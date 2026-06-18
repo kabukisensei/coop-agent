@@ -43,6 +43,15 @@ $ErrorActionPreference = 'Continue'
 $script:CoopRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $env:COOP_ROOT = $script:CoopRoot
 
+# Isolate coop's Pi config (extensions, settings, themes, MCP) from the user's personal
+# `pi` — for launching AND the coop add/remove/list/config/pi management aliases.
+# Disable with COOP_NO_ISOLATE=1.
+if ($env:COOP_NO_ISOLATE -ne '1') {
+  $coopAgentDir = if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' }
+  $env:PI_CODING_AGENT_DIR = $coopAgentDir
+  New-Item -ItemType Directory -Force -Path $coopAgentDir -ErrorAction SilentlyContinue | Out-Null
+}
+
 # --- Shared helpers (mirror of lib/common.sh) --------------------------------
 # Reproduced inline so coop.ps1 has no external PowerShell dependency.
 

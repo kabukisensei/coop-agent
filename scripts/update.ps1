@@ -51,7 +51,11 @@ function Invoke-CoopScript {
   return $LASTEXITCODE
 }
 
-$PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review', 'fabric-cicd', 'ms-fabric-cli')
+$PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review', 'ms-fabric-cli')
+
+# Update coop's ISOLATED Pi agent dir (not the user's personal pi).
+function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' } }
+$env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 
 Coop-Head "coop update (v$($script:CoopVersion))"
 
@@ -102,6 +106,11 @@ if (Test-Have 'pipx') {
     } else {
       Coop-Warn "$pkg not installed — run: coop install"
     }
+  }
+  # fabric-cicd is a library injected into the Fabric CLI env — refresh it there.
+  if ($pipxList -match 'package ms-fabric-cli ') {
+    & pipx inject ms-fabric-cli fabric-cicd --force > $null 2>&1
+    if ($LASTEXITCODE -eq 0) { Coop-Ok 'fabric-cicd (library) refreshed' }
   }
 } else {
   Coop-Warn 'pipx not installed — run: coop install'

@@ -40,21 +40,39 @@ function Coop-Warn { param([string]$m) [Console]::Error.WriteLine("$($script:C_O
 function Coop-Head { param([string]$m) [Console]::Error.WriteLine("`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)") }
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 
-$CORE_EXTENSIONS = @('pi-mcp-adapter', 'pi-hermes-memory', 'pi-powerline-footer')
+# coop renders its own footer/splash — no third-party powerline footer.
+$CORE_EXTENSIONS = @('pi-mcp-adapter', 'pi-hermes-memory')
+function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' } }
+$PI_AGENT = Get-CoopPiAgentDir
+$GLOBAL_AGENT = Join-Path $HOME '.pi\agent'
 
 Coop-Head "coop sync (v$($script:CoopVersion))"
 
 # --- 1. Launchers (the .ps1/.cmd shims are inherently executable on Windows) --
 Coop-Ok 'bin/coop launchers and scripts are runnable'
 
-# --- 2. Core Pi extensions (idempotent) --------------------------------------
+# --- 2. Isolated Pi agent dir + shared credentials ---------------------------
+Coop-Head 'Isolated Pi agent dir'
+New-Item -ItemType Directory -Force -Path $PI_AGENT | Out-Null
+Coop-Ok "coop Pi agent dir: $PI_AGENT"
+foreach ($f in @('auth.json', 'models.json')) {
+  $dst = Join-Path $PI_AGENT $f
+  $src = Join-Path $GLOBAL_AGENT $f
+  if (-not (Test-Path -LiteralPath $dst) -and (Test-Path -LiteralPath $src -PathType Leaf)) {
+    Copy-Item -LiteralPath $src -Destination $dst
+    Coop-Ok "shared $f from your personal pi (login/models)"
+  }
+}
+
+# --- 3. Core Pi extensions — installed INTO the isolated dir (idempotent) -----
+$env:PI_CODING_AGENT_DIR = $PI_AGENT
 if (Test-Have 'pi') {
   $pilist = (& pi list 2>$null | Out-String)
   foreach ($ext in $CORE_EXTENSIONS) {
     if ($pilist -match [regex]::Escape($ext)) {
-      Coop-Ok "$ext present"
+      Coop-Ok "$ext present (isolated)"
     } else {
-      Coop-Info "installing $ext…"
+      Coop-Info "installing $ext into coop's dir…"
       & pi install "npm:$ext" > $null 2>&1
       if ($LASTEXITCODE -eq 0) { Coop-Ok "$ext installed" } else { Coop-Warn "could not install $ext" }
     }
@@ -63,9 +81,9 @@ if (Test-Have 'pi') {
   Coop-Warn 'pi not installed — skipping extension sync (run: coop install)'
 }
 
-# --- 3. MCP config (read-only) — non-destructive -----------------------------
+# --- 4. MCP config (read-only) into the isolated dir — non-destructive --------
 $MCP_SRC = Join-Path $script:CoopRoot 'config\mcp.example.json'
-$MCP_DST = Join-Path $HOME '.config\mcp\mcp.json'
+$MCP_DST = Join-Path $PI_AGENT 'mcp.json'
 if (Test-Path -LiteralPath $MCP_SRC -PathType Leaf) {
   if (Test-Path -LiteralPath $MCP_DST -PathType Leaf) {
     Coop-Ok "MCP config already exists: $MCP_DST"

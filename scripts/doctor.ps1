@@ -93,6 +93,10 @@ function Find-CoopProjectYml {
 }
 
 # --- doctor body -------------------------------------------------------------
+# Check coop's ISOLATED Pi agent dir, not the user's personal ~/.pi/agent.
+function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' } }
+$env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
+
 $script:FAIL = 0   # required missing -> non-zero exit
 $script:WARN = 0
 
@@ -156,7 +160,22 @@ Check 'coop-sql-review' 'required' 'pipx install coop-sql-review' @('coop-sql-re
 Check 'coop-dax-review' 'required' 'pipx install coop-dax-review' @('coop-dax-review','--version')
 
 Coop-Head 'Fabric / semantic-model tooling'
-Check 'fabric-cicd' 'optional' 'pipx install fabric-cicd  (Fabric deployment validation)' @('fabric-cicd','--version')
+# fabric-cicd is a Python LIBRARY (no CLI) — check it's importable in the Fabric CLI's env.
+if (Test-Have 'fab') {
+  $fabCmd = (Get-Command fab -ErrorAction SilentlyContinue)
+  $fabReal = if ($fabCmd) { $fabCmd.Source } else { '' }
+  $fabPy = if ($fabReal) { Join-Path (Split-Path -Parent $fabReal) 'python.exe' } else { '' }
+  if (-not (Test-Path -LiteralPath $fabPy)) { $fabPy = if ($fabReal) { Join-Path (Split-Path -Parent $fabReal) 'python' } else { '' } }
+  if ($fabPy -and (Test-Path -LiteralPath $fabPy)) {
+    & $fabPy -c 'import fabric_cicd' > $null 2>&1
+    if ($LASTEXITCODE -eq 0) { D-Ok 'fabric-cicd (library, in the Fabric CLI env)' }
+    else { D-Warn 'fabric-cicd not installed' 'pipx inject ms-fabric-cli fabric-cicd' }
+  } else {
+    D-Warn 'fabric-cicd not installed' 'pipx inject ms-fabric-cli fabric-cicd'
+  }
+} else {
+  D-Warn 'fabric-cicd: install the Microsoft Fabric CLI first' 'coop install'
+}
 # Tabular Editor CLI is path-configured and mostly Windows; check the project's path if set.
 $tePath = Get-CoopYamlValue (Find-CoopProjectYml) 'tools.tabular_editor_cli.executable_path' ''
 if (-not $tePath -or $tePath -like 'TODO*') {
@@ -170,7 +189,7 @@ if (-not $tePath -or $tePath -like 'TODO*') {
 Coop-Head 'Pi extensions'
 if (Test-Have 'pi') {
   $pilist = (& pi list 2>$null | Out-String)
-  foreach ($ext in @('pi-mcp-adapter:MCP servers', 'pi-hermes-memory:persistent memory', 'pi-powerline-footer:branded footer')) {
+  foreach ($ext in @('pi-mcp-adapter:MCP servers', 'pi-hermes-memory:persistent memory')) {
     $name = $ext.Split(':')[0]; $desc = $ext.Split(':')[1]
     if ($pilist -match [regex]::Escape($name)) { D-Ok "$name ($desc)" }
     else { D-Warn "$name not installed ($desc)" "coop add npm:$name" }
@@ -183,10 +202,10 @@ Coop-Head 'MCP servers (read-only, optional)'
 $mcpFound = ''
 $cwd = (Get-Location).Path
 foreach ($f in @(
+    (Join-Path $env:PI_CODING_AGENT_DIR 'mcp.json'),
     (Join-Path $cwd '.mcp.json'),
     (Join-Path $cwd '.pi\mcp.json'),
     (Join-Path $HOME '.config\mcp\mcp.json'),
-    (Join-Path $HOME '.pi\agent\mcp.json'),
     (Join-Path $HOME '.pi\mcp-config\mcp.json'))) {
   if (Test-Path -LiteralPath $f -PathType Leaf) { $mcpFound = $f; break }
 }

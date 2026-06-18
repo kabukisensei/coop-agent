@@ -67,14 +67,20 @@ foreach ($a in $args) {
 }
 
 # --- What we install (keep in sync with config/defaults.yml) ------------------
+# coop renders its OWN footer/splash via extensions/coop-powerline — no third-party
+# powerline footer.
 $PI_NPM_PACKAGE = '@mariozechner/pi-coding-agent'
 $PI_EXTENSIONS = @(
-  'npm:pi-mcp-adapter',       # MCP servers (Fabric / Power BI / Microsoft Learn)
-  'npm:pi-hermes-memory',     # persistent memory + session search + secret scanning
-  'npm:pi-powerline-footer'   # branded footer / status bar
+  'npm:pi-mcp-adapter',       # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
+  'npm:pi-hermes-memory'      # persistent memory + session search + secret scanning
 )
-$PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review', 'fabric-cicd')
+$PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')
 $FABRIC_PKG = 'ms-fabric-cli'
+
+# Install/operate against coop's ISOLATED Pi agent dir (mirror of coop_pi_agent_dir).
+function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' } }
+$env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
+New-Item -ItemType Directory -Force -Path $env:PI_CODING_AGENT_DIR | Out-Null
 
 $OS = 'Windows'
 
@@ -140,6 +146,9 @@ if ($NO_FABRIC) {
     & pipx install $FABRIC_PKG > $null 2>&1
     if ($LASTEXITCODE -ne 0) { & pipx upgrade $FABRIC_PKG > $null 2>&1 }
   }
+  # fabric-cicd is a Python LIBRARY (no CLI) — inject it into the Fabric CLI env.
+  & pipx inject $FABRIC_PKG fabric-cicd > $null 2>&1
+  if ($LASTEXITCODE -eq 0) { Coop-Ok 'fabric-cicd (library) added to the Fabric CLI env' } else { Coop-Warn 'could not add fabric-cicd (optional)' }
   if (Test-Have 'fab') {
     $fabver = ((& fab --version 2>&1) -join ' ')
     if ($fabver -match '(?i)paramiko|invoke') {
