@@ -68,6 +68,36 @@ coop data-doc                    # build lineage + Markdown docs
 coop list / coop config          # manage Pi extensions
 ```
 
+## Try it — a safe first task (nothing gets changed)
+
+**1. See an advisory review on a throwaway file.**
+
+```bash
+printf 'SELECT * FROM dbo.Orders o JOIN dbo.Customer c ON o.CustomerId = c.Id;\n' > /tmp/sample.sql
+coop sql-review /tmp/sample.sql
+#   Windows: Set-Content /tmp/sample.sql 'SELECT * FROM dbo.Orders;'; coop sql-review /tmp/sample.sql
+```
+
+You'll get a severity summary (errors / warnings / info). `coop sql-review` is
+**advisory** — it reports against our SQL standards and **never edits or blocks**.
+
+**2. Now work *with* the agent.**
+
+```bash
+coop @/tmp/sample.sql "Review this against our SQL standards and explain what you'd change — don't edit anything yet."
+```
+
+Watch the loop: it reads context → runs `sql_review` → **proposes a plan and asks
+before changing anything**. Reply "looks good" to proceed, or steer it. That
+plan-and-approve loop — you always in control — is the whole point.
+
+**3. In a real work repo, try a focused lineage read.**
+
+> "Use `data_doc` to show the lineage for `<object>`, focused on its upstream and
+> downstream — don't load the whole estate."
+
+That's the context-saving, object-focused read in action.
+
 ## 6. Make it yours
 
 ```bash
