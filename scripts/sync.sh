@@ -16,7 +16,7 @@ export COOP_ROOT
 # shellcheck source=../lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
 
-CORE_EXTENSIONS=( pi-mcp-adapter pi-hermes-memory )
+CORE_EXTENSIONS=( pi-mcp-adapter pi-hermes-memory pi-better-openai )
 PI_AGENT="$(coop_pi_agent_dir)"
 GLOBAL_AGENT="$(coop_global_pi_agent_dir)"
 

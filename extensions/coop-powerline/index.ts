@@ -179,7 +179,11 @@ export default function coopPowerline(pi: ExtensionAPI) {
           // Only draw the block-art logo when the terminal is wide enough; otherwise
           // it would wrap and look malformed — fall back to the wordmark alone.
           if (splashW > 0 && width >= splashW) {
-            for (const l of splash) out.push(center(l, width));
+            // Pad the whole block by ONE uniform left margin so the concentric arcs
+            // stay aligned. (Centering each line by its own width — lines have ragged
+            // widths because trailing transparent cells are trimmed — skews the logo.)
+            const pad = " ".repeat(Math.max(0, Math.floor((width - splashW) / 2)));
+            for (const l of splash) out.push(pad + l);
             out.push("");
           }
           out.push(center(wordmark(), width));
@@ -219,8 +223,21 @@ export default function coopPowerline(pi: ExtensionAPI) {
                 const branch = typeof footerData?.getGitBranch === "function" ? footerData.getGitBranch() : "";
                 const model = ctx.model?.id || "";
                 const usage = formatUsage(ctx);
+                // Surface other extensions' status text (e.g. pi-better-openai's plan
+                // usage limits / 5h+7d windows) in OUR single footer — no duplicate bar.
+                const extTexts: string[] = [];
+                try {
+                  const statuses =
+                    typeof footerData?.getExtensionStatuses === "function" ? footerData.getExtensionStatuses() : null;
+                  statuses?.forEach?.((v: string) => {
+                    if (v && stripAnsi(v).trim()) extTexts.push(v.trim());
+                  });
+                } catch {
+                  /* ignore */
+                }
                 const left = `${NAVY("⬢")}${LIME(" Cooptimize")}` + (branch ? theme.fg("dim", `  ${branch}`) : "");
-                const right = theme.fg("dim", [model, usage].filter(Boolean).join("  ·  "));
+                const meta = theme.fg("dim", [model, usage].filter(Boolean).join("  ·  "));
+                const right = [meta, ...extTexts].filter((s) => s && stripAnsi(s).trim()).join(theme.fg("dim", "  ·  "));
                 const gap = Math.max(1, width - visWidth(left) - visWidth(right));
                 return [clip(left + " ".repeat(gap) + right, width)];
               } catch {

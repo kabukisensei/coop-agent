@@ -41,7 +41,7 @@ function Coop-Head { param([string]$m) [Console]::Error.WriteLine("`n$($script:C
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 
 # coop renders its own footer/splash — no third-party powerline footer.
-$CORE_EXTENSIONS = @('pi-mcp-adapter', 'pi-hermes-memory')
+$CORE_EXTENSIONS = @('pi-mcp-adapter', 'pi-hermes-memory', 'pi-better-openai')
 function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' } }
 $PI_AGENT = Get-CoopPiAgentDir
 $GLOBAL_AGENT = Join-Path $HOME '.pi\agent'
@@ -104,7 +104,7 @@ if (Test-Path -LiteralPath $MCP_SRC -PathType Leaf) {
   Coop-Warn 'config/mcp.example.json missing — cannot sync MCP servers'
 }
 
-# --- 4. Brand assets ---------------------------------------------------------
+# --- 5. Brand assets ---------------------------------------------------------
 Coop-Head 'Brand assets'
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi') -PathType Leaf) { Coop-Ok 'splash present' } else { Coop-Warn 'splash.ansi missing (regenerate from the logo)' }
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'themes\cooptimize.json') -PathType Leaf) { Coop-Ok 'theme present' } else { Coop-Warn 'themes/cooptimize.json missing' }
