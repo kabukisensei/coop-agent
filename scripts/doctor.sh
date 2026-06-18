@@ -13,7 +13,7 @@ export COOP_ROOT
 
 # Check coop's ISOLATED Pi agent dir (where coop's extensions/MCP live), not the
 # user's personal ~/.pi/agent.
-export PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"
+PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"; export PI_CODING_AGENT_DIR
 
 FAIL=0   # required missing -> non-zero exit
 WARN=0

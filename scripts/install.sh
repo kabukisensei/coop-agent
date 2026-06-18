@@ -38,7 +38,7 @@ FABRIC_PKG="ms-fabric-cli"
 
 # Install/operate against coop's ISOLATED Pi agent dir so nothing mixes with the
 # user's personal `pi`. Every `pi` call below (and the sync/doctor it runs) inherits it.
-export PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"
+PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"; export PI_CODING_AGENT_DIR
 mkdir -p "$PI_CODING_AGENT_DIR"
 
 OS="$(uname -s 2>/dev/null || echo unknown)"

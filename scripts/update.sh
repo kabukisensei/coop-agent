@@ -17,7 +17,7 @@ export COOP_ROOT
 PY_TOOLS=( coop-data-doc coop-sql-review coop-dax-review ms-fabric-cli )
 
 # Update coop's ISOLATED Pi agent dir (not the user's personal pi).
-export PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"
+PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"; export PI_CODING_AGENT_DIR
 
 coop_head "coop update (v${COOP_VERSION})"
 
