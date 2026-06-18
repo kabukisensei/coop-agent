@@ -60,7 +60,7 @@ mcp:
       mode: read-only
     - name: microsoft-learn # learn.microsoft.com/api/mcp via mcp-remote (always-current docs)
       mode: read-only
-    - name: context-mode    # local
+    - name: context-mode    # npx -y context-mode — intent-driven search + sandboxed exec (context savings)
       mode: read-only
 
 # Branded resources loaded at launch (see bin/coop).
@@ -71,6 +71,21 @@ resources:
   guardrails: docs/guardrails.md
   vibes: vibes
   splash: extensions/coop-powerline/assets/splash.ansi
+
+# Tested-with versions (reference). Installs pull the latest unless you pin; doctor
+# warns when Pi is older than pi_min (the extension API coop's extensions rely on).
+tested_with:
+  pi_min: "0.79.0"
+  pi: "0.79.4"
+  pi_mcp_adapter: "2.10.0"
+  pi_hermes_memory: "0.7.17"
+  pi_powerline_footer: "0.6.1"
+  context_mode: "1.0.162"
+  ms_fabric_cli: "1.6.1"
+  fabric_cicd: "1.1.0"
+  coop_data_doc: "0.17.0"
+  coop_sql_review: "0.1.0"
+  coop_dax_review: "0.1.0"
 
 # Cooptimize brand palette (sampled from the color logo).
 brand_colors:

@@ -21,7 +21,14 @@ So adding a capability is usually just **adding a file and committing it**.
 
 ## 1. Add a custom skill (most common)
 
-A skill is a folder with a `SKILL.md`. Create one:
+Fastest path — let coop scaffold it:
+
+```bash
+coop new-skill lakehouse-naming-review   # creates skills/lakehouse-naming-review/SKILL.md
+```
+
+Then edit the generated `SKILL.md`. Or do it by hand — a skill is just a folder with
+a `SKILL.md`:
 
 ```bash
 mkdir -p skills/lakehouse-naming-review
@@ -46,7 +53,7 @@ MD
 ```
 
 That's it — next time anyone runs `coop`, the skill is available. It automatically
-operates under the 11-step `coop-workflow` and the guardrails (read-only-first,
+operates under the `coop-workflow` and the guardrails (read-only-first,
 plan-and-approve, never commit source). Reference it from a prompt or just ask the
 agent to "use the lakehouse-naming-review skill."
 
@@ -56,7 +63,8 @@ agent to "use the lakehouse-naming-review skill."
 
 ## 2. Add a prompt template (a `/slash` command)
 
-Prompt templates are Markdown with `{{placeholders}}`:
+Scaffold with `coop new-prompt <name>`, or write one by hand. Prompt templates are
+Markdown with `{{placeholders}}`:
 
 ```bash
 cat > prompts/weekly-log.md <<'MD'

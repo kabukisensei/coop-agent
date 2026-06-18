@@ -13,7 +13,7 @@ fold in Tabular Editor Best Practice Analyzer (BPA) results. This skill is
 advisory: it reports and suggests but never edits a model or measure and never
 blocks. Applying a fix is a separate, plan-and-approve step.
 
-Run inside the `coop-workflow` 11 steps. `dax_review` is the review tool the
+Run inside the `coop-workflow` skill. `dax_review` is the review tool the
 workflow calls at step 7 for DAX/models; this skill covers running it and reading
 results.
 

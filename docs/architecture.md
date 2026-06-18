@@ -27,9 +27,9 @@ stock Pi install — so Pi can be updated underneath `coop` without merge pain.
    - **Guardrails system prompt** — `docs/guardrails.md`, *appended* (not
      replacing Pi's prompt): read-only-first, plan-and-approve, never commit
      source, MCP read-only, never expose secrets.
-   - **Skills** — `skills/`, including `coop-workflow` (the mandatory 11-step
-     workflow) and a filtered set of official Microsoft agent skills under
-     `skills/_microsoft/`.
+   - **Skills** — `skills/`, including `coop-workflow` (the principles-first
+     Cooptimize workflow) and a subordinate, allow-listed set of official Microsoft
+     skills under `skills/_microsoft/`.
    - **Prompt templates** — `prompts/`.
    - **Theme** — `themes/cooptimize.json` (brand palette: navy `#00416B`,
      forest `#42783C`, olive `#82AA43`, lime `#B2D235`, red `#EF412D`).
@@ -88,7 +88,7 @@ flowchart TD
 
     subgraph LAYER["Cooptimize layer (this repo)"]
       guard["guardrails.md\n(system prompt)"]
-      skills["skills/\ncoop-workflow (11 steps)\n+ _microsoft/*"]
+      skills["skills/\ncoop-workflow\n+ _microsoft/*"]
       prompts["prompts/"]
       theme["themes/cooptimize.json"]
       ext_pl["ext: coop-powerline\nsplash · footer · vibes"]
@@ -140,7 +140,7 @@ flowchart TD
 ## Governance flow
 
 Every task that touches SQL, DAX, Fabric objects, semantic models, reports, docs,
-or lineage runs through the **`coop-workflow` 11-step skill**, enforced by the
+or lineage runs through the **`coop-workflow` skill** (principles-first), enforced by the
 `guardrails.md` system prompt: read context (`.coop/project.yml` + standards) →
 scope and impact → read target + lineage (`data_doc`) → **PLAN + explicit
 approval** → timestamped backup → smallest safe edit → review

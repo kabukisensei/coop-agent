@@ -1,6 +1,6 @@
 # Cooptimize agent — project contract (.coop/project.yml)
 # Copy this file to <your-repo>/.coop/project.yml and replace every TODO.
-# coop's skills, prompts, and the 11-step workflow treat this file as the single
+# coop's skills, prompts, and the Cooptimize workflow treat this file as the single
 # source of truth. coop reads it before any file work. Based on the original
 # pi-analytics-agent agent-config.template.yml, extended for the Cooptimize stack.
 
@@ -178,7 +178,7 @@ documentation:
 
 # --- Workflow + governance ----------------------------------------------------
 workflow:
-  skill: "coop-workflow"      # the 11-step grounding skill
+  skill: "coop-workflow"      # the workflow grounding skill
   steps:
     - "Read .coop/project.yml + the relevant standards"
     - "Identify repo/object + upstream/downstream impact; git status && git pull"

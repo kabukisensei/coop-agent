@@ -12,7 +12,7 @@ the JSON output into a clear, prioritized summary the user can act on. This skil
 is advisory: it reports findings and suggests fixes but never edits files and never
 blocks. Applying a fix is a separate, plan-and-approve step.
 
-Run inside the `coop-workflow` 11 steps. `sql_review` is the review tool the
+Run inside the `coop-workflow` skill. `sql_review` is the review tool the
 workflow calls at step 7 for SQL; this skill covers running it and reading results.
 
 ## Review checklist

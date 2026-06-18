@@ -64,7 +64,7 @@ coop_head "Next steps"
 cat >&2 <<EOF
   1. Edit ${DST}/.coop/project.yml (fill TODOs: repo paths, Fabric/Power BI workspaces, tenant).
   2. Run: coop doctor
-  3. The 18-step pi-analytics workflow is now the 11-step 'coop-workflow' skill;
+  3. The 18-step pi-analytics workflow is now the coop-workflow skill;
      documentation reads are handled by the coop-data-doc tool.
   4. Start the agent in your repo with: coop
 EOF

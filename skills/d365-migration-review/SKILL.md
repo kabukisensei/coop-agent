@@ -12,7 +12,7 @@ architecture, and check that the design is sound before it is built or trusted.
 The deliverable is an advisory review of the mapping — this skill reads specs,
 SQL, and lineage and reports findings; it never edits migration code or objects.
 
-Run inside the `coop-workflow` 11 steps: read `.coop/project.yml`, `standards.sql`,
+Run inside the `coop-workflow` skill: read `.coop/project.yml`, `standards.sql`,
 and `standards.fabric` first; scope the entities under review; inspect read-only;
 write findings and a PLAN; log the review.
 

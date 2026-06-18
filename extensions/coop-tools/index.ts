@@ -133,11 +133,12 @@ export default function coopTools(pi: ExtensionAPI) {
     name: "data_doc",
     label: "Data Documentation",
     description:
-      "Run coop-data-doc to document SQL + Power BI estates and build lineage. 'scan' (default) writes the lineage graph (graph.json); 'build' also writes Markdown docs and a searchable portal (manifest.json). Documentation outputs are committable; source is never touched.",
-    promptSnippet: "Build/scan SQL + Power BI documentation and lineage (graph.json / manifest.json)",
+      "Run coop-data-doc to document SQL + Power BI estates and build lineage. 'scan' (default) writes the lineage graph (graph.json); 'build' also writes Markdown documentation (per-object docs + lineage) and a searchable portal, indexed by manifest.json. After running this, READ the generated Markdown docs (use your read tool) — they are the canonical, human- and agent-readable documentation for the estate. Documentation outputs are committable; source is never touched.",
+    promptSnippet: "Document SQL + Power BI estate: lineage graph + Markdown docs (read them via manifest.json)",
     promptGuidelines: [
-      "Use data_doc to read lineage and existing documentation (workflow step 3) before planning changes.",
-      "Default to 'scan' (read-only). Only run 'build' when the user wants docs/portal regenerated.",
+      "Use data_doc to understand relationships, lineage, and existing documentation before planning changes.",
+      "After scan/build, READ the generated Markdown docs (find them via manifest.json) instead of re-deriving relationships by hand — they are the source of truth for the estate.",
+      "Default to 'scan' (read-only). Only run 'build' when the user wants the Markdown docs/portal regenerated.",
     ],
     parameters: DATADOC_PARAMS,
     executionMode: "sequential",

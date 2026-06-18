@@ -126,6 +126,15 @@ Check 'npm'     'optional' 'ships with Node.js' @('npm','--version')
 Check 'python3' 'required' 'install Python 3.10+ from https://python.org' @('python3','--version')
 Check 'pipx'    'required' 'python3 -m pip install --user pipx && python3 -m pipx ensurepath' @('pipx','--version')
 
+# Minimum Pi version — the extension API used by coop-powerline / coop-tools.
+if (Test-Have 'pi') {
+  $piRaw = (& pi --version 2>$null | Select-Object -First 1)
+  if ($piRaw -match '(\d+)\.(\d+)\.(\d+)') {
+    $piv = [version]("{0}.{1}.{2}" -f $matches[1], $matches[2], $matches[3])
+    if ($piv -lt [version]'0.79.0') { D-Warn "pi $piv is older than the tested minimum (0.79.0)" 'coop update' }
+  }
+}
+
 Coop-Head 'Microsoft Fabric CLI'
 if (Test-Have 'fab') {
   $fabver = ((& fab --version 2>&1 | Select-Object -First 3) -join ' ')

@@ -120,6 +120,28 @@ Finish with `coop sync` (ensures the core Pi extensions are installed, places th
 read-only MCP config non-destructively, and verifies the splash/theme/vibe assets)
 and `coop doctor`.
 
+### What `coop install` includes (turnkey)
+
+One command (`coop install`) gets a coworker everything below. `coop doctor` then
+shows anything still missing.
+
+| Component | How it's provided |
+| --- | --- |
+| **Pi** | installed globally via `npm` |
+| **Pi extensions** — `pi-mcp-adapter`, `pi-hermes-memory`, `pi-powerline-footer` | installed via `pi install` |
+| **Coop companion extensions** — `coop-powerline` (splash/vibes), `coop-tools` (native `sql_review`/`dax_review`/`data_doc`) | shipped in this repo, loaded at launch (nothing to install) |
+| **Standalone tools** — `coop-data-doc`, `coop-sql-review`, `coop-dax-review`, `fabric-cicd` | installed via `pipx` from PyPI |
+| **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
+| **MCP servers** — `fabric`, `powerbi`, `microsoft-learn`, `context-mode` | **fetched on first use via `npx`** (need Node + internet); placed read-only into `~/.config/mcp/mcp.json` by `coop sync`. No separate install. |
+
+**Not auto-installed (optional, external):**
+
+- **Tabular Editor CLI** — a separate Microsoft desktop/CLI app (no `npm`/`pip`
+  package). Install it yourself and set `tools.tabular_editor_cli.executable_path`
+  in `.coop/project.yml` if you want semantic-model BPA. coop works without it.
+- **Azure CLI** (`az`) — optional, for Fabric / Power BI auth. Install from Microsoft
+  if your team uses live MCP / Power BI access.
+
 ---
 
 ## Commands
@@ -141,6 +163,10 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop fabric [args]` | Pass through to the Microsoft Fabric CLI (`fab`) |
 | `coop version` | Print `coop` + `pi` versions |
 | `coop help` | Show usage |
+| **Authoring** | |
+| `coop init [dir]` | Scaffold `.coop/project.yml` into a work repo (default: `.`) |
+| `coop new-skill <name>` | Scaffold `skills/<name>/SKILL.md` |
+| `coop new-prompt <name>` | Scaffold `prompts/<name>.md` |
 | **Pi management (aliased under coop)** | |
 | `coop list` | List installed Pi extensions (`pi list`) |
 | `coop config` | Open Pi's resource TUI (`pi config`) |
@@ -235,7 +261,7 @@ launch.
 6. MCP is read-only.
 7. Never expose secrets.
 
-**The 11-step workflow** (the `coop-workflow` skill — see
+**The Cooptimize workflow** (the `coop-workflow` skill — see
 [`skills/coop-workflow/SKILL.md`](skills/coop-workflow/SKILL.md)):
 
 1. Read `.coop/project.yml` and the relevant standards.

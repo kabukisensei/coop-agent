@@ -4,11 +4,11 @@ This repository is **coop**, the Cooptimize terminal agent: a branded layer on t
 of Pi (`@mariozechner/pi-coding-agent`). It is **not** a fork of Pi.
 
 If you are an agent working in a Cooptimize work repo, you operate under the
-Cooptimize guardrails and the 11-step workflow:
+Cooptimize guardrails and the Cooptimize workflow:
 
 - **Guardrails:** `docs/guardrails.md` (read-only first, plan-and-approve, never
   commit source, back up before edits, never expose secrets, MCP read-only).
-- **Workflow:** the `coop-workflow` skill — the mandatory 11 steps for any task.
+- **Workflow:** the `coop-workflow` skill — the Cooptimize workflow for any task.
 - **Contract:** `.coop/project.yml` is the single source of truth (repo paths,
   Fabric/Power BI workspaces, standards, backup/log rules, approval policy). Read
   the nearest one before doing file work.

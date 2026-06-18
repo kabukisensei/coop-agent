@@ -12,7 +12,7 @@ then report on coverage, gaps, and staleness. The deliverable is an analysis of 
 generated artifacts. Generating documentation is read-safe; committing or
 publishing the site happens only with approval per the contract.
 
-Run inside the `coop-workflow` 11 steps. `data_doc` is the lineage tool the
+Run inside the `coop-workflow` skill. `data_doc` is the lineage tool the
 workflow calls at step 3 (read target + lineage) and step 9 (document).
 
 ## Analysis checklist
@@ -21,6 +21,14 @@ workflow calls at step 3 (read target + lineage) and step 9 (document).
   lineage graph of objects and their edges.
 - **Build.** Run `coop-data-doc build` to produce `manifest.json`, the Markdown
   docs, and the portal. Use `manifest.json` as the structured source for analysis.
+- **Read the generated Markdown — focused.** The per-object Markdown docs are the
+  canonical, human- and agent-readable documentation for the estate. To protect the
+  context window, **do not read the whole doc set**: locate the object's node in
+  `manifest.json` / `graph.json` (it carries `upstream`, `downstream`, and each
+  object's `slug`), then read **only** that object's `<slug>.md` plus its immediate
+  upstream and downstream neighbors. Prefer **context-mode** (intent-driven search +
+  sandboxed execution) to pull just the relevant slice. Widen the radius only when
+  the change's blast radius requires it.
 - **Lineage.** Summarize key flows: sources → bronze → silver → gold → semantic
   model → report. Highlight critical paths and any cross-repo edges.
 - **Coverage gaps.** Identify objects with no description, no owner, or no glossary

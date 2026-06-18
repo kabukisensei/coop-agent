@@ -11,7 +11,7 @@ Inspect a Microsoft Fabric workspace and report on its architecture, hygiene, an
 deployment posture. Output is an advisory review — findings and recommendations
 only. This skill never creates, updates, deploys, or deletes Fabric artifacts.
 
-Run this inside the `coop-workflow` 11 steps: read `.coop/project.yml` and
+Run this inside the `coop-workflow` skill: read `.coop/project.yml` and
 `standards.fabric` first, scope the workspace and its blast radius, inspect
 read-only, write a PLAN before any change is even proposed, and log the review.
 

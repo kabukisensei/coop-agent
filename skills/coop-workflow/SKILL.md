@@ -1,15 +1,28 @@
 ---
 name: coop-workflow
-description: The mandatory 11-step Cooptimize workflow for any task touching SQL, DAX, Fabric, semantic models, Power BI reports, documentation, or lineage. Read-only first, plan-and-approve before edits, never commit source.
+description: The Cooptimize workflow for any task touching SQL, DAX, Fabric, semantic models, Power BI reports, documentation, or lineage. Principles first (read-only first, plan-and-approve before edits, back up, review, document, never commit source); the step sequence is a default to adapt, not a rigid count.
 ---
 
-# Cooptimize Workflow (the 11 steps)
+# Cooptimize Workflow
 
 Use this skill for **every** task that reads or changes SQL, DAX, Fabric
 warehouse/lakehouse objects, semantic models, Power BI reports, documentation, or
 lineage. It keeps work grounded and ensures a human at Cooptimize reviews anything
-before it ships. Derived from the pi-analytics-agent mandatory workflow, tightened
-to 11 steps, with documentation reads handled by the `coop-data-doc` tool.
+before it ships. Derived from the pi-analytics-agent mandatory workflow, with
+documentation reads handled by the `coop-data-doc` tool.
+
+## Principles (these are what matter)
+
+- **Read-only first**, plan and **get approval before changing anything**.
+- **Back up** before edits; make the **smallest safe change**.
+- **Review** with the tools; **document and log** the work.
+- **Never commit source** — docs/logs/site only, after approval.
+- **Explain your choices** (why this approach/pattern/trade-off), but keep it terse
+  when the user says the rationale isn't needed for that situation.
+
+The sequence below is the **default way** to honor those principles — adapt it
+(skip, reorder, or combine steps) to the task. The exact number of steps is not
+sacred; the principles are.
 
 ## Before you start
 
@@ -19,7 +32,7 @@ locations, backup/log rules, allowed/blocked commit paths, and the approval poli
 If it is missing, ask the user to copy `.coop/project.example.yml` into the repo's
 `.coop/project.yml` and fill the TODOs.
 
-## The 11 steps
+## The default sequence
 
 1. **Read context.** Read `.coop/project.yml` and the relevant standards
    (`standards.sql` / `standards.dax` / `standards.fabric` / `standards.documentation`).

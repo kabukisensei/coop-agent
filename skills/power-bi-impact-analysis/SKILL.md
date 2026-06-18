@@ -12,7 +12,7 @@ the target (upstream) and what depends on it (downstream). The deliverable is an
 impact report so a human can scope and approve the change. This skill reads and
 analyzes only — it never edits a model, measure, or report.
 
-Run inside the `coop-workflow` 11 steps. This skill primarily supports step 2
+Run inside the `coop-workflow` skill. This skill primarily supports step 2
 (scope + upstream/downstream impact) and step 3 (read target + lineage); it must
 not stand in for the PLAN/approval gate at step 4.
 

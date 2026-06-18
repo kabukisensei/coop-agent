@@ -250,6 +250,11 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop version              Print coop + pi versions
   coop help                 Show this help
 
+$(Coop-Bold)Authoring$(Coop-Rst)
+  coop init [dir]           Scaffold .coop/project.yml into a work repo (default: .)
+  coop new-skill <name>     Scaffold skills/<name>/SKILL.md
+  coop new-prompt <name>    Scaffold prompts/<name>.md
+
 $(Coop-Bold)Pi management (aliased under coop)$(Coop-Rst)
   coop list                 List installed Pi extensions   (pi list)
   coop config               Open Pi's resource TUI         (pi config)
@@ -405,6 +410,81 @@ function Invoke-DataDoc {
   }
 }
 
+# --- Authoring scaffolders (mirror of bin/coop) ------------------------------
+function Test-CoopValidName { param([string]$Name) return ($Name -and $Name -notmatch '[^a-zA-Z0-9._-]') }
+
+function Invoke-CoopInit {
+  param([string[]]$RestArgs = @())
+  $dir = if ($RestArgs.Count -ge 1) { $RestArgs[0] } else { (Get-Location).Path }
+  $tmpl = Join-Path $script:CoopRoot '.coop\project.example.yml'
+  if (-not (Test-Path -LiteralPath $tmpl -PathType Leaf)) { Coop-Die 'template missing: .coop/project.example.yml' }
+  $dst = Join-Path $dir '.coop\project.yml'
+  if (Test-Path -LiteralPath $dst) { Coop-Die "$dst already exists — not overwriting." }
+  New-Item -ItemType Directory -Force -Path (Join-Path $dir '.coop') | Out-Null
+  Copy-Item -LiteralPath $tmpl -Destination $dst
+  Coop-Ok "Wrote $dst"
+  Coop-Info 'Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor'
+}
+
+function New-CoopSkill {
+  param([string[]]$RestArgs = @())
+  $name = if ($RestArgs.Count -ge 1) { $RestArgs[0] } else { '' }
+  if (-not (Test-CoopValidName $name)) { Coop-Die 'Usage: coop new-skill <name>  (letters, digits, . _ - only)' }
+  if ($name -eq '_microsoft') { Coop-Die "'_microsoft' is reserved for official Microsoft skills." }
+  $dir = Join-Path $script:CoopRoot "skills\$name"
+  if (Test-Path -LiteralPath $dir) { Coop-Die "skills/$name already exists." }
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $body = @"
+---
+name: $name
+description: TODO one-line summary of when to use this skill.
+---
+
+# $name skill
+
+TODO: when to use this skill.
+
+## Checklist
+- TODO
+- TODO
+
+## Tools
+- Use the native tools (sql_review / dax_review / data_doc) and read-only MCP as needed.
+- Operates under the coop-workflow skill and docs/guardrails.md (advisory, read-only first).
+
+## Output
+- Pass/fail summary, findings by severity, suggested fixes (advisory — never auto-edit).
+"@
+  Set-Content -LiteralPath (Join-Path $dir 'SKILL.md') -Value $body -Encoding UTF8
+  Coop-Ok "Created skills/$name/SKILL.md"
+  Coop-Info 'Edit it, test with: coop  — then commit & push so the team gets it.'
+}
+
+function New-CoopPrompt {
+  param([string[]]$RestArgs = @())
+  $name = if ($RestArgs.Count -ge 1) { $RestArgs[0] } else { '' }
+  if (-not (Test-CoopValidName $name)) { Coop-Die 'Usage: coop new-prompt <name>  (letters, digits, . _ - only)' }
+  $f = Join-Path $script:CoopRoot "prompts\$name.md"
+  if (Test-Path -LiteralPath $f) { Coop-Die "prompts/$name.md already exists." }
+  $body = @"
+# $name
+
+Use the ``coop-workflow`` skill.
+
+Task: TODO describe the task for {{subject}}.
+Goal: {{goal}}
+
+Steps:
+1. Read .coop/project.yml and the relevant standards.
+2. TODO …
+3. Keep read-only first; present a PLAN and get approval before any edit.
+4. Never commit source — show the diff and let a human commit.
+"@
+  Set-Content -LiteralPath $f -Value $body -Encoding UTF8
+  Coop-Ok "Created prompts/$name.md"
+  Coop-Info 'Edit it, then it loads automatically next time you run: coop'
+}
+
 # --- Dispatch ----------------------------------------------------------------
 $argList = @()
 if ($null -ne $args) { $argList = @($args) }
@@ -430,6 +510,9 @@ switch -CaseSensitive ($cmd) {
     exit $LASTEXITCODE
   }
   'sync' { & (Join-Path $script:CoopRoot 'scripts\sync.ps1') @rest; exit $LASTEXITCODE }
+  'init' { Invoke-CoopInit $rest; break }
+  'new-skill' { New-CoopSkill $rest; break }
+  'new-prompt' { New-CoopPrompt $rest; break }
   'data-doc' { Invoke-DataDoc $rest; break }
   'sql-review' { Invoke-Review 'coop-sql-review' 'SQL review' $rest; break }
   'dax-review' { Invoke-Review 'coop-dax-review' 'DAX review' $rest; break }

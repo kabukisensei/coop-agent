@@ -39,6 +39,15 @@ check npm     optional "ships with Node.js" "npm --version"
 check python3 required "install Python 3.10+ from https://python.org" "python3 --version"
 check pipx    required "python3 -m pip install --user pipx && python3 -m pipx ensurepath" "pipx --version"
 
+# Minimum Pi version — the extension API used by coop-powerline / coop-tools.
+if have pi; then
+  piv="$(pi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  minv="0.79.0"
+  if [ -n "$piv" ] && [ "$(printf '%s\n%s\n' "$minv" "$piv" | sort -V | head -1)" != "$minv" ]; then
+    warn "pi $piv is older than the tested minimum ($minv)" "coop update"
+  fi
+fi
+
 coop_head "Microsoft Fabric CLI"
 if have fab; then
   fabver="$(fab --version 2>&1 | head -3 | tr '\n' ' ')"

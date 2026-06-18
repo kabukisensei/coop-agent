@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shell:
+    name: shell + config lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n (syntax)
+        run: for f in bin/coop lib/common.sh scripts/*.sh; do echo "checking $f"; bash -n "$f"; done
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y shellcheck
+          shellcheck -S warning -e SC1091 bin/coop lib/common.sh scripts/*.sh
+      - name: python yaml reader
+        run: |
+          python3 -c "import ast; ast.parse(open('lib/_yaml.py').read())"
+          test "$(python3 lib/_yaml.py get .coop/project.yml profile.organization MISS)" = "Cooptimize"
+      - name: validate JSON
+        run: for f in $(find . -name '*.json' -not -path './node_modules/*' -not -path './.git/*'); do echo "$f"; python3 -m json.tool "$f" >/dev/null; done
+      - name: validate YAML
+        run: |
+          python3 -m pip install --quiet pyyaml
+          for f in $(find . -name '*.yml' -not -path './.git/*'); do echo "$f"; python3 -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" "$f"; done
+
+  extensions:
+    name: extensions transpile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: esbuild check (mirrors how Pi loads .ts extensions)
+        run: |
+          for f in extensions/coop-powerline/index.ts extensions/coop-tools/index.ts; do
+            echo "transpiling $f"
+            npx -y esbuild "$f" --bundle --format=esm --platform=node --packages=external --outfile=/dev/null
+          done

@@ -40,7 +40,7 @@ each allow-listed skill into `skills/_microsoft/<name>/`.
 - Subordinate + opt-in: presence is never enough; a skill must be allow-listed and
   conflict-free to activate.
 - Microsoft skills run under the Cooptimize guardrails (`docs/guardrails.md`) and the
-  `coop-workflow` 11 steps: read-only first, plan-and-approve, never commit source,
+  `coop-workflow` skill: read-only first, plan-and-approve, never commit source,
   MCP read-only.
 - Only files inside `coop-agent` are managed here; the upstream Microsoft source is
   never modified.

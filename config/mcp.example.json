@@ -20,7 +20,8 @@
       "args": ["-y", "mcp-remote", "https://learn.microsoft.com/api/mcp"]
     },
     "context-mode": {
-      "command": "context-mode"
+      "command": "npx",
+      "args": ["-y", "context-mode"]
     }
   }
 }

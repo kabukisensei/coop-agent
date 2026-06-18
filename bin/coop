@@ -60,6 +60,11 @@ ${COOP_BOLD}Usage${COOP_RST}
   coop version              Print coop + pi versions
   coop help                 Show this help
 
+${COOP_BOLD}Authoring${COOP_RST}
+  coop init [dir]           Scaffold .coop/project.yml into a work repo (default: .)
+  coop new-skill <name>     Scaffold skills/<name>/SKILL.md
+  coop new-prompt <name>    Scaffold prompts/<name>.md
+
 ${COOP_BOLD}Pi management (aliased under coop)${COOP_RST}
   coop list                 List installed Pi extensions   (pi list)
   coop config               Open Pi's resource TUI         (pi config)
@@ -219,6 +224,75 @@ PY
   done
 }
 
+# --- Authoring scaffolders ---------------------------------------------------
+# Validate a kebab-case-ish resource name (letters, digits, _ . -).
+coop_valid_name() { case "$1" in ""|*[!a-zA-Z0-9._-]*) return 1 ;; *) return 0 ;; esac; }
+
+coop_init() {
+  local dir="${1:-$PWD}" dst="${1:-$PWD}/.coop/project.yml"
+  [ -f "$COOP_ROOT/.coop/project.example.yml" ] || coop_die "template missing: .coop/project.example.yml"
+  [ -e "$dst" ] && coop_die "$dst already exists — not overwriting."
+  mkdir -p "$dir/.coop"
+  cp "$COOP_ROOT/.coop/project.example.yml" "$dst"
+  coop_ok "Wrote $dst"
+  coop_info "Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor"
+}
+
+coop_new_skill() {
+  local name="${1:-}"
+  coop_valid_name "$name" || coop_die "Usage: coop new-skill <name>  (letters, digits, . _ - only)"
+  local dir="$COOP_ROOT/skills/$name"
+  [ "$name" = "_microsoft" ] && coop_die "'_microsoft' is reserved for official Microsoft skills."
+  [ -e "$dir" ] && coop_die "skills/$name already exists."
+  mkdir -p "$dir"
+  cat > "$dir/SKILL.md" <<EOF
+---
+name: $name
+description: TODO one-line summary of when to use this skill.
+---
+
+# ${name} skill
+
+TODO: when to use this skill.
+
+## Checklist
+- TODO
+- TODO
+
+## Tools
+- Use the native tools (sql_review / dax_review / data_doc) and read-only MCP as needed.
+- Operates under the coop-workflow skill and docs/guardrails.md (advisory, read-only first).
+
+## Output
+- Pass/fail summary, findings by severity, suggested fixes (advisory — never auto-edit).
+EOF
+  coop_ok "Created skills/$name/SKILL.md"
+  coop_info "Edit it, test with: coop  — then commit & push so the team gets it."
+}
+
+coop_new_prompt() {
+  local name="${1:-}"
+  coop_valid_name "$name" || coop_die "Usage: coop new-prompt <name>  (letters, digits, . _ - only)"
+  local f="$COOP_ROOT/prompts/$name.md"
+  [ -e "$f" ] && coop_die "prompts/$name.md already exists."
+  cat > "$f" <<EOF
+# ${name}
+
+Use the \`coop-workflow\` skill.
+
+Task: TODO describe the task for {{subject}}.
+Goal: {{goal}}
+
+Steps:
+1. Read .coop/project.yml and the relevant standards.
+2. TODO …
+3. Keep read-only first; present a PLAN and get approval before any edit.
+4. Never commit source — show the diff and let a human commit.
+EOF
+  coop_ok "Created prompts/$name.md"
+  coop_info "Edit it, then it loads automatically next time you run: coop"
+}
+
 # --- Dispatch ----------------------------------------------------------------
 cmd="${1:-}"
 case "$cmd" in
@@ -237,6 +311,9 @@ case "$cmd" in
     exec pi install "$@"
     ;;
   sync)          shift; exec "$COOP_ROOT/scripts/sync.sh" "$@" ;;
+  init)          shift; coop_init "$@" ;;
+  new-skill)     shift; coop_new_skill "$@" ;;
+  new-prompt)    shift; coop_new_prompt "$@" ;;
   data-doc)      shift; run_data_doc "$@" ;;
   sql-review)    shift; run_review coop-sql-review "SQL review" "$@" ;;
   dax-review)    shift; run_review coop-dax-review "DAX review" "$@" ;;
