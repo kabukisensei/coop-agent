@@ -15,8 +15,8 @@
 #   coop install              Fresh-install / bootstrap everything (idempotent)
 #   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
 #   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
-#   coop sql-review [paths]   Run coop-sql-review and summarize findings (--json for raw)
-#   coop dax-review [paths]   Run coop-dax-review and summarize findings (--json for raw)
+#   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
+#   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
 #   coop fabric [args]        Pass through to the Microsoft Fabric CLI (`fab`)
 #   coop version              Print coop + pi versions
 #   coop help                 Show this help
@@ -54,8 +54,8 @@ ${COOP_BOLD}Usage${COOP_RST}
   coop install              Fresh-install / bootstrap everything (idempotent)
   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
-  coop sql-review [paths]   Run coop-sql-review; summarize findings (--json = raw)
-  coop dax-review [paths]   Run coop-dax-review; summarize findings (--json = raw)
+  coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
+  coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
   coop fabric [args]        Pass through to the Microsoft Fabric CLI (fab)
   coop version              Print coop + pi versions
   coop help                 Show this help
@@ -154,45 +154,24 @@ EOF
   exec pi ${args[@]+"${args[@]}"} "$@"
 }
 
-# --- Tool wrappers -----------------------------------------------------------
-default_paths_for() {
-  # Echo a sensible default review path from project.yml, else ".".
-  local proj; proj="$(coop_find_project_yml)"
-  local p=""
-  [ -n "$proj" ] && p="$(coop_yaml_get "$proj" "repositories.fabric_dw.sql_root" "")"
-  case "$p" in ""|TODO*) echo "." ;; *) echo "$p" ;; esac
-}
-
-run_review() {
-  # run_review <tool-binary> <label> [args...]
-  local bin="$1" label="$2"; shift 2
+# --- Tool passthrough --------------------------------------------------------
+# Flow straight through to a standalone Coop tool: every subcommand (check, rules,
+# upgrade, …) and the tool's own interactive prompts (e.g. coop-sql-review's
+# subfolder picker) work, and the exit code propagates. The AI agent gets structured
+# JSON via the native sql_review / dax_review tools in extensions/coop-tools.
+run_tool() {
+  local bin="$1"; shift
   have "$bin" || coop_die "$bin is not installed. Run: coop install"
-
-  local raw=0 strict=() paths=() a
-  for a in "$@"; do
-    case "$a" in
-      --json) raw=1 ;;
-      --strict) strict+=(--strict) ;;
-      *) paths+=("$a") ;;
-    esac
-  done
-  if [ "${#paths[@]}" -eq 0 ]; then paths=("$(default_paths_for)"); fi
-
-  if [ "$raw" = "1" ]; then
-    exec "$bin" check "${paths[@]}" --format json ${strict[@]+"${strict[@]}"}
-  fi
-
-  coop_head "$label — ${paths[*]}"
-  local out rc=0
-  out="$("$bin" check "${paths[@]}" --format json ${strict[@]+"${strict[@]}"})" || rc=$?
-  printf '%s' "$out" | coop_summarize_review_json
-  coop_info "For the full advisory report: $bin check ${paths[*]} --format text"
-  return $rc   # propagate --strict CI exit codes
+  coop_head "$bin ${*:-}"
+  exec "$bin" "$@"
 }
 
 run_data_doc() {
   have coop-data-doc || coop_die "coop-data-doc is not installed. Run: coop install"
   if [ "$#" -eq 0 ]; then set -- build; fi
+  # Pass straight through to coop-data-doc — including its interactive `setup` wizard
+  # and `init`. The tool handles its own first-run setup (it tells you to run
+  # `init`/`setup` when coop-data-doc.yml is missing); coop never auto-creates it.
   coop_head "coop-data-doc $*"
   coop-data-doc "$@"
   # Summarize machine-readable artifacts when present (manifest.json / graph.json).
@@ -315,8 +294,8 @@ case "$cmd" in
   new-skill)     shift; coop_new_skill "$@" ;;
   new-prompt)    shift; coop_new_prompt "$@" ;;
   data-doc)      shift; run_data_doc "$@" ;;
-  sql-review)    shift; run_review coop-sql-review "SQL review" "$@" ;;
-  dax-review)    shift; run_review coop-dax-review "DAX review" "$@" ;;
+  sql-review)    shift; run_tool coop-sql-review "$@" ;;
+  dax-review)    shift; run_tool coop-dax-review "$@" ;;
   fabric|fab)    shift; have fab || coop_die "Microsoft Fabric CLI (fab) not found. Run: coop install"; exec fab "$@" ;;
   # --- Pi management, aliased under coop ---
   add)           shift; have pi || coop_die "pi not installed. Run: coop bootstrap"; exec pi install "$@" ;;

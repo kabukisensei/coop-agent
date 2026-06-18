@@ -103,35 +103,6 @@ coop_find_project_yml() {
   printf ''
 }
 
-# Summarize a coop-sql-review / coop-dax-review JSON report (read from stdin).
-# Prints a one-line severity breakdown. Used by `coop sql-review` / `coop dax-review`.
-coop_summarize_review_json() {
-  # Reads the JSON report on stdin. Uses `python3 -c` so the pipe stays on stdin
-  # (a heredoc would occupy stdin with the program text and swallow the data).
-  local py; py="$(coop_python)" || { cat; return 0; }
-  "$py" -c '
-import sys, json
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    print("  (could not parse JSON report)"); sys.exit(0)
-findings = data.get("findings") or data.get("results") or []
-sev = {"error": 0, "warning": 0, "info": 0}
-for f in findings:
-    s = str(f.get("severity", "")).lower()
-    if s in sev: sev[s] += 1
-total = len(findings)
-files = data.get("files_checked") or data.get("file_count")
-parts = ["\033[38;2;239;65;45m%d error\033[0m" % sev["error"],
-         "\033[38;2;130;170;67m%d warning\033[0m" % sev["warning"],
-         "\033[38;2;0;101;164m%d info\033[0m" % sev["info"]]
-head = "  %d finding(s): " % total + "  ".join(parts)
-if files is not None:
-    head += "   (%s file(s) checked)" % files
-print(head)
-'
-}
-
 # Confirm a potentially-destructive action unless --yes / COOP_ASSUME_YES is set.
 coop_confirm() {
   local prompt="${1:-Proceed?}"

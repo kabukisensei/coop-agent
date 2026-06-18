@@ -5,6 +5,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- `coop data-doc` / `coop sql-review` / `coop dax-review` now **flow straight through**
+  to the underlying tool — every subcommand (`rules`, `upgrade`, the
+  `coop-data-doc setup` wizard, …) and the tools' own interactive prompts (e.g.
+  `coop-sql-review`'s subfolder picker) work, and the exit code propagates. The CLI no
+  longer captures/summarizes review output; the tools drive their own first-run setup.
+  The AI agent's structured-JSON path is unchanged (native `sql_review` / `dax_review`
+  tools in `extensions/coop-tools`).
+
 ## [0.1.0] — 2026-06-17
 
 Initial release. **coop** is a branded Cooptimize layer on Pi

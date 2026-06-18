@@ -15,8 +15,8 @@
 #   coop install              Fresh-install / bootstrap everything (idempotent)
 #   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
 #   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
-#   coop sql-review [paths]   Run coop-sql-review and summarize findings (--json for raw)
-#   coop dax-review [paths]   Run coop-dax-review and summarize findings (--json for raw)
+#   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
+#   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
 #   coop fabric [args]        Pass through to the Microsoft Fabric CLI (`fab`)
 #   coop version              Print coop + pi versions
 #   coop help                 Show this help
@@ -164,37 +164,6 @@ function Find-CoopProjectYml {
   return ''
 }
 
-# Summarize a coop-sql-review / coop-dax-review JSON report (a single JSON string).
-# Prints a one-line severity breakdown to stderr. (mirror of coop_summarize_review_json)
-function Invoke-CoopSummarizeReviewJson {
-  param([string]$Json)
-  $py = Get-CoopPython
-  if (-not $py) { [Console]::Error.WriteLine($Json); return }
-  $pyScript = @'
-import sys, json
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    print("  (could not parse JSON report)"); sys.exit(0)
-findings = data.get("findings") or data.get("results") or []
-sev = {"error": 0, "warning": 0, "info": 0}
-for f in findings:
-    s = str(f.get("severity", "")).lower()
-    if s in sev: sev[s] += 1
-total = len(findings)
-files = data.get("files_checked") or data.get("file_count")
-parts = ["\033[38;2;239;65;45m{} error\033[0m".format(sev['error']),
-         "\033[38;2;130;170;67m{} warning\033[0m".format(sev['warning']),
-         "\033[38;2;0;101;164m{} info\033[0m".format(sev['info'])]
-head = "  {} finding(s): ".format(total) + "  ".join(parts)
-if files is not None:
-    head += "   ({} file(s) checked)".format(files)
-print(head)
-'@
-  # Pass the program via -c so stdin stays free for the JSON report (mirrors lib/common.sh).
-  ($Json | & $py -c $pyScript 2>$null) | ForEach-Object { [Console]::Error.WriteLine($_) }
-}
-
 # Summarize a coop-data-doc manifest/graph JSON artifact. (mirror of the inline PY in run_data_doc)
 function Invoke-CoopSummarizeDataDocJson {
   param([string]$File)
@@ -244,8 +213,8 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop install              Fresh-install / bootstrap everything (idempotent)
   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
-  coop sql-review [paths]   Run coop-sql-review; summarize findings (--json = raw)
-  coop dax-review [paths]   Run coop-dax-review; summarize findings (--json = raw)
+  coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
+  coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
   coop fabric [args]        Pass through to the Microsoft Fabric CLI (fab)
   coop version              Print coop + pi versions
   coop help                 Show this help
@@ -351,47 +320,15 @@ function Invoke-LaunchPi {
 }
 
 # --- Tool wrappers -----------------------------------------------------------
-function Get-DefaultReviewPath {
-  # Return a sensible default review path from project.yml, else ".".
-  $proj = Find-CoopProjectYml
-  $p = ''
-  if ($proj) { $p = Get-CoopYamlValue $proj 'repositories.fabric_dw.sql_root' '' }
-  if (-not $p -or $p -like 'TODO*') { return '.' }
-  return $p
-}
-
-function Invoke-Review {
-  # Invoke-Review <tool-binary> <label> [args...]
-  param(
-    [string] $Bin,
-    [string] $Label,
-    [string[]] $RestArgs = @()
-  )
+# Flow straight through to a standalone Coop tool: every subcommand and the tool's
+# own interactive prompts work, and the exit code propagates. The AI agent gets
+# structured JSON via the native sql_review / dax_review tools. (mirror of run_tool)
+function Invoke-Tool {
+  param([string] $Bin, [string[]] $RestArgs = @())
   if (-not (Test-Have $Bin)) { Coop-Die "$Bin is not installed. Run: coop install" }
-
-  $raw = $false
-  $strict = @()
-  $paths = @()
-  foreach ($a in $RestArgs) {
-    switch -CaseSensitive ($a) {
-      '--json'   { $raw = $true }
-      '--strict' { $strict += '--strict' }
-      default    { $paths += $a }
-    }
-  }
-  if ($paths.Count -eq 0) { $paths = @(Get-DefaultReviewPath) }
-
-  if ($raw) {
-    & $Bin check @paths --format json @strict
-    exit $LASTEXITCODE
-  }
-
-  Coop-Head "$Label — $($paths -join ' ')"
-  $out = (& $Bin check @paths --format json @strict 2>$null | Out-String)
-  $rc = $LASTEXITCODE
-  Invoke-CoopSummarizeReviewJson $out
-  Coop-Info "For the full advisory report: $Bin check $($paths -join ' ') --format text"
-  exit $rc   # propagate --strict CI exit codes (mirrors bin/coop run_review)
+  Coop-Head "$Bin $($RestArgs -join ' ')"
+  & $Bin @RestArgs
+  exit $LASTEXITCODE
 }
 
 function Invoke-DataDoc {
@@ -514,8 +451,8 @@ switch -CaseSensitive ($cmd) {
   'new-skill' { New-CoopSkill $rest; break }
   'new-prompt' { New-CoopPrompt $rest; break }
   'data-doc' { Invoke-DataDoc $rest; break }
-  'sql-review' { Invoke-Review 'coop-sql-review' 'SQL review' $rest; break }
-  'dax-review' { Invoke-Review 'coop-dax-review' 'DAX review' $rest; break }
+  'sql-review' { Invoke-Tool 'coop-sql-review' $rest; break }
+  'dax-review' { Invoke-Tool 'coop-dax-review' $rest; break }
   { $_ -eq 'fabric' -or $_ -eq 'fab' } {
     if (-not (Test-Have 'fab')) { Coop-Die 'Microsoft Fabric CLI (fab) not found. Run: coop install' }
     & fab @rest

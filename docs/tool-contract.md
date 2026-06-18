@@ -19,46 +19,36 @@ coop-sql-review check <paths...> --format json [--min-severity error|warning|inf
 coop-dax-review check <paths...> --format json [--min-severity error|warning|info] [--strict]
 ```
 
-**How `coop` invokes them** (`bin/coop` → `run_review`):
+**How `coop` invokes them** (`bin/coop` → `run_tool`):
 
-- Splits its args into flags and paths. `--json` ⇒ pass the raw JSON straight
-  through (`exec coop-sql-review check <paths> --format json [--strict]`).
-  `--strict` ⇒ append `--strict`. Everything else is treated as a path.
-- If no paths are given, it falls back to `repositories.fabric_dw.sql_root` from
-  the nearest `.coop/project.yml`, else `.`.
-- Without `--json`, it runs `check … --format json`, pipes stdout through
-  `coop_summarize_review_json` (a severity rollup), and prints the full-report
-  hint (`… --format text`).
-
-**Example — summarized:**
+The CLI wrappers **flow straight through** — `coop sql-review <args>` runs
+`coop-sql-review <args>` verbatim (`exec`), and likewise for dax. Every subcommand
+works and the exit code propagates:
 
 ```
-$ coop sql-review sql/gold
-SQL review — sql/gold
-  3 finding(s): 1 error, 2 warning, 0 info
-For the full advisory report: coop-sql-review check sql/gold --format text
+coop sql-review check sql/gold --format text     # human-readable report
+coop sql-review check sql/gold --format json     # raw JSON
+coop sql-review rules                            # list the rules
+coop sql-review upgrade                          # update the tool
+coop sql-review check sql/                        # directory -> interactive subfolder picker (TTY)
 ```
 
-**Example — raw JSON (`--json`), the shape `coop` and `coop-tools` expect:**
+There is **no capture and no summary** in the CLI path (so the tools' own
+interactive prompts work). The tools have **no setup wizard** — they ship bundled
+standards, configurable per run with `--standards` / `--config`.
 
-```
-$ coop sql-review sql/gold --json
-{
-  "findings": [
-    {
-      "severity": "error",
-      "rule": "TSQL-NO-SELECT-STAR",
-      "message": "Avoid SELECT * in gold layer views.",
-      "file": "sql/gold/v_sales.sql",
-      "line": 12
-    }
-  ]
-}
+**For the AI agent**, structured JSON comes from the native `sql_review` / `dax_review`
+tools in `extensions/coop-tools/index.ts`, which run `check … --format json` and
+return the parsed report in the tool result's `details`. Report shape:
+
+```json
+{ "findings": [ { "severity": "error", "rule": "TSQL-NO-SELECT-STAR",
+                  "message": "Avoid SELECT * in gold layer views.",
+                  "file": "sql/gold/v_sales.sql", "line": 12 } ] }
 ```
 
-The summarizer reads `findings` (or `results` as a fallback) and counts the
-`severity` field (`error` / `warning` / `info`). Other keys are passed through
-untouched in the native tool's `details`.
+The native tool counts the `severity` field (`error` / `warning` / `info`) for its
+one-line summary and passes the full report through in `details`.
 
 ---
 
@@ -72,11 +62,30 @@ Documents the SQL + Power BI estate and builds lineage.
 - `build` → also writes **`manifest.json`** + Markdown docs + the searchable
   portal/site.
 - `check` → CI staleness gate.
+- `setup` → **interactive wizard**: prompts for each value, prefilled from any
+  existing config, then validates and saves. Ctrl-C before the end writes nothing.
+- `init` → writes a starter config to edit by hand (`--force` to overwrite).
+
+**First-run setup (user-driven).** `coop-data-doc` reads its own config file,
+**`coop-data-doc.yml`** — which is **separate** from coop's `.coop/project.yml`. It
+points the tool at the repos to crawl and the doc output. coop does **not** create
+it for you; the tool does, when you run its setup:
+
+```
+coop data-doc setup     # interactive wizard (recommended first time)
+coop data-doc init      # or: write a starter coop-data-doc.yml to edit by hand
+```
+
+Until that exists, doc-building commands flow through and the tool tells you to run
+`init`/`setup` (e.g. `error: Config file not found: coop-data-doc.yml`). The review
+tools (`sql_review` / `dax_review`) have **no** wizard — they use bundled standards,
+configurable per-run with `--standards` / `--config`.
 
 **How `coop` invokes it** (`bin/coop` → `run_data_doc`):
 
-- `coop data-doc` with no args defaults to **`build`**; otherwise the args are
-  passed through verbatim.
+- Args are **passed through verbatim** — including the interactive `setup` wizard and
+  `init` (coop preserves the terminal, so the prompts work). `coop data-doc` with no
+  args defaults to **`build`**.
 - After running, it looks for machine-readable artifacts in this order and
   summarizes the first found:
   `manifest.json`, `graph.json`, `docs/manifest.json`, `docs/graph.json`,

@@ -158,8 +158,8 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
 | `coop sync` | Ensure core Pi extensions are installed, place the read-only MCP config (non-destructive), verify brand assets |
 | `coop data-doc [args]` | Run `coop-data-doc` (default: `build`) and summarize outputs |
-| `coop sql-review [paths]` | Run `coop-sql-review`; summarize findings (`--json` for raw JSON) |
-| `coop dax-review [paths]` | Run `coop-dax-review`; summarize findings (`--json` for raw JSON) |
+| `coop sql-review [args]` | Pass through to `coop-sql-review` (e.g. `check <paths>`, `rules`) |
+| `coop dax-review [args]` | Pass through to `coop-dax-review` (e.g. `check <paths>`, `rules`) |
 | `coop fabric [args]` | Pass through to the Microsoft Fabric CLI (`fab`) |
 | `coop version` | Print `coop` + `pi` versions |
 | `coop help` | Show usage |
@@ -174,10 +174,13 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop remove <source>` | Remove a Pi extension (`pi remove <source>`) |
 | `coop pi <args...>` | Raw escape hatch to `pi` |
 
-The review wrappers default their target path to `repositories.fabric_dw.sql_root`
-from `.coop/project.yml` when you omit paths, falling back to `.`. Both reviews are
-**advisory** — they never edit or block. For the full report, run the tool directly
-with `--format text`.
+`coop data-doc` / `coop sql-review` / `coop dax-review` **flow straight through** to
+the underlying tool — every subcommand (`check`, `rules`, `upgrade`, the
+`coop-data-doc setup` wizard, …) and the tools' own interactive prompts work, and
+the exit code propagates. The tools handle their own first-run setup; coop never
+auto-creates their config. Both reviews are **advisory** — they never edit or block.
+The AI agent gets machine-readable JSON through the native `sql_review` / `dax_review`
+tools (in `extensions/coop-tools`), independent of these passthrough commands.
 
 ---
 
