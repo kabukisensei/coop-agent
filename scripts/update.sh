@@ -14,7 +14,10 @@ export COOP_ROOT
 # shellcheck source=../lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
 
-PY_TOOLS=( coop-data-doc coop-sql-review coop-dax-review fabric-cicd ms-fabric-cli )
+PY_TOOLS=( coop-data-doc coop-sql-review coop-dax-review ms-fabric-cli )
+
+# Update coop's ISOLATED Pi agent dir (not the user's personal pi).
+export PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"
 
 coop_head "coop update (v${COOP_VERSION})"
 
@@ -56,6 +59,10 @@ if have pipx; then
       coop_warn "$pkg not installed — run: coop install"
     fi
   done
+  # fabric-cicd is a library injected into the Fabric CLI env — refresh it there.
+  if pipx list 2>/dev/null | grep -q "package ms-fabric-cli "; then
+    pipx inject ms-fabric-cli fabric-cicd --force >/dev/null 2>&1 && coop_ok "fabric-cicd (library) refreshed" || true
+  fi
 else
   coop_warn "pipx not installed — run: coop install"
 fi

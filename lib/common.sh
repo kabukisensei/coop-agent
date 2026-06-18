@@ -51,6 +51,13 @@ coop_head() { printf '\n%s%s%s%s\n' "$COOP_BOLD" "$COOP_NAVY" "$*" "$COOP_RST" >
 # --- Small utilities ---------------------------------------------------------
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# coop runs Pi against an ISOLATED agent dir so coop's extensions/settings/theme
+# never mix with the user's personal `pi` (~/.pi/agent). Override with COOP_AGENT_DIR.
+coop_pi_agent_dir() { printf '%s' "${COOP_AGENT_DIR:-$HOME/.coop/agent}"; }
+
+# The user's *global* Pi agent dir (used to share credentials into coop's isolated dir).
+coop_global_pi_agent_dir() { printf '%s' "$HOME/.pi/agent"; }
+
 # Pick a usable python interpreter (for YAML/JSON parsing). Prefer python3.
 coop_python() {
   if have python3; then echo python3

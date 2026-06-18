@@ -110,6 +110,44 @@ function wordmark(): string {
     .join(" ");
 }
 
+// Build a usage segment: context-window % (how much room is left), token totals,
+// and cost — computed from the session, so it works for any provider. Composes with
+// pi-better-openai's own usage/limit status in the footer.
+function formatUsage(ctx: any): string | undefined {
+  try {
+    let input = 0;
+    let output = 0;
+    let cost = 0;
+    const branch = ctx?.sessionManager?.getBranch?.() ?? [];
+    for (const e of branch) {
+      if (e?.type === "message" && e.message?.role === "assistant" && e.message?.usage) {
+        input += e.message.usage.input || 0;
+        output += e.message.usage.output || 0;
+        cost += e.message.usage.cost?.total || 0;
+      }
+    }
+    const parts: string[] = [];
+    const cu = typeof ctx?.getContextUsage === "function" ? ctx.getContextUsage() : undefined;
+    if (cu && typeof cu.percent === "number") parts.push(`ctx ${Math.round(cu.percent)}%`);
+    const fmt = (n: number) => (n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`);
+    if (input || output) parts.push(`↑${fmt(input)} ↓${fmt(output)}`);
+    if (cost > 0) parts.push(`$${cost.toFixed(3)}`);
+    return parts.length ? parts.join(" · ") : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function updateUsage(ctx: any): void {
+  try {
+    if (!ctx?.hasUI || typeof ctx.ui?.setStatus !== "function") return;
+    const u = formatUsage(ctx);
+    if (u) ctx.ui.setStatus("coop-usage", `${OLIVE("⬡")} ${ctx.ui.theme?.fg ? ctx.ui.theme.fg("dim", u) : u}`);
+  } catch {
+    /* never break pi */
+  }
+}
+
 export default function coopPowerline(pi: ExtensionAPI) {
   let currentSet: string | undefined; // active vibe theme (undefined = all)
   let vibes = loadVibes();
@@ -154,6 +192,8 @@ export default function coopPowerline(pi: ExtensionAPI) {
       if (typeof ctx.ui.setStatus === "function") {
         ctx.ui.setStatus("coop", `${NAVY("⬢")}${LIME(" Cooptimize")}`);
       }
+      // Usage segment: context % left + tokens + cost (provider-agnostic).
+      updateUsage(ctx);
       // Working vibes + honeycomb indicator.
       if (typeof ctx.ui.setWorkingMessage === "function") {
         ctx.ui.setWorkingMessage(`${OLIVE("⬡")} ${pickVibe()}`);
@@ -176,6 +216,10 @@ export default function coopPowerline(pi: ExtensionAPI) {
       /* ignore */
     }
   });
+
+  // Refresh the usage segment as the conversation grows.
+  pi.on("turn_end", async (_event, ctx) => updateUsage(ctx));
+  pi.on("message_end", async (_event, ctx) => updateUsage(ctx));
 
   pi.registerCommand("coop-vibe", {
     description: "Pick a Cooptimize vibe set (sociocracy × Fabric/D365), or show a fresh one",

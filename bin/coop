@@ -43,6 +43,16 @@ export COOP_ROOT
 # shellcheck source=lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
 
+# Isolate coop's Pi config (extensions, settings, themes, MCP, sessions) from the
+# user's personal `pi`. Applies to launching AND the `coop add/remove/list/config/pi`
+# management aliases, so they operate on coop's dir — not your global ~/.pi/agent.
+# Disable with COOP_NO_ISOLATE=1.
+if [ "${COOP_NO_ISOLATE:-0}" != "1" ]; then
+  PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"
+  export PI_CODING_AGENT_DIR
+  mkdir -p "$PI_CODING_AGENT_DIR" 2>/dev/null || true
+fi
+
 usage() {
   cat >&2 <<EOF
 ${COOP_BOLD}${COOP_NAVY}coop${COOP_RST} ${COOP_DIM}v${COOP_VERSION}${COOP_RST} — the Cooptimize terminal agent (a branded layer on Pi)
@@ -150,6 +160,7 @@ EOF
   # Point the extension at our vibe files and brand splash.
   export COOP_VIBES_DIR="$COOP_ROOT/vibes"
   export COOP_SPLASH_FILE="$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi"
+  # PI_CODING_AGENT_DIR (isolation) is already exported at the top of this script.
 
   exec pi ${args[@]+"${args[@]}"} "$@"
 }

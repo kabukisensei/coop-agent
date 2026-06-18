@@ -11,6 +11,10 @@ export COOP_ROOT
 # shellcheck source=../lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
 
+# Check coop's ISOLATED Pi agent dir (where coop's extensions/MCP live), not the
+# user's personal ~/.pi/agent.
+export PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"
+
 FAIL=0   # required missing -> non-zero exit
 WARN=0
 
@@ -68,7 +72,20 @@ check coop-sql-review required "pipx install coop-sql-review" "coop-sql-review -
 check coop-dax-review required "pipx install coop-dax-review" "coop-dax-review --version"
 
 coop_head "Fabric / semantic-model tooling"
-check fabric-cicd optional "pipx install fabric-cicd  (Fabric deployment validation)" "fabric-cicd --version"
+# fabric-cicd is a Python LIBRARY (no CLI) — check it's importable in the Fabric CLI's env.
+if have fab; then
+  fabbin="$(command -v fab)"; fabreal="$fabbin"
+  [ -L "$fabbin" ] && fabreal="$(readlink "$fabbin")"
+  case "$fabreal" in /*) ;; *) fabreal="$(dirname "$fabbin")/$fabreal" ;; esac
+  fabpy="$(dirname "$fabreal")/python"
+  if [ -x "$fabpy" ] && "$fabpy" -c "import fabric_cicd" >/dev/null 2>&1; then
+    ok "fabric-cicd (library, in the Fabric CLI env)"
+  else
+    warn "fabric-cicd not installed" "pipx inject ms-fabric-cli fabric-cicd  (or: uv tool install ms-fabric-cli --with fabric-cicd)"
+  fi
+else
+  warn "fabric-cicd: install the Microsoft Fabric CLI first" "coop install"
+fi
 # Tabular Editor CLI is path-configured and mostly Windows; check the project's path if set.
 te_path="$(coop_yaml_get "$(coop_find_project_yml)" "tools.tabular_editor_cli.executable_path" "")"
 case "$te_path" in
@@ -89,7 +106,7 @@ fi
 
 coop_head "MCP servers (read-only, optional)"
 mcp_found=""
-for f in "$PWD/.mcp.json" "$PWD/.pi/mcp.json" "$HOME/.config/mcp/mcp.json" "$HOME/.pi/agent/mcp.json" "$HOME/.pi/mcp-config/mcp.json"; do
+for f in "$PI_CODING_AGENT_DIR/mcp.json" "$PWD/.mcp.json" "$PWD/.pi/mcp.json" "$HOME/.config/mcp/mcp.json" "$HOME/.pi/mcp-config/mcp.json"; do
   [ -f "$f" ] && { mcp_found="$f"; break; }
 done
 if [ -n "$mcp_found" ]; then

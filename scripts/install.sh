@@ -33,8 +33,13 @@ PI_EXTENSIONS=(
   "npm:pi-hermes-memory"      # persistent memory + session search + secret scanning
   "npm:pi-powerline-footer"   # branded footer / status bar
 )
-PY_TOOLS=( coop-data-doc coop-sql-review coop-dax-review fabric-cicd )
+PY_TOOLS=( coop-data-doc coop-sql-review coop-dax-review )
 FABRIC_PKG="ms-fabric-cli"
+
+# Install/operate against coop's ISOLATED Pi agent dir so nothing mixes with the
+# user's personal `pi`. Every `pi` call below (and the sync/doctor it runs) inherits it.
+export PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"
+mkdir -p "$PI_CODING_AGENT_DIR"
 
 OS="$(uname -s 2>/dev/null || echo unknown)"
 
@@ -93,11 +98,16 @@ elif have pipx; then
   if [ "$FORCE" = 1 ]; then pipx install --force "$FABRIC_PKG" >/dev/null 2>&1 || true
   else pipx install "$FABRIC_PKG" >/dev/null 2>&1 || pipx upgrade "$FABRIC_PKG" >/dev/null 2>&1 || true
   fi
+  # fabric-cicd is a Python LIBRARY (no CLI), used for deploy validation — inject it
+  # into the Fabric CLI's environment so it's importable alongside `fab`.
+  pipx inject "$FABRIC_PKG" fabric-cicd >/dev/null 2>&1 \
+    && coop_ok "fabric-cicd (library) added to the Fabric CLI env" \
+    || coop_warn "could not add fabric-cicd (optional; pipx inject $FABRIC_PKG fabric-cicd)"
   hash -r 2>/dev/null || true
   if have fab; then
     if fab --version 2>&1 | grep -qiE 'paramiko|invoke'; then
-      coop_warn "'fab' still resolves to Python Fabric (SSH), not the Microsoft Fabric CLI."
-      coop_say  "      Make ~/.local/bin precede Homebrew on PATH, or 'brew uninstall fabric'. Then re-check: fab --version"
+      coop_warn "'fab' resolves to Python Fabric (SSH), not the Microsoft Fabric CLI."
+      coop_say  "      Put the pipx bin dir ahead of any other 'fab' on PATH (or remove it). Then re-check: fab --version"
     else
       coop_ok "Microsoft Fabric CLI ready ($(fab --version 2>/dev/null | head -1))"
     fi
