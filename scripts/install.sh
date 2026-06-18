@@ -31,7 +31,6 @@ PI_NPM_PACKAGE="@mariozechner/pi-coding-agent"
 PI_EXTENSIONS=(
   "npm:pi-mcp-adapter"        # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
   "npm:pi-hermes-memory"      # persistent memory + session search + secret scanning
-  "npm:pi-powerline-footer"   # branded footer / status bar
 )
 PY_TOOLS=( coop-data-doc coop-sql-review coop-dax-review )
 FABRIC_PKG="ms-fabric-cli"

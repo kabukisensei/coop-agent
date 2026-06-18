@@ -42,6 +42,27 @@ function center(line: string, width: number): string {
   if (w >= width) return line;
   return " ".repeat(Math.floor((width - w) / 2)) + line;
 }
+// Truncate to `width` visible columns, preserving ANSI escapes so the footer never overflows.
+function clip(s: string, width: number): string {
+  if (visWidth(s) <= width) return s;
+  let out = "";
+  let vis = 0;
+  let i = 0;
+  while (i < s.length && vis < width) {
+    if (s[i] === "\x1b") {
+      const m = /^\x1b\[[0-9;]*m/.exec(s.slice(i));
+      if (m) {
+        out += m[0];
+        i += m[0].length;
+        continue;
+      }
+    }
+    out += s[i];
+    vis++;
+    i++;
+  }
+  return `${out}\x1b[0m`;
+}
 
 // --- Vibes ---
 function vibesDir(): string {
@@ -110,10 +131,9 @@ function wordmark(): string {
     .join(" ");
 }
 
-// Build a usage segment: context-window % (how much room is left), token totals,
-// and cost — computed from the session, so it works for any provider. Composes with
-// pi-better-openai's own usage/limit status in the footer.
-function formatUsage(ctx: any): string | undefined {
+// Usage string: context-window % (room left), token totals, cost — from the session,
+// so it works for any provider. Plain text + common Unicode only (no Nerd Font glyphs).
+function formatUsage(ctx: any): string {
   try {
     let input = 0;
     let output = 0;
@@ -130,21 +150,11 @@ function formatUsage(ctx: any): string | undefined {
     const cu = typeof ctx?.getContextUsage === "function" ? ctx.getContextUsage() : undefined;
     if (cu && typeof cu.percent === "number") parts.push(`ctx ${Math.round(cu.percent)}%`);
     const fmt = (n: number) => (n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`);
-    if (input || output) parts.push(`↑${fmt(input)} ↓${fmt(output)}`);
+    if (input || output) parts.push(`${fmt(input)}>${fmt(output)} tok`);
     if (cost > 0) parts.push(`$${cost.toFixed(3)}`);
-    return parts.length ? parts.join(" · ") : undefined;
+    return parts.join("  ");
   } catch {
-    return undefined;
-  }
-}
-
-function updateUsage(ctx: any): void {
-  try {
-    if (!ctx?.hasUI || typeof ctx.ui?.setStatus !== "function") return;
-    const u = formatUsage(ctx);
-    if (u) ctx.ui.setStatus("coop-usage", `${OLIVE("⬡")} ${ctx.ui.theme?.fg ? ctx.ui.theme.fg("dim", u) : u}`);
-  } catch {
-    /* never break pi */
+    return "";
   }
 }
 
@@ -159,17 +169,22 @@ export default function coopPowerline(pi: ExtensionAPI) {
 
   const showSplash = (theme: Theme) => {
     const splash = loadSplash();
+    const splashW = splash.reduce((m, l) => Math.max(m, visWidth(l)), 0);
     const vibe = pickVibe();
     return {
       invalidate() {},
       render(width: number): string[] {
         try {
           const out: string[] = [""];
-          for (const l of splash) out.push(center(l, width));
-          out.push("");
+          // Only draw the block-art logo when the terminal is wide enough; otherwise
+          // it would wrap and look malformed — fall back to the wordmark alone.
+          if (splashW > 0 && width >= splashW) {
+            for (const l of splash) out.push(center(l, width));
+            out.push("");
+          }
           out.push(center(wordmark(), width));
           out.push(center(theme.fg("muted", "worker-owned analytics engineering"), width));
-          out.push(center(theme.fg("dim", "Microsoft Fabric · Power BI · D365 · SQL · DAX · semantic models"), width));
+          out.push(center(theme.fg("dim", "Microsoft Fabric · Power BI · D365 · SQL · DAX"), width));
           out.push("");
           out.push(center(`${OLIVE("⬡")} ${theme.fg("muted", vibe)}`, width));
           out.push("");
@@ -188,12 +203,33 @@ export default function coopPowerline(pi: ExtensionAPI) {
       if (typeof ctx.ui.setHeader === "function") {
         ctx.ui.setHeader((_tui, theme) => showSplash(theme));
       }
-      // Branded footer segment (pi-powerline-footer surfaces setStatus entries).
-      if (typeof ctx.ui.setStatus === "function") {
-        ctx.ui.setStatus("coop", `${NAVY("⬢")}${LIME(" Cooptimize")}`);
+      // coop renders its OWN footer (no third-party powerline → no Nerd Font `?`
+      // glyphs, no welcome overlay, no duplication). Plain text + common Unicode.
+      if (typeof ctx.ui.setFooter === "function") {
+        ctx.ui.setFooter((tui: any, theme: Theme, footerData: any) => {
+          const unsub =
+            typeof footerData?.onBranchChange === "function"
+              ? footerData.onBranchChange(() => tui?.requestRender?.())
+              : () => {};
+          return {
+            dispose: unsub,
+            invalidate() {},
+            render(width: number): string[] {
+              try {
+                const branch = typeof footerData?.getGitBranch === "function" ? footerData.getGitBranch() : "";
+                const model = ctx.model?.id || "";
+                const usage = formatUsage(ctx);
+                const left = `${NAVY("⬢")}${LIME(" Cooptimize")}` + (branch ? theme.fg("dim", `  ${branch}`) : "");
+                const right = theme.fg("dim", [model, usage].filter(Boolean).join("  ·  "));
+                const gap = Math.max(1, width - visWidth(left) - visWidth(right));
+                return [clip(left + " ".repeat(gap) + right, width)];
+              } catch {
+                return [theme.fg("dim", " Cooptimize")];
+              }
+            },
+          };
+        });
       }
-      // Usage segment: context % left + tokens + cost (provider-agnostic).
-      updateUsage(ctx);
       // Working vibes + honeycomb indicator.
       if (typeof ctx.ui.setWorkingMessage === "function") {
         ctx.ui.setWorkingMessage(`${OLIVE("⬡")} ${pickVibe()}`);
@@ -206,7 +242,8 @@ export default function coopPowerline(pi: ExtensionAPI) {
     }
   });
 
-  // Rotate the vibe each turn so the working line stays fresh.
+  // Rotate the vibe each turn so the working line stays fresh; nudge a re-render so
+  // the footer's usage/context numbers refresh between turns.
   pi.on("turn_start", async (_event, ctx) => {
     try {
       if (ctx.hasUI && typeof ctx.ui.setWorkingMessage === "function") {
@@ -216,10 +253,6 @@ export default function coopPowerline(pi: ExtensionAPI) {
       /* ignore */
     }
   });
-
-  // Refresh the usage segment as the conversation grows.
-  pi.on("turn_end", async (_event, ctx) => updateUsage(ctx));
-  pi.on("message_end", async (_event, ctx) => updateUsage(ctx));
 
   pi.registerCommand("coop-vibe", {
     description: "Pick a Cooptimize vibe set (sociocracy × Fabric/D365), or show a fresh one",

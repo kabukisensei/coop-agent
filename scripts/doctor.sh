@@ -96,7 +96,7 @@ esac
 coop_head "Pi extensions"
 if have pi; then
   pilist="$(pi list 2>/dev/null || true)"
-  for ext in "pi-mcp-adapter:MCP servers" "pi-hermes-memory:persistent memory" "pi-powerline-footer:branded footer"; do
+  for ext in "pi-mcp-adapter:MCP servers" "pi-hermes-memory:persistent memory"; do
     name="${ext%%:*}"; desc="${ext##*:}"
     if printf '%s' "$pilist" | grep -qi "$name"; then ok "$name ($desc)"; else warn "$name not installed ($desc)" "coop add npm:$name"; fi
   done

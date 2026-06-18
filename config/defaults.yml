@@ -19,7 +19,11 @@ pi_extensions:
   core:
     - pi-mcp-adapter        # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
     - pi-hermes-memory      # persistent memory + session search + secret scanning
-    - pi-powerline-footer   # branded footer / status bar
+    # NOTE: coop renders its OWN footer + splash via extensions/coop-powerline — we do
+    # NOT use a third-party powerline footer (avoids Nerd Font glyphs, welcome-overlay
+    # conflicts, and duplicate footers).
+  optional:
+    - pi-better-openai      # OpenAI fast-mode + rate-limit usage (add with: coop add npm:pi-better-openai)
   recommended:
     - pi-permissions        # tool-permission gating (reinforces read-only-first)
     - "@aliou/pi-guardrails" # extra guardrails
