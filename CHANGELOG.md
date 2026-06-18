@@ -5,8 +5,31 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Pi-config isolation** — coop now runs Pi against its own agent dir
+  (`~/.coop/agent`; override with `COOP_AGENT_DIR`) via the `PI_CODING_AGENT_DIR` env
+  var, so only Cooptimize's curated extensions/settings/theme/MCP load — your personal
+  `pi` (its extensions, themes, splash) stays untouched. Your login (auth/models) is
+  shared in from `~/.pi/agent`; settings/extensions/MCP are isolated. Provisioned by
+  `coop install` / `coop sync`. Disable with `COOP_NO_ISOLATE=1`.
+- **Authoring scaffolders** — `coop init` / `coop new-skill` / `coop new-prompt` for
+  bootstrapping a project contract, skills, and prompt templates.
+
 ### Changed
 
+- **coop renders its OWN footer + splash** via `extensions/coop-powerline` and no longer
+  uses a third-party powerline footer — `pi-powerline-footer` was **dropped** (its welcome
+  overlay couldn't be disabled, Nerd Font glyphs showed as `?`, and it duplicated the bar).
+  The footer shows `⬢ Cooptimize · <branch>` on the left and `<model> · ctx N% · tokens ·
+  $cost · <plan usage limits>` on the right, in plain text + common Unicode (no Nerd Font
+  glyphs). It surfaces other extensions' status text (e.g. `pi-better-openai`'s plan usage
+  limits / 5h+7d windows) via `footerData.getExtensionStatuses()`, so everything is in one
+  clean bar. The splash is the truecolor block-art Cooptimize logo.
+- **`fabric-cicd` is treated as a Python LIBRARY** (no CLI). coop installs it via
+  `pipx inject ms-fabric-cli fabric-cicd` so `fabric_cicd` is importable in the Fabric
+  CLI's environment; it's used in deployment scripts (`import fabric_cicd`, validate-only
+  by default), NOT as a `fabric-cicd` command. `coop doctor` checks it's importable.
 - `coop data-doc` / `coop sql-review` / `coop dax-review` now **flow straight through**
   to the underlying tool — every subcommand (`rules`, `upgrade`, the
   `coop-data-doc setup` wizard, …) and the tools' own interactive prompts (e.g.

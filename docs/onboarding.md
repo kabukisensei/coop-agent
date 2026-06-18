@@ -4,6 +4,10 @@
 Fabric / Power BI / D365 / SQL / DAX work. It works **read-only first** and reviews
 work **with you** before anything ships.
 
+> coop runs in its own isolated agent dir (`~/.coop/agent`), so it stays separate from
+> your personal `pi` — only Cooptimize's curated extensions/settings/theme/MCP load,
+> and your own `pi` setup is untouched.
+
 ## 1. Prerequisites (install once)
 
 - **Node.js 18+** — https://nodejs.org

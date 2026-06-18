@@ -180,13 +180,18 @@ Microsoft Fabric CLI
 
 ---
 
-## `fabric-cicd` — validate-only by default
+## `fabric-cicd` — a Python library (validate-only by default)
 
-Fabric deployment validation. In `.coop/project.yml`,
-`tools.fabric_cicd.default_mode` is `"validate_only"`. The agent runs validation
-freely; **deploy / run-deployment is approval-gated** (`approval_policy.ask_first`
-includes "fabric-cicd deploy / run deployment", and deploying to test/prod is in
-`never_without_explicit_instruction`).
+`fabric-cicd` is a Python **LIBRARY** (no CLI). coop installs it via
+`pipx inject ms-fabric-cli fabric-cicd` so `fabric_cicd` is importable in the
+Fabric CLI's environment; it's used in deployment scripts (`import fabric_cicd`),
+**NOT** as a `fabric-cicd` command. `coop doctor` checks it's importable
+(`python -c "import fabric_cicd"` in the Fabric CLI's env).
+
+In `.coop/project.yml`, `tools.fabric_cicd.default_mode` is `"validate_only"`. The
+agent runs validation freely; **deploy / run-deployment is approval-gated**
+(`approval_policy.ask_first` includes "fabric-cicd deploy / run deployment", and
+deploying to test/prod is in `never_without_explicit_instruction`).
 
 ---
 
@@ -194,8 +199,8 @@ includes "fabric-cicd deploy / run deployment", and deploying to test/prod is in
 
 All MCP servers (`fabric`, `powerbi --readonly`, `microsoft-learn`,
 `context-mode`) are read-only and optional; `coop` runs without them. Config lives
-in `config/mcp.example.json`, placed non-destructively into
-`~/.config/mcp/mcp.json` by `coop sync`, and wired through `pi-mcp-adapter`.
+in `config/mcp.example.json`, placed non-destructively into coop's isolated agent
+dir (`~/.coop/agent/mcp.json`) by `coop sync`, and wired through `pi-mcp-adapter`.
 
 Per `.coop/project.yml` and `docs/guardrails.md`:
 

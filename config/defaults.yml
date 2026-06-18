@@ -20,10 +20,14 @@ pi_extensions:
     - pi-mcp-adapter        # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
     - pi-hermes-memory      # persistent memory + session search + secret scanning
     - pi-better-openai      # plan usage limits (5h / 7d windows) — surfaced in coop's footer
-    # NOTE: coop renders its OWN footer + splash via extensions/coop-powerline — we do
-    # NOT use a third-party powerline footer (avoids Nerd Font glyphs, welcome-overlay
-    # conflicts, and duplicate footers). coop's footer surfaces other extensions'
-    # setStatus text (e.g. pi-better-openai's plan limits) via getExtensionStatuses().
+    # NOTE: coop renders its OWN footer + splash via extensions/coop-powerline — it does
+    # NOT use a third-party powerline footer (pi-powerline-footer was removed: its welcome
+    # overlay couldn't be disabled, Nerd Font glyphs showed as `?`, and it duplicated the
+    # bar). coop's footer shows `⬢ Cooptimize · <branch>` on the left and `<model> · ctx N%
+    # · tokens · $cost · <plan usage limits>` on the right, in plain text + common Unicode.
+    # It surfaces other extensions' status text (e.g. pi-better-openai's plan usage limits /
+    # 5h+7d windows) via footerData.getExtensionStatuses(). The splash is the truecolor
+    # block-art Cooptimize logo (uniform-padded, width-robust).
   recommended:
     - pi-permissions        # tool-permission gating (reinforces read-only-first)
     - "@aliou/pi-guardrails" # extra guardrails
@@ -38,14 +42,21 @@ python_tools:
   - coop-data-doc        # SQL + Power BI documentation, lineage, manifest.json
   - coop-sql-review      # advisory T-SQL standards linter (--format json)
   - coop-dax-review      # advisory DAX standards linter (--format json)
-  - fabric-cicd          # Fabric deployment validation (validate-only by default)
 
 # Microsoft Fabric CLI. NOTE: installing this makes `fab` the Microsoft Fabric CLI.
 # A Homebrew formula named `fabric` ships a DIFFERENT `fab` (Python SSH automation);
-# coop doctor detects the clash and warns. See docs/guardrails.md and README.
+# coop doctor detects the clash (and the Python-Fabric/Paramiko collision) and warns.
+# See docs/guardrails.md and README.
 fabric_cli:
   pipx_package: ms-fabric-cli
   command: fab
+  # fabric-cicd is a Python LIBRARY (no CLI), injected INTO this env via
+  # `pipx inject ms-fabric-cli fabric-cicd`, so `fabric_cicd` is importable in the
+  # Fabric CLI's environment. Used as `import fabric_cicd` in deployment scripts
+  # (validate-only by default), NOT a `fabric-cicd` command. `coop doctor` checks
+  # it's importable.
+  pipx_inject:
+    - fabric-cicd
 
 # Optional, path-configured (mostly Windows). Not auto-installed.
 tabular_editor_cli:
@@ -53,10 +64,11 @@ tabular_editor_cli:
   note: "Set tools.tabular_editor_cli.executable_path in .coop/project.yml"
 
 # MCP servers coop preloads — all read-only, all optional (coop runs without them).
-# Placed non-destructively into ~/.config/mcp/mcp.json by `coop sync`.
+# Placed non-destructively into coop's isolated agent dir (~/.coop/agent/mcp.json)
+# by `coop sync` — never touches your personal `pi`'s MCP.
 mcp:
   config_example: config/mcp.example.json
-  install_target: "~/.config/mcp/mcp.json"
+  install_target: "~/.coop/agent/mcp.json"
   servers:
     - name: fabric          # @microsoft/fabric-mcp (AzureCliCredential)
       mode: read-only
@@ -83,7 +95,6 @@ tested_with:
   pi: "0.79.4"
   pi_mcp_adapter: "2.10.0"
   pi_hermes_memory: "0.7.17"
-  pi_powerline_footer: "0.6.1"
   context_mode: "1.0.162"
   ms_fabric_cli: "1.6.1"
   fabric_cicd: "1.1.0"

@@ -1,9 +1,14 @@
 /**
- * coop-powerline — Cooptimize branding for Pi.
+ * coop-powerline — Cooptimize's own footer, splash, and working vibes for Pi.
  *
- * A small companion extension (NOT a fork of pi-powerline-footer). It adds:
- *   • a startup SPLASH header rendered from the color logo (assets/splash.ansi)
- *   • a branded footer segment via ctx.ui.setStatus (surfaced by pi-powerline-footer)
+ * coop renders its OWN footer and splash (NOT a third-party powerline; pi-powerline-footer
+ * was removed). It adds:
+ *   • its OWN footer via ctx.ui.setFooter — left "⬢ Cooptimize · <branch>", right
+ *     "<model> · ctx% · tokens · $cost · <ext statuses>", surfacing other extensions'
+ *     status text (e.g. pi-better-openai's plan usage limits) via getExtensionStatuses();
+ *     plain text + common Unicode (no Nerd Font glyphs)
+ *   • a startup SPLASH header via ctx.ui.setHeader, rendered from the truecolor block-art
+ *     logo (assets/splash.ansi), uniform-padded and width-robust
  *   • rotating "working vibes" via ctx.ui.setWorkingMessage — sociocracy / democratic
  *     workplace lines riffing on the D365 + Microsoft Fabric analytics stack
  *   • a honeycomb working indicator in the Cooptimize palette

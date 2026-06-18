@@ -51,7 +51,10 @@ power_bi:
 
 tools:
   fabric_cli:    { command: "fab",          enabled: true,  default_mode: "read_only_first" }
-  fabric_cicd:   { command: "fabric-cicd",  enabled: true,  default_mode: "validate_only" }
+  # fabric-cicd is a Python LIBRARY (no CLI), injected into the Fabric CLI env via
+  # `pipx inject ms-fabric-cli fabric-cicd`. Used as `import fabric_cicd` in deployment
+  # scripts (validate-only by default), NOT a `fabric-cicd` command.
+  fabric_cicd:   { library: "fabric_cicd", injected_into: "ms-fabric-cli", enabled: true, default_mode: "validate_only" }
   tabular_editor_cli: { enabled: false, executable_path: "TODO: path to TabularEditor" }
   coop_data_doc:   { command: "coop-data-doc",   enabled: true, default_command: "build", machine_outputs: ["graph.json", "manifest.json"] }
   coop_sql_review: { command: "coop-sql-review", enabled: true, invoke: "check {paths} --format json", advisory_only: true }

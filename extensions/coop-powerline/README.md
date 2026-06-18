@@ -1,8 +1,11 @@
 # coop-powerline
 
-Cooptimize branding for Pi. A small **companion** extension — not a fork of
-`pi-powerline-footer`. It feature-detects everything it touches and wraps each
-hook in `try/catch`, so it can never crash Pi.
+Cooptimize's OWN footer, splash, and working vibes for Pi. coop-powerline
+renders its own bar via `ctx.ui.setFooter` and its own splash via
+`ctx.ui.setHeader` — it does **not** use a third-party powerline footer.
+(`pi-powerline-footer` was removed: its welcome overlay couldn't be disabled,
+its Nerd Font glyphs showed up as `?`, and it duplicated the bar.) Everything it
+touches is feature-detected and wrapped in `try/catch`, so it can never crash Pi.
 
 It is loaded the way any Pi extension is, via `pi -e`:
 
@@ -15,24 +18,38 @@ also exports the two env vars below.
 
 ## What it adds
 
-### Startup splash (header)
+### Footer (`ctx.ui.setFooter`)
+
+coop-powerline renders its own single footer in plain text + common Unicode (no
+Nerd Font glyphs):
+
+- **left** — `⬢ Cooptimize · <branch>` (the honeycomb in navy, `Cooptimize` in
+  lime, the current git branch dimmed);
+- **right** — `<model> · ctx N% · tokens · $cost · <plan usage limits>`: the
+  active model id, the context-window usage percent, token totals
+  (`input>output`), and the running cost — all read from the session, so it
+  works for any provider.
+
+It also surfaces **other extensions' status text** via
+`footerData.getExtensionStatuses()` — for example pi-better-openai's plan usage
+limits / 5h+7d windows — appending them to the right side, so everything ends up
+in one clean bar instead of a duplicate one. The whole line is clipped to the
+terminal width so it never overflows, and it re-renders on branch changes and
+between turns so the numbers stay current.
+
+### Startup splash (`ctx.ui.setHeader`)
 
 On `session_start` (UI sessions only) it installs a header via
-`ctx.ui.setHeader`. The header renders, centered to the terminal width:
+`ctx.ui.setHeader`. The header renders:
 
-- the color logo from `assets/splash.ansi` (an ANSI-art render of the
-  Cooptimize mark),
+- the truecolor block-art Cooptimize logo from `assets/splash.ansi`, padded by a
+  single uniform left margin so the concentric arcs stay aligned (width-robust:
+  it falls back to the wordmark alone when the terminal is too narrow for the
+  block art),
 - the `COOPTIMIZE` wordmark in a navy → forest → olive → lime gradient,
 - the taglines `worker-owned analytics engineering` and
-  `Microsoft Fabric · Power BI · D365 · SQL · DAX · semantic models`,
+  `Microsoft Fabric · Power BI · D365 · SQL · DAX`,
 - a fresh working vibe.
-
-### Footer segment (status)
-
-It registers a branded status entry with `ctx.ui.setStatus("coop", …)` —
-a navy honeycomb plus `Cooptimize` in lime. This is surfaced by
-`pi-powerline-footer` as a footer segment; coop-powerline only contributes the
-entry, it does not render the footer itself.
 
 ### Working vibes
 

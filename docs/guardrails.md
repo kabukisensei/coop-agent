@@ -67,10 +67,11 @@ You have these tools. Know they exist and reach for the right one:
   Fabric Warehouse SQL — advisory standards check, never edits or blocks.
 - **`dax_review`** → `coop-dax-review`. Use when reviewing or before changing DAX /
   semantic-model code — advisory, never edits or blocks.
-- **`fab`** (Microsoft Fabric CLI) — list/inspect Fabric workspaces and artifacts
-  (read-only first). **`fabric-cicd`** — deployment **validation** (validate-only by
-  default; never deploy without explicit approval). **Tabular Editor CLI** (if
-  configured) — semantic-model BPA.
+- **`fab`** (Microsoft Fabric CLI = ms-fabric-cli) — list/inspect Fabric workspaces
+  and artifacts (read-only first). **`fabric-cicd`** is a Python **library** (no CLI):
+  `import fabric_cicd` inside deployment scripts for deployment **validation**
+  (validate-only by default; never deploy without explicit approval) — it is not a
+  `fabric-cicd` command. **Tabular Editor CLI** (if configured) — semantic-model BPA.
 - **MCP (read-only):** **Microsoft Learn** when you need *current* Microsoft
   documentation rather than memory; **Fabric** / **Power BI** to list/read/inspect
   live artifacts; **context-mode** for intent-driven search and sandboxed code

@@ -17,6 +17,13 @@ At launch, `bin/coop` loads, from this repo:
 
 So adding a capability is usually just **adding a file and committing it**.
 
+> **Isolation:** coop runs Pi against its own agent dir (`~/.coop/agent`; override with
+> `COOP_AGENT_DIR`) via the `PI_CODING_AGENT_DIR` env var, so only Cooptimize's curated
+> extensions/settings/theme/MCP load — your personal `pi` stays untouched. The same
+> applies to the management aliases: `coop add` and the `coop new-*` scaffolders operate
+> on coop's isolated dir / this repo, not your global `~/.pi/agent`. Disable with
+> `COOP_NO_ISOLATE=1`.
+
 ---
 
 ## 1. Add a custom skill (most common)
@@ -94,8 +101,16 @@ Pi extension in TypeScript. Use the two in `extensions/` as templates:
 
 - `extensions/coop-tools/index.ts` — registers `sql_review` / `dax_review` /
   `data_doc` with `pi.registerTool(...)`. Copy the pattern to wrap another CLI.
-- `extensions/coop-powerline/index.ts` — splash (`ctx.ui.setHeader`), vibes
-  (`setWorkingMessage`), footer (`setStatus`), commands (`pi.registerCommand`).
+- `extensions/coop-powerline/index.ts` — coop renders its **own** footer and splash
+  here (it does **not** use a third-party powerline footer). The splash is the
+  truecolor block-art Cooptimize logo; the footer shows `⬢ Cooptimize · <branch>` on
+  the left and `<model> · ctx N% · tokens · $cost · <plan usage limits>` on the right,
+  in plain text + common Unicode (no Nerd Font glyphs). It pulls other extensions'
+  status text — e.g. pi-better-openai's plan usage limits (5h+7d windows) — into the
+  one bar via `footerData.getExtensionStatuses()`. To extend the footer, surface your
+  extension's own status string the same way rather than adding a second bar; to tweak
+  the splash/footer rendering itself, edit this extension. It also wires vibes
+  (`setWorkingMessage`) and commands (`pi.registerCommand`).
 
 To load a new companion extension, either drop it in `extensions/<name>/` and add a
 `-e` line in `bin/coop` / `bin/coop.ps1`, or install a published one with

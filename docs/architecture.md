@@ -7,11 +7,22 @@ extensions, and shells out to the standalone Coop tools and the Microsoft Fabric
 CLI. Everything Cooptimize-specific lives in this repo and is layered onto a
 stock Pi install — so Pi can be updated underneath `coop` without merge pain.
 
+## Isolation
+
+coop runs Pi against its own agent dir (`~/.coop/agent`; override with
+`COOP_AGENT_DIR`) via the `PI_CODING_AGENT_DIR` env var, so only Cooptimize's
+curated extensions/settings/theme/MCP load — your personal `pi` (its extensions,
+themes, splash) stays untouched. Your login (auth/models) is shared in from
+`~/.pi/agent`; settings/extensions/MCP are isolated. Provisioned by
+`coop install`/`coop sync`. Disable with `COOP_NO_ISOLATE=1`.
+
 ## Layers
 
 1. **`coop` (orchestrator).** `bin/coop` resolves `COOP_ROOT`, sources
-   `lib/common.sh`, optionally runs an Azure / Power BI token preflight, then
-   `exec pi …` with the branded resources attached. It also dispatches the
+   `lib/common.sh`, exports `PI_CODING_AGENT_DIR` to point Pi at coop's isolated
+   agent dir (`~/.coop/agent`; see **Isolation** above), optionally runs an
+   Azure / Power BI token preflight, then `exec pi …` with the branded resources
+   attached. It also dispatches the
    subcommands (`doctor`, `update`, `install`/`bootstrap`, `sync`, `data-doc`,
    `sql-review`, `dax-review`, `fabric`, `version`, `help`) and aliases Pi
    management (`coop list/config/add/remove/pi`) so `coop` is the only command a
@@ -33,18 +44,32 @@ stock Pi install — so Pi can be updated underneath `coop` without merge pain.
    - **Prompt templates** — `prompts/`.
    - **Theme** — `themes/cooptimize.json` (brand palette: navy `#00416B`,
      forest `#42783C`, olive `#82AA43`, lime `#B2D235`, red `#EF412D`).
-   - **`coop-powerline` extension** — `extensions/coop-powerline/`: brand splash
-     (`assets/splash.ansi`), footer/status segments, and working "vibes"
-     (`COOP_VIBES_DIR`, `COOP_SPLASH_FILE` are exported for it).
+   - **`coop-powerline` extension** — `extensions/coop-powerline/`: coop's OWN
+     footer and splash, plus working "vibes" (`COOP_VIBES_DIR`,
+     `COOP_SPLASH_FILE` are exported for it). coop does **not** use a third-party
+     powerline footer (pi-powerline-footer was removed: its welcome overlay
+     couldn't be disabled, Nerd Font glyphs showed as `?`, and it duplicated the
+     bar). The footer shows `⬢ Cooptimize · <branch>` on the left and
+     `<model> · ctx N% · tokens · $cost · <plan usage limits>` on the right, in
+     plain text + common Unicode (no Nerd Font glyphs). It surfaces other
+     extensions' status text (e.g. pi-better-openai's plan usage limits /
+     5h+7d windows) via `footerData.getExtensionStatuses()`, so everything is in
+     one clean bar. The splash is the truecolor block-art Cooptimize logo
+     (uniform-padded, width-robust; `assets/splash.ansi`).
    - **`coop-tools` extension** — `extensions/coop-tools/`: registers the native
      LLM-callable tools `sql_review`, `dax_review`, `data_doc` that shell out to
      the standalone CLIs and return JSON the model reasons over.
 
-4. **Pi extensions installed from npm** (`config/defaults.yml`):
+4. **Pi extensions installed from npm** into coop's isolated agent dir
+   (`config/defaults.yml`):
    - `pi-mcp-adapter` — wires the read-only MCP servers.
    - `pi-hermes-memory` — persistent memory, session search, secret scanning.
-   - `pi-powerline-footer` — branded footer/status bar.
+   - `pi-better-openai` — plan usage limits (5h / 7d windows), surfaced in
+     coop's own footer via `footerData.getExtensionStatuses()`.
    - Recommended: `pi-permissions` (tool-permission gating), `@aliou/pi-guardrails`.
+
+   `pi-powerline-footer` is **not** used — coop renders its own footer/splash via
+   `extensions/coop-powerline` (see layer 3).
 
 5. **Standalone tools** (pipx, on PyPI) — invoked two ways: by the `coop`
    subcommands and by the native `coop-tools` extension, both via CLI with the
@@ -60,14 +85,18 @@ stock Pi install — so Pi can be updated underneath `coop` without merge pain.
      pass-through. NOTE: a Homebrew `fabric` formula ships a *different* `fab`
      (Python SSH / Paramiko) — a real `PATH` collision that `coop doctor`
      detects and warns about.
-   - **`fabric-cicd`** — Fabric deployment validation, **validate-only by
-     default**; deploy is an approval-gated action.
+   - **`fabric-cicd`** — a Python **LIBRARY** (no CLI). coop installs it via
+     `pipx inject ms-fabric-cli fabric-cicd` so `fabric_cicd` is importable in the
+     Fabric CLI's environment; it's used in deployment scripts (`import
+     fabric_cicd`, **validate-only by default**), NOT as a `fabric-cicd` command.
+     `coop doctor` checks it's importable. Deploy is an approval-gated action.
    - **Tabular Editor CLI** — optional, path-configured (mostly Windows), not
      auto-installed; set `tools.tabular_editor_cli.executable_path` in
      `.coop/project.yml`.
 
 7. **Read-only MCP servers** (all optional; `coop` runs without them). Preloaded
-   into `~/.config/mcp/mcp.json` by `coop sync` from `config/mcp.example.json`:
+   non-destructively into coop's isolated agent dir (`~/.coop/agent/mcp.json`) by
+   `coop sync` from `config/mcp.example.json`:
    - `fabric` — `@microsoft/fabric-mcp` (AzureCliCredential).
    - `powerbi` — `powerbi-mcp-server --readonly`.
    - `microsoft-learn` — `learn.microsoft.com/api/mcp` via `mcp-remote`
@@ -91,7 +120,7 @@ flowchart TD
       skills["skills/\ncoop-workflow\n+ _microsoft/*"]
       prompts["prompts/"]
       theme["themes/cooptimize.json"]
-      ext_pl["ext: coop-powerline\nsplash · footer · vibes"]
+      ext_pl["ext: coop-powerline\ncoop's OWN footer · splash · vibes\n(no pi-powerline-footer)"]
       ext_tools["ext: coop-tools\nsql_review · dax_review · data_doc"]
     end
 
@@ -102,19 +131,20 @@ flowchart TD
     pi --> ext_pl
     pi --> ext_tools
 
-    subgraph PIEXT["Pi extensions (npm)"]
+    subgraph PIEXT["Pi extensions (npm, into ~/.coop/agent)"]
       mcpad["pi-mcp-adapter"]
       mem["pi-hermes-memory"]
-      plfoot["pi-powerline-footer"]
+      bopenai["pi-better-openai\nplan usage limits (5h/7d)"]
     end
     pi --> PIEXT
+    bopenai -. "status via getExtensionStatuses()" .-> ext_pl
 
-    subgraph TOOLS["Standalone tools (pipx / CLI)"]
+    subgraph TOOLS["Standalone tools (pipx) — CLIs + the fabric-cicd library"]
       datadoc["coop-data-doc\nscan→graph.json\nbuild→manifest.json + docs + portal"]
       sqlrev["coop-sql-review\ncheck --format json (advisory)"]
       daxrev["coop-dax-review\ncheck --format json (advisory)"]
       fab["fab (Microsoft Fabric CLI)\n⚠ Homebrew 'fab' collision → doctor"]
-      cicd["fabric-cicd\nvalidate-only by default"]
+      cicd["fabric-cicd (LIBRARY, no CLI)\npipx inject ms-fabric-cli fabric-cicd\nimport fabric_cicd · validate-only"]
       te["Tabular Editor CLI\noptional · path-configured"]
     end
     subs --> datadoc

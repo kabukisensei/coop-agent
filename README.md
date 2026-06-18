@@ -2,9 +2,10 @@
 
 **coop** is a branded analytics-engineering agent for Cooptimize, a worker-owned
 cooperative. It is a thin **layer on top of [Pi](https://www.npmjs.com/package/@mariozechner/pi-coding-agent)**
-(`@mariozechner/pi-coding-agent`) — **not a fork**. `coop` launches `pi` with the
-Cooptimize skills, prompt templates, theme, splash/footer extension, and a
-governance system prompt, and it shells out to the standalone Coop tools
+(`@mariozechner/pi-coding-agent`) — **not a fork**. `coop` runs `pi` against its
+**own isolated agent dir** (`~/.coop/agent`) with the Cooptimize skills, prompt
+templates, theme, its own splash/footer extension, and a governance system prompt,
+and it shells out to the standalone Coop tools
 (`coop-data-doc` / `coop-sql-review` / `coop-dax-review`) and the Microsoft Fabric
 CLI (`fab`). The stack targets Microsoft Fabric, Azure, Power BI, D365 (Finance &
 Operations), T-SQL (Fabric Warehouse/Lakehouse, medallion bronze/silver/gold),
@@ -24,6 +25,11 @@ git clone <coop-agent-repo> && cd coop-agent
 coop                   # launch the branded Pi agent (after install + new shell)
 ```
 
+> **Isolation:** `coop` runs Pi against its own agent dir (`~/.coop/agent`) via the
+> `PI_CODING_AGENT_DIR` env var, so only Cooptimize's curated extensions/settings/
+> theme/MCP load — your personal `pi` stays untouched. See [Isolation](#isolation)
+> below.
+
 `coop install` links `coop` into `~/.local/bin`. **That directory must be on your
 `PATH`.** If `coop` is not found after install, add this to your shell rc
 (`~/.zshrc`, `~/.bashrc`, …) and open a new shell:
@@ -37,6 +43,17 @@ Verify everything with:
 ```bash
 coop doctor      # checks dependencies + configuration; exits non-zero if required items are missing
 ```
+
+---
+
+## Isolation
+
+`coop` runs Pi against its own agent dir (`~/.coop/agent`; override with
+`COOP_AGENT_DIR`) via the `PI_CODING_AGENT_DIR` env var, so only Cooptimize's
+curated extensions/settings/theme/MCP load — your personal `pi` (its extensions,
+themes, splash) stays untouched. Your login (auth/models) is shared in from
+`~/.pi/agent`; settings/extensions/MCP are isolated. Provisioned by `coop install` /
+`coop sync`. Disable with `COOP_NO_ISOLATE=1`.
 
 ---
 
@@ -98,19 +115,23 @@ If you prefer to install the pieces yourself, the bootstrap is equivalent to:
 # Pi itself
 npm install -g @mariozechner/pi-coding-agent
 
-# Pi extensions
+# Pi extensions (into coop's isolated agent dir)
 pi install npm:pi-mcp-adapter        # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
 pi install npm:pi-hermes-memory      # persistent memory + session search + secret scanning
-pi install npm:pi-powerline-footer   # branded footer / status bar
+pi install npm:pi-better-openai      # plan usage limits (5h + 7d windows), surfaced in coop's footer
+# coop renders its own footer + splash via extensions/coop-powerline — no third-party
+# powerline-footer extension is installed.
 
-# Standalone Coop tools + Fabric deployment validation (via pipx)
+# Standalone Coop tools (via pipx)
 pipx install coop-data-doc
 pipx install coop-sql-review
 pipx install coop-dax-review
-pipx install fabric-cicd
 
 # Microsoft Fabric CLI (see the fab collision warning below)
 pipx install ms-fabric-cli
+
+# fabric-cicd is a Python LIBRARY (no CLI) — inject it into the Fabric CLI's env
+pipx inject ms-fabric-cli fabric-cicd
 
 # Link coop onto your PATH
 ln -sf "$PWD/bin/coop" "$HOME/.local/bin/coop"
@@ -128,11 +149,15 @@ shows anything still missing.
 | Component | How it's provided |
 | --- | --- |
 | **Pi** | installed globally via `npm` |
-| **Pi extensions** — `pi-mcp-adapter`, `pi-hermes-memory`, `pi-powerline-footer` | installed via `pi install` |
-| **Coop companion extensions** — `coop-powerline` (splash/vibes), `coop-tools` (native `sql_review`/`dax_review`/`data_doc`) | shipped in this repo, loaded at launch (nothing to install) |
-| **Standalone tools** — `coop-data-doc`, `coop-sql-review`, `coop-dax-review`, `fabric-cicd` | installed via `pipx` from PyPI |
+| **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits, surfaced in coop's footer) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
+| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `sql_review`/`dax_review`/`data_doc`) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
+| **Standalone tools** — `coop-data-doc`, `coop-sql-review`, `coop-dax-review` | installed via `pipx` from PyPI |
+| **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
-| **MCP servers** — `fabric`, `powerbi`, `microsoft-learn`, `context-mode` | **fetched on first use via `npx`** (need Node + internet); placed read-only into `~/.config/mcp/mcp.json` by `coop sync`. No separate install. |
+| **MCP servers** — `fabric`, `powerbi`, `microsoft-learn`, `context-mode` | **fetched on first use via `npx`** (need Node + internet); placed read-only into coop's isolated MCP config by `coop sync`. No separate install. |
+
+> `pi-powerline-footer` is **not** used. coop renders its own footer and splash via
+> `extensions/coop-powerline` (see [Footer & splash](#footer--splash)).
 
 **Not auto-installed (optional, external):**
 
@@ -221,9 +246,10 @@ coop preloads four MCP servers via `pi-mcp-adapter`. They are **all read-only** 
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` — always-current Microsoft docs | read-only |
 | `context-mode` | local context server | read-only |
 
-`coop sync` places `config/mcp.example.json` **non-destructively** into
-`~/.config/mcp/mcp.json` (it never overwrites an existing config). Before live
-Power BI work, set your tenant in that file:
+`coop sync` places `config/mcp.example.json` **non-destructively** into coop's
+isolated agent dir (`~/.coop/agent`) — it never overwrites an existing config and
+never touches your personal `pi`'s MCP. Before live Power BI work, set your tenant in
+that file:
 
 ```jsonc
 "powerbi": {
@@ -239,8 +265,8 @@ regardless of what a server is capable of.
 > **Supply-chain note:** the example launches these servers with `npx -y` against
 > the latest published package (e.g. `powerbi-mcp-server@latest`, `mcp-remote`),
 > which fetches and runs remote code at startup with your Azure CLI credentials
-> available. For locked-down environments, pin exact versions in
-> `~/.config/mcp/mcp.json` and review updates before enabling, or disable MCP
+> available. For locked-down environments, pin exact versions in coop's isolated MCP
+> config (in `~/.coop/agent`) and review updates before enabling, or disable MCP
 > entirely (coop runs fine without it).
 
 ---
@@ -299,8 +325,12 @@ also exposed as the native LLM tools `sql_review` / `dax_review` / `data_doc`):
 - **`coop-dax-review`** — advisory DAX standards linter (same shape as sql-review).
 
 The review tools are **advisory only**: they never edit files and never block work.
-Also available: **`fabric-cicd`** for Fabric deployment validation (validate-only by
-default) and an optional, path-configured **Tabular Editor CLI** (set
+
+Also available: **`fabric-cicd`** — a Python **library** (no CLI). coop installs it via
+`pipx inject ms-fabric-cli fabric-cicd` so `fabric_cicd` is importable in the Fabric
+CLI's environment; it's used in deployment scripts (`import fabric_cicd`, validate-only
+by default), **not** as a `fabric-cicd` command. `coop doctor` checks it's importable.
+There is also an optional, path-configured **Tabular Editor CLI** (set
 `tools.tabular_editor_cli.executable_path` in `.coop/project.yml`).
 
 ---
@@ -332,15 +362,30 @@ See [`skills/_microsoft/README.md`](skills/_microsoft/README.md) for details.
 
 ---
 
+## Footer & splash
+
+coop renders its **own** footer and splash via `extensions/coop-powerline` — it does
+**not** use a third-party powerline footer (`pi-powerline-footer` was removed: its
+welcome overlay couldn't be disabled, Nerd Font glyphs showed as `?`, and it
+duplicated the bar). The footer shows `⬢ Cooptimize · <branch>` on the left and
+`<model> · ctx N% · tokens · $cost · <plan usage limits>` on the right, in plain text +
+common Unicode (no Nerd Font glyphs). It surfaces other extensions' status text (e.g.
+`pi-better-openai`'s plan usage limits / 5h + 7d windows) via
+`footerData.getExtensionStatuses()`, so everything is in one clean bar. The splash is
+the truecolor block-art Cooptimize logo (uniform-padded, width-robust).
+
+---
+
 ## Persistent memory & branding
 
 - **Persistent memory** is provided by **`pi-hermes-memory`** — durable facts,
   preferences, corrections, session search, and secret scanning. Use it for durable
   context; **never** for secrets.
-- **Branding** at launch: the Cooptimize **splash**, powerline **footer/segments**,
-  working **vibes**, and the **theme** (`themes/cooptimize.json`). Brand palette
-  (sampled from the logo): navy `#00416B`, forest `#42783C`, olive `#82AA43`,
-  lime `#B2D235`, red `#EF412D`. `coop sync` keeps the splash and vibe assets fresh.
+- **Branding** at launch: the Cooptimize **splash** and **footer** (both rendered by
+  `coop-powerline` — see [Footer & splash](#footer--splash)), working **vibes**, and
+  the **theme** (`themes/cooptimize.json`). Brand palette (sampled from the logo):
+  navy `#00416B`, forest `#42783C`, olive `#82AA43`, lime `#B2D235`, red `#EF412D`.
+  `coop sync` keeps the splash and vibe assets fresh.
 
 ---
 

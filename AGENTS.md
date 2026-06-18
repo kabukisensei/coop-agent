@@ -1,7 +1,11 @@
 # coop-agent — agent context
 
 This repository is **coop**, the Cooptimize terminal agent: a branded layer on top
-of Pi (`@mariozechner/pi-coding-agent`). It is **not** a fork of Pi.
+of Pi (`@mariozechner/pi-coding-agent`). It is **not** a fork of Pi. coop runs Pi in
+its own isolated agent dir (`~/.coop/agent`, via `PI_CODING_AGENT_DIR`) so only
+Cooptimize's curated extensions/settings/theme/MCP load and your personal `pi` stays
+untouched (disable with `COOP_NO_ISOLATE=1`). It renders its own footer and splash via
+`extensions/coop-powerline` — no third-party powerline footer.
 
 If you are an agent working in a Cooptimize work repo, you operate under the
 Cooptimize guardrails and the Cooptimize workflow:
@@ -14,9 +18,10 @@ Cooptimize guardrails and the Cooptimize workflow:
   the nearest one before doing file work.
 
 Native tools available: `sql_review`, `dax_review`, `data_doc` (advisory, read-only),
-plus the Microsoft Fabric CLI (`fab`), `fabric-cicd` (validate-only), and read-only
-Fabric / Power BI / Microsoft Learn MCP servers. Persistent memory is provided by
-pi-hermes-memory.
+plus the Microsoft Fabric CLI (`fab` = ms-fabric-cli) and `fabric_cicd` (a validate-only
+Python **library**, not a CLI — `import fabric_cicd` in deployment scripts), and
+read-only Fabric / Power BI / Microsoft Learn MCP servers. Persistent memory is provided
+by pi-hermes-memory.
 
 Official Microsoft skills (`skills/_microsoft/`) are **subordinate**: a Microsoft
 skill loads only if allow-listed in `microsoft_skills.allow[]` and it does not
