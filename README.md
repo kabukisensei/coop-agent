@@ -356,6 +356,9 @@ coop doctor      # re-check dependencies and configuration at any time
 
 ## Sharing with your team
 
+> New teammate? Hand them **[docs/onboarding.md](docs/onboarding.md)** — a one-page
+> clone → install → verify → use guide.
+
 coop is distributed as **this Git repo**. Put it on a host your coworkers can reach
 (GitHub/Azure DevOps/internal), then each teammate runs the bootstrap once:
 
