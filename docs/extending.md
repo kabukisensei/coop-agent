@@ -1,0 +1,121 @@
+# Extending coop — custom skills, prompts, themes, and tools
+
+coop is a thin layer over Pi, so **everything Pi can be extended with, coop can
+too** — and your team's additions live in this repo, version-controlled and shared
+the moment you push. Nothing here requires forking Pi or coop.
+
+At launch, `bin/coop` loads, from this repo:
+
+| What | Where | How it's loaded |
+|------|-------|-----------------|
+| Skills | `skills/<name>/SKILL.md` | each folder auto-loaded (except the allow-listed `skills/_microsoft/`) |
+| Prompt templates | `prompts/<name>.md` | whole folder via `--prompt-template` |
+| Theme | `themes/cooptimize.json` | via `--theme` |
+| Guardrails prompt | `docs/guardrails.md` | via `--append-system-prompt` |
+| Companion extensions | `extensions/coop-*/` | via `pi -e` |
+| Vibes | `vibes/*.txt` | read by `coop-powerline` |
+
+So adding a capability is usually just **adding a file and committing it**.
+
+---
+
+## 1. Add a custom skill (most common)
+
+A skill is a folder with a `SKILL.md`. Create one:
+
+```bash
+mkdir -p skills/lakehouse-naming-review
+cat > skills/lakehouse-naming-review/SKILL.md <<'MD'
+---
+name: lakehouse-naming-review
+description: Review Fabric Lakehouse table/column naming against Cooptimize conventions.
+---
+
+# Lakehouse Naming Review
+
+Use this when reviewing names in a Fabric Lakehouse.
+
+## Checklist
+- bronze tables keep source names; silver uses PascalCase business entities; gold is report-friendly.
+- surrogate keys end in `Key`; date keys are `yyyymmdd` ints.
+- no reserved words; no spaces.
+
+## Output
+- Pass/fail by table, findings by severity, suggested renames (advisory — never auto-rename).
+MD
+```
+
+That's it — next time anyone runs `coop`, the skill is available. It automatically
+operates under the 11-step `coop-workflow` and the guardrails (read-only-first,
+plan-and-approve, never commit source). Reference it from a prompt or just ask the
+agent to "use the lakehouse-naming-review skill."
+
+> Keep skills **advisory and read-only** to match Cooptimize governance. If a skill
+> needs to run a tool, point it at the native tools (`sql_review`, `dax_review`,
+> `data_doc`) or `fab` / `fabric-cicd` (validate-only).
+
+## 2. Add a prompt template (a `/slash` command)
+
+Prompt templates are Markdown with `{{placeholders}}`:
+
+```bash
+cat > prompts/weekly-log.md <<'MD'
+# Weekly Log
+
+Use the `coop-workflow` skill.
+
+Summarize this week's analytics-engineering work for {{repo_or_area}}.
+1. Read the daily logs under docs/agent/logs/daily.
+2. Group changes by object and layer (bronze/silver/gold/model/report).
+3. List validations run (sql_review / dax_review / fabric-cicd) and open risks.
+4. Write docs/agent/logs/weekly/{{week}}.md. Do not commit without approval.
+MD
+```
+
+It shows up as a prompt/command in Pi automatically.
+
+## 3. Add or tweak the theme
+
+Copy `themes/cooptimize.json`, change the `vars` (brand colors live there), and
+either replace the file or load yours with `coop --theme path/to/theme.json`.
+
+## 4. Add a native tool or UI feature (a Pi extension)
+
+For real logic (new LLM-callable tools, footer/splash tweaks, event hooks), write a
+Pi extension in TypeScript. Use the two in `extensions/` as templates:
+
+- `extensions/coop-tools/index.ts` — registers `sql_review` / `dax_review` /
+  `data_doc` with `pi.registerTool(...)`. Copy the pattern to wrap another CLI.
+- `extensions/coop-powerline/index.ts` — splash (`ctx.ui.setHeader`), vibes
+  (`setWorkingMessage`), footer (`setStatus`), commands (`pi.registerCommand`).
+
+To load a new companion extension, either drop it in `extensions/<name>/` and add a
+`-e` line in `bin/coop` / `bin/coop.ps1`, or install a published one with
+`coop add npm:<package>` (it persists in Pi's settings for everyone who installs).
+
+Full Pi extension API reference: run `coop pi --help`, and see the bundled examples
+under the Pi package's `examples/extensions/` (the patterns coop's extensions follow).
+
+## 5. The official-Microsoft-skills slot (subordinate)
+
+`skills/_microsoft/` holds the official Microsoft skills
+([github.com/microsoft/skills](https://github.com/microsoft/skills)). They are
+**subordinate to your skills**: a Microsoft skill loads only if it is allow-listed
+in `microsoft_skills.allow[]` **and** doesn't conflict (by folder or frontmatter
+name) with one of yours — on conflict, yours wins and the Microsoft one is skipped.
+Fetch with `scripts/fetch-microsoft-skills.sh` (fetched skills are gitignored). See
+`skills/_microsoft/README.md`.
+
+---
+
+## Sharing changes with the team
+
+Because skills/prompts/vibes/theme are just files in this repo, the workflow is:
+
+1. Create the file (skill folder, prompt, etc.).
+2. `coop sql-review` / test it locally with `coop`.
+3. Commit and push (these are docs/config, safe to commit).
+4. Teammates run `coop update` (which `git pull`s coop-agent) and pick it up.
+
+`coop update` keeps Pi, its extensions, and the standalone tools current at the same
+time, so the whole team stays in sync with one command.

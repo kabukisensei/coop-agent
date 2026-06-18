@@ -1,0 +1,137 @@
+# Cooptimize agent — bundled project contract (the live default for coop-agent).
+# When you run `coop` inside one of your work repos, coop uses THAT repo's
+# .coop/project.yml instead (it walks up from your working directory). This file
+# is the fallback + a worked example. See .coop/project.example.yml for the fully
+# documented template, and copy it into each work repo.
+
+profile:
+  consultant_name: "Aaron Jennings"
+  organization: "Cooptimize"
+  timezone: "America/Chicago"
+  default_branch: "main"
+  work_mode: "consultant_review_first"
+
+repositories:
+  fabric:
+    description: "Semantic models, reports, and Fabric artifacts"
+    local_path: "../fabric"
+    remote_name: "origin"
+    default_branch: "main"
+    agent_allowed_to_commit: ["docs/**", "site/**", "docs/agent/logs/**", "docs/agent/diagrams/**"]
+    agent_never_commit:
+      - "**/*.pbip"
+      - "**/*.pbir"
+      - "**/*.bim"
+      - "**/*.tmdl"
+      - "**/*.dax"
+      - "**/*.json"      # semantic-model / report definitions (PBIR definition.json, .platform)
+      - "**/*.rdl"
+      - "**/*.SemanticModel/**"
+      - "**/*.Report/**"
+  fabric_dw:
+    description: "Warehouse / Lakehouse SQL"
+    local_path: "../fabric-dw"
+    remote_name: "origin"
+    default_branch: "main"
+    sql_root: "sql"
+    agent_allowed_to_commit: ["docs/**", "site/**", "docs/agent/logs/**", "docs/agent/diagrams/**"]
+    agent_never_commit: ["**/*.sql", "**/*.py", "**/*.ipynb"]
+
+fabric:
+  tenant_id: "TODO: tenant id"
+  default_workspace_name: "TODO: workspace name"
+  default_workspace_id: "TODO: workspace id"
+  environment_names:
+    dev:  "TODO: dev workspace"
+    test: "TODO: test workspace"
+    prod: "TODO: prod workspace"
+
+power_bi:
+  default_workspace_name: "TODO: Power BI workspace name"
+
+tools:
+  fabric_cli:    { command: "fab",          enabled: true,  default_mode: "read_only_first" }
+  fabric_cicd:   { command: "fabric-cicd",  enabled: true,  default_mode: "validate_only" }
+  tabular_editor_cli: { enabled: false, executable_path: "TODO: path to TabularEditor" }
+  coop_data_doc:   { command: "coop-data-doc",   enabled: true, default_command: "build", machine_outputs: ["graph.json", "manifest.json"] }
+  coop_sql_review: { command: "coop-sql-review", enabled: true, invoke: "check {paths} --format json", advisory_only: true }
+  coop_dax_review: { command: "coop-dax-review", enabled: true, invoke: "check {paths} --format json", advisory_only: true }
+
+mcp:
+  fabric:          { enabled: true, allowed_default_actions: ["list","read","inspect"], requires_approval_actions: ["create","update","delete","deploy"] }
+  powerbi:         { enabled: true, readonly_flag: true, allowed_default_actions: ["list","read","inspect"], requires_approval_actions: ["create","update","delete","publish"] }
+  microsoft_learn: { enabled: true, purpose: "Always-current Microsoft documentation lookups" }
+  context_mode:    { enabled: true }
+
+memory:
+  extension: "pi-hermes-memory"
+  enabled: true
+  secret_scanning: true
+
+microsoft_skills:
+  # Official Microsoft agent skills (MIT). SUBORDINATE to Cooptimize skills: a
+  # Microsoft skill loads only if allow-listed below AND it does not conflict (by
+  # folder or frontmatter name) with one of ours. Fetch with:
+  #   scripts/fetch-microsoft-skills.sh
+  source: "https://github.com/microsoft/skills"
+  load_dir: "skills/_microsoft"
+  allow: []   # e.g. ["azure-cosmos-db-py", "azure-storage-blob-py"] — empty = none
+
+standards:
+  sql: "docs/standards/sql-standards.md"
+  dax: "docs/standards/dax-standards.md"
+  documentation: "docs/standards/documentation-standards.md"
+  fabric: "docs/standards/fabric-standards.md"
+
+backup:
+  root: ".backups"
+  timestamp_format: "%Y%m%d_%H%M%S"
+  naming_pattern: "{original_name}.{timestamp}.bak"
+  required_before_edit: true
+
+logging:
+  daily_log_path: "docs/agent/logs/daily/{yyyy-mm-dd}.md"
+  weekly_log_path: "docs/agent/logs/weekly/{yyyy}-W{ww}.md"
+  require_task_log: true
+
+documentation:
+  agent_docs_root: "docs/agent"
+  human_site_root: "site"
+  source_of_truth: "markdown_first_html_generated"
+  use_coop_data_doc: true
+
+workflow:
+  skill: "coop-workflow"
+  steps:
+    - "Read .coop/project.yml + the relevant standards"
+    - "Identify repo/object + upstream/downstream impact; git status && git pull"
+    - "Read target file(s) + related docs/lineage (coop-data-doc)"
+    - "Write a short PLAN and get explicit review/approval before any edit"
+    - "Create a timestamped backup of every file to be changed"
+    - "Make the smallest safe edit"
+    - "Run the applicable review (coop-sql-review / coop-dax-review; Tabular Editor BPA / fabric-cicd validate where relevant)"
+    - "Show git diff + summarize the change"
+    - "Update Markdown docs / glossary / lineage; regenerate site if docs changed"
+    - "Append to the daily log"
+    - "Commit docs/logs/site ONLY with approval; never commit source"
+
+approval_policy:
+  always_allowed:
+    - "read files"
+    - "git status / git diff / git pull"
+    - "create backups"
+    - "run coop-sql-review / coop-dax-review / coop-data-doc (advisory)"
+    - "MCP list / read / inspect"
+    - "update markdown docs, html site, logs"
+  ask_first:
+    - "delete files"
+    - "fabric-cicd deploy / run deployment"
+    - "change production workspace"
+    - "commit documentation changes"
+  never_without_explicit_instruction:
+    - "commit SQL/DAX/model/report source changes"
+    - "push to remote"
+    - "deploy to test/prod"
+    - "MCP create/update/delete/deploy/publish"
+    - "delete Fabric / Power BI artifacts"
+    - "print secrets, tokens, connection strings, or .env contents"

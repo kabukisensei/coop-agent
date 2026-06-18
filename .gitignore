@@ -1,0 +1,39 @@
+# OS / editor
+.DS_Store
+*.swp
+
+# Node (companion extensions resolve against pi's node_modules; none committed here)
+node_modules/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Backups created by the agent before edits
+.backups/
+
+# Local secrets / env / credentials (defensive — never commit these)
+.env
+.env.*
+!.env.template
+*.pem
+*.key
+*.pfx
+*.p12
+id_rsa*
+secrets*
+*.secret
+credentials.json
+
+# Local MCP overrides that may contain tenant ids
+.mcp.local.json
+
+# Generated review/doc artifacts when run inside this repo
+graph.json
+manifest.json
+site/
+
+# Fetched official Microsoft skills (pulled on demand, not vendored) + fetch cache
+skills/_microsoft/*/
+.cache/

@@ -1,0 +1,81 @@
+# coop-agent internal defaults — the single reference for what coop installs and
+# wires. Human-readable; the install/update/doctor scripts keep their own copy of
+# these lists (bash arrays) in sync with this file. Editing here documents intent;
+# edit the matching arrays in scripts/ to change behavior.
+
+agent:
+  name: coop
+  brand: Cooptimize
+  built_on: "@mariozechner/pi-coding-agent"   # Pi — coop is a layer, never a fork
+
+# How coop installs Pi itself.
+pi:
+  npm_package: "@mariozechner/pi-coding-agent"
+  self_update: "pi update pi"
+  ext_update: "pi update"
+
+# Pi extensions coop installs (pi install npm:<name>).
+pi_extensions:
+  core:
+    - pi-mcp-adapter        # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
+    - pi-hermes-memory      # persistent memory + session search + secret scanning
+    - pi-powerline-footer   # branded footer / status bar
+  recommended:
+    - pi-permissions        # tool-permission gating (reinforces read-only-first)
+    - "@aliou/pi-guardrails" # extra guardrails
+
+# coop's own companion extensions (loaded from this repo via `pi -e`).
+coop_extensions:
+  - extensions/coop-powerline   # splash + footer segments + working vibes
+  - extensions/coop-tools       # native LLM tools: sql_review / dax_review / data_doc
+
+# Standalone tools installed via pipx (all on PyPI).
+python_tools:
+  - coop-data-doc        # SQL + Power BI documentation, lineage, manifest.json
+  - coop-sql-review      # advisory T-SQL standards linter (--format json)
+  - coop-dax-review      # advisory DAX standards linter (--format json)
+  - fabric-cicd          # Fabric deployment validation (validate-only by default)
+
+# Microsoft Fabric CLI. NOTE: installing this makes `fab` the Microsoft Fabric CLI.
+# A Homebrew formula named `fabric` ships a DIFFERENT `fab` (Python SSH automation);
+# coop doctor detects the clash and warns. See docs/guardrails.md and README.
+fabric_cli:
+  pipx_package: ms-fabric-cli
+  command: fab
+
+# Optional, path-configured (mostly Windows). Not auto-installed.
+tabular_editor_cli:
+  command: TabularEditor.exe
+  note: "Set tools.tabular_editor_cli.executable_path in .coop/project.yml"
+
+# MCP servers coop preloads — all read-only, all optional (coop runs without them).
+# Placed non-destructively into ~/.config/mcp/mcp.json by `coop sync`.
+mcp:
+  config_example: config/mcp.example.json
+  install_target: "~/.config/mcp/mcp.json"
+  servers:
+    - name: fabric          # @microsoft/fabric-mcp (AzureCliCredential)
+      mode: read-only
+    - name: powerbi         # powerbi-mcp-server --readonly
+      mode: read-only
+    - name: microsoft-learn # learn.microsoft.com/api/mcp via mcp-remote (always-current docs)
+      mode: read-only
+    - name: context-mode    # local
+      mode: read-only
+
+# Branded resources loaded at launch (see bin/coop).
+resources:
+  skills: skills
+  prompts: prompts
+  theme: themes/cooptimize.json
+  guardrails: docs/guardrails.md
+  vibes: vibes
+  splash: extensions/coop-powerline/assets/splash.ansi
+
+# Cooptimize brand palette (sampled from the color logo).
+brand_colors:
+  navy:   "#00416B"
+  forest: "#42783C"
+  olive:  "#82AA43"
+  lime:   "#B2D235"
+  red:    "#EF412D"

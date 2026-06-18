@@ -1,0 +1,11 @@
+{
+  "name": "coop-powerline",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cooptimize branding for Pi: startup splash, footer segment, and sociocracy × Fabric/D365 working vibes. A companion to pi-powerline-footer (not a fork).",
+  "keywords": ["pi-package", "pi", "coding-agent", "powerline", "cooptimize", "splash", "vibes"],
+  "type": "module",
+  "main": "index.ts",
+  "license": "MIT",
+  "files": ["index.ts", "assets/", "README.md"]
+}

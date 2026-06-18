@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+#
+# coop — the Cooptimize terminal agent.
+#
+# A thin, branded layer ON TOP OF Pi (@mariozechner/pi-coding-agent). coop never
+# forks Pi: it launches `pi` with Cooptimize skills, prompts, theme, a powerline
+# splash/footer extension, and a governance system prompt, and it shells out to
+# the standalone Coop tools (coop-data-doc / coop-sql-review / coop-dax-review)
+# and the Microsoft Fabric CLI (`fab`).
+#
+# Usage:
+#   coop                      Launch the branded Pi agent (passes extra args to pi)
+#   coop doctor               Check dependencies and configuration
+#   coop update               Update Pi, Coop tools, vibes, skills/prompts, then doctor
+#   coop install              Fresh-install / bootstrap everything (idempotent)
+#   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
+#   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
+#   coop sql-review [paths]   Run coop-sql-review and summarize findings (--json for raw)
+#   coop dax-review [paths]   Run coop-dax-review and summarize findings (--json for raw)
+#   coop fabric [args]        Pass through to the Microsoft Fabric CLI (`fab`)
+#   coop version              Print coop + pi versions
+#   coop help                 Show this help
+#
+# Pi management, aliased under coop (so coop is the only command you type):
+#   coop list                 List installed Pi extensions   (-> pi list)
+#   coop config               Open Pi's resource TUI         (-> pi config)
+#   coop add <source>         Install a Pi extension          (-> pi install <source>)
+#   coop install <source>     Same as `coop add` (bare `coop install` bootstraps)
+#   coop remove <source>      Remove a Pi extension           (-> pi remove <source>)
+#   coop pi <args...>         Raw escape hatch to pi          (-> pi <args...>)
+#
+set -euo pipefail
+
+# --- Resolve COOP_ROOT and load the shared library ---------------------------
+_src="${BASH_SOURCE[0]}"
+while [ -h "$_src" ]; do
+  _dir="$(cd -P "$(dirname "$_src")" >/dev/null 2>&1 && pwd)"
+  _src="$(readlink "$_src")"
+  case "$_src" in /*) ;; *) _src="$_dir/$_src" ;; esac
+done
+COOP_ROOT="$(cd -P "$(dirname "$_src")/.." >/dev/null 2>&1 && pwd)"
+export COOP_ROOT
+# shellcheck source=lib/common.sh
+. "$COOP_ROOT/lib/common.sh"
+
+usage() {
+  cat >&2 <<EOF
+${COOP_BOLD}${COOP_NAVY}coop${COOP_RST} ${COOP_DIM}v${COOP_VERSION}${COOP_RST} — the Cooptimize terminal agent (a branded layer on Pi)
+
+${COOP_BOLD}Usage${COOP_RST}
+  coop                      Launch the branded Pi agent
+  coop doctor               Check dependencies and configuration
+  coop update               Update Pi + Coop tools + vibes/skills, then run doctor
+  coop install              Fresh-install / bootstrap everything (idempotent)
+  coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
+  coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
+  coop sql-review [paths]   Run coop-sql-review; summarize findings (--json = raw)
+  coop dax-review [paths]   Run coop-dax-review; summarize findings (--json = raw)
+  coop fabric [args]        Pass through to the Microsoft Fabric CLI (fab)
+  coop version              Print coop + pi versions
+  coop help                 Show this help
+
+${COOP_BOLD}Pi management (aliased under coop)${COOP_RST}
+  coop list                 List installed Pi extensions   (pi list)
+  coop config               Open Pi's resource TUI         (pi config)
+  coop add <source>         Install a Pi extension         (pi install <source>)
+  coop remove <source>      Remove a Pi extension          (pi remove <source>)
+  coop pi <args...>         Raw escape hatch to pi
+
+Anything after \`coop\` that is not a known subcommand is passed straight to pi,
+e.g. \`coop -c\` resumes the last session, \`coop @notes.md "review this"\`.
+EOF
+}
+
+# --- Optional Azure preflight (non-fatal) ------------------------------------
+# Mirrors the team's pi-ready habit: if the project pins a Fabric tenant and the
+# Azure CLI is present, make sure a Power BI token exists before launching.
+# Skipped entirely when COOP_SKIP_AZ=1 or no tenant is configured.
+coop_az_preflight() {
+  [ "${COOP_SKIP_AZ:-0}" = "1" ] && return 0
+  have az || return 0
+  local proj tenant
+  proj="$(coop_find_project_yml)"
+  [ -n "$proj" ] || return 0
+  tenant="$(coop_yaml_get "$proj" "fabric.tenant_id" "")"
+  case "$tenant" in ""|TODO*|"TODO:"*) return 0 ;; esac
+  if az account get-access-token --resource https://analysis.windows.net/powerbi/api >/dev/null 2>&1; then
+    return 0
+  fi
+  coop_warn "Azure / Power BI token missing or expired."
+  if coop_confirm "Run 'az login' for tenant ${tenant} now?"; then
+    az login --tenant "$tenant" --allow-no-subscriptions || coop_warn "az login failed; continuing anyway."
+  fi
+}
+
+# --- Launch the branded Pi agent ---------------------------------------------
+launch_pi() {
+  have pi || coop_die "pi is not installed. Run: coop install   (or: npm install -g @mariozechner/pi-coding-agent)"
+
+  coop_az_preflight
+
+  local args=()
+  # Governance system prompt (read-only-first guardrails). Appended, not replaced.
+  [ -f "$COOP_ROOT/docs/guardrails.md" ] && args+=(--append-system-prompt "$COOP_ROOT/docs/guardrails.md")
+  # Cooptimize skills — load each skill folder individually. The official Microsoft
+  # drop-in slot (skills/_microsoft/) is SUBORDINATE: a Microsoft skill is surfaced
+  # only if it is (a) named in microsoft_skills.allow[] in .coop/project.yml AND
+  # (b) does not conflict (by folder name or frontmatter `name:`) with one of our
+  # own skills. Cooptimize skills always win.
+  if [ -d "$COOP_ROOT/skills" ]; then
+    local d name fm allow proj own_names=" "
+    for d in "$COOP_ROOT"/skills/*/; do
+      [ -d "$d" ] || continue
+      name="$(basename "$d")"
+      [ "$name" = "_microsoft" ] && continue
+      [ -f "${d}SKILL.md" ] || continue
+      args+=(--skill "$d")
+      own_names="$own_names$name "
+      fm="$(coop_skill_name "${d}SKILL.md")"
+      [ -n "$fm" ] && own_names="$own_names$fm "
+    done
+    proj="$(coop_find_project_yml)"
+    if [ -n "$proj" ] && [ -d "$COOP_ROOT/skills/_microsoft" ]; then
+      while IFS= read -r allow; do
+        [ -z "$allow" ] && continue
+        case "$allow" in TODO*) continue ;; esac
+        [ -f "$COOP_ROOT/skills/_microsoft/$allow/SKILL.md" ] || continue
+        # Skip if the Microsoft skill collides with one of ours (subordinate rule).
+        case "$own_names" in *" $allow "*) coop_warn "skipping Microsoft skill '$allow' (conflicts with a Cooptimize skill)"; continue ;; esac
+        fm="$(coop_skill_name "$COOP_ROOT/skills/_microsoft/$allow/SKILL.md")"
+        if [ -n "$fm" ]; then
+          case "$own_names" in *" $fm "*) coop_warn "skipping Microsoft skill '$allow' (name '$fm' conflicts with a Cooptimize skill)"; continue ;; esac
+        fi
+        args+=(--skill "$COOP_ROOT/skills/_microsoft/$allow")
+      done <<EOF
+$(coop_yaml_list "$proj" "microsoft_skills.allow")
+EOF
+    fi
+  fi
+  [ -d "$COOP_ROOT/prompts" ]  && args+=(--prompt-template "$COOP_ROOT/prompts")
+  [ -f "$COOP_ROOT/themes/cooptimize.json" ] && args+=(--theme "$COOP_ROOT/themes/cooptimize.json")
+  # Cooptimize companion extensions: branding/splash/vibes, and native review tools.
+  [ -e "$COOP_ROOT/extensions/coop-powerline" ] && args+=(-e "$COOP_ROOT/extensions/coop-powerline")
+  [ -e "$COOP_ROOT/extensions/coop-tools" ]     && args+=(-e "$COOP_ROOT/extensions/coop-tools")
+  # Point the extension at our vibe files and brand splash.
+  export COOP_VIBES_DIR="$COOP_ROOT/vibes"
+  export COOP_SPLASH_FILE="$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi"
+
+  exec pi ${args[@]+"${args[@]}"} "$@"
+}
+
+# --- Tool wrappers -----------------------------------------------------------
+default_paths_for() {
+  # Echo a sensible default review path from project.yml, else ".".
+  local proj; proj="$(coop_find_project_yml)"
+  local p=""
+  [ -n "$proj" ] && p="$(coop_yaml_get "$proj" "repositories.fabric_dw.sql_root" "")"
+  case "$p" in ""|TODO*) echo "." ;; *) echo "$p" ;; esac
+}
+
+run_review() {
+  # run_review <tool-binary> <label> [args...]
+  local bin="$1" label="$2"; shift 2
+  have "$bin" || coop_die "$bin is not installed. Run: coop install"
+
+  local raw=0 strict=() paths=() a
+  for a in "$@"; do
+    case "$a" in
+      --json) raw=1 ;;
+      --strict) strict+=(--strict) ;;
+      *) paths+=("$a") ;;
+    esac
+  done
+  if [ "${#paths[@]}" -eq 0 ]; then paths=("$(default_paths_for)"); fi
+
+  if [ "$raw" = "1" ]; then
+    exec "$bin" check "${paths[@]}" --format json ${strict[@]+"${strict[@]}"}
+  fi
+
+  coop_head "$label — ${paths[*]}"
+  local out rc=0
+  out="$("$bin" check "${paths[@]}" --format json ${strict[@]+"${strict[@]}"})" || rc=$?
+  printf '%s' "$out" | coop_summarize_review_json
+  coop_info "For the full advisory report: $bin check ${paths[*]} --format text"
+  return $rc   # propagate --strict CI exit codes
+}
+
+run_data_doc() {
+  have coop-data-doc || coop_die "coop-data-doc is not installed. Run: coop install"
+  if [ "$#" -eq 0 ]; then set -- build; fi
+  coop_head "coop-data-doc $*"
+  coop-data-doc "$@"
+  # Summarize machine-readable artifacts when present (manifest.json / graph.json).
+  local f
+  for f in manifest.json graph.json docs/manifest.json docs/graph.json site/manifest.json; do
+    if [ -f "$f" ]; then
+      coop_ok "Machine-readable output: $f"
+      local py; py="$(coop_python)" || break
+      "$py" - "$f" <<'PY' 2>/dev/null || true
+import sys, json
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+def n(*keys):
+    for k in keys:
+        v = d.get(k)
+        if isinstance(v, list): return len(v)
+        if isinstance(v, dict): return len(v)
+    return None
+parts=[]
+for label,keys in [("nodes",("nodes","objects","entities")),("edges",("edges","links","lineage")),("docs",("documents","docs","pages"))]:
+    c=n(*keys)
+    if c is not None: parts.append(f"{c} {label}")
+if parts: print("  " + ", ".join(parts))
+PY
+      break
+    fi
+  done
+}
+
+# --- Dispatch ----------------------------------------------------------------
+cmd="${1:-}"
+case "$cmd" in
+  ""|--no-launch) launch_pi ;;
+  doctor)        shift; exec "$COOP_ROOT/scripts/doctor.sh" "$@" ;;
+  update)        shift; exec "$COOP_ROOT/scripts/update.sh" "$@" ;;
+  bootstrap)     shift; exec "$COOP_ROOT/scripts/install.sh" "$@" ;;
+  install)
+    # Bare `coop install` (or with bootstrap flags) bootstraps the whole stack.
+    # `coop install <source>` adds a Pi extension (alias of `coop add`).
+    shift
+    if [ "$#" -eq 0 ] || [ "${1#-}" != "$1" ]; then
+      exec "$COOP_ROOT/scripts/install.sh" "$@"
+    fi
+    have pi || coop_die "pi not installed. Run: coop bootstrap"
+    exec pi install "$@"
+    ;;
+  sync)          shift; exec "$COOP_ROOT/scripts/sync.sh" "$@" ;;
+  data-doc)      shift; run_data_doc "$@" ;;
+  sql-review)    shift; run_review coop-sql-review "SQL review" "$@" ;;
+  dax-review)    shift; run_review coop-dax-review "DAX review" "$@" ;;
+  fabric|fab)    shift; have fab || coop_die "Microsoft Fabric CLI (fab) not found. Run: coop install"; exec fab "$@" ;;
+  # --- Pi management, aliased under coop ---
+  add)           shift; have pi || coop_die "pi not installed. Run: coop bootstrap"; exec pi install "$@" ;;
+  remove|uninstall) shift; have pi || coop_die "pi not installed."; exec pi "$cmd" "$@" ;;
+  list)          shift; have pi || coop_die "pi not installed."; exec pi list "$@" ;;
+  config)        shift; have pi || coop_die "pi not installed."; exec pi config "$@" ;;
+  pi)            shift; have pi || coop_die "pi not installed."; exec pi "$@" ;;
+  version|--version|-V)
+    printf 'coop %s\n' "$COOP_VERSION"
+    if have pi; then printf 'pi   %s\n' "$(pi --version 2>/dev/null || echo '?')"; else printf 'pi   (not installed)\n'; fi
+    ;;
+  help|--help|-h) usage ;;
+  -*)            launch_pi "$@" ;;   # unknown flags -> pass to pi (e.g. coop -c)
+  *)             # Unknown subcommand: treat as pi input (files/messages).
+                 launch_pi "$@" ;;
+esac

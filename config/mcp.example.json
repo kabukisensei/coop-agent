@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "fabric": {
+      "command": "npx",
+      "args": ["-y", "@microsoft/fabric-mcp", "server", "start", "--mode", "namespace"],
+      "env": {
+        "AZURE_TOKEN_CREDENTIALS": "AzureCliCredential",
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    },
+    "powerbi": {
+      "command": "npx",
+      "args": ["-y", "powerbi-mcp-server@latest", "--authentication", "azcli", "--tenant", "TODO-tenant-id", "--readonly"],
+      "env": {
+        "AZURE_TOKEN_CREDENTIALS": "AzureCliCredential"
+      }
+    },
+    "microsoft-learn": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://learn.microsoft.com/api/mcp"]
+    },
+    "context-mode": {
+      "command": "context-mode"
+    }
+  }
+}

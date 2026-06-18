@@ -1,0 +1,214 @@
+# Cooptimize agent — project contract (.coop/project.yml)
+# Copy this file to <your-repo>/.coop/project.yml and replace every TODO.
+# coop's skills, prompts, and the 11-step workflow treat this file as the single
+# source of truth. coop reads it before any file work. Based on the original
+# pi-analytics-agent agent-config.template.yml, extended for the Cooptimize stack.
+
+profile:
+  consultant_name: "TODO: Your name"
+  organization: "Cooptimize"
+  client: "TODO: client / engagement"
+  timezone: "America/Chicago"
+  default_branch: "main"
+  work_mode: "consultant_review_first"     # read-only first; plan + approval before edits
+
+# --- Repositories the agent may touch ----------------------------------------
+repositories:
+  fabric:
+    description: "Semantic models, reports, and Fabric artifacts"
+    local_path: "TODO: /path/to/fabric"
+    remote_name: "origin"
+    default_branch: "main"
+    agent_allowed_to_commit:
+      - "docs/**"
+      - "site/**"
+      - "docs/agent/logs/**"
+      - "docs/agent/diagrams/**"
+    agent_never_commit:
+      - "**/*.pbip"
+      - "**/*.pbir"
+      - "**/*.bim"
+      - "**/*.tmdl"
+      - "**/*.dax"
+      - "**/*.json"
+      - "**/*.rdl"
+      - "**/*.SemanticModel/**"
+      - "**/*.Report/**"
+  fabric_dw:
+    description: "Warehouse / Lakehouse SQL"
+    local_path: "TODO: /path/to/fabric-dw"
+    remote_name: "origin"
+    default_branch: "main"
+    sql_root: "TODO: sql"
+    agent_allowed_to_commit:
+      - "docs/**"
+      - "site/**"
+      - "docs/agent/logs/**"
+      - "docs/agent/diagrams/**"
+    agent_never_commit:
+      - "**/*.sql"
+      - "**/*.py"
+      - "**/*.ipynb"
+
+# --- Microsoft Fabric ---------------------------------------------------------
+fabric:
+  tenant_id: "TODO: tenant id (used for az login + Power BI MCP)"
+  default_workspace_name: "TODO: workspace name"
+  default_workspace_id: "TODO: workspace id"
+  lakehouse_names: ["TODO: lakehouse"]
+  warehouse_names: ["TODO: warehouse"]
+  environment_names:
+    dev:  "TODO: dev workspace"
+    test: "TODO: test workspace"
+    prod: "TODO: prod workspace"
+
+power_bi:
+  default_workspace_name: "TODO: Power BI workspace name"
+  default_workspace_id: "TODO: Power BI workspace id"
+  semantic_models:
+    - name: "TODO: semantic model name"
+      path: "TODO: relative path in fabric repo"
+      workspace: "TODO: workspace name"
+  reports:
+    - name: "TODO: report name"
+      path: "TODO: relative path in fabric repo"
+      semantic_model: "TODO: semantic model name"
+      app_category: "TODO: app/category"
+
+# --- D365 (Finance & Operations / source system) -----------------------------
+d365:
+  environment: "TODO: D365 environment name"
+  entities_of_interest: ["TODO: entity/table names"]
+  migration_targets: ["bronze", "silver", "gold"]
+
+# --- Tools --------------------------------------------------------------------
+tools:
+  fabric_cli:
+    command: "fab"            # the Microsoft Fabric CLI (ms-fabric-cli)
+    enabled: true
+    default_mode: "read_only_first"
+  fabric_cicd:
+    command: "fabric-cicd"
+    enabled: true
+    default_mode: "validate_only"
+  tabular_editor_cli:
+    enabled: false
+    executable_path: "TODO: C:/Program Files/Tabular Editor 3/TabularEditor.exe"
+    bpa_rules_path: "TODO: path/to/BPARules.json"
+  coop_data_doc:
+    command: "coop-data-doc"
+    enabled: true
+    default_command: "build"
+    machine_outputs: ["graph.json", "manifest.json"]
+  coop_sql_review:
+    command: "coop-sql-review"
+    enabled: true
+    invoke: "check {paths} --format json"
+    advisory_only: true       # never edits or blocks
+  coop_dax_review:
+    command: "coop-dax-review"
+    enabled: true
+    invoke: "check {paths} --format json"
+    advisory_only: true
+
+# --- MCP servers (all read-only, all optional) -------------------------------
+# Wired via pi-mcp-adapter from ~/.config/mcp/mcp.json (see config/mcp.example.json).
+# coop NEVER performs write/create/update/delete/deploy MCP actions without
+# explicit user approval, regardless of server capability.
+mcp:
+  fabric:
+    enabled: true
+    allowed_default_actions: ["list", "read", "inspect"]
+    requires_approval_actions: ["create", "update", "delete", "deploy"]
+  powerbi:
+    enabled: true
+    readonly_flag: true
+    allowed_default_actions: ["list", "read", "inspect"]
+    requires_approval_actions: ["create", "update", "delete", "publish"]
+  microsoft_learn:
+    enabled: true
+    purpose: "Always-current Microsoft documentation lookups"
+  context_mode:
+    enabled: true
+
+# --- Persistent memory (pi-hermes-memory) ------------------------------------
+memory:
+  extension: "pi-hermes-memory"
+  enabled: true
+  secret_scanning: true       # block secrets from being written to memory/output
+
+# --- Official Microsoft agent skills (subordinate, opt-in) -------------------
+# Official Microsoft agent skills (https://github.com/microsoft/skills, MIT) are
+# SUBORDINATE to Cooptimize skills: a Microsoft skill is surfaced only if it is
+# allow-listed below AND it does not conflict (by folder name or frontmatter name)
+# with one of our own skills. On any conflict, the Cooptimize skill wins.
+# Fetch allow-listed skills into skills/_microsoft/ with:
+#   scripts/fetch-microsoft-skills.sh
+microsoft_skills:
+  source: "https://github.com/microsoft/skills"
+  load_dir: "skills/_microsoft"
+  allow: []   # e.g. ["azure-cosmos-db-py"] — empty = load none
+
+# --- Standards ----------------------------------------------------------------
+standards:
+  sql: "docs/standards/sql-standards.md"
+  dax: "docs/standards/dax-standards.md"
+  documentation: "docs/standards/documentation-standards.md"
+  fabric: "docs/standards/fabric-standards.md"
+
+# --- Backups / logging / documentation ---------------------------------------
+backup:
+  root: ".backups"
+  timestamp_format: "%Y%m%d_%H%M%S"
+  naming_pattern: "{original_name}.{timestamp}.bak"
+  required_before_edit: true
+
+logging:
+  daily_log_path: "docs/agent/logs/daily/{yyyy-mm-dd}.md"
+  weekly_log_path: "docs/agent/logs/weekly/{yyyy}-W{ww}.md"
+  require_task_log: true
+
+documentation:
+  agent_docs_root: "docs/agent"
+  human_site_root: "site"
+  glossary_path: "docs/agent/glossary/index.md"
+  diagrams_path: "docs/agent/diagrams"
+  source_of_truth: "markdown_first_html_generated"
+  use_coop_data_doc: true     # step 3 of the workflow calls coop-data-doc
+
+# --- Workflow + governance ----------------------------------------------------
+workflow:
+  skill: "coop-workflow"      # the 11-step grounding skill
+  steps:
+    - "Read .coop/project.yml + the relevant standards"
+    - "Identify repo/object + upstream/downstream impact; git status && git pull"
+    - "Read target file(s) + related docs/lineage (coop-data-doc)"
+    - "Write a short PLAN and get explicit review/approval before any edit"
+    - "Create a timestamped backup of every file to be changed"
+    - "Make the smallest safe edit"
+    - "Run the applicable review (coop-sql-review / coop-dax-review; Tabular Editor BPA / fabric-cicd validate where relevant)"
+    - "Show git diff + summarize the change"
+    - "Update Markdown docs / glossary / lineage; regenerate site if docs changed"
+    - "Append to the daily log"
+    - "Commit docs/logs/site ONLY with approval; never commit source"
+
+approval_policy:
+  always_allowed:
+    - "read files"
+    - "git status / git diff / git pull"
+    - "create backups"
+    - "run coop-sql-review / coop-dax-review / coop-data-doc (advisory)"
+    - "MCP list / read / inspect"
+    - "update markdown docs, html site, logs"
+  ask_first:
+    - "delete files"
+    - "fabric-cicd deploy / run deployment"
+    - "change production workspace"
+    - "commit documentation changes"
+  never_without_explicit_instruction:
+    - "commit SQL/DAX/model/report source changes"
+    - "push to remote"
+    - "deploy to test/prod"
+    - "MCP create/update/delete/deploy/publish"
+    - "delete Fabric / Power BI artifacts"
+    - "print secrets, tokens, connection strings, or .env contents"
