@@ -88,7 +88,7 @@ coop_az_preflight() {
   proj="$(coop_find_project_yml)"
   [ -n "$proj" ] || return 0
   tenant="$(coop_yaml_get "$proj" "fabric.tenant_id" "")"
-  case "$tenant" in ""|TODO*|"TODO:"*) return 0 ;; esac
+  case "$tenant" in ""|TODO*) return 0 ;; esac
   if az account get-access-token --resource https://analysis.windows.net/powerbi/api >/dev/null 2>&1; then
     return 0
   fi

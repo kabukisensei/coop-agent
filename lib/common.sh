@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034  # shared color/var library: many vars are used by sourcing scripts, not here
 # coop-agent shared shell library.
 # Sourced by bin/coop and scripts/*.sh. Defines helpers only; never calls `set -e`
 # (that is the caller's job) and never `exit`s except via coop_die().
