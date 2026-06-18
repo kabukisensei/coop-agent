@@ -74,9 +74,9 @@ check coop-dax-review required "pipx install coop-dax-review" "coop-dax-review -
 coop_head "Fabric / semantic-model tooling"
 # fabric-cicd is a Python LIBRARY (no CLI) — check it's importable in the Fabric CLI's env.
 if have fab; then
-  fabbin="$(command -v fab)"; fabreal="$fabbin"
-  [ -L "$fabbin" ] && fabreal="$(readlink "$fabbin")"
-  case "$fabreal" in /*) ;; *) fabreal="$(dirname "$fabbin")/$fabreal" ;; esac
+  fabbin="$(command -v fab)"
+  # Resolve transitively (handles multi-hop symlinks; readlink -f isn't portable on macOS).
+  fabreal="$("$(coop_python)" -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$fabbin" 2>/dev/null || echo "$fabbin")"
   fabpy="$(dirname "$fabreal")/python"
   if [ -x "$fabpy" ] && "$fabpy" -c "import fabric_cicd" >/dev/null 2>&1; then
     ok "fabric-cicd (library, in the Fabric CLI env)"
@@ -90,7 +90,7 @@ fi
 te_path="$(coop_yaml_get "$(coop_find_project_yml)" "tools.tabular_editor_cli.executable_path" "")"
 case "$te_path" in
   ""|TODO*) if have TabularEditor.exe; then ok "Tabular Editor CLI on PATH"; else warn "Tabular Editor CLI not configured" "set tools.tabular_editor_cli.executable_path in .coop/project.yml (optional)"; fi ;;
-  *) [ -x "$te_path" ] || [ -f "$te_path" ] && ok "Tabular Editor CLI: $te_path" || warn "Tabular Editor CLI path not found: $te_path" ;;
+  *) if [ -x "$te_path" ] || [ -f "$te_path" ]; then ok "Tabular Editor CLI: $te_path"; else warn "Tabular Editor CLI path not found: $te_path"; fi ;;
 esac
 
 coop_head "Pi extensions"
@@ -111,7 +111,7 @@ for f in "$PI_CODING_AGENT_DIR/mcp.json" "$PWD/.mcp.json" "$PWD/.pi/mcp.json" "$
 done
 if [ -n "$mcp_found" ]; then
   ok "MCP config: $mcp_found"
-  for s in fabric powerbi microsoft-learn learn context-mode; do
+  for s in fabric powerbi microsoft-learn context-mode; do
     grep -qi "\"$s\"" "$mcp_found" 2>/dev/null && ok "  • $s server configured" || true
   done
   grep -qiE 'learn\.microsoft\.com|microsoft-learn' "$mcp_found" 2>/dev/null || warn "  Microsoft Learn MCP not configured" "coop sync   (adds it read-only)"

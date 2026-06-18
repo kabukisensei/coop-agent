@@ -55,7 +55,7 @@ while IFS= read -r skill; do
   [ -z "$skill" ] && continue
   case "$skill" in TODO*) continue ;; esac
   # Reject anything but a safe skill-folder charset (blocks globs / path traversal).
-  case "$skill" in *[!a-zA-Z0-9._-]*) coop_warn "skip '$skill' — invalid skill name"; continue ;; esac
+  case "$skill" in .|..|-*|*[!a-zA-Z0-9._-]*) coop_warn "skip '$skill' — invalid skill name"; continue ;; esac
   case "$own" in *" $skill "*) coop_warn "skip '$skill' — conflicts with a Cooptimize skill (subordinate rule)"; continue ;; esac
   # microsoft/skills stores SKILL.md folders under .github/skills, plugins, or skills/
   found=""

@@ -29,6 +29,7 @@ coop_ok "bin/coop and scripts are executable"
 # --- 2. Isolated Pi agent dir + shared credentials ---------------------------
 coop_head "Isolated Pi agent dir"
 mkdir -p "$PI_AGENT"
+chmod 700 "$PI_AGENT" 2>/dev/null || true   # holds the auth.json login link
 coop_ok "coop Pi agent dir: $PI_AGENT"
 # Share login/model config from your personal pi so coop doesn't need a separate
 # login — but keep settings/extensions/themes isolated. Only symlink if absent.

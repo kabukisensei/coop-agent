@@ -1,10 +1,10 @@
 ﻿#!/usr/bin/env pwsh
 #
 # coop sync (Windows / PowerShell mirror of scripts/sync.sh) —
-# refresh Cooptimize brand assets and runtime wiring (non-destructive):
-#   • ensure the core Pi extensions are installed (MCP / memory / powerline)
-#   • place the read-only MCP config (fabric / powerbi / microsoft-learn / context-mode)
-#     into ~/.config/mcp/mcp.json IF you don't already have one (never clobbers)
+# provision coop's ISOLATED Pi agent dir (~/.coop/agent) + brand assets (non-destructive):
+#   • create the isolated dir; share auth/models from your personal pi (login)
+#   • install coop's core Pi extensions INTO that dir (MCP / memory / better-openai)
+#   • place the read-only MCP config into the isolated dir if absent (never clobbers)
 #   • verify splash / theme / vibes are present
 #
 $ErrorActionPreference = 'Continue'
@@ -59,8 +59,15 @@ foreach ($f in @('auth.json', 'models.json')) {
   $dst = Join-Path $PI_AGENT $f
   $src = Join-Path $GLOBAL_AGENT $f
   if (-not (Test-Path -LiteralPath $dst) -and (Test-Path -LiteralPath $src -PathType Leaf)) {
-    Copy-Item -LiteralPath $src -Destination $dst
-    Coop-Ok "shared $f from your personal pi (login/models)"
+    # Prefer a symlink so refreshed logins stay live (like bash `ln -sf`); fall back to a
+    # static copy when symlinks aren't allowed (no Developer Mode / admin).
+    try {
+      New-Item -ItemType SymbolicLink -Path $dst -Target $src -ErrorAction Stop | Out-Null
+      Coop-Ok "linked $f from your personal pi (login/models)"
+    } catch {
+      Copy-Item -LiteralPath $src -Destination $dst
+      Coop-Ok "copied $f from your personal pi (login/models; enable Developer Mode for a live link)"
+    }
   }
 }
 
@@ -87,11 +94,6 @@ $MCP_DST = Join-Path $PI_AGENT 'mcp.json'
 if (Test-Path -LiteralPath $MCP_SRC -PathType Leaf) {
   if (Test-Path -LiteralPath $MCP_DST -PathType Leaf) {
     Coop-Ok "MCP config already exists: $MCP_DST"
-    $dstText = (Get-Content -LiteralPath $MCP_DST -Raw -ErrorAction SilentlyContinue)
-    if ($dstText -notmatch '(?i)learn\.microsoft\.com|microsoft-learn') {
-      Coop-Warn 'Microsoft Learn MCP not in your config.'
-      Coop-Say  "      Merge the 'microsoft-learn' server from: $MCP_SRC"
-    }
   } else {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $MCP_DST) | Out-Null
     Copy-Item -LiteralPath $MCP_SRC -Destination $MCP_DST

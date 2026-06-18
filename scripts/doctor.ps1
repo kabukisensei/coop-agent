@@ -40,40 +40,20 @@ function Coop-Head { param([string]$m) [Console]::Error.WriteLine("`n$($script:C
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 function Get-CoopPython { if (Test-Have 'python3') { 'python3' } elseif (Test-Have 'python') { 'python' } else { $null } }
 
+# Read a dotted scalar key from YAML via lib/_yaml.py (PyYAML when present, else the
+# dependency-free fallback parser) — matches bash + coop.ps1 on machines without PyYAML.
 function Get-CoopYamlValue {
   param([string]$File, [string]$Key, [string]$Default = '')
   if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { return $Default }
   $py = Get-CoopPython
   if (-not $py) { return $Default }
-  $pyScript = @'
-import sys
-path, dotted, default = sys.argv[1], sys.argv[2], sys.argv[3]
-try:
-    import yaml
-except Exception:
-    print(default, end=""); sys.exit(0)
-try:
-    with open(path) as f:
-        data = yaml.safe_load(f) or {}
-except Exception:
-    print(default, end=""); sys.exit(0)
-cur = data
-for part in dotted.split('.'):
-    if isinstance(cur, dict) and part in cur:
-        cur = cur[part]
-    else:
-        print(default, end=""); sys.exit(0)
-if cur is None:
-    print(default, end="")
-elif isinstance(cur, (list, dict)):
-    print(default, end="")
-else:
-    print(cur, end="")
-'@
+  $yamlPy = Join-Path $script:CoopRoot 'lib/_yaml.py'
   try {
-    $out = ($pyScript | & $py - $File $Key $Default 2>$null)
+    $out = (& $py $yamlPy get $File $Key $Default 2>$null)
     if ($null -eq $out) { return $Default }
-    return ($out | Out-String).TrimEnd("`r","`n")
+    $out = ($out | Out-String).TrimEnd("`r", "`n")
+    if ($out -eq '') { return $Default }
+    return $out
   } catch { return $Default }
 }
 

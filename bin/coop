@@ -216,7 +216,7 @@ PY
 
 # --- Authoring scaffolders ---------------------------------------------------
 # Validate a kebab-case-ish resource name (letters, digits, _ . -).
-coop_valid_name() { case "$1" in ""|*[!a-zA-Z0-9._-]*) return 1 ;; *) return 0 ;; esac; }
+coop_valid_name() { case "$1" in ""|.|..|-*|*[!a-zA-Z0-9._-]*) return 1 ;; *) return 0 ;; esac; }
 
 coop_init() {
   local dir="${1:-$PWD}" dst="${1:-$PWD}/.coop/project.yml"
