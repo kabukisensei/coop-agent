@@ -10,8 +10,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **`coop release [patch|minor|major]`** — one-command release cut: bumps `VERSION` +
   the extension manifests, rolls the CHANGELOG `[Unreleased]` section into a dated
   release heading, commits, tags `vX.Y.Z`, and pushes (commit + tag). Guards on a clean
-  working tree; `--yes` skips the confirm, `--no-push` stops at the local tag. Mirrored
-  in `bin/coop.ps1`.
+  working tree; `--yes` skips the confirm, `--no-push` stops at the local tag,
+  `--no-check` skips the pre-tag transpile gate. Mirrored in `bin/coop.ps1`.
+- **`coop doctor --fix`** — applies the safe remediations (`coop sync` for
+  extensions/MCP/assets, `pipx install` for missing Coop tools), then re-checks.
+- **Release GitHub Action** (`.github/workflows/release.yml`) — on a `v*` tag, publishes
+  a GitHub Release whose body is that version's `CHANGELOG.md` section.
+
+### Changed
+
+- **`coop doctor` now checks the Node version** (Pi requires ≥ 22.19) and warns clearly
+  instead of letting teammates hit a cryptic pi failure; flags a lingering deprecated
+  `@mariozechner/pi-coding-agent` global install; and nudges a first-run **Pi login** when
+  none is found. `coop release` verifies the extensions transpile before tagging.
+- **Guardrails teach the new tools** — the agent is told to use `pi-web-access` (read-only
+  web) and `@juicesharp/rpiv-ask-user-question` (structured questions for consent rounds);
+  `coop init` now also points you to `coop data-doc setup` / `/setup-docs`.
 
 ## [0.2.0] — 2026-06-21
 

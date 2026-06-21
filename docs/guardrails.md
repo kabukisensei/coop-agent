@@ -86,6 +86,14 @@ You have these tools. Know they exist and reach for the right one:
   write/deploy/publish MCP actions without approval.
 - **Memory** (pi-hermes-memory) — durable facts, preferences, and corrections across
   sessions; never store secrets.
+- **Web access** (`pi-web-access`) — search the web, fetch URLs, clone a GitHub repo,
+  extract PDFs/videos. Read-only, so it fits read-only-first. Prefer the **Microsoft
+  Learn MCP** for Microsoft/Fabric/Power BI docs; use web access for everything else
+  (vendor docs, standards references, articles).
+- **Ask the user** (`@juicesharp/rpiv-ask-user-question`) — when you would otherwise
+  **guess**, put a structured, typed-option question to the user instead. Reach for it
+  at **consent rounds** and plan-and-approve decision points — surfacing a clear choice
+  is exactly how Cooptimize works by consent.
 
 ### Read focused — protect the context window
 

@@ -372,6 +372,7 @@ function Invoke-CoopInit {
   Copy-Item -LiteralPath $tmpl -Destination $dst
   Coop-Ok "Wrote $dst"
   Coop-Info 'Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor'
+  Coop-Info 'Set up lineage docs too: run `coop data-doc setup` (full wizard) — or just launch `coop` and accept the /setup-docs offer.'
 }
 
 function New-CoopSkill {
@@ -438,20 +439,23 @@ Steps:
 # Windows CRLF/BOM drift. Requires a clean working tree.
 function Invoke-CoopRelease {
   param([string[]]$RestArgs = @())
-  $level = ''; $assumeYes = $false; $doPush = $true
+  $level = ''; $assumeYes = $false; $doPush = $true; $doCheck = $true
   foreach ($a in $RestArgs) {
     switch -Regex ($a) {
       '^(patch|minor|major)$' { $level = $a }
       '^(-y|--yes)$'          { $assumeYes = $true }
       '^--no-push$'           { $doPush = $false }
+      '^--check$'             { $doCheck = $true }
+      '^--no-check$'          { $doCheck = $false }
       '^(-h|--help)$' {
-        Coop-Say 'Usage: coop release [patch|minor|major] [--yes] [--no-push]'
+        Coop-Say 'Usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]'
         Coop-Say '  Bump VERSION + extension manifests, roll CHANGELOG [Unreleased] into a dated'
         Coop-Say '  release, commit, tag vX.Y.Z, and push (commit + tag). Default level: patch.'
+        Coop-Say '  Verifies the extensions transpile first (--no-check to skip).'
         Coop-Say '  Requires a clean working tree (commit your changes first).'
         return
       }
-      default { Coop-Die "unknown arg '$a' — usage: coop release [patch|minor|major] [--yes] [--no-push]" }
+      default { Coop-Die "unknown arg '$a' — usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]" }
     }
   }
   if (-not $level) { $level = 'patch' }
@@ -473,6 +477,28 @@ function Invoke-CoopRelease {
 
   & git -C $root rev-parse "v$new" *> $null
   if ($LASTEXITCODE -eq 0) { Coop-Die "tag v$new already exists." }
+
+  # Pre-flight: never tag code that doesn't transpile. Skips when npx is unavailable;
+  # bypass with --no-check. Builds to a temp file (portable null output).
+  if ($doCheck) {
+    if (Test-Have 'npx') {
+      $buildFail = $false
+      Get-ChildItem -LiteralPath (Join-Path $root 'extensions') -Directory | ForEach-Object {
+        $ext = Join-Path $_.FullName 'index.ts'
+        if (Test-Path -LiteralPath $ext) {
+          $tmpOut = [System.IO.Path]::GetTempFileName()
+          & npx -y esbuild $ext --bundle --format=esm --platform=node --packages=external --outfile=$tmpOut *> $null
+          $code = $LASTEXITCODE
+          Remove-Item -LiteralPath $tmpOut -ErrorAction SilentlyContinue
+          if ($code -ne 0) { Coop-Warn "extension does not build: $($_.Name)/index.ts"; $buildFail = $true }
+        }
+      }
+      if ($buildFail) { Coop-Die 'extension build check failed — fix it, or re-run with --no-check.' }
+      Coop-Ok 'extensions build'
+    } else {
+      Coop-Warn 'npx not found — skipping the extension build check.'
+    }
+  }
 
   $pushMsg = if ($doPush) { ' + push' } else { '' }
   if (-not $assumeYes) {

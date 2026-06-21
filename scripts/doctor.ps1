@@ -79,6 +79,15 @@ $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 
 $script:FAIL = 0   # required missing -> non-zero exit
 $script:WARN = 0
+$script:FIX  = $false   # --fix: auto-apply safe remediations at the end
+foreach ($a in $args) {
+  if ($a -eq '--fix') { $script:FIX = $true }
+  elseif ($a -eq '-h' -or $a -eq '--help') {
+    Coop-Say 'Usage: coop doctor [--fix]'
+    Coop-Say '  --fix  apply safe remediations (sync extensions/MCP/assets, install missing Coop tools), then re-check'
+    exit 0
+  }
+}
 
 function D-Ok   { param([string]$m) Coop-Ok $m }
 function D-Warn { param([string]$m, [string]$hint = '') Coop-Warn ($m + $(if ($hint) { " — $hint" } else { '' })); $script:WARN++ }
@@ -116,6 +125,36 @@ if (Test-Have 'pi') {
   if ($piRaw -match '(\d+)\.(\d+)\.(\d+)') {
     $piv = [version]("{0}.{1}.{2}" -f $matches[1], $matches[2], $matches[3])
     if ($piv -lt [version]'0.79.0') { D-Warn "pi $piv is older than the tested minimum (0.79.0)" 'coop update' }
+  }
+}
+
+# Pi (latest, @earendil-works) requires Node >= 22.19 — check the version so a teammate
+# on Node 18/20 gets a clear message instead of a cryptic pi failure.
+if (Test-Have 'node') {
+  $nraw = (& node --version 2>$null)
+  if ($nraw -match '(\d+)\.(\d+)\.(\d+)') {
+    $nv = [version]("{0}.{1}.{2}" -f $matches[1], $matches[2], $matches[3])
+    if ($nv -lt [version]'22.19.0') { D-Warn "Node $nv is older than Pi's requirement (>= 22.19)" "upgrade Node, or pin Pi's legacy build: npm i -g @earendil-works/pi-coding-agent@legacy-node20" }
+  }
+}
+
+# Lingering deprecated Pi package — coop migrated to @earendil-works (Out-String so
+# npm ls's exit code on an invalid tree doesn't matter).
+if (Test-Have 'npm') {
+  $globals = (& npm ls -g --depth=0 2>$null | Out-String)
+  if ($globals -match '@mariozechner/pi-coding-agent') {
+    D-Warn 'deprecated Pi package still installed globally (@mariozechner/pi-coding-agent; Pi is now @earendil-works)' 'remove if unused: npm uninstall -g @mariozechner/pi-coding-agent  (skip if an extension still depends on it)'
+  }
+}
+
+# First-run login: coop shares Pi auth in from ~/.pi/agent. A brand-new teammate has none.
+if (Test-Have 'pi') {
+  $authA = Join-Path (Get-CoopPiAgentDir) 'auth.json'
+  $authB = Join-Path (Join-Path $HOME '.pi\agent') 'auth.json'
+  if ((Test-Path -LiteralPath $authA -PathType Leaf) -or (Test-Path -LiteralPath $authB -PathType Leaf)) {
+    D-Ok 'Pi login present'
+  } else {
+    D-Warn 'no Pi login found yet' "your first 'coop' run will prompt you to sign in to a model provider"
   }
 }
 
@@ -222,9 +261,30 @@ Coop-Head 'Powerline / splash assets'
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi') -PathType Leaf) { D-Ok 'brand splash present' } else { D-Warn 'splash.ansi missing' 'run: coop sync' }
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'themes\cooptimize.json') -PathType Leaf) { D-Ok 'Cooptimize theme present' } else { D-Warn 'theme missing' }
 
+if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
+  Coop-Head 'Applying fixes (--fix)'
+  $syncScript = Join-Path $script:CoopRoot 'scripts\sync.ps1'
+  if (Test-Path -LiteralPath $syncScript) {
+    & $syncScript *> $null
+    if ($LASTEXITCODE -eq 0) { Coop-Ok 'synced extensions / MCP / assets' } else { Coop-Warn 'sync had issues (run: coop sync)' }
+  }
+  foreach ($t in @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')) {
+    if (-not (Test-Have $t)) {
+      Coop-Info "pipx install $t"
+      & pipx install $t *> $null
+      if ($LASTEXITCODE -eq 0) { Coop-Ok "$t installed" } else { Coop-Warn "could not install $t (run: pipx install $t)" }
+    }
+  }
+  Coop-Info 'Re-checking... (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)'
+  [Console]::Error.WriteLine('')
+  & (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
+  exit $LASTEXITCODE
+}
+
 [Console]::Error.WriteLine('')
+$fixHint = if (-not $script:FIX) { "   (or auto-fix what's safe: coop doctor --fix)" } else { '' }
 if ($script:FAIL -gt 0) {
-  Coop-Err "doctor: $($script:FAIL) required item(s) missing, $($script:WARN) warning(s). Run: coop install"
+  Coop-Err "doctor: $($script:FAIL) required item(s) missing, $($script:WARN) warning(s). Run: coop install$fixHint"
   exit 1
 } else {
   Coop-Ok ("doctor: all required dependencies present" + $(if ($script:WARN) { ", $($script:WARN) warning(s)" } else { '' }) + '.')

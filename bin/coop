@@ -228,6 +228,7 @@ coop_init() {
   cp "$COOP_ROOT/.coop/project.example.yml" "$dst"
   coop_ok "Wrote $dst"
   coop_info "Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor"
+  coop_info "Set up lineage docs too: run \`coop data-doc setup\` (full wizard) — or just launch \`coop\` and accept the /setup-docs offer."
 }
 
 coop_new_skill() {
@@ -290,21 +291,24 @@ EOF
 # rolls the CHANGELOG's [Unreleased] section into a dated [X.Y.Z] heading, commits,
 # tags vX.Y.Z, and pushes the commit + tag. Requires a clean working tree.
 coop_release() {
-  local level="" assume_yes=0 do_push=1
+  local level="" assume_yes=0 do_push=1 do_check=1
   while [ "$#" -gt 0 ]; do
     case "$1" in
       patch|minor|major) level="$1" ;;
       -y|--yes)          assume_yes=1 ;;
       --no-push)         do_push=0 ;;
+      --check)           do_check=1 ;;
+      --no-check)        do_check=0 ;;
       -h|--help)
         cat >&2 <<'EOF'
-Usage: coop release [patch|minor|major] [--yes] [--no-push]
+Usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]
   Bump VERSION + extension manifests, roll CHANGELOG [Unreleased] into a dated
   release, commit, tag vX.Y.Z, and push (commit + tag). Default level: patch.
+  Verifies the extensions transpile first (--no-check to skip).
   Requires a clean working tree (commit your changes first).
 EOF
         return 0 ;;
-      *) coop_die "unknown arg '$1' — usage: coop release [patch|minor|major] [--yes] [--no-push]" ;;
+      *) coop_die "unknown arg '$1' — usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]" ;;
     esac
     shift
   done
@@ -332,6 +336,24 @@ EOF
   esac
 
   if git -C "$COOP_ROOT" rev-parse "v$new" >/dev/null 2>&1; then coop_die "tag v$new already exists."; fi
+
+  # Pre-flight: never tag code that doesn't transpile. Skips silently when npx is
+  # unavailable; bypass with --no-check.
+  if [ "$do_check" = "1" ]; then
+    if have npx; then
+      local extf build_fail=0
+      for extf in "$COOP_ROOT"/extensions/*/index.ts; do
+        [ -f "$extf" ] || continue
+        if ! npx -y esbuild "$extf" --bundle --format=esm --platform=node --packages=external --outfile=/dev/null >/dev/null 2>&1; then
+          coop_warn "extension does not build: ${extf#"$COOP_ROOT"/}"; build_fail=1
+        fi
+      done
+      [ "$build_fail" = "1" ] && coop_die "extension build check failed — fix it, or re-run with --no-check."
+      coop_ok "extensions build"
+    else
+      coop_warn "npx not found — skipping the extension build check."
+    fi
+  fi
 
   local pushmsg=""; [ "$do_push" = "1" ] && pushmsg=" + push"
   if [ "$assume_yes" != "1" ]; then

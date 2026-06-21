@@ -17,6 +17,15 @@ PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"; export PI_CODING_AGENT_DIR
 
 FAIL=0   # required missing -> non-zero exit
 WARN=0
+FIX=0    # --fix: auto-apply the safe remediations at the end
+for _a in "$@"; do
+  case "$_a" in
+    --fix) FIX=1 ;;
+    -h|--help)
+      printf 'Usage: coop doctor [--fix]\n  --fix  apply safe remediations (sync extensions/MCP/assets, install missing Coop tools), then re-check\n' >&2
+      exit 0 ;;
+  esac
+done
 
 ok()   { coop_ok   "$1"; }
 warn() { coop_warn "$1 ${2:+— $2}"; WARN=$((WARN+1)); }
@@ -49,6 +58,33 @@ if have pi; then
   minv="0.79.0"
   if [ -n "$piv" ] && [ "$(printf '%s\n%s\n' "$minv" "$piv" | sort -V | head -1)" != "$minv" ]; then
     warn "pi $piv is older than the tested minimum ($minv)" "coop update"
+  fi
+fi
+
+# Pi (latest, @earendil-works) requires Node >= 22.19. Presence is checked above; the
+# VERSION check here saves a teammate on Node 18/20 from a cryptic pi failure.
+if have node; then
+  nodev="$(node --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  nodemin="22.19.0"
+  if [ -n "$nodev" ] && [ "$(printf '%s\n%s\n' "$nodemin" "$nodev" | sort -V | head -1)" != "$nodemin" ]; then
+    warn "Node $nodev is older than Pi's requirement (>= 22.19)" "upgrade Node, or pin Pi's legacy build: npm i -g @earendil-works/pi-coding-agent@legacy-node20"
+  fi
+fi
+
+# Lingering deprecated Pi package — coop migrated to @earendil-works. Detect the
+# DIRECT top-level global install (pipe through grep so npm ls's exit code, which is
+# non-zero on an invalid tree, doesn't matter).
+if have npm && npm ls -g --depth=0 2>/dev/null | grep -q '@mariozechner/pi-coding-agent'; then
+  warn "deprecated Pi package still installed globally (@mariozechner/pi-coding-agent; Pi is now @earendil-works)" "remove if unused: npm uninstall -g @mariozechner/pi-coding-agent  (skip if an extension still depends on it)"
+fi
+
+# First-run login: coop shares Pi auth in from ~/.pi/agent. A brand-new teammate has none.
+if have pi; then
+  gdir="$(coop_global_pi_agent_dir 2>/dev/null || true)"
+  if [ -s "$PI_CODING_AGENT_DIR/auth.json" ] || { [ -n "$gdir" ] && [ -s "$gdir/auth.json" ]; }; then
+    ok "Pi login present"
+  else
+    warn "no Pi login found yet" "your first 'coop' run will prompt you to sign in to a model provider"
   fi
 fi
 
@@ -137,9 +173,27 @@ coop_head "Powerline / splash assets"
 [ -f "$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi" ] && ok "brand splash present" || warn "splash.ansi missing" "run: coop sync"
 [ -f "$COOP_ROOT/themes/cooptimize.json" ] && ok "Cooptimize theme present" || warn "theme missing"
 
+if [ "$FIX" = 1 ] && { [ "$FAIL" -gt 0 ] || [ "$WARN" -gt 0 ]; }; then
+  coop_head "Applying fixes (--fix)"
+  if [ -f "$COOP_ROOT/scripts/sync.sh" ]; then
+    "$COOP_ROOT/scripts/sync.sh" >/dev/null 2>&1 && coop_ok "synced extensions / MCP / assets" || coop_warn "sync had issues (run: coop sync)"
+  fi
+  for t in coop-data-doc coop-sql-review coop-dax-review; do
+    if ! have "$t"; then
+      coop_info "pipx install $t"
+      pipx install "$t" >/dev/null 2>&1 && coop_ok "$t installed" || coop_warn "could not install $t (run: pipx install $t)"
+    fi
+  done
+  coop_info "Re-checking… (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)"
+  echo >&2
+  exec "$COOP_ROOT/scripts/doctor.sh"
+fi
+
 echo >&2
+fixhint=""
+[ "$FIX" = 0 ] && fixhint="   (or auto-fix what's safe: coop doctor --fix)"
 if [ "$FAIL" -gt 0 ]; then
-  coop_err "doctor: $FAIL required item(s) missing, $WARN warning(s). Run: coop install"
+  coop_err "doctor: $FAIL required item(s) missing, $WARN warning(s). Run: coop install$fixhint"
   exit 1
 else
   coop_ok "doctor: all required dependencies present${WARN:+, $WARN warning(s)}."

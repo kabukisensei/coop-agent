@@ -1,0 +1,37 @@
+name: release
+
+# When `coop release` pushes a vX.Y.Z tag, publish a GitHub Release whose body is
+# that version's section from CHANGELOG.md — so release notes are automatic.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract changelog section for this tag
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          # Print lines under "## [<ver>]" up to (not including) the next "## [" heading.
+          awk -v ver="$ver" '
+            $0 ~ "^## \\[" ver "\\]" { grab = 1; next }
+            grab && /^## \[/        { exit }
+            grab                    { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            printf "Release %s. See CHANGELOG.md.\n" "$GITHUB_REF_NAME" > RELEASE_NOTES.md
+          fi
+          echo "----- notes for $GITHUB_REF_NAME -----"; cat RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "coop-agent ${{ github.ref_name }}"
+          body_path: RELEASE_NOTES.md
