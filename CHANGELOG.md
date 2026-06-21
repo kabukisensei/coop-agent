@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-21
+
 ### Added
 
 - **`daily-logger` skill + `/daily-log` and `/weekly-log` prompts** — make the
