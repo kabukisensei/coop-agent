@@ -28,6 +28,12 @@ human at Cooptimize approving it.
 7. **Never expose secrets.** Do not print or write tokens, passwords, connection
    strings, keys, or `.env` contents. Do not store secrets in memory.
 
+> Two of these are **enforced at runtime** by the `coop-guardrails` extension, not just
+> asked of you: a `git commit` that stages source is **blocked** (commit only
+> docs/logs/site; let a human commit source), and destructive commands (`rm -rf`,
+> `git push --force`, `git reset --hard`, `DROP`/`TRUNCATE`) require confirmation. If a
+> tool call is blocked, read the reason and adjust — don't try to route around it.
+
 ## The Cooptimize workflow (use the `coop-workflow` skill)
 
 What matters is the **principles**, not a rigid step count: stay grounded in the

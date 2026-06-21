@@ -157,8 +157,9 @@ EOF
   [ -d "$COOP_ROOT/prompts" ]  && args+=(--prompt-template "$COOP_ROOT/prompts")
   [ -f "$COOP_ROOT/themes/cooptimize.json" ] && args+=(--theme "$COOP_ROOT/themes/cooptimize.json")
   # Cooptimize companion extensions: branding/splash/vibes, and native review tools.
-  [ -e "$COOP_ROOT/extensions/coop-powerline" ] && args+=(-e "$COOP_ROOT/extensions/coop-powerline")
-  [ -e "$COOP_ROOT/extensions/coop-tools" ]     && args+=(-e "$COOP_ROOT/extensions/coop-tools")
+  [ -e "$COOP_ROOT/extensions/coop-powerline" ]  && args+=(-e "$COOP_ROOT/extensions/coop-powerline")
+  [ -e "$COOP_ROOT/extensions/coop-tools" ]      && args+=(-e "$COOP_ROOT/extensions/coop-tools")
+  [ -e "$COOP_ROOT/extensions/coop-guardrails" ] && args+=(-e "$COOP_ROOT/extensions/coop-guardrails")
   # Point the extension at our vibe files and brand splash.
   export COOP_VIBES_DIR="$COOP_ROOT/vibes"
   export COOP_SPLASH_FILE="$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi"

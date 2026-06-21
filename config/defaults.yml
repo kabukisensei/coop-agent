@@ -32,13 +32,16 @@ pi_extensions:
     # 5h+7d windows) via footerData.getExtensionStatuses(). The splash is the truecolor
     # block-art Cooptimize logo (uniform-padded, width-robust).
   recommended:
-    - pi-permissions        # tool-permission gating (reinforces read-only-first)
-    - "@aliou/pi-guardrails" # extra guardrails
+    - pi-permissions        # optional: finer per-tool permission gating (generic)
+    # NOTE: @aliou/pi-guardrails was DROPPED — it's pinned to the deprecated
+    # @mariozechner Pi and is superseded by coop's own `coop-guardrails` extension
+    # (below), which enforces Cooptimize's actual rules on the current Pi.
 
 # coop's own companion extensions (loaded from this repo via `pi -e`).
 coop_extensions:
   - extensions/coop-powerline   # splash + footer segments + working vibes
   - extensions/coop-tools       # native LLM tools: sql_review / dax_review / data_doc
+  - extensions/coop-guardrails  # ENFORCES governance: never-commit-source + destructive-command confirm
 
 # Standalone tools installed via pipx (all on PyPI).
 python_tools:

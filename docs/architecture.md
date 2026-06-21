@@ -58,7 +58,12 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      (uniform-padded, width-robust; `assets/splash.ansi`).
    - **`coop-tools` extension** — `extensions/coop-tools/`: registers the native
      LLM-callable tools `sql_review`, `dax_review`, `data_doc` that shell out to
-     the standalone CLIs and return JSON the model reasons over.
+     the standalone CLIs and return JSON the model reasons over; also hosts the
+     in-agent `coop-data-doc` setup wizard (`/setup-docs`).
+   - **`coop-guardrails` extension** — `extensions/coop-guardrails/`: **enforces**
+     governance at runtime via a `tool_call` hook (blocks the agent committing
+     source; confirms destructive commands). Complements the advisory
+     `docs/guardrails.md` system prompt. Fail-open; `COOP_NO_GUARDRAILS=1` disables.
 
 4. **Pi extensions installed from npm** into coop's isolated agent dir
    (`config/defaults.yml`):
@@ -70,7 +75,8 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      understanding (read-only; complements the Microsoft Learn MCP).
    - `@juicesharp/rpiv-ask-user-question` — lets the model put a structured,
      typed-option question to the user instead of guessing (fits consent rounds).
-   - Recommended: `pi-permissions` (tool-permission gating), `@aliou/pi-guardrails`.
+   - Optional: `pi-permissions` (finer per-tool permission gating). *(`@aliou/pi-guardrails`
+     was dropped — pinned to the deprecated Pi and superseded by `coop-guardrails`.)*
 
    `pi-powerline-footer` is **not** used — coop renders its own footer/splash via
    `extensions/coop-powerline` (see layer 3).

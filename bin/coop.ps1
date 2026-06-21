@@ -321,6 +321,8 @@ function Invoke-LaunchPi {
   if (Test-Path -LiteralPath $extPowerline) { $piArgs += @('-e', $extPowerline) }
   $extTools = Join-Path $script:CoopRoot 'extensions\coop-tools'
   if (Test-Path -LiteralPath $extTools) { $piArgs += @('-e', $extTools) }
+  $extGuardrails = Join-Path $script:CoopRoot 'extensions\coop-guardrails'
+  if (Test-Path -LiteralPath $extGuardrails) { $piArgs += @('-e', $extGuardrails) }
   # Point the extension at our vibe files and brand splash.
   $env:COOP_VIBES_DIR = Join-Path $script:CoopRoot 'vibes'
   $env:COOP_SPLASH_FILE = Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi'

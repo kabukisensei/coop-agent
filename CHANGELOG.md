@@ -5,6 +5,24 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`coop-guardrails` extension** — runtime **enforcement** of Cooptimize governance
+  (vs. the advisory `docs/guardrails.md` prompt). A `tool_call` hook on the agent's bash
+  tool: **blocks `git commit`** when staged files include source (anything outside the
+  allow-listed docs/logs/site paths, read from `.coop/project.yml`), and **confirms
+  destructive commands** (`rm -rf`, `git push --force`, `git reset --hard`, `git clean
+  -f`, `DROP`/`TRUNCATE`). Fail-open, feature-detected, `COOP_NO_GUARDRAILS=1` to
+  disable, `/coop-guardrails` to inspect. Your own shell is never intercepted — only the
+  agent's tool calls.
+
+### Removed
+
+- **Dropped `@aliou/pi-guardrails`** from the recommended extensions — it's pinned to the
+  deprecated `@mariozechner` Pi (and was never loaded into coop's isolated dir anyway);
+  `coop-guardrails` supersedes it with coop-tailored rules on the current Pi. (Lets you
+  `npm uninstall -g @aliou/pi-guardrails @mariozechner/pi-coding-agent` to clean globals.)
+
 ## [0.2.1] — 2026-06-21
 
 ### Added
