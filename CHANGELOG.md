@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-06-21
+
 ### Added
 
 - **Automated test suite** (`tests/`) + CI coverage — the real logic now in the repo
