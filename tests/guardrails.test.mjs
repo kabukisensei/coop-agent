@@ -3,7 +3,9 @@
 import { strict as assert } from "node:assert";
 
 const dist = process.env.COOP_TEST_DIST;
-const coopGuardrails = (await import(`${dist}/coop-guardrails.mjs`)).default;
+const cg = await import(`${dist}/coop-guardrails.mjs`);
+const coopGuardrails = cg.default;
+const { isSecretPath } = cg;
 
 // Capture the handler the extension registers.
 let staged = "";
@@ -28,6 +30,10 @@ const call = async (command, { stagedFiles = "", confirm = false, toolName = "ba
   staged = stagedFiles;
   confirmAnswer = confirm;
   return await handle({ toolName, input: { command } }, ctx);
+};
+const callFile = async (toolName, path, { confirm = false } = {}) => {
+  confirmAnswer = confirm;
+  return await handle({ toolName, input: { path } }, ctx);
 };
 const blocked = (r) => !!(r && r.block);
 
@@ -67,6 +73,25 @@ await t("COOP_NO_GUARDRAILS=1 disables enforcement", async () => {
   const r = await call("git commit -m x", { stagedFiles: "sql/v.sql" });
   delete process.env.COOP_NO_GUARDRAILS;
   assert.equal(blocked(r), false);
+});
+
+await t("isSecretPath flags secrets, not docs/public/examples", () => {
+  for (const p of [".env", "config/.env.production", "certs/server.pem", "keys/id_rsa", "secrets.yaml", "deploy/credentials"]) {
+    assert.equal(isSecretPath(p), true, `${p} should be secret`);
+  }
+  for (const p of [".env.example", "keys/id_rsa.pub", "README.md", "src/app.py", "docs/notes.md"]) {
+    assert.equal(isSecretPath(p), false, `${p} should NOT be secret`);
+  }
+});
+await t("blocks a declined read of a secret file", async () => {
+  assert.equal(blocked(await callFile("read", "config/.env", { confirm: false })), true);
+});
+await t("blocks a declined write to a secret file", async () => {
+  assert.equal(blocked(await callFile("write", ".env", { confirm: false })), true);
+});
+await t("allows an approved secret-file read; allows non-secret files", async () => {
+  assert.equal(blocked(await callFile("read", ".env", { confirm: true })), false);
+  assert.equal(blocked(await callFile("read", "src/app.py", { confirm: false })), false);
 });
 
 console.log(`  ${n} guardrails tests passed`);

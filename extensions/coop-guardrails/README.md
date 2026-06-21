@@ -15,6 +15,7 @@ never intercepted**.
 | --- | --- |
 | **Never commit source** | Blocks a `git commit` whenever staged files include anything outside the allow-listed docs/logs/site paths. Reads `approval_policy.agent_allowed_to_commit` from `.coop/project.yml` (plus sensible defaults: `docs/`, `site/`, `data-docs/`, `*-site/`, any `*.md`). The agent may still commit docs/logs/site; a human commits source. |
 | **Destructive commands** | Confirms (via a dialog) before `rm -rf`, `git push --force`, `git reset --hard`, `git clean -f`, and `DROP`/`TRUNCATE` SQL. Declining blocks the command. |
+| **Secret files** | Confirms before the agent reads/edits/writes a secret-looking file — `.env` (not `.env.example`), `*.pem`/`*.key`/`*.p12`, `id_rsa`/`id_ed25519`, `credentials`, `.npmrc`, `secrets.*`. Declining blocks. |
 
 When a tool call is blocked, the model receives a `reason` explaining why and what to
 do instead (e.g. "unstage source and let a human commit").

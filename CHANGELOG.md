@@ -5,6 +5,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`coop-guardrails` now guards secret files** — confirms before the agent
+  reads/edits/writes a secret-looking file (`.env` [not `.env.example`], `*.pem`/`*.key`/
+  `*.p12`, `id_rsa`/`id_ed25519`, `credentials`, `.npmrc`, `secrets.*`); declining
+  blocks. Completes guardrail rule #7 (never expose secrets) alongside never-commit-source
+  and destructive-command confirmation. (`.pub` keys and `*.example` are excluded.)
+- **Skill/prompt validation** (`scripts/validate-resources.sh`, run in CI) — every
+  `SKILL.md` must have `name:` + `description:` frontmatter and every prompt must be
+  non-empty, so an authoring typo can't silently break loading.
+
 ## [0.3.1] — 2026-06-21
 
 ### Added

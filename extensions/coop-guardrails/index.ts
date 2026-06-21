@@ -2,7 +2,7 @@
  * coop-guardrails — runtime ENFORCEMENT of Cooptimize's governance rules.
  *
  * `docs/guardrails.md` is the advisory system prompt (it asks the model to behave).
- * This extension hooks the agent's tool calls and actually ENFORCES the two
+ * This extension hooks the agent's tool calls and actually ENFORCES the
  * non-negotiables the model could slip on:
  *
  *   1. NEVER commit source — block `git commit` from the agent whenever staged files
@@ -10,6 +10,8 @@
  *      may commit docs/logs/site (with approval); a human commits source.
  *   2. Destructive commands — confirm before `rm -rf`, `git push --force`,
  *      `git reset --hard`, `git clean -f`, and `DROP`/`TRUNCATE` SQL.
+ *   3. Secret files — confirm before read/edit/write of `.env`, private keys, or
+ *      credential files (the agent must never expose secrets).
  *
  * It is the coop-native replacement for the third-party @aliou/pi-guardrails (which
  * was pinned to the old @mariozechner Pi). It enforces the AGENT's tool calls — your
@@ -109,13 +111,44 @@ function dangerLabel(cmd: string): string | null {
   return null;
 }
 
+/** Does this path look like a secret (private key / credential / .env) the agent
+ *  shouldn't read or write? Public keys (.pub) and *.example/.sample are excluded. */
+export function isSecretPath(p: string): boolean {
+  const base = (p.split(/[/\\]/).pop() || "").toLowerCase();
+  if (base.endsWith(".pub")) return false; // public keys are fine
+  if (/^\.env(\.|$)/.test(base) && !/\.(example|sample|template|dist)$/.test(base)) return true;
+  if (/\.(pem|key|p12|pfx|keystore|jks)$/.test(base)) return true;
+  if (/^id_(rsa|dsa|ecdsa|ed25519)(\.|$)/.test(base)) return true;
+  if (/^(\.npmrc|\.pypirc|\.netrc|\.pgpass|credentials)$/.test(base)) return true;
+  if (/(^|[._-])secrets?([._-]|$)/.test(base) && /\.(ya?ml|json|env|txt|conf|ini)$/.test(base)) return true;
+  return false;
+}
+
 export default function coopGuardrails(pi: ExtensionAPI) {
   const enabled = () => process.env.COOP_NO_GUARDRAILS !== "1";
 
   pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
     try {
       if (!enabled()) return;
-      if (event?.toolName !== "bash") return;
+      const tool = event?.toolName;
+
+      // 0. Secret-file access (read / edit / write) → confirm.
+      if (tool === "read" || tool === "edit" || tool === "write") {
+        const path = String(event?.input?.path ?? "");
+        if (path && isSecretPath(path) && ctx.hasUI && typeof ctx.ui?.confirm === "function") {
+          const verb = tool === "read" ? "read" : "write to";
+          const ok = await ctx.ui.confirm(
+            "coop guardrails",
+            `Secret-looking file (${verb}):\n  ${path}\ncoop never exposes secrets (tokens, keys, .env). Proceed?`,
+          );
+          if (!ok) {
+            return { block: true, reason: `coop guardrails: blocked ${tool} of the secret-looking file ${path} (you declined). Reference an env var / vault instead of reading or writing secrets.` };
+          }
+        }
+        return;
+      }
+
+      if (tool !== "bash") return;
       const cmd = String(event?.input?.command ?? "").trim();
       if (!cmd) return;
 
@@ -160,6 +193,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         "Enforced on the agent's tool calls (your own shell is never intercepted):",
         "  • never commit source — blocks `git commit` of anything outside docs/logs/site",
         "  • destructive commands — confirms rm -rf / git push --force / reset --hard / git clean -f / DROP·TRUNCATE",
+        "  • secret files — confirms read/edit/write of .env / keys / credentials",
         "Advisory rules live in docs/guardrails.md. Disable with COOP_NO_GUARDRAILS=1.",
       ];
       try {

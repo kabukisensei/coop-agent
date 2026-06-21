@@ -27,6 +27,8 @@ jobs:
         run: |
           python3 -m pip install --quiet pyyaml
           for f in $(find . -name '*.yml' -not -path './.git/*'); do echo "$f"; python3 -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" "$f"; done
+      - name: validate skills + prompts
+        run: bash scripts/validate-resources.sh
 
   extensions:
     name: extensions transpile
