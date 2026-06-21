@@ -41,10 +41,12 @@ fi
 # --- 2. Update Pi + extensions ----------------------------------------------
 coop_head "2/5  Pi and extensions"
 if have pi; then
-  coop_info "pi update pi   (the agent itself)"
-  pi update pi >/dev/null 2>&1 && coop_ok "pi updated ($(pi --version 2>/dev/null || echo '?'))" || coop_warn "pi self-update failed"
-  coop_info "pi update      (installed extensions)"
-  pi update >/dev/null 2>&1 && coop_ok "extensions updated" || coop_warn "extension update failed"
+  # `pi update --all` updates the agent AND every installed extension. (Bare
+  # `pi update` updates pi ONLY; `--extensions` updates packages only.)
+  coop_info "pi update --all   (the agent + all installed extensions)"
+  pi update --all >/dev/null 2>&1 \
+    && coop_ok "pi + extensions updated ($(pi --version 2>/dev/null || echo '?'))" \
+    || coop_warn "pi update --all failed (try: pi update --all)"
 else
   coop_warn "pi not installed — run: coop install"
 fi

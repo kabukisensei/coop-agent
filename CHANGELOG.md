@@ -7,6 +7,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **`daily-logger` skill + `/daily-log` and `/weekly-log` prompts** — make the
+  workflow's "Log" step (step 10) concrete: append a structured entry (tasks done,
+  source changes awaiting review, standards findings, open questions, next actions) to
+  `docs/agent/logs/daily/YYYY-MM-DD.md` (path from `.coop/project.yml` →
+  `logging.daily_log_path`). The log is a documentation artifact — committed with
+  approval, never source.
+- **Two more default Pi extensions** — `coop install` / `coop sync` now also install
+  **`pi-web-access`** (web search / URL fetch / GitHub clone / PDF / video — read-only,
+  complements the Microsoft Learn MCP) and **`@juicesharp/rpiv-ask-user-question`**
+  (structured, typed-option questions the model can put to you — fits consent rounds).
+  `context-mode` remains available as a read-only **MCP** server (not a `pi install`
+  extension). Teammates can still add or remove any extension with `coop add` / `coop
+  remove`, exactly like stock Pi.
 - **In-agent data-doc setup** — coop now bootstraps `coop-data-doc` without leaving the
   session: a launch-time offer (when the folder has no `coop-data-doc.yml` — *Yes / Not
   now / Don't ask again*) and a **`/setup-docs`** command run a native-dialog quick wizard
@@ -29,6 +42,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **`coop update` now runs `pi update --all`** so it updates the Pi agent **and every
+  installed extension** in one step. Pi's CLI changed so that bare `pi update` updates
+  the agent only (`--extensions` = packages only, `--all` = both); coop's previous
+  two-call sequence had stopped updating extensions.
 - **coop renders its OWN footer + splash** via `extensions/coop-powerline` and no longer
   uses a third-party powerline footer — `pi-powerline-footer` was **dropped** (its welcome
   overlay couldn't be disabled, Nerd Font glyphs showed as `?`, and it duplicated the bar).

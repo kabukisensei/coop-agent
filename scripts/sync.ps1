@@ -41,7 +41,7 @@ function Coop-Head { param([string]$m) [Console]::Error.WriteLine("`n$($script:C
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 
 # coop renders its own footer/splash — no third-party powerline footer.
-$CORE_EXTENSIONS = @('pi-mcp-adapter', 'pi-hermes-memory', 'pi-better-openai')
+$CORE_EXTENSIONS = @('pi-mcp-adapter', 'pi-hermes-memory', 'pi-better-openai', 'pi-web-access', '@juicesharp/rpiv-ask-user-question')
 function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' } }
 $PI_AGENT = Get-CoopPiAgentDir
 $GLOBAL_AGENT = Join-Path $HOME '.pi\agent'

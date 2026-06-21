@@ -121,6 +121,8 @@ npm install -g @earendil-works/pi-coding-agent
 pi install npm:pi-mcp-adapter        # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
 pi install npm:pi-hermes-memory      # persistent memory + session search + secret scanning
 pi install npm:pi-better-openai      # plan usage limits (5h + 7d windows), surfaced in coop's footer
+pi install npm:pi-web-access         # web search / URL fetch / GitHub clone / PDF / video (read-only)
+pi install npm:@juicesharp/rpiv-ask-user-question   # structured questions the model can put to you
 # coop renders its own footer + splash via extensions/coop-powerline — no third-party
 # powerline-footer extension is installed.
 
@@ -151,7 +153,7 @@ shows anything still missing.
 | Component | How it's provided |
 | --- | --- |
 | **Pi** | installed globally via `npm` |
-| **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits, surfaced in coop's footer) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
+| **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits), `pi-web-access` (web search/fetch — read-only), `@juicesharp/rpiv-ask-user-question` (structured questions) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
 | **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `sql_review`/`dax_review`/`data_doc`) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
 | **Standalone tools** — `coop-data-doc`, `coop-sql-review`, `coop-dax-review` | installed via `pipx` from PyPI |
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |

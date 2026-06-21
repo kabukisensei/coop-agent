@@ -66,6 +66,10 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
    - `pi-hermes-memory` — persistent memory, session search, secret scanning.
    - `pi-better-openai` — plan usage limits (5h / 7d windows), surfaced in
      coop's own footer via `footerData.getExtensionStatuses()`.
+   - `pi-web-access` — web search, URL fetch, GitHub clone, PDF/YouTube/video
+     understanding (read-only; complements the Microsoft Learn MCP).
+   - `@juicesharp/rpiv-ask-user-question` — lets the model put a structured,
+     typed-option question to the user instead of guessing (fits consent rounds).
    - Recommended: `pi-permissions` (tool-permission gating), `@aliou/pi-guardrails`.
 
    `pi-powerline-footer` is **not** used — coop renders its own footer/splash via

@@ -74,20 +74,21 @@ Scaffold with `coop new-prompt <name>`, or write one by hand. Prompt templates a
 Markdown with `{{placeholders}}`:
 
 ```bash
-cat > prompts/weekly-log.md <<'MD'
-# Weekly Log
+cat > prompts/sprint-review.md <<'MD'
+# Sprint Review
 
 Use the `coop-workflow` skill.
 
-Summarize this week's analytics-engineering work for {{repo_or_area}}.
+Summarize this sprint's analytics-engineering work for {{repo_or_area}}.
 1. Read the daily logs under docs/agent/logs/daily.
 2. Group changes by object and layer (bronze/silver/gold/model/report).
 3. List validations run (sql_review / dax_review / fabric-cicd) and open risks.
-4. Write docs/agent/logs/weekly/{{week}}.md. Do not commit without approval.
+4. Write a short summary to docs/agent/logs/{{sprint}}.md. Do not commit without approval.
 MD
 ```
 
-It shows up as a prompt/command in Pi automatically.
+It shows up as a prompt/command in Pi automatically. (Daily/weekly logging already
+ships — see the `daily-logger` skill and the `/daily-log` and `/weekly-log` prompts.)
 
 ## 3. Add or tweak the theme
 

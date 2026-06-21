@@ -8,11 +8,12 @@ agent:
   brand: Cooptimize
   built_on: "@earendil-works/pi-coding-agent"   # Pi — coop is a layer, never a fork
 
-# How coop installs Pi itself.
+# How coop installs + updates Pi itself.
 pi:
   npm_package: "@earendil-works/pi-coding-agent"
-  self_update: "pi update pi"
-  ext_update: "pi update"
+  # `coop update` runs this — it updates the agent AND every installed extension.
+  # (Bare `pi update` updates pi ONLY; `pi update --extensions` updates packages only.)
+  update_all: "pi update --all"
 
 # Pi extensions coop installs (pi install npm:<name>).
 pi_extensions:
@@ -20,6 +21,8 @@ pi_extensions:
     - pi-mcp-adapter        # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
     - pi-hermes-memory      # persistent memory + session search + secret scanning
     - pi-better-openai      # plan usage limits (5h / 7d windows) — surfaced in coop's footer
+    - pi-web-access         # web search / URL fetch / GitHub clone / PDF / video understanding (read-only)
+    - "@juicesharp/rpiv-ask-user-question"  # structured questions the model can put to you (consent rounds)
     # NOTE: coop renders its OWN footer + splash via extensions/coop-powerline — it does
     # NOT use a third-party powerline footer (pi-powerline-footer was removed: its welcome
     # overlay couldn't be disabled, Nerd Font glyphs showed as `?`, and it duplicated the
@@ -92,9 +95,11 @@ resources:
 # warns when Pi is older than pi_min (the extension API coop's extensions rely on).
 tested_with:
   pi_min: "0.79.0"
-  pi: "0.79.4"
+  pi: "0.79.9"          # @earendil-works/pi-coding-agent (requires Node >= 22.19)
   pi_mcp_adapter: "2.10.0"
   pi_hermes_memory: "0.7.17"
+  pi_web_access: "0.10.7"
+  rpiv_ask_user_question: "1.20.0"
   context_mode: "1.0.162"
   ms_fabric_cli: "1.6.1"
   fabric_cicd: "1.1.0"

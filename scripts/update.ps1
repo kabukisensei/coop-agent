@@ -82,15 +82,14 @@ if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have
 # --- 2. Update Pi + extensions ----------------------------------------------
 Coop-Head '2/5  Pi and extensions'
 if (Test-Have 'pi') {
-  Coop-Info 'pi update pi   (the agent itself)'
-  & pi update pi > $null 2>&1
+  # `pi update --all` updates the agent AND every installed extension. (Bare
+  # `pi update` updates pi ONLY; `--extensions` updates packages only.)
+  Coop-Info 'pi update --all   (the agent + all installed extensions)'
+  & pi update --all > $null 2>&1
   if ($LASTEXITCODE -eq 0) {
     $pv = (& pi --version 2>$null); if (-not $pv) { $pv = '?' }
-    Coop-Ok "pi updated ($pv)"
-  } else { Coop-Warn 'pi self-update failed' }
-  Coop-Info 'pi update      (installed extensions)'
-  & pi update > $null 2>&1
-  if ($LASTEXITCODE -eq 0) { Coop-Ok 'extensions updated' } else { Coop-Warn 'extension update failed' }
+    Coop-Ok "pi + extensions updated ($pv)"
+  } else { Coop-Warn 'pi update --all failed (try: pi update --all)' }
 } else {
   Coop-Warn 'pi not installed — run: coop install'
 }

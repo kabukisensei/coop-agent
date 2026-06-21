@@ -73,7 +73,9 @@ $PI_NPM_PACKAGE = '@earendil-works/pi-coding-agent'
 $PI_EXTENSIONS = @(
   'npm:pi-mcp-adapter',       # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
   'npm:pi-hermes-memory',     # persistent memory + session search + secret scanning
-  'npm:pi-better-openai'      # plan usage limits (5h/7d) — shown in coop's footer
+  'npm:pi-better-openai',     # plan usage limits (5h/7d) — shown in coop's footer
+  'npm:pi-web-access',        # web search / URL fetch / GitHub clone / PDF / video (read-only)
+  'npm:@juicesharp/rpiv-ask-user-question'  # structured questions the model can ask (consent rounds)
 )
 $PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')
 $FABRIC_PKG = 'ms-fabric-cli'
