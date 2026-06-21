@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-06-21
+
 ### Added
 
 - **`coop release [patch|minor|major]`** — one-command release cut: bumps `VERSION` +
