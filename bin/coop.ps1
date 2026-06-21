@@ -2,7 +2,7 @@
 #
 # coop.ps1 — the Cooptimize terminal agent (Windows / PowerShell mirror of bin/coop).
 #
-# A thin, branded layer ON TOP OF Pi (@mariozechner/pi-coding-agent). coop never
+# A thin, branded layer ON TOP OF Pi (@earendil-works/pi-coding-agent). coop never
 # forks Pi: it launches `pi` with Cooptimize skills, prompts, theme, a powerline
 # splash/footer extension, and a governance system prompt, and it shells out to
 # the standalone Coop tools (coop-data-doc / coop-sql-review / coop-dax-review)
@@ -270,7 +270,7 @@ function Invoke-LaunchPi {
   param([string[]] $PassArgs = @())
 
   if (-not (Test-Have 'pi')) {
-    Coop-Die 'pi is not installed. Run: coop install   (or: npm install -g @mariozechner/pi-coding-agent)'
+    Coop-Die 'pi is not installed. Run: coop install   (or: npm install -g @earendil-works/pi-coding-agent)'
   }
 
   Invoke-CoopAzPreflight

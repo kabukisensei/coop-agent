@@ -10,7 +10,7 @@ work **with you** before anything ships.
 
 ## 1. Prerequisites (install once)
 
-- **Node.js 18+** — https://nodejs.org
+- **Node.js 22.19+** — https://nodejs.org
 - **Python 3.10+** — https://python.org
 - **git**
 - **pipx** — `coop install` installs it for you if it's missing
@@ -53,6 +53,12 @@ coop init                 # writes .coop/project.yml
 # edit .coop/project.yml — fill the TODOs (repo paths, workspaces, tenant)
 coop doctor
 ```
+
+The first time you launch `coop` in a repo, it offers to set up **lineage docs**
+(`coop-data-doc`) so the agent understands up/downstream impact — accept it, or run
+**`/setup-docs`** anytime inside the agent (a quick native wizard). For the full
+wizard (medallion layers, branding, schema→model mappings), run `coop data-doc setup`
+in a shell.
 
 ## 5. Use it
 

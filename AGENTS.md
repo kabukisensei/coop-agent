@@ -1,7 +1,7 @@
 # coop-agent — agent context
 
 This repository is **coop**, the Cooptimize terminal agent: a branded layer on top
-of Pi (`@mariozechner/pi-coding-agent`). It is **not** a fork of Pi. coop runs Pi in
+of Pi (`@earendil-works/pi-coding-agent`). It is **not** a fork of Pi. coop runs Pi in
 its own isolated agent dir (`~/.coop/agent`, via `PI_CODING_AGENT_DIR`) so only
 Cooptimize's curated extensions/settings/theme/MCP load and your personal `pi` stays
 untouched (disable with `COOP_NO_ISOLATE=1`). It renders its own footer and splash via

@@ -17,6 +17,10 @@ workflow calls at step 3 (read target + lineage) and step 9 (document).
 
 ## Analysis checklist
 
+- **First run.** If the folder has no `coop-data-doc.yml`, the docs aren't set up
+  yet — have the user run **`/setup-docs`** (native in-agent wizard) or
+  `coop data-doc setup` (full wizard, in a shell) to create it, then continue. coop
+  also offers this on startup when a folder has no built docs.
 - **Scan.** Run `coop-data-doc scan` to (re)generate `graph.json` — the machine
   lineage graph of objects and their edges.
 - **Build.** Run `coop-data-doc build` to produce `manifest.json`, the Markdown

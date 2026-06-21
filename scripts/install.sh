@@ -27,7 +27,7 @@ for a in "$@"; do
 done
 
 # --- What we install (keep in sync with config/defaults.yml) ------------------
-PI_NPM_PACKAGE="@mariozechner/pi-coding-agent"
+PI_NPM_PACKAGE="@earendil-works/pi-coding-agent"
 PI_EXTENSIONS=(
   "npm:pi-mcp-adapter"        # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
   "npm:pi-hermes-memory"      # persistent memory + session search + secret scanning
@@ -49,7 +49,7 @@ coop_head "Cooptimize agent bootstrap (v${COOP_VERSION})  [$OS]"
 coop_head "1/7  Prerequisites"
 have git     || coop_warn "git not found — install Git (mac: 'xcode-select --install' or 'brew install git'; linux: your package manager)."
 have python3 || coop_warn "python3 not found — install Python 3.10+ (mac: 'brew install python'; linux: 'apt install python3')."
-have node    || coop_warn "node not found — install Node.js 18+ from https://nodejs.org (needed to install/update pi)."
+have node    || coop_warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)."
 
 # pipx: we can usually install this ourselves.
 if ! have pipx; then
@@ -67,7 +67,7 @@ else
 fi
 
 # --- 2. Pi itself ------------------------------------------------------------
-coop_head "2/7  Pi (@mariozechner/pi-coding-agent)"
+coop_head "2/7  Pi (@earendil-works/pi-coding-agent)"
 if have pi && [ "$FORCE" = 0 ]; then
   coop_ok "pi present ($(pi --version 2>/dev/null || echo '?'))"
 elif have npm; then

@@ -6,11 +6,11 @@
 agent:
   name: coop
   brand: Cooptimize
-  built_on: "@mariozechner/pi-coding-agent"   # Pi — coop is a layer, never a fork
+  built_on: "@earendil-works/pi-coding-agent"   # Pi — coop is a layer, never a fork
 
 # How coop installs Pi itself.
 pi:
-  npm_package: "@mariozechner/pi-coding-agent"
+  npm_package: "@earendil-works/pi-coding-agent"
   self_update: "pi update pi"
   ext_update: "pi update"
 

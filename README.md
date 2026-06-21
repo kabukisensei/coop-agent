@@ -1,8 +1,8 @@
 # coop — the Cooptimize terminal agent
 
 **coop** is a branded analytics-engineering agent for Cooptimize, a worker-owned
-cooperative. It is a thin **layer on top of [Pi](https://www.npmjs.com/package/@mariozechner/pi-coding-agent)**
-(`@mariozechner/pi-coding-agent`) — **not a fork**. `coop` runs `pi` against its
+cooperative. It is a thin **layer on top of [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)**
+(`@earendil-works/pi-coding-agent`) — **not a fork**. `coop` runs `pi` against its
 **own isolated agent dir** (`~/.coop/agent`) with the Cooptimize skills, prompt
 templates, theme, its own splash/footer extension, and a governance system prompt,
 and it shells out to the standalone Coop tools
@@ -61,7 +61,9 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 
 All platforms need:
 
-- **Node.js 18+** (to install/update Pi via `npm`) — https://nodejs.org
+- **Node.js 22.19+** (to install/update Pi via `npm`) — https://nodejs.org
+  (Pi = `@earendil-works/pi-coding-agent` requires ≥ 22.19; teammates still on Node 20
+  can pin Pi's `legacy-node20` build)
 - **Python 3.10+** — https://python.org
 - **pipx** (`coop install` will install it for you if `python3` is present)
 - **git** — https://git-scm.com
@@ -113,7 +115,7 @@ If you prefer to install the pieces yourself, the bootstrap is equivalent to:
 
 ```bash
 # Pi itself
-npm install -g @mariozechner/pi-coding-agent
+npm install -g @earendil-works/pi-coding-agent
 
 # Pi extensions (into coop's isolated agent dir)
 pi install npm:pi-mcp-adapter        # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
@@ -200,12 +202,20 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop pi <args...>` | Raw escape hatch to `pi` |
 
 `coop data-doc` / `coop sql-review` / `coop dax-review` **flow straight through** to
-the underlying tool — every subcommand (`check`, `rules`, `upgrade`, the
+the underlying tool — every subcommand (`check`, `rules`, `upgrade`, the full
 `coop-data-doc setup` wizard, …) and the tools' own interactive prompts work, and
-the exit code propagates. The tools handle their own first-run setup; coop never
-auto-creates their config. Both reviews are **advisory** — they never edit or block.
+the exit code propagates. Both reviews are **advisory** — they never edit or block.
 The AI agent gets machine-readable JSON through the native `sql_review` / `dax_review`
 tools (in `extensions/coop-tools`), independent of these passthrough commands.
+
+For **`coop-data-doc`'s first-run setup**, coop also offers an **in-agent** path so you
+don't have to drop to a shell: when you launch `coop` in a folder with no
+`coop-data-doc.yml`, it offers to set up lineage docs right there, and the
+**`/setup-docs`** command runs (or re-runs) that quick wizard anytime — Pi's native
+dialogs collect the essentials, write/patch `coop-data-doc.yml`, and build. The full
+wizard (medallion layers, branding, schema→model mappings, per-folder globs) still
+lives in the tool: run `coop data-doc setup` in a shell. See
+[`extensions/coop-tools/README.md`](extensions/coop-tools/README.md#data-doc-setup-setup-docs).
 
 ---
 
@@ -426,7 +436,7 @@ git clone <coop-agent-repo>; cd coop-agent
 - **Windows** — `bin/coop.ps1` + `bin/coop.cmd` (PowerShell). Same subcommands,
   dependency list, and `fab`-collision detection as the bash path.
 
-Each teammate's machine needs the prerequisites (Node 18+, Python 3.10+, pipx, git —
+Each teammate's machine needs the prerequisites (Node 22.19+, Python 3.10+, pipx, git —
 see [Prerequisites](#prerequisites)); the installer pulls everything else from npm
 and PyPI. After install, `coop doctor` tells each person exactly what (if anything)
 is still missing.

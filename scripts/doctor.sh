@@ -36,7 +36,7 @@ check() {
 coop_head "coop doctor — Cooptimize agent v${COOP_VERSION}"
 
 coop_head "Core"
-check pi      required "npm install -g @mariozechner/pi-coding-agent   (or: coop bootstrap)" "pi --version"
+check pi      required "npm install -g @earendil-works/pi-coding-agent   (or: coop bootstrap)" "pi --version"
 check git     required "install Git from https://git-scm.com" "git --version"
 check node    optional "needed to install/update pi: https://nodejs.org" "node --version"
 check npm     optional "ships with Node.js" "npm --version"

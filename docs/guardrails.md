@@ -63,6 +63,13 @@ You have these tools. Know they exist and reach for the right one:
   (the project's `coop-data-doc.yml` output dir / mkdocs `docs/` tree), read the
   relevant `.md` files instead of re-deriving relationships by hand; use
   `manifest.json` to find which doc covers which object.
+  **First run:** if this folder has no `coop-data-doc.yml`, the docs don't exist yet —
+  tell the user to run **`/setup-docs`** (a native in-agent wizard) or `coop data-doc
+  setup` (the full wizard, in a shell) to establish them. coop also offers this
+  automatically on startup when a folder has no built docs. **Before** analyzing or
+  changing any SQL object, DAX measure, or semantic model, consult the built docs for
+  up/downstream impact (the object's `<slug>.md` + its immediate neighbors — see
+  "Read focused"); don't reconstruct lineage by hand when the docs already have it.
 - **`sql_review`** → `coop-sql-review`. Use when reviewing or before changing T-SQL /
   Fabric Warehouse SQL — advisory standards check, never edits or blocks.
 - **`dax_review`** → `coop-dax-review`. Use when reviewing or before changing DAX /

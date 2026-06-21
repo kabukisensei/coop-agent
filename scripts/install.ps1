@@ -69,7 +69,7 @@ foreach ($a in $args) {
 # --- What we install (keep in sync with config/defaults.yml) ------------------
 # coop renders its OWN footer/splash via extensions/coop-powerline — no third-party
 # powerline footer.
-$PI_NPM_PACKAGE = '@mariozechner/pi-coding-agent'
+$PI_NPM_PACKAGE = '@earendil-works/pi-coding-agent'
 $PI_EXTENSIONS = @(
   'npm:pi-mcp-adapter',       # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
   'npm:pi-hermes-memory',     # persistent memory + session search + secret scanning
@@ -91,7 +91,7 @@ Coop-Head "Cooptimize agent bootstrap (v$($script:CoopVersion))  [$OS]"
 Coop-Head '1/7  Prerequisites'
 if (-not (Test-Have 'git'))     { Coop-Warn "git not found — install Git from https://git-scm.com (or 'winget install Git.Git')." }
 if (-not (Test-Have 'python3') -and -not (Test-Have 'python')) { Coop-Warn "python3 not found — install Python 3.10+ from https://python.org (or 'winget install Python.Python.3.12')." }
-if (-not (Test-Have 'node'))    { Coop-Warn "node not found — install Node.js 18+ from https://nodejs.org (needed to install/update pi)." }
+if (-not (Test-Have 'node'))    { Coop-Warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)." }
 
 # pipx: we can usually install this ourselves.
 if (-not (Test-Have 'pipx')) {
@@ -112,7 +112,7 @@ if (-not (Test-Have 'pipx')) {
 }
 
 # --- 2. Pi itself ------------------------------------------------------------
-Coop-Head '2/7  Pi (@mariozechner/pi-coding-agent)'
+Coop-Head '2/7  Pi (@earendil-works/pi-coding-agent)'
 if ((Test-Have 'pi') -and -not $FORCE) {
   $pv = (& pi --version 2>$null); if (-not $pv) { $pv = '?' }
   Coop-Ok "pi present ($pv)"

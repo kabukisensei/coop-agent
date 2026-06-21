@@ -1,6 +1,6 @@
 # Cooptimize Agent — Architecture
 
-`coop` is a **branded layer on top of Pi** (`@mariozechner/pi-coding-agent`). It
+`coop` is a **branded layer on top of Pi** (`@earendil-works/pi-coding-agent`). It
 is **not a fork**. `bin/coop` is a thin bash dispatcher that launches `pi` with
 Cooptimize skills, prompts, theme, a governance system prompt, and companion
 extensions, and shells out to the standalone Coop tools and the Microsoft Fabric
@@ -113,7 +113,7 @@ flowchart TD
     user([User]) --> coop["coop (bin/coop)\nbranded layer / orchestrator — never a fork"]
 
     coop -- "subcommands:\ndoctor · update · install · sync\ndata-doc · sql-review · dax-review · fabric" --> subs[[coop subcommands]]
-    coop -- "exec pi --append-system-prompt --skill\n--prompt-template --theme -e …" --> pi["Pi\n@mariozechner/pi-coding-agent"]
+    coop -- "exec pi --append-system-prompt --skill\n--prompt-template --theme -e …" --> pi["Pi\n@earendil-works/pi-coding-agent"]
 
     subgraph LAYER["Cooptimize layer (this repo)"]
       guard["guardrails.md\n(system prompt)"]

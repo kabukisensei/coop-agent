@@ -103,7 +103,7 @@ function Check {
 Coop-Head "coop doctor — Cooptimize agent v$($script:CoopVersion)"
 
 Coop-Head 'Core'
-Check 'pi'      'required' 'npm install -g @mariozechner/pi-coding-agent   (or: coop bootstrap)' @('pi','--version')
+Check 'pi'      'required' 'npm install -g @earendil-works/pi-coding-agent   (or: coop bootstrap)' @('pi','--version')
 Check 'git'     'required' 'install Git from https://git-scm.com' @('git','--version')
 Check 'node'    'optional' 'needed to install/update pi: https://nodejs.org' @('node','--version')
 Check 'npm'     'optional' 'ships with Node.js' @('npm','--version')

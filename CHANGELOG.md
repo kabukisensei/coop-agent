@@ -7,6 +7,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **In-agent data-doc setup** — coop now bootstraps `coop-data-doc` without leaving the
+  session: a launch-time offer (when the folder has no `coop-data-doc.yml` — *Yes / Not
+  now / Don't ask again*) and a **`/setup-docs`** command run a native-dialog quick wizard
+  that writes/patches `coop-data-doc.yml` and offers to build. Pi runs tool subprocesses
+  non-interactively (no TTY), so the tool's own questionary `setup` can't be driven from
+  inside a session; the native dialogs (in `extensions/coop-tools`) fill that gap. A
+  **re-run patches only the managed fields in place**, preserving anything from the full
+  wizard (layers, branding, schema→model mappings, globs, dialect); "Don't ask again"
+  writes a `.coop-data-doc.skip` marker. The full shell wizard (`coop data-doc setup`) is
+  unchanged. The agent is also guided (guardrails + the `data-doc-analysis` skill) to
+  consult the built docs for up/downstream impact before touching SQL/DAX/semantic models.
 - **Pi-config isolation** — coop now runs Pi against its own agent dir
   (`~/.coop/agent`; override with `COOP_AGENT_DIR`) via the `PI_CODING_AGENT_DIR` env
   var, so only Cooptimize's curated extensions/settings/theme/MCP load — your personal
@@ -34,14 +45,24 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   to the underlying tool — every subcommand (`rules`, `upgrade`, the
   `coop-data-doc setup` wizard, …) and the tools' own interactive prompts (e.g.
   `coop-sql-review`'s subfolder picker) work, and the exit code propagates. The CLI no
-  longer captures/summarizes review output; the tools drive their own first-run setup.
-  The AI agent's structured-JSON path is unchanged (native `sql_review` / `dax_review`
-  tools in `extensions/coop-tools`).
+  longer captures/summarizes review output. Interactive `coop-data-doc` setup is now
+  available both in a shell (`coop data-doc setup`) and in-agent (`/setup-docs`; see
+  Added). The AI agent's structured-JSON path is unchanged (native `sql_review` /
+  `dax_review` tools in `extensions/coop-tools`).
+- **Pi package moved to `@earendil-works/pi-coding-agent`** — the original
+  `@mariozechner/pi-coding-agent` is deprecated upstream ("please use
+  @earendil-works/pi-coding-agent instead going forward"). coop now installs, version-
+  checks, and imports the `@earendil-works` package everywhere (`bin/coop` +
+  `bin/coop.ps1`, the install/doctor scripts, `config/defaults.yml`, and the
+  `coop-tools` / `coop-powerline` extensions). This raises the Node requirement to
+  **22.19+** (Pi's current `engines`); teammates still on Node 20 can pin Pi's
+  `legacy-node20` build. Pi's CLI flags coop relies on are unchanged.
 
 ## [0.1.0] — 2026-06-17
 
-Initial release. **coop** is a branded Cooptimize layer on Pi
-(`@mariozechner/pi-coding-agent`) — not a fork.
+Initial release. **coop** is a branded Cooptimize layer on Pi — not a fork.
+(Shipped on `@mariozechner/pi-coding-agent`; migrated to its successor
+`@earendil-works/pi-coding-agent` — see [Unreleased].)
 
 ### Added
 

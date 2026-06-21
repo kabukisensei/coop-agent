@@ -66,20 +66,32 @@ Documents the SQL + Power BI estate and builds lineage.
   existing config, then validates and saves. Ctrl-C before the end writes nothing.
 - `init` → writes a starter config to edit by hand (`--force` to overwrite).
 
-**First-run setup (user-driven).** `coop-data-doc` reads its own config file,
+**First-run setup.** `coop-data-doc` reads its own config file,
 **`coop-data-doc.yml`** — which is **separate** from coop's `.coop/project.yml`. It
-points the tool at the repos to crawl and the doc output. coop does **not** create
-it for you; the tool does, when you run its setup:
+points the tool at the repos to crawl and the doc output. Two ways to create it:
+
+- **In the agent (recommended):** run **`/setup-docs`**, or accept the offer coop
+  makes on launch when the folder has no `coop-data-doc.yml`. A native-dialog quick
+  wizard (in `extensions/coop-tools`) collects the essentials — project name, SQL +
+  Power BI repo paths, output folders — then writes/patches `coop-data-doc.yml` and
+  offers to build. A re-run patches **only those fields, in place**, preserving
+  anything set by the full wizard (layers, branding, mappings, globs, dialect).
+  "Don't ask again" drops a `.coop-data-doc.skip` marker so the launch offer won't
+  re-ask. (It lives in coop-tools because Pi runs tool subprocesses
+  non-interactively — no TTY — so the tool's own questionary wizard can't be driven
+  from inside a session.)
+- **In a shell (full wizard):**
 
 ```
-coop data-doc setup     # interactive wizard (recommended first time)
+coop data-doc setup     # full interactive wizard (layers, branding, mappings, globs)
 coop data-doc init      # or: write a starter coop-data-doc.yml to edit by hand
 ```
 
-Until that exists, doc-building commands flow through and the tool tells you to run
-`init`/`setup` (e.g. `error: Config file not found: coop-data-doc.yml`). The review
-tools (`sql_review` / `dax_review`) have **no** wizard — they use bundled standards,
-configurable per-run with `--standards` / `--config`.
+Until a config exists, doc-building commands flow through and the tool reports
+`error: Config file not found: coop-data-doc.yml` — and the native `data_doc` tool
+appends a `/setup-docs` hint when it sees that. The review tools (`sql_review` /
+`dax_review`) have **no** wizard — they use bundled standards, configurable per-run
+with `--standards` / `--config`.
 
 **How `coop` invokes it** (`bin/coop` → `run_data_doc`):
 
@@ -144,7 +156,14 @@ Result:
 Invocation: `coop-data-doc <command>` via `pi.exec`. Result `content` notes the
 artifacts: always `graph.json`, plus `manifest.json + Markdown docs + portal`
 when `command === "build"`, followed by the last 25 lines of stdout.
-`details` → `{ tool: "coop-data-doc", command, exitCode, stderr }`.
+`details` → `{ tool: "coop-data-doc", command, exitCode, stderr }`. When stdout/stderr
+contains `Config file not found`, the result appends a hint to run `/setup-docs`.
+
+> The model can only call `scan` / `build` / `check` — **`setup` and `init` are not
+> exposed to the LLM** (a wizard can't be driven through a captured subprocess).
+> Interactive setup is user-driven: the **`/setup-docs`** command + launch offer
+> (native dialogs, also in `extensions/coop-tools`), or `coop data-doc setup` in a
+> shell for the full wizard.
 
 > Note: the native `data_doc` tool defaults to **`scan`** (read-only first per
 > the workflow), whereas the `coop data-doc` subcommand defaults to **`build`**.
