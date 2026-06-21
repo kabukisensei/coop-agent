@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-06-21
+
 ### Added
 
 - **`coop-guardrails` now guards secret files** — confirms before the agent
