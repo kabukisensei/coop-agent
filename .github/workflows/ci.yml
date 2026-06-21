@@ -12,11 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: bash -n (syntax)
-        run: for f in bin/coop lib/common.sh scripts/*.sh; do echo "checking $f"; bash -n "$f"; done
+        run: for f in bin/coop lib/common.sh scripts/*.sh tests/*.sh; do echo "checking $f"; bash -n "$f"; done
       - name: shellcheck
         run: |
           sudo apt-get update -qq && sudo apt-get install -y shellcheck
-          shellcheck -S warning -e SC1091 bin/coop lib/common.sh scripts/*.sh
+          shellcheck -S warning -e SC1091 bin/coop lib/common.sh scripts/*.sh tests/*.sh
       - name: python yaml reader
         run: |
           python3 -c "import ast; ast.parse(open('lib/_yaml.py').read())"
@@ -38,7 +38,42 @@ jobs:
           node-version: '20'
       - name: esbuild check (mirrors how Pi loads .ts extensions)
         run: |
-          for f in extensions/coop-powerline/index.ts extensions/coop-tools/index.ts; do
+          for f in extensions/*/index.ts; do
             echo "transpiling $f"
             npx -y esbuild "$f" --bundle --format=esm --platform=node --packages=external --outfile=/dev/null
           done
+
+  tests:
+    name: logic tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: run test suite (data-doc config + coop-guardrails enforcement)
+        run: bash tests/run.sh
+
+  windows:
+    name: powershell parse (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: parse every .ps1 with the PowerShell language parser
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem -Recurse -Filter *.ps1 |
+            Where-Object { $_.FullName -notmatch 'node_modules' } |
+            ForEach-Object {
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors) | Out-Null
+              if ($errors) {
+                Write-Host "PARSE ERRORS in $($_.FullName):"
+                $errors | ForEach-Object { Write-Host "  $_" }
+                $failed = $true
+              } else {
+                Write-Host "ok: $($_.FullName)"
+              }
+            }
+          if ($failed) { exit 1 }

@@ -5,6 +5,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Automated test suite** (`tests/`) + CI coverage — the real logic now in the repo
+  gets actual tests: the data-doc config writer/parser (round-trip, in-place update
+  preserving rich config, quote/comment handling, dir-conflict) and `coop-guardrails`
+  enforcement (drives the real `tool_call` handler: blocks source commits / declined
+  destructive ops, allows docs-only/safe, honours the kill-switch). Run with
+  `bash tests/run.sh`; CI runs it as a `tests` job.
+- **Windows CI job** — a `windows-latest` job parses every `.ps1` with the PowerShell
+  language parser, so the PowerShell mirrors are syntax-validated automatically (they
+  were previously hand-written without a `pwsh` to check them).
+
 ## [0.3.0] — 2026-06-21
 
 ### Added
