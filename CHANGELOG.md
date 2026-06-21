@@ -5,6 +5,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`coop release [patch|minor|major]`** — one-command release cut: bumps `VERSION` +
+  the extension manifests, rolls the CHANGELOG `[Unreleased]` section into a dated
+  release heading, commits, tags `vX.Y.Z`, and pushes (commit + tag). Guards on a clean
+  working tree; `--yes` skips the confirm, `--no-push` stops at the local tag. Mirrored
+  in `bin/coop.ps1`.
+
 ## [0.2.0] — 2026-06-21
 
 ### Added

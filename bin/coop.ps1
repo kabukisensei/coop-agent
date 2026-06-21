@@ -232,6 +232,8 @@ $(Coop-Bold)Authoring$(Coop-Rst)
   coop init [dir]           Scaffold .coop/project.yml into a work repo (default: .)
   coop new-skill <name>     Scaffold skills/<name>/SKILL.md
   coop new-prompt <name>    Scaffold prompts/<name>.md
+  coop release [level]      Cut a release: bump version + roll CHANGELOG + commit + tag + push
+                            (level = patch|minor|major, default patch; --yes, --no-push)
 
 $(Coop-Bold)Pi management (aliased under coop)$(Coop-Rst)
   coop list                 List installed Pi extensions   (pi list)
@@ -431,6 +433,106 @@ Steps:
   Coop-Info 'Edit it, then it loads automatically next time you run: coop'
 }
 
+# --- Release: bump version, roll CHANGELOG, commit + tag (+ push) -------------
+# Mirror of coop_release in bin/coop. Writes files with LF via [IO.File] to avoid
+# Windows CRLF/BOM drift. Requires a clean working tree.
+function Invoke-CoopRelease {
+  param([string[]]$RestArgs = @())
+  $level = ''; $assumeYes = $false; $doPush = $true
+  foreach ($a in $RestArgs) {
+    switch -Regex ($a) {
+      '^(patch|minor|major)$' { $level = $a }
+      '^(-y|--yes)$'          { $assumeYes = $true }
+      '^--no-push$'           { $doPush = $false }
+      '^(-h|--help)$' {
+        Coop-Say 'Usage: coop release [patch|minor|major] [--yes] [--no-push]'
+        Coop-Say '  Bump VERSION + extension manifests, roll CHANGELOG [Unreleased] into a dated'
+        Coop-Say '  release, commit, tag vX.Y.Z, and push (commit + tag). Default level: patch.'
+        Coop-Say '  Requires a clean working tree (commit your changes first).'
+        return
+      }
+      default { Coop-Die "unknown arg '$a' — usage: coop release [patch|minor|major] [--yes] [--no-push]" }
+    }
+  }
+  if (-not $level) { $level = 'patch' }
+
+  if (-not (Test-Have 'git')) { Coop-Die "git is required for 'coop release'." }
+  $root = $script:CoopRoot
+  & git -C $root rev-parse --is-inside-work-tree *> $null
+  if ($LASTEXITCODE -ne 0) { Coop-Die "$root is not a git checkout." }
+  if (& git -C $root status --porcelain) { Coop-Die 'working tree not clean — commit or stash your changes before releasing.' }
+
+  $cur = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
+  if ($cur -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { Coop-Die "VERSION ('$cur') is not X.Y.Z — fix it before releasing." }
+  $p = $cur.Split('.'); $ma = [int]$p[0]; $mi = [int]$p[1]; $pa = [int]$p[2]
+  switch ($level) {
+    'major' { $new = "$($ma + 1).0.0" }
+    'minor' { $new = "$ma.$($mi + 1).0" }
+    'patch' { $new = "$ma.$mi.$($pa + 1)" }
+  }
+
+  & git -C $root rev-parse "v$new" *> $null
+  if ($LASTEXITCODE -eq 0) { Coop-Die "tag v$new already exists." }
+
+  $pushMsg = if ($doPush) { ' + push' } else { '' }
+  if (-not $assumeYes) {
+    if (-not (Coop-Confirm "Release v$cur -> v$new? (bump VERSION + manifests, roll CHANGELOG, commit, tag v$new$pushMsg)")) {
+      Coop-Info 'release cancelled — nothing changed.'; return
+    }
+  }
+
+  $today = (Get-Date -Format 'yyyy-MM-dd')
+
+  # 1. VERSION (LF)
+  [System.IO.File]::WriteAllText((Join-Path $root 'VERSION'), "$new`n")
+
+  # 2. extension manifests
+  Get-ChildItem -LiteralPath (Join-Path $root 'extensions') -Directory | ForEach-Object {
+    $pkg = Join-Path $_.FullName 'package.json'
+    if (Test-Path -LiteralPath $pkg) {
+      $c = Get-Content -LiteralPath $pkg -Raw
+      $c = [regex]::Replace($c, '"version":\s*"[0-9][^"]*"', "`"version`": `"$new`"")
+      [System.IO.File]::WriteAllText($pkg, $c)
+    }
+  }
+
+  # 3. CHANGELOG: insert a dated [X.Y.Z] heading right under [Unreleased]
+  $clog = Join-Path $root 'CHANGELOG.md'
+  if (Test-Path -LiteralPath $clog) {
+    $lines = Get-Content -LiteralPath $clog
+    if ($lines -match '^## \[Unreleased\]') {
+      $out = New-Object System.Collections.Generic.List[string]
+      $done = $false
+      foreach ($ln in $lines) {
+        $out.Add($ln)
+        if (-not $done -and $ln -match '^## \[Unreleased\]') { $out.Add(''); $out.Add("## [$new] — $today"); $done = $true }
+      }
+      [System.IO.File]::WriteAllText($clog, ($out -join "`n") + "`n")
+    } else {
+      Coop-Warn "no '## [Unreleased]' heading in CHANGELOG.md — skipped the changelog roll."
+    }
+  }
+
+  # 4. commit + tag
+  & git -C $root add -A
+  & git -C $root commit -q -m "Release v$new"
+  if ($LASTEXITCODE -ne 0) { Coop-Die 'git commit failed.' }
+  & git -C $root tag -a "v$new" -m "coop-agent v$new"
+  if ($LASTEXITCODE -ne 0) { Coop-Die 'git tag failed.' }
+  Coop-Ok "released v$new (was v$cur)"
+
+  # 5. push
+  if ($doPush) {
+    $branch = (& git -C $root rev-parse --abbrev-ref HEAD)
+    & git -C $root push origin $branch *> $null
+    if ($LASTEXITCODE -eq 0) { Coop-Ok "pushed $branch" } else { Coop-Warn "git push $branch failed — push manually: git push origin $branch" }
+    & git -C $root push origin "v$new" *> $null
+    if ($LASTEXITCODE -eq 0) { Coop-Ok "pushed tag v$new" } else { Coop-Warn 'git push tag failed — push manually.' }
+  } else {
+    Coop-Info "not pushed (--no-push). When ready: git push origin HEAD; git push origin v$new"
+  }
+}
+
 # --- Dispatch ----------------------------------------------------------------
 $argList = @()
 if ($null -ne $args) { $argList = @($args) }
@@ -459,6 +561,7 @@ switch -CaseSensitive ($cmd) {
   'init' { Invoke-CoopInit $rest; break }
   'new-skill' { New-CoopSkill $rest; break }
   'new-prompt' { New-CoopPrompt $rest; break }
+  'release' { Invoke-CoopRelease $rest; break }
   'data-doc' { Invoke-DataDoc $rest; break }
   'sql-review' { Invoke-Tool 'coop-sql-review' $rest; break }
   'dax-review' { Invoke-Tool 'coop-dax-review' $rest; break }

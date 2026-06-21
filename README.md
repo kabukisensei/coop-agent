@@ -196,6 +196,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop init [dir]` | Scaffold `.coop/project.yml` into a work repo (default: `.`) |
 | `coop new-skill <name>` | Scaffold `skills/<name>/SKILL.md` |
 | `coop new-prompt <name>` | Scaffold `prompts/<name>.md` |
+| `coop release [level]` | Cut a release — bump version, roll CHANGELOG, commit + tag + push (`patch`/`minor`/`major`, default `patch`) |
 | **Pi management (aliased under coop)** | |
 | `coop list` | List installed Pi extensions (`pi list`) |
 | `coop config` | Open Pi's resource TUI (`pi config`) |

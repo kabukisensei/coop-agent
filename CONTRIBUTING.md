@@ -58,3 +58,17 @@ YAML/JSON, and transpiles the TypeScript extensions with esbuild.
 - Update the relevant docs (`README.md`, `docs/*`) when behavior changes.
 - Never commit secrets, tenant ids, tokens, `.env`, or generated artifacts (the
   `.gitignore` is set up to prevent this — keep it that way).
+
+## Cutting a release
+
+From a clean working tree (all changes committed, `CHANGELOG.md` updated under
+`## [Unreleased]`):
+
+```bash
+coop release minor        # or: patch | major  (default: patch)
+```
+
+`coop release` bumps `VERSION` + the extension manifests, rolls `[Unreleased]` into a
+dated `## [X.Y.Z]` section (leaving a fresh `[Unreleased]`), commits, tags `vX.Y.Z`,
+and pushes the commit + tag. Use `--no-push` to stop at the local tag, `--yes` to skip
+the confirm. SemVer in 0.x: **minor** for features/notable changes, **patch** for fixes.
