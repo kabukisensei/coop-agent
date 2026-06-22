@@ -372,6 +372,7 @@ if ($existing -ne $launcherBody) {
   Coop-Ok 'coop already linked'
 }
 if (($env:PATH -split ';') -notcontains $LOCALBIN) {
+  $script:NeedNewShell = $true
   # Add the launcher dir to the persistent USER PATH (idempotent) so `coop` works in
   # every shell — not just warn. Also prepend it to THIS process so the rest of the
   # install + doctor can call `coop` now. New terminals pick up the persistent change.
@@ -396,4 +397,10 @@ if ($syncRc -ne 0) { Coop-Warn 'sync reported issues' }
 $null = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
 
 [Console]::Error.WriteLine('')
-Coop-Ok 'Bootstrap complete. Start the agent with:  coop'
+if ($script:NeedNewShell) {
+  Coop-Ok 'Bootstrap complete. coop was just added to your PATH.'
+  Coop-Say "      Open a NEW terminal, then run:  coop"
+  Coop-Say "      (or use it right now in this window:  & `"$LOCALBIN\coop.cmd`")"
+} else {
+  Coop-Ok 'Bootstrap complete. Start the agent with:  coop'
+}

@@ -174,9 +174,10 @@ if [ ! -e "$LOCALBIN/coop" ] || [ "$(readlink "$LOCALBIN/coop" 2>/dev/null)" != 
 else
   coop_ok "coop already linked"
 fi
+COOP_ON_PATH=1
 case ":$PATH:" in
   *":$LOCALBIN:"*) : ;;
-  *) coop_warn "$LOCALBIN is not on your PATH. Add to your shell rc:  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+  *) COOP_ON_PATH=0 ;;
 esac
 
 # --- 7. Sync brand assets + doctor ------------------------------------------
@@ -186,4 +187,11 @@ echo >&2
 "$COOP_ROOT/scripts/doctor.sh" || true
 
 echo >&2
-coop_ok "Bootstrap complete. Start the agent with:  coop"
+if [ "${COOP_ON_PATH:-1}" = 1 ]; then
+  coop_ok "Bootstrap complete. Start the agent with:  coop"
+else
+  coop_ok "Bootstrap complete — but '$LOCALBIN' isn't on this shell's PATH yet."
+  coop_say "      • open a NEW terminal, then run:  coop"
+  coop_say "      • or use it in THIS shell right now:  $LOCALBIN/coop"
+  coop_say "      • to make it permanent, add to ~/.zshrc (or ~/.bashrc):  export PATH=\"\$HOME/.local/bin:\$PATH\""
+fi
