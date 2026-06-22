@@ -33,7 +33,12 @@ before building (consent rounds). Never commit source.
   named folders as skipped (everything else documented), preserving custom excludes.
 - `coop-data-doc init` → scaffold a starter `coop-data-doc.yml` when none exists.
 - `coop-data-doc build --non-interactive` → build markdown + portal; leaves ambiguous
-  cross-repo links unresolved (mapping those is the terminal/interactive path).
+  cross-repo links unresolved (map those with resolve/resolve-apply below).
+- `coop-data-doc resolve` → JSON of the ambiguous Power BI→SQL links that need a
+  human decision, each with its candidate SQL targets + fuzzy scores.
+- `coop-data-doc resolve-apply` ← decisions JSON on stdin:
+  `{"decisions":[{"cache_key":"…","target":"view:…"},{"cache_key":"…","external":true},
+  {"cache_key":"…","skip":true}]}` — writes them to the lineage cache; rebuild to use.
 
 ## Flow
 
@@ -55,10 +60,15 @@ before building (consent rounds). Never commit source.
    (bronze/silver/gold) and whether any view schema feeds a specific semantic model;
    apply via `config-set` (`layers`, `schema_mappings`). Skipping is fine.
 6. **Build (with approval).** Confirm, then `coop-data-doc build --non-interactive`.
-   Show the portal path and the counts (objects / edges / unresolved). If there are
-   **unresolved cross-repo links**, say so and offer either to resolve them in a
-   terminal (`coop data-doc build`) or to come back to them.
-7. **Hand off.** Point the user at the portal and note that from now on the agent will
+   Show the portal path and the counts (objects / edges / unresolved).
+7. **Resolve ambiguous links (optional, through the agent).** If the build reports
+   unresolved cross-repo links, run `coop-data-doc resolve`. For each item, present
+   its `candidates` (with scores) plus "external source" and "skip" via
+   `ask-user-question` — *"Which SQL object feeds Power BI table `<pbi_table>` (source
+   `<source>`)?"* Collect the answers into a `resolve-apply` decisions payload, pipe it
+   to `coop-data-doc resolve-apply`, then **rebuild** (`build --non-interactive`) so the
+   new edges land. Mapping every link is optional — skipping is fine.
+8. **Hand off.** Point the user at the portal and note that from now on the agent will
    consult these docs for any object's lineage (see the `data_doc` guardrail / the
    `coop-data-doc lineage <object>` query).
 
