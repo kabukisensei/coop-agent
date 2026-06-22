@@ -213,16 +213,27 @@ if (Test-Have 'fab') {
     if ($LASTEXITCODE -eq 0) { $hasCicd = $true }
   }
   if (-not $hasCicd) {
-    # Fallback: probe an interpreter next to the resolved shim (works where the
-    # shim IS a symlink into the venv, e.g. *nix-like setups).
+    # Fallback: find the ms-fabric-cli venv interpreter directly. Needed on Windows,
+    # where the `fab` shim in ~\.local\bin isn't a symlink AND `pipx` may be absent
+    # (no system Python). Try PIPX_HOME + the common defaults, plus an interpreter
+    # next to the shim (where the shim IS a symlink, e.g. *nix-like setups).
+    $venvCandidates = @()
+    foreach ($pipxHome in @($env:PIPX_HOME, (Join-Path $HOME 'pipx'), (Join-Path $HOME '.local\pipx'), (Join-Path $env:LOCALAPPDATA 'pipx\pipx'))) {
+      if ($pipxHome) {
+        $venvCandidates += (Join-Path $pipxHome 'venvs\ms-fabric-cli\Scripts\python.exe')  # Windows
+        $venvCandidates += (Join-Path $pipxHome 'venvs\ms-fabric-cli\bin\python')           # *nix-like
+      }
+    }
     $fabCmd = (Get-Command fab -ErrorAction SilentlyContinue)
-    $fabReal = if ($fabCmd) { $fabCmd.Source } else { '' }
-    foreach ($pyName in @('python.exe', 'python')) {
-      $cand = if ($fabReal) { Join-Path (Split-Path -Parent $fabReal) $pyName } else { '' }
-      if ($cand -and (Test-Path -LiteralPath $cand)) {
-        & $cand -c 'import fabric_cicd' *> $null
-        if ($LASTEXITCODE -eq 0) { $hasCicd = $true }
-        break
+    if ($fabCmd) {
+      $shimDir = Split-Path -Parent $fabCmd.Source
+      $venvCandidates += (Join-Path $shimDir 'python.exe')
+      $venvCandidates += (Join-Path $shimDir 'python')
+    }
+    foreach ($py in $venvCandidates) {
+      if ($py -and (Test-Path -LiteralPath $py)) {
+        & $py -c 'import fabric_cicd' *> $null
+        if ($LASTEXITCODE -eq 0) { $hasCicd = $true; break }
       }
     }
   }
