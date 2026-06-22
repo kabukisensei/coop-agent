@@ -6,7 +6,8 @@
  *
  *   sql_review  -> coop-sql-review check <paths> --format json   (advisory; never edits/blocks)
  *   dax_review  -> coop-dax-review check <paths> --format json   (advisory; never edits/blocks)
- *   data_doc    -> coop-data-doc <scan|build|check>              (lineage + manifest.json)
+ *   data_doc    -> coop-data-doc <scan|build|check|lineage>      (lineage graph + manifest.json;
+ *                                                                lineage = one object's up/downstream)
  *
  * These let the agent call the review/documentation tools directly instead of
  * asking the user to run them. They are advisory: they never modify source.
