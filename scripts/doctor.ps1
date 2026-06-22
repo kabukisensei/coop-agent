@@ -122,8 +122,24 @@ Check 'pi'      'required' 'npm install -g @earendil-works/pi-coding-agent   (or
 Check 'git'     'required' 'install Git from https://git-scm.com' @('git','--version')
 Check 'node'    'optional' 'needed to install/update pi: https://nodejs.org' @('node','--version')
 Check 'npm'     'optional' 'ships with Node.js' @('npm','--version')
-Check 'python3' 'required' 'install Python 3.10+ from https://python.org' @('python3','--version')
-Check 'pipx'    'required' 'python3 -m pip install --user pipx && python3 -m pipx ensurepath' @('pipx','--version')
+# Python: Windows ships `python`/`py`, not `python3` — accept either. And no bash-
+# style `&&` in hints (Windows PowerShell 5.1 can't parse it).
+$pyBin  = if (Test-Have 'python3') { 'python3' } elseif (Test-Have 'python') { 'python' } else { $null }
+$pyName = if ($pyBin) { $pyBin } else { 'python' }
+if ($pyBin) {
+  $pv = (& $pyBin --version 2>$null | Select-Object -First 1)
+  $pm = [regex]::Match([string]$pv, '\d+\.\d+(\.\d+)?')
+  D-Ok ('python' + $(if ($pm.Success) { "  ($($pm.Value))" } else { '' }))
+} else {
+  D-Bad 'python missing' 'winget install Python.Python.3.12  (or https://python.org), then: coop install'
+}
+if (Test-Have 'pipx') {
+  $xv = (& pipx --version 2>$null | Select-Object -First 1)
+  $xm = [regex]::Match([string]$xv, '\d+\.\d+(\.\d+)?')
+  D-Ok ('pipx' + $(if ($xm.Success) { "  ($($xm.Value))" } else { '' }))
+} else {
+  D-Bad 'pipx missing' "$pyName -m pip install --user pipx; $pyName -m pipx ensurepath  (or just: coop install)"
+}
 
 # Minimum Pi version — the extension API used by coop-powerline / coop-tools.
 if (Test-Have 'pi') {

@@ -404,6 +404,26 @@ EOF
   fi
 }
 
+# Surface freshly-installed tools (npm-global `pi`, pipx `fab`/coop-*) on PATH for
+# this process so a shell whose persistent PATH predates the install still finds
+# them. Best-effort; only prepends dirs that exist.
+_coop_add_runtime_paths() {
+  local d p
+  if have npm; then
+    p="$(npm prefix -g 2>/dev/null)"
+    if [ -n "$p" ] && [ -d "$p/bin" ]; then
+      case ":$PATH:" in *":$p/bin:"*) ;; *) PATH="$p/bin:$PATH" ;; esac
+    fi
+  fi
+  d="$HOME/.local/bin"
+  if [ -d "$d" ]; then
+    case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
+  fi
+  export PATH
+  hash -r 2>/dev/null || true
+}
+_coop_add_runtime_paths
+
 # --- Dispatch ----------------------------------------------------------------
 cmd="${1:-}"
 case "$cmd" in

@@ -108,6 +108,24 @@ function Get-CoopPython {
   else { return $null }
 }
 
+# Make tools in the npm global bin (`pi`) or the pipx bin (`fab`, coop-*) resolvable
+# even when the current shell's persistent PATH predates their install — otherwise
+# `coop` / `coop doctor` falsely report them "not installed" right after a fresh
+# `coop install`. Best-effort, process-local: only PREPENDS dirs that exist.
+function Add-CoopRuntimePaths {
+  $dirs = @()
+  if (Test-Have 'npm') {
+    $p = (& npm prefix -g 2>$null)
+    if ($p) { $dirs += $p; $dirs += (Join-Path $p 'bin') }   # win: shims in prefix; *nix: prefix/bin
+  }
+  $dirs += (Join-Path $HOME '.local\bin')                    # pipx default PIPX_BIN_DIR
+  foreach ($d in $dirs) {
+    if ($d -and (Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
+      $env:PATH = "$d;$env:PATH"
+    }
+  }
+}
+
 # Read a dotted scalar key from a YAML file via lib/_yaml.py (PyYAML when present,
 # else a dependency-free fallback parser). (mirror of coop_yaml_get)
 function Get-CoopYamlValue {
@@ -568,6 +586,10 @@ $cmd = if ($argList.Count -ge 1) { $argList[0] } else { '' }
 # Everything after the subcommand. Guard the count<=1 case: PowerShell ranges like
 # 1..0 count DOWNWARDS (1,0) and would wrongly re-include element 0.
 $rest = if ($argList.Count -gt 1) { @($argList[1..($argList.Count - 1)]) } else { @() }
+
+# Surface freshly-installed tools (npm-global `pi`, pipx `fab`/coop-*) on PATH for
+# this process so a shell whose persistent PATH predates the install still finds them.
+Add-CoopRuntimePaths
 
 switch -CaseSensitive ($cmd) {
   { $_ -eq '' -or $_ -eq '--no-launch' } { Invoke-LaunchPi; break }
