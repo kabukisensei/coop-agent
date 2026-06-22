@@ -1,6 +1,6 @@
 ---
 name: data-doc-analysis
-description: Run and interpret coop-data-doc — scan to produce graph.json, build to produce manifest.json plus Markdown docs and the portal — then summarize lineage and find documentation gaps and staleness. Advisory analysis; regenerates docs/site only with approval.
+description: Run and interpret coop-data-doc — scan to produce graph.json, build to produce manifest.json plus Markdown docs and the portal, lineage to look up one object's up/downstream before touching it — then summarize lineage and find documentation gaps and staleness. Advisory analysis; regenerates docs/site only with approval.
 ---
 
 # Data Documentation Analysis
@@ -20,21 +20,32 @@ workflow calls at step 3 (read target + lineage) and step 9 (document).
 - **First run.** If the folder has no `coop-data-doc.yml`, the docs aren't set up
   yet — have the user run **`/setup-docs`** (native in-agent wizard) or
   `coop data-doc setup` (full wizard, in a shell) to create it, then continue. coop
-  also offers this on startup when a folder has no built docs.
+  also offers this on startup when a folder has no built docs. When the folder *does*
+  have built docs, coop auto-detects them at session start and announces it so you
+  consult lineage before touching objects. The lineage is an **aid, not a gate** —
+  if it's absent, proceed without it.
+- **Lineage before you touch an object.** Before analyzing or changing any SQL
+  object, DAX measure, or semantic model, look up its up/downstream impact: call
+  `data_doc` with `command="lineage"`, `object="<name>"` (optionally `depth`) to get
+  that object's upstream inputs, downstream dependents, relationships, and doc path
+  as JSON from the built graph — don't reconstruct lineage by hand. An ambiguous name
+  returns candidates to choose from; "no built graph" means run `build` (or
+  `/setup-docs`) first, or proceed without it.
 - **Scan.** Run `coop-data-doc scan` to (re)generate `graph.json` — the machine
   lineage graph of objects and their edges.
 - **Build.** Run `coop-data-doc build` to produce `manifest.json`, the Markdown
   docs, and the portal. Use `manifest.json` as the structured source for analysis.
 - **Read the generated Markdown — focused.** The per-object Markdown docs are the
   canonical, human- and agent-readable documentation for the estate. To protect the
-  context window, **do not read the whole doc set**: locate the object's node in
-  `manifest.json` / `graph.json` (it carries `upstream`, `downstream`, and each
-  object's `slug`), then read **only** that object's `<slug>.md` plus its immediate
-  upstream and downstream neighbors. Prefer **context-mode** (intent-driven search +
-  sandboxed execution) to pull just the relevant slice. Widen the radius only when
-  the change's blast radius requires it.
-- **Lineage.** Summarize key flows: sources → bronze → silver → gold → semantic
-  model → report. Highlight critical paths and any cross-repo edges.
+  context window, **do not read the whole doc set**: the quickest grounding is the
+  `lineage` command above, which returns the object's neighbors + its doc path in one
+  call; otherwise locate the object's node in `manifest.json` / `graph.json` (it
+  carries `upstream`, `downstream`, and each object's `slug`). Then read **only** that
+  object's `<slug>.md` plus its immediate upstream and downstream neighbors. Prefer
+  **context-mode** (intent-driven search + sandboxed execution) to pull just the
+  relevant slice. Widen the radius only when the change's blast radius requires it.
+- **Lineage flows.** Summarize key flows: sources → bronze → silver → gold →
+  semantic model → report. Highlight critical paths and any cross-repo edges.
 - **Coverage gaps.** Identify objects with no description, no owner, or no glossary
   term; measures/columns lacking definitions; and dangling references.
 - **Orphans + dead ends.** Flag objects with no upstream (unexplained sources) or
@@ -46,9 +57,12 @@ workflow calls at step 3 (read target + lineage) and step 9 (document).
 
 ## Tools / MCP used
 
-- **`data_doc`** (`coop-data-doc`) — `scan` → `graph.json`; `build` →
-  `manifest.json` + Markdown + portal. Also `check`, `init`, `setup`, `update`,
-  `upgrade` as needed. This is the primary tool for this skill.
+- **`data_doc`** (`coop-data-doc`) — `scan` → `graph.json` (lineage graph,
+  read-only); `build` → `manifest.json` + Markdown + portal; `lineage` (with
+  `object`, optional `depth`) → one object's upstream/downstream + relationships +
+  doc path as JSON from the built graph (use it **before** touching that object);
+  `check` is a CI staleness gate. Also `init` / `setup` as needed. This is the
+  primary tool for this skill.
 - **`git`** — `status` / `log` to detect source-vs-doc staleness (read-only).
 - **Microsoft Learn MCP** — current guidance when interpreting Fabric/Power BI
   lineage.

@@ -11,8 +11,8 @@ At launch, `bin/coop` loads, from this repo:
 | Skills | `skills/<name>/SKILL.md` | each folder auto-loaded (except the allow-listed `skills/_microsoft/`) |
 | Prompt templates | `prompts/<name>.md` | whole folder via `--prompt-template` |
 | Theme | `themes/cooptimize.json` | via `--theme` |
-| Guardrails prompt | `docs/guardrails.md` | via `--append-system-prompt` |
-| Companion extensions | `extensions/coop-*/` | via `pi -e` |
+| Guardrails prompt | `docs/guardrails.md` | via `--append-system-prompt` (advisory; the `coop-guardrails` extension enforces it) |
+| Companion extensions | `extensions/coop-*/` (`coop-powerline`, `coop-tools`, `coop-guardrails`) | via `pi -e` |
 | Vibes | `vibes/*.txt` | read by `coop-powerline` |
 
 So adding a capability is usually just **adding a file and committing it**.
@@ -98,20 +98,35 @@ either replace the file or load yours with `coop --theme path/to/theme.json`.
 ## 4. Add a native tool or UI feature (a Pi extension)
 
 For real logic (new LLM-callable tools, footer/splash tweaks, event hooks), write a
-Pi extension in TypeScript. Use the two in `extensions/` as templates:
+Pi extension in TypeScript. Use the three in `extensions/` as templates:
 
 - `extensions/coop-tools/index.ts` — registers `sql_review` / `dax_review` /
-  `data_doc` with `pi.registerTool(...)`. Copy the pattern to wrap another CLI.
+  `data_doc` with `pi.registerTool(...)`. Copy the pattern to wrap another CLI. The
+  `data_doc` tool takes `command` = `scan` / `build` / `check` / `lineage` (the last
+  returns one object's up/downstream + relationships as JSON). It also shows the event
+  hooks: a `session_start` hook that offers the in-agent `/setup-docs` wizard when a
+  folder has no lineage docs, and a `before_agent_start` hook that — only when BUILT
+  docs exist — injects an agent-visible, human-hidden (`display: false`) note so coop
+  consults the lineage before touching an object; both degrade silently when absent.
 - `extensions/coop-powerline/index.ts` — coop renders its **own** footer and splash
-  here (it does **not** use a third-party powerline footer). The splash is the
-  truecolor block-art Cooptimize logo; the footer shows `⬢ Cooptimize · <branch>` on
-  the left and `<model> · ctx N% · tokens · $cost · <plan usage limits>` on the right,
+  here (it does **not** use a third-party powerline footer; `pi-powerline-footer` was
+  removed). The splash is the truecolor block-art Cooptimize logo; the footer shows
+  `⬢ Cooptimize · <branch>` on the left and
+  `<model> · ctx N% · tokens · $cost · <plan usage limits>` on the right,
   in plain text + common Unicode (no Nerd Font glyphs). It pulls other extensions'
   status text — e.g. pi-better-openai's plan usage limits (5h+7d windows) — into the
   one bar via `footerData.getExtensionStatuses()`. To extend the footer, surface your
   extension's own status string the same way rather than adding a second bar; to tweak
   the splash/footer rendering itself, edit this extension. It also wires vibes
-  (`setWorkingMessage`) and commands (`pi.registerCommand`).
+  (`setWorkingMessage`) and the `/coop-vibe` / `/coop-splash` commands
+  (`pi.registerCommand`).
+- `extensions/coop-guardrails/index.ts` — runtime **enforcement** of the governance
+  rules (`docs/guardrails.md` only *asks* the model; this hooks the agent's tool calls
+  and blocks/confirms): never commit source outside docs/logs/site, confirm destructive
+  commands (`rm -rf`, `git push --force`, `reset --hard`, `git clean -f`, `DROP`/`TRUNCATE`),
+  and confirm reads/writes of secret files. It's fail-open and feature-detected; disable
+  with `COOP_NO_GUARDRAILS=1`. It only ever intercepts the **agent's** tool calls — your
+  own shell is untouched.
 
 To load a new companion extension, either drop it in `extensions/<name>/` and add a
 `-e` line in `bin/coop` / `bin/coop.ps1`, or install a published one with

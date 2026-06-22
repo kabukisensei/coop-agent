@@ -39,9 +39,15 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      replacing Pi's prompt): read-only-first, plan-and-approve, never commit
      source, MCP read-only, never expose secrets.
    - **Skills** — `skills/`, including `coop-workflow` (the principles-first
-     Cooptimize workflow) and a subordinate, allow-listed set of official Microsoft
-     skills under `skills/_microsoft/`.
-   - **Prompt templates** — `prompts/`.
+     Cooptimize workflow) that the task skills run inside: `sql-review`,
+     `dax-review`, `data-doc-analysis`, `power-bi-impact-analysis`,
+     `fabric-workspace-review`, `daily-logger`, and `setup-docs` (the in-agent
+     coop-data-doc wizard driven via `ask-user-question` + coop-data-doc's
+     non-interactive commands) — plus a subordinate, allow-listed set of official
+     Microsoft skills under `skills/_microsoft/`.
+   - **Prompt templates** — `prompts/` (one per task skill: `discovery`,
+     `impact-analysis`, `semantic-model-review`, `fabric-architecture-review`,
+     `setup-docs`, `daily-log`, `weekly-log`).
    - **Theme** — `themes/cooptimize.json` (brand palette: navy `#00416B`,
      forest `#42783C`, olive `#82AA43`, lime `#B2D235`, red `#EF412D`).
    - **`coop-powerline` extension** — `extensions/coop-powerline/`: coop's OWN
@@ -58,8 +64,22 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      (uniform-padded, width-robust; `assets/splash.ansi`).
    - **`coop-tools` extension** — `extensions/coop-tools/`: registers the native
      LLM-callable tools `sql_review`, `dax_review`, `data_doc` that shell out to
-     the standalone CLIs and return JSON the model reasons over; also hosts the
-     in-agent `coop-data-doc` setup wizard (`/setup-docs`).
+     the standalone CLIs and return JSON the model reasons over. `data_doc` takes
+     a `command` (`scan` / `build` / `check` / `lineage`); `lineage <object>
+     [depth]` returns one object's upstream/downstream + relationships as JSON
+     from the built graph, so the agent grounds a change in real lineage instead
+     of guessing. A `before_agent_start` hook injects an agent-visible,
+     human-hidden (`display:false`) note — once per folder — telling the agent to
+     consult that lineage **before** touching any SQL/DAX/semantic-model object;
+     it stays silent when no built docs exist (the docs are an aid, not a gate).
+     The extension also hosts the in-agent `coop-data-doc` setup wizard built on
+     Pi's native dialogs (the `/setup-docs` command, plus a `session_start`
+     first-run offer when a folder has no built docs), since coop-data-doc's own
+     questionary wizard can't be driven from a non-TTY child. (The `setup-docs`
+     skill + prompt are a parallel, model-driven path to the same outcome via
+     `ask-user-question` + coop-data-doc's non-interactive commands; both end at
+     the same `coop-data-doc.yml` and build.) Everything is feature-detected and
+     try/catch-wrapped so it can never crash Pi.
    - **`coop-guardrails` extension** — `extensions/coop-guardrails/`: **enforces**
      governance at runtime via a `tool_call` hook (blocks the agent committing
      source; confirms destructive commands). Complements the advisory
@@ -85,7 +105,13 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
    subcommands and by the native `coop-tools` extension, both via CLI with the
    exact contracts in [`tool-contract.md`](./tool-contract.md):
    - `coop-data-doc` — SQL + Power BI documentation and lineage.
-     `scan` → `graph.json`; `build` → `manifest.json` + Markdown docs + portal.
+     `scan` → `graph.json`; `build` → `manifest.json` + Markdown docs + portal;
+     `lineage <object> [--depth]` → one object's up/downstream + relationships as
+     JSON (read from the built graph). Degrades to non-interactive when run with
+     no TTY (e.g. under the agent) — building everything that resolves rather than
+     prompting — and exposes non-interactive twins of its wizard for agents/CI
+     (`folders` / `set-folders`, `show-config` / `config-set`, `resolve` /
+     `resolve-apply`).
    - `coop-sql-review` — advisory T-SQL standards linter
      (`check <paths> --format json`). Never edits or blocks.
    - `coop-dax-review` — advisory DAX standards linter (same shape).
@@ -131,7 +157,7 @@ flowchart TD
       prompts["prompts/"]
       theme["themes/cooptimize.json"]
       ext_pl["ext: coop-powerline\ncoop's OWN footer · splash · vibes\n(no pi-powerline-footer)"]
-      ext_tools["ext: coop-tools\nsql_review · dax_review · data_doc"]
+      ext_tools["ext: coop-tools\nsql_review · dax_review · data_doc (scan/build/check/lineage)\n+ /setup-docs wizard · before_agent_start lineage note"]
     end
 
     pi --> guard
@@ -150,7 +176,7 @@ flowchart TD
     bopenai -. "status via getExtensionStatuses()" .-> ext_pl
 
     subgraph TOOLS["Standalone tools (pipx) — CLIs + the fabric-cicd library"]
-      datadoc["coop-data-doc\nscan→graph.json\nbuild→manifest.json + docs + portal"]
+      datadoc["coop-data-doc\nscan→graph.json\nbuild→manifest.json + docs + portal\nlineage <object>→up/downstream JSON"]
       sqlrev["coop-sql-review\ncheck --format json (advisory)"]
       daxrev["coop-dax-review\ncheck --format json (advisory)"]
       fab["fab (Microsoft Fabric CLI)\n⚠ Homebrew 'fab' collision → doctor"]

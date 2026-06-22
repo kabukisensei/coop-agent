@@ -56,15 +56,28 @@ one-line summary and passes the full report through in `details`.
 
 Documents the SQL + Power BI estate and builds lineage.
 
-**CLI contract:** `coop-data-doc <build|scan|check|init|setup|update|upgrade>`
+**CLI contract:** `coop-data-doc <build|scan|check|lineage|init|setup|update|upgrade>`
+plus the non-interactive agent/CI helpers `folders`, `set-folders`, `show-config`,
+`config-set`, `resolve`, and `resolve-apply`.
 
 - `scan` → writes the lineage graph **`graph.json`** (read-only over source).
 - `build` → also writes **`manifest.json`** + Markdown docs + the searchable
   portal/site.
 - `check` → CI staleness gate.
+- `lineage <object> [--depth N]` → prints ONE object's upstream/downstream +
+  relationships as **JSON**, read from the already-built `graph.json` (default
+  `--depth 1`). Ambiguous names print the candidate list instead of guessing;
+  no built graph → a one-line error pointing at `build`.
 - `setup` → **interactive wizard**: prompts for each value, prefilled from any
   existing config, then validates and saves. Ctrl-C before the end writes nothing.
 - `init` → writes a starter config to edit by hand (`--force` to overwrite).
+- The agent/CI helpers (`folders`, `set-folders`, `show-config`, `config-set`,
+  `resolve`, `resolve-apply`) read/patch config or list ambiguous links as JSON
+  with **no prompts**, so a session can drive setup non-interactively. When run
+  with no terminal (e.g. under the agent), `scan`/`build` **degrade to
+  non-interactive** — building everything that resolves automatically and pointing
+  the user at a terminal to map the rest — instead of crashing on the missing
+  console.
 
 **First-run setup.** `coop-data-doc` reads its own config file,
 **`coop-data-doc.yml`** — which is **separate** from coop's `.coop/project.yml`. It
@@ -151,22 +164,52 @@ Result:
 
 | Param | Type | Notes |
 |-------|------|-------|
-| `command` | `"scan" \| "build" \| "check"` (optional) | Defaults to **`scan`** (read-only). `build` writes docs/portal. |
+| `command` | `"scan" \| "build" \| "check" \| "lineage"` (optional) | Defaults to **`scan`** (read-only). `build` writes docs/portal; `lineage` looks up one object. |
+| `object` | `string` (optional) | **Required when `command === "lineage"`** — the object to look up (e.g. `dbo.fact_sales`, or a table/measure name). Ambiguous names return candidates. |
+| `depth` | `number` (optional) | For `lineage` only: hops up/downstream to include (default 1). |
 
-Invocation: `coop-data-doc <command>` via `pi.exec`. Result `content` notes the
-artifacts: always `graph.json`, plus `manifest.json + Markdown docs + portal`
-when `command === "build"`, followed by the last 25 lines of stdout.
-`details` → `{ tool: "coop-data-doc", command, exitCode, stderr }`. When stdout/stderr
-contains `Config file not found`, the result appends a hint to run `/setup-docs`.
+For `scan` / `build` / `check`, invocation is `coop-data-doc <command>` via
+`pi.exec`. Result `content` notes the artifacts: always `graph.json`, plus
+`manifest.json + Markdown docs + portal` when `command === "build"`, followed by the
+last 25 lines of stdout. `details` → `{ tool: "coop-data-doc", command, exitCode, stderr }`.
+When stdout/stderr matches `Config file not found` / `No coop-data-doc.yml`, the result
+appends a hint to run `/setup-docs` (or `coop data-doc setup`) — noting the docs are
+optional and you can still work without them.
 
-> The model can only call `scan` / `build` / `check` — **`setup` and `init` are not
-> exposed to the LLM** (a wizard can't be driven through a captured subprocess).
+For `command === "lineage"`, invocation is `coop-data-doc lineage <object> [--depth N]`.
+It reads the **already-built** `graph.json` (it does not re-parse the repos), so the
+agent can ground a change in an object's immediate lineage. Result `content` is a
+one-liner (`N upstream, M downstream, K relationship(s)`); the full slice is in
+`details.lineage` → the parsed JSON `{ object, schema, layer, source_file, upstream[],
+downstream[], relationships[] }` (each up/downstream entry carries `id`, `name`,
+`type`, and `doc`, the per-object Markdown path). An ambiguous `object` returns
+`{ query, ambiguous: true, matches[] }` (re-call with a specific name); when there's
+no built graph, `content` says so and points at `build` / `/setup-docs` — you can
+still proceed without it. `object` is required: a blank one returns a usage note, not
+an error.
+
+> The model can call `scan` / `build` / `check` / `lineage` — **`setup` and `init`
+> are not exposed to the LLM** (a wizard can't be driven through a captured subprocess).
 > Interactive setup is user-driven: the **`/setup-docs`** command + launch offer
 > (native dialogs, also in `extensions/coop-tools`), or `coop data-doc setup` in a
 > shell for the full wizard.
 
 > Note: the native `data_doc` tool defaults to **`scan`** (read-only first per
 > the workflow), whereas the `coop data-doc` subcommand defaults to **`build`**.
+
+**Auto-detection (lineage grounding).** Two hooks make coop consult lineage
+without the user asking:
+
+- `before_agent_start` — once per folder, when **built** docs exist (the config's
+  markdown output dir has `manifest.json` or `index.md`), it injects an
+  agent-visible, **`display: false`** note (`customType: "coop-lineage"`) telling
+  coop to look up an object's up/downstream via `data_doc (command="lineage")`
+  before touching it. **Silent when no built docs exist** — the docs are an aid,
+  not a gate.
+- `session_start` — when the folder has **no** `coop-data-doc.yml` (and no
+  `.coop-data-doc.skip` marker), it offers `/setup-docs`; when a config exists but
+  isn't built, it offers to build. Esc/"Not now" never suppresses; only an explicit
+  "Don't ask again" writes the skip marker.
 
 ---
 

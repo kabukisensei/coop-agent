@@ -5,6 +5,59 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Native lineage awareness + a `lineage` command on the `data_doc` tool** — the
+  `data_doc` native tool (`extensions/coop-tools`) gained `command="lineage"`
+  (`object` + optional `depth`): it returns ONE object's upstream inputs,
+  downstream dependents, and relationships as JSON from the built graph, so the
+  agent looks up consequences before touching a SQL object / DAX measure /
+  semantic model instead of re-deriving lineage by hand (ambiguous names return
+  candidates to choose from). A `before_agent_start` hook detects BUILT
+  coop-data-doc outputs (`graph.json` / `manifest.json` under the configured
+  output dir) and injects an **agent-visible, human-hidden** (`display: false`)
+  note — once per folder — telling the agent to consult that lineage first; it is
+  **silent and degrades** when no built docs are present (the docs are an aid, not
+  a gate). `guardrails.md` gains the matching lineage-grounding + auto-detect /
+  degrade policy.
+- **`/setup-docs` skill + prompt** — a `setup-docs` skill and `/setup-docs` prompt
+  cover the in-agent data-doc bootstrap (the native-dialog quick wizard in
+  `extensions/coop-tools` that writes/patches `coop-data-doc.yml` and offers to
+  build), including an agent-driven link-resolution step.
+- **Live install progress bar** — `coop install` now shows a determinate overall
+  progress bar plus an animated active-item line (`lib/common.sh`
+  `coop_progress_begin`/`coop_progress_end` with a braille spinner; the
+  PowerShell installer mirrors it), so a long bootstrap shows what it's doing
+  instead of going quiet.
+
+### Changed
+
+- **Windows install adds `coop` to PATH automatically + clearer first-run
+  message** — `install.ps1` links a `coop.cmd` launcher into
+  `%LOCALAPPDATA%\coop\bin` and adds that dir to the persistent **user PATH**
+  (idempotent), prepending it to the current process so install + doctor can call
+  `coop` immediately; the closing message tells first-timers to **open a new
+  terminal** when `coop` isn't on PATH yet. `install.sh` mirrors the
+  new-terminal / make-it-permanent guidance.
+- **Launchers resolve freshly-installed tools** — `bin/coop` and `bin/coop.ps1`
+  now prepend the npm-global bin (`pi`) and the pipx bin (`fab`, `coop-*`) at
+  launch (best-effort, only dirs that exist), so tools installed in the same
+  session resolve without a new shell.
+- **`coop doctor` (Windows) hardening** — `doctor.ps1` accepts `python` (not just
+  `python3`); it extracts a version-looking token before reporting, so a stray
+  REPL banner (node's "Welcome to Node.js v…"), an `Unknown command: -`, or a
+  version-prefix no longer leaks into the check; and the `fabric-cicd` check
+  probes the `ms-fabric-cli` pipx venv interpreter directly (via `pipx runpip`,
+  falling back to the venv `python`) instead of deriving it from the non-symlink
+  `fab` shim, which falsely reported "not installed" on Windows.
+
+### Removed
+
+- **Dropped the `d365-migration-review` skill + `/d365-migration-review` prompt**
+  — replaced by the data-doc / lineage flow (`setup-docs` skill + `/setup-docs`
+  prompt, native lineage awareness); the example project config no longer
+  references it.
+
 ## [0.3.2] — 2026-06-21
 
 ### Added

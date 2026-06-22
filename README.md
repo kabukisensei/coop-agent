@@ -106,8 +106,10 @@ cd coop-agent
 .\bin\coop.ps1 install
 ```
 
-Then add `bin\coop.cmd`'s directory (or your linked location) to your user `PATH`
-so `coop` is available from any shell.
+`coop install` drops a launcher at `%LOCALAPPDATA%\coop\bin\coop.cmd` and adds
+`%LOCALAPPDATA%\coop\bin` to your **user `PATH` automatically**. If `coop` isn't
+found yet, **open a new terminal** — the persistent PATH change only applies to
+shells started after the install.
 
 ### Manual install (any platform)
 
@@ -209,7 +211,9 @@ the underlying tool — every subcommand (`check`, `rules`, `upgrade`, the full
 `coop-data-doc setup` wizard, …) and the tools' own interactive prompts work, and
 the exit code propagates. Both reviews are **advisory** — they never edit or block.
 The AI agent gets machine-readable JSON through the native `sql_review` / `dax_review`
-tools (in `extensions/coop-tools`), independent of these passthrough commands.
+/ `data_doc` tools (in `extensions/coop-tools`), independent of these passthrough
+commands — including `data_doc`'s `lineage` command (see
+[Lineage-grounded edits](#lineage-grounded-edits)).
 
 For **`coop-data-doc`'s first-run setup**, coop also offers an **in-agent** path so you
 don't have to drop to a shell: when you launch `coop` in a folder with no
@@ -308,7 +312,7 @@ launch.
 
 1. Read `.coop/project.yml` and the relevant standards.
 2. Locate the repo/object and assess upstream/downstream impact; `git status` && `git pull`.
-3. Read the target file(s) + related docs/lineage via the `data_doc` tool; use the Microsoft Learn MCP for current docs.
+3. Read the target file(s) + look up the object's upstream/downstream via the `data_doc` tool (`command="lineage"`) before touching it; use the Microsoft Learn MCP for current docs.
 4. Write a short **PLAN** and get explicit approval **before** any edit.
 5. Create a timestamped backup of every file to be changed.
 6. Make the smallest safe edit.
@@ -332,7 +336,10 @@ also exposed as the native LLM tools `sql_review` / `dax_review` / `data_doc`):
 
 - **`coop-data-doc`** — SQL + Power BI documentation, lineage, and machine-readable
   output. `scan` → `graph.json`; `build` → `manifest.json` + Markdown docs + a
-  portal site. Other verbs: `check`, `init`, `setup`, `update`, `upgrade`.
+  portal site; `lineage <object>` → one object's upstream/downstream + relationships
+  as JSON. Other verbs: `check`, `init`, `setup`, `update`, `upgrade`. coop consumes
+  these natively through the `data_doc` tool (including `command="lineage"`) — see
+  [Lineage-grounded edits](#lineage-grounded-edits) below.
 - **`coop-sql-review`** — advisory T-SQL standards linter.
   `coop-sql-review check <paths...> --format json [--min-severity error|warning|info] [--strict]`
 - **`coop-dax-review`** — advisory DAX standards linter (same shape as sql-review).
@@ -345,6 +352,30 @@ CLI's environment; it's used in deployment scripts (`import fabric_cicd`, valida
 by default), **not** as a `fabric-cicd` command. `coop doctor` checks it's importable.
 There is also an optional, path-configured **Tabular Editor CLI** (set
 `tools.tabular_editor_cli.executable_path` in `.coop/project.yml`).
+
+---
+
+## Lineage-grounded edits
+
+coop uses `coop-data-doc`'s lineage **natively**, so it understands up/downstream
+impact before it touches an object — without you running anything by hand:
+
+- **Auto-detect.** When you launch `coop` in a folder that has **built**
+  `coop-data-doc` outputs (`graph.json` / `manifest.json` / per-object Markdown under
+  the configured output dir), `coop-tools` quietly tells the agent the docs are
+  available (agent-visible, hidden from the chat) so it consults them first.
+- **Look up lineage.** Before analyzing or changing any SQL object, DAX measure, or
+  semantic model, the agent calls the `data_doc` tool with `command="lineage"`,
+  `object="<name>"` (optionally a `depth`), which returns that object's upstream
+  inputs, downstream dependents, and relationships as JSON — it reads the focused
+  per-object doc rather than re-deriving lineage by hand.
+- **Degrade gracefully.** If the folder has **no** `coop-data-doc.yml` or no built
+  graph, lineage is silent and optional — the agent proceeds without it and may
+  suggest **`/setup-docs`**. The docs are an aid, not a gate.
+
+This policy lives in [`docs/guardrails.md`](docs/guardrails.md) (lineage-grounding +
+auto-detect/degrade) and the `coop-workflow` skill. To create or refresh the docs,
+run **`/setup-docs`** in the agent (or `coop data-doc setup` in a shell).
 
 ---
 
@@ -430,7 +461,7 @@ git clone <coop-agent-repo> && cd coop-agent
 
 # Windows (PowerShell)
 git clone <coop-agent-repo>; cd coop-agent
-.\bin\coop.ps1 install        # creates %LOCALAPPDATA%\coop\bin\coop.cmd; add it to PATH if prompted
+.\bin\coop.ps1 install        # creates %LOCALAPPDATA%\coop\bin\coop.cmd and adds it to your user PATH; open a new terminal if coop isn't found yet
 ```
 
 `coop install` is idempotent and **cross-platform**:

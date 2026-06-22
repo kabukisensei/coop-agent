@@ -23,10 +23,27 @@ Python **library**, not a CLI — `import fabric_cicd` in deployment scripts), a
 read-only Fabric / Power BI / Microsoft Learn MCP servers. Persistent memory is provided
 by pi-hermes-memory.
 
+`data_doc` wraps `coop-data-doc` with commands `scan` (default; builds the lineage
+graph, read-only), `build` (also writes Markdown docs + portal, indexed by
+`manifest.json`), `check` (CI staleness gate), and `lineage` (returns ONE object's
+upstream/downstream + relationships as JSON from the built graph). **Lineage policy:**
+BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up
+its lineage (`data_doc` with `command="lineage"`, `object="<name>"`) so you know its
+up/downstream impact — don't re-derive it by hand. coop **auto-detects** built docs at
+session start (a `before_agent_start` hook injects an agent-visible, human-hidden note
+when they exist) and **degrades gracefully** when they're absent: lineage is an aid, not
+a gate, so proceed without it and, if useful, suggest `/setup-docs`.
+
 Official Microsoft skills (`skills/_microsoft/`) are **subordinate**: a Microsoft
 skill loads only if allow-listed in `microsoft_skills.allow[]` and it does not
 conflict with a Cooptimize skill — yours always win.
 
-For setup and commands, see `README.md`. For how coop calls the standalone tools,
-see `docs/tool-contract.md`. To add custom skills/prompts/tools, see
-`docs/extending.md`.
+The in-agent `/setup-docs` command (and a `setup-docs` skill) runs a native wizard to
+create or rebuild lineage docs for the current folder without leaving the session;
+`coop-data-doc.yml` and the built docs are committable, source is never touched.
+
+For setup and commands — including `coop install`'s automatic `PATH` linking
+(it adds `~/.local/bin` / `%LOCALAPPDATA%\coop\bin` and prompts you to open a new
+terminal) and `coop doctor`'s dependency checks — see `README.md`. For how coop calls
+the standalone tools, see `docs/tool-contract.md`. To add custom skills/prompts/tools,
+see `docs/extending.md`.

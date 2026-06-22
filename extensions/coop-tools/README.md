@@ -14,8 +14,10 @@ can reason over it. All three are **advisory / read-only**: they report
 findings or build documentation, but they never edit source.
 
 It also adds a **first-run setup** for `coop-data-doc` (the `/setup-docs` command
-and a startup prompt) so lineage docs can be established without leaving the
-agent — see [Data-doc setup](#data-doc-setup-setup-docs) below.
+and a startup offer) so lineage docs can be established without leaving the
+agent, and a **native lineage announcement** that points the agent at built docs
+before it touches an object — see [Data-doc setup](#data-doc-setup-setup-docs)
+and [Lineage awareness](#lineage-awareness-before_agent_start) below.
 
 ## Tools
 
@@ -43,21 +45,34 @@ standards.
 
 ### `data_doc`
 
-Runs `coop-data-doc <command>` to document the SQL + Power BI estate and build
-lineage. Executes **sequentially**.
+Runs `coop-data-doc <command>` to understand and document the SQL + Power BI
+estate and build lineage. Executes **sequentially**.
 
 | Param | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `command` | `scan` \| `build` \| `check` | `scan` | See below. |
+| `command` | `scan` \| `build` \| `check` \| `lineage` | `scan` | See below. |
+| `object` | `string` | — | For `lineage`: the object to look up (e.g. `dbo.fact_sales`, or a table/measure name). Ambiguous names return candidates. |
+| `depth` | `number` | `1` | For `lineage`: hops up/downstream to include. |
 
 - **`scan`** (default) — read-only; writes the lineage graph (`graph.json`).
-- **`build`** — also writes Markdown docs, a searchable portal, and
-  `manifest.json`. Documentation outputs are committable; source is never
-  touched.
+- **`build`** — also writes Markdown docs (per-object docs + lineage), a
+  searchable portal, and `manifest.json`. Documentation outputs are committable;
+  source is never touched.
 - **`check`** — CI staleness gate.
+- **`lineage`** — read-only; returns **one** object's upstream inputs, downstream
+  dependents, and relationships as JSON, read from the **built** graph. Call it
+  (or read the object's `<slug>.md` via `manifest.json`) **before** analyzing or
+  changing any object, so you know its up/downstream consequences — don't
+  reconstruct lineage by hand. An ambiguous `object` returns the candidate
+  matches to choose from; if no graph has been built yet, it says so and you can
+  still proceed without it (suggest `/setup-docs`).
 
-The text result reports the command, exit code, the machine-readable artifacts
-produced, and the tail of stdout.
+For `scan` / `build` / `check`, the text result reports the command, exit code,
+the machine-readable artifacts produced (`graph.json`, plus `manifest.json` +
+Markdown docs + portal on `build`), and the tail of stdout; the `lineage` result
+summarizes the up/downstream counts and carries the full slice + doc path in the
+tool result's `details`. If the folder has no `coop-data-doc.yml` or built graph,
+these **degrade gracefully** — the docs are an aid, not a requirement.
 
 ## Data-doc setup (`/setup-docs`)
 
@@ -93,6 +108,24 @@ The fresh-config writer mirrors the defaults in `coop-data-doc`'s `config.py`
 delegated to `coop-data-doc build` (`Config.load`), whose error is surfaced via
 `ctx.ui.notify`. Pasted control characters are stripped from inputs so the written
 YAML stays loadable.
+
+## Lineage awareness (`before_agent_start`)
+
+When **built** `coop-data-doc` outputs exist for the working folder, this
+extension injects a note — **once per folder** — telling the agent to consult the
+lineage before it touches any object. The note is **agent-visible but hidden from
+the human** (`customType: "coop-lineage"`, `display: false`), so it grounds the
+model without cluttering the transcript. It carries the markdown output dir
+(relative to cwd) and instructs the agent to look up up/downstream impact via the
+`data_doc` tool (`command="lineage"`, `object="<name>"`) and read that object's
+doc (located via `manifest.json`) plus its immediate neighbors — and to run
+`data_doc (build)` if the docs look stale.
+
+"Built" means the markdown output dir (from `coop-data-doc.yml`'s `output.dir`,
+defaulting to `./data-docs`) contains a `manifest.json` **or** an `index.md`. The
+hook **degrades silently** when there's no `coop-data-doc.yml`, or when a config
+exists but hasn't been built yet — the docs are an aid, not a gate, and the whole
+hook is wrapped so it can never break a turn.
 
 ## Behavior notes
 
