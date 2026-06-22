@@ -40,13 +40,154 @@ else
 fi
 
 # --- Logging -----------------------------------------------------------------
-coop_say()  { printf '%s\n' "$*" >&2; }
-coop_info() { printf '%s%s%s %s\n' "$COOP_LIME" "•" "$COOP_RST" "$*" >&2; }
-coop_ok()   { printf '%s%s%s %s\n' "$COOP_FOREST" "✓" "$COOP_RST" "$*" >&2; }
-coop_warn() { printf '%s%s%s %s\n' "$COOP_OLIVE" "!" "$COOP_RST" "$*" >&2; }
-coop_err()  { printf '%s%s%s %s\n' "$COOP_RED" "✗" "$COOP_RST" "$*" >&2; }
+# All log lines go to stderr. When a progress live-region is active on a TTY,
+# _coop_emit lifts the pinned bar/spinner, prints the line above it, then redraws
+# the region — so ordinary logs scroll normally while the bar stays pinned to the
+# bottom. When no region is active (the common case — doctor/sync/update/etc.) it
+# is a plain printf and behaves exactly as before.
+_coop_emit() {
+  if [ "${COOP_PROG_ACTIVE:-0}" = 1 ] && _coop_prog_tty; then
+    _coop_prog_lift
+    printf '%s\n' "$1" >&2
+    _coop_prog_draw
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+coop_say()  { _coop_emit "$*"; }
+coop_info() { _coop_emit "$(printf '%s•%s %s' "$COOP_LIME"   "$COOP_RST" "$*")"; }
+coop_ok()   { _coop_emit "$(printf '%s✓%s %s' "$COOP_FOREST" "$COOP_RST" "$*")"; }
+coop_warn() { _coop_emit "$(printf '%s!%s %s' "$COOP_OLIVE"  "$COOP_RST" "$*")"; }
+coop_err()  { _coop_emit "$(printf '%s✗%s %s' "$COOP_RED"    "$COOP_RST" "$*")"; }
 coop_die()  { coop_err "$*"; exit 1; }
-coop_head() { printf '\n%s%s%s%s\n' "$COOP_BOLD" "$COOP_NAVY" "$*" "$COOP_RST" >&2; }
+coop_head() { _coop_emit "$(printf '\n%s%s%s%s' "$COOP_BOLD" "$COOP_NAVY" "$*" "$COOP_RST")"; }
+
+# --- Progress: one determinate "overall" bar + an animated active-item line ---
+# Built for installers where each item (npm/pipx/pi install) takes a while and its
+# own % is unknowable. The bar is determinate at the ITEM level (we know the total
+# up front); the active item shows a braille spinner + elapsed seconds so it is
+# obviously alive. Animates only on a TTY (respects NO_COLOR / dumb term); anywhere
+# else it degrades to plain "• starting…" / "✓ done" lines so CI logs still move.
+COOP_PROG_ACTIVE=0
+COOP_PROG_TOTAL=0
+COOP_PROG_DONE=0
+COOP_PROG_W=22
+COOP_PROG_COLS=80
+COOP_PROG_SPINLINE=''
+COOP_SPIN_FRAMES=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+
+_coop_prog_tty() { [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != "dumb" ] && [ "${COOP_PROG_COLS:-80}" -ge 24 ]; }
+
+# Render the overall bar (no newline). Filled cells lime, empty dim. Never byte-
+# slices the multibyte block glyphs — it builds whole-cell strings instead.
+_coop_prog_bar() {
+  local total="$COOP_PROG_TOTAL" done="$COOP_PROG_DONE" w="$COOP_PROG_W" i on='' off=''
+  [ "$total" -gt 0 ] || total=1
+  [ "$done" -le "$total" ] || done="$total"
+  local fill=$(( done * w / total )) pct=$(( done * 100 / total ))
+  for (( i=0; i<fill; i++ )); do on+='█'; done
+  for (( i=fill; i<w;    i++ )); do off+='░'; done
+  printf '  [%s%s%s%s%s] %d/%d  %d%%' "$COOP_LIME" "$on" "$COOP_DIM" "$off" "$COOP_RST" "$done" "$total" "$pct"
+}
+
+# Render the active-item line (no newline). Label is char-safe to truncate (ASCII
+# package names); kept short so the 2-line region never wraps and breaks the math.
+_coop_prog_spin() {
+  local g="$1" label="$2" el="$3" max
+  max=$(( COOP_PROG_COLS - 14 )); [ "$max" -lt 8 ] && max=8; [ "$max" -gt 48 ] && max=48
+  [ "${#label}" -le "$max" ] || label="${label:0:max-1}…"
+  printf '  %s%s%s %s %s(%ds)%s' "$COOP_LIME" "$g" "$COOP_RST" "$label" "$COOP_DIM" "$el" "$COOP_RST"
+}
+
+# Draw the 2-line region (bar + active item) at the cursor, parking the cursor back
+# at the start of the bar line so the next lift/draw lines up. Relative moves only,
+# so terminal scrolling at the bottom edge stays correct.
+_coop_prog_draw() {
+  _coop_prog_tty || return 0
+  printf '\r\033[2K%s\n' "$(_coop_prog_bar)" >&2   # bar line
+  printf '\033[2K%s'     "$COOP_PROG_SPINLINE" >&2  # active-item line
+  printf '\033[1A\r'                            >&2  # back up to bar line, col 0
+}
+
+# Erase the 2-line region, leaving the cursor at the (now empty) bar line, col 0.
+_coop_prog_lift() {
+  _coop_prog_tty || return 0
+  printf '\r\033[2K' >&2     # clear bar line
+  printf '\n\033[2K' >&2     # down to active-item line, clear it
+  printf '\033[1A\r' >&2     # back up to bar line, col 0
+}
+
+coop_progress_begin() {
+  COOP_PROG_TOTAL="${1:-0}"; COOP_PROG_DONE=0; COOP_PROG_SPINLINE=''; COOP_PROG_ACTIVE=1
+  # Read the controlling terminal's width directly (</dev/tty) so a redirected
+  # stdout/stderr doesn't fool us into the 80 fallback.
+  COOP_PROG_COLS="$( { tput cols </dev/tty; } 2>/dev/null || printf '%s' "${COLUMNS:-80}" )"
+  case "$COOP_PROG_COLS" in ''|*[!0-9]*) COOP_PROG_COLS=80 ;; esac
+  # Clamp the bar so the whole bar line ("  [" + W + "]  N/N  NN%") stays on one
+  # row — otherwise it wraps and the single-row \033[1A cursor math corrupts.
+  # (_coop_prog_tty also refuses to animate below 24 cols.)
+  COOP_PROG_W=22
+  [ "$COOP_PROG_COLS" -lt 38 ] && COOP_PROG_W=$(( COOP_PROG_COLS - 16 ))
+  [ "$COOP_PROG_W" -lt 6 ] && COOP_PROG_W=6
+  if _coop_prog_tty; then printf '\033[?25l' >&2; _coop_prog_draw; fi   # hide cursor, draw 0%
+}
+
+coop_progress_end() {
+  if [ "${COOP_PROG_ACTIVE:-0}" = 1 ] && _coop_prog_tty; then
+    _coop_prog_lift
+    COOP_PROG_SPINLINE=''
+    printf '%s\n'      "$(_coop_prog_bar)" >&2    # leave a permanent completed bar
+    printf '\033[?25h'                     >&2    # restore cursor
+  fi
+  COOP_PROG_ACTIVE=0
+}
+
+# Tear down an in-flight unit's background work + temp file. The installer wires
+# this into its INT/TERM/EXIT trap so Ctrl-C doesn't leave an orphaned install
+# (best-effort: kills the unit subshell; an already-spawned npm/pipx child may
+# still finish, but re-running install is idempotent).
+COOP_UNIT_PID=''
+COOP_UNIT_TMP=''
+_coop_unit_cleanup() {
+  [ -n "${COOP_UNIT_PID:-}" ] && kill "$COOP_UNIT_PID" 2>/dev/null
+  [ -n "${COOP_UNIT_TMP:-}" ] && rm -f "$COOP_UNIT_TMP" 2>/dev/null
+  COOP_UNIT_PID=''; COOP_UNIT_TMP=''
+}
+
+# coop_unit "<label>" <fn> [args…]
+#   Runs `<fn args>` in the background; its stdout becomes the permanent result
+#   message, its exit status decides ✓ (0) vs ! (non-zero). While it runs, the
+#   active-item line animates under the overall bar; on completion the bar advances
+#   by one. Returns the unit's exit status. The work runs in a subshell so it sees
+#   the caller's functions/vars but only its stdout + status flow back.
+coop_unit() {
+  local label="$1"; shift
+  local tmp; tmp="$(mktemp 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}/coop.$$.$RANDOM")"
+  ( "$@" >"$tmp" 2>/dev/null ) &
+  local pid=$!
+  COOP_UNIT_PID="$pid"; COOP_UNIT_TMP="$tmp"     # so the trap can reap us on Ctrl-C
+  if _coop_prog_tty && [ "${COOP_PROG_ACTIVE:-0}" = 1 ]; then
+    local start=$SECONDS n=${#COOP_SPIN_FRAMES[@]} i=0 el
+    while kill -0 "$pid" 2>/dev/null; do
+      el=$(( SECONDS - start ))
+      COOP_PROG_SPINLINE="$(_coop_prog_spin "${COOP_SPIN_FRAMES[i % n]}" "$label" "$el")"
+      _coop_prog_draw
+      i=$(( i + 1 ))
+      sleep 0.12
+    done
+  else
+    coop_info "${label}…"         # non-TTY: at least show the slow step started
+                                  # (braces required: bash 3.2 mis-scans $var+multibyte)
+  fi
+  wait "$pid"; local st=$?
+  local msg; msg="$(cat "$tmp" 2>/dev/null)"; rm -f "$tmp" 2>/dev/null
+  COOP_UNIT_PID=''; COOP_UNIT_TMP=''             # unit finished — nothing to reap
+  [ -n "$msg" ] || msg="$label"
+  COOP_PROG_DONE=$(( COOP_PROG_DONE + 1 ))
+  COOP_PROG_SPINLINE=''
+  if [ "$st" -eq 0 ]; then coop_ok "$msg"; else coop_warn "$msg"; fi
+  return "$st"
+}
 
 # --- Small utilities ---------------------------------------------------------
 have() { command -v "$1" >/dev/null 2>&1; }

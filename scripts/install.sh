@@ -19,6 +19,7 @@ export COOP_ROOT
 FORCE=0; NO_FABRIC=0
 for a in "$@"; do
   case "$a" in
+    '') ;;                                            # ignore blank args (launchers can pass one)
     --force) FORCE=1 ;;
     --no-fabric) NO_FABRIC=1 ;;
     --yes|-y) export COOP_ASSUME_YES=1 ;;
@@ -45,95 +46,123 @@ mkdir -p "$PI_CODING_AGENT_DIR"
 
 OS="$(uname -s 2>/dev/null || echo unknown)"
 
+# Overall-bar denominator: the install ITEMS we will attempt (pipx + pi + each
+# extension + each coop tool, plus Fabric unless --no-fabric).
+PROG_TOTAL=$(( 2 + ${#PI_EXTENSIONS[@]} + ${#PY_TOOLS[@]} ))
+[ "$NO_FABRIC" = 0 ] && PROG_TOTAL=$(( PROG_TOTAL + 1 ))
+
+# --- Per-item units ----------------------------------------------------------
+# Each prints its final status message to stdout and returns 0 (✓) or non-zero (!).
+# coop_unit runs these in the background, animates the active-item line, then ticks
+# the overall bar. They run in a subshell, so they see the vars above but cannot
+# mutate the parent's command hash — callers run `hash -r` after install units.
+_unit_pipx() {
+  if have pipx; then printf 'pipx present'; return 0; fi
+  if have python3; then
+    if python3 -m pip install --user pipx >/dev/null 2>&1 && python3 -m pipx ensurepath >/dev/null 2>&1; then
+      printf 'pipx installed (open a new shell for PATH changes)'; return 0
+    fi
+    printf 'could not install pipx automatically — see https://pipx.pypa.io'; return 1
+  fi
+  printf 'skipping pipx (python3 missing)'; return 1
+}
+
+_unit_pi() {
+  if have pi && [ "$FORCE" = 0 ]; then printf 'pi present (%s)' "$(pi --version 2>/dev/null || echo '?')"; return 0; fi
+  if have npm; then
+    if npm install -g "$PI_NPM_PACKAGE" >/dev/null 2>&1; then printf 'pi installed'; return 0; fi
+    printf 'npm install of pi failed — try: npm install -g %s' "$PI_NPM_PACKAGE"; return 1
+  fi
+  printf 'cannot install pi (npm missing) — install Node.js, then re-run: coop install'; return 1
+}
+
+_unit_ext() {  # $1 = extension spec
+  local ext="$1"
+  have pi || { printf 'skipped %s (pi not installed)' "$ext"; return 1; }
+  if pi install "$ext" >/dev/null 2>&1; then printf '%s' "$ext"; return 0; fi
+  printf 'could not install %s (continuing)' "$ext"; return 1
+}
+
+_unit_fabric() {
+  have pipx || { printf 'skipping Fabric CLI (pipx missing)'; return 1; }
+  if [ "$FORCE" = 1 ]; then pipx install --force "$FABRIC_PKG" >/dev/null 2>&1 || true
+  else pipx install "$FABRIC_PKG" >/dev/null 2>&1 || pipx upgrade "$FABRIC_PKG" >/dev/null 2>&1 || true
+  fi
+  # fabric-cicd is a Python LIBRARY (no CLI), used for deploy validation — inject it
+  # into the Fabric CLI's env so it's importable alongside `fab`. (doctor verifies it.)
+  pipx inject "$FABRIC_PKG" fabric-cicd >/dev/null 2>&1 || true
+  hash -r 2>/dev/null || true
+  if have fab; then
+    if fab --version 2>&1 | grep -qiE 'paramiko|invoke'; then
+      printf "'fab' is Python Fabric (SSH), not Microsoft Fabric CLI — put the pipx bin dir first on PATH, then: fab --version"; return 1
+    fi
+    printf 'Microsoft Fabric CLI ready (%s)' "$(fab --version 2>/dev/null | head -1)"; return 0
+  fi
+  printf "ms-fabric-cli installed but 'fab' not on PATH yet — open a new shell (pipx ensurepath)"; return 1
+}
+
+_unit_pytool() {  # $1 = package
+  local pkg="$1"
+  have pipx || { printf 'skipping %s (pipx missing)' "$pkg"; return 1; }
+  if [ "$FORCE" = 1 ]; then
+    if pipx install --force "$pkg" >/dev/null 2>&1; then printf '%s' "$pkg"; return 0; fi
+    printf 'failed: %s' "$pkg"; return 1
+  fi
+  if pipx install "$pkg" >/dev/null 2>&1; then printf '%s (installed)' "$pkg"; return 0; fi
+  if pipx upgrade "$pkg" >/dev/null 2>&1; then printf '%s (up to date)' "$pkg"; return 0; fi
+  printf 'could not install %s' "$pkg"; return 1
+}
+
 coop_head "Cooptimize agent bootstrap (v${COOP_VERSION})  [$OS]"
+
+# Pin the overall bar to the bottom for the install phase; restore the cursor even
+# on Ctrl-C. (coop_progress_end is idempotent, so the EXIT trap is a safe no-op
+# once we've ended it explicitly after step 5.)
+coop_progress_begin "$PROG_TOTAL"
+trap 'coop_progress_end; _coop_unit_cleanup' EXIT INT TERM
 
 # --- 1. Prerequisites (warn-and-continue; these usually need a package manager)
 coop_head "1/7  Prerequisites"
 have git     || coop_warn "git not found — install Git (mac: 'xcode-select --install' or 'brew install git'; linux: your package manager)."
 have python3 || coop_warn "python3 not found — install Python 3.10+ (mac: 'brew install python'; linux: 'apt install python3')."
 have node    || coop_warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)."
-
-# pipx: we can usually install this ourselves.
-if ! have pipx; then
-  if have python3; then
-    coop_info "Installing pipx (python3 -m pip install --user pipx)…"
-    python3 -m pip install --user pipx >/dev/null 2>&1 && python3 -m pipx ensurepath >/dev/null 2>&1 \
-      && coop_ok "pipx installed (you may need to open a new shell for PATH changes)" \
-      || coop_warn "could not install pipx automatically — see https://pipx.pypa.io"
-    hash -r 2>/dev/null || true
-  else
-    coop_warn "skipping pipx (python3 missing)"
-  fi
-else
-  coop_ok "pipx present"
-fi
+coop_unit "pipx" _unit_pipx
+# Make a just-installed pipx (and the bins pipx will drop tools into) visible to
+# the REST of this run, so steps 4/5 don't fail "pipx missing" until a new shell.
+if have python3; then _ub="$(python3 -m site --user-base 2>/dev/null)"; [ -n "${_ub:-}" ] && PATH="$_ub/bin:$PATH"; unset _ub; fi
+PATH="$HOME/.local/bin:$PATH"   # pipx default PIPX_BIN_DIR (fab, coop-* land here)
+hash -r 2>/dev/null || true
 
 # --- 2. Pi itself ------------------------------------------------------------
 coop_head "2/7  Pi (@earendil-works/pi-coding-agent)"
-if have pi && [ "$FORCE" = 0 ]; then
-  coop_ok "pi present ($(pi --version 2>/dev/null || echo '?'))"
-elif have npm; then
-  coop_info "Installing pi globally via npm…"
-  npm install -g "$PI_NPM_PACKAGE" >/dev/null 2>&1 \
-    && coop_ok "pi installed" || coop_warn "npm install of pi failed — try: npm install -g $PI_NPM_PACKAGE"
-  hash -r 2>/dev/null || true
-else
-  coop_warn "cannot install pi (npm missing). Install Node.js, then re-run 'coop install'."
-fi
+coop_unit "pi (@earendil-works/pi-coding-agent)" _unit_pi
+# Make a just-npm-installed `pi` visible to step 3 in the same run (npm's global
+# bin dir is often not yet on PATH right after install).
+if have npm; then _np="$(npm prefix -g 2>/dev/null)"; [ -n "${_np:-}" ] && PATH="$_np/bin:$PATH"; unset _np; fi
+hash -r 2>/dev/null || true
 
-# --- 3. Pi extensions (branded powerline footer) -----------------------------
+# --- 3. Pi extensions (MCP / memory / usage / web / ask-user) ----------------
 coop_head "3/7  Pi extensions"
-if have pi; then
-  for ext in "${PI_EXTENSIONS[@]}"; do
-    coop_info "pi install $ext"
-    pi install "$ext" >/dev/null 2>&1 && coop_ok "$ext" || coop_warn "could not install $ext (continuing)"
-  done
-else
-  coop_warn "skipping extensions (pi not installed)"
-fi
+for ext in "${PI_EXTENSIONS[@]}"; do
+  coop_unit "$ext" _unit_ext "$ext"
+done
 
 # --- 4. Microsoft Fabric CLI -------------------------------------------------
 coop_head "4/7  Microsoft Fabric CLI (fab)"
 if [ "$NO_FABRIC" = 1 ]; then
   coop_warn "skipped (--no-fabric)"
-elif have pipx; then
-  if [ "$FORCE" = 1 ]; then pipx install --force "$FABRIC_PKG" >/dev/null 2>&1 || true
-  else pipx install "$FABRIC_PKG" >/dev/null 2>&1 || pipx upgrade "$FABRIC_PKG" >/dev/null 2>&1 || true
-  fi
-  # fabric-cicd is a Python LIBRARY (no CLI), used for deploy validation — inject it
-  # into the Fabric CLI's environment so it's importable alongside `fab`.
-  pipx inject "$FABRIC_PKG" fabric-cicd >/dev/null 2>&1 \
-    && coop_ok "fabric-cicd (library) added to the Fabric CLI env" \
-    || coop_warn "could not add fabric-cicd (optional; pipx inject $FABRIC_PKG fabric-cicd)"
-  hash -r 2>/dev/null || true
-  if have fab; then
-    if fab --version 2>&1 | grep -qiE 'paramiko|invoke'; then
-      coop_warn "'fab' resolves to Python Fabric (SSH), not the Microsoft Fabric CLI."
-      coop_say  "      Put the pipx bin dir ahead of any other 'fab' on PATH (or remove it). Then re-check: fab --version"
-    else
-      coop_ok "Microsoft Fabric CLI ready ($(fab --version 2>/dev/null | head -1))"
-    fi
-  else
-    coop_warn "ms-fabric-cli installed but 'fab' not on PATH yet — open a new shell (pipx ensurepath)."
-  fi
 else
-  coop_warn "skipping Fabric CLI (pipx missing)"
+  coop_unit "Microsoft Fabric CLI" _unit_fabric; hash -r 2>/dev/null || true
 fi
 
 # --- 5. Standalone Coop tools ------------------------------------------------
 coop_head "5/7  Coop tools (coop-data-doc / coop-sql-review / coop-dax-review)"
-if have pipx; then
-  for pkg in "${PY_TOOLS[@]}"; do
-    if [ "$FORCE" = 1 ]; then
-      pipx install --force "$pkg" >/dev/null 2>&1 && coop_ok "$pkg" || coop_warn "failed: $pkg"
-    else
-      pipx install "$pkg" >/dev/null 2>&1 && coop_ok "$pkg (installed)" \
-        || { pipx upgrade "$pkg" >/dev/null 2>&1 && coop_ok "$pkg (up to date)" || coop_warn "could not install $pkg"; }
-    fi
-  done
-else
-  coop_warn "skipping Coop tools (pipx missing)"
-fi
+for pkg in "${PY_TOOLS[@]}"; do
+  coop_unit "$pkg" _unit_pytool "$pkg"
+done
+
+# Done with the install items — finalize the bar (leaves a permanent 100% line).
+coop_progress_end
 
 # --- 6. Put `coop` on PATH ---------------------------------------------------
 coop_head "6/7  Link 'coop' onto your PATH"

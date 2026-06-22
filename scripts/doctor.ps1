@@ -101,7 +101,13 @@ function Check {
     if ($VCmd.Count -gt 0) {
       $vArgs = if ($VCmd.Count -gt 1) { @($VCmd[1..($VCmd.Count-1)]) } else { @() }
       $vout = (& $VCmd[0] @vArgs 2>$null | Select-Object -First 1)
-      if ($vout) { $ver = $vout }
+      # Show only a version-looking token, so a stray REPL banner (node ->
+      # "Welcome to Node.js v24..."), an "Unknown command: -" error, or a version-
+      # manager wrapper's noise never gets printed as the "version".
+      if ($vout) {
+        $m = [regex]::Match([string]$vout, '\d+\.\d+(\.\d+)?')
+        if ($m.Success) { $ver = $m.Value }
+      }
     }
     D-Ok ("$Bin" + $(if ($ver) { "  ($ver)" } else { '' }))
   } else {
@@ -181,17 +187,31 @@ Check 'coop-dax-review' 'required' 'pipx install coop-dax-review' @('coop-dax-re
 Coop-Head 'Fabric / semantic-model tooling'
 # fabric-cicd is a Python LIBRARY (no CLI) — check it's importable in the Fabric CLI's env.
 if (Test-Have 'fab') {
-  $fabCmd = (Get-Command fab -ErrorAction SilentlyContinue)
-  $fabReal = if ($fabCmd) { $fabCmd.Source } else { '' }
-  $fabPy = if ($fabReal) { Join-Path (Split-Path -Parent $fabReal) 'python.exe' } else { '' }
-  if (-not (Test-Path -LiteralPath $fabPy)) { $fabPy = if ($fabReal) { Join-Path (Split-Path -Parent $fabReal) 'python' } else { '' } }
-  if ($fabPy -and (Test-Path -LiteralPath $fabPy)) {
-    & $fabPy -c 'import fabric_cicd' > $null 2>&1
-    if ($LASTEXITCODE -eq 0) { D-Ok 'fabric-cicd (library, in the Fabric CLI env)' }
-    else { D-Warn 'fabric-cicd not installed' 'pipx inject ms-fabric-cli fabric-cicd' }
-  } else {
-    D-Warn 'fabric-cicd not installed' 'pipx inject ms-fabric-cli fabric-cicd'
+  $hasCicd = $false
+  # Primary: ask pipx to run pip inside the ms-fabric-cli venv. This is OS-agnostic
+  # and avoids guessing the venv layout. (On Windows the `fab` shim in ~\.local\bin
+  # is NOT a symlink, so deriving python.exe from the shim's dir — the old approach —
+  # never finds the interpreter and falsely reports "not installed".)
+  if (Test-Have 'pipx') {
+    & pipx runpip ms-fabric-cli show fabric-cicd *> $null
+    if ($LASTEXITCODE -eq 0) { $hasCicd = $true }
   }
+  if (-not $hasCicd) {
+    # Fallback: probe an interpreter next to the resolved shim (works where the
+    # shim IS a symlink into the venv, e.g. *nix-like setups).
+    $fabCmd = (Get-Command fab -ErrorAction SilentlyContinue)
+    $fabReal = if ($fabCmd) { $fabCmd.Source } else { '' }
+    foreach ($pyName in @('python.exe', 'python')) {
+      $cand = if ($fabReal) { Join-Path (Split-Path -Parent $fabReal) $pyName } else { '' }
+      if ($cand -and (Test-Path -LiteralPath $cand)) {
+        & $cand -c 'import fabric_cicd' *> $null
+        if ($LASTEXITCODE -eq 0) { $hasCicd = $true }
+        break
+      }
+    }
+  }
+  if ($hasCicd) { D-Ok 'fabric-cicd (library, in the Fabric CLI env)' }
+  else { D-Warn 'fabric-cicd not installed' 'pipx inject ms-fabric-cli fabric-cicd' }
 } else {
   D-Warn 'fabric-cicd: install the Microsoft Fabric CLI first' 'coop install'
 }

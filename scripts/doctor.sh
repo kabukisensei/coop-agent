@@ -35,7 +35,9 @@ bad()  { coop_err  "$1 ${2:+— $2}"; FAIL=$((FAIL+1)); }
 check() {
   local bin="$1" need="$2" hint="$3" vcmd="${4:-}" ver=""
   if have "$bin"; then
-    if [ -n "$vcmd" ]; then ver="$($vcmd 2>/dev/null | head -1)"; fi
+    # Extract just a version token, so a REPL banner / error line / wrapper noise
+    # never shows up as the "version" (keeps parity with doctor.ps1).
+    if [ -n "$vcmd" ]; then ver="$($vcmd 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"; fi
     ok "$bin${ver:+  ($ver)}"
   else
     if [ "$need" = required ]; then bad "$bin missing" "$hint"; else warn "$bin missing" "$hint"; fi
@@ -110,11 +112,20 @@ check coop-dax-review required "pipx install coop-dax-review" "coop-dax-review -
 coop_head "Fabric / semantic-model tooling"
 # fabric-cicd is a Python LIBRARY (no CLI) — check it's importable in the Fabric CLI's env.
 if have fab; then
-  fabbin="$(command -v fab)"
-  # Resolve transitively (handles multi-hop symlinks; readlink -f isn't portable on macOS).
-  fabreal="$("$(coop_python)" -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$fabbin" 2>/dev/null || echo "$fabbin")"
-  fabpy="$(dirname "$fabreal")/python"
-  if [ -x "$fabpy" ] && "$fabpy" -c "import fabric_cicd" >/dev/null 2>&1; then
+  has_cicd=0
+  # Primary: run pip inside the ms-fabric-cli venv via pipx — OS-agnostic, no need to
+  # locate the venv interpreter (the shim isn't always a symlink, e.g. on Windows).
+  if have pipx && pipx runpip ms-fabric-cli show fabric-cicd >/dev/null 2>&1; then
+    has_cicd=1
+  else
+    fabbin="$(command -v fab)"
+    # Fallback: resolve the shim transitively (handles multi-hop symlinks; readlink -f
+    # isn't portable on macOS) and probe the interpreter next to it.
+    fabreal="$("$(coop_python)" -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$fabbin" 2>/dev/null || echo "$fabbin")"
+    fabpy="$(dirname "$fabreal")/python"
+    if [ -x "$fabpy" ] && "$fabpy" -c "import fabric_cicd" >/dev/null 2>&1; then has_cicd=1; fi
+  fi
+  if [ "$has_cicd" = 1 ]; then
     ok "fabric-cicd (library, in the Fabric CLI env)"
   else
     warn "fabric-cicd not installed" "pipx inject ms-fabric-cli fabric-cicd  (or: uv tool install ms-fabric-cli --with fabric-cicd)"
