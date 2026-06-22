@@ -371,9 +371,21 @@ if ($existing -ne $launcherBody) {
 } else {
   Coop-Ok 'coop already linked'
 }
-$pathEntries = ($env:PATH -split ';')
-if ($pathEntries -notcontains $LOCALBIN) {
-  Coop-Warn "$LOCALBIN is not on your PATH. Add it (User PATH), e.g.:  setx PATH `"%PATH%;$LOCALBIN`""
+if (($env:PATH -split ';') -notcontains $LOCALBIN) {
+  # Add the launcher dir to the persistent USER PATH (idempotent) so `coop` works in
+  # every shell — not just warn. Also prepend it to THIS process so the rest of the
+  # install + doctor can call `coop` now. New terminals pick up the persistent change.
+  try {
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if (($userPath -split ';') -notcontains $LOCALBIN) {
+      $newUserPath = (@($userPath, $LOCALBIN) | Where-Object { $_ }) -join ';'
+      [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
+      Coop-Ok "added $LOCALBIN to your user PATH (open a new terminal for `coop` to be found there)"
+    }
+    $env:PATH = "$LOCALBIN;$env:PATH"
+  } catch {
+    Coop-Warn "couldn't update PATH automatically — add it (User PATH):  setx PATH `"%PATH%;$LOCALBIN`""
+  }
 }
 
 # --- 7. Sync brand assets + doctor ------------------------------------------
