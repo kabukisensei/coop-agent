@@ -75,12 +75,6 @@ power_bi:
       semantic_model: "TODO: semantic model name"
       app_category: "TODO: app/category"
 
-# --- D365 (Finance & Operations / source system) -----------------------------
-d365:
-  environment: "TODO: D365 environment name"
-  entities_of_interest: ["TODO: entity/table names"]
-  migration_targets: ["bronze", "silver", "gold"]
-
 # --- Tools --------------------------------------------------------------------
 tools:
   fabric_cli:
