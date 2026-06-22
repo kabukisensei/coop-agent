@@ -76,8 +76,12 @@ You have these tools. Know they exist and reach for the right one:
   changing any SQL object, DAX measure, or semantic model, consult the built docs for
   up/downstream impact (the object's `<slug>.md` + its immediate neighbors — see
   "Read focused"); don't reconstruct lineage by hand when the docs already have it.
-  The quickest grounding is **`coop-data-doc lineage <object> --depth 1`** → JSON of
-  that object's upstream/downstream + relationships + its doc path, in one call.
+  The quickest grounding is the **`data_doc` tool with `command="lineage"`,
+  `object="<name>"`** (or `coop-data-doc lineage <object> --depth 1`) → JSON of that
+  object's upstream/downstream + relationships + its doc path, in one call. coop
+  **auto-detects** built docs at the start of a session and tells you when they're
+  available — consult them then. When a folder has **no** built docs, proceed
+  normally: the lineage is an **aid, not a gate**.
 - **`sql_review`** → `coop-sql-review`. Use when reviewing or before changing T-SQL /
   Fabric Warehouse SQL — advisory standards check, never edits or blocks.
 - **`dax_review`** → `coop-dax-review`. Use when reviewing or before changing DAX /

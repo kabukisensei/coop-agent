@@ -50,10 +50,22 @@ const REVIEW_PARAMS = Type.Object({
 
 const DATADOC_PARAMS = Type.Object({
   command: Type.Optional(
-    Type.Union([Type.Literal("scan"), Type.Literal("build"), Type.Literal("check")], {
+    Type.Union(
+      [Type.Literal("scan"), Type.Literal("build"), Type.Literal("check"), Type.Literal("lineage")],
+      {
+        description:
+          "coop-data-doc subcommand. 'scan' (default) builds the lineage graph (read-only); 'build' also writes Markdown docs + portal; 'check' is a CI staleness gate; 'lineage' returns ONE object's upstream/downstream + relationships as JSON from the built graph — call it BEFORE touching that object.",
+      },
+    ),
+  ),
+  object: Type.Optional(
+    Type.String({
       description:
-        "coop-data-doc subcommand. 'scan' (default) builds the lineage graph (read-only); 'build' also writes Markdown docs + portal; 'check' is a CI staleness gate.",
+        "For command='lineage': the object to look up (e.g. 'dbo.fact_sales', or a table/measure name). Ambiguous names return candidates to choose from.",
     }),
+  ),
+  depth: Type.Optional(
+    Type.Number({ description: "For command='lineage': hops up/downstream to include (default 1)." }),
   ),
 });
 
@@ -545,17 +557,61 @@ export default function coopTools(pi: ExtensionAPI) {
     name: "data_doc",
     label: "Data Documentation",
     description:
-      "Run coop-data-doc to document SQL + Power BI estates and build lineage. 'scan' (default) writes the lineage graph (graph.json); 'build' also writes Markdown documentation (per-object docs + lineage) and a searchable portal, indexed by manifest.json. After running this, READ the generated Markdown docs (use your read tool) — they are the canonical, human- and agent-readable documentation for the estate. Documentation outputs are committable; source is never touched.",
-    promptSnippet: "Document SQL + Power BI estate: lineage graph + Markdown docs (read them via manifest.json)",
+      "Understand and document a SQL + Power BI estate with coop-data-doc. Commands: 'scan' (default) writes the lineage graph (graph.json, read-only); 'build' also writes Markdown docs (per-object docs + lineage) and a searchable portal, indexed by manifest.json; 'check' is a CI staleness gate; 'lineage' returns ONE object's upstream inputs + downstream dependents + relationships as JSON from the built graph. Use 'lineage' (or read the object's <slug>.md via manifest.json) BEFORE analyzing or changing any object so you know its up/downstream consequences. If the folder has no coop-data-doc.yml or built graph, these degrade gracefully — the docs are an aid, not a requirement; you can proceed without them and optionally suggest /setup-docs. Documentation outputs are committable; source is never touched.",
+    promptSnippet: "Understand a SQL+PowerBI estate: lineage graph + per-object up/downstream (use before touching an object)",
     promptGuidelines: [
-      "Use data_doc to understand relationships, lineage, and existing documentation before planning changes.",
-      "After scan/build, READ the generated Markdown docs (find them via manifest.json) instead of re-deriving relationships by hand — they are the source of truth for the estate.",
-      "Default to 'scan' (read-only). Only run 'build' when the user wants the Markdown docs/portal regenerated.",
+      "BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its lineage: call data_doc with command='lineage', object='<name>' to get its upstream inputs, downstream dependents, and relationships. Don't reconstruct lineage by hand when the docs already have it.",
+      "Use data_doc to understand relationships and existing documentation before planning changes. After scan/build, read the focused per-object Markdown (find it via manifest.json), not the whole tree.",
+      "Default to 'scan'/'lineage' (read-only). Only run 'build' when the user wants the Markdown docs/portal regenerated.",
+      "If the estate has no coop-data-doc.yml or built graph (lineage reports 'no built graph'), proceed without it — the lineage is an aid, not a gate — and, if useful, suggest /setup-docs.",
     ],
     parameters: DATADOC_PARAMS,
     executionMode: "sequential",
     async execute(_id, params, signal, _onUpdate, ctx) {
-      const command = (params as { command?: string }).command || "scan";
+      const p = params as { command?: string; object?: string; depth?: number };
+      const command = p.command || "scan";
+
+      // --- lineage: one object's up/downstream from the BUILT graph (read-only) ---
+      if (command === "lineage") {
+        if (!p.object || !p.object.trim()) {
+          return {
+            content: [{ type: "text" as const, text: "data_doc lineage needs an 'object' (e.g. 'dbo.fact_sales' or a table/measure name)." }],
+            details: { tool: "coop-data-doc", command },
+          };
+        }
+        const args = ["lineage", p.object.trim()];
+        if (p.depth && p.depth > 0) args.push("--depth", String(Math.floor(p.depth)));
+        let res;
+        try {
+          res = await pi.exec("coop-data-doc", args, { cwd: ctx.cwd, signal });
+        } catch (e: any) {
+          return {
+            content: [{ type: "text" as const, text: `coop-data-doc could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
+            details: { tool: "coop-data-doc", command, error: errMsg(e) },
+          };
+        }
+        let parsed: any = null;
+        try {
+          parsed = JSON.parse(res.stdout);
+        } catch {
+          /* leave parsed null */
+        }
+        const noGraph = /no built graph/i.test(res.stderr + res.stdout);
+        const text =
+          res.code === 0 && parsed
+            ? parsed.ambiguous
+              ? `'${p.object}' is ambiguous — ${(parsed.matches || []).length} matches; re-call lineage with a specific name (candidates in details).`
+              : `Lineage for ${parsed.object?.name || p.object}: ${(parsed.upstream || []).length} upstream, ${(parsed.downstream || []).length} downstream, ${(parsed.relationships || []).length} relationship(s). Full slice + doc path in details.`
+            : noGraph
+              ? "No built lineage graph yet — run data_doc (build) first, or /setup-docs to set it up. (You can still work without it.)"
+              : `lineage failed (exit ${res.code}): ${(res.stderr || res.stdout).trim().slice(0, 300)}`;
+        return {
+          content: [{ type: "text" as const, text }],
+          details: { tool: "coop-data-doc", command, object: p.object, exitCode: res.code, lineage: parsed ?? res.stdout, stderr: res.stderr },
+        };
+      }
+
+      // --- scan / build / check ---
       let res;
       try {
         res = await pi.exec("coop-data-doc", [command], { cwd: ctx.cwd, signal });
@@ -566,10 +622,10 @@ export default function coopTools(pi: ExtensionAPI) {
         };
       }
       const tail = res.stdout.split("\n").slice(-25).join("\n");
-      // No coop-data-doc.yml yet → point at the in-agent setup wizard.
-      const missingConfig = /Config file not found/i.test(res.stderr) || /Config file not found/i.test(res.stdout);
+      // No coop-data-doc.yml yet → point at the in-agent setup wizard (but it's optional).
+      const missingConfig = /Config file not found|No coop-data-doc\.yml/i.test(res.stderr + res.stdout);
       const setupHint = missingConfig
-        ? `\n\nThis folder has no coop-data-doc.yml — tell the user to run /setup-docs (in-agent wizard) or \`coop data-doc setup\` (full wizard, in a shell) to create it first.`
+        ? `\n\nThis folder has no coop-data-doc.yml — suggest /setup-docs (in-agent wizard) or \`coop data-doc setup\` (full wizard, in a shell) to create it. You can still work without lineage docs.`
         : "";
       return {
         content: [
@@ -601,6 +657,38 @@ export default function coopTools(pi: ExtensionAPI) {
       // Interactive dialogs may not be safe at startup on every Pi build — degrade
       // to a non-blocking breadcrumb instead of failing the session.
       notify(ctx, "No data docs for this folder — run /setup-docs to create SQL + Power BI lineage docs.", "info");
+    }
+  });
+
+  // --- Native lineage awareness ---------------------------------------------
+  // Once per folder, if BUILT coop-data-doc outputs exist, inject an (agent-visible,
+  // human-hidden) note so coop consults the lineage for up/downstream impact before
+  // touching an object. Silent when there are none — the docs are an aid, not a gate.
+  // Wrapped so it can never break a turn.
+  const announcedCwds = new Set<string>();
+  pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
+    try {
+      const cwd: string = ctx.cwd;
+      if (announcedCwds.has(cwd)) return;
+      const ymlPath = join(cwd, DATADOC_CONFIG);
+      if (!existsSync(ymlPath)) return; // no config → nothing to announce
+      const cfg = parseExisting(safeRead(ymlPath));
+      const outAbs = resolveRel(cwd, cfg.outputDir || DEFAULT_OUTPUT_DIR);
+      if (!isBuilt(outAbs)) return; // config present but not built yet → don't announce
+      announcedCwds.add(cwd);
+      const relOut = relative(cwd, outAbs) || ".";
+      return {
+        message: {
+          customType: "coop-lineage",
+          display: false,
+          content:
+            `Cooptimize lineage docs ARE available for this estate (coop-data-doc outputs under ${relOut}: graph.json, manifest.json, per-object Markdown). ` +
+            `Use them: BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its up/downstream impact via the data_doc tool (command="lineage", object="<name>"), and read that object's doc (located via manifest.json) plus its immediate neighbors — don't re-derive lineage by hand. If the docs look stale, run data_doc (build) to refresh.`,
+          details: { outputDir: relOut },
+        },
+      };
+    } catch {
+      return; // never break a turn
     }
   });
 
