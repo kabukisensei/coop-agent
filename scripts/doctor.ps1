@@ -39,6 +39,12 @@ function Coop-Err  { param([string]$m) [Console]::Error.WriteLine("$($script:C_R
 function Coop-Head { param([string]$m) [Console]::Error.WriteLine("`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)") }
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 function Get-CoopPython { if (Test-Have 'python3') { 'python3' } elseif (Test-Have 'python') { 'python' } else { $null } }
+function Get-CoopPiVersion {
+  if (-not (Test-Have 'pi')) { return '' }
+  $raw = (& pi --version 2>$null | Select-Object -First 1)
+  $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
+  if ($m.Success) { return $m.Value } else { return '' }
+}
 
 # Read a dotted scalar key from YAML via lib/_yaml.py (PyYAML when present, else the
 # dependency-free fallback parser) — matches bash + coop.ps1 on machines without PyYAML.
@@ -259,6 +265,29 @@ if (Test-Have 'pi') {
     $name = $ext.Split(':')[0]; $desc = $ext.Split(':')[1]
     if ($pilist -match [regex]::Escape($name)) { D-Ok "$name ($desc)" }
     else { D-Warn "$name not installed ($desc)" "coop add npm:$name" }
+  }
+  # pi-ai / pi-tui must match the agent — coop's extensions load INTO it and share one
+  # copy. A skew (e.g. tree 0.74.x vs agent 0.80.x) breaks pi-web-access's /compat import.
+  $extPy = Get-CoopPython
+  $extVer = Get-CoopPiVersion
+  if ($extPy -and $extVer) {
+    $extScript = Join-Path $script:CoopRoot 'lib/_extdeps.py'
+    # Capture output BEFORE reading $LASTEXITCODE — piping a native command into
+    # `Select-Object -First 1` terminates it early and leaves $LASTEXITCODE unset.
+    $extOut = (& $extPy $extScript align $env:PI_CODING_AGENT_DIR $extVer --check 2>$null)
+    $extRc = $LASTEXITCODE
+    $extLine = if ($extOut) { @($extOut)[0] } else { '' }
+    if ($extRc -eq 0) { D-Ok "extension pi-ai / pi-tui aligned to pi $extVer" }
+    elseif ($extRc -eq 10) {
+      $ep = if ($extLine) { $extLine -split '\s+' } else { @() }
+      $etAi = if ($ep.Count -ge 1) { $ep[0] } else { '-' }
+      $etTui = if ($ep.Count -ge 2) { $ep[1] } else { '-' }
+      D-Warn "extension pi-ai/pi-tui skew (tree $etAi/$etTui vs agent $extVer)" 'coop doctor --fix   (re-pins + reinstalls; close any running coop session first)'
+    }
+    elseif ($extRc -eq 11) {
+      D-Warn "Pi agent $extVer is too old for the installed pi-web-access (needs pi-ai >= 0.80.1 /compat)" 'update the Pi agent: coop update   (or move off the legacy-node20 build)'
+    }
+    # $extRc -eq 2 (no extension tree yet) / other → silent
   }
 } else {
   D-Warn 'cannot check extensions' 'pi not installed'

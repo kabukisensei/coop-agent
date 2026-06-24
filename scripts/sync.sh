@@ -51,6 +51,10 @@ if have pi; then
         && coop_ok "$ext installed" || coop_warn "could not install $ext"
     fi
   done
+  # Align the extension tree's @earendil-works/pi-ai + pi-tui to the agent's own
+  # version so they share one pi-ai/pi-tui (else pi-web-access's 0.80 `/compat`
+  # import breaks against pi-mcp-adapter's hoisted 0.74.x). Idempotent.
+  coop_align_ext_deps
 else
   coop_warn "pi not installed — skipping extension sync (run: coop install)"
 fi

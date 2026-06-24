@@ -207,6 +207,76 @@ coop_python() {
   fi
 }
 
+# The Pi agent's own semver, e.g. "0.80.2" (from `pi --version`). Echoes "" if unknown.
+coop_pi_version() {
+  have pi || return 0
+  pi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+# The _extdeps.py "align --check" exit code (0 aligned / 10 reinstall / 11 agent too
+# old / 2 nothing). Read-only. Args: <python> <agent_dir> <agent_version>.
+_coop_ext_align_rc() {
+  "$1" "$COOP_ROOT/lib/_extdeps.py" align "$2" "$3" --check >/dev/null 2>&1
+  printf '%s' "$?"
+}
+
+# Warn that the agent itself is too old to satisfy pi-web-access's /compat import.
+_coop_ext_too_old() {  # version
+  coop_warn "extension tree pinned to pi $1, but pi-web-access needs pi-ai ≥ 0.80.1 (/compat)" "your Pi agent is too old — update it: coop update   (or move off the legacy-node20 build)"
+}
+
+# Align coop's ISOLATED extension tree's @earendil-works/pi-ai + pi-tui to the Pi
+# agent's OWN version. coop's extensions load INTO the running agent, so they must
+# share one pi-ai/pi-tui with it; a stale lockfile otherwise keeps pi-ai pinned at
+# pi-mcp-adapter's 0.74.x and pi-web-access (peer `*`) resolves against it, breaking
+# its 0.80 `/compat` import. We write an npm `overrides` pin into
+# <agentdir>/npm/package.json (via lib/_extdeps.py); when the installed tree doesn't
+# already match, we drop the lockfile so npm re-resolves against the overrides and
+# reinstall. Best-effort; never fatal. See lib/_extdeps.py for the full rationale.
+coop_align_ext_deps() {
+  have pi || return 0
+  local py; py="$(coop_python)" || return 0
+  local agent_dir npm_dir ver line rc tree_ai
+  agent_dir="$(coop_pi_agent_dir)"
+  npm_dir="$agent_dir/npm"
+  [ -f "$npm_dir/package.json" ] || return 0     # no extension tree yet — nothing to align
+  ver="$(coop_pi_version)"
+  [ -n "$ver" ] || return 0                       # can't determine the agent version
+
+  # Write/refresh the overrides pin and learn the tree's state (branch on the exit
+  # code, so an unexpected helper failure is a clean no-op rather than a reinstall).
+  line="$("$py" "$COOP_ROOT/lib/_extdeps.py" align "$agent_dir" "$ver" 2>/dev/null)"; rc=$?
+  tree_ai="$(printf '%s' "$line" | awk 'NR==1{print $1}')"
+  case "$rc" in
+    0)  coop_ok "extension pi-ai / pi-tui aligned to pi $ver"; return 0 ;;
+    11) _coop_ext_too_old "$ver"; return 0 ;;
+    10) ;;                                          # skewed — reconcile below
+    *)  return 0 ;;                                 # 2 (nothing) or unexpected — no-op
+  esac
+
+  if ! have npm; then
+    coop_warn "extension pi-ai/pi-tui need realignment to pi $ver but npm is missing" "install Node.js, then: coop sync"
+    return 0
+  fi
+  # Skewed: drop the lockfile (the thing pinning the stale hoist) so npm re-resolves
+  # against the overrides, then reinstall.
+  coop_info "aligning extension pi-ai / pi-tui to the agent ($ver; tree has ${tree_ai:-?})…"
+  rm -f "$npm_dir/package-lock.json" 2>/dev/null || true
+  ( cd "$npm_dir" && npm install >/dev/null 2>&1 ) || true
+  rc="$(_coop_ext_align_rc "$py" "$agent_dir" "$ver")"
+  if [ "$rc" = 10 ]; then
+    # A stale node_modules can keep the old hoist — rebuild it clean as a last resort.
+    rm -rf "$npm_dir/node_modules" 2>/dev/null || true
+    ( cd "$npm_dir" && npm install >/dev/null 2>&1 ) || true
+    rc="$(_coop_ext_align_rc "$py" "$agent_dir" "$ver")"
+  fi
+  case "$rc" in
+    0)  coop_ok "extension pi-ai / pi-tui aligned to $ver" ;;
+    11) _coop_ext_too_old "$ver" ;;
+    *)  coop_warn "could not fully align extension pi-ai/pi-tui to $ver" "close any running coop session, then: coop doctor --fix" ;;
+  esac
+}
+
 # Read a dotted scalar key from a YAML file. Usage: coop_yaml_get FILE a.b.c [default]
 # Uses lib/_yaml.py (PyYAML when available, else a dependency-free fallback parser).
 coop_yaml_get() {

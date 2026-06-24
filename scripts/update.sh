@@ -39,6 +39,8 @@ else
 fi
 
 # --- 2. Update Pi + extensions ----------------------------------------------
+# (Windows guards this step against running sessions + leftover staging dirs in
+# update.ps1; POSIX can replace open files, so no such guard is needed here.)
 coop_head "2/5  Pi and extensions"
 if have pi; then
   # `pi update --all` updates the agent AND every installed extension. (Bare
@@ -70,6 +72,8 @@ else
 fi
 
 # --- 4. Sync vibes / skills / prompts / extension ----------------------------
+# sync also re-pins the extension tree's pi-ai/pi-tui to the (possibly just-updated)
+# agent version, so the skew can't survive an update. Runs AFTER step 2 by design.
 coop_head "4/5  Sync brand assets"
 "$COOP_ROOT/scripts/sync.sh" || coop_warn "sync reported issues"
 

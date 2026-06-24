@@ -147,6 +147,21 @@ if have pi; then
     name="${ext%%:*}"; desc="${ext##*:}"
     if printf '%s' "$pilist" | grep -qi "$name"; then ok "$name ($desc)"; else warn "$name not installed ($desc)" "coop add npm:$name"; fi
   done
+  # pi-ai / pi-tui must match the agent — coop's extensions load INTO it and share one
+  # copy. A skew (e.g. tree 0.74.x vs agent 0.80.x) breaks pi-web-access's /compat import.
+  ext_ver="$(coop_pi_version)"; ext_py="$(coop_python 2>/dev/null || true)"
+  if [ -n "$ext_ver" ] && [ -n "$ext_py" ]; then
+    ext_line="$("$ext_py" "$COOP_ROOT/lib/_extdeps.py" align "$PI_CODING_AGENT_DIR" "$ext_ver" --check 2>/dev/null)"; ext_rc=$?
+    if [ "$ext_rc" = 0 ]; then
+      ok "extension pi-ai / pi-tui aligned to pi $ext_ver"
+    elif [ "$ext_rc" = 10 ]; then
+      read -r ext_tree_ai ext_tree_tui _ <<< "$ext_line"
+      warn "extension pi-ai/pi-tui skew (tree ${ext_tree_ai}/${ext_tree_tui} vs agent $ext_ver)" "coop doctor --fix   (re-pins + reinstalls; close any running coop session first)"
+    elif [ "$ext_rc" = 11 ]; then
+      warn "Pi agent $ext_ver is too old for the installed pi-web-access (needs pi-ai ≥ 0.80.1 /compat)" "update the Pi agent: coop update   (or move off the legacy-node20 build)"
+    fi
+    # ext_rc=2 (no extension tree yet) / other → silent
+  fi
 else
   warn "cannot check extensions" "pi not installed"
 fi

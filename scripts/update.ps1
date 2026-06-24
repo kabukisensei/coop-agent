@@ -51,6 +51,42 @@ function Invoke-CoopScript {
   return $LASTEXITCODE
 }
 
+# Windows in-place `pi update --all` replaces the global agent via an atomic rename.
+# If a coop/pi session has those files open, the rename fails and leaves a half-written
+# tree plus a leftover `.pi-coding-agent-*` staging dir (see the pi-ai/pi-tui skew
+# issue). So: clean stale staging dirs and refuse the in-place update while a session
+# is open. (POSIX can replace open files, so update.sh has no such guard.)
+function Get-CoopNpmGlobalRoots {
+  $roots = @()
+  try { $r = (& npm root -g 2>$null | Select-Object -First 1); if ($r) { $roots += $r.Trim() } } catch { }
+  if ($env:APPDATA) { $roots += (Join-Path $env:APPDATA 'npm\node_modules') }
+  return ($roots | Where-Object { $_ } | Select-Object -Unique)
+}
+
+function Remove-CoopPiStagingDirs {
+  foreach ($root in (Get-CoopNpmGlobalRoots)) {
+    $ew = Join-Path $root '@earendil-works'
+    if (Test-Path -LiteralPath $ew) {
+      Get-ChildItem -LiteralPath $ew -Directory -Filter '.pi-coding-agent-*' -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        $name = $_.Name
+        Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path -LiteralPath $_.FullName)) { Coop-Info "removed leftover npm staging dir: $name" }
+      }
+    }
+  }
+}
+
+function Test-CoopPiRunning {
+  try {
+    $procs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue
+    foreach ($p in $procs) {
+      if ($p.ProcessId -eq $PID) { continue }
+      if ($p.CommandLine -and $p.CommandLine -match 'pi-coding-agent') { return $true }
+    }
+  } catch { }
+  return $false
+}
+
 $PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review', 'ms-fabric-cli')
 
 # Update coop's ISOLATED Pi agent dir (not the user's personal pi).
@@ -82,14 +118,21 @@ if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have
 # --- 2. Update Pi + extensions ----------------------------------------------
 Coop-Head '2/5  Pi and extensions'
 if (Test-Have 'pi') {
-  # `pi update --all` updates the agent AND every installed extension. (Bare
-  # `pi update` updates pi ONLY; `--extensions` updates packages only.)
-  Coop-Info 'pi update --all   (the agent + all installed extensions)'
-  & pi update --all > $null 2>&1
-  if ($LASTEXITCODE -eq 0) {
-    $pv = (& pi --version 2>$null); if (-not $pv) { $pv = '?' }
-    Coop-Ok "pi + extensions updated ($pv)"
-  } else { Coop-Warn 'pi update --all failed (try: pi update --all)' }
+  # Clear any leftover staging dir from a prior interrupted in-place update.
+  Remove-CoopPiStagingDirs
+  if (Test-CoopPiRunning) {
+    Coop-Warn 'a coop/pi session appears to be running — skipping in-place `pi update --all` (Windows locks open files, which can corrupt the agent install and leave a `.pi-coding-agent-*` staging dir).'
+    Coop-Say  '      Close all coop/pi windows, then re-run: coop update'
+  } else {
+    # `pi update --all` updates the agent AND every installed extension. (Bare
+    # `pi update` updates pi ONLY; `--extensions` updates packages only.)
+    Coop-Info 'pi update --all   (the agent + all installed extensions)'
+    & pi update --all > $null 2>&1
+    if ($LASTEXITCODE -eq 0) {
+      $pv = (& pi --version 2>$null); if (-not $pv) { $pv = '?' }
+      Coop-Ok "pi + extensions updated ($pv)"
+    } else { Coop-Warn 'pi update --all failed (try: pi update --all)' }
+  }
 } else {
   Coop-Warn 'pi not installed — run: coop install'
 }

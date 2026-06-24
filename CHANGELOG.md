@@ -51,6 +51,33 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   falling back to the venv `python`) instead of deriving it from the non-symlink
   `fab` shim, which falsely reported "not installed" on Windows.
 
+### Fixed
+
+- **Pi extension `pi-ai` / `pi-tui` version skew (broke `pi-web-access`)** — coop's
+  isolated extension tree (`~/.coop/agent/npm`) could end up with `@earendil-works/pi-ai`
+  (and `pi-tui`) pinned at `pi-mcp-adapter`'s `0.74.x` while the agent ran `0.80.x`,
+  so `pi-web-access` (peer `*`) resolved the stale `0.74.x` and its
+  `import "@earendil-works/pi-ai/compat"` failed (`Cannot find module …/pi-ai/dist/index.js/compat`).
+  `coop sync` now writes an npm **`overrides`** block pinning `pi-ai`/`pi-tui` to the
+  **agent's own version** (from `pi --version` — the agent, pi-ai and pi-tui publish
+  in lockstep, so it always resolves) and, when the installed tree is skewed, drops
+  the lockfile and reinstalls so the override takes effect. Because `coop update`
+  runs `pi update --all` (which bumps the agent) **before** sync, the skew can't
+  survive an update. New cross-platform helper `lib/_extdeps.py` does the
+  `package.json` surgery; `coop doctor` reports any remaining skew and
+  `coop doctor --fix` re-pins + reinstalls. If the agent itself pre-dates pi-ai's
+  `/compat` (< 0.80.1 — e.g. the `legacy-node20` build) while an installed
+  `pi-web-access` needs it, alignment can't help: sync/doctor say so explicitly
+  ("agent too old — `coop update`") instead of reporting a false-green.
+  (`sync.sh`/`sync.ps1`, `doctor.sh`/`doctor.ps1`, `lib/common.sh`.)
+- **Windows: `pi update --all` no longer corrupts the agent when a session is open**
+  — on Windows the in-place update replaces the global agent via an atomic rename,
+  which fails (leaving a half-written tree + a leftover `.pi-coding-agent-*` npm
+  staging dir) if a coop/pi process has those files open. `update.ps1` now removes
+  stale staging dirs first and **skips** the in-place `pi update --all` while a
+  coop/pi session is detected, telling you to close it and re-run. (POSIX can
+  replace open files, so `update.sh` keeps the in-place update.)
+
 ### Removed
 
 - **Dropped the `d365-migration-review` skill + `/d365-migration-review` prompt**

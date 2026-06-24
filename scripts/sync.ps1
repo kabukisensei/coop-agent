@@ -39,6 +39,76 @@ function Coop-Ok   { param([string]$m) [Console]::Error.WriteLine("$($script:C_F
 function Coop-Warn { param([string]$m) [Console]::Error.WriteLine("$($script:C_OLIVE)!$($script:C_RST) $m") }
 function Coop-Head { param([string]$m) [Console]::Error.WriteLine("`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)") }
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
+function Get-CoopPython { if (Test-Have 'python3') { 'python3' } elseif (Test-Have 'python') { 'python' } else { $null } }
+
+# The Pi agent's own semver, e.g. '0.80.2' (from `pi --version`). '' if unknown.
+function Get-CoopPiVersion {
+  if (-not (Test-Have 'pi')) { return '' }
+  $raw = (& pi --version 2>$null | Select-Object -First 1)
+  $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
+  if ($m.Success) { return $m.Value } else { return '' }
+}
+
+# Align coop's ISOLATED extension tree's @earendil-works/pi-ai + pi-tui to the Pi
+# agent's OWN version (mirror of lib/common.sh coop_align_ext_deps). coop's
+# extensions load INTO the running agent, so they must share one pi-ai/pi-tui with
+# it; we write an npm `overrides` pin via lib/_extdeps.py and reinstall only when
+# the installed tree doesn't already match. Best-effort; never fatal.
+function Sync-CoopExtDeps {
+  param([string]$AgentDir)
+  if (-not (Test-Have 'pi')) { return }
+  $py = Get-CoopPython
+  if (-not $py) { return }
+  $npmDir = Join-Path $AgentDir 'npm'
+  if (-not (Test-Path -LiteralPath (Join-Path $npmDir 'package.json') -PathType Leaf)) { return }
+  $ver = Get-CoopPiVersion
+  if (-not $ver) { return }
+  $extdeps = Join-Path $script:CoopRoot 'lib/_extdeps.py'
+
+  function Read-AlignField {
+    param([string[]]$Parts, [int]$Index, [string]$Default = '-')
+    if ($Parts.Count -gt $Index) { return $Parts[$Index] } else { return $Default }
+  }
+  function Invoke-Align {
+    param([switch]$Check)
+    $a = @($extdeps, 'align', $AgentDir, $ver); if ($Check) { $a += '--check' }
+    # Capture the whole output BEFORE reading $LASTEXITCODE — piping a native command
+    # into `Select-Object -First 1` terminates it early and leaves $LASTEXITCODE unset.
+    $out = (& $py @a 2>$null)
+    $code = $LASTEXITCODE
+    $line = if ($out) { @($out)[0] } else { '' }
+    return @{ rc = $code; parts = $(if ($line) { $line -split '\s+' } else { @() }) }
+  }
+
+  $tooOld = "extension tree pinned to pi $ver, but pi-web-access needs pi-ai >= 0.80.1 (/compat) — your Pi agent is too old; update it: coop update   (or move off the legacy-node20 build)"
+
+  # Branch on the helper's exit code (so an unexpected failure is a clean no-op).
+  $r = Invoke-Align
+  $treeAi = Read-AlignField $r.parts 0
+  if ($r.rc -eq 0) { Coop-Ok "extension pi-ai / pi-tui aligned to pi $ver"; return }
+  if ($r.rc -eq 11) { Coop-Warn $tooOld; return }
+  if ($r.rc -ne 10) { return }   # 2 (nothing) or unexpected — no-op
+
+  if (-not (Test-Have 'npm')) {
+    Coop-Warn "extension pi-ai/pi-tui need realignment to pi $ver but npm is missing — install Node.js, then: coop sync"
+    return
+  }
+  # Skewed: drop the lockfile (the thing pinning the stale hoist) so npm re-resolves
+  # against the overrides, then reinstall.
+  Coop-Info "aligning extension pi-ai / pi-tui to the agent ($ver; tree has $treeAi)…"
+  Remove-Item -LiteralPath (Join-Path $npmDir 'package-lock.json') -Force -ErrorAction SilentlyContinue
+  Push-Location $npmDir; try { & npm install *> $null } catch { } finally { Pop-Location }
+  $r = Invoke-Align -Check
+  if ($r.rc -eq 10) {
+    # A stale node_modules can keep the old hoist — rebuild it clean as a last resort.
+    Remove-Item -LiteralPath (Join-Path $npmDir 'node_modules') -Recurse -Force -ErrorAction SilentlyContinue
+    Push-Location $npmDir; try { & npm install *> $null } catch { } finally { Pop-Location }
+    $r = Invoke-Align -Check
+  }
+  if ($r.rc -eq 0) { Coop-Ok "extension pi-ai / pi-tui aligned to $ver" }
+  elseif ($r.rc -eq 11) { Coop-Warn $tooOld }
+  else { Coop-Warn "could not fully align extension pi-ai/pi-tui to $ver — close any running coop session, then: coop doctor --fix" }
+}
 
 # coop renders its own footer/splash — no third-party powerline footer.
 $CORE_EXTENSIONS = @('pi-mcp-adapter', 'pi-hermes-memory', 'pi-better-openai', 'pi-web-access', '@juicesharp/rpiv-ask-user-question')
@@ -84,6 +154,9 @@ if (Test-Have 'pi') {
       if ($LASTEXITCODE -eq 0) { Coop-Ok "$ext installed" } else { Coop-Warn "could not install $ext" }
     }
   }
+  # Share one pi-ai/pi-tui with the agent (else pi-web-access's 0.80 `/compat`
+  # import breaks against pi-mcp-adapter's hoisted 0.74.x). Idempotent.
+  Sync-CoopExtDeps -AgentDir $PI_AGENT
 } else {
   Coop-Warn 'pi not installed — skipping extension sync (run: coop install)'
 }
