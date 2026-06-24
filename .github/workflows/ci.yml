@@ -10,7 +10,7 @@ jobs:
     name: shell + config lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: bash -n (syntax)
         run: for f in bin/coop lib/common.sh scripts/*.sh tests/*.sh; do echo "checking $f"; bash -n "$f"; done
       - name: shellcheck
@@ -55,8 +55,8 @@ jobs:
     name: extensions transpile
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
       - name: esbuild check (mirrors how Pi loads .ts extensions)
@@ -70,8 +70,8 @@ jobs:
     name: logic tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
       - name: run test suite (data-doc config + coop-guardrails enforcement)
@@ -81,7 +81,7 @@ jobs:
     name: powershell parse (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: parse every .ps1 with the PowerShell language parser
         shell: pwsh
         run: |

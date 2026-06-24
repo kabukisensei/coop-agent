@@ -14,7 +14,7 @@ jobs:
     name: GitHub Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Extract changelog section for this tag
         run: |
@@ -31,7 +31,7 @@ jobs:
           echo "----- notes for $GITHUB_REF_NAME -----"; cat RELEASE_NOTES.md
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: "coop-agent ${{ github.ref_name }}"
           body_path: RELEASE_NOTES.md
