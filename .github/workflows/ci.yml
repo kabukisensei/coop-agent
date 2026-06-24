@@ -22,18 +22,23 @@ jobs:
           python3 -c "import ast; ast.parse(open('lib/_yaml.py').read())"
           test "$(python3 lib/_yaml.py get .coop/project.yml profile.organization MISS)" = "Cooptimize"
       - name: python extdeps helper
+        # NB: this step runs under `bash -e`, so capture the intentionally-nonzero
+        # exit codes with `|| rc=$?` (a list context, exempt from set -e) rather than
+        # `cmd; test "$?"` — the bare `cmd` would abort the step before the test runs.
         run: |
           python3 -c "import ast; ast.parse(open('lib/_extdeps.py').read())"
           # no extension tree -> exit 2 (nothing to do)
-          python3 lib/_extdeps.py align /tmp/coop-no-such-dir 0.0.0 --check; test "$?" -eq 2
+          rc=0; python3 lib/_extdeps.py align /tmp/coop-no-such-dir 0.0.0 --check || rc=$?
+          test "$rc" -eq 2
           # bad usage -> exit 3
-          python3 lib/_extdeps.py 2>/dev/null; test "$?" -eq 3
+          rc=0; python3 lib/_extdeps.py 2>/dev/null || rc=$?
+          test "$rc" -eq 3
           # write + report on a fixture: overrides written, skew reported (exit 10)
           d="$(mktemp -d)"; mkdir -p "$d/npm/node_modules/@earendil-works/pi-ai" "$d/npm/node_modules/@earendil-works/pi-tui"
           printf '{"version":"0.74.2"}' > "$d/npm/node_modules/@earendil-works/pi-ai/package.json"
           printf '{"version":"0.74.2"}' > "$d/npm/node_modules/@earendil-works/pi-tui/package.json"
           printf '{"name":"pi-extensions","dependencies":{}}' > "$d/npm/package.json"
-          out="$(python3 lib/_extdeps.py align "$d" 0.80.2)"; rc=$?
+          rc=0; out="$(python3 lib/_extdeps.py align "$d" 0.80.2)" || rc=$?
           test "$rc" -eq 10
           test "$out" = "0.74.2 0.74.2 0.80.2 0.80.2 1 0"
           python3 -c "import json,sys; o=json.load(open(sys.argv[1]))['overrides']; assert o['@earendil-works/pi-ai']=='0.80.2' and o['@earendil-works/pi-tui']=='0.80.2'" "$d/npm/package.json"
