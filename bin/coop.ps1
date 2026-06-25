@@ -368,14 +368,17 @@ function Invoke-DataDoc {
   if ($RestArgs.Count -eq 0) { $RestArgs = @('build') }
   Coop-Head "coop-data-doc $($RestArgs -join ' ')"
   & coop-data-doc @RestArgs
+  $rc = $LASTEXITCODE   # capture before the summary loop so the tool's exit code propagates
   # Summarize machine-readable artifacts when present (manifest.json / graph.json).
-  foreach ($f in @('manifest.json', 'graph.json', 'docs/manifest.json', 'docs/graph.json', 'site/manifest.json')) {
+  # Includes the default output dir (./data-docs) plus legacy/alternate locations.
+  foreach ($f in @('data-docs/manifest.json', 'data-docs/graph.json', 'manifest.json', 'graph.json', 'docs/manifest.json', 'docs/graph.json', 'site/manifest.json', 'data-docs-site/manifest.json')) {
     if (Test-Path -LiteralPath $f -PathType Leaf) {
       Coop-Ok "Machine-readable output: $f"
       Invoke-CoopSummarizeDataDocJson $f
       break
     }
   }
+  exit $rc   # mirror Invoke-Tool: a coop-data-doc failure must not be masked by the summary
 }
 
 # --- Authoring scaffolders (mirror of bin/coop) ------------------------------

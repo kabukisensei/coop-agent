@@ -189,8 +189,9 @@ run_data_doc() {
   coop_head "coop-data-doc $*"
   coop-data-doc "$@"
   # Summarize machine-readable artifacts when present (manifest.json / graph.json).
+  # Includes the default output dir (./data-docs) plus legacy/alternate locations.
   local f
-  for f in manifest.json graph.json docs/manifest.json docs/graph.json site/manifest.json; do
+  for f in data-docs/manifest.json data-docs/graph.json manifest.json graph.json docs/manifest.json docs/graph.json site/manifest.json data-docs-site/manifest.json; do
     if [ -f "$f" ]; then
       coop_ok "Machine-readable output: $f"
       local py; py="$(coop_python)" || break
@@ -323,13 +324,15 @@ EOF
 
   local cur new ma mi pa
   cur="$(tr -d '[:space:]' < "$COOP_ROOT/VERSION" 2>/dev/null)"
+  # Strict X.Y.Z. The old loose globs let e.g. '1abc.2.3' or '1.2.3.4' through, then
+  # `$((ma + 1))` aborted mid-release with a raw arithmetic error under `set -e`.
   case "$cur" in
-    [0-9]*.[0-9]*.[0-9]) ;;
-    [0-9]*.[0-9]*.[0-9]*) ;;
-    *) coop_die "VERSION ('$cur') is not X.Y.Z — fix it before releasing." ;;
+    ''|*[!0-9.]*|.*|*.|*..*|*.*.*.*) coop_die "VERSION ('$cur') is not X.Y.Z — fix it before releasing." ;;
   esac
   IFS=. read -r ma mi pa <<<"$cur"
-  case "$pa" in *[!0-9]*) coop_die "VERSION patch ('$pa') is not numeric." ;; esac
+  for _f in "$ma" "$mi" "$pa"; do
+    case "$_f" in ''|*[!0-9]*) coop_die "VERSION ('$cur') is not X.Y.Z — fix it before releasing." ;; esac
+  done
   case "$level" in
     major) new="$((ma + 1)).0.0" ;;
     minor) new="${ma}.$((mi + 1)).0" ;;

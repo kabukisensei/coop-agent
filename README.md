@@ -183,7 +183,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | Command | Description |
 | --- | --- |
 | `coop` | Launch the branded Pi agent (skills, prompts, theme, guardrails, splash) |
-| `coop doctor` | Check dependencies and configuration; exit non-zero if required items missing |
+| `coop doctor [--fix]` | Check dependencies and configuration; exit non-zero if required items missing. `--fix` auto-applies safe remediations (sync extensions/MCP/assets, pipx-install missing Coop tools), then re-checks |
 | `coop update` | Update Pi + Pi extensions + Coop tools + vibes/skills, then run doctor |
 | `coop install` | Fresh-install / bootstrap everything (idempotent). With a source arg, alias of `coop add` |
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
@@ -198,7 +198,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop init [dir]` | Scaffold `.coop/project.yml` into a work repo (default: `.`) |
 | `coop new-skill <name>` | Scaffold `skills/<name>/SKILL.md` |
 | `coop new-prompt <name>` | Scaffold `prompts/<name>.md` |
-| `coop release [level]` | Cut a release — bump version, roll CHANGELOG, commit + tag + push (`patch`/`minor`/`major`, default `patch`) |
+| `coop release [patch\|minor\|major] [--yes] [--no-push] [--no-check]` | Cut a release — bump version, roll CHANGELOG, commit + tag + push (default `patch`). Build-checks the extensions first (skip with `--no-check`); `--no-push` tags locally only; `--yes` skips the confirm |
 | **Pi management (aliased under coop)** | |
 | `coop list` | List installed Pi extensions (`pi list`) |
 | `coop config` | Open Pi's resource TUI (`pi config`) |

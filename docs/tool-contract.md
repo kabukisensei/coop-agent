@@ -155,7 +155,8 @@ Invocation (built in `runReview`):
 Result:
 
 - `content[0].text` — e.g.
-  `coop-sql-review: 3 finding(s) — 1 error, 2 warning, 0 info (exit 1). Full structured report is in this tool result's details.`
+  `coop-sql-review: 3 finding(s) — 1 error, 2 warning, 0 info (exit 0). Full structured report is in this tool result's details.`
+  (the advisory default exits `0` even with findings; `--strict` exits `2` when errors are present)
 - `details` — `{ tool, args, exitCode, report: <parsed JSON or raw stdout>, stderr }`.
 - If the binary is missing or JSON won't parse, it reports the problem in
   `content` (not a conversation error) and still returns `details`.

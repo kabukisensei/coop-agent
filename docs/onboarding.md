@@ -39,9 +39,11 @@ links `coop` onto your `PATH`. **Open a new shell afterward** so `coop` is found
 coop doctor
 ```
 
-Green = ready; it tells you exactly what's missing. One known gotcha it may flag is
-the **`fab` collision** — if your `fab` is Homebrew's Python SSH tool instead of the
-Microsoft Fabric CLI, follow doctor's one-line fix.
+Green = ready; it tells you exactly what's missing. Add `--fix` (`coop doctor --fix`)
+to auto-apply the safe remediations — re-sync extensions/MCP/assets and `pipx`-install
+any missing Coop tools, then re-check. One known gotcha it may flag is the **`fab`
+collision** — if your `fab` is Homebrew's Python SSH tool instead of the Microsoft
+Fabric CLI, follow doctor's one-line fix.
 
 ## 4. Point it at a work repo
 
@@ -72,9 +74,9 @@ back up → review with the tools → never commit source. You stay in control.
 Handy commands:
 
 ```bash
-coop sql-review path/to.sql      # advisory SQL standards check
-coop dax-review path/to/model    # advisory DAX standards check
-coop data-doc                    # build lineage + Markdown docs
+coop sql-review check path/to.sql      # advisory SQL standards check
+coop dax-review check path/to/model    # advisory DAX standards check
+coop data-doc                          # build lineage + Markdown docs
 coop list / coop config          # manage Pi extensions
 ```
 
@@ -84,8 +86,8 @@ coop list / coop config          # manage Pi extensions
 
 ```bash
 printf 'SELECT * FROM dbo.Orders o JOIN dbo.Customer c ON o.CustomerId = c.Id;\n' > /tmp/sample.sql
-coop sql-review /tmp/sample.sql
-#   Windows: Set-Content /tmp/sample.sql 'SELECT * FROM dbo.Orders;'; coop sql-review /tmp/sample.sql
+coop sql-review check /tmp/sample.sql
+#   Windows: Set-Content /tmp/sample.sql 'SELECT * FROM dbo.Orders;'; coop sql-review check /tmp/sample.sql
 ```
 
 You'll get a severity summary (errors / warnings / info). `coop sql-review` is

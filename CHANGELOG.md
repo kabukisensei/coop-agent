@@ -60,6 +60,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **`coop data-doc` exit code + artifact summary (cross-repo review)** — on Windows,
+  `Invoke-DataDoc` now captures the tool's `$LASTEXITCODE` and `exit`s with it after the
+  summary, so a `coop-data-doc` failure is no longer masked (bash already propagated via
+  `set -e`). The machine-readable-output summary now also searches the **default** output
+  dir (`./data-docs`), not just legacy locations. `coop release` VERSION validation is now
+  strict X.Y.Z on both platforms (a malformed `VERSION` fails cleanly instead of crashing
+  mid-release in bash arithmetic). Docs: documented `coop doctor --fix` and the
+  `coop release` flags (`--yes`/`--no-push`/`--no-check`) in the README/onboarding; fixed
+  the `tool-contract` exit-code example (advisory exits `0`, `--strict` exits `2`); added
+  `check` to the `coop sql-review`/`coop dax-review` examples in onboarding; refreshed
+  `config/defaults.yml` `tested_with` tool versions (data-doc 0.26.1 / sql-review 0.2.3 /
+  dax-review 0.6.2).
 - **Pi extension `pi-ai` / `pi-tui` version skew (broke `pi-web-access`)** — coop's
   isolated extension tree (`~/.coop/agent/npm`) could end up with `@earendil-works/pi-ai`
   (and `pi-tui`) pinned at `pi-mcp-adapter`'s `0.74.x` while the agent ran `0.80.x`,

@@ -106,9 +106,9 @@ tested_with:
   context_mode: "1.0.162"
   ms_fabric_cli: "1.6.1"
   fabric_cicd: "1.1.0"
-  coop_data_doc: "0.17.0"
-  coop_sql_review: "0.1.0"
-  coop_dax_review: "0.1.0"
+  coop_data_doc: "0.26.1"
+  coop_sql_review: "0.2.3"
+  coop_dax_review: "0.6.2"
 
 # Cooptimize brand palette (sampled from the color logo).
 brand_colors:
