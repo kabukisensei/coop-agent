@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-06-25
+
 ### Added
 
 - **More `coop-internal` working vibes** — extra sociocracy/consent one-liners in
