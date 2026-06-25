@@ -7,6 +7,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **More `coop-internal` working vibes** — extra sociocracy/consent one-liners in
+  `vibes/coop-internal.txt` featuring the crew (Joel, Eric, Tanner, Josh, Simar,
+  April, Aaron) plus South Park / Star Wars / Star Trek / *Monty Python and the
+  Holy Grail* (the "constitutional peasants" anarcho-syndicalist-commune bit)
+  easter eggs. They ride along in the default rotation (which draws from every set)
+  and `/coop-vibe coop-internal`; `professional.txt` stays client-safe. (`VERSION`
+  bumped to 0.3.3.)
 - **Native lineage awareness + a `lineage` command on the `data_doc` tool** — the
   `data_doc` native tool (`extensions/coop-tools`) gained `command="lineage"`
   (`object` + optional `depth`): it returns ONE object's upstream inputs,
