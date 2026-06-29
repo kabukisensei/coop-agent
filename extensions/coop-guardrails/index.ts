@@ -98,16 +98,20 @@ async function stagedSourceFiles(pi: ExtensionAPI, cwd: string): Promise<string[
 function dangerLabel(cmd: string): string | null {
   // rm with BOTH recursive and force flags (single-file rm is fine)
   if (/\brm\b/.test(cmd)) {
-    const flagRuns = cmd.match(/\brm\s+(?:-\S+\s*)+/g);
-    if (flagRuns) {
-      const flags = flagRuns.join(" ");
-      if (/r/.test(flags) && /f/.test(flags)) return "rm -rf";
-    }
+    // Collect just the dash-prefixed flag tokens (NOT the literal "rm"), so the
+    // "r"/"f" tests don't match the "r" in the "rm" command name itself.
+    const flagTokens = cmd.match(/(?<=\s)-\S+/g) || [];
+    // Short-flag clusters (e.g. -rf, -fr) carry their letters after a single dash.
+    const shortFlags = flagTokens.filter((t) => !t.startsWith("--")).join("");
+    const longFlags = flagTokens.filter((t) => t.startsWith("--")).join(" ");
+    const recursive = /r/i.test(shortFlags) || /--recursive\b/i.test(longFlags);
+    const force = /f/i.test(shortFlags) || /--force\b/i.test(longFlags);
+    if (recursive && force) return "rm -rf";
   }
-  if (/\bgit\s+push\b[\s\S]*?(--force\b|--force-with-lease\b|(?:\s|=)-f\b)/i.test(cmd)) return "git push --force";
+  if (/\bgit\s+push\b[^;&|]*?(--force\b|--force-with-lease\b|(?:\s|=)-f\b)/i.test(cmd)) return "git push --force";
   if (/\bgit\s+reset\s+--hard\b/i.test(cmd)) return "git reset --hard";
-  if (/\bgit\s+clean\s+-\S*f/i.test(cmd)) return "git clean -f";
-  if (/\b(DROP|TRUNCATE)\s+(TABLE|DATABASE|SCHEMA|VIEW)\b/i.test(cmd)) return "destructive SQL (DROP/TRUNCATE)";
+  if (/\bgit\s+clean\b[^;&|]*?(?:\s-[a-z]*f|\s--force\b)/i.test(cmd)) return "git clean -f";
+  if (/\b(DROP|TRUNCATE)\s+(TABLE|DATABASE|SCHEMA|VIEW|PROCEDURE|FUNCTION|INDEX|TRIGGER|SEQUENCE|TYPE)\b/i.test(cmd)) return "destructive SQL (DROP/TRUNCATE)";
   return null;
 }
 

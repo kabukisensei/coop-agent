@@ -152,7 +152,7 @@ Fetch with `scripts/fetch-microsoft-skills.sh` (fetched skills are gitignored). 
 Because skills/prompts/vibes/theme are just files in this repo, the workflow is:
 
 1. Create the file (skill folder, prompt, etc.).
-2. `coop sql-review` / test it locally with `coop`.
+2. Test it locally with `coop`.
 3. Commit and push (these are docs/config, safe to commit).
 4. Teammates run `coop update` (which `git pull`s coop-agent) and pick it up.
 

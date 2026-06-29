@@ -57,7 +57,7 @@ _coop_emit() {
 coop_say()  { _coop_emit "$*"; }
 coop_info() { _coop_emit "$(printf '%s•%s %s' "$COOP_LIME"   "$COOP_RST" "$*")"; }
 coop_ok()   { _coop_emit "$(printf '%s✓%s %s' "$COOP_FOREST" "$COOP_RST" "$*")"; }
-coop_warn() { _coop_emit "$(printf '%s!%s %s' "$COOP_OLIVE"  "$COOP_RST" "$*")"; }
+coop_warn() { _coop_emit "$(printf '%s!%s %s' "$COOP_OLIVE"  "$COOP_RST" "$1${2:+ — $2}")"; }
 coop_err()  { _coop_emit "$(printf '%s✗%s %s' "$COOP_RED"    "$COOP_RST" "$*")"; }
 coop_die()  { coop_err "$*"; exit 1; }
 coop_head() { _coop_emit "$(printf '\n%s%s%s%s' "$COOP_BOLD" "$COOP_NAVY" "$*" "$COOP_RST")"; }

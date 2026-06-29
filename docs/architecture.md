@@ -137,7 +137,7 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
    - `powerbi` — `powerbi-mcp-server --readonly`.
    - `microsoft-learn` — `learn.microsoft.com/api/mcp` via `mcp-remote`
      (always-current Microsoft docs).
-   - `context-mode` — local.
+   - `context-mode` — `npx -y context-mode` (intent-driven search + sandboxed exec).
 
    `coop` **never** performs write/create/update/delete/deploy/publish MCP
    actions without explicit approval, regardless of server capability.

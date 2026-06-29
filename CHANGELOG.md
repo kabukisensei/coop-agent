@@ -5,6 +5,29 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Guardrail `git clean` force-detection** — `git clean -d -f`, `git clean -df`, and
+  `git clean --force` are now caught (previously only the single fused `-fd`-style cluster
+  triggered the confirmation).
+- **Guardrail `rm` label** — a force-only `rm -f` is no longer mislabeled "rm -rf"; the recursive
+  warning now fires only when `-r`/`-R`/`--recursive` is actually present.
+- **Guardrail destructive-SQL gate** — now also prompts on `DROP PROCEDURE/INDEX/FUNCTION/TRIGGER/
+  SEQUENCE`, and the `git push` force check no longer false-positives on an unrelated standalone
+  `-f` later in the same shell line.
+- **`Test-CoopValidName` parity** — the PowerShell validator now rejects leading-dash and dot-only
+  skill/prompt names, matching bash `coop_valid_name`.
+- **`coop doctor` parity** — `doctor.sh` accepts `python` as well as `python3` (matching
+  `coop_python` and `doctor.ps1`); removed a stray extra MCP token from `doctor.ps1`.
+- **`coop_warn` hint separator** — two-arg calls now render `message — hint` (was a plain space).
+
+### Docs
+
+- Corrected `tool-contract.md` `coop data-doc` artifact-search list/order (adds the default
+  `data-docs/*` entries); fixed `guardrails.md` ("three" runtime rules, adds `git clean -f`);
+  fixed the guardrails README commit-allow defaults, a stray `coop sql-review` artifact in
+  `extending.md`, the context-mode "local server" wording, and the stale CHANGELOG note in [0.3.4].
+
 ## [0.3.4] — 2026-06-25
 
 ### Added
@@ -14,8 +37,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   April, Aaron) plus South Park / Star Wars / Star Trek / *Monty Python and the
   Holy Grail* (the "constitutional peasants" anarcho-syndicalist-commune bit)
   easter eggs. They ride along in the default rotation (which draws from every set)
-  and `/coop-vibe coop-internal`; `professional.txt` stays client-safe. (`VERSION`
-  bumped to 0.3.3.)
+  and `/coop-vibe coop-internal`; `professional.txt` stays client-safe.
 - **Native lineage awareness + a `lineage` command on the `data_doc` tool** — the
   `data_doc` native tool (`extensions/coop-tools`) gained `command="lineage"`
   (`object` + optional `depth`): it returns ONE object's upstream inputs,

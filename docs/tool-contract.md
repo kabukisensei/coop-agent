@@ -113,8 +113,9 @@ with `--standards` / `--config`.
   args defaults to **`build`**.
 - After running, it looks for machine-readable artifacts in this order and
   summarizes the first found:
-  `manifest.json`, `graph.json`, `docs/manifest.json`, `docs/graph.json`,
-  `site/manifest.json`. The summary counts nodes
+  `data-docs/manifest.json`, `data-docs/graph.json`, `manifest.json`,
+  `graph.json`, `docs/manifest.json`, `docs/graph.json`, `site/manifest.json`,
+  `data-docs-site/manifest.json`. The summary counts nodes
   (`nodes`/`objects`/`entities`), edges (`edges`/`links`/`lineage`), and docs
   (`documents`/`docs`/`pages`).
 

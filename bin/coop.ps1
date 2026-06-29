@@ -382,7 +382,7 @@ function Invoke-DataDoc {
 }
 
 # --- Authoring scaffolders (mirror of bin/coop) ------------------------------
-function Test-CoopValidName { param([string]$Name) return ($Name -and $Name -notmatch '[^a-zA-Z0-9._-]') }
+function Test-CoopValidName { param([string]$Name) if ($Name -in @('.', '..') -or $Name.StartsWith('-')) { return $false }; return ($Name -and $Name -notmatch '[^a-zA-Z0-9._-]') }
 
 function Invoke-CoopInit {
   param([string[]]$RestArgs = @())

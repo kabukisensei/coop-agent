@@ -62,6 +62,28 @@ await t("allows an approved destructive command", async () => {
 await t("blocks declined git push --force", async () => {
   assert.equal(blocked(await call("git push --force origin main", { confirm: false })), true);
 });
+await t("force-only rm (rm -f, no -r) is NOT treated as destructive", async () => {
+  // dangerLabel must require BOTH recursive and force; single-file force rm is fine.
+  assert.equal(blocked(await call("rm -f secret.tmp", { confirm: false })), false);
+  assert.equal(blocked(await call("rm -f a.txt b.txt", { confirm: false })), false);
+});
+await t("blocks declined rm with separate -r -f tokens and long flags", async () => {
+  assert.equal(blocked(await call("rm -r -f /tmp/x", { confirm: false })), true);
+  assert.equal(blocked(await call("rm --recursive --force /tmp/x", { confirm: false })), true);
+});
+await t("blocks declined git clean with separate force token / --force", async () => {
+  assert.equal(blocked(await call("git clean -d -f", { confirm: false })), true);
+  assert.equal(blocked(await call("git clean --force", { confirm: false })), true);
+  assert.equal(blocked(await call("git clean -fd", { confirm: false })), true);
+});
+await t("git push without force is not flagged by a later -f in the same line", async () => {
+  assert.equal(blocked(await call("git push origin main; rm -f x", { confirm: false })), false);
+  assert.equal(blocked(await call("git push && grep -f pat file", { confirm: false })), false);
+});
+await t("blocks declined DROP of non-table objects (INDEX/PROCEDURE)", async () => {
+  assert.equal(blocked(await call("DROP INDEX x", { confirm: false })), true);
+  assert.equal(blocked(await call("DROP PROCEDURE p", { confirm: false })), true);
+});
 await t("allows a safe command (ls)", async () => {
   assert.equal(blocked(await call("ls -la")), false);
 });

@@ -307,7 +307,7 @@ foreach ($f in @(
 if ($mcpFound) {
   D-Ok "MCP config: $mcpFound"
   $mcpText = (Get-Content -LiteralPath $mcpFound -Raw -ErrorAction SilentlyContinue)
-  foreach ($s in @('fabric', 'powerbi', 'microsoft-learn', 'learn', 'context-mode')) {
+  foreach ($s in @('fabric', 'powerbi', 'microsoft-learn', 'context-mode')) {
     if ($mcpText -match ('(?i)"' + [regex]::Escape($s) + '"')) { D-Ok "  • $s server configured" }
   }
   if ($mcpText -notmatch '(?i)learn\.microsoft\.com|microsoft-learn') {

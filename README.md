@@ -261,7 +261,7 @@ coop preloads four MCP servers via `pi-mcp-adapter`. They are **all read-only** 
 | `fabric` | `@microsoft/fabric-mcp` (AzureCliCredential) | read-only |
 | `powerbi` | `powerbi-mcp-server --readonly` | read-only |
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` — always-current Microsoft docs | read-only |
-| `context-mode` | local context server | read-only |
+| `context-mode` | `npx -y context-mode` — intent-driven search + sandboxed exec | read-only |
 
 `coop sync` places `config/mcp.example.json` **non-destructively** into coop's
 isolated agent dir (`~/.coop/agent`) — it never overwrites an existing config and
