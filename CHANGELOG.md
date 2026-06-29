@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.3.5] — 2026-06-29
+
 ### Fixed
 
 - **Guardrail `git clean` force-detection** — `git clean -d -f`, `git clean -df`, and
