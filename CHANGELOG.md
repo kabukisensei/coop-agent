@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-06-30
+
 ### Fixed
 
 - **`coop update` no longer freezes on untracked files** — step 1's "skip the pull if the

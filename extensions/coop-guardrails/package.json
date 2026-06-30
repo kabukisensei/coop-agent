@@ -1,6 +1,6 @@
 {
   "name": "coop-guardrails",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Runtime enforcement of Cooptimize governance for Pi: never commit source, confirm destructive commands. The coop-native replacement for @aliou/pi-guardrails.",
   "keywords": ["pi-package", "pi", "coding-agent", "cooptimize", "guardrails", "security"],
