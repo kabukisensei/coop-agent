@@ -40,8 +40,19 @@ jobs:
           printf '{"name":"pi-extensions","dependencies":{}}' > "$d/npm/package.json"
           rc=0; out="$(python3 lib/_extdeps.py align "$d" 0.80.2)" || rc=$?
           test "$rc" -eq 10
-          test "$out" = "0.74.2 0.74.2 0.80.2 0.80.2 1 0"
+          # 8-field line: tree_ai tree_tui ovr_ai ovr_tui changed aligned required_floor offending_ext
+          # (last two are "-" here: nothing imposes a pi-ai floor, so the agent is not "too old")
+          test "$out" = "0.74.2 0.74.2 0.80.2 0.80.2 1 0 - -"
           python3 -c "import json,sys; o=json.load(open(sys.argv[1]))['overrides']; assert o['@earendil-works/pi-ai']=='0.80.2' and o['@earendil-works/pi-tui']=='0.80.2'" "$d/npm/package.json"
+          # agent too old for an installed extension -> exit 11, names the offending ext + floor
+          e="$(mktemp -d)"; mkdir -p "$e/npm/node_modules/@earendil-works/pi-ai" "$e/npm/node_modules/@earendil-works/pi-tui" "$e/npm/node_modules/pi-hermes-memory"
+          printf '{"version":"0.80.2"}' > "$e/npm/node_modules/@earendil-works/pi-ai/package.json"
+          printf '{"version":"0.80.2"}' > "$e/npm/node_modules/@earendil-works/pi-tui/package.json"
+          printf '{"name":"pi-hermes-memory","dependencies":{"@earendil-works/pi-ai":"^0.99.0"}}' > "$e/npm/node_modules/pi-hermes-memory/package.json"
+          printf '{"name":"pi-extensions"}' > "$e/npm/package.json"
+          rc=0; out="$(python3 lib/_extdeps.py align "$e" 0.80.2 --check)" || rc=$?
+          test "$rc" -eq 11
+          test "$out" = "0.80.2 0.80.2 - - 0 1 0.99.0 pi-hermes-memory"
       - name: validate JSON
         run: for f in $(find . -name '*.json' -not -path './node_modules/*' -not -path './.git/*'); do echo "$f"; python3 -m json.tool "$f" >/dev/null; done
       - name: validate YAML
