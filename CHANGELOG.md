@@ -5,6 +5,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`coop update` no longer freezes on untracked files** — step 1's "skip the pull if the
+  tree is dirty" guard used `git status --porcelain`, which **counts untracked files**. A
+  single stray file in the checkout (a downloaded skill drop-in such as `skills/te-cli/`, an
+  editor artifact, etc.) made every `coop update` silently skip its `git pull`, leaving the
+  machine stuck on an old version indefinitely. The guard now ignores untracked files
+  (`--untracked-files=no`); only **uncommitted changes to tracked files** block the
+  fast-forward (and `git pull --ff-only` still fails loudly on its own if an incoming tracked
+  file would overwrite an untracked one). bash + PowerShell.
+
 ## [0.4.0] — 2026-06-30
 
 ### Added

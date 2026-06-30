@@ -262,9 +262,13 @@ Coop-Head '1/5  coop-agent repository'
 if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have 'git')) {
   & git -C $script:CoopRoot remote get-url origin > $null 2>&1
   if ($LASTEXITCODE -eq 0) {
-    $status = (& git -C $script:CoopRoot status --porcelain 2>$null | Out-String)
+    # Only uncommitted changes to TRACKED files can block a fast-forward pull; untracked
+    # files (stray skills, downloaded drop-ins) are harmless and must NOT freeze updates
+    # — `--untracked-files=no` excludes them. (git pull --ff-only still fails loudly on
+    # its own if an incoming tracked file would actually overwrite an untracked one.)
+    $status = (& git -C $script:CoopRoot status --porcelain --untracked-files=no 2>$null | Out-String)
     if ($status.Trim()) {
-      Coop-Warn "local changes present in coop-agent — skipping 'git pull' (commit/stash first)."
+      Coop-Warn "uncommitted changes to tracked files in coop-agent — skipping 'git pull' (commit/stash first)."
     } else {
       Coop-Info 'git pull --ff-only'
       & git -C $script:CoopRoot pull --ff-only > $null 2>&1

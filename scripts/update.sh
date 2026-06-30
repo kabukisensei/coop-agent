@@ -54,8 +54,12 @@ coop_head "coop update (v${COOP_VERSION})"
 coop_head "1/5  coop-agent repository"
 if [ -d "$COOP_ROOT/.git" ] && have git; then
   if git -C "$COOP_ROOT" remote get-url origin >/dev/null 2>&1; then
-    if [ -n "$(git -C "$COOP_ROOT" status --porcelain 2>/dev/null)" ]; then
-      coop_warn "local changes present in coop-agent — skipping 'git pull' (commit/stash first)."
+    # Only uncommitted changes to TRACKED files can block a fast-forward pull; untracked
+    # files (stray skills, downloaded drop-ins) are harmless and must NOT freeze updates
+    # — `--untracked-files=no` excludes them. (git pull --ff-only still fails loudly on
+    # its own if an incoming tracked file would actually overwrite an untracked one.)
+    if [ -n "$(git -C "$COOP_ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+      coop_warn "uncommitted changes to tracked files in coop-agent — skipping 'git pull' (commit/stash first)."
     else
       coop_info "git pull --ff-only"
       git -C "$COOP_ROOT" pull --ff-only >/dev/null 2>&1 && coop_ok "coop-agent updated" || coop_warn "git pull failed (continuing)"
