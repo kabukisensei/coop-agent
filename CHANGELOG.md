@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-30
+
 ### Added
 
 - **`coop update` progress bar** — `coop update` now shows the same animated overall
