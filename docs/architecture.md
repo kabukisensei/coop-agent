@@ -20,7 +20,11 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 
 1. **`coop` (orchestrator).** `bin/coop` resolves `COOP_ROOT`, sources
    `lib/common.sh`, exports `PI_CODING_AGENT_DIR` to point Pi at coop's isolated
-   agent dir (`~/.coop/agent`; see **Isolation** above), optionally runs an
+   agent dir (`~/.coop/agent`; see **Isolation** above), runs a **launch-time
+   extension-skew preflight** (checks the Pi agent against every installed
+   extension's `@earendil-works/pi-ai` requirement — aborts with clear guidance if
+   the agent is too old for an installed extension, and auto-realigns a merely-stale
+   extension tree; bypass with `COOP_SKIP_EXT_CHECK=1`), optionally runs an
    Azure / Power BI token preflight, then `exec pi …` with the branded resources
    attached. It also dispatches the
    subcommands (`doctor`, `update`, `install`/`bootstrap`, `sync`, `data-doc`,
