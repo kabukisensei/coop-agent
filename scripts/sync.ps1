@@ -80,13 +80,20 @@ function Sync-CoopExtDeps {
     return @{ rc = $code; parts = $(if ($line) { $line -split '\s+' } else { @() }) }
   }
 
-  $tooOld = "extension tree pinned to pi $ver, but pi-web-access needs pi-ai >= 0.80.1 (/compat) — your Pi agent is too old; update it: coop update   (or move off the legacy-node20 build)"
+  # Build the "agent too old" warning from _extdeps.py fields 7 (required floor) and
+  # 8 (offending extension); fall back to a generic line when they're absent ('-').
+  function Format-TooOld {
+    param([string[]]$Parts)
+    $req = Read-AlignField $Parts 6; $ext = Read-AlignField $Parts 7
+    $need = if ($ext -and $ext -ne '-' -and $req -and $req -ne '-') { "$ext needs pi-ai >= $req" } else { 'an installed extension needs a newer pi-ai' }
+    "Pi agent $ver is too old — $need — update the Pi agent: coop update   (or move off the legacy-node20 build)"
+  }
 
   # Branch on the helper's exit code (so an unexpected failure is a clean no-op).
   $r = Invoke-Align
   $treeAi = Read-AlignField $r.parts 0
   if ($r.rc -eq 0) { Coop-Ok "extension pi-ai / pi-tui aligned to pi $ver"; return }
-  if ($r.rc -eq 11) { Coop-Warn $tooOld; return }
+  if ($r.rc -eq 11) { Coop-Warn (Format-TooOld $r.parts); return }
   if ($r.rc -ne 10) { return }   # 2 (nothing) or unexpected — no-op
 
   if (-not (Test-Have 'npm')) {
@@ -106,7 +113,7 @@ function Sync-CoopExtDeps {
     $r = Invoke-Align -Check
   }
   if ($r.rc -eq 0) { Coop-Ok "extension pi-ai / pi-tui aligned to $ver" }
-  elseif ($r.rc -eq 11) { Coop-Warn $tooOld }
+  elseif ($r.rc -eq 11) { Coop-Warn (Format-TooOld $r.parts) }
   else { Coop-Warn "could not fully align extension pi-ai/pi-tui to $ver — close any running coop session, then: coop doctor --fix" }
 }
 

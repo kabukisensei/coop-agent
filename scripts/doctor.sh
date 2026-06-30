@@ -161,13 +161,14 @@ if have pi; then
   ext_ver="$(coop_pi_version)"; ext_py="$(coop_python 2>/dev/null || true)"
   if [ -n "$ext_ver" ] && [ -n "$ext_py" ]; then
     ext_line="$("$ext_py" "$COOP_ROOT/lib/_extdeps.py" align "$PI_CODING_AGENT_DIR" "$ext_ver" --check 2>/dev/null)"; ext_rc=$?
+    read -r ext_tree_ai ext_tree_tui _ _ _ _ ext_req ext_ext <<< "$ext_line"
     if [ "$ext_rc" = 0 ]; then
       ok "extension pi-ai / pi-tui aligned to pi $ext_ver"
     elif [ "$ext_rc" = 10 ]; then
-      read -r ext_tree_ai ext_tree_tui _ <<< "$ext_line"
       warn "extension pi-ai/pi-tui skew (tree ${ext_tree_ai}/${ext_tree_tui} vs agent $ext_ver)" "coop doctor --fix   (re-pins + reinstalls; close any running coop session first)"
     elif [ "$ext_rc" = 11 ]; then
-      warn "Pi agent $ext_ver is too old for the installed pi-web-access (needs pi-ai ≥ 0.80.1 /compat)" "update the Pi agent: coop update   (or move off the legacy-node20 build)"
+      if [ -n "$ext_ext" ] && [ "$ext_ext" != "-" ]; then ext_need="$ext_ext needs pi-ai ≥ $ext_req"; else ext_need="an installed extension needs a newer pi-ai"; fi
+      warn "Pi agent $ext_ver is too old — $ext_need" "update the Pi agent: coop update   (or move off the legacy-node20 build)"
     fi
     # ext_rc=2 (no extension tree yet) / other → silent
   fi

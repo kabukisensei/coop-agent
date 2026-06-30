@@ -114,6 +114,11 @@ coop_az_preflight() {
 launch_pi() {
   have pi || coop_die "pi is not installed. Run: coop install   (or: npm install -g @earendil-works/pi-coding-agent)"
 
+  # Guard against launching into a known-broken extension load (agent/extension
+  # pi-ai skew). Aborts with instructions when the agent is too old; auto-realigns
+  # a merely-stale tree. Fast + read-only. Bypass with COOP_SKIP_EXT_CHECK=1.
+  coop_launch_preflight
+
   coop_az_preflight
 
   local args=()

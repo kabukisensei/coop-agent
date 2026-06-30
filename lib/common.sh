@@ -213,16 +213,17 @@ coop_pi_version() {
   pi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
-# The _extdeps.py "align --check" exit code (0 aligned / 10 reinstall / 11 agent too
-# old / 2 nothing). Read-only. Args: <python> <agent_dir> <agent_version>.
-_coop_ext_align_rc() {
-  "$1" "$COOP_ROOT/lib/_extdeps.py" align "$2" "$3" --check >/dev/null 2>&1
-  printf '%s' "$?"
-}
-
-# Warn that the agent itself is too old to satisfy pi-web-access's /compat import.
-_coop_ext_too_old() {  # version
-  coop_warn "extension tree pinned to pi $1, but pi-web-access needs pi-ai ≥ 0.80.1 (/compat)" "your Pi agent is too old — update it: coop update   (or move off the legacy-node20 build)"
+# Warn that the agent itself is too old to satisfy an installed extension's pi-ai
+# requirement. Args: <agent-version> [required-floor] [offending-ext] (the last two
+# come from _extdeps.py fields 7/8; "-" or empty falls back to a generic message).
+_coop_ext_too_old() {  # version [required] [ext]
+  local ver="$1" req="${2:-}" ext="${3:-}" need
+  if [ -n "$req" ] && [ "$req" != "-" ] && [ -n "$ext" ] && [ "$ext" != "-" ]; then
+    need="$ext needs pi-ai ≥ $req"
+  else
+    need="an installed extension needs a newer pi-ai"
+  fi
+  coop_warn "Pi agent $ver is too old — $need" "update the Pi agent: coop update   (or move off the legacy-node20 build)"
 }
 
 # Align coop's ISOLATED extension tree's @earendil-works/pi-ai + pi-tui to the Pi
@@ -240,16 +241,22 @@ coop_align_ext_deps() {
   agent_dir="$(coop_pi_agent_dir)"
   npm_dir="$agent_dir/npm"
   [ -f "$npm_dir/package.json" ] || return 0     # no extension tree yet — nothing to align
-  ver="$(coop_pi_version)"
+  ver="$(coop_pi_version || true)"
   [ -n "$ver" ] || return 0                       # can't determine the agent version
 
   # Write/refresh the overrides pin and learn the tree's state (branch on the exit
   # code, so an unexpected helper failure is a clean no-op rather than a reinstall).
-  line="$("$py" "$COOP_ROOT/lib/_extdeps.py" align "$agent_dir" "$ver" 2>/dev/null)"; rc=$?
-  tree_ai="$(printf '%s' "$line" | awk 'NR==1{print $1}')"
+  # `|| rc=$?` (not `; rc=$?`) keeps this safe when called under a caller's `set -e`
+  # (e.g. coop_launch_preflight runs under bin/coop's set -euo pipefail).
+  local req ext
+  rc=0
+  line="$("$py" "$COOP_ROOT/lib/_extdeps.py" align "$agent_dir" "$ver" 2>/dev/null)" || rc=$?
+  read -r tree_ai _ _ _ _ _ req ext <<EOF
+$line
+EOF
   case "$rc" in
     0)  coop_ok "extension pi-ai / pi-tui aligned to pi $ver"; return 0 ;;
-    11) _coop_ext_too_old "$ver"; return 0 ;;
+    11) _coop_ext_too_old "$ver" "$req" "$ext"; return 0 ;;
     10) ;;                                          # skewed — reconcile below
     *)  return 0 ;;                                 # 2 (nothing) or unexpected — no-op
   esac
@@ -263,18 +270,60 @@ coop_align_ext_deps() {
   coop_info "aligning extension pi-ai / pi-tui to the agent ($ver; tree has ${tree_ai:-?})…"
   rm -f "$npm_dir/package-lock.json" 2>/dev/null || true
   ( cd "$npm_dir" && npm install >/dev/null 2>&1 ) || true
-  rc="$(_coop_ext_align_rc "$py" "$agent_dir" "$ver")"
+  # Re-check AND re-parse the fields (not just the rc): if the reinstall surfaces a
+  # too-old agent (rc 11), the final message must name the fresh offending ext/floor.
+  # `|| rc=$?` keeps the rc capture safe under a caller's `set -e`.
+  rc=0
+  line="$("$py" "$COOP_ROOT/lib/_extdeps.py" align "$agent_dir" "$ver" --check 2>/dev/null)" || rc=$?
+  read -r tree_ai _ _ _ _ _ req ext <<EOF
+$line
+EOF
   if [ "$rc" = 10 ]; then
     # A stale node_modules can keep the old hoist — rebuild it clean as a last resort.
     rm -rf "$npm_dir/node_modules" 2>/dev/null || true
     ( cd "$npm_dir" && npm install >/dev/null 2>&1 ) || true
-    rc="$(_coop_ext_align_rc "$py" "$agent_dir" "$ver")"
+    rc=0
+    line="$("$py" "$COOP_ROOT/lib/_extdeps.py" align "$agent_dir" "$ver" --check 2>/dev/null)" || rc=$?
+    read -r tree_ai _ _ _ _ _ req ext <<EOF
+$line
+EOF
   fi
   case "$rc" in
     0)  coop_ok "extension pi-ai / pi-tui aligned to $ver" ;;
-    11) _coop_ext_too_old "$ver" ;;
+    11) _coop_ext_too_old "$ver" "$req" "$ext" ;;
     *)  coop_warn "could not fully align extension pi-ai/pi-tui to $ver" "close any running coop session, then: coop doctor --fix" ;;
   esac
+}
+
+# Launch-time skew guard: refuse to exec pi into a known-broken extension load.
+# Read-only and fast (one python call). If the Pi agent is too old for an installed
+# extension (rc 11), aligning the tree can't help — abort with clear instructions
+# instead of letting pi crash deep in its loader. If the tree is merely skewed but
+# fixable (rc 10), silently re-align, then continue. Aligned / no tree / no python /
+# unknown rc are all no-ops. Bypass entirely with COOP_SKIP_EXT_CHECK=1.
+coop_launch_preflight() {
+  [ "${COOP_SKIP_EXT_CHECK:-0}" = "1" ] && return 0
+  have pi || return 0
+  local py; py="$(coop_python)" || return 0
+  local agent_dir ver line rc tree_ai req ext
+  agent_dir="$(coop_pi_agent_dir)"
+  [ -f "$agent_dir/npm/package.json" ] || return 0   # no extension tree — nothing to guard
+  ver="$(coop_pi_version || true)"; [ -n "$ver" ] || return 0
+  # Capture rc WITHOUT tripping the caller's `set -e`: bin/coop runs `set -euo
+  # pipefail`, and a bare `line=$(...); rc=$?` would let a non-zero align (rc 10/11)
+  # abort coop SILENTLY here — before we branch to the helpful message. Keeping the
+  # assignment as the left side of `|| rc=$?` makes the list exit 0, so set -e holds.
+  rc=0
+  line="$("$py" "$COOP_ROOT/lib/_extdeps.py" align "$agent_dir" "$ver" --check 2>/dev/null)" || rc=$?
+  read -r tree_ai _ _ _ _ _ req ext <<EOF
+$line
+EOF
+  case "$rc" in
+    11) _coop_ext_too_old "$ver" "$req" "$ext"
+        coop_die "launch aborted — update the Pi agent above, then re-run: coop   (bypass once with COOP_SKIP_EXT_CHECK=1)" ;;
+    10) coop_align_ext_deps ;;   # fixable tree skew — re-pin + reinstall, then launch
+  esac
+  return 0
 }
 
 # Read a dotted scalar key from a YAML file. Usage: coop_yaml_get FILE a.b.c [default]

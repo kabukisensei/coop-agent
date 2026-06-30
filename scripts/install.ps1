@@ -158,6 +158,11 @@ function Coop-Unit {
   } else {
     Coop-Info "$Label…"          # non-console: at least show the slow step started
   }
+  # Wait for the job to FINISH before reading it. The TTY branch's poll loop already
+  # blocks until completion; the non-TTY branch does not, so without this Receive-Job
+  # could read an empty (still-running) result and falsely report failure. Mirrors the
+  # `wait "$pid"` in bash coop_unit.
+  $null = Wait-Job $job -ErrorAction SilentlyContinue
   $res = $null
   try { $res = Receive-Job $job -ErrorAction SilentlyContinue | Select-Object -Last 1 } catch {}
   Remove-Job $job -Force -ErrorAction SilentlyContinue

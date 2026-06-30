@@ -5,6 +5,40 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`coop update` progress bar** — `coop update` now shows the same animated overall
+  bar + per-item braille spinner that `coop install` does (bash and PowerShell).
+- **Launch-time extension skew guard** — before launching, `coop` verifies the Pi agent
+  satisfies every installed extension's `@earendil-works/pi-ai` requirement. If the agent
+  is too old it aborts with a clear, named message (e.g. *"Pi agent 0.79.9 is too old —
+  pi-hermes-memory needs pi-ai ≥ 0.80.2 — update the Pi agent: coop update"*) instead of
+  crashing deep in pi's extension loader; a merely-stale extension tree is re-aligned
+  automatically. Bypass with `COOP_SKIP_EXT_CHECK=1`. (bash + PowerShell)
+
+### Changed
+
+- **Generalized pi-ai skew detection** (`lib/_extdeps.py`) — the "agent too old" check now
+  derives the required pi-ai floor from **all** installed extensions' declared
+  dependency/peer ranges (not just `pi-web-access`) and names the offending extension +
+  required version. The agent-too-old result (rc 11) now takes precedence over the
+  reinstall-recommended result (rc 10), since re-pinning can't fix a too-old agent. The
+  helper output gained two appended fields (`required_floor`, `offending_ext`); existing
+  consumers are unaffected.
+
+### Fixed
+
+- **`coop` could exit silently (code 11) on a too-old agent** — the new launch preflight's
+  `align --check` returns a non-zero rc, which tripped `bin/coop`'s `set -euo pipefail` and
+  aborted before the helpful message printed. All rc captures in `coop_launch_preflight` and
+  `coop_align_ext_deps` are now errexit-safe (`|| rc=$?`).
+- **`Coop-Unit` (PowerShell) falsely reported every step as failed** when `coop install` /
+  `coop update` output was redirected or piped (e.g. CI, `coop update > log.txt`) — the
+  non-TTY branch didn't wait for the background job before reading its result. It now waits
+  (`Wait-Job`), mirroring bash `coop_unit`. Fixed in `install.ps1` and `update.ps1`.
+- **"Agent too old" diagnostics** in `coop doctor` and `coop sync` now name the specific
+  offending extension and the pi-ai version it needs (bash + PowerShell).
+
 ## [0.3.5] — 2026-06-29
 
 ### Fixed

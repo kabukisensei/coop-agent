@@ -34,13 +34,145 @@ if ($script:CoopColor) {
 $script:G_BULLET = [char]0x2022   # bullet
 $script:G_CHECK  = [char]0x2713   # check
 $script:G_CROSS  = [char]0x2717   # cross
-function Coop-Say  { param([string]$m) [Console]::Error.WriteLine($m) }
-function Coop-Info { param([string]$m) [Console]::Error.WriteLine("$($script:C_LIME)$($script:G_BULLET)$($script:C_RST) $m") }
-function Coop-Ok   { param([string]$m) [Console]::Error.WriteLine("$($script:C_FOREST)$($script:G_CHECK)$($script:C_RST) $m") }
-function Coop-Warn { param([string]$m) [Console]::Error.WriteLine("$($script:C_OLIVE)!$($script:C_RST) $m") }
-function Coop-Err  { param([string]$m) [Console]::Error.WriteLine("$($script:C_RED)$($script:G_CROSS)$($script:C_RST) $m") }
-function Coop-Head { param([string]$m) [Console]::Error.WriteLine("`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)") }
+
+# --- Progress: one determinate "overall" bar + an animated active-item line ---
+# Mirror of lib/common.sh (and scripts/install.ps1). The bar is determinate at the
+# ITEM level (total known up front); the active item shows a braille spinner +
+# elapsed seconds. Animates only on a real console; otherwise the loggers fall
+# through to plain lines and units print "<label>…".
+$script:ProgActive   = $false
+$script:ProgTotal    = 0
+$script:ProgDone     = 0
+$script:ProgW        = 22
+$script:ProgCols     = 80
+$script:ProgSpinline = ''
+$script:SpinFrames   = @(
+  [char]0x280B, [char]0x2819, [char]0x2839, [char]0x2838, [char]0x283C,
+  [char]0x2834, [char]0x2826, [char]0x2827, [char]0x2807, [char]0x280F
+)
+$script:UseThreadJob = [bool](Get-Command Start-ThreadJob -ErrorAction SilentlyContinue)
+
+function Test-ProgTty { $script:CoopColor }   # already folds in -not IsErrorRedirected
+
+function Coop-ProgBar {
+  $total = if ($script:ProgTotal -gt 0) { $script:ProgTotal } else { 1 }
+  $done  = [Math]::Min([int]$script:ProgDone, [int]$total)
+  $w     = $script:ProgW
+  $fill  = [int][Math]::Floor($done * $w / $total)
+  $pct   = [int][Math]::Floor($done * 100 / $total)
+  $on    = ([string][char]0x2588) * $fill
+  $off   = ([string][char]0x2591) * ($w - $fill)
+  "  [$($script:C_LIME)$on$($script:C_DIM)$off$($script:C_RST)] $done/$total  $pct%"
+}
+
+function Coop-ProgSpin {
+  param([string]$Glyph, [string]$Label, [int]$Elapsed)
+  $max = $script:ProgCols - 14
+  if ($max -lt 8)  { $max = 8 }
+  if ($max -gt 48) { $max = 48 }
+  if ($Label.Length -gt $max) { $Label = $Label.Substring(0, $max - 1) + [char]0x2026 }
+  "  $($script:C_LIME)$Glyph$($script:C_RST) $Label $($script:C_DIM)(${Elapsed}s)$($script:C_RST)"
+}
+
+# Draw the 2-line region (bar + active item), parking the cursor back at the start
+# of the bar line. Relative moves only, so scrolling at the bottom edge stays sane.
+function Coop-ProgDraw {
+  if (-not (Test-ProgTty)) { return }
+  $x = [char]27
+  [Console]::Error.Write("`r$x[2K" + (Coop-ProgBar) + "`n")
+  [Console]::Error.Write("$x[2K" + $script:ProgSpinline)
+  [Console]::Error.Write("$x[1A`r")
+}
+
+# Erase the 2-line region, leaving the cursor at the (now empty) bar line, col 0.
+function Coop-ProgLift {
+  if (-not (Test-ProgTty)) { return }
+  $x = [char]27
+  [Console]::Error.Write("`r$x[2K")
+  [Console]::Error.Write("`n$x[2K")
+  [Console]::Error.Write("$x[1A`r")
+}
+
+function Coop-ProgBegin {
+  param([int]$Total)
+  $script:ProgTotal = $Total; $script:ProgDone = 0; $script:ProgSpinline = ''; $script:ProgActive = $true
+  try { $script:ProgCols = [Console]::WindowWidth } catch { $script:ProgCols = 80 }
+  if ($script:ProgCols -lt 1) { $script:ProgCols = 80 }
+  if (Test-ProgTty) { [Console]::Error.Write("$([char]27)[?25l"); Coop-ProgDraw }   # hide cursor, draw 0%
+}
+
+function Coop-ProgEnd {
+  if ($script:ProgActive -and (Test-ProgTty)) {
+    Coop-ProgLift
+    $script:ProgSpinline = ''
+    [Console]::Error.WriteLine((Coop-ProgBar))            # leave a permanent completed bar
+    [Console]::Error.Write("$([char]27)[?25h")            # restore cursor
+  }
+  $script:ProgActive = $false
+}
+
+# --- Logging (progress-aware: lift the pinned bar, print above it, redraw) -----
+function Coop-Emit {
+  param([string]$Line)
+  if ($script:ProgActive -and (Test-ProgTty)) {
+    Coop-ProgLift
+    [Console]::Error.WriteLine($Line)
+    Coop-ProgDraw
+  } else {
+    [Console]::Error.WriteLine($Line)
+  }
+}
+function Coop-Say  { param([string]$m) Coop-Emit $m }
+function Coop-Info { param([string]$m) Coop-Emit "$($script:C_LIME)$($script:G_BULLET)$($script:C_RST) $m" }
+function Coop-Ok   { param([string]$m) Coop-Emit "$($script:C_FOREST)$($script:G_CHECK)$($script:C_RST) $m" }
+function Coop-Warn { param([string]$m) Coop-Emit "$($script:C_OLIVE)!$($script:C_RST) $m" }
+function Coop-Err  { param([string]$m) Coop-Emit "$($script:C_RED)$($script:G_CROSS)$($script:C_RST) $m" }
+function Coop-Head { param([string]$m) Coop-Emit "`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)" }
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
+
+function Start-CoopJob {
+  param([scriptblock]$Sb, [object[]]$JobArgs)
+  if ($script:UseThreadJob) { Start-ThreadJob -ScriptBlock $Sb -ArgumentList $JobArgs }
+  else                      { Start-Job       -ScriptBlock $Sb -ArgumentList $JobArgs }
+}
+
+# Coop-Unit <label> <scriptblock> [args]
+#   Runs the scriptblock in a background job (it returns @{ok=<bool>; msg=<string>}).
+#   While it runs, the active-item line animates under the overall bar; on completion
+#   the bar advances by one and a permanent ✓/! line is printed.
+function Coop-Unit {
+  param([string]$Label, [scriptblock]$Work, [object[]]$WorkArgs = @())
+  $sw  = [System.Diagnostics.Stopwatch]::StartNew()
+  $job = Start-CoopJob $Work $WorkArgs
+  if ((Test-ProgTty) -and $script:ProgActive) {
+    $i = 0
+    while ($job.State -eq 'Running') {
+      $g = $script:SpinFrames[$i % $script:SpinFrames.Count]
+      $script:ProgSpinline = (Coop-ProgSpin $g $Label ([int]$sw.Elapsed.TotalSeconds))
+      Coop-ProgDraw
+      $i++
+      Start-Sleep -Milliseconds 120
+    }
+  } else {
+    Coop-Info "$Label…"          # non-console: at least show the slow step started
+  }
+  # Wait for the job to FINISH before reading it. The TTY branch's poll loop already
+  # blocks until completion; the non-TTY branch does not, so without this Receive-Job
+  # could read an empty (still-running) result and falsely report failure. Mirrors the
+  # `wait "$pid"` in bash coop_unit.
+  $null = Wait-Job $job -ErrorAction SilentlyContinue
+  $res = $null
+  try { $res = Receive-Job $job -ErrorAction SilentlyContinue | Select-Object -Last 1 } catch {}
+  Remove-Job $job -Force -ErrorAction SilentlyContinue
+  $ok = $false; $msg = $Label
+  if ($null -ne $res) {
+    if ($res.PSObject.Properties.Name -contains 'ok')  { $ok  = [bool]$res.ok }
+    if ($res.PSObject.Properties.Name -contains 'msg') { $msg = [string]$res.msg }
+  }
+  $script:ProgDone++
+  $script:ProgSpinline = ''
+  if ($ok) { Coop-Ok $msg } else { Coop-Warn $msg }
+}
 
 # Run a sibling coop script (sync/doctor) in a CHILD process so its `exit` cannot
 # abort this update — mirrors bash invoking the script as a subprocess.
@@ -93,6 +225,36 @@ $PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review', 'ms-fabric-
 function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' } }
 $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 
+# --- Per-item units (run in a background job; return @{ok=<bool>; msg=<string>}) --
+# Same contract as the install units, so the update bar animates identically.
+$UnitPiUpdate = {
+  if (-not (Get-Command pi -ErrorAction SilentlyContinue)) {
+    return [pscustomobject]@{ ok = $false; msg = 'pi not installed — run: coop install' }
+  }
+  # `pi update --all` updates the agent AND every installed extension. (Bare
+  # `pi update` updates pi ONLY; `--extensions` updates packages only.)
+  & pi update --all *> $null
+  if ($LASTEXITCODE -eq 0) {
+    $v = (& pi --version 2>$null); if (-not $v) { $v = '?' }
+    return [pscustomobject]@{ ok = $true; msg = "pi + extensions updated ($v)" }
+  }
+  return [pscustomobject]@{ ok = $false; msg = 'pi update --all failed (try: pi update --all)' }
+}
+
+$UnitPytoolUpgrade = {
+  param([string]$Pkg)
+  if (-not (Get-Command pipx -ErrorAction SilentlyContinue)) {
+    return [pscustomobject]@{ ok = $false; msg = "skipping $Pkg (pipx missing) — run: coop install" }
+  }
+  $list = (& pipx list 2>$null | Out-String)
+  if ($list -notmatch ("package " + [regex]::Escape($Pkg) + " ")) {
+    return [pscustomobject]@{ ok = $false; msg = "$Pkg not installed — run: coop install" }
+  }
+  & pipx upgrade $Pkg *> $null
+  if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = $Pkg } }
+  return [pscustomobject]@{ ok = $false; msg = "upgrade failed: $Pkg" }
+}
+
 Coop-Head "coop update (v$($script:CoopVersion))"
 
 # --- 1. Update coop-agent itself ---------------------------------------------
@@ -115,47 +277,49 @@ if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have
   Coop-Info 'not a git checkout — skipping repo update'
 }
 
-# --- 2. Update Pi + extensions ----------------------------------------------
-Coop-Head '2/5  Pi and extensions'
+# Windows-only pre-flight for the in-place `pi update --all`: clear any leftover
+# staging dir from a prior interrupted update, and refuse the update while a coop/pi
+# session has the agent files open (Windows locks open files). This decides whether
+# the pi-update item runs, so it must happen BEFORE we size the bar.
+$RunPiUpdate = $true
 if (Test-Have 'pi') {
-  # Clear any leftover staging dir from a prior interrupted in-place update.
   Remove-CoopPiStagingDirs
   if (Test-CoopPiRunning) {
     Coop-Warn 'a coop/pi session appears to be running — skipping in-place `pi update --all` (Windows locks open files, which can corrupt the agent install and leave a `.pi-coding-agent-*` staging dir).'
     Coop-Say  '      Close all coop/pi windows, then re-run: coop update'
-  } else {
-    # `pi update --all` updates the agent AND every installed extension. (Bare
-    # `pi update` updates pi ONLY; `--extensions` updates packages only.)
-    Coop-Info 'pi update --all   (the agent + all installed extensions)'
-    & pi update --all > $null 2>&1
-    if ($LASTEXITCODE -eq 0) {
-      $pv = (& pi --version 2>$null); if (-not $pv) { $pv = '?' }
-      Coop-Ok "pi + extensions updated ($pv)"
-    } else { Coop-Warn 'pi update --all failed (try: pi update --all)' }
+    $RunPiUpdate = $false
   }
-} else {
-  Coop-Warn 'pi not installed — run: coop install'
 }
 
-# --- 3. Upgrade pipx tools ---------------------------------------------------
-Coop-Head '3/5  Coop tools + Fabric CLI (pipx)'
-if (Test-Have 'pipx') {
-  $pipxList = (& pipx list 2>$null | Out-String)
-  foreach ($pkg in $PY_TOOLS) {
-    if ($pipxList -match ("package " + [regex]::Escape($pkg) + " ")) {
-      & pipx upgrade $pkg > $null 2>&1
-      if ($LASTEXITCODE -eq 0) { Coop-Ok "$pkg" } else { Coop-Warn "upgrade failed: $pkg" }
-    } else {
-      Coop-Warn "$pkg not installed — run: coop install"
-    }
+# Overall-bar denominator: the update ITEMS we attempt (pi update unless skipped +
+# each pipx tool). Steps 1/4/5 (git pull / sync / doctor) sit outside the bar,
+# exactly as the install bar covers only its install items.
+$TOTAL = $PY_TOOLS.Count
+if ($RunPiUpdate) { $TOTAL += 1 }
+
+# Pin the overall bar to the bottom for the update phase (steps 2–3); restore the
+# cursor even on Ctrl-C / errors via finally.
+try {
+  Coop-ProgBegin $TOTAL
+
+  # --- 2. Update Pi + extensions ---------------------------------------------
+  Coop-Head '2/5  Pi and extensions'
+  if ($RunPiUpdate) {
+    Coop-Unit 'pi update --all   (the agent + all installed extensions)' $UnitPiUpdate
   }
-  # fabric-cicd is a library injected into the Fabric CLI env — refresh it there.
-  if ($pipxList -match 'package ms-fabric-cli ') {
-    & pipx inject ms-fabric-cli fabric-cicd --force > $null 2>&1
-    if ($LASTEXITCODE -eq 0) { Coop-Ok 'fabric-cicd (library) refreshed' }
-  }
-} else {
-  Coop-Warn 'pipx not installed — run: coop install'
+
+  # --- 3. Upgrade pipx tools -------------------------------------------------
+  Coop-Head '3/5  Coop tools + Fabric CLI (pipx)'
+  foreach ($pkg in $PY_TOOLS) { Coop-Unit $pkg $UnitPytoolUpgrade @($pkg) }
+}
+finally {
+  Coop-ProgEnd
+}
+
+# fabric-cicd is a library injected into the Fabric CLI env — refresh it there.
+if ((Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package ms-fabric-cli ')) {
+  & pipx inject ms-fabric-cli fabric-cicd --force > $null 2>&1
+  if ($LASTEXITCODE -eq 0) { Coop-Ok 'fabric-cicd (library) refreshed' }
 }
 
 # --- 4. Sync vibes / skills / prompts / extension ----------------------------

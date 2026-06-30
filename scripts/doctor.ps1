@@ -277,15 +277,18 @@ if (Test-Have 'pi') {
     $extOut = (& $extPy $extScript align $env:PI_CODING_AGENT_DIR $extVer --check 2>$null)
     $extRc = $LASTEXITCODE
     $extLine = if ($extOut) { @($extOut)[0] } else { '' }
+    $ep = if ($extLine) { $extLine -split '\s+' } else { @() }
     if ($extRc -eq 0) { D-Ok "extension pi-ai / pi-tui aligned to pi $extVer" }
     elseif ($extRc -eq 10) {
-      $ep = if ($extLine) { $extLine -split '\s+' } else { @() }
       $etAi = if ($ep.Count -ge 1) { $ep[0] } else { '-' }
       $etTui = if ($ep.Count -ge 2) { $ep[1] } else { '-' }
       D-Warn "extension pi-ai/pi-tui skew (tree $etAi/$etTui vs agent $extVer)" 'coop doctor --fix   (re-pins + reinstalls; close any running coop session first)'
     }
     elseif ($extRc -eq 11) {
-      D-Warn "Pi agent $extVer is too old for the installed pi-web-access (needs pi-ai >= 0.80.1 /compat)" 'update the Pi agent: coop update   (or move off the legacy-node20 build)'
+      $eReq = if ($ep.Count -ge 7) { $ep[6] } else { '-' }
+      $eExt = if ($ep.Count -ge 8) { $ep[7] } else { '-' }
+      $eNeed = if ($eExt -and $eExt -ne '-' -and $eReq -and $eReq -ne '-') { "$eExt needs pi-ai >= $eReq" } else { 'an installed extension needs a newer pi-ai' }
+      D-Warn "Pi agent $extVer is too old — $eNeed" 'update the Pi agent: coop update   (or move off the legacy-node20 build)'
     }
     # $extRc -eq 2 (no extension tree yet) / other → silent
   }

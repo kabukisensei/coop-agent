@@ -31,20 +31,25 @@ Usage:
 ``--check`` is read-only: it never writes package.json (used by ``coop doctor``).
 
 Prints ONE space-separated line to stdout (``-`` for missing values):
-    <tree_pi_ai> <tree_pi_tui> <override_pi_ai> <override_pi_tui> <changed> <aligned>
-  where <changed> and <aligned> are ``1`` or ``0``.
+    <tree_pi_ai> <tree_pi_tui> <override_pi_ai> <override_pi_tui> <changed> <aligned> <required_floor> <offending_ext>
+  where <changed> and <aligned> are ``1`` or ``0``. ``<required_floor>`` is the
+  highest pi-ai version any installed extension needs (or ``-``), and
+  ``<offending_ext>`` is the extension that drives it (or ``-``). Fields 1-6 are
+  unchanged for backward compatibility; 7-8 are appended.
 
 Exit codes (so the shell can branch without parsing):
     0   installed tree already matches the pin — no reinstall needed
     10  reinstall recommended (installed tree doesn't match the pin)
-    11  tree matches the pin, but the pin pre-dates pi-ai's ``/compat`` (< 0.80.1)
-        while an installed pi-web-access needs it — the AGENT is too old; aligning
-        can't help, so warn (don't reinstall) and tell the user to update the agent
+    11  an installed extension needs a NEWER pi-ai than the agent provides — the
+        AGENT is too old; aligning the extension tree can't help, so warn (don't
+        reinstall) and tell the user to update the agent. Takes precedence over 10:
+        if the agent is too old, no reinstall would fix it anyway.
     2   nothing to do (no npm tree / package.json / unreadable) — silent
     3   bad usage
 """
 import json
 import os
+import re
 import sys
 
 PI_AI = "@earendil-works/pi-ai"
@@ -52,23 +57,109 @@ PI_TUI = "@earendil-works/pi-tui"
 PI_WEB_ACCESS = "pi-web-access"
 
 # pi-ai first shipped the ``./compat`` subpath export at 0.80.1; pi-web-access began
-# importing it around 0.11. So a pin BELOW 0.80.1 cannot satisfy a pi-web-access AT
-# OR ABOVE 0.11 no matter how cleanly we align — that's an agent-too-old situation
-# the user must resolve by updating Pi, not by re-pinning extensions.
+# importing it around 0.11, but declares pi-ai only as a ``*`` peer — so its need is
+# read from pi-web-access's OWN version, not a pi-ai range. Every other extension
+# (e.g. pi-hermes-memory: ``@earendil-works/pi-ai: ^0.80.2``) states its floor as a
+# concrete dependency range, which we read directly below. A pin under the resulting
+# floor is an agent-too-old situation the user must fix by updating Pi.
 PI_AI_COMPAT_FLOOR = (0, 80, 1)
 PWA_COMPAT_FLOOR = (0, 11, 0)
 
 
 def _ver_tuple(s):
-    """('0.80.2') -> (0, 80, 2); tolerant of pre-release/build suffixes. None if unparseable."""
+    """('0.80.2') -> (0, 80, 2); tolerant of pre-release/build suffixes. None if unparseable.
+
+    Always returns a 3-tuple, padding short versions with zeros ('0.11' -> (0,11,0)),
+    so comparisons against 3-tuple floors are sound even if a version omits its patch."""
     if not isinstance(s, str):
         return None
     core = s.strip().lstrip("v").split("+")[0].split("-")[0]
     parts = core.split(".")
+    if not parts or parts[0] == "":
+        return None
     try:
-        return tuple(int(p) for p in parts[:3]) if parts and parts[0] != "" else None
+        nums = [int(p) for p in parts[:3]]
     except ValueError:
         return None
+    while len(nums) < 3:
+        nums.append(0)
+    return tuple(nums)
+
+
+def _range_floor(spec):
+    """Lowest pi-ai version a dependency range REQUIRES, as a (maj,min,pat) tuple.
+
+    Conservative on purpose — this gates a launch guard, so a false "too old" is
+    worse than a miss. We only extract a floor from simple lower-bound ranges
+    (``^0.80.2``, ``~0.80.2``, ``>=0.80.1``, ``0.80.2``). Anything that imposes no
+    real lower bound — ``*`` / ``latest`` / ``x`` / a pure upper bound (``<0.81``) /
+    ``workspace:`` / ``file:`` / a URL — returns None (no floor)."""
+    if not isinstance(spec, str):
+        return None
+    s = spec.strip()
+    if not s or s in ("*", "latest", "x", "X"):
+        return None
+    if s[0] == "<":                       # pure upper bound — no lower floor
+        return None
+    if not re.match(r"^[\^~>=v0-9]", s):  # workspace:/file:/link:/git/http/etc.
+        return None
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", s)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+def _required_pi_ai_floor(node_modules):
+    """Highest pi-ai version any installed extension needs: (floor, ext, floor_str).
+
+    Scans every top-level package in the agent's extension ``node_modules`` for a
+    ``@earendil-works/pi-ai`` entry in its dependencies/peerDependencies and keeps the
+    max lower bound. pi-web-access is a special case: it declares pi-ai as ``*`` but
+    its own version (>= 0.11) implies the ``/compat`` floor (0.80.1). Returns
+    (None, None, None) when nothing imposes a floor."""
+    best = None        # (maj,min,pat)
+    best_ext = None
+    if not os.path.isdir(node_modules):
+        return None, None, None
+
+    def _consider(floor, ext):
+        nonlocal best, best_ext
+        if floor is not None and (best is None or floor > best):
+            best, best_ext = floor, ext
+
+    # Enumerate installed packages: top-level dirs plus one level into @scopes.
+    pkg_dirs = []
+    try:
+        for name in os.listdir(node_modules):
+            if name.startswith(".") or name == ".bin":
+                continue
+            full = os.path.join(node_modules, name)
+            if name.startswith("@"):
+                if os.path.isdir(full):
+                    for sub in os.listdir(full):
+                        pkg_dirs.append(os.path.join(full, sub))
+            else:
+                pkg_dirs.append(full)
+    except OSError:
+        return None, None, None
+
+    for pdir in pkg_dirs:
+        data = _read_json(os.path.join(pdir, "package.json"))
+        if not isinstance(data, dict):
+            continue
+        ext_name = data.get("name") or os.path.basename(pdir)
+        for field in ("dependencies", "peerDependencies"):
+            deps = data.get(field)
+            if isinstance(deps, dict):
+                _consider(_range_floor(deps.get(PI_AI)), ext_name)
+        # pi-web-access encodes its /compat need in its OWN version, not a pi-ai range.
+        if ext_name == PI_WEB_ACCESS:
+            pwa = _ver_tuple(data.get("version"))
+            if pwa is not None and pwa >= PWA_COMPAT_FLOOR:
+                _consider(PI_AI_COMPAT_FLOOR, PI_WEB_ACCESS)
+
+    floor_str = ".".join(str(p) for p in best) if best else None
+    return best, best_ext, floor_str
 
 
 def _read_json(path):
@@ -130,33 +221,33 @@ def align(agent_dir, version, check=False):
     tree_tui = _installed_version(node_modules, PI_TUI)
     aligned = tree_ai == version and tree_tui == version
 
-    # Would aligning even help? If an installed pi-web-access needs the ``/compat``
-    # export but the pin (agent version) pre-dates it, the agent itself is too old —
-    # re-pinning the tree can't fix the crash. Surface that distinctly (rc 11).
-    pwa = _ver_tuple(_installed_version(node_modules, PI_WEB_ACCESS))
+    # Would aligning even help? Compute the highest pi-ai any installed extension
+    # needs. If the agent (pin) is below that floor, the agent itself is too old —
+    # re-pinning/reinstalling the tree can only drag pi-ai DOWN to the agent, so it
+    # can't fix the crash. Surface that distinctly (rc 11) and name the extension.
+    floor, offending_ext, floor_str = _required_pi_ai_floor(node_modules)
     pin = _ver_tuple(version)
-    agent_too_old = (
-        pwa is not None
-        and pwa >= PWA_COMPAT_FLOOR
-        and pin is not None
-        and pin < PI_AI_COMPAT_FLOOR
-    )
+    agent_too_old = floor is not None and pin is not None and pin < floor
 
-    line = "{} {} {} {} {} {}".format(
+    line = "{} {} {} {} {} {} {} {}".format(
         tree_ai or "-",
         tree_tui or "-",
         ovr_ai or "-",
         ovr_tui or "-",
         "1" if changed else "0",
         "1" if aligned else "0",
+        floor_str if agent_too_old else "-",
+        offending_ext if agent_too_old else "-",
     )
-    # Branch on the installed tree, not on `changed`: if the versions already match
-    # the pin there is nothing to reinstall (the overrides we just wrote are for
-    # future protection). 10 = fix the versions; 11 = aligned but agent too old.
-    if not aligned:
-        rc = 10
-    elif agent_too_old:
+    # agent-too-old takes precedence: if the agent can't satisfy an installed
+    # extension, no amount of reinstalling the tree will help (it would just pin
+    # pi-ai to the too-old agent), so don't recommend a pointless reinstall (10) —
+    # report 11 so callers tell the user to update Pi. Otherwise branch on the
+    # installed tree: 10 = fix the versions (reinstall); 0 = already aligned.
+    if agent_too_old:
         rc = 11
+    elif not aligned:
+        rc = 10
     else:
         rc = 0
     return rc, line

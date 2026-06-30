@@ -286,12 +286,54 @@ function Invoke-CoopAzPreflight {
 }
 
 # --- Launch the branded Pi agent ---------------------------------------------
+# Launch-time skew guard (mirror of common.sh coop_launch_preflight): refuse to exec
+# pi into a known-broken extension load. If the Pi agent is too old for an installed
+# extension (rc 11), aligning the tree can't help — abort with instructions instead
+# of crashing in pi's loader. If the tree is merely skewed but fixable (rc 10), run
+# sync to re-pin + reinstall, then continue. Read-only + fast. Bypass with
+# COOP_SKIP_EXT_CHECK=1.
+function Invoke-CoopLaunchPreflight {
+  if ($env:COOP_SKIP_EXT_CHECK -eq '1') { return }
+  if (-not (Test-Have 'pi')) { return }
+  $py = Get-CoopPython; if (-not $py) { return }
+  $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR }
+              elseif ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR }
+              else { Join-Path $HOME '.coop\agent' }
+  if (-not (Test-Path -LiteralPath (Join-Path $agentDir 'npm\package.json') -PathType Leaf)) { return }
+  $verRaw = (& pi --version 2>$null | Select-Object -First 1)
+  if (-not $verRaw) { return }
+  $m = [regex]::Match([string]$verRaw, '\d+\.\d+\.\d+'); if (-not $m.Success) { return }
+  $ver = $m.Value
+  $extScript = Join-Path $script:CoopRoot 'lib/_extdeps.py'
+  # Capture output BEFORE reading $LASTEXITCODE (piping a native command can leave it unset).
+  $out = (& $py $extScript align $agentDir $ver --check 2>$null)
+  $rc = $LASTEXITCODE
+  $line = if ($out) { @($out)[0] } else { '' }
+  $parts = if ($line) { $line -split '\s+' } else { @() }
+  if ($rc -eq 11) {
+    $req = if ($parts.Count -ge 7) { $parts[6] } else { '-' }
+    $ext = if ($parts.Count -ge 8) { $parts[7] } else { '-' }
+    $need = if ($ext -and $ext -ne '-' -and $req -and $req -ne '-') { "$ext needs pi-ai >= $req" } else { 'an installed extension needs a newer pi-ai' }
+    Coop-Warn "Pi agent $ver is too old — $need — update the Pi agent: coop update   (or move off the legacy-node20 build)"
+    Coop-Die 'launch aborted — update the Pi agent above, then re-run: coop   (bypass once with COOP_SKIP_EXT_CHECK=1)'
+  }
+  elseif ($rc -eq 10) {
+    # Fixable tree skew — run sync (re-pins + reinstalls) in a child process, then launch.
+    Coop-Info 'realigning Pi extensions to the agent…'
+    $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
+    & $psExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:CoopRoot 'scripts\sync.ps1') *> $null
+  }
+}
+
 function Invoke-LaunchPi {
   param([string[]] $PassArgs = @())
 
   if (-not (Test-Have 'pi')) {
     Coop-Die 'pi is not installed. Run: coop install   (or: npm install -g @earendil-works/pi-coding-agent)'
   }
+
+  # Guard against launching into a known-broken extension load (agent/extension skew).
+  Invoke-CoopLaunchPreflight
 
   Invoke-CoopAzPreflight
 
