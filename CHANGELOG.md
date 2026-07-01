@@ -5,6 +5,37 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`coop web` working folder** — `coop web --cwd <dir>` runs the agent in an
+  explicit folder (default: where you ran it; the desktop icon defaults to your
+  home folder — change it via the shortcut's *Start in* property). The chat
+  header now **shows the working folder** so you always know where coop is
+  operating.
+- **`coop web` request log** — the server console prints every request
+  (`GET /events -> 200`, …), so a misbehaving client is diagnosable at a glance.
+
+### Fixed
+
+- **`coop web` died seconds after launch → "reconnecting…" and messages that
+  never send** (root cause). The Start Here menu (and the data-doc offer) were
+  `await`ed inside the `session_start` extension hook; in RPC mode that dialog
+  can only be answered by the browser, and with `session_start` blocked nothing
+  else held pi's event loop yet — **pi 0.80.2 exited cleanly (~1.3s in) before
+  serving a single command**, taking the `coop web` bridge down with it. The page
+  (already loaded) then showed "reconnecting…" forever, and since the UI renders
+  everything from the event stream, sends looked dead too. The front door is now
+  fire-and-forget outside the TUI (TUI behavior unchanged). Reproduced and
+  verified fixed end-to-end in a plain folder.
+- **"reconnecting…" when streaming is blocked** — on machines where streaming
+  responses are buffered or blocked (corporate proxies / endpoint protection,
+  even on loopback), the SSE event stream never opens. The page now **falls back
+  automatically to polling** (`/events-poll`, plain finite GETs) when the stream
+  doesn't open within 4s, a 15s heartbeat keeps healthy streams from being idled
+  out, and a stale window (cookie from a previous `coop web` run) gets an
+  explicit "session expired — close this window and start coop again" message
+  instead of retrying forever.
+
 ## [0.5.1] — 2026-07-01
 
 ### Changed

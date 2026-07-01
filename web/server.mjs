@@ -33,6 +33,8 @@ const PORT_EXPLICIT = argv.includes("--port") || Boolean(process.env.COOP_WEB_PO
 let PORT = Number(getArg("--port", process.env.COOP_WEB_PORT || "7420"));
 const HOST = "127.0.0.1";
 const TOKEN = randomBytes(16).toString("hex");
+// Working folder for the agent: --cwd <dir>, else wherever `coop web` was run.
+const CWD = getArg("--cwd", process.cwd());
 
 // --- Resolve the governed launch spec ---------------------------------------
 let spec;
@@ -43,6 +45,14 @@ try {
   console.error(
     "coop web: missing/invalid COOP_LAUNCH_SPEC. Run this via `coop web`, not `node server.mjs` directly.",
   );
+  process.exit(1);
+}
+
+import { statSync } from "node:fs";
+try {
+  if (!statSync(CWD).isDirectory()) throw new Error("not a directory");
+} catch {
+  console.error(`coop web: working folder not found: ${CWD}`);
   process.exit(1);
 }
 
@@ -67,12 +77,13 @@ function spawnPi() {
     // whole line in one extra pair (the canonical cmd /s /c pattern).
     return spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${line}"`], {
       env,
+      cwd: CWD,
       windowsHide: true,
       windowsVerbatimArguments: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
   }
-  return spawn(bin, args, { env, stdio: ["pipe", "pipe", "pipe"] });
+  return spawn(bin, args, { env, cwd: CWD, stdio: ["pipe", "pipe", "pipe"] });
 }
 
 const pi = spawnPi();
@@ -101,6 +112,7 @@ function sendToPi(obj) {
 // transcript. Answered dialog cards and transient toasts are skipped on replay.
 const HISTORY_MAX = 4000;
 const history = []; // { line, uiId?, uiMethod? }
+let historyBase = 0; // count of evicted entries — history[i] is global event #(historyBase+i)
 const answeredUi = new Set();
 const sseClients = new Set();
 let busy = false; // agent streaming? (chooses prompt vs steer)
@@ -115,7 +127,9 @@ function record(line, evt) {
   if (history.length > HISTORY_MAX) {
     // Evict oldest — and drop their ids from answeredUi so the Set can't grow
     // unbounded over a long session.
-    for (const old of history.splice(0, history.length - HISTORY_MAX)) {
+    const evicted = history.splice(0, history.length - HISTORY_MAX);
+    historyBase += evicted.length;
+    for (const old of evicted) {
       if (old.uiId) answeredUi.delete(old.uiId);
     }
   }
@@ -137,6 +151,18 @@ function broadcast(jsonLine) {
     }
   }
 }
+
+// Heartbeat: a comment frame every 15s keeps intermediaries (proxies, endpoint
+// protection) from idling-out or indefinitely buffering the SSE stream.
+setInterval(() => {
+  for (const res of sseClients) {
+    try {
+      res.write(": ping\n\n");
+    } catch {
+      sseClients.delete(res);
+    }
+  }
+}, 15000).unref();
 
 // --- Parse Pi's stdout as strict JSONL (\n only — NOT a generic line reader) --
 let stdoutBuf = "";
@@ -241,6 +267,10 @@ const server = createServer((req, res) => {
 });
 
 async function handle(req, res) {
+  res.on("finish", () => {
+    if (req.url && req.url.startsWith("/events-poll") && res.statusCode === 200) return;
+    console.error(`  ${req.method} ${(req.url || "").split("?")[0]} -> ${res.statusCode}`);
+  });
   if (!hostOk(req)) {
     res.writeHead(403, baseHeaders("text/plain")).end("bad host");
     return;
@@ -294,12 +324,24 @@ async function handle(req, res) {
     });
     res.write(`retry: 2000\n\n`);
     // Hello marker (client clears its transcript), then replay, then live.
-    res.write(`data: ${JSON.stringify({ type: "__hello", replay: history.length })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: "__hello", replay: history.length, cwd: CWD })}\n\n`);
     for (const entry of history) {
       if (replayable(entry)) res.write(`data: ${entry.line}\n\n`);
     }
     sseClients.add(res);
     req.on("close", () => sseClients.delete(res));
+    return;
+  }
+
+  // Polling fallback for environments where SSE never connects (some corporate
+  // proxies/endpoint protection buffer or block streaming responses, even on
+  // loopback). Returns everything after global event #since, plus the next cursor.
+  if (req.method === "GET" && url.pathname === "/events-poll") {
+    const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
+    const rel = Math.max(0, since - historyBase);
+    const events = history.slice(rel).filter(replayable).map((e) => e.line);
+    res.writeHead(200, baseHeaders("application/json"));
+    res.end(JSON.stringify({ next: historyBase + history.length, cwd: CWD, events }));
     return;
   }
 

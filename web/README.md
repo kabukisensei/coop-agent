@@ -11,6 +11,16 @@ coop web --port 7500
 See [`../docs/coop-web-plan.md`](../docs/coop-web-plan.md) for the full plan and
 decision history.
 
+## Which folder does it work in?
+
+The agent works in a **working folder** (where it reads/writes files, finds
+`coop-data-doc.yml`, etc.), shown in the **chat header**:
+
+- `coop web` in a terminal → the folder you ran it from (`cd` there first).
+- `coop web --cwd C:\path\to\repo` → an explicit folder.
+- The desktop **coop** icon → your home folder by default. To change it:
+  right-click the shortcut → Properties → **Start in** → your project folder.
+
 ## How it works
 
 ```
@@ -47,6 +57,14 @@ Browser (Edge app-mode)  ⇄  web/server.mjs  ⇄  pi --mode rpc -a  (the real c
   transcript. Already-answered dialog cards and transient toasts are not
   replayed. User bubbles render only from the event stream (single source of
   truth), so replays never duplicate.
+- **Polling fallback**: if the SSE stream never opens (some corporate
+  proxies/endpoint protection buffer or block streaming responses, even on
+  loopback), the page automatically falls back to polling `/events-poll` every
+  1.5s — plain finite GETs that work anywhere the page itself loads. A 15s SSE
+  heartbeat also keeps healthy streams from being idled out. The server console
+  logs every request (`GET /events -> 200`, …) so a stuck client is diagnosable
+  at a glance; a stale window (cookie from a previous run) gets an explicit
+  "session expired" message.
 
 ## Security model (localhost, single user — layered)
 

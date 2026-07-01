@@ -137,6 +137,24 @@ t("POST /ui-response -> 200", r.status === 200);
 events = await readSse(1200);
 t("answered dialog is not replayed on reconnect", !events.some((e) => e.type === "extension_ui_request" && e.id === dialog.id));
 
+// --- polling fallback (/events-poll) ----------------------------------------------
+r = await fetch(base + "/events-poll?since=0");
+t("/events-poll without cookie -> 401", r.status === 401);
+
+r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
+t("/events-poll with cookie -> 200", r.status === 200);
+let poll = await r.json();
+t("poll returns a cursor + cwd", typeof poll.next === "number" && poll.next > 0 && typeof poll.cwd === "string");
+t("poll at 0 excludes the answered dialog", !poll.events.some((l) => l.includes(dialog.id)));
+t("poll at 0 includes earlier stream events", poll.events.some((l) => l.includes("polo:marco")));
+
+const cursor = poll.next;
+await post("/prompt", { message: "again" });
+await new Promise((res) => setTimeout(res, 400));
+r = await fetch(base + `/events-poll?since=${cursor}`, { headers: { cookie } });
+poll = await r.json();
+t("incremental poll returns only new events", poll.events.some((l) => l.includes("polo:again")) && !poll.events.some((l) => l.includes("polo:marco")));
+
 server.kill();
 console.log(`  ${n} web-bridge tests passed`);
 process.exit(0);

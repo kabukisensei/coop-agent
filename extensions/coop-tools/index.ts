@@ -799,20 +799,33 @@ export default function coopTools(pi: ExtensionAPI) {
   pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext) => {
     if (!ctx.hasUI || startedCwds.has(ctx.cwd)) return;
     startedCwds.add(ctx.cwd);
-    if (event?.reason === "startup" && !startMenuDisabled()) {
-      try {
-        await showStartMenu(pi, ctx, true);
-        return; // menu is the front door here; don't stack the setup offer on top
-      } catch {
-        // Interactive dialogs may not be safe at startup on every Pi build —
-        // breadcrumb, then fall through to the data-doc nudge so nothing is lost.
-        notify(ctx, "Type /start for a menu of common coop tasks.", "info");
+    const wantMenu = event?.reason === "startup" && !startMenuDisabled();
+    const frontDoor = async () => {
+      if (wantMenu) {
+        try {
+          await showStartMenu(pi, ctx, true);
+          return; // menu is the front door here; don't stack the setup offer on top
+        } catch {
+          // Interactive dialogs may not be safe at startup on every Pi build —
+          // breadcrumb, then fall through to the data-doc nudge so nothing is lost.
+          notify(ctx, "Type /start for a menu of common coop tasks.", "info");
+        }
       }
-    }
-    try {
-      await maybeOfferSetup(pi, ctx);
-    } catch {
-      notify(ctx, "No data docs for this folder — run /setup-docs to create SQL + Power BI lineage docs.", "info");
+      try {
+        await maybeOfferSetup(pi, ctx);
+      } catch {
+        notify(ctx, "No data docs for this folder — run /setup-docs to create SQL + Power BI lineage docs.", "info");
+      }
+    };
+    if (ctx.mode === "tui") {
+      // TUI: await, so the front door renders before the first prompt.
+      await frontDoor();
+    } else {
+      // RPC (coop web) and other modes: fire-and-forget. Blocking session_start on
+      // a dialog that only a (possibly not-yet-connected) client can answer starves
+      // pi's event loop — pi 0.80.2 then exits 0 before serving a single command,
+      // which killed the coop web bridge seconds after startup.
+      void frontDoor().catch(() => { /* never break a session */ });
     }
   });
 

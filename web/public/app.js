@@ -236,6 +236,7 @@ function handle(evt) {
   switch (evt.type) {
     case "__hello":
       resetTranscript(); // reconnect: server replays history next — start clean
+      if (evt.cwd) setCwd(evt.cwd);
       break;
     case "agent_start": setBusy(true); break;
     case "agent_end": setBusy(false); current = null; break;
@@ -295,16 +296,57 @@ async function post(path, body) {
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res;
 }
+function setCwd(cwd) {
+  const el = document.querySelector("#cwd");
+  if (el) { el.textContent = cwd; el.title = "coop is working in this folder"; }
+}
+
+// Connection strategy: try SSE (instant streaming). If the stream NEVER opens —
+// some corporate proxies/endpoint protection buffer or block streaming responses,
+// even on loopback — fall back to polling /events-poll, which is plain finite
+// GETs and works anywhere the page itself loads.
+let mode = "sse";
 function connect() {
+  let opened = false;
   const es = new EventSource("/events");
+  const giveUp = setTimeout(() => { if (!opened) { es.close(); switchToPolling(); } }, 4000);
+  es.onopen = () => { opened = true; clearTimeout(giveUp); };
   es.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch { /* skip bad frame */ } };
   es.onerror = () => {
+    if (!opened) { clearTimeout(giveUp); es.close(); switchToPolling(); return; }
     // CLOSED means the browser gave up (server gone / auth lost) — reconnects
     // have stopped, so say so plainly instead of pretending.
     statusText.textContent = es.readyState === EventSource.CLOSED
-      ? "disconnected — restart coop web and use the new URL"
+      ? "disconnected — close this window and start coop again"
       : "reconnecting…";
   };
+}
+
+function switchToPolling() {
+  if (mode === "poll") return;
+  mode = "poll";
+  let since = 0, first = true;
+  statusText.textContent = "connecting…";
+  const tick = async () => {
+    try {
+      const r = await fetch(`/events-poll?since=${since}`);
+      if (r.status === 401) {
+        statusText.textContent = "session expired — close this window and start coop again";
+        return; // stop polling: the cookie belongs to a previous coop web run
+      }
+      if (!r.ok) throw new Error(String(r.status));
+      const data = await r.json();
+      if (first) { resetTranscript(); first = false; if (data.cwd) setCwd(data.cwd); }
+      since = data.next;
+      for (const line of data.events) { try { handle(JSON.parse(line)); } catch { /* skip */ } }
+      if (/connecting|reconnecting/.test(statusText.textContent)) setBusy(dot.classList.contains("busy"));
+      setTimeout(tick, 1500);
+    } catch {
+      statusText.textContent = "reconnecting…";
+      setTimeout(tick, 2500);
+    }
+  };
+  tick();
 }
 
 const input = $("#input");
