@@ -52,9 +52,12 @@ Browser (Edge app-mode)  ⇄  web/server.mjs  ⇄  pi --mode rpc -a  (the real c
 
 - Binds **127.0.0.1 only**; the `Host` header must be `localhost`/`127.0.0.1`
   (DNS-rebinding guard).
-- A **one-time token** (query → `HttpOnly` `SameSite=Strict` cookie) gates every
-  route; compared timing-safe. No `Secure` flag because this is plain HTTP on
-  loopback, which never leaves the machine.
+- A **per-run random token** (query → `HttpOnly` `SameSite=Strict` cookie) gates
+  every route; compared timing-safe; valid until the `coop web` process exits. The
+  launch URL (token included) lands in browser history and is visible in the
+  local process list — fine on your own machine, one more reason this is not for
+  shared hosts. No `Secure` flag because this is plain HTTP on loopback, which
+  never leaves the machine.
 - **Strict CSP** (`default-src 'none'`; no inline script or style — the SPA is
   served as separate files), `nosniff`, `no-referrer`. CORS is never enabled.
 - POSTs additionally require the **`X-Coop-CSRF: 1`** custom header —

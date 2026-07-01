@@ -224,6 +224,7 @@ coop_web() {
   have pi   || coop_die "pi is not installed. Run: coop install"
   have node || coop_die "Node.js is required for coop web. Run: coop install"
   coop_launch_preflight
+  coop_az_preflight   # same Fabric/Power BI token check the terminal launch does
   local spec
   spec="$(coop_launch_spec --json)" || coop_die "couldn't build the launch spec for coop web"
   COOP_LAUNCH_SPEC="$spec" exec node "$COOP_ROOT/web/server.mjs" "$@"

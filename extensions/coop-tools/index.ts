@@ -502,18 +502,19 @@ const TYPE_IT = "Something else — I'll type it myself";
 const DISABLE_MENU = "Don't show this automatically";
 
 /** Where to persist the "don't auto-open" preference. Prefer coop's isolated agent
- *  dir (PI_CODING_AGENT_DIR, set by the launcher); fall back to the home dir. */
-function agentConfigDir(): string {
+ *  dir (PI_CODING_AGENT_DIR — always set when launched via coop); fall back to a
+ *  dot-file in the home dir so bare-pi loads don't drop a visible file there. */
+function startMenuMarkerPath(): string {
   const d = process.env.PI_CODING_AGENT_DIR;
-  if (d && d.trim()) return d;
-  return process.env.HOME || process.env.USERPROFILE || ".";
+  if (d && d.trim()) return join(d, START_MENU_OFF);
+  return join(process.env.HOME || process.env.USERPROFILE || ".", `.coop-${START_MENU_OFF}`);
 }
 
 /** Power-user opt-out: the COOP_NO_START_MENU env var OR a persisted marker file. */
 export function startMenuDisabled(): boolean {
   if (/^(1|true|yes|on)$/i.test(process.env.COOP_NO_START_MENU || "")) return true;
   try {
-    return existsSync(join(agentConfigDir(), START_MENU_OFF));
+    return existsSync(startMenuMarkerPath());
   } catch {
     return false;
   }
@@ -522,8 +523,8 @@ export function startMenuDisabled(): boolean {
 function disableStartMenu(ctx: any): void {
   try {
     writeFileSync(
-      join(agentConfigDir(), START_MENU_OFF),
-      "coop: the Start Here menu won't auto-open. Delete this file (or set COOP_NO_START_MENU=0) to re-enable it. Run /start anytime to open it manually.\n",
+      startMenuMarkerPath(),
+      "coop: the Start Here menu won't auto-open. Delete this file to re-enable it. Run /start anytime to open it manually.\n",
       "utf8",
     );
     notify(ctx, "Got it — the menu won't auto-open. Run /start anytime to bring it back.", "info");

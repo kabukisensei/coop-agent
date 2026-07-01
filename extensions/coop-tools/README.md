@@ -37,7 +37,9 @@ workspace/architecture review, and work logs.
 
 - **`/start`** opens the menu on demand, anytime.
 - It **auto-opens only on the initial launch** of an interactive session (reason
-  `startup`) — never on `/new`, `/resume`, `/fork`, or `/reload`.
+  `startup`) — never on `/new`, `/resume`, `/fork`, or `/reload`. (Note: launching
+  with `coop -c` / `--continue` counts as an initial launch, so the menu appears
+  over the continued session too — one keypress dismisses it, or disable auto-open.)
 - Every menu always offers **"Something else — I'll type it myself"** (one key →
   the normal blank prompt), and when auto-opened also **"Don't show this
   automatically"**.

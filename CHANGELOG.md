@@ -5,6 +5,50 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **"Start Here" menu** — a fresh interactive session now opens with a guided menu of
+  common Cooptimize tasks (document data, SQL/DAX review, impact check, Fabric review,
+  work logs) instead of a blank prompt. Run **`/start`** anytime. Strictly additive:
+  one keypress ("Something else — I'll type it myself") drops to the normal prompt,
+  auto-open only happens on the *initial* launch (never `/new`/`/resume`/`/fork`), and
+  power users can disable it for good with `COOP_NO_START_MENU=1`, the `start-menu.off`
+  marker, or the in-menu "Don't show this automatically" choice.
+- **Windows double-click launcher** — `coop install` now creates a **coop** shortcut on
+  the Start Menu and Desktop (icon: `themes/coop.ico`, the Cooptimize logo in a spy
+  fedora + mustache). It runs `bin/coop-desktop.ps1`, which finds (or first-run
+  installs) coop and keeps the window open on error so the message stays readable.
+- **`Install coop.cmd`** (repo root) — no-terminal first-time setup: double-click it to
+  run the same `coop install` bootstrap with a friendly window and a pause at the end.
+- **`coop web` (experimental)** — a friendly localhost **browser UI** over the *same
+  governed* agent the terminal runs (Edge app-mode window on Windows). A Node
+  built-ins-only bridge spawns `pi --mode rpc -a` from the shared launch spec and
+  relays events over SSE: streaming chat with markdown-lite rendering, the Start Here
+  menu and guardrail confirmations as clickable cards, human-readable
+  `sql_review`/`dax_review` result cards (raw-JSON fallback), tool activity chips, a
+  Stop button, and reconnect transcript replay. Hardened for its localhost scope:
+  one-time token → HttpOnly SameSite=Strict cookie (timing-safe compare), strict CSP
+  with no inline script/style, `X-Coop-CSRF` header on all POSTs, Host-header
+  rebinding guard, 127.0.0.1 bind only. See `web/README.md`.
+- **`coop launch-spec [--json]`** (internal) — prints the exact resolved `pi`
+  invocation (args + env). The flag assembly that was duplicated between `bin/coop`
+  and `bin/coop.ps1` is now a single builder per dispatcher
+  (`coop_build_pi_args` / `Build-CoopPiArgs`) consumed by both the terminal launch and
+  `coop web`, so surfaces can never drift. Guarded by a new test in `tests/run.sh`.
+
+### Changed
+
+- The startup data-doc setup offer is folded into the Start Here menu on initial
+  launch (the menu surfaces "Document my data"); `/resume`/`/fork`/`/reload` keep the
+  original offer exactly as before.
+
+### Tests
+
+- `tests/startmenu.test.mjs` (menu wiring + opt-out) and `tests/webbridge.test.mjs` +
+  `tests/stub-pi.mjs` — 16 integration tests that drive the `coop web` bridge against
+  a stub Pi (auth, CSP, CSRF, rebinding guard, SSE replay semantics, prompt
+  forwarding, answered-dialog skipping).
+
 ## [0.4.1] — 2026-06-30
 
 ### Fixed

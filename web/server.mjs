@@ -7,8 +7,8 @@
 //
 // Security model (localhost, single user — layered):
 //   - binds 127.0.0.1 only; Host header must be localhost/127.0.0.1 (DNS-rebinding guard)
-//   - one-time token (query -> HttpOnly SameSite=Strict cookie) gates every route;
-//     compared timing-safe
+//   - per-run random token (query -> HttpOnly SameSite=Strict cookie) gates every
+//     route; compared timing-safe. Valid until this process exits.
 //   - strict CSP (no inline script/style — the SPA is served as separate files),
 //     nosniff, no-referrer; CORS is never enabled
 //   - POSTs additionally require the X-Coop-CSRF custom header (cross-origin pages
@@ -51,10 +51,25 @@ function spawnPi() {
   const args = [...spec.args, "--mode", "rpc", "-a"];
   const env = { ...process.env, ...(spec.env || {}) };
   if (process.platform === "win32") {
-    // npm-global `pi` is a .cmd shim, which Node can only launch through a shell.
-    const q = (s) => `"${String(s).replace(/"/g, '\\"')}"`;
-    const line = [bin, ...args].map(q).join(" ");
-    return spawn(line, { env, shell: true, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    // npm-global `pi` is a .cmd shim, which Node can only launch through cmd.exe.
+    // cmd has no safe escape for embedded `"` or `%` inside a quoted argument, so
+    // refuse those outright (launch-spec args are repo paths + fixed flags — they
+    // never legitimately contain either) rather than quote them wrongly.
+    for (const a of [bin, ...args]) {
+      if (/["%]/.test(String(a))) {
+        console.error(`coop web: launch-spec argument contains '"' or '%', which cmd.exe cannot quote safely: ${a}`);
+        process.exit(1);
+      }
+    }
+    const line = [bin, ...args].map((s) => `"${s}"`).join(" ");
+    // `/s` strips the first and last quote of the string after /c, so wrap the
+    // whole line in one extra pair (the canonical cmd /s /c pattern).
+    return spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${line}"`], {
+      env,
+      windowsHide: true,
+      windowsVerbatimArguments: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
   }
   return spawn(bin, args, { env, stdio: ["pipe", "pipe", "pipe"] });
 }
@@ -96,7 +111,13 @@ function record(line, evt) {
     entry.uiMethod = evt.method;
   }
   history.push(entry);
-  if (history.length > HISTORY_MAX) history.splice(0, history.length - HISTORY_MAX);
+  if (history.length > HISTORY_MAX) {
+    // Evict oldest — and drop their ids from answeredUi so the Set can't grow
+    // unbounded over a long session.
+    for (const old of history.splice(0, history.length - HISTORY_MAX)) {
+      if (old.uiId) answeredUi.delete(old.uiId);
+    }
+  }
 }
 
 function replayable(entry) {
@@ -139,6 +160,7 @@ pi.stdout.on("data", (chunk) => {
   }
 });
 pi.stderr.on("data", (c) => process.stderr.write(c)); // pi diagnostics -> our console
+pi.stdin.on("error", (e) => console.error("coop web: pi stdin error:", e.message)); // don't crash on async write errors
 
 // --- HTTP server ---------------------------------------------------------------
 const STATIC = {
@@ -195,6 +217,7 @@ function readBody(req) {
     });
     req.on("end", () => resolve(b));
     req.on("error", () => resolve(""));
+    req.on("close", () => resolve(b)); // destroyed (cap hit) — settle the promise
   });
 }
 async function readJson(req) {
@@ -209,7 +232,7 @@ const server = createServer((req, res) => {
   handle(req, res).catch((e) => {
     console.error("coop web: request error:", e.message);
     try {
-      res.writeHead(500).end("error");
+      res.writeHead(500, baseHeaders("text/plain")).end("error");
     } catch {
       /* headers already sent */
     }
@@ -218,7 +241,7 @@ const server = createServer((req, res) => {
 
 async function handle(req, res) {
   if (!hostOk(req)) {
-    res.writeHead(403).end("bad host");
+    res.writeHead(403, baseHeaders("text/plain")).end("bad host");
     return;
   }
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
@@ -258,16 +281,14 @@ async function handle(req, res) {
       res.writeHead(200, baseHeaders("image/x-icon"));
       res.end(readFileSync(FAVICON));
     } else {
-      res.writeHead(404).end();
+      res.writeHead(404, baseHeaders("text/plain")).end();
     }
     return;
   }
 
   if (req.method === "GET" && url.pathname === "/events") {
     res.writeHead(200, {
-      "content-type": "text/event-stream",
-      "cache-control": "no-store",
-      "x-content-type-options": "nosniff",
+      ...baseHeaders("text/event-stream"),
       connection: "keep-alive",
     });
     res.write(`retry: 2000\n\n`);
@@ -304,8 +325,13 @@ async function handle(req, res) {
       const body = await readJson(req);
       if (body && body.id) {
         answeredUi.add(body.id); // don't replay this dialog card on reconnect
-        // Pass through the matching fields (value / confirmed / cancelled).
-        sendToPi({ type: "extension_ui_response", ...body });
+        // Whitelist the fields — never spread an untrusted body over a fixed
+        // `type`, or the browser could relay arbitrary RPC commands to pi.
+        const reply = { type: "extension_ui_response", id: String(body.id) };
+        if (body.value !== undefined) reply.value = body.value;
+        if (body.confirmed !== undefined) reply.confirmed = Boolean(body.confirmed);
+        if (body.cancelled !== undefined) reply.cancelled = Boolean(body.cancelled);
+        sendToPi(reply);
       }
       res.writeHead(200, baseHeaders("application/json")).end(`{"ok":true}`);
       return;

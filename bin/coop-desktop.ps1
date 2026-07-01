@@ -14,7 +14,11 @@ $ErrorActionPreference = 'Stop'
 try { $Host.UI.RawUI.WindowTitle = 'coop' } catch { }
 
 function Find-Coop {
-  # Prefer whatever is on PATH; otherwise the installer drops a launcher in LOCALAPPDATA.
+  # Prefer the dispatcher SITTING NEXT TO THIS LAUNCHER: the shortcut belongs to
+  # this repo clone, and a `coop` found on PATH could be a stale second clone
+  # (exactly the drift that bit us before). PATH and LOCALAPPDATA are fallbacks.
+  $sibling = Join-Path $PSScriptRoot 'coop.ps1'
+  if (Test-Path -LiteralPath $sibling) { return $sibling }
   $cmd = Get-Command coop -ErrorAction SilentlyContinue
   if ($cmd) { return 'coop' }
   $local = Join-Path $env:LOCALAPPDATA 'coop\bin\coop.cmd'

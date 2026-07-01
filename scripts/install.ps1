@@ -420,7 +420,7 @@ if (Test-Path -LiteralPath $desktopLauncher) {
     foreach ($lnk in $links) {
       $sc = $ws.CreateShortcut($lnk)
       $sc.TargetPath       = $psExe
-      $sc.Arguments        = "-NoLogo -ExecutionPolicy Bypass -File `"$desktopLauncher`""
+      $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`""
       $sc.WorkingDirectory = $HOME
       $sc.Description       = 'coop - the Cooptimize analytics agent'
       $sc.WindowStyle       = 1

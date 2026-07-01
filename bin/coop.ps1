@@ -417,9 +417,12 @@ function Invoke-CoopLaunchSpec {
     if ($env:PI_CODING_AGENT_DIR) { $envMap['PI_CODING_AGENT_DIR'] = $env:PI_CODING_AGENT_DIR }
     if ($env:COOP_VIBES_DIR)      { $envMap['COOP_VIBES_DIR']      = $env:COOP_VIBES_DIR }
     if ($env:COOP_SPLASH_FILE)    { $envMap['COOP_SPLASH_FILE']    = $env:COOP_SPLASH_FILE }
+    # The JSON SHAPE ({bin,args,env}) is the contract with web/server.mjs — the
+    # formatting (bash pretty-prints, this compresses) intentionally is not.
     [pscustomobject]@{ bin = 'pi'; args = @($piArgs); env = $envMap } | ConvertTo-Json -Depth 5 -Compress
   } else {
-    'pi ' + ($piArgs -join ' ')
+    # Mirror bash's %q-quoted human output: quote any arg containing whitespace.
+    'pi ' + (($piArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
   }
 }
 
@@ -432,6 +435,7 @@ function Invoke-CoopWeb {
   if (-not (Test-Have 'pi'))   { Coop-Die 'pi is not installed. Run: coop install' }
   if (-not (Test-Have 'node')) { Coop-Die 'Node.js is required for coop web. Run: coop install' }
   Invoke-CoopLaunchPreflight
+  Invoke-CoopAzPreflight   # same Fabric/Power BI token check the terminal launch does
   $env:COOP_LAUNCH_SPEC = (Invoke-CoopLaunchSpec @('--json'))
   $server = Join-Path $script:CoopRoot 'web\server.mjs'
   & node $server @WebArgs

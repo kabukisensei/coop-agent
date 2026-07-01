@@ -18,11 +18,23 @@ function renderMarkdown(raw) {
   const out = [];
   let inCode = false, code = [], inList = false;
   const closeList = () => { if (inList) { out.push("</ul>"); inList = false; } };
-  const inline = (s) =>
-    esc(s)
-      .replace(/`([^`\n]+)`/g, "<code>$1</code>")
-      .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
-      .replace(/\bhttps?:\/\/[^\s<>"')\]]+/g, (u) => `<a href="${u}" target="_blank" rel="noreferrer noopener">${u}</a>`);
+  // Tokenize code spans FIRST, then apply bold/link transforms only to the
+  // non-code segments — so ** or URLs inside `code` stay literal and spans
+  // can't misnest across each other.
+  const inline = (s) => {
+    const escaped = esc(s);
+    const parts = escaped.split(/(`[^`\n]+`)/);
+    return parts
+      .map((part) => {
+        if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+          return `<code>${part.slice(1, -1)}</code>`;
+        }
+        return part
+          .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+          .replace(/\bhttps?:\/\/[^\s<>"')\]]+/g, (u) => `<a href="${u}" target="_blank" rel="noreferrer noopener">${u}</a>`);
+      })
+      .join("");
+  };
   for (const line of lines) {
     if (/^```/.test(line)) {
       if (inCode) { out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`); code = []; }
@@ -83,7 +95,13 @@ function toast(message, kind = "info") {
 }
 
 // --- extension UI requests (Start Here menu, approvals, prompts) ---------------
-async function respond(id, payload) { await post("/ui-response", { id, ...payload }); }
+async function respond(id, payload) {
+  try {
+    await post("/ui-response", { id, ...payload });
+  } catch {
+    toast("Couldn't deliver your answer — is coop web still running?", "error");
+  }
+}
 
 function uiCard(req) {
   const was = atBottom();
@@ -103,6 +121,11 @@ function uiCard(req) {
       btn.onclick = () => done({ value: opt });
       row.appendChild(btn);
     });
+    // Match the TUI's Esc: selects are cancellable per the RPC protocol.
+    const dismiss = document.createElement("button");
+    dismiss.className = "ghost"; dismiss.textContent = "Dismiss";
+    dismiss.onclick = () => done({ cancelled: true });
+    row.appendChild(dismiss);
     card.appendChild(row);
   } else if (req.method === "confirm") {
     const row = document.createElement("div"); row.className = "row";
@@ -131,7 +154,8 @@ const SEV_ORDER = ["error", "warning", "info"];
 
 function reviewCard(evt) {
   const report = evt.result && evt.result.details && evt.result.details.report;
-  const findings = report && Array.isArray(report.findings) ? report.findings : null;
+  // Mirror the extension's summarizeReview, which accepts findings || results.
+  const findings = report && (Array.isArray(report.findings) ? report.findings : Array.isArray(report.results) ? report.results : null);
   const was = atBottom();
   const card = document.createElement("div");
   card.className = "card review";
@@ -155,7 +179,8 @@ function reviewCard(evt) {
     const bySev = { error: [], warning: [], info: [] };
     for (const f of findings) {
       const s = String(f.severity || "info").toLowerCase();
-      (bySev[s] || bySev.info).push(f);
+      // Own-property guard: a severity like "constructor" must not hit the prototype.
+      (Object.prototype.hasOwnProperty.call(bySev, s) ? bySev[s] : bySev.info).push(f);
     }
     title.innerHTML =
       `${esc(name)} <span class="counts">— ${findings.length} finding${findings.length === 1 ? "" : "s"}: ` +
@@ -164,7 +189,9 @@ function reviewCard(evt) {
 
     if (findings.length === 0) {
       const p = document.createElement("p");
-      p.textContent = "No findings — this passes the Cooptimize standards. ✓";
+      // Careful copy: a run can be filtered by min_severity, so "no findings"
+      // means clean at this threshold — not a blanket certification.
+      p.textContent = "No findings in this check. ✓";
       card.appendChild(p);
     }
     for (const sev of SEV_ORDER) {
@@ -250,36 +277,57 @@ function handle(evt) {
       else if (["select", "confirm", "input", "editor"].includes(evt.method)) uiCard(evt);
       // setStatus/setWidget/setTitle: not rendered
       break;
+    case "response":
+      // Surface command rejections (e.g. a prompt refused mid-stream) instead of
+      // failing silently.
+      if (evt.success === false) toast(`coop rejected a command${evt.error ? `: ${evt.error}` : ""}.`, "error");
+      break;
   }
 }
 
 // --- transport --------------------------------------------------------------------
 async function post(path, body) {
-  await fetch(path, {
+  const res = await fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json", "x-coop-csrf": "1" },
     body: JSON.stringify(body),
   });
+  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  return res;
 }
 function connect() {
   const es = new EventSource("/events");
   es.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch { /* skip bad frame */ } };
-  es.onerror = () => { statusText.textContent = "reconnecting…"; };
+  es.onerror = () => {
+    // CLOSED means the browser gave up (server gone / auth lost) — reconnects
+    // have stopped, so say so plainly instead of pretending.
+    statusText.textContent = es.readyState === EventSource.CLOSED
+      ? "disconnected — restart coop web and use the new URL"
+      : "reconnecting…";
+  };
 }
 
 const input = $("#input");
-function send() {
+async function send() {
   const message = input.value.trim();
   if (!message) return;
   // No local echo: the user bubble renders from the message_start event on the
   // stream (single source of truth — identical for live sends, replays after a
   // reconnect, and steered messages that Pi delivers later).
-  if (dot.classList.contains("busy")) toast("Queued — coop will pick this up in a moment.");
+  const wasBusy = dot.classList.contains("busy");
   input.value = ""; input.style.height = "auto";
-  post("/prompt", { message });
+  try {
+    await post("/prompt", { message });
+    if (wasBusy) toast("Queued — coop will pick this up in a moment.");
+  } catch {
+    // Never lose the user's words: put the message back in the composer.
+    toast("Couldn't send — is coop web still running?", "error");
+    input.value = message;
+    input.dispatchEvent(new Event("input"));
+  }
 }
 $("#send").onclick = send;
-stopBtn.onclick = () => post("/abort", {});
+stopBtn.onclick = () => post("/abort", {}).catch(() => toast("Couldn't reach coop web.", "error"));
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
 });
