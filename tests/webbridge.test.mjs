@@ -19,7 +19,23 @@ const t = (name, ok) => {
 };
 
 // --- start the bridge against the stub pi ------------------------------------
-const spec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: {} });
+// A fake agent dir with one prior session for THIS cwd, so /sessions and /resume
+// can be exercised (the bridge mirrors pi's session-dir encoding).
+import { mkdirSync, writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir as osTmp } from "node:os";
+import { resolve as resolvePath } from "node:path";
+const agentDir = mkdtempSync(join(osTmp(), "coop-web-test-"));
+const encoded = `--${resolvePath(process.cwd()).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+const sessDir = join(agentDir, "sessions", encoded);
+mkdirSync(sessDir, { recursive: true });
+const FAKE_SESSION = "2026-07-01T00-00-00-000Z_test-session.jsonl";
+writeFileSync(join(sessDir, FAKE_SESSION), [
+  JSON.stringify({ type: "session", version: 3, id: "test-session", timestamp: "2026-07-01T00:00:00.000Z", cwd: process.cwd() }),
+  JSON.stringify({ type: "session_info", name: "My old chat" }),
+  JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "hello from the past" }] } }),
+].join("\n") + "\n");
+
+const spec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: agentDir } });
 const server = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT)], {
   env: { ...process.env, COOP_LAUNCH_SPEC: spec, COOP_WEB_NO_OPEN: "1" },
   stdio: ["ignore", "pipe", "pipe"],
@@ -183,13 +199,29 @@ r = await fetch(base + `/events-poll?since=0`, { headers: { cookie } });
 poll = await r.json();
 t("new_session resets the replay history", poll.next === 0 && poll.events.length === 0);
 
+// --- /sessions + /resume ------------------------------------------------------------
+r = await fetch(base + "/sessions", { headers: { cookie } });
+t("/sessions -> 200", r.status === 200);
+let sess = (await r.json()).sessions;
+const mine = sess.find((x) => x.file === FAKE_SESSION);
+t("lists the prior conversation with name + preview", !!mine && mine.name === "My old chat" && mine.preview.includes("hello from the past"));
+
+r = await post("/resume", { file: "../evil.jsonl" });
+t("/resume path-jails the filename", r.status === 400);
+
+r = await post("/resume", { file: FAKE_SESSION });
+t("/resume a real conversation -> 200", r.status === 200);
+await new Promise((res) => setTimeout(res, 900)); // respawn + backfill
+r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
+poll = await r.json();
+t("backfilled user turn arrives as __message", poll.events.some((l) => l.includes('"__message"') && l.includes("old question")));
+t("backfilled assistant turn carries its tool call", poll.events.some((l) => l.includes("old answer") && l.includes("sql_review")));
+
 // --- /chdir (restart the agent in a new working folder) ---------------------------
 r = await post("/chdir", { dir: join(ROOT, "no-such-folder-xyz") });
 t("/chdir rejects a missing folder", r.status === 400);
 
-const { tmpdir } = await import("node:os");
-const { resolve: resolvePath } = await import("node:path");
-const target = resolvePath(tmpdir());
+const target = resolvePath(osTmp());
 r = await post("/chdir", { dir: target });
 t("/chdir switches to a real folder", r.status === 200);
 let ch = await r.json();

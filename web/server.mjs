@@ -19,7 +19,7 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve as resolvePath } from "node:path";
 
@@ -58,9 +58,9 @@ try {
 }
 
 // --- Spawn the governed Pi in RPC mode --------------------------------------
-function spawnPi() {
+function spawnPi(extraArgs = []) {
   const bin = spec.bin || "pi";
-  const args = [...spec.args, "--mode", "rpc", "-a"];
+  const args = [...spec.args, "--mode", "rpc", "-a", ...extraArgs];
   const env = { ...process.env, ...(spec.env || {}) };
   if (process.platform === "win32") {
     // npm-global `pi` is a .cmd shim, which Node can only launch through cmd.exe.
@@ -233,7 +233,7 @@ function handlePiLine(line) {
 // Restart the governed pi in a new working folder: fresh session, tools, and
 // data-doc detection all consistent with the header. The old child's exit is
 // ignored via the generation check in wirePi.
-function restartPi(newCwd) {
+function restartPi(newCwd, extraArgs = []) {
   CWD = newCwd;
   const old = pi;
   pi = null; // generation check: old child's events/exit are ignored from here
@@ -247,9 +247,88 @@ function restartPi(newCwd) {
   history.length = 0;
   historyBase = 0;
   answeredUi.clear();
-  pi = spawnPi();
+  pi = spawnPi(extraArgs);
   wirePi(pi);
   broadcast(JSON.stringify({ type: "__hello", replay: 0, cwd: CWD }));
+}
+
+// One correlated RPC round-trip against the current pi child.
+function rpcCall(cmd, timeoutMs = 30000) {
+  const id = `web-${++rpcSeq}`;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingRpc.delete(id);
+      resolve(null);
+    }, timeoutMs);
+    pendingRpc.set(id, { resolve, timer });
+    sendToPi({ ...cmd, id });
+  });
+}
+
+// --- Session listing + resume -------------------------------------------------
+// Mirrors pi's getDefaultSessionDirPath: sessions live under
+// <agentDir>/sessions/--<cwd with [/\:] -> - >--/. We list the newest files with
+// a cheap scan for the display name (last session_info entry) and a preview
+// (first user message), and resume by restarting pi with --session <file> —
+// the file must live inside the current folder's session dir (path jail).
+function sessionsDirFor(cwd) {
+  const agentDir = (spec.env && spec.env.PI_CODING_AGENT_DIR) || process.env.PI_CODING_AGENT_DIR || "";
+  if (!agentDir) return null;
+  const safe = `--${resolvePath(cwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+  return join(resolvePath(agentDir), "sessions", safe);
+}
+
+function scanSessionFile(fullPath) {
+  // Read a bounded chunk: enough for the header + early entries without loading
+  // multi-MB sessions wholesale.
+  let text = "";
+  try {
+    text = readFileSync(fullPath, "utf8");
+  } catch {
+    return null;
+  }
+  const lines = text.split("\n");
+  let name = "";
+  let preview = "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry.type === "session_info" && typeof entry.name === "string") name = entry.name; // last one wins
+    if (!preview && entry.message && entry.message.role === "user") {
+      const c = entry.message.content;
+      const t = typeof c === "string" ? c : Array.isArray(c) ? c.filter((b) => b.type === "text").map((b) => b.text).join(" ") : "";
+      preview = String(t).replace(/\s+/g, " ").trim().slice(0, 80);
+    }
+  }
+  return { name, preview };
+}
+
+// After resuming, pull the active branch and backfill the browser transcript as
+// synthetic __message events (recorded, so replay/polling see them too).
+async function backfillMessages() {
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const reply = await rpcCall({ type: "get_messages" }, 5000);
+    if (reply && reply.success && reply.data && Array.isArray(reply.data.messages)) {
+      for (const m of reply.data.messages) {
+        if (!m || (m.role !== "user" && m.role !== "assistant")) continue;
+        const c = m.content;
+        const text = typeof c === "string" ? c : Array.isArray(c) ? c.filter((b) => b.type === "text").map((b) => b.text).join("\n") : "";
+        const tools = Array.isArray(c) ? c.filter((b) => b.type === "toolCall").map((b) => b.name) : [];
+        if (!text.trim() && !tools.length) continue;
+        const line = JSON.stringify({ type: "__message", role: m.role, text, tools });
+        record(line, { type: "__message" });
+        broadcast(line);
+      }
+      return;
+    }
+    await new Promise((res) => setTimeout(res, 500));
+  }
+  console.error("coop web: could not backfill the resumed conversation (get_messages never answered)");
 }
 
 // --- HTTP server ---------------------------------------------------------------
@@ -408,6 +487,39 @@ async function handle(req, res) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/sessions") {
+    const dir = sessionsDirFor(CWD);
+    const sessions = [];
+    if (dir && existsSync(dir)) {
+      let files = [];
+      try {
+        files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+      } catch {
+        files = [];
+      }
+      const withTimes = files
+        .map((f) => {
+          try {
+            return { f, mtime: statSync(join(dir, f)).mtimeMs };
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.mtime - a.mtime)
+        .slice(0, 30);
+      for (const { f, mtime } of withTimes) {
+        const meta = scanSessionFile(join(dir, f));
+        if (!meta) continue;
+        if (!meta.name && !meta.preview) continue; // empty shell sessions aren't resumable conversations
+        sessions.push({ file: f, mtime, name: meta.name, preview: meta.preview });
+      }
+    }
+    res.writeHead(200, baseHeaders("application/json"));
+    res.end(JSON.stringify({ sessions }));
+    return;
+  }
+
   // POSTs: require the CSRF custom header on top of the cookie.
   if (req.method === "POST") {
     if (req.headers["x-coop-csrf"] !== "1") {
@@ -450,22 +562,14 @@ async function handle(req, res) {
         res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "command not allowed" }));
         return;
       }
-      const id = `web-${++rpcSeq}`;
-      const cmd = { id, type };
+      const cmd = { type };
       if (type === "set_model") {
         cmd.provider = String(body.provider || "");
         cmd.modelId = String(body.modelId || "");
       }
       if (type === "set_thinking_level") cmd.level = String(body.level || "medium");
       if (type === "compact" && body.customInstructions) cmd.customInstructions = String(body.customInstructions);
-      const reply = await new Promise((resolve) => {
-        const timer = setTimeout(() => {
-          pendingRpc.delete(id);
-          resolve(null);
-        }, 30000);
-        pendingRpc.set(id, { resolve, timer });
-        sendToPi(cmd);
-      });
+      const reply = await rpcCall(cmd);
       if (!reply) {
         res.writeHead(504, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "pi did not answer in time" }));
         return;
@@ -479,6 +583,24 @@ async function handle(req, res) {
         broadcast(JSON.stringify({ type: "__hello", replay: 0, cwd: CWD }));
       }
       res.writeHead(200, baseHeaders("application/json")).end(JSON.stringify(reply));
+      return;
+    }
+
+    if (url.pathname === "/resume") {
+      const body = await readJson(req);
+      const name = body && typeof body.file === "string" ? body.file : "";
+      const dir = sessionsDirFor(CWD);
+      // Path jail: a plain .jsonl basename inside THIS folder's session dir only.
+      const safeName = /^[A-Za-z0-9._-]+\.jsonl$/.test(name);
+      const full = dir && safeName ? join(dir, name) : "";
+      if (!full || !existsSync(full)) {
+        res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "That conversation could not be found." }));
+        return;
+      }
+      restartPi(CWD, ["--session", full]);
+      console.error(`  resuming session ${name}`);
+      backfillMessages(); // async: fills the fresh transcript once pi is up
+      res.writeHead(200, baseHeaders("application/json")).end(JSON.stringify({ ok: true }));
       return;
     }
 

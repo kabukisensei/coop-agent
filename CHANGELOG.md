@@ -5,6 +5,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **🕘 History in `coop web`** — resume a previous conversation in the current
+  folder, ChatGPT-style. The picker lists this folder's sessions newest-first
+  (named sessions show their `/name`; unnamed ones show their first message);
+  picking one restarts the governed agent with that session and **backfills the
+  transcript** (user turns, assistant replies, tool calls) so you continue where
+  you left off. Bridge side: `GET /sessions` mirrors pi's session-dir encoding
+  and scans headers cheaply; `POST /resume` is path-jailed to the current
+  folder's session dir and restarts pi with `--session`; the active branch is
+  pulled via `get_messages` and replayed as synthetic events (so refresh /
+  polling clients see it too).
+
 ## [0.7.0] — 2026-07-01
 
 ### Added

@@ -65,7 +65,10 @@ Browser (Edge app-mode)  ⇄  web/server.mjs  ⇄  pi --mode rpc -a  (the real c
   replayed. User bubbles render only from the event stream (single source of
   truth), so replays never duplicate.
 - **Header toolbar** — **＋ New chat** (fresh session; the transcript resets),
-  a **model picker** (type-to-filter across every configured model), a
+  **🕘 History** (resume a previous conversation in this folder — named sessions
+  show their name, unnamed ones the first message; the prior transcript is
+  backfilled so you continue where you left off), a
+  **model picker** (type-to-filter across every configured model), a
   **🧠 thinking-level** chip (click to cycle off → minimal → low → medium → high),
   and **♻ Compact** (frees context; reports before/after tokens). These drive
   pi's own RPC commands through a whitelisted `/rpc` relay.
@@ -113,8 +116,8 @@ put a bash-capable agent on the network.
 
 - Replay history is bounded (~4000 events); very long sessions truncate the
   rebuilt transcript (newest events win).
-- One conversation at a time: New chat, model switching, thinking level, compact,
-  and folder switching are in the toolbar/header, but resuming a *previous*
-  session isn't surfaced yet.
+- One conversation at a time (switch via ＋ New chat / 🕘 History). Backfilled
+  transcripts show text and tool names; original diffs/streaming detail aren't
+  reconstructed.
 - Thinking blocks and image attachments are not rendered.
 - Tested against the RPC protocol of Pi 0.80.x.

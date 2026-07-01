@@ -240,6 +240,21 @@ function handle(evt) {
       break;
     case "agent_start": setBusy(true); break;
     case "agent_end": setBusy(false); current = null; break;
+    case "__message": {
+      // Backfilled turn from a resumed conversation (bridge-synthesized).
+      if (evt.role === "user") bubble("user", evt.text || "");
+      else {
+        if (evt.text) bubble("assistant", evt.text);
+        for (const name of evt.tools || []) {
+          const el = document.createElement("div");
+          el.className = "tool";
+          el.innerHTML = '<span class="ok">✓</span> ' + esc(name);
+          transcript.appendChild(el);
+        }
+      }
+      stick(was);
+      break;
+    }
     case "message_start":
       if (evt.message && evt.message.role === "user") {
         // Sole renderer of user bubbles (live sends, replays, steered deliveries).
@@ -457,6 +472,81 @@ $("#newChat").onclick = async () => {
   } catch {
     toast("Couldn't start a new chat — is coop web still running?", "error");
   }
+};
+
+function relTime(ms) {
+  const mins = Math.round((Date.now() - ms) / 60000);
+  if (mins < 2) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return days === 1 ? "yesterday" : `${days} days ago`;
+}
+
+$("#historyBtn").onclick = async () => {
+  let sessions = [];
+  try {
+    const r = await fetch("/sessions");
+    if (!r.ok) throw new Error(String(r.status));
+    sessions = (await r.json()).sessions || [];
+  } catch {
+    toast("Couldn't list previous conversations.", "error");
+    return;
+  }
+  if (!sessions.length) {
+    toast("No previous conversations in this folder yet.");
+    return;
+  }
+  const was = atBottom();
+  const card = document.createElement("div");
+  card.className = "card";
+  const title = document.createElement("h3");
+  title.textContent = "Resume a conversation";
+  const p = document.createElement("p");
+  p.textContent = "Previous conversations in this folder, newest first.";
+  const row = document.createElement("div");
+  row.className = "row list";
+  const done = () => card.remove();
+  for (const sess of sessions) {
+    const btn = document.createElement("button");
+    btn.textContent = sess.name || sess.preview || "(untitled)";
+    const when = document.createElement("span");
+    when.className = "prov";
+    when.textContent = relTime(sess.mtime);
+    btn.appendChild(when);
+    if (sess.name && sess.preview) btn.title = sess.preview;
+    btn.onclick = async () => {
+      try {
+        const r = await fetch("/resume", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-coop-csrf": "1" },
+          body: JSON.stringify({ file: sess.file }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          toast(data.error || "Couldn't resume that conversation.", "error");
+          return;
+        }
+        toast("Resuming — one moment while the conversation loads…");
+        setTimeout(refreshState, 1500);
+      } catch {
+        toast("Couldn't reach coop web.", "error");
+      }
+      done();
+    };
+    row.appendChild(btn);
+  }
+  const closeRow = document.createElement("div");
+  closeRow.className = "row";
+  const cancel = document.createElement("button");
+  cancel.className = "ghost";
+  cancel.textContent = "Cancel";
+  cancel.onclick = done;
+  closeRow.appendChild(cancel);
+  card.append(title, p, row, closeRow);
+  transcript.appendChild(card);
+  stick(was);
 };
 
 modelChip.onclick = async () => {

@@ -49,6 +49,12 @@ process.stdin.on("data", (chunk) => {
       out({ id: cmd.id, type: "response", command: "set_thinking_level", success: true });
     } else if (cmd.type === "new_session") {
       out({ id: cmd.id, type: "response", command: "new_session", success: true, data: { cancelled: false } });
+    } else if (cmd.type === "get_messages") {
+      out({ id: cmd.id, type: "response", command: "get_messages", success: true,
+        data: { messages: [
+          { role: "user", content: [{ type: "text", text: "old question" }] },
+          { role: "assistant", content: [{ type: "text", text: "old answer" }, { type: "toolCall", id: "t1", name: "sql_review", arguments: {} }] },
+        ] } });
     } else if (cmd.type === "compact") {
       out({ id: cmd.id, type: "response", command: "compact", success: true,
         data: { summary: "stub summary", tokensBefore: 50000, estimatedTokensAfter: 8000 } });
