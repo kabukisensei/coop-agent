@@ -30,7 +30,7 @@
  * Everything here is feature-detected and try/catch-wrapped so it can never crash pi.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -486,6 +486,146 @@ async function maybeOfferSetup(pi: ExtensionAPI, ctx: any): Promise<void> {
   else if (choice === "never") writeSkip(skipPath);
 }
 
+// --- "Start Here" menu (friendly front door) ---------------------------------
+// A guided menu of common Cooptimize tasks so a fresh session opens with clear
+// choices instead of a blank prompt — the #1 thing that intimidates non-terminal
+// users. STRICTLY ADDITIVE and OPT-OUTABLE: it only auto-opens on the initial
+// launch of an interactive session, ALWAYS offers "I'll type it myself" (one key
+// → the normal blank prompt), and can be turned off for good (a marker file, or
+// COOP_NO_START_MENU=1). Power users who live in the terminal lose nothing; the
+// menu is also available on demand via /start. Everything is best-effort so it
+// can never break a session.
+const START_MENU_OFF = "start-menu.off";
+const MENU_TITLE = "Welcome to coop 👋  What would you like to do?";
+const MENU_HELP = 'Pick an option — or choose "I\'ll type it myself" to just start chatting.';
+const TYPE_IT = "Something else — I'll type it myself";
+const DISABLE_MENU = "Don't show this automatically";
+
+/** Where to persist the "don't auto-open" preference. Prefer coop's isolated agent
+ *  dir (PI_CODING_AGENT_DIR — always set when launched via coop); fall back to a
+ *  dot-file in the home dir so bare-pi loads don't drop a visible file there. */
+function startMenuMarkerPath(): string {
+  const d = process.env.PI_CODING_AGENT_DIR;
+  if (d && d.trim()) return join(d, START_MENU_OFF);
+  return join(process.env.HOME || process.env.USERPROFILE || ".", `.coop-${START_MENU_OFF}`);
+}
+
+/** Power-user opt-out: the COOP_NO_START_MENU env var OR a persisted marker file. */
+export function startMenuDisabled(): boolean {
+  if (/^(1|true|yes|on)$/i.test(process.env.COOP_NO_START_MENU || "")) return true;
+  try {
+    return existsSync(startMenuMarkerPath());
+  } catch {
+    return false;
+  }
+}
+
+function disableStartMenu(ctx: any): void {
+  try {
+    writeFileSync(
+      startMenuMarkerPath(),
+      "coop: the Start Here menu won't auto-open. Delete this file to re-enable it. Run /start anytime to open it manually.\n",
+      "utf8",
+    );
+    notify(ctx, "Got it — the menu won't auto-open. Run /start anytime to bring it back.", "info");
+  } catch {
+    notify(ctx, "To disable the auto menu, set COOP_NO_START_MENU=1. Run /start anytime to open it.", "info");
+  }
+}
+
+interface MenuItem {
+  label: string;
+  run: (pi: ExtensionAPI, ctx: any) => Promise<void>;
+}
+
+/** "Document my data" choice: set up (no config), build (not built yet), else explore. */
+async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
+  const cwd: string = ctx.cwd;
+  const ymlPath = join(cwd, DATADOC_CONFIG);
+  if (!existsSync(ymlPath)) {
+    await runQuickSetup(pi, ctx, {});
+    return;
+  }
+  const cfg = parseExisting(safeRead(ymlPath));
+  const outAbs = resolveRel(cwd, cfg.outputDir || DEFAULT_OUTPUT_DIR);
+  if (!isBuilt(outAbs)) {
+    await runBuild(pi, ctx, cfg.outputDir);
+    return;
+  }
+  pi.sendUserMessage(
+    "Give me a plain-language tour of my data estate from the lineage docs: the main data sources, the key tables and semantic models, and how they flow downstream. Flag anything that looks undocumented or risky. Use the data_doc tool.",
+  );
+}
+
+/** The task menu — wired to tools/skills coop already ships. Each choice sends a
+ *  friendly, first-person request AS the user (the menu just pre-writes the prompt
+ *  a newcomer would otherwise have to compose); the agent then asks for specifics. */
+export function buildStartMenu(): MenuItem[] {
+  return [
+    { label: "📚  Document my data (SQL + Power BI lineage)", run: documentDataFlow },
+    {
+      label: "🔎  Review SQL against our standards",
+      run: async (pi) => {
+        pi.sendUserMessage(
+          "I'd like to review some T-SQL / Fabric Warehouse SQL against our Cooptimize standards. Ask me which file or folder to check, then run sql_review and summarize the findings by severity with file and line references.",
+        );
+      },
+    },
+    {
+      label: "📊  Review DAX or a semantic model",
+      run: async (pi) => {
+        pi.sendUserMessage(
+          "I'd like to review DAX / a semantic model against our Cooptimize standards. Ask me for the file or folder, then run dax_review and walk me through the findings by severity in plain language.",
+        );
+      },
+    },
+    {
+      label: "🧭  Impact check — what breaks if I change something?",
+      run: async (pi) => {
+        pi.sendUserMessage(
+          "Before I change something, I want to see its impact. Ask me which SQL object, table, measure, or semantic model I'm about to touch, then use the data_doc lineage to show me what's upstream and downstream and what could break.",
+        );
+      },
+    },
+    {
+      label: "🏛️  Review a Fabric workspace or architecture",
+      run: async (pi) => {
+        pi.sendUserMessage(
+          "Help me review a Microsoft Fabric workspace or data architecture against best practices. Ask me what to look at — a workspace, or the files in this folder — then walk me through what you find in plain language.",
+        );
+      },
+    },
+    {
+      label: "📝  Write my work log (daily or weekly)",
+      run: async (pi) => {
+        pi.sendUserMessage(
+          "Help me write my work log. Ask whether it's a daily or weekly entry, then help me capture what I worked on and turn it into a clean log entry.",
+        );
+      },
+    },
+  ];
+}
+
+/** Render the Start Here menu and dispatch the choice. `auto` = opened automatically
+ *  on launch (adds the "don't show automatically" opt-out); false = user ran /start. */
+async function showStartMenu(pi: ExtensionAPI, ctx: any, auto: boolean): Promise<void> {
+  if (typeof ctx?.ui?.select !== "function") {
+    if (!auto) notify(ctx, "This coop build has no menu UI here — just type what you'd like to do.", "info");
+    return;
+  }
+  const items = buildStartMenu();
+  const options = [...items.map((i) => i.label), TYPE_IT];
+  if (auto) options.push(DISABLE_MENU);
+  const choice = await ctx.ui.select(`${MENU_TITLE}\n${MENU_HELP}`, options);
+  if (!choice || choice === TYPE_IT) return; // Esc / dismiss / "type it myself" → normal blank prompt
+  if (choice === DISABLE_MENU) {
+    disableStartMenu(ctx);
+    return;
+  }
+  const item = items.find((i) => i.label === choice);
+  if (item) await item.run(pi, ctx);
+}
+
 export default function coopTools(pi: ExtensionAPI) {
   const runReview = async (
     bin: string,
@@ -644,19 +784,34 @@ export default function coopTools(pi: ExtensionAPI) {
     },
   });
 
-  // --- First-run data-doc setup (native dialogs; see file header) ---
-  // Track which folders we've already offered in THIS process — session_start
-  // re-fires on /new, /resume, /fork (and the cwd can change), so a single bool
-  // would silence every later session. Keyed by cwd instead.
-  const offeredCwds = new Set<string>();
-  pi.on("session_start", async (_event, ctx: ExtensionContext) => {
-    if (!ctx.hasUI || offeredCwds.has(ctx.cwd)) return;
-    offeredCwds.add(ctx.cwd);
+  // --- Fresh-session front door + first-run data-doc setup (native dialogs) ---
+  // Track folders handled in THIS process — session_start re-fires on /new,
+  // /resume, /fork (and the cwd can change), so a single bool would silence every
+  // later session. Keyed by cwd instead.
+  //
+  // On the INITIAL launch (reason "startup") of an interactive session we open the
+  // friendly Start Here menu, which also surfaces data-doc setup as a choice — so
+  // we don't ALSO stack the separate setup offer. On /resume, /fork, /reload, or
+  // when a power user has opted out of the menu, we skip it and keep the original
+  // proactive data-doc nudge exactly as before. Nothing here changes the terminal
+  // experience for people who just want to start typing.
+  const startedCwds = new Set<string>();
+  pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext) => {
+    if (!ctx.hasUI || startedCwds.has(ctx.cwd)) return;
+    startedCwds.add(ctx.cwd);
+    if (event?.reason === "startup" && !startMenuDisabled()) {
+      try {
+        await showStartMenu(pi, ctx, true);
+        return; // menu is the front door here; don't stack the setup offer on top
+      } catch {
+        // Interactive dialogs may not be safe at startup on every Pi build —
+        // breadcrumb, then fall through to the data-doc nudge so nothing is lost.
+        notify(ctx, "Type /start for a menu of common coop tasks.", "info");
+      }
+    }
     try {
       await maybeOfferSetup(pi, ctx);
     } catch {
-      // Interactive dialogs may not be safe at startup on every Pi build — degrade
-      // to a non-blocking breadcrumb instead of failing the session.
       notify(ctx, "No data docs for this folder — run /setup-docs to create SQL + Power BI lineage docs.", "info");
     }
   });
@@ -691,6 +846,17 @@ export default function coopTools(pi: ExtensionAPI) {
     } catch {
       return; // never break a turn
     }
+  });
+
+  pi.registerCommand("start", {
+    description: 'Open the coop "Start Here" menu of common tasks',
+    handler: async (_args, ctx) => {
+      try {
+        await showStartMenu(pi, ctx, false);
+      } catch (e: any) {
+        notify(ctx, `Couldn't open the menu: ${errMsg(e)}. Just type what you'd like to do.`, "error");
+      }
+    },
   });
 
   pi.registerCommand("setup-docs", {

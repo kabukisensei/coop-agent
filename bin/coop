@@ -63,6 +63,7 @@ ${COOP_BOLD}Usage${COOP_RST}
   coop update               Update Pi + Coop tools + vibes/skills, then run doctor
   coop install              Fresh-install / bootstrap everything (idempotent)
   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
+  coop web                  Open a friendly browser UI over the agent (experimental)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
@@ -110,20 +111,16 @@ coop_az_preflight() {
   fi
 }
 
-# --- Launch the branded Pi agent ---------------------------------------------
-launch_pi() {
-  have pi || coop_die "pi is not installed. Run: coop install   (or: npm install -g @earendil-works/pi-coding-agent)"
-
-  # Guard against launching into a known-broken extension load (agent/extension
-  # pi-ai skew). Aborts with instructions when the agent is too old; auto-realigns
-  # a merely-stale tree. Fast + read-only. Bypass with COOP_SKIP_EXT_CHECK=1.
-  coop_launch_preflight
-
-  coop_az_preflight
-
-  local args=()
+# --- Assemble the exact Pi launch spec (args + brand env) --------------------
+# SINGLE SOURCE OF TRUTH for how coop launches Pi. Both `launch_pi` (the terminal
+# agent) and `coop launch-spec` (JSON for a future UI / coop web bridge) consume
+# this, so the terminal and any other surface can NEVER drift. Populates the global
+# COOP_PI_ARGS array and exports the brand env (vibes/splash). PI_CODING_AGENT_DIR
+# (isolation) is exported at the top of this script. Read-only; never launches pi.
+coop_build_pi_args() {
+  COOP_PI_ARGS=()
   # Governance system prompt (read-only-first guardrails). Appended, not replaced.
-  [ -f "$COOP_ROOT/docs/guardrails.md" ] && args+=(--append-system-prompt "$COOP_ROOT/docs/guardrails.md")
+  [ -f "$COOP_ROOT/docs/guardrails.md" ] && COOP_PI_ARGS+=(--append-system-prompt "$COOP_ROOT/docs/guardrails.md")
   # Cooptimize skills — load each skill folder individually. The official Microsoft
   # drop-in slot (skills/_microsoft/) is SUBORDINATE: a Microsoft skill is surfaced
   # only if it is (a) named in microsoft_skills.allow[] in .coop/project.yml AND
@@ -136,7 +133,7 @@ launch_pi() {
       name="$(basename "$d")"
       [ "$name" = "_microsoft" ] && continue
       [ -f "${d}SKILL.md" ] || continue
-      args+=(--skill "$d")
+      COOP_PI_ARGS+=(--skill "$d")
       own_names="$own_names$name "
       fm="$(coop_skill_name "${d}SKILL.md")"
       [ -n "$fm" ] && own_names="$own_names$fm "
@@ -153,24 +150,84 @@ launch_pi() {
         if [ -n "$fm" ]; then
           case "$own_names" in *" $fm "*) coop_warn "skipping Microsoft skill '$allow' (name '$fm' conflicts with a Cooptimize skill)"; continue ;; esac
         fi
-        args+=(--skill "$COOP_ROOT/skills/_microsoft/$allow")
+        COOP_PI_ARGS+=(--skill "$COOP_ROOT/skills/_microsoft/$allow")
       done <<EOF
 $(coop_yaml_list "$proj" "microsoft_skills.allow")
 EOF
     fi
   fi
-  [ -d "$COOP_ROOT/prompts" ]  && args+=(--prompt-template "$COOP_ROOT/prompts")
-  [ -f "$COOP_ROOT/themes/cooptimize.json" ] && args+=(--theme "$COOP_ROOT/themes/cooptimize.json")
+  [ -d "$COOP_ROOT/prompts" ]  && COOP_PI_ARGS+=(--prompt-template "$COOP_ROOT/prompts")
+  [ -f "$COOP_ROOT/themes/cooptimize.json" ] && COOP_PI_ARGS+=(--theme "$COOP_ROOT/themes/cooptimize.json")
   # Cooptimize companion extensions: branding/splash/vibes, and native review tools.
-  [ -e "$COOP_ROOT/extensions/coop-powerline" ]  && args+=(-e "$COOP_ROOT/extensions/coop-powerline")
-  [ -e "$COOP_ROOT/extensions/coop-tools" ]      && args+=(-e "$COOP_ROOT/extensions/coop-tools")
-  [ -e "$COOP_ROOT/extensions/coop-guardrails" ] && args+=(-e "$COOP_ROOT/extensions/coop-guardrails")
+  [ -e "$COOP_ROOT/extensions/coop-powerline" ]  && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-powerline")
+  [ -e "$COOP_ROOT/extensions/coop-tools" ]      && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-tools")
+  [ -e "$COOP_ROOT/extensions/coop-guardrails" ] && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-guardrails")
   # Point the extension at our vibe files and brand splash.
   export COOP_VIBES_DIR="$COOP_ROOT/vibes"
   export COOP_SPLASH_FILE="$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi"
-  # PI_CODING_AGENT_DIR (isolation) is already exported at the top of this script.
+}
 
-  exec pi ${args[@]+"${args[@]}"} "$@"
+# --- Launch the branded Pi agent ---------------------------------------------
+launch_pi() {
+  have pi || coop_die "pi is not installed. Run: coop install   (or: npm install -g @earendil-works/pi-coding-agent)"
+
+  # Guard against launching into a known-broken extension load (agent/extension
+  # pi-ai skew). Aborts with instructions when the agent is too old; auto-realigns
+  # a merely-stale tree. Fast + read-only. Bypass with COOP_SKIP_EXT_CHECK=1.
+  coop_launch_preflight
+
+  coop_az_preflight
+
+  coop_build_pi_args
+  exec pi ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} "$@"
+}
+
+# --- Emit the launch spec (for a UI / coop web bridge) -----------------------
+# Internal/advanced. `coop launch-spec` prints the resolved pi invocation
+# (human-readable); `--json` emits {"bin","args","env"} for a programmatic consumer
+# — e.g. a future coop web bridge that spawns `pi --mode rpc` with the SAME governed
+# spec the terminal uses. Read-only: builds the spec, never launches pi.
+coop_launch_spec() {
+  local want_json=0 a
+  for a in "$@"; do [ "$a" = "--json" ] && want_json=1; done
+  coop_build_pi_args
+  if [ "$want_json" = "1" ]; then
+    local py; py="$(coop_python)" || coop_die "python3 is required for: coop launch-spec --json"
+    COOP_LS_AGENT_DIR="${PI_CODING_AGENT_DIR:-}" \
+    COOP_LS_VIBES="${COOP_VIBES_DIR:-}" \
+    COOP_LS_SPLASH="${COOP_SPLASH_FILE:-}" \
+    "$py" - ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} <<'PY'
+import json, os, sys
+env = {}
+for out_key, src_key in (("PI_CODING_AGENT_DIR", "COOP_LS_AGENT_DIR"),
+                         ("COOP_VIBES_DIR", "COOP_LS_VIBES"),
+                         ("COOP_SPLASH_FILE", "COOP_LS_SPLASH")):
+    val = os.environ.get(src_key, "")
+    if val:
+        env[out_key] = val
+print(json.dumps({"bin": "pi", "args": sys.argv[1:], "env": env}, indent=2))
+PY
+  else
+    printf 'pi'
+    local x
+    for x in ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"}; do printf ' %q' "$x"; done
+    printf '\n'
+  fi
+}
+
+# --- coop web (experimental): friendly browser UI over `pi --mode rpc` --------
+# Spawns the SAME governed coop the terminal runs, but drives it from a local
+# browser window (SSE bridge). Uses the shared launch spec so it can never drift
+# from the terminal. Localhost + one-time token; see web/server.mjs and
+# docs/coop-web-plan.md.
+coop_web() {
+  have pi   || coop_die "pi is not installed. Run: coop install"
+  have node || coop_die "Node.js is required for coop web. Run: coop install"
+  coop_launch_preflight
+  coop_az_preflight   # same Fabric/Power BI token check the terminal launch does
+  local spec
+  spec="$(coop_launch_spec --json)" || coop_die "couldn't build the launch spec for coop web"
+  COOP_LAUNCH_SPEC="$spec" exec node "$COOP_ROOT/web/server.mjs" "$@"
 }
 
 # --- Tool passthrough --------------------------------------------------------
@@ -450,6 +507,8 @@ case "$cmd" in
     exec pi install "$@"
     ;;
   sync)          shift; exec "$COOP_ROOT/scripts/sync.sh" "$@" ;;
+  web)           shift; coop_web "$@" ;;
+  launch-spec)   shift; coop_launch_spec "$@" ;;
   init)          shift; coop_init "$@" ;;
   new-skill)     shift; coop_new_skill "$@" ;;
   new-prompt)    shift; coop_new_prompt "$@" ;;

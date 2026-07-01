@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>coop</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <span class="mark"></span>
+    <b>coop</b><span class="tag">Cooptimize agent</span>
+    <span class="status"><span class="dot" id="dot"></span><span id="statusText">ready</span></span>
+  </header>
+
+  <div id="scroll"><div id="transcript"></div></div>
+  <div id="toasts"></div>
+
+  <footer>
+    <div class="composer">
+      <textarea id="input" rows="1" placeholder="Ask coop anything…  (Enter to send, Shift+Enter for a new line)"></textarea>
+      <button id="stop" class="stop" hidden>Stop</button>
+      <button id="send">Send</button>
+    </div>
+  </footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

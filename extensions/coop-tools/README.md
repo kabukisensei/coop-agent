@@ -13,11 +13,46 @@ result, and returns it as structured `details` on the tool result so the model
 can reason over it. All three are **advisory / read-only**: they report
 findings or build documentation, but they never edit source.
 
-It also adds a **first-run setup** for `coop-data-doc` (the `/setup-docs` command
-and a startup offer) so lineage docs can be established without leaving the
-agent, and a **native lineage announcement** that points the agent at built docs
-before it touches an object — see [Data-doc setup](#data-doc-setup-setup-docs)
-and [Lineage awareness](#lineage-awareness-before_agent_start) below.
+It also adds a friendly **Start Here menu** (the `/start` command, plus an
+auto-open on a fresh session) so newcomers get guided choices instead of a blank
+prompt, a **first-run setup** for `coop-data-doc` (the `/setup-docs` command and a
+startup offer) so lineage docs can be established without leaving the agent, and a
+**native lineage announcement** that points the agent at built docs before it
+touches an object — see [Start Here menu](#start-here-menu-start),
+[Data-doc setup](#data-doc-setup-setup-docs) and
+[Lineage awareness](#lineage-awareness-before_agent_start) below.
+
+## Start Here menu (`/start`)
+
+A guided menu of common Cooptimize tasks so a fresh session opens with clear
+choices instead of a blank prompt — the thing that most intimidates people who
+aren't at home in a terminal. Each choice sends a friendly, first-person request
+**as you** (the menu just pre-writes the prompt a newcomer would otherwise have to
+compose); the agent then asks for specifics. The *Document my data* choice routes
+into the `/setup-docs` wizard (or a build) when needed. Choices are wired to the
+tools/skills coop already ships: SQL review, DAX review, impact/lineage, Fabric
+workspace/architecture review, and work logs.
+
+**Strictly additive and opt-outable — power users lose nothing:**
+
+- **`/start`** opens the menu on demand, anytime.
+- It **auto-opens only on the initial launch** of an interactive session (reason
+  `startup`) — never on `/new`, `/resume`, `/fork`, or `/reload`. (Note: launching
+  with `coop -c` / `--continue` counts as an initial launch, so the menu appears
+  over the continued session too — one keypress dismisses it, or disable auto-open.)
+- Every menu always offers **"Something else — I'll type it myself"** (one key →
+  the normal blank prompt), and when auto-opened also **"Don't show this
+  automatically"**.
+- Turn it off for good with `COOP_NO_START_MENU=1`, or the `start-menu.off` marker
+  (written in the coop agent dir when you pick *Don't show this automatically*).
+- On the initial launch the menu is the front door, so it **replaces** the
+  separate data-doc startup offer for that session (the menu surfaces data-doc
+  setup as a choice). On `/resume` / `/fork` / `/reload`, the original data-doc
+  offer still fires exactly as before.
+
+It requires dialog-capable UI (`ctx.hasUI`), degrades to a one-line breadcrumb
+("Type /start …") when dialogs aren't available, and is wrapped so it can never
+break a session.
 
 ## Tools
 

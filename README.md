@@ -111,6 +111,21 @@ cd coop-agent
 found yet, **open a new terminal** — the persistent PATH change only applies to
 shells started after the install.
 
+It also creates a **double-click `coop` launcher** on the **Start Menu and
+Desktop** (Windows), so members who aren't comfortable in a terminal can open coop
+by clicking an icon — it finds/installs coop, runs it, and keeps the window open
+if anything goes wrong. This is purely additive: running `coop` in any terminal is
+unchanged. On first launch, coop greets you with a **Start Here menu** of common
+tasks (or run `/start` anytime); power users can dismiss it with one key or turn it
+off with `COOP_NO_START_MENU=1`.
+
+**No-terminal first-time setup (for non-technical members).** Hand them the
+`coop-agent` folder (a zip or a shared drive) and have them double-click
+**`Install coop.cmd`** in it. That runs the same `coop install` for them — no
+terminal, no commands — and when it finishes they'll have the coop icon to
+double-click. Power users keep using `.\bin\coop.ps1 install` exactly as above;
+`Install coop.cmd` just wraps it with a friendly window and a pause at the end.
+
 ### Manual install (any platform)
 
 If you prefer to install the pieces yourself, the bootstrap is equivalent to:
