@@ -113,7 +113,8 @@ put a bash-capable agent on the network.
 
 - Replay history is bounded (~4000 events); very long sessions truncate the
   rebuilt transcript (newest events win).
-- One session per server process; `/new`, `/resume`, model switching, and session
-  naming aren't surfaced in the UI yet.
+- One conversation at a time: New chat, model switching, thinking level, compact,
+  and folder switching are in the toolbar/header, but resuming a *previous*
+  session isn't surfaced yet.
 - Thinking blocks and image attachments are not rendered.
 - Tested against the RPC protocol of Pi 0.80.x.

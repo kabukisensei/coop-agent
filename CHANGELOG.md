@@ -7,6 +7,26 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [0.7.0] — 2026-07-01
 
+### Added
+
+- **Clickable working folder in `coop web`** — the folder shown in the chat
+  header is now a button: click it, paste a path (File Explorer address-bar
+  friendly), and the bridge **restarts the governed agent in that folder** with a
+  fresh conversation — so tools, lineage docs, and the header always agree.
+  Rejects folders that don't exist with a friendly message.
+
+### Fixed
+
+- **"I asked coop to `cd` but the folder at the top didn't change"** — asking the
+  agent to change directories in chat only moves its *shell*; coop's native tools
+  (`sql_review`, `data_doc` lineage, config detection) keep operating in the
+  session's working folder, which is what the header truthfully shows. The new
+  folder button is the correct way to move coop (documented in `web/README.md`).
+  Internally the bridge now uses a restartable pi child (generation-checked exit,
+  per-child stream buffers, fast-failing in-flight toolbar calls) so a folder
+  switch can't kill the server or bleed a replaced child's output into the new
+  stream.
+
 ## [0.6.0] — 2026-07-01
 
 ### Added
