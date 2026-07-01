@@ -117,6 +117,21 @@ const answeredUi = new Set();
 const sseClients = new Set();
 let busy = false; // agent streaming? (chooses prompt vs steer)
 
+// --- RPC command relay (toolbar: new chat, model picker, thinking, compact) ----
+// POST /rpc sends ONE whitelisted pi RPC command and returns pi's correlated
+// response. Claimed responses are request-scoped: they are neither recorded in
+// history nor broadcast to the event stream.
+const RPC_ALLOWED = new Set([
+  "new_session",
+  "get_state",
+  "get_available_models",
+  "set_model",
+  "set_thinking_level",
+  "compact",
+]);
+let rpcSeq = 0;
+const pendingRpc = new Map(); // id -> { resolve, timer }
+
 function record(line, evt) {
   const entry = { line };
   if (evt.type === "extension_ui_request") {
@@ -179,6 +194,18 @@ pi.stdout.on("data", (chunk) => {
       evt = JSON.parse(line);
     } catch {
       continue; // ignore any non-JSON noise on stdout
+    }
+    if (evt.type === "response") {
+      const waiter = evt.id !== undefined ? pendingRpc.get(evt.id) : undefined;
+      if (waiter) {
+        // Claimed by a /rpc call: request-scoped, never recorded or broadcast.
+        pendingRpc.delete(evt.id);
+        clearTimeout(waiter.timer);
+        waiter.resolve(evt);
+      } else {
+        broadcast(line); // e.g. a rejected prompt — live only, meaningless on replay
+      }
+      continue;
     }
     if (evt.type === "agent_start") busy = true;
     if (evt.type === "agent_end") busy = false;
@@ -377,6 +404,45 @@ async function handle(req, res) {
         sendToPi(reply);
       }
       res.writeHead(200, baseHeaders("application/json")).end(`{"ok":true}`);
+      return;
+    }
+
+    if (url.pathname === "/rpc") {
+      const body = await readJson(req);
+      const type = body && body.type;
+      if (!type || !RPC_ALLOWED.has(type)) {
+        res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "command not allowed" }));
+        return;
+      }
+      const id = `web-${++rpcSeq}`;
+      const cmd = { id, type };
+      if (type === "set_model") {
+        cmd.provider = String(body.provider || "");
+        cmd.modelId = String(body.modelId || "");
+      }
+      if (type === "set_thinking_level") cmd.level = String(body.level || "medium");
+      if (type === "compact" && body.customInstructions) cmd.customInstructions = String(body.customInstructions);
+      const reply = await new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          pendingRpc.delete(id);
+          resolve(null);
+        }, 30000);
+        pendingRpc.set(id, { resolve, timer });
+        sendToPi(cmd);
+      });
+      if (!reply) {
+        res.writeHead(504, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "pi did not answer in time" }));
+        return;
+      }
+      if (type === "new_session" && reply.success && !(reply.data && reply.data.cancelled)) {
+        // The old session's events are meaningless now: reset the replay buffer
+        // and tell every connected client to start a fresh transcript.
+        history.length = 0;
+        historyBase = 0;
+        answeredUi.clear();
+        broadcast(JSON.stringify({ type: "__hello", replay: 0, cwd: CWD }));
+      }
+      res.writeHead(200, baseHeaders("application/json")).end(JSON.stringify(reply));
       return;
     }
 

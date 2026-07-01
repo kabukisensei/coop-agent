@@ -274,8 +274,11 @@ function handle(evt) {
       break;
     }
     case "extension_ui_request":
-      if (evt.method === "notify") toast(evt.message || "", evt.notifyType || "info");
-      else if (["select", "confirm", "input", "editor"].includes(evt.method)) uiCard(evt);
+      if (evt.method === "notify") {
+        // Usage snapshots (pi-better-openai's /openai-usage) render as the header
+        // meter instead of a toast; everything else stays a toast.
+        if (!maybeUsage(evt.message || "")) toast(evt.message || "", evt.notifyType || "info");
+      } else if (["select", "confirm", "input", "editor"].includes(evt.method)) uiCard(evt);
       // setStatus/setWidget/setTitle: not rendered
       break;
     case "response":
@@ -349,6 +352,173 @@ function switchToPolling() {
   tick();
 }
 
+// --- toolbar: new chat, model picker, thinking level, compact ------------------
+async function rpc(body) {
+  const res = await fetch("/rpc", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-coop-csrf": "1" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`/rpc ${body.type} -> ${res.status}`);
+  return res.json();
+}
+
+const modelChip = $("#modelChip"), thinkChip = $("#thinkChip");
+const THINK_LEVELS = ["off", "minimal", "low", "medium", "high"];
+let currentThink = "medium";
+
+function shortModel(m) {
+  const label = (m && (m.name || m.id)) || "model…";
+  return label.length > 26 ? label.slice(0, 25) + "…" : label;
+}
+function setModelChip(m) {
+  modelChip.textContent = shortModel(m);
+  if (m) modelChip.title = `Model: ${m.id || ""} (${m.provider || ""}) — click to change`;
+}
+function setThinkChip(level) {
+  if (level) currentThink = level;
+  thinkChip.textContent = `🧠 ${currentThink}`;
+}
+
+async function refreshState() {
+  try {
+    const st = await rpc({ type: "get_state" });
+    const d = (st && st.data) || {};
+    setModelChip(d.model);
+    setThinkChip(d.thinkingLevel);
+    startUsagePolling(d.model);
+  } catch {
+    /* toolbar stays generic — chat still works */
+  }
+}
+
+$("#newChat").onclick = async () => {
+  try {
+    const r = await rpc({ type: "new_session" });
+    if (r && r.data && r.data.cancelled) toast("New chat was cancelled.");
+    // On success the server resets history and broadcasts a fresh __hello,
+    // which clears this transcript.
+  } catch {
+    toast("Couldn't start a new chat — is coop web still running?", "error");
+  }
+};
+
+modelChip.onclick = async () => {
+  let models = [];
+  try {
+    const r = await rpc({ type: "get_available_models" });
+    models = (r && r.data && r.data.models) || [];
+  } catch {
+    toast("Couldn't list models.", "error");
+    return;
+  }
+  if (!models.length) {
+    toast("No other models are configured.");
+    return;
+  }
+  const was = atBottom();
+  const card = document.createElement("div");
+  card.className = "card";
+  const title = document.createElement("h3");
+  title.textContent = "Choose a model";
+  card.appendChild(title);
+  // With hundreds of configured models, a type-to-filter box is essential.
+  const filter = document.createElement("input");
+  filter.placeholder = `Filter ${models.length} models…`;
+  filter.addEventListener("input", () => {
+    const q = filter.value.trim().toLowerCase();
+    for (const b of row.children) {
+      b.hidden = q !== "" && !b.textContent.toLowerCase().includes(q);
+    }
+  });
+  card.appendChild(filter);
+  const row = document.createElement("div");
+  row.className = "row list";
+  const closeRow = document.createElement("div");
+  closeRow.className = "row";
+  const done = () => card.remove();
+  for (const m of models) {
+    const btn = document.createElement("button");
+    btn.textContent = m.name || m.id;
+    const prov = document.createElement("span");
+    prov.className = "prov";
+    prov.textContent = m.provider || "";
+    btn.appendChild(prov);
+    btn.onclick = async () => {
+      try {
+        const r = await rpc({ type: "set_model", provider: m.provider, modelId: m.id });
+        setModelChip((r && r.data) || m);
+        toast(`Model set to ${m.name || m.id}.`);
+      } catch {
+        toast("Couldn't switch model.", "error");
+      }
+      done();
+    };
+    row.appendChild(btn);
+  }
+  const cancel = document.createElement("button");
+  cancel.className = "ghost";
+  cancel.textContent = "Cancel";
+  cancel.onclick = done;
+  closeRow.appendChild(cancel);
+  card.append(row, closeRow);
+  transcript.appendChild(card);
+  filter.focus();
+  stick(was);
+};
+
+thinkChip.onclick = async () => {
+  const next = THINK_LEVELS[(THINK_LEVELS.indexOf(currentThink) + 1) % THINK_LEVELS.length];
+  try {
+    await rpc({ type: "set_thinking_level", level: next });
+    setThinkChip(next);
+  } catch {
+    toast("Couldn't change the thinking level.", "error");
+  }
+};
+
+$("#compactBtn").onclick = async () => {
+  toast("Compacting the conversation…");
+  try {
+    const r = await rpc({ type: "compact" });
+    const d = (r && r.data) || {};
+    toast(d.tokensBefore ? `Compacted: ~${Math.round(d.tokensBefore / 1000)}k → ~${Math.round((d.estimatedTokensAfter || 0) / 1000)}k tokens.` : "Compacted.");
+  } catch {
+    toast("Compaction failed or timed out.", "error");
+  }
+};
+
+// --- usage meter (pi-better-openai subscription snapshot) -----------------------
+// The extension's footer meter is TUI-only, but its /openai-usage command reports
+// the same snapshot via notify ("Usage: 5h: 62% | 7d: 81% | …"). We poll it and
+// render the header meter (values are % LEFT in each window).
+const usageEl = $("#usage"), usageText = $("#usageText");
+const bar5 = $("#bar5"), bar7 = $("#bar7");
+let usagePolling = false;
+
+function maybeUsage(text) {
+  if (!/^Usage:\s*5h:/i.test(text)) return false;
+  const m5 = /5h:\s*([\d.]+)%/i.exec(text);
+  const m7 = /7d:\s*([\d.]+)%/i.exec(text);
+  usageEl.hidden = false;
+  usageText.textContent = [m5 && `5h ${m5[1]}%`, m7 && `7d ${m7[1]}%`].filter(Boolean).join(" · ") || "usage";
+  usageEl.querySelector(".meter").title = text + "  (percent remaining)";
+  if (m5) bar5.style.width = Math.min(100, Number(m5[1])) + "%";
+  if (m7) bar7.style.width = Math.min(100, Number(m7[1])) + "%";
+  return true;
+}
+
+function startUsagePolling(model) {
+  // Only when an OpenAI-family model is active — the /openai-usage command comes
+  // from pi-better-openai, which coop installs alongside it.
+  const sig = `${(model && model.provider) || ""} ${(model && model.id) || ""}`;
+  if (usagePolling || !/openai|codex/i.test(sig)) return;
+  usagePolling = true;
+  const ask = () => post("/prompt", { message: "/openai-usage" }).catch(() => { /* retry next tick */ });
+  ask();
+  setInterval(ask, 120000);
+}
+
 const input = $("#input");
 async function send() {
   const message = input.value.trim();
@@ -376,3 +546,4 @@ input.addEventListener("keydown", (e) => {
 input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 180) + "px"; });
 
 connect();
+refreshState();

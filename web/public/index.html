@@ -10,6 +10,16 @@
   <header>
     <span class="mark"></span>
     <b>coop</b><span class="tag" id="cwd">Cooptimize agent</span>
+    <nav class="toolbar">
+      <button id="newChat" class="chip" title="Start a fresh conversation">＋ New chat</button>
+      <button id="modelChip" class="chip" title="Change model">model…</button>
+      <button id="thinkChip" class="chip" title="Thinking effort (click to change)">🧠 …</button>
+      <button id="compactBtn" class="chip" title="Compact the conversation to free up memory">♻ Compact</button>
+    </nav>
+    <span class="usage" id="usage" hidden>
+      <span class="meter" title=""><span class="bar"><i id="bar5"></i></span><span class="bar"><i id="bar7"></i></span></span>
+      <span id="usageText"></span>
+    </span>
     <span class="status"><span class="dot" id="dot"></span><span id="statusText">ready</span></span>
   </header>
 

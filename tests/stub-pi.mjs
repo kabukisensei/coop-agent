@@ -36,6 +36,22 @@ process.stdin.on("data", (chunk) => {
     } else if (cmd.type === "abort") {
       out({ type: "response", command: "abort", success: true });
       out({ type: "agent_end", messages: [] });
+    } else if (cmd.type === "get_state") {
+      out({ id: cmd.id, type: "response", command: "get_state", success: true,
+        data: { model: { id: "stub-1", provider: "stub", name: "Stub One" }, thinkingLevel: "medium", isStreaming: false } });
+    } else if (cmd.type === "get_available_models") {
+      out({ id: cmd.id, type: "response", command: "get_available_models", success: true,
+        data: { models: [ { id: "stub-1", provider: "stub", name: "Stub One" }, { id: "stub-2", provider: "stub", name: "Stub Two" } ] } });
+    } else if (cmd.type === "set_model") {
+      out({ id: cmd.id, type: "response", command: "set_model", success: true,
+        data: { id: cmd.modelId, provider: cmd.provider, name: cmd.modelId } });
+    } else if (cmd.type === "set_thinking_level") {
+      out({ id: cmd.id, type: "response", command: "set_thinking_level", success: true });
+    } else if (cmd.type === "new_session") {
+      out({ id: cmd.id, type: "response", command: "new_session", success: true, data: { cancelled: false } });
+    } else if (cmd.type === "compact") {
+      out({ id: cmd.id, type: "response", command: "compact", success: true,
+        data: { summary: "stub summary", tokensBefore: 50000, estimatedTokensAfter: 8000 } });
     }
   }
 });

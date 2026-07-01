@@ -5,6 +5,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`coop web` toolbar** — the chat header gains **＋ New chat**, a **model
+  picker** (type-to-filter across every configured model), a **🧠 thinking-level**
+  chip (click to cycle), and **♻ Compact** (reports before/after tokens). Powered
+  by a new whitelisted **`/rpc` relay** in the bridge that correlates pi's RPC
+  responses to requests (claimed responses are request-scoped: never recorded in
+  replay history or broadcast). Starting a new chat resets the replay buffer and
+  every connected window.
+- **`coop web` usage meter** — when an OpenAI/Codex model is active, the header
+  shows the `pi-better-openai` subscription snapshot (percent **remaining** in
+  the 5h and 7d windows) as brand-styled mini bars + text, refreshed every two
+  minutes via the extension's `/openai-usage` command (its TUI footer meter
+  doesn't cross RPC; this is the same data by another path). Hover for reset
+  times. Usage notifications render as the meter instead of toasts.
+
 ## [0.5.2] — 2026-07-01
 
 ### Added

@@ -155,6 +155,34 @@ r = await fetch(base + `/events-poll?since=${cursor}`, { headers: { cookie } });
 poll = await r.json();
 t("incremental poll returns only new events", poll.events.some((l) => l.includes("polo:again")) && !poll.events.some((l) => l.includes("polo:marco")));
 
+// --- /rpc relay (toolbar commands) --------------------------------------------
+r = await fetch(base + "/rpc", {
+  method: "POST",
+  headers: { cookie, "content-type": "application/json", "x-coop-csrf": "1" },
+  body: JSON.stringify({ type: "prompt", message: "sneaky" }),
+});
+t("/rpc rejects non-whitelisted commands", r.status === 400);
+
+r = await post("/rpc", { type: "get_state" });
+t("/rpc get_state -> 200", r.status === 200);
+let state = await r.json();
+t("get_state response correlated (model returned)", state.success === true && state.data.model.id === "stub-1");
+
+r = await fetch(base + `/events-poll?since=0`, { headers: { cookie } });
+poll = await r.json();
+t("claimed rpc responses are NOT recorded in history", !poll.events.some((l) => l.includes('"command":"get_state"')));
+
+r = await post("/rpc", { type: "set_model", provider: "stub", modelId: "stub-2" });
+state = await r.json();
+t("/rpc set_model round-trips", state.success === true && state.data.id === "stub-2");
+
+r = await post("/rpc", { type: "new_session" });
+state = await r.json();
+t("/rpc new_session -> success", state.success === true && state.data.cancelled === false);
+r = await fetch(base + `/events-poll?since=0`, { headers: { cookie } });
+poll = await r.json();
+t("new_session resets the replay history", poll.next === 0 && poll.events.length === 0);
+
 server.kill();
 console.log(`  ${n} web-bridge tests passed`);
 process.exit(0);

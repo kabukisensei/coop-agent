@@ -57,6 +57,21 @@ Browser (Edge app-mode)  ⇄  web/server.mjs  ⇄  pi --mode rpc -a  (the real c
   transcript. Already-answered dialog cards and transient toasts are not
   replayed. User bubbles render only from the event stream (single source of
   truth), so replays never duplicate.
+- **Header toolbar** — **＋ New chat** (fresh session; the transcript resets),
+  a **model picker** (type-to-filter across every configured model), a
+  **🧠 thinking-level** chip (click to cycle off → minimal → low → medium → high),
+  and **♻ Compact** (frees context; reports before/after tokens). These drive
+  pi's own RPC commands through a whitelisted `/rpc` relay.
+- **Usage meter** — when an OpenAI/Codex model is active, the header shows the
+  `pi-better-openai` subscription snapshot (percent **remaining** in the 5-hour
+  and 7-day windows) as two mini bars + text, refreshed every 2 minutes via the
+  extension's `/openai-usage` command. Hover for reset times. (The extension's
+  TUI footer meter doesn't cross RPC; this is the same data by another path.)
+- **Slash commands typed in the chat box**: extension commands (`/start`,
+  `/setup-docs`, `/openai-usage`) execute immediately; prompt templates
+  (`/discovery`, `/impact-analysis`, …) and `/skill:<name>` expand before
+  sending. Pi's built-in TUI commands (`/model`, `/new`, `/compact`) are covered
+  by the toolbar instead.
 - **Polling fallback**: if the SSE stream never opens (some corporate
   proxies/endpoint protection buffer or block streaming responses, even on
   loopback), the page automatically falls back to polling `/events-poll` every
