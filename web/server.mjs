@@ -21,7 +21,7 @@ import { spawn } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -34,7 +34,8 @@ let PORT = Number(getArg("--port", process.env.COOP_WEB_PORT || "7420"));
 const HOST = "127.0.0.1";
 const TOKEN = randomBytes(16).toString("hex");
 // Working folder for the agent: --cwd <dir>, else wherever `coop web` was run.
-const CWD = getArg("--cwd", process.cwd());
+// Mutable: POST /chdir restarts the governed pi child in a new folder.
+let CWD = getArg("--cwd", process.cwd());
 
 // --- Resolve the governed launch spec ---------------------------------------
 let spec;
@@ -86,15 +87,39 @@ function spawnPi() {
   return spawn(bin, args, { env, cwd: CWD, stdio: ["pipe", "pipe", "pipe"] });
 }
 
-const pi = spawnPi();
-pi.on("error", (e) => {
-  console.error("coop web: failed to start pi:", e.message);
-  process.exit(1);
-});
-pi.on("exit", (code) => {
-  console.error(`coop web: pi exited (${code}). Shutting down.`);
-  process.exit(code || 0);
-});
+let pi; // current child — reassigned by restartPi(); handlers generation-check it
+
+function wirePi(child) {
+  child.on("error", (e) => {
+    console.error("coop web: failed to start pi:", e.message);
+    if (child === pi) process.exit(1);
+  });
+  child.on("exit", (code) => {
+    if (child !== pi) return; // an old child we intentionally replaced — ignore
+    console.error(`coop web: pi exited (${code}). Shutting down.`);
+    process.exit(code || 0);
+  });
+  // Strict \n-only JSONL parse, buffered PER CHILD (a replaced child's partial
+  // line must never bleed into the new one's stream).
+  let buf = "";
+  child.stdout.on("data", (chunk) => {
+    if (child !== pi) return;
+    buf += chunk.toString("utf8");
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      let line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      if (line.endsWith("\r")) line = line.slice(0, -1); // tolerate CRLF input
+      if (!line.trim()) continue;
+      handlePiLine(line);
+    }
+  });
+  child.stderr.on("data", (c) => process.stderr.write(c)); // pi diagnostics -> our console
+  child.stdin.on("error", (e) => console.error("coop web: pi stdin error:", e.message));
+}
+
+pi = spawnPi();
+wirePi(pi);
 
 // Write one JSONL command to Pi's stdin (LF-terminated, per the RPC contract).
 function sendToPi(obj) {
@@ -179,42 +204,53 @@ setInterval(() => {
   }
 }, 15000).unref();
 
-// --- Parse Pi's stdout as strict JSONL (\n only — NOT a generic line reader) --
-let stdoutBuf = "";
-pi.stdout.on("data", (chunk) => {
-  stdoutBuf += chunk.toString("utf8");
-  let nl;
-  while ((nl = stdoutBuf.indexOf("\n")) >= 0) {
-    let line = stdoutBuf.slice(0, nl);
-    stdoutBuf = stdoutBuf.slice(nl + 1);
-    if (line.endsWith("\r")) line = line.slice(0, -1); // tolerate CRLF input
-    if (!line.trim()) continue;
-    let evt;
-    try {
-      evt = JSON.parse(line);
-    } catch {
-      continue; // ignore any non-JSON noise on stdout
-    }
-    if (evt.type === "response") {
-      const waiter = evt.id !== undefined ? pendingRpc.get(evt.id) : undefined;
-      if (waiter) {
-        // Claimed by a /rpc call: request-scoped, never recorded or broadcast.
-        pendingRpc.delete(evt.id);
-        clearTimeout(waiter.timer);
-        waiter.resolve(evt);
-      } else {
-        broadcast(line); // e.g. a rejected prompt — live only, meaningless on replay
-      }
-      continue;
-    }
-    if (evt.type === "agent_start") busy = true;
-    if (evt.type === "agent_end") busy = false;
-    record(line, evt);
-    broadcast(line); // forward the raw JSON line verbatim
+// One parsed line from the CURRENT pi child (called by wirePi's stream reader).
+function handlePiLine(line) {
+  let evt;
+  try {
+    evt = JSON.parse(line);
+  } catch {
+    return; // ignore any non-JSON noise on stdout
   }
-});
-pi.stderr.on("data", (c) => process.stderr.write(c)); // pi diagnostics -> our console
-pi.stdin.on("error", (e) => console.error("coop web: pi stdin error:", e.message)); // don't crash on async write errors
+  if (evt.type === "response") {
+    const waiter = evt.id !== undefined ? pendingRpc.get(evt.id) : undefined;
+    if (waiter) {
+      // Claimed by a /rpc call: request-scoped, never recorded or broadcast.
+      pendingRpc.delete(evt.id);
+      clearTimeout(waiter.timer);
+      waiter.resolve(evt);
+    } else {
+      broadcast(line); // e.g. a rejected prompt — live only, meaningless on replay
+    }
+    return;
+  }
+  if (evt.type === "agent_start") busy = true;
+  if (evt.type === "agent_end") busy = false;
+  record(line, evt);
+  broadcast(line); // forward the raw JSON line verbatim
+}
+
+// Restart the governed pi in a new working folder: fresh session, tools, and
+// data-doc detection all consistent with the header. The old child's exit is
+// ignored via the generation check in wirePi.
+function restartPi(newCwd) {
+  CWD = newCwd;
+  const old = pi;
+  pi = null; // generation check: old child's events/exit are ignored from here
+  try { old.kill(); } catch { /* already gone */ }
+  for (const [id, waiter] of pendingRpc) {
+    clearTimeout(waiter.timer);
+    waiter.resolve(null); // fail pending toolbar calls fast instead of timing out
+    pendingRpc.delete(id);
+  }
+  busy = false;
+  history.length = 0;
+  historyBase = 0;
+  answeredUi.clear();
+  pi = spawnPi();
+  wirePi(pi);
+  broadcast(JSON.stringify({ type: "__hello", replay: 0, cwd: CWD }));
+}
 
 // --- HTTP server ---------------------------------------------------------------
 const STATIC = {
@@ -443,6 +479,25 @@ async function handle(req, res) {
         broadcast(JSON.stringify({ type: "__hello", replay: 0, cwd: CWD }));
       }
       res.writeHead(200, baseHeaders("application/json")).end(JSON.stringify(reply));
+      return;
+    }
+
+    if (url.pathname === "/chdir") {
+      const body = await readJson(req);
+      const target = body && typeof body.dir === "string" ? resolvePath(String(body.dir).trim()) : "";
+      let ok = false;
+      try {
+        ok = Boolean(target) && statSync(target).isDirectory();
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "That folder doesn't exist. Paste a full path (e.g. C:\\Users\\you\\repo)." }));
+        return;
+      }
+      restartPi(target);
+      console.error(`  working folder changed -> ${target}`);
+      res.writeHead(200, baseHeaders("application/json")).end(JSON.stringify({ ok: true, cwd: target }));
       return;
     }
 

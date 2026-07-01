@@ -299,10 +299,66 @@ async function post(path, body) {
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res;
 }
+let currentCwd = "";
 function setCwd(cwd) {
+  currentCwd = cwd;
   const el = document.querySelector("#cwd");
-  if (el) { el.textContent = cwd; el.title = "coop is working in this folder"; }
+  if (el) { el.textContent = cwd; el.title = `coop is working in ${cwd} — click to change`; }
 }
+
+// Change the working folder: the bridge restarts the governed agent IN that
+// folder, so tools, lineage docs, and the header all agree. (Asking the agent to
+// `cd` in chat only moves its shell — not where coop's tools operate.)
+document.querySelector("#cwd").addEventListener("click", () => {
+  const was = atBottom();
+  const card = document.createElement("div");
+  card.className = "card";
+  const title = document.createElement("h3");
+  title.textContent = "Change working folder";
+  const p = document.createElement("p");
+  p.textContent = "Paste the full path of the folder coop should work in (tip: copy it from the File Explorer address bar). This starts a fresh conversation there.";
+  const field = document.createElement("input");
+  field.value = currentCwd;
+  const row = document.createElement("div");
+  row.className = "row";
+  row.style.marginTop = "8px";
+  const ok = document.createElement("button");
+  ok.textContent = "Switch folder";
+  const cancel = document.createElement("button");
+  cancel.className = "ghost";
+  cancel.textContent = "Cancel";
+  cancel.onclick = () => card.remove();
+  ok.onclick = async () => {
+    const dir = field.value.trim();
+    if (!dir) return;
+    ok.disabled = true;
+    try {
+      const r = await fetch("/chdir", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-coop-csrf": "1" },
+        body: JSON.stringify({ dir }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        toast(data.error || "Couldn't switch to that folder.", "error");
+        ok.disabled = false;
+        return;
+      }
+      toast(`Now working in ${data.cwd}`);
+      card.remove(); // the transcript resets via the fresh __hello broadcast
+      setTimeout(refreshState, 1500); // repopulate model/thinking chips for the new session
+    } catch {
+      toast("Couldn't reach coop web.", "error");
+      ok.disabled = false;
+    }
+  };
+  field.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); ok.click(); } });
+  row.append(ok, cancel);
+  card.append(title, p, field, row);
+  transcript.appendChild(card);
+  field.focus();
+  stick(was);
+});
 
 // Connection strategy: try SSE (instant streaming). If the stream NEVER opens —
 // some corporate proxies/endpoint protection buffer or block streaming responses,

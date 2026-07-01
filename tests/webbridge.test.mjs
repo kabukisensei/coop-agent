@@ -183,6 +183,23 @@ r = await fetch(base + `/events-poll?since=0`, { headers: { cookie } });
 poll = await r.json();
 t("new_session resets the replay history", poll.next === 0 && poll.events.length === 0);
 
+// --- /chdir (restart the agent in a new working folder) ---------------------------
+r = await post("/chdir", { dir: join(ROOT, "no-such-folder-xyz") });
+t("/chdir rejects a missing folder", r.status === 400);
+
+const { tmpdir } = await import("node:os");
+const { resolve: resolvePath } = await import("node:path");
+const target = resolvePath(tmpdir());
+r = await post("/chdir", { dir: target });
+t("/chdir switches to a real folder", r.status === 200);
+let ch = await r.json();
+t("chdir echoes the resolved folder", ch.ok === true && ch.cwd === target);
+await new Promise((res) => setTimeout(res, 600)); // let the respawned stub boot
+r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
+poll = await r.json();
+t("poll reports the new folder", poll.cwd === target);
+t("restarted agent's startup dialog arrives fresh", poll.events.some((l) => l.includes("What would you like to do")));
+
 server.kill();
 console.log(`  ${n} web-bridge tests passed`);
 process.exit(0);

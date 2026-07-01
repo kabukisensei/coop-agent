@@ -14,12 +14,19 @@ decision history.
 ## Which folder does it work in?
 
 The agent works in a **working folder** (where it reads/writes files, finds
-`coop-data-doc.yml`, etc.), shown in the **chat header**:
+`coop-data-doc.yml`, etc.), shown in the **chat header** — **click it to switch
+folders** (paste a path from the File Explorer address bar; the bridge restarts
+the governed agent in that folder with a fresh conversation, so tools, lineage
+docs, and the header all agree). Starting folder:
 
 - `coop web` in a terminal → the folder you ran it from (`cd` there first).
 - `coop web --cwd C:\path\to\repo` → an explicit folder.
-- The desktop **coop** icon → your home folder by default. To change it:
-  right-click the shortcut → Properties → **Start in** → your project folder.
+- The desktop **coop** icon → your home folder by default (change the default via
+  the shortcut's Properties → **Start in**).
+
+> Note: asking the agent to `cd` in chat only moves its *shell* — coop's native
+> tools (`sql_review`, `data_doc` lineage, …) keep operating in the working
+> folder. Use the header folder button to actually move coop.
 
 ## How it works
 
