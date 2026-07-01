@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-01
+
 ### Added
 
 - **🕘 History in `coop web`** — resume a previous conversation in the current
