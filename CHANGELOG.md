@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-07-01
+
 ### Added
 
 - **`coop web` working folder** — `coop web --cwd <dir>` runs the agent in an
