@@ -51,18 +51,23 @@ These are correctness/security gates, not TODOs — a v1 without them is broken:
    (`0.0.0.0`), a leaked token, or an SPA XSS becomes network‑reachable RCE.
    This is permanent security hygiene, owned by us.
 
-## Prerequisite refactor (do first, useful regardless)
+## Prerequisite refactor — ✅ DONE
 
-Today `bin/coop`'s `launch_pi()` and its `coop.ps1` twin **assemble Pi's flags by
-hand, separately** (guardrails prompt, per‑skill `--skill` incl. the `_microsoft`
-allow‑list, `--prompt-template`, the three `-e` extensions, `PI_CODING_AGENT_DIR`,
-vibe env). `coop web` would be a **third** hand‑copied assembler and drift.
+Previously `bin/coop`'s `launch_pi()` and its `coop.ps1` twin assembled Pi's flags
+by hand, separately. That's now extracted into a single builder per language
+(`coop_build_pi_args` / `Build-CoopPiArgs`) consumed by both the terminal launch
+**and** a new internal **`coop launch-spec [--json]`** subcommand (bash + ps1).
 
-**Extract one source of truth:** a hidden `coop launch-spec --json` subcommand
-(+ ps1 twin) that emits the exact launch spec. `exec pi` and the `coop web` spawn
-both consume it. Add a parity test asserting they produce the same spec. This is
-the single highest‑leverage anti‑drift move and pays off even if `coop web` is
-never built.
+- `coop launch-spec` prints the resolved `pi` invocation; `coop launch-spec --json`
+  emits `{"bin":"pi","args":[…],"env":{PI_CODING_AGENT_DIR, COOP_VIBES_DIR,
+  COOP_SPLASH_FILE}}`.
+- Verified byte‑equivalent across bash and PowerShell (guardrails + 8 skills +
+  prompt‑template + theme + 3 extensions + isolation env). A `tests/run.sh` check
+  guards the bash builder against drift.
+
+**`coop web` MUST consume `coop launch-spec --json`** (append `--mode rpc -a` to
+`args`, apply `env`) so it launches the exact same governed coop the terminal
+does — never a third hand‑copied list.
 
 ## MVP scope (ship small, safe, governed)
 

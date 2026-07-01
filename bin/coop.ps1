@@ -325,18 +325,13 @@ function Invoke-CoopLaunchPreflight {
   }
 }
 
-function Invoke-LaunchPi {
-  param([string[]] $PassArgs = @())
-
-  if (-not (Test-Have 'pi')) {
-    Coop-Die 'pi is not installed. Run: coop install   (or: npm install -g @earendil-works/pi-coding-agent)'
-  }
-
-  # Guard against launching into a known-broken extension load (agent/extension skew).
-  Invoke-CoopLaunchPreflight
-
-  Invoke-CoopAzPreflight
-
+# --- Assemble the exact Pi launch spec (args + brand env) --------------------
+# SINGLE SOURCE OF TRUTH for how coop launches Pi (mirror of bin/coop's
+# coop_build_pi_args). Both Invoke-LaunchPi (the terminal agent) and
+# Invoke-CoopLaunchSpec (`coop launch-spec`, JSON for a future coop web bridge)
+# consume this, so the terminal and any other surface can NEVER drift. Returns the
+# pi args array and exports the brand env. Read-only; never launches pi.
+function Build-CoopPiArgs {
   $piArgs = @()
   # Governance system prompt (read-only-first guardrails). Appended, not replaced.
   $guardrails = Join-Path $script:CoopRoot 'docs\guardrails.md'
@@ -386,10 +381,45 @@ function Invoke-LaunchPi {
   # Point the extension at our vibe files and brand splash.
   $env:COOP_VIBES_DIR = Join-Path $script:CoopRoot 'vibes'
   $env:COOP_SPLASH_FILE = Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi'
+  return ,$piArgs
+}
 
+# --- Launch the branded Pi agent ---------------------------------------------
+function Invoke-LaunchPi {
+  param([string[]] $PassArgs = @())
+
+  if (-not (Test-Have 'pi')) {
+    Coop-Die 'pi is not installed. Run: coop install   (or: npm install -g @earendil-works/pi-coding-agent)'
+  }
+
+  # Guard against launching into a known-broken extension load (agent/extension skew).
+  Invoke-CoopLaunchPreflight
+
+  Invoke-CoopAzPreflight
+
+  $piArgs = Build-CoopPiArgs
   $allArgs = @($piArgs + $PassArgs)
   & pi @allArgs
   exit $LASTEXITCODE
+}
+
+# --- Emit the launch spec (for a UI / coop web bridge) -----------------------
+# Internal/advanced. `coop launch-spec` prints the resolved pi invocation;
+# `--json` emits {"bin","args","env"} for a programmatic consumer — e.g. a future
+# coop web bridge that spawns `pi --mode rpc` with the SAME governed spec the
+# terminal uses. Read-only: builds the spec, never launches pi.
+function Invoke-CoopLaunchSpec {
+  param([string[]] $SpecArgs = @())
+  $piArgs = Build-CoopPiArgs
+  if ($SpecArgs -contains '--json') {
+    $envMap = [ordered]@{}
+    if ($env:PI_CODING_AGENT_DIR) { $envMap['PI_CODING_AGENT_DIR'] = $env:PI_CODING_AGENT_DIR }
+    if ($env:COOP_VIBES_DIR)      { $envMap['COOP_VIBES_DIR']      = $env:COOP_VIBES_DIR }
+    if ($env:COOP_SPLASH_FILE)    { $envMap['COOP_SPLASH_FILE']    = $env:COOP_SPLASH_FILE }
+    [pscustomobject]@{ bin = 'pi'; args = @($piArgs); env = $envMap } | ConvertTo-Json -Depth 5
+  } else {
+    'pi ' + ($piArgs -join ' ')
+  }
 }
 
 # --- Tool wrappers -----------------------------------------------------------
@@ -653,6 +683,7 @@ switch -CaseSensitive ($cmd) {
     exit $LASTEXITCODE
   }
   'sync' { & (Join-Path $script:CoopRoot 'scripts\sync.ps1') @rest; exit $LASTEXITCODE }
+  'launch-spec' { Invoke-CoopLaunchSpec $rest; break }
   'init' { Invoke-CoopInit $rest; break }
   'new-skill' { New-CoopSkill $rest; break }
   'new-prompt' { New-CoopPrompt $rest; break }
