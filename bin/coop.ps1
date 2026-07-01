@@ -239,6 +239,7 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop update               Update Pi + Coop tools + vibes/skills, then run doctor
   coop install              Fresh-install / bootstrap everything (idempotent)
   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
+  coop web                  Open a friendly browser UI over the agent (experimental)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
@@ -416,10 +417,25 @@ function Invoke-CoopLaunchSpec {
     if ($env:PI_CODING_AGENT_DIR) { $envMap['PI_CODING_AGENT_DIR'] = $env:PI_CODING_AGENT_DIR }
     if ($env:COOP_VIBES_DIR)      { $envMap['COOP_VIBES_DIR']      = $env:COOP_VIBES_DIR }
     if ($env:COOP_SPLASH_FILE)    { $envMap['COOP_SPLASH_FILE']    = $env:COOP_SPLASH_FILE }
-    [pscustomobject]@{ bin = 'pi'; args = @($piArgs); env = $envMap } | ConvertTo-Json -Depth 5
+    [pscustomobject]@{ bin = 'pi'; args = @($piArgs); env = $envMap } | ConvertTo-Json -Depth 5 -Compress
   } else {
     'pi ' + ($piArgs -join ' ')
   }
+}
+
+# --- coop web (experimental): friendly browser UI over `pi --mode rpc` --------
+# Spawns the SAME governed coop the terminal runs, but drives it from a local
+# browser window (SSE bridge). Uses the shared launch spec so it can never drift
+# from the terminal. Localhost + one-time token; see web\server.mjs.
+function Invoke-CoopWeb {
+  param([string[]] $WebArgs = @())
+  if (-not (Test-Have 'pi'))   { Coop-Die 'pi is not installed. Run: coop install' }
+  if (-not (Test-Have 'node')) { Coop-Die 'Node.js is required for coop web. Run: coop install' }
+  Invoke-CoopLaunchPreflight
+  $env:COOP_LAUNCH_SPEC = (Invoke-CoopLaunchSpec @('--json'))
+  $server = Join-Path $script:CoopRoot 'web\server.mjs'
+  & node $server @WebArgs
+  exit $LASTEXITCODE
 }
 
 # --- Tool wrappers -----------------------------------------------------------
@@ -683,6 +699,7 @@ switch -CaseSensitive ($cmd) {
     exit $LASTEXITCODE
   }
   'sync' { & (Join-Path $script:CoopRoot 'scripts\sync.ps1') @rest; exit $LASTEXITCODE }
+  'web' { Invoke-CoopWeb $rest; break }
   'launch-spec' { Invoke-CoopLaunchSpec $rest; break }
   'init' { Invoke-CoopInit $rest; break }
   'new-skill' { New-CoopSkill $rest; break }

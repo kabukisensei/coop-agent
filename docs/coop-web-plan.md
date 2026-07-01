@@ -1,8 +1,11 @@
 # `coop web` — a friendly windowed UI (phase 2 plan)
 
-> Status: **planned, not built.** This is the scoping doc for the "real window"
-> step after the phase‑1 [Start Here menu](../extensions/coop-tools/README.md#start-here-menu-start)
-> and double‑click launcher. Nothing here ships until we decide to build it.
+> Status: **SPIKE BUILT** — `coop web` runs (see [`../web/`](../web/)). It spawns the
+> governed `pi --mode rpc -a` via the shared launch spec, serves a localhost SPA
+> over SSE, and already renders the Start Here menu + guardrail dialogs as clickable
+> cards. What remains before it's a real product is the hardening/renderer work
+> flagged below (CSP/CSRF, review renderer, history replay). This doc is the plan;
+> `../web/README.md` documents what exists.
 
 ## Why
 

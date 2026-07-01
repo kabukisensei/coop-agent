@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>coop</title>
+<style>
+  :root {
+    --navy:#0D1822; --navy2:#14202A; --panel:#101D28; --line:#26333d;
+    --lime:#B2D235; --forest:#7BB749; --gold:#E0A82E; --red:#EF412D;
+    --ink:#F0F3EE; --dim:#9fb0a6;
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; }
+  body {
+    background:var(--navy); color:var(--ink); display:flex; flex-direction:column;
+    font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  }
+  header {
+    display:flex; align-items:center; gap:10px; padding:12px 18px;
+    background:var(--navy2); border-bottom:1px solid var(--line);
+  }
+  header .mark { width:22px; height:22px; border-radius:6px; background:
+    radial-gradient(circle at 50% 50%, var(--gold) 0 18%, transparent 19%),
+    conic-gradient(from 0deg, var(--forest), var(--lime), var(--forest)); }
+  header b { font-weight:700; letter-spacing:.3px; }
+  header .tag { color:var(--dim); font-size:12px; }
+  header .status { margin-left:auto; font-size:12px; color:var(--dim); display:flex; align-items:center; gap:6px; }
+  header .dot { width:8px; height:8px; border-radius:50%; background:var(--forest); }
+  header .dot.busy { background:var(--gold); animation:pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity:.35; } }
+
+  #scroll { flex:1; overflow-y:auto; padding:20px; }
+  #transcript { max-width:820px; margin:0 auto; display:flex; flex-direction:column; gap:14px; }
+
+  .msg { display:flex; }
+  .msg.user { justify-content:flex-end; }
+  .bubble {
+    max-width:88%; padding:10px 14px; border-radius:14px; white-space:pre-wrap; word-wrap:break-word;
+  }
+  .user .bubble { background:var(--forest); color:#08130a; border-bottom-right-radius:4px; }
+  .assistant .bubble { background:var(--panel); border:1px solid var(--line); border-bottom-left-radius:4px; }
+
+  .tool { align-self:flex-start; font-size:12.5px; color:var(--dim); background:var(--navy2);
+    border:1px solid var(--line); border-radius:999px; padding:4px 12px; }
+  .tool .ok { color:var(--lime); }
+
+  .card { align-self:stretch; max-width:820px; margin:2px auto; width:100%;
+    background:var(--panel); border:1px solid var(--lime); border-radius:14px; padding:14px 16px; }
+  .card h3 { margin:0 0 4px; font-size:15px; }
+  .card p  { margin:0 0 10px; color:var(--dim); font-size:13.5px; white-space:pre-wrap; }
+  .card .row { display:flex; flex-wrap:wrap; gap:8px; }
+  .card input, .card textarea { width:100%; background:var(--navy); color:var(--ink);
+    border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; }
+  button {
+    background:var(--lime); color:#0a1508; border:0; border-radius:8px; padding:8px 14px;
+    font:inherit; font-weight:600; cursor:pointer;
+  }
+  button.ghost { background:transparent; color:var(--dim); border:1px solid var(--line); }
+  button:disabled { opacity:.5; cursor:default; }
+
+  footer { border-top:1px solid var(--line); background:var(--navy2); padding:12px; }
+  .composer { max-width:820px; margin:0 auto; display:flex; gap:10px; align-items:flex-end; }
+  #input { flex:1; resize:none; max-height:180px; background:var(--navy); color:var(--ink);
+    border:1px solid var(--line); border-radius:10px; padding:10px 12px; font:inherit; }
+  #toasts { position:fixed; bottom:84px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; gap:8px; z-index:5; }
+  .toast { background:var(--navy2); border:1px solid var(--line); border-left:3px solid var(--forest);
+    padding:8px 14px; border-radius:8px; font-size:13px; max-width:520px; }
+  .toast.warning { border-left-color:var(--gold); }
+  .toast.error { border-left-color:var(--red); }
+</style>
+</head>
+<body>
+  <header>
+    <span class="mark"></span>
+    <b>coop</b><span class="tag">Cooptimize agent</span>
+    <span class="status"><span class="dot" id="dot"></span><span id="statusText">ready</span></span>
+  </header>
+
+  <div id="scroll"><div id="transcript"></div></div>
+  <div id="toasts"></div>
+
+  <footer>
+    <div class="composer">
+      <textarea id="input" rows="1" placeholder="Ask coop anything…  (Enter to send, Shift+Enter for a new line)"></textarea>
+      <button id="send">Send</button>
+    </div>
+  </footer>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const transcript = $("#transcript"), scroll = $("#scroll");
+const dot = $("#dot"), statusText = $("#statusText");
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c]));
+const atBottom = () => scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+const stick = (was) => { if (was) scroll.scrollTop = scroll.scrollHeight; };
+
+function bubble(role, text = "") {
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + role;
+  const b = document.createElement("div");
+  b.className = "bubble";
+  b.textContent = text;
+  wrap.appendChild(b);
+  transcript.appendChild(wrap);
+  scroll.scrollTop = scroll.scrollHeight;
+  return b;
+}
+let current = null; // current streaming assistant bubble
+const tools = new Map();
+
+function setBusy(b) {
+  dot.classList.toggle("busy", b);
+  statusText.textContent = b ? "thinking…" : "ready";
+}
+
+function toast(message, kind = "info") {
+  const t = document.createElement("div");
+  t.className = "toast " + kind;
+  t.textContent = message;
+  $("#toasts").appendChild(t);
+  setTimeout(() => t.remove(), 6000);
+}
+
+// --- extension UI requests (Start Here menu, approvals, prompts) -------------
+async function respond(id, payload) { await post("/ui-response", { id, ...payload }); }
+
+function uiCard(req) {
+  const was = atBottom();
+  const card = document.createElement("div");
+  card.className = "card";
+  const title = document.createElement("h3");
+  title.textContent = req.title || "coop";
+  card.appendChild(title);
+  if (req.message) { const p = document.createElement("p"); p.textContent = req.message; card.appendChild(p); }
+
+  const done = (payload) => { card.querySelectorAll("button,input,textarea").forEach((e) => (e.disabled = true)); respond(req.id, payload); };
+
+  if (req.method === "select") {
+    const row = document.createElement("div"); row.className = "row";
+    (req.options || []).forEach((opt) => {
+      const btn = document.createElement("button"); btn.textContent = opt;
+      btn.onclick = () => done({ value: opt });
+      row.appendChild(btn);
+    });
+    card.appendChild(row);
+  } else if (req.method === "confirm") {
+    const row = document.createElement("div"); row.className = "row";
+    const yes = document.createElement("button"); yes.textContent = "Yes"; yes.onclick = () => done({ confirmed: true });
+    const no = document.createElement("button"); no.className = "ghost"; no.textContent = "No"; no.onclick = () => done({ confirmed: false });
+    row.append(yes, no); card.appendChild(row);
+  } else if (req.method === "input" || req.method === "editor") {
+    const field = document.createElement(req.method === "editor" ? "textarea" : "input");
+    if (req.method === "editor") field.rows = 5;
+    field.value = req.prefill || "";
+    field.placeholder = req.placeholder || "";
+    const row = document.createElement("div"); row.className = "row"; row.style.marginTop = "8px";
+    const ok = document.createElement("button"); ok.textContent = "OK"; ok.onclick = () => done({ value: field.value });
+    row.appendChild(ok);
+    card.append(field, row);
+  } else { return; }
+
+  transcript.appendChild(card);
+  stick(was);
+}
+
+// --- event stream ------------------------------------------------------------
+function handle(evt) {
+  const was = atBottom();
+  switch (evt.type) {
+    case "agent_start": setBusy(true); break;
+    case "agent_end": setBusy(false); current = null; break;
+    case "message_start":
+      if (evt.message && evt.message.role === "assistant") current = null;
+      break;
+    case "message_update": {
+      const d = evt.assistantMessageEvent || {};
+      if (d.type === "text_start") current = bubble("assistant", "");
+      else if (d.type === "text_delta") { if (!current) current = bubble("assistant", ""); current.textContent += d.delta || ""; stick(was); }
+      break;
+    }
+    case "message_end": current = null; break;
+    case "tool_execution_start": {
+      const el = document.createElement("div");
+      el.className = "tool";
+      el.innerHTML = "⚙ " + esc(evt.toolName || "tool") + " …";
+      transcript.appendChild(el);
+      tools.set(evt.toolCallId, el);
+      stick(was);
+      break;
+    }
+    case "tool_execution_end": {
+      const el = tools.get(evt.toolCallId);
+      if (el) el.innerHTML = '<span class="ok">✓</span> ' + esc(evt.toolName || "tool");
+      break;
+    }
+    case "extension_ui_request":
+      if (evt.method === "notify") toast(evt.message || "", evt.notifyType || "info");
+      else if (["select", "confirm", "input", "editor"].includes(evt.method)) uiCard(evt);
+      // setStatus/setWidget/setTitle: ignored in the spike
+      break;
+  }
+}
+
+// --- transport ---------------------------------------------------------------
+async function post(path, body) {
+  await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+}
+function connect() {
+  const es = new EventSource("/events");
+  es.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch {} };
+  es.onerror = () => { statusText.textContent = "reconnecting…"; };
+}
+
+const input = $("#input");
+function send() {
+  const message = input.value.trim();
+  if (!message) return;
+  bubble("user", message);
+  input.value = ""; input.style.height = "auto";
+  post("/prompt", { message });
+}
+$("#send").onclick = send;
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 180) + "px"; });
+
+connect();
+</script>
+</body>
+</html>

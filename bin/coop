@@ -63,6 +63,7 @@ ${COOP_BOLD}Usage${COOP_RST}
   coop update               Update Pi + Coop tools + vibes/skills, then run doctor
   coop install              Fresh-install / bootstrap everything (idempotent)
   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
+  coop web                  Open a friendly browser UI over the agent (experimental)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
@@ -212,6 +213,20 @@ PY
     for x in ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"}; do printf ' %q' "$x"; done
     printf '\n'
   fi
+}
+
+# --- coop web (experimental): friendly browser UI over `pi --mode rpc` --------
+# Spawns the SAME governed coop the terminal runs, but drives it from a local
+# browser window (SSE bridge). Uses the shared launch spec so it can never drift
+# from the terminal. Localhost + one-time token; see web/server.mjs and
+# docs/coop-web-plan.md.
+coop_web() {
+  have pi   || coop_die "pi is not installed. Run: coop install"
+  have node || coop_die "Node.js is required for coop web. Run: coop install"
+  coop_launch_preflight
+  local spec
+  spec="$(coop_launch_spec --json)" || coop_die "couldn't build the launch spec for coop web"
+  COOP_LAUNCH_SPEC="$spec" exec node "$COOP_ROOT/web/server.mjs" "$@"
 }
 
 # --- Tool passthrough --------------------------------------------------------
@@ -491,6 +506,7 @@ case "$cmd" in
     exec pi install "$@"
     ;;
   sync)          shift; exec "$COOP_ROOT/scripts/sync.sh" "$@" ;;
+  web)           shift; coop_web "$@" ;;
   launch-spec)   shift; coop_launch_spec "$@" ;;
   init)          shift; coop_init "$@" ;;
   new-skill)     shift; coop_new_skill "$@" ;;
