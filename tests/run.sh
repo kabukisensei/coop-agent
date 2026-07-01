@@ -25,5 +25,7 @@ echo "→ data-doc config tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/datadoc.test.mjs"
 echo "→ coop-guardrails enforcement tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/guardrails.test.mjs"
+echo "→ start-here menu tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/startmenu.test.mjs"
 
 echo "✓ all tests passed"

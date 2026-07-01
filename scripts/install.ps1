@@ -401,6 +401,38 @@ if (($env:PATH -split ';') -notcontains $LOCALBIN) {
   }
 }
 
+# --- Double-click launcher (Start Menu + Desktop shortcut) -------------------
+# A friendly front door so members who aren't comfortable in a terminal can open
+# coop by double-clicking an icon. PURELY ADDITIVE: `coop` in any terminal is
+# unchanged. The shortcut points at bin\coop-desktop.ps1, which finds/installs
+# coop, runs it, and keeps the window open on error. Best-effort — a failure here
+# never fails the install (you can always run coop from a terminal).
+$desktopLauncher = Join-Path $script:CoopRoot 'bin\coop-desktop.ps1'
+if (Test-Path -LiteralPath $desktopLauncher) {
+  try {
+    $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $icon  = Join-Path $script:CoopRoot 'themes\coop.ico'
+    $ws = New-Object -ComObject WScript.Shell
+    $links = @(
+      (Join-Path ([Environment]::GetFolderPath('Programs')) 'coop.lnk'),
+      (Join-Path ([Environment]::GetFolderPath('Desktop'))  'coop.lnk')
+    )
+    foreach ($lnk in $links) {
+      $sc = $ws.CreateShortcut($lnk)
+      $sc.TargetPath       = $psExe
+      $sc.Arguments        = "-NoLogo -ExecutionPolicy Bypass -File `"$desktopLauncher`""
+      $sc.WorkingDirectory = $HOME
+      $sc.Description       = 'coop - the Cooptimize analytics agent'
+      $sc.WindowStyle       = 1
+      if (Test-Path -LiteralPath $icon) { $sc.IconLocation = $icon }
+      $sc.Save()
+    }
+    Coop-Ok 'created a double-click coop launcher (Start Menu + Desktop)'
+  } catch {
+    Coop-Warn "couldn't create the double-click launcher (you can still run coop in a terminal): $($_.Exception.Message)"
+  }
+}
+
 # --- 7. Sync brand assets + doctor ------------------------------------------
 Coop-Head '7/7  Sync assets and run doctor'
 $syncRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
