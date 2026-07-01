@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-01
+
 ### Added
 
 - **"Start Here" menu** — a fresh interactive session now opens with a guided menu of
