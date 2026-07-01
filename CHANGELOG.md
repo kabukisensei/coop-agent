@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-01
+
 ### Added
 
 - **`coop web` toolbar** — the chat header gains **＋ New chat**, a **model
