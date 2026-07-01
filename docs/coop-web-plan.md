@@ -1,11 +1,14 @@
 # `coop web` — a friendly windowed UI (phase 2 plan)
 
-> Status: **SPIKE BUILT** — `coop web` runs (see [`../web/`](../web/)). It spawns the
-> governed `pi --mode rpc -a` via the shared launch spec, serves a localhost SPA
-> over SSE, and already renders the Start Here menu + guardrail dialogs as clickable
-> cards. What remains before it's a real product is the hardening/renderer work
-> flagged below (CSP/CSRF, review renderer, history replay). This doc is the plan;
-> `../web/README.md` documents what exists.
+> Status: **BUILT + HARDENED** — `coop web` runs (see [`../web/`](../web/)). It spawns
+> the governed `pi --mode rpc -a` via the shared launch spec, serves a localhost SPA
+> over SSE, renders the Start Here menu + guardrail dialogs as clickable cards, and
+> now ships the production-hardening pass: strict CSP (no inline script/style),
+> CSRF custom-header requirement, timing-safe token auth, DNS-rebinding guard,
+> reconnect history replay, markdown-lite rendering, a human-readable
+> sql_review/dax_review renderer with raw-JSON fallback, and a stub-pi integration
+> test suite (`tests/webbridge.test.mjs`). Remaining gaps are UX breadth, not
+> safety — see "Known limitations" in `../web/README.md`.
 
 ## Why
 

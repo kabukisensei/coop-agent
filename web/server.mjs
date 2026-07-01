@@ -1,22 +1,25 @@
 // coop web — a tiny localhost bridge that puts a friendly browser window in front
-// of the SAME governed coop the terminal runs. (Phase-2 SPIKE; see docs/coop-web-plan.md.)
+// of the SAME governed coop the terminal runs. See docs/coop-web-plan.md.
 //
 // It spawns `pi --mode rpc -a` using the shared launch spec (COOP_LAUNCH_SPEC, from
 // `coop launch-spec --json`), relays Pi's JSONL events to the browser over SSE, and
 // forwards prompts + extension-UI responses back to Pi's stdin. Node built-ins only.
 //
-// Security (spike-grade, non-negotiable even here):
-//   - binds 127.0.0.1 only
-//   - a one-time token (query -> httpOnly cookie) gates /events, /prompt, /ui-response
-//   - Host header must be localhost/127.0.0.1 (basic DNS-rebinding guard)
+// Security model (localhost, single user — layered):
+//   - binds 127.0.0.1 only; Host header must be localhost/127.0.0.1 (DNS-rebinding guard)
+//   - one-time token (query -> HttpOnly SameSite=Strict cookie) gates every route;
+//     compared timing-safe
+//   - strict CSP (no inline script/style — the SPA is served as separate files),
+//     nosniff, no-referrer; CORS is never enabled
+//   - POSTs additionally require the X-Coop-CSRF custom header (cross-origin pages
+//     can't set custom headers without a CORS preflight, which we never grant)
 //
-// NOT for remote/multi-user use. A production coop web needs CSP/CSRF hardening and
-// the review renderer — this proves the shape.
+// NOT for remote or multi-user use.
 
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -75,9 +78,45 @@ function sendToPi(obj) {
   }
 }
 
-// --- Parse Pi's stdout as strict JSONL (\n only — NOT a generic line reader) --
+// --- Event fan-out + reconnect replay -----------------------------------------
+// We keep a bounded ring buffer of every event line broadcast to browsers. A new
+// (or reconnecting) SSE client gets a `__hello` marker, then the replay, then live
+// events — so refreshing the page or dropping the connection doesn't lose the
+// transcript. Answered dialog cards and transient toasts are skipped on replay.
+const HISTORY_MAX = 4000;
+const history = []; // { line, uiId?, uiMethod? }
+const answeredUi = new Set();
 const sseClients = new Set();
 let busy = false; // agent streaming? (chooses prompt vs steer)
+
+function record(line, evt) {
+  const entry = { line };
+  if (evt.type === "extension_ui_request") {
+    entry.uiId = evt.id;
+    entry.uiMethod = evt.method;
+  }
+  history.push(entry);
+  if (history.length > HISTORY_MAX) history.splice(0, history.length - HISTORY_MAX);
+}
+
+function replayable(entry) {
+  if (entry.uiMethod === "notify") return false; // transient toast
+  if (entry.uiId && answeredUi.has(entry.uiId)) return false; // dialog already answered
+  return true;
+}
+
+function broadcast(jsonLine) {
+  const frame = `data: ${jsonLine}\n\n`;
+  for (const res of sseClients) {
+    try {
+      res.write(frame);
+    } catch {
+      sseClients.delete(res);
+    }
+  }
+}
+
+// --- Parse Pi's stdout as strict JSONL (\n only — NOT a generic line reader) --
 let stdoutBuf = "";
 pi.stdout.on("data", (chunk) => {
   stdoutBuf += chunk.toString("utf8");
@@ -95,35 +134,57 @@ pi.stdout.on("data", (chunk) => {
     }
     if (evt.type === "agent_start") busy = true;
     if (evt.type === "agent_end") busy = false;
-    broadcast(line); // forward the raw JSON line to browsers verbatim
+    record(line, evt);
+    broadcast(line); // forward the raw JSON line verbatim
   }
 });
 pi.stderr.on("data", (c) => process.stderr.write(c)); // pi diagnostics -> our console
 
-function broadcast(jsonLine) {
-  const frame = `data: ${jsonLine}\n\n`;
-  for (const res of sseClients) {
-    try {
-      res.write(frame);
-    } catch {
-      sseClients.delete(res);
-    }
-  }
-}
+// --- HTTP server ---------------------------------------------------------------
+const STATIC = {
+  "/": { file: "index.html", type: "text/html; charset=utf-8" },
+  "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
+  "/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
+};
+const FAVICON = join(HERE, "..", "themes", "coop.ico");
 
-// --- HTTP server -------------------------------------------------------------
-const INDEX = readFileSync(join(HERE, "public", "index.html"), "utf8");
+const CSP = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "connect-src 'self'",
+  "img-src 'self'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+function baseHeaders(type) {
+  return {
+    "content-type": type,
+    "content-security-policy": CSP,
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+    "cache-control": "no-store",
+  };
+}
 
 function hostOk(req) {
   const h = (req.headers.host || "").split(":")[0];
   return h === "127.0.0.1" || h === "localhost";
+}
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 function cookieToken(req) {
   const m = /(?:^|;\s*)coop_token=([a-f0-9]+)/.exec(req.headers.cookie || "");
   return m ? m[1] : null;
 }
 function authed(req) {
-  return cookieToken(req) === TOKEN;
+  const t = cookieToken(req);
+  return t !== null && safeEqual(t, TOKEN);
 }
 function readBody(req) {
   return new Promise((resolve) => {
@@ -133,10 +194,29 @@ function readBody(req) {
       if (b.length > 1e6) req.destroy(); // cap payloads
     });
     req.on("end", () => resolve(b));
+    req.on("error", () => resolve(""));
   });
 }
+async function readJson(req) {
+  try {
+    return JSON.parse((await readBody(req)) || "{}");
+  } catch {
+    return null;
+  }
+}
 
-const server = createServer(async (req, res) => {
+const server = createServer((req, res) => {
+  handle(req, res).catch((e) => {
+    console.error("coop web: request error:", e.message);
+    try {
+      res.writeHead(500).end("error");
+    } catch {
+      /* headers already sent */
+    }
+  });
+});
+
+async function handle(req, res) {
   if (!hostOk(req)) {
     res.writeHead(403).end("bad host");
     return;
@@ -145,22 +225,41 @@ const server = createServer(async (req, res) => {
 
   // Landing page: require the one-time token in the query, then set it as a cookie.
   if (req.method === "GET" && url.pathname === "/") {
-    if (url.searchParams.get("token") !== TOKEN) {
-      res.writeHead(401, { "content-type": "text/plain" }).end("coop web: invalid or missing token.");
+    if (!safeEqual(url.searchParams.get("token") || "", TOKEN)) {
+      res
+        .writeHead(401, baseHeaders("text/plain"))
+        .end("coop web: invalid or missing token. Restart with `coop web` and use the printed URL.");
       return;
     }
     res.writeHead(200, {
-      "content-type": "text/html; charset=utf-8",
+      ...baseHeaders(STATIC["/"].type),
+      // No `Secure` flag: this is plain http on 127.0.0.1 (loopback never leaves the machine).
       "set-cookie": `coop_token=${TOKEN}; HttpOnly; SameSite=Strict; Path=/`,
-      "cache-control": "no-store",
     });
-    res.end(INDEX);
+    res.end(readFileSync(join(HERE, "public", STATIC["/"].file)));
     return;
   }
 
   // Everything below requires the cookie.
   if (!authed(req)) {
-    res.writeHead(401).end("unauthorized");
+    res.writeHead(401, baseHeaders("text/plain")).end("unauthorized");
+    return;
+  }
+
+  if (req.method === "GET" && STATIC[url.pathname] && url.pathname !== "/") {
+    const s = STATIC[url.pathname];
+    res.writeHead(200, baseHeaders(s.type));
+    res.end(readFileSync(join(HERE, "public", s.file)));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/favicon.ico") {
+    if (existsSync(FAVICON)) {
+      res.writeHead(200, baseHeaders("image/x-icon"));
+      res.end(readFileSync(FAVICON));
+    } else {
+      res.writeHead(404).end();
+    }
     return;
   }
 
@@ -168,43 +267,59 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
       connection: "keep-alive",
     });
     res.write(`retry: 2000\n\n`);
+    // Hello marker (client clears its transcript), then replay, then live.
+    res.write(`data: ${JSON.stringify({ type: "__hello", replay: history.length })}\n\n`);
+    for (const entry of history) {
+      if (replayable(entry)) res.write(`data: ${entry.line}\n\n`);
+    }
     sseClients.add(res);
     req.on("close", () => sseClients.delete(res));
     return;
   }
 
-  if (req.method === "POST" && url.pathname === "/prompt") {
-    const { message } = JSON.parse((await readBody(req)) || "{}");
-    if (message && String(message).trim()) {
-      const cmd = { type: "prompt", message: String(message) };
-      if (busy) cmd.streamingBehavior = "steer";
-      sendToPi(cmd);
+  // POSTs: require the CSRF custom header on top of the cookie.
+  if (req.method === "POST") {
+    if (req.headers["x-coop-csrf"] !== "1") {
+      res.writeHead(403, baseHeaders("text/plain")).end("missing CSRF header");
+      return;
     }
-    res.writeHead(200, { "content-type": "application/json" }).end(`{"ok":true}`);
-    return;
-  }
 
-  if (req.method === "POST" && url.pathname === "/ui-response") {
-    const body = JSON.parse((await readBody(req)) || "{}");
-    if (body && body.id) {
-      // Pass through the matching fields (value / confirmed / cancelled).
-      sendToPi({ type: "extension_ui_response", ...body });
+    if (url.pathname === "/prompt") {
+      const body = await readJson(req);
+      const message = body && body.message;
+      if (message && String(message).trim()) {
+        const cmd = { type: "prompt", message: String(message) };
+        if (busy) cmd.streamingBehavior = "steer";
+        sendToPi(cmd);
+      }
+      res.writeHead(200, baseHeaders("application/json")).end(`{"ok":true}`);
+      return;
     }
-    res.writeHead(200, { "content-type": "application/json" }).end(`{"ok":true}`);
-    return;
+
+    if (url.pathname === "/ui-response") {
+      const body = await readJson(req);
+      if (body && body.id) {
+        answeredUi.add(body.id); // don't replay this dialog card on reconnect
+        // Pass through the matching fields (value / confirmed / cancelled).
+        sendToPi({ type: "extension_ui_response", ...body });
+      }
+      res.writeHead(200, baseHeaders("application/json")).end(`{"ok":true}`);
+      return;
+    }
+
+    if (url.pathname === "/abort") {
+      sendToPi({ type: "abort" });
+      res.writeHead(200, baseHeaders("application/json")).end(`{"ok":true}`);
+      return;
+    }
   }
 
-  if (req.method === "POST" && url.pathname === "/abort") {
-    sendToPi({ type: "abort" });
-    res.writeHead(200).end(`{"ok":true}`);
-    return;
-  }
-
-  res.writeHead(404).end("not found");
-});
+  res.writeHead(404, baseHeaders("text/plain")).end("not found");
+}
 
 // --- Open the browser (Edge app-mode = "it's an app" window on Windows) -------
 function openBrowser(u) {
@@ -224,6 +339,16 @@ function openBrowser(u) {
     /* the URL is printed below regardless */
   }
 }
+
+server.on("error", (e) => {
+  if (e.code === "EADDRINUSE") {
+    console.error(`coop web: port ${PORT} is already in use. Try:  coop web --port ${PORT + 1}`);
+  } else {
+    console.error("coop web: server error:", e.message);
+  }
+  try { pi.kill(); } catch { /* ignore */ }
+  process.exit(1);
+});
 
 server.listen(PORT, HOST, () => {
   const u = `http://${HOST}:${PORT}/?token=${TOKEN}`;

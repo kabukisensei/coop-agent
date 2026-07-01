@@ -39,4 +39,7 @@ for needle in "docs/guardrails.md" "--prompt-template" "themes/cooptimize.json" 
 done
 echo "  ✓ launch-spec resolves guardrails, prompts, theme, and all 3 extensions"
 
+echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
+node "$ROOT/tests/webbridge.test.mjs"
+
 echo "✓ all tests passed"
