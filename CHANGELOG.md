@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-07-01
+
 ### Changed
 
 - **The desktop "coop" icon now opens the chat window** (`coop web`, ChatGPT-style,
