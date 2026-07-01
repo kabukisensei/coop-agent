@@ -5,6 +5,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The desktop "coop" icon now opens the chat window** (`coop web`, ChatGPT-style,
+  Edge app-mode) — the experience non-terminal members asked for. A second
+  **"coop (terminal)"** shortcut keeps the classic TUI one click away. The `coop web`
+  server console starts minimized; closing it stops coop.
+
+### Fixed
+
+- **Generic/gear shortcut icon** — `themes/coop.ico` is rewritten with classic
+  BMP frames (some Windows shells refuse ICOs whose small frames are PNG-encoded,
+  which is what the previous file used), and shortcuts now set `IconLocation`
+  with an explicit `,0` index. Re-run `coop install` to refresh the shortcuts.
+- **Double-launching the coop icon no longer dies on a busy port** — `coop web`
+  walks to the next free port (default port only; an explicit `--port` /
+  `COOP_WEB_PORT` is still respected strictly).
+
 ## [0.5.0] — 2026-07-01
 
 ### Added

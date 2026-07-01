@@ -111,13 +111,19 @@ cd coop-agent
 found yet, **open a new terminal** — the persistent PATH change only applies to
 shells started after the install.
 
-It also creates a **double-click `coop` launcher** on the **Start Menu and
-Desktop** (Windows), so members who aren't comfortable in a terminal can open coop
-by clicking an icon — it finds/installs coop, runs it, and keeps the window open
-if anything goes wrong. This is purely additive: running `coop` in any terminal is
-unchanged. On first launch, coop greets you with a **Start Here menu** of common
-tasks (or run `/start` anytime); power users can dismiss it with one key or turn it
-off with `COOP_NO_START_MENU=1`.
+It also creates **two double-click launchers** on the **Start Menu and Desktop**
+(Windows), so members who aren't comfortable in a terminal can open coop by
+clicking an icon:
+
+- **coop** — opens the friendly **chat window** (`coop web`: ChatGPT-style chat in
+  an Edge app window; the server console starts minimized — closing that minimized
+  window stops coop).
+- **coop (terminal)** — the classic terminal agent.
+
+Both are purely additive: running `coop` in any terminal is unchanged. On first
+launch, coop greets you with a **Start Here menu** of common tasks (or run `/start`
+anytime); power users can dismiss it with one key or turn it off with
+`COOP_NO_START_MENU=1`.
 
 **No-terminal first-time setup (for non-technical members).** Hand them the
 `coop-agent` folder (a zip or a shared drive) and have them double-click

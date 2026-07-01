@@ -413,21 +413,29 @@ if (Test-Path -LiteralPath $desktopLauncher) {
     $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $icon  = Join-Path $script:CoopRoot 'themes\coop.ico'
     $ws = New-Object -ComObject WScript.Shell
-    $links = @(
-      (Join-Path ([Environment]::GetFolderPath('Programs')) 'coop.lnk'),
-      (Join-Path ([Environment]::GetFolderPath('Desktop'))  'coop.lnk')
+    # Two shortcuts, each on the Start Menu + Desktop:
+    #   coop            -> the friendly chat window (`coop web`, ChatGPT-style; the
+    #                      server console starts minimized so the chat is the star —
+    #                      closing that minimized window stops coop)
+    #   coop (terminal) -> the classic terminal agent, for people who prefer it
+    $shortcuts = @(
+      @{ Name = 'coop.lnk';            ExtraArgs = ' web'; Window = 7; Desc = 'coop - chat with the Cooptimize analytics agent' },
+      @{ Name = 'coop (terminal).lnk'; ExtraArgs = '';     Window = 1; Desc = 'coop - the Cooptimize analytics agent (terminal)' }
     )
-    foreach ($lnk in $links) {
-      $sc = $ws.CreateShortcut($lnk)
-      $sc.TargetPath       = $psExe
-      $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`""
-      $sc.WorkingDirectory = $HOME
-      $sc.Description       = 'coop - the Cooptimize analytics agent'
-      $sc.WindowStyle       = 1
-      if (Test-Path -LiteralPath $icon) { $sc.IconLocation = $icon }
-      $sc.Save()
+    foreach ($def in $shortcuts) {
+      foreach ($dir in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
+        $sc = $ws.CreateShortcut((Join-Path $dir $def.Name))
+        $sc.TargetPath       = $psExe
+        $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`"$($def.ExtraArgs)"
+        $sc.WorkingDirectory = $HOME
+        $sc.Description       = $def.Desc
+        $sc.WindowStyle       = $def.Window
+        # ',0' = explicit icon index; some shells show a generic icon without it.
+        if (Test-Path -LiteralPath $icon) { $sc.IconLocation = "$icon,0" }
+        $sc.Save()
+      }
     }
-    Coop-Ok 'created a double-click coop launcher (Start Menu + Desktop)'
+    Coop-Ok 'created double-click launchers (Start Menu + Desktop): "coop" (chat window) and "coop (terminal)"'
   } catch {
     Coop-Warn "couldn't create the double-click launcher (you can still run coop in a terminal): $($_.Exception.Message)"
   }

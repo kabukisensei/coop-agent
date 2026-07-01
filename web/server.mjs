@@ -29,7 +29,8 @@ const getArg = (name, def) => {
   const i = argv.indexOf(name);
   return i >= 0 && argv[i + 1] ? argv[i + 1] : def;
 };
-const PORT = Number(getArg("--port", process.env.COOP_WEB_PORT || "7420"));
+const PORT_EXPLICIT = argv.includes("--port") || Boolean(process.env.COOP_WEB_PORT);
+let PORT = Number(getArg("--port", process.env.COOP_WEB_PORT || "7420"));
 const HOST = "127.0.0.1";
 const TOKEN = randomBytes(16).toString("hex");
 
@@ -366,7 +367,18 @@ function openBrowser(u) {
   }
 }
 
+// A busy default port (e.g. the desktop icon double-clicked twice) walks to the
+// next free one instead of dying in a minimized console nobody sees. An explicit
+// --port / COOP_WEB_PORT is respected strictly.
+let portTries = 0;
 server.on("error", (e) => {
+  if (e.code === "EADDRINUSE" && !PORT_EXPLICIT && portTries < 10) {
+    portTries++;
+    PORT++;
+    console.error(`coop web: port ${PORT - 1} is in use — trying ${PORT}…`);
+    setTimeout(() => server.listen(PORT, HOST), 100);
+    return;
+  }
   if (e.code === "EADDRINUSE") {
     console.error(`coop web: port ${PORT} is already in use. Try:  coop web --port ${PORT + 1}`);
   } else {
