@@ -20,6 +20,28 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   RPC allow-list entries) stay behind the existing token+CSRF gates, add no
   dependencies, and are covered by the stub-pi suite (56 tests). The TUI,
   extensions, skills, and guardrails are untouched.
+- **`git-helper` skill + `/pr-description` prompt.** Drafts a Conventional-Commits
+  message and a structured PR description (summary, changes, lineage impact,
+  standards/validation, rollback) from the current diff — so the human's commit is
+  one paste. Drafts only: it never runs `git commit`/`push`/`merge`, and the
+  never-commit-source guardrail is unchanged.
+- **Process prompts `/spec-first`, `/annotate`, `/handoff`.** Spec-first writes a
+  short approved spec (goal, constraints, data model + lineage, edge cases, test
+  plan) before editing; annotate applies only Markdown-annotated review feedback;
+  handoff emits a resume-cold summary (what changed, tested, files, blockers, next
+  todos). The `coop-workflow` skill and `docs/guardrails.md` now name these as the
+  working habits for non-trivial tasks (vertical slices, codify mistakes,
+  annotations, handoff).
+
+### Changed
+
+- **`coop release` now gates on the full test suite + parity, not just the
+  transpile.** The pre-tag check previously ran only `esbuild` over each
+  `extensions/*/index.ts`; it now also runs `bash tests/run.sh` and
+  `bash scripts/check-parity.sh` against the (already-clean) tree and aborts
+  before tagging if either fails — so a release can no longer tag red tests or a
+  broken bash/PowerShell pairing. Still bypassable with `--no-check`; mirrored in
+  `bin/coop.ps1` (which runs the bash suites when `bash` is available).
 
 ## [0.8.1] — 2026-07-01
 
