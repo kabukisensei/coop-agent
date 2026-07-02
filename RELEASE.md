@@ -191,9 +191,5 @@ git pull
    bash scripts/check-links.sh      # expect: "PASS: ..." and exit 0
    ```
 
-   TODO(aaron): `versions.json`, both check scripts, and `check.yml` were
-   added to coop-website's working tree on 2026-07-02 but were not yet
-   committed there — delete this note once that change lands.
-
 5. Commit, push `main`, then spot-check the live site (badge versions + a
    hard-refresh for the new assets).
