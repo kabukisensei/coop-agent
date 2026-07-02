@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-07-02
+
 ### Added
 
 - **`coop web` UX-breadth pass.** The browser UI gains rendered **thinking blocks**,
