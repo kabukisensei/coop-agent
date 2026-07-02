@@ -33,10 +33,14 @@ security model, known limitations).
    drift.
 3. **Phase 2 — `coop web`** (shipped): `web/server.mjs` (Node builtins only)
    spawns **`pi --mode rpc -a`** as a subprocess and bridges it to a static SPA
-   over HTTP + SSE. The Windows "it's an app" feel comes free from Edge
-   app-mode (`msedge --app=…`) — **explicitly not Electron/Tauri**: no code
-   signing, no bundled runtime, no Rust, and `coop web` dominates a native
-   desktop shell on cost.
+   over HTTP + SSE. The "it's an app" feel comes free from launching the first
+   Chromium-family browser found (Edge → Chrome → Brave → Vivaldi/Chromium,
+   cross-platform) in app-mode (`--app=…`) with a **dedicated coop profile** —
+   a chromeless window with its own taskbar/dock entry, the coop icon, and
+   isolation from the user's real browser session. **Explicitly not
+   Electron/Tauri**: no code signing, no bundled runtime, no Rust, and `coop
+   web` dominates a native desktop shell on cost. (`COOP_WEB_NO_APP=1` falls back
+   to a normal tab.)
 4. **Beyond** (only on proven demand): VS Code extension or a hosted Teams
    surface. Native desktop stays off the table.
 

@@ -116,8 +116,8 @@ It also creates **two double-click launchers** on the **Start Menu and Desktop**
 clicking an icon:
 
 - **coop** — opens the friendly **chat window** (`coop web`: ChatGPT-style chat in
-  an Edge app window; the server console starts minimized — closing that minimized
-  window stops coop).
+  a chromeless app window; the server console starts minimized — closing that
+  minimized window stops coop).
 - **coop (terminal)** — the classic terminal agent.
 
 Both are purely additive: running `coop` in any terminal is unchanged. On first
