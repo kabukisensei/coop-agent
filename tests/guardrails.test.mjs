@@ -1,24 +1,32 @@
 // Tests for extensions/coop-guardrails — drives the REAL tool_call handler with a
 // mock pi/ctx (COOP_TEST_DIST set by tests/run.sh).
 import { strict as assert } from "node:assert";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const dist = process.env.COOP_TEST_DIST;
 const cg = await import(`${dist}/coop-guardrails.mjs`);
 const coopGuardrails = cg.default;
-const { isSecretPath } = cg;
+const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel } = cg;
 
 // Capture the handler the extension registers.
-let staged = "";
+let staged = "";     // `git diff --cached --name-only`
+let modified = "";   // `git diff --name-only` (what `git commit -a` would stage)
 let confirmAnswer = false;
 const handlers = {};
 const cmds = {};
 const pi = {
   on: (ev, h) => (handlers[ev] = h),
   registerCommand: (name, opts) => (cmds[name] = opts),
-  exec: async (bin, args) =>
-    bin === "git" && args.join(" ").includes("diff --cached")
-      ? { stdout: staged, code: 0, stderr: "" }
-      : { stdout: "", code: 0, stderr: "" },
+  exec: async (bin, args) => {
+    const a = args.join(" ");
+    // NB: cached diff args ("diff --cached --name-only") contain BOTH substrings, so
+    // check --cached first.
+    if (bin === "git" && a.includes("diff --cached")) return { stdout: staged, code: 0, stderr: "" };
+    if (bin === "git" && a.includes("diff --name-only")) return { stdout: modified, code: 0, stderr: "" };
+    return { stdout: "", code: 0, stderr: "" };
+  },
 };
 coopGuardrails(pi);
 const handle = handlers["tool_call"];
@@ -26,8 +34,9 @@ assert.ok(typeof handle === "function", "registers a tool_call handler");
 assert.ok(cmds["coop-guardrails"], "registers the /coop-guardrails command");
 
 const ctx = { cwd: "/tmp/no-such-repo-xyz", hasUI: true, ui: { confirm: async () => confirmAnswer, notify: () => {} } };
-const call = async (command, { stagedFiles = "", confirm = false, toolName = "bash" } = {}) => {
+const call = async (command, { stagedFiles = "", modifiedFiles = "", confirm = false, toolName = "bash" } = {}) => {
   staged = stagedFiles;
+  modified = modifiedFiles;
   confirmAnswer = confirm;
   return await handle({ toolName, input: { command } }, ctx);
 };
@@ -52,6 +61,24 @@ await t("allows a docs-only git commit", async () => {
 });
 await t("allows git commit with nothing staged", async () => {
   assert.equal(blocked(await call("git commit -m x", { stagedFiles: "" })), false);
+});
+await t("blocks `git commit -am` that auto-stages source (nothing pre-staged)", async () => {
+  // The classic bypass: -a stages tracked modifications at commit time, so a
+  // --cached-only check would miss them. offendingCommitPaths must fold in modified.
+  assert.equal(blocked(await call("git commit -am wip", { stagedFiles: "", modifiedFiles: "sql/gold/v.sql" })), true);
+});
+await t("allows `git commit -am` when only docs are modified", async () => {
+  assert.equal(blocked(await call("git commit -am docs", { stagedFiles: "", modifiedFiles: "docs/a.md" })), false);
+});
+await t("detects `git -C <dir> commit` (global options before the subcommand)", async () => {
+  assert.equal(blocked(await call("git -C /some/repo commit -m x", { stagedFiles: "src/app.py" })), true);
+});
+await t("commitStagesAll: -a / -am / --all stage all; -m / --amend do not", () => {
+  assert.equal(commitStagesAll("git commit -a"), true);
+  assert.equal(commitStagesAll("git commit -am x"), true);
+  assert.equal(commitStagesAll("git commit --all -m x"), true);
+  assert.equal(commitStagesAll("git commit -m x"), false);
+  assert.equal(commitStagesAll("git commit --amend --no-edit"), false);
 });
 await t("blocks a declined destructive command (rm -rf)", async () => {
   assert.equal(blocked(await call("rm -rf /tmp/x", { confirm: false })), true);
@@ -114,6 +141,42 @@ await t("blocks a declined write to a secret file", async () => {
 await t("allows an approved secret-file read; allows non-secret files", async () => {
   assert.equal(blocked(await callFile("read", ".env", { confirm: true })), false);
   assert.equal(blocked(await callFile("read", "src/app.py", { confirm: false })), false);
+});
+
+// --- allow-list parsing (block + flow YAML forms) --------------------------------
+await t("parseAllowedGlobs reads BOTH block and flow YAML forms", () => {
+  const block =
+    "repositories:\n  fabric:\n    agent_allowed_to_commit:\n      - \"docs/**\"\n      - reports/generated/**  # note\n  other: x\n";
+  assert.deepEqual(parseAllowedGlobs(block).sort(), ["docs/**", "reports/generated/**"].sort());
+  assert.deepEqual(parseAllowedGlobs('agent_allowed_to_commit: ["docs/**", "site/**"]').sort(), ["docs/**", "site/**"].sort());
+});
+await t("honors a BLOCK-form custom allow-prefix from project.yml (was flow-only before)", async () => {
+  // Regression: the shipped project.example.yml uses block form. A custom non-doc
+  // prefix in that style must be merged so committing there isn't wrongly blocked.
+  const repo = mkdtempSync(join(tmpdir(), "coop-gr-"));
+  mkdirSync(join(repo, ".coop"), { recursive: true });
+  writeFileSync(join(repo, ".coop", "project.yml"), "approval_policy:\n  agent_allowed_to_commit:\n    - \"generated/**\"\n");
+  const ctx2 = { cwd: repo, hasUI: true, ui: { confirm: async () => false, notify: () => {} } };
+  staged = "generated/out.txt"; // not a .md and not a default prefix → only the custom rule allows it
+  modified = "";
+  assert.equal(blocked(await handle({ toolName: "bash", input: { command: "git commit -m x" } }, ctx2)), false);
+});
+
+// --- MCP-mutation enforcement -----------------------------------------------------
+await t("mcpMutationLabel flags mutating MCP/Fabric actions, not reads or safe tools", () => {
+  for (const name of ["fabric_create_workspace", "powerbi_delete_dataset", "mcp__fabric__deploy_pipeline", "fabric_publishReport"]) {
+    assert.ok(mcpMutationLabel(name), `${name} should be flagged`);
+  }
+  for (const name of ["fabric_list_workspaces", "powerbi_get_dataset", "read", "bash", "sql_review", "data_doc"]) {
+    assert.equal(mcpMutationLabel(name), null, `${name} should NOT be flagged`);
+  }
+});
+await t("blocks a declined mutating MCP tool call", async () => {
+  assert.equal(blocked(await handle({ toolName: "fabric_delete_workspace", input: {} }, { ...ctx, ui: { confirm: async () => false, notify: () => {} } })), true);
+});
+await t("allows an approved mutating MCP tool call; never touches read MCP calls", async () => {
+  assert.equal(blocked(await handle({ toolName: "fabric_delete_workspace", input: {} }, { ...ctx, ui: { confirm: async () => true, notify: () => {} } })), false);
+  assert.equal(blocked(await handle({ toolName: "fabric_list_workspaces", input: {} }, ctx)), false);
 });
 
 console.log(`  ${n} guardrails tests passed`);

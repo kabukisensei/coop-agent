@@ -279,10 +279,18 @@ coop preloads four MCP servers via `pi-mcp-adapter`. They are **all read-only** 
 
 | Server | Provides | Mode |
 | --- | --- | --- |
-| `fabric` | `@microsoft/fabric-mcp` (AzureCliCredential) | read-only |
-| `powerbi` | `powerbi-mcp-server --readonly` | read-only |
+| `fabric` | `@microsoft/fabric-mcp` (AzureCliCredential) | read-only *by policy* † |
+| `powerbi` | `powerbi-mcp-server --readonly` | read-only (server-enforced `--readonly`) |
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` — always-current Microsoft docs | read-only |
 | `context-mode` | `npx -y context-mode` — intent-driven search + sandboxed exec | read-only |
+
+> † The Fabric MCP has **no** server-side read-only switch (unlike `powerbi`'s
+> `--readonly`), so its read-only posture is enforced by **policy**, not by the
+> server: Pi's tool-approval prompts, the advisory guardrails prompt, and
+> `coop-guardrails`, which **confirms** any Fabric/Power BI/MCP tool call whose name
+> looks like a mutation (create/update/delete/deploy/publish). That last check is
+> best-effort (MCP tool names vary). For hard, per-tool gating, enable the optional
+> `pi-permissions` extension.
 
 `coop sync` places `config/mcp.example.json` **non-destructively** into coop's
 isolated agent dir (`~/.coop/agent`) — it never overwrites an existing config and

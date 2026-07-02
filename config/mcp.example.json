@@ -4,8 +4,7 @@
       "command": "npx",
       "args": ["-y", "@microsoft/fabric-mcp", "server", "start", "--mode", "namespace"],
       "env": {
-        "AZURE_TOKEN_CREDENTIALS": "AzureCliCredential",
-        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        "AZURE_TOKEN_CREDENTIALS": "AzureCliCredential"
       }
     },
     "powerbi": {

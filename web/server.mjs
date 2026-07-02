@@ -19,7 +19,7 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, openSync, readSync, closeSync, fstatSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve as resolvePath } from "node:path";
 
@@ -278,15 +278,33 @@ function sessionsDirFor(cwd) {
   return join(resolvePath(agentDir), "sessions", safe);
 }
 
-function scanSessionFile(fullPath) {
-  // Read a bounded chunk: enough for the header + early entries without loading
-  // multi-MB sessions wholesale.
-  let text = "";
+// Read up to maxBytes from the head of a file, without loading a multi-MB session
+// wholesale. A truncated trailing line simply fails JSON.parse below and is skipped.
+function readHead(fullPath, maxBytes) {
+  let fd;
   try {
-    text = readFileSync(fullPath, "utf8");
+    fd = openSync(fullPath, "r");
+    const len = Math.min(fstatSync(fd).size, maxBytes);
+    const buf = Buffer.allocUnsafe(len);
+    let off = 0;
+    while (off < len) {
+      const nread = readSync(fd, buf, off, len - off, off);
+      if (nread <= 0) break;
+      off += nread;
+    }
+    return buf.toString("utf8", 0, off);
   } catch {
     return null;
+  } finally {
+    if (fd !== undefined) { try { closeSync(fd); } catch { /* ignore */ } }
   }
+}
+
+function scanSessionFile(fullPath) {
+  // Read a bounded head chunk: enough for the header + early entries (session name
+  // and the first user message) without loading a multi-MB session wholesale.
+  const text = readHead(fullPath, 256 * 1024);
+  if (text === null) return null;
   const lines = text.split("\n");
   let name = "";
   let preview = "";

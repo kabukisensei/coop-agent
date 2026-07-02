@@ -111,3 +111,17 @@ jobs:
               }
             }
           if ($failed) { exit 1 }
+
+      - name: PSScriptAnalyzer (errors only)
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          $issues = Get-ChildItem -Recurse -Filter *.ps1 |
+            Where-Object { $_.FullName -notmatch 'node_modules' } |
+            ForEach-Object { Invoke-ScriptAnalyzer -Path $_.FullName -Severity Error }
+          if ($issues) {
+            $issues | Format-Table -AutoSize | Out-String | Write-Host
+            exit 1
+          }
+          Write-Host "PSScriptAnalyzer: no errors"

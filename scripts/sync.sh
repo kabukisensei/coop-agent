@@ -43,7 +43,7 @@ done
 if have pi; then
   pilist="$(PI_CODING_AGENT_DIR="$PI_AGENT" pi list 2>/dev/null || true)"
   for ext in "${CORE_EXTENSIONS[@]}"; do
-    if printf '%s' "$pilist" | grep -qi "$ext"; then
+    if printf '%s' "$pilist" | grep -qiF "$ext"; then
       coop_ok "$ext present (isolated)"
     else
       coop_info "installing $ext into coop's dir…"

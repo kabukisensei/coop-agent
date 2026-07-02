@@ -633,7 +633,10 @@ export default function coopTools(pi: ExtensionAPI) {
     signal: AbortSignal | undefined,
     ctx: ExtensionContext,
   ) => {
-    const paths = params.paths && params.paths.length ? params.paths : ["."];
+    // Neutralize argument injection: a model-supplied path starting with "-" would be
+    // read as a CLI flag by the review tool. Prefix "./" so it stays a positional path.
+    const rawPaths = params.paths && params.paths.length ? params.paths : ["."];
+    const paths = rawPaths.map((p) => (String(p).startsWith("-") ? "./" + p : p));
     const args = ["check", ...paths, "--format", "json"];
     if (params.min_severity) args.push("--min-severity", params.min_severity);
     if (params.strict) args.push("--strict");

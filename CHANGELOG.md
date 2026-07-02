@@ -5,6 +5,48 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Security / governance
+
+- **`coop-guardrails` now covers the common `git commit` bypasses.** The
+  "never commit source" block previously only inspected *staged* files, so
+  `git commit -a` / `-am` (which auto-stages tracked changes at commit time) and
+  `git -C <dir> commit` (global options before the subcommand) slipped through. The
+  block now folds in the tracked modifications `-a` will stage and tolerates git
+  global options, and runs the check against the repo the commit actually targets.
+- **`coop-guardrails` now enforces MCP as read-only, best-effort.** It **confirms**
+  any Fabric/Power BI/MCP tool call whose name looks like a mutation
+  (create/update/delete/deploy/publish). MCP tool names vary, so this complements —
+  it does not replace — Pi's tool approval and the advisory prompt; enable the
+  optional `pi-permissions` extension for hard per-tool gating. Docs/README updated to
+  state plainly that the Fabric MCP is read-only *by policy* (no server-side flag,
+  unlike `powerbi --readonly`).
+- **`agent_allowed_to_commit` is now parsed in both YAML forms.** The guardrails
+  extension previously read only the flow form (`[ ... ]`), but the shipped
+  `project.example.yml` uses block form (`- "…"`), so a user's custom allow-prefix was
+  silently ignored (and diverged from the bash side, which reads both). It now parses
+  block and flow forms, across all per-repository occurrences.
+
+### Fixed
+
+- **`config/mcp.example.json` no longer hardcodes a macOS PATH.** The `fabric` server
+  pinned `PATH=/opt/homebrew/bin:…`, which broke the Fabric MCP on Windows (no `npx`
+  on that PATH) and even hid `az`/pipx binaries on macOS. It now inherits the
+  environment `coop` already prepares.
+- **`coop web` no longer loads whole session files to build the history list.**
+  `scanSessionFile` read the entire file despite a "bounded chunk" comment; it now
+  reads a bounded head (256 KB), matching the intent and avoiding multi-MB reads
+  across up to 30 sessions.
+- **`coop-tools` neutralizes argument injection in review paths.** A model-supplied
+  path beginning with `-` was passed straight to `coop-sql-review` / `coop-dax-review`
+  as a flag; such paths are now prefixed with `./` so they stay positional.
+
+### Changed
+
+- **CI now runs PSScriptAnalyzer (error severity) on all `.ps1`** in addition to the
+  language parse check, so PowerShell logic issues — not just syntax — are caught.
+- `scripts/sync.sh` matches installed extension names with `grep -qiF` (literal),
+  matching `sync.ps1`'s `[regex]::Escape` behavior.
+
 ## [0.8.0] — 2026-07-01
 
 ### Added

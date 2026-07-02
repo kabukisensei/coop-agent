@@ -28,13 +28,19 @@ human at Cooptimize approving it.
 7. **Never expose secrets.** Do not print or write tokens, passwords, connection
    strings, keys, or `.env` contents. Do not store secrets in memory.
 
-> Three of these are **enforced at runtime** by the `coop-guardrails` extension, not just
-> asked of you: a `git commit` that stages source is **blocked** (commit only
-> docs/logs/site; let a human commit source); destructive commands (`rm -rf`,
-> `git push --force`, `git reset --hard`, `git clean -f`, `DROP`/`TRUNCATE`) require
-> confirmation; and a read/edit/write of a secret-looking file (`.env`, private keys,
-> credential files) requires confirmation. If a tool call is blocked, read the reason
-> and adjust — don't try to route around it.
+> Most of these are **enforced at runtime** by the `coop-guardrails` extension, not just
+> asked of you: a `git commit` that would include source is **blocked** — covering
+> staged files, `git commit -a/-am` (which auto-stages tracked changes), and
+> `git -C <dir> commit` (commit only docs/logs/site; let a human commit source);
+> destructive commands (`rm -rf`, `git push --force`, `git reset --hard`,
+> `git clean -f`, `DROP`/`TRUNCATE`) require confirmation; a read/edit/write of a
+> secret-looking file (`.env`, private keys, credential files) requires confirmation;
+> and a Fabric/Power BI/MCP tool call whose name looks like a **mutation**
+> (create/update/delete/deploy/publish) requires confirmation. That last check is
+> best-effort — MCP tool names vary, so it **complements** (does not replace) Pi's own
+> tool-approval prompts and this advisory prompt; enable the optional `pi-permissions`
+> extension for hard per-tool gating. If a tool call is blocked, read the reason and
+> adjust — don't try to route around it.
 
 ## The Cooptimize workflow (use the `coop-workflow` skill)
 
