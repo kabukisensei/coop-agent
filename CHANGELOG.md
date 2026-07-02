@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-07-01
+
 ### Security / governance
 
 - **`coop-guardrails` now covers the common `git commit` bypasses.** The
