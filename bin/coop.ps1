@@ -566,7 +566,8 @@ function Invoke-CoopRelease {
         Coop-Say 'Usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]'
         Coop-Say '  Bump VERSION + extension manifests, roll CHANGELOG [Unreleased] into a dated'
         Coop-Say '  release, commit, tag vX.Y.Z, and push (commit + tag). Default level: patch.'
-        Coop-Say '  Verifies the extensions transpile first (--no-check to skip).'
+        Coop-Say '  Verifies extensions transpile + tests + bash/PowerShell parity pass first'
+        Coop-Say '  (--no-check to skip).'
         Coop-Say '  Requires a clean working tree (commit your changes first).'
         return
       }
@@ -612,6 +613,30 @@ function Invoke-CoopRelease {
       Coop-Ok 'extensions build'
     } else {
       Coop-Warn 'npx not found — skipping the extension build check.'
+    }
+
+    # Gate on the full Node suite + bash/PowerShell parity, not just transpile.
+    # Both are bash scripts, so run them only when bash is available (Git Bash /
+    # WSL); they exercise the already-clean tree that will ship.
+    $testsSh = Join-Path (Join-Path $root 'tests') 'run.sh'
+    if (Test-Path -LiteralPath $testsSh) {
+      if ((Test-Have 'bash') -and (Test-Have 'node')) {
+        & bash $testsSh *> $null
+        if ($LASTEXITCODE -eq 0) { Coop-Ok 'tests pass' }
+        else { Coop-Die 'tests failed (bash tests/run.sh) — fix them, or re-run with --no-check.' }
+      } else {
+        Coop-Warn 'bash or node not found — skipping the test suite.'
+      }
+    }
+    $paritySh = Join-Path (Join-Path $root 'scripts') 'check-parity.sh'
+    if (Test-Path -LiteralPath $paritySh) {
+      if (Test-Have 'bash') {
+        & bash $paritySh *> $null
+        if ($LASTEXITCODE -eq 0) { Coop-Ok 'parity check passes' }
+        else { Coop-Die 'parity check failed (bash scripts/check-parity.sh) — fix it, or re-run with --no-check.' }
+      } else {
+        Coop-Warn 'bash not found — skipping the parity check.'
+      }
     }
   }
 

@@ -368,7 +368,8 @@ coop_release() {
 Usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]
   Bump VERSION + extension manifests, roll CHANGELOG [Unreleased] into a dated
   release, commit, tag vX.Y.Z, and push (commit + tag). Default level: patch.
-  Verifies the extensions transpile first (--no-check to skip).
+  Verifies extensions transpile + tests + bash/PowerShell parity pass first
+  (--no-check to skip).
   Requires a clean working tree (commit your changes first).
 EOF
         return 0 ;;
@@ -418,6 +419,31 @@ EOF
       coop_ok "extensions build"
     else
       coop_warn "npx not found — skipping the extension build check."
+    fi
+
+    # A release tags exactly the (clean) working tree, so gate on the full Node
+    # suite and the bash/PowerShell parity check — the transpile above only proves
+    # the extensions compile, not that the tests or the .ps1 pairing pass. These
+    # run on the already-clean tree, so they test precisely what will ship.
+    if [ -f "$COOP_ROOT/tests/run.sh" ]; then
+      if have node; then
+        local test_log; test_log="$(mktemp)" || coop_die "mktemp failed."
+        if bash "$COOP_ROOT/tests/run.sh" >"$test_log" 2>&1; then
+          coop_ok "tests pass"; rm -f "$test_log"
+        else
+          cat "$test_log" >&2; rm -f "$test_log"
+          coop_die "tests failed (bash tests/run.sh) — fix them, or re-run with --no-check."
+        fi
+      else
+        coop_warn "node not found — skipping the test suite."
+      fi
+    fi
+    if [ -f "$COOP_ROOT/scripts/check-parity.sh" ]; then
+      if bash "$COOP_ROOT/scripts/check-parity.sh" >/dev/null 2>&1; then
+        coop_ok "parity check passes"
+      else
+        coop_die "parity check failed (bash scripts/check-parity.sh) — fix it, or re-run with --no-check."
+      fi
     fi
   fi
 

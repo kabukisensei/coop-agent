@@ -131,8 +131,10 @@ From a clean tree on `main`, with user-visible changes recorded under
 ```
 
 What `coop release` does (`coop_release` in `bin/coop`): requires a clean tree;
-esbuild-checks every `extensions/*/index.ts` (skip with `--no-check`); bumps
-the `VERSION` file **and** every `extensions/*/package.json` in lockstep; rolls
+runs the pre-tag gate — esbuild-checks every `extensions/*/index.ts`, then
+`bash tests/run.sh` and `bash scripts/check-parity.sh` (all skippable with
+`--no-check`); bumps the `VERSION` file **and** every `extensions/*/package.json`
+in lockstep; rolls
 `## [Unreleased]` into a dated `## [X.Y.Z]`; commits `Release vX.Y.Z`; tags
 `vX.Y.Z`; pushes commit + tag (`--no-push` stops at the local tag). The tag
 push triggers `release.yml`, which cuts a GitHub Release whose body is that
