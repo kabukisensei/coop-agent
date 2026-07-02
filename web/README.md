@@ -4,12 +4,30 @@ A friendly **browser window** in front of the *same governed coop* the terminal
 runs. Start it with:
 
 ```bash
-coop web            # opens a local page (Edge app-mode on Windows) — Ctrl+C to stop
+coop web            # opens a chromeless "app" window (Ctrl+C to stop)
 coop web --port 7500
 ```
 
 See [`../docs/coop-web-plan.md`](../docs/coop-web-plan.md) for the full plan and
 decision history.
+
+## The app window
+
+`coop web` opens as a **native-feeling app window**, not a browser tab: it
+launches the first Chromium-family browser it finds (Edge → Chrome → Brave →
+Vivaldi/Chromium, on Windows, macOS, and Linux) in `--app` mode with a
+**dedicated coop profile**. That single launch choice — no Electron, no bundle,
+no build step, no dependency, just *how* the browser is invoked — gives the
+whole native finish: a chromeless window, its own taskbar/dock entry, the coop
+icon (from the served favicon), and complete isolation from your real browser
+session and extensions. On Windows the double-click **coop** shortcut (`coop
+install` creates it on the Start Menu + Desktop) launches straight into this
+window.
+
+Escape hatches (env vars): `COOP_WEB_NO_APP=1` opens the UI as an ordinary
+browser tab instead of an app window; `COOP_WEB_NO_OPEN=1` starts the server but
+opens nothing (paste the printed URL yourself). If no Chromium browser is found,
+coop web falls back to a normal tab automatically.
 
 ## Which folder does it work in?
 
@@ -31,7 +49,7 @@ docs, and the header all agree). Starting folder:
 ## How it works
 
 ```
-Browser (Edge app-mode)  ⇄  web/server.mjs  ⇄  pi --mode rpc -a  (the real coop)
+Browser (Chromium --app)  ⇄  web/server.mjs  ⇄  pi --mode rpc -a  (the real coop)
   SPA: chat, cards           HTTP + SSE          governed via `coop launch-spec`
 ```
 

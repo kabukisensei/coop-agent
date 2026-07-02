@@ -22,6 +22,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, readdirSync, openSync, readSync, closeSync, fstatSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, sep, extname, resolve as resolvePath } from "node:path";
+import { tmpdir } from "node:os";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -850,22 +851,110 @@ async function handle(req, res) {
   res.writeHead(404, baseHeaders("text/plain")).end("not found");
 }
 
-// --- Open the browser (Edge app-mode = "it's an app" window on Windows) -------
-function openBrowser(u) {
+// --- Open the UI as a native-feeling "app" window -----------------------------
+// The lowest-cost path to "it's an app, not a browser tab": launch a Chromium-
+// family browser (Edge/Chrome/Brave/…) in --app mode with a DEDICATED profile.
+// That single choice buys the whole native finish — a chromeless window, its own
+// taskbar/dock entry, the coop icon (from the served favicon), and isolation from
+// the user's real browsing session/extensions — with no Electron, no bundle, no
+// build step, and no dependency: it's purely how the browser is invoked. If no
+// Chromium browser is found (or COOP_WEB_NO_APP is set) we fall back to the OS
+// default handler, i.e. a normal tab. Set COOP_WEB_NO_OPEN=1 to open nothing.
+
+// A persistent, coop-owned profile dir. Distinct from the user's real profile, so
+// the window is its own app (own taskbar identity + icon) and never touches their
+// session; persisted so the window's size/position stick between launches.
+function webAppProfileDir() {
+  const agentDir = (spec.env && spec.env.PI_CODING_AGENT_DIR) || process.env.PI_CODING_AGENT_DIR || "";
+  const base = agentDir ? dirname(resolvePath(agentDir)) : join(tmpdir(), "coop");
+  return join(base, "web-app-profile");
+}
+
+// First existing browser from a candidate list. Windows/macOS entries are absolute
+// install paths (existence-checked); Linux entries are bare names resolved against
+// PATH. Spawning the resolved executable directly (never via cmd.exe) sidesteps
+// the Windows quoting hazards called out in spawnPi.
+function firstBrowser(candidates) {
+  const pathSep = process.platform === "win32" ? ";" : ":";
+  for (const c of candidates) {
+    if (!c) continue;
+    if (c.includes("/") || c.includes("\\")) {
+      if (existsSync(c)) return c;
+    } else {
+      for (const dir of (process.env.PATH || "").split(pathSep)) {
+        if (dir && existsSync(join(dir, c))) return join(dir, c);
+      }
+    }
+  }
+  return null;
+}
+
+function browserCandidates() {
+  const p = process.platform;
+  if (p === "win32") {
+    const pf = process.env["ProgramFiles"] || "C:\\Program Files";
+    const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+    const local = process.env["LOCALAPPDATA"] || "";
+    return [
+      join(pf, "Microsoft\\Edge\\Application\\msedge.exe"),
+      join(pf86, "Microsoft\\Edge\\Application\\msedge.exe"),
+      join(pf, "Google\\Chrome\\Application\\chrome.exe"),
+      join(pf86, "Google\\Chrome\\Application\\chrome.exe"),
+      local ? join(local, "Google\\Chrome\\Application\\chrome.exe") : null,
+      join(pf, "BraveSoftware\\Brave-Browser\\Application\\brave.exe"),
+    ];
+  }
+  if (p === "darwin") {
+    return [
+      "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+      "/Applications/Vivaldi.app/Contents/MacOS/Vivaldi",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    ];
+  }
+  return [
+    "microsoft-edge", "microsoft-edge-stable", "google-chrome", "google-chrome-stable",
+    "brave-browser", "chromium", "chromium-browser", "vivaldi-stable",
+  ];
+}
+
+// Last resort: hand the URL to the OS default handler (a normal browser tab).
+function openDefault(u) {
   const p = process.platform;
   try {
-    if (p === "win32") {
-      // Prefer Edge app-mode (chromeless); fall back to the default browser.
-      spawn("cmd", ["/c", "start", "", "msedge", `--app=${u}`], { detached: true, stdio: "ignore" })
-        .on("error", () => spawn("cmd", ["/c", "start", "", u], { detached: true, stdio: "ignore" }));
-    } else if (p === "darwin") {
-      spawn("open", ["-na", "Microsoft Edge", "--args", `--app=${u}`], { detached: true, stdio: "ignore" })
-        .on("error", () => spawn("open", [u], { detached: true, stdio: "ignore" }));
-    } else {
-      spawn("xdg-open", [u], { detached: true, stdio: "ignore" });
-    }
+    if (p === "win32") spawn("cmd", ["/c", "start", "", u], { detached: true, stdio: "ignore" }).unref();
+    else if (p === "darwin") spawn("open", [u], { detached: true, stdio: "ignore" }).unref();
+    else spawn("xdg-open", [u], { detached: true, stdio: "ignore" }).unref();
   } catch {
-    /* the URL is printed below regardless */
+    /* the URL is printed to the console regardless */
+  }
+}
+
+function openBrowser(u) {
+  if (/^(1|true|yes)$/i.test(process.env.COOP_WEB_NO_APP || "")) {
+    openDefault(u);
+    return;
+  }
+  try {
+    const exe = firstBrowser(browserCandidates());
+    if (!exe) {
+      openDefault(u);
+      return;
+    }
+    // The browser CREATES --user-data-dir (and parents) if absent, so no mkdir.
+    const args = [
+      `--app=${u}`,
+      `--user-data-dir=${webAppProfileDir()}`,
+      "--window-size=1200,840",
+      "--no-first-run",
+      "--no-default-browser-check",
+    ];
+    const child = spawn(exe, args, { detached: true, stdio: "ignore" });
+    child.on("error", () => openDefault(u)); // resolved path failed to launch
+    child.unref();
+  } catch {
+    openDefault(u);
   }
 }
 

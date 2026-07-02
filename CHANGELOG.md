@@ -20,6 +20,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   RPC allow-list entries) stay behind the existing token+CSRF gates, add no
   dependencies, and are covered by the stub-pi suite (56 tests). The TUI,
   extensions, skills, and guardrails are untouched.
+- **`coop web` opens as a native app window.** Instead of a browser tab, `coop
+  web` now launches the first Chromium-family browser it finds (Edge → Chrome →
+  Brave → Vivaldi/Chromium, on Windows/macOS/Linux) in `--app` mode with a
+  **dedicated coop profile** — a chromeless window with its own taskbar/dock
+  entry, the coop icon, and full isolation from the user's real browser session,
+  with no Electron, bundle, or dependency. Falls back to a normal tab when no
+  Chromium browser is present; `COOP_WEB_NO_APP=1` forces a tab and
+  `COOP_WEB_NO_OPEN=1` opens nothing. On Windows the existing double-click **coop**
+  shortcut lands straight in this window.
 - **`git-helper` skill + `/pr-description` prompt.** Drafts a Conventional-Commits
   message and a structured PR description (summary, changes, lineage impact,
   standards/validation, rollback) from the current diff — so the human's commit is
