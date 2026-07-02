@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-07-02
+
 ### Fixed
 
 - **`coop web` polling fallback now clears the transcript on New Chat / folder
