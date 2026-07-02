@@ -5,6 +5,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`coop web` UX-breadth pass.** The browser UI gains rendered **thinking blocks**,
+  **expandable tool activity** with live `tool_execution_update` output, richer
+  markdown (tables, ordered lists, blockquotes, rules, italics), a header **context
+  gauge** + live status line + per-response token/throughput stats
+  (`get_session_stats`, `message_end` usage), a read-only **Files panel** (tree +
+  markdown/code/sortable-table preview, jailed to the working folder by lexical
+  *and* realpath checks) with an opt-in "you're viewing this file" prompt
+  attachment, **recent-folder** quick-switching (from session headers),
+  **name-this-chat** (`set_session_name`), and a crash card when the agent exits.
+  All bridge additions (`/files`, `/file`, `/folders`, two read-only/session-scoped
+  RPC allow-list entries) stay behind the existing token+CSRF gates, add no
+  dependencies, and are covered by the stub-pi suite (56 tests). The TUI,
+  extensions, skills, and guardrails are untouched.
+
 ## [0.8.1] — 2026-07-01
 
 ### Security / governance

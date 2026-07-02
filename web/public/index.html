@@ -16,7 +16,12 @@
       <button id="modelChip" class="chip" title="Change model">model…</button>
       <button id="thinkChip" class="chip" title="Thinking effort (click to change)">🧠 …</button>
       <button id="compactBtn" class="chip" title="Compact the conversation to free up memory">♻ Compact</button>
+      <button id="filesBtn" class="chip" title="Browse and preview files in the working folder">📁 Files</button>
     </nav>
+    <span class="ctxg" id="ctx" hidden>
+      <span class="bar"><i id="ctxBar"></i></span>
+      <span id="ctxText"></span>
+    </span>
     <span class="usage" id="usage" hidden>
       <span class="meter" title=""><span class="bar"><i id="bar5"></i></span><span class="bar"><i id="bar7"></i></span></span>
       <span id="usageText"></span>
@@ -24,7 +29,24 @@
     <span class="status"><span class="dot" id="dot"></span><span id="statusText">ready</span></span>
   </header>
 
-  <div id="scroll"><div id="transcript"></div></div>
+  <div id="main">
+    <div id="scroll"><div id="transcript"></div></div>
+    <aside id="files" hidden>
+      <div class="files-head">
+        <b>📁 Files</b>
+        <button id="filesRefresh" class="chip" title="Refresh the file list">⟳</button>
+        <button id="filesClose" class="chip" title="Close the panel">✕</button>
+      </div>
+      <div id="fileTree" class="file-tree"></div>
+      <div class="preview-head" id="previewHead" hidden>
+        <span id="previewName" title=""></span>
+        <label class="attach-lbl" title="When on, coop is told which file you're looking at, so 'this file' just works">
+          <input type="checkbox" id="attachChk" checked /> tell coop
+        </label>
+      </div>
+      <div id="preview" class="preview" hidden></div>
+    </aside>
+  </div>
   <div id="toasts"></div>
 
   <footer>
@@ -36,5 +58,6 @@
   </footer>
 
 <script src="/app.js"></script>
+<script src="/viewer.js"></script>
 </body>
 </html>

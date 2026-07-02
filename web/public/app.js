@@ -11,14 +11,19 @@ const atBottom = () => scroll.scrollHeight - scroll.scrollTop - scroll.clientHei
 const stick = (was) => { if (was) scroll.scrollTop = scroll.scrollHeight; };
 
 // --- markdown-lite (escape FIRST, then a few safe transforms) -----------------
-// Supports: fenced code blocks, headings, bullet lists, inline code, **bold**,
-// and bare http(s) links. Everything else stays literal text — no raw HTML ever.
+// Supports: fenced code blocks, headings, bullet + ordered lists, blockquotes,
+// GFM tables (rows must start with |), horizontal rules, inline code, **bold**,
+// *italic*, and bare http(s) links. Everything else stays literal text — no raw
+// HTML ever.
 function renderMarkdown(raw) {
   const lines = String(raw).split("\n");
   const out = [];
-  let inCode = false, code = [], inList = false;
-  const closeList = () => { if (inList) { out.push("</ul>"); inList = false; } };
-  // Tokenize code spans FIRST, then apply bold/link transforms only to the
+  let inCode = false, code = [], inUl = false, inOl = false, quote = [], table = [];
+  const closeLists = () => {
+    if (inUl) { out.push("</ul>"); inUl = false; }
+    if (inOl) { out.push("</ol>"); inOl = false; }
+  };
+  // Tokenize code spans FIRST, then apply bold/italic/link transforms only to the
   // non-code segments — so ** or URLs inside `code` stay literal and spans
   // can't misnest across each other.
   const inline = (s) => {
@@ -31,30 +36,65 @@ function renderMarkdown(raw) {
         }
         return part
           .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+          .replace(/(^|[^*])\*([^*\s][^*\n]*)\*(?!\*)/g, "$1<i>$2</i>")
           .replace(/\bhttps?:\/\/[^\s<>"')\]]+/g, (u) => `<a href="${u}" target="_blank" rel="noreferrer noopener">${u}</a>`);
       })
       .join("");
   };
+  const flushQuote = () => {
+    if (quote.length) { out.push(`<blockquote>${quote.join("<br>")}</blockquote>`); quote = []; }
+  };
+  // A buffered run of |-prefixed lines becomes a table if line 2 is a separator
+  // row (|---|:---:|…); otherwise the run renders as plain paragraphs.
+  const flushTable = () => {
+    if (!table.length) return;
+    const rows = table; table = [];
+    const cells = (line) => line.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((c) => inline(c.trim()));
+    if (rows.length >= 2 && /^\s*\|[\s:|-]+\|?\s*$/.test(rows[1]) && rows[1].includes("-")) {
+      const html = ["<table><thead><tr>"];
+      for (const c of cells(rows[0])) html.push(`<th>${c}</th>`);
+      html.push("</tr></thead><tbody>");
+      for (const row of rows.slice(2)) {
+        html.push("<tr>");
+        for (const c of cells(row)) html.push(`<td>${c}</td>`);
+        html.push("</tr>");
+      }
+      html.push("</tbody></table>");
+      out.push(html.join(""));
+    } else {
+      for (const row of rows) out.push(`<p>${inline(row)}</p>`);
+    }
+  };
   for (const line of lines) {
     if (/^```/.test(line)) {
       if (inCode) { out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`); code = []; }
-      else closeList();
+      else { closeLists(); flushQuote(); flushTable(); }
       inCode = !inCode;
       continue;
     }
     if (inCode) { code.push(line); continue; }
+    if (/^\s*\|/.test(line)) { closeLists(); flushQuote(); table.push(line); continue; }
+    flushTable();
+    const q = /^>\s?(.*)$/.exec(line);
+    if (q) { closeLists(); quote.push(inline(q[1])); continue; }
+    flushQuote();
     const h = /^(#{1,4})\s+(.*)$/.exec(line);
-    if (h) { closeList(); out.push(`<h${h[1].length + 1}>${inline(h[2])}</h${h[1].length + 1}>`); continue; }
+    if (h) { closeLists(); out.push(`<h${h[1].length + 1}>${inline(h[2])}</h${h[1].length + 1}>`); continue; }
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { closeLists(); out.push("<hr>"); continue; }
     const li = /^\s*[-*]\s+(.*)$/.exec(line);
-    if (li) { if (!inList) { out.push("<ul>"); inList = true; } out.push(`<li>${inline(li[1])}</li>`); continue; }
-    closeList();
+    if (li) { if (inOl) closeLists(); if (!inUl) { out.push("<ul>"); inUl = true; } out.push(`<li>${inline(li[1])}</li>`); continue; }
+    const ol = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+    if (ol) { if (inUl) closeLists(); if (!inOl) { out.push("<ol>"); inOl = true; } out.push(`<li>${inline(ol[1])}</li>`); continue; }
+    closeLists();
     if (line.trim() === "") out.push("<p></p>");
     else out.push(`<p>${inline(line)}</p>`);
   }
   if (inCode && code.length) out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
-  closeList();
+  closeLists(); flushQuote(); flushTable();
   return out.join("");
 }
+// Shared with viewer.js (Files panel) so markdown files render like chat markdown.
+window.renderMarkdown = renderMarkdown;
 
 // --- transcript primitives -----------------------------------------------------
 function bubble(role, text = "") {
@@ -70,7 +110,9 @@ function bubble(role, text = "") {
   return b;
 }
 let current = null; // current streaming assistant bubble
-let tools = new Map();
+let tools = new Map(); // toolCallId -> { sum, outp, hint }
+let thinkingEl = null; // current streaming thinking <details> (open while streaming)
+let assistantT0 = 0; // when the current assistant message started (for tok/s)
 
 function appendAssistant(delta) {
   const was = atBottom();
@@ -80,10 +122,110 @@ function appendAssistant(delta) {
   stick(was);
 }
 
+// Reasoning stream: a collapsible block that stays open while the model thinks,
+// then folds shut when the visible answer starts (the TUI shows the same stream).
+function appendThinking(delta) {
+  const was = atBottom();
+  if (!thinkingEl) {
+    const det = document.createElement("details");
+    det.className = "thinking";
+    det.open = true;
+    const sum = document.createElement("summary");
+    sum.textContent = "✦ thinking";
+    const content = document.createElement("div");
+    content.className = "content";
+    det.append(sum, content);
+    transcript.appendChild(det);
+    thinkingEl = det;
+  }
+  thinkingEl.lastElementChild.textContent += delta;
+  stick(was);
+}
+function endThinking() {
+  if (thinkingEl) thinkingEl.open = false;
+  thinkingEl = null;
+}
+
+// Status line: what coop is doing right now + for how long ("running sql_review… 34s").
+let busySince = 0, curTool = "", statusPhase = "", statusTimer = null;
+function renderStatus() {
+  if (!dot.classList.contains("busy")) return;
+  const secs = Math.floor((Date.now() - busySince) / 1000);
+  const t = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
+  const doing = statusPhase || (curTool ? `running ${curTool}` : "thinking");
+  statusText.textContent = `${doing}… ${t}`;
+}
 function setBusy(b) {
   dot.classList.toggle("busy", b);
-  statusText.textContent = b ? "thinking…" : "ready";
   stopBtn.hidden = !b;
+  if (b) {
+    if (!busySince) busySince = Date.now(); // replayed agent_starts keep the original clock
+    if (!statusTimer) statusTimer = setInterval(renderStatus, 1000);
+    renderStatus();
+  } else {
+    busySince = 0; curTool = "";
+    if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+    if (!statusPhase) statusText.textContent = "ready";
+  }
+}
+
+// --- tool activity helpers ------------------------------------------------------
+function toolHint(args) {
+  const a = args || {};
+  const s = typeof a.command === "string" ? a.command
+    : typeof a.path === "string" ? a.path
+    : typeof a.file === "string" ? a.file
+    : typeof a.object === "string" ? a.object : "";
+  if (!s) return "";
+  const short = s.length > 64 ? s.slice(0, 63) + "…" : s;
+  return ` <span class="hint">${esc(short)}</span>`;
+}
+function formatToolArgs(args) {
+  if (args && typeof args === "object" && typeof args.command === "string") return args.command;
+  try { return JSON.stringify(args, null, 2); } catch { return String(args); }
+}
+function resultText(result) {
+  const c = result && Array.isArray(result.content) ? result.content : [];
+  return c.filter((b) => b && b.type === "text").map((b) => b.text).join("\n").trim();
+}
+function fmtTok(n) { return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n); }
+
+// --- "viewing this file" context (Files panel) ----------------------------------
+// When a file is open in the Files panel with attach enabled, the outgoing prompt
+// is wrapped with a directive naming that file, so "this file" / "here" resolve
+// without typing a path. The wrapped form is what the agent sees and what the
+// session persists — so EVERY user-bubble render path strips it back out and
+// shows a 📎 chip instead (the round-trip must match wrapViewingContext exactly).
+const VIEW_TAG = "coop-viewing-context";
+function wrapViewingContext(text, filePath) {
+  const directive =
+    `The user is currently viewing this file in the coop web Files panel:\n${filePath}\n` +
+    `If they refer to "this file", "this", "here", or mention a section, object, ` +
+    `measure, query, or name without specifying a file, assume they mean this file ` +
+    `and read it with your tools as needed.`;
+  return `<${VIEW_TAG} file="${filePath}">\n${directive}\n</${VIEW_TAG}>\n\n${text}`;
+}
+// Lazy capture up to the first `">` so a filename containing a `"` (legal on
+// macOS/Linux) still round-trips instead of leaking the raw wrapper into the bubble.
+const VIEW_RE = new RegExp(`^<${VIEW_TAG} file="([\\s\\S]*?)">[\\s\\S]*?</${VIEW_TAG}>\\n*`);
+function stripViewingContext(raw) {
+  const m = VIEW_RE.exec(String(raw));
+  if (!m) return { file: "", text: String(raw) };
+  return { file: m[1], text: String(raw).slice(m[0].length) };
+}
+
+// The one way a user turn becomes a bubble (live sends, replays, backfills).
+function userBubble(raw) {
+  const { file, text } = stripViewingContext(raw);
+  if (!text.trim() && !file) return;
+  const b = bubble("user", text);
+  if (file) {
+    const chip = document.createElement("div");
+    chip.className = "attach-chip";
+    chip.textContent = "📎 " + (file.split(/[\\/]/).pop() || file);
+    chip.title = file;
+    b.appendChild(chip);
+  }
 }
 
 function toast(message, kind = "info") {
@@ -228,6 +370,8 @@ function resetTranscript() {
   transcript.textContent = "";
   current = null;
   tools = new Map();
+  thinkingEl = null;
+  statusPhase = "";
   setBusy(false);
 }
 
@@ -239,10 +383,49 @@ function handle(evt) {
       if (evt.cwd) setCwd(evt.cwd);
       break;
     case "agent_start": setBusy(true); break;
-    case "agent_end": setBusy(false); current = null; break;
+    case "agent_end":
+      setBusy(false);
+      endThinking();
+      current = null;
+      refreshCtx(); // context gauge: cheap read-only stats after each turn
+      if (window.coopFiles) window.coopFiles.onAgentEnd(); // the agent may have written files
+      break;
+    case "__fatal": {
+      // The bridge's last words before it exits: the agent process died.
+      setBusy(false);
+      statusPhase = "";
+      statusText.textContent = "coop stopped — close this window and start coop again";
+      const card = document.createElement("div");
+      card.className = "card";
+      const h = document.createElement("h3");
+      h.textContent = "coop stopped unexpectedly";
+      const p = document.createElement("p");
+      p.textContent = evt.code != null ? `The agent process exited (code ${evt.code}).` : "The agent process exited.";
+      card.append(h, p);
+      if (evt.stderrTail) {
+        const pre = document.createElement("pre");
+        pre.className = "fatal";
+        pre.textContent = evt.stderrTail;
+        card.appendChild(pre);
+      }
+      transcript.appendChild(card);
+      stick(true);
+      break;
+    }
+    case "compaction_start":
+      statusPhase = "compacting";
+      if (evt.reason && evt.reason !== "manual") toast("Context is getting full — compacting the conversation automatically…");
+      if (dot.classList.contains("busy")) renderStatus();
+      else statusText.textContent = "compacting…";
+      break;
+    case "compaction_end":
+      statusPhase = "";
+      if (!dot.classList.contains("busy")) statusText.textContent = "ready";
+      refreshCtx();
+      break;
     case "__message": {
       // Backfilled turn from a resumed conversation (bridge-synthesized).
-      if (evt.role === "user") bubble("user", evt.text || "");
+      if (evt.role === "user") userBubble(evt.text || "");
       else {
         if (evt.text) bubble("assistant", evt.text);
         for (const name of evt.tools || []) {
@@ -260,31 +443,99 @@ function handle(evt) {
         // Sole renderer of user bubbles (live sends, replays, steered deliveries).
         const c = Array.isArray(evt.message.content) ? evt.message.content : [];
         const text = c.filter((p) => p.type === "text").map((p) => p.text).join("\n") || (typeof evt.message.content === "string" ? evt.message.content : "");
-        if (text.trim()) bubble("user", text);
+        if (text.trim()) userBubble(text);
       }
-      if (evt.message && evt.message.role === "assistant") current = null;
+      if (evt.message && evt.message.role === "assistant") { current = null; assistantT0 = Date.now(); }
       break;
     case "message_update": {
       const d = evt.assistantMessageEvent || {};
-      if (d.type === "text_start") current = bubble("assistant", "");
+      if (d.type === "thinking_delta") appendThinking(d.delta || "");
+      else if (d.type === "thinking_end") endThinking();
+      else if (d.type === "text_start") { endThinking(); current = bubble("assistant", ""); }
       else if (d.type === "text_delta") appendAssistant(d.delta || "");
       break;
     }
-    case "message_end": current = null; break;
+    case "message_end": {
+      endThinking();
+      // Compact per-response stats under the bubble (Hephaestus-style): output
+      // tokens, throughput, cache reads, model. Only when the turn produced a
+      // visible bubble and the message actually carries usage.
+      const m = evt.message || {};
+      if (m.role === "assistant" && current) {
+        const parts = [];
+        const u = m.usage || {};
+        const secs = assistantT0 ? (Date.now() - assistantT0) / 1000 : 0;
+        if (u.output) {
+          parts.push(`${fmtTok(u.output)} out`);
+          // Live timing only: replayed events arrive in a burst, so the >1s
+          // guard naturally excludes nonsense tok/s on reconnect.
+          if (secs > 1) {
+            const tps = u.output / secs;
+            parts.push(`${tps >= 100 ? Math.round(tps) : tps.toFixed(1)} tok/s`);
+          }
+        }
+        if (u.cacheRead) parts.push(`${fmtTok(u.cacheRead)} cached`);
+        const model = m.responseModel || m.model;
+        if (typeof model === "string" && model) parts.push(model);
+        if (parts.length) {
+          const el = document.createElement("div");
+          el.className = "msg-stats";
+          el.textContent = parts.join("  ·  ");
+          transcript.appendChild(el);
+        }
+      }
+      current = null;
+      break;
+    }
     case "tool_execution_start": {
-      const el = document.createElement("div");
-      el.className = "tool";
-      el.innerHTML = "⚙ " + esc(evt.toolName || "tool") + " …";
-      transcript.appendChild(el);
-      tools.set(evt.toolCallId, el);
+      // Expandable activity row: the pill summary shows tool + a hint (e.g. the
+      // bash command); opening it reveals the full args and, while running, the
+      // live output stream.
+      const det = document.createElement("details");
+      det.className = "toolblock";
+      const hint = toolHint(evt.args);
+      const sum = document.createElement("summary");
+      sum.innerHTML = "⚙ " + esc(evt.toolName || "tool") + hint + " …";
+      const body = document.createElement("div");
+      body.className = "tool-body";
+      const args = document.createElement("pre");
+      args.className = "tool-args";
+      args.textContent = formatToolArgs(evt.args);
+      const outp = document.createElement("pre");
+      outp.className = "tool-out";
+      outp.hidden = true;
+      body.append(args, outp);
+      det.append(sum, body);
+      transcript.appendChild(det);
+      tools.set(evt.toolCallId, { sum, outp, hint, name: evt.toolName || "tool" });
+      curTool = evt.toolName || "";
+      renderStatus();
       stick(was);
       break;
     }
-    case "tool_execution_end": {
-      const el = tools.get(evt.toolCallId);
-      if (el) {
-        el.innerHTML = (evt.isError ? '<span class="bad">✗</span> ' : '<span class="ok">✓</span> ') + esc(evt.toolName || "tool");
+    case "tool_execution_update": {
+      // partialResult carries the ACCUMULATED output so far — replace, don't append.
+      const t = tools.get(evt.toolCallId);
+      if (t) {
+        const text = resultText(evt.partialResult);
+        if (text) {
+          t.outp.hidden = false;
+          t.outp.textContent = text.length > 4000 ? "…" + text.slice(-4000) : text;
+        }
       }
+      break;
+    }
+    case "tool_execution_end": {
+      const t = tools.get(evt.toolCallId);
+      if (t) {
+        t.sum.innerHTML = (evt.isError ? '<span class="bad">✗</span> ' : '<span class="ok">✓</span> ') + esc(evt.toolName || t.name) + t.hint;
+        const text = resultText(evt.result);
+        if (text) {
+          t.outp.hidden = false;
+          t.outp.textContent = text.length > 6000 ? text.slice(0, 6000) + `\n… (${text.length - 6000} more chars)` : text;
+        }
+      }
+      curTool = "";
       if ((evt.toolName === "sql_review" || evt.toolName === "dax_review") && !evt.isError) reviewCard(evt);
       break;
     }
@@ -317,6 +568,7 @@ async function post(path, body) {
 let currentCwd = "";
 function setCwd(cwd) {
   currentCwd = cwd;
+  window.coopCwd = cwd; // viewer.js prefixes relative file paths with this for attach
   const el = document.querySelector("#cwd");
   if (el) { el.textContent = cwd; el.title = `coop is working in ${cwd} — click to change`; }
 }
@@ -324,14 +576,64 @@ function setCwd(cwd) {
 // Change the working folder: the bridge restarts the governed agent IN that
 // folder, so tools, lineage docs, and the header all agree. (Asking the agent to
 // `cd` in chat only moves its shell — not where coop's tools operate.)
-document.querySelector("#cwd").addEventListener("click", () => {
+document.querySelector("#cwd").addEventListener("click", async () => {
+  // Folders you've used coop in before (from pi's session store) come first —
+  // one click instead of hunting down a path. Pasting a path still works.
+  let folders = [];
+  try {
+    const r = await fetch("/folders");
+    if (r.ok) folders = (await r.json()).folders || [];
+  } catch { /* recents are a convenience — the paste field below always works */ }
+
   const was = atBottom();
   const card = document.createElement("div");
   card.className = "card";
   const title = document.createElement("h3");
   title.textContent = "Change working folder";
+  card.appendChild(title);
+
+  const doChdir = async (dir, busyEl) => {
+    if (!dir) return;
+    if (busyEl) busyEl.disabled = true;
+    try {
+      const r = await fetch("/chdir", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-coop-csrf": "1" },
+        body: JSON.stringify({ dir }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        toast(data.error || "Couldn't switch to that folder.", "error");
+        if (busyEl) busyEl.disabled = false;
+        return;
+      }
+      toast(`Now working in ${data.cwd}`);
+      card.remove(); // the transcript resets via the fresh __hello broadcast
+      setTimeout(refreshState, 1500); // repopulate model/thinking chips for the new session
+    } catch {
+      toast("Couldn't reach coop web.", "error");
+      if (busyEl) busyEl.disabled = false;
+    }
+  };
+
+  const recents = folders.filter((f) => f.dir !== currentCwd);
+  if (recents.length) {
+    const p0 = document.createElement("p");
+    p0.textContent = "Folders you've worked in before:";
+    const list = document.createElement("div");
+    list.className = "row list";
+    for (const f of recents.slice(0, 8)) {
+      const btn = document.createElement("button");
+      btn.textContent = f.dir;
+      btn.title = `Switch coop to ${f.dir}`;
+      btn.onclick = () => doChdir(f.dir, btn);
+      list.appendChild(btn);
+    }
+    card.append(p0, list);
+  }
+
   const p = document.createElement("p");
-  p.textContent = "Paste the full path of the folder coop should work in (tip: copy it from the File Explorer address bar). This starts a fresh conversation there.";
+  p.textContent = (recents.length ? "Or paste" : "Paste") + " the full path of the folder coop should work in (tip: copy it from the File Explorer address bar). This starts a fresh conversation there.";
   const field = document.createElement("input");
   field.value = currentCwd;
   const row = document.createElement("div");
@@ -343,33 +645,10 @@ document.querySelector("#cwd").addEventListener("click", () => {
   cancel.className = "ghost";
   cancel.textContent = "Cancel";
   cancel.onclick = () => card.remove();
-  ok.onclick = async () => {
-    const dir = field.value.trim();
-    if (!dir) return;
-    ok.disabled = true;
-    try {
-      const r = await fetch("/chdir", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-coop-csrf": "1" },
-        body: JSON.stringify({ dir }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        toast(data.error || "Couldn't switch to that folder.", "error");
-        ok.disabled = false;
-        return;
-      }
-      toast(`Now working in ${data.cwd}`);
-      card.remove(); // the transcript resets via the fresh __hello broadcast
-      setTimeout(refreshState, 1500); // repopulate model/thinking chips for the new session
-    } catch {
-      toast("Couldn't reach coop web.", "error");
-      ok.disabled = false;
-    }
-  };
+  ok.onclick = () => doChdir(field.value.trim(), ok);
   field.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); ok.click(); } });
   row.append(ok, cancel);
-  card.append(title, p, field, row);
+  card.append(p, field, row);
   transcript.appendChild(card);
   field.focus();
   stick(was);
@@ -399,7 +678,7 @@ function connect() {
 function switchToPolling() {
   if (mode === "poll") return;
   mode = "poll";
-  let since = 0, first = true;
+  let since = 0, first = true, fails = 0;
   statusText.textContent = "connecting…";
   const tick = async () => {
     try {
@@ -410,12 +689,23 @@ function switchToPolling() {
       }
       if (!r.ok) throw new Error(String(r.status));
       const data = await r.json();
+      fails = 0;
       if (first) { resetTranscript(); first = false; if (data.cwd) setCwd(data.cwd); }
       since = data.next;
       for (const line of data.events) { try { handle(JSON.parse(line)); } catch { /* skip */ } }
       if (/connecting|reconnecting/.test(statusText.textContent)) setBusy(dot.classList.contains("busy"));
       setTimeout(tick, 1500);
     } catch {
+      // On loopback a poll can only fail because the bridge (and its pi child) is
+      // gone — there's no flaky network to 127.0.0.1. The SSE path surfaces this as
+      // a terminal EventSource.CLOSED; the polling path can't get the __fatal frame
+      // (the server exits before the next poll), so after a few failures we mirror
+      // that terminal state instead of looping "reconnecting…" forever.
+      if (++fails >= 4) {
+        setBusy(false);
+        statusText.textContent = "coop stopped — close this window and start coop again";
+        return;
+      }
       statusText.textContent = "reconnecting…";
       setTimeout(tick, 2500);
     }
@@ -460,6 +750,34 @@ async function refreshState() {
     startUsagePolling(d.model);
   } catch {
     /* toolbar stays generic — chat still works */
+  }
+  refreshCtx();
+  if (window.coopFiles) window.coopFiles.onAgentEnd(); // refresh the Files tree for the (possibly new) folder
+}
+
+// --- context gauge (get_session_stats) ------------------------------------------
+// How full the conversation's context window is, refreshed after every turn and
+// after compaction — the web twin of the TUI footer's context readout.
+const ctxEl = $("#ctx"), ctxBar = $("#ctxBar"), ctxText = $("#ctxText");
+async function refreshCtx() {
+  try {
+    const r = await rpc({ type: "get_session_stats" });
+    const d = (r && r.data) || {};
+    const cu = d.contextUsage;
+    if (!cu || cu.percent == null) { ctxEl.hidden = true; return; }
+    const pct = Math.max(0, Math.min(100, cu.percent));
+    ctxEl.hidden = false;
+    ctxBar.style.width = pct + "%";
+    ctxBar.className = pct >= 90 ? "hot" : pct >= 70 ? "warm" : "";
+    ctxText.textContent = `ctx ${Math.round(pct)}%`;
+    const tot = d.tokens && d.tokens.total;
+    const cost = typeof d.cost === "number" && d.cost > 0 ? ` · ~$${d.cost.toFixed(2)}` : "";
+    ctxEl.title =
+      `Context: ${fmtTok(cu.tokens || 0)} of ${fmtTok(cu.contextWindow || 0)} tokens (${Math.round(pct)}%)` +
+      (tot ? ` · session total ${fmtTok(tot)} tok${cost}` : "") +
+      " — ♻ Compact frees space";
+  } catch {
+    /* the gauge is best-effort; never block the chat on it */
   }
 }
 
@@ -539,15 +857,61 @@ $("#historyBtn").onclick = async () => {
   }
   const closeRow = document.createElement("div");
   closeRow.className = "row";
+  const nameBtn = document.createElement("button");
+  nameBtn.className = "ghost";
+  nameBtn.textContent = "✎ Name current chat";
+  nameBtn.title = "Give this conversation a name so it's easy to find here later";
+  nameBtn.onclick = () => { done(); nameChatCard(); };
   const cancel = document.createElement("button");
   cancel.className = "ghost";
   cancel.textContent = "Cancel";
   cancel.onclick = done;
-  closeRow.appendChild(cancel);
+  closeRow.append(nameBtn, cancel);
   card.append(title, p, row, closeRow);
   transcript.appendChild(card);
   stick(was);
 };
+
+// Name the current conversation (pi's set_session_name) so the History list shows
+// a real title instead of the first message.
+function nameChatCard() {
+  const was = atBottom();
+  const card = document.createElement("div");
+  card.className = "card";
+  const title = document.createElement("h3");
+  title.textContent = "Name this chat";
+  const field = document.createElement("input");
+  field.placeholder = "e.g. Q3 revenue measure review";
+  field.maxLength = 200;
+  const row = document.createElement("div");
+  row.className = "row";
+  row.style.marginTop = "8px";
+  const ok = document.createElement("button");
+  ok.textContent = "Save name";
+  const cancel = document.createElement("button");
+  cancel.className = "ghost";
+  cancel.textContent = "Cancel";
+  cancel.onclick = () => card.remove();
+  ok.onclick = async () => {
+    const name = field.value.trim();
+    if (!name) return;
+    ok.disabled = true;
+    try {
+      await rpc({ type: "set_session_name", name });
+      toast(`Chat named “${name}”.`);
+      card.remove();
+    } catch {
+      toast("Couldn't name the chat.", "error");
+      ok.disabled = false;
+    }
+  };
+  field.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); ok.click(); } });
+  row.append(ok, cancel);
+  card.append(title, field, row);
+  transcript.appendChild(card);
+  field.focus();
+  stick(was);
+}
 
 modelChip.onclick = async () => {
   let models = [];
@@ -669,13 +1033,18 @@ const input = $("#input");
 async function send() {
   const message = input.value.trim();
   if (!message) return;
+  // If a file is open in the Files panel with attach enabled, wrap the outgoing
+  // prompt with the viewing-context directive. Slash commands are never wrapped —
+  // the wrapper would break command parsing.
+  const attach = !message.startsWith("/") && window.coopFiles ? window.coopFiles.attachTarget() : "";
+  const outgoing = attach ? wrapViewingContext(message, attach) : message;
   // No local echo: the user bubble renders from the message_start event on the
   // stream (single source of truth — identical for live sends, replays after a
   // reconnect, and steered messages that Pi delivers later).
   const wasBusy = dot.classList.contains("busy");
   input.value = ""; input.style.height = "auto";
   try {
-    await post("/prompt", { message });
+    await post("/prompt", { message: outgoing });
     if (wasBusy) toast("Queued — coop will pick this up in a moment.");
   } catch {
     // Never lose the user's words: put the message back in the composer.

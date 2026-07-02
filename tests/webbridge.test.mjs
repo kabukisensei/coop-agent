@@ -21,10 +21,22 @@ const t = (name, ok) => {
 // --- start the bridge against the stub pi ------------------------------------
 // A fake agent dir with one prior session for THIS cwd, so /sessions and /resume
 // can be exercised (the bridge mirrors pi's session-dir encoding).
-import { mkdirSync, writeFileSync, mkdtempSync } from "node:fs";
+import { mkdirSync, writeFileSync, mkdtempSync, symlinkSync } from "node:fs";
 import { tmpdir as osTmp } from "node:os";
 import { resolve as resolvePath } from "node:path";
 const agentDir = mkdtempSync(join(osTmp(), "coop-web-test-"));
+
+// A controlled working folder with known files, for the Files-panel endpoints
+// (/files, /file) and their path jail. `outside` is a sibling the jail must never
+// reach, incl. via the `escape` symlink planted inside the work dir.
+const workDir = mkdtempSync(join(osTmp(), "coop-web-work-"));
+const outside = mkdtempSync(join(osTmp(), "coop-web-outside-"));
+writeFileSync(join(outside, "secret.txt"), "TOP SECRET — must never be served\n");
+writeFileSync(join(workDir, "notes.md"), "# Title\n\nHello **world**.\n");
+writeFileSync(join(workDir, "data.csv"), "name,age\nAlice,30\nBob,25\n");
+mkdirSync(join(workDir, "sub"));
+writeFileSync(join(workDir, "sub", "inner.txt"), "inner file contents\n");
+try { symlinkSync(outside, join(workDir, "escape")); } catch { /* symlinks may be unavailable (e.g. Windows w/o privilege) */ }
 const encoded = `--${resolvePath(process.cwd()).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 const sessDir = join(agentDir, "sessions", encoded);
 mkdirSync(sessDir, { recursive: true });
@@ -78,6 +90,9 @@ t("serves the SPA shell", html.includes("<title>coop</title>") && html.includes(
 
 r = await fetch(base + "/app.js", { headers: { cookie } });
 t("app.js served with cookie", r.status === 200 && /javascript/.test(r.headers.get("content-type") || ""));
+
+r = await fetch(base + "/viewer.js", { headers: { cookie } });
+t("viewer.js served with cookie", r.status === 200 && /javascript/.test(r.headers.get("content-type") || ""));
 
 // fetch() forbids overriding Host, so use raw http for the rebinding-guard probe.
 const rebindStatus = await new Promise((resolve) => {
@@ -192,6 +207,14 @@ r = await post("/rpc", { type: "set_model", provider: "stub", modelId: "stub-2" 
 state = await r.json();
 t("/rpc set_model round-trips", state.success === true && state.data.id === "stub-2");
 
+r = await post("/rpc", { type: "get_session_stats" });
+state = await r.json();
+t("/rpc get_session_stats returns context usage", state.success === true && state.data.contextUsage.percent === 6);
+
+r = await post("/rpc", { type: "set_session_name", name: "My named chat" });
+state = await r.json();
+t("/rpc set_session_name round-trips", state.success === true);
+
 r = await post("/rpc", { type: "new_session" });
 state = await r.json();
 t("/rpc new_session -> success", state.success === true && state.data.cancelled === false);
@@ -217,11 +240,18 @@ poll = await r.json();
 t("backfilled user turn arrives as __message", poll.events.some((l) => l.includes('"__message"') && l.includes("old question")));
 t("backfilled assistant turn carries its tool call", poll.events.some((l) => l.includes("old answer") && l.includes("sql_review")));
 
+// --- /folders (recent working folders from the session store) ---------------------
+r = await fetch(base + "/folders", { headers: { cookie } });
+t("/folders -> 200", r.status === 200);
+let folders = (await r.json()).folders;
+t("/folders lists the prior session's cwd (from the header, not the dir name)",
+  Array.isArray(folders) && folders.some((f) => f.dir === resolvePath(process.cwd())));
+
 // --- /chdir (restart the agent in a new working folder) ---------------------------
 r = await post("/chdir", { dir: join(ROOT, "no-such-folder-xyz") });
 t("/chdir rejects a missing folder", r.status === 400);
 
-const target = resolvePath(osTmp());
+const target = resolvePath(workDir);
 r = await post("/chdir", { dir: target });
 t("/chdir switches to a real folder", r.status === 200);
 let ch = await r.json();
@@ -231,6 +261,40 @@ r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
 poll = await r.json();
 t("poll reports the new folder", poll.cwd === target);
 t("restarted agent's startup dialog arrives fresh", poll.events.some((l) => l.includes("What would you like to do")));
+
+// --- /files + /file (read-only Files panel, jailed to the working folder) ---------
+r = await fetch(base + "/files", { headers: { cookie } });
+t("/files -> 200", r.status === 200);
+let tree = await r.json();
+const treeNames = (tree.tree || []).map((n) => n.name);
+t("/files lists the working folder's entries", treeNames.includes("notes.md") && treeNames.includes("data.csv") && treeNames.includes("sub"));
+const subNode = (tree.tree || []).find((n) => n.name === "sub");
+t("/files nests subdirectories", subNode && subNode.type === "dir" && (subNode.children || []).some((c) => c.name === "inner.txt"));
+
+r = await fetch(base + "/file?p=notes.md", { headers: { cookie } });
+t("/file reads a markdown file (kind=markdown)", r.status === 200);
+let file = await r.json();
+t("/file returns the file's content + kind", file.ok === true && file.kind === "markdown" && file.content.includes("# Title"));
+
+r = await fetch(base + "/file?p=data.csv", { headers: { cookie } });
+file = await r.json();
+t("/file tags csv as a sheet", file.ok === true && file.kind === "sheet");
+
+r = await fetch(base + "/file?p=sub/inner.txt", { headers: { cookie } });
+file = await r.json();
+t("/file reads a nested file", file.ok === true && file.content.includes("inner file contents"));
+
+r = await fetch(base + "/file?p=" + encodeURIComponent("../../etc/passwd"), { headers: { cookie } });
+t("/file rejects ../ traversal (path jail)", r.status === 400);
+
+r = await fetch(base + "/file?p=" + encodeURIComponent("escape/secret.txt"), { headers: { cookie } });
+t("/file rejects a symlink that escapes the jail (realpath check)", r.status === 400);
+
+r = await fetch(base + "/file?p=does-not-exist.md", { headers: { cookie } });
+t("/file rejects a missing file", r.status === 400);
+
+r = await fetch(base + "/files");
+t("/files without cookie -> 401", r.status === 401);
 
 server.kill();
 console.log(`  ${n} web-bridge tests passed`);

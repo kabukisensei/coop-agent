@@ -19,9 +19,9 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { readFileSync, existsSync, readdirSync, openSync, readSync, closeSync, fstatSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, openSync, readSync, closeSync, fstatSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { dirname, join, sep, extname, resolve as resolvePath } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -88,6 +88,8 @@ function spawnPi(extraArgs = []) {
 }
 
 let pi; // current child — reassigned by restartPi(); handlers generation-check it
+let stderrTail = ""; // bounded tail of pi's stderr, surfaced to the browser on a crash
+const STDERR_TAIL_MAX = 4000;
 
 function wirePi(child) {
   child.on("error", (e) => {
@@ -97,7 +99,15 @@ function wirePi(child) {
   child.on("exit", (code) => {
     if (child !== pi) return; // an old child we intentionally replaced — ignore
     console.error(`coop web: pi exited (${code}). Shutting down.`);
-    process.exit(code || 0);
+    // Best-effort last words: tell connected browsers WHY instead of leaving them
+    // on a generic "disconnected". SSE writes are buffered synchronously, so a
+    // short grace period lets the frame flush before the process dies.
+    broadcast(JSON.stringify({
+      type: "__fatal",
+      code: code === undefined ? null : code,
+      stderrTail: stderrTail.trim().slice(-1500),
+    }));
+    setTimeout(() => process.exit(code || 0), 250);
   });
   // Strict \n-only JSONL parse, buffered PER CHILD (a replaced child's partial
   // line must never bleed into the new one's stream).
@@ -114,7 +124,11 @@ function wirePi(child) {
       handlePiLine(line);
     }
   });
-  child.stderr.on("data", (c) => process.stderr.write(c)); // pi diagnostics -> our console
+  child.stderr.on("data", (c) => {
+    process.stderr.write(c); // pi diagnostics -> our console
+    if (child !== pi) return;
+    stderrTail = (stderrTail + c.toString("utf8")).slice(-STDERR_TAIL_MAX);
+  });
   child.stdin.on("error", (e) => console.error("coop web: pi stdin error:", e.message));
 }
 
@@ -153,6 +167,8 @@ const RPC_ALLOWED = new Set([
   "set_model",
   "set_thinking_level",
   "compact",
+  "get_session_stats", // read-only: tokens, cost, context usage (header gauge)
+  "set_session_name", // names the current conversation (History list)
 ]);
 let rpcSeq = 0;
 const pendingRpc = new Map(); // id -> { resolve, timer }
@@ -247,6 +263,7 @@ function restartPi(newCwd, extraArgs = []) {
   history.length = 0;
   historyBase = 0;
   answeredUi.clear();
+  stderrTail = "";
   pi = spawnPi(extraArgs);
   wirePi(pi);
   broadcast(JSON.stringify({ type: "__hello", replay: 0, cwd: CWD }));
@@ -326,6 +343,161 @@ function scanSessionFile(fullPath) {
   return { name, preview };
 }
 
+// --- Recent working folders ----------------------------------------------------
+// Folders coop has been used in before, derived from pi's session store: each
+// sessions/--…--/ dir holds the conversations for one working folder. The dir
+// NAME is a lossy encoding (hyphens in real path segments are indistinguishable
+// from separators), so we read the authoritative `cwd` from the newest session
+// file's header line instead — and only offer folders that still exist.
+function recentFolders(limit = 12) {
+  const agentDir = (spec.env && spec.env.PI_CODING_AGENT_DIR) || process.env.PI_CODING_AGENT_DIR || "";
+  if (!agentDir) return [];
+  const root = join(resolvePath(agentDir), "sessions");
+  let dirs = [];
+  try {
+    dirs = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
+  } catch {
+    return [];
+  }
+  const byNewest = dirs
+    .map((d) => {
+      try {
+        return { name: d.name, mtime: statSync(join(root, d.name)).mtimeMs };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.mtime - a.mtime);
+  const seen = new Set();
+  const out = [];
+  for (const { name, mtime } of byNewest) {
+    if (out.length >= limit) break;
+    const dir = join(root, name);
+    let newest = null;
+    try {
+      for (const f of readdirSync(dir)) {
+        if (!f.endsWith(".jsonl")) continue;
+        const m = statSync(join(dir, f)).mtimeMs;
+        if (!newest || m > newest.mtime) newest = { f, mtime: m };
+      }
+    } catch {
+      continue;
+    }
+    if (!newest) continue;
+    // The header ({"type":"session",…,"cwd":…}) is the first line of the file.
+    const head = readHead(join(dir, newest.f), 8 * 1024);
+    if (!head) continue;
+    let cwd = "";
+    for (const line of head.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type === "session" && typeof entry.cwd === "string") cwd = entry.cwd;
+      } catch { /* truncated/odd line — keep scanning */ }
+      break; // header is line one; don't scan the whole head
+    }
+    if (!cwd || seen.has(cwd)) continue;
+    try {
+      if (!statSync(cwd).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    seen.add(cwd);
+    out.push({ dir: cwd, mtime });
+  }
+  return out;
+}
+
+// --- Read-only file browsing (Files panel) --------------------------------------
+// The browser can LIST and READ files inside the current working folder — never
+// outside it (path jail incl. symlink resolution), never write. This mirrors what
+// the user could already see in their own file manager; it exists so review docs,
+// lineage output, and CSVs are readable next to the chat.
+const FILES_IGNORE = new Set([
+  ".git", "node_modules", ".DS_Store", ".venv", "venv", "__pycache__", "dist", "out", ".next",
+]);
+const FILES_DEPTH = 6; // directory levels below CWD
+const FILES_MAX = 2000; // total entries per listing — keeps the payload bounded
+const FILE_TEXT_MAX = 1_000_000; // 1MB text preview cap
+
+function listTree(dir, rel, depth, state) {
+  let entries = [];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const nodes = [];
+  for (const e of entries) {
+    if (state.count >= FILES_MAX) {
+      state.clipped = true;
+      break;
+    }
+    if (FILES_IGNORE.has(e.name)) continue;
+    if (e.name.startsWith(".") && e.name !== ".gitignore") continue;
+    const childRel = rel ? `${rel}/${e.name}` : e.name;
+    if (e.isDirectory()) {
+      state.count++;
+      nodes.push({
+        name: e.name,
+        path: childRel,
+        type: "dir",
+        children: depth > 0 ? listTree(join(dir, e.name), childRel, depth - 1, state) : [],
+      });
+    } else if (e.isFile()) {
+      state.count++;
+      nodes.push({ name: e.name, path: childRel, type: "file" });
+    }
+  }
+  nodes.sort((a, b) => (a.type !== b.type ? (a.type === "dir" ? -1 : 1) : a.name.localeCompare(b.name)));
+  return nodes;
+}
+
+const MD_EXT = new Set([".md", ".markdown", ".mdx"]);
+const SHEET_EXT = new Set([".csv", ".tsv"]);
+const DATA_EXT = new Set([".json", ".jsonl", ".ndjson"]);
+
+// Resolve a browser-supplied relative path inside the CWD jail, or null.
+// Two gates: the lexical resolve must stay under CWD (blocks ../ traversal), and
+// the REAL path must too (blocks a symlink inside the tree pointing outside it).
+function jailPath(rel) {
+  if (typeof rel !== "string" || !rel || rel.includes("\0")) return null;
+  const root = resolvePath(CWD);
+  const full = resolvePath(root, rel);
+  if (full !== root && !full.startsWith(root + sep)) return null;
+  try {
+    const real = realpathSync(full);
+    const realRoot = realpathSync(root);
+    if (real !== realRoot && !real.startsWith(realRoot + sep)) return null;
+    return real;
+  } catch {
+    return null; // doesn't exist / unreadable
+  }
+}
+
+function readFilePreview(rel) {
+  const full = jailPath(rel);
+  if (!full) return null;
+  let st;
+  try {
+    st = statSync(full);
+  } catch {
+    return null;
+  }
+  if (!st.isFile()) return null;
+  const truncated = st.size > FILE_TEXT_MAX;
+  const text = readHead(full, FILE_TEXT_MAX);
+  if (text === null) return null;
+  // Binary sniff: a NUL byte in the first 8KB means "don't render this as text".
+  if (text.slice(0, 8192).includes("\0")) {
+    return { path: rel, kind: "binary", content: "", truncated: false, size: st.size };
+  }
+  const ext = extname(full).toLowerCase();
+  const kind = MD_EXT.has(ext) ? "markdown" : SHEET_EXT.has(ext) ? "sheet" : DATA_EXT.has(ext) ? "data" : "code";
+  return { path: rel, kind, ext, content: text, truncated, size: st.size };
+}
+
 // After resuming, pull the active branch and backfill the browser transcript as
 // synthetic __message events (recorded, so replay/polling see them too).
 async function backfillMessages() {
@@ -353,6 +525,7 @@ async function backfillMessages() {
 const STATIC = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
+  "/viewer.js": { file: "viewer.js", type: "text/javascript; charset=utf-8" },
   "/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
 };
 const FAVICON = join(HERE, "..", "themes", "coop.ico");
@@ -538,6 +711,31 @@ async function handle(req, res) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/folders") {
+    res.writeHead(200, baseHeaders("application/json"));
+    res.end(JSON.stringify({ folders: recentFolders() }));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/files") {
+    const state = { count: 0, clipped: false };
+    const tree = listTree(resolvePath(CWD), "", FILES_DEPTH, state);
+    res.writeHead(200, baseHeaders("application/json"));
+    res.end(JSON.stringify({ cwd: CWD, tree, clipped: state.clipped }));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/file") {
+    const preview = readFilePreview(url.searchParams.get("p") || "");
+    if (!preview) {
+      res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "That file can't be shown." }));
+      return;
+    }
+    res.writeHead(200, baseHeaders("application/json"));
+    res.end(JSON.stringify({ ok: true, ...preview }));
+    return;
+  }
+
   // POSTs: require the CSRF custom header on top of the cookie.
   if (req.method === "POST") {
     if (req.headers["x-coop-csrf"] !== "1") {
@@ -587,6 +785,7 @@ async function handle(req, res) {
       }
       if (type === "set_thinking_level") cmd.level = String(body.level || "medium");
       if (type === "compact" && body.customInstructions) cmd.customInstructions = String(body.customInstructions);
+      if (type === "set_session_name") cmd.name = String(body.name || "").slice(0, 200);
       const reply = await rpcCall(cmd);
       if (!reply) {
         res.writeHead(504, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "pi did not answer in time" }));

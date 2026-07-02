@@ -58,6 +58,17 @@ process.stdin.on("data", (chunk) => {
     } else if (cmd.type === "compact") {
       out({ id: cmd.id, type: "response", command: "compact", success: true,
         data: { summary: "stub summary", tokensBefore: 50000, estimatedTokensAfter: 8000 } });
+    } else if (cmd.type === "get_session_stats") {
+      out({ id: cmd.id, type: "response", command: "get_session_stats", success: true,
+        data: {
+          sessionFile: "stub.jsonl", sessionId: "test-session",
+          userMessages: 1, assistantMessages: 1, toolCalls: 0, toolResults: 0, totalMessages: 2,
+          tokens: { input: 1200, output: 340, cacheRead: 0, cacheWrite: 0, total: 1540 },
+          cost: 0.01,
+          contextUsage: { tokens: 12000, contextWindow: 200000, percent: 6 },
+        } });
+    } else if (cmd.type === "set_session_name") {
+      out({ id: cmd.id, type: "response", command: "set_session_name", success: true });
     }
   }
 });

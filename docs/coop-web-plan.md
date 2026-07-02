@@ -7,8 +7,20 @@
 > CSRF custom-header requirement, timing-safe token auth, DNS-rebinding guard,
 > reconnect history replay, markdown-lite rendering, a human-readable
 > sql_review/dax_review renderer with raw-JSON fallback, and a stub-pi integration
-> test suite (`tests/webbridge.test.mjs`). Remaining gaps are UX breadth, not
-> safety — see "Known limitations" in `../web/README.md`.
+> test suite (`tests/webbridge.test.mjs`).
+>
+> A **UX-breadth pass** (borrowing shapes from the Hephaestus pi GUI, adapted to
+> the no-dependency / strict-CSP / dumb-pipe constraints) then added: rendered
+> thinking blocks, expandable tool activity with live `tool_execution_update`
+> output, richer markdown (tables, ordered lists, blockquotes, hr, italics), a
+> header context gauge + live status line + per-response stats (`get_session_stats`,
+> `message_end` usage), a read-only **Files panel** (`/files` + `/file`, jailed to
+> the working folder by lexical *and* realpath checks) with markdown/code/table
+> previews and an opt-in "you're viewing this file" prompt attachment, recent-folder
+> quick-switching (`/folders`, from session headers), `set_session_name`, and a
+> `__fatal` crash card. All bridge additions are covered by the stub-pi suite.
+> Remaining gaps are narrower UX breadth, not safety — see "Known limitations" in
+> `../web/README.md`.
 
 ## Why
 
