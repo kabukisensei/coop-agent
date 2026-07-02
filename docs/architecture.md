@@ -45,13 +45,16 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
    - **Skills** — `skills/`, including `coop-workflow` (the principles-first
      Cooptimize workflow) that the task skills run inside: `sql-review`,
      `dax-review`, `data-doc-analysis`, `power-bi-impact-analysis`,
-     `fabric-workspace-review`, `daily-logger`, and `setup-docs` (the in-agent
+     `fabric-workspace-review`, `daily-logger`, `setup-docs` (the in-agent
      coop-data-doc wizard driven via `ask-user-question` + coop-data-doc's
-     non-interactive commands) — plus a subordinate, allow-listed set of official
-     Microsoft skills under `skills/_microsoft/`.
-   - **Prompt templates** — `prompts/` (one per task skill: `discovery`,
+     non-interactive commands), and `git-helper` (drafts Conventional-Commits
+     messages + PR descriptions from the diff — drafts only, never commits) —
+     plus a subordinate, allow-listed set of official Microsoft skills under
+     `skills/_microsoft/`.
+   - **Prompt templates** — `prompts/` (per task skill: `discovery`,
      `impact-analysis`, `semantic-model-review`, `fabric-architecture-review`,
-     `setup-docs`, `daily-log`, `weekly-log`).
+     `setup-docs`, `daily-log`, `weekly-log`; plus workflow prompts `spec-first`,
+     `annotate`, `handoff`, and `pr-description`).
    - **Theme** — `themes/cooptimize.json` (brand palette: navy `#00416B`,
      forest `#42783C`, olive `#82AA43`, lime `#B2D235`, red `#EF412D`).
    - **`coop-powerline` extension** — `extensions/coop-powerline/`: coop's OWN

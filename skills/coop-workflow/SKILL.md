@@ -58,7 +58,31 @@ If it is missing, ask the user to copy `.coop/project.example.yml` into the repo
 11. **Commit policy.** Commit **docs / logs / site only**, and **only** if the
     contract allows it and the user approves. **Never commit SQL, DAX, semantic
     model, report, Python, or notebook source** — make the edit, show the diff,
-    and let the user commit.
+    and let the user commit. Use the `git-helper` skill (or `/pr-description`) to
+    draft a Conventional-Commits message and PR description from the diff so the
+    human's commit is one paste — drafts only, it never commits.
+
+## Working habits that keep long tasks reviewable
+
+These sharpen the principles above; reach for them on non-trivial or multi-step work.
+
+- **Vertical slices.** Prefer one failing check → one small implementation → one
+  passing check over a large rewrite. Each slice is independently reviewable and
+  easy to back out. Smallest safe edit, repeated — not one big edit.
+- **Codify mistakes.** When the model repeats an error or the user corrects the
+  same thing twice, write the correction down where future sessions inherit it —
+  the relevant skill, `.coop/project.yml` standards, or memory (pi-hermes-memory).
+  A fix that lives only in this chat is a fix you'll redo next week.
+- **Markdown annotations.** Accept review feedback as annotations keyed to
+  sections/files/lines (e.g. `fact_sales.sql:42: use the shared date dimension`)
+  and apply **only** what's annotated — read each referenced spot first, make the
+  smallest edit, flag anything an annotation would break. The `/annotate` prompt
+  sets this up.
+- **End with a handoff.** After a long task, emit a handoff: what changed,
+  what you reviewed/tested (with results), files modified, open blockers, and the
+  next 3–5 todos. It's what lets the next session — or teammate — resume cold. The
+  `/handoff` prompt produces it. For a fresh task, `/spec-first` writes the spec up
+  front; both stay read-only.
 
 ## Guardrails (always)
 

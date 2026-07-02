@@ -13,6 +13,10 @@ Cooptimize guardrails and the Cooptimize workflow:
 - **Guardrails:** `docs/guardrails.md` (read-only first, plan-and-approve, never
   commit source, back up before edits, never expose secrets, MCP read-only).
 - **Workflow:** the `coop-workflow` skill — the Cooptimize workflow for any task.
+  On non-trivial work: `/spec-first` (approved spec before editing), `/annotate`
+  (apply only Markdown-annotated feedback), `/handoff` (resume-cold summary), and
+  the `git-helper` skill / `/pr-description` (draft commit message + PR from the
+  diff — drafts only, never commits).
 - **Contract:** `.coop/project.yml` is the single source of truth (repo paths,
   Fabric/Power BI workspaces, standards, backup/log rules, approval policy). Read
   the nearest one before doing file work.

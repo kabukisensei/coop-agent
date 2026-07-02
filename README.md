@@ -351,6 +351,13 @@ launch.
 10. Append to the daily log.
 11. Commit docs/logs/site **only with approval**; never commit source.
 
+On non-trivial work the skill adds a few habits — vertical slices, codifying
+repeated corrections, and applying review feedback as Markdown annotations — with
+four prompts to drive them: **`/spec-first`** (an approved spec before editing),
+**`/annotate`** (apply only annotated changes), **`/handoff`** (a resume-cold
+summary), and the **`git-helper`** skill / **`/pr-description`** (draft a commit
+message + PR description from the diff — drafts only, never commits).
+
 The single source of truth for repo paths, workspaces, standards, backup/log rules,
 and the approval policy is the project contract `.coop/project.yml`. Copy
 [`.coop/project.example.yml`](.coop/project.example.yml) into your work repo's

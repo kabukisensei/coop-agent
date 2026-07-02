@@ -51,6 +51,12 @@ it, and **never commit source**. The sequence below is the default way to honor
 those principles for a file-touching task — adapt it to the situation (skip,
 reorder, or combine steps when they don't apply), but don't drop the principles.
 
+On non-trivial work, favor **vertical slices** (one small change reviewed at a
+time), **codify** repeated corrections into the relevant skill / standards /
+memory, apply review feedback as **Markdown annotations** (change only what's
+annotated), and **end with a handoff**. The `/spec-first`, `/annotate`, and
+`/handoff` prompts drive these; the `coop-workflow` skill has the detail.
+
 1. Read `.coop/project.yml` and the relevant standards.
 2. Identify the repo/object and upstream/downstream impact; run `git status` and `git pull`.
 3. Read the target file(s) and related docs/lineage — use the `coop-data-doc` tool.
