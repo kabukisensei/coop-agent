@@ -5,6 +5,28 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`coop web` polling fallback now clears the transcript on New Chat / folder
+  switch / resume.** The reset signal (`__hello`) was broadcast to SSE clients only
+  and never reached clients on the `/events-poll` fallback (used where a proxy or
+  endpoint protection blocks SSE), so a new/switched/resumed session was appended
+  below the old one. The server now surfaces a monotonic `epoch` in every poll
+  response and the polling client resets when it changes; it also applies `cwd`
+  every poll so a folder switch updates the header on that path.
+- **`coop web` `GET /file` no longer serves dotfiles the Files panel hides.** The
+  listing hid `.env`, `.git/`, etc., but the read path applied only the folder jail,
+  so `GET /file?p=.env` returned its contents. Listing and read now share one
+  `isHidden()` rule (segment-checked on the resolved path, both separators).
+- **Windows: `coop web` opens its app window for Brave, Vivaldi, and Chromium.**
+  `browserCandidates()` only checked Brave under `Program Files` and omitted Vivaldi/
+  Chromium on Windows, so those (per-user by default) fell back to a plain tab; the
+  win32 list now includes their `%LOCALAPPDATA%` and system paths, matching the docs.
+- **Windows: `coop release` fails closed when its test/parity gate can't run.** On a
+  host without Git Bash the PowerShell path skipped the gate but still tagged/pushed;
+  it now aborts a push unless `--no-check` is passed (or `--no-push`), and surfaces
+  test output on failure.
+
 ## [0.9.1] — 2026-07-02
 
 ## [0.9.0] — 2026-07-02

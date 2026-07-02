@@ -678,7 +678,7 @@ function connect() {
 function switchToPolling() {
   if (mode === "poll") return;
   mode = "poll";
-  let since = 0, first = true, fails = 0;
+  let since = 0, first = true, fails = 0, epoch = null;
   statusText.textContent = "connecting…";
   const tick = async () => {
     try {
@@ -690,7 +690,12 @@ function switchToPolling() {
       if (!r.ok) throw new Error(String(r.status));
       const data = await r.json();
       fails = 0;
-      if (first) { resetTranscript(); first = false; if (data.cwd) setCwd(data.cwd); }
+      // The __hello reset frame is broadcast-only (SSE), so on this polling path we
+      // detect a server-side reset (new_session/chdir/resume) via the epoch instead.
+      if (first) { resetTranscript(); first = false; }
+      else if (epoch !== null && data.epoch !== epoch) { resetTranscript(); }
+      epoch = data.epoch;
+      if (data.cwd) setCwd(data.cwd); // every poll, so a chdir updates the header here too
       since = data.next;
       for (const line of data.events) { try { handle(JSON.parse(line)); } catch { /* skip */ } }
       if (/connecting|reconnecting/.test(statusText.textContent)) setBusy(dot.classList.contains("busy"));

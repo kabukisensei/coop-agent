@@ -616,16 +616,21 @@ function Invoke-CoopRelease {
     }
 
     # Gate on the full Node suite + bash/PowerShell parity, not just transpile.
-    # Both are bash scripts, so run them only when bash is available (Git Bash /
-    # WSL); they exercise the already-clean tree that will ship.
+    # Both are bash scripts, so they need bash (Git Bash / WSL) on Windows. If the
+    # gate can't run on this host we fail closed before a push (below) rather than
+    # silently tagging an unverified release — matching the macOS/Linux path, where
+    # bash is guaranteed and the gate always runs.
+    $gateSkipped = $false
     $testsSh = Join-Path (Join-Path $root 'tests') 'run.sh'
     if (Test-Path -LiteralPath $testsSh) {
       if ((Test-Have 'bash') -and (Test-Have 'node')) {
-        & bash $testsSh *> $null
+        # Capture combined output and echo it on failure, so a Windows test failure
+        # is diagnosable (the bash path cats its log to stderr for the same reason).
+        $testOut = & bash $testsSh 2>&1
         if ($LASTEXITCODE -eq 0) { Coop-Ok 'tests pass' }
-        else { Coop-Die 'tests failed (bash tests/run.sh) — fix them, or re-run with --no-check.' }
+        else { $testOut | Out-String | Write-Host; Coop-Die 'tests failed (bash tests/run.sh) — fix them, or re-run with --no-check.' }
       } else {
-        Coop-Warn 'bash or node not found — skipping the test suite.'
+        Coop-Warn 'bash or node not found — skipping the test suite.'; $gateSkipped = $true
       }
     }
     $paritySh = Join-Path (Join-Path $root 'scripts') 'check-parity.sh'
@@ -635,8 +640,14 @@ function Invoke-CoopRelease {
         if ($LASTEXITCODE -eq 0) { Coop-Ok 'parity check passes' }
         else { Coop-Die 'parity check failed (bash scripts/check-parity.sh) — fix it, or re-run with --no-check.' }
       } else {
-        Coop-Warn 'bash not found — skipping the parity check.'
+        Coop-Warn 'bash not found — skipping the parity check.'; $gateSkipped = $true
       }
+    }
+    # Fail closed: a host that could not run the gate must not PUBLISH an unverified
+    # tag. Bumping/committing locally (--no-push) is fine; a push requires the gate
+    # to have run — or an explicit --no-check opt-out (which skips this whole block).
+    if ($gateSkipped -and $doPush) {
+      Coop-Die 'release gate could not run (bash/node not found) — cut the release from macOS/Linux or a Windows host with Git Bash/WSL, use --no-push to bump locally only, or --no-check to release without gating.'
     }
   }
 

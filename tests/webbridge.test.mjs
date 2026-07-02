@@ -34,9 +34,11 @@ const outside = mkdtempSync(join(osTmp(), "coop-web-outside-"));
 writeFileSync(join(outside, "secret.txt"), "TOP SECRET — must never be served\n");
 writeFileSync(join(workDir, "notes.md"), "# Title\n\nHello **world**.\n");
 writeFileSync(join(workDir, "data.csv"), "name,age\nAlice,30\nBob,25\n");
+writeFileSync(join(workDir, ".env"), "SECRET_KEY=abc123\n"); // hidden by the listing; /file must not serve it either
 mkdirSync(join(workDir, "sub"));
 writeFileSync(join(workDir, "sub", "inner.txt"), "inner file contents\n");
-try { symlinkSync(outside, join(workDir, "escape")); } catch { /* symlinks may be unavailable (e.g. Windows w/o privilege) */ }
+let symlinked = false;
+try { symlinkSync(outside, join(workDir, "escape")); symlinked = true; } catch { /* symlinks may be unavailable (e.g. Windows w/o privilege / Developer Mode) */ }
 const encoded = `--${resolvePath(process.cwd()).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 const sessDir = join(agentDir, "sessions", encoded);
 mkdirSync(sessDir, { recursive: true });
@@ -215,12 +217,23 @@ r = await post("/rpc", { type: "set_session_name", name: "My named chat" });
 state = await r.json();
 t("/rpc set_session_name round-trips", state.success === true);
 
+// Capture the pre-reset epoch + the REAL monotonic cursor, to prove the polling
+// path learns of the reset (the __hello reset frame is SSE-broadcast-only).
+r = await fetch(base + `/events-poll?since=0`, { headers: { cookie } });
+const beforeReset = await r.json();
+
 r = await post("/rpc", { type: "new_session" });
 state = await r.json();
 t("/rpc new_session -> success", state.success === true && state.data.cancelled === false);
 r = await fetch(base + `/events-poll?since=0`, { headers: { cookie } });
 poll = await r.json();
 t("new_session resets the replay history", poll.next === 0 && poll.events.length === 0);
+
+// A poll carrying the pre-reset cursor must see a bumped epoch — the signal a
+// polling-fallback client uses to clear its transcript after new_session/chdir/resume.
+r = await fetch(base + `/events-poll?since=${beforeReset.next}`, { headers: { cookie } });
+const afterReset = await r.json();
+t("poll signals the reset via a bumped epoch", typeof afterReset.epoch === "number" && afterReset.epoch !== beforeReset.epoch);
 
 // --- /sessions + /resume ------------------------------------------------------------
 r = await fetch(base + "/sessions", { headers: { cookie } });
@@ -287,11 +300,22 @@ t("/file reads a nested file", file.ok === true && file.content.includes("inner 
 r = await fetch(base + "/file?p=" + encodeURIComponent("../../etc/passwd"), { headers: { cookie } });
 t("/file rejects ../ traversal (path jail)", r.status === 400);
 
-r = await fetch(base + "/file?p=" + encodeURIComponent("escape/secret.txt"), { headers: { cookie } });
-t("/file rejects a symlink that escapes the jail (realpath check)", r.status === 400);
+// Only meaningful if the symlink was actually created — on a host without symlink
+// privilege (Windows w/o Developer Mode) the fetch would test "missing file", not
+// "symlink escape", passing for the wrong reason. Skip visibly instead.
+if (symlinked) {
+  r = await fetch(base + "/file?p=" + encodeURIComponent("escape/secret.txt"), { headers: { cookie } });
+  t("/file rejects a symlink that escapes the jail (realpath check)", r.status === 400);
+} else {
+  console.log("  ~ SKIP /file symlink-escape jail test (symlinks unavailable on this host)");
+}
 
 r = await fetch(base + "/file?p=does-not-exist.md", { headers: { cookie } });
 t("/file rejects a missing file", r.status === 400);
+
+// Dotfiles the /files listing hides must not be readable via /file either.
+r = await fetch(base + "/file?p=.env", { headers: { cookie } });
+t("/file refuses a hidden dotfile the listing omits (.env)", r.status === 400);
 
 r = await fetch(base + "/files");
 t("/files without cookie -> 401", r.status === 401);

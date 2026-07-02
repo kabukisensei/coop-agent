@@ -21,7 +21,7 @@ import { spawn } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, readdirSync, openSync, readSync, closeSync, fstatSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, sep, extname, resolve as resolvePath } from "node:path";
+import { dirname, join, sep, extname, resolve as resolvePath, relative as relPath } from "node:path";
 import { tmpdir } from "node:os";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -153,6 +153,11 @@ function sendToPi(obj) {
 const HISTORY_MAX = 4000;
 const history = []; // { line, uiId?, uiMethod? }
 let historyBase = 0; // count of evicted entries — history[i] is global event #(historyBase+i)
+// Bumped on every transcript reset (new_session / chdir / resume). The reset signal
+// is a broadcast-only __hello that never reaches polling-fallback clients (they read
+// only `history`), so we surface this monotonic epoch in every poll response and let
+// the client clear its transcript when it changes. SSE clients still reset on __hello.
+let resetEpoch = 0;
 const answeredUi = new Set();
 const sseClients = new Set();
 let busy = false; // agent streaming? (chooses prompt vs steer)
@@ -263,11 +268,12 @@ function restartPi(newCwd, extraArgs = []) {
   busy = false;
   history.length = 0;
   historyBase = 0;
+  resetEpoch++;
   answeredUi.clear();
   stderrTail = "";
   pi = spawnPi(extraArgs);
   wirePi(pi);
-  broadcast(JSON.stringify({ type: "__hello", replay: 0, cwd: CWD }));
+  broadcast(JSON.stringify({ type: "__hello", replay: 0, cwd: CWD, epoch: resetEpoch }));
 }
 
 // One correlated RPC round-trip against the current pi child.
@@ -418,6 +424,10 @@ function recentFolders(limit = 12) {
 const FILES_IGNORE = new Set([
   ".git", "node_modules", ".DS_Store", ".venv", "venv", "__pycache__", "dist", "out", ".next",
 ]);
+// One rule for BOTH the listing and the read path, so /file can never serve a file
+// the /files tree deliberately hid (e.g. .env, .git/config). Dotfiles are hidden
+// except .gitignore; FILES_IGNORE dirs are hidden outright.
+const isHidden = (name) => FILES_IGNORE.has(name) || (name.startsWith(".") && name !== ".gitignore");
 const FILES_DEPTH = 6; // directory levels below CWD
 const FILES_MAX = 2000; // total entries per listing — keeps the payload bounded
 const FILE_TEXT_MAX = 1_000_000; // 1MB text preview cap
@@ -435,8 +445,7 @@ function listTree(dir, rel, depth, state) {
       state.clipped = true;
       break;
     }
-    if (FILES_IGNORE.has(e.name)) continue;
-    if (e.name.startsWith(".") && e.name !== ".gitignore") continue;
+    if (isHidden(e.name)) continue;
     const childRel = rel ? `${rel}/${e.name}` : e.name;
     if (e.isDirectory()) {
       state.count++;
@@ -480,6 +489,15 @@ function jailPath(rel) {
 function readFilePreview(rel) {
   const full = jailPath(rel);
   if (!full) return null;
+  // Apply the listing's hide rule to the READ path too, so /file can't serve a
+  // .env / .git/config the tree never showed. Derive segments relative to the REAL
+  // root (jailPath returns a realpath-resolved `full`, so a symlinked CWD like
+  // macOS /var -> /private/var doesn't spuriously produce ".." segments). Splitting
+  // on both separators also catches Windows-style input. Refusing returns null ->
+  // the same 400 as a missing file.
+  for (const seg of relPath(realpathSync(resolvePath(CWD)), full).split(/[/\\]/)) {
+    if (seg && isHidden(seg)) return null;
+  }
   let st;
   try {
     st = statSync(full);
@@ -658,7 +676,7 @@ async function handle(req, res) {
     });
     res.write(`retry: 2000\n\n`);
     // Hello marker (client clears its transcript), then replay, then live.
-    res.write(`data: ${JSON.stringify({ type: "__hello", replay: history.length, cwd: CWD })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: "__hello", replay: history.length, cwd: CWD, epoch: resetEpoch })}\n\n`);
     for (const entry of history) {
       if (replayable(entry)) res.write(`data: ${entry.line}\n\n`);
     }
@@ -675,7 +693,7 @@ async function handle(req, res) {
     const rel = Math.max(0, since - historyBase);
     const events = history.slice(rel).filter(replayable).map((e) => e.line);
     res.writeHead(200, baseHeaders("application/json"));
-    res.end(JSON.stringify({ next: historyBase + history.length, cwd: CWD, events }));
+    res.end(JSON.stringify({ next: historyBase + history.length, epoch: resetEpoch, cwd: CWD, events }));
     return;
   }
 
@@ -797,8 +815,9 @@ async function handle(req, res) {
         // and tell every connected client to start a fresh transcript.
         history.length = 0;
         historyBase = 0;
+        resetEpoch++;
         answeredUi.clear();
-        broadcast(JSON.stringify({ type: "__hello", replay: 0, cwd: CWD }));
+        broadcast(JSON.stringify({ type: "__hello", replay: 0, cwd: CWD, epoch: resetEpoch }));
       }
       res.writeHead(200, baseHeaders("application/json")).end(JSON.stringify(reply));
       return;
@@ -901,7 +920,14 @@ function browserCandidates() {
       join(pf, "Google\\Chrome\\Application\\chrome.exe"),
       join(pf86, "Google\\Chrome\\Application\\chrome.exe"),
       local ? join(local, "Google\\Chrome\\Application\\chrome.exe") : null,
+      // Brave and Vivaldi default to PER-USER installs (%LOCALAPPDATA%), so check
+      // there as well as Program Files — else these browsers silently fall back to
+      // a plain tab. Chromium too, so the win32 list matches the README's chain.
       join(pf, "BraveSoftware\\Brave-Browser\\Application\\brave.exe"),
+      local ? join(local, "BraveSoftware\\Brave-Browser\\Application\\brave.exe") : null,
+      local ? join(local, "Vivaldi\\Application\\vivaldi.exe") : null,
+      join(pf, "Vivaldi\\Application\\vivaldi.exe"),
+      local ? join(local, "Chromium\\Application\\chrome.exe") : null,
     ];
   }
   if (p === "darwin") {
