@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.9.3] — 2026-07-03
+
 ### Security
 
 - **Guardrails: closed the `git commit <pathspec>` bypass.** `git commit src/app.py`
