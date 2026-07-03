@@ -93,12 +93,17 @@ you are editing. See `docs/troubleshooting.md` for the full runbook entry.
 Run the same checks CI runs:
 
 ```bash
-for f in bin/coop lib/common.sh scripts/*.sh; do bash -n "$f"; done   # shell syntax
-python3 lib/_yaml.py get .coop/project.yml profile.organization MISS  # yaml reader
-bash tests/run.sh                                                     # logic tests (extensions + web bridge)
-bash scripts/check-parity.sh                                          # bash<->ps1 pairing + .ps1 BOM
-coop doctor                                                           # deps + config
+for f in bin/coop lib/common.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
+                                                                      # shell syntax — expect: no output, exit 0
+python3 lib/_yaml.py get .coop/project.yml profile.organization MISS  # yaml reader — expect: Cooptimize
+bash tests/run.sh                                                     # logic tests — expect: "✓ all tests passed"
+bash scripts/check-parity.sh                                          # pairing + BOM — expect: "✓ parity check passed"
+coop doctor                                                           # deps + config (workstation only — see note)
 ```
+
+If you are on a headless dev box without the coop stack installed (no `pi`,
+pipx tools, or `fab`), **skip `coop doctor`** and say so in the PR — the four
+checks above plus CI fully cover script/doc changes.
 
 CI (`.github/workflows/ci.yml`) additionally runs `shellcheck`, validates all
 YAML/JSON, transpiles the TypeScript extensions with esbuild, and parses every
@@ -113,6 +118,11 @@ YAML/JSON, transpiles the TypeScript extensions with esbuild, and parses every
   `.gitignore` is set up to prevent this — keep it that way).
 
 ## Cutting a release
+
+> **Agents:** cut a release **only** when Aaron explicitly asks for one in the
+> current conversation, naming the version or bump level. A clean tree or a
+> finished task is never a release trigger — see
+> [RELEASE.md](RELEASE.md#when-to-release--explicit-instruction-only).
 
 From a clean working tree (all changes committed, `CHANGELOG.md` updated under
 `## [Unreleased]`):

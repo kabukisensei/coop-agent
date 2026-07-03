@@ -2,8 +2,10 @@
 
 # Maintainer notes — developing coop-agent itself
 
-Everything above (AGENTS.md) is the runtime context coop loads when operating in
-a work repo. This section is for working ON this repo.
+AGENTS.md (above) carries coop's runtime context for work repos **plus** the
+canonical "Maintaining this repo" section — environment, platform notes,
+before-work git rules, verification commands, and the release guard. Read that
+first; this section adds architecture detail for working ON this repo.
 
 ## Architecture
 

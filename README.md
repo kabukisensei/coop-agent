@@ -263,7 +263,9 @@ and reports it as an error:
 ```
 
 **Fix:** ensure `~/.local/bin` (where pipx installs `fab`) **precedes Homebrew** on
-your `PATH`, or remove the conflicting formula:
+your `PATH`, or remove the conflicting formula (macOS/Homebrew; on Linux,
+uninstall the Python `fabric` package however it was installed, e.g.
+`pipx uninstall fabric`):
 
 ```bash
 brew uninstall fabric        # or reorder PATH so ~/.local/bin comes first

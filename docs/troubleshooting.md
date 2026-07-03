@@ -6,6 +6,12 @@ symptom → diagnose → fix → verify. For general setup problems, run
 
 ## 1. `coop update` updated the wrong Pi (two Node toolchains, macOS)
 
+> **Scope: Aaron's Mac only** — the split is Homebrew (`/opt/homebrew`) plus a
+> second npm prefix (`~/.hermes`). A normal Linux box has a single Node
+> toolchain and no `/opt/homebrew`; if you hit a module-resolution error there,
+> this entry does not apply — run `which -a node npm pi`, confirm they share one
+> prefix, and report instead of chasing Homebrew paths.
+
 **Symptom.** `coop` crashes at launch with a module-resolution error inside an
 extension (e.g. `Cannot find module '…/pi-ai/dist/index.js/compat'`), or the
 launch preflight aborts with `Pi agent X.Y.Z is too old — <ext> needs pi-ai ≥ N`
@@ -69,7 +75,8 @@ Fabric's version banner, never in the Microsoft Fabric CLI's.
 
 **Fix.** The PATH ordering rule: `~/.local/bin` (pipx's bin dir) must precede
 Homebrew's bin dir. Either reorder PATH in your shell rc, or remove the
-collision entirely:
+collision entirely (macOS/Homebrew — on Linux, uninstall the Python `fabric`
+package however it was installed, e.g. `pipx uninstall fabric`):
 
 ```bash
 brew uninstall fabric

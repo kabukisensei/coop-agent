@@ -10,6 +10,10 @@
 > and its actions aren't gated by `coop-guardrails`). Shipped work is recorded in
 > `CHANGELOG.md`.
 > Goal: give an agent a concrete, reviewable roadmap it can implement incrementally.
+>
+> **This is a historical planning record, not standing instructions.** Do not
+> implement the deferred items (1, 5, 6) — or any step in this file — without an
+> explicit request from Aaron in the current conversation.
 
 ---
 

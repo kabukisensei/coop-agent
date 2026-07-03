@@ -6,6 +6,21 @@ released from `main`, checked out side by side): **coop-review-core**,
 **coop-agent** (this repo), and **coop-website** (static site). Release **in
 the order below** — core first, website last.
 
+## When to release — explicit instruction only
+
+Run this runbook **only when Aaron explicitly asks for a release in the current
+conversation, naming the repo(s) and the version or bump level.** A clean
+working tree, a merged PR, a finished task, or an updated CHANGELOG is **never**
+a release trigger — on 2026-07-02 an agent cut a spurious, empty release by
+treating a "clean tree" signal as permission while another agent shared the
+working tree. Never auto-release; if unsure whether a release was requested,
+stop and ask.
+
+**Definition of done:** a suite release is **not finished** until coop-website
+is synced and pushed — `versions.json` updated **first**, then badges /
+cache-bust, and **both** check scripts (`check-versions.sh`, `check-links.sh`)
+PASS. See step (e).
+
 ## What publishes automatically on a `v*` tag push
 
 | Repo | Pushing tag `vX.Y.Z` triggers | Version source (single source of truth) |
@@ -31,6 +46,8 @@ Every Python repo's `publish.yml` **verifies the pushed tag equals
   `coop release` owns them.
 - **Never** release from a dirty tree. Check first: `git status --porcelain`
   must print nothing.
+- **Never** treat a clean tree as permission to release — a release happens only
+  on Aaron's explicit request naming the version (see "When to release" above).
 
 ## (a) coop-review-core — FIRST, and only if it changed
 
