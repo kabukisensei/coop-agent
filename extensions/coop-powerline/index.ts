@@ -92,7 +92,12 @@ function loadVibes(set?: string): string[] {
     }
     const all: string[] = [];
     for (const name of readdirSync(dir)) {
-      if (name.endsWith(".txt")) all.push(...readLines(join(dir, name)));
+      if (!name.endsWith(".txt")) continue;
+      // coop-internal holds crew in-jokes + real coworker names — client-unsafe, so
+      // keep it OUT of the pooled default (which can surface during a client screen-
+      // share). It stays selectable explicitly via `/coop-vibe coop-internal`.
+      if (name === "coop-internal.txt") continue;
+      all.push(...readLines(join(dir, name)));
     }
     return all;
   } catch {

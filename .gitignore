@@ -29,10 +29,14 @@ credentials.json
 # Local MCP overrides that may contain tenant ids
 .mcp.local.json
 
-# Generated review/doc artifacts when run inside this repo
+# Generated review/doc artifacts when run inside this repo (coop-data-doc's default
+# output dirs + the /setup-docs "don't ask again" marker)
 graph.json
 manifest.json
 site/
+data-docs/
+data-docs-site/
+.coop-data-doc.skip
 
 # Fetched official Microsoft skills (pulled on demand, not vendored) + fetch cache
 skills/_microsoft/*/

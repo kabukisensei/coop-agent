@@ -232,6 +232,9 @@ if [ "$FAIL" -gt 0 ]; then
   coop_err "doctor: $FAIL required item(s) missing, $WARN warning(s). Run: coop install$fixhint"
   exit 1
 else
-  coop_ok "doctor: all required dependencies present${WARN:+, $WARN warning(s)}."
+  # WARN is a numeric string ("0"), which is non-empty — so `${WARN:+…}` always
+  # expanded, printing ", 0 warning(s)". Gate on the value instead.
+  wsuf=""; [ "$WARN" -gt 0 ] && wsuf=", $WARN warning(s)"
+  coop_ok "doctor: all required dependencies present${wsuf}."
   exit 0
 fi

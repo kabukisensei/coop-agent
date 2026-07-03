@@ -132,6 +132,20 @@ function Coop-Err  { param([string]$m) Coop-Emit "$($script:C_RED)$($script:G_CR
 function Coop-Head { param([string]$m) Coop-Emit "`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)" }
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 
+# A python that ACTUALLY runs — not a Windows Store App-Execution-Alias stub. Those
+# stubs live under ...\WindowsApps\ and exist on stock Win10/11 with no Python, so
+# Get-Command succeeds while `--version` prints nothing. Returns the name, or $null.
+function Get-CoopRealPython {
+  foreach ($name in @('python3', 'python')) {
+    $c = Get-Command $name -ErrorAction SilentlyContinue
+    if (-not $c) { continue }
+    if ($c.Source -and $c.Source -match '\\WindowsApps\\') { continue }
+    $v = (& $name --version 2>&1)
+    if ($v -match '\d+\.\d+') { return $name }
+  }
+  return $null
+}
+
 function Start-CoopJob {
   param([scriptblock]$Sb, [object[]]$JobArgs)
   if ($script:UseThreadJob) { Start-ThreadJob -ScriptBlock $Sb -ArgumentList $JobArgs }
@@ -259,7 +273,17 @@ if (-not $NO_FABRIC) { $TOTAL += 1 }
 # --- Per-item units (run in a background job; return @{ok=<bool>; msg=<string>}) --
 $UnitPipx = {
   if (Get-Command pipx -ErrorAction SilentlyContinue) { return [pscustomobject]@{ ok = $true; msg = 'pipx present' } }
-  $py = if (Get-Command python3 -ErrorAction SilentlyContinue) { 'python3' } elseif (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { $null }
+  # Skip a Windows Store App-Execution-Alias stub (under \WindowsApps\, no real python):
+  # it makes Get-Command succeed but every pip call returns rc 9009. Self-contained
+  # because this scriptblock runs in a background job without the script's functions.
+  $py = $null
+  foreach ($name in @('python3', 'python')) {
+    $c = Get-Command $name -ErrorAction SilentlyContinue
+    if ($c -and ($c.Source -notmatch '\\WindowsApps\\')) {
+      $vv = (& $name --version 2>&1)
+      if ($vv -match '\d+\.\d+') { $py = $name; break }
+    }
+  }
   if (-not $py) { return [pscustomobject]@{ ok = $false; msg = 'skipping pipx (python missing)' } }
   & $py -m pip install --user pipx *> $null; $a = ($LASTEXITCODE -eq 0)
   & $py -m pipx ensurepath          *> $null; $b = ($LASTEXITCODE -eq 0)
@@ -333,7 +357,7 @@ try {
   # --- 1. Prerequisites ------------------------------------------------------
   Coop-Head '1/7  Prerequisites'
   if (-not (Test-Have 'git'))  { Coop-Warn "git not found — install Git from https://git-scm.com (or 'winget install Git.Git')." }
-  if (-not (Test-Have 'python3') -and -not (Test-Have 'python')) { Coop-Warn "python not found — install Python 3.10+ from https://python.org (or 'winget install Python.Python.3.12')." }
+  if (-not (Get-CoopRealPython)) { Coop-Warn "python not found — install Python 3.10+ from https://python.org (or 'winget install Python.Python.3.12'). (A Windows Store 'python' stub does not count.)" }
   if (-not (Test-Have 'node')) { Coop-Warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)." }
   Coop-Unit 'pipx' $UnitPipx
   Add-CoopUserPaths    # make a just-installed pipx + its tool-bin visible this run
@@ -377,13 +401,13 @@ if ($existing -ne $launcherBody) {
   Coop-Ok 'coop already linked'
 }
 if (($env:PATH -split ';') -notcontains $LOCALBIN) {
-  $script:NeedNewShell = $true
   # Add the launcher dir to the persistent USER PATH (idempotent) so coop works in every
   # shell — not just warn. Read/write the RAW user PATH via the registry as an
   # ExpandString, so any %VAR% tokens already in it stay dynamic ([Environment]::
   # SetEnvironmentVariable would expand and freeze them into REG_SZ). Also prepend it to
   # THIS process so the rest of the install + doctor can call coop now; new terminals
-  # pick up the persistent change.
+  # pick up the persistent change. NeedNewShell is set ONLY on success, so a failed
+  # write doesn't produce a misleading "coop was just added to your PATH" at the end.
   try {
     $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
     $userPath = if ($envKey) {
@@ -392,10 +416,18 @@ if (($env:PATH -split ';') -notcontains $LOCALBIN) {
     if (($userPath -split ';') -notcontains $LOCALBIN) {
       $newUserPath = (@($userPath, $LOCALBIN) | Where-Object { $_ }) -join ';'
       if ($envKey) { $envKey.SetValue('Path', $newUserPath, [Microsoft.Win32.RegistryValueKind]::ExpandString) }
+      # A raw registry SetValue does NOT notify anyone. Setting a User env var via
+      # [Environment]::SetEnvironmentVariable DOES broadcast WM_SETTINGCHANGE, so open
+      # terminals/Explorer refresh their environment and actually see the new PATH
+      # (otherwise "open a new terminal" wouldn't help until a logoff). Set + clear a
+      # throwaway var so we trigger the broadcast without leaving residue or touching PATH.
+      [Environment]::SetEnvironmentVariable('COOP_PATH_SYNC', '1', 'User')
+      [Environment]::SetEnvironmentVariable('COOP_PATH_SYNC', $null, 'User')
       Coop-Ok "added $LOCALBIN to your user PATH (open a new terminal so coop is found there)"
     }
     if ($envKey) { $envKey.Close() }
     $env:PATH = "$LOCALBIN;$env:PATH"
+    $script:NeedNewShell = $true
   } catch {
     Coop-Warn "couldn't update PATH automatically — add $LOCALBIN to your user PATH (System Properties > Environment Variables), then open a new terminal."
   }
@@ -446,7 +478,10 @@ Coop-Head '7/7  Sync assets and run doctor'
 $syncRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
 if ($syncRc -ne 0) { Coop-Warn 'sync reported issues' }
 [Console]::Error.WriteLine('')
-$null = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
+# Propagate doctor's verdict as the install's exit code (mirror of install.sh): a
+# genuinely broken install (a required dep still missing → doctor exits 1) is then
+# detectable by whatever ran `coop install`, incl. the double-click launcher wrapper.
+$doctorRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
 
 [Console]::Error.WriteLine('')
 if ($script:NeedNewShell) {
@@ -456,3 +491,4 @@ if ($script:NeedNewShell) {
 } else {
   Coop-Ok 'Bootstrap complete. Start the agent with:  coop'
 }
+exit $doctorRc

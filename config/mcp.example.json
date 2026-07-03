@@ -20,7 +20,7 @@
     },
     "context-mode": {
       "command": "npx",
-      "args": ["-y", "context-mode"]
+      "args": ["-y", "context-mode@1.0.162"]
     }
   }
 }

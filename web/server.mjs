@@ -88,6 +88,21 @@ function spawnPi(extraArgs = []) {
   return spawn(bin, args, { env, cwd: CWD, stdio: ["pipe", "pipe", "pipe"] });
 }
 
+// Terminate a pi child. On Windows the child is a cmd.exe wrapper around the real `pi`
+// grandchild, and killing cmd does NOT propagate to it — so `child.kill()` would orphan
+// a file-editing/bash-capable agent on every restart and on shutdown. taskkill /T (tree)
+// /F reaps the whole subtree. On POSIX a plain kill suffices.
+function killPi(child) {
+  if (!child) return;
+  try {
+    if (process.platform === "win32" && child.pid) {
+      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    } else {
+      child.kill();
+    }
+  } catch { /* already gone */ }
+}
+
 let pi; // current child — reassigned by restartPi(); handlers generation-check it
 let stderrTail = ""; // bounded tail of pi's stderr, surfaced to the browser on a crash
 const STDERR_TAIL_MAX = 4000;
@@ -259,7 +274,7 @@ function restartPi(newCwd, extraArgs = []) {
   CWD = newCwd;
   const old = pi;
   pi = null; // generation check: old child's events/exit are ignored from here
-  try { old.kill(); } catch { /* already gone */ }
+  killPi(old); // reap the whole subtree (Windows cmd.exe wrapper would otherwise orphan pi)
   for (const [id, waiter] of pendingRpc) {
     clearTimeout(waiter.timer);
     waiter.resolve(null); // fail pending toolbar calls fast instead of timing out
@@ -1001,7 +1016,7 @@ server.on("error", (e) => {
   } else {
     console.error("coop web: server error:", e.message);
   }
-  try { pi.kill(); } catch { /* ignore */ }
+  killPi(pi);
   process.exit(1);
 });
 
@@ -1012,8 +1027,14 @@ server.listen(PORT, HOST, () => {
 });
 
 function shutdown() {
-  try { pi.kill(); } catch { /* ignore */ }
+  killPi(pi);
   process.exit(0);
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+// A stray throw or rejected promise must not leave the governed (file-editing, bash-
+// capable) agent running unsupervised with browsers stuck reconnecting. Route both
+// through shutdown(), which reaps the child. Node v15+ would otherwise terminate on an
+// unhandled rejection WITHOUT running our cleanup.
+process.on("uncaughtException", (e) => { console.error("coop web: uncaught exception:", e); shutdown(); });
+process.on("unhandledRejection", (e) => { console.error("coop web: unhandled rejection:", e); shutdown(); });

@@ -199,6 +199,15 @@ coop_pi_agent_dir() { printf '%s' "${COOP_AGENT_DIR:-$HOME/.coop/agent}"; }
 # The user's *global* Pi agent dir (used to share credentials into coop's isolated dir).
 coop_global_pi_agent_dir() { printf '%s' "$HOME/.pi/agent"; }
 
+# The agent dir Pi will ACTUALLY load, so the launch preflight guards the right tree.
+# bin/coop exports PI_CODING_AGENT_DIR only when isolation is on; with COOP_NO_ISOLATE=1
+# Pi falls back to ~/.pi/agent. Using the isolated dir unconditionally would guard (and
+# reinstall into) a tree Pi isn't even using.
+coop_effective_agent_dir() {
+  if [ -n "${PI_CODING_AGENT_DIR:-}" ]; then printf '%s' "$PI_CODING_AGENT_DIR"; return 0; fi
+  if [ "${COOP_NO_ISOLATE:-0}" = "1" ]; then coop_global_pi_agent_dir; else coop_pi_agent_dir; fi
+}
+
 # Pick a usable python interpreter (for YAML/JSON parsing). Prefer python3.
 coop_python() {
   if have python3; then echo python3
@@ -238,7 +247,7 @@ coop_align_ext_deps() {
   have pi || return 0
   local py; py="$(coop_python)" || return 0
   local agent_dir npm_dir ver line rc tree_ai
-  agent_dir="$(coop_pi_agent_dir)"
+  agent_dir="$(coop_effective_agent_dir)"
   npm_dir="$agent_dir/npm"
   [ -f "$npm_dir/package.json" ] || return 0     # no extension tree yet — nothing to align
   ver="$(coop_pi_version || true)"
@@ -279,9 +288,18 @@ EOF
 $line
 EOF
   if [ "$rc" = 10 ]; then
-    # A stale node_modules can keep the old hoist — rebuild it clean as a last resort.
-    rm -rf "$npm_dir/node_modules" 2>/dev/null || true
-    ( cd "$npm_dir" && npm install >/dev/null 2>&1 ) || true
+    # A stale node_modules can keep the old hoist — rebuild it clean as a last resort,
+    # but PRESERVE the existing tree: move it aside, reinstall, and restore it if the
+    # reinstall fails (offline / registry down / proxy). Deleting first would leave
+    # coop with NO extensions — strictly worse than a skewed-but-working tree.
+    local nm="$npm_dir/node_modules" bak="$npm_dir/node_modules.coopbak"
+    if [ -d "$nm" ]; then rm -rf "$bak" 2>/dev/null || true; mv "$nm" "$bak" 2>/dev/null || true; fi
+    if ( cd "$npm_dir" && npm install >/dev/null 2>&1 ); then
+      rm -rf "$bak" 2>/dev/null || true
+    elif [ -d "$bak" ]; then
+      rm -rf "$nm" 2>/dev/null || true; mv "$bak" "$nm" 2>/dev/null || true
+      coop_warn "extension realignment reinstall failed — restored the previous tree" "check your network, then: coop doctor --fix"
+    fi
     rc=0
     line="$("$py" "$COOP_ROOT/lib/_extdeps.py" align "$agent_dir" "$ver" --check 2>/dev/null)" || rc=$?
     read -r tree_ai _ _ _ _ _ req ext <<EOF
@@ -306,7 +324,7 @@ coop_launch_preflight() {
   have pi || return 0
   local py; py="$(coop_python)" || return 0
   local agent_dir ver line rc tree_ai req ext
-  agent_dir="$(coop_pi_agent_dir)"
+  agent_dir="$(coop_effective_agent_dir)"    # the dir Pi will actually load (honors COOP_NO_ISOLATE)
   [ -f "$agent_dir/npm/package.json" ] || return 0   # no extension tree — nothing to guard
   ver="$(coop_pi_version || true)"; [ -n "$ver" ] || return 0
   # Capture rc WITHOUT tripping the caller's `set -e`: bin/coop runs `set -euo
@@ -321,7 +339,13 @@ EOF
   case "$rc" in
     11) _coop_ext_too_old "$ver" "$req" "$ext"
         coop_die "launch aborted — update the Pi agent above, then re-run: coop   (bypass once with COOP_SKIP_EXT_CHECK=1)" ;;
-    10) coop_align_ext_deps ;;   # fixable tree skew — re-pin + reinstall, then launch
+    10) if [ "${COOP_NO_ISOLATE:-0}" = "1" ]; then
+          # Isolation off → Pi is loading the user's personal ~/.pi/agent. Don't silently
+          # mutate the personal tree at launch; tell them how to align it deliberately.
+          coop_warn "your Pi extension tree needs realignment to pi $ver (isolation is off)" "align it deliberately: coop doctor --fix   (or unset COOP_NO_ISOLATE to use coop's isolated tree)"
+        else
+          coop_align_ext_deps   # fixable tree skew in coop's OWN dir — re-pin + reinstall, then launch
+        fi ;;
   esac
   return 0
 }

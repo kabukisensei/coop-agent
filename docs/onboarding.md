@@ -87,7 +87,7 @@ coop list / coop config          # manage Pi extensions
 ```bash
 printf 'SELECT * FROM dbo.Orders o JOIN dbo.Customer c ON o.CustomerId = c.Id;\n' > /tmp/sample.sql
 coop sql-review check /tmp/sample.sql
-#   Windows: Set-Content /tmp/sample.sql 'SELECT * FROM dbo.Orders;'; coop sql-review check /tmp/sample.sql
+#   Windows (PowerShell): Set-Content "$env:TEMP\sample.sql" 'SELECT * FROM dbo.Orders;'; coop sql-review check "$env:TEMP\sample.sql"
 ```
 
 You'll get a severity summary (errors / warnings / info). `coop sql-review` is

@@ -8,12 +8,16 @@
  *   1. NEVER commit source — block `git commit` from the agent whenever the commit
  *      would include anything outside the allow-listed docs / logs / site paths. This
  *      covers staged files, `git commit -a/-am` (which auto-stages tracked changes),
- *      and `git -C <dir> commit`. The agent may commit docs/logs/site (with approval);
- *      a human commits source.
- *   2. Destructive commands — confirm before `rm -rf`, `git push --force`,
- *      `git reset --hard`, `git clean -f`, and `DROP`/`TRUNCATE` SQL.
+ *      `git -C <dir> commit`, and `git commit <pathspec>` (which commits working-tree
+ *      content ignoring the index). The agent may commit docs/logs/site (with
+ *      approval); a human commits source.
+ *   2. Destructive commands — confirm before `rm -rf`, `git push --force` (incl. a
+ *      `+refspec` force push), `git reset --hard`, `git clean -f`, and `DROP`/
+ *      `TRUNCATE` SQL. All git detectors tolerate `git -C <dir>` and interspersed
+ *      flags, and match case-insensitively.
  *   3. Secret files — confirm before read/edit/write of `.env`, private keys, or
- *      credential files (the agent must never expose secrets).
+ *      credential files, AND before a bash command that touches one (`cat .env`
+ *      etc.). The agent must never expose secrets.
  *   4. Mutating MCP actions — confirm before Fabric/Power BI/MCP tool calls whose
  *      names look like create/update/delete/deploy/publish (best-effort; MCP tool
  *      names vary, so this complements — not replaces — Pi's tool approval).
@@ -115,10 +119,61 @@ function isAllowedCommitPath(file: string, prefixes: string[]): boolean {
   return prefixes.some((p) => file === p.replace(/\/$/, "") || file.startsWith(p));
 }
 
+/** `git`, optionally followed by global options (`-C <dir>`, `-c k=v`, `--no-pager`),
+ *  as a regex-source fragment shared by every git detector so `git -C <dir> <subcmd>`
+ *  and interspersed flags match consistently. */
+const GIT_PREFIX = String.raw`\bgit\b(?:\s+-{1,2}[A-Za-z][\w-]*(?:[=\s]\S+)?)*`;
+
 /** A `git commit` invocation, tolerant of global options between `git` and `commit`
  *  (`git -C <dir> commit`, `git -c k=v commit`, `git --no-pager commit`). The old
- *  `\bgit\s+commit\b` missed all of those, so the source-commit block was bypassable. */
-export const GIT_COMMIT_RE = /\bgit\b(?:\s+-{1,2}[A-Za-z][\w-]*(?:[=\s]\S+)?)*\s+commit\b/;
+ *  `\bgit\s+commit\b` missed all of those, so the source-commit block was bypassable.
+ *  Case-insensitive: on macOS/Windows (case-insensitive filesystems) `GIT COMMIT`
+ *  resolves to the real binary, so the block must match it too. */
+export const GIT_COMMIT_RE = new RegExp(GIT_PREFIX + String.raw`\s+commit\b`, "i");
+
+/** Split a command string into tokens, honoring single/double quotes. */
+export function tokenizeArgs(s: string): string[] {
+  const toks: string[] = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s))) toks.push(m[1] ?? m[2] ?? m[3] ?? "");
+  return toks;
+}
+
+// git-commit options that consume a SEPARATE following token (so that token is the
+// option's value, not a pathspec). `--opt=value` forms are self-contained.
+const COMMIT_VALUE_OPTS = new Set([
+  "-m", "-F", "-C", "-c", "-t", "--message", "--file", "--reuse-message",
+  "--reedit-message", "--fixup", "--squash", "--template", "--author", "--date",
+  "--cleanup", "--gpg-sign", "--trailer", "--pathspec-from-file",
+]);
+
+/** Explicit pathspec arguments of `git commit <pathspec>` — the files it commits
+ *  straight from the WORKING TREE, ignoring the index. Everything after `--` is a
+ *  pathspec; otherwise bare (non-flag) tokens that aren't option values. Over-
+ *  inclusion is harmless (a non-path token yields an empty diff); under-inclusion is
+ *  the bypass we're closing, so we err toward including. */
+export function explicitCommitPathspecs(cmd: string): string[] {
+  const m = GIT_COMMIT_RE.exec(cmd);
+  if (!m) return [];
+  // Only the `git commit …` segment — stop at a shell separator so a chained
+  // command's args aren't swallowed.
+  const rest = cmd.slice(m.index + m[0].length).split(/[;&|]/)[0];
+  const toks = tokenizeArgs(rest);
+  const specs: string[] = [];
+  let dashDash = false;
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (dashDash) { if (t) specs.push(t); continue; }
+    if (t === "--") { dashDash = true; continue; }
+    if (t.startsWith("-")) {
+      if (COMMIT_VALUE_OPTS.has(t) && i + 1 < toks.length) i++; // skip its value token
+      continue;
+    }
+    if (t) specs.push(t);
+  }
+  return specs;
+}
 
 /** The effective git repo dir for a command: its `-C <dir>` value (last wins, like
  *  git; quote-aware), else the caller's cwd. So the staged-files check runs against
@@ -163,6 +218,16 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string):
     const modified = await diff(["diff", "--name-only"]); // -a will stage these
     if (modified) for (const f of modified) if (!files.includes(f)) files.push(f);
   }
+  // `git commit <pathspec>` commits the WORKING-TREE content of the named paths,
+  // ignoring the index — so a --cached-only check misses them entirely (the classic
+  // pathspec bypass). Diff those paths vs HEAD to learn what the commit will include.
+  const pathspecs = explicitCommitPathspecs(cmd);
+  if (pathspecs.length) {
+    const named =
+      (await diff(["diff", "--name-only", "HEAD", "--", ...pathspecs])) ??
+      (await diff(["diff", "--name-only", "--", ...pathspecs]));
+    if (named) for (const f of named) if (!files.includes(f)) files.push(f);
+  }
   if (!files.length) return null;
   const prefixes = allowedPrefixes(repoDir);
   return files.filter((f) => !isAllowedCommitPath(f, prefixes));
@@ -189,8 +254,9 @@ export function mcpMutationLabel(toolName: string): string | null {
 
 /** Label a destructive bash command, or null. Conservative — only clearly risky ops. */
 function dangerLabel(cmd: string): string | null {
-  // rm with BOTH recursive and force flags (single-file rm is fine)
-  if (/\brm\b/.test(cmd)) {
+  // rm with BOTH recursive and force flags (single-file rm is fine). Case-insensitive
+  // so `RM -rf` on a case-insensitive filesystem (macOS/Windows) is caught too.
+  if (/\brm\b/i.test(cmd)) {
     // Collect just the dash-prefixed flag tokens (NOT the literal "rm"), so the
     // "r"/"f" tests don't match the "r" in the "rm" command name itself.
     const flagTokens = cmd.match(/(?<=\s)-\S+/g) || [];
@@ -201,9 +267,11 @@ function dangerLabel(cmd: string): string | null {
     const force = /f/i.test(shortFlags) || /--force\b/i.test(longFlags);
     if (recursive && force) return "rm -rf";
   }
-  if (/\bgit\s+push\b[^;&|]*?(--force\b|--force-with-lease\b|(?:\s|=)-f\b)/i.test(cmd)) return "git push --force";
-  if (/\bgit\s+reset\s+--hard\b/i.test(cmd)) return "git reset --hard";
-  if (/\bgit\s+clean\b[^;&|]*?(?:\s-[a-z]*f|\s--force\b)/i.test(cmd)) return "git clean -f";
+  // Every git detector tolerates global options (`git -C <dir> …`) and flags between
+  // the subcommand and its dangerous flag (`git reset -q --hard`), like GIT_COMMIT_RE.
+  if (new RegExp(GIT_PREFIX + String.raw`\s+push\b[^;&|]*?(?:--force\b|--force-with-lease\b|(?:^|\s)-[A-Za-z]*f[A-Za-z]*\b|(?:^|\s)\+[^\s:]+(?::|\s|$))`, "i").test(cmd)) return "git push --force";
+  if (new RegExp(GIT_PREFIX + String.raw`\s+reset\b[^;&|]*?--hard\b`, "i").test(cmd)) return "git reset --hard";
+  if (new RegExp(GIT_PREFIX + String.raw`\s+clean\b[^;&|]*?(?:\s-[A-Za-z]*f|--force\b)`, "i").test(cmd)) return "git clean -f";
   if (/\b(DROP|TRUNCATE)\s+(TABLE|DATABASE|SCHEMA|VIEW|PROCEDURE|FUNCTION|INDEX|TRIGGER|SEQUENCE|TYPE)\b/i.test(cmd)) return "destructive SQL (DROP/TRUNCATE)";
   return null;
 }
@@ -219,6 +287,19 @@ export function isSecretPath(p: string): boolean {
   if (/^(\.npmrc|\.pypirc|\.netrc|\.pgpass|credentials)$/.test(base)) return true;
   if (/(^|[._-])secrets?([._-]|$)/.test(base) && /\.(ya?ml|json|env|txt|conf|ini)$/.test(base)) return true;
   return false;
+}
+
+/** First secret-looking path token in a bash command, or null. Mirrors the
+ *  read/edit/write secret gate so bash isn't an unguarded exfil path
+ *  (`cat .env`, `cp .env /tmp`, `curl -F f=@.env`, `base64 .env`, `>.env`). */
+export function bashSecretCmdPath(cmd: string): string | null {
+  for (let t of tokenizeArgs(cmd)) {
+    t = t.replace(/^[<>]+/, "");         // strip redirection operators (>.env, <.env)
+    const at = t.lastIndexOf("@");       // curl -F field=@.env / scp x@host — take the tail
+    const cand = at >= 0 ? t.slice(at + 1) : t;
+    if (cand && isSecretPath(cand)) return cand;
+  }
+  return null;
 }
 
 export default function coopGuardrails(pi: ExtensionAPI) {
@@ -265,6 +346,20 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       const cmd = String(event?.input?.command ?? "").trim();
       if (!cmd) return;
 
+      // 1a. Secret-file access via bash (cat / cp / curl / base64 / redirection) →
+      //     confirm, mirroring the read/edit/write secret gate so bash isn't an
+      //     unguarded exfil path. Fail-open with no UI, like the other confirm gates.
+      const secretPath = bashSecretCmdPath(cmd);
+      if (secretPath && ctx.hasUI && typeof ctx.ui?.confirm === "function") {
+        const ok = await ctx.ui.confirm(
+          "coop guardrails",
+          `This command touches a secret-looking file:\n  ${secretPath}\ncoop never exposes secrets (tokens, keys, .env). Run it?`,
+        );
+        if (!ok) {
+          return { block: true, reason: `coop guardrails: blocked a command touching the secret-looking file ${secretPath} (you declined). Reference an env var / vault instead of reading or writing secrets.` };
+        }
+      }
+
       // 1. Never commit source (incl. `git commit -a/-am` auto-staging and `git -C`).
       if (GIT_COMMIT_RE.test(cmd)) {
         const offending = await offendingCommitPaths(pi, ctx.cwd, cmd);
@@ -304,9 +399,9 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       const lines = [
         `coop-guardrails: ${enabled() ? "ON" : "OFF (COOP_NO_GUARDRAILS=1)"}`,
         "Enforced on the agent's tool calls (your own shell is never intercepted):",
-        "  • never commit source — blocks `git commit` (incl. -a/-am and `git -C`) of anything outside docs/logs/site",
-        "  • destructive commands — confirms rm -rf / git push --force / reset --hard / git clean -f / DROP·TRUNCATE",
-        "  • secret files — confirms read/edit/write of .env / keys / credentials",
+        "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, and `git commit <path>`) of anything outside docs/logs/site",
+        "  • destructive commands — confirms rm -rf / git push --force (incl. +refspec) / reset --hard / git clean -f / DROP·TRUNCATE",
+        "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
         "Advisory rules live in docs/guardrails.md. Disable with COOP_NO_GUARDRAILS=1.",
       ];

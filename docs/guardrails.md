@@ -30,12 +30,15 @@ human at Cooptimize approving it.
 
 > Most of these are **enforced at runtime** by the `coop-guardrails` extension, not just
 > asked of you: a `git commit` that would include source is **blocked** — covering
-> staged files, `git commit -a/-am` (which auto-stages tracked changes), and
-> `git -C <dir> commit` (commit only docs/logs/site; let a human commit source);
-> destructive commands (`rm -rf`, `git push --force`, `git reset --hard`,
-> `git clean -f`, `DROP`/`TRUNCATE`) require confirmation; a read/edit/write of a
-> secret-looking file (`.env`, private keys, credential files) requires confirmation;
-> and a Fabric/Power BI/MCP tool call whose name looks like a **mutation**
+> staged files, `git commit -a/-am` (which auto-stages tracked changes),
+> `git -C <dir> commit`, and `git commit <pathspec>` (which commits working-tree content
+> straight past the index); commit only docs/logs/site and let a human commit source.
+> Destructive commands (`rm -rf`, `git push --force` — including a `+refspec` force push,
+> `git reset --hard`, `git clean -f`, `DROP`/`TRUNCATE`) require confirmation; the git
+> detectors tolerate `git -C` and interspersed flags and match case-insensitively. A
+> read/edit/write of a secret-looking file (`.env`, private keys, credential files) —
+> **or a bash command that touches one** (`cat .env`, `curl -F f=@.env`) — requires
+> confirmation. And a Fabric/Power BI/MCP tool call whose name looks like a **mutation**
 > (create/update/delete/deploy/publish) requires confirmation. That last check is
 > best-effort — MCP tool names vary, so it **complements** (does not replace) Pi's own
 > tool-approval prompts and this advisory prompt; enable the optional `pi-permissions`

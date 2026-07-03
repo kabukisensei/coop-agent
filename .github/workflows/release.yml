@@ -31,7 +31,9 @@ jobs:
           echo "----- notes for $GITHUB_REF_NAME -----"; cat RELEASE_NOTES.md
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        # SHA-pinned (v3.0.1) — this is a third-party action with `contents: write`, so
+        # a movable tag is the sharpest supply-chain edge in the whole workflow.
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           name: "coop-agent ${{ github.ref_name }}"
           body_path: RELEASE_NOTES.md

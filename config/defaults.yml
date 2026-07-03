@@ -69,21 +69,25 @@ tabular_editor_cli:
   command: TabularEditor.exe
   note: "Set tools.tabular_editor_cli.executable_path in .coop/project.yml"
 
-# MCP servers coop preloads — all read-only, all optional (coop runs without them).
-# Placed non-destructively into coop's isolated agent dir (~/.coop/agent/mcp.json)
-# by `coop sync` — never touches your personal `pi`'s MCP.
+# MCP servers coop preloads — all optional (coop runs without them). Placed non-
+# destructively into coop's isolated agent dir (~/.coop/agent/mcp.json) by `coop sync`
+# — never touches your personal `pi`'s MCP. NOTE: fabric/powerbi/microsoft-learn are
+# read-only over CLIENT data (fabric is read-only *by policy* — its MCP has no server-
+# side switch; see docs/guardrails.md). context-mode is NOT a pure read: it runs
+# SANDBOXED code over the docs/graph (not client data) to save context — pinned, and
+# still subject to Pi's tool approval.
 mcp:
   config_example: config/mcp.example.json
   install_target: "~/.coop/agent/mcp.json"
   servers:
     - name: fabric          # @microsoft/fabric-mcp (AzureCliCredential)
-      mode: read-only
+      mode: read-only       # by policy — Fabric MCP has no server-side read-only switch
     - name: powerbi         # powerbi-mcp-server --readonly
       mode: read-only
     - name: microsoft-learn # learn.microsoft.com/api/mcp via mcp-remote (always-current docs)
       mode: read-only
-    - name: context-mode    # npx -y context-mode — intent-driven search + sandboxed exec (context savings)
-      mode: read-only
+    - name: context-mode    # context-mode@1.0.162 — intent-driven search + SANDBOXED exec over docs/graph
+      mode: sandboxed-exec  # not read-only: sandboxed code execution (over docs, not client data)
 
 # Branded resources loaded at launch (see bin/coop).
 resources:
@@ -98,7 +102,7 @@ resources:
 # warns when Pi is older than pi_min (the extension API coop's extensions rely on).
 tested_with:
   pi_min: "0.79.0"
-  pi: "0.79.9"          # @earendil-works/pi-coding-agent (requires Node >= 22.19)
+  pi: "0.80.2"          # @earendil-works/pi-coding-agent (requires Node >= 22.19)
   pi_mcp_adapter: "2.10.0"
   pi_hermes_memory: "0.7.17"
   pi_web_access: "0.10.7"

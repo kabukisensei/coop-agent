@@ -6,6 +6,19 @@ on:
   pull_request:
 
 jobs:
+  bash32:
+    # Enforce the hard bash-3.2 rule (macOS stock /bin/bash). ubuntu's bash 5 accepts
+    # ${var,,}, mapfile, &>>, etc. that break every stock-bash Mac install.sh runs on;
+    # only a real 3.2 shell catches them. macOS runners ship bash 3.2 at /bin/bash.
+    name: bash 3.2 parse (macOS stock)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: parse under stock /bin/bash (3.2)
+        run: |
+          /bin/bash --version | head -1
+          for f in bin/coop lib/common.sh scripts/*.sh tests/*.sh; do echo "checking $f"; /bin/bash -n "$f"; done
+
   shell:
     name: shell + config lint
     runs-on: ubuntu-latest

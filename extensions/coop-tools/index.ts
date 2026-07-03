@@ -723,8 +723,11 @@ export default function coopTools(pi: ExtensionAPI) {
             details: { tool: "coop-data-doc", command },
           };
         }
-        const args = ["lineage", p.object.trim()];
+        // Options first, then `--` so a model-supplied object that starts with `-`
+        // is treated as a positional name, not parsed as a coop-data-doc flag.
+        const args = ["lineage"];
         if (p.depth && p.depth > 0) args.push("--depth", String(Math.floor(p.depth)));
+        args.push("--", p.object.trim());
         let res;
         try {
           res = await pi.exec("coop-data-doc", args, { cwd: ctx.cwd, signal });
@@ -765,7 +768,7 @@ export default function coopTools(pi: ExtensionAPI) {
           details: { tool: "coop-data-doc", error: errMsg(e) },
         };
       }
-      const tail = res.stdout.split("\n").slice(-25).join("\n");
+      const tail = String(res.stdout || "").split("\n").slice(-25).join("\n");
       // No coop-data-doc.yml yet → point at the in-agent setup wizard (but it's optional).
       const missingConfig = /Config file not found|No coop-data-doc\.yml/i.test(res.stderr + res.stdout);
       const setupHint = missingConfig

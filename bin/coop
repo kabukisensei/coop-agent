@@ -143,6 +143,10 @@ coop_build_pi_args() {
       while IFS= read -r allow; do
         [ -z "$allow" ] && continue
         case "$allow" in TODO*) continue ;; esac
+        # Validate the name (letters/digits/._-, no `..`, no leading `-`) so a hostile
+        # project.yml can't traverse out of skills/_microsoft/ and inject an arbitrary
+        # SKILL.md into the model (e.g. allow: "../../../../etc/evil").
+        coop_valid_name "$allow" || { coop_warn "ignoring invalid Microsoft skill name '$allow'"; continue; }
         [ -f "$COOP_ROOT/skills/_microsoft/$allow/SKILL.md" ] || continue
         # Skip if the Microsoft skill collides with one of ours (subordinate rule).
         case "$own_names" in *" $allow "*) coop_warn "skipping Microsoft skill '$allow' (conflicts with a Cooptimize skill)"; continue ;; esac
@@ -386,7 +390,11 @@ EOF
     || coop_die "working tree not clean — commit or stash your changes before releasing."
 
   local cur new ma mi pa
-  cur="$(tr -d '[:space:]' < "$COOP_ROOT/VERSION" 2>/dev/null)"
+  # Guard the read first: a missing/unreadable VERSION makes the `<` redirect fail
+  # BEFORE `2>/dev/null` applies, so under `set -e` bash would abort with a raw error
+  # instead of reaching the friendly validation below.
+  [ -f "$COOP_ROOT/VERSION" ] || coop_die "VERSION file missing at $COOP_ROOT/VERSION — fix it before releasing."
+  cur="$(tr -d '[:space:]' < "$COOP_ROOT/VERSION" 2>/dev/null || true)"
   # Strict X.Y.Z. The old loose globs let e.g. '1abc.2.3' or '1.2.3.4' through, then
   # `$((ma + 1))` aborted mid-release with a raw arithmetic error under `set -e`.
   case "$cur" in
@@ -477,8 +485,14 @@ EOF
     coop_warn "no '## [Unreleased]' heading in CHANGELOG.md — skipped the changelog roll."
   fi
 
-  # 4. commit + tag
-  git -C "$COOP_ROOT" add -A
+  # 4. commit + tag. Stage ONLY the files a release actually touches — never `add -A`,
+  # which would sweep in anything created during the (slow) gate window if another
+  # agent or an editor autosave shares the tree (this is how a spurious empty release
+  # got cut once). VERSION + CHANGELOG are repo-relative to git's -C dir.
+  git -C "$COOP_ROOT" add VERSION CHANGELOG.md
+  for f in "$COOP_ROOT"/extensions/*/package.json; do
+    [ -f "$f" ] && git -C "$COOP_ROOT" add "$f"
+  done
   git -C "$COOP_ROOT" commit -q -m "Release v$new" || coop_die "git commit failed."
   git -C "$COOP_ROOT" tag -a "v$new" -m "coop-agent v$new" || coop_die "git tag failed."
   coop_ok "released v$new (was v$cur)"
@@ -501,7 +515,9 @@ EOF
 _coop_add_runtime_paths() {
   local d p
   if have npm; then
-    p="$(npm prefix -g 2>/dev/null)"
+    # `|| true`: a failing `npm prefix -g` (broken node, corrupt .npmrc, EACCES) must
+    # not abort coop under `set -euo pipefail` — that would brick even `coop help`.
+    p="$(npm prefix -g 2>/dev/null || true)"
     if [ -n "$p" ] && [ -d "$p/bin" ]; then
       case ":$PATH:" in *":$p/bin:"*) ;; *) PATH="$p/bin:$PATH" ;; esac
     fi

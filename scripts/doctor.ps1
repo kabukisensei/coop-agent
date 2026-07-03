@@ -129,15 +129,24 @@ Check 'git'     'required' 'install Git from https://git-scm.com' @('git','--ver
 Check 'node'    'optional' 'needed to install/update pi: https://nodejs.org' @('node','--version')
 Check 'npm'     'optional' 'ships with Node.js' @('npm','--version')
 # Python: Windows ships `python`/`py`, not `python3` — accept either. And no bash-
-# style `&&` in hints (Windows PowerShell 5.1 can't parse it).
-$pyBin  = if (Test-Have 'python3') { 'python3' } elseif (Test-Have 'python') { 'python' } else { $null }
+# style `&&` in hints (Windows PowerShell 5.1 can't parse it). Skip a Windows Store
+# App-Execution-Alias stub (under \WindowsApps\, no real python): it makes Test-Have
+# succeed while `--version` prints nothing, so it must not read as a ✓.
+$pyBin = $null
+foreach ($n in @('python3', 'python')) {
+  $c = Get-Command $n -ErrorAction SilentlyContinue
+  if ($c -and ($c.Source -notmatch '\\WindowsApps\\')) {
+    $vv = (& $n --version 2>&1)
+    if ($vv -match '\d+\.\d+') { $pyBin = $n; break }
+  }
+}
 $pyName = if ($pyBin) { $pyBin } else { 'python' }
 if ($pyBin) {
   $pv = (& $pyBin --version 2>$null | Select-Object -First 1)
   $pm = [regex]::Match([string]$pv, '\d+\.\d+(\.\d+)?')
   D-Ok ('python' + $(if ($pm.Success) { "  ($($pm.Value))" } else { '' }))
 } else {
-  D-Bad 'python missing' 'winget install Python.Python.3.12  (or https://python.org), then: coop install'
+  D-Bad 'python missing' 'winget install Python.Python.3.12  (or https://python.org), then: coop install. (A Windows Store python stub does not count.)'
 }
 if (Test-Have 'pipx') {
   $xv = (& pipx --version 2>$null | Select-Object -First 1)
@@ -344,15 +353,26 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
   Coop-Head 'Applying fixes (--fix)'
   $syncScript = Join-Path $script:CoopRoot 'scripts\sync.ps1'
   if (Test-Path -LiteralPath $syncScript) {
-    & $syncScript *> $null
+    # Run in a CHILD process (like install/update) so its real exit code is read from
+    # $LASTEXITCODE — invoking it in-process could leave $LASTEXITCODE stale from an
+    # earlier native call and report a random success/failure.
+    $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
+    & $psExe -NoProfile -ExecutionPolicy Bypass -File $syncScript *> $null
     if ($LASTEXITCODE -eq 0) { Coop-Ok 'synced extensions / MCP / assets' } else { Coop-Warn 'sync had issues (run: coop sync)' }
   }
-  foreach ($t in @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')) {
-    if (-not (Test-Have $t)) {
-      Coop-Info "pipx install $t"
-      & pipx install $t *> $null
-      if ($LASTEXITCODE -eq 0) { Coop-Ok "$t installed" } else { Coop-Warn "could not install $t (run: pipx install $t)" }
+  if (Test-Have 'pipx') {
+    foreach ($t in @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')) {
+      if (-not (Test-Have $t)) {
+        Coop-Info "pipx install $t"
+        & pipx install $t *> $null
+        # $LASTEXITCODE is meaningful only because `pipx` resolved (guarded above);
+        # a missing pipx would be a command-not-found error that *> $null can't
+        # suppress, leaving $LASTEXITCODE stale and a false ✓.
+        if ($LASTEXITCODE -eq 0) { Coop-Ok "$t installed" } else { Coop-Warn "could not install $t (run: pipx install $t)" }
+      }
     }
+  } else {
+    Coop-Warn 'pipx missing — cannot auto-install the Coop tools (install pipx first: see the hint above)'
   }
   Coop-Info 'Re-checking... (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)'
   [Console]::Error.WriteLine('')

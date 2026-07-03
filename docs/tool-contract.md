@@ -261,19 +261,23 @@ deploying to test/prod is in `never_without_explicit_instruction`).
 
 ## MCP read-only action policy
 
-All MCP servers (`fabric`, `powerbi --readonly`, `microsoft-learn`,
-`context-mode`) are read-only and optional; `coop` runs without them. Config lives
-in `config/mcp.example.json`, placed non-destructively into coop's isolated agent
-dir (`~/.coop/agent/mcp.json`) by `coop sync`, and wired through `pi-mcp-adapter`.
+The MCP servers are optional; `coop` runs without them. `fabric`, `powerbi --readonly`,
+and `microsoft-learn` are read-only over **client data** — `fabric` is read-only *by
+policy* (its MCP has **no** server-side read-only switch, unlike `powerbi`'s `--readonly`),
+so the guardrail heuristic + Pi's tool approval are what hold it. `context-mode` is **not**
+a pure read: it runs **sandboxed code over the docs/graph** (not client data) to save
+context. Config lives in `config/mcp.example.json` (pinned versions), placed non-
+destructively into coop's isolated agent dir (`~/.coop/agent/mcp.json`) by `coop sync`,
+and wired through `pi-mcp-adapter`.
 
 Per `.coop/project.yml` and `docs/guardrails.md`:
 
 | Server | Allowed by default | Requires explicit approval |
 |--------|--------------------|----------------------------|
-| `fabric` | `list`, `read`, `inspect` | `create`, `update`, `delete`, `deploy` |
+| `fabric` | `list`, `read`, `inspect` (read-only **by policy**) | `create`, `update`, `delete`, `deploy` |
 | `powerbi` (`--readonly`) | `list`, `read`, `inspect` | `create`, `update`, `delete`, `publish` |
 | `microsoft-learn` | docs lookups (always-current) | — |
-| `context-mode` | local read | — |
+| `context-mode` | intent search + **sandboxed exec** over docs/graph | — |
 
 `coop` **never** calls create/update/delete/deploy/publish MCP actions without
 explicit approval — regardless of what the server is capable of.

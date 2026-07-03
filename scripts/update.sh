@@ -14,7 +14,21 @@ export COOP_ROOT
 # shellcheck source=../lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
 
-PY_TOOLS=( coop-data-doc coop-sql-review coop-dax-review ms-fabric-cli )
+NO_FABRIC=0
+for a in "$@"; do
+  case "$a" in
+    '') ;;
+    --no-fabric) NO_FABRIC=1 ;;
+    --yes|-y) export COOP_ASSUME_YES=1 ;;
+    *) coop_warn "update: ignoring unknown flag '$a'" ;;
+  esac
+done
+
+# The Coop tools to upgrade. Fabric CLI is included unless --no-fabric (matching
+# `coop install --no-fabric`), so a fabric-less machine doesn't report a perpetual
+# failed item on every update.
+PY_TOOLS=( coop-data-doc coop-sql-review coop-dax-review )
+[ "$NO_FABRIC" = 0 ] && PY_TOOLS+=( ms-fabric-cli )
 
 # Update coop's ISOLATED Pi agent dir (not the user's personal pi).
 PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"; export PI_CODING_AGENT_DIR
@@ -75,7 +89,10 @@ fi
 # cursor even on Ctrl-C. (coop_progress_end is idempotent, so the EXIT trap is a
 # safe no-op once we've ended it explicitly after step 3.)
 coop_progress_begin "$PROG_TOTAL"
-trap 'coop_progress_end; _coop_unit_cleanup' EXIT INT TERM
+# EXIT restores the cursor + reaps the unit; INT/TERM ALSO exit (a bare trap would
+# clean up but then let the script resume on Ctrl-C).
+trap 'coop_progress_end; _coop_unit_cleanup' EXIT
+trap 'coop_progress_end; _coop_unit_cleanup; exit 130' INT TERM
 
 # --- 2. Update Pi + extensions ----------------------------------------------
 # (Windows guards this step against running sessions + leftover staging dirs in
@@ -104,5 +121,8 @@ coop_head "4/5  Sync brand assets"
 "$COOP_ROOT/scripts/sync.sh" || coop_warn "sync reported issues"
 
 # --- 5. Doctor ---------------------------------------------------------------
+# Propagate doctor's verdict as the update's exit code (see install.sh) so a broken
+# update is detectable by scripted callers; the steps above stay warn-and-continue.
 coop_head "5/5  Doctor"
-"$COOP_ROOT/scripts/doctor.sh" || true
+"$COOP_ROOT/scripts/doctor.sh"; DOCTOR_RC=$?
+exit "$DOCTOR_RC"

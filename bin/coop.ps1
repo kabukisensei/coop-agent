@@ -297,7 +297,10 @@ function Invoke-CoopLaunchPreflight {
   if ($env:COOP_SKIP_EXT_CHECK -eq '1') { return }
   if (-not (Test-Have 'pi')) { return }
   $py = Get-CoopPython; if (-not $py) { return }
+  # The dir Pi will ACTUALLY load: PI_CODING_AGENT_DIR when set; with COOP_NO_ISOLATE=1
+  # Pi uses the personal ~/.pi/agent, so guarding coop's isolated dir would be wrong.
   $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR }
+              elseif ($env:COOP_NO_ISOLATE -eq '1') { Join-Path $HOME '.pi\agent' }
               elseif ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR }
               else { Join-Path $HOME '.coop\agent' }
   if (-not (Test-Path -LiteralPath (Join-Path $agentDir 'npm\package.json') -PathType Leaf)) { return }
@@ -319,10 +322,17 @@ function Invoke-CoopLaunchPreflight {
     Coop-Die 'launch aborted — update the Pi agent above, then re-run: coop   (bypass once with COOP_SKIP_EXT_CHECK=1)'
   }
   elseif ($rc -eq 10) {
-    # Fixable tree skew — run sync (re-pins + reinstalls) in a child process, then launch.
-    Coop-Info 'realigning Pi extensions to the agent…'
-    $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
-    & $psExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:CoopRoot 'scripts\sync.ps1') *> $null
+    if ($env:COOP_NO_ISOLATE -eq '1') {
+      # Isolation off → Pi is loading the user's personal ~/.pi/agent. Don't silently
+      # mutate the personal tree at launch; tell them how to align it deliberately.
+      Coop-Warn "your Pi extension tree needs realignment to pi $ver (isolation is off) — align it deliberately: coop doctor --fix   (or unset COOP_NO_ISOLATE to use coop's isolated tree)"
+    } else {
+      # Fixable tree skew in coop's OWN dir — run sync (re-pins + reinstalls) in a child
+      # process, then launch. Streams stay visible so a slow reinstall isn't a silent hang.
+      Coop-Info 'realigning Pi extensions to the agent…'
+      $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
+      & $psExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:CoopRoot 'scripts\sync.ps1')
+    }
   }
 }
 
@@ -358,6 +368,9 @@ function Build-CoopPiArgs {
     if ($proj -and (Test-Path -LiteralPath $msDir -PathType Container)) {
       foreach ($allow in (Get-CoopYamlList $proj 'microsoft_skills.allow')) {
         if ([string]::IsNullOrWhiteSpace($allow) -or $allow.StartsWith('TODO')) { continue }
+        # Validate the name so a hostile project.yml can't traverse out of
+        # skills/_microsoft/ and inject an arbitrary SKILL.md into the model.
+        if (-not (Test-CoopValidName $allow)) { Coop-Warn "ignoring invalid Microsoft skill name '$allow'"; continue }
         $cand = Join-Path $msDir $allow
         $sk = Join-Path $cand 'SKILL.md'
         if (-not (Test-Path -LiteralPath $sk -PathType Leaf)) { continue }
@@ -519,7 +532,10 @@ TODO: when to use this skill.
 ## Output
 - Pass/fail summary, findings by severity, suggested fixes (advisory — never auto-edit).
 "@
-  Set-Content -LiteralPath (Join-Path $dir 'SKILL.md') -Value $body -Encoding UTF8
+  # Write LF, no BOM (Set-Content -Encoding UTF8 emits BOM+CRLF on Windows PowerShell
+  # 5.1, which breaks the bash-side frontmatter parser `coop_skill_name`). Same
+  # [IO.File]::WriteAllText path the release code uses.
+  [System.IO.File]::WriteAllText((Join-Path $dir 'SKILL.md'), ($body -replace "`r`n", "`n"))
   Coop-Ok "Created skills/$name/SKILL.md"
   Coop-Info 'Edit it, test with: coop  — then commit & push so the team gets it.'
 }
@@ -544,7 +560,8 @@ Steps:
 3. Keep read-only first; present a PLAN and get approval before any edit.
 4. Never commit source — show the diff and let a human commit.
 "@
-  Set-Content -LiteralPath $f -Value $body -Encoding UTF8
+  # Write LF, no BOM (see New-CoopSkill).
+  [System.IO.File]::WriteAllText($f, ($body -replace "`r`n", "`n"))
   Coop-Ok "Created prompts/$name.md"
   Coop-Info 'Edit it, then it loads automatically next time you run: coop'
 }
@@ -582,7 +599,9 @@ function Invoke-CoopRelease {
   if ($LASTEXITCODE -ne 0) { Coop-Die "$root is not a git checkout." }
   if (& git -C $root status --porcelain) { Coop-Die 'working tree not clean — commit or stash your changes before releasing.' }
 
-  $cur = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
+  $verFile = Join-Path $root 'VERSION'
+  if (-not (Test-Path -LiteralPath $verFile -PathType Leaf)) { Coop-Die "VERSION file missing at $verFile — fix it before releasing." }
+  $cur = (Get-Content -LiteralPath $verFile -Raw).Trim()
   if ($cur -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { Coop-Die "VERSION ('$cur') is not X.Y.Z — fix it before releasing." }
   $p = $cur.Split('.'); $ma = [int]$p[0]; $mi = [int]$p[1]; $pa = [int]$p[2]
   switch ($level) {
@@ -690,8 +709,14 @@ function Invoke-CoopRelease {
     }
   }
 
-  # 4. commit + tag
-  & git -C $root add -A
+  # 4. commit + tag. Stage ONLY the files a release touches — never `add -A`, which
+  # would sweep in anything created during the (slow) gate window if another agent or
+  # an editor autosave shares the tree (this is how a spurious empty release got cut).
+  & git -C $root add VERSION CHANGELOG.md
+  Get-ChildItem -LiteralPath (Join-Path $root 'extensions') -Directory | ForEach-Object {
+    $pkg = Join-Path $_.FullName 'package.json'
+    if (Test-Path -LiteralPath $pkg) { & git -C $root add $pkg }
+  }
   & git -C $root commit -q -m "Release v$new"
   if ($LASTEXITCODE -ne 0) { Coop-Die 'git commit failed.' }
   & git -C $root tag -a "v$new" -m "coop-agent v$new"

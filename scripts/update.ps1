@@ -219,7 +219,22 @@ function Test-CoopPiRunning {
   return $false
 }
 
-$PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review', 'ms-fabric-cli')
+# --- Parse flags (mirror of update.sh) ---------------------------------------
+$NO_FABRIC = $false
+foreach ($a in $args) {
+  switch -CaseSensitive ($a) {
+    '--no-fabric' { $NO_FABRIC = $true }
+    '--yes'       { $env:COOP_ASSUME_YES = '1' }
+    '-y'          { $env:COOP_ASSUME_YES = '1' }
+    default       { if (-not [string]::IsNullOrWhiteSpace($a)) { Coop-Warn "update: ignoring unknown flag '$a'" } }
+  }
+}
+
+# The Coop tools to upgrade. Fabric CLI is included unless --no-fabric (matching
+# `coop install --no-fabric`), so a fabric-less machine doesn't report a perpetual
+# failed item on every update.
+$PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')
+if (-not $NO_FABRIC) { $PY_TOOLS += 'ms-fabric-cli' }
 
 # Update coop's ISOLATED Pi agent dir (not the user's personal pi).
 function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' } }
@@ -332,5 +347,7 @@ $syncRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
 if ($syncRc -ne 0) { Coop-Warn 'sync reported issues' }
 
 # --- 5. Doctor ---------------------------------------------------------------
+# Propagate doctor's verdict as the update's exit code (mirror of update.sh).
 Coop-Head '5/5  Doctor'
-$null = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
+$doctorRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
+exit $doctorRc

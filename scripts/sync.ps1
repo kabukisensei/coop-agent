@@ -107,9 +107,25 @@ function Sync-CoopExtDeps {
   Push-Location $npmDir; try { & npm install *> $null } catch { } finally { Pop-Location }
   $r = Invoke-Align -Check
   if ($r.rc -eq 10) {
-    # A stale node_modules can keep the old hoist — rebuild it clean as a last resort.
-    Remove-Item -LiteralPath (Join-Path $npmDir 'node_modules') -Recurse -Force -ErrorAction SilentlyContinue
-    Push-Location $npmDir; try { & npm install *> $null } catch { } finally { Pop-Location }
+    # A stale node_modules can keep the old hoist — rebuild it clean as a last resort,
+    # but PRESERVE the existing tree: move it aside, reinstall, and restore it if the
+    # reinstall fails (offline / registry down). Deleting first would leave coop with
+    # NO extensions — strictly worse than a skewed-but-working tree.
+    $nm = Join-Path $npmDir 'node_modules'
+    $bak = Join-Path $npmDir 'node_modules.coopbak'
+    if (Test-Path -LiteralPath $nm) {
+      Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
+      Move-Item -LiteralPath $nm -Destination $bak -Force -ErrorAction SilentlyContinue
+    }
+    $reinstallOk = $false
+    Push-Location $npmDir; try { & npm install *> $null; $reinstallOk = ($LASTEXITCODE -eq 0) } catch { } finally { Pop-Location }
+    if ($reinstallOk) {
+      Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
+    } elseif (Test-Path -LiteralPath $bak) {
+      Remove-Item -LiteralPath $nm -Recurse -Force -ErrorAction SilentlyContinue
+      Move-Item -LiteralPath $bak -Destination $nm -Force -ErrorAction SilentlyContinue
+      Coop-Warn 'extension realignment reinstall failed — restored the previous tree — check your network, then: coop doctor --fix'
+    }
     $r = Invoke-Align -Check
   }
   if ($r.rc -eq 0) { Coop-Ok "extension pi-ai / pi-tui aligned to $ver" }
@@ -198,3 +214,7 @@ if (Test-Path -LiteralPath $vibesDir -PathType Container) {
 if ($vibeCount -gt 0) { Coop-Ok "$vibeCount vibe file(s) present" } else { Coop-Warn 'no vibe files found in vibes/' }
 
 Coop-Ok 'sync complete.'
+# Explicit success code (sync is best-effort) so `coop sync` / the launch preflight's
+# child call don't inherit an incidental non-zero $LASTEXITCODE from the last native
+# call above — mirrors sync.sh ending on a clean exit 0.
+exit 0

@@ -205,8 +205,9 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | --- | --- |
 | `coop` | Launch the branded Pi agent (skills, prompts, theme, guardrails, splash) |
 | `coop doctor [--fix]` | Check dependencies and configuration; exit non-zero if required items missing. `--fix` auto-applies safe remediations (sync extensions/MCP/assets, pipx-install missing Coop tools), then re-checks |
-| `coop update` | Update Pi + Pi extensions + Coop tools + vibes/skills, then run doctor |
+| `coop update [--no-fabric]` | Update Pi + Pi extensions + Coop tools + vibes/skills, then run doctor (`--no-fabric` skips the Fabric CLI, matching `install --no-fabric`) |
 | `coop install` | Fresh-install / bootstrap everything (idempotent). With a source arg, alias of `coop add` |
+| `coop web` | Open a friendly browser UI over the same governed agent (experimental; loopback-only + one-time token — see `web/README.md`) |
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
 | `coop sync` | Ensure core Pi extensions are installed, place the read-only MCP config (non-destructive), verify brand assets |
 | `coop data-doc [args]` | Run `coop-data-doc` (default: `build`) and summarize outputs |

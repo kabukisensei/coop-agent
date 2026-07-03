@@ -119,7 +119,10 @@ coop_head "Cooptimize agent bootstrap (v${COOP_VERSION})  [$OS]"
 # on Ctrl-C. (coop_progress_end is idempotent, so the EXIT trap is a safe no-op
 # once we've ended it explicitly after step 5.)
 coop_progress_begin "$PROG_TOTAL"
-trap 'coop_progress_end; _coop_unit_cleanup' EXIT INT TERM
+# EXIT restores the cursor + reaps the unit; INT/TERM ALSO exit (a bare trap would
+# clean up but then let the script resume and keep mutating the machine on Ctrl-C).
+trap 'coop_progress_end; _coop_unit_cleanup' EXIT
+trap 'coop_progress_end; _coop_unit_cleanup; exit 130' INT TERM
 
 # --- 1. Prerequisites (warn-and-continue; these usually need a package manager)
 coop_head "1/7  Prerequisites"
@@ -169,8 +172,14 @@ coop_head "6/7  Link 'coop' onto your PATH"
 LOCALBIN="$HOME/.local/bin"
 mkdir -p "$LOCALBIN"
 chmod +x "$COOP_ROOT/bin/coop" "$COOP_ROOT"/scripts/*.sh 2>/dev/null || true
+# If a REAL file (not a symlink) already sits there, back it up before ln -sf would
+# clobber it with no trace.
+if [ -e "$LOCALBIN/coop" ] && [ ! -L "$LOCALBIN/coop" ]; then
+  mv "$LOCALBIN/coop" "$LOCALBIN/coop.bak.$$" 2>/dev/null \
+    && coop_warn "backed up an existing non-symlink $LOCALBIN/coop to coop.bak.$$"
+fi
 if [ ! -e "$LOCALBIN/coop" ] || [ "$(readlink "$LOCALBIN/coop" 2>/dev/null)" != "$COOP_ROOT/bin/coop" ]; then
-  ln -sf "$COOP_ROOT/bin/coop" "$LOCALBIN/coop" && coop_ok "linked $LOCALBIN/coop -> bin/coop"
+  if ln -sf "$COOP_ROOT/bin/coop" "$LOCALBIN/coop"; then coop_ok "linked $LOCALBIN/coop -> bin/coop"; else coop_warn "could not link $LOCALBIN/coop" "check permissions on $LOCALBIN"; fi
 else
   coop_ok "coop already linked"
 fi
@@ -184,7 +193,11 @@ esac
 coop_head "7/7  Sync assets and run doctor"
 "$COOP_ROOT/scripts/sync.sh" || coop_warn "sync reported issues"
 echo >&2
-"$COOP_ROOT/scripts/doctor.sh" || true
+# Propagate doctor's verdict as the install's exit code, so a genuinely broken
+# install (a required dep still missing) is detectable by whatever ran `coop install`
+# (onboarding automation, the double-click launcher's wrapper). Steps above stay
+# warn-and-continue; this is the one authoritative "is it usable?" signal.
+"$COOP_ROOT/scripts/doctor.sh"; DOCTOR_RC=$?
 
 echo >&2
 if [ "${COOP_ON_PATH:-1}" = 1 ]; then
@@ -195,3 +208,4 @@ else
   coop_say "      • or use it in THIS shell right now:  $LOCALBIN/coop"
   coop_say "      • to make it permanent, add to ~/.zshrc (or ~/.bashrc):  export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
+exit "$DOCTOR_RC"

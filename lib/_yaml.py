@@ -4,8 +4,11 @@
 coop must work on a fresh machine where the system python has no PyYAML. This
 reader uses PyYAML when importable (full fidelity) and otherwise falls back to a
 focused parser that handles the subset coop's .coop/project.yml uses: nested
-block maps, block lists, inline flow lists [a, b], inline flow maps {k: v},
-scalars (quoted/unquoted), and # comments.
+block maps, block lists (dash at the same OR deeper indent than the key),
+multi-key block-list items, inline flow lists [a, b], inline flow maps {k: v},
+scalars (quoted/unquoted, with null coercion), and # comments. Block scalars
+(| / >) are captured as text (not parsed as keys) but not folded; anchors,
+aliases, and tags are out of scope.
 
 Usage:
     python3 _yaml.py get  FILE dotted.key [default]   -> prints scalar (or default)
@@ -64,6 +67,35 @@ def _split_top(s, sep):
     return parts
 
 
+def _split_first_colon(s):
+    """Split on the first TOP-LEVEL mapping colon (outside quotes/brackets, followed
+    by whitespace or end-of-string). Returns (key, value) or None if not a map entry."""
+    depth, q = 0, None
+    for i, c in enumerate(s):
+        if q:
+            if c == q:
+                q = None
+        elif c in ('"', "'"):
+            q = c
+        elif c in '[{':
+            depth += 1
+        elif c in ']}':
+            depth -= 1
+        elif c == ':' and depth == 0:
+            if i + 1 >= len(s) or s[i + 1] in ' \t':
+                return s[:i], s[i + 1:].strip()
+    return None
+
+
+def _parse_scalar(s):
+    s = s.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+        return s[1:-1]                       # quoted → always a literal string
+    if s.lower() in ('null', '~'):
+        return None                          # match PyYAML: bare null/~ → None
+    return s
+
+
 def _parse_value(s):
     s = s.strip()
     if s.startswith('['):
@@ -74,11 +106,21 @@ def _parse_value(s):
         d = {}
         if inner:
             for part in _split_top(inner, ','):
-                if ':' in part:
-                    k, v = part.split(':', 1)
-                    d[_unquote(k)] = _parse_value(v)
+                kv = _split_first_colon(part) or (
+                    part.split(':', 1) if ':' in part else None)
+                if kv:
+                    d[_unquote(kv[0])] = _parse_value(kv[1])
         return d
-    return _unquote(s)
+    return _parse_scalar(s)
+
+
+def _is_seq(content):
+    return content == '-' or content.startswith('- ')
+
+
+def _is_block_scalar(v):
+    # `|`, `>`, `|-`, `|+`, `>-`, `>+` (with optional trailing digit) start a block scalar.
+    return len(v) >= 1 and v[0] in '|>' and v[1:].strip('+-0123456789') == ''
 
 
 def _load_fallback(text):
@@ -88,59 +130,119 @@ def _load_fallback(text):
         if s.strip() in ('', '---'):
             continue
         lines.append((len(s) - len(s.lstrip(' ')), s.strip()))
+    n = len(lines)
     pos = [0]
 
-    def parse(min_indent):
-        if pos[0] >= len(lines):
+    def parse_child(parent_indent):
+        # Parse the block that is the VALUE of a key at parent_indent: a deeper map,
+        # or a sequence whose dash sits at OR beyond the key's indent (both are legal
+        # YAML — the same-indent form is the default of yq / K8s manifests).
+        if pos[0] >= n:
             return None
-        _, content = lines[pos[0]]
-        if content.startswith('- '):
-            lst = []
-            while pos[0] < len(lines):
-                indent, content = lines[pos[0]]
-                if indent < min_indent or not content.startswith('- '):
-                    break
-                item = content[2:].strip()
-                pos[0] += 1
-                if item == '':
-                    lst.append(parse(min_indent + 1))
-                elif ':' in item and not item[:1] in '[{"\'':
-                    k, v = item.split(':', 1)
-                    lst.append({_unquote(k): _parse_value(v)})
-                else:
-                    lst.append(_parse_value(item))
-            return lst
+        indent, content = lines[pos[0]]
+        if _is_seq(content) and indent >= parent_indent:
+            return parse_seq(indent)
+        if indent > parent_indent:
+            return parse_map(indent)
+        return None
+
+    def parse_map(map_indent):
         d = {}
-        while pos[0] < len(lines):
+        while pos[0] < n:
             indent, content = lines[pos[0]]
-            if indent < min_indent or content.startswith('- '):
+            if indent < map_indent or _is_seq(content):
                 break
-            if ':' not in content:
+            if indent > map_indent:
+                pos[0] += 1                   # stray deeper line without a parent key
+                continue
+            kv = _split_first_colon(content)
+            if not kv:
                 pos[0] += 1
                 continue
-            k, v = content.split(':', 1)
-            key, v = _unquote(k), v.strip()
+            key, v = _unquote(kv[0]), kv[1]
             pos[0] += 1
             if v == '':
-                if pos[0] < len(lines) and lines[pos[0]][0] > indent:
-                    d[key] = parse(indent + 1)
-                else:
-                    d[key] = None
+                d[key] = parse_child(indent)
+            elif _is_block_scalar(v):
+                # Collect the deeper-indented body as text so its lines don't leak
+                # into this map as sibling keys (folding/indentation is not preserved).
+                body = []
+                while pos[0] < n and lines[pos[0]][0] > indent:
+                    body.append(lines[pos[0]][1])
+                    pos[0] += 1
+                d[key] = '\n'.join(body)
             else:
                 d[key] = _parse_value(v)
         return d
 
-    return parse(0) or {}
+    def parse_seq(seq_indent):
+        lst = []
+        while pos[0] < n:
+            indent, content = lines[pos[0]]
+            if indent != seq_indent or not _is_seq(content):
+                break
+            after = content[1:].lstrip(' ')                  # text after the dash
+            keycol = indent + (len(content) - len(after)) if after else indent + 1
+            pos[0] += 1
+            if after == '':
+                if pos[0] < n and lines[pos[0]][0] > seq_indent:
+                    lst.append(parse_child(seq_indent))
+                else:
+                    lst.append(None)
+            elif _split_first_colon(after) and after[:1] not in '[{"\'':
+                # A mapping item, possibly multi-key: first entry here, the rest on
+                # following lines aligned at the item's content column (keycol).
+                item = {}
+                _consume_entry(item, after, keycol)
+                while pos[0] < n:
+                    ind2, c2 = lines[pos[0]]
+                    if ind2 != keycol or _is_seq(c2) or not _split_first_colon(c2):
+                        break
+                    pos[0] += 1
+                    _consume_entry(item, c2, keycol)
+                lst.append(item)
+            else:
+                lst.append(_parse_value(after))
+        return lst
+
+    def _consume_entry(item, text, keycol):
+        kv = _split_first_colon(text)
+        if not kv:
+            return
+        key, v = _unquote(kv[0]), kv[1]
+        if v == '':
+            item[key] = parse_child(keycol)
+        elif _is_block_scalar(v):
+            body = []
+            while pos[0] < n and lines[pos[0]][0] > keycol:
+                body.append(lines[pos[0]][1])
+                pos[0] += 1
+            item[key] = '\n'.join(body)
+        else:
+            item[key] = _parse_value(v)
+
+    if n == 0:
+        return {}
+    first_indent, first_content = lines[0]
+    if _is_seq(first_content):
+        result = parse_seq(first_indent)
+    else:
+        result = parse_map(first_indent)
+    return result if result is not None else {}
 
 
 def load(path):
-    with open(path) as f:
+    # utf-8-sig strips a leading BOM (Windows editors / PowerShell add one), so the
+    # first key never glues to a BOM. Universal newlines handle CRLF.
+    with open(path, encoding='utf-8-sig') as f:
         text = f.read()
     try:
         import yaml
-        return yaml.safe_load(text) or {}
-    except Exception:
+    except ImportError:
         return _load_fallback(text)
+    # A genuine YAML *syntax* error propagates (main() maps it to the default) rather
+    # than silently falling through to the naive parser's best-effort guess.
+    return yaml.safe_load(text) or {}
 
 
 def dig(data, dotted):

@@ -5,6 +5,55 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Security
+
+- **Guardrails: closed the `git commit <pathspec>` bypass.** `git commit src/app.py`
+  commits working-tree content straight past the index, so the staged-files-only check
+  used to allow it. The hook now also diffs any explicit pathspec (and `--`-separated
+  paths) against HEAD and blocks source. The destructive-git detectors (`git push
+  --force`, `reset --hard`, `clean -f`) now tolerate `git -C <dir>` and interspersed
+  flags, catch a `+refspec` force push, and match case-insensitively; `rm -rf`/`git
+  commit` are matched case-insensitively too (macOS/Windows). Secret-file access is now
+  also gated on **bash** commands (`cat .env`, `curl -F f=@.env`), not just the
+  read/edit/write tools.
+- **Launcher: `microsoft_skills.allow[]` no longer allows path traversal.** A hostile
+  work-repo `.coop/project.yml` could name `../../../evil` and inject an arbitrary
+  `SKILL.md` into the model; both `bin/coop` and `bin/coop.ps1` now validate each name.
+- **`context-mode` MCP is documented honestly as sandboxed-exec (not read-only) and
+  pinned** to `context-mode@1.0.162` in `config/mcp.example.json`.
+
+### Fixed
+
+- **Dependency-free YAML reader (`lib/_yaml.py`) no longer silently corrupts files.** A
+  block list at the SAME indent as its key (the default `yq`/Kubernetes/Prettier style)
+  used to parse as `null` and discard the rest of the file; multi-key list items lost
+  all but the first key and leaked the rest into the parent map. Both are fixed, a BOM
+  is stripped (`utf-8-sig`, for Windows-edited files), bare `null`/`~` coerce to `None`,
+  block scalars no longer leak child keys, and a genuine PyYAML syntax error no longer
+  falls through to the fallback parser.
+- **`coop install` / `coop update` now exit non-zero when doctor reports a required item
+  missing** (bash always exited 0; PowerShell propagated an incidental code) — so a
+  broken install is detectable by the double-click launcher and onboarding automation.
+- **Ctrl-C during install/update now actually aborts** instead of cleaning up and
+  resuming the run.
+- **Launch preflight guards the tree Pi actually loads** — with `COOP_NO_ISOLATE=1` it
+  now targets `~/.pi/agent` and warns rather than silently mutating the personal tree.
+- **Extension-realignment no longer destroys the tree on an offline reinstall** — the
+  old `node_modules` is moved aside and restored if `npm install` fails (bash + PS).
+- **`coop release` stages only the files it touches** (VERSION, CHANGELOG, extension
+  manifests) instead of `git add -A`, so a shared working tree can't sweep stray files
+  into the release commit (bash + PS).
+- **A flaky `npm prefix -g` no longer bricks every `coop` command** under `set -e`.
+- **Windows:** `coop web` reaps the whole `pi` process tree (`taskkill /T`) instead of
+  orphaning the agent behind its `cmd.exe` wrapper; the server now has global
+  `uncaughtException`/`unhandledRejection` handlers; a Windows Store `python` alias stub
+  no longer reads as a real Python; the persistent-PATH write now broadcasts
+  `WM_SETTINGCHANGE`; and `coop new-skill`/`new-prompt` write LF/no-BOM files.
+- Vibe rotation excludes the internal crew file from the default pool (opt-in only), so
+  it can't surface during a client screen-share.
+- CI now enforces bash-3.2 compatibility on a macOS stock-shell job; the third-party
+  release action is SHA-pinned.
+
 ## [0.9.2] — 2026-07-02
 
 ### Fixed
