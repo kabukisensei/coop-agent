@@ -73,7 +73,17 @@ Browser (Chromium --app)  ⇄  web/server.mjs  ⇄  pi --mode rpc -a  (the real 
   ✦ thinking lane (open while it thinks, folded once the visible answer starts),
   the same stream the TUI shows.
 - **Dialog cards** for select / confirm / input / editor requests (Start Here
-  menu, guardrail approvals, /setup-docs wizard), plus toast notifications.
+  menu, guardrail approvals, /setup-docs wizard), plus toast notifications
+  (multi-line `notify` messages keep their line breaks).
+- **Extension dock** — a slim lane above the composer where extension **status
+  segments** (`setStatus`) and **widgets** (`setWidget`) render, keyed and
+  order-reconstructed from replay (ANSI escape codes are stripped to plain text).
+  `setTitle` updates the browser tab title, `set_editor_text` prefills the composer
+  (live-only — never replayed over a draft), and any **unknown** extension-UI method
+  renders a deduplicated fallback card showing the raw request with a Dismiss button
+  — so nothing an extension sends is ever silently dropped. Dock state clears on new
+  chat / folder switch and is bounded by the ~4000-event replay ring (a status
+  segment older than the ring is lost on reconnect).
 - **Human-readable review cards** for `sql_review` / `dax_review` results —
   findings grouped by severity with rule id, message, and `file:line`, with a
   collapsible **Raw JSON** fallback (so a tool schema change degrades gracefully
@@ -98,16 +108,42 @@ Browser (Chromium --app)  ⇄  web/server.mjs  ⇄  pi --mode rpc -a  (the real 
   "this file" / "here" resolve, and the chat shows a 📎 chip instead of the note.
   The bridge jails every read to the working folder (lexical **and** realpath
   checks — a `../` or an escaping symlink is refused) and never writes.
-- **Reconnect replay**: the bridge keeps a bounded history (last ~4000 events)
-  and replays it on connect — a page refresh or dropped connection rebuilds the
-  transcript. Already-answered dialog cards and transient toasts are not
-  replayed. User bubbles render only from the event stream (single source of
-  truth), so replays never duplicate.
+- **Changes panel** (± Changes) — a **read-only** git diff viewer for the working
+  folder, with a live changed-file count on the toolbar chip. A changed-files list
+  (add/modify/delete/rename, untracked marked "new") on the left; for the selected
+  file, a rendered diff on the right — **unified or side-by-side**, line numbers,
+  add/remove coloring, cheap intraline emphasis, and in-file search. Diffs come
+  from the system `git` (working tree vs `HEAD`, or vs a **base ref** you type,
+  e.g. `origin/main`); the badge refreshes after each agent turn so tool edits show
+  up immediately. Caps: 500 files, 1 MB per diff, 4000 rendered rows (with a "show
+  more"). In a non-git folder — or on a machine without git — it degrades to a
+  clear one-line explanation instead of erroring. Like the Files panel it is a
+  bridge-local read jailed to the working folder; it never writes.
+- **Reconnect / tab-switch replay**: the bridge keeps a bounded history per chat
+  (last ~4000 events each) and serves it via `/events-poll?sid` — a page refresh,
+  dropped connection, or switching to another tab rebuilds that chat's transcript.
+  The live `/events` stream carries only new frames (one multiplexed SSE connection
+  for every tab, `{sid,n,ev}` envelopes; the `n` cursor dedupes a live frame against
+  the replay so a switch never doubles an event). Already-answered dialog cards and
+  transient toasts are not replayed. User bubbles render only from the event stream
+  (single source of truth), so replays never duplicate.
+- **Protocol-drift warning**: the bridge validates every pi event against a
+  checked-in contract ([`protocol.mjs`](protocol.mjs)). If a Pi upgrade sends an
+  event coop-web doesn't recognize (or one whose shape changed), the bridge logs
+  it to the console and shows a one-time **warning toast** — chat keeps working
+  (the event is still forwarded verbatim), but you get an actionable heads-up
+  instead of silent blank bubbles. See *Protocol contract* below.
 - **Header toolbar** — **＋ New chat** (fresh session; the transcript resets),
-  **🕘 History** (resume a previous conversation in this folder — named sessions
-  show their name, unnamed ones the first message; the prior transcript is
-  backfilled so you continue where you left off; a **✎ Name current chat** action
-  sets the session name via `set_session_name` so it's easy to find later), a
+  **🕘 History** (resume a previous conversation — grouped by **every workspace
+  coop has been used in**: the current folder first, other folders as collapsible
+  groups you can resume from in one click, which switches the working folder *and*
+  resumes together; folders that no longer exist are shown disabled. Named sessions
+  show their name, unnamed ones the first message. Resuming rebuilds the transcript
+  **from the session file itself** — thinking blocks, tool calls with their
+  arguments and outputs, and compaction markers, in original order (a one-line
+  notice appears if the conversation has other branches; the most recent is shown).
+  A **✎ Name current chat** action sets the session name via `set_session_name` so
+  it's easy to find later), a
   **model picker** (type-to-filter across every configured model), a
   **🧠 thinking-level** chip (click to cycle off → minimal → low → medium → high),
   **♻ Compact** (frees context; reports before/after tokens), and **📁 Files**
@@ -153,21 +189,69 @@ Browser (Chromium --app)  ⇄  web/server.mjs  ⇄  pi --mode rpc -a  (the real 
   never granted.
 - The RPC child is spawned with **`-a`** so coop's project trust — and therefore
   its guardrails and skills — load exactly as in the terminal.
+- The **Changes panel** deliberately diverges from the Files panel's hidden-file
+  rule: a *tracked* dotfile (e.g. `.github/workflows/ci.yml`) IS diffable, so a
+  tracked, modified `.env`'s diff would be viewable — but only ever when git itself
+  reports it changed, and `FILES_IGNORE` segments (`.git/`, `node_modules/`, …) are
+  refused everywhere. Untracked files (incl. an untracked `.env`) still render
+  through `/file`, which refuses them exactly as before.
 
 **Not** for remote or multi-user use. Exposing this port beyond loopback would
 put a bash-capable agent on the network.
+
+## Protocol contract (when Pi is upgraded)
+
+coop-web speaks Pi's RPC protocol, so a Pi upgrade that renames a field or adds
+an event can silently break rendering. The wire contract coop-web depends on —
+the commands the bridge sends, the events it consumes, the ones it deliberately
+ignores, and the response-data fields the UI reads — is pinned in
+[`protocol.mjs`](protocol.mjs), and a bridge-side **drift detector** validates
+every pi event against it (logging to the console and showing a one-time toast on
+a mismatch). When you bump Pi:
+
+1. Read the Pi release notes / RPC changes for the new version.
+2. Diff `protocol.mjs` (`COMMANDS_SENT`, `EVENTS_CONSUMED`, `EVENTS_KNOWN_IGNORED`,
+   `RESPONSE_DATA`) against Pi's RPC docs **and** the installed package's type
+   unions (e.g. `AssistantMessageEvent` in `pi-ai` / `pi-agent-core`
+   `dist/types.d.ts`) — every contract entry must exist in the real protocol; no
+   aspirational entries. (pi-vis's `src/shared/pi-protocol/` Zod schemas are a
+   useful second reference — *read* them, never copy.)
+3. Update the contract; mirror any command/event changes in `tests/stub-pi.mjs`;
+   run `bash tests/run.sh`.
+4. Launch `coop web` against the new Pi, exercise chat / **tool calls** / model
+   picker / resume / chdir, and watch the console for `protocol drift` lines —
+   each one is either a contract update or a renderer fix. (Tool calls matter:
+   they exercise the `toolcall_*` assistant-message events that a text-only smoke
+   test never emits.)
+5. Bump the "Tested against the RPC protocol of Pi 0.80.x" line in *Known
+   limitations* below, and the verified-against version noted in the
+   `protocol.mjs` header comment.
 
 ## Known limitations
 
 - Replay history is bounded (~4000 events); very long sessions truncate the
   rebuilt transcript (newest events win).
-- One conversation at a time (switch via ＋ New chat / 🕘 History). Backfilled
-  transcripts show text and tool names; original thinking/streaming detail and
-  tool output aren't reconstructed (they render live, then the settled text
-  stands in on replay).
+- **Multiple parallel chats** via the tab strip (default 4, env `COOP_WEB_MAX_CHATS`
+  clamped 1–8; set `COOP_WEB_MAX_CHATS=1` to behave like the old single-session
+  coop web). Each tab is an independent governed `pi --mode rpc -a` with its own
+  transcript, model, working folder, and Files/Changes view; background tabs keep
+  streaming (busy pulse; unread dot when a background turn finishes) and one tab's
+  agent crashing shows a crash card in that tab only — the others (and the bridge)
+  keep running. The SPA renders only the active tab; switching rebuilds that tab's
+  transcript from the bridge's per-chat replay (served by `/events-poll?sid`, still
+  ~4000 events per chat). Deferred: worktree isolation, idle-process eviction, and a
+  crashed-chat restart button (close the tab / resume from History instead).
+- Resuming rebuilds the transcript from the session file with full detail — thinking,
+  tool arguments/outputs, and compaction markers; a text-only `get_messages` backfill
+  remains the fallback for oversized (>16 MiB) or corrupt files. The active branch is
+  picked by most-recent timestamp, so after a fork the shown branch may differ from
+  Pi's (an honest "has other branches" notice appears).
 - Image attachments are not rendered.
 - The Files panel is **read-only** and preview-only: a 1 MB text cap, ~2000-entry
   / 6-level tree, and 1000-row × 60-column table clip; binary files show no
   preview. It never writes — the agent does that through its governed tools. Code
   previews are line-numbered but not syntax-highlighted (no-dependency rule).
-- Tested against the RPC protocol of Pi 0.80.x.
+- Tested against the RPC protocol of Pi 0.80.x. The wire contract coop-web
+  depends on is pinned in [`protocol.mjs`](protocol.mjs) (verified against Pi
+  0.80.2); a drift detector warns when a pi event doesn't match it — see
+  *Protocol contract* above when upgrading Pi.

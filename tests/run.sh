@@ -42,4 +42,10 @@ echo "  ✓ launch-spec resolves guardrails, prompts, theme, and all 3 extension
 echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
 node "$ROOT/tests/webbridge.test.mjs"
 
+echo "→ protocol contract + JSONL splitter tests"
+node "$ROOT/tests/protocol.test.mjs"
+
+echo "→ diff model (unified + side-by-side parsing) tests"
+node "$ROOT/tests/diffmodel.test.mjs"
+
 echo "✓ all tests passed"

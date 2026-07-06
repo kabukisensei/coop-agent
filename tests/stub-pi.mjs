@@ -12,6 +12,14 @@ out({
   options: ["Option A", "Option B", "Something else — I'll type it myself"],
 });
 out({ type: "extension_ui_request", id: "stub-notify-1", method: "notify", message: "stub ready", notifyType: "info" });
+// Extension-UI methods beyond the four dialogs (M4). setStatus carries an ANSI SGR
+// color (stripped client-side); holo_display is an UNKNOWN method (renders a fallback
+// card AND registers as one deduped protocol-drift line per stub child — expected).
+out({ type: "extension_ui_request", id: "stub-status-1", method: "setStatus", statusKey: "stub", statusText: "stub status \x1b[32mgreen\x1b[0m" });
+out({ type: "extension_ui_request", id: "stub-widget-1", method: "setWidget", widgetKey: "w1", widgetLines: ["line one", "line two"] });
+out({ type: "extension_ui_request", id: "stub-title-1", method: "setTitle", title: "Stub Title" });
+out({ type: "extension_ui_request", id: "stub-editor-1", method: "set_editor_text", text: "prefilled" });
+out({ type: "extension_ui_request", id: "stub-mystery-1", method: "holo_display", title: "unknown method" });
 
 let buf = "";
 process.stdin.on("data", (chunk) => {
@@ -23,6 +31,20 @@ process.stdin.on("data", (chunk) => {
     if (!line.trim()) continue;
     let cmd;
     try { cmd = JSON.parse(line); } catch { continue; }
+    // Test escape hatch: inject an arbitrary raw line straight through the real
+    // stdout pipe (no agent_start, so the bridge's `busy` is untouched). The drift
+    // integration tests use this to provoke unknown / shape-mismatched events.
+    if (cmd.type === "prompt" && typeof cmd.message === "string" && cmd.message.startsWith("emit:")) {
+      process.stdout.write(cmd.message.slice(5) + "\n");
+      continue;
+    }
+    // Simulate a pi crash — the bridge must CONTAIN it to this chat (M5), not exit.
+    if (cmd.type === "prompt" && cmd.message === "__crash__") process.exit(3);
+    // Exercise the delete-on-absent contract end-to-end: setStatus with NO statusText
+    // clears the "stub" segment (M4).
+    if (cmd.type === "prompt" && cmd.message === "clear-status") {
+      out({ type: "extension_ui_request", id: "stub-status-2", method: "setStatus", statusKey: "stub" });
+    }
     if (cmd.type === "prompt") {
       out({ type: "response", command: "prompt", success: true });
       out({ type: "agent_start" });
@@ -30,6 +52,13 @@ process.stdin.on("data", (chunk) => {
       out({ type: "message_update", message: {}, assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
       out({ type: "message_update", message: {}, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `polo:${cmd.message}` } });
       out({ type: "message_update", message: {}, assistantMessageEvent: { type: "text_end", contentIndex: 0 } });
+      // Also stream a tool call — Pi 0.80.x's AssistantMessageEvent union includes
+      // toolcall_start/delta/end (delta = partial-JSON args as a string). Every real
+      // tool call produces these; exercising them here guards the contract's
+      // toolcall_* members against the end-of-suite no-drift assertion.
+      out({ type: "message_update", message: {}, assistantMessageEvent: { type: "toolcall_start", contentIndex: 1, toolCallId: "stub-tc-1", toolName: "read" } });
+      out({ type: "message_update", message: {}, assistantMessageEvent: { type: "toolcall_delta", contentIndex: 1, delta: '{"path":"n' } });
+      out({ type: "message_update", message: {}, assistantMessageEvent: { type: "toolcall_end", contentIndex: 1 } });
       out({ type: "agent_end", messages: [] });
     } else if (cmd.type === "extension_ui_response") {
       out({ type: "response", command: "extension_ui_response", success: true });

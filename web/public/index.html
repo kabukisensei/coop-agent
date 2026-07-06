@@ -16,6 +16,7 @@
       <button id="modelChip" class="chip" title="Change model">model…</button>
       <button id="thinkChip" class="chip" title="Thinking effort (click to change)">🧠 …</button>
       <button id="compactBtn" class="chip" title="Compact the conversation to free up memory">♻ Compact</button>
+      <button id="diffBtn" class="chip" title="File changes in this folder (git)">± Changes</button>
       <button id="filesBtn" class="chip" title="Browse and preview files in the working folder">📁 Files</button>
     </nav>
     <span class="ctxg" id="ctx" hidden>
@@ -28,6 +29,8 @@
     </span>
     <span class="status"><span class="dot" id="dot"></span><span id="statusText">ready</span></span>
   </header>
+
+  <nav id="tabs"></nav>
 
   <div id="main">
     <div id="scroll"><div id="transcript"></div></div>
@@ -46,10 +49,18 @@
       </div>
       <div id="preview" class="preview" hidden></div>
     </aside>
+    <div id="diff" hidden>
+      <div id="diffHead"></div>
+      <div id="diffCols">
+        <div id="diffFiles"></div>
+        <div id="diffBody"></div>
+      </div>
+    </div>
   </div>
   <div id="toasts"></div>
 
   <footer>
+    <div id="extDock" hidden></div>
     <div class="composer">
       <textarea id="input" rows="1" placeholder="Ask coop anything…  (Enter to send, Shift+Enter for a new line)"></textarea>
       <button id="stop" class="stop" hidden>Stop</button>
@@ -59,5 +70,7 @@
 
 <script src="/app.js"></script>
 <script src="/viewer.js"></script>
+<script src="/diff.js"></script>
+<script src="/diffview.js"></script>
 </body>
 </html>

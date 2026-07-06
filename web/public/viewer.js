@@ -12,6 +12,11 @@
 (function () {
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  // Route reads to the ACTIVE chat's working folder. Guard on a non-empty string so we
+  // never interpolate an unset value into the literal "undefined" (which the bridge
+  // would 400); before the first __hello the un-sid'd request works via single-chat.
+  const withSid = (url) => (typeof window.coopSid === "string" && window.coopSid)
+    ? url + (url.includes("?") ? "&" : "?") + "sid=" + encodeURIComponent(window.coopSid) : url;
 
   const panel = $("#files"), treeEl = $("#fileTree"), previewEl = $("#preview");
   const previewHead = $("#previewHead"), previewName = $("#previewName"), attachChk = $("#attachChk");
@@ -37,7 +42,7 @@
     // agent may have written files) so a mid-tree position doesn't jump to the top.
     const prevScroll = treeEl.scrollTop;
     try {
-      const r = await fetch("/files");
+      const r = await fetch(withSid("/files"));
       if (!r.ok) throw new Error(String(r.status));
       const data = await r.json();
       loadedTree = true;
@@ -114,7 +119,7 @@
     previewEl.hidden = false;
     previewEl.textContent = "Loading…";
     try {
-      const r = await fetch("/file?p=" + encodeURIComponent(rel));
+      const r = await fetch(withSid("/file?p=" + encodeURIComponent(rel)));
       const data = await r.json();
       if (!r.ok || !data.ok) { previewEl.textContent = (data && data.error) || "Can't preview this file."; return; }
       renderPreview(data);

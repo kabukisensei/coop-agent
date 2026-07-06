@@ -235,6 +235,7 @@ function toast(message, kind = "info") {
   $("#toasts").appendChild(t);
   setTimeout(() => t.remove(), 6000);
 }
+window.toast = toast; // shared with viewer.js / diffview.js panels for error messaging
 
 // --- extension UI requests (Start Here menu, approvals, prompts) ---------------
 async function respond(id, payload) {
@@ -365,6 +366,94 @@ function reviewCard(evt) {
   stick(was);
 }
 
+// --- extension dock + unknown-method fallback ----------------------------------
+// Extension-UI methods beyond the four dialogs: setStatus/setWidget render in a slim
+// dock above the composer (keyed, order-reconstructed from replay); setTitle sets the
+// tab title; set_editor_text prefills the composer; anything unknown renders a deduped
+// fallback card. Nothing an extension sends is ever silently dropped.
+const extStatus = new Map();  // statusKey -> statusText
+const extWidgets = new Map(); // widgetKey -> widgetLines[]
+const extUnknown = new Map(); // method -> { card, pre, count, countEl }
+const extDock = $("#extDock");
+
+// Extensions format for a terminal; we render plain text (no ANSI colorizer in v1):
+// CSI sequences incl. SGR colors, OSC sequences with BEL/ST, single-char escapes.
+const ANSI_RE = /\x1b(?:\[[0-9;?]*[ -\/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])/g;
+const stripAnsi = (s) => String(s).replace(ANSI_RE, "");
+
+// Rebuild #extDock from scratch each call — the dock is tiny, so an O(n) idempotent
+// rebuild is the simple-correct choice for replay bursts. CSP-clean (textContent).
+function renderExtDock() {
+  if (!extDock) return;
+  if (!extStatus.size && !extWidgets.size) { extDock.hidden = true; extDock.textContent = ""; return; }
+  extDock.hidden = false;
+  extDock.textContent = "";
+  const addSeg = (cls, key, lines) => {
+    const seg = document.createElement("div");
+    seg.className = cls;
+    seg.title = key;
+    for (const line of lines) {
+      const el = document.createElement("div");
+      el.className = "ext-line";
+      el.textContent = stripAnsi(String(line));
+      seg.appendChild(el);
+    }
+    extDock.appendChild(seg);
+  };
+  for (const key of [...extStatus.keys()].sort()) addSeg("ext-status", key, String(extStatus.get(key)).split("\n"));
+  for (const key of [...extWidgets.keys()].sort()) addSeg("ext-widget", key, extWidgets.get(key));
+}
+
+// A generic fallback for an unknown extension-UI method, deduped per method so a
+// chatty fire-and-forget method updates one card instead of spamming the transcript.
+function extFallbackCard(req) {
+  const method = String(req.method);
+  const existing = extUnknown.get(method);
+  if (existing) {
+    existing.pre.textContent = JSON.stringify(req, null, 2);
+    existing.count++;
+    existing.countEl.textContent = `seen ${existing.count}×`;
+    return;
+  }
+  const was = atBottom();
+  const card = document.createElement("div");
+  card.className = "card ext-unknown";
+  const h = document.createElement("h3");
+  h.textContent = `Extension UI: ${method}`;
+  card.appendChild(h);
+  if (req.title || req.message) {
+    const p = document.createElement("p");
+    p.textContent = String(req.title || req.message);
+    card.appendChild(p);
+  }
+  const det = document.createElement("details");
+  const sum = document.createElement("summary");
+  sum.textContent = "Raw request";
+  const pre = document.createElement("pre");
+  pre.textContent = JSON.stringify(req, null, 2);
+  det.append(sum, pre);
+  card.appendChild(det);
+  const row = document.createElement("div");
+  row.className = "row";
+  const countEl = document.createElement("span");
+  countEl.className = "prov";
+  countEl.textContent = "seen 1×";
+  const dismiss = document.createElement("button");
+  dismiss.className = "ghost";
+  dismiss.textContent = "Dismiss";
+  dismiss.onclick = () => {
+    card.querySelectorAll("button,input,textarea").forEach((e) => (e.disabled = true));
+    respond(req.id, { cancelled: true }); // safe: pi ignores responses to non-pending ids; unblocks a dialog-like method
+    card.remove();
+    extUnknown.delete(method);
+  };
+  row.append(countEl, dismiss);
+  card.appendChild(row);
+  transcript.appendChild(card);
+  stick(was);
+  extUnknown.set(method, { card, pre, count: 1, countEl });
+}
+
 // --- event stream ---------------------------------------------------------------
 function resetTranscript() {
   transcript.textContent = "";
@@ -372,16 +461,18 @@ function resetTranscript() {
   tools = new Map();
   thinkingEl = null;
   statusPhase = "";
+  extStatus.clear();
+  extWidgets.clear();
+  extUnknown.clear();
+  renderExtDock();
+  document.title = "coop"; // new session / chdir / resume starts clean; replay rebuilds state
   setBusy(false);
 }
 
 function handle(evt) {
   const was = atBottom();
   switch (evt.type) {
-    case "__hello":
-      resetTranscript(); // reconnect: server replays history next — start clean
-      if (evt.cwd) setCwd(evt.cwd);
-      break;
+    // __hello / __reset are handled by route() (global vs per-chat) — not here.
     case "agent_start": setBusy(true); break;
     case "agent_end":
       setBusy(false);
@@ -389,16 +480,17 @@ function handle(evt) {
       current = null;
       refreshCtx(); // context gauge: cheap read-only stats after each turn
       if (window.coopFiles) window.coopFiles.onAgentEnd(); // the agent may have written files
+      if (window.coopDiff) window.coopDiff.onAgentEnd(); // ...and changed the git working tree
       break;
     case "__fatal": {
-      // The bridge's last words before it exits: the agent process died.
+      // This CHAT's agent died (not the whole bridge — other tabs keep running).
       setBusy(false);
       statusPhase = "";
-      statusText.textContent = "coop stopped — close this window and start coop again";
+      statusText.textContent = "this chat's agent stopped — close the tab or start a new chat";
       const card = document.createElement("div");
       card.className = "card";
       const h = document.createElement("h3");
-      h.textContent = "coop stopped unexpectedly";
+      h.textContent = "This chat's agent stopped unexpectedly";
       const p = document.createElement("p");
       p.textContent = evt.code != null ? `The agent process exited (code ${evt.code}).` : "The agent process exited.";
       card.append(h, p);
@@ -412,6 +504,13 @@ function handle(evt) {
       stick(true);
       break;
     }
+    case "__drift":
+      // The bridge saw an event that doesn't match the checked-in protocol
+      // contract (protocol.mjs) — usually a Pi upgrade renamed/reshaped something.
+      // Deduped server-side (at most one toast per drifting event type per pi
+      // child); chat keeps working because the bridge still forwards it verbatim.
+      toast(`Unexpected data from the agent (${evt.eventType || "?"}) — a Pi update may have changed the protocol. Chat keeps working; check the coop web console.`, "warning");
+      break;
     case "compaction_start":
       statusPhase = "compacting";
       if (evt.reason && evt.reason !== "manual") toast("Context is getting full — compacting the conversation automatically…");
@@ -433,6 +532,54 @@ function handle(evt) {
           el.className = "tool";
           el.innerHTML = '<span class="ok">✓</span> ' + esc(name);
           transcript.appendChild(el);
+        }
+      }
+      stick(was);
+      break;
+    }
+    case "__replay": {
+      // High-fidelity backfill from the session file (bridge-synthesized): dividers,
+      // user bubbles, and assistant turns with thinking / tool calls (args + output).
+      if (evt.kind === "info" || evt.kind === "compaction") {
+        const div = document.createElement("div");
+        div.className = "divider";
+        div.textContent = evt.kind === "compaction" ? `♻ compacted — ${evt.summary || ""}` : (evt.text || "");
+        transcript.appendChild(div);
+      } else if (evt.role === "user") {
+        userBubble(evt.text || "");
+      } else if (evt.role === "assistant") {
+        for (const part of evt.parts || []) {
+          if (part.kind === "thinking") {
+            const det = document.createElement("details");
+            det.className = "thinking";
+            const sum = document.createElement("summary");
+            sum.textContent = "✦ thinking";
+            const content = document.createElement("div");
+            content.className = "content";
+            content.textContent = part.text || "";
+            det.append(sum, content);
+            transcript.appendChild(det);
+          } else if (part.kind === "text") {
+            bubble("assistant", part.text || "");
+          } else if (part.kind === "tool") {
+            const det = document.createElement("details");
+            det.className = "toolblock";
+            const sum = document.createElement("summary");
+            // Same escaped-summary idiom as tool_execution_end: esc() the name,
+            // toolHint() escapes its own hint — no unescaped input reaches innerHTML.
+            sum.innerHTML = (part.isError ? '<span class="bad">✗</span> ' : '<span class="ok">✓</span> ') + esc(part.name || "tool") + toolHint(part.args);
+            const body = document.createElement("div");
+            body.className = "tool-body";
+            const args = document.createElement("pre");
+            args.className = "tool-args";
+            args.textContent = formatToolArgs(part.args);
+            const outp = document.createElement("pre");
+            outp.className = "tool-out";
+            if (part.output) outp.textContent = part.output; else outp.hidden = true;
+            body.append(args, outp);
+            det.append(sum, body);
+            transcript.appendChild(det);
+          }
         }
       }
       stick(was);
@@ -544,8 +691,26 @@ function handle(evt) {
         // Usage snapshots (pi-better-openai's /openai-usage) render as the header
         // meter instead of a toast; everything else stays a toast.
         if (!maybeUsage(evt.message || "")) toast(evt.message || "", evt.notifyType || "info");
-      } else if (["select", "confirm", "input", "editor"].includes(evt.method)) uiCard(evt);
-      // setStatus/setWidget/setTitle: not rendered
+      } else if (["select", "confirm", "input", "editor"].includes(evt.method)) {
+        uiCard(evt);
+      } else if (evt.method === "setStatus") {
+        // Absent statusText = clear the segment (JSON omits undefined) — key off the
+        // TYPE, never "statusText" in evt.
+        if (typeof evt.statusText === "string") extStatus.set(String(evt.statusKey), evt.statusText);
+        else extStatus.delete(String(evt.statusKey));
+        renderExtDock();
+      } else if (evt.method === "setWidget") {
+        if (Array.isArray(evt.widgetLines)) extWidgets.set(String(evt.widgetKey), evt.widgetLines.map(String));
+        else extWidgets.delete(String(evt.widgetKey));
+        renderExtDock();
+      } else if (evt.method === "setTitle") {
+        document.title = evt.title ? `${evt.title} — coop` : "coop";
+      } else if (evt.method === "set_editor_text") {
+        input.value = String(evt.text ?? ""); // live-only: the bridge never replays this
+        input.dispatchEvent(new Event("input")); // reuse the auto-grow listener
+      } else {
+        extFallbackCard(evt); // unknown method — never drop silently
+      }
       break;
     case "response":
       // Surface command rejections (e.g. a prompt refused mid-stream) instead of
@@ -555,12 +720,171 @@ function handle(evt) {
   }
 }
 
+// --- multi-session: tabs, active chat, envelope routing -------------------------
+// One SSE stream carries every chat as {sid,n,ev} envelopes. The SPA renders only the
+// ACTIVE chat (background transcripts are rebuilt from the bridge's per-chat ring on
+// switch); the tab strip shows the others with busy/unread/crashed indicators.
+const chatsState = new Map(); // sid -> { cwd, busy, status, unread }
+let activeSid = null;
+let switchSeq = 0;
+let switching = false;
+let pendingLive = []; // live frames buffered during a switch's replay fetch
+const tabsEl = $("#tabs");
+
+// Merge server chat fields into chatsState WITHOUT wiping the client-only `unread`
+// flag; create entries for new sids; delete only sids absent from the list.
+function applyChats(list) {
+  const seen = new Set();
+  for (const c of list || []) {
+    seen.add(c.sid);
+    const cur = chatsState.get(c.sid);
+    if (cur) { cur.cwd = c.cwd; cur.busy = c.busy; cur.status = c.status; }
+    else chatsState.set(c.sid, { cwd: c.cwd, busy: c.busy, status: c.status, unread: false });
+  }
+  for (const sid of [...chatsState.keys()]) if (!seen.has(sid)) chatsState.delete(sid);
+}
+
+function renderTabs() {
+  if (!tabsEl) return;
+  tabsEl.textContent = "";
+  for (const [sid, c] of chatsState) {
+    const tab = document.createElement("button");
+    tab.className = "tab" + (sid === activeSid ? " on" : "") + (c.status === "exited" ? " crashed" : "");
+    tab.title = c.cwd || "";
+    const label = document.createElement("span");
+    label.className = "tab-label";
+    label.textContent = (c.cwd || "").split(/[\\/]/).filter(Boolean).pop() || c.cwd || "chat";
+    tab.appendChild(label);
+    if (c.busy) { const d = document.createElement("span"); d.className = "tab-dot"; tab.appendChild(d); }
+    if (c.unread && sid !== activeSid) { const u = document.createElement("span"); u.className = "tab-unread"; tab.appendChild(u); }
+    const close = document.createElement("span");
+    close.className = "tab-close";
+    close.textContent = "✕";
+    close.title = "Close this chat";
+    // Pass the CLICKED tab's sid explicitly — usually not the active tab; the
+    // fill-if-absent rule in post() must not overwrite it.
+    close.onclick = (e) => { e.stopPropagation(); post("/chat-close", { sid }).catch(() => toast("Couldn't close that chat.", "error")); };
+    tab.appendChild(close);
+    tab.onclick = () => { if (sid !== activeSid) switchChat(sid); };
+    tabsEl.appendChild(tab);
+  }
+  const add = document.createElement("button");
+  add.className = "tab-new";
+  add.textContent = "＋";
+  add.title = "New chat";
+  add.onclick = async () => {
+    try {
+      const active = chatsState.get(activeSid);
+      const r = await post("/chat-new", { cwd: active ? active.cwd : undefined });
+      const data = await r.json();
+      if (data && data.ok && data.sid) switchChat(data.sid);
+      else if (data && data.error) toast(data.error, "error");
+    } catch { toast("Couldn't open a new chat.", "error"); }
+  };
+  tabsEl.appendChild(add);
+}
+
+// Never leave the UI a dead end: if the active sid vanished, switch to the first
+// remaining chat; if none remain, auto-create one.
+function ensureActiveExists() {
+  if (activeSid && chatsState.has(activeSid)) return;
+  const first = chatsState.keys().next().value;
+  if (first) { switchChat(first); return; }
+  post("/chat-new", {}).then((r) => r.json()).then((d) => { if (d && d.sid) switchChat(d.sid); }).catch(() => {});
+}
+
+// Switch the active tab. Under SSE: reset the transcript, replay the target chat's ring
+// via /events-poll?sid&since=0, then apply live frames buffered during the fetch
+// (n-deduped). Under polling: just set the active sid — the poll tick reloads it.
+async function switchChat(sid) {
+  const c = chatsState.get(sid);
+  if (!c) return;
+  if (sid === activeSid && !switching) return; // already here — don't reset/replay (avoids a reconnect flicker)
+  activeSid = sid;
+  window.coopSid = sid; // set before any Files/diff fetch can carry a sid
+  c.unread = false;
+  renderTabs();
+  if (mode === "poll") { setCwd(c.cwd); return; } // the poll tick resets since=0 and replays
+  const my = ++switchSeq;
+  switching = true;
+  pendingLive = [];
+  resetTranscript();
+  setCwd(c.cwd);
+  let data = null;
+  try {
+    const r = await fetch(`/events-poll?sid=${encodeURIComponent(sid)}&since=0`);
+    if (r.ok) data = await r.json();
+  } catch { /* fall through — an empty transcript beats a throw */ }
+  if (my !== switchSeq) return; // a newer switch superseded this one
+  if (data) {
+    for (const line of data.events) { try { handle(JSON.parse(line)); } catch { /* skip bad line */ } }
+    // Buffered live frames: replay already covered anything below `next`; recorded
+    // frames always carry n (structural), so nothing recorded can double. A buffered
+    // __reset (unrecorded, n-less — a chdir/resume/new_session that raced this switch)
+    // must still reset the transcript/cwd; handle() has no __reset case, so apply it
+    // the same way route() does (mirrors route's per-chat __reset tail).
+    for (const { n, ev } of pendingLive) {
+      if (n !== undefined && n < data.next) continue; // already covered by the replay
+      try {
+        if (ev.type === "__reset") { resetTranscript(); setCwd(ev.cwd); }
+        else handle(ev);
+      } catch { /* skip a bad frame */ }
+    }
+  }
+  pendingLive = [];
+  switching = false;
+  c.unread = false;
+  renderTabs();
+  refreshState();
+  if (window.coopFiles) window.coopFiles.onAgentEnd(); // tree reload for the new cwd
+  if (window.coopDiff) window.coopDiff.onReset(); // the panel must not show a stale repo
+}
+
+// The first __hello picks the initial active tab (the first chat), stamping
+// window.coopSid before any panel fetch can carry a sid.
+function pickInitialTab() {
+  const first = chatsState.keys().next().value;
+  if (first) switchChat(first);
+}
+
+// Envelope router: global frames (no sid) manage tabs; per-chat frames update tab
+// indicators and, for the ACTIVE chat, drive the existing handle() dispatcher.
+let helloSeen = false;
+function route(frame) {
+  const { sid, n, ev } = frame || {};
+  if (!ev) return;
+  if (!sid) { // global frames
+    if (ev.type === "__hello") {
+      applyChats(ev.chats);
+      renderTabs();
+      // Bootstrap the initial tab ONCE. A reconnect (sleep/wake, heartbeat gap) re-sends
+      // __hello; re-picking the first tab would silently yank the user off their active
+      // chat (and misroute the next prompt). Later __hello frames just reconcile the list.
+      if (!helloSeen) { helloSeen = true; pickInitialTab(); }
+      else ensureActiveExists();
+    } else if (ev.type === "__chats") { applyChats(ev.chats); renderTabs(); ensureActiveExists(); }
+    return;
+  }
+  const c = chatsState.get(sid);
+  if (ev.type === "agent_start" && c) { c.busy = true; renderTabs(); }
+  if (ev.type === "agent_end" && c) { c.busy = false; if (sid !== activeSid) c.unread = true; renderTabs(); }
+  if (ev.type === "__fatal" && c) { c.status = "exited"; renderTabs(); }
+  if (sid !== activeSid) return; // background chats: indicators only, no DOM
+  if (switching) { pendingLive.push({ n, ev }); return; } // buffered during a switch fetch
+  if (ev.type === "__reset") { resetTranscript(); setCwd(ev.cwd); return; }
+  handle(ev); // the existing dispatcher, unchanged cases
+}
+
 // --- transport --------------------------------------------------------------------
+// post()/rpc() FILL the active sid only when the caller didn't supply one — a
+// caller-supplied sid (e.g. the tab-close ✕) always wins (never clobber it).
 async function post(path, body) {
+  const b = body || {};
+  b.sid ??= activeSid;
   const res = await fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json", "x-coop-csrf": "1" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(b),
   });
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res;
@@ -599,7 +923,7 @@ document.querySelector("#cwd").addEventListener("click", async () => {
       const r = await fetch("/chdir", {
         method: "POST",
         headers: { "content-type": "application/json", "x-coop-csrf": "1" },
-        body: JSON.stringify({ dir }),
+        body: JSON.stringify({ dir, sid: activeSid }), // moves only THIS tab
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -608,7 +932,7 @@ document.querySelector("#cwd").addEventListener("click", async () => {
         return;
       }
       toast(`Now working in ${data.cwd}`);
-      card.remove(); // the transcript resets via the fresh __hello broadcast
+      card.remove(); // the transcript resets via this tab's __reset broadcast
       setTimeout(refreshState, 1500); // repopulate model/thinking chips for the new session
     } catch {
       toast("Couldn't reach coop web.", "error");
@@ -633,7 +957,7 @@ document.querySelector("#cwd").addEventListener("click", async () => {
   }
 
   const p = document.createElement("p");
-  p.textContent = (recents.length ? "Or paste" : "Paste") + " the full path of the folder coop should work in (tip: copy it from the File Explorer address bar). This starts a fresh conversation there.";
+  p.textContent = (recents.length ? "Or paste" : "Paste") + " the full path of the folder coop should work in (tip: copy it from the File Explorer address bar). This moves THIS tab to a fresh conversation there.";
   const field = document.createElement("input");
   field.value = currentCwd;
   const row = document.createElement("div");
@@ -664,7 +988,7 @@ function connect() {
   const es = new EventSource("/events");
   const giveUp = setTimeout(() => { if (!opened) { es.close(); switchToPolling(); } }, 4000);
   es.onopen = () => { opened = true; clearTimeout(giveUp); };
-  es.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch { /* skip bad frame */ } };
+  es.onmessage = (e) => { try { route(JSON.parse(e.data)); } catch { /* skip bad frame */ } };
   es.onerror = () => {
     if (!opened) { clearTimeout(giveUp); es.close(); switchToPolling(); return; }
     // CLOSED means the browser gave up (server gone / auth lost) — reconnects
@@ -678,22 +1002,42 @@ function connect() {
 function switchToPolling() {
   if (mode === "poll") return;
   mode = "poll";
-  let since = 0, first = true, fails = 0, epoch = null;
+  let since = 0, fails = 0, epoch = null, polledSid = null;
   statusText.textContent = "connecting…";
   const tick = async () => {
     try {
-      const r = await fetch(`/events-poll?since=${since}`);
+      // When the active tab changes (a switch or auto-create), reload it from scratch.
+      if (activeSid !== polledSid) { polledSid = activeSid; since = 0; epoch = null; resetTranscript(); }
+      const q = activeSid ? `?sid=${encodeURIComponent(activeSid)}&since=${since}` : `?since=${since}`;
+      const r = await fetch("/events-poll" + q);
       if (r.status === 401) {
         statusText.textContent = "session expired — close this window and start coop again";
         return; // stop polling: the cookie belongs to a previous coop web run
       }
+      if (r.status === 400) {
+        // Stale/closed sid — NOT a connectivity failure (the bridge answered). Recover
+        // via the chats list in the 400 body; never trip the terminal failure counter.
+        const body = await r.json().catch(() => ({}));
+        if (body.chats) applyChats(body.chats);
+        renderTabs();
+        ensureActiveExists();
+        fails = 0;
+        setTimeout(tick, 1500);
+        return;
+      }
       if (!r.ok) throw new Error(String(r.status));
       const data = await r.json();
       fails = 0;
-      // The __hello reset frame is broadcast-only (SSE), so on this polling path we
-      // detect a server-side reset (new_session/chdir/resume) via the epoch instead.
-      if (first) { resetTranscript(); first = false; }
-      else if (epoch !== null && data.epoch !== epoch) { resetTranscript(); }
+      if (data.chats) applyChats(data.chats);
+      // Bootstrap the active sid on the single-chat fallback (SSE never opened, so no
+      // global __hello arrived to pick the initial tab).
+      if (!activeSid && data.chats && data.chats.length) {
+        activeSid = data.chats[0].sid; window.coopSid = activeSid; polledSid = activeSid;
+      }
+      renderTabs();
+      // The __reset frame is broadcast-only, so on this polling path we detect a
+      // server-side reset (new_session/chdir/resume) via the epoch instead.
+      if (epoch !== null && data.epoch !== epoch) resetTranscript();
       epoch = data.epoch;
       if (data.cwd) setCwd(data.cwd); // every poll, so a chdir updates the header here too
       since = data.next;
@@ -701,11 +1045,9 @@ function switchToPolling() {
       if (/connecting|reconnecting/.test(statusText.textContent)) setBusy(dot.classList.contains("busy"));
       setTimeout(tick, 1500);
     } catch {
-      // On loopback a poll can only fail because the bridge (and its pi child) is
-      // gone — there's no flaky network to 127.0.0.1. The SSE path surfaces this as
-      // a terminal EventSource.CLOSED; the polling path can't get the __fatal frame
-      // (the server exits before the next poll), so after a few failures we mirror
-      // that terminal state instead of looping "reconnecting…" forever.
+      // On loopback a poll can only fail because the bridge (and its pi children) is
+      // gone — there's no flaky network to 127.0.0.1. After a few failures mirror the
+      // terminal state instead of looping "reconnecting…" forever.
       if (++fails >= 4) {
         setBusy(false);
         statusText.textContent = "coop stopped — close this window and start coop again";
@@ -720,12 +1062,14 @@ function switchToPolling() {
 
 // --- toolbar: new chat, model picker, thinking level, compact ------------------
 async function rpc(body) {
+  const b = body || {};
+  b.sid ??= activeSid; // fill-if-absent — a caller-supplied sid always wins
   const res = await fetch("/rpc", {
     method: "POST",
     headers: { "content-type": "application/json", "x-coop-csrf": "1" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(b),
   });
-  if (!res.ok) throw new Error(`/rpc ${body.type} -> ${res.status}`);
+  if (!res.ok) throw new Error(`/rpc ${b.type} -> ${res.status}`);
   return res.json();
 }
 
@@ -758,6 +1102,7 @@ async function refreshState() {
   }
   refreshCtx();
   if (window.coopFiles) window.coopFiles.onAgentEnd(); // refresh the Files tree for the (possibly new) folder
+  if (window.coopDiff) window.coopDiff.onAgentEnd(); // repopulate the ± Changes badge for the new session/folder
 }
 
 // --- context gauge (get_session_stats) ------------------------------------------
@@ -790,7 +1135,7 @@ $("#newChat").onclick = async () => {
   try {
     const r = await rpc({ type: "new_session" });
     if (r && r.data && r.data.cancelled) toast("New chat was cancelled.");
-    // On success the server resets history and broadcasts a fresh __hello,
+    // On success the server resets this chat's history and broadcasts its __reset,
     // which clears this transcript.
   } catch {
     toast("Couldn't start a new chat — is coop web still running?", "error");
@@ -808,17 +1153,20 @@ function relTime(ms) {
 }
 
 $("#historyBtn").onclick = async () => {
-  let sessions = [];
+  let groups = [];
   try {
-    const r = await fetch("/sessions");
+    // sid so /history marks the ACTIVE tab's folder as current (guarded — un-sid'd
+    // works via the single-chat fallback before the first __hello).
+    const sq = (typeof window.coopSid === "string" && window.coopSid) ? "?sid=" + encodeURIComponent(window.coopSid) : "";
+    const r = await fetch("/history" + sq);
     if (!r.ok) throw new Error(String(r.status));
-    sessions = (await r.json()).sessions || [];
+    groups = (await r.json()).groups || [];
   } catch {
     toast("Couldn't list previous conversations.", "error");
     return;
   }
-  if (!sessions.length) {
-    toast("No previous conversations in this folder yet.");
+  if (!groups.length) {
+    toast("No previous conversations yet.");
     return;
   }
   const was = atBottom();
@@ -827,11 +1175,13 @@ $("#historyBtn").onclick = async () => {
   const title = document.createElement("h3");
   title.textContent = "Resume a conversation";
   const p = document.createElement("p");
-  p.textContent = "Previous conversations in this folder, newest first.";
-  const row = document.createElement("div");
-  row.className = "row list";
+  p.textContent = "Conversations grouped by folder — this folder first.";
   const done = () => card.remove();
-  for (const sess of sessions) {
+
+  // One resume button. `workspace` is undefined for the current group (resume in
+  // place) or the group's folder for a cross-workspace resume; disabled when the
+  // folder no longer exists on disk.
+  const resumeBtn = (sess, workspace, disabled) => {
     const btn = document.createElement("button");
     btn.textContent = sess.name || sess.preview || "(untitled)";
     const when = document.createElement("span");
@@ -839,18 +1189,23 @@ $("#historyBtn").onclick = async () => {
     when.textContent = relTime(sess.mtime);
     btn.appendChild(when);
     if (sess.name && sess.preview) btn.title = sess.preview;
+    if (disabled) {
+      btn.disabled = true;
+      btn.title = "This folder no longer exists on disk.";
+      return btn;
+    }
     btn.onclick = async () => {
       try {
+        const body = workspace ? { file: sess.file, workspace, sid: activeSid } : { file: sess.file, sid: activeSid };
         const r = await fetch("/resume", {
           method: "POST",
           headers: { "content-type": "application/json", "x-coop-csrf": "1" },
-          body: JSON.stringify({ file: sess.file }),
+          body: JSON.stringify(body),
         });
         const data = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          toast(data.error || "Couldn't resume that conversation.", "error");
-          return;
-        }
+        if (!r.ok) { toast(data.error || "Couldn't resume that conversation.", "error"); return; }
+        // On success the transcript resets via this tab's __reset (which carries the
+        // new cwd -> setCwd), plus refreshState repopulates the chips.
         toast("Resuming — one moment while the conversation loads…");
         setTimeout(refreshState, 1500);
       } catch {
@@ -858,8 +1213,32 @@ $("#historyBtn").onclick = async () => {
       }
       done();
     };
-    row.appendChild(btn);
+    return btn;
+  };
+
+  card.append(title, p);
+  // The SERVER decides which group is current (never a client dir === cwd compare).
+  const current = groups.find((g) => g.current);
+  if (current) {
+    const row = document.createElement("div");
+    row.className = "row list";
+    for (const sess of current.sessions) row.appendChild(resumeBtn(sess, undefined, false));
+    card.appendChild(row);
   }
+  for (const g of groups) {
+    if (g.current) continue;
+    const grp = document.createElement("details");
+    grp.className = "hist-group";
+    const sum = document.createElement("summary");
+    sum.textContent = `${g.dir}  (${g.sessions.length})`;
+    grp.appendChild(sum);
+    const row = document.createElement("div");
+    row.className = "row list";
+    for (const sess of g.sessions) row.appendChild(resumeBtn(sess, g.dir, !g.exists));
+    grp.appendChild(row);
+    card.appendChild(grp);
+  }
+
   const closeRow = document.createElement("div");
   closeRow.className = "row";
   const nameBtn = document.createElement("button");
@@ -872,7 +1251,7 @@ $("#historyBtn").onclick = async () => {
   cancel.textContent = "Cancel";
   cancel.onclick = done;
   closeRow.append(nameBtn, cancel);
-  card.append(title, p, row, closeRow);
+  card.appendChild(closeRow);
   transcript.appendChild(card);
   stick(was);
 };
@@ -1029,7 +1408,13 @@ function startUsagePolling(model) {
   const sig = `${(model && model.provider) || ""} ${(model && model.id) || ""}`;
   if (usagePolling || !/openai|codex/i.test(sig)) return;
   usagePolling = true;
-  const ask = () => post("/prompt", { message: "/openai-usage" }).catch(() => { /* retry next tick */ });
+  const ask = () => {
+    // Skip a tick while the active chat is busy or crashed — otherwise this /openai-usage
+    // prompt would be STEERED into the running turn (the /prompt handler steers when busy).
+    const c = chatsState.get(activeSid);
+    if (!c || c.busy || c.status === "exited") return;
+    post("/prompt", { message: "/openai-usage" }).catch(() => { /* retry next tick */ });
+  };
   ask();
   setInterval(ask, 120000);
 }

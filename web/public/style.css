@@ -55,7 +55,7 @@ header .ctxg .bar i.hot { background:linear-gradient(90deg, var(--gold), var(--r
 header .ctxg:not([hidden]) ~ .usage,
 header .ctxg:not([hidden]) ~ .status { margin-left:14px; }
 
-#main { flex:1; display:flex; min-height:0; }
+#main { flex:1; display:flex; min-height:0; position:relative; }
 #scroll { flex:1; overflow-y:auto; padding:20px; min-width:0; }
 #transcript { max-width:820px; margin:0 auto; display:flex; flex-direction:column; gap:14px; }
 
@@ -187,12 +187,103 @@ button:disabled { opacity:.5; cursor:default; }
 
 footer { border-top:1px solid var(--line); background:var(--navy2); padding:12px; }
 .composer { max-width:820px; margin:0 auto; display:flex; gap:10px; align-items:flex-end; }
+/* extension dock — slim status/widget lane above the composer, matching its column */
+#extDock { max-width:820px; margin:0 auto 8px; border:1px solid var(--line); border-radius:8px;
+  background:var(--navy); color:var(--dim); font-family:ui-monospace,Consolas,monospace; font-size:12px;
+  padding:4px 12px; max-height:120px; overflow-y:auto; }
+#extDock[hidden] { display:none; }
+.ext-line { white-space:pre-wrap; overflow-wrap:anywhere; }
+.ext-widget { color:var(--ink); }
+.ext-widget + .ext-status, .ext-status + .ext-widget { margin-top:4px; }
+.card.ext-unknown pre { overflow-x:auto; }
 #input { flex:1; resize:none; max-height:180px; background:var(--navy); color:var(--ink);
   border:1px solid var(--line); border-radius:10px; padding:10px 12px; font:inherit; }
 #toasts { position:fixed; bottom:84px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; gap:8px; z-index:5; }
 .toast { background:var(--navy2); border:1px solid var(--line); border-left:3px solid var(--forest);
-  padding:8px 14px; border-radius:8px; font-size:13px; max-width:520px; }
+  padding:8px 14px; border-radius:8px; font-size:13px; max-width:520px; white-space:pre-line; }
 .toast.warning { border-left-color:var(--gold); }
 .toast.error { border-left-color:var(--red); }
 .card .row.list button[hidden] { display:none; }
 .card > input { margin-bottom:10px; }
+
+/* --- Changes panel (± Changes / git diff viewer) ---------------------------- */
+/* Full-pane overlay over the content area — full width is what makes side-by-side
+   viable; toasts (z-index 5) stay on top. */
+#diff { position:absolute; inset:0; background:var(--navy); display:flex; flex-direction:column; z-index:4; }
+#diff[hidden] { display:none; }
+#diffBtn .cnt { display:inline-block; margin-left:6px; min-width:16px; padding:0 5px; border-radius:999px;
+  background:var(--lime); color:var(--navy); font-size:11px; line-height:16px; text-align:center; }
+#diffBtn .cnt[hidden] { display:none; }
+#diffHead { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+#diffHead .diff-base { width:200px; }
+#diffHead .diff-search { width:160px; }
+#diffHead input { background:var(--navy); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:4px 8px; font-size:12px; }
+#diffHead input:focus { outline:none; border-color:var(--lime); }
+#diffHead .diff-count { color:var(--dim); font-size:11.5px; min-width:52px; }
+#diffCols { flex:1; display:flex; min-height:0; }
+#diffFiles { width:240px; flex:none; overflow-y:auto; border-right:1px solid var(--line); padding:6px 4px; font-size:13px; }
+#diffBody { flex:1; overflow:auto; min-width:0; }
+/* left rail rows */
+.dfile { display:flex; align-items:center; gap:6px; padding:3px 6px; border-radius:5px; cursor:pointer;
+  white-space:nowrap; overflow:hidden; }
+.dfile:hover { background:var(--panel); }
+.dfile.active { background:var(--panel); color:var(--lime); }
+.dfile-path { overflow:hidden; text-overflow:ellipsis; }
+.dfile-new { color:var(--dim); font-size:10.5px; margin-left:auto; padding-left:6px; }
+.st { flex:none; width:1ch; font-weight:700; text-align:center; }
+.st.a { color:var(--lime); }
+.st.m { color:var(--gold); }
+.st.d { color:var(--red); }
+.st.r { color:var(--dim); }
+/* diff rows: CSS-grid, NOT a table, so copy never includes gutters/markers */
+.drow { display:grid; grid-template-columns:48px 48px 1fr; font:12px/1.6 ui-monospace,Consolas,monospace;
+  white-space:pre-wrap; overflow-wrap:anywhere; }
+.drow.split { grid-template-columns:1fr 1fr; }
+.drow.hunk { grid-template-columns:1fr; }
+.dside { display:grid; grid-template-columns:48px 1fr; min-width:0; }
+.dno { color:var(--dim); text-align:right; padding-right:8px; user-select:none; }
+.dcode { padding-left:2px; min-width:0; }
+/* +/- markers via ::before so selected/copied text never contains them; a 1ch slot
+   on every code cell keeps columns aligned across ctx / add / del. */
+.dcode::before { content:" "; display:inline-block; width:1ch; user-select:none; }
+.drow.hunk .dcode::before { content:none; }
+.drow.add .dcode::before, .dcode.add::before { content:"+"; color:var(--forest); }
+.drow.del .dcode::before, .dcode.del::before { content:"-"; color:var(--red); }
+.drow.add, .dcode.add { background:rgba(123,183,73,.13); }
+.drow.del, .dcode.del { background:rgba(239,65,45,.12); }
+.drow.hunk { color:var(--dim); border-top:1px solid var(--line); }
+.drow.hunk .dcode { color:var(--dim); }
+/* intraline emphasis (common prefix/suffix trim) */
+.dem { background:rgba(123,183,73,.35); }
+.drow.del .dem, .dcode.del .dem { background:rgba(239,65,45,.35); }
+/* in-file search hits */
+.dhit { outline:1px solid var(--gold); }
+.dhit.cur { background:var(--gold); color:var(--navy); }
+.diff-more { margin:8px; }
+
+/* --- Session history (grouped by folder) + replay dividers ------------------ */
+.divider { text-align:center; color:var(--dim); font-size:11.5px; margin:6px auto; }
+details.hist-group { border:1px solid var(--line); border-radius:8px; margin-top:8px; padding:0 8px; }
+details.hist-group > summary { cursor:pointer; color:var(--dim); padding:6px 2px;
+  font:12px ui-monospace,Consolas,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+details.hist-group .row.list { padding-bottom:6px; }
+.hist-group .row.list button[disabled] { opacity:.5; cursor:not-allowed; }
+.hist-group .row.list button[disabled]:hover { border-color:var(--line); }
+
+/* --- multi-session tab strip ------------------------------------------------ */
+#tabs { display:flex; align-items:center; gap:6px; padding:6px 12px; background:var(--navy2);
+  border-bottom:1px solid var(--line); overflow-x:auto; flex:none; }
+.tab { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px;
+  background:transparent; color:var(--dim); border:1px solid var(--line); font-size:12px; cursor:pointer;
+  white-space:nowrap; max-width:220px; }
+.tab:hover { color:var(--ink); }
+.tab.on { color:var(--lime); border-color:var(--lime); }
+.tab.crashed { color:var(--red); border-color:var(--red); }
+.tab-label { overflow:hidden; text-overflow:ellipsis; }
+.tab-dot { width:7px; height:7px; border-radius:50%; background:var(--gold); animation:pulse 1s infinite; flex:none; }
+.tab-unread { width:7px; height:7px; border-radius:50%; background:var(--lime); flex:none; }
+.tab-close { color:var(--dim); font-size:11px; padding:0 3px; border-radius:4px; }
+.tab-close:hover { color:var(--red); background:var(--panel); }
+.tab-new { background:transparent; color:var(--dim); border:1px solid var(--line); border-radius:999px;
+  width:26px; height:26px; font-size:15px; line-height:1; cursor:pointer; flex:none; }
+.tab-new:hover { color:var(--lime); border-color:var(--lime); }

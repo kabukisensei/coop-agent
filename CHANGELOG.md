@@ -5,6 +5,42 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **coop web — Changes panel (git diff viewer).** A read-only `± Changes` panel
+  shows the working tree's git changes: a changed-files list plus a rendered
+  unified/side-by-side diff (line numbers, add/remove coloring, intraline emphasis,
+  in-file search, base-ref comparison). Badge refreshes after each agent turn;
+  degrades gracefully when git is absent or the folder isn't a repo. Bridge-local
+  git reads, jailed to the working folder — no new pi RPC.
+- **coop web — grouped session history + high-fidelity resume.** 🕘 History now
+  spans every workspace coop has been used in (current folder first, others as
+  collapsible groups) with one-click cross-folder resume (switch + resume together).
+  Resuming rebuilds the transcript from the session file itself — thinking blocks,
+  tool calls with arguments/outputs, and compaction markers in order — with a
+  `get_messages` text fallback for oversized/corrupt files.
+- **coop web — broader extension-UI bridging.** Extension status segments and
+  widgets render in a dock above the composer; `setTitle` sets the tab title,
+  `set_editor_text` prefills the composer, multi-line `notify` keeps its line
+  breaks, and any unknown extension-UI method renders a deduplicated fallback card
+  instead of being silently dropped.
+- **coop web — multiple parallel chats.** A header tab strip runs several
+  independent governed `pi` subprocesses at once, each with its own transcript,
+  model, working folder, and Files/Changes view (default 4, env `COOP_WEB_MAX_CHATS`
+  1–8; `=1` behaves like the old single-session UI). Background tabs keep streaming
+  with busy/unread indicators; a crashed tab is contained (crash card) while the
+  bridge and other tabs keep running. One multiplexed SSE stream with `{sid,n,ev}`
+  envelopes; per-chat replay served by `/events-poll?sid`.
+
+### Changed
+
+- **coop web — Pi RPC protocol contract + drift detection.** The wire contract
+  coop-web depends on is now pinned in `web/protocol.mjs` with a bridge-side drift
+  detector (stderr log + one-time toast on an unknown/shape-changed pi event; the
+  event is still forwarded verbatim). Also hardens the JSONL framer with a
+  `StringDecoder` (fixes a multi-byte-UTF-8 chunk-boundary corruption bug) and an
+  oversized-line cap.
+
 ## [0.9.3] — 2026-07-03
 
 ### Security

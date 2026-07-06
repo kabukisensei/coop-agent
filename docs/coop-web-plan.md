@@ -19,6 +19,45 @@
 > previews and an opt-in "you're viewing this file" prompt attachment, recent-folder
 > quick-switching (`/folders`, from session headers), `set_session_name`, and a
 > `__fatal` crash card. All bridge additions are covered by the stub-pi suite.
+>
+> A **protocol-contract pass** then pinned the Pi RPC wire contract coop-web
+> depends on in a new dependency-free module (`../web/protocol.mjs`): the commands
+> the bridge sends, the events it consumes / knowingly ignores, and the
+> response-data fields the UI reads, plus a bridge-side **drift detector** that
+> logs to stderr and shows a one-time warning toast when a Pi upgrade sends an
+> unknown or shape-changed event (the event is still forwarded verbatim — the dumb
+> pipe is preserved). The same pass hardened the JSONL framer with a
+> `StringDecoder` (fixing a real multi-byte-UTF-8 chunk-boundary corruption bug)
+> and an oversized-line cap, added a `tests/protocol.test.mjs` unit suite, and made
+> the stub-pi integration fixtures assert the contract (an end-of-suite drift-count
+> assertion fails if a future change adds unexpected drift). See "Protocol contract"
+> in `../web/README.md`.
+>
+> A **pi-vis-inspired capability pass** then added three self-contained features on
+> top of that machinery (all bridge-local, no new pi RPC): a read-only **Changes
+> panel** — a git diff viewer (unified + side-by-side, base-ref comparison, in-file
+> search, badge refresh per turn, git-missing/non-repo degradation), jailed to the
+> working folder; **grouped session history** — 🕘 History now spans every workspace
+> coop has been used in, with one-click cross-folder resume and a high-fidelity,
+> file-based transcript backfill (thinking, tool args/outputs, compaction markers,
+> most-recent-branch heuristic) that falls back to `get_messages`; and **broader
+> extension-UI bridging** — an extension dock (`setStatus`/`setWidget`), `setTitle`,
+> composer prefill, multi-line notify, and a deduped fallback card for any unknown
+> method. Each is covered by the stub-pi suite (plus pure-model unit tests for the
+> diff parser). See the plan `docs/coop-web-pivis-plan.md` for the full design.
+>
+> Finally, **multiple parallel sessions** landed: a header tab strip where each tab
+> is an independent governed `pi --mode rpc -a` with its own transcript, model,
+> working folder, and Files/Changes view (default 4, `COOP_WEB_MAX_CHATS` 1–8).
+> Background tabs keep streaming with busy/unread indicators; one tab's agent
+> crashing is contained to that tab (a recorded crash card) while the bridge and the
+> other tabs keep running. This was a bridge-wide refactor of the per-conversation
+> state into chat objects behind one multiplexed SSE stream (`{sid,n,ev}` envelopes,
+> per-chat replay via `/events-poll?sid`); it shipped in two stages — a
+> behaviour-preserving Stage 1 (the existing suite passed unmodified) then the wire +
+> UI change — with `COOP_WEB_MAX_CHATS=1` behaving exactly like the old single-session
+> coop web. Worktree isolation and idle-eviction are deliberately deferred.
+>
 > Remaining gaps are narrower UX breadth, not safety — see "Known limitations" in
 > `../web/README.md`.
 
