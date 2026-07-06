@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-07-06
+
 ### Added
 
 - **coop web — Changes panel (git diff viewer).** A read-only `± Changes` panel
