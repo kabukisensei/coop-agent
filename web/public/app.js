@@ -826,7 +826,12 @@ async function switchChat(sid) {
     for (const { n, ev } of pendingLive) {
       if (n !== undefined && n < data.next) continue; // already covered by the replay
       try {
-        if (ev.type === "__reset") { resetTranscript(); setCwd(ev.cwd); }
+        if (ev.type === "__reset") { 
+          resetTranscript(); 
+          setCwd(ev.cwd); 
+          if (window.coopFiles) window.coopFiles.onReset();
+          if (window.coopDiff) window.coopDiff.onReset();
+        }
         else handle(ev);
       } catch { /* skip a bad frame */ }
     }
@@ -836,8 +841,8 @@ async function switchChat(sid) {
   c.unread = false;
   renderTabs();
   refreshState();
-  if (window.coopFiles) window.coopFiles.onAgentEnd(); // tree reload for the new cwd
-  if (window.coopDiff) window.coopDiff.onReset(); // the panel must not show a stale repo
+  if (window.coopFiles) window.coopFiles.onReset(); 
+  if (window.coopDiff) window.coopDiff.onReset(); 
 }
 
 // The first __hello picks the initial active tab (the first chat), stamping
@@ -846,7 +851,6 @@ function pickInitialTab() {
   const first = chatsState.keys().next().value;
   if (first) switchChat(first);
 }
-
 // Envelope router: global frames (no sid) manage tabs; per-chat frames update tab
 // indicators and, for the ACTIVE chat, drive the existing handle() dispatcher.
 let helloSeen = false;
@@ -871,7 +875,16 @@ function route(frame) {
   if (ev.type === "__fatal" && c) { c.status = "exited"; renderTabs(); }
   if (sid !== activeSid) return; // background chats: indicators only, no DOM
   if (switching) { pendingLive.push({ n, ev }); return; } // buffered during a switch fetch
-  if (ev.type === "__reset") { resetTranscript(); setCwd(ev.cwd); return; }
+  
+  // --- FIXED STATE INVOCATIONS (Part B) ---
+  if (ev.type === "__reset") { 
+    resetTranscript(); 
+    setCwd(ev.cwd); 
+    if (window.coopFiles) window.coopFiles.onReset();
+    if (window.coopDiff) window.coopDiff.onReset();
+    return; 
+  }
+  
   handle(ev); // the existing dispatcher, unchanged cases
 }
 
@@ -1035,9 +1048,17 @@ function switchToPolling() {
         activeSid = data.chats[0].sid; window.coopSid = activeSid; polledSid = activeSid;
       }
       renderTabs();
+      
       // The __reset frame is broadcast-only, so on this polling path we detect a
       // server-side reset (new_session/chdir/resume) via the epoch instead.
-      if (epoch !== null && data.epoch !== epoch) resetTranscript();
+      if (epoch !== null && data.epoch !== epoch) {
+        resetTranscript();
+        
+        // --- FIXED STATE INVOCATIONS (Part D) ---
+        if (window.coopFiles) window.coopFiles.onReset();
+        if (window.coopDiff) window.coopDiff.onReset();
+      }
+      
       epoch = data.epoch;
       if (data.cwd) setCwd(data.cwd); // every poll, so a chdir updates the header here too
       since = data.next;
