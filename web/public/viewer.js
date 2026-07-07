@@ -290,6 +290,29 @@
 
   // --- public surface for app.js --------------------------------------------------
   window.coopFiles = {
+    // Expose the reset hook to clear stale state across tab/folder changes
+    onReset() {
+      selectedPath = "";
+      expanded.clear();
+      loadedTree = false;
+
+      previewHead.hidden = true;
+      previewName.textContent = "";
+      previewName.title = "";
+      
+      previewEl.hidden = true;
+      previewEl.textContent = "";
+      treeEl.textContent = "";
+
+      for (const el of treeEl.querySelectorAll(".fnode.file.active")) {
+        el.classList.remove("active");
+      }
+
+      if (open) {
+        loadTree();
+      }
+    },
+
     // The absolute-ish path to wrap the next prompt with, or "" when nothing is
     // eligible (panel closed, no selection, or attach unchecked). app.js turns a
     // non-empty value into a viewing-context block + 📎 chip.
