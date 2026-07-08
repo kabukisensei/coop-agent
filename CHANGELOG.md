@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-07-08
+
 ### Added
 
 - **Azure DevOps Boards integration** — a new `azure-devops` skill plus batch tools to
