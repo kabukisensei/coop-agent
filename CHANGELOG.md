@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-07-08
+
 ### Changed
 
 - **`coop sync` now backfills MCP servers that are new in the example but missing from an
