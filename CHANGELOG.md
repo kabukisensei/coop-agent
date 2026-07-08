@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-07-08
+
 ### Added
 
 - **`coop update` version-ceiling + `--check`** (#13). Guards against an untested Pi
