@@ -3,7 +3,7 @@
 import { strict as assert } from "node:assert";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 // Point the audit log at a throwaway dir BEFORE the handler runs, so no test writes to
@@ -117,7 +117,9 @@ await t("`cd <dir> && git commit` with an unverifiable target repo confirms (dec
 await t("gitRepoDir/leadingCdDir unit: -C wins over cd; cd honored; siblings ignored", () => {
   assert.equal(gitRepoDir("git -C /a commit -m x", "/cwd"), "/a");
   assert.equal(gitRepoDir("cd /b && git commit -m x", "/cwd"), "/b");
-  assert.equal(gitRepoDir("cd sub && git commit -m x", "/cwd"), "/cwd/sub"); // relative → resolved
+  // relative → resolved against cwd (via node:path, so compute the expected the same
+  // way the code does — on Windows this is a drive-qualified path, not `/cwd/sub`).
+  assert.equal(gitRepoDir("cd sub && git commit -m x", "/cwd"), resolve("/cwd", "sub"));
   assert.equal(gitRepoDir("tar -C /tmp -xf x && git commit -m x", "/cwd"), "/cwd"); // tar's -C ignored
   assert.equal(gitRepoDir("git commit -m x", "/cwd"), "/cwd");
   assert.equal(leadingCdDir("cd /a && cd /b &&"), "/b"); // last cd wins
