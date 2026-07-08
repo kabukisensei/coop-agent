@@ -1,10 +1,13 @@
 // Tests for the data-doc config writer/parser in extensions/coop-tools.
 // Imports the bundled extension's named exports (COOP_TEST_DIST set by tests/run.sh).
 import { strict as assert } from "node:assert";
+import { pathToFileURL } from "node:url";
 
+// COOP_TEST_DIST is an ABSOLUTE path; a bare `C:\...` is not a valid ESM URL on
+// Windows (ERR_UNSUPPORTED_ESM_URL_SCHEME), so import it via a file:// URL.
 const dist = process.env.COOP_TEST_DIST;
 const { renderMinimalConfig, parseExisting, updateConfigText, scalarValue, outputDirsConflict, siblingSite } =
-  await import(`${dist}/coop-tools.mjs`);
+  await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 
 let n = 0;
 const t = (name, fn) => {

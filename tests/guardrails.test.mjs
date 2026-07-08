@@ -4,6 +4,7 @@ import { strict as assert } from "node:assert";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 // Point the audit log at a throwaway dir BEFORE the handler runs, so no test writes to
 // the real ~/.coop/agent/guardrails-audit.jsonl fallback.
@@ -13,8 +14,10 @@ const AUDIT_FILE = join(AUDIT_DIR, "guardrails-audit.jsonl");
 const readAudit = () => (existsSync(AUDIT_FILE) ? readFileSync(AUDIT_FILE, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
 const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
 
+// COOP_TEST_DIST is an ABSOLUTE path; a bare `C:\...` is not a valid ESM URL on
+// Windows (ERR_UNSUPPORTED_ESM_URL_SCHEME), so import it via a file:// URL.
 const dist = process.env.COOP_TEST_DIST;
-const cg = await import(`${dist}/coop-guardrails.mjs`);
+const cg = await import(pathToFileURL(`${dist}/coop-guardrails.mjs`).href);
 const coopGuardrails = cg.default;
 const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, gitRepoDir, leadingCdDir } = cg;
 
