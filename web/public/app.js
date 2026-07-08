@@ -2,6 +2,14 @@
 // Served with a strict CSP (no inline script/style). No dependencies.
 "use strict";
 
+// The landing token has already become the HttpOnly cookie by the time this script runs
+// (the GET / response set both in one response), so drop it from the address bar / history
+// — it shouldn't be shoulder-surfed or copied out of the URL. history API only (no
+// navigation, CSP-clean); the cookie remains the real gate.
+if (location.search.includes("token=")) {
+  try { history.replaceState(null, "", location.pathname); } catch { /* ignore */ }
+}
+
 const $ = (s) => document.querySelector(s);
 const transcript = $("#transcript"), scroll = $("#scroll");
 const dot = $("#dot"), statusText = $("#statusText");
@@ -114,18 +122,43 @@ let tools = new Map(); // toolCallId -> { sum, outp, hint }
 let thinkingEl = null; // current streaming thinking <details> (open while streaming)
 let assistantT0 = 0; // when the current assistant message started (for tok/s)
 
+// Streaming renders are BATCHED to one paint per animation frame. A long answer arrives
+// as hundreds of text_delta events; re-running renderMarkdown() over the WHOLE message
+// on every delta is O(n²) string work + O(n) DOM churn — janky on modest VMs, and it
+// thrashes during switchChat() replay and /events-poll catch-up bursts. We append to
+// dataset.raw immediately (the source of truth) and coalesce the actual render into a
+// single requestAnimationFrame; flushStreaming() forces it synchronously at turn
+// boundaries so the final bubble is never left mid-render.
+let rafId = 0;
+let streamWas = false;   // were we at the bottom when this frame's first delta landed?
+let thinkingRaw = "";    // accumulated reasoning text for the current thinking block
+function scheduleStreamRender() {
+  if (rafId) return; // a render is already queued for this frame — deltas just accumulate
+  streamWas = atBottom(); // capture stickiness before this frame's content lands
+  rafId = requestAnimationFrame(() => { rafId = 0; renderStreaming(); });
+}
+function renderStreaming() {
+  if (current) current.innerHTML = renderMarkdown(current.dataset.raw || "");
+  if (thinkingEl) thinkingEl.lastElementChild.textContent = thinkingRaw;
+  stick(streamWas);
+}
+// Synchronous flush: render any pending deltas NOW (cancelling the queued frame) so a
+// turn boundary — text/message/agent end, or folding the thinking block — never leaves
+// the last deltas unrendered. Safe to call when nothing is pending.
+function flushStreaming() {
+  if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+  renderStreaming();
+}
+
 function appendAssistant(delta) {
-  const was = atBottom();
   if (!current) current = bubble("assistant", "");
   current.dataset.raw = (current.dataset.raw || "") + delta;
-  current.innerHTML = renderMarkdown(current.dataset.raw);
-  stick(was);
+  scheduleStreamRender();
 }
 
 // Reasoning stream: a collapsible block that stays open while the model thinks,
 // then folds shut when the visible answer starts (the TUI shows the same stream).
 function appendThinking(delta) {
-  const was = atBottom();
   if (!thinkingEl) {
     const det = document.createElement("details");
     det.className = "thinking";
@@ -137,12 +170,13 @@ function appendThinking(delta) {
     det.append(sum, content);
     transcript.appendChild(det);
     thinkingEl = det;
+    thinkingRaw = "";
   }
-  thinkingEl.lastElementChild.textContent += delta;
-  stick(was);
+  thinkingRaw += delta;
+  scheduleStreamRender();
 }
 function endThinking() {
-  if (thinkingEl) thinkingEl.open = false;
+  if (thinkingEl) { flushStreaming(); thinkingEl.open = false; } // render final reasoning before folding
   thinkingEl = null;
 }
 
@@ -476,9 +510,15 @@ function handle(evt) {
     case "agent_start": setBusy(true); break;
     case "agent_end":
       setBusy(false);
+      flushStreaming(); // render any deltas still batched for this frame before we drop `current`
       endThinking();
       current = null;
-      refreshCtx(); // context gauge: cheap read-only stats after each turn
+      // During a ring replay (tab switch), the ONLY thing agent_end should do is the
+      // rendering above — the per-turn side effects below would otherwise fire once per
+      // replayed turn (N× get_session_stats RPCs + N× /files scans). switchChat runs
+      // them ONCE after the loop.
+      if (replaying) break;
+      refreshCtx(); // context gauge: cheap read-only stats after each turn (debounced)
       if (window.coopFiles) window.coopFiles.onAgentEnd(); // the agent may have written files
       if (window.coopDiff) window.coopDiff.onAgentEnd(); // ...and changed the git working tree
       break;
@@ -603,6 +643,7 @@ function handle(evt) {
       break;
     }
     case "message_end": {
+      flushStreaming(); // finalize the bubble's markdown before stats read `current` / it's cleared
       endThinking();
       // Compact per-response stats under the bubble (Hephaestus-style): output
       // tokens, throughput, cache reads, model. Only when the turn produced a
@@ -728,6 +769,9 @@ const chatsState = new Map(); // sid -> { cwd, busy, status, unread }
 let activeSid = null;
 let switchSeq = 0;
 let switching = false;
+let replaying = false; // true while replaying a chat's ring: agent_end's per-turn side
+                       // effects (get_session_stats RPC, Files/Changes refetch) are
+                       // coalesced into a single refresh after the loop (see switchChat).
 let pendingLive = []; // live frames buffered during a switch's replay fetch
 const tabsEl = $("#tabs");
 
@@ -817,7 +861,9 @@ async function switchChat(sid) {
   } catch { /* fall through — an empty transcript beats a throw */ }
   if (my !== switchSeq) return; // a newer switch superseded this one
   if (data) {
+    replaying = true; // coalesce per-turn side effects across the whole ring (see agent_end)
     for (const line of data.events) { try { handle(JSON.parse(line)); } catch { /* skip bad line */ } }
+    replaying = false; // buffered live frames below apply as LIVE (their side effects run)
     // Buffered live frames: replay already covered anything below `next`; recorded
     // frames always carry n (structural), so nothing recorded can double. A buffered
     // __reset (unrecorded, n-less — a chdir/resume/new_session that raced this switch)
@@ -826,7 +872,7 @@ async function switchChat(sid) {
     for (const { n, ev } of pendingLive) {
       if (n !== undefined && n < data.next) continue; // already covered by the replay
       try {
-        if (ev.type === "__reset") { resetTranscript(); setCwd(ev.cwd); }
+        if (ev.type === "__reset") { resetTranscript(); setCwd(ev.cwd); resetPanels(); }
         else handle(ev);
       } catch { /* skip a bad frame */ }
     }
@@ -836,8 +882,16 @@ async function switchChat(sid) {
   c.unread = false;
   renderTabs();
   refreshState();
-  if (window.coopFiles) window.coopFiles.onAgentEnd(); // tree reload for the new cwd
-  if (window.coopDiff) window.coopDiff.onReset(); // the panel must not show a stale repo
+  resetPanels(); // new cwd — drop stale Files selection/tree and the stale Changes repo
+}
+
+// A working-folder change (tab switch, chdir/resume __reset, polling epoch reset)
+// invalidates BOTH side panels: the Files selection/tree belongs to the old folder
+// (a stale selectedPath would make attachTarget() name a nonexistent file) and the
+// Changes panel would show a stale repo. Clear both from every such site.
+function resetPanels() {
+  if (window.coopFiles) window.coopFiles.onReset();
+  if (window.coopDiff) window.coopDiff.onReset();
 }
 
 // The first __hello picks the initial active tab (the first chat), stamping
@@ -871,7 +925,7 @@ function route(frame) {
   if (ev.type === "__fatal" && c) { c.status = "exited"; renderTabs(); }
   if (sid !== activeSid) return; // background chats: indicators only, no DOM
   if (switching) { pendingLive.push({ n, ev }); return; } // buffered during a switch fetch
-  if (ev.type === "__reset") { resetTranscript(); setCwd(ev.cwd); return; }
+  if (ev.type === "__reset") { resetTranscript(); setCwd(ev.cwd); resetPanels(); return; }
   handle(ev); // the existing dispatcher, unchanged cases
 }
 
@@ -1007,7 +1061,7 @@ function switchToPolling() {
   const tick = async () => {
     try {
       // When the active tab changes (a switch or auto-create), reload it from scratch.
-      if (activeSid !== polledSid) { polledSid = activeSid; since = 0; epoch = null; resetTranscript(); }
+      if (activeSid !== polledSid) { polledSid = activeSid; since = 0; epoch = null; resetTranscript(); resetPanels(); }
       const q = activeSid ? `?sid=${encodeURIComponent(activeSid)}&since=${since}` : `?since=${since}`;
       const r = await fetch("/events-poll" + q);
       if (r.status === 401) {
@@ -1037,7 +1091,7 @@ function switchToPolling() {
       renderTabs();
       // The __reset frame is broadcast-only, so on this polling path we detect a
       // server-side reset (new_session/chdir/resume) via the epoch instead.
-      if (epoch !== null && data.epoch !== epoch) resetTranscript();
+      if (epoch !== null && data.epoch !== epoch) { resetTranscript(); resetPanels(); }
       epoch = data.epoch;
       if (data.cwd) setCwd(data.cwd); // every poll, so a chdir updates the header here too
       since = data.next;
@@ -1069,7 +1123,7 @@ async function rpc(body) {
     headers: { "content-type": "application/json", "x-coop-csrf": "1" },
     body: JSON.stringify(b),
   });
-  if (!res.ok) throw new Error(`/rpc ${b.type} -> ${res.status}`);
+  if (!res.ok) { const e = new Error(`/rpc ${b.type} -> ${res.status}`); e.status = res.status; throw e; }
   return res.json();
 }
 
@@ -1109,7 +1163,16 @@ async function refreshState() {
 // How full the conversation's context window is, refreshed after every turn and
 // after compaction — the web twin of the TUI footer's context readout.
 const ctxEl = $("#ctx"), ctxBar = $("#ctxBar"), ctxText = $("#ctxText");
-async function refreshCtx() {
+// Debounced (trailing 300 ms): a polling catch-up burst — or several agent_end frames in
+// quick succession — collapses to ONE get_session_stats RPC instead of one per turn. The
+// tab-switch replay is already skipped via the `replaying` flag; this catches the polling
+// path, which has no such flag. A single live turn still refreshes (just ≤300 ms later).
+let ctxTimer = null;
+function refreshCtx() {
+  if (ctxTimer) clearTimeout(ctxTimer);
+  ctxTimer = setTimeout(() => { ctxTimer = null; doRefreshCtx(); }, 300);
+}
+async function doRefreshCtx() {
   try {
     const r = await rpc({ type: "get_session_stats" });
     const d = (r && r.data) || {};
@@ -1377,8 +1440,16 @@ $("#compactBtn").onclick = async () => {
     const r = await rpc({ type: "compact" });
     const d = (r && r.data) || {};
     toast(d.tokensBefore ? `Compacted: ~${Math.round(d.tokensBefore / 1000)}k → ~${Math.round((d.estimatedTokensAfter || 0) / 1000)}k tokens.` : "Compacted.");
-  } catch {
-    toast("Compaction failed or timed out.", "error");
+  } catch (e) {
+    // A 504 means the bridge stopped WAITING (180s) — not that pi failed. Compaction may
+    // still finish; don't claim outright failure, and refresh the gauge shortly so a late
+    // success is reflected. Any other error is a real failure.
+    if (e && e.status === 504) {
+      toast("Compaction is taking longer than expected — it may still finish; the context gauge will update when it does.");
+      setTimeout(refreshCtx, 5000);
+    } else {
+      toast("Compaction failed or timed out.", "error");
+    }
   }
 };
 

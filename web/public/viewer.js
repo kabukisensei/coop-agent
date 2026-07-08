@@ -288,6 +288,28 @@
     return p;
   }
 
+  // Debounced (trailing 300 ms), single-flight tree refresh so a switchChat replay or a
+  // polling catch-up burst of agent_end events collapses to ONE /files scan instead of
+  // one per turn (mirrors diffview.js scheduleBadgeRefresh).
+  let refreshTimer = null, refreshInFlight = false;
+  function scheduleRefresh() {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(async () => {
+      refreshTimer = null;
+      if (refreshInFlight) return; // a scan is already running — its result is fresh enough
+      refreshInFlight = true;
+      try {
+        await loadTree();
+        if (selectedPath) {
+          const row = treeEl.querySelector(`.fnode.file[data-path="${cssEscape(selectedPath)}"]`);
+          await openFile(selectedPath, row);
+        }
+      } finally {
+        refreshInFlight = false;
+      }
+    }, 300);
+  }
+
   // --- public surface for app.js --------------------------------------------------
   window.coopFiles = {
     // The absolute-ish path to wrap the next prompt with, or "" when nothing is
@@ -302,11 +324,22 @@
     // and the previewed file may have changed. Refresh both if the panel is open.
     onAgentEnd() {
       if (!open) { loadedTree = false; return; } // reload lazily next time it opens
-      loadTree();
-      if (selectedPath) {
-        const row = treeEl.querySelector(`.fnode.file[data-path="${cssEscape(selectedPath)}"]`);
-        openFile(selectedPath, row);
-      }
+      scheduleRefresh(); // debounced + single-flight so replay/poll bursts collapse to one scan
+    },
+    // Called when the working folder changes (tab switch, chdir/resume __reset, or a
+    // polling epoch reset). The previous selection/expanded dirs/tree belong to the OLD
+    // folder — keeping them would make attachTarget() name <newCwd>/<oldRelPath> (a file
+    // that doesn't exist here, or a different file sharing the relative path), so drop all
+    // of it. Mirrors coopDiff.onReset(); app.js calls both from every folder-change site.
+    onReset() {
+      selectedPath = "";
+      expanded.clear();
+      loadedTree = false;
+      previewHead.hidden = true;
+      previewEl.hidden = true;
+      previewEl.textContent = "";
+      treeEl.textContent = "";
+      if (open) loadTree(); // sets loadedTree = true for the new folder
     },
   };
 

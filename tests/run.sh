@@ -39,6 +39,26 @@ for needle in "docs/guardrails.md" "--prompt-template" "themes/cooptimize.json" 
 done
 echo "  ✓ launch-spec resolves guardrails, prompts, theme, and all 3 extensions"
 
+echo "→ --no-launch dry-run (must NOT start pi; prints the spec)"
+# --no-launch is a dry-run: it runs the preflights (no-op without pi) and prints the
+# resolved launch spec, then exits 0 — the opposite of its old behavior (it launched).
+NL_RC=0
+NL_OUT="$(bash "$ROOT/bin/coop" --no-launch)" || NL_RC=$?
+[ "$NL_RC" -eq 0 ] || { echo "  ✗ coop --no-launch exited $NL_RC (expected 0)"; exit 1; }
+case "$NL_OUT" in
+  *"docs/guardrails.md"*) ;;
+  *) echo "  ✗ coop --no-launch did not print the launch spec (no docs/guardrails.md)"; exit 1 ;;
+esac
+# --json delegates to the launch-spec JSON path.
+case "$(bash "$ROOT/bin/coop" --no-launch --json)" in
+  *'"bin"'*'"args"'*) ;;
+  *) echo "  ✗ coop --no-launch --json did not emit the JSON spec"; exit 1 ;;
+esac
+echo "  ✓ --no-launch prints the spec and exits 0 (no pi launched)"
+
+echo "→ coop update tested-Pi-version guard (--check, gate decision)"
+bash "$ROOT/tests/update-guard.test.sh"
+
 echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
 node "$ROOT/tests/webbridge.test.mjs"
 

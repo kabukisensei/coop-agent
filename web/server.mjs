@@ -40,7 +40,13 @@ const HOST = "127.0.0.1";
 const TOKEN = randomBytes(16).toString("hex");
 // Default working folder for a new chat: --cwd <dir>, else wherever `coop web` was
 // run. Immutable — each chat carries its OWN cwd (POST /chdir moves only that chat).
-const DEFAULT_CWD = getArg("--cwd", process.cwd());
+// resolvePath() so a relative --cwd, a trailing separator, or a Windows case difference
+// becomes ONE canonical absolute path: DEFAULT_CWD seeds chat.cwd, sessionsDirFor(),
+// the tab labels, /history's `current` marking, and the SPA's recents filter — all of
+// which compare cwd strings. Every other write to chat.cwd already goes through
+// resolvePath (/chdir, /chat-new, /resume), so normalizing here makes the whole set
+// consistent and the client-side `f.dir !== currentCwd` compare safe.
+const DEFAULT_CWD = resolvePath(getArg("--cwd", process.cwd()));
 
 // --- Resolve the governed launch spec ---------------------------------------
 let spec;
@@ -225,6 +231,7 @@ function sendTo(chat, obj) {
 // reconnecting client reconstructs the current dock/title from history.
 const HISTORY_MAX = 4000; // per chat
 const DRIFT_SEEN_MAX = 100; // per chat
+const ANSWERED_UI_MAX = 500; // per chat — bound the answered-dialog dedupe set
 
 // The ONLY way to broadcast a recorded event: record + broadcast together, and the
 // ONLY place that computes the global event number n. Because EVERY recorded event —
@@ -401,6 +408,16 @@ function rpcCall(chat, cmd, timeoutMs = 30000) {
   });
 }
 
+// Per-command /rpc timeouts. `compact` is an LLM round-trip: pi summarizes a long
+// conversation with the model, which routinely exceeds the 30 s default on big sessions
+// (the whole point of compacting). A 504 there falsely reports failure while pi is still
+// working — so give compact a 3-minute ceiling. COOP_WEB_RPC_TIMEOUT_COMPACT (ms) overrides
+// it, used by tests to exercise the timeout path without a real 3-minute wait. Documented
+// next to `compact` in web/protocol.mjs COMMANDS_SENT.
+const RPC_TIMEOUTS = {
+  compact: Number(process.env.COOP_WEB_RPC_TIMEOUT_COMPACT) || 180000,
+};
+
 // Boot: one chat in the default working folder. Every function/const above is defined,
 // so spawning here is safe. Each chat carries its own cwd from this point on.
 makeChat(DEFAULT_CWD);
@@ -458,6 +475,14 @@ function readHead(fullPath, maxBytes) {
 const sessionMetaCache = new Map(); // fullPath -> { mtimeMs, meta }
 const SESSION_META_CACHE_MAX = 500;
 
+// A prompt sent with a Files-panel attachment is persisted wrapped in a
+// <coop-viewing-context> directive (see wrapViewingContext in web/public/app.js). The
+// SPA strips it from every user-bubble render (app.js VIEW_RE / stripViewingContext);
+// the History/`/sessions` preview must strip it too, or every such conversation shows
+// the same boilerplate instead of the user's question. KEEP THIS IN SYNC with the SPA's
+// VIEW_RE (web/public/app.js).
+const VIEW_CONTEXT_RE = /^<coop-viewing-context file="[\s\S]*?">[\s\S]*?<\/coop-viewing-context>\n*/;
+
 function scanSessionFile(fullPath) {
   let mtimeMs = 0;
   try { mtimeMs = statSync(fullPath).mtimeMs; } catch { /* fall through to a fresh read */ }
@@ -482,7 +507,10 @@ function scanSessionFile(fullPath) {
     if (!preview && entry.message && entry.message.role === "user") {
       const c = entry.message.content;
       const t = typeof c === "string" ? c : Array.isArray(c) ? c.filter((b) => b.type === "text").map((b) => b.text).join(" ") : "";
-      preview = String(t).replace(/\s+/g, " ").trim().slice(0, 80);
+      // Strip the viewing-context wrapper first so the preview is the real question, not
+      // the attachment boilerplate. A wrapper-only message strips to "" (falsy), so the
+      // `!preview` guard lets the NEXT user message supply the preview instead.
+      preview = String(t).replace(VIEW_CONTEXT_RE, "").replace(/\s+/g, " ").trim().slice(0, 80);
     }
   }
   const meta = { name, preview };
@@ -1376,10 +1404,18 @@ async function handle(req, res) {
       const chat = chatFor(body && body.sid);
       if (!chat) { res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "That chat is no longer open." })); return; }
       if (body && body.id) {
-        chat.answeredUi.add(body.id); // don't replay this dialog card on reconnect
+        const id = String(body.id);
+        // Bound the dedupe set: an id that never matches a recorded dialog (a client bug
+        // or a junk POST) is otherwise never evicted by record()'s history-eviction path,
+        // so the Set grows unbounded for the life of the chat. When full, drop the oldest
+        // inserted (Set preserves insertion order — same idiom as sessionMetaCache).
+        if (chat.answeredUi.size >= ANSWERED_UI_MAX && !chat.answeredUi.has(id)) {
+          chat.answeredUi.delete(chat.answeredUi.values().next().value);
+        }
+        chat.answeredUi.add(id); // don't replay this dialog card on reconnect
         // Whitelist the fields — never spread an untrusted body over a fixed
         // `type`, or the browser could relay arbitrary RPC commands to pi.
-        const reply = { type: "extension_ui_response", id: String(body.id) };
+        const reply = { type: "extension_ui_response", id };
         if (body.value !== undefined) reply.value = body.value;
         if (body.confirmed !== undefined) reply.confirmed = Boolean(body.confirmed);
         if (body.cancelled !== undefined) reply.cancelled = Boolean(body.cancelled);
@@ -1406,7 +1442,7 @@ async function handle(req, res) {
       if (type === "set_thinking_level") cmd.level = String(body.level || "medium");
       if (type === "compact" && body.customInstructions) cmd.customInstructions = String(body.customInstructions);
       if (type === "set_session_name") cmd.name = String(body.name || "").slice(0, 200);
-      const reply = await rpcCall(chat, cmd);
+      const reply = await rpcCall(chat, cmd, RPC_TIMEOUTS[type] || 30000);
       if (!reply) {
         res.writeHead(504, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "pi did not answer in time" }));
         return;
@@ -1455,7 +1491,10 @@ async function handle(req, res) {
         res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "That conversation could not be found." }));
         return;
       }
-      const switched = targetCwd !== chat.cwd;
+      // samePath (not a naive !==): on Windows a case-different or trailing-separator
+      // equivalent of the chat's own folder must NOT count as a switch (spurious
+      // broadcastChats + a misleading "resuming … in <dir>" log).
+      const switched = !samePath(targetCwd, chat.cwd);
       restartChat(chat, targetCwd, ["--session", full]); // switches the working folder AND resumes
       console.error(`  resuming session ${name}${switched ? ` in ${targetCwd}` : ""}`);
       if (switched) broadcastChats(); // the tab's cwd (label) changed

@@ -59,6 +59,21 @@ writeFileSync(join(sessDir, FAKE_SESSION), [
   JSON.stringify({ type: "message", id: "b1", parentId: "u1", timestamp: "2026-07-01T00:00:04.000Z", message: { role: "assistant", content: [{ type: "text", text: "stale branch answer" }] } }),
 ].join("\n") + "\n");
 
+// A session whose FIRST user message was sent with a Files-panel attachment, so it is
+// persisted wrapped in a <coop-viewing-context> directive. The /sessions preview must
+// strip that wrapper and surface the real question (issue #6) — not the boilerplate.
+const WRAP_SESSION = "2026-07-01T00-00-20-000Z_wrapped.jsonl";
+const wrappedFirstMessage =
+  '<coop-viewing-context file="/tmp/x.md">\n' +
+  "The user is currently viewing this file in the coop web Files panel:\n/tmp/x.md\n" +
+  'If they refer to "this file", assume they mean this file and read it as needed.\n' +
+  "</coop-viewing-context>\n\nreal question here about revenue";
+writeFileSync(join(sessDir, WRAP_SESSION), [
+  JSON.stringify({ type: "session", version: 3, id: "wrapped-session", timestamp: "2026-07-01T00:00:20.000Z", cwd: process.cwd() }),
+  JSON.stringify({ type: "message", id: "wru1", parentId: null, timestamp: "2026-07-01T00:00:21.000Z", message: { role: "user", content: [{ type: "text", text: wrappedFirstMessage }] } }),
+  JSON.stringify({ type: "message", id: "wra1", parentId: "wru1", timestamp: "2026-07-01T00:00:22.000Z", message: { role: "assistant", content: [{ type: "text", text: "an answer" }] } }),
+].join("\n") + "\n");
+
 // A session whose only real content is unparseable — the file backfill yields zero
 // turns, so /resume falls back to get_messages (proving the fallback still works).
 const FALLBACK_SESSION = "2026-07-01T00-00-10-000Z_fallback.jsonl";
@@ -127,7 +142,12 @@ const html = await r.text();
 t("serves the SPA shell", html.includes("<title>coop</title>") && html.includes("/app.js"));
 
 r = await fetch(base + "/app.js", { headers: { cookie } });
+const appJsSrc = await r.text();
 t("app.js served with cookie", r.status === 200 && /javascript/.test(r.headers.get("content-type") || ""));
+// Fix B (docs/web-security-fix-plan.md): the SPA drops the landing ?token= from the URL
+// after load (the cookie is the real gate). No DOM harness for app.js, so assert the guard.
+t("app.js strips the token from the address bar after load (Fix B)",
+  appJsSrc.includes('location.search.includes("token=")') && /history\.replaceState\(null, "", location\.pathname\)/.test(appJsSrc));
 
 r = await fetch(base + "/viewer.js", { headers: { cookie } });
 t("viewer.js served with cookie", r.status === 200 && /javascript/.test(r.headers.get("content-type") || ""));
@@ -227,6 +247,27 @@ let poll = await r.json();
 t("poll returns a cursor + cwd", typeof poll.next === "number" && poll.next > 0 && typeof poll.cwd === "string");
 t("poll at 0 excludes the answered dialog", !poll.events.some((l) => l.includes(dialog.id)));
 t("poll at 0 includes earlier stream events", poll.events.some((l) => l.includes("polo:marco")));
+
+// --- Fix A (docs/web-security-fix-plan.md): answeredUi is bounded, not unbounded ------
+// Flood the per-chat dedupe set past its cap (ANSWERED_UI_MAX = 500) with distinct junk
+// ids. Eviction is oldest-first, so: (1) the handler survives the flood, (2) the
+// earlier-answered real dialog id — the OLDEST entry — is evicted and its card REPLAYS
+// again (proving the Set is bounded, not growing forever), and (3) re-answering it is
+// still honored (eviction didn't corrupt the Set). Re-answering restores the pre-flood
+// state so later tests are unaffected.
+let floodOk = true;
+for (let i = 0; i < 550; i++) {
+  const rr = await post("/ui-response", { id: `flood-${i}` });
+  if (rr.status !== 200) floodOk = false;
+}
+t("flooding /ui-response past the cap stays 200 (handler survives eviction)", floodOk);
+rep = await (await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } })).json();
+t("answeredUi is bounded — the oldest answered dialog id was evicted, so its card replays again",
+  rep.events.some((l) => l.includes(dialog.id)));
+await post("/ui-response", { id: dialog.id, value: dialog.options[0] }); // re-answer -> restore state
+rep = await (await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } })).json();
+t("re-answering after the flood is still honored (eviction didn't corrupt the Set)",
+  !rep.events.some((l) => l.includes(dialog.id)));
 
 const cursor = poll.next;
 await post("/prompt", { message: "again" });
@@ -333,6 +374,9 @@ t("/sessions -> 200", r.status === 200);
 let sess = (await r.json()).sessions;
 const mine = sess.find((x) => x.file === FAKE_SESSION);
 t("lists the prior conversation with name + preview", !!mine && mine.name === "My old chat" && mine.preview.includes("hello from the past"));
+const wrapped = sess.find((x) => x.file === WRAP_SESSION);
+t("/sessions strips the <coop-viewing-context> wrapper from the preview (issue #6)",
+  !!wrapped && wrapped.preview.startsWith("real question here") && !wrapped.preview.includes("coop-viewing-context"));
 
 r = await post("/resume", { file: "../evil.jsonl" });
 t("/resume path-jails the filename", r.status === 400);
@@ -807,6 +851,87 @@ t("/rpc new_session {sid:sid1} -> success", ns.success === true);
 r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
 const p1e = await r.json();
 t("chat 1's history reset to 0 by its own new_session", p1e.next === 0);
+
+// --- issue #10: DEFAULT_CWD is normalized (trailing separator / relative --cwd) -------
+// A second, short-lived bridge started with a TRAILING-SEPARATOR --cwd must resolve the
+// chat cwd to the canonical (separator-stripped) path, and /history must then mark that
+// folder's group current — proving the whole cwd-compare chain uses one canonical form.
+{
+  const PORT2 = PORT + 1;
+  const spec2 = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: agentDir } });
+  const srv2 = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT2), "--cwd", workDir + "/"], {
+    env: { ...process.env, COOP_LAUNCH_SPEC: spec2, COOP_WEB_NO_OPEN: "1" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let err2 = "";
+  srv2.stderr.on("data", (d) => (err2 += d));
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("bridge2 didn't start in 10s")), 10000);
+    const poll = setInterval(() => {
+      if (/http:\/\/127\.0\.0\.1:\d+\/\?token=[a-f0-9]+/.test(err2)) { clearTimeout(timer); clearInterval(poll); resolve(); }
+    }, 100);
+  }).catch((e) => die("bridge2: " + e.message + "\n" + err2));
+  const base2 = `http://127.0.0.1:${PORT2}`;
+  const url2 = err2.match(/http:\/\/127\.0\.0\.1:\d+\/\?token=[a-f0-9]+/)[0];
+  const cookie2 = ((await fetch(url2)).headers.get("set-cookie") || "").split(";")[0];
+  // Read the __hello frame off SSE.
+  const hello2 = await (async () => {
+    const ctrl = new AbortController();
+    const resp = await fetch(base2 + "/events", { headers: { cookie: cookie2 }, signal: ctrl.signal });
+    const reader = resp.body.getReader();
+    let buf = "";
+    const until = Date.now() + 2000;
+    while (Date.now() < until && !buf.includes("__hello")) {
+      const race = await Promise.race([reader.read(), new Promise((res) => setTimeout(() => res(null), 100))]);
+      if (!race || race.done) break;
+      buf += Buffer.from(race.value).toString("utf8");
+    }
+    ctrl.abort();
+    return buf.split("\n\n").map((f) => f.replace(/^data: /, "").trim()).filter(Boolean)
+      .map((f) => { try { return JSON.parse(f); } catch { return null; } }).filter(Boolean)
+      .find((e) => e.ev && e.ev.type === "__hello");
+  })();
+  t("trailing-separator --cwd normalizes the chat cwd to resolvePath(workDir)",
+    !!hello2 && hello2.ev.chats[0].cwd === resolvePath(workDir));
+  const h2 = await (await fetch(base2 + `/history?sid=${hello2.ev.chats[0].sid}`, { headers: { cookie: cookie2 } })).json();
+  const cur2 = (h2.groups || []).find((g) => g.current);
+  t("trailing-separator --cwd: /history marks the resolved folder current",
+    !!cur2 && cur2.dir === resolvePath(workDir));
+  await new Promise((resolve) => { const done = setTimeout(resolve, 2000); srv2.on("exit", () => { clearTimeout(done); resolve(); }); srv2.kill(); });
+}
+
+// --- issue #11: per-command /rpc timeout (compact gets a longer ceiling) --------------
+// (a) On the default-timeout main bridge, a promptly-answered compact returns 200.
+r = await post("/rpc", { sid: sid1, type: "compact" });
+t("compact returns 200 on the default path (prompt answer)", r.status === 200);
+{
+  const cd = await r.json();
+  t("compact 200 carries the summary data", !!cd && cd.success === true && cd.data && cd.data.tokensBefore === 50000);
+}
+// (b) A bridge with COOP_WEB_RPC_TIMEOUT_COMPACT=500 against a stub that delays compact
+//     ~2 s returns 504 (the timeout path); a NON-compact command is unaffected, proving
+//     the timeout is per-command, not a blanket change.
+{
+  const PORT3 = PORT + 2;
+  const spec3 = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: agentDir } });
+  const srv3 = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT3)], {
+    env: { ...process.env, COOP_LAUNCH_SPEC: spec3, COOP_WEB_NO_OPEN: "1", COOP_WEB_RPC_TIMEOUT_COMPACT: "500", COOP_STUB_COMPACT_DELAY_MS: "2000" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let err3 = "";
+  srv3.stderr.on("data", (d) => (err3 += d));
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("bridge3 didn't start in 10s")), 10000);
+    const poll = setInterval(() => { if (/\/\?token=[a-f0-9]+/.test(err3)) { clearTimeout(timer); clearInterval(poll); resolve(); } }, 100);
+  }).catch((e) => die("bridge3: " + e.message + "\n" + err3));
+  const base3 = `http://127.0.0.1:${PORT3}`;
+  const url3 = err3.match(/http:\/\/127\.0\.0\.1:\d+\/\?token=[a-f0-9]+/)[0];
+  const cookie3 = ((await fetch(url3)).headers.get("set-cookie") || "").split(";")[0];
+  const rpc3 = (type) => fetch(base3 + "/rpc", { method: "POST", headers: { cookie: cookie3, "content-type": "application/json", "x-coop-csrf": "1" }, body: JSON.stringify({ type }) });
+  t("compact times out -> 504 when COOP_WEB_RPC_TIMEOUT_COMPACT is short and pi is slow", (await rpc3("compact")).status === 504);
+  t("a non-compact command is unaffected by the compact timeout override (200)", (await rpc3("get_state")).status === 200);
+  await new Promise((resolve) => { const done = setTimeout(resolve, 2000); srv3.on("exit", () => { clearTimeout(done); resolve(); }); srv3.kill(); });
+}
 
 // Wait for the bridge to actually exit (release its port) before we exit, so a
 // back-to-back run can't collide with a lingering listener.

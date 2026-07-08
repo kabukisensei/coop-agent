@@ -226,6 +226,10 @@ a mismatch). When you bump Pi:
 5. Bump the "Tested against the RPC protocol of Pi 0.80.x" line in *Known
    limitations* below, and the verified-against version noted in the
    `protocol.mjs` header comment.
+6. Bump `tested_with.pi` in `config/defaults.yml` to the newly-verified Pi version.
+   Until you do, `coop update` will warn teammates and **hold at the old tested
+   version** when Pi ships a newer minor (and `coop doctor` flags a machine already
+   on it) — that guard is deliberate; this bump is how you release the new floor.
 
 ## Known limitations
 

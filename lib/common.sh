@@ -222,6 +222,20 @@ coop_pi_version() {
   pi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
+# True (0) if version $1's MAJOR.MINOR is strictly newer than $2's (patch ignored). Used
+# to gate `coop update` at the tested-Pi ceiling (a new MINOR is where Pi's extension API
+# has broken before, e.g. 0.74→0.80) and to warn in doctor. Empty/non-numeric input is
+# treated as "not newer" (return 1), so a parse hiccup never trips the gate.
+coop_minor_newer() {
+  local a="$1" b="$2" amaj amin bmaj bmin
+  amaj="${a%%.*}"; amin="${a#*.}"; amin="${amin%%.*}"
+  bmaj="${b%%.*}"; bmin="${b#*.}"; bmin="${bmin%%.*}"
+  case "$amaj.$amin.$bmaj.$bmin" in *[!0-9.]*|*..*|.*|*.) return 1 ;; esac
+  if [ "$amaj" -gt "$bmaj" ]; then return 0; fi
+  if [ "$amaj" -eq "$bmaj" ] && [ "$amin" -gt "$bmin" ]; then return 0; fi
+  return 1
+}
+
 # Warn that the agent itself is too old to satisfy an installed extension's pi-ai
 # requirement. Args: <agent-version> [required-floor] [offending-ext] (the last two
 # come from _extdeps.py fields 7/8; "-" or empty falls back to a generic message).

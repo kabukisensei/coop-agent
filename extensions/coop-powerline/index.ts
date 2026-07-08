@@ -259,7 +259,7 @@ export default function coopPowerline(pi: ExtensionAPI) {
       }
       // Working vibes + honeycomb indicator.
       if (typeof ctx.ui.setWorkingMessage === "function") {
-        ctx.ui.setWorkingMessage(`${OLIVE("⬡")} ${pickVibe()}`);
+        ctx.ui.setWorkingMessage(pickVibe());
       }
       if (typeof ctx.ui.setWorkingIndicator === "function") {
         ctx.ui.setWorkingIndicator({ frames: HEX_FRAMES, intervalMs: 140 });
@@ -274,7 +274,7 @@ export default function coopPowerline(pi: ExtensionAPI) {
   pi.on("turn_start", async (_event, ctx) => {
     try {
       if (ctx.hasUI && typeof ctx.ui.setWorkingMessage === "function") {
-        ctx.ui.setWorkingMessage(`${OLIVE("⬡")} ${pickVibe()}`);
+        ctx.ui.setWorkingMessage(pickVibe());
       }
     } catch {
       /* ignore */
@@ -299,7 +299,7 @@ export default function coopPowerline(pi: ExtensionAPI) {
       if (vibes.length === 0) vibes = FALLBACK_VIBES;
       const v = pickVibe();
       if (ctx.hasUI && typeof ctx.ui.setWorkingMessage === "function") {
-        ctx.ui.setWorkingMessage(`${OLIVE("⬡")} ${v}`);
+        ctx.ui.setWorkingMessage(v);
       }
       ctx.ui.notify(`vibe[${currentSet ?? "all"}]: ${stripAnsi(v)}`, "info");
     },

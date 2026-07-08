@@ -15,11 +15,15 @@ export COOP_ROOT
 . "$COOP_ROOT/lib/common.sh"
 
 NO_FABRIC=0
+CHECK=0        # --check: dry-run — report current/latest/tested, change nothing
+PI_LATEST=0    # --pi-latest: skip the tested-version gate and take latest Pi
 for a in "$@"; do
   case "$a" in
     '') ;;
     --no-fabric) NO_FABRIC=1 ;;
     --yes|-y) export COOP_ASSUME_YES=1 ;;
+    --check) CHECK=1 ;;
+    --pi-latest) PI_LATEST=1 ;;
     *) coop_warn "update: ignoring unknown flag '$a'" ;;
   esac
 done
@@ -33,6 +37,24 @@ PY_TOOLS=( coop-data-doc coop-sql-review coop-dax-review )
 # Update coop's ISOLATED Pi agent dir (not the user's personal pi).
 PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"; export PI_CODING_AGENT_DIR
 
+# --- Tested-version guard ------------------------------------------------------
+# coop's one real incident (#1) was a version-compat break: `coop update` jumped Pi to a
+# new minor whose extension API coop's extensions weren't verified against. Guard the
+# jump at the tested ceiling (config/defaults.yml tested_with.pi). PI_INSTALL_TARGET, when
+# set, tells _unit_pi_update to PIN Pi to that version (extensions still update) instead
+# of `pi update --all`.
+PI_TESTED="$(coop_yaml_get "$COOP_ROOT/config/defaults.yml" tested_with.pi "")"
+PI_INSTALL_TARGET=""
+PI_PKG="@earendil-works/pi-coding-agent"
+
+# Latest published Pi version. COOP_PI_LATEST_OVERRIDE short-circuits the registry query
+# (tests set it; real runs hit npm). Echoes "" when it can't be determined.
+_pi_latest() {
+  if [ -n "${COOP_PI_LATEST_OVERRIDE:-}" ]; then printf '%s' "$COOP_PI_LATEST_OVERRIDE"; return 0; fi
+  have npm || return 0
+  npm view "$PI_PKG" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
 # Overall-bar denominator: the update ITEMS we will attempt (pi update + each
 # pipx tool). Steps 1/4/5 (git pull / sync / doctor) sit outside the bar, exactly
 # as the install bar covers only its install items.
@@ -44,6 +66,15 @@ PROG_TOTAL=$(( 1 + ${#PY_TOOLS[@]} ))
 # the overall bar — same contract as the install units.
 _unit_pi_update() {
   have pi || { printf 'pi not installed — run: coop install'; return 1; }
+  if [ -n "$PI_INSTALL_TARGET" ]; then
+    # The tested-version gate was declined: PIN Pi to the tested version (don't jump to an
+    # untested minor), then still refresh extensions so those stay current.
+    if have npm && npm install -g "$PI_PKG@$PI_INSTALL_TARGET" >/dev/null 2>&1; then
+      pi update --extensions >/dev/null 2>&1 || true
+      printf 'pinned pi to tested %s + extensions updated' "$PI_INSTALL_TARGET"; return 0
+    fi
+    printf 'failed to pin pi to %s (try: npm install -g %s@%s)' "$PI_INSTALL_TARGET" "$PI_PKG" "$PI_INSTALL_TARGET"; return 1
+  fi
   # `pi update --all` updates the agent AND every installed extension. (Bare
   # `pi update` updates pi ONLY; `--extensions` updates packages only.)
   if pi update --all >/dev/null 2>&1; then
@@ -62,7 +93,49 @@ _unit_pytool_upgrade() {  # $1 = package
   printf 'upgrade failed: %s' "$pkg"; return 1
 }
 
+# --- coop update --check (dry-run: report versions, change NOTHING) ----------
+if [ "$CHECK" = "1" ]; then
+  coop_head "coop update --check (dry-run — nothing is installed)"
+  pi_cur="$(coop_pi_version)"; [ -n "$pi_cur" ] || pi_cur="not installed"
+  pi_lat="$(_pi_latest)"; [ -n "$pi_lat" ] || pi_lat="?"
+  printf '  %-24s current %-13s latest %-13s tested %s\n' "pi ($PI_PKG)" "$pi_cur" "$pi_lat" "${PI_TESTED:-?}"
+  if [ -n "$PI_TESTED" ] && coop_minor_newer "$pi_lat" "$PI_TESTED"; then
+    coop_warn "latest Pi ($pi_lat) is a newer MINOR than tested ($PI_TESTED) — 'coop update' will ask before jumping (skip with --pi-latest, or decline to stay on the tested version)."
+  fi
+  for pkg in "${PY_TOOLS[@]}"; do
+    key="$(printf '%s' "$pkg" | tr '-' '_')"
+    tv="$(coop_yaml_get "$COOP_ROOT/config/defaults.yml" "tested_with.$key" "-")"
+    cur="$(pipx list 2>/dev/null | grep -E "package $pkg " | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    [ -n "$cur" ] || cur="not installed"
+    printf '  %-24s current %-13s %-20s tested %s\n' "$pkg" "$cur" "" "$tv"
+  done
+  exit 0
+fi
+
 coop_head "coop update (v${COOP_VERSION})"
+
+# Tested-version gate: if latest Pi crosses the tested MINOR and the user didn't pass
+# --pi-latest, ask before jumping. Declining (or a non-interactive shell without --yes)
+# pins Pi to the tested version instead — extensions still update. Runs before the bar so
+# the decision is made before any install starts.
+if have pi && [ -n "$PI_TESTED" ] && [ "$PI_LATEST" != "1" ]; then
+  pi_lat="$(_pi_latest)"
+  if [ -n "$pi_lat" ] && coop_minor_newer "$pi_lat" "$PI_TESTED"; then
+    coop_warn "Pi $pi_lat is newer than coop's tested version ($PI_TESTED). New Pi minors have broken coop's extensions before (0.74 → 0.80)."
+    if coop_confirm "Jump to the untested Pi $pi_lat anyway?"; then
+      coop_info "Updating to the latest Pi $pi_lat (untested with this coop build)."
+    else
+      PI_INSTALL_TARGET="$PI_TESTED"
+      coop_info "Staying on the tested Pi $PI_TESTED (extensions will still update). Re-run with --pi-latest to take $pi_lat."
+    fi
+  fi
+fi
+
+# Test seam: print the resolved gate decision and stop BEFORE any install or side effect.
+if [ "${COOP_UPDATE_GATE_DRYRUN:-0}" = "1" ]; then
+  if [ -n "$PI_INSTALL_TARGET" ]; then printf 'GATE pin:%s\n' "$PI_INSTALL_TARGET"; else printf 'GATE all\n'; fi
+  exit 0
+fi
 
 # --- 1. Update coop-agent itself ---------------------------------------------
 coop_head "1/5  coop-agent repository"

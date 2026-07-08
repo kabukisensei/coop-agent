@@ -44,6 +44,14 @@ human at Cooptimize approving it.
 > tool-approval prompts and this advisory prompt; enable the optional `pi-permissions`
 > extension for hard per-tool gating. If a tool call is blocked, read the reason and
 > adjust — don't try to route around it.
+>
+> **These decisions are logged.** Every block and every confirm (allowed or declined) is
+> appended as one JSON line to `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default
+> `~/.coop/agent/…`): timestamp, working folder, kind, decision, and the offending path(s)
+> or a truncated command — **secrets and file contents are never written** (the secret gate
+> records only the matched path). Run `/coop-guardrails` to see the last ~10 decisions and
+> the log path. The log is a reviewable trail of "the agent tried X; a human said yes/no",
+> not a place to hide activity.
 
 ## The Cooptimize workflow (use the `coop-workflow` skill)
 

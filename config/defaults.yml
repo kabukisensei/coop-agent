@@ -99,7 +99,11 @@ resources:
   splash: extensions/coop-powerline/assets/splash.ansi
 
 # Tested-with versions (reference). Installs pull the latest unless you pin; doctor
-# warns when Pi is older than pi_min (the extension API coop's extensions rely on).
+# warns when Pi is older than pi_min (the extension API coop's extensions rely on) AND
+# when it is a newer MINOR than `pi` below. `coop update` reads `pi` here to gate the
+# jump: crossing the tested minor prompts before taking latest (decline -> pin to `pi`;
+# `--pi-latest`/`--yes` take latest). Bump `pi` as part of the Pi-upgrade checklist
+# (web/README.md) once coop's extensions + protocol are re-verified against a new Pi.
 tested_with:
   pi_min: "0.79.0"
   pi: "0.80.2"          # @earendil-works/pi-coding-agent (requires Node >= 22.19)

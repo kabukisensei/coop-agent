@@ -8,13 +8,20 @@
 #      except intentional singletons listed in ALLOWLIST below;
 #   2. bin/coop and bin/coop.ps1 must both exist;
 #   3. every .ps1 in the repo must start with the UTF-8 BOM (EF BB BF) —
-#      Windows PowerShell 5.1 reads a BOM-less .ps1 as ANSI (mojibake).
+#      Windows PowerShell 5.1 reads a BOM-less .ps1 as ANSI (mojibake);
+#   4. STRUCTURAL parity (grep-based, best-effort — catches the drift the file-level
+#      checks can't): bin/coop and bin/coop.ps1 must dispatch the SAME subcommand
+#      tokens, and install/update/doctor's bash and PowerShell arg parsers must
+#      recognize the SAME flags. A subcommand or flag added to only one side fails here.
 #
 # bash 3.2 compatible (macOS stock /bin/bash). Exits non-zero listing offenders.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 cd "$ROOT"
+
+PARITY_TMP="$(mktemp -d)"
+trap 'rm -rf "$PARITY_TMP"' EXIT
 
 # Intentional singletons (repo-relative paths). A dev/CI-only or platform-specific
 # script goes here — with a reason — instead of growing a pointless twin.
@@ -79,6 +86,62 @@ while IFS= read -r f; do
     ko "$f is missing the UTF-8 BOM — fix: printf '\\357\\273\\277' | cat - '$f' > '$f.bom' && mv '$f.bom' '$f'"
   fi
 done < <(find . -name '*.ps1' -not -path './.git/*' -not -path '*/node_modules/*' | sed 's|^\./||' | sort)
+
+# --- Structural parity (grep-based) ------------------------------------------
+# These extractors are deliberately simple and anchored on the real markers in the
+# dispatchers/parsers, so an unrelated `case`/`switch` elsewhere isn't swept in.
+# They print SORTED token sets; a set difference means the two sides drifted.
+
+# Subcommand tokens from bin/coop's `# --- Dispatch` case block (patterns are the
+# only 2-space-indented, non-comment lines; split on `|`; drop the `*`/`-*` catch-alls).
+_bash_dispatch() {
+  awk '/^# --- Dispatch/{f=1;next} f&&/^esac/{exit} f' bin/coop \
+    | grep -E '^  [^ #]' \
+    | sed -E 's/\).*$//; s/^[[:space:]]+//' \
+    | tr '|' '\n' | tr -d "\"'" \
+    | awk '{gsub(/^[ \t]+|[ \t]+$/,"")} NF && $0 !~ /^-?\*$/' | sort -u
+}
+# Subcommand tokens from bin/coop.ps1's `switch -CaseSensitive ($cmd)`: the first
+# quoted token of a `'x' { … }` label, plus every quoted token of a compound
+# `{ $_ -eq 'x' -or … } {` label. `default` and the empty `''` label are excluded.
+_ps_dispatch() {
+  local block; block="$(awk '/switch -CaseSensitive \(\$cmd\)/{f=1} f{print} f&&/^}$/{exit}' bin/coop.ps1)"
+  { printf '%s\n' "$block" | grep -E "^[[:space:]]*'[^']+'[[:space:]]*\{" | sed -E "s/^[[:space:]]*'([^']+)'.*/\1/"
+    printf '%s\n' "$block" | grep -E "^[[:space:]]*\{.*-eq '" | grep -oE "'[^']*'" | tr -d "'"
+  } | awk '{gsub(/^[ \t]+|[ \t]+$/,"")} NF && $0 != "default"' | sort -u
+}
+# Recognized flags from a bash arg parser: the `-flag)` / `-a|--flag)` case patterns.
+_bash_flags() {
+  grep -oE '^[[:space:]]*-{1,2}[A-Za-z][A-Za-z0-9-]*(\|-{1,2}[A-Za-z][A-Za-z0-9-]*)*\)' "$1" \
+    | sed -E 's/\)$//; s/^[[:space:]]+//' | tr '|' '\n' | awk 'NF' | sort -u
+}
+# Recognized flags from a PowerShell arg parser: `'-flag' { … }` switch labels and
+# `-eq '-flag'` comparisons (scoped so version-command args like '--version' don't leak).
+_ps_flags() {
+  grep -E "^[[:space:]]*'-{1,2}[A-Za-z][^']*'[[:space:]]*\{|-eq '-" "$1" \
+    | grep -oE "'-{1,2}[A-Za-z][A-Za-z0-9-]*'" | tr -d "'" | awk 'NF' | sort -u
+}
+_report_diff() { # <label> <bash-list-file> <ps-list-file>
+  if diff "$2" "$3" >/dev/null 2>&1; then
+    ok "$1"
+  else
+    ko "$1 — bash and PowerShell disagree"
+    printf '      bash: %s\n' "$(tr '\n' ' ' < "$2")"
+    printf '      ps  : %s\n' "$(tr '\n' ' ' < "$3")"
+  fi
+}
+
+echo "→ dispatch-table parity (bin/coop ↔ bin/coop.ps1 subcommands)"
+_bash_dispatch > "$PARITY_TMP/disp-bash" || true
+_ps_dispatch   > "$PARITY_TMP/disp-ps"   || true
+_report_diff "bin/coop ↔ bin/coop.ps1 dispatch subcommands match" "$PARITY_TMP/disp-bash" "$PARITY_TMP/disp-ps"
+
+echo "→ flag parity (install / update / doctor arg parsers)"
+for pair in install update doctor; do
+  _bash_flags "scripts/$pair.sh"  > "$PARITY_TMP/$pair-bash" || true
+  _ps_flags   "scripts/$pair.ps1" > "$PARITY_TMP/$pair-ps"   || true
+  _report_diff "scripts/$pair.{sh,ps1} recognize the same flags" "$PARITY_TMP/$pair-bash" "$PARITY_TMP/$pair-ps"
+done
 
 if [ "$fail" -ne 0 ]; then
   echo "✗ parity check FAILED — fix the offenders above (see CONTRIBUTING.md → PowerShell requirements)"

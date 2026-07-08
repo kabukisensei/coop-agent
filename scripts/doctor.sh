@@ -70,6 +70,13 @@ if have pi; then
   if [ -n "$piv" ] && [ "$(printf '%s\n%s\n' "$minv" "$piv" | sort -V | head -1)" != "$minv" ]; then
     warn "pi $piv is older than the tested minimum ($minv)" "coop update"
   fi
+  # Ceiling: warn (never fail) when the installed Pi is a newer MINOR than coop's tested
+  # version — new Pi minors have broken coop's extensions before. `coop update` gates this
+  # jump; doctor just flags a machine that already crossed it.
+  tested_pi="$(coop_yaml_get "$COOP_ROOT/config/defaults.yml" tested_with.pi "")"
+  if [ -n "$piv" ] && [ -n "$tested_pi" ] && coop_minor_newer "$piv" "$tested_pi"; then
+    warn "pi $piv is newer than coop's tested version ($tested_pi)" "if extensions misbehave, pin back: npm i -g @earendil-works/pi-coding-agent@$tested_pi"
+  fi
 fi
 
 # Pi (latest, @earendil-works) requires Node >= 22.19. Presence is checked above; the

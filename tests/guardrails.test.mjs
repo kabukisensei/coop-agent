@@ -1,19 +1,28 @@
 // Tests for extensions/coop-guardrails — drives the REAL tool_call handler with a
 // mock pi/ctx (COOP_TEST_DIST set by tests/run.sh).
 import { strict as assert } from "node:assert";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// Point the audit log at a throwaway dir BEFORE the handler runs, so no test writes to
+// the real ~/.coop/agent/guardrails-audit.jsonl fallback.
+const AUDIT_DIR = mkdtempSync(join(tmpdir(), "coop-audit-"));
+process.env.PI_CODING_AGENT_DIR = AUDIT_DIR;
+const AUDIT_FILE = join(AUDIT_DIR, "guardrails-audit.jsonl");
+const readAudit = () => (existsSync(AUDIT_FILE) ? readFileSync(AUDIT_FILE, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
+const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
 
 const dist = process.env.COOP_TEST_DIST;
 const cg = await import(`${dist}/coop-guardrails.mjs`);
 const coopGuardrails = cg.default;
-const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel } = cg;
+const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, gitRepoDir, leadingCdDir } = cg;
 
 // Capture the handler the extension registers.
 let staged = "";     // `git diff --cached --name-only`
 let modified = "";   // `git diff --name-only` (what `git commit -a` would stage)
 let confirmAnswer = false;
+let lastRepoDir = ""; // the `-C <dir>` the commit gate ran git against (which repo it checked)
 const handlers = {};
 const cmds = {};
 const pi = {
@@ -21,6 +30,7 @@ const pi = {
   registerCommand: (name, opts) => (cmds[name] = opts),
   exec: async (bin, args) => {
     const a = args.join(" ");
+    if (bin === "git") { const i = args.indexOf("-C"); if (i >= 0) lastRepoDir = args[i + 1]; }
     // NB: cached diff args ("diff --cached --name-only") contain BOTH substrings, so
     // check --cached first.
     if (bin === "git" && a.includes("diff --cached")) return { stdout: staged, code: 0, stderr: "" };
@@ -38,6 +48,7 @@ const call = async (command, { stagedFiles = "", modifiedFiles = "", confirm = f
   staged = stagedFiles;
   modified = modifiedFiles;
   confirmAnswer = confirm;
+  lastRepoDir = "";
   return await handle({ toolName, input: { command } }, ctx);
 };
 const callFile = async (toolName, path, { confirm = false } = {}) => {
@@ -72,6 +83,42 @@ await t("allows `git commit -am` when only docs are modified", async () => {
 });
 await t("detects `git -C <dir> commit` (global options before the subcommand)", async () => {
   assert.equal(blocked(await call("git -C /some/repo commit -m x", { stagedFiles: "src/app.py" })), true);
+  assert.equal(lastRepoDir, "/some/repo", "the staged check ran against the -C repo");
+});
+await t("`cd <dir> && git commit -am` checks the cd'd-into repo (not ctx.cwd) and blocks source", async () => {
+  // The chained-cd bypass: the commit runs in /work/other, so the staged/modified check
+  // must target THAT repo, not ctx.cwd. With src/app.py there → blocked.
+  assert.equal(blocked(await call("cd /work/other && git commit -am wip", { stagedFiles: "src/app.py", modifiedFiles: "src/app.py" })), true);
+  assert.equal(lastRepoDir, "/work/other", "ran git against the cd target repo");
+});
+await t("`pushd <dir> && git commit` also targets the pushd'd repo", async () => {
+  assert.equal(blocked(await call("pushd /work/other && git commit -m x", { stagedFiles: "src/app.py" })), true);
+  assert.equal(lastRepoDir, "/work/other");
+});
+await t("`cd <dir> && git commit` of docs only is allowed (target repo, docs)", async () => {
+  assert.equal(blocked(await call("cd /work/other && git commit -am docs", { stagedFiles: "docs/a.md", modifiedFiles: "docs/a.md" })), false);
+});
+await t("a sibling command's -C (`tar -C /tmp && git commit`) is NOT misread as the git repo", async () => {
+  // The -C belongs to tar; the git segment has no -C and no leading cd, so the check
+  // must run against ctx.cwd — never /tmp.
+  assert.equal(blocked(await call("tar -C /tmp -xf x.tar && git commit -am wip", { stagedFiles: "src/app.py" })), true);
+  assert.equal(lastRepoDir, ctx.cwd, "git ran against ctx.cwd, not tar's -C /tmp");
+});
+await t("`cd <dir> && git commit` with an unverifiable target repo confirms (declined → blocked)", async () => {
+  // offendingCommitPaths returns null (nothing staged/modified in the mock) AND there is
+  // a leading cd → the defense-in-depth confirm fires; declining blocks.
+  assert.equal(blocked(await call("cd /elsewhere && git commit -m wip", { stagedFiles: "", modifiedFiles: "", confirm: false })), true);
+  // Approving the same lets it through (fail-open honored via the user's yes).
+  assert.equal(blocked(await call("cd /elsewhere && git commit -m wip", { stagedFiles: "", modifiedFiles: "", confirm: true })), false);
+});
+await t("gitRepoDir/leadingCdDir unit: -C wins over cd; cd honored; siblings ignored", () => {
+  assert.equal(gitRepoDir("git -C /a commit -m x", "/cwd"), "/a");
+  assert.equal(gitRepoDir("cd /b && git commit -m x", "/cwd"), "/b");
+  assert.equal(gitRepoDir("cd sub && git commit -m x", "/cwd"), "/cwd/sub"); // relative → resolved
+  assert.equal(gitRepoDir("tar -C /tmp -xf x && git commit -m x", "/cwd"), "/cwd"); // tar's -C ignored
+  assert.equal(gitRepoDir("git commit -m x", "/cwd"), "/cwd");
+  assert.equal(leadingCdDir("cd /a && cd /b &&"), "/b"); // last cd wins
+  assert.equal(leadingCdDir("echo hi &&"), null);
 });
 await t("blocks `git commit <pathspec>` of source (nothing staged — the pathspec bypass)", async () => {
   // `git commit src/app.py -m x` commits the working-tree content of the named path,
@@ -214,6 +261,62 @@ await t("blocks a declined mutating MCP tool call", async () => {
 await t("allows an approved mutating MCP tool call; never touches read MCP calls", async () => {
   assert.equal(blocked(await handle({ toolName: "fabric_delete_workspace", input: {} }, { ...ctx, ui: { confirm: async () => true, notify: () => {} } })), false);
   assert.equal(blocked(await handle({ toolName: "fabric_list_workspaces", input: {} }, ctx)), false);
+});
+
+// --- audit log (issue #14) --------------------------------------------------------
+await t("audit: a blocked git commit writes one commit-block line with the offending path", async () => {
+  clearAudit();
+  await call("git commit -m x", { stagedFiles: "src/app.py" });
+  const e = readAudit();
+  assert.equal(e.length, 1);
+  assert.equal(e[0].kind, "commit-block");
+  assert.equal(e[0].decision, "blocked");
+  assert.ok(e[0].detail.includes("src/app.py"), "detail names the offending path");
+  assert.ok(typeof e[0].ts === "string" && e[0].ts, "entry is timestamped");
+});
+await t("audit: a declined rm -rf writes decision:declined; an approved one writes decision:allowed", async () => {
+  clearAudit();
+  await call("rm -rf /tmp/x", { confirm: false });
+  await call("rm -rf /tmp/x", { confirm: true });
+  const e = readAudit();
+  assert.equal(e.length, 2);
+  assert.equal(e[0].kind, "danger-confirm");
+  assert.equal(e[0].decision, "declined");
+  assert.equal(e[1].decision, "allowed");
+});
+await t("audit: secret-gate entries record the PATH, never file contents", async () => {
+  clearAudit();
+  await callFile("read", "config/.env", { confirm: false });
+  await call("cat .env", { confirm: false });
+  const e = readAudit();
+  assert.equal(e.length, 2);
+  for (const rec of e) {
+    assert.equal(rec.kind, "secret-confirm");
+    assert.ok(rec.label.includes(".env"), "label is the secret path");
+    // The whole record, serialized, must not carry a bash command body (which could embed a value).
+    const blob = JSON.stringify(rec);
+    assert.ok(!blob.includes("cat "), "no command text is logged for the secret gate");
+  }
+});
+await t("audit: writes never throw even when the log dir is unwritable (fail-open)", async () => {
+  const prev = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = "/proc/nonexistent-coop-audit/nope"; // unwritable path
+  try {
+    // The handler must still return its normal block result despite the logging failure.
+    assert.equal(blocked(await call("git commit -m x", { stagedFiles: "src/app.py" })), true);
+    assert.equal(blocked(await call("rm -rf /tmp/x", { confirm: true })), false);
+  } finally {
+    process.env.PI_CODING_AGENT_DIR = prev;
+  }
+});
+await t("/coop-guardrails output mentions the audit log path", async () => {
+  clearAudit();
+  await call("git commit -m x", { stagedFiles: "src/app.py" }); // one entry to list
+  let shown = "";
+  const ctx2 = { ...ctx, ui: { confirm: async () => false, notify: (msg) => { shown = String(msg); } } };
+  await cmds["coop-guardrails"].handler([], ctx2);
+  assert.ok(shown.includes("guardrails-audit.jsonl"), "prints the audit log path");
+  assert.ok(shown.includes("commit-block"), "lists the recent decision");
 });
 
 console.log(`  ${n} guardrails tests passed`);

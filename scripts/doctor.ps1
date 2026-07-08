@@ -162,6 +162,14 @@ if (Test-Have 'pi') {
   if ($piRaw -match '(\d+)\.(\d+)\.(\d+)') {
     $piv = [version]("{0}.{1}.{2}" -f $matches[1], $matches[2], $matches[3])
     if ($piv -lt [version]'0.79.0') { D-Warn "pi $piv is older than the tested minimum (0.79.0)" 'coop update' }
+    # Ceiling: warn (never fail) when the installed Pi is a newer MINOR than coop's tested
+    # version (mirror of doctor.sh). `coop update` gates the jump; doctor just flags it.
+    $testedPi = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') 'tested_with.pi' ''
+    if ($testedPi -match '(\d+)\.(\d+)') {
+      $testedMinor = [version]("{0}.{1}" -f $matches[1], $matches[2])
+      $piMinor = [version]("{0}.{1}" -f $piv.Major, $piv.Minor)
+      if ($piMinor -gt $testedMinor) { D-Warn "pi $piv is newer than coop's tested version ($testedPi)" "if extensions misbehave, pin back: npm i -g @earendil-works/pi-coding-agent@$testedPi" }
+    }
   }
 }
 

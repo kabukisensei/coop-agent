@@ -103,6 +103,23 @@ jobs:
       - name: run test suite (data-doc config + coop-guardrails enforcement)
         run: bash tests/run.sh
 
+  tests-windows:
+    # Windows is coop's PRIMARY deployment target, yet the Node logic tests (webbridge,
+    # protocol splitter, diff model, guardrails bundle) only ran on ubuntu — so the
+    # win32-specific bridge paths (cmd.exe spawn wrapper, taskkill tree reaping,
+    # case-insensitive samePath, drive-letter session dirs) had ZERO logic coverage. Git
+    # Bash on windows-latest runs tests/run.sh unchanged (bash + node + npx all present).
+    name: logic tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+      - name: run test suite under Git Bash
+        shell: bash
+        run: bash tests/run.sh
+
   windows:
     name: powershell parse (Windows)
     runs-on: windows-latest

@@ -339,6 +339,16 @@ launch.
 6. MCP is read-only.
 7. Never expose secrets.
 
+**Audit trail.** Every guardrail decision the runtime `coop-guardrails` extension makes —
+a blocked source commit, or a confirmed/declined destructive command, secret-file access,
+or mutating MCP call — is appended as one JSON line to
+`$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`). Each line records
+the timestamp, working folder, kind, decision, and the offending path(s) or a truncated
+command — **never secrets or file contents** (the secret gate logs only the matched path).
+Run `/coop-guardrails` in a session to see the last ~10 decisions and the log path; the log
+rolls to `.jsonl.1` past ~1 MB. It's the reviewable record of "the agent tried X; a human
+said yes/no" — useful for client trust and for debugging a guardrail false positive.
+
 **The Cooptimize workflow** (the `coop-workflow` skill — see
 [`skills/coop-workflow/SKILL.md`](skills/coop-workflow/SKILL.md)):
 
@@ -475,13 +485,23 @@ the truecolor block-art Cooptimize logo (uniform-padded, width-robust).
 ## Updating & maintenance
 
 ```bash
-coop update      # updates Pi + Pi extensions + Coop tools + vibes/skills, then runs doctor
-coop sync        # re-sync vibes/powerline + place the read-only MCP config (non-destructive)
-coop doctor      # re-check dependencies and configuration at any time
+coop update          # updates Pi + Pi extensions + Coop tools + vibes/skills, then runs doctor
+coop update --check  # dry-run: show current / latest / tested versions — installs NOTHING
+coop sync            # re-sync vibes/powerline + place the read-only MCP config (non-destructive)
+coop doctor          # re-check dependencies and configuration at any time
 ```
 
 `coop update` keeps Pi, its extensions, and the standalone tools current, then runs
 `coop doctor` so you immediately see anything left to fix.
+
+**Tested-version guard.** coop pins the Pi version it has been verified against
+(`config/defaults.yml` → `tested_with.pi`); a new Pi *minor* has broken coop's extensions
+before. If the latest Pi crosses that tested minor, `coop update` **warns and asks before
+jumping** — decline (or run non-interactively without `--yes`) and it pins Pi to the tested
+version instead, still updating extensions. Take the latest deliberately with
+`coop update --pi-latest` (or `--yes`). Use `coop update --check` first to see what an
+update *would* do before telling the team to run it; `coop doctor` also warns (never fails)
+when the installed Pi is newer than the tested version.
 
 ---
 

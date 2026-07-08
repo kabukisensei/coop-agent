@@ -65,6 +65,9 @@ export const COMMANDS_SENT = {
   get_available_models: {},
   set_model: { provider: "string", modelId: "string" },
   set_thinking_level: { level: "string" },
+  // compact is an LLM round-trip — the /rpc handler gives it a 180 s timeout (RPC_TIMEOUTS
+  // in server.mjs; COOP_WEB_RPC_TIMEOUT_COMPACT overrides), vs the 30 s default for the
+  // rest, so a long compaction on a big session isn't reported as a false failure.
   compact: { customInstructions: "string?" },
   get_session_stats: {},
   set_session_name: { name: "string" },

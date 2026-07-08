@@ -534,7 +534,12 @@ _coop_add_runtime_paths
 # --- Dispatch ----------------------------------------------------------------
 cmd="${1:-}"
 case "$cmd" in
-  ""|--no-launch) launch_pi ;;
+  "")            launch_pi ;;
+  # Dry-run: run the launch preflights but PRINT the resolved pi invocation instead of
+  # exec'ing it — the flag name's plain meaning (it used to launch, the opposite). Same
+  # stdout as `coop launch-spec`; trailing args (e.g. --json) pass through. Preflight is
+  # a no-op when pi is absent, so this exits 0 even on a machine without pi installed.
+  --no-launch)   shift; coop_launch_preflight; coop_launch_spec "$@" ;;
   doctor)        shift; exec "$COOP_ROOT/scripts/doctor.sh" "$@" ;;
   update)        shift; exec "$COOP_ROOT/scripts/update.sh" "$@" ;;
   bootstrap)     shift; exec "$COOP_ROOT/scripts/install.sh" "$@" ;;

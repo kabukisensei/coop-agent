@@ -30,8 +30,9 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, existsSync, readFileSync, renameSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 // Paths the agent MAY commit; everything else counts as source. The .coop/project.yml
 // `approval_policy.agent_allowed_to_commit` globs are merged in on top of these.
@@ -175,15 +176,71 @@ export function explicitCommitPathspecs(cmd: string): string[] {
   return specs;
 }
 
-/** The effective git repo dir for a command: its `-C <dir>` value (last wins, like
- *  git; quote-aware), else the caller's cwd. So the staged-files check runs against
- *  the repo the commit actually targets, not always ctx.cwd. */
+/** The shell segment (top-level, split on ; && || | &) that contains string index
+ *  `idx`, plus everything before it — positions are on the ORIGINAL string so callers
+ *  can slice exactly. Not quote-aware for the separators (matches the pragmatic split
+ *  explicitCommitPathspecs already uses); over-splitting only ever narrows the window a
+ *  detector looks at, it never opens a bypass. */
+function segmentAround(cmd: string, idx: number): { segment: string; before: string } {
+  const sep = /&&|\|\||[;&|]/g;
+  let start = 0, end = cmd.length;
+  let m: RegExpExecArray | null;
+  while ((m = sep.exec(cmd))) {
+    const s = m.index, e = m.index + m[0].length;
+    if (e <= idx) start = e;               // separator fully before idx → next segment starts here
+    else if (s >= idx) { end = s; break; } // first separator at/after idx → segment ends here
+  }
+  return { segment: cmd.slice(start, end), before: cmd.slice(0, start) };
+}
+
+/** The directory of the LAST `cd <dir>` / `pushd <dir>` in a command prefix, or null.
+ *  Quote-aware (reuses tokenizeArgs). `cd` with no arg or an option arg (`cd -`) is
+ *  ignored — it can't be resolved to a concrete repo, so we fall back to cwd there. */
+export function leadingCdDir(before: string): string | null {
+  let dir: string | null = null;
+  for (const seg of before.split(/&&|\|\||[;&|]/)) {
+    const toks = tokenizeArgs(seg.trim());
+    if ((toks[0] === "cd" || toks[0] === "pushd") && toks[1] && !toks[1].startsWith("-")) {
+      dir = toks[1];
+    }
+  }
+  return dir;
+}
+
+function resolveDir(dir: string, cwd: string): string {
+  return isAbsolute(dir) ? dir : resolve(cwd, dir);
+}
+
+/** The effective git repo dir for a `git commit` command, resolved to an absolute path:
+ *  git's own `-C <dir>` global option if present (scanned ONLY in the `git … commit`
+ *  prefix, so a sibling command's `-C` like `tar -C /tmp` and a `commit -C <ref>`
+ *  reuse-message are never misread as the repo); else a leading `cd`/`pushd` target from
+ *  an earlier shell segment (`cd /other && git commit …` — the chained-cd bypass); else
+ *  the caller's cwd. So the staged-files check runs against the repo the commit actually
+ *  targets, not always ctx.cwd. */
 export function gitRepoDir(cmd: string, cwd: string): string {
+  const gc = GIT_COMMIT_RE.exec(cmd);
+  // git's global -C lives BETWEEN `git` and `commit` — i.e. inside the match itself.
+  const prefix = gc ? gc[0] : cmd;
   const re = /(?:^|\s)-C\s+(?:"([^"]*)"|'([^']*)'|(\S+))/g;
   let m: RegExpExecArray | null;
   let dir: string | null = null;
-  while ((m = re.exec(cmd))) dir = m[1] ?? m[2] ?? m[3] ?? dir;
-  return dir || cwd;
+  while ((m = re.exec(prefix))) dir = m[1] ?? m[2] ?? m[3] ?? dir;
+  if (dir) return resolveDir(dir, cwd);
+  if (gc) {
+    const cd = leadingCdDir(segmentAround(cmd, gc.index).before);
+    if (cd) return resolveDir(cd, cwd);
+  }
+  return cwd;
+}
+
+/** True when a `cd`/`pushd` precedes the `git commit` segment (`cd /other && git commit
+ *  …`) — the chained-cd shape whose target repo the staged-file check may not be able to
+ *  reach. Used to prompt instead of silently allowing when the check can't determine. */
+export function commitHasLeadingCd(cmd: string): boolean {
+  const gc = GIT_COMMIT_RE.exec(cmd);
+  if (!gc) return false;
+  return leadingCdDir(segmentAround(cmd, gc.index).before) !== null;
 }
 
 /** Will this `git commit` auto-stage tracked changes (-a / --all / a short-flag
@@ -302,8 +359,59 @@ export function bashSecretCmdPath(cmd: string): string | null {
   return null;
 }
 
+// --- Audit trail ----------------------------------------------------------------
+// An append-only JSONL record of what the guardrails blocked/confirmed, WHEN, and in
+// WHICH repo. For a governed, review-first practice this is direct client-trust value
+// and the fastest way to debug a false positive (e.g. the git -C / pathspec / cd family
+// that has needed several rounds of fixes). SECRETS ARE NEVER WRITTEN — the secret gate
+// logs only the matched path, never file contents; commands are truncated. Every write is
+// wrapped so a logging failure can never block work or crash pi (the extension's prime
+// directive is fail-open).
+const AUDIT_MAX_BYTES = 1_000_000;
+function auditDir(): string {
+  return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".coop", "agent");
+}
+function auditPath(): string {
+  return join(auditDir(), "guardrails-audit.jsonl");
+}
+type AuditEntry = {
+  ts?: string;     // set by audit() on write; present on every read
+  cwd: string;
+  kind: "commit-block" | "danger-confirm" | "secret-confirm" | "mcp-confirm";
+  tool: string;
+  decision: "blocked" | "allowed" | "declined";
+  label: string;   // the short subject (offending path, danger label, tool name)
+  detail: string;  // paths (commit, first 8) or the command truncated to 200 chars — NEVER secrets
+};
+function audit(entry: AuditEntry): void {
+  try {
+    appendFileSync(auditPath(), JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n");
+  } catch {
+    /* fail-open — a logging failure must never block legitimate work */
+  }
+}
+// Best-effort size cap: on load, roll a >1 MB log to .jsonl.1 so it can't grow unbounded.
+function rotateAuditIfLarge(): void {
+  try {
+    const p = auditPath();
+    if (existsSync(p) && statSync(p).size > AUDIT_MAX_BYTES) renameSync(p, p + ".1");
+  } catch {
+    /* best-effort */
+  }
+}
+// The last `n` audit entries (newest last), parsed. Empty on any read/parse trouble.
+function readAuditTail(n: number): AuditEntry[] {
+  try {
+    const lines = readFileSync(auditPath(), "utf8").split("\n").filter((l) => l.trim());
+    return lines.slice(-n).map((l) => JSON.parse(l));
+  } catch {
+    return [];
+  }
+}
+
 export default function coopGuardrails(pi: ExtensionAPI) {
   const enabled = () => process.env.COOP_NO_GUARDRAILS !== "1";
+  rotateAuditIfLarge();
 
   pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
     try {
@@ -319,6 +427,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
             "coop guardrails",
             `Secret-looking file (${verb}):\n  ${path}\ncoop never exposes secrets (tokens, keys, .env). Proceed?`,
           );
+          audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: ok ? "allowed" : "declined", label: path, detail: path });
           if (!ok) {
             return { block: true, reason: `coop guardrails: blocked ${tool} of the secret-looking file ${path} (you declined). Reference an env var / vault instead of reading or writing secrets.` };
           }
@@ -336,6 +445,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
             "coop guardrails",
             `This looks like a MUTATING MCP action (create/update/delete/deploy/publish):\n  ${mcp}\ncoop treats MCP as read-only (list / read / inspect). Run it?`,
           );
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: String(tool), decision: ok ? "allowed" : "declined", label: mcp, detail: mcp });
           if (!ok) {
             return { block: true, reason: `coop guardrails: blocked the MCP action ${mcp} (you declined). MCP is read-only by default — list / read / inspect only; make changes with explicit approval or in the Fabric / Power BI UX.` };
           }
@@ -355,17 +465,22 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           "coop guardrails",
           `This command touches a secret-looking file:\n  ${secretPath}\ncoop never exposes secrets (tokens, keys, .env). Run it?`,
         );
+        // Log the matched PATH only — never the command (it may embed the secret's value).
+        audit({ cwd: ctx.cwd, kind: "secret-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: secretPath, detail: secretPath });
         if (!ok) {
           return { block: true, reason: `coop guardrails: blocked a command touching the secret-looking file ${secretPath} (you declined). Reference an env var / vault instead of reading or writing secrets.` };
         }
       }
 
-      // 1. Never commit source (incl. `git commit -a/-am` auto-staging and `git -C`).
+      // 1. Never commit source (incl. `git commit -a/-am` auto-staging, `git -C <dir>`,
+      //    `git commit <pathspec>`, and `cd <dir> && git commit` — the staged check runs
+      //    against the repo the commit actually targets, see gitRepoDir).
       if (GIT_COMMIT_RE.test(cmd)) {
         const offending = await offendingCommitPaths(pi, ctx.cwd, cmd);
         if (offending && offending.length) {
           const shown = offending.slice(0, 8).join(", ");
           const more = offending.length > 8 ? ` (+${offending.length - 8} more)` : "";
+          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: "git commit", detail: offending.slice(0, 8).join(", ") });
           return {
             block: true,
             reason:
@@ -373,6 +488,21 @@ export default function coopGuardrails(pi: ExtensionAPI) {
               `Unstage them (\`git restore --staged <file>\`), show the diff, and let a human commit. ` +
               `You may commit docs / logs / site / diagrams / glossary.`,
           };
+        }
+        // Defense in depth: a `cd <dir> && git commit …` whose target repo we couldn't
+        // read (offending === null) is the known bypass shape — confirm rather than
+        // silently allow. Fail-open when there's no UI (headless agent), like the other
+        // confirm gates; a plain non-cd commit stays fully silent as before.
+        if (offending === null && commitHasLeadingCd(cmd) && ctx.hasUI && typeof ctx.ui?.confirm === "function") {
+          const ok = await ctx.ui.confirm(
+            "coop guardrails",
+            `Can't verify what this commit would include in the cd'd-into repo:\n  ${cmd.slice(0, 200)}\n` +
+              `The agent may only commit docs / logs / site — a human commits source. Proceed?`,
+          );
+          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: ok ? "allowed" : "declined", label: "cd && git commit", detail: cmd.slice(0, 200) });
+          if (!ok) {
+            return { block: true, reason: `coop guardrails: blocked a \`cd … && git commit\` whose target repo couldn't be verified (you declined). Let a human commit source; the agent may commit docs / logs / site.` };
+          }
         }
       }
 
@@ -384,6 +514,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           "coop guardrails",
           `Destructive command (${danger}):\n  ${cmd.slice(0, 200)}\nRun it?`,
         );
+        audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: danger, detail: cmd.slice(0, 200) });
         if (!ok) {
           return { block: true, reason: `coop guardrails: blocked the ${danger} command (you declined). Propose a safer approach.` };
         }
@@ -399,12 +530,23 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       const lines = [
         `coop-guardrails: ${enabled() ? "ON" : "OFF (COOP_NO_GUARDRAILS=1)"}`,
         "Enforced on the agent's tool calls (your own shell is never intercepted):",
-        "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, and `git commit <path>`) of anything outside docs/logs/site",
+        "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, `git commit <path>`, and `cd <dir> && git commit`) of anything outside docs/logs/site",
         "  • destructive commands — confirms rm -rf / git push --force (incl. +refspec) / reset --hard / git clean -f / DROP·TRUNCATE",
         "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
         "Advisory rules live in docs/guardrails.md. Disable with COOP_NO_GUARDRAILS=1.",
+        "",
+        `Audit log (append-only; secrets/file contents never written): ${auditPath()}`,
       ];
+      const recent = readAuditTail(10);
+      if (recent.length) {
+        lines.push(`Last ${recent.length} decision(s):`);
+        for (const e of recent) {
+          lines.push(`  ${e.ts || "?"}  ${e.kind}/${e.decision}  ${e.label}${e.detail && e.detail !== e.label ? `  (${e.detail})` : ""}`);
+        }
+      } else {
+        lines.push("No guardrail decisions recorded yet.");
+      }
       try {
         if (typeof ctx.ui?.notify === "function") ctx.ui.notify(lines.join("\n"), "info");
       } catch {

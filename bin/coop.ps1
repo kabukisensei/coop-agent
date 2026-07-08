@@ -748,7 +748,11 @@ $rest = if ($argList.Count -gt 1) { @($argList[1..($argList.Count - 1)]) } else 
 Add-CoopRuntimePaths
 
 switch -CaseSensitive ($cmd) {
-  { $_ -eq '' -or $_ -eq '--no-launch' } { Invoke-LaunchPi; break }
+  '' { Invoke-LaunchPi; break }
+  # Dry-run twin of bash's `--no-launch`: run the preflights, then PRINT the resolved pi
+  # invocation instead of launching (the flag used to launch — the opposite of its name).
+  # Same stdout as `coop launch-spec`; trailing args (e.g. --json) pass through.
+  '--no-launch' { Invoke-CoopLaunchPreflight; Invoke-CoopLaunchSpec $rest; break }
   'doctor' { & (Join-Path $script:CoopRoot 'scripts\doctor.ps1') @rest; exit $LASTEXITCODE }
   'update' { & (Join-Path $script:CoopRoot 'scripts\update.ps1') @rest; exit $LASTEXITCODE }
   'bootstrap' { & (Join-Path $script:CoopRoot 'scripts\install.ps1') @rest; exit $LASTEXITCODE }

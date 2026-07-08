@@ -5,6 +5,51 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`coop update` version-ceiling + `--check`** (#13). Guards against an untested Pi
+  version: a tested-version ceiling plus a `--check` dry-run so an update can't silently
+  produce a pinned-agent/extension mismatch. Ported to both dispatchers.
+- **coop-guardrails audit log** (#14). An append-only log of blocked/confirmed actions,
+  so the guardrail layer leaves a reviewable trail.
+
+### Fixed
+
+- **`coop --no-launch` no longer launches the agent** (#4) — it was doing the opposite of
+  its name and silently dropping following args, in both the bash and PowerShell
+  dispatchers. Covered by a new `tests/update-guard.test.sh`.
+- **coop-guardrails: `cd <dir> && git commit -am …` no longer bypasses the
+  never-commit-source gate** (#5) — the staged check was running against the wrong repo.
+- **coop web Files panel no longer keeps a stale selection / attach target** across tab
+  switches and folder changes (#3).
+- **coop web History previews show the user's first message**, not the raw
+  `<coop-viewing-context>` wrapper (#6).
+- **coop web `/resume` normalizes `DEFAULT_CWD` and compares with `samePath()`** instead
+  of a naive string compare (#10).
+- **coop web `/rpc` timeout is no longer a one-size 30s** (#11) — a long compaction no
+  longer reports a false failure.
+- **Vibes: the static duplicate hexagon is gone** — only the animated mark remains.
+
+### Performance
+
+- **coop web streams markdown without O(n²) re-rendering** (#7) — a text_delta no longer
+  re-parses and re-renders the entire message.
+- **coop web tab-switch replay no longer storms RPCs** (#8) — `get_session_stats` and the
+  Files/Changes refetch fire once per switch, not once per replayed `agent_end`.
+
+### Security
+
+- **coop web localhost-bridge hardening** (per `docs/web-security-fix-plan.md`): an
+  `ANSWERED_UI_MAX` cap on buffered answered-question payloads and the companion input
+  bound (fixes A + B of the 2026-07-07 review).
+
+### Internal
+
+- **`check-parity.sh` gates dispatch/flag parity** (#9), not just file existence + BOM, so
+  bash↔PowerShell drift is caught mechanically.
+- **Node test suite (webbridge, protocol, guardrails) now runs on Windows CI** (#12) — the
+  primary deployment platform previously had zero logic-test coverage.
+
 ## [0.10.0] — 2026-07-06
 
 ### Added

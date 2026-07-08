@@ -85,8 +85,12 @@ process.stdin.on("data", (chunk) => {
           { role: "assistant", content: [{ type: "text", text: "old answer" }, { type: "toolCall", id: "t1", name: "sql_review", arguments: {} }] },
         ] } });
     } else if (cmd.type === "compact") {
-      out({ id: cmd.id, type: "response", command: "compact", success: true,
-        data: { summary: "stub summary", tokensBefore: 50000, estimatedTokensAfter: 8000 } });
+      const reply = { id: cmd.id, type: "response", command: "compact", success: true,
+        data: { summary: "stub summary", tokensBefore: 50000, estimatedTokensAfter: 8000 } };
+      // COOP_STUB_COMPACT_DELAY_MS lets a test make compact slow (an LLM round-trip), to
+      // exercise the bridge's per-command /rpc timeout without a real long wait.
+      const delay = Number(process.env.COOP_STUB_COMPACT_DELAY_MS) || 0;
+      if (delay > 0) setTimeout(() => out(reply), delay); else out(reply);
     } else if (cmd.type === "get_session_stats") {
       out({ id: cmd.id, type: "response", command: "get_session_stats", success: true,
         data: {
