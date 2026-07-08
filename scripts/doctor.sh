@@ -190,7 +190,7 @@ for f in "$PI_CODING_AGENT_DIR/mcp.json" "$PWD/.mcp.json" "$PWD/.pi/mcp.json" "$
 done
 if [ -n "$mcp_found" ]; then
   ok "MCP config: $mcp_found"
-  for s in fabric powerbi microsoft-learn context-mode; do
+  for s in fabric powerbi azure-devops microsoft-learn context-mode; do
     grep -qi "\"$s\"" "$mcp_found" 2>/dev/null && ok "  • $s server configured" || true
   done
   grep -qiE 'learn\.microsoft\.com|microsoft-learn' "$mcp_found" 2>/dev/null || warn "  Microsoft Learn MCP not configured" "coop sync   (adds it read-only)"

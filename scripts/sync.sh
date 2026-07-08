@@ -65,6 +65,17 @@ MCP_DST="$PI_AGENT/mcp.json"
 if [ -f "$MCP_SRC" ]; then
   if [ -f "$MCP_DST" ]; then
     coop_ok "MCP config already exists: $MCP_DST"
+    # Non-destructively ADD any servers new in the example but missing here (the plain
+    # copy above only runs on a fresh install, so updates would otherwise never pick up
+    # newly-shipped MCP servers). Existing entries — and their tenant ids — are untouched.
+    _mcp_py="$(coop_python 2>/dev/null || true)"
+    if [ -n "$_mcp_py" ] && [ -f "$COOP_ROOT/lib/_mcpmerge.py" ]; then
+      _mcp_added="$("$_mcp_py" "$COOP_ROOT/lib/_mcpmerge.py" "$MCP_SRC" "$MCP_DST" 2>/dev/null || true)"
+      if [ -n "$_mcp_added" ]; then
+        coop_ok "added missing MCP server(s): $(printf '%s' "$_mcp_added" | tr '\n' ' ')"
+        coop_warn "New MCP server(s) may carry TODO org/tenant placeholders — edit $MCP_DST."
+      fi
+    fi
   else
     cp "$MCP_SRC" "$MCP_DST" && coop_ok "wrote read-only MCP config -> $MCP_DST"
     coop_warn "Edit $MCP_DST and set your tenant id where marked TODO."

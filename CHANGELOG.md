@@ -5,6 +5,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **`coop sync` now backfills MCP servers that are new in the example but missing from an
+  existing config.** Previously `sync` wrote `mcp.json` only on a fresh install and never
+  touched an existing one, so a `coop update` never picked up MCP servers added to
+  `config/mcp.example.json` in a later release. It now merges in any example server absent
+  from your live config — **adding only, never overwriting** your existing entries or their
+  tenant ids (`lib/_mcpmerge.py`, stdlib only). `coop doctor --fix` inherits this (it runs
+  `sync`), and `coop doctor` now also reports the `azure-devops` server.
+
 ## [0.12.0] — 2026-07-08
 
 ### Added

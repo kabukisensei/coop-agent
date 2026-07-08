@@ -190,6 +190,18 @@ $MCP_DST = Join-Path $PI_AGENT 'mcp.json'
 if (Test-Path -LiteralPath $MCP_SRC -PathType Leaf) {
   if (Test-Path -LiteralPath $MCP_DST -PathType Leaf) {
     Coop-Ok "MCP config already exists: $MCP_DST"
+    # Non-destructively ADD any servers new in the example but missing here (the plain
+    # copy below only runs on a fresh install, so updates would otherwise never pick up
+    # newly-shipped MCP servers). Existing entries — and their tenant ids — are untouched.
+    $mcpPy = Get-CoopPython
+    $mcpMerge = Join-Path $script:CoopRoot 'lib/_mcpmerge.py'
+    if ($mcpPy -and (Test-Path -LiteralPath $mcpMerge -PathType Leaf)) {
+      $mcpAdded = (& $mcpPy $mcpMerge $MCP_SRC $MCP_DST 2>$null)
+      if ($mcpAdded) {
+        Coop-Ok "added missing MCP server(s): $((@($mcpAdded) | Where-Object { $_ }) -join ' ')"
+        Coop-Warn "New MCP server(s) may carry TODO org/tenant placeholders — edit $MCP_DST."
+      }
+    }
   } else {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $MCP_DST) | Out-Null
     Copy-Item -LiteralPath $MCP_SRC -Destination $MCP_DST
