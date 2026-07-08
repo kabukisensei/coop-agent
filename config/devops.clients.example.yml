@@ -1,0 +1,54 @@
+# Azure DevOps digest config — EXAMPLE (placeholders only).
+#
+# Copy to ~/.coop/devops/clients.yml (or set COOP_DEVOPS_CONFIG) and fill in real
+# values THERE. The real file is PRIVATE and must never be committed to any repo:
+# it holds client org names, projects, people, and mailbox addresses. This example
+# ships only placeholders (Cooptimize confidentiality policy).
+#
+# Used by: scripts/ado-digest.py (weekly watchdog digest) and scripts/ado-onboard.py
+# (which appends new client blocks here). Schema is documented in the azure-devops
+# skill and docs/plan-azure-devops-integration.md.
+
+defaults:
+  stale_days: 14                 # "assigned but untouched for N days" threshold
+  work_item_types: [User Story, Feature]
+  digest_day: monday             # recommended cadence (scheduler runs it; see the skill)
+  internal_rollup: false         # true = also emit an all-clients rollup to the list below
+  rollup:                        # internal Cooptimize-only summary (used when internal_rollup or --rollup)
+    to: [team@example.com]
+    cc: []
+
+# Microsoft Graph sender for --send email. A dedicated Entra app in the COOPTIMIZE
+# tenant with application permission Mail.Send (admin consent required), restricted by
+# an application access policy to one shared mailbox. The client secret is read from
+# $COOP_GRAPH_CLIENT_SECRET — never put it in this file.
+sender:
+  mailbox: reports@example.com
+  tenant_id: TODO-cooptimize-tenant-id
+  client_id: TODO-entra-app-client-id     # app with Mail.Send
+
+clients:
+  - key: clienta                 # short, safe for env-var and state-file names
+    enabled: true
+    name: Client A               # optional friendly label for the digest header (defaults to project)
+    org: https://dev.azure.com/ClientAOrg
+    project: Project Name
+    teams: [Team Name]           # empty [] = whole project (no area-path scoping)
+    auth: pat                    # pat | azcli | sp
+    tenant_id: TODO              # for azcli/sp auth (the client's tenant)
+    # States are per-client. Fetch them with ado-onboard (it proposes these by category).
+    open_states_exclude: [Closed, Removed, Done]           # states that count as "not open"
+    stale_states_exclude: []     # extra states that should NOT count as stale (e.g. an "In Prod" state)
+    people:                      # one entry per human; merges that org's duplicate identities
+      - name: Jane Doe
+        email: jane@clienta.example.com          # where digest mail about their items routes
+        ado_identities: ["Jane Doe", "Ext-Jane Doe"]   # every display name seen in this org
+        primary: Ext-Jane Doe    # the ACTIVE identity in THIS org (varies per client — guest
+                                 # "Ext-" accounts are primary at some clients, members at others)
+        assign_to: jane.upn@clienta.example.com  # UPN passed to --assigned-to on creates
+    recipients:
+      to: [jane@clienta.example.com]
+      cc: [team@example.com]
+
+  # PAT auth uses an env var named ADO_PAT_<KEY-UPPERCASED> (scope: vso.work).
+  # For key "clienta" that is ADO_PAT_CLIENTA. Note the PAT's expiry in a comment here.

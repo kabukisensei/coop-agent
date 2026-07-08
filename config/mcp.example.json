@@ -14,6 +14,10 @@
         "AZURE_TOKEN_CREDENTIALS": "AzureCliCredential"
       }
     },
+    "azure-devops": {
+      "command": "npx",
+      "args": ["-y", "@azure-devops/mcp", "TODO-org-name", "--authentication", "azcli", "-d", "core", "work", "work-items", "search"]
+    },
     "microsoft-learn": {
       "command": "npx",
       "args": ["-y", "mcp-remote", "https://learn.microsoft.com/api/mcp"]

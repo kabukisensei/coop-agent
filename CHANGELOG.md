@@ -5,6 +5,25 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Azure DevOps Boards integration** — a new `azure-devops` skill plus batch tools to
+  manage Boards from coop without the web UI:
+  - `scripts/ado-digest.py` — read-only, per-client watchdog digest (open / stale /
+    unassigned per work item type) with identity-merged grouping, "newly stale" and
+    "assigned to inactive account" flags, week-over-week deltas, Markdown/HTML output,
+    and Microsoft Graph email (`--send`). Paired `.sh`/`.ps1` launchers.
+  - `scripts/ado-onboard.py` — guided, read-only client discovery (org → project → team →
+    area paths, state-category-based exclude proposals, duplicate-identity grouping) that
+    writes only the local config. Paired `.sh`/`.ps1` launchers.
+  - `scripts/ado_lib.py` — shared, dependency-free (stdlib only) auth / REST / WIQL /
+    identity core, built on the REST `wiql` → `workitemsbatch` flow (not the unreliable
+    `az boards query`).
+  - `config/devops.clients.example.yml` — example config (placeholders only); real client
+    config stays private at `~/.coop/devops/clients.yml`.
+  - `config/mcp.example.json` — added the official `@azure-devops/mcp` server (read-focused
+    `core work work-items search` domains) for interactive natural-language board queries.
+
 ## [0.11.0] — 2026-07-08
 
 ### Added
