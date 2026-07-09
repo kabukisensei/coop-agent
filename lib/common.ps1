@@ -177,6 +177,76 @@ function Get-CoopPython {
 # (mirror of coop_pi_agent_dir)
 function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' } }
 
+# The agent dir Pi will ACTUALLY load: PI_CODING_AGENT_DIR when set; with
+# COOP_NO_ISOLATE=1 Pi falls back to the personal ~/.pi/agent.
+# (mirror of coop_effective_agent_dir)
+function Get-CoopEffectiveAgentDir {
+  if ($env:PI_CODING_AGENT_DIR) { return $env:PI_CODING_AGENT_DIR }
+  if ($env:COOP_NO_ISOLATE -eq '1') { return (Join-Path $HOME '.pi\agent') }
+  return (Get-CoopPiAgentDir)
+}
+
+# --- Repo staleness (fleet drift) ---------------------------------------------
+# coop-agent updates arrive via `git pull` inside `coop update`; a zip/shared-drive
+# copy (no .git) silently never updates, and even a git checkout has no signal
+# between updates. These helpers power the doctor / launch staleness nudge.
+
+# Quietly refresh origin — at most once per day (marker in the effective agent
+# dir) and bounded by a 5s wait, so an offline or VPN-black-holed fetch can never
+# stall doctor or a launch. Stamps BEFORE fetching, so an offline machine pays
+# the wait at most once a day. Returns $true when THIS call attempted the (daily)
+# fetch; $false when throttled or not applicable (non-git copy / no git / no
+# origin remote). (mirror of coop_repo_fetch_throttled)
+function Invoke-CoopRepoFetchThrottled {
+  if (-not (Test-Have 'git')) { return $false }
+  if (-not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) { return $false }
+  & git -C $script:CoopRoot remote get-url origin *> $null
+  if ($LASTEXITCODE -ne 0) { return $false }
+  $agentDir = Get-CoopEffectiveAgentDir
+  $marker = Join-Path $agentDir '.coop-fetch-stamp'
+  # -Force: pwsh on macOS/Linux treats the dot-prefixed marker as hidden and
+  # Get-Item won't return it otherwise (Windows has no Hidden attribute on it).
+  $mi = Get-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+  if ($mi -and (((Get-Date) - $mi.LastWriteTime).TotalHours -lt 24)) { return $false }
+  New-Item -ItemType Directory -Force -Path $agentDir -ErrorAction SilentlyContinue | Out-Null
+  New-Item -ItemType File -Force -Path $marker -ErrorAction SilentlyContinue | Out-Null
+  $oldPrompt = $env:GIT_TERMINAL_PROMPT
+  $env:GIT_TERMINAL_PROMPT = '0'
+  try {
+    $job = Start-CoopJob { param($Root) & git -C $Root fetch --quiet origin *> $null } @($script:CoopRoot)
+    $null = Wait-Job $job -Timeout 5 -ErrorAction SilentlyContinue
+    Stop-Job $job -ErrorAction SilentlyContinue
+    Remove-Job $job -Force -ErrorAction SilentlyContinue
+  } catch { }
+  finally {
+    if ($null -eq $oldPrompt) { Remove-Item Env:\GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue }
+    else { $env:GIT_TERMINAL_PROMPT = $oldPrompt }
+  }
+  return $true
+}
+
+# How many commits HEAD is behind origin/main — purely local and instant (counts
+# against the last-fetched origin/main; no network). 0 when this is not a git
+# checkout, git is missing, or the count is unknowable.
+# (mirror of coop_repo_behind_count)
+function Get-CoopRepoBehindCount {
+  if (-not (Test-Have 'git')) { return 0 }
+  if (-not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) { return 0 }
+  $out = (& git -C $script:CoopRoot rev-list --count 'HEAD..origin/main' 2>$null | Out-String).Trim()
+  if ($out -match '^\d+$') { return [int]$out }
+  return 0
+}
+
+# Launch-time staleness nudge: at most once per day (it fires only when this call
+# performed the daily fetch), warn when the checkout is behind origin/main.
+# Never blocks or fails the launch; silent offline / non-git / up-to-date.
+# (mirror of coop_update_nudge)
+function Invoke-CoopUpdateNudge {
+  if (-not (Invoke-CoopRepoFetchThrottled)) { return }
+  $behind = Get-CoopRepoBehindCount
+  if ($behind -gt 0) { Coop-Warn "coop-agent is $behind commit(s) behind — run: coop update" }
+}
+
 # The Pi agent's own semver, e.g. '0.80.2' (from `pi --version`). '' if unknown.
 # (mirror of coop_pi_version)
 function Get-CoopPiVersion {

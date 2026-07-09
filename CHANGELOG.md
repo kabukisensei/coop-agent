@@ -5,6 +5,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Zip/shared-drive installs no longer silently never update** (#20). A coop-agent
+  copy without `.git` had its skills/prompts/guardrails/themes frozen forever while
+  every surface said "up to date" — `coop update` logged only an info-level skip.
+  Now: `coop update` **and** `coop doctor` warn loudly ("… will NEVER update") with
+  the remediation (git clone + `coop install`; `~/.coop` settings carry over), on
+  both platforms. And for git checkouts, a **staleness nudge**: doctor and the
+  launch path quietly `git fetch` origin at most once per day (marker in the agent
+  dir; 5s watchdog so offline/VPN-black-holed machines never stall) and warn
+  "coop-agent is N commit(s) behind — run: coop update". Silent when offline, when
+  the fetch fails, or when up to date; the launch nudge fires at most once per day
+  and never blocks the launch. New shared helpers
+  `coop_repo_fetch_throttled`/`coop_repo_behind_count`/`coop_update_nudge`
+  (+ PowerShell twins) with an offline test suite (`tests/staleness.test.sh`).
+
 ### Changed
 
 - **Shared PowerShell helpers extracted into `lib/common.ps1`** — the dot-sourced

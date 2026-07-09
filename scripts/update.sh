@@ -155,7 +155,9 @@ if [ -d "$COOP_ROOT/.git" ] && have git; then
     coop_info "no 'origin' remote configured — skipping repo update"
   fi
 else
-  coop_info "not a git checkout — skipping repo update"
+  # A zip/shared-drive copy: Pi + pipx tools above still update, but the repo layer
+  # (skills/prompts/guardrails/themes/scripts) is frozen forever — say so loudly.
+  coop_warn "this coop-agent is not a git checkout — skills/prompts/guardrails will NEVER update" "fix: git clone the repo, then run ./bin/coop install from the clone (your ~/.coop settings carry over)"
 fi
 
 # Pin the overall bar to the bottom for the update phase (steps 2–3); restore the

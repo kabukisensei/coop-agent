@@ -217,6 +217,23 @@ else
   warn "no .coop/project.yml found" "copy $COOP_ROOT/.coop/project.example.yml to your repo's .coop/project.yml"
 fi
 
+coop_head "coop-agent repository"
+if [ -d "$COOP_ROOT/.git" ] && have git; then
+  # Staleness nudge: refresh origin at most once/day (5s watchdog; silent offline),
+  # then count against the last-fetched origin/main — local + instant.
+  coop_repo_fetch_throttled || true
+  behind="$(coop_repo_behind_count)"
+  if [ "${behind:-0}" -gt 0 ]; then
+    warn "coop-agent is $behind commit(s) behind" "run: coop update"
+  else
+    ok "coop-agent is a git checkout (updates via: coop update)"
+  fi
+else
+  # A zip/shared-drive copy: everything above still updates, but the repo layer
+  # (skills/prompts/guardrails/themes/scripts) is frozen at whatever the zip held.
+  warn "this coop-agent is not a git checkout — skills/prompts/guardrails will NEVER update" "fix: git clone the repo, then run ./bin/coop install from the clone (your ~/.coop settings carry over)"
+fi
+
 coop_head "Powerline / splash assets"
 [ -f "$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi" ] && ok "brand splash present" || warn "splash.ansi missing" "run: coop sync"
 [ -f "$COOP_ROOT/themes/cooptimize.json" ] && ok "Cooptimize theme present" || warn "theme missing"

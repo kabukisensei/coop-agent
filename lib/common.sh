@@ -236,6 +236,62 @@ coop_minor_newer() {
   return 1
 }
 
+# --- Repo staleness (fleet drift) ---------------------------------------------
+# coop-agent updates arrive via `git pull` inside `coop update`; a zip/shared-drive
+# copy (no .git) silently never updates, and even a git checkout has no signal
+# between updates. These helpers power the doctor / launch staleness nudge.
+
+# Quietly refresh origin — at most once per day (marker mtime in the effective
+# agent dir) and under a 5s watchdog, so an offline or VPN-black-holed fetch can
+# never stall doctor or a launch. Stamps BEFORE fetching, so an offline machine
+# pays the watchdog at most once a day. Returns 0 when THIS call attempted the
+# (daily) fetch; 1 when throttled or not applicable (non-git copy / no git / no
+# origin remote). Best-effort: a failed fetch is silent by design.
+coop_repo_fetch_throttled() {
+  have git || return 1
+  [ -d "$COOP_ROOT/.git" ] || return 1
+  git -C "$COOP_ROOT" remote get-url origin >/dev/null 2>&1 || return 1
+  local agent_dir marker fpid wpid
+  agent_dir="$(coop_effective_agent_dir)"
+  marker="$agent_dir/.coop-fetch-stamp"
+  # POSIX find prints the marker only when it was modified <24h ago (no stat(1)
+  # portability games — BSD and GNU stat disagree on flags).
+  [ -n "$(find "$marker" -mtime -1 2>/dev/null)" ] && return 1
+  mkdir -p "$agent_dir" 2>/dev/null || true
+  touch "$marker" 2>/dev/null || true
+  ( GIT_TERMINAL_PROMPT=0 git -C "$COOP_ROOT" fetch --quiet origin >/dev/null 2>&1 ) &
+  fpid=$!
+  ( sleep 5; kill "$fpid" 2>/dev/null ) >/dev/null 2>&1 &
+  wpid=$!
+  wait "$fpid" 2>/dev/null || true
+  kill "$wpid" 2>/dev/null || true
+  wait "$wpid" 2>/dev/null || true
+  return 0
+}
+
+# Print how many commits HEAD is behind origin/main — purely local and instant
+# (counts against the last-fetched origin/main; no network). Prints 0 when this
+# is not a git checkout, git is missing, or the count is unknowable.
+coop_repo_behind_count() {
+  local n=""
+  if have git && [ -d "$COOP_ROOT/.git" ]; then
+    n="$(git -C "$COOP_ROOT" rev-list --count HEAD..origin/main 2>/dev/null || true)"
+  fi
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  printf '%s' "$n"
+}
+
+# Launch-time staleness nudge: at most once per day (it fires only when this call
+# performed the daily fetch), warn when the checkout is behind origin/main.
+# Never blocks or fails the launch; silent offline / non-git / up-to-date.
+coop_update_nudge() {
+  local behind
+  coop_repo_fetch_throttled || return 0
+  behind="$(coop_repo_behind_count)"
+  [ "$behind" -gt 0 ] && coop_warn "coop-agent is $behind commit(s) behind — run: coop update"
+  return 0
+}
+
 # Warn that the agent itself is too old to satisfy an installed extension's pi-ai
 # requirement. Args: <agent-version> [required-floor] [offending-ext] (the last two
 # come from _extdeps.py fields 7/8; "-" or empty falls back to a generic message).

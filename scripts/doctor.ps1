@@ -286,6 +286,20 @@ if ($proj) {
   D-Warn 'no .coop/project.yml found' "copy $($script:CoopRoot)/.coop/project.example.yml to your repo's .coop/project.yml"
 }
 
+Coop-Head 'coop-agent repository'
+if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have 'git')) {
+  # Staleness nudge: refresh origin at most once/day (bounded wait; silent offline),
+  # then count against the last-fetched origin/main — local + instant.
+  $null = Invoke-CoopRepoFetchThrottled
+  $behind = Get-CoopRepoBehindCount
+  if ($behind -gt 0) { D-Warn "coop-agent is $behind commit(s) behind" 'run: coop update' }
+  else { D-Ok 'coop-agent is a git checkout (updates via: coop update)' }
+} else {
+  # A zip/shared-drive copy: everything above still updates, but the repo layer
+  # (skills/prompts/guardrails/themes/scripts) is frozen at whatever the zip held.
+  D-Warn 'this coop-agent is not a git checkout — skills/prompts/guardrails will NEVER update' 'fix: git clone the repo, then run .\bin\coop.cmd install from the clone (your ~/.coop settings carry over)'
+}
+
 Coop-Head 'Powerline / splash assets'
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi') -PathType Leaf) { D-Ok 'brand splash present' } else { D-Warn 'splash.ansi missing' 'run: coop sync' }
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'themes\cooptimize.json') -PathType Leaf) { D-Ok 'Cooptimize theme present' } else { D-Warn 'theme missing' }

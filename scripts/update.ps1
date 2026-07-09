@@ -216,7 +216,9 @@ if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have
     Coop-Info "no 'origin' remote configured — skipping repo update"
   }
 } else {
-  Coop-Info 'not a git checkout — skipping repo update'
+  # A zip/shared-drive copy: Pi + pipx tools above still update, but the repo layer
+  # (skills/prompts/guardrails/themes/scripts) is frozen forever — say so loudly.
+  Coop-Warn "this coop-agent is not a git checkout — skills/prompts/guardrails will NEVER update — fix: git clone the repo, then run .\bin\coop.cmd install from the clone (your ~/.coop settings carry over)"
 }
 
 # Windows-only pre-flight for the in-place `pi update --all`: clear any leftover

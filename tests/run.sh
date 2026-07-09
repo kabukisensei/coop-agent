@@ -59,6 +59,9 @@ echo "  ✓ --no-launch prints the spec and exits 0 (no pi launched)"
 echo "→ coop update tested-Pi-version guard (--check, gate decision)"
 bash "$ROOT/tests/update-guard.test.sh"
 
+echo "→ repo staleness nudge (throttled fetch + behind-count) tests"
+bash "$ROOT/tests/staleness.test.sh"
+
 echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
 node "$ROOT/tests/webbridge.test.mjs"
 
