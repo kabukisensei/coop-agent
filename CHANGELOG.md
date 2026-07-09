@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.12.2] — 2026-07-09
+
 ### Fixed
 
 - **Windows: the PATH launcher survives accented install paths.** `coop install`
