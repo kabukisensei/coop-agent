@@ -7,6 +7,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **Windows: the PATH launcher survives accented install paths.** `coop install`
+  wrote `%LOCALAPPDATA%\coop\bin\coop.cmd` with `-Encoding ASCII`, so a repo path
+  like `C:\Users\José\...` became `?` inside the launcher and every `coop` run from
+  PATH failed while install reported success. cmd.exe parses batch files in the
+  console OEM code page, so the launcher is now written with the OEM encoding and
+  the embedded path is verified to round-trip; when the path cannot survive the OEM
+  code page, install warns to clone coop-agent into an ASCII-safe path.
 - **Windows: `Get-CoopPython` no longer picks the Windows Store `python3` stub.**
   python.org's installer never creates `python3.exe`, so on stock Windows `python3`
   resolves only to the Store App-Execution-Alias stub under `...\WindowsApps\` —

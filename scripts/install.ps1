@@ -390,13 +390,29 @@ $LOCALBIN = Join-Path $env:LOCALAPPDATA 'coop\bin'
 New-Item -ItemType Directory -Force -Path $LOCALBIN | Out-Null
 # Drop a launcher .cmd that forwards to the repo's coop.cmd shim, so `coop` works
 # anywhere once $LOCALBIN is on PATH.
+#
+# Encoding matters: cmd.exe parses batch files in the console OEM code page, NOT
+# ASCII/UTF-8. `-Encoding ASCII` mangled any non-ASCII repo path (C:\Users\José\...)
+# into '?', so every `coop` failed while install still reported success. Write with
+# the OEM encoding and verify the embedded path round-trips; if it can't survive
+# the OEM code page, the launcher is broken no matter what we write — warn the
+# user to clone coop-agent into an ASCII-safe path (the file is still written).
 $shimTarget = Join-Path $script:CoopRoot 'bin\coop.cmd'
 $launcher = Join-Path $LOCALBIN 'coop.cmd'
 $launcherBody = "@echo off`r`ncall `"$shimTarget`" %*`r`n"
-$existing = if (Test-Path -LiteralPath $launcher -PathType Leaf) { Get-Content -LiteralPath $launcher -Raw } else { '' }
+$oemEnc = [System.Text.Encoding]::GetEncoding(
+  [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+$existing = if (Test-Path -LiteralPath $launcher -PathType Leaf) {
+  [System.IO.File]::ReadAllText($launcher, $oemEnc)
+} else { '' }
 if ($existing -ne $launcherBody) {
-  Set-Content -LiteralPath $launcher -Value $launcherBody -NoNewline -Encoding ASCII
-  Coop-Ok "linked $launcher -> bin\coop.cmd"
+  [System.IO.File]::WriteAllText($launcher, $launcherBody, $oemEnc)
+  $roundTrip = [System.IO.File]::ReadAllText($launcher, $oemEnc)
+  if ($roundTrip -eq $launcherBody) {
+    Coop-Ok "linked $launcher -> bin\coop.cmd"
+  } else {
+    Coop-Warn "the repo path '$($script:CoopRoot)' contains characters that don't survive the console (OEM) code page — the coop launcher on PATH will NOT work. Clone coop-agent into an ASCII-safe path (e.g. C:\coop-agent) and re-run install."
+  }
 } else {
   Coop-Ok 'coop already linked'
 }
