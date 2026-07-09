@@ -58,13 +58,16 @@ PROG_TOTAL=$(( 2 + ${#PI_EXTENSIONS[@]} + ${#PY_TOOLS[@]} ))
 # mutate the parent's command hash — callers run `hash -r` after install units.
 _unit_pipx() {
   if have pipx; then printf 'pipx present'; return 0; fi
-  if have python3; then
-    if python3 -m pip install --user pipx >/dev/null 2>&1 && python3 -m pipx ensurepath >/dev/null 2>&1; then
+  # coop_python accepts `python3` OR `python` (mirror of doctor.sh + install.ps1's
+  # resolver) — a python-only host must still get pipx installed.
+  local py
+  if py="$(coop_python)"; then
+    if "$py" -m pip install --user pipx >/dev/null 2>&1 && "$py" -m pipx ensurepath >/dev/null 2>&1; then
       printf 'pipx installed (open a new shell for PATH changes)'; return 0
     fi
     printf 'could not install pipx automatically — see https://pipx.pypa.io'; return 1
   fi
-  printf 'skipping pipx (python3 missing)'; return 1
+  printf 'skipping pipx (python missing)'; return 1
 }
 
 _unit_pi() {
@@ -127,12 +130,12 @@ trap 'coop_progress_end; _coop_unit_cleanup; exit 130' INT TERM
 # --- 1. Prerequisites (warn-and-continue; these usually need a package manager)
 coop_head "1/7  Prerequisites"
 have git     || coop_warn "git not found — install Git (mac: 'xcode-select --install' or 'brew install git'; linux: your package manager)."
-have python3 || coop_warn "python3 not found — install Python 3.10+ (mac: 'brew install python'; linux: 'apt install python3')."
+coop_python >/dev/null || coop_warn "python not found — install Python 3.10+ (mac: 'brew install python'; linux: 'apt install python3')."
 have node    || coop_warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)."
 coop_unit "pipx" _unit_pipx
 # Make a just-installed pipx (and the bins pipx will drop tools into) visible to
 # the REST of this run, so steps 4/5 don't fail "pipx missing" until a new shell.
-if have python3; then _ub="$(python3 -m site --user-base 2>/dev/null)"; [ -n "${_ub:-}" ] && PATH="$_ub/bin:$PATH"; unset _ub; fi
+if _py="$(coop_python)"; then _ub="$("$_py" -m site --user-base 2>/dev/null)"; [ -n "${_ub:-}" ] && PATH="$_ub/bin:$PATH"; unset _ub; fi; unset _py
 PATH="$HOME/.local/bin:$PATH"   # pipx default PIPX_BIN_DIR (fab, coop-* land here)
 hash -r 2>/dev/null || true
 
@@ -200,10 +203,16 @@ echo >&2
 "$COOP_ROOT/scripts/doctor.sh"; DOCTOR_RC=$?
 
 echo >&2
-if [ "${COOP_ON_PATH:-1}" = 1 ]; then
+# Close on doctor's verdict: a green "complete" line after a failed doctor would
+# bury the real state — on failure, point back at the ✗ items instead.
+if [ "$DOCTOR_RC" -ne 0 ]; then
+  coop_warn "Bootstrap finished, but doctor reported problems — fix the ✗ items above, then re-run: coop doctor"
+elif [ "${COOP_ON_PATH:-1}" = 1 ]; then
   coop_ok "Bootstrap complete. Start the agent with:  coop"
 else
   coop_ok "Bootstrap complete — but '$LOCALBIN' isn't on this shell's PATH yet."
+fi
+if [ "${COOP_ON_PATH:-1}" != 1 ]; then
   coop_say "      • open a NEW terminal, then run:  coop"
   coop_say "      • or use it in THIS shell right now:  $LOCALBIN/coop"
   coop_say "      • to make it permanent, add to ~/.zshrc (or ~/.bashrc):  export PATH=\"\$HOME/.local/bin:\$PATH\""

@@ -194,6 +194,11 @@ if [ -n "$mcp_found" ]; then
     grep -qi "\"$s\"" "$mcp_found" 2>/dev/null && ok "  • $s server configured" || true
   done
   grep -qiE 'learn\.microsoft\.com|microsoft-learn' "$mcp_found" 2>/dev/null || warn "  Microsoft Learn MCP not configured" "coop sync   (adds it read-only)"
+  # A synced mcp.json still carries TODO-tenant-id / TODO-org-name seeds (from
+  # config/mcp.example.json) until the user fills them in — mirror the project.yml
+  # TODO check so a placeholder config never reads as fully green.
+  mcp_todo="$(grep -c 'TODO-' "$mcp_found" 2>/dev/null)" || mcp_todo=0
+  [ "${mcp_todo:-0}" -gt 0 ] && warn "$mcp_todo TODO placeholder(s) remain in mcp.json" "set your tenant/org before live Power BI / Azure DevOps work"
 else
   warn "no MCP config found" "coop sync   (writes a read-only fabric/powerbi/learn config)"
 fi

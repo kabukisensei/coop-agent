@@ -500,11 +500,17 @@ if ($syncRc -ne 0) { Coop-Warn 'sync reported issues' }
 $doctorRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
 
 [Console]::Error.WriteLine('')
-if ($script:NeedNewShell) {
+# Close on doctor's verdict (mirror of install.sh): a green "complete" line after a
+# failed doctor would bury the real state — on failure, point back at the ✗ items.
+if ($doctorRc -ne 0) {
+  Coop-Warn "Bootstrap finished, but doctor reported problems — fix the $($script:G_CROSS) items above, then re-run: coop doctor"
+} elseif ($script:NeedNewShell) {
   Coop-Ok 'Bootstrap complete. coop was just added to your PATH.'
-  Coop-Say "      Open a NEW terminal, then run:  coop"
-  Coop-Say "      (or use it right now in this window:  & `"$LOCALBIN\coop.cmd`")"
 } else {
   Coop-Ok 'Bootstrap complete. Start the agent with:  coop'
+}
+if ($script:NeedNewShell) {
+  Coop-Say "      Open a NEW terminal, then run:  coop"
+  Coop-Say "      (or use it right now in this window:  & `"$LOCALBIN\coop.cmd`")"
 }
 exit $doctorRc

@@ -5,6 +5,25 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Small install/doctor/parity fixes** (#16):
+  - `coop install` no longer prints a green "Bootstrap complete" line when the
+    closing doctor run failed — it now closes with a warning pointing back at the
+    ✗ items (both `install.sh` and `install.ps1`); the doctor exit code still
+    propagates as before.
+  - `coop doctor` now warns when the found `mcp.json` still contains `TODO-`
+    placeholders (`TODO-tenant-id` / `TODO-org-name` from `config/mcp.example.json`),
+    mirroring the existing `project.yml` TODO check, on both platforms.
+  - `bin/coop.cmd` passes `-NoLogo -NoProfile` to PowerShell like every other
+    invocation in the repo, so corporate PS profiles can't slow or pollute `coop`.
+  - Windows: `coop update --check` writes its version table to **stdout**
+    (was stderr), so `coop update --check > versions.txt` captures it — matching
+    the bash behavior.
+  - `install.sh` now resolves Python via `coop_python` (accepts `python3` **or**
+    `python`), so a python-only host gets pipx installed instead of silently
+    skipping it while doctor reports everything fine.
+
 ## [0.12.3] — 2026-07-09
 
 ### Added

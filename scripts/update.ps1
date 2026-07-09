@@ -360,7 +360,9 @@ if ($CHECK) {
   Coop-Head 'coop update --check (dry-run — nothing is installed)'
   $piCur = if (Test-Have 'pi') { $m = [regex]::Match((& pi --version 2>$null | Out-String), '\d+\.\d+\.\d+'); if ($m.Success) { $m.Value } else { '?' } } else { 'not installed' }
   $piLat = Get-PiLatest; if (-not $piLat) { $piLat = '?' }
-  Coop-Say ('  {0,-24} current {1,-13} latest {2,-13} tested {3}' -f "pi ($script:PI_PKG)", $piCur, $piLat, $(if ($PI_TESTED) { $PI_TESTED } else { '?' }))
+  # The version-table rows go to STDOUT (Write-Output), matching update.sh's bare
+  # printf — so `coop update --check > versions.txt` captures the table on Windows too.
+  Write-Output ('  {0,-24} current {1,-13} latest {2,-13} tested {3}' -f "pi ($script:PI_PKG)", $piCur, $piLat, $(if ($PI_TESTED) { $PI_TESTED } else { '?' }))
   if ($PI_TESTED -and (Test-CoopMinorNewer $piLat $PI_TESTED)) {
     Coop-Warn "latest Pi ($piLat) is a newer MINOR than tested ($PI_TESTED) — 'coop update' will ask before jumping (skip with --pi-latest, or decline to stay on the tested version)."
   }
@@ -371,7 +373,7 @@ if ($CHECK) {
     $cur = 'not installed'
     $cm = [regex]::Match($pipxList, ("package " + [regex]::Escape($pkg) + " (\d+\.\d+\.\d+)"))
     if ($cm.Success) { $cur = $cm.Groups[1].Value }
-    Coop-Say ('  {0,-24} current {1,-13} {2,-20} tested {3}' -f $pkg, $cur, '', $tv)
+    Write-Output ('  {0,-24} current {1,-13} {2,-20} tested {3}' -f $pkg, $cur, '', $tv)
   }
   exit 0
 }

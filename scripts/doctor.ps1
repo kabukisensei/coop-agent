@@ -349,6 +349,13 @@ if ($mcpFound) {
   if ($mcpText -notmatch '(?i)learn\.microsoft\.com|microsoft-learn') {
     D-Warn '  Microsoft Learn MCP not configured' 'coop sync   (adds it read-only)'
   }
+  # A synced mcp.json still carries TODO-tenant-id / TODO-org-name seeds (from
+  # config/mcp.example.json) until the user fills them in — mirror the project.yml
+  # TODO check so a placeholder config never reads as fully green.
+  $mcpTodo = 0
+  $mcpLines = (Get-Content -LiteralPath $mcpFound -ErrorAction SilentlyContinue)
+  if ($mcpLines) { $mcpTodo = ($mcpLines | Select-String -Pattern 'TODO-' -SimpleMatch).Count }
+  if ($mcpTodo -gt 0) { D-Warn "$mcpTodo TODO placeholder(s) remain in mcp.json" 'set your tenant/org before live Power BI / Azure DevOps work' }
 } else {
   D-Warn 'no MCP config found' 'coop sync   (writes a read-only fabric/powerbi/learn config)'
 }
