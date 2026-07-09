@@ -5,6 +5,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docs: the documented Windows install command now survives the default execution
+  policy.** README and onboarding said `.\bin\coop.ps1 install`, which fails on stock
+  Windows (`Restricted` policy → "running scripts is disabled on this system"). The
+  documented command everywhere is now `.\bin\coop.cmd install` (the shim already
+  invokes PowerShell with `-ExecutionPolicy Bypass`); the bare `.ps1` path remains as
+  a footnote with the explicit
+  `powershell -ExecutionPolicy Bypass -File .\bin\coop.ps1 install` fallback.
+
 ## [0.12.1] — 2026-07-08
 
 ### Changed

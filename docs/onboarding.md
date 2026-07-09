@@ -27,8 +27,13 @@ git clone <coop-agent-repo> && cd coop-agent
 **Windows (PowerShell)**
 ```powershell
 git clone <coop-agent-repo>; cd coop-agent
-.\bin\coop.ps1 install
+.\bin\coop.cmd install
 ```
+
+> Use the `.cmd` shim — on stock Windows the `Restricted` execution policy blocks
+> `.\bin\coop.ps1 install` with *"running scripts is disabled on this system"*.
+> If you need the bare `.ps1` entry point, run it with an explicit bypass:
+> `powershell -ExecutionPolicy Bypass -File .\bin\coop.ps1 install`
 
 This installs Pi, its extensions, the Coop tools, and the Microsoft Fabric CLI, and
 links `coop` onto your `PATH`. **Open a new shell afterward** so `coop` is found.

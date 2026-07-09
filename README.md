@@ -21,7 +21,7 @@ From a fresh clone, run the installer with its full path (it links `coop` onto y
 ```bash
 git clone <coop-agent-repo> && cd coop-agent
 ./bin/coop install     # fresh bootstrap of the whole stack (idempotent — safe to re-run)
-                       # Windows: .\bin\coop.ps1 install
+                       # Windows: .\bin\coop.cmd install
 coop                   # launch the branded Pi agent (after install + new shell)
 ```
 
@@ -103,8 +103,15 @@ PowerShell:
 ```powershell
 git clone <coop-agent repo url> coop-agent
 cd coop-agent
-.\bin\coop.ps1 install
+.\bin\coop.cmd install
 ```
+
+> **Why `.cmd`, not `.ps1`?** Stock Windows ships with the `Restricted` execution
+> policy, under which `.\bin\coop.ps1 install` dies with *"running scripts is
+> disabled on this system"*. The `.cmd` shim bypasses the policy for this one
+> invocation (nothing machine-wide changes). If you specifically want the bare
+> PowerShell entry point, invoke it with an explicit bypass:
+> `powershell -ExecutionPolicy Bypass -File .\bin\coop.ps1 install`
 
 `coop install` drops a launcher at `%LOCALAPPDATA%\coop\bin\coop.cmd` and adds
 `%LOCALAPPDATA%\coop\bin` to your **user `PATH` automatically**. If `coop` isn't
@@ -129,7 +136,7 @@ anytime); power users can dismiss it with one key or turn it off with
 `coop-agent` folder (a zip or a shared drive) and have them double-click
 **`Install coop.cmd`** in it. That runs the same `coop install` for them — no
 terminal, no commands — and when it finishes they'll have the coop icon to
-double-click. Power users keep using `.\bin\coop.ps1 install` exactly as above;
+double-click. Power users keep using `.\bin\coop.cmd install` exactly as above;
 `Install coop.cmd` just wraps it with a friendly window and a pause at the end.
 
 ### Manual install (any platform)
@@ -520,7 +527,7 @@ git clone <coop-agent-repo> && cd coop-agent
 
 # Windows (PowerShell)
 git clone <coop-agent-repo>; cd coop-agent
-.\bin\coop.ps1 install        # creates %LOCALAPPDATA%\coop\bin\coop.cmd and adds it to your user PATH; open a new terminal if coop isn't found yet
+.\bin\coop.cmd install        # creates %LOCALAPPDATA%\coop\bin\coop.cmd and adds it to your user PATH; open a new terminal if coop isn't found yet
 ```
 
 `coop install` is idempotent and **cross-platform**:
