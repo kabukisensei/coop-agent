@@ -6,7 +6,8 @@
 # coop ships paired bash + PowerShell implementations (see CONTRIBUTING.md):
 #   1. every scripts/*.sh must have a scripts/*.ps1 twin (and vice versa),
 #      except intentional singletons listed in ALLOWLIST below;
-#   2. bin/coop and bin/coop.ps1 must both exist;
+#   2. bin/coop and bin/coop.ps1 must both exist, and so must the shared helper
+#      libraries lib/common.sh and lib/common.ps1 (its dot-sourced twin);
 #   3. every .ps1 in the repo must start with the UTF-8 BOM (EF BB BF) —
 #      Windows PowerShell 5.1 reads a BOM-less .ps1 as ANSI (mojibake);
 #   4. STRUCTURAL parity (grep-based, best-effort — catches the drift the file-level
@@ -74,6 +75,18 @@ for f in bin/coop bin/coop.ps1; do
     ok "$f"
   else
     ko "$f is missing — the bash and PowerShell dispatchers must both exist"
+  fi
+done
+
+echo "→ lib/common.sh ↔ lib/common.ps1"
+# The shared helper libraries are twins: every .sh sources common.sh, every .ps1
+# dot-sources common.ps1. A helper changed in one must be ported to the other in
+# the same change (see CONTRIBUTING.md → PowerShell requirements).
+for f in lib/common.sh lib/common.ps1; do
+  if [ -f "$f" ]; then
+    ok "$f"
+  else
+    ko "$f is missing — the shared helper libraries (bash + PowerShell twins) must both exist"
   fi
 done
 

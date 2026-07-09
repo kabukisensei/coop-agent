@@ -39,84 +39,18 @@
 # bash's per-command behavior and propagate exit codes explicitly.
 $ErrorActionPreference = 'Continue'
 
-# --- Resolve COOP_ROOT (the directory that contains bin/, lib/, scripts/) ------
-$script:CoopRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$env:COOP_ROOT = $script:CoopRoot
+# --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
+# Resolves COOP_ROOT/COOP_VERSION and defines the loggers, Test-Have,
+# Get-CoopPython, YAML readers, Find-CoopProjectYml, Coop-Confirm, etc.
+. (Join-Path $PSScriptRoot '../lib/common.ps1')
 
 # Isolate coop's Pi config (extensions, settings, themes, MCP) from the user's personal
 # `pi` — for launching AND the coop add/remove/list/config/pi management aliases.
 # Disable with COOP_NO_ISOLATE=1.
 if ($env:COOP_NO_ISOLATE -ne '1') {
-  $coopAgentDir = if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' }
+  $coopAgentDir = Get-CoopPiAgentDir
   $env:PI_CODING_AGENT_DIR = $coopAgentDir
   New-Item -ItemType Directory -Force -Path $coopAgentDir -ErrorAction SilentlyContinue | Out-Null
-}
-
-# --- Shared helpers (mirror of lib/common.sh) --------------------------------
-# Reproduced inline so coop.ps1 has no external PowerShell dependency.
-
-$script:CoopVersion = '0.0.0'
-$verFile = Join-Path $script:CoopRoot 'VERSION'
-if (Test-Path -LiteralPath $verFile -PathType Leaf) {
-  $vRaw = (Get-Content -LiteralPath $verFile -Raw -ErrorAction SilentlyContinue)
-  if ($vRaw) { $script:CoopVersion = $vRaw.Trim() }
-}
-$env:COOP_VERSION = $script:CoopVersion
-
-# Colors (respect NO_COLOR and non-TTY). Truecolor brand palette.
-$script:CoopColor = ($null -eq $env:NO_COLOR -or $env:NO_COLOR -eq '') -and -not [Console]::IsErrorRedirected
-$e = [char]27
-if ($script:CoopColor) {
-  $script:C_NAVY   = "$e[38;2;0;65;107m"
-  $script:C_FOREST = "$e[38;2;66;120;60m"
-  $script:C_OLIVE  = "$e[38;2;130;170;67m"
-  $script:C_LIME   = "$e[38;2;178;210;53m"
-  $script:C_RED    = "$e[38;2;239;65;45m"
-  $script:C_BOLD   = "$e[1m"
-  $script:C_DIM    = "$e[2m"
-  $script:C_RST    = "$e[0m"
-} else {
-  $script:C_NAVY = ''; $script:C_FOREST = ''; $script:C_OLIVE = ''; $script:C_LIME = ''; $script:C_RED = ''
-  $script:C_BOLD = ''; $script:C_DIM = ''; $script:C_RST = ''
-}
-function Coop-Navy { $script:C_NAVY }
-function Coop-Bold { $script:C_BOLD }
-function Coop-Dim  { $script:C_DIM }
-function Coop-Rst  { $script:C_RST }
-
-# Status glyphs (defined with [char] codepoints for Windows PowerShell 5.1 compat).
-$script:G_BULLET = [char]0x2022   # •
-$script:G_CHECK  = [char]0x2713   # ✓
-$script:G_CROSS  = [char]0x2717   # ✗
-
-# Logging (to stderr, mirroring coop_say/info/ok/warn/err/head).
-function Coop-Say  { param([string]$m) [Console]::Error.WriteLine($m) }
-function Coop-Info { param([string]$m) [Console]::Error.WriteLine("$($script:C_LIME)$($script:G_BULLET)$($script:C_RST) $m") }
-function Coop-Ok   { param([string]$m) [Console]::Error.WriteLine("$($script:C_FOREST)$($script:G_CHECK)$($script:C_RST) $m") }
-function Coop-Warn { param([string]$m) [Console]::Error.WriteLine("$($script:C_OLIVE)!$($script:C_RST) $m") }
-function Coop-Err  { param([string]$m) [Console]::Error.WriteLine("$($script:C_RED)$($script:G_CROSS)$($script:C_RST) $m") }
-function Coop-Die  { param([string]$m) Coop-Err $m; exit 1 }
-function Coop-Head { param([string]$m) [Console]::Error.WriteLine("`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)") }
-
-# Is a command available on PATH? (mirror of have())
-function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
-
-# Pick a usable python interpreter that ACTUALLY runs — not the Windows Store
-# App-Execution-Alias stub. python.org's installer never creates python3.exe, so
-# on stock Windows `python3` resolves ONLY to the Store stub under
-# ...\WindowsApps\: Get-Command succeeds while `--version` prints nothing.
-# Prefer python3, fall back to python; $null when neither is real. (Deliberately
-# duplicated inline per script — keep every copy textually identical until the
-# lib/common.ps1 extraction hoists it.)
-function Get-CoopPython {
-  foreach ($name in @('python3', 'python')) {
-    $c = Get-Command $name -ErrorAction SilentlyContinue
-    if (-not $c) { continue }
-    if ($c.Source -and $c.Source -match '\\WindowsApps\\') { continue }
-    $v = (& $name --version 2>&1)
-    if ($v -match '\d+\.\d+') { return $name }
-  }
-  return $null
 }
 
 # Make tools in the npm global bin (`pi`) or the pipx bin (`fab`, coop-*) resolvable
@@ -135,71 +69,6 @@ function Add-CoopRuntimePaths {
       $env:PATH = "$d;$env:PATH"
     }
   }
-}
-
-# Read a dotted scalar key from a YAML file via lib/_yaml.py (PyYAML when present,
-# else a dependency-free fallback parser). (mirror of coop_yaml_get)
-function Get-CoopYamlValue {
-  param([string]$File, [string]$Key, [string]$Default = '')
-  if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { return $Default }
-  $py = Get-CoopPython
-  if (-not $py) { return $Default }
-  $yamlPy = Join-Path $script:CoopRoot 'lib/_yaml.py'
-  try {
-    $out = (& $py $yamlPy get $File $Key $Default 2>$null)
-    if ($null -eq $out) { return $Default }
-    $out = ($out | Out-String).TrimEnd("`r", "`n")
-    if ($out -eq '') { return $Default }
-    return $out
-  } catch { return $Default }
-}
-
-# Read a dotted key that is a YAML list of scalars, returning a string array.
-# (mirror of coop_yaml_list)
-function Get-CoopYamlList {
-  param([string]$File, [string]$Key)
-  if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { return @() }
-  $py = Get-CoopPython
-  if (-not $py) { return @() }
-  $yamlPy = Join-Path $script:CoopRoot 'lib/_yaml.py'
-  try {
-    $out = (& $py $yamlPy list $File $Key 2>$null)
-    if ($null -eq $out) { return @() }
-    return @($out -split "`r?`n" | Where-Object { $_ -ne '' })
-  } catch { return @() }
-}
-
-# Extract the YAML frontmatter `name:` from a SKILL.md (first match), or '' if none.
-# (mirror of coop_skill_name)
-function Get-CoopSkillName {
-  param([string]$File)
-  if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { return '' }
-  $lines = Get-Content -LiteralPath $File -ErrorAction SilentlyContinue
-  if (-not $lines -or $lines.Count -eq 0 -or $lines[0].Trim() -ne '---') { return '' }
-  for ($i = 1; $i -lt $lines.Count; $i++) {
-    if ($lines[$i].Trim() -eq '---') { break }
-    if ($lines[$i] -match '^\s*name:\s*(.+?)\s*$') {
-      return ($matches[1].Trim() -replace '^["'']|["'']$', '')
-    }
-  }
-  return ''
-}
-
-# Locate the active project contract: nearest .coop/project.yml walking up from
-# $PWD, else the bundled one at COOP_ROOT/.coop/project.yml. (mirror of coop_find_project_yml)
-function Find-CoopProjectYml {
-  param([string]$StartDir = (Get-Location).Path)
-  $dir = $StartDir
-  while ($dir) {
-    $candidate = Join-Path $dir '.coop\project.yml'
-    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
-    $parent = Split-Path -Parent $dir
-    if ($parent -eq $dir -or -not $parent) { break }
-    $dir = $parent
-  }
-  $bundled = Join-Path $script:CoopRoot '.coop\project.yml'
-  if (Test-Path -LiteralPath $bundled -PathType Leaf) { return $bundled }
-  return ''
 }
 
 # Summarize a coop-data-doc manifest/graph JSON artifact. (mirror of the inline PY in run_data_doc)
@@ -226,17 +95,6 @@ for label,keys in [("nodes",("nodes","objects","entities")),("edges",("edges","l
 if parts: print("  " + ", ".join(parts))
 '@
   ($pyScript | & $py - $File 2>$null) | ForEach-Object { [Console]::Error.WriteLine($_) }
-}
-
-# Confirm a potentially-destructive action unless --yes / COOP_ASSUME_YES is set.
-# (mirror of coop_confirm)
-function Coop-Confirm {
-  param([string]$Prompt = 'Proceed?')
-  if ($env:COOP_ASSUME_YES -eq '1') { return $true }
-  if ([Console]::IsInputRedirected) { Coop-Warn 'Non-interactive shell; refusing without --yes.'; return $false }
-  [Console]::Error.Write("$($script:C_OLIVE)$Prompt$($script:C_RST) [y/N] ")
-  $ans = [Console]::In.ReadLine()
-  if ($ans -match '^(y|yes)$') { return $true } else { return $false }
 }
 
 function Show-Usage {

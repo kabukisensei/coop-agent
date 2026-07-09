@@ -99,7 +99,10 @@ force anything to "fix" it.
 
 1. **Paired scripts stay in sync.** Any edit to `bin/coop`, `lib/common.sh`, or
    `scripts/*.sh` must be ported to the matching `.ps1` in the same change (and
-   vice versa). `scripts/check-parity.sh` gates the pairing.
+   vice versa). `lib/common.sh`'s twin is `lib/common.ps1` — the shared helper
+   library dot-sourced by `bin/coop.ps1` and every `scripts/*.ps1`; helper
+   changes go there, never into per-script inline copies.
+   `scripts/check-parity.sh` gates the pairing.
 2. **Every `.ps1` keeps its UTF-8 BOM** (`EF BB BF` as the first three bytes).
    Editors and agent write-tools silently strip it on rewrite — after every
    `.ps1` edit, re-run `bash scripts/check-parity.sh` (it gates the BOM and

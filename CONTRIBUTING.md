@@ -61,13 +61,18 @@ Keep parity and the contract:
   printf '\357\273\277' | cat - file.ps1 > file.ps1.bom && mv file.ps1.bom file.ps1
   ```
 
-- **`.ps1` files re-implement the bash helper logic inline** — they do **not**
-  source `lib/common.sh`. When you change a helper in `lib/common.sh` (or logic
-  in `bin/coop` / `scripts/*.sh`), port the change into the matching `.ps1` in
-  the same PR.
-- `scripts/check-parity.sh` (run by CI) fails on any BOM-less `.ps1` and on any
+- **Shared PowerShell helpers live in `lib/common.ps1`** — the dot-sourced twin
+  of `lib/common.sh` (loggers, progress engine, `Test-Have`, `Get-CoopPython`,
+  YAML readers, `Coop-Unit`, …). `bin/coop.ps1` and every `scripts/*.ps1` load it
+  with `. (Join-Path $PSScriptRoot '../lib/common.ps1')`. When you change a helper
+  in `lib/common.sh`, port the change into `lib/common.ps1` in the same PR (and
+  vice versa) — never re-add a per-script inline copy. (Exception: `Coop-Unit`
+  scriptblocks run in fresh background runspaces and see none of the library, so
+  logic inside a unit stays self-contained by design.)
+- `scripts/check-parity.sh` (run by CI) fails on any BOM-less `.ps1`, on any
   `scripts/*.sh` without a `scripts/*.ps1` twin (and vice versa) that isn't
-  allow-listed as an intentional singleton.
+  allow-listed as an intentional singleton, and when either shared helper
+  library (`lib/common.sh` / `lib/common.ps1`) is missing.
 
 ### Testing local changes on macOS
 

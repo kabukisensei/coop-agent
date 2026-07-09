@@ -5,6 +5,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Shared PowerShell helpers extracted into `lib/common.ps1`** — the dot-sourced
+  twin of `lib/common.sh` (#17). The loggers, progress engine, `Coop-Unit`,
+  `Test-Have`, `Get-CoopPython` (now the ONE python resolver —
+  `install.ps1`'s identical `Get-CoopRealPython` folded in), `Get-CoopPiVersion`,
+  `Get-CoopPiAgentDir`, `Get-CoopYamlValue`/`Get-CoopYamlList`,
+  `Get-CoopSkillName`, `Find-CoopProjectYml`, `Test-CoopMinorNewer`,
+  `Coop-Confirm`, and `Invoke-CoopScript` now live in one file, dot-sourced by
+  `bin/coop.ps1` and every `scripts/*.ps1` — ~600 lines of per-script duplication
+  (the structural cause of the WindowsApps-stub and stream-drift bug class)
+  removed. Behavior-preserving; `scripts/check-parity.sh` now gates the
+  `lib/common.sh` ↔ `lib/common.ps1` pairing (and the new file's BOM), and
+  CONTRIBUTING.md/AGENTS.md document the new rule: helper changes go into
+  `lib/common.ps1`, never per-script inline copies.
+
 ### Fixed
 
 - **Small install/doctor/parity fixes** (#16):

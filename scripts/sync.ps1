@@ -9,61 +9,10 @@
 #
 $ErrorActionPreference = 'Continue'
 
-# --- Resolve COOP_ROOT and shared helpers (mirror of lib/common.sh) ----------
-$script:CoopRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$env:COOP_ROOT = $script:CoopRoot
-
-$script:CoopVersion = '0.0.0'
-$verFile = Join-Path $script:CoopRoot 'VERSION'
-if (Test-Path -LiteralPath $verFile -PathType Leaf) {
-  $vRaw = (Get-Content -LiteralPath $verFile -Raw -ErrorAction SilentlyContinue)
-  if ($vRaw) { $script:CoopVersion = $vRaw.Trim() }
-}
-
-$script:CoopColor = ($null -eq $env:NO_COLOR -or $env:NO_COLOR -eq '') -and -not [Console]::IsErrorRedirected
-$e = [char]27
-if ($script:CoopColor) {
-  $script:C_NAVY = "$e[38;2;0;65;107m"; $script:C_FOREST = "$e[38;2;66;120;60m"
-  $script:C_OLIVE = "$e[38;2;130;170;67m"; $script:C_LIME = "$e[38;2;178;210;53m"
-  $script:C_RED = "$e[38;2;239;65;45m"; $script:C_BOLD = "$e[1m"; $script:C_DIM = "$e[2m"; $script:C_RST = "$e[0m"
-} else {
-  $script:C_NAVY = ''; $script:C_FOREST = ''; $script:C_OLIVE = ''; $script:C_LIME = ''
-  $script:C_RED = ''; $script:C_BOLD = ''; $script:C_DIM = ''; $script:C_RST = ''
-}
-$script:G_BULLET = [char]0x2022   # bullet
-$script:G_CHECK  = [char]0x2713   # check
-$script:G_CROSS  = [char]0x2717   # cross
-function Coop-Say  { param([string]$m) [Console]::Error.WriteLine($m) }
-function Coop-Info { param([string]$m) [Console]::Error.WriteLine("$($script:C_LIME)$($script:G_BULLET)$($script:C_RST) $m") }
-function Coop-Ok   { param([string]$m) [Console]::Error.WriteLine("$($script:C_FOREST)$($script:G_CHECK)$($script:C_RST) $m") }
-function Coop-Warn { param([string]$m) [Console]::Error.WriteLine("$($script:C_OLIVE)!$($script:C_RST) $m") }
-function Coop-Head { param([string]$m) [Console]::Error.WriteLine("`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)") }
-function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
-# Pick a usable python interpreter that ACTUALLY runs — not the Windows Store
-# App-Execution-Alias stub. python.org's installer never creates python3.exe, so
-# on stock Windows `python3` resolves ONLY to the Store stub under
-# ...\WindowsApps\: Get-Command succeeds while `--version` prints nothing.
-# Prefer python3, fall back to python; $null when neither is real. (Deliberately
-# duplicated inline per script — keep every copy textually identical until the
-# lib/common.ps1 extraction hoists it.)
-function Get-CoopPython {
-  foreach ($name in @('python3', 'python')) {
-    $c = Get-Command $name -ErrorAction SilentlyContinue
-    if (-not $c) { continue }
-    if ($c.Source -and $c.Source -match '\\WindowsApps\\') { continue }
-    $v = (& $name --version 2>&1)
-    if ($v -match '\d+\.\d+') { return $name }
-  }
-  return $null
-}
-
-# The Pi agent's own semver, e.g. '0.80.2' (from `pi --version`). '' if unknown.
-function Get-CoopPiVersion {
-  if (-not (Test-Have 'pi')) { return '' }
-  $raw = (& pi --version 2>$null | Select-Object -First 1)
-  $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
-  if ($m.Success) { return $m.Value } else { return '' }
-}
+# --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
+# Resolves COOP_ROOT/COOP_VERSION and defines the loggers, Test-Have,
+# Get-CoopPython, Get-CoopPiVersion, Get-CoopPiAgentDir, etc.
+. (Join-Path $PSScriptRoot '../lib/common.ps1')
 
 # Align coop's ISOLATED extension tree's @earendil-works/pi-ai + pi-tui to the Pi
 # agent's OWN version (mirror of lib/common.sh coop_align_ext_deps). coop's
@@ -151,7 +100,6 @@ function Sync-CoopExtDeps {
 
 # coop renders its own footer/splash — no third-party powerline footer.
 $CORE_EXTENSIONS = @('pi-mcp-adapter', 'pi-hermes-memory', 'pi-better-openai', 'pi-web-access', '@juicesharp/rpiv-ask-user-question')
-function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' } }
 $PI_AGENT = Get-CoopPiAgentDir
 $GLOBAL_AGENT = Join-Path $HOME '.pi\agent'
 
