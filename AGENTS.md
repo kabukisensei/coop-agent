@@ -140,3 +140,18 @@ delete or re-push a tag, never commit secrets (`.env*`, keys, tokens — see
   explicit request):** `docs/ui-strategy.md`, `docs/coop-web-plan.md`,
   `docs/plan-coop-agent-improvements.md`.
 - `CHANGELOG.md` — history; edit only under `## [Unreleased]`.
+
+## Working the backlog (agents)
+
+This repo's work queue is its GitHub issues labeled **`agent:ready`**:
+`gh issue list --label agent:ready --state open`. Each issue is self-contained
+(Context / Problem / Proposed fix / Acceptance criteria). Rules of engagement:
+
+- Read this file fully first; take ONE issue at a time (oldest first unless one
+  blocks another).
+- Implement to the acceptance criteria; run the full test suite + lint before
+  every commit; commit with `Fixes #N` so the issue closes on push.
+- Never push tags, release, or bump versions — Aaron releases (see the release
+  rules above).
+- An open issue WITHOUT the `agent:ready` label is waiting on a human decision —
+  leave it alone.
