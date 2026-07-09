@@ -23,6 +23,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Onboarding §3.5 documents the first-launch sign-in** (#19) — the one
+  interactive fork in setup now has guidance: choose the **OpenAI (Codex)**
+  provider and sign in with your **Cooptimize business account** (the
+  no-training-on-our-data terms attach to the business subscription; a personal
+  sign-in silently voids them), one-time, stored in `~/.coop/agent` (or shared in
+  from a personal `~/.pi/agent`). Cross-linked from README's Quick start and from
+  doctor's "no Pi login found yet" hint on both platforms.
 - **Shared PowerShell helpers extracted into `lib/common.ps1`** — the dot-sourced
   twin of `lib/common.sh` (#17). The loggers, progress engine, `Coop-Unit`,
   `Test-Have`, `Get-CoopPython` (now the ONE python resolver —

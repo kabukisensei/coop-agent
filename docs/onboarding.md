@@ -50,6 +50,30 @@ any missing Coop tools, then re-check. One known gotcha it may flag is the **`fa
 collision** — if your `fab` is Homebrew's Python SSH tool instead of the Microsoft
 Fabric CLI, follow doctor's one-line fix.
 
+## 3.5 First launch — sign in (one time)
+
+```bash
+coop
+```
+
+The **first** launch prompts you to sign in to a model provider. This is the one
+interactive choice in the whole setup, and it has governance consequences — pick
+carefully:
+
+- **Provider: OpenAI (Codex).** This is the provider Cooptimize's data-handling
+  posture is built on.
+- **Account: your Cooptimize business account — not a personal one.** The
+  no-training-on-our-data terms attach to the **business** subscription; signing
+  in with a personal account silently voids that protection. If you accidentally
+  signed in with the wrong account, sign in again from inside the agent and pick
+  the business account.
+
+It's a **one-time** step. The login is stored in coop's isolated agent dir
+(`~/.coop/agent`) — and if you already use a personal `pi`, its existing login is
+shared in from `~/.pi/agent` automatically (see
+[README → Isolation](../README.md#isolation)), so you may not be prompted at all.
+`coop doctor` shows **"Pi login present"** once it's done.
+
 ## 4. Point it at a work repo
 
 In each Fabric / D365 repo you work in:

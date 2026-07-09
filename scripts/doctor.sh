@@ -102,7 +102,7 @@ if have pi; then
   if [ -s "$PI_CODING_AGENT_DIR/auth.json" ] || { [ -n "$gdir" ] && [ -s "$gdir/auth.json" ]; }; then
     ok "Pi login present"
   else
-    warn "no Pi login found yet" "your first 'coop' run will prompt you to sign in to a model provider"
+    warn "no Pi login found yet" "your first 'coop' run will prompt you to sign in — see docs/onboarding.md §3.5 (OpenAI/Codex provider, Cooptimize BUSINESS account)"
   fi
 fi
 

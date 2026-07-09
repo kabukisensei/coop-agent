@@ -125,7 +125,7 @@ if (Test-Have 'pi') {
   if ((Test-Path -LiteralPath $authA -PathType Leaf) -or (Test-Path -LiteralPath $authB -PathType Leaf)) {
     D-Ok 'Pi login present'
   } else {
-    D-Warn 'no Pi login found yet' "your first 'coop' run will prompt you to sign in to a model provider"
+    D-Warn 'no Pi login found yet' "your first 'coop' run will prompt you to sign in — see docs/onboarding.md §3.5 (OpenAI/Codex provider, Cooptimize BUSINESS account)"
   }
 }
 

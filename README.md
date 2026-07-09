@@ -39,6 +39,11 @@ coop                   # launch the branded Pi agent (after install + new shell)
 > theme/MCP load — your personal `pi` stays untouched. See [Isolation](#isolation)
 > below.
 
+> **First launch:** the first `coop` run prompts a one-time model-provider sign-in —
+> choose the **OpenAI (Codex)** provider with your **Cooptimize business account**
+> (the no-training-on-our-data terms attach to the business subscription). Details:
+> [docs/onboarding.md §3.5](docs/onboarding.md#35-first-launch--sign-in-one-time).
+
 `coop install` links `coop` into `~/.local/bin`. **That directory must be on your
 `PATH`.** If `coop` is not found after install, add this to your shell rc
 (`~/.zshrc`, `~/.bashrc`, …) and open a new shell:
