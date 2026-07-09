@@ -5,6 +5,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`docs/ci.md` — the three-gate suite CI recipe**, in both GitHub Actions and Azure
+  DevOps flavors: `coop-sql-review check --strict` with SARIF uploaded to code scanning
+  (GitHub) / the CodeAnalysisLogs "Scans tab" convention (ADO); `coop-dax-review check
+  --strict` as an exit-code gate with HTML/Markdown report artifacts (its SARIF output
+  lands in an upcoming release); and `coop-data-doc check` (freshness) + `build
+  --non-interactive --strict` (strict rebuild) with the built docs published as
+  artifacts. Documents the advisory-by-default / `--strict`-opt-in philosophy, the
+  family exit-code contract per gate (0 clean / 1 environment / 2 findings), the
+  gate-ordering rationale, `.coop/project.yml` path reuse, and `==` version pinning.
+  Linked from README ("Sharing with your team") and docs/onboarding.md. (#24)
+
 ## [0.12.2] — 2026-07-09
 
 ### Fixed

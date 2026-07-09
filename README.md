@@ -544,6 +544,13 @@ is still missing.
 To keep the team in sync, push changes to the repo and have everyone run
 `coop update` (it `git pull`s coop-agent **and** updates Pi/extensions/tools).
 
+### CI gates for your repos
+
+The three suite tools double as CI gates: SQL review (with SARIF PR annotations),
+DAX review, and the lineage-docs freshness + strict-rebuild check. Copy-paste
+pipelines for **GitHub Actions and Azure DevOps** — flags, exit codes, artifact
+publishing, version pinning — are in **[docs/ci.md](docs/ci.md)**.
+
 ### Making it your own / extending it
 
 Coworkers can add their own skills, prompts, themes, and tools — see

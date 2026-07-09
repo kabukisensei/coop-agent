@@ -142,4 +142,5 @@ coop update               # updates Pi + extensions + tools, pulls latest coop-a
 - **[README.md](../README.md)** — full setup + commands
 - **[extending.md](extending.md)** — custom skills / prompts / tools
 - **[tool-contract.md](tool-contract.md)** — how the tools work
+- **[ci.md](ci.md)** — run the suite's three gates in CI (GitHub Actions + Azure DevOps)
 - `coop help` — the command list
