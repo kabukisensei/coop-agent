@@ -140,6 +140,12 @@ coop-agent does **not** publish to a registry; teammates get it via
 `coop update` (git pull). The whole release is one command — see also
 [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a-release).
 
+If this suite release also bumped any of the three coop tools (steps (a)–(c)),
+**refresh `config/defaults.yml` → `tested_with` first** — the pre-tag gate below
+verifies those pins against coop-website's `versions.json` and aborts on a
+mismatch. (Update `versions.json` before or together with the pins; step (e)
+requires it anyway.)
+
 From a clean tree on `main`, with user-visible changes recorded under
 `## [Unreleased]` in `CHANGELOG.md`:
 
@@ -149,9 +155,13 @@ From a clean tree on `main`, with user-visible changes recorded under
 
 What `coop release` does (`coop_release` in `bin/coop`): requires a clean tree;
 runs the pre-tag gate — esbuild-checks every `extensions/*/index.ts`, then
-`bash tests/run.sh` and `bash scripts/check-parity.sh` (all skippable with
-`--no-check`); bumps the `VERSION` file **and** every `extensions/*/package.json`
-in lockstep; rolls
+`bash tests/run.sh` and `bash scripts/check-parity.sh`, then verifies the three
+coop-tool `tested_with` pins in `config/defaults.yml` match the sibling
+`../coop-website/versions.json` (`coop_release_check_pins`; a mismatch aborts
+with the fix named, a **missing sibling checkout warns and asks** so an
+offline/partial clone can still release deliberately — all of the gate is
+skippable with `--no-check`); bumps the `VERSION` file **and** every
+`extensions/*/package.json` in lockstep; rolls
 `## [Unreleased]` into a dated `## [X.Y.Z]`; commits `Release vX.Y.Z`; tags
 `vX.Y.Z`; pushes commit + tag (`--no-push` stops at the local tag). The tag
 push triggers `release.yml`, which cuts a GitHub Release whose body is that

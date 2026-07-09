@@ -11,6 +11,15 @@ CLI (`fab`). The stack targets Microsoft Fabric, Azure, Power BI, D365 (Finance 
 Operations), T-SQL (Fabric Warehouse/Lakehouse, medallion bronze/silver/gold),
 DAX, semantic models (TMDL), and data documentation.
 
+> **Part of the coop suite.** coop-agent is the suite's hub: **`coop install`**
+> sets up the standalone tools —
+> [coop-data-doc](https://github.com/kabukisensei/coop-data-doc) (lineage docs),
+> [coop-sql-review](https://github.com/kabukisensei/coop-sql-review) (T-SQL linter),
+> [coop-dax-review](https://github.com/kabukisensei/coop-dax-review) (DAX/model
+> linter) — alongside the agent, and **`coop update`** keeps everything current.
+> Each tool also works standalone (`pipx install <tool>`); to run them as CI
+> gates, see [docs/ci.md](docs/ci.md).
+
 ---
 
 ## Quick start

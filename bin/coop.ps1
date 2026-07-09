@@ -577,6 +577,53 @@ Steps:
   Coop-Info 'Edit it, then it loads automatically next time you run: coop'
 }
 
+# --- Release gate: tested_with pins vs coop-website/versions.json -------------
+# Mirror of coop_release_check_pins in bin/coop. config/defaults.yml pins the
+# coop-tool versions coop was last verified against; the sibling coop-website
+# checkout's versions.json is the suite's single source of truth for released
+# version strings. Pins match -> $true; a mismatch dies (fix defaults.yml, or
+# --no-check); a missing sibling warns + confirms (--yes continues with a note).
+# Returns $false when the user declines the confirm (caller cancels the release).
+function Test-CoopReleasePins {
+  param([bool]$AssumeYes = $false)
+  $defaults = Join-Path $script:CoopRoot 'config\defaults.yml'
+  $vjson = Join-Path (Split-Path -Parent $script:CoopRoot) 'coop-website\versions.json'
+  if (-not (Test-Path -LiteralPath $vjson -PathType Leaf)) {
+    Coop-Warn "sibling coop-website checkout not found — can't verify config/defaults.yml tested_with against versions.json (see RELEASE.md)."
+    if ($AssumeYes) {
+      Coop-Info 'continuing (--yes) — verify the tested_with pins by hand.'
+      return $true
+    }
+    return (Coop-Confirm 'Release without verifying the tested_with pins?')
+  }
+  $vraw = Get-Content -LiteralPath $vjson -Raw
+  $mismatch = $false
+  foreach ($tool in @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')) {
+    $key = $tool -replace '-', '_'
+    $pin = Get-CoopYamlValue $defaults "tested_with.$key" ''
+    # versions.json keeps a strict one-`"key": "value"`-per-line layout (enforced
+    # by coop-website's own checker), so a regex read is safe — and python-free.
+    $rel = ''
+    if ($vraw -match ('"' + [regex]::Escape($tool) + '"\s*:\s*"([^"]*)"')) { $rel = $matches[1] }
+    if (-not $rel) {
+      Coop-Warn "could not read $tool from coop-website/versions.json — skipping its pin check."
+      continue
+    }
+    if (-not $pin) {
+      Coop-Warn "could not read tested_with.$key from config/defaults.yml (versions.json says $tool is $rel)."
+      $mismatch = $true
+    } elseif ($pin -ne $rel) {
+      Coop-Warn "tested_with.$key is $pin but coop-website/versions.json says $tool is $rel."
+      $mismatch = $true
+    }
+  }
+  if ($mismatch) {
+    Coop-Die 'tested_with pins disagree with coop-website/versions.json — update config/defaults.yml (see RELEASE.md), or re-run with --no-check.'
+  }
+  Coop-Ok 'tested_with pins match coop-website/versions.json'
+  return $true
+}
+
 # --- Release: bump version, roll CHANGELOG, commit + tag (+ push) -------------
 # Mirror of coop_release in bin/coop. Writes files with LF via [IO.File] to avoid
 # Windows CRLF/BOM drift. Requires a clean working tree.
@@ -594,7 +641,8 @@ function Invoke-CoopRelease {
         Coop-Say 'Usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]'
         Coop-Say '  Bump VERSION + extension manifests, roll CHANGELOG [Unreleased] into a dated'
         Coop-Say '  release, commit, tag vX.Y.Z, and push (commit + tag). Default level: patch.'
-        Coop-Say '  Verifies extensions transpile + tests + bash/PowerShell parity pass first'
+        Coop-Say '  Verifies extensions transpile + tests + bash/PowerShell parity pass, and that'
+        Coop-Say '  the tested_with coop-tool pins match the sibling coop-website''s versions.json'
         Coop-Say '  (--no-check to skip).'
         Coop-Say '  Requires a clean working tree (commit your changes first).'
         return
@@ -678,6 +726,13 @@ function Invoke-CoopRelease {
     # to have run — or an explicit --no-check opt-out (which skips this whole block).
     if ($gateSkipped -and $doPush) {
       Coop-Die 'release gate could not run (bash/node not found) — cut the release from macOS/Linux or a Windows host with Git Bash/WSL, use --no-push to bump locally only, or --no-check to release without gating.'
+    }
+
+    # tested_with pins vs the sibling coop-website's versions.json: a mismatch
+    # dies; a missing sibling warns + confirms (--yes continues). See
+    # Test-CoopReleasePins above and RELEASE.md.
+    if (-not (Test-CoopReleasePins -AssumeYes:$assumeYes)) {
+      Coop-Info 'release cancelled — nothing changed.'; return
     }
   }
 

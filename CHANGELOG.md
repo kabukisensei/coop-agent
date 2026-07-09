@@ -17,6 +17,25 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   family exit-code contract per gate (0 clean / 1 environment / 2 findings), the
   gate-ordering rationale, `.coop/project.yml` path reuse, and `==` version pinning.
   Linked from README ("Sharing with your team") and docs/onboarding.md. (#24)
+- **`coop release` now verifies the `tested_with` coop-tool pins before tagging**
+  (`coop_release_check_pins` in `bin/coop`, mirrored as `Test-CoopReleasePins` in
+  `bin/coop.ps1`): the three `config/defaults.yml` pins must match the sibling
+  `../coop-website/versions.json` — the suite's single source of truth for released
+  version strings — so `coop update --check`'s "tested" column can't drift
+  releases-stale again. A mismatch aborts the release with the fix named; a missing
+  sibling checkout warns and asks instead of hard-failing (`--yes` continues with a
+  note, `--no-check` skips the whole gate). Documented in RELEASE.md. (refs #23)
+
+### Changed
+
+- **`config/defaults.yml` `tested_with` pins refreshed** to the tool versions
+  released 2026-07-09 — coop-data-doc **0.30.1** (was 0.26.1), coop-sql-review
+  **0.8.0** (was 0.2.3), coop-dax-review **0.11.0** (was 0.6.2) — so
+  `coop update --check`'s "tested" column no longer trails the released tools by
+  several versions. (refs #23)
+- **README opens with a "Part of the coop suite" pointer** — the hub side of the
+  suite's cross-linking: the three tools are standalone, `coop install` /
+  `coop update` manage them, `docs/ci.md` gates them in CI. (refs #23)
 
 ## [0.12.2] — 2026-07-09
 
