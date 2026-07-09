@@ -7,6 +7,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **Windows: `Get-CoopPython` no longer picks the Windows Store `python3` stub.**
+  python.org's installer never creates `python3.exe`, so on stock Windows `python3`
+  resolves only to the Store App-Execution-Alias stub under `...\WindowsApps\` —
+  `Get-Command` succeeds while `--version` prints nothing. The resolvers in
+  `bin/coop.ps1`, `scripts/update.ps1`, `scripts/doctor.ps1`, `scripts/sync.ps1`,
+  `scripts/ado-digest.ps1`, and `scripts/ado-onboard.ps1` preferred `python3`, so
+  YAML reads silently returned their defaults (disabling the tested-Pi-version
+  update guard on Windows) and the ADO launchers hard-failed. All six now use the
+  proven stub filter from `scripts/install.ps1` (skip `\WindowsApps\` resolutions,
+  probe `--version`), kept textually identical across files pending the
+  `lib/common.ps1` extraction.
 - **Docs: the documented Windows install command now survives the default execution
   policy.** README and onboarding said `.\bin\coop.ps1 install`, which fails on stock
   Windows (`Restricted` policy → "running scripts is disabled on this system"). The

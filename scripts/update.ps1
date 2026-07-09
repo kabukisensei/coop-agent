@@ -252,10 +252,22 @@ $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 $script:PI_PKG = '@earendil-works/pi-coding-agent'
 $script:PI_INSTALL_TARGET = ''
 
+# Pick a usable python interpreter that ACTUALLY runs — not the Windows Store
+# App-Execution-Alias stub. python.org's installer never creates python3.exe, so
+# on stock Windows `python3` resolves ONLY to the Store stub under
+# ...\WindowsApps\: Get-Command succeeds while `--version` prints nothing.
+# Prefer python3, fall back to python; $null when neither is real. (Deliberately
+# duplicated inline per script — keep every copy textually identical until the
+# lib/common.ps1 extraction hoists it.)
 function Get-CoopPython {
-  if (Test-Have 'python3') { return 'python3' }
-  elseif (Test-Have 'python') { return 'python' }
-  else { return $null }
+  foreach ($name in @('python3', 'python')) {
+    $c = Get-Command $name -ErrorAction SilentlyContinue
+    if (-not $c) { continue }
+    if ($c.Source -and $c.Source -match '\\WindowsApps\\') { continue }
+    $v = (& $name --version 2>&1)
+    if ($v -match '\d+\.\d+') { return $name }
+  }
+  return $null
 }
 # Read a dotted scalar key from YAML via lib/_yaml.py (copy of doctor.ps1's helper).
 function Get-CoopYamlValue {

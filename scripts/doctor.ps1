@@ -38,7 +38,23 @@ function Coop-Warn { param([string]$m) [Console]::Error.WriteLine("$($script:C_O
 function Coop-Err  { param([string]$m) [Console]::Error.WriteLine("$($script:C_RED)$($script:G_CROSS)$($script:C_RST) $m") }
 function Coop-Head { param([string]$m) [Console]::Error.WriteLine("`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)") }
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
-function Get-CoopPython { if (Test-Have 'python3') { 'python3' } elseif (Test-Have 'python') { 'python' } else { $null } }
+# Pick a usable python interpreter that ACTUALLY runs — not the Windows Store
+# App-Execution-Alias stub. python.org's installer never creates python3.exe, so
+# on stock Windows `python3` resolves ONLY to the Store stub under
+# ...\WindowsApps\: Get-Command succeeds while `--version` prints nothing.
+# Prefer python3, fall back to python; $null when neither is real. (Deliberately
+# duplicated inline per script — keep every copy textually identical until the
+# lib/common.ps1 extraction hoists it.)
+function Get-CoopPython {
+  foreach ($name in @('python3', 'python')) {
+    $c = Get-Command $name -ErrorAction SilentlyContinue
+    if (-not $c) { continue }
+    if ($c.Source -and $c.Source -match '\\WindowsApps\\') { continue }
+    $v = (& $name --version 2>&1)
+    if ($v -match '\d+\.\d+') { return $name }
+  }
+  return $null
+}
 function Get-CoopPiVersion {
   if (-not (Test-Have 'pi')) { return '' }
   $raw = (& pi --version 2>$null | Select-Object -First 1)
