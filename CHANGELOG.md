@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.12.3] — 2026-07-09
+
 ### Added
 
 - **`docs/ci.md` — the three-gate suite CI recipe**, in both GitHub Actions and Azure
