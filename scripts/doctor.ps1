@@ -19,18 +19,34 @@ $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 $script:FAIL = 0   # required missing -> non-zero exit
 $script:WARN = 0
 $script:FIX  = $false   # --fix: auto-apply safe remediations at the end
+$script:JSON = $false   # --json: one machine-readable document on stdout (fleet health digests)
 foreach ($a in $args) {
   if ($a -eq '--fix') { $script:FIX = $true }
+  elseif ($a -eq '--json') { $script:JSON = $true }
   elseif ($a -eq '-h' -or $a -eq '--help') {
-    Coop-Say 'Usage: coop doctor [--fix]'
-    Coop-Say '  --fix  apply safe remediations (sync extensions/MCP/assets, install missing Coop tools), then re-check'
+    Coop-Say 'Usage: coop doctor [--fix] [--json]'
+    Coop-Say '  --fix   apply safe remediations (sync extensions/MCP/assets, install missing Coop tools), then re-check'
+    Coop-Say '  --json  suppress the human report and emit one JSON document on stdout: {"checks":[{name,section,status,hint}...],"fail":N,"warn":N}'
     exit 0
   }
 }
 
-function D-Ok   { param([string]$m) Coop-Ok $m }
-function D-Warn { param([string]$m, [string]$hint = '') Coop-Warn ($m + $(if ($hint) { " — $hint" } else { '' })); $script:WARN++ }
-function D-Bad  { param([string]$m, [string]$hint = '') Coop-Err ($m + $(if ($hint) { " — $hint" } else { '' })); $script:FAIL++ }
+# --json plumbing (mirror of doctor.sh): EVERY check funnels through D-Ok/D-Warn/
+# D-Bad (and every header through D-Head), so machine-readable output is a
+# choke-point change. Records collect in $script:JsonChecks; the summary at the
+# bottom emits the document via ConvertTo-Json.
+$script:Section = ''
+$script:JsonChecks = @()
+function D-Rec {
+  param([string]$Status, [string]$Name, [string]$Hint = '')
+  if ($script:JSON) {
+    $script:JsonChecks += [ordered]@{ name = $Name; section = $script:Section; status = $Status; hint = $Hint }
+  }
+}
+function D-Ok   { param([string]$m) D-Rec 'ok' $m; if (-not $script:JSON) { Coop-Ok $m } }
+function D-Warn { param([string]$m, [string]$hint = '') D-Rec 'warn' $m $hint; if (-not $script:JSON) { Coop-Warn ($m + $(if ($hint) { " — $hint" } else { '' })) }; $script:WARN++ }
+function D-Bad  { param([string]$m, [string]$hint = '') D-Rec 'fail' $m $hint; if (-not $script:JSON) { Coop-Err ($m + $(if ($hint) { " — $hint" } else { '' })) }; $script:FAIL++ }
+function D-Head { param([string]$m) $script:Section = $m; if (-not $script:JSON) { Coop-Head $m } }
 
 # Check <cmd> <required|optional> <fix-hint> [version-cmd]
 function Check {
@@ -54,9 +70,9 @@ function Check {
   }
 }
 
-Coop-Head "coop doctor — Cooptimize agent v$($script:CoopVersion)"
+D-Head "coop doctor — Cooptimize agent v$($script:CoopVersion)"
 
-Coop-Head 'Core'
+D-Head 'Core'
 Check 'pi'      'required' 'npm install -g @earendil-works/pi-coding-agent   (or: coop bootstrap)' @('pi','--version')
 Check 'git'     'required' 'install Git from https://git-scm.com' @('git','--version')
 Check 'node'    'optional' 'needed to install/update pi: https://nodejs.org' @('node','--version')
@@ -129,13 +145,15 @@ if (Test-Have 'pi') {
   }
 }
 
-Coop-Head 'Microsoft Fabric CLI'
+D-Head 'Microsoft Fabric CLI'
 if (Test-Have 'fab') {
   $fabver = ((& fab --version 2>&1 | Select-Object -First 3) -join ' ')
   if ($fabver -match '(?i)paramiko|invoke') {
     D-Bad 'fab is the WRONG tool' "this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI"
-    Coop-Say '      Fix: pipx install ms-fabric-cli   and ensure ~/.local/bin precedes Homebrew on PATH'
-    Coop-Say '           (or: brew uninstall fabric). Verify with: fab --version'
+    if (-not $script:JSON) {
+      Coop-Say '      Fix: pipx install ms-fabric-cli   and ensure ~/.local/bin precedes Homebrew on PATH'
+      Coop-Say '           (or: brew uninstall fabric). Verify with: fab --version'
+    }
   } else {
     $fv = (& fab --version 2>$null | Select-Object -First 1)
     D-Ok "fab — Microsoft Fabric CLI  ($fv)"
@@ -144,12 +162,12 @@ if (Test-Have 'fab') {
   D-Bad 'fab missing' 'pipx install ms-fabric-cli'
 }
 
-Coop-Head 'Standalone Coop tools (pipx)'
+D-Head 'Standalone Coop tools (pipx)'
 Check 'coop-data-doc'   'required' 'pipx install coop-data-doc'   @('coop-data-doc','--version')
 Check 'coop-sql-review' 'required' 'pipx install coop-sql-review' @('coop-sql-review','--version')
 Check 'coop-dax-review' 'required' 'pipx install coop-dax-review' @('coop-dax-review','--version')
 
-Coop-Head 'Fabric / semantic-model tooling'
+D-Head 'Fabric / semantic-model tooling'
 # fabric-cicd is a Python LIBRARY (no CLI) — check it's importable in the Fabric CLI's env.
 if (Test-Have 'fab') {
   $hasCicd = $false
@@ -201,7 +219,7 @@ if (-not $tePath -or $tePath -like 'TODO*') {
   else { D-Warn "Tabular Editor CLI path not found: $tePath" }
 }
 
-Coop-Head 'Pi extensions'
+D-Head 'Pi extensions'
 if (Test-Have 'pi') {
   $pilist = (& pi list 2>$null | Out-String)
   foreach ($ext in @('pi-mcp-adapter:MCP servers', 'pi-hermes-memory:persistent memory')) {
@@ -239,7 +257,7 @@ if (Test-Have 'pi') {
   D-Warn 'cannot check extensions' 'pi not installed'
 }
 
-Coop-Head 'MCP servers (read-only, optional)'
+D-Head 'MCP servers (read-only, optional)'
 $mcpFound = ''
 $cwd = (Get-Location).Path
 foreach ($f in @(
@@ -270,11 +288,11 @@ if ($mcpFound) {
   D-Warn 'no MCP config found' 'coop sync   (writes a read-only fabric/powerbi/learn config)'
 }
 
-Coop-Head 'Optional'
+D-Head 'Optional'
 Check 'az' 'optional' 'Azure CLI for Fabric/Power BI auth: https://learn.microsoft.com/cli/azure'
 Check 'jq' 'optional' 'nice-to-have for JSON in your own scripts (coop uses python3)'
 
-Coop-Head 'Project contract'
+D-Head 'Project contract'
 $proj = Find-CoopProjectYml
 if ($proj) {
   D-Ok ".coop/project.yml found: $proj"
@@ -286,7 +304,7 @@ if ($proj) {
   D-Warn 'no .coop/project.yml found' "copy $($script:CoopRoot)/.coop/project.example.yml to your repo's .coop/project.yml"
 }
 
-Coop-Head 'coop-agent repository'
+D-Head 'coop-agent repository'
 if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have 'git')) {
   # Staleness nudge: refresh origin at most once/day (bounded wait; silent offline),
   # then count against the last-fetched origin/main — local + instant.
@@ -300,12 +318,12 @@ if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have
   D-Warn 'this coop-agent is not a git checkout — skills/prompts/guardrails will NEVER update' 'fix: git clone the repo, then run .\bin\coop.cmd install from the clone (your ~/.coop settings carry over)'
 }
 
-Coop-Head 'Powerline / splash assets'
+D-Head 'Powerline / splash assets'
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi') -PathType Leaf) { D-Ok 'brand splash present' } else { D-Warn 'splash.ansi missing' 'run: coop sync' }
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'themes\cooptimize.json') -PathType Leaf) { D-Ok 'Cooptimize theme present' } else { D-Warn 'theme missing' }
 
 if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
-  Coop-Head 'Applying fixes (--fix)'
+  D-Head 'Applying fixes (--fix)'
   $syncScript = Join-Path $script:CoopRoot 'scripts\sync.ps1'
   if (Test-Path -LiteralPath $syncScript) {
     # Run in a CHILD process (like install/update) so its real exit code is read from
@@ -331,8 +349,18 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
   }
   Coop-Info 'Re-checking... (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)'
   [Console]::Error.WriteLine('')
-  & (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
+  # Propagate --json so the re-check emits the (final) machine-readable document.
+  $reArgs = @(); if ($script:JSON) { $reArgs += '--json' }
+  & (Join-Path $script:CoopRoot 'scripts\doctor.ps1') @reArgs
   exit $LASTEXITCODE
+}
+
+# --json: one JSON document on stdout (mirror of doctor.sh; ConvertTo-Json handles
+# escaping, including any control character a probed tool leaked into a message).
+if ($script:JSON) {
+  $doc = [ordered]@{ checks = @($script:JsonChecks); fail = $script:FAIL; warn = $script:WARN }
+  Write-Output ($doc | ConvertTo-Json -Depth 4 -Compress)
+  if ($script:FAIL -gt 0) { exit 1 } else { exit 0 }
 }
 
 [Console]::Error.WriteLine('')

@@ -225,7 +225,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | Command | Description |
 | --- | --- |
 | `coop` | Launch the branded Pi agent (skills, prompts, theme, guardrails, splash) |
-| `coop doctor [--fix]` | Check dependencies and configuration; exit non-zero if required items missing. `--fix` auto-applies safe remediations (sync extensions/MCP/assets, pipx-install missing Coop tools), then re-checks |
+| `coop doctor [--fix] [--json]` | Check dependencies and configuration; exit non-zero if required items missing. `--fix` auto-applies safe remediations (sync extensions/MCP/assets, pipx-install missing Coop tools), then re-checks. `--json` emits one machine-readable document on stdout (`{"checks":[{name,section,status,hint}…],"fail":N,"warn":N}`) for fleet-health digests |
 | `coop update [--no-fabric]` | Update Pi + Pi extensions + Coop tools + vibes/skills, then run doctor (`--no-fabric` skips the Fabric CLI, matching `install --no-fabric`) |
 | `coop install` | Fresh-install / bootstrap everything (idempotent). With a source arg, alias of `coop add` |
 | `coop web` | Open a friendly browser UI over the same governed agent (experimental; loopback-only + one-time token — see `web/README.md`) |

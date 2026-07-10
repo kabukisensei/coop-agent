@@ -253,15 +253,20 @@ function Invoke-CoopRepoFetchThrottled {
   if ($mi -and (((Get-Date) - $mi.LastWriteTime).TotalHours -lt 24)) { return $false }
   New-Item -ItemType Directory -Force -Path $agentDir -ErrorAction SilentlyContinue | Out-Null
   New-Item -ItemType File -Force -Path $marker -ErrorAction SilentlyContinue | Out-Null
+  # Watchdog via a raw child process (mirrors bash's bg-fetch + 5s killer).
+  # Deliberately NOT a PowerShell job: Stop-Job can block indefinitely while a
+  # native command is mid-flight inside the job, which would hang doctor/launch —
+  # Process.WaitForExit(ms) + Kill() can't.
   $oldPrompt = $env:GIT_TERMINAL_PROMPT
   $env:GIT_TERMINAL_PROMPT = '0'
+  $so = [System.IO.Path]::GetTempFileName(); $se = [System.IO.Path]::GetTempFileName()
   try {
-    $job = Start-CoopJob { param($Root) & git -C $Root fetch --quiet origin *> $null } @($script:CoopRoot)
-    $null = Wait-Job $job -Timeout 5 -ErrorAction SilentlyContinue
-    Stop-Job $job -ErrorAction SilentlyContinue
-    Remove-Job $job -Force -ErrorAction SilentlyContinue
+    $p = Start-Process -FilePath 'git' -ArgumentList @('-C', "$script:CoopRoot", 'fetch', '--quiet', 'origin') `
+          -NoNewWindow -PassThru -RedirectStandardOutput $so -RedirectStandardError $se -ErrorAction Stop
+    if (-not $p.WaitForExit(5000)) { try { $p.Kill() } catch { } }
   } catch { }
   finally {
+    Remove-Item $so, $se -Force -ErrorAction SilentlyContinue
     if ($null -eq $oldPrompt) { Remove-Item Env:\GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue }
     else { $env:GIT_TERMINAL_PROMPT = $oldPrompt }
   }

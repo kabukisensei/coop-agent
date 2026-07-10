@@ -20,6 +20,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   and never blocks the launch. New shared helpers
   `coop_repo_fetch_throttled`/`coop_repo_behind_count`/`coop_update_nudge`
   (+ PowerShell twins) with an offline test suite (`tests/staleness.test.sh`).
+- **`coop doctor --json`** (#22) — one machine-readable JSON document on stdout
+  (`{"checks":[{name,section,status,hint}…],"fail":N,"warn":N}`,
+  `status ∈ ok|warn|fail`), human output suppressed, exit code unchanged — the
+  cheapest fleet-health signal: run it per machine and aggregate. Implemented at
+  the ok/warn/bad + section choke points on both platforms (dependency-free JSON
+  on the bash side, `ConvertTo-Json` on PowerShell); `--fix --json` runs the
+  fixes then emits the re-check document. The doctor flag-parity gate covers the
+  new flag.
 
 ### Changed
 

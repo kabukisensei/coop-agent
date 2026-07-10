@@ -18,18 +18,35 @@ PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"; export PI_CODING_AGENT_DIR
 FAIL=0   # required missing -> non-zero exit
 WARN=0
 FIX=0    # --fix: auto-apply the safe remediations at the end
+JSON=0   # --json: one machine-readable document on stdout (fleet health digests)
 for _a in "$@"; do
   case "$_a" in
     --fix) FIX=1 ;;
+    --json) JSON=1 ;;
     -h|--help)
-      printf 'Usage: coop doctor [--fix]\n  --fix  apply safe remediations (sync extensions/MCP/assets, install missing Coop tools), then re-check\n' >&2
+      printf 'Usage: coop doctor [--fix] [--json]\n  --fix   apply safe remediations (sync extensions/MCP/assets, install missing Coop tools), then re-check\n  --json  suppress the human report and emit one JSON document on stdout: {"checks":[{name,section,status,hint}...],"fail":N,"warn":N}\n' >&2
       exit 0 ;;
   esac
 done
 
-ok()   { coop_ok   "$1"; }
-warn() { coop_warn "$1 ${2:+— $2}"; WARN=$((WARN+1)); }
-bad()  { coop_err  "$1 ${2:+— $2}"; FAIL=$((FAIL+1)); }
+# --json plumbing: EVERY check funnels through ok/warn/bad below (and every header
+# through section), so machine-readable output is a choke-point change. Records go
+# to a temp file as status<US>section<US>name<US>hint (US = 0x1f, which can never
+# appear in a message); the summary at the bottom emits the JSON document.
+DOCTOR_SECTION=""
+DOCTOR_JSON_TMP=""
+if [ "$JSON" = 1 ]; then
+  DOCTOR_JSON_TMP="$(mktemp)"
+  trap 'rm -f "$DOCTOR_JSON_TMP"' EXIT
+fi
+_rec() {  # status name hint
+  [ "$JSON" = 1 ] || return 0
+  printf '%s\037%s\037%s\037%s\n' "$1" "$DOCTOR_SECTION" "$2" "${3:-}" >> "$DOCTOR_JSON_TMP"
+}
+ok()   { _rec ok "$1" ""; [ "$JSON" = 1 ] || coop_ok "$1"; }
+warn() { _rec warn "$1" "${2:-}"; [ "$JSON" = 1 ] || coop_warn "$1 ${2:+— $2}"; WARN=$((WARN+1)); }
+bad()  { _rec fail "$1" "${2:-}"; [ "$JSON" = 1 ] || coop_err "$1 ${2:+— $2}"; FAIL=$((FAIL+1)); }
+section() { DOCTOR_SECTION="$1"; [ "$JSON" = 1 ] || coop_head "$1"; }
 
 # check <cmd> <required|optional> <fix-hint> [version-cmd]
 check() {
@@ -44,9 +61,9 @@ check() {
   fi
 }
 
-coop_head "coop doctor — Cooptimize agent v${COOP_VERSION}"
+section "coop doctor — Cooptimize agent v${COOP_VERSION}"
 
-coop_head "Core"
+section "Core"
 check pi      required "npm install -g @earendil-works/pi-coding-agent   (or: coop bootstrap)" "pi --version"
 check git     required "install Git from https://git-scm.com" "git --version"
 check node    optional "needed to install/update pi: https://nodejs.org" "node --version"
@@ -106,13 +123,15 @@ if have pi; then
   fi
 fi
 
-coop_head "Microsoft Fabric CLI"
+section "Microsoft Fabric CLI"
 if have fab; then
   fabver="$(fab --version 2>&1 | head -3 | tr '\n' ' ')"
   if printf '%s' "$fabver" | grep -qiE 'paramiko|invoke'; then
     bad "fab is the WRONG tool" "this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI"
-    coop_say "      Fix: pipx install ms-fabric-cli   and ensure ~/.local/bin precedes Homebrew on PATH"
-    coop_say "           (or: brew uninstall fabric). Verify with: fab --version"
+    if [ "$JSON" = 0 ]; then
+      coop_say "      Fix: pipx install ms-fabric-cli   and ensure ~/.local/bin precedes Homebrew on PATH"
+      coop_say "           (or: brew uninstall fabric). Verify with: fab --version"
+    fi
   else
     ok "fab — Microsoft Fabric CLI  ($(fab --version 2>/dev/null | head -1))"
   fi
@@ -120,12 +139,12 @@ else
   bad "fab missing" "pipx install ms-fabric-cli"
 fi
 
-coop_head "Standalone Coop tools (pipx)"
+section "Standalone Coop tools (pipx)"
 check coop-data-doc   required "pipx install coop-data-doc"   "coop-data-doc --version"
 check coop-sql-review required "pipx install coop-sql-review" "coop-sql-review --version"
 check coop-dax-review required "pipx install coop-dax-review" "coop-dax-review --version"
 
-coop_head "Fabric / semantic-model tooling"
+section "Fabric / semantic-model tooling"
 # fabric-cicd is a Python LIBRARY (no CLI) — check it's importable in the Fabric CLI's env.
 if have fab; then
   has_cicd=0
@@ -156,7 +175,7 @@ case "$te_path" in
   *) if [ -x "$te_path" ] || [ -f "$te_path" ]; then ok "Tabular Editor CLI: $te_path"; else warn "Tabular Editor CLI path not found: $te_path"; fi ;;
 esac
 
-coop_head "Pi extensions"
+section "Pi extensions"
 if have pi; then
   pilist="$(pi list 2>/dev/null || true)"
   for ext in "pi-mcp-adapter:MCP servers" "pi-hermes-memory:persistent memory"; do
@@ -183,7 +202,7 @@ else
   warn "cannot check extensions" "pi not installed"
 fi
 
-coop_head "MCP servers (read-only, optional)"
+section "MCP servers (read-only, optional)"
 mcp_found=""
 for f in "$PI_CODING_AGENT_DIR/mcp.json" "$PWD/.mcp.json" "$PWD/.pi/mcp.json" "$HOME/.config/mcp/mcp.json" "$HOME/.pi/mcp-config/mcp.json"; do
   [ -f "$f" ] && { mcp_found="$f"; break; }
@@ -203,11 +222,11 @@ else
   warn "no MCP config found" "coop sync   (writes a read-only fabric/powerbi/learn config)"
 fi
 
-coop_head "Optional"
+section "Optional"
 check az optional "Azure CLI for Fabric/Power BI auth: https://learn.microsoft.com/cli/azure"
 check jq optional "nice-to-have for JSON in your own scripts (coop uses python3)"
 
-coop_head "Project contract"
+section "Project contract"
 proj="$(coop_find_project_yml)"
 if [ -n "$proj" ]; then
   ok ".coop/project.yml found: $proj"
@@ -217,7 +236,7 @@ else
   warn "no .coop/project.yml found" "copy $COOP_ROOT/.coop/project.example.yml to your repo's .coop/project.yml"
 fi
 
-coop_head "coop-agent repository"
+section "coop-agent repository"
 if [ -d "$COOP_ROOT/.git" ] && have git; then
   # Staleness nudge: refresh origin at most once/day (5s watchdog; silent offline),
   # then count against the last-fetched origin/main — local + instant.
@@ -234,12 +253,12 @@ else
   warn "this coop-agent is not a git checkout — skills/prompts/guardrails will NEVER update" "fix: git clone the repo, then run ./bin/coop install from the clone (your ~/.coop settings carry over)"
 fi
 
-coop_head "Powerline / splash assets"
+section "Powerline / splash assets"
 [ -f "$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi" ] && ok "brand splash present" || warn "splash.ansi missing" "run: coop sync"
 [ -f "$COOP_ROOT/themes/cooptimize.json" ] && ok "Cooptimize theme present" || warn "theme missing"
 
 if [ "$FIX" = 1 ] && { [ "$FAIL" -gt 0 ] || [ "$WARN" -gt 0 ]; }; then
-  coop_head "Applying fixes (--fix)"
+  section "Applying fixes (--fix)"
   if [ -f "$COOP_ROOT/scripts/sync.sh" ]; then
     "$COOP_ROOT/scripts/sync.sh" >/dev/null 2>&1 && coop_ok "synced extensions / MCP / assets" || coop_warn "sync had issues (run: coop sync)"
   fi
@@ -251,7 +270,33 @@ if [ "$FIX" = 1 ] && { [ "$FAIL" -gt 0 ] || [ "$WARN" -gt 0 ]; }; then
   done
   coop_info "Re-checking… (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)"
   echo >&2
+  # Propagate --json so the re-check emits the (final) machine-readable document.
+  # exec skips EXIT traps, so drop the pre-fix records explicitly first.
+  if [ "$JSON" = 1 ]; then
+    rm -f "$DOCTOR_JSON_TMP"
+    exec "$COOP_ROOT/scripts/doctor.sh" --json
+  fi
   exec "$COOP_ROOT/scripts/doctor.sh"
+fi
+
+# --json: one JSON document on stdout (everything human went nowhere; the fix-branch
+# action log above stays on stderr). Dependency-free: drop any C0 control character
+# a probed tool leaked into a message (e.g. `fab --version` ends in \r), then
+# escaping \ and " is sufficient.
+if [ "$JSON" = 1 ]; then
+  _json_esc() { printf '%s' "$1" | tr -d '\000-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+  _us="$(printf '\037')"
+  _out='{"checks":['
+  _first=1
+  while IFS="$_us" read -r _st _sec _nm _ht; do
+    [ -n "$_st" ] || continue
+    [ "$_first" = 1 ] && _first=0 || _out="$_out,"
+    _out="$_out{\"name\":\"$(_json_esc "$_nm")\",\"section\":\"$(_json_esc "$_sec")\",\"status\":\"$_st\",\"hint\":\"$(_json_esc "$_ht")\"}"
+  done < "$DOCTOR_JSON_TMP"
+  _out="$_out],\"fail\":$FAIL,\"warn\":$WARN}"
+  printf '%s\n' "$_out"
+  [ "$FAIL" -gt 0 ] && exit 1
+  exit 0
 fi
 
 echo >&2
