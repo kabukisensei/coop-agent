@@ -145,7 +145,7 @@ data in `details`.
 
 | Param | Type | Notes |
 |-------|------|-------|
-| `paths` | `string[]` (optional) | Files/dirs to check. Defaults to `["."]`. |
+| `paths` | `string[]` (optional) | Files/dirs to check. When omitted, the nearest `.coop/project.yml`'s `repositories.*.local_path` entries scope the review (TODO placeholders and paths missing on this machine are skipped with a note); only with no usable contract does it fall back to `["."]`. Explicit paths always win. The scope used is surfaced in the result (`details.scope` + a `Scope:` line). |
 | `min_severity` | `"error" \| "warning" \| "info"` (optional) | Maps to `--min-severity`. |
 | `strict` | `boolean` (optional, default false) | Maps to `--strict` (CI gate). |
 

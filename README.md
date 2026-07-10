@@ -239,7 +239,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop version` | Print `coop` + `pi` versions |
 | `coop help` | Show usage |
 | **Authoring** | |
-| `coop init [dir]` | Scaffold `.coop/project.yml` into a work repo (default: `.`) |
+| `coop init [dir]` | Scaffold `.coop/project.yml` into a work repo (default: `.`). Once `repositories:` is filled, `coop init --seed-docs` generates/patches `coop-data-doc.yml` from it (via `coop-data-doc config-set`), so repo paths are typed once |
 | `coop new-skill <name>` | Scaffold `skills/<name>/SKILL.md` |
 | `coop new-prompt <name>` | Scaffold `prompts/<name>.md` |
 | `coop release [patch\|minor\|major] [--yes] [--no-push] [--no-check]` | Cut a release — bump version, roll CHANGELOG, commit + tag + push (default `patch`). Build-checks the extensions first (skip with `--no-check`); `--no-push` tags locally only; `--yes` skips the confirm |

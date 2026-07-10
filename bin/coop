@@ -75,6 +75,7 @@ ${COOP_BOLD}Usage${COOP_RST}
 
 ${COOP_BOLD}Authoring${COOP_RST}
   coop init [dir]           Scaffold .coop/project.yml into a work repo (default: .)
+                            (--seed-docs: generate coop-data-doc.yml from repositories:)
   coop new-skill <name>     Scaffold skills/<name>/SKILL.md
   coop new-prompt <name>    Scaffold prompts/<name>.md
   coop release [level]      Cut a release: bump version + roll CHANGELOG + commit + tag + push
@@ -277,14 +278,61 @@ PY
 coop_valid_name() { case "$1" in ""|.|..|-*|*[!a-zA-Z0-9._-]*) return 1 ;; *) return 0 ;; esac; }
 
 coop_init() {
-  local dir="${1:-$PWD}" dst="${1:-$PWD}/.coop/project.yml"
+  # coop init [dir]              scaffold .coop/project.yml (current behavior)
+  # coop init --seed-docs [dir]  generate/patch coop-data-doc.yml from an EXISTING
+  #                              contract's repositories: (paths typed once, not twice)
+  local seed=0 dir="" a
+  for a in "$@"; do
+    case "$a" in
+      --seed-docs) seed=1 ;;
+      --yes|-y) export COOP_ASSUME_YES=1 ;;
+      -*) coop_die "unknown flag '$a' — usage: coop init [dir] [--seed-docs] [--yes]" ;;
+      *) dir="$a" ;;
+    esac
+  done
+  [ -n "$dir" ] || dir="$PWD"
+  if [ "$seed" = 1 ]; then
+    coop_init_seed_docs "$dir"
+    return $?
+  fi
+  local dst="$dir/.coop/project.yml"
   [ -f "$COOP_ROOT/.coop/project.example.yml" ] || coop_die "template missing: .coop/project.example.yml"
-  [ -e "$dst" ] && coop_die "$dst already exists — not overwriting."
+  [ -e "$dst" ] && coop_die "$dst already exists — not overwriting.  (seed coop-data-doc.yml from it with: coop init --seed-docs)"
   mkdir -p "$dir/.coop"
   cp "$COOP_ROOT/.coop/project.example.yml" "$dst"
   coop_ok "Wrote $dst"
   coop_info "Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor"
-  coop_info "Set up lineage docs too: run \`coop data-doc setup\` (full wizard) — or just launch \`coop\` and accept the /setup-docs offer."
+  coop_info "Once repositories: is filled, seed the lineage-docs config from it: coop init --seed-docs"
+  coop_info "Or set up lineage docs interactively: \`coop data-doc setup\` (full wizard) — or launch \`coop\` and accept the /setup-docs offer."
+}
+
+# Seed coop-data-doc.yml's repos: from the contract's repositories: (issue #25) —
+# the same paths typed once. lib/_seeddocs.py classifies the filled repos into
+# coop-data-doc's sql/powerbi slots (TODO placeholders skipped with a note) and
+# prints the JSON patch; `coop-data-doc config-set --from-json -` applies it
+# non-destructively (only the keys in the patch change). Declining changes nothing.
+coop_init_seed_docs() {
+  local dir="$1" proj="$1/.coop/project.yml" py patch rc=0
+  [ -f "$proj" ] || coop_die "no $proj — run 'coop init' first, then fill repositories:."
+  py="$(coop_python)" || coop_die "python3 is required for: coop init --seed-docs"
+  have coop-data-doc || coop_die "coop-data-doc is not installed. Run: coop install"
+  # The mapping summary (and any skip notes) print to stderr; the patch is stdout.
+  patch="$("$py" "$COOP_ROOT/lib/_seeddocs.py" "$proj")" || rc=$?
+  if [ "$rc" = 3 ]; then
+    coop_warn "nothing to seed yet" "fill repositories.*.local_path in $proj (TODO placeholders are skipped), then re-run: coop init --seed-docs"
+    return 1
+  fi
+  { [ "$rc" = 0 ] && [ -n "$patch" ]; } || coop_die "could not read repositories from $proj"
+  if ! coop_confirm "Write these repos into $dir/coop-data-doc.yml?"; then
+    coop_info "seed cancelled — nothing changed."
+    return 1
+  fi
+  if printf '%s' "$patch" | coop-data-doc config-set --config "$dir/coop-data-doc.yml" --from-json - >/dev/null; then
+    coop_ok "seeded $dir/coop-data-doc.yml from project.yml (repos)"
+    coop_info "review it, then build the lineage docs: coop data-doc   (or /setup-docs inside the agent)"
+  else
+    coop_die "coop-data-doc config-set failed — apply the patch by hand: $py $COOP_ROOT/lib/_seeddocs.py $proj | coop-data-doc config-set --from-json -"
+  fi
 }
 
 coop_new_skill() {

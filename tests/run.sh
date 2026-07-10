@@ -65,6 +65,9 @@ bash "$ROOT/tests/staleness.test.sh"
 echo "→ az-preflight cache (.az-ok TTL + tenant stamp) tests"
 bash "$ROOT/tests/azcache.test.sh"
 
+echo "→ coop init --seed-docs (contract → coop-data-doc.yml) tests"
+bash "$ROOT/tests/seeddocs.test.sh"
+
 echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
 node "$ROOT/tests/webbridge.test.mjs"
 

@@ -31,6 +31,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `~/.coop` (private config lives there), or the personal `~/.pi/agent`.
   `coop uninstall <source>` still removes a Pi extension — the same
   bare-vs-source split `coop install` already uses.
+- **`.coop/project.yml` now drives the native tools** (#25). When the model calls
+  `sql_review`/`dax_review` without explicit paths, coop-tools finds the nearest
+  contract and scopes the review to its `repositories.*.local_path` entries
+  (TODO placeholders and missing paths skipped with a note) instead of
+  blind-scanning the cwd; explicit paths always win, no contract falls back to
+  `["."]`, and the scope used is surfaced in the tool result. And
+  **`coop init --seed-docs`** generates/patches `coop-data-doc.yml` from the
+  contract's `repositories:` (via the new `lib/_seeddocs.py` +
+  `coop-data-doc config-set --from-json`), classifying filled repos into the
+  sql/powerbi slots (`sql_root` honored) so repo paths are typed once —
+  confirmed before writing, declining changes nothing, on both platforms.
+  New Node suite cases (contract present/absent/all-TODO) and a shimmed
+  end-to-end test (`tests/seeddocs.test.sh`).
 - **`coop doctor --json`** (#22) — one machine-readable JSON document on stdout
   (`{"checks":[{name,section,status,hint}…],"fail":N,"warn":N}`,
   `status ∈ ok|warn|fail`), human output suppressed, exit code unchanged — the

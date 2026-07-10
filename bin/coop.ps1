@@ -120,6 +120,7 @@ $(Coop-Bold)Usage$(Coop-Rst)
 
 $(Coop-Bold)Authoring$(Coop-Rst)
   coop init [dir]           Scaffold .coop/project.yml into a work repo (default: .)
+                            (--seed-docs: generate coop-data-doc.yml from repositories:)
   coop new-skill <name>     Scaffold skills/<name>/SKILL.md
   coop new-prompt <name>    Scaffold prompts/<name>.md
   coop release [level]      Cut a release: bump version + roll CHANGELOG + commit + tag + push
@@ -350,16 +351,67 @@ function Test-CoopValidName { param([string]$Name) if ($Name -in @('.', '..') -o
 
 function Invoke-CoopInit {
   param([string[]]$RestArgs = @())
-  $dir = if ($RestArgs.Count -ge 1) { $RestArgs[0] } else { (Get-Location).Path }
+  # coop init [dir]              scaffold .coop\project.yml (current behavior)
+  # coop init --seed-docs [dir]  generate/patch coop-data-doc.yml from an EXISTING
+  #                              contract's repositories: (paths typed once, not twice)
+  $seed = $false; $dir = ''
+  foreach ($a in $RestArgs) {
+    switch -CaseSensitive ($a) {
+      '--seed-docs' { $seed = $true }
+      '--yes'       { $env:COOP_ASSUME_YES = '1' }
+      '-y'          { $env:COOP_ASSUME_YES = '1' }
+      default {
+        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop init [dir] [--seed-docs] [--yes]" }
+        $dir = $a
+      }
+    }
+  }
+  if (-not $dir) { $dir = (Get-Location).Path }
+  if ($seed) { Invoke-CoopInitSeedDocs $dir; return }
   $tmpl = Join-Path $script:CoopRoot '.coop\project.example.yml'
   if (-not (Test-Path -LiteralPath $tmpl -PathType Leaf)) { Coop-Die 'template missing: .coop/project.example.yml' }
   $dst = Join-Path $dir '.coop\project.yml'
-  if (Test-Path -LiteralPath $dst) { Coop-Die "$dst already exists — not overwriting." }
+  if (Test-Path -LiteralPath $dst) { Coop-Die "$dst already exists — not overwriting.  (seed coop-data-doc.yml from it with: coop init --seed-docs)" }
   New-Item -ItemType Directory -Force -Path (Join-Path $dir '.coop') | Out-Null
   Copy-Item -LiteralPath $tmpl -Destination $dst
   Coop-Ok "Wrote $dst"
   Coop-Info 'Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor'
-  Coop-Info 'Set up lineage docs too: run `coop data-doc setup` (full wizard) — or just launch `coop` and accept the /setup-docs offer.'
+  Coop-Info 'Once repositories: is filled, seed the lineage-docs config from it: coop init --seed-docs'
+  Coop-Info 'Or set up lineage docs interactively: `coop data-doc setup` (full wizard) — or launch `coop` and accept the /setup-docs offer.'
+}
+
+# Seed coop-data-doc.yml's repos: from the contract's repositories: (issue #25) —
+# mirror of coop_init_seed_docs in bin/coop. lib/_seeddocs.py classifies the filled
+# repos into coop-data-doc's sql/powerbi slots (TODO placeholders skipped with a
+# note) and prints the JSON patch; `coop-data-doc config-set --from-json -` applies
+# it non-destructively. Declining changes nothing.
+function Invoke-CoopInitSeedDocs {
+  param([string]$Dir)
+  $proj = Join-Path $Dir '.coop\project.yml'
+  if (-not (Test-Path -LiteralPath $proj -PathType Leaf)) { Coop-Die "no $proj — run 'coop init' first, then fill repositories:." }
+  $py = Get-CoopPython
+  if (-not $py) { Coop-Die 'python is required for: coop init --seed-docs' }
+  if (-not (Test-Have 'coop-data-doc')) { Coop-Die 'coop-data-doc is not installed. Run: coop install' }
+  # The mapping summary (and any skip notes) print to stderr; the patch is stdout.
+  $patch = (& $py (Join-Path $script:CoopRoot 'lib/_seeddocs.py') $proj | Out-String)
+  $rc = $LASTEXITCODE
+  if ($rc -eq 3) {
+    Coop-Warn "nothing to seed yet — fill repositories.*.local_path in $proj (TODO placeholders are skipped), then re-run: coop init --seed-docs"
+    exit 1
+  }
+  if ($rc -ne 0 -or -not $patch.Trim()) { Coop-Die "could not read repositories from $proj" }
+  if (-not (Coop-Confirm "Write these repos into $Dir\coop-data-doc.yml?")) {
+    Coop-Info 'seed cancelled — nothing changed.'
+    exit 1
+  }
+  $cfg = Join-Path $Dir 'coop-data-doc.yml'
+  $patch | & coop-data-doc config-set --config $cfg --from-json - > $null
+  if ($LASTEXITCODE -eq 0) {
+    Coop-Ok "seeded $cfg from project.yml (repos)"
+    Coop-Info 'review it, then build the lineage docs: coop data-doc   (or /setup-docs inside the agent)'
+  } else {
+    Coop-Die "coop-data-doc config-set failed — apply the patch by hand: $py $(Join-Path $script:CoopRoot 'lib/_seeddocs.py') $proj | coop-data-doc config-set --from-json -"
+  }
 }
 
 function New-CoopSkill {

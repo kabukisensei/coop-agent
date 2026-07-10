@@ -344,6 +344,97 @@ export function updateConfigText(text: string, s: DataDocSettings): string {
   return lines.join("\n");
 }
 
+/* --- Project-contract scoping (.coop/project.yml → review paths) -------------
+ * The contract's `repositories.*.local_path` answers "which paths matter"; when
+ * the model calls sql_review/dax_review without explicit paths, scope the review
+ * to those repos instead of blind-scanning the cwd (coop-sql-review's own docs
+ * warn against bare full-tree `check` runs). Explicit paths always win. */
+
+/** Nearest .coop/project.yml walking up from cwd (mirror of the wrapper's
+ *  coop_find_project_yml, WITHOUT its bundled-template fallback — the bundled
+ *  template is all TODO placeholders and must never scope a review). */
+export function findProjectYml(cwd: string): string | null {
+  let dir = resolve(cwd || ".");
+  for (;;) {
+    const cand = join(dir, ".coop", "project.yml");
+    if (existsSync(cand)) return cand;
+    const parent = resolve(dir, "..");
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/** Pull `repositories.<name>.local_path` values out of a project.yml (block-style,
+ *  best-effort — same spirit as classifyManagedLines). TODO/blank placeholders are
+ *  returned in `todo` so the caller can note-and-skip rather than scan them. */
+export function contractRepoPaths(text: string): { paths: string[]; todo: string[] } {
+  const lines = text.split("\n");
+  const paths: string[] = [];
+  const todo: string[] = [];
+  let inRepos = false;
+  let repoIndent: number | null = null;
+  let repo: string | null = null;
+  for (const raw of lines) {
+    const line = raw.replace(/\t/g, "  ");
+    const body = line.trim();
+    if (!body || body.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    if (indent === 0) {
+      inRepos = body === "repositories:";
+      repoIndent = null;
+      repo = null;
+      continue;
+    }
+    if (!inRepos) continue;
+    if (repoIndent === null) repoIndent = indent; // first nested key sets the repo level
+    if (indent === repoIndent) {
+      repo = body.endsWith(":") ? body.slice(0, -1).trim() : null;
+      continue;
+    }
+    if (indent > repoIndent && repo && body.startsWith("local_path:")) {
+      const v = scalarValue(body.slice(body.indexOf(":") + 1));
+      if (!v || /^TODO\b/i.test(v)) todo.push(repo);
+      else paths.push(v);
+    }
+  }
+  return { paths, todo };
+}
+
+export interface ContractScope {
+  /** Absolute, existing repo paths declared by the contract (empty = no usable contract). */
+  paths: string[];
+  /** Repo names whose local_path is still a TODO placeholder (skipped, noted). */
+  skippedTodo: string[];
+  /** Declared local_paths that don't exist on this machine (skipped, noted). */
+  skippedMissing: string[];
+  /** The contract file that was read, or null when none was found. */
+  contract: string | null;
+}
+
+/** Resolve the contract's declared repo paths against the contract's own repo root
+ *  (the dir containing .coop/), keeping only paths that exist on this machine. */
+export function contractReviewScope(cwd: string): ContractScope {
+  const empty: ContractScope = { paths: [], skippedTodo: [], skippedMissing: [], contract: null };
+  try {
+    const file = findProjectYml(cwd);
+    if (!file) return empty;
+    const text = safeRead(file);
+    if (!text) return { ...empty, contract: file };
+    const { paths, todo } = contractRepoPaths(text);
+    const base = resolve(file, "..", "..");
+    const ok: string[] = [];
+    const missing: string[] = [];
+    for (const p of paths) {
+      const abs = isAbsolute(p) ? p : resolve(base, p);
+      if (existsSync(abs)) ok.push(abs);
+      else missing.push(p);
+    }
+    return { paths: ok, skippedTodo: todo, skippedMissing: missing, contract: file };
+  } catch {
+    return empty; // scoping is an aid — never let it break a review call
+  }
+}
+
 /** Render a minimal, valid coop-data-doc.yml. Scalars/arrays JSON-encoded (valid YAML). */
 export function renderMinimalConfig(s: DataDocSettings): string {
   const j = (v: unknown) => JSON.stringify(v);
@@ -633,9 +724,32 @@ export default function coopTools(pi: ExtensionAPI) {
     signal: AbortSignal | undefined,
     ctx: ExtensionContext,
   ) => {
+    // Scope: explicit model-supplied paths always win. Otherwise read the nearest
+    // .coop/project.yml and review the contract's declared repos
+    // (repositories.*.local_path) instead of blind-scanning the cwd; fall back to
+    // ["."] only when there is no usable contract (absent, or all TODO/missing).
+    let rawPaths: string[];
+    let scope: string;
+    let scopeNotes = "";
+    if (params.paths && params.paths.length) {
+      rawPaths = params.paths;
+      scope = "explicit paths";
+    } else {
+      const c = contractReviewScope(ctx.cwd);
+      const notes: string[] = [];
+      if (c.skippedTodo.length) notes.push(`skipped TODO local_path: ${c.skippedTodo.join(", ")}`);
+      if (c.skippedMissing.length) notes.push(`skipped missing local_path: ${c.skippedMissing.join(", ")}`);
+      scopeNotes = notes.length ? ` (${notes.join("; ")})` : "";
+      if (c.paths.length) {
+        rawPaths = c.paths;
+        scope = `project contract (${c.contract})`;
+      } else {
+        rawPaths = ["."];
+        scope = "current directory";
+      }
+    }
     // Neutralize argument injection: a model-supplied path starting with "-" would be
     // read as a CLI flag by the review tool. Prefix "./" so it stays a positional path.
-    const rawPaths = params.paths && params.paths.length ? params.paths : ["."];
     const paths = rawPaths.map((p) => (String(p).startsWith("-") ? "./" + p : p));
     const args = ["check", ...paths, "--format", "json"];
     if (params.min_severity) args.push("--min-severity", params.min_severity);
@@ -657,9 +771,10 @@ export default function coopTools(pi: ExtensionAPI) {
     } catch {
       /* leave parsed null */
     }
+    const scopeLine = `Scope: ${scope}${scopeNotes} — ${paths.join(", ")}`;
     return {
-      content: [{ type: "text" as const, text: summarizeReview(bin, parsed, res.stdout, res.code) }],
-      details: { tool: bin, args, exitCode: res.code, report: parsed ?? res.stdout, stderr: res.stderr },
+      content: [{ type: "text" as const, text: `${summarizeReview(bin, parsed, res.stdout, res.code)}\n${scopeLine}` }],
+      details: { tool: bin, args, scope, scopeNotes, exitCode: res.code, report: parsed ?? res.stdout, stderr: res.stderr },
     };
   };
 
