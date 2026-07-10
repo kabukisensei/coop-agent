@@ -20,6 +20,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   and never blocks the launch. New shared helpers
   `coop_repo_fetch_throttled`/`coop_repo_behind_count`/`coop_update_nudge`
   (+ PowerShell twins) with an offline test suite (`tests/staleness.test.sh`).
+- **`coop uninstall [--keep-tools] [--yes]`** (#21) — clean teardown for VM churn
+  and offboarding (`scripts/uninstall.{sh,ps1}`). Removes the PATH
+  launcher/symlink, the Windows user-PATH registry entry (ExpandString-safe, with
+  the WM_SETTINGCHANGE broadcast), the Start Menu + Desktop shortcuts, coop's
+  isolated agent dir, and — by default — the npm-global Pi agent plus the pipx
+  venvs (coop tools + `ms-fabric-cli`). `--keep-tools` spares the tool layer for
+  fast re-installs and shared machines. Confirms before acting (`--yes` to skip),
+  and never touches the repo clone, work repos' `.coop/project.yml`, the rest of
+  `~/.coop` (private config lives there), or the personal `~/.pi/agent`.
+  `coop uninstall <source>` still removes a Pi extension — the same
+  bare-vs-source split `coop install` already uses.
 - **`coop doctor --json`** (#22) — one machine-readable JSON document on stdout
   (`{"checks":[{name,section,status,hint}…],"fail":N,"warn":N}`,
   `status ∈ ok|warn|fail`), human output suppressed, exit code unchanged — the

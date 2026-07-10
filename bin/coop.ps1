@@ -13,6 +13,7 @@
 #   coop doctor               Check dependencies and configuration
 #   coop update               Update Pi, Coop tools, vibes, skills/prompts, then doctor
 #   coop install              Fresh-install / bootstrap everything (idempotent)
+#   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
 #   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
 #   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
 #   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
@@ -107,6 +108,7 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop doctor               Check dependencies and configuration
   coop update               Update Pi + Coop tools + vibes/skills, then run doctor
   coop install              Fresh-install / bootstrap everything (idempotent)
+  coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
   coop web                  Open a friendly browser UI over the agent (experimental)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
@@ -700,9 +702,22 @@ switch -CaseSensitive ($cmd) {
     & pi install @rest
     exit $LASTEXITCODE
   }
-  { $_ -eq 'remove' -or $_ -eq 'uninstall' } {
+  'remove' {
     if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed.' }
-    & pi $cmd @rest
+    & pi remove @rest
+    exit $LASTEXITCODE
+  }
+  'uninstall' {
+    # Bare `coop uninstall` (or with flags) removes coop's footprint from this
+    # machine (scripts\uninstall.ps1; --keep-tools spares pi + the pipx tools).
+    # `coop uninstall <source>` removes a Pi extension (alias of `coop remove`) —
+    # the same bare-vs-source split `coop install` uses.
+    if ($rest.Count -eq 0 -or $rest[0].StartsWith('-')) {
+      & (Join-Path $script:CoopRoot 'scripts\uninstall.ps1') @rest
+      exit $LASTEXITCODE
+    }
+    if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed.' }
+    & pi uninstall @rest
     exit $LASTEXITCODE
   }
   'list' {

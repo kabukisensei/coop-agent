@@ -149,8 +149,8 @@ _bash_dispatch > "$PARITY_TMP/disp-bash" || true
 _ps_dispatch   > "$PARITY_TMP/disp-ps"   || true
 _report_diff "bin/coop ↔ bin/coop.ps1 dispatch subcommands match" "$PARITY_TMP/disp-bash" "$PARITY_TMP/disp-ps"
 
-echo "→ flag parity (install / update / doctor arg parsers)"
-for pair in install update doctor; do
+echo "→ flag parity (install / update / doctor / uninstall arg parsers)"
+for pair in install update doctor uninstall; do
   _bash_flags "scripts/$pair.sh"  > "$PARITY_TMP/$pair-bash" || true
   _ps_flags   "scripts/$pair.ps1" > "$PARITY_TMP/$pair-ps"   || true
   _report_diff "scripts/$pair.{sh,ps1} recognize the same flags" "$PARITY_TMP/$pair-bash" "$PARITY_TMP/$pair-ps"

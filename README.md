@@ -227,6 +227,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop` | Launch the branded Pi agent (skills, prompts, theme, guardrails, splash) |
 | `coop doctor [--fix] [--json]` | Check dependencies and configuration; exit non-zero if required items missing. `--fix` auto-applies safe remediations (sync extensions/MCP/assets, pipx-install missing Coop tools), then re-checks. `--json` emits one machine-readable document on stdout (`{"checks":[{name,section,status,hint}…],"fail":N,"warn":N}`) for fleet-health digests |
 | `coop update [--no-fabric]` | Update Pi + Pi extensions + Coop tools + vibes/skills, then run doctor (`--no-fabric` skips the Fabric CLI, matching `install --no-fabric`) |
+| `coop uninstall [--keep-tools] [--yes]` | Remove coop from this machine (VM churn / offboarding): the PATH launcher/symlink, the Start Menu + Desktop shortcuts and user-PATH entry (Windows), and coop's isolated agent dir — plus, by default, Pi (npm) and the pipx tools. `--keep-tools` spares pi/pipx/fab for a fast re-install. Never touches the repo clone, work repos, the rest of `~/.coop`, or your personal `~/.pi/agent` |
 | `coop install` | Fresh-install / bootstrap everything (idempotent). With a source arg, alias of `coop add` |
 | `coop web` | Open a friendly browser UI over the same governed agent (experimental; loopback-only + one-time token — see `web/README.md`) |
 | `coop bootstrap` | Same bootstrap as bare `coop install` |

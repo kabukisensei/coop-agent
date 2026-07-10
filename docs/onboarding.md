@@ -155,6 +155,15 @@ Commit + push; teammates get it on their next `coop update`. See
 coop update               # updates Pi + extensions + tools, pulls latest coop-agent, runs doctor
 ```
 
+## Leaving a machine (VM rebuild / offboarding)
+
+```bash
+coop uninstall            # removes the launcher/PATH entry, shortcuts (Windows), and coop's agent dir
+                          # + Pi and the pipx tools; add --keep-tools to spare those for a fast re-install
+```
+
+It never touches the repo clone, your work repos, or your personal `pi` setup.
+
 ## Ground rules (the agent follows these for you)
 
 - **Read-only first** — it plans and asks before changing anything.
