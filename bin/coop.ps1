@@ -135,25 +135,9 @@ e.g. ``coop -c`` resumes the last session, ``coop @notes.md "review this"``.
 "@
 }
 
-# --- Optional Azure preflight (non-fatal) ------------------------------------
-# Mirrors the team's pi-ready habit: if the project pins a Fabric tenant and the
-# Azure CLI is present, make sure a Power BI token exists before launching.
-# Skipped entirely when COOP_SKIP_AZ=1 or no tenant is configured.
-function Invoke-CoopAzPreflight {
-  if ($env:COOP_SKIP_AZ -eq '1') { return }
-  if (-not (Test-Have 'az')) { return }
-  $proj = Find-CoopProjectYml
-  if (-not $proj) { return }
-  $tenant = Get-CoopYamlValue $proj 'fabric.tenant_id' ''
-  if (-not $tenant -or $tenant -like 'TODO*' -or $tenant -like 'TODO:*') { return }
-  & az account get-access-token --resource https://analysis.windows.net/powerbi/api > $null 2>&1
-  if ($LASTEXITCODE -eq 0) { return }
-  Coop-Warn 'Azure / Power BI token missing or expired.'
-  if (Coop-Confirm "Run 'az login' for tenant $tenant now?") {
-    & az login --tenant $tenant --allow-no-subscriptions
-    if ($LASTEXITCODE -ne 0) { Coop-Warn 'az login failed; continuing anyway.' }
-  }
-}
+# The optional Azure preflight (Power BI token check, cached ~30 min) lives in
+# lib/common.ps1 (Invoke-CoopAzPreflight) — called below by Invoke-LaunchPi and
+# Invoke-CoopWeb.
 
 # --- Launch the branded Pi agent ---------------------------------------------
 # Launch-time skew guard (mirror of common.sh coop_launch_preflight): refuse to exec

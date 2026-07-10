@@ -23,6 +23,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **The az preflight is cached for ~30 minutes** (#18) — on tenant-pinned
+  projects every `coop` / `coop web` launch paid `az`'s 1–3s cold start to
+  re-verify a ~60-minute Power BI token. A successful probe now stamps the
+  validated tenant into `<agent-dir>/.az-ok`; within 30 minutes for the same
+  tenant the probe is skipped entirely. Tenant changes and stale/missing markers
+  re-probe exactly as before, failed probes clear the marker, `COOP_SKIP_AZ=1`
+  is unchanged, and marker I/O is best-effort (never fails a launch). The
+  preflight moved into the shared libraries (`coop_az_preflight` in
+  `lib/common.sh`, `Invoke-CoopAzPreflight` in `lib/common.ps1`) with a
+  shimmed-`az` test suite (`tests/azcache.test.sh`).
 - **Onboarding §3.5 documents the first-launch sign-in** (#19) — the one
   interactive fork in setup now has guidance: choose the **OpenAI (Codex)**
   provider and sign in with your **Cooptimize business account** (the

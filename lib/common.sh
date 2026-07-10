@@ -236,6 +236,46 @@ coop_minor_newer() {
   return 1
 }
 
+# --- Optional Azure preflight (non-fatal) --------------------------------------
+# Mirrors the team's pi-ready habit: if the project pins a Fabric tenant and the
+# Azure CLI is present, make sure a Power BI token exists before launching.
+# Skipped entirely when COOP_SKIP_AZ=1 or no tenant is configured.
+#
+# Cached: a successful probe stamps the tenant id into <agent-dir>/.az-ok. Power BI
+# tokens live ~60 minutes and `az` cold-starts in ~1-3s, so within 30 minutes of a
+# success for the SAME tenant the probe is skipped entirely. A failed probe (or a
+# stale/missing/mismatched marker) behaves exactly as before; marker I/O is
+# best-effort and never fails the launch.
+coop_az_preflight() {
+  [ "${COOP_SKIP_AZ:-0}" = "1" ] && return 0
+  have az || return 0
+  local proj tenant marker
+  proj="$(coop_find_project_yml)"
+  [ -n "$proj" ] || return 0
+  tenant="$(coop_yaml_get "$proj" "fabric.tenant_id" "")"
+  case "$tenant" in ""|TODO*) return 0 ;; esac
+  marker="$(coop_effective_agent_dir)/.az-ok"
+  # find -mmin -30: marker modified <30 min ago (BSD + GNU; no stat(1) flag games).
+  if [ -n "$(find "$marker" -mmin -30 2>/dev/null)" ] \
+     && [ "$(cat "$marker" 2>/dev/null)" = "$tenant" ]; then
+    return 0
+  fi
+  if az account get-access-token --resource https://analysis.windows.net/powerbi/api >/dev/null 2>&1; then
+    { mkdir -p "$(coop_effective_agent_dir)" && printf '%s' "$tenant" > "$marker"; } 2>/dev/null || true
+    return 0
+  fi
+  rm -f "$marker" 2>/dev/null || true
+  coop_warn "Azure / Power BI token missing or expired."
+  if coop_confirm "Run 'az login' for tenant ${tenant} now?"; then
+    if az login --tenant "$tenant" --allow-no-subscriptions; then
+      { printf '%s' "$tenant" > "$marker"; } 2>/dev/null || true
+    else
+      coop_warn "az login failed; continuing anyway."
+    fi
+  fi
+  return 0
+}
+
 # --- Repo staleness (fleet drift) ---------------------------------------------
 # coop-agent updates arrive via `git pull` inside `coop update`; a zip/shared-drive
 # copy (no .git) silently never updates, and even a git checkout has no signal

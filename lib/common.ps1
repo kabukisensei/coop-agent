@@ -186,6 +186,49 @@ function Get-CoopEffectiveAgentDir {
   return (Get-CoopPiAgentDir)
 }
 
+# --- Optional Azure preflight (non-fatal) --------------------------------------
+# Mirrors the team's pi-ready habit: if the project pins a Fabric tenant and the
+# Azure CLI is present, make sure a Power BI token exists before launching.
+# Skipped entirely when COOP_SKIP_AZ=1 or no tenant is configured.
+#
+# Cached: a successful probe stamps the tenant id into <agent-dir>/.az-ok. Power BI
+# tokens live ~60 minutes and `az` cold-starts in ~1-3s, so within 30 minutes of a
+# success for the SAME tenant the probe is skipped entirely. A failed probe (or a
+# stale/missing/mismatched marker) behaves exactly as before; marker I/O is
+# best-effort and never fails the launch. (mirror of coop_az_preflight)
+function Invoke-CoopAzPreflight {
+  if ($env:COOP_SKIP_AZ -eq '1') { return }
+  if (-not (Test-Have 'az')) { return }
+  $proj = Find-CoopProjectYml
+  if (-not $proj) { return }
+  $tenant = Get-CoopYamlValue $proj 'fabric.tenant_id' ''
+  if (-not $tenant -or $tenant -like 'TODO*' -or $tenant -like 'TODO:*') { return }
+  $agentDir = Get-CoopEffectiveAgentDir
+  $marker = Join-Path $agentDir '.az-ok'
+  # -Force: pwsh on macOS/Linux treats the dot-prefixed marker as hidden.
+  $mi = Get-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+  if ($mi -and (((Get-Date) - $mi.LastWriteTime).TotalMinutes -lt 30)) {
+    $cached = ''
+    try { $cached = ([System.IO.File]::ReadAllText($marker)).Trim() } catch { }
+    if ($cached -eq $tenant) { return }
+  }
+  & az account get-access-token --resource https://analysis.windows.net/powerbi/api > $null 2>&1
+  if ($LASTEXITCODE -eq 0) {
+    try {
+      New-Item -ItemType Directory -Force -Path $agentDir -ErrorAction SilentlyContinue | Out-Null
+      [System.IO.File]::WriteAllText($marker, $tenant)
+    } catch { }
+    return
+  }
+  Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+  Coop-Warn 'Azure / Power BI token missing or expired.'
+  if (Coop-Confirm "Run 'az login' for tenant $tenant now?") {
+    & az login --tenant $tenant --allow-no-subscriptions
+    if ($LASTEXITCODE -ne 0) { Coop-Warn 'az login failed; continuing anyway.' }
+    else { try { [System.IO.File]::WriteAllText($marker, $tenant) } catch { } }
+  }
+}
+
 # --- Repo staleness (fleet drift) ---------------------------------------------
 # coop-agent updates arrive via `git pull` inside `coop update`; a zip/shared-drive
 # copy (no .git) silently never updates, and even a git checkout has no signal

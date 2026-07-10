@@ -90,26 +90,8 @@ e.g. \`coop -c\` resumes the last session, \`coop @notes.md "review this"\`.
 EOF
 }
 
-# --- Optional Azure preflight (non-fatal) ------------------------------------
-# Mirrors the team's pi-ready habit: if the project pins a Fabric tenant and the
-# Azure CLI is present, make sure a Power BI token exists before launching.
-# Skipped entirely when COOP_SKIP_AZ=1 or no tenant is configured.
-coop_az_preflight() {
-  [ "${COOP_SKIP_AZ:-0}" = "1" ] && return 0
-  have az || return 0
-  local proj tenant
-  proj="$(coop_find_project_yml)"
-  [ -n "$proj" ] || return 0
-  tenant="$(coop_yaml_get "$proj" "fabric.tenant_id" "")"
-  case "$tenant" in ""|TODO*) return 0 ;; esac
-  if az account get-access-token --resource https://analysis.windows.net/powerbi/api >/dev/null 2>&1; then
-    return 0
-  fi
-  coop_warn "Azure / Power BI token missing or expired."
-  if coop_confirm "Run 'az login' for tenant ${tenant} now?"; then
-    az login --tenant "$tenant" --allow-no-subscriptions || coop_warn "az login failed; continuing anyway."
-  fi
-}
+# The optional Azure preflight (Power BI token check, cached ~30 min) lives in
+# lib/common.sh (coop_az_preflight) — called below by launch_pi and coop_web.
 
 # --- Assemble the exact Pi launch spec (args + brand env) --------------------
 # SINGLE SOURCE OF TRUTH for how coop launches Pi. Both `launch_pi` (the terminal

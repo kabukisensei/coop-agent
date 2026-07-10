@@ -62,6 +62,9 @@ bash "$ROOT/tests/update-guard.test.sh"
 echo "→ repo staleness nudge (throttled fetch + behind-count) tests"
 bash "$ROOT/tests/staleness.test.sh"
 
+echo "→ az-preflight cache (.az-ok TTL + tenant stamp) tests"
+bash "$ROOT/tests/azcache.test.sh"
+
 echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
 node "$ROOT/tests/webbridge.test.mjs"
 
