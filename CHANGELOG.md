@@ -5,6 +5,24 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`coop review [paths...] [--strict] [--skip-docs]`** — one command for the whole
+  advisory loop: runs `coop-sql-review` **and** `coop-dax-review` over the same
+  scope (explicit paths win; else the nearest `.coop/project.yml`'s
+  `repositories.*.local_path` entries, resolved against the contract's repo root
+  with TODO/missing paths skipped — the same contract scoping the native
+  `sql_review`/`dax_review` tools use; never a blind cwd scan), saves both JSON
+  reports under `.coop/reviews/` next to the contract, then rebuilds the lineage
+  docs with the findings composed in
+  (`coop-data-doc build --non-interactive --reviews …`). Lineage docs not set up
+  (data-doc's friendly exit 1) is a hint, not a failure; a hard data-doc failure
+  propagates; `--strict` flows to both linters and exits 2 when either exits
+  non-zero; `--skip-docs` runs the linters only. On both platforms, with a
+  shimmed offline suite (`tests/review.test.sh`). To support the scoping,
+  `lib/_yaml.py list` learned `*` fan-out for dotted keys
+  (`repositories.*.local_path`).
+
 ## [0.13.0] — 2026-07-09
 
 ### Added

@@ -18,6 +18,7 @@
 #   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
 #   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
 #   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
+#   coop review [paths...]    Run both linters + compose findings onto the lineage docs
 #   coop fabric [args]        Pass through to the Microsoft Fabric CLI (`fab`)
 #   coop version              Print coop + pi versions
 #   coop help                 Show this help
@@ -114,6 +115,8 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
+  coop review [paths...]    Run both linters + compose findings onto the lineage docs
+                            (--strict: exit 2 on a failing linter; --skip-docs: linters only)
   coop fabric [args]        Pass through to the Microsoft Fabric CLI (fab)
   coop version              Print coop + pi versions
   coop help                 Show this help
@@ -344,6 +347,116 @@ function Invoke-DataDoc {
     }
   }
   exit $rc   # mirror Invoke-Tool: a coop-data-doc failure must not be masked by the summary
+}
+
+# --- coop review: both linters + compose findings onto the lineage docs -------
+# Mirror of run_review in bin/coop. One command for the whole advisory loop: run
+# coop-sql-review AND coop-dax-review over the same scope (each tool filters by
+# file type itself), save both JSON reports under .coop/reviews/ next to the
+# contract, then rebuild the lineage docs with the findings composed in
+# (coop-data-doc build --reviews …). Scope: explicit paths win; with none, the
+# nearest .coop/project.yml's repositories.*.local_path entries — the same
+# contract scoping the native sql_review/dax_review tools use (TODO placeholders
+# and paths missing on this machine are skipped with a note). NEVER blind-scans
+# the cwd. Advisory: linter findings don't fail the run unless --strict; docs-
+# not-set-up is a hint, not a failure; a hard data-doc failure (exit 2) propagates.
+function Invoke-CoopReview {
+  param([string[]] $RestArgs = @())
+  $strict = $false; $skipDocs = $false; $scope = @()
+  foreach ($a in $RestArgs) {
+    switch -CaseSensitive ($a) {
+      '--strict'    { $strict = $true }
+      '--skip-docs' { $skipDocs = $true }
+      { $_ -eq '-h' -or $_ -eq '--help' } {
+        Coop-Say 'Usage: coop review [paths...] [--strict] [--skip-docs]'
+        Coop-Say '  Run coop-sql-review AND coop-dax-review over the project scope (explicit paths'
+        Coop-Say "  win; else the nearest .coop/project.yml's repositories.*.local_path entries),"
+        Coop-Say '  save both JSON reports under .coop/reviews/, then rebuild the lineage docs with'
+        Coop-Say '  the findings composed in (coop-data-doc build --reviews …).'
+        Coop-Say '  --strict      pass --strict to both linters; exit 2 if either exits non-zero'
+        Coop-Say '  --skip-docs   skip the coop-data-doc build step (linters only)'
+        return
+      }
+      default {
+        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop review [paths...] [--strict] [--skip-docs]" }
+        $scope += $a
+      }
+    }
+  }
+
+  if (-not (Test-Have 'coop-sql-review')) { Coop-Die 'coop-sql-review is not installed. Run: coop install' }
+  if (-not (Test-Have 'coop-dax-review')) { Coop-Die 'coop-dax-review is not installed. Run: coop install' }
+  if (-not $skipDocs -and -not (Test-Have 'coop-data-doc')) { Coop-Die 'coop-data-doc is not installed. Run: coop install   (or skip the docs step: coop review --skip-docs)' }
+
+  # Scope + output dir from the project contract (same semantics as coop-tools'
+  # contractReviewScope: resolve against the contract's repo root, existing only).
+  $proj = Find-CoopProjectYml
+  $outdir = if ($proj) { Join-Path (Split-Path -Parent $proj) 'reviews' } else { Join-Path '.coop' 'reviews' }
+  if ($scope.Count -eq 0 -and $proj) {
+    $base = Split-Path -Parent (Split-Path -Parent $proj)
+    foreach ($p in (Get-CoopYamlList $proj 'repositories.*.local_path')) {
+      if (-not $p) { continue }
+      if ($p -like 'TODO*') { Coop-Warn 'skipping a repositories.local_path that is still a TODO placeholder'; continue }
+      $abs = if ([System.IO.Path]::IsPathRooted($p)) { $p } else { Join-Path $base $p }
+      if (Test-Path -LiteralPath $abs) { $scope += $abs } else { Coop-Warn "skipping $p (not found on this machine)" }
+    }
+  }
+  if ($scope.Count -eq 0) { Coop-Die 'nothing to review — run inside a project with .coop/project.yml (repositories.*.local_path filled), or pass paths: coop review <paths...>' }
+
+  New-Item -ItemType Directory -Force -Path $outdir -ErrorAction SilentlyContinue | Out-Null
+  if (-not (Test-Path -LiteralPath $outdir -PathType Container)) { Coop-Die "cannot create $outdir" }
+  $sqlJson = Join-Path $outdir 'coop-sql-review.json'
+  $daxJson = Join-Path $outdir 'coop-dax-review.json'
+  $extra = @(); if ($strict) { $extra = @('--strict') }
+
+  # Run both linters over the SAME scope; capture exit codes, never abort here.
+  Coop-Head "coop-sql-review check → $sqlJson"
+  & coop-sql-review check @scope --format json -o $sqlJson @extra
+  $sqlRc = $LASTEXITCODE
+  if ($sqlRc -ne 0) { Coop-Warn "coop-sql-review exited $sqlRc" }
+  Coop-Head "coop-dax-review check → $daxJson"
+  & coop-dax-review check @scope --format json -o $daxJson @extra
+  $daxRc = $LASTEXITCODE
+  if ($daxRc -ne 0) { Coop-Warn "coop-dax-review exited $daxRc" }
+
+  # Compose the findings onto the lineage docs (unless --skip-docs).
+  $ddRc = 0
+  if ($skipDocs) {
+    Coop-Info 'skipping the lineage-docs step (--skip-docs)'
+  } else {
+    Coop-Head 'coop-data-doc build (composing review findings)'
+    & coop-data-doc build --non-interactive --reviews $sqlJson --reviews $daxJson
+    $ddRc = $LASTEXITCODE
+    if ($ddRc -eq 1) {
+      # Friendly "no config" exit — the findings are still saved; docs are an aid, not a gate.
+      Coop-Warn 'lineage docs not set up — findings saved, docs step skipped. Set up lineage docs first: coop data-doc setup   (or /setup-docs in the agent)'
+      $ddRc = 0
+    } elseif ($ddRc -ne 0) {
+      Coop-Err "coop-data-doc build failed (exit $ddRc)"
+    } else {
+      foreach ($d in @('data-docs-site', 'site')) {
+        if (Test-Path -LiteralPath (Join-Path $d 'index.html') -PathType Leaf) { Coop-Ok "Portal: $d/index.html"; break }
+      }
+    }
+  }
+
+  # Summary: per-tool finding counts when cheaply parseable, else just the paths.
+  $py = Get-CoopPython
+  if ($py) {
+    foreach ($f in @($sqlJson, $daxJson)) {
+      if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { continue }
+      $label = (& $py -c 'import json,sys; d=json.load(open(sys.argv[1])); s=d.get("summary") or {}; f=d.get("findings"); n=len(f) if isinstance(f,list) else 0; print("%d finding(s) — %s error, %s warning, %s info" % (n, s.get("error",0), s.get("warning",0), s.get("info",0)))' $f 2>$null)
+      if ($label) { Coop-Ok "$(Split-Path -Leaf $f): $label  ($f)" } else { Coop-Ok "Report: $f" }
+    }
+  } else {
+    Coop-Ok "Reports: $sqlJson  $daxJson"
+  }
+  Coop-Info "Tip: add these files to coop-data-doc.yml's reviews: list so CI check sees the same inputs."
+
+  # Exit: hard data-doc failures propagate; --strict makes a failing linter exit 2.
+  if ($ddRc -ge 2) { exit $ddRc }
+  if ($strict -and ($sqlRc -ne 0 -or $daxRc -ne 0)) { exit 2 }
+  exit 0
 }
 
 # --- Authoring scaffolders (mirror of bin/coop) ------------------------------
@@ -743,6 +856,7 @@ switch -CaseSensitive ($cmd) {
   'data-doc' { Invoke-DataDoc $rest; break }
   'sql-review' { Invoke-Tool 'coop-sql-review' $rest; break }
   'dax-review' { Invoke-Tool 'coop-dax-review' $rest; break }
+  'review' { Invoke-CoopReview $rest; break }
   { $_ -eq 'fabric' -or $_ -eq 'fab' } {
     if (-not (Test-Have 'fab')) { Coop-Die 'Microsoft Fabric CLI (fab) not found. Run: coop install' }
     & fab @rest

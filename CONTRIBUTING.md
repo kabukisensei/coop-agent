@@ -118,7 +118,10 @@ YAML/JSON, transpiles the TypeScript extensions with esbuild, and parses every
 
 - Small, focused commits with clear messages.
 - Update `CHANGELOG.md` under `## [Unreleased]` for user-visible changes.
-- Update the relevant docs (`README.md`, `docs/*`) when behavior changes.
+- Update the relevant docs (`README.md`, `docs/*`) when behavior changes. A
+  feature change must update the repo's own docs — `README.md` **plus** the
+  relevant `docs/*.md` — **in the same commit/PR**; skipping this is how
+  `docs/extending.md` went a whole release stale.
 - Never commit secrets, tenant ids, tokens, `.env`, or generated artifacts (the
   `.gitignore` is set up to prevent this — keep it that way).
 

@@ -66,7 +66,13 @@ agent to "use the lakehouse-naming-review skill."
 
 > Keep skills **advisory and read-only** to match Cooptimize governance. If a skill
 > needs to run a tool, point it at the native tools (`sql_review`, `dax_review`,
-> `data_doc`) or `fab` / `fabric-cicd` (validate-only).
+> `data_doc`) or `fab` / `fabric-cicd` (validate-only). A skill doesn't need to
+> spell out paths for the review tools: called without explicit paths, they
+> auto-scope to the nearest `.coop/project.yml`'s `repositories.*.local_path`
+> entries (the scope used is surfaced in the tool result; explicit paths always
+> win) — see [docs/tool-contract.md](tool-contract.md). From a shell, `coop review`
+> runs both linters over that same contract scope and composes the findings onto
+> the lineage docs.
 
 ## 2. Add a prompt template (a `/slash` command)
 
@@ -135,7 +141,26 @@ To load a new companion extension, either drop it in `extensions/<name>/` and ad
 Full Pi extension API reference: run `coop pi --help`, and see the bundled examples
 under the Pi package's `examples/extensions/` (the patterns coop's extensions follow).
 
-## 5. The official-Microsoft-skills slot (subordinate)
+## 5. Scaffold a work repo (`coop init`)
+
+Skills and prompts lean on the project contract — `.coop/project.yml` in the work
+repo — for repo paths, workspaces, and standards. Scaffolding a new work repo is
+two commands:
+
+```bash
+coop init                 # scaffolds .coop/project.yml (from .coop/project.example.yml)
+coop init --seed-docs     # then, once repositories: is filled — generates a matching
+                          # coop-data-doc.yml from the contract's repositories: paths
+```
+
+`coop init` copies the fully documented template into `<repo>/.coop/project.yml`;
+fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then verify
+with `coop doctor`. `coop init --seed-docs` generates/patches `coop-data-doc.yml`
+from the contract's `repositories:` (via `coop-data-doc config-set`), so repo
+paths are typed once — the same paths that auto-scope the review tools (§1's note)
+and `coop review`.
+
+## 6. The official-Microsoft-skills slot (subordinate)
 
 `skills/_microsoft/` holds the official Microsoft skills
 ([github.com/microsoft/skills](https://github.com/microsoft/skills)). They are

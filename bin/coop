@@ -18,6 +18,7 @@
 #   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
 #   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
 #   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
+#   coop review [paths...]    Run both linters + compose findings onto the lineage docs
 #   coop fabric [args]        Pass through to the Microsoft Fabric CLI (`fab`)
 #   coop version              Print coop + pi versions
 #   coop help                 Show this help
@@ -69,6 +70,8 @@ ${COOP_BOLD}Usage${COOP_RST}
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
+  coop review [paths...]    Run both linters + compose findings onto the lineage docs
+                            (--strict: exit 2 on a failing linter; --skip-docs: linters only)
   coop fabric [args]        Pass through to the Microsoft Fabric CLI (fab)
   coop version              Print coop + pi versions
   coop help                 Show this help
@@ -271,6 +274,120 @@ PY
       break
     fi
   done
+}
+
+# --- coop review: both linters + compose findings onto the lineage docs -------
+# One command for the whole advisory loop: run coop-sql-review AND coop-dax-review
+# over the same scope (each tool filters by file type itself), save both JSON
+# reports under .coop/reviews/ next to the contract, then rebuild the lineage docs
+# with the findings composed in (coop-data-doc build --reviews …). Scope: explicit
+# paths win; with none, the nearest .coop/project.yml's repositories.*.local_path
+# entries — the same contract scoping the native sql_review/dax_review tools use
+# (TODO placeholders and paths missing on this machine are skipped with a note).
+# NEVER blind-scans the cwd. Advisory: linter findings don't fail the run unless
+# --strict; docs-not-set-up is a hint, not a failure; a hard data-doc failure
+# (exit 2) propagates.
+run_review() {
+  local strict=0 skip_docs=0
+  local scope=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --strict)    strict=1 ;;
+      --skip-docs) skip_docs=1 ;;
+      -h|--help)
+        cat >&2 <<'EOF'
+Usage: coop review [paths...] [--strict] [--skip-docs]
+  Run coop-sql-review AND coop-dax-review over the project scope (explicit paths
+  win; else the nearest .coop/project.yml's repositories.*.local_path entries),
+  save both JSON reports under .coop/reviews/, then rebuild the lineage docs with
+  the findings composed in (coop-data-doc build --reviews …).
+  --strict      pass --strict to both linters; exit 2 if either exits non-zero
+  --skip-docs   skip the coop-data-doc build step (linters only)
+EOF
+        return 0 ;;
+      -*) coop_die "unknown flag '$1' — usage: coop review [paths...] [--strict] [--skip-docs]" ;;
+      *)  scope+=("$1") ;;
+    esac
+    shift
+  done
+
+  have coop-sql-review || coop_die "coop-sql-review is not installed. Run: coop install"
+  have coop-dax-review || coop_die "coop-dax-review is not installed. Run: coop install"
+  if [ "$skip_docs" != 1 ]; then
+    have coop-data-doc || coop_die "coop-data-doc is not installed. Run: coop install   (or skip the docs step: coop review --skip-docs)"
+  fi
+
+  # Scope + output dir from the project contract (same semantics as coop-tools'
+  # contractReviewScope: resolve against the contract's repo root, existing only).
+  local proj outdir base p abs
+  proj="$(coop_find_project_yml)"
+  if [ -n "$proj" ]; then outdir="$(dirname "$proj")/reviews"; else outdir=".coop/reviews"; fi
+  if [ "${#scope[@]}" -eq 0 ] && [ -n "$proj" ]; then
+    base="$(dirname "$(dirname "$proj")")"
+    while IFS= read -r p; do
+      [ -z "$p" ] && continue
+      case "$p" in TODO*) coop_warn "skipping a repositories.local_path that is still a TODO placeholder"; continue ;; esac
+      case "$p" in /*) abs="$p" ;; *) abs="$base/$p" ;; esac
+      if [ -e "$abs" ]; then scope+=("$abs"); else coop_warn "skipping ${p} (not found on this machine)"; fi
+    done <<EOF
+$(coop_yaml_list "$proj" "repositories.*.local_path")
+EOF
+  fi
+  [ "${#scope[@]}" -gt 0 ] || coop_die "nothing to review — run inside a project with .coop/project.yml (repositories.*.local_path filled), or pass paths: coop review <paths...>"
+
+  mkdir -p "$outdir" || coop_die "cannot create $outdir"
+  local sql_json="$outdir/coop-sql-review.json" dax_json="$outdir/coop-dax-review.json"
+  local sql_rc=0 dax_rc=0 dd_rc=0
+  local extra=()
+  [ "$strict" = 1 ] && extra=(--strict)
+
+  # Run both linters over the SAME scope; capture exit codes, never abort here.
+  coop_head "coop-sql-review check → $sql_json"
+  coop-sql-review check ${scope[@]+"${scope[@]}"} --format json -o "$sql_json" ${extra[@]+"${extra[@]}"} || sql_rc=$?
+  [ "$sql_rc" -eq 0 ] || coop_warn "coop-sql-review exited $sql_rc"
+  coop_head "coop-dax-review check → $dax_json"
+  coop-dax-review check ${scope[@]+"${scope[@]}"} --format json -o "$dax_json" ${extra[@]+"${extra[@]}"} || dax_rc=$?
+  [ "$dax_rc" -eq 0 ] || coop_warn "coop-dax-review exited $dax_rc"
+
+  # Compose the findings onto the lineage docs (unless --skip-docs).
+  if [ "$skip_docs" = 1 ]; then
+    coop_info "skipping the lineage-docs step (--skip-docs)"
+  else
+    coop_head "coop-data-doc build (composing review findings)"
+    coop-data-doc build --non-interactive --reviews "$sql_json" --reviews "$dax_json" || dd_rc=$?
+    if [ "$dd_rc" -eq 1 ]; then
+      # Friendly "no config" exit — the findings are still saved; docs are an aid, not a gate.
+      coop_warn "lineage docs not set up — findings saved, docs step skipped" "set up lineage docs first: coop data-doc setup   (or /setup-docs in the agent)"
+      dd_rc=0
+    elif [ "$dd_rc" -ne 0 ]; then
+      coop_err "coop-data-doc build failed (exit $dd_rc)"
+    else
+      local d
+      for d in data-docs-site site; do
+        [ -f "$d/index.html" ] && { coop_ok "Portal: $d/index.html"; break; }
+      done
+    fi
+  fi
+
+  # Summary: per-tool finding counts when cheaply parseable, else just the paths.
+  local f label
+  if have python3; then
+    for f in "$sql_json" "$dax_json"; do
+      [ -f "$f" ] || continue
+      label="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); s=d.get("summary") or {}; f=d.get("findings"); n=len(f) if isinstance(f,list) else 0; print("%d finding(s) — %s error, %s warning, %s info" % (n, s.get("error",0), s.get("warning",0), s.get("info",0)))' "$f" 2>/dev/null)" || label=""
+      if [ -n "$label" ]; then coop_ok "$(basename "$f"): ${label}  (${f})"; else coop_ok "Report: $f"; fi
+    done
+  else
+    coop_ok "Reports: $sql_json  $dax_json"
+  fi
+  coop_info "Tip: add these files to coop-data-doc.yml's reviews: list so CI check sees the same inputs."
+
+  # Exit: hard data-doc failures propagate; --strict makes a failing linter exit 2.
+  [ "$dd_rc" -ge 2 ] && exit "$dd_rc"
+  if [ "$strict" = 1 ]; then
+    if [ "$sql_rc" -ne 0 ] || [ "$dax_rc" -ne 0 ]; then exit 2; fi
+  fi
+  return 0
 }
 
 # --- Authoring scaffolders ---------------------------------------------------
@@ -655,6 +772,7 @@ case "$cmd" in
   data-doc)      shift; run_data_doc "$@" ;;
   sql-review)    shift; run_tool coop-sql-review "$@" ;;
   dax-review)    shift; run_tool coop-dax-review "$@" ;;
+  review)        shift; run_review "$@" ;;
   fabric|fab)    shift; have fab || coop_die "Microsoft Fabric CLI (fab) not found. Run: coop install"; exec fab "$@" ;;
   # --- Pi management, aliased under coop ---
   add)           shift; have pi || coop_die "pi not installed. Run: coop bootstrap"; exec pi install "$@" ;;

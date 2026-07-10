@@ -68,6 +68,9 @@ bash "$ROOT/tests/azcache.test.sh"
 echo "→ coop init --seed-docs (contract → coop-data-doc.yml) tests"
 bash "$ROOT/tests/seeddocs.test.sh"
 
+echo "→ coop review (composite linters + docs compose) tests"
+bash "$ROOT/tests/review.test.sh"
+
 echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
 node "$ROOT/tests/webbridge.test.mjs"
 

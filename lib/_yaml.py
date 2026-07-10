@@ -13,6 +13,9 @@ aliases, and tags are out of scope.
 Usage:
     python3 _yaml.py get  FILE dotted.key [default]   -> prints scalar (or default)
     python3 _yaml.py list FILE dotted.key             -> prints list items, one per line
+
+In `list` mode a `*` segment fans out over every value of a dict, so e.g.
+`list FILE repositories.*.local_path` prints each repo's local_path, one per line.
 """
 import sys
 
@@ -255,6 +258,24 @@ def dig(data, dotted):
     return cur
 
 
+def dig_star(data, dotted):
+    """dig with `*` fan-out: a `*` segment matches every value of a dict (e.g.
+    repositories.*.local_path -> each repo's local_path). Returns the list of
+    matches, possibly empty."""
+    cur = [data]
+    for part in dotted.split('.'):
+        nxt = []
+        for c in cur:
+            if not isinstance(c, dict):
+                continue
+            if part == '*':
+                nxt.extend(c.values())
+            elif part in c:
+                nxt.append(c[part])
+        cur = nxt
+    return cur
+
+
 def main(argv):
     if len(argv) < 4:
         return 0
@@ -265,6 +286,11 @@ def main(argv):
     except Exception:
         if mode == 'get':
             sys.stdout.write(default)
+        return 0
+    if mode == 'list' and '*' in key.split('.'):
+        for item in dig_star(data, key):
+            if item is not None and not isinstance(item, (list, dict)):
+                print(item)
         return 0
     val = dig(data, key)
     if mode == 'get':
