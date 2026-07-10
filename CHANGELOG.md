@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-07-09
+
 ### Added
 
 - **Zip/shared-drive installs no longer silently never update** (#20). A coop-agent
