@@ -144,7 +144,11 @@ If this suite release also bumped any of the three coop tools (steps (a)–(c)),
 **refresh `config/defaults.yml` → `tested_with` first** — the pre-tag gate below
 verifies those pins against coop-website's `versions.json` and aborts on a
 mismatch. (Update `versions.json` before or together with the pins; step (e)
-requires it anyway.)
+requires it anyway.) **Also update the `==X.Y.Z` pins in
+[`docs/ci.md`](docs/ci.md)** (the copy-paste GitHub Actions + Azure DevOps
+pipelines and the "Pinning tool versions" prose) to the same versions — the
+pre-tag gate does **not** check `docs/ci.md`, so those pins drift silently if
+you skip this.
 
 From a clean tree on `main`, with user-visible changes recorded under
 `## [Unreleased]` in `CHANGELOG.md`:
