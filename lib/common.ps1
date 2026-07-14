@@ -186,6 +186,94 @@ function Get-CoopEffectiveAgentDir {
   return (Get-CoopPiAgentDir)
 }
 
+# Align coop's ISOLATED extension tree's @earendil-works/pi-ai + pi-tui to the Pi
+# agent's OWN version (mirror of lib/common.sh coop_align_ext_deps). coop's
+# extensions load INTO the running agent, so they must share one pi-ai/pi-tui with
+# it; we write an npm `overrides` pin via lib/_extdeps.py and reinstall only when
+# the installed tree doesn't already match. Best-effort; never fatal. Lives in the
+# shared lib (not sync.ps1) so `coop sync` AND the launch preflight can both call
+# the SAME targeted re-pin without the preflight spawning the full sync.
+# -AgentDir defaults to the dir Pi will actually load (honors COOP_NO_ISOLATE),
+# mirroring the bash helper's internal coop_effective_agent_dir call.
+function Sync-CoopExtDeps {
+  param([string]$AgentDir = (Get-CoopEffectiveAgentDir))
+  if (-not (Test-Have 'pi')) { return }
+  $py = Get-CoopPython
+  if (-not $py) { return }
+  $npmDir = Join-Path $AgentDir 'npm'
+  if (-not (Test-Path -LiteralPath (Join-Path $npmDir 'package.json') -PathType Leaf)) { return }
+  $ver = Get-CoopPiVersion
+  if (-not $ver) { return }
+  $extdeps = Join-Path $script:CoopRoot 'lib/_extdeps.py'
+
+  function Read-AlignField {
+    param([string[]]$Parts, [int]$Index, [string]$Default = '-')
+    if ($Parts.Count -gt $Index) { return $Parts[$Index] } else { return $Default }
+  }
+  function Invoke-Align {
+    param([switch]$Check)
+    $a = @($extdeps, 'align', $AgentDir, $ver); if ($Check) { $a += '--check' }
+    # Capture the whole output BEFORE reading $LASTEXITCODE — piping a native command
+    # into `Select-Object -First 1` terminates it early and leaves $LASTEXITCODE unset.
+    $out = (& $py @a 2>$null)
+    $code = $LASTEXITCODE
+    $line = if ($out) { @($out)[0] } else { '' }
+    return @{ rc = $code; parts = $(if ($line) { $line -split '\s+' } else { @() }) }
+  }
+
+  # Build the "agent too old" warning from _extdeps.py fields 7 (required floor) and
+  # 8 (offending extension); fall back to a generic line when they're absent ('-').
+  function Format-TooOld {
+    param([string[]]$Parts)
+    $req = Read-AlignField $Parts 6; $ext = Read-AlignField $Parts 7
+    $need = if ($ext -and $ext -ne '-' -and $req -and $req -ne '-') { "$ext needs pi-ai >= $req" } else { 'an installed extension needs a newer pi-ai' }
+    "Pi agent $ver is too old — $need — update the Pi agent: coop update   (or move off the legacy-node20 build)"
+  }
+
+  # Branch on the helper's exit code (so an unexpected failure is a clean no-op).
+  $r = Invoke-Align
+  $treeAi = Read-AlignField $r.parts 0
+  if ($r.rc -eq 0) { Coop-Ok "extension pi-ai / pi-tui aligned to pi $ver"; return }
+  if ($r.rc -eq 11) { Coop-Warn (Format-TooOld $r.parts); return }
+  if ($r.rc -ne 10) { return }   # 2 (nothing) or unexpected — no-op
+
+  if (-not (Test-Have 'npm')) {
+    Coop-Warn "extension pi-ai/pi-tui need realignment to pi $ver but npm is missing — install Node.js, then: coop sync"
+    return
+  }
+  # Skewed: drop the lockfile (the thing pinning the stale hoist) so npm re-resolves
+  # against the overrides, then reinstall.
+  Coop-Info "aligning extension pi-ai / pi-tui to the agent ($ver; tree has $treeAi)…"
+  Remove-Item -LiteralPath (Join-Path $npmDir 'package-lock.json') -Force -ErrorAction SilentlyContinue
+  Push-Location $npmDir; try { & npm install *> $null } catch { } finally { Pop-Location }
+  $r = Invoke-Align -Check
+  if ($r.rc -eq 10) {
+    # A stale node_modules can keep the old hoist — rebuild it clean as a last resort,
+    # but PRESERVE the existing tree: move it aside, reinstall, and restore it if the
+    # reinstall fails (offline / registry down). Deleting first would leave coop with
+    # NO extensions — strictly worse than a skewed-but-working tree.
+    $nm = Join-Path $npmDir 'node_modules'
+    $bak = Join-Path $npmDir 'node_modules.coopbak'
+    if (Test-Path -LiteralPath $nm) {
+      Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
+      Move-Item -LiteralPath $nm -Destination $bak -Force -ErrorAction SilentlyContinue
+    }
+    $reinstallOk = $false
+    Push-Location $npmDir; try { & npm install *> $null; $reinstallOk = ($LASTEXITCODE -eq 0) } catch { } finally { Pop-Location }
+    if ($reinstallOk) {
+      Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
+    } elseif (Test-Path -LiteralPath $bak) {
+      Remove-Item -LiteralPath $nm -Recurse -Force -ErrorAction SilentlyContinue
+      Move-Item -LiteralPath $bak -Destination $nm -Force -ErrorAction SilentlyContinue
+      Coop-Warn 'extension realignment reinstall failed — restored the previous tree — check your network, then: coop doctor --fix'
+    }
+    $r = Invoke-Align -Check
+  }
+  if ($r.rc -eq 0) { Coop-Ok "extension pi-ai / pi-tui aligned to $ver" }
+  elseif ($r.rc -eq 11) { Coop-Warn (Format-TooOld $r.parts) }
+  else { Coop-Warn "could not fully align extension pi-ai/pi-tui to $ver — close any running coop session, then: coop doctor --fix" }
+}
+
 # --- Optional Azure preflight (non-fatal) --------------------------------------
 # Mirrors the team's pi-ready habit: if the project pins a Fabric tenant and the
 # Azure CLI is present, make sure a Power BI token exists before launching.

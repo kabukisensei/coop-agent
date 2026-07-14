@@ -186,11 +186,12 @@ function Invoke-CoopLaunchPreflight {
       # mutate the personal tree at launch; tell them how to align it deliberately.
       Coop-Warn "your Pi extension tree needs realignment to pi $ver (isolation is off) — align it deliberately: coop doctor --fix   (or unset COOP_NO_ISOLATE to use coop's isolated tree)"
     } else {
-      # Fixable tree skew in coop's OWN dir — run sync (re-pins + reinstalls) in a child
-      # process, then launch. Streams stay visible so a slow reinstall isn't a silent hang.
-      Coop-Info 'realigning Pi extensions to the agent…'
-      $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
-      & $psExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:CoopRoot 'scripts\sync.ps1')
+      # Fixable tree skew in coop's OWN dir — re-pin + reinstall ONLY pi-ai/pi-tui, then
+      # launch. Call the shared Sync-CoopExtDeps against the SAME effective agent dir we
+      # detected the skew in (not the whole sync.ps1 child, which would also reinstall
+      # deliberately-removed core extensions, re-merge MCP config, and never clear the
+      # skew under a custom PI_CODING_AGENT_DIR). Mirrors bash coop_align_ext_deps.
+      Sync-CoopExtDeps -AgentDir $agentDir
     }
   }
 }
