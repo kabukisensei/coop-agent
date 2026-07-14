@@ -466,7 +466,9 @@ coop_yaml_get() {
   local file="$1" key="$2" default="${3:-}"
   local py; py="$(coop_python)" || { printf '%s' "$default"; return 0; }
   [ -f "$file" ] || { printf '%s' "$default"; return 0; }
-  local out; out="$("$py" "$COOP_ROOT/lib/_yaml.py" get "$file" "$key" "$default" 2>/dev/null)"
+  # tr -d '\r': Python's print() emits CRLF on Windows, so without this the value
+  # carries a trailing \r that breaks path/scalar comparisons in Git Bash.
+  local out; out="$("$py" "$COOP_ROOT/lib/_yaml.py" get "$file" "$key" "$default" 2>/dev/null | tr -d '\r')"
   [ -n "$out" ] && printf '%s' "$out" || printf '%s' "$default"
 }
 
@@ -476,7 +478,9 @@ coop_yaml_list() {
   local file="$1" key="$2"
   local py; py="$(coop_python)" || return 0
   [ -f "$file" ] || return 0
-  "$py" "$COOP_ROOT/lib/_yaml.py" list "$file" "$key" 2>/dev/null || true
+  # tr -d '\r': strip the CRLF Python's print() adds on Windows, so each list item
+  # read by the caller's `while read` loop is a clean path (no trailing \r).
+  "$py" "$COOP_ROOT/lib/_yaml.py" list "$file" "$key" 2>/dev/null | tr -d '\r' || true
 }
 
 # Extract the YAML frontmatter `name:` from a SKILL.md (first match). Echoes "" if none.

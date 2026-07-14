@@ -25,6 +25,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **`coop review` (and every YAML-driven path) now works on Windows.** The bash
+  `coop_yaml_get`/`coop_yaml_list` helpers read `lib/_yaml.py`'s stdout, and
+  Python's `print()` emits CRLF on Windows, so each value arrived with a trailing
+  `\r`. A `repositories.*.local_path` of `sqlrepo` became `sqlrepo\r`, failed its
+  `[ -e ]` path check, and `coop review` died with "nothing to review" on every
+  Windows run — the reason `tests/review.test.sh` had been red on the Windows CI
+  job since the feature landed. The helpers now strip `\r` from `_yaml.py` output.
 - **`coop update` no longer crashes when the npm registry can't be queried** (#26).
   On Windows PowerShell 5.1, `Get-PiLatest` passed AutomationNull (npm produced no
   stdout — offline, registry/proxy error) into `[regex]::Match`, which threw
