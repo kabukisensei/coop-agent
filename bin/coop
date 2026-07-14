@@ -245,7 +245,11 @@ run_data_doc() {
   # and `init`. The tool handles its own first-run setup (it tells you to run
   # `init`/`setup` when coop-data-doc.yml is missing); coop never auto-creates it.
   coop_head "coop-data-doc $*"
-  coop-data-doc "$@"
+  # Capture the exit code instead of letting `set -e` abort here, so the artifact
+  # summary below still prints on a non-zero exit (e.g. `check` flagging stale docs)
+  # — matching Invoke-DataDoc in bin/coop.ps1. The code propagates via `return $rc`.
+  local rc=0
+  coop-data-doc "$@" || rc=$?
   # Summarize machine-readable artifacts when present (manifest.json / graph.json).
   # Includes the default output dir (./data-docs) plus legacy/alternate locations.
   local f
@@ -274,6 +278,7 @@ PY
       break
     fi
   done
+  return "$rc"   # mirror Invoke-DataDoc: a coop-data-doc failure must not be masked by the summary
 }
 
 # --- coop review: both linters + compose findings onto the lineage docs -------
