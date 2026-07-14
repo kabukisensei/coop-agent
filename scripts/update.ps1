@@ -89,6 +89,10 @@ function Get-PiLatest {
   if ($env:COOP_PI_LATEST_OVERRIDE) { return $env:COOP_PI_LATEST_OVERRIDE }
   if (-not (Test-Have 'npm')) { return '' }
   $raw = (& npm view $script:PI_PKG version 2>$null | Select-Object -First 1)
+  # No stdout (offline, registry/proxy error) leaves $raw as AutomationNull, and Windows
+  # PowerShell 5.1 passes that to .NET as a real $null — [regex]::Match would throw
+  # ArgumentNullException. Return '' instead, matching update.sh's silent-empty contract.
+  if ($null -eq $raw) { return '' }
   $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
   if ($m.Success) { return $m.Value } else { return '' }
 }

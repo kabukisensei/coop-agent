@@ -23,6 +23,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `lib/_yaml.py list` learned `*` fan-out for dotted keys
   (`repositories.*.local_path`).
 
+### Fixed
+
+- **`coop update` no longer crashes when the npm registry can't be queried** (#26).
+  On Windows PowerShell 5.1, `Get-PiLatest` passed AutomationNull (npm produced no
+  stdout — offline, registry/proxy error) into `[regex]::Match`, which threw
+  `ArgumentNullException` at update.ps1:92 and aborted the whole update. It now
+  returns `''`, matching `update.sh`'s silent-empty contract, so the tested-version
+  gate simply skips and the update proceeds.
+
 ## [0.13.0] — 2026-07-09
 
 ### Added
