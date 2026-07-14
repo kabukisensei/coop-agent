@@ -494,6 +494,9 @@ coop_skill_name() {
 
 # Locate the active project contract: nearest .coop/project.yml walking up from
 # $PWD, else the bundled one at $COOP_ROOT/.coop/project.yml. Echoes a path or "".
+# $1 is an optional start dir (defaults to $PWD); every caller currently omits it,
+# which is fine — the default is the intended API, not a bug.
+# shellcheck disable=SC2120  # optional positional arg; callers may omit it
 coop_find_project_yml() {
   local dir="${1:-$PWD}"
   while [ -n "$dir" ] && [ "$dir" != "/" ]; do

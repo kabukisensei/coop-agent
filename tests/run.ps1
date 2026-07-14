@@ -61,7 +61,10 @@ try {
 
   # --- 1. launch-spec resolves the governed pi invocation --------------------
   Head 'launch-spec (shared launch builder) test'
-  $spec = & $coop launch-spec 2>&1 | Out-String
+  # Join-Path emits native separators, so on Windows PowerShell 5.1 the spec paths
+  # are backslash-delimited (docs\guardrails.md); the forward-slash needles below
+  # would never match. Normalize '\' -> '/' so the check is separator-agnostic.
+  $spec = (& $coop launch-spec 2>&1 | Out-String) -replace '\\', '/'
   $miss = $false
   foreach ($needle in @('docs/guardrails.md', '--prompt-template', 'themes/cooptimize.json',
                         'extensions/coop-powerline', 'extensions/coop-tools', 'extensions/coop-guardrails')) {
@@ -71,7 +74,7 @@ try {
 
   # --- 2. --no-launch is a dry-run: exits 0, prints the spec -----------------
   Head '--no-launch dry-run (must NOT start pi; prints the spec)'
-  $nlOut = & $coop --no-launch 2>&1 | Out-String
+  $nlOut = (& $coop --no-launch 2>&1 | Out-String) -replace '\\', '/'
   if ($LASTEXITCODE -eq 0) { Ok '--no-launch exits 0' } else { Ko "--no-launch exited $LASTEXITCODE (expected 0)" }
   if ($nlOut -like '*docs/guardrails.md*') { Ok '--no-launch prints the launch spec' } else { Ko '--no-launch did not print the spec (no docs/guardrails.md)' }
   $jsonOut = & $coop --no-launch --json 2>&1 | Out-String

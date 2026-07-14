@@ -62,8 +62,8 @@ run_review() {  # [extra coop args...] — runs `coop review` from $TMP/proj wit
 # 1. Contract scope: both JSON reports land in .coop/reviews/, the resolved repo
 #    path (not the TODO / missing ones) is the linters' scope, and the data-doc
 #    build received BOTH --reviews files.
-rc=0; run_review >/dev/null 2>&1 || rc=$?
-[ "$rc" -eq 0 ] || fail "coop review should exit 0 (got $rc)"
+out="$(run_review 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] || { printf '%s\n' "$out" >&2; fail "coop review should exit 0 (got $rc)"; }
 [ -f "$TMP/proj/.coop/reviews/coop-sql-review.json" ] || fail "sql JSON missing from .coop/reviews/"
 [ -f "$TMP/proj/.coop/reviews/coop-dax-review.json" ] || fail "dax JSON missing from .coop/reviews/"
 "$PY" -c "import json,sys; json.load(open(sys.argv[1]))" "$TMP/proj/.coop/reviews/coop-sql-review.json" \
@@ -80,8 +80,8 @@ pass "contract scope: JSONs in .coop/reviews/, TODO/missing skipped, data-doc go
 
 # 2. --skip-docs: linters run, data-doc is never called.
 rm -f "$TMP/coop-data-doc.args.log" "$TMP"/coop-*-review.args.log
-rc=0; run_review --skip-docs >/dev/null 2>&1 || rc=$?
-[ "$rc" -eq 0 ] || fail "coop review --skip-docs should exit 0 (got $rc)"
+out="$(run_review --skip-docs 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] || { printf '%s\n' "$out" >&2; fail "coop review --skip-docs should exit 0 (got $rc)"; }
 [ -f "$TMP/coop-sql-review.args.log" ] || fail "--skip-docs must still run the linters"
 [ ! -f "$TMP/coop-data-doc.args.log" ] || fail "--skip-docs must not invoke coop-data-doc"
 pass "--skip-docs runs the linters only"
@@ -89,8 +89,8 @@ pass "--skip-docs runs the linters only"
 # 3. Explicit paths win over the contract scope.
 rm -f "$TMP"/coop-*.args.log
 mkdir -p "$TMP/elsewhere"
-rc=0; run_review "$TMP/elsewhere" --skip-docs >/dev/null 2>&1 || rc=$?
-[ "$rc" -eq 0 ] || fail "explicit-path review should exit 0 (got $rc)"
+out="$(run_review "$TMP/elsewhere" --skip-docs 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] || { printf '%s\n' "$out" >&2; fail "explicit-path review should exit 0 (got $rc)"; }
 grep -q "check $TMP/elsewhere --format json" "$TMP/coop-sql-review.args.log" || fail "explicit path not passed to the linter"
 grep -q "sqlrepo" "$TMP/coop-sql-review.args.log" && fail "contract scope leaked in despite explicit paths"
 pass "explicit paths win over the contract"
