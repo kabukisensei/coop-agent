@@ -623,6 +623,10 @@ EOF
   # Pre-flight: never tag code that doesn't transpile. Skips silently when npx is
   # unavailable; bypass with --no-check.
   if [ "$do_check" = "1" ]; then
+    # Track whether the transpile/test gate actually ran. A host missing npx/node
+    # skips those halves; if a push is requested we fail closed below rather than
+    # publish an unverified tag — mirroring bin/coop.ps1's Invoke-CoopRelease.
+    local gate_skipped=0
     if have npx; then
       local extf build_fail=0
       for extf in "$COOP_ROOT"/extensions/*/index.ts; do
@@ -634,7 +638,7 @@ EOF
       [ "$build_fail" = "1" ] && coop_die "extension build check failed — fix it, or re-run with --no-check."
       coop_ok "extensions build"
     else
-      coop_warn "npx not found — skipping the extension build check."
+      coop_warn "npx not found — skipping the extension build check."; gate_skipped=1
     fi
 
     # A release tags exactly the (clean) working tree, so gate on the full Node
@@ -651,7 +655,7 @@ EOF
           coop_die "tests failed (bash tests/run.sh) — fix them, or re-run with --no-check."
         fi
       else
-        coop_warn "node not found — skipping the test suite."
+        coop_warn "node not found — skipping the test suite."; gate_skipped=1
       fi
     fi
     if [ -f "$COOP_ROOT/scripts/check-parity.sh" ]; then
@@ -660,6 +664,14 @@ EOF
       else
         coop_die "parity check failed (bash scripts/check-parity.sh) — fix it, or re-run with --no-check."
       fi
+    fi
+
+    # Fail closed: a host that could not run the transpile/test gate must not
+    # PUBLISH an unverified tag. Bumping/committing locally (--no-push) is fine; a
+    # push requires the gate to have run — or an explicit --no-check opt-out (which
+    # skips this whole block). Matches bin/coop.ps1's Invoke-CoopRelease.
+    if [ "$gate_skipped" = "1" ] && [ "$do_push" = "1" ]; then
+      coop_die "release gate could not run (npx/node not found) — install Node.js, use --no-push to bump locally only, or --no-check to release without gating."
     fi
 
     # tested_with pins vs the sibling coop-website's versions.json: a mismatch

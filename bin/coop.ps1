@@ -699,6 +699,10 @@ function Invoke-CoopRelease {
   # Pre-flight: never tag code that doesn't transpile. Skips when npx is unavailable;
   # bypass with --no-check. Builds to a temp file (portable null output).
   if ($doCheck) {
+    # Track whether the transpile/test gate actually ran. A host missing npx/node/bash
+    # skips those halves; if a push is requested we fail closed below rather than
+    # publish an unverified tag. Mirrors coop_release in bin/coop.
+    $gateSkipped = $false
     if (Test-Have 'npx') {
       $buildFail = $false
       Get-ChildItem -LiteralPath (Join-Path $root 'extensions') -Directory | ForEach-Object {
@@ -714,15 +718,15 @@ function Invoke-CoopRelease {
       if ($buildFail) { Coop-Die 'extension build check failed — fix it, or re-run with --no-check.' }
       Coop-Ok 'extensions build'
     } else {
-      Coop-Warn 'npx not found — skipping the extension build check.'
+      Coop-Warn 'npx not found — skipping the extension build check.'; $gateSkipped = $true
     }
 
     # Gate on the full Node suite + bash/PowerShell parity, not just transpile.
     # Both are bash scripts, so they need bash (Git Bash / WSL) on Windows. If the
     # gate can't run on this host we fail closed before a push (below) rather than
-    # silently tagging an unverified release — matching the macOS/Linux path, where
-    # bash is guaranteed and the gate always runs.
-    $gateSkipped = $false
+    # silently tagging an unverified release. bin/coop's coop_release tracks the same
+    # gate_skipped condition — bash is guaranteed on macOS/Linux, but node/npx are
+    # not, so a node-less host fails closed there too.
     $testsSh = Join-Path (Join-Path $root 'tests') 'run.sh'
     if (Test-Path -LiteralPath $testsSh) {
       if ((Test-Have 'bash') -and (Test-Have 'node')) {
@@ -749,7 +753,7 @@ function Invoke-CoopRelease {
     # tag. Bumping/committing locally (--no-push) is fine; a push requires the gate
     # to have run — or an explicit --no-check opt-out (which skips this whole block).
     if ($gateSkipped -and $doPush) {
-      Coop-Die 'release gate could not run (bash/node not found) — cut the release from macOS/Linux or a Windows host with Git Bash/WSL, use --no-push to bump locally only, or --no-check to release without gating.'
+      Coop-Die 'release gate could not run (npx/bash/node not found) — cut the release from macOS/Linux or a Windows host with Git Bash/WSL, use --no-push to bump locally only, or --no-check to release without gating.'
     }
 
     # tested_with pins vs the sibling coop-website's versions.json: a mismatch
