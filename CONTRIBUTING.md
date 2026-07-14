@@ -61,6 +61,18 @@ Keep parity and the contract:
   printf '\357\273\277' | cat - file.ps1 > file.ps1.bom && mv file.ps1.bom file.ps1
   ```
 
+- **Target Windows PowerShell 5.1 — no PowerShell-7-only syntax.** Every real
+  Windows entry point runs the built-in Windows PowerShell 5.1
+  (`System32\WindowsPowerShell\v1.0\powershell.exe`): `bin/coop.cmd`, the Install
+  shortcut, and the Start-Menu/Desktop shortcuts `scripts/install.ps1` creates.
+  So the whole repo has a **5.1 floor**. PowerShell-7-only constructs — the
+  ternary `cond ? a : b`, null-coalescing `??` / `??=`, null-conditional `?.` /
+  `?[]`, and `clean { }` blocks — parse fine under `pwsh` 7 (all a macOS dev has)
+  but are a **hard parse error** under 5.1, which breaks `coop` at launch for the
+  whole team. Don't use them. CI parses every `.ps1` under BOTH `pwsh` 7 and
+  Windows PowerShell 5.1 (the `windows` job) so a 7-ism can't sail through green;
+  when in doubt, keep to syntax that predates PowerShell 6.
+
 - **Shared PowerShell helpers live in `lib/common.ps1`** — the dot-sourced twin
   of `lib/common.sh` (loggers, progress engine, `Test-Have`, `Get-CoopPython`,
   YAML readers, `Coop-Unit`, …). `bin/coop.ps1` and every `scripts/*.ps1` load it

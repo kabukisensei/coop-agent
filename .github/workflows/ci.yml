@@ -147,6 +147,32 @@ jobs:
             }
           if ($failed) { exit 1 }
 
+      # Parse EVERY .ps1 under Windows PowerShell 5.1 too — the runtime bin/coop.cmd,
+      # the Install shortcut, and install.ps1's Start-Menu/Desktop shortcuts all invoke
+      # (System32\WindowsPowerShell\v1.0\powershell.exe), not pwsh 7. The pwsh step above
+      # accepts PS-7-only syntax (ternary `? :`, `??`, `?.`, `clean{}`) that is a HARD
+      # parse error on 5.1 — so an agent editing .ps1 on macOS (pwsh only) could land a
+      # 7-ism that sails CI green and then breaks `coop` at launch for the whole fleet.
+      # This step is the 5.1 floor. (Same parser API; runs under Windows PowerShell 5.1.)
+      - name: parse every .ps1 under Windows PowerShell 5.1 (the runtime coop.cmd uses)
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem -Recurse -Filter *.ps1 |
+            Where-Object { $_.FullName -notmatch 'node_modules' } |
+            ForEach-Object {
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors) | Out-Null
+              if ($errors) {
+                Write-Host "5.1 PARSE ERRORS in $($_.FullName):"
+                $errors | ForEach-Object { Write-Host "  $_" }
+                $failed = $true
+              } else {
+                Write-Host "ok (5.1): $($_.FullName)"
+              }
+            }
+          if ($failed) { exit 1 }
+
       - name: PSScriptAnalyzer (errors only)
         shell: pwsh
         run: |
