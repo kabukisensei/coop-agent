@@ -149,6 +149,12 @@ coop new-prompt <name>    # add a /prompt       -> prompts/<name>.md
 Commit + push; teammates get it on their next `coop update`. See
 [extending.md](extending.md).
 
+Using **Azure DevOps Boards**? coop has an optional integration — the
+`azure-devops` skill plus `scripts/ado-digest.sh|.ps1` and
+`scripts/ado-onboard.sh|.ps1` (all client identifiers stay in the private
+`~/.coop/devops/clients.yml`). See the "Azure DevOps Boards (optional)" section
+in the [README](../README.md#azure-devops-boards-optional).
+
 ## 7. Stay current
 
 ```bash

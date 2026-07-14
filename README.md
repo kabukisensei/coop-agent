@@ -341,6 +341,40 @@ regardless of what a server is capable of.
 > config (in `~/.coop/agent`) and review updates before enabling, or disable MCP
 > entirely (coop runs fine without it).
 
+The example MCP config also carries an optional **`azure-devops`** entry
+(`@azure-devops/mcp`, read-only verbs) for teams that manage Boards — see the
+section below.
+
+---
+
+## Azure DevOps Boards (optional)
+
+For teams that track work in Azure DevOps Boards, coop ships an optional
+integration — nothing loads or runs unless you configure it.
+
+- **In-session** — the auto-loaded **`azure-devops`** skill
+  ([`skills/azure-devops/SKILL.md`](skills/azure-devops/SKILL.md)) answers
+  "what's stale/unassigned for `<team>`?", creates and updates work items
+  (**confirm-first** — coop-guardrails flags any work-item write), and runs the
+  weekly per-client digest. It uses the Entra-authenticated REST API, plus the
+  optional read-only `azure-devops` MCP entry in
+  [`config/mcp.example.json`](config/mcp.example.json).
+- **Batch entry points** — paired bash/PowerShell launchers over a stdlib-only
+  Python core:
+  - `scripts/ado-digest.sh` / `scripts/ado-digest.ps1` — a read-only, per-client
+    watchdog digest (open / stale / unassigned) with Markdown/HTML output and
+    optional Graph email (schedulable, e.g. from a Windows VM's Task Scheduler —
+    see the skill).
+  - `scripts/ado-onboard.sh` / `scripts/ado-onboard.ps1` — guided, read-only
+    client discovery that writes only the local config.
+- **Config** — all client identifiers (org, project, people, mailboxes) live
+  **only** in the private `~/.coop/devops/clients.yml`, seeded from
+  [`config/devops.clients.example.yml`](config/devops.clients.example.yml)
+  (placeholders only — never commit real values to a repo).
+
+Full guide, auth model, and scheduling:
+[`skills/azure-devops/SKILL.md`](skills/azure-devops/SKILL.md).
+
 ---
 
 ## Workflow & guardrails
