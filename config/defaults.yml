@@ -117,7 +117,7 @@ tested_with:
   # The three coop-tool pins below must match the sibling coop-website checkout's
   # versions.json (the suite's single source of truth for released version strings).
   # `coop release` verifies this before tagging; refresh these when the tools release.
-  coop_data_doc: "0.32.1"
+  coop_data_doc: "0.33.0"
   coop_sql_review: "0.10.0"
   coop_dax_review: "0.13.0"
 
