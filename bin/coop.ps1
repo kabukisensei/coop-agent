@@ -441,11 +441,21 @@ function Invoke-CoopReview {
   }
 
   # Summary: per-tool finding counts when cheaply parseable, else just the paths.
+  # Feed the script via stdin (single-quoted here-string, quoting-proof on Windows
+  # PowerShell 5.1 which mangles embedded double quotes in a native `-c` arg).
   $py = Get-CoopPython
   if ($py) {
+    $summaryPy = @'
+import json, sys
+d = json.load(open(sys.argv[1]))
+s = d.get("summary") or {}
+f = d.get("findings")
+n = len(f) if isinstance(f, list) else 0
+print("%d finding(s) — %s error, %s warning, %s info" % (n, s.get("error", 0), s.get("warning", 0), s.get("info", 0)))
+'@
     foreach ($f in @($sqlJson, $daxJson)) {
       if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { continue }
-      $label = (& $py -c 'import json,sys; d=json.load(open(sys.argv[1])); s=d.get("summary") or {}; f=d.get("findings"); n=len(f) if isinstance(f,list) else 0; print("%d finding(s) — %s error, %s warning, %s info" % (n, s.get("error",0), s.get("warning",0), s.get("info",0)))' $f 2>$null)
+      $label = ($summaryPy | & $py - $f 2>$null) | Select-Object -First 1
       if ($label) { Coop-Ok "$(Split-Path -Leaf $f): $label  ($f)" } else { Coop-Ok "Report: $f" }
     }
   } else {
