@@ -1,8 +1,10 @@
 # Plan: Azure DevOps integration (boards watchdog, quick-add, digest email, Power BI)
 
-**Status:** approved for implementation
+**Status:** implemented (2026-07-08) — kept as design history, not pending work. The
+operational docs are the `azure-devops` skill (`skills/azure-devops/SKILL.md`) and the
+script headers (`scripts/ado-digest.{sh,ps1,py}`, `scripts/ado-onboard.{sh,ps1,py}`,
+`scripts/ado_lib.py`). Do not re-execute the steps below.
 **Owner:** Aaron
-**Implementer:** agent (follow the coop-workflow: spec-first was satisfied by this plan; do not commit — leave changes for Aaron to review)
 
 ## Goal
 

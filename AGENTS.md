@@ -137,10 +137,12 @@ delete or re-push a tag, never commit secrets (`.env*`, keys, tokens — see
 ### Doc map — operational truth vs. plans
 
 - **Operational (follow these):** `AGENTS.md`, `CONTRIBUTING.md`, `RELEASE.md`,
-  `README.md`, `docs/architecture.md`, `docs/extending.md`, `docs/guardrails.md`,
-  `docs/onboarding.md`, `docs/tool-contract.md`, `docs/troubleshooting.md`.
+  `README.md`, `docs/architecture.md`, `docs/ci.md`, `docs/extending.md`,
+  `docs/guardrails.md`, `docs/onboarding.md`, `docs/tool-contract.md`,
+  `docs/troubleshooting.md`.
 - **Plans / history (context only — never execute their steps without an
   explicit request):** `docs/ui-strategy.md`, `docs/coop-web-plan.md`,
+  `docs/coop-web-pivis-plan.md`, `docs/plan-azure-devops-integration.md`,
   `docs/plan-coop-agent-improvements.md`.
 - `CHANGELOG.md` — history; edit only under `## [Unreleased]`.
 
