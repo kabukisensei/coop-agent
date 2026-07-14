@@ -367,7 +367,7 @@ function Invoke-CoopReview {
     switch -CaseSensitive ($a) {
       '--strict'    { $strict = $true }
       '--skip-docs' { $skipDocs = $true }
-      { $_ -eq '-h' -or $_ -eq '--help' } {
+      { $_ -ceq '-h' -or $_ -ceq '--help' } {
         Coop-Say 'Usage: coop review [paths...] [--strict] [--skip-docs]'
         Coop-Say '  Run coop-sql-review AND coop-dax-review over the project scope (explicit paths'
         Coop-Say "  win; else the nearest .coop/project.yml's repositories.*.local_path entries),"
@@ -867,7 +867,7 @@ switch -CaseSensitive ($cmd) {
   'sql-review' { Invoke-Tool 'coop-sql-review' $rest; break }
   'dax-review' { Invoke-Tool 'coop-dax-review' $rest; break }
   'review' { Invoke-CoopReview $rest; break }
-  { $_ -eq 'fabric' -or $_ -eq 'fab' } {
+  { $_ -ceq 'fabric' -or $_ -ceq 'fab' } {
     if (-not (Test-Have 'fab')) { Coop-Die 'Microsoft Fabric CLI (fab) not found. Run: coop install' }
     & fab @rest
     exit $LASTEXITCODE
@@ -911,7 +911,7 @@ switch -CaseSensitive ($cmd) {
     & pi @rest
     exit $LASTEXITCODE
   }
-  { $_ -eq 'version' -or $_ -eq '--version' -or $_ -eq '-V' } {
+  { $_ -ceq 'version' -or $_ -ceq '--version' -or $_ -ceq '-V' } {
     Write-Host ("coop {0}" -f $script:CoopVersion)
     if (Test-Have 'pi') {
       $pv = (& pi --version 2>$null)
@@ -922,7 +922,7 @@ switch -CaseSensitive ($cmd) {
     }
     break
   }
-  { $_ -eq 'help' -or $_ -eq '--help' -or $_ -eq '-h' } { Show-Usage; break }
+  { $_ -ceq 'help' -or $_ -ceq '--help' -or $_ -ceq '-h' } { Show-Usage; break }
   default {
     # Unknown flags (-*) or unknown subcommand: pass straight to pi (files/messages).
     Invoke-LaunchPi -PassArgs $argList

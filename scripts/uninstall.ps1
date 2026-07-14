@@ -31,7 +31,7 @@ foreach ($a in $args) {
     '--keep-tools' { $KEEP_TOOLS = $true }
     '--yes'        { $env:COOP_ASSUME_YES = '1' }
     '-y'           { $env:COOP_ASSUME_YES = '1' }
-    { $_ -eq '-h' -or $_ -eq '--help' } {
+    { $_ -ceq '-h' -or $_ -ceq '--help' } {
       Coop-Say 'Usage: coop uninstall [--keep-tools] [--yes]'
       Coop-Say "  --keep-tools  keep pi + the pipx tools (remove only coop's own footprint)"
       Coop-Say '  --yes, -y     assume yes for the confirmation'

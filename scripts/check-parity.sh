@@ -116,11 +116,13 @@ _bash_dispatch() {
 }
 # Subcommand tokens from bin/coop.ps1's `switch -CaseSensitive ($cmd)`: the first
 # quoted token of a `'x' { … }` label, plus every quoted token of a compound
-# `{ $_ -eq 'x' -or … } {` label. `default` and the empty `''` label are excluded.
+# `{ $_ -ceq 'x' -or … } {` label. `default` and the empty `''` label are excluded.
+# (Compound labels use the case-sensitive `-ceq` to match bash's case-sensitive
+# `case`; the extractor accepts `-eq`/`-ceq` so either spelling is still seen.)
 _ps_dispatch() {
   local block; block="$(awk '/switch -CaseSensitive \(\$cmd\)/{f=1} f{print} f&&/^}$/{exit}' bin/coop.ps1)"
   { printf '%s\n' "$block" | grep -E "^[[:space:]]*'[^']+'[[:space:]]*\{" | sed -E "s/^[[:space:]]*'([^']+)'.*/\1/"
-    printf '%s\n' "$block" | grep -E "^[[:space:]]*\{.*-eq '" | grep -oE "'[^']*'" | tr -d "'"
+    printf '%s\n' "$block" | grep -E "^[[:space:]]*\{.*-c?eq '" | grep -oE "'[^']*'" | tr -d "'"
   } | awk '{gsub(/^[ \t]+|[ \t]+$/,"")} NF && $0 != "default"' | sort -u
 }
 # Recognized flags from a bash arg parser: the `-flag)` / `-a|--flag)` case patterns.
@@ -129,9 +131,11 @@ _bash_flags() {
     | sed -E 's/\)$//; s/^[[:space:]]+//' | tr '|' '\n' | awk 'NF' | sort -u
 }
 # Recognized flags from a PowerShell arg parser: `'-flag' { … }` switch labels and
-# `-eq '-flag'` comparisons (scoped so version-command args like '--version' don't leak).
+# `-eq '-flag'` / `-ceq '-flag'` comparisons (scoped so version-command args like
+# '--version' don't leak). `-c?eq` matches the case-sensitive `-ceq` used in compound
+# switch labels (see #33) as well as a plain `-eq`.
 _ps_flags() {
-  grep -E "^[[:space:]]*'-{1,2}[A-Za-z][^']*'[[:space:]]*\{|-eq '-" "$1" \
+  grep -E "^[[:space:]]*'-{1,2}[A-Za-z][^']*'[[:space:]]*\{|-c?eq '-" "$1" \
     | grep -oE "'-{1,2}[A-Za-z][A-Za-z0-9-]*'" | tr -d "'" | awk 'NF' | sort -u
 }
 _report_diff() { # <label> <bash-list-file> <ps-list-file>
