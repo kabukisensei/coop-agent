@@ -102,6 +102,9 @@ jobs:
           node-version: '20'
       - name: run test suite (data-doc config + coop-guardrails enforcement)
         run: bash tests/run.sh
+      - name: PowerShell behavioral tests (pwsh — coop.ps1 + update.ps1 seams)
+        shell: pwsh
+        run: pwsh -File tests/run.ps1
 
   tests-windows:
     # Windows is coop's PRIMARY deployment target, yet the Node logic tests (webbridge,
@@ -157,3 +160,12 @@ jobs:
             exit 1
           }
           Write-Host "PSScriptAnalyzer: no errors"
+
+      # Behavioral test of the .ps1 twins under Windows PowerShell 5.1 — the runtime
+      # bin/coop.cmd actually launches (not pwsh 7). Exercises coop.ps1's launch-spec /
+      # --no-launch / review parser and update.ps1's gate seams, the closest production
+      # fidelity for coop's PRIMARY platform. (The ubuntu `tests` job runs the same file
+      # under pwsh 7 for the cross-edition check.)
+      - name: PowerShell behavioral tests (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell -NoProfile -File tests\run.ps1
