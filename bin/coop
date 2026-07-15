@@ -293,24 +293,27 @@ PY
 # --strict; docs-not-set-up is a hint, not a failure; a hard data-doc failure
 # (exit 2) propagates.
 run_review() {
-  local strict=0 skip_docs=0
+  local strict=0 skip_docs=0 compare=0
   local scope=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --strict)    strict=1 ;;
       --skip-docs) skip_docs=1 ;;
+      --compare)   compare=1 ;;
       -h|--help)
         cat >&2 <<'EOF'
-Usage: coop review [paths...] [--strict] [--skip-docs]
+Usage: coop review [paths...] [--strict] [--skip-docs] [--compare]
   Run coop-sql-review AND coop-dax-review over the project scope (explicit paths
   win; else the nearest .coop/project.yml's repositories.*.local_path entries),
   save both JSON reports under .coop/reviews/, then rebuild the lineage docs with
   the findings composed in (coop-data-doc build --reviews …).
   --strict      pass --strict to both linters; exit 2 if either exits non-zero
   --skip-docs   skip the coop-data-doc build step (linters only)
+  --compare     diff each linter against the previous run's saved report and print
+                a new/fixed/persisting delta (first run just becomes the baseline)
 EOF
         return 0 ;;
-      -*) coop_die "unknown flag '$1' — usage: coop review [paths...] [--strict] [--skip-docs]" ;;
+      -*) coop_die "unknown flag '$1' — usage: coop review [paths...] [--strict] [--skip-docs] [--compare]" ;;
       *)  scope+=("$1") ;;
     esac
     shift
@@ -346,13 +349,27 @@ EOF
   local extra=()
   [ "$strict" = 1 ] && extra=(--strict)
 
+  # --compare: snapshot each linter's previous saved report to a temp file, then hand it
+  # to the linter as --diff-against so it prints a new/fixed/persisting delta (the run
+  # overwrites the saved copy via -o, so we compare against the snapshot). A first run
+  # has nothing to diff — it just becomes the baseline for the next --compare.
+  local sql_prev="" dax_prev=""
+  local sql_diff=() dax_diff=()
+  if [ "$compare" = 1 ]; then
+    if [ -f "$sql_json" ]; then sql_prev="$(mktemp)"; cp "$sql_json" "$sql_prev"; sql_diff=(--diff-against "$sql_prev"); fi
+    if [ -f "$dax_json" ]; then dax_prev="$(mktemp)"; cp "$dax_json" "$dax_prev"; dax_diff=(--diff-against "$dax_prev"); fi
+    { [ -n "$sql_prev" ] || [ -n "$dax_prev" ]; } || coop_info "no previous review to compare against yet — this run becomes the baseline"
+  fi
+
   # Run both linters over the SAME scope; capture exit codes, never abort here.
   coop_head "coop-sql-review check → $sql_json"
-  coop-sql-review check ${scope[@]+"${scope[@]}"} --format json -o "$sql_json" ${extra[@]+"${extra[@]}"} || sql_rc=$?
+  coop-sql-review check ${scope[@]+"${scope[@]}"} --format json -o "$sql_json" ${sql_diff[@]+"${sql_diff[@]}"} ${extra[@]+"${extra[@]}"} || sql_rc=$?
   [ "$sql_rc" -eq 0 ] || coop_warn "coop-sql-review exited $sql_rc"
   coop_head "coop-dax-review check → $dax_json"
-  coop-dax-review check ${scope[@]+"${scope[@]}"} --format json -o "$dax_json" ${extra[@]+"${extra[@]}"} || dax_rc=$?
+  coop-dax-review check ${scope[@]+"${scope[@]}"} --format json -o "$dax_json" ${dax_diff[@]+"${dax_diff[@]}"} ${extra[@]+"${extra[@]}"} || dax_rc=$?
   [ "$dax_rc" -eq 0 ] || coop_warn "coop-dax-review exited $dax_rc"
+  [ -n "$sql_prev" ] && rm -f "$sql_prev"
+  [ -n "$dax_prev" ] && rm -f "$dax_prev"
 
   # Compose the findings onto the lineage docs (unless --skip-docs).
   if [ "$skip_docs" = 1 ]; then

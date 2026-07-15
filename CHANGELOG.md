@@ -5,8 +5,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-14
+
 ### Added
 
+- **`coop review --compare`** — after running both linters, diff each against the previous
+  run's saved report and print a new / fixed / persisting delta ("12 new, 5 fixed, 210
+  unchanged", with the new/fixed findings listed). Built on coop-review-core 0.6.0's delta
+  engine via the linters' new `check --diff-against`: it snapshots the prior
+  `.coop/reviews/<tool>.json`, hands it to each linter, and lets the linter render the
+  delta; the first run simply becomes the baseline. Advisory — never changes the exit code.
+  bash + PowerShell twins. Requires coop-sql-review >= 0.12.0 / coop-dax-review >= 0.15.0
+  (the `--diff-against` flag); `tested_with` is bumped to match.
 - **`coop review [paths...] [--strict] [--skip-docs]`** — one command for the whole
   advisory loop: runs `coop-sql-review` **and** `coop-dax-review` over the same
   scope (explicit paths win; else the nearest `.coop/project.yml`'s

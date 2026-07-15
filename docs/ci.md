@@ -95,7 +95,7 @@ jobs:
 
       # Pin the version — see "Pinning tool versions" below.
       - name: Install coop-sql-review
-        run: pipx install coop-sql-review==0.10.0
+        run: pipx install coop-sql-review==0.12.0
 
       # --strict + --min-severity warning: fail on warnings and errors; info-level
       # style suggestions stay out of the gate (drop --min-severity to include them).
@@ -135,7 +135,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install coop-dax-review
-        run: pipx install coop-dax-review==0.13.0
+        run: pipx install coop-dax-review==0.15.0
 
       # coop-dax-review has no SARIF output yet (it lands in an upcoming release —
       # switch this job to the sql-review shape when it does). Until then the gate
@@ -215,7 +215,7 @@ stages:
         steps:
           - checkout: self
 
-          - script: pipx install coop-sql-review==0.10.0
+          - script: pipx install coop-sql-review==0.12.0
             displayName: Install coop-sql-review
 
           # Same flags as the GitHub job. SARIF goes into a folder that is
@@ -255,7 +255,7 @@ stages:
         steps:
           - checkout: self
 
-          - script: pipx install coop-dax-review==0.13.0
+          - script: pipx install coop-dax-review==0.15.0
             displayName: Install coop-dax-review
 
           # No SARIF from coop-dax-review yet (it lands in an upcoming release —
@@ -321,7 +321,7 @@ elsewhere with `--config PATH` or `COOP_DATA_DOC_CONFIG`.
 
 ## Pinning tool versions
 
-The pins in this page (`coop-sql-review==0.10.0`, `coop-dax-review==0.13.0`,
+The pins in this page (`coop-sql-review==0.12.0`, `coop-dax-review==0.15.0`,
 `coop-data-doc==0.33.0`) match `config/defaults.yml` → `tested_with` — the
 versions coop was last verified against — at the time of writing. Pinning keeps
 pipelines reproducible: a new tool release can add rules, and an unpinned

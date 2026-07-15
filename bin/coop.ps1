@@ -363,23 +363,26 @@ function Invoke-DataDoc {
 # not-set-up is a hint, not a failure; a hard data-doc failure (exit 2) propagates.
 function Invoke-CoopReview {
   param([string[]] $RestArgs = @())
-  $strict = $false; $skipDocs = $false; $scope = @()
+  $strict = $false; $skipDocs = $false; $compare = $false; $scope = @()
   foreach ($a in $RestArgs) {
     switch -CaseSensitive ($a) {
       '--strict'    { $strict = $true }
       '--skip-docs' { $skipDocs = $true }
+      '--compare'   { $compare = $true }
       { $_ -ceq '-h' -or $_ -ceq '--help' } {
-        Coop-Say 'Usage: coop review [paths...] [--strict] [--skip-docs]'
+        Coop-Say 'Usage: coop review [paths...] [--strict] [--skip-docs] [--compare]'
         Coop-Say '  Run coop-sql-review AND coop-dax-review over the project scope (explicit paths'
         Coop-Say "  win; else the nearest .coop/project.yml's repositories.*.local_path entries),"
         Coop-Say '  save both JSON reports under .coop/reviews/, then rebuild the lineage docs with'
         Coop-Say '  the findings composed in (coop-data-doc build --reviews …).'
         Coop-Say '  --strict      pass --strict to both linters; exit 2 if either exits non-zero'
         Coop-Say '  --skip-docs   skip the coop-data-doc build step (linters only)'
+        Coop-Say '  --compare     diff each linter against the previous run''s saved report and print'
+        Coop-Say '                a new/fixed/persisting delta (first run just becomes the baseline)'
         return
       }
       default {
-        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop review [paths...] [--strict] [--skip-docs]" }
+        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop review [paths...] [--strict] [--skip-docs] [--compare]" }
         $scope += $a
       }
     }
@@ -410,15 +413,27 @@ function Invoke-CoopReview {
   $daxJson = Join-Path $outdir 'coop-dax-review.json'
   $extra = @(); if ($strict) { $extra = @('--strict') }
 
+  # --compare: snapshot each linter's previous saved report, then hand it to the linter as
+  # --diff-against so it prints a new/fixed/persisting delta (the run overwrites the saved
+  # copy via -o, so we compare against the snapshot). A first run has nothing to diff.
+  $sqlDiff = @(); $daxDiff = @(); $sqlPrev = $null; $daxPrev = $null
+  if ($compare) {
+    if (Test-Path -LiteralPath $sqlJson) { $sqlPrev = [System.IO.Path]::GetTempFileName(); Copy-Item -LiteralPath $sqlJson -Destination $sqlPrev -Force; $sqlDiff = @('--diff-against', $sqlPrev) }
+    if (Test-Path -LiteralPath $daxJson) { $daxPrev = [System.IO.Path]::GetTempFileName(); Copy-Item -LiteralPath $daxJson -Destination $daxPrev -Force; $daxDiff = @('--diff-against', $daxPrev) }
+    if (-not $sqlPrev -and -not $daxPrev) { Coop-Info 'no previous review to compare against yet — this run becomes the baseline' }
+  }
+
   # Run both linters over the SAME scope; capture exit codes, never abort here.
   Coop-Head "coop-sql-review check → $sqlJson"
-  & coop-sql-review check @scope --format json -o $sqlJson @extra
+  & coop-sql-review check @scope --format json -o $sqlJson @sqlDiff @extra
   $sqlRc = $LASTEXITCODE
   if ($sqlRc -ne 0) { Coop-Warn "coop-sql-review exited $sqlRc" }
   Coop-Head "coop-dax-review check → $daxJson"
-  & coop-dax-review check @scope --format json -o $daxJson @extra
+  & coop-dax-review check @scope --format json -o $daxJson @daxDiff @extra
   $daxRc = $LASTEXITCODE
   if ($daxRc -ne 0) { Coop-Warn "coop-dax-review exited $daxRc" }
+  if ($sqlPrev) { Remove-Item -LiteralPath $sqlPrev -Force -ErrorAction SilentlyContinue }
+  if ($daxPrev) { Remove-Item -LiteralPath $daxPrev -Force -ErrorAction SilentlyContinue }
 
   # Compose the findings onto the lineage docs (unless --skip-docs).
   $ddRc = 0

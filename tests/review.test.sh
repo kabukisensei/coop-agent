@@ -131,4 +131,19 @@ esac
 [ ! -f "$TMP/coop-sql-review.args.log" ] || fail "no-contract run must not invoke the linters"
 pass "no contract + no paths dies with guidance, no blind cwd scan"
 
+# 7. --compare: after a prior report exists, each linter is handed --diff-against a
+#    snapshot of the previous report; a first run (no prior report) passes none.
+reviews="$TMP/proj/.coop/reviews"
+rm -f "$TMP"/coop-*.args.log "$reviews"/*.json
+run_review --skip-docs >/dev/null 2>&1                       # baseline run: writes the reports
+rm -f "$TMP"/coop-*.args.log
+out="$(run_review --skip-docs --compare 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] || { printf '%s\n' "$out" >&2; fail "coop review --compare should exit 0 (got $rc)"; }
+grep -q -- "--diff-against" "$TMP/coop-sql-review.args.log" || fail "--compare did not pass --diff-against to coop-sql-review"
+grep -q -- "--diff-against" "$TMP/coop-dax-review.args.log" || fail "--compare did not pass --diff-against to coop-dax-review"
+rm -f "$TMP"/coop-*.args.log "$reviews"/*.json               # no prior report now
+run_review --skip-docs --compare >/dev/null 2>&1
+grep -q -- "--diff-against" "$TMP/coop-sql-review.args.log" && fail "--compare on a first run must not pass --diff-against"
+pass "--compare diffs against the previous report (baseline no-op on the first run)"
+
 printf '  %s\n' "review tests passed"
