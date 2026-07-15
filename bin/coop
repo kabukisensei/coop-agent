@@ -346,8 +346,8 @@ EOF
   [ "${#scope[@]}" -gt 0 ] || coop_die "nothing to review — run inside a project with .coop/project.yml (repositories.*.local_path filled), or pass paths: coop review <paths...>"
 
   mkdir -p "$outdir" || coop_die "cannot create $outdir"
-  local sql_json="$outdir/coop-sql-review.json" dax_json="$outdir/coop-dax-review.json"
-  local sql_rc=0 dax_rc=0 dd_rc=0
+  local sql_json="$outdir/coop-sql-review.json" dax_json="$outdir/coop-dax-review.json" bpa_json="$outdir/bpa-review.json"
+  local sql_rc=0 dax_rc=0 bpa_rc=0 dd_rc=0
   local extra=()
   [ "$strict" = 1 ] && extra=(--strict)
 
@@ -370,6 +370,22 @@ EOF
   coop_head "coop-dax-review check → $dax_json"
   coop-dax-review check ${scope[@]+"${scope[@]}"} --format json -o "$dax_json" ${dax_diff[@]+"${dax_diff[@]}"} ${extra[@]+"${extra[@]}"} || dax_rc=$?
   [ "$dax_rc" -eq 0 ] || coop_warn "coop-dax-review exited $dax_rc"
+  
+  # Tabular Editor BPA check (if enabled in project.yml)
+  local bpa_prev=""
+  if [ -n "$proj" ]; then
+    local py_cmd
+    if py_cmd="$(coop_python)"; then
+      if [ "$compare" = 1 ] && [ -f "$bpa_json" ]; then bpa_prev="$(mktemp)"; cp "$bpa_json" "$bpa_prev"; fi
+      "$py_cmd" "$COOP_ROOT/lib/_bpa_runner.py" "$proj" "$bpa_json" ${scope[@]+"${scope[@]}"} || bpa_rc=$?
+      if [ -f "$bpa_json" ]; then
+        coop_head "Tabular Editor BPA → $bpa_json"
+        [ "$bpa_rc" -eq 0 ] || coop_warn "Tabular Editor BPA exited $bpa_rc"
+      fi
+      [ -n "$bpa_prev" ] && rm -f "$bpa_prev"
+    fi
+  fi
+
   [ -n "$sql_prev" ] && rm -f "$sql_prev"
   [ -n "$dax_prev" ] && rm -f "$dax_prev"
 
@@ -378,7 +394,9 @@ EOF
     coop_info "skipping the lineage-docs step (--skip-docs)"
   else
     coop_head "coop-data-doc build (composing review findings)"
-    coop-data-doc build --non-interactive --reviews "$sql_json" --reviews "$dax_json" || dd_rc=$?
+    local dd_args=(build --non-interactive --reviews "$sql_json" --reviews "$dax_json")
+    [ -f "$bpa_json" ] && dd_args+=(--reviews "$bpa_json")
+    coop-data-doc "${dd_args[@]}" || dd_rc=$?
     if [ "$dd_rc" -eq 1 ]; then
       # Friendly "no config" exit — the findings are still saved; docs are an aid, not a gate.
       coop_warn "lineage docs not set up — findings saved, docs step skipped" "set up lineage docs first: coop data-doc setup   (or /setup-docs in the agent)"
@@ -396,11 +414,11 @@ EOF
   # Summary: use coop_review_core.suite to aggregate.
   local py_cmd
   if py_cmd="$(coop_python)"; then
-    "$py_cmd" - "$sql_json" "$dax_json" "$do_html" "$outdir/suite.html" <<'PY' || true
+    "$py_cmd" - "$sql_json" "$dax_json" "$bpa_json" "$do_html" "$outdir/suite.html" <<'PY' || true
 import sys, os
 from coop_review_core.suite import load_envelopes, suite_summary, suite_text, suite_html
 
-paths = [p for p in sys.argv[1:3] if os.path.exists(p)]
+paths = [p for p in sys.argv[1:4] if os.path.exists(p)]
 if not paths:
     sys.exit(0)
 
@@ -409,9 +427,9 @@ try:
     summary = suite_summary(envs)
     print("\n" + suite_text(envs, summary, color=True))
     
-    do_html = sys.argv[3] == "1"
+    do_html = sys.argv[4] == "1"
     if do_html:
-        html_out = sys.argv[4]
+        html_out = sys.argv[5]
         html_paths = {}
         for env in envs:
             t = env.get("tool")
@@ -429,14 +447,14 @@ except Exception as exc:
     print(f"Suite summary error: {exc}", file=sys.stderr)
 PY
   else
-    coop_ok "Reports: $sql_json  $dax_json"
+    coop_ok "Reports: $sql_json $dax_json $bpa_json"
   fi
   coop_info "Tip: add these files to coop-data-doc.yml's reviews: list so CI check sees the same inputs."
 
   # Exit: hard data-doc failures propagate; --strict makes a failing linter exit 2.
   [ "$dd_rc" -ge 2 ] && exit "$dd_rc"
   if [ "$strict" = 1 ]; then
-    if [ "$sql_rc" -ne 0 ] || [ "$dax_rc" -ne 0 ]; then exit 2; fi
+    if [ "$sql_rc" -ne 0 ] || [ "$dax_rc" -ne 0 ] || [ "$bpa_rc" -ne 0 ]; then exit 2; fi
   fi
   return 0
 }

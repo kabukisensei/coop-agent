@@ -413,16 +413,18 @@ function Invoke-CoopReview {
   if (-not (Test-Path -LiteralPath $outdir -PathType Container)) { Coop-Die "cannot create $outdir" }
   $sqlJson = Join-Path $outdir 'coop-sql-review.json'
   $daxJson = Join-Path $outdir 'coop-dax-review.json'
+  $bpaJson = Join-Path $outdir 'bpa-review.json'
   $extra = @(); if ($strict) { $extra = @('--strict') }
 
   # --compare: snapshot each linter's previous saved report, then hand it to the linter as
   # --diff-against so it prints a new/fixed/persisting delta (the run overwrites the saved
   # copy via -o, so we compare against the snapshot). A first run has nothing to diff.
-  $sqlDiff = @(); $daxDiff = @(); $sqlPrev = $null; $daxPrev = $null
+  $sqlDiff = @(); $daxDiff = @(); $sqlPrev = $null; $daxPrev = $null; $bpaPrev = $null
   if ($compare) {
     if (Test-Path -LiteralPath $sqlJson) { $sqlPrev = [System.IO.Path]::GetTempFileName(); Copy-Item -LiteralPath $sqlJson -Destination $sqlPrev -Force; $sqlDiff = @('--diff-against', $sqlPrev) }
     if (Test-Path -LiteralPath $daxJson) { $daxPrev = [System.IO.Path]::GetTempFileName(); Copy-Item -LiteralPath $daxJson -Destination $daxPrev -Force; $daxDiff = @('--diff-against', $daxPrev) }
-    if (-not $sqlPrev -and -not $daxPrev) { Coop-Info 'no previous review to compare against yet — this run becomes the baseline' }
+    if (Test-Path -LiteralPath $bpaJson) { $bpaPrev = [System.IO.Path]::GetTempFileName(); Copy-Item -LiteralPath $bpaJson -Destination $bpaPrev -Force }
+    if (-not $sqlPrev -and -not $daxPrev -and -not $bpaPrev) { Coop-Info 'no previous review to compare against yet — this run becomes the baseline' }
   }
 
   # Run both linters over the SAME scope; capture exit codes, never abort here.
@@ -434,8 +436,24 @@ function Invoke-CoopReview {
   & coop-dax-review check @scope --format json -o $daxJson @daxDiff @extra
   $daxRc = $LASTEXITCODE
   if ($daxRc -ne 0) { Coop-Warn "coop-dax-review exited $daxRc" }
+  
+  $bpaRc = 0
+  if ($proj) {
+    $pyCmd = Get-CoopPython
+    if ($pyCmd) {
+      $bpaScript = Join-Path $env:COOP_ROOT 'lib\_bpa_runner.py'
+      & $pyCmd $bpaScript $proj $bpaJson @scope
+      $bpaRc = $LASTEXITCODE
+      if (Test-Path -LiteralPath $bpaJson -PathType Leaf) {
+        Coop-Head "Tabular Editor BPA → $bpaJson"
+        if ($bpaRc -ne 0) { Coop-Warn "Tabular Editor BPA exited $bpaRc" }
+      }
+    }
+  }
+
   if ($sqlPrev) { Remove-Item -LiteralPath $sqlPrev -Force -ErrorAction SilentlyContinue }
   if ($daxPrev) { Remove-Item -LiteralPath $daxPrev -Force -ErrorAction SilentlyContinue }
+  if ($bpaPrev) { Remove-Item -LiteralPath $bpaPrev -Force -ErrorAction SilentlyContinue }
 
   # Compose the findings onto the lineage docs (unless --skip-docs).
   $ddRc = 0
@@ -443,7 +461,9 @@ function Invoke-CoopReview {
     Coop-Info 'skipping the lineage-docs step (--skip-docs)'
   } else {
     Coop-Head 'coop-data-doc build (composing review findings)'
-    & coop-data-doc build --non-interactive --reviews $sqlJson --reviews $daxJson
+    $ddArgs = @('build', '--non-interactive', '--reviews', $sqlJson, '--reviews', $daxJson)
+    if (Test-Path -LiteralPath $bpaJson -PathType Leaf) { $ddArgs += '--reviews'; $ddArgs += $bpaJson }
+    & coop-data-doc @ddArgs
     $ddRc = $LASTEXITCODE
     if ($ddRc -eq 1) {
       # Friendly "no config" exit — the findings are still saved; docs are an aid, not a gate.
@@ -469,7 +489,7 @@ function Invoke-CoopReview {
 import sys, os
 from coop_review_core.suite import load_envelopes, suite_summary, suite_text, suite_html
 
-paths = [p for p in sys.argv[1:3] if os.path.exists(p)]
+paths = [p for p in sys.argv[1:4] if os.path.exists(p)]
 if not paths:
     sys.exit(0)
 
@@ -478,9 +498,9 @@ try:
     summary = suite_summary(envs)
     print("\n" + suite_text(envs, summary, color=True))
     
-    do_html = sys.argv[3] == "1"
+    do_html = sys.argv[4] == "1"
     if do_html:
-        html_out = sys.argv[4]
+        html_out = sys.argv[5]
         html_paths = {}
         for env in envs:
             t = env.get("tool")
@@ -495,15 +515,17 @@ try:
 except Exception as exc:
     print(f"Suite summary error: {exc}", file=sys.stderr)
 '@
-    $summaryPy | & $py - $sqlJson $daxJson $htmlFlag $suiteHtml
+    $summaryPy | & $py - $sqlJson $daxJson $bpaJson $htmlFlag $suiteHtml
   } else {
-    Coop-Ok "Reports: $sqlJson  $daxJson"
+    Coop-Ok "Reports: $sqlJson $daxJson $bpaJson"
   }
   Coop-Info "Tip: add these files to coop-data-doc.yml's reviews: list so CI check sees the same inputs."
 
   # Exit: hard data-doc failures propagate; --strict makes a failing linter exit 2.
   if ($ddRc -ge 2) { exit $ddRc }
-  if ($strict -and ($sqlRc -ne 0 -or $daxRc -ne 0)) { exit 2 }
+  if ($strict) {
+    if ($sqlRc -ne 0 -or $daxRc -ne 0 -or $bpaRc -ne 0) { exit 2 }
+  }
   exit 0
 }
 

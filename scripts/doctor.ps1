@@ -211,12 +211,21 @@ if (Test-Have 'fab') {
 }
 # Tabular Editor CLI is path-configured and mostly Windows; check the project's path if set.
 $tePath = Get-CoopYamlValue (Find-CoopProjectYml) 'tools.tabular_editor_cli.executable_path' ''
+$teRules = Get-CoopYamlValue (Find-CoopProjectYml) 'tools.tabular_editor_cli.bpa_rules_path' ''
 if (-not $tePath -or $tePath -like 'TODO*') {
   if (Test-Have 'TabularEditor.exe') { D-Ok 'Tabular Editor CLI on PATH' }
   else { D-Warn 'Tabular Editor CLI not configured' 'set tools.tabular_editor_cli.executable_path in .coop/project.yml (optional)' }
 } else {
   if (Test-Path -LiteralPath $tePath) { D-Ok "Tabular Editor CLI: $tePath" }
   else { D-Warn "Tabular Editor CLI path not found: $tePath" }
+}
+if (-not $teRules -or $teRules -like 'TODO*') {
+  D-Warn 'Tabular Editor BPA rules not configured' 'set tools.tabular_editor_cli.bpa_rules_path in .coop/project.yml (optional)'
+} else {
+  $projYml = Find-CoopProjectYml
+  $resolvedRules = Join-Path (Split-Path -Parent (Split-Path -Parent $projYml)) $teRules
+  if ((Test-Path -LiteralPath $resolvedRules) -or (Test-Path -LiteralPath $teRules)) { D-Ok "Tabular Editor BPA Rules: $teRules" }
+  else { D-Warn "Tabular Editor BPA rules not found: $teRules" }
 }
 
 D-Head 'Pi extensions'

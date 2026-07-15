@@ -5,6 +5,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-15
+### Added
+- Wire up `coop_review_core` HTML suite summaries in `coop review --html` (#33)
+- Run Tabular Editor BPA as a fourth `coop review` gate when configured in `.coop/project.yml` (#38)
+
 ## [0.14.0] - 2026-07-14
 
 ### Added

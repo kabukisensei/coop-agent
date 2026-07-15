@@ -435,6 +435,77 @@ export function contractReviewScope(cwd: string): ContractScope {
   }
 }
 
+export interface TeConfig {
+  enabled: boolean;
+  exe: string;
+  rules: string;
+  models: string[];
+}
+
+export function contractTeConfig(text: string): TeConfig {
+  const lines = text.split("\n");
+  let exe = "", rules = "";
+  let enabled = false;
+  const models: string[] = [];
+  
+  let inTe = false;
+  let inPbi = false;
+  let inSm = false;
+
+  for (const raw of lines) {
+    const line = raw.replace(/\t/g, "  ");
+    const body = line.trim();
+    if (!body || body.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+
+    if (indent === 2 && body.startsWith("tabular_editor_cli:")) { inTe = true; continue; }
+    if (indent <= 2 && inTe && !body.startsWith("tabular_editor_cli:")) inTe = false;
+
+    if (inTe) {
+      if (body.startsWith("enabled:")) enabled = scalarValue(body.slice(8)) === "true";
+      if (body.startsWith("executable_path:")) exe = scalarValue(body.slice(16));
+      if (body.startsWith("bpa_rules_path:")) rules = scalarValue(body.slice(15));
+    }
+
+    if (indent === 0 && body.startsWith("power_bi:")) { inPbi = true; continue; }
+    if (indent === 0 && inPbi && !body.startsWith("power_bi:")) inPbi = false;
+
+    if (inPbi && indent === 2 && body.startsWith("semantic_models:")) { inSm = true; continue; }
+    if (inPbi && indent <= 2 && inSm && !body.startsWith("semantic_models:")) inSm = false;
+
+    if (inSm && (body.startsWith("path:") || body.startsWith("- path:"))) {
+      const v = scalarValue(body.substring(body.indexOf("path:") + 5));
+      if (v && !/^TODO/i.test(v)) models.push(v);
+    }
+  }
+  return { enabled, exe, rules, models };
+}
+
+function parseBpaOutput(stdout: string): any {
+  const findings = [];
+  const summary = { error: 0, warning: 0, info: 0 };
+  
+  const lines = stdout.split("\n");
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const m = line.match(/^(.*?):\s*\[(.*?)\]\s*\((\w+)\)(?:\s+(.*))?$/);
+    if (m) {
+      const [, object, rule, sevRaw, message] = m;
+      let severity = sevRaw.toLowerCase();
+      if (!["error", "warning", "info"].includes(severity)) severity = "info";
+      findings.push({
+        rule: rule.trim(),
+        severity,
+        file: "", 
+        object: object.trim(),
+        message: (message || "").trim()
+      });
+      (summary as any)[severity]++;
+    }
+  }
+  return { findings, summary };
+}
+
 /** Render a minimal, valid coop-data-doc.yml. Scalars/arrays JSON-encoded (valid YAML). */
 export function renderMinimalConfig(s: DataDocSettings): string {
   const j = (v: unknown) => JSON.stringify(v);
@@ -809,6 +880,63 @@ export default function coopTools(pi: ExtensionAPI) {
     executionMode: "parallel",
     async execute(_id, params, signal, _onUpdate, ctx) {
       return runReview("coop-dax-review", params as ReviewParams, signal, ctx);
+    },
+  });
+
+  pi.registerTool({
+    name: "bpa_review",
+    label: "Tabular Editor BPA",
+    description:
+      "Run Tabular Editor BPA against semantic-model files and return findings as JSON. Advisory only — reports deviations from Cooptimize BPA standards and never edits or blocks.",
+    promptSnippet: "Lint Semantic Models against Cooptimize BPA standards (advisory, JSON output)",
+    promptGuidelines: [
+      "Use bpa_review to check semantic models before proposing or reviewing changes.",
+      "Treat results as advisory; summarize findings by severity.",
+    ],
+    parameters: REVIEW_PARAMS,
+    executionMode: "parallel",
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const contract = findProjectYml(ctx.cwd);
+      if (!contract) return { content: [{ type: "text" as const, text: "No .coop/project.yml found." }] };
+      const cfg = contractTeConfig(safeRead(contract));
+      if (!cfg.enabled) return { content: [{ type: "text" as const, text: "Tabular Editor CLI is not enabled in .coop/project.yml." }] };
+      if (!cfg.exe || !cfg.rules) return { content: [{ type: "text" as const, text: "Tabular Editor executable_path or bpa_rules_path is missing in .coop/project.yml." }] };
+
+      let models = cfg.models;
+      const p = params as ReviewParams;
+      if (p.paths && p.paths.length) models = p.paths;
+      if (!models.length) return { content: [{ type: "text" as const, text: "No semantic models to review (none in project.yml power_bi.semantic_models or passed explicitly)." }] };
+
+      const allFindings: any[] = [];
+      const allSummary = { error: 0, warning: 0, info: 0 };
+      let finalCode = 0;
+      let allStdout = "";
+
+      for (const model of models) {
+        let absModel = isAbsolute(model) ? model : resolve(resolve(contract, "..", ".."), model);
+        let absRules = isAbsolute(cfg.rules) ? cfg.rules : resolve(resolve(contract, "..", ".."), cfg.rules);
+        const args = [absModel, "-A", absRules, "-V"];
+        let res;
+        try {
+          res = await pi.exec(cfg.exe, args, { cwd: ctx.cwd, signal });
+        } catch (e: any) {
+          return { content: [{ type: "text" as const, text: `Failed to run Tabular Editor: ${errMsg(e)}` }] };
+        }
+        allStdout += res.stdout + "\n";
+        if (res.code !== 0) finalCode = res.code;
+        const { findings, summary } = parseBpaOutput(res.stdout);
+        allFindings.push(...findings);
+        allSummary.error += summary.error;
+        allSummary.warning += summary.warning;
+        allSummary.info += summary.info;
+      }
+
+      const report = { findings: allFindings, summary: allSummary };
+      const scopeLine = `Scope: ${models.join(", ")}`;
+      return {
+        content: [{ type: "text" as const, text: `${summarizeReview("bpa_review", report, allStdout, finalCode)}\n${scopeLine}` }],
+        details: { tool: "bpa_review", args: ["..."], report, exitCode: finalCode, stdout: allStdout },
+      };
     },
   });
 

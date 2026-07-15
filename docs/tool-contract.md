@@ -162,6 +162,17 @@ Result:
 - If the binary is missing or JSON won't parse, it reports the problem in
   `content` (not a conversation error) and still returns `details`.
 
+### `bpa_review` (Tabular Editor)
+
+| Param | Type | Notes |
+|-------|------|-------|
+| `paths` | `string[]` (optional) | Semantic models to check. When omitted, uses `power_bi.semantic_models[].path` from the project contract. |
+| `min_severity` | `"error" \| "warning" \| "info"` (optional) | Ignored by TE CLI but preserved for API compatibility. |
+| `strict` | `boolean` (optional, default false) | If true, non-zero TE exit codes trigger CI failures. |
+
+Invocation (built in `index.ts` and `coop review`):
+`TabularEditor.exe <model> -A <bpa_rules_path> -V`. Output is parsed into JSON findings. Advisory only. Degrades gracefully: if TE is not configured, it's a hint, never a failure.
+
 ### `data_doc`
 
 | Param | Type | Notes |
