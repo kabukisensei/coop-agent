@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+﻿﻿#!/usr/bin/env pwsh
 #
 # coop.ps1 — the Cooptimize terminal agent (Windows / PowerShell mirror of bin/coop).
 #
@@ -364,13 +364,20 @@ function Invoke-DataDoc {
 function Invoke-CoopReview {
   param([string[]] $RestArgs = @())
   $strict = $false; $skipDocs = $false; $compare = $false; $doHtml = $false; $scope = @()
+  $diffMode = $false; $diffRef = 'HEAD'; $needDiffRef = $false
   foreach ($a in $RestArgs) {
-    switch -CaseSensitive ($a) {
-      '--strict'    { $strict = $true }
-      '--skip-docs' { $skipDocs = $true }
-      '--compare'   { $compare = $true }
-      '--html'      { $doHtml = $true }
-      { $_ -ceq '-h' -or $_ -ceq '--help' } {
+    if ($needDiffRef) {
+      if ($a -notlike '-*') { $diffRef = $a; $needDiffRef = $false; continue }
+      $needDiffRef = $false
+    }
+    switch -Regex ($a) {
+      '^--strict$'    { $strict = $true }
+      '^--skip-docs$' { $skipDocs = $true }
+      '^--compare$'   { $compare = $true }
+      '^--html$'      { $doHtml = $true }
+      '^--diff$'      { $diffMode = $true; $needDiffRef = $true }
+      '^--diff=(.*)'  { $diffMode = $true; $diffRef = $Matches[1] }
+      '^(-h|--help)$' {
         Coop-Say 'Usage: coop review [paths...] [--strict] [--skip-docs] [--compare] [--html]'
         Coop-Say '  Run coop-sql-review AND coop-dax-review over the project scope (explicit paths'
         Coop-Say "  win; else the nearest .coop/project.yml's repositories.*.local_path entries),"
@@ -381,10 +388,12 @@ function Invoke-CoopReview {
         Coop-Say '  --compare     diff each linter against the previous run''s saved report and print'
         Coop-Say '                a new/fixed/persisting delta (first run just becomes the baseline)'
         Coop-Say '  --html        write a combined HTML suite report to .coop/reviews/suite.html'
+        Coop-Say '  --diff [ref]  review only the files changed since [ref] (default: HEAD)'
+        Coop-Say '                in git-tracked roots, falling back to full review for others'
         return
       }
       default {
-        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop review [paths...] [--strict] [--skip-docs] [--compare] [--html]" }
+        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop review [paths...] [--strict] [--skip-docs] [--compare] [--diff [ref]] [--html]" }
         $scope += $a
       }
     }
@@ -408,6 +417,35 @@ function Invoke-CoopReview {
     }
   }
   if ($scope.Count -eq 0) { Coop-Die 'nothing to review — run inside a project with .coop/project.yml (repositories.*.local_path filled), or pass paths: coop review <paths...>' }
+
+  if ($diffMode) {
+    $newScope = @()
+    foreach ($item in $scope) {
+      if (Test-Path -LiteralPath $item -PathType Container) {
+        $isGit = $false
+        try {
+          $isGit = (& git -C $item rev-parse --is-inside-work-tree 2>$null) -eq 'true'
+        } catch {}
+        if ($isGit) {
+          $files = (& git -C $item diff --name-only -z $diffRef --; & git -C $item ls-files -z --others --exclude-standard) -join '' -split "`0" | Where-Object { $_ }
+          foreach ($f in $files) {
+            $fPath = Join-Path $item $f
+            if (Test-Path -LiteralPath $fPath) { $newScope += $fPath }
+          }
+        } else {
+          Coop-Warn "$item is not a git repository; falling back to full review for this root"
+          $newScope += $item
+        }
+      } elseif (Test-Path -LiteralPath $item -PathType Leaf) {
+        $newScope += $item
+      }
+    }
+    $scope = $newScope
+    if ($scope.Count -eq 0) {
+      Coop-Info "coop review --diff: no files changed in the scope."
+      return
+    }
+  }
 
   New-Item -ItemType Directory -Force -Path $outdir -ErrorAction SilentlyContinue | Out-Null
   if (-not (Test-Path -LiteralPath $outdir -PathType Container)) { Coop-Die "cannot create $outdir" }
@@ -541,7 +579,7 @@ function Invoke-CoopInit {
   $seed = $false; $dir = ''; $ciType = ''
   for ($i = 0; $i -lt $RestArgs.Count; $i++) {
     $a = $RestArgs[$i]
-    switch -CaseSensitive ($a) {
+    switch -Regex ($a) {
       '--seed-docs' { $seed = $true }
       '--ci' {
         if ($i + 1 -lt $RestArgs.Count) { $ciType = $RestArgs[++$i] }
@@ -721,6 +759,10 @@ function Invoke-CoopRelease {
   param([string[]]$RestArgs = @())
   $level = ''; $assumeYes = $false; $doPush = $true; $doCheck = $true
   foreach ($a in $RestArgs) {
+    if ($needDiffRef) {
+      if ($a -notlike '-*') { $diffRef = $a; $needDiffRef = $false; continue }
+      $needDiffRef = $false
+    }
     switch -Regex ($a) {
       '^(patch|minor|major)$' { $level = $a }
       '^(-y|--yes)$'          { $assumeYes = $true }

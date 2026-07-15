@@ -146,4 +146,14 @@ run_review --skip-docs --compare >/dev/null 2>&1
 grep -q -- "--diff-against" "$TMP/coop-sql-review.args.log" && fail "--compare on a first run must not pass --diff-against"
 pass "--compare diffs against the previous report (baseline no-op on the first run)"
 
+
+# 8. --diff: uses git to construct the scope (changed files only).
+rm -f "$TMP"/coop-*.args.log
+( cd "$TMP/proj" && git init -q && git config user.email "test@example.com" && git config user.name "Test" && mkdir -p sqlrepo && echo "--" > sqlrepo/old.sql && git add sqlrepo/old.sql && git commit -q -m "init" )
+( cd "$TMP/proj" && touch sqlrepo/new.sql )
+out="$(run_review --skip-docs --diff 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] || { printf '%s\n' "$out" >&2; fail "coop review --diff should exit 0 (got $rc)"; }
+grep -q "sqlrepo/new.sql" "$TMP/coop-sql-review.args.log" || fail "--diff did not pass the changed file"
+grep -q "sqlrepo/old.sql" "$TMP/coop-sql-review.args.log" && fail "--diff passed an unchanged file"
+pass "--diff scopes to changed files via git"
 printf '  %s\n' "review tests passed"
