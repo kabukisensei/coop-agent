@@ -537,20 +537,27 @@ function Invoke-CoopInit {
   # coop init [dir]              scaffold .coop\project.yml (current behavior)
   # coop init --seed-docs [dir]  generate/patch coop-data-doc.yml from an EXISTING
   #                              contract's repositories: (paths typed once, not twice)
-  $seed = $false; $dir = ''
-  foreach ($a in $RestArgs) {
+  # coop init --ci github|ado    generate CI pipeline
+  $seed = $false; $dir = ''; $ciType = ''
+  for ($i = 0; $i -lt $RestArgs.Count; $i++) {
+    $a = $RestArgs[$i]
     switch -CaseSensitive ($a) {
       '--seed-docs' { $seed = $true }
+      '--ci' {
+        if ($i + 1 -lt $RestArgs.Count) { $ciType = $RestArgs[++$i] }
+        else { Coop-Die "--ci requires an argument (github or ado)" }
+      }
       '--yes'       { $env:COOP_ASSUME_YES = '1' }
       '-y'          { $env:COOP_ASSUME_YES = '1' }
       default {
-        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop init [dir] [--seed-docs] [--yes]" }
+        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop init [dir] [--seed-docs] [--ci github|ado] [--yes]" }
         $dir = $a
       }
     }
   }
   if (-not $dir) { $dir = (Get-Location).Path }
   if ($seed) { Invoke-CoopInitSeedDocs $dir; return }
+  if ($ciType) { Invoke-CoopInitCi $dir $ciType; return }
   $tmpl = Join-Path $script:CoopRoot '.coop\project.example.yml'
   if (-not (Test-Path -LiteralPath $tmpl -PathType Leaf)) { Coop-Die 'template missing: .coop/project.example.yml' }
   $dst = Join-Path $dir '.coop\project.yml'
@@ -991,5 +998,29 @@ switch -CaseSensitive ($cmd) {
     # Unknown flags (-*) or unknown subcommand: pass straight to pi (files/messages).
     Invoke-LaunchPi -PassArgs $argList
     break
+  }
+}
+
+function Invoke-CoopInitCi {
+  param([string]$Dir, [string]$CiType)
+  $projYml = Join-Path $Dir '.coop\project.yml'
+  $defaultsYml = Join-Path $script:CoopRoot 'config\defaults.yml'
+  
+  if (-not (Test-Path -LiteralPath $projYml -PathType Leaf)) { Coop-Die "$projYml not found. Run ``coop init`` first." }
+  
+  $pyCmd = Get-CoopPython
+  if ($pyCmd) {
+    $script = Join-Path $script:CoopRoot 'lib\_ciscaffold.py'
+    $outFile = (& $pyCmd $script $CiType $projYml $defaultsYml $Dir)
+    $rc = $LASTEXITCODE
+    if ($rc -eq 0) {
+      Coop-Ok "Wrote $outFile"
+    } elseif ($rc -eq 3) {
+      Coop-Warn "No CI gates generated: paths missing in .coop/project.yml"
+    } else {
+      Coop-Die "CI scaffolding failed"
+    }
+  } else {
+    Coop-Die "Python 3 required to scaffold CI"
   }
 }

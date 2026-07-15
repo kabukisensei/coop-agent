@@ -70,9 +70,7 @@ Two details worth knowing:
 
 ## GitHub Actions
 
-Drop this in `.github/workflows/coop-gates.yml`. Replace `sql/` and
-`semantic-models/` with your real paths (see [Paths](#paths-reuse-coopprojectyml)),
-and split the jobs across repos if SQL / Power BI / docs live apart.
+Run `coop init --ci github` in your work repo to generate this pipeline automatically from your `.coop/project.yml` paths, or drop this template in `.github/workflows/coop-gates.yml`. Replace `sql/` and `semantic-models/` with your real paths (see [Paths](#paths-reuse-coopprojectyml)), and split the jobs across repos if SQL / Power BI / docs live apart.
 
 ```yaml
 name: coop gates
@@ -192,9 +190,7 @@ jobs:
 
 ## Azure DevOps
 
-Drop this in `azure-pipelines.yml`. Same three gates, same flags. PR validation
-on Azure Repos comes from a **branch policy** ("Build validation" on the target
-branch) that runs this pipeline — not from a `pr:` trigger.
+Run `coop init --ci ado` in your work repo to generate this pipeline automatically from your `.coop/project.yml` paths, or drop this template in `azure-pipelines.yml`. Same three gates, same flags. PR validation on Azure Repos comes from a **branch policy** ("Build validation" on the target branch) that runs this pipeline — not from a `pr:` trigger.
 
 ```yaml
 # coop suite gates — three independent jobs, hosted ubuntu agents.

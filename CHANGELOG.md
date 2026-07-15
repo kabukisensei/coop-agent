@@ -5,6 +5,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-15
+### Added
+- Generate CI pipelines (`.github/workflows/coop-gates.yml` or `azure-pipelines/coop-gates.yml`) using `coop init --ci github|ado` (issue #39)
+
 ## [0.15.0] - 2026-07-15
 ### Added
 - Wire up `coop_review_core` HTML suite summaries in `coop review --html` (#33)

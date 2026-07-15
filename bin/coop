@@ -467,18 +467,25 @@ coop_init() {
   # coop init [dir]              scaffold .coop/project.yml (current behavior)
   # coop init --seed-docs [dir]  generate/patch coop-data-doc.yml from an EXISTING
   #                              contract's repositories: (paths typed once, not twice)
-  local seed=0 dir="" a
-  for a in "$@"; do
-    case "$a" in
+  # coop init --ci github|ado    generate CI pipeline
+  local seed=0 dir="" a ci_type=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
       --seed-docs) seed=1 ;;
+      --ci) shift; ci_type="$1" ;;
       --yes|-y) export COOP_ASSUME_YES=1 ;;
-      -*) coop_die "unknown flag '$a' — usage: coop init [dir] [--seed-docs] [--yes]" ;;
-      *) dir="$a" ;;
+      -*) coop_die "unknown flag '$1' — usage: coop init [dir] [--seed-docs] [--ci github|ado] [--yes]" ;;
+      *) dir="$1" ;;
     esac
+    shift
   done
   [ -n "$dir" ] || dir="$PWD"
   if [ "$seed" = 1 ]; then
     coop_init_seed_docs "$dir"
+    return $?
+  fi
+  if [ -n "$ci_type" ]; then
+    coop_init_ci "$dir" "$ci_type"
     return $?
   fi
   local dst="$dir/.coop/project.yml"
@@ -882,3 +889,28 @@ case "$cmd" in
   *)             # Unknown subcommand: treat as pi input (files/messages).
                  launch_pi "$@" ;;
 esac
+
+coop_init_ci() {
+  local dir="$1"
+  local ci_type="$2"
+  local py_cmd proj_yml="$dir/.coop/project.yml" defaults_yml="$COOP_ROOT/config/defaults.yml"
+  
+  if [ ! -f "$proj_yml" ]; then
+    coop_die "$proj_yml not found. Run \`coop init\` first."
+  fi
+  
+  if py_cmd="$(coop_python)"; then
+    local out_file
+    out_file="$("$py_cmd" "$COOP_ROOT/lib/_ciscaffold.py" "$ci_type" "$proj_yml" "$defaults_yml" "$dir")"
+    local rc=$?
+    if [ $rc -eq 0 ]; then
+      coop_ok "Wrote $out_file"
+    elif [ $rc -eq 3 ]; then
+      coop_warn "No CI gates generated: paths missing in .coop/project.yml"
+    else
+      coop_err "CI scaffolding failed"
+    fi
+  else
+    coop_die "Python 3 required to scaffold CI"
+  fi
+}
