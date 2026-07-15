@@ -161,6 +161,14 @@ in the [README](../README.md#azure-devops-boards-optional).
 coop update               # updates Pi + extensions + tools, pulls latest coop-agent, runs doctor
 ```
 
+## 8. Fleet health digest
+
+For teams managing multiple machines or VMs, `coop` can aggregate its doctor status across the fleet to catch stale tool versions or broken dependencies before they cost a work session:
+
+1. Configure `fleet.publish_dir` in `~/.coop/config` (or `config/defaults.yml`) to a shared folder (e.g., OneDrive/SharePoint synced path).
+2. Have each machine run `coop doctor --json --publish` on a schedule (e.g., daily).
+3. Have one machine run `scripts/fleet-digest.sh --send` weekly to aggregate the snapshots into an email digest via Microsoft Graph.
+
 ## Leaving a machine (VM rebuild / offboarding)
 
 ```bash

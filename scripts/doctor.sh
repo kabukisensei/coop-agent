@@ -19,12 +19,14 @@ FAIL=0   # required missing -> non-zero exit
 WARN=0
 FIX=0    # --fix: auto-apply the safe remediations at the end
 JSON=0   # --json: one machine-readable document on stdout (fleet health digests)
+PUBLISH=0
 for _a in "$@"; do
   case "$_a" in
     --fix) FIX=1 ;;
     --json) JSON=1 ;;
+    --publish) PUBLISH=1; JSON=1 ;;
     -h|--help)
-      printf 'Usage: coop doctor [--fix] [--json]\n  --fix   apply safe remediations (sync extensions/MCP/assets, install missing Coop tools), then re-check\n  --json  suppress the human report and emit one JSON document on stdout: {"checks":[{name,section,status,hint}...],"fail":N,"warn":N}\n' >&2
+      printf 'Usage: coop doctor [--fix] [--json] [--publish]\n  --fix      apply safe remediations (sync extensions/MCP/assets, install missing Coop tools), then re-check\n  --json     suppress the human report and emit one JSON document on stdout: {"checks":[{name,section,status,hint}...],"fail":N,"warn":N}\n  --publish  augment the --json payload with machine identity (hostname/user/versions/timestamp) and write to fleet.publish_dir (from ~/.coop/config or defaults.yml) instead of stdout\n' >&2
       exit 0 ;;
   esac
 done
@@ -275,11 +277,15 @@ if [ "$FIX" = 1 ] && { [ "$FAIL" -gt 0 ] || [ "$WARN" -gt 0 ]; }; then
   done
   coop_info "Re-checking… (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)"
   echo >&2
-  # Propagate --json so the re-check emits the (final) machine-readable document.
+  # Propagate --json/--publish so the re-check emits the machine-readable document.
   # exec skips EXIT traps, so drop the pre-fix records explicitly first.
   if [ "$JSON" = 1 ]; then
     rm -f "$DOCTOR_JSON_TMP"
-    exec "$COOP_ROOT/scripts/doctor.sh" --json
+    if [ "$PUBLISH" = 1 ]; then
+      exec "$COOP_ROOT/scripts/doctor.sh" --publish
+    else
+      exec "$COOP_ROOT/scripts/doctor.sh" --json
+    fi
   fi
   exec "$COOP_ROOT/scripts/doctor.sh"
 fi
@@ -298,8 +304,51 @@ if [ "$JSON" = 1 ]; then
     [ "$_first" = 1 ] && _first=0 || _out="$_out,"
     _out="$_out{\"name\":\"$(_json_esc "$_nm")\",\"section\":\"$(_json_esc "$_sec")\",\"status\":\"$_st\",\"hint\":\"$(_json_esc "$_ht")\"}"
   done < "$DOCTOR_JSON_TMP"
-  _out="$_out],\"fail\":$FAIL,\"warn\":$WARN}"
-  printf '%s\n' "$_out"
+  _out="$_out],\"fail\":$FAIL,\"warn\":$WARN"
+
+  if [ "$PUBLISH" = 1 ]; then
+    _host="$(hostname 2>/dev/null || echo "unknown")"
+    _user="${USER:-${USERNAME:-unknown}}"
+    _coop_v="$(coop_version)"
+    _pi_v="$(coop_pi_version || echo "none")"
+    _ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    _out="$_out,\"hostname\":\"$(_json_esc "$_host")\",\"user\":\"$(_json_esc "$_user")\",\"coop_version\":\"$(_json_esc "$_coop_v")\",\"pi_version\":\"$(_json_esc "$_pi_v")\",\"timestamp\":\"$_ts\"}"
+    
+    # Resolve publish_dir from config or defaults
+    _pub_dir=""
+    if _py="$(coop_python)"; then
+      _pub_dir="$("$_py" -c "
+import os, sys
+sys.path.insert(0, os.path.join('$COOP_ROOT', 'lib'))
+import _yaml
+d = _yaml.load(os.path.expanduser('~/.coop/config')) if os.path.exists(os.path.expanduser('~/.coop/config')) else {}
+p = _yaml.dig(d, 'fleet.publish_dir')
+if not p:
+    d = _yaml.load(os.path.join('$COOP_ROOT', 'config/defaults.yml'))
+    p = _yaml.dig(d, 'fleet.publish_dir')
+print(p or '')
+" 2>/dev/null)"
+    fi
+    
+    if [ -n "$_pub_dir" ]; then
+      if [ ! -d "$_pub_dir" ]; then
+        mkdir -p "$_pub_dir" 2>/dev/null || true
+      fi
+      if [ -d "$_pub_dir" ]; then
+        _dest="$_pub_dir/${_host}_${_user}.json"
+        printf '%s\n' "$_out" > "$_dest"
+        coop_ok "Published fleet health to $_dest" >&2
+      else
+        coop_err "fleet.publish_dir '$_pub_dir' is not a valid directory" >&2
+      fi
+    else
+      coop_err "fleet.publish_dir not configured in ~/.coop/config or config/defaults.yml" >&2
+    fi
+  else
+    _out="$_out}"
+    printf '%s\n' "$_out"
+  fi
+
   [ "$FAIL" -gt 0 ] && exit 1
   exit 0
 fi

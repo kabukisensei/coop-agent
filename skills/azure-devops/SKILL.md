@@ -163,11 +163,10 @@ no duplicate). Natural-language trigger: "set up a new DevOps client."
 **macOS/Linux (cron):**
 ```
 0 7 * * 1  /path/to/coop-agent/scripts/ado-digest.sh --send >> ~/.coop/devops/digest.log 2>&1
+0 8 * * 1  /path/to/coop-agent/scripts/fleet-digest.sh --send >> ~/.coop/fleet.log 2>&1
 ```
 
-**Windows (Task Scheduler)** — call `scripts\ado-digest.ps1 --send` (the launcher passes
-flags through to Python verbatim, so use the double-dash `--send`, not `-send`). Minimal
-task XML:
+**Windows (Task Scheduler)** — call `scripts\ado-digest.ps1 --send` and `scripts\fleet-digest.ps1 --send` (the launcher passes flags through to Python verbatim, so use the double-dash `--send`, not `-send`). Minimal task XML:
 ```xml
 <Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers><CalendarTrigger>
@@ -179,6 +178,7 @@ task XML:
       <Command>pwsh.exe</Command>
       <Arguments>-File "C:\path\to\coop-agent\scripts\ado-digest.ps1" --send</Arguments>
     </Exec>
+    <!-- Add a similar Action for scripts\fleet-digest.ps1 if scheduling the fleet digest here -->
   </Actions>
 </Task>
 ```

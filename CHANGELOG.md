@@ -5,6 +5,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-15
+### Added
+- Fleet health digest: `coop doctor --json --publish` writes state to `fleet.publish_dir`; `scripts/fleet-digest.sh` aggregates them into an email digest via Microsoft Graph (issue #41)
+
 ## [0.16.0] - 2026-07-15
 ### Added
 - Generate CI pipelines (`.github/workflows/coop-gates.yml` or `azure-pipelines/coop-gates.yml`) using `coop init --ci github|ado` (issue #39)

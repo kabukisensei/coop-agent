@@ -20,13 +20,16 @@ $script:FAIL = 0   # required missing -> non-zero exit
 $script:WARN = 0
 $script:FIX  = $false   # --fix: auto-apply safe remediations at the end
 $script:JSON = $false   # --json: one machine-readable document on stdout (fleet health digests)
+$script:PUBLISH = $false
 foreach ($a in $args) {
   if ($a -eq '--fix') { $script:FIX = $true }
   elseif ($a -eq '--json') { $script:JSON = $true }
+  elseif ($a -eq '--publish') { $script:PUBLISH = $true; $script:JSON = $true }
   elseif ($a -eq '-h' -or $a -eq '--help') {
-    Coop-Say 'Usage: coop doctor [--fix] [--json]'
-    Coop-Say '  --fix   apply safe remediations (sync extensions/MCP/assets, install missing Coop tools), then re-check'
-    Coop-Say '  --json  suppress the human report and emit one JSON document on stdout: {"checks":[{name,section,status,hint}...],"fail":N,"warn":N}'
+    Coop-Say 'Usage: coop doctor [--fix] [--json] [--publish]'
+    Coop-Say '  --fix      apply safe remediations (sync extensions/MCP/assets, install missing Coop tools), then re-check'
+    Coop-Say '  --json     suppress the human report and emit one JSON document on stdout: {"checks":[{name,section,status,hint}...],"fail":N,"warn":N}'
+    Coop-Say '  --publish  augment the --json payload with machine identity (hostname/user/versions/timestamp) and write to fleet.publish_dir (from ~/.coop/config or defaults.yml) instead of stdout'
     exit 0
   }
 }
@@ -358,8 +361,8 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
   }
   Coop-Info 'Re-checking... (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)'
   [Console]::Error.WriteLine('')
-  # Propagate --json so the re-check emits the (final) machine-readable document.
-  $reArgs = @(); if ($script:JSON) { $reArgs += '--json' }
+  # Propagate --json/--publish so the re-check emits the (final) machine-readable document.
+  $reArgs = @(); if ($script:PUBLISH) { $reArgs += '--publish' } elseif ($script:JSON) { $reArgs += '--json' }
   & (Join-Path $script:CoopRoot 'scripts\doctor.ps1') @reArgs
   exit $LASTEXITCODE
 }
@@ -368,7 +371,41 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
 # escaping, including any control character a probed tool leaked into a message).
 if ($script:JSON) {
   $doc = [ordered]@{ checks = @($script:JsonChecks); fail = $script:FAIL; warn = $script:WARN }
-  Write-Output ($doc | ConvertTo-Json -Depth 4 -Compress)
+
+  if ($script:PUBLISH) {
+    $hostName = [System.Net.Dns]::GetHostName()
+    $userName = if ($env:USERNAME) { $env:USERNAME } else { $env:USER }
+    if (-not $userName) { $userName = 'unknown' }
+    $doc['hostname'] = $hostName
+    $doc['user'] = $userName
+    $doc['coop_version'] = $script:CoopVersion
+    $piVer = Get-CoopPiVersion
+    $doc['pi_version'] = if ($piVer) { $piVer } else { 'none' }
+    $doc['timestamp'] = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    
+    $jsonStr = ($doc | ConvertTo-Json -Depth 4 -Compress)
+    
+    $pubDir = ''
+    $pyCmd = Get-CoopPython
+    if ($pyCmd) {
+      $pubDir = (& $pyCmd -c "import os, sys; sys.path.insert(0, os.path.join(r'$script:CoopRoot', 'lib')); import _yaml; d = _yaml.load(os.path.expanduser('~/.coop/config')) if os.path.exists(os.path.expanduser('~/.coop/config')) else {}; p = _yaml.dig(d, 'fleet.publish_dir'); print(p or _yaml.dig(_yaml.load(os.path.join(r'$script:CoopRoot', 'config/defaults.yml')), 'fleet.publish_dir') or '')" 2>$null | Out-String).Trim()
+    }
+    if ($pubDir) {
+      if (-not (Test-Path -LiteralPath $pubDir)) { New-Item -ItemType Directory -Force -Path $pubDir | Out-Null }
+      if (Test-Path -LiteralPath $pubDir -PathType Container) {
+        $dest = Join-Path $pubDir "${hostName}_${userName}.json"
+        [System.IO.File]::WriteAllText($dest, $jsonStr)
+        [Console]::Error.WriteLine("  ✓ Published fleet health to $dest")
+      } else {
+        [Console]::Error.WriteLine("  ✗ fleet.publish_dir '$pubDir' is not a valid directory")
+      }
+    } else {
+      [Console]::Error.WriteLine("  ✗ fleet.publish_dir not configured in ~/.coop/config or config/defaults.yml")
+    }
+  } else {
+    Write-Output ($doc | ConvertTo-Json -Depth 4 -Compress)
+  }
+
   if ($script:FAIL -gt 0) { exit 1 } else { exit 0 }
 }
 
