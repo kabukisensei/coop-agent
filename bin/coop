@@ -293,16 +293,17 @@ PY
 # --strict; docs-not-set-up is a hint, not a failure; a hard data-doc failure
 # (exit 2) propagates.
 run_review() {
-  local strict=0 skip_docs=0 compare=0
+  local strict=0 skip_docs=0 compare=0 do_html=0
   local scope=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --strict)    strict=1 ;;
       --skip-docs) skip_docs=1 ;;
       --compare)   compare=1 ;;
+      --html)      do_html=1 ;;
       -h|--help)
         cat >&2 <<'EOF'
-Usage: coop review [paths...] [--strict] [--skip-docs] [--compare]
+Usage: coop review [paths...] [--strict] [--skip-docs] [--compare] [--html]
   Run coop-sql-review AND coop-dax-review over the project scope (explicit paths
   win; else the nearest .coop/project.yml's repositories.*.local_path entries),
   save both JSON reports under .coop/reviews/, then rebuild the lineage docs with
@@ -311,9 +312,10 @@ Usage: coop review [paths...] [--strict] [--skip-docs] [--compare]
   --skip-docs   skip the coop-data-doc build step (linters only)
   --compare     diff each linter against the previous run's saved report and print
                 a new/fixed/persisting delta (first run just becomes the baseline)
+  --html        write a combined HTML suite report to .coop/reviews/suite.html
 EOF
         return 0 ;;
-      -*) coop_die "unknown flag '$1' — usage: coop review [paths...] [--strict] [--skip-docs] [--compare]" ;;
+      -*) coop_die "unknown flag '$1' — usage: coop review [paths...] [--strict] [--skip-docs] [--compare] [--html]" ;;
       *)  scope+=("$1") ;;
     esac
     shift
@@ -391,14 +393,41 @@ EOF
     fi
   fi
 
-  # Summary: per-tool finding counts when cheaply parseable, else just the paths.
-  local f label
-  if have python3; then
-    for f in "$sql_json" "$dax_json"; do
-      [ -f "$f" ] || continue
-      label="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); s=d.get("summary") or {}; f=d.get("findings"); n=len(f) if isinstance(f,list) else 0; print("%d finding(s) — %s error, %s warning, %s info" % (n, s.get("error",0), s.get("warning",0), s.get("info",0)))' "$f" 2>/dev/null)" || label=""
-      if [ -n "$label" ]; then coop_ok "$(basename "$f"): ${label}  (${f})"; else coop_ok "Report: $f"; fi
-    done
+  # Summary: use coop_review_core.suite to aggregate.
+  local py_cmd
+  if py_cmd="$(coop_python)"; then
+    "$py_cmd" - "$sql_json" "$dax_json" "$do_html" "$outdir/suite.html" <<'PY' || true
+import sys, os
+from coop_review_core.suite import load_envelopes, suite_summary, suite_text, suite_html
+
+paths = [p for p in sys.argv[1:3] if os.path.exists(p)]
+if not paths:
+    sys.exit(0)
+
+try:
+    envs = load_envelopes(paths)
+    summary = suite_summary(envs)
+    print("\n" + suite_text(envs, summary, color=True))
+    
+    do_html = sys.argv[3] == "1"
+    if do_html:
+        html_out = sys.argv[4]
+        html_paths = {}
+        for env in envs:
+            t = env.get("tool")
+            if t:
+                # We link to the specific tool's HTML if it exists in the same dir.
+                # Assuming the linters wrote foo.json and maybe foo.html.
+                html_file = os.path.join(os.path.dirname(html_out), f"{t}.html")
+                if os.path.exists(html_file):
+                    html_paths[t] = f"{t}.html"
+        
+        with open(html_out, "w", encoding="utf-8") as f:
+            f.write(suite_html(envs, summary, html_paths))
+        print(f"Suite HTML Report: {html_out}\n")
+except Exception as exc:
+    print(f"Suite summary error: {exc}", file=sys.stderr)
+PY
   else
     coop_ok "Reports: $sql_json  $dax_json"
   fi

@@ -363,14 +363,15 @@ function Invoke-DataDoc {
 # not-set-up is a hint, not a failure; a hard data-doc failure (exit 2) propagates.
 function Invoke-CoopReview {
   param([string[]] $RestArgs = @())
-  $strict = $false; $skipDocs = $false; $compare = $false; $scope = @()
+  $strict = $false; $skipDocs = $false; $compare = $false; $doHtml = $false; $scope = @()
   foreach ($a in $RestArgs) {
     switch -CaseSensitive ($a) {
       '--strict'    { $strict = $true }
       '--skip-docs' { $skipDocs = $true }
       '--compare'   { $compare = $true }
+      '--html'      { $doHtml = $true }
       { $_ -ceq '-h' -or $_ -ceq '--help' } {
-        Coop-Say 'Usage: coop review [paths...] [--strict] [--skip-docs] [--compare]'
+        Coop-Say 'Usage: coop review [paths...] [--strict] [--skip-docs] [--compare] [--html]'
         Coop-Say '  Run coop-sql-review AND coop-dax-review over the project scope (explicit paths'
         Coop-Say "  win; else the nearest .coop/project.yml's repositories.*.local_path entries),"
         Coop-Say '  save both JSON reports under .coop/reviews/, then rebuild the lineage docs with'
@@ -379,10 +380,11 @@ function Invoke-CoopReview {
         Coop-Say '  --skip-docs   skip the coop-data-doc build step (linters only)'
         Coop-Say '  --compare     diff each linter against the previous run''s saved report and print'
         Coop-Say '                a new/fixed/persisting delta (first run just becomes the baseline)'
+        Coop-Say '  --html        write a combined HTML suite report to .coop/reviews/suite.html'
         return
       }
       default {
-        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop review [paths...] [--strict] [--skip-docs] [--compare]" }
+        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop review [paths...] [--strict] [--skip-docs] [--compare] [--html]" }
         $scope += $a
       }
     }
@@ -456,24 +458,44 @@ function Invoke-CoopReview {
     }
   }
 
-  # Summary: per-tool finding counts when cheaply parseable, else just the paths.
+  # Summary: use coop_review_core.suite to aggregate.
   # Feed the script via stdin (single-quoted here-string, quoting-proof on Windows
   # PowerShell 5.1 which mangles embedded double quotes in a native `-c` arg).
   $py = Get-CoopPython
   if ($py) {
+    $htmlFlag = if ($doHtml) { "1" } else { "0" }
+    $suiteHtml = Join-Path $outdir "suite.html"
     $summaryPy = @'
-import json, sys
-d = json.load(open(sys.argv[1]))
-s = d.get("summary") or {}
-f = d.get("findings")
-n = len(f) if isinstance(f, list) else 0
-print("%d finding(s) — %s error, %s warning, %s info" % (n, s.get("error", 0), s.get("warning", 0), s.get("info", 0)))
+import sys, os
+from coop_review_core.suite import load_envelopes, suite_summary, suite_text, suite_html
+
+paths = [p for p in sys.argv[1:3] if os.path.exists(p)]
+if not paths:
+    sys.exit(0)
+
+try:
+    envs = load_envelopes(paths)
+    summary = suite_summary(envs)
+    print("\n" + suite_text(envs, summary, color=True))
+    
+    do_html = sys.argv[3] == "1"
+    if do_html:
+        html_out = sys.argv[4]
+        html_paths = {}
+        for env in envs:
+            t = env.get("tool")
+            if t:
+                html_file = os.path.join(os.path.dirname(html_out), f"{t}.html")
+                if os.path.exists(html_file):
+                    html_paths[t] = f"{t}.html"
+        
+        with open(html_out, "w", encoding="utf-8") as f:
+            f.write(suite_html(envs, summary, html_paths))
+        print(f"Suite HTML Report: {html_out}\n")
+except Exception as exc:
+    print(f"Suite summary error: {exc}", file=sys.stderr)
 '@
-    foreach ($f in @($sqlJson, $daxJson)) {
-      if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { continue }
-      $label = ($summaryPy | & $py - $f 2>$null) | Select-Object -First 1
-      if ($label) { Coop-Ok "$(Split-Path -Leaf $f): $label  ($f)" } else { Coop-Ok "Report: $f" }
-    }
+    $summaryPy | & $py - $sqlJson $daxJson $htmlFlag $suiteHtml
   } else {
     Coop-Ok "Reports: $sqlJson  $daxJson"
   }
