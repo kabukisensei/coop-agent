@@ -1,4 +1,4 @@
-﻿﻿#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 #
 # coop.ps1 — the Cooptimize terminal agent (Windows / PowerShell mirror of bin/coop).
 #
@@ -427,7 +427,7 @@ function Invoke-CoopReview {
           $isGit = (& git -C $item rev-parse --is-inside-work-tree 2>$null) -eq 'true'
         } catch {}
         if ($isGit) {
-          $files = (& git -C $item diff --name-only -z $diffRef --; & git -C $item ls-files -z --others --exclude-standard) -join '' -split "`0" | Where-Object { $_ }
+          $files = $(& git -C $item diff --name-only -z $diffRef --; & git -C $item ls-files -z --others --exclude-standard) -join '' -split "`0" | Where-Object { $_ }
           foreach ($f in $files) {
             $fPath = Join-Path $item $f
             if (Test-Path -LiteralPath $fPath) { $newScope += $fPath }
