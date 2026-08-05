@@ -20,7 +20,13 @@ results.
 ## Review checklist
 
 - **Scope the paths.** Identify the DAX / TMDL / model files to check. Read
-  `standards.dax` so findings map to the team's rules.
+  `standards.dax` so findings map to the team's rules. The standards follow the hybrid
+  methodology: variable-first is the default (§2, §27–§29: underscore-prefixed VARs,
+  table variables + explicit iterators for routine local filters, no gratuitous
+  CALCULATE), CALCULATE is allowed only for the three §30 exceptions (filter-state
+  overrides, relationship/security overrides, deliberate context transition), and §31–§32
+  ban magic numbers and implicit context transitions. Frame agent-judgment findings in
+  those terms.
 - **Run the check.** Invoke `coop-dax-review check <paths...> --format json`. Use
   `--min-severity error|warning|info` to filter and `--strict` when wanted. The
   tool is advisory and never modifies files.
