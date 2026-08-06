@@ -5,7 +5,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
-## [0.18.1] — 2026-08-06
+## [Unreleased]
+### Changed
+- Vibes: restored the D365 reference in the Monty Python line — D365 (Microsoft Dynamics 365) is a general product term, not client-specific
+
+## [0.18.1] - 2026-08-06
 ### Changed
 - Vibes: `coop-internal` expanded with more crew in-jokes (Joel, Eric, Tanner, Josh, Simar, April, Aaron) and heavier South Park / Star Trek / Monty Python & the Holy Grail (plus Star Wars) easter eggs; the four pooled sets (data-doc, dax-review, fabric, sql-review) gained client-safe "classics" sections. `professional.txt` stays client-safe.
 
