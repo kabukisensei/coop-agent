@@ -4,6 +4,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions follow [SemVer](https://semver.org).
 
 ## [Unreleased]
+### Changed
+- Vibes: `coop-internal` expanded with more crew in-jokes (Joel, Eric, Tanner, Josh, Simar, April, Aaron) and heavier South Park / Star Trek / Monty Python & the Holy Grail (plus Star Wars) easter eggs; the four pooled sets (data-doc, dax-review, fabric, sql-review) gained client-safe "classics" sections. `professional.txt` stays client-safe.
 
 ## [0.18.0] - 2026-07-15
 ### Added
