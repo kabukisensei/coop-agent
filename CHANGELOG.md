@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.18.2] — 2026-08-06
+
 ## [Unreleased]
 ### Changed
 - Vibes: restored the D365 reference in the Monty Python line — D365 (Microsoft Dynamics 365) is a general product term, not client-specific
