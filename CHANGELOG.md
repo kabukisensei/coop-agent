@@ -4,6 +4,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions follow [SemVer](https://semver.org).
 
 ## [Unreleased]
+
+## [0.18.3] — 2026-08-10
 ### Added
 - Vibes: `coop-internal` expanded with The Office (US), Office Space, and The 5th Element easter eggs; `professional.txt` gained a small client-safe seasoning section from the same sources.
 
