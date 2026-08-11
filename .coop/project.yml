@@ -78,7 +78,37 @@ microsoft_skills:
   #   scripts/fetch-microsoft-skills.sh
   source: "https://github.com/microsoft/skills"
   load_dir: "skills/_microsoft"
-  allow: []   # e.g. ["azure-cosmos-db-py", "azure-storage-blob-py"] — empty = none
+  allow:
+    - "kql"             # KQL / Fabric Real-Time Intelligence (EventHouse/ADX)
+    - "microsoft-docs"  # Microsoft Learn documentation queries
+
+# --- Microsoft Skills for Fabric (Power BI / Fabric authoring) ---------------
+# Distributed separately from github.com/microsoft/skills. These skills can
+# author PBIR, TMDL, SQL, notebooks, and Fabric items. They are still
+# subordinate to Cooptimize skills and remain subject to the guardrails:
+# plan-and-approve before edits, show diff, and NEVER commit source.
+fabric_skills:
+  source: "https://github.com/microsoft/skills-for-fabric"
+  load_dir: "skills/_microsoft_fabric"
+  allow:
+    # Core Power BI authoring pipeline (design → plan → author → manage + model)
+    - "check-updates"              # mandatory pre-flight for Fabric skills
+    - "powerbi-report-design"      # read-only design briefs / archetypes / themes
+    - "powerbi-report-planning"    # requirements → locked spec → approval → build
+    - "powerbi-report-authoring"   # PBIR/PBIP pages, visuals, filters, themes
+    - "powerbi-report-management"  # upload/publish/download report definitions
+    - "semantic-model-authoring"   # DAX/TMDL/semantic model create-edit-deploy
+    # Fabric data engineering
+    - "eventhouse-cli"             # KQL database authoring + read-only queries
+    - "sqldw-authoring-cli"        # T-SQL DDL/DML against Warehouse/SQL endpoint
+    - "sqldw-consumption-cli"      # read-only T-SQL against Warehouse/SQL endpoint
+    - "dataflows-cli"              # Dataflow Gen2 authoring/inspection/upgrade
+    - "e2e-medallion-architecture" # Bronze/Silver/Gold lakehouse + notebooks
+    - "spark-authoring-cli"        # Fabric Spark notebooks / MLV authoring
+    - "fabriciq"                   # natural-language Q&A over existing report data
+    # Deferred (narrow / add when needed):
+    # - "sqldw-operations-cli"     # Warehouse performance diagnostics
+    # - "deployment-pipelines-authoring-cli"  # Fabric ALM deployment pipelines
 
 standards:
   sql: "docs/standards/sql-standards.md"

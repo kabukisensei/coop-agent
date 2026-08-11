@@ -72,6 +72,9 @@ foreach ($a in $args) {
 # failed item on every update.
 $PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')
 if (-not $NO_FABRIC) { $PY_TOOLS += 'ms-fabric-cli' }
+# Microsoft Fabric/Power BI authoring CLI packages (npm) — kept current by update.
+$PBIH_NPM_TOOLS = @('@microsoft/powerbi-report-authoring-cli', '@microsoft/powerbi-modeling-mcp')
+if ($env:OS -eq 'Windows_NT') { $PBIH_NPM_TOOLS += '@microsoft/powerbi-desktop-bridge-cli' }
 
 # Update coop's ISOLATED Pi agent dir (not the user's personal pi).
 $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
@@ -150,6 +153,20 @@ $UnitPytoolUpgrade = {
   & pipx upgrade $Pkg *> $null
   if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = $Pkg } }
   return [pscustomobject]@{ ok = $false; msg = "upgrade failed: $Pkg" }
+}
+
+$UnitPbihToolsUpgrade = {
+  param([array]$Pkgs)
+  if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+    return [pscustomobject]@{ ok = $false; msg = 'skipping Power BI/Fabric authoring tools (npm missing)' }
+  }
+  $ok = 0; $fail = 0
+  foreach ($pkg in $Pkgs) {
+    & npm update -g $pkg *> $null
+    if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
+  }
+  if ($fail -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$ok Power BI/Fabric authoring tool(s) updated" } }
+  return [pscustomobject]@{ ok = $false; msg = "$ok updated, $fail failed" }
 }
 
 # --- coop update --check (dry-run: report versions, change NOTHING) ----------
@@ -240,25 +257,30 @@ if (Test-Have 'pi') {
 }
 
 # Overall-bar denominator: the update ITEMS we attempt (pi update unless skipped +
-# each pipx tool). Steps 1/4/5 (git pull / sync / doctor) sit outside the bar,
-# exactly as the install bar covers only its install items.
-$TOTAL = $PY_TOOLS.Count
+# each pipx tool + Power BI/Fabric authoring npm tools). Steps 1/4/5/6 (git pull /
+# sync / doctor) sit outside the bar, exactly as the install bar covers only its
+# install items.
+$TOTAL = $PY_TOOLS.Count + 1
 if ($RunPiUpdate) { $TOTAL += 1 }
 
-# Pin the overall bar to the bottom for the update phase (steps 2–3); restore the
+# Pin the overall bar to the bottom for the update phase (steps 2–4); restore the
 # cursor even on Ctrl-C / errors via finally.
 try {
   Coop-ProgBegin $TOTAL
 
   # --- 2. Update Pi + extensions ---------------------------------------------
-  Coop-Head '2/5  Pi and extensions'
+  Coop-Head '2/6  Pi and extensions'
   if ($RunPiUpdate) {
     Coop-Unit 'pi update --all   (the agent + all installed extensions)' $UnitPiUpdate @($script:PI_INSTALL_TARGET, $script:PI_PKG)
   }
 
   # --- 3. Upgrade pipx tools -------------------------------------------------
-  Coop-Head '3/5  Coop tools + Fabric CLI (pipx)'
+  Coop-Head '3/6  Coop tools + Fabric CLI (pipx)'
   foreach ($pkg in $PY_TOOLS) { Coop-Unit $pkg $UnitPytoolUpgrade @($pkg) }
+
+  # --- 4. Upgrade Microsoft Fabric / Power BI authoring tools (npm) ----------
+  Coop-Head '4/6  Fabric / Power BI authoring tools'
+  Coop-Unit 'Power BI/Fabric authoring tools' $UnitPbihToolsUpgrade @($PBIH_NPM_TOOLS)
 }
 finally {
   Coop-ProgEnd
@@ -270,13 +292,13 @@ if ((Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package 
   if ($LASTEXITCODE -eq 0) { Coop-Ok 'fabric-cicd (library) refreshed' }
 }
 
-# --- 4. Sync vibes / skills / prompts / extension ----------------------------
-Coop-Head '4/5  Sync brand assets'
+# --- 5. Sync vibes / skills / prompts / extension ----------------------------
+Coop-Head '5/6  Sync brand assets'
 $syncRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
 if ($syncRc -ne 0) { Coop-Warn 'sync reported issues' }
 
-# --- 5. Doctor ---------------------------------------------------------------
+# --- 6. Doctor ---------------------------------------------------------------
 # Propagate doctor's verdict as the update's exit code (mirror of update.sh).
-Coop-Head '5/5  Doctor'
+Coop-Head '6/6  Doctor'
 $doctorRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
 exit $doctorRc

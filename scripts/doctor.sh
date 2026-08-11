@@ -147,6 +147,17 @@ check coop-sql-review required "pipx install coop-sql-review" "coop-sql-review -
 check coop-dax-review required "pipx install coop-dax-review" "coop-dax-review --version"
 
 section "Fabric / semantic-model tooling"
+
+# Power BI / Fabric authoring npm tools required by the skills-for-fabric skills.
+# powerbi-desktop-bridge is only useful on Windows with Power BI Desktop installed.
+check powerbi-report-author optional "npm install -g @microsoft/powerbi-report-authoring-cli" "powerbi-report-author --version"
+check powerbi-modeling-mcp optional "npm install -g @microsoft/powerbi-modeling-mcp" "npx -y @microsoft/powerbi-modeling-mcp@latest --start --help 2>&1"
+if [ "$(uname -s 2>/dev/null || echo unknown)" = "Windows" ] || [ "$(uname -s 2>/dev/null || echo unknown)" = "MINGW" ] || [ "$(uname -s 2>/dev/null || echo unknown)" = "MSYS" ]; then
+  check powerbi-desktop optional "npm install -g @microsoft/powerbi-desktop-bridge-cli (Windows + Power BI Desktop only)" "powerbi-desktop --version"
+else
+  warn "powerbi-desktop (Desktop Bridge)" "Windows + Power BI Desktop only — skipped on this OS"
+fi
+
 # fabric-cicd is a Python LIBRARY (no CLI) — check it's importable in the Fabric CLI's env.
 if have fab; then
   has_cicd=0

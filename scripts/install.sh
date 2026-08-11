@@ -38,6 +38,12 @@ PI_EXTENSIONS=(
 )
 PY_TOOLS=( coop-data-doc coop-sql-review coop-dax-review )
 FABRIC_PKG="ms-fabric-cli"
+# Microsoft Fabric/Power BI authoring CLI packages (npm). powerbi-desktop-bridge
+# requires Power BI Desktop on Windows, so it is installed only there.
+PBIH_NPM_TOOLS=( @microsoft/powerbi-report-authoring-cli @microsoft/powerbi-modeling-mcp )
+case "$OS" in
+  MINGW*|CYGWIN*|MSYS*|Windows*|windows*) PBIH_NPM_TOOLS+=( @microsoft/powerbi-desktop-bridge-cli ) ;;
+esac
 
 # Install/operate against coop's ISOLATED Pi agent dir so nothing mixes with the
 # user's personal `pi`. Every `pi` call below (and the sync/doctor it runs) inherits it.
@@ -47,8 +53,8 @@ mkdir -p "$PI_CODING_AGENT_DIR"
 OS="$(uname -s 2>/dev/null || echo unknown)"
 
 # Overall-bar denominator: the install ITEMS we will attempt (pipx + pi + each
-# extension + each coop tool, plus Fabric unless --no-fabric).
-PROG_TOTAL=$(( 2 + ${#PI_EXTENSIONS[@]} + ${#PY_TOOLS[@]} ))
+# extension + each coop tool + Power BI/Fabric authoring tools, plus Fabric unless --no-fabric).
+PROG_TOTAL=$(( 2 + ${#PI_EXTENSIONS[@]} + ${#PY_TOOLS[@]} + 1 ))
 [ "$NO_FABRIC" = 0 ] && PROG_TOTAL=$(( PROG_TOTAL + 1 ))
 
 # --- Per-item units ----------------------------------------------------------
@@ -116,6 +122,22 @@ _unit_pytool() {  # $1 = package
   printf 'could not install %s' "$pkg"; return 1
 }
 
+_unit_pbih_tools() {
+  have npm || { printf 'skipping Power BI/Fabric authoring tools (npm missing)'; return 1; }
+  local pkg ok=0 fail=0
+  for pkg in "${PBIH_NPM_TOOLS[@]}"; do
+    if [ "$FORCE" = 1 ]; then
+      npm install -g "$pkg" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
+    else
+      if npm install -g "$pkg" >/dev/null 2>&1; then ok=$((ok+1))
+      elif npm update -g "$pkg" >/dev/null 2>&1; then ok=$((ok+1))
+      else fail=$((fail+1)); fi
+    fi
+  done
+  if [ "$fail" -eq 0 ]; then printf '%d Power BI/Fabric authoring tool(s) ready' "$ok"; return 0; fi
+  printf '%d installed, %d failed' "$ok" "$fail"; return 1
+}
+
 coop_head "Cooptimize agent bootstrap (v${COOP_VERSION})  [$OS]"
 
 # Pin the overall bar to the bottom for the install phase; restore the cursor even
@@ -162,16 +184,21 @@ else
 fi
 
 # --- 5. Standalone Coop tools ------------------------------------------------
-coop_head "5/7  Coop tools (coop-data-doc / coop-sql-review / coop-dax-review)"
+coop_head "5/8  Coop tools (coop-data-doc / coop-sql-review / coop-dax-review)"
 for pkg in "${PY_TOOLS[@]}"; do
   coop_unit "$pkg" _unit_pytool "$pkg"
 done
 
+# --- 6. Microsoft Fabric / Power BI authoring tools (npm) --------------------
+coop_head "6/8  Fabric / Power BI authoring tools"
+coop_unit "Power BI/Fabric authoring tools" _unit_pbih_tools
+hash -r 2>/dev/null || true
+
 # Done with the install items — finalize the bar (leaves a permanent 100% line).
 coop_progress_end
 
-# --- 6. Put `coop` on PATH ---------------------------------------------------
-coop_head "6/7  Link 'coop' onto your PATH"
+# --- 7. Put `coop` on PATH ---------------------------------------------------
+coop_head "7/8  Link 'coop' onto your PATH"
 LOCALBIN="$HOME/.local/bin"
 mkdir -p "$LOCALBIN"
 chmod +x "$COOP_ROOT/bin/coop" "$COOP_ROOT"/scripts/*.sh 2>/dev/null || true
@@ -192,8 +219,8 @@ case ":$PATH:" in
   *) COOP_ON_PATH=0 ;;
 esac
 
-# --- 7. Sync brand assets + doctor ------------------------------------------
-coop_head "7/7  Sync assets and run doctor"
+# --- 8. Sync brand assets + doctor ------------------------------------------
+coop_head "8/8  Sync assets and run doctor"
 "$COOP_ROOT/scripts/sync.sh" || coop_warn "sync reported issues"
 echo >&2
 # Propagate doctor's verdict as the install's exit code, so a genuinely broken

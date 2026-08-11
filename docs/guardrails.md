@@ -28,6 +28,27 @@ human at Cooptimize approving it.
 7. **Never expose secrets.** Do not print or write tokens, passwords, connection
    strings, keys, or `.env` contents. Do not store secrets in memory.
 
+## Microsoft Fabric / Power BI authoring skills
+
+Official Microsoft skills from `github.com/microsoft/skills-for-fabric` are
+**allowed and subordinate** to Cooptimize skills. Skills such as
+`powerbi-report-authoring`, `semantic-model-authoring`, `sqldw-authoring-cli`,
+`eventhouse-cli`, `spark-authoring-cli`, `e2e-medallion-architecture`, and
+`dataflows-cli` may author or modify PBIR, TMDL, SQL, KQL, notebooks, and
+Fabric item definitions. Treat them exactly like any other source edit:
+
+- Follow the **coop-workflow**: read the contract and standards, assess lineage,
+  write a PLAN, and get **explicit approval** before editing.
+- Create timestamped **backups** before changing source files.
+- Make the smallest safe edit; run the relevant review tools
+  (`sql_review`, `dax_review`, `coop-data-doc` checks, `fabric-cicd` validate).
+- **Show the diff** and summarize changes for human review.
+- **Never commit source.** The agent may edit files; a human at Cooptimize
+  reviews the diff and commits. Docs, logs, diagrams, and generated sites may
+  be committed only with explicit approval.
+- For Fabric/Power BI item CRUD (upload, publish, deploy), use explicit
+  approval — same as any production change.
+
 > Most of these are **enforced at runtime** by the `coop-guardrails` extension, not just
 > asked of you: a `git commit` that would include source is **blocked** — covering
 > staged files, `git commit -a/-am` (which auto-stages tracked changes),

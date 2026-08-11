@@ -25,8 +25,11 @@ read-only, write a PLAN before any change is even proposed, and log the review.
   (environment suffixes, layer prefixes, casing). Flag inconsistencies and
   ambiguous abbreviations.
 - **Capacity.** Note the assigned capacity/SKU and look for obvious pressure
-  signals (oversized items, runaway refreshes, throttling notes). Capacity tuning
-  is a recommendation, not an action.
+  signals (oversized items, runaway refreshes, throttling notes). Where capacity
+  management is in scope, also check capacity state (`Active`/`Paused`), SKU
+  sizing against workload, and suspend/resume hygiene — the `azure-mgmt-fabric`
+  SDK or `fab` capacity commands can surface this. Capacity tuning is a
+  recommendation, not an action.
 - **Security / access.** Review workspace roles, item permissions, and any
   service principals. Flag over-broad access (everyone as Admin/Member), shared
   personal accounts, and gaps between dev/test/prod.
@@ -46,6 +49,8 @@ read-only, write a PLAN before any change is even proposed, and log the review.
   `fab`; `coop doctor` detects that collision.
 - **Fabric MCP** (`@microsoft/fabric-mcp`) — `list` / `read` / `inspect` only.
   Never call create/update/delete/deploy.
+- **`azure-mgmt-fabric`** (Azure SDK for Python) — optional, for capacity
+  lifecycle/state/SKU inspection; read-only unless explicit approval is given.
 - **`fabric-cicd`** — validate-only; deployment requires explicit approval.
 - **Microsoft Learn MCP** — current Fabric guidance instead of relying on memory.
 

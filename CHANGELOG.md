@@ -5,6 +5,33 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+- Official Microsoft **Skills for Fabric** (`github.com/microsoft/skills-for-fabric`) are
+  now supported as a second skill source via `fabric_skills` in `.coop/project.yml`.
+  Allow-listed skills are fetched into `skills/_microsoft_fabric/` and remain
+  subordinate to Cooptimize skills.
+- Added 13 Fabric/Power BI authoring skills to the default allow-list:
+  `check-updates`, `powerbi-report-design`, `powerbi-report-planning`,
+  `powerbi-report-authoring`, `powerbi-report-management`,
+  `semantic-model-authoring`, `eventhouse-cli`, `sqldw-authoring-cli`,
+  `sqldw-consumption-cli`, `dataflows-cli`, `e2e-medallion-architecture`,
+  `spark-authoring-cli`, `fabriciq`.
+- `coop install` / `coop update` now install/refresh the npm tools these skills
+  need: `@microsoft/powerbi-report-authoring-cli`,
+  `@microsoft/powerbi-modeling-mcp`, and (Windows only)
+  `@microsoft/powerbi-desktop-bridge-cli`.
+- `coop doctor` checks for the Power BI/Fabric authoring npm tools.
+- Added `powerbi-modeling-mcp` to `config/mcp.example.json`.
+
+### Changed
+- `scripts/fetch-microsoft-skills.sh` now fetches from both
+  `microsoft_skills` and `fabric_skills` source blocks.
+- `docs/guardrails.md` and `skills/coop-workflow/SKILL.md` explicitly require
+  Microsoft authoring skills to follow the coop workflow: plan-and-approve,
+  back up, review, show diff, and **never commit source**.
+- `scripts/check-parity.sh` ignores `.cache/*` so fetched Microsoft skill repos
+  don't fail the PowerShell BOM check.
+
 ## [0.18.3] — 2026-08-10
 ### Added
 - Vibes: `coop-internal` expanded with The Office (US), Office Space, and The 5th Element easter eggs; `professional.txt` gained a small client-safe seasoning section from the same sources.

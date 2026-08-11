@@ -74,6 +74,10 @@ $PI_EXTENSIONS = @(
 )
 $PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')
 $FABRIC_PKG = 'ms-fabric-cli'
+# Microsoft Fabric/Power BI authoring CLI packages (npm). powerbi-desktop-bridge
+# requires Power BI Desktop on Windows, so it is installed only there.
+$PBIH_NPM_TOOLS = @('@microsoft/powerbi-report-authoring-cli', '@microsoft/powerbi-modeling-mcp')
+if ($env:OS -eq 'Windows_NT') { $PBIH_NPM_TOOLS += '@microsoft/powerbi-desktop-bridge-cli' }
 
 # Install/operate against coop's ISOLATED Pi agent dir (mirror of coop_pi_agent_dir).
 $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
@@ -82,8 +86,8 @@ New-Item -ItemType Directory -Force -Path $env:PI_CODING_AGENT_DIR | Out-Null
 $OS = 'Windows'
 
 # Overall-bar denominator: the install ITEMS we attempt (pipx + pi + each extension
-# + each coop tool, plus Fabric unless --no-fabric).
-$TOTAL = 2 + $PI_EXTENSIONS.Count + $PY_TOOLS.Count
+# + each coop tool + Power BI/Fabric authoring tools, plus Fabric unless --no-fabric).
+$TOTAL = 2 + $PI_EXTENSIONS.Count + $PY_TOOLS.Count + 1
 if (-not $NO_FABRIC) { $TOTAL += 1 }
 
 # --- Per-item units (run in a background job; return @{ok=<bool>; msg=<string>}) --
@@ -163,6 +167,27 @@ $UnitPytool = {
   return [pscustomobject]@{ ok = $false; msg = "could not install $Pkg" }
 }
 
+$UnitPbihTools = {
+  param([bool]$Force, [array]$Pkgs)
+  if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { return [pscustomobject]@{ ok = $false; msg = 'skipping Power BI/Fabric authoring tools (npm missing)' } }
+  $ok = 0; $fail = 0
+  foreach ($pkg in $Pkgs) {
+    if ($Force) {
+      & npm install -g $pkg *> $null
+      if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
+    } else {
+      & npm install -g $pkg *> $null
+      if ($LASTEXITCODE -eq 0) { $ok++ }
+      else {
+        & npm update -g $pkg *> $null
+        if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
+      }
+    }
+  }
+  if ($fail -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$ok Power BI/Fabric authoring tool(s) ready" } }
+  return [pscustomobject]@{ ok = $false; msg = "$ok installed, $fail failed" }
+}
+
 Coop-Head "Cooptimize agent bootstrap (v$($script:CoopVersion))  [$OS]"
 
 # Pin the overall bar to the bottom for the install phase; restore the cursor even
@@ -193,15 +218,19 @@ try {
   else { Coop-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $FABRIC_PKG) }
 
   # --- 5. Standalone Coop tools ----------------------------------------------
-  Coop-Head '5/7  Coop tools (coop-data-doc / coop-sql-review / coop-dax-review)'
+  Coop-Head '5/8  Coop tools (coop-data-doc / coop-sql-review / coop-dax-review)'
   foreach ($pkg in $PY_TOOLS) { Coop-Unit $pkg $UnitPytool @($FORCE, $pkg) }
+
+  # --- 6. Microsoft Fabric / Power BI authoring tools (npm) ------------------
+  Coop-Head '6/8  Fabric / Power BI authoring tools'
+  Coop-Unit 'Power BI/Fabric authoring tools' $UnitPbihTools @($FORCE, $PBIH_NPM_TOOLS)
 }
 finally {
   Coop-ProgEnd
 }
 
-# --- 6. Put `coop` on PATH ---------------------------------------------------
-Coop-Head "6/7  Link 'coop' onto your PATH"
+# --- 7. Put `coop` on PATH ---------------------------------------------------
+Coop-Head "7/8  Link 'coop' onto your PATH"
 $LOCALBIN = Join-Path $env:LOCALAPPDATA 'coop\bin'
 New-Item -ItemType Directory -Force -Path $LOCALBIN | Out-Null
 # Drop a launcher .cmd that forwards to the repo's coop.cmd shim, so `coop` works
@@ -305,8 +334,8 @@ if (Test-Path -LiteralPath $desktopLauncher) {
   }
 }
 
-# --- 7. Sync brand assets + doctor ------------------------------------------
-Coop-Head '7/7  Sync assets and run doctor'
+# --- 8. Sync brand assets + doctor ------------------------------------------
+Coop-Head '8/8  Sync assets and run doctor'
 $syncRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
 if ($syncRc -ne 0) { Coop-Warn 'sync reported issues' }
 [Console]::Error.WriteLine('')

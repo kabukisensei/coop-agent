@@ -33,6 +33,11 @@ done
 # failed item on every update.
 PY_TOOLS=( coop-data-doc coop-sql-review coop-dax-review )
 [ "$NO_FABRIC" = 0 ] && PY_TOOLS+=( ms-fabric-cli )
+# Microsoft Fabric/Power BI authoring CLI packages (npm) — kept current by update.
+PBIH_NPM_TOOLS=( @microsoft/powerbi-report-authoring-cli @microsoft/powerbi-modeling-mcp )
+case "$(uname -s 2>/dev/null || echo unknown)" in
+  MINGW*|CYGWIN*|MSYS*|Windows*|windows*) PBIH_NPM_TOOLS+=( @microsoft/powerbi-desktop-bridge-cli ) ;;
+esac
 
 # Update coop's ISOLATED Pi agent dir (not the user's personal pi).
 PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"; export PI_CODING_AGENT_DIR
@@ -56,9 +61,10 @@ _pi_latest() {
 }
 
 # Overall-bar denominator: the update ITEMS we will attempt (pi update + each
-# pipx tool). Steps 1/4/5 (git pull / sync / doctor) sit outside the bar, exactly
-# as the install bar covers only its install items.
-PROG_TOTAL=$(( 1 + ${#PY_TOOLS[@]} ))
+# pipx tool + Power BI/Fabric authoring npm tools). Steps 1/4/5 (git pull /
+# sync / doctor) sit outside the bar, exactly as the install bar covers only
+# its install items.
+PROG_TOTAL=$(( 1 + ${#PY_TOOLS[@]} + 1 ))
 
 # --- Per-item units ----------------------------------------------------------
 # Each prints its final status message to stdout and returns 0 (✓) or non-zero (!).
@@ -91,6 +97,16 @@ _unit_pytool_upgrade() {  # $1 = package
   fi
   if pipx upgrade "$pkg" >/dev/null 2>&1; then printf '%s' "$pkg"; return 0; fi
   printf 'upgrade failed: %s' "$pkg"; return 1
+}
+
+_unit_pbih_tools_upgrade() {
+  have npm || { printf 'skipping Power BI/Fabric authoring tools (npm missing)'; return 1; }
+  local pkg ok=0 fail=0
+  for pkg in "${PBIH_NPM_TOOLS[@]}"; do
+    if npm update -g "$pkg" >/dev/null 2>&1; then ok=$((ok+1)); else fail=$((fail+1)); fi
+  done
+  if [ "$fail" -eq 0 ]; then printf '%d Power BI/Fabric authoring tool(s) updated' "$ok"; return 0; fi
+  printf '%d updated, %d failed' "$ok" "$fail"; return 1
 }
 
 # --- coop update --check (dry-run: report versions, change NOTHING) ----------
@@ -172,14 +188,19 @@ trap 'coop_progress_end; _coop_unit_cleanup; exit 130' INT TERM
 # --- 2. Update Pi + extensions ----------------------------------------------
 # (Windows guards this step against running sessions + leftover staging dirs in
 # update.ps1; POSIX can replace open files, so no such guard is needed here.)
-coop_head "2/5  Pi and extensions"
+coop_head "2/6  Pi and extensions"
 coop_unit "pi update --all   (the agent + all installed extensions)" _unit_pi_update
 
 # --- 3. Upgrade pipx tools ---------------------------------------------------
-coop_head "3/5  Coop tools + Fabric CLI (pipx)"
+coop_head "3/6  Coop tools + Fabric CLI (pipx)"
 for pkg in "${PY_TOOLS[@]}"; do
   coop_unit "$pkg" _unit_pytool_upgrade "$pkg"
 done
+
+# --- 4. Upgrade Microsoft Fabric / Power BI authoring tools (npm) ------------
+coop_head "4/6  Fabric / Power BI authoring tools"
+coop_unit "Power BI/Fabric authoring tools" _unit_pbih_tools_upgrade
+hash -r 2>/dev/null || true
 
 # Done with the update items — finalize the bar (leaves a permanent 100% line).
 coop_progress_end
@@ -189,15 +210,15 @@ if have pipx && pipx list 2>/dev/null | grep -q "package ms-fabric-cli "; then
   pipx inject ms-fabric-cli fabric-cicd --force >/dev/null 2>&1 && coop_ok "fabric-cicd (library) refreshed" || true
 fi
 
-# --- 4. Sync vibes / skills / prompts / extension ----------------------------
+# --- 5. Sync vibes / skills / prompts / extension ----------------------------
 # sync also re-pins the extension tree's pi-ai/pi-tui to the (possibly just-updated)
 # agent version, so the skew can't survive an update. Runs AFTER step 2 by design.
-coop_head "4/5  Sync brand assets"
+coop_head "5/6  Sync brand assets"
 "$COOP_ROOT/scripts/sync.sh" || coop_warn "sync reported issues"
 
-# --- 5. Doctor ---------------------------------------------------------------
+# --- 6. Doctor ---------------------------------------------------------------
 # Propagate doctor's verdict as the update's exit code (see install.sh) so a broken
 # update is detectable by scripted callers; the steps above stay warn-and-continue.
-coop_head "5/5  Doctor"
+coop_head "6/6  Doctor"
 "$COOP_ROOT/scripts/doctor.sh"; DOCTOR_RC=$?
 exit "$DOCTOR_RC"

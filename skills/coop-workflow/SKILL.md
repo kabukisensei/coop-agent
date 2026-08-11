@@ -22,7 +22,11 @@ documentation reads handled by the `coop-data-doc` tool.
 
 The sequence below is the **default way** to honor those principles — adapt it
 (skip, reorder, or combine steps) to the task. The exact number of steps is not
-sacred; the principles are.
+sacred; the principles are. This workflow also governs official Microsoft
+Fabric/Power BI authoring skills (`powerbi-report-authoring`,
+`semantic-model-authoring`, `sqldw-authoring-cli`, `eventhouse-cli`, etc.):
+they may edit source files, but they still require plan approval, backups,
+review, diff summary, and human commit.
 
 ## Before you start
 

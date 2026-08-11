@@ -171,6 +171,24 @@ Check 'coop-sql-review' 'required' 'pipx install coop-sql-review' @('coop-sql-re
 Check 'coop-dax-review' 'required' 'pipx install coop-dax-review' @('coop-dax-review','--version')
 
 D-Head 'Fabric / semantic-model tooling'
+
+# Power BI / Fabric authoring npm tools required by the skills-for-fabric skills.
+# powerbi-desktop-bridge is only useful on Windows with Power BI Desktop installed.
+Check 'powerbi-report-author' 'optional' 'npm install -g @microsoft/powerbi-report-authoring-cli' @('powerbi-report-author', '--version')
+if ($env:OS -eq 'Windows_NT') {
+  Check 'powerbi-desktop' 'optional' 'npm install -g @microsoft/powerbi-desktop-bridge-cli (Windows + Power BI Desktop only)' @('powerbi-desktop', '--version')
+} else {
+  D-Warn 'powerbi-desktop (Desktop Bridge)' 'Windows + Power BI Desktop only — skipped on this OS'
+}
+# powerbi-modeling-mcp is started via npx; verify the package is installed globally.
+$pbihModeling = $false
+if (Test-Have 'npm') {
+  & npm ls -g --depth=0 @microsoft/powerbi-modeling-mcp *> $null
+  if ($LASTEXITCODE -eq 0) { $pbihModeling = $true }
+}
+if ($pbihModeling) { D-Ok 'powerbi-modeling-mcp (npm package installed)' }
+else { D-Warn 'powerbi-modeling-mcp not installed' 'npm install -g @microsoft/powerbi-modeling-mcp' }
+
 # fabric-cicd is a Python LIBRARY (no CLI) — check it's importable in the Fabric CLI's env.
 if (Test-Have 'fab') {
   $hasCicd = $false

@@ -98,7 +98,7 @@ while IFS= read -r f; do
   else
     ko "$f is missing the UTF-8 BOM — fix: printf '\\357\\273\\277' | cat - '$f' > '$f.bom' && mv '$f.bom' '$f'"
   fi
-done < <(find . -name '*.ps1' -not -path './.git/*' -not -path '*/node_modules/*' | sed 's|^\./||' | sort)
+done < <(find . -name '*.ps1' -not -path './.git/*' -not -path '*/node_modules/*' -not -path './.cache/*' | sed 's|^\./||' | sort)
 
 # --- Structural parity (grep-based) ------------------------------------------
 # These extractors are deliberately simple and anchored on the real markers in the

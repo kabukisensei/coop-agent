@@ -146,7 +146,32 @@ memory:
 microsoft_skills:
   source: "https://github.com/microsoft/skills"
   load_dir: "skills/_microsoft"
-  allow: []   # e.g. ["azure-cosmos-db-py"] — empty = load none
+  allow:
+    - "kql"             # KQL / Fabric Real-Time Intelligence (EventHouse/ADX)
+    - "microsoft-docs"  # Microsoft Learn documentation queries
+
+# Microsoft Skills for Fabric (Power BI / Fabric authoring). These skills can
+# author PBIR, TMDL, SQL, notebooks, and Fabric items. They remain subordinate
+# to Cooptimize skills and subject to the same guardrails: plan-and-approve
+# before edits, show diff, and NEVER commit source.
+fabric_skills:
+  source: "https://github.com/microsoft/skills-for-fabric"
+  load_dir: "skills/_microsoft_fabric"
+  allow: []
+  # Recommended starter set (uncomment to enable):
+  #   - "check-updates"
+  #   - "powerbi-report-design"
+  #   - "powerbi-report-planning"
+  #   - "powerbi-report-authoring"
+  #   - "powerbi-report-management"
+  #   - "semantic-model-authoring"
+  #   - "eventhouse-cli"
+  #   - "sqldw-authoring-cli"
+  #   - "sqldw-consumption-cli"
+  #   - "dataflows-cli"
+  #   - "e2e-medallion-architecture"
+  #   - "spark-authoring-cli"
+  #   - "fabriciq"
 
 # --- Standards ----------------------------------------------------------------
 standards:

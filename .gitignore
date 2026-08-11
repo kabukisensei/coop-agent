@@ -42,4 +42,5 @@ data-docs-site/
 
 # Fetched official Microsoft skills (pulled on demand, not vendored) + fetch cache
 skills/_microsoft/*/
+skills/_microsoft_fabric/*/
 .cache/

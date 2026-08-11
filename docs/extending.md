@@ -162,11 +162,20 @@ and `coop review`.
 
 ## 6. The official-Microsoft-skills slot (subordinate)
 
-`skills/_microsoft/` holds the official Microsoft skills
-([github.com/microsoft/skills](https://github.com/microsoft/skills)). They are
-**subordinate to your skills**: a Microsoft skill loads only if it is allow-listed
-in `microsoft_skills.allow[]` **and** doesn't conflict (by folder or frontmatter
-name) with one of yours — on conflict, yours wins and the Microsoft one is skipped.
+Two Microsoft skill sources are supported and are **subordinate to your skills**:
+
+- `skills/_microsoft/` — [github.com/microsoft/skills](https://github.com/microsoft/skills)
+  (Azure SDK / AI-Foundry / KQL / Microsoft Docs).
+- `skills/_microsoft_fabric/` — [github.com/microsoft/skills-for-fabric](https://github.com/microsoft/skills-for-fabric)
+  (Power BI / Fabric authoring: PBIR, TMDL/DAX, SQL, KQL, notebooks, pipelines).
+
+A Microsoft skill loads only if it is allow-listed in its source block
+(`microsoft_skills.allow[]` or `fabric_skills.allow[]`) **and** doesn't conflict
+(by folder or frontmatter name) with one of yours — on conflict, yours wins and
+the Microsoft one is skipped. Fabric authoring skills may edit source files, but
+they still fall under the coop-workflow guardrails: plan approval, backups,
+review, diff summary, and human commit.
+
 Fetch with `scripts/fetch-microsoft-skills.sh` (fetched skills are gitignored). See
 `skills/_microsoft/README.md`.
 
