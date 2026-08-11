@@ -38,7 +38,10 @@ results.
   configured (`tools.tabular_editor_cli`, path-based, optional), run BPA and merge
   its findings — note that it is optional and only when enabled in the contract.
 - **Suggest fixes.** Propose a concrete, minimal fix per finding. Do not apply it —
-  surface it for the PLAN/approval gate.
+  surface it for the PLAN/approval gate. Where a measure computes per-entity values
+  by iterating the whole fact table (e.g. “for each customer…”, “for each day…”,
+  exchange rates, balances, thresholds), consider the SUMX + SUMMARIZE reshape-to-grain
+  pattern from the `dax-patterns` skill as the suggested fix.
 - **Note false positives.** Where a finding is contextually fine, say so and why.
 
 ## Tools / MCP used

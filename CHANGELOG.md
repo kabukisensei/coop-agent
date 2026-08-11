@@ -5,6 +5,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+- `dax-patterns` skill: SUMX + SUMMARIZE reshape-to-grain DAX pattern guidance for
+  entity-level logic (exchange rates, customers-with-balances, semi-additive,
+  weighted averages, thresholds, de-duplication, performance). Loads every session
+  and is cross-referenced from `dax-review` fix suggestions.
+
+### Fixed
+- Fabric skills now actually load: `coop launch` (via `coop_build_pi_args`) descends
+  the `_microsoft_fabric` slot and surfaces the `fabric_skills.allow[]` list, with
+  the same subordination and name-validation guards as `_microsoft`.
+
 ## [0.19.0] — 2026-08-11
 
 ### Added

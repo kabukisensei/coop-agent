@@ -99,6 +99,47 @@ EOF
 # The optional Azure preflight (Power BI token check, cached ~30 min) lives in
 # lib/common.sh (coop_az_preflight) — called below by launch_pi and coop_web.
 
+# --- Load allow-listed official Microsoft skills from a subordinate slot --------
+# Two slots are supported: skills/_microsoft (microsoft_skills) and
+# skills/_microsoft_fabric (fabric_skills). A Microsoft skill is surfaced only if it
+# is (a) named in <key>.allow[] in .coop/project.yml AND (b) does not conflict (by
+# folder name or frontmatter `name:`) with one of our own skills. Cooptimize skills
+# always win. The load_dir is read from the config but validated to stay inside
+# skills/ with no `..` components, so a hostile project.yml can't point the loader
+# at an arbitrary SKILL.md tree. Appends to the global COOP_PI_ARGS.
+coop_load_ms_skills() {
+  local key="$1" proj="$2" own_names="$3"
+  local dir allow fm
+  dir="$(coop_yaml_get "$proj" "$key.load_dir" "skills/$key")"
+  case "$dir" in
+    .|..|-*|*[!a-zA-Z0-9/._-]*|"" ) coop_warn "ignoring invalid $key.load_dir '$dir'"; return 0 ;;
+  esac
+  case "$dir" in
+    *".."*|*"//"*) coop_warn "ignoring unsafe $key.load_dir '$dir'"; return 0 ;;
+    skills/*) ;;
+    *) coop_warn "ignoring $key.load_dir '$dir' (must be under skills/)"; return 0 ;;
+  esac
+  [ -d "$COOP_ROOT/$dir" ] || return 0
+  while IFS= read -r allow; do
+    [ -z "$allow" ] && continue
+    case "$allow" in TODO*) continue ;; esac
+    # Validate the name (letters/digits/._-, no `..`, no leading `-`) so a hostile
+    # project.yml can't traverse out of the slot and inject an arbitrary
+    # SKILL.md into the model (e.g. allow: "../../../../etc/evil").
+    coop_valid_name "$allow" || { coop_warn "ignoring invalid Microsoft skill name '$allow'"; continue; }
+    [ -f "$COOP_ROOT/$dir/$allow/SKILL.md" ] || continue
+    # Skip if the Microsoft skill collides with one of ours (subordinate rule).
+    case "$own_names" in *" $allow "*) coop_warn "skipping Microsoft skill '$allow' (conflicts with a Cooptimize skill)"; continue ;; esac
+    fm="$(coop_skill_name "$COOP_ROOT/$dir/$allow/SKILL.md")"
+    if [ -n "$fm" ]; then
+      case "$own_names" in *" $fm "*) coop_warn "skipping Microsoft skill '$allow' (name '$fm' conflicts with a Cooptimize skill)"; continue ;; esac
+    fi
+    COOP_PI_ARGS+=(--skill "$COOP_ROOT/$dir/$allow")
+  done <<EOF
+$(coop_yaml_list "$proj" "$key.allow")
+EOF
+}
+
 # --- Assemble the exact Pi launch spec (args + brand env) --------------------
 # SINGLE SOURCE OF TRUTH for how coop launches Pi. Both `launch_pi` (the terminal
 # agent) and `coop launch-spec` (JSON for a future UI / coop web bridge) consume
@@ -110,8 +151,9 @@ coop_build_pi_args() {
   # Governance system prompt (read-only-first guardrails). Appended, not replaced.
   [ -f "$COOP_ROOT/docs/guardrails.md" ] && COOP_PI_ARGS+=(--append-system-prompt "$COOP_ROOT/docs/guardrails.md")
   # Cooptimize skills — load each skill folder individually. The official Microsoft
-  # drop-in slot (skills/_microsoft/) is SUBORDINATE: a Microsoft skill is surfaced
-  # only if it is (a) named in microsoft_skills.allow[] in .coop/project.yml AND
+  # drop-in slots (skills/_microsoft/ and skills/_microsoft_fabric/) are SUBORDINATE:
+  # a Microsoft skill is surfaced only if it is (a) named in
+  # microsoft_skills.allow[] / fabric_skills.allow[] in .coop/project.yml AND
   # (b) does not conflict (by folder name or frontmatter `name:`) with one of our
   # own skills. Cooptimize skills always win.
   if [ -d "$COOP_ROOT/skills" ]; then
@@ -119,7 +161,7 @@ coop_build_pi_args() {
     for d in "$COOP_ROOT"/skills/*/; do
       [ -d "$d" ] || continue
       name="$(basename "$d")"
-      [ "$name" = "_microsoft" ] && continue
+      case "$name" in _microsoft|_microsoft_fabric) continue ;; esac
       [ -f "${d}SKILL.md" ] || continue
       COOP_PI_ARGS+=(--skill "$d")
       own_names="$own_names$name "
@@ -127,25 +169,9 @@ coop_build_pi_args() {
       [ -n "$fm" ] && own_names="$own_names$fm "
     done
     proj="$(coop_find_project_yml)"
-    if [ -n "$proj" ] && [ -d "$COOP_ROOT/skills/_microsoft" ]; then
-      while IFS= read -r allow; do
-        [ -z "$allow" ] && continue
-        case "$allow" in TODO*) continue ;; esac
-        # Validate the name (letters/digits/._-, no `..`, no leading `-`) so a hostile
-        # project.yml can't traverse out of skills/_microsoft/ and inject an arbitrary
-        # SKILL.md into the model (e.g. allow: "../../../../etc/evil").
-        coop_valid_name "$allow" || { coop_warn "ignoring invalid Microsoft skill name '$allow'"; continue; }
-        [ -f "$COOP_ROOT/skills/_microsoft/$allow/SKILL.md" ] || continue
-        # Skip if the Microsoft skill collides with one of ours (subordinate rule).
-        case "$own_names" in *" $allow "*) coop_warn "skipping Microsoft skill '$allow' (conflicts with a Cooptimize skill)"; continue ;; esac
-        fm="$(coop_skill_name "$COOP_ROOT/skills/_microsoft/$allow/SKILL.md")"
-        if [ -n "$fm" ]; then
-          case "$own_names" in *" $fm "*) coop_warn "skipping Microsoft skill '$allow' (name '$fm' conflicts with a Cooptimize skill)"; continue ;; esac
-        fi
-        COOP_PI_ARGS+=(--skill "$COOP_ROOT/skills/_microsoft/$allow")
-      done <<EOF
-$(coop_yaml_list "$proj" "microsoft_skills.allow")
-EOF
+    if [ -n "$proj" ]; then
+      coop_load_ms_skills "microsoft_skills" "$proj" "$own_names"
+      coop_load_ms_skills "fabric_skills" "$proj" "$own_names"
     fi
   fi
   [ -d "$COOP_ROOT/prompts" ]  && COOP_PI_ARGS+=(--prompt-template "$COOP_ROOT/prompts")
