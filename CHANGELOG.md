@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-08-11
+
 ### Added
 - `dax-patterns` skill: SUMX + SUMMARIZE reshape-to-grain DAX pattern guidance for
   entity-level logic (exchange rates, customers-with-balances, semi-additive,
