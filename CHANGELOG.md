@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-08-11
+
 ### Added
 - Official Microsoft **Skills for Fabric** (`github.com/microsoft/skills-for-fabric`) are
   now supported as a second skill source via `fabric_skills` in `.coop/project.yml`.
