@@ -491,10 +491,10 @@ coop can use the **official Microsoft agent skills**, but they are **subordinate
 Cooptimize skills**: yours always win. Two sources are supported:
 
 - [`github.com/microsoft/skills`](https://github.com/microsoft/skills) — Azure SDK /
-  AI-Foundry / KQL / Microsoft Docs skills.
+  AI-Foundry / KQL / Microsoft Docs skills (MIT).
 - [`github.com/microsoft/skills-for-fabric`](https://github.com/microsoft/skills-for-fabric)
   — Power BI and Fabric authoring skills (PBIR, TMDL/DAX, SQL, KQL, notebooks,
-  pipelines, deployment).
+  pipelines, deployment) (MIT).
 
 A Microsoft skill is surfaced only if it is **allow-listed** in its source block
 (`microsoft_skills.allow[]` or `fabric_skills.allow[]`) **and** does not conflict
@@ -529,6 +529,7 @@ fabric_skills:
     # Add when needed:
     # - "sqldw-operations-cli"
     # - "deployment-pipelines-authoring-cli"
+
 ```
 
 `coop install` automatically installs the npm tools these skills need

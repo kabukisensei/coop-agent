@@ -148,10 +148,11 @@ check coop-dax-review required "pipx install coop-dax-review" "coop-dax-review -
 
 section "Fabric / semantic-model tooling"
 
-# Power BI / Fabric authoring npm tools required by the skills-for-fabric skills.
-# powerbi-desktop-bridge is only useful on Windows with Power BI Desktop installed.
-check powerbi-report-author optional "npm install -g @microsoft/powerbi-report-authoring-cli" "powerbi-report-author --version"
-check powerbi-modeling-mcp optional "npm install -g @microsoft/powerbi-modeling-mcp" "npx -y @microsoft/powerbi-modeling-mcp@latest --start --help 2>&1"
+# Power BI / Fabric authoring npm tools. powerbi-report-author backs coop's own
+# power-bi-* skills AND the skills-for-fabric skills, so it is required; the rest
+# stay optional. powerbi-desktop-bridge is only useful on Windows with Desktop.
+check powerbi-report-author required "npm install -g @microsoft/powerbi-report-authoring-cli" "powerbi-report-author --version"
+check powerbi-modeling-mcp optional "npm install -g @microsoft/powerbi-modeling-mcp"
 if [ "$(uname -s 2>/dev/null || echo unknown)" = "Windows" ] || [ "$(uname -s 2>/dev/null || echo unknown)" = "MINGW" ] || [ "$(uname -s 2>/dev/null || echo unknown)" = "MSYS" ]; then
   check powerbi-desktop optional "npm install -g @microsoft/powerbi-desktop-bridge-cli (Windows + Power BI Desktop only)" "powerbi-desktop --version"
 else
@@ -250,6 +251,27 @@ if [ -n "$proj" ]; then
   ok ".coop/project.yml found: $proj"
   todo="$(grep -c 'TODO' "$proj" 2>/dev/null)" || todo=0   # grep -c exits 1 on zero matches; count is already on stdout
   [ "${todo:-0}" -gt 0 ] && warn "$todo TODO placeholder(s) remain in project.yml" "edit it before live Fabric/Power BI work"
+  # Subordinate skill sources: warn when configured but not yet fetched.
+  for key in microsoft_skills fabric_skills; do
+    src="$(coop_yaml_get "$proj" "$key.source" "")"
+    case "$src" in ""|TODO*) continue ;; esac
+    load_dir="$(coop_yaml_get "$proj" "$key.load_dir" "skills/$key")"
+    allowed="$(coop_yaml_list "$proj" "$key.allow")"
+    [ -n "$allowed" ] || continue
+    missing=0
+    while IFS= read -r skill; do
+      [ -z "$skill" ] && continue
+      case "$skill" in TODO*) continue ;; esac
+      [ -f "$COOP_ROOT/$load_dir/$skill/SKILL.md" ] || missing=$((missing+1))
+    done <<EOF
+$allowed
+EOF
+    if [ "$missing" -gt 0 ]; then
+      warn "$key: $missing allow-listed skill(s) not fetched" "run: scripts/fetch-microsoft-skills.sh"
+    else
+      ok "$key: all allow-listed skills fetched"
+    fi
+  done
 else
   warn "no .coop/project.yml found" "copy $COOP_ROOT/.coop/project.example.yml to your repo's .coop/project.yml"
 fi
@@ -320,7 +342,7 @@ if [ "$JSON" = 1 ]; then
   if [ "$PUBLISH" = 1 ]; then
     _host="$(hostname 2>/dev/null || echo "unknown")"
     _user="${USER:-${USERNAME:-unknown}}"
-    _coop_v="$(coop_version)"
+    _coop_v="$COOP_VERSION"
     _pi_v="$(coop_pi_version || echo "none")"
     _ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     _out="$_out,\"hostname\":\"$(_json_esc "$_host")\",\"user\":\"$(_json_esc "$_user")\",\"coop_version\":\"$(_json_esc "$_coop_v")\",\"pi_version\":\"$(_json_esc "$_pi_v")\",\"timestamp\":\"$_ts\"}"

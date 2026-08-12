@@ -1,0 +1,9 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {"name": "dataset"},
+  "mark": {"type": "bar", "tooltip": true},
+  "encoding": {
+    "y": {"field": "Category", "type": "nominal", "sort": "-x"},
+    "x": {"field": "Value", "type": "quantitative"}
+  }
+}

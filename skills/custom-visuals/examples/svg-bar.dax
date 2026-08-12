@@ -1,0 +1,17 @@
+SVG Bar =
+VAR _Actual = [Sales Amount]
+VAR _Scope = ALLSELECTED ( 'Product'[Category] )
+VAR _Max =
+    CALCULATE (
+        MAXX ( _Scope, [Sales Amount] ),
+        REMOVEFILTERS ( 'Product'[Category] )
+    ) * 1.1
+VAR _Range = 100
+VAR _Normalized = DIVIDE ( _Actual, _Max ) * _Range
+VAR _Svg =
+    "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 25'>"
+        & "<desc>" & FORMAT ( _Actual, "000000000000" ) & "</desc>"
+        & "<rect x='0' y='5' width='" & _Normalized & "' height='15' fill='#5B8DBE'/>"
+        & "</svg>"
+RETURN
+    IF ( HASONEVALUE ( 'Product'[Category] ), _Svg )

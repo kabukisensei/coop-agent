@@ -103,7 +103,12 @@ _unit_pbih_tools_upgrade() {
   have npm || { printf 'skipping Power BI/Fabric authoring tools (npm missing)'; return 1; }
   local pkg ok=0 fail=0
   for pkg in "${PBIH_NPM_TOOLS[@]}"; do
-    if npm update -g "$pkg" >/dev/null 2>&1; then ok=$((ok+1)); else fail=$((fail+1)); fi
+    if npm ls -g --depth=0 "$pkg" >/dev/null 2>&1; then
+      npm update -g "$pkg" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
+    else
+      # Never installed (machine predates these tools) — install rather than fail.
+      npm install -g "$pkg" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
+    fi
   done
   if [ "$fail" -eq 0 ]; then printf '%d Power BI/Fabric authoring tool(s) updated' "$ok"; return 0; fi
   printf '%d updated, %d failed' "$ok" "$fail"; return 1
@@ -154,7 +159,7 @@ if [ "${COOP_UPDATE_GATE_DRYRUN:-0}" = "1" ]; then
 fi
 
 # --- 1. Update coop-agent itself ---------------------------------------------
-coop_head "1/5  coop-agent repository"
+coop_head "1/6  coop-agent repository"
 if [ -d "$COOP_ROOT/.git" ] && have git; then
   if git -C "$COOP_ROOT" remote get-url origin >/dev/null 2>&1; then
     # Only uncommitted changes to TRACKED files can block a fast-forward pull; untracked

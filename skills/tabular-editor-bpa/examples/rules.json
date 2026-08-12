@@ -1,0 +1,30 @@
+[
+  {
+    "ID": "META_MEASURE_NO_DESCRIPTION",
+    "Name": "Measure has no description",
+    "Category": "Metadata",
+    "Description": "All measures should have descriptions for documentation and Copilot grounding.",
+    "Severity": 2,
+    "Scope": "Measure",
+    "Expression": "string.IsNullOrWhitespace(Description)"
+  },
+  {
+    "ID": "PERF_HIDDEN_UNUSED_COLUMN",
+    "Name": "Hidden column has no references",
+    "Category": "Performance",
+    "Description": "Hidden columns with no references waste memory.",
+    "Severity": 3,
+    "Scope": "Column",
+    "Expression": "IsHidden && ReferencedBy.Count == 0 && !UsedInRelationships.Any()",
+    "FixExpression": "Delete()"
+  },
+  {
+    "ID": "NAME_MEASURE_LOWERCASE",
+    "Name": "Measure name starts with lowercase",
+    "Category": "Naming",
+    "Description": "Measure names should start with an uppercase letter.",
+    "Severity": 3,
+    "Scope": "Measure",
+    "Expression": "!RegEx.IsMatch(Name, \"^[A-Z]\")"
+  }
+]

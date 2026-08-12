@@ -162,8 +162,15 @@ $UnitPbihToolsUpgrade = {
   }
   $ok = 0; $fail = 0
   foreach ($pkg in $Pkgs) {
-    & npm update -g $pkg *> $null
-    if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
+    & npm ls -g --depth=0 $pkg *> $null
+    if ($LASTEXITCODE -eq 0) {
+      & npm update -g $pkg *> $null
+      if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
+    } else {
+      # Never installed (machine predates these tools) — install rather than fail.
+      & npm install -g $pkg *> $null
+      if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
+    }
   }
   if ($fail -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$ok Power BI/Fabric authoring tool(s) updated" } }
   return [pscustomobject]@{ ok = $false; msg = "$ok updated, $fail failed" }

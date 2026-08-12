@@ -64,6 +64,17 @@ fabric_cli:
   pipx_inject:
     - fabric-cicd
 
+# Microsoft Power BI / Fabric authoring CLIs (npm). powerbi-report-author is the
+# metadata/validation/inventory CLI behind coop's power-bi-* skills (and the
+# skills-for-fabric skills); doctor treats it as required. The desktop bridge is
+# the Desktop reload/screenshot bridge — Windows + Power BI Desktop only, so the
+# installers add it only on Windows.
+npm_authoring_tools:
+  - "@microsoft/powerbi-report-authoring-cli"   # powerbi-report-author: catalog/formatting/validate/preview-*
+  - "@microsoft/powerbi-modeling-mcp"           # Power BI Modeling MCP server (optional in doctor)
+  # Windows-only, added by the installers when on Windows:
+  # - "@microsoft/powerbi-desktop-bridge-cli"   # powerbi-desktop: open/status/reload/screenshot
+
 # Optional, path-configured (mostly Windows). Not auto-installed.
 tabular_editor_cli:
   command: TabularEditor.exe

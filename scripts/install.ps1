@@ -196,7 +196,7 @@ Coop-Head "Cooptimize agent bootstrap (v$($script:CoopVersion))  [$OS]"
 try {
   Coop-ProgBegin $TOTAL
   # --- 1. Prerequisites ------------------------------------------------------
-  Coop-Head '1/7  Prerequisites'
+  Coop-Head '1/8  Prerequisites'
   if (-not (Test-Have 'git'))  { Coop-Warn "git not found — install Git from https://git-scm.com (or 'winget install Git.Git')." }
   if (-not (Get-CoopPython)) { Coop-Warn "python not found — install Python 3.10+ from https://python.org (or 'winget install Python.Python.3.12'). (A Windows Store 'python' stub does not count.)" }
   if (-not (Test-Have 'node')) { Coop-Warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)." }
@@ -204,16 +204,16 @@ try {
   Add-CoopUserPaths    # make a just-installed pipx + its tool-bin visible this run
 
   # --- 2. Pi itself ----------------------------------------------------------
-  Coop-Head '2/7  Pi (@earendil-works/pi-coding-agent)'
+  Coop-Head '2/8  Pi (@earendil-works/pi-coding-agent)'
   Coop-Unit 'pi (@earendil-works/pi-coding-agent)' $UnitPi @($FORCE, $PI_NPM_PACKAGE)
   Add-CoopNpmPath      # make a just-npm-installed `pi` visible to step 3 this run
 
   # --- 3. Pi extensions ------------------------------------------------------
-  Coop-Head '3/7  Pi extensions'
+  Coop-Head '3/8  Pi extensions'
   foreach ($ext in $PI_EXTENSIONS) { Coop-Unit $ext $UnitExt @($ext) }
 
   # --- 4. Microsoft Fabric CLI ----------------------------------------------
-  Coop-Head '4/7  Microsoft Fabric CLI (fab)'
+  Coop-Head '4/8  Microsoft Fabric CLI (fab)'
   if ($NO_FABRIC) { Coop-Warn 'skipped (--no-fabric)' }
   else { Coop-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $FABRIC_PKG) }
 

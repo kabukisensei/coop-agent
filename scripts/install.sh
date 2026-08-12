@@ -150,7 +150,7 @@ trap 'coop_progress_end; _coop_unit_cleanup' EXIT
 trap 'coop_progress_end; _coop_unit_cleanup; exit 130' INT TERM
 
 # --- 1. Prerequisites (warn-and-continue; these usually need a package manager)
-coop_head "1/7  Prerequisites"
+coop_head "1/8  Prerequisites"
 have git     || coop_warn "git not found — install Git (mac: 'xcode-select --install' or 'brew install git'; linux: your package manager)."
 coop_python >/dev/null || coop_warn "python not found — install Python 3.10+ (mac: 'brew install python'; linux: 'apt install python3')."
 have node    || coop_warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)."
@@ -162,7 +162,7 @@ PATH="$HOME/.local/bin:$PATH"   # pipx default PIPX_BIN_DIR (fab, coop-* land he
 hash -r 2>/dev/null || true
 
 # --- 2. Pi itself ------------------------------------------------------------
-coop_head "2/7  Pi (@earendil-works/pi-coding-agent)"
+coop_head "2/8  Pi (@earendil-works/pi-coding-agent)"
 coop_unit "pi (@earendil-works/pi-coding-agent)" _unit_pi
 # Make a just-npm-installed `pi` visible to step 3 in the same run (npm's global
 # bin dir is often not yet on PATH right after install).
@@ -170,13 +170,13 @@ if have npm; then _np="$(npm prefix -g 2>/dev/null)"; [ -n "${_np:-}" ] && PATH=
 hash -r 2>/dev/null || true
 
 # --- 3. Pi extensions (MCP / memory / usage / web / ask-user) ----------------
-coop_head "3/7  Pi extensions"
+coop_head "3/8  Pi extensions"
 for ext in "${PI_EXTENSIONS[@]}"; do
   coop_unit "$ext" _unit_ext "$ext"
 done
 
 # --- 4. Microsoft Fabric CLI -------------------------------------------------
-coop_head "4/7  Microsoft Fabric CLI (fab)"
+coop_head "4/8  Microsoft Fabric CLI (fab)"
 if [ "$NO_FABRIC" = 1 ]; then
   coop_warn "skipped (--no-fabric)"
 else

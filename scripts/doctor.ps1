@@ -172,9 +172,10 @@ Check 'coop-dax-review' 'required' 'pipx install coop-dax-review' @('coop-dax-re
 
 D-Head 'Fabric / semantic-model tooling'
 
-# Power BI / Fabric authoring npm tools required by the skills-for-fabric skills.
-# powerbi-desktop-bridge is only useful on Windows with Power BI Desktop installed.
-Check 'powerbi-report-author' 'optional' 'npm install -g @microsoft/powerbi-report-authoring-cli' @('powerbi-report-author', '--version')
+# Power BI / Fabric authoring npm tools. powerbi-report-author backs coop's own
+# power-bi-* skills AND the skills-for-fabric skills, so it is required; the rest
+# stay optional. powerbi-desktop-bridge is only useful on Windows with Desktop.
+Check 'powerbi-report-author' 'required' 'npm install -g @microsoft/powerbi-report-authoring-cli' @('powerbi-report-author', '--version')
 if ($env:OS -eq 'Windows_NT') {
   Check 'powerbi-desktop' 'optional' 'npm install -g @microsoft/powerbi-desktop-bridge-cli (Windows + Power BI Desktop only)' @('powerbi-desktop', '--version')
 } else {
@@ -330,6 +331,25 @@ if ($proj) {
   $projText = (Get-Content -LiteralPath $proj -ErrorAction SilentlyContinue)
   if ($projText) { $todo = ($projText | Select-String -Pattern 'TODO' -SimpleMatch).Count }
   if ($todo -gt 0) { D-Warn "$todo TODO placeholder(s) remain in project.yml" 'edit it before live Fabric/Power BI work' }
+  # Subordinate skill sources: warn when configured but not yet fetched.
+  foreach ($key in @('microsoft_skills', 'fabric_skills')) {
+    $src = Get-CoopYamlValue $proj "$key.source" ''
+    if ([string]::IsNullOrWhiteSpace($src) -or $src.StartsWith('TODO')) { continue }
+    $loadDir = Get-CoopYamlValue $proj "$key.load_dir" "skills/$key"
+    $allowed = Get-CoopYamlList $proj "$key.allow"
+    if (-not $allowed -or $allowed.Count -eq 0) { continue }
+    $missing = 0
+    foreach ($skill in $allowed) {
+      if ([string]::IsNullOrWhiteSpace($skill) -or $skill.StartsWith('TODO')) { continue }
+      $p = Join-Path $script:CoopRoot "$loadDir/$skill/SKILL.md"
+      if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { $missing++ }
+    }
+    if ($missing -gt 0) {
+      D-Warn "$key`: $missing allow-listed skill(s) not fetched" 'run: scripts/fetch-microsoft-skills.sh'
+    } else {
+      D-Ok "$key`: all allow-listed skills fetched"
+    }
+  }
 } else {
   D-Warn 'no .coop/project.yml found' "copy $($script:CoopRoot)/.coop/project.example.yml to your repo's .coop/project.yml"
 }

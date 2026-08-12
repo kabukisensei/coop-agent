@@ -99,14 +99,14 @@ EOF
 # The optional Azure preflight (Power BI token check, cached ~30 min) lives in
 # lib/common.sh (coop_az_preflight) — called below by launch_pi and coop_web.
 
-# --- Load allow-listed official Microsoft skills from a subordinate slot --------
+# --- Load allow-listed subordinate skills from configured external slots --------
 # Two slots are supported: skills/_microsoft (microsoft_skills) and
-# skills/_microsoft_fabric (fabric_skills). A Microsoft skill is surfaced only if it
-# is (a) named in <key>.allow[] in .coop/project.yml AND (b) does not conflict (by
-# folder name or frontmatter `name:`) with one of our own skills. Cooptimize skills
-# always win. The load_dir is read from the config but validated to stay inside
-# skills/ with no `..` components, so a hostile project.yml can't point the loader
-# at an arbitrary SKILL.md tree. Appends to the global COOP_PI_ARGS.
+# skills/_microsoft_fabric (fabric_skills). A subordinate skill is surfaced only if
+# it is (a) named in <key>.allow[] in .coop/project.yml AND (b) does not conflict
+# (by folder name or frontmatter `name:`) with one of our own skills. Cooptimize skills always win.
+# The load_dir is read from the config but validated to stay inside skills/ with no
+# `..` components, so a hostile project.yml can't point the loader at an arbitrary
+# SKILL.md tree. Appends to the global COOP_PI_ARGS.
 coop_load_ms_skills() {
   local key="$1" proj="$2" own_names="$3"
   local dir allow fm
@@ -151,11 +151,9 @@ coop_build_pi_args() {
   # Governance system prompt (read-only-first guardrails). Appended, not replaced.
   [ -f "$COOP_ROOT/docs/guardrails.md" ] && COOP_PI_ARGS+=(--append-system-prompt "$COOP_ROOT/docs/guardrails.md")
   # Cooptimize skills — load each skill folder individually. The official Microsoft
-  # drop-in slots (skills/_microsoft/ and skills/_microsoft_fabric/) are SUBORDINATE:
-  # a Microsoft skill is surfaced only if it is (a) named in
-  # microsoft_skills.allow[] / fabric_skills.allow[] in .coop/project.yml AND
-  # (b) does not conflict (by folder name or frontmatter `name:`) with one of our
-  # own skills. Cooptimize skills always win.
+  # drop-in slots are SUBORDINATE: an external skill is surfaced only if it is (a)
+  # named in its <key>.allow[] block in .coop/project.yml AND (b) does not conflict
+  # (by folder name or frontmatter `name:`) with one of our own skills. Cooptimize skills always win.
   if [ -d "$COOP_ROOT/skills" ]; then
     local d name fm allow proj own_names=" "
     for d in "$COOP_ROOT"/skills/*/; do
@@ -426,6 +424,7 @@ EOF
   [ "$dax_rc" -eq 0 ] || coop_warn "coop-dax-review exited $dax_rc"
   
   # Tabular Editor BPA check (if enabled in project.yml)
+  rm -f "$bpa_json"   # never let a stale report stand in for this run
   local bpa_prev=""
   if [ -n "$proj" ]; then
     local py_cmd
@@ -526,7 +525,10 @@ coop_init() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --seed-docs) seed=1 ;;
-      --ci) shift; ci_type="$1" ;;
+      --ci)
+        if [ "$#" -lt 2 ]; then coop_die "coop init --ci needs a value: github|ado"; fi
+        shift; ci_type="$1"
+        ;;
       --yes|-y) export COOP_ASSUME_YES=1 ;;
       -*) coop_die "unknown flag '$1' — usage: coop init [dir] [--seed-docs] [--ci github|ado] [--yes]" ;;
       *) dir="$1" ;;
@@ -534,6 +536,9 @@ coop_init() {
     shift
   done
   [ -n "$dir" ] || dir="$PWD"
+  if [ -n "$ci_type" ]; then
+    case "$ci_type" in github|ado) ;; *) coop_die "unknown CI type '$ci_type' — usage: coop init --ci github|ado" ;; esac
+  fi
   if [ "$seed" = 1 ]; then
     coop_init_seed_docs "$dir"
     return $?
@@ -586,7 +591,7 @@ coop_new_skill() {
   local name="${1:-}"
   coop_valid_name "$name" || coop_die "Usage: coop new-skill <name>  (letters, digits, . _ - only)"
   local dir="$COOP_ROOT/skills/$name"
-  [ "$name" = "_microsoft" ] && coop_die "'_microsoft' is reserved for official Microsoft skills."
+  case "$name" in _microsoft|_microsoft_fabric) coop_die "'$name' is reserved for subordinate skill slots." ;; esac
   [ -e "$dir" ] && coop_die "skills/$name already exists."
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<EOF
@@ -882,6 +887,34 @@ _coop_add_runtime_paths() {
 }
 _coop_add_runtime_paths
 
+coop_init_ci() {
+  local dir="$1"
+  local ci_type="$2"
+  local py_cmd proj_yml="$dir/.coop/project.yml" defaults_yml="$COOP_ROOT/config/defaults.yml"
+
+  if [ ! -f "$proj_yml" ]; then
+    coop_die "$proj_yml not found. Run \`coop init\` first."
+  fi
+  case "$ci_type" in
+    github|ado) ;;
+    *) coop_die "unknown CI type '$ci_type' — usage: coop init --ci github|ado" ;;
+  esac
+
+  if py_cmd="$(coop_python)"; then
+    local out_file rc=0
+    out_file="$("$py_cmd" "$COOP_ROOT/lib/_ciscaffold.py" "$ci_type" "$proj_yml" "$defaults_yml" "$dir")" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      coop_ok "Wrote $out_file"
+    elif [ "$rc" -eq 3 ]; then
+      coop_warn "No CI gates generated: paths missing in .coop/project.yml"
+    else
+      coop_err "CI scaffolding failed"
+    fi
+  else
+    coop_die "Python 3 required to scaffold CI"
+  fi
+}
+
 # --- Dispatch ----------------------------------------------------------------
 cmd="${1:-}"
 case "$cmd" in
@@ -943,28 +976,3 @@ case "$cmd" in
   *)             # Unknown subcommand: treat as pi input (files/messages).
                  launch_pi "$@" ;;
 esac
-
-coop_init_ci() {
-  local dir="$1"
-  local ci_type="$2"
-  local py_cmd proj_yml="$dir/.coop/project.yml" defaults_yml="$COOP_ROOT/config/defaults.yml"
-  
-  if [ ! -f "$proj_yml" ]; then
-    coop_die "$proj_yml not found. Run \`coop init\` first."
-  fi
-  
-  if py_cmd="$(coop_python)"; then
-    local out_file
-    out_file="$("$py_cmd" "$COOP_ROOT/lib/_ciscaffold.py" "$ci_type" "$proj_yml" "$defaults_yml" "$dir")"
-    local rc=$?
-    if [ $rc -eq 0 ]; then
-      coop_ok "Wrote $out_file"
-    elif [ $rc -eq 3 ]; then
-      coop_warn "No CI gates generated: paths missing in .coop/project.yml"
-    else
-      coop_err "CI scaffolding failed"
-    fi
-  else
-    coop_die "Python 3 required to scaffold CI"
-  fi
-}

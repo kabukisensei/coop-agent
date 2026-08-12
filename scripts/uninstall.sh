@@ -96,6 +96,14 @@ else
   else
     coop_info "pipx not found — no pipx tools to remove"
   fi
+  # Power BI / Fabric authoring npm tools that install.sh adds globally.
+  for pkg in @microsoft/powerbi-report-authoring-cli @microsoft/powerbi-modeling-mcp @microsoft/powerbi-desktop-bridge-cli; do
+    if have npm && npm ls -g --depth=0 "$pkg" >/dev/null 2>&1; then
+      npm uninstall -g "$pkg" >/dev/null 2>&1 \
+        && coop_ok "removed $pkg (npm)" \
+        || coop_warn "could not npm-uninstall $pkg — remove by hand: npm uninstall -g $pkg"
+    fi
+  done
 fi
 
 echo >&2

@@ -147,6 +147,15 @@ if ($KEEP_TOOLS) {
   } else {
     Coop-Info 'pipx not found — no pipx tools to remove'
   }
+  # Power BI / Fabric authoring npm tools that install.ps1 adds globally.
+  $pbihTools = @('@microsoft/powerbi-report-authoring-cli', '@microsoft/powerbi-modeling-mcp', '@microsoft/powerbi-desktop-bridge-cli')
+  foreach ($pkg in $pbihTools) {
+    if ($globals -match [regex]::Escape($pkg)) {
+      & npm uninstall -g $pkg *> $null
+      if ($LASTEXITCODE -eq 0) { Coop-Ok "removed $pkg (npm)" }
+      else { Coop-Warn "could not npm-uninstall $pkg — remove by hand: npm uninstall -g $pkg" }
+    }
+  }
 }
 
 [Console]::Error.WriteLine('')

@@ -207,14 +207,15 @@ function Build-CoopPiArgs {
   # Governance system prompt (read-only-first guardrails). Appended, not replaced.
   $guardrails = Join-Path $script:CoopRoot 'docs\guardrails.md'
   if (Test-Path -LiteralPath $guardrails -PathType Leaf) { $piArgs += @('--append-system-prompt', $guardrails) }
-  # Cooptimize skills — load each folder individually. The official Microsoft slot
-  # (skills/_microsoft/) is SUBORDINATE: a Microsoft skill is surfaced only if it is
-  # allow-listed in microsoft_skills.allow[] AND does not conflict (by folder name or
+  # Cooptimize skills — load each folder individually. The official Microsoft
+  # drop-in slots are SUBORDINATE: an external skill is surfaced only if it is
+  # allow-listed in its source block AND does not conflict (by folder name or
   # frontmatter name) with one of our own skills. Cooptimize skills always win.
   $skills = Join-Path $script:CoopRoot 'skills'
+  $subordinateSlots = @('_microsoft', '_microsoft_fabric')
   if (Test-Path -LiteralPath $skills -PathType Container) {
     $ownNames = New-Object System.Collections.Generic.HashSet[string]
-    Get-ChildItem -LiteralPath $skills -Directory | Where-Object { $_.Name -ne '_microsoft' } | ForEach-Object {
+    Get-ChildItem -LiteralPath $skills -Directory | Where-Object { $_.Name -notin $subordinateSlots } | ForEach-Object {
       $sk = Join-Path $_.FullName 'SKILL.md'
       if (Test-Path -LiteralPath $sk -PathType Leaf) {
         $piArgs += @('--skill', $_.FullName)
@@ -223,21 +224,29 @@ function Build-CoopPiArgs {
         if ($fm) { [void]$ownNames.Add($fm) }
       }
     }
-    $msDir = Join-Path $skills '_microsoft'
     $proj = Find-CoopProjectYml
-    if ($proj -and (Test-Path -LiteralPath $msDir -PathType Container)) {
-      foreach ($allow in (Get-CoopYamlList $proj 'microsoft_skills.allow')) {
-        if ([string]::IsNullOrWhiteSpace($allow) -or $allow.StartsWith('TODO')) { continue }
-        # Validate the name so a hostile project.yml can't traverse out of
-        # skills/_microsoft/ and inject an arbitrary SKILL.md into the model.
-        if (-not (Test-CoopValidName $allow)) { Coop-Warn "ignoring invalid Microsoft skill name '$allow'"; continue }
-        $cand = Join-Path $msDir $allow
-        $sk = Join-Path $cand 'SKILL.md'
-        if (-not (Test-Path -LiteralPath $sk -PathType Leaf)) { continue }
-        if ($ownNames.Contains($allow)) { Coop-Warn "skipping Microsoft skill '$allow' (conflicts with a Cooptimize skill)"; continue }
-        $fm = Get-CoopSkillName $sk
-        if ($fm -and $ownNames.Contains($fm)) { Coop-Warn "skipping Microsoft skill '$allow' (name '$fm' conflicts with a Cooptimize skill)"; continue }
-        $piArgs += @('--skill', $cand)
+    if ($proj) {
+      foreach ($slot in $subordinateSlots) {
+        $slotDir = Join-Path $skills $slot
+        if (-not (Test-Path -LiteralPath $slotDir -PathType Container)) { continue }
+        # Map slot folder to project.yml source block key.
+        switch ($slot) {
+          '_microsoft'       { $yamlKey = 'microsoft_skills.allow' }
+          '_microsoft_fabric'{ $yamlKey = 'fabric_skills.allow' }
+        }
+        foreach ($allow in (Get-CoopYamlList $proj $yamlKey)) {
+          if ([string]::IsNullOrWhiteSpace($allow) -or $allow.StartsWith('TODO')) { continue }
+          # Validate the name so a hostile project.yml can't traverse out of the
+          # slot and inject an arbitrary SKILL.md into the model.
+          if (-not (Test-CoopValidName $allow)) { Coop-Warn "ignoring invalid subordinate skill name '$allow'"; continue }
+          $cand = Join-Path $slotDir $allow
+          $sk = Join-Path $cand 'SKILL.md'
+          if (-not (Test-Path -LiteralPath $sk -PathType Leaf)) { continue }
+          if ($ownNames.Contains($allow)) { Coop-Warn "skipping $slot skill '$allow' (conflicts with a Cooptimize skill)"; continue }
+          $fm = Get-CoopSkillName $sk
+          if ($fm -and $ownNames.Contains($fm)) { Coop-Warn "skipping $slot skill '$allow' (name '$fm' conflicts with a Cooptimize skill)"; continue }
+          $piArgs += @('--skill', $cand)
+        }
       }
     }
   }
@@ -476,6 +485,7 @@ function Invoke-CoopReview {
   if ($daxRc -ne 0) { Coop-Warn "coop-dax-review exited $daxRc" }
   
   $bpaRc = 0
+  Remove-Item -LiteralPath $bpaJson -Force -ErrorAction SilentlyContinue   # never let a stale report stand in for this run
   if ($proj) {
     $pyCmd = Get-CoopPython
     if ($pyCmd) {
@@ -646,7 +656,7 @@ function New-CoopSkill {
   param([string[]]$RestArgs = @())
   $name = if ($RestArgs.Count -ge 1) { $RestArgs[0] } else { '' }
   if (-not (Test-CoopValidName $name)) { Coop-Die 'Usage: coop new-skill <name>  (letters, digits, . _ - only)' }
-  if ($name -eq '_microsoft') { Coop-Die "'_microsoft' is reserved for official Microsoft skills." }
+  if ($name -in @('_microsoft', '_microsoft_fabric')) { Coop-Die "'$name' is reserved for subordinate skill slots." }
   $dir = Join-Path $script:CoopRoot "skills\$name"
   if (Test-Path -LiteralPath $dir) { Coop-Die "skills/$name already exists." }
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
