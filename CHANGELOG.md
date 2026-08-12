@@ -5,6 +5,33 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-08-12
+
+### Added
+- Native Power BI/Fabric authoring skills that follow Cooptimize conventions and
+  use the MIT-licensed Microsoft tooling already bundled with coop:
+  - `power-bi-report-authoring`
+  - `power-bi-report-review`
+  - `custom-visuals`
+  - `report-themes`
+  - `tabular-editor-bpa`
+
+### Fixed
+- `coop init --ci github|ado` works again (function ordering and rc handling).
+- `coop init --ci` without a value now prints a clear error.
+- `coop doctor --publish` no longer references an undefined `coop_version`.
+- `scripts/doctor.ps1` now checks whether allow-listed Microsoft/Fabric
+  subordinate skills have been fetched.
+- `coop review` removes a stale `bpa-review.json` before running the BPA step.
+- `coop update` installs Power BI/Fabric npm tools if they were never present.
+- `coop uninstall` removes the `@microsoft/powerbi-*` npm tools.
+- `scripts/doctor.sh` no longer probes the network for `powerbi-modeling-mcp`.
+
+### Changed
+- `powerbi-report-author` is now a required dependency (four of the five new
+  Power BI skills depend on it).
+- `lib/_bpa_runner.py` now uses `lib/_yaml.py` for project.yml parsing.
+
 ## [0.20.0] — 2026-08-11
 
 ### Added
