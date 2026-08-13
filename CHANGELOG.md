@@ -5,6 +5,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- `coop update` now applies the same tested-version gate it uses for Pi to the pipx tools (`coop-data-doc`, `coop-sql-review`, `coop-dax-review`, `ms-fabric-cli`) and to the injected `fabric-cicd` library: a release crossing the tested MINOR asks before jumping, and declining (or a non-interactive shell without `--yes`) pins that tool to its tested version instead of silently upgrading past it. `coop update --check` now also shows the latest pipx version alongside current/tested.
+
 ### Fixed
 - `tests/workflow.test.mjs` resolved the repo root via `new URL("..", import.meta.url).pathname`, which produces a mangled doubled-drive path on Windows (`D:\D:\a\...`) and crashed the Windows logic-tests CI job. It now uses `fileURLToPath` (same convention as `tests/webbridge.test.mjs`).
 - `skills/custom-visuals/SKILL.md` had an unquoted `: ` in its frontmatter description ("Power BI reports: Deneb…"), which strict YAML parsers reject — skill loading failed with "Nested mappings are not allowed in compact mappings". The description is now quoted, and `scripts/validate-resources.sh` fails the build when a plain-style description contains `: ` so this class of bug can't ship again.

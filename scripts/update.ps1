@@ -107,6 +107,29 @@ function Confirm-CoopPiJump {
   $ans = Read-Host ("{0} [y/N]" -f $Prompt)
   return ($ans -match '^(y|yes)$')
 }
+# Generic twin for the pipx/fabric-cicd gate (Non-interactive = stay on tested).
+function Confirm-CoopToolJump {
+  param([string]$Prompt)
+  if ($env:COOP_ASSUME_YES -eq '1') { return $true }
+  if ([Console]::IsInputRedirected) { Coop-Warn 'Non-interactive shell; staying on the tested version (pass --yes to jump).'; return $false }
+  $ans = Read-Host ("{0} [y/N]" -f $Prompt)
+  return ($ans -match '^(y|yes)$')
+}
+
+# Latest published version of a pipx/PyPI tool. COOP_PYPI_LATEST_OVERRIDE short-circuits.
+function Get-PypiLatest {
+  param([string]$Pkg)
+  if ($env:COOP_PYPI_LATEST_OVERRIDE) { return $env:COOP_PYPI_LATEST_OVERRIDE }
+  $py = Get-CoopPython
+  if (-not $py) { return '' }
+  # python -c with the package as argv[1]. Keep it %-format (no f-strings) so old
+  # pythons parse it; the inner quotes are single, so the PS double-quoted string
+  # only needs backtick-n newlines.
+  $code = "import json,sys,urllib.request`ntry:`n d=json.load(urllib.request.urlopen('https://pypi.org/pypi/{0}/json'.format(sys.argv[1]),timeout=15))`n print(d['info']['version'])`nexcept Exception: pass"
+  $raw = (& $py -c $code $Pkg 2>$null | Select-Object -First 1)
+  $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
+  if ($m.Success) { return $m.Value } else { return '' }
+}
 
 $PI_TESTED = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') 'tested_with.pi' ''
 
@@ -142,13 +165,19 @@ $UnitPiUpdate = {
 }
 
 $UnitPytoolUpgrade = {
-  param([string]$Pkg)
+  param([string]$Pkg, [string]$Target)
   if (-not (Get-Command pipx -ErrorAction SilentlyContinue)) {
     return [pscustomobject]@{ ok = $false; msg = "skipping $Pkg (pipx missing) — run: coop install" }
   }
   $list = (& pipx list 2>$null | Out-String)
   if ($list -notmatch ("package " + [regex]::Escape($Pkg) + " ")) {
     return [pscustomobject]@{ ok = $false; msg = "$Pkg not installed — run: coop install" }
+  }
+  if ($Target) {
+    # The tested-version gate was declined: PIN to the tested version.
+    & pipx install --force "$Pkg==$Target" *> $null
+    if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = "pinned $Pkg to tested $Target" } }
+    return [pscustomobject]@{ ok = $false; msg = "failed to pin $Pkg to $Target (try: pipx install --force '$Pkg==$Target')" }
   }
   & pipx upgrade $Pkg *> $null
   if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = $Pkg } }
@@ -194,7 +223,8 @@ if ($CHECK) {
     $cur = 'not installed'
     $cm = [regex]::Match($pipxList, ("package " + [regex]::Escape($pkg) + " (\d+\.\d+\.\d+)"))
     if ($cm.Success) { $cur = $cm.Groups[1].Value }
-    Write-Output ('  {0,-24} current {1,-13} {2,-20} tested {3}' -f $pkg, $cur, '', $tv)
+    $lat = Get-PypiLatest $pkg; if (-not $lat) { $lat = '?' }
+    Write-Output ('  {0,-24} current {1,-13} latest {2,-13} tested {3}' -f $pkg, $cur, $lat, $tv)
   }
   exit 0
 }
@@ -217,9 +247,49 @@ if ((Test-Have 'pi') -and $PI_TESTED -and (-not $PI_LATEST)) {
   }
 }
 
+# --- Tested-version gate, pipx tools + fabric-cicd (mirror of update.sh) -------
+# Same rule as Pi: a release crossing the tested MINOR asks first; declining (or
+# non-interactive without --yes) pins that tool to its tested version.
+$script:PY_PIN = @{}
+foreach ($pkg in $PY_TOOLS) {
+  $key = $pkg -replace '-', '_'
+  $tested = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') "tested_with.$key" ''
+  if (-not $tested) { continue }
+  $lat = Get-PypiLatest $pkg
+  if ($lat -and (Test-CoopMinorNewer $lat $tested)) {
+    Coop-Warn "$pkg $lat is newer than coop's tested version ($tested)."
+    if (Confirm-CoopToolJump "Jump to the untested $pkg $lat anyway?") {
+      Coop-Info "Updating to the latest $pkg $lat (untested with this coop build)."
+    } else {
+      $script:PY_PIN[$pkg] = $tested
+      Coop-Info "Staying on the tested $pkg $tested. Re-run with --yes to take $lat."
+    }
+  }
+}
+$script:FCC_PIN = ''
+if ((Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package ms-fabric-cli ')) {
+  $fccTested = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') 'tested_with.fabric_cicd' ''
+  if ($fccTested) {
+    $fccLat = Get-PypiLatest 'fabric-cicd'
+    if ($fccLat -and (Test-CoopMinorNewer $fccLat $fccTested)) {
+      Coop-Warn "fabric-cicd $fccLat is newer than coop's tested version ($fccTested)."
+      if (Confirm-CoopToolJump "Jump to the untested fabric-cicd $fccLat anyway?") {
+        Coop-Info "Updating to the latest fabric-cicd $fccLat (untested with this coop build)."
+      } else {
+        $script:FCC_PIN = $fccTested
+        Coop-Info "Staying on the tested fabric-cicd $fccTested."
+      }
+    }
+  }
+}
+
 # Test seam: print the resolved gate decision and stop BEFORE any install or side effect.
 if ($env:COOP_UPDATE_GATE_DRYRUN -eq '1') {
-  if ($script:PI_INSTALL_TARGET) { Write-Output ("GATE pin:{0}" -f $script:PI_INSTALL_TARGET) } else { Write-Output 'GATE all' }
+  $pins = @()
+  if ($script:PI_INSTALL_TARGET) { $pins += $script:PI_INSTALL_TARGET }
+  foreach ($k in $script:PY_PIN.Keys) { $pins += "$k=$($script:PY_PIN[$k])" }
+  if ($script:FCC_PIN) { $pins += "fabric-cicd=$($script:FCC_PIN)" }
+  if ($pins.Count -gt 0) { Write-Output ("GATE pin:{0}" -f ($pins -join ',')) } else { Write-Output 'GATE all' }
   exit 0
 }
 
@@ -283,7 +353,7 @@ try {
 
   # --- 3. Upgrade pipx tools -------------------------------------------------
   Coop-Head '3/6  Coop tools + Fabric CLI (pipx)'
-  foreach ($pkg in $PY_TOOLS) { Coop-Unit $pkg $UnitPytoolUpgrade @($pkg) }
+  foreach ($pkg in $PY_TOOLS) { Coop-Unit $pkg $UnitPytoolUpgrade @($pkg, $script:PY_PIN[$pkg]) }
 
   # --- 4. Upgrade Microsoft Fabric / Power BI authoring tools (npm) ----------
   Coop-Head '4/6  Fabric / Power BI authoring tools'
@@ -293,10 +363,16 @@ finally {
   Coop-ProgEnd
 }
 
-# fabric-cicd is a library injected into the Fabric CLI env — refresh it there.
+# fabric-cicd is a library injected into the Fabric CLI env — refresh it there (or
+# pin it to the tested version when the update gate declined a jump).
 if ((Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package ms-fabric-cli ')) {
-  & pipx inject ms-fabric-cli fabric-cicd --force > $null 2>&1
-  if ($LASTEXITCODE -eq 0) { Coop-Ok 'fabric-cicd (library) refreshed' }
+  if ($script:FCC_PIN) {
+    & pipx inject ms-fabric-cli "fabric-cicd==$($script:FCC_PIN)" --force > $null 2>&1
+    if ($LASTEXITCODE -eq 0) { Coop-Ok "fabric-cicd (library) pinned to tested $($script:FCC_PIN)" }
+  } else {
+    & pipx inject ms-fabric-cli fabric-cicd --force > $null 2>&1
+    if ($LASTEXITCODE -eq 0) { Coop-Ok 'fabric-cicd (library) refreshed' }
+  }
 }
 
 # --- 5. Sync vibes / skills / prompts / extension ----------------------------

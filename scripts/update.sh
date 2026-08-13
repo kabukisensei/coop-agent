@@ -60,6 +60,25 @@ _pi_latest() {
   npm view "$PI_PKG" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
+# Latest published version of a pipx/PyPI tool (coop-data-doc, ms-fabric-cli, …).
+# COOP_PYPI_LATEST_OVERRIDE short-circuits the registry query (tests set it; real
+# runs query PyPI). Echoes "" when it can't be determined — a hiccup never trips
+# the gate. Uses coop_python (pipx implies a python is present).
+_pypi_latest() {
+  local pkg="$1" py
+  if [ -n "${COOP_PYPI_LATEST_OVERRIDE:-}" ]; then printf '%s' "$COOP_PYPI_LATEST_OVERRIDE"; return 0; fi
+  py="$(coop_python)" || return 0
+  "$py" - "$pkg" 2>/dev/null <<'PYEOF'
+import json, sys, urllib.request
+try:
+    info = json.load(urllib.request.urlopen(
+        "https://pypi.org/pypi/%s/json" % sys.argv[1], timeout=15))
+    print(info["info"]["version"])
+except Exception:
+    pass
+PYEOF
+}
+
 # Overall-bar denominator: the update ITEMS we will attempt (pi update + each
 # pipx tool + Power BI/Fabric authoring npm tools). Steps 1/4/5 (git pull /
 # sync / doctor) sit outside the bar, exactly as the install bar covers only
@@ -89,11 +108,15 @@ _unit_pi_update() {
   printf 'pi update --all failed (try: pi update --all)'; return 1
 }
 
-_unit_pytool_upgrade() {  # $1 = package
-  local pkg="$1"
+_unit_pytool_upgrade() {  # $1 = package; $2 = optional tested-version pin ("" = latest)
+  local pkg="$1" pin="${2:-}"
   have pipx || { printf 'skipping %s (pipx missing) — run: coop install' "$pkg"; return 1; }
   if ! pipx list 2>/dev/null | grep -q "package $pkg "; then
     printf '%s not installed — run: coop install' "$pkg"; return 1
+  fi
+  if [ -n "$pin" ]; then
+    if pipx install --force "$pkg==$pin" >/dev/null 2>&1; then printf 'pinned %s to tested %s' "$pkg" "$pin"; return 0; fi
+    printf 'failed to pin %s to %s (try: pipx install --force %s==%s)' "$pkg" "$pin" "$pkg" "$pin"; return 1
   fi
   if pipx upgrade "$pkg" >/dev/null 2>&1; then printf '%s' "$pkg"; return 0; fi
   printf 'upgrade failed: %s' "$pkg"; return 1
@@ -128,7 +151,8 @@ if [ "$CHECK" = "1" ]; then
     tv="$(coop_yaml_get "$COOP_ROOT/config/defaults.yml" "tested_with.$key" "-")"
     cur="$(pipx list 2>/dev/null | grep -E "package $pkg " | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
     [ -n "$cur" ] || cur="not installed"
-    printf '  %-24s current %-13s %-20s tested %s\n' "$pkg" "$cur" "" "$tv"
+    lat="$(_pypi_latest "$pkg")"; [ -n "$lat" ] || lat="?"
+    printf '  %-24s current %-13s latest %-13s tested %s\n' "$pkg" "$cur" "$lat" "$tv"
   done
   exit 0
 fi
@@ -152,9 +176,50 @@ if have pi && [ -n "$PI_TESTED" ] && [ "$PI_LATEST" != "1" ]; then
   fi
 fi
 
+# --- Tested-version gate, pipx tools + fabric-cicd ------------------------------
+# Same rule as Pi, for the pipx tools we upgrade and the fabric-cicd library we
+# inject: a release crossing the tested MINOR asks first; declining (or a
+# non-interactive shell without --yes) pins that tool to its tested version. The
+# pins land in PY_PIN ("pkg=ver" pairs) and FCC_PIN for the refresh step below.
+PY_PIN=''
+for pkg in "${PY_TOOLS[@]}"; do
+  key="$(printf '%s' "$pkg" | tr '-' '_')"
+  tested="$(coop_yaml_get "$COOP_ROOT/config/defaults.yml" "tested_with.$key" "")"
+  [ -n "$tested" ] || continue
+  lat="$(_pypi_latest "$pkg")"
+  if [ -n "$lat" ] && coop_minor_newer "$lat" "$tested"; then
+    coop_warn "$pkg $lat is newer than coop's tested version ($tested)."
+    if coop_confirm "Jump to the untested $pkg $lat anyway?"; then
+      coop_info "Updating to the latest $pkg $lat (untested with this coop build)."
+    else
+      PY_PIN="$PY_PIN $pkg=$tested"
+      coop_info "Staying on the tested $pkg $tested. Re-run with --yes to take $lat."
+    fi
+  fi
+done
+FCC_PIN=''
+if have pipx && pipx list 2>/dev/null | grep -q "package ms-fabric-cli "; then
+  fcc_tested="$(coop_yaml_get "$COOP_ROOT/config/defaults.yml" tested_with.fabric_cicd "")"
+  if [ -n "$fcc_tested" ]; then
+    fcc_lat="$(_pypi_latest fabric-cicd)"
+    if [ -n "$fcc_lat" ] && coop_minor_newer "$fcc_lat" "$fcc_tested"; then
+      coop_warn "fabric-cicd $fcc_lat is newer than coop's tested version ($fcc_tested)."
+      if coop_confirm "Jump to the untested fabric-cicd $fcc_lat anyway?"; then
+        coop_info "Updating to the latest fabric-cicd $fcc_lat (untested with this coop build)."
+      else
+        FCC_PIN="$fcc_tested"
+        coop_info "Staying on the tested fabric-cicd $fcc_tested."
+      fi
+    fi
+  fi
+fi
+
 # Test seam: print the resolved gate decision and stop BEFORE any install or side effect.
 if [ "${COOP_UPDATE_GATE_DRYRUN:-0}" = "1" ]; then
-  if [ -n "$PI_INSTALL_TARGET" ]; then printf 'GATE pin:%s\n' "$PI_INSTALL_TARGET"; else printf 'GATE all\n'; fi
+  pins="$PI_INSTALL_TARGET"
+  for p in $PY_PIN; do pins="${pins:+$pins,}$p"; done
+  [ -n "$FCC_PIN" ] && pins="${pins:+$pins,}fabric-cicd=$FCC_PIN"
+  if [ -n "$pins" ]; then printf 'GATE pin:%s\n' "$pins"; else printf 'GATE all\n'; fi
   exit 0
 fi
 
@@ -199,7 +264,9 @@ coop_unit "pi update --all   (the agent + all installed extensions)" _unit_pi_up
 # --- 3. Upgrade pipx tools ---------------------------------------------------
 coop_head "3/6  Coop tools + Fabric CLI (pipx)"
 for pkg in "${PY_TOOLS[@]}"; do
-  coop_unit "$pkg" _unit_pytool_upgrade "$pkg"
+  pin=''
+  for p in $PY_PIN; do case "$p" in "$pkg="*) pin="${p#*=}" ;; esac; done
+  coop_unit "$pkg" _unit_pytool_upgrade "$pkg" "$pin"
 done
 
 # --- 4. Upgrade Microsoft Fabric / Power BI authoring tools (npm) ------------
@@ -210,9 +277,14 @@ hash -r 2>/dev/null || true
 # Done with the update items — finalize the bar (leaves a permanent 100% line).
 coop_progress_end
 
-# fabric-cicd is a library injected into the Fabric CLI env — refresh it there.
+# fabric-cicd is a library injected into the Fabric CLI env — refresh it there (or
+# pin it to the tested version when the update gate declined a jump).
 if have pipx && pipx list 2>/dev/null | grep -q "package ms-fabric-cli "; then
-  pipx inject ms-fabric-cli fabric-cicd --force >/dev/null 2>&1 && coop_ok "fabric-cicd (library) refreshed" || true
+  if [ -n "$FCC_PIN" ]; then
+    pipx inject ms-fabric-cli "fabric-cicd==$FCC_PIN" --force >/dev/null 2>&1 && coop_ok "fabric-cicd (library) pinned to tested $FCC_PIN" || true
+  else
+    pipx inject ms-fabric-cli fabric-cicd --force >/dev/null 2>&1 && coop_ok "fabric-cicd (library) refreshed" || true
+  fi
 fi
 
 # --- 5. Sync vibes / skills / prompts / extension ----------------------------
