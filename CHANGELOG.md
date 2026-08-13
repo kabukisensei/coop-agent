@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-08-13
+
 ### Added
 - Vertical slices are now the default workflow for multi-step tasks. The
   `coop-workflow` skill requires a failing-check → change → passing-check template
