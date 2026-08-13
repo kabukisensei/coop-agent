@@ -5,6 +5,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+- Vertical slices are now the default workflow for multi-step tasks. The
+  `coop-workflow` skill requires a failing-check → change → passing-check template
+  for each slice, plus explicit assumptions, early-warning signals, and
+  stop-and-ask triggers so the model teaches its reasoning as it goes. Each
+  slice now defines its own test; the configured live-data command is only an
+  optional default runner.
+- New `/slice-next` prompt to plan the next vertical slice before editing, with
+  slice-specific failing/passing checks and exact data conditions.
+- New `/explain` prompt for on-demand explanation of the current plan so an
+  experienced teammate can catch drift early.
+- Optional live-data test hook in `.coop/project.yml`:
+  `tests.live_data.enabled` runs a configured command between slices with approval
+  and dev/test workspace safety.
+- `tests/workflow.test.mjs` validates the slice workflow, prompt, project contract
+  schema, and guardrails reference.
+
 ## [0.21.0] — 2026-08-12
 
 ### Added

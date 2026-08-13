@@ -28,6 +28,9 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/guardrails.test.mjs"
 echo "→ start-here menu tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/startmenu.test.mjs"
 
+echo "→ workflow slice tests"
+node "$ROOT/tests/workflow.test.mjs"
+
 echo "→ launch-spec (shared launch builder) test"
 SPEC="$(bash "$ROOT/bin/coop" launch-spec)"
 for needle in "docs/guardrails.md" "--prompt-template" "themes/cooptimize.json" \

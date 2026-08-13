@@ -83,11 +83,17 @@ it, and **never commit source**. The sequence below is the default way to honor
 those principles for a file-touching task — adapt it to the situation (skip,
 reorder, or combine steps when they don't apply), but don't drop the principles.
 
-On non-trivial work, favor **vertical slices** (one small change reviewed at a
-time), **codify** repeated corrections into the relevant skill / standards /
-memory, apply review feedback as **Markdown annotations** (change only what's
-annotated), and **end with a handoff**. The `/spec-first`, `/annotate`, and
-`/handoff` prompts drive these; the `coop-workflow` skill has the detail.
+On non-trivial work, run **vertical slices** by default: each slice is one small,
+end-to-end change that starts with a failing check and ends with a passing check.
+Each slice gets its own test: state the specific SQL/DAX query, measure, linter, or
+review that demonstrates the problem before and proves the fix after. Explain why this
+slice is next, what it proves, and the assumptions / early warning signs that would make
+it wrong; do not just list tasks. If the project enables `tests.live_data.enabled`, run
+the configured live-data test between slices with approval and target dev/test only; the
+configured command is a default runner, but the slice still defines the specific test. Apply review feedback as
+**Markdown annotations**, **codify** repeated corrections, and **end with a handoff**.
+The `/spec-first`, `/annotate`, `/slice-next`, `/explain`, and `/handoff` prompts
+drive these; the `coop-workflow` skill has the detail.
 
 1. Read `.coop/project.yml` and the relevant standards.
 2. Identify the repo/object and upstream/downstream impact; run `git status` and `git pull`.

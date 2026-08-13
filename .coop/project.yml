@@ -168,3 +168,15 @@ approval_policy:
     - "MCP create/update/delete/deploy/publish"
     - "delete Fabric / Power BI artifacts"
     - "print secrets, tokens, connection strings, or .env contents"
+
+# --- Live-data tests between slices (optional) -------------------------------
+# Enable only if the repo has safe, fast integration tests against dev/test data.
+# The `command` is an optional default runner; each slice still defines its own
+# specific test. coop will ask before running unless require_approval is false.
+tests:
+  live_data:
+    enabled: false
+    between_slices: true
+    command: "TODO: pytest tests/integration"   # optional default runner
+    workspace: "dev"          # dev or test only — never prod
+    require_approval: true
