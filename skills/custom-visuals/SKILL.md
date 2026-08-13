@@ -1,6 +1,6 @@
 ---
 name: custom-visuals
-description: Author custom visuals for Power BI reports: Deneb (Vega/Vega-Lite) and SVG generated via DAX measures. Use when the user mentions Deneb, Vega, Vega-Lite, SVG sparklines, SVG measures, or inline graphics in tables/matrices/cards.
+description: "Author custom visuals for Power BI reports: Deneb (Vega/Vega-Lite) and SVG generated via DAX measures. Use when the user mentions Deneb, Vega, Vega-Lite, SVG sparklines, SVG measures, or inline graphics in tables/matrices/cards."
 ---
 
 # Custom visuals in Power BI

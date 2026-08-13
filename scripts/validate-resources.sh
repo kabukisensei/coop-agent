@@ -20,6 +20,14 @@ for skill in "$ROOT"/skills/*/SKILL.md; do
   fi
   printf '%s\n' "$fm" | grep -qE '^name:[[:space:]]*\S'        || { echo "✗ $rel: frontmatter missing 'name:'"; fail=1; }
   printf '%s\n' "$fm" | grep -qE '^description:[[:space:]]*\S' || { echo "✗ $rel: frontmatter missing 'description:'"; fail=1; }
+  # A plain-style description must not contain ': ' — strict YAML parsers read it
+  # as a nested mapping and skill loading breaks (real incident: custom-visuals).
+  # Quoted values are fine; the case guard skips them.
+  desc="$(printf '%s\n' "$fm" | grep '^description:' | sed 's/^description:[[:space:]]*//')"
+  case "$desc" in
+    \"*|\'*) : ;;
+    *": "*) echo "✗ $rel: description contains unquoted ': ' — wrap the value in double quotes"; fail=1 ;;
+  esac
 done
 
 for prompt in "$ROOT"/prompts/*.md; do
