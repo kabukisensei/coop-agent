@@ -5,6 +5,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- `tests/workflow.test.mjs` resolved the repo root via `new URL("..", import.meta.url).pathname`, which produces a mangled doubled-drive path on Windows (`D:\D:\a\...`) and crashed the Windows logic-tests CI job. It now uses `fileURLToPath` (same convention as `tests/webbridge.test.mjs`).
+
 ## [0.22.0] — 2026-08-13
 
 ### Added

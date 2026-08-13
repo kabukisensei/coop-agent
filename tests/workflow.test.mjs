@@ -3,8 +3,9 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 const skill = readFileSync(join(ROOT, "skills/coop-workflow/SKILL.md"), "utf8");
 assert.ok(skill.includes("## Slice by default"), "skill has 'Slice by default' section");
