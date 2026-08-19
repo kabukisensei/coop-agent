@@ -93,6 +93,7 @@ try {
 `$env:PATH = '$stubPath'
 `$env:COOP_UPDATE_GATE_DRYRUN = '1'
 `$env:COOP_PI_LATEST_OVERRIDE = '$Latest'
+`$env:COOP_PYPI_LATEST_OVERRIDE = '0.0.0'
 `$env:COOP_ASSUME_YES = '$Yes'
 & '$update' $($GateArgs -join ' ') 2>`$null
 "@ 6>$null
