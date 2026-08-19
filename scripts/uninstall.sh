@@ -53,7 +53,11 @@ fi
 # --- 1. The `coop` PATH symlink (inverse of install.sh step 6) ----------------
 LOCALBIN="$HOME/.local/bin"
 if [ -L "$LOCALBIN/coop" ]; then
-  rm -f "$LOCALBIN/coop" 2>/dev/null && coop_ok "removed $LOCALBIN/coop" || coop_warn "could not remove $LOCALBIN/coop"
+  if [ "$(readlink "$LOCALBIN/coop" 2>/dev/null)" = "$COOP_ROOT/bin/coop" ]; then
+    rm -f "$LOCALBIN/coop" 2>/dev/null && coop_ok "removed $LOCALBIN/coop" || coop_warn "could not remove $LOCALBIN/coop"
+  else
+    coop_warn "$LOCALBIN/coop points elsewhere — left in place"
+  fi
 elif [ -e "$LOCALBIN/coop" ]; then
   coop_warn "$LOCALBIN/coop exists but is not a symlink — left in place (not coop's)"
 else
@@ -64,7 +68,7 @@ fi
 # ONLY the agent dir — the rest of ~/.coop can hold private, non-coop-agent config.
 AGENT_DIR="$(coop_pi_agent_dir)"
 case "$AGENT_DIR" in
-  ''|/|"$HOME") coop_warn "suspicious agent dir '$AGENT_DIR' — not removing" ;;
+  ''|/|"$HOME"|"$HOME/.coop"|"$HOME/.coop/") coop_warn "suspicious agent dir '$AGENT_DIR' — not removing" ;;
   *)
     if [ -d "$AGENT_DIR" ]; then
       rm -rf "$AGENT_DIR" 2>/dev/null && coop_ok "removed $AGENT_DIR (extensions, settings, MCP config, session state)" \

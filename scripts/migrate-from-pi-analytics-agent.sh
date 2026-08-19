@@ -21,6 +21,7 @@ SRC="${1:-}"
 DST="${2:-$PWD}"
 [ -n "$SRC" ] || coop_die "Usage: migrate-from-pi-analytics-agent.sh <pi-analytics-agent-dir> [target-repo-dir]"
 [ -d "$SRC" ] || coop_die "Source not found: $SRC"
+[ -d "$DST" ] || coop_die "Target repo not found: $DST"
 
 coop_head "Migrate pi-analytics-agent -> coop-agent"
 coop_info "Source: $SRC"
@@ -36,12 +37,10 @@ done
 if [ -f "$DST/.coop/project.yml" ]; then
   coop_warn ".coop/project.yml already exists — leaving it untouched."
 else
-  cp "$COOP_ROOT/.coop/project.example.yml" "$DST/.coop/project.yml"
-  coop_ok "Created .coop/project.yml from the Cooptimize template."
+  cp "$COOP_ROOT/.coop/project.example.yml" "$DST/.coop/project.yml" && coop_ok "Created .coop/project.yml from the Cooptimize template." || coop_warn "could not copy the project.yml template"
 fi
 if [ -n "$OLD_CFG" ]; then
-  cp "$OLD_CFG" "$DST/.coop/agent-config.legacy.yml"
-  coop_ok "Copied your old config to .coop/agent-config.legacy.yml for reference."
+  cp "$OLD_CFG" "$DST/.coop/agent-config.legacy.yml" && coop_ok "Copied your old config to .coop/agent-config.legacy.yml for reference." || coop_warn "could not copy the legacy config"
   coop_warn "Hand-port repo paths, workspaces, and tool paths from the legacy file into .coop/project.yml."
 fi
 

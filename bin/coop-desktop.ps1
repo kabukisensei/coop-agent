@@ -18,7 +18,7 @@ function Find-Coop {
   # this repo clone, and a `coop` found on PATH could be a stale second clone
   # (exactly the drift that bit us before). PATH and LOCALAPPDATA are fallbacks.
   $sibling = Join-Path $PSScriptRoot 'coop.ps1'
-  if (Test-Path -LiteralPath $sibling) { return $sibling }
+  if ((Test-Path -LiteralPath $sibling) -and (Get-Command pi -ErrorAction SilentlyContinue)) { return $sibling }
   $cmd = Get-Command coop -ErrorAction SilentlyContinue
   if ($cmd) { return 'coop' }
   $local = Join-Path $env:LOCALAPPDATA 'coop\bin\coop.cmd'
@@ -53,8 +53,14 @@ if (-not $coop) {
 # closes; on an error we pause so the message stays on screen for a non-technical user.
 $code = 0
 try {
-  & $coop @args
-  $code = $LASTEXITCODE
+  if ($coop -like '*.ps1') {
+    $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
+    & $psExe -NoProfile -ExecutionPolicy Bypass -File $coop @args
+    $code = $LASTEXITCODE
+  } else {
+    & $coop @args
+    $code = $LASTEXITCODE
+  }
 } catch {
   Write-Host ''
   Write-Host "coop hit a problem: $($_.Exception.Message)" -ForegroundColor Red

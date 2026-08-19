@@ -41,6 +41,7 @@ FABRIC_PKG="ms-fabric-cli"
 # Microsoft Fabric/Power BI authoring CLI packages (npm). powerbi-desktop-bridge
 # requires Power BI Desktop on Windows, so it is installed only there.
 PBIH_NPM_TOOLS=( @microsoft/powerbi-report-authoring-cli @microsoft/powerbi-modeling-mcp )
+OS="$(uname -s 2>/dev/null || echo unknown)"
 case "$OS" in
   MINGW*|CYGWIN*|MSYS*|Windows*|windows*) PBIH_NPM_TOOLS+=( @microsoft/powerbi-desktop-bridge-cli ) ;;
 esac
@@ -49,8 +50,6 @@ esac
 # user's personal `pi`. Every `pi` call below (and the sync/doctor it runs) inherits it.
 PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"; export PI_CODING_AGENT_DIR
 mkdir -p "$PI_CODING_AGENT_DIR"
-
-OS="$(uname -s 2>/dev/null || echo unknown)"
 
 # Overall-bar denominator: the install ITEMS we will attempt (pipx + pi + each
 # extension + each coop tool + Power BI/Fabric authoring tools, plus Fabric unless --no-fabric).

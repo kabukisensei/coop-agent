@@ -285,10 +285,10 @@ if (($env:PATH -split ';') -notcontains $LOCALBIN) {
       [Environment]::SetEnvironmentVariable('COOP_PATH_SYNC', '1', 'User')
       [Environment]::SetEnvironmentVariable('COOP_PATH_SYNC', $null, 'User')
       Coop-Ok "added $LOCALBIN to your user PATH (open a new terminal so coop is found there)"
+      $script:NeedNewShell = $true
     }
     if ($envKey) { $envKey.Close() }
     $env:PATH = "$LOCALBIN;$env:PATH"
-    $script:NeedNewShell = $true
   } catch {
     Coop-Warn "couldn't update PATH automatically — add $LOCALBIN to your user PATH (System Properties > Environment Variables), then open a new terminal."
   }

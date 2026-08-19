@@ -113,7 +113,7 @@ else { Coop-Info 'no coop shortcuts found (already gone)' }
 # --- 3. The isolated Pi agent dir ----------------------------------------------
 # ONLY the agent dir — the rest of ~/.coop can hold private, non-coop-agent config.
 $agentDir = Get-CoopPiAgentDir
-if (-not $agentDir -or $agentDir -eq $HOME) {
+if (-not $agentDir -or $agentDir -eq $HOME -or $agentDir -eq (Join-Path $HOME '.coop')) {
   Coop-Warn "suspicious agent dir '$agentDir' — not removing"
 } elseif (Test-Path -LiteralPath $agentDir) {
   Remove-Item -LiteralPath $agentDir -Recurse -Force -ErrorAction SilentlyContinue

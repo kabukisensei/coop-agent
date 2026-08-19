@@ -56,10 +56,10 @@ fetch_source() {
 
   coop_head "Fetching Microsoft skills from $src"
   if [ -d "$cache/.git" ]; then
-    coop_info "Updating cache…"; git -C "$cache" pull --ff-only --depth 1 >/dev/null 2>&1 || coop_warn "cache pull failed (using existing)"
+    coop_info "Updating cache…"; git -C "$cache" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=15 pull --ff-only --depth 1 >/dev/null 2>&1 || coop_warn "cache pull failed (using existing)"
   else
     mkdir -p "$(dirname "$cache")"
-    coop_info "Cloning (shallow)…"; git clone --depth 1 "$src" "$cache" >/dev/null 2>&1 || coop_die "clone failed: $src"
+    coop_info "Cloning (shallow)…"; git clone --depth 1 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=15 "$src" "$cache" >/dev/null 2>&1 || coop_die "clone failed: $src"
   fi
 
   mkdir -p "$dest"

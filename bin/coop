@@ -392,7 +392,7 @@ EOF
         new_scope+=("$item")
       fi
     done
-    scope=("${new_scope[@]}")
+    scope=(${new_scope[@]+"${new_scope[@]}"})
     if [ "${#scope[@]}" -eq 0 ]; then
       coop_info "coop review --diff: no files changed in the scope."
       return 0
@@ -425,17 +425,14 @@ EOF
   
   # Tabular Editor BPA check (if enabled in project.yml)
   rm -f "$bpa_json"   # never let a stale report stand in for this run
-  local bpa_prev=""
   if [ -n "$proj" ]; then
     local py_cmd
     if py_cmd="$(coop_python)"; then
-      if [ "$compare" = 1 ] && [ -f "$bpa_json" ]; then bpa_prev="$(mktemp)"; cp "$bpa_json" "$bpa_prev"; fi
       "$py_cmd" "$COOP_ROOT/lib/_bpa_runner.py" "$proj" "$bpa_json" ${scope[@]+"${scope[@]}"} || bpa_rc=$?
       if [ -f "$bpa_json" ]; then
         coop_head "Tabular Editor BPA → $bpa_json"
         [ "$bpa_rc" -eq 0 ] || coop_warn "Tabular Editor BPA exited $bpa_rc"
       fi
-      [ -n "$bpa_prev" ] && rm -f "$bpa_prev"
     fi
   fi
 
@@ -672,7 +669,7 @@ coop_release_check_pins() {
     pin="$(coop_yaml_get "$defaults" "tested_with.$key" "")"
     # versions.json keeps a strict one-`"key": "value"`-per-line layout (enforced
     # by coop-website's own checker), so sed is safe — and python-free — here.
-    rel="$(sed -n 's/^[[:space:]]*"'"$tool"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$vjson" | head -1)"
+    rel="$(sed -n 's/^[[:space:]]*"'"$tool"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$vjson")"; rel="${rel%%$'\n'*}"
     if [ -z "$rel" ]; then
       coop_warn "could not read $tool from coop-website/versions.json — skipping its pin check."
       continue
@@ -908,7 +905,7 @@ coop_init_ci() {
     elif [ "$rc" -eq 3 ]; then
       coop_warn "No CI gates generated: paths missing in .coop/project.yml"
     else
-      coop_err "CI scaffolding failed"
+      coop_die "CI scaffolding failed"
     fi
   else
     coop_die "Python 3 required to scaffold CI"
