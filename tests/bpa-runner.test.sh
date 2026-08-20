@@ -4,10 +4,12 @@
 # CLI via `te bpa run <model> -r <rules> --non-interactive` and must NEVER
 # resolve or invoke the legacy Tabular Editor 2 executable (fixed 2026-08-20).
 #
-# Windows notes (CI runs this under Git Bash): shutil.which() on Windows only
-# sees PATHEXT extensions, so the fake ships as `te` (unix) AND `te.cmd`
-# (Windows, CRLF); and Git Bash PATH entries use /tmp/... paths that native
-# Windows processes can't search, so the bin dir is converted with cygpath.
+# Windows notes (CI runs this under Git Bash): every path the native python
+# child sees is converted explicitly with cygpath -m (never rely on MSYS
+# argument/PATH conversion), and the fake is pinned via
+# tools.tabular_editor_cli.executable_path (a te.cmd fake) — Git Bash PATH
+# semantics are unreliable for native children. On unix the extensionless
+# `te` fake exercises shutil.which() resolution through PATH.
 #
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
@@ -20,18 +22,17 @@ if [ -z "$_py" ] || ! "$_py" -c 'import json' >/dev/null 2>&1; then
   echo "SKIP: no usable python available"; exit 0
 fi
 
-# project.yml enabling BPA with a rules file (absolute paths so the runner's
-# base-dir join can't mis-resolve them in the temp dir)
-cat > "$TMP/project.yml" <<YAML
-tools:
-  tabular_editor_cli:
-    enabled: "true"
-    bpa_rules_path: $TMP/rules.json
-power_bi:
-  semantic_models:
-    - path: model.bim
-YAML
-touch "$TMP/model.bim" "$TMP/rules.json"
+_iswin=0
+case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) _iswin=1 ;; esac
+if [ "$_iswin" = 1 ]; then
+  # Mixed (forward-slash) form: valid for Windows python open()/subprocess and
+  # for Git Bash's [ -f ] checks against the same temp dir.
+  _tmp_native="$(cygpath -m "$TMP" 2>/dev/null || echo "$TMP")"
+  _root_native="$(cygpath -m "$ROOT" 2>/dev/null || echo "$ROOT")"
+else
+  _tmp_native="$TMP"
+  _root_native="$ROOT"
+fi
 
 mkdir -p "$TMP/bin"
 # Fake `te` (unix) that validates the bpa-run invocation shape and emits one JSON finding.
@@ -67,14 +68,39 @@ echo "TE2 WAS INVOKED" >&2
 exit 42
 EOF
 chmod +x "$TMP/bin/te" "$TMP/bin/TabularEditor.exe" 2>/dev/null || true
+touch "$TMP/model.bim" "$TMP/rules.json"
 
-# Git Bash PATH entries must be native Windows paths for the python child.
-_bindir="$TMP/bin"
-case "$(uname -s 2>/dev/null)" in
-  MINGW*|MSYS*|CYGWIN*) _bindir="$(cygpath -w "$_bindir" 2>/dev/null || echo "$_bindir")" ;;
-esac
+# project.yml with native paths. On Windows, pin executable_path so the run
+# does not depend on PATH resolution of the fake under Git Bash (real users
+# have te.exe on PATH; shutil.which is still exercised on unix).
+if [ "$_iswin" = 1 ]; then
+  cat > "$TMP/project.yml" <<YAML
+tools:
+  tabular_editor_cli:
+    enabled: "true"
+    executable_path: $_tmp_native/bin/te.cmd
+    bpa_rules_path: $_tmp_native/rules.json
+power_bi:
+  semantic_models:
+    - path: model.bim
+YAML
+else
+  cat > "$TMP/project.yml" <<YAML
+tools:
+  tabular_editor_cli:
+    enabled: "true"
+    bpa_rules_path: $_tmp_native/rules.json
+power_bi:
+  semantic_models:
+    - path: model.bim
+YAML
+fi
 
-PATH="$_bindir:$PATH" "$_py" "$ROOT/lib/_bpa_runner.py" "$TMP/project.yml" "$TMP/out.json" "$TMP/model.bim" 2>"$TMP/err"
+if [ "$_iswin" = 0 ]; then
+  PATH="$TMP/bin:$PATH" "$_py" "$_root_native/lib/_bpa_runner.py" "$_tmp_native/project.yml" "$_tmp_native/out.json" "$_tmp_native/model.bim" 2>"$TMP/err"
+else
+  "$_py" "$_root_native/lib/_bpa_runner.py" "$_tmp_native/project.yml" "$_tmp_native/out.json" "$_tmp_native/model.bim" 2>"$TMP/err"
+fi
 rc=$?
 [ "$rc" -eq 0 ] || { echo "FAIL: runner exited $rc"; cat "$TMP/err"; exit 1; }
 grep -q 'TE2 WAS INVOKED' "$TMP/err" && { echo "FAIL: TabularEditor.exe was invoked — runner must use te only"; exit 1; }
@@ -82,7 +108,7 @@ grep -q 'TE2 WAS INVOKED' "$TMP/err" && { echo "FAIL: TabularEditor.exe was invo
 
 "$_py" - <<PYEOF
 import json
-d = json.load(open("$TMP/out.json"))
+d = json.load(open("$_tmp_native/out.json"))
 assert d["summary"]["info"] == 1, d
 assert d["findings"][0]["rule"] == "Unneeded columns in tables", d
 assert d["findings"][0]["object"] == "Revenue", d
