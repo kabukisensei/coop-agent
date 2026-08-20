@@ -243,11 +243,13 @@ if [ "$NO_PREREQS" != 1 ] && ! have az; then
 fi
 have az && coop_ok "az present ($(az --version 2>/dev/null | head -1))" || coop_warn "az not found — install Azure CLI from https://learn.microsoft.com/cli/azure (needed for Fabric/Power BI live auth)."
 
-# Tabular Editor CLI (optional / Best Practice Analyzer for Power BI models)
-if have TabularEditor.exe || have TabularEditor; then
+# Tabular Editor CLI (te — cross-platform semantic model CLI)
+if have te; then
+  coop_ok "te present ($(te --version 2>/dev/null | head -1))"
+elif have TabularEditor.exe || have TabularEditor; then
   coop_ok "Tabular Editor CLI present"
 else
-  coop_warn "Tabular Editor CLI not found (optional; Windows-primary for BPA semantic model rules: https://tabulareditor.com)."
+  coop_warn "Tabular Editor CLI (te) not found (optional; download 'te' from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli and place in ~/.local/bin or on PATH)."
 fi
 
 coop_unit "pipx" _unit_pipx

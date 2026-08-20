@@ -188,11 +188,18 @@ if have fab; then
 else
   warn "fabric-cicd: install the Microsoft Fabric CLI first" "coop install"
 fi
-# Tabular Editor CLI is path-configured and mostly Windows; check the project's path if set.
+# Tabular Editor CLI (cross-platform te or legacy TabularEditor.exe)
 te_path="$(coop_yaml_get "$(coop_find_project_yml)" "tools.tabular_editor_cli.executable_path" "")"
 te_rules="$(coop_yaml_get "$(coop_find_project_yml)" "tools.tabular_editor_cli.bpa_rules_path" "")"
 case "$te_path" in
-  ""|TODO*) if have TabularEditor.exe || have TabularEditor; then ok "Tabular Editor CLI on PATH"; else warn "Tabular Editor CLI not configured" "set tools.tabular_editor_cli.executable_path in .coop/project.yml (optional)"; fi ;;
+  ""|TODO*)
+    if have te; then
+      ok "te — Tabular Editor CLI  ($(te --version 2>/dev/null | head -1))"
+    elif have TabularEditor.exe || have TabularEditor; then
+      ok "Tabular Editor CLI on PATH"
+    else
+      warn "Tabular Editor CLI (te) not found (optional)" "download 'te' from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli and place in ~/.local/bin or on PATH"
+    fi ;;
   *) if [ -x "$te_path" ] || [ -f "$te_path" ]; then ok "Tabular Editor CLI: $te_path"; else warn "Tabular Editor CLI path not found: $te_path"; fi ;;
 esac
 case "$te_rules" in

@@ -242,19 +242,23 @@ if (Test-Have 'fab') {
 $tePath = Get-CoopYamlValue (Find-CoopProjectYml) 'tools.tabular_editor_cli.executable_path' ''
 $teRules = Get-CoopYamlValue (Find-CoopProjectYml) 'tools.tabular_editor_cli.bpa_rules_path' ''
 if (-not $tePath -or $tePath -like 'TODO*') {
-  if ((Test-Have 'TabularEditor.exe') -or (Test-Have 'TabularEditor')) { D-Ok 'Tabular Editor CLI on PATH' }
-  else {
+  if (Test-Have 'te') {
+    $tev = (& te --version 2>$null | Select-Object -First 1)
+    D-Ok "te — Tabular Editor CLI ($tev)"
+  } elseif ((Test-Have 'TabularEditor.exe') -or (Test-Have 'TabularEditor')) {
+    D-Ok 'Tabular Editor CLI on PATH'
+  } else {
     $foundTe = $null
     foreach ($d in @(
+      (Join-Path $HOME '.local\bin\te.exe'),
+      (Join-Path $env:LOCALAPPDATA 'Programs\te\te.exe'),
       (Join-Path ${env:ProgramFiles(x86)} 'Tabular Editor\TabularEditor.exe'),
-      (Join-Path $env:ProgramFiles 'Tabular Editor\TabularEditor.exe'),
-      (Join-Path $env:LOCALAPPDATA 'Programs\Tabular Editor\TabularEditor.exe'),
-      (Join-Path $env:ProgramFiles 'Tabular Editor 3\TabularEditor3.exe')
+      (Join-Path $env:ProgramFiles 'Tabular Editor\TabularEditor.exe')
     )) {
       if (Test-Path -LiteralPath $d) { $foundTe = $d; break }
     }
     if ($foundTe) { D-Ok "Tabular Editor CLI: $foundTe" }
-    else { D-Warn 'Tabular Editor CLI not configured' 'set tools.tabular_editor_cli.executable_path in .coop/project.yml (optional)' }
+    else { D-Warn 'Tabular Editor CLI (te) not found (optional)' 'download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli and place in ~/.local/bin or on PATH' }
   }
 } else {
   if (Test-Path -LiteralPath $tePath) { D-Ok "Tabular Editor CLI: $tePath" }

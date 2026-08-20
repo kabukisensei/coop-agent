@@ -80,7 +80,7 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 - **pipx** (auto-installed by `coop install` via Python `pip`)
 - **git** — https://git-scm.com (auto-installed via `winget` / `brew` / `apt` if missing)
 - **Azure CLI** (`az`) — *optional* — https://learn.microsoft.com/cli/azure (auto-installed via `winget` / `brew` / `apt` if missing; needed only for Fabric / Power BI live authentication — local SQL/DAX review works without it)
-- **Tabular Editor CLI** — https://tabulareditor.com (auto-installed via `winget` on Windows if missing, for Best Practice Analyzer rules on semantic models)
+- **Tabular Editor CLI (`te`)** — *optional* — https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (cross-platform semantic model CLI for Best Practice Analyzer rules; requires login to download; place `te` in `~/.local/bin` or your `PATH`)
 
 ---
 

@@ -6,8 +6,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Changed
-- `coop install` gains `--no-prereqs` to skip auto-installing missing system prerequisites (they are still reported).- `coop install` now automatically installs missing system prerequisites and tools (Git, Python 3.12, Node.js LTS, Azure CLI, Tabular Editor 2 CLI via winget on Windows, and pipx) via `winget` on Windows or `brew`/`apt`/`dnf` on macOS and Linux when package managers are available, and dynamically adds their installation directories to `PATH` for the remainder of the setup.
-- `coop doctor` now automatically searches standard installation directories for Tabular Editor on Windows (`C:\Program Files (x86)\Tabular Editor`, etc.) when `tools.tabular_editor_cli.executable_path` is not explicitly pinned in `project.yml`.
+- `coop install` gains `--no-prereqs` to skip auto-installing missing system prerequisites (they are still reported).
+- `coop install` now automatically installs missing system prerequisites (Git, Python 3.12, Node.js LTS, Azure CLI, and pipx) via `winget` on Windows or `brew`/`apt`/`dnf` on macOS and Linux when package managers are available, dynamically adds their installation directories to `PATH` for the remainder of the setup, and checks for the cross-platform Tabular Editor CLI (`te`).
+- `coop doctor` now detects the cross-platform `te` CLI on `PATH` and in standard tool directories (`~/.local/bin`, `%LOCALAPPDATA%\Programs\te`), and `coop doctor --fix` now auto-installs `ms-fabric-cli` and injects `fabric-cicd`.
 - `coop update` now applies the same tested-version gate it uses for Pi to the pipx tools (`coop-data-doc`, `coop-sql-review`, `coop-dax-review`, `ms-fabric-cli`) and to the injected `fabric-cicd` library: a release crossing the tested MINOR asks before jumping, and declining (or a non-interactive shell without `--yes`) pins that tool to its tested version instead of silently upgrading past it. `coop update --check` now also shows the latest pipx version alongside current/tested.
 
 ### Fixed

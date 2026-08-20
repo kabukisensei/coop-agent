@@ -380,21 +380,14 @@ try {
     Coop-Warn "az not found — install Azure CLI from https://learn.microsoft.com/cli/azure (or 'winget install Microsoft.AzureCLI')."
   }
 
-  # Tabular Editor CLI (optional / Best Practice Analyzer for Power BI models)
-  if (-not (Test-Have 'TabularEditor.exe') -and -not (Test-Have 'TabularEditor')) {
-    Add-CoopUserPaths
-  }
-  if (-not (Test-Have 'TabularEditor.exe') -and -not (Test-Have 'TabularEditor')) {
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-      Coop-Info 'installing Tabular Editor 2 via winget…'
-      & winget install --id TabularEditor.TabularEditor.2 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
-      Add-CoopUserPaths
-    }
-  }
-  if ((Test-Have 'TabularEditor.exe') -or (Test-Have 'TabularEditor')) {
+  # Tabular Editor CLI (te — cross-platform semantic model CLI)
+  if (Test-Have 'te') {
+    $tev = (& te --version 2>$null | Select-Object -First 1)
+    Coop-Ok "te present ($tev)"
+  } elseif ((Test-Have 'TabularEditor.exe') -or (Test-Have 'TabularEditor')) {
     Coop-Ok 'Tabular Editor CLI present'
   } else {
-    Coop-Warn "Tabular Editor CLI not found (optional; install Tabular Editor 2 from https://tabulareditor.com or 'winget install TabularEditor.TabularEditor.2')."
+    Coop-Warn "Tabular Editor CLI (te) not found (optional; download 'te' from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli and place in ~/.local/bin or on PATH)."
   }
 
   Coop-Unit 'pipx' $UnitPipx

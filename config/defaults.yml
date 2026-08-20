@@ -75,10 +75,10 @@ npm_authoring_tools:
   # Windows-only, added by the installers when on Windows:
   # - "@microsoft/powerbi-desktop-bridge-cli"   # powerbi-desktop: open/status/reload/screenshot
 
-# Optional, path-configured (mostly Windows). Not auto-installed.
+# Optional cross-platform CLI (https://tabulareditor.com/product/features-and-tools/tabular-editor-cli)
 tabular_editor_cli:
-  command: TabularEditor.exe
-  note: "Set tools.tabular_editor_cli.executable_path in .coop/project.yml"
+  command: te
+  note: "Place 'te' on PATH (e.g. in ~/.local/bin) or set tools.tabular_editor_cli.executable_path in .coop/project.yml"
 
 # MCP servers coop preloads — all optional (coop runs without them). Placed non-
 # destructively into coop's isolated agent dir (~/.coop/agent/mcp.json) by `coop sync`

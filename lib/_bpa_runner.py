@@ -15,9 +15,12 @@ def main():
     if not cfg:
         sys.exit(0)
 
+    import shutil
     te = _yaml.dig(cfg, "tools.tabular_editor_cli") or {}
     te_enabled = str(te.get("enabled", "")).lower() == "true"
     te_exe = te.get("executable_path", "")
+    if not te_exe or te_exe.lower().startswith("todo"):
+        te_exe = shutil.which("te") or shutil.which("TabularEditor.exe") or shutil.which("TabularEditor") or ""
     te_rules = te.get("bpa_rules_path", "")
 
     if not te_enabled or not te_exe or not te_rules:
