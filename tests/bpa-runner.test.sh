@@ -96,6 +96,7 @@ power_bi:
 YAML
 fi
 
+# 1. Happy path: te invoked correctly, TE2 never touched, findings parsed.
 if [ "$_iswin" = 0 ]; then
   PATH="$TMP/bin:$PATH" "$_py" "$_root_native/lib/_bpa_runner.py" "$_tmp_native/project.yml" "$_tmp_native/out.json" "$_tmp_native/model.bim" 2>"$TMP/err"
 else
@@ -116,3 +117,76 @@ PYEOF
 [ $? -eq 0 ] || { echo "FAIL: findings not parsed as expected"; exit 1; }
 
 echo "PASS: BPA runner invoked te with bpa run --non-interactive, never touched TE2, and parsed JSON findings"
+
+# 2. Output directory is created automatically and report is written atomically.
+rm -rf "$TMP/nested"
+out_nested="$_tmp_native/nested/out.json"
+if [ "$_iswin" = 0 ]; then
+  PATH="$TMP/bin:$PATH" "$_py" "$_root_native/lib/_bpa_runner.py" "$_tmp_native/project.yml" "$out_nested" "$_tmp_native/model.bim" 2>"$TMP/err2"
+else
+  "$_py" "$_root_native/lib/_bpa_runner.py" "$_tmp_native/project.yml" "$out_nested" "$_tmp_native/model.bim" 2>"$TMP/err2"
+fi
+rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: runner exited $rc for nested output"; cat "$TMP/err2"; exit 1; }
+[ -f "$out_nested" ] || { echo "FAIL: nested output report not written"; cat "$TMP/err2"; exit 1; }
+echo "PASS: BPA runner creates nested output directory and writes report"
+
+# 3. A failing te run (non-zero exit, no findings) propagates as non-zero.
+cat > "$TMP/bin/te-fail" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" != "bpa" ] || [ "$2" != "run" ]; then echo "BAD SUBCOMMAND: $*" >&2; exit 9; fi
+echo '{"findings":[]}'
+exit 7
+EOF
+chmod +x "$TMP/bin/te-fail"
+if [ "$_iswin" = 0 ]; then
+  cat > "$TMP/project-fail.yml" <<YAML
+tools:
+  tabular_editor_cli:
+    enabled: "true"
+    executable_path: $_tmp_native/bin/te-fail
+    bpa_rules_path: $_tmp_native/rules.json
+power_bi:
+  semantic_models:
+    - path: model.bim
+YAML
+  PATH="$TMP/bin:$PATH" "$_py" "$_root_native/lib/_bpa_runner.py" "$TMP/project-fail.yml" "$_tmp_native/out-fail.json" "$_tmp_native/model.bim" 2>"$TMP/err3" || rc=$?
+else
+  cat > "$TMP/bin/te-fail.cmd" <<'EOF'
+@echo off
+echo {"findings":[]}
+exit /b 7
+EOF
+  sed -i.bak 's/$/\r/' "$TMP/bin/te-fail.cmd" && rm -f "$TMP/bin/te-fail.cmd.bak"
+  cat > "$TMP/project-fail.yml" <<YAML
+tools:
+  tabular_editor_cli:
+    enabled: "true"
+    executable_path: $_tmp_native/bin/te-fail.cmd
+    bpa_rules_path: $_tmp_native/rules.json
+power_bi:
+  semantic_models:
+    - path: model.bim
+YAML
+  rc=0
+  "$_py" "$_root_native/lib/_bpa_runner.py" "$TMP/project-fail.yml" "$_tmp_native/out-fail.json" "$_tmp_native/model.bim" 2>"$TMP/err3" || rc=$?
+fi
+[ "$rc" -ne 0 ] || { echo "FAIL: runner should exit non-zero when te fails"; exit 1; }
+[ -f "$_tmp_native/out-fail.json" ] || { echo "FAIL: no failure report written"; cat "$TMP/err3"; exit 1; }
+echo "PASS: BPA runner propagates a non-zero te exit"
+
+# 4. A missing te executable returns non-zero instead of silently succeeding.
+cat > "$TMP/project-missing.yml" <<YAML
+tools:
+  tabular_editor_cli:
+    enabled: "true"
+    executable_path: $_tmp_native/bin/no-such-te
+    bpa_rules_path: $_tmp_native/rules.json
+power_bi:
+  semantic_models:
+    - path: model.bim
+YAML
+rc=0
+"$_py" "$_root_native/lib/_bpa_runner.py" "$TMP/project-missing.yml" "$_tmp_native/out-missing.json" "$_tmp_native/model.bim" 2>"$TMP/err4" || rc=$?
+[ "$rc" -ne 0 ] || { echo "FAIL: runner should exit non-zero when te is missing"; exit 1; }
+echo "PASS: BPA runner fails loudly when te executable is missing"
