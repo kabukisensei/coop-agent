@@ -218,7 +218,7 @@ fi
 if have node; then
   coop_ok "node present ($(node --version 2>/dev/null || echo '?'))"
   _nodev="$(node --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-  if [ -n "$_nodev" ] && [ "$(printf '%s\n%s\n' '22.19.0' "$_nodev" | sort -V | head -1)" != '22.19.0' ]; then
+  if [ -n "$_nodev" ] && coop_version_lt "$_nodev" "22.19.0"; then
     coop_warn "Node $_nodev is older than Pi's requirement (>= 22.19)" "upgrade Node, or pin Pi's legacy build: npm i -g @earendil-works/pi-coding-agent@legacy-node20"
   fi
   unset _nodev

@@ -241,6 +241,25 @@ coop_minor_newer() {
   return 1
 }
 
+# True (0) if version $1 is strictly less than version $2. Missing components are
+# treated as 0 ("3.12" -> "3.12.0"). Empty / non-numeric input returns 1 (not less).
+# Avoids GNU sort -V, which is absent on macOS/BSD.
+coop_version_lt() {
+  local a="$1" b="$2"
+  local a1 a2 a3 b1 b2 b3
+  a1="${a%%.*}"; a="${a#*.}"; a2="${a%%.*}"; a="${a#*.}"; a3="${a%%.*}"
+  b1="${b%%.*}"; b="${b#*.}"; b2="${b%%.*}"; b="${b#*.}"; b3="${b%%.*}"
+  a1="${a1:-0}"; a2="${a2:-0}"; a3="${a3:-0}"
+  b1="${b1:-0}"; b2="${b2:-0}"; b3="${b3:-0}"
+  case "$a1.$a2.$a3.$b1.$b2.$b3" in *[!0-9.]*) return 1 ;; esac
+  [ "$a1" -lt "$b1" ] && return 0
+  [ "$a1" -gt "$b1" ] && return 1
+  [ "$a2" -lt "$b2" ] && return 0
+  [ "$a2" -gt "$b2" ] && return 1
+  [ "$a3" -lt "$b3" ] && return 0
+  return 1
+}
+
 # --- Optional Azure preflight (non-fatal) --------------------------------------
 # Mirrors the team's pi-ready habit: if the project pins a Fabric tenant and the
 # Azure CLI is present, make sure a Power BI token exists before launching.

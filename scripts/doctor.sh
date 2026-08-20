@@ -79,7 +79,7 @@ if [ -n "$_pybin" ]; then
   # The coop tools (coop-data-doc/sql-review/dax-review, ms-fabric-cli) require
   # >= 3.10 — macOS CLT ships a 3.9 python3 that passes the presence check above
   # but fails every pipx install later. Flag it now, like the Node gate below.
-  if [ -n "$_pyver" ] && [ "$(printf '%s\n%s\n' '3.10.0' "$_pyver" | sort -V | head -1)" != '3.10.0' ]; then
+  if [ -n "$_pyver" ] && coop_version_lt "$_pyver" "3.10.0"; then
     warn "Python $_pyver is older than the coop tools require (>= 3.10)" "upgrade Python: https://python.org"
   fi
 else
@@ -92,7 +92,7 @@ check pipx    required "python3 -m pip install --user pipx && python3 -m pipx en
 if have pi; then
   piv="$(pi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
   minv="0.79.0"
-  if [ -n "$piv" ] && [ "$(printf '%s\n%s\n' "$minv" "$piv" | sort -V | head -1)" != "$minv" ]; then
+  if [ -n "$piv" ] && coop_version_lt "$piv" "$minv"; then
     warn "pi $piv is older than the tested minimum ($minv)" "coop update"
   fi
   # Ceiling: warn (never fail) when the installed Pi is a newer MINOR than coop's tested
@@ -109,7 +109,7 @@ fi
 if have node; then
   nodev="$(node --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
   nodemin="22.19.0"
-  if [ -n "$nodev" ] && [ "$(printf '%s\n%s\n' "$nodemin" "$nodev" | sort -V | head -1)" != "$nodemin" ]; then
+  if [ -n "$nodev" ] && coop_version_lt "$nodev" "$nodemin"; then
     warn "Node $nodev is older than Pi's requirement (>= 22.19)" "upgrade Node, or pin Pi's legacy build: npm i -g @earendil-works/pi-coding-agent@legacy-node20"
   fi
 fi
