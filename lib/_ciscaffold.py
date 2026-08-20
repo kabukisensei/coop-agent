@@ -1,6 +1,28 @@
+import re
 import sys, os, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _yaml
+
+
+def _valid_version(v):
+    return bool(re.match(r'^[0-9]+\.[0-9]+\.[0-9]+$', str(v)))
+
+
+def _valid_path(p):
+    """Reject shell/YAML metacharacters and path traversal in CI-facing paths."""
+    if not isinstance(p, str) or not p:
+        return False
+    if '..' in p.split('/'):
+        return False
+    return bool(re.match(r'^[A-Za-z0-9_./\-]+$', p))
+
+
+def is_todo(value):
+    if value is None:
+        return True
+    if not isinstance(value, str):
+        return False
+    return value.strip().upper().startswith('TODO')
 
 GITHUB_TEMPLATE = """name: coop gates
 
@@ -33,7 +55,7 @@ stages:
 {jobs}
 """
 
-def generate_github_sql(repo, path, sql_ver):
+def generate_github_sql(path, sql_ver):
     return f"""  sql-review:
     name: SQL standards (coop-sql-review)
     runs-on: ubuntu-latest
@@ -68,7 +90,7 @@ def generate_github_sql(repo, path, sql_ver):
             coop-sql-review.md
 """
 
-def generate_github_dax(repo, paths, dax_ver):
+def generate_github_dax(paths, dax_ver):
     pstr = " ".join(paths)
     return f"""  dax-review:
     name: DAX / model standards (coop-dax-review)
@@ -122,7 +144,7 @@ def generate_github_docs(doc_ver):
             data-docs-site/
 """
 
-def generate_ado_sql(repo, path, sql_ver):
+def generate_ado_sql(path, sql_ver):
     return f"""      - job: sql_review
         displayName: SQL standards (coop-sql-review)
         steps:
@@ -155,7 +177,7 @@ def generate_ado_sql(repo, path, sql_ver):
               artifact: coop-sql-review-report
 """
 
-def generate_ado_dax(repo, paths, dax_ver):
+def generate_ado_dax(paths, dax_ver):
     pstr = " ".join(paths)
     return f"""      - job: dax_review
         displayName: DAX / model standards (coop-dax-review)
@@ -211,9 +233,6 @@ def generate_ado_docs(doc_ver):
               artifact: coop-data-docs-site
 """
 
-def is_todo(value):
-    return not value or str(value).strip().upper().startswith('TODO')
-
 def get_sql_path(proj_data):
     repos = proj_data.get('repositories', {})
     if not isinstance(repos, dict): return None
@@ -258,19 +277,40 @@ def main():
     except Exception as e:
         sys.stderr.write(f"error reading yamls: {e}\n")
         sys.exit(1)
-    
+
+    if not isinstance(proj_data, dict) or not isinstance(defaults_data, dict):
+        sys.stderr.write("error: project yml and defaults yml must be mappings\n")
+        sys.exit(1)
+
     tested_with = defaults_data.get('tested_with', {})
+    if not isinstance(tested_with, dict):
+        sys.stderr.write("error: defaults.yml tested_with must be a mapping\n")
+        sys.exit(1)
+
     sql_ver = tested_with.get('coop_sql_review', '0.12.0')
     dax_ver = tested_with.get('coop_dax_review', '0.15.0')
     doc_ver = tested_with.get('coop_data_doc', '0.33.0')
 
+    for label, ver in [("coop_sql_review", sql_ver), ("coop_dax_review", dax_ver), ("coop_data_doc", doc_ver)]:
+        if not _valid_version(ver):
+            sys.stderr.write(f"error: {label} version {ver!r} is not a valid semver\n")
+            sys.exit(1)
+
     sql_path = get_sql_path(proj_data)
     pbi_paths = get_pbi_paths(proj_data)
 
+    if sql_path is not None and not _valid_path(sql_path):
+        sys.stderr.write(f"error: sql_path {sql_path!r} contains unsafe characters\n")
+        sys.exit(1)
+    for p in pbi_paths:
+        if not _valid_path(p):
+            sys.stderr.write(f"error: pbi path {p!r} contains unsafe characters\n")
+            sys.exit(1)
+
     jobs = ""
     if ci_type == "github":
-        if sql_path: jobs += generate_github_sql("sql", sql_path, sql_ver)
-        if pbi_paths: jobs += generate_github_dax("pbi", pbi_paths, dax_ver)
+        if sql_path: jobs += generate_github_sql(sql_path, sql_ver)
+        if pbi_paths: jobs += generate_github_dax(pbi_paths, dax_ver)
         if os.path.exists("coop-data-doc.yml"): jobs += generate_github_docs(doc_ver)
         if not jobs:
             sys.stderr.write("error: nothing to generate, missing paths\n")
@@ -278,8 +318,8 @@ def main():
         res = GITHUB_TEMPLATE.format(jobs=jobs.rstrip() + "\n")
         out_file = os.path.join(out_dir, ".github", "workflows", "coop-gates.yml")
     else:
-        if sql_path: jobs += generate_ado_sql("sql", sql_path, sql_ver)
-        if pbi_paths: jobs += generate_ado_dax("pbi", pbi_paths, dax_ver)
+        if sql_path: jobs += generate_ado_sql(sql_path, sql_ver)
+        if pbi_paths: jobs += generate_ado_dax(pbi_paths, dax_ver)
         if os.path.exists("coop-data-doc.yml"): jobs += generate_ado_docs(doc_ver)
         if not jobs:
             sys.stderr.write("error: nothing to generate, missing paths\n")
@@ -288,7 +328,7 @@ def main():
         out_file = os.path.join(out_dir, "azure-pipelines", "coop-gates.yml")
 
     os.makedirs(os.path.dirname(out_file), exist_ok=True)
-    with open(out_file, 'w') as f:
+    with open(out_file, 'w', encoding='utf-8', newline='\n') as f:
         f.write(res)
     print(out_file)
     sys.exit(0)
