@@ -60,7 +60,8 @@ echo %* | findstr /c:"--non-interactive" >nul || (echo MISSING --non-interactive
 echo {"findings":[{"ruleId":"Unneeded columns in tables","severity":"info","object":"Revenue","message":"fake finding"}]}
 exit /b 0
 EOF
-sed -i.bak 's/$/\r/' "$TMP/bin/te.cmd" && rm -f "$TMP/bin/te.cmd.bak"
+# CRLF line endings for cmd.exe — use a temp file so sed stays portable (BSD/macOS).
+sed 's/$/\r/' "$TMP/bin/te.cmd" > "$TMP/bin/te.cmd.crlf" && mv "$TMP/bin/te.cmd.crlf" "$TMP/bin/te.cmd"
 # A legacy TE2 executable must never be touched.
 cat > "$TMP/bin/TabularEditor.exe" <<'EOF'
 #!/usr/bin/env bash

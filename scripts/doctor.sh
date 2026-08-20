@@ -190,7 +190,8 @@ else
 fi
 # Tabular Editor CLI (te — cross-platform; BPA reviews run through `te bpa run`)
 te_path="$(coop_yaml_get "$(coop_find_project_yml)" "tools.tabular_editor_cli.executable_path" "")"
-te_rules="$(coop_yaml_get "$(coop_find_project_yml)" "tools.tabular_editor_cli.bpa_rules_path" "")"
+proj_yml="$(coop_find_project_yml)"
+te_rules="$(coop_yaml_get "$proj_yml" "tools.tabular_editor_cli.bpa_rules_path" "")"
 case "$te_path" in
   ""|TODO*)
     if have te; then
@@ -202,7 +203,7 @@ case "$te_path" in
 esac
 case "$te_rules" in
   ""|TODO*) warn "Tabular Editor BPA rules not configured" "set tools.tabular_editor_cli.bpa_rules_path in .coop/project.yml (optional)" ;;
-  *) if [ -f "$(dirname "$(coop_find_project_yml)")/../$te_rules" ] || [ -f "$te_rules" ]; then ok "Tabular Editor BPA Rules: $te_rules"; else warn "Tabular Editor BPA rules not found: $te_rules"; fi ;;
+  *) if [ -n "$proj_yml" ] && [ -f "$(dirname "$proj_yml")/../$te_rules" ] || [ -f "$te_rules" ]; then ok "Tabular Editor BPA Rules: $te_rules"; else warn "Tabular Editor BPA rules not found: $te_rules"; fi ;;
 esac
 
 section "Pi extensions"

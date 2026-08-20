@@ -1500,7 +1500,7 @@ async function handle(req, res) {
       if (switched) broadcastChats(); // the tab's cwd (label) changed
       // Rebuild the transcript FROM THE FILE (synchronous, high fidelity); fall back to
       // the get_messages backfill only for oversized/corrupt files.
-      if (!backfillFromFile(chat, full)) backfillMessages(chat);
+      if (!backfillFromFile(chat, full)) await backfillMessages(chat);
       res.writeHead(200, baseHeaders("application/json")).end(JSON.stringify({ ok: true }));
       return;
     }

@@ -26,17 +26,18 @@ if (Test-Path -LiteralPath $coopVerFile -PathType Leaf) {
 $env:COOP_VERSION = $script:CoopVersion
 
 # Ensure user tool bins (pipx, Azure CLI) are on PATH in-process
+$script:PathSep = [System.IO.Path]::PathSeparator
 $pipxBin = Join-Path $HOME '.local\bin'
-if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split ';') -notcontains $pipxBin)) {
-  $env:PATH = "$pipxBin;$env:PATH"
+if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split $script:PathSep) -notcontains $pipxBin)) {
+  $env:PATH = "$pipxBin$script:PathSep$env:PATH"
 }
 foreach ($d in (@(
   $(if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'Microsoft SDKs\Azure\CLI2\wbin' }),
   $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'Microsoft SDKs\Azure\CLI2\wbin' }),
   $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\Microsoft\Azure CLI\wbin' })
 ) | Where-Object { $_ })) {
-  if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
-    $env:PATH = "$d;$env:PATH"
+  if ((Test-Path -LiteralPath $d) -and (($env:PATH -split $script:PathSep) -notcontains $d)) {
+    $env:PATH = "$d$script:PathSep$env:PATH"
   }
 }
 
@@ -181,7 +182,7 @@ function Get-CoopPython {
     $c = Get-Command $name -ErrorAction SilentlyContinue
     if (-not $c) { continue }
     if ($c.Source -and $c.Source -match '\\WindowsApps\\') { continue }
-    $v = (& $name --version 2>&1)
+    $v = (& $name --version 2>&1 | ForEach-Object { $_.ToString() }) -join ' '
     if ($v -match '\d+\.\d+') { return $name }
   }
   return $null
