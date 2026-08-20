@@ -37,6 +37,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ado_lib as A  # noqa: E402
+import _yaml  # noqa: E402
 
 
 # --- Prompt helpers ----------------------------------------------------------
@@ -386,22 +387,34 @@ def existing_client(cfg, key=None, org=None, project=None):
 
 def append_block(cfg_path, block):
     """Append a client block, adding the top-level `clients:` header only when the file
-    has no such key yet — keyed on the KEY's presence, not the file's, so a config that
-    already holds only defaults:/sender: doesn't get a dangling, parser-losing list."""
-    import re
+    has no such key yet. Uses YAML parsing for robust detection; falls back to a
+    line-start regex if parsing fails. Writes atomically via temp + os.replace."""
     existing = ""
     if os.path.isfile(cfg_path):
         with open(cfg_path, encoding="utf-8") as f:
             existing = f.read()
-    has_clients_key = bool(re.search(r"(?m)^clients[ \t]*:", existing))
+
+    has_clients_key = False
+    if existing:
+        try:
+            data = _yaml.load(cfg_path)
+            if isinstance(data, dict) and "clients" in data:
+                has_clients_key = True
+        except Exception:
+            import re
+            has_clients_key = bool(re.search(r"(?m)^clients[ \t]*:", existing))
+
     out = existing
     if out and not out.endswith("\n"):
         out += "\n"
     if not has_clients_key:
         out += "clients:\n"
     out += "\n" + block.rstrip() + "\n"
-    with open(cfg_path, "w", encoding="utf-8") as f:
+
+    tmp = cfg_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         f.write(out)
+    os.replace(tmp, cfg_path)
 
 
 def run_smoke(cfg_path, key):
@@ -409,7 +422,9 @@ def run_smoke(cfg_path, key):
     _info("\n--- smoke test: ado-digest --no-state --client %s (dry run, no email) ---" % key)
     env = dict(os.environ, COOP_DEVOPS_CONFIG=cfg_path)
     py = sys.executable or "python3"
-    subprocess.run([py, script, "--client", key, "--no-state", "--format", "md"], env=env)
+    res = subprocess.run([py, script, "--client", key, "--no-state", "--format", "md"], env=env)
+    if res.returncode != 0:
+        _err("smoke test failed for client %r — check output above" % key)
 
 
 def main(argv):
