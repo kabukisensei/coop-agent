@@ -7,6 +7,7 @@
 #   Flags:
 #     --force        Reinstall pi tools / pipx packages even if already present
 #     --no-fabric    Skip installing the Microsoft Fabric CLI (ms-fabric-cli)
+#     --no-prereqs   Skip auto-installing missing system prerequisites
 #     --yes, -y      Assume yes for prompts
 #
 set -uo pipefail
@@ -16,12 +17,13 @@ export COOP_ROOT
 # shellcheck source=../lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
 
-FORCE=0; NO_FABRIC=0
+FORCE=0; NO_FABRIC=0; NO_PREREQS=0
 for a in "$@"; do
   case "$a" in
     '') ;;                                            # ignore blank args (launchers can pass one)
     --force) FORCE=1 ;;
     --no-fabric) NO_FABRIC=1 ;;
+    --no-prereqs) NO_PREREQS=1 ;;
     --yes|-y) export COOP_ASSUME_YES=1 ;;
     *) coop_warn "install: ignoring unknown flag '$a'" ;;
   esac
@@ -152,7 +154,7 @@ trap 'coop_progress_end; _coop_unit_cleanup; exit 130' INT TERM
 coop_head "1/8  Prerequisites"
 
 # Git
-if ! have git; then
+if [ "$NO_PREREQS" != 1 ] && ! have git; then
   if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
     coop_info "installing git via brew…"
     brew install git >/dev/null 2>&1 || true
@@ -167,10 +169,21 @@ fi
 have git && coop_ok "git present ($(git --version 2>/dev/null | head -1))" || coop_warn "git not found — install Git (mac: 'xcode-select --install' or 'brew install git'; linux: your package manager)."
 
 # Python
-if ! coop_python >/dev/null; then
+if [ "$NO_PREREQS" != 1 ] && ! coop_python >/dev/null; then
   if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
     coop_info "installing python via brew…"
-    brew install python@3.12 >/dev/null 2>&1 || brew install python >/dev/null 2>&1 || true
+    # python@3.12/@3.13 are keg-only — brew does NOT link `python3`, and the
+    # unversioned symlinks live in <keg>/libexec/bin, so add that dir to PATH.
+    # (Not the unversioned `python` formula: it is 3.14+, which ms-fabric-cli rejects.)
+    for _pyc in python@3.12 python@3.13; do
+      brew install "$_pyc" >/dev/null 2>&1 || true
+      _pylib="$(brew --prefix "$_pyc" 2>/dev/null)/libexec/bin"
+      if [ -d "$_pylib" ]; then
+        case ":$PATH:" in *":$_pylib:"*) : ;; *) PATH="$_pylib:$PATH" ;; esac
+        break
+      fi
+    done
+    unset _pyc _pylib
   elif have apt-get; then
     coop_info "installing python via apt…"
     (sudo apt-get update -y && sudo apt-get install -y python3 python3-pip python3-venv) >/dev/null 2>&1 || apt-get install -y python3 python3-pip python3-venv >/dev/null 2>&1 || true
@@ -188,7 +201,7 @@ else
 fi
 
 # Node.js
-if ! have node; then
+if [ "$NO_PREREQS" != 1 ] && ! have node; then
   if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
     coop_info "installing node via brew…"
     brew install node >/dev/null 2>&1 || true
@@ -202,10 +215,19 @@ if ! have node; then
   [ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
   hash -r 2>/dev/null || true
 fi
-have node && coop_ok "node present ($(node --version 2>/dev/null || echo '?'))" || coop_warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)."
+if have node; then
+  coop_ok "node present ($(node --version 2>/dev/null || echo '?'))"
+  _nodev="$(node --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  if [ -n "$_nodev" ] && [ "$(printf '%s\n%s\n' '22.19.0' "$_nodev" | sort -V | head -1)" != '22.19.0' ]; then
+    coop_warn "Node $_nodev is older than Pi's requirement (>= 22.19)" "upgrade Node, or pin Pi's legacy build: npm i -g @earendil-works/pi-coding-agent@legacy-node20"
+  fi
+  unset _nodev
+else
+  coop_warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)."
+fi
 
 # Azure CLI (az)
-if ! have az; then
+if [ "$NO_PREREQS" != 1 ] && ! have az; then
   if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
     coop_info "installing azure-cli via brew…"
     brew install azure-cli >/dev/null 2>&1 || true
@@ -220,6 +242,13 @@ if ! have az; then
   hash -r 2>/dev/null || true
 fi
 have az && coop_ok "az present ($(az --version 2>/dev/null | head -1))" || coop_warn "az not found — install Azure CLI from https://learn.microsoft.com/cli/azure (needed for Fabric/Power BI live auth)."
+
+# Tabular Editor CLI (optional / Best Practice Analyzer for Power BI models)
+if have TabularEditor.exe || have TabularEditor; then
+  coop_ok "Tabular Editor CLI present"
+else
+  coop_warn "Tabular Editor CLI not found (optional; Windows-primary for BPA semantic model rules: https://tabulareditor.com)."
+fi
 
 coop_unit "pipx" _unit_pipx
 # Make a just-installed pipx (and the bins pipx will drop tools into) visible to

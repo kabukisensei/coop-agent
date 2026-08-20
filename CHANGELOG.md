@@ -6,10 +6,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Changed
-- `coop install` now automatically installs missing system prerequisites (Git, Python 3.12, Node.js LTS, Azure CLI, and pipx) via `winget` on Windows or `brew`/`apt`/`dnf` on macOS and Linux when package managers are available, and dynamically adds their installation directories to `PATH` for the remainder of the setup.
+- `coop install` gains `--no-prereqs` to skip auto-installing missing system prerequisites (they are still reported).- `coop install` now automatically installs missing system prerequisites and tools (Git, Python 3.12, Node.js LTS, Azure CLI, Tabular Editor 2 CLI via winget on Windows, and pipx) via `winget` on Windows or `brew`/`apt`/`dnf` on macOS and Linux when package managers are available, and dynamically adds their installation directories to `PATH` for the remainder of the setup.
+- `coop doctor` now automatically searches standard installation directories for Tabular Editor on Windows (`C:\Program Files (x86)\Tabular Editor`, etc.) when `tools.tabular_editor_cli.executable_path` is not explicitly pinned in `project.yml`.
 - `coop update` now applies the same tested-version gate it uses for Pi to the pipx tools (`coop-data-doc`, `coop-sql-review`, `coop-dax-review`, `ms-fabric-cli`) and to the injected `fabric-cicd` library: a release crossing the tested MINOR asks before jumping, and declining (or a non-interactive shell without `--yes`) pins that tool to its tested version instead of silently upgrading past it. `coop update --check` now also shows the latest pipx version alongside current/tested.
 
 ### Fixed
+- `scripts/install.sh` installed brew's keg-only `python@3.12` without putting its `libexec/bin` (where the unversioned `python3` symlinks live) on `PATH`, so a fresh macOS install still reported "python not found" and skipped pipx. It now adds the keg bin dir to `PATH` and falls back to `python@3.13` (never the unversioned 3.14+ formula, which `ms-fabric-cli` rejects).
+- `scripts/install.{sh,ps1}` now check the Node version right after auto-installing it — package managers often deliver Node 18/20, which is older than Pi's >= 22.19 requirement — and warn instead of printing a misleading ✓.
+- `scripts/doctor.{sh,ps1}` now warn when Python is older than the coop tools' >= 3.10 requirement (e.g. the 3.9 python3 that ships with macOS Command Line Tools).
+- `scripts/install.ps1` no longer crashes on 32-bit Windows, where `${env:ProgramFiles(x86)}` is unset and `Join-Path` threw.
+- Docs: Azure CLI is marked *optional* again (auto-installed if missing, but coop works without it for local SQL/DAX review), matching `coop doctor`.
 - `tests/workflow.test.mjs` resolved the repo root via `new URL("..", import.meta.url).pathname`, which produces a mangled doubled-drive path on Windows (`D:\D:\a\...`) and crashed the Windows logic-tests CI job. It now uses `fileURLToPath` (same convention as `tests/webbridge.test.mjs`).
 - `skills/custom-visuals/SKILL.md` had an unquoted `: ` in its frontmatter description ("Power BI reports: Deneb…"), which strict YAML parsers reject — skill loading failed with "Nested mappings are not allowed in compact mappings". The description is now quoted, and `scripts/validate-resources.sh` fails the build when a plain-style description contains `: ` so this class of bug can't ship again.
 

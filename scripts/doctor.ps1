@@ -90,6 +90,13 @@ if ($pyBin) {
   $pv = (& $pyBin --version 2>$null | Select-Object -First 1)
   $pm = [regex]::Match([string]$pv, '\d+\.\d+(\.\d+)?')
   D-Ok ('python' + $(if ($pm.Success) { "  ($($pm.Value))" } else { '' }))
+  # The coop tools (coop-data-doc/sql-review/dax-review, ms-fabric-cli) require
+  # >= 3.10 — flag an old python now instead of failing later at pipx install.
+  if ($pm.Success) {
+    $parts = $pm.Value -split '\.'
+    $pyVer = [version]("{0}.{1}.{2}" -f $parts[0], $parts[1], $(if ($parts.Count -ge 3) { $parts[2] } else { '0' }))
+    if ($pyVer -lt [version]'3.10.0') { D-Warn "Python $($pm.Value) is older than the coop tools require (>= 3.10)" 'upgrade Python: https://python.org' }
+  }
 } else {
   D-Bad 'python missing' 'winget install Python.Python.3.12  (or https://python.org), then: coop install. (A Windows Store python stub does not count.)'
 }
@@ -235,8 +242,20 @@ if (Test-Have 'fab') {
 $tePath = Get-CoopYamlValue (Find-CoopProjectYml) 'tools.tabular_editor_cli.executable_path' ''
 $teRules = Get-CoopYamlValue (Find-CoopProjectYml) 'tools.tabular_editor_cli.bpa_rules_path' ''
 if (-not $tePath -or $tePath -like 'TODO*') {
-  if (Test-Have 'TabularEditor.exe') { D-Ok 'Tabular Editor CLI on PATH' }
-  else { D-Warn 'Tabular Editor CLI not configured' 'set tools.tabular_editor_cli.executable_path in .coop/project.yml (optional)' }
+  if ((Test-Have 'TabularEditor.exe') -or (Test-Have 'TabularEditor')) { D-Ok 'Tabular Editor CLI on PATH' }
+  else {
+    $foundTe = $null
+    foreach ($d in @(
+      (Join-Path ${env:ProgramFiles(x86)} 'Tabular Editor\TabularEditor.exe'),
+      (Join-Path $env:ProgramFiles 'Tabular Editor\TabularEditor.exe'),
+      (Join-Path $env:LOCALAPPDATA 'Programs\Tabular Editor\TabularEditor.exe'),
+      (Join-Path $env:ProgramFiles 'Tabular Editor 3\TabularEditor3.exe')
+    )) {
+      if (Test-Path -LiteralPath $d) { $foundTe = $d; break }
+    }
+    if ($foundTe) { D-Ok "Tabular Editor CLI: $foundTe" }
+    else { D-Warn 'Tabular Editor CLI not configured' 'set tools.tabular_editor_cli.executable_path in .coop/project.yml (optional)' }
+  }
 } else {
   if (Test-Path -LiteralPath $tePath) { D-Ok "Tabular Editor CLI: $tePath" }
   else { D-Warn "Tabular Editor CLI path not found: $tePath" }
@@ -384,18 +403,25 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
     if ($LASTEXITCODE -eq 0) { Coop-Ok 'synced extensions / MCP / assets' } else { Coop-Warn 'sync had issues (run: coop sync)' }
   }
   if (Test-Have 'pipx') {
+    if (-not (Test-Have 'fab')) {
+      Coop-Info 'pipx install ms-fabric-cli'
+      & pipx install ms-fabric-cli *> $null
+      if ($LASTEXITCODE -eq 0) {
+        & pipx inject ms-fabric-cli fabric-cicd *> $null
+        Coop-Ok 'ms-fabric-cli installed'
+      } else {
+        Coop-Warn 'could not install ms-fabric-cli (run: pipx install ms-fabric-cli)'
+      }
+    }
     foreach ($t in @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')) {
       if (-not (Test-Have $t)) {
         Coop-Info "pipx install $t"
         & pipx install $t *> $null
-        # $LASTEXITCODE is meaningful only because `pipx` resolved (guarded above);
-        # a missing pipx would be a command-not-found error that *> $null can't
-        # suppress, leaving $LASTEXITCODE stale and a false ✓.
         if ($LASTEXITCODE -eq 0) { Coop-Ok "$t installed" } else { Coop-Warn "could not install $t (run: pipx install $t)" }
       }
     }
   } else {
-    Coop-Warn 'pipx missing — cannot auto-install the Coop tools (install pipx first: see the hint above)'
+    Coop-Warn 'pipx missing — cannot auto-install tools (install pipx first: see the hint above)'
   }
   Coop-Info 'Re-checking... (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)'
   [Console]::Error.WriteLine('')

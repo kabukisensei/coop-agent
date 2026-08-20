@@ -73,13 +73,14 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 
 ## Prerequisites
 
-`coop install` automatically attempts to install missing prerequisites via `winget` (Windows) or `brew`/`apt`/`dnf` (macOS/Linux) when available:
+`coop install` automatically attempts to install missing prerequisites via `winget` (Windows) or `brew`/`apt`/`dnf` (macOS/Linux) when available (opt out with `--no-prereqs`):
 
 - **Node.js 22.19+** (to install/update Pi via `npm`) — https://nodejs.org (auto-installed via `winget` / `brew` / `apt` if missing)
 - **Python 3.10+** — https://python.org (auto-installed via `winget` / `brew` / `apt` if missing)
 - **pipx** (auto-installed by `coop install` via Python `pip`)
 - **git** — https://git-scm.com (auto-installed via `winget` / `brew` / `apt` if missing)
-- **Azure CLI** (`az`) — https://learn.microsoft.com/cli/azure (auto-installed via `winget` / `brew` / `apt` if missing, for Fabric / Power BI authentication)
+- **Azure CLI** (`az`) — *optional* — https://learn.microsoft.com/cli/azure (auto-installed via `winget` / `brew` / `apt` if missing; needed only for Fabric / Power BI live authentication — local SQL/DAX review works without it)
+- **Tabular Editor CLI** — https://tabulareditor.com (auto-installed via `winget` on Windows if missing, for Best Practice Analyzer rules on semantic models)
 
 ---
 
@@ -103,6 +104,7 @@ Useful flags:
 
 - `--force` — reinstall pi tools / pipx packages even if already present
 - `--no-fabric` — skip installing the Microsoft Fabric CLI
+- `--no-prereqs` — skip auto-installing missing system prerequisites (still reports them)
 - `--yes`, `-y` — assume yes for prompts
 
 ### Windows

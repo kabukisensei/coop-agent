@@ -8,6 +8,7 @@
 #   Flags:
 #     --force        Reinstall pi tools / pipx packages even if already present
 #     --no-fabric    Skip installing the Microsoft Fabric CLI (ms-fabric-cli)
+#     --no-prereqs   Skip auto-installing missing system prerequisites
 #     --yes, -y      Assume yes for prompts
 #
 $ErrorActionPreference = 'Continue'
@@ -36,6 +37,18 @@ function Add-CoopUserPaths {
       }
     }
   }
+  # Tabular Editor standard directories on Windows
+  foreach ($d in @(
+    (Join-Path ${env:ProgramFiles(x86)} 'Tabular Editor'),
+    (Join-Path $env:ProgramFiles 'Tabular Editor'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\Tabular Editor'),
+    (Join-Path $env:ProgramFiles 'Tabular Editor 3'),
+    (Join-Path ${env:ProgramFiles(x86)} 'Tabular Editor 3')
+  )) {
+    if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
+      $env:PATH = "$d;$env:PATH"
+    }
+  }
 }
 function Add-CoopNpmPath {
   if (-not (Test-Have 'npm')) { return }
@@ -50,12 +63,13 @@ function Add-CoopNpmPath {
 }
 
 # --- Parse flags -------------------------------------------------------------
-$FORCE = $false; $NO_FABRIC = $false
+$FORCE = $false; $NO_FABRIC = $false; $NO_PREREQS = $false
 foreach ($a in $args) {
   switch -CaseSensitive ($a) {
-    '--force'     { $FORCE = $true }
-    '--no-fabric' { $NO_FABRIC = $true }
-    '--yes'       { $env:COOP_ASSUME_YES = '1' }
+    '--force'      { $FORCE = $true }
+    '--no-fabric'  { $NO_FABRIC = $true }
+    '--no-prereqs' { $NO_PREREQS = $true }
+    '--yes'        { $env:COOP_ASSUME_YES = '1' }
     '-y'          { $env:COOP_ASSUME_YES = '1' }
     default       { if (-not [string]::IsNullOrWhiteSpace($a)) { Coop-Warn "install: ignoring unknown flag '$a'" } }
   }
@@ -135,12 +149,43 @@ $UnitExt = {
 
 $UnitFabric = {
   param([bool]$Force, [string]$Pkg)
-  if (-not (Get-Command pipx -ErrorAction SilentlyContinue)) { return [pscustomobject]@{ ok = $false; msg = 'skipping Fabric CLI (pipx missing)' } }
-  if ($Force) { & pipx install --force $Pkg *> $null }
-  else { & pipx install $Pkg *> $null; if ($LASTEXITCODE -ne 0) { & pipx upgrade $Pkg *> $null } }
+  $pipxBin = Join-Path $HOME '.local\bin'
+  if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split ';') -notcontains $pipxBin)) {
+    $env:PATH = "$pipxBin;$env:PATH"
+  }
+  $runPipx = {
+    param([string[]]$PipxArgs)
+    if (Get-Command pipx -ErrorAction SilentlyContinue) {
+      & pipx @PipxArgs *> $null
+      return $LASTEXITCODE
+    }
+    foreach ($name in @('python3', 'python')) {
+      $c = Get-Command $name -ErrorAction SilentlyContinue
+      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
+      & $name -m pipx @PipxArgs *> $null
+      return $LASTEXITCODE
+    }
+    return 1
+  }
+
+  $hasPipx = (Get-Command pipx -ErrorAction SilentlyContinue)
+  if (-not $hasPipx) {
+    foreach ($name in @('python3', 'python')) {
+      $c = Get-Command $name -ErrorAction SilentlyContinue
+      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
+      & $name -m pipx --version *> $null
+      if ($LASTEXITCODE -eq 0) { $hasPipx = $true; break }
+    }
+  }
+  if (-not $hasPipx) { return [pscustomobject]@{ ok = $false; msg = 'skipping Fabric CLI (pipx missing)' } }
+
+  if ($Force) { & $runPipx @('install', '--force', $Pkg) }
+  else {
+    & $runPipx @('install', $Pkg)
+    if ($LASTEXITCODE -ne 0) { & $runPipx @('upgrade', $Pkg) }
+  }
   # fabric-cicd is a Python LIBRARY (no CLI) — inject it into the Fabric CLI env.
-  # (doctor verifies it separately; we don't claim success here unless `fab` works.)
-  & pipx inject $Pkg fabric-cicd *> $null
+  & $runPipx @('inject', $Pkg, 'fabric-cicd')
   if (Get-Command fab -ErrorAction SilentlyContinue) {
     $fv = ((& fab --version 2>&1) -join ' ')
     if ($fv -match '(?i)paramiko|invoke') {
@@ -149,21 +194,55 @@ $UnitFabric = {
     $v = (& fab --version 2>$null | Select-Object -First 1)
     return [pscustomobject]@{ ok = $true; msg = "Microsoft Fabric CLI ready ($v)" }
   }
+  $localFab = Join-Path $HOME '.local\bin\fab.exe'
+  if (Test-Path -LiteralPath $localFab) {
+    $v = (& $localFab --version 2>$null | Select-Object -First 1)
+    return [pscustomobject]@{ ok = $true; msg = "Microsoft Fabric CLI ready ($v)" }
+  }
   return [pscustomobject]@{ ok = $false; msg = "ms-fabric-cli installed but 'fab' not on PATH yet — open a new shell" }
 }
 
 $UnitPytool = {
   param([bool]$Force, [string]$Pkg)
-  if (-not (Get-Command pipx -ErrorAction SilentlyContinue)) { return [pscustomobject]@{ ok = $false; msg = "skipping $Pkg (pipx missing)" } }
+  $pipxBin = Join-Path $HOME '.local\bin'
+  if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split ';') -notcontains $pipxBin)) {
+    $env:PATH = "$pipxBin;$env:PATH"
+  }
+  $runPipx = {
+    param([string[]]$PipxArgs)
+    if (Get-Command pipx -ErrorAction SilentlyContinue) {
+      & pipx @PipxArgs *> $null
+      return $LASTEXITCODE
+    }
+    foreach ($name in @('python3', 'python')) {
+      $c = Get-Command $name -ErrorAction SilentlyContinue
+      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
+      & $name -m pipx @PipxArgs *> $null
+      return $LASTEXITCODE
+    }
+    return 1
+  }
+
+  $hasPipx = (Get-Command pipx -ErrorAction SilentlyContinue)
+  if (-not $hasPipx) {
+    foreach ($name in @('python3', 'python')) {
+      $c = Get-Command $name -ErrorAction SilentlyContinue
+      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
+      & $name -m pipx --version *> $null
+      if ($LASTEXITCODE -eq 0) { $hasPipx = $true; break }
+    }
+  }
+  if (-not $hasPipx) { return [pscustomobject]@{ ok = $false; msg = "skipping $Pkg (pipx missing)" } }
+
   if ($Force) {
-    & pipx install --force $Pkg *> $null
-    if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = $Pkg } }
+    $rc = & $runPipx @('install', '--force', $Pkg)
+    if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = $Pkg } }
     return [pscustomobject]@{ ok = $false; msg = "failed: $Pkg" }
   }
-  & pipx install $Pkg *> $null
-  if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg (installed)" } }
-  & pipx upgrade $Pkg *> $null
-  if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg (up to date)" } }
+  $rc = & $runPipx @('install', $Pkg)
+  if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg (installed)" } }
+  $rc = & $runPipx @('upgrade', $Pkg)
+  if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg (up to date)" } }
   return [pscustomobject]@{ ok = $false; msg = "could not install $Pkg" }
 }
 
@@ -199,16 +278,16 @@ try {
   Coop-Head '1/8  Prerequisites'
 
   # Git
-  if (-not (Test-Have 'git')) {
+  if ((-not (Test-Have 'git')) -and (-not $NO_PREREQS)) {
     if (Get-Command winget -ErrorAction SilentlyContinue) {
       Coop-Info 'installing git via winget…'
       & winget install --id Git.Git -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
-      foreach ($d in @(
+      foreach ($d in (@(
         (Join-Path $env:ProgramFiles 'Git\cmd'),
         (Join-Path $env:ProgramFiles 'Git\bin'),
-        (Join-Path ${env:ProgramFiles(x86)} 'Git\cmd'),
+        $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'Git\cmd' }),
         (Join-Path $env:LOCALAPPDATA 'Programs\Git\cmd')
-      )) {
+      ) | Where-Object { $_ })) {
         if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
           $env:PATH = "$d;$env:PATH"
         }
@@ -223,7 +302,7 @@ try {
   }
 
   # Python
-  if (-not (Get-CoopPython)) {
+  if ((-not (Get-CoopPython)) -and (-not $NO_PREREQS)) {
     if (Get-Command winget -ErrorAction SilentlyContinue) {
       Coop-Info 'installing Python 3.12 via winget…'
       & winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
@@ -252,15 +331,15 @@ try {
   }
 
   # Node.js
-  if (-not (Test-Have 'node')) {
+  if ((-not (Test-Have 'node')) -and (-not $NO_PREREQS)) {
     if (Get-Command winget -ErrorAction SilentlyContinue) {
       Coop-Info 'installing Node.js LTS via winget…'
       & winget install --id OpenJS.NodeJS.LTS -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
-      foreach ($d in @(
+      foreach ($d in (@(
         (Join-Path $env:ProgramFiles 'nodejs'),
-        (Join-Path ${env:ProgramFiles(x86)} 'nodejs'),
+        $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'nodejs' }),
         (Join-Path $env:LOCALAPPDATA 'Programs\nodejs')
-      )) {
+      ) | Where-Object { $_ })) {
         if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
           $env:PATH = "$d;$env:PATH"
         }
@@ -270,20 +349,24 @@ try {
   if (Test-Have 'node') {
     $nv = (& node --version 2>$null | Select-Object -First 1)
     Coop-Ok "node present ($nv)"
+    if ($nv -match '(\d+)\.(\d+)\.(\d+)') {
+      $nver = [version]("{0}.{1}.{2}" -f $matches[1], $matches[2], $matches[3])
+      if ($nver -lt [version]'22.19.0') { Coop-Warn "Node $nver is older than Pi's requirement (>= 22.19)" "upgrade Node, or pin Pi's legacy build: npm i -g @earendil-works/pi-coding-agent@legacy-node20" }
+    }
   } else {
     Coop-Warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)."
   }
 
   # Azure CLI (az)
-  if (-not (Test-Have 'az')) {
+  if ((-not (Test-Have 'az')) -and (-not $NO_PREREQS)) {
     if (Get-Command winget -ErrorAction SilentlyContinue) {
       Coop-Info 'installing Azure CLI via winget…'
       & winget install --id Microsoft.AzureCLI -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
-      foreach ($d in @(
+      foreach ($d in (@(
         (Join-Path $env:ProgramFiles 'Microsoft SDKs\Azure\CLI2\wbin'),
-        (Join-Path ${env:ProgramFiles(x86)} 'Microsoft SDKs\Azure\CLI2\wbin'),
+        $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'Microsoft SDKs\Azure\CLI2\wbin' }),
         (Join-Path $env:LOCALAPPDATA 'Programs\Microsoft\Azure CLI\wbin')
-      )) {
+      ) | Where-Object { $_ })) {
         if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
           $env:PATH = "$d;$env:PATH"
         }
@@ -295,6 +378,23 @@ try {
     Coop-Ok "az present ($azv)"
   } else {
     Coop-Warn "az not found — install Azure CLI from https://learn.microsoft.com/cli/azure (or 'winget install Microsoft.AzureCLI')."
+  }
+
+  # Tabular Editor CLI (optional / Best Practice Analyzer for Power BI models)
+  if (-not (Test-Have 'TabularEditor.exe') -and -not (Test-Have 'TabularEditor')) {
+    Add-CoopUserPaths
+  }
+  if (-not (Test-Have 'TabularEditor.exe') -and -not (Test-Have 'TabularEditor')) {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+      Coop-Info 'installing Tabular Editor 2 via winget…'
+      & winget install --id TabularEditor.TabularEditor.2 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
+      Add-CoopUserPaths
+    }
+  }
+  if ((Test-Have 'TabularEditor.exe') -or (Test-Have 'TabularEditor')) {
+    Coop-Ok 'Tabular Editor CLI present'
+  } else {
+    Coop-Warn "Tabular Editor CLI not found (optional; install Tabular Editor 2 from https://tabulareditor.com or 'winget install TabularEditor.TabularEditor.2')."
   }
 
   Coop-Unit 'pipx' $UnitPipx

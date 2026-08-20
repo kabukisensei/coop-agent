@@ -25,6 +25,26 @@ if (Test-Path -LiteralPath $coopVerFile -PathType Leaf) {
 }
 $env:COOP_VERSION = $script:CoopVersion
 
+# Ensure user tool bins (pipx, Tabular Editor, Azure CLI) are on PATH in-process
+$pipxBin = Join-Path $HOME '.local\bin'
+if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split ';') -notcontains $pipxBin)) {
+  $env:PATH = "$pipxBin;$env:PATH"
+}
+foreach ($d in @(
+  (Join-Path ${env:ProgramFiles(x86)} 'Tabular Editor'),
+  (Join-Path $env:ProgramFiles 'Tabular Editor'),
+  (Join-Path $env:LOCALAPPDATA 'Programs\Tabular Editor'),
+  (Join-Path $env:ProgramFiles 'Tabular Editor 3'),
+  (Join-Path ${env:ProgramFiles(x86)} 'Tabular Editor 3'),
+  (Join-Path $env:ProgramFiles 'Microsoft SDKs\Azure\CLI2\wbin'),
+  (Join-Path ${env:ProgramFiles(x86)} 'Microsoft SDKs\Azure\CLI2\wbin'),
+  (Join-Path $env:LOCALAPPDATA 'Programs\Microsoft\Azure CLI\wbin')
+)) {
+  if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
+    $env:PATH = "$d;$env:PATH"
+  }
+}
+
 # --- Colors (respect NO_COLOR and non-TTY) -----------------------------------
 # Cooptimize brand palette (truecolor). Folds "is stderr a real console" in, so
 # redirected output gets plain text — mirror of common.sh's [ -t 2 ] check.

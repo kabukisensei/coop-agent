@@ -76,6 +76,12 @@ if have python3; then _pybin=python3; elif have python; then _pybin=python; else
 if [ -n "$_pybin" ]; then
   _pyver="$("$_pybin" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
   ok "python${_pyver:+  ($_pyver)}"
+  # The coop tools (coop-data-doc/sql-review/dax-review, ms-fabric-cli) require
+  # >= 3.10 — macOS CLT ships a 3.9 python3 that passes the presence check above
+  # but fails every pipx install later. Flag it now, like the Node gate below.
+  if [ -n "$_pyver" ] && [ "$(printf '%s\n%s\n' '3.10.0' "$_pyver" | sort -V | head -1)" != '3.10.0' ]; then
+    warn "Python $_pyver is older than the coop tools require (>= 3.10)" "upgrade Python: https://python.org"
+  fi
 else
   bad "python missing" "install Python 3.10+ from https://python.org"
 fi
@@ -186,7 +192,7 @@ fi
 te_path="$(coop_yaml_get "$(coop_find_project_yml)" "tools.tabular_editor_cli.executable_path" "")"
 te_rules="$(coop_yaml_get "$(coop_find_project_yml)" "tools.tabular_editor_cli.bpa_rules_path" "")"
 case "$te_path" in
-  ""|TODO*) if have TabularEditor.exe; then ok "Tabular Editor CLI on PATH"; else warn "Tabular Editor CLI not configured" "set tools.tabular_editor_cli.executable_path in .coop/project.yml (optional)"; fi ;;
+  ""|TODO*) if have TabularEditor.exe || have TabularEditor; then ok "Tabular Editor CLI on PATH"; else warn "Tabular Editor CLI not configured" "set tools.tabular_editor_cli.executable_path in .coop/project.yml (optional)"; fi ;;
   *) if [ -x "$te_path" ] || [ -f "$te_path" ]; then ok "Tabular Editor CLI: $te_path"; else warn "Tabular Editor CLI path not found: $te_path"; fi ;;
 esac
 case "$te_rules" in
@@ -302,12 +308,23 @@ if [ "$FIX" = 1 ] && { [ "$FAIL" -gt 0 ] || [ "$WARN" -gt 0 ]; }; then
   if [ -f "$COOP_ROOT/scripts/sync.sh" ]; then
     "$COOP_ROOT/scripts/sync.sh" >/dev/null 2>&1 && coop_ok "synced extensions / MCP / assets" || coop_warn "sync had issues (run: coop sync)"
   fi
-  for t in coop-data-doc coop-sql-review coop-dax-review; do
-    if ! have "$t"; then
-      coop_info "pipx install $t"
-      pipx install "$t" >/dev/null 2>&1 && coop_ok "$t installed" || coop_warn "could not install $t (run: pipx install $t)"
+  if have pipx; then
+    if ! have fab; then
+      coop_info "pipx install ms-fabric-cli"
+      if pipx install ms-fabric-cli >/dev/null 2>&1; then
+        pipx inject ms-fabric-cli fabric-cicd >/dev/null 2>&1 || true
+        coop_ok "ms-fabric-cli installed"
+      else
+        coop_warn "could not install ms-fabric-cli (run: pipx install ms-fabric-cli)"
+      fi
     fi
-  done
+    for t in coop-data-doc coop-sql-review coop-dax-review; do
+      if ! have "$t"; then
+        coop_info "pipx install $t"
+        pipx install "$t" >/dev/null 2>&1 && coop_ok "$t installed" || coop_warn "could not install $t (run: pipx install $t)"
+      fi
+    done
+  fi
   coop_info "Re-checking… (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)"
   echo >&2
   # Propagate --json/--publish so the re-check emits the machine-readable document.

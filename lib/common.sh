@@ -23,6 +23,11 @@ export COOP_ROOT
 COOP_VERSION="$(cat "$COOP_ROOT/VERSION" 2>/dev/null || echo "0.0.0")"
 export COOP_VERSION
 
+# Ensure user tool bins (pipx, Homebrew, standard local bins) are on PATH in-process
+[ -d "$HOME/.local/bin" ] && case ":$PATH:" in *":$HOME/.local/bin:"*) : ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
+[ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
+[ -d "/usr/local/bin" ] && case ":$PATH:" in *":/usr/local/bin:"*) : ;; *) PATH="/usr/local/bin:$PATH" ;; esac
+
 # --- Colors (respect NO_COLOR and non-TTY) -----------------------------------
 if [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != "dumb" ]; then
   # Cooptimize brand palette (256-ish approximations of the truecolor brand).

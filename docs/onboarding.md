@@ -10,12 +10,13 @@ work **with you** before anything ships.
 
 ## 1. Prerequisites
 
-`coop install` automatically attempts to install missing prerequisites via `winget` (Windows) or `brew`/`apt`/`dnf` (macOS/Linux) if they are not already on your system:
+`coop install` automatically attempts to install missing prerequisites via `winget` (Windows) or `brew`/`apt`/`dnf` (macOS/Linux) if they are not already on your system (opt out with `coop install --no-prereqs`):
 
 - **Node.js 22.19+** — https://nodejs.org (auto-installed via `winget` / `brew` / `apt` if missing)
 - **Python 3.10+** — https://python.org (auto-installed via `winget` / `brew` / `apt` if missing)
 - **git** — https://git-scm.com (auto-installed via `winget` / `brew` / `apt` if missing)
-- **Azure CLI** (`az`) — https://learn.microsoft.com/cli/azure (auto-installed via `winget` / `brew` / `apt` if missing, for Fabric / Power BI live access)
+- **Azure CLI** (`az`) — *optional* — https://learn.microsoft.com/cli/azure (auto-installed via `winget` / `brew` / `apt` if missing; needed only for Fabric / Power BI live access — local SQL/DAX review works without it)
+- **Tabular Editor CLI** — https://tabulareditor.com (auto-installed via `winget` on Windows if missing, for Best Practice Analyzer rules on semantic models)
 - **pipx** — auto-installed via Python `pip` during bootstrap
 
 ## 2. Install
