@@ -14,6 +14,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -21,6 +22,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 import ado_lib as A  # reusing GraphMailer
 import _yaml
+
+def _esc_html(s):
+    if s is None: return ""
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+def _esc_md(s):
+    if s is None: return ""
+    return str(s).replace("|", "\\|")
 
 def _days_since(iso, now):
     if not iso: return None
@@ -120,6 +129,9 @@ def _render_md(machines, now, tested_with):
     lines.append("|---------|------|--------------:|----------|----------|----------|")
 
     for m in machines:
+        cv = m.get("coop_version", "unknown")
+        pv = m.get("pi_version", "unknown")
+
         days = _days_since(m.get("timestamp"), now)
         days_str = f"{days}d ago" if days is not None else "unknown"
         if days is not None and days > 7:
@@ -128,23 +140,19 @@ def _render_md(machines, now, tested_with):
         fail_count = m.get("fail", 0)
         warn_count = m.get("warn", 0)
 
-        fails = [c["name"] for c in m.get("checks", []) if c.get("status") == "fail"]
-        warns = [c["name"] for c in m.get("checks", []) if c.get("status") == "warn"]
+        fails = [_esc_md(c["name"]) for c in m.get("checks", []) if c.get("status") == "fail"]
+        warns = [_esc_md(c["name"]) for c in m.get("checks", []) if c.get("status") == "warn"]
 
         f_str = f"**{fail_count}** ({', '.join(fails)})" if fail_count else "0"
         w_str = f"{warn_count} ({', '.join(warns)})" if warn_count else "0"
 
-        cv = m.get("coop_version", "unknown")
-        pv = m.get("pi_version", "unknown")
-        
         pv_expected = tested_with.get("pi")
         if pv_expected and pv != "unknown" and pv != pv_expected:
-            pv_str = f"{pv} (⚠ != {pv_expected})"
+            pv_str = f"{_esc_md(pv)} (⚠ != {_esc_md(pv_expected)})"
         else:
-            pv_str = pv
-            
-        # extract tool versions from check names: "coop-data-doc  (0.33.0)"
-        import re
+            pv_str = _esc_md(pv)
+
+        # extract tool versions from check names: "coop-data-doc (0.33.0)"
         tool_mismatches = []
         for chk in m.get("checks", []):
             name = chk.get("name", "")
@@ -156,19 +164,19 @@ def _render_md(machines, now, tested_with):
                 tw_key = tool_bin.replace("-", "_")
                 if tool_bin == "fab": tw_key = "ms_fabric_cli"
                 if tw_key in tested_with and tool_ver != tested_with[tw_key]:
-                    tool_mismatches.append(f"{tool_bin} {tool_ver} (⚠ != {tested_with[tw_key]})")
-        
+                    tool_mismatches.append(f"{_esc_md(tool_bin)} {_esc_md(tool_ver)} (⚠ != {_esc_md(tested_with[tw_key])})")
+
         if tool_mismatches:
-            pv_str += "<br>" + "<br>".join(tool_mismatches)
-        
-        lines.append(f"| {m.get('hostname', 'unknown')} | {m.get('user', 'unknown')} | {days_str} | {f_str} | {w_str} | coop {cv}, pi {pv_str} |")
+            pv_str += "; " + "; ".join(tool_mismatches)
+
+        lines.append(f"| {_esc_md(m.get('hostname', 'unknown'))} | {_esc_md(m.get('user', 'unknown'))} | {_esc_md(days_str)} | {f_str} | {w_str} | coop {_esc_md(cv)}, pi {pv_str} |")
 
     return "\n".join(lines)
 
 def _render_html(machines, now, tested_with):
     css_td = 'style="padding:4px 8px;border:1px solid #d0d7de;font-family:Segoe UI,Arial,sans-serif;font-size:13px"'
     css_th = 'style="padding:4px 8px;border:1px solid #d0d7de;background:#00416b;color:#fff;font-family:Segoe UI,Arial,sans-serif;font-size:13px;text-align:left"'
-    
+
     html = ['<div style="font-family:Segoe UI,Arial,sans-serif;color:#24292f">']
     html.append('<h2 style="color:#00416b;margin:0 0 4px">Fleet Health Digest</h2>')
     html.append(f'<div style="color:#57606a;font-size:12px;margin-bottom:12px">Generated {now.strftime("%Y-%m-%d %H:%M UTC")}</div>')
@@ -177,6 +185,9 @@ def _render_html(machines, now, tested_with):
     html.append(f'<tr><th {css_th}>Machine</th><th {css_th}>User</th><th {css_th}>Last Check-in</th><th {css_th}>Failures</th><th {css_th}>Warnings</th><th {css_th}>Versions</th></tr>')
 
     for m in machines:
+        cv = m.get("coop_version", "unknown")
+        pv = m.get("pi_version", "unknown")
+
         days = _days_since(m.get("timestamp"), now)
         days_str = f"{days}d ago" if days is not None else "unknown"
         if days is not None and days > 7:
@@ -185,19 +196,18 @@ def _render_html(machines, now, tested_with):
         fail_count = m.get("fail", 0)
         warn_count = m.get("warn", 0)
 
-        fails = [c["name"] for c in m.get("checks", []) if c.get("status") == "fail"]
-        warns = [c["name"] for c in m.get("checks", []) if c.get("status") == "warn"]
+        fails = [_esc_html(c["name"]) for c in m.get("checks", []) if c.get("status") == "fail"]
+        warns = [_esc_html(c["name"]) for c in m.get("checks", []) if c.get("status") == "warn"]
 
-        f_str = f'<b style="color:#cf222e">{fail_count}</b><br><small>{", ".join(fails)}</small>' if fail_count else "0"
-        w_str = f'<span style="color:#b26a00">{warn_count}</span><br><small>{", ".join(warns)}</small>' if warn_count else "0"
+        f_str = f'<b style="color:#cf222e">{fail_count}</b><br><small>{"<br>".join(fails)}</small>' if fail_count else "0"
+        w_str = f'<span style="color:#b26a00">{warn_count}</span><br><small>{"<br>".join(warns)}</small>' if warn_count else "0"
 
         pv_expected = tested_with.get("pi")
         if pv_expected and pv != "unknown" and pv != pv_expected:
-            pv_str = f'{pv} <b style="color:#cf222e">(⚠ != {pv_expected})</b>'
+            pv_str = f'{_esc_html(pv)} <b style="color:#cf222e">(⚠ != {_esc_html(pv_expected)})</b>'
         else:
-            pv_str = pv
+            pv_str = _esc_html(pv)
 
-        import re
         tool_mismatches = []
         for chk in m.get("checks", []):
             name = chk.get("name", "")
@@ -209,12 +219,12 @@ def _render_html(machines, now, tested_with):
                 # fabric CLI pipx package is ms-fabric-cli but command is fab
                 if tool_bin == "fab": tw_key = "ms_fabric_cli"
                 if tw_key in tested_with and tool_ver != tested_with[tw_key]:
-                    tool_mismatches.append(f'{tool_bin} {tool_ver} <b style="color:#b26a00">(⚠ != {tested_with[tw_key]})</b>')
+                    tool_mismatches.append(f'{_esc_html(tool_bin)} {_esc_html(tool_ver)} <b style="color:#b26a00">(⚠ != {_esc_html(tested_with[tw_key])})</b>')
 
         if tool_mismatches:
             pv_str += "<br>" + "<br>".join(tool_mismatches)
 
-        html.append(f'<tr><td {css_td}>{m.get("hostname", "unknown")}</td><td {css_td}>{m.get("user", "unknown")}</td><td {css_td}>{days_str}</td><td {css_td}>{f_str}</td><td {css_td}>{w_str}</td><td {css_td}>coop {cv}<br>pi {pv_str}</td></tr>')
+        html.append(f'<tr><td {css_td}>{_esc_html(m.get("hostname", "unknown"))}</td><td {css_td}>{_esc_html(m.get("user", "unknown"))}</td><td {css_td}>{_esc_html(days_str)}</td><td {css_td}>{f_str}</td><td {css_td}>{w_str}</td><td {css_td}>coop {_esc_html(cv)}<br>pi {pv_str}</td></tr>')
 
     html.append('</table></div>')
     return "".join(html)
