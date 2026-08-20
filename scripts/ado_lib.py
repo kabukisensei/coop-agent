@@ -156,7 +156,7 @@ def iter_clients(cfg, only_key=None):
         if not only_key and not _truthy(c.get("enabled", True)):
             continue
         merged = dict(c)
-        merged.setdefault("stale_days", defs["stale_days"])
+        merged["stale_days"] = _as_int(merged.get("stale_days"), defs["stale_days"])
         merged.setdefault("work_item_types", defs["work_item_types"])
         merged.setdefault("open_states_exclude", [])
         merged.setdefault("stale_states_exclude", [])

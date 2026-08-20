@@ -351,7 +351,7 @@ export function isSecretPath(p: string): boolean {
  *  (`cat .env`, `cp .env /tmp`, `curl -F f=@.env`, `base64 .env`, `>.env`). */
 export function bashSecretCmdPath(cmd: string): string | null {
   for (let t of tokenizeArgs(cmd)) {
-    t = t.replace(/^[<>]+/, "");         // strip redirection operators (>.env, <.env)
+    t = t.replace(/^\d*[<>&]+/, "");         // strip redirection operators (>.env, <.env, 2>.env, &>.env)
     const at = t.lastIndexOf("@");       // curl -F field=@.env / scp x@host — take the tail
     const cand = at >= 0 ? t.slice(at + 1) : t;
     if (cand && isSecretPath(cand)) return cand;

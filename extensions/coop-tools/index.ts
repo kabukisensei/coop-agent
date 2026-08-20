@@ -462,9 +462,9 @@ export function contractTeConfig(text: string): TeConfig {
     if (indent <= 2 && inTe && !body.startsWith("tabular_editor_cli:")) inTe = false;
 
     if (inTe) {
-      if (body.startsWith("enabled:")) enabled = scalarValue(body.slice(8)) === "true";
-      if (body.startsWith("executable_path:")) exe = scalarValue(body.slice(16));
-      if (body.startsWith("bpa_rules_path:")) rules = scalarValue(body.slice(15));
+      if (body.startsWith("enabled:")) enabled = scalarValue(body.slice(body.indexOf(":") + 1)) === "true";
+      if (body.startsWith("executable_path:")) exe = scalarValue(body.slice(body.indexOf(":") + 1));
+      if (body.startsWith("bpa_rules_path:")) rules = scalarValue(body.slice(body.indexOf(":") + 1));
     }
 
     if (indent === 0 && body.startsWith("power_bi:")) { inPbi = true; continue; }

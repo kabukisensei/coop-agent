@@ -239,8 +239,9 @@ if (Test-Have 'fab') {
   D-Warn 'fabric-cicd: install the Microsoft Fabric CLI first' 'coop install'
 }
 # Tabular Editor CLI is path-configured and mostly Windows; check the project's path if set.
-$tePath = Get-CoopYamlValue (Find-CoopProjectYml) 'tools.tabular_editor_cli.executable_path' ''
-$teRules = Get-CoopYamlValue (Find-CoopProjectYml) 'tools.tabular_editor_cli.bpa_rules_path' ''
+$projYml = Find-CoopProjectYml
+$tePath = Get-CoopYamlValue $projYml 'tools.tabular_editor_cli.executable_path' ''
+$teRules = Get-CoopYamlValue $projYml 'tools.tabular_editor_cli.bpa_rules_path' ''
 if (-not $tePath -or $tePath -like 'TODO*') {
   if (Test-Have 'te') {
     $tev = (& te --version 2>$null | Select-Object -First 1)
@@ -263,9 +264,8 @@ if (-not $tePath -or $tePath -like 'TODO*') {
 if (-not $teRules -or $teRules -like 'TODO*') {
   D-Warn 'Tabular Editor BPA rules not configured' 'set tools.tabular_editor_cli.bpa_rules_path in .coop/project.yml (optional)'
 } else {
-  $projYml = Find-CoopProjectYml
-  $resolvedRules = Join-Path (Split-Path -Parent (Split-Path -Parent $projYml)) $teRules
-  if ((Test-Path -LiteralPath $resolvedRules) -or (Test-Path -LiteralPath $teRules)) { D-Ok "Tabular Editor BPA Rules: $teRules" }
+  $resolvedRules = if ($projYml) { Join-Path (Split-Path -Parent (Split-Path -Parent $projYml)) $teRules } else { $null }
+  if (($resolvedRules -and (Test-Path -LiteralPath $resolvedRules)) -or (Test-Path -LiteralPath $teRules)) { D-Ok "Tabular Editor BPA Rules: $teRules" }
   else { D-Warn "Tabular Editor BPA rules not found: $teRules" }
 }
 

@@ -188,8 +188,10 @@ def _installed_version(node_modules, pkg):
 def _write_json(path, data):
     # Deterministic: 2-space indent, preserve key order, trailing newline, LF.
     text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
+    os.replace(tmp, path)
 
 
 def align(agent_dir, version, check=False):

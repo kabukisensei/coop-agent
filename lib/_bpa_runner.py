@@ -1,3 +1,4 @@
+import shutil
 import sys, os, subprocess, json, re
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -71,13 +72,30 @@ def _run_bpa(te_exe, model, rules):
         cmd = [te_exe, "bpa", "run", model, "-r", rules, "--non-interactive"] + extra
         try:
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        except Exception:
-            return [], last_rc
+        except subprocess.TimeoutExpired:
+            sys.stderr.write(f"bpa run timed out after 600s: {model}\n")
+            return [], 124
+        except OSError as e:
+            sys.stderr.write(f"bpa run failed to execute {te_exe}: {e}\n")
+            return [], 127
         last_rc = res.returncode
         findings = _extract_findings(res.stdout or "")
         if findings or last_rc == 0:
+            if last_rc != 0:
+                sys.stderr.write(res.stderr or "")
             return findings, last_rc
     return [], last_rc
+
+
+def _write_json_atomic(path, data):
+    """Write JSON atomically: temp file in the same dir, then os.replace."""
+    out_dir = os.path.dirname(os.path.abspath(path))
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
 
 
 def main():
@@ -91,7 +109,6 @@ def main():
     if not cfg:
         sys.exit(0)
 
-    import shutil
     te = _yaml.dig(cfg, "tools.tabular_editor_cli") or {}
     te_enabled = str(te.get("enabled", "")).lower() == "true"
     te_exe = te.get("executable_path", "")
@@ -140,8 +157,7 @@ def main():
 
     report = {"tool": "bpa-review", "findings": all_findings, "summary": summary}
 
-    with open(out_json, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
+    _write_json_atomic(out_json, report)
     sys.exit(final_code)
 
 
