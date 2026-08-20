@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.22.1] — 2026-08-20
+
 ### Changed
 - `coop install` gains `--no-prereqs` to skip auto-installing missing system prerequisites (they are still reported).
 - `coop install` now automatically installs missing system prerequisites (Git, Python 3.12, Node.js LTS, Azure CLI, and pipx) via `winget` on Windows or `brew`/`apt`/`dnf` on macOS and Linux when package managers are available, dynamically adds their installation directories to `PATH` for the remainder of the setup, and checks for the cross-platform Tabular Editor CLI (`te`).
