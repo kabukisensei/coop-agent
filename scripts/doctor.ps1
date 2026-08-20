@@ -245,20 +245,16 @@ if (-not $tePath -or $tePath -like 'TODO*') {
   if (Test-Have 'te') {
     $tev = (& te --version 2>$null | Select-Object -First 1)
     D-Ok "te — Tabular Editor CLI ($tev)"
-  } elseif ((Test-Have 'TabularEditor.exe') -or (Test-Have 'TabularEditor')) {
-    D-Ok 'Tabular Editor CLI on PATH'
   } else {
     $foundTe = $null
-    foreach ($d in @(
+    foreach ($d in (@(
       (Join-Path $HOME '.local\bin\te.exe'),
-      (Join-Path $env:LOCALAPPDATA 'Programs\te\te.exe'),
-      (Join-Path ${env:ProgramFiles(x86)} 'Tabular Editor\TabularEditor.exe'),
-      (Join-Path $env:ProgramFiles 'Tabular Editor\TabularEditor.exe')
-    )) {
+      $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\te\te.exe' })
+    ) | Where-Object { $_ })) {
       if (Test-Path -LiteralPath $d) { $foundTe = $d; break }
     }
     if ($foundTe) { D-Ok "Tabular Editor CLI: $foundTe" }
-    else { D-Warn 'Tabular Editor CLI (te) not found (optional)' 'download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli and place in ~/.local/bin or on PATH' }
+    else { D-Warn 'Tabular Editor CLI (te) not found (optional)' "download 'te' from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (requires a Tabular Editor account during the preview), place in ~/.local/bin or on PATH, then run: te auth login" }
   }
 } else {
   if (Test-Path -LiteralPath $tePath) { D-Ok "Tabular Editor CLI: $tePath" }

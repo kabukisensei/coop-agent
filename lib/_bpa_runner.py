@@ -4,6 +4,82 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _yaml
 
 
+def _parse_finding(item):
+    """Map one `te bpa run` JSON violation item onto the coop finding shape.
+    Tolerant of preview-schema drift: accepts several common key spellings."""
+    rule = item.get("ruleId") or item.get("rule") or item.get("id") or item.get("name") or ""
+    sev = str(item.get("severity") or item.get("level") or "").lower()
+    if sev not in ("error", "warning", "info"):
+        sev = "info"
+    obj = item.get("object") or item.get("path") or item.get("target") or item.get("table") or ""
+    msg = item.get("message") or item.get("description") or item.get("text") or ""
+    return {"rule": rule, "severity": sev, "file": "", "object": obj, "message": msg}
+
+
+def _extract_findings(out):
+    """Parse `te bpa run` stdout: JSON first, then a text-scan fallback."""
+    findings = []
+    if not out or not out.strip():
+        return findings
+    data = None
+    try:
+        data = json.loads(out)
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        for key in ("findings", "violations", "results", "issues"):
+            if isinstance(data.get(key), list):
+                data = data[key]
+                break
+        else:
+            data = None
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                f = _parse_finding(item)
+                if f["rule"] or f["object"] or f["message"]:
+                    findings.append(f)
+        return findings
+    # Text fallback (`te` text table or legacy TE2-style `-V` lines).
+    for ln in out.split("\n"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        m = re.match(r"^(.*?):\s*\[(.*?)\]\s*\((\w+)\)(?:\s+(.*))?$", ln)
+        if m:
+            sev = m.group(3).lower()
+            if sev not in ("error", "warning", "info"):
+                sev = "info"
+            findings.append(
+                {
+                    "rule": m.group(2).strip(),
+                    "severity": sev,
+                    "file": "",
+                    "object": m.group(1).strip(),
+                    "message": (m.group(4) or "").strip(),
+                }
+            )
+    return findings
+
+
+def _run_bpa(te_exe, model, rules):
+    """Run `te bpa run <model> -r <rules>` non-interactively. JSON output first;
+    if that yields nothing (e.g. a preview build rejects --output-format for
+    bpa run), retry once with default text output and parse that."""
+    last_rc = 0
+    for extra in (["--output-format", "json"], []):
+        cmd = [te_exe, "bpa", "run", model, "-r", rules, "--non-interactive"] + extra
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        except Exception:
+            return [], last_rc
+        last_rc = res.returncode
+        findings = _extract_findings(res.stdout or "")
+        if findings or last_rc == 0:
+            return findings, last_rc
+    return [], last_rc
+
+
 def main():
     if len(sys.argv) < 3:
         sys.exit(0)
@@ -20,7 +96,10 @@ def main():
     te_enabled = str(te.get("enabled", "")).lower() == "true"
     te_exe = te.get("executable_path", "")
     if not te_exe or te_exe.lower().startswith("todo"):
-        te_exe = shutil.which("te") or shutil.which("TabularEditor.exe") or shutil.which("TabularEditor") or ""
+        # The cross-platform Tabular Editor CLI only. During the preview it
+        # requires a Tabular Editor account — users run `te auth login` once
+        # (and rule files may need the te rule schema, not a TE2 export).
+        te_exe = shutil.which("te") or ""
     te_rules = te.get("bpa_rules_path", "")
 
     if not te_enabled or not te_exe or not te_rules:
@@ -51,38 +130,13 @@ def main():
         if not os.path.exists(abs_model):
             continue
 
-        cmd = [te_exe, abs_model, "-A", abs_rules, "-V"]
-        try:
-            res = subprocess.run(cmd, capture_output=True, text=True)
-            if res.returncode != 0:
-                final_code = res.returncode
-            out = res.stdout
-        except Exception:
-            continue
+        findings, rc = _run_bpa(te_exe, abs_model, abs_rules)
+        all_findings.extend(findings)
+        if rc != 0:
+            final_code = rc
 
-        for ln in out.split("\n"):
-            ln = ln.strip()
-            if not ln:
-                continue
-            m = re.match(r"^(.*?):\s*\[(.*?)\]\s*\((\w+)\)(?:\s+(.*))?$", ln)
-            if m:
-                obj = m.group(1).strip()
-                rule = m.group(2).strip()
-                sev_raw = m.group(3).lower()
-                msg = m.group(4)
-                msg = msg.strip() if msg else ""
-                if sev_raw not in ["error", "warning", "info"]:
-                    sev_raw = "info"
-                all_findings.append(
-                    {
-                        "rule": rule,
-                        "severity": sev_raw,
-                        "file": "",
-                        "object": obj,
-                        "message": msg,
-                    }
-                )
-                summary[sev_raw] += 1
+    for f in all_findings:
+        summary[f["severity"]] += 1
 
     report = {"tool": "bpa-review", "findings": all_findings, "summary": summary}
 

@@ -171,7 +171,7 @@ Result:
 | `strict` | `boolean` (optional, default false) | If true, non-zero TE exit codes trigger CI failures. |
 
 Invocation (built in `index.ts` and `coop review`):
-`TabularEditor.exe <model> -A <bpa_rules_path> -V`. Output is parsed into JSON findings. Advisory only. Degrades gracefully: if TE is not configured, it's a hint, never a failure.
+`te bpa run <model> -r <bpa_rules_path> --non-interactive` (the cross-platform Tabular Editor CLI; `te auth login` once during the preview). Output is parsed into JSON findings. Advisory only. Degrades gracefully: if TE is not configured, it's a hint, never a failure.
 
 ### `data_doc`
 

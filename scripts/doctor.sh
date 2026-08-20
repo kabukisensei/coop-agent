@@ -188,17 +188,15 @@ if have fab; then
 else
   warn "fabric-cicd: install the Microsoft Fabric CLI first" "coop install"
 fi
-# Tabular Editor CLI (cross-platform te or legacy TabularEditor.exe)
+# Tabular Editor CLI (te — cross-platform; BPA reviews run through `te bpa run`)
 te_path="$(coop_yaml_get "$(coop_find_project_yml)" "tools.tabular_editor_cli.executable_path" "")"
 te_rules="$(coop_yaml_get "$(coop_find_project_yml)" "tools.tabular_editor_cli.bpa_rules_path" "")"
 case "$te_path" in
   ""|TODO*)
     if have te; then
       ok "te — Tabular Editor CLI  ($(te --version 2>/dev/null | head -1))"
-    elif have TabularEditor.exe || have TabularEditor; then
-      ok "Tabular Editor CLI on PATH"
     else
-      warn "Tabular Editor CLI (te) not found (optional)" "download 'te' from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli and place in ~/.local/bin or on PATH"
+      warn "Tabular Editor CLI (te) not found (optional)" "download 'te' from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (requires a Tabular Editor account during the preview), place in ~/.local/bin or on PATH, then run: te auth login"
     fi ;;
   *) if [ -x "$te_path" ] || [ -f "$te_path" ]; then ok "Tabular Editor CLI: $te_path"; else warn "Tabular Editor CLI path not found: $te_path"; fi ;;
 esac

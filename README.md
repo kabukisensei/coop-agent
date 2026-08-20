@@ -80,7 +80,7 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 - **pipx** (auto-installed by `coop install` via Python `pip`)
 - **git** — https://git-scm.com (auto-installed via `winget` / `brew` / `apt` if missing)
 - **Azure CLI** (`az`) — *optional* — https://learn.microsoft.com/cli/azure (auto-installed via `winget` / `brew` / `apt` if missing; needed only for Fabric / Power BI live authentication — local SQL/DAX review works without it)
-- **Tabular Editor CLI (`te`)** — *optional* — https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (cross-platform semantic model CLI for Best Practice Analyzer rules; requires login to download; place `te` in `~/.local/bin` or your `PATH`)
+- **Tabular Editor CLI (`te`)** — *optional* — https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (cross-platform CLI that runs Best Practice Analyzer rules on semantic models; requires a Tabular Editor account during the preview — place `te` in `~/.local/bin` or your `PATH`, then run `te auth login` once)
 
 ---
 
@@ -208,9 +208,10 @@ shows anything still missing.
 
 **Not auto-installed (optional, external):**
 
-- **Tabular Editor CLI** — a separate Microsoft desktop/CLI app (no `npm`/`pip`
-  package). Install it yourself and set `tools.tabular_editor_cli.executable_path`
-  in `.coop/project.yml` if you want semantic-model BPA. coop works without it.
+- **Tabular Editor CLI (`te`)** — the cross-platform Tabular Editor CLI (no `npm`/`pip`
+  package). Install it yourself, run `te auth login` once, and set
+  `tools.tabular_editor_cli.executable_path` in `.coop/project.yml` if you want
+  semantic-model BPA. coop works without it.
 - **Azure CLI** (`az`) — optional, for Fabric / Power BI auth. Install from Microsoft
   if your team uses live MCP / Power BI access.
 

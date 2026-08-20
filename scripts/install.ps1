@@ -37,18 +37,6 @@ function Add-CoopUserPaths {
       }
     }
   }
-  # Tabular Editor standard directories on Windows
-  foreach ($d in @(
-    (Join-Path ${env:ProgramFiles(x86)} 'Tabular Editor'),
-    (Join-Path $env:ProgramFiles 'Tabular Editor'),
-    (Join-Path $env:LOCALAPPDATA 'Programs\Tabular Editor'),
-    (Join-Path $env:ProgramFiles 'Tabular Editor 3'),
-    (Join-Path ${env:ProgramFiles(x86)} 'Tabular Editor 3')
-  )) {
-    if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
-      $env:PATH = "$d;$env:PATH"
-    }
-  }
 }
 function Add-CoopNpmPath {
   if (-not (Test-Have 'npm')) { return }
@@ -380,14 +368,12 @@ try {
     Coop-Warn "az not found — install Azure CLI from https://learn.microsoft.com/cli/azure (or 'winget install Microsoft.AzureCLI')."
   }
 
-  # Tabular Editor CLI (te — cross-platform semantic model CLI)
+  # Tabular Editor CLI (te — cross-platform; BPA reviews run through `te bpa run`)
   if (Test-Have 'te') {
     $tev = (& te --version 2>$null | Select-Object -First 1)
     Coop-Ok "te present ($tev)"
-  } elseif ((Test-Have 'TabularEditor.exe') -or (Test-Have 'TabularEditor')) {
-    Coop-Ok 'Tabular Editor CLI present'
   } else {
-    Coop-Warn "Tabular Editor CLI (te) not found (optional; download 'te' from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli and place in ~/.local/bin or on PATH)."
+    Coop-Warn "Tabular Editor CLI (te) not found (optional; BPA reviews need it — download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli, place in ~/.local/bin or on PATH, then run: te auth login)."
   }
 
   Coop-Unit 'pipx' $UnitPipx

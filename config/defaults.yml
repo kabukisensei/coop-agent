@@ -77,8 +77,7 @@ npm_authoring_tools:
 
 # Optional cross-platform CLI (https://tabulareditor.com/product/features-and-tools/tabular-editor-cli)
 tabular_editor_cli:
-  command: te
-  note: "Place 'te' on PATH (e.g. in ~/.local/bin) or set tools.tabular_editor_cli.executable_path in .coop/project.yml"
+  note: "BPA reviews run through the cross-platform te CLI: download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (requires a Tabular Editor account during the preview), place on PATH or set tools.tabular_editor_cli.executable_path in .coop/project.yml, and run `te auth login` once."
 
 # MCP servers coop preloads — all optional (coop runs without them). Placed non-
 # destructively into coop's isolated agent dir (~/.coop/agent/mcp.json) by `coop sync`

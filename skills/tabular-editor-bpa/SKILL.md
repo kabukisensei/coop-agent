@@ -6,8 +6,9 @@ description: Create, validate, and audit Tabular Editor Best Practice Analyzer r
 # Tabular Editor BPA rules
 
 Best Practice Analyzer (BPA) rules are automated checks for Power BI / Analysis
-Services tabular models. They run in Tabular Editor 2, 3, or the TE CLI and can
-flag issues or auto-fix them with `FixExpression`.
+Services tabular models. They run in the cross-platform Tabular Editor CLI
+(`te bpa run`) — coop drives BPA reviews through it — and can flag issues or
+auto-fix them with `FixExpression`.
 
 This skill helps you write and validate BPA rules that match Cooptimize
 standards. It operates under the `coop-workflow` skill.
@@ -52,11 +53,13 @@ add extra properties such as `_comment`, `ObjectCount`, or `ErrorMessage`.
 
 ## Severity levels
 
+Tabular Editor CLI severity semantics (`--severity` in `te bpa rules add`):
+
 | Level | Meaning |
 |---|---|
-| 1 | Error |
+| 1 | Info |
 | 2 | Warning |
-| 3 | Info |
+| 3 | Error |
 
 ## Common scopes
 
@@ -131,6 +134,11 @@ Tabular Editor is strict about rule file formatting:
 - **Absolute paths** work best when loading rule files in TE.
 - **No extra properties** in JSON.
 - **Scope names** must match the TOM enum exactly.
+- **`te` rule schema:** during the preview, `te bpa rules init` creates an empty
+  `[]` rules file and `te bpa rules add` builds entries with `name` / `scope` /
+  `expression` / `severity` / `category` / `description`. Rule files exported from
+  Tabular Editor 2 may need conversion — validate any rules file with
+  `te bpa run` before relying on it in a pipeline.
 
 ## Validate a rule file
 
