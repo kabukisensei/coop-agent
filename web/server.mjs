@@ -1104,14 +1104,14 @@ function authed(req) {
 }
 function readBody(req) {
   return new Promise((resolve) => {
-    let b = "";
+    const chunks = [];
     req.on("data", (d) => {
-      b += d;
-      if (b.length > 1e6) req.destroy(); // cap payloads
+      chunks.push(d);
+      if (chunks.reduce((sum, c) => sum + c.length, 0) > 1e6) req.destroy(); // cap payloads
     });
-    req.on("end", () => resolve(b));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", () => resolve(""));
-    req.on("close", () => resolve(b)); // destroyed (cap hit) — settle the promise
+    req.on("close", () => resolve(Buffer.concat(chunks).toString("utf8"))); // destroyed (cap hit)
   });
 }
 async function readJson(req) {

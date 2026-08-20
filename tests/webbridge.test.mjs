@@ -227,6 +227,16 @@ r = await post("/prompt", { message: "marco" });
 t("POST /prompt with CSRF -> 200", r.status === 200);
 events = await echoWatch;
 const echoFrame = events.find((e) => e.ev && e.ev.type === "message_update" && e.ev.assistantMessageEvent && e.ev.assistantMessageEvent.delta === "polo:marco");
+
+// --- readBody must preserve multi-byte UTF-8, not mojibake via string concatenation ---
+const utf8Msg = "日本語 🎌 émojis";
+const utf8Watch = readSse(1600);
+await new Promise((res) => setTimeout(res, 400));
+r = await post("/prompt", { message: utf8Msg });
+t("POST /prompt with multi-byte UTF-8 -> 200", r.status === 200);
+events = await utf8Watch;
+const utf8Frame = events.find((e) => e.ev && e.ev.type === "message_update" && e.ev.assistantMessageEvent && e.ev.assistantMessageEvent.delta === `polo:${utf8Msg}`);
+t("prompt body preserves UTF-8 round-trip", !!utf8Frame);
 t("prompt reached the stub pi and its reply streamed back (enveloped)", !!echoFrame);
 t("the live frame carries the chat's sid and an integer n", !!echoFrame && echoFrame.sid === sid1 && Number.isInteger(echoFrame.n));
 
