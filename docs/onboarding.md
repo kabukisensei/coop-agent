@@ -8,13 +8,15 @@ work **with you** before anything ships.
 > your personal `pi` — only Cooptimize's curated extensions/settings/theme/MCP load,
 > and your own `pi` setup is untouched.
 
-## 1. Prerequisites (install once)
+## 1. Prerequisites
 
-- **Node.js 22.19+** — https://nodejs.org
-- **Python 3.10+** — https://python.org
-- **git**
-- **pipx** — `coop install` installs it for you if it's missing
-- *Optional:* **Azure CLI** (`az`) for live Fabric / Power BI access
+`coop install` automatically attempts to install missing prerequisites via `winget` (Windows) or `brew`/`apt`/`dnf` (macOS/Linux) if they are not already on your system:
+
+- **Node.js 22.19+** — https://nodejs.org (auto-installed via `winget` / `brew` / `apt` if missing)
+- **Python 3.10+** — https://python.org (auto-installed via `winget` / `brew` / `apt` if missing)
+- **git** — https://git-scm.com (auto-installed via `winget` / `brew` / `apt` if missing)
+- **Azure CLI** (`az`) — https://learn.microsoft.com/cli/azure (auto-installed via `winget` / `brew` / `apt` if missing, for Fabric / Power BI live access)
+- **pipx** — auto-installed via Python `pip` during bootstrap
 
 ## 2. Install
 

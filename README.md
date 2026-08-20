@@ -73,16 +73,13 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 
 ## Prerequisites
 
-All platforms need:
+`coop install` automatically attempts to install missing prerequisites via `winget` (Windows) or `brew`/`apt`/`dnf` (macOS/Linux) when available:
 
-- **Node.js 22.19+** (to install/update Pi via `npm`) — https://nodejs.org
-  (Pi = `@earendil-works/pi-coding-agent` requires ≥ 22.19; teammates still on Node 20
-  can pin Pi's `legacy-node20` build)
-- **Python 3.10+** — https://python.org
-- **pipx** (`coop install` will install it for you if `python3` is present)
-- **git** — https://git-scm.com
-
-Optional: **Azure CLI** (`az`) for Fabric / Power BI authentication.
+- **Node.js 22.19+** (to install/update Pi via `npm`) — https://nodejs.org (auto-installed via `winget` / `brew` / `apt` if missing)
+- **Python 3.10+** — https://python.org (auto-installed via `winget` / `brew` / `apt` if missing)
+- **pipx** (auto-installed by `coop install` via Python `pip`)
+- **git** — https://git-scm.com (auto-installed via `winget` / `brew` / `apt` if missing)
+- **Azure CLI** (`az`) — https://learn.microsoft.com/cli/azure (auto-installed via `winget` / `brew` / `apt` if missing, for Fabric / Power BI authentication)
 
 ---
 

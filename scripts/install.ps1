@@ -195,11 +195,108 @@ Coop-Head "Cooptimize agent bootstrap (v$($script:CoopVersion))  [$OS]"
 # hiding the cursor and the first loop still reaches the finally.
 try {
   Coop-ProgBegin $TOTAL
-  # --- 1. Prerequisites ------------------------------------------------------
+  # --- 1. Prerequisites (auto-install missing tools if winget is available) --
   Coop-Head '1/8  Prerequisites'
-  if (-not (Test-Have 'git'))  { Coop-Warn "git not found — install Git from https://git-scm.com (or 'winget install Git.Git')." }
-  if (-not (Get-CoopPython)) { Coop-Warn "python not found — install Python 3.10+ from https://python.org (or 'winget install Python.Python.3.12'). (A Windows Store 'python' stub does not count.)" }
-  if (-not (Test-Have 'node')) { Coop-Warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)." }
+
+  # Git
+  if (-not (Test-Have 'git')) {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+      Coop-Info 'installing git via winget…'
+      & winget install --id Git.Git -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
+      foreach ($d in @(
+        (Join-Path $env:ProgramFiles 'Git\cmd'),
+        (Join-Path $env:ProgramFiles 'Git\bin'),
+        (Join-Path ${env:ProgramFiles(x86)} 'Git\cmd'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Git\cmd')
+      )) {
+        if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
+          $env:PATH = "$d;$env:PATH"
+        }
+      }
+    }
+  }
+  if (Test-Have 'git') {
+    $gv = (& git --version 2>$null | Select-Object -First 1)
+    Coop-Ok "git present ($gv)"
+  } else {
+    Coop-Warn "git not found — install Git from https://git-scm.com (or 'winget install Git.Git')."
+  }
+
+  # Python
+  if (-not (Get-CoopPython)) {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+      Coop-Info 'installing Python 3.12 via winget…'
+      & winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
+      foreach ($d in @(
+        (Join-Path $env:ProgramFiles 'Python312'),
+        (Join-Path $env:ProgramFiles 'Python312\Scripts'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\Scripts'),
+        (Join-Path $env:ProgramFiles 'Python311'),
+        (Join-Path $env:ProgramFiles 'Python311\Scripts'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python311'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python311\Scripts')
+      )) {
+        if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
+          $env:PATH = "$d;$env:PATH"
+        }
+      }
+    }
+  }
+  $py = Get-CoopPython
+  if ($py) {
+    $pyv = (& $py --version 2>&1)
+    Coop-Ok "python present ($pyv)"
+  } else {
+    Coop-Warn "python not found — install Python 3.10+ from https://python.org (or 'winget install Python.Python.3.12'). (A Windows Store 'python' stub does not count.)"
+  }
+
+  # Node.js
+  if (-not (Test-Have 'node')) {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+      Coop-Info 'installing Node.js LTS via winget…'
+      & winget install --id OpenJS.NodeJS.LTS -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
+      foreach ($d in @(
+        (Join-Path $env:ProgramFiles 'nodejs'),
+        (Join-Path ${env:ProgramFiles(x86)} 'nodejs'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\nodejs')
+      )) {
+        if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
+          $env:PATH = "$d;$env:PATH"
+        }
+      }
+    }
+  }
+  if (Test-Have 'node') {
+    $nv = (& node --version 2>$null | Select-Object -First 1)
+    Coop-Ok "node present ($nv)"
+  } else {
+    Coop-Warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)."
+  }
+
+  # Azure CLI (az)
+  if (-not (Test-Have 'az')) {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+      Coop-Info 'installing Azure CLI via winget…'
+      & winget install --id Microsoft.AzureCLI -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
+      foreach ($d in @(
+        (Join-Path $env:ProgramFiles 'Microsoft SDKs\Azure\CLI2\wbin'),
+        (Join-Path ${env:ProgramFiles(x86)} 'Microsoft SDKs\Azure\CLI2\wbin'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Microsoft\Azure CLI\wbin')
+      )) {
+        if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
+          $env:PATH = "$d;$env:PATH"
+        }
+      }
+    }
+  }
+  if (Test-Have 'az') {
+    $azv = (& az --version 2>$null | Select-Object -First 1)
+    Coop-Ok "az present ($azv)"
+  } else {
+    Coop-Warn "az not found — install Azure CLI from https://learn.microsoft.com/cli/azure (or 'winget install Microsoft.AzureCLI')."
+  }
+
   Coop-Unit 'pipx' $UnitPipx
   Add-CoopUserPaths    # make a just-installed pipx + its tool-bin visible this run
 

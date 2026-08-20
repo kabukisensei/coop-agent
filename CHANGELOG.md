@@ -6,6 +6,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Changed
+- `coop install` now automatically installs missing system prerequisites (Git, Python 3.12, Node.js LTS, Azure CLI, and pipx) via `winget` on Windows or `brew`/`apt`/`dnf` on macOS and Linux when package managers are available, and dynamically adds their installation directories to `PATH` for the remainder of the setup.
 - `coop update` now applies the same tested-version gate it uses for Pi to the pipx tools (`coop-data-doc`, `coop-sql-review`, `coop-dax-review`, `ms-fabric-cli`) and to the injected `fabric-cicd` library: a release crossing the tested MINOR asks before jumping, and declining (or a non-interactive shell without `--yes`) pins that tool to its tested version instead of silently upgrading past it. `coop update --check` now also shows the latest pipx version alongside current/tested.
 
 ### Fixed

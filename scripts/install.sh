@@ -148,11 +148,79 @@ coop_progress_begin "$PROG_TOTAL"
 trap 'coop_progress_end; _coop_unit_cleanup' EXIT
 trap 'coop_progress_end; _coop_unit_cleanup; exit 130' INT TERM
 
-# --- 1. Prerequisites (warn-and-continue; these usually need a package manager)
+# --- 1. Prerequisites (auto-install missing tools if package manager is available)
 coop_head "1/8  Prerequisites"
-have git     || coop_warn "git not found — install Git (mac: 'xcode-select --install' or 'brew install git'; linux: your package manager)."
-coop_python >/dev/null || coop_warn "python not found — install Python 3.10+ (mac: 'brew install python'; linux: 'apt install python3')."
-have node    || coop_warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)."
+
+# Git
+if ! have git; then
+  if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
+    coop_info "installing git via brew…"
+    brew install git >/dev/null 2>&1 || true
+  elif have apt-get; then
+    coop_info "installing git via apt…"
+    (sudo apt-get update -y && sudo apt-get install -y git) >/dev/null 2>&1 || apt-get install -y git >/dev/null 2>&1 || true
+  elif have dnf; then
+    coop_info "installing git via dnf…"
+    (sudo dnf install -y git) >/dev/null 2>&1 || dnf install -y git >/dev/null 2>&1 || true
+  fi
+fi
+have git && coop_ok "git present ($(git --version 2>/dev/null | head -1))" || coop_warn "git not found — install Git (mac: 'xcode-select --install' or 'brew install git'; linux: your package manager)."
+
+# Python
+if ! coop_python >/dev/null; then
+  if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
+    coop_info "installing python via brew…"
+    brew install python@3.12 >/dev/null 2>&1 || brew install python >/dev/null 2>&1 || true
+  elif have apt-get; then
+    coop_info "installing python via apt…"
+    (sudo apt-get update -y && sudo apt-get install -y python3 python3-pip python3-venv) >/dev/null 2>&1 || apt-get install -y python3 python3-pip python3-venv >/dev/null 2>&1 || true
+  elif have dnf; then
+    coop_info "installing python via dnf…"
+    (sudo dnf install -y python3 python3-pip) >/dev/null 2>&1 || dnf install -y python3 python3-pip >/dev/null 2>&1 || true
+  fi
+  [ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
+  hash -r 2>/dev/null || true
+fi
+if _py="$(coop_python)"; then
+  coop_ok "python present ($("$_py" --version 2>&1))"
+else
+  coop_warn "python not found — install Python 3.10+ (mac: 'brew install python'; linux: 'apt install python3')."
+fi
+
+# Node.js
+if ! have node; then
+  if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
+    coop_info "installing node via brew…"
+    brew install node >/dev/null 2>&1 || true
+  elif have apt-get; then
+    coop_info "installing nodejs via apt…"
+    (sudo apt-get update -y && sudo apt-get install -y nodejs npm) >/dev/null 2>&1 || apt-get install -y nodejs npm >/dev/null 2>&1 || true
+  elif have dnf; then
+    coop_info "installing nodejs via dnf…"
+    (sudo dnf install -y nodejs npm) >/dev/null 2>&1 || dnf install -y nodejs npm >/dev/null 2>&1 || true
+  fi
+  [ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
+  hash -r 2>/dev/null || true
+fi
+have node && coop_ok "node present ($(node --version 2>/dev/null || echo '?'))" || coop_warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)."
+
+# Azure CLI (az)
+if ! have az; then
+  if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
+    coop_info "installing azure-cli via brew…"
+    brew install azure-cli >/dev/null 2>&1 || true
+  elif have apt-get; then
+    coop_info "installing azure-cli via apt…"
+    (curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash) >/dev/null 2>&1 || (sudo apt-get update -y && sudo apt-get install -y azure-cli) >/dev/null 2>&1 || true
+  elif have dnf; then
+    coop_info "installing azure-cli via dnf…"
+    (sudo dnf install -y azure-cli) >/dev/null 2>&1 || dnf install -y azure-cli >/dev/null 2>&1 || true
+  fi
+  [ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
+  hash -r 2>/dev/null || true
+fi
+have az && coop_ok "az present ($(az --version 2>/dev/null | head -1))" || coop_warn "az not found — install Azure CLI from https://learn.microsoft.com/cli/azure (needed for Fabric/Power BI live auth)."
+
 coop_unit "pipx" _unit_pipx
 # Make a just-installed pipx (and the bins pipx will drop tools into) visible to
 # the REST of this run, so steps 4/5 don't fail "pipx missing" until a new shell.
