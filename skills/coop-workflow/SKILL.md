@@ -13,7 +13,9 @@ documentation reads handled by the `coop-data-doc` tool.
 
 ## Principles (these are what matter)
 
-- **Read-only first**, plan and **get approval before changing anything**.
+- **Read-only first**, plan and **get approval before changing anything**. Once the
+  user approves a slice, that approval remains valid through its stated backup,
+  edits, review, authorized validation, restoration, diff, and passing check.
 - **Back up** before edits; make the **smallest safe change**.
 - **Review** with the tools; **document and log** the work.
 - **Never commit source** — docs/logs/site only, after approval.
@@ -48,7 +50,8 @@ If it is missing, ask the user to copy `.coop/project.example.yml` into the repo
 4. **Plan the first slice + get approval.** For multi-step work, write a short PLAN
    for the first vertical slice (what, why, failing check before, passing check after,
    blast radius, rollback). For single-edit tasks, still write a short PLAN.
-   **Do not edit anything until the user approves the slice or plan.**
+   **Do not edit anything until the user approves the slice or plan.** That approval
+   covers the complete stated slice; do not seek approval again at its internal steps.
 5. **Back up.** Create a timestamped backup of every file you will change, under
    `.backups/...` using `backup.timestamp_format` from the contract.
 6. **Smallest safe edit.** Make the minimal change that satisfies the request.
@@ -70,10 +73,11 @@ If it is missing, ask the user to copy `.coop/project.example.yml` into the repo
 
 ## Slice by default
 
-For any task that needs more than one edit or touches more than one object, run it as
-a sequence of **vertical slices**. A slice is one small, end-to-end change that starts
-with a failing check and ends with a passing check. Do not chain multiple edits
-silently.
+For any task with more than one independently testable outcome, run it as a sequence
+of **vertical slices**. A slice is one small, end-to-end behavioral outcome that starts
+with a failing check and ends with a passing check. A slice may include multiple tightly
+related file or object edits needed for that one outcome; do not split it merely because
+it has a backup, refactor, review finding, or more than one edit.
 
 Before each slice, state:
 
@@ -90,6 +94,21 @@ Before each slice, state:
 - **What I’ll watch** — concrete checks I’ll use to spot drift before the final test.
 - **Stop-and-ask triggers** — conditions where I will pause instead of continuing.
 
+### Execute an approved slice without checkpoint stops
+
+After the user approves a slice, continue through its stated **backup → minimal edit →
+review and in-scope remediation → authorized validation → restoration → passing check
+→ final result** in the same run. Backup completion, edit completion, advisory-review
+output, test start, and ordinary progress updates are internal steps, not reportable
+endpoints. Do not end the turn merely to announce them, and do not ask the user to say
+"continue" again.
+
+Pause only when a declared stop-and-ask trigger actually fires: a genuine blocker, a
+test mismatch or invalidated assumption, scope expansion, a decision only the user can
+make, or a newly encountered destructive, production, or otherwise unapproved action.
+An approved Dev/test validation pattern remains approved for that slice. Progress may
+be shown when useful, but it is non-blocking and must not replace completing the slice.
+
 Each slice gets its own test. A generic test suite is not enough: the failing and
 passing checks must target the exact data, model, or behavior outcome this slice
 changes. If you use live data, write the before-query and the after-query, run them,
@@ -97,10 +116,11 @@ and compare the results. If the slice is a SQL/DAX change, the failing check is 
 a query that returns the wrong value today; the passing check is the same query
 returning the expected value after the change.
 
-After the slice, briefly **explain what happened, what you learned, and whether any
-assumptions were invalidated**. If an assumption was wrong or a stop-and-ask trigger
-fired, do not proceed to the next slice without approval. The `/slice-next` prompt
-expands this template when you want to plan the next slice explicitly.
+Only after the passing check completes, briefly **explain what happened, what you
+learned, and whether any assumptions were invalidated**. If an assumption was wrong or
+a stop-and-ask trigger fired, do not proceed to the next slice without approval. The
+`/slice-next` prompt applies after the current slice is complete and expands this
+template when you want to plan the next slice explicitly.
 
 ### Live-data tests between slices
 
@@ -121,7 +141,8 @@ tests:
 
 Live-data tests must target a dev or test workspace. Never run them against production
 unless the user explicitly says so. If `require_approval` is true (the default), ask
-before running the command.
+before running the command unless the user already approved that specific validation
+or an explicitly named Dev/test validation pattern as part of the current slice.
 
 ## Other working habits
 

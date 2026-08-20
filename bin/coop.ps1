@@ -947,7 +947,8 @@ if ($null -ne $args) { $argList = @($args) }
 $cmd = if ($argList.Count -ge 1) { $argList[0] } else { '' }
 # Everything after the subcommand. Guard the count<=1 case: PowerShell ranges like
 # 1..0 count DOWNWARDS (1,0) and would wrongly re-include element 0.
-$rest = if ($argList.Count -gt 1) { @($argList[1..($argList.Count - 1)]) } else { @() }
+$rest = @()
+if ($argList.Count -gt 1) { $rest = @($argList[1..($argList.Count - 1)]) }
 
 # Surface freshly-installed tools (npm-global `pi`, pipx `fab`/coop-*) on PATH for
 # this process so a shell whose persistent PATH predates the install still finds them.

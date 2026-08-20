@@ -10,8 +10,12 @@ human at Cooptimize approving it.
 
 1. **Read-only by default.** Prefer reading, listing, and inspecting. Treat every
    write, edit, deployment, or remote action as requiring explicit human approval.
+   Approval of a clearly stated slice covers its planned non-destructive actions
+   through the passing check; it does not expire after each internal step.
 2. **Plan before you edit.** For any change, present a short plan and get explicit
-   approval **before** touching a file. Make the smallest safe edit.
+   approval **before** touching a file. Make the smallest safe edit. Once approved,
+   complete the stated slice without stopping at backup, edit, review, or validation
+   checkpoints unless a genuine blocker or declared stop trigger fires.
 3. **Back up before editing.** Create a timestamped backup of every source file
    you are about to change (see `backup` in `.coop/project.yml`).
 4. **Never commit source.** You may **never** commit SQL, DAX, semantic model,
@@ -93,7 +97,11 @@ the configured live-data test between slices with approval and target dev/test o
 configured command is a default runner, but the slice still defines the specific test. Apply review feedback as
 **Markdown annotations**, **codify** repeated corrections, and **end with a handoff**.
 The `/spec-first`, `/annotate`, `/slice-next`, `/explain`, and `/handoff` prompts
-drive these; the `coop-workflow` skill has the detail.
+drive these; the `coop-workflow` skill has the detail. For an approved slice, progress
+messages are non-blocking: continue through backup, edits, review, authorized Dev/test
+validation, restoration, and the passing check before giving the final result. Pause
+only for a genuine blocker, mismatch, invalidated assumption, scope expansion, user-only
+decision, or newly encountered destructive/production action.
 
 1. Read `.coop/project.yml` and the relevant standards.
 2. Identify the repo/object and upstream/downstream impact; run `git status` and `git pull`.

@@ -20,6 +20,12 @@ assert.ok(skill.includes("each slice still defines its own specific test"), "ski
 assert.ok(skill.includes("What would prove this slice wrong"), "skill requires early-warning signals");
 assert.ok(skill.includes("What I’ll watch"), "skill requires concrete drift checks");
 assert.ok(skill.includes("Stop-and-ask triggers"), "skill requires pause triggers");
+assert.ok(skill.includes("Execute an approved slice without checkpoint stops"), "skill requires uninterrupted approved-slice execution");
+assert.ok(skill.includes("do not ask the user to say"), "skill forbids repeated continue prompts");
+assert.ok(skill.includes("internal steps, not reportable"), "skill makes internal checkpoints non-blocking");
+assert.ok(skill.includes("An approved Dev/test validation pattern remains approved"), "skill preserves validation approval through the slice");
+assert.ok(skill.includes("more than one edit"), "skill permits tightly related edits in one outcome slice");
+assert.ok(skill.includes("Only after the passing check completes"), "skill delays reporting until the slice passes");
 assert.ok(skill.includes("assumptions were invalidated"), "skill checks assumptions after the slice");
 assert.ok(skill.includes("explain what happened"), "skill requires post-slice explanation");
 assert.ok(skill.includes("Live-data tests between slices"), "skill documents live-data test hook");
@@ -38,6 +44,8 @@ assert.ok(prompt.includes("Assumptions I’m making"), "prompt asks for assumpti
 assert.ok(prompt.includes("What would prove this slice wrong"), "prompt asks for early-warning signals");
 assert.ok(prompt.includes("Stop-and-ask triggers"), "prompt asks for pause triggers");
 assert.ok(prompt.includes("Wait for my approval"), "prompt waits for approval before editing");
+assert.ok(prompt.includes("without interim checkpoint stops"), "prompt requires uninterrupted approved-slice execution");
+assert.ok(prompt.includes("only after the slice passes"), "prompt reports only after completion");
 assert.ok(prompt.includes("tests.live_data.enabled"), "prompt references live-data config");
 
 const explain = readFileSync(join(ROOT, "prompts/explain.md"), "utf8");
@@ -60,5 +68,7 @@ assert.ok(guardrails.includes("vertical slices"), "guardrails reference vertical
 assert.ok(guardrails.includes("tests.live_data.enabled"), "guardrails reference live-data test hook");
 assert.ok(guardrails.includes("/slice-next"), "guardrails reference /slice-next prompt");
 assert.ok(guardrails.includes("/explain"), "guardrails reference /explain prompt");
+assert.ok(guardrails.includes("does not expire after each internal step"), "guardrails preserve slice approval");
+assert.ok(guardrails.includes("messages are non-blocking"), "guardrails forbid progress checkpoints from ending a slice");
 
 console.log("✓ workflow slice tests passed");

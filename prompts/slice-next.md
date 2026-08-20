@@ -20,4 +20,7 @@ State:
 - **Live-data test** — if `.coop/project.yml` has `tests.live_data.enabled: true`,
   the specific query/measure/command, workspace, and whether approval is required.
 
-Wait for my approval before making the edit.
+Wait for my approval before starting. Once I approve this slice, complete its stated
+backup, tightly related edits, review and in-scope remediation, authorized Dev/test
+validation, restoration, and passing check without interim checkpoint stops. Report
+only after the slice passes, unless a declared stop-and-ask trigger actually fires.

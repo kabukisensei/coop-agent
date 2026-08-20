@@ -9,7 +9,8 @@
 #   3. update.ps1 gate decisions via COOP_UPDATE_GATE_DRYRUN / COOP_PI_LATEST_OVERRIDE
 #      (the same seams tests/update-guard.test.sh drives against update.sh)
 #   4. update.ps1 --check is a dry-run that reports current/latest/tested and exits 0
-#   5. coop.ps1 review --help exits 0; an unknown review flag dies non-zero
+#   5. coop.ps1 forwards a single trailing --check argument intact to update.ps1
+#   6. coop.ps1 review --help exits 0; an unknown review flag dies non-zero
 #
 # No network: the registry query is mocked with COOP_PI_LATEST_OVERRIDE, and the gate
 # stops before any install via COOP_UPDATE_GATE_DRYRUN. Runs under Windows PowerShell 5.1
@@ -120,7 +121,27 @@ try {
   if ($checkOut -like '*tested 0.80.2*') { Ok '--check prints the pi tested version' } else { Ko '--check missing pi tested version' }
   if ($checkOut -like '*latest 0.99.0*') { Ok '--check prints the (mocked) latest' } else { Ko '--check missing latest' }
 
-  # --- 5. review --help exits 0; an unknown review flag dies -----------------
+  # --- 5. dispatcher preserves one trailing argument -------------------------
+  # COOP_UPDATE_GATE_DRYRUN is a safety net: before the fix, coop.ps1 split the
+  # scalar '--check' into six characters and update.ps1 entered its mutating path.
+  # The gate seam stops that broken path before any install while this test asserts
+  # that the real --check dry-run was reached through the public wrapper.
+  Head 'coop update --check wrapper forwarding (single trailing argument)'
+  $wrappedCheckOut = & $psExe -NoProfile -Command @"
+`$env:PATH = '$stubPath'
+`$env:COOP_UPDATE_GATE_DRYRUN = '1'
+`$env:COOP_PI_LATEST_OVERRIDE = '0.99.0'
+`$env:COOP_PYPI_LATEST_OVERRIDE = '0.0.0'
+& '$coop' update --check 2>&1
+"@ 6>$null | Out-String
+  if (($wrappedCheckOut -like '*latest 0.99.0*') -and ($wrappedCheckOut -like '*tested 0.80.2*')) {
+    Ok 'coop wrapper forwards --check intact to the read-only path'
+  } else { Ko "coop wrapper did not reach the --check dry-run: $wrappedCheckOut" }
+  if ($wrappedCheckOut -notlike '*ignoring unknown flag*' -and $wrappedCheckOut -notlike '*GATE *') {
+    Ok 'coop wrapper does not split --check or enter the update gate'
+  } else { Ko 'coop wrapper split --check or entered the mutating update path' }
+
+  # --- 6. review --help exits 0; an unknown review flag dies -----------------
   Head 'coop review arg parsing (--help ok; unknown flag dies)'
   & $coop review --help *> $null
   if ($LASTEXITCODE -eq 0) { Ok 'review --help exits 0' } else { Ko "review --help exit was $LASTEXITCODE" }
