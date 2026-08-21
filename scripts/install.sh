@@ -91,7 +91,8 @@ _unit_pi() {
 }
 
 _unit_ext() {  # $1 = extension spec
-  local ext="$1" pkg="${1#npm:}" spec="$ext"
+  local ext="$1" pkg="${1#npm:}"
+  local spec="$ext"
   local manifest_key
   case "$pkg" in
     "@juicesharp/rpiv-ask-user-question") manifest_key="rpiv_ask_user_question" ;;
@@ -138,7 +139,8 @@ _unit_fabric() {
 }
 
 _unit_pytool() {  # $1 = package
-  local pkg="$1" target="$pkg"
+  local pkg="$1"
+  local target="$pkg"
   if [ "$EDGE" != 1 ]; then
     local ver
     ver="$(coop_manifest_get "python_tools.$pkg")"

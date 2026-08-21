@@ -34,7 +34,6 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 # --- stub PATH ------------------------------------------------------------------
 STUB="$(mktemp -d)"; MARKER="$STUB/INSTALLS"; export MARKER
 trap 'rm -rf "$STUB"' EXIT
-REAL_NPM="$(command -v npm 2>/dev/null || true)"
 REAL_PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
 
 cat > "$STUB/pi" <<'EOF'

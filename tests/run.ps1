@@ -135,7 +135,7 @@ try {
 `$env:COOP_PYPI_LATEST_OVERRIDE = '0.0.0'
 & '$coop' update --check 2>&1
 "@ 6>$null | Out-String
-  if (($wrappedCheckOut -like '*latest 0.99.0*') -and ($wrappedCheckOut -like '*tested 0.80.2*')) {
+  if (($wrappedCheckOut -like '*expected 0.80.2*') -and ($wrappedCheckOut -like '*status *')) {
     Ok 'coop wrapper forwards --check intact to the read-only path'
   } else { Ko "coop wrapper did not reach the --check dry-run: $wrappedCheckOut" }
   if ($wrappedCheckOut -notlike '*ignoring unknown flag*' -and $wrappedCheckOut -notlike '*GATE *') {
