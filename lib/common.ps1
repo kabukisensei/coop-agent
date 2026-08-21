@@ -25,6 +25,59 @@ if (Test-Path -LiteralPath $coopVerFile -PathType Leaf) {
 }
 $env:COOP_VERSION = $script:CoopVersion
 
+# Release manifest: single source of truth for exact versions installed together.
+$script:CoopReleaseManifest = if ($env:COOP_RELEASE_MANIFEST) { $env:COOP_RELEASE_MANIFEST } else { Join-Path $script:CoopRoot 'config\release-manifest.json' }
+$env:COOP_RELEASE_MANIFEST = $script:CoopReleaseManifest
+
+function Coop-ManifestGet([string]$Key, [string]$Default = '') {
+  try {
+    $m = Get-Content -LiteralPath $script:CoopReleaseManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    $parts = $Key -split '\.'
+    $v = $m
+    foreach ($p in $parts) { if ($v -is [System.Collections.IDictionary]) { $v = $v[$p] } elseif ($v -and $v.PSObject.Properties[$p]) { $v = $v.$p } else { return $Default } }
+    if ($null -eq $v) { return $Default }
+    return [string]$v
+  } catch { return $Default }
+}
+
+function Coop-ManifestKeys([string]$Key) {
+  try {
+    $m = Get-Content -LiteralPath $script:CoopReleaseManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    $parts = $Key -split '\.'
+    $v = $m
+    foreach ($p in $parts) { if ($v -is [System.Collections.IDictionary]) { $v = $v[$p] } elseif ($v -and $v.PSObject.Properties[$p]) { $v = $v.$p } else { return @() } }
+    if ($v -is [System.Collections.IDictionary]) { return $v.Keys }
+    return @()
+  } catch { return @() }
+}
+
+function Coop-VersionLessThan([string]$A, [string]$B) {
+  if (-not $A -or -not $B) { return $false }
+  $aParts = @($A -replace '^v','' -split '\.' | Select-Object -First 3 | ForEach-Object { [int]($_ -replace '[^0-9].*$','') })
+  $bParts = @($B -replace '^v','' -split '\.' | Select-Object -First 3 | ForEach-Object { [int]($_ -replace '[^0-9].*$','') })
+  for ($i = 0; $i -lt 3; $i++) { $av = if ($i -lt $aParts.Count) { $aParts[$i] } else { 0 }; $bv = if ($i -lt $bParts.Count) { $bParts[$i] } else { 0 }; if ($av -lt $bv) { return $true }; if ($av -gt $bv) { return $false } }
+  return $false
+}
+
+function Coop-MinorNewer([string]$A, [string]$B) {
+  if (-not $A -or -not $B) { return $false }
+  $aParts = @($A -replace '^v','' -split '\.' | ForEach-Object { $_ -replace '[^0-9].*$','' })
+  $bParts = @($B -replace '^v','' -split '\.' | ForEach-Object { $_ -replace '[^0-9].*$','' })
+  if ($aParts.Count -lt 2 -or $bParts.Count -lt 2) { return $false }
+  $aMaj = [int]$aParts[0]; $aMin = [int]$aParts[1]; $bMaj = [int]$bParts[0]; $bMin = [int]$bParts[1]
+  return ($aMaj -gt $bMaj) -or (($aMaj -eq $bMaj) -and ($aMin -gt $bMin))
+}
+
+function Coop-ManifestStatus([string]$Installed, [string]$Expected) {
+  if ([string]::IsNullOrWhiteSpace($Installed)) { return 'missing' }
+  if ([string]::IsNullOrWhiteSpace($Expected)) { return 'not-applicable' }
+  if ($Installed -eq $Expected) { return 'ok' }
+  $i = $Installed -replace '^v',''; $e = $Expected -replace '^v',''
+  if (Coop-VersionLessThan $i $e) { return 'older' }
+  if (Coop-MinorNewer $i $e) { return 'newer-than-tested' }
+  return 'wrong-version'
+}
+
 # Ensure user tool bins (pipx, Azure CLI) are on PATH in-process
 $script:PathSep = [System.IO.Path]::PathSeparator
 $pipxBin = Join-Path $HOME '.local\bin'
@@ -465,6 +518,18 @@ function Get-CoopSkillName {
   return ''
 }
 
+# Test whether a tool is enabled in .coop/project.yml. Returns $true when the key
+# is absent or set to true/yes/1; returns $false only for explicit false/0/no.
+# Falls back to enabled if no project.yml exists.
+function Test-CoopToolEnabled {
+  param([string]$Proj, [string]$Key)
+  $v = Get-CoopYamlValue $Proj "tools.$Key.enabled"
+  switch -Regex ($v) {
+    '^(false|0|no|nope)$' { return $false }
+    default { return $true }
+  }
+}
+
 # Locate the active project contract: nearest .coop/project.yml walking up from
 # $PWD, else the bundled one at COOP_ROOT/.coop/project.yml. (mirror of coop_find_project_yml)
 function Find-CoopProjectYml {
@@ -491,6 +556,28 @@ function Coop-Confirm {
   [Console]::Error.Write("$($script:C_OLIVE)$Prompt$($script:C_RST) [y/N] ")
   $ans = [Console]::In.ReadLine()
   if ($ans -match '^(y|yes)$') { return $true } else { return $false }
+}
+
+# Test whether the local COOP user profile exists.
+function Test-CoopUserProfileMissing {
+  return -not (Test-Path -LiteralPath (Join-Path $HOME '.coop\user.json') -PathType Leaf)
+}
+
+# First-run onboarding: run the wizard when interactive and no profile exists.
+function Invoke-CoopMaybeOnboard {
+  if (-not (Test-CoopUserProfileMissing)) { return }
+  if ([Console]::IsInputRedirected) {
+    Coop-Warn 'No COOP profile found. Run: coop onboard'
+    return
+  }
+  if ($env:COOP_NO_ONBOARD -eq '1') { return }
+  $py = Get-CoopPython
+  if (-not $py) {
+    Coop-Warn 'python3 required for onboarding. Run: coop onboard once python is available.'
+    return
+  }
+  Coop-Info "First run: let's set up your COOP profile."
+  & $py (Join-Path $script:CoopRoot 'scripts\onboard.py') onboard
 }
 
 # --- Background units (install/update items) ----------------------------------

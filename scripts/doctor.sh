@@ -104,13 +104,51 @@ if have pi; then
   fi
 fi
 
-# Pi (latest, @earendil-works) requires Node >= 22.19. Presence is checked above; the
-# VERSION check here saves a teammate on Node 18/20 from a cryptic pi failure.
-if have node; then
+# Release manifest: the single source of truth for the exact versions that ship
+# together with this coop build. Doctor reports drift so a teammate can `coop update`
+# or `coop update --edge` intentionally.
+section "Release manifest"
+pi_expected="$(coop_manifest_get pi.version)"
+if [ -n "$pi_expected" ]; then
+  if have pi; then
+    piv="$(pi --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    status="$(coop_manifest_status "${piv:-}" "$pi_expected")"
+    case "$status" in
+      ok) ok "pi $piv matches manifest ($pi_expected)" ;;
+      missing) warn "pi version unknown" "coop update" ;;
+      older) warn "pi $piv is older than manifest ($pi_expected)" "coop update" ;;
+      newer-than-tested) warn "pi $piv is newer than manifest ($pi_expected)" "coop update --edge, or pin back: npm i -g @earendil-works/pi-coding-agent@$pi_expected" ;;
+      wrong-version) warn "pi $piv differs from manifest ($pi_expected)" "coop update" ;;
+    esac
+  else
+    warn "pi not installed" "coop install"
+  fi
+fi
+
+for key in coop-data-doc coop-sql-review coop-dax-review ms-fabric-cli; do
+  expected="$(coop_manifest_get "python_tools.$key")"
+  [ -z "$expected" ] && continue
+  if have "$key"; then
+    ver="$("$key" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
+  else
+    ver=""
+  fi
+  status="$(coop_manifest_status "${ver:-}" "$expected")"
+  case "$status" in
+    ok) ok "$key $ver matches manifest ($expected)" ;;
+    missing) warn "$key not installed or version unknown (manifest: $expected)" "pipx install $key==$expected" ;;
+    older) warn "$key $ver is older than manifest ($expected)" "pipx install $key==$expected" ;;
+    newer-than-tested) warn "$key $ver is newer than manifest ($expected)" "pipx install $key==$expected" ;;
+    wrong-version) warn "$key $ver differs from manifest ($expected)" "pipx install $key==$expected" ;;
+  esac
+done
+
+# Minimum node version from the manifest.
+node_expected="$(coop_manifest_get node.min)"
+if [ -n "$node_expected" ] && have node; then
   nodev="$(node --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-  nodemin="22.19.0"
-  if [ -n "$nodev" ] && coop_version_lt "$nodev" "$nodemin"; then
-    warn "Node $nodev is older than Pi's requirement (>= 22.19)" "upgrade Node, or pin Pi's legacy build: npm i -g @earendil-works/pi-coding-agent@legacy-node20"
+  if [ -n "$nodev" ] && coop_version_lt "$nodev" "$node_expected"; then
+    warn "Node $nodev is older than the manifest minimum ($node_expected)" "upgrade Node: https://nodejs.org"
   fi
 fi
 
@@ -162,7 +200,7 @@ check powerbi-modeling-mcp optional "npm install -g @microsoft/powerbi-modeling-
 if [ "$(uname -s 2>/dev/null || echo unknown)" = "Windows" ] || [ "$(uname -s 2>/dev/null || echo unknown)" = "MINGW" ] || [ "$(uname -s 2>/dev/null || echo unknown)" = "MSYS" ]; then
   check powerbi-desktop optional "npm install -g @microsoft/powerbi-desktop-bridge-cli (Windows + Power BI Desktop only)" "powerbi-desktop --version"
 else
-  warn "powerbi-desktop (Desktop Bridge)" "Windows + Power BI Desktop only — skipped on this OS"
+  ok "powerbi-desktop (Desktop Bridge) — Windows only, not applicable here"
 fi
 
 # fabric-cicd is a Python LIBRARY (no CLI) — check it's importable in the Fabric CLI's env.
@@ -189,22 +227,28 @@ else
   warn "fabric-cicd: install the Microsoft Fabric CLI first" "coop install"
 fi
 # Tabular Editor CLI (te — cross-platform; BPA reviews run through `te bpa run`)
-te_path="$(coop_yaml_get "$(coop_find_project_yml)" "tools.tabular_editor_cli.executable_path" "")"
 proj_yml="$(coop_find_project_yml)"
-te_rules="$(coop_yaml_get "$proj_yml" "tools.tabular_editor_cli.bpa_rules_path" "")"
-case "$te_path" in
-  ""|TODO*)
-    if have te; then
-      ok "te — Tabular Editor CLI  ($(te --version 2>/dev/null | head -1))"
-    else
-      warn "Tabular Editor CLI (te) not found (optional)" "download 'te' from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (requires a Tabular Editor account during the preview), place in ~/.local/bin or on PATH, then run: te auth login"
-    fi ;;
-  *) if [ -x "$te_path" ] || [ -f "$te_path" ]; then ok "Tabular Editor CLI: $te_path"; else warn "Tabular Editor CLI path not found: $te_path"; fi ;;
-esac
-case "$te_rules" in
-  ""|TODO*) warn "Tabular Editor BPA rules not configured" "set tools.tabular_editor_cli.bpa_rules_path in .coop/project.yml (optional)" ;;
-  *) if [ -n "$proj_yml" ] && [ -f "$(dirname "$proj_yml")/../$te_rules" ] || [ -f "$te_rules" ]; then ok "Tabular Editor BPA Rules: $te_rules"; else warn "Tabular Editor BPA rules not found: $te_rules"; fi ;;
-esac
+if ! coop_tool_enabled "$proj_yml" "tabular_editor_cli"; then
+  ok "Tabular Editor CLI disabled in project.yml"
+else
+  te_path="$(coop_yaml_get "$proj_yml" "tools.tabular_editor_cli.executable_path" "")"
+  te_rules="$(coop_yaml_get "$proj_yml" "tools.tabular_editor_cli.bpa_rules_path" "")"
+  case "$te_path" in
+    "")
+      if have te; then
+        ok "te — Tabular Editor CLI  ($(te --version 2>/dev/null | head -1))"
+      else
+        warn "Tabular Editor CLI (te) not found (optional)" "download 'te' from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (requires a Tabular Editor account during the preview), place in ~/.local/bin or on PATH, then run: te auth login"
+      fi ;;
+    TODO*)
+      warn "Tabular Editor CLI executable_path not configured" "set tools.tabular_editor_cli.executable_path in .coop/project.yml" ;;
+    *) if [ -x "$te_path" ] || [ -f "$te_path" ]; then ok "Tabular Editor CLI: $te_path"; else warn "Tabular Editor CLI path not found: $te_path"; fi ;;
+  esac
+  case "$te_rules" in
+    ""|TODO*) warn "Tabular Editor BPA rules not configured" "set tools.tabular_editor_cli.bpa_rules_path in .coop/project.yml (optional)" ;;
+    *) if [ -n "$proj_yml" ] && [ -f "$(dirname "$proj_yml")/../$te_rules" ] || [ -f "$te_rules" ]; then ok "Tabular Editor BPA Rules: $te_rules"; else warn "Tabular Editor BPA rules not found: $te_rules"; fi ;;
+  esac
+fi
 
 section "Pi extensions"
 if have pi; then
@@ -240,8 +284,22 @@ for f in "$PI_CODING_AGENT_DIR/mcp.json" "$PWD/.mcp.json" "$PWD/.pi/mcp.json" "$
 done
 if [ -n "$mcp_found" ]; then
   ok "MCP config: $mcp_found"
-  for s in fabric powerbi azure-devops microsoft-learn context-mode; do
-    grep -qi "\"$s\"" "$mcp_found" 2>/dev/null && ok "  • $s server configured" || true
+  for s in fabric powerbi powerbi-modeling-mcp azure-devops microsoft-learn context-mode; do
+    if grep -qi "\"$s\"" "$mcp_found" 2>/dev/null; then
+      if [ "$s" = "powerbi-modeling-mcp" ]; then
+        # Report whether the Power BI Modeling MCP server is configured read-only.
+        modeling_args="$(grep -A20 "\"$s\"" "$mcp_found" 2>/dev/null | grep -E '\"args\"' | head -1 || true)"
+        if echo "$modeling_args" | grep -qiE '\"--readonly\"|\"--read-only\"'; then
+          ok "  • $s server configured (read-only mode)"
+        elif echo "$modeling_args" | grep -qiE '\"--start\"|\"--read-write\"|\"--readwrite\"'; then
+          warn "  • $s server configured (read-write mode)" "change args to --readonly for read-only"
+        else
+          warn "  • $s server configured (mode unclear)" "use --readonly for read-only"
+        fi
+      else
+        ok "  • $s server configured"
+      fi
+    fi
   done
   grep -qiE 'learn\.microsoft\.com|microsoft-learn' "$mcp_found" 2>/dev/null || warn "  Microsoft Learn MCP not configured" "coop sync   (adds it read-only)"
   # A synced mcp.json still carries TODO-tenant-id / TODO-org-name seeds (from
@@ -261,8 +319,26 @@ section "Project contract"
 proj="$(coop_find_project_yml)"
 if [ -n "$proj" ]; then
   ok ".coop/project.yml found: $proj"
-  todo="$(grep -c 'TODO' "$proj" 2>/dev/null)" || todo=0   # grep -c exits 1 on zero matches; count is already on stdout
-  [ "${todo:-0}" -gt 0 ] && warn "$todo TODO placeholder(s) remain in project.yml" "edit it before live Fabric/Power BI work"
+
+  # Feature-aware validation: only flag missing values for enabled features instead of
+  # counting raw TODO substrings.
+  _org="$(coop_yaml_get "$proj" "profile.organization" "")"
+  _branch="$(coop_yaml_get "$proj" "profile.default_branch" "")"
+  _repo_name_count="$(coop_yaml_list "$proj" "repositories.*.local_path" | grep -c .)"
+  [ -z "$_org" ] && warn "profile.organization is empty" "set it in .coop/project.yml"
+  [ -z "$_branch" ] && warn "profile.default_branch is empty" "set it in .coop/project.yml"
+  [ "${_repo_name_count:-0}" -eq 0 ] && warn "no repositories configured" "add at least one repository under repositories:"
+
+  if coop_tool_enabled "$proj" "fabric_cli" || coop_tool_enabled "$proj" "fabric_cicd"; then
+    _tenant="$(coop_yaml_get "$proj" "fabric.tenant_id" "")"
+    [ -z "$_tenant" ] && warn "Fabric tools enabled but fabric.tenant_id is empty" "set it in .coop/project.yml"
+  fi
+
+  if coop_tool_enabled "$proj" "tabular_editor_cli"; then
+    _te_path="$(coop_yaml_get "$proj" "tools.tabular_editor_cli.executable_path" "")"
+    case "$_te_path" in ""|TODO*) warn "Tabular Editor enabled but executable_path not set" "set tools.tabular_editor_cli.executable_path in .coop/project.yml" ;; esac
+  fi
+
   # Subordinate skill sources: warn when configured but not yet fetched.
   for key in microsoft_skills fabric_skills; do
     src="$(coop_yaml_get "$proj" "$key.source" "")"

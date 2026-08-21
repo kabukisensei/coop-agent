@@ -59,9 +59,13 @@ chmod +x "$STUB/pi" "$STUB/npm" "$STUB/pipx" "$STUB/python3"
 out="$(PATH="$STUB:$PATH" COOP_PI_LATEST_OVERRIDE=0.99.0 bash "$ROOT/scripts/update.sh" --check 2>/dev/null)"
 rc=$?
 [ "$rc" -eq 0 ] && ok "--check exits 0" || ko "--check exit was $rc"
-case "$out" in *"tested 0.80.2"*) ok "--check prints the pi tested version" ;; *) ko "--check missing pi tested version" ;; esac
-case "$out" in *"latest 0.99.0"*) ok "--check prints the (mocked) latest" ;; *) ko "--check missing latest" ;; esac
-[ ! -s "$MARKER" ] && ok "--check installed NOTHING" || { ko "--check ran installs:"; cat "$MARKER"; }
+case "$out" in *"expected 0.80.2"*) ok "--check prints the pi expected version" ;; *) ko "--check missing pi expected version" ;; esac
+case "$out" in *"status ok"*|*"status older"*|*"status newer-than-tested"*|*"status wrong-version"*|*"status missing"*) ok "--check prints a status column" ;; *) ko "--check missing status column" ;; esac
+case "$out" in *"@microsoft/powerbi-report-authoring-cli"*) ok "--check lists npm authoring tools" ;; *) ko "--check missing npm authoring tools" ;; esac
+# --check may query npm ls for current versions, but must not install/upgrade anything.
+grep -vE '^NPM ls -g --depth=0 ' "$MARKER" > "$MARKER.noinstall" 2>/dev/null || true
+[ ! -s "$MARKER.noinstall" ] && ok "--check installed NOTHING" || { ko "--check ran installs:"; cat "$MARKER"; }
+rm -f "$MARKER.noinstall"
 
 # --- gate decision (COOP_UPDATE_GATE_DRYRUN stops before any install) ------------
 # Script args go after the script; the mocked latest + assume-yes are read from
@@ -87,7 +91,7 @@ d="$(GATE_LATEST=0.80.5 gate)"
 # --- pipx tool + fabric-cicd gate (mock latest via the python3 stub) ------------
 # Stub latest 2.0.0 crosses the tested MINOR of every pipx tool AND fabric-cicd:
 # declining pins each to its tested version (pi stays pinned too, as above).
-full_pin="GATE pin:0.80.2,coop-data-doc=1.0.0,coop-sql-review=0.15.2,coop-dax-review=0.22.0,ms-fabric-cli=1.6.1,fabric-cicd=1.1.0"
+full_pin="GATE pin:0.80.2,coop-data-doc=1.1.0,coop-sql-review=0.15.2,coop-dax-review=0.22.0,ms-fabric-cli=1.6.1,fabric-cicd=1.1.0"
 d="$(GATE_LATEST=0.99.0 PYPI_STUB_VER=2.0.0 gate)"
 [ "$d" = "$full_pin" ] && ok "crossing tested minors + declined -> pins pi, every pipx tool, and fabric-cicd to tested" || ko "expected '$full_pin', got '$d'"
 
@@ -95,7 +99,7 @@ d="$(GATE_LATEST=0.99.0 PYPI_STUB_VER=2.0.0 GATE_YES=1 gate)"
 [ "$d" = "GATE all" ] && ok "--yes / COOP_ASSUME_YES takes latest for pipx tools and fabric-cicd too" || ko "with --yes expected 'GATE all', got '$d'"
 
 # A pipx latest at/under the tested MINOR is NOT gated (per-tool; sql-review's tested
-# 0.15.2 is crossed by 0.16.0 but 1.0.0 is not newer than 1.0.0 for data-doc).
+# 0.15.2 is crossed by 0.16.0 but 1.0.0 is older than 1.1.0 for data-doc).
 d="$(GATE_LATEST=0.80.5 PYPI_STUB_VER=1.0.0 gate)"
 case "$d" in
   "GATE pin:"*coop-sql-review=0.15.2*) ok "pipx gate is per-tool: only genuinely-crossed tools pin (sql-review 0.15.2 <- 1.0.0)" ;;

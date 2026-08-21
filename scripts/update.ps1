@@ -55,6 +55,7 @@ function Test-CoopPiRunning {
 # --- Parse flags (mirror of update.sh) ---------------------------------------
 $NO_FABRIC = $false
 $CHECK = $false       # --check: dry-run — report current/latest/tested, change nothing
+$EDGE = $false        # --edge: take latest upstream instead of the release manifest
 $PI_LATEST = $false   # --pi-latest: skip the tested-version gate and take latest Pi
 foreach ($a in $args) {
   switch -CaseSensitive ($a) {
@@ -63,6 +64,7 @@ foreach ($a in $args) {
     '-y'          { $env:COOP_ASSUME_YES = '1' }
     '--check'     { $CHECK = $true }
     '--pi-latest' { $PI_LATEST = $true }
+    '--edge'      { $EDGE = $true }
     default       { if (-not [string]::IsNullOrWhiteSpace($a)) { Coop-Warn "update: ignoring unknown flag '$a'" } }
   }
 }
@@ -138,30 +140,27 @@ $PI_TESTED = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml'
 # Runs in a background job (a fresh runspace), so the tested-version DECISION is passed
 # in as args — script variables are not inherited. $Target set => pin to that version.
 $UnitPiUpdate = {
-  param([string]$Target, [string]$Pkg)
+  param([string]$Spec, [string]$Pkg)
   if (-not (Get-Command pi -ErrorAction SilentlyContinue)) {
     return [pscustomobject]@{ ok = $false; msg = 'pi not installed — run: coop install' }
   }
-  if ($Target) {
-    # The tested-version gate was declined: PIN Pi to the tested version (don't jump to an
-    # untested minor), then still refresh extensions so those stay current.
-    if (Get-Command npm -ErrorAction SilentlyContinue) {
-      & npm install -g "$Pkg@$Target" *> $null
-      if ($LASTEXITCODE -eq 0) {
-        & pi update --extensions *> $null
-        return [pscustomobject]@{ ok = $true; msg = "pinned pi to tested $Target + extensions updated" }
-      }
+  if ($Spec -eq 'edge') {
+    & pi update --all *> $null
+    if ($LASTEXITCODE -eq 0) {
+      $v = (& pi --version 2>$null); if (-not $v) { $v = '?' }
+      return [pscustomobject]@{ ok = $true; msg = "pi + extensions updated (edge) ($v)" }
     }
-    return [pscustomobject]@{ ok = $false; msg = "failed to pin pi to $Target (try: npm install -g $Pkg@$Target)" }
+    return [pscustomobject]@{ ok = $false; msg = 'pi update --all failed (try: pi update --all)' }
   }
-  # `pi update --all` updates the agent AND every installed extension. (Bare
-  # `pi update` updates pi ONLY; `--extensions` updates packages only.)
-  & pi update --all *> $null
-  if ($LASTEXITCODE -eq 0) {
-    $v = (& pi --version 2>$null); if (-not $v) { $v = '?' }
-    return [pscustomobject]@{ ok = $true; msg = "pi + extensions updated ($v)" }
+  # $Spec is "pkg@version" (manifest pin or tested-version gate pin).
+  if (Get-Command npm -ErrorAction SilentlyContinue) {
+    & npm install -g $Spec *> $null
+    if ($LASTEXITCODE -eq 0) {
+      & pi update --extensions *> $null
+      return [pscustomobject]@{ ok = $true; msg = "pinned pi to tested $($Spec.Split('@')[1]) + extensions updated" }
+    }
   }
-  return [pscustomobject]@{ ok = $false; msg = 'pi update --all failed (try: pi update --all)' }
+  return [pscustomobject]@{ ok = $false; msg = "failed to pin pi to $Spec (try: npm install -g $Spec)" }
 }
 
 $UnitPytoolUpgrade = {
@@ -173,31 +172,29 @@ $UnitPytoolUpgrade = {
   if ($list -notmatch ("package " + [regex]::Escape($Pkg) + " ")) {
     return [pscustomobject]@{ ok = $false; msg = "$Pkg not installed — run: coop install" }
   }
-  if ($Target) {
-    # The tested-version gate was declined: PIN to the tested version.
-    & pipx install --force "$Pkg==$Target" *> $null
-    if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = "pinned $Pkg to tested $Target" } }
-    return [pscustomobject]@{ ok = $false; msg = "failed to pin $Pkg to $Target (try: pipx install --force '$Pkg==$Target')" }
+  $target = if ($Target) { $Target } else { $Pkg }
+  & pipx install --force $target *> $null
+  if ($LASTEXITCODE -eq 0) {
+    $ver = if ($target -eq $Pkg) { '' } else { $target.Split('=')[-1] }
+    return [pscustomobject]@{ ok = $true; msg = if ($ver) { "pinned $Pkg to tested $ver" } else { $Pkg } }
   }
-  & pipx upgrade $Pkg *> $null
-  if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = $Pkg } }
   return [pscustomobject]@{ ok = $false; msg = "upgrade failed: $Pkg" }
 }
 
 $UnitPbihToolsUpgrade = {
-  param([array]$Pkgs)
+  param([array]$Specs)
   if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     return [pscustomobject]@{ ok = $false; msg = 'skipping Power BI/Fabric authoring tools (npm missing)' }
   }
   $ok = 0; $fail = 0
-  foreach ($pkg in $Pkgs) {
-    & npm ls -g --depth=0 $pkg *> $null
+  foreach ($spec in $Specs) {
+    & npm ls -g --depth=0 ($spec.Split('@')[0]) *> $null
     if ($LASTEXITCODE -eq 0) {
-      & npm update -g $pkg *> $null
+      & npm install -g $spec *> $null
       if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
     } else {
       # Never installed (machine predates these tools) — install rather than fail.
-      & npm install -g $pkg *> $null
+      & npm install -g $spec *> $null
       if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
     }
   }
@@ -209,22 +206,30 @@ $UnitPbihToolsUpgrade = {
 if ($CHECK) {
   Coop-Head 'coop update --check (dry-run — nothing is installed)'
   $piCur = if (Test-Have 'pi') { $m = [regex]::Match((& pi --version 2>$null | Out-String), '\d+\.\d+\.\d+'); if ($m.Success) { $m.Value } else { '?' } } else { 'not installed' }
+  $piExp = Coop-ManifestGet -Key 'pi.version'; if (-not $piExp) { $piExp = '?' }
   $piLat = Get-PiLatest; if (-not $piLat) { $piLat = '?' }
   # The version-table rows go to STDOUT (Write-Output), matching update.sh's bare
   # printf — so `coop update --check > versions.txt` captures the table on Windows too.
-  Write-Output ('  {0,-24} current {1,-13} latest {2,-13} tested {3}' -f "pi ($script:PI_PKG)", $piCur, $piLat, $(if ($PI_TESTED) { $PI_TESTED } else { '?' }))
+  Write-Output ('  {0,-32} current {1,-13} expected {2,-13} status {3}' -f "pi ($script:PI_PKG)", $piCur, $piExp, (Coop-ManifestStatus -Installed $piCur -Expected $piExp))
   if ($PI_TESTED -and (Test-CoopMinorNewer $piLat $PI_TESTED)) {
-    Coop-Warn "latest Pi ($piLat) is a newer MINOR than tested ($PI_TESTED) — 'coop update' will ask before jumping (skip with --pi-latest, or decline to stay on the tested version)."
+    Coop-Warn "latest Pi ($piLat) is a newer MINOR than tested ($PI_TESTED) — 'coop update' will ask before jumping (skip with --edge to take latest)."
   }
   $pipxList = if (Test-Have 'pipx') { (& pipx list 2>$null | Out-String) } else { '' }
   foreach ($pkg in $PY_TOOLS) {
-    $key = $pkg -replace '-', '_'
-    $tv = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') "tested_with.$key" '-'
+    $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if (-not $tv) { $tv = '?' }
     $cur = 'not installed'
     $cm = [regex]::Match($pipxList, ("package " + [regex]::Escape($pkg) + " (\d+\.\d+\.\d+)"))
     if ($cm.Success) { $cur = $cm.Groups[1].Value }
-    $lat = Get-PypiLatest $pkg; if (-not $lat) { $lat = '?' }
-    Write-Output ('  {0,-24} current {1,-13} latest {2,-13} tested {3}' -f $pkg, $cur, $lat, $tv)
+    Write-Output ('  {0,-32} current {1,-13} expected {2,-13} status {3}' -f $pkg, $cur, $tv, (Coop-ManifestStatus -Installed $cur -Expected $tv))
+  }
+  foreach ($pkg in $PBIH_NPM_TOOLS) {
+    $tv = Coop-ManifestGet -Key "npm_tools.$pkg"; if (-not $tv) { $tv = '?' }
+    $cur = 'not installed'
+    $nm = (& npm ls -g --depth=0 $pkg 2>$null | Out-String)
+    $cm = [regex]::Match($nm, ("" + [regex]::Escape($pkg) + "@(\d+\.\d+\.\d+[^\s]*)"))
+    if (-not $cm.Success) { $cm = [regex]::Match($nm, ("" + [regex]::Escape($pkg) + "@(\S+)")) }
+    if ($cm.Success) { $cur = $cm.Groups[1].Value }
+    Write-Output ('  {0,-32} current {1,-13} expected {2,-13} status {3}' -f $pkg, $cur, $tv, (Coop-ManifestStatus -Installed $cur -Expected $tv))
   }
   exit 0
 }
@@ -285,6 +290,7 @@ if ((Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package 
 
 # Test seam: print the resolved gate decision and stop BEFORE any install or side effect.
 if ($env:COOP_UPDATE_GATE_DRYRUN -eq '1') {
+  if ($EDGE) { Write-Output 'GATE all'; exit 0 }
   $pins = @()
   if ($script:PI_INSTALL_TARGET) { $pins += $script:PI_INSTALL_TARGET }
   foreach ($k in $script:PY_PIN.Keys) { $pins += "$k=$($script:PY_PIN[$k])" }
@@ -345,19 +351,30 @@ if ($RunPiUpdate) { $TOTAL += 1 }
 try {
   Coop-ProgBegin $TOTAL
 
+  # Resolve exact specs from the release manifest (unless --edge or gate pin).
+  $piSpec = if ($EDGE) { 'edge' } elseif ($script:PI_INSTALL_TARGET) { "$script:PI_PKG@$script:PI_INSTALL_TARGET" } else { $manifestPi = Coop-ManifestGet -Key 'pi.version'; if ($manifestPi) { "$script:PI_PKG@$manifestPi" } else { '' } }
+  $pytoolTargets = @()
+  foreach ($pkg in $PY_TOOLS) {
+    $pytoolTargets += if ($EDGE) { $pkg } else { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "$pkg==$tv" } else { $pkg } }
+  }
+  $pbihSpecs = @()
+  foreach ($pkg in $PBIH_NPM_TOOLS) {
+    $pbihSpecs += if ($EDGE) { $pkg } else { $tv = Coop-ManifestGet -Key "npm_tools.$pkg"; if ($tv) { "$pkg@$tv" } else { $pkg } }
+  }
+
   # --- 2. Update Pi + extensions ---------------------------------------------
   Coop-Head '2/6  Pi and extensions'
   if ($RunPiUpdate) {
-    Coop-Unit 'pi update --all   (the agent + all installed extensions)' $UnitPiUpdate @($script:PI_INSTALL_TARGET, $script:PI_PKG)
+    Coop-Unit 'pi update --all   (the agent + all installed extensions)' $UnitPiUpdate @($piSpec, $script:PI_PKG)
   }
 
   # --- 3. Upgrade pipx tools -------------------------------------------------
   Coop-Head '3/6  Coop tools + Fabric CLI (pipx)'
-  foreach ($pkg in $PY_TOOLS) { Coop-Unit $pkg $UnitPytoolUpgrade @($pkg, $script:PY_PIN[$pkg]) }
+  for ($i = 0; $i -lt $PY_TOOLS.Count; $i++) { Coop-Unit $PY_TOOLS[$i] $UnitPytoolUpgrade @($PY_TOOLS[$i], $pytoolTargets[$i]) }
 
   # --- 4. Upgrade Microsoft Fabric / Power BI authoring tools (npm) ----------
   Coop-Head '4/6  Fabric / Power BI authoring tools'
-  Coop-Unit 'Power BI/Fabric authoring tools' $UnitPbihToolsUpgrade @($PBIH_NPM_TOOLS)
+  Coop-Unit 'Power BI/Fabric authoring tools' $UnitPbihToolsUpgrade @($pbihSpecs)
 }
 finally {
   Coop-ProgEnd

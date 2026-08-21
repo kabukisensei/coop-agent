@@ -125,6 +125,62 @@ if (Test-Have 'pi') {
   }
 }
 
+# Release manifest: the single source of truth for the exact versions that ship
+# together with this coop build. Doctor reports drift so a teammate can `coop update`
+# or `coop update --edge` intentionally.
+D-Head 'Release manifest'
+$piExpected = Coop-ManifestGet 'pi.version'
+if ($piExpected) {
+  if (Test-Have 'pi') {
+    $piRaw = (& pi --version 2>$null | Select-Object -First 1)
+    $piv = ''
+    if ($piRaw -match '(\d+)\.(\d+)\.(\d+)') {
+      $piv = "$($matches[1]).$($matches[2]).$($matches[3])"
+    }
+    $piStatus = Coop-ManifestStatus $piv $piExpected
+    switch ($piStatus) {
+      'ok'                { D-Ok "pi $piv matches manifest ($piExpected)" }
+      'missing'           { D-Warn 'pi version unknown' 'coop update' }
+      'older'             { D-Warn "pi $piv is older than manifest ($piExpected)" 'coop update' }
+      'newer-than-tested' { D-Warn "pi $piv is newer than manifest ($piExpected)" "coop update --edge, or pin back: npm i -g @earendil-works/pi-coding-agent@$piExpected" }
+      'wrong-version'     { D-Warn "pi $piv differs from manifest ($piExpected)" 'coop update' }
+    }
+  } else {
+    D-Warn 'pi not installed' 'coop install'
+  }
+}
+
+foreach ($key in @('coop-data-doc', 'coop-sql-review', 'coop-dax-review', 'ms-fabric-cli')) {
+  $expected = Coop-ManifestGet "python_tools.$key"
+  if (-not $expected) { continue }
+  if (Test-Have $key) {
+    $vOut = (& $key --version 2>$null | Select-Object -First 1)
+    $ver = ''
+    if ($vOut -match '\d+\.\d+(\.\d+)?') { $ver = $matches[0] }
+  } else {
+    $ver = ''
+  }
+  $status = Coop-ManifestStatus $ver $expected
+  switch ($status) {
+    'ok'                { D-Ok "$key $ver matches manifest ($expected)" }
+    'missing'           { D-Warn "$key not installed or version unknown (manifest: $expected)" "pipx install $key==$expected" }
+    'older'             { D-Warn "$key $ver is older than manifest ($expected)" "pipx install $key==$expected" }
+    'newer-than-tested' { D-Warn "$key $ver is newer than manifest ($expected)" "pipx install $key==$expected" }
+    'wrong-version'     { D-Warn "$key $ver differs from manifest ($expected)" "pipx install $key==$expected" }
+  }
+}
+
+# Minimum node version from the manifest.
+$nodeExpected = Coop-ManifestGet 'node.min'
+if ($nodeExpected -and (Test-Have 'node')) {
+  $nraw = (& node --version 2>$null | Select-Object -First 1)
+  $nodev = ''
+  if ($nraw -match '(\d+)\.(\d+)\.(\d+)') { $nodev = "$($matches[1]).$($matches[2]).$($matches[3])" }
+  if ($nodev -and (Coop-VersionLessThan $nodev $nodeExpected)) {
+    D-Warn "Node $nodev is older than the manifest minimum ($nodeExpected)" 'upgrade Node: https://nodejs.org'
+  }
+}
+
 # Pi (latest, @earendil-works) requires Node >= 22.19 — check the version so a teammate
 # on Node 18/20 gets a clear message instead of a cryptic pi failure.
 if (Test-Have 'node') {
@@ -186,7 +242,7 @@ Check 'powerbi-report-author' 'required' 'npm install -g @microsoft/powerbi-repo
 if ($env:OS -eq 'Windows_NT') {
   Check 'powerbi-desktop' 'optional' 'npm install -g @microsoft/powerbi-desktop-bridge-cli (Windows + Power BI Desktop only)' @('powerbi-desktop', '--version')
 } else {
-  D-Warn 'powerbi-desktop (Desktop Bridge)' 'Windows + Power BI Desktop only — skipped on this OS'
+  D-Ok 'powerbi-desktop (Desktop Bridge) — Windows only, not applicable here'
 }
 # powerbi-modeling-mcp is started via npx; verify the package is installed globally.
 $pbihModeling = $false
@@ -240,33 +296,39 @@ if (Test-Have 'fab') {
 }
 # Tabular Editor CLI is path-configured and mostly Windows; check the project's path if set.
 $projYml = Find-CoopProjectYml
-$tePath = Get-CoopYamlValue $projYml 'tools.tabular_editor_cli.executable_path' ''
-$teRules = Get-CoopYamlValue $projYml 'tools.tabular_editor_cli.bpa_rules_path' ''
-if (-not $tePath -or $tePath -like 'TODO*') {
-  if (Test-Have 'te') {
-    $tev = (& te --version 2>$null | Select-Object -First 1)
-    D-Ok "te — Tabular Editor CLI ($tev)"
-  } else {
-    $foundTe = $null
-    foreach ($d in (@(
-      (Join-Path $HOME '.local\bin\te.exe'),
-      $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\te\te.exe' })
-    ) | Where-Object { $_ })) {
-      if (Test-Path -LiteralPath $d) { $foundTe = $d; break }
+if (-not (Test-CoopToolEnabled $projYml 'tabular_editor_cli')) {
+  D-Ok 'Tabular Editor CLI disabled in project.yml'
+} else {
+  $tePath = Get-CoopYamlValue $projYml 'tools.tabular_editor_cli.executable_path' ''
+  $teRules = Get-CoopYamlValue $projYml 'tools.tabular_editor_cli.bpa_rules_path' ''
+  if (-not $tePath) {
+    if (Test-Have 'te') {
+      $tev = (& te --version 2>$null | Select-Object -First 1)
+      D-Ok "te — Tabular Editor CLI ($tev)"
+    } else {
+      $foundTe = $null
+      foreach ($d in (@(
+        (Join-Path $HOME '.local\bin\te.exe'),
+        $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\te\te.exe' })
+      ) | Where-Object { $_ })) {
+        if (Test-Path -LiteralPath $d) { $foundTe = $d; break }
+      }
+      if ($foundTe) { D-Ok "Tabular Editor CLI: $foundTe" }
+      else { D-Warn 'Tabular Editor CLI (te) not found (optional)' "download 'te' from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (requires a Tabular Editor account during the preview), place in ~/.local/bin or on PATH, then run: te auth login" }
     }
-    if ($foundTe) { D-Ok "Tabular Editor CLI: $foundTe" }
-    else { D-Warn 'Tabular Editor CLI (te) not found (optional)' "download 'te' from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (requires a Tabular Editor account during the preview), place in ~/.local/bin or on PATH, then run: te auth login" }
+  } elseif ($tePath -like 'TODO*') {
+    D-Warn 'Tabular Editor CLI executable_path not configured' 'set tools.tabular_editor_cli.executable_path in .coop/project.yml'
+  } else {
+    if (Test-Path -LiteralPath $tePath) { D-Ok "Tabular Editor CLI: $tePath" }
+    else { D-Warn "Tabular Editor CLI path not found: $tePath" }
   }
-} else {
-  if (Test-Path -LiteralPath $tePath) { D-Ok "Tabular Editor CLI: $tePath" }
-  else { D-Warn "Tabular Editor CLI path not found: $tePath" }
-}
-if (-not $teRules -or $teRules -like 'TODO*') {
-  D-Warn 'Tabular Editor BPA rules not configured' 'set tools.tabular_editor_cli.bpa_rules_path in .coop/project.yml (optional)'
-} else {
-  $resolvedRules = if ($projYml) { Join-Path (Split-Path -Parent (Split-Path -Parent $projYml)) $teRules } else { $null }
-  if (($resolvedRules -and (Test-Path -LiteralPath $resolvedRules)) -or (Test-Path -LiteralPath $teRules)) { D-Ok "Tabular Editor BPA Rules: $teRules" }
-  else { D-Warn "Tabular Editor BPA rules not found: $teRules" }
+  if (-not $teRules -or $teRules -like 'TODO*') {
+    D-Warn 'Tabular Editor BPA rules not configured' 'set tools.tabular_editor_cli.bpa_rules_path in .coop/project.yml (optional)'
+  } else {
+    $resolvedRules = if ($projYml) { Join-Path (Split-Path -Parent (Split-Path -Parent $projYml)) $teRules } else { $null }
+    if (($resolvedRules -and (Test-Path -LiteralPath $resolvedRules)) -or (Test-Path -LiteralPath $teRules)) { D-Ok "Tabular Editor BPA Rules: $teRules" }
+    else { D-Warn "Tabular Editor BPA rules not found: $teRules" }
+  }
 }
 
 D-Head 'Pi extensions'
@@ -321,8 +383,24 @@ foreach ($f in @(
 if ($mcpFound) {
   D-Ok "MCP config: $mcpFound"
   $mcpText = (Get-Content -LiteralPath $mcpFound -Raw -ErrorAction SilentlyContinue)
-  foreach ($s in @('fabric', 'powerbi', 'azure-devops', 'microsoft-learn', 'context-mode')) {
-    if ($mcpText -match ('(?i)"' + [regex]::Escape($s) + '"')) { D-Ok "  • $s server configured" }
+  foreach ($s in @('fabric', 'powerbi', 'powerbi-modeling-mcp', 'azure-devops', 'microsoft-learn', 'context-mode')) {
+    if ($mcpText -match ('(?i)"' + [regex]::Escape($s) + '"')) {
+      if ($s -eq 'powerbi-modeling-mcp') {
+        $modelingArgs = ''
+        # Extract the args array lines following the powerbi-modeling-mcp key.
+        $m = [regex]::Match($mcpText, ('(?i)"' + [regex]::Escape($s) + '"\s*:\s*\{[\s\S]*?"args"\s*:\s*\[(?<args>[\s\S]*?)\]'))
+        if ($m.Success) { $modelingArgs = $m.Groups['args'].Value }
+        if ($modelingArgs -match '(?i)"--readonly"|"--read-only"') {
+          D-Ok "  • $s server configured (read-only mode)"
+        } elseif ($modelingArgs -match '(?i)"--start"|"--read-write"|"--readwrite"') {
+          D-Warn "  • $s server configured (read-write mode)" 'change args to --readonly for read-only'
+        } else {
+          D-Warn "  • $s server configured (mode unclear)" 'use --readonly for read-only'
+        }
+      } else {
+        D-Ok "  • $s server configured"
+      }
+    }
   }
   if ($mcpText -notmatch '(?i)learn\.microsoft\.com|microsoft-learn') {
     D-Warn '  Microsoft Learn MCP not configured' 'coop sync   (adds it read-only)'
@@ -346,10 +424,26 @@ D-Head 'Project contract'
 $proj = Find-CoopProjectYml
 if ($proj) {
   D-Ok ".coop/project.yml found: $proj"
-  $todo = 0
-  $projText = (Get-Content -LiteralPath $proj -ErrorAction SilentlyContinue)
-  if ($projText) { $todo = ($projText | Select-String -Pattern 'TODO' -SimpleMatch).Count }
-  if ($todo -gt 0) { D-Warn "$todo TODO placeholder(s) remain in project.yml" 'edit it before live Fabric/Power BI work' }
+
+  # Feature-aware validation: only flag missing values for enabled features instead of
+  # counting raw TODO substrings.
+  $org = Get-CoopYamlValue $proj 'profile.organization' ''
+  $branch = Get-CoopYamlValue $proj 'profile.default_branch' ''
+  $repoPaths = @(Get-CoopYamlList $proj 'repositories.*.local_path')
+  if ([string]::IsNullOrWhiteSpace($org)) { D-Warn 'profile.organization is empty' 'set it in .coop/project.yml' }
+  if ([string]::IsNullOrWhiteSpace($branch)) { D-Warn 'profile.default_branch is empty' 'set it in .coop/project.yml' }
+  if ($repoPaths.Count -eq 0) { D-Warn 'no repositories configured' 'add at least one repository under repositories:' }
+
+  if ((Test-CoopToolEnabled $proj 'fabric_cli') -or (Test-CoopToolEnabled $proj 'fabric_cicd')) {
+    $tenant = Get-CoopYamlValue $proj 'fabric.tenant_id' ''
+    if ([string]::IsNullOrWhiteSpace($tenant)) { D-Warn 'Fabric tools enabled but fabric.tenant_id is empty' 'set it in .coop/project.yml' }
+  }
+
+  if (Test-CoopToolEnabled $proj 'tabular_editor_cli') {
+    $tePath = Get-CoopYamlValue $proj 'tools.tabular_editor_cli.executable_path' ''
+    if ([string]::IsNullOrWhiteSpace($tePath) -or $tePath.StartsWith('TODO')) { D-Warn 'Tabular Editor enabled but executable_path not set' 'set tools.tabular_editor_cli.executable_path in .coop/project.yml' }
+  }
+
   # Subordinate skill sources: warn when configured but not yet fetched.
   foreach ($key in @('microsoft_skills', 'fabric_skills')) {
     $src = Get-CoopYamlValue $proj "$key.source" ''

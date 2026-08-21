@@ -68,10 +68,10 @@ try {
   $spec = (& $coop launch-spec 2>&1 | Out-String) -replace '\\', '/'
   $miss = $false
   foreach ($needle in @('docs/guardrails.md', '--prompt-template', 'themes/cooptimize.json',
-                        'extensions/coop-powerline', 'extensions/coop-tools', 'extensions/coop-guardrails')) {
+                        'extensions/coop-powerline', 'extensions/coop-tools', 'extensions/coop-guardrails', 'extensions/coop-profile')) {
     if ($spec -notlike "*$needle*") { Ko "launch-spec missing: $needle"; $miss = $true }
   }
-  if (-not $miss) { Ok 'launch-spec resolves guardrails, prompts, theme, and all 3 extensions' }
+  if (-not $miss) { Ok 'launch-spec resolves guardrails, prompts, theme, and all 4 extensions' }
 
   # --- 2. --no-launch is a dry-run: exits 0, prints the spec -----------------
   Head '--no-launch dry-run (must NOT start pi; prints the spec)'
@@ -118,8 +118,9 @@ try {
 & '$update' --check 2>`$null
 "@ 6>$null | Out-String
   if ($LASTEXITCODE -eq 0) { Ok '--check exits 0' } else { Ko "--check exit was $LASTEXITCODE" }
-  if ($checkOut -like '*tested 0.80.2*') { Ok '--check prints the pi tested version' } else { Ko '--check missing pi tested version' }
-  if ($checkOut -like '*latest 0.99.0*') { Ok '--check prints the (mocked) latest' } else { Ko '--check missing latest' }
+  if ($checkOut -like '*expected 0.80.2*') { Ok '--check prints the pi expected version' } else { Ko '--check missing pi expected version' }
+  if ($checkOut -like '*status *') { Ok '--check prints a status column' } else { Ko '--check missing status column' }
+  if ($checkOut -like '*@microsoft/powerbi-report-authoring-cli*') { Ok '--check lists npm authoring tools' } else { Ko '--check missing npm authoring tools' }
 
   # --- 5. dispatcher preserves one trailing argument -------------------------
   # COOP_UPDATE_GATE_DRYRUN is a safety net: before the fix, coop.ps1 split the

@@ -16,6 +16,7 @@ export COOP_ROOT
 
 NO_FABRIC=0
 CHECK=0        # --check: dry-run — report current/latest/tested, change nothing
+EDGE=0         # --edge: take latest upstream instead of the release manifest
 PI_LATEST=0    # --pi-latest: skip the tested-version gate and take latest Pi
 for a in "$@"; do
   case "$a" in
@@ -24,6 +25,7 @@ for a in "$@"; do
     --yes|-y) export COOP_ASSUME_YES=1 ;;
     --check) CHECK=1 ;;
     --pi-latest) PI_LATEST=1 ;;
+    --edge) EDGE=1 ;;
     *) coop_warn "update: ignoring unknown flag '$a'" ;;
   esac
 done
@@ -91,25 +93,35 @@ PROG_TOTAL=$(( 1 + ${#PY_TOOLS[@]} + 1 ))
 # the overall bar — same contract as the install units.
 _unit_pi_update() {
   have pi || { printf 'pi not installed — run: coop install'; return 1; }
-  if [ -n "$PI_INSTALL_TARGET" ]; then
-    # The tested-version gate was declined: PIN Pi to the tested version (don't jump to an
-    # untested minor), then still refresh extensions so those stay current.
-    if have npm && npm install -g "$PI_PKG@$PI_INSTALL_TARGET" >/dev/null 2>&1; then
-      pi update --extensions >/dev/null 2>&1 || true
-      printf 'pinned pi to tested %s + extensions updated' "$PI_INSTALL_TARGET"; return 0
+  if [ "$EDGE" = 1 ]; then
+    if pi update --all >/dev/null 2>&1; then
+      printf 'pi + extensions updated (edge) (%s)' "$(pi --version 2>/dev/null || echo '?')"; return 0
     fi
-    printf 'failed to pin pi to %s (try: npm install -g %s@%s)' "$PI_INSTALL_TARGET" "$PI_PKG" "$PI_INSTALL_TARGET"; return 1
+    printf 'pi update --all failed (try: pi update --all)'; return 1
   fi
-  # `pi update --all` updates the agent AND every installed extension. (Bare
-  # `pi update` updates pi ONLY; `--extensions` updates packages only.)
+  # Default (reproducible): pin Pi to the release manifest, then refresh extensions.
+  local pi_target
+  pi_target="$(coop_manifest_get pi.version)"
+  if [ -z "$pi_target" ]; then pi_target="$PI_INSTALL_TARGET"; fi
+  if [ -n "$pi_target" ]; then
+    if have npm && npm install -g "$PI_PKG@$pi_target" >/dev/null 2>&1; then
+      pi update --extensions >/dev/null 2>&1 || true
+      printf 'pinned pi to tested %s + extensions updated' "$pi_target"; return 0
+    fi
+    printf 'failed to pin pi to %s (try: npm install -g %s@%s)' "$pi_target" "$PI_PKG" "$pi_target"; return 1
+  fi
+  # No manifest pin and no gate decision: fall back to `pi update --all`.
   if pi update --all >/dev/null 2>&1; then
     printf 'pi + extensions updated (%s)' "$(pi --version 2>/dev/null || echo '?')"; return 0
   fi
   printf 'pi update --all failed (try: pi update --all)'; return 1
 }
 
-_unit_pytool_upgrade() {  # $1 = package; $2 = optional tested-version pin ("" = latest)
-  local pkg="$1" pin="${2:-}"
+_unit_pytool_upgrade() {  # $1 = package
+  local pkg="$1" pin=""
+  if [ "$EDGE" != 1 ]; then
+    pin="$(coop_manifest_get "python_tools.$pkg")"
+  fi
   have pipx || { printf 'skipping %s (pipx missing) — run: coop install' "$pkg"; return 1; }
   if ! pipx list 2>/dev/null | grep -q "package $pkg "; then
     printf '%s not installed — run: coop install' "$pkg"; return 1
@@ -124,13 +136,19 @@ _unit_pytool_upgrade() {  # $1 = package; $2 = optional tested-version pin ("" =
 
 _unit_pbih_tools_upgrade() {
   have npm || { printf 'skipping Power BI/Fabric authoring tools (npm missing)'; return 1; }
-  local pkg ok=0 fail=0
+  local pkg ok=0 fail=0 spec
   for pkg in "${PBIH_NPM_TOOLS[@]}"; do
+    spec="$pkg"
+    if [ "$EDGE" != 1 ]; then
+      local ver
+      ver="$(coop_manifest_get "npm_tools.$pkg")"
+      [ -n "$ver" ] && spec="${pkg}@${ver}"
+    fi
     if npm ls -g --depth=0 "$pkg" >/dev/null 2>&1; then
-      npm update -g "$pkg" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
+      npm install -g "$spec" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
     else
       # Never installed (machine predates these tools) — install rather than fail.
-      npm install -g "$pkg" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
+      npm install -g "$spec" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
     fi
   done
   if [ "$fail" -eq 0 ]; then printf '%d Power BI/Fabric authoring tool(s) updated' "$ok"; return 0; fi
@@ -141,18 +159,19 @@ _unit_pbih_tools_upgrade() {
 if [ "$CHECK" = "1" ]; then
   coop_head "coop update --check (dry-run — nothing is installed)"
   pi_cur="$(coop_pi_version)"; [ -n "$pi_cur" ] || pi_cur="not installed"
-  pi_lat="$(_pi_latest)"; [ -n "$pi_lat" ] || pi_lat="?"
-  printf '  %-24s current %-13s latest %-13s tested %s\n' "pi ($PI_PKG)" "$pi_cur" "$pi_lat" "${PI_TESTED:-?}"
-  if [ -n "$PI_TESTED" ] && coop_minor_newer "$pi_lat" "$PI_TESTED"; then
-    coop_warn "latest Pi ($pi_lat) is a newer MINOR than tested ($PI_TESTED) — 'coop update' will ask before jumping (skip with --pi-latest, or decline to stay on the tested version)."
-  fi
+  pi_exp="$(coop_manifest_get pi.version)"; [ -n "$pi_exp" ] || pi_exp="?"
+  printf '  %-32s current %-13s expected %-13s status %s\n' "pi ($PI_PKG)" "$pi_cur" "$pi_exp" "$(coop_manifest_status "$pi_cur" "$pi_exp")"
   for pkg in "${PY_TOOLS[@]}"; do
-    key="$(printf '%s' "$pkg" | tr '-' '_')"
-    tv="$(coop_yaml_get "$COOP_ROOT/config/defaults.yml" "tested_with.$key" "-")"
+    tv="$(coop_manifest_get "python_tools.$pkg")"; [ -n "$tv" ] || tv="?"
     cur="$(pipx list 2>/dev/null | grep -E "package $pkg " | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
     [ -n "$cur" ] || cur="not installed"
-    lat="$(_pypi_latest "$pkg")"; [ -n "$lat" ] || lat="?"
-    printf '  %-24s current %-13s latest %-13s tested %s\n' "$pkg" "$cur" "$lat" "$tv"
+    printf '  %-32s current %-13s expected %-13s status %s\n' "$pkg" "$cur" "$tv" "$(coop_manifest_status "$cur" "$tv")"
+  done
+  for pkg in "${PBIH_NPM_TOOLS[@]}"; do
+    tv="$(coop_manifest_get "npm_tools.$pkg")"; [ -n "$tv" ] || tv="?"
+    cur="$(npm ls -g --depth=0 "$pkg" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -1)"
+    [ -n "$cur" ] || cur="not installed"
+    printf '  %-32s current %-13s expected %-13s status %s\n' "$pkg" "$cur" "$tv" "$(coop_manifest_status "$cur" "$tv")"
   done
   exit 0
 fi
@@ -215,7 +234,11 @@ if have pipx && pipx list 2>/dev/null | grep -q "package ms-fabric-cli "; then
 fi
 
 # Test seam: print the resolved gate decision and stop BEFORE any install or side effect.
-if [ "${COOP_UPDATE_GATE_DRYRUN:-0}" = "1" ]; then
+if [ "${COOP_UPDATE_GATE_DRYRUN:-}" = "1" ]; then
+  if [ "$EDGE" = "1" ]; then
+    echo "GATE all"
+    exit 0
+  fi
   pins="$PI_INSTALL_TARGET"
   for p in $PY_PIN; do pins="${pins:+$pins,}$p"; done
   [ -n "$FCC_PIN" ] && pins="${pins:+$pins,}fabric-cicd=$FCC_PIN"

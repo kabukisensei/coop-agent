@@ -67,6 +67,10 @@ ${COOP_BOLD}Usage${COOP_RST}
   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
   coop web                  Open a friendly browser UI over the agent (experimental)
+  coop onboard              First-run global onboarding (creates ~/.coop/user.json)
+  coop profile              Show your COOP user profile
+  coop profile edit         Edit your COOP user profile
+  coop profile reset        Remove your COOP user profile
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
@@ -174,10 +178,12 @@ coop_build_pi_args() {
   fi
   [ -d "$COOP_ROOT/prompts" ]  && COOP_PI_ARGS+=(--prompt-template "$COOP_ROOT/prompts")
   [ -f "$COOP_ROOT/themes/cooptimize.json" ] && COOP_PI_ARGS+=(--theme "$COOP_ROOT/themes/cooptimize.json")
-  # Cooptimize companion extensions: branding/splash/vibes, and native review tools.
+  # Cooptimize companion extensions: branding/splash/vibes, native review tools, governance,
+  # and the local user profile hidden instruction.
   [ -e "$COOP_ROOT/extensions/coop-powerline" ]  && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-powerline")
   [ -e "$COOP_ROOT/extensions/coop-tools" ]      && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-tools")
   [ -e "$COOP_ROOT/extensions/coop-guardrails" ] && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-guardrails")
+  [ -e "$COOP_ROOT/extensions/coop-profile" ]    && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-profile")
   # Point the extension at our vibe files and brand splash.
   export COOP_VIBES_DIR="$COOP_ROOT/vibes"
   export COOP_SPLASH_FILE="$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi"
@@ -186,6 +192,10 @@ coop_build_pi_args() {
 # --- Launch the branded Pi agent ---------------------------------------------
 launch_pi() {
   have pi || coop_die "pi is not installed. Run: coop install   (or: npm install -g @earendil-works/pi-coding-agent)"
+
+  # First-run onboarding: ask for name/communication preference before the first
+  # real session, but only in an interactive terminal and only if not disabled.
+  coop_maybe_onboard || true
 
   # Guard against launching into a known-broken extension load (agent/extension
   # pi-ai skew). Aborts with instructions when the agent is too old; auto-realigns
@@ -260,6 +270,17 @@ run_tool() {
   have "$bin" || coop_die "$bin is not installed. Run: coop install"
   coop_head "$bin ${*:-}"
   exec "$bin" "$@"
+}
+
+# --- Onboarding / profile ----------------------------------------------------
+run_onboard() {
+  local py; py="$(coop_python)" || coop_die "python3 is required for coop onboard"
+  exec "$py" "$COOP_ROOT/scripts/onboard.py" "$@"
+}
+
+run_profile() {
+  local py; py="$(coop_python)" || coop_die "python3 is required for coop profile"
+  exec "$py" "$COOP_ROOT/scripts/onboard.py" profile "$@"
 }
 
 run_data_doc() {
@@ -514,20 +535,22 @@ PY
 coop_valid_name() { case "$1" in ""|.|..|-*|*[!a-zA-Z0-9._-]*) return 1 ;; *) return 0 ;; esac; }
 
 coop_init() {
-  # coop init [dir]              scaffold .coop/project.yml (current behavior)
+  # coop init [dir]              run the guided project wizard
+  # coop init --template [dir]   copy the full documented example (legacy raw template)
   # coop init --seed-docs [dir]  generate/patch coop-data-doc.yml from an EXISTING
   #                              contract's repositories: (paths typed once, not twice)
   # coop init --ci github|ado    generate CI pipeline
-  local seed=0 dir="" a ci_type=""
+  local seed=0 dir="" a ci_type="" template=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --seed-docs) seed=1 ;;
+      --template) template=1 ;;
       --ci)
         if [ "$#" -lt 2 ]; then coop_die "coop init --ci needs a value: github|ado"; fi
         shift; ci_type="$1"
         ;;
       --yes|-y) export COOP_ASSUME_YES=1 ;;
-      -*) coop_die "unknown flag '$1' — usage: coop init [dir] [--seed-docs] [--ci github|ado] [--yes]" ;;
+      -*) coop_die "unknown flag '$1' — usage: coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]" ;;
       *) dir="$1" ;;
     esac
     shift
@@ -545,12 +568,17 @@ coop_init() {
     return $?
   fi
   local dst="$dir/.coop/project.yml"
-  [ -f "$COOP_ROOT/.coop/project.example.yml" ] || coop_die "template missing: .coop/project.example.yml"
   [ -e "$dst" ] && coop_die "$dst already exists — not overwriting.  (seed coop-data-doc.yml from it with: coop init --seed-docs)"
-  mkdir -p "$dir/.coop"
-  cp "$COOP_ROOT/.coop/project.example.yml" "$dst"
+  local py; py="$(coop_python)" || coop_die "python3 is required for: coop init"
+  if [ "$template" = 1 ]; then
+    "$py" "$COOP_ROOT/lib/init_wizard.py" "$dir" --template > "$dst"
+  else
+    "$py" "$COOP_ROOT/lib/init_wizard.py" "$dir" || return $?
+  fi
   coop_ok "Wrote $dst"
-  coop_info "Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor"
+  if [ "$template" = 1 ]; then
+    coop_info "Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor"
+  fi
   coop_info "Once repositories: is filled, seed the lineage-docs config from it: coop init --seed-docs"
   coop_info "Or set up lineage docs interactively: \`coop data-doc setup\` (full wizard) — or launch \`coop\` and accept the /setup-docs offer."
 }
@@ -937,6 +965,8 @@ case "$cmd" in
   sync)          shift; exec "$COOP_ROOT/scripts/sync.sh" "$@" ;;
   web)           shift; coop_web "$@" ;;
   launch-spec)   shift; coop_launch_spec "$@" ;;
+  onboard)       shift; run_onboard onboard "$@" ;;
+  profile)       shift; run_profile "$@" ;;
   init)          shift; coop_init "$@" ;;
   new-skill)     shift; coop_new_skill "$@" ;;
   new-prompt)    shift; coop_new_prompt "$@" ;;

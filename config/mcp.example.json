@@ -16,7 +16,7 @@
     },
     "powerbi-modeling-mcp": {
       "command": "npx",
-      "args": ["-y", "@microsoft/powerbi-modeling-mcp@latest", "--start"]
+      "args": ["-y", "@microsoft/powerbi-modeling-mcp@latest", "--readonly"]
     },
     "azure-devops": {
       "command": "npx",

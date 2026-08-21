@@ -57,15 +57,20 @@ Fabric item definitions. Treat them exactly like any other source edit:
 > asked of you: a `git commit` that would include source is **blocked** — covering
 > staged files, `git commit -a/-am` (which auto-stages tracked changes),
 > `git -C <dir> commit`, and `git commit <pathspec>` (which commits working-tree content
-> straight past the index); commit only docs/logs/site and let a human commit source.
+> straight past the index). The allowed paths come from the target repo's
+> `.coop/project.yml` entry under `repositories:` (`agent_allowed_to_commit` /
+> `agent_never_commit`), falling back to the top-level `agent_allowed_to_commit` and
+> the built-in docs/logs/site defaults; commit only allowed paths and let a human commit
+> source.
 > Destructive commands (`rm -rf`, `git push --force` — including a `+refspec` force push,
 > `git reset --hard`, `git clean -f`, `DROP`/`TRUNCATE`) require confirmation; the git
 > detectors tolerate `git -C` and interspersed flags and match case-insensitively. A
 > read/edit/write of a secret-looking file (`.env`, private keys, credential files) —
 > **or a bash command that touches one** (`cat .env`, `curl -F f=@.env`) — requires
 > confirmation. And a Fabric/Power BI/MCP tool call whose name looks like a **mutation**
-> (create/update/delete/deploy/publish) requires confirmation. That last check is
-> best-effort — MCP tool names vary, so it **complements** (does not replace) Pi's own
+> (create/update/delete/deploy/publish) requires confirmation, including proxied MCP
+> calls where the real remote tool name is carried inside the `mcp` tool input. That last
+> check is best-effort — MCP tool names vary, so it **complements** (does not replace) Pi's own
 > tool-approval prompts and this advisory prompt; enable the optional `pi-permissions`
 > extension for hard per-tool gating. If a tool call is blocked, read the reason and
 > adjust — don't try to route around it.
@@ -74,9 +79,10 @@ Fabric item definitions. Treat them exactly like any other source edit:
 > appended as one JSON line to `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default
 > `~/.coop/agent/…`): timestamp, working folder, kind, decision, and the offending path(s)
 > or a truncated command — **secrets and file contents are never written** (the secret gate
-> records only the matched path). Run `/coop-guardrails` to see the last ~10 decisions and
-> the log path. The log is a reviewable trail of "the agent tried X; a human said yes/no",
-> not a place to hide activity.
+> records only the matched path; the MCP gate records the remote tool/server, never raw
+> arguments). Run `/coop-guardrails` to see the last ~10 decisions and the log path. The log
+> is a reviewable trail of "the agent tried X; a human said yes/no", not a place to hide
+> activity.
 
 ## The Cooptimize workflow (use the `coop-workflow` skill)
 

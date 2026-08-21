@@ -5,7 +5,6 @@
 # documented template, and copy it into each work repo.
 
 profile:
-  consultant_name: "Aaron Jennings"
   organization: "Cooptimize"
   timezone: "America/Chicago"
   default_branch: "main"

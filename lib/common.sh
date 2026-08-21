@@ -23,6 +23,56 @@ export COOP_ROOT
 COOP_VERSION="$(cat "$COOP_ROOT/VERSION" 2>/dev/null || echo "0.0.0")"
 export COOP_VERSION
 
+# Release manifest: single source of truth for exact versions installed together.
+COOP_RELEASE_MANIFEST="${COOP_RELEASE_MANIFEST:-$COOP_ROOT/config/release-manifest.json}"
+export COOP_RELEASE_MANIFEST
+
+# Read a dotted path from the release manifest JSON. Usage: coop_manifest_get pi.version
+# Falls back to an empty string if the key is missing or JSON is invalid.
+# Requires node (install/update already require it); doctor silently returns "" if node is missing.
+coop_manifest_get() {
+  local key="$1"
+  [ -f "$COOP_RELEASE_MANIFEST" ] || return 0
+  have node || return 0
+  node -e "
+const m = require('$COOP_RELEASE_MANIFEST');
+const parts = '$key'.split('.');
+let v = m;
+for (const p of parts) { if (v == null || typeof v !== 'object') process.exit(0); v = v[p]; }
+if (v !== undefined) console.log(String(v));
+" 2>/dev/null
+}
+
+# Echo the keys of an object in the manifest (one per line), or nothing on missing/invalid.
+# Usage: coop_manifest_keys extensions
+coop_manifest_keys() {
+  local key="$1"
+  [ -f "$COOP_RELEASE_MANIFEST" ] || return 0
+  have node || return 0
+  node -e "
+const m = require('$COOP_RELEASE_MANIFEST');
+const parts = '$key'.split('.');
+let v = m;
+for (const p of parts) { if (v == null || typeof v !== 'object') process.exit(0); v = v[p]; }
+if (v && typeof v === 'object' && !Array.isArray(v)) console.log(Object.keys(v).join('\n'));
+" 2>/dev/null
+}
+
+# Compare installed version against expected. Echo one of: ok missing older newer-than-tested wrong-version not-applicable
+# $1 = installed (may be empty), $2 = expected (may be empty), $3 = optional name (for logging)
+coop_manifest_status() {
+  local installed="$1" expected="$2"
+  if [ -z "$installed" ]; then echo "missing"; return; fi
+  if [ -z "$expected" ]; then echo "not-applicable"; return; fi
+  if [ "$installed" = "$expected" ]; then echo "ok"; return; fi
+  # Normalize for comparison: strip leading 'v' if present.
+  local i="${installed#v}" e="${expected#v}"
+  if coop_version_lt "$i" "$e"; then echo "older"; return; fi
+  if coop_minor_newer "$i" "$e"; then echo "newer-than-tested"; return; fi
+  # Same major.minor but different patch, or any other mismatch.
+  echo "wrong-version"
+}
+
 # Ensure user tool bins (pipx, Homebrew, standard local bins) are on PATH in-process
 [ -d "$HOME/.local/bin" ] && case ":$PATH:" in *":$HOME/.local/bin:"*) : ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
 [ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
@@ -520,6 +570,19 @@ coop_skill_name() {
   ' "$file"
 }
 
+# Test whether a tool is enabled in .coop/project.yml. Returns 0 (enabled) when the
+# key is absent or set to true/yes/1; returns 1 (disabled) only for explicit false/0/no.
+# Falls back to enabled if no project.yml exists, preserving previous doctor behavior.
+coop_tool_enabled() {
+  local proj="$1" key="$2"
+  local v
+  v="$(coop_yaml_get "$proj" "tools.${key}.enabled" "")"
+  case "$v" in
+    [fF]alse|0|[nN]o|[nN]ope) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 # Locate the active project contract: nearest .coop/project.yml walking up from
 # $PWD, else the bundled one at $COOP_ROOT/.coop/project.yml. Echoes a path or "".
 # $1 is an optional start dir (defaults to $PWD); every caller currently omits it,
@@ -533,6 +596,30 @@ coop_find_project_yml() {
   done
   if [ -f "$COOP_ROOT/.coop/project.yml" ]; then printf '%s' "$COOP_ROOT/.coop/project.yml"; return 0; fi
   printf ''
+}
+
+# Confirm a potentially-destructive action unless --yes / COOP_ASSUME_YES is set.
+# Check whether the local COOP user profile is missing.
+coop_user_profile_missing() {
+  [ ! -f "${HOME:-}/.coop/user.json" ]
+}
+
+# First-run onboarding: run the wizard when interactive and no profile exists.
+# Returns 0 if onboarding ran (or was skipped because non-interactive), non-zero
+# if the wizard itself failed. Safe to call before launching pi.
+coop_maybe_onboard() {
+  if ! coop_user_profile_missing; then return 0; fi
+  if [ ! -t 0 ]; then
+    coop_warn "No COOP profile found. Run: coop onboard"
+    return 0
+  fi
+  if [ "${COOP_NO_ONBOARD:-0}" = "1" ]; then return 0; fi
+  if ! have python3; then
+    coop_warn "python3 required for onboarding. Run: coop onboard once python is available."
+    return 0
+  fi
+  coop_info "First run: let's set up your COOP profile."
+  "$COOP_ROOT/scripts/onboard.py" onboard || return $?
 }
 
 # Confirm a potentially-destructive action unless --yes / COOP_ASSUME_YES is set.

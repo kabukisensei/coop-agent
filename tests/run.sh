@@ -20,6 +20,7 @@ echo "→ bundling extensions for test…"
 # coop-tools imports `typebox` (Pi provides it at runtime) — stub it for the test build.
 bundle coop-tools --alias:typebox="$ROOT/tests/typebox-stub.mjs"
 bundle coop-guardrails
+bundle coop-profile
 
 echo "→ data-doc config tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/datadoc.test.mjs"
@@ -28,19 +29,25 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/guardrails.test.mjs"
 echo "→ start-here menu tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/startmenu.test.mjs"
 
+echo "→ setup-docs JSONL bridge (renderPrompt / askCheckbox) tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge.test.mjs"
+
 echo "→ workflow slice tests"
 node "$ROOT/tests/workflow.test.mjs"
+
+echo "→ coop-profile tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/coop-profile.test.mjs"
 
 echo "→ launch-spec (shared launch builder) test"
 SPEC="$(bash "$ROOT/bin/coop" launch-spec)"
 for needle in "docs/guardrails.md" "--prompt-template" "themes/cooptimize.json" \
-              "extensions/coop-powerline" "extensions/coop-tools" "extensions/coop-guardrails"; do
+              "extensions/coop-powerline" "extensions/coop-tools" "extensions/coop-guardrails" "extensions/coop-profile"; do
   case "$SPEC" in
     *"$needle"*) ;;
     *) echo "  ✗ launch-spec missing: $needle"; exit 1 ;;
   esac
 done
-echo "  ✓ launch-spec resolves guardrails, prompts, theme, and all 3 extensions"
+echo "  ✓ launch-spec resolves guardrails, prompts, theme, and all 4 extensions"
 
 echo "→ --no-launch dry-run (must NOT start pi; prints the spec)"
 # --no-launch is a dry-run: it runs the preflights (no-op without pi) and prints the
@@ -61,12 +68,17 @@ echo "  ✓ --no-launch prints the spec and exits 0 (no pi launched)"
 
 echo "→ coop update tested-Pi-version guard (--check, gate decision)"
 bash "$ROOT/tests/update-guard.test.sh"
+bash "$ROOT/tests/fleet-manifest.test.sh"
+bash "$ROOT/tests/onboard.test.sh"
 
 echo "→ repo staleness nudge (throttled fetch + behind-count) tests"
 bash "$ROOT/tests/staleness.test.sh"
 
 echo "→ az-preflight cache (.az-ok TTL + tenant stamp) tests"
 bash "$ROOT/tests/azcache.test.sh"
+
+echo "→ coop init wizard tests"
+bash "$ROOT/tests/init-wizard.test.sh"
 
 echo "→ coop init --seed-docs (contract → coop-data-doc.yml) tests"
 bash "$ROOT/tests/seeddocs.test.sh"
@@ -76,6 +88,12 @@ bash "$ROOT/tests/ciscaffold.test.sh"
 
 echo "→ coop review (composite linters + docs compose) tests"
 bash "$ROOT/tests/review.test.sh"
+
+echo "→ doctor project contract validation tests"
+bash "$ROOT/tests/doctor-project.test.sh"
+
+echo "→ doctor MCP mode reporting tests"
+bash "$ROOT/tests/doctor.test.sh"
 
 echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
 node "$ROOT/tests/webbridge.test.mjs"

@@ -32,6 +32,8 @@
 
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
@@ -560,9 +562,222 @@ async function runBuild(pi: ExtensionAPI, ctx: any, outputDir?: string): Promise
   return false;
 }
 
+// --- JSONL wizard bridge ---------------------------------------------------
+// When the installed coop-data-doc ships `setup --transport jsonl`, drive the
+// REAL wizard from inside the agent: spawn it, forward each prompt through Pi's
+// native dialogs, and stream the answers back. There is no duplicate wizard
+// logic here — the terminal and in-agent flows share the one definition in
+// coop-data-doc. The old runQuickSetup() dialog above remains only as the
+// fallback for coop-data-doc versions that predate the JSONL transport.
+
+interface JsonlChoice {
+  label: string;
+  value: string;
+  checked?: boolean;
+}
+interface JsonlPrompt {
+  type: "prompt";
+  id: string;
+  kind: "text" | "path" | "confirm" | "select" | "checkbox";
+  message: string;
+  default?: unknown;
+  choices?: JsonlChoice[];
+}
+type JsonlEvent =
+  | JsonlPrompt
+  | { type: "notice" | "progress" | "complete" | "error" | "cancelled"; id?: string; message?: string };
+
+/** Feature-detect `setup --transport jsonl` (cached per process). */
+let jsonlSupported: boolean | null = null;
+async function supportsJsonlTransport(pi: ExtensionAPI, ctx: any): Promise<boolean> {
+  if (jsonlSupported !== null) return jsonlSupported;
+  try {
+    const res = await pi.exec("coop-data-doc", ["setup", "--help"], { cwd: ctx.cwd, signal: ctx.signal });
+    jsonlSupported = /--transport/.test(`${res.stdout}\n${res.stderr}`);
+  } catch {
+    jsonlSupported = false;
+  }
+  return jsonlSupported;
+}
+
+/** Render one wizard prompt via Pi's native dialogs; return the answer (any JSON
+ *  value) or null when the user cancelled (Esc). Exported for tests. */
+export async function renderPrompt(ctx: any, p: JsonlPrompt): Promise<unknown> {
+  if (p.kind === "confirm") {
+    if (typeof ctx.ui?.confirm !== "function") return null;
+    return await ctx.ui.confirm("coop-data-doc setup", p.message);
+  }
+  if (p.kind === "select") {
+    if (typeof ctx.ui?.select !== "function") return null;
+    const choices = p.choices || [];
+    const labels = choices.map((c) => c.label);
+    const picked = await ctx.ui.select(p.message, labels);
+    if (picked === null || picked === undefined) return null;
+    const match = choices.find((c) => c.label === picked);
+    return match ? match.value : picked;
+  }
+  if (p.kind === "checkbox") {
+    if (typeof ctx.ui?.select !== "function") return null;
+    return await askCheckbox(ctx, p);
+  }
+  // text / path
+  if (typeof ctx.ui?.input !== "function") return null;
+  const def = typeof p.default === "string" ? p.default : "";
+  const raw = await ctx.ui.input(`${p.message}  ·  Enter = ${def || "(blank)"}`, def);
+  if (raw === null || raw === undefined) return null;
+  // eslint-disable-next-line no-control-regex
+  const v = String(raw).replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim();
+  return v || def;
+}
+
+/** Pi has no native multi-select: render a checkbox toggle loop over the wizard's
+ *  authoritative choices. Returns the selected values, or null on cancel.
+ *  Exported for tests. */
+export async function askCheckbox(ctx: any, p: JsonlPrompt): Promise<string[] | null> {
+  const choices = p.choices || [];
+  if (!choices.length) return [];
+  const selected = new Set(choices.filter((c) => c.checked).map((c) => c.value));
+  const DONE = "✓ Done";
+  const labelOf = (c: JsonlChoice): string => (selected.has(c.value) ? `☑ ${c.label}` : `☐ ${c.label}`);
+  for (;;) {
+    const options = [...choices.map(labelOf), DONE];
+    const picked = await ctx.ui.select(p.message, options);
+    if (picked === null || picked === undefined) return null; // Esc / cancel
+    if (picked === DONE) return [...selected];
+    const target = choices.find((c) => labelOf(c) === picked);
+    if (target) {
+      if (selected.has(target.value)) selected.delete(target.value);
+      else selected.add(target.value);
+    }
+  }
+}
+
+/** Drive `coop-data-doc setup --transport jsonl` to completion. Returns true on a
+ *  clean exit (config written); false on cancel/error (nothing written). */
+async function runJsonlSetup(pi: ExtensionAPI, ctx: any): Promise<boolean> {
+  const cwd: string = ctx.cwd;
+  const child = spawn("coop-data-doc", ["setup", "--transport", "jsonl"], {
+    cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+    // Windows pipx shims (.cmd/.bat) aren't directly spawnable without a shell.
+    shell: process.platform === "win32",
+  });
+
+  let stderrTail = "";
+  if (child.stderr) {
+    child.stderr.on("data", (d) => {
+      stderrTail = (stderrTail + d.toString()).slice(-2000);
+    });
+  }
+
+  const closed = new Promise<number | null>((res) => {
+    child.on("close", (code) => res(code));
+    child.on("error", () => res(null));
+  });
+
+  let settled = false;
+  const settle = (ok: boolean) => {
+    if (settled) return;
+    settled = true;
+    try {
+      child.stdin.end();
+    } catch {
+      /* ignore */
+    }
+    doneResolve(ok);
+  };
+  let doneResolve: (ok: boolean) => void = () => {};
+  const done = new Promise<boolean>((res) => {
+    doneResolve = res;
+  });
+
+  const rl = createInterface({ input: child.stdout });
+  void (async () => {
+    try {
+      for await (const line of rl) {
+        if (!line.trim()) continue;
+        let evt: JsonlEvent;
+        try {
+          evt = JSON.parse(line);
+        } catch {
+          continue; // never let a non-JSON line break the session
+        }
+        if (evt.type === "prompt") {
+          const answer = await renderPrompt(ctx, evt as JsonlPrompt);
+          if (answer === null) {
+            try {
+              child.kill("SIGINT");
+            } catch {
+              /* ignore */
+            }
+            settle(false);
+            return;
+          }
+          try {
+            child.stdin.write(JSON.stringify({ id: evt.id, answer }) + "\n");
+          } catch {
+            settle(false);
+            return;
+          }
+        } else if (evt.type === "notice" || evt.type === "progress") {
+          if (evt.message) notify(ctx, evt.message, "info");
+        } else if (evt.type === "complete") {
+          notify(ctx, evt.message || `Wrote ${DATADOC_CONFIG}.`, "info");
+        } else if (evt.type === "error") {
+          notify(ctx, evt.message || "coop-data-doc setup reported an error", "error");
+        } else if (evt.type === "cancelled") {
+          settle(false);
+          return;
+        }
+      }
+    } catch (e: any) {
+      notify(ctx, `setup failed: ${errMsg(e)}`, "error");
+      settle(false);
+      return;
+    }
+    // stdout closed → child exited; resolve on the close code.
+    const code = await closed;
+    if (code === 0) {
+      settle(true);
+    } else {
+      const tail = stderrTail.trim() ? ` — ${stderrTail.trim().split("\n").slice(-2).join("  ")}` : "";
+      notify(
+        ctx,
+        `setup did not complete (exit ${code ?? "?"})${tail}. You can run the full wizard in a shell: coop data-doc setup`,
+        "error",
+      );
+      settle(false);
+    }
+  })();
+
+  return done;
+}
+
 /** The native quick-setup wizard: collect essentials, write the yml, offer to build. */
 async function runQuickSetup(pi: ExtensionAPI, ctx: any, prefill: Partial<DataDocSettings>): Promise<boolean> {
   const cwd: string = ctx.cwd;
+
+  // Prefer the native JSONL bridge when the installed coop-data-doc ships it:
+  // the FULL wizard (folders / medallion layers / branding / schema mappings)
+  // then runs in-agent, sharing one definition with the terminal. The old
+  // essentials-only dialog below stays as the fallback for older tool versions.
+  if (await supportsJsonlTransport(pi, ctx)) {
+    const ok = await runJsonlSetup(pi, ctx);
+    if (ok) {
+      if (
+        await askConfirm(
+          ctx,
+          "Build now?",
+          "Build the lineage docs now? (you can also run data_doc (build), or `coop data-doc build` later)",
+        )
+      ) {
+        await runBuild(pi, ctx);
+      } else {
+        notify(ctx, "Build them whenever you're ready: ask me to run data_doc (build), or run `coop data-doc build`.", "info");
+      }
+    }
+    return ok;
+  }
 
   const projectName = await askText(ctx, "Project name (docs site title)", prefill.projectName || "Coop BI Estate");
   if (projectName === null) return false;

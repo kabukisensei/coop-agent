@@ -17,20 +17,22 @@ export COOP_ROOT
 # shellcheck source=../lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
 
-FORCE=0; NO_FABRIC=0; NO_PREREQS=0
+FORCE=0; NO_FABRIC=0; NO_PREREQS=0; EDGE=0
 for a in "$@"; do
   case "$a" in
     '') ;;                                            # ignore blank args (launchers can pass one)
     --force) FORCE=1 ;;
     --no-fabric) NO_FABRIC=1 ;;
     --no-prereqs) NO_PREREQS=1 ;;
+    --edge) EDGE=1 ;;
     --yes|-y) export COOP_ASSUME_YES=1 ;;
     *) coop_warn "install: ignoring unknown flag '$a'" ;;
   esac
 done
 
-# --- What we install (keep in sync with config/defaults.yml) ------------------
-PI_NPM_PACKAGE="@earendil-works/pi-coding-agent"
+# --- What we install (release manifest is the single source of truth) ----------
+PI_NPM_PACKAGE="$(coop_manifest_get pi.package || echo "@earendil-works/pi-coding-agent")"
+PI_TARGET_VERSION="$(coop_manifest_get pi.version)"
 PI_EXTENSIONS=(
   "npm:pi-mcp-adapter"        # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
   "npm:pi-hermes-memory"      # persistent memory + session search + secret scanning
@@ -78,29 +80,53 @@ _unit_pipx() {
 }
 
 _unit_pi() {
+  local spec="$PI_NPM_PACKAGE"
+  if [ "$EDGE" != 1 ] && [ -n "$PI_TARGET_VERSION" ]; then spec="${PI_NPM_PACKAGE}@${PI_TARGET_VERSION}"; fi
   if have pi && [ "$FORCE" = 0 ]; then printf 'pi present (%s)' "$(pi --version 2>/dev/null || echo '?')"; return 0; fi
   if have npm; then
-    if npm install -g "$PI_NPM_PACKAGE" >/dev/null 2>&1; then printf 'pi installed'; return 0; fi
-    printf 'npm install of pi failed — try: npm install -g %s' "$PI_NPM_PACKAGE"; return 1
+    if npm install -g "$spec" >/dev/null 2>&1; then printf 'pi installed (%s)' "$spec"; return 0; fi
+    printf 'npm install of pi failed — try: npm install -g %s' "$spec"; return 1
   fi
   printf 'cannot install pi (npm missing) — install Node.js, then re-run: coop install'; return 1
 }
 
 _unit_ext() {  # $1 = extension spec
-  local ext="$1"
-  have pi || { printf 'skipped %s (pi not installed)' "$ext"; return 1; }
-  if pi install "$ext" >/dev/null 2>&1; then printf '%s' "$ext"; return 0; fi
-  printf 'could not install %s (continuing)' "$ext"; return 1
+  local ext="$1" pkg="${1#npm:}" spec="$ext"
+  local manifest_key
+  case "$pkg" in
+    "@juicesharp/rpiv-ask-user-question") manifest_key="rpiv_ask_user_question" ;;
+    *) manifest_key="$(printf '%s' "$pkg" | tr '-' '_')" ;;
+  esac
+  if [ "$EDGE" != 1 ]; then
+    local ver
+    ver="$(coop_manifest_get "extensions.$manifest_key")"
+    [ -n "$ver" ] && spec="npm:${pkg}@${ver}"
+  fi
+  have pi || { printf 'skipped %s (pi not installed)' "$spec"; return 1; }
+  if pi install "$spec" >/dev/null 2>&1; then printf '%s' "$spec"; return 0; fi
+  printf 'could not install %s (continuing)' "$spec"; return 1
 }
 
 _unit_fabric() {
   have pipx || { printf 'skipping Fabric CLI (pipx missing)'; return 1; }
-  if [ "$FORCE" = 1 ]; then pipx install --force "$FABRIC_PKG" >/dev/null 2>&1 || true
-  else pipx install "$FABRIC_PKG" >/dev/null 2>&1 || pipx upgrade "$FABRIC_PKG" >/dev/null 2>&1 || true
+  local target="$FABRIC_PKG"
+  if [ "$EDGE" != 1 ]; then
+    local ver
+    ver="$(coop_manifest_get "python_tools.$FABRIC_PKG")"
+    [ -n "$ver" ] && target="${FABRIC_PKG}==${ver}"
+  fi
+  if [ "$FORCE" = 1 ]; then pipx install --force "$target" >/dev/null 2>&1 || true
+  else pipx install "$target" >/dev/null 2>&1 || pipx upgrade "$target" >/dev/null 2>&1 || true
   fi
   # fabric-cicd is a Python LIBRARY (no CLI), used for deploy validation — inject it
   # into the Fabric CLI's env so it's importable alongside `fab`. (doctor verifies it.)
-  pipx inject "$FABRIC_PKG" fabric-cicd >/dev/null 2>&1 || true
+  local fcc="fabric-cicd"
+  if [ "$EDGE" != 1 ]; then
+    local fcc_ver
+    fcc_ver="$(coop_manifest_get "python_tools.fabric_cicd")"
+    [ -n "$fcc_ver" ] && fcc="fabric-cicd==${fcc_ver}"
+  fi
+  pipx inject "$FABRIC_PKG" "$fcc" >/dev/null 2>&1 || true
   hash -r 2>/dev/null || true
   if have fab; then
     if fab --version 2>&1 | grep -qiE 'paramiko|invoke'; then
@@ -112,26 +138,38 @@ _unit_fabric() {
 }
 
 _unit_pytool() {  # $1 = package
-  local pkg="$1"
+  local pkg="$1" target="$pkg"
+  if [ "$EDGE" != 1 ]; then
+    local ver
+    ver="$(coop_manifest_get "python_tools.$pkg")"
+    [ -n "$ver" ] && target="${pkg}==${ver}"
+  fi
   have pipx || { printf 'skipping %s (pipx missing)' "$pkg"; return 1; }
   if [ "$FORCE" = 1 ]; then
-    if pipx install --force "$pkg" >/dev/null 2>&1; then printf '%s' "$pkg"; return 0; fi
+    if pipx install --force "$target" >/dev/null 2>&1; then printf '%s (installed)' "$pkg"; return 0; fi
     printf 'failed: %s' "$pkg"; return 1
   fi
-  if pipx install "$pkg" >/dev/null 2>&1; then printf '%s (installed)' "$pkg"; return 0; fi
-  if pipx upgrade "$pkg" >/dev/null 2>&1; then printf '%s (up to date)' "$pkg"; return 0; fi
+  if pipx install "$target" >/dev/null 2>&1; then printf '%s (installed)' "$pkg"; return 0; fi
+  if pipx upgrade "$target" >/dev/null 2>&1; then printf '%s (up to date)' "$pkg"; return 0; fi
   printf 'could not install %s' "$pkg"; return 1
 }
 
 _unit_pbih_tools() {
   have npm || { printf 'skipping Power BI/Fabric authoring tools (npm missing)'; return 1; }
-  local pkg ok=0 fail=0
+  local pkg ok=0 fail=0 spec
   for pkg in "${PBIH_NPM_TOOLS[@]}"; do
+    spec="$pkg"
+    if [ "$EDGE" != 1 ]; then
+      local key="$pkg"
+      local ver
+      ver="$(coop_manifest_get "npm_tools.$key")"
+      [ -n "$ver" ] && spec="${pkg}@${ver}"
+    fi
     if [ "$FORCE" = 1 ]; then
-      npm install -g "$pkg" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
+      npm install -g "$spec" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
     else
-      if npm install -g "$pkg" >/dev/null 2>&1; then ok=$((ok+1))
-      elif npm update -g "$pkg" >/dev/null 2>&1; then ok=$((ok+1))
+      if npm install -g "$spec" >/dev/null 2>&1; then ok=$((ok+1))
+      elif npm update -g "$spec" >/dev/null 2>&1; then ok=$((ok+1))
       else fail=$((fail+1)); fi
     fi
   done
@@ -315,8 +353,15 @@ case ":$PATH:" in
   *) COOP_ON_PATH=0 ;;
 esac
 
-# --- 8. Sync brand assets + doctor ------------------------------------------
-coop_head "8/8  Sync assets and run doctor"
+# --- 8. First-run onboarding ---------------------------------------------------
+# If this is an interactive install and there's no local profile yet, ask the user
+# for their name and communication preference before the first real session.
+if [ -t 0 ] && [ "${COOP_NO_ONBOARD:-0}" != "1" ]; then
+  coop_maybe_onboard || coop_warn "onboarding could not complete; run: coop onboard"
+fi
+
+# --- 9. Sync brand assets + doctor --------------------------------------------
+coop_head "9/9  Sync assets and run doctor"
 "$COOP_ROOT/scripts/sync.sh" || coop_warn "sync reported issues"
 echo >&2
 # Propagate doctor's verdict as the install's exit code, so a genuinely broken

@@ -51,22 +51,24 @@ function Add-CoopNpmPath {
 }
 
 # --- Parse flags -------------------------------------------------------------
-$FORCE = $false; $NO_FABRIC = $false; $NO_PREREQS = $false
+$FORCE = $false; $NO_FABRIC = $false; $NO_PREREQS = $false; $EDGE = $false
 foreach ($a in $args) {
   switch -CaseSensitive ($a) {
     '--force'      { $FORCE = $true }
     '--no-fabric'  { $NO_FABRIC = $true }
     '--no-prereqs' { $NO_PREREQS = $true }
+    '--edge'       { $EDGE = $true }
     '--yes'        { $env:COOP_ASSUME_YES = '1' }
     '-y'          { $env:COOP_ASSUME_YES = '1' }
     default       { if (-not [string]::IsNullOrWhiteSpace($a)) { Coop-Warn "install: ignoring unknown flag '$a'" } }
   }
 }
 
-# --- What we install (keep in sync with config/defaults.yml) ------------------
+# --- What we install (release manifest is the single source of truth) ----------
 # coop renders its OWN footer/splash via extensions/coop-powerline — no third-party
 # powerline footer.
-$PI_NPM_PACKAGE = '@earendil-works/pi-coding-agent'
+$PI_NPM_PACKAGE = Coop-ManifestGet -Key 'pi.package' -Default '@earendil-works/pi-coding-agent'
+$PI_TARGET_VERSION = Coop-ManifestGet -Key 'pi.version'
 $PI_EXTENSIONS = @(
   'npm:pi-mcp-adapter',       # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
   'npm:pi-hermes-memory',     # persistent memory + session search + secret scanning
@@ -114,29 +116,29 @@ $UnitPipx = {
 }
 
 $UnitPi = {
-  param([bool]$Force, [string]$Pkg)
+  param([bool]$Force, [string]$Spec)
   if ((Get-Command pi -ErrorAction SilentlyContinue) -and -not $Force) {
     $v = (& pi --version 2>$null); if (-not $v) { $v = '?' }
     return [pscustomobject]@{ ok = $true; msg = "pi present ($v)" }
   }
   if (Get-Command npm -ErrorAction SilentlyContinue) {
-    & npm install -g $Pkg *> $null
-    if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = 'pi installed' } }
-    return [pscustomobject]@{ ok = $false; msg = "npm install of pi failed — try: npm install -g $Pkg" }
+    & npm install -g $Spec *> $null
+    if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = "pi installed ($Spec)" } }
+    return [pscustomobject]@{ ok = $false; msg = "npm install of pi failed — try: npm install -g $Spec" }
   }
   return [pscustomobject]@{ ok = $false; msg = "cannot install pi (npm missing) — install Node.js, then re-run: coop install" }
 }
 
 $UnitExt = {
-  param([string]$Ext)
-  if (-not (Get-Command pi -ErrorAction SilentlyContinue)) { return [pscustomobject]@{ ok = $false; msg = "skipped $Ext (pi not installed)" } }
-  & pi install $Ext *> $null
-  if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = $Ext } }
-  return [pscustomobject]@{ ok = $false; msg = "could not install $Ext (continuing)" }
+  param([string]$Spec)
+  if (-not (Get-Command pi -ErrorAction SilentlyContinue)) { return [pscustomobject]@{ ok = $false; msg = "skipped $Spec (pi not installed)" } }
+  & pi install $Spec *> $null
+  if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = $Spec } }
+  return [pscustomobject]@{ ok = $false; msg = "could not install $Spec (continuing)" }
 }
 
 $UnitFabric = {
-  param([bool]$Force, [string]$Pkg)
+  param([bool]$Force, [string]$Pkg, [string]$Target, [string]$Fcc)
   $pipxBin = Join-Path $HOME '.local\bin'
   if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split ';') -notcontains $pipxBin)) {
     $env:PATH = "$pipxBin;$env:PATH"
@@ -167,13 +169,15 @@ $UnitFabric = {
   }
   if (-not $hasPipx) { return [pscustomobject]@{ ok = $false; msg = 'skipping Fabric CLI (pipx missing)' } }
 
-  if ($Force) { & $runPipx @('install', '--force', $Pkg) }
+  $target = if ($Target) { $Target } else { $Pkg }
+  if ($Force) { & $runPipx @('install', '--force', $target) }
   else {
-    & $runPipx @('install', $Pkg)
-    if ($LASTEXITCODE -ne 0) { & $runPipx @('upgrade', $Pkg) }
+    & $runPipx @('install', $target)
+    if ($LASTEXITCODE -ne 0) { & $runPipx @('upgrade', $target) }
   }
   # fabric-cicd is a Python LIBRARY (no CLI) — inject it into the Fabric CLI env.
-  & $runPipx @('inject', $Pkg, 'fabric-cicd')
+  $fcc = if ($Fcc) { $Fcc } else { 'fabric-cicd' }
+  & $runPipx @('inject', $Pkg, $fcc)
   if (Get-Command fab -ErrorAction SilentlyContinue) {
     $fv = ((& fab --version 2>&1) -join ' ')
     if ($fv -match '(?i)paramiko|invoke') {
@@ -191,7 +195,7 @@ $UnitFabric = {
 }
 
 $UnitPytool = {
-  param([bool]$Force, [string]$Pkg)
+  param([bool]$Force, [string]$Pkg, [string]$Target)
   $pipxBin = Join-Path $HOME '.local\bin'
   if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split ';') -notcontains $pipxBin)) {
     $env:PATH = "$pipxBin;$env:PATH"
@@ -222,31 +226,36 @@ $UnitPytool = {
   }
   if (-not $hasPipx) { return [pscustomobject]@{ ok = $false; msg = "skipping $Pkg (pipx missing)" } }
 
+  $target = $Pkg
+  if (-not $Edge) {
+    $ver = Coop-ManifestGet -Key "python_tools.$Pkg"
+    if ($ver) { $target = "${Pkg}==${ver}" }
+  }
   if ($Force) {
-    $rc = & $runPipx @('install', '--force', $Pkg)
+    $rc = & $runPipx @('install', '--force', $target)
     if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = $Pkg } }
     return [pscustomobject]@{ ok = $false; msg = "failed: $Pkg" }
   }
-  $rc = & $runPipx @('install', $Pkg)
+  $rc = & $runPipx @('install', $target)
   if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg (installed)" } }
-  $rc = & $runPipx @('upgrade', $Pkg)
+  $rc = & $runPipx @('upgrade', $target)
   if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg (up to date)" } }
   return [pscustomobject]@{ ok = $false; msg = "could not install $Pkg" }
 }
 
 $UnitPbihTools = {
-  param([bool]$Force, [array]$Pkgs)
+  param([bool]$Force, [array]$Specs)
   if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { return [pscustomobject]@{ ok = $false; msg = 'skipping Power BI/Fabric authoring tools (npm missing)' } }
   $ok = 0; $fail = 0
-  foreach ($pkg in $Pkgs) {
+  foreach ($spec in $Specs) {
     if ($Force) {
-      & npm install -g $pkg *> $null
+      & npm install -g $spec *> $null
       if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
     } else {
-      & npm install -g $pkg *> $null
+      & npm install -g $spec *> $null
       if ($LASTEXITCODE -eq 0) { $ok++ }
       else {
-        & npm update -g $pkg *> $null
+        & npm update -g $spec *> $null
         if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
       }
     }
@@ -379,27 +388,51 @@ try {
   Coop-Unit 'pipx' $UnitPipx
   Add-CoopUserPaths    # make a just-installed pipx + its tool-bin visible this run
 
+  # Resolve exact specs from the release manifest (unless --edge).
+  $piSpec = if (-not $EDGE -and $PI_TARGET_VERSION) { "${PI_NPM_PACKAGE}@${PI_TARGET_VERSION}" } else { $PI_NPM_PACKAGE }
+  $extSpecs = @()
+  foreach ($ext in $PI_EXTENSIONS) {
+    $spec = $ext
+    if (-not $EDGE) {
+      $pkg = if ($ext -match '^npm:(.+)$') { $matches[1] } else { $ext }
+      $key = if ($pkg -eq '@juicesharp/rpiv-ask-user-question') { 'rpiv_ask_user_question' } else { $pkg -replace '-', '_' }
+      $ver = Coop-ManifestGet -Key "extensions.$key"
+      if ($ver) { $spec = "npm:${pkg}@${ver}" }
+    }
+    $extSpecs += $spec
+  }
+  $fabricTarget = if (-not $EDGE) { $tv = Coop-ManifestGet -Key "python_tools.$FABRIC_PKG"; if ($tv) { "${FABRIC_PKG}==${tv}" } else { $FABRIC_PKG } } else { $FABRIC_PKG }
+  $fabricCicd = if (-not $EDGE) { $tv = Coop-ManifestGet -Key 'python_tools.fabric_cicd'; if ($tv) { "fabric-cicd==${tv}" } else { 'fabric-cicd' } } else { 'fabric-cicd' }
+  $pytoolTargets = @()
+  foreach ($pkg in $PY_TOOLS) {
+    $pytoolTargets += if (-not $EDGE) { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "${pkg}==${tv}" } else { $pkg } } else { $pkg }
+  }
+  $pbihSpecs = @()
+  foreach ($pkg in $PBIH_NPM_TOOLS) {
+    $pbihSpecs += if (-not $EDGE) { $tv = Coop-ManifestGet -Key "npm_tools.$pkg"; if ($tv) { "${pkg}@${tv}" } else { $pkg } } else { $pkg }
+  }
+
   # --- 2. Pi itself ----------------------------------------------------------
   Coop-Head '2/8  Pi (@earendil-works/pi-coding-agent)'
-  Coop-Unit 'pi (@earendil-works/pi-coding-agent)' $UnitPi @($FORCE, $PI_NPM_PACKAGE)
+  Coop-Unit 'pi (@earendil-works/pi-coding-agent)' $UnitPi @($FORCE, $piSpec)
   Add-CoopNpmPath      # make a just-npm-installed `pi` visible to step 3 this run
 
   # --- 3. Pi extensions ------------------------------------------------------
   Coop-Head '3/8  Pi extensions'
-  foreach ($ext in $PI_EXTENSIONS) { Coop-Unit $ext $UnitExt @($ext) }
+  for ($i = 0; $i -lt $PI_EXTENSIONS.Count; $i++) { Coop-Unit $PI_EXTENSIONS[$i] $UnitExt @($extSpecs[$i]) }
 
   # --- 4. Microsoft Fabric CLI ----------------------------------------------
-  Coop-Head '4/8  Microsoft Fabric CLI (fab)'
-  if ($NO_FABRIC) { Coop-Warn 'skipped (--no-fabric)' }
-  else { Coop-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $FABRIC_PKG) }
+  Coop-Head '4/8  Microsoft Fabric CLI'
+  if ($NO_FABRIC) { Coop-Info 'skipping Microsoft Fabric CLI (--no-fabric)' }
+  else { Coop-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $FABRIC_PKG, $fabricTarget, $fabricCicd) }
 
-  # --- 5. Standalone Coop tools ----------------------------------------------
-  Coop-Head '5/8  Coop tools (coop-data-doc / coop-sql-review / coop-dax-review)'
-  foreach ($pkg in $PY_TOOLS) { Coop-Unit $pkg $UnitPytool @($FORCE, $pkg) }
+  # --- 5. Python tools (pipx) -----------------------------------------------
+  Coop-Head '5/8  Coop tools (pipx)'
+  for ($i = 0; $i -lt $PY_TOOLS.Count; $i++) { Coop-Unit $PY_TOOLS[$i] $UnitPytool @($FORCE, $PY_TOOLS[$i], $pytoolTargets[$i]) }
 
-  # --- 6. Microsoft Fabric / Power BI authoring tools (npm) ------------------
-  Coop-Head '6/8  Fabric / Power BI authoring tools'
-  Coop-Unit 'Power BI/Fabric authoring tools' $UnitPbihTools @($FORCE, $PBIH_NPM_TOOLS)
+  # --- 6. Power BI / Fabric authoring tools (npm) ----------------------------
+  Coop-Head '6/8  Power BI / Fabric authoring tools'
+  Coop-Unit 'Power BI/Fabric authoring tools' $UnitPbihTools @($FORCE, $pbihSpecs)
 }
 finally {
   Coop-ProgEnd
@@ -510,8 +543,15 @@ if (Test-Path -LiteralPath $desktopLauncher) {
   }
 }
 
-# --- 8. Sync brand assets + doctor ------------------------------------------
-Coop-Head '8/8  Sync assets and run doctor'
+# --- 8. First-run onboarding -----------------------------------------------------
+# If this is an interactive install and there's no local profile yet, ask the user
+# for their name and communication preference before the first real session.
+if (-not [Console]::IsInputRedirected -and $env:COOP_NO_ONBOARD -ne '1') {
+  Invoke-CoopMaybeOnboard
+}
+
+# --- 9. Sync brand assets + doctor --------------------------------------------
+Coop-Head '9/9  Sync assets and run doctor'
 $syncRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
 if ($syncRc -ne 0) { Coop-Warn 'sync reported issues' }
 [Console]::Error.WriteLine('')

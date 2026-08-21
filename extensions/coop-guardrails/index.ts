@@ -97,40 +97,183 @@ export function parseAllowedGlobs(text: string): string[] {
   return globs;
 }
 
-/** Allowed-to-commit path prefixes: defaults + best-effort read of the project contract. */
-function allowedPrefixes(cwd: string): string[] {
-  const out = new Set(DEFAULT_ALLOWED_PREFIXES);
+/** A committed path is allowed if it's a doc file anywhere, or under an allowed prefix. */
+function isAllowedCommitPath(file: string, allowed: string[], denied: string[]): boolean {
+  if (/\.(md|markdown)$/i.test(file)) return true; // documentation anywhere
+  if (denied.some((g) => matchGlob(file, g))) return false;
+  return allowed.some((p) => file === p.replace(/\/$/, "") || file.startsWith(p));
+}
+
+/** Very small glob matcher for the patterns we use in project.yml: `**` matches any
+ *  number of path segments; `*` matches within a segment; `?` matches one char. */
+function matchGlob(path: string, glob: string): boolean {
+  const re = globToRegex(glob);
+  return re.test(path);
+}
+
+function globToRegex(glob: string): RegExp {
+  let s = "";
+  let i = 0;
+  while (i < glob.length) {
+    const c = glob[i];
+    if (c === "*" && glob[i + 1] === "*") {
+      s += ".*";
+      i += 2;
+      if (glob[i] === "/") { s += "\\/?"; i++; }
+    } else if (c === "*") { s += "[^/]*"; i++; }
+    else if (c === "?") { s += "[^/]"; i++; }
+    else if (/[A-Za-z0-9_\-./]/.test(c)) { s += c.replace(/[.]/g, "\\$&"); i++; }
+    else { s += "\\" + c; i++; }
+  }
+  return new RegExp("^(?:.*/)?" + s + "$", "i");
+}
+
+export type RepoCommitPolicy = { allowed: string[]; denied: string[] };
+
+/** Parse the `repositories` section of project.yml and find the entry whose
+ *  `local_path` resolves to `repoDir`. Returns null if no matching entry. */
+export function parseRepoCommitPolicy(text: string, projectDir: string, repoDir: string): RepoCommitPolicy | null {
+  const lines = text.split("\n");
+  let inRepos = false;
+  let repoBaseIndent = 0;
+  let currentName: string | null = null;
+  let currentLocalPath: string | null = null;
+  let currentAllowed: string[] = [];
+  let currentDenied: string[] = [];
+  let currentBaseIndent = 0;
+
+  function flush(): RepoCommitPolicy | null {
+    if (!currentName || !currentLocalPath) return null;
+    const resolved = isAbsolute(currentLocalPath)
+      ? currentLocalPath
+      : resolve(projectDir, currentLocalPath);
+    if (resolve(repoDir) === resolved || resolve(repoDir) === resolve(resolved)) {
+      return { allowed: currentAllowed, denied: currentDenied };
+    }
+    return null;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const trimmed = raw.trimStart();
+    const indent = raw.length - trimmed.length;
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    if (/^repositories\s*:\s*(#.*)?$/.test(trimmed)) {
+      inRepos = true;
+      repoBaseIndent = indent;
+      continue;
+    }
+    if (!inRepos) continue;
+
+    // End of repositories section: a key at or before repoBaseIndent that isn't a repo name.
+    if (indent <= repoBaseIndent && !trimmed.startsWith("-")) {
+      const hit = flush();
+      if (hit) return hit;
+      inRepos = false;
+      continue;
+    }
+
+    // A repository entry name is a key exactly one indent deeper than `repositories:`.
+    const repoKey = /^([A-Za-z0-9_\-]+)\s*:\s*(#.*)?$/.exec(trimmed);
+    if (indent === repoBaseIndent + 2 && repoKey && !trimmed.startsWith("-")) {
+      const hit = flush();
+      if (hit) return hit;
+      currentName = repoKey[1];
+      currentLocalPath = null;
+      currentAllowed = [];
+      currentDenied = [];
+      currentBaseIndent = indent;
+      continue;
+    }
+
+    // Properties inside a repository entry.
+    if (currentName && indent > currentBaseIndent) {
+      const kv = /^([A-Za-z0-9_\-]+)\s*:\s*(.*)$/.exec(trimmed);
+      if (kv) {
+        const k = kv[1];
+        const v = kv[2].trim().replace(/\s+#.*$/, "");
+        if (k === "local_path") {
+          currentLocalPath = v.replace(/^["']|["']$/g, "");
+        } else if (k === "agent_allowed_to_commit" && v.startsWith("[")) {
+          // Flow form on a single line.
+          for (const raw of v.slice(1, -1).split(",")) {
+            const g = raw.trim().replace(/^["']|["']$/g, "");
+            if (g) currentAllowed.push(g);
+          }
+        } else if (k === "agent_never_commit" && v.startsWith("[")) {
+          for (const raw of v.slice(1, -1).split(",")) {
+            const g = raw.trim().replace(/^["']|["']$/g, "");
+            if (g) currentDenied.push(g);
+          }
+        }
+      }
+      const item = /^-\s+(.*)$/.exec(trimmed);
+      if (item && indent > currentBaseIndent + 2) {
+        const parentKey = findParentKey(lines, i, currentBaseIndent + 2);
+        const g = item[1].trim().replace(/^["']|["']$/g, "");
+        if (g) {
+          if (parentKey === "agent_allowed_to_commit") currentAllowed.push(g);
+          else if (parentKey === "agent_never_commit") currentDenied.push(g);
+        }
+      }
+    }
+  }
+  if (inRepos) {
+    const hit = flush();
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function findParentKey(lines: string[], idx: number, parentIndent: number): string | null {
+  for (let j = idx - 1; j >= 0; j--) {
+    const raw = lines[j];
+    const trimmed = raw.trimStart();
+    const indent = raw.length - trimmed.length;
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (indent === parentIndent) {
+      const kv = /^([A-Za-z0-9_\-]+)\s*:/.exec(trimmed);
+      return kv ? kv[1] : null;
+    }
+    if (indent < parentIndent) return null;
+  }
+  return null;
+}
+
+const policyCache = new Map<string, RepoCommitPolicy>();
+
+/** Resolve the commit policy for a repository directory. Uses the matching entry in
+ *  the nearest .coop/project.yml's `repositories` section, falls back to the
+ *  top-level `agent_allowed_to_commit` globs, and finally to the built-in defaults. */
+export function commitPolicy(repoDir: string): RepoCommitPolicy {
+  const key = resolve(repoDir);
+  const cached = policyCache.get(key);
+  if (cached) return cached;
+
+  const result: RepoCommitPolicy = { allowed: [...DEFAULT_ALLOWED_PREFIXES], denied: [] };
   try {
-    const proj = findProjectYml(cwd);
+    const proj = findProjectYml(repoDir);
     if (proj) {
-      for (const glob of parseAllowedGlobs(readFileSync(proj, "utf8"))) {
-        const prefix = glob.replace(/\*+.*$/, ""); // "docs/**" -> "docs/"
-        if (prefix) out.add(prefix);
+      const text = readFileSync(proj, "utf8");
+      const projectRoot = dirname(dirname(proj)); // parent of .coop
+      const repoSpecific = parseRepoCommitPolicy(text, projectRoot, repoDir);
+      if (repoSpecific) {
+        result.allowed = [...DEFAULT_ALLOWED_PREFIXES, ...repoSpecific.allowed.map((g) => g.replace(/\*+.*$/, "")).filter(Boolean)];
+        result.denied = repoSpecific.denied;
+      } else {
+        for (const glob of parseAllowedGlobs(text)) {
+          const prefix = glob.replace(/\*+.*$/, "");
+          if (prefix) result.allowed.push(prefix);
+        }
       }
     }
   } catch {
     /* defaults are fine */
   }
-  return [...out];
+  policyCache.set(key, result);
+  return result;
 }
-
-/** A committed path is allowed if it's a doc file anywhere, or under an allowed prefix. */
-function isAllowedCommitPath(file: string, prefixes: string[]): boolean {
-  if (/\.(md|markdown)$/i.test(file)) return true; // documentation anywhere
-  return prefixes.some((p) => file === p.replace(/\/$/, "") || file.startsWith(p));
-}
-
-/** `git`, optionally followed by global options (`-C <dir>`, `-c k=v`, `--no-pager`),
- *  as a regex-source fragment shared by every git detector so `git -C <dir> <subcmd>`
- *  and interspersed flags match consistently. */
-const GIT_PREFIX = String.raw`\bgit\b(?:\s+-{1,2}[A-Za-z][\w-]*(?:[=\s]\S+)?)*`;
-
-/** A `git commit` invocation, tolerant of global options between `git` and `commit`
- *  (`git -C <dir> commit`, `git -c k=v commit`, `git --no-pager commit`). The old
- *  `\bgit\s+commit\b` missed all of those, so the source-commit block was bypassable.
- *  Case-insensitive: on macOS/Windows (case-insensitive filesystems) `GIT COMMIT`
- *  resolves to the real binary, so the block must match it too. */
-export const GIT_COMMIT_RE = new RegExp(GIT_PREFIX + String.raw`\s+commit\b`, "i");
 
 /** Split a command string into tokens, honoring single/double quotes. */
 export function tokenizeArgs(s: string): string[] {
@@ -141,6 +284,46 @@ export function tokenizeArgs(s: string): string[] {
   return toks;
 }
 
+/** Split a shell command into top-level segments on `&&`, `||`, `;`, `|`, `&`.
+ *  Quote-aware: separators inside quotes do not split. Returns each segment with
+ *  its start index in the original string. */
+function splitShellSegments(cmd: string): { segment: string; start: number }[] {
+  const segs: { segment: string; start: number }[] = [];
+  let current = "";
+  let start = 0;
+  let inDquote = false, inSquote = false;
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i];
+    if (ch === '"' && !inSquote) { inDquote = !inDquote; current += ch; continue; }
+    if (ch === "'" && !inDquote) { inSquote = !inSquote; current += ch; continue; }
+    if (!inDquote && !inSquote) {
+      const two = cmd.slice(i, i + 2);
+      const one = ch;
+      const sep = two === "&&" || two === "||" ? two : one === ";" || one === "|" || one === "&" ? one : null;
+      if (sep) {
+        segs.push({ segment: current, start });
+        current = "";
+        i += sep.length - 1;
+        start = i + 1;
+        continue;
+      }
+    }
+    current += ch;
+  }
+  segs.push({ segment: current, start });
+  return segs;
+}
+
+/** A parsed Git invocation inside one shell segment. */
+export type ParsedGitCommand = {
+  segment: string;
+  segmentStart: number;
+  cwdOverride?: string;
+  subcommand?: string;
+  args: string[];
+  pathspecs: string[];
+};
+
 // git-commit options that consume a SEPARATE following token (so that token is the
 // option's value, not a pathspec). `--opt=value` forms are self-contained.
 const COMMIT_VALUE_OPTS = new Set([
@@ -149,48 +332,124 @@ const COMMIT_VALUE_OPTS = new Set([
   "--cleanup", "--gpg-sign", "--trailer", "--pathspec-from-file",
 ]);
 
-/** Explicit pathspec arguments of `git commit <pathspec>` — the files it commits
- *  straight from the WORKING TREE, ignoring the index. Everything after `--` is a
- *  pathspec; otherwise bare (non-flag) tokens that aren't option values. Over-
- *  inclusion is harmless (a non-path token yields an empty diff); under-inclusion is
- *  the bypass we're closing, so we err toward including. */
-export function explicitCommitPathspecs(cmd: string): string[] {
-  const m = GIT_COMMIT_RE.exec(cmd);
-  if (!m) return [];
-  // Only the `git commit …` segment — stop at a shell separator so a chained
-  // command's args aren't swallowed.
-  const rest = cmd.slice(m.index + m[0].length).split(/[;&|]/)[0];
-  const toks = tokenizeArgs(rest);
-  const specs: string[] = [];
-  let dashDash = false;
-  for (let i = 0; i < toks.length; i++) {
+// Git global options that take a value and should be consumed before the subcommand.
+const GIT_GLOBAL_VALUE_OPTS = new Set([
+  "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix",
+  "--config-env", "--attr-source",
+]);
+
+/** Parse one quote-aware Git invocation from a shell command segment, or null.
+ *  The caller supplies the segment so sibling commands (and their flags) are never
+ *  mixed into the Git parse. */
+function parseGitSegment(segment: string, segmentStart: number): ParsedGitCommand | null {
+  const toks = tokenizeArgs(segment);
+  if (toks.length === 0) return null;
+  const first = toks[0].toLowerCase();
+  if (first !== "git") return null;
+
+  let i = 1;
+  let cwdOverride: string | undefined;
+  while (i < toks.length) {
     const t = toks[i];
-    if (dashDash) { if (t) specs.push(t); continue; }
-    if (t === "--") { dashDash = true; continue; }
     if (t.startsWith("-")) {
-      if (COMMIT_VALUE_OPTS.has(t) && i + 1 < toks.length) i++; // skip its value token
+      const eq = t.indexOf("=");
+      const opt = eq >= 0 ? t.slice(0, eq) : t;
+      if (GIT_GLOBAL_VALUE_OPTS.has(opt)) {
+        if (eq >= 0) {
+          if (opt === "-C") cwdOverride = t.slice(eq + 1);
+          i++;
+          continue;
+        }
+        if (i + 1 < toks.length) {
+          if (opt === "-C") cwdOverride = toks[i + 1];
+          i += 2;
+          continue;
+        }
+      }
+      i++;
       continue;
     }
-    if (t) specs.push(t);
+    break; // first non-option token is the subcommand
   }
-  return specs;
+
+  const subcommand = toks[i]?.toLowerCase();
+  if (!subcommand) return { segment, segmentStart, cwdOverride, args: [], pathspecs: [] };
+  i++;
+
+  const args: string[] = [];
+  const pathspecs: string[] = [];
+  let dashDash = false;
+  for (; i < toks.length; i++) {
+    const t = toks[i];
+    if (dashDash) { pathspecs.push(t); continue; }
+    if (t === "--") { dashDash = true; continue; }
+    if (t.startsWith("-")) {
+      args.push(t);
+      if (subcommand === "commit") {
+        // Long-form `--opt value` consumes the next token.
+        if (COMMIT_VALUE_OPTS.has(t) && i + 1 < toks.length) {
+          i++;
+          args.push(toks[i]);
+          continue;
+        }
+        // Short-flag cluster like `-am x`: if the cluster ends with a value-taking
+        // letter (m/F/C/c/t), the next token is that value, not a pathspec.
+        if (/^-[A-Za-z]+$/.test(t)) {
+          const last = t[t.length - 1];
+          if (["m", "F", "C", "c", "t"].includes(last) && i + 1 < toks.length) {
+            i++;
+            args.push(toks[i]);
+          }
+        }
+      }
+      continue;
+    }
+    if (subcommand === "commit") {
+      pathspecs.push(t);
+    } else {
+      args.push(t);
+    }
+  }
+  return { segment, segmentStart, cwdOverride, subcommand, args, pathspecs };
+}
+
+/** Find the first Git invocation in a command, quote-aware and segment-scoped.
+ *  Sibling commands are never parsed as Git. */
+export function parseGitCommand(cmd: string): ParsedGitCommand | null {
+  for (const { segment, start } of splitShellSegments(cmd)) {
+    const parsed = parseGitSegment(segment.trim(), start);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+/** `git`, optionally followed by global options (`-C <dir>`, `-c k=v`, `--no-pager`),
+ *  as a regex-source fragment shared by every git detector so `git -C <dir> <subcmd>`
+ *  and interspersed flags match consistently. Kept for backwards compatibility with
+ *  any external callers; new code should use {@link parseGitCommand}. */
+const GIT_PREFIX = String.raw`\bgit\b(?:\s+-{1,2}[A-Za-z][\w-]*(?:[=\s]\S+)?)*`;
+
+/** A `git commit` invocation, tolerant of global options between `git` and `commit`
+ *  (`git -C <dir> commit`, `git -c k=v commit`, `git --no-pager commit`). */
+export const GIT_COMMIT_RE = new RegExp(GIT_PREFIX + String.raw`\s+commit\b`, "i");
+
+/** Explicit pathspec arguments of `git commit <pathspec>` — the files it commits
+ *  straight from the WORKING TREE, ignoring the index. */
+export function explicitCommitPathspecs(cmd: string): string[] {
+  const parsed = parseGitCommand(cmd);
+  if (!parsed || parsed.subcommand !== "commit") return [];
+  return parsed.pathspecs;
 }
 
 /** The shell segment (top-level, split on ; && || | &) that contains string index
  *  `idx`, plus everything before it — positions are on the ORIGINAL string so callers
- *  can slice exactly. Not quote-aware for the separators (matches the pragmatic split
- *  explicitCommitPathspecs already uses); over-splitting only ever narrows the window a
- *  detector looks at, it never opens a bypass. */
+ *  can slice exactly. Kept for leading-cd logic. */
 function segmentAround(cmd: string, idx: number): { segment: string; before: string } {
-  const sep = /&&|\|\||[;&|]/g;
-  let start = 0, end = cmd.length;
-  let m: RegExpExecArray | null;
-  while ((m = sep.exec(cmd))) {
-    const s = m.index, e = m.index + m[0].length;
-    if (e <= idx) start = e;               // separator fully before idx → next segment starts here
-    else if (s >= idx) { end = s; break; } // first separator at/after idx → segment ends here
+  for (const { segment, start } of splitShellSegments(cmd)) {
+    const end = start + segment.length;
+    if (idx >= start && idx < end) return { segment, before: cmd.slice(0, start) };
   }
-  return { segment: cmd.slice(start, end), before: cmd.slice(0, start) };
+  return { segment: cmd, before: "" };
 }
 
 /** The directory of the LAST `cd <dir>` / `pushd <dir>` in a command prefix, or null.
@@ -207,50 +466,46 @@ export function leadingCdDir(before: string): string | null {
   return dir;
 }
 
+function isAbsoluteOrWinAbsolute(dir: string): boolean {
+  return isAbsolute(dir) || /^[A-Za-z]:[\\/]/.test(dir);
+}
+
 function resolveDir(dir: string, cwd: string): string {
-  return isAbsolute(dir) ? dir : resolve(cwd, dir);
+  return isAbsoluteOrWinAbsolute(dir) ? dir : resolve(cwd, dir);
 }
 
 /** The effective git repo dir for a `git commit` command, resolved to an absolute path:
- *  git's own `-C <dir>` global option if present (scanned ONLY in the `git … commit`
- *  prefix, so a sibling command's `-C` like `tar -C /tmp` and a `commit -C <ref>`
- *  reuse-message are never misread as the repo); else a leading `cd`/`pushd` target from
- *  an earlier shell segment (`cd /other && git commit …` — the chained-cd bypass); else
- *  the caller's cwd. So the staged-files check runs against the repo the commit actually
- *  targets, not always ctx.cwd. */
+ *  git's own `-C <dir>` global option if present; else a leading `cd`/`pushd` target
+ *  from an earlier shell segment (`cd /other && git commit …` — the chained-cd bypass);
+ *  else the caller's cwd. Uses the quote-aware parser so sibling commands and quoted
+ *  paths are handled correctly. */
 export function gitRepoDir(cmd: string, cwd: string): string {
-  const gc = GIT_COMMIT_RE.exec(cmd);
-  // git's global -C lives BETWEEN `git` and `commit` — i.e. inside the match itself.
-  const prefix = gc ? gc[0] : cmd;
-  const re = /(?:^|\s)-C\s+(?:"([^"]*)"|'([^']*)'|(\S+))/g;
-  let m: RegExpExecArray | null;
-  let dir: string | null = null;
-  while ((m = re.exec(prefix))) dir = m[1] ?? m[2] ?? m[3] ?? dir;
-  if (dir) return resolveDir(dir, cwd);
-  if (gc) {
-    const cd = leadingCdDir(segmentAround(cmd, gc.index).before);
+  const parsed = parseGitCommand(cmd);
+  if (parsed?.cwdOverride) return resolveDir(parsed.cwdOverride, cwd);
+  if (parsed?.subcommand) {
+    const cd = leadingCdDir(cmd.slice(0, parsed.segmentStart));
     if (cd) return resolveDir(cd, cwd);
   }
   return cwd;
 }
 
-/** True when a `cd`/`pushd` precedes the `git commit` segment (`cd /other && git commit
+/** True when a `cd`/`pushd` precedes the `git commit` segment (`cd /other && git commit`
  *  …`) — the chained-cd shape whose target repo the staged-file check may not be able to
  *  reach. Used to prompt instead of silently allowing when the check can't determine. */
 export function commitHasLeadingCd(cmd: string): boolean {
-  const gc = GIT_COMMIT_RE.exec(cmd);
-  if (!gc) return false;
-  return leadingCdDir(segmentAround(cmd, gc.index).before) !== null;
+  const parsed = parseGitCommand(cmd);
+  if (!parsed) return false;
+  return leadingCdDir(cmd.slice(0, parsed.segmentStart)) !== null;
 }
 
 /** Will this `git commit` auto-stage tracked changes (-a / --all / a short-flag
- *  cluster containing 'a', e.g. -am / -av)? Those files aren't in the index when the
- *  hook fires, so a `--cached` check alone misses them — the classic `git commit -am`
- *  source-commit bypass. */
+ *  cluster containing 'a', e.g. -am / -av)? Uses the parsed command so flags in a sibling
+ *  segment (like `grep -a`) are never misread. */
 export function commitStagesAll(cmd: string): boolean {
-  if (/(?:^|\s)--all\b/.test(cmd)) return true;
-  const clusters = cmd.match(/(?<=\s)-[A-Za-z]+/g) || []; // short-flag clusters only
-  return clusters.some((c) => /a/i.test(c.slice(1)));
+  const parsed = parseGitCommand(cmd);
+  if (!parsed || parsed.subcommand !== "commit") return false;
+  if (parsed.args.includes("--all")) return true;
+  return parsed.args.some((a) => /^-[A-Za-z]*a[A-Za-z]*$/.test(a));
 }
 
 /** Committed paths that are NOT docs/logs/site, or null if it can't be determined
@@ -286,8 +541,8 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string):
     if (named) for (const f of named) if (!files.includes(f)) files.push(f);
   }
   if (!files.length) return null;
-  const prefixes = allowedPrefixes(repoDir);
-  return files.filter((f) => !isAllowedCommitPath(f, prefixes));
+  const { allowed, denied } = commitPolicy(repoDir);
+  return files.filter((f) => !isAllowedCommitPath(f, allowed, denied));
 }
 
 // MCP tools carry no server-enforced read-only flag for Fabric (unlike powerbi's
@@ -300,13 +555,39 @@ const MCP_TOOLISH =
 const MCP_WRITE_VERB =
   /(^|[_\-.:/])(create|update|delete|remove|deploy|publish|drop|write|patch|overwrite|rename|truncate|grant|revoke|provision)([_\-.:/A-Z]|$)/i;
 
+/** The effective target of a proxied MCP call. The `pi-mcp-adapter` normally
+ *  registers a single `mcp` tool and carries the real server/tool in
+ *  `event.input.tool` (and optional `event.input.server`). Direct calls have no
+ *  inner tool. */
+export function effectiveMutationTarget(event: any): { outerTool: string; innerTool?: string; server?: string } {
+  const outerTool = String(event?.toolName ?? "");
+  const input = event?.input;
+  if (outerTool === "mcp" && input && typeof input === "object" && typeof input.tool === "string") {
+    return {
+      outerTool,
+      innerTool: input.tool,
+      server: typeof input.server === "string" ? input.server : undefined,
+    };
+  }
+  return { outerTool };
+}
+
+function mutationName(target: { outerTool: string; innerTool?: string; server?: string }): string {
+  if (!target.innerTool) return target.outerTool;
+  const prefix = target.server ? `${target.server}/` : "";
+  return `${prefix}${target.innerTool}`;
+}
+
 /** Label a tool call that looks like a MUTATING MCP/Fabric/Power BI action, or null.
- *  Requires BOTH an MCP-ish name and a write verb, so reads (list/get/inspect) pass. */
-export function mcpMutationLabel(toolName: string): string | null {
-  const name = String(toolName || "");
-  if (!name || name === "bash" || name === "read" || name === "edit" || name === "write") return null;
+ *  Accepts either a raw tool name (for direct calls) or an effective target
+ *  (for proxied `mcp` calls). Requires BOTH an MCP-ish name and a write verb,
+ *  so reads (list/get/inspect) pass. */
+export function mcpMutationLabel(toolName: string | { outerTool: string; innerTool?: string }): string | null {
+  const target = typeof toolName === "string" ? { outerTool: toolName } : toolName;
+  const name = target.innerTool || target.outerTool;
+  if (!name || name === "bash" || name === "read" || name === "edit" || name === "write" || name === "mcp") return null;
   if (!MCP_TOOLISH.test(name) || !MCP_WRITE_VERB.test(name)) return null;
-  return name;
+  return mutationName(target as { outerTool: string; innerTool?: string; server?: string });
 }
 
 /** Label a destructive bash command, or null. Conservative — only clearly risky ops. */
@@ -439,7 +720,8 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       //     server-enforced read-only for Fabric, so add a runtime prompt). Fail-open:
       //     no UI → allow (Pi's tool approval + the advisory prompt still apply).
       if (tool !== "bash") {
-        const mcp = mcpMutationLabel(tool ?? "");
+        const target = effectiveMutationTarget(event);
+        const mcp = mcpMutationLabel(target);
         if (mcp && ctx.hasUI && typeof ctx.ui?.confirm === "function") {
           const ok = await ctx.ui.confirm(
             "coop guardrails",

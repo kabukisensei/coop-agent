@@ -19,7 +19,7 @@ const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
 const dist = process.env.COOP_TEST_DIST;
 const cg = await import(pathToFileURL(`${dist}/coop-guardrails.mjs`).href);
 const coopGuardrails = cg.default;
-const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, gitRepoDir, leadingCdDir, bashSecretCmdPath } = cg;
+const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseRepoCommitPolicy, commitPolicy } = cg;
 
 // Capture the handler the extension registers.
 let staged = "";     // `git diff --cached --name-only`
@@ -124,6 +124,98 @@ await t("gitRepoDir/leadingCdDir unit: -C wins over cd; cd honored; siblings ign
   assert.equal(gitRepoDir("git commit -m x", "/cwd"), "/cwd");
   assert.equal(leadingCdDir("cd /a && cd /b &&"), "/b"); // last cd wins
   assert.equal(leadingCdDir("echo hi &&"), null);
+});
+await t("parseGitCommand is quote-aware and segment-scoped", () => {
+  const p1 = parseGitCommand('git -C "/tmp/path with spaces" commit -m x');
+  assert.deepEqual({ segment: p1.segment, segmentStart: p1.segmentStart, cwdOverride: p1.cwdOverride, subcommand: p1.subcommand, args: p1.args, pathspecs: p1.pathspecs }, {
+    segment: 'git -C "/tmp/path with spaces" commit -m x',
+    segmentStart: 0,
+    cwdOverride: "/tmp/path with spaces",
+    subcommand: "commit",
+    args: ["-m", "x"],
+    pathspecs: [],
+  });
+  const p2 = parseGitCommand('git -C "C:\\Work\\Client Project" commit -am x');
+  assert.deepEqual({ segment: p2.segment, segmentStart: p2.segmentStart, cwdOverride: p2.cwdOverride, subcommand: p2.subcommand, args: p2.args, pathspecs: p2.pathspecs }, {
+    segment: 'git -C "C:\\Work\\Client Project" commit -am x',
+    segmentStart: 0,
+    cwdOverride: "C:\\Work\\Client Project",
+    subcommand: "commit",
+    args: ["-am", "x"],
+    pathspecs: [],
+  });
+  // Sibling commands do not leak flags into the Git parse.
+  assert.deepEqual(parseGitCommand('git commit -m docs && grep -a foo file')?.subcommand, "commit");
+  assert.deepEqual(parseGitCommand('git commit -m docs; tar -a archive.tar file')?.subcommand, "commit");
+  const p3 = parseGitCommand('git commit src/app.py -m x');
+  assert.deepEqual({ segment: p3.segment, segmentStart: p3.segmentStart, cwdOverride: p3.cwdOverride, subcommand: p3.subcommand, args: p3.args, pathspecs: p3.pathspecs }, {
+    segment: 'git commit src/app.py -m x',
+    segmentStart: 0,
+    cwdOverride: undefined,
+    subcommand: "commit",
+    args: ["-m", "x"],
+    pathspecs: ["src/app.py"],
+  });
+  const p4 = parseGitCommand('git commit -m x -- sql/v.sql');
+  assert.deepEqual({ segment: p4.segment, segmentStart: p4.segmentStart, cwdOverride: p4.cwdOverride, subcommand: p4.subcommand, args: p4.args, pathspecs: p4.pathspecs }, {
+    segment: 'git commit -m x -- sql/v.sql',
+    segmentStart: 0,
+    cwdOverride: undefined,
+    subcommand: "commit",
+    args: ["-m", "x"],
+    pathspecs: ["sql/v.sql"],
+  });
+});
+await t("commitStagesAll uses parsed args, not sibling flags", () => {
+  assert.equal(commitStagesAll("git commit -a"), true);
+  assert.equal(commitStagesAll("git commit -am x"), true);
+  assert.equal(commitStagesAll("git commit --all -m x"), true);
+  assert.equal(commitStagesAll("git commit -m x"), false);
+  assert.equal(commitStagesAll("git commit -m docs && grep -a foo file"), false);
+  assert.equal(commitStagesAll("git commit -m docs; tar -a archive.tar file"), false);
+});
+await t("gitRepoDir handles Windows absolute -C paths without resolving against cwd", () => {
+  assert.equal(gitRepoDir('git -C "C:\\Work\\Client Project" commit -am x', "/cwd"), "C:\\Work\\Client Project");
+});
+await t("parseRepoCommitPolicy resolves per-repository local_path", () => {
+  const text = `
+repositories:
+  fabric:
+    local_path: "../fabric"
+    agent_allowed_to_commit:
+      - "docs/**"
+    agent_never_commit:
+      - "**/*.tmdl"
+  fabric_dw:
+    local_path: "../fabric-dw"
+    agent_allowed_to_commit:
+      - "reports/**"
+    agent_never_commit:
+      - "**/*.sql"
+`;
+  const projectDir = "/home/user/coop-agent";
+  assert.deepEqual(parseRepoCommitPolicy(text, projectDir, "/home/user/fabric"), { allowed: ["docs/**"], denied: ["**/*.tmdl"] });
+  assert.deepEqual(parseRepoCommitPolicy(text, projectDir, "/home/user/fabric-dw"), { allowed: ["reports/**"], denied: ["**/*.sql"] });
+  assert.equal(parseRepoCommitPolicy(text, projectDir, "/home/user/other"), null);
+});
+await t("commitPolicy caches and falls back to top-level globs / defaults", () => {
+  const repo = "/tmp/repo-policy-test-" + Math.random().toString(36).slice(2);
+  mkdirSync(repo, { recursive: true });
+  mkdirSync(join(repo, ".coop"), { recursive: true });
+  writeFileSync(join(repo, ".coop/project.yml"), `
+repositories:
+  mine:
+    local_path: "."
+    agent_allowed_to_commit:
+      - "docs/**"
+    agent_never_commit:
+      - "**/*.pbip"
+`);
+  const p = commitPolicy(repo);
+  assert.deepEqual(p.allowed.slice(-1), ["docs/"]);
+  assert.deepEqual(p.denied, ["**/*.pbip"]);
+  // Cached lookup returns the same object identity.
+  assert.equal(commitPolicy(repo), p);
 });
 await t("blocks `git commit <pathspec>` of source (nothing staged — the pathspec bypass)", async () => {
   // `git commit src/app.py -m x` commits the working-tree content of the named path,
@@ -277,6 +369,46 @@ await t("blocks a declined mutating MCP tool call", async () => {
 await t("allows an approved mutating MCP tool call; never touches read MCP calls", async () => {
   assert.equal(blocked(await handle({ toolName: "fabric_delete_workspace", input: {} }, { ...ctx, ui: { confirm: async () => true, notify: () => {} } })), false);
   assert.equal(blocked(await handle({ toolName: "fabric_list_workspaces", input: {} }, ctx)), false);
+});
+
+// --- proxied MCP mutation gating (pi-mcp-adapter shape: toolName="mcp", input.tool=<remote>) --
+await t("effectiveMutationTarget derives the inner remote tool for proxied MCP calls", () => {
+  assert.deepEqual(effectiveMutationTarget({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace", args: "{}" } }), { outerTool: "mcp", innerTool: "fabric_delete_workspace", server: "fabric" });
+  assert.deepEqual(effectiveMutationTarget({ toolName: "mcp", input: { tool: "powerbi_update_dataset" } }), { outerTool: "mcp", innerTool: "powerbi_update_dataset", server: undefined });
+  assert.deepEqual(effectiveMutationTarget({ toolName: "fabric_delete_workspace", input: {} }), { outerTool: "fabric_delete_workspace" });
+  assert.deepEqual(effectiveMutationTarget({ toolName: "read", input: { path: ".env" } }), { outerTool: "read" });
+});
+await t("mcpMutationLabel classifies proxied inner tools, not the outer 'mcp' wrapper", () => {
+  assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace" } })));
+  assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: { server: "powerbi", tool: "powerbi_update_dataset" } })));
+  assert.equal(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: { server: "fabric", tool: "fabric_list_workspaces" } })), null);
+  assert.equal(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: {} })), null);
+});
+await t("blocks a declined proxied MCP mutation", async () => {
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace", args: "{}" } }, { ...ctx, ui: { confirm: async () => false, notify: () => {} } })), true);
+});
+await t("allows an approved proxied MCP mutation", async () => {
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace", args: "{}" } }, { ...ctx, ui: { confirm: async () => true, notify: () => {} } })), false);
+});
+await t("proxied read/list/get/search MCP calls require no COOP confirmation", async () => {
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_list_workspaces" } }, ctx)), false);
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "powerbi", tool: "powerbi_get_dataset" } }, ctx)), false);
+});
+await t("malformed proxied MCP payload fails safely", async () => {
+  // Missing inner tool → no mutation label → allowed through (fail-open).
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric" } }, ctx)), false);
+  assert.equal(blocked(await handle({ toolName: "mcp", input: null }, ctx)), false);
+});
+await t("audit of proxied MCP mutation never contains raw input.args", async () => {
+  clearAudit();
+  await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace", args: '{"secret":"value"}' } }, { ...ctx, ui: { confirm: async () => false, notify: () => {} } });
+  const e = readAudit();
+  assert.equal(e.length, 1);
+  assert.equal(e[0].kind, "mcp-confirm");
+  assert.ok(e[0].detail.includes("fabric_delete_workspace"), "detail names the remote tool");
+  const blob = JSON.stringify(e[0]);
+  assert.ok(!blob.includes("secret"), "raw args never logged");
+  assert.ok(!blob.includes("value"), "raw args never logged");
 });
 
 // --- audit log (issue #14) --------------------------------------------------------

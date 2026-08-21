@@ -74,6 +74,23 @@ function Add-CoopRuntimePaths {
 }
 
 # Summarize a coop-data-doc manifest/graph JSON artifact. (mirror of the inline PY in run_data_doc)
+# --- Onboarding / profile ----------------------------------------------------
+function Invoke-CoopOnboard {
+  param([string[]]$Rest)
+  $py = Get-CoopPython
+  if (-not $py) { Coop-Die 'python3 is required for coop onboard' }
+  & $py (Join-Path $script:CoopRoot 'scripts\onboard.py') @Rest
+  exit $LASTEXITCODE
+}
+
+function Invoke-CoopProfile {
+  param([string[]]$Rest)
+  $py = Get-CoopPython
+  if (-not $py) { Coop-Die 'python3 is required for coop profile' }
+  & $py (Join-Path $script:CoopRoot 'scripts\onboard.py') profile @Rest
+  exit $LASTEXITCODE
+}
+
 function Invoke-CoopSummarizeDataDocJson {
   param([string]$File)
   $py = Get-CoopPython
@@ -112,6 +129,10 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
   coop web                  Open a friendly browser UI over the agent (experimental)
+  coop onboard              First-run global onboarding (creates ~/.coop/user.json)
+  coop profile              Show your COOP user profile
+  coop profile edit         Edit your COOP user profile
+  coop profile reset        Remove your COOP user profile
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
@@ -254,13 +275,16 @@ function Build-CoopPiArgs {
   if (Test-Path -LiteralPath $prompts -PathType Container) { $piArgs += @('--prompt-template', $prompts) }
   $theme = Join-Path $script:CoopRoot 'themes\cooptimize.json'
   if (Test-Path -LiteralPath $theme -PathType Leaf) { $piArgs += @('--theme', $theme) }
-  # Cooptimize companion extensions: branding/splash/vibes, and native review tools.
+  # Cooptimize companion extensions: branding/splash/vibes, native review tools, governance,
+  # and the local user profile hidden instruction.
   $extPowerline = Join-Path $script:CoopRoot 'extensions\coop-powerline'
   if (Test-Path -LiteralPath $extPowerline) { $piArgs += @('-e', $extPowerline) }
   $extTools = Join-Path $script:CoopRoot 'extensions\coop-tools'
   if (Test-Path -LiteralPath $extTools) { $piArgs += @('-e', $extTools) }
   $extGuardrails = Join-Path $script:CoopRoot 'extensions\coop-guardrails'
   if (Test-Path -LiteralPath $extGuardrails) { $piArgs += @('-e', $extGuardrails) }
+  $extProfile = Join-Path $script:CoopRoot 'extensions\coop-profile'
+  if (Test-Path -LiteralPath $extProfile) { $piArgs += @('-e', $extProfile) }
   # Point the extension at our vibe files and brand splash.
   $env:COOP_VIBES_DIR = Join-Path $script:CoopRoot 'vibes'
   $env:COOP_SPLASH_FILE = Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi'
@@ -274,6 +298,10 @@ function Invoke-LaunchPi {
   if (-not (Test-Have 'pi')) {
     Coop-Die 'pi is not installed. Run: coop install   (or: npm install -g @earendil-works/pi-coding-agent)'
   }
+
+  # First-run onboarding: ask for name/communication preference before the first
+  # real session, but only in an interactive terminal and only if not disabled.
+  Invoke-CoopMaybeOnboard
 
   # Guard against launching into a known-broken extension load (agent/extension skew).
   Invoke-CoopLaunchPreflight
@@ -580,15 +608,17 @@ function Test-CoopValidName { param([string]$Name) if ($Name -in @('.', '..') -o
 
 function Invoke-CoopInit {
   param([string[]]$RestArgs = @())
-  # coop init [dir]              scaffold .coop\project.yml (current behavior)
+  # coop init [dir]              run the guided project wizard
+  # coop init --template [dir]   copy the full documented example (legacy raw template)
   # coop init --seed-docs [dir]  generate/patch coop-data-doc.yml from an EXISTING
   #                              contract's repositories: (paths typed once, not twice)
   # coop init --ci github|ado    generate CI pipeline
-  $seed = $false; $dir = ''; $ciType = ''
+  $seed = $false; $dir = ''; $ciType = ''; $template = $false
   for ($i = 0; $i -lt $RestArgs.Count; $i++) {
     $a = $RestArgs[$i]
     switch -Regex ($a) {
       '^--seed-docs$' { $seed = $true }
+      '^--template$'  { $template = $true }
       '^--ci$' {
         if ($i + 1 -lt $RestArgs.Count) { $ciType = $RestArgs[++$i] }
         else { Coop-Die "--ci requires an argument (github or ado)" }
@@ -596,7 +626,7 @@ function Invoke-CoopInit {
       '^--yes$'       { $env:COOP_ASSUME_YES = '1' }
       '^-y$'          { $env:COOP_ASSUME_YES = '1' }
       default {
-        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop init [dir] [--seed-docs] [--ci github|ado] [--yes]" }
+        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]" }
         $dir = $a
       }
     }
@@ -604,14 +634,20 @@ function Invoke-CoopInit {
   if (-not $dir) { $dir = (Get-Location).Path }
   if ($seed) { Invoke-CoopInitSeedDocs $dir; return }
   if ($ciType) { Invoke-CoopInitCi $dir $ciType; return }
-  $tmpl = Join-Path $script:CoopRoot '.coop\project.example.yml'
-  if (-not (Test-Path -LiteralPath $tmpl -PathType Leaf)) { Coop-Die 'template missing: .coop/project.example.yml' }
   $dst = Join-Path $dir '.coop\project.yml'
   if (Test-Path -LiteralPath $dst) { Coop-Die "$dst already exists — not overwriting.  (seed coop-data-doc.yml from it with: coop init --seed-docs)" }
-  New-Item -ItemType Directory -Force -Path (Join-Path $dir '.coop') | Out-Null
-  Copy-Item -LiteralPath $tmpl -Destination $dst
+  $py = Get-CoopPython
+  if (-not $py) { Coop-Die 'python3 is required for: coop init' }
+  if ($template) {
+    & $py "$script:CoopRoot\lib\init_wizard.py" "$dir" --template > "$dst"
+  } else {
+    & $py "$script:CoopRoot\lib\init_wizard.py" "$dir"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  }
   Coop-Ok "Wrote $dst"
-  Coop-Info 'Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor'
+  if ($template) {
+    Coop-Info 'Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor'
+  }
   Coop-Info 'Once repositories: is filled, seed the lineage-docs config from it: coop init --seed-docs'
   Coop-Info 'Or set up lineage docs interactively: `coop data-doc setup` (full wizard) — or launch `coop` and accept the /setup-docs offer.'
 }
@@ -977,6 +1013,8 @@ switch -CaseSensitive ($cmd) {
   'sync' { & (Join-Path $script:CoopRoot 'scripts\sync.ps1') @rest; exit $LASTEXITCODE }
   'web' { Invoke-CoopWeb $rest; break }
   'launch-spec' { Invoke-CoopLaunchSpec $rest; break }
+  'onboard' { Invoke-CoopOnboard $rest; break }
+  'profile' { Invoke-CoopProfile $rest; break }
   'init' { Invoke-CoopInit $rest; break }
   'new-skill' { New-CoopSkill $rest; break }
   'new-prompt' { New-CoopPrompt $rest; break }
