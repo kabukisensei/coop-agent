@@ -158,3 +158,17 @@ rm -rf "$stub_drift"
 
 if [ "$fail" -ne 0 ]; then echo "  ✗ doctor-mcp-mode tests FAILED"; exit 1; fi
 echo "  doctor-mcp-mode tests passed"
+
+# --- doctor against a GENERATED mcp.json (pretty-printed, not a hand fixture) ---
+# The real generator writes multi-line JSON; line-greps would only ever see
+# '"args": [' and falsely report missing flags.
+d="$TMP/generated"
+mkdir -p "$d"
+printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"tenant-1"},"integrations":{"fabric":false,"power_bi":true,"power_bi_modeling":true,"azure_devops":false,"microsoft_learn":false},"azure_devops":{"organization":"org"}}' > "$d/config"
+COOP_ROOT="$ROOT" bash -c "cd '$d' && python3 '$ROOT/lib/mcp_config.py' --config '$d/config' --output '$d/.mcp.json'" || ko "generator failed on scratch config"
+out="$(doctor_out "$d")"
+case "$out" in
+  *"powerbi-modeling-mcp configured (started, read-only)"*) ok "doctor reads generated pretty-printed MCP JSON correctly" ;;
+  *) ko "doctor misreads generated MCP JSON"; echo "$out" | grep -i modeling ;;
+esac
+grep -q '"args": \[' "$d/.mcp.json" && ok "fixture really is pretty-printed (multi-line args)" || ok "generator emitted compact JSON"

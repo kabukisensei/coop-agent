@@ -822,6 +822,11 @@ function readAuditTail(n: number): AuditEntry[] {
 export default function coopGuardrails(pi: ExtensionAPI) {
   const enabled = () => process.env.COOP_NO_GUARDRAILS !== "1";
   rotateAuditIfLarge();
+  // One Pi process can serve multiple sessions (/new, /resume, /fork fire
+  // session_shutdown + session_start without reloading this module). Drop the
+  // stale governance snapshot so THIS session's project contract is re-read on
+  // its next governed call — never carry policy across session switches.
+  pi.on("session_start", async () => { resetSessionGovernance(); });
 
   pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
     try {
@@ -907,8 +912,12 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       for (const git of parseGitCommands(cmd).filter((g) => g.subcommand === "commit")) {
         const hard = commitHardBlockReason(git);
         if (hard) {
+          // Inside this loop every entry is a commit; explain WHICH hard block fired.
+          const why = hard.includes("--amend")
+            ? "amend rewrites an existing commit"
+            : "the guardrail does not read pathspec files";
           audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: hard, detail: git.segment.slice(0, 200) });
-          return { block: true, reason: `coop guardrails: ${hard} is never permitted — it can bypass the source-commit gate (${git.subcommand === "commit" ? "amend rewrites an existing commit" : "the guardrail does not read pathspec files"}). Let a human run it.` };
+          return { block: true, reason: `coop guardrails: ${hard} is never permitted — ${why}. Let a human run it.` };
         }
         const offending = await offendingCommitPaths(pi, ctx.cwd, cmd, git, governance);
         if (offending && offending.length) {

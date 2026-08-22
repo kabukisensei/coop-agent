@@ -118,9 +118,26 @@ $UnitPipx = {
 
 $UnitPi = {
   param([bool]$Force, [string]$Spec)
-  if ((Get-Command pi -ErrorAction SilentlyContinue) -and -not $Force) {
-    $v = (& pi --version 2>$null); if (-not $v) { $v = '?' }
-    return [pscustomobject]@{ ok = $true; msg = "pi present ($v)" }
+  $piCmd = Get-Command pi -ErrorAction SilentlyContinue
+  if ($piCmd) {
+    $raw = (& pi --version 2>$null | Out-String)
+    $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
+    $cur = if ($m.Success) { $m.Value } else { '' }
+    # Convergence: missing -> install exact; == manifest -> skip;
+    # != manifest -> force-install exact; --force -> reinstall exact.
+    if (-not $Force -and $cur) {
+      if ($EDGE) { return [pscustomobject]@{ ok = $true; msg = "pi present ($cur)" } }
+      $expected = $null
+      if (-not [string]::IsNullOrEmpty($PI_TARGET_VERSION)) { $expected = $PI_TARGET_VERSION }
+      if (-not $expected) { return [pscustomobject]@{ ok = $true; msg = "pi present ($cur) — no manifest pin" } }
+      if ($cur -eq $expected) { return [pscustomobject]@{ ok = $true; msg = "pi $cur matches manifest" } }
+      if (Get-Command npm -ErrorAction SilentlyContinue) {
+        & npm install -g $Spec *> $null
+        if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = "pi converged $cur -> $expected" } }
+        return [pscustomobject]@{ ok = $false; msg = "failed to converge pi to $Spec — try: npm install -g $Spec" }
+      }
+      return [pscustomobject]@{ ok = $false; msg = "cannot converge pi (npm missing) — install Node.js, then re-run: coop install" }
+    }
   }
   if (Get-Command npm -ErrorAction SilentlyContinue) {
     & npm install -g $Spec *> $null
@@ -158,6 +175,18 @@ $UnitFabric = {
     }
     return 1
   }
+  $runPipxText = {
+    param([string[]]$PipxArgs)
+    if (Get-Command pipx -ErrorAction SilentlyContinue) {
+      return ((& pipx @PipxArgs 2>$null | Out-String))
+    }
+    foreach ($name in @('python3', 'python')) {
+      $c = Get-Command $name -ErrorAction SilentlyContinue
+      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
+      return ((& $name -m pipx @PipxArgs 2>$null | Out-String))
+    }
+    return ''
+  }
 
   $hasPipx = (Get-Command pipx -ErrorAction SilentlyContinue)
   if (-not $hasPipx) {
@@ -171,10 +200,23 @@ $UnitFabric = {
   if (-not $hasPipx) { return [pscustomobject]@{ ok = $false; msg = 'skipping Fabric CLI (pipx missing)' } }
 
   $target = if ($Target) { $Target } else { $Pkg }
-  if ($Force) { & $runPipx @('install', '--force', $target) }
-  else {
-    & $runPipx @('install', $target)
-    if ($LASTEXITCODE -ne 0) { & $runPipx @('upgrade', $target) }
+  # Convergence: skip only when the installed version matches the pin.
+  if (-not $Force) {
+    $installed = ''
+    $listText = (& $runPipxText @('list'))
+    if ($listText) {
+      $m2 = [regex]::Match([string]$listText, ('(?i)package ' + [regex]::Escape($Pkg) + ' (\d+\.\d+\.\d+)'))
+      if ($m2.Success) { $installed = $m2.Groups[1].Value }
+    }
+    if ($installed) {
+      if (-not $EDGE -and $target -match '==(.+)$' -and $installed -ne $Matches[1]) {
+        & $runPipx @('install', '--force', $target)
+      }
+    } else {
+      & $runPipx @('install', $target)
+    }
+  } else {
+    & $runPipx @('install', '--force', $target)
   }
   # fabric-cicd is a Python LIBRARY (no CLI) — inject it into the Fabric CLI env.
   $fcc = if ($Fcc) { $Fcc } else { 'fabric-cicd' }
@@ -215,6 +257,18 @@ $UnitPytool = {
     }
     return 1
   }
+  $runPipxText = {
+    param([string[]]$PipxArgs)
+    if (Get-Command pipx -ErrorAction SilentlyContinue) {
+      return ((& pipx @PipxArgs 2>$null | Out-String))
+    }
+    foreach ($name in @('python3', 'python')) {
+      $c = Get-Command $name -ErrorAction SilentlyContinue
+      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
+      return ((& $name -m pipx @PipxArgs 2>$null | Out-String))
+    }
+    return ''
+  }
 
   $hasPipx = (Get-Command pipx -ErrorAction SilentlyContinue)
   if (-not $hasPipx) {
@@ -231,6 +285,24 @@ $UnitPytool = {
   if (-not $Edge) {
     $ver = Coop-ManifestGet -Key "python_tools.$Pkg"
     if ($ver) { $target = "${Pkg}==${ver}" }
+  }
+  # Convergence: skip only when the installed version matches the manifest pin.
+  if (-not $Force) {
+    $installed = ''
+    $listText = (& $runPipxText @('list'))
+    if ($listText) {
+      $m2 = [regex]::Match([string]$listText, ('(?i)package ' + [regex]::Escape($Pkg) + ' (\d+\.\d+\.\d+)'))
+      if ($m2.Success) { $installed = $m2.Groups[1].Value }
+    }
+    if ($installed) {
+      if ($Edge) { return [pscustomobject]@{ ok = $true; msg = "$Pkg present ($installed)" } }
+      if (-not $target -match '==') { return [pscustomobject]@{ ok = $true; msg = "$Pkg present ($installed) — no manifest pin" } }
+      $expectedVer = $target -replace '.*==', ''
+      if ($installed -eq $expectedVer) { return [pscustomobject]@{ ok = $true; msg = "$Pkg $installed matches manifest" } }
+      $rc = & $runPipx @('install', '--force', $target)
+      if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg converged $installed -> $expectedVer" } }
+      return [pscustomobject]@{ ok = $false; msg = "failed to converge $Pkg to $target" }
+    }
   }
   if ($Force) {
     $rc = & $runPipx @('install', '--force', $target)

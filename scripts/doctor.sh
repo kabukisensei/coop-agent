@@ -306,12 +306,31 @@ if [ -n "$mcp_found" ]; then
       if [ "$s" = "powerbi-modeling-mcp" ]; then
         # Health requires BOTH flags: --start (the server must actually launch)
         # and --readonly (COOP treats MCP as read-only). Anything less is not a
-        # healthy configuration.
-        modeling_args="$(grep -A20 "\"$s\"" "$mcp_found" 2>/dev/null | grep -E '\"args\"' | head -1 || true)"
-        has_start=$(echo "$modeling_args" | grep -qiE '\"--start\"' && echo yes || echo no)
-        has_ro=$(echo "$modeling_args" | grep -qiE '\"--readonly\"|\"--read-only\"' && echo yes || echo no)
+        # healthy configuration. Generated mcp.json is pretty-printed, so parse
+        # the JSON structurally — line greps would only ever see '"args": ['.
+        _doc_py="$(coop_python 2>/dev/null || true)"
+        modeling_args=""
+        if [ -n "$_doc_py" ]; then
+          modeling_args="$($_doc_py - "$mcp_found" <<'PYEOF'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8-sig") as fh:
+        data = json.load(fh)
+    entry = (data.get("mcpServers") or {}).get("powerbi-modeling-mcp") or {}
+    print(json.dumps(entry.get("args", [])))
+except Exception:
+    pass
+PYEOF
+)"
+        fi
+        has_start=no
+        has_ro=no
+        case "$modeling_args" in *'"--start"'*) has_start=yes ;; esac
+        case "$modeling_args" in *'"--read-only"'*|*'"--readonly"'*) has_ro=yes ;; esac
         if [ "$has_start" = yes ] && [ "$has_ro" = yes ]; then
           ok "  • $s configured (started, read-only)"
+        elif [ -z "$modeling_args" ] && [ -z "$_doc_py" ]; then
+          warn "  • $s present but cannot inspect args (python missing)" "install Python 3 so coop doctor can verify --start/--readonly"
         elif [ "$has_start" != yes ]; then
           warn "  • Power BI Modeling MCP missing --start" "add --start so the server launches; keep --readonly"
         elif [ "$has_ro" != yes ]; then

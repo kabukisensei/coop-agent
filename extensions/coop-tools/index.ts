@@ -695,6 +695,8 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any): Promise<boolea
   catch (e: any) { notify(ctx, errMsg(e), "error"); return false; }
   const child = spawn(executable, ["setup", "--transport", "jsonl"], { cwd: ctx.cwd, stdio: ["pipe", "pipe", "pipe"], shell: false });
   let stderrTail = "", terminal: "complete" | "cancelled" | "error" | null = null, protocolError = "";
+  let helloSeen = false;
+  const SUPPORTED_PROTOCOL_MAJOR = 1;
   child.stderr?.on("data", (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
   const decoder = new JsonlLineDecoder();
   let chain = Promise.resolve();
@@ -703,7 +705,17 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any): Promise<boolea
     let evt: JsonlEvent;
     try { evt = JSON.parse(line); } catch { throw new Error("malformed JSONL from coop-data-doc"); }
     if (!evt || typeof evt !== "object" || !("type" in evt)) throw new Error("invalid JSONL event");
+    if (evt.type === "hello") {
+      // Handshake: required before the first prompt/terminal event; the wire
+      // protocol is 1.x — a future major means the bridge must be upgraded.
+      if (helloSeen) throw new Error("duplicate hello event");
+      const v = typeof (evt as any).protocol_version === "string" ? (evt as any).protocol_version : "";
+      if (!/^1\./.test(v)) throw new Error(`unsupported coop-data-doc protocol version '${v || "(none)"}' (bridge supports 1.x; requires coop-data-doc 1.1.1+)`);
+      helloSeen = true;
+      return;
+    }
     if (evt.type === "prompt") {
+      if (!helloSeen) throw new Error("missing hello handshake before first prompt (requires coop-data-doc 1.1.1+)");
       if (terminal) throw new Error("prompt received after terminal event");
       const answer = await renderPrompt(ctx, evt);
       if (answer === null) {
@@ -717,6 +729,7 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any): Promise<boolea
     } else if (evt.type === "notice" || evt.type === "progress") {
       if (evt.message) notify(ctx, evt.message, "info");
     } else if (evt.type === "complete" || evt.type === "cancelled" || evt.type === "error") {
+      if (!helloSeen) throw new Error(`missing hello handshake before ${evt.type} event (requires coop-data-doc 1.1.1+)`);
       if (terminal) throw new Error(`duplicate terminal event (${terminal}, ${evt.type})`);
       terminal = evt.type;
       if (evt.message) notify(ctx, evt.message, evt.type === "error" ? "error" : "info");
@@ -746,7 +759,7 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any): Promise<boolea
 /** Run the one authoritative coop-data-doc wizard; no local fallback exists. */
 async function runQuickSetup(pi: ExtensionAPI, ctx: any, _prefill: Partial<DataDocSettings>): Promise<boolean> {
   if (!(await supportsJsonlTransport(pi, ctx))) {
-    notify(ctx, "Your coop-data-doc does not support the native JSONL setup wizard. Run `coop update` (requires coop-data-doc 1.1.0+), then retry /setup-docs.", "error");
+    notify(ctx, "Your coop-data-doc does not support the native JSONL setup wizard. Run `coop update` (requires coop-data-doc 1.1.1+), then retry /setup-docs.", "error");
     return false;
   }
   const ok = await runJsonlSetup(pi, ctx);
