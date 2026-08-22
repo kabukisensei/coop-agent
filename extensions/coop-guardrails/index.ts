@@ -41,7 +41,6 @@ const DEFAULT_ALLOWED_GLOBS = [
   "site/**",
   "data-docs/**",
   "data-docs-site/**",
-  ".coop/project.yml",
 ];
 
 /** Find the nearest .coop/project.yml walking up from `cwd` (bounded). */
@@ -132,7 +131,12 @@ export type RepoCommitPolicy = { allowed: string[]; denied: string[] };
 
 /** Parse the `repositories` section of project.yml and find the entry whose
  *  `local_path` resolves to `repoDir`. Returns null if no matching entry. */
-export function parseRepoCommitPolicy(text: string, projectDir: string, repoDir: string): RepoCommitPolicy | null {
+export type RepoPolicyEntry = { name: string; path: string; allowed: string[]; denied: string[] };
+
+/** Parse EVERY repositories: entry into resolved policy entries. This is the input
+ *  to the trusted per-session governance snapshot — it is read once, never per commit. */
+export function parseRepoEntries(text: string, projectDir: string): RepoPolicyEntry[] {
+  const entries: RepoPolicyEntry[] = [];
   const lines = text.split("\n");
   let inRepos = false;
   let repoBaseIndent = 0;
@@ -142,15 +146,16 @@ export function parseRepoCommitPolicy(text: string, projectDir: string, repoDir:
   let currentDenied: string[] = [];
   let currentBaseIndent = 0;
 
-  function flush(): RepoCommitPolicy | null {
-    if (!currentName || !currentLocalPath) return null;
+  function flush(): void {
+    if (!currentName || !currentLocalPath) return;
     const resolved = isAbsolute(currentLocalPath)
       ? currentLocalPath
       : resolve(projectDir, currentLocalPath);
-    if (resolve(repoDir) === resolved || resolve(repoDir) === resolve(resolved)) {
-      return { allowed: currentAllowed, denied: currentDenied };
-    }
-    return null;
+    entries.push({ name: currentName, path: resolve(resolved), allowed: [...currentAllowed], denied: [...currentDenied] });
+    currentName = null;
+    currentLocalPath = null;
+    currentAllowed = [];
+    currentDenied = [];
   }
 
   for (let i = 0; i < lines.length; i++) {
@@ -168,8 +173,7 @@ export function parseRepoCommitPolicy(text: string, projectDir: string, repoDir:
 
     // End of repositories section: a key at or before repoBaseIndent that isn't a repo name.
     if (indent <= repoBaseIndent && !trimmed.startsWith("-")) {
-      const hit = flush();
-      if (hit) return hit;
+      flush();
       inRepos = false;
       continue;
     }
@@ -177,8 +181,7 @@ export function parseRepoCommitPolicy(text: string, projectDir: string, repoDir:
     // A repository entry name is a key exactly one indent deeper than `repositories:`.
     const repoKey = /^(?:'((?:[^']|'')+)'|"([^"]+)"|([A-Za-z0-9_\-]+))\s*:\s*(#.*)?$/.exec(trimmed);
     if (indent === repoBaseIndent + 2 && repoKey && !trimmed.startsWith("-")) {
-      const hit = flush();
-      if (hit) return hit;
+      flush();
       currentName = (repoKey[1] || repoKey[2] || repoKey[3]).replace(/''/g, "'");
       currentLocalPath = null;
       currentAllowed = [];
@@ -219,11 +222,14 @@ export function parseRepoCommitPolicy(text: string, projectDir: string, repoDir:
       }
     }
   }
-  if (inRepos) {
-    const hit = flush();
-    if (hit) return hit;
-  }
-  return null;
+  if (inRepos) flush();
+  return entries;
+}
+
+/** Back-compat wrapper: policy for exactly the repository whose local_path matches. */
+export function parseRepoCommitPolicy(text: string, projectDir: string, repoDir: string): RepoCommitPolicy | null {
+  const hit = parseRepoEntries(text, projectDir).find((e) => e.path === resolve(repoDir));
+  return hit ? { allowed: hit.allowed, denied: hit.denied } : null;
 }
 
 function findParentKey(lines: string[], idx: number, parentIndent: number): string | null {
@@ -241,32 +247,49 @@ function findParentKey(lines: string[], idx: number, parentIndent: number): stri
   return null;
 }
 
-const policyCache = new Map<string, RepoCommitPolicy>();
+export type SessionGovernance = { loaded: boolean; entries: RepoPolicyEntry[] };
 
-/** Resolve commit policy for exactly the repository whose local_path matches.
- *  An unmatched repository receives conservative built-ins only; repository-specific
- *  allowlists never leak across sibling repositories. */
-export function commitPolicy(repoDir: string): RepoCommitPolicy {
-  const key = resolve(repoDir);
-  const cached = policyCache.get(key);
-  if (cached) return cached;
+// The TRUSTED policy snapshot: read once per session, then frozen. Editing
+// .coop/project.yml mid-session can never weaken the active guardrails.
+let sessionGovernance: SessionGovernance = { loaded: false, entries: [] };
 
-  const result: RepoCommitPolicy = { allowed: [...DEFAULT_ALLOWED_GLOBS], denied: [] };
+/** Read the session's project contract once into an immutable governance snapshot. */
+export function buildSessionGovernance(sessionCwd: string): SessionGovernance {
+  const entries: RepoPolicyEntry[] = [];
   try {
-    const proj = findProjectYml(repoDir);
+    const proj = findProjectYml(sessionCwd);
     if (proj) {
-      const text = readFileSync(proj, "utf8");
       const projectRoot = dirname(dirname(proj));
-      const repoSpecific = parseRepoCommitPolicy(text, projectRoot, repoDir);
-      if (repoSpecific) {
-        result.allowed.push(...repoSpecific.allowed);
-        result.denied.push(...repoSpecific.denied);
-      }
+      entries.push(...parseRepoEntries(readFileSync(proj, "utf8"), projectRoot));
     }
   } catch {
     /* conservative defaults are fine */
   }
-  policyCache.set(key, result);
+  return { loaded: true, entries };
+}
+
+/** Forget the snapshot so the next governed call re-reads the contract (new session / tests). */
+export function resetSessionGovernance(): void {
+  sessionGovernance = { loaded: false, entries: [] };
+}
+
+function ensureSessionGovernance(sessionCwd: string): SessionGovernance {
+  if (!sessionGovernance.loaded) sessionGovernance = buildSessionGovernance(sessionCwd);
+  return sessionGovernance;
+}
+
+/** Resolve commit policy for exactly the repository whose local_path matches,
+ *  using ONLY the trusted snapshot — the working tree is never re-read here.
+ *  An unmatched repository receives conservative built-ins only; repository-
+ *  specific allowlists never leak across sibling repositories. */
+export function commitPolicy(repoDir: string, governance?: SessionGovernance): RepoCommitPolicy {
+  const snap = governance?.loaded ? governance : ensureSessionGovernance(repoDir);
+  const result: RepoCommitPolicy = { allowed: [...DEFAULT_ALLOWED_GLOBS], denied: [] };
+  const hit = snap.entries.find((e) => e.path === resolve(repoDir));
+  if (hit) {
+    result.allowed.push(...hit.allowed);
+    result.denied.push(...hit.denied);
+  }
   return result;
 }
 
@@ -341,24 +364,70 @@ const GIT_GLOBAL_VALUE_OPTS = new Set([
 /** Parse one quote-aware Git invocation from a shell command segment, or null.
  *  The caller supplies the segment so sibling commands (and their flags) are never
  *  mixed into the Git parse. */
-function supportedGitPrefix(prefix: string): boolean {
-  let p = prefix.trim().replace(/^[({]\s*/, "").trim();
-  if (/^(?:then|do|else|!)$/.test(p)) return true;
-  p = p.replace(/^(?:then|do|else|!)\s+/, "").trim();
-  if (/^(?:command|builtin|exec)(?:\s+-\S+)*$/.test(p)) return true;
-  if (/^env(?:\s+(?:-\S+|[A-Za-z_][A-Za-z0-9_]*=\S+))*$/.test(p)) return true;
-  return p === "";
+/** Remove quote characters that are glued onto word characters ("git" -> git,
+ *  "gi"t -> git) while leaving space-delimited quoted strings untouched so prose
+ *  like "some docs about git" never looks like a Git command word. */
+function stripGluedQuotes(s: string): string {
+  return s.replace(/(['"])(?=\S)/g, "").replace(/(?<=\S)(['"])/g, "");
 }
 
-/** Parse one supported Git invocation. Unsupported Git-containing wrapper shapes are
- *  classified as ambiguous by hasAmbiguousGitInvocation() and fail closed at runtime. */
+/** Walk a shell segment's words and find the word that resolves to the COMMAND
+ *  position, skipping grouping punctuation, reserved words (then/do/else/!),
+ *  VAR=value assignments, and supported wrappers (command/builtin/exec/time/env
+ *  with their flags and env value flags). Returns null when the command word is
+ *  anything other than git — mentioning git as an ARGUMENT (grep git README.md)
+ *  does not make a command a Git invocation. Quote-glued names count: bash
+ *  executes "git" and "gi"t exactly like unquoted git. */
+function findGitAtCommandPosition(segment: string): { charOffset: number } | null {
+  const wordRe = /\S+/g;
+  let m: RegExpExecArray | null;
+  let inWrapper = false;
+  let envValuePending = false;
+  while ((m = wordRe.exec(segment))) {
+    const w = m[0];
+    const core = w.replace(/^[({]+/, "");
+    const charOffset = m.index + (w.length - core.length);
+    if (core === "") continue; // pure grouping token
+    if (envValuePending) { envValuePending = false; continue; } // consumed env flag value
+    if (inWrapper) {
+      if (core.startsWith("-")) {
+        // env flags that take a separate value (-u NAME, -S STR, -C DIR)
+        if (/^-(u|S|C)$|^--split-string$/.test(core)) envValuePending = true;
+        continue;
+      }
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(core)) continue; // env VAR=val
+      inWrapper = false; // wrapper arguments ended — this word is the command
+    }
+    const bare = core.replace(/['"]/g, "").toLowerCase();
+    if (bare === "git") return { charOffset };
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(core)) continue; // assignment prefix
+    if (/^(then|do|else|!)$/.test(bare)) continue; // reserved words
+    if (/^(command|builtin|exec|time|env)$/.test(bare)) { inWrapper = true; continue; }
+    return null; // command position resolves to something else — not a Git command
+  }
+  return null;
+}
+
+/** Parse one Git invocation whose command word resolves to git. Shapes the walker
+ *  cannot safely attribute are classified as ambiguous by hasAmbiguousGitInvocation()
+ *  and fail closed at runtime. */
 function parseGitSegment(segment: string, segmentStart: number): ParsedGitCommand | null {
-  const match = /\bgit\b/i.exec(segment);
-  if (!match || !supportedGitPrefix(segment.slice(0, match.index))) return null;
-  segmentStart += match.index;
-  segment = segment.slice(match.index);
-  const toks = tokenizeArgs(segment);
-  if (toks.length === 0 || toks[0].toLowerCase() !== "git") return null;
+  const loc = findGitAtCommandPosition(segment);
+  if (!loc) return null;
+  segmentStart += loc.charOffset;
+  const rawTail = segment.slice(loc.charOffset);
+  let toks = tokenizeArgs(rawTail);
+  if (toks.length === 0) return null;
+  if (toks[0].toLowerCase() !== "git") {
+    // Split-quote command name ("gi"t): tokenizeArgs keeps it in pieces, so parse
+    // the de-glued tail instead. Whole-word quotes ("git") already tokenize to git.
+    const degluedFirst = stripGluedQuotes(rawTail).split(/\s+/)[0]?.replace(/['"]/g, "").toLowerCase();
+    if (degluedFirst !== "git") return null;
+    segment = rawTail;
+    toks = tokenizeArgs(stripGluedQuotes(rawTail));
+  } else {
+    segment = rawTail;
+  }
 
   let i = 1;
   let cwdOverride: string | undefined;
@@ -449,9 +518,16 @@ function unquotedText(text: string): string {
 }
 
 export function hasAmbiguousGitInvocation(cmd: string): boolean {
-  return splitShellSegments(cmd).some(({ segment, start }) =>
-    /\bgit\b/i.test(unquotedText(segment)) && parseGitSegment(segment.trim(), start) === null,
-  );
+  return splitShellSegments(cmd).some(({ segment, start }) => {
+    // Git mentioned anywhere (prose-blanked or glue-stripped views)?
+    const mentioned = /\bgit\b/i.test(unquotedText(segment)) || /\bgit\b/i.test(stripGluedQuotes(segment));
+    if (!mentioned) return false;
+    // Real Git command word we cannot safely parse -> fail closed.
+    if (findGitAtCommandPosition(segment) && parseGitSegment(segment.trim(), start) === null) return true;
+    // Command substitution/backticks containing git execute it out of view.
+    if (/\$\(/.test(segment) || segment.includes("`")) return true;
+    return false;
+  });
 }
 
 /** Backwards-compatible first-invocation helper. Runtime enforcement uses all. */
@@ -543,7 +619,7 @@ export function commitStagesAll(cmd: string, parsed: ParsedGitCommand | null = p
 /** Committed paths that are NOT docs/logs/site, or null if it can't be determined
  *  (fail-open). Covers staged files AND, when the command auto-stages (-a/-am), the
  *  tracked modifications `-a` will stage at commit time. */
-async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, parsed: ParsedGitCommand): Promise<string[] | null> {
+async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, parsed: ParsedGitCommand, governance: SessionGovernance): Promise<string[] | null> {
   const repoDir = gitRepoDir(cmd, cwd, parsed);
   const diff = async (extra: string[]): Promise<string[] | null> => {
     let res: { stdout: string; code: number };
@@ -573,7 +649,7 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
     if (named) for (const f of named) if (!files.includes(f)) files.push(f);
   }
   if (!files.length) return null;
-  const { allowed, denied } = commitPolicy(repoDir);
+  const { allowed, denied } = commitPolicy(repoDir, governance);
   return files.filter((f) => !isAllowedCommitPath(f, allowed, denied));
 }
 
@@ -626,6 +702,21 @@ export function mcpMutationLabel(toolName: string | { outerTool: string; innerTo
   return mutationName(target);
 }
 
+/** Hard-block reasons for commit forms whose contents cannot be policy-checked:
+ *  --amend rewrites an existing commit; pathspec-file forms commit paths the
+ *  guardrail deliberately does not read. */
+export function usesCommitPathspecFile(git: ParsedGitCommand): boolean {
+  return git.args.some(
+    (a) => a === "--pathspec-from-file" || a === "--pathspec-file-nul" || a.startsWith("--pathspec-from-file="),
+  );
+}
+
+export function commitHardBlockReason(git: ParsedGitCommand): string | null {
+  if (git.args.some((a) => a === "--amend")) return "git commit --amend";
+  if (usesCommitPathspecFile(git)) return "git commit --pathspec-from-file";
+  return null;
+}
+
 /** Label a destructive bash command, or null. Conservative — only clearly risky ops. */
 function dangerLabel(cmd: string): string | null {
   for (const git of parseGitCommands(cmd)) {
@@ -634,12 +725,13 @@ function dangerLabel(cmd: string): string | null {
     if (git.subcommand === "reset" && args.includes("--hard")) return "git reset --hard";
     if (git.subcommand === "clean" && args.some((a) => a === "--force" || /^-[A-Za-z]*f[A-Za-z]*$/.test(a))) return "git clean -f";
   }
-  // rm with BOTH recursive and force flags (single-file rm is fine). Case-insensitive
-  // so `RM -rf` on a case-insensitive filesystem (macOS/Windows) is caught too.
-  if (/\brm\b/i.test(cmd)) {
-    // Collect just the dash-prefixed flag tokens (NOT the literal "rm"), so the
-    // "r"/"f" tests don't match the "r" in the "rm" command name itself.
-    const flagTokens = cmd.match(/(?<=\s)-\S+/g) || [];
+  // rm with BOTH recursive and force flags (single-file rm is fine), SEGMENT-SCOPED:
+  // flags from sibling commands (`rm x && grep -rf y .`) must never classify as rm.
+  for (const { segment } of splitShellSegments(cmd)) {
+    const toks = tokenizeArgs(segment);
+    if (!toks.some((t) => t.replace(/['"]/g, "").split("/").pop()?.toLowerCase() === "rm")) continue;
+    // Dash-prefixed tokens of THIS segment only (never the literal "rm" itself).
+    const flagTokens = toks.filter((t) => t.startsWith("-"));
     // Short-flag clusters (e.g. -rf, -fr) carry their letters after a single dash.
     const shortFlags = flagTokens.filter((t) => !t.startsWith("--")).join("");
     const longFlags = flagTokens.filter((t) => t.startsWith("--")).join(" ");
@@ -730,6 +822,11 @@ function readAuditTail(n: number): AuditEntry[] {
 export default function coopGuardrails(pi: ExtensionAPI) {
   const enabled = () => process.env.COOP_NO_GUARDRAILS !== "1";
   rotateAuditIfLarge();
+  // One Pi process can serve multiple sessions (/new, /resume, /fork fire
+  // session_shutdown + session_start without reloading this module). Drop the
+  // stale governance snapshot so THIS session's project contract is re-read on
+  // its next governed call — never carry policy across session switches.
+  pi.on("session_start", async () => { resetSessionGovernance(); });
 
   pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
     try {
@@ -805,8 +902,24 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       // 1. Never commit source (incl. `git commit -a/-am` auto-staging, `git -C <dir>`,
       //    `git commit <pathspec>`, and `cd <dir> && git commit` — the staged check runs
       //    against the repo the commit actually targets, see gitRepoDir).
+      //    Policy comes from the TRUSTED SESSION SNAPSHOT (read once at first governed
+      //    call) — in-session edits to .coop/project.yml cannot weaken it, and the
+      //    contract is resolved from the session directory so sibling repositories
+      //    inherit their configured policies.
+      //    Hard-blocked first: --amend (rewrites history) and pathspec-file forms
+      //    (commits paths the guardrail deliberately does not read) — no approval path.
+      const governance = ensureSessionGovernance(ctx.cwd);
       for (const git of parseGitCommands(cmd).filter((g) => g.subcommand === "commit")) {
-        const offending = await offendingCommitPaths(pi, ctx.cwd, cmd, git);
+        const hard = commitHardBlockReason(git);
+        if (hard) {
+          // Inside this loop every entry is a commit; explain WHICH hard block fired.
+          const why = hard.includes("--amend")
+            ? "amend rewrites an existing commit"
+            : "the guardrail does not read pathspec files";
+          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: hard, detail: git.segment.slice(0, 200) });
+          return { block: true, reason: `coop guardrails: ${hard} is never permitted — ${why}. Let a human run it.` };
+        }
+        const offending = await offendingCommitPaths(pi, ctx.cwd, cmd, git, governance);
         if (offending && offending.length) {
           const shown = offending.slice(0, 8).join(", ");
           const more = offending.length > 8 ? ` (+${offending.length - 8} more)` : "";

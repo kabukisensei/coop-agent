@@ -54,16 +54,15 @@ function Test-CoopPiRunning {
 
 # --- Parse flags (mirror of update.sh) ---------------------------------------
 $NO_FABRIC = $false
-$CHECK = $false       # --check: dry-run — report current/latest/tested, change nothing
+$CHECK = $false       # --check: dry-run — report current/expected, change nothing
 $EDGE = $false        # --edge: take latest upstream instead of the release manifest
-$PI_LATEST = $false   # --pi-latest: skip the tested-version gate and take latest Pi
 foreach ($a in $args) {
   switch -CaseSensitive ($a) {
     '--no-fabric' { $NO_FABRIC = $true }
     '--yes'       { $env:COOP_ASSUME_YES = '1' }
     '-y'          { $env:COOP_ASSUME_YES = '1' }
     '--check'     { $CHECK = $true }
-    '--pi-latest' { $PI_LATEST = $true }
+    '--pi-latest' { Coop-Warn '--pi-latest is deprecated - use --edge (normal update always pins to the release manifest)'; $EDGE = $true }
     '--edge'      { $EDGE = $true }
     default       { if (-not [string]::IsNullOrWhiteSpace($a)) { Coop-Warn "update: ignoring unknown flag '$a'" } }
   }
@@ -81,15 +80,16 @@ if ($env:OS -eq 'Windows_NT') { $PBIH_NPM_TOOLS += '@microsoft/powerbi-desktop-b
 # Update coop's ISOLATED Pi agent dir (not the user's personal pi).
 $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 
-# --- Tested-version guard (mirror of update.sh) ------------------------------
-# coop's one real incident (#1) was a Pi version-compat break. Guard the Pi jump at the
-# tested ceiling (config/defaults.yml tested_with.pi). $script:PI_INSTALL_TARGET, when set,
-# tells the pi-update unit to PIN Pi to that version (extensions still update) instead of
-# `pi update --all`.
+# --- Fleet mode (mirror of update.sh) ----------------------------------------
+# Exactly two modes: NORMAL pins Pi + every extension/tool to the release manifest
+# (no registry queries, no prompts); --edge takes latest upstream across the fleet.
+# The old tested-version gates (--pi-latest / "Jump to the untested ...?" prompts)
+# are gone: they queried latest versions merely to ask about them, and normal
+# update resolved back to manifest pins anyway.
 $script:PI_PKG = '@earendil-works/pi-coding-agent'
-$script:PI_INSTALL_TARGET = ''
 
-# Latest published Pi version. COOP_PI_LATEST_OVERRIDE short-circuits the registry query.
+# Latest published Pi version — used ONLY by --check reporting. COOP_PI_LATEST_OVERRIDE
+# short-circuits the registry query.
 function Get-PiLatest {
   if ($env:COOP_PI_LATEST_OVERRIDE) { return $env:COOP_PI_LATEST_OVERRIDE }
   if (-not (Test-Have 'npm')) { return '' }
@@ -101,39 +101,6 @@ function Get-PiLatest {
   $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
   if ($m.Success) { return $m.Value } else { return '' }
 }
-# Confirm the untested-Pi jump (respects --yes / COOP_ASSUME_YES; non-interactive = no).
-function Confirm-CoopPiJump {
-  param([string]$Prompt)
-  if ($env:COOP_ASSUME_YES -eq '1') { return $true }
-  if ([Console]::IsInputRedirected) { Coop-Warn 'Non-interactive shell; staying on the tested Pi (pass --yes or --pi-latest to jump).'; return $false }
-  $ans = Read-Host ("{0} [y/N]" -f $Prompt)
-  return ($ans -match '^(y|yes)$')
-}
-# Generic twin for the pipx/fabric-cicd gate (Non-interactive = stay on tested).
-function Confirm-CoopToolJump {
-  param([string]$Prompt)
-  if ($env:COOP_ASSUME_YES -eq '1') { return $true }
-  if ([Console]::IsInputRedirected) { Coop-Warn 'Non-interactive shell; staying on the tested version (pass --yes to jump).'; return $false }
-  $ans = Read-Host ("{0} [y/N]" -f $Prompt)
-  return ($ans -match '^(y|yes)$')
-}
-
-# Latest published version of a pipx/PyPI tool. COOP_PYPI_LATEST_OVERRIDE short-circuits.
-function Get-PypiLatest {
-  param([string]$Pkg)
-  if ($env:COOP_PYPI_LATEST_OVERRIDE) { return $env:COOP_PYPI_LATEST_OVERRIDE }
-  $py = Get-CoopPython
-  if (-not $py) { return '' }
-  # python -c with the package as argv[1]. Keep it %-format (no f-strings) so old
-  # pythons parse it; the inner quotes are single, so the PS double-quoted string
-  # only needs backtick-n newlines.
-  $code = "import json,sys,urllib.request`ntry:`n d=json.load(urllib.request.urlopen('https://pypi.org/pypi/{0}/json'.format(sys.argv[1]),timeout=15))`n print(d['info']['version'])`nexcept Exception: pass"
-  $raw = (& $py -c $code $Pkg 2>$null | Select-Object -First 1)
-  $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
-  if ($m.Success) { return $m.Value } else { return '' }
-}
-
-$PI_TESTED = Coop-ManifestGet -Key 'pi.version'
 
 # --- Per-item units (run in a background job; return @{ok=<bool>; msg=<string>}) --
 # Same contract as the install units, so the update bar animates identically.
@@ -216,9 +183,6 @@ if ($CHECK) {
   # The version-table rows go to STDOUT (Write-Output), matching update.sh's bare
   # printf — so `coop update --check > versions.txt` captures the table on Windows too.
   Write-Output ('  {0,-32} current {1,-13} expected {2,-13} status {3}' -f "pi ($script:PI_PKG)", $piCur, $piExp, (Coop-ManifestStatus -Installed $piCur -Expected $piExp))
-  if ($PI_TESTED -and (Test-CoopMinorNewer $piLat $PI_TESTED)) {
-    Coop-Warn "latest Pi ($piLat) is a newer MINOR than tested ($PI_TESTED) — 'coop update' will ask before jumping (skip with --edge to take latest)."
-  }
   $pipxList = if (Test-Have 'pipx') { (& pipx list 2>$null | Out-String) } else { '' }
   foreach ($pkg in $PY_TOOLS) {
     $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if (-not $tv) { $tv = '?' }
@@ -241,65 +205,12 @@ if ($CHECK) {
 
 Coop-Head "coop update (v$($script:CoopVersion))"
 
-# Tested-version gate (mirror of update.sh): if latest Pi crosses the tested MINOR and the
-# user didn't pass --pi-latest, ask before jumping. Declining (or a non-interactive shell
-# without --yes) pins Pi to the tested version — extensions still update.
-if ((Test-Have 'pi') -and $PI_TESTED -and (-not $PI_LATEST)) {
-  $piLat = Get-PiLatest
-  if ($piLat -and (Test-CoopMinorNewer $piLat $PI_TESTED)) {
-    Coop-Warn "Pi $piLat is newer than coop's tested version ($PI_TESTED). New Pi minors have broken coop's extensions before (0.74 -> 0.80)."
-    if (Confirm-CoopPiJump "Jump to the untested Pi $piLat anyway?") {
-      Coop-Info "Updating to the latest Pi $piLat (untested with this coop build)."
-    } else {
-      $script:PI_INSTALL_TARGET = $PI_TESTED
-      Coop-Info "Staying on the tested Pi $PI_TESTED (extensions will still update). Re-run with --pi-latest to take $piLat."
-    }
-  }
-}
-
-# --- Tested-version gate, pipx tools + fabric-cicd (mirror of update.sh) -------
-# Same rule as Pi: a release crossing the tested MINOR asks first; declining (or
-# non-interactive without --yes) pins that tool to its tested version.
-$script:PY_PIN = @{}
-foreach ($pkg in $PY_TOOLS) {
-  $tested = Coop-ManifestObjectGet 'python_tools' $pkg
-  if (-not $tested) { continue }
-  $lat = Get-PypiLatest $pkg
-  if ($lat -and (Test-CoopMinorNewer $lat $tested)) {
-    Coop-Warn "$pkg $lat is newer than coop's tested version ($tested)."
-    if (Confirm-CoopToolJump "Jump to the untested $pkg $lat anyway?") {
-      Coop-Info "Updating to the latest $pkg $lat (untested with this coop build)."
-    } else {
-      $script:PY_PIN[$pkg] = $tested
-      Coop-Info "Staying on the tested $pkg $tested. Re-run with --yes to take $lat."
-    }
-  }
-}
-$script:FCC_PIN = ''
-if ((Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package ms-fabric-cli ')) {
-  $fccTested = Coop-ManifestObjectGet 'python_tools' 'fabric-cicd'
-  if ($fccTested) {
-    $fccLat = Get-PypiLatest 'fabric-cicd'
-    if ($fccLat -and (Test-CoopMinorNewer $fccLat $fccTested)) {
-      Coop-Warn "fabric-cicd $fccLat is newer than coop's tested version ($fccTested)."
-      if (Confirm-CoopToolJump "Jump to the untested fabric-cicd $fccLat anyway?") {
-        Coop-Info "Updating to the latest fabric-cicd $fccLat (untested with this coop build)."
-      } else {
-        $script:FCC_PIN = $fccTested
-        Coop-Info "Staying on the tested fabric-cicd $fccTested."
-      }
-    }
-  }
-}
-
-# Test seam: print the resolved gate decision and stop BEFORE any install or side effect.
+# Test seam: print the resolved fleet-mode decision and stop BEFORE any install or
+# side effect. Normal mode pins everything to the release manifest; --edge takes latest.
 if ($env:COOP_UPDATE_GATE_DRYRUN -eq '1') {
   if ($EDGE) { Write-Output 'GATE all'; exit 0 }
-  $pins = @()
-  if ($script:PI_INSTALL_TARGET) { $pins += $script:PI_INSTALL_TARGET }
-  foreach ($k in $script:PY_PIN.Keys) { $pins += "$k=$($script:PY_PIN[$k])" }
-  if ($script:FCC_PIN) { $pins += "fabric-cicd=$($script:FCC_PIN)" }
-  if ($pins.Count -gt 0) { Write-Output ("GATE pin:{0}" -f ($pins -join ',')) } else { Write-Output 'GATE all' }
+  $piPin = Coop-ManifestGet -Key 'pi.version'
+  if ($piPin) { Write-Output ("GATE pin:{0}" -f $piPin) } else { Write-Output 'GATE all' }
   exit 0
 }
 
@@ -356,7 +267,7 @@ try {
   Coop-ProgBegin $TOTAL
 
   # Resolve exact specs from the release manifest (unless --edge or gate pin).
-  $piSpec = if ($EDGE) { 'edge' } elseif ($script:PI_INSTALL_TARGET) { "$script:PI_PKG@$script:PI_INSTALL_TARGET" } else { $manifestPi = Coop-ManifestGet -Key 'pi.version'; if ($manifestPi) { "$script:PI_PKG@$manifestPi" } else { '' } }
+  $piSpec = if ($EDGE) { 'edge' } else { $manifestPi = Coop-ManifestGet -Key 'pi.version'; if ($manifestPi) { "$($script:PI_PKG)@$manifestPi" } else { '' } }
   $pytoolTargets = @()
   foreach ($pkg in $PY_TOOLS) {
     $pytoolTargets += if ($EDGE) { $pkg } else { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "$pkg==$tv" } else { $pkg } }
@@ -390,7 +301,10 @@ finally {
 }
 
 # fabric-cicd is manifest-pinned in normal mode; edge alone may take latest.
-if (-not $EDGE -and -not $script:FCC_PIN) { $script:FCC_PIN = Coop-ManifestObjectGet 'python_tools' 'fabric-cicd' }
+# fabric-cicd is a library injected into the Fabric CLI env. Normal mode always
+# uses the manifest pin; edge mode alone may take latest.
+$script:FCC_PIN = ''
+if (-not $EDGE) { $script:FCC_PIN = Coop-ManifestObjectGet 'python_tools' 'fabric-cicd' }
 if ((Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package ms-fabric-cli ')) {
   if ($script:FCC_PIN) {
     & pipx inject ms-fabric-cli "fabric-cicd==$($script:FCC_PIN)" --force > $null 2>&1

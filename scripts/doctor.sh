@@ -253,10 +253,27 @@ fi
 section "Pi extensions"
 if have pi; then
   pilist="$(pi list 2>/dev/null || true)"
-  for ext in "pi-mcp-adapter:MCP servers" "pi-hermes-memory:persistent memory"; do
-    name="${ext%%:*}"; desc="${ext##*:}"
-    if printf '%s' "$pilist" | grep -qi "$name"; then ok "$name ($desc)"; else warn "$name not installed ($desc)" "coop add npm:$name"; fi
-  done
+  # Every MANAGED extension is checked against its exact release-manifest pin —
+  # presence alone let a drifted fleet read as healthy.
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    exp="$(coop_manifest_get "extensions.$name")"
+    if ! printf '%s' "$pilist" | grep -qi "$name"; then
+      warn "$name not installed" "coop sync   (installs the pinned extension fleet)"
+      continue
+    fi
+    if [ -z "$exp" ]; then ok "$name installed (no manifest pin)"; continue; fi
+    cur="$(printf '%s\n' "$pilist" | grep -i "$name" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    status="$(coop_manifest_status "${cur:-}" "$exp")"
+    case "$status" in
+      ok) ok "$name $cur matches manifest ($exp)" ;;
+      missing) warn "$name installed but version unknown (manifest: $exp)" "coop sync   (pins the extension fleet)" ;;
+      older|wrong-version) warn "$name ${cur:-?} differs from manifest ($exp)" "coop sync   (pins the extension fleet)" ;;
+      newer-than-tested) warn "$name $cur is newer than manifest ($exp)" "coop sync   (pins back), or coop update --edge intentionally" ;;
+    esac
+  done <<EOF
+$(coop_manifest_keys extensions)
+EOF
   # pi-ai / pi-tui must match the agent — coop's extensions load INTO it and share one
   # copy. A skew (e.g. tree 0.74.x vs agent 0.80.x) breaks pi-web-access's /compat import.
   ext_ver="$(coop_pi_version)"; ext_py="$(coop_python 2>/dev/null || true)"
@@ -284,17 +301,40 @@ for f in "$PWD/.mcp.json" "$PWD/.pi/mcp.json" "$PI_CODING_AGENT_DIR/mcp.json" "$
 done
 if [ -n "$mcp_found" ]; then
   ok "MCP config: $mcp_found"
-  for s in fabric powerbi powerbi-modeling-mcp azure-devops microsoft-learn context-mode; do
+  for s in fabric powerbi powerbi-modeling-mcp azure-devops microsoft-learn; do
     if grep -qi "\"$s\"" "$mcp_found" 2>/dev/null; then
       if [ "$s" = "powerbi-modeling-mcp" ]; then
-        # Report whether the Power BI Modeling MCP server is configured read-only.
-        modeling_args="$(grep -A20 "\"$s\"" "$mcp_found" 2>/dev/null | grep -E '\"args\"' | head -1 || true)"
-        if echo "$modeling_args" | grep -qiE '\"--readonly\"|\"--read-only\"'; then
-          ok "  • $s server configured (read-only mode)"
-        elif echo "$modeling_args" | grep -qiE '\"--start\"|\"--read-write\"|\"--readwrite\"'; then
-          warn "  • $s server configured (read-write mode)" "change args to --readonly for read-only"
-        else
-          warn "  • $s server configured (mode unclear)" "use --readonly for read-only"
+        # Health requires BOTH flags: --start (the server must actually launch)
+        # and --readonly (COOP treats MCP as read-only). Anything less is not a
+        # healthy configuration. Generated mcp.json is pretty-printed, so parse
+        # the JSON structurally — line greps would only ever see '"args": ['.
+        _doc_py="$(coop_python 2>/dev/null || true)"
+        modeling_args=""
+        if [ -n "$_doc_py" ]; then
+          modeling_args="$($_doc_py - "$mcp_found" <<'PYEOF'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8-sig") as fh:
+        data = json.load(fh)
+    entry = (data.get("mcpServers") or {}).get("powerbi-modeling-mcp") or {}
+    print(json.dumps(entry.get("args", [])))
+except Exception:
+    pass
+PYEOF
+)"
+        fi
+        has_start=no
+        has_ro=no
+        case "$modeling_args" in *'"--start"'*) has_start=yes ;; esac
+        case "$modeling_args" in *'"--read-only"'*|*'"--readonly"'*) has_ro=yes ;; esac
+        if [ "$has_start" = yes ] && [ "$has_ro" = yes ]; then
+          ok "  • $s configured (started, read-only)"
+        elif [ -z "$modeling_args" ] && [ -z "$_doc_py" ]; then
+          warn "  • $s present but cannot inspect args (python missing)" "install Python 3 so coop doctor can verify --start/--readonly"
+        elif [ "$has_start" != yes ]; then
+          warn "  • Power BI Modeling MCP missing --start" "add --start so the server launches; keep --readonly"
+        elif [ "$has_ro" != yes ]; then
+          warn "  • Power BI Modeling MCP missing --readonly — it would run READ-WRITE" "change args to --readonly before any client work"
         fi
       else
         ok "  • $s server configured"

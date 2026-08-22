@@ -20,8 +20,10 @@ SERVER_PACKAGES = {
     "powerbi-modeling-mcp": "@microsoft/powerbi-modeling-mcp",
     "azure-devops": "@azure-devops/mcp",
     "microsoft-learn": "mcp-remote",
-    "context-mode": "context-mode",
 }
+# NOTE: context-mode is deliberately NOT here. It is a native Pi extension
+# (release manifest `extensions` list, installed via `pi install`) — generating it
+# too as an MCP server would register the same capability twice.
 
 
 def load_json(path: Path, *, required: bool = False) -> dict[str, Any]:
@@ -71,8 +73,6 @@ def desired_servers(manifest: dict[str, Any], config: dict[str, Any]) -> dict[st
         out["azure-devops"] = {"command": "npx", "args": ["-y", spec(manifest, SERVER_PACKAGES["azure-devops"]), org, "--authentication", "azcli", "-d", "core", "work", "work-items", "search"]}
     if enabled("microsoft_learn"):
         out["microsoft-learn"] = {"command": "npx", "args": ["-y", spec(manifest, SERVER_PACKAGES["microsoft-learn"]), "https://learn.microsoft.com/api/mcp"]}
-    if enabled("context_mode"):
-        out["context-mode"] = {"command": "npx", "args": ["-y", spec(manifest, SERVER_PACKAGES["context-mode"])]}
     return out
 
 

@@ -334,10 +334,26 @@ if (-not (Test-CoopToolEnabled $projYml 'tabular_editor_cli')) {
 D-Head 'Pi extensions'
 if (Test-Have 'pi') {
   $pilist = (& pi list 2>$null | Out-String)
-  foreach ($ext in @('pi-mcp-adapter:MCP servers', 'pi-hermes-memory:persistent memory')) {
-    $name = $ext.Split(':')[0]; $desc = $ext.Split(':')[1]
-    if ($pilist -match [regex]::Escape($name)) { D-Ok "$name ($desc)" }
-    else { D-Warn "$name not installed ($desc)" "coop add npm:$name" }
+  # Every MANAGED extension is checked against its exact release-manifest pin —
+  # presence alone let a drifted fleet read as healthy.
+  foreach ($name in (Coop-ManifestKeys 'extensions')) {
+    $exp = Coop-ManifestGet -Key "extensions.$name"
+    if ($pilist -notmatch [regex]::Escape($name)) {
+      D-Warn "$name not installed" 'coop sync   (installs the pinned extension fleet)'
+      continue
+    }
+    if (-not $exp) { D-Ok "$name installed (no manifest pin)"; continue }
+    $line = ($pilist -split "`n" | Where-Object { $_ -match [regex]::Escape($name) } | Select-Object -First 1)
+    $cur = ''
+    if ($line) { $m2 = [regex]::Match([string]$line, '\d+\.\d+\.\d+'); if ($m2.Success) { $cur = $m2.Value } }
+    $st = Coop-ManifestStatus -Installed $cur -Expected $exp
+    switch ($st) {
+      'ok'                { D-Ok "$name $cur matches manifest ($exp)" }
+      'missing'           { D-Warn "$name installed but version unknown (manifest: $exp)" 'coop sync   (pins the extension fleet)' }
+      'older'             { D-Warn "$name ${cur}: differs from manifest ($exp)" 'coop sync   (pins the extension fleet)' }
+      'wrong-version'     { D-Warn "$name ${cur}: differs from manifest ($exp)" 'coop sync   (pins the extension fleet)' }
+      'newer-than-tested' { D-Warn "$name $cur is newer than manifest ($exp)" 'coop sync   (pins back), or coop update --edge intentionally' }
+    }
   }
   # pi-ai / pi-tui must match the agent — coop's extensions load INTO it and share one
   # copy. A skew (e.g. tree 0.74.x vs agent 0.80.x) breaks pi-web-access's /compat import.
@@ -383,19 +399,24 @@ foreach ($f in @(
 if ($mcpFound) {
   D-Ok "MCP config: $mcpFound"
   $mcpText = (Get-Content -LiteralPath $mcpFound -Raw -ErrorAction SilentlyContinue)
-  foreach ($s in @('fabric', 'powerbi', 'powerbi-modeling-mcp', 'azure-devops', 'microsoft-learn', 'context-mode')) {
+  foreach ($s in @('fabric', 'powerbi', 'powerbi-modeling-mcp', 'azure-devops', 'microsoft-learn')) {
     if ($mcpText -match ('(?i)"' + [regex]::Escape($s) + '"')) {
       if ($s -eq 'powerbi-modeling-mcp') {
+        # Health requires BOTH flags: --start (the server must actually launch)
+        # and --readonly (COOP treats MCP as read-only). Anything less is not a
+        # healthy configuration.
         $modelingArgs = ''
         # Extract the args array lines following the powerbi-modeling-mcp key.
         $m = [regex]::Match($mcpText, ('(?i)"' + [regex]::Escape($s) + '"\s*:\s*\{[\s\S]*?"args"\s*:\s*\[(?<args>[\s\S]*?)\]'))
         if ($m.Success) { $modelingArgs = $m.Groups['args'].Value }
-        if ($modelingArgs -match '(?i)"--readonly"|"--read-only"') {
-          D-Ok "  • $s server configured (read-only mode)"
-        } elseif ($modelingArgs -match '(?i)"--start"|"--read-write"|"--readwrite"') {
-          D-Warn "  • $s server configured (read-write mode)" 'change args to --readonly for read-only'
-        } else {
-          D-Warn "  • $s server configured (mode unclear)" 'use --readonly for read-only'
+        $hasStart = ($modelingArgs -match '(?i)"--start"')
+        $hasRo = ($modelingArgs -match '(?i)"--readonly"|"--read-only"')
+        if ($hasStart -and $hasRo) {
+          D-Ok "  • $s configured (started, read-only)"
+        } elseif (-not $hasStart) {
+          D-Warn '  • Power BI Modeling MCP missing --start' 'add --start so the server launches; keep --readonly'
+        } elseif (-not $hasRo) {
+          D-Warn '  • Power BI Modeling MCP missing --readonly — it would run READ-WRITE' 'change args to --readonly before any client work'
         }
       } else {
         D-Ok "  • $s server configured"

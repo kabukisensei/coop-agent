@@ -83,7 +83,32 @@ _unit_pipx() {
 _unit_pi() {
   local spec="$PI_NPM_PACKAGE"
   if [ "$EDGE" != 1 ] && [ -n "$PI_TARGET_VERSION" ]; then spec="${PI_NPM_PACKAGE}@${PI_TARGET_VERSION}"; fi
-  if have pi && [ "$FORCE" = 0 ]; then printf 'pi present (%s)' "$(pi --version 2>/dev/null || echo '?')"; return 0; fi
+  if have pi; then
+    local cur
+    cur="$(pi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    # Convergence: missing -> install exact; == manifest -> skip;
+    # != manifest -> force-install exact; --force -> reinstall exact.
+    if [ "$FORCE" = 0 ] && [ -n "$cur" ]; then
+      if [ "$EDGE" = 1 ]; then
+        # Edge means upstream/latest for EXISTING installs too.
+        if have npm && npm install -g "$PI_NPM_PACKAGE" >/dev/null 2>&1; then
+          printf 'pi updated to latest (%s)' "$(pi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '?')"
+          return 0
+        fi
+        printf 'failed to update pi to latest (npm install -g %s)' "$PI_NPM_PACKAGE"; return 1
+      fi
+      if [ "${PI_TARGET_VERSION:-}" != "" ] && [ "$cur" = "$PI_TARGET_VERSION" ]; then
+        printf 'pi %s matches manifest' "$cur"; return 0
+      fi
+      if [ -n "${PI_TARGET_VERSION:-}" ]; then
+        if have npm && npm install -g "$spec" >/dev/null 2>&1; then
+          printf 'pi converged %s -> %s' "${cur:-?}" "$PI_TARGET_VERSION"; return 0
+        fi
+        printf 'failed to converge pi to %s (try: npm install -g %s)' "$spec" "$spec"; return 1
+      fi
+      printf 'pi present (%s) — no manifest pin' "$cur"; return 0
+    fi
+  fi
   if have npm; then
     if npm install -g "$spec" >/dev/null 2>&1; then printf 'pi installed (%s)' "$spec"; return 0; fi
     printf 'npm install of pi failed — try: npm install -g %s' "$spec"; return 1
@@ -103,6 +128,13 @@ _unit_ext() {  # $1 = extension spec
   printf 'could not install %s (continuing)' "$spec"; return 1
 }
 
+# Installed version of a pipx-managed package, or "" when absent/unknown.
+_pipx_installed_version() {
+  local pkg="$1"
+  have pipx || return 0
+  pipx list 2>/dev/null | grep -iE "package ${pkg} " | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
 _unit_fabric() {
   have pipx || { printf 'skipping Fabric CLI (pipx missing)'; return 1; }
   local target="$FABRIC_PKG"
@@ -111,8 +143,24 @@ _unit_fabric() {
     ver="$(coop_manifest_get "python_tools.$FABRIC_PKG")"
     [ -n "$ver" ] && target="${FABRIC_PKG}==${ver}"
   fi
-  if [ "$FORCE" = 1 ]; then pipx install --force "$target" >/dev/null 2>&1 || true
-  else pipx install "$target" >/dev/null 2>&1 || pipx upgrade "$target" >/dev/null 2>&1 || true
+  # Convergence: skip only when the installed version matches the pin.
+  if [ "$FORCE" = 0 ]; then
+    local cur=""; cur="$(_pipx_installed_version "$FABRIC_PKG")"
+    if [ -n "$cur" ]; then
+      if [ "$EDGE" = 1 ]; then
+        # Edge means upstream/latest for EXISTING installs too.
+        pipx upgrade "$FABRIC_PKG" >/dev/null 2>&1 || true
+      elif [ -n "${ver:-}" ] && [ "$cur" != "$ver" ]; then
+        if ! pipx install --force "$target" >/dev/null 2>&1; then
+          printf 'failed to converge %s to %s' "$FABRIC_PKG" "$ver"; return 1
+        fi
+        coop_info "converged $FABRIC_PKG $cur -> $ver"
+      fi
+    else
+      pipx install "$target" >/dev/null 2>&1 || true
+    fi
+  else
+    pipx install --force "$target" >/dev/null 2>&1 || { printf 'failed to reinstall %s (%s)' "$FABRIC_PKG" "$target"; return 1; }
   fi
   # fabric-cicd is a Python LIBRARY (no CLI), used for deploy validation — inject it
   # into the Fabric CLI's env so it's importable alongside `fab`. (doctor verifies it.)
@@ -124,6 +172,14 @@ _unit_fabric() {
   fi
   pipx inject "$FABRIC_PKG" "$fcc" >/dev/null 2>&1 || true
   hash -r 2>/dev/null || true
+  # A failed convergence must not read as success just because an OLD fab binary
+  # is still on PATH — verify the installed version actually matches the pin.
+  if [ "$EDGE" != 1 ] && [ -n "${ver:-}" ]; then
+    local now=""; now="$(_pipx_installed_version "$FABRIC_PKG")"
+    if [ "$now" != "$ver" ]; then
+      printf 'Fabric CLI remains at %s; expected %s' "${now:-none}" "$ver"; return 1
+    fi
+  fi
   if have fab; then
     if fab --version 2>&1 | grep -qiE 'paramiko|invoke'; then
       printf "'fab' is Python Fabric (SSH), not Microsoft Fabric CLI — put the pipx bin dir first on PATH, then: fab --version"; return 1
@@ -142,12 +198,30 @@ _unit_pytool() {  # $1 = package
     [ -n "$ver" ] && target="${pkg}==${ver}"
   fi
   have pipx || { printf 'skipping %s (pipx missing)' "$pkg"; return 1; }
+  local installed="" ; installed="$(_pipx_installed_version "$pkg")"
+  local expected="" ; [ "$EDGE" != 1 ] && expected="$(coop_manifest_get "python_tools.$pkg")"
+  # Convergence: skip only when the installed version matches the manifest pin.
+  if [ "$FORCE" = 0 ] && [ -n "$installed" ]; then
+    if [ "$EDGE" = 1 ]; then
+      # Edge means upstream/latest for EXISTING installs too.
+      if pipx upgrade "$pkg" >/dev/null 2>&1; then
+        printf '%s updated to latest (%s)' "$pkg" "$(_pipx_installed_version "$pkg" || echo '?')"
+        return 0
+      fi
+      printf 'failed to upgrade %s to latest' "$pkg"; return 1
+    fi
+    if [ -z "$expected" ]; then printf '%s present (%s) — no manifest pin' "$pkg" "$installed"; return 0; fi
+    if [ "$installed" = "$expected" ]; then printf '%s %s matches manifest' "$pkg" "$installed"; return 0; fi
+    if pipx install --force "$target" >/dev/null 2>&1; then
+      printf '%s converged %s -> %s' "$pkg" "$installed" "$expected"; return 0
+    fi
+    printf 'failed to converge %s to %s' "$pkg" "$expected"; return 1
+  fi
   if [ "$FORCE" = 1 ]; then
     if pipx install --force "$target" >/dev/null 2>&1; then printf '%s (installed)' "$pkg"; return 0; fi
     printf 'failed: %s' "$pkg"; return 1
   fi
   if pipx install "$target" >/dev/null 2>&1; then printf '%s (installed)' "$pkg"; return 0; fi
-  if pipx upgrade "$target" >/dev/null 2>&1; then printf '%s (up to date)' "$pkg"; return 0; fi
   printf 'could not install %s' "$pkg"; return 1
 }
 

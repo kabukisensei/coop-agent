@@ -107,11 +107,11 @@ resources:
   vibes: vibes
   splash: extensions/coop-powerline/assets/splash.ansi
 
-# Tested-with versions (reference). Installs pull the latest unless you pin; doctor
-# warns when Pi is older than pi_min (the extension API coop's extensions rely on) AND
-# when it is a newer MINOR than `pi` below. `coop update` reads `pi` here to gate the
-# jump: crossing the tested minor prompts before taking latest (decline -> pin to `pi`;
-# `--pi-latest`/`--yes` take latest). Bump `pi` as part of the Pi-upgrade checklist
+# Tested-with versions (reference). Installs and normal `coop update` pin everything to
+# config/release-manifest.json; CI checks any tested_with documentation below against it.
+# doctor warns when Pi is older than pi_min (the extension API coop's extensions rely on)
+# or a newer MINOR than `pi` below (drift reporting only — update never gates on this;
+# --edge is the only latest/upstream path). Bump `pi` as part of the Pi-upgrade checklist
 # (web/README.md) once coop's extensions + protocol are re-verified against a new Pi.
 tested_with:
   pi_min: "0.79.0"
@@ -126,7 +126,7 @@ tested_with:
   # The three coop-tool pins below must match the sibling coop-website checkout's
   # versions.json (the suite's single source of truth for released version strings).
   # `coop release` verifies this before tagging; refresh these when the tools release.
-  coop_data_doc: "1.1.0"
+  coop_data_doc: "1.1.1"
   coop_sql_review: "0.15.2"
   coop_dax_review: "0.22.0"
 

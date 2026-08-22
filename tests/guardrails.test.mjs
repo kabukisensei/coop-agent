@@ -19,7 +19,7 @@ const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
 const dist = process.env.COOP_TEST_DIST;
 const cg = await import(pathToFileURL(`${dist}/coop-guardrails.mjs`).href);
 const coopGuardrails = cg.default;
-const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoCommitPolicy, commitPolicy } = cg;
+const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoCommitPolicy, commitPolicy, buildSessionGovernance, resetSessionGovernance } = cg;
 
 // Capture the handler the extension registers.
 let staged = "";     // `git diff --cached --name-only`
@@ -173,14 +173,62 @@ await t("parseGitCommands returns every invocation and ignores escaped/quoted se
   assert.deepEqual(parseGitCommands('git status\ngit commit -am x').map((g) => g.subcommand), ["status", "commit"]);
   assert.deepEqual(parseGitCommands('(git commit -m x)').map((g) => g.subcommand), ["commit"]);
   assert.deepEqual(parseGitCommands('env FOO=1 git reset --hard').map((g) => g.subcommand), ["reset"]);
-  assert.equal(hasAmbiguousGitInvocation('echo git commit'), true);
+});
+await t("ambiguous-Git detection follows command position (doc round-2 #7)", () => {
+  // Git as an ARGUMENT never makes a command a Git invocation.
+  assert.equal(hasAmbiguousGitInvocation('grep git README.md'), false);
+  assert.equal(hasAmbiguousGitInvocation('echo git commit'), false);
+  assert.equal(hasAmbiguousGitInvocation('echo "some docs about git"'), false);
+  // Supported wrappers still resolve to a parseable Git command.
+  assert.equal(hasAmbiguousGitInvocation('builtin git status'), false);
+  assert.equal(hasAmbiguousGitInvocation('exec git status'), false);
+  assert.equal(hasAmbiguousGitInvocation('command git status'), false);
+  assert.equal(hasAmbiguousGitInvocation('time git status'), false);
+  assert.equal(hasAmbiguousGitInvocation('env -u FOO git status'), false);
+  assert.equal(hasAmbiguousGitInvocation('FOO=1 git status'), false);
+  // Quoted/split command names EXECUTE git -> must be caught (parseable, so not
+  // ambiguous — they flow through the normal commit/destructive gates).
+  assert.equal(hasAmbiguousGitInvocation('"git" commit -am x'), false);
+  assert.deepEqual(parseGitCommands('"git" commit -am x').map((g) => g.subcommand), ["commit"]);
+  assert.deepEqual(parseGitCommands("'git' commit -am x").map((g) => g.subcommand), ["commit"]);
+  assert.deepEqual(parseGitCommands('"gi"t commit -am x').map((g) => g.subcommand), ["commit"]);
+  // Unparseable real Git shapes stay fail-closed.
+  assert.equal(hasAmbiguousGitInvocation('$() git commit'), true);
+  assert.equal(hasAmbiguousGitInvocation('`git commit -am x`'), true);
+  assert.equal(hasAmbiguousGitInvocation('echo $(git commit -am x)'), true);
 });
 await t("real handler checks later LF/wrapper Git commands and fails closed on ambiguity", async () => {
   assert.equal(blocked(await call("git status && git commit -am x", { modifiedFiles: "src/app.py" })), true);
   assert.equal(blocked(await call("git status\ngit commit -am x", { modifiedFiles: "src/app.py" })), true);
   assert.equal(blocked(await call("env FOO=1 git commit -am x", { modifiedFiles: "src/app.py" })), true);
   assert.equal(blocked(await call("if true; then git commit -am x; fi", { modifiedFiles: "src/app.py" })), true);
-  assert.equal(blocked(await call("echo git commit", { stagedFiles: "" })), true);
+});
+await t("git mentioned only as an argument does not trigger the Git guard", async () => {
+  assert.equal(blocked(await call("grep git README.md", { stagedFiles: "" })), false);
+  assert.equal(blocked(await call("echo git commit", { stagedFiles: "" })), false);
+});
+await t("quoted/split Git command names are enforced like plain git", async () => {
+  assert.equal(blocked(await call('"git" commit -am x', { modifiedFiles: "src/app.py" })), true);
+  assert.equal(blocked(await call("'git' commit -am x", { modifiedFiles: "src/app.py" })), true);
+  assert.equal(blocked(await call('"gi"t commit -am x', { modifiedFiles: "src/app.py" })), true);
+  const headless = { cwd: ctx.cwd, hasUI: false };
+  assert.equal(blocked(await handle({ toolName: "bash", input: { command: '"git" reset --hard' } }, headless)), true);
+  assert.equal(blocked(await handle({ toolName: "bash", input: { command: "'git' push --force" } }, headless)), true);
+});
+await t("commit --amend and pathspec-file forms are hard-blocked", async () => {
+  for (const cmd of [
+    'git commit --amend --no-edit',
+    'git commit --amend',
+    'git -C "/tmp/a b" commit --amend --no-edit',
+    'git -C "C:\\Work\\Client Project" commit --amend --no-edit',
+    'git commit --pathspec-from-file paths.txt',
+    'git commit --pathspec-from-file=paths.txt',
+    'git commit --pathspec-file-nul --pathspec-from-file paths.txt',
+    'git status && git commit --amend --no-edit',
+    '"git" commit --amend --no-edit',
+  ]) {
+    assert.equal(blocked(await call(cmd, { stagedFiles: "docs/readme.md" })), true, `must block: ${cmd}`);
+  }
 });
 await t("real handler checks quoted POSIX and Windows -C commit paths", async () => {
   assert.equal(blocked(await call('git -C "/tmp/path with spaces" commit -am x', { modifiedFiles: "src/app.py" })), true);
@@ -220,12 +268,12 @@ repositories:
   const quoted = "repositories:\n  'sql repo':\n    local_path: '../fabric'\n    agent_allowed_to_commit: ['docs/**']\n";
   assert.deepEqual(parseRepoCommitPolicy(quoted, projectDir, "/home/user/fabric"), { allowed: ["docs/**"], denied: [] });
 });
-await t("commitPolicy caches and falls back to top-level globs / defaults", () => {
-  const repo = "/tmp/repo-policy-test-" + Math.random().toString(36).slice(2);
-  mkdirSync(repo, { recursive: true });
-  mkdirSync(join(repo, ".coop"), { recursive: true });
-  writeFileSync(join(repo, ".coop/project.yml"), `
-repositories:
+await t("governance is a per-session trusted snapshot; in-session edits cannot weaken it", () => {
+  resetSessionGovernance();
+  const control = mkdtempSync(join(tmpdir(), "coop-ctrl-"));
+  mkdirSync(join(control, ".coop"), { recursive: true });
+  const yml = join(control, ".coop", "project.yml");
+  writeFileSync(yml, `repositories:
   mine:
     local_path: "."
     agent_allowed_to_commit:
@@ -233,11 +281,58 @@ repositories:
     agent_never_commit:
       - "**/*.pbip"
 `);
-  const p = commitPolicy(repo);
+  const snap = buildSessionGovernance(control);
+  const p = commitPolicy(control, snap);
   assert.deepEqual(p.allowed.slice(-1), ["docs/**"]);
   assert.deepEqual(p.denied, ["**/*.pbip"]);
-  // Cached lookup returns the same object identity.
-  assert.equal(commitPolicy(repo), p);
+  // Attempted self-modification: weaken the working-tree contract.
+  writeFileSync(yml, `repositories:
+  mine:
+    local_path: "."
+    agent_allowed_to_commit:
+      - "**"
+`);
+  // The session snapshot still enforces the ORIGINAL policy...
+  const pAfter = commitPolicy(control, snap);
+  assert.equal(pAfter.allowed.includes("**"), false);
+  assert.deepEqual(pAfter.denied, ["**/*.pbip"]);
+  // ...and a fresh session picks up the new policy only then.
+  const fresh = buildSessionGovernance(control);
+  assert.equal(commitPolicy(control, fresh).allowed.includes("**"), true);
+});
+await t("sibling repositories resolve policies from the session project contract", () => {
+  resetSessionGovernance();
+  const base = mkdtempSync(join(tmpdir(), "coop-sib-"));
+  const control = join(base, "client-control");
+  const sqlRepo = join(base, "client-sql");
+  const thirdRepo = join(base, "client-other");
+  mkdirSync(join(control, ".coop"), { recursive: true });
+  mkdirSync(sqlRepo); mkdirSync(thirdRepo);
+  writeFileSync(join(control, ".coop", "project.yml"), `repositories:
+  sql:
+    local_path: "../client-sql"
+    agent_allowed_to_commit:
+      - "generated-docs/**"
+  pbi:
+    local_path: "../client-pbi"
+    agent_never_commit:
+      - "**/*.pbip"
+`);
+  const snap = buildSessionGovernance(control);
+  // Sibling SQL repo inherits ITS configured policy even though the contract
+  // lives in a sibling directory (walk-up from the repo would find nothing).
+  const sqlPolicy = commitPolicy(sqlRepo, snap);
+  assert.deepEqual(sqlPolicy.allowed.slice(-1), ["generated-docs/**"]);
+  // An unlisted repository gets conservative defaults ONLY — no leakage.
+  const third = commitPolicy(thirdRepo, snap);
+  assert.deepEqual(third.allowed, ["docs/**", "site/**", "data-docs/**", "data-docs-site/**"]);
+  assert.deepEqual(third.denied, []);
+});
+await t("defaults no longer allow committing .coop/project.yml (anti self-modification)", () => {
+  resetSessionGovernance();
+  const bare = mkdtempSync(join(tmpdir(), "coop-bare-"));
+  const p = commitPolicy(bare);
+  assert.deepEqual(p.allowed, ["docs/**", "site/**", "data-docs/**", "data-docs-site/**"]);
 });
 await t("blocks `git commit <pathspec>` of source (nothing staged — the pathspec bypass)", async () => {
   // `git commit src/app.py -m x` commits the working-tree content of the named path,
@@ -290,6 +385,19 @@ await t("force-only rm (rm -f, no -r) is NOT treated as destructive", async () =
 await t("blocks declined rm with separate -r -f tokens and long flags", async () => {
   assert.equal(blocked(await call("rm -r -f /tmp/x", { confirm: false })), true);
   assert.equal(blocked(await call("rm --recursive --force /tmp/x", { confirm: false })), true);
+});
+await t("rm classification is segment-scoped (round-2 #11)", async () => {
+  // Flags from sibling commands must never influence the rm classification.
+  assert.equal(blocked(await call('rm temp.txt && grep -rf "foo" src/', { confirm: false })), false);
+  assert.equal(blocked(await call("rm notes.md; tar -czf a.tgz -rf extra/", { confirm: false })), false);
+  // Same-segment flags still classify, in every position.
+  assert.equal(blocked(await call("rm -rf /tmp/x", { confirm: false })), true);
+  assert.equal(blocked(await call("rm /tmp/x -rf", { confirm: false })), true);
+  assert.equal(blocked(await call("rm --recursive --force folder", { confirm: false })), true);
+  // Quoted filenames do not hide the command or smuggle flags.
+  assert.equal(blocked(await call('rm -rf "/tmp/my folder"', { confirm: false })), true);
+  assert.equal(blocked(await call('rm "notes.txt" && grep -rf x .', { confirm: false })), false);
+  assert.equal(blocked(await call('echo "rm -rf"', { confirm: false })), false);
 });
 await t("blocks declined git clean with separate force token / --force", async () => {
   assert.equal(blocked(await call("git clean -d -f", { confirm: false })), true);
@@ -365,6 +473,7 @@ await t("parseAllowedGlobs reads BOTH block and flow YAML forms", () => {
   assert.deepEqual(parseAllowedGlobs('agent_allowed_to_commit: ["docs/**", "site/**"]').sort(), ["docs/**", "site/**"].sort());
 });
 await t("repository-specific globs retain semantics and deny overrides markdown allowance", async () => {
+  resetSessionGovernance();
   const repo = mkdtempSync(join(tmpdir(), "coop-gr-"));
   mkdirSync(join(repo, ".coop"), { recursive: true });
   writeFileSync(join(repo, ".coop", "project.yml"), "repositories:\n  mine:\n    local_path: .\n    agent_allowed_to_commit:\n      - 'generated/*/out/**'\n    agent_never_commit:\n      - 'docs/private/**'\n");

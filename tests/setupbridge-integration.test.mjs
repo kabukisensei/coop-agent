@@ -31,17 +31,20 @@ const mode=process.env.COOP_FIXTURE_MODE||'flow';
 const line=o=>process.stdout.write(JSON.stringify(o)+'\\n');
 (async()=>{
  if(mode==='malformed'){process.stdout.write('not json\\n');return}
+ if(mode==='hello-bad'){line({type:'hello',protocol_version:'2.0'});line({type:'complete'});process.exit(0)}
+ if(mode==='hello-dup'){line({type:'hello',protocol_version:'1.1'});line({type:'hello',protocol_version:'1.1'});line({type:'complete'});process.exit(0)}
+ if(mode==='no-hello'){line({type:'prompt',id:'q',kind:'text',message:'x',default:'',choices:[]});process.exit(0)}
  if(mode==='large'){process.stdout.write(JSON.stringify({type:'notice',message:'x'.repeat(1024*1024+2)})+'\\n');return}
  if(mode==='missing'){process.exit(0)}
  if(mode==='duplicate'){line({type:'complete'});line({type:'complete'});return}
- if(mode==='contradiction'){process.stderr.write('diagnostic-tail\\n');line({type:'complete'});process.exit(2)}
+ if(mode==='contradiction'){line({type:'hello',protocol_version:'1.1'});process.stderr.write('diagnostic-tail\\n');line({type:'complete'});process.exit(2)}
  if(mode==='error'){process.stderr.write('child-stderr\\n');line({type:'error',message:'boom'});process.exit(2)}
  if(mode==='cancel'){
    line({type:'prompt',id:'cancel',kind:'text',message:'Cancel me',default:'',choices:[]});
    const a=JSON.parse((await rl[Symbol.asyncIterator]().next()).value); if(!a.cancelled) process.exit(3);
    line({type:'cancelled'});process.exit(130)
  }
- process.stdout.write(JSON.stringify({type:'notice',message:'ready'})+'\\n'+JSON.stringify({type:'progress',message:'scan \\u2028 ok'})+'\\n');
+ process.stdout.write(JSON.stringify({type:'hello',protocol_version:'1.1'})+'\\n'+JSON.stringify({type:'notice',message:'ready'})+'\\n'+JSON.stringify({type:'progress',message:'scan \\u2028 ok'})+'\\n');
  const select=JSON.stringify({type:'prompt',id:'select',kind:'select',message:'Pick',choices:[{label:'Alpha',value:'a'},{label:'Beta',value:'b'}]})+'\\r\\n';
  process.stdout.write(select.slice(0,11));setTimeout(()=>process.stdout.write(select.slice(11)),5);
  const it=rl[Symbol.asyncIterator](); const a1=JSON.parse((await it.next()).value); if(a1.answer!=='b') process.exit(4);
@@ -60,7 +63,7 @@ const line=o=>process.stdout.write(JSON.stringify(o)+'\\n');
   } };
   process.env.COOP_FIXTURE_MODE = "flow"; assert.equal(await runJsonlSetup({}, ctx), true);
   process.env.COOP_FIXTURE_MODE = "cancel"; assert.equal(await runJsonlSetup({}, { ...ctx, ui: { ...ctx.ui, input: async () => null } }), false);
-  for (const mode of ["error", "malformed", "large", "missing", "duplicate", "contradiction"]) {
+  for (const mode of ["error", "malformed", "large", "missing", "duplicate", "contradiction", "hello-bad", "hello-dup", "no-hello"]) {
     process.env.COOP_FIXTURE_MODE = mode; assert.equal(await runJsonlSetup({}, ctx), false, mode);
   }
   process.env.PATH = "/no/such/path"; delete process.env.COOP_FIXTURE_MODE;

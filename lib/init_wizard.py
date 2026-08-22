@@ -424,6 +424,10 @@ def run_lineage_setup(target: Path) -> None:
             sys.stderr.write("Lineage setup was not launched because config-set could not seed repository paths.\n")
             return
         subprocess.run(_argv("setup"), cwd=target)
+    except KeyboardInterrupt:
+        # Ctrl-C during the interactive questionnaire is the normal way to skip;
+        # never surface a traceback for it.
+        sys.stderr.write("\nLineage setup skipped — run `coop data-doc setup` anytime.\n")
     except FileNotFoundError:
         sys.stderr.write("coop-data-doc isn't installed — run `coop install`, then `coop data-doc setup`.\n")
     except Exception as exc:

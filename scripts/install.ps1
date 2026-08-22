@@ -70,7 +70,7 @@ foreach ($a in $args) {
 $PI_NPM_PACKAGE = Coop-ManifestGet -Key 'pi.package' -Default '@earendil-works/pi-coding-agent'
 $PI_TARGET_VERSION = Coop-ManifestGet -Key 'pi.version'
 $PI_EXTENSIONS = @(
-  'npm:pi-mcp-adapter',       # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
+  'npm:pi-mcp-adapter',       # MCP servers (Fabric / Power BI / Microsoft Learn)
   'npm:pi-hermes-memory',     # persistent memory + session search + secret scanning
   'npm:pi-better-openai',     # plan usage limits (5h/7d) — shown in coop's footer
   'npm:pi-web-access',        # web search / URL fetch / GitHub clone / PDF / video (read-only)
@@ -118,9 +118,38 @@ $UnitPipx = {
 
 $UnitPi = {
   param([bool]$Force, [string]$Spec)
-  if ((Get-Command pi -ErrorAction SilentlyContinue) -and -not $Force) {
-    $v = (& pi --version 2>$null); if (-not $v) { $v = '?' }
-    return [pscustomobject]@{ ok = $true; msg = "pi present ($v)" }
+  $piCmd = Get-Command pi -ErrorAction SilentlyContinue
+  if ($piCmd) {
+    $raw = (& pi --version 2>$null | Out-String)
+    $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
+    $cur = if ($m.Success) { $m.Value } else { '' }
+    # Convergence: missing -> install exact; == manifest -> skip;
+    # != manifest -> force-install exact; --force -> reinstall exact.
+    if (-not $Force -and $cur) {
+      if ($EDGE) {
+        # Edge means upstream/latest for EXISTING installs too.
+        if (Get-Command npm -ErrorAction SilentlyContinue) {
+          & npm install -g $PI_NPM_PACKAGE *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $raw2 = (& pi --version 2>$null | Out-String)
+            $m3 = [regex]::Match([string]$raw2, '\d+\.\d+\.\d+')
+            return [pscustomobject]@{ ok = $true; msg = "pi updated to latest ($($m3.Value))" }
+          }
+          return [pscustomobject]@{ ok = $false; msg = "failed to update pi to latest (npm install -g $PI_NPM_PACKAGE)" }
+        }
+        return [pscustomobject]@{ ok = $false; msg = 'cannot update pi (npm missing) — install Node.js, then re-run: coop install' }
+      }
+      $expected = $null
+      if (-not [string]::IsNullOrEmpty($PI_TARGET_VERSION)) { $expected = $PI_TARGET_VERSION }
+      if (-not $expected) { return [pscustomobject]@{ ok = $true; msg = "pi present ($cur) — no manifest pin" } }
+      if ($cur -eq $expected) { return [pscustomobject]@{ ok = $true; msg = "pi $cur matches manifest" } }
+      if (Get-Command npm -ErrorAction SilentlyContinue) {
+        & npm install -g $Spec *> $null
+        if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = "pi converged $cur -> $expected" } }
+        return [pscustomobject]@{ ok = $false; msg = "failed to converge pi to $Spec — try: npm install -g $Spec" }
+      }
+      return [pscustomobject]@{ ok = $false; msg = "cannot converge pi (npm missing) — install Node.js, then re-run: coop install" }
+    }
   }
   if (Get-Command npm -ErrorAction SilentlyContinue) {
     & npm install -g $Spec *> $null
@@ -158,6 +187,18 @@ $UnitFabric = {
     }
     return 1
   }
+  $runPipxText = {
+    param([string[]]$PipxArgs)
+    if (Get-Command pipx -ErrorAction SilentlyContinue) {
+      return ((& pipx @PipxArgs 2>$null | Out-String))
+    }
+    foreach ($name in @('python3', 'python')) {
+      $c = Get-Command $name -ErrorAction SilentlyContinue
+      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
+      return ((& $name -m pipx @PipxArgs 2>$null | Out-String))
+    }
+    return ''
+  }
 
   $hasPipx = (Get-Command pipx -ErrorAction SilentlyContinue)
   if (-not $hasPipx) {
@@ -171,14 +212,48 @@ $UnitFabric = {
   if (-not $hasPipx) { return [pscustomobject]@{ ok = $false; msg = 'skipping Fabric CLI (pipx missing)' } }
 
   $target = if ($Target) { $Target } else { $Pkg }
-  if ($Force) { & $runPipx @('install', '--force', $target) }
-  else {
-    & $runPipx @('install', $target)
-    if ($LASTEXITCODE -ne 0) { & $runPipx @('upgrade', $target) }
+  # Convergence: skip only when the installed version matches the pin.
+  $expectedVer = $null
+  if ($target -match '==(.+)$') { $expectedVer = $Matches[1] }
+  if (-not $Force) {
+    $installed = ''
+    $listText = (& $runPipxText @('list'))
+    if ($listText) {
+      $m2 = [regex]::Match([string]$listText, ('(?i)package ' + [regex]::Escape($Pkg) + ' (\d+\.\d+\.\d+)'))
+      if ($m2.Success) { $installed = $m2.Groups[1].Value }
+    }
+    if ($installed) {
+      if ($EDGE) {
+        # Edge means upstream/latest for EXISTING installs too.
+        & $runPipx @('upgrade', $Pkg)
+      } elseif ($expectedVer -and $installed -ne $expectedVer) {
+        $rc = & $runPipx @('install', '--force', $target)
+        if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to converge $Pkg to $expectedVer" } }
+      }
+    } else {
+      & $runPipx @('install', $target)
+    }
+  } else {
+    $rc = & $runPipx @('install', '--force', $target)
+    if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to reinstall $Pkg ($target)" } }
   }
   # fabric-cicd is a Python LIBRARY (no CLI) — inject it into the Fabric CLI env.
   $fcc = if ($Fcc) { $Fcc } else { 'fabric-cicd' }
   & $runPipx @('inject', $Pkg, $fcc)
+  # A failed convergence must not read as success just because an OLD fab binary
+  # is still on PATH — verify the installed version actually matches the pin.
+  if (-not $EDGE -and $expectedVer) {
+    $now = ''
+    $listText2 = (& $runPipxText @('list'))
+    if ($listText2) {
+      $m4 = [regex]::Match([string]$listText2, ('(?i)package ' + [regex]::Escape($Pkg) + ' (\d+\.\d+\.\d+)'))
+      if ($m4.Success) { $now = $m4.Groups[1].Value }
+    }
+    if ($now -ne $expectedVer) {
+      $nowDisp = if ($now) { $now } else { 'none' }
+      return [pscustomobject]@{ ok = $false; msg = "Fabric CLI remains at $nowDisp; expected $expectedVer" }
+    }
+  }
   if (Get-Command fab -ErrorAction SilentlyContinue) {
     $fv = ((& fab --version 2>&1) -join ' ')
     if ($fv -match '(?i)paramiko|invoke') {
@@ -215,6 +290,18 @@ $UnitPytool = {
     }
     return 1
   }
+  $runPipxText = {
+    param([string[]]$PipxArgs)
+    if (Get-Command pipx -ErrorAction SilentlyContinue) {
+      return ((& pipx @PipxArgs 2>$null | Out-String))
+    }
+    foreach ($name in @('python3', 'python')) {
+      $c = Get-Command $name -ErrorAction SilentlyContinue
+      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
+      return ((& $name -m pipx @PipxArgs 2>$null | Out-String))
+    }
+    return ''
+  }
 
   $hasPipx = (Get-Command pipx -ErrorAction SilentlyContinue)
   if (-not $hasPipx) {
@@ -231,6 +318,29 @@ $UnitPytool = {
   if (-not $Edge) {
     $ver = Coop-ManifestGet -Key "python_tools.$Pkg"
     if ($ver) { $target = "${Pkg}==${ver}" }
+  }
+  # Convergence: skip only when the installed version matches the manifest pin.
+  if (-not $Force) {
+    $installed = ''
+    $listText = (& $runPipxText @('list'))
+    if ($listText) {
+      $m2 = [regex]::Match([string]$listText, ('(?i)package ' + [regex]::Escape($Pkg) + ' (\d+\.\d+\.\d+)'))
+      if ($m2.Success) { $installed = $m2.Groups[1].Value }
+    }
+    if ($installed) {
+      if ($Edge) {
+        # Edge means upstream/latest for EXISTING installs too.
+        $rc = & $runPipx @('upgrade', $Pkg)
+        if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg updated to latest ($(& $runPipxText @('list') | ForEach-Object { if ($_ -match "(?i)package $Pkg (\d+\.\d+\.\d+)") { $Matches[1] } }))" } }
+        return [pscustomobject]@{ ok = $false; msg = "failed to upgrade $Pkg to latest" }
+      }
+      if (-not $target -match '==') { return [pscustomobject]@{ ok = $true; msg = "$Pkg present ($installed) — no manifest pin" } }
+      $expectedVer = $target -replace '.*==', ''
+      if ($installed -eq $expectedVer) { return [pscustomobject]@{ ok = $true; msg = "$Pkg $installed matches manifest" } }
+      $rc = & $runPipx @('install', '--force', $target)
+      if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg converged $installed -> $expectedVer" } }
+      return [pscustomobject]@{ ok = $false; msg = "failed to converge $Pkg to $target" }
+    }
   }
   if ($Force) {
     $rc = & $runPipx @('install', '--force', $target)

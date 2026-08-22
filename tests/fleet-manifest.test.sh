@@ -20,7 +20,7 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 [ "$(coop_manifest_get pi.version)" = "0.80.2" ] && ok "coop_manifest_get pi.version" || ko "coop_manifest_get pi.version"
 [ "$(coop_manifest_get node.min)" = "22.19.0" ] && ok "coop_manifest_get node.min" || ko "coop_manifest_get node.min"
 [ "$(coop_manifest_get extensions.pi-mcp-adapter)" = "2.10.0" ] && ok "coop_manifest_get extensions.pi-mcp-adapter" || ko "coop_manifest_get extensions.pi-mcp-adapter"
-[ "$(coop_manifest_get python_tools.coop-data-doc)" = "1.1.0" ] && ok "coop_manifest_get python_tools.coop-data-doc" || ko "coop_manifest_get python_tools.coop-data-doc"
+[ "$(coop_manifest_get python_tools.coop-data-doc)" = "1.1.1" ] && ok "coop_manifest_get python_tools.coop-data-doc" || ko "coop_manifest_get python_tools.coop-data-doc"
 [ -z "$(coop_manifest_get missing.key)" ] && ok "coop_manifest_get missing key returns empty" || ko "missing key should return empty"
 [ "$(coop_manifest_extension_spec pi-mcp-adapter)" = "npm:pi-mcp-adapter@2.10.0" ] && ok "literal extension spec: pi-mcp-adapter" || ko "extension spec mismatch"
 [ "$(coop_manifest_extension_spec @juicesharp/rpiv-ask-user-question)" = "npm:@juicesharp/rpiv-ask-user-question@1.20.0" ] && ok "literal scoped extension spec" || ko "scoped extension spec mismatch"
@@ -113,15 +113,15 @@ case "$out" in *"@microsoft/powerbi-report-authoring-cli"*) ok "--check lists np
 out="$(PATH="$STUB:$PATH" COOP_UPDATE_GATE_DRYRUN=1 bash "$ROOT/scripts/update.sh" 2>/dev/null)"
 rc=$?
 [ "$rc" -eq 0 ] && ok "default update (gate dry-run) exits 0" || ko "default update exit was $rc"
-# With matching installed versions and no newer mocked latest, gate should pass (GATE all).
-case "$out" in *"GATE all"*) ok "default update takes all (manifest already satisfied)" ;; *) ko "expected GATE all, got: $out" ;; esac
+# Normal mode ALWAYS pins Pi to the release manifest version.
+case "$out" in *"GATE pin:0.80.2"*) ok "default update pins Pi to the manifest (GATE pin:0.80.2)" ;; *) ko "expected GATE pin:0.80.2, got: $out" ;; esac
 
 # --- --edge update path bypasses the manifest pin ---------------------------------
 : > "$MARKER"
-out="$(PATH="$STUB:$PATH" COOP_UPDATE_GATE_DRYRUN=1 COOP_PI_LATEST_OVERRIDE=0.99.0 bash "$ROOT/scripts/update.sh" --edge 2>/dev/null)"
+out="$(PATH="$STUB:$PATH" COOP_UPDATE_GATE_DRYRUN=1 bash "$ROOT/scripts/update.sh" --edge 2>/dev/null)"
 rc=$?
 [ "$rc" -eq 0 ] && ok "--edge update (gate dry-run) exits 0" || ko "--edge update exit was $rc"
-case "$out" in *"GATE all"*) ok "--edge bypasses the tested-version gate" ;; *) ko "expected --edge GATE all, got: $out" ;; esac
+case "$out" in *"GATE all"*) ok "--edge is the only latest/upstream mode" ;; *) ko "expected --edge GATE all, got: $out" ;; esac
 # With COOP_UPDATE_GATE_DRYRUN the script stops before the install unit; the gate
 # decision is the observable seam. The run.ps1 suite validates the actual pi update
 # path under PowerShell using the same seams.
