@@ -8,12 +8,16 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 COOP_DIR = Path.home() / ".coop"
 USER_JSON = COOP_DIR / "user.json"
-CONFIG_YML = COOP_DIR / "config"
+CONFIG_JSON = COOP_DIR / "config"
+MCP_OUTPUT = COOP_DIR / "agent" / "mcp.json"
 
 PRESETS = {
     "concise": "Answer first. Keep explanations short. Use bullets where useful. Explain tradeoffs only when material.",
@@ -116,9 +120,97 @@ def load_user() -> dict:
     return {}
 
 
+def atomic_save(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(data, handle, indent=2, ensure_ascii=False, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+
+
 def save_user(data: dict) -> None:
-    COOP_DIR.mkdir(parents=True, exist_ok=True)
-    USER_JSON.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    atomic_save(USER_JSON, data)
+
+
+def load_config() -> dict:
+    if not CONFIG_JSON.exists():
+        return {}
+    try:
+        value = json.loads(CONFIG_JSON.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Invalid existing {CONFIG_JSON}: {exc}. Fix or move it; COOP will not overwrite it.") from exc
+    if not isinstance(value, dict) or value.get("schema_version") != 1:
+        raise ValueError(f"Unsupported existing {CONFIG_JSON} schema; expected schema_version 1. COOP will not overwrite it.")
+    return value
+
+
+def save_config(data: dict) -> None:
+    atomic_save(CONFIG_JSON, data)
+
+
+def read_confirm(prompt: str, default: bool) -> bool:
+    answer = read_input(f"{prompt} [{'Y/n' if default else 'y/N'}]: ", "y" if default else "n")
+    return answer.lower() in ("y", "yes", "true", "1")
+
+
+def detect_azure_account() -> dict:
+    if not shutil.which("az"):
+        return {}
+    try:
+        result = subprocess.run(["az", "account", "show", "--output", "json"], capture_output=True, text=True, timeout=15)
+        value = json.loads(result.stdout) if result.returncode == 0 else {}
+        return value if isinstance(value, dict) else {}
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return {}
+
+
+def run_config_questions(existing: dict | None = None) -> dict:
+    existing = existing or load_config()
+    old_azure = existing.get("azure", {}) if isinstance(existing.get("azure", {}), dict) else {}
+    old_i = existing.get("integrations", {}) if isinstance(existing.get("integrations", {}), dict) else {}
+    account = detect_azure_account()
+    detected_tenant = str(account.get("tenantId", ""))
+    tenant = str(old_azure.get("tenant_id", ""))
+    tenant_name = str(old_azure.get("tenant_name", ""))
+    if detected_tenant and read_confirm(f"Use detected Azure tenant {account.get('name', detected_tenant)} ({detected_tenant})?", True):
+        tenant = detected_tenant
+        tenant_name = str(account.get("name", ""))
+    elif read_confirm("Configure an Azure tenant now?", bool(tenant)):
+        tenant = read_input("Azure tenant ID: ", tenant)
+    integrations = {}
+    labels = [
+        ("fabric", "Microsoft Fabric MCP"), ("power_bi", "Power BI MCP"),
+        ("power_bi_modeling", "Power BI Modeling MCP"), ("azure_devops", "Azure DevOps MCP"),
+        ("microsoft_learn", "Microsoft Learn MCP"), ("context_mode", "context-mode"),
+    ]
+    for key, label in labels:
+        integrations[key] = read_confirm(f"Enable {label}?", bool(old_i.get(key, True)))
+    old_ado = existing.get("azure_devops", {}) if isinstance(existing.get("azure_devops", {}), dict) else {}
+    organization = str(old_ado.get("organization", ""))
+    if integrations["azure_devops"]:
+        organization = read_input("Azure DevOps organization: ", organization)
+    return {
+        "schema_version": 1,
+        "azure": {"enabled": bool(tenant), "tenant_id": tenant, "tenant_name": tenant_name},
+        "integrations": integrations,
+        "azure_devops": {"organization": organization},
+        "mcp": {"safe_mode": "read_only_first"},
+        "fleet": {"publish_dir": str(existing.get("fleet", {}).get("publish_dir", "")) if isinstance(existing.get("fleet", {}), dict) else ""},
+    }
+
+
+def refresh_mcp() -> None:
+    helper = Path(__file__).resolve().parent.parent / "lib" / "mcp_config.py"
+    result = subprocess.run([sys.executable, str(helper), "--config", str(CONFIG_JSON), "--output", str(MCP_OUTPUT)])
+    if result.returncode != 0:
+        raise RuntimeError("MCP config generation failed")
 
 
 def run_profile_questions(existing: dict | None = None, migration_name: str = "") -> dict:
@@ -202,14 +294,27 @@ def cmd_onboard(args: argparse.Namespace) -> int:
         sys.stderr.write("Profile reset.\n")
         return 0
 
-    if args.edit or USER_JSON.exists():
-        # edit mode or file exists: ask questions and overwrite.
+    try:
+        existing_config = load_config()
+    except ValueError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 2
+
+    if args.config_only:
+        profile = load_user()
+    elif args.edit or USER_JSON.exists():
         profile = run_profile_questions()
         save_user(profile)
         sys.stderr.write(f"Updated profile for {profile['name']}.\n")
     else:
         profile = run_full_onboarding()
 
+    config = run_config_questions(existing_config)
+    save_config(config)
+    refresh_mcp()
+    sys.stderr.write(f"Saved integration config to {CONFIG_JSON}.\n")
+    if not config["azure"].get("tenant_id") and (config["integrations"]["power_bi"]):
+        sys.stderr.write("Power BI MCP is omitted until an Azure tenant is configured; run `coop onboard --edit`.\n")
     if args.json:
         print(json.dumps(profile, indent=2, ensure_ascii=False))
     return 0
@@ -253,6 +358,7 @@ def main(argv: list[str] | None = None) -> int:
     onboard.add_argument("--edit", action="store_true", help="Re-run only profile questions.")
     onboard.add_argument("--reset", action="store_true", help="Remove local profile.")
     onboard.add_argument("--json", action="store_true", help="Emit profile as JSON.")
+    onboard.add_argument("--config-only", action="store_true", help="Edit integrations without changing the user profile.")
 
     profile = sub.add_parser("profile", help="Show or edit COOP profile.")
     profile.add_argument("--edit", action="store_true", help="Edit profile.")

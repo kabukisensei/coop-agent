@@ -25,6 +25,32 @@ name="$(printf '%s' "$out" | "$PY" -c 'import sys,json; print(json.load(sys.stdi
 preset="$(printf '%s' "$out" | "$PY" -c 'import sys,json; print(json.load(sys.stdin)["communication"]["preset"])')"
 [ "$name" = "Test User" ] && ok "onboard captures name" || ko "onboard name: $name"
 [ "$preset" = "concise" ] && ok "onboard captures preset by number" || ko "onboard preset: $preset"
+[ -f "$COOP_DIR/.coop/config" ] && "$PY" -c 'import json,sys; c=json.load(open(sys.argv[1])); assert c["schema_version"]==1 and "integrations" in c' "$COOP_DIR/.coop/config" && ok "onboard writes valid versioned integration config" || ko "integration config missing/invalid"
+[ -f "$COOP_DIR/.coop/agent/mcp.json" ] && ! grep -q 'TODO-\|@latest' "$COOP_DIR/.coop/agent/mcp.json" && ok "onboard generates placeholder-free pinned MCP config" || ko "managed MCP config missing/unpinned"
+cp "$COOP_DIR/.coop/user.json" "$COOP_DIR/user-before.json"
+printf '\n\n\n\n\n\n\n\n\n' | HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" onboard --config-only >/dev/null 2>&1
+cmp -s "$COOP_DIR/.coop/user.json" "$COOP_DIR/user-before.json" && ok "config-only edit preserves user profile" || ko "config-only edit changed profile"
+# Malformed config fails safely and remains byte-identical.
+printf '{broken\n' > "$COOP_DIR/.coop/config"; cp "$COOP_DIR/.coop/config" "$COOP_DIR/config-before"
+printf '\n' | HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" onboard --config-only >/dev/null 2>&1; bad_rc=$?
+[ "$bad_rc" -eq 2 ] && cmp -s "$COOP_DIR/.coop/config" "$COOP_DIR/config-before" && ok "malformed config fails without overwrite" || ko "malformed config was not preserved"
+rm "$COOP_DIR/.coop/config"
+# Stub a logged-in Azure CLI; accept tenant and explicitly disable Azure DevOps.
+mkdir -p "$COOP_DIR/azbin"; cat > "$COOP_DIR/azbin/az" <<'EOF'
+#!/bin/sh
+printf '%s\n' '{"tenantId":"tenant-detected","name":"Detected Tenant"}'
+EOF
+chmod +x "$COOP_DIR/azbin/az"
+printf 'y\n\n\n\nn\n\n\n' | PATH="$COOP_DIR/azbin:$PATH" HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" onboard --config-only >/dev/null 2>&1
+"$PY" - "$COOP_DIR/.coop/config" <<'PY'
+import json,sys
+c=json.load(open(sys.argv[1])); assert c['azure']['tenant_id']=='tenant-detected'; assert c['integrations']['azure_devops'] is False
+PY
+[ "$?" -eq 0 ] && ok "detected tenant accepted and Azure DevOps disabled" || ko "Azure integration choices incorrect"
+# Existing profile alone is incomplete: common helper requires global config too.
+rm "$COOP_DIR/.coop/config"
+( HOME="$COOP_DIR" COOP_ROOT="$ROOT" bash -c '. "$COOP_ROOT/lib/common.sh"; coop_onboarding_missing' ) && ok "missing global config retriggers onboarding" || ko "missing global config did not retrigger onboarding"
+printf '%s\n' '{"schema_version":1,"azure":{"enabled":false,"tenant_id":"","tenant_name":""},"integrations":{},"azure_devops":{"organization":""},"mcp":{"safe_mode":"read_only_first"},"fleet":{"publish_dir":""}}' > "$COOP_DIR/.coop/config"
 
 # --- profile show ---------------------------------------------------------------
 show="$(HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" profile)"
