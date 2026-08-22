@@ -126,7 +126,19 @@ $UnitPi = {
     # Convergence: missing -> install exact; == manifest -> skip;
     # != manifest -> force-install exact; --force -> reinstall exact.
     if (-not $Force -and $cur) {
-      if ($EDGE) { return [pscustomobject]@{ ok = $true; msg = "pi present ($cur)" } }
+      if ($EDGE) {
+        # Edge means upstream/latest for EXISTING installs too.
+        if (Get-Command npm -ErrorAction SilentlyContinue) {
+          & npm install -g $PI_NPM_PACKAGE *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $raw2 = (& pi --version 2>$null | Out-String)
+            $m3 = [regex]::Match([string]$raw2, '\d+\.\d+\.\d+')
+            return [pscustomobject]@{ ok = $true; msg = "pi updated to latest ($($m3.Value))" }
+          }
+          return [pscustomobject]@{ ok = $false; msg = "failed to update pi to latest (npm install -g $PI_NPM_PACKAGE)" }
+        }
+        return [pscustomobject]@{ ok = $false; msg = 'cannot update pi (npm missing) — install Node.js, then re-run: coop install' }
+      }
       $expected = $null
       if (-not [string]::IsNullOrEmpty($PI_TARGET_VERSION)) { $expected = $PI_TARGET_VERSION }
       if (-not $expected) { return [pscustomobject]@{ ok = $true; msg = "pi present ($cur) — no manifest pin" } }
@@ -201,6 +213,8 @@ $UnitFabric = {
 
   $target = if ($Target) { $Target } else { $Pkg }
   # Convergence: skip only when the installed version matches the pin.
+  $expectedVer = $null
+  if ($target -match '==(.+)$') { $expectedVer = $Matches[1] }
   if (-not $Force) {
     $installed = ''
     $listText = (& $runPipxText @('list'))
@@ -209,18 +223,37 @@ $UnitFabric = {
       if ($m2.Success) { $installed = $m2.Groups[1].Value }
     }
     if ($installed) {
-      if (-not $EDGE -and $target -match '==(.+)$' -and $installed -ne $Matches[1]) {
-        & $runPipx @('install', '--force', $target)
+      if ($EDGE) {
+        # Edge means upstream/latest for EXISTING installs too.
+        & $runPipx @('upgrade', $Pkg)
+      } elseif ($expectedVer -and $installed -ne $expectedVer) {
+        $rc = & $runPipx @('install', '--force', $target)
+        if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to converge $Pkg to $expectedVer" } }
       }
     } else {
       & $runPipx @('install', $target)
     }
   } else {
-    & $runPipx @('install', '--force', $target)
+    $rc = & $runPipx @('install', '--force', $target)
+    if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to reinstall $Pkg ($target)" } }
   }
   # fabric-cicd is a Python LIBRARY (no CLI) — inject it into the Fabric CLI env.
   $fcc = if ($Fcc) { $Fcc } else { 'fabric-cicd' }
   & $runPipx @('inject', $Pkg, $fcc)
+  # A failed convergence must not read as success just because an OLD fab binary
+  # is still on PATH — verify the installed version actually matches the pin.
+  if (-not $EDGE -and $expectedVer) {
+    $now = ''
+    $listText2 = (& $runPipxText @('list'))
+    if ($listText2) {
+      $m4 = [regex]::Match([string]$listText2, ('(?i)package ' + [regex]::Escape($Pkg) + ' (\d+\.\d+\.\d+)'))
+      if ($m4.Success) { $now = $m4.Groups[1].Value }
+    }
+    if ($now -ne $expectedVer) {
+      $nowDisp = if ($now) { $now } else { 'none' }
+      return [pscustomobject]@{ ok = $false; msg = "Fabric CLI remains at $nowDisp; expected $expectedVer" }
+    }
+  }
   if (Get-Command fab -ErrorAction SilentlyContinue) {
     $fv = ((& fab --version 2>&1) -join ' ')
     if ($fv -match '(?i)paramiko|invoke') {
@@ -295,7 +328,12 @@ $UnitPytool = {
       if ($m2.Success) { $installed = $m2.Groups[1].Value }
     }
     if ($installed) {
-      if ($Edge) { return [pscustomobject]@{ ok = $true; msg = "$Pkg present ($installed)" } }
+      if ($Edge) {
+        # Edge means upstream/latest for EXISTING installs too.
+        $rc = & $runPipx @('upgrade', $Pkg)
+        if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg updated to latest ($(& $runPipxText @('list') | ForEach-Object { if ($_ -match "(?i)package $Pkg (\d+\.\d+\.\d+)") { $Matches[1] } }))" } }
+        return [pscustomobject]@{ ok = $false; msg = "failed to upgrade $Pkg to latest" }
+      }
       if (-not $target -match '==') { return [pscustomobject]@{ ok = $true; msg = "$Pkg present ($installed) — no manifest pin" } }
       $expectedVer = $target -replace '.*==', ''
       if ($installed -eq $expectedVer) { return [pscustomobject]@{ ok = $true; msg = "$Pkg $installed matches manifest" } }

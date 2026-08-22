@@ -93,6 +93,79 @@ grep -F 'PIPX install --force coop-data-doc==1.1.1' "$MARKER2" >/dev/null \
   || { echo 'matching fabric-cli was reinstalled despite matching pin'; exit 1; }
 echo '  ✓ normal install converges drifted Pi and pipx tools without --force'
 
+# --- --edge on an EXISTING machine attempts upstream latest ----------------------
+# Existing Pi 0.80.2 + coop-data-doc 1.1.1: edge must attempt an upgrade, not skip.
+D4="$(mktemp -d)"; HOME="$D4/home"; STUB4="$HOME/.local/bin"; MARKER4="$D4/calls"; mkdir -p "$STUB4"; export HOME MARKER4
+cat > "$STUB4/pi" <<'SH'
+#!/bin/sh
+[ "$1" = "--version" ] && { echo 'pi 0.80.2'; exit 0; }
+echo "PI $*" >> "$MARKER4"; exit 0
+SH
+cat > "$STUB4/npm" <<'SH'
+#!/bin/sh
+[ "$1 $2" = "prefix -g" ] && { dirname "$(dirname "$0")"; exit 0; }
+echo "NPM $*" >> "$MARKER4"; exit 0
+SH
+cat > "$STUB4/pipx" <<'SH'
+#!/bin/sh
+if [ "$1" = "list" ]; then echo 'package coop-data-doc 1.1.1'; echo 'package ms-fabric-cli 1.6.1'; exit 0; fi
+echo "PIPX $*" >> "$MARKER4"; exit 0
+SH
+cat > "$STUB4/fab" <<'SH'
+#!/bin/sh
+echo 'fab version 1.6.1'
+SH
+ln -s "$REAL_NODE" "$STUB4/node"; ln -s "$REAL_PY" "$STUB4/python3"
+chmod +x "$STUB4/pi" "$STUB4/npm" "$STUB4/pipx" "$STUB4/fab"
+PATH="$STUB4:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB4"; export PATH COOP_TEST_STUB_PATH
+: > "$MARKER4"
+COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" --edge >/dev/null 2>&1
+grep -F 'NPM install -g @earendil-works/pi-coding-agent' "$MARKER4" >/dev/null \
+  || { echo 'edge install did not attempt a Pi upstream update'; exit 1; }
+grep -F 'PIPX upgrade coop-data-doc' "$MARKER4" >/dev/null \
+  || { echo 'edge install did not attempt a pipx upgrade for an existing tool'; exit 1; }
+echo '  ✓ install --edge attempts upstream latest for existing installs'
+
+# --- Fabric failed convergence must NOT read as success --------------------------
+# pipx refuses the --force install of ms-fabric-cli==pin while an OLD fab binary
+# stays on PATH: the unit must fail, not report "ready".
+D5="$(mktemp -d)"; HOME="$D5/home"; STUB5="$HOME/.local/bin"; MARKER5="$D5/calls"; mkdir -p "$STUB5"; export HOME MARKER5
+cat > "$STUB5/pi" <<'SH'
+#!/bin/sh
+[ "$1" = "--version" ] && { echo 'pi 0.80.2'; exit 0; }
+echo "PI $*" >> "$MARKER5"; exit 0
+SH
+cat > "$STUB5/npm" <<'SH'
+#!/bin/sh
+[ "$1 $2" = "prefix -g" ] && { dirname "$(dirname "$0")"; exit 0; }
+echo "NPM $*" >> "$MARKER5"; exit 0
+SH
+cat > "$STUB5/pipx" <<'SH'
+#!/bin/sh
+if [ "$1" = "list" ]; then echo 'package coop-data-doc 1.1.1'; echo 'package ms-fabric-cli 1.5.0'; exit 0; fi
+if [ "$1" = "install" ] && [ "$3" = "ms-fabric-cli==1.6.1" ]; then exit 1; fi
+echo "PIPX $*" >> "$MARKER5"; exit 0
+SH
+cat > "$STUB5/fab" <<'SH'
+#!/bin/sh
+echo 'fab version 1.5.0'
+SH
+ln -s "$REAL_NODE" "$STUB5/node"; ln -s "$REAL_PY" "$STUB5/python3"
+chmod +x "$STUB5/pi" "$STUB5/npm" "$STUB5/pipx" "$STUB5/fab"
+PATH="$STUB5:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB5"; export PATH COOP_TEST_STUB_PATH
+: > "$MARKER5"
+COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" >/dev/null 2>&1
+! grep -F 'PIPX inject ms-fabric-cli' "$MARKER5" >/dev/null \
+  || { echo 'fabric inject ran despite failed convergence'; exit 1; }
+out5="$(PATH="$STUB5:/usr/bin:/bin" COOP_TEST_STUB_PATH="$STUB5" COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" 2>&1)"
+case "$out5" in
+  *"failed to converge ms-fabric-cli"*|*"remains at"*) : ;;
+  *"Microsoft Fabric CLI ready"*) echo 'fabric reported ready after FAILED convergence'; exit 1 ;;
+  *) echo "unexpected fabric outcome: no converge-failure message"; exit 1 ;;
+esac
+echo '  ✓ failed Fabric convergence is reported as failure, not ready'
+
+
 # --- NORMAL-mode skip when everything already matches ----------------------------
 D3="$(mktemp -d)"; HOME="$D3/home"; STUB3="$HOME/.local/bin"; MARKER3="$D3/calls"; mkdir -p "$STUB3"; export HOME MARKER3
 cat > "$STUB3/pi" <<'SH'
