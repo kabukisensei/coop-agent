@@ -83,16 +83,15 @@ In each Fabric / D365 repo you work in:
 
 ```bash
 cd /path/to/your/fabric-repo
-coop init                 # writes .coop/project.yml
-# edit .coop/project.yml — fill the TODOs (repo paths, workspaces, tenant)
+coop onboard              # writes ~/.coop/user.json + versioned ~/.coop/config and managed MCP entries
+coop init                  # guided .coop/project.yml; repository paths are collected once
 coop doctor
 ```
 
 The first time you launch `coop` in a repo, it offers to set up **lineage docs**
 (`coop-data-doc`) so the agent understands up/downstream impact — accept it, or run
-**`/setup-docs`** anytime inside the agent (a quick native wizard). For the full
-wizard (medallion layers, branding, schema→model mappings), run `coop data-doc setup`
-in a shell.
+**`/setup-docs`** anytime inside the agent. It bridges the same full native
+`coop-data-doc` questionnaire used by `coop data-doc setup`; no reduced fallback exists.
 
 ## 5. Use it
 
@@ -161,7 +160,7 @@ in the [README](../README.md#azure-devops-boards-optional).
 ## 7. Stay current
 
 ```bash
-coop update               # updates Pi + extensions + tools, pulls latest coop-agent, runs doctor
+coop update               # converges Pi, extensions, tools, and MCP packages to the release manifest
 ```
 
 ## 8. Fleet health digest

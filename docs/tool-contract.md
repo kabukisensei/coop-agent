@@ -83,17 +83,11 @@ plus the non-interactive agent/CI helpers `folders`, `set-folders`, `show-config
 **`coop-data-doc.yml`** — which is **separate** from coop's `.coop/project.yml`. It
 points the tool at the repos to crawl and the doc output. Two ways to create it:
 
-- **In the agent (recommended):** run **`/setup-docs`**, or accept the offer coop
-  makes on launch when the folder has no `coop-data-doc.yml`. A native-dialog quick
-  wizard (in `extensions/coop-tools`) collects the essentials — project name, SQL +
-  Power BI repo paths, output folders — then writes/patches `coop-data-doc.yml` and
-  offers to build. A re-run patches **only those fields, in place**, preserving
-  anything set by the full wizard (layers, branding, mappings, globs, dialect).
-  "Don't ask again" drops a `.coop-data-doc.skip` marker so the launch offer won't
-  re-ask. (It lives in coop-tools because Pi runs tool subprocesses
-  non-interactively — no TTY — so the tool's own questionary wizard can't be driven
-  from inside a session.)
-- **In a shell (full wizard):**
+- **In the agent (recommended):** run **`/setup-docs`**, or accept the launch offer.
+  `extensions/coop-tools` bridges the full native questionnaire over strict JSONL;
+  prompt definitions remain solely in `coop-data-doc`. "Don't ask again" drops a
+  `.coop-data-doc.skip` marker. Older tool versions stop with upgrade guidance.
+- **In a shell (the same wizard):**
 
 ```
 coop data-doc setup     # full interactive wizard (layers, branding, mappings, globs)
@@ -201,11 +195,9 @@ no built graph, `content` says so and points at `build` / `/setup-docs` — you 
 still proceed without it. `object` is required: a blank one returns a usage note, not
 an error.
 
-> The model can call `scan` / `build` / `check` / `lineage` — **`setup` and `init`
-> are not exposed to the LLM** (a wizard can't be driven through a captured subprocess).
-> Interactive setup is user-driven: the **`/setup-docs`** command + launch offer
-> (native dialogs, also in `extensions/coop-tools`), or `coop data-doc setup` in a
-> shell for the full wizard.
+> The model can call `scan` / `build` / `check` / `lineage`. Interactive setup is
+> user-driven through **`/setup-docs`** / the launch offer (the full native wizard over
+> JSONL), or through the same wizard in a shell with `coop data-doc setup`.
 
 > Note: the native `data_doc` tool defaults to **`scan`** (read-only first per
 > the workflow), whereas the `coop data-doc` subcommand defaults to **`build`**.
@@ -277,8 +269,8 @@ and `microsoft-learn` are read-only over **client data** — `fabric` is read-on
 policy* (its MCP has **no** server-side read-only switch, unlike `powerbi`'s `--readonly`),
 so the guardrail heuristic + Pi's tool approval are what hold it. `context-mode` is **not**
 a pure read: it runs **sandboxed code over the docs/graph** (not client data) to save
-context. Config lives in `config/mcp.example.json` (pinned versions), placed non-
-destructively into coop's isolated agent dir (`~/.coop/agent/mcp.json`) by `coop sync`,
+context. Manifest-pinned managed config is generated into coop's isolated agent dir
+(`~/.coop/agent/mcp.json`) from `~/.coop/config` by `coop onboard` / `coop sync`,
 and wired through `pi-mcp-adapter`.
 
 Per `.coop/project.yml` and `docs/guardrails.md`:

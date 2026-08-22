@@ -5,6 +5,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- Stabilized multi-command Git enforcement, repository-scoped commit policy, and headless approvals.
+- Made install/update/sync and generated MCP entries manifest-pinned; Modeling MCP starts read-only.
+- Unified `/setup-docs` on the native JSONL wizard and hardened onboarding, profile, and project init.
+
 ## [0.22.1] — 2026-08-20
 
 ### Changed

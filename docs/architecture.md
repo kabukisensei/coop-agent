@@ -83,14 +83,13 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      Pi's native dialogs (the `/setup-docs` command, plus a `session_start`
      first-run offer when a folder has no built docs), since coop-data-doc's own
      questionary wizard can't be driven from a non-TTY child. (The `setup-docs`
-     skill + prompt are a parallel, model-driven path to the same outcome via
-     `ask-user-question` + coop-data-doc's non-interactive commands; both end at
-     the same `coop-data-doc.yml` and build.) Everything is feature-detected and
-     try/catch-wrapped so it can never crash Pi.
+     skill + prompt launch coop-data-doc's authoritative questionnaire over JSONL;
+     terminal and in-agent setup both end at the same `coop-data-doc.yml`.)
    - **`coop-guardrails` extension** — `extensions/coop-guardrails/`: **enforces**
      governance at runtime via a `tool_call` hook (blocks the agent committing
      source; confirms destructive commands). Complements the advisory
-     `docs/guardrails.md` system prompt. Fail-open; `COOP_NO_GUARDRAILS=1` disables.
+     `docs/guardrails.md` system prompt. Approval-required actions fail closed
+     headlessly; unexpected extension faults stay isolated. `COOP_NO_GUARDRAILS=1` disables.
 
 4. **Pi extensions installed from npm** into coop's isolated agent dir
    (`config/defaults.yml`):
@@ -138,8 +137,8 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      `.coop/project.yml`.
 
 7. **Read-only MCP servers** (all optional; `coop` runs without them). Preloaded
-   non-destructively into coop's isolated agent dir (`~/.coop/agent/mcp.json`) by
-   `coop sync` from `config/mcp.example.json`:
+   as manifest-pinned managed entries in coop's isolated agent dir
+   (`~/.coop/agent/mcp.json`) by `coop onboard` / `coop sync`:
    - `fabric` — `@microsoft/fabric-mcp` (AzureCliCredential).
    - `powerbi` — `powerbi-mcp-server --readonly`.
    - `microsoft-learn` — `learn.microsoft.com/api/mcp` via `mcp-remote`

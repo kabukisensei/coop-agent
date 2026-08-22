@@ -206,7 +206,7 @@ client's own workspace (never mix client data):
 - `scripts/ado-digest.py` (+ `.sh`/`.ps1` wrappers) — the digest workhorse (read-only ADO).
 - `scripts/ado-onboard.py` (+ wrappers) — guided client onboarding (read-only ADO).
 - `scripts/ado_lib.py` — shared auth/REST/WIQL/identity library (stdlib only).
-- **azure-devops MCP** (`@azure-devops/mcp`, in `config/mcp.example.json`, domains
+- **azure-devops MCP** (`@azure-devops/mcp`, generated from `~/.coop/config`, domains
   `core work work-items search`) — interactive natural-language board queries; write
   tools are confirm-first.
 - **Microsoft Learn MCP** — current Azure DevOps REST / WIQL / OData guidance.

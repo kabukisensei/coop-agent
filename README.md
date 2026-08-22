@@ -263,10 +263,9 @@ commands — including `data_doc`'s `lineage` command (see
 For **`coop-data-doc`'s first-run setup**, coop also offers an **in-agent** path so you
 don't have to drop to a shell: when you launch `coop` in a folder with no
 `coop-data-doc.yml`, it offers to set up lineage docs right there, and the
-**`/setup-docs`** command runs (or re-runs) that quick wizard anytime — Pi's native
-dialogs collect the essentials, write/patch `coop-data-doc.yml`, and build. The full
-wizard (medallion layers, branding, schema→model mappings, per-folder globs) still
-lives in the tool: run `coop data-doc setup` in a shell. See
+**`/setup-docs`** command runs (or re-runs) the full native `coop-data-doc` wizard
+through a strict JSONL bridge. It is the same questionnaire used by `coop data-doc
+setup`; older tool versions stop with upgrade guidance rather than a reduced fallback. See
 [`extensions/coop-tools/README.md`](extensions/coop-tools/README.md#data-doc-setup-setup-docs).
 
 ---
@@ -300,13 +299,15 @@ fab --version                # re-verify: should be the Microsoft Fabric CLI
 
 ## MCP servers (read-only, optional)
 
-coop preloads four MCP servers via `pi-mcp-adapter`. They are **all read-only** and
+coop generates up to six MCP server entries via `pi-mcp-adapter`. They are **read-only first** and
 **all optional** — coop runs fine without them.
 
 | Server | Provides | Mode |
 | --- | --- | --- |
 | `fabric` | `@microsoft/fabric-mcp` (AzureCliCredential) | read-only *by policy* † |
 | `powerbi` | `powerbi-mcp-server --readonly` | read-only (server-enforced `--readonly`) |
+| `powerbi-modeling-mcp` | `@microsoft/powerbi-modeling-mcp --start --readonly` | read-only (server-enforced) |
+| `azure-devops` | `@azure-devops/mcp` for configured organization | read-only first; mutations approval-gated |
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` — always-current Microsoft docs | read-only |
 | `context-mode` | `npx -y context-mode` — intent-driven search + sandboxed exec | read-only |
 
@@ -318,28 +319,18 @@ coop preloads four MCP servers via `pi-mcp-adapter`. They are **all read-only** 
 > best-effort (MCP tool names vary). For hard, per-tool gating, enable the optional
 > `pi-permissions` extension.
 
-`coop sync` places `config/mcp.example.json` **non-destructively** into coop's
-isolated agent dir (`~/.coop/agent`) — it never overwrites an existing config and
-never touches your personal `pi`'s MCP. Before live Power BI work, set your tenant in
-that file:
-
-```jsonc
-"powerbi": {
-  "args": ["-y", "powerbi-mcp-server@latest", "--authentication", "azcli",
-           "--tenant", "TODO-tenant-id", "--readonly"]
-}
-```
+`coop onboard` writes versioned `~/.coop/config`; `coop sync` deterministically
+generates manifest-pinned COOP-managed entries in `~/.coop/agent/mcp.json` while
+preserving custom and unmarked user-owned servers. Configure tenant and Azure DevOps
+organization with `coop onboard --edit`; generated entries contain no TODOs or latest pins.
 
 MCP servers are for `list` / `read` / `inspect` only. coop **never** calls
 create/update/delete/deploy/publish MCP actions without explicit approval —
 regardless of what a server is capable of.
 
-> **Supply-chain note:** the example launches these servers with `npx -y` against
-> the latest published package (e.g. `powerbi-mcp-server@latest`, `mcp-remote`),
-> which fetches and runs remote code at startup with your Azure CLI credentials
-> available. For locked-down environments, pin exact versions in coop's isolated MCP
-> config (in `~/.coop/agent`) and review updates before enabling, or disable MCP
-> entirely (coop runs fine without it).
+> **Supply-chain note:** generated servers use exact versions from
+> `config/release-manifest.json`. Review COOP release updates before enabling them in
+> locked-down environments; MCP integrations remain optional.
 
 The example MCP config also carries an optional **`azure-devops`** entry
 (`@azure-devops/mcp`, read-only verbs) for teams that manage Boards — see the
@@ -357,8 +348,7 @@ integration — nothing loads or runs unless you configure it.
   "what's stale/unassigned for `<team>`?", creates and updates work items
   (**confirm-first** — coop-guardrails flags any work-item write), and runs the
   weekly per-client digest. It uses the Entra-authenticated REST API, plus the
-  optional read-only `azure-devops` MCP entry in
-  [`config/mcp.example.json`](config/mcp.example.json).
+  optional read-only `azure-devops` MCP entry generated from `~/.coop/config`.
 - **Batch entry points** — paired bash/PowerShell launchers over a stdlib-only
   Python core:
   - `scripts/ado-digest.sh` / `scripts/ado-digest.ps1` — a read-only, per-client

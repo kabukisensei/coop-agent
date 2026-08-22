@@ -130,7 +130,7 @@ Pi extension in TypeScript. Use the three in `extensions/` as templates:
   rules (`docs/guardrails.md` only *asks* the model; this hooks the agent's tool calls
   and blocks/confirms): never commit source outside docs/logs/site, confirm destructive
   commands (`rm -rf`, `git push --force`, `reset --hard`, `git clean -f`, `DROP`/`TRUNCATE`),
-  and confirm reads/writes of secret files. It's fail-open and feature-detected; disable
+  and confirm reads/writes of secret files. Approval-required actions fail closed headlessly; disable
   with `COOP_NO_GUARDRAILS=1`. It only ever intercepts the **agent's** tool calls — your
   own shell is untouched.
 
@@ -153,9 +153,9 @@ coop init --seed-docs     # then, once repositories: is filled — generates a m
                           # coop-data-doc.yml from the contract's repositories: paths
 ```
 
-`coop init` copies the fully documented template into `<repo>/.coop/project.yml`;
-fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then verify
-with `coop doctor`. `coop init --seed-docs` generates/patches `coop-data-doc.yml`
+`coop init --template` copies the documented template into `<repo>/.coop/project.yml`;
+plain `coop init` runs the safe guided wizard, and `coop onboard --edit` owns global
+integration/MCP settings. Verify with `coop doctor`. `coop init --seed-docs` generates/patches `coop-data-doc.yml`
 from the contract's `repositories:` (via `coop-data-doc config-set`), so repo
 paths are typed once — the same paths that auto-scope the review tools (§1's note)
 and `coop review`.

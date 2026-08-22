@@ -58,8 +58,8 @@ npm install -g @microsoft/powerbi-report-authoring-cli @microsoft/powerbi-modeli
 npm install -g @microsoft/powerbi-desktop-bridge-cli
 ```
 
-`powerbi-modeling-mcp` is added to the example MCP config (`config/mcp.example.json`);
-`coop sync` places it non-destructively into `~/.coop/agent/mcp.json`.
+`powerbi-modeling-mcp` is generated from the release manifest and `~/.coop/config`;
+`coop sync` converges its managed entry in `~/.coop/agent/mcp.json`.
 
 ### Remote Fabric MCP servers
 

@@ -18,8 +18,8 @@ workflow calls at step 3 (read target + lineage) and step 9 (document).
 ## Analysis checklist
 
 - **First run.** If the folder has no `coop-data-doc.yml`, the docs aren't set up
-  yet — have the user run **`/setup-docs`** (native in-agent wizard) or
-  `coop data-doc setup` (full wizard, in a shell) to create it, then continue. coop
+  yet — have the user run **`/setup-docs`** or `coop data-doc setup` (the same
+  authoritative wizard) to create it, then continue. coop
   also offers this on startup when a folder has no built docs. When the folder *does*
   have built docs, coop auto-detects them at session start and announces it so you
   consult lineage before touching objects. The lineage is an **aid, not a gate** —
