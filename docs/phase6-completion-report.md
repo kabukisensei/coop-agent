@@ -76,8 +76,14 @@ The guardrail file grew slightly from the first measured optimized value (~4,609
 
 ## Windows CI result
 
-Observed GitHub Actions run for the pushed commit: **all jobs green** including the PowerShell behavioral tests (`logic tests (Windows)` and `powershell parse (Windows)`).
+Observed GitHub Actions run for the pushed commit `0d9a97d` (run 32580065041): **all jobs green**, including:
+- logic tests (Linux)
+- logic tests (Windows) — Git Bash
+- powershell parse (Windows) — PowerShell 5.1 + PSScriptAnalyzer + PowerShell behavioral tests
+- bash 3.2 parse (macOS)
+- shell + config lint
+- extensions transpile
 
-## Recommendation
+The initial post-push run (629ccc1) failed because `context-budget` printed OS-native backslash paths on Windows; `0d9a97d` switched path display to POSIX `.as_posix()` and the rerun passed.
 
 Phase 6 is functionally accepted. The measurement model is now consistent with how Pi loads prompt templates (on-demand) and profiles (injected instruction, not raw JSON). Proceed to Phase 7 only on explicit request.
