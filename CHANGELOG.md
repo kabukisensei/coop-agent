@@ -10,6 +10,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - Made install/update/sync and generated MCP entries manifest-pinned; Modeling MCP starts read-only.
 - Unified `/setup-docs` on the native JSONL wizard and hardened onboarding, profile, and project init.
 
+### Added
+- `coop context-budget` command with human-readable and `--json` output to report fixed startup context sizes; optional `--measure` falls back to static estimates until an explicit-approval provider measurement path is added.
+- CI context-budget gate (`scripts/check-context-budget.sh` / `.ps1`) with thresholds based on the optimized baseline: `docs/guardrails.md` ≤ 6,500 bytes and estimated fixed total ≤ 11,000 tokens.
+
+### Changed
+- Shrunk always-loaded `docs/guardrails.md` from ~13.7 KB to ~4.6 KB by moving detailed enforcement mechanics, tool guide, workflow steps, and communication norms to the new on-demand `docs/guardrails-reference.md`. Policy semantics, hard blocks, approval paths, and required phrases (`tests.live_data.enabled`, non-blocking slice progress) are preserved.
+
 ## [0.22.1] — 2026-08-20
 
 ### Changed

@@ -91,6 +91,14 @@ function Invoke-CoopProfile {
   exit $LASTEXITCODE
 }
 
+function Invoke-CoopContextBudget {
+  param([string[]]$Rest)
+  $py = Get-CoopPython
+  if (-not $py) { Coop-Die 'python3 is required for coop context-budget' }
+  & $py (Join-Path $script:CoopRoot 'scripts\context-budget.py') @Rest
+  exit $LASTEXITCODE
+}
+
 function Invoke-CoopSummarizeDataDocJson {
   param([string]$File)
   $py = Get-CoopPython
@@ -133,6 +141,7 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop profile              Show your COOP user profile
   coop profile edit         Edit your COOP user profile
   coop profile reset        Remove your COOP user profile
+  coop context-budget       Report fixed startup context sizes (use --json for machine output)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
@@ -1016,6 +1025,7 @@ switch -CaseSensitive ($cmd) {
   'launch-spec' { Invoke-CoopLaunchSpec $rest; break }
   'onboard' { Invoke-CoopOnboard $rest; break }
   'profile' { Invoke-CoopProfile $rest; break }
+  'context-budget' { Invoke-CoopContextBudget $rest; break }
   'init' { Invoke-CoopInit $rest; break }
   'new-skill' { New-CoopSkill $rest; break }
   'new-prompt' { New-CoopPrompt $rest; break }

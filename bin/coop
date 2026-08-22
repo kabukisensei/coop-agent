@@ -71,6 +71,7 @@ ${COOP_BOLD}Usage${COOP_RST}
   coop profile              Show your COOP user profile
   coop profile edit         Edit your COOP user profile
   coop profile reset        Remove your COOP user profile
+  coop context-budget       Report fixed startup context sizes (use --json for machine output)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
@@ -968,6 +969,7 @@ case "$cmd" in
   launch-spec)   shift; coop_launch_spec "$@" ;;
   onboard)       shift; run_onboard onboard "$@" ;;
   profile)       shift; run_profile "$@" ;;
+  context-budget) shift; exec "$COOP_ROOT/scripts/context-budget.py" "$@" ;;
   init)          shift; coop_init "$@" ;;
   new-skill)     shift; coop_new_skill "$@" ;;
   new-prompt)    shift; coop_new_prompt "$@" ;;

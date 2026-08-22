@@ -73,6 +73,8 @@ bash "$ROOT/tests/fleet-manifest.test.sh"
 bash "$ROOT/tests/fleet-execution.test.sh"
 bash "$ROOT/tests/mcp-config.test.sh"
 bash "$ROOT/tests/onboard.test.sh"
+bash "$ROOT/tests/context-budget.test.sh"
+bash "$ROOT/scripts/check-context-budget.sh"
 
 echo "→ repo staleness nudge (throttled fetch + behind-count) tests"
 bash "$ROOT/tests/staleness.test.sh"
