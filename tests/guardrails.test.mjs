@@ -19,7 +19,7 @@ const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
 const dist = process.env.COOP_TEST_DIST;
 const cg = await import(pathToFileURL(`${dist}/coop-guardrails.mjs`).href);
 const coopGuardrails = cg.default;
-const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoCommitPolicy, commitPolicy } = cg;
+const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoCommitPolicy, commitPolicy, buildSessionGovernance, resetSessionGovernance } = cg;
 
 // Capture the handler the extension registers.
 let staged = "";     // `git diff --cached --name-only`
@@ -268,12 +268,12 @@ repositories:
   const quoted = "repositories:\n  'sql repo':\n    local_path: '../fabric'\n    agent_allowed_to_commit: ['docs/**']\n";
   assert.deepEqual(parseRepoCommitPolicy(quoted, projectDir, "/home/user/fabric"), { allowed: ["docs/**"], denied: [] });
 });
-await t("commitPolicy caches and falls back to top-level globs / defaults", () => {
-  const repo = "/tmp/repo-policy-test-" + Math.random().toString(36).slice(2);
-  mkdirSync(repo, { recursive: true });
-  mkdirSync(join(repo, ".coop"), { recursive: true });
-  writeFileSync(join(repo, ".coop/project.yml"), `
-repositories:
+await t("governance is a per-session trusted snapshot; in-session edits cannot weaken it", () => {
+  resetSessionGovernance();
+  const control = mkdtempSync(join(tmpdir(), "coop-ctrl-"));
+  mkdirSync(join(control, ".coop"), { recursive: true });
+  const yml = join(control, ".coop", "project.yml");
+  writeFileSync(yml, `repositories:
   mine:
     local_path: "."
     agent_allowed_to_commit:
@@ -281,11 +281,58 @@ repositories:
     agent_never_commit:
       - "**/*.pbip"
 `);
-  const p = commitPolicy(repo);
+  const snap = buildSessionGovernance(control);
+  const p = commitPolicy(control, snap);
   assert.deepEqual(p.allowed.slice(-1), ["docs/**"]);
   assert.deepEqual(p.denied, ["**/*.pbip"]);
-  // Cached lookup returns the same object identity.
-  assert.equal(commitPolicy(repo), p);
+  // Attempted self-modification: weaken the working-tree contract.
+  writeFileSync(yml, `repositories:
+  mine:
+    local_path: "."
+    agent_allowed_to_commit:
+      - "**"
+`);
+  // The session snapshot still enforces the ORIGINAL policy...
+  const pAfter = commitPolicy(control, snap);
+  assert.equal(pAfter.allowed.includes("**"), false);
+  assert.deepEqual(pAfter.denied, ["**/*.pbip"]);
+  // ...and a fresh session picks up the new policy only then.
+  const fresh = buildSessionGovernance(control);
+  assert.equal(commitPolicy(control, fresh).allowed.includes("**"), true);
+});
+await t("sibling repositories resolve policies from the session project contract", () => {
+  resetSessionGovernance();
+  const base = mkdtempSync(join(tmpdir(), "coop-sib-"));
+  const control = join(base, "client-control");
+  const sqlRepo = join(base, "client-sql");
+  const thirdRepo = join(base, "client-other");
+  mkdirSync(join(control, ".coop"), { recursive: true });
+  mkdirSync(sqlRepo); mkdirSync(thirdRepo);
+  writeFileSync(join(control, ".coop", "project.yml"), `repositories:
+  sql:
+    local_path: "../client-sql"
+    agent_allowed_to_commit:
+      - "generated-docs/**"
+  pbi:
+    local_path: "../client-pbi"
+    agent_never_commit:
+      - "**/*.pbip"
+`);
+  const snap = buildSessionGovernance(control);
+  // Sibling SQL repo inherits ITS configured policy even though the contract
+  // lives in a sibling directory (walk-up from the repo would find nothing).
+  const sqlPolicy = commitPolicy(sqlRepo, snap);
+  assert.deepEqual(sqlPolicy.allowed.slice(-1), ["generated-docs/**"]);
+  // An unlisted repository gets conservative defaults ONLY — no leakage.
+  const third = commitPolicy(thirdRepo, snap);
+  assert.deepEqual(third.allowed, ["docs/**", "site/**", "data-docs/**", "data-docs-site/**"]);
+  assert.deepEqual(third.denied, []);
+});
+await t("defaults no longer allow committing .coop/project.yml (anti self-modification)", () => {
+  resetSessionGovernance();
+  const bare = mkdtempSync(join(tmpdir(), "coop-bare-"));
+  const p = commitPolicy(bare);
+  assert.deepEqual(p.allowed, ["docs/**", "site/**", "data-docs/**", "data-docs-site/**"]);
 });
 await t("blocks `git commit <pathspec>` of source (nothing staged — the pathspec bypass)", async () => {
   // `git commit src/app.py -m x` commits the working-tree content of the named path,
@@ -426,6 +473,7 @@ await t("parseAllowedGlobs reads BOTH block and flow YAML forms", () => {
   assert.deepEqual(parseAllowedGlobs('agent_allowed_to_commit: ["docs/**", "site/**"]').sort(), ["docs/**", "site/**"].sort());
 });
 await t("repository-specific globs retain semantics and deny overrides markdown allowance", async () => {
+  resetSessionGovernance();
   const repo = mkdtempSync(join(tmpdir(), "coop-gr-"));
   mkdirSync(join(repo, ".coop"), { recursive: true });
   writeFileSync(join(repo, ".coop", "project.yml"), "repositories:\n  mine:\n    local_path: .\n    agent_allowed_to_commit:\n      - 'generated/*/out/**'\n    agent_never_commit:\n      - 'docs/private/**'\n");
