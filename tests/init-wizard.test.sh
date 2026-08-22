@@ -49,6 +49,13 @@ exit 0
 EOF
 chmod +x "$TMP/stubbin/coop-data-doc"
 
+# Windows Python subprocess needs an executable extension (.bat) for PATH lookup.
+cat > "$TMP/stubbin/coop-data-doc.bat" <<'EOF'
+@echo off
+type nul > "%COOP_SETUP_MARKER%"
+exit /b 0
+EOF
+
 # Feed the 8 wizard answers + "y" for the lineage offer (9th prompt).
 answers "Cooptimize" "Test Client" "" "" "" "" "" "no" "y" | \
   COOP_SETUP_MARKER="$TMP/setup-marker" \
