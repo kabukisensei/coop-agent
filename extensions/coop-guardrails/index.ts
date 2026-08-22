@@ -341,24 +341,70 @@ const GIT_GLOBAL_VALUE_OPTS = new Set([
 /** Parse one quote-aware Git invocation from a shell command segment, or null.
  *  The caller supplies the segment so sibling commands (and their flags) are never
  *  mixed into the Git parse. */
-function supportedGitPrefix(prefix: string): boolean {
-  let p = prefix.trim().replace(/^[({]\s*/, "").trim();
-  if (/^(?:then|do|else|!)$/.test(p)) return true;
-  p = p.replace(/^(?:then|do|else|!)\s+/, "").trim();
-  if (/^(?:command|builtin|exec)(?:\s+-\S+)*$/.test(p)) return true;
-  if (/^env(?:\s+(?:-\S+|[A-Za-z_][A-Za-z0-9_]*=\S+))*$/.test(p)) return true;
-  return p === "";
+/** Remove quote characters that are glued onto word characters ("git" -> git,
+ *  "gi"t -> git) while leaving space-delimited quoted strings untouched so prose
+ *  like "some docs about git" never looks like a Git command word. */
+function stripGluedQuotes(s: string): string {
+  return s.replace(/(['"])(?=\S)/g, "").replace(/(?<=\S)(['"])/g, "");
 }
 
-/** Parse one supported Git invocation. Unsupported Git-containing wrapper shapes are
- *  classified as ambiguous by hasAmbiguousGitInvocation() and fail closed at runtime. */
+/** Walk a shell segment's words and find the word that resolves to the COMMAND
+ *  position, skipping grouping punctuation, reserved words (then/do/else/!),
+ *  VAR=value assignments, and supported wrappers (command/builtin/exec/time/env
+ *  with their flags and env value flags). Returns null when the command word is
+ *  anything other than git — mentioning git as an ARGUMENT (grep git README.md)
+ *  does not make a command a Git invocation. Quote-glued names count: bash
+ *  executes "git" and "gi"t exactly like unquoted git. */
+function findGitAtCommandPosition(segment: string): { charOffset: number } | null {
+  const wordRe = /\S+/g;
+  let m: RegExpExecArray | null;
+  let inWrapper = false;
+  let envValuePending = false;
+  while ((m = wordRe.exec(segment))) {
+    const w = m[0];
+    const core = w.replace(/^[({]+/, "");
+    const charOffset = m.index + (w.length - core.length);
+    if (core === "") continue; // pure grouping token
+    if (envValuePending) { envValuePending = false; continue; } // consumed env flag value
+    if (inWrapper) {
+      if (core.startsWith("-")) {
+        // env flags that take a separate value (-u NAME, -S STR, -C DIR)
+        if (/^-(u|S|C)$|^--split-string$/.test(core)) envValuePending = true;
+        continue;
+      }
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(core)) continue; // env VAR=val
+      inWrapper = false; // wrapper arguments ended — this word is the command
+    }
+    const bare = core.replace(/['"]/g, "").toLowerCase();
+    if (bare === "git") return { charOffset };
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(core)) continue; // assignment prefix
+    if (/^(then|do|else|!)$/.test(bare)) continue; // reserved words
+    if (/^(command|builtin|exec|time|env)$/.test(bare)) { inWrapper = true; continue; }
+    return null; // command position resolves to something else — not a Git command
+  }
+  return null;
+}
+
+/** Parse one Git invocation whose command word resolves to git. Shapes the walker
+ *  cannot safely attribute are classified as ambiguous by hasAmbiguousGitInvocation()
+ *  and fail closed at runtime. */
 function parseGitSegment(segment: string, segmentStart: number): ParsedGitCommand | null {
-  const match = /\bgit\b/i.exec(segment);
-  if (!match || !supportedGitPrefix(segment.slice(0, match.index))) return null;
-  segmentStart += match.index;
-  segment = segment.slice(match.index);
-  const toks = tokenizeArgs(segment);
-  if (toks.length === 0 || toks[0].toLowerCase() !== "git") return null;
+  const loc = findGitAtCommandPosition(segment);
+  if (!loc) return null;
+  segmentStart += loc.charOffset;
+  const rawTail = segment.slice(loc.charOffset);
+  let toks = tokenizeArgs(rawTail);
+  if (toks.length === 0) return null;
+  if (toks[0].toLowerCase() !== "git") {
+    // Split-quote command name ("gi"t): tokenizeArgs keeps it in pieces, so parse
+    // the de-glued tail instead. Whole-word quotes ("git") already tokenize to git.
+    const degluedFirst = stripGluedQuotes(rawTail).split(/\s+/)[0]?.replace(/['"]/g, "").toLowerCase();
+    if (degluedFirst !== "git") return null;
+    segment = rawTail;
+    toks = tokenizeArgs(stripGluedQuotes(rawTail));
+  } else {
+    segment = rawTail;
+  }
 
   let i = 1;
   let cwdOverride: string | undefined;
@@ -449,9 +495,16 @@ function unquotedText(text: string): string {
 }
 
 export function hasAmbiguousGitInvocation(cmd: string): boolean {
-  return splitShellSegments(cmd).some(({ segment, start }) =>
-    /\bgit\b/i.test(unquotedText(segment)) && parseGitSegment(segment.trim(), start) === null,
-  );
+  return splitShellSegments(cmd).some(({ segment, start }) => {
+    // Git mentioned anywhere (prose-blanked or glue-stripped views)?
+    const mentioned = /\bgit\b/i.test(unquotedText(segment)) || /\bgit\b/i.test(stripGluedQuotes(segment));
+    if (!mentioned) return false;
+    // Real Git command word we cannot safely parse -> fail closed.
+    if (findGitAtCommandPosition(segment) && parseGitSegment(segment.trim(), start) === null) return true;
+    // Command substitution/backticks containing git execute it out of view.
+    if (/\$\(/.test(segment) || segment.includes("`")) return true;
+    return false;
+  });
 }
 
 /** Backwards-compatible first-invocation helper. Runtime enforcement uses all. */
@@ -626,6 +679,21 @@ export function mcpMutationLabel(toolName: string | { outerTool: string; innerTo
   return mutationName(target);
 }
 
+/** Hard-block reasons for commit forms whose contents cannot be policy-checked:
+ *  --amend rewrites an existing commit; pathspec-file forms commit paths the
+ *  guardrail deliberately does not read. */
+export function usesCommitPathspecFile(git: ParsedGitCommand): boolean {
+  return git.args.some(
+    (a) => a === "--pathspec-from-file" || a === "--pathspec-file-nul" || a.startsWith("--pathspec-from-file="),
+  );
+}
+
+export function commitHardBlockReason(git: ParsedGitCommand): string | null {
+  if (git.args.some((a) => a === "--amend")) return "git commit --amend";
+  if (usesCommitPathspecFile(git)) return "git commit --pathspec-from-file";
+  return null;
+}
+
 /** Label a destructive bash command, or null. Conservative — only clearly risky ops. */
 function dangerLabel(cmd: string): string | null {
   for (const git of parseGitCommands(cmd)) {
@@ -634,12 +702,13 @@ function dangerLabel(cmd: string): string | null {
     if (git.subcommand === "reset" && args.includes("--hard")) return "git reset --hard";
     if (git.subcommand === "clean" && args.some((a) => a === "--force" || /^-[A-Za-z]*f[A-Za-z]*$/.test(a))) return "git clean -f";
   }
-  // rm with BOTH recursive and force flags (single-file rm is fine). Case-insensitive
-  // so `RM -rf` on a case-insensitive filesystem (macOS/Windows) is caught too.
-  if (/\brm\b/i.test(cmd)) {
-    // Collect just the dash-prefixed flag tokens (NOT the literal "rm"), so the
-    // "r"/"f" tests don't match the "r" in the "rm" command name itself.
-    const flagTokens = cmd.match(/(?<=\s)-\S+/g) || [];
+  // rm with BOTH recursive and force flags (single-file rm is fine), SEGMENT-SCOPED:
+  // flags from sibling commands (`rm x && grep -rf y .`) must never classify as rm.
+  for (const { segment } of splitShellSegments(cmd)) {
+    const toks = tokenizeArgs(segment);
+    if (!toks.some((t) => t.replace(/['"]/g, "").split("/").pop()?.toLowerCase() === "rm")) continue;
+    // Dash-prefixed tokens of THIS segment only (never the literal "rm" itself).
+    const flagTokens = toks.filter((t) => t.startsWith("-"));
     // Short-flag clusters (e.g. -rf, -fr) carry their letters after a single dash.
     const shortFlags = flagTokens.filter((t) => !t.startsWith("--")).join("");
     const longFlags = flagTokens.filter((t) => t.startsWith("--")).join(" ");
@@ -805,7 +874,14 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       // 1. Never commit source (incl. `git commit -a/-am` auto-staging, `git -C <dir>`,
       //    `git commit <pathspec>`, and `cd <dir> && git commit` — the staged check runs
       //    against the repo the commit actually targets, see gitRepoDir).
+      //    Hard-blocked first: --amend (rewrites history) and pathspec-file forms
+      //    (commits paths the guardrail deliberately does not read) — no approval path.
       for (const git of parseGitCommands(cmd).filter((g) => g.subcommand === "commit")) {
+        const hard = commitHardBlockReason(git);
+        if (hard) {
+          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: hard, detail: git.segment.slice(0, 200) });
+          return { block: true, reason: `coop guardrails: ${hard} is never permitted — it can bypass the source-commit gate (${git.subcommand === "commit" ? "amend rewrites an existing commit" : "the guardrail does not read pathspec files"}). Let a human run it.` };
+        }
         const offending = await offendingCommitPaths(pi, ctx.cwd, cmd, git);
         if (offending && offending.length) {
           const shown = offending.slice(0, 8).join(", ");
