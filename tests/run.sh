@@ -31,6 +31,7 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/startmenu.test.mjs"
 
 echo "→ setup-docs JSONL bridge (renderPrompt / askCheckbox) tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge.test.mjs"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge-integration.test.mjs"
 
 echo "→ workflow slice tests"
 node "$ROOT/tests/workflow.test.mjs"
@@ -69,6 +70,8 @@ echo "  ✓ --no-launch prints the spec and exits 0 (no pi launched)"
 echo "→ coop update tested-Pi-version guard (--check, gate decision)"
 bash "$ROOT/tests/update-guard.test.sh"
 bash "$ROOT/tests/fleet-manifest.test.sh"
+bash "$ROOT/tests/fleet-execution.test.sh"
+bash "$ROOT/tests/mcp-config.test.sh"
 bash "$ROOT/tests/onboard.test.sh"
 
 echo "→ repo staleness nudge (throttled fetch + behind-count) tests"
@@ -79,6 +82,7 @@ bash "$ROOT/tests/azcache.test.sh"
 
 echo "→ coop init wizard tests"
 bash "$ROOT/tests/init-wizard.test.sh"
+"$(command -v python3 2>/dev/null || command -v python)" "$ROOT/tests/init-wizard-windows-paths.test.py"
 
 echo "→ coop init --seed-docs (contract → coop-data-doc.yml) tests"
 bash "$ROOT/tests/seeddocs.test.sh"
