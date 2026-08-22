@@ -35,12 +35,13 @@ coop_manifest_get() {
   [ -f "$COOP_RELEASE_MANIFEST" ] || return 0
   have node || return 0
   node -e "
-const m = require('$COOP_RELEASE_MANIFEST');
-const parts = '$key'.split('.');
+const fs = require('fs');
+const m = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+const parts = process.argv[2].split('.');
 let v = m;
 for (const p of parts) { if (v == null || typeof v !== 'object') process.exit(0); v = v[p]; }
 if (v !== undefined) console.log(String(v));
-" 2>/dev/null
+" "$COOP_RELEASE_MANIFEST" "$key" 2>/dev/null
 }
 
 # Echo the keys of an object in the manifest (one per line), or nothing on missing/invalid.
@@ -50,12 +51,13 @@ coop_manifest_keys() {
   [ -f "$COOP_RELEASE_MANIFEST" ] || return 0
   have node || return 0
   node -e "
-const m = require('$COOP_RELEASE_MANIFEST');
-const parts = '$key'.split('.');
+const fs = require('fs');
+const m = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+const parts = process.argv[2].split('.');
 let v = m;
 for (const p of parts) { if (v == null || typeof v !== 'object') process.exit(0); v = v[p]; }
 if (v && typeof v === 'object' && !Array.isArray(v)) console.log(Object.keys(v).join('\n'));
-" 2>/dev/null
+" "$COOP_RELEASE_MANIFEST" "$key" 2>/dev/null
 }
 
 # Compare installed version against expected. Echo one of: ok missing older newer-than-tested wrong-version not-applicable
