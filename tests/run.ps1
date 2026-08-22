@@ -83,7 +83,32 @@ try {
     Ok '--no-launch --json emits {bin,args,env}'
   } else { Ko '--no-launch --json did not emit the JSON spec' }
 
-  # --- 3. update fleet-mode decisions (COOP_UPDATE_GATE_DRYRUN stops before install) -
+  # --- 3. context-budget via PowerShell dispatcher ---------------------------
+  Head 'coop context-budget (PowerShell dispatch)'
+  $pythonAvailable = (Get-Command python3 -ErrorAction SilentlyContinue) -or (Get-Command python -ErrorAction SilentlyContinue)
+  if (-not $pythonAvailable) {
+    Ok 'python not available on this runner; skipping context-budget PowerShell tests'
+  } else {
+    $cbOut = & $coop context-budget 2>&1 | Out-String
+    if ($cbOut -like '*COOP context budget*') { Ok 'context-budget prints the human header' } else { Ko 'context-budget missing human header' }
+    if ($cbOut -like '*Estimated fixed total*') { Ok 'context-budget reports the estimated fixed total' } else { Ko 'context-budget missing estimated fixed total' }
+    if ($cbOut -like '*On-demand inventory*') { Ok 'context-budget lists on-demand inventory separately' } else { Ko 'context-budget missing on-demand inventory section' }
+    $cbJsonOut = & $coop context-budget --json 2>&1 | Out-String
+    try {
+      $cbData = $cbJsonOut | ConvertFrom-Json
+      if ($cbData.schema_version -eq 1) { Ok 'context-budget --json schema_version is 1' } else { Ko 'context-budget --json schema_version unexpected' }
+      if ($cbData.estimated_fixed_total_tokens -gt 0) { Ok 'context-budget --json fixed total is positive' } else { Ko 'context-budget --json fixed total not positive' }
+      $prompts = $cbData.categories.on_demand_inventory.prompts
+      if ($prompts.chars -gt 0) { Ok 'context-budget --json reports on-demand prompt inventory' } else { Ko 'context-budget --json missing prompt inventory' }
+    } catch {
+      Ko "context-budget --json did not parse as JSON: $_"
+    }
+    $cbCheck = Join-Path $root 'scripts\check-context-budget.ps1'
+    & $cbCheck
+    if ($LASTEXITCODE -eq 0) { Ok 'check-context-budget.ps1 gate passes' } else { Ko 'check-context-budget.ps1 gate failed' }
+  }
+
+  # --- 4. update fleet-mode decisions (COOP_UPDATE_GATE_DRYRUN stops before install) -
   # Normal mode pins to the release manifest ('GATE pin:<v>'); --edge takes latest
   # ('GATE all'); --pi-latest is a deprecated alias for --edge.
   Head 'coop update fleet-mode decision (COOP_UPDATE_GATE_DRYRUN)'

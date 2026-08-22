@@ -11,17 +11,26 @@ Platform: Linux (headless VPS)
 > intentionally excluded because the model only sees tool/command metadata and
 > explicitly injected messages, not the full TypeScript files.
 
-## Baseline summary
+## Fixed startup context (always-loaded + advertised metadata)
+
+These items are present at the start of every session.
 
 | Category | Chars | Estimated tokens |
 | --- | --- | --- |
 | Guardrails (`docs/guardrails.md`) | 13,685 | ~3,422 |
-| User profile (`~/.coop/user.json`) | 127 | ~32 |
+| User profile instruction (`coop-profile` extension) | 124 | ~31 |
 | Project instructions (`AGENTS.md`) | 8,719 | ~2,180 |
-| Prompt templates (13 files) | 13,776 | ~3,444 |
 | Skill descriptions (16 skills) | 4,730 | ~1,183 |
 | Native tool metadata (4 tools) | 2,897 | ~725 |
-| **Estimated fixed total** | **43,934** | **~10,984** |
+| **Estimated fixed total** | **30,155** | **~7,539** |
+
+## On-demand inventory
+
+These items are advertised by name but their full bodies are expanded only when invoked.
+
+| Category | Chars | Estimated tokens |
+| --- | --- | --- |
+| Prompt templates (13 files) | 13,776 | ~3,444 |
 
 ## Extensions loaded at startup
 
@@ -53,22 +62,18 @@ Platform: Linux (headless VPS)
 | sql-review | 295 |
 | tabular-editor-bpa | 282 |
 
-## Notes and limitations
+## Classification notes
 
-## After Phase 6 reductions
-
-The optimized `docs/guardrails.md` shrank from 13,685 chars to 4,609 chars. The
-resulting estimated fixed total dropped from ~10,984 tokens to ~8,715 tokens (a
-~20.7% reduction). See `docs/phase6-completion-report.md` for the full report.
-
-No other categories changed during Phase 6.
-
-- Native tool schema chars were extracted from the metadata strings inside
+- **Prompt templates** are *on-demand inventory*: Pi knows their names and where
+  to find them, but their full bodies are only injected when a prompt is invoked.
+  They are therefore excluded from the fixed total.
+- **User profile** is measured as the instruction the `coop-profile` extension
+  actually injects (`buildInstruction`), not the raw `~/.coop/user.json` bytes.
+- **Native tool schema chars** are extracted from the metadata strings inside
   `extensions/coop-tools/index.ts` (descriptions, prompt snippets, prompt
   guidelines, parameter descriptions), not the 57,249 total file chars.
-- Project instructions are the nearest `AGENTS.md`/`CLAUDE.md` from the current
+- **Project instructions** are the nearest `AGENTS.md`/`CLAUDE.md` from the current
   working directory. Inside the `coop-agent` repo this is the repo's own
   `AGENTS.md`.
 - Exact tokenizer output is unavailable. The `ceil(chars / 4)` approximation
   is intentionally conservative.
-- This baseline was captured before any Phase 6 reductions.

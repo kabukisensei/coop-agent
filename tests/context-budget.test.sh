@@ -43,8 +43,9 @@ assert d.get("schema_version") == 1, "schema_version must be 1"
 assert d.get("measurement", {}).get("method") == "static_char_estimate", "method must be static_char_estimate"
 assert d.get("measurement", {}).get("token_formula") == "ceil(chars/4)", "token_formula must be ceil(chars/4)"
 cats = d.get("categories", {})
-for key in ("guardrails", "profile", "project_instructions", "prompts", "skills", "native_tools", "extensions"):
+for key in ("guardrails", "profile", "project_instructions", "skills", "native_tools", "extensions", "on_demand_inventory"):
     assert key in cats, f"missing category: {key}"
+assert "prompts" in cats.get("on_demand_inventory", {}), "missing on_demand_inventory.prompts"
 assert cats["guardrails"].get("bytes", 0) > 0, "guardrails bytes must be > 0"
 assert cats["guardrails"].get("chars", 0) > 0, "guardrails chars must be > 0"
 assert d.get("estimated_fixed_total_tokens", 0) > 0, "estimated_fixed_total_tokens must be > 0"
@@ -70,7 +71,7 @@ d = json.loads(sys.argv[1])
 total = d["total_chars"]
 assert d["estimated_fixed_total_tokens"] == math.ceil(total / 4), "token estimate must be ceil(chars/4)"
 cats = d["categories"]
-expected = cats["guardrails"]["chars"] + cats["profile"]["chars"] + cats["project_instructions"]["chars"] + cats["prompts"]["chars"] + cats["skills"]["description_chars"] + cats["native_tools"]["schema_chars"]
+expected = cats["guardrails"]["chars"] + cats["profile"]["chars"] + cats["project_instructions"]["chars"] + cats["skills"]["description_chars"] + cats["native_tools"]["schema_chars"]
 assert total == expected, f"total_chars mismatch: {total} != {expected}"
 PY
 echo "  ✓ JSON values are consistent"

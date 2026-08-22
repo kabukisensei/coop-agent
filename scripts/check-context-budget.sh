@@ -11,7 +11,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 
 GUARDRAILS_LIMIT_BYTES=6500
-TOTAL_LIMIT_TOKENS=11000
+TOTAL_LIMIT_TOKENS=7000
 
 py="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
 if [ -z "$py" ]; then

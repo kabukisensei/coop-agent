@@ -9,7 +9,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $coop = Join-Path (Join-Path $root 'bin') 'coop.ps1'
 
 $GUARDRAILS_LIMIT_BYTES = 6500
-$TOTAL_LIMIT_TOKENS = 11000
+$TOTAL_LIMIT_TOKENS = 7000
 
 $py = Get-Command python3 -ErrorAction SilentlyContinue
 if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }

@@ -39,10 +39,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 - `coop context-budget` command with human-readable and `--json` output to report fixed startup context sizes; optional `--measure` falls back to static estimates until an explicit-approval provider measurement path is added.
-- CI context-budget gate (`scripts/check-context-budget.sh` / `.ps1`) with thresholds based on the optimized baseline: `docs/guardrails.md` ≤ 6,500 bytes and estimated fixed total ≤ 11,000 tokens.
+- CI context-budget gate (`scripts/check-context-budget.sh` / `.ps1`) with thresholds based on the corrected optimized baseline: `docs/guardrails.md` ≤ 6,500 bytes and estimated fixed total ≤ 7,000 tokens.
 
 ### Changed
 - Shrunk always-loaded `docs/guardrails.md` from ~13.7 KB to ~4.6 KB by moving detailed enforcement mechanics, tool guide, workflow steps, and communication norms to the new on-demand `docs/guardrails-reference.md`. Policy semantics, hard blocks, approval paths, and required phrases (`tests.live_data.enabled`, non-blocking slice progress) are preserved.
+- Corrected `coop context-budget` classification: prompt template bodies are now reported as on-demand inventory rather than fixed startup context, and the user profile is measured as the instruction injected by `coop-profile` instead of raw `user.json` bytes. Updated baseline docs, completion report, and CI threshold accordingly.
 
 ## [0.22.1] — 2026-08-20
 

@@ -12,6 +12,11 @@ Rules:
 - Cross-platform: works on Linux, macOS, Windows with python3.
 - Bash 3.2 compatibility is irrelevant here because this is Python; the bash
   launcher simply execs this script.
+
+Classification:
+- Always-loaded items are counted in estimated_fixed_total_tokens.
+- Prompt template bodies are NOT counted in fixed total because Pi expands them
+  only when invoked; they are reported as on-demand inventory.
 """
 
 import argparse
@@ -24,6 +29,15 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1
 TOKEN_FORMULA = "ceil(chars/4)"
+
+PRESET_TEXT = {
+    "concise": "Answer first. Keep explanations short. Use bullets where useful. Explain tradeoffs only when material.",
+    "balanced": "Answer first. Give a brief why. Then structured detail.",
+    "teaching": "Answer first. Explain reasoning, alternatives, and tradeoffs in more depth.",
+    "custom": "",
+}
+
+VALID_PRESETS = set(PRESET_TEXT.keys())
 
 
 def die(msg: str) -> None:
@@ -99,12 +113,75 @@ def find_project_instructions(start_dir: Path) -> tuple[Path | None, int, int]:
 
 def profile_path() -> Path:
     """Locate the local user profile."""
-    # COOP user profile lives in ~/.coop/user.json by default.
-    # The bash launcher sets COOP_DIR for the isolated agent dir, but the user
-    # profile is intentionally outside the agent dir.
     home = Path.home()
     coop_dir = os.environ.get("COOP_DIR", str(home / ".coop"))
     return Path(coop_dir) / "user.json"
+
+
+def _sanitize(value: str, max_len: int = 100) -> str:
+    """Mirror of extensions/coop-profile/index.ts sanitize()."""
+    cleaned = re.sub(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]+", " ", value)
+    collapsed = re.sub(r"\s+", " ", cleaned)
+    return collapsed.strip()[:max_len]
+
+
+def load_profile(profile_file: Path) -> dict | None:
+    """Load and validate ~/.coop/user.json; return normalized profile or None."""
+    if not profile_file.is_file():
+        return None
+    try:
+        raw = json.loads(profile_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict) or raw.get("schema_version") != 1:
+        return None
+    name = raw.get("name")
+    if not isinstance(name, str) or not _sanitize(name):
+        return None
+    comm = raw.get("communication")
+    if not isinstance(comm, dict):
+        return None
+    preset = comm.get("preset")
+    if not isinstance(preset, str) or preset not in VALID_PRESETS:
+        return None
+    custom = comm.get("custom_instructions")
+    return {
+        "name": _sanitize(name),
+        "preset": preset,
+        "custom_instructions": _sanitize(custom, 1000) if isinstance(custom, str) else "",
+    }
+
+
+def build_profile_instruction(profile: dict) -> str:
+    """Mirror of extensions/coop-profile/index.ts buildInstruction()."""
+    preset = profile["preset"]
+    style = PRESET_TEXT[preset]
+    if preset == "custom" and profile["custom_instructions"]:
+        style = profile["custom_instructions"].strip()
+    parts = [
+        "COOP user profile:",
+        f"- Call the user {profile['name']}.",
+    ]
+    if style:
+        parts.append(f"- Communication: {preset}. {style}")
+    else:
+        parts.append(f"- Communication: {preset}.")
+    return "\n".join(parts)
+
+
+def measure_profile(profile_file: Path) -> dict:
+    """Measure the instruction the coop-profile extension actually injects."""
+    raw_text = read_text(profile_file)
+    profile = load_profile(profile_file)
+    instruction = build_profile_instruction(profile) if profile else ""
+    return {
+        "path": str(profile_file),
+        "present": profile_file.is_file(),
+        "valid": profile is not None,
+        "raw_chars": len(raw_text),
+        "instruction_chars": len(instruction),
+        "estimated_tokens": estimate_tokens(len(instruction)),
+    }
 
 
 def parse_skill_frontmatter(path: Path) -> dict:
@@ -119,11 +196,9 @@ def parse_skill_frontmatter(path: Path) -> dict:
     if end == -1:
         return out
     fm = text[3:end]
-    # name
     m = re.search(r"^\s*name:\s*(.+)$", fm, re.MULTILINE)
     if m:
         out["name"] = m.group(1).strip().strip('"').strip("'")
-    # description: support one-line quoted or unquoted
     m = re.search(r'^\s*description:\s*(?:"((?:[^"\\]|\\.)*)"|\'((?:[^\'\\]|\\.)*)\'|([^\r\n]+))$', fm, re.MULTILINE)
     if m:
         desc = next(g for g in m.groups() if g is not None)
@@ -237,7 +312,6 @@ def collect_tool_metadata_chars(index_text: str) -> tuple[int, int]:
         i = 0
         in_guidelines = False
         while i < len(block):
-            # detect promptGuidelines: [
             if block.startswith("promptGuidelines", i):
                 j = i + len("promptGuidelines")
                 while j < len(block) and block[j] in ": \t\n\r":
@@ -259,7 +333,6 @@ def collect_tool_metadata_chars(index_text: str) -> tuple[int, int]:
                         i = j + 1
                         break
             if key_match:
-                # skip whitespace/newlines
                 while i < len(block) and block[i] in " \t\n\r":
                     i += 1
                 lit, nxt = extract_string_literal(block, i)
@@ -346,13 +419,11 @@ def main() -> int:
             "tiny no-op model call and require explicit user approval.",
             file=sys.stderr,
         )
-        # Continue with static output rather than inventing numbers.
 
     repo_root = find_repo_root()
     defaults_path = repo_root / "config" / "defaults.yml"
     defaults_text = read_text(defaults_path)
 
-    # Resolve configured paths (fallbacks are the current defaults).
     guardrails_rel = defaults_value(defaults_text, "guardrails") or "docs/guardrails.md"
     prompts_rel = defaults_value(defaults_text, "prompts") or "prompts"
     skills_rel = defaults_value(defaults_text, "skills") or "skills"
@@ -366,8 +437,7 @@ def main() -> int:
     guardrails = measure_guardrails(guardrails_path, repo_root)
 
     profile_file = profile_path()
-    profile_text = read_text(profile_file)
-    profile_chars = len(profile_text)
+    profile = measure_profile(profile_file)
 
     proj_path, proj_chars, proj_tokens = find_project_instructions(cwd)
 
@@ -376,13 +446,12 @@ def main() -> int:
     native_tools = measure_native_tools(extensions_dir)
     extensions = measure_extensions(extensions_dir)
 
-    # Total: always-loaded + advertised metadata. This is a conservative upper-bound
-    # estimate because we cannot know exactly how Pi deduplicates or lazy-loads items.
+    # Fixed total: only always-loaded + advertised metadata that is present at startup.
+    # Prompt template bodies are on-demand inventory, not fixed total.
     total_chars = (
         guardrails["chars"]
-        + profile_chars
+        + profile["instruction_chars"]
         + proj_chars
-        + prompts["chars"]
         + skills["description_chars"]
         + native_tools["schema_chars"]
     )
@@ -390,7 +459,7 @@ def main() -> int:
     measurement = {
         "method": "static_char_estimate",
         "token_formula": TOKEN_FORMULA,
-        "note": "Upper-bound static estimate of prompt-visible material; Pi may deduplicate or lazy-load some items. Extension implementation source is intentionally excluded.",
+        "note": "Upper-bound static estimate of prompt-visible fixed startup context. Prompt template bodies are excluded from the fixed total because Pi expands them only when invoked.",
     }
 
     categories = {
@@ -401,22 +470,19 @@ def main() -> int:
             "estimated_tokens": guardrails["estimated_tokens"],
         },
         "profile": {
-            "path": str(profile_file),
-            "present": profile_file.is_file(),
-            "chars": profile_chars,
-            "estimated_tokens": estimate_tokens(profile_chars),
+            "path": profile["path"],
+            "present": profile["present"],
+            "valid": profile["valid"],
+            "chars": profile["instruction_chars"],
+            "raw_chars": profile["raw_chars"],
+            "instruction_chars": profile["instruction_chars"],
+            "estimated_tokens": estimate_tokens(profile["instruction_chars"]),
         },
         "project_instructions": {
             "path": str(proj_path) if proj_path else None,
             "present": proj_path is not None,
             "chars": proj_chars,
             "estimated_tokens": proj_tokens,
-        },
-        "prompts": {
-            "dir": str(prompts_dir.relative_to(repo_root)),
-            "count": prompts["count"],
-            "chars": prompts["chars"],
-            "estimated_tokens": prompts["estimated_tokens"],
         },
         "skills": {
             "dir": str(skills_dir.relative_to(repo_root)),
@@ -438,6 +504,16 @@ def main() -> int:
             "entries": extensions["entries"],
             "note": "Extension implementation source is not included in the fixed-total estimate; only tool/command metadata and hidden messages are prompt-visible.",
         },
+        "on_demand_inventory": {
+            "prompts": {
+                "dir": str(prompts_dir.relative_to(repo_root)),
+                "count": prompts["count"],
+                "chars": prompts["chars"],
+                "estimated_tokens": prompts["estimated_tokens"],
+                "files": prompts["files"],
+                "note": "Prompt templates are loaded by name/reference; their full bodies expand only when invoked.",
+            },
+        },
     }
 
     result = {
@@ -455,18 +531,19 @@ def main() -> int:
         print(json.dumps(result, indent=2))
         return 0
 
-    # Human-readable output
     print("COOP context budget")
     print("")
     print("Always-loaded")
     print(f"  Guardrails              {guardrails['chars']:,} chars    ~{guardrails['estimated_tokens']:,} tokens   ({guardrails['path']})")
-    print(f"  User profile            {profile_chars:,} chars    ~{estimate_tokens(profile_chars):,} tokens   ({'present' if profile_file.is_file() else 'absent'})")
+    print(f"  User profile            {profile['instruction_chars']:,} instr chars  ~{estimate_tokens(profile['instruction_chars']):,} tokens   ({'valid' if profile['valid'] else ('present but invalid' if profile['present'] else 'absent')})")
     print(f"  Project instructions    {proj_chars:,} chars    ~{proj_tokens:,} tokens   ({proj_path if proj_path else 'none found'})")
     print("")
     print("Advertised metadata")
-    print(f"  Prompt templates       {prompts['count']:<3} files   {prompts['chars']:,} chars    ~{prompts['estimated_tokens']:,} tokens")
     print(f"  Skills                 {skills['count']:<3} entries {skills['description_chars']:,} chars    ~{skills['estimated_tokens']:,} tokens")
-    print(f"  Native tools           {native_tools['count']:<3} tools   {native_tools['schema_chars']:,} schema chars  ~{native_tools['estimated_tokens']:,} tokens   ({native_tools['file_chars']:,} total file chars)")
+    print(f"  Native tools           {native_tools['count']:<3} tools   {native_tools['schema_chars']:,} schema chars  ~{native_tools['estimated_tokens']:,} tokens")
+    print("")
+    print("On-demand inventory (not included in fixed total)")
+    print(f"  Prompt templates       {prompts['count']:<3} files   {prompts['chars']:,} chars    ~{prompts['estimated_tokens']:,} tokens")
     print("")
     print("Extensions")
     for e in extensions["entries"]:
