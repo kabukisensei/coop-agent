@@ -580,6 +580,7 @@ interface JsonlPrompt {
 }
 type JsonlEvent =
   | JsonlPrompt
+  | { type: "hello"; protocol_version?: string }
   | { type: "notice" | "progress" | "complete" | "error" | "cancelled"; id?: string; message?: string; data?: unknown };
 
 export class JsonlLineDecoder {
@@ -710,6 +711,9 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any): Promise<boolea
         return;
       }
       child.stdin.write(JSON.stringify({ id: evt.id, answer }) + "\n");
+    } else if (evt.type === "hello") {
+      // Handshake from coop-data-doc >= 1.1.1. Informational: the protocol is
+      // version 1.x — a future major would warrant a bridge upgrade check here.
     } else if (evt.type === "notice" || evt.type === "progress") {
       if (evt.message) notify(ctx, evt.message, "info");
     } else if (evt.type === "complete" || evt.type === "cancelled" || evt.type === "error") {

@@ -41,7 +41,7 @@ const line=o=>process.stdout.write(JSON.stringify(o)+'\\n');
    const a=JSON.parse((await rl[Symbol.asyncIterator]().next()).value); if(!a.cancelled) process.exit(3);
    line({type:'cancelled'});process.exit(130)
  }
- process.stdout.write(JSON.stringify({type:'notice',message:'ready'})+'\\n'+JSON.stringify({type:'progress',message:'scan \\u2028 ok'})+'\\n');
+ process.stdout.write(JSON.stringify({type:'hello',protocol_version:'1.1'})+'\\n'+JSON.stringify({type:'notice',message:'ready'})+'\\n'+JSON.stringify({type:'progress',message:'scan \\u2028 ok'})+'\\n');
  const select=JSON.stringify({type:'prompt',id:'select',kind:'select',message:'Pick',choices:[{label:'Alpha',value:'a'},{label:'Beta',value:'b'}]})+'\\r\\n';
  process.stdout.write(select.slice(0,11));setTimeout(()=>process.stdout.write(select.slice(11)),5);
  const it=rl[Symbol.asyncIterator](); const a1=JSON.parse((await it.next()).value); if(a1.answer!=='b') process.exit(4);
