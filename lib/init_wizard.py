@@ -408,7 +408,12 @@ def run_lineage_setup(target: Path) -> None:
     sys.stderr.write("\nLaunching coop-data-doc setup (Ctrl-C to skip)…\n")
     try:
         cmd = os.environ.get("COOP_DATA_DOC_BIN", "coop-data-doc")
-        subprocess.run([cmd, "setup"], cwd=target)
+        # On Windows, .bat/.cmd files can't be executed via CreateProcess directly;
+        # route them through cmd.exe so PATH/PATHEXT resolution isn't needed.
+        if sys.platform == "win32" and cmd.lower().endswith((".bat", ".cmd")):
+            subprocess.run(["cmd.exe", "/c", cmd, "setup"], cwd=target)
+        else:
+            subprocess.run([cmd, "setup"], cwd=target)
     except FileNotFoundError:
         sys.stderr.write("coop-data-doc isn't installed — run `coop install`, then `coop data-doc setup`.\n")
     except Exception as exc:
