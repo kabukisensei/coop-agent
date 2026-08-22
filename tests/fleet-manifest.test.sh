@@ -113,15 +113,15 @@ case "$out" in *"@microsoft/powerbi-report-authoring-cli"*) ok "--check lists np
 out="$(PATH="$STUB:$PATH" COOP_UPDATE_GATE_DRYRUN=1 bash "$ROOT/scripts/update.sh" 2>/dev/null)"
 rc=$?
 [ "$rc" -eq 0 ] && ok "default update (gate dry-run) exits 0" || ko "default update exit was $rc"
-# With matching installed versions and no newer mocked latest, gate should pass (GATE all).
-case "$out" in *"GATE all"*) ok "default update takes all (manifest already satisfied)" ;; *) ko "expected GATE all, got: $out" ;; esac
+# Normal mode ALWAYS pins Pi to the release manifest version.
+case "$out" in *"GATE pin:0.80.2"*) ok "default update pins Pi to the manifest (GATE pin:0.80.2)" ;; *) ko "expected GATE pin:0.80.2, got: $out" ;; esac
 
 # --- --edge update path bypasses the manifest pin ---------------------------------
 : > "$MARKER"
-out="$(PATH="$STUB:$PATH" COOP_UPDATE_GATE_DRYRUN=1 COOP_PI_LATEST_OVERRIDE=0.99.0 bash "$ROOT/scripts/update.sh" --edge 2>/dev/null)"
+out="$(PATH="$STUB:$PATH" COOP_UPDATE_GATE_DRYRUN=1 bash "$ROOT/scripts/update.sh" --edge 2>/dev/null)"
 rc=$?
 [ "$rc" -eq 0 ] && ok "--edge update (gate dry-run) exits 0" || ko "--edge update exit was $rc"
-case "$out" in *"GATE all"*) ok "--edge bypasses the tested-version gate" ;; *) ko "expected --edge GATE all, got: $out" ;; esac
+case "$out" in *"GATE all"*) ok "--edge is the only latest/upstream mode" ;; *) ko "expected --edge GATE all, got: $out" ;; esac
 # With COOP_UPDATE_GATE_DRYRUN the script stops before the install unit; the gate
 # decision is the observable seam. The run.ps1 suite validates the actual pi update
 # path under PowerShell using the same seams.

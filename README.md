@@ -583,14 +583,12 @@ coop doctor          # re-check dependencies and configuration at any time
 `coop update` keeps Pi, its extensions, and the standalone tools current, then runs
 `coop doctor` so you immediately see anything left to fix.
 
-**Tested-version guard.** coop pins the Pi version it has been verified against
-(`config/defaults.yml` → `tested_with.pi`); a new Pi *minor* has broken coop's extensions
-before. If the latest Pi crosses that tested minor, `coop update` **warns and asks before
-jumping** — decline (or run non-interactively without `--yes`) and it pins Pi to the tested
-version instead, still updating extensions. Take the latest deliberately with
-`coop update --pi-latest` (or `--yes`). Use `coop update --check` first to see what an
-update *would* do before telling the team to run it; `coop doctor` also warns (never fails)
-when the installed Pi is newer than the tested version.
+**Fleet pinning.** `coop update` has exactly two fleet modes. **Normal** mode pins Pi,
+every extension, and all tools to the exact versions in the release manifest — no registry
+queries and no prompts. `--edge` is the only latest/upstream mode: it takes newest upstream
+across the fleet, and `coop doctor` reports any component that drifts from the manifest.
+Use `coop update --check` first to see what an update *would* do before telling the team to
+run it.
 
 ---
 

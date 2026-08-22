@@ -17,14 +17,13 @@ export COOP_ROOT
 NO_FABRIC=0
 CHECK=0        # --check: dry-run — report current/latest/tested, change nothing
 EDGE=0         # --edge: take latest upstream instead of the release manifest
-PI_LATEST=0    # --pi-latest: skip the tested-version gate and take latest Pi
 for a in "$@"; do
   case "$a" in
     '') ;;
     --no-fabric) NO_FABRIC=1 ;;
     --yes|-y) export COOP_ASSUME_YES=1 ;;
     --check) CHECK=1 ;;
-    --pi-latest) PI_LATEST=1 ;;
+    --pi-latest) coop_warn "--pi-latest is deprecated — use --edge (normal update always pins to the release manifest)"; EDGE=1 ;;
     --edge) EDGE=1 ;;
     *) coop_warn "update: ignoring unknown flag '$a'" ;;
   esac
@@ -44,42 +43,13 @@ esac
 # Update coop's ISOLATED Pi agent dir (not the user's personal pi).
 PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"; export PI_CODING_AGENT_DIR
 
-# --- Tested-version guard ------------------------------------------------------
-# coop's one real incident (#1) was a version-compat break: `coop update` jumped Pi to a
-# new minor whose extension API coop's extensions weren't verified against. Guard the
-# jump at the tested ceiling (config/defaults.yml tested_with.pi). PI_INSTALL_TARGET, when
-# set, tells _unit_pi_update to PIN Pi to that version (extensions still update) instead
-# of `pi update --all`.
-PI_TESTED="$(coop_manifest_get pi.version)"
-PI_INSTALL_TARGET=""
+# --- Fleet mode -----------------------------------------------------------------
+# Exactly two modes: NORMAL pins Pi + every extension/tool to the release manifest
+# (no registry queries, no prompts); --edge takes latest upstream across the fleet.
+# The old tested-version gates (--pi-latest / "Jump to the untested …?" prompts) are
+# gone: they queried latest versions merely to ask about them, and normal update
+# resolved back to manifest pins anyway.
 PI_PKG="@earendil-works/pi-coding-agent"
-
-# Latest published Pi version. COOP_PI_LATEST_OVERRIDE short-circuits the registry query
-# (tests set it; real runs hit npm). Echoes "" when it can't be determined.
-_pi_latest() {
-  if [ -n "${COOP_PI_LATEST_OVERRIDE:-}" ]; then printf '%s' "$COOP_PI_LATEST_OVERRIDE"; return 0; fi
-  have npm || return 0
-  npm view "$PI_PKG" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
-}
-
-# Latest published version of a pipx/PyPI tool (coop-data-doc, ms-fabric-cli, …).
-# COOP_PYPI_LATEST_OVERRIDE short-circuits the registry query (tests set it; real
-# runs query PyPI). Echoes "" when it can't be determined — a hiccup never trips
-# the gate. Uses coop_python (pipx implies a python is present).
-_pypi_latest() {
-  local pkg="$1" py
-  if [ -n "${COOP_PYPI_LATEST_OVERRIDE:-}" ]; then printf '%s' "$COOP_PYPI_LATEST_OVERRIDE"; return 0; fi
-  py="$(coop_python)" || return 0
-  "$py" - "$pkg" 2>/dev/null <<'PYEOF'
-import json, sys, urllib.request
-try:
-    info = json.load(urllib.request.urlopen(
-        "https://pypi.org/pypi/%s/json" % sys.argv[1], timeout=15))
-    print(info["info"]["version"])
-except Exception:
-    pass
-PYEOF
-}
 
 # Overall-bar denominator: the update ITEMS we will attempt (pi update + each
 # pipx tool + Power BI/Fabric authoring npm tools). Steps 1/4/5 (git pull /
@@ -102,7 +72,6 @@ _unit_pi_update() {
   # Default (reproducible): pin Pi and install every exact manifest extension spec.
   local pi_target ext spec failed=0
   pi_target="$(coop_manifest_get pi.version)"
-  if [ -z "$pi_target" ]; then pi_target="$PI_INSTALL_TARGET"; fi
   if [ -n "$pi_target" ]; then
     if have npm && npm install -g "$PI_PKG@$pi_target" >/dev/null 2>&1; then
       for ext in $(coop_manifest_keys extensions); do
@@ -182,70 +151,15 @@ fi
 
 coop_head "coop update (v${COOP_VERSION})"
 
-# Tested-version gate: if latest Pi crosses the tested MINOR and the user didn't pass
-# --pi-latest, ask before jumping. Declining (or a non-interactive shell without --yes)
-# pins Pi to the tested version instead — extensions still update. Runs before the bar so
-# the decision is made before any install starts.
-if have pi && [ -n "$PI_TESTED" ] && [ "$PI_LATEST" != "1" ]; then
-  pi_lat="$(_pi_latest)"
-  if [ -n "$pi_lat" ] && coop_minor_newer "$pi_lat" "$PI_TESTED"; then
-    coop_warn "Pi $pi_lat is newer than coop's tested version ($PI_TESTED). New Pi minors have broken coop's extensions before (0.74 → 0.80)."
-    if coop_confirm "Jump to the untested Pi $pi_lat anyway?"; then
-      coop_info "Updating to the latest Pi $pi_lat (untested with this coop build)."
-    else
-      PI_INSTALL_TARGET="$PI_TESTED"
-      coop_info "Staying on the tested Pi $PI_TESTED (extensions will still update). Re-run with --pi-latest to take $pi_lat."
-    fi
-  fi
-fi
-
-# --- Tested-version gate, pipx tools + fabric-cicd ------------------------------
-# Same rule as Pi, for the pipx tools we upgrade and the fabric-cicd library we
-# inject: a release crossing the tested MINOR asks first; declining (or a
-# non-interactive shell without --yes) pins that tool to its tested version. The
-# pins land in PY_PIN ("pkg=ver" pairs) and FCC_PIN for the refresh step below.
-PY_PIN=''
-for pkg in "${PY_TOOLS[@]}"; do
-  tested="$(coop_manifest_object_get python_tools "$pkg")"
-  [ -n "$tested" ] || continue
-  lat="$(_pypi_latest "$pkg")"
-  if [ -n "$lat" ] && coop_minor_newer "$lat" "$tested"; then
-    coop_warn "$pkg $lat is newer than coop's tested version ($tested)."
-    if coop_confirm "Jump to the untested $pkg $lat anyway?"; then
-      coop_info "Updating to the latest $pkg $lat (untested with this coop build)."
-    else
-      PY_PIN="$PY_PIN $pkg=$tested"
-      coop_info "Staying on the tested $pkg $tested. Re-run with --yes to take $lat."
-    fi
-  fi
-done
-FCC_PIN=''
-if have pipx && pipx list 2>/dev/null | grep -q "package ms-fabric-cli "; then
-  fcc_tested="$(coop_manifest_object_get python_tools fabric-cicd)"
-  if [ -n "$fcc_tested" ]; then
-    fcc_lat="$(_pypi_latest fabric-cicd)"
-    if [ -n "$fcc_lat" ] && coop_minor_newer "$fcc_lat" "$fcc_tested"; then
-      coop_warn "fabric-cicd $fcc_lat is newer than coop's tested version ($fcc_tested)."
-      if coop_confirm "Jump to the untested fabric-cicd $fcc_lat anyway?"; then
-        coop_info "Updating to the latest fabric-cicd $fcc_lat (untested with this coop build)."
-      else
-        FCC_PIN="$fcc_tested"
-        coop_info "Staying on the tested fabric-cicd $fcc_tested."
-      fi
-    fi
-  fi
-fi
-
-# Test seam: print the resolved gate decision and stop BEFORE any install or side effect.
+# Test seam: print the resolved fleet-mode decision and stop BEFORE any install or
+# side effect. Normal mode pins everything to the release manifest; --edge takes latest.
 if [ "${COOP_UPDATE_GATE_DRYRUN:-}" = "1" ]; then
   if [ "$EDGE" = "1" ]; then
     echo "GATE all"
     exit 0
   fi
-  pins="$PI_INSTALL_TARGET"
-  for p in $PY_PIN; do pins="${pins:+$pins,}$p"; done
-  [ -n "$FCC_PIN" ] && pins="${pins:+$pins,}fabric-cicd=$FCC_PIN"
-  if [ -n "$pins" ]; then printf 'GATE pin:%s\n' "$pins"; else printf 'GATE all\n'; fi
+  pi_pin="$(coop_manifest_get pi.version)"
+  if [ -n "$pi_pin" ]; then printf 'GATE pin:%s\n' "$pi_pin"; else printf 'GATE all\n'; fi
   exit 0
 fi
 
@@ -290,9 +204,8 @@ coop_unit "pi update --all   (the agent + all installed extensions)" _unit_pi_up
 # --- 3. Upgrade pipx tools ---------------------------------------------------
 coop_head "3/6  Coop tools + Fabric CLI (pipx)"
 for pkg in "${PY_TOOLS[@]}"; do
-  pin=''
-  for p in $PY_PIN; do case "$p" in "$pkg="*) pin="${p#*=}" ;; esac; done
-  coop_unit "$pkg" _unit_pytool_upgrade "$pkg" "$pin"
+  # _unit_pytool_upgrade pins from the release manifest in normal mode; --edge takes latest.
+  coop_unit "$pkg" _unit_pytool_upgrade "$pkg"
 done
 
 # --- 4. Upgrade Microsoft Fabric / Power BI authoring tools (npm) ------------

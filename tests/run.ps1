@@ -6,14 +6,14 @@
 # net. This exercises the SAME seams tests/run.sh does, but through PowerShell:
 #   1. coop.ps1 launch-spec resolves guardrails, prompts, theme, all 3 extensions
 #   2. coop.ps1 --no-launch exits 0 + prints the spec; --no-launch --json emits {bin,args,env}
-#   3. update.ps1 gate decisions via COOP_UPDATE_GATE_DRYRUN / COOP_PI_LATEST_OVERRIDE
+#   3. update.ps1 fleet-mode decisions via COOP_UPDATE_GATE_DRYRUN
 #      (the same seams tests/update-guard.test.sh drives against update.sh)
-#   4. update.ps1 --check is a dry-run that reports current/latest/tested and exits 0
+#   4. update.ps1 --check is a dry-run that reports current/expected and exits 0
 #   5. coop.ps1 forwards a single trailing --check argument intact to update.ps1
 #   6. coop.ps1 review --help exits 0; an unknown review flag dies non-zero
 #
-# No network: the registry query is mocked with COOP_PI_LATEST_OVERRIDE, and the gate
-# stops before any install via COOP_UPDATE_GATE_DRYRUN. Runs under Windows PowerShell 5.1
+# No network: the fleet-mode decision stops before any install via
+# COOP_UPDATE_GATE_DRYRUN. Runs under Windows PowerShell 5.1
 # (coop.cmd's runtime) and pwsh 7 (macOS/Linux CI). CI wires it into the windows +
 # tests jobs; run locally with `pwsh -File tests/run.ps1`.
 #
@@ -83,38 +83,31 @@ try {
     Ok '--no-launch --json emits {bin,args,env}'
   } else { Ko '--no-launch --json did not emit the JSON spec' }
 
-  # --- 3. update gate decisions (COOP_UPDATE_GATE_DRYRUN stops before install) -
-  # Run each case in a child pwsh with the scratch PATH + a mocked latest, stdin
-  # redirected (a non-interactive shell declines the untested-Pi jump). The child
-  # prints exactly 'GATE pin:<v>' or 'GATE all' on the last line.
-  Head 'coop update gate decision (COOP_PI_LATEST_OVERRIDE / COOP_UPDATE_GATE_DRYRUN)'
+  # --- 3. update fleet-mode decisions (COOP_UPDATE_GATE_DRYRUN stops before install) -
+  # Normal mode pins to the release manifest ('GATE pin:<v>'); --edge takes latest
+  # ('GATE all'); --pi-latest is a deprecated alias for --edge.
+  Head 'coop update fleet-mode decision (COOP_UPDATE_GATE_DRYRUN)'
   function Invoke-Gate {
-    param([string]$Latest, [string]$Yes, [string[]]$GateArgs = @())
+    param([string[]]$GateArgs = @())
     $out = & $psExe -NoProfile -Command @"
 `$env:PATH = '$stubPath'
 `$env:COOP_UPDATE_GATE_DRYRUN = '1'
-`$env:COOP_PI_LATEST_OVERRIDE = '$Latest'
-`$env:COOP_PYPI_LATEST_OVERRIDE = '0.0.0'
-`$env:COOP_ASSUME_YES = '$Yes'
 & '$update' $($GateArgs -join ' ') 2>`$null
 "@ 6>$null
     # The gate line is the last emitted 'GATE …' line.
     return (($out | Where-Object { $_ -match 'GATE' }) | Select-Object -Last 1)
   }
-  $d = Invoke-Gate -Latest '0.99.0'
-  if ($d -eq 'GATE pin:0.80.2') { Ok 'crossing the tested minor + declined -> pins to tested' } else { Ko "expected 'GATE pin:0.80.2', got '$d'" }
-  $d = Invoke-Gate -Latest '0.99.0' -Yes '1'
-  if ($d -eq 'GATE all') { Ok '--yes / COOP_ASSUME_YES bypasses the gate (takes latest)' } else { Ko "with --yes expected 'GATE all', got '$d'" }
-  $d = Invoke-Gate -Latest '0.99.0' -GateArgs @('--pi-latest')
-  if ($d -eq 'GATE all') { Ok '--pi-latest bypasses the gate (takes latest)' } else { Ko "with --pi-latest expected 'GATE all', got '$d'" }
-  $d = Invoke-Gate -Latest '0.80.5'
-  if ($d -eq 'GATE all') { Ok 'a newer PATCH (same minor) is NOT gated' } else { Ko "0.80.5 should not gate, got '$d'" }
+  $d = Invoke-Gate
+  if ($d -eq 'GATE pin:0.80.2') { Ok 'normal mode pins Pi to the release manifest' } else { Ko "expected 'GATE pin:0.80.2', got '$d'" }
+  $d = Invoke-Gate -GateArgs @('--edge')
+  if ($d -eq 'GATE all') { Ok '--edge is the only latest/upstream mode' } else { Ko "with --edge expected 'GATE all', got '$d'" }
+  $d = Invoke-Gate -GateArgs @('--pi-latest')
+  if ($d -eq 'GATE all') { Ok '--pi-latest is a deprecated alias for --edge' } else { Ko "with --pi-latest expected 'GATE all', got '$d'"
 
   # --- 4. update --check is a dry-run: reports versions, exits 0 -------------
-  Head 'coop update --check (dry-run — reports current/latest/tested)'
+  Head 'coop update --check (dry-run — reports current/expected)'
   $checkOut = & $psExe -NoProfile -Command @"
 `$env:PATH = '$stubPath'
-`$env:COOP_PI_LATEST_OVERRIDE = '0.99.0'
 & '$update' --check 2>`$null
 "@ 6>$null | Out-String
   if ($LASTEXITCODE -eq 0) { Ok '--check exits 0' } else { Ko "--check exit was $LASTEXITCODE" }
@@ -131,8 +124,6 @@ try {
   $wrappedCheckOut = & $psExe -NoProfile -Command @"
 `$env:PATH = '$stubPath'
 `$env:COOP_UPDATE_GATE_DRYRUN = '1'
-`$env:COOP_PI_LATEST_OVERRIDE = '0.99.0'
-`$env:COOP_PYPI_LATEST_OVERRIDE = '0.0.0'
 & '$coop' update --check 2>&1
 "@ 6>$null | Out-String
   if (($wrappedCheckOut -like '*expected 0.80.2*') -and ($wrappedCheckOut -like '*status *')) {
