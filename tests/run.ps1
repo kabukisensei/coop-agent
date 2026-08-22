@@ -102,7 +102,7 @@ try {
   $d = Invoke-Gate -GateArgs @('--edge')
   if ($d -eq 'GATE all') { Ok '--edge is the only latest/upstream mode' } else { Ko "with --edge expected 'GATE all', got '$d'" }
   $d = Invoke-Gate -GateArgs @('--pi-latest')
-  if ($d -eq 'GATE all') { Ok '--pi-latest is a deprecated alias for --edge' } else { Ko "with --pi-latest expected 'GATE all', got '$d'"
+  if ($d -eq 'GATE all') { Ok '--pi-latest is a deprecated alias for --edge' } else { Ko "with --pi-latest expected 'GATE all', got '$d'" }
 
   # --- 4. update --check is a dry-run: reports versions, exits 0 -------------
   Head 'coop update --check (dry-run — reports current/expected)'
