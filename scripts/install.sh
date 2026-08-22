@@ -144,7 +144,6 @@ _unit_fabric() {
     [ -n "$ver" ] && target="${FABRIC_PKG}==${ver}"
   fi
   # Convergence: skip only when the installed version matches the pin.
-  local converge_rc=0
   if [ "$FORCE" = 0 ]; then
     local cur=""; cur="$(_pipx_installed_version "$FABRIC_PKG")"
     if [ -n "$cur" ]; then
