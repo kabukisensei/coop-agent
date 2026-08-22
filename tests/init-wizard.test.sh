@@ -71,11 +71,6 @@ answers "Cooptimize" "Test Client" "" "" "" "" "" "sql" "n" "no" "no" "y" | \
   HOME="$TMP" \
   "$PY" "$ROOT/lib/init_wizard.py" "$TMP/repo2" > "$TMP/accepted.out" 2>&1
 rc=$?
-echo "DEBUG: COOP_DATA_DOC_BIN=$COOP_DATA_DOC_BIN" >&2
-echo "DEBUG: repo2 files:" >&2
-ls -la "$TMP/repo2" >&2 || true
-echo "DEBUG: accepted.out:" >&2
-cat "$TMP/accepted.out" >&2 || true
 [ "$rc" -eq 0 ] && ok "wizard exits 0 with lineage offer accepted" || ko "wizard exit: $rc"
 [ -f "$TMP/repo2/.coop/project.yml" ] && ok "project.yml created (lineage path)" || ko "project.yml missing (lineage path)"
 case "$(cat "$TMP/repo2/setup-marker.calls" 2>/dev/null)" in *"config-set"*"setup"*) ok "config-set ran before native setup" ;; *) ko "lineage invocation order incorrect" ;; esac
