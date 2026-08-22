@@ -133,14 +133,14 @@ function Get-PypiLatest {
   if ($m.Success) { return $m.Value } else { return '' }
 }
 
-$PI_TESTED = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') 'tested_with.pi' ''
+$PI_TESTED = Coop-ManifestGet -Key 'pi.version'
 
 # --- Per-item units (run in a background job; return @{ok=<bool>; msg=<string>}) --
 # Same contract as the install units, so the update bar animates identically.
 # Runs in a background job (a fresh runspace), so the tested-version DECISION is passed
 # in as args — script variables are not inherited. $Target set => pin to that version.
 $UnitPiUpdate = {
-  param([string]$Spec, [string]$Pkg)
+  param([string]$Spec, [string]$Pkg, [string]$ExtensionSpecs)
   if (-not (Get-Command pi -ErrorAction SilentlyContinue)) {
     return [pscustomobject]@{ ok = $false; msg = 'pi not installed — run: coop install' }
   }
@@ -156,8 +156,13 @@ $UnitPiUpdate = {
   if (Get-Command npm -ErrorAction SilentlyContinue) {
     & npm install -g $Spec *> $null
     if ($LASTEXITCODE -eq 0) {
-      & pi update --extensions *> $null
-      return [pscustomobject]@{ ok = $true; msg = "pinned pi to tested $($Spec.Split('@')[1]) + extensions updated" }
+      $failed = $false
+      foreach ($extSpec in @($ExtensionSpecs -split '\|' | Where-Object { $_ })) {
+        & pi install $extSpec *> $null
+        if ($LASTEXITCODE -ne 0) { $failed = $true }
+      }
+      if (-not $failed) { return [pscustomobject]@{ ok = $true; msg = 'pinned pi and extensions to release manifest' } }
+      return [pscustomobject]@{ ok = $false; msg = 'pi pinned but one or more manifest extensions failed' }
     }
   }
   return [pscustomobject]@{ ok = $false; msg = "failed to pin pi to $Spec (try: npm install -g $Spec)" }
@@ -257,8 +262,7 @@ if ((Test-Have 'pi') -and $PI_TESTED -and (-not $PI_LATEST)) {
 # non-interactive without --yes) pins that tool to its tested version.
 $script:PY_PIN = @{}
 foreach ($pkg in $PY_TOOLS) {
-  $key = $pkg -replace '-', '_'
-  $tested = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') "tested_with.$key" ''
+  $tested = Coop-ManifestObjectGet 'python_tools' $pkg
   if (-not $tested) { continue }
   $lat = Get-PypiLatest $pkg
   if ($lat -and (Test-CoopMinorNewer $lat $tested)) {
@@ -273,7 +277,7 @@ foreach ($pkg in $PY_TOOLS) {
 }
 $script:FCC_PIN = ''
 if ((Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package ms-fabric-cli ')) {
-  $fccTested = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') 'tested_with.fabric_cicd' ''
+  $fccTested = Coop-ManifestObjectGet 'python_tools' 'fabric-cicd'
   if ($fccTested) {
     $fccLat = Get-PypiLatest 'fabric-cicd'
     if ($fccLat -and (Test-CoopMinorNewer $fccLat $fccTested)) {
@@ -357,6 +361,11 @@ try {
   foreach ($pkg in $PY_TOOLS) {
     $pytoolTargets += if ($EDGE) { $pkg } else { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "$pkg==$tv" } else { $pkg } }
   }
+  $extensionSpecs = @()
+  foreach ($pkg in @(Coop-ManifestKeys 'extensions')) {
+    $spec = Coop-ManifestExtensionSpec $pkg
+    if ($spec) { $extensionSpecs += $spec }
+  }
   $pbihSpecs = @()
   foreach ($pkg in $PBIH_NPM_TOOLS) {
     $pbihSpecs += if ($EDGE) { $pkg } else { $tv = Coop-ManifestGet -Key "npm_tools.$pkg"; if ($tv) { "$pkg@$tv" } else { $pkg } }
@@ -365,7 +374,7 @@ try {
   # --- 2. Update Pi + extensions ---------------------------------------------
   Coop-Head '2/6  Pi and extensions'
   if ($RunPiUpdate) {
-    Coop-Unit 'pi update --all   (the agent + all installed extensions)' $UnitPiUpdate @($piSpec, $script:PI_PKG)
+    Coop-Unit 'pi + manifest extensions' $UnitPiUpdate @($piSpec, $script:PI_PKG, ($extensionSpecs -join '|'))
   }
 
   # --- 3. Upgrade pipx tools -------------------------------------------------
@@ -380,8 +389,8 @@ finally {
   Coop-ProgEnd
 }
 
-# fabric-cicd is a library injected into the Fabric CLI env — refresh it there (or
-# pin it to the tested version when the update gate declined a jump).
+# fabric-cicd is manifest-pinned in normal mode; edge alone may take latest.
+if (-not $EDGE -and -not $script:FCC_PIN) { $script:FCC_PIN = Coop-ManifestObjectGet 'python_tools' 'fabric-cicd' }
 if ((Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package ms-fabric-cli ')) {
   if ($script:FCC_PIN) {
     & pipx inject ms-fabric-cli "fabric-cicd==$($script:FCC_PIN)" --force > $null 2>&1

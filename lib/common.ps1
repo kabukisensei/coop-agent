@@ -40,6 +40,20 @@ function Coop-ManifestGet([string]$Key, [string]$Default = '') {
   } catch { return $Default }
 }
 
+function Coop-ManifestObjectGet([string]$Object, [string]$Key, [string]$Default = '') {
+  try {
+    $m = Get-Content -LiteralPath $script:CoopReleaseManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    $o = $m.PSObject.Properties[$Object].Value
+    $p = $o.PSObject.Properties[$Key]
+    if ($null -eq $p -or $null -eq $p.Value) { return $Default }
+    return [string]$p.Value
+  } catch { return $Default }
+}
+function Coop-ManifestExtensionSpec([string]$Package) { $v = Coop-ManifestObjectGet 'extensions' $Package; if ($v) { return "npm:${Package}@${v}" }; return '' }
+function Coop-ManifestPythonSpec([string]$Package) { $v = Coop-ManifestObjectGet 'python_tools' $Package; if ($v) { return "${Package}==${v}" }; return '' }
+function Coop-ManifestNpmToolSpec([string]$Package) { $v = Coop-ManifestObjectGet 'npm_tools' $Package; if ($v) { return "${Package}@${v}" }; return '' }
+function Coop-ManifestMcpSpec([string]$Package) { $v = Coop-ManifestObjectGet 'mcp_servers' $Package; if ($v) { return "${Package}@${v}" }; return '' }
+
 function Coop-ManifestKeys([string]$Key) {
   try {
     $m = Get-Content -LiteralPath $script:CoopReleaseManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
@@ -563,11 +577,15 @@ function Test-CoopUserProfileMissing {
   return -not (Test-Path -LiteralPath (Join-Path $HOME '.coop\user.json') -PathType Leaf)
 }
 
-# First-run onboarding: run the wizard when interactive and no profile exists.
+function Test-CoopOnboardingMissing {
+  return (Test-CoopUserProfileMissing) -or -not (Test-Path -LiteralPath (Join-Path $HOME '.coop\config') -PathType Leaf)
+}
+
+# First-run onboarding: run when either the profile or integration config is missing.
 function Invoke-CoopMaybeOnboard {
-  if (-not (Test-CoopUserProfileMissing)) { return }
+  if (-not (Test-CoopOnboardingMissing)) { return }
   if ([Console]::IsInputRedirected) {
-    Coop-Warn 'No COOP profile found. Run: coop onboard'
+    Coop-Warn 'COOP onboarding is incomplete (user.json or config missing). Run: coop onboard'
     return
   }
   if ($env:COOP_NO_ONBOARD -eq '1') { return }

@@ -16,7 +16,7 @@ export COOP_ROOT
 # shellcheck source=../lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
 
-CORE_EXTENSIONS=( pi-mcp-adapter pi-hermes-memory pi-better-openai pi-web-access @juicesharp/rpiv-ask-user-question )
+CORE_EXTENSIONS=( pi-mcp-adapter pi-hermes-memory pi-better-openai pi-web-access @juicesharp/rpiv-ask-user-question context-mode )
 PI_AGENT="$(coop_pi_agent_dir)"
 GLOBAL_AGENT="$(coop_global_pi_agent_dir)"
 
@@ -41,15 +41,12 @@ done
 
 # --- 3. Core Pi extensions — installed INTO the isolated dir (idempotent) -----
 if have pi; then
-  pilist="$(PI_CODING_AGENT_DIR="$PI_AGENT" pi list 2>/dev/null || true)"
   for ext in "${CORE_EXTENSIONS[@]}"; do
-    if printf '%s' "$pilist" | grep -qiF "$ext"; then
-      coop_ok "$ext present (isolated)"
-    else
-      coop_info "installing $ext into coop's dir…"
-      PI_CODING_AGENT_DIR="$PI_AGENT" pi install "npm:$ext" >/dev/null 2>&1 \
-        && coop_ok "$ext installed" || coop_warn "could not install $ext"
-    fi
+    ext_spec="$(coop_manifest_extension_spec "$ext")"
+    if [ -z "$ext_spec" ]; then coop_warn "manifest pin missing for $ext"; continue; fi
+    coop_info "converging $ext to the release pin…"
+    PI_CODING_AGENT_DIR="$PI_AGENT" pi install "$ext_spec" >/dev/null 2>&1 \
+      && coop_ok "$ext pinned (isolated)" || coop_warn "could not pin $ext"
   done
   # Align the extension tree's @earendil-works/pi-ai + pi-tui to the agent's own
   # version so they share one pi-ai/pi-tui (else pi-web-access's 0.80 `/compat`
@@ -59,29 +56,13 @@ else
   coop_warn "pi not installed — skipping extension sync (run: coop install)"
 fi
 
-# --- 4. MCP config (read-only) into the isolated dir — non-destructive --------
-MCP_SRC="$COOP_ROOT/config/mcp.example.json"
+# --- 4. MCP config — manifest-pinned, ownership-aware, non-destructive --------
 MCP_DST="$PI_AGENT/mcp.json"
-if [ -f "$MCP_SRC" ]; then
-  if [ -f "$MCP_DST" ]; then
-    coop_ok "MCP config already exists: $MCP_DST"
-    # Non-destructively ADD any servers new in the example but missing here (the plain
-    # copy above only runs on a fresh install, so updates would otherwise never pick up
-    # newly-shipped MCP servers). Existing entries — and their tenant ids — are untouched.
-    _mcp_py="$(coop_python 2>/dev/null || true)"
-    if [ -n "$_mcp_py" ] && [ -f "$COOP_ROOT/lib/_mcpmerge.py" ]; then
-      _mcp_added="$("$_mcp_py" "$COOP_ROOT/lib/_mcpmerge.py" "$MCP_SRC" "$MCP_DST" 2>/dev/null || true)"
-      if [ -n "$_mcp_added" ]; then
-        coop_ok "added missing MCP server(s): $(printf '%s' "$_mcp_added" | tr '\n' ' ')"
-        coop_warn "New MCP server(s) may carry TODO org/tenant placeholders — edit $MCP_DST."
-      fi
-    fi
-  else
-    cp "$MCP_SRC" "$MCP_DST" && coop_ok "wrote read-only MCP config -> $MCP_DST"
-    coop_warn "Edit $MCP_DST and set your tenant id where marked TODO."
-  fi
+_mcp_py="$(coop_python 2>/dev/null || true)"
+if [ -n "$_mcp_py" ] && "$_mcp_py" "$COOP_ROOT/lib/mcp_config.py" --output "$MCP_DST"; then
+  coop_ok "generated manifest-pinned MCP config -> $MCP_DST"
 else
-  coop_warn "config/mcp.example.json missing — cannot sync MCP servers"
+  coop_warn "could not generate MCP config" "run: coop onboard --edit, then coop sync"
 fi
 
 # --- 5. Brand assets ---------------------------------------------------------

@@ -50,7 +50,7 @@ PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"; export PI_CODING_AGENT_DIR
 # jump at the tested ceiling (config/defaults.yml tested_with.pi). PI_INSTALL_TARGET, when
 # set, tells _unit_pi_update to PIN Pi to that version (extensions still update) instead
 # of `pi update --all`.
-PI_TESTED="$(coop_yaml_get "$COOP_ROOT/config/defaults.yml" tested_with.pi "")"
+PI_TESTED="$(coop_manifest_get pi.version)"
 PI_INSTALL_TARGET=""
 PI_PKG="@earendil-works/pi-coding-agent"
 
@@ -99,14 +99,18 @@ _unit_pi_update() {
     fi
     printf 'pi update --all failed (try: pi update --all)'; return 1
   fi
-  # Default (reproducible): pin Pi to the release manifest, then refresh extensions.
-  local pi_target
+  # Default (reproducible): pin Pi and install every exact manifest extension spec.
+  local pi_target ext spec failed=0
   pi_target="$(coop_manifest_get pi.version)"
   if [ -z "$pi_target" ]; then pi_target="$PI_INSTALL_TARGET"; fi
   if [ -n "$pi_target" ]; then
     if have npm && npm install -g "$PI_PKG@$pi_target" >/dev/null 2>&1; then
-      pi update --extensions >/dev/null 2>&1 || true
-      printf 'pinned pi to tested %s + extensions updated' "$pi_target"; return 0
+      for ext in $(coop_manifest_keys extensions); do
+        spec="$(coop_manifest_extension_spec "$ext")"
+        [ -n "$spec" ] && pi install "$spec" >/dev/null 2>&1 || failed=1
+      done
+      [ "$failed" = 0 ] && { printf 'pinned pi and extensions to release manifest'; return 0; }
+      printf 'pi pinned but one or more manifest extensions failed'; return 1
     fi
     printf 'failed to pin pi to %s (try: npm install -g %s@%s)' "$pi_target" "$PI_PKG" "$pi_target"; return 1
   fi
@@ -202,8 +206,7 @@ fi
 # pins land in PY_PIN ("pkg=ver" pairs) and FCC_PIN for the refresh step below.
 PY_PIN=''
 for pkg in "${PY_TOOLS[@]}"; do
-  key="$(printf '%s' "$pkg" | tr '-' '_')"
-  tested="$(coop_yaml_get "$COOP_ROOT/config/defaults.yml" "tested_with.$key" "")"
+  tested="$(coop_manifest_object_get python_tools "$pkg")"
   [ -n "$tested" ] || continue
   lat="$(_pypi_latest "$pkg")"
   if [ -n "$lat" ] && coop_minor_newer "$lat" "$tested"; then
@@ -218,7 +221,7 @@ for pkg in "${PY_TOOLS[@]}"; do
 done
 FCC_PIN=''
 if have pipx && pipx list 2>/dev/null | grep -q "package ms-fabric-cli "; then
-  fcc_tested="$(coop_yaml_get "$COOP_ROOT/config/defaults.yml" tested_with.fabric_cicd "")"
+  fcc_tested="$(coop_manifest_object_get python_tools fabric-cicd)"
   if [ -n "$fcc_tested" ]; then
     fcc_lat="$(_pypi_latest fabric-cicd)"
     if [ -n "$fcc_lat" ] && coop_minor_newer "$fcc_lat" "$fcc_tested"; then
@@ -300,8 +303,9 @@ hash -r 2>/dev/null || true
 # Done with the update items — finalize the bar (leaves a permanent 100% line).
 coop_progress_end
 
-# fabric-cicd is a library injected into the Fabric CLI env — refresh it there (or
-# pin it to the tested version when the update gate declined a jump).
+# fabric-cicd is a library injected into the Fabric CLI env. Normal mode always
+# uses the manifest pin; edge mode alone may take latest.
+if [ "$EDGE" != 1 ] && [ -z "$FCC_PIN" ]; then FCC_PIN="$(coop_manifest_object_get python_tools fabric-cicd)"; fi
 if have pipx && pipx list 2>/dev/null | grep -q "package ms-fabric-cli "; then
   if [ -n "$FCC_PIN" ]; then
     pipx inject ms-fabric-cli "fabric-cicd==$FCC_PIN" --force >/dev/null 2>&1 && coop_ok "fabric-cicd (library) pinned to tested $FCC_PIN" || true
@@ -309,6 +313,7 @@ if have pipx && pipx list 2>/dev/null | grep -q "package ms-fabric-cli "; then
     pipx inject ms-fabric-cli fabric-cicd --force >/dev/null 2>&1 && coop_ok "fabric-cicd (library) refreshed" || true
   fi
 fi
+[ "${COOP_FLEET_TEST_MODE:-0}" = 1 ] && exit 0
 
 # --- 5. Sync vibes / skills / prompts / extension ----------------------------
 # sync also re-pins the extension tree's pi-ai/pi-tui to the (possibly just-updated)

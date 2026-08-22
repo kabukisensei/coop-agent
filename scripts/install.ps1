@@ -74,7 +74,8 @@ $PI_EXTENSIONS = @(
   'npm:pi-hermes-memory',     # persistent memory + session search + secret scanning
   'npm:pi-better-openai',     # plan usage limits (5h/7d) — shown in coop's footer
   'npm:pi-web-access',        # web search / URL fetch / GitHub clone / PDF / video (read-only)
-  'npm:@juicesharp/rpiv-ask-user-question'  # structured questions the model can ask (consent rounds)
+  'npm:@juicesharp/rpiv-ask-user-question', # structured questions the model can ask (consent rounds)
+  'npm:context-mode'
 )
 $PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')
 $FABRIC_PKG = 'ms-fabric-cli'
@@ -395,14 +396,13 @@ try {
     $spec = $ext
     if (-not $EDGE) {
       $pkg = if ($ext -match '^npm:(.+)$') { $matches[1] } else { $ext }
-      $key = if ($pkg -eq '@juicesharp/rpiv-ask-user-question') { 'rpiv_ask_user_question' } else { $pkg -replace '-', '_' }
-      $ver = Coop-ManifestGet -Key "extensions.$key"
-      if ($ver) { $spec = "npm:${pkg}@${ver}" }
+      $pinned = Coop-ManifestExtensionSpec $pkg
+      if ($pinned) { $spec = $pinned }
     }
     $extSpecs += $spec
   }
   $fabricTarget = if (-not $EDGE) { $tv = Coop-ManifestGet -Key "python_tools.$FABRIC_PKG"; if ($tv) { "${FABRIC_PKG}==${tv}" } else { $FABRIC_PKG } } else { $FABRIC_PKG }
-  $fabricCicd = if (-not $EDGE) { $tv = Coop-ManifestGet -Key 'python_tools.fabric_cicd'; if ($tv) { "fabric-cicd==${tv}" } else { 'fabric-cicd' } } else { 'fabric-cicd' }
+  $fabricCicd = if (-not $EDGE) { $tv = Coop-ManifestObjectGet 'python_tools' 'fabric-cicd'; if ($tv) { "fabric-cicd==${tv}" } else { 'fabric-cicd' } } else { 'fabric-cicd' }
   $pytoolTargets = @()
   foreach ($pkg in $PY_TOOLS) {
     $pytoolTargets += if (-not $EDGE) { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "${pkg}==${tv}" } else { $pkg } } else { $pkg }

@@ -22,6 +22,40 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 [ "$(coop_manifest_get extensions.pi-mcp-adapter)" = "2.10.0" ] && ok "coop_manifest_get extensions.pi-mcp-adapter" || ko "coop_manifest_get extensions.pi-mcp-adapter"
 [ "$(coop_manifest_get python_tools.coop-data-doc)" = "1.1.0" ] && ok "coop_manifest_get python_tools.coop-data-doc" || ko "coop_manifest_get python_tools.coop-data-doc"
 [ -z "$(coop_manifest_get missing.key)" ] && ok "coop_manifest_get missing key returns empty" || ko "missing key should return empty"
+[ "$(coop_manifest_extension_spec pi-mcp-adapter)" = "npm:pi-mcp-adapter@2.10.0" ] && ok "literal extension spec: pi-mcp-adapter" || ko "extension spec mismatch"
+[ "$(coop_manifest_extension_spec @juicesharp/rpiv-ask-user-question)" = "npm:@juicesharp/rpiv-ask-user-question@1.20.0" ] && ok "literal scoped extension spec" || ko "scoped extension spec mismatch"
+"$(command -v python3 2>/dev/null || command -v python)" - "$ROOT" <<'PY' || fail=1
+import json, pathlib, sys
+r=pathlib.Path(sys.argv[1]); m=json.load(open(r/'config/release-manifest.json'))
+assert m['coop_version']==(r/'VERSION').read_text().strip()
+for p in ['@microsoft/fabric-mcp','powerbi-mcp-server','@azure-devops/mcp','mcp-remote']:
+    assert p in m['mcp_servers']
+assert '@microsoft/powerbi-modeling-mcp' in m['npm_tools']
+for p in ['pi-mcp-adapter','pi-hermes-memory','pi-better-openai','pi-web-access','@juicesharp/rpiv-ask-user-question','context-mode']:
+    assert p in m['extensions']
+# Manifest is authoritative: every manifest fleet member must be referenced by its
+# runtime consumers, and every generated MCP package must resolve from the manifest.
+install=(r/'scripts/install.sh').read_text(); update=(r/'scripts/update.sh').read_text(); sync=(r/'scripts/sync.sh').read_text()
+for p in m['extensions']:
+    assert p in install and p in sync
+for p in m['python_tools']:
+    assert p in install or p in update
+for p in m['npm_tools']:
+    assert p in install and p in update
+import importlib.util
+spec=importlib.util.spec_from_file_location('mcp_config',r/'lib/mcp_config.py'); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+all_versions={**m['extensions'],**m['npm_tools'],**m['mcp_servers']}
+assert set(mod.SERVER_PACKAGES.values()) <= set(all_versions)
+assert json.load(open(r/'config/mcp.example.json'))['mcpServers']=={}
+# Any retained tested_with documentation must equal manifest, never own a second value.
+spec=importlib.util.spec_from_file_location('coop_yaml',r/'lib/_yaml.py'); y=importlib.util.module_from_spec(spec); spec.loader.exec_module(y)
+d=y._load_fallback((r/'config/defaults.yml').read_text()).get('tested_with',{})
+for key,pkg in [('pi',None),('coop_data_doc','coop-data-doc'),('coop_sql_review','coop-sql-review'),('coop_dax_review','coop-dax-review'),('ms_fabric_cli','ms-fabric-cli'),('fabric_cicd','fabric-cicd')]:
+    expected=m['pi']['version'] if pkg is None else m['python_tools'][pkg]
+    if key in d: assert str(d[key])==expected, (key,d[key],expected)
+PY
+[ "$fail" = 0 ] && ok "manifest version/package contract" || ko "manifest contract failed"
+if grep -q 'pi update --extensions' "$ROOT/scripts/update.sh" "$ROOT/scripts/update.ps1"; then ko "normal update still invokes pi update --extensions"; else ok "normal update has no unpinned extension update path"; fi
 
 # --- status classifier ----------------------------------------------------------
 [ "$(coop_manifest_status 0.80.2 0.80.2)" = "ok" ] && ok "status: exact match" || ko "status exact match"

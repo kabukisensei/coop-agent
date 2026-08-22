@@ -44,6 +44,21 @@ if (v !== undefined) console.log(String(v));
 " "$COOP_RELEASE_MANIFEST" "$key" 2>/dev/null
 }
 
+# Read a literal object key (package names may contain dots, slashes, @, or hyphens).
+coop_manifest_object_get() {
+  local object="$1" key="$2"
+  [ -f "$COOP_RELEASE_MANIFEST" ] || return 0
+  have node || return 0
+  COOP_MANIFEST_OBJECT="$object" COOP_MANIFEST_KEY="$key" node -e '
+const m=require(process.argv[1]); const o=m[process.env.COOP_MANIFEST_OBJECT];
+if (o && Object.prototype.hasOwnProperty.call(o, process.env.COOP_MANIFEST_KEY)) console.log(String(o[process.env.COOP_MANIFEST_KEY]));
+' "$COOP_RELEASE_MANIFEST" 2>/dev/null
+}
+coop_manifest_extension_spec() { local p="$1" v; v="$(coop_manifest_object_get extensions "$p")"; [ -n "$v" ] && printf 'npm:%s@%s' "$p" "$v"; }
+coop_manifest_python_spec() { local p="$1" v; v="$(coop_manifest_object_get python_tools "$p")"; [ -n "$v" ] && printf '%s==%s' "$p" "$v"; }
+coop_manifest_npm_tool_spec() { local p="$1" v; v="$(coop_manifest_object_get npm_tools "$p")"; [ -n "$v" ] && printf '%s@%s' "$p" "$v"; }
+coop_manifest_mcp_spec() { local p="$1" v; v="$(coop_manifest_object_get mcp_servers "$p")"; [ -n "$v" ] && printf '%s@%s' "$p" "$v"; }
+
 # Echo the keys of an object in the manifest (one per line), or nothing on missing/invalid.
 # Usage: coop_manifest_keys extensions
 coop_manifest_keys() {
@@ -79,6 +94,8 @@ coop_manifest_status() {
 [ -d "$HOME/.local/bin" ] && case ":$PATH:" in *":$HOME/.local/bin:"*) : ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
 [ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
 [ -d "/usr/local/bin" ] && case ":$PATH:" in *":/usr/local/bin:"*) : ;; *) PATH="/usr/local/bin:$PATH" ;; esac
+# Offline fleet tests explicitly re-prepend their stub bin after workstation PATH normalization.
+[ -n "${COOP_TEST_STUB_PATH:-}" ] && PATH="$COOP_TEST_STUB_PATH:$PATH"
 
 # --- Colors (respect NO_COLOR and non-TTY) -----------------------------------
 if [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != "dumb" ]; then
@@ -606,13 +623,17 @@ coop_user_profile_missing() {
   [ ! -f "${HOME:-}/.coop/user.json" ]
 }
 
-# First-run onboarding: run the wizard when interactive and no profile exists.
+coop_onboarding_missing() {
+  [ ! -f "${HOME:-}/.coop/user.json" ] || [ ! -f "${HOME:-}/.coop/config" ]
+}
+
+# First-run onboarding: run when either the profile or integration config is missing.
 # Returns 0 if onboarding ran (or was skipped because non-interactive), non-zero
 # if the wizard itself failed. Safe to call before launching pi.
 coop_maybe_onboard() {
-  if ! coop_user_profile_missing; then return 0; fi
+  if ! coop_onboarding_missing; then return 0; fi
   if [ ! -t 0 ]; then
-    coop_warn "No COOP profile found. Run: coop onboard"
+    coop_warn "COOP onboarding is incomplete (user.json or config missing). Run: coop onboard"
     return 0
   fi
   if [ "${COOP_NO_ONBOARD:-0}" = "1" ]; then return 0; fi

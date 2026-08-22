@@ -39,6 +39,7 @@ PI_EXTENSIONS=(
   "npm:pi-better-openai"      # plan usage limits (5h/7d) — shown in coop's footer
   "npm:pi-web-access"         # web search / URL fetch / GitHub clone / PDF / video (read-only)
   "npm:@juicesharp/rpiv-ask-user-question"  # structured questions the model can ask (consent rounds)
+  "npm:context-mode"        # context compaction MCP/extension
 )
 PY_TOOLS=( coop-data-doc coop-sql-review coop-dax-review )
 FABRIC_PKG="ms-fabric-cli"
@@ -91,17 +92,11 @@ _unit_pi() {
 }
 
 _unit_ext() {  # $1 = extension spec
-  local ext="$1" pkg="${1#npm:}"
-  local spec="$ext"
-  local manifest_key
-  case "$pkg" in
-    "@juicesharp/rpiv-ask-user-question") manifest_key="rpiv_ask_user_question" ;;
-    *) manifest_key="$(printf '%s' "$pkg" | tr '-' '_')" ;;
-  esac
+  local ext="$1" pkg="${1#npm:}" spec pinned
+  spec="$ext"
   if [ "$EDGE" != 1 ]; then
-    local ver
-    ver="$(coop_manifest_get "extensions.$manifest_key")"
-    [ -n "$ver" ] && spec="npm:${pkg}@${ver}"
+    pinned="$(coop_manifest_extension_spec "$pkg")"
+    [ -n "$pinned" ] && spec="$pinned"
   fi
   have pi || { printf 'skipped %s (pi not installed)' "$spec"; return 1; }
   if pi install "$spec" >/dev/null 2>&1; then printf '%s' "$spec"; return 0; fi
@@ -124,7 +119,7 @@ _unit_fabric() {
   local fcc="fabric-cicd"
   if [ "$EDGE" != 1 ]; then
     local fcc_ver
-    fcc_ver="$(coop_manifest_get "python_tools.fabric_cicd")"
+    fcc_ver="$(coop_manifest_object_get python_tools fabric-cicd)"
     [ -n "$fcc_ver" ] && fcc="fabric-cicd==${fcc_ver}"
   fi
   pipx inject "$FABRIC_PKG" "$fcc" >/dev/null 2>&1 || true
@@ -332,6 +327,7 @@ hash -r 2>/dev/null || true
 
 # Done with the install items — finalize the bar (leaves a permanent 100% line).
 coop_progress_end
+[ "${COOP_FLEET_TEST_MODE:-0}" = 1 ] && exit 0
 
 # --- 7. Put `coop` on PATH ---------------------------------------------------
 coop_head "7/8  Link 'coop' onto your PATH"

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "coop_version": "0.22.0",
+  "coop_version": "0.22.1",
   "node": {
     "min": "22.19.0"
   },
@@ -31,6 +31,7 @@
   "mcp_servers": {
     "@microsoft/fabric-mcp": "1.3.0",
     "powerbi-mcp-server": "0.1.0",
+    "@azure-devops/mcp": "2.9.0",
     "mcp-remote": "0.1.38"
   }
 }

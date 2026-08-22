@@ -18,7 +18,7 @@ $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
 
 # coop renders its own footer/splash — no third-party powerline footer.
-$CORE_EXTENSIONS = @('pi-mcp-adapter', 'pi-hermes-memory', 'pi-better-openai', 'pi-web-access', '@juicesharp/rpiv-ask-user-question')
+$CORE_EXTENSIONS = @('pi-mcp-adapter', 'pi-hermes-memory', 'pi-better-openai', 'pi-web-access', '@juicesharp/rpiv-ask-user-question', 'context-mode')
 $PI_AGENT = Get-CoopPiAgentDir
 $GLOBAL_AGENT = Join-Path $HOME '.pi\agent'
 
@@ -50,15 +50,12 @@ foreach ($f in @('auth.json', 'models.json')) {
 # --- 3. Core Pi extensions — installed INTO the isolated dir (idempotent) -----
 $env:PI_CODING_AGENT_DIR = $PI_AGENT
 if (Test-Have 'pi') {
-  $pilist = (& pi list 2>$null | Out-String)
   foreach ($ext in $CORE_EXTENSIONS) {
-    if ($pilist -match [regex]::Escape($ext)) {
-      Coop-Ok "$ext present (isolated)"
-    } else {
-      Coop-Info "installing $ext into coop's dir…"
-      & pi install "npm:$ext" > $null 2>&1
-      if ($LASTEXITCODE -eq 0) { Coop-Ok "$ext installed" } else { Coop-Warn "could not install $ext" }
-    }
+    $extSpec = Coop-ManifestExtensionSpec $ext
+    if (-not $extSpec) { Coop-Warn "manifest pin missing for $ext"; continue }
+    Coop-Info "converging $ext to the release pin…"
+    & pi install $extSpec > $null 2>&1
+    if ($LASTEXITCODE -eq 0) { Coop-Ok "$ext pinned (isolated)" } else { Coop-Warn "could not pin $ext" }
   }
   # Share one pi-ai/pi-tui with the agent (else pi-web-access's 0.80 `/compat`
   # import breaks against pi-mcp-adapter's hoisted 0.74.x). Idempotent.
@@ -67,34 +64,15 @@ if (Test-Have 'pi') {
   Coop-Warn 'pi not installed — skipping extension sync (run: coop install)'
 }
 
-# --- 4. MCP config (read-only) into the isolated dir — non-destructive --------
-$MCP_SRC = Join-Path $script:CoopRoot 'config\mcp.example.json'
+# --- 4. MCP config — manifest-pinned, ownership-aware, non-destructive --------
 $MCP_DST = Join-Path $PI_AGENT 'mcp.json'
-if (Test-Path -LiteralPath $MCP_SRC -PathType Leaf) {
-  if (Test-Path -LiteralPath $MCP_DST -PathType Leaf) {
-    Coop-Ok "MCP config already exists: $MCP_DST"
-    # Non-destructively ADD any servers new in the example but missing here (the plain
-    # copy below only runs on a fresh install, so updates would otherwise never pick up
-    # newly-shipped MCP servers). Existing entries — and their tenant ids — are untouched.
-    $mcpPy = Get-CoopPython
-    $mcpMerge = Join-Path $script:CoopRoot 'lib/_mcpmerge.py'
-    if ($mcpPy -and (Test-Path -LiteralPath $mcpMerge -PathType Leaf)) {
-      $mcpAdded = (& $mcpPy $mcpMerge $MCP_SRC $MCP_DST 2>$null)
-      if ($mcpAdded) {
-        Coop-Ok "added missing MCP server(s): $((@($mcpAdded) | Where-Object { $_ }) -join ' ')"
-        Coop-Warn "New MCP server(s) may carry TODO org/tenant placeholders — edit $MCP_DST."
-      }
-    }
-  } else {
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $MCP_DST) | Out-Null
-    Copy-Item -LiteralPath $MCP_SRC -Destination $MCP_DST
-    if (Test-Path -LiteralPath $MCP_DST -PathType Leaf) {
-      Coop-Ok "wrote read-only MCP config -> $MCP_DST"
-      Coop-Warn "Edit $MCP_DST and set your tenant id where marked TODO."
-    }
-  }
+$mcpPy = Get-CoopPython
+if ($mcpPy) {
+  & $mcpPy (Join-Path $script:CoopRoot 'lib\mcp_config.py') --output $MCP_DST
+  if ($LASTEXITCODE -eq 0) { Coop-Ok "generated manifest-pinned MCP config -> $MCP_DST" }
+  else { Coop-Warn 'could not generate MCP config — run: coop onboard --edit, then coop sync' }
 } else {
-  Coop-Warn 'config/mcp.example.json missing — cannot sync MCP servers'
+  Coop-Warn 'python missing — cannot generate MCP config'
 }
 
 # --- 5. Brand assets ---------------------------------------------------------
