@@ -49,32 +49,29 @@ exit 0
 EOF
 chmod +x "$TMP/stubbin/coop-data-doc"
 
-# Windows Python subprocess needs an executable extension (.bat) for PATH lookup.
-cat > "$TMP/stubbin/coop-data-doc.bat" <<'EOF'
-@echo off
-type nul > "%COOP_SETUP_MARKER%"
-exit /b 0
-EOF
+# Windows Python subprocess resolves by extension; provide a .bat twin.
+# Use CRLF so cmd.exe parses the batch file reliably on Windows runners.
+printf '@echo off\r\ntype nul > "%%COOP_SETUP_MARKER%%"\r\nexit /b 0\r\n' > "$TMP/stubbin/coop-data-doc.bat"
 
 # Feed the 8 wizard answers + "y" for the lineage offer (9th prompt).
 answers "Cooptimize" "Test Client" "" "" "" "" "" "no" "y" | \
-  COOP_SETUP_MARKER="$TMP/setup-marker" \
+  COOP_SETUP_MARKER=setup-marker \
   PATH="$TMP/stubbin:$PATH" \
   HOME="$TMP" \
   "$PY" "$ROOT/lib/init_wizard.py" "$TMP/repo2" >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "wizard exits 0 with lineage offer accepted" || ko "wizard exit: $rc"
 [ -f "$TMP/repo2/.coop/project.yml" ] && ok "project.yml created (lineage path)" || ko "project.yml missing (lineage path)"
-[ -f "$TMP/setup-marker" ] && ok "coop-data-doc setup was invoked" || ko "coop-data-doc setup NOT invoked"
+[ -f "$TMP/repo2/setup-marker" ] && ok "coop-data-doc setup was invoked" || ko "coop-data-doc setup NOT invoked"
 
 # --- lineage offer declined → no coop-data-doc invocation ----------------------
 answers "Cooptimize" "Test Client" "" "" "" "" "" "no" "n" | \
-  COOP_SETUP_MARKER="$TMP/setup-marker2" \
+  COOP_SETUP_MARKER=setup-marker2 \
   PATH="$TMP/stubbin:$PATH" \
   HOME="$TMP" \
   "$PY" "$ROOT/lib/init_wizard.py" "$TMP/repo3" >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "wizard exits 0 with lineage offer declined" || ko "wizard exit: $rc"
-[ ! -f "$TMP/setup-marker2" ] && ok "coop-data-doc setup NOT invoked when declined" || ko "coop-data-doc setup invoked despite decline"
+[ ! -f "$TMP/repo3/setup-marker2" ] && ok "coop-data-doc setup NOT invoked when declined" || ko "coop-data-doc setup invoked despite decline"
 
 exit $fail
