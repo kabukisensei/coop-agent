@@ -571,6 +571,7 @@ coop_init() {
   [ -e "$dst" ] && coop_die "$dst already exists — not overwriting.  (seed coop-data-doc.yml from it with: coop init --seed-docs)"
   local py; py="$(coop_python)" || coop_die "python3 is required for: coop init"
   if [ "$template" = 1 ]; then
+    mkdir -p "$dir/.coop"
     "$py" "$COOP_ROOT/lib/init_wizard.py" "$dir" --template > "$dst"
   else
     "$py" "$COOP_ROOT/lib/init_wizard.py" "$dir" || return $?
@@ -580,7 +581,7 @@ coop_init() {
     coop_info "Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor"
   fi
   coop_info "Once repositories: is filled, seed the lineage-docs config from it: coop init --seed-docs"
-  coop_info "Or set up lineage docs interactively: \`coop data-doc setup\` (full wizard) — or launch \`coop\` and accept the /setup-docs offer."
+  coop_info "Run the same native lineage wizard via \`coop data-doc setup\` or /setup-docs inside coop."
 }
 
 # Seed coop-data-doc.yml's repos: from the contract's repositories: (issue #25) —

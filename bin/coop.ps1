@@ -639,6 +639,7 @@ function Invoke-CoopInit {
   $py = Get-CoopPython
   if (-not $py) { Coop-Die 'python3 is required for: coop init' }
   if ($template) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $dir '.coop') | Out-Null
     & $py "$script:CoopRoot\lib\init_wizard.py" "$dir" --template > "$dst"
   } else {
     & $py "$script:CoopRoot\lib\init_wizard.py" "$dir"
@@ -649,7 +650,7 @@ function Invoke-CoopInit {
     Coop-Info 'Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor'
   }
   Coop-Info 'Once repositories: is filled, seed the lineage-docs config from it: coop init --seed-docs'
-  Coop-Info 'Or set up lineage docs interactively: `coop data-doc setup` (full wizard) — or launch `coop` and accept the /setup-docs offer.'
+  Coop-Info 'Run the same native lineage wizard via `coop data-doc setup` or /setup-docs inside coop.'
 }
 
 # Seed coop-data-doc.yml's repos: from the contract's repositories: (issue #25) —

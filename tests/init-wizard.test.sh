@@ -20,7 +20,7 @@ answers() {
 
 # --- guided wizard generates a usable project.yml -------------------------------
 answers \
-  "Cooptimize" "Test Client" "" "" "" "" "" "no" | \
+  "Cooptimize" "Test Client" "" "" "" "" "" "n" "no" "no" "n" | \
   HOME="$TMP" "$PY" "$ROOT/lib/init_wizard.py" "$TMP/repo" >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "wizard exits 0" || ko "wizard exit: $rc"
@@ -28,14 +28,14 @@ rc=$?
 
 # --- yaml contains discovered/prefilled values ----------------------------------
 text="$(cat "$TMP/repo/.coop/project.yml")"
-case "$text" in *"organization: Cooptimize"*) ok "organization written" ;; *) ko "organization missing" ;; esac
-case "$text" in *"client: \"Test Client\""*) ok "client written" ;; *) ko "client missing" ;; esac
+case "$text" in *"organization: 'Cooptimize'"*) ok "organization written" ;; *) ko "organization missing" ;; esac
+case "$text" in *"client: 'Test Client'"*) ok "client written" ;; *) ko "client missing" ;; esac
 case "$text" in *"enabled: false"*) ok "Fabric disabled when declined" ;; *) ko "Fabric should be disabled" ;; esac
 case "$text" in *"coop_data_doc:"*) ok "data_doc tool written" ;; *) ko "data_doc missing" ;; esac
 
 # --- legacy --template still works --------------------------------------------
-mkdir -p "$TMP/legacy/.coop"
-HOME="$TMP" "$PY" "$ROOT/lib/init_wizard.py" "$TMP/legacy" --template > "$TMP/legacy/.coop/project.yml" 2>/dev/null
+mkdir -p "$TMP/legacy"
+HOME="$TMP" bash "$ROOT/bin/coop" init --template "$TMP/legacy" >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "--template exits 0" || ko "--template exit: $rc"
 [ -s "$TMP/legacy/.coop/project.yml" ] && ok "--template produced output" || ko "--template output empty"
@@ -44,14 +44,16 @@ rc=$?
 mkdir -p "$TMP/stubbin"
 cat > "$TMP/stubbin/coop-data-doc" <<'EOF'
 #!/bin/sh
-printf 'stub coop-data-doc invoked: %s\n' "$*" > "$COOP_SETUP_MARKER"
+printf '%s\n' "$*" >> "$COOP_SETUP_MARKER.calls"
+if [ "$1" = "config-set" ]; then cat > "$COOP_SETUP_MARKER.patch"; fi
 exit 0
 EOF
 chmod +x "$TMP/stubbin/coop-data-doc"
 
-# Windows Python subprocess resolves by extension; provide a .bat twin.
+# Windows Python subprocess resolves by extension; provide a .bat twin that
+# mirrors the sh stub (records invocations; captures config-set stdin patch).
 # Use CRLF so cmd.exe parses the batch file reliably on Windows runners.
-printf '@echo off\r\ntype nul > "%%COOP_SETUP_MARKER%%"\r\nexit /b 0\r\n' > "$TMP/stubbin/coop-data-doc.bat"
+printf '@echo off\r\necho %%* >> "%%COOP_SETUP_MARKER%%.calls"\r\nif "%%1"=="config-set" findstr . > "%%COOP_SETUP_MARKER%%.patch"\r\nexit /b 0\r\n' > "$TMP/stubbin/coop-data-doc.bat"
 
 # init_wizard.py honors COOP_DATA_DOC_BIN so tests can point it at the stub
 # without relying on PATH/extension resolution across Linux/Git-Bash/Windows.
@@ -62,8 +64,8 @@ else
 fi
 export COOP_DATA_DOC_BIN
 
-# Feed the 8 wizard answers + "y" for the lineage offer (9th prompt).
-answers "Cooptimize" "Test Client" "" "" "" "" "" "no" "y" | \
+# Explicit SQL role guarantees config-set seeding before native setup.
+answers "Cooptimize" "Test Client" "" "" "" "" "" "sql" "n" "no" "no" "y" | \
   COOP_SETUP_MARKER=setup-marker \
   COOP_DATA_DOC_BIN="$COOP_DATA_DOC_BIN" \
   HOME="$TMP" \
@@ -76,16 +78,28 @@ echo "DEBUG: accepted.out:" >&2
 cat "$TMP/accepted.out" >&2 || true
 [ "$rc" -eq 0 ] && ok "wizard exits 0 with lineage offer accepted" || ko "wizard exit: $rc"
 [ -f "$TMP/repo2/.coop/project.yml" ] && ok "project.yml created (lineage path)" || ko "project.yml missing (lineage path)"
-[ -f "$TMP/repo2/setup-marker" ] && ok "coop-data-doc setup was invoked" || ko "coop-data-doc setup NOT invoked"
+case "$(cat "$TMP/repo2/setup-marker.calls" 2>/dev/null)" in *"config-set"*"setup"*) ok "config-set ran before native setup" ;; *) ko "lineage invocation order incorrect" ;; esac
+"$PY" - "$TMP/repo2/setup-marker.patch" "$TMP/repo2" <<'PY'
+import json,sys
+from pathlib import Path
+p=json.load(open(sys.argv[1])); assert Path(p['repos']['sql']['path']).resolve()==Path(sys.argv[2]).resolve()
+PY
+[ "$?" -eq 0 ] && ok "seed patch contains the entered SQL path" || ko "seed patch missing entered path"
 
 # --- lineage offer declined → no coop-data-doc invocation ----------------------
-answers "Cooptimize" "Test Client" "" "" "" "" "" "no" "n" | \
+answers "Cooptimize" "Test Client" "" "" "" "" "" "generic" "n" "no" "no" "n" | \
   COOP_SETUP_MARKER=setup-marker2 \
   COOP_DATA_DOC_BIN="$COOP_DATA_DOC_BIN" \
   HOME="$TMP" \
   "$PY" "$ROOT/lib/init_wizard.py" "$TMP/repo3" >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "wizard exits 0 with lineage offer declined" || ko "wizard exit: $rc"
-[ ! -f "$TMP/repo3/setup-marker2" ] && ok "coop-data-doc setup NOT invoked when declined" || ko "coop-data-doc setup invoked despite decline"
+[ ! -f "$TMP/repo3/setup-marker2.calls" ] && ok "coop-data-doc setup NOT invoked when declined" || ko "coop-data-doc setup invoked despite decline"
+
+# Tabular Editor CLI captures both executable and BPA rules path.
+answers "Cooptimize" "BPA Client" "" "" "" "" "" "generic" "n" "no" "yes" "/custom/te" "/rules/BPARules.json" "n" | \
+  HOME="$TMP" "$PY" "$ROOT/lib/init_wizard.py" "$TMP/repo4" >/dev/null 2>&1
+text="$(cat "$TMP/repo4/.coop/project.yml")"
+case "$text" in *"executable_path: '/custom/te'"*"bpa_rules_path: '/rules/BPARules.json'"*) ok "Tabular Editor executable and BPA rules captured" ;; *) ko "Tabular Editor config incomplete" ;; esac
 
 exit $fail

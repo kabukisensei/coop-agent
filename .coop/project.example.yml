@@ -90,7 +90,7 @@ tools:
     default_mode: "validate_only"
   tabular_editor_cli:
     enabled: false
-    executable_path: "TODO: C:/Program Files/Tabular Editor 3/TabularEditor.exe"
+    executable_path: "te"
     bpa_rules_path: "TODO: path/to/BPARules.json"
   coop_data_doc:
     command: "coop-data-doc"
@@ -109,8 +109,7 @@ tools:
     advisory_only: true
 
 # --- MCP servers (all read-only, all optional) -------------------------------
-# Wired via pi-mcp-adapter from coop's isolated agent dir (~/.coop/agent/mcp.json;
-# placed non-destructively by `coop sync` from config/mcp.example.json).
+# Generated as manifest-pinned managed entries from ~/.coop/config by `coop sync`.
 # coop NEVER performs write/create/update/delete/deploy MCP actions without
 # explicit user approval, regardless of server capability.
 mcp:

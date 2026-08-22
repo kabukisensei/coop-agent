@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -67,15 +68,8 @@ def discover_tenant() -> str:
 
 
 def discover_te_path() -> str:
-    # Tabular Editor 3 default Windows install path; empty if not found.
-    candidates = [
-        Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Tabular Editor 3" / "TabularEditor.exe",
-        Path(os.environ.get("PROGRAMFILES(x86)", "C:/Program Files (x86)")) / "Tabular Editor 3" / "TabularEditor.exe",
-    ]
-    for c in candidates:
-        if c.exists():
-            return str(c)
-    return ""
+    """Return the current cross-platform Tabular Editor CLI command/path."""
+    return shutil.which("te") or "te"
 
 
 def read_input(prompt: str, default: str = "") -> str:
@@ -129,12 +123,8 @@ def indent(lines: list[str], spaces: int = 2) -> str:
 
 
 def quote(v: str) -> str:
-    if not v:
-        return '""'
-    if re.search(r'[\s:\\\'"]', v):
-        v = v.replace('"', '\\"')
-        return f'"{v}"'
-    return v
+    """Dependency-free YAML scalar; single quotes preserve Windows backslashes."""
+    return "'" + str(v).replace("'", "''") + "'"
 
 
 def ask_prefilled(prompt: str, default: str) -> str:
@@ -153,26 +143,26 @@ def build_project_yml(answers: dict) -> str:
     lines.append("")
 
     lines.append("repositories:")
-    lines.append(f"  {answers['repo_name']}:")
-    lines.append(f"    description: {quote(answers['repo_description'])}")
-    lines.append(f"    local_path: {quote(answers['repo_local_path'])}")
-    lines.append(f"    remote_name: {quote(answers['repo_remote_name'])}")
-    lines.append(f"    default_branch: {quote(answers['default_branch'])}")
-    lines.append("    agent_allowed_to_commit:")
-    lines.append("      - \"docs/**\"")
-    lines.append("      - \"site/**\"")
-    lines.append("      - \"docs/agent/logs/**\"")
-    lines.append("      - \"docs/agent/diagrams/**\"")
-    lines.append("    agent_never_commit:")
-    lines.append("      - \"**/*.pbip\"")
-    lines.append("      - \"**/*.pbir\"")
-    lines.append("      - \"**/*.bim\"")
-    lines.append("      - \"**/*.tmdl\"")
-    lines.append("      - \"**/*.dax\"")
-    lines.append("      - \"**/*.json\"")
-    lines.append("      - \"**/*.rdl\"")
-    lines.append("      - \"**/*.SemanticModel/**\"")
-    lines.append("      - \"**/*.Report/**\"")
+    repositories = answers.get("repositories") or [{
+        "name": answers["repo_name"], "description": answers["repo_description"],
+        "local_path": answers["repo_local_path"], "remote_name": answers["repo_remote_name"],
+        "default_branch": answers["default_branch"],
+    }]
+    for repo in repositories:
+        lines.append(f"  {quote(repo['name'])}:")
+        lines.append(f"    description: {quote(repo['description'])}")
+        lines.append(f"    role: {quote(repo.get('role', 'generic'))}")
+        lines.append(f"    local_path: {quote(repo['local_path'])}")
+        lines.append(f"    remote_name: {quote(repo.get('remote_name', 'origin'))}")
+        lines.append(f"    default_branch: {quote(repo.get('default_branch', answers['default_branch']))}")
+        lines.append("    agent_allowed_to_commit:")
+        lines.append("      - 'docs/**'")
+        lines.append("      - 'site/**'")
+        lines.append("      - 'docs/agent/logs/**'")
+        lines.append("      - 'docs/agent/diagrams/**'")
+        lines.append("    agent_never_commit:")
+        for pattern in ("**/*.pbip", "**/*.pbir", "**/*.bim", "**/*.tmdl", "**/*.dax", "**/*.json", "**/*.rdl", "**/*.SemanticModel/**", "**/*.Report/**"):
+            lines.append(f"      - {quote(pattern)}")
     lines.append("")
 
     if answers.get("use_fabric"):
@@ -213,7 +203,7 @@ def build_project_yml(answers: dict) -> str:
     if te_enabled:
         te_path = answers.get("te_path", "")
         lines.append(f"    executable_path: {quote(te_path)}")
-        lines.append("    bpa_rules_path: \"\"")
+        lines.append(f"    bpa_rules_path: {quote(answers.get('bpa_rules_path', ''))}")
 
     lines.append("  coop_data_doc:")
     lines.append("    command: coop-data-doc")
@@ -367,18 +357,27 @@ def run_wizard(target_dir: Path) -> dict:
     repo_description = ask_prefilled("Repository description", "Project source and docs")
     repo_local_path = ask_prefilled("Repository local path", repo_root)
     default_branch = ask_prefilled("Default branch", default_branch)
+    repo_role = read_choice("Repository role for lineage setup", ["sql", "powerbi", "generic"], default="generic")
+    repositories = [{"name": repo_name, "description": repo_description, "role": repo_role, "local_path": repo_local_path, "remote_name": "origin", "default_branch": default_branch}]
+    while read_confirm("Add another repository?", default=False):
+        extra_path = ask_prefilled("Additional repository local path", "")
+        extra_name = ask_prefilled("Additional repository short name", Path(extra_path).name or f"repo{len(repositories)+1}")
+        extra_description = ask_prefilled("Additional repository description", "Project source and docs")
+        extra_branch = ask_prefilled("Additional repository default branch", "main")
+        extra_role = read_choice("Additional repository role", ["sql", "powerbi", "generic"], default="generic")
+        repositories.append({"name": extra_name, "description": extra_description, "role": extra_role, "local_path": extra_path, "remote_name": "origin", "default_branch": extra_branch})
 
     use_fabric = read_confirm("Is this a Microsoft Fabric / Power BI engagement?", default=False)
     tenant_id = ""
     if use_fabric:
         tenant_id = ask_prefilled("Azure tenant ID (optional)", discover_tenant())
 
-    use_tabular_editor = False
+    use_tabular_editor = read_confirm("Use Tabular Editor CLI for BPA?", default=False)
     te_path = ""
-    if sys.platform == "win32":
-        use_tabular_editor = read_confirm("Use Tabular Editor 3 for BPA rules?", default=False)
-        if use_tabular_editor:
-            te_path = ask_prefilled("Tabular Editor 3 executable path", discover_te_path())
+    bpa_rules_path = ""
+    if use_tabular_editor:
+        te_path = ask_prefilled("Tabular Editor CLI command or executable path", discover_te_path())
+        bpa_rules_path = ask_prefilled("BPA rules file path (optional)", "")
 
     setup_lineage = read_confirm("Configure SQL + Power BI lineage docs now? (runs `coop-data-doc setup`)", default=False)
 
@@ -391,29 +390,40 @@ def run_wizard(target_dir: Path) -> dict:
         "repo_description": repo_description,
         "repo_local_path": repo_local_path,
         "repo_remote_name": "origin",
+        "repositories": repositories,
         "use_fabric": use_fabric,
         "tenant_id": tenant_id,
         "use_tabular_editor": use_tabular_editor,
         "te_path": te_path,
+        "bpa_rules_path": bpa_rules_path,
         "setup_lineage": setup_lineage,
     }
 
 
 def run_lineage_setup(target: Path) -> None:
-    """The user accepted the lineage-docs offer: run the coop-data-doc wizard.
-
-    Inherits the terminal (no capture) so coop-data-doc's questionary prompts
-    render; a missing binary or non-TTY run degrades to a friendly hint.
-    """
-    sys.stderr.write("\nLaunching coop-data-doc setup (Ctrl-C to skip)…\n")
+    """Seed project repository paths, then launch the authoritative wizard."""
+    sys.stderr.write("\nSeeding repository paths, then launching coop-data-doc setup (Ctrl-C to skip)…\n")
     try:
         cmd = os.environ.get("COOP_DATA_DOC_BIN", "coop-data-doc")
         # On Windows, .bat/.cmd files can't be executed via CreateProcess directly;
         # route them through cmd.exe so PATH/PATHEXT resolution isn't needed.
-        if sys.platform == "win32" and cmd.lower().endswith((".bat", ".cmd")):
-            subprocess.run(["cmd.exe", "/c", cmd, "setup"], cwd=target)
-        else:
-            subprocess.run([cmd, "setup"], cwd=target)
+        def _argv(sub: str):
+            if sys.platform == "win32" and cmd.lower().endswith((".bat", ".cmd")):
+                return ["cmd.exe", "/c", cmd, sub]
+            return [cmd, sub]
+        helper = Path(__file__).resolve().parent / "_seeddocs.py"
+        patch = subprocess.run([sys.executable, str(helper), str(target / ".coop" / "project.yml")], capture_output=True, text=True)
+        if patch.returncode != 0 or not patch.stdout.strip():
+            sys.stderr.write("Lineage setup was not launched because repository roles/paths could not be seeded. Re-run `coop init --seed-docs` after fixing them.\n")
+            return
+        seeded = subprocess.run(
+            _argv("config-set") + ["--config", str(target / "coop-data-doc.yml"), "--from-json", "-"],
+            cwd=target, input=patch.stdout, text=True,
+        )
+        if seeded.returncode != 0:
+            sys.stderr.write("Lineage setup was not launched because config-set could not seed repository paths.\n")
+            return
+        subprocess.run(_argv("setup"), cwd=target)
     except FileNotFoundError:
         sys.stderr.write("coop-data-doc isn't installed — run `coop install`, then `coop data-doc setup`.\n")
     except Exception as exc:

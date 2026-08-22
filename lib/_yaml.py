@@ -40,7 +40,9 @@ def _strip_comment(line):
 
 def _unquote(s):
     s = s.strip()
-    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+    if len(s) >= 2 and s[0] == s[-1] == "'":
+        return s[1:-1].replace("''", "'")
+    if len(s) >= 2 and s[0] == s[-1] == '"':
         return s[1:-1]
     return s
 
@@ -92,7 +94,9 @@ def _split_first_colon(s):
 
 def _parse_scalar(s):
     s = s.strip()
-    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+    if len(s) >= 2 and s[0] == s[-1] == "'":
+        return s[1:-1].replace("''", "'")  # YAML single-quote escaping
+    if len(s) >= 2 and s[0] == s[-1] == '"':
         return s[1:-1]                       # quoted → always a literal string
     if s.lower() in ('null', '~'):
         return None                          # match PyYAML: bare null/~ → None

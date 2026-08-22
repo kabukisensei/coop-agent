@@ -43,6 +43,11 @@ def is_todo(value):
 
 
 def classify(name, entry):
+    role = str(entry.get('role') or '').strip().lower().replace('_', '')
+    if role in ('sql', 'powerbi'):
+        return role
+    if role == 'generic':
+        return None
     text = '{} {}'.format(name, entry.get('description') or '')
     if 'sql_root' in entry or SQL_HINT.search(text):
         return 'sql'
