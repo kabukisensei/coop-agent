@@ -391,7 +391,7 @@ def measure_extensions(extensions_dir: Path) -> dict:
 def measure_guardrails(guardrails_path: Path, repo_root: Path) -> dict:
     chars = len(read_text(guardrails_path))
     return {
-        "path": str(guardrails_path.relative_to(repo_root) if guardrails_path.is_file() else guardrails_path),
+        "path": str(guardrails_path.relative_to(repo_root).as_posix()) if guardrails_path.is_file() else str(guardrails_path.as_posix() if isinstance(guardrails_path, Path) else guardrails_path),
         "chars": chars,
         "bytes": read_bytes(guardrails_path),
         "estimated_tokens": estimate_tokens(chars),
@@ -479,20 +479,20 @@ def main() -> int:
             "estimated_tokens": estimate_tokens(profile["instruction_chars"]),
         },
         "project_instructions": {
-            "path": str(proj_path) if proj_path else None,
+            "path": proj_path.as_posix() if proj_path else None,
             "present": proj_path is not None,
             "chars": proj_chars,
             "estimated_tokens": proj_tokens,
         },
         "skills": {
-            "dir": str(skills_dir.relative_to(repo_root)),
+            "dir": skills_dir.relative_to(repo_root).as_posix(),
             "count": skills["count"],
             "description_chars": skills["description_chars"],
             "estimated_tokens": skills["estimated_tokens"],
             "entries": skills["entries"],
         },
         "native_tools": {
-            "file": native_tools["file"],
+            "file": Path(native_tools["file"]).as_posix(),
             "count": native_tools["count"],
             "schema_chars": native_tools["schema_chars"],
             "estimated_tokens": native_tools["estimated_tokens"],
@@ -506,7 +506,7 @@ def main() -> int:
         },
         "on_demand_inventory": {
             "prompts": {
-                "dir": str(prompts_dir.relative_to(repo_root)),
+                "dir": prompts_dir.relative_to(repo_root).as_posix(),
                 "count": prompts["count"],
                 "chars": prompts["chars"],
                 "estimated_tokens": prompts["estimated_tokens"],
