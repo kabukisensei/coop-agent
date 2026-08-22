@@ -10,6 +10,27 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - Made install/update/sync and generated MCP entries manifest-pinned; Modeling MCP starts read-only.
 - Unified `/setup-docs` on the native JSONL wizard and hardened onboarding, profile, and project init.
 
+### Security
+- Hard-blocked `git commit --amend` and `--pathspec-from-file` / `--pathspec-file-nul` commit forms.
+- Closed a bypass where quoting or splitting the command name (`"git"`, `"gi"t`) evaded all Git
+  enforcement; commands merely mentioning git as an argument (`grep git README.md`) are no longer
+  falsely blocked. `rm -rf` classification is segment-scoped.
+
+### Changed
+- Repository governance policy is snapshotted once per session: in-session edits to
+  `.coop/project.yml` cannot weaken active guardrails, sibling repositories resolve their
+  configured policies from the session contract, and `.coop/project.yml` itself is no longer
+  agent-committable by default.
+- `coop update` has two fleet modes: normal pins everything to the release manifest (no registry
+  queries or prompts); `--edge` is the only latest/upstream mode. The tested-version gates,
+  their prompts, and `--pi-latest` (deprecated alias for `--edge`) are removed.
+- `coop doctor` verifies every managed extension against its exact manifest pin and requires
+  BOTH `--start` and `--readonly` to report Power BI Modeling MCP healthy.
+- `context-mode` has one ownership path: native Pi extension only (no duplicate MCP server).
+- Onboarding reports MCP-generation failures cleanly instead of tracebacking after saving config.
+- Requires `coop-data-doc` 1.1.1 (JSONL protocol v1.1: hello handshake, typed answers, atomic
+  config write); the setup bridge accepts the hello event.
+
 ## [0.22.1] — 2026-08-20
 
 ### Changed

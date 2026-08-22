@@ -136,14 +136,19 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      auto-installed; set `tools.tabular_editor_cli.executable_path` in
      `.coop/project.yml`.
 
-7. **Read-only MCP servers** (all optional; `coop` runs without them). Preloaded
-   as manifest-pinned managed entries in coop's isolated agent dir
+7. **Read-only MCP servers** (all optional; `coop` runs without them). Generated as
+   manifest-pinned, COOP-managed entries in coop's isolated agent dir
    (`~/.coop/agent/mcp.json`) by `coop onboard` / `coop sync`:
    - `fabric` — `@microsoft/fabric-mcp` (AzureCliCredential).
-   - `powerbi` — `powerbi-mcp-server --readonly`.
+   - `powerbi` — `powerbi-mcp-server --readonly` (tenant-gated: omitted until an
+     Azure tenant is configured).
+   - `powerbi-modeling-mcp` — `@microsoft/powerbi-modeling-mcp --start --readonly`.
+   - `azure-devops` — `@azure-devops/mcp <org>` (organization-gated).
    - `microsoft-learn` — `learn.microsoft.com/api/mcp` via `mcp-remote`
      (always-current Microsoft docs).
-   - `context-mode` — `npx -y context-mode` (intent-driven search + sandboxed exec).
+
+   (`context-mode` is NOT an MCP server — it is a native Pi extension from the
+   release-manifest `extensions` list; one ownership path only.)
 
    `coop` **never** performs write/create/update/delete/deploy/publish MCP
    actions without explicit approval, regardless of server capability.
