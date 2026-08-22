@@ -373,9 +373,9 @@ D-Head 'MCP servers (read-only, optional)'
 $mcpFound = ''
 $cwd = (Get-Location).Path
 foreach ($f in @(
-    (Join-Path $env:PI_CODING_AGENT_DIR 'mcp.json'),
     (Join-Path $cwd '.mcp.json'),
     (Join-Path $cwd '.pi\mcp.json'),
+    (Join-Path $env:PI_CODING_AGENT_DIR 'mcp.json'),
     (Join-Path $HOME '.config\mcp\mcp.json'),
     (Join-Path $HOME '.pi\mcp-config\mcp.json'))) {
   if (Test-Path -LiteralPath $f -PathType Leaf) { $mcpFound = $f; break }
@@ -405,9 +405,7 @@ if ($mcpFound) {
   if ($mcpText -notmatch '(?i)learn\.microsoft\.com|microsoft-learn') {
     D-Warn '  Microsoft Learn MCP not configured' 'coop sync   (adds it read-only)'
   }
-  # A synced mcp.json still carries TODO-tenant-id / TODO-org-name seeds (from
-  # config/mcp.example.json) until the user fills them in — mirror the project.yml
-  # TODO check so a placeholder config never reads as fully green.
+  # Legacy/unmanaged placeholders remain actionable; generated COOP entries never contain TODOs.
   $mcpTodo = 0
   $mcpLines = (Get-Content -LiteralPath $mcpFound -ErrorAction SilentlyContinue)
   if ($mcpLines) { $mcpTodo = ($mcpLines | Select-String -Pattern 'TODO-' -SimpleMatch).Count }

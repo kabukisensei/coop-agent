@@ -1,7 +1,6 @@
-# coop-agent internal defaults — the single reference for what coop installs and
-# wires. Human-readable; the install/update/doctor scripts keep their own copy of
-# these lists (bash arrays) in sync with this file. Editing here documents intent;
-# edit the matching arrays in scripts/ to change behavior.
+# coop-agent human-readable behavior defaults. Runtime package/version pins live
+# only in config/release-manifest.json; CI checks any tested_with documentation below
+# against that manifest.
 
 agent:
   name: coop
@@ -87,7 +86,7 @@ tabular_editor_cli:
 # SANDBOXED code over the docs/graph (not client data) to save context — pinned, and
 # still subject to Pi's tool approval.
 mcp:
-  config_example: config/mcp.example.json
+  generator: lib/mcp_config.py
   install_target: "~/.coop/agent/mcp.json"
   servers:
     - name: fabric          # @microsoft/fabric-mcp (AzureCliCredential)

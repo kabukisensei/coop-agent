@@ -279,7 +279,7 @@ fi
 
 section "MCP servers (read-only, optional)"
 mcp_found=""
-for f in "$PI_CODING_AGENT_DIR/mcp.json" "$PWD/.mcp.json" "$PWD/.pi/mcp.json" "$HOME/.config/mcp/mcp.json" "$HOME/.pi/mcp-config/mcp.json"; do
+for f in "$PWD/.mcp.json" "$PWD/.pi/mcp.json" "$PI_CODING_AGENT_DIR/mcp.json" "$HOME/.config/mcp/mcp.json" "$HOME/.pi/mcp-config/mcp.json"; do
   [ -f "$f" ] && { mcp_found="$f"; break; }
 done
 if [ -n "$mcp_found" ]; then
@@ -302,9 +302,7 @@ if [ -n "$mcp_found" ]; then
     fi
   done
   grep -qiE 'learn\.microsoft\.com|microsoft-learn' "$mcp_found" 2>/dev/null || warn "  Microsoft Learn MCP not configured" "coop sync   (adds it read-only)"
-  # A synced mcp.json still carries TODO-tenant-id / TODO-org-name seeds (from
-  # config/mcp.example.json) until the user fills them in — mirror the project.yml
-  # TODO check so a placeholder config never reads as fully green.
+  # Legacy/unmanaged placeholder configs remain actionable; generated COOP entries never contain TODOs.
   mcp_todo="$(grep -c 'TODO-' "$mcp_found" 2>/dev/null)" || mcp_todo=0
   [ "${mcp_todo:-0}" -gt 0 ] && warn "$mcp_todo TODO placeholder(s) remain in mcp.json" "set your tenant/org before live Power BI / Azure DevOps work"
 else

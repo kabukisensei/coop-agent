@@ -13,12 +13,12 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 
 EXAMPLE="$ROOT/config/mcp.example.json"
 
-# --- example config defaults to read-only -------------------------------------
-case "$(cat "$EXAMPLE")" in
-  *'"--readonly"'*'powerbi-modeling-mcp'*|*'powerbi-modeling-mcp'*'"--readonly"'*)
-    ok "config/mcp.example.json configures powerbi-modeling-mcp with --readonly" ;;
-  *) ko "config/mcp.example.json missing --readonly for powerbi-modeling-mcp" ;;
-esac
+# --- checked-in example is documentation only; generator owns runtime specs ---
+if grep -q '"mcpServers": {}' "$EXAMPLE" && ! grep -q '@latest\|TODO-' "$EXAMPLE"; then
+  ok "mcp.example.json carries no duplicate runtime package authority"
+else
+  ko "mcp.example.json must remain an empty documentation skeleton"
+fi
 
 # --- doctor reports the configured mode ---------------------------------------
 # Doctor discovers mcp.json from the cwd first (as $PWD/.mcp.json), so run each
