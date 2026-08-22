@@ -407,7 +407,8 @@ def run_lineage_setup(target: Path) -> None:
     """
     sys.stderr.write("\nLaunching coop-data-doc setup (Ctrl-C to skip)…\n")
     try:
-        subprocess.run(["coop-data-doc", "setup"], cwd=target)
+        cmd = os.environ.get("COOP_DATA_DOC_BIN", "coop-data-doc")
+        subprocess.run([cmd, "setup"], cwd=target)
     except FileNotFoundError:
         sys.stderr.write("coop-data-doc isn't installed — run `coop install`, then `coop data-doc setup`.\n")
     except Exception as exc:

@@ -53,10 +53,19 @@ chmod +x "$TMP/stubbin/coop-data-doc"
 # Use CRLF so cmd.exe parses the batch file reliably on Windows runners.
 printf '@echo off\r\ntype nul > "%%COOP_SETUP_MARKER%%"\r\nexit /b 0\r\n' > "$TMP/stubbin/coop-data-doc.bat"
 
+# init_wizard.py honors COOP_DATA_DOC_BIN so tests can point it at the stub
+# without relying on PATH/extension resolution across Linux/Git-Bash/Windows.
+if command -v cygpath >/dev/null 2>&1; then
+  COOP_DATA_DOC_BIN="$(cygpath -w "$TMP/stubbin/coop-data-doc.bat")"
+else
+  COOP_DATA_DOC_BIN="$TMP/stubbin/coop-data-doc"
+fi
+export COOP_DATA_DOC_BIN
+
 # Feed the 8 wizard answers + "y" for the lineage offer (9th prompt).
 answers "Cooptimize" "Test Client" "" "" "" "" "" "no" "y" | \
   COOP_SETUP_MARKER=setup-marker \
-  PATH="$TMP/stubbin:$PATH" \
+  COOP_DATA_DOC_BIN="$COOP_DATA_DOC_BIN" \
   HOME="$TMP" \
   "$PY" "$ROOT/lib/init_wizard.py" "$TMP/repo2" >/dev/null 2>&1
 rc=$?
@@ -67,7 +76,7 @@ rc=$?
 # --- lineage offer declined → no coop-data-doc invocation ----------------------
 answers "Cooptimize" "Test Client" "" "" "" "" "" "no" "n" | \
   COOP_SETUP_MARKER=setup-marker2 \
-  PATH="$TMP/stubbin:$PATH" \
+  COOP_DATA_DOC_BIN="$COOP_DATA_DOC_BIN" \
   HOME="$TMP" \
   "$PY" "$ROOT/lib/init_wizard.py" "$TMP/repo3" >/dev/null 2>&1
 rc=$?
