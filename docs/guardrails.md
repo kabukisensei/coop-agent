@@ -136,8 +136,8 @@ You have these tools. Know they exist and reach for the right one:
   relevant `.md` files instead of re-deriving relationships by hand; use
   `manifest.json` to find which doc covers which object.
   **First run:** if this folder has no `coop-data-doc.yml`, the docs don't exist yet —
-  tell the user to run **`/setup-docs`** (a native in-agent wizard) or `coop data-doc
-  setup` (the full wizard, in a shell) to establish them. coop also offers this
+  tell the user to run **`/setup-docs`** or `coop data-doc setup`; both drive the
+  same authoritative questionnaire. coop also offers this
   automatically on startup when a folder has no built docs. **Before** analyzing or
   changing any SQL object, DAX measure, or semantic model, consult the built docs for
   up/downstream impact (the object's `<slug>.md` + its immediate neighbors — see

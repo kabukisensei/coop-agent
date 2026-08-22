@@ -22,8 +22,8 @@ do instead (e.g. "unstage source and let a human commit").
 
 ## Design
 
-- **Fail-open.** Any error in a guardrail (e.g. git not present, can't read staged
-  files) lets the action through — a bug here must never block legitimate work. The
+- **Fail closed for approval-required actions.** Headless mutations/destructive
+  commands and ambiguous Git wrappers block. Unexpected extension faults stay isolated. The
   system prompt still guides in that case.
 - **Feature-detected + try/catch** so it can never crash pi.
 - **Interactive confirms only.** The destructive-command gate needs a UI; in

@@ -19,7 +19,7 @@ const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
 const dist = process.env.COOP_TEST_DIST;
 const cg = await import(pathToFileURL(`${dist}/coop-guardrails.mjs`).href);
 const coopGuardrails = cg.default;
-const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseRepoCommitPolicy, commitPolicy } = cg;
+const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoCommitPolicy, commitPolicy } = cg;
 
 // Capture the handler the extension registers.
 let staged = "";     // `git diff --cached --name-only`
@@ -166,6 +166,26 @@ await t("parseGitCommand is quote-aware and segment-scoped", () => {
     pathspecs: ["sql/v.sql"],
   });
 });
+await t("parseGitCommands returns every invocation and ignores escaped/quoted separators", () => {
+  assert.deepEqual(parseGitCommands('git status && git -C "/tmp/a b" commit -am x').map((g) => g.subcommand), ["status", "commit"]);
+  assert.deepEqual(parseGitCommands('echo "a\\\";b" && git commit -m x').map((g) => g.subcommand), ["commit"]);
+  assert.deepEqual(parseGitCommands('echo a\\;b && git reset --hard').map((g) => g.subcommand), ["reset"]);
+  assert.deepEqual(parseGitCommands('git status\ngit commit -am x').map((g) => g.subcommand), ["status", "commit"]);
+  assert.deepEqual(parseGitCommands('(git commit -m x)').map((g) => g.subcommand), ["commit"]);
+  assert.deepEqual(parseGitCommands('env FOO=1 git reset --hard').map((g) => g.subcommand), ["reset"]);
+  assert.equal(hasAmbiguousGitInvocation('echo git commit'), true);
+});
+await t("real handler checks later LF/wrapper Git commands and fails closed on ambiguity", async () => {
+  assert.equal(blocked(await call("git status && git commit -am x", { modifiedFiles: "src/app.py" })), true);
+  assert.equal(blocked(await call("git status\ngit commit -am x", { modifiedFiles: "src/app.py" })), true);
+  assert.equal(blocked(await call("env FOO=1 git commit -am x", { modifiedFiles: "src/app.py" })), true);
+  assert.equal(blocked(await call("if true; then git commit -am x; fi", { modifiedFiles: "src/app.py" })), true);
+  assert.equal(blocked(await call("echo git commit", { stagedFiles: "" })), true);
+});
+await t("real handler checks quoted POSIX and Windows -C commit paths", async () => {
+  assert.equal(blocked(await call('git -C "/tmp/path with spaces" commit -am x', { modifiedFiles: "src/app.py" })), true);
+  assert.equal(blocked(await call('git -C "C:\\Work\\Client Project" commit -am x', { modifiedFiles: "src/app.py" })), true);
+});
 await t("commitStagesAll uses parsed args, not sibling flags", () => {
   assert.equal(commitStagesAll("git commit -a"), true);
   assert.equal(commitStagesAll("git commit -am x"), true);
@@ -197,6 +217,8 @@ repositories:
   assert.deepEqual(parseRepoCommitPolicy(text, projectDir, "/home/user/fabric"), { allowed: ["docs/**"], denied: ["**/*.tmdl"] });
   assert.deepEqual(parseRepoCommitPolicy(text, projectDir, "/home/user/fabric-dw"), { allowed: ["reports/**"], denied: ["**/*.sql"] });
   assert.equal(parseRepoCommitPolicy(text, projectDir, "/home/user/other"), null);
+  const quoted = "repositories:\n  'sql repo':\n    local_path: '../fabric'\n    agent_allowed_to_commit: ['docs/**']\n";
+  assert.deepEqual(parseRepoCommitPolicy(quoted, projectDir, "/home/user/fabric"), { allowed: ["docs/**"], denied: [] });
 });
 await t("commitPolicy caches and falls back to top-level globs / defaults", () => {
   const repo = "/tmp/repo-policy-test-" + Math.random().toString(36).slice(2);
@@ -212,7 +234,7 @@ repositories:
       - "**/*.pbip"
 `);
   const p = commitPolicy(repo);
-  assert.deepEqual(p.allowed.slice(-1), ["docs/"]);
+  assert.deepEqual(p.allowed.slice(-1), ["docs/**"]);
   assert.deepEqual(p.denied, ["**/*.pbip"]);
   // Cached lookup returns the same object identity.
   assert.equal(commitPolicy(repo), p);
@@ -342,16 +364,19 @@ await t("parseAllowedGlobs reads BOTH block and flow YAML forms", () => {
   assert.deepEqual(parseAllowedGlobs(block).sort(), ["docs/**", "reports/generated/**"].sort());
   assert.deepEqual(parseAllowedGlobs('agent_allowed_to_commit: ["docs/**", "site/**"]').sort(), ["docs/**", "site/**"].sort());
 });
-await t("honors a BLOCK-form custom allow-prefix from project.yml (was flow-only before)", async () => {
-  // Regression: the shipped project.example.yml uses block form. A custom non-doc
-  // prefix in that style must be merged so committing there isn't wrongly blocked.
+await t("repository-specific globs retain semantics and deny overrides markdown allowance", async () => {
   const repo = mkdtempSync(join(tmpdir(), "coop-gr-"));
   mkdirSync(join(repo, ".coop"), { recursive: true });
-  writeFileSync(join(repo, ".coop", "project.yml"), "approval_policy:\n  agent_allowed_to_commit:\n    - \"generated/**\"\n");
+  writeFileSync(join(repo, ".coop", "project.yml"), "repositories:\n  mine:\n    local_path: .\n    agent_allowed_to_commit:\n      - 'generated/*/out/**'\n    agent_never_commit:\n      - 'docs/private/**'\n");
   const ctx2 = { cwd: repo, hasUI: true, ui: { confirm: async () => false, notify: () => {} } };
-  staged = "generated/out.txt"; // not a .md and not a default prefix → only the custom rule allows it
-  modified = "";
+  staged = "generated/a/out/result.txt"; modified = "";
   assert.equal(blocked(await handle({ toolName: "bash", input: { command: "git commit -m x" } }, ctx2)), false);
+  staged = "generated/a/other/result.txt";
+  assert.equal(blocked(await handle({ toolName: "bash", input: { command: "git commit -m x" } }, ctx2)), true);
+  staged = "src/vendor/generated/a/out/result.txt";
+  assert.equal(blocked(await handle({ toolName: "bash", input: { command: "git commit -m x" } }, ctx2)), true, "configured globs are root-anchored");
+  staged = "docs/private/a.md";
+  assert.equal(blocked(await handle({ toolName: "bash", input: { command: "git commit -m x" } }, ctx2)), true);
 });
 
 // --- MCP-mutation enforcement -----------------------------------------------------
@@ -365,6 +390,13 @@ await t("mcpMutationLabel flags mutating MCP/Fabric actions, not reads or safe t
 });
 await t("blocks a declined mutating MCP tool call", async () => {
   assert.equal(blocked(await handle({ toolName: "fabric_delete_workspace", input: {} }, { ...ctx, ui: { confirm: async () => false, notify: () => {} } })), true);
+});
+await t("headless approval-required mutations fail closed while reads pass", async () => {
+  const headless = { cwd: ctx.cwd, hasUI: false };
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace" } }, headless)), true);
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_list_workspaces" } }, headless)), false);
+  assert.equal(blocked(await handle({ toolName: "bash", input: { command: "git reset --hard" } }, headless)), true);
+  assert.equal(blocked(await handle({ toolName: "read", input: { path: ".env" } }, headless)), true);
 });
 await t("allows an approved mutating MCP tool call; never touches read MCP calls", async () => {
   assert.equal(blocked(await handle({ toolName: "fabric_delete_workspace", input: {} }, { ...ctx, ui: { confirm: async () => true, notify: () => {} } })), false);
@@ -381,11 +413,14 @@ await t("effectiveMutationTarget derives the inner remote tool for proxied MCP c
 await t("mcpMutationLabel classifies proxied inner tools, not the outer 'mcp' wrapper", () => {
   assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace" } })));
   assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: { server: "powerbi", tool: "powerbi_update_dataset" } })));
+  assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: { server: "azure-devops", tool: "create_work_item" } })));
+  assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: { server: "custom-db", tool: "delete_record" } })));
   assert.equal(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: { server: "fabric", tool: "fabric_list_workspaces" } })), null);
   assert.equal(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: {} })), null);
 });
-await t("blocks a declined proxied MCP mutation", async () => {
+await t("blocks declined and headless proxied mutations using server identity", async () => {
   assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace", args: "{}" } }, { ...ctx, ui: { confirm: async () => false, notify: () => {} } })), true);
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "azure-devops", tool: "create_work_item" } }, { cwd: ctx.cwd, hasUI: false })), true);
 });
 await t("allows an approved proxied MCP mutation", async () => {
   assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace", args: "{}" } }, { ...ctx, ui: { confirm: async () => true, notify: () => {} } })), false);

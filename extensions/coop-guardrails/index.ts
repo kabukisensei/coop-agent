@@ -24,9 +24,9 @@
  *
  * It is the coop-native replacement for the third-party @aliou/pi-guardrails (which
  * was pinned to the old @mariozechner Pi). It enforces the AGENT's tool calls — your
- * own shell is never intercepted. Everything is **fail-open** (a bug here must never
- * block legitimate work; the system prompt still guides) and feature-detected so it
- * can never crash pi. Disable entirely with COOP_NO_GUARDRAILS=1.
+ * own shell is never intercepted. Approval-required actions fail closed when no UI is
+ * available; unexpected extension faults remain isolated so Pi cannot crash. Disable
+ * entirely with COOP_NO_GUARDRAILS=1.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -36,12 +36,12 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 
 // Paths the agent MAY commit; everything else counts as source. The .coop/project.yml
 // `approval_policy.agent_allowed_to_commit` globs are merged in on top of these.
-const DEFAULT_ALLOWED_PREFIXES = [
-  "docs/",
-  "site/",
-  "data-docs/",
-  "data-docs-site/",
-  ".coop/",
+const DEFAULT_ALLOWED_GLOBS = [
+  "docs/**",
+  "site/**",
+  "data-docs/**",
+  "data-docs-site/**",
+  ".coop/project.yml",
 ];
 
 /** Find the nearest .coop/project.yml walking up from `cwd` (bounded). */
@@ -97,11 +97,11 @@ export function parseAllowedGlobs(text: string): string[] {
   return globs;
 }
 
-/** A committed path is allowed if it's a doc file anywhere, or under an allowed prefix. */
-function isAllowedCommitPath(file: string, allowed: string[], denied: string[]): boolean {
-  if (/\.(md|markdown)$/i.test(file)) return true; // documentation anywhere
-  if (denied.some((g) => matchGlob(file, g))) return false;
-  return allowed.some((p) => file === p.replace(/\/$/, "") || file.startsWith(p));
+/** A committed path is allowed only after explicit deny rules have been checked. */
+function isAllowedCommitPath(file: string, allowedGlobs: string[], deniedGlobs: string[]): boolean {
+  if (deniedGlobs.some((g) => matchGlob(file, g))) return false;
+  if (/\.(md|markdown)$/i.test(file)) return true; // documentation anywhere, unless denied
+  return allowedGlobs.some((g) => matchGlob(file, g));
 }
 
 /** Very small glob matcher for the patterns we use in project.yml: `**` matches any
@@ -125,7 +125,7 @@ function globToRegex(glob: string): RegExp {
     else if (/[A-Za-z0-9_\-./]/.test(c)) { s += c.replace(/[.]/g, "\\$&"); i++; }
     else { s += "\\" + c; i++; }
   }
-  return new RegExp("^(?:.*/)?" + s + "$", "i");
+  return new RegExp("^" + s + "$", "i");
 }
 
 export type RepoCommitPolicy = { allowed: string[]; denied: string[] };
@@ -175,11 +175,11 @@ export function parseRepoCommitPolicy(text: string, projectDir: string, repoDir:
     }
 
     // A repository entry name is a key exactly one indent deeper than `repositories:`.
-    const repoKey = /^([A-Za-z0-9_\-]+)\s*:\s*(#.*)?$/.exec(trimmed);
+    const repoKey = /^(?:'((?:[^']|'')+)'|"([^"]+)"|([A-Za-z0-9_\-]+))\s*:\s*(#.*)?$/.exec(trimmed);
     if (indent === repoBaseIndent + 2 && repoKey && !trimmed.startsWith("-")) {
       const hit = flush();
       if (hit) return hit;
-      currentName = repoKey[1];
+      currentName = (repoKey[1] || repoKey[2] || repoKey[3]).replace(/''/g, "'");
       currentLocalPath = null;
       currentAllowed = [];
       currentDenied = [];
@@ -243,33 +243,28 @@ function findParentKey(lines: string[], idx: number, parentIndent: number): stri
 
 const policyCache = new Map<string, RepoCommitPolicy>();
 
-/** Resolve the commit policy for a repository directory. Uses the matching entry in
- *  the nearest .coop/project.yml's `repositories` section, falls back to the
- *  top-level `agent_allowed_to_commit` globs, and finally to the built-in defaults. */
+/** Resolve commit policy for exactly the repository whose local_path matches.
+ *  An unmatched repository receives conservative built-ins only; repository-specific
+ *  allowlists never leak across sibling repositories. */
 export function commitPolicy(repoDir: string): RepoCommitPolicy {
   const key = resolve(repoDir);
   const cached = policyCache.get(key);
   if (cached) return cached;
 
-  const result: RepoCommitPolicy = { allowed: [...DEFAULT_ALLOWED_PREFIXES], denied: [] };
+  const result: RepoCommitPolicy = { allowed: [...DEFAULT_ALLOWED_GLOBS], denied: [] };
   try {
     const proj = findProjectYml(repoDir);
     if (proj) {
       const text = readFileSync(proj, "utf8");
-      const projectRoot = dirname(dirname(proj)); // parent of .coop
+      const projectRoot = dirname(dirname(proj));
       const repoSpecific = parseRepoCommitPolicy(text, projectRoot, repoDir);
       if (repoSpecific) {
-        result.allowed = [...DEFAULT_ALLOWED_PREFIXES, ...repoSpecific.allowed.map((g) => g.replace(/\*+.*$/, "")).filter(Boolean)];
-        result.denied = repoSpecific.denied;
-      } else {
-        for (const glob of parseAllowedGlobs(text)) {
-          const prefix = glob.replace(/\*+.*$/, "");
-          if (prefix) result.allowed.push(prefix);
-        }
+        result.allowed.push(...repoSpecific.allowed);
+        result.denied.push(...repoSpecific.denied);
       }
     }
   } catch {
-    /* defaults are fine */
+    /* conservative defaults are fine */
   }
   policyCache.set(key, result);
   return result;
@@ -284,9 +279,14 @@ export function tokenizeArgs(s: string): string[] {
   return toks;
 }
 
-/** Split a shell command into top-level segments on `&&`, `||`, `;`, `|`, `&`.
- *  Quote-aware: separators inside quotes do not split. Returns each segment with
- *  its start index in the original string. */
+function isEscapedAt(text: string, index: number): boolean {
+  let slashes = 0;
+  for (let i = index - 1; i >= 0 && text[i] === "\\"; i--) slashes++;
+  return slashes % 2 === 1;
+}
+
+/** Split a shell command on unquoted shell separators, including LF/CRLF.
+ *  Quote/escape-aware: separators inside quotes or escaped with backslash do not split. */
 function splitShellSegments(cmd: string): { segment: string; start: number }[] {
   const segs: { segment: string; start: number }[] = [];
   let current = "";
@@ -294,12 +294,12 @@ function splitShellSegments(cmd: string): { segment: string; start: number }[] {
   let inDquote = false, inSquote = false;
   for (let i = 0; i < cmd.length; i++) {
     const ch = cmd[i];
-    if (ch === '"' && !inSquote) { inDquote = !inDquote; current += ch; continue; }
-    if (ch === "'" && !inDquote) { inSquote = !inSquote; current += ch; continue; }
-    if (!inDquote && !inSquote) {
+    if (ch === '"' && !inSquote && !isEscapedAt(cmd, i)) { inDquote = !inDquote; current += ch; continue; }
+    if (ch === "'" && !inDquote && !isEscapedAt(cmd, i)) { inSquote = !inSquote; current += ch; continue; }
+    if (!inDquote && !inSquote && !isEscapedAt(cmd, i)) {
       const two = cmd.slice(i, i + 2);
       const one = ch;
-      const sep = two === "&&" || two === "||" ? two : one === ";" || one === "|" || one === "&" ? one : null;
+      const sep = two === "&&" || two === "||" || two === "\r\n" ? two : one === ";" || one === "|" || one === "&" || one === "\n" || one === "\r" ? one : null;
       if (sep) {
         segs.push({ segment: current, start });
         current = "";
@@ -341,11 +341,24 @@ const GIT_GLOBAL_VALUE_OPTS = new Set([
 /** Parse one quote-aware Git invocation from a shell command segment, or null.
  *  The caller supplies the segment so sibling commands (and their flags) are never
  *  mixed into the Git parse. */
+function supportedGitPrefix(prefix: string): boolean {
+  let p = prefix.trim().replace(/^[({]\s*/, "").trim();
+  if (/^(?:then|do|else|!)$/.test(p)) return true;
+  p = p.replace(/^(?:then|do|else|!)\s+/, "").trim();
+  if (/^(?:command|builtin|exec)(?:\s+-\S+)*$/.test(p)) return true;
+  if (/^env(?:\s+(?:-\S+|[A-Za-z_][A-Za-z0-9_]*=\S+))*$/.test(p)) return true;
+  return p === "";
+}
+
+/** Parse one supported Git invocation. Unsupported Git-containing wrapper shapes are
+ *  classified as ambiguous by hasAmbiguousGitInvocation() and fail closed at runtime. */
 function parseGitSegment(segment: string, segmentStart: number): ParsedGitCommand | null {
+  const match = /\bgit\b/i.exec(segment);
+  if (!match || !supportedGitPrefix(segment.slice(0, match.index))) return null;
+  segmentStart += match.index;
+  segment = segment.slice(match.index);
   const toks = tokenizeArgs(segment);
-  if (toks.length === 0) return null;
-  const first = toks[0].toLowerCase();
-  if (first !== "git") return null;
+  if (toks.length === 0 || toks[0].toLowerCase() !== "git") return null;
 
   let i = 1;
   let cwdOverride: string | undefined;
@@ -413,14 +426,37 @@ function parseGitSegment(segment: string, segmentStart: number): ParsedGitComman
   return { segment, segmentStart, cwdOverride, subcommand, args, pathspecs };
 }
 
-/** Find the first Git invocation in a command, quote-aware and segment-scoped.
- *  Sibling commands are never parsed as Git. */
-export function parseGitCommand(cmd: string): ParsedGitCommand | null {
+/** Find every Git invocation in a command, quote-aware and segment-scoped. */
+export function parseGitCommands(cmd: string): ParsedGitCommand[] {
+  const out: ParsedGitCommand[] = [];
   for (const { segment, start } of splitShellSegments(cmd)) {
-    const parsed = parseGitSegment(segment.trim(), start);
-    if (parsed) return parsed;
+    const leading = segment.length - segment.trimStart().length;
+    const parsed = parseGitSegment(segment.trim(), start + leading);
+    if (parsed) out.push(parsed);
   }
-  return null;
+  return out;
+}
+
+function unquotedText(text: string): string {
+  let out = "", single = false, double = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "'" && !double && !isEscapedAt(text, i)) { single = !single; out += " "; }
+    else if (ch === '"' && !single && !isEscapedAt(text, i)) { double = !double; out += " "; }
+    else out += single || double ? " " : ch;
+  }
+  return out;
+}
+
+export function hasAmbiguousGitInvocation(cmd: string): boolean {
+  return splitShellSegments(cmd).some(({ segment, start }) =>
+    /\bgit\b/i.test(unquotedText(segment)) && parseGitSegment(segment.trim(), start) === null,
+  );
+}
+
+/** Backwards-compatible first-invocation helper. Runtime enforcement uses all. */
+export function parseGitCommand(cmd: string): ParsedGitCommand | null {
+  return parseGitCommands(cmd)[0] ?? null;
 }
 
 /** `git`, optionally followed by global options (`-C <dir>`, `-c k=v`, `--no-pager`),
@@ -435,8 +471,7 @@ export const GIT_COMMIT_RE = new RegExp(GIT_PREFIX + String.raw`\s+commit\b`, "i
 
 /** Explicit pathspec arguments of `git commit <pathspec>` — the files it commits
  *  straight from the WORKING TREE, ignoring the index. */
-export function explicitCommitPathspecs(cmd: string): string[] {
-  const parsed = parseGitCommand(cmd);
+export function explicitCommitPathspecs(cmd: string, parsed: ParsedGitCommand | null = parseGitCommand(cmd)): string[] {
   if (!parsed || parsed.subcommand !== "commit") return [];
   return parsed.pathspecs;
 }
@@ -479,8 +514,7 @@ function resolveDir(dir: string, cwd: string): string {
  *  from an earlier shell segment (`cd /other && git commit …` — the chained-cd bypass);
  *  else the caller's cwd. Uses the quote-aware parser so sibling commands and quoted
  *  paths are handled correctly. */
-export function gitRepoDir(cmd: string, cwd: string): string {
-  const parsed = parseGitCommand(cmd);
+export function gitRepoDir(cmd: string, cwd: string, parsed: ParsedGitCommand | null = parseGitCommand(cmd)): string {
   if (parsed?.cwdOverride) return resolveDir(parsed.cwdOverride, cwd);
   if (parsed?.subcommand) {
     const cd = leadingCdDir(cmd.slice(0, parsed.segmentStart));
@@ -492,8 +526,7 @@ export function gitRepoDir(cmd: string, cwd: string): string {
 /** True when a `cd`/`pushd` precedes the `git commit` segment (`cd /other && git commit`
  *  …`) — the chained-cd shape whose target repo the staged-file check may not be able to
  *  reach. Used to prompt instead of silently allowing when the check can't determine. */
-export function commitHasLeadingCd(cmd: string): boolean {
-  const parsed = parseGitCommand(cmd);
+export function commitHasLeadingCd(cmd: string, parsed: ParsedGitCommand | null = parseGitCommand(cmd)): boolean {
   if (!parsed) return false;
   return leadingCdDir(cmd.slice(0, parsed.segmentStart)) !== null;
 }
@@ -501,8 +534,7 @@ export function commitHasLeadingCd(cmd: string): boolean {
 /** Will this `git commit` auto-stage tracked changes (-a / --all / a short-flag
  *  cluster containing 'a', e.g. -am / -av)? Uses the parsed command so flags in a sibling
  *  segment (like `grep -a`) are never misread. */
-export function commitStagesAll(cmd: string): boolean {
-  const parsed = parseGitCommand(cmd);
+export function commitStagesAll(cmd: string, parsed: ParsedGitCommand | null = parseGitCommand(cmd)): boolean {
   if (!parsed || parsed.subcommand !== "commit") return false;
   if (parsed.args.includes("--all")) return true;
   return parsed.args.some((a) => /^-[A-Za-z]*a[A-Za-z]*$/.test(a));
@@ -511,8 +543,8 @@ export function commitStagesAll(cmd: string): boolean {
 /** Committed paths that are NOT docs/logs/site, or null if it can't be determined
  *  (fail-open). Covers staged files AND, when the command auto-stages (-a/-am), the
  *  tracked modifications `-a` will stage at commit time. */
-async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string): Promise<string[] | null> {
-  const repoDir = gitRepoDir(cmd, cwd);
+async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, parsed: ParsedGitCommand): Promise<string[] | null> {
+  const repoDir = gitRepoDir(cmd, cwd, parsed);
   const diff = async (extra: string[]): Promise<string[] | null> => {
     let res: { stdout: string; code: number };
     try {
@@ -526,14 +558,14 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string):
   const staged = await diff(["diff", "--cached", "--name-only"]);
   if (staged === null) return null; // can't determine → fail open (old behavior)
   const files = [...staged];
-  if (commitStagesAll(cmd)) {
+  if (commitStagesAll(cmd, parsed)) {
     const modified = await diff(["diff", "--name-only"]); // -a will stage these
     if (modified) for (const f of modified) if (!files.includes(f)) files.push(f);
   }
   // `git commit <pathspec>` commits the WORKING-TREE content of the named paths,
   // ignoring the index — so a --cached-only check misses them entirely (the classic
   // pathspec bypass). Diff those paths vs HEAD to learn what the commit will include.
-  const pathspecs = explicitCommitPathspecs(cmd);
+  const pathspecs = explicitCommitPathspecs(cmd, parsed);
   if (pathspecs.length) {
     const named =
       (await diff(["diff", "--name-only", "HEAD", "--", ...pathspecs])) ??
@@ -548,8 +580,8 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string):
 // MCP tools carry no server-enforced read-only flag for Fabric (unlike powerbi's
 // --readonly), and this hook can't see whether a given MCP call mutates. As a
 // best-effort layer we CONFIRM tool calls whose names look like a mutating
-// Fabric/Power BI/MCP action. Heuristic + fail-open: MCP governance still also relies
-// on Pi's own tool approval and the advisory system prompt (docs/guardrails.md).
+// Fabric/Power BI/MCP action. Approval-required mutations fail closed headlessly;
+// this complements Pi approval and server-side read-only flags.
 const MCP_TOOLISH =
   /(^|[_\-.:/])(mcp|fabric|powerbi|pbi|pbip|adx|kusto|eventhouse|onelake|lakehouse|warehouse|workspace|dataset|semanticmodel|report|pipeline|notebook|dataflow|capacity)([_\-.:/]|$)/i;
 const MCP_WRITE_VERB =
@@ -582,16 +614,26 @@ function mutationName(target: { outerTool: string; innerTool?: string; server?: 
  *  Accepts either a raw tool name (for direct calls) or an effective target
  *  (for proxied `mcp` calls). Requires BOTH an MCP-ish name and a write verb,
  *  so reads (list/get/inspect) pass. */
-export function mcpMutationLabel(toolName: string | { outerTool: string; innerTool?: string }): string | null {
+export function mcpMutationLabel(toolName: string | { outerTool: string; innerTool?: string; server?: string }): string | null {
   const target = typeof toolName === "string" ? { outerTool: toolName } : toolName;
   const name = target.innerTool || target.outerTool;
   if (!name || name === "bash" || name === "read" || name === "edit" || name === "write" || name === "mcp") return null;
-  if (!MCP_TOOLISH.test(name) || !MCP_WRITE_VERB.test(name)) return null;
-  return mutationName(target as { outerTool: string; innerTool?: string; server?: string });
+  if (!MCP_WRITE_VERB.test(name)) return null;
+  // A proxied call's server identity proves this is MCP; remote tool names need not
+  // repeat a Fabric/Power BI noun (e.g. azure-devops/create_work_item).
+  if (target.outerTool === "mcp" && target.innerTool && target.server) return mutationName(target);
+  if (!MCP_TOOLISH.test(name)) return null;
+  return mutationName(target);
 }
 
 /** Label a destructive bash command, or null. Conservative — only clearly risky ops. */
 function dangerLabel(cmd: string): string | null {
+  for (const git of parseGitCommands(cmd)) {
+    const args = git.args;
+    if (git.subcommand === "push" && args.some((a) => a === "--force" || a === "--force-with-lease" || /^-[A-Za-z]*f[A-Za-z]*$/.test(a) || a.startsWith("+"))) return "git push --force";
+    if (git.subcommand === "reset" && args.includes("--hard")) return "git reset --hard";
+    if (git.subcommand === "clean" && args.some((a) => a === "--force" || /^-[A-Za-z]*f[A-Za-z]*$/.test(a))) return "git clean -f";
+  }
   // rm with BOTH recursive and force flags (single-file rm is fine). Case-insensitive
   // so `RM -rf` on a case-insensitive filesystem (macOS/Windows) is caught too.
   if (/\brm\b/i.test(cmd)) {
@@ -605,11 +647,6 @@ function dangerLabel(cmd: string): string | null {
     const force = /f/i.test(shortFlags) || /--force\b/i.test(longFlags);
     if (recursive && force) return "rm -rf";
   }
-  // Every git detector tolerates global options (`git -C <dir> …`) and flags between
-  // the subcommand and its dangerous flag (`git reset -q --hard`), like GIT_COMMIT_RE.
-  if (new RegExp(GIT_PREFIX + String.raw`\s+push\b[^;&|]*?(?:--force\b|--force-with-lease\b|(?:^|\s)-[A-Za-z]*f[A-Za-z]*\b|(?:^|\s)\+[^\s:]+(?::|\s|$))`, "i").test(cmd)) return "git push --force";
-  if (new RegExp(GIT_PREFIX + String.raw`\s+reset\b[^;&|]*?--hard\b`, "i").test(cmd)) return "git reset --hard";
-  if (new RegExp(GIT_PREFIX + String.raw`\s+clean\b[^;&|]*?(?:\s-[A-Za-z]*f|--force\b)`, "i").test(cmd)) return "git clean -f";
   if (/\b(DROP|TRUNCATE)\s+(TABLE|DATABASE|SCHEMA|VIEW|PROCEDURE|FUNCTION|INDEX|TRIGGER|SEQUENCE|TYPE)\b/i.test(cmd)) return "destructive SQL (DROP/TRUNCATE)";
   return null;
 }
@@ -660,7 +697,7 @@ type AuditEntry = {
   cwd: string;
   kind: "commit-block" | "danger-confirm" | "secret-confirm" | "mcp-confirm";
   tool: string;
-  decision: "blocked" | "allowed" | "declined";
+  decision: "blocked" | "blocked-headless" | "allowed" | "declined";
   label: string;   // the short subject (offending path, danger label, tool name)
   detail: string;  // paths (commit, first 8) or the command truncated to 200 chars — NEVER secrets
 };
@@ -702,27 +739,32 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       // 0. Secret-file access (read / edit / write) → confirm.
       if (tool === "read" || tool === "edit" || tool === "write") {
         const path = String(event?.input?.path ?? "");
-        if (path && isSecretPath(path) && ctx.hasUI && typeof ctx.ui?.confirm === "function") {
+        if (path && isSecretPath(path)) {
+          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+            audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked-headless", label: path, detail: path });
+            return { block: true, reason: `coop guardrails: blocked ${tool} of secret-looking file ${path}; approval is unavailable in headless mode.` };
+          }
           const verb = tool === "read" ? "read" : "write to";
           const ok = await ctx.ui.confirm(
             "coop guardrails",
             `Secret-looking file (${verb}):\n  ${path}\ncoop never exposes secrets (tokens, keys, .env). Proceed?`,
           );
           audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: ok ? "allowed" : "declined", label: path, detail: path });
-          if (!ok) {
-            return { block: true, reason: `coop guardrails: blocked ${tool} of the secret-looking file ${path} (you declined). Reference an env var / vault instead of reading or writing secrets.` };
-          }
+          if (!ok) return { block: true, reason: `coop guardrails: blocked ${tool} of the secret-looking file ${path} (you declined). Reference an env var / vault instead.` };
         }
         return;
       }
 
-      // 0b. Mutating MCP / Fabric / Power BI action → confirm (best-effort; MCP has no
-      //     server-enforced read-only for Fabric, so add a runtime prompt). Fail-open:
-      //     no UI → allow (Pi's tool approval + the advisory prompt still apply).
+      // 0b. Mutating MCP / Fabric / Power BI action → explicit approval. Proxied
+      // calls use the adapter's server/tool identity; approval fails closed headlessly.
       if (tool !== "bash") {
         const target = effectiveMutationTarget(event);
         const mcp = mcpMutationLabel(target);
-        if (mcp && ctx.hasUI && typeof ctx.ui?.confirm === "function") {
+        if (mcp) {
+          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: String(tool), decision: "blocked-headless", label: mcp, detail: mcp });
+            return { block: true, reason: `coop guardrails: blocked mutating MCP action ${mcp}; approval is unavailable in headless mode.` };
+          }
           const ok = await ctx.ui.confirm(
             "coop guardrails",
             `This looks like a MUTATING MCP action (create/update/delete/deploy/publish):\n  ${mcp}\ncoop treats MCP as read-only (list / read / inspect). Run it?`,
@@ -737,12 +779,18 @@ export default function coopGuardrails(pi: ExtensionAPI) {
 
       const cmd = String(event?.input?.command ?? "").trim();
       if (!cmd) return;
+      if (hasAmbiguousGitInvocation(cmd)) {
+        return { block: true, reason: "coop guardrails: blocked an ambiguous Git wrapper/segment that cannot be safely inspected. Run Git directly or use a supported env/command/group wrapper." };
+      }
 
-      // 1a. Secret-file access via bash (cat / cp / curl / base64 / redirection) →
-      //     confirm, mirroring the read/edit/write secret gate so bash isn't an
-      //     unguarded exfil path. Fail-open with no UI, like the other confirm gates.
+      // 1a. Secret-file access via bash mirrors the read/edit/write gate and fails
+      // closed when approval UI is unavailable.
       const secretPath = bashSecretCmdPath(cmd);
-      if (secretPath && ctx.hasUI && typeof ctx.ui?.confirm === "function") {
+      if (secretPath) {
+        if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+          audit({ cwd: ctx.cwd, kind: "secret-confirm", tool: "bash", decision: "blocked-headless", label: secretPath, detail: secretPath });
+          return { block: true, reason: `coop guardrails: blocked command touching ${secretPath}; approval is unavailable in headless mode.` };
+        }
         const ok = await ctx.ui.confirm(
           "coop guardrails",
           `This command touches a secret-looking file:\n  ${secretPath}\ncoop never exposes secrets (tokens, keys, .env). Run it?`,
@@ -757,41 +805,31 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       // 1. Never commit source (incl. `git commit -a/-am` auto-staging, `git -C <dir>`,
       //    `git commit <pathspec>`, and `cd <dir> && git commit` — the staged check runs
       //    against the repo the commit actually targets, see gitRepoDir).
-      if (GIT_COMMIT_RE.test(cmd)) {
-        const offending = await offendingCommitPaths(pi, ctx.cwd, cmd);
+      for (const git of parseGitCommands(cmd).filter((g) => g.subcommand === "commit")) {
+        const offending = await offendingCommitPaths(pi, ctx.cwd, cmd, git);
         if (offending && offending.length) {
           const shown = offending.slice(0, 8).join(", ");
           const more = offending.length > 8 ? ` (+${offending.length - 8} more)` : "";
-          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: "git commit", detail: offending.slice(0, 8).join(", ") });
-          return {
-            block: true,
-            reason:
-              `coop guardrails: never commit source. These staged paths aren't docs/logs/site: ${shown}${more}. ` +
-              `Unstage them (\`git restore --staged <file>\`), show the diff, and let a human commit. ` +
-              `You may commit docs / logs / site / diagrams / glossary.`,
-          };
+          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: "git commit", detail: shown });
+          return { block: true, reason: `coop guardrails: never commit source. These paths aren't docs/logs/site: ${shown}${more}. Unstage them and let a human commit source.` };
         }
-        // Defense in depth: a `cd <dir> && git commit …` whose target repo we couldn't
-        // read (offending === null) is the known bypass shape — confirm rather than
-        // silently allow. Fail-open when there's no UI (headless agent), like the other
-        // confirm gates; a plain non-cd commit stays fully silent as before.
-        if (offending === null && commitHasLeadingCd(cmd) && ctx.hasUI && typeof ctx.ui?.confirm === "function") {
-          const ok = await ctx.ui.confirm(
-            "coop guardrails",
-            `Can't verify what this commit would include in the cd'd-into repo:\n  ${cmd.slice(0, 200)}\n` +
-              `The agent may only commit docs / logs / site — a human commits source. Proceed?`,
-          );
-          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: ok ? "allowed" : "declined", label: "cd && git commit", detail: cmd.slice(0, 200) });
-          if (!ok) {
-            return { block: true, reason: `coop guardrails: blocked a \`cd … && git commit\` whose target repo couldn't be verified (you declined). Let a human commit source; the agent may commit docs / logs / site.` };
+        if (offending === null && commitHasLeadingCd(cmd, git)) {
+          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+            return { block: true, reason: "coop guardrails: blocked an unverifiable commit because approval is unavailable in headless mode." };
           }
+          const ok = await ctx.ui.confirm("coop guardrails", `Can't verify what this commit would include:\n  ${git.segment.slice(0, 200)}\nProceed?`);
+          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: ok ? "allowed" : "declined", label: "unverifiable git commit", detail: git.segment.slice(0, 200) });
+          if (!ok) return { block: true, reason: "coop guardrails: blocked an unverifiable commit (you declined)." };
         }
       }
 
-      // 2. Destructive command → confirm (interactive only; no UI = let it through,
-      //    the system prompt still applies).
+      // 2. Destructive command → explicit approval; fail closed without UI.
       const danger = dangerLabel(cmd);
-      if (danger && ctx.hasUI && typeof ctx.ui?.confirm === "function") {
+      if (danger) {
+        if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked-headless", label: danger, detail: cmd.slice(0, 200) });
+          return { block: true, reason: `coop guardrails: blocked ${danger}; approval is unavailable in headless mode.` };
+        }
         const ok = await ctx.ui.confirm(
           "coop guardrails",
           `Destructive command (${danger}):\n  ${cmd.slice(0, 200)}\nRun it?`,
