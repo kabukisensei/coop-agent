@@ -27,4 +27,4 @@ assert parsed["tools"]["tabular_editor_cli"]["executable_path"] == r"C:\Program 
 assert parsed["tools"]["tabular_editor_cli"]["bpa_rules_path"] == r"C:\Rules\BPA Rules.json"
 assert parsed["repositories"]["sql repo"]["role"] == "sql"
 assert len(parsed["repositories"]) == 2
-print("  ✓ init YAML round-trips Windows paths, apostrophes, punctuation, Unicode, and multiple repos")
+print("OK: init YAML round-trips Windows paths, apostrophes, punctuation, Unicode, and multiple repos")
