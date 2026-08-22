@@ -218,7 +218,8 @@ coop_progress_end
 
 # fabric-cicd is a library injected into the Fabric CLI env. Normal mode always
 # uses the manifest pin; edge mode alone may take latest.
-if [ "$EDGE" != 1 ] && [ -z "$FCC_PIN" ]; then FCC_PIN="$(coop_manifest_object_get python_tools fabric-cicd)"; fi
+FCC_PIN=''
+if [ "$EDGE" != 1 ]; then FCC_PIN="$(coop_manifest_object_get python_tools fabric-cicd)"; fi
 if have pipx && pipx list 2>/dev/null | grep -q "package ms-fabric-cli "; then
   if [ -n "$FCC_PIN" ]; then
     pipx inject ms-fabric-cli "fabric-cicd==$FCC_PIN" --force >/dev/null 2>&1 && coop_ok "fabric-cicd (library) pinned to tested $FCC_PIN" || true
