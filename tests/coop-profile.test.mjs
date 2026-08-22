@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 
 const home = mkdtempSync(path.join(tmpdir(), "coop-profile-"));
 process.env.HOME = home;
+process.env.USERPROFILE = home;
 const userFile = path.join(home, ".coop", "user.json");
 mkdirSync(path.dirname(userFile), { recursive: true });
 const dist = process.env.COOP_TEST_DIST || "/tmp/coop-test-dist";
