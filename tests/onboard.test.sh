@@ -41,7 +41,15 @@ mkdir -p "$COOP_DIR/azbin"; cat > "$COOP_DIR/azbin/az" <<'EOF'
 printf '%s\n' '{"tenantId":"tenant-detected","name":"Detected Tenant"}'
 EOF
 chmod +x "$COOP_DIR/azbin/az"
-printf 'y\n\n\n\nn\n\n\n' | PATH="$COOP_DIR/azbin:$PATH" HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" onboard --config-only >/dev/null 2>&1
+# Windows Python subprocess can't execute a no-extension shell script; provide a .bat twin.
+printf '@echo off\r\necho {"tenantId":"tenant-detected","name":"Detected Tenant"}\r\n' > "$COOP_DIR/azbin/az.bat"
+if command -v cygpath >/dev/null 2>&1; then
+  COOP_AZ_BIN="$(cygpath -w "$COOP_DIR/azbin/az.bat")"
+else
+  COOP_AZ_BIN="$COOP_DIR/azbin/az"
+fi
+export COOP_AZ_BIN
+printf 'y\n\n\n\nn\n\n\n' | PATH="$COOP_DIR/azbin:$PATH" COOP_AZ_BIN="$COOP_AZ_BIN" "$PY" "$ROOT/scripts/onboard.py" onboard --config-only >/dev/null 2>&1
 "$PY" - "$COOP_DIR/.coop/config" <<'PY'
 import json,sys
 c=json.load(open(sys.argv[1])); assert c['azure']['tenant_id']=='tenant-detected'; assert c['integrations']['azure_devops'] is False

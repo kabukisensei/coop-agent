@@ -161,10 +161,16 @@ def read_confirm(prompt: str, default: bool) -> bool:
 
 
 def detect_azure_account() -> dict:
-    if not shutil.which("az"):
+    az_cmd = os.environ.get("COOP_AZ_BIN", "az")
+    if az_cmd == "az" and not shutil.which("az"):
         return {}
     try:
-        result = subprocess.run(["az", "account", "show", "--output", "json"], capture_output=True, text=True, timeout=15)
+        # On Windows, .bat/.cmd stubs need cmd.exe /c because CreateProcess
+        # can't execute batch files directly.
+        if sys.platform == "win32" and az_cmd.lower().endswith((".bat", ".cmd")):
+            result = subprocess.run(["cmd.exe", "/c", az_cmd, "account", "show", "--output", "json"], capture_output=True, text=True, timeout=15)
+        else:
+            result = subprocess.run([az_cmd, "account", "show", "--output", "json"], capture_output=True, text=True, timeout=15)
         value = json.loads(result.stdout) if result.returncode == 0 else {}
         return value if isinstance(value, dict) else {}
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
