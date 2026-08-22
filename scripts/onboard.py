@@ -14,7 +14,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-COOP_DIR = Path.home() / ".coop"
+COOP_DIR = Path(os.environ.get("COOP_DIR", Path.home())) / ".coop"
 USER_JSON = COOP_DIR / "user.json"
 CONFIG_JSON = COOP_DIR / "config"
 MCP_OUTPUT = COOP_DIR / "agent" / "mcp.json"
