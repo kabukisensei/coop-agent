@@ -70,7 +70,7 @@ foreach ($a in $args) {
 $PI_NPM_PACKAGE = Coop-ManifestGet -Key 'pi.package' -Default '@earendil-works/pi-coding-agent'
 $PI_TARGET_VERSION = Coop-ManifestGet -Key 'pi.version'
 $PI_EXTENSIONS = @(
-  'npm:pi-mcp-adapter',       # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
+  'npm:pi-mcp-adapter',       # MCP servers (Fabric / Power BI / Microsoft Learn)
   'npm:pi-hermes-memory',     # persistent memory + session search + secret scanning
   'npm:pi-better-openai',     # plan usage limits (5h/7d) — shown in coop's footer
   'npm:pi-web-access',        # web search / URL fetch / GitHub clone / PDF / video (read-only)

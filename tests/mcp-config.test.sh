@@ -21,6 +21,8 @@ assert '--start' in model and '--readonly' in model
 assert model[1].endswith('@'+manifest['npm_tools']['@microsoft/powerbi-modeling-mcp'])
 assert all('@latest' not in str(v) and 'TODO-' not in str(v) for v in s.values())
 assert s['azure-devops']['args'][1].endswith('@'+manifest['mcp_servers']['@azure-devops/mcp'])
+# context-mode is a native Pi extension — never generated as an MCP server.
+assert 'context-mode' not in s
 PY
 # Missing tenant omits tenant-dependent Power BI server without placeholders.
 printf '%s\n' '{"schema_version":1,"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false,"context_mode":false}}' > "$d/config"

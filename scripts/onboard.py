@@ -194,7 +194,7 @@ def run_config_questions(existing: dict | None = None) -> dict:
     labels = [
         ("fabric", "Microsoft Fabric MCP"), ("power_bi", "Power BI MCP"),
         ("power_bi_modeling", "Power BI Modeling MCP"), ("azure_devops", "Azure DevOps MCP"),
-        ("microsoft_learn", "Microsoft Learn MCP"), ("context_mode", "context-mode"),
+        ("microsoft_learn", "Microsoft Learn MCP"),
     ]
     for key, label in labels:
         integrations[key] = read_confirm(f"Enable {label}?", bool(old_i.get(key, True)))
@@ -317,7 +317,16 @@ def cmd_onboard(args: argparse.Namespace) -> int:
 
     config = run_config_questions(existing_config)
     save_config(config)
-    refresh_mcp()
+    try:
+        refresh_mcp()
+    except Exception as exc:
+        # The profile and integration config are already saved — an MCP-generation
+        # failure must not surface as a traceback or look like onboarding broke.
+        sys.stderr.write(
+            f"\nMCP config generation failed ({exc}). Your profile and integration config were saved.\n"
+            "Fix the cause (usually a missing manifest or python), then run `coop sync` to write the MCP config.\n"
+        )
+        return 1
     sys.stderr.write(f"Saved integration config to {CONFIG_JSON}.\n")
     if not config["azure"].get("tenant_id") and (config["integrations"]["power_bi"]):
         sys.stderr.write("Power BI MCP is omitted until an Azure tenant is configured; run `coop onboard --edit`.\n")
