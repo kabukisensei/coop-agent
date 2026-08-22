@@ -111,12 +111,9 @@ these **degrade gracefully** — the docs are an aid, not a requirement.
 
 ## Data-doc setup (`/setup-docs`)
 
-`coop-data-doc` is configured by a `coop-data-doc.yml` in the working folder. Its
-own `setup` wizard is interactive (questionary), but Pi runs tool subprocesses
-**non-interactively** (no TTY) — so the agent can't drive that wizard directly.
-Instead this extension renders a small wizard with **Pi's native dialogs**
-(`ctx.ui.input` / `ctx.ui.confirm` / `ctx.ui.select`), writes or patches
-`coop-data-doc.yml`, and offers to run `coop-data-doc build`.
+`coop-data-doc` is configured by `coop-data-doc.yml`. This extension launches the
+same authoritative setup questionnaire with `--transport jsonl`, renders its prompts
+through Pi dialogs, and returns answers over stdin. No local/reduced wizard exists.
 
 - **Startup offer.** On `session_start`, if the working folder has no
   `coop-data-doc.yml` (and no `.coop-data-doc.skip` marker), coop offers to set it
@@ -126,23 +123,12 @@ Instead this extension renders a small wizard with **Pi's native dialogs**
   docs aren't built yet, it offers to build them instead. The offer fires once per
   folder per process (keyed by cwd, so `/new` / `/resume` / `/fork` into a new folder
   still get offered).
-- **`/setup-docs` command.** Run (or re-run) the wizard anytime. When a
-  `coop-data-doc.yml` already exists, its values **prefill** the prompts and the
-  wizard **patches only the fields it manages, in place** — so anything set by the
-  full wizard (layers, branding, schema→model mappings, include/exclude globs,
-  `sql_dialect`) and your comments are preserved. A successful run clears the skip
-  marker.
-- **Collected fields (essentials):** project name, SQL repo path, Power BI repo
-  path, and the Markdown + HTML output folders (with the same separate-folders
-  rule the CLI enforces, separator-aware so it holds on Windows). Everything else is
-  left untouched (re-run) or defaulted (fresh) — configure the rest with the **full**
-  wizard in a shell: `coop data-doc setup`.
-
-The fresh-config writer mirrors the defaults in `coop-data-doc`'s `config.py`
-(`render_config_yaml`); a re-run edits the existing file in place. Validation is
-delegated to `coop-data-doc build` (`Config.load`), whose error is surfaced via
-`ctx.ui.notify`. Pasted control characters are stripped from inputs so the written
-YAML stays loadable.
+- **`/setup-docs` command.** Run or re-run the full native questionnaire anytime.
+  Existing config values prefill prompts. Completion/cancellation/error events and
+  process exit status must agree before the bridge reports success.
+- **Transport safety.** Stdout is strict LF-framed JSONL with a 1 MiB line limit;
+  stderr is diagnostics only. Windows resolves `coop-data-doc.exe` directly and
+  rejects `.cmd`/`.bat` shell shims. Older tool versions stop with upgrade guidance.
 
 ## Lineage awareness (`before_agent_start`)
 
