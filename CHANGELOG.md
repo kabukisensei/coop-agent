@@ -6,10 +6,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Fixed
-- Fixed the `coop-profile` startup crash: the extension treated Pi's extension
-  API argument as `{ pi }`-wrapped and called `api.pi.on(...)`, but Pi passes the
-  ExtensionAPI itself (`pi.on(...)`). Unit tests now mock the real contract, and
-  a black-box test loads the shipped source through Pi's actual extension loader.
 - First-run onboarding through plain `coop` now continues into Pi with
   "Setup complete. Starting Coop…"; an explicit `coop onboard` ends with
   "Setup complete. Run 'coop' to start." A failed onboarding now stops the
@@ -61,7 +57,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   Cooptimize tenant only for internal work — and prints a review summary
   (tenant, enabled/omitted integrations, destination) before saving.
 
+## [0.22.2] — 2026-08-24
+
 ### Fixed
+- Fixed `coop-profile` startup against Pi's real extension API. The extension now registers
+  directly with `api.on(...)` instead of reading a nonexistent nested `api.pi`, which caused
+  Coop to exit immediately after onboarding with `Cannot read properties of undefined`.
 - Stabilized multi-command Git enforcement, repository-scoped commit policy, and headless approvals.
 - Made install/update/sync and generated MCP entries manifest-pinned; Modeling MCP starts read-only.
 - Unified `/setup-docs` on the native JSONL wizard and hardened onboarding, profile, and project init.
