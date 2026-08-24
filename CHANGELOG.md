@@ -6,6 +6,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- Fixed `coop-profile` startup against Pi's real extension API. The extension now registers
+  directly with `api.on(...)` instead of reading a nonexistent nested `api.pi`, which caused
+  Coop to exit immediately after onboarding with `Cannot read properties of undefined`.
 - Stabilized multi-command Git enforcement, repository-scoped commit policy, and headless approvals.
 - Made install/update/sync and generated MCP entries manifest-pinned; Modeling MCP starts read-only.
 - Unified `/setup-docs` on the native JSONL wizard and hardened onboarding, profile, and project init.
