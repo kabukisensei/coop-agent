@@ -816,8 +816,9 @@ function Test-CoopReleasePins {
 }
 
 # --- Release: bump version, roll CHANGELOG, commit + tag (+ push) -------------
-# Mirror of coop_release in bin/coop. Writes files with LF via [IO.File] to avoid
-# Windows CRLF/BOM drift. Requires a clean working tree.
+# Mirror of coop_release in bin/coop. Bumps VERSION, release-manifest.json, and
+# the extension manifests. Writes files with LF via [IO.File] to avoid Windows
+# CRLF/BOM drift. Requires a clean working tree.
 function Invoke-CoopRelease {
   param([string[]]$RestArgs = @())
   $level = ''; $assumeYes = $false; $doPush = $true; $doCheck = $true
@@ -830,8 +831,8 @@ function Invoke-CoopRelease {
       '^--no-check$'          { $doCheck = $false }
       '^(-h|--help)$' {
         Coop-Say 'Usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]'
-        Coop-Say '  Bump VERSION + extension manifests, roll CHANGELOG [Unreleased] into a dated'
-        Coop-Say '  release, commit, tag vX.Y.Z, and push (commit + tag). Default level: patch.'
+        Coop-Say '  Bump VERSION + release/extension manifests, roll CHANGELOG [Unreleased] into'
+        Coop-Say '  a dated release, commit, tag vX.Y.Z, and push (commit + tag). Default: patch.'
         Coop-Say '  Verifies extensions transpile + tests + bash/PowerShell parity pass, and that'
         Coop-Say '  the tested_with coop-tool pins match the sibling coop-website''s versions.json'
         Coop-Say '  (--no-check to skip).'
@@ -853,6 +854,12 @@ function Invoke-CoopRelease {
   if (-not (Test-Path -LiteralPath $verFile -PathType Leaf)) { Coop-Die "VERSION file missing at $verFile — fix it before releasing." }
   $cur = (Get-Content -LiteralPath $verFile -Raw).Trim()
   if ($cur -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { Coop-Die "VERSION ('$cur') is not X.Y.Z — fix it before releasing." }
+  $releaseManifest = Join-Path $root 'config\release-manifest.json'
+  if (-not (Test-Path -LiteralPath $releaseManifest -PathType Leaf)) { Coop-Die "release manifest missing at $releaseManifest — fix it before releasing." }
+  $manifestRaw = Get-Content -LiteralPath $releaseManifest -Raw
+  $manifestMatches = [regex]::Matches($manifestRaw, '(?m)^\s*"coop_version"\s*:\s*"([^"]*)"')
+  $manifestCur = if ($manifestMatches.Count -eq 1) { $manifestMatches[0].Groups[1].Value } else { '' }
+  if ($manifestCur -ne $cur) { Coop-Die "release manifest coop_version ('$manifestCur') does not match VERSION ('$cur') — align it before releasing." }
   $p = $cur.Split('.'); $ma = [int]$p[0]; $mi = [int]$p[1]; $pa = [int]$p[2]
   switch ($level) {
     'major' { $new = "$($ma + 1).0.0" }
@@ -943,7 +950,13 @@ function Invoke-CoopRelease {
   # 1. VERSION (LF)
   [System.IO.File]::WriteAllText((Join-Path $root 'VERSION'), "$new`n")
 
-  # 2. extension manifests
+  # 2. release manifest + extension manifests
+  $manifestRaw = [regex]::Replace(
+    $manifestRaw,
+    '(?m)^(\s*"coop_version"\s*:\s*")[^"]*(".*)$',
+    ('${1}' + $new + '${2}')
+  )
+  [System.IO.File]::WriteAllText($releaseManifest, ($manifestRaw -replace "`r`n", "`n"))
   Get-ChildItem -LiteralPath (Join-Path $root 'extensions') -Directory | ForEach-Object {
     $pkg = Join-Path $_.FullName 'package.json'
     if (Test-Path -LiteralPath $pkg) {
@@ -973,7 +986,7 @@ function Invoke-CoopRelease {
   # 4. commit + tag. Stage ONLY the files a release touches — never `add -A`, which
   # would sweep in anything created during the (slow) gate window if another agent or
   # an editor autosave shares the tree (this is how a spurious empty release got cut).
-  & git -C $root add VERSION CHANGELOG.md
+  & git -C $root add VERSION CHANGELOG.md config/release-manifest.json
   Get-ChildItem -LiteralPath (Join-Path $root 'extensions') -Directory | ForEach-Object {
     $pkg = Join-Path $_.FullName 'package.json'
     if (Test-Path -LiteralPath $pkg) { & git -C $root add $pkg }

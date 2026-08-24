@@ -136,7 +136,7 @@ $UnitPiUpdate = {
 }
 
 $UnitPytoolUpgrade = {
-  param([string]$Pkg, [string]$Target)
+  param([string]$Pkg, [string]$Target, [string]$Python)
   if (-not (Get-Command pipx -ErrorAction SilentlyContinue)) {
     return [pscustomobject]@{ ok = $false; msg = "skipping $Pkg (pipx missing) — run: coop install" }
   }
@@ -145,7 +145,13 @@ $UnitPytoolUpgrade = {
     return [pscustomobject]@{ ok = $false; msg = "$Pkg not installed — run: coop install" }
   }
   $target = if ($Target) { $Target } else { $Pkg }
-  & pipx install --force $target *> $null
+  if ($Pkg -eq 'ms-fabric-cli' -and -not $Python) {
+    return [pscustomobject]@{ ok = $false; msg = 'ms-fabric-cli needs Python 3.12 or 3.13 — install one, then re-run: coop update' }
+  }
+  $pipxArgs = @('install', '--force')
+  if ($Python) { $pipxArgs += @('--python', $Python) }
+  $pipxArgs += $target
+  & pipx @pipxArgs *> $null
   if ($LASTEXITCODE -eq 0) {
     $ver = if ($target -eq $Pkg) { '' } else { $target.Split('=')[-1] }
     return [pscustomobject]@{ ok = $true; msg = if ($ver) { "pinned $Pkg to tested $ver" } else { $Pkg } }
@@ -272,6 +278,7 @@ try {
   foreach ($pkg in $PY_TOOLS) {
     $pytoolTargets += if ($EDGE) { $pkg } else { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "$pkg==$tv" } else { $pkg } }
   }
+  $fabricPython = Get-CoopFabricPython
   $extensionSpecs = @()
   foreach ($pkg in @(Coop-ManifestKeys 'extensions')) {
     $spec = Coop-ManifestExtensionSpec $pkg
@@ -290,7 +297,10 @@ try {
 
   # --- 3. Upgrade pipx tools -------------------------------------------------
   Coop-Head '3/6  Coop tools + Fabric CLI (pipx)'
-  for ($i = 0; $i -lt $PY_TOOLS.Count; $i++) { Coop-Unit $PY_TOOLS[$i] $UnitPytoolUpgrade @($PY_TOOLS[$i], $pytoolTargets[$i]) }
+  for ($i = 0; $i -lt $PY_TOOLS.Count; $i++) {
+    $toolPython = if ($PY_TOOLS[$i] -eq 'ms-fabric-cli') { $fabricPython } else { '' }
+    Coop-Unit $PY_TOOLS[$i] $UnitPytoolUpgrade @($PY_TOOLS[$i], $pytoolTargets[$i], $toolPython)
+  }
 
   # --- 4. Upgrade Microsoft Fabric / Power BI authoring tools (npm) ----------
   Coop-Head '4/6  Fabric / Power BI authoring tools'

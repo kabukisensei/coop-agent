@@ -8,10 +8,11 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, copyFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
 if (!dist) { console.error("COOP_TEST_DIST not set"); process.exit(1); }
-const { resolveDataDocExecutable } = await import(new URL(`${dist}/coop-tools.mjs`, "file://").href);
+const { resolveDataDocExecutable } = await import(pathToFileURL(join(dist, "coop-tools.mjs")).href);
 
 let exe;
 try { exe = resolveDataDocExecutable(process.platform, process.env); }
@@ -21,12 +22,23 @@ catch (e) {
   process.exit(0);
 }
 
-const verOut = await new Promise((res) => {
+const verResult = await new Promise((res) => {
   const p = spawn(exe, ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
   p.stdout.on("data", (d) => { out += d; });
-  p.once("close", () => res(out));
+  let settled = false;
+  p.once("error", (error) => { if (!settled) { settled = true; res({ out, error }); } });
+  p.once("close", () => { if (!settled) { settled = true; res({ out, error: null }); } });
 });
+if (verResult.error) {
+  if (process.env.COOP_TEST_DATADOC_REQUIRED === "1") {
+    console.error(`could not start coop-data-doc: ${verResult.error.message}`);
+    process.exit(1);
+  }
+  console.log("  – coop-data-doc not on PATH; skipping live JSONL happy-path");
+  process.exit(0);
+}
+const verOut = verResult.out;
 const m = verOut.match(/(\d+)\.(\d+)\.(\d+)/);
 // The JSONL transport contract requires >= 1.1.1: compare numerically on all
 // three components (a string/prefix check would accept 1.0.1 or 1.1.0).

@@ -26,6 +26,7 @@ isolate_block() { # [n] -> sets env + STUB[/MARKER] or STUBn/MARKERn
 
 isolate_block
 REAL_NODE="$(command -v node)"; REAL_PY="$(command -v python3 2>/dev/null || command -v python)"
+COOP_FABRIC_PYTHON="$REAL_PY"; export COOP_FABRIC_PYTHON
 cat > "$STUB/pi" <<'SH'
 #!/bin/sh
 [ "$1" = "--version" ] && { echo 'pi 0.80.2'; exit 0; }
@@ -62,6 +63,8 @@ chmod +x "$STUB/pi" "$STUB/npm" "$STUB/pipx" "$STUB/fab"
 PATH="$STUB:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB"; export PATH COOP_TEST_STUB_PATH
 : > "$MARKER"
 COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" --force >/dev/null 2>&1
+grep -F "PIPX install --force --python $REAL_PY ms-fabric-cli==1.7.0" "$MARKER" >/dev/null \
+  || { echo 'Fabric CLI install did not select the supported Python explicitly'; cat "$MARKER"; exit 1; }
 for spec in \
   'npm:pi-mcp-adapter@2.10.0' 'npm:pi-hermes-memory@0.7.17' \
   'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' \
@@ -71,6 +74,8 @@ done
 grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0' "$MARKER" >/dev/null
 : > "$MARKER"
 COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.80.2 COOP_PYPI_LATEST_OVERRIDE=0.1.0 bash "$ROOT/scripts/update.sh" >/dev/null 2>&1
+grep -F "PIPX install --force --python $REAL_PY ms-fabric-cli==1.7.0" "$MARKER" >/dev/null \
+  || { echo 'Fabric CLI update did not select the supported Python explicitly'; cat "$MARKER"; exit 1; }
 for spec in 'npm:pi-mcp-adapter@2.10.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.162'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing update spec $spec"; exit 1; }
 done
@@ -172,7 +177,7 @@ SH
 cat > "$STUB5/pipx" <<'SH'
 #!/bin/sh
 if [ "$1" = "list" ]; then echo 'package coop-data-doc 1.1.1'; echo 'package ms-fabric-cli 1.5.0'; exit 0; fi
-if [ "$1" = "install" ] && [ "$3" = "ms-fabric-cli==1.7.0" ]; then exit 1; fi
+case "$*" in install*ms-fabric-cli==1.7.0*) exit 1 ;; esac
 echo "PIPX $*" >> "$MARKER5"; exit 0
 SH
 cat > "$STUB5/fab" <<'SH'

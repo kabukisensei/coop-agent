@@ -141,7 +141,7 @@ grep -q "$GUID" "$d1/stderr.txt" \
 
 # (2) Detected tenant prompt uses the access-oriented question.
 d2="$(mktemp -d "$COOP_DIR/c2.XXXXXX")"
-out2="$(printf 'y\n\n\nn\n\n' | PATH="$COOP_DIR/azbin:$PATH" HOME="$d2" COOP_DIR="$d2" COOP_AZ_BIN="$COOP_AZ_BIN" \
+out2="$(printf 'y\n\n\nn\n\n' | env PATH="$COOP_DIR/azbin:$PATH" HOME="$d2" COOP_DIR="$d2" COOP_AZ_BIN="$COOP_AZ_BIN" \
   "$PY" "$ROOT/scripts/onboard.py" onboard --config-only 2>&1 >/dev/null)"
 case "$out2" in
   *"Use this tenant for Coop's Fabric and Power BI access?"*)
@@ -197,7 +197,6 @@ PYEOF
 # (8) Editing an existing configuration updates it in place.
 d8="$(mktemp -d "$COOP_DIR/c8.XXXXXX")"
 run_config "$d8" "y" "$GUID" "n" "n" "n" "n" "n"
-before_profile="x"; [ -f "$d8/.coop/user.json" ] && before_profile="exists"
 run_config "$d8" "n" "n" "y" "n" "n" "y"
 learn="$(cfg_json "$d8/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["integrations"]["microsoft_learn"])')"
 fabric="$(cfg_json "$d8/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["integrations"]["fabric"])')"

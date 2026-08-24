@@ -138,6 +138,35 @@ coop_venv_python_version() { # <venv-name>
   "$py" -c 'import platform;print(platform.python_version())' 2>/dev/null
 }
 
+# Resolve a Python interpreter supported by ms-fabric-cli (<3.14, >=3.10).
+# Prefer 3.13, then 3.12; accept a compatible generic python as a fallback.
+# COOP_FABRIC_PYTHON is an explicit test/admin override.
+coop_fabric_python() {
+  local c v pycmd
+  if [ -n "${COOP_FABRIC_PYTHON:-}" ]; then
+    [ -x "$COOP_FABRIC_PYTHON" ] || return 1
+    printf '%s' "$COOP_FABRIC_PYTHON"
+    return 0
+  fi
+  for c in python3.13 python3.12; do
+    if command -v "$c" >/dev/null 2>&1; then command -v "$c"; return 0; fi
+  done
+  # Windows' Python launcher can locate versioned interpreters even when their
+  # directories are not on PATH. Return the real executable for pipx --python.
+  if command -v py >/dev/null 2>&1; then
+    for v in 3.13 3.12; do
+      pycmd="$(py -"$v" -c 'import sys;print(sys.executable)' 2>/dev/null | head -1)"
+      [ -n "$pycmd" ] && { printf '%s' "$pycmd"; return 0; }
+    done
+  fi
+  for c in python3 python; do
+    command -v "$c" >/dev/null 2>&1 || continue
+    v="$($c -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>/dev/null)"
+    case "$v" in 3.10|3.11|3.12|3.13) command -v "$c"; return 0 ;; esac
+  done
+  return 1
+}
+
 # The installed distribution's own Requires-Python metadata, read from inside
 # its venv. Empty when absent/unreadable. The probe program carries a marker so
 # fixture interpreters can recognise it in tests.

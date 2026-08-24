@@ -195,3 +195,22 @@ jobs:
       - name: PowerShell behavioral tests (Windows PowerShell 5.1)
         shell: powershell
         run: powershell -NoProfile -File tests\run.ps1
+
+  pi-matrix-windows:
+    # The isolated extension tree and pipx/launcher behavior are most important
+    # on the company fleet's primary platform. Exercise both the retained stable
+    # baseline and the candidate runtime before changing the release pin.
+    name: Pi ${{ matrix.pi-version }} compatibility (Windows)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pi-version: ['0.80.2', '0.84.3']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.19.0'
+      - name: clean-room production convergence matrix
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/test-pi-matrix.ps1 -PiVersion '${{ matrix.pi-version }}'

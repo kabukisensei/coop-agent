@@ -723,9 +723,10 @@ coop_release_check_pins() {
 }
 
 # --- Release: bump version, roll CHANGELOG, commit + tag (+ push) -------------
-# Cut a release with one command. Bumps VERSION + every extensions/*/package.json,
-# rolls the CHANGELOG's [Unreleased] section into a dated [X.Y.Z] heading, commits,
-# tags vX.Y.Z, and pushes the commit + tag. Requires a clean working tree.
+# Cut a release with one command. Bumps VERSION, release-manifest.json, and every
+# extensions/*/package.json; rolls the CHANGELOG's [Unreleased] section into a
+# dated [X.Y.Z] heading; commits, tags vX.Y.Z, and pushes the commit + tag.
+# Requires a clean working tree.
 coop_release() {
   local level="" assume_yes=0 do_push=1 do_check=1
   while [ "$#" -gt 0 ]; do
@@ -738,8 +739,8 @@ coop_release() {
       -h|--help)
         cat >&2 <<'EOF'
 Usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]
-  Bump VERSION + extension manifests, roll CHANGELOG [Unreleased] into a dated
-  release, commit, tag vX.Y.Z, and push (commit + tag). Default level: patch.
+  Bump VERSION + release/extension manifests, roll CHANGELOG [Unreleased] into
+  a dated release, commit, tag vX.Y.Z, and push (commit + tag). Default: patch.
   Verifies extensions transpile + tests + bash/PowerShell parity pass, and that
   the tested_with coop-tool pins match the sibling coop-website's versions.json
   (--no-check to skip).
@@ -773,6 +774,11 @@ EOF
   for _f in "$ma" "$mi" "$pa"; do
     case "$_f" in ''|*[!0-9]*) coop_die "VERSION ('$cur') is not X.Y.Z — fix it before releasing." ;; esac
   done
+  local release_manifest="$COOP_ROOT/config/release-manifest.json" manifest_cur
+  [ -f "$release_manifest" ] || coop_die "release manifest missing at $release_manifest — fix it before releasing."
+  manifest_cur="$(sed -n 's/^[[:space:]]*"coop_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$release_manifest")"
+  [ "$manifest_cur" = "$cur" ] \
+    || coop_die "release manifest coop_version ('$manifest_cur') does not match VERSION ('$cur') — align it before releasing."
   case "$level" in
     major) new="$((ma + 1)).0.0" ;;
     minor) new="${ma}.$((mi + 1)).0" ;;
@@ -854,7 +860,11 @@ EOF
   # 1. VERSION
   printf '%s\n' "$new" > "$COOP_ROOT/VERSION"
 
-  # 2. extension manifests (sed without -i for mac/linux portability)
+  # 2. release manifest + extension manifests (sed without -i for portability)
+  tmp="$(mktemp)" || coop_die "mktemp failed."
+  sed 's/^\([[:space:]]*"coop_version"[[:space:]]*:[[:space:]]*"\)[^"]*\(".*\)$/\1'"$new"'\2/' \
+    "$release_manifest" > "$tmp" || coop_die "could not update release manifest."
+  mv "$tmp" "$release_manifest" || coop_die "could not replace release manifest."
   for f in "$COOP_ROOT"/extensions/*/package.json; do
     [ -f "$f" ] || continue
     tmp="$(mktemp)" || coop_die "mktemp failed."
@@ -876,7 +886,7 @@ EOF
   # which would sweep in anything created during the (slow) gate window if another
   # agent or an editor autosave shares the tree (this is how a spurious empty release
   # got cut once). VERSION + CHANGELOG are repo-relative to git's -C dir.
-  git -C "$COOP_ROOT" add VERSION CHANGELOG.md
+  git -C "$COOP_ROOT" add VERSION CHANGELOG.md config/release-manifest.json
   for f in "$COOP_ROOT"/extensions/*/package.json; do
     [ -f "$f" ] && git -C "$COOP_ROOT" add "$f"
   done

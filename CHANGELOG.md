@@ -6,6 +6,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- Fabric CLI install/update now creates its pipx environment with an explicitly
+  supported Python 3.13 or 3.12 interpreter instead of inheriting Python 3.14
+  and failing `ms-fabric-cli`'s `<3.14` requirement. If neither interpreter is
+  available, Coop reports the exact prerequisite instead of a generic failure.
+- The optional live coop-data-doc JSONL test now skips cleanly when the binary
+  is absent and imports its generated extension bundle through a Windows-safe
+  file URL.
+- `coop release` now updates and stages `config/release-manifest.json` alongside
+  `VERSION` and extension package versions, and refuses to start from an
+  inconsistent checkout. This prevents publishing a tag whose manifest still
+  identifies the previous Coop release.
 - First-run onboarding through plain `coop` now continues into Pi with
   "Setup complete. Starting Coop…"; an explicit `coop onboard` ends with
   "Setup complete. Run 'coop' to start." A failed onboarding now stops the

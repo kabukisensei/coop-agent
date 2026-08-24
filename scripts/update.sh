@@ -91,7 +91,7 @@ _unit_pi_update() {
 }
 
 _unit_pytool_upgrade() {  # $1 = package
-  local pkg="$1" pin=""
+  local pkg="$1" pin="" fabric_py=""
   if [ "$EDGE" != 1 ]; then
     pin="$(coop_manifest_get "python_tools.$pkg")"
   fi
@@ -99,7 +99,17 @@ _unit_pytool_upgrade() {  # $1 = package
   if ! pipx list 2>/dev/null | grep -q "package $pkg "; then
     printf '%s not installed — run: coop install' "$pkg"; return 1
   fi
+  if [ "$pkg" = "ms-fabric-cli" ]; then
+    fabric_py="$(coop_fabric_python)" || {
+      printf 'ms-fabric-cli needs Python 3.12 or 3.13 — install one, then re-run: coop update'
+      return 1
+    }
+  fi
   if [ -n "$pin" ]; then
+    if [ -n "$fabric_py" ]; then
+      if pipx install --force --python "$fabric_py" "$pkg==$pin" >/dev/null 2>&1; then printf 'pinned %s to tested %s (Python %s)' "$pkg" "$pin" "$fabric_py"; return 0; fi
+      printf 'failed to pin %s to %s (try: pipx install --force --python "%s" %s==%s)' "$pkg" "$pin" "$fabric_py" "$pkg" "$pin"; return 1
+    fi
     if pipx install --force "$pkg==$pin" >/dev/null 2>&1; then printf 'pinned %s to tested %s' "$pkg" "$pin"; return 0; fi
     printf 'failed to pin %s to %s (try: pipx install --force %s==%s)' "$pkg" "$pin" "$pkg" "$pin"; return 1
   fi

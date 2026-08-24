@@ -137,7 +137,11 @@ _pipx_installed_version() {
 
 _unit_fabric() {
   have pipx || { printf 'skipping Fabric CLI (pipx missing)'; return 1; }
-  local target="$FABRIC_PKG"
+  local target="$FABRIC_PKG" fabric_py
+  fabric_py="$(coop_fabric_python)" || {
+    printf 'Microsoft Fabric CLI needs Python 3.12 or 3.13 — install one, then re-run: coop install'
+    return 1
+  }
   if [ "$EDGE" != 1 ]; then
     local ver
     ver="$(coop_manifest_get "python_tools.$FABRIC_PKG")"
@@ -151,16 +155,16 @@ _unit_fabric() {
         # Edge means upstream/latest for EXISTING installs too.
         pipx upgrade "$FABRIC_PKG" >/dev/null 2>&1 || true
       elif [ -n "${ver:-}" ] && [ "$cur" != "$ver" ]; then
-        if ! pipx install --force "$target" >/dev/null 2>&1; then
+        if ! pipx install --force --python "$fabric_py" "$target" >/dev/null 2>&1; then
           printf 'failed to converge %s to %s' "$FABRIC_PKG" "$ver"; return 1
         fi
         coop_info "converged $FABRIC_PKG $cur -> $ver"
       fi
     else
-      pipx install "$target" >/dev/null 2>&1 || true
+      pipx install --python "$fabric_py" "$target" >/dev/null 2>&1 || true
     fi
   else
-    pipx install --force "$target" >/dev/null 2>&1 || { printf 'failed to reinstall %s (%s)' "$FABRIC_PKG" "$target"; return 1; }
+    pipx install --force --python "$fabric_py" "$target" >/dev/null 2>&1 || { printf 'failed to reinstall %s (%s)' "$FABRIC_PKG" "$target"; return 1; }
   fi
   # fabric-cicd is a Python LIBRARY (no CLI), used for deploy validation — inject it
   # into the Fabric CLI's env so it's importable alongside `fab`. (doctor verifies it.)

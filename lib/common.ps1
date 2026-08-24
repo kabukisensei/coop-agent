@@ -153,6 +153,34 @@ function Get-CoopVenvPythonVersion([string]$Venv) {
   & $py -c 'import platform;print(platform.python_version())' 2>$null
 }
 
+# Resolve a Python interpreter supported by ms-fabric-cli (<3.14, >=3.10).
+# Prefer 3.13, then 3.12; accept a compatible generic python as a fallback.
+# COOP_FABRIC_PYTHON is an explicit test/admin override.
+function Get-CoopFabricPython {
+  if ($env:COOP_FABRIC_PYTHON) {
+    if (Test-Path -LiteralPath $env:COOP_FABRIC_PYTHON -PathType Leaf) { return $env:COOP_FABRIC_PYTHON }
+    return $null
+  }
+  foreach ($name in @('python3.13', 'python3.12')) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source -and $cmd.Source -notmatch '\\WindowsApps\\') { return $cmd.Source }
+  }
+  $launcher = Get-Command py -ErrorAction SilentlyContinue
+  if ($launcher) {
+    foreach ($version in @('3.13', '3.12')) {
+      $resolved = [string]((& $launcher.Source "-$version" -c 'import sys;print(sys.executable)' 2>$null | Out-String)).Trim()
+      if ($LASTEXITCODE -eq 0 -and $resolved) { return $resolved }
+    }
+  }
+  foreach ($name in @('python3', 'python')) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if (-not $cmd -or ($cmd.Source -and $cmd.Source -match '\\WindowsApps\\')) { continue }
+    $version = [string]((& $cmd.Source -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>$null | Out-String)).Trim()
+    if ($version -match '^3\.(10|11|12|13)$') { return $cmd.Source }
+  }
+  return $null
+}
+
 function Get-CoopVenvPythonPath([string]$Venv) {
   $base = Join-Path (Get-CoopPipxVenvsDir) $Venv
   foreach ($py in @((Join-Path $base 'Scripts\python.exe'), (Join-Path $base 'bin\python'), (Join-Path $base 'bin/python'))) {

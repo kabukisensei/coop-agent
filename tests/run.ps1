@@ -173,6 +173,15 @@ try {
   } else {
     Ko "pipx ownership fixture failed: $($ownerOut | Out-String)"
   }
+
+  # --- 8. release transaction ------------------------------------------------
+  Head 'release transaction consistency'
+  $releaseOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\release.test.ps1') 2>&1
+  if ($LASTEXITCODE -eq 0) {
+    $releaseOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "release transaction fixture failed: $($releaseOut | Out-String)"
+  }
 }
 finally {
   Remove-Item -LiteralPath $stub -Recurse -Force -ErrorAction SilentlyContinue

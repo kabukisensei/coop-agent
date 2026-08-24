@@ -85,7 +85,7 @@ fi
   && ok "launcher exits non-zero on onboarding failure" \
   || ko "launcher exited 0 despite onboarding failure"
 case "$F2_OUT" in
-  *"onboard"*|*"onboarding"*) ok "clear error names onboarding as the cause" ;;
+  *"onboard"*) ok "clear error names onboarding as the cause" ;;
   *) ko "error output does not mention onboarding: $(printf '%s' "$F2_OUT" | tail -3)" ;;
 esac
 
