@@ -28,9 +28,26 @@ try {
   # --- 1. Runtime from an explicit temporary npm prefix ------------------------
   $NpmPrefix = Join-Path $T 'npmpkg'
   $npm = (Get-Command npm -ErrorAction SilentlyContinue).Source
-  & $npm install --silent --no-audit --no-fund --global --prefix $NpmPrefix ("@earendil-works/pi-coding-agent@" + $PiVersion) *> $null
-  $PiBin = Join-Path $NpmPrefix 'pi.cmd'
-  if (-not (Test-Path $PiBin)) { Ko 'pi binary missing after install'; exit 1 }
+  $npmOut = & $npm install --no-audit --no-fund --global --prefix $NpmPrefix ("@earendil-works/pi-coding-agent@" + $PiVersion) 2>&1 | Out-String
+  if ($LASTEXITCODE -ne 0) { Ko "npm install of Pi failed: $($npmOut.Trim())"; exit 1 }
+  # npm's Windows prefix layout has varied: traditional global installs expose
+  # pi.cmd at the prefix root, while some npm releases place it under a bin or
+  # node_modules/.bin directory. Resolve the actual launcher, don't assume one.
+  $PiBin = @(
+    (Join-Path $NpmPrefix 'pi.cmd'),
+    (Join-Path $NpmPrefix 'bin\pi.cmd'),
+    (Join-Path $NpmPrefix 'node_modules\.bin\pi.cmd')
+  ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+  if (-not $PiBin) {
+    $found = @(Get-ChildItem -LiteralPath $NpmPrefix -Filter 'pi.cmd' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 5 -ExpandProperty FullName)
+    Ko "pi binary missing after install (found: $($found -join ', '))"
+    exit 1
+  }
+  $PiPackageDir = @(
+    (Join-Path $NpmPrefix 'node_modules\@earendil-works\pi-coding-agent'),
+    (Join-Path $NpmPrefix 'lib\node_modules\@earendil-works\pi-coding-agent')
+  ) | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'package.json') -PathType Leaf } | Select-Object -First 1
+  if (-not $PiPackageDir) { Ko 'Pi package directory missing after install'; exit 1 }
   $runtimeVer = (& $PiBin --version 2>$null | Select-String -Pattern '\d+\.\d+\.\d+').Matches.Value
   if ($runtimeVer -eq $PiVersion) { Ok "runtime $PiVersion resolves from temporary prefix" } else { Ko "runtime version mismatch: $runtimeVer" }
 
@@ -52,7 +69,7 @@ try {
   # the workstation's global pi. Sync must exit zero: it performs exact-pin
   # convergence and postcondition verification itself, so no harness-side
   # installation happens here.
-  $env:PATH = "$NpmPrefix;" + $env:PATH
+  $env:PATH = "$(Split-Path -Parent $PiBin);" + $env:PATH
   $syncOut = & (Join-Path $RepoRoot 'scripts\sync.ps1') 2>&1
   $syncRc = $LASTEXITCODE
   $syncText = $syncOut | Out-String
@@ -78,7 +95,7 @@ try {
     $got = VerOf $name
     if ($got -eq $want) { Ok "$name at manifest version $want" } else { Ko "$name version '$got', wanted $want" }
   }
-  $pkgJson = Get-Content (Join-Path $NpmPrefix 'node_modules\@earendil-works\pi-coding-agent\package.json') -Raw | ConvertFrom-Json
+  $pkgJson = Get-Content (Join-Path $PiPackageDir 'package.json') -Raw | ConvertFrom-Json
   foreach ($lib in @('@earendil-works/pi-ai', '@earendil-works/pi-tui')) {
     $req = $pkgJson.dependencies.$lib
     $got = VerOf $lib.Replace('/', '\')
@@ -96,7 +113,7 @@ try {
   catch { Ko 'mcp.json missing or invalid' }
 
   # --- 6. First-party extensions through the REAL Pi loader ---------------------
-  $loader = Join-Path $NpmPrefix 'node_modules\@earendil-works\pi-coding-agent\dist\core\extensions\loader.js'
+  $loader = Join-Path $PiPackageDir 'dist\core\extensions\loader.js'
   $probe = Join-Path $T 'load-probe.mjs'
   $srcs = @('coop-powerline','coop-tools','coop-guardrails','coop-profile' | ForEach-Object { Join-Path $RepoRoot "extensions\$_\index.ts" })
   @"

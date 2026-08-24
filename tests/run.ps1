@@ -176,8 +176,15 @@ try {
 
   # --- 8. release transaction ------------------------------------------------
   Head 'release transaction consistency'
+  # Coop status output intentionally uses stderr. Windows PowerShell 5.1 turns
+  # redirected native stderr into NativeCommandError records; with this suite's
+  # ErrorActionPreference=Stop that would abort despite a zero child exit.
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
   $releaseOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\release.test.ps1') 2>&1
-  if ($LASTEXITCODE -eq 0) {
+  $releaseRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($releaseRc -eq 0) {
     $releaseOut | ForEach-Object { Write-Host $_ }
   } else {
     Ko "release transaction fixture failed: $($releaseOut | Out-String)"

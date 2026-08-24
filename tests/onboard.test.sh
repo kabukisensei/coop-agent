@@ -134,7 +134,7 @@ tenant_id="$(cfg_json "$d1/.coop/config" | "$PY" -c 'import json,sys; print(json
 [ "$tenant_id" = "$GUID" ] && ok "manually supplied client tenant is stored" || ko "manual tenant lost: $tenant_id"
 power_bi="$(cfg_json "$d1/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["integrations"]["power_bi"])')"
 [ "$power_bi" = "True" ] && ok "Power BI MCP can be enabled WITH a tenant" || ko "power_bi should be True with tenant: $power_bi"
-grep -q "Review" "$d1/stderr.txt" && grep -q ".coop/config" "$d1/stderr.txt" \
+grep -q "Review" "$d1/stderr.txt" && grep -q "Destination:" "$d1/stderr.txt" \
   && ok "summary shows review block and destination path" || ko "summary missing before save"
 grep -q "$GUID" "$d1/stderr.txt" \
   && ok "summary echoes the configured tenant" || ko "summary omits tenant"
