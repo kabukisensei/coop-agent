@@ -115,7 +115,7 @@ resources:
 # (web/README.md) once coop's extensions + protocol are re-verified against a new Pi.
 tested_with:
   pi_min: "0.79.0"
-  pi: "0.80.2"          # @earendil-works/pi-coding-agent (requires Node >= 22.19)
+  pi: "0.84.3"          # @earendil-works/pi-coding-agent (requires Node >= 22.19)
   pi_mcp_adapter: "2.10.0"
   pi_hermes_memory: "0.7.17"
   pi_web_access: "0.10.7"

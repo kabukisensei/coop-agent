@@ -198,14 +198,14 @@ jobs:
 
   pi-matrix-windows:
     # The isolated extension tree and pipx/launcher behavior are most important
-    # on the company fleet's primary platform. Exercise both the retained stable
-    # baseline and the candidate runtime before changing the release pin.
+    # on the company fleet's primary platform. Exercise the exact release pin;
+    # unit tests separately prove that legacy runtimes fail with upgrade guidance.
     name: Pi ${{ matrix.pi-version }} compatibility (Windows)
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        pi-version: ['0.80.2', '0.84.3']
+        pi-version: ['0.84.3']
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

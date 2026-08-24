@@ -37,6 +37,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   launcher instead of continuing with a partially generated MCP configuration.
 
 ### Changed
+- Promoted the tested Pi release pin from **0.80.2** to **0.84.3**. A real
+  clean-room Windows run proved that the current pinned extension fleet now
+  requires `pi-ai >= 0.84.3`, so retaining 0.80.2 produced the same
+  update-then-launch-abort seen on workstations. Coop now installs the coherent
+  0.84.3 runtime and shared-library set; legacy runtimes fail with explicit
+  upgrade guidance instead of leaving a mixed, unlaunchable tree.
 - Added `scripts/test-pi-matrix.{sh,ps1}`: clean-room Pi compatibility matrix
   (temporary npm prefix + temporary agent dir; never touches the workstation).
   Each run installs a coherent fleet at exact manifest versions via dependency
@@ -46,7 +52,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   exercises RPC startup/get_state/clean shutdown plus a live agent turn when
   credentials permit, proves second-sync idempotency, and reproduces+repairs a
   deliberate shared-lib skew (including the observed getOAuthApiKey class of
-  failure). macOS results: 0.80.2 / 0.83.0 / 0.84.3 all pass 29 checks.
+  failure). Pi 0.84.3 passes the full production-convergence matrix on macOS;
+  Windows is enforced in CI. Older Pi releases remain covered by explicit
+  incompatibility/upgrade-path tests rather than being advertised as supported.
 - New live test drives the real coop-data-doc setup wizard over its JSONL
   transport end-to-end (hello first, every prompt answered, exactly one
   `complete`, exit 0, valid config, JSON-only stdout); skips cleanly when the

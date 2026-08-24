@@ -6,7 +6,7 @@
   },
   "pi": {
     "package": "@earendil-works/pi-coding-agent",
-    "version": "0.80.2"
+    "version": "0.84.3"
   },
   "extensions": {
     "pi-mcp-adapter": "2.10.0",

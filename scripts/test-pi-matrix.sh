@@ -76,17 +76,8 @@ const m = require(process.argv[1]);
 console.log(Object.entries(m.extensions || {}).map(([k, v]) => `${k}@${v}`).join("\n"));
 ' "$MANIFEST")
 [ ${#FLEET[@]} -gt 0 ] || { ko "manifest has no extensions"; exit 1; }
-for spec in "${FLEET[@]}"; do
-  if "$PI_BIN" install "npm:$spec" >/dev/null 2>&1; then ok "installed npm:$spec"
-  else ko "install failed: npm:$spec"; fi
-done
-
-# npm resolves ^-ranges fresh on each install, so a single sequential pass can
-# float earlier extensions to latest. A second pass over an ALREADY-populated
-# tree keeps satisfying versions in place — then verify, never assume.
-for spec in "${FLEET[@]}"; do
-  "$PI_BIN" install "npm:$spec" >/dev/null 2>&1 || true
-done
+# Do not preinstall or repair extensions in the harness. Production sync below
+# owns the complete install + exact-pin + shared-library convergence path.
 
 # --- 3. coop sync (first run: convergence) ------------------------------------
 agent_nm="$PI_CODING_AGENT_DIR/npm/node_modules"

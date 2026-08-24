@@ -11,7 +11,7 @@
 [ -n "${COOP_TEST_FAKE_PI_BEHAVIOR:-}" ] && . "$COOP_TEST_FAKE_PI_BEHAVIOR"
 case "${1:-}" in
   --version)
-    echo "0.80.2"
+    echo "0.84.3"
     exit 0
     ;;
   install)

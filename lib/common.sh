@@ -744,17 +744,23 @@ EOF
 $line
 EOF
   if [ "$rc" = 10 ]; then
-    # A stale node_modules can keep the old hoist — rebuild it clean as a last resort,
-    # but PRESERVE the existing tree: move it aside, reinstall, and restore it if the
-    # reinstall fails (offline / registry down / proxy). Deleting first would leave
-    # coop with NO extensions — strictly worse than a skewed-but-working tree.
-    local nm="$npm_dir/node_modules" bak="$npm_dir/node_modules.coopbak"
-    if [ -d "$nm" ]; then rm -rf "$bak" 2>/dev/null || true; mv "$nm" "$bak" 2>/dev/null || true; fi
+    # A stale hoist can survive an in-place install. Remove and reinstall ONLY the
+    # two shared libraries, preserving the extension fleet and native dependencies
+    # such as context-mode's better-sqlite3. A full node_modules rebuild needlessly
+    # invokes node-gyp on Windows and can turn a repairable skew into a broken tree.
+    local scope="$npm_dir/node_modules/@earendil-works"
+    local ai="$scope/pi-ai" tui="$scope/pi-tui" bak="$npm_dir/.coop-extdeps-backup"
+    rm -rf "$bak" 2>/dev/null || true; mkdir -p "$bak"
+    [ -d "$ai" ] && mv "$ai" "$bak/pi-ai" 2>/dev/null || true
+    [ -d "$tui" ] && mv "$tui" "$bak/pi-tui" 2>/dev/null || true
     if ( cd "$npm_dir" && npm install >/dev/null 2>&1 ); then
       rm -rf "$bak" 2>/dev/null || true
-    elif [ -d "$bak" ]; then
-      rm -rf "$nm" 2>/dev/null || true; mv "$bak" "$nm" 2>/dev/null || true
-      coop_warn "extension realignment reinstall failed — restored the previous tree" "check your network, then: coop doctor --fix"
+    else
+      rm -rf "$ai" "$tui" 2>/dev/null || true; mkdir -p "$scope"
+      [ -d "$bak/pi-ai" ] && mv "$bak/pi-ai" "$ai" 2>/dev/null || true
+      [ -d "$bak/pi-tui" ] && mv "$bak/pi-tui" "$tui" 2>/dev/null || true
+      rm -rf "$bak" 2>/dev/null || true
+      coop_warn "extension realignment reinstall failed — restored the previous shared libraries" "check your network, then: coop doctor --fix"
     fi
     rc=0
     line="$("$py" "$COOP_ROOT/lib/_extdeps.py" align "$agent_dir" "$ver" --check 2>/dev/null)" || rc=$?

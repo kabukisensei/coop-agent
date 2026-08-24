@@ -32,7 +32,7 @@ FAKEBIN="$TMP/home/.local/bin"; mkdir -p "$FAKEBIN"
 # postcondition check requires it).
 cat > "$FAKEBIN/pi" <<'SH'
 #!/bin/sh
-[ "$1" = "--version" ] && { echo 'pi 0.80.2'; exit 0; }
+[ "$1" = "--version" ] && { echo 'pi 0.84.3'; exit 0; }
 if [ "$1" = "install" ]; then
   spec="$2"; rest="${spec#npm:}"; name="${rest%@*}"; ver="${rest##*@}"
   dir="${PI_CODING_AGENT_DIR:?}/npm/node_modules/$name"
@@ -44,7 +44,7 @@ SH
 cat > "$FAKEBIN/npm" <<'SH'
 #!/bin/sh
 [ "$1 $2" = "prefix -g" ] && { dirname "$(dirname "$0")"; exit 0; }
-[ "$1" = "view" ] && { echo '0.80.2'; exit 0; }
+[ "$1" = "view" ] && { echo '0.84.3'; exit 0; }
 echo "NPM $*" >> "$MARKER"; exit 0
 SH
 cat > "$FAKEBIN/pipx" <<'SH'

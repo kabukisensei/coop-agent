@@ -42,7 +42,7 @@ function Ko   { param([string]$m) Write-Host "  $G_CROSS $m"; $script:fail = 1 }
 function Head { param([string]$m) Write-Host "$G_ARROW $m" }
 
 # --- pi/npm stubs on a scratch PATH -----------------------------------------
-# The gate + --check need a `pi` (reporting 0.80.2) and an `npm` that Get-Command
+# The gate + --check need a `pi` (reporting 0.84.3) and an `npm` that Get-Command
 # resolves. Windows PowerShell 5.1 finds a stub only via a PATHEXT extension
 # (.cmd), so write BOTH an extension-less Unix executable and a .cmd wrapper.
 $stub = Join-Path ([System.IO.Path]::GetTempPath()) ("coop-ps-test-" + [System.IO.Path]::GetRandomFileName())
@@ -54,7 +54,7 @@ try {
   [System.IO.File]::WriteAllText((Join-Path $stub 'npm'), "#!/bin/sh`nexit 0`n")
   if ($IsLinux -or $IsMacOS) { & chmod +x (Join-Path $stub 'pi') (Join-Path $stub 'npm') }
   # Windows .cmd wrappers — resolved by Get-Command on Windows PowerShell 5.1.
-  [System.IO.File]::WriteAllText((Join-Path $stub 'pi.cmd'),  "@echo off`r`nif `"%1`"==`"--version`" (echo pi 0.80.2& exit /b 0)`r`nexit /b 0`r`n")
+  [System.IO.File]::WriteAllText((Join-Path $stub 'pi.cmd'),  "@echo off`r`nif `"%1`"==`"--version`" (echo pi 0.84.3& exit /b 0)`r`nexit /b 0`r`n")
   [System.IO.File]::WriteAllText((Join-Path $stub 'npm.cmd'), "@echo off`r`nexit /b 0`r`n")
 
   $sep = [System.IO.Path]::PathSeparator
@@ -136,7 +136,7 @@ try {
     return (($out | Where-Object { $_ -match 'GATE' }) | Select-Object -Last 1)
   }
   $d = Invoke-Gate
-  if ($d -eq 'GATE pin:0.80.2') { Ok 'normal mode pins Pi to the release manifest' } else { Ko "expected 'GATE pin:0.80.2', got '$d'" }
+  if ($d -eq 'GATE pin:0.84.3') { Ok 'normal mode pins Pi to the release manifest' } else { Ko "expected 'GATE pin:0.84.3', got '$d'" }
   $d = Invoke-Gate -GateArgs @('--edge')
   if ($d -eq 'GATE all') { Ok '--edge is the only latest/upstream mode' } else { Ko "with --edge expected 'GATE all', got '$d'" }
   $d = Invoke-Gate -GateArgs @('--pi-latest')
@@ -149,7 +149,7 @@ try {
 & '$update' --check 2>`$null
 "@ 6>$null | Out-String
   if ($LASTEXITCODE -eq 0) { Ok '--check exits 0' } else { Ko "--check exit was $LASTEXITCODE" }
-  if ($checkOut -like '*expected 0.80.2*') { Ok '--check prints the pi expected version' } else { Ko '--check missing pi expected version' }
+  if ($checkOut -like '*expected 0.84.3*') { Ok '--check prints the pi expected version' } else { Ko '--check missing pi expected version' }
   if ($checkOut -like '*status *') { Ok '--check prints a status column' } else { Ko '--check missing status column' }
   if ($checkOut -like '*@microsoft/powerbi-report-authoring-cli*') { Ok '--check lists npm authoring tools' } else { Ko '--check missing npm authoring tools' }
 
@@ -164,7 +164,7 @@ try {
 `$env:COOP_UPDATE_GATE_DRYRUN = '1'
 & '$coop' update --check 2>&1
 "@ 6>$null | Out-String
-  if (($wrappedCheckOut -like '*expected 0.80.2*') -and ($wrappedCheckOut -like '*status *')) {
+  if (($wrappedCheckOut -like '*expected 0.84.3*') -and ($wrappedCheckOut -like '*status *')) {
     Ok 'coop wrapper forwards --check intact to the read-only path'
   } else { Ko "coop wrapper did not reach the --check dry-run: $wrappedCheckOut" }
   if ($wrappedCheckOut -notlike '*ignoring unknown flag*' -and $wrappedCheckOut -notlike '*GATE *') {
