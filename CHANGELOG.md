@@ -9,6 +9,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - Windows sync now preserves complete extension package names when stripping
   the `npm:` transport prefix; scoped packages no longer become invalid names
   during exact-pin/shared-library convergence.
+- Repeat syncs now leave already-exact extensions untouched, avoiding needless
+  network installs while still verifying every postcondition and repairing
+  shared-library skew.
+- Bash update inventory now consumes complete `pipx list` output under
+  `pipefail`, preventing early-match SIGPIPE from misclassifying installed tools.
 - `coop install` now preserves failed install and sync steps in its final exit
   status instead of allowing a warning-only Doctor result to report bootstrap
   success for an agent that still cannot launch.

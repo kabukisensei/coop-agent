@@ -96,7 +96,9 @@ _unit_pytool_upgrade() {  # $1 = package
     pin="$(coop_manifest_get "python_tools.$pkg")"
   fi
   have pipx || { printf 'skipping %s (pipx missing) — run: coop install' "$pkg"; return 1; }
-  if ! pipx list 2>/dev/null | grep -q "package $pkg "; then
+  # Do not use grep -q under pipefail: it can close the pipe after an early
+  # match, SIGPIPE pipx, and turn a real installed package into a false miss.
+  if ! pipx list 2>/dev/null | grep "package $pkg " >/dev/null; then
     printf '%s not installed — run: coop install' "$pkg"; return 1
   fi
   if [ "$pkg" = "ms-fabric-cli" ]; then
@@ -234,7 +236,7 @@ coop_progress_end
 # uses the manifest pin; edge mode alone may take latest.
 FCC_PIN=''
 if [ "$EDGE" != 1 ]; then FCC_PIN="$(coop_manifest_object_get python_tools fabric-cicd)"; fi
-if have pipx && pipx list 2>/dev/null | grep -q "package ms-fabric-cli "; then
+if have pipx && pipx list 2>/dev/null | grep "package ms-fabric-cli " >/dev/null; then
   if [ -n "$FCC_PIN" ]; then
     if pipx inject ms-fabric-cli "fabric-cicd==$FCC_PIN" --force >/dev/null 2>&1; then
       coop_ok "fabric-cicd (library) pinned to tested $FCC_PIN"

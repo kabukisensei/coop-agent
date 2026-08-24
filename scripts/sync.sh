@@ -62,9 +62,14 @@ if have pi; then
     FLEET_NAMES+=("$ext")
     ext_pin="${ext_spec##*@}"
     FLEET_PINS+=("$ext_pin")
-    PREVERS+=("$(coop_ext_installed_version "$PI_AGENT" "$ext")")
+    pre="$(coop_ext_installed_version "$PI_AGENT" "$ext")"
+    PREVERS+=("$pre")
     coop_info "Ensuring isolated $ext is version ${ext_pin}…"
-    if ! PI_CODING_AGENT_DIR="$PI_AGENT" pi install "$ext_spec" >/dev/null 2>&1; then
+    # Exact installed pins need no network or package-manager mutation. This
+    # makes repeat syncs genuinely idempotent and keeps offline launches stable.
+    if [ "$pre" = "$ext_pin" ]; then
+      :
+    elif ! PI_CODING_AGENT_DIR="$PI_AGENT" pi install "$ext_spec" >/dev/null 2>&1; then
       coop_warn "could not install $ext (pin $ext_pin)"
       SYNC_FAILURES=$((SYNC_FAILURES + 1))
     fi

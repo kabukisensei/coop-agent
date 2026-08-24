@@ -76,10 +76,15 @@ try {
       $fleetNames += $ext
       $pin = $extSpec.Substring($i + 1)
       $fleetPins += $pin
-      $preVers[$ext] = Get-CoopExtInstalledVersion -AgentDir $PI_AGENT -Name $ext
+      $pre = Get-CoopExtInstalledVersion -AgentDir $PI_AGENT -Name $ext
+      $preVers[$ext] = $pre
       Coop-Info "Ensuring isolated $ext is version ${pin}…"
-      & pi install $extSpec > $null 2>&1
-      if ($LASTEXITCODE -ne 0) { Coop-Warn "could not install $ext (pin $pin)"; $script:SyncFailures++ }
+      # Exact installed pins need no network or package-manager mutation. This
+      # makes repeat syncs genuinely idempotent and keeps offline launches stable.
+      if ($pre -ne $pin) {
+        & pi install $extSpec > $null 2>&1
+        if ($LASTEXITCODE -ne 0) { Coop-Warn "could not install $ext (pin $pin)"; $script:SyncFailures++ }
+      }
     }
 
     # Order matters: exact extension pins FIRST, then shared-library alignment —
