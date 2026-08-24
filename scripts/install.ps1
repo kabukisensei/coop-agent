@@ -18,6 +18,16 @@ $ErrorActionPreference = 'Continue'
 # (Coop-Prog*/Coop-Emit), Test-Have, Get-CoopPython, Coop-Unit, Invoke-CoopScript, etc.
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
 
+# Keep going so Doctor can present the complete state, but preserve every failed
+# convergence unit for the final process result. A warning-only Doctor must not
+# turn an unusable install (for example, extension sync failure) into exit 0.
+$script:InstallFailures = 0
+function Install-Unit {
+  param([string]$Label, [scriptblock]$Work, [object[]]$WorkArgs = @())
+  Coop-Unit $Label $Work $WorkArgs
+  if (-not $script:CoopUnitLastOk) { $script:InstallFailures++ }
+}
+
 # Make freshly-installed user/pipx/npm bins visible to the REST of this run (their
 # dirs are usually not on PATH until a new shell — which is why a one-pass install
 # would otherwise "skip" later steps). Best-effort; never fatal.
@@ -507,7 +517,7 @@ try {
     Coop-Warn "Tabular Editor CLI (te) not found (optional; BPA reviews need it — download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli, place in ~/.local/bin or on PATH, then run: te auth login)."
   }
 
-  Coop-Unit 'pipx' $UnitPipx
+  Install-Unit 'pipx' $UnitPipx
   Add-CoopUserPaths    # make a just-installed pipx + its tool-bin visible this run
 
   # Resolve exact specs from the release manifest (unless --edge).
@@ -536,25 +546,25 @@ try {
 
   # --- 2. Pi itself ----------------------------------------------------------
   Coop-Head '2/8  Pi (@earendil-works/pi-coding-agent)'
-  Coop-Unit 'pi (@earendil-works/pi-coding-agent)' $UnitPi @($FORCE, $piSpec)
+  Install-Unit 'pi (@earendil-works/pi-coding-agent)' $UnitPi @($FORCE, $piSpec)
   Add-CoopNpmPath      # make a just-npm-installed `pi` visible to step 3 this run
 
   # --- 3. Pi extensions ------------------------------------------------------
   Coop-Head '3/8  Pi extensions'
-  for ($i = 0; $i -lt $PI_EXTENSIONS.Count; $i++) { Coop-Unit $PI_EXTENSIONS[$i] $UnitExt @($extSpecs[$i]) }
+  for ($i = 0; $i -lt $PI_EXTENSIONS.Count; $i++) { Install-Unit $PI_EXTENSIONS[$i] $UnitExt @($extSpecs[$i]) }
 
   # --- 4. Microsoft Fabric CLI ----------------------------------------------
   Coop-Head '4/8  Microsoft Fabric CLI'
   if ($NO_FABRIC) { Coop-Info 'skipping Microsoft Fabric CLI (--no-fabric)' }
-  else { Coop-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $EDGE, $FABRIC_PKG, $fabricTarget, $fabricCicd, $fabricPython) }
+  else { Install-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $EDGE, $FABRIC_PKG, $fabricTarget, $fabricCicd, $fabricPython) }
 
   # --- 5. Python tools (pipx) -----------------------------------------------
   Coop-Head '5/8  Coop tools (pipx)'
-  for ($i = 0; $i -lt $PY_TOOLS.Count; $i++) { Coop-Unit $PY_TOOLS[$i] $UnitPytool @($FORCE, $PY_TOOLS[$i], $pytoolTargets[$i]) }
+  for ($i = 0; $i -lt $PY_TOOLS.Count; $i++) { Install-Unit $PY_TOOLS[$i] $UnitPytool @($FORCE, $PY_TOOLS[$i], $pytoolTargets[$i]) }
 
   # --- 6. Power BI / Fabric authoring tools (npm) ----------------------------
   Coop-Head '6/8  Power BI / Fabric authoring tools'
-  Coop-Unit 'Power BI/Fabric authoring tools' $UnitPbihTools @($FORCE, $pbihSpecs)
+  Install-Unit 'Power BI/Fabric authoring tools' $UnitPbihTools @($FORCE, $pbihSpecs)
 }
 finally {
   Coop-ProgEnd
@@ -675,7 +685,7 @@ if (-not [Console]::IsInputRedirected -and $env:COOP_NO_ONBOARD -ne '1') {
 # --- 9. Sync brand assets + doctor --------------------------------------------
 Coop-Head '9/9  Sync assets and run doctor'
 $syncRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
-if ($syncRc -ne 0) { Coop-Warn 'sync reported issues' }
+if ($syncRc -ne 0) { Coop-Warn 'sync reported issues'; $script:InstallFailures++ }
 [Console]::Error.WriteLine('')
 # Propagate doctor's verdict as the install's exit code (mirror of install.sh): a
 # genuinely broken install (a required dep still missing → doctor exits 1) is then
@@ -685,8 +695,14 @@ $doctorRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
 [Console]::Error.WriteLine('')
 # Close on doctor's verdict (mirror of install.sh): a green "complete" line after a
 # failed doctor would bury the real state — on failure, point back at the ✗ items.
-if ($doctorRc -ne 0) {
-  Coop-Warn "Bootstrap finished, but doctor reported problems — fix the $($script:G_CROSS) items above, then re-run: coop doctor"
+$installRc = if (($doctorRc -ne 0) -or ($script:InstallFailures -gt 0)) { 1 } else { 0 }
+if ($installRc -ne 0) {
+  if ($script:InstallFailures -gt 0) { Coop-Warn "$($script:InstallFailures) install/sync step(s) failed — review the ! items above" }
+  if ($doctorRc -ne 0) {
+    Coop-Warn "Bootstrap finished, but doctor reported problems — fix the $($script:G_CROSS) items above, then re-run: coop doctor"
+  } else {
+    Coop-Warn 'Bootstrap is incomplete — fix the failed steps above, then re-run: coop install'
+  }
 } elseif ($script:NeedNewShell) {
   Coop-Ok 'Bootstrap complete. coop was just added to your PATH.'
 } else {
@@ -696,4 +712,4 @@ if ($script:NeedNewShell) {
   Coop-Say "      Open a NEW terminal, then run:  coop"
   Coop-Say "      (or use it right now in this window:  & `"$LOCALBIN\coop.cmd`")"
 }
-exit $doctorRc
+exit $installRc

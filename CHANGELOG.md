@@ -6,6 +6,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- `coop install` now preserves failed install and sync steps in its final exit
+  status instead of allowing a warning-only Doctor result to report bootstrap
+  success for an agent that still cannot launch.
 - `coop update` now returns nonzero when any Pi/tool convergence, Fabric library
   injection, or sync step fails; it still runs Doctor for diagnostics, but no
   longer converts visible `upgrade failed` warnings into a successful exit.

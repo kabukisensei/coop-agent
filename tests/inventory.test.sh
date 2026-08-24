@@ -47,7 +47,14 @@ FIXHOME="$TMP/home"; FAKEBIN="$FIXHOME/.local/bin"; mkdir -p "$FAKEBIN"
 # python3 AND the real fab/coop shims there, which would defeat isolation).
 NODE_DIR="$(dirname "$(command -v node)")"
 PY_DIR="$TMP/pybin"; mkdir -p "$PY_DIR"
-ln -sf "$(command -v "$PY")" "$PY_DIR/python3"
+# Use a real wrapper rather than a symlink. Git Bash on Windows may materialize
+# `ln -s` as a plain text file when symlink creation is unavailable, which made
+# the supposedly hermetic fixture unable to execute Python.
+cat > "$PY_DIR/python3" <<EOF
+#!/bin/sh
+exec "$PY" "\$@"
+EOF
+chmod +x "$PY_DIR/python3"
 BASE_PATH="$NODE_DIR:$PY_DIR:/usr/bin:/bin"
 PIPXHOME="$TMP/pipxhome"; mkdir -p "$PIPXHOME/venvs/ms-fabric-cli/bin" "$PIPXHOME/venvs/coop-data-doc/bin"
 
@@ -92,9 +99,8 @@ make_real_fab() { # <version>
 exit 1
 EOF
   chmod +x "$PIPXHOME/venvs/ms-fabric-cli/bin/fab"
-  ln -sf "$PIPXHOME/venvs/ms-fabric-cli/bin/fab" "$FAKEBIN/fab"
 }
-remove_fab() { rm -f "$FAKEBIN/fab" "$PIPXHOME/venvs/ms-fabric-cli/bin/fab"; }
+remove_fab() { rm -f "$PIPXHOME/venvs/ms-fabric-cli/bin/fab"; }
 
 # Genuine-looking coop-data-doc: lives INSIDE its fake pipx venv so ownership
 # probes pass exactly as they would for a pipx-installed console script.
@@ -105,18 +111,18 @@ make_real_cdd() { # <version>
     echo "echo coop-data-doc, version $1"
   } > "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc"
   chmod +x "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc"
-  ln -sf "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc" "$FAKEBIN/coop-data-doc"
 }
 
 
 doctor_out() { # <scratch-cwd> [path-prefix]
   local pfx="${2:-}"
+  local fixture_bins="$PIPXHOME/venvs/ms-fabric-cli/bin:$PIPXHOME/venvs/coop-data-doc/bin:$FAKEBIN"
   ( cd "$1" && COOP_ROOT="$ROOT" \
-      HOME="$FIXHOME" PATH="$pfx$BASE_PATH" \
+      HOME="$FIXHOME" PATH="$pfx$fixture_bins:$BASE_PATH" \
       COOP_RELEASE_MANIFEST="$TMP/manifest.json" \
       COOP_TEST_PIPX_FIXTURE="$TMP/fixtures" \
       COOP_PIPX_HOME="$PIPXHOME" COOP_PIPX_BIN="$FAKEBIN/pipx" \
-      PI_CODING_AGENT_DIR="$TMP/noagent" COOP_TEST_STUB_PATH="$pfx$FAKEBIN" \
+      PI_CODING_AGENT_DIR="$TMP/noagent" COOP_TEST_STUB_PATH="$pfx$fixture_bins" \
       bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null )
 }
 
@@ -358,8 +364,6 @@ PYEOF
   # node/python3 symlinks - so results are deterministic and offline.
   cat "$ROOT/tests/fixtures/sync-fake-pi.sh" > "$sandbox/bin/pi"
   printf '#!/bin/sh\n[ "$1" = "--version" ] && { echo 22.0.0; exit 0; }\nexit 1\n' > "$sandbox/bin/npm"
-  ln -sf "$(command -v node)" "$sandbox/bin/node"
-  ln -sf "$(command -v python3 || command -v python)" "$sandbox/bin/python3"
   chmod +x "$sandbox/bin"/*
   local ad="$sandbox/agent"
   mkdir -p "$ad/npm/node_modules/pi-mcp-adapter" "$ad/npm"
@@ -368,7 +372,7 @@ PYEOF
   HOME="$sandbox/home" COOP_AGENT_DIR="$ad" PI_CODING_AGENT_DIR="$ad" \
       COOP_RELEASE_MANIFEST="$sandbox/config/release-manifest.json" \
       COOP_FAKE_EXTDEPS_RC="$rc" COOP_PIPX_BIN=/nonexistent/pipx \
-      COOP_TEST_STUB_PATH="$sandbox/bin" PATH="$sandbox/bin:/usr/bin:/bin" \
+      COOP_TEST_STUB_PATH="$sandbox/bin:$BASE_PATH" PATH="$sandbox/bin:$BASE_PATH" \
       bash "$sandbox/scripts/sync.sh" >"$sandbox/sync.log" 2>&1 </dev/null
   local sync_rc=$?
   sed 's/\x1b\[[0-9;]*m//g' "$sandbox/sync.log"

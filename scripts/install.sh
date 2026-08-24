@@ -18,6 +18,7 @@ export COOP_ROOT
 . "$COOP_ROOT/lib/common.sh"
 
 FORCE=0; NO_FABRIC=0; NO_PREREQS=0; EDGE=0
+INSTALL_FAILURES=0
 for a in "$@"; do
   case "$a" in
     '') ;;                                            # ignore blank args (launchers can pass one)
@@ -363,7 +364,7 @@ else
   coop_warn "Tabular Editor CLI (te) not found (optional; BPA reviews need it — download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli, place in ~/.local/bin or on PATH, then run: te auth login)."
 fi
 
-coop_unit "pipx" _unit_pipx
+coop_unit "pipx" _unit_pipx || INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
 # Make a just-installed pipx (and the bins pipx will drop tools into) visible to
 # the REST of this run, so steps 4/5 don't fail "pipx missing" until a new shell.
 if _py="$(coop_python)"; then _ub="$("$_py" -m site --user-base 2>/dev/null)"; [ -n "${_ub:-}" ] && PATH="$_ub/bin:$PATH"; unset _ub; fi; unset _py
@@ -372,7 +373,7 @@ hash -r 2>/dev/null || true
 
 # --- 2. Pi itself ------------------------------------------------------------
 coop_head "2/8  Pi (@earendil-works/pi-coding-agent)"
-coop_unit "pi (@earendil-works/pi-coding-agent)" _unit_pi
+coop_unit "pi (@earendil-works/pi-coding-agent)" _unit_pi || INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
 # Make a just-npm-installed `pi` visible to step 3 in the same run (npm's global
 # bin dir is often not yet on PATH right after install).
 if have npm; then _np="$(npm prefix -g 2>/dev/null)"; [ -n "${_np:-}" ] && PATH="$_np/bin:$PATH"; unset _np; fi
@@ -381,7 +382,7 @@ hash -r 2>/dev/null || true
 # --- 3. Pi extensions (MCP / memory / usage / web / ask-user) ----------------
 coop_head "3/8  Pi extensions"
 for ext in "${PI_EXTENSIONS[@]}"; do
-  coop_unit "$ext" _unit_ext "$ext"
+  coop_unit "$ext" _unit_ext "$ext" || INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
 done
 
 # --- 4. Microsoft Fabric CLI -------------------------------------------------
@@ -389,23 +390,24 @@ coop_head "4/8  Microsoft Fabric CLI (fab)"
 if [ "$NO_FABRIC" = 1 ]; then
   coop_warn "skipped (--no-fabric)"
 else
-  coop_unit "Microsoft Fabric CLI" _unit_fabric; hash -r 2>/dev/null || true
+  coop_unit "Microsoft Fabric CLI" _unit_fabric || INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
+  hash -r 2>/dev/null || true
 fi
 
 # --- 5. Standalone Coop tools ------------------------------------------------
 coop_head "5/8  Coop tools (coop-data-doc / coop-sql-review / coop-dax-review)"
 for pkg in "${PY_TOOLS[@]}"; do
-  coop_unit "$pkg" _unit_pytool "$pkg"
+  coop_unit "$pkg" _unit_pytool "$pkg" || INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
 done
 
 # --- 6. Microsoft Fabric / Power BI authoring tools (npm) --------------------
 coop_head "6/8  Fabric / Power BI authoring tools"
-coop_unit "Power BI/Fabric authoring tools" _unit_pbih_tools
+coop_unit "Power BI/Fabric authoring tools" _unit_pbih_tools || INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
 hash -r 2>/dev/null || true
 
 # Done with the install items — finalize the bar (leaves a permanent 100% line).
 coop_progress_end
-[ "${COOP_FLEET_TEST_MODE:-0}" = 1 ] && exit 0
+[ "${COOP_FLEET_TEST_MODE:-0}" = 1 ] && { [ "$INSTALL_FAILURES" -eq 0 ]; exit; }
 
 # --- 7. Put `coop` on PATH ---------------------------------------------------
 coop_head "7/8  Link 'coop' onto your PATH"
@@ -438,7 +440,10 @@ fi
 
 # --- 9. Sync brand assets + doctor --------------------------------------------
 coop_head "9/9  Sync assets and run doctor"
-"$COOP_ROOT/scripts/sync.sh" || coop_warn "sync reported issues"
+if ! "$COOP_ROOT/scripts/sync.sh"; then
+  coop_warn "sync reported issues"
+  INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
+fi
 echo >&2
 # Propagate doctor's verdict as the install's exit code, so a genuinely broken
 # install (a required dep still missing) is detectable by whatever ran `coop install`
@@ -449,8 +454,16 @@ echo >&2
 echo >&2
 # Close on doctor's verdict: a green "complete" line after a failed doctor would
 # bury the real state — on failure, point back at the ✗ items instead.
-if [ "$DOCTOR_RC" -ne 0 ]; then
-  coop_warn "Bootstrap finished, but doctor reported problems — fix the ✗ items above, then re-run: coop doctor"
+INSTALL_RC=0
+[ "$DOCTOR_RC" -ne 0 ] && INSTALL_RC=1
+[ "$INSTALL_FAILURES" -gt 0 ] && INSTALL_RC=1
+if [ "$INSTALL_RC" -ne 0 ]; then
+  [ "$INSTALL_FAILURES" -gt 0 ] && coop_warn "$INSTALL_FAILURES install/sync step(s) failed — review the ! items above"
+  if [ "$DOCTOR_RC" -ne 0 ]; then
+    coop_warn "Bootstrap finished, but doctor reported problems — fix the ✗ items above, then re-run: coop doctor"
+  else
+    coop_warn "Bootstrap is incomplete — fix the failed steps above, then re-run: coop install"
+  fi
 elif [ "${COOP_ON_PATH:-1}" = 1 ]; then
   coop_ok "Bootstrap complete. Start the agent with:  coop"
 else
@@ -461,4 +474,4 @@ if [ "${COOP_ON_PATH:-1}" != 1 ]; then
   coop_say "      • or use it in THIS shell right now:  $LOCALBIN/coop"
   coop_say "      • to make it permanent, add to ~/.zshrc (or ~/.bashrc):  export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
-exit "$DOCTOR_RC"
+exit "$INSTALL_RC"

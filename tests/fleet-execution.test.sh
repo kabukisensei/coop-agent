@@ -73,6 +73,15 @@ for spec in \
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing install spec $spec"; cat "$MARKER"; exit 1; }
 done
 grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0' "$MARKER" >/dev/null
+
+# Install, like update, must preserve a visible convergence failure in its exit
+# status even though it continues through the remaining units for diagnostics.
+failed_install_rc=0
+PIPX_FAIL_MATCH='coop-data-doc==1.1.1' COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 \
+  bash "$ROOT/scripts/install.sh" --force >/dev/null 2>&1 || failed_install_rc=$?
+[ "$failed_install_rc" -ne 0 ] \
+  || { echo 'failed pipx convergence was converted into install success'; exit 1; }
+echo '  ✓ install exits non-zero when a convergence unit fails'
 : > "$MARKER"
 COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.80.2 COOP_PYPI_LATEST_OVERRIDE=0.1.0 bash "$ROOT/scripts/update.sh" >/dev/null 2>&1
 grep -F "PIPX install --force --python $REAL_PY ms-fabric-cli==1.7.0" "$MARKER" >/dev/null \
@@ -199,10 +208,14 @@ ln -s "$REAL_NODE" "$STUB5/node"; ln -s "$REAL_PY" "$STUB5/python3"
 chmod +x "$STUB5/pi" "$STUB5/npm" "$STUB5/pipx" "$STUB5/fab"
 PATH="$STUB5:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB5"; export PATH COOP_TEST_STUB_PATH
 : > "$MARKER5"
-COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" >/dev/null 2>&1
+fabric_fail_rc=0
+COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" >/dev/null 2>&1 || fabric_fail_rc=$?
+[ "$fabric_fail_rc" -ne 0 ] || { echo 'failed Fabric convergence returned install success'; exit 1; }
 ! grep -F 'PIPX inject ms-fabric-cli' "$MARKER5" >/dev/null \
   || { echo 'fabric inject ran despite failed convergence'; exit 1; }
-out5="$(PATH="$STUB5:/usr/bin:/bin" COOP_TEST_STUB_PATH="$STUB5" COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" 2>&1)"
+out5_rc=0
+out5="$(PATH="$STUB5:/usr/bin:/bin" COOP_TEST_STUB_PATH="$STUB5" COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" 2>&1)" || out5_rc=$?
+[ "$out5_rc" -ne 0 ] || { echo 'repeated failed Fabric convergence returned install success'; exit 1; }
 case "$out5" in
   *"failed to converge ms-fabric-cli"*|*"remains at"*) : ;;
   *"Microsoft Fabric CLI ready"*) echo 'fabric reported ready after FAILED convergence'; exit 1 ;;
