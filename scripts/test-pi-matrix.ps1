@@ -27,7 +27,10 @@ Write-Host "-- Pi $PiVersion matrix (root: $T)"
 try {
   # --- 1. Runtime from an explicit temporary npm prefix ------------------------
   $NpmPrefix = Join-Path $T 'npmpkg'
-  $npm = (Get-Command npm -ErrorAction SilentlyContinue).Source
+  $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $npmCommand) { $npmCommand = Get-Command npm -ErrorAction SilentlyContinue | Select-Object -First 1 }
+  $npm = if ($npmCommand) { $npmCommand.Source } else { $null }
+  if (-not $npm) { Ko 'npm is missing'; exit 1 }
   $npmOut = & $npm install --no-audit --no-fund --global --prefix $NpmPrefix ("@earendil-works/pi-coding-agent@" + $PiVersion) 2>&1 | Out-String
   if ($LASTEXITCODE -ne 0) { Ko "npm install of Pi failed: $($npmOut.Trim())"; exit 1 }
   # npm's Windows prefix layout has varied: traditional global installs expose

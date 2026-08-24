@@ -235,14 +235,17 @@ $UnitFabric = {
         # Edge means upstream/latest for EXISTING installs too.
         & $runPipx @('upgrade', $Pkg)
       } elseif ($expectedVer -and $installed -ne $expectedVer) {
-        $rc = & $runPipx @(& $installArgs $true $target)
+        $pipxInstallArgs = & $installArgs $true $target
+        $rc = & $runPipx $pipxInstallArgs
         if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to converge $Pkg to $expectedVer" } }
       }
     } else {
-      & $runPipx @(& $installArgs $false $target)
+      $pipxInstallArgs = & $installArgs $false $target
+      & $runPipx $pipxInstallArgs
     }
   } else {
-    $rc = & $runPipx @(& $installArgs $true $target)
+    $pipxInstallArgs = & $installArgs $true $target
+    $rc = & $runPipx $pipxInstallArgs
     if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to reinstall $Pkg ($target)" } }
   }
   # fabric-cicd is a Python LIBRARY (no CLI) — inject it into the Fabric CLI env.

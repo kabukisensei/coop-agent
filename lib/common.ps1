@@ -336,7 +336,12 @@ function Get-CoopExePipxVenv([string]$Command) {
 # nothing (observed with a broken ~/.hermes/node/bin/npm), which silently
 # no-ops convergence. Requires real version output.
 function Get-CoopWorkingNpm {
-  $cand = (Get-Command npm -ErrorAction SilentlyContinue).Source
+  # Windows commonly exposes BOTH npm.ps1 and npm.cmd. Without Select-Object,
+  # `.Source` becomes an array and `& $cand --version` passes the second launcher
+  # as argv[0] (effectively `npm npm --version`). Prefer the native .cmd shim.
+  $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $npmCommand) { $npmCommand = Get-Command npm -ErrorAction SilentlyContinue | Select-Object -First 1 }
+  $cand = if ($npmCommand) { $npmCommand.Source } else { $null }
   if ($cand) {
     $v = [string]((& $cand --version 2>$null | Out-String)).Trim()
     if ($v) { return $cand }
