@@ -49,7 +49,7 @@ $stub = Join-Path ([System.IO.Path]::GetTempPath()) ("coop-ps-test-" + [System.I
 New-Item -ItemType Directory -Path $stub -Force | Out-Null
 try {
   # Unix executables (extension-less, +x) — resolved by Get-Command on macOS/Linux.
-  $piSh = "#!/bin/sh`n[ `"`$1`" = `"--version`" ] && { echo `"pi 0.80.2`"; exit 0; }`nexit 0`n"
+  $piSh = "#!/bin/sh`n[ `"`$1`" = `"--version`" ] && { echo `"pi 0.84.3`"; exit 0; }`nexit 0`n"
   [System.IO.File]::WriteAllText((Join-Path $stub 'pi'),  $piSh)
   [System.IO.File]::WriteAllText((Join-Path $stub 'npm'), "#!/bin/sh`nexit 0`n")
   if ($IsLinux -or $IsMacOS) { & chmod +x (Join-Path $stub 'pi') (Join-Path $stub 'npm') }

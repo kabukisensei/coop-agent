@@ -121,8 +121,8 @@ tested_with:
   pi_web_access: "0.10.7"
   rpiv_ask_user_question: "1.20.0"
   context_mode: "1.0.162"
-  ms_fabric_cli: "1.6.1"
-  fabric_cicd: "1.1.0"
+  ms_fabric_cli: "1.7.0"
+  fabric_cicd: "1.3.0"
   # The three coop-tool pins below must match the sibling coop-website checkout's
   # versions.json (the suite's single source of truth for released version strings).
   # `coop release` verifies this before tagging; refresh these when the tools release.

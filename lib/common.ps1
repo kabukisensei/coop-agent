@@ -92,6 +92,187 @@ function Coop-ManifestStatus([string]$Installed, [string]$Expected) {
   return 'wrong-version'
 }
 
+# --- pipx inventory probes (truthful tool inventory; twins of lib/common.sh) --
+# `pipx list` output is NEVER authoritative: its cache can be stale and the
+# command can even be shadowed. The source of truth is distribution metadata
+# read INSIDE each venv via `pipx runpip`.
+
+function Get-CoopPipxVenvsDir {
+  # COOP_PIPX_HOME exists so tests can point this at fixtures without touching
+  # the workstation.
+  $home1 = $env:COOP_PIPX_HOME; $home2 = $env:PIPX_HOME
+  if (-not $home1 -and -not $home2) { $home1 = Join-Path $HOME '.local\pipx' }
+  $base = if ($home1) { $home1 } else { $home2 }
+  return (Join-Path $base 'venvs')
+}
+
+# Installed version of a pipx-managed distribution from in-venv metadata.
+# The pipx command used for inventory probes. COOP_PIPX_BIN lets callers pin an
+# exact binary — useful when PATH carries shadows/stubs, and in tests.
+function Get-CoopPipxCmd {
+  if ($env:COOP_PIPX_BIN) { return $env:COOP_PIPX_BIN }
+  return 'pipx'
+}
+
+function Get-CoopVenvDistVersion([string]$Venv, [string]$Distribution) {
+  $pipx = Get-CoopPipxCmd
+  $out = (& $pipx runpip $Venv show $Distribution 2>$null | Out-String)
+  if (-not $out) { return '' }
+  foreach ($line in ($out -split "`r?`n")) {
+    if ($line -match '^Version:\s*(.+)$') { return $matches[1].Trim() }
+  }
+  return ''
+}
+
+# Python version inside a pipx venv, resolved directly.
+function Get-CoopVenvPythonVersion([string]$Venv) {
+  $py = Get-CoopVenvPythonPath $Venv
+  if (-not $py) { return }
+  & $py -c 'import platform;print(platform.python_version())' 2>$null
+}
+
+function Get-CoopVenvPythonPath([string]$Venv) {
+  $base = Join-Path (Get-CoopPipxVenvsDir) $Venv
+  foreach ($py in @((Join-Path $base 'Scripts\python.exe'), (Join-Path $base 'bin\python'), (Join-Path $base 'bin/python'))) {
+    if (Test-Path -LiteralPath $py) { return $py }
+  }
+  return $null
+}
+
+# The installed distribution's own Requires-Python metadata, read from inside
+# its venv. The probe program carries a marker so fixture interpreters can
+# recognise it in tests.
+function Get-CoopVenvRequiresPython([string]$Venv, [string]$Distribution) {
+  $py = Get-CoopVenvPythonPath $Venv
+  if (-not $py) { return '' }
+  $probe = @'
+# coop-requires-python-probe
+import sys
+from importlib.metadata import metadata
+print(metadata(sys.argv[1]).get("Requires-Python") or "")
+'@
+  $out = (& $py -c $probe $Distribution 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) { return '' }
+  return $out
+}
+
+# Evaluate <Version> against a PEP 440 Requires-Python specifier subset:
+# comma-separated <, <=, >, >=, ==, != tokens (optionally "X.Y.*" wildcards).
+# Anything unparseable counts as matching — never warn on uncertainty.
+function Test-CoopPythonSpec([string]$PyVer, [string]$Spec) {
+  if (-not $Spec) { return $true }
+  function Key([string]$v) {
+    $v = $v.TrimStart('v') -replace '[^0-9.].*$', ''
+    $p = ($v -split '\.') + @('0','0','0')
+    return [int]$p[0] * 1000000 + [int]$p[1] * 1000 + [int]($p[2] -as [int])
+  }
+  $keyPy = Key $PyVer
+  foreach ($tok in ($Spec -split ',')) {
+    $t = $tok.Trim()
+    if (-not $t) { continue }
+    if ($t.StartsWith('~=')) { return $true }                       # not approximated here
+    if ($t -notmatch '[0-9]') { return $true }                      # no version -> no verdict
+    $op = ''; $want = ''
+    foreach ($candidate in @('==','!=','>=','<=','>','<')) {
+      if ($t.StartsWith($candidate)) { $op = $candidate; $want = $t.Substring($candidate.Length); break }
+      elseif ($t.StartsWith($candidate.Substring(0,1)) -and $candidate.Length -eq 1) { $op = $candidate; $want = $t.Substring(1); break }
+    }
+    if (-not $op) { return $true }
+    $wild = $false
+    if ($want.EndsWith('.*') -or $want.EndsWith('*')) { $wild = $true; $want = $want.TrimEnd('*').TrimEnd('.') }
+    $want = $want.TrimStart('v')
+    if (-not $want -or $want -match '[^0-9.]') { return $true }
+    $keyWant = Key $want
+    if ($wild) {
+      $parts = ($want -split '\.').Count
+      $scale = 1
+      for ($i = 3; $i -gt $parts; $i--) { $scale *= 1000 }
+      $modW = [math]::Floor($keyWant / $scale); $modP = [math]::Floor($keyPy / $scale)
+      if ($op -eq '==' -and $modP -ne $modW) { return $false }
+      if ($op -eq '!=' -and $modP -eq $modW) { return $false }
+      continue
+    }
+    switch ($op) {
+      '<'  { if (-not ($keyPy -lt $keyWant)) { return $false } }
+      '<=' { if (-not ($keyPy -le $keyWant)) { return $false } }
+      '>'  { if (-not ($keyPy -gt $keyWant)) { return $false } }
+      '>=' { if (-not ($keyPy -ge $keyWant)) { return $false } }
+      '==' { if ($keyPy -ne $keyWant) { return $false } }
+      '!=' { if ($keyPy -eq $keyWant) { return $false } }
+    }
+  }
+  return $true
+}
+
+# Which pipx venv does <command> resolve to? Returns venv name or $null.
+function Get-CoopExePipxVenv([string]$Command) {
+  $cmd = Get-Command $Command -ErrorAction SilentlyContinue
+  if (-not $cmd) { return $null }
+  $vdir = (Get-CoopPipxVenvsDir)
+  try { $resolved = (Resolve-Path -LiteralPath $cmd.Source -ErrorAction Stop).Path } catch { $resolved = $cmd.Source }
+  if ($resolved -like "$vdir*") {
+    $rest = $resolved.Substring($vdir.Length).TrimStart('\\', '/')
+    return ($rest -split '[\\/]')[0]
+  }
+  # Console scripts are plain files whose first line names their venv python.
+  try {
+    $first = (Get-Content -LiteralPath $resolved -TotalCount 1 -ErrorAction Stop)
+    if ($first -and $first.Contains($vdir)) {
+      $rest = $first.Substring($first.IndexOf($vdir) + $vdir.Length).TrimStart('\\', '/')
+      return ($rest -split '[\\/]')[0]
+    }
+  } catch {}
+  return $null
+}
+
+# Converge the isolated tree's recorded extension dependencies to EXACT
+# versions and reinstall (twin of coop_converge_extension_pins). PRODUCTION
+# convergence: the compatibility matrix relies on this same path.
+function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
+  $pjPath = Join-Path $AgentDir 'npm\package.json'
+  if (-not (Test-Path -LiteralPath $pjPath)) { return $false }
+  if (-not (Test-Have 'node')) { return $false }
+  # Skip the reinstall when every extension is already at its exact pin.
+  $need = $false
+  foreach ($spec in $Specs) {
+    $i = $spec.LastIndexOf('@')
+    $got = Get-CoopExtInstalledVersion -AgentDir $AgentDir -Name $spec.Substring(0, $i)
+    if ($got -ne $spec.Substring($i + 1)) { $need = $true; break }
+  }
+  if (-not $need) { return $true }
+  $pinJson = ($Specs | ForEach-Object {
+      $i = $_.LastIndexOf('@'); $n = $_.Substring(0, $i); $v = $_.Substring($i + 1)
+      'pj.dependencies[' + "'" + $n + "'" + ']=' + "'" + $v + "'"
+    }) -join '; '
+  node -e "
+const fs=require('fs');
+const pjPath=process.argv[1]+'\\npm\\package.json';
+let pj={}; try{pj=JSON.parse(fs.readFileSync(pjPath,'utf8'))}catch{}
+pj.name='pi-extensions'; pj.private=true; pj.dependencies=pj.dependencies||{};
+$pinJson;
+fs.writeFileSync(pjPath, JSON.stringify(pj,null,2));
+" $AgentDir
+  if ($LASTEXITCODE -ne 0) { return $false }
+  Push-Location (Join-Path $AgentDir 'npm')
+  & npm install --silent --no-audit --no-fund *> $null
+  $rc = $LASTEXITCODE
+  Pop-Location
+  return ($rc -eq 0)
+}
+
+# Version of an installed Pi extension inside an isolated agent dir, read from
+# its package.json. Empty when absent or unreadable — callers treat that as a
+# failed postcondition, never as success.
+function Get-CoopExtInstalledVersion([string]$AgentDir, [string]$Name) {
+  $f = Join-Path $AgentDir "npm\node_modules\$Name\package.json"
+  if (-not (Test-Path -LiteralPath $f)) { return '' }
+  try {
+    $pkg = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
+    if ($pkg.version -and -not [string]::IsNullOrWhiteSpace($pkg.version)) { return [string]$pkg.version }
+  } catch {}
+  return ''
+}
+
 # Ensure user tool bins (pipx, Azure CLI) are on PATH in-process
 $script:PathSep = [System.IO.Path]::PathSeparator
 $pipxBin = Join-Path $HOME '.local\bin'
@@ -583,6 +764,9 @@ function Test-CoopOnboardingMissing {
 
 # First-run onboarding: run when either the profile or integration config is missing.
 function Invoke-CoopMaybeOnboard {
+  # Exit code contract for callers: $script:CoopOnboardRc is 0 when onboarding
+  # ran (or was legitimately skipped) and the wizard's exit code when it failed.
+  $script:CoopOnboardRc = 0
   if (-not (Test-CoopOnboardingMissing)) { return }
   if ([Console]::IsInputRedirected) {
     Coop-Warn 'COOP onboarding is incomplete (user.json or config missing). Run: coop onboard'
@@ -596,6 +780,7 @@ function Invoke-CoopMaybeOnboard {
   }
   Coop-Info "First run: let's set up your COOP profile."
   & $py (Join-Path $script:CoopRoot 'scripts\onboard.py') onboard
+  $script:CoopOnboardRc = $LASTEXITCODE
 }
 
 # --- Background units (install/update items) ----------------------------------

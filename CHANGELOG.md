@@ -6,6 +6,62 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- Fixed the `coop-profile` startup crash: the extension treated Pi's extension
+  API argument as `{ pi }`-wrapped and called `api.pi.on(...)`, but Pi passes the
+  ExtensionAPI itself (`pi.on(...)`). Unit tests now mock the real contract, and
+  a black-box test loads the shipped source through Pi's actual extension loader.
+- First-run onboarding through plain `coop` now continues into Pi with
+  "Setup complete. Starting Coop…"; an explicit `coop onboard` ends with
+  "Setup complete. Run 'coop' to start." A failed onboarding now stops the
+  launcher instead of continuing with a partially generated MCP configuration.
+
+### Changed
+- Added `scripts/test-pi-matrix.{sh,ps1}`: clean-room Pi compatibility matrix
+  (temporary npm prefix + temporary agent dir; never touches the workstation).
+  Each run installs a coherent fleet at exact manifest versions via dependency
+  specs (npm rejects same-name overrides with EOVERRIDE — dependencies are the
+  deterministic mechanism), verifies shared pi-ai/pi-tui against the runtime's
+  own package metadata, loads first-party extensions through the real loader,
+  exercises RPC startup/get_state/clean shutdown plus a live agent turn when
+  credentials permit, proves second-sync idempotency, and reproduces+repairs a
+  deliberate shared-lib skew (including the observed getOAuthApiKey class of
+  failure). macOS results: 0.80.2 / 0.83.0 / 0.84.3 all pass 29 checks.
+- New live test drives the real coop-data-doc setup wizard over its JSONL
+  transport end-to-end (hello first, every prompt answered, exactly one
+  `complete`, exit 0, valid config, JSON-only stdout); skips cleanly when the
+  installed tool predates the JSONL transport.
+- Approved and pinned the verified Python tool trio after clean-room
+  verification on Python 3.13 (isolated pipx home): `ms-fabric-cli` 1.6.1 →
+  **1.7.0**, `fabric-cicd` 1.1.0 → **1.3.0** (injected into the Fabric CLI env;
+  confirmed compatible pair via `pip check`), `coop-data-doc` stays at **1.1.1**
+  (full scan/build/check/lineage/config-set + JSONL setup protocol contract
+  re-verified). Read-only authenticated `fab ls`/`auth status` exercised.
+- `coop sync` now verifies every core extension against the manifest pin AFTER
+  installation and states the exact outcome ("Already at release version X" /
+  "Installed release version X" / "Updated A → B"); a successful-looking install
+  that leaves the wrong version or nothing in the isolated tree is reported as a
+  postcondition failure and makes sync exit non-zero. Shared pi-ai/pi-tui work
+  is worded as runtime alignment, distinct from release pins.
+- `coop doctor` no longer trusts `pipx list` or a package name as the executable:
+  the in-venv distribution metadata (`pipx runpip <venv> show <dist>`) is the
+  authoritative version, cross-checked against the CLI's own `--version`, with
+  ms-fabric-cli checked via its real `fab` executable (Paramiko collision check
+  retained). Metadata/CLI disagreement is classified as a stale/corrupt pipx
+  environment with an exact `pipx install --force` repair; when pipx itself is
+  unreadable the CLI classification says so. Doctor now also reports the Python
+  interpreter INSIDE each tool's venv and flags unsupported versions (≥3.14)
+  with a recreate command.
+- Doctor's Python-support verdict now comes from each distribution's own installed `Requires-Python` metadata (evaluated against the venv interpreter) instead of a hardcoded version cap.
+- Onboarding no longer offers toggles it cannot honor: Power BI MCP is stored
+  disabled (with the reason) when no Azure tenant is configured instead of
+  enabled-but-silently-omitted; Azure DevOps MCP requires a valid organization
+  (short name or `https://dev.azure.com/<org>` URL) and can be backed out of.
+  The tenant prompt states that Coop accesses the tenant holding the Fabric and
+  Power BI resources — normally the client's Microsoft Entra tenant, the
+  Cooptimize tenant only for internal work — and prints a review summary
+  (tenant, enabled/omitted integrations, destination) before saving.
+
+### Fixed
 - Stabilized multi-command Git enforcement, repository-scoped commit policy, and headless approvals.
 - Made install/update/sync and generated MCP entries manifest-pinned; Modeling MCP starts read-only.
 - Unified `/setup-docs` on the native JSONL wizard and hardened onboarding, profile, and project init.

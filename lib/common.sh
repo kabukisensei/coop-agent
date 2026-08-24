@@ -75,6 +75,212 @@ if (v && typeof v === 'object' && !Array.isArray(v)) console.log(Object.keys(v).
 " "$COOP_RELEASE_MANIFEST" "$key" 2>/dev/null
 }
 
+# --- pipx inventory probes (truthful tool inventory) --------------------------
+# `pipx list` output is NEVER authoritative: its cache can be stale and (as seen
+# on real workstations) the command can even be shadowed by stubs. The source of
+# truth is distribution metadata read INSIDE each venv via `pipx runpip`.
+
+# Root of pipx's venv tree. COOP_PIPX_HOME exists so tests can point this at
+# fixtures without touching the workstation.
+coop_pipx_venvs_dir() {
+  printf '%s/venvs' "${COOP_PIPX_HOME:-${PIPX_HOME:-$HOME/.local/pipx}}"
+}
+
+# The pipx command used for inventory probes. COOP_PIPX_BIN lets callers pin an
+# exact binary — useful when PATH carries shadows/stubs, and in tests.
+coop_pipx_cmd() {
+  printf '%s' "${COOP_PIPX_BIN:-pipx}"
+}
+
+# Installed version of a pipx-managed distribution from in-venv metadata.
+# $1 = venv name, $2 = distribution name. Empty + rc 1 when unavailable.
+coop_venv_dist_version() {
+  local pipx; pipx="$(coop_pipx_cmd)"
+  [ -n "$pipx" ] || return 1
+  local out
+  out="$("$pipx" runpip "$1" show "$2" 2>/dev/null)" || return 1
+  printf '%s\n' "$out" | sed -n 's/^Version: //p' | head -1
+}
+
+# Python version inside a pipx venv, resolved directly — uv-backed pipx has no
+# `runpip --version`. Prints e.g. 3.13.13; nothing when unresolvable.
+coop_venv_python_path() { # <venv-name>
+  local base py
+  base="$(coop_pipx_venvs_dir)/$1"
+  for py in "$base/bin/python" "$base/bin/python3" "$base/Scripts/python.exe"; do
+    [ -f "$py" ] && { printf '%s' "$py"; return 0; }
+  done
+  return 1
+}
+
+coop_venv_python_version() { # <venv-name>
+  local py
+  py="$(coop_venv_python_path "$1")" || return 1
+  "$py" -c 'import platform;print(platform.python_version())' 2>/dev/null
+}
+
+# The installed distribution's own Requires-Python metadata, read from inside
+# its venv. Empty when absent/unreadable. The probe program carries a marker so
+# fixture interpreters can recognise it in tests.
+coop_venv_requires_python() { # <venv-name> <distribution>
+  local py out
+  py="$(coop_venv_python_path "$1")" || return 1
+  out="$("$py" -c '# coop-requires-python-probe
+import sys
+from importlib.metadata import metadata
+print(metadata(sys.argv[1]).get("Requires-Python") or "")' "$2" 2>/dev/null)" || return 1
+  printf '%s' "$out"
+}
+
+# Evaluate <pyver> against a PEP 440 Requires-Python specifier subset:
+# comma-separated <, <=, >, >=, ==, != tokens (optionally "X.Y.*" wildcards).
+# Anything unparseable counts as MATCHING — never warn on uncertainty.
+_coop_vkey() { # <version> -> comparable integer (major*1e6+minor*1e3+patch)
+  local v="${1#v}" p1 p2 p3
+  v="${v%%[^0-9.]*}"
+  IFS=. read -r p1 p2 p3 <<<"$v"
+  printf '%d' "$(( ${p1:-0} * 1000000 + ${p2:-0} * 1000 + ${p3:-0} ))"
+}
+coop_python_matches_spec() { # <pyver> <spec>
+  local py="$1" spec="${2:-}"
+  [ -z "$spec" ] && return 0
+  local key_want key_py tok op want wild parts scale mod_w mod_p i
+  key_py="$(_coop_vkey "$py")"
+  local oldIFS=$IFS
+  IFS=','
+  set -- $spec
+  IFS=$oldIFS
+  for tok in "$@"; do
+    tok="${tok#"${tok%%[![:space:]]*}"}"; tok="${tok%"${tok##*[![:space:]]}"}"
+    [ -z "$tok" ] && continue
+    # Unparseable syntax ('~=', exotic markers) counts as matching: never warn on uncertainty.
+    if [[ "$tok" == '~='* ]]; then return 0; fi
+    if [[ "$tok" != *[0-9]* || "$tok" == *[\\\`\"]* ]]; then return 0; fi
+    op=''
+    case "$tok" in
+      '=='*) op='=='; want="${tok#==}" ;;
+      '!='*) op='!='; want="${tok#!=}" ;;
+      '>='*) op='>='; want="${tok#>=}" ;;
+      '<='*) op='<='; want="${tok#<=}" ;;
+      '>'*) op='>'; want="${tok#>}" ;;
+      '<'*) op='<'; want="${tok#<}" ;;
+      *) return 0 ;;
+    esac
+    wild=''
+    case "$want" in
+      *'.*'|"*") wild=1; want="${want%\*}"; want="${want%.}" ;;
+    esac
+    want="${want#v}"
+    if [[ -z "$want" || "$want" == *[!0-9.]* ]]; then return 0; fi
+    key_want="$(_coop_vkey "$want")"
+    if [ -n "$wild" ]; then
+      parts="$(awk -F. '{print NF}' <<<"$want")"
+      scale=1
+      for (( i = 3; i > parts; i-- )); do scale=$(( scale * 1000 )); done
+      mod_w=$(( key_want / scale )); mod_p=$(( key_py / scale ))
+      if [ "$op" = '==' ] && [ "$mod_p" -ne "$mod_w" ]; then return 1; fi
+      if [ "$op" = '!=' ] && [ "$mod_p" -eq "$mod_w" ]; then return 1; fi
+      continue
+    fi
+    case "$op" in
+      '<')  [ "$key_py" -lt "$key_want" ] || return 1 ;;
+      '<='*) [ "$key_py" -le "$key_want" ] || return 1 ;;
+      '>')  [ "$key_py" -gt "$key_want" ] || return 1 ;;
+      '>='*) [ "$key_py" -ge "$key_want" ] || return 1 ;;
+      '==') [ "$key_py" -eq "$key_want" ] || return 1 ;;
+      '!=') [ "$key_py" -ne "$key_want" ] || return 1 ;;
+    esac
+  done
+  return 0
+}
+
+# Which pipx venv does <command> resolve to? Echoes the venv name, or fails when
+# the executable is absent or outside pipx's tree. Checks both the resolved path
+# (venv bin dirs) and the interpreter shebang (console scripts on macOS are plain
+# files whose first line points at the venv python).
+coop_exe_pipx_venv() { # <command>
+  local p head vdir norm
+  p="$(command -v "$1" 2>/dev/null)" || return 1
+  [ -n "$p" ] || return 1
+  vdir="$(coop_pipx_venvs_dir)"
+  # Resolved-path membership: handles shims symlinked into a venv bin dir.
+  if [ -L "$p" ]; then
+    norm="$(cd "$(dirname "$p")" && pwd -P)/$(basename "$p")"
+    case "$norm" in "$vdir"/*) printf '%s' "${norm#"$vdir"/}" | cut -d/ -f1; return 0 ;; esac
+  fi
+  # Shebang membership: console scripts name their venv interpreter.
+  head="$(head -c 512 "$p" 2>/dev/null || true)"
+  case "$head" in
+    *"$vdir"/*)
+      printf '%s' "${head#*"$vdir"/}" | cut -d/ -f1
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# Converge the isolated tree's recorded extension dependencies to EXACT
+# versions and reinstall. `pi install` records ^-ranges, so fresh trees would
+# otherwise materialize at latest-in-range; exact dependency specs make
+# "converged to the release pin" deterministic. This is PRODUCTION convergence:
+# scripts/test-pi-matrix.* rely on this same path, never their own.
+coop_converge_extension_pins() { # <agent-dir> <name@ver>...
+  local agent_dir="$1"; shift
+  # Fast path: already-at-pin trees are coherent without touching npm.
+  local need=0 spec nm want got
+  for spec in "$@"; do
+    nm="${spec%@*}"; want="${spec##*@}"
+    got="$(coop_ext_installed_version "$agent_dir" "$nm")"
+    [ "$got" != "$want" ] && need=1
+  done
+  [ "$need" = 1 ] || return 0
+  have node || return 1
+  local npm_bin npm_ok o
+  npm_bin="$(command -v npm)"
+  # Broken shims can exit 0 without doing anything — require real version output.
+  npm_ok() { [ -n "$("$1" --version 2>/dev/null | tr -d "[:space:]")" ]; }
+  if ! npm_ok "$npm_bin" && [ -x /opt/homebrew/bin/npm ] && npm_ok /opt/homebrew/bin/npm; then
+    npm_bin=/opt/homebrew/bin/npm
+  fi
+  npm_ok "$npm_bin" || return 1
+  local pj="$agent_dir/npm/package.json"
+  if [ ! -f "$pj" ]; then
+    mkdir -p "$agent_dir/npm"
+    printf '{\n  "name": "pi-extensions",\n  "private": true\n}\n' > "$pj"
+  fi
+  COOP_PIN_SPECS="$*" node -e '
+const fs = require("fs");
+const pjPath = process.argv[1] + "/npm/package.json";
+let pj = {};
+try { pj = JSON.parse(fs.readFileSync(pjPath, "utf8")); } catch {}
+pj.name = pj.name || "pi-extensions";
+pj.private = true;
+pj.dependencies = pj.dependencies || {};
+for (const spec of (process.env.COOP_PIN_SPECS || "").trim().split(/\s+/).filter(Boolean)) {
+  const i = spec.lastIndexOf("@");
+  pj.dependencies[spec.slice(0, i)] = spec.slice(i + 1);
+}
+fs.writeFileSync(pjPath, JSON.stringify(pj, null, 2));
+' "$agent_dir" || return 1
+  ( cd "$agent_dir/npm" && "$npm_bin" install --silent --no-audit --no-fund >/dev/null 2>&1 ) || return 1
+}
+
+# Version of an installed Pi extension inside an isolated agent dir, read from
+# its package.json. Empty when absent or unreadable — callers treat that as a
+# failed postcondition, never as success.
+coop_ext_installed_version() { # <agent-dir> <extension-name>
+  local f="$1/npm/node_modules/$2/package.json"
+  [ -f "$f" ] || return 0
+  have node || return 0
+  node -e "
+const fs = require('fs');
+try {
+  const v = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')).version;
+  if (typeof v === 'string' && v) console.log(v);
+} catch {}
+" "$f" 2>/dev/null
+}
+
 # Compare installed version against expected. Echo one of: ok missing older newer-than-tested wrong-version not-applicable
 # $1 = installed (may be empty), $2 = expected (may be empty), $3 = optional name (for logging)
 coop_manifest_status() {

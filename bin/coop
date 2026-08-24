@@ -196,7 +196,11 @@ launch_pi() {
 
   # First-run onboarding: ask for name/communication preference before the first
   # real session, but only in an interactive terminal and only if not disabled.
-  coop_maybe_onboard || true
+  # A failed onboarding must STOP the launch: continuing would run with a
+  # half-generated MCP configuration. The env var makes onboard.py announce
+  # "Starting Coop…" instead of "Run 'coop' to start."
+  COOP_ONBOARD_FROM_LAUNCH=1 coop_maybe_onboard \
+    || coop_die "first-run onboarding failed — fix the error above, then run: coop   (or: coop onboard)"
 
   # Guard against launching into a known-broken extension load (agent/extension
   # pi-ai skew). Aborts with instructions when the agent is too old; auto-realigns

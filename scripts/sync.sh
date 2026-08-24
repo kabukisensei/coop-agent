@@ -40,18 +40,80 @@ for f in auth.json models.json; do
 done
 
 # --- 3. Core Pi extensions — installed INTO the isolated dir (idempotent) -----
+# `pi install` exiting 0 proves nothing on its own: a successful-looking install
+# can still leave the wrong version or nothing at all in the tree. After the
+# install loop, dependency specs are converged to EXACT manifest versions
+# (coop_converge_extension_pins — the same helper the compatibility matrix uses)
+# and every extension is verified; any postcondition failure makes sync exit
+# non-zero.
+SYNC_FAILURES=0
+FLEET_SPECS=()
+FLEET_NAMES=()
+FLEET_PINS=()
+PREVERS=()
+
 if have pi; then
+  coop_info "Coop keeps its extensions in $PI_AGENT and pins the versions tested"
+  coop_info "together with this Coop release. Your personal Pi extensions are unchanged."
   for ext in "${CORE_EXTENSIONS[@]}"; do
     ext_spec="$(coop_manifest_extension_spec "$ext")"
-    if [ -z "$ext_spec" ]; then coop_warn "manifest pin missing for $ext"; continue; fi
-    coop_info "converging $ext to the release pin…"
-    PI_CODING_AGENT_DIR="$PI_AGENT" pi install "$ext_spec" >/dev/null 2>&1 \
-      && coop_ok "$ext pinned (isolated)" || coop_warn "could not pin $ext"
+    if [ -z "$ext_spec" ]; then coop_warn "manifest pin missing for $ext"; SYNC_FAILURES=$((SYNC_FAILURES + 1)); continue; fi
+    FLEET_SPECS+=("${ext_spec#npm:}")
+    FLEET_NAMES+=("$ext")
+    ext_pin="${ext_spec##*@}"
+    FLEET_PINS+=("$ext_pin")
+    PREVERS+=("$(coop_ext_installed_version "$PI_AGENT" "$ext")")
+    coop_info "Ensuring isolated $ext is version ${ext_pin}…"
+    if ! PI_CODING_AGENT_DIR="$PI_AGENT" pi install "$ext_spec" >/dev/null 2>&1; then
+      coop_warn "could not install $ext (pin $ext_pin)"
+      SYNC_FAILURES=$((SYNC_FAILURES + 1))
+    fi
   done
-  # Align the extension tree's @earendil-works/pi-ai + pi-tui to the agent's own
-  # version so they share one pi-ai/pi-tui (else pi-web-access's 0.80 `/compat`
-  # import breaks against pi-mcp-adapter's hoisted 0.74.x). Idempotent.
+
+  # Runtime alignment of shared libraries first (distinct from release pins),
+  # because it also reinstalls the tree; exact-pin enforcement runs after so the
+  # final state is what was tested.
+  _pi_runtime="$(coop_pi_version 2>/dev/null || true)"
+  [ -n "$_pi_runtime" ] && coop_info "Aligning shared Pi libraries with the installed Pi runtime ${_pi_runtime}…"
   coop_align_ext_deps
+
+  # Production exact-pin convergence: rewrite recorded ^-ranges to manifest
+  # versions and reinstall, so what ships is what was tested.
+  if [ ${#FLEET_SPECS[@]} -gt 0 ]; then
+    if ! coop_converge_extension_pins "$PI_AGENT" "${FLEET_SPECS[@]}"; then
+      coop_warn "could not enforce exact extension pins in $PI_AGENT/npm" "run: coop sync"
+      SYNC_FAILURES=$((SYNC_FAILURES + 1))
+    fi
+  fi
+
+  # Postcondition verification over every required extension.
+  for i in "${!FLEET_NAMES[@]}"; do
+    ext="${FLEET_NAMES[$i]}"; ext_pin="${FLEET_PINS[$i]}"; pre="${PREVERS[$i]}"
+    post_ver="$(coop_ext_installed_version "$PI_AGENT" "$ext")"
+    if [ -z "$post_ver" ]; then
+      coop_warn "postcondition failed: pi install reported success, but $ext is MISSING from the isolated tree (wanted $ext_pin)" \
+        "run: coop sync   (or inspect $(printf '%s/npm/node_modules' "$PI_AGENT"))"
+      SYNC_FAILURES=$((SYNC_FAILURES + 1))
+      continue
+    fi
+    if [ "$post_ver" != "$ext_pin" ]; then
+      coop_warn "postcondition failed: pi install reported success, but $ext is version $post_ver, not the pinned $ext_pin" \
+        "run: coop sync"
+      SYNC_FAILURES=$((SYNC_FAILURES + 1))
+      continue
+    fi
+    case "$pre" in
+      "")        coop_ok "Installed release version $ext_pin ($ext)" ;;
+      "$ext_pin") coop_ok "Already at release version $ext_pin ($ext)" ;;
+      *)
+        if coop_version_lt "$ext_pin" "$pre"; then
+          coop_ok "Downgraded untested $pre → release version $ext_pin ($ext)"
+        else
+          coop_ok "Updated $pre → $ext_pin ($ext)"
+        fi
+        ;;
+    esac
+  done
 else
   coop_warn "pi not installed — skipping extension sync (run: coop install)"
 fi
@@ -71,5 +133,10 @@ coop_head "Brand assets"
 [ -f "$COOP_ROOT/themes/cooptimize.json" ] && coop_ok "theme present" || coop_warn "themes/cooptimize.json missing"
 vibe_count="$(find "$COOP_ROOT/vibes" -name '*.txt' 2>/dev/null | wc -l | tr -d ' ')"
 [ "${vibe_count:-0}" -gt 0 ] && coop_ok "$vibe_count vibe file(s) present" || coop_warn "no vibe files found in vibes/"
+
+if [ "$SYNC_FAILURES" -gt 0 ]; then
+  coop_warn "sync finished WITH $SYNC_FAILURES failure(s) — see above" "re-run: coop sync"
+  exit 1
+fi
 
 coop_ok "sync complete."

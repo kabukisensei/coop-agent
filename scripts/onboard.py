@@ -71,6 +71,20 @@ def read_input(prompt: str, default: str = "") -> str:
     return line.strip() or default
 
 
+def read_line_bounded(prompt: str, default: str) -> tuple[str, bool]:
+    """Read a line for a re-prompting loop. Returns (value, eof).
+
+    On EOF there is nobody left to answer; callers must stop looping instead of
+    re-asking forever (a wizard must never spin on a closed pipe).
+    """
+    sys.stderr.write(prompt)
+    sys.stderr.flush()
+    line = sys.stdin.readline()
+    if not line:
+        return default, True
+    return (line.strip() or default), False
+
+
 def read_choice(prompt: str, choices: list[str], default: str = "") -> str:
     """Present a list and return one of the choices (or default if empty/non-interactive)."""
     sys.stderr.write(prompt + "\n")
@@ -177,31 +191,118 @@ def detect_azure_account() -> dict:
         return {}
 
 
+def validate_ado_organization(value: str) -> str | None:
+    """Return an error message, or None when the value is acceptable.
+
+    Accepts a short organization name (e.g. 'contoso') or a full Azure DevOps
+    URL (https://dev.azure.com/<org> or https://<org>.visualstudio.com).
+    """
+    v = value.strip()
+    if not v:
+        return "Azure DevOps organization cannot be empty."
+    if re.match(r"^https://(?:dev\.azure\.com/[A-Za-z0-9._-]+|[A-Za-z0-9._-]+\.visualstudio\.com)/?$", v, re.IGNORECASE):
+        return None
+    if v.lower().startswith(("http://", "https://")) or re.search(r"\s", v):
+        return "Enter a short organization name (e.g. 'contoso') or a https://dev.azure.com/<org> URL."
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", v):
+        return "Organization names use letters, digits, '.', '_' or '-' (or paste the full https://dev.azure.com/<org> URL)."
+    return None
+
+
 def run_config_questions(existing: dict | None = None) -> dict:
     existing = existing or load_config()
     old_azure = existing.get("azure", {}) if isinstance(existing.get("azure", {}), dict) else {}
     old_i = existing.get("integrations", {}) if isinstance(existing.get("integrations", {}), dict) else {}
     account = detect_azure_account()
     detected_tenant = str(account.get("tenantId", ""))
+    detected_name = str(account.get("name", ""))
     tenant = str(old_azure.get("tenant_id", ""))
     tenant_name = str(old_azure.get("tenant_name", ""))
-    if detected_tenant and read_confirm(f"Use detected Azure tenant {account.get('name', detected_tenant)} ({detected_tenant})?", True):
+
+    # Ownership must be unambiguous: Coop accesses whatever tenant holds the
+    # Fabric/Power BI resources for THIS workstation's work — normally the
+    # client's tenant; the Cooptimize tenant only for internal work.
+    sys.stderr.write(
+        "\nCoop reads Fabric and Power BI through one Azure tenant, chosen here.\n"
+        "For client work, use the client's Microsoft Entra tenant.\n"
+        "Use the Cooptimize tenant only for internal Cooptimize work.\n"
+        f"This is a workstation-wide default saved in {CONFIG_JSON}; until per-project\n"
+        "tenant selection exists, switch between clients with `coop onboard --edit`.\n"
+    )
+    if detected_tenant and read_confirm(
+        f"Detected Azure tenant {account.get('name', detected_tenant)} ({detected_tenant}).\n"
+        "Use this tenant for Coop's Fabric and Power BI access?",
+        True,
+    ):
         tenant = detected_tenant
-        tenant_name = str(account.get("name", ""))
-    elif read_confirm("Configure an Azure tenant now?", bool(tenant)):
+        tenant_name = detected_name
+    elif read_confirm("Configure the Azure tenant whose Fabric and Power BI resources Coop should access now?", bool(tenant)):
         tenant = read_input("Azure tenant ID: ", tenant)
+        tenant_name = ""  # only Azure CLI can resolve display names
+
     integrations = {}
-    labels = [
-        ("fabric", "Microsoft Fabric MCP"), ("power_bi", "Power BI MCP"),
-        ("power_bi_modeling", "Power BI Modeling MCP"), ("azure_devops", "Azure DevOps MCP"),
-        ("microsoft_learn", "Microsoft Learn MCP"),
-    ]
-    for key, label in labels:
-        integrations[key] = read_confirm(f"Enable {label}?", bool(old_i.get(key, True)))
+    omitted = {}  # key -> reason shown in the summary
+
+    # Fabric MCP follows the active Azure CLI login; it works without an
+    # explicitly stored tenant (the login itself carries the tenant).
+    integrations["fabric"] = read_confirm("Enable Microsoft Fabric MCP? (follows your active Azure CLI login)", bool(old_i.get("fabric", True)))
+
+    # Power BI MCP needs an explicit tenant ID. Never offer an enable toggle we
+    # cannot honor: without a tenant it stays disabled, visibly.
+    if tenant:
+        integrations["power_bi"] = read_confirm("Enable Power BI MCP?", bool(old_i.get("power_bi", True)))
+    else:
+        integrations["power_bi"] = False
+        omitted["power_bi"] = "requires an Azure tenant"
+        sys.stderr.write("Power BI MCP requires an Azure tenant and will remain disabled.\n")
+
+    integrations["power_bi_modeling"] = read_confirm("Enable Power BI Modeling MCP?", bool(old_i.get("power_bi_modeling", True)))
+
     old_ado = existing.get("azure_devops", {}) if isinstance(existing.get("azure_devops", {}), dict) else {}
     organization = str(old_ado.get("organization", ""))
+    integrations["azure_devops"] = read_confirm("Enable Azure DevOps MCP?", bool(old_i.get("azure_devops", True)))
     if integrations["azure_devops"]:
-        organization = read_input("Azure DevOps organization: ", organization)
+        while True:
+            organization, eof = read_line_bounded("Azure DevOps organization (short name or full URL): ", organization)
+            err = validate_ado_organization(organization)
+            if err is None:
+                break
+            sys.stderr.write(f"  {err}\n")
+            if eof:
+                # Nobody left to answer — never save the integration half-configured,
+                # and never spin on a closed pipe.
+                integrations["azure_devops"] = False
+                organization = ""
+                omitted["azure_devops"] = "no organization provided"
+                sys.stderr.write("Input ended; Azure DevOps MCP saved disabled.\n")
+                break
+            if not read_confirm("Try another organization? (answering 'n' disables Azure DevOps MCP)", True):
+                integrations["azure_devops"] = False
+                omitted["azure_devops"] = "no valid organization"
+                break
+    else:
+        omitted["azure_devops"] = "not enabled"
+
+    integrations["microsoft_learn"] = read_confirm("Enable Microsoft Learn MCP?", bool(old_i.get("microsoft_learn", True)))
+
+    # Honest summary BEFORE anything is saved.
+    labels = {
+        "fabric": "Microsoft Fabric MCP", "power_bi": "Power BI MCP",
+        "power_bi_modeling": "Power BI Modeling MCP", "azure_devops": "Azure DevOps MCP",
+        "microsoft_learn": "Microsoft Learn MCP",
+    }
+    enabled_labels = [labels[k] for k in labels if integrations.get(k)]
+    omitted_lines = [f"{labels[k]} ({reason})" for k, reason in omitted.items() if not integrations.get(k)]
+    sys.stderr.write("\nReview:\n")
+    if tenant:
+        sys.stderr.write(f"- Azure tenant: {tenant_name or '(display name unknown)'} ({tenant})\n")
+    else:
+        sys.stderr.write("- Azure tenant: not configured\n")
+    sys.stderr.write(f"- Enabled: {', '.join(enabled_labels) if enabled_labels else 'none'}\n")
+    for line in omitted_lines:
+        sys.stderr.write(f"- Omitted: {line}\n")
+    sys.stderr.write(f"- Destination: {CONFIG_JSON}\n")
+
     return {
         "schema_version": 1,
         "azure": {"enabled": bool(tenant), "tenant_id": tenant, "tenant_name": tenant_name},
@@ -229,13 +330,20 @@ def run_profile_questions(existing: dict | None = None, migration_name: str = ""
 
     name_default = old_name or migration_name
     name = ""
-    while not name:
+    while True:
         try:
             prompt = "What should COOP call you?"
             if name_default:
                 prompt += f" [{name_default}]"
             prompt += ": "
-            name = validate_name(read_input(prompt, default=name_default))
+            value, eof = read_line_bounded(prompt, name_default)
+            if eof and not value:
+                sys.stderr.write("\nNo name entered; aborting onboarding. Run `coop onboard` to try again.\n")
+                raise SystemExit(1)
+            # Assign only AFTER validation: storing the raw value first would let
+            # a rejected answer satisfy the retry loop.
+            name = validate_name(value)
+            break
         except ValueError as e:
             sys.stderr.write(f"  {e}\n")
 
@@ -329,7 +437,13 @@ def cmd_onboard(args: argparse.Namespace) -> int:
         return 1
     sys.stderr.write(f"Saved integration config to {CONFIG_JSON}.\n")
     if not config["azure"].get("tenant_id") and (config["integrations"]["power_bi"]):
+        # Only reachable via hand-edited legacy configs; the wizard itself can no
+        # longer save Power BI as enabled without a tenant.
         sys.stderr.write("Power BI MCP is omitted until an Azure tenant is configured; run `coop onboard --edit`.\n")
+    if os.environ.get("COOP_ONBOARD_FROM_LAUNCH") == "1":
+        sys.stderr.write("Setup complete. Starting Coop…\n")
+    else:
+        sys.stderr.write("Setup complete. Run 'coop' to start.\n")
     if args.json:
         print(json.dumps(profile, indent=2, ensure_ascii=False))
     return 0

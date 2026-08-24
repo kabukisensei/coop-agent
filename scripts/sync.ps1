@@ -48,18 +48,64 @@ foreach ($f in @('auth.json', 'models.json')) {
 }
 
 # --- 3. Core Pi extensions — installed INTO the isolated dir (idempotent) -----
-$env:PI_CODING_AGENT_DIR = $PI_AGENT
+# `pi install` exiting 0 proves nothing on its own: every extension is verified
+# against the manifest pin AFTER production exact-pin convergence; any failure
+# makes sync exit non-zero.
+$script:SyncFailures = 0
+$fleetSpecs = @(); $fleetNames = @(); $fleetPins = @(); $preVers = @{}
+
 if (Test-Have 'pi') {
+  Coop-Info "Coop keeps its extensions in $PI_AGENT and pins the versions tested"
+  Coop-Info "together with this Coop release. Your personal Pi extensions are unchanged."
   foreach ($ext in $CORE_EXTENSIONS) {
     $extSpec = Coop-ManifestExtensionSpec $ext
-    if (-not $extSpec) { Coop-Warn "manifest pin missing for $ext"; continue }
-    Coop-Info "converging $ext to the release pin…"
+    if (-not $extSpec) { Coop-Warn "manifest pin missing for $ext"; $script:SyncFailures++; continue }
+    $i = $extSpec.LastIndexOf('@')
+    $fleetSpecs += $extSpec.Substring(5)
+    $fleetNames += $ext
+    $fleetPins += $extSpec.Substring($i + 1)
+    $preVers[$ext] = Get-CoopExtInstalledVersion -AgentDir $PI_AGENT -Name $ext
+    Coop-Info "Ensuring isolated $ext is version $($fleetPins[$fleetPins.Count - 1])…"
     & pi install $extSpec > $null 2>&1
-    if ($LASTEXITCODE -eq 0) { Coop-Ok "$ext pinned (isolated)" } else { Coop-Warn "could not pin $ext" }
+    if ($LASTEXITCODE -ne 0) { Coop-Warn "could not install $ext (pin $($fleetPins[-1]))"; $script:SyncFailures++ }
   }
-  # Share one pi-ai/pi-tui with the agent (else pi-web-access's 0.80 `/compat`
-  # import breaks against pi-mcp-adapter's hoisted 0.74.x). Idempotent.
+
+  # Runtime alignment of shared libraries first (distinct from release pins).
+  $piRuntime = Get-CoopPiVersion
+  if ($piRuntime) { Coop-Info "Aligning shared Pi libraries with the installed Pi runtime ${piRuntime}…" }
   Sync-CoopExtDeps -AgentDir $PI_AGENT
+
+  # Production exact-pin convergence: rewrite recorded ^-ranges to the manifest
+  # versions and reinstall, so what ships is what was tested.
+  if ($fleetSpecs.Count -gt 0) {
+    if (-not (Sync-CoopExtensionPins -AgentDir $PI_AGENT -Specs $fleetSpecs)) {
+      Coop-Warn "could not enforce exact extension pins in $PI_AGENT\npm" 'run: coop sync'
+      $script:SyncFailures++
+    }
+  }
+
+  for ($k = 0; $k -lt $fleetNames.Count; $k++) {
+    $ext = $fleetNames[$k]; $extPin = $fleetPins[$k]; $pre = $preVers[$ext]
+    $postVer = Get-CoopExtInstalledVersion -AgentDir $PI_AGENT -Name $ext
+    if (-not $postVer) {
+      Coop-Warn "postcondition failed: pi install reported success, but $ext is MISSING from the isolated tree (wanted $extPin)" 'run: coop sync'
+      $script:SyncFailures++
+      continue
+    }
+    if ($postVer -ne $extPin) {
+      Coop-Warn "postcondition failed: pi install reported success, but $ext is version $postVer, not the pinned $extPin" 'run: coop sync'
+      $script:SyncFailures++
+      continue
+    }
+    switch ($pre) {
+      ''             { Coop-Ok "Installed release version $extPin ($ext)" }
+      $extPin        { Coop-Ok "Already at release version $extPin ($ext)" }
+      default {
+        if (Coop-VersionLessThan $extPin $pre) { Coop-Ok "Downgraded untested $pre → release version $extPin ($ext)" }
+        else { Coop-Ok "Updated $pre → $extPin ($ext)" }
+      }
+    }
+  }
 } else {
   Coop-Warn 'pi not installed — skipping extension sync (run: coop install)'
 }
@@ -86,8 +132,15 @@ if (Test-Path -LiteralPath $vibesDir -PathType Container) {
 }
 if ($vibeCount -gt 0) { Coop-Ok "$vibeCount vibe file(s) present" } else { Coop-Warn 'no vibe files found in vibes/' }
 
+# A successful install command is not success: any postcondition failure above
+# must surface as a non-zero result so callers (launch preflight, CI, humans)
+# never mistake a half-provisioned tree for a converged one.
+if ($script:SyncFailures -gt 0) {
+  Coop-Warn "sync finished WITH $($script:SyncFailures) failure(s) — see above" 're-run: coop sync'
+  exit 1
+}
+
 Coop-Ok 'sync complete.'
-# Explicit success code (sync is best-effort) so `coop sync` / the launch preflight's
-# child call don't inherit an incidental non-zero $LASTEXITCODE from the last native
-# call above — mirrors sync.sh ending on a clean exit 0.
+# Explicit success code so `coop sync` / the launch preflight's child call don't
+# inherit an incidental non-zero $LASTEXITCODE from the last native call above.
 exit 0

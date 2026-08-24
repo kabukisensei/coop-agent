@@ -310,7 +310,16 @@ function Invoke-LaunchPi {
 
   # First-run onboarding: ask for name/communication preference before the first
   # real session, but only in an interactive terminal and only if not disabled.
+  # A failed onboarding must STOP the launch: continuing would run with a
+  # half-generated MCP configuration. The env var makes onboard.py announce
+  # "Starting Coop…" instead of "Run 'coop' to start."
+  $env:COOP_ONBOARD_FROM_LAUNCH = '1'
   Invoke-CoopMaybeOnboard
+  $onboardRc = $script:CoopOnboardRc
+  Remove-Item Env:COOP_ONBOARD_FROM_LAUNCH -ErrorAction SilentlyContinue
+  if ($onboardRc -ne 0) {
+    Coop-Die "first-run onboarding failed — fix the error above, then run: coop   (or: coop onboard)"
+  }
 
   # Guard against launching into a known-broken extension load (agent/extension skew).
   Invoke-CoopLaunchPreflight

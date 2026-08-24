@@ -2,14 +2,43 @@
 # Execute normal install/update/sync fleet paths with offline stubs and assert exact specs.
 set -euo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
-D="$(mktemp -d)"; trap 'rm -rf "$D"' EXIT
-ORIG_HOME="$HOME"
-HOME="$D/home"; STUB="$HOME/.local/bin"; MARKER="$D/calls"; mkdir -p "$STUB"; export HOME MARKER
+# Fully isolate EVERY location the fleet scripts can touch. Tests must never
+# write to the real home directory — see tests/home-guard.test.sh. This runs in
+# the CURRENT shell (no command substitution: subshell exports would die).
+isolate_block() { # [n] -> sets env + STUB[/MARKER] or STUBn/MARKERn
+  ISOL_D="$(mktemp -d)"
+  HOME="$ISOL_D/home"
+  COOP_DIR="$ISOL_D/coop-dir"
+  PIPX_HOME="$ISOL_D/pipx-home"
+  PIPX_BIN_DIR="$ISOL_D/pipx-bin"
+  PI_CODING_AGENT_DIR="$ISOL_D/pi-agent"
+  COOP_AGENT_DIR="$ISOL_D/coop-agent"
+  COOP_NO_ONBOARD=1
+  mkdir -p "$HOME/.local/bin" "$ISOL_D"
+  export HOME COOP_DIR PIPX_HOME PIPX_BIN_DIR PI_CODING_AGENT_DIR COOP_AGENT_DIR COOP_NO_ONBOARD
+  STUB="$HOME/.local/bin"
+  MARKER="$ISOL_D/calls"
+  if [ -n "${1:-}" ]; then
+    eval "STUB$1=\"\$STUB\" MARKER$1=\"\$MARKER\"; export STUB$1 MARKER$1"
+  fi
+  export STUB MARKER
+}
+
+isolate_block
 REAL_NODE="$(command -v node)"; REAL_PY="$(command -v python3 2>/dev/null || command -v python)"
 cat > "$STUB/pi" <<'SH'
 #!/bin/sh
 [ "$1" = "--version" ] && { echo 'pi 0.80.2'; exit 0; }
-echo "PI $*" >> "$MARKER"; exit 0
+echo "PI $*" >> "$MARKER"
+# Honest install: sync verifies the tree AFTER pi install returns, so this stub
+# must actually materialize the extension (scoped names included).
+if [ "$1" = "install" ]; then
+  spec="$2"; rest="${spec#npm:}"; name="${rest%@*}"; ver="${rest##*@}"
+  dir="${PI_CODING_AGENT_DIR:?}/npm/node_modules/$name"
+  mkdir -p "$dir"
+  printf '{"name":"%s","version":"%s"}\n' "$name" "$ver" > "$dir/package.json"
+fi
+exit 0
 SH
 cat > "$STUB/npm" <<'SH'
 #!/bin/sh
@@ -20,7 +49,7 @@ SH
 cat > "$STUB/pipx" <<'SH'
 #!/bin/sh
 if [ "$1" = "list" ]; then
-  echo 'package coop-data-doc 1.1.0'; echo 'package coop-sql-review 0.15.2'; echo 'package coop-dax-review 0.22.0'; echo 'package ms-fabric-cli 1.6.1'; exit 0
+  echo 'package coop-data-doc 1.1.0'; echo 'package coop-sql-review 0.15.2'; echo 'package coop-dax-review 0.22.0'; echo 'package ms-fabric-cli 1.7.0'; exit 0
 fi
 echo "PIPX $*" >> "$MARKER"; exit 0
 SH
@@ -39,7 +68,7 @@ for spec in \
   'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.162'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing install spec $spec"; cat "$MARKER"; exit 1; }
 done
-grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.1.0' "$MARKER" >/dev/null
+grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0' "$MARKER" >/dev/null
 : > "$MARKER"
 COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.80.2 COOP_PYPI_LATEST_OVERRIDE=0.1.0 bash "$ROOT/scripts/update.sh" >/dev/null 2>&1
 for spec in 'npm:pi-mcp-adapter@2.10.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.162'; do
@@ -52,13 +81,13 @@ for spec in 'npm:pi-mcp-adapter@2.10.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-be
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing sync spec $spec"; exit 1; }
 done
 if command -v pwsh >/dev/null 2>&1; then
-  pwsh -NoProfile -Command ". '$ROOT/lib/common.ps1'; if ((Coop-ManifestExtensionSpec '@juicesharp/rpiv-ask-user-question') -ne 'npm:@juicesharp/rpiv-ask-user-question@1.20.0') { exit 1 }; if ((Coop-ManifestPythonSpec 'fabric-cicd') -ne 'fabric-cicd==1.1.0') { exit 1 }"
+  pwsh -NoProfile -Command ". '$ROOT/lib/common.ps1'; if ((Coop-ManifestExtensionSpec '@juicesharp/rpiv-ask-user-question') -ne 'npm:@juicesharp/rpiv-ask-user-question@1.20.0') { exit 1 }; if ((Coop-ManifestPythonSpec 'fabric-cicd') -ne 'fabric-cicd==1.3.0') { exit 1 }"
 fi
 
 # --- NORMAL-mode drift convergence (no --force): round-2 review item #1 ---------
 # Deliberate drift: installed Pi 0.81.0 (manifest says 0.80.2) and
 # coop-data-doc 1.1.0 (manifest says 1.1.1); ms-fabric-cli matches its pin.
-D2="$(mktemp -d)"; HOME="$D2/home"; STUB2="$HOME/.local/bin"; MARKER2="$D2/calls"; mkdir -p "$STUB2"; export HOME MARKER2
+isolate_block 2
 cat > "$STUB2/pi" <<'SH'
 #!/bin/sh
 [ "$1" = "--version" ] && { echo 'pi 0.81.0'; exit 0; }
@@ -72,7 +101,7 @@ SH
 cat > "$STUB2/pipx" <<'SH'
 #!/bin/sh
 if [ "$1" = "list" ]; then
-  echo 'package coop-data-doc 1.1.0'; echo 'package coop-sql-review 0.15.2'; echo 'package coop-dax-review 0.22.0'; echo 'package ms-fabric-cli 1.6.1'; exit 0
+  echo 'package coop-data-doc 1.1.0'; echo 'package coop-sql-review 0.15.2'; echo 'package coop-dax-review 0.22.0'; echo 'package ms-fabric-cli 1.7.0'; exit 0
 fi
 echo "PIPX $*" >> "$MARKER2"; exit 0
 SH
@@ -95,7 +124,7 @@ echo '  ✓ normal install converges drifted Pi and pipx tools without --force'
 
 # --- --edge on an EXISTING machine attempts upstream latest ----------------------
 # Existing Pi 0.80.2 + coop-data-doc 1.1.1: edge must attempt an upgrade, not skip.
-D4="$(mktemp -d)"; HOME="$D4/home"; STUB4="$HOME/.local/bin"; MARKER4="$D4/calls"; mkdir -p "$STUB4"; export HOME MARKER4
+isolate_block 4
 cat > "$STUB4/pi" <<'SH'
 #!/bin/sh
 [ "$1" = "--version" ] && { echo 'pi 0.80.2'; exit 0; }
@@ -108,7 +137,7 @@ echo "NPM $*" >> "$MARKER4"; exit 0
 SH
 cat > "$STUB4/pipx" <<'SH'
 #!/bin/sh
-if [ "$1" = "list" ]; then echo 'package coop-data-doc 1.1.1'; echo 'package ms-fabric-cli 1.6.1'; exit 0; fi
+if [ "$1" = "list" ]; then echo 'package coop-data-doc 1.1.1'; echo 'package ms-fabric-cli 1.7.0'; exit 0; fi
 echo "PIPX $*" >> "$MARKER4"; exit 0
 SH
 cat > "$STUB4/fab" <<'SH'
@@ -129,7 +158,7 @@ echo '  ✓ install --edge attempts upstream latest for existing installs'
 # --- Fabric failed convergence must NOT read as success --------------------------
 # pipx refuses the --force install of ms-fabric-cli==pin while an OLD fab binary
 # stays on PATH: the unit must fail, not report "ready".
-D5="$(mktemp -d)"; HOME="$D5/home"; STUB5="$HOME/.local/bin"; MARKER5="$D5/calls"; mkdir -p "$STUB5"; export HOME MARKER5
+isolate_block 5
 cat > "$STUB5/pi" <<'SH'
 #!/bin/sh
 [ "$1" = "--version" ] && { echo 'pi 0.80.2'; exit 0; }
@@ -143,7 +172,7 @@ SH
 cat > "$STUB5/pipx" <<'SH'
 #!/bin/sh
 if [ "$1" = "list" ]; then echo 'package coop-data-doc 1.1.1'; echo 'package ms-fabric-cli 1.5.0'; exit 0; fi
-if [ "$1" = "install" ] && [ "$3" = "ms-fabric-cli==1.6.1" ]; then exit 1; fi
+if [ "$1" = "install" ] && [ "$3" = "ms-fabric-cli==1.7.0" ]; then exit 1; fi
 echo "PIPX $*" >> "$MARKER5"; exit 0
 SH
 cat > "$STUB5/fab" <<'SH'
@@ -167,16 +196,25 @@ echo '  ✓ failed Fabric convergence is reported as failure, not ready'
 
 
 # --- NORMAL-mode skip when everything already matches ----------------------------
-D3="$(mktemp -d)"; HOME="$D3/home"; STUB3="$HOME/.local/bin"; MARKER3="$D3/calls"; mkdir -p "$STUB3"; export HOME MARKER3
+isolate_block 3
 cat > "$STUB3/pi" <<'SH'
 #!/bin/sh
 [ "$1" = "--version" ] && { echo 'pi 0.80.2'; exit 0; }
 echo "PI $*" >> "$MARKER3"; exit 0
 SH
-cp "$STUB/npm" "$STUB3/npm"; cp "$STUB/fab" "$STUB3/fab"; cat > "$STUB3/pipx" <<'SH'
+cat > "$STUB3/npm" <<'SH'
+#!/bin/sh
+[ "$1 $2" = "prefix -g" ] && { dirname "$(dirname "$0")"; exit 0; }
+echo "NPM $*" >> "$MARKER3"; exit 0
+SH
+cat > "$STUB3/fab" <<'SH'
+#!/bin/sh
+echo 'fab version 1.6.1'
+SH
+cat > "$STUB3/pipx" <<'SH'
 #!/bin/sh
 if [ "$1" = "list" ]; then
-  echo 'package coop-data-doc 1.1.1'; echo 'package ms-fabric-cli 1.6.1'; exit 0
+  echo 'package coop-data-doc 1.1.1'; echo 'package ms-fabric-cli 1.7.0'; exit 0
 fi
 echo "PIPX $*" >> "$MARKER3"; exit 0
 SH
@@ -190,7 +228,5 @@ COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" >/dev/n
 ! grep -F 'PIPX install --force coop-data-doc==' "$MARKER3" >/dev/null \
   || { echo 'coop-data-doc was reinstalled although it matched the manifest'; exit 1; }
 echo '  ✓ normal install skips components already at their manifest pins'
-
-restore_home() { HOME="$ORIG_HOME"; }
 
 echo '  ✓ normal install/update/sync executed exact manifest specs (plus PowerShell literal helpers)'

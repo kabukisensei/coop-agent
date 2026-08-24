@@ -83,9 +83,10 @@ export function buildInstruction(profile: UserProfile): string {
   return parts.join("\n");
 }
 
-export default function (api: ExtensionAPI) {
-  const { pi } = api;
-
+// Pi passes the ExtensionAPI itself as the argument (ExtensionFactory =
+// (pi: ExtensionAPI) => void). Registering on it directly is the only correct
+// contract — destructuring a `pi` property from it crashes at load time.
+export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event: any, _ctx: ExtensionContext) => {
     try {
       const profile = loadProfile();
