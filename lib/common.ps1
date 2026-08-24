@@ -384,9 +384,13 @@ function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
   node (Join-Path $script:CoopRoot 'lib\pins.js') $AgentDir @Specs
   if ($LASTEXITCODE -ne 0) { return $false }
   Push-Location $npmDir
-  & $npm install --silent --no-audit --no-fund *> $null
+  $npmOut = @(& $npm install --silent --no-audit --no-fund 2>&1)
   $rc = $LASTEXITCODE
   Pop-Location
+  if ($rc -ne 0) {
+    $detail = ((@($npmOut | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }) | Select-Object -Last 8) -join ' | ')
+    Coop-Warn ("npm extension convergence failed via {0}{1}" -f $npm, $(if ($detail) { ": $detail" } else { '' }))
+  }
   return ($rc -eq 0)
 }
 
@@ -631,7 +635,8 @@ function Sync-CoopExtDeps {
   if ($r.rc -eq 11) { Coop-Warn (Format-TooOld $r.parts); return }
   if ($r.rc -ne 10) { return }   # 2 (nothing) or unexpected — no-op
 
-  if (-not (Test-Have 'npm')) {
+  $npm = Get-CoopWorkingNpm
+  if (-not $npm) {
     Coop-Warn "extension pi-ai/pi-tui need realignment to pi $ver but npm is missing — install Node.js, then: coop sync"
     return
   }
@@ -639,7 +644,8 @@ function Sync-CoopExtDeps {
   # against the overrides, then reinstall.
   Coop-Info "aligning extension pi-ai / pi-tui to the agent ($ver; tree has $treeAi)…"
   Remove-Item -LiteralPath (Join-Path $npmDir 'package-lock.json') -Force -ErrorAction SilentlyContinue
-  Push-Location $npmDir; try { & npm install *> $null } catch { } finally { Pop-Location }
+  $npmOut = @()
+  Push-Location $npmDir; try { $npmOut = @(& $npm install 2>&1) } catch { $npmOut = @($_) } finally { Pop-Location }
   $r = Invoke-Align -Check
   if ($r.rc -eq 10) {
     # A stale node_modules can keep the old hoist — rebuild it clean as a last resort,
@@ -653,13 +659,14 @@ function Sync-CoopExtDeps {
       Move-Item -LiteralPath $nm -Destination $bak -Force -ErrorAction SilentlyContinue
     }
     $reinstallOk = $false
-    Push-Location $npmDir; try { & npm install *> $null; $reinstallOk = ($LASTEXITCODE -eq 0) } catch { } finally { Pop-Location }
+    Push-Location $npmDir; try { $npmOut = @(& $npm install 2>&1); $reinstallOk = ($LASTEXITCODE -eq 0) } catch { $npmOut = @($_) } finally { Pop-Location }
     if ($reinstallOk) {
       Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
     } elseif (Test-Path -LiteralPath $bak) {
       Remove-Item -LiteralPath $nm -Recurse -Force -ErrorAction SilentlyContinue
       Move-Item -LiteralPath $bak -Destination $nm -Force -ErrorAction SilentlyContinue
-      Coop-Warn 'extension realignment reinstall failed — restored the previous tree — check your network, then: coop doctor --fix'
+      $detail = ((@($npmOut | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }) | Select-Object -Last 8) -join ' | ')
+      Coop-Warn ("extension realignment reinstall failed — restored the previous tree{0} — check your network, then: coop doctor --fix" -f $(if ($detail) { ": $detail" } else { '' }))
     }
     $r = Invoke-Align -Check
   }

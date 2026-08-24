@@ -51,6 +51,8 @@ try {
     (Join-Path $NpmPrefix 'lib\node_modules\@earendil-works\pi-coding-agent')
   ) | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'package.json') -PathType Leaf } | Select-Object -First 1
   if (-not $PiPackageDir) { Ko 'Pi package directory missing after install'; exit 1 }
+  $PiCli = Join-Path $PiPackageDir 'dist\cli.js'
+  if (-not (Test-Path -LiteralPath $PiCli -PathType Leaf)) { Ko 'Pi CLI entry missing after install'; exit 1 }
   $runtimeVer = (& $PiBin --version 2>$null | Select-String -Pattern '\d+\.\d+\.\d+').Matches.Value
   if ($runtimeVer -eq $PiVersion) { Ok "runtime $PiVersion resolves from temporary prefix" } else { Ko "runtime version mismatch: $runtimeVer" }
 
@@ -62,11 +64,10 @@ try {
     Set-Content (Join-Path $env:COOP_DIR '.coop\config')
 
   # --- 2. Exact manifest extension fleet ---------------------------------------
+  # Do not preinstall extensions in the harness. Production sync below owns the
+  # entire install + exact-pin + shared-library convergence path; this keeps the
+  # matrix incapable of repairing a defect that production users would hit.
   $fleet = node -e "const m=require(process.argv[1]);console.log(Object.entries(m.extensions||{}).map(([k,v])=>k+'@'+v).join('\n'))" $Manifest
-  foreach ($spec in @($fleet)) {
-    & $PiBin install "npm:$spec" *> $null
-    if ($LASTEXITCODE -eq 0) { Ok "installed npm:$spec" } else { Ko "install failed: npm:$spec" }
-  }
   # --- 3. coop sync — PRODUCTION convergence, temp runtime FIRST on PATH --------
   # Prepend the temporary prefix so sync.ps1 resolves THIS matrix runtime, not
   # the workstation's global pi. Sync must exit zero: it performs exact-pin
@@ -106,8 +107,14 @@ try {
     $base = $req -replace '^[^\d]*', ''
     if ($got -eq $base) { Ok "$lib $got satisfies runtime requirement ($req)" } else { Ko "$lib '$got' does not satisfy $req" }
   }
-  $nested = @(Get-ChildItem -Recurse -Directory -Filter 'pi-ai' $agentNm -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -notmatch 'node_modules\\@earendil-works\\pi-coding-agent\\' })
+  $topAi = Join-Path $agentNm '@earendil-works\pi-ai'
+  $topTui = Join-Path $agentNm '@earendil-works\pi-tui'
+  $nested = @(Get-ChildItem -Recurse -Directory $agentNm -ErrorAction SilentlyContinue |
+              Where-Object {
+                ($_.Name -eq 'pi-ai' -or $_.Name -eq 'pi-tui') -and
+                $_.FullName -ne $topAi -and $_.FullName -ne $topTui -and
+                $_.FullName -notmatch 'node_modules\\@earendil-works\\pi-coding-agent\\'
+              })
   if ($nested.Count -eq 0) { Ok 'no nested/hoisted pi-ai or pi-tui copies' } else { Ko "nested shared-lib copies found" }
 
   $cmEntry = Join-Path $agentNm 'context-mode'
@@ -119,9 +126,10 @@ try {
   $loader = Join-Path $PiPackageDir 'dist\core\extensions\loader.js'
   $probe = Join-Path $T 'load-probe.mjs'
   $srcs = @('coop-powerline','coop-tools','coop-guardrails','coop-profile' | ForEach-Object { Join-Path $RepoRoot "extensions\$_\index.ts" })
+  $loaderJson = ConvertTo-Json (($loader -replace '\\', '/')) -Compress
   @"
 import { pathToFileURL } from "node:url";
-const { createExtensionRuntime, loadExtensions } = await import(pathToFileURL(`$(JSON.stringify($loader.replace(/\\/g,'/')))`).href);
+const { createExtensionRuntime, loadExtensions } = await import(pathToFileURL($loaderJson).href);
 const targets = process.argv.slice(2).map((p) => pathToFileURL(p.replace(/\\\\/g, '/')).href);
 const result = await loadExtensions(targets, process.cwd(), undefined, createExtensionRuntime());
 console.log(JSON.stringify({ n: result.extensions.length, errors: result.errors }));
@@ -137,7 +145,7 @@ console.log(JSON.stringify({ n: result.extensions.length, errors: result.errors 
   $rpc = Join-Path $T 'rpc-probe.mjs'
   @"
 import { spawn } from "node:child_process";
-const child = spawn(process.argv[2], ["--mode", "rpc", "--no-session"], { stdio: ["pipe", "pipe", "pipe"] });
+const child = spawn(process.execPath, [process.argv[2], "--mode", "rpc", "--no-session"], { stdio: ["pipe", "pipe", "pipe"] });
 let gotState = false, events = 0;
 const timer = setTimeout(() => { try { child.kill(); } catch {} }, 90000);
 child.stdout.on("data", () => {});
@@ -148,7 +156,7 @@ child.stdout.on("data", (d) => {
 child.stdin.write(JSON.stringify({ id: 1, type: "get_state" }) + "\n");
 child.once("close", (code) => console.log(JSON.stringify({ code, gotState, events })));
 "@ | Set-Content $rpc
-  $rpcOut = node $rpc $PiBin 2>$null | Select-Object -Last 1
+  $rpcOut = node $rpc $PiCli 2>$null | Select-Object -Last 1
   try { $r = $rpcOut | ConvertFrom-Json } catch { $r = $null }
   if ($r -and $r.gotState) { Ok "RPC startup reached a usable session (exit $($r.code))" }
   elseif ($rpcOut -match 'auth|provider|login') { SkipM "RPC session unavailable without provider here" }

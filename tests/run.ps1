@@ -59,6 +59,19 @@ try {
 
   $sep = [System.IO.Path]::PathSeparator
   $stubPath = "$stub$sep$($env:PATH)"
+  # The launch preflight can repair an extension tree. Point every writable
+  # Coop/Pi location at this fixture and make the fake Pi authoritative so this
+  # behavioral suite never inspects or changes the developer's real ~/.coop.
+  $priorPath = $env:PATH
+  $priorCoopDir = $env:COOP_DIR
+  $priorCoopAgentDir = $env:COOP_AGENT_DIR
+  $priorPiAgentDir = $env:PI_CODING_AGENT_DIR
+  $priorNoOnboard = $env:COOP_NO_ONBOARD
+  $env:PATH = $stubPath
+  $env:COOP_DIR = Join-Path $stub 'coop-dir'
+  $env:COOP_AGENT_DIR = Join-Path $stub 'agent'
+  $env:PI_CODING_AGENT_DIR = $env:COOP_AGENT_DIR
+  $env:COOP_NO_ONBOARD = '1'
 
   # --- 1. launch-spec resolves the governed pi invocation --------------------
   Head 'launch-spec (shared launch builder) test'
@@ -191,6 +204,11 @@ try {
   }
 }
 finally {
+  $env:PATH = $priorPath
+  if ($null -eq $priorCoopDir) { Remove-Item Env:\COOP_DIR -ErrorAction SilentlyContinue } else { $env:COOP_DIR = $priorCoopDir }
+  if ($null -eq $priorCoopAgentDir) { Remove-Item Env:\COOP_AGENT_DIR -ErrorAction SilentlyContinue } else { $env:COOP_AGENT_DIR = $priorCoopAgentDir }
+  if ($null -eq $priorPiAgentDir) { Remove-Item Env:\PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue } else { $env:PI_CODING_AGENT_DIR = $priorPiAgentDir }
+  if ($null -eq $priorNoOnboard) { Remove-Item Env:\COOP_NO_ONBOARD -ErrorAction SilentlyContinue } else { $env:COOP_NO_ONBOARD = $priorNoOnboard }
   Remove-Item -LiteralPath $stub -Recurse -Force -ErrorAction SilentlyContinue
 }
 
