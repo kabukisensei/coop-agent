@@ -88,10 +88,14 @@ coop_pipx_venvs_dir() {
   # (modern Windows uses LOCALAPPDATA\\pipx\\pipx; legacy Windows ~/pipx).
   if [ -n "${COOP_PIPX_HOME:-}" ]; then printf '%s/venvs' "$COOP_PIPX_HOME"; return 0; fi
   if [ -n "${PIPX_HOME:-}" ]; then printf '%s/venvs' "$PIPX_HOME"; return 0; fi
-  local v
-  if have pipx; then
-    v="$(pipx environment --value PIPX_LOCAL_VENVS 2>/dev/null | head -1)"
-    [ -n "$v" ] && { printf '%s/venvs' "$v"; return 0; }
+  # PIPX_LOCAL_VENVS is ALREADY the complete venvs directory - never append
+  # another "venvs" (that produced .../venvs/venvs and broke every probe).
+  # COOP_PIPX_BIN pins the binary so PATH shadows/stubs cannot lie to us.
+  local pcmd v
+  pcmd="$(coop_pipx_cmd)"
+  if [ -n "$pcmd" ] && have "$pcmd"; then
+    v="$("$pcmd" environment --value PIPX_LOCAL_VENVS 2>/dev/null | head -1)"
+    [ -n "$v" ] && { printf '%s' "$v"; return 0; }
   fi
   local c
   for c in "$HOME/.local/pipx" "$HOME/pipx" \

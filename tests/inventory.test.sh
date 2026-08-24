@@ -43,7 +43,12 @@ EOF
 # additions, so the fakes always beat both the workstation's real tools AND any
 # leaked stubs. Nothing from the real machine is invoked.
 FIXHOME="$TMP/home"; FAKEBIN="$FIXHOME/.local/bin"; mkdir -p "$FAKEBIN"
-BASE_PATH="/usr/bin:/bin"
+# Dedicated python dir: never reuse ~/.local/bin (this workstation keeps
+# python3 AND the real fab/coop shims there, which would defeat isolation).
+NODE_DIR="$(dirname "$(command -v node)")"
+PY_DIR="$TMP/pybin"; mkdir -p "$PY_DIR"
+ln -sf "$(command -v "$PY")" "$PY_DIR/python3"
+BASE_PATH="$NODE_DIR:$PY_DIR:/usr/bin:/bin"
 PIPXHOME="$TMP/pipxhome"; mkdir -p "$PIPXHOME/venvs/ms-fabric-cli/bin" "$PIPXHOME/venvs/coop-data-doc/bin"
 
 # --- fake pipx: `runpip <venv> show <dist>` reads <fixture>/<venv>--<dist>.meta
@@ -329,5 +334,73 @@ case "$out" in
   *"Your personal Pi extensions are unchanged"*) ok "one-time explanation distinguishes isolated tree" ;;
   *) ko "isolated-tree explanation missing" ;;
 esac
+
+# --- S4: alignment rc 10 / rc 11 must increment failures (deterministic) -------
+# Runs PRODUCTION sync.sh from a sandbox COOP_ROOT whose lib/_extdeps.py is a
+# stub emitting a chosen result code/line - zero environment sensitivity.
+run_sync_with_extdeps_rc() { # <rc> <line-fields...>
+  local rc="$1"; shift
+  local line="$*"
+  local sandbox="$TMP/fakeroot-$rc"
+  rm -rf "$sandbox"
+  mkdir -p "$sandbox/lib" "$sandbox/config" "$sandbox/scripts" "$sandbox/bin" "$sandbox/home"
+  cp "$ROOT/lib/common.sh" "$sandbox/lib/"
+  cp "$ROOT/lib/pins.js" "$sandbox/lib/" 2>/dev/null || true
+  cp "$ROOT/config/release-manifest.json" "$sandbox/config/"
+  cp "$ROOT/scripts/sync.sh" "$sandbox/scripts/"
+  # Stubbed alignment checker: emits fixed fields and exits with $rc.
+  cat > "$sandbox/lib/_extdeps.py" <<PYEOF
+import os, sys
+print("$line")
+sys.exit(int(os.environ.get("COOP_FAKE_EXTDEPS_RC", "$rc")))
+PYEOF
+  # Controlled tools: honest fake pi (installs at spec), sabotaged npm, real
+  # node/python3 symlinks - so results are deterministic and offline.
+  cat "$ROOT/tests/fixtures/sync-fake-pi.sh" > "$sandbox/bin/pi"
+  printf '#!/bin/sh\n[ "$1" = "--version" ] && { echo 22.0.0; exit 0; }\nexit 1\n' > "$sandbox/bin/npm"
+  ln -sf "$(command -v node)" "$sandbox/bin/node"
+  ln -sf "$(command -v python3 || command -v python)" "$sandbox/bin/python3"
+  chmod +x "$sandbox/bin"/*
+  local ad="$sandbox/agent"
+  mkdir -p "$ad/npm/node_modules/pi-mcp-adapter" "$ad/npm"
+  printf '{"name":"pi-mcp-adapter","version":"2.10.0"}\n' > "$ad/npm/node_modules/pi-mcp-adapter/package.json"
+  printf '{\n  "name": "pi-extensions",\n  "private": true,\n  "dependencies": {}\n}\n' > "$ad/npm/package.json"
+  HOME="$sandbox/home" COOP_AGENT_DIR="$ad" PI_CODING_AGENT_DIR="$ad" \
+      COOP_RELEASE_MANIFEST="$sandbox/config/release-manifest.json" \
+      COOP_FAKE_EXTDEPS_RC="$rc" COOP_PIPX_BIN=/nonexistent/pipx \
+      COOP_TEST_STUB_PATH="$sandbox/bin" PATH="$sandbox/bin:/usr/bin:/bin" \
+      bash "$sandbox/scripts/sync.sh" >"$sandbox/sync.log" 2>&1 </dev/null
+  local sync_rc=$?
+  sed 's/\x1b\[[0-9;]*m//g' "$sandbox/sync.log"
+  return "$sync_rc"
+}
+
+echo "-> S4: shared-library skew classes must FAIL sync (rc 10 and rc 11)"
+out="$(run_sync_with_extdeps_rc 10 '- 0.80.2 - - 1 0 - -')"; rc=$?
+[ "${COOP_MATRIX_DEBUG:-0}" = "1" ] && printf 'DBG S4 rc=%s\n' "$rc" >&2
+[ "$rc" -ne 0 ] && ok "rc-10 shared-lib skew -> sync exits non-zero" || ko "sync exited 0 on rc-10 skew"
+case "$out" in
+  *"shared-library skew remains after alignment"*) ok "rc-10 skew reported precisely" ;;
+  *) ko "rc-10 message missing: $(printf '%s' "$out" | tail -2)" ;;
+esac
+
+out="$(run_sync_with_extdeps_rc 11 '- 0.80.2 - - 1 0 ^99.0.0 pi-web-access')"; rc=$?
+[ "$rc" -ne 0 ] && ok "rc-11 agent-too-old skew -> sync exits non-zero" || ko "sync exited 0 on rc-11 skew"
+case "$out" in
+  *"provides older libraries"*) ok "rc-11 names the offending extension and floor" ;;
+  *) ko "rc-11 detail missing: $(printf '%s' "$out" | tail -2)" ;;
+esac
+
+# --- S5: venvs dir comes straight from PIPX_LOCAL_VENVS (no doubling) ----------
+mkdir -p "$TMP/pipxq"
+printf '#!/bin/sh\n[ "$2" = "--value" ] && { printf "%%s\\n" "${COOP_FAKE_LOCAL_VENVS:?}"; exit 0; }\nexit 1\n' > "$TMP/pipxq/pipx"
+chmod +x "$TMP/pipxq/pipx"
+vd="$(HOME="$TMP/pipxq-home" COOP_PIPX_HOME='' PIPX_HOME='' \
+  COOP_PIPX_BIN="$TMP/pipxq/pipx" COOP_FAKE_LOCAL_VENVS="$TMP/auth-venvs" \
+  COOP_TEST_STUB_PATH="$TMP/pipxq" PATH="$TMP/pipxq:/usr/bin:/bin" \
+  bash -c '. "'"$ROOT"'/lib/common.sh"; coop_pipx_venvs_dir')"
+[ "$vd" = "$TMP/auth-venvs" ] \
+  && ok "venv dir comes straight from PIPX_LOCAL_VENVS (no /venvs doubling)" \
+  || ko "doubled/mangled venvs dir: $vd"
 
 exit $fail

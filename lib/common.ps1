@@ -107,9 +107,12 @@ function Get-CoopPipxVenvsDir {
   # Defaulting straight to ~/.local/pipx misses Windows installs entirely.
   if ($env:COOP_PIPX_HOME) { return (Join-Path $env:COOP_PIPX_HOME 'venvs') }
   if ($env:PIPX_HOME) { return (Join-Path $env:PIPX_HOME 'venvs') }
-  if (Test-Have 'pipx') {
-    $v = (& pipx environment --value PIPX_LOCAL_VENVS 2>$null | Out-String).Trim()
-    if ($v) { return (Join-Path $v 'venvs') }
+  # PIPX_LOCAL_VENVS is ALREADY the complete venvs directory - never append
+  # another "venvs" (that produced .../venvs/venvs and broke every probe).
+  $cmd = Get-CoopPipxCmd
+  if (Get-Command $cmd -ErrorAction SilentlyContinue) {
+    $v = [string]((& $cmd environment --value PIPX_LOCAL_VENVS 2>$null | Out-String)).Trim()
+    if ($v) { return $v }
   }
   $candidates = @()
   if ($IsWindows -or $env:OS -eq 'Windows_NT') {
@@ -225,22 +228,79 @@ function Test-CoopPythonSpec([string]$PyVer, [string]$Spec) {
 
 # Which pipx venv does <command> resolve to? Returns venv name or $null.
 function Get-CoopExePipxVenv([string]$Command) {
+  # Ownership probe: which pipx venv exposes <command>?
+  #   1. follow the full symlink chain (unix shims),
+  #   2. compare against raw AND physically-resolved venv prefixes,
+  #   3. fall back to pipx's own application metadata (`pipx list --json`),
+  #      the only reliable source for Windows .exe launchers exposed OUTSIDE
+  #      the venv (binary stubs carry no readable path).
   $cmd = Get-Command $Command -ErrorAction SilentlyContinue
   if (-not $cmd) { return $null }
+  $p = $cmd.Source
+
   $vdir = (Get-CoopPipxVenvsDir)
-  try { $resolved = (Resolve-Path -LiteralPath $cmd.Source -ErrorAction Stop).Path } catch { $resolved = $cmd.Source }
-  if ($resolved -like "$vdir*") {
-    $rest = $resolved.Substring($vdir.Length).TrimStart('\\', '/')
-    return ($rest -split '[\\/]')[0]
+  $vdirReal = $vdir
+  try { $vdirReal = (Resolve-Path -LiteralPath $vdir -ErrorAction Stop).Path } catch {}
+  $isUnder = {
+    param($path, $base)
+    if (-not $path) { return $false }
+    $np = $path.Replace('\', '/'); $nb = $base.Replace('\', '/')
+    return $np.StartsWith($nb + '/', [System.StringComparison]::OrdinalIgnoreCase)
   }
-  # Console scripts are plain files whose first line names their venv python.
-  try {
-    $first = (Get-Content -LiteralPath $resolved -TotalCount 1 -ErrorAction Stop)
-    if ($first -and $first.Contains($vdir)) {
-      $rest = $first.Substring($first.IndexOf($vdir) + $vdir.Length).TrimStart('\\', '/')
-      return ($rest -split '[\\/]')[0]
+
+  # 1-2. Path membership across the symlink chain.
+  $cur = $p
+  for ($hop = 0; $hop -lt 4 -and $cur; $hop++) {
+    if (& $isUnder $cur $vdir) {
+      $rest = $cur.Replace('\', '/').Substring(($vdir.Replace('\', '/')).Length).TrimStart('/')
+      return ($rest -split '/')[0]
     }
-  } catch {}
+    if (& $isUnder $cur $vdirReal) {
+      $rest = $cur.Replace('\', '/').Substring(($vdirReal.Replace('\', '/')).Length).TrimStart('/')
+      return ($rest -split '/')[0]
+    }
+    $item = Get-Item -LiteralPath $cur -Force -ErrorAction SilentlyContinue
+    if (-not $item) { break }
+    $tgt = $null
+    if ($item.PSObject.Properties['Target'] -and $item.Target) { $tgt = @($item.Target)[0] }
+    if (-not $tgt) { break }
+    if (-not [System.IO.Path]::IsPathRooted($tgt)) { $tgt = Join-Path (Split-Path -Parent $cur) $tgt }
+    $cur = $tgt
+  }
+
+  # 3. pipx application metadata: map an executable exposed in PIPX_BIN_DIR
+  # back to the venv whose main package declares that app name. Windows launchers
+  # are binary .exe files outside the venv, so neither shebang nor target-path
+  # inspection can establish their ownership.
+  $pipxBin = Get-CoopPipxCmd
+  if (Get-Command $pipxBin -ErrorAction SilentlyContinue) {
+    $pipxBinDir = [string]((& $pipxBin environment --value PIPX_BIN_DIR 2>$null | Out-String)).Trim()
+    if (-not $pipxBinDir) { return $null }
+    $pipxBinDirReal = $pipxBinDir
+    try { $pipxBinDirReal = (Resolve-Path -LiteralPath $pipxBinDir -ErrorAction Stop).Path } catch {}
+    $parent = Split-Path -Parent $p
+    $parentReal = $parent
+    try { $parentReal = (Resolve-Path -LiteralPath $parent -ErrorAction Stop).Path } catch {}
+    $normParent = $parent.Replace('\', '/').TrimEnd('/')
+    $normParentReal = $parentReal.Replace('\', '/').TrimEnd('/')
+    $normBin = $pipxBinDir.Replace('\', '/').TrimEnd('/')
+    $normBinReal = $pipxBinDirReal.Replace('\', '/').TrimEnd('/')
+    $inPipxBin = $normParent.Equals($normBin, [System.StringComparison]::OrdinalIgnoreCase) -or
+                 $normParentReal.Equals($normBinReal, [System.StringComparison]::OrdinalIgnoreCase)
+    if (-not $inPipxBin) { return $null }
+
+    $json = [string]((& $pipxBin list --json 2>$null | Out-String))
+    if ($json.Trim()) {
+      try { $data = $json | ConvertFrom-Json } catch { $data = $null }
+      if ($data -and $data.venvs) {
+        $app = [System.IO.Path]::GetFileNameWithoutExtension($p)
+        foreach ($venv in $data.venvs.PSObject.Properties) {
+          $apps = @($venv.Value.metadata.main_package.apps)
+          if ($apps -contains $app) { return $venv.Name }
+        }
+      }
+    }
+  }
   return $null
 }
 

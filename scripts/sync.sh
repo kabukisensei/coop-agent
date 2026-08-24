@@ -127,9 +127,11 @@ $line
 EOF2
       case "$preflight_rc" in
         0)  coop_ok "shared pi-ai/pi-tui aligned to pi $_pi_runtime" ;;
-        10) coop_err "shared-library skew remains after alignment (wanted pi-ai/pi-tui for pi $_pi_runtime)" ;;
-        11) coop_err "extension ${off_ext:-unknown} needs pi-ai $req_floor but pi $_pi_runtime provides older libraries" \
-              "update Pi: npm install -g @earendil-works/pi-coding-agent@latest, then: coop sync" ;;
+        10) coop_err "shared-library skew remains after alignment (wanted pi-ai/pi-tui for pi $_pi_runtime)"
+            SYNC_FAILURES=$((SYNC_FAILURES + 1)) ;;
+        11) coop_err "extension ${off_ext:-unknown} needs pi-ai $req_floor but pi $_pi_runtime provides older libraries"
+            SYNC_FAILURES=$((SYNC_FAILURES + 1))
+            coop_say "      Fix: npm install -g @earendil-works/pi-coding-agent@latest, then: coop sync" ;;
         *)  : ;;   # nothing installed yet — nothing to verify
       esac
     fi

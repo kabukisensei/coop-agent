@@ -67,6 +67,7 @@ try {
 
 
   # --- 5. Inventory postconditions ----------------------------------------------
+  $agentNm = Join-Path $env:PI_CODING_AGENT_DIR 'npm\node_modules'
   function VerOf([string]$pkg) {
     $pj = Join-Path $agentNm "$pkg\package.json"
     if (-not (Test-Path $pj)) { return '' }
@@ -135,8 +136,10 @@ child.once("close", (code) => console.log(JSON.stringify({ code, gotState, event
 
   # --- 8. Second sync idempotent --------------------------------------------------
   $sync2 = & (Join-Path $RepoRoot 'scripts\sync.ps1') 2>&1
-  if (($sync2 | Out-String) -match 'Already at release version') { Ok "second sync is idempotent ('Already at release version')" }
-  else { Ko 'second sync not idempotent' }
+  $sync2Rc = $LASTEXITCODE
+  if ($sync2Rc -eq 0 -and (($sync2 | Out-String) -match 'Already at release version')) {
+    Ok "second sync is idempotent ('Already at release version')"
+  } else { Ko "second sync not idempotent (exit $sync2Rc)" }
 
   # --- 9. Deliberate skew (temporary tree only) -----------------------------------
   $skewPkg = Join-Path $T 'skewpkg'
@@ -147,10 +150,14 @@ child.once("close", (code) => console.log(JSON.stringify({ code, gotState, event
     Remove-Item -Recurse -Force $aiDir -ErrorAction SilentlyContinue
     Copy-Item $skewSrc $aiDir -Recurse
     Ok 'deliberate skew planted (pi-ai 0.82.1)'
+    # Repair via PRODUCTION sync only; require exit zero before reading state.
     & (Join-Path $RepoRoot 'scripts\sync.ps1') *> $null
-    Push-Location (Join-Path $env:PI_CODING_AGENT_DIR 'npm'); & $npm install --silent --no-audit --no-fund *> $null; Pop-Location
-    $repaired = VerOf '@earendil-works/pi-ai'
-    if ($repaired -eq $base) { Ok "convergence repaired the skew (pi-ai back to $base)" } else { Ko "skew not repaired (pi-ai: $repaired)" }
+    if ($LASTEXITCODE -ne 0) {
+      Ko "production sync failed during skew repair (exit $LASTEXITCODE)"
+    } else {
+      $repaired = VerOf '@earendil-works/pi-ai'
+      if ($repaired -eq $base) { Ok "convergence repaired the skew (pi-ai back to $base)" } else { Ko "skew not repaired (pi-ai: $repaired)" }
+    }
   } else { SkipM 'skew planting failed (network?)' }
 }
 finally {

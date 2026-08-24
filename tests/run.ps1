@@ -164,6 +164,15 @@ try {
   if ($LASTEXITCODE -eq 0) { Ok 'review --help exits 0' } else { Ko "review --help exit was $LASTEXITCODE" }
   & $coop review --bogus-flag *> $null
   if ($LASTEXITCODE -ne 0) { Ok 'review with an unknown flag dies non-zero' } else { Ko 'review --bogus-flag did not die' }
+
+  # --- 7. pipx launcher ownership (Windows .exe metadata fallback) ----------
+  Head 'pipx executable ownership'
+  $ownerOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\pipx-ownership.test.ps1') 2>&1
+  if ($LASTEXITCODE -eq 0) {
+    $ownerOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "pipx ownership fixture failed: $($ownerOut | Out-String)"
+  }
 }
 finally {
   Remove-Item -LiteralPath $stub -Recurse -Force -ErrorAction SilentlyContinue

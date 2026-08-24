@@ -57,90 +57,91 @@ $fleetSpecs = @(); $fleetNames = @(); $fleetPins = @(); $preVers = @{}
 # PI_CODING_AGENT_DIR scoping: every Pi operation must target the ISOLATED dir,
 # never the caller's personal ~/.pi. Save and restore any prior value.
 $priorAgentDir = $env:PI_CODING_AGENT_DIR
-$env:PI_CODING_AGENT_DIR = $PI_AGENT
 
 try {
+  # Scoped here so EVERY Pi operation targets the isolated dir and the caller's
+  # environment is always restored (even when Pi is missing).
+  $env:PI_CODING_AGENT_DIR = $PI_AGENT
   Coop-Info "Coop keeps its extensions in $PI_AGENT and pins the versions tested"
   Coop-Info "together with this Coop release. Your personal Pi extensions are unchanged."
   if (Test-Have 'pi') {
-  foreach ($ext in $CORE_EXTENSIONS) {
-    $extSpec = Coop-ManifestExtensionSpec $ext
-    if (-not $extSpec) { Coop-Warn "manifest pin missing for $ext"; $script:SyncFailures++; continue }
-    $i = $extSpec.LastIndexOf('@')
-    $fleetSpecs += $extSpec.Substring(5)
-    $fleetNames += $ext
-    $pin = $extSpec.Substring($i + 1)
-    $fleetPins += $pin
-    $preVers[$ext] = Get-CoopExtInstalledVersion -AgentDir $PI_AGENT -Name $ext
-    Coop-Info "Ensuring isolated $ext is version ${pin}…"
-    & pi install $extSpec > $null 2>&1
-    if ($LASTEXITCODE -ne 0) { Coop-Warn "could not install $ext (pin $pin)"; $script:SyncFailures++ }
-  }
-
-  }
-
-  # Order matters: exact extension pins FIRST, then shared-library alignment —
-  # the alignment's npm install is the LAST resolution, so its overrides are
-  # what ships and no later reinstall can recreate the startup skew.
-  if ($fleetSpecs.Count -gt 0) {
-    if (-not (Sync-CoopExtensionPins -AgentDir $PI_AGENT -Specs $fleetSpecs)) {
-      Coop-Warn "could not enforce exact extension pins in $PI_AGENT\npm" 'run: coop sync'
-      $script:SyncFailures++
+    foreach ($ext in $CORE_EXTENSIONS) {
+      $extSpec = Coop-ManifestExtensionSpec $ext
+      if (-not $extSpec) { Coop-Warn "manifest pin missing for $ext"; $script:SyncFailures++; continue }
+      $i = $extSpec.LastIndexOf('@')
+      $fleetSpecs += $extSpec.Substring(5)
+      $fleetNames += $ext
+      $pin = $extSpec.Substring($i + 1)
+      $fleetPins += $pin
+      $preVers[$ext] = Get-CoopExtInstalledVersion -AgentDir $PI_AGENT -Name $ext
+      Coop-Info "Ensuring isolated $ext is version ${pin}…"
+      & pi install $extSpec > $null 2>&1
+      if ($LASTEXITCODE -ne 0) { Coop-Warn "could not install $ext (pin $pin)"; $script:SyncFailures++ }
     }
-  }
 
-  $piRuntime = Get-CoopPiVersion
-  if ($piRuntime) { Coop-Info "Aligning shared Pi libraries with the installed Pi runtime ${piRuntime}…" }
-  Sync-CoopExtDeps -AgentDir $PI_AGENT
-
-  # Postconditions: fleet at manifest versions AND shared libs satisfying the
-  # ACTIVE runtime's own metadata, verified after all installs.
-  for ($k = 0; $k -lt $fleetNames.Count; $k++) {
-    $ext = $fleetNames[$k]; $extPin = $fleetPins[$k]; $pre = $preVers[$ext]
-    $postVer = Get-CoopExtInstalledVersion -AgentDir $PI_AGENT -Name $ext
-    if (-not $postVer) {
-      Coop-Warn "postcondition failed: pi install reported success, but $ext is MISSING from the isolated tree (wanted $extPin)" 'run: coop sync'
-      $script:SyncFailures++
-      continue
-    }
-    if ($postVer -ne $extPin) {
-      Coop-Warn "postcondition failed: pi install reported success, but $ext is version $postVer, not the pinned $extPin" 'run: coop sync'
-      $script:SyncFailures++
-      continue
-    }
-    switch ($pre) {
-      ''             { Coop-Ok "Installed release version $extPin ($ext)" }
-      $extPin        { Coop-Ok "Already at release version $extPin ($ext)" }
-      default {
-        if (Coop-VersionLessThan $extPin $pre) { Coop-Ok "Downgraded untested $pre → release version $extPin ($ext)" }
-        else { Coop-Ok "Updated $pre → $extPin ($ext)" }
-      }
-    }
-  }
-
-  if ($piRuntime) {
-    $py = Get-CoopPython
-    if ($py) {
-      & $py (Join-Path $script:CoopRoot 'lib\_extdeps.py') align $PI_AGENT $piRuntime --check *> $null
-      $alignRc = $LASTEXITCODE
-      if ($alignRc -eq 10) {
-        Coop-Err "shared-library skew remains after alignment (wanted pi-ai/pi-tui for pi $piRuntime)"
-        $script:SyncFailures++
-      } elseif ($alignRc -eq 11) {
-        Coop-Err "an installed extension needs newer pi-ai libraries than pi $piRuntime provides" 'update Pi: npm install -g @earendil-works/pi-coding-agent@latest, then: coop sync'
+    # Order matters: exact extension pins FIRST, then shared-library alignment —
+    # the alignment's npm install is the LAST resolution, so its overrides are
+    # what ships and no later reinstall can recreate the startup skew.
+    if ($fleetSpecs.Count -gt 0) {
+      if (-not (Sync-CoopExtensionPins -AgentDir $PI_AGENT -Specs $fleetSpecs)) {
+        Coop-Warn "could not enforce exact extension pins in $PI_AGENT\npm" 'run: coop sync'
         $script:SyncFailures++
       }
     }
+
+    $piRuntime = Get-CoopPiVersion
+    if ($piRuntime) { Coop-Info "Aligning shared Pi libraries with the installed Pi runtime ${piRuntime}…" }
+    Sync-CoopExtDeps -AgentDir $PI_AGENT
+
+    # Postconditions: fleet at manifest versions AND shared libs satisfying the
+    # ACTIVE runtime's own metadata, verified after all installs.
+    for ($k = 0; $k -lt $fleetNames.Count; $k++) {
+      $ext = $fleetNames[$k]; $extPin = $fleetPins[$k]; $pre = $preVers[$ext]
+      $postVer = Get-CoopExtInstalledVersion -AgentDir $PI_AGENT -Name $ext
+      if (-not $postVer) {
+        Coop-Warn "postcondition failed: pi install reported success, but $ext is MISSING from the isolated tree (wanted $extPin)" 'run: coop sync'
+        $script:SyncFailures++
+        continue
+      }
+      if ($postVer -ne $extPin) {
+        Coop-Warn "postcondition failed: pi install reported success, but $ext is version $postVer, not the pinned $extPin" 'run: coop sync'
+        $script:SyncFailures++
+        continue
+      }
+      switch ($pre) {
+        ''             { Coop-Ok "Installed release version $extPin ($ext)" }
+        $extPin        { Coop-Ok "Already at release version $extPin ($ext)" }
+        default {
+          if (Coop-VersionLessThan $extPin $pre) { Coop-Ok "Downgraded untested $pre → release version $extPin ($ext)" }
+          else { Coop-Ok "Updated $pre → $extPin ($ext)" }
+        }
+      }
+    }
+
+    if ($piRuntime) {
+      $py = Get-CoopPython
+      if ($py) {
+        & $py (Join-Path $script:CoopRoot 'lib\_extdeps.py') align $PI_AGENT $piRuntime --check *> $null
+        $alignRc = $LASTEXITCODE
+        if ($alignRc -eq 10) {
+          Coop-Err "shared-library skew remains after alignment (wanted pi-ai/pi-tui for pi $piRuntime)"
+          $script:SyncFailures++
+        } elseif ($alignRc -eq 11) {
+          Coop-Err "an installed extension needs newer pi-ai libraries than pi $piRuntime provides" 'update Pi: npm install -g @earendil-works/pi-coding-agent@latest, then: coop sync'
+          $script:SyncFailures++
+        }
+      }
+    }
+  } else {
+    # No runtime means NO fleet convergence happened at all: per contract that
+    # is a failure, not a warning.
+    Coop-Err 'pi is not installed — no extensions were converged or verified' 'install Pi first: coop install'
+    $script:SyncFailures++
   }
-} finally {
-  if ($null -ne $priorAgentDir) { $env:PI_CODING_AGENT_DIR = $priorAgentDir }
 }
-
-# Missing runtime: NO fleet convergence happened at all — a failure, not a
-# warning, per the convergence contract.
-if (-not (Test-Have 'pi')) {
-  Coop-Err 'pi is not installed — no extensions were converged or verified' 'install Pi first: coop install'
-  $script:SyncFailures++
+finally {
+  if ($null -ne $priorAgentDir) { $env:PI_CODING_AGENT_DIR = $priorAgentDir }
+  else { Remove-Item Env:PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue }
 }
 
 # --- 4. MCP config — manifest-pinned, ownership-aware, non-destructive --------
