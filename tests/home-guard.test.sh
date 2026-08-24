@@ -18,8 +18,10 @@ REAL_HOME="${HOME:?}"
 snapshot() { # <dir> -> sorted "relative-path sha256" lines (stable, no mtimes)
   local dir="$1"
   [ -d "$dir" ] || return 0
-  ( cd "$dir" && find . -type f ! -name '*.pyc' 2>/dev/null | sort |
-    while IFS= read -r f; do printf '%s %s\n' "$f" "$(shasum -a 256 "$f" | cut -d' ' -f1)"; done )
+  # Batch files into shasum invocations. Spawning one process per file made a
+  # realistic extension tree (tens of thousands of node_modules files) take
+  # several minutes per snapshot and obscured genuine hangs.
+  ( cd "$dir" && find . -type f ! -name '*.pyc' -exec shasum -a 256 {} + 2>/dev/null | LC_ALL=C sort )
 }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

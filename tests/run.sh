@@ -55,15 +55,18 @@ echo "  ✓ launch-spec resolves guardrails, prompts, theme, and all 4 extension
 echo "→ --no-launch dry-run (must NOT start pi; prints the spec)"
 # --no-launch is a dry-run: it runs the preflights (no-op without pi) and prints the
 # resolved launch spec, then exits 0 — the opposite of its old behavior (it launched).
+# Keep its repair-capable preflight away from the developer's real ~/.coop tree.
+LAUNCH_AGENT="$TMP/launch-agent"; LAUNCH_COOP="$TMP/launch-coop"
+mkdir -p "$LAUNCH_AGENT" "$LAUNCH_COOP"
 NL_RC=0
-NL_OUT="$(bash "$ROOT/bin/coop" --no-launch)" || NL_RC=$?
+NL_OUT="$(COOP_AGENT_DIR="$LAUNCH_AGENT" PI_CODING_AGENT_DIR="$LAUNCH_AGENT" COOP_DIR="$LAUNCH_COOP" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" --no-launch)" || NL_RC=$?
 [ "$NL_RC" -eq 0 ] || { echo "  ✗ coop --no-launch exited $NL_RC (expected 0)"; exit 1; }
 case "$NL_OUT" in
   *"docs/guardrails.md"*) ;;
   *) echo "  ✗ coop --no-launch did not print the launch spec (no docs/guardrails.md)"; exit 1 ;;
 esac
 # --json delegates to the launch-spec JSON path.
-case "$(bash "$ROOT/bin/coop" --no-launch --json)" in
+case "$(COOP_AGENT_DIR="$LAUNCH_AGENT" PI_CODING_AGENT_DIR="$LAUNCH_AGENT" COOP_DIR="$LAUNCH_COOP" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" --no-launch --json)" in
   *'"bin"'*'"args"'*) ;;
   *) echo "  ✗ coop --no-launch --json did not emit the JSON spec"; exit 1 ;;
 esac
@@ -80,7 +83,10 @@ bash "$ROOT/tests/onboard.test.sh"
 echo "→ truthful inventory (doctor pipx probes / sync postconditions)"
 bash "$ROOT/tests/inventory.test.sh"
 echo "→ first-run continuation through plain coop (pty-driven)"
-bash "$ROOT/tests/first-run.test.sh"
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) echo "  – Python pty/termios is unavailable on native Windows; covered by macOS PTY + Windows launcher tests" ;;
+  *) bash "$ROOT/tests/first-run.test.sh" ;;
+esac
 echo "→ home-guard (fleet paths must not mutate the real home)"
 bash "$ROOT/tests/home-guard.test.sh"
 bash "$ROOT/tests/context-budget.test.sh"
