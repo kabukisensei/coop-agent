@@ -69,7 +69,10 @@ try {
       $extSpec = Coop-ManifestExtensionSpec $ext
       if (-not $extSpec) { Coop-Warn "manifest pin missing for $ext"; $script:SyncFailures++; continue }
       $i = $extSpec.LastIndexOf('@')
-      $fleetSpecs += $extSpec.Substring(5)
+      # Strip only the literal four-character `npm:` transport prefix. The old
+      # Substring(5) also removed the package's first character, producing
+      # `juicesharp/...` for scoped packages and invalidating npm convergence.
+      $fleetSpecs += ($extSpec -replace '^npm:', '')
       $fleetNames += $ext
       $pin = $extSpec.Substring($i + 1)
       $fleetPins += $pin
