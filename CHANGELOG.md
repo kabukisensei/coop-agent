@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.22.2] — 2026-08-24
+
 ### Fixed
 - Fixed `coop-profile` startup against Pi's real extension API. The extension now registers
   directly with `api.on(...)` instead of reading a nonexistent nested `api.pi`, which caused
