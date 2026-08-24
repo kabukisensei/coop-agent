@@ -98,12 +98,31 @@ function Coop-ManifestStatus([string]$Installed, [string]$Expected) {
 # read INSIDE each venv via `pipx runpip`.
 
 function Get-CoopPipxVenvsDir {
-  # COOP_PIPX_HOME exists so tests can point this at fixtures without touching
-  # the workstation.
-  $home1 = $env:COOP_PIPX_HOME; $home2 = $env:PIPX_HOME
-  if (-not $home1 -and -not $home2) { $home1 = Join-Path $HOME '.local\pipx' }
-  $base = if ($home1) { $home1 } else { $home2 }
-  return (Join-Path $base 'venvs')
+  # Resolution order (authoritative first):
+  #   COOP_PIPX_HOME      test hook — point at fixtures without touching the box
+  #   PIPX_HOME           user override, honored by pipx itself
+  #   pipx environment    the selected pipx binary's OWN resolved value
+  #   platform defaults   modern Windows %LOCALAPPDATA%\pipx\pipx,
+  #                       legacy Windows ~\pipx, unix ~/.local/pipx
+  # Defaulting straight to ~/.local/pipx misses Windows installs entirely.
+  if ($env:COOP_PIPX_HOME) { return (Join-Path $env:COOP_PIPX_HOME 'venvs') }
+  if ($env:PIPX_HOME) { return (Join-Path $env:PIPX_HOME 'venvs') }
+  if (Test-Have 'pipx') {
+    $v = (& pipx environment --value PIPX_LOCAL_VENVS 2>$null | Out-String).Trim()
+    if ($v) { return (Join-Path $v 'venvs') }
+  }
+  $candidates = @()
+  if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+    if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'pipx\pipx') }
+    $candidates += (Join-Path $HOME 'pipx')
+  } else {
+    $candidates += (Join-Path $HOME '.local\pipx')
+    $candidates += (Join-Path $HOME '.local/pipx')
+  }
+  foreach ($c in $candidates) {
+    if ($c -and (Test-Path -LiteralPath $c)) { return (Join-Path $c 'venvs') }
+  }
+  return (Join-Path $HOME '.local\pipx\venvs')
 }
 
 # Installed version of a pipx-managed distribution from in-venv metadata.
@@ -225,12 +244,39 @@ function Get-CoopExePipxVenv([string]$Command) {
   return $null
 }
 
+# Select an npm that actually WORKS: some workstation shims exit 0 while doing
+# nothing (observed with a broken ~/.hermes/node/bin/npm), which silently
+# no-ops convergence. Requires real version output.
+function Get-CoopWorkingNpm {
+  $cand = (Get-Command npm -ErrorAction SilentlyContinue).Source
+  if ($cand) {
+    $v = [string]((& $cand --version 2>$null | Out-String)).Trim()
+    if ($v) { return $cand }
+  }
+  $candidates = @('/opt/homebrew/bin/npm')
+  if (${env:ProgramFiles}) { $candidates += (Join-Path ${env:ProgramFiles} 'nodejs\npm.cmd') }
+  if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\nodejs\npm.cmd') }
+  foreach ($c in $candidates) {
+    if ($c -and (Test-Path -LiteralPath $c)) {
+      $v = [string]((& $c --version 2>$null | Out-String)).Trim()
+      if ($v) { return $c }
+    }
+  }
+  return $null
+}
+
 # Converge the isolated tree's recorded extension dependencies to EXACT
 # versions and reinstall (twin of coop_converge_extension_pins). PRODUCTION
 # convergence: the compatibility matrix relies on this same path.
 function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
-  $pjPath = Join-Path $AgentDir 'npm\package.json'
-  if (-not (Test-Path -LiteralPath $pjPath)) { return $false }
+  # NOTE: forward slashes throughout — backslashes leak into node/npm argv on
+  # any host and corrupt paths (observed as ENOENT on POSIX).
+  $npmDir = Join-Path $AgentDir 'npm'
+  if (-not (Test-Path -LiteralPath (Join-Path $npmDir 'package.json'))) {
+    # Bootstrap the npm project exactly like the bash helper does.
+    New-Item -ItemType Directory -Force -Path $npmDir | Out-Null
+    Set-Content -LiteralPath (Join-Path $npmDir 'package.json') -Value "{`n  `"name`": `"pi-extensions`",`n  `"private`": true`n}"
+  }
   if (-not (Test-Have 'node')) { return $false }
   # Skip the reinstall when every extension is already at its exact pin.
   $need = $false
@@ -240,21 +286,12 @@ function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
     if ($got -ne $spec.Substring($i + 1)) { $need = $true; break }
   }
   if (-not $need) { return $true }
-  $pinJson = ($Specs | ForEach-Object {
-      $i = $_.LastIndexOf('@'); $n = $_.Substring(0, $i); $v = $_.Substring($i + 1)
-      'pj.dependencies[' + "'" + $n + "'" + ']=' + "'" + $v + "'"
-    }) -join '; '
-  node -e "
-const fs=require('fs');
-const pjPath=process.argv[1]+'\\npm\\package.json';
-let pj={}; try{pj=JSON.parse(fs.readFileSync(pjPath,'utf8'))}catch{}
-pj.name='pi-extensions'; pj.private=true; pj.dependencies=pj.dependencies||{};
-$pinJson;
-fs.writeFileSync(pjPath, JSON.stringify(pj,null,2));
-" $AgentDir
+  $npm = Get-CoopWorkingNpm
+  if (-not $npm) { return $false }
+  node (Join-Path $script:CoopRoot 'lib\pins.js') $AgentDir @Specs
   if ($LASTEXITCODE -ne 0) { return $false }
-  Push-Location (Join-Path $AgentDir 'npm')
-  & npm install --silent --no-audit --no-fund *> $null
+  Push-Location $npmDir
+  & $npm install --silent --no-audit --no-fund *> $null
   $rc = $LASTEXITCODE
   Pop-Location
   return ($rc -eq 0)

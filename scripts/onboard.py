@@ -329,6 +329,14 @@ def run_profile_questions(existing: dict | None = None, migration_name: str = ""
     old_custom = existing.get("communication", {}).get("custom_instructions", "")
 
     name_default = old_name or migration_name
+    # A persisted default that fails validation must never reach the retry
+    # loop: at EOF the loop would otherwise feed it back forever.
+    if name_default:
+        try:
+            validate_name(name_default)
+        except ValueError as e:
+            sys.stderr.write(f"  Saved profile name is invalid ({e}); entering a new one.\n")
+            name_default = ""
     name = ""
     while True:
         try:
@@ -340,12 +348,18 @@ def run_profile_questions(existing: dict | None = None, migration_name: str = ""
             if eof and not value:
                 sys.stderr.write("\nNo name entered; aborting onboarding. Run `coop onboard` to try again.\n")
                 raise SystemExit(1)
+
             # Assign only AFTER validation: storing the raw value first would let
             # a rejected answer satisfy the retry loop.
             name = validate_name(value)
             break
         except ValueError as e:
             sys.stderr.write(f"  {e}\n")
+            if eof:
+                # The saved default was invalid AND input has ended: re-prompting
+                # can never succeed, so stop instead of spinning forever.
+                sys.stderr.write("Input ended with an invalid saved name; aborting onboarding. Run `coop onboard`.\n")
+                raise SystemExit(1)
 
     preset = read_choice(
         "How do you prefer agents to communicate?",

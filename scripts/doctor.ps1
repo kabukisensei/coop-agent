@@ -176,8 +176,18 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
     return
   }
   if (-not $cli) {
+    # Stop here: without a CLI answer there is nothing trustworthy to compare.
     D-Warn "$Dist metadata present ($meta) but $Exe produced no version" $repair
-  } elseif (-not $meta) {
+    return
+  }
+  # Executable ownership: an unrelated binary must never be correlated with
+  # this distribution's pipx metadata.
+  if ((Get-CoopExePipxVenv $Exe) -ne $Dist) {
+    D-Warn "$Dist skipped: resolved $Exe does not belong to its pipx environment" \
+      "reinstall so the pinned $Exe is first on PATH: $repair"
+    return
+  }
+  if (-not $meta) {
     # Metadata unreadable (missing/broken/shadowed pipx): classify by the CLI's
     # own report, but say so — the two sources are supposed to agree.
     $status = Coop-ManifestStatus $cli $expected

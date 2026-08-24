@@ -47,25 +47,24 @@ try {
     & $PiBin install "npm:$spec" *> $null
     if ($LASTEXITCODE -eq 0) { Ok "installed npm:$spec" } else { Ko "install failed: npm:$spec" }
   }
-  # Second pass: npm re-resolution can float ^ ranges; a pass over a populated tree holds.
-  foreach ($spec in @($fleet)) { & $PiBin install "npm:$spec" *> $null }
-
-  # --- 3. coop sync -------------------------------------------------------------
+  # --- 3. coop sync — PRODUCTION convergence, temp runtime FIRST on PATH --------
+  # Prepend the temporary prefix so sync.ps1 resolves THIS matrix runtime, not
+  # the workstation's global pi. Sync must exit zero: it performs exact-pin
+  # convergence and postcondition verification itself, so no harness-side
+  # installation happens here.
+  $env:PATH = "$NpmPrefix;" + $env:PATH
   $syncOut = & (Join-Path $RepoRoot 'scripts\sync.ps1') 2>&1
-  if (($syncOut | Out-String) -match 'Installed release version|Already at release version') { Ok 'sync reports precise convergence' } else { Ko 'sync output lacks convergence messages' }
+  $syncRc = $LASTEXITCODE
+  $syncText = $syncOut | Out-String
+  if ($syncRc -ne 0) {
+    Ko ("production sync exited {0} (must be zero)" -f $syncRc)
+    $syncText -split "`n" | Select-Object -Last 3 | ForEach-Object { Ko $_ }
+  } elseif (($syncOut | Out-String) -match 'Installed release version|Already at release version') {
+    Ok 'production sync converged (exit 0, precise convergence messages)'
+  } else {
+    Ko 'sync output lacks convergence messages'
+  }
 
-  # --- 4. Exact-version enforcement via dependency specs ------------------------
-  $agentNm = Join-Path $env:PI_CODING_AGENT_DIR 'npm\node_modules'
-  node -e "
-const fs=require('fs');
-const pjPath=process.argv[1]+'\\npm\\package.json';
-let pj={}; try{pj=JSON.parse(fs.readFileSync(pjPath,'utf8'))}catch{}
-pj.name='pi-extensions'; pj.private=true; pj.dependencies=pj.dependencies||{};
-for(const spec of process.argv.slice(2)){const i=spec.lastIndexOf('@');pj.dependencies[spec.slice(0,i)]=spec.slice(i+1);}
-fs.writeFileSync(pjPath,JSON.stringify(pj,null,2));
-" $env:PI_CODING_AGENT_DIR @($fleet)
-  Remove-Item -Recurse -Force $agentNm -ErrorAction SilentlyContinue
-  Push-Location (Join-Path $env:PI_CODING_AGENT_DIR 'npm'); & $npm install --silent --no-audit --no-fund *> $null; Pop-Location
 
   # --- 5. Inventory postconditions ----------------------------------------------
   function VerOf([string]$pkg) {

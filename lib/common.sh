@@ -83,7 +83,22 @@ if (v && typeof v === 'object' && !Array.isArray(v)) console.log(Object.keys(v).
 # Root of pipx's venv tree. COOP_PIPX_HOME exists so tests can point this at
 # fixtures without touching the workstation.
 coop_pipx_venvs_dir() {
-  printf '%s/venvs' "${COOP_PIPX_HOME:-${PIPX_HOME:-$HOME/.local/pipx}}"
+  # Same resolution order as lib/common.ps1: env hooks, then the selected
+  # pipx binary's own answer, then documented platform/legacy defaults
+  # (modern Windows uses LOCALAPPDATA\\pipx\\pipx; legacy Windows ~/pipx).
+  if [ -n "${COOP_PIPX_HOME:-}" ]; then printf '%s/venvs' "$COOP_PIPX_HOME"; return 0; fi
+  if [ -n "${PIPX_HOME:-}" ]; then printf '%s/venvs' "$PIPX_HOME"; return 0; fi
+  local v
+  if have pipx; then
+    v="$(pipx environment --value PIPX_LOCAL_VENVS 2>/dev/null | head -1)"
+    [ -n "$v" ] && { printf '%s/venvs' "$v"; return 0; }
+  fi
+  local c
+  for c in "$HOME/.local/pipx" "$HOME/pipx" \
+           "${LOCALAPPDATA:-}/pipx/pipx"; do
+    [ -n "$c" ] && [ -d "$c" ] && { printf '%s/venvs' "$c"; return 0; }
+  done
+  printf '%s/venvs' "${HOME:-}/.local/pipx"
 }
 
 # The pipx command used for inventory probes. COOP_PIPX_BIN lets callers pin an
@@ -199,20 +214,32 @@ coop_python_matches_spec() { # <pyver> <spec>
 # (venv bin dirs) and the interpreter shebang (console scripts on macOS are plain
 # files whose first line points at the venv python).
 coop_exe_pipx_venv() { # <command>
-  local p head vdir norm
+  local p head vdir norm real_vdir tgt
   p="$(command -v "$1" 2>/dev/null)" || return 1
   [ -n "$p" ] || return 1
-  vdir="$(coop_pipx_venvs_dir)"
-  # Resolved-path membership: handles shims symlinked into a venv bin dir.
+  # Follow symlinks so shims dropped in ~/.local/bin resolve to their target.
   if [ -L "$p" ]; then
-    norm="$(cd "$(dirname "$p")" && pwd -P)/$(basename "$p")"
-    case "$norm" in "$vdir"/*) printf '%s' "${norm#"$vdir"/}" | cut -d/ -f1; return 0 ;; esac
+    tgt="$(readlink "$p")"
+    case "$tgt" in
+      /*) p="$tgt" ;;
+      *) p="$(dirname "$p")/$tgt" ;;
+    esac
   fi
-  # Shebang membership: console scripts name their venv interpreter.
+  vdir="$(coop_pipx_venvs_dir)"
+  # macOS resolves /var -> /private/var etc.: compare against BOTH the raw and
+  # the physically-resolved prefix so neither environment lies to us.
+  real_vdir="$vdir"
+  [ -d "$vdir" ] && real_vdir="$(cd "$vdir" && pwd -P)"
+  norm="$(cd "$(dirname "$p")" && pwd -P)/$(basename "$p")"
+  case "$norm" in
+    "$vdir"/*) printf '%s' "${norm#"$vdir"/}" | cut -d/ -f1; return 0 ;;
+    "$real_vdir"/*) printf '%s' "${norm#"$real_vdir"/}" | cut -d/ -f1; return 0 ;;
+  esac
   head="$(head -c 512 "$p" 2>/dev/null || true)"
   case "$head" in
-    *"$vdir"/*)
-      printf '%s' "${head#*"$vdir"/}" | cut -d/ -f1
+    "$vdir"/*|"$real_vdir"/*)
+      local rest="${head#*/venvs/}"
+      printf '%s' "$rest" | cut -d/ -f1
       return 0
       ;;
   esac
@@ -248,21 +275,8 @@ coop_converge_extension_pins() { # <agent-dir> <name@ver>...
     mkdir -p "$agent_dir/npm"
     printf '{\n  "name": "pi-extensions",\n  "private": true\n}\n' > "$pj"
   fi
-  COOP_PIN_SPECS="$*" node -e '
-const fs = require("fs");
-const pjPath = process.argv[1] + "/npm/package.json";
-let pj = {};
-try { pj = JSON.parse(fs.readFileSync(pjPath, "utf8")); } catch {}
-pj.name = pj.name || "pi-extensions";
-pj.private = true;
-pj.dependencies = pj.dependencies || {};
-for (const spec of (process.env.COOP_PIN_SPECS || "").trim().split(/\s+/).filter(Boolean)) {
-  const i = spec.lastIndexOf("@");
-  pj.dependencies[spec.slice(0, i)] = spec.slice(i + 1);
-}
-fs.writeFileSync(pjPath, JSON.stringify(pj, null, 2));
-' "$agent_dir" || return 1
-  ( cd "$agent_dir/npm" && "$npm_bin" install --silent --no-audit --no-fund >/dev/null 2>&1 ) || return 1
+  node "$COOP_ROOT/lib/pins.js" "$agent_dir" "$@" || return 1
+( cd "$agent_dir/npm" && "$npm_bin" install --silent --no-audit --no-fund >/dev/null 2>&1 ) || return 1
 }
 
 # Version of an installed Pi extension inside an isolated agent dir, read from

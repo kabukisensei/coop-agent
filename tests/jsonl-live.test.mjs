@@ -27,14 +27,16 @@ const verOut = await new Promise((res) => {
   p.stdout.on("data", (d) => { out += d; });
   p.once("close", () => res(out));
 });
-const m = verOut.match(/(\d+\.\d+\.\d+)/);
-const capable = m && m[1] !== "1.0.0" && m[1].split(".")[0] >= "1";
+const m = verOut.match(/(\d+)\.(\d+)\.(\d+)/);
+// The JSONL transport contract requires >= 1.1.1: compare numerically on all
+// three components (a string/prefix check would accept 1.0.1 or 1.1.0).
+const capable = !!m && (+m[1] > 1 || (+m[1] === 1 && (+m[2] > 1 || (+m[2] === 1 && +m[3] >= 1))));
 if (!capable) {
   if (process.env.COOP_TEST_DATADOC_REQUIRED === "1") {
-    console.error(`coop-data-doc ${m ? m[1] : "(unknown)"} cannot drive the JSONL wizard; need >= 1.1.1`);
+    console.error(`coop-data-doc ${m ? `${m[1]}.${m[2]}.${m[3]}` : "(unknown)"} cannot drive the JSONL wizard; need >= 1.1.1`);
     process.exit(1);
   }
-  console.log(`  – coop-data-doc ${m ? m[1] : "?"} lacks the JSONL wizard; skipping live happy-path`);
+  console.log(`  – coop-data-doc ${m ? `${m[1]}.${m[2]}.${m[3]}` : "?"} lacks the JSONL wizard; skipping live happy-path`);
   process.exit(0);
 }
 

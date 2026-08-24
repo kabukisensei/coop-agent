@@ -101,6 +101,17 @@ out="$(printf 'bad/name\nGood Name\n1\n' | HOME="$COOP_DIR" "$PY" "$ROOT/scripts
 name="$(printf '%s' "$out" | "$PY" -c 'import sys,json; print(json.load(sys.stdin)["name"])')"
 [ "$name" = "Good Name" ] && ok "invalid name is rejected and re-asked" || ko "name after reject: $name"
 
+# --- invalid saved profile name + EOF must abort, not loop forever -------------
+mkdir -p "$COOP_DIR/.coop"
+printf '%s\n' '{"schema_version":1,"name":"bad/name","communication":{"preset":"balanced","custom_instructions":""}}' > "$COOP_DIR/.coop/user.json"
+inv_out="$(GUARD_HOME="$COOP_DIR" "$PY" "$ROOT/tests/fixtures/timeout.py" 10 \
+  env HOME="$COOP_DIR" COOP_DIR="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" onboard)"; inv_rc=$?
+[ "$inv_rc" -ne 0 ] && ok "invalid saved profile name at EOF aborts non-zero" || { ko "EOF+invalid name did not abort (rc=$inv_rc)"; }
+case "$inv_out" in
+  *"aborting onboarding"*) ok "abort message explains the saved-name problem" ;;
+  *) ko "missing abort explanation: $(printf '%s' "$inv_out" | tail -2)" ;;
+esac
+
 # --- conditional/honest integrations -------------------------------------------
 cfg_json() { "$PY" -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps(c))' "$1"; }
 

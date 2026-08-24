@@ -154,8 +154,19 @@ check_pipx_dist() { # <dist> <exe>
     return 0
   fi
   if [ -z "$cli" ]; then
+    # Stop here: without a CLI answer there is nothing trustworthy to compare,
+    # and falling through would let metadata alone claim a match.
     warn "$dist metadata present ($meta) but $exe produced no version" "$repair"
-  elif [ -z "$meta" ]; then
+    return 0
+  fi
+  # Executable ownership: an unrelated binary that happens to answer --version
+  # must never be correlated with this distribution's pipx metadata.
+  if [ "$(coop_exe_pipx_venv "$exe")" != "$dist" ]; then
+    warn "$dist skipped: resolved $exe does not belong to its pipx environment" \
+      "reinstall so the pinned $exe is first on PATH: $repair"
+    return 0
+  fi
+  if [ -z "$meta" ]; then
     # Metadata unreadable (missing/broken/shadowed pipx): classify by the CLI's
     # own report, but say so — the two sources are supposed to agree.
     status="$(coop_manifest_status "$cli" "$expected")"

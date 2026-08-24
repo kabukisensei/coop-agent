@@ -91,6 +91,19 @@ EOF
 }
 remove_fab() { rm -f "$FAKEBIN/fab" "$PIPXHOME/venvs/ms-fabric-cli/bin/fab"; }
 
+# Genuine-looking coop-data-doc: lives INSIDE its fake pipx venv so ownership
+# probes pass exactly as they would for a pipx-installed console script.
+make_real_cdd() { # <version>
+  mkdir -p "$PIPXHOME/venvs/coop-data-doc/bin"
+  {
+    echo '#!/bin/sh'
+    echo "echo coop-data-doc, version $1"
+  } > "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc"
+  chmod +x "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc"
+  ln -sf "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc" "$FAKEBIN/coop-data-doc"
+}
+
+
 doctor_out() { # <scratch-cwd> [path-prefix]
   local pfx="${2:-}"
   ( cd "$1" && COOP_ROOT="$ROOT" \
@@ -141,12 +154,7 @@ esac
 # F4: stale/corrupt environment — in-venv metadata disagrees with the CLI.
 #     Mirrors the workstation shape: metadata 1.1.1 vs CLI-reported 1.0.0.
 put_meta coop-data-doc coop-data-doc "$PIN_DDD"
-cat > "$FAKEBIN/coop-data-doc" <<'EOF'
-#!/bin/sh
-[ "$1" = "--version" ] && { echo "coop-data-doc, version 1.0.0"; exit 0; }
-exit 1
-EOF
-chmod +x "$FAKEBIN/coop-data-doc"
+make_real_cdd "1.0.0"
 out="$(doctor_out "$d")"
 case "$out" in
   *stale*"coop-data-doc"*|*"coop-data-doc"*stale*) ok "metadata/CLI disagreement classified as stale environment" ;;
@@ -224,12 +232,7 @@ esac
 # F7b: NO hardcoded <3.14 — a distribution whose own metadata allows 3.14 passes.
 venv_python coop-data-doc 3.14.0 ">=3.9"
 put_meta coop-data-doc coop-data-doc "1.1.1"
-cat > "$FAKEBIN/coop-data-doc" <<'EOF'
-#!/bin/sh
-[ "$1" = "--version" ] && { echo "coop-data-doc, version 1.1.1"; exit 0; }
-exit 1
-EOF
-chmod +x "$FAKEBIN/coop-data-doc"
+make_real_cdd "1.1.1"
 out="$(doctor_out "$d")"
 case "$out" in
   *"coop-data-doc environment uses Python 3.14.0 (requires-python: >=3.9)"*)

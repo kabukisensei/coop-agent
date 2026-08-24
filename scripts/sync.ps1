@@ -54,29 +54,34 @@ foreach ($f in @('auth.json', 'models.json')) {
 $script:SyncFailures = 0
 $fleetSpecs = @(); $fleetNames = @(); $fleetPins = @(); $preVers = @{}
 
-if (Test-Have 'pi') {
+# PI_CODING_AGENT_DIR scoping: every Pi operation must target the ISOLATED dir,
+# never the caller's personal ~/.pi. Save and restore any prior value.
+$priorAgentDir = $env:PI_CODING_AGENT_DIR
+$env:PI_CODING_AGENT_DIR = $PI_AGENT
+
+try {
   Coop-Info "Coop keeps its extensions in $PI_AGENT and pins the versions tested"
   Coop-Info "together with this Coop release. Your personal Pi extensions are unchanged."
+  if (Test-Have 'pi') {
   foreach ($ext in $CORE_EXTENSIONS) {
     $extSpec = Coop-ManifestExtensionSpec $ext
     if (-not $extSpec) { Coop-Warn "manifest pin missing for $ext"; $script:SyncFailures++; continue }
     $i = $extSpec.LastIndexOf('@')
     $fleetSpecs += $extSpec.Substring(5)
     $fleetNames += $ext
-    $fleetPins += $extSpec.Substring($i + 1)
+    $pin = $extSpec.Substring($i + 1)
+    $fleetPins += $pin
     $preVers[$ext] = Get-CoopExtInstalledVersion -AgentDir $PI_AGENT -Name $ext
-    Coop-Info "Ensuring isolated $ext is version $($fleetPins[$fleetPins.Count - 1])…"
+    Coop-Info "Ensuring isolated $ext is version ${pin}…"
     & pi install $extSpec > $null 2>&1
-    if ($LASTEXITCODE -ne 0) { Coop-Warn "could not install $ext (pin $($fleetPins[-1]))"; $script:SyncFailures++ }
+    if ($LASTEXITCODE -ne 0) { Coop-Warn "could not install $ext (pin $pin)"; $script:SyncFailures++ }
   }
 
-  # Runtime alignment of shared libraries first (distinct from release pins).
-  $piRuntime = Get-CoopPiVersion
-  if ($piRuntime) { Coop-Info "Aligning shared Pi libraries with the installed Pi runtime ${piRuntime}…" }
-  Sync-CoopExtDeps -AgentDir $PI_AGENT
+  }
 
-  # Production exact-pin convergence: rewrite recorded ^-ranges to the manifest
-  # versions and reinstall, so what ships is what was tested.
+  # Order matters: exact extension pins FIRST, then shared-library alignment —
+  # the alignment's npm install is the LAST resolution, so its overrides are
+  # what ships and no later reinstall can recreate the startup skew.
   if ($fleetSpecs.Count -gt 0) {
     if (-not (Sync-CoopExtensionPins -AgentDir $PI_AGENT -Specs $fleetSpecs)) {
       Coop-Warn "could not enforce exact extension pins in $PI_AGENT\npm" 'run: coop sync'
@@ -84,6 +89,12 @@ if (Test-Have 'pi') {
     }
   }
 
+  $piRuntime = Get-CoopPiVersion
+  if ($piRuntime) { Coop-Info "Aligning shared Pi libraries with the installed Pi runtime ${piRuntime}…" }
+  Sync-CoopExtDeps -AgentDir $PI_AGENT
+
+  # Postconditions: fleet at manifest versions AND shared libs satisfying the
+  # ACTIVE runtime's own metadata, verified after all installs.
   for ($k = 0; $k -lt $fleetNames.Count; $k++) {
     $ext = $fleetNames[$k]; $extPin = $fleetPins[$k]; $pre = $preVers[$ext]
     $postVer = Get-CoopExtInstalledVersion -AgentDir $PI_AGENT -Name $ext
@@ -106,8 +117,30 @@ if (Test-Have 'pi') {
       }
     }
   }
-} else {
-  Coop-Warn 'pi not installed — skipping extension sync (run: coop install)'
+
+  if ($piRuntime) {
+    $py = Get-CoopPython
+    if ($py) {
+      & $py (Join-Path $script:CoopRoot 'lib\_extdeps.py') align $PI_AGENT $piRuntime --check *> $null
+      $alignRc = $LASTEXITCODE
+      if ($alignRc -eq 10) {
+        Coop-Err "shared-library skew remains after alignment (wanted pi-ai/pi-tui for pi $piRuntime)"
+        $script:SyncFailures++
+      } elseif ($alignRc -eq 11) {
+        Coop-Err "an installed extension needs newer pi-ai libraries than pi $piRuntime provides" 'update Pi: npm install -g @earendil-works/pi-coding-agent@latest, then: coop sync'
+        $script:SyncFailures++
+      }
+    }
+  }
+} finally {
+  if ($null -ne $priorAgentDir) { $env:PI_CODING_AGENT_DIR = $priorAgentDir }
+}
+
+# Missing runtime: NO fleet convergence happened at all — a failure, not a
+# warning, per the convergence contract.
+if (-not (Test-Have 'pi')) {
+  Coop-Err 'pi is not installed — no extensions were converged or verified' 'install Pi first: coop install'
+  $script:SyncFailures++
 }
 
 # --- 4. MCP config — manifest-pinned, ownership-aware, non-destructive --------

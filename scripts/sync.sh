@@ -70,21 +70,20 @@ if have pi; then
     fi
   done
 
-  # Runtime alignment of shared libraries first (distinct from release pins),
-  # because it also reinstalls the tree; exact-pin enforcement runs after so the
-  # final state is what was tested.
-  _pi_runtime="$(coop_pi_version 2>/dev/null || true)"
-  [ -n "$_pi_runtime" ] && coop_info "Aligning shared Pi libraries with the installed Pi runtime ${_pi_runtime}…"
-  coop_align_ext_deps
-
-  # Production exact-pin convergence: rewrite recorded ^-ranges to manifest
-  # versions and reinstall, so what ships is what was tested.
+  # Order matters: exact extension pins FIRST, then shared-library alignment.
+  # The alignment's npm install is the LAST resolution, so its overrides are
+  # what ships; running it after any other reinstall prevents the skew that
+  # broke agent startup.
   if [ ${#FLEET_SPECS[@]} -gt 0 ]; then
     if ! coop_converge_extension_pins "$PI_AGENT" "${FLEET_SPECS[@]}"; then
       coop_warn "could not enforce exact extension pins in $PI_AGENT/npm" "run: coop sync"
       SYNC_FAILURES=$((SYNC_FAILURES + 1))
     fi
   fi
+
+  _pi_runtime="$(coop_pi_version 2>/dev/null || true)"
+  [ -n "$_pi_runtime" ] && coop_info "Aligning shared Pi libraries with the installed Pi runtime ${_pi_runtime}…"
+  coop_align_ext_deps
 
   # Postcondition verification over every required extension.
   for i in "${!FLEET_NAMES[@]}"; do
@@ -114,8 +113,33 @@ if have pi; then
         ;;
     esac
   done
+
+  # Shared libraries: the tree must satisfy the ACTIVE runtime's own metadata —
+  # verified AFTER all installs so nothing can re-skew them behind our back.
+  _pi_runtime="$(coop_pi_version 2>/dev/null || true)"
+  if [ -n "$_pi_runtime" ]; then
+    _py_bin="$(coop_python)" || _py_bin=""
+    if [ -n "$_py_bin" ]; then
+      preflight_rc=0
+      line="$("$_py_bin" "$COOP_ROOT/lib/_extdeps.py" align "$PI_AGENT" "$_pi_runtime" --check 2>/dev/null)" || preflight_rc=$?
+      read -r _tree_ai _tree_tui _ovr_ai _ovr_tui _chg _aligned req_floor off_ext <<EOF2
+$line
+EOF2
+      case "$preflight_rc" in
+        0)  coop_ok "shared pi-ai/pi-tui aligned to pi $_pi_runtime" ;;
+        10) coop_err "shared-library skew remains after alignment (wanted pi-ai/pi-tui for pi $_pi_runtime)" ;;
+        11) coop_err "extension ${off_ext:-unknown} needs pi-ai $req_floor but pi $_pi_runtime provides older libraries" \
+              "update Pi: npm install -g @earendil-works/pi-coding-agent@latest, then: coop sync" ;;
+        *)  : ;;   # nothing installed yet — nothing to verify
+      esac
+    fi
+  fi
 else
-  coop_warn "pi not installed — skipping extension sync (run: coop install)"
+  # A missing runtime means NO fleet convergence happened at all: per contract,
+  # that is a failure, not a warning.
+  coop_err "pi is not installed — no extensions were converged or verified" \
+    "install Pi first: coop install   (or: npm install -g @earendil-works/pi-coding-agent)"
+  SYNC_FAILURES=$((SYNC_FAILURES + 1))
 fi
 
 # --- 4. MCP config — manifest-pinned, ownership-aware, non-destructive --------
