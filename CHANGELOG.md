@@ -6,6 +6,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- `coop update` now returns nonzero when any Pi/tool convergence, Fabric library
+  injection, or sync step fails; it still runs Doctor for diagnostics, but no
+  longer converts visible `upgrade failed` warnings into a successful exit.
 - Fabric CLI install/update now creates its pipx environment with an explicitly
   supported Python 3.13 or 3.12 interpreter instead of inheriting Python 3.14
   and failing `ms-fabric-cli`'s `<3.14` requirement. If neither interpreter is

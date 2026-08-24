@@ -952,6 +952,9 @@ function Coop-Unit {
   }
   $script:ProgDone++
   $script:ProgSpinline = ''
+  # Callers that need a truthful aggregate result read this after each unit.
+  # Do not emit a Boolean: that would pollute command output and job results.
+  $script:CoopUnitLastOk = $ok
   if ($ok) { Coop-Ok $msg } else { Coop-Warn $msg }
 }
 

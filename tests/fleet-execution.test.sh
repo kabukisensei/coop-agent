@@ -52,6 +52,7 @@ cat > "$STUB/pipx" <<'SH'
 if [ "$1" = "list" ]; then
   echo 'package coop-data-doc 1.1.0'; echo 'package coop-sql-review 0.15.2'; echo 'package coop-dax-review 0.22.0'; echo 'package ms-fabric-cli 1.7.0'; exit 0
 fi
+case "$*" in *"${PIPX_FAIL_MATCH:-__never__}"*) exit 1 ;; esac
 echo "PIPX $*" >> "$MARKER"; exit 0
 SH
 cat > "$STUB/fab" <<'SH'
@@ -80,6 +81,16 @@ for spec in 'npm:pi-mcp-adapter@2.10.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-be
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing update spec $spec"; exit 1; }
 done
 ! grep -F 'PI update --extensions' "$MARKER" >/dev/null
+
+# A visible unit failure must make update non-zero even though execution reaches
+# the aggregate end (the old behavior silently returned success via Doctor).
+failed_update_rc=0
+PIPX_FAIL_MATCH='coop-data-doc==1.1.1' COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 \
+  bash "$ROOT/scripts/update.sh" >/dev/null 2>&1 || failed_update_rc=$?
+[ "$failed_update_rc" -ne 0 ] \
+  || { echo 'failed pipx convergence was converted into update success'; exit 1; }
+echo '  ✓ update exits non-zero when a convergence unit fails'
+
 : > "$MARKER"
 COOP_RELEASE_MANIFEST="$ROOT/config/release-manifest.json" bash "$ROOT/scripts/sync.sh" >/dev/null 2>&1
 for spec in 'npm:pi-mcp-adapter@2.10.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.162'; do
