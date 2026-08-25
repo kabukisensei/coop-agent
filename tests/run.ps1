@@ -187,6 +187,19 @@ try {
     Ko "pipx ownership fixture failed: $($ownerOut | Out-String)"
   }
 
+  # --- 7b. fabric-compatible Python discovery (side-by-side, off-PATH) ------
+  Head 'fabric-compatible Python discovery'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $finderOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\fabric-python-finder.test.ps1') 2>&1
+  $finderRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($finderRc -eq 0) {
+    $finderOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "fabric python finder fixture failed: $($finderOut | Out-String)"
+  }
+
   # --- 8. release transaction ------------------------------------------------
   Head 'release transaction consistency'
   # Coop status output intentionally uses stderr. Windows PowerShell 5.1 turns

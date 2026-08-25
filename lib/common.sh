@@ -141,6 +141,19 @@ coop_venv_python_version() { # <venv-name>
 # Resolve a Python interpreter supported by ms-fabric-cli (<3.14, >=3.10).
 # Prefer 3.13, then 3.12; accept a compatible generic python as a fallback.
 # COOP_FABRIC_PYTHON is an explicit test/admin override.
+# Last ERROR line of captured pip output, trimmed — for actionable warnings.
+coop_pip_error_tail() { # <captured output>
+  local reason="" line
+  while IFS= read -r line; do
+    case "$line" in *ERROR:*) reason="${line#"${line%%[![:space:]]*}"}" ;; esac
+  done <<PIPERR
+$1
+PIPERR
+  [ -n "$reason" ] || return 0
+  if [ "${#reason}" -gt 160 ]; then reason="${reason:0:157}..."; fi
+  printf '%s' "$reason"
+}
+
 coop_fabric_python() {
   local c v pycmd
   if [ -n "${COOP_FABRIC_PYTHON:-}" ]; then
@@ -159,6 +172,18 @@ coop_fabric_python() {
     for v in 3.13 3.12; do
       pycmd="$(py -"$v" -c 'import sys;print(sys.executable)' 2>/dev/null | head -1)"
       [ -n "$pycmd" ] && { printf '%s' "$pycmd"; return 0; }
+    done
+  fi
+  # Side-by-side interpreters that are NOT on PATH (Git Bash on Windows):
+  #   Python install manager: %LOCALAPPDATA%\Python\bin\python3.1x.exe
+  #   winget user-scope:      %LOCALAPPDATA%\Programs\Python\Python31x\python.exe
+  if [ -n "${LOCALAPPDATA:-}" ]; then
+    for c in "python3.13.exe" "python3.12.exe" "Programs/Python/Python313/python.exe" "Programs/Python/Python312/python.exe"; do
+      pycmd="$LOCALAPPDATA/Python/bin/$c"
+      case "$c" in Programs/*) pycmd="$LOCALAPPDATA/$c" ;; esac
+      [ -f "$pycmd" ] || continue
+      v="$("$pycmd" -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>/dev/null)"
+      case "$v" in 3.10|3.11|3.12|3.13) printf '%s' "$pycmd"; return 0 ;; esac
     done
   fi
   for c in python3 python; do

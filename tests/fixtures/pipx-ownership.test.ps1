@@ -21,11 +21,13 @@ foreach ($name in $envNames) { $prior[$name] = [Environment]::GetEnvironmentVari
 
 try {
   $chmod = if ($env:OS -eq 'Windows_NT') { $null } else { (Get-Command chmod -ErrorAction Stop).Source }
+  # Real pipx on Windows lists apps WITH their extension ("fab.exe"); the
+  # matcher must also accept bare names from older installs — both are covered.
   $metadata = @{
     pipx_spec_version = '0.1'
     venvs = @{
       'ms-fabric-cli' = @{
-        metadata = @{ main_package = @{ apps = @('fab') } }
+        metadata = @{ main_package = @{ apps = @('fab.exe') } }
       }
     }
   }
@@ -72,6 +74,13 @@ exit 1
   $owned = Get-CoopExePipxVenv 'fab.exe'
   if ($owned -ne 'ms-fabric-cli') { throw "external pipx launcher resolved to '$owned'" }
   Write-Output '  ✓ external Windows-style launcher maps through pipx metadata'
+
+  # Older pipx metadata lists bare app names without the .exe suffix.
+  $metadata.venvs.'ms-fabric-cli'.metadata.main_package.apps = @('fab')
+  [System.IO.File]::WriteAllText($jsonFile, (($metadata | ConvertTo-Json -Depth 8) + [Environment]::NewLine))
+  $owned = Get-CoopExePipxVenv 'fab.exe'
+  if ($owned -ne 'ms-fabric-cli') { throw "bare-name metadata resolved to '$owned'" }
+  Write-Output '  ✓ extension-less pipx metadata still matches'
 
   $rogue = Join-Path $rogueBin 'fab.exe'
   [System.IO.File]::WriteAllText($rogue, "#!/bin/sh`nexit 0`n")

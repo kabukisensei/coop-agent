@@ -229,6 +229,13 @@ if ! coop_fabric_python >/dev/null 2>&1; then
     coop_info "Microsoft Fabric CLI needs Python 3.10–3.13; installing a compatible Python…"
     (sudo dnf install -y python3.13 || sudo dnf install -y python3.12) >/dev/null 2>&1 \
       || (dnf install -y python3.13 || dnf install -y python3.12) >/dev/null 2>&1 || true
+  elif case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) true ;; *) false ;; esac; then
+    # Git Bash on Windows: the Python launcher/install manager first, winget second.
+    coop_info "Microsoft Fabric CLI needs Python 3.10–3.13; installing Python 3.12…"
+    if command -v py >/dev/null 2>&1; then py install 3.12 >/dev/null 2>&1 || true; fi
+    if ! coop_fabric_python >/dev/null 2>&1 && command -v winget >/dev/null 2>&1; then
+      winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity >/dev/null 2>&1 || true
+    fi
   fi
   hash -r 2>/dev/null || true
 fi
@@ -262,21 +269,27 @@ coop_progress_end
 FCC_PIN=''
 if [ "$EDGE" != 1 ]; then FCC_PIN="$(coop_manifest_object_get python_tools fabric-cicd)"; fi
 if have pipx && pipx list 2>/dev/null | grep "package ms-fabric-cli " >/dev/null; then
+  # Keep the tail of pip's output: a pin that cannot resolve (e.g. Requires-Python
+  # <3.14 vs a 3.14 venv) must say WHY instead of failing silently.
+  _inject_out=''
   if [ -n "$FCC_PIN" ]; then
-    if pipx inject ms-fabric-cli "fabric-cicd==$FCC_PIN" --force >/dev/null 2>&1; then
+    _inject_out="$(pipx inject ms-fabric-cli "fabric-cicd==$FCC_PIN" --force 2>&1)" && _inject_rc=0 || _inject_rc=$?
+    if [ "$_inject_rc" -eq 0 ]; then
       coop_ok "fabric-cicd (library) pinned to tested $FCC_PIN"
     else
-      coop_warn "failed to pin fabric-cicd to $FCC_PIN in the ms-fabric-cli environment"
+      coop_warn "failed to pin fabric-cicd to $FCC_PIN in the ms-fabric-cli environment" "$(coop_pip_error_tail "$_inject_out")"
       UPDATE_FAILURES=$((UPDATE_FAILURES + 1))
     fi
   else
-    if pipx inject ms-fabric-cli fabric-cicd --force >/dev/null 2>&1; then
+    _inject_out="$(pipx inject ms-fabric-cli fabric-cicd --force 2>&1)" && _inject_rc=0 || _inject_rc=$?
+    if [ "$_inject_rc" -eq 0 ]; then
       coop_ok "fabric-cicd (library) refreshed"
     else
-      coop_warn "failed to refresh fabric-cicd in the ms-fabric-cli environment"
+      coop_warn "failed to refresh fabric-cicd in the ms-fabric-cli environment" "$(coop_pip_error_tail "$_inject_out")"
       UPDATE_FAILURES=$((UPDATE_FAILURES + 1))
     fi
   fi
+  unset _inject_out _inject_rc
 fi
 [ "${COOP_FLEET_TEST_MODE:-0}" = 1 ] && { [ "$UPDATE_FAILURES" -eq 0 ]; exit $?; }
 
