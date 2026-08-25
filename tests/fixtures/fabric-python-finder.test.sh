@@ -14,10 +14,10 @@ mkdir -p "$fake_local"
 
 # Fail-stubs shadow every interpreter name the PATH-based probes try, so host
 # interpreters cannot leak into the result; coreutils stay reachable via /bin.
+mkdir -p "$T/bin"
 for stub in python3.13 python3.12 python3 python py; do
-  printf '#!/bin/sh\nexit 1\n' > "$T/bin-$stub"
-  mv "$T/bin-$stub" "$T/$stub"
-  chmod +x "$T/$stub"
+  printf '#!/bin/sh\nexit 1\n' > "$T/bin/$stub"
+  chmod +x "$T/bin/$stub"
 done
 
 make_fake_py() { # <path>
