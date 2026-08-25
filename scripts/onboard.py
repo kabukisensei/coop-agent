@@ -191,6 +191,26 @@ def detect_azure_account() -> dict:
         return {}
 
 
+def azure_cli_available() -> bool:
+    az_cmd = os.environ.get("COOP_AZ_BIN", "az")
+    if az_cmd == "az":
+        return bool(shutil.which("az"))
+    return Path(az_cmd).is_file() or bool(shutil.which(az_cmd))
+
+
+def run_azure_login() -> bool:
+    """Let Azure CLI own the interactive browser/device-code login flow."""
+    az_cmd = os.environ.get("COOP_AZ_BIN", "az")
+    try:
+        if sys.platform == "win32" and az_cmd.lower().endswith((".bat", ".cmd")):
+            result = subprocess.run(["cmd.exe", "/c", az_cmd, "login"], stdout=sys.stderr, stderr=sys.stderr)
+        else:
+            result = subprocess.run([az_cmd, "login"], stdout=sys.stderr, stderr=sys.stderr)
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def validate_ado_organization(value: str) -> str | None:
     """Return an error message, or None when the value is acceptable.
 
@@ -214,6 +234,14 @@ def run_config_questions(existing: dict | None = None) -> dict:
     old_azure = existing.get("azure", {}) if isinstance(existing.get("azure", {}), dict) else {}
     old_i = existing.get("integrations", {}) if isinstance(existing.get("integrations", {}), dict) else {}
     account = detect_azure_account()
+    if not account.get("tenantId") and not old_azure.get("tenant_id") and azure_cli_available():
+        sys.stderr.write("\nAzure CLI is installed, but no active Azure sign-in was detected.\n")
+        if read_confirm("Sign in now so Coop can detect your tenant automatically?", True):
+            sys.stderr.write("Opening Azure sign-in…\n")
+            if run_azure_login():
+                account = detect_azure_account()
+            if not account.get("tenantId"):
+                sys.stderr.write("Azure sign-in did not return a tenant; you can enter one manually or skip it.\n")
     detected_tenant = str(account.get("tenantId", ""))
     detected_name = str(account.get("name", ""))
     tenant = str(old_azure.get("tenant_id", ""))
@@ -237,7 +265,11 @@ def run_config_questions(existing: dict | None = None) -> dict:
         tenant = detected_tenant
         tenant_name = detected_name
     elif read_confirm("Configure the Azure tenant whose Fabric and Power BI resources Coop should access now?", bool(tenant)):
-        tenant = read_input("Azure tenant ID: ", tenant)
+        sys.stderr.write(
+            "Find it in Azure Portal > Microsoft Entra ID > Overview > Tenant ID.\n"
+            "You can also run `az login`, then rerun `coop onboard --edit` for automatic detection.\n"
+        )
+        tenant = read_input("Azure tenant ID (GUID): ", tenant)
         tenant_name = ""  # only Azure CLI can resolve display names
 
     integrations = {}

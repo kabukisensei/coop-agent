@@ -14,6 +14,7 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 COOP_DIR="$(mktemp -d)"
 trap 'rm -rf "$COOP_DIR"' EXIT
 export COOP_DIR
+export COOP_AZ_BIN=/nonexistent/az
 
 run_onboard() {
   HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" "$@"
@@ -138,6 +139,8 @@ grep -q "Review" "$d1/stderr.txt" && grep -q "Destination:" "$d1/stderr.txt" \
   && ok "summary shows review block and destination path" || ko "summary missing before save"
 grep -q "$GUID" "$d1/stderr.txt" \
   && ok "summary echoes the configured tenant" || ko "summary omits tenant"
+grep -q "Microsoft Entra ID > Overview > Tenant ID" "$d1/stderr.txt" \
+  && ok "manual tenant prompt explains where to find the ID" || ko "manual tenant prompt lacks inline lookup instructions"
 
 # (2) Detected tenant prompt uses the access-oriented question.
 d2="$(mktemp -d "$COOP_DIR/c2.XXXXXX")"
@@ -147,6 +150,29 @@ case "$out2" in
   *"Use this tenant for Coop's Fabric and Power BI access?"*)
     ok "detected-tenant prompt asks about Fabric/Power BI access" ;;
   *) ko "detected-tenant prompt wrong: $out2" ;;
+esac
+
+# (2b) Installed-but-signed-out Azure CLI offers login, then detects the tenant.
+d2b="$(mktemp -d "$COOP_DIR/c2b.XXXXXX")"
+az_login_stub="$d2b/az-login-stub"
+cat > "$az_login_stub" <<'SH'
+#!/bin/sh
+state="${COOP_TEST_AZ_STATE:?}"
+if [ "$1" = "login" ]; then touch "$state"; exit 0; fi
+if [ "$1 $2" = "account show" ] && [ -f "$state" ]; then
+  printf '%s\n' '{"tenantId":"tenant-after-login","name":"Signed In Tenant"}'
+  exit 0
+fi
+exit 1
+SH
+chmod +x "$az_login_stub"
+out2b="$(printf 'y\ny\n\n\n\nn\n\n' | HOME="$d2b" COOP_DIR="$d2b" COOP_AZ_BIN="$az_login_stub" COOP_TEST_AZ_STATE="$d2b/signed-in" \
+  "$PY" "$ROOT/scripts/onboard.py" onboard --config-only 2>&1 >/dev/null)"
+tenant2b="$(cfg_json "$d2b/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure"]["tenant_id"])')"
+case "$out2b" in
+  *"Sign in now so Coop can detect your tenant automatically?"*)
+    [ "$tenant2b" = "tenant-after-login" ] && ok "Azure sign-in automatically detects tenant" || ko "tenant not detected after login: $tenant2b" ;;
+  *) ko "signed-out Azure CLI did not offer automatic login: $out2b" ;;
 esac
 
 # (3) Tenant declined -> Power BI MCP cannot be enabled and says why.

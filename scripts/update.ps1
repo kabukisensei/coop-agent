@@ -141,20 +141,19 @@ $UnitPytoolUpgrade = {
     return [pscustomobject]@{ ok = $false; msg = "skipping $Pkg (pipx missing) — run: coop install" }
   }
   $list = (& pipx list 2>$null | Out-String)
-  if ($list -notmatch ("package " + [regex]::Escape($Pkg) + " ")) {
-    return [pscustomobject]@{ ok = $false; msg = "$Pkg not installed — run: coop install" }
-  }
+  $installed = $list -match ("package " + [regex]::Escape($Pkg) + " ")
   $target = if ($Target) { $Target } else { $Pkg }
   if ($Pkg -eq 'ms-fabric-cli' -and -not $Python) {
     return [pscustomobject]@{ ok = $false; msg = 'ms-fabric-cli needs Python 3.12 or 3.13 — install one, then re-run: coop update' }
   }
-  $pipxArgs = @('install', '--force')
+  $pipxArgs = @('install')
+  if ($installed) { $pipxArgs += '--force' }
   if ($Python) { $pipxArgs += @('--python', $Python) }
   $pipxArgs += $target
   & pipx @pipxArgs *> $null
   if ($LASTEXITCODE -eq 0) {
     $ver = if ($target -eq $Pkg) { '' } else { $target.Split('=')[-1] }
-    return [pscustomobject]@{ ok = $true; msg = if ($ver) { "pinned $Pkg to tested $ver" } else { $Pkg } }
+    return [pscustomobject]@{ ok = $true; msg = if (-not $installed) { "installed missing $Pkg$(if ($ver) { " at tested $ver" } else { '' })" } elseif ($ver) { "pinned $Pkg to tested $ver" } else { $Pkg } }
   }
   return [pscustomobject]@{ ok = $false; msg = "upgrade failed: $Pkg" }
 }
@@ -281,6 +280,19 @@ try {
     $pytoolTargets += if ($EDGE) { $pkg } else { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "$pkg==$tv" } else { $pkg } }
   }
   $fabricPython = Get-CoopFabricPython
+  if (-not $fabricPython -and (Get-Command winget -ErrorAction SilentlyContinue)) {
+    Coop-Info 'Microsoft Fabric CLI needs Python 3.10–3.13; installing Python 3.12…'
+    & winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
+    foreach ($d in @(
+      (Join-Path $env:ProgramFiles 'Python312'),
+      (Join-Path $env:ProgramFiles 'Python312\Scripts'),
+      (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312'),
+      (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\Scripts')
+    )) {
+      if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) { $env:PATH = "$d;$env:PATH" }
+    }
+    $fabricPython = Get-CoopFabricPython
+  }
   $extensionSpecs = @()
   foreach ($pkg in @(Coop-ManifestKeys 'extensions')) {
     $spec = Coop-ManifestExtensionSpec $pkg
