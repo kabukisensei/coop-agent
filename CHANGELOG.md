@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.22.3] — 2026-08-24
+
 ### Fixed
 - Shared Pi-library skew repair now replaces only exact `pi-ai`/`pi-tui`
   packages with lifecycle scripts disabled, so a repair cannot rebuild unrelated
