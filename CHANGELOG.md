@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.22.5] — 2026-08-25
+
 ## [0.22.4] — 2026-08-25
 
 ### Fixed
