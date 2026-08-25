@@ -1,6 +1,6 @@
 {
   "name": "coop-profile",
-  "version": "0.22.3",
+  "version": "0.22.4",
   "private": true,
   "description": "Inject the local COOP user profile into each Pi session as a tiny hidden instruction.",
   "type": "module",

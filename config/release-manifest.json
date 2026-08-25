@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "coop_version": "0.22.3",
+  "coop_version": "0.22.4",
   "node": {
     "min": "22.19.0"
   },
