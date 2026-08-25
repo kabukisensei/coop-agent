@@ -205,8 +205,12 @@ try {
 
   # --- 9. Fresh install repairs a Python 3.14-only Fabric prerequisite -------
   Head 'fresh-install Fabric Python prerequisite'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
   $pyPrereqOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\install-python-prereq.test.ps1') 2>&1
-  if ($LASTEXITCODE -eq 0) {
+  $pyPrereqRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($pyPrereqRc -eq 0) {
     $pyPrereqOut | ForEach-Object { Write-Host $_ }
   } else {
     Ko "fresh-install Python prerequisite fixture failed: $($pyPrereqOut | Out-String)"
