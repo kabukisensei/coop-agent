@@ -13,7 +13,7 @@ work **with you** before anything ships.
 `coop install` automatically attempts to install missing prerequisites via `winget` (Windows) or `brew`/`apt`/`dnf` (macOS/Linux) if they are not already on your system (opt out with `coop install --no-prereqs`):
 
 - **Node.js 22.19+** — https://nodejs.org (auto-installed via `winget` / `brew` / `apt` if missing)
-- **Python 3.10+** — https://python.org (auto-installed via `winget` / `brew` / `apt` if missing)
+- **Python 3.10–3.13 for Microsoft Fabric CLI** — https://python.org (`coop install` adds a compatible Python 3.12 when needed, including when Python 3.14 is already installed)
 - **git** — https://git-scm.com (auto-installed via `winget` / `brew` / `apt` if missing)
 - **Azure CLI** (`az`) — *optional* — https://learn.microsoft.com/cli/azure (auto-installed via `winget` / `brew` / `apt` if missing; needed only for Fabric / Power BI live access — local SQL/DAX review works without it)
 - **Tabular Editor CLI (`te`)** — *optional* — https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (cross-platform CLI that runs Best Practice Analyzer rules on semantic models; requires a Tabular Editor account during the preview — place `te` in `~/.local/bin` or your `PATH`, then run `te auth login` once)

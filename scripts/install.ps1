@@ -430,10 +430,15 @@ try {
     Coop-Warn "git not found — install Git from https://git-scm.com (or 'winget install Git.Git')."
   }
 
-  # Python
-  if ((-not (Get-CoopPython)) -and (-not $NO_PREREQS)) {
+  # General Coop tooling can use any current Python 3, but ms-fabric-cli
+  # currently requires <3.14. Treat those as separate prerequisites: a machine
+  # with only Python 3.14 still needs a compatible interpreter installed
+  # alongside it when Fabric support is enabled.
+  $needPython = -not (Get-CoopPython)
+  $needFabricPython = (-not $NO_FABRIC) -and (-not (Get-CoopFabricPython))
+  if (($needPython -or $needFabricPython) -and (-not $NO_PREREQS)) {
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-      Coop-Info 'installing Python 3.12 via winget…'
+      Coop-Info 'installing Fabric-compatible Python 3.12 via winget…'
       & winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
       foreach ($d in @(
         (Join-Path $env:ProgramFiles 'Python312'),
@@ -457,6 +462,15 @@ try {
     Coop-Ok "python present ($pyv)"
   } else {
     Coop-Warn "python not found — install Python 3.10+ from https://python.org (or 'winget install Python.Python.3.12'). (A Windows Store 'python' stub does not count.)"
+  }
+  if (-not $NO_FABRIC) {
+    $fabricPrereqPython = Get-CoopFabricPython
+    if ($fabricPrereqPython) {
+      $fabricPyVersion = (& $fabricPrereqPython --version 2>&1)
+      Coop-Ok "Fabric-compatible Python present ($fabricPyVersion)"
+    } else {
+      Coop-Warn "Microsoft Fabric CLI needs Python 3.10–3.13 — install Python 3.12, then re-run: coop install"
+    }
   }
 
   # Node.js
@@ -568,6 +582,12 @@ try {
 }
 finally {
   Coop-ProgEnd
+}
+
+# Offline fleet fixtures exercise the real install units but must stop before
+# launcher/PATH/onboarding/Doctor work. This mirrors install.sh's existing seam.
+if ($env:COOP_FLEET_TEST_MODE -eq '1') {
+  if ($script:InstallFailures -eq 0) { exit 0 } else { exit 1 }
 }
 
 # --- 7. Put `coop` on PATH ---------------------------------------------------

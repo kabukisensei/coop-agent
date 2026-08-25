@@ -98,9 +98,8 @@ _unit_pytool_upgrade() {  # $1 = package
   have pipx || { printf 'skipping %s (pipx missing) — run: coop install' "$pkg"; return 1; }
   # Do not use grep -q under pipefail: it can close the pipe after an early
   # match, SIGPIPE pipx, and turn a real installed package into a false miss.
-  if ! pipx list 2>/dev/null | grep "package $pkg " >/dev/null; then
-    printf '%s not installed — run: coop install' "$pkg"; return 1
-  fi
+  local installed=0
+  pipx list 2>/dev/null | grep "package $pkg " >/dev/null && installed=1
   if [ "$pkg" = "ms-fabric-cli" ]; then
     fabric_py="$(coop_fabric_python)" || {
       printf 'ms-fabric-cli needs Python 3.12 or 3.13 — install one, then re-run: coop update'
@@ -114,6 +113,10 @@ _unit_pytool_upgrade() {  # $1 = package
     fi
     if pipx install --force "$pkg==$pin" >/dev/null 2>&1; then printf 'pinned %s to tested %s' "$pkg" "$pin"; return 0; fi
     printf 'failed to pin %s to %s (try: pipx install --force %s==%s)' "$pkg" "$pin" "$pkg" "$pin"; return 1
+  fi
+  if [ "$installed" = 0 ]; then
+    if pipx install "$pkg" >/dev/null 2>&1; then printf 'installed missing %s' "$pkg"; return 0; fi
+    printf 'failed to install missing %s' "$pkg"; return 1
   fi
   if pipx upgrade "$pkg" >/dev/null 2>&1; then printf '%s' "$pkg"; return 0; fi
   printf 'upgrade failed: %s' "$pkg"; return 1
@@ -207,6 +210,28 @@ UPDATE_FAILURES=0
 # clean up but then let the script resume on Ctrl-C).
 trap 'coop_progress_end; _coop_unit_cleanup' EXIT
 trap 'coop_progress_end; _coop_unit_cleanup; exit 130' INT TERM
+
+# `coop update` is also the repair path for an incomplete workstation. If the
+# Fabric CLI cannot run under the default Python (notably Python 3.14), add a
+# supported side-by-side interpreter before converging the pipx fleet.
+if ! coop_fabric_python >/dev/null 2>&1; then
+  if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
+    coop_info "Microsoft Fabric CLI needs Python 3.10–3.13; installing Python 3.12…"
+    brew install python@3.12 >/dev/null 2>&1 || true
+    _fabric_lib="$(brew --prefix python@3.12 2>/dev/null)/libexec/bin"
+    [ -d "$_fabric_lib" ] && PATH="$_fabric_lib:$PATH"
+    unset _fabric_lib
+  elif have apt-get; then
+    coop_info "Microsoft Fabric CLI needs Python 3.10–3.13; installing a compatible Python…"
+    (sudo apt-get update -y && (sudo apt-get install -y python3.13 python3.13-venv || sudo apt-get install -y python3.12 python3.12-venv)) >/dev/null 2>&1 \
+      || (apt-get install -y python3.13 python3.13-venv || apt-get install -y python3.12 python3.12-venv) >/dev/null 2>&1 || true
+  elif have dnf; then
+    coop_info "Microsoft Fabric CLI needs Python 3.10–3.13; installing a compatible Python…"
+    (sudo dnf install -y python3.13 || sudo dnf install -y python3.12) >/dev/null 2>&1 \
+      || (dnf install -y python3.13 || dnf install -y python3.12) >/dev/null 2>&1 || true
+  fi
+  hash -r 2>/dev/null || true
+fi
 
 # --- 2. Update Pi + extensions ----------------------------------------------
 # (Windows guards this step against running sessions + leftover staging dirs in

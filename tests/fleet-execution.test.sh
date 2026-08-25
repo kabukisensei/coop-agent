@@ -264,4 +264,35 @@ COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" >/dev/n
   || { echo 'coop-data-doc was reinstalled although it matched the manifest'; exit 1; }
 echo '  ✓ normal install skips components already at their manifest pins'
 
+# --- UPDATE repairs an incomplete workstation instead of only diagnosing it ----
+isolate_block 6
+cat > "$STUB6/pi" <<'SH'
+#!/bin/sh
+[ "$1" = "--version" ] && { echo 'pi 0.84.3'; exit 0; }
+exit 0
+SH
+cat > "$STUB6/npm" <<'SH'
+#!/bin/sh
+[ "$1 $2" = "prefix -g" ] && { dirname "$(dirname "$0")"; exit 0; }
+[ "$1" = "view" ] && { echo '0.84.3'; exit 0; }
+exit 0
+SH
+cat > "$STUB6/pipx" <<'SH'
+#!/bin/sh
+[ "$1" = "list" ] && exit 0
+echo "PIPX $*" >> "$MARKER6"
+exit 0
+SH
+ln -s "$REAL_NODE" "$STUB6/node"; ln -s "$REAL_PY" "$STUB6/python3"
+chmod +x "$STUB6/pi" "$STUB6/npm" "$STUB6/pipx"
+PATH="$STUB6:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB6"; COOP_FABRIC_PYTHON="$REAL_PY"
+export PATH COOP_TEST_STUB_PATH COOP_FABRIC_PYTHON
+: > "$MARKER6"
+COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.84.3 COOP_PYPI_LATEST_OVERRIDE=0.1.0 \
+  bash "$ROOT/scripts/update.sh" >/dev/null 2>&1
+for spec in 'coop-data-doc==1.1.1' 'coop-sql-review==0.15.2' 'coop-dax-review==0.22.0' 'ms-fabric-cli==1.7.0'; do
+  grep -F "$spec" "$MARKER6" >/dev/null || { echo "update did not install missing $spec"; cat "$MARKER6"; exit 1; }
+done
+echo '  ✓ update installs missing manifest-pinned pipx tools'
+
 echo '  ✓ normal install/update/sync executed exact manifest specs (plus PowerShell literal helpers)'

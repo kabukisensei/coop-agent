@@ -149,7 +149,9 @@ coop_fabric_python() {
     return 0
   fi
   for c in python3.13 python3.12; do
-    if command -v "$c" >/dev/null 2>&1; then command -v "$c"; return 0; fi
+    command -v "$c" >/dev/null 2>&1 || continue
+    v="$("$c" -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>/dev/null)"
+    case "$v" in 3.10|3.11|3.12|3.13) command -v "$c"; return 0 ;; esac
   done
   # Windows' Python launcher can locate versioned interpreters even when their
   # directories are not on PATH. Return the real executable for pipx --python.

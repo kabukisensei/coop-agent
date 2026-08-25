@@ -35,12 +35,20 @@ PY
 cat > "$d/user-owned.json" <<'JSON'
 {"mcpServers":{"powerbi":{"command":"npx","args":["-y","powerbi-mcp-server@9.9.9","--tenant","user-tenant","--custom-auth"]}}}
 JSON
-printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"coop-tenant"},"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false,"context_mode":false}}' > "$d/config"
+printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"client-tenant"},"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false,"context_mode":false}}' > "$d/config"
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --output "$d/user-owned.json" || exit 1
 "$PY" - "$d/user-owned.json" <<'PY'
 import json,sys
 m=json.load(open(sys.argv[1])); assert m['mcpServers']['powerbi']['args'][-1]=='--custom-auth'; assert 'powerbi' not in m['_coop']['managed_servers']
 PY
+# A tenant explicitly marked for another identity domain must never be routed
+# into client-facing Fabric/Power BI servers.
+printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"knowledge-tenant","purpose":"shared_knowledge"},"integrations":{"power_bi":true}}' > "$d/config"
+if "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --output "$d/wrong-domain.json" 2>"$d/wrong-domain.err"; then
+  echo 'wrong-domain Azure tenant was accepted for client MCP servers' >&2
+  exit 1
+fi
+grep -q 'reserved for client resources' "$d/wrong-domain.err" || exit 1
 # Unmistakable pre-marker TODO/@latest COOP seeds migrate and are removed when disabled.
 cat > "$d/legacy.json" <<'JSON'
 {"mcpServers":{"powerbi":{"command":"npx","args":["-y","powerbi-mcp-server@latest","--tenant","TODO-tenant-id"]},"custom":{"command":"x"}}}

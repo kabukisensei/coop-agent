@@ -163,7 +163,9 @@ function Get-CoopFabricPython {
   }
   foreach ($name in @('python3.13', 'python3.12')) {
     $cmd = Get-Command $name -ErrorAction SilentlyContinue
-    if ($cmd -and $cmd.Source -and $cmd.Source -notmatch '\\WindowsApps\\') { return $cmd.Source }
+    if (-not $cmd -or -not $cmd.Source -or $cmd.Source -match '\\WindowsApps\\') { continue }
+    $version = [string]((& $cmd.Source -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>$null | Out-String)).Trim()
+    if ($version -match '^3\.(10|11|12|13)$') { return $cmd.Source }
   }
   $launcher = Get-Command py -ErrorAction SilentlyContinue
   if ($launcher) {

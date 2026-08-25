@@ -5,6 +5,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- Fresh installs now bootstrap a Fabric-compatible Python alongside an existing
+  Python 3.14 instead of treating any Python as sufficient and later failing to
+  install `ms-fabric-cli`.
+- `coop update` now installs missing manifest-pinned pipx tools instead of
+  leaving incomplete workstations broken and directing users to a second command;
+  it also bootstraps a Fabric-compatible Python when needed.
+- Onboarding now offers Azure CLI sign-in and automatic tenant detection before
+  asking for a tenant ID, with inline Azure Portal directions as a fallback.
+- Onboarding now labels this identity explicitly as the client-resource tenant;
+  current Fabric and Power BI integrations reject any differently marked tenant.
+  The future Cooptimize Shared Knowledge identity remains a separate sign-in and
+  token domain that cannot replace the client's Azure CLI session.
+
 ## [0.22.3] — 2026-08-24
 
 ### Fixed
