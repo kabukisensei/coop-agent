@@ -115,14 +115,14 @@ resources:
 # (web/README.md) once coop's extensions + protocol are re-verified against a new Pi.
 tested_with:
   pi_min: "0.79.0"
-  pi: "0.80.2"          # @earendil-works/pi-coding-agent (requires Node >= 22.19)
+  pi: "0.84.3"          # @earendil-works/pi-coding-agent (requires Node >= 22.19)
   pi_mcp_adapter: "2.10.0"
   pi_hermes_memory: "0.7.17"
   pi_web_access: "0.10.7"
   rpiv_ask_user_question: "1.20.0"
   context_mode: "1.0.162"
-  ms_fabric_cli: "1.6.1"
-  fabric_cicd: "1.1.0"
+  ms_fabric_cli: "1.7.0"
+  fabric_cicd: "1.3.0"
   # The three coop-tool pins below must match the sibling coop-website checkout's
   # versions.json (the suite's single source of truth for released version strings).
   # `coop release` verifies this before tagging; refresh these when the tools release.

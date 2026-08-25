@@ -91,15 +91,27 @@ _unit_pi_update() {
 }
 
 _unit_pytool_upgrade() {  # $1 = package
-  local pkg="$1" pin=""
+  local pkg="$1" pin="" fabric_py=""
   if [ "$EDGE" != 1 ]; then
     pin="$(coop_manifest_get "python_tools.$pkg")"
   fi
   have pipx || { printf 'skipping %s (pipx missing) — run: coop install' "$pkg"; return 1; }
-  if ! pipx list 2>/dev/null | grep -q "package $pkg "; then
+  # Do not use grep -q under pipefail: it can close the pipe after an early
+  # match, SIGPIPE pipx, and turn a real installed package into a false miss.
+  if ! pipx list 2>/dev/null | grep "package $pkg " >/dev/null; then
     printf '%s not installed — run: coop install' "$pkg"; return 1
   fi
+  if [ "$pkg" = "ms-fabric-cli" ]; then
+    fabric_py="$(coop_fabric_python)" || {
+      printf 'ms-fabric-cli needs Python 3.12 or 3.13 — install one, then re-run: coop update'
+      return 1
+    }
+  fi
   if [ -n "$pin" ]; then
+    if [ -n "$fabric_py" ]; then
+      if pipx install --force --python "$fabric_py" "$pkg==$pin" >/dev/null 2>&1; then printf 'pinned %s to tested %s (Python %s)' "$pkg" "$pin" "$fabric_py"; return 0; fi
+      printf 'failed to pin %s to %s (try: pipx install --force --python "%s" %s==%s)' "$pkg" "$pin" "$fabric_py" "$pkg" "$pin"; return 1
+    fi
     if pipx install --force "$pkg==$pin" >/dev/null 2>&1; then printf 'pinned %s to tested %s' "$pkg" "$pin"; return 0; fi
     printf 'failed to pin %s to %s (try: pipx install --force %s==%s)' "$pkg" "$pin" "$pkg" "$pin"; return 1
   fi
@@ -190,6 +202,7 @@ fi
 # cursor even on Ctrl-C. (coop_progress_end is idempotent, so the EXIT trap is a
 # safe no-op once we've ended it explicitly after step 3.)
 coop_progress_begin "$PROG_TOTAL"
+UPDATE_FAILURES=0
 # EXIT restores the cursor + reaps the unit; INT/TERM ALSO exit (a bare trap would
 # clean up but then let the script resume on Ctrl-C).
 trap 'coop_progress_end; _coop_unit_cleanup' EXIT
@@ -199,18 +212,21 @@ trap 'coop_progress_end; _coop_unit_cleanup; exit 130' INT TERM
 # (Windows guards this step against running sessions + leftover staging dirs in
 # update.ps1; POSIX can replace open files, so no such guard is needed here.)
 coop_head "2/6  Pi and extensions"
-coop_unit "pi update --all   (the agent + all installed extensions)" _unit_pi_update
+coop_unit "pi update --all   (the agent + all installed extensions)" _unit_pi_update \
+  || UPDATE_FAILURES=$((UPDATE_FAILURES + 1))
 
 # --- 3. Upgrade pipx tools ---------------------------------------------------
 coop_head "3/6  Coop tools + Fabric CLI (pipx)"
 for pkg in "${PY_TOOLS[@]}"; do
   # _unit_pytool_upgrade pins from the release manifest in normal mode; --edge takes latest.
-  coop_unit "$pkg" _unit_pytool_upgrade "$pkg"
+  coop_unit "$pkg" _unit_pytool_upgrade "$pkg" \
+    || UPDATE_FAILURES=$((UPDATE_FAILURES + 1))
 done
 
 # --- 4. Upgrade Microsoft Fabric / Power BI authoring tools (npm) ------------
 coop_head "4/6  Fabric / Power BI authoring tools"
-coop_unit "Power BI/Fabric authoring tools" _unit_pbih_tools_upgrade
+coop_unit "Power BI/Fabric authoring tools" _unit_pbih_tools_upgrade \
+  || UPDATE_FAILURES=$((UPDATE_FAILURES + 1))
 hash -r 2>/dev/null || true
 
 # Done with the update items — finalize the bar (leaves a permanent 100% line).
@@ -220,24 +236,41 @@ coop_progress_end
 # uses the manifest pin; edge mode alone may take latest.
 FCC_PIN=''
 if [ "$EDGE" != 1 ]; then FCC_PIN="$(coop_manifest_object_get python_tools fabric-cicd)"; fi
-if have pipx && pipx list 2>/dev/null | grep -q "package ms-fabric-cli "; then
+if have pipx && pipx list 2>/dev/null | grep "package ms-fabric-cli " >/dev/null; then
   if [ -n "$FCC_PIN" ]; then
-    pipx inject ms-fabric-cli "fabric-cicd==$FCC_PIN" --force >/dev/null 2>&1 && coop_ok "fabric-cicd (library) pinned to tested $FCC_PIN" || true
+    if pipx inject ms-fabric-cli "fabric-cicd==$FCC_PIN" --force >/dev/null 2>&1; then
+      coop_ok "fabric-cicd (library) pinned to tested $FCC_PIN"
+    else
+      coop_warn "failed to pin fabric-cicd to $FCC_PIN in the ms-fabric-cli environment"
+      UPDATE_FAILURES=$((UPDATE_FAILURES + 1))
+    fi
   else
-    pipx inject ms-fabric-cli fabric-cicd --force >/dev/null 2>&1 && coop_ok "fabric-cicd (library) refreshed" || true
+    if pipx inject ms-fabric-cli fabric-cicd --force >/dev/null 2>&1; then
+      coop_ok "fabric-cicd (library) refreshed"
+    else
+      coop_warn "failed to refresh fabric-cicd in the ms-fabric-cli environment"
+      UPDATE_FAILURES=$((UPDATE_FAILURES + 1))
+    fi
   fi
 fi
-[ "${COOP_FLEET_TEST_MODE:-0}" = 1 ] && exit 0
+[ "${COOP_FLEET_TEST_MODE:-0}" = 1 ] && { [ "$UPDATE_FAILURES" -eq 0 ]; exit $?; }
 
 # --- 5. Sync vibes / skills / prompts / extension ----------------------------
 # sync also re-pins the extension tree's pi-ai/pi-tui to the (possibly just-updated)
 # agent version, so the skew can't survive an update. Runs AFTER step 2 by design.
 coop_head "5/6  Sync brand assets"
-"$COOP_ROOT/scripts/sync.sh" || coop_warn "sync reported issues"
+if ! "$COOP_ROOT/scripts/sync.sh"; then
+  coop_warn "sync reported issues"
+  UPDATE_FAILURES=$((UPDATE_FAILURES + 1))
+fi
 
 # --- 6. Doctor ---------------------------------------------------------------
 # Propagate doctor's verdict as the update's exit code (see install.sh) so a broken
 # update is detectable by scripted callers; the steps above stay warn-and-continue.
 coop_head "6/6  Doctor"
 "$COOP_ROOT/scripts/doctor.sh"; DOCTOR_RC=$?
-exit "$DOCTOR_RC"
+if [ "$DOCTOR_RC" -ne 0 ] || [ "$UPDATE_FAILURES" -ne 0 ]; then
+  [ "$UPDATE_FAILURES" -gt 0 ] && coop_warn "update finished with $UPDATE_FAILURES failed convergence step(s) — see warnings above"
+  exit 1
+fi
+exit 0

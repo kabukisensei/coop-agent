@@ -92,6 +92,321 @@ function Coop-ManifestStatus([string]$Installed, [string]$Expected) {
   return 'wrong-version'
 }
 
+# --- pipx inventory probes (truthful tool inventory; twins of lib/common.sh) --
+# `pipx list` output is NEVER authoritative: its cache can be stale and the
+# command can even be shadowed. The source of truth is distribution metadata
+# read INSIDE each venv via `pipx runpip`.
+
+function Get-CoopPipxVenvsDir {
+  # Resolution order (authoritative first):
+  #   COOP_PIPX_HOME      test hook — point at fixtures without touching the box
+  #   PIPX_HOME           user override, honored by pipx itself
+  #   pipx environment    the selected pipx binary's OWN resolved value
+  #   platform defaults   modern Windows %LOCALAPPDATA%\pipx\pipx,
+  #                       legacy Windows ~\pipx, unix ~/.local/pipx
+  # Defaulting straight to ~/.local/pipx misses Windows installs entirely.
+  if ($env:COOP_PIPX_HOME) { return (Join-Path $env:COOP_PIPX_HOME 'venvs') }
+  if ($env:PIPX_HOME) { return (Join-Path $env:PIPX_HOME 'venvs') }
+  # PIPX_LOCAL_VENVS is ALREADY the complete venvs directory - never append
+  # another "venvs" (that produced .../venvs/venvs and broke every probe).
+  $cmd = Get-CoopPipxCmd
+  if (Get-Command $cmd -ErrorAction SilentlyContinue) {
+    $v = [string]((& $cmd environment --value PIPX_LOCAL_VENVS 2>$null | Out-String)).Trim()
+    if ($v) { return $v }
+  }
+  $candidates = @()
+  if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+    if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'pipx\pipx') }
+    $candidates += (Join-Path $HOME 'pipx')
+  } else {
+    $candidates += (Join-Path $HOME '.local\pipx')
+    $candidates += (Join-Path $HOME '.local/pipx')
+  }
+  foreach ($c in $candidates) {
+    if ($c -and (Test-Path -LiteralPath $c)) { return (Join-Path $c 'venvs') }
+  }
+  return (Join-Path $HOME '.local\pipx\venvs')
+}
+
+# Installed version of a pipx-managed distribution from in-venv metadata.
+# The pipx command used for inventory probes. COOP_PIPX_BIN lets callers pin an
+# exact binary — useful when PATH carries shadows/stubs, and in tests.
+function Get-CoopPipxCmd {
+  if ($env:COOP_PIPX_BIN) { return $env:COOP_PIPX_BIN }
+  return 'pipx'
+}
+
+function Get-CoopVenvDistVersion([string]$Venv, [string]$Distribution) {
+  $pipx = Get-CoopPipxCmd
+  $out = (& $pipx runpip $Venv show $Distribution 2>$null | Out-String)
+  if (-not $out) { return '' }
+  foreach ($line in ($out -split "`r?`n")) {
+    if ($line -match '^Version:\s*(.+)$') { return $matches[1].Trim() }
+  }
+  return ''
+}
+
+# Python version inside a pipx venv, resolved directly.
+function Get-CoopVenvPythonVersion([string]$Venv) {
+  $py = Get-CoopVenvPythonPath $Venv
+  if (-not $py) { return }
+  & $py -c 'import platform;print(platform.python_version())' 2>$null
+}
+
+# Resolve a Python interpreter supported by ms-fabric-cli (<3.14, >=3.10).
+# Prefer 3.13, then 3.12; accept a compatible generic python as a fallback.
+# COOP_FABRIC_PYTHON is an explicit test/admin override.
+function Get-CoopFabricPython {
+  if ($env:COOP_FABRIC_PYTHON) {
+    if (Test-Path -LiteralPath $env:COOP_FABRIC_PYTHON -PathType Leaf) { return $env:COOP_FABRIC_PYTHON }
+    return $null
+  }
+  foreach ($name in @('python3.13', 'python3.12')) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source -and $cmd.Source -notmatch '\\WindowsApps\\') { return $cmd.Source }
+  }
+  $launcher = Get-Command py -ErrorAction SilentlyContinue
+  if ($launcher) {
+    foreach ($version in @('3.13', '3.12')) {
+      $resolved = [string]((& $launcher.Source "-$version" -c 'import sys;print(sys.executable)' 2>$null | Out-String)).Trim()
+      if ($LASTEXITCODE -eq 0 -and $resolved) { return $resolved }
+    }
+  }
+  foreach ($name in @('python3', 'python')) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if (-not $cmd -or ($cmd.Source -and $cmd.Source -match '\\WindowsApps\\')) { continue }
+    $version = [string]((& $cmd.Source -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>$null | Out-String)).Trim()
+    if ($version -match '^3\.(10|11|12|13)$') { return $cmd.Source }
+  }
+  return $null
+}
+
+function Get-CoopVenvPythonPath([string]$Venv) {
+  $base = Join-Path (Get-CoopPipxVenvsDir) $Venv
+  foreach ($py in @((Join-Path $base 'Scripts\python.exe'), (Join-Path $base 'bin\python'), (Join-Path $base 'bin/python'))) {
+    if (Test-Path -LiteralPath $py) { return $py }
+  }
+  return $null
+}
+
+# The installed distribution's own Requires-Python metadata, read from inside
+# its venv. The probe program carries a marker so fixture interpreters can
+# recognise it in tests.
+function Get-CoopVenvRequiresPython([string]$Venv, [string]$Distribution) {
+  $py = Get-CoopVenvPythonPath $Venv
+  if (-not $py) { return '' }
+  $probe = @'
+# coop-requires-python-probe
+import sys
+from importlib.metadata import metadata
+print(metadata(sys.argv[1]).get("Requires-Python") or "")
+'@
+  $out = (& $py -c $probe $Distribution 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) { return '' }
+  return $out
+}
+
+# Evaluate <Version> against a PEP 440 Requires-Python specifier subset:
+# comma-separated <, <=, >, >=, ==, != tokens (optionally "X.Y.*" wildcards).
+# Anything unparseable counts as matching — never warn on uncertainty.
+function Test-CoopPythonSpec([string]$PyVer, [string]$Spec) {
+  if (-not $Spec) { return $true }
+  function Key([string]$v) {
+    $v = $v.TrimStart('v') -replace '[^0-9.].*$', ''
+    $p = ($v -split '\.') + @('0','0','0')
+    return [int]$p[0] * 1000000 + [int]$p[1] * 1000 + [int]($p[2] -as [int])
+  }
+  $keyPy = Key $PyVer
+  foreach ($tok in ($Spec -split ',')) {
+    $t = $tok.Trim()
+    if (-not $t) { continue }
+    if ($t.StartsWith('~=')) { return $true }                       # not approximated here
+    if ($t -notmatch '[0-9]') { return $true }                      # no version -> no verdict
+    $op = ''; $want = ''
+    foreach ($candidate in @('==','!=','>=','<=','>','<')) {
+      if ($t.StartsWith($candidate)) { $op = $candidate; $want = $t.Substring($candidate.Length); break }
+      elseif ($t.StartsWith($candidate.Substring(0,1)) -and $candidate.Length -eq 1) { $op = $candidate; $want = $t.Substring(1); break }
+    }
+    if (-not $op) { return $true }
+    $wild = $false
+    if ($want.EndsWith('.*') -or $want.EndsWith('*')) { $wild = $true; $want = $want.TrimEnd('*').TrimEnd('.') }
+    $want = $want.TrimStart('v')
+    if (-not $want -or $want -match '[^0-9.]') { return $true }
+    $keyWant = Key $want
+    if ($wild) {
+      $parts = ($want -split '\.').Count
+      $scale = 1
+      for ($i = 3; $i -gt $parts; $i--) { $scale *= 1000 }
+      $modW = [math]::Floor($keyWant / $scale); $modP = [math]::Floor($keyPy / $scale)
+      if ($op -eq '==' -and $modP -ne $modW) { return $false }
+      if ($op -eq '!=' -and $modP -eq $modW) { return $false }
+      continue
+    }
+    switch ($op) {
+      '<'  { if (-not ($keyPy -lt $keyWant)) { return $false } }
+      '<=' { if (-not ($keyPy -le $keyWant)) { return $false } }
+      '>'  { if (-not ($keyPy -gt $keyWant)) { return $false } }
+      '>=' { if (-not ($keyPy -ge $keyWant)) { return $false } }
+      '==' { if ($keyPy -ne $keyWant) { return $false } }
+      '!=' { if ($keyPy -eq $keyWant) { return $false } }
+    }
+  }
+  return $true
+}
+
+# Which pipx venv does <command> resolve to? Returns venv name or $null.
+function Get-CoopExePipxVenv([string]$Command) {
+  # Ownership probe: which pipx venv exposes <command>?
+  #   1. follow the full symlink chain (unix shims),
+  #   2. compare against raw AND physically-resolved venv prefixes,
+  #   3. fall back to pipx's own application metadata (`pipx list --json`),
+  #      the only reliable source for Windows .exe launchers exposed OUTSIDE
+  #      the venv (binary stubs carry no readable path).
+  $cmd = Get-Command $Command -ErrorAction SilentlyContinue
+  if (-not $cmd) { return $null }
+  $p = $cmd.Source
+
+  $vdir = (Get-CoopPipxVenvsDir)
+  $vdirReal = $vdir
+  try { $vdirReal = (Resolve-Path -LiteralPath $vdir -ErrorAction Stop).Path } catch {}
+  $isUnder = {
+    param($path, $base)
+    if (-not $path) { return $false }
+    $np = $path.Replace('\', '/'); $nb = $base.Replace('\', '/')
+    return $np.StartsWith($nb + '/', [System.StringComparison]::OrdinalIgnoreCase)
+  }
+
+  # 1-2. Path membership across the symlink chain.
+  $cur = $p
+  for ($hop = 0; $hop -lt 4 -and $cur; $hop++) {
+    if (& $isUnder $cur $vdir) {
+      $rest = $cur.Replace('\', '/').Substring(($vdir.Replace('\', '/')).Length).TrimStart('/')
+      return ($rest -split '/')[0]
+    }
+    if (& $isUnder $cur $vdirReal) {
+      $rest = $cur.Replace('\', '/').Substring(($vdirReal.Replace('\', '/')).Length).TrimStart('/')
+      return ($rest -split '/')[0]
+    }
+    $item = Get-Item -LiteralPath $cur -Force -ErrorAction SilentlyContinue
+    if (-not $item) { break }
+    $tgt = $null
+    if ($item.PSObject.Properties['Target'] -and $item.Target) { $tgt = @($item.Target)[0] }
+    if (-not $tgt) { break }
+    if (-not [System.IO.Path]::IsPathRooted($tgt)) { $tgt = Join-Path (Split-Path -Parent $cur) $tgt }
+    $cur = $tgt
+  }
+
+  # 3. pipx application metadata: map an executable exposed in PIPX_BIN_DIR
+  # back to the venv whose main package declares that app name. Windows launchers
+  # are binary .exe files outside the venv, so neither shebang nor target-path
+  # inspection can establish their ownership.
+  $pipxBin = Get-CoopPipxCmd
+  if (Get-Command $pipxBin -ErrorAction SilentlyContinue) {
+    $pipxBinDir = [string]((& $pipxBin environment --value PIPX_BIN_DIR 2>$null | Out-String)).Trim()
+    if (-not $pipxBinDir) { return $null }
+    $pipxBinDirReal = $pipxBinDir
+    try { $pipxBinDirReal = (Resolve-Path -LiteralPath $pipxBinDir -ErrorAction Stop).Path } catch {}
+    $parent = Split-Path -Parent $p
+    $parentReal = $parent
+    try { $parentReal = (Resolve-Path -LiteralPath $parent -ErrorAction Stop).Path } catch {}
+    $normParent = $parent.Replace('\', '/').TrimEnd('/')
+    $normParentReal = $parentReal.Replace('\', '/').TrimEnd('/')
+    $normBin = $pipxBinDir.Replace('\', '/').TrimEnd('/')
+    $normBinReal = $pipxBinDirReal.Replace('\', '/').TrimEnd('/')
+    $inPipxBin = $normParent.Equals($normBin, [System.StringComparison]::OrdinalIgnoreCase) -or
+                 $normParentReal.Equals($normBinReal, [System.StringComparison]::OrdinalIgnoreCase)
+    if (-not $inPipxBin) { return $null }
+
+    $json = [string]((& $pipxBin list --json 2>$null | Out-String))
+    if ($json.Trim()) {
+      try { $data = $json | ConvertFrom-Json } catch { $data = $null }
+      if ($data -and $data.venvs) {
+        $app = [System.IO.Path]::GetFileNameWithoutExtension($p)
+        foreach ($venv in $data.venvs.PSObject.Properties) {
+          $apps = @($venv.Value.metadata.main_package.apps)
+          if ($apps -contains $app) { return $venv.Name }
+        }
+      }
+    }
+  }
+  return $null
+}
+
+# Select an npm that actually WORKS: some workstation shims exit 0 while doing
+# nothing (observed with a broken ~/.hermes/node/bin/npm), which silently
+# no-ops convergence. Requires real version output.
+function Get-CoopWorkingNpm {
+  # Windows commonly exposes BOTH npm.ps1 and npm.cmd. Without Select-Object,
+  # `.Source` becomes an array and `& $cand --version` passes the second launcher
+  # as argv[0] (effectively `npm npm --version`). Prefer the native .cmd shim.
+  $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $npmCommand) { $npmCommand = Get-Command npm -ErrorAction SilentlyContinue | Select-Object -First 1 }
+  $cand = if ($npmCommand) { $npmCommand.Source } else { $null }
+  if ($cand) {
+    $v = [string]((& $cand --version 2>$null | Out-String)).Trim()
+    if ($v) { return $cand }
+  }
+  $candidates = @('/opt/homebrew/bin/npm')
+  if (${env:ProgramFiles}) { $candidates += (Join-Path ${env:ProgramFiles} 'nodejs\npm.cmd') }
+  if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\nodejs\npm.cmd') }
+  foreach ($c in $candidates) {
+    if ($c -and (Test-Path -LiteralPath $c)) {
+      $v = [string]((& $c --version 2>$null | Out-String)).Trim()
+      if ($v) { return $c }
+    }
+  }
+  return $null
+}
+
+# Converge the isolated tree's recorded extension dependencies to EXACT
+# versions and reinstall (twin of coop_converge_extension_pins). PRODUCTION
+# convergence: the compatibility matrix relies on this same path.
+function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
+  # NOTE: forward slashes throughout — backslashes leak into node/npm argv on
+  # any host and corrupt paths (observed as ENOENT on POSIX).
+  $npmDir = Join-Path $AgentDir 'npm'
+  if (-not (Test-Path -LiteralPath (Join-Path $npmDir 'package.json'))) {
+    # Bootstrap the npm project exactly like the bash helper does.
+    New-Item -ItemType Directory -Force -Path $npmDir | Out-Null
+    Set-Content -LiteralPath (Join-Path $npmDir 'package.json') -Value "{`n  `"name`": `"pi-extensions`",`n  `"private`": true`n}"
+  }
+  if (-not (Test-Have 'node')) { return $false }
+  # Skip the reinstall when every extension is already at its exact pin.
+  $need = $false
+  foreach ($spec in $Specs) {
+    $i = $spec.LastIndexOf('@')
+    $got = Get-CoopExtInstalledVersion -AgentDir $AgentDir -Name $spec.Substring(0, $i)
+    if ($got -ne $spec.Substring($i + 1)) { $need = $true; break }
+  }
+  if (-not $need) { return $true }
+  $npm = Get-CoopWorkingNpm
+  if (-not $npm) { return $false }
+  node (Join-Path $script:CoopRoot 'lib\pins.js') $AgentDir @Specs
+  if ($LASTEXITCODE -ne 0) { return $false }
+  Push-Location $npmDir
+  $npmOut = @(& $npm install --silent --no-audit --no-fund 2>&1)
+  $rc = $LASTEXITCODE
+  Pop-Location
+  if ($rc -ne 0) {
+    $detail = ((@($npmOut | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }) | Select-Object -Last 8) -join ' | ')
+    Coop-Warn ("npm extension convergence failed via {0}{1}" -f $npm, $(if ($detail) { ": $detail" } else { '' }))
+  }
+  return ($rc -eq 0)
+}
+
+# Version of an installed Pi extension inside an isolated agent dir, read from
+# its package.json. Empty when absent or unreadable — callers treat that as a
+# failed postcondition, never as success.
+function Get-CoopExtInstalledVersion([string]$AgentDir, [string]$Name) {
+  $f = Join-Path $AgentDir "npm\node_modules\$Name\package.json"
+  if (-not (Test-Path -LiteralPath $f)) { return '' }
+  try {
+    $pkg = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
+    if ($pkg.version -and -not [string]::IsNullOrWhiteSpace($pkg.version)) { return [string]$pkg.version }
+  } catch {}
+  return ''
+}
+
 # Ensure user tool bins (pipx, Azure CLI) are on PATH in-process
 $script:PathSep = [System.IO.Path]::PathSeparator
 $pipxBin = Join-Path $HOME '.local\bin'
@@ -320,38 +635,43 @@ function Sync-CoopExtDeps {
   if ($r.rc -eq 11) { Coop-Warn (Format-TooOld $r.parts); return }
   if ($r.rc -ne 10) { return }   # 2 (nothing) or unexpected — no-op
 
-  if (-not (Test-Have 'npm')) {
+  $npm = Get-CoopWorkingNpm
+  if (-not $npm) {
     Coop-Warn "extension pi-ai/pi-tui need realignment to pi $ver but npm is missing — install Node.js, then: coop sync"
     return
   }
-  # Skewed: drop the lockfile (the thing pinning the stale hoist) so npm re-resolves
-  # against the overrides, then reinstall.
+  # Skewed: replace ONLY the two shared libraries. Removing npm's root and hidden
+  # lock inventories prevents a manually damaged tree from being credited as the
+  # locked version. --ignore-scripts guarantees this repair cannot rebuild an
+  # unrelated native dependency such as context-mode's better-sqlite3.
   Coop-Info "aligning extension pi-ai / pi-tui to the agent ($ver; tree has $treeAi)…"
-  Remove-Item -LiteralPath (Join-Path $npmDir 'package-lock.json') -Force -ErrorAction SilentlyContinue
-  Push-Location $npmDir; try { & npm install *> $null } catch { } finally { Pop-Location }
-  $r = Invoke-Align -Check
-  if ($r.rc -eq 10) {
-    # A stale node_modules can keep the old hoist — rebuild it clean as a last resort,
-    # but PRESERVE the existing tree: move it aside, reinstall, and restore it if the
-    # reinstall fails (offline / registry down). Deleting first would leave coop with
-    # NO extensions — strictly worse than a skewed-but-working tree.
-    $nm = Join-Path $npmDir 'node_modules'
-    $bak = Join-Path $npmDir 'node_modules.coopbak'
-    if (Test-Path -LiteralPath $nm) {
-      Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
-      Move-Item -LiteralPath $nm -Destination $bak -Force -ErrorAction SilentlyContinue
-    }
-    $reinstallOk = $false
-    Push-Location $npmDir; try { & npm install *> $null; $reinstallOk = ($LASTEXITCODE -eq 0) } catch { } finally { Pop-Location }
-    if ($reinstallOk) {
-      Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
-    } elseif (Test-Path -LiteralPath $bak) {
-      Remove-Item -LiteralPath $nm -Recurse -Force -ErrorAction SilentlyContinue
-      Move-Item -LiteralPath $bak -Destination $nm -Force -ErrorAction SilentlyContinue
-      Coop-Warn 'extension realignment reinstall failed — restored the previous tree — check your network, then: coop doctor --fix'
-    }
-    $r = Invoke-Align -Check
+  $scope = Join-Path $npmDir 'node_modules\@earendil-works'
+  $ai = Join-Path $scope 'pi-ai'
+  $tui = Join-Path $scope 'pi-tui'
+  $bak = Join-Path $npmDir '.coop-extdeps-backup'
+  Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path $bak | Out-Null
+  if (Test-Path -LiteralPath $ai) { Move-Item -LiteralPath $ai -Destination (Join-Path $bak 'pi-ai') -Force }
+  if (Test-Path -LiteralPath $tui) { Move-Item -LiteralPath $tui -Destination (Join-Path $bak 'pi-tui') -Force }
+  Remove-Item -LiteralPath (Join-Path $npmDir 'package-lock.json'), (Join-Path $npmDir 'node_modules\.package-lock.json') -Force -ErrorAction SilentlyContinue
+  $npmOut = @(); $reinstallOk = $false
+  Push-Location $npmDir
+  try {
+    $npmOut = @(& $npm install --no-save --ignore-scripts --no-audit --no-fund ("@earendil-works/pi-ai@" + $ver) ("@earendil-works/pi-tui@" + $ver) 2>&1)
+    $reinstallOk = ($LASTEXITCODE -eq 0)
+  } catch { $npmOut = @($_) } finally { Pop-Location }
+  if ($reinstallOk) {
+    Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
+  } else {
+    Remove-Item -LiteralPath $ai, $tui -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $scope | Out-Null
+    if (Test-Path -LiteralPath (Join-Path $bak 'pi-ai')) { Move-Item -LiteralPath (Join-Path $bak 'pi-ai') -Destination $ai -Force }
+    if (Test-Path -LiteralPath (Join-Path $bak 'pi-tui')) { Move-Item -LiteralPath (Join-Path $bak 'pi-tui') -Destination $tui -Force }
+    Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
+    $detail = ((@($npmOut | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }) | Select-Object -Last 8) -join ' | ')
+    Coop-Warn ("extension realignment reinstall failed — restored the previous shared libraries{0} — check your network, then: coop doctor --fix" -f $(if ($detail) { ": $detail" } else { '' }))
   }
+  $r = Invoke-Align -Check
   if ($r.rc -eq 0) { Coop-Ok "extension pi-ai / pi-tui aligned to $ver" }
   elseif ($r.rc -eq 11) { Coop-Warn (Format-TooOld $r.parts) }
   else { Coop-Warn "could not fully align extension pi-ai/pi-tui to $ver — close any running coop session, then: coop doctor --fix" }
@@ -583,6 +903,9 @@ function Test-CoopOnboardingMissing {
 
 # First-run onboarding: run when either the profile or integration config is missing.
 function Invoke-CoopMaybeOnboard {
+  # Exit code contract for callers: $script:CoopOnboardRc is 0 when onboarding
+  # ran (or was legitimately skipped) and the wizard's exit code when it failed.
+  $script:CoopOnboardRc = 0
   if (-not (Test-CoopOnboardingMissing)) { return }
   if ([Console]::IsInputRedirected) {
     Coop-Warn 'COOP onboarding is incomplete (user.json or config missing). Run: coop onboard'
@@ -596,6 +919,7 @@ function Invoke-CoopMaybeOnboard {
   }
   Coop-Info "First run: let's set up your COOP profile."
   & $py (Join-Path $script:CoopRoot 'scripts\onboard.py') onboard
+  $script:CoopOnboardRc = $LASTEXITCODE
 }
 
 # --- Background units (install/update items) ----------------------------------
@@ -642,6 +966,9 @@ function Coop-Unit {
   }
   $script:ProgDone++
   $script:ProgSpinline = ''
+  # Callers that need a truthful aggregate result read this after each unit.
+  # Do not emit a Boolean: that would pollute command output and job results.
+  $script:CoopUnitLastOk = $ok
   if ($ok) { Coop-Ok $msg } else { Coop-Warn $msg }
 }
 

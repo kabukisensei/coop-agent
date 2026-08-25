@@ -5,6 +5,94 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- Shared Pi-library skew repair now replaces only exact `pi-ai`/`pi-tui`
+  packages with lifecycle scripts disabled, so a repair cannot rebuild unrelated
+  native dependencies such as `context-mode`'s `better-sqlite3` on Windows.
+- Windows sync now preserves complete extension package names when stripping
+  the `npm:` transport prefix; scoped packages no longer become invalid names
+  during exact-pin/shared-library convergence.
+- Repeat syncs now leave already-exact extensions untouched, avoiding needless
+  network installs while still verifying every postcondition and repairing
+  shared-library skew.
+- Bash update inventory now consumes complete `pipx list` output under
+  `pipefail`, preventing early-match SIGPIPE from misclassifying installed tools.
+- `coop install` now preserves failed install and sync steps in its final exit
+  status instead of allowing a warning-only Doctor result to report bootstrap
+  success for an agent that still cannot launch.
+- `coop update` now returns nonzero when any Pi/tool convergence, Fabric library
+  injection, or sync step fails; it still runs Doctor for diagnostics, but no
+  longer converts visible `upgrade failed` warnings into a successful exit.
+- Fabric CLI install/update now creates its pipx environment with an explicitly
+  supported Python 3.13 or 3.12 interpreter instead of inheriting Python 3.14
+  and failing `ms-fabric-cli`'s `<3.14` requirement. If neither interpreter is
+  available, Coop reports the exact prerequisite instead of a generic failure.
+- The optional live coop-data-doc JSONL test now skips cleanly when the binary
+  is absent and imports its generated extension bundle through a Windows-safe
+  file URL.
+- `coop release` now updates and stages `config/release-manifest.json` alongside
+  `VERSION` and extension package versions, and refuses to start from an
+  inconsistent checkout. This prevents publishing a tag whose manifest still
+  identifies the previous Coop release.
+- First-run onboarding through plain `coop` now continues into Pi with
+  "Setup complete. Starting Coop…"; an explicit `coop onboard` ends with
+  "Setup complete. Run 'coop' to start." A failed onboarding now stops the
+  launcher instead of continuing with a partially generated MCP configuration.
+
+### Changed
+- Promoted the tested Pi release pin from **0.80.2** to **0.84.3**. A real
+  clean-room Windows run proved that the current pinned extension fleet now
+  requires `pi-ai >= 0.84.3`, so retaining 0.80.2 produced the same
+  update-then-launch-abort seen on workstations. Coop now installs the coherent
+  0.84.3 runtime and shared-library set; legacy runtimes fail with explicit
+  upgrade guidance instead of leaving a mixed, unlaunchable tree.
+- Added `scripts/test-pi-matrix.{sh,ps1}`: clean-room Pi compatibility matrix
+  (temporary npm prefix + temporary agent dir; never touches the workstation).
+  Each run installs a coherent fleet at exact manifest versions via dependency
+  specs (npm rejects same-name overrides with EOVERRIDE — dependencies are the
+  deterministic mechanism), verifies shared pi-ai/pi-tui against the runtime's
+  own package metadata, loads first-party extensions through the real loader,
+  exercises RPC startup/get_state/clean shutdown plus a live agent turn when
+  credentials permit, proves second-sync idempotency, and reproduces+repairs a
+  deliberate shared-lib skew (including the observed getOAuthApiKey class of
+  failure). Pi 0.84.3 passes the full production-convergence matrix on macOS;
+  Windows is enforced in CI. Older Pi releases remain covered by explicit
+  incompatibility/upgrade-path tests rather than being advertised as supported.
+- New live test drives the real coop-data-doc setup wizard over its JSONL
+  transport end-to-end (hello first, every prompt answered, exactly one
+  `complete`, exit 0, valid config, JSON-only stdout); skips cleanly when the
+  installed tool predates the JSONL transport.
+- Approved and pinned the verified Python tool trio after clean-room
+  verification on Python 3.13 (isolated pipx home): `ms-fabric-cli` 1.6.1 →
+  **1.7.0**, `fabric-cicd` 1.1.0 → **1.3.0** (injected into the Fabric CLI env;
+  confirmed compatible pair via `pip check`), `coop-data-doc` stays at **1.1.1**
+  (full scan/build/check/lineage/config-set + JSONL setup protocol contract
+  re-verified). Read-only authenticated `fab ls`/`auth status` exercised.
+- `coop sync` now verifies every core extension against the manifest pin AFTER
+  installation and states the exact outcome ("Already at release version X" /
+  "Installed release version X" / "Updated A → B"); a successful-looking install
+  that leaves the wrong version or nothing in the isolated tree is reported as a
+  postcondition failure and makes sync exit non-zero. Shared pi-ai/pi-tui work
+  is worded as runtime alignment, distinct from release pins.
+- `coop doctor` no longer trusts `pipx list` or a package name as the executable:
+  the in-venv distribution metadata (`pipx runpip <venv> show <dist>`) is the
+  authoritative version, cross-checked against the CLI's own `--version`, with
+  ms-fabric-cli checked via its real `fab` executable (Paramiko collision check
+  retained). Metadata/CLI disagreement is classified as a stale/corrupt pipx
+  environment with an exact `pipx install --force` repair; when pipx itself is
+  unreadable the CLI classification says so. Doctor now also reports the Python
+  interpreter INSIDE each tool's venv and flags unsupported versions (≥3.14)
+  with a recreate command.
+- Doctor's Python-support verdict now comes from each distribution's own installed `Requires-Python` metadata (evaluated against the venv interpreter) instead of a hardcoded version cap.
+- Onboarding no longer offers toggles it cannot honor: Power BI MCP is stored
+  disabled (with the reason) when no Azure tenant is configured instead of
+  enabled-but-silently-omitted; Azure DevOps MCP requires a valid organization
+  (short name or `https://dev.azure.com/<org>` URL) and can be backed out of.
+  The tenant prompt states that Coop accesses the tenant holding the Fabric and
+  Power BI resources — normally the client's Microsoft Entra tenant, the
+  Cooptimize tenant only for internal work — and prints a review summary
+  (tenant, enabled/omitted integrations, destination) before saving.
+
 ## [0.22.2] — 2026-08-24
 
 ### Fixed

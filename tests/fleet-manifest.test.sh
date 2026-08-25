@@ -17,7 +17,7 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 . "$ROOT/lib/common.sh"
 
 # --- manifest helpers -----------------------------------------------------------
-[ "$(coop_manifest_get pi.version)" = "0.80.2" ] && ok "coop_manifest_get pi.version" || ko "coop_manifest_get pi.version"
+[ "$(coop_manifest_get pi.version)" = "0.84.3" ] && ok "coop_manifest_get pi.version" || ko "coop_manifest_get pi.version"
 [ "$(coop_manifest_get node.min)" = "22.19.0" ] && ok "coop_manifest_get node.min" || ko "coop_manifest_get node.min"
 [ "$(coop_manifest_get extensions.pi-mcp-adapter)" = "2.10.0" ] && ok "coop_manifest_get extensions.pi-mcp-adapter" || ko "coop_manifest_get extensions.pi-mcp-adapter"
 [ "$(coop_manifest_get python_tools.coop-data-doc)" = "1.1.1" ] && ok "coop_manifest_get python_tools.coop-data-doc" || ko "coop_manifest_get python_tools.coop-data-doc"
@@ -72,7 +72,7 @@ REAL_PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
 
 cat > "$STUB/pi" <<'EOF'
 #!/bin/sh
-[ "$1" = "--version" ] && { echo "pi 0.80.2"; exit 0; }
+[ "$1" = "--version" ] && { echo "pi 0.84.3"; exit 0; }
 echo "PI $*" >> "$MARKER"; exit 0
 EOF
 cat > "$STUB/npm" <<EOF
@@ -104,7 +104,7 @@ chmod +x "$STUB/pi" "$STUB/npm" "$STUB/pipx" "$STUB/python3"
 out="$(PATH="$STUB:$PATH" bash "$ROOT/scripts/update.sh" --check 2>/dev/null)"
 rc=$?
 [ "$rc" -eq 0 ] && ok "--check exits 0" || ko "--check exit was $rc"
-case "$out" in *"expected 0.80.2"*) ok "--check reports pi expected 0.80.2" ;; *) ko "--check missing pi expected 0.80.2" ;; esac
+case "$out" in *"expected 0.84.3"*) ok "--check reports pi expected 0.84.3" ;; *) ko "--check missing pi expected 0.84.3" ;; esac
 case "$out" in *"status ok"*) ok "--check reports status ok for matching versions" ;; *) ko "--check missing ok status" ;; esac
 case "$out" in *"@microsoft/powerbi-report-authoring-cli"*) ok "--check lists npm authoring tools" ;; *) ko "--check missing npm authoring tools" ;; esac
 
@@ -114,7 +114,7 @@ out="$(PATH="$STUB:$PATH" COOP_UPDATE_GATE_DRYRUN=1 bash "$ROOT/scripts/update.s
 rc=$?
 [ "$rc" -eq 0 ] && ok "default update (gate dry-run) exits 0" || ko "default update exit was $rc"
 # Normal mode ALWAYS pins Pi to the release manifest version.
-case "$out" in *"GATE pin:0.80.2"*) ok "default update pins Pi to the manifest (GATE pin:0.80.2)" ;; *) ko "expected GATE pin:0.80.2, got: $out" ;; esac
+case "$out" in *"GATE pin:0.84.3"*) ok "default update pins Pi to the manifest (GATE pin:0.84.3)" ;; *) ko "expected GATE pin:0.84.3, got: $out" ;; esac
 
 # --- --edge update path bypasses the manifest pin ---------------------------------
 : > "$MARKER"

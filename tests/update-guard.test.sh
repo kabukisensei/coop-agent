@@ -20,7 +20,7 @@ STUB="$(mktemp -d)"; MARKER="$STUB/INSTALLS"; export MARKER
 trap 'rm -rf "$STUB"' EXIT
 cat > "$STUB/pi" <<'EOF'
 #!/bin/sh
-[ "$1" = "--version" ] && { echo "pi 0.80.2"; exit 0; }
+[ "$1" = "--version" ] && { echo "pi 0.84.3"; exit 0; }
 echo "PI $*" >> "$MARKER"; exit 0
 EOF
 cat > "$STUB/npm" <<'EOF'
@@ -39,7 +39,7 @@ chmod +x "$STUB/pi" "$STUB/npm" "$STUB/pipx"
 out="$(PATH="$STUB:$PATH" bash "$ROOT/scripts/update.sh" --check 2>/dev/null)"
 rc=$?
 [ "$rc" -eq 0 ] && ok "--check exits 0" || ko "--check exit was $rc"
-case "$out" in *"expected 0.80.2"*) ok "--check prints the pi expected version" ;; *) ko "--check missing pi expected version" ;; esac
+case "$out" in *"expected 0.84.3"*) ok "--check prints the pi expected version" ;; *) ko "--check missing pi expected version" ;; esac
 case "$out" in *"status ok"*|*"status older"*|*"status newer-than-tested"*|*"status wrong-version"*|*"status missing"*) ok "--check prints a status column" ;; *) ko "--check missing status column" ;; esac
 case "$out" in *"@microsoft/powerbi-report-authoring-cli"*) ok "--check lists npm authoring tools" ;; *) ko "--check missing npm authoring tools" ;; esac
 # --check may query npm ls for current versions, but must not install/upgrade anything.
@@ -54,7 +54,7 @@ gate() {
 }
 
 d="$(gate)"
-[ "$d" = "GATE pin:0.80.2" ] && ok "normal mode pins Pi to the release manifest" || ko "expected 'GATE pin:0.80.2', got '$d'"
+[ "$d" = "GATE pin:0.84.3" ] && ok "normal mode pins Pi to the release manifest" || ko "expected 'GATE pin:0.84.3', got '$d'"
 
 d="$(gate --edge)"
 [ "$d" = "GATE all" ] && ok "--edge is the only latest/upstream mode" || ko "with --edge expected 'GATE all', got '$d'"
@@ -66,7 +66,7 @@ d="$(gate --pi-latest)"
 # has no `npm view`-capable registry output beyond `ls`, and the decision is made
 # without COOP_ASSUME_YES or stdin (no prompts can fire).
 d="$(GATE_YES_UNSET=1 gate </dev/null)"
-[ "$d" = "GATE pin:0.80.2" ] && ok "normal mode needs no prompt or --yes to pin" || ko "normal mode decision changed: '$d'"
+[ "$d" = "GATE pin:0.84.3" ] && ok "normal mode needs no prompt or --yes to pin" || ko "normal mode decision changed: '$d'"
 
 if [ "$fail" -ne 0 ]; then echo "  ✗ update-guard tests FAILED"; exit 1; fi
 echo "  update-guard tests passed"

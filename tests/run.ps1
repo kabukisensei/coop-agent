@@ -42,23 +42,36 @@ function Ko   { param([string]$m) Write-Host "  $G_CROSS $m"; $script:fail = 1 }
 function Head { param([string]$m) Write-Host "$G_ARROW $m" }
 
 # --- pi/npm stubs on a scratch PATH -----------------------------------------
-# The gate + --check need a `pi` (reporting 0.80.2) and an `npm` that Get-Command
+# The gate + --check need a `pi` (reporting 0.84.3) and an `npm` that Get-Command
 # resolves. Windows PowerShell 5.1 finds a stub only via a PATHEXT extension
 # (.cmd), so write BOTH an extension-less Unix executable and a .cmd wrapper.
 $stub = Join-Path ([System.IO.Path]::GetTempPath()) ("coop-ps-test-" + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Path $stub -Force | Out-Null
 try {
   # Unix executables (extension-less, +x) — resolved by Get-Command on macOS/Linux.
-  $piSh = "#!/bin/sh`n[ `"`$1`" = `"--version`" ] && { echo `"pi 0.80.2`"; exit 0; }`nexit 0`n"
+  $piSh = "#!/bin/sh`n[ `"`$1`" = `"--version`" ] && { echo `"pi 0.84.3`"; exit 0; }`nexit 0`n"
   [System.IO.File]::WriteAllText((Join-Path $stub 'pi'),  $piSh)
   [System.IO.File]::WriteAllText((Join-Path $stub 'npm'), "#!/bin/sh`nexit 0`n")
   if ($IsLinux -or $IsMacOS) { & chmod +x (Join-Path $stub 'pi') (Join-Path $stub 'npm') }
   # Windows .cmd wrappers — resolved by Get-Command on Windows PowerShell 5.1.
-  [System.IO.File]::WriteAllText((Join-Path $stub 'pi.cmd'),  "@echo off`r`nif `"%1`"==`"--version`" (echo pi 0.80.2& exit /b 0)`r`nexit /b 0`r`n")
+  [System.IO.File]::WriteAllText((Join-Path $stub 'pi.cmd'),  "@echo off`r`nif `"%1`"==`"--version`" (echo pi 0.84.3& exit /b 0)`r`nexit /b 0`r`n")
   [System.IO.File]::WriteAllText((Join-Path $stub 'npm.cmd'), "@echo off`r`nexit /b 0`r`n")
 
   $sep = [System.IO.Path]::PathSeparator
   $stubPath = "$stub$sep$($env:PATH)"
+  # The launch preflight can repair an extension tree. Point every writable
+  # Coop/Pi location at this fixture and make the fake Pi authoritative so this
+  # behavioral suite never inspects or changes the developer's real ~/.coop.
+  $priorPath = $env:PATH
+  $priorCoopDir = $env:COOP_DIR
+  $priorCoopAgentDir = $env:COOP_AGENT_DIR
+  $priorPiAgentDir = $env:PI_CODING_AGENT_DIR
+  $priorNoOnboard = $env:COOP_NO_ONBOARD
+  $env:PATH = $stubPath
+  $env:COOP_DIR = Join-Path $stub 'coop-dir'
+  $env:COOP_AGENT_DIR = Join-Path $stub 'agent'
+  $env:PI_CODING_AGENT_DIR = $env:COOP_AGENT_DIR
+  $env:COOP_NO_ONBOARD = '1'
 
   # --- 1. launch-spec resolves the governed pi invocation --------------------
   Head 'launch-spec (shared launch builder) test'
@@ -123,7 +136,7 @@ try {
     return (($out | Where-Object { $_ -match 'GATE' }) | Select-Object -Last 1)
   }
   $d = Invoke-Gate
-  if ($d -eq 'GATE pin:0.80.2') { Ok 'normal mode pins Pi to the release manifest' } else { Ko "expected 'GATE pin:0.80.2', got '$d'" }
+  if ($d -eq 'GATE pin:0.84.3') { Ok 'normal mode pins Pi to the release manifest' } else { Ko "expected 'GATE pin:0.84.3', got '$d'" }
   $d = Invoke-Gate -GateArgs @('--edge')
   if ($d -eq 'GATE all') { Ok '--edge is the only latest/upstream mode' } else { Ko "with --edge expected 'GATE all', got '$d'" }
   $d = Invoke-Gate -GateArgs @('--pi-latest')
@@ -136,7 +149,7 @@ try {
 & '$update' --check 2>`$null
 "@ 6>$null | Out-String
   if ($LASTEXITCODE -eq 0) { Ok '--check exits 0' } else { Ko "--check exit was $LASTEXITCODE" }
-  if ($checkOut -like '*expected 0.80.2*') { Ok '--check prints the pi expected version' } else { Ko '--check missing pi expected version' }
+  if ($checkOut -like '*expected 0.84.3*') { Ok '--check prints the pi expected version' } else { Ko '--check missing pi expected version' }
   if ($checkOut -like '*status *') { Ok '--check prints a status column' } else { Ko '--check missing status column' }
   if ($checkOut -like '*@microsoft/powerbi-report-authoring-cli*') { Ok '--check lists npm authoring tools' } else { Ko '--check missing npm authoring tools' }
 
@@ -151,7 +164,7 @@ try {
 `$env:COOP_UPDATE_GATE_DRYRUN = '1'
 & '$coop' update --check 2>&1
 "@ 6>$null | Out-String
-  if (($wrappedCheckOut -like '*expected 0.80.2*') -and ($wrappedCheckOut -like '*status *')) {
+  if (($wrappedCheckOut -like '*expected 0.84.3*') -and ($wrappedCheckOut -like '*status *')) {
     Ok 'coop wrapper forwards --check intact to the read-only path'
   } else { Ko "coop wrapper did not reach the --check dry-run: $wrappedCheckOut" }
   if ($wrappedCheckOut -notlike '*ignoring unknown flag*' -and $wrappedCheckOut -notlike '*GATE *') {
@@ -164,8 +177,38 @@ try {
   if ($LASTEXITCODE -eq 0) { Ok 'review --help exits 0' } else { Ko "review --help exit was $LASTEXITCODE" }
   & $coop review --bogus-flag *> $null
   if ($LASTEXITCODE -ne 0) { Ok 'review with an unknown flag dies non-zero' } else { Ko 'review --bogus-flag did not die' }
+
+  # --- 7. pipx launcher ownership (Windows .exe metadata fallback) ----------
+  Head 'pipx executable ownership'
+  $ownerOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\pipx-ownership.test.ps1') 2>&1
+  if ($LASTEXITCODE -eq 0) {
+    $ownerOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "pipx ownership fixture failed: $($ownerOut | Out-String)"
+  }
+
+  # --- 8. release transaction ------------------------------------------------
+  Head 'release transaction consistency'
+  # Coop status output intentionally uses stderr. Windows PowerShell 5.1 turns
+  # redirected native stderr into NativeCommandError records; with this suite's
+  # ErrorActionPreference=Stop that would abort despite a zero child exit.
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $releaseOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\release.test.ps1') 2>&1
+  $releaseRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($releaseRc -eq 0) {
+    $releaseOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "release transaction fixture failed: $($releaseOut | Out-String)"
+  }
 }
 finally {
+  $env:PATH = $priorPath
+  if ($null -eq $priorCoopDir) { Remove-Item Env:\COOP_DIR -ErrorAction SilentlyContinue } else { $env:COOP_DIR = $priorCoopDir }
+  if ($null -eq $priorCoopAgentDir) { Remove-Item Env:\COOP_AGENT_DIR -ErrorAction SilentlyContinue } else { $env:COOP_AGENT_DIR = $priorCoopAgentDir }
+  if ($null -eq $priorPiAgentDir) { Remove-Item Env:\PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue } else { $env:PI_CODING_AGENT_DIR = $priorPiAgentDir }
+  if ($null -eq $priorNoOnboard) { Remove-Item Env:\COOP_NO_ONBOARD -ErrorAction SilentlyContinue } else { $env:COOP_NO_ONBOARD = $priorNoOnboard }
   Remove-Item -LiteralPath $stub -Recurse -Force -ErrorAction SilentlyContinue
 }
 

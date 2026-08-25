@@ -150,25 +150,84 @@ if ($piExpected) {
   }
 }
 
-foreach ($key in @('coop-data-doc', 'coop-sql-review', 'coop-dax-review', 'ms-fabric-cli')) {
-  $expected = Coop-ManifestGet "python_tools.$key"
-  if (-not $expected) { continue }
-  if (Test-Have $key) {
-    $vOut = (& $key --version 2>$null | Select-Object -First 1)
-    $ver = ''
-    if ($vOut -match '\d+\.\d+(\.\d+)?') { $ver = $matches[0] }
-  } else {
-    $ver = ''
+# Truthful inventory per distribution. The in-venv metadata is authoritative;
+# the CLI-reported version cross-checks it; `pipx list` is never trusted. Each
+# distribution maps to its real executable — ms-fabric-cli installs `fab`.
+function Check-PipxDist([string]$Dist, [string]$Exe) {
+  $expected = Coop-ManifestGet "python_tools.$Dist"
+  if (-not $expected) { return }
+  $repair = "pipx install --force $Dist==$expected"
+  $meta = Get-CoopVenvDistVersion $Dist $Dist
+  if (Test-Have $Exe) {
+    $vOut = (& $Exe --version 2>$null | Out-String)
+    $cli = ''
+    if ($vOut -match '\d+\.\d+(\.\d+)?') { $cli = $matches[0] }
+  } else { $cli = '' }
+  # Python interpreter INSIDE this tool's venv — not the system default python.
+  $pyver = (Get-CoopVenvPythonVersion $Dist)
+
+  if (-not $meta -and -not $cli) {
+    D-Warn "$Dist not installed (manifest: $expected)" "pipx install $Dist==$expected"
+    return
   }
-  $status = Coop-ManifestStatus $ver $expected
-  switch ($status) {
-    'ok'                { D-Ok "$key $ver matches manifest ($expected)" }
-    'missing'           { D-Warn "$key not installed or version unknown (manifest: $expected)" "pipx install $key==$expected" }
-    'older'             { D-Warn "$key $ver is older than manifest ($expected)" "pipx install $key==$expected" }
-    'newer-than-tested' { D-Warn "$key $ver is newer than manifest ($expected)" "pipx install $key==$expected" }
-    'wrong-version'     { D-Warn "$key $ver differs from manifest ($expected)" "pipx install $key==$expected" }
+  if ($meta -and $cli -and ($meta -ne $cli)) {
+    D-Bad "$Dist pipx environment is stale/corrupt: metadata says $meta but $Exe reports $(if ($cli) { $cli } else { 'nothing' })" \
+      "$repair   (metadata/CLI disagreement; recreate the environment)"
+    return
+  }
+  if (-not $cli) {
+    # Stop here: without a CLI answer there is nothing trustworthy to compare.
+    D-Warn "$Dist metadata present ($meta) but $Exe produced no version" $repair
+    return
+  }
+  # Executable ownership: an unrelated binary must never be correlated with
+  # this distribution's pipx metadata.
+  if ((Get-CoopExePipxVenv $Exe) -ne $Dist) {
+    D-Warn "$Dist skipped: resolved $Exe does not belong to its pipx environment" \
+      "reinstall so the pinned $Exe is first on PATH: $repair"
+    return
+  }
+  if (-not $meta) {
+    # Metadata unreadable (missing/broken/shadowed pipx): classify by the CLI's
+    # own report, but say so — the two sources are supposed to agree.
+    $status = Coop-ManifestStatus $cli $expected
+    switch ($status) {
+      'ok' { D-Ok "$Dist $cli matches manifest ($expected) (CLI-reported; pipx metadata unreadable)" }
+      default { D-Warn "$Dist $cli differs from manifest per $Exe (pipx metadata unreadable)" "$repair   (also check that pipx itself works)" }
+    }
+  } else {
+    $status = Coop-ManifestStatus $meta $expected
+    switch ($status) {
+      'ok'                { D-Ok "$Dist $meta matches manifest ($expected)" }
+      'missing'           { D-Warn "$Dist not installed or version unknown (manifest: $expected)" "pipx install $Dist==$expected" }
+      'older'             { D-Warn "$Dist $meta is older than manifest ($expected)" "pipx install $Dist==$expected" }
+      'newer-than-tested' { D-Warn "$Dist $meta is newer than manifest ($expected)" "pipx install $Dist==$expected" }
+      'wrong-version'     { D-Warn "$Dist $meta differs from manifest ($expected)" "pipx install $Dist==$expected" }
+    }
+  }
+  if (-not $pyver) {
+    D-Warn "$Dist environment Python could not be determined" "$repair --python 3.12"
+    return
+  }
+  # Judge support by the distribution's own installed Requires-Python metadata.
+  $rp = Get-CoopVenvRequiresPython $Dist $Dist
+  if (-not $rp) {
+    D-Ok "$Dist environment uses Python $pyver (no Requires-Python metadata found)"
+    return
+  }
+  if (Test-CoopPythonSpec $pyver $rp) {
+    D-Ok "$Dist environment uses Python $pyver (requires-python: $rp)"
+  } else {
+    # Only the Fabric CLI env carries the injected fabric-cicd library.
+    $cicdPin = if ($Dist -eq 'ms-fabric-cli') { Coop-ManifestGet 'python_tools.fabric-cicd' } else { '' }
+    D-Warn "$Dist environment uses Python $pyver — violates its own requires-python '$rp'" \
+      "$repair --python 3.12   (or --python 3.13)$(if ($cicdPin) { ", then: pipx inject $Dist fabric-cicd==$cicdPin" })"
   }
 }
+Check-PipxDist 'coop-data-doc' 'coop-data-doc'
+Check-PipxDist 'coop-sql-review' 'coop-sql-review'
+Check-PipxDist 'coop-dax-review' 'coop-dax-review'
+Check-PipxDist 'ms-fabric-cli' 'fab'
 
 # Minimum node version from the manifest.
 $nodeExpected = Coop-ManifestGet 'node.min'
@@ -253,27 +312,20 @@ if (Test-Have 'npm') {
 if ($pbihModeling) { D-Ok 'powerbi-modeling-mcp (npm package installed)' }
 else { D-Warn 'powerbi-modeling-mcp not installed' 'npm install -g @microsoft/powerbi-modeling-mcp' }
 
-# fabric-cicd is a Python LIBRARY (no CLI) — check it's importable in the Fabric CLI's env.
+# fabric-cicd is a Python LIBRARY (no CLI) living inside the Fabric CLI's env;
+# it is manifest-pinned like any other tool, just verified differently.
 if (Test-Have 'fab') {
-  $hasCicd = $false
-  # Primary: ask pipx to run pip inside the ms-fabric-cli venv. This is OS-agnostic
-  # and avoids guessing the venv layout. (On Windows the `fab` shim in ~\.local\bin
-  # is NOT a symlink, so deriving python.exe from the shim's dir — the old approach —
-  # never finds the interpreter and falsely reports "not installed".)
-  if (Test-Have 'pipx') {
-    & pipx runpip ms-fabric-cli show fabric-cicd *> $null
-    if ($LASTEXITCODE -eq 0) { $hasCicd = $true }
-  }
+  $cicdExpected = Coop-ManifestGet 'python_tools.fabric-cicd'
+  $cicdMeta = Get-CoopVenvDistVersion 'ms-fabric-cli' 'fabric-cicd'
+  $hasCicd = [bool]$cicdMeta
   if (-not $hasCicd) {
-    # Fallback: find the ms-fabric-cli venv interpreter directly. Needed on Windows,
-    # where the `fab` shim in ~\.local\bin isn't a symlink AND `pipx` may be absent
-    # (no system Python). Try PIPX_HOME + the common defaults, plus an interpreter
-    # next to the shim (where the shim IS a symlink, e.g. *nix-like setups).
+    # Metadata unavailable: fall back to importing with a venv interpreter found
+    # next to the shim or under common pipx homes.
     $venvCandidates = @()
     foreach ($pipxHome in @($env:PIPX_HOME, (Join-Path $HOME 'pipx'), (Join-Path $HOME '.local\pipx'), (Join-Path $env:LOCALAPPDATA 'pipx\pipx'))) {
       if ($pipxHome) {
-        $venvCandidates += (Join-Path $pipxHome 'venvs\ms-fabric-cli\Scripts\python.exe')  # Windows
-        $venvCandidates += (Join-Path $pipxHome 'venvs\ms-fabric-cli\bin\python')           # *nix-like
+        $venvCandidates += (Join-Path $pipxHome 'venvs\ms-fabric-cli\Scripts\python.exe')
+        $venvCandidates += (Join-Path $pipxHome 'venvs\ms-fabric-cli\bin\python')
       }
     }
     $fabCmd = (Get-Command fab -ErrorAction SilentlyContinue)
@@ -289,11 +341,21 @@ if (Test-Have 'fab') {
       }
     }
   }
-  if ($hasCicd) { D-Ok 'fabric-cicd (library, in the Fabric CLI env)' }
-  else { D-Warn 'fabric-cicd not installed' 'pipx inject ms-fabric-cli fabric-cicd' }
+  if ($hasCicd) {
+    if ($cicdExpected -and $cicdMeta -and ($cicdMeta -ne $cicdExpected)) {
+      D-Warn "fabric-cicd $cicdMeta differs from manifest ($cicdExpected)" "pipx inject ms-fabric-cli fabric-cicd==$cicdExpected"
+    } else {
+      $label = if ($cicdMeta) { "fabric-cicd $cicdMeta" } else { 'fabric-cicd' }
+      D-Ok "$label (library, in the Fabric CLI env)"
+    }
+  } else {
+    $pinSuffix = if ($cicdExpected) { "==$cicdExpected" } else { '' }
+    D-Warn 'fabric-cicd not installed' "pipx inject ms-fabric-cli fabric-cicd$pinSuffix"
+  }
 } else {
   D-Warn 'fabric-cicd: install the Microsoft Fabric CLI first' 'coop install'
 }
+
 # Tabular Editor CLI is path-configured and mostly Windows; check the project's path if set.
 $projYml = Find-CoopProjectYml
 if (-not (Test-CoopToolEnabled $projYml 'tabular_editor_cli')) {

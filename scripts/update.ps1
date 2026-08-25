@@ -136,7 +136,7 @@ $UnitPiUpdate = {
 }
 
 $UnitPytoolUpgrade = {
-  param([string]$Pkg, [string]$Target)
+  param([string]$Pkg, [string]$Target, [string]$Python)
   if (-not (Get-Command pipx -ErrorAction SilentlyContinue)) {
     return [pscustomobject]@{ ok = $false; msg = "skipping $Pkg (pipx missing) — run: coop install" }
   }
@@ -145,7 +145,13 @@ $UnitPytoolUpgrade = {
     return [pscustomobject]@{ ok = $false; msg = "$Pkg not installed — run: coop install" }
   }
   $target = if ($Target) { $Target } else { $Pkg }
-  & pipx install --force $target *> $null
+  if ($Pkg -eq 'ms-fabric-cli' -and -not $Python) {
+    return [pscustomobject]@{ ok = $false; msg = 'ms-fabric-cli needs Python 3.12 or 3.13 — install one, then re-run: coop update' }
+  }
+  $pipxArgs = @('install', '--force')
+  if ($Python) { $pipxArgs += @('--python', $Python) }
+  $pipxArgs += $target
+  & pipx @pipxArgs *> $null
   if ($LASTEXITCODE -eq 0) {
     $ver = if ($target -eq $Pkg) { '' } else { $target.Split('=')[-1] }
     return [pscustomobject]@{ ok = $true; msg = if ($ver) { "pinned $Pkg to tested $ver" } else { $Pkg } }
@@ -245,12 +251,14 @@ if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have
 # session has the agent files open (Windows locks open files). This decides whether
 # the pi-update item runs, so it must happen BEFORE we size the bar.
 $RunPiUpdate = $true
+$script:UpdateFailures = 0
 if (Test-Have 'pi') {
   Remove-CoopPiStagingDirs
   if (Test-CoopPiRunning) {
     Coop-Warn 'a coop/pi session appears to be running — skipping in-place `pi update --all` (Windows locks open files, which can corrupt the agent install and leave a `.pi-coding-agent-*` staging dir).'
     Coop-Say  '      Close all coop/pi windows, then re-run: coop update'
     $RunPiUpdate = $false
+    $script:UpdateFailures++
   }
 }
 
@@ -272,6 +280,7 @@ try {
   foreach ($pkg in $PY_TOOLS) {
     $pytoolTargets += if ($EDGE) { $pkg } else { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "$pkg==$tv" } else { $pkg } }
   }
+  $fabricPython = Get-CoopFabricPython
   $extensionSpecs = @()
   foreach ($pkg in @(Coop-ManifestKeys 'extensions')) {
     $spec = Coop-ManifestExtensionSpec $pkg
@@ -286,15 +295,21 @@ try {
   Coop-Head '2/6  Pi and extensions'
   if ($RunPiUpdate) {
     Coop-Unit 'pi + manifest extensions' $UnitPiUpdate @($piSpec, $script:PI_PKG, ($extensionSpecs -join '|'))
+    if (-not $script:CoopUnitLastOk) { $script:UpdateFailures++ }
   }
 
   # --- 3. Upgrade pipx tools -------------------------------------------------
   Coop-Head '3/6  Coop tools + Fabric CLI (pipx)'
-  for ($i = 0; $i -lt $PY_TOOLS.Count; $i++) { Coop-Unit $PY_TOOLS[$i] $UnitPytoolUpgrade @($PY_TOOLS[$i], $pytoolTargets[$i]) }
+  for ($i = 0; $i -lt $PY_TOOLS.Count; $i++) {
+    $toolPython = if ($PY_TOOLS[$i] -eq 'ms-fabric-cli') { $fabricPython } else { '' }
+    Coop-Unit $PY_TOOLS[$i] $UnitPytoolUpgrade @($PY_TOOLS[$i], $pytoolTargets[$i], $toolPython)
+    if (-not $script:CoopUnitLastOk) { $script:UpdateFailures++ }
+  }
 
   # --- 4. Upgrade Microsoft Fabric / Power BI authoring tools (npm) ----------
   Coop-Head '4/6  Fabric / Power BI authoring tools'
   Coop-Unit 'Power BI/Fabric authoring tools' $UnitPbihToolsUpgrade @($pbihSpecs)
+  if (-not $script:CoopUnitLastOk) { $script:UpdateFailures++ }
 }
 finally {
   Coop-ProgEnd
@@ -309,19 +324,26 @@ if ((Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package 
   if ($script:FCC_PIN) {
     & pipx inject ms-fabric-cli "fabric-cicd==$($script:FCC_PIN)" --force > $null 2>&1
     if ($LASTEXITCODE -eq 0) { Coop-Ok "fabric-cicd (library) pinned to tested $($script:FCC_PIN)" }
+    else { Coop-Warn "failed to pin fabric-cicd to $($script:FCC_PIN) in the ms-fabric-cli environment"; $script:UpdateFailures++ }
   } else {
     & pipx inject ms-fabric-cli fabric-cicd --force > $null 2>&1
     if ($LASTEXITCODE -eq 0) { Coop-Ok 'fabric-cicd (library) refreshed' }
+    else { Coop-Warn 'failed to refresh fabric-cicd in the ms-fabric-cli environment'; $script:UpdateFailures++ }
   }
 }
+if ($env:COOP_FLEET_TEST_MODE -eq '1') { if ($script:UpdateFailures -gt 0) { exit 1 } else { exit 0 } }
 
 # --- 5. Sync vibes / skills / prompts / extension ----------------------------
 Coop-Head '5/6  Sync brand assets'
 $syncRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
-if ($syncRc -ne 0) { Coop-Warn 'sync reported issues' }
+if ($syncRc -ne 0) { Coop-Warn 'sync reported issues'; $script:UpdateFailures++ }
 
 # --- 6. Doctor ---------------------------------------------------------------
 # Propagate doctor's verdict as the update's exit code (mirror of update.sh).
 Coop-Head '6/6  Doctor'
 $doctorRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
-exit $doctorRc
+if ($doctorRc -ne 0 -or $script:UpdateFailures -gt 0) {
+  if ($script:UpdateFailures -gt 0) { Coop-Warn "update finished with $($script:UpdateFailures) failed convergence step(s) — see warnings above" }
+  exit 1
+}
+exit 0

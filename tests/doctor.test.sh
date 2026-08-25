@@ -118,7 +118,7 @@ m=json.load(sys.stdin)
 for k,v in m["extensions"].items(): print(f"{k} {v}")'
   exit 0
 }
-echo "pi 0.80.2"
+echo "pi 0.84.3"
 EOF
 chmod +x "$stub_ok/pi"
 out="$(PATH="$stub_ok:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
@@ -146,7 +146,7 @@ for k,v in m["extensions"].items():
     print(f"{k} 9.9.9" if k==first else f"{k} {v}")'
   exit 0
 }
-echo "pi 0.80.2"
+echo "pi 0.84.3"
 EOF
 chmod +x "$stub_drift/pi"
 out="$(PATH="$stub_drift:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
