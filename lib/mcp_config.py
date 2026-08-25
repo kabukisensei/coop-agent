@@ -60,11 +60,17 @@ def desired_servers(manifest: dict[str, Any], config: dict[str, Any]) -> dict[st
     ado = config.get("azure_devops", {}) if isinstance(config.get("azure_devops", {}), dict) else {}
     enabled = lambda name, default=True: integrations.get(name, default) is True
     tenant = azure.get("tenant_id", "") if isinstance(azure.get("tenant_id", ""), str) else ""
+    tenant_purpose = azure.get("purpose", "client_resources")
+    if tenant and tenant_purpose != "client_resources":
+        raise ValueError("~/.coop/config azure.tenant_id is reserved for client resources")
     org = ado.get("organization", "") if isinstance(ado.get("organization", ""), str) else ""
     out: dict[str, dict[str, Any]] = {}
     env = {"AZURE_TOKEN_CREDENTIALS": "AzureCliCredential"}
     if enabled("fabric"):
         out["fabric"] = {"command": "npx", "args": ["-y", spec(manifest, SERVER_PACKAGES["fabric"]), "server", "start", "--mode", "namespace"], "env": env}
+    # Current Azure-backed MCP servers are exclusively client-facing. The future
+    # Shared Knowledge server must read a separate `knowledge` config and use its
+    # own authentication/token cache, never this Azure CLI credential domain.
     if enabled("power_bi") and tenant:
         out["powerbi"] = {"command": "npx", "args": ["-y", spec(manifest, SERVER_PACKAGES["powerbi"]), "--authentication", "azcli", "--tenant", tenant, "--readonly"], "env": env}
     if enabled("power_bi_modeling"):

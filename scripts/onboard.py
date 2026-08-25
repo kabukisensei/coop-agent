@@ -236,7 +236,7 @@ def run_config_questions(existing: dict | None = None) -> dict:
     account = detect_azure_account()
     if not account.get("tenantId") and not old_azure.get("tenant_id") and azure_cli_available():
         sys.stderr.write("\nAzure CLI is installed, but no active Azure sign-in was detected.\n")
-        if read_confirm("Sign in now so Coop can detect your tenant automatically?", True):
+        if read_confirm("Sign in now so Coop can detect the client tenant automatically?", True):
             sys.stderr.write("Opening Azure sign-in…\n")
             if run_azure_login():
                 account = detect_azure_account()
@@ -247,19 +247,20 @@ def run_config_questions(existing: dict | None = None) -> dict:
     tenant = str(old_azure.get("tenant_id", ""))
     tenant_name = str(old_azure.get("tenant_name", ""))
 
-    # Ownership must be unambiguous: Coop accesses whatever tenant holds the
-    # Fabric/Power BI resources for THIS workstation's work — normally the
-    # client's tenant; the Cooptimize tenant only for internal work.
+    # This identity domain is exclusively for client resources. Shared Knowledge
+    # will use a separate `knowledge` config, authentication flow, and token cache;
+    # it must never reuse or replace the client's Azure CLI session.
     sys.stderr.write(
-        "\nCoop reads Fabric and Power BI through one Azure tenant, chosen here.\n"
-        "For client work, use the client's Microsoft Entra tenant.\n"
-        "Use the Cooptimize tenant only for internal Cooptimize work.\n"
-        f"This is a workstation-wide default saved in {CONFIG_JSON}; until per-project\n"
-        "tenant selection exists, switch between clients with `coop onboard --edit`.\n"
+        "\nClient environment identity\n"
+        "This tenant is used only for the client's Fabric, Power BI, Azure, and D365 resources.\n"
+        "Do not enter the Cooptimize tenant here. Cooptimize Shared Knowledge will use a\n"
+        "separate sign-in and will never replace the client Azure session.\n"
+        f"This workstation default is saved in {CONFIG_JSON}; a project's `.coop/project.yml`\n"
+        "can pin the client tenant used when that project launches.\n"
     )
     if detected_tenant and read_confirm(
         f"Detected Azure tenant {account.get('name', detected_tenant)} ({detected_tenant}).\n"
-        "Use this tenant for Coop's Fabric and Power BI access?",
+        "Use this as the client resource tenant for Fabric and Power BI?",
         True,
     ):
         tenant = detected_tenant
@@ -327,9 +328,10 @@ def run_config_questions(existing: dict | None = None) -> dict:
     omitted_lines = [f"{labels[k]} ({reason})" for k, reason in omitted.items() if not integrations.get(k)]
     sys.stderr.write("\nReview:\n")
     if tenant:
-        sys.stderr.write(f"- Azure tenant: {tenant_name or '(display name unknown)'} ({tenant})\n")
+        sys.stderr.write(f"- Client Azure tenant: {tenant_name or '(display name unknown)'} ({tenant})\n")
     else:
-        sys.stderr.write("- Azure tenant: not configured\n")
+        sys.stderr.write("- Client Azure tenant: not configured\n")
+    sys.stderr.write("- Cooptimize Shared Knowledge identity: separate; not configured by this release\n")
     sys.stderr.write(f"- Enabled: {', '.join(enabled_labels) if enabled_labels else 'none'}\n")
     for line in omitted_lines:
         sys.stderr.write(f"- Omitted: {line}\n")
@@ -337,7 +339,12 @@ def run_config_questions(existing: dict | None = None) -> dict:
 
     return {
         "schema_version": 1,
-        "azure": {"enabled": bool(tenant), "tenant_id": tenant, "tenant_name": tenant_name},
+        "azure": {
+            "enabled": bool(tenant),
+            "purpose": "client_resources",
+            "tenant_id": tenant,
+            "tenant_name": tenant_name,
+        },
         "integrations": integrations,
         "azure_devops": {"organization": organization},
         "mcp": {"safe_mode": "read_only_first"},

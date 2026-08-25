@@ -14,6 +14,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   it also bootstraps a Fabric-compatible Python when needed.
 - Onboarding now offers Azure CLI sign-in and automatic tenant detection before
   asking for a tenant ID, with inline Azure Portal directions as a fallback.
+- Onboarding now labels this identity explicitly as the client-resource tenant;
+  current Fabric and Power BI integrations reject any differently marked tenant.
+  The future Cooptimize Shared Knowledge identity remains a separate sign-in and
+  token domain that cannot replace the client's Azure CLI session.
 
 ## [0.22.3] — 2026-08-24
 

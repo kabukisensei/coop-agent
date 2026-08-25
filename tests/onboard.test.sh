@@ -133,6 +133,11 @@ grep -q "Fabric and Power BI resources Coop should access" "$d1/stderr.txt" \
   && ok "tenant prompt says whose resources Coop accesses" || ko "tenant prompt vague about resource ownership"
 tenant_id="$(cfg_json "$d1/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure"]["tenant_id"])')"
 [ "$tenant_id" = "$GUID" ] && ok "manually supplied client tenant is stored" || ko "manual tenant lost: $tenant_id"
+tenant_purpose="$(cfg_json "$d1/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure"]["purpose"])')"
+[ "$tenant_purpose" = "client_resources" ] && ok "Azure tenant is machine-labeled client-only" || ko "Azure tenant purpose is ambiguous: $tenant_purpose"
+grep -q "Do not enter the Cooptimize tenant here" "$d1/stderr.txt" \
+  && grep -q "separate sign-in" "$d1/stderr.txt" \
+  && ok "onboarding preserves the client/Cooptimize identity boundary" || ko "dual-identity boundary is not explicit"
 power_bi="$(cfg_json "$d1/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["integrations"]["power_bi"])')"
 [ "$power_bi" = "True" ] && ok "Power BI MCP can be enabled WITH a tenant" || ko "power_bi should be True with tenant: $power_bi"
 grep -q "Review" "$d1/stderr.txt" && grep -q "Destination:" "$d1/stderr.txt" \
@@ -147,7 +152,7 @@ d2="$(mktemp -d "$COOP_DIR/c2.XXXXXX")"
 out2="$(printf 'y\n\n\nn\n\n' | env PATH="$COOP_DIR/azbin:$PATH" HOME="$d2" COOP_DIR="$d2" COOP_AZ_BIN="$COOP_AZ_BIN" \
   "$PY" "$ROOT/scripts/onboard.py" onboard --config-only 2>&1 >/dev/null)"
 case "$out2" in
-  *"Use this tenant for Coop's Fabric and Power BI access?"*)
+  *"Use this as the client resource tenant for Fabric and Power BI?"*)
     ok "detected-tenant prompt asks about Fabric/Power BI access" ;;
   *) ko "detected-tenant prompt wrong: $out2" ;;
 esac
@@ -181,7 +186,7 @@ out2b="$(printf 'y\ny\n\n\n\nn\n\n' | HOME="$d2b" COOP_DIR="$d2b" COOP_AZ_BIN="$
   "$PY" "$ROOT/scripts/onboard.py" onboard --config-only 2>&1 >/dev/null)"
 tenant2b="$(cfg_json "$d2b/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure"]["tenant_id"])')"
 case "$out2b" in
-  *"Sign in now so Coop can detect your tenant automatically?"*)
+  *"Sign in now so Coop can detect the client tenant automatically?"*)
     [ "$tenant2b" = "tenant-after-login" ] && ok "Azure sign-in automatically detects tenant" || ko "tenant not detected after login: $tenant2b" ;;
   *) ko "signed-out Azure CLI did not offer automatic login: $out2b" ;;
 esac
