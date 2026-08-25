@@ -313,6 +313,13 @@ if [ "$NO_PREREQS" != 1 ] && { [ "$_need_python" = 1 ] || [ "$_need_fabric_pytho
     coop_info "installing a compatible Python via dnf…"
     (sudo dnf install -y python3.13 || sudo dnf install -y python3.12 || sudo dnf install -y python3 python3-pip) >/dev/null 2>&1 \
       || (dnf install -y python3.13 || dnf install -y python3.12 || dnf install -y python3 python3-pip) >/dev/null 2>&1 || true
+  elif case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) true ;; *) false ;; esac; then
+    # Git Bash on Windows: the Python launcher/install manager first, winget second.
+    coop_info "installing a compatible Python via the Python manager…"
+    if command -v py >/dev/null 2>&1; then py install 3.12 >/dev/null 2>&1 || true; fi
+    if ! coop_fabric_python >/dev/null 2>&1 && command -v winget >/dev/null 2>&1; then
+      winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity >/dev/null 2>&1 || true
+    fi
   fi
   if [ -z "${COOP_TEST_STUB_PATH:-}" ] && [ -d "/opt/homebrew/bin" ]; then
     case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac

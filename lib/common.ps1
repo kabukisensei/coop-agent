@@ -156,6 +156,17 @@ function Get-CoopVenvPythonVersion([string]$Venv) {
 # Resolve a Python interpreter supported by ms-fabric-cli (<3.14, >=3.10).
 # Prefer 3.13, then 3.12; accept a compatible generic python as a fallback.
 # COOP_FABRIC_PYTHON is an explicit test/admin override.
+# Last ERROR line of captured pip output, trimmed — for actionable warnings.
+function Coop-PipErrorTail([string]$Out) {
+  $reason = ''
+  foreach ($line in ($Out -split "`r?`n")) {
+    if ($line -match 'ERROR:') { $reason = $line.Trim() }
+  }
+  if (-not $reason) { return '' }
+  if ($reason.Length -gt 160) { $reason = $reason.Substring(0, 157) + '...' }
+  return $reason
+}
+
 function Get-CoopFabricPython {
   if ($env:COOP_FABRIC_PYTHON) {
     if (Test-Path -LiteralPath $env:COOP_FABRIC_PYTHON -PathType Leaf) { return $env:COOP_FABRIC_PYTHON }
@@ -166,6 +177,24 @@ function Get-CoopFabricPython {
     if (-not $cmd -or -not $cmd.Source -or $cmd.Source -match '\\WindowsApps\\') { continue }
     $version = [string]((& $cmd.Source -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>$null | Out-String)).Trim()
     if ($version -match '^3\.(10|11|12|13)$') { return $cmd.Source }
+  }
+  # Side-by-side interpreters that are NOT on PATH:
+  #   Python install manager: %LOCALAPPDATA%\Python\bin\python3.1x.exe
+  #   winget user-scope:      %LOCALAPPDATA%\Programs\Python\Python31x\python.exe
+  #   winget machine-scope:   %ProgramFiles%\Python31x\python.exe
+  # A stale or broken launcher shim on PATH cannot shadow these direct probes.
+  $direct = @()
+  foreach ($minor in @('13', '12')) {
+    if ($env:LOCALAPPDATA) {
+      $direct += (Join-Path $env:LOCALAPPDATA "Python\bin\python3.$minor.exe")
+      $direct += (Join-Path $env:LOCALAPPDATA "Programs\Python\Python3$minor\python.exe")
+    }
+    if ($env:ProgramFiles) { $direct += (Join-Path $env:ProgramFiles "Python3$minor\python.exe") }
+  }
+  foreach ($candidate in $direct) {
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+    $version = [string]((& $candidate -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>$null | Out-String)).Trim()
+    if ($version -match '^3\.(10|11|12|13)$') { return $candidate }
   }
   $launcher = Get-Command py -ErrorAction SilentlyContinue
   if ($launcher) {
@@ -323,10 +352,15 @@ function Get-CoopExePipxVenv([string]$Command) {
     if ($json.Trim()) {
       try { $data = $json | ConvertFrom-Json } catch { $data = $null }
       if ($data -and $data.venvs) {
+        # pipx 1.x on Windows lists apps WITH their extension ("fab.exe") while
+        # older installs / unix list bare names — compare both forms (-eq is
+        # case-insensitive in PowerShell) so a healthy install never false-warns.
         $app = [System.IO.Path]::GetFileNameWithoutExtension($p)
+        $raw = [System.IO.Path]::GetFileName($p)
         foreach ($venv in $data.venvs.PSObject.Properties) {
-          $apps = @($venv.Value.metadata.main_package.apps)
-          if ($apps -contains $app) { return $venv.Name }
+          foreach ($a in @($venv.Value.metadata.main_package.apps)) {
+            if ([System.IO.Path]::GetFileNameWithoutExtension([string]$a) -eq $app -or [string]$a -eq $raw) { return $venv.Name }
+          }
         }
       }
     }

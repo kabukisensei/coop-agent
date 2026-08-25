@@ -437,6 +437,13 @@ try {
   $needPython = -not (Get-CoopPython)
   $needFabricPython = (-not $NO_FABRIC) -and (-not (Get-CoopFabricPython))
   if (($needPython -or $needFabricPython) -and (-not $NO_PREREQS)) {
+    # Ladder: the Python launcher/install manager first (`py install` covers both
+    # the classic py.exe and the newer Python install manager), then winget.
+    $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyLauncher) {
+      Coop-Info 'installing Python 3.12 via the Python manager…'
+      & $pyLauncher.Source install 3.12 *> $null
+    }
     if (Get-Command winget -ErrorAction SilentlyContinue) {
       Coop-Info 'installing Fabric-compatible Python 3.12 via winget…'
       & winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null

@@ -280,9 +280,20 @@ try {
     $pytoolTargets += if ($EDGE) { $pkg } else { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "$pkg==$tv" } else { $pkg } }
   }
   $fabricPython = Get-CoopFabricPython
-  if (-not $fabricPython -and (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Coop-Info 'Microsoft Fabric CLI needs Python 3.10–3.13; installing Python 3.12…'
-    & winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
+  if (-not $fabricPython) {
+    # Ladder: the Python launcher/install manager first (`py install` covers both
+    # the classic py.exe and the newer Python install manager), then winget.
+    # Machines with only Python 3.14 (e.g. pymanager's pythoncore-3.14) get a
+    # compatible side-by-side interpreter instead of an unrepairable warning.
+    $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyLauncher) {
+      Coop-Info 'Microsoft Fabric CLI needs Python 3.10–3.13; installing Python 3.12…'
+      & $pyLauncher.Source install 3.12 *> $null
+      $fabricPython = Get-CoopFabricPython
+    }
+    if (-not $fabricPython -and (Get-Command winget -ErrorAction SilentlyContinue)) {
+      Coop-Info 'Microsoft Fabric CLI needs Python 3.10–3.13; installing Python 3.12 via winget…'
+      & winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
     foreach ($d in @(
       (Join-Path $env:ProgramFiles 'Python312'),
       (Join-Path $env:ProgramFiles 'Python312\Scripts'),
@@ -291,7 +302,8 @@ try {
     )) {
       if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) { $env:PATH = "$d;$env:PATH" }
     }
-    $fabricPython = Get-CoopFabricPython
+      $fabricPython = Get-CoopFabricPython
+    }
   }
   $extensionSpecs = @()
   foreach ($pkg in @(Coop-ManifestKeys 'extensions')) {
@@ -333,14 +345,17 @@ finally {
 $script:FCC_PIN = ''
 if (-not $EDGE) { $script:FCC_PIN = Coop-ManifestObjectGet 'python_tools' 'fabric-cicd' }
 if ((Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package ms-fabric-cli ')) {
+  # Keep the tail of pip's output: a pin that cannot resolve (e.g. Requires-Python
+  # <3.14 vs a 3.14 venv) must say WHY instead of failing silently.
+  $injectOut = ''
   if ($script:FCC_PIN) {
-    & pipx inject ms-fabric-cli "fabric-cicd==$($script:FCC_PIN)" --force > $null 2>&1
+    $injectOut = (& pipx inject ms-fabric-cli "fabric-cicd==$($script:FCC_PIN)" --force 2>&1 | Out-String)
     if ($LASTEXITCODE -eq 0) { Coop-Ok "fabric-cicd (library) pinned to tested $($script:FCC_PIN)" }
-    else { Coop-Warn "failed to pin fabric-cicd to $($script:FCC_PIN) in the ms-fabric-cli environment"; $script:UpdateFailures++ }
+    else { Coop-Warn "failed to pin fabric-cicd to $($script:FCC_PIN) in the ms-fabric-cli environment$(Coop-PipErrorTail $injectOut)"; $script:UpdateFailures++ }
   } else {
-    & pipx inject ms-fabric-cli fabric-cicd --force > $null 2>&1
+    $injectOut = (& pipx inject ms-fabric-cli fabric-cicd --force 2>&1 | Out-String)
     if ($LASTEXITCODE -eq 0) { Coop-Ok 'fabric-cicd (library) refreshed' }
-    else { Coop-Warn 'failed to refresh fabric-cicd in the ms-fabric-cli environment'; $script:UpdateFailures++ }
+    else { Coop-Warn "failed to refresh fabric-cicd in the ms-fabric-cli environment$(Coop-PipErrorTail $injectOut)"; $script:UpdateFailures++ }
   }
 }
 if ($env:COOP_FLEET_TEST_MODE -eq '1') { if ($script:UpdateFailures -gt 0) { exit 1 } else { exit 0 } }
