@@ -166,7 +166,18 @@ fi
 exit 1
 SH
 chmod +x "$az_login_stub"
-out2b="$(printf 'y\ny\n\n\n\nn\n\n' | HOME="$d2b" COOP_DIR="$d2b" COOP_AZ_BIN="$az_login_stub" COOP_TEST_AZ_STATE="$d2b/signed-in" \
+az_login_state="$d2b/signed-in"
+if command -v cygpath >/dev/null 2>&1; then
+  az_login_stub_bat="$d2b/az-login-stub.bat"
+  printf '%s\r\n' \
+    '@echo off' \
+    'if "%1"=="login" (type nul > "%COOP_TEST_AZ_STATE%" & exit /b 0)' \
+    'if "%1"=="account" if "%2"=="show" if exist "%COOP_TEST_AZ_STATE%" (echo {"tenantId":"tenant-after-login","name":"Signed In Tenant"} & exit /b 0)' \
+    'exit /b 1' > "$az_login_stub_bat"
+  az_login_stub="$(cygpath -w "$az_login_stub_bat")"
+  az_login_state="$(cygpath -w "$az_login_state")"
+fi
+out2b="$(printf 'y\ny\n\n\n\nn\n\n' | HOME="$d2b" COOP_DIR="$d2b" COOP_AZ_BIN="$az_login_stub" COOP_TEST_AZ_STATE="$az_login_state" \
   "$PY" "$ROOT/scripts/onboard.py" onboard --config-only 2>&1 >/dev/null)"
 tenant2b="$(cfg_json "$d2b/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure"]["tenant_id"])')"
 case "$out2b" in
