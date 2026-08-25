@@ -640,41 +640,38 @@ function Sync-CoopExtDeps {
     Coop-Warn "extension pi-ai/pi-tui need realignment to pi $ver but npm is missing — install Node.js, then: coop sync"
     return
   }
-  # Skewed: drop the lockfile (the thing pinning the stale hoist) so npm re-resolves
-  # against the overrides, then reinstall.
+  # Skewed: replace ONLY the two shared libraries. Removing npm's root and hidden
+  # lock inventories prevents a manually damaged tree from being credited as the
+  # locked version. --ignore-scripts guarantees this repair cannot rebuild an
+  # unrelated native dependency such as context-mode's better-sqlite3.
   Coop-Info "aligning extension pi-ai / pi-tui to the agent ($ver; tree has $treeAi)…"
-  Remove-Item -LiteralPath (Join-Path $npmDir 'package-lock.json') -Force -ErrorAction SilentlyContinue
-  $npmOut = @()
-  Push-Location $npmDir; try { $npmOut = @(& $npm install 2>&1) } catch { $npmOut = @($_) } finally { Pop-Location }
-  $r = Invoke-Align -Check
-  if ($r.rc -eq 10) {
-    # A stale hoist can survive an in-place install. Remove and reinstall ONLY the
-    # two shared libraries, preserving the extension fleet and native dependencies
-    # such as context-mode's better-sqlite3. A full node_modules rebuild needlessly
-    # invokes node-gyp on Windows and can turn a repairable skew into a broken tree.
-    $scope = Join-Path $npmDir 'node_modules\@earendil-works'
-    $ai = Join-Path $scope 'pi-ai'
-    $tui = Join-Path $scope 'pi-tui'
-    $bak = Join-Path $npmDir '.coop-extdeps-backup'
+  $scope = Join-Path $npmDir 'node_modules\@earendil-works'
+  $ai = Join-Path $scope 'pi-ai'
+  $tui = Join-Path $scope 'pi-tui'
+  $bak = Join-Path $npmDir '.coop-extdeps-backup'
+  Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path $bak | Out-Null
+  if (Test-Path -LiteralPath $ai) { Move-Item -LiteralPath $ai -Destination (Join-Path $bak 'pi-ai') -Force }
+  if (Test-Path -LiteralPath $tui) { Move-Item -LiteralPath $tui -Destination (Join-Path $bak 'pi-tui') -Force }
+  Remove-Item -LiteralPath (Join-Path $npmDir 'package-lock.json'), (Join-Path $npmDir 'node_modules\.package-lock.json') -Force -ErrorAction SilentlyContinue
+  $npmOut = @(); $reinstallOk = $false
+  Push-Location $npmDir
+  try {
+    $npmOut = @(& $npm install --no-save --ignore-scripts --no-audit --no-fund ("@earendil-works/pi-ai@" + $ver) ("@earendil-works/pi-tui@" + $ver) 2>&1)
+    $reinstallOk = ($LASTEXITCODE -eq 0)
+  } catch { $npmOut = @($_) } finally { Pop-Location }
+  if ($reinstallOk) {
     Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force -Path $bak | Out-Null
-    if (Test-Path -LiteralPath $ai) { Move-Item -LiteralPath $ai -Destination (Join-Path $bak 'pi-ai') -Force }
-    if (Test-Path -LiteralPath $tui) { Move-Item -LiteralPath $tui -Destination (Join-Path $bak 'pi-tui') -Force }
-    $reinstallOk = $false
-    Push-Location $npmDir; try { $npmOut = @(& $npm install 2>&1); $reinstallOk = ($LASTEXITCODE -eq 0) } catch { $npmOut = @($_) } finally { Pop-Location }
-    if ($reinstallOk) {
-      Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
-    } else {
-      Remove-Item -LiteralPath $ai, $tui -Recurse -Force -ErrorAction SilentlyContinue
-      New-Item -ItemType Directory -Force -Path $scope | Out-Null
-      if (Test-Path -LiteralPath (Join-Path $bak 'pi-ai')) { Move-Item -LiteralPath (Join-Path $bak 'pi-ai') -Destination $ai -Force }
-      if (Test-Path -LiteralPath (Join-Path $bak 'pi-tui')) { Move-Item -LiteralPath (Join-Path $bak 'pi-tui') -Destination $tui -Force }
-      Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
-      $detail = ((@($npmOut | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }) | Select-Object -Last 8) -join ' | ')
-      Coop-Warn ("extension realignment reinstall failed — restored the previous shared libraries{0} — check your network, then: coop doctor --fix" -f $(if ($detail) { ": $detail" } else { '' }))
-    }
-    $r = Invoke-Align -Check
+  } else {
+    Remove-Item -LiteralPath $ai, $tui -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $scope | Out-Null
+    if (Test-Path -LiteralPath (Join-Path $bak 'pi-ai')) { Move-Item -LiteralPath (Join-Path $bak 'pi-ai') -Destination $ai -Force }
+    if (Test-Path -LiteralPath (Join-Path $bak 'pi-tui')) { Move-Item -LiteralPath (Join-Path $bak 'pi-tui') -Destination $tui -Force }
+    Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
+    $detail = ((@($npmOut | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }) | Select-Object -Last 8) -join ' | ')
+    Coop-Warn ("extension realignment reinstall failed — restored the previous shared libraries{0} — check your network, then: coop doctor --fix" -f $(if ($detail) { ": $detail" } else { '' }))
   }
+  $r = Invoke-Align -Check
   if ($r.rc -eq 0) { Coop-Ok "extension pi-ai / pi-tui aligned to $ver" }
   elseif ($r.rc -eq 11) { Coop-Warn (Format-TooOld $r.parts) }
   else { Coop-Warn "could not fully align extension pi-ai/pi-tui to $ver — close any running coop session, then: coop doctor --fix" }

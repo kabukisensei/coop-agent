@@ -730,44 +730,34 @@ EOF
     coop_warn "extension pi-ai/pi-tui need realignment to pi $ver but npm is missing" "install Node.js, then: coop sync"
     return 0
   fi
-  # Skewed: drop the lockfile (the thing pinning the stale hoist) so npm re-resolves
-  # against the overrides, then reinstall.
+  # Skewed: replace ONLY the two shared libraries. Removing npm's root and hidden
+  # lock inventories prevents a manually damaged tree from being credited as the
+  # locked version. --ignore-scripts guarantees this repair cannot rebuild an
+  # unrelated native dependency such as context-mode's better-sqlite3.
   coop_info "aligning extension pi-ai / pi-tui to the agent ($ver; tree has ${tree_ai:-?})…"
-  rm -f "$npm_dir/package-lock.json" 2>/dev/null || true
-  ( cd "$npm_dir" && npm install >/dev/null 2>&1 ) || true
-  # Re-check AND re-parse the fields (not just the rc): if the reinstall surfaces a
+  local scope="$npm_dir/node_modules/@earendil-works"
+  local ai="$scope/pi-ai" tui="$scope/pi-tui" bak="$npm_dir/.coop-extdeps-backup"
+  rm -rf "$bak" 2>/dev/null || true; mkdir -p "$bak"
+  [ -d "$ai" ] && mv "$ai" "$bak/pi-ai" 2>/dev/null || true
+  [ -d "$tui" ] && mv "$tui" "$bak/pi-tui" 2>/dev/null || true
+  rm -f "$npm_dir/package-lock.json" "$npm_dir/node_modules/.package-lock.json" 2>/dev/null || true
+  if ( cd "$npm_dir" && npm install --no-save --ignore-scripts --no-audit --no-fund \
+      "@earendil-works/pi-ai@$ver" "@earendil-works/pi-tui@$ver" >/dev/null 2>&1 ); then
+    rm -rf "$bak" 2>/dev/null || true
+  else
+    rm -rf "$ai" "$tui" 2>/dev/null || true; mkdir -p "$scope"
+    [ -d "$bak/pi-ai" ] && mv "$bak/pi-ai" "$ai" 2>/dev/null || true
+    [ -d "$bak/pi-tui" ] && mv "$bak/pi-tui" "$tui" 2>/dev/null || true
+    rm -rf "$bak" 2>/dev/null || true
+    coop_warn "extension realignment reinstall failed — restored the previous shared libraries" "check your network, then: coop doctor --fix"
+  fi
+  # Re-check AND re-parse the fields (not just the rc): if the install surfaces a
   # too-old agent (rc 11), the final message must name the fresh offending ext/floor.
-  # `|| rc=$?` keeps the rc capture safe under a caller's `set -e`.
   rc=0
   line="$("$py" "$COOP_ROOT/lib/_extdeps.py" align "$agent_dir" "$ver" --check 2>/dev/null)" || rc=$?
   read -r tree_ai _ _ _ _ _ req ext <<EOF
 $line
 EOF
-  if [ "$rc" = 10 ]; then
-    # A stale hoist can survive an in-place install. Remove and reinstall ONLY the
-    # two shared libraries, preserving the extension fleet and native dependencies
-    # such as context-mode's better-sqlite3. A full node_modules rebuild needlessly
-    # invokes node-gyp on Windows and can turn a repairable skew into a broken tree.
-    local scope="$npm_dir/node_modules/@earendil-works"
-    local ai="$scope/pi-ai" tui="$scope/pi-tui" bak="$npm_dir/.coop-extdeps-backup"
-    rm -rf "$bak" 2>/dev/null || true; mkdir -p "$bak"
-    [ -d "$ai" ] && mv "$ai" "$bak/pi-ai" 2>/dev/null || true
-    [ -d "$tui" ] && mv "$tui" "$bak/pi-tui" 2>/dev/null || true
-    if ( cd "$npm_dir" && npm install >/dev/null 2>&1 ); then
-      rm -rf "$bak" 2>/dev/null || true
-    else
-      rm -rf "$ai" "$tui" 2>/dev/null || true; mkdir -p "$scope"
-      [ -d "$bak/pi-ai" ] && mv "$bak/pi-ai" "$ai" 2>/dev/null || true
-      [ -d "$bak/pi-tui" ] && mv "$bak/pi-tui" "$tui" 2>/dev/null || true
-      rm -rf "$bak" 2>/dev/null || true
-      coop_warn "extension realignment reinstall failed — restored the previous shared libraries" "check your network, then: coop doctor --fix"
-    fi
-    rc=0
-    line="$("$py" "$COOP_ROOT/lib/_extdeps.py" align "$agent_dir" "$ver" --check 2>/dev/null)" || rc=$?
-    read -r tree_ai _ _ _ _ _ req ext <<EOF
-$line
-EOF
-  fi
   case "$rc" in
     0)  coop_ok "extension pi-ai / pi-tui aligned to $ver" ;;
     11) _coop_ext_too_old "$ver" "$req" "$ext" ;;

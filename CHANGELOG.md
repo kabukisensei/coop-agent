@@ -6,6 +6,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- Shared Pi-library skew repair now replaces only exact `pi-ai`/`pi-tui`
+  packages with lifecycle scripts disabled, so a repair cannot rebuild unrelated
+  native dependencies such as `context-mode`'s `better-sqlite3` on Windows.
 - Windows sync now preserves complete extension package names when stripping
   the `npm:` transport prefix; scoped packages no longer become invalid names
   during exact-pin/shared-library convergence.

@@ -74,7 +74,7 @@ try {
   # convergence and postcondition verification itself, so no harness-side
   # installation happens here.
   $env:PATH = "$(Split-Path -Parent $PiBin);" + $env:PATH
-  $syncOut = & (Join-Path $RepoRoot 'scripts\sync.ps1') 2>&1
+  $syncOut = & (Join-Path $RepoRoot 'scripts\sync.ps1') *>&1
   $syncRc = $LASTEXITCODE
   $syncText = $syncOut | Out-String
   if ($syncRc -ne 0) {
@@ -163,7 +163,7 @@ child.once("close", (code) => console.log(JSON.stringify({ code, gotState, event
   else { Ko "RPC startup unusable: $rpcOut" }
 
   # --- 8. Second sync idempotent --------------------------------------------------
-  $sync2 = & (Join-Path $RepoRoot 'scripts\sync.ps1') 2>&1
+  $sync2 = & (Join-Path $RepoRoot 'scripts\sync.ps1') *>&1
   $sync2Rc = $LASTEXITCODE
   $sync2Text = $sync2 | Out-String
   if ($sync2Rc -eq 0 -and $sync2Text -match 'Already at release version') {
