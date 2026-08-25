@@ -282,10 +282,17 @@ if [ "$NO_PREREQS" != 1 ] && ! have git; then
 fi
 have git && coop_ok "git present ($(git --version 2>/dev/null | head -1))" || coop_warn "git not found — install Git (mac: 'xcode-select --install' or 'brew install git'; linux: your package manager)."
 
-# Python
-if [ "$NO_PREREQS" != 1 ] && ! coop_python >/dev/null; then
+# Python. General Coop tooling can use any current Python 3, but ms-fabric-cli
+# currently requires <3.14. Treat those as separate prerequisites: a machine
+# with only Python 3.14 still needs a compatible interpreter installed alongside
+# it when Fabric support is enabled.
+_need_python=0
+_need_fabric_python=0
+coop_python >/dev/null || _need_python=1
+if [ "$NO_FABRIC" != 1 ] && ! coop_fabric_python >/dev/null; then _need_fabric_python=1; fi
+if [ "$NO_PREREQS" != 1 ] && { [ "$_need_python" = 1 ] || [ "$_need_fabric_python" = 1 ]; }; then
   if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
-    coop_info "installing python via brew…"
+    coop_info "installing Fabric-compatible Python via brew…"
     # python@3.12/@3.13 are keg-only — brew does NOT link `python3`, and the
     # unversioned symlinks live in <keg>/libexec/bin, so add that dir to PATH.
     # (Not the unversioned `python` formula: it is 3.14+, which ms-fabric-cli rejects.)
@@ -299,13 +306,17 @@ if [ "$NO_PREREQS" != 1 ] && ! coop_python >/dev/null; then
     done
     unset _pyc _pylib
   elif have apt-get; then
-    coop_info "installing python via apt…"
-    (sudo apt-get update -y && sudo apt-get install -y python3 python3-pip python3-venv) >/dev/null 2>&1 || apt-get install -y python3 python3-pip python3-venv >/dev/null 2>&1 || true
+    coop_info "installing a compatible Python via apt…"
+    (sudo apt-get update -y && (sudo apt-get install -y python3.13 python3.13-venv || sudo apt-get install -y python3.12 python3.12-venv || sudo apt-get install -y python3 python3-pip python3-venv)) >/dev/null 2>&1 \
+      || (apt-get install -y python3.13 python3.13-venv || apt-get install -y python3.12 python3.12-venv || apt-get install -y python3 python3-pip python3-venv) >/dev/null 2>&1 || true
   elif have dnf; then
-    coop_info "installing python via dnf…"
-    (sudo dnf install -y python3 python3-pip) >/dev/null 2>&1 || dnf install -y python3 python3-pip >/dev/null 2>&1 || true
+    coop_info "installing a compatible Python via dnf…"
+    (sudo dnf install -y python3.13 || sudo dnf install -y python3.12 || sudo dnf install -y python3 python3-pip) >/dev/null 2>&1 \
+      || (dnf install -y python3.13 || dnf install -y python3.12 || dnf install -y python3 python3-pip) >/dev/null 2>&1 || true
   fi
-  [ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
+  if [ -z "${COOP_TEST_STUB_PATH:-}" ] && [ -d "/opt/homebrew/bin" ]; then
+    case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
+  fi
   hash -r 2>/dev/null || true
 fi
 if _py="$(coop_python)"; then
@@ -313,6 +324,15 @@ if _py="$(coop_python)"; then
 else
   coop_warn "python not found — install Python 3.10+ (mac: 'brew install python'; linux: 'apt install python3')."
 fi
+if [ "$NO_FABRIC" != 1 ]; then
+  if _fabric_py="$(coop_fabric_python)"; then
+    coop_ok "Fabric-compatible Python present ($("$_fabric_py" --version 2>&1))"
+  else
+    coop_warn "Microsoft Fabric CLI needs Python 3.10–3.13 — install Python 3.12, then re-run: coop install"
+  fi
+  unset _fabric_py
+fi
+unset _need_python _need_fabric_python
 
 # Node.js
 if [ "$NO_PREREQS" != 1 ] && ! have node; then

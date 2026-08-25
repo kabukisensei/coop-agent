@@ -5,6 +5,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- Fresh installs now bootstrap a Fabric-compatible Python alongside an existing
+  Python 3.14 instead of treating any Python as sufficient and later failing to
+  install `ms-fabric-cli`.
+
 ## [0.22.3] — 2026-08-24
 
 ### Fixed
