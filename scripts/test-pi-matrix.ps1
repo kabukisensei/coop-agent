@@ -20,6 +20,19 @@ function Ok($m)  { Write-Host "  OK  $m"; $script:Pass++ }
 function Ko($m)  { Write-Host "  FAIL $m"; $script:Failed++ }
 function SkipM($m){ Write-Host "  --  $m"; $script:Skipped++ }
 
+# sync.ps1 deliberately writes user-facing status through Console.Error. A
+# directly invoked PowerShell script bypasses PowerShell's redirectable streams
+# in that case, so run it as a child process when the matrix needs to assert on
+# the complete CLI transcript.
+function Invoke-SyncCaptured {
+  $pwsh = (Get-Process -Id $PID).Path
+  $output = & $pwsh -NoProfile -File (Join-Path $RepoRoot 'scripts\sync.ps1') 2>&1
+  return [pscustomobject]@{
+    ExitCode = $LASTEXITCODE
+    Text = ($output | Out-String)
+  }
+}
+
 $T = Join-Path ([System.IO.Path]::GetTempPath()) ("coop-pi-matrix-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $T | Out-Null
 Write-Host "-- Pi $PiVersion matrix (root: $T)"
@@ -74,9 +87,10 @@ try {
   # convergence and postcondition verification itself, so no harness-side
   # installation happens here.
   $env:PATH = "$(Split-Path -Parent $PiBin);" + $env:PATH
-  $syncOut = & (Join-Path $RepoRoot 'scripts\sync.ps1') *>&1
-  $syncRc = $LASTEXITCODE
-  $syncText = $syncOut | Out-String
+  $syncResult = Invoke-SyncCaptured
+  $syncRc = $syncResult.ExitCode
+  $syncText = $syncResult.Text
+  Write-Host $syncText.TrimEnd()
   if ($syncRc -ne 0) {
     Ko ("production sync exited {0} (must be zero)" -f $syncRc)
     $syncText -split "`n" | Select-Object -Last 3 | ForEach-Object { Ko $_ }
@@ -163,9 +177,10 @@ child.once("close", (code) => console.log(JSON.stringify({ code, gotState, event
   else { Ko "RPC startup unusable: $rpcOut" }
 
   # --- 8. Second sync idempotent --------------------------------------------------
-  $sync2 = & (Join-Path $RepoRoot 'scripts\sync.ps1') *>&1
-  $sync2Rc = $LASTEXITCODE
-  $sync2Text = $sync2 | Out-String
+  $sync2Result = Invoke-SyncCaptured
+  $sync2Rc = $sync2Result.ExitCode
+  $sync2Text = $sync2Result.Text
+  Write-Host $sync2Text.TrimEnd()
   if ($sync2Rc -eq 0 -and $sync2Text -match 'Already at release version') {
     Ok "second sync is idempotent ('Already at release version')"
   } else { Ko "second sync not idempotent (exit $sync2Rc)" }
