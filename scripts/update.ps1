@@ -136,7 +136,7 @@ $UnitPiUpdate = {
 }
 
 $UnitPytoolUpgrade = {
-  param([string]$Pkg, [string]$Target, [string]$Python)
+  param([string]$Pkg, [string]$Target, [string]$Python, [string]$FetchPython)
   if (-not (Get-Command pipx -ErrorAction SilentlyContinue)) {
     return [pscustomobject]@{ ok = $false; msg = "skipping $Pkg (pipx missing) — run: coop install" }
   }
@@ -148,6 +148,7 @@ $UnitPytoolUpgrade = {
   }
   $pipxArgs = @('install')
   if ($installed) { $pipxArgs += '--force' }
+  if ($FetchPython) { $pipxArgs += $FetchPython }
   if ($Python) { $pipxArgs += @('--python', $Python) }
   $pipxArgs += $target
   & pipx @pipxArgs *> $null
@@ -280,6 +281,7 @@ try {
     $pytoolTargets += if ($EDGE) { $pkg } else { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "$pkg==$tv" } else { $pkg } }
   }
   $fabricPython = Get-CoopFabricPython
+  $fabricFetchPython = ''
   if (-not $fabricPython) {
     # Ladder: the Python launcher/install manager first (`py install` covers both
     # the classic py.exe and the newer Python install manager), then winget.
@@ -305,6 +307,18 @@ try {
       $fabricPython = Get-CoopFabricPython
     }
   }
+  if (-not $fabricPython -and (Get-Command pipx -ErrorAction SilentlyContinue)) {
+    $pipxInstallHelp = (& pipx install --help 2>&1 | Out-String)
+    if ($pipxInstallHelp -match '--fetch-python') {
+      $fabricPython = '3.12'
+      $fabricFetchPython = '--fetch-python=missing'
+      Coop-Info "Microsoft Fabric CLI will use pipx's standalone Python 3.12"
+    } elseif ($pipxInstallHelp -match '--fetch-missing-python') {
+      $fabricPython = '3.12'
+      $fabricFetchPython = '--fetch-missing-python'
+      Coop-Info "Microsoft Fabric CLI will use pipx's standalone Python 3.12"
+    }
+  }
   $extensionSpecs = @()
   foreach ($pkg in @(Coop-ManifestKeys 'extensions')) {
     $spec = Coop-ManifestExtensionSpec $pkg
@@ -326,7 +340,8 @@ try {
   Coop-Head '3/6  Coop tools + Fabric CLI (pipx)'
   for ($i = 0; $i -lt $PY_TOOLS.Count; $i++) {
     $toolPython = if ($PY_TOOLS[$i] -eq 'ms-fabric-cli') { $fabricPython } else { '' }
-    Coop-Unit $PY_TOOLS[$i] $UnitPytoolUpgrade @($PY_TOOLS[$i], $pytoolTargets[$i], $toolPython)
+    $toolFetchPython = if ($PY_TOOLS[$i] -eq 'ms-fabric-cli') { $fabricFetchPython } else { '' }
+    Coop-Unit $PY_TOOLS[$i] $UnitPytoolUpgrade @($PY_TOOLS[$i], $pytoolTargets[$i], $toolPython, $toolFetchPython)
     if (-not $script:CoopUnitLastOk) { $script:UpdateFailures++ }
   }
 

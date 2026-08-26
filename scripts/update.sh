@@ -91,7 +91,7 @@ _unit_pi_update() {
 }
 
 _unit_pytool_upgrade() {  # $1 = package
-  local pkg="$1" pin="" fabric_py=""
+  local pkg="$1" pin="" fabric_py="" fabric_fetch=""
   if [ "$EDGE" != 1 ]; then
     pin="$(coop_manifest_get "python_tools.$pkg")"
   fi
@@ -101,18 +101,29 @@ _unit_pytool_upgrade() {  # $1 = package
   local installed=0
   pipx list 2>/dev/null | grep "package $pkg " >/dev/null && installed=1
   if [ "$pkg" = "ms-fabric-cli" ]; then
-    fabric_py="$(coop_fabric_python)" || {
-      printf 'ms-fabric-cli needs Python 3.12 or 3.13 — install one, then re-run: coop update'
-      return 1
-    }
+    fabric_py="$(coop_fabric_python)" || fabric_py=""
+    if [ -z "$fabric_py" ]; then
+      if pipx install --help 2>&1 | grep -F -- '--fetch-python' >/dev/null; then
+        fabric_py="3.12"; fabric_fetch="--fetch-python=missing"
+      elif pipx install --help 2>&1 | grep -F -- '--fetch-missing-python' >/dev/null; then
+        fabric_py="3.12"; fabric_fetch="--fetch-missing-python"
+      else
+        printf 'ms-fabric-cli needs Python 3.12 or 3.13 — upgrade pipx or install one, then re-run: coop update'
+        return 1
+      fi
+    fi
   fi
   if [ -n "$pin" ]; then
     if [ -n "$fabric_py" ]; then
-      if pipx install --force --python "$fabric_py" "$pkg==$pin" >/dev/null 2>&1; then printf 'pinned %s to tested %s (Python %s)' "$pkg" "$pin" "$fabric_py"; return 0; fi
-      printf 'failed to pin %s to %s (try: pipx install --force --python "%s" %s==%s)' "$pkg" "$pin" "$fabric_py" "$pkg" "$pin"; return 1
+      if pipx install --force ${fabric_fetch:+"$fabric_fetch"} --python "$fabric_py" "$pkg==$pin" >/dev/null 2>&1; then printf 'pinned %s to tested %s (Python %s)' "$pkg" "$pin" "$fabric_py"; return 0; fi
+      printf 'failed to pin %s to %s with Python %s' "$pkg" "$pin" "$fabric_py"; return 1
     fi
     if pipx install --force "$pkg==$pin" >/dev/null 2>&1; then printf 'pinned %s to tested %s' "$pkg" "$pin"; return 0; fi
     printf 'failed to pin %s to %s (try: pipx install --force %s==%s)' "$pkg" "$pin" "$pkg" "$pin"; return 1
+  fi
+  if [ "$pkg" = "ms-fabric-cli" ]; then
+    if pipx install --force ${fabric_fetch:+"$fabric_fetch"} --python "$fabric_py" "$pkg" >/dev/null 2>&1; then printf '%s (Python %s)' "$pkg" "$fabric_py"; return 0; fi
+    printf 'upgrade failed: %s' "$pkg"; return 1
   fi
   if [ "$installed" = 0 ]; then
     if pipx install "$pkg" >/dev/null 2>&1; then printf 'installed missing %s' "$pkg"; return 0; fi

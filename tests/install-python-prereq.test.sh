@@ -14,7 +14,7 @@ mkdir -p "$BIN" "$KEG/libexec/bin" "$T/home/.local/bin" "$T/pipx-home" "$T/pipx-
 
 cat > "$BIN/uname" <<'SH'
 #!/bin/sh
-echo Darwin
+echo "${COOP_TEST_UNAME:-Darwin}"
 SH
 cat > "$BIN/python3" <<'SH'
 #!/bin/sh
@@ -77,6 +77,10 @@ SH
 cat > "$BIN/pipx" <<'SH'
 #!/bin/sh
 echo "PIPX $*" >> "$COOP_TEST_CALLS"
+if [ "$1 $2" = 'install --help' ]; then
+  echo '--fetch-python {always,missing,never}'
+  exit 0
+fi
 if [ "$1" = 'list' ]; then
   echo 'package coop-data-doc 1.1.1'
   echo 'package coop-sql-review 0.15.2'
@@ -129,3 +133,25 @@ fi
 grep -F "PIPX install --force --python $BIN/python3.13 ms-fabric-cli==1.7.0" "$CALLS" >/dev/null \
   || { echo 'Fabric CLI did not retain the existing compatible Python'; cat "$CALLS"; exit 1; }
 echo '  ✓ existing compatible Python is retained without redundant installation'
+
+# A Windows VM with Python 3.14 but no winget/py/pymanager must fall back to
+# pipx's own standalone-Python cache instead of requiring a system installer.
+: > "$CALLS"
+if ! COOP_TEST_UNAME=MINGW64_NT COOP_TEST_GENERIC_PY_VERSION=3.14.6 COOP_FLEET_TEST_MODE=1 \
+  bash "$ROOT/scripts/install.sh" --force >"$OUT" 2>&1; then
+  echo 'Windows Python 3.14-only standalone-fetch fixture failed unexpectedly'; tail -40 "$OUT"; cat "$CALLS"; exit 1
+fi
+grep -F 'PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0' "$CALLS" >/dev/null \
+  || { echo 'Fabric CLI did not fetch standalone Python 3.12 without Windows installers'; cat "$CALLS"; exit 1; }
+echo '  ✓ Windows install fetches standalone Python 3.12 without winget/py/pymanager'
+
+: > "$CALLS"
+if ! COOP_TEST_UNAME=MINGW64_NT COOP_TEST_GENERIC_PY_VERSION=3.14.6 COOP_FLEET_TEST_MODE=1 \
+  bash "$ROOT/scripts/update.sh" >"$OUT" 2>&1; then
+  echo 'Windows Python 3.14-only update fixture failed unexpectedly'; tail -40 "$OUT"; cat "$CALLS"; exit 1
+fi
+grep -F 'PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0' "$CALLS" >/dev/null \
+  || { echo 'Updater did not rebuild Fabric CLI with standalone Python 3.12'; cat "$CALLS"; exit 1; }
+grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force' "$CALLS" >/dev/null \
+  || { echo 'Updater did not reinject fabric-cicd after rebuilding Fabric CLI'; cat "$CALLS"; exit 1; }
+echo '  ✓ Windows update repairs an existing Python 3.14 Fabric environment'

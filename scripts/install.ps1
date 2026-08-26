@@ -178,7 +178,7 @@ $UnitExt = {
 }
 
 $UnitFabric = {
-  param([bool]$Force, [bool]$Edge, [string]$Pkg, [string]$Target, [string]$Fcc, [string]$Python)
+  param([bool]$Force, [bool]$Edge, [string]$Pkg, [string]$Target, [string]$Fcc, [string]$Python, [string]$FetchPython)
   $pipxBin = Join-Path $HOME '.local\bin'
   if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split ';') -notcontains $pipxBin)) {
     $env:PATH = "$pipxBin;$env:PATH"
@@ -225,6 +225,7 @@ $UnitFabric = {
   $installArgs = { param([bool]$WithForce, [string]$Spec)
     $a = @('install')
     if ($WithForce) { $a += '--force' }
+    if ($FetchPython) { $a += $FetchPython }
     $a += @('--python', $Python, $Spec)
     return $a
   }
@@ -242,12 +243,19 @@ $UnitFabric = {
     }
     if ($installed) {
       if ($Edge) {
-        # Edge means upstream/latest for EXISTING installs too.
-        & $runPipx @('upgrade', $Pkg)
+        # Reinstall explicitly so an existing unsupported 3.14 venv is repaired.
+        $pipxInstallArgs = & $installArgs $true $target
+        $rc = & $runPipx $pipxInstallArgs
+        if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to update $Pkg with Python $Python" } }
       } elseif ($expectedVer -and $installed -ne $expectedVer) {
         $pipxInstallArgs = & $installArgs $true $target
         $rc = & $runPipx $pipxInstallArgs
         if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to converge $Pkg to $expectedVer" } }
+      } elseif ($FetchPython) {
+        # A matching package version can still live in an unsupported 3.14 venv.
+        $pipxInstallArgs = & $installArgs $true $target
+        $rc = & $runPipx $pipxInstallArgs
+        if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to rebuild $Pkg with standalone Python $Python" } }
       }
     } else {
       $pipxInstallArgs = & $installArgs $false $target
@@ -260,7 +268,8 @@ $UnitFabric = {
   }
   # fabric-cicd is a Python LIBRARY (no CLI) — inject it into the Fabric CLI env.
   $fcc = if ($Fcc) { $Fcc } else { 'fabric-cicd' }
-  & $runPipx @('inject', $Pkg, $fcc)
+  $injectRc = & $runPipx @('inject', '--force', $Pkg, $fcc)
+  if ($injectRc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to inject $fcc into $Pkg" } }
   # A failed convergence must not read as success just because an OLD fab binary
   # is still on PATH — verify the installed version actually matches the pin.
   if (-not $Edge -and $expectedVer) {
@@ -475,8 +484,10 @@ try {
     if ($fabricPrereqPython) {
       $fabricPyVersion = (& $fabricPrereqPython --version 2>&1)
       Coop-Ok "Fabric-compatible Python present ($fabricPyVersion)"
+    } elseif ((Get-Command pipx -ErrorAction SilentlyContinue) -and ((& pipx install --help 2>&1 | Out-String) -match '--fetch-python')) {
+      Coop-Info "Fabric-compatible Python will be fetched into pipx's standalone cache"
     } else {
-      Coop-Warn "Microsoft Fabric CLI needs Python 3.10–3.13 — install Python 3.12, then re-run: coop install"
+      Coop-Warn "Microsoft Fabric CLI needs Python 3.10–3.13 — upgrade pipx or install Python 3.12, then re-run: coop install"
     }
   }
 
@@ -556,6 +567,17 @@ try {
   $fabricTarget = if (-not $EDGE) { $tv = Coop-ManifestGet -Key "python_tools.$FABRIC_PKG"; if ($tv) { "${FABRIC_PKG}==${tv}" } else { $FABRIC_PKG } } else { $FABRIC_PKG }
   $fabricCicd = if (-not $EDGE) { $tv = Coop-ManifestObjectGet 'python_tools' 'fabric-cicd'; if ($tv) { "fabric-cicd==${tv}" } else { 'fabric-cicd' } } else { 'fabric-cicd' }
   $fabricPython = Get-CoopFabricPython
+  $fabricFetchPython = ''
+  if (-not $fabricPython -and (Get-Command pipx -ErrorAction SilentlyContinue)) {
+    $pipxInstallHelp = (& pipx install --help 2>&1 | Out-String)
+    if ($pipxInstallHelp -match '--fetch-python') {
+      $fabricPython = '3.12'
+      $fabricFetchPython = '--fetch-python=missing'
+    } elseif ($pipxInstallHelp -match '--fetch-missing-python') {
+      $fabricPython = '3.12'
+      $fabricFetchPython = '--fetch-missing-python'
+    }
+  }
   $pytoolTargets = @()
   foreach ($pkg in $PY_TOOLS) {
     $pytoolTargets += if (-not $EDGE) { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "${pkg}==${tv}" } else { $pkg } } else { $pkg }
@@ -577,7 +599,7 @@ try {
   # --- 4. Microsoft Fabric CLI ----------------------------------------------
   Coop-Head '4/8  Microsoft Fabric CLI'
   if ($NO_FABRIC) { Coop-Info 'skipping Microsoft Fabric CLI (--no-fabric)' }
-  else { Install-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $EDGE, $FABRIC_PKG, $fabricTarget, $fabricCicd, $fabricPython) }
+  else { Install-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $EDGE, $FABRIC_PKG, $fabricTarget, $fabricCicd, $fabricPython, $fabricFetchPython) }
 
   # --- 5. Python tools (pipx) -----------------------------------------------
   Coop-Head '5/8  Coop tools (pipx)'

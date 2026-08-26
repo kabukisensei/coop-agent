@@ -5,6 +5,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- Windows install/update now repairs a Fabric CLI pipx environment that inherited
+  Python 3.14 even when the VM has no `winget`, `py`, or `pymanager`: pipx fetches
+  an isolated standalone Python 3.12, rebuilds `ms-fabric-cli`, and reinjects the
+  manifest-pinned `fabric-cicd` library.
+
 ## [0.22.5] — 2026-08-25
 
 ## [0.22.4] — 2026-08-25

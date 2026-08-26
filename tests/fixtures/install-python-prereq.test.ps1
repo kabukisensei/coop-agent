@@ -1,11 +1,12 @@
 ﻿#!/usr/bin/env pwsh
 # Execute the real Windows installer with an incompatible generic Python and an
-# initially absent explicit Fabric interpreter. The winget stub materializes the
-# compatible interpreter, proving install.ps1 does not mistake Python 3.14 for a
-# complete Fabric prerequisite.
+# initially absent explicit Fabric interpreter and no Windows Python installer.
+# pipx must fetch a standalone 3.12 runtime, proving install.ps1 does not require
+# winget, py, or pymanager to repair a Python 3.14-only workstation.
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $install = Join-Path $root 'scripts\install.ps1'
+$update = Join-Path $root 'scripts\update.ps1'
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-install-python-' + [guid]::NewGuid().ToString('N'))
 $bin = Join-Path $t 'bin'
 $calls = Join-Path $t 'calls'
@@ -49,17 +50,6 @@ if "%1"=="--version" echo Python 3.14.6
 if "%1"=="-c" echo 3.14
 exit /b 0
 '@
-  Write-Shim 'winget' @'
-#!/bin/sh
-echo "WINGET $*" >> "$COOP_TEST_CALLS"
-case "$*" in *Python.Python.3.12*) cp "$COOP_TEST_PY_TEMPLATE" "$COOP_FABRIC_PYTHON"; chmod +x "$COOP_FABRIC_PYTHON" ;; esac
-exit 0
-'@ @'
-@echo off
-echo WINGET %*>>"%COOP_TEST_CALLS%"
-echo %*| findstr /c:"Python.Python.3.12" >nul && copy /y "%COOP_TEST_PY_TEMPLATE%" "%COOP_FABRIC_PYTHON%" >nul
-exit /b 0
-'@
   Write-Shim 'pi' @'
 #!/bin/sh
 [ "$1" = "--version" ] && echo 'pi 0.84.3'
@@ -68,6 +58,18 @@ exit 0
 @echo off
 if "%1"=="--version" echo pi 0.84.3
 exit /b 0
+'@
+  Write-Shim 'git' @'
+#!/bin/sh
+[ "$1" = "--version" ] && { echo 'git version 2.50.0'; exit 0; }
+exit 1
+'@ @'
+@echo off
+if "%1"=="--version" (
+  echo git version 2.50.0
+  exit /b 0
+)
+exit /b 1
 '@
   Write-Shim 'npm' "#!/bin/sh`nexit 0`n" "@echo off`r`nexit /b 0`r`n"
   Write-Shim 'pipx' @'
@@ -80,6 +82,10 @@ exit 0
 '@ @'
 @echo off
 echo PIPX %*>>"%COOP_TEST_CALLS%"
+if "%1"=="install" if "%2"=="--help" (
+  echo --fetch-python {always,missing,never}
+  exit /b 0
+)
 if "%1"=="list" (
   echo package coop-data-doc 1.1.1
   echo package coop-sql-review 0.15.2
@@ -115,9 +121,21 @@ exit /b 0
   $ErrorActionPreference = $oldPreference
   if ($rc -ne 0) { Write-Error "install fixture exited $rc`n$output`n$(Get-Content $calls -Raw)" }
   $transcript = Get-Content $calls -Raw
-  if ($transcript -notlike '*WINGET install --id Python.Python.3.12*') { Write-Error "Python 3.14-only install did not invoke winget for Python 3.12`n$transcript" }
-  if ($transcript -notlike "*PIPX install --force --python $fabricPython ms-fabric-cli==1.7.0*") { Write-Error "Fabric CLI did not use the bootstrapped interpreter`n$transcript" }
-  Write-Host '  OK  Windows installer bootstraps and uses a compatible Fabric interpreter'
+  if ($transcript -like '*WINGET*') { Write-Error "Python 3.14-only install unexpectedly required winget`n$transcript" }
+  if ($transcript -notlike '*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0*') { Write-Error "Fabric CLI did not fetch and use a standalone Python 3.12`n$transcript" }
+  Write-Host '  OK  Windows installer fetches a standalone Fabric Python without winget/py/pymanager'
+
+  [System.IO.File]::WriteAllText($calls, '')
+  $oldPreference = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $output = & $update 2>&1 | Out-String
+  $rc = $LASTEXITCODE
+  $ErrorActionPreference = $oldPreference
+  if ($rc -ne 0) { Write-Error "update fixture exited $rc`n$output`n$(Get-Content $calls -Raw)" }
+  $transcript = Get-Content $calls -Raw
+  if ($transcript -notlike '*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0*') { Write-Error "Updater did not rebuild Fabric CLI with standalone Python 3.12`n$transcript" }
+  if ($transcript -notlike '*PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force*') { Write-Error "Updater did not reinject fabric-cicd after rebuilding Fabric CLI`n$transcript" }
+  Write-Host '  OK  Windows updater repairs an existing Python 3.14 Fabric environment'
 }
 finally {
   foreach ($name in $saved.Keys) {

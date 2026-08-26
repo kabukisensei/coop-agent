@@ -138,11 +138,18 @@ _pipx_installed_version() {
 
 _unit_fabric() {
   have pipx || { printf 'skipping Fabric CLI (pipx missing)'; return 1; }
-  local target="$FABRIC_PKG" fabric_py
-  fabric_py="$(coop_fabric_python)" || {
-    printf 'Microsoft Fabric CLI needs Python 3.12 or 3.13 — install one, then re-run: coop install'
-    return 1
-  }
+  local target="$FABRIC_PKG" fabric_py="" fabric_fetch=""
+  fabric_py="$(coop_fabric_python)" || fabric_py=""
+  if [ -z "$fabric_py" ]; then
+    if pipx install --help 2>&1 | grep -F -- '--fetch-python' >/dev/null; then
+      fabric_py="3.12"; fabric_fetch="--fetch-python=missing"
+    elif pipx install --help 2>&1 | grep -F -- '--fetch-missing-python' >/dev/null; then
+      fabric_py="3.12"; fabric_fetch="--fetch-missing-python"
+    else
+      printf 'Microsoft Fabric CLI needs Python 3.12 or 3.13 — upgrade pipx or install Python 3.12, then re-run: coop install'
+      return 1
+    fi
+  fi
   if [ "$EDGE" != 1 ]; then
     local ver
     ver="$(coop_manifest_get "python_tools.$FABRIC_PKG")"
@@ -153,19 +160,23 @@ _unit_fabric() {
     local cur=""; cur="$(_pipx_installed_version "$FABRIC_PKG")"
     if [ -n "$cur" ]; then
       if [ "$EDGE" = 1 ]; then
-        # Edge means upstream/latest for EXISTING installs too.
-        pipx upgrade "$FABRIC_PKG" >/dev/null 2>&1 || true
+        # Reinstall explicitly so an existing unsupported 3.14 venv is repaired.
+        pipx install --force ${fabric_fetch:+"$fabric_fetch"} --python "$fabric_py" "$target" >/dev/null 2>&1 || true
       elif [ -n "${ver:-}" ] && [ "$cur" != "$ver" ]; then
-        if ! pipx install --force --python "$fabric_py" "$target" >/dev/null 2>&1; then
+        if ! pipx install --force ${fabric_fetch:+"$fabric_fetch"} --python "$fabric_py" "$target" >/dev/null 2>&1; then
           printf 'failed to converge %s to %s' "$FABRIC_PKG" "$ver"; return 1
         fi
         coop_info "converged $FABRIC_PKG $cur -> $ver"
+      elif [ -n "$fabric_fetch" ]; then
+        # The package pin may already match while its old venv still uses 3.14.
+        pipx install --force "$fabric_fetch" --python "$fabric_py" "$target" >/dev/null 2>&1 \
+          || { printf 'failed to rebuild %s with standalone Python %s' "$FABRIC_PKG" "$fabric_py"; return 1; }
       fi
     else
-      pipx install --python "$fabric_py" "$target" >/dev/null 2>&1 || true
+      pipx install ${fabric_fetch:+"$fabric_fetch"} --python "$fabric_py" "$target" >/dev/null 2>&1 || true
     fi
   else
-    pipx install --force --python "$fabric_py" "$target" >/dev/null 2>&1 || { printf 'failed to reinstall %s (%s)' "$FABRIC_PKG" "$target"; return 1; }
+    pipx install --force ${fabric_fetch:+"$fabric_fetch"} --python "$fabric_py" "$target" >/dev/null 2>&1 || { printf 'failed to reinstall %s (%s)' "$FABRIC_PKG" "$target"; return 1; }
   fi
   # fabric-cicd is a Python LIBRARY (no CLI), used for deploy validation — inject it
   # into the Fabric CLI's env so it's importable alongside `fab`. (doctor verifies it.)
@@ -334,8 +345,10 @@ fi
 if [ "$NO_FABRIC" != 1 ]; then
   if _fabric_py="$(coop_fabric_python)"; then
     coop_ok "Fabric-compatible Python present ($("$_fabric_py" --version 2>&1))"
+  elif have pipx && pipx install --help 2>&1 | grep -F -- '--fetch-python' >/dev/null; then
+    coop_info "Fabric-compatible Python will be fetched into pipx's standalone cache"
   else
-    coop_warn "Microsoft Fabric CLI needs Python 3.10–3.13 — install Python 3.12, then re-run: coop install"
+    coop_warn "Microsoft Fabric CLI needs Python 3.10–3.13 — upgrade pipx or install Python 3.12, then re-run: coop install"
   fi
   unset _fabric_py
 fi
