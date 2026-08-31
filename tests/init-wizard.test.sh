@@ -33,6 +33,44 @@ case "$text" in *"client: 'Test Client'"*) ok "client written" ;; *) ko "client 
 case "$text" in *"enabled: false"*) ok "Fabric disabled when declined" ;; *) ko "Fabric should be disabled" ;; esac
 case "$text" in *"coop_data_doc:"*) ok "data_doc tool written" ;; *) ko "data_doc missing" ;; esac
 
+# --- Fabric setup signs in inline and detects the tenant ----------------------
+az_login_stub="$TMP/az-login-stub"
+cat > "$az_login_stub" <<'SH'
+#!/bin/sh
+state="${COOP_TEST_AZ_STATE:?}"
+if [ "$1" = "login" ]; then touch "$state"; exit 0; fi
+if [ "$1 $2" = "account show" ] && [ -f "$state" ]; then
+  printf '%s\n' '{"tenantId":"tenant-from-login"}'
+  exit 0
+fi
+exit 1
+SH
+chmod +x "$az_login_stub"
+az_login_state="$TMP/az-signed-in"
+if command -v cygpath >/dev/null 2>&1; then
+  az_login_stub_bat="$TMP/az-login-stub.bat"
+  printf '%s\r\n' \
+    '@echo off' \
+    'if "%1"=="login" (type nul > "%COOP_TEST_AZ_STATE%" & exit /b 0)' \
+    'if "%1"=="account" if "%2"=="show" if exist "%COOP_TEST_AZ_STATE%" (echo {"tenantId":"tenant-from-login"} & exit /b 0)' \
+    'exit /b 1' > "$az_login_stub_bat"
+  az_login_stub="$(cygpath -w "$az_login_stub_bat")"
+  az_login_state="$(cygpath -w "$az_login_state")"
+fi
+answers \
+  "Cooptimize" "Login Client" "" "" "" "" "" "generic" "n" "y" "y" "" "n" "n" | \
+  COOP_AZ_BIN="$az_login_stub" COOP_TEST_AZ_STATE="$az_login_state" \
+  HOME="$TMP" "$PY" "$ROOT/lib/init_wizard.py" "$TMP/repo-login" > "$TMP/login.out" 2>&1
+login_text="$(cat "$TMP/repo-login/.coop/project.yml" 2>/dev/null)"
+case "$(cat "$TMP/login.out")" in
+  *"Sign in now so Coop can detect the client tenant automatically?"*) ok "Fabric setup offers inline Azure sign-in" ;;
+  *) ko "Fabric setup did not offer inline Azure sign-in" ;;
+esac
+case "$login_text" in
+  *"tenant_id: 'tenant-from-login'"*) ok "Azure login tenant written to project contract" ;;
+  *) ko "Azure login tenant was not detected" ;;
+esac
+
 # --- legacy --template still works --------------------------------------------
 mkdir -p "$TMP/legacy"
 HOME="$TMP" bash "$ROOT/bin/coop" init --template "$TMP/legacy" >/dev/null 2>&1

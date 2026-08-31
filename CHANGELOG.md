@@ -6,6 +6,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Changed
+- `coop init` can now run Azure CLI sign-in inside the project wizard and use
+  the detected tenant immediately, without requiring a separate terminal step.
 - Updated the tested `context-mode` extension pin from `1.0.162` to `1.0.169`,
   eliminating its stale-version warning and incorrect Pi source-build hint.
 - Shared-library convergence now bypasses a broken user-level `npm` shim and

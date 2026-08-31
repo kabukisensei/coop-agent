@@ -203,9 +203,17 @@ def run_azure_login() -> bool:
     az_cmd = os.environ.get("COOP_AZ_BIN", "az")
     try:
         if sys.platform == "win32" and az_cmd.lower().endswith((".bat", ".cmd")):
-            result = subprocess.run(["cmd.exe", "/c", az_cmd, "login"], stdout=sys.stderr, stderr=sys.stderr)
+            result = subprocess.run(
+                ["cmd.exe", "/c", az_cmd, "login", "--allow-no-subscriptions"],
+                stdout=sys.stderr,
+                stderr=sys.stderr,
+            )
         else:
-            result = subprocess.run([az_cmd, "login"], stdout=sys.stderr, stderr=sys.stderr)
+            result = subprocess.run(
+                [az_cmd, "login", "--allow-no-subscriptions"],
+                stdout=sys.stderr,
+                stderr=sys.stderr,
+            )
         return result.returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
