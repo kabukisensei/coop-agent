@@ -274,7 +274,7 @@ mkdir -p "$TMP/npm-broken" "$TMP/npm-fallback"
 printf '#!/bin/sh\nexit 0\n' > "$TMP/npm-broken/npm"
 printf '#!/bin/sh\n[ "$1" = "--version" ] && { echo 10.0.0; exit 0; }\nexit 1\n' > "$TMP/npm-fallback/npm"
 chmod +x "$TMP/npm-broken/npm" "$TMP/npm-fallback/npm"
-npm_selected="$(PATH="$TMP/npm-broken:$BASE_PATH:/opt/homebrew/bin" COOP_NPM_FALLBACK="$TMP/npm-fallback/npm" \
+npm_selected="$(PATH="$TMP/npm-broken:$BASE_PATH:/usr/local/bin:/opt/homebrew/bin" COOP_NPM_FALLBACK="$TMP/npm-fallback/npm" \
   COOP_ROOT="$ROOT" bash -c '. "'$ROOT'/lib/common.sh"; coop_working_npm')"
 [ "$npm_selected" = "$TMP/npm-fallback/npm" ] \
   && ok "broken npm shim falls back to a working managed launcher" \
