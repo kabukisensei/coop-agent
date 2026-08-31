@@ -34,6 +34,7 @@ const line=o=>process.stdout.write(JSON.stringify(o)+'\\n');
  if(mode==='hello-bad'){line({type:'hello',protocol_version:'2.0'});line({type:'complete'});process.exit(0)}
  if(mode==='hello-dup'){line({type:'hello',protocol_version:'1.1'});line({type:'hello',protocol_version:'1.1'});line({type:'complete'});process.exit(0)}
  if(mode==='no-hello'){line({type:'prompt',id:'q',kind:'text',message:'x',default:'',choices:[]});process.exit(0)}
+ if(mode==='early-close'){line({type:'hello',protocol_version:'1.1'});line({type:'prompt',id:'q',kind:'text',message:'x',default:'',choices:[]});process.exit(0)}
  if(mode==='large'){process.stdout.write(JSON.stringify({type:'notice',message:'x'.repeat(1024*1024+2)})+'\\n');return}
  if(mode==='missing'){process.exit(0)}
  if(mode==='duplicate'){line({type:'complete'});line({type:'complete'});return}
@@ -63,6 +64,11 @@ const line=o=>process.stdout.write(JSON.stringify(o)+'\\n');
   } };
   process.env.COOP_FIXTURE_MODE = "flow"; assert.equal(await runJsonlSetup({}, ctx), true);
   process.env.COOP_FIXTURE_MODE = "cancel"; assert.equal(await runJsonlSetup({}, { ...ctx, ui: { ...ctx.ui, input: async () => null } }), false);
+  process.env.COOP_FIXTURE_MODE = "early-close";
+  assert.equal(await runJsonlSetup({}, { ...ctx, ui: {
+    ...ctx.ui,
+    input: async () => { await new Promise((resolve) => setTimeout(resolve, 25)); return "answer"; },
+  } }), false, "early-close");
   for (const mode of ["error", "malformed", "large", "missing", "duplicate", "contradiction", "hello-bad", "hello-dup", "no-hello"]) {
     process.env.COOP_FIXTURE_MODE = mode; assert.equal(await runJsonlSetup({}, ctx), false, mode);
   }
@@ -71,6 +77,7 @@ const line=o=>process.stdout.write(JSON.stringify(o)+'\\n');
   process.env.PATH = oldPath;
   assert.ok(notices.some((n) => n.includes("diagnostic-tail")), "stderr tail reported on contradiction");
   assert.ok(notices.some((n) => n.includes("protocol")), "protocol failures reported");
+  assert.ok(notices.some((n) => /closed|input/.test(n)), "early wizard close is reported without an unhandled stdin error");
   console.log("  ✓ fake subprocess covers sequencing/select/checkbox/progress/cancel/framing/terminal errors/spawn/stderr");
 } else {
   console.log("  ✓ Windows subprocess execution remains covered by CI/manual .exe launch; unsafe shell fallback is impossible");

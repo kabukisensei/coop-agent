@@ -30,8 +30,9 @@ import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendi
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const SEVERITY = Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info")]);
 
@@ -608,6 +609,90 @@ export class JsonlLineDecoder {
   }
 }
 
+function expandHomePath(value: string): string {
+  if (value === "~") return homedir();
+  if (value.startsWith("~/") || value.startsWith("~\\")) return join(homedir(), value.slice(2));
+  return value;
+}
+
+function isDirectory(path: string): boolean {
+  try { return statSync(path).isDirectory(); }
+  catch { return false; }
+}
+
+function nearestExistingDirectory(cwd: string, value: string): string {
+  let current = resolve(cwd, expandHomePath(value || "."));
+  while (!isDirectory(current)) {
+    const parent = dirname(current);
+    if (parent === current) return resolve(cwd);
+    current = parent;
+  }
+  return current;
+}
+
+function childDirectories(path: string): string[] {
+  try {
+    return readdirSync(path, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() || (entry.isSymbolicLink() && isDirectory(join(path, entry.name))))
+      .map((entry) => entry.name)
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  } catch { return []; }
+}
+
+function displayPath(path: string, cwd: string): string {
+  const rel = relative(cwd, path);
+  return rel || ".";
+}
+
+/** Browse real folders with Pi's fuzzy selector. Typing filters the discovered
+ *  children, Enter opens one, and the returned path is relative to the config
+ *  folder where possible. Manual paste remains available as an escape hatch. */
+export async function renderPathPrompt(ctx: any, p: JsonlPrompt): Promise<string | null> {
+  const def = typeof p.default === "string" ? p.default : "";
+  if (typeof ctx.ui?.select !== "function") {
+    if (typeof ctx.ui?.input !== "function") return null;
+    const raw = await ctx.ui.input(`${p.message}  ·  Enter = ${def || "(blank)"}`, def);
+    if (raw === null || raw === undefined) return null;
+    return String(raw).trim() || def;
+  }
+
+  const cwd = typeof ctx.cwd === "string" && ctx.cwd ? resolve(ctx.cwd) : process.cwd();
+  const defaultAbs = resolve(cwd, expandHomePath(def || "."));
+  const defaultExists = isDirectory(defaultAbs);
+  let current = nearestExistingDirectory(cwd, def);
+  const MANUAL = "⌨ Type or paste a path…";
+
+  for (;;) {
+    const options: Array<{ label: string; path?: string; answer?: string }> = [];
+    if (def && !defaultExists) options.push({ label: `↩ Keep suggested path (not found): ${def}`, answer: def });
+    options.push({ label: `✓ Use this folder: ${displayPath(current, cwd)}`, path: current });
+    const parent = dirname(current);
+    if (parent !== current) options.push({ label: `↑ Parent: ${displayPath(parent, cwd)}`, path: parent });
+    for (const name of childDirectories(current)) {
+      const path = join(current, name);
+      options.push({ label: `📁 ${name}`, path });
+    }
+    options.push({ label: MANUAL });
+
+    const picked = await ctx.ui.select(`${p.message}  ·  Type to filter folders; Enter opens`, options.map((o) => o.label));
+    if (picked === null || picked === undefined) return null;
+    const selected = options.find((o) => o.label === picked);
+    if (!selected) continue;
+    if (selected.answer !== undefined) return selected.answer;
+    if (selected.label === MANUAL) {
+      if (typeof ctx.ui?.input !== "function") continue;
+      const raw = await ctx.ui.input(p.message, def);
+      if (raw === null || raw === undefined) return null;
+      return String(raw).trim() || def;
+    }
+    if (selected.label.startsWith("✓ ") && selected.path) {
+      if (isAbsolute(def)) return selected.path;
+      return relative(cwd, selected.path) || ".";
+    }
+    if (selected.path) current = selected.path;
+  }
+}
+
 /** Feature-detect `setup --transport jsonl` (cached per process). */
 let jsonlSupported: boolean | null = null;
 async function supportsJsonlTransport(pi: ExtensionAPI, ctx: any): Promise<boolean> {
@@ -641,7 +726,8 @@ export async function renderPrompt(ctx: any, p: JsonlPrompt): Promise<unknown> {
     if (typeof ctx.ui?.select !== "function") return null;
     return await askCheckbox(ctx, p);
   }
-  // text / path
+  if (p.kind === "path") return await renderPathPrompt(ctx, p);
+  // text
   if (typeof ctx.ui?.input !== "function") return null;
   const def = typeof p.default === "string" ? p.default : "";
   const raw = await ctx.ui.input(`${p.message}  ·  Enter = ${def || "(blank)"}`, def);
@@ -696,10 +782,18 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any): Promise<boolea
   const child = spawn(executable, ["setup", "--transport", "jsonl"], { cwd: ctx.cwd, stdio: ["pipe", "pipe", "pipe"], shell: false });
   let stderrTail = "", terminal: "complete" | "cancelled" | "error" | null = null, protocolError = "";
   let helloSeen = false;
-  const SUPPORTED_PROTOCOL_MAJOR = 1;
   child.stderr?.on("data", (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
+  child.stdin?.on("error", (e) => { protocolError ||= `wizard input closed: ${errMsg(e)}`; });
   const decoder = new JsonlLineDecoder();
   let chain = Promise.resolve();
+  const send = async (payload: object): Promise<void> => {
+    if (!child.stdin || child.stdin.destroyed || !child.stdin.writable) {
+      throw new Error("coop-data-doc closed before it accepted the wizard answer");
+    }
+    await new Promise<void>((resolveWrite, rejectWrite) => {
+      child.stdin.write(JSON.stringify(payload) + "\n", (error) => error ? rejectWrite(error) : resolveWrite());
+    });
+  };
   const accept = async (line: string): Promise<void> => {
     if (!line.trim()) return;
     let evt: JsonlEvent;
@@ -719,13 +813,10 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any): Promise<boolea
       if (terminal) throw new Error("prompt received after terminal event");
       const answer = await renderPrompt(ctx, evt);
       if (answer === null) {
-        child.stdin.write(JSON.stringify({ id: evt.id, cancelled: true }) + "\n");
+        await send({ id: evt.id, cancelled: true });
         return;
       }
-      child.stdin.write(JSON.stringify({ id: evt.id, answer }) + "\n");
-    } else if (evt.type === "hello") {
-      // Handshake from coop-data-doc >= 1.1.1. Informational: the protocol is
-      // version 1.x — a future major would warrant a bridge upgrade check here.
+      await send({ id: evt.id, answer });
     } else if (evt.type === "notice" || evt.type === "progress") {
       if (evt.message) notify(ctx, evt.message, "info");
     } else if (evt.type === "complete" || evt.type === "cancelled" || evt.type === "error") {

@@ -3,6 +3,9 @@
 // mapping pieces of the bridge — no live coop-data-doc subprocess required.
 // Imports the bundled extension's named exports (COOP_TEST_DIST set by tests/run.sh).
 import { strict as assert } from "node:assert";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
@@ -36,6 +39,30 @@ t("renderPrompt text → blank answer falls back to default", async () => {
   const ctx = { ui: { input: async () => "   " } };
   const answer = await renderPrompt(ctx, { type: "prompt", id: "q", kind: "text", message: "X", default: "fallback" });
   assert.equal(answer, "fallback");
+});
+
+t("renderPrompt path → discovers sibling folders and returns a relative path", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-path-picker-"));
+  const cwd = join(root, "current-project");
+  const sql = join(root, "sql-warehouse");
+  mkdirSync(cwd); mkdirSync(sql);
+  let calls = 0;
+  const ctx = { cwd, ui: {
+    select: async (_message, choices) => {
+      calls++;
+      if (calls === 1) {
+        const folder = choices.find((choice) => choice.includes("sql-warehouse"));
+        assert.ok(folder, "sibling folder should be discovered from the default's real parent");
+        return folder;
+      }
+      return choices.find((choice) => choice.startsWith("✓ Use this folder:"));
+    },
+  } };
+  const answer = await renderPrompt(ctx, {
+    type: "prompt", id: "sql_path", kind: "path", message: "SQL repo path", default: "../sql-repo",
+  });
+  assert.equal(answer, relative(cwd, sql));
+  assert.equal(calls, 2);
 });
 
 t("renderPrompt confirm → ui.confirm returns boolean", async () => {

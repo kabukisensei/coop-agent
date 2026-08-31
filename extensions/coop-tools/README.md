@@ -125,7 +125,9 @@ through Pi dialogs, and returns answers over stdin. No local/reduced wizard exis
   still get offered).
 - **`/setup-docs` command.** Run or re-run the full native questionnaire anytime.
   Existing config values prefill prompts. Completion/cancellation/error events and
-  process exit status must agree before the bridge reports success.
+  process exit status must agree before the bridge reports success. Repository-path
+  prompts browse real folders with a type-to-filter selector, so users can open a
+  nearby repo and store its relative path without typing an absolute path.
 - **Transport safety.** Stdout is strict LF-framed JSONL with a 1 MiB line limit;
   stderr is diagnostics only. Windows resolves `coop-data-doc.exe` directly and
   rejects `.cmd`/`.bat` shell shims. Older tool versions stop with upgrade guidance.

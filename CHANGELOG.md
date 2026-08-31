@@ -6,6 +6,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Changed
+- Embedded `coop-data-doc` setup now discovers nearby repository folders in a
+  type-to-filter path browser and reports early wizard exits cleanly.
 - `coop init` can now run Azure CLI sign-in inside the project wizard and use
   the detected tenant immediately, without requiring a separate terminal step.
 - Updated the tested `context-mode` extension pin from `1.0.162` to `1.0.169`,
