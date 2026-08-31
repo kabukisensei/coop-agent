@@ -7,10 +7,11 @@ T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 
 BIN="$T/bin"
+RUNNER_BIN="$T/runner-bin"
 KEG="$T/python312"
 CALLS="$T/calls"
 REAL_NODE="$(command -v node)"
-mkdir -p "$BIN" "$KEG/libexec/bin" "$T/home/.local/bin" "$T/pipx-home" "$T/pipx-bin" "$T/agent"
+mkdir -p "$BIN" "$RUNNER_BIN" "$KEG/libexec/bin" "$T/home/.local/bin" "$T/pipx-home" "$T/pipx-bin" "$T/agent" "$T/localappdata"
 
 cat > "$BIN/uname" <<'SH'
 #!/bin/sh
@@ -29,8 +30,28 @@ case "$1" in
 esac
 exit 0
 SH
-ln -s python3 "$BIN/python3.12"
-ln -s python3 "$BIN/python3.13"
+# Shadow every PATH-based Python name coop_fabric_python probes. The runner
+# directory below intentionally contains a compatible Python so this fixture
+# fails deterministically if any candidate leaks past the stubs.
+for _py_name in python3.10 python3.11 python3.12 python3.13 python; do
+  ln -s python3 "$BIN/$_py_name"
+done
+cat > "$BIN/py" <<'SH'
+#!/bin/sh
+exit 1
+SH
+cat > "$BIN/winget" <<'SH'
+#!/bin/sh
+exit 1
+SH
+cat > "$RUNNER_BIN/python" <<'SH'
+#!/bin/sh
+case "$1" in
+  --version) echo 'Python 3.11.9' ;;
+  -c) echo '3.11' ;;
+esac
+exit 0
+SH
 cat > "$KEG/libexec/bin/python3" <<'SH'
 #!/bin/sh
 case "$1" in
@@ -97,13 +118,15 @@ cat > "$BIN/az" <<'SH'
 #!/bin/sh
 echo 'azure-cli 2.80.0'
 SH
-chmod +x "$BIN"/* "$KEG/libexec/bin/python3"
+chmod +x "$BIN"/* "$RUNNER_BIN/python" "$KEG/libexec/bin/python3"
 
 export HOME="$T/home" COOP_DIR="$T/coop-dir" PIPX_HOME="$T/pipx-home" PIPX_BIN_DIR="$T/pipx-bin"
 export PI_CODING_AGENT_DIR="$T/agent" COOP_AGENT_DIR="$T/agent" COOP_NO_ONBOARD=1
+export LOCALAPPDATA="$T/localappdata"
 export COOP_TEST_CALLS="$CALLS" COOP_TEST_KEG="$KEG" COOP_TEST_REAL_NODE="$REAL_NODE"
 COOP_TEST_STUB_PATH="$BIN"; export COOP_TEST_STUB_PATH
-PATH="$BIN:/usr/bin:/bin"; export PATH
+unset COOP_FABRIC_PYTHON COOP_TEST_UNAME
+PATH="$BIN:$RUNNER_BIN:/usr/bin:/bin"; export PATH
 
 # Python 3.14 satisfies general Coop scripting but not ms-fabric-cli. The
 # installer must bootstrap 3.12 and pass that interpreter explicitly to pipx.
