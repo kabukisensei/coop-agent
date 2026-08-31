@@ -123,8 +123,8 @@ Pi extension in TypeScript. Use the three in `extensions/` as templates:
   status text — e.g. pi-better-openai's plan usage limits (5h+7d windows) — into the
   one bar via `footerData.getExtensionStatuses()`. To extend the footer, surface your
   extension's own status string the same way rather than adding a second bar; to tweak
-  the splash/footer rendering itself, edit this extension. It also wires vibes
-  (`setWorkingMessage`) and the `/coop-vibe` / `/coop-splash` commands
+  the splash/footer rendering itself, edit this extension. It also wires rotating
+  feature tips and easter eggs (`setWorkingMessage`) and the `/coop-vibe` / `/coop-splash` commands
   (`pi.registerCommand`).
 - `extensions/coop-guardrails/index.ts` — runtime **enforcement** of the governance
   rules (`docs/guardrails.md` only *asks* the model; this hooks the agent's tool calls

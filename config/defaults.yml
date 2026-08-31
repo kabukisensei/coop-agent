@@ -38,7 +38,7 @@ pi_extensions:
 
 # coop's own companion extensions (loaded from this repo via `pi -e`).
 coop_extensions:
-  - extensions/coop-powerline   # splash + footer segments + working vibes
+  - extensions/coop-powerline   # splash + footer segments + rotating feature tips
   - extensions/coop-tools       # native LLM tools: sql_review / dax_review / data_doc
   - extensions/coop-guardrails  # ENFORCES governance: never-commit-source + destructive-command confirm
 

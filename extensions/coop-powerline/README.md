@@ -1,6 +1,6 @@
 # coop-powerline
 
-Cooptimize's OWN footer, splash, and working vibes for Pi. coop-powerline
+Cooptimize's OWN footer, splash, and rotating feature discovery tips for Pi. coop-powerline
 renders its own bar via `ctx.ui.setFooter` and its own splash via
 `ctx.ui.setHeader` — it does **not** use a third-party powerline footer.
 (`pi-powerline-footer` was removed: its welcome overlay couldn't be disabled,
@@ -49,19 +49,18 @@ On `session_start` (UI sessions only) it installs a header via
 - the `COOPTIMIZE` wordmark in a navy → forest → olive → lime gradient,
 - the taglines `worker-owned analytics engineering` and
   `Microsoft Fabric · Power BI · D365 · SQL · DAX`,
-- a fresh working vibe.
+- a fresh working vibe or feature tip.
 
-### Working vibes
+### Working vibes & feature tips
 
 While the agent is thinking, `ctx.ui.setWorkingMessage` shows a rotating
-"working vibe" — sociocracy / democratic-workplace lines riffing on the
-D365 + Microsoft Fabric analytics stack (e.g. *"Forming a consent round on the
-bronze layer…"*). A new vibe is picked on `session_start` and again on every
-`turn_start`, so the line stays fresh.
+feature discovery tip teaching a tool, command, or workflow (e.g. *"Type /start anytime
+to open the Start Here menu of common tasks."*), alongside a small set of quiet easter eggs.
+A new tip is picked on `session_start` and again on every `turn_start`, so the line stays fresh.
 
 Vibes are loaded from the **vibes directory** (see `COOP_VIBES_DIR`): each
-`*.txt` file is a "set", one vibe per line; blank lines and `#` comments are
-ignored. If no vibe files are found, a small built-in fallback set is used.
+`*.txt` file is a "set", one tip per line; blank lines and `#` comments are
+ignored. If no vibe files are found, a small built-in fallback set of client-safe tips is used.
 
 ### Honeycomb working indicator
 
@@ -74,7 +73,7 @@ at 140 ms per frame.
 - **`/coop-vibe [set|all]`** — pick a vibe set, or show a fresh vibe.
   - `/coop-vibe` shows a new vibe from the current set.
   - `/coop-vibe <name>` switches to the set `<name>.txt` (warns if unknown).
-  - `/coop-vibe all` draws from every set.
+  - `/coop-vibe all` draws from every client-safe set; `coop-internal` remains explicit.
 - **`/coop-splash`** — re-show the splash header (handy after the screen
   scrolls or clears).
 

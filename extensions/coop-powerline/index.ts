@@ -1,5 +1,5 @@
 /**
- * coop-powerline — Cooptimize's own footer, splash, and working vibes for Pi.
+ * coop-powerline — Cooptimize's own footer, splash, and rotating feature tips for Pi.
  *
  * coop renders its OWN footer and splash (NOT a third-party powerline; pi-powerline-footer
  * was removed). It adds:
@@ -9,8 +9,8 @@
  *     plain text + common Unicode (no Nerd Font glyphs)
  *   • a startup SPLASH header via ctx.ui.setHeader, rendered from the truecolor block-art
  *     logo (assets/splash.ansi), uniform-padded and width-robust
- *   • rotating "working vibes" via ctx.ui.setWorkingMessage — sociocracy / democratic
- *     workplace lines riffing on the D365 + Microsoft Fabric analytics stack
+ *   • rotating working messages via ctx.ui.setWorkingMessage — actionable feature
+ *     discovery tips with a small set of easter eggs
  *   • a honeycomb working indicator in the Cooptimize palette
  *   • /coop-vibe and /coop-splash commands
  *
@@ -115,10 +115,10 @@ function vibeSets(): string[] {
 }
 
 const FALLBACK_VIBES = [
-  "Forming a consent round on the bronze layer…",
-  "No objections to this measure…",
-  "Stewarding D365 entities into OneLake…",
-  "Surfacing a tension in the lineage graph…",
+  "Type /start anytime to open the Start Here menu of common tasks.",
+  "Run /setup-docs to configure and build data documentation in-agent.",
+  "Use /handoff to generate a clean summary of changes and next steps.",
+  "Type /copy to copy the last assistant response directly to your clipboard.",
 ];
 
 // --- Splash ---
@@ -282,7 +282,7 @@ export default function coopPowerline(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("coop-vibe", {
-    description: "Pick a Cooptimize vibe set (sociocracy × Fabric/D365), or show a fresh one",
+    description: "Pick a Cooptimize vibe set (rotating feature tips & easter eggs), or show a fresh one",
     handler: async (args, ctx) => {
       const want = args.trim();
       const sets = vibeSets();

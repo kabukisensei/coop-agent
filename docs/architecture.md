@@ -58,7 +58,7 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
    - **Theme** — `themes/cooptimize.json` (brand palette: navy `#00416B`,
      forest `#42783C`, olive `#82AA43`, lime `#B2D235`, red `#EF412D`).
    - **`coop-powerline` extension** — `extensions/coop-powerline/`: coop's OWN
-     footer and splash, plus working "vibes" (`COOP_VIBES_DIR`,
+     footer and splash, plus rotating feature tips and easter eggs (`COOP_VIBES_DIR`,
      `COOP_SPLASH_FILE` are exported for it). coop does **not** use a third-party
      powerline footer (pi-powerline-footer was removed: its welcome overlay
      couldn't be disabled, Nerd Font glyphs showed as `?`, and it duplicated the
@@ -167,7 +167,7 @@ flowchart TD
       skills["skills/\ncoop-workflow\n+ _microsoft/*"]
       prompts["prompts/"]
       theme["themes/cooptimize.json"]
-      ext_pl["ext: coop-powerline\ncoop's OWN footer · splash · vibes\n(no pi-powerline-footer)"]
+      ext_pl["ext: coop-powerline\nfooter · splash · rotating feature tips\n(no pi-powerline-footer)"]
       ext_tools["ext: coop-tools\nsql_review · dax_review · data_doc (scan/build/check/lineage)\n+ /setup-docs wizard · before_agent_start lineage note"]
     end
 

@@ -567,7 +567,8 @@ the truecolor block-art Cooptimize logo (uniform-padded, width-robust).
   preferences, corrections, session search, and secret scanning. Use it for durable
   context; **never** for secrets.
 - **Branding** at launch: the Cooptimize **splash** and **footer** (both rendered by
-  `coop-powerline` — see [Footer & splash](#footer--splash)), working **vibes**, and
+  `coop-powerline` — see [Footer & splash](#footer--splash)), rotating feature
+  **tips** with a few easter eggs, and
   the **theme** (`themes/cooptimize.json`). Brand palette (sampled from the logo):
   navy `#00416B`, forest `#42783C`, olive `#82AA43`, lime `#B2D235`, red `#EF412D`.
   `coop sync` keeps the splash and vibe assets fresh.

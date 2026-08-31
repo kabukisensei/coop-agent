@@ -2,7 +2,7 @@
   "name": "coop-powerline",
   "version": "0.22.5",
   "private": true,
-  "description": "Cooptimize's own footer (ctx.ui.setFooter), startup splash, and sociocracy × Fabric/D365 working vibes for Pi. Renders its own bar (no third-party powerline).",
+  "description": "Cooptimize's own footer (ctx.ui.setFooter), startup splash, and rotating feature discovery tips for Pi. Renders its own bar (no third-party powerline).",
   "keywords": ["pi-package", "pi", "coding-agent", "powerline", "cooptimize", "splash", "vibes"],
   "type": "module",
   "main": "index.ts",

@@ -5,6 +5,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- Reworked rotating working vibes into short feature-discovery tips, while retaining
+  client-safe Star Wars, Monty Python, and South Park easter eggs and keeping crew
+  references isolated to the internal pool.
+
 ### Fixed
 - Windows install/update now repairs a Fabric CLI pipx environment that inherited
   Python 3.14 even when the VM has no `winget`, `py`, or `pymanager`: pipx fetches

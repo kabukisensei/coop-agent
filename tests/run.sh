@@ -41,6 +41,9 @@ node "$ROOT/tests/workflow.test.mjs"
 echo "→ coop-profile tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/coop-profile.test.mjs"
 
+echo "→ vibes & feature-discovery tips contract tests"
+node "$ROOT/tests/vibes.test.mjs"
+
 echo "→ launch-spec (shared launch builder) test"
 SPEC="$(bash "$ROOT/bin/coop" launch-spec)"
 for needle in "docs/guardrails.md" "--prompt-template" "themes/cooptimize.json" \
