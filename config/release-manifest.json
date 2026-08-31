@@ -14,7 +14,7 @@
     "pi-better-openai": "0.1.22",
     "pi-web-access": "0.10.7",
     "@juicesharp/rpiv-ask-user-question": "1.20.0",
-    "context-mode": "1.0.162"
+    "context-mode": "1.0.169"
   },
   "python_tools": {
     "coop-data-doc": "1.1.1",

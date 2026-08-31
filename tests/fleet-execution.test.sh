@@ -69,7 +69,7 @@ grep -F "PIPX install --force --python $REAL_PY ms-fabric-cli==1.7.0" "$MARKER" 
 for spec in \
   'npm:pi-mcp-adapter@2.10.0' 'npm:pi-hermes-memory@0.7.17' \
   'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' \
-  'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.162'; do
+  'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing install spec $spec"; cat "$MARKER"; exit 1; }
 done
 grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0' "$MARKER" >/dev/null
@@ -89,7 +89,7 @@ COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.84.3 COOP_PYPI_LATEST_OVERRIDE=
 [ "$update_rc" -eq 0 ] || { echo "normal pinned update failed unexpectedly (rc=$update_rc)"; tail -30 "$update_out"; exit 1; }
 grep -F "PIPX install --force --python $REAL_PY ms-fabric-cli==1.7.0" "$MARKER" >/dev/null \
   || { echo 'Fabric CLI update did not select the supported Python explicitly'; cat "$MARKER"; exit 1; }
-for spec in 'npm:pi-mcp-adapter@2.10.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.162'; do
+for spec in 'npm:pi-mcp-adapter@2.10.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing update spec $spec"; exit 1; }
 done
 ! grep -F 'PI update --extensions' "$MARKER" >/dev/null
@@ -108,7 +108,7 @@ echo '  ✓ update exits non-zero when a convergence unit fails'
 # now intentionally skip already-exact extensions without touching the network.
 rm -rf "$COOP_AGENT_DIR/npm/node_modules"
 COOP_RELEASE_MANIFEST="$ROOT/config/release-manifest.json" bash "$ROOT/scripts/sync.sh" >/dev/null 2>&1
-for spec in 'npm:pi-mcp-adapter@2.10.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.162'; do
+for spec in 'npm:pi-mcp-adapter@2.10.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing sync spec $spec"; exit 1; }
 done
 if command -v pwsh >/dev/null 2>&1; then

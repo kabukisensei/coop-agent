@@ -306,6 +306,29 @@ coop_exe_pipx_venv() { # <command>
   return 1
 }
 
+# Select an npm launcher that actually executes. Some workstation shims return
+# success with no version/output, which otherwise makes extension convergence a
+# silent no-op. COOP_NPM_FALLBACK is a test/managed-install override; Homebrew is
+# the common real launcher behind a broken user-level shim on macOS.
+coop_working_npm() {
+  local cand v
+  cand="$(command -v npm 2>/dev/null || true)"
+  if [ -n "$cand" ]; then
+    if v="$("$cand" --version 2>/dev/null)"; then
+      v="$(printf '%s' "$v" | tr -d '[:space:]')"
+      if [ -n "$v" ]; then printf '%s\n' "$cand"; return 0; fi
+    fi
+  fi
+  for cand in "${COOP_NPM_FALLBACK:-}" /opt/homebrew/bin/npm; do
+    [ -n "$cand" ] && [ -x "$cand" ] || continue
+    if v="$("$cand" --version 2>/dev/null)"; then
+      v="$(printf '%s' "$v" | tr -d '[:space:]')"
+      if [ -n "$v" ]; then printf '%s\n' "$cand"; return 0; fi
+    fi
+  done
+  return 1
+}
+
 # Converge the isolated tree's recorded extension dependencies to EXACT
 # versions and reinstall. `pi install` records ^-ranges, so fresh trees would
 # otherwise materialize at latest-in-range; exact dependency specs make
@@ -322,14 +345,8 @@ coop_converge_extension_pins() { # <agent-dir> <name@ver>...
   done
   [ "$need" = 1 ] || return 0
   have node || return 1
-  local npm_bin npm_ok o
-  npm_bin="$(command -v npm)"
-  # Broken shims can exit 0 without doing anything — require real version output.
-  npm_ok() { [ -n "$("$1" --version 2>/dev/null | tr -d "[:space:]")" ]; }
-  if ! npm_ok "$npm_bin" && [ -x /opt/homebrew/bin/npm ] && npm_ok /opt/homebrew/bin/npm; then
-    npm_bin=/opt/homebrew/bin/npm
-  fi
-  npm_ok "$npm_bin" || return 1
+  local npm_bin
+  npm_bin="$(coop_working_npm)" || return 1
   local pj="$agent_dir/npm/package.json"
   if [ ! -f "$pj" ]; then
     mkdir -p "$agent_dir/npm"
@@ -753,7 +770,8 @@ EOF
     *)  return 0 ;;                                 # 2 (nothing) or unexpected — no-op
   esac
 
-  if ! have npm; then
+  local npm_bin
+  if ! npm_bin="$(coop_working_npm)"; then
     coop_warn "extension pi-ai/pi-tui need realignment to pi $ver but npm is missing" "install Node.js, then: coop sync"
     return 0
   fi
@@ -768,7 +786,7 @@ EOF
   [ -d "$ai" ] && mv "$ai" "$bak/pi-ai" 2>/dev/null || true
   [ -d "$tui" ] && mv "$tui" "$bak/pi-tui" 2>/dev/null || true
   rm -f "$npm_dir/package-lock.json" "$npm_dir/node_modules/.package-lock.json" 2>/dev/null || true
-  if ( cd "$npm_dir" && npm install --no-save --ignore-scripts --no-audit --no-fund \
+  if ( cd "$npm_dir" && "$npm_bin" install --no-save --ignore-scripts --no-audit --no-fund \
       "@earendil-works/pi-ai@$ver" "@earendil-works/pi-tui@$ver" >/dev/null 2>&1 ); then
     rm -rf "$bak" 2>/dev/null || true
   else

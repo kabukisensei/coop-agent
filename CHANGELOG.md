@@ -6,6 +6,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Changed
+- Updated the tested `context-mode` extension pin from `1.0.162` to `1.0.169`,
+  eliminating its stale-version warning and incorrect Pi source-build hint.
+- Shared-library convergence now bypasses a broken user-level `npm` shim and
+  uses the same verified managed fallback as extension-pin convergence.
 - Reworked rotating working vibes into short feature-discovery tips, while retaining
   client-safe Star Wars, Monty Python, and South Park easter eggs and keeping crew
   references isolated to the internal pool.

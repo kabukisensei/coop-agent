@@ -95,7 +95,7 @@ mcp:
       mode: read-only
     - name: microsoft-learn # learn.microsoft.com/api/mcp via mcp-remote (always-current docs)
       mode: read-only
-    - name: context-mode    # context-mode@1.0.162 — intent-driven search + SANDBOXED exec over docs/graph
+    - name: context-mode    # context-mode@1.0.169 — intent-driven search + SANDBOXED exec over docs/graph
       mode: sandboxed-exec  # not read-only: sandboxed code execution (over docs, not client data)
 
 # Branded resources loaded at launch (see bin/coop).
@@ -120,7 +120,7 @@ tested_with:
   pi_hermes_memory: "0.7.17"
   pi_web_access: "0.10.7"
   rpiv_ask_user_question: "1.20.0"
-  context_mode: "1.0.162"
+  context_mode: "1.0.169"
   ms_fabric_cli: "1.7.0"
   fabric_cicd: "1.3.0"
   # The three coop-tool pins below must match the sibling coop-website checkout's
