@@ -109,14 +109,20 @@ def _range_floor(spec):
     return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
 
-def _required_pi_ai_floor(node_modules):
+def _required_pi_ai_floor(node_modules, extension_names=None):
     """Highest pi-ai version any installed extension needs: (floor, ext, floor_str).
 
-    Scans every top-level package in the agent's extension ``node_modules`` for a
-    ``@earendil-works/pi-ai`` entry in its dependencies/peerDependencies and keeps the
-    max lower bound. pi-web-access is a special case: it declares pi-ai as ``*`` but
-    its own version (>= 0.11) implies the ``/compat`` floor (0.80.1). Returns
-    (None, None, None) when nothing imposes a floor."""
+    Scans the isolated project's recorded direct extensions for a
+    ``@earendil-works/pi-ai`` entry in dependencies/peerDependencies and keeps
+    the max lower bound. npm may auto-install peer hosts and their transitive
+    packages at the top level; those are not extensions and must not raise a
+    false "agent too old" result. ``extension_names=None`` retains the broad
+    scan for legacy trees whose package.json has no dependencies mapping.
+
+    pi-web-access is a special case: it declares pi-ai as ``*`` but its own
+    version (>= 0.11) implies the ``/compat`` floor (0.80.1). Returns
+    (None, None, None) when nothing imposes a floor.
+    """
     best = None        # (maj,min,pat)
     best_ext = None
     if not os.path.isdir(node_modules):
@@ -127,21 +133,28 @@ def _required_pi_ai_floor(node_modules):
         if floor is not None and (best is None or floor > best):
             best, best_ext = floor, ext
 
-    # Enumerate installed packages: top-level dirs plus one level into @scopes.
-    pkg_dirs = []
-    try:
-        for name in os.listdir(node_modules):
-            if name.startswith(".") or name == ".bin":
-                continue
-            full = os.path.join(node_modules, name)
-            if name.startswith("@"):
-                if os.path.isdir(full):
-                    for sub in os.listdir(full):
-                        pkg_dirs.append(os.path.join(full, sub))
-            else:
-                pkg_dirs.append(full)
-    except OSError:
-        return None, None, None
+    if extension_names is not None:
+        pkg_dirs = [
+            os.path.join(node_modules, *name.split("/"))
+            for name in extension_names
+            if isinstance(name, str) and name
+        ]
+    else:
+        # Legacy fallback: enumerate top-level dirs plus one level into @scopes.
+        pkg_dirs = []
+        try:
+            for name in os.listdir(node_modules):
+                if name.startswith(".") or name == ".bin":
+                    continue
+                full = os.path.join(node_modules, name)
+                if name.startswith("@"):
+                    if os.path.isdir(full):
+                        for sub in os.listdir(full):
+                            pkg_dirs.append(os.path.join(full, sub))
+                else:
+                    pkg_dirs.append(full)
+        except OSError:
+            return None, None, None
 
     for pdir in pkg_dirs:
         data = _read_json(os.path.join(pdir, "package.json"))
@@ -227,7 +240,9 @@ def align(agent_dir, version, check=False):
     # needs. If the agent (pin) is below that floor, the agent itself is too old —
     # re-pinning/reinstalling the tree can only drag pi-ai DOWN to the agent, so it
     # can't fix the crash. Surface that distinctly (rc 11) and name the extension.
-    floor, offending_ext, floor_str = _required_pi_ai_floor(node_modules)
+    dependencies = data.get("dependencies")
+    extension_names = dependencies.keys() if isinstance(dependencies, dict) else None
+    floor, offending_ext, floor_str = _required_pi_ai_floor(node_modules, extension_names)
     pin = _ver_tuple(version)
     agent_too_old = floor is not None and pin is not None and pin < floor
 

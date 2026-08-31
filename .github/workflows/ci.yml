@@ -60,11 +60,14 @@ jobs:
           test "$out" = "0.74.2 0.74.2 0.80.2 0.80.2 1 0 - -"
           python3 -c "import json,sys; o=json.load(open(sys.argv[1]))['overrides']; assert o['@earendil-works/pi-ai']=='0.80.2' and o['@earendil-works/pi-tui']=='0.80.2'" "$d/npm/package.json"
           # agent too old for an installed extension -> exit 11, names the offending ext + floor
-          e="$(mktemp -d)"; mkdir -p "$e/npm/node_modules/@earendil-works/pi-ai" "$e/npm/node_modules/@earendil-works/pi-tui" "$e/npm/node_modules/pi-hermes-memory"
+          e="$(mktemp -d)"; mkdir -p "$e/npm/node_modules/@earendil-works/pi-ai" "$e/npm/node_modules/@earendil-works/pi-tui" "$e/npm/node_modules/@earendil-works/pi-coding-agent" "$e/npm/node_modules/pi-hermes-memory"
           printf '{"version":"0.80.2"}' > "$e/npm/node_modules/@earendil-works/pi-ai/package.json"
           printf '{"version":"0.80.2"}' > "$e/npm/node_modules/@earendil-works/pi-tui/package.json"
           printf '{"name":"pi-hermes-memory","dependencies":{"@earendil-works/pi-ai":"^0.99.0"}}' > "$e/npm/node_modules/pi-hermes-memory/package.json"
-          printf '{"name":"pi-extensions"}' > "$e/npm/package.json"
+          # npm can auto-install a newer peer host at the top level. It is not an
+          # extension and must not override the direct extension's requirement.
+          printf '{"name":"@earendil-works/pi-coding-agent","dependencies":{"@earendil-works/pi-ai":"^0.99.1"}}' > "$e/npm/node_modules/@earendil-works/pi-coding-agent/package.json"
+          printf '{"name":"pi-extensions","dependencies":{"pi-hermes-memory":"0.0.0"}}' > "$e/npm/package.json"
           rc=0; out="$(python3 lib/_extdeps.py align "$e" 0.80.2 --check)" || rc=$?
           test "$rc" -eq 11
           test "$out" = "0.80.2 0.80.2 - - 0 1 0.99.0 pi-hermes-memory"
