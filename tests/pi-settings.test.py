@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     result = run(fresh)
     assert result.returncode == 0, result.stderr
     assert json.loads(fresh.read_text()) == {"quietStartup": True}
-    print("  ✓ creates an isolated settings file with quietStartup enabled")
+    print("  PASS creates an isolated settings file with quietStartup enabled")
 
     existing = tmp / "existing.json"
     original = {
@@ -44,13 +44,13 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     assert result.returncode == 0, result.stderr
     merged = json.loads(existing.read_text())
     assert merged == {**original, "quietStartup": True}
-    print("  ✓ enables quietStartup while preserving packages and unknown settings")
+    print("  PASS enables quietStartup while preserving packages and unknown settings")
 
     before = existing.read_bytes()
     result = run(existing)
     assert result.returncode == 0, result.stderr
     assert existing.read_bytes() == before
-    print("  ✓ converged settings are left byte-for-byte unchanged")
+    print("  PASS converged settings are left byte-for-byte unchanged")
 
     invalid = tmp / "invalid.json"
     invalid.write_text("{not json", encoding="utf-8")
@@ -58,6 +58,6 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     result = run(invalid)
     assert result.returncode == 2
     assert invalid.read_bytes() == before
-    print("  ✓ invalid settings fail without overwriting the original")
+    print("  PASS invalid settings fail without overwriting the original")
 
 print("  4 Pi settings tests passed")
