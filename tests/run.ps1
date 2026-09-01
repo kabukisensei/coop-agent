@@ -95,6 +95,11 @@ try {
   if (($jsonOut -like '*"bin"*') -and ($jsonOut -like '*"args"*') -and ($jsonOut -like '*"env"*')) {
     Ok '--no-launch --json emits {bin,args,env}'
   } else { Ko '--no-launch --json did not emit the JSON spec' }
+  try {
+    $jsonData = $jsonOut | ConvertFrom-Json
+    if ($jsonData.env.PI_SKIP_VERSION_CHECK -eq '1') { Ok 'launch spec suppresses Pi upstream version notices' }
+    else { Ko 'launch spec does not suppress Pi upstream version notices' }
+  } catch { Ko "--no-launch --json update-policy check failed: $_" }
 
   # --- 3. context-budget via PowerShell dispatcher ---------------------------
   Head 'coop context-budget (PowerShell dispatch)'

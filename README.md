@@ -594,6 +594,13 @@ across the fleet, and `coop doctor` reports any component that drifts from the m
 Use `coop update --check` first to see what an update *would* do before telling the team to
 run it.
 
+**One update voice.** Coop suppresses Pi and managed-extension self-update notices and
+blocks `context-mode`'s `ctx_upgrade` shortcut so a component cannot drift away from the
+tested fleet. The daily **coop-agent is behind** notice remains: it is the safe prompt to
+run `coop update`, which advances the whole manifest together. Maintainers debugging an
+upstream release can temporarily restore upstream notices and `ctx_upgrade` with
+`COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1`.
+
 ---
 
 ## Sharing with your team

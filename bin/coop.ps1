@@ -294,6 +294,12 @@ function Build-CoopPiArgs {
   if (Test-Path -LiteralPath $extGuardrails) { $piArgs += @('-e', $extGuardrails) }
   $extProfile = Join-Path $script:CoopRoot 'extensions\coop-profile'
   if (Test-Path -LiteralPath $extProfile) { $piArgs += @('-e', $extProfile) }
+  # Coop owns fleet updates. Hide Pi's upstream self-update banner so users do not
+  # drift Pi away from the release-manifest pins; Invoke-CoopUpdateNudge still
+  # reports when THIS checkout is behind and directs the user to `coop update`.
+  if ($env:COOP_SHOW_UPSTREAM_UPDATE_NOTICES -ne '1') {
+    $env:PI_SKIP_VERSION_CHECK = '1'
+  }
   # Point the extension at our vibe files and brand splash.
   $env:COOP_VIBES_DIR = Join-Path $script:CoopRoot 'vibes'
   $env:COOP_SPLASH_FILE = Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi'
@@ -347,6 +353,7 @@ function Invoke-CoopLaunchSpec {
   if ($SpecArgs -contains '--json') {
     $envMap = [ordered]@{}
     if ($env:PI_CODING_AGENT_DIR) { $envMap['PI_CODING_AGENT_DIR'] = $env:PI_CODING_AGENT_DIR }
+    if ($env:PI_SKIP_VERSION_CHECK) { $envMap['PI_SKIP_VERSION_CHECK'] = $env:PI_SKIP_VERSION_CHECK }
     if ($env:COOP_VIBES_DIR)      { $envMap['COOP_VIBES_DIR']      = $env:COOP_VIBES_DIR }
     if ($env:COOP_SPLASH_FILE)    { $envMap['COOP_SPLASH_FILE']    = $env:COOP_SPLASH_FILE }
     # The JSON SHAPE ({bin,args,env}) is the contract with web/server.mjs — the

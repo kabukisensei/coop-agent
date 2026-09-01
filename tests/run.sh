@@ -69,10 +69,12 @@ case "$NL_OUT" in
   *) echo "  ✗ coop --no-launch did not print the launch spec (no docs/guardrails.md)"; exit 1 ;;
 esac
 # --json delegates to the launch-spec JSON path.
-case "$(COOP_AGENT_DIR="$LAUNCH_AGENT" PI_CODING_AGENT_DIR="$LAUNCH_AGENT" COOP_DIR="$LAUNCH_COOP" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" --no-launch --json)" in
+JSON_SPEC="$(COOP_AGENT_DIR="$LAUNCH_AGENT" PI_CODING_AGENT_DIR="$LAUNCH_AGENT" COOP_DIR="$LAUNCH_COOP" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" --no-launch --json)"
+case "$JSON_SPEC" in
   *'"bin"'*'"args"'*) ;;
   *) echo "  ✗ coop --no-launch --json did not emit the JSON spec"; exit 1 ;;
 esac
+JSON_SPEC="$JSON_SPEC" node -e 'const s=JSON.parse(process.env.JSON_SPEC); if(s.env.PI_SKIP_VERSION_CHECK!=="1") process.exit(1)'
 echo "  ✓ --no-launch prints the spec and exits 0 (no pi launched)"
 
 echo "→ coop update tested-Pi-version guard (--check, gate decision)"

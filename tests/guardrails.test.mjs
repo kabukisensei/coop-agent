@@ -19,7 +19,7 @@ const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
 const dist = process.env.COOP_TEST_DIST;
 const cg = await import(pathToFileURL(`${dist}/coop-guardrails.mjs`).href);
 const coopGuardrails = cg.default;
-const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoCommitPolicy, commitPolicy, buildSessionGovernance, resetSessionGovernance } = cg;
+const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoCommitPolicy, commitPolicy, buildSessionGovernance, resetSessionGovernance, stripManagedUpdateNotices } = cg;
 
 // Capture the handler the extension registers.
 let staged = "";     // `git diff --cached --name-only`
@@ -43,7 +43,9 @@ const pi = {
 };
 coopGuardrails(pi);
 const handle = handlers["tool_call"];
+const handleResult = handlers["tool_result"];
 assert.ok(typeof handle === "function", "registers a tool_call handler");
+assert.ok(typeof handleResult === "function", "registers a tool_result handler");
 assert.ok(cmds["coop-guardrails"], "registers the /coop-guardrails command");
 
 const ctx = { cwd: "/tmp/no-such-repo-xyz", hasUI: true, ui: { confirm: async () => confirmAnswer, notify: () => {} } };
@@ -66,6 +68,37 @@ const t = async (name, fn) => {
   n++;
   console.log(`  ✓ ${name}`);
 };
+
+await t("suppresses context-mode update noise but preserves useful tool output", async () => {
+  const warning = "⚠️ context-mode v1.0.169 outdated → v1.0.170 available. Upgrade: npm update -g context-mode\n\n";
+  const result = await handleResult({
+    toolName: "ctx_search",
+    input: {},
+    content: [{ type: "text", text: `${warning}lineage result` }],
+  });
+  assert.deepEqual(result.content, [{ type: "text", text: "lineage result" }]);
+  assert.equal(
+    stripManagedUpdateNotices("stats\n  Update available: v1.0.169 -> v1.0.170  |  ctx_upgrade"),
+    "stats\n",
+  );
+  assert.equal(await handleResult({ toolName: "read", input: {}, content: [{ type: "text", text: warning }] }), undefined);
+});
+
+await t("blocks context-mode self-upgrades and redirects users to coop update", async () => {
+  const direct = await handle({ toolName: "ctx_upgrade", input: {} }, ctx);
+  assert.equal(blocked(direct), true);
+  assert.match(direct.reason, /coop update/);
+  const proxied = await handle({ toolName: "mcp", input: { server: "context-mode", tool: "ctx_upgrade" } }, ctx);
+  assert.equal(blocked(proxied), true);
+
+  process.env.COOP_SHOW_UPSTREAM_UPDATE_NOTICES = "1";
+  try {
+    assert.equal(blocked(await handle({ toolName: "ctx_upgrade", input: {} }, ctx)), false);
+    assert.equal(await handleResult({ toolName: "ctx_search", input: {}, content: [{ type: "text", text: "Update available: v1 -> v2  |  ctx_upgrade" }] }), undefined);
+  } finally {
+    delete process.env.COOP_SHOW_UPSTREAM_UPDATE_NOTICES;
+  }
+});
 
 await t("blocks git commit when source is staged", async () => {
   assert.equal(blocked(await call("git commit -m wip", { stagedFiles: "docs/a.md\nsql/gold/v.sql" })), true);
@@ -609,6 +642,7 @@ await t("/coop-guardrails output mentions the audit log path", async () => {
   await cmds["coop-guardrails"].handler([], ctx2);
   assert.ok(shown.includes("guardrails-audit.jsonl"), "prints the audit log path");
   assert.ok(shown.includes("commit-block"), "lists the recent decision");
+  assert.ok(shown.includes("Pi/context-mode self-update prompts suppressed"), "shows the managed update policy");
 });
 
 console.log(`  ${n} guardrails tests passed`);

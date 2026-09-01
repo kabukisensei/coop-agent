@@ -185,6 +185,12 @@ coop_build_pi_args() {
   [ -e "$COOP_ROOT/extensions/coop-tools" ]      && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-tools")
   [ -e "$COOP_ROOT/extensions/coop-guardrails" ] && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-guardrails")
   [ -e "$COOP_ROOT/extensions/coop-profile" ]    && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-profile")
+  # Coop owns fleet updates. Hide Pi's upstream self-update banner so users do not
+  # drift Pi away from the release-manifest pins; coop_update_nudge still reports
+  # when THIS checkout is behind and directs the user to `coop update`.
+  if [ "${COOP_SHOW_UPSTREAM_UPDATE_NOTICES:-0}" != "1" ]; then
+    export PI_SKIP_VERSION_CHECK=1
+  fi
   # Point the extension at our vibe files and brand splash.
   export COOP_VIBES_DIR="$COOP_ROOT/vibes"
   export COOP_SPLASH_FILE="$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi"
@@ -229,12 +235,14 @@ coop_launch_spec() {
   if [ "$want_json" = "1" ]; then
     local py; py="$(coop_python)" || coop_die "python3 is required for: coop launch-spec --json"
     COOP_LS_AGENT_DIR="${PI_CODING_AGENT_DIR:-}" \
+    COOP_LS_SKIP_VERSION="${PI_SKIP_VERSION_CHECK:-}" \
     COOP_LS_VIBES="${COOP_VIBES_DIR:-}" \
     COOP_LS_SPLASH="${COOP_SPLASH_FILE:-}" \
     "$py" - ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} <<'PY'
 import json, os, sys
 env = {}
 for out_key, src_key in (("PI_CODING_AGENT_DIR", "COOP_LS_AGENT_DIR"),
+                         ("PI_SKIP_VERSION_CHECK", "COOP_LS_SKIP_VERSION"),
                          ("COOP_VIBES_DIR", "COOP_LS_VIBES"),
                          ("COOP_SPLASH_FILE", "COOP_LS_SPLASH")):
     val = os.environ.get(src_key, "")
