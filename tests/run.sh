@@ -21,6 +21,7 @@ echo "→ bundling extensions for test…"
 bundle coop-tools --alias:typebox="$ROOT/tests/typebox-stub.mjs"
 bundle coop-guardrails
 bundle coop-profile
+bundle coop-powerline
 
 echo "→ data-doc config tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/datadoc.test.mjs"
@@ -43,6 +44,9 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/coop-profile.test.mjs"
 
 echo "→ isolated Pi settings tests"
 python3 "$ROOT/tests/pi-settings.test.py"
+
+echo "→ Coop terminal-title branding tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/powerline.test.mjs"
 
 echo "→ vibes & feature-discovery tips contract tests"
 node "$ROOT/tests/vibes.test.mjs"

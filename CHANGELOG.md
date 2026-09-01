@@ -12,6 +12,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - Coop now enables Pi's quiet-startup setting in its isolated configuration, hiding
   the raw context/skills/prompts/extensions/themes inventory without disabling any
   resources or the branded Coop header.
+- Terminal tabs now use `coop - <session> - <folder>` instead of Pi's `π` title and
+  reassert the Coop title after startup checks and session changes. Existing terminal
+  profile icons remain controlled by the terminal; Coop shortcuts keep `coop.ico`.
 - Embedded `coop-data-doc` setup now discovers nearby repository folders in a
   type-to-filter path browser and reports early wizard exits cleanly.
 - `coop init` can now run Azure CLI sign-in inside the project wizard and use

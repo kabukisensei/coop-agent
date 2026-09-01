@@ -68,6 +68,15 @@ Via `ctx.ui.setWorkingIndicator`, the spinner is replaced with a honeycomb
 (`⬢`) cycling through the Cooptimize palette — navy, forest, olive, lime, red —
 at 140 ms per frame.
 
+### Terminal tab title
+
+Via `ctx.ui.setTitle`, the tab reads `coop - <folder>` or
+`coop - <session> - <folder>` instead of Pi's `π` title. The extension reapplies
+the title after Pi's startup package check and whenever a session is renamed or
+the agent runs. Terminal tab icons are owned by the terminal profile; the Coop
+Windows shortcuts use `themes/coop.ico`, while an already-open PowerShell profile
+keeps its configured icon.
+
 ## Commands
 
 - **`/coop-vibe [set|all]`** — pick a vibe set, or show a fresh vibe.

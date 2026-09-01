@@ -12,6 +12,7 @@
  *   • rotating working messages via ctx.ui.setWorkingMessage — actionable feature
  *     discovery tips with a small set of easter eggs
  *   • a honeycomb working indicator in the Cooptimize palette
+ *   • a Coop-branded terminal title (`coop - <session> - <folder>`)
  *   • /coop-vibe and /coop-splash commands
  *
  * Everything is feature-detected and wrapped in try/catch so it can never crash pi.
@@ -19,7 +20,7 @@
 
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // --- Locate our assets (env vars from bin/coop win; else resolve from this file) ---
@@ -42,6 +43,10 @@ const GRAD = [NAVY, FOREST, OLIVE, LIME];
 
 const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const visWidth = (s: string) => stripAnsi(s).length;
+export function formatCoopTitle(cwd: string, session?: string): string {
+  const folder = basename(cwd) || "coop";
+  return session ? `coop - ${session} - ${folder}` : `coop - ${folder}`;
+}
 function center(line: string, width: number): string {
   const w = visWidth(line);
   if (w >= width) return line;
@@ -169,6 +174,35 @@ export default function coopPowerline(pi: ExtensionAPI) {
   let vibes = loadVibes();
   if (vibes.length === 0) vibes = FALLBACK_VIBES;
 
+  const titleTimers = new Set<ReturnType<typeof setTimeout>>();
+  const clearTitleTimers = () => {
+    for (const timer of titleTimers) clearTimeout(timer);
+    titleTimers.clear();
+  };
+  const setCoopTitle = (ctx: any, settleStartup = false) => {
+    if (!ctx?.hasUI || typeof ctx?.ui?.setTitle !== "function") return;
+    const render = () => {
+      try {
+        const session = ctx.sessionManager?.getSessionName?.();
+        ctx.ui.setTitle(formatCoopTitle(ctx.cwd || process.cwd(), session));
+      } catch {
+        /* title branding must never affect the session */
+      }
+    };
+    render();
+    // Pi restores its own title immediately after extension binding and, on
+    // Windows, once more after its async package check. Reassert after both
+    // lifecycle points without keeping the process alive for the delayed pass.
+    for (const delay of settleStartup ? [0, 16_000] : [0]) {
+      const timer = setTimeout(() => {
+        titleTimers.delete(timer);
+        render();
+      }, delay);
+      timer.unref?.();
+      titleTimers.add(timer);
+    }
+  };
+
   const pickVibe = (): string => vibes[Math.floor(Math.random() * vibes.length)] || FALLBACK_VIBES[0];
 
   const HEX_FRAMES = [NAVY("⬢"), FOREST("⬢"), OLIVE("⬢"), LIME("⬢"), RED("⬢")];
@@ -209,6 +243,7 @@ export default function coopPowerline(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     try {
       if (!ctx.hasUI) return;
+      setCoopTitle(ctx, true);
       // Splash header (logo + wordmark + a vibe).
       if (typeof ctx.ui.setHeader === "function") {
         ctx.ui.setHeader((_tui, theme) => showSplash(theme));
@@ -272,9 +307,26 @@ export default function coopPowerline(pi: ExtensionAPI) {
       if (ctx.hasUI && typeof ctx.ui.setWorkingMessage === "function") {
         ctx.ui.setWorkingMessage(pickVibe());
       }
+      setCoopTitle(ctx);
     } catch {
       /* ignore */
     }
+  });
+
+  pi.on("session_info_changed", async (_event, ctx) => {
+    setCoopTitle(ctx);
+  });
+
+  pi.on("agent_start", async (_event, ctx) => {
+    setCoopTitle(ctx);
+  });
+
+  pi.on("agent_settled", async (_event, ctx) => {
+    setCoopTitle(ctx);
+  });
+
+  pi.on("session_shutdown", async () => {
+    clearTitleTimers();
   });
 
   pi.registerCommand("coop-vibe", {

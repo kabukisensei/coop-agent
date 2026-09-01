@@ -557,7 +557,11 @@ duplicated the bar). The footer shows `⬢ Cooptimize · <branch>` on the left a
 common Unicode (no Nerd Font glyphs). It surfaces other extensions' status text (e.g.
 `pi-better-openai`'s plan usage limits / 5h + 7d windows) via
 `footerData.getExtensionStatuses()`, so everything is in one clean bar. The splash is
-the truecolor block-art Cooptimize logo (uniform-padded, width-robust).
+the truecolor block-art Cooptimize logo (uniform-padded, width-robust). Coop also owns
+the terminal tab title (`coop - <session> - <folder>`) so Pi's `π` branding does not
+reappear after startup or a session rename. The tab icon itself belongs to the terminal
+profile; Windows shortcuts use `themes/coop.ico`, while an existing PowerShell tab keeps
+its configured profile icon.
 
 ---
 
