@@ -13,7 +13,7 @@ Use /impact-analysis before touching a shared table, measure, or procedure.
 Type /compact when the conversation is useful but the context is getting crowded.
 Type /tree to inspect branches, then /fork when an alternate path deserves a session.
 Type /model to switch among the models already configured for Coop.
-Run /coop-vibe coop-internal when client-safe is good, but coworker-safe is better.
+Run /coop-vibe coop-internal when you want only the coworker-safe pool.
 Run /coop-splash when the terminal has forgotten who owns the means of computation.
 Run /coop-guardrails to check source and destructive-action protections.
 Ask Coop to trace a report issue all the way back to its load procedure.
@@ -29,6 +29,7 @@ Try asking Coop to test RLS as a Viewer or effective identity.
 Ask Coop to save the SQL that proved the conclusion, not only the conclusion.
 
 # --- the crew (real names — keep this file out of the client-safe pool) ---
+TLDR or Joel won't read it
 Joel asks for exact outputs; "it compiled" withdraws its proposal…
 Joel sees delete-and-create in the PBIR diff and calls a very short consent round…
 Joel traces the visual to a procedure; the innocent measure retains counsel…

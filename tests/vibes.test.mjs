@@ -215,17 +215,17 @@ for (const pool of POOL_NAMES) {
   }
 }
 
-console.log("→ actionable tip ratio (>= 80% tips in default non-internal aggregate)");
-let totalDefaultLines = 0;
-let totalDefaultTips = 0;
+console.log("→ actionable tip ratio (>= 80% tips in client-safe aggregate)");
+let totalClientSafeLines = 0;
+let totalClientSafeTips = 0;
 for (const pool of POOL_NAMES) {
   if (pool === "coop-internal.txt") continue;
   const entries = readPool(join(VIBES_DIR, pool));
   const tips = entries.filter(({ section }) => section === "tips");
   const malformed = tips.filter(({ line }) => !ACTIONABLE_PREFIX.test(line));
   const pct = Math.round((tips.length / entries.length) * 100);
-  totalDefaultLines += entries.length;
-  totalDefaultTips += tips.length;
+  totalClientSafeLines += entries.length;
+  totalClientSafeTips += tips.length;
   if (malformed.length === 0) {
     ok(`${pool} marks only imperative, actionable lines as tips`);
   } else {
@@ -252,11 +252,11 @@ for (const franchise of [
   else ko(`coop-internal.txt is missing ${franchise} references`);
 }
 
-const aggPct = Math.round((totalDefaultTips / totalDefaultLines) * 100);
+const aggPct = Math.round((totalClientSafeTips / totalClientSafeLines) * 100);
 if (aggPct >= 80) {
-  ok(`default non-internal aggregate has ${totalDefaultTips}/${totalDefaultLines} tips (${aggPct}% >= 80%)`);
+  ok(`client-safe aggregate has ${totalClientSafeTips}/${totalClientSafeLines} tips (${aggPct}% >= 80%)`);
 } else {
-  ko(`default aggregate tip ratio too low (${aggPct}%)`);
+  ko(`client-safe aggregate tip ratio too low (${aggPct}%)`);
 }
 
 console.log("→ key feature discoverability tips");
@@ -315,6 +315,11 @@ if (allNeedlesFound) {
 
 console.log("→ coop-powerline FALLBACK_VIBES");
 const powerlineSrc = readFileSync(join(ROOT, "extensions/coop-powerline/index.ts"), "utf8");
+if (!powerlineSrc.includes('if (name === "coop-internal.txt") continue;')) {
+  ok("default rotation includes coop-internal.txt");
+} else {
+  ko("default rotation still excludes coop-internal.txt");
+}
 const match = powerlineSrc.match(/const FALLBACK_VIBES = \[([\s\S]*?)\];/);
 if (match) {
   const rawArray = match[1];

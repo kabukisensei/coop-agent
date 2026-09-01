@@ -21,7 +21,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   prompts grounded in recurring Power BI, Fabric, SQL, and lineage work. Restored The
   Office and Office Space to the internal pool, expanded every worker's rotation, and
   removed shell-only instructions that were not useful from an active Coop session.
-  The client-safe rotation covers every slash command documented by `coop-website`.
+  The client-safe sets cover every slash command documented by `coop-website`; the
+  default rotation now also includes `coop-internal`, since Coop is an internal tool.
 
 ### Fixed
 - Windows install/update now repairs a Fabric CLI pipx environment that inherited

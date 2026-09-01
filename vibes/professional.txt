@@ -17,7 +17,7 @@ Type /fork to branch a new session from an earlier turn.
 Type /model to switch between configured LLM providers and models.
 Type /openai-usage to inspect your OpenAI plan limits from inside Coop.
 Type /skill:<name> to invoke a specific Coop skill directly.
-Run /coop-vibe <set> to switch pools, or /coop-vibe all for client-safe tips.
+Run /coop-vibe <set> to switch pools, or /coop-vibe all for the full rotation.
 Run /coop-splash to re-display the startup header and brand banner.
 Run /coop-guardrails to check Coop's source and destructive-action protections.
 Try asking Coop to trace a visual through its measure, table, view, and load procedure.

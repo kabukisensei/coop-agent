@@ -73,7 +73,7 @@ at 140 ms per frame.
 - **`/coop-vibe [set|all]`** — pick a vibe set, or show a fresh vibe.
   - `/coop-vibe` shows a new vibe from the current set.
   - `/coop-vibe <name>` switches to the set `<name>.txt` (warns if unknown).
-  - `/coop-vibe all` draws from every client-safe set; `coop-internal` remains explicit.
+  - `/coop-vibe all` draws from every set, including `coop-internal` (the default rotation).
 - **`/coop-splash`** — re-show the splash header (handy after the screen
   scrolls or clears).
 
