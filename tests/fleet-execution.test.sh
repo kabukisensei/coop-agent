@@ -107,7 +107,11 @@ echo '  ✓ update exits non-zero when a convergence unit fails'
 # Force the subsequent production sync through its install path. Repeat syncs
 # now intentionally skip already-exact extensions without touching the network.
 rm -rf "$COOP_AGENT_DIR/npm/node_modules"
-COOP_RELEASE_MANIFEST="$ROOT/config/release-manifest.json" bash "$ROOT/scripts/sync.sh" >/dev/null 2>&1
+sync_out="$ISOL_D/sync.out"; sync_rc=0
+COOP_RELEASE_MANIFEST="$ROOT/config/release-manifest.json" \
+  bash "$ROOT/scripts/sync.sh" >"$sync_out" 2>&1 || sync_rc=$?
+[ "$sync_rc" -eq 0 ] \
+  || { echo "production sync failed unexpectedly (rc=$sync_rc)"; cat "$sync_out"; exit 1; }
 for spec in 'npm:pi-mcp-adapter@2.10.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing sync spec $spec"; exit 1; }
 done
