@@ -55,13 +55,18 @@ const CREW_MEMBERS = ["Joel", "Eric", "Tanner", "Josh", "Simar", "April", "Aaron
 
 const DISALLOWED_PATTERNS = [
   /\b(Spock|Starship|Klingon|Scotty|assimilated|Resistance is futile|Make it so|She cannae|Data, the final frontier|beam me up)\b/i,
-  /\b(Dwight|Michael Scott|Battlestar|dementors|turntables|That's what she said|Identity theft|Rit-dit-dit-di-doo)\b/i,
-  /\b(TPS report|Milton|stapler|PC load letter|case of the Mondays)\b/i,
   /\b(Leeloo|multipass|Aziz|Korben|meat popsicle|Big bada boom)\b/i,
 ];
 
-const ACTIONABLE_PREFIX = /^(Add|Ask|Configure|Import|Include|Open|Pass|Read|Run|Save|Scan|Set|Type|Use)\b/;
+const ACTIONABLE_PREFIX = /^(Add|Ask|Configure|Include|Open|Read|Run|Save|Scan|Set|Try|Type|Use)\b/;
 const CLIENT_UNSAFE_PATTERNS = [/\bbastards\b/i, /screw you guys/i];
+const OUT_OF_AGENT_PATTERNS = [
+  /^Run coop\b/i,
+  /^Run fab\b/i,
+  /^Run te\b/i,
+  /^Run powerbi-report-author\b/i,
+  /^Import fabric_cicd\b/i,
+];
 
 console.log("→ vibes files existence and syntax");
 for (const pool of POOL_NAMES) {
@@ -137,7 +142,7 @@ if (repeatedLegacy.length === 0) {
   ko("legacy easter eggs repeat across pools", repeatedLegacy.join(" | "));
 }
 
-console.log("→ disallowed themes removal (Star Trek, The Office, Office Space, Fifth Element)");
+console.log("→ disallowed themes removal (Star Trek and Fifth Element)");
 for (const pool of POOL_NAMES) {
   const lines = readLines(join(VIBES_DIR, pool));
   let matchedDisallowed = false;
@@ -160,17 +165,17 @@ console.log("→ client-safety: real names restricted to coop-internal.txt");
 for (const pool of POOL_NAMES) {
   const lines = readLines(join(VIBES_DIR, pool));
   if (pool === "coop-internal.txt") {
-    // Must contain all crew members
+    // Give every worker several turns in the rotation, not a token mention.
     let allFound = true;
     for (const person of CREW_MEMBERS) {
-      const found = lines.some((l) => l.includes(person));
-      if (!found) {
+      const references = lines.filter((l) => new RegExp(`\\b${person}\\b`).test(l)).length;
+      if (references < 5) {
         allFound = false;
-        console.error(`    Missing crew member in coop-internal.txt: ${person}`);
+        console.error(`    ${person} has only ${references} internal references; expected at least 5`);
       }
     }
     if (allFound) {
-      ok(`coop-internal.txt represents every crew member (${CREW_MEMBERS.join(", ")})`);
+      ok(`coop-internal.txt gives every crew member at least 5 references`);
     } else {
       ko(`coop-internal.txt is missing some crew members`);
     }
@@ -199,6 +204,17 @@ for (const pool of POOL_NAMES) {
   }
 }
 
+console.log("→ tips stay runnable from inside the active Coop session");
+for (const pool of POOL_NAMES) {
+  const tips = readPool(join(VIBES_DIR, pool)).filter(({ section }) => section === "tips");
+  const escaped = tips.filter(({ line }) => OUT_OF_AGENT_PATTERNS.some((pattern) => pattern.test(line)));
+  if (escaped.length === 0) {
+    ok(`${pool} has no shell-only tips`);
+  } else {
+    ko(`${pool} contains tips that require leaving Coop`, escaped.map(({ line }) => line).join(" | "));
+  }
+}
+
 console.log("→ actionable tip ratio (>= 80% tips in default non-internal aggregate)");
 let totalDefaultLines = 0;
 let totalDefaultTips = 0;
@@ -222,9 +238,15 @@ for (const pool of POOL_NAMES) {
   }
 }
 
-console.log("→ preserved internal references");
+console.log("→ preserved and restored internal references");
 const internalEntries = readPool(join(VIBES_DIR, "coop-internal.txt"));
-for (const franchise of ["south park", "star wars", "monty python and the holy grail"]) {
+for (const franchise of [
+  "south park",
+  "star wars",
+  "monty python and the holy grail",
+  "the office (us)",
+  "office space",
+]) {
   const count = internalEntries.filter(({ section }) => section === franchise).length;
   if (count > 0) ok(`coop-internal.txt preserves ${franchise} references (${count})`);
   else ko(`coop-internal.txt is missing ${franchise} references`);
@@ -243,29 +265,37 @@ const defaultLines = POOL_NAMES.filter((p) => p !== "coop-internal.txt")
 
 // Product-discovery coverage only. Command validity is verified against the
 // pinned tools and Pi documentation during review; string presence is not proof.
-const REQUIRED_NEEDLES = [
-  "/copy",
+const WEBSITE_SLASH_COMMANDS = [
   "/start",
   "/setup-docs",
-  "/handoff",
-  "/explain",
+  "/openai-usage",
+  "/discovery",
+  "/impact-analysis",
+  "/semantic-model-review",
+  "/fabric-architecture-review",
+  "/daily-log",
+  "/weekly-log",
   "/spec-first",
   "/slice-next",
   "/annotate",
+  "/explain",
+  "/handoff",
   "/pr-description",
-  "/daily-log",
-  "/weekly-log",
-  "/impact-analysis",
-  "/fabric-architecture-review",
-  "/semantic-model-review",
+  "/skill:<name>",
+  "/model",
+  "/new",
+  "/compact",
   "/coop-vibe",
   "/coop-splash",
-  "coop -c",
-  "coop web",
-  "coop doctor --fix",
-  "coop data-doc build",
-  "coop sql-review check",
-  "coop dax-review check",
+  "/coop-guardrails",
+];
+
+const REQUIRED_NEEDLES = [
+  "/copy",
+  ...WEBSITE_SLASH_COMMANDS,
+  "build Markdown docs",
+  "SQL review",
+  "DAX review",
 ];
 
 let allNeedlesFound = true;
@@ -277,6 +307,7 @@ for (const needle of REQUIRED_NEEDLES) {
   }
 }
 if (allNeedlesFound) {
+  ok(`all ${WEBSITE_SLASH_COMMANDS.length} website slash commands appear in client-safe pools`);
   ok(`all ${REQUIRED_NEEDLES.length} key feature discovery needles found in client-safe pools`);
 } else {
   ko(`some key feature needles missing`);

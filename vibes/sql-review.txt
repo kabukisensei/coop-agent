@@ -1,20 +1,19 @@
-# sql-review — SQL review commands, standards, and CI workflow tips
-Run coop sql-review check . to lint T-SQL against Cooptimize standards.
-Add --strict to coop sql-review in CI to block on any rule finding.
-Use --write-baseline baseline.json to baseline legacy SQL findings.
-Pass --baseline baseline.json to report only newly introduced issues.
-Use -- coop-sql-review:ignore <rule_id> inline to suppress a rule.
-Run coop sql-review check . --format sarif -o review.sarif for code scanning.
-Run coop sql-review check . --format html -o report.html for visual report.
-Use --target azure-sql to skip Fabric-DW-specific type restrictions.
-Run coop sql-review compare old.json new.json to inspect finding deltas.
-Use --save-ignores to interactively save rule suppressions to rules.yml.
-Run coop sql-review check . offline; no SQL leaves your machine.
-Run coop sql-review check . to flag SELECT * in production queries.
-Pass --schema <file> to catch cross-file type and conversion issues.
-Run coop sql-review check . to enforce PascalCase aliases in silver and gold outputs.
-Run coop sql-review rules to list every rule, severity, and tier.
-Run coop sql-review explain <rule-id> to read a rule's rationale and standard.
+# sql-review — things to ask Coop about SQL quality and validation
+Ask Coop to run its SQL review on this file, folder, or proposed change.
+Ask Coop to explain each finding's rule, severity, and likely fix.
+Try asking Coop to review only new findings against an existing baseline.
+Ask Coop to check cross-file types and conversions with the available schema.
+Ask Coop to flag SELECT *, unsafe writes, and grain-changing joins.
+Try asking Coop to compare old and new review results before editing.
+Ask Coop to prove a procedure refactor with exact before-and-after results.
+Try server-side EXCEPT, counts, and aggregates for large output comparisons.
+Ask Coop to poll warehouse procedure results until they are stable after execution.
+Try a reconnect-safe baseline when DDL may invalidate the warehouse session.
+Ask Coop to pre-aggregate facts independently before joining different grains.
+Try asking Coop whether a many-to-many join explains inflated totals or timeouts.
+Ask Coop to preserve a compatibility path while a replacement view is adopted.
+Ask Coop to save important diagnostic SQL as a project file.
+Try a small slice: backup, smallest change, SQL review, validation, then diff.
 
 # --- light easter eggs (client-safe) ---
 I find this query's lack of constraints disturbing…

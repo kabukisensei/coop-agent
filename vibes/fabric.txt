@@ -1,20 +1,22 @@
-# fabric — Microsoft Fabric, Power BI, modeling, and tool tips
-Run fab ls to list Fabric workspaces.
-Run fab cd <name>.Workspace, then fab ls -l to list its items with details.
-Run /fabric-architecture-review to review workspace patterns and OneLake.
-Run powerbi-report-author validate <Report.Report> to validate PBIR files.
-Ask Coop to inspect Fabric through its read-only-by-policy MCP workflow.
-Ask Coop to inspect a semantic model with the Power BI Modeling MCP.
+# fabric — things to ask Coop about Fabric, Power BI, and deployment safety
+Ask Coop to inspect Fabric through its read-only-by-policy tools.
+Ask Coop to inspect a semantic model with the Power BI Modeling tools.
+Run /fabric-architecture-review to review workspaces, OneLake, and deployment stages.
 Run /semantic-model-review to audit relationships, DAX, and star schemas.
-Ask Coop to build a Deneb visual; the custom-visuals skill handles PBIR details.
-Ask Coop to create or audit theme.json; the report-themes skill validates it.
-Ask Coop for a Power BI report review to check accessibility and usability.
-Run fab ln --help to learn how to create a OneLake shortcut.
-Import fabric_cicd in Python to validate Fabric deployments before execution.
-Ask Coop for a Fabric workspace review to assess deployment-pipeline stages.
-Run te bpa run <model> -r <rules-file> --non-interactive for BPA checks.
-Ask Coop to review D365-to-OneLake mirroring architecture before implementation.
-Save Power BI projects as PBIR to make report changes reviewable in Git.
+Ask Coop to build a Deneb visual and handle the PBIR details.
+Ask Coop to create or audit theme.json against report-theme standards.
+Ask Coop for a Power BI report review covering accessibility and usability.
+Ask Coop to run Tabular Editor BPA when the project has it configured.
+Ask Coop to validate a Fabric deployment without deploying it.
+Try asking Coop to review D365-to-OneLake mirroring before implementation.
+Ask Coop to compare Power BI performance under like-for-like cache conditions.
+Try Performance Analyzer evidence before calling a visual faster.
+Ask Coop to preserve Git byPath and Desktop live-connect bindings separately.
+Try an opt-in compatibility path before moving facts to reporting versions.
+Ask Coop to check copied PBIR page and visual filter IDs for collisions.
+Ask Coop to preserve report identity by updating in place.
+Try staying read-only during concurrent Fabric work until shared changes reconcile.
+Ask Coop to flag Update from Git when another worker may be using the endpoint.
 
 # --- light easter eggs (client-safe) ---
 The force is strong with this OneLake shortcut…

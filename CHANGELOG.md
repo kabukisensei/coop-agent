@@ -14,9 +14,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   eliminating its stale-version warning and incorrect Pi source-build hint.
 - Shared-library convergence now bypasses a broken user-level `npm` shim and
   uses the same verified managed fallback as extension-pin convergence.
-- Reworked rotating working vibes into short feature-discovery tips, while retaining
-  client-safe Star Wars, Monty Python, and South Park easter eggs and keeping crew
-  references isolated to the internal pool.
+- Reworked rotating vibes into in-agent `/commands` and practical "Ask Coop" / "Try"
+  prompts grounded in recurring Power BI, Fabric, SQL, and lineage work. Restored The
+  Office and Office Space to the internal pool, expanded every worker's rotation, and
+  removed shell-only instructions that were not useful from an active Coop session.
+  The client-safe rotation covers every slash command documented by `coop-website`.
 
 ### Fixed
 - Windows install/update now repairs a Fabric CLI pipx environment that inherited

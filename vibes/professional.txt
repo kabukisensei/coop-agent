@@ -1,4 +1,4 @@
-# professional — polished, client-safe feature discovery tips & quiet classics
+# professional — client-safe commands and practical things to try inside Coop
 Type /copy to copy the last assistant response directly to your clipboard.
 Type /start anytime to open the Start Here menu of common tasks.
 Run /setup-docs to launch the in-agent wizard and build lineage docs.
@@ -10,16 +10,22 @@ Use /annotate to apply structured Markdown review feedback cleanly.
 Run /pr-description to draft a Conventional Commits message and PR summary.
 Run /daily-log to record session work, or /weekly-log for a roll-up.
 Use /impact-analysis to assess upstream and downstream effects before edits.
-Run coop -c from your terminal to resume your last session instantly.
-Run coop web to launch the browser UI with live chat and file previews.
-Run coop doctor --fix to diagnose and repair environment setup issues.
-Run coop init --seed-docs to scaffold project config and starter docs.
 Type /compact to summarize context when conversations grow long.
+Type /new to start a fresh session without leaving Coop.
 Type /tree to explore conversation branches and switch directions.
 Type /fork to branch a new session from an earlier turn.
 Type /model to switch between configured LLM providers and models.
+Type /openai-usage to inspect your OpenAI plan limits from inside Coop.
+Type /skill:<name> to invoke a specific Coop skill directly.
 Run /coop-vibe <set> to switch pools, or /coop-vibe all for client-safe tips.
 Run /coop-splash to re-display the startup header and brand banner.
+Run /coop-guardrails to check Coop's source and destructive-action protections.
+Try asking Coop to trace a visual through its measure, table, view, and load procedure.
+Ask Coop to prove a refactor with exact before-and-after outputs, not compilation alone.
+Try a small slice: backup, smallest change, review, real validation, then diff.
+Ask Coop to validate page filters, slicers, calculation groups, and the target visual.
+Ask Coop to save important diagnostic SQL with the conclusions it supports.
+Try asking Coop to write project updates in user outcomes and next steps.
 
 # --- light easter eggs (client-safe) ---
 These aren't the insights you're looking for…

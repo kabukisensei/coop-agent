@@ -1,20 +1,21 @@
-# dax-review — DAX, TMDL, and semantic model review tips
-Run coop dax-review check . to lint DAX and semantic models.
-Add --strict to coop dax-review in CI to enforce clean semantic models.
-Pass --vpax model.vpax to coop dax-review check . for size-aware rules.
-Use --write-baseline baseline.json to ratchet legacy DAX model issues.
-Pass --baseline baseline.json to ignore existing technical debt.
-Use // coop-dax-review:ignore <rule_id> inline in TMDL to silence a rule.
-Run coop dax-review check . --format sarif -o review.sarif for code scanning.
-Run coop dax-review check . --format html -o report.html for browser view.
-Run coop dax-review check on TMDL folders, .bim files, or .pbit templates.
-Run coop dax-review check . to catch unnecessary CALCULATE wrappers and risky iterators.
-Run coop dax-review check . to flag context transitions inside iterator expressions.
-Run coop dax-review check . to find bidirectional relationships across star schemas.
-Run coop dax-review check . to flag missing or inconsistent measure format strings.
-Run /semantic-model-review to get an architectural review of measures.
-Use the tabular-editor-bpa skill to run Best Practice Analyzer rules.
-Use --save-ignores to interactively save accepted findings in the config.
+# dax-review — things to ask Coop about DAX, TMDL, and semantic models
+Ask Coop to run its DAX review on this TMDL, .bim, or .pbit project.
+Run /semantic-model-review for an architectural review of measures and relationships.
+Use /impact-analysis before changing a shared measure or semantic table.
+Ask Coop to combine DAX review with BPA when Tabular Editor is configured.
+Ask Coop to flag risky iterators, unnecessary CALCULATE wrappers, and context transitions.
+Try asking Coop to compare a refactor's exact before-and-after query outputs.
+Ask Coop to test date iterators for accidental reuse of the outer date context.
+Try a FILTER table variable when KEEPFILTERS is not in a valid filter position.
+Ask Coop whether recurring status or scenario logic belongs upstream instead of in DAX.
+Try a disconnected table plus measures when a button slicer uses calculated status.
+Ask Coop to keep old behavior unless exactly one reporting version is selected.
+Try separating source scenarios from reporting versions that span date ranges.
+Ask Coop to test RLS as a Viewer or effective identity, not as a workspace editor.
+Ask Coop to inspect conditional-format binding before rewriting an invisible icon measure.
+Ask Coop to include page filters, slicers, calculation groups, and the target visual.
+Try asking Coop to review copied PBIR filter IDs before accepting a cloned page.
+Ask Coop to treat a delete-and-create diff as a stop signal for report identity.
 
 # --- light easter eggs (client-safe) ---
 These aren't the measures you're looking for…

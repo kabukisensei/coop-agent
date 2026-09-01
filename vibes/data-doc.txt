@@ -1,19 +1,18 @@
-# data-doc — data documentation, lineage, impact, and portal tips
-Run coop data-doc lineage <object> before changing shared tables or measures.
-Run coop data-doc build to generate Markdown docs and an offline portal.
-Run coop data-doc build --reviews <report.json> to add review findings to docs.
-Use coop data-doc check in CI to detect stale documentation.
-Run coop data-doc scan to parse SQL and Power BI files into graph.json.
-Use /setup-docs to configure coop-data-doc.yml in an interactive wizard.
-Use /impact-analysis to inspect lineage before changing shared schemas.
-Add --depth 2 to coop data-doc lineage <object> to trace two dependency hops.
-Open the generated HTML portal for clickable, collapsible lineage graphs.
-Read manifest.json for machine-readable nodes, edges, and trust markers.
-Scan SQL and Power BI together to trace lineage across both estates.
-Configure table and measure descriptions in coop-data-doc.yml.
-Use bronze, silver, and gold folders to expose medallion-layer lineage.
-Include TMDL and .bim paths in coop-data-doc.yml to document semantic models.
-Set output.dir and output.site_dir in coop-data-doc.yml to choose output folders.
+# data-doc — in-agent documentation, lineage, impact, and portal tips
+Run /setup-docs to configure and build lineage docs without leaving Coop.
+Use /impact-analysis before changing a shared table, measure, or schema.
+Ask Coop to look up an object's lineage before proposing a change.
+Ask Coop to build Markdown docs and the offline lineage portal for this project.
+Ask Coop to scan SQL and Power BI together for cross-estate lineage.
+Ask Coop to check whether built documentation is stale.
+Try asking Coop for two dependency hops when one does not explain the impact.
+Ask Coop to trace a report issue from visual to measure to view to load procedure.
+Try treating missing lineage as a documentation gap, not proof an object is absent.
+Ask Coop to add review findings to the generated documentation.
+Ask Coop to explain lineage trust markers before relying on an inferred edge.
+Ask Coop to document TMDL and .bim semantic models alongside warehouse SQL.
+Try asking Coop to identify undocumented tables, measures, and relationships.
+Ask Coop to save the diagnostic query that proved a lineage conclusion.
 Use /discovery to explore and document an unfamiliar data estate.
 
 # --- light easter eggs (client-safe) ---
