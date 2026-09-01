@@ -363,6 +363,7 @@ run_sync_with_extdeps_rc() { # <rc> <line-fields...>
   rm -rf "$sandbox"
   mkdir -p "$sandbox/lib" "$sandbox/config" "$sandbox/scripts" "$sandbox/bin" "$sandbox/home"
   cp "$ROOT/lib/common.sh" "$sandbox/lib/"
+  cp "$ROOT/lib/pi_settings.py" "$sandbox/lib/"
   cp "$ROOT/lib/pins.js" "$sandbox/lib/" 2>/dev/null || true
   cp "$ROOT/config/release-manifest.json" "$sandbox/config/"
   cp "$ROOT/scripts/sync.sh" "$sandbox/scripts/"

@@ -9,6 +9,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - Coop is now the single update voice: Pi and managed-extension self-update notices
   are suppressed, `context-mode` self-upgrades are redirected to manifest-safe
   `coop update`, and the useful daily checkout-behind nudge remains unchanged.
+- Coop now enables Pi's quiet-startup setting in its isolated configuration, hiding
+  the raw context/skills/prompts/extensions/themes inventory without disabling any
+  resources or the branded Coop header.
 - Embedded `coop-data-doc` setup now discovers nearby repository folders in a
   type-to-filter path browser and reports early wizard exits cleanly.
 - `coop init` can now run Azure CLI sign-in inside the project wizard and use

@@ -571,7 +571,9 @@ the truecolor block-art Cooptimize logo (uniform-padded, width-robust).
   **tips** with a few easter eggs, and
   the **theme** (`themes/cooptimize.json`). Brand palette (sampled from the logo):
   navy `#00416B`, forest `#42783C`, olive `#82AA43`, lime `#B2D235`, red `#EF412D`.
-  `coop sync` keeps the splash and vibe assets fresh.
+  Coop enables Pi's quiet-startup setting so the raw context/skills/prompts/extensions
+  inventory stays hidden; those resources still load normally. `coop sync` keeps this
+  setting, the splash, and the vibe assets current.
 
 ---
 

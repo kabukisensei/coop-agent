@@ -41,6 +41,9 @@ node "$ROOT/tests/workflow.test.mjs"
 echo "→ coop-profile tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/coop-profile.test.mjs"
 
+echo "→ isolated Pi settings tests"
+python3 "$ROOT/tests/pi-settings.test.py"
+
 echo "→ vibes & feature-discovery tips contract tests"
 node "$ROOT/tests/vibes.test.mjs"
 

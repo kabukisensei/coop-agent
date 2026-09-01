@@ -4,6 +4,7 @@
 #   • make bin/coop + scripts executable
 #   • create coop's own Pi agent dir (~/.coop/agent) so coop's extensions/settings
 #     never mix with your personal `pi`; share credentials (auth/models) from it
+#   • enable Pi's quiet startup in the isolated settings (resources still load)
 #   • install the core Pi extensions INTO that isolated dir (MCP / memory / powerline)
 #   • place the read-only MCP config (fabric / powerbi / microsoft-learn / context-mode)
 #     into the isolated dir if absent (never clobbers)
@@ -39,14 +40,23 @@ for f in auth.json models.json; do
   fi
 done
 
-# --- 3. Core Pi extensions — installed INTO the isolated dir (idempotent) -----
+# --- 3. Fleet Pi settings ----------------------------------------------------
+SYNC_FAILURES=0
+_settings_py="$(coop_python 2>/dev/null || true)"
+if [ -n "$_settings_py" ] && "$_settings_py" "$COOP_ROOT/lib/pi_settings.py" ensure-quiet-startup "$PI_AGENT/settings.json"; then
+  coop_ok "quiet startup enabled (guardrails, skills, prompts, extensions, and theme still load)"
+else
+  coop_warn "could not enable quiet startup in $PI_AGENT/settings.json" "run: coop sync"
+  SYNC_FAILURES=$((SYNC_FAILURES + 1))
+fi
+
+# --- 4. Core Pi extensions — installed INTO the isolated dir (idempotent) -----
 # `pi install` exiting 0 proves nothing on its own: a successful-looking install
 # can still leave the wrong version or nothing at all in the tree. After the
 # install loop, dependency specs are converged to EXACT manifest versions
 # (coop_converge_extension_pins — the same helper the compatibility matrix uses)
 # and every extension is verified; any postcondition failure makes sync exit
 # non-zero.
-SYNC_FAILURES=0
 FLEET_SPECS=()
 FLEET_NAMES=()
 FLEET_PINS=()
@@ -149,7 +159,7 @@ else
   SYNC_FAILURES=$((SYNC_FAILURES + 1))
 fi
 
-# --- 4. MCP config — manifest-pinned, ownership-aware, non-destructive --------
+# --- 5. MCP config — manifest-pinned, ownership-aware, non-destructive --------
 MCP_DST="$PI_AGENT/mcp.json"
 _mcp_py="$(coop_python 2>/dev/null || true)"
 if [ -n "$_mcp_py" ] && "$_mcp_py" "$COOP_ROOT/lib/mcp_config.py" --output "$MCP_DST"; then
@@ -158,7 +168,7 @@ else
   coop_warn "could not generate MCP config" "run: coop onboard --edit, then coop sync"
 fi
 
-# --- 5. Brand assets ---------------------------------------------------------
+# --- 6. Brand assets ---------------------------------------------------------
 coop_head "Brand assets"
 [ -f "$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi" ] && coop_ok "splash present" || coop_warn "splash.ansi missing (regenerate from the logo)"
 [ -f "$COOP_ROOT/themes/cooptimize.json" ] && coop_ok "theme present" || coop_warn "themes/cooptimize.json missing"

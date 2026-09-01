@@ -3,6 +3,7 @@
 # coop sync (Windows / PowerShell mirror of scripts/sync.sh) —
 # provision coop's ISOLATED Pi agent dir (~/.coop/agent) + brand assets (non-destructive):
 #   • create the isolated dir; share auth/models from your personal pi (login)
+#   • enable Pi's quiet startup in the isolated settings (resources still load)
 #   • install coop's core Pi extensions INTO that dir (MCP / memory / better-openai)
 #   • place the read-only MCP config into the isolated dir if absent (never clobbers)
 #   • verify splash / theme / vibes are present
@@ -47,11 +48,22 @@ foreach ($f in @('auth.json', 'models.json')) {
   }
 }
 
-# --- 3. Core Pi extensions — installed INTO the isolated dir (idempotent) -----
+# --- 3. Fleet Pi settings ----------------------------------------------------
+$script:SyncFailures = 0
+$settingsPy = Get-CoopPython
+if ($settingsPy) {
+  & $settingsPy (Join-Path $script:CoopRoot 'lib\pi_settings.py') ensure-quiet-startup (Join-Path $PI_AGENT 'settings.json')
+  if ($LASTEXITCODE -eq 0) { Coop-Ok 'quiet startup enabled (guardrails, skills, prompts, extensions, and theme still load)' }
+  else { Coop-Warn "could not enable quiet startup in $PI_AGENT\settings.json" 'run: coop sync'; $script:SyncFailures++ }
+} else {
+  Coop-Warn 'could not enable quiet startup: Python not found' 'run: coop sync'
+  $script:SyncFailures++
+}
+
+# --- 4. Core Pi extensions — installed INTO the isolated dir (idempotent) -----
 # `pi install` exiting 0 proves nothing on its own: every extension is verified
 # against the manifest pin AFTER production exact-pin convergence; any failure
 # makes sync exit non-zero.
-$script:SyncFailures = 0
 $fleetSpecs = @(); $fleetNames = @(); $fleetPins = @(); $preVers = @{}
 
 # PI_CODING_AGENT_DIR scoping: every Pi operation must target the ISOLATED dir,
@@ -152,7 +164,7 @@ finally {
   else { Remove-Item Env:PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue }
 }
 
-# --- 4. MCP config — manifest-pinned, ownership-aware, non-destructive --------
+# --- 5. MCP config — manifest-pinned, ownership-aware, non-destructive --------
 $MCP_DST = Join-Path $PI_AGENT 'mcp.json'
 $mcpPy = Get-CoopPython
 if ($mcpPy) {
@@ -163,7 +175,7 @@ if ($mcpPy) {
   Coop-Warn 'python missing — cannot generate MCP config'
 }
 
-# --- 5. Brand assets ---------------------------------------------------------
+# --- 6. Brand assets ---------------------------------------------------------
 Coop-Head 'Brand assets'
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi') -PathType Leaf) { Coop-Ok 'splash present' } else { Coop-Warn 'splash.ansi missing (regenerate from the logo)' }
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'themes\cooptimize.json') -PathType Leaf) { Coop-Ok 'theme present' } else { Coop-Warn 'themes/cooptimize.json missing' }
