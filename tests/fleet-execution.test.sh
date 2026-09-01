@@ -26,6 +26,13 @@ isolate_block() { # [n] -> sets env + STUB[/MARKER] or STUBn/MARKERn
 
 isolate_block
 REAL_NODE="$(command -v node)"; REAL_PY="$(command -v python3 2>/dev/null || command -v python)"
+stub_python() { # <destination> — wrappers preserve native Windows DLL lookup
+  cat > "$1" <<SH
+#!/bin/sh
+exec "$REAL_PY" "\$@"
+SH
+  chmod +x "$1"
+}
 COOP_FABRIC_PYTHON="$REAL_PY"; export COOP_FABRIC_PYTHON
 cat > "$STUB/pi" <<'SH'
 #!/bin/sh
@@ -59,7 +66,7 @@ cat > "$STUB/fab" <<'SH'
 #!/bin/sh
 echo 'fab version 1.6.1'
 SH
-ln -s "$REAL_NODE" "$STUB/node"; ln -s "$REAL_PY" "$STUB/python3"
+ln -s "$REAL_NODE" "$STUB/node"; stub_python "$STUB/python3"
 chmod +x "$STUB/pi" "$STUB/npm" "$STUB/pipx" "$STUB/fab"
 PATH="$STUB:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB"; export PATH COOP_TEST_STUB_PATH
 : > "$MARKER"
@@ -144,7 +151,7 @@ cat > "$STUB2/fab" <<'SH'
 #!/bin/sh
 echo 'fab version 1.6.1'
 SH
-ln -s "$REAL_NODE" "$STUB2/node"; ln -s "$REAL_PY" "$STUB2/python3"
+ln -s "$REAL_NODE" "$STUB2/node"; stub_python "$STUB2/python3"
 chmod +x "$STUB2/pi" "$STUB2/npm" "$STUB2/pipx" "$STUB2/fab"
 PATH="$STUB2:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB2"; export PATH COOP_TEST_STUB_PATH
 : > "$MARKER2"
@@ -179,7 +186,7 @@ cat > "$STUB4/fab" <<'SH'
 #!/bin/sh
 echo 'fab version 1.6.1'
 SH
-ln -s "$REAL_NODE" "$STUB4/node"; ln -s "$REAL_PY" "$STUB4/python3"
+ln -s "$REAL_NODE" "$STUB4/node"; stub_python "$STUB4/python3"
 chmod +x "$STUB4/pi" "$STUB4/npm" "$STUB4/pipx" "$STUB4/fab"
 PATH="$STUB4:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB4"; export PATH COOP_TEST_STUB_PATH
 : > "$MARKER4"
@@ -214,7 +221,7 @@ cat > "$STUB5/fab" <<'SH'
 #!/bin/sh
 echo 'fab version 1.5.0'
 SH
-ln -s "$REAL_NODE" "$STUB5/node"; ln -s "$REAL_PY" "$STUB5/python3"
+ln -s "$REAL_NODE" "$STUB5/node"; stub_python "$STUB5/python3"
 chmod +x "$STUB5/pi" "$STUB5/npm" "$STUB5/pipx" "$STUB5/fab"
 PATH="$STUB5:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB5"; export PATH COOP_TEST_STUB_PATH
 : > "$MARKER5"
@@ -257,7 +264,7 @@ if [ "$1" = "list" ]; then
 fi
 echo "PIPX $*" >> "$MARKER3"; exit 0
 SH
-ln -s "$REAL_NODE" "$STUB3/node"; ln -s "$REAL_PY" "$STUB3/python3"
+ln -s "$REAL_NODE" "$STUB3/node"; stub_python "$STUB3/python3"
 chmod +x "$STUB3/pi" "$STUB3/npm" "$STUB3/pipx" "$STUB3/fab"
 PATH="$STUB3:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB3"; export PATH COOP_TEST_STUB_PATH
 : > "$MARKER3"
@@ -287,7 +294,7 @@ cat > "$STUB6/pipx" <<'SH'
 echo "PIPX $*" >> "$MARKER6"
 exit 0
 SH
-ln -s "$REAL_NODE" "$STUB6/node"; ln -s "$REAL_PY" "$STUB6/python3"
+ln -s "$REAL_NODE" "$STUB6/node"; stub_python "$STUB6/python3"
 chmod +x "$STUB6/pi" "$STUB6/npm" "$STUB6/pipx"
 PATH="$STUB6:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB6"; COOP_FABRIC_PYTHON="$REAL_PY"
 export PATH COOP_TEST_STUB_PATH COOP_FABRIC_PYTHON
