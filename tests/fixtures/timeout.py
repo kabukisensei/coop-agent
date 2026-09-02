@@ -16,8 +16,14 @@ def main() -> int:
     secs = float(sys.argv[1])
     cmd = sys.argv[2:]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=secs,
-                           env=os.environ)
+        r = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=secs,
+            env=os.environ,
+            stdin=subprocess.DEVNULL,
+        )
     except subprocess.TimeoutExpired:
         print("TIMEOUT after %ss" % secs, file=sys.stderr)
         return 124
