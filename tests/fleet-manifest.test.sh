@@ -20,7 +20,7 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 [ "$(coop_manifest_get pi.version)" = "0.84.3" ] && ok "coop_manifest_get pi.version" || ko "coop_manifest_get pi.version"
 [ "$(coop_manifest_get node.min)" = "22.19.0" ] && ok "coop_manifest_get node.min" || ko "coop_manifest_get node.min"
 [ "$(coop_manifest_get extensions.pi-mcp-adapter)" = "2.10.0" ] && ok "coop_manifest_get extensions.pi-mcp-adapter" || ko "coop_manifest_get extensions.pi-mcp-adapter"
-[ "$(coop_manifest_get python_tools.coop-data-doc)" = "1.1.1" ] && ok "coop_manifest_get python_tools.coop-data-doc" || ko "coop_manifest_get python_tools.coop-data-doc"
+[ "$(coop_manifest_get python_tools.coop-data-doc)" = "1.2.0" ] && ok "coop_manifest_get python_tools.coop-data-doc" || ko "coop_manifest_get python_tools.coop-data-doc"
 [ -z "$(coop_manifest_get missing.key)" ] && ok "coop_manifest_get missing key returns empty" || ko "missing key should return empty"
 [ "$(coop_manifest_extension_spec pi-mcp-adapter)" = "npm:pi-mcp-adapter@2.10.0" ] && ok "literal extension spec: pi-mcp-adapter" || ko "extension spec mismatch"
 [ "$(coop_manifest_extension_spec @juicesharp/rpiv-ask-user-question)" = "npm:@juicesharp/rpiv-ask-user-question@1.20.0" ] && ok "literal scoped extension spec" || ko "scoped extension spec mismatch"

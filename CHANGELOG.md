@@ -6,6 +6,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Changed
+- New-client setup now supports discovery, partial, mixed-repo, and fully connected
+  estates. The in-Coop project wizard can start with no local repository and records
+  current coverage, while Coop uses read-only dev/test metadata to fill gaps and
+  approval-gates live rows plus every production read.
+- The release fleet now pins `coop-data-doc` 1.2.0 across the release manifest,
+  tested compatibility metadata, and copy-paste CI pipelines so install/update/sync
+  converge every workstation on the progressive-estate setup protocol.
+- Fresh interactive installs now finish model setup in Coop itself: the real
+  `/login openai-codex` command is prepared, successful browser authentication
+  returns automatically to the final doctor check, and a plain unauthenticated
+  `coop` launch provides the same fallback without affecting signed-in users.
 - Fresh installation now uses a short first-run path: one Microsoft-cloud choice
   replaces the individual MCP toggles, recommended integrations are applied
   automatically, and advanced choices remain in `coop onboard --config-only`.

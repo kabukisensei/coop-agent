@@ -31,7 +31,7 @@ From a fresh clone, run the installer with its full path (it links `coop` onto y
 git clone <coop-agent-repo> && cd coop-agent
 ./bin/coop install     # fresh bootstrap of the whole stack (idempotent — safe to re-run)
                        # Windows: .\bin\coop.cmd install
-coop                   # launch the branded Pi agent (after install + new shell)
+coop                   # launch the ready, branded Pi agent (after install + new shell)
 ```
 
 > **Isolation:** `coop` runs Pi against its own agent dir (`~/.coop/agent`) via the
@@ -39,8 +39,10 @@ coop                   # launch the branded Pi agent (after install + new shell)
 > theme/MCP load — your personal `pi` stays untouched. See [Isolation](#isolation)
 > below.
 
-> **First launch:** the first `coop` run prompts a one-time model-provider sign-in —
-> choose the **OpenAI (Codex)** provider with your **Cooptimize business account**
+> **Model sign-in:** a fresh interactive `coop install` finishes in a short sign-in
+> screen with `/login openai-codex` prepared. Press Enter and use your
+> **Cooptimize business account**. If setup ran non-interactively, the first plain
+> `coop` launch prepares the same one-time sign-in automatically
 > (the no-training-on-our-data terms attach to the business subscription). Details:
 > [docs/onboarding.md §3.5](docs/onboarding.md#35-first-launch--sign-in-one-time).
 
@@ -283,7 +285,9 @@ setup`; older tool versions stop with upgrade guidance rather than a reduced fal
 Project configuration has the same no-shell path: run **`/setup-project`** or
 choose **Set up or edit this Coop project** from `/start`. The wizard creates a
 missing `.coop/project.yml` or safely edits the nearest existing one, covering
-client details, repositories, Fabric/Power BI workspaces, and Tabular Editor.
+client details, whatever repositories are available, Fabric/Power BI workspaces,
+and Tabular Editor. A repository is not required: the wizard can start an engagement
+in discovery mode, record SQL-only or Power-BI-only coverage, and add sources later.
 After an edit, run `/new` (or restart Coop) so the guardrails take a fresh trusted
 snapshot of the contract.
 
@@ -347,6 +351,12 @@ MCP servers are for `list` / `read` / `inspect` only. coop **never** calls
 create/update/delete/deploy/publish MCP actions without explicit approval —
 regardless of what a server is capable of.
 
+For live estate discovery, Coop may inspect dev/test metadata, schemas, and artifact
+code read-only by default. Actual row reads ask first. Production metadata and code
+also ask first; production row reads require an explicitly bounded target, columns,
+filters, and row limit. Results identify whether evidence came from a repo or a live
+environment and flag drift between them.
+
 > **Supply-chain note:** generated servers use exact versions from
 > `config/release-manifest.json`. Review COOP release updates before enabling them in
 > locked-down environments; MCP integrations remain optional.
@@ -401,13 +411,14 @@ launch.
 4. **Never commit source** — never commit SQL, DAX, semantic model, report,
    Python, or notebook source. Make the edit, show the diff, let a human commit.
    Only docs / logs / diagrams / glossary / site may be committed, after approval.
-5. No production changes without explicit, specific confirmation.
-6. MCP is read-only.
-7. Never expose secrets.
+5. Dev/test metadata/schema/code is read-only by default; actual rows and all production access ask first.
+6. No production changes without explicit, specific confirmation.
+7. MCP is read-only.
+8. Never expose secrets.
 
 **Audit trail.** Every guardrail decision the runtime `coop-guardrails` extension makes —
 a blocked source commit, or a confirmed/declined destructive command, secret-file access,
-or mutating MCP call — is appended as one JSON line to
+live row/production read, or mutating MCP call — is appended as one JSON line to
 `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`). Each line records
 the timestamp, working folder, kind, decision, and the offending path(s) or a truncated
 command — **never secrets or file contents** (the secret gate logs only the matched path).
@@ -457,7 +468,7 @@ append, not a commit or push.
 coop wraps three standalone, advisory, **read-only** tools (installed via pipx;
 also exposed as the native LLM tools `sql_review` / `dax_review` / `data_doc`):
 
-- **`coop-data-doc`** — SQL + Power BI documentation, lineage, and machine-readable
+- **`coop-data-doc`** — progressive SQL and/or Power BI documentation, lineage, and machine-readable
   output. `scan` → `graph.json`; `build` → `manifest.json` + Markdown docs + a
   portal site; `lineage <object>` → one object's upstream/downstream + relationships
   as JSON. Other verbs: `check`, `init`, `setup`, `update`, `upgrade`. coop consumes

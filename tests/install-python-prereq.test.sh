@@ -103,7 +103,7 @@ if [ "$1 $2" = 'install --help' ]; then
   exit 0
 fi
 if [ "$1" = 'list' ]; then
-  echo 'package coop-data-doc 1.1.1'
+  echo 'package coop-data-doc 1.2.0'
   echo 'package coop-sql-review 0.15.2'
   echo 'package coop-dax-review 0.22.0'
   echo 'package ms-fabric-cli 1.7.0'

@@ -167,12 +167,26 @@ def build_project_yml(answers: dict) -> str:
     lines.append("  work_mode: consultant_review_first")
     lines.append("")
 
-    lines.append("repositories:")
     repositories = answers.get("repositories") or [{
         "name": answers["repo_name"], "description": answers["repo_description"],
         "local_path": answers["repo_local_path"], "remote_name": answers["repo_remote_name"],
         "default_branch": answers["default_branch"],
     }]
+    roles = {repo.get("role", "generic") for repo in repositories}
+    estate_mode = "connected" if "mixed" in roles or {"sql", "powerbi"}.issubset(roles) else ("partial" if repositories else "discovery")
+    lines.append("estate:")
+    lines.append(f"  mode: {quote(estate_mode)}")
+    lines.append("  local_source_coverage:")
+    lines.append(f"    sql: {quote('available' if 'sql' in roles or 'mixed' in roles else ('unknown' if 'generic' in roles else 'not_available_yet'))}")
+    lines.append(f"    power_bi: {quote('available' if 'powerbi' in roles or 'mixed' in roles else ('unknown' if 'generic' in roles else 'not_available_yet'))}")
+    lines.append("  live_discovery:")
+    lines.append("    dev_test_metadata: 'read_only_allowed'")
+    lines.append("    dev_test_rows: 'ask_first'")
+    lines.append("    production_metadata: 'ask_first'")
+    lines.append("    production_rows: 'explicit_scope_and_approval'")
+    lines.append("")
+
+    lines.append("repositories:" if repositories else "repositories: {}")
     for repo in repositories:
         lines.append(f"  {quote(repo['name'])}:")
         lines.append(f"    description: {quote(repo['description'])}")
@@ -335,9 +349,12 @@ def build_project_yml(answers: dict) -> str:
     lines.append("    - \"git status / git diff / git pull\"")
     lines.append("    - \"create backups\"")
     lines.append("    - \"run coop-sql-review / coop-dax-review / coop-data-doc (advisory)\"")
-    lines.append("    - \"MCP list / read / inspect\"")
+    lines.append("    - \"MCP dev/test metadata / schema / artifact-code list / read / inspect\"")
     lines.append("    - \"update markdown docs, html site, logs\"")
     lines.append("  ask_first:")
+    lines.append("    - \"read actual rows from a live environment\"")
+    lines.append("    - \"read production metadata or artifact code\"")
+    lines.append("    - \"read production rows with target / columns / filters / limit\"")
     lines.append("    - \"delete files\"")
     lines.append("    - \"fabric-cicd deploy / run deployment\"")
     lines.append("    - \"change production workspace\"")
@@ -382,14 +399,14 @@ def run_wizard(target_dir: Path) -> dict:
     repo_description = ask_prefilled("Repository description", "Project source and docs")
     repo_local_path = ask_prefilled("Repository local path", repo_root)
     default_branch = ask_prefilled("Default branch", default_branch)
-    repo_role = read_choice("Repository role for lineage setup", ["sql", "powerbi", "generic"], default="generic")
+    repo_role = read_choice("Repository role for lineage setup", ["sql", "powerbi", "mixed", "generic"], default="generic")
     repositories = [{"name": repo_name, "description": repo_description, "role": repo_role, "local_path": repo_local_path, "remote_name": "origin", "default_branch": default_branch}]
     while read_confirm("Add another repository?", default=False):
         extra_path = ask_prefilled("Additional repository local path", "")
         extra_name = ask_prefilled("Additional repository short name", Path(extra_path).name or f"repo{len(repositories)+1}")
         extra_description = ask_prefilled("Additional repository description", "Project source and docs")
         extra_branch = ask_prefilled("Additional repository default branch", "main")
-        extra_role = read_choice("Additional repository role", ["sql", "powerbi", "generic"], default="generic")
+        extra_role = read_choice("Additional repository role", ["sql", "powerbi", "mixed", "generic"], default="generic")
         repositories.append({"name": extra_name, "description": extra_description, "role": extra_role, "local_path": extra_path, "remote_name": "origin", "default_branch": extra_branch})
 
     use_fabric = read_confirm("Is this a Microsoft Fabric / Power BI engagement?", default=False)
@@ -410,7 +427,7 @@ def run_wizard(target_dir: Path) -> dict:
         te_path = ask_prefilled("Tabular Editor CLI command or executable path", discover_te_path())
         bpa_rules_path = ask_prefilled("BPA rules file path (optional)", "")
 
-    setup_lineage = read_confirm("Configure SQL + Power BI lineage docs now? (runs `coop-data-doc setup`)", default=False)
+    setup_lineage = read_confirm("Configure lineage docs for the local sources available now? (runs `coop-data-doc setup`)", default=False)
 
     return {
         "organization": organization,

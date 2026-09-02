@@ -88,6 +88,25 @@ t("renderPrompt select → chosen label mapped back to value", async () => {
   assert.deepEqual(labels, ["Alpha", "Beta"]);
 });
 
+t("renderPrompt select → protocol default is shown first", async () => {
+  let shown = [];
+  const ctx = { ui: { select: async (_msg, labels) => { shown = labels; return labels[0]; } } };
+  const answer = await renderPrompt(ctx, {
+    type: "prompt",
+    id: "local_sources",
+    kind: "select",
+    message: "Available sources",
+    default: "sql",
+    choices: [
+      { label: "Both", value: "both" },
+      { label: "SQL only", value: "sql" },
+      { label: "Power BI only", value: "powerbi" },
+    ],
+  });
+  assert.equal(answer, "sql");
+  assert.deepEqual(shown, ["SQL only", "Both", "Power BI only"]);
+});
+
 t("renderPrompt cancel (Esc) → null", async () => {
   const ctx = { ui: { input: async () => null } };
   const answer = await renderPrompt(ctx, { type: "prompt", id: "q4", kind: "text", message: "X", default: "" });

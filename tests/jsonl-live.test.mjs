@@ -103,8 +103,12 @@ const answerFor = (p) => {
   if (p.kind === "checkbox") {
     const checked = (p.choices || []).filter((c) => c.checked).map((c) => c.value);
     if (checked.length) return checked;
-    // Layer pickers require at least one entry; derive a name from the prompt id.
-    if (/layer/i.test(id) && !/^no_/.test(id)) return [id.replace(/_layer.*$/, "")];
+    // Layer pickers require an OFFERED entry; choose the first discovered schema
+    // (never fabricate one from the prompt id).
+    if (/layer/i.test(id) && !/^no_/.test(id)) {
+      const offered = (p.choices || []).find((c) => c.value !== "__manual__");
+      return offered ? [offered.value] : [];
+    }
     return [];
   }
   if (typeof p.default === "string" && p.default) return p.default;

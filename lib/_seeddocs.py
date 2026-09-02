@@ -2,13 +2,15 @@
 """Seed coop-data-doc.yml from .coop/project.yml's `repositories:` (issue #25).
 
 The project contract declares each repo's local_path once; coop-data-doc needs
-the same paths in its own `repos:` (two slots: `sql` and `powerbi`). This helper
+the same paths in its own `repos:` (the conventional `sql` and `powerbi` slots). This helper
 reads the contract, classifies each FILLED repository into a slot, and prints a
 JSON patch for `coop-data-doc config-set --from-json -` on STDOUT. A human
 mapping summary goes to STDERR (so `coop init --seed-docs` can show it above the
 confirmation without polluting the pipe).
 
 Classification (best-effort, first match wins per slot):
+  - a repo explicitly marked `role: mixed` -> both slots (the same root, except
+    an optional sql_root scopes the SQL side)
   - a repo with a `sql_root` key, or whose name/description mentions
     sql / warehouse / lakehouse / dw / database  -> repos.sql
     (path includes the sql_root subfolder when set and not a TODO)
@@ -44,7 +46,7 @@ def is_todo(value):
 
 def classify(name, entry):
     role = str(entry.get('role') or '').strip().lower().replace('_', '')
-    if role in ('sql', 'powerbi'):
+    if role in ('sql', 'powerbi', 'mixed'):
         return role
     if role == 'generic':
         return None
@@ -82,10 +84,21 @@ def main(argv):
             continue
         path = str(local_path)
         slot = classify(name, entry)
-        if slot == 'sql':
+        if slot in ('sql', 'mixed'):
             sql_root = entry.get('sql_root')
             if not is_todo(sql_root):
-                path = os.path.join(path, str(sql_root))
+                sql_path = os.path.join(path, str(sql_root))
+            else:
+                sql_path = path
+        if slot == 'mixed':
+            for target, target_path in (('sql', sql_path), ('powerbi', path)):
+                if target not in slots:
+                    slots[target] = (name, target_path)
+                else:
+                    sys.stderr.write("note: repos.{} already mapped — '{}' {} side left out.\n".format(target, name, target))
+            continue
+        if slot == 'sql':
+            path = sql_path
         if slot is None:
             unclassified.append((name, path))
         elif slot not in slots:

@@ -49,7 +49,12 @@ sign-in; Coop waits for it, detects the tenant (including tenants without Azure
 subscriptions), and confirms the exact tenant before continuing. If browser sign-in
 cannot complete, Coop offers a device-code retry. Recommended integrations are then
 enabled automatically; run `coop onboard --config-only` later for detailed choices.
-**Open a new shell afterward** so `coop` is found.
+As the final interactive step, Coop opens its model sign-in screen with
+`/login openai-codex` already prepared. Press Enter, finish browser authentication
+with your Cooptimize business account, and Coop returns to its final readiness
+check automatically. Set `COOP_NO_MODEL_LOGIN=1` only for managed/non-interactive
+installations that deliberately handle model credentials separately. **Open a new
+shell afterward** so `coop` is found.
 
 ## 3. Verify
 
@@ -69,9 +74,11 @@ Fabric CLI, follow doctor's one-line fix.
 coop
 ```
 
-The **first** launch prompts you to sign in to a model provider. This is the one
-interactive choice in the whole setup, and it has governance consequences — pick
-carefully:
+Fresh interactive installation now performs this step at the end: Coop opens a
+short sign-in-only screen with `/login openai-codex` in the editor. Press Enter,
+complete the browser sign-in, and the installer resumes automatically. If the
+installer could not use an interactive terminal, the first plain `coop` launch
+prepares the same command instead. This choice has governance consequences:
 
 - **Provider: OpenAI (Codex).** This is the provider Cooptimize's data-handling
   posture is built on.
@@ -81,8 +88,9 @@ carefully:
   signed in with the wrong account, sign in again from inside the agent and pick
   the business account.
 
-It's a **one-time** step. The login is stored in coop's isolated agent dir
-(`~/.coop/agent`) — and if you already use a personal `pi`, its existing login is
+It's a **one-time** step. Once a credential is present, normal Coop launches do
+not show or replace anything in the editor. The login is stored in coop's isolated
+agent dir (`~/.coop/agent`) — and if you already use a personal `pi`, its existing login is
 shared in from `~/.pi/agent` automatically (see
 [README → Isolation](../README.md#isolation)), so you may not be prompted at all.
 `coop doctor` shows **"Pi login present"** once it's done.
@@ -101,7 +109,9 @@ coop doctor
 Non-terminal users can simply launch `coop`: when the current Git repository has
 no `.coop/project.yml`, Coop offers to create it with native dialogs. The wizard
 is also available anytime from `/start` or `/setup-project`, and can edit an
-existing contract without replacing custom fields or policies.
+existing contract without replacing custom fields or policies. Choose discovery
+mode when no local source exists yet; SQL-only, Power-BI-only, partial-folder, and
+fully connected projects can all be expanded later through the same wizard.
 
 The first time you launch `coop` in a repo, it offers to set up **lineage docs**
 (`coop-data-doc`) so the agent understands up/downstream impact — accept it, or run

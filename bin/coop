@@ -219,6 +219,16 @@ launch_pi() {
 
   coop_az_preflight
 
+  # A plain interactive launch with no stored provider credential should lead
+  # directly into the real Pi login command. The coop-tools extension fills the
+  # command into Pi's editor (CLI positional arguments would incorrectly send it
+  # to the model as a prompt). Explicit Pi arguments are never overridden.
+  if [ "$#" -eq 0 ] && [ -t 0 ] && [ -t 1 ] \
+    && [ "${COOP_NO_MODEL_LOGIN:-0}" != "1" ] \
+    && ! coop_pi_login_present; then
+    export COOP_PRIME_MODEL_LOGIN=1
+  fi
+
   coop_build_pi_args
   exec pi ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} "$@"
 }

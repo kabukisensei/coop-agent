@@ -510,10 +510,11 @@ if ($proj) {
   # counting raw TODO substrings.
   $org = Get-CoopYamlValue $proj 'profile.organization' ''
   $branch = Get-CoopYamlValue $proj 'profile.default_branch' ''
+  $estateMode = Get-CoopYamlValue $proj 'estate.mode' ''
   $repoPaths = @(Get-CoopYamlList $proj 'repositories.*.local_path')
   if ([string]::IsNullOrWhiteSpace($org)) { D-Warn 'profile.organization is empty' 'set it in .coop/project.yml' }
   if ([string]::IsNullOrWhiteSpace($branch)) { D-Warn 'profile.default_branch is empty' 'set it in .coop/project.yml' }
-  if ($repoPaths.Count -eq 0) { D-Warn 'no repositories configured' 'add at least one repository under repositories:' }
+  if ($repoPaths.Count -eq 0 -and $estateMode -ne 'discovery') { D-Warn 'no repositories configured' 'run /setup-project in Coop, or set estate.mode: discovery' }
 
   if ((Test-CoopToolEnabled $proj 'fabric_cli') -or (Test-CoopToolEnabled $proj 'fabric_cicd')) {
     $tenant = Get-CoopYamlValue $proj 'fabric.tenant_id' ''

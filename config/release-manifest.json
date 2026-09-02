@@ -17,7 +17,7 @@
     "context-mode": "1.0.169"
   },
   "python_tools": {
-    "coop-data-doc": "1.1.1",
+    "coop-data-doc": "1.2.0",
     "coop-sql-review": "0.15.2",
     "coop-dax-review": "0.22.0",
     "ms-fabric-cli": "1.7.0",

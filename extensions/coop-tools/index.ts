@@ -117,6 +117,10 @@ interface DataDocSettings {
   siteDir: string;
 }
 
+interface DataDocSetupPrefill extends Partial<DataDocSettings> {
+  sourceMode?: "both" | "sql" | "powerbi" | "none";
+}
+
 const errMsg = (e: any): string => (e && e.message ? e.message : String(e));
 
 function notify(ctx: any, message: string, type: "info" | "warning" | "error" = "info"): void {
@@ -295,8 +299,8 @@ export function classifyManagedLines(text: string): Array<{ i: number; key: Mana
 }
 
 /** Best-effort prefill: pull the few scalars we manage from an existing yml. */
-export function parseExisting(text: string): Partial<DataDocSettings> {
-  const out: Partial<DataDocSettings> = {};
+export function parseExisting(text: string): DataDocSetupPrefill {
+  const out: DataDocSetupPrefill = {};
   const lines = text.split("\n");
   for (const { i, key } of classifyManagedLines(text)) {
     const v = scalarValue(lines[i].slice(lines[i].indexOf(":") + 1));
@@ -306,6 +310,7 @@ export function parseExisting(text: string): Partial<DataDocSettings> {
     else if (key === "output_dir") out.outputDir = v;
     else if (key === "output_site_dir") out.siteDir = v;
   }
+  out.sourceMode = out.sqlPath && out.pbiPath ? "both" : out.sqlPath ? "sql" : out.pbiPath ? "powerbi" : "none";
   return out;
 }
 
@@ -719,7 +724,10 @@ export async function renderPrompt(ctx: any, p: JsonlPrompt): Promise<unknown> {
   }
   if (p.kind === "select") {
     if (typeof ctx.ui?.select !== "function") return null;
-    const choices = p.choices || [];
+    const choices = [...(p.choices || [])];
+    if (typeof p.default === "string") {
+      choices.sort((a, b) => Number(b.value === p.default) - Number(a.value === p.default));
+    }
     const labels = choices.map((c) => c.label);
     const picked = await ctx.ui.select(p.message, labels);
     if (picked === null || picked === undefined) return null;
@@ -779,7 +787,7 @@ export function resolveDataDocExecutable(platform = process.platform, env: NodeJ
 }
 
 /** Drive the authoritative JSONL wizard. Terminal event and exit code must agree. */
-export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any): Promise<boolean> {
+export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPrefill = {}): Promise<boolean> {
   let executable: string;
   try { executable = resolveDataDocExecutable(); }
   catch (e: any) { notify(ctx, errMsg(e), "error"); return false; }
@@ -815,7 +823,12 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any): Promise<boolea
     if (evt.type === "prompt") {
       if (!helloSeen) throw new Error("missing hello handshake before first prompt (requires coop-data-doc 1.1.1+)");
       if (terminal) throw new Error("prompt received after terminal event");
-      const answer = await renderPrompt(ctx, evt);
+      const prompt = { ...evt } as JsonlPrompt;
+      if (prompt.id === "project_name" && prefill.projectName) prompt.default = prefill.projectName;
+      if (prompt.id === "local_sources" && prefill.sourceMode) prompt.default = prefill.sourceMode;
+      if (prompt.kind === "path" && /SQL repo path/i.test(prompt.message) && prefill.sqlPath) prompt.default = prefill.sqlPath;
+      if (prompt.kind === "path" && /Power BI repo path/i.test(prompt.message) && prefill.pbiPath) prompt.default = prefill.pbiPath;
+      const answer = await renderPrompt(ctx, prompt);
       if (answer === null) {
         await send({ id: evt.id, cancelled: true });
         return;
@@ -851,13 +864,41 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any): Promise<boolea
   return false;
 }
 
+/** Use the project contract to prefill data-doc without making users type repo paths twice. */
+export function dataDocPrefillFromProject(cwd: string): DataDocSetupPrefill {
+  const contract = findProjectYml(cwd);
+  if (!contract) return {};
+  const text = safeRead(contract);
+  const projectRoot = resolve(contract, "..", "..");
+  let sqlPath = "", pbiPath = "";
+  let sql = false, powerbi = false;
+  const fromRoot = (raw: string): string => {
+    const absolute = isAbsolute(raw) ? raw : resolve(projectRoot, raw);
+    return relative(cwd, absolute) || ".";
+  };
+  for (const name of repositoryNames(text)) {
+    const role = projectYamlScalar(text, ["repositories", name, "role"]) || "generic";
+    const raw = projectYamlScalar(text, ["repositories", name, "local_path"]);
+    if (!raw || /^TODO\b/i.test(raw)) continue;
+    if ((role === "sql" || role === "mixed") && !sqlPath) { sqlPath = fromRoot(raw); sql = true; }
+    if ((role === "powerbi" || role === "mixed") && !pbiPath) { pbiPath = fromRoot(raw); powerbi = true; }
+  }
+  const sourceMode = sql && powerbi ? "both" : sql ? "sql" : powerbi ? "powerbi" : "none";
+  return {
+    sourceMode,
+    ...(sqlPath ? { sqlPath } : {}),
+    ...(pbiPath ? { pbiPath } : {}),
+    projectName: projectYamlScalar(text, ["profile", "client"]),
+  };
+}
+
 /** Run the one authoritative coop-data-doc wizard; no local fallback exists. */
-async function runQuickSetup(pi: ExtensionAPI, ctx: any, _prefill: Partial<DataDocSettings>): Promise<boolean> {
+async function runQuickSetup(pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPrefill): Promise<boolean> {
   if (!(await supportsJsonlTransport(pi, ctx))) {
     notify(ctx, "Your coop-data-doc does not support the native JSONL setup wizard. Run `coop update` (requires coop-data-doc 1.1.1+), then retry /setup-docs.", "error");
     return false;
   }
-  const ok = await runJsonlSetup(pi, ctx);
+  const ok = await runJsonlSetup(pi, ctx, { ...dataDocPrefillFromProject(ctx.cwd), ...prefill });
   if (ok) {
     if (await askConfirm(ctx, "Build now?", "Build the lineage docs now? (you can also run `coop data-doc build` later)")) await runBuild(pi, ctx);
     else notify(ctx, "Build them whenever you're ready with `coop data-doc build`.", "info");
@@ -905,7 +946,7 @@ const PROJECT_SETUP_SKIP = ".coop-project-setup.skip";
 export interface ProjectRepositorySettings {
   name: string;
   description: string;
-  role: "sql" | "powerbi" | "generic";
+  role: "sql" | "powerbi" | "mixed" | "generic";
   localPath: string;
   remoteName: string;
   defaultBranch: string;
@@ -927,6 +968,20 @@ export interface ProjectWizardSettings {
   tabularEditorEnabled: boolean;
   tabularEditorPath: string;
   bpaRulesPath: string;
+}
+
+export type EstateMode = "discovery" | "partial" | "connected";
+
+/** Derive the engagement's current local-source coverage from wizard repo roles. */
+export function estateMode(repositories: ProjectRepositorySettings[]): EstateMode {
+  if (!repositories.length) return "discovery";
+  const roles = new Set(repositories.map((repo) => repo.role));
+  return roles.has("mixed") || (roles.has("sql") && roles.has("powerbi")) ? "connected" : "partial";
+}
+
+function coverageFor(repositories: ProjectRepositorySettings[], role: "sql" | "powerbi"): string {
+  if (repositories.some((repo) => repo.role === role || repo.role === "mixed")) return "available";
+  return repositories.some((repo) => repo.role === "generic") ? "unknown" : "not_available_yet";
 }
 
 function yamlLineKey(raw: string): string | null {
@@ -1187,7 +1242,7 @@ export function parseProjectWizardSettings(text: string, projectRoot: string): P
     client: projectYamlScalar(text, ["profile", "client"]),
     timezone: projectYamlScalar(text, ["profile", "timezone"]) || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     defaultBranch,
-    repositories: repositories.length ? repositories : [{
+    repositories: repositories.length || text.trim() ? repositories : [{
       name: basename(projectRoot) || "project",
       description: "Project source and docs",
       role: "generic",
@@ -1258,6 +1313,13 @@ export function applyProjectWizardSettings(text: string, settings: ProjectWizard
   set(["profile", "timezone"], settings.timezone);
   set(["profile", "default_branch"], settings.defaultBranch);
   set(["profile", "work_mode"], "consultant_review_first");
+  set(["estate", "mode"], estateMode(settings.repositories));
+  set(["estate", "local_source_coverage", "sql"], coverageFor(settings.repositories, "sql"));
+  set(["estate", "local_source_coverage", "power_bi"], coverageFor(settings.repositories, "powerbi"));
+  set(["estate", "live_discovery", "dev_test_metadata"], "read_only_allowed");
+  set(["estate", "live_discovery", "dev_test_rows"], "ask_first");
+  set(["estate", "live_discovery", "production_metadata"], "ask_first");
+  set(["estate", "live_discovery", "production_rows"], "explicit_scope_and_approval");
   for (const repo of settings.repositories) {
     if (repo.isNew && !repositoryNames(out).includes(repo.name)) out = appendNewRepository(out, repo);
     else {
@@ -1300,7 +1362,18 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     `  default_branch: ${yamlQuoted(settings.defaultBranch)}`,
     "  work_mode: 'consultant_review_first'",
     "",
-    "repositories:",
+    "estate:",
+    `  mode: ${yamlQuoted(estateMode(settings.repositories))}`,
+    "  local_source_coverage:",
+    `    sql: ${yamlQuoted(coverageFor(settings.repositories, "sql"))}`,
+    `    power_bi: ${yamlQuoted(coverageFor(settings.repositories, "powerbi"))}`,
+    "  live_discovery:",
+    "    dev_test_metadata: 'read_only_allowed'",
+    "    dev_test_rows: 'ask_first'",
+    "    production_metadata: 'ask_first'",
+    "    production_rows: 'explicit_scope_and_approval'",
+    "",
+    settings.repositories.length ? "repositories:" : "repositories: {}",
   ];
   for (const repo of settings.repositories) lines.push(...safeRepositoryBlock(repo));
   if (settings.fabricEnabled) lines.push(
@@ -1432,9 +1505,12 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "    - 'git status / git diff / git pull'",
     "    - 'create backups'",
     "    - 'run advisory Coop review and documentation tools'",
-    "    - 'MCP list / read / inspect'",
+    "    - 'MCP dev/test metadata / schema / artifact-code list / read / inspect'",
     "    - 'update markdown docs, html site, logs'",
     "  ask_first:",
+    "    - 'read actual rows from a live environment'",
+    "    - 'read production metadata or artifact code'",
+    "    - 'read production rows with target / columns / filters / limit'",
     "    - 'delete files'",
     "    - 'deploy or publish'",
     "    - 'change production workspace'",
@@ -1492,6 +1568,7 @@ async function chooseRole(ctx: any, label: string, current: ProjectRepositorySet
   const choices = [
     { label: "SQL / Warehouse", value: "sql" as const },
     { label: "Power BI / Semantic models", value: "powerbi" as const },
+    { label: "SQL + Power BI / mixed", value: "mixed" as const },
     { label: "General project", value: "generic" as const },
   ];
   const ordered = [...choices.filter((c) => c.value === current), ...choices.filter((c) => c.value !== current)];
@@ -1548,6 +1625,15 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   settings.timezone = timezone;
   settings.defaultBranch = defaultBranch;
 
+  if (!existing) {
+    const hasLocalSource = await askConfirm(
+      ctx,
+      "Local source folders",
+      "Do you have any local SQL, warehouse, Power BI, or project source folders to connect now? Choose No to start in discovery mode; you can add them later with /setup-project.",
+    );
+    if (!hasLocalSource) settings.repositories = [];
+  }
+
   const editedRepos: ProjectRepositorySettings[] = [];
   for (const repo of settings.repositories) {
     const shouldEdit = repo.isNew || await askConfirm(ctx, `Repository: ${repo.name}`, `Edit ${repo.name}'s path, role, and branch?`);
@@ -1601,8 +1687,11 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     settings.bpaRulesPath = rules;
   }
 
-  const repoSummary = settings.repositories.map((r) => `${r.name} (${r.role}: ${r.localPath})`).join("\n");
-  const confirmed = await askConfirm(ctx, title, `${existing ? "Update" : "Create"} .coop/project.yml for ${client || "this project"}?\n\n${repoSummary}`);
+  const mode = estateMode(settings.repositories);
+  const repoSummary = settings.repositories.length
+    ? settings.repositories.map((r) => `${r.name} (${r.role}: ${r.localPath})`).join("\n")
+    : "No local source yet (discovery mode)";
+  const confirmed = await askConfirm(ctx, title, `${existing ? "Update" : "Create"} .coop/project.yml for ${client || "this project"}?\n\nMode: ${mode}\n${repoSummary}`);
   if (!confirmed) { notify(ctx, "Project setup cancelled — no files changed.", "info"); return false; }
   const output = existing ? applyProjectWizardSettings(original, settings) : renderProjectWizardSettings(settings);
   const path = existing || join(root, ".coop", "project.yml");
@@ -1612,8 +1701,10 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   notify(ctx, `Project contract ${existing ? "updated" : "created"}: ${path}${backup ? ` (backup: ${backup})` : ""}`, "info");
   notify(ctx, "Run /new or restart Coop before governed work so the guardrails load the updated contract.", "info");
 
-  if (!existsSync(join(root, DATADOC_CONFIG)) && await askConfirm(ctx, "Lineage documentation", "Set up SQL + Power BI lineage documentation next?")) {
+  if (settings.repositories.length && !existsSync(join(root, DATADOC_CONFIG)) && await askConfirm(ctx, "Lineage documentation", "Set up lineage documentation for the local source available now?")) {
     await runQuickSetup(pi, { ...ctx, cwd: root }, {});
+  } else if (!settings.repositories.length) {
+    notify(ctx, "Discovery mode is ready. Coop can inspect dev/test metadata read-only; row data and production access still ask first.", "info");
   }
   return true;
 }
@@ -1684,6 +1775,60 @@ function disableStartMenu(ctx: any): void {
   }
 }
 
+const MODEL_LOGIN_COMMAND = "/login openai-codex";
+
+/** Path used by the Pi process currently hosting this extension. */
+export function modelLoginAuthPath(): string {
+  const configured = process.env.PI_CODING_AGENT_DIR;
+  if (configured && configured.trim()) return join(configured, "auth.json");
+  if (/^(1|true|yes|on)$/i.test(process.env.COOP_NO_ISOLATE || "")) {
+    return join(homedir(), ".pi", "agent", "auth.json");
+  }
+  const coopAgent = process.env.COOP_AGENT_DIR;
+  return join(coopAgent && coopAgent.trim() ? coopAgent : join(homedir(), ".coop", "agent"), "auth.json");
+}
+
+/** Only an explicit launcher handoff may replace the user's empty editor. */
+export function shouldPrimeModelLogin(ctx: Pick<ExtensionContext, "hasUI" | "mode">): boolean {
+  return ctx.hasUI && ctx.mode === "tui" && /^(1|true|yes|on)$/i.test(process.env.COOP_PRIME_MODEL_LOGIN || "");
+}
+
+/**
+ * Put Pi's real built-in login command in the editor. Pi does not execute slash
+ * commands supplied as CLI arguments; those become model prompts instead. During
+ * installer login-only mode, watch for Pi to persist credentials and then return
+ * control to the installer so its final doctor check can run.
+ */
+function primeModelLogin(ctx: ExtensionContext): boolean {
+  if (!shouldPrimeModelLogin(ctx)) return false;
+  ctx.ui.setEditorText(MODEL_LOGIN_COMMAND);
+  notify(ctx, "Final setup: press Enter to sign in with your Cooptimize OpenAI account.", "info");
+  delete process.env.COOP_PRIME_MODEL_LOGIN;
+
+  if (/^(1|true|yes|on)$/i.test(process.env.COOP_LOGIN_ONLY || "")) {
+    const authPath = modelLoginAuthPath();
+    let credentialSeenAt = 0;
+    const timer = setInterval(() => {
+      try {
+        if (!existsSync(authPath) || statSync(authPath).size === 0) return;
+        if (!credentialSeenAt) credentialSeenAt = Date.now();
+        // Fresh login selects OpenAI's default model after credentials are saved.
+        // Prefer that positive readiness signal; the timeout covers a preselected
+        // model, where Pi intentionally keeps the existing choice after login.
+        const modelReady = ctx.model?.provider === "openai-codex";
+        if (!modelReady && Date.now() - credentialSeenAt < 3000) return;
+        clearInterval(timer);
+        notify(ctx, "Model sign-in complete. Finishing Coop setup…", "info");
+        setTimeout(() => ctx.shutdown(), 250);
+      } catch {
+        // The auth file can be atomically replaced while Pi saves it; retry.
+      }
+    }, 300);
+    timer.unref?.();
+  }
+  return true;
+}
+
 interface MenuItem {
   label: string;
   run: (pi: ExtensionAPI, ctx: any) => Promise<void>;
@@ -1714,7 +1859,7 @@ async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
 export function buildStartMenu(): MenuItem[] {
   return [
     { label: "⚙️  Set up or edit this Coop project", run: runProjectWizard },
-    { label: "📚  Document my data (SQL + Power BI lineage)", run: documentDataFlow },
+    { label: "📚  Document the data sources I have", run: documentDataFlow },
     {
       label: "🔎  Review SQL against our standards",
       run: async (pi) => {
@@ -1934,7 +2079,7 @@ export default function coopTools(pi: ExtensionAPI) {
     name: "data_doc",
     label: "Data Documentation",
     description:
-      "Understand and document a SQL + Power BI estate with coop-data-doc. Commands: 'scan' (default) writes the lineage graph (graph.json, read-only); 'build' also writes Markdown docs (per-object docs + lineage) and a searchable portal, indexed by manifest.json; 'check' is a CI staleness gate; 'lineage' returns ONE object's upstream inputs + downstream dependents + relationships as JSON from the built graph. Use 'lineage' (or read the object's <slug>.md via manifest.json) BEFORE analyzing or changing any object so you know its up/downstream consequences. If the folder has no coop-data-doc.yml or built graph, these degrade gracefully — the docs are an aid, not a requirement; you can proceed without them and optionally suggest /setup-docs. Documentation outputs are committable; source is never touched.",
+      "Understand and document whatever SQL and/or Power BI source is currently available with coop-data-doc. Commands: 'scan' (default) writes the lineage graph (graph.json, read-only); 'build' also writes Markdown docs (per-object docs + lineage) and a searchable portal, indexed by manifest.json; 'check' is a CI staleness gate; 'lineage' returns ONE object's upstream inputs + downstream dependents + relationships as JSON from the built graph. Use 'lineage' (or read the object's <slug>.md via manifest.json) BEFORE analyzing or changing any object so you know its up/downstream consequences. No source, one side, partial folders, and both sides are valid stages. If the folder has no coop-data-doc.yml or built graph, these degrade gracefully — the docs are an aid, not a requirement; you can proceed without them and optionally suggest /setup-docs. Documentation outputs are committable; source is never touched.",
     promptSnippet: "Understand a SQL+PowerBI estate: lineage graph + per-object up/downstream (use before touching an object)",
     promptGuidelines: [
       "BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its lineage: call data_doc with command='lineage', object='<name>' to get its upstream inputs, downstream dependents, and relationships. Don't reconstruct lineage by hand when the docs already have it.",
@@ -2038,6 +2183,9 @@ export default function coopTools(pi: ExtensionAPI) {
   pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext) => {
     if (!ctx.hasUI || startedCwds.has(ctx.cwd)) return;
     startedCwds.add(ctx.cwd);
+    // Model authentication is the final onboarding step and must take precedence
+    // over the normal Start Here/project dialogs so the user sees one clear action.
+    if (primeModelLogin(ctx)) return;
     const wantMenu = event?.reason === "startup" && !startMenuDisabled();
     const frontDoor = async () => {
       if (wantMenu) {
@@ -2054,7 +2202,7 @@ export default function coopTools(pi: ExtensionAPI) {
       try {
         await maybeOfferSetup(pi, ctx);
       } catch {
-        notify(ctx, "No data docs for this folder — run /setup-docs to create SQL + Power BI lineage docs.", "info");
+        notify(ctx, "No data docs for this folder — run /setup-docs to document whatever local sources are available.", "info");
       }
     };
     if (ctx.mode === "tui") {

@@ -11,10 +11,25 @@ profile:
   default_branch: "main"
   work_mode: "consultant_review_first"     # read-only first; plan + approval before edits
 
+# --- Progressive estate coverage --------------------------------------------
+# A new engagement may start with no local source, only one side, or selected
+# folders. The /setup-project wizard maintains this block; users need not edit it.
+estate:
+  mode: "connected"                # discovery | partial | connected
+  local_source_coverage:
+    sql: "available"               # available | unknown | not_available_yet
+    power_bi: "available"
+  live_discovery:
+    dev_test_metadata: "read_only_allowed"
+    dev_test_rows: "ask_first"
+    production_metadata: "ask_first"
+    production_rows: "explicit_scope_and_approval"
+
 # --- Repositories the agent may touch ----------------------------------------
 repositories:
   fabric:
     description: "Semantic models, reports, and Fabric artifacts"
+    role: "powerbi"
     local_path: "TODO: /path/to/fabric"
     remote_name: "origin"
     default_branch: "main"
@@ -35,6 +50,7 @@ repositories:
       - "**/*.Report/**"
   fabric_dw:
     description: "Warehouse / Lakehouse SQL"
+    role: "sql"
     local_path: "TODO: /path/to/fabric-dw"
     remote_name: "origin"
     default_branch: "main"
@@ -220,9 +236,12 @@ approval_policy:
     - "git status / git diff / git pull"
     - "create backups"
     - "run coop-sql-review / coop-dax-review / coop-data-doc (advisory)"
-    - "MCP list / read / inspect"
+    - "MCP dev/test metadata / schema / artifact-code list / read / inspect"
     - "update markdown docs, html site, logs"
   ask_first:
+    - "read actual rows from a live environment"
+    - "read production metadata or artifact code"
+    - "read production rows with target / columns / filters / limit"
     - "delete files"
     - "fabric-cicd deploy / run deployment"
     - "change production workspace"

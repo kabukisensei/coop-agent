@@ -34,6 +34,10 @@ A read/edit/write of a secret-looking file (`.env`, private keys, credential fil
 
 A Fabric/Power BI/MCP tool call whose name looks like a **mutation** (create/update/delete/deploy/publish) requires confirmation, including proxied MCP calls where the real remote tool name is carried inside the `mcp` tool input (`event.input.tool`). That check is best-effort — MCP tool names vary, so it **complements** (does not replace) Pi's own tool-approval prompts and the advisory prompt. Enable the optional `pi-permissions` extension for hard per-tool gating. If a tool call is blocked, read the reason and adjust — don't try to route around it.
 
+### Live environment reads
+
+Coop permits read-only metadata, schema, and artifact-code inspection in dev/test by default. Query/execute/sample/export-style calls can return actual rows, so the runtime asks first. Any tool request that explicitly names prod/production also asks first, including metadata-only reads; production row reads should be narrowly scoped to a named target, columns, filters, and a small limit. Approval-required reads fail closed when no interactive approval UI is available. The audit record contains only the remote server/tool label and risk class, never query arguments or returned data.
+
 ### Audit log
 
 Every block and every confirm (allowed or declined) is appended as one JSON line to `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`): timestamp, working folder, kind, decision, and the offending path(s) or a truncated command. **Secrets and file contents are never written** — the secret gate records only the matched path; the MCP gate records the remote tool/server, never raw arguments. Run `/coop-guardrails` to see the last ~10 decisions and the log path. The log is a reviewable trail, not a place to hide activity.

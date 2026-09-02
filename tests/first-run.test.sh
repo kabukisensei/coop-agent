@@ -27,6 +27,7 @@ MARKER="$WORK/marker"; mkdir -p "$MARKER"
 cat > "$FAKEBIN/pi" <<EOF
 #!/bin/sh
 printf '%s\\n' "\$*" > "$MARKER/pi-args"
+printf '%s\\n' "\${COOP_PRIME_MODEL_LOGIN:-}" > "$MARKER/pi-prime-login"
 touch "$MARKER/pi-ran"
 echo "STUB-PI-READY"
 exit 0
@@ -70,9 +71,12 @@ case "$(cat "$MARKER/pi-args" 2>/dev/null)" in
   "") ko "no pi invocation recorded" ;;
   *) ko "pi args missing coop-profile: $(cat "$MARKER/pi-args")" ;;
 esac
+[ "$(cat "$MARKER/pi-prime-login" 2>/dev/null)" = "1" ] \
+  && ok "fresh plain launch primes the real model login command" \
+  || ko "fresh plain launch did not request model login"
 
 echo "→ F2: failed onboarding stops the launcher"
-rm -f "$MARKER/pi-ran" "$MARKER/pi-args"
+rm -f "$MARKER/pi-ran" "$MARKER/pi-args" "$MARKER/pi-prime-login"
 F2_HOME="$WORK/f2-home"; mkdir -p "$F2_HOME/.coop"
 printf '{broken\n' > "$F2_HOME/.coop/config"   # malformed config -> onboard fails (rc 2)
 F2_OUT="$(run_coop_pty "$F2_HOME" "$ONBOARD_ANSWERS" "$WORK/f2.out")"; F2_RC=$?

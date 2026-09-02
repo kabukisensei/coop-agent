@@ -18,7 +18,9 @@
  *   3. Secret files — confirm before read/edit/write of `.env`, private keys, or
  *      credential files, AND before a bash command that touches one (`cat .env`
  *      etc.). The agent must never expose secrets.
- *   4. Mutating MCP actions — confirm before Fabric/Power BI/MCP tool calls whose
+ *   4. Live data reads — dev/test metadata is allowed read-only; row-level reads
+ *      and any production access require explicit approval.
+ *   5. Mutating MCP actions — confirm before Fabric/Power BI/MCP tool calls whose
  *      names look like create/update/delete/deploy/publish (best-effort; MCP tool
  *      names vary, so this complements — not replaces — Pi's tool approval).
  *
@@ -662,6 +664,9 @@ const MCP_TOOLISH =
   /(^|[_\-.:/])(mcp|fabric|powerbi|pbi|pbip|adx|kusto|eventhouse|onelake|lakehouse|warehouse|workspace|dataset|semanticmodel|report|pipeline|notebook|dataflow|capacity)([_\-.:/]|$)/i;
 const MCP_WRITE_VERB =
   /(^|[_\-.:/])(create|update|delete|remove|deploy|publish|drop|write|patch|overwrite|rename|truncate|grant|revoke|provision)([_\-.:/A-Z]|$)/i;
+const DATA_SERVER = /(^|[_\-.:/])(fabric|powerbi|pbi|sql|database|db|warehouse|lakehouse|onelake|kusto|adx|eventhouse)([_\-.:/]|$)/i;
+const ROW_READ_VERB = /(^|[_\-.:/])(query|execute|evaluate|run_sql|runsql|sql_query|dax_query|preview|sample|row|rows|record|records|data|export|download)([_\-.:/]|$)/i;
+const PRODUCTION_WORD = /(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)/i;
 
 /** The effective target of a proxied MCP call. The `pi-mcp-adapter` normally
  *  registers a single `mcp` tool and carries the real server/tool in
@@ -700,6 +705,36 @@ export function mcpMutationLabel(toolName: string | { outerTool: string; innerTo
   if (target.outerTool === "mcp" && target.innerTool && target.server) return mutationName(target);
   if (!MCP_TOOLISH.test(name)) return null;
   return mutationName(target);
+}
+
+export type LiveReadRisk = {
+  label: string;
+  kind: "row-data" | "production-metadata";
+  environment: "production" | "dev/test/unspecified";
+};
+
+/** Classify approval-required live reads without retaining or logging arguments.
+ * Dev/test/unspecified metadata calls (list/get/describe/schema/inspect) return null.
+ * Query/execute/sample/export-style calls can return actual rows and always ask.
+ * Any read whose tool identity or arguments explicitly name prod/production asks,
+ * even when it appears metadata-only. Mutations are handled by mcpMutationLabel. */
+export function mcpLiveReadRisk(event: any): LiveReadRisk | null {
+  const target = effectiveMutationTarget(event);
+  if (mcpMutationLabel(target)) return null;
+  const name = target.innerTool || target.outerTool;
+  if (!name || ["bash", "read", "edit", "write", "mcp"].includes(name)) return null;
+  const isDataRemote = DATA_SERVER.test(target.server || "") || MCP_TOOLISH.test(name);
+  if (!isDataRemote) return null;
+  let inputText = "";
+  try { inputText = JSON.stringify(event?.input || {}); } catch { inputText = ""; }
+  const production = PRODUCTION_WORD.test(`${name} ${target.server || ""} ${inputText}`);
+  const rows = ROW_READ_VERB.test(name);
+  if (!production && !rows) return null;
+  return {
+    label: mutationName(target),
+    kind: rows ? "row-data" : "production-metadata",
+    environment: production ? "production" : "dev/test/unspecified",
+  };
 }
 
 /** Hard-block reasons for commit forms whose contents cannot be policy-checked:
@@ -912,6 +947,22 @@ export default function coopGuardrails(pi: ExtensionAPI) {
             return { block: true, reason: `coop guardrails: blocked the MCP action ${mcp} (you declined). MCP is read-only by default — list / read / inspect only; make changes with explicit approval or in the Fabric / Power BI UX.` };
           }
         }
+        const readRisk = mcpLiveReadRisk(event);
+        if (readRisk) {
+          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: String(tool), decision: "blocked-headless", label: readRisk.label, detail: `${readRisk.kind}/${readRisk.environment}` });
+            return { block: true, reason: `coop guardrails: blocked ${readRisk.kind} access through ${readRisk.label}; explicit approval is unavailable in headless mode.` };
+          }
+          const production = readRisk.environment === "production";
+          const prompt = readRisk.kind === "row-data"
+            ? `${production ? "PRODUCTION " : ""}row-level data read:\n  ${readRisk.label}\nConfirm the target, columns, filters, and a small row limit in the tool request. Read these rows?`
+            : `Production metadata/code read:\n  ${readRisk.label}\nDev/test metadata is read-only by default; production always asks. Read it?`;
+          const ok = await ctx.ui.confirm("coop live-data guardrail", prompt);
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: String(tool), decision: ok ? "allowed" : "declined", label: readRisk.label, detail: `${readRisk.kind}/${readRisk.environment}` });
+          if (!ok) {
+            return { block: true, reason: `coop guardrails: blocked ${readRisk.kind} access through ${readRisk.label} (you declined). Use dev/test metadata, or request a specific target and bounded read.` };
+          }
+        }
         return;
       }
 
@@ -1008,6 +1059,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, `git commit <path>`, and `cd <dir> && git commit`) of anything outside docs/logs/site",
         "  • destructive commands — confirms rm -rf / git push --force (incl. +refspec) / reset --hard / git clean -f / DROP·TRUNCATE",
         "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
+        "  • live data — allows read-only dev/test metadata; confirms row-level reads and all production access",
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
         "  • managed updates — blocks ctx_upgrade so the manifest-pinned fleet moves together",
         "Advisory rules live in docs/guardrails.md. Disable with COOP_NO_GUARDRAILS=1.",

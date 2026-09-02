@@ -34,7 +34,7 @@ cmp -s "$COOP_DIR/.coop/user.json" "$COOP_DIR/user-before.json" && ok "config-on
 # A repeat onboarding run (including install repairing a missing config) should
 # not ask an already-complete user profile again unless --edit was requested.
 rm "$COOP_DIR/.coop/config"
-repeat_out="$(printf 'n\n' | HOME="$COOP_DIR" COOP_DIR="$COOP_DIR" COOP_AZ_BIN=/nonexistent/az \
+repeat_out="$(printf 'n\n' | env HOME="$COOP_DIR" COOP_DIR="$COOP_DIR" COOP_AZ_BIN=/nonexistent/az \
   "$PY" "$ROOT/scripts/onboard.py" onboard 2>&1 >/dev/null)"
 case "$repeat_out" in
   *"What should COOP call you?"*) ko "repeat onboarding unnecessarily re-asked the profile" ;;

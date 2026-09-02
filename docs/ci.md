@@ -161,7 +161,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install coop-data-doc
-        run: pipx install coop-data-doc==1.1.1
+        run: pipx install coop-data-doc==1.2.0
 
       # Freshness first: compares the COMMITTED docs against the source.
       # Exit 1 = stale (someone changed source without rebuilding the docs);
@@ -277,7 +277,7 @@ stages:
         steps:
           - checkout: self
 
-          - script: pipx install coop-data-doc==1.1.1
+          - script: pipx install coop-data-doc==1.2.0
             displayName: Install coop-data-doc
 
           # Freshness first (committed docs vs source) — see the ordering note
@@ -318,7 +318,7 @@ elsewhere with `--config PATH` or `COOP_DATA_DOC_CONFIG`.
 ## Pinning tool versions
 
 The pins in this page (`coop-sql-review==0.12.0`, `coop-dax-review==0.15.0`,
-`coop-data-doc==1.1.1`) match `config/defaults.yml` → `tested_with` — the
+`coop-data-doc==1.2.0`) match `config/defaults.yml` → `tested_with` — the
 versions coop was last verified against — at the time of writing. Pinning keeps
 pipelines reproducible: a new tool release can add rules, and an unpinned
 pipeline would go red on a change nobody made. Bump the pins deliberately (a

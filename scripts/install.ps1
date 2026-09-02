@@ -732,10 +732,39 @@ if (-not [Console]::IsInputRedirected -and $env:COOP_NO_ONBOARD -ne '1') {
   Invoke-CoopMaybeOnboard
 }
 
-# --- 9. Sync brand assets + doctor --------------------------------------------
-Coop-Head '9/9  Sync assets and run doctor'
+# --- 9. Sync, model sign-in, and doctor ---------------------------------------
+Coop-Head '9/9  Sync assets, sign in, and run doctor'
 $syncRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
 if ($syncRc -ne 0) { Coop-Warn 'sync reported issues'; $script:InstallFailures++ }
+
+# Finish a fresh interactive setup inside the real Pi /login UI. coop-tools
+# primes the built-in command and, in login-only mode, returns here as soon as Pi
+# persists the credential. Non-interactive automation and explicit opt-outs keep
+# the previous behavior and receive doctor's normal login hint instead.
+if ($script:InstallFailures -eq 0 -and
+    -not [Console]::IsInputRedirected -and
+    -not [Console]::IsOutputRedirected -and
+    $env:COOP_NO_MODEL_LOGIN -ne '1' -and
+    -not (Test-CoopPiLoginPresent)) {
+  Coop-Head 'Final setup  Sign in to the model'
+  Coop-Say 'Press Enter on the prepared /login command, then complete the browser sign-in'
+  Coop-Say 'with your Cooptimize OpenAI account. Coop will return here automatically.'
+  $oldPrime = $env:COOP_PRIME_MODEL_LOGIN
+  $oldLoginOnly = $env:COOP_LOGIN_ONLY
+  $env:COOP_PRIME_MODEL_LOGIN = '1'
+  $env:COOP_LOGIN_ONLY = '1'
+  $loginRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'bin\coop.ps1')
+  if ($null -eq $oldPrime) { Remove-Item Env:COOP_PRIME_MODEL_LOGIN -ErrorAction SilentlyContinue } else { $env:COOP_PRIME_MODEL_LOGIN = $oldPrime }
+  if ($null -eq $oldLoginOnly) { Remove-Item Env:COOP_LOGIN_ONLY -ErrorAction SilentlyContinue } else { $env:COOP_LOGIN_ONLY = $oldLoginOnly }
+  if (Test-CoopPiLoginPresent) {
+    Coop-Ok 'model sign-in saved — Coop is ready'
+  } else {
+    Coop-Warn 'model sign-in did not finish — run: coop   (the /login command will be ready)'
+    if ($loginRc -ne 0) { Coop-Warn "the sign-in session exited with code $loginRc" }
+    $script:InstallFailures++
+  }
+}
+
 [Console]::Error.WriteLine('')
 # Propagate doctor's verdict as the install's exit code (mirror of install.sh): a
 # genuinely broken install (a required dep still missing → doctor exits 1) is then
@@ -756,7 +785,7 @@ if ($installRc -ne 0) {
 } elseif ($script:NeedNewShell) {
   Coop-Ok 'Bootstrap complete. coop was just added to your PATH.'
 } else {
-  Coop-Ok 'Bootstrap complete. Start the agent with:  coop'
+  Coop-Ok 'Bootstrap complete. Coop is ready — start it with:  coop'
 }
 if ($script:NeedNewShell) {
   Coop-Say "      Open a NEW terminal, then run:  coop"

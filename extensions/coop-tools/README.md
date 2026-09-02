@@ -32,9 +32,11 @@ inside a Git repository with no `.coop/project.yml`, Coop offers to launch the
 project wizard. The same flow is always available as the first `/start` menu item
 or through `/setup-project`.
 
-The wizard configures the organization/client, one or more repository paths and
-roles, default branches, Fabric/Power BI tenant and workspace defaults, and the
-optional Tabular Editor CLI. A new project receives conservative commit policies
+The wizard configures the organization/client, zero or more repository paths and
+roles (including mixed SQL + Power BI repos), default branches, Fabric/Power BI
+tenant and workspace defaults, and the optional Tabular Editor CLI. Starting with
+no local source creates a first-class discovery project; one-sided and partial
+coverage can be expanded later. A new project receives conservative commit policies
 and approval defaults. Editing an existing project creates a backup and patches
 only wizard-owned scalar fields; comments, custom sections, commit allow/deny
 rules, and future unknown settings are preserved. Run `/new` or restart Coop after
@@ -98,8 +100,8 @@ standards.
 
 ### `data_doc`
 
-Runs `coop-data-doc <command>` to understand and document the SQL + Power BI
-estate and build lineage. Executes **sequentially**.
+Runs `coop-data-doc <command>` to understand and document whatever SQL and/or
+Power BI source is available and build lineage. Executes **sequentially**.
 
 | Param | Type | Default | Notes |
 | --- | --- | --- | --- |
@@ -142,7 +144,8 @@ through Pi dialogs, and returns answers over stdin. No local/reduced wizard exis
   folder per process (keyed by cwd, so `/new` / `/resume` / `/fork` into a new folder
   still get offered).
 - **`/setup-docs` command.** Run or re-run the full native questionnaire anytime.
-  Existing config values prefill prompts. Completion/cancellation/error events and
+  Choose SQL + Power BI, SQL only, Power BI only, or no local source yet; existing
+  config values prefill prompts. Completion/cancellation/error events and
   process exit status must agree before the bridge reports success. Repository-path
   prompts browse real folders with a type-to-filter selector, so users can open a
   nearby repo and store its relative path without typing an absolute path.

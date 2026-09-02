@@ -23,7 +23,7 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-PIN_FAB="1.7.0"; PIN_DDD="1.1.1"
+PIN_FAB="1.7.0"; PIN_DDD="1.2.0"
 
 cat > "$TMP/manifest.json" <<EOF
 {
@@ -163,7 +163,7 @@ case "$out" in
 esac
 
 # F4: stale/corrupt environment — in-venv metadata disagrees with the CLI.
-#     Mirrors the workstation shape: metadata 1.1.1 vs CLI-reported 1.0.0.
+#     Mirrors the workstation shape: metadata 1.2.0 vs CLI-reported 1.0.0.
 put_meta coop-data-doc coop-data-doc "$PIN_DDD"
 make_real_cdd "1.0.0"
 out="$(doctor_out "$d")"
@@ -242,8 +242,8 @@ esac
 
 # F7b: NO hardcoded <3.14 — a distribution whose own metadata allows 3.14 passes.
 venv_python coop-data-doc 3.14.0 ">=3.9"
-put_meta coop-data-doc coop-data-doc "1.1.1"
-make_real_cdd "1.1.1"
+put_meta coop-data-doc coop-data-doc "1.2.0"
+make_real_cdd "1.2.0"
 out="$(doctor_out "$d")"
 case "$out" in
   *"coop-data-doc environment uses Python 3.14.0 (requires-python: >=3.9)"*)

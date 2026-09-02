@@ -438,10 +438,13 @@ if [ -n "$proj" ]; then
   # counting raw TODO substrings.
   _org="$(coop_yaml_get "$proj" "profile.organization" "")"
   _branch="$(coop_yaml_get "$proj" "profile.default_branch" "")"
+  _estate_mode="$(coop_yaml_get "$proj" "estate.mode" "")"
   _repo_name_count="$(coop_yaml_list "$proj" "repositories.*.local_path" | grep -c .)"
   [ -z "$_org" ] && warn "profile.organization is empty" "set it in .coop/project.yml"
   [ -z "$_branch" ] && warn "profile.default_branch is empty" "set it in .coop/project.yml"
-  [ "${_repo_name_count:-0}" -eq 0 ] && warn "no repositories configured" "add at least one repository under repositories:"
+  if [ "${_repo_name_count:-0}" -eq 0 ] && [ "$_estate_mode" != "discovery" ]; then
+    warn "no repositories configured" "run /setup-project in Coop, or set estate.mode: discovery"
+  fi
 
   if coop_tool_enabled "$proj" "fabric_cli" || coop_tool_enabled "$proj" "fabric_cicd"; then
     _tenant="$(coop_yaml_get "$proj" "fabric.tenant_id" "")"

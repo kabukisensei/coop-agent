@@ -19,6 +19,8 @@ documentation reads handled by the `coop-data-doc` tool.
 - **Back up** before edits; make the **smallest safe change**.
 - **Review** with the tools; **document and log** the work.
 - **Never commit source** — docs/logs/site only, after approval.
+- **Start with what exists.** No local repo, SQL-only, Power-BI-only, partial, and
+  full estates are all valid. Use the available source and make coverage gaps explicit.
 - **Explain your choices** (why this approach/pattern/trade-off), but keep it terse
   when the user says the rationale isn't needed for that situation.
 
@@ -38,8 +40,8 @@ review, diff summary, and human commit.
 Read the project contract `.coop/project.yml` (coop loads the nearest one). It is
 the single source of truth for repo paths, Fabric/Power BI workspaces, standards
 locations, backup/log rules, allowed/blocked commit paths, and the approval policy.
-If it is missing, ask the user to copy `.coop/project.example.yml` into the repo's
-`.coop/project.yml` and fill the TODOs.
+If it is missing, offer `/setup-project`; the in-Coop wizard can create a discovery,
+partial, or connected project without requiring the user to edit YAML.
 
 ## The default sequence
 
@@ -47,9 +49,11 @@ If it is missing, ask the user to copy `.coop/project.example.yml` into the repo
    (`standards.sql` / `standards.dax` / `standards.fabric` / `standards.documentation`).
 2. **Locate + scope.** Identify the repo and object, and the upstream/downstream
    impact. Run `git status` and `git pull` for the relevant repo.
-3. **Read the target + lineage.** Read the file(s) and related documentation and
-   lineage — call the `data_doc` tool (`coop-data-doc`) instead of guessing at
-   relationships. Use the **Microsoft Learn** MCP for current Microsoft docs.
+3. **Read the target + lineage.** Read the available file(s) and related documentation
+   and lineage — call the `data_doc` tool (`coop-data-doc`) instead of guessing at
+   relationships. If local source is missing or partial, use read-only dev/test live
+   metadata/schema/code to fill gaps. Mark each fact's provenance (repo or live
+   environment) and report drift. Use **Microsoft Learn** for current Microsoft docs.
 4. **Plan the first slice + get approval.** For multi-step work, write a short PLAN
    for the first vertical slice (what, why, failing check before, passing check after,
    blast radius, rollback). For single-edit tasks, still write a short PLAN.
@@ -145,8 +149,10 @@ tests:
     require_approval: true    # ask before running
 ```
 
-Live-data tests must target a dev or test workspace. Never run them against production
-unless the user explicitly says so. If `require_approval` is true (the default), ask
+Live-data tests target a dev or test workspace by default. Never run them against production
+unless the user explicitly says so. Metadata/schema/code inspection in dev/test is
+read-only by default; actual row reads ask first. Any production read asks first, and
+a production row request must state the target, columns, filters, and small limit. If `require_approval` is true (the default), ask
 before running the command unless the user already approved that specific validation
 or an explicitly named Dev/test validation pattern as part of the current slice.
 

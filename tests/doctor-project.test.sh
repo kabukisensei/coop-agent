@@ -60,6 +60,27 @@ echo "$out" | grep -q 'organization is empty' && ok "flags empty organization" |
 echo "$out" | grep -q 'default_branch is empty' && ok "flags empty default_branch" || ko "did not flag empty default_branch"
 echo "$out" | grep -q 'no repositories configured' && ok "flags missing repositories" || ko "did not flag missing repositories"
 
+# --- explicit discovery mode needs no local repository -----------------------
+mkdir -p "$TMP/discovery/.coop"
+cat > "$TMP/discovery/.coop/project.yml" <<'YAML'
+profile:
+  organization: Cooptimize
+  default_branch: main
+estate:
+  mode: discovery
+repositories: {}
+tools:
+  fabric_cli:
+    enabled: false
+  fabric_cicd:
+    enabled: false
+  tabular_editor_cli:
+    enabled: false
+YAML
+
+out="$(cd "$TMP/discovery" && "$ROOT/scripts/doctor.sh" --json 2>/dev/null)"
+echo "$out" | grep -q 'no repositories configured' && ko "warned about repositories in discovery mode" || ok "accepts repository-free discovery mode"
+
 # --- Fabric enabled but tenant missing ----------------------------------------
 mkdir -p "$TMP/fabric/.coop"
 cat > "$TMP/fabric/.coop/project.yml" <<'YAML'

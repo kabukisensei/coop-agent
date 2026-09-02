@@ -10,9 +10,21 @@ profile:
   default_branch: "main"
   work_mode: "consultant_review_first"
 
+estate:
+  mode: "connected"                 # discovery | partial | connected
+  local_source_coverage:
+    sql: "available"
+    power_bi: "available"
+  live_discovery:
+    dev_test_metadata: "read_only_allowed"
+    dev_test_rows: "ask_first"
+    production_metadata: "ask_first"
+    production_rows: "explicit_scope_and_approval"
+
 repositories:
   fabric:
     description: "Semantic models, reports, and Fabric artifacts"
+    role: "powerbi"
     local_path: "../fabric"
     remote_name: "origin"
     default_branch: "main"
@@ -29,6 +41,7 @@ repositories:
       - "**/*.Report/**"
   fabric_dw:
     description: "Warehouse / Lakehouse SQL"
+    role: "sql"
     local_path: "../fabric-dw"
     remote_name: "origin"
     default_branch: "main"
@@ -153,9 +166,12 @@ approval_policy:
     - "git status / git diff / git pull"
     - "create backups"
     - "run coop-sql-review / coop-dax-review / coop-data-doc (advisory)"
-    - "MCP list / read / inspect"
+    - "MCP dev/test metadata / schema / artifact-code list / read / inspect"
     - "update markdown docs, html site, logs"
   ask_first:
+    - "read actual rows from a live environment"
+    - "read production metadata or artifact code"
+    - "read production rows with target / columns / filters / limit"
     - "delete files"
     - "fabric-cicd deploy / run deployment"
     - "change production workspace"

@@ -44,6 +44,25 @@ PYEOF
 grep -q "extras.local_path is a TODO placeholder" "$TMP/notes.txt" || fail "TODO repo should be noted on stderr"
 pass "_seeddocs.py maps sql (incl. sql_root) + powerbi, skips the TODO repo"
 
+# A monorepo explicitly marked mixed feeds both conventional slots.
+mkdir -p "$TMP/mixed/.coop" "$TMP/mixed/source/warehouse"
+cat > "$TMP/mixed/.coop/project.yml" <<EOF
+repositories:
+  analytics:
+    role: mixed
+    local_path: "$TMP/mixed/source"
+    sql_root: warehouse
+EOF
+patch="$("$PY" "$ROOT/lib/_seeddocs.py" "$TMP/mixed/.coop/project.yml" 2>/dev/null)" || fail "mixed repo should seed both sides"
+"$PY" - "$patch" <<'PYEOF' || fail "mixed repo patch wrong shape"
+import json, sys
+p = json.loads(sys.argv[1])["repos"]
+assert set(p) == {"sql", "powerbi"}, p
+assert p["sql"]["path"].endswith("warehouse"), p
+assert p["powerbi"]["path"].endswith("source"), p
+PYEOF
+pass "mixed repository seeds both SQL and Power BI sources"
+
 # 2. All-TODO contract -> exit 3, no patch.
 mkdir -p "$TMP/empty/.coop"
 printf 'repositories:\n  fabric:\n    local_path: "TODO: /x"\n' > "$TMP/empty/.coop/project.yml"

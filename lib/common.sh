@@ -579,6 +579,15 @@ coop_effective_agent_dir() {
   if [ "${COOP_NO_ISOLATE:-0}" = "1" ]; then coop_global_pi_agent_dir; else coop_pi_agent_dir; fi
 }
 
+# True when Pi has a stored provider credential in the agent tree Coop will
+# actually load. Environment-only credentials intentionally do not count: this
+# helper gates the one-time interactive /login handoff requested by onboarding.
+coop_pi_login_present() {
+  local agent_dir
+  agent_dir="$(coop_effective_agent_dir)"
+  [ -s "$agent_dir/auth.json" ]
+}
+
 # Pick a usable python interpreter (for YAML/JSON parsing). Prefer python3.
 coop_python() {
   if have python3; then echo python3

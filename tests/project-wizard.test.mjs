@@ -13,6 +13,8 @@ const {
   projectYamlScalar,
   renderProjectWizardSettings,
   runProjectWizard,
+  estateMode,
+  dataDocPrefillFromProject,
 } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 
 let n = 0;
@@ -52,12 +54,17 @@ await t("new-project renderer produces a parseable, governed contract", () => {
   assert.equal(projectYamlScalar(text, ["repositories", "analytics", "local_path"]), ".");
   assert.equal(projectYamlScalar(text, ["tools", "fabric_cli", "enabled"]), "true");
   assert.equal(projectYamlScalar(text, ["logging", "require_task_log"]), "true");
+  assert.equal(projectYamlScalar(text, ["estate", "mode"]), "partial");
+  assert.equal(projectYamlScalar(text, ["estate", "live_discovery", "production_rows"]), "explicit_scope_and_approval");
   assert.match(text, /- 'update markdown docs, html site, logs'/);
   assert.match(text, /agent_never_commit:/);
   assert.match(text, /never_without_explicit_instruction:/);
   const parsed = parseProjectWizardSettings(text, "/work/analytics");
   assert.equal(parsed.repositories[0].role, "sql");
   assert.equal(parsed.tenantId, "tenant-123");
+  assert.equal(estateMode([]), "discovery");
+  assert.equal(estateMode([{ ...settings.repositories[0], role: "mixed" }]), "connected");
+  assert.equal(estateMode([{ ...settings.repositories[0], role: "powerbi" }, settings.repositories[0]]), "connected");
 });
 
 await t("existing-project merge preserves comments, custom keys, and commit policy", () => {
@@ -110,7 +117,7 @@ tools:
 await t("native wizard is reachable inside Coop and creates the contract", async () => {
   const root = mkdtempSync(join(tmpdir(), "coop-project-wizard-"));
   mkdirSync(join(root, ".git"));
-  const confirms = [false, false, false, true, false]; // add repo, Fabric, TE, write, lineage
+  const confirms = [true, false, false, false, true, false]; // local source, add repo, Fabric, TE, write, lineage
   let selectCount = 0;
   const ctx = {
     cwd: root,
@@ -133,6 +140,68 @@ await t("native wizard is reachable inside Coop and creates the contract", async
   const text = readFileSync(contract, "utf8");
   assert.equal(projectYamlScalar(text, ["profile", "client"]), "Contoso");
   assert.equal(projectYamlScalar(text, ["repositories", root.split(/[\\/]/).pop(), "local_path"]), ".");
+});
+
+await t("native wizard can create a repository-free discovery project", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-project-discovery-"));
+  const confirms = [false, false, false, false, true]; // no local source, add repo, Fabric, TE, write
+  const notices = [];
+  const ctx = {
+    cwd: root,
+    hasUI: true,
+    mode: "tui",
+    ui: {
+      input: async (_label, def) => def,
+      confirm: async () => confirms.shift() ?? false,
+      notify: (message) => notices.push(message),
+    },
+  };
+  assert.equal(await runProjectWizard({}, ctx), true);
+  const text = readFileSync(join(root, ".coop", "project.yml"), "utf8");
+  assert.equal(projectYamlScalar(text, ["estate", "mode"]), "discovery");
+  assert.match(text, /repositories: \{\}/);
+  assert.ok(notices.some((message) => message.includes("Discovery mode is ready")));
+});
+
+await t("data-doc setup reuses source roles and paths from the project contract", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-project-prefill-"));
+  mkdirSync(join(root, ".coop"));
+  mkdirSync(join(root, "warehouse"));
+  mkdirSync(join(root, "analytics"));
+  const nested = join(root, "analytics");
+  writeFileSync(join(root, ".coop", "project.yml"), `profile:
+  client: 'Contoso'
+repositories:
+  warehouse:
+    role: 'sql'
+    local_path: './warehouse'
+  future_reports:
+    role: 'powerbi'
+    local_path: 'TODO: add later'
+`);
+  assert.deepEqual(dataDocPrefillFromProject(nested), {
+    sourceMode: "sql",
+    sqlPath: "../warehouse",
+    projectName: "Contoso",
+  });
+});
+
+await t("a mixed repository prefills both data-doc source slots", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-project-mixed-"));
+  mkdirSync(join(root, ".coop"));
+  writeFileSync(join(root, ".coop", "project.yml"), `profile:
+  client: 'Fabrikam'
+repositories:
+  platform:
+    role: 'mixed'
+    local_path: '.'
+`);
+  assert.deepEqual(dataDocPrefillFromProject(root), {
+    sourceMode: "both",
+    sqlPath: ".",
+    pbiPath: ".",
+    projectName: "Fabrikam",
+  });
 });
 
 await t("startup offers project setup in an unconfigured Git repository", async () => {

@@ -19,7 +19,7 @@ const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
 const dist = process.env.COOP_TEST_DIST;
 const cg = await import(pathToFileURL(`${dist}/coop-guardrails.mjs`).href);
 const coopGuardrails = cg.default;
-const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoCommitPolicy, commitPolicy, buildSessionGovernance, resetSessionGovernance, stripManagedUpdateNotices } = cg;
+const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, mcpLiveReadRisk, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoCommitPolicy, commitPolicy, buildSessionGovernance, resetSessionGovernance, stripManagedUpdateNotices } = cg;
 
 // Capture the handler the extension registers.
 let staged = "";     // `git diff --cached --name-only`
@@ -543,6 +543,32 @@ await t("headless approval-required mutations fail closed while reads pass", asy
 await t("allows an approved mutating MCP tool call; never touches read MCP calls", async () => {
   assert.equal(blocked(await handle({ toolName: "fabric_delete_workspace", input: {} }, { ...ctx, ui: { confirm: async () => true, notify: () => {} } })), false);
   assert.equal(blocked(await handle({ toolName: "fabric_list_workspaces", input: {} }, ctx)), false);
+});
+
+await t("live-read policy allows dev/test metadata and classifies rows/production", () => {
+  assert.equal(mcpLiveReadRisk({ toolName: "fabric_list_tables", input: { workspace: "Client Dev" } }), null);
+  assert.equal(mcpLiveReadRisk({ toolName: "powerbi_get_schema", input: { workspace: "test" } }), null);
+  assert.deepEqual(
+    mcpLiveReadRisk({ toolName: "fabric_execute_query", input: { workspace: "dev", sql: "select top 10 *" } }),
+    { label: "fabric_execute_query", kind: "row-data", environment: "dev/test/unspecified" },
+  );
+  assert.deepEqual(
+    mcpLiveReadRisk({ toolName: "powerbi_get_schema", input: { workspace: "Client Production" } }),
+    { label: "powerbi_get_schema", kind: "production-metadata", environment: "production" },
+  );
+  assert.deepEqual(
+    mcpLiveReadRisk({ toolName: "mcp", input: { server: "fabric", tool: "execute_dax_query", args: '{"workspace":"prod"}' } }),
+    { label: "fabric/execute_dax_query", kind: "row-data", environment: "production" },
+  );
+});
+
+await t("row reads and production metadata require approval and fail closed headlessly", async () => {
+  const declined = { ...ctx, ui: { confirm: async () => false, notify: () => {} } };
+  assert.equal(blocked(await handle({ toolName: "fabric_execute_query", input: { workspace: "dev" } }, declined)), true);
+  assert.equal(blocked(await handle({ toolName: "powerbi_get_schema", input: { workspace: "prod" } }, declined)), true);
+  assert.equal(blocked(await handle({ toolName: "fabric_execute_query", input: { workspace: "dev" } }, { cwd: ctx.cwd, hasUI: false })), true);
+  assert.equal(blocked(await handle({ toolName: "fabric_list_tables", input: { workspace: "test" } }, ctx)), false);
+  assert.equal(blocked(await handle({ toolName: "fabric_execute_query", input: { workspace: "dev" } }, { ...ctx, ui: { confirm: async () => true, notify: () => {} } })), false);
 });
 
 // --- proxied MCP mutation gating (pi-mcp-adapter shape: toolName="mcp", input.tool=<remote>) --

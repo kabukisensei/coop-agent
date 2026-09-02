@@ -84,7 +84,7 @@ grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0' "$MARKER" >/dev/null
 # Install, like update, must preserve a visible convergence failure in its exit
 # status even though it continues through the remaining units for diagnostics.
 failed_install_rc=0
-PIPX_FAIL_MATCH='coop-data-doc==1.1.1' COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 \
+PIPX_FAIL_MATCH='coop-data-doc==1.2.0' COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 \
   bash "$ROOT/scripts/install.sh" --force >/dev/null 2>&1 || failed_install_rc=$?
 [ "$failed_install_rc" -ne 0 ] \
   || { echo 'failed pipx convergence was converted into install success'; exit 1; }
@@ -104,7 +104,7 @@ done
 # A visible unit failure must make update non-zero even though execution reaches
 # the aggregate end (the old behavior silently returned success via Doctor).
 failed_update_rc=0
-PIPX_FAIL_MATCH='coop-data-doc==1.1.1' COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 \
+PIPX_FAIL_MATCH='coop-data-doc==1.2.0' COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 \
   bash "$ROOT/scripts/update.sh" >/dev/null 2>&1 || failed_update_rc=$?
 [ "$failed_update_rc" -ne 0 ] \
   || { echo 'failed pipx convergence was converted into update success'; exit 1; }
@@ -128,7 +128,7 @@ fi
 
 # --- NORMAL-mode drift convergence (no --force): round-2 review item #1 ---------
 # Deliberate drift: installed Pi 0.81.0 (manifest says 0.84.3) and
-# coop-data-doc 1.1.0 (manifest says 1.1.1); ms-fabric-cli matches its pin.
+# coop-data-doc 1.1.0 (manifest says 1.2.0); ms-fabric-cli matches its pin.
 isolate_block 2
 cat > "$STUB2/pi" <<'SH'
 #!/bin/sh
@@ -158,14 +158,14 @@ PATH="$STUB2:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB2"; export PATH COOP_TEST
 COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" >/dev/null 2>&1
 grep -F 'NPM install -g @earendil-works/pi-coding-agent@0.84.3' "$MARKER2" >/dev/null \
   || { echo 'drifted Pi NOT converged to manifest'; grep '^NPM install' "$MARKER2"; exit 1; }
-grep -F 'PIPX install --force coop-data-doc==1.1.1' "$MARKER2" >/dev/null \
+grep -F 'PIPX install --force coop-data-doc==1.2.0' "$MARKER2" >/dev/null \
   || { echo 'drifted coop-data-doc NOT force-installed to pin'; exit 1; }
 ! grep -F 'PIPX install --force ms-fabric-cli==' "$MARKER2" >/dev/null \
   || { echo 'matching fabric-cli was reinstalled despite matching pin'; exit 1; }
 echo '  ✓ normal install converges drifted Pi and pipx tools without --force'
 
 # --- --edge on an EXISTING machine attempts upstream latest ----------------------
-# Existing Pi 0.84.3 + coop-data-doc 1.1.1: edge must attempt an upgrade, not skip.
+# Existing Pi 0.84.3 + coop-data-doc 1.2.0: edge must attempt an upgrade, not skip.
 isolate_block 4
 cat > "$STUB4/pi" <<'SH'
 #!/bin/sh
@@ -179,7 +179,7 @@ echo "NPM $*" >> "$MARKER4"; exit 0
 SH
 cat > "$STUB4/pipx" <<'SH'
 #!/bin/sh
-if [ "$1" = "list" ]; then echo 'package coop-data-doc 1.1.1'; echo 'package ms-fabric-cli 1.7.0'; exit 0; fi
+if [ "$1" = "list" ]; then echo 'package coop-data-doc 1.2.0'; echo 'package ms-fabric-cli 1.7.0'; exit 0; fi
 echo "PIPX $*" >> "$MARKER4"; exit 0
 SH
 cat > "$STUB4/fab" <<'SH'
@@ -213,7 +213,7 @@ echo "NPM $*" >> "$MARKER5"; exit 0
 SH
 cat > "$STUB5/pipx" <<'SH'
 #!/bin/sh
-if [ "$1" = "list" ]; then echo 'package coop-data-doc 1.1.1'; echo 'package ms-fabric-cli 1.5.0'; exit 0; fi
+if [ "$1" = "list" ]; then echo 'package coop-data-doc 1.2.0'; echo 'package ms-fabric-cli 1.5.0'; exit 0; fi
 case "$*" in install*ms-fabric-cli==1.7.0*) exit 1 ;; esac
 echo "PIPX $*" >> "$MARKER5"; exit 0
 SH
@@ -260,7 +260,7 @@ SH
 cat > "$STUB3/pipx" <<'SH'
 #!/bin/sh
 if [ "$1" = "list" ]; then
-  echo 'package coop-data-doc 1.1.1'; echo 'package ms-fabric-cli 1.7.0'; exit 0
+  echo 'package coop-data-doc 1.2.0'; echo 'package ms-fabric-cli 1.7.0'; exit 0
 fi
 echo "PIPX $*" >> "$MARKER3"; exit 0
 SH
@@ -301,7 +301,7 @@ export PATH COOP_TEST_STUB_PATH COOP_FABRIC_PYTHON
 : > "$MARKER6"
 COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.84.3 COOP_PYPI_LATEST_OVERRIDE=0.1.0 \
   bash "$ROOT/scripts/update.sh" >/dev/null 2>&1
-for spec in 'coop-data-doc==1.1.1' 'coop-sql-review==0.15.2' 'coop-dax-review==0.22.0' 'ms-fabric-cli==1.7.0'; do
+for spec in 'coop-data-doc==1.2.0' 'coop-sql-review==0.15.2' 'coop-dax-review==0.22.0' 'ms-fabric-cli==1.7.0'; do
   grep -F "$spec" "$MARKER6" >/dev/null || { echo "update did not install missing $spec"; cat "$MARKER6"; exit 1; }
 done
 echo '  ✓ update installs missing manifest-pinned pipx tools'

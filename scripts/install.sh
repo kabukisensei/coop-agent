@@ -479,12 +479,34 @@ if [ -t 0 ] && [ "${COOP_NO_ONBOARD:-0}" != "1" ]; then
   coop_maybe_onboard || coop_warn "onboarding could not complete; run: coop onboard"
 fi
 
-# --- 9. Sync brand assets + doctor --------------------------------------------
-coop_head "9/9  Sync assets and run doctor"
+# --- 9. Sync, model sign-in, and doctor ---------------------------------------
+coop_head "9/9  Sync assets, sign in, and run doctor"
 if ! "$COOP_ROOT/scripts/sync.sh"; then
   coop_warn "sync reported issues"
   INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
 fi
+
+# Finish a fresh interactive setup inside the real Pi /login UI. coop-tools
+# primes the built-in command and, in login-only mode, returns here as soon as Pi
+# persists the credential. Non-interactive automation and explicit opt-outs keep
+# the previous behavior and receive doctor's normal login hint instead.
+if [ "$INSTALL_FAILURES" -eq 0 ] && [ -t 0 ] && [ -t 1 ] \
+  && [ "${COOP_NO_MODEL_LOGIN:-0}" != "1" ] \
+  && ! coop_pi_login_present; then
+  coop_head "Final setup  Sign in to the model"
+  coop_say "Press Enter on the prepared /login command, then complete the browser sign-in"
+  coop_say "with your Cooptimize OpenAI account. Coop will return here automatically."
+  COOP_PRIME_MODEL_LOGIN=1 COOP_LOGIN_ONLY=1 "$COOP_ROOT/bin/coop"
+  LOGIN_RC=$?
+  if coop_pi_login_present; then
+    coop_ok "model sign-in saved — Coop is ready"
+  else
+    coop_warn "model sign-in did not finish" "run: coop   (the /login command will be ready)"
+    [ "$LOGIN_RC" -ne 0 ] && coop_warn "the sign-in session exited with code $LOGIN_RC"
+    INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
+  fi
+fi
+
 echo >&2
 # Propagate doctor's verdict as the install's exit code, so a genuinely broken
 # install (a required dep still missing) is detectable by whatever ran `coop install`
@@ -506,7 +528,7 @@ if [ "$INSTALL_RC" -ne 0 ]; then
     coop_warn "Bootstrap is incomplete — fix the failed steps above, then re-run: coop install"
   fi
 elif [ "${COOP_ON_PATH:-1}" = 1 ]; then
-  coop_ok "Bootstrap complete. Start the agent with:  coop"
+  coop_ok "Bootstrap complete. Coop is ready — start it with:  coop"
 else
   coop_ok "Bootstrap complete — but '$LOCALBIN' isn't on this shell's PATH yet."
 fi

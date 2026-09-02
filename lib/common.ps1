@@ -620,6 +620,15 @@ function Get-CoopEffectiveAgentDir {
   return (Get-CoopPiAgentDir)
 }
 
+# True when Pi has a stored provider credential in the agent tree Coop will
+# actually load. Environment-only credentials intentionally do not count: this
+# helper gates the one-time interactive /login handoff requested by onboarding.
+function Test-CoopPiLoginPresent {
+  $authPath = Join-Path (Get-CoopEffectiveAgentDir) 'auth.json'
+  if (-not (Test-Path -LiteralPath $authPath -PathType Leaf)) { return $false }
+  try { return (Get-Item -LiteralPath $authPath).Length -gt 0 } catch { return $false }
+}
+
 # Align coop's ISOLATED extension tree's @earendil-works/pi-ai + pi-tui to the Pi
 # agent's OWN version (mirror of lib/common.sh coop_align_ext_deps). coop's
 # extensions load INTO the running agent, so they must share one pi-ai/pi-tui with

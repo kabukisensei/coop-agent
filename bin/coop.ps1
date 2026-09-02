@@ -336,6 +336,18 @@ function Invoke-LaunchPi {
 
   Invoke-CoopAzPreflight
 
+  # A plain interactive launch with no stored provider credential should lead
+  # directly into the real Pi login command. The coop-tools extension fills the
+  # command into Pi's editor (CLI positional arguments would incorrectly send it
+  # to the model as a prompt). Explicit Pi arguments are never overridden.
+  if ($PassArgs.Count -eq 0 -and
+      -not [Console]::IsInputRedirected -and
+      -not [Console]::IsOutputRedirected -and
+      $env:COOP_NO_MODEL_LOGIN -ne '1' -and
+      -not (Test-CoopPiLoginPresent)) {
+    $env:COOP_PRIME_MODEL_LOGIN = '1'
+  }
+
   $piArgs = Build-CoopPiArgs
   $allArgs = @($piArgs + $PassArgs)
   & pi @allArgs
