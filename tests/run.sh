@@ -31,6 +31,8 @@ echo "→ start-here menu tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/startmenu.test.mjs"
 echo "→ in-Coop project contract wizard tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/project-wizard.test.mjs"
+echo "→ contract-driven daily log default tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/daily-log-default.test.mjs"
 
 echo "→ setup-docs JSONL bridge (renderPrompt / askCheckbox) tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge.test.mjs"

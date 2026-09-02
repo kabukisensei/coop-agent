@@ -21,7 +21,9 @@ startup offer) so lineage docs can be established without leaving the agent, and
 **native lineage announcement** that points the agent at built docs before it
 touches an object — see [Start Here menu](#start-here-menu-start),
 [Data-doc setup](#data-doc-setup-setup-docs) and
-[Lineage awareness](#lineage-awareness-before_agent_start) below.
+[Lineage awareness](#lineage-awareness-before_agent_start) below. It also turns
+`logging.require_task_log` into a real completion rule; see
+[Required daily logging](#required-daily-logging).
 
 ## Project setup (`/setup-project`)
 
@@ -165,6 +167,24 @@ defaulting to `./data-docs`) contains a `manifest.json` **or** an `index.md`. Th
 hook **degrades silently** when there's no `coop-data-doc.yml`, or when a config
 exists but hasn't been built yet — the docs are an aid, not a gate, and the whole
 hook is wrapped so it can never break a turn.
+
+## Required daily logging
+
+When the nearest `.coop/project.yml` sets `logging.require_task_log: true`, the
+`before_agent_start` hook adds a human-hidden system instruction on every turn:
+after meaningful project work, Coop must explicitly use `daily-logger` and append
+today's entry before its final response. The configured `daily_log_path` and project
+timezone determine the file. The contract flag is standing authorization for the
+append, but never for a commit or push.
+
+The extension tracks successful edit/write calls, substantive review and data-doc
+calls, and common shell validation/mutation commands. Once the agent is fully
+settled, it compares the target log's timestamp and tracked writes. If meaningful
+work finished without a log update, Coop shows a warning and a footer status; a
+later log update clears it. Read-only Q&A, status checks, lineage lookups, failed
+tool calls, contracts with the flag disabled, and explicit per-task opt-outs do not
+require an entry. The verifier is intentionally advisory—the per-turn instruction
+is what makes the agent perform the log step, while the warning exposes a miss.
 
 ## Behavior notes
 

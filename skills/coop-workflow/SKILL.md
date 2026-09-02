@@ -24,7 +24,10 @@ documentation reads handled by the `coop-data-doc` tool.
 
 The sequence below is the **default way** to honor those principles — adapt it
 (skip, reorder, or combine steps) to the task. The exact number of steps is not
-sacred; the principles are. This workflow also governs official Microsoft
+sacred; the principles are. One exception is the log postcondition: when the nearest
+project contract sets `logging.require_task_log: true`, step 10 is non-skippable after
+meaningful completed work. Ordinary read-only Q&A/status checks and an explicit user
+opt-out for the particular task are excluded. This workflow also governs official Microsoft
 Fabric/Power BI authoring skills (`powerbi-report-authoring`,
 `semantic-model-authoring`, `sqldw-authoring-cli`, `eventhouse-cli`, etc.):
 they may edit source files, but they still require plan approval, backups,
@@ -61,9 +64,12 @@ If it is missing, ask the user to copy `.coop/project.example.yml` into the repo
 8. **Diff + summarize.** Show `git diff` and summarize the change in plain language.
 9. **Document.** Update Markdown docs, glossary, and lineage; regenerate the site
    (or re-run `coop-data-doc build`) if documentation changed.
-10. **Log.** Append a task entry to the daily log
-    (`docs/agent/logs/daily/YYYY-MM-DD.md`): summary, files touched, object(s)
-    affected, standards checked, validation run, docs updated, next action.
+10. **Log.** When `logging.require_task_log` is true, explicitly use the
+    `daily-logger` skill **before the final response** and append a task entry to the
+    configured daily log: summary, files touched, object(s) affected, standards
+    checked, validation run, docs updated, next action. The contract flag is standing
+    authorization for the log append; do not ask again just to write it. It does not
+    authorize a commit or push.
 11. **Commit policy.** Commit **docs / logs / site only**, and **only** if the
     contract allows it and the user approves. **Never commit SQL, DAX, semantic
     model, report, Python, or notebook source** — make the edit, show the diff,

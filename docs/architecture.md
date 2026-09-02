@@ -228,6 +228,12 @@ where relevant) → diff + summarize → update docs/glossary/lineage and regene
 the site → append to the daily log → **commit docs/logs/site only with approval;
 never commit source**.
 
+When the contract sets `logging.require_task_log: true`, `coop-tools` adds that
+log step to every turn's system prompt as a non-skippable completion postcondition
+for meaningful work. A quiet `tool_call`/`tool_result` tracker and
+`agent_settled` check warn when substantive edits, reviews, or validation finish
+without touching today's configured log; ordinary read-only Q&A is ignored.
+
 The project contract `.coop/project.yml` (copied from
 `.coop/project.example.yml`) is the single source of truth for repo paths,
 Fabric/Power BI workspaces, standards locations, backup/log rules,

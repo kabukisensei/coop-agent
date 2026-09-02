@@ -22,6 +22,14 @@ These rules are **enforced at runtime** by the `coop-guardrails` extension. `git
 
 For non-trivial work, follow the `coop-workflow` skill. Default to **vertical slices**: each slice is one small end-to-end change that starts with a failing check and ends with a passing check. If the project enables `tests.live_data.enabled`, run the configured live-data check between slices with approval and target dev/test only. Explain why the slice is next, what it proves, and what would make it wrong. Get approval before editing. Use `/spec-first`, `/slice-next`, `/annotate`, `/explain`, and `/handoff` as needed. For an approved slice, progress messages are non-blocking: continue through backup, edits, review, validation, and the passing check before the final result; pause only for genuine blockers or newly encountered destructive/production actions.
 
+If the nearest `.coop/project.yml` sets `logging.require_task_log: true`, using the
+`daily-logger` skill and appending the configured daily log is a **non-skippable
+completion postcondition** after meaningful project work, including edits, reviews,
+validation, generated docs, and decisions/open questions. Do it before the final
+response. The contract flag is standing authorization for that log append; it does
+not authorize a commit or push. Skip logging for ordinary read-only Q&A/status checks
+or when the user explicitly opts out for that task.
+
 ## Tool summary
 
 You have native read-only/advisory tools: `data_doc`, `sql_review`, `dax_review`. You have read-only MCP (Fabric, Power BI, Microsoft Learn), memory, web access, and ask-user. Consult `docs/guardrails-reference.md` and the `coop-workflow` skill for detailed usage guidance.

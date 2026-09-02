@@ -6,6 +6,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Changed
+- `logging.require_task_log: true` is now enforced as a per-turn completion
+  postcondition: Coop explicitly invokes `daily-logger` after meaningful work and
+  warns if a settled task changed/reviewed/validated the project without updating
+  today's configured log. Read-only Q&A and explicit per-task opt-outs stay quiet.
 - Project setup no longer depends on users knowing `coop init` or editing YAML:
   Coop now offers a native wizard on first launch in an unconfigured Git repo,
   exposes it from `/start` and `/setup-project`, and safely edits existing

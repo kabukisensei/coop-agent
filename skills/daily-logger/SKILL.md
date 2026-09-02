@@ -1,6 +1,6 @@
 ---
 name: daily-logger
-description: Append a structured entry to the daily work log after completing (or preparing) any task that touches SQL, DAX, Fabric, semantic models, reports, documentation, or lineage. Records what was done, what's awaiting human review, standards findings, open questions, and next actions. The log is a documentation artifact — commit it (with approval), never source.
+description: Append a structured entry after meaningful completed project work, including implementation, configuration, validation, SQL, DAX, Fabric, semantic models, reports, documentation, or lineage. Required before the final response when the nearest project contract sets logging.require_task_log true. Skip ordinary read-only Q&A/status checks or an explicit per-task user opt-out. Records work, review state, findings, open questions, and next actions. The log is a documentation artifact — commit it only with approval, never source.
 ---
 
 # Daily Logger
@@ -9,19 +9,28 @@ description: Append a structured entry to the daily work log after completing (o
 
 Keep a durable, human-readable record of the day's analytics-engineering work so the
 team has an audit trail of what changed, what's pending review, and what's next. This
-is **step 10 of the `coop-workflow`** ("Log") made concrete. Logging is read-safe;
-committing the log happens only with approval per the contract.
+is **step 10 of the `coop-workflow`** ("Log") made concrete. A required-task-log
+contract authorizes the append; committing the log happens only with approval.
+
+When the nearest `.coop/project.yml` sets `logging.require_task_log: true`, treat
+this skill as a non-skippable completion postcondition for meaningful work. Use it
+before the final response. That contract flag is standing authorization to append
+the log; it is not authorization to commit or push it. Respect an explicit user
+request not to log a particular task.
 
 ## When to log
 
 Append an entry whenever you:
 
+- completed an implementation or configuration change,
 - prepared or proposed a source change for human review (SQL / DAX / model / report),
-- ran a review (`sql_review` / `dax_review`) or built/refreshed docs (`data_doc`),
+- ran meaningful validation or a review (`sql_review` / `dax_review`) or
+  built/refreshed docs (`data_doc`),
 - updated documentation, glossary, lineage, or the portal,
 - hit an open question or a decision the user should weigh in on.
 
 Multiple tasks in one day go in the **same** day's file — append, don't overwrite.
+Do not create an entry for ordinary read-only Q&A or a simple status check.
 
 ## Where it goes
 

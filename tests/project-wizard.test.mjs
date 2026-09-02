@@ -51,6 +51,8 @@ await t("new-project renderer produces a parseable, governed contract", () => {
   assert.equal(projectYamlScalar(text, ["profile", "client"]), "Contoso");
   assert.equal(projectYamlScalar(text, ["repositories", "analytics", "local_path"]), ".");
   assert.equal(projectYamlScalar(text, ["tools", "fabric_cli", "enabled"]), "true");
+  assert.equal(projectYamlScalar(text, ["logging", "require_task_log"]), "true");
+  assert.match(text, /- 'update markdown docs, html site, logs'/);
   assert.match(text, /agent_never_commit:/);
   assert.match(text, /never_without_explicit_instruction:/);
   const parsed = parseProjectWizardSettings(text, "/work/analytics");

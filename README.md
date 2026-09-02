@@ -424,7 +424,8 @@ said yes/no" — useful for client trust and for debugging a guardrail false pos
 7. Run the applicable review — `sql_review` / `dax_review` (and Tabular Editor BPA / `fabric-cicd` validate where relevant).
 8. Show `git diff` and summarize the change.
 9. Update Markdown docs / glossary / lineage; regenerate the site if docs changed.
-10. Append to the daily log.
+10. If `logging.require_task_log` is enabled, use `daily-logger` and append to the
+    configured daily log before the final response.
 11. Commit docs/logs/site **only with approval**; never commit source.
 
 On non-trivial work the skill adds a few habits — vertical slices, codifying
@@ -438,6 +439,13 @@ The single source of truth for repo paths, workspaces, standards, backup/log rul
 and the approval policy is the project contract `.coop/project.yml`. Copy
 [`.coop/project.example.yml`](.coop/project.example.yml) into your work repo's
 `.coop/project.yml` and replace every `TODO`.
+
+`logging.require_task_log: true` makes that log step a completion postcondition for
+meaningful project work. Coop injects the requirement every turn and warns if a
+settled task made changes or ran substantive review/validation without updating
+today's configured log. Ordinary read-only Q&A/status checks are excluded, and a
+user can explicitly opt out for a particular task. The flag authorizes the log
+append, not a commit or push.
 
 ---
 

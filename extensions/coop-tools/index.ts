@@ -1050,6 +1050,125 @@ function boolValue(value: string, fallback = false): boolean {
   return fallback;
 }
 
+export interface DailyLogRequirement {
+  contractPath: string;
+  projectRoot: string;
+  logPath: string;
+  displayPath: string;
+  date: string;
+  timezone: string;
+}
+
+function dateInTimezone(now: Date, timezone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(now);
+    const value = (type: string) => parts.find((part) => part.type === type)?.value || "";
+    const year = value("year"), month = value("month"), day = value("day");
+    if (year && month && day) return `${year}-${month}-${day}`;
+  } catch {
+    /* invalid timezone: fall back to the workstation's local date */
+  }
+  const year = String(now.getFullYear()).padStart(4, "0");
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/** Resolve today's required daily-log file from the nearest project contract. */
+export function requiredDailyLog(cwd: string, now = new Date()): DailyLogRequirement | null {
+  try {
+    const contractPath = findProjectYml(cwd);
+    if (!contractPath) return null;
+    const text = safeRead(contractPath);
+    if (!boolValue(projectYamlScalar(text, ["logging", "require_task_log"]), false)) return null;
+    const projectRoot = resolve(contractPath, "..", "..");
+    const timezone = projectYamlScalar(text, ["profile", "timezone"])
+      || Intl.DateTimeFormat().resolvedOptions().timeZone
+      || "UTC";
+    const date = dateInTimezone(now, timezone);
+    const template = projectYamlScalar(text, ["logging", "daily_log_path"])
+      || "docs/agent/logs/daily/{yyyy-mm-dd}.md";
+    const rendered = template
+      .replace(/\{yyyy-mm-dd\}/gi, date)
+      .replace(/YYYY-MM-DD/g, date);
+    const logPath = isAbsolute(rendered) ? resolve(rendered) : resolve(projectRoot, rendered);
+    const rel = relative(projectRoot, logPath);
+    const displayPath = (!rel.startsWith("..") && !isAbsolute(rel) ? rel || basename(logPath) : logPath)
+      .replace(/\\/g, "/");
+    return { contractPath, projectRoot, logPath, displayPath, date, timezone };
+  } catch {
+    return null; // contract guidance must never break an agent turn
+  }
+}
+
+/** Per-turn instruction injected when logging.require_task_log is enabled. */
+export function dailyLogSystemInstruction(requirement: DailyLogRequirement): string {
+  return [
+    "Cooptimize required daily-log postcondition:",
+    "The nearest .coop/project.yml sets logging.require_task_log: true.",
+    "For meaningful project work in this turn—implementation or configuration changes, source/docs edits, reviews, validation, generated documentation, or decisions/open questions—the daily log is a NON-SKIPPABLE completion postcondition.",
+    `Before your final response, explicitly use the daily-logger skill and append an accurate entry to ${requirement.displayPath} for ${requirement.date}, creating it if needed.`,
+    "The contract flag is standing authorization for this log append, so do not ask again merely to update the log. Do not log ordinary read-only Q&A or status checks, and respect an explicit user request to skip logging for a particular task.",
+    "Never put secrets in the log. Logging does not authorize git commit or push.",
+  ].join(" ");
+}
+
+export type DailyLogToolEffect = "none" | "meaningful" | "log";
+
+function samePath(a: string, b: string): boolean {
+  const aa = resolve(a).replace(/\\/g, "/");
+  const bb = resolve(b).replace(/\\/g, "/");
+  return process.platform === "win32" ? aa.toLowerCase() === bb.toLowerCase() : aa === bb;
+}
+
+function shellMentionsPath(command: string, cwd: string, logPath: string): boolean {
+  const normalized = command.replace(/\\/g, "/");
+  const absolute = resolve(logPath).replace(/\\/g, "/");
+  const rel = relative(cwd, logPath).replace(/\\/g, "/");
+  return normalized.includes(absolute) || (rel && normalized.includes(rel.replace(/^\.\//, "")));
+}
+
+/** Deliberate per-task escape hatch; avoid broad matches such as "didn't log". */
+export function dailyLogOptOut(prompt: string): boolean {
+  return /\b(?:do not|don't|dont)\s+(?:(?:write|update|append|create)\s+(?:to\s+)?(?:the\s+)?(?:daily\s+)?log|log\s+(?:this(?:\s+(?:task|work|one))?|the\s+task|anything))\b/i.test(prompt)
+    || /\bskip\s+(?:the\s+)?(?:daily\s+)?(?:log|logging)\b/i.test(prompt)
+    || /\b(?:no|without)\s+(?:a\s+|the\s+)?(?:daily\s+)?log\b/i.test(prompt);
+}
+
+/** Classify successful tool calls for the quiet end-of-task logging verifier. */
+export function dailyLogToolEffect(toolName: string, input: Record<string, unknown>, cwd: string, logPath: string): DailyLogToolEffect {
+  if (toolName === "edit" || toolName === "write") {
+    const rawPath = typeof input.path === "string" ? input.path : "";
+    if (!rawPath) return "none";
+    const target = isAbsolute(rawPath) ? rawPath : resolve(cwd, rawPath);
+    return samePath(target, logPath) ? "log" : "meaningful";
+  }
+  if (toolName === "sql_review" || toolName === "dax_review" || toolName === "bpa_review") return "meaningful";
+  if (toolName === "data_doc") return input.command === "lineage" ? "none" : "meaningful";
+  if (toolName === "bash" || toolName === "powershell") {
+    const command = typeof input.command === "string" ? input.command : "";
+    if (!command) return "none";
+    const mayWrite = /(?:apply_patch|(?:^|[;&|]\s*)(?:sed\s+-i|perl\s+-pi|tee|touch|cp|mv)\b|(?:^|\s)(?:>|>>)(?:\s|$))/i;
+    if (shellMentionsPath(command, cwd, logPath) && mayWrite.test(command)) return "log";
+    const mutationOrValidation = /(?:apply_patch|(?:^|[;&|]\s*)(?:sed\s+-i|perl\s+-pi|tee|touch|mkdir|cp|mv)\b|(?:^|\s)(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b|\bpytest\b|\bdotnet\s+test\b|\bbash\s+tests\/|\bscripts\/check[^\s]*|\bgit\s+(?:commit|push)\b|(?:^|\s)(?:>|>>)(?:\s|$))/i;
+    return mutationOrValidation.test(command) ? "meaningful" : "none";
+  }
+  return "none";
+}
+
+function fileMtime(path: string): number {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
 /** Parse the wizard-owned subset; unknown project fields are intentionally ignored. */
 export function parseProjectWizardSettings(text: string, projectRoot: string): ProjectWizardSettings {
   const defaultBranch = projectYamlScalar(text, ["profile", "default_branch"]) || "main";
@@ -1314,6 +1433,7 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "    - 'create backups'",
     "    - 'run advisory Coop review and documentation tools'",
     "    - 'MCP list / read / inspect'",
+    "    - 'update markdown docs, html site, logs'",
     "  ask_first:",
     "    - 'delete files'",
     "    - 'deploy or publish'",
@@ -1949,35 +2069,110 @@ export default function coopTools(pi: ExtensionAPI) {
     }
   });
 
-  // --- Native lineage awareness ---------------------------------------------
+  // --- Native lineage awareness + required daily-log postcondition ----------
   // Once per folder, if BUILT coop-data-doc outputs exist, inject an (agent-visible,
   // human-hidden) note so coop consults the lineage for up/downstream impact before
-  // touching an object. Silent when there are none — the docs are an aid, not a gate.
-  // Wrapped so it can never break a turn.
+  // touching an object. Every turn whose project contract requires a daily task log
+  // also gets a system-prompt postcondition. Silent when neither applies; wrapped so
+  // contract/logging guidance can never break a turn.
   const announcedCwds = new Set<string>();
-  pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
+  let dailyRun: {
+    requirement: DailyLogRequirement;
+    baselineMtime: number;
+    meaningful: boolean;
+    logTouched: boolean;
+  } | null = null;
+  const pendingDailyEffects = new Map<string, DailyLogToolEffect>();
+  const missedLogAt = new Map<string, number>();
+
+  pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
     try {
       const cwd: string = ctx.cwd;
-      if (announcedCwds.has(cwd)) return;
-      const ymlPath = join(cwd, DATADOC_CONFIG);
-      if (!existsSync(ymlPath)) return; // no config → nothing to announce
-      const cfg = parseExisting(safeRead(ymlPath));
-      const outAbs = resolveRel(cwd, cfg.outputDir || DEFAULT_OUTPUT_DIR);
-      if (!isBuilt(outAbs)) return; // config present but not built yet → don't announce
-      announcedCwds.add(cwd);
-      const relOut = relative(cwd, outAbs) || ".";
+      pendingDailyEffects.clear();
+      const requirement = requiredDailyLog(cwd);
+      dailyRun = requirement && !dailyLogOptOut(event.prompt || "")
+        ? { requirement, baselineMtime: fileMtime(requirement.logPath), meaningful: false, logTouched: false }
+        : null;
+
+      if (!requirement) {
+        try { ctx.ui.setStatus("coop-daily-log", undefined); } catch { /* best effort */ }
+      }
+
+      if (requirement) {
+        const warnedAt = missedLogAt.get(requirement.logPath);
+        if (warnedAt && fileMtime(requirement.logPath) > warnedAt) {
+          missedLogAt.delete(requirement.logPath);
+          try { ctx.ui.setStatus("coop-daily-log", undefined); } catch { /* best effort */ }
+        }
+      }
+
+      let message: any;
+      if (!announcedCwds.has(cwd)) {
+        const ymlPath = join(cwd, DATADOC_CONFIG);
+        if (existsSync(ymlPath)) {
+          const cfg = parseExisting(safeRead(ymlPath));
+          const outAbs = resolveRel(cwd, cfg.outputDir || DEFAULT_OUTPUT_DIR);
+          if (isBuilt(outAbs)) {
+            announcedCwds.add(cwd);
+            const relOut = relative(cwd, outAbs) || ".";
+            message = {
+              customType: "coop-lineage",
+              display: false,
+              content:
+                `Cooptimize lineage docs ARE available for this estate (coop-data-doc outputs under ${relOut}: graph.json, manifest.json, per-object Markdown). ` +
+                `Use them: BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its up/downstream impact via the data_doc tool (command="lineage", object="<name>"), and read that object's doc (located via manifest.json) plus its immediate neighbors — don't re-derive lineage by hand. If the docs look stale, run data_doc (build) to refresh.`,
+              details: { outputDir: relOut },
+            };
+          }
+        }
+      }
+
+      if (!message && !requirement) return;
       return {
-        message: {
-          customType: "coop-lineage",
-          display: false,
-          content:
-            `Cooptimize lineage docs ARE available for this estate (coop-data-doc outputs under ${relOut}: graph.json, manifest.json, per-object Markdown). ` +
-            `Use them: BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its up/downstream impact via the data_doc tool (command="lineage", object="<name>"), and read that object's doc (located via manifest.json) plus its immediate neighbors — don't re-derive lineage by hand. If the docs look stale, run data_doc (build) to refresh.`,
-          details: { outputDir: relOut },
-        },
+        ...(message ? { message } : {}),
+        ...(requirement
+          ? { systemPrompt: `${event.systemPrompt}\n\n${dailyLogSystemInstruction(requirement)}` }
+          : {}),
       };
     } catch {
       return; // never break a turn
+    }
+  });
+
+  pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
+    if (!dailyRun) return;
+    const effect = dailyLogToolEffect(event.toolName, event.input || {}, ctx.cwd, dailyRun.requirement.logPath);
+    if (effect !== "none") pendingDailyEffects.set(event.toolCallId, effect);
+  });
+
+  pi.on("tool_result", async (event: any) => {
+    if (!dailyRun) return;
+    const effect = pendingDailyEffects.get(event.toolCallId);
+    pendingDailyEffects.delete(event.toolCallId);
+    if (!effect || event.isError) return;
+    if (effect === "log") dailyRun.logTouched = true;
+    if (effect === "meaningful") dailyRun.meaningful = true;
+  });
+
+  pi.on("agent_settled", async (_event, ctx: ExtensionContext) => {
+    try {
+      if (!dailyRun) return;
+      const run = dailyRun;
+      dailyRun = null;
+      pendingDailyEffects.clear();
+      const logUpdated = run.logTouched || fileMtime(run.requirement.logPath) > run.baselineMtime;
+      if (logUpdated) {
+        missedLogAt.delete(run.requirement.logPath);
+        try { ctx.ui.setStatus("coop-daily-log", undefined); } catch { /* best effort */ }
+        return;
+      }
+      if (!run.meaningful) return;
+      const warning = `Required daily log wasn't updated: ${run.requirement.displayPath}. Ask Coop to finish the log or run /daily-log.`;
+      missedLogAt.set(run.requirement.logPath, Date.now());
+      try { ctx.ui.setStatus("coop-daily-log", `daily log missing · ${run.requirement.date}`); } catch { /* best effort */ }
+      notify(ctx, warning, "warning");
+    } catch {
+      /* a verifier warning must never break the session */
     }
   });
 
