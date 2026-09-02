@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-09-02
+
 ### Changed
 - New-client setup now supports discovery, partial, mixed-repo, and fully connected
   estates. The in-Coop project wizard can start with no local repository and records
