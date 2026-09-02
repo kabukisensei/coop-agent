@@ -413,7 +413,7 @@ Coop-Head "Cooptimize agent bootstrap (v$($script:CoopVersion))  [$OS]"
 try {
   Coop-ProgBegin $TOTAL
   # --- 1. Prerequisites (auto-install missing tools if winget is available) --
-  Coop-Head '1/8  Prerequisites'
+  Coop-Head '1/9  Prerequisites'
 
   # Git
   if ((-not (Test-Have 'git')) -and (-not $NO_PREREQS)) {
@@ -588,25 +588,25 @@ try {
   }
 
   # --- 2. Pi itself ----------------------------------------------------------
-  Coop-Head '2/8  Pi (@earendil-works/pi-coding-agent)'
+  Coop-Head '2/9  Pi (@earendil-works/pi-coding-agent)'
   Install-Unit 'pi (@earendil-works/pi-coding-agent)' $UnitPi @($FORCE, $piSpec)
   Add-CoopNpmPath      # make a just-npm-installed `pi` visible to step 3 this run
 
   # --- 3. Pi extensions ------------------------------------------------------
-  Coop-Head '3/8  Pi extensions'
+  Coop-Head '3/9  Pi extensions'
   for ($i = 0; $i -lt $PI_EXTENSIONS.Count; $i++) { Install-Unit $PI_EXTENSIONS[$i] $UnitExt @($extSpecs[$i]) }
 
   # --- 4. Microsoft Fabric CLI ----------------------------------------------
-  Coop-Head '4/8  Microsoft Fabric CLI'
+  Coop-Head '4/9  Microsoft Fabric CLI'
   if ($NO_FABRIC) { Coop-Info 'skipping Microsoft Fabric CLI (--no-fabric)' }
   else { Install-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $EDGE, $FABRIC_PKG, $fabricTarget, $fabricCicd, $fabricPython, $fabricFetchPython) }
 
   # --- 5. Python tools (pipx) -----------------------------------------------
-  Coop-Head '5/8  Coop tools (pipx)'
+  Coop-Head '5/9  Coop tools (pipx)'
   for ($i = 0; $i -lt $PY_TOOLS.Count; $i++) { Install-Unit $PY_TOOLS[$i] $UnitPytool @($FORCE, $PY_TOOLS[$i], $pytoolTargets[$i]) }
 
   # --- 6. Power BI / Fabric authoring tools (npm) ----------------------------
-  Coop-Head '6/8  Power BI / Fabric authoring tools'
+  Coop-Head '6/9  Power BI / Fabric authoring tools'
   Install-Unit 'Power BI/Fabric authoring tools' $UnitPbihTools @($FORCE, $pbihSpecs)
 }
 finally {
@@ -620,7 +620,7 @@ if ($env:COOP_FLEET_TEST_MODE -eq '1') {
 }
 
 # --- 7. Put `coop` on PATH ---------------------------------------------------
-Coop-Head "7/8  Link 'coop' onto your PATH"
+Coop-Head "7/9  Link 'coop' onto your PATH"
 $LOCALBIN = Join-Path $env:LOCALAPPDATA 'coop\bin'
 New-Item -ItemType Directory -Force -Path $LOCALBIN | Out-Null
 # Drop a launcher .cmd that forwards to the repo's coop.cmd shim, so `coop` works
@@ -728,6 +728,7 @@ if (Test-Path -LiteralPath $desktopLauncher) {
 # If this is an interactive install and there's no local profile yet, ask the user
 # for their name and communication preference before the first real session.
 if (-not [Console]::IsInputRedirected -and $env:COOP_NO_ONBOARD -ne '1') {
+  Coop-Head '8/9  Personalize Coop'
   Invoke-CoopMaybeOnboard
 }
 

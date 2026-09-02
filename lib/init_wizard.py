@@ -11,7 +11,6 @@ Without --template: run the guided wizard.
 With --template: print the full documented example to stdout (legacy raw copy).
 """
 import argparse
-import json
 import os
 import re
 import shutil
@@ -19,6 +18,12 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+LIB_DIR = Path(__file__).resolve().parent
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
+
+from azure_auth import azure_cli_available, discover_azure_tenants, login_azure, tenant_label
 
 
 def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -55,49 +60,36 @@ def discover_timezone() -> str:
         return "UTC"
 
 
-def azure_cli_available() -> bool:
-    az_cmd = os.environ.get("COOP_AZ_BIN", "az")
-    if az_cmd == "az":
-        return bool(shutil.which("az"))
-    return Path(az_cmd).is_file() or bool(shutil.which(az_cmd))
-
-
-def azure_argv(*args: str) -> list[str]:
-    """Build a cross-platform Azure CLI command, including Windows stubs."""
-    az_cmd = os.environ.get("COOP_AZ_BIN", "az")
-    if sys.platform == "win32" and az_cmd.lower().endswith((".bat", ".cmd")):
-        return ["cmd.exe", "/c", az_cmd, *args]
-    return [az_cmd, *args]
-
-
-def discover_tenant() -> str:
-    # Try az account show, but do not fail if az is missing / not logged in.
-    if not azure_cli_available():
+def choose_tenant(tenants: list[dict[str, str]], *, login_result: bool = False) -> str:
+    if not tenants:
         return ""
-    try:
-        p = run(azure_argv("account", "show", "--output", "json"), timeout=15)
-        if p.returncode == 0:
-            data = json.loads(p.stdout)
-            return str(data.get("tenantId", "")) if isinstance(data, dict) else ""
-    except Exception:
-        pass
+    if len(tenants) == 1:
+        if login_result:
+            sys.stderr.write(f"✓ Signed in. Detected client tenant {tenant_label(tenants[0])}.\n")
+        return tenants[0]["tenant_id"]
+    labels = [tenant_label(tenant) for tenant in tenants]
+    sys.stderr.write("✓ Azure sign-in succeeded.\n" if login_result else "Multiple signed-in Azure tenants detected.\n")
+    selected = read_choice(
+        "Which tenant owns the client's Fabric and Power BI environment?",
+        labels,
+        default=labels[0],
+    )
+    return tenants[labels.index(selected)]["tenant_id"]
+
+
+def sign_in_and_detect_tenant() -> str:
+    sys.stderr.write("Opening Azure sign-in. Coop will wait here until it finishes…\n")
+    ok, tenants = login_azure()
+    if ok and tenants:
+        return choose_tenant(tenants, login_result=True)
+    sys.stderr.write("Azure sign-in did not produce a tenant.\n")
+    if read_confirm("Try again with a device code?", default=True):
+        sys.stderr.write("Starting device-code sign-in. Follow the Azure instructions below…\n")
+        ok, tenants = login_azure(use_device_code=True)
+        if ok and tenants:
+            return choose_tenant(tenants, login_result=True)
+    sys.stderr.write("Azure is not connected. Enter the tenant manually or leave it blank and configure it later.\n")
     return ""
-
-
-def run_azure_login() -> bool:
-    """Run Azure CLI's browser/device-code login in the current wizard."""
-    try:
-        result = subprocess.run(
-            azure_argv("login", "--allow-no-subscriptions"),
-            stdout=sys.stderr,
-            stderr=sys.stderr,
-        )
-        return result.returncode == 0
-    except KeyboardInterrupt:
-        sys.stderr.write("\nAzure sign-in cancelled; continuing with manual tenant entry.\n")
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return False
 
 
 def discover_te_path() -> str:
@@ -403,15 +395,12 @@ def run_wizard(target_dir: Path) -> dict:
     use_fabric = read_confirm("Is this a Microsoft Fabric / Power BI engagement?", default=False)
     tenant_id = ""
     if use_fabric:
-        tenant_id = discover_tenant()
+        tenants = discover_azure_tenants()
+        tenant_id = choose_tenant(tenants) if tenants else ""
         if not tenant_id and azure_cli_available():
             sys.stderr.write("Azure CLI is installed, but no active Azure sign-in was detected.\n")
             if read_confirm("Sign in now so Coop can detect the client tenant automatically?", default=True):
-                sys.stderr.write("Opening Azure sign-in…\n")
-                if run_azure_login():
-                    tenant_id = discover_tenant()
-                if not tenant_id:
-                    sys.stderr.write("Azure sign-in did not return a tenant; enter one manually or leave it blank.\n")
+                tenant_id = sign_in_and_detect_tenant()
         tenant_id = ask_prefilled("Azure tenant ID (optional)", tenant_id)
 
     use_tabular_editor = read_confirm("Use Tabular Editor CLI for BPA?", default=False)

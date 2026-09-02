@@ -40,8 +40,10 @@ cd "$TMP/proj"
 # 1. First launch probes az once and stamps the marker with the tenant.
 coop_az_preflight
 [ "$(probes)" = "1" ] || fail "first preflight should probe az once (got $(probes))"
+[ "$(grep -c 'get-access-token --tenant tenant-aaa --resource https://analysis.windows.net/powerbi/api' "$TMP/az.log")" = "1" ] \
+  || fail "preflight must request the Power BI token for the pinned tenant"
 [ "$(cat "$TMP/agent/.az-ok")" = "tenant-aaa" ] || fail "marker should hold the validated tenant"
-pass "first preflight probes az and stamps .az-ok with the tenant"
+pass "first preflight verifies the pinned tenant and stamps .az-ok"
 
 # 2. Second launch within the TTL: NO az invocation at all.
 coop_az_preflight
@@ -75,6 +77,25 @@ out="$(coop_az_preflight 2>&1 </dev/null)" || fail "a failed probe must not fail
 case "$out" in
   *"token missing or expired"*) pass "failed probe warns exactly as before (no marker left)" ;;
   *) fail "failed probe should warn about the missing token (got: $out)" ;;
+esac
+
+# 7. A successful login is re-probed for the exact tenant before it is cached.
+cat > "$TMP/bin/az" <<EOF
+#!/bin/sh
+echo "\$*" >> "$TMP/az.log"
+if [ "\$1" = "login" ]; then touch "$TMP/logged-in"; exit 0; fi
+if [ "\$1 \$2" = "account get-access-token" ] && [ -f "$TMP/logged-in" ]; then exit 0; fi
+exit 1
+EOF
+chmod +x "$TMP/bin/az"
+out="$(COOP_ASSUME_YES=1 coop_az_preflight 2>&1)" || fail "verified login must remain non-fatal"
+[ "$(probes)" = "6" ] || fail "login recovery should probe before and after login (got $(probes))"
+grep -q 'login --tenant tenant-bbb --allow-no-subscriptions' "$TMP/az.log" \
+  || fail "login recovery must target the pinned tenant"
+[ "$(cat "$TMP/agent/.az-ok")" = "tenant-bbb" ] || fail "verified login should stamp the pinned tenant"
+case "$out" in
+  *"sign-in verified for the project tenant"*) pass "successful login is verified before caching" ;;
+  *) fail "successful login should report verification (got: $out)" ;;
 esac
 
 printf '  %s\n' "az-preflight cache tests passed"

@@ -739,7 +739,7 @@ function Invoke-CoopAzPreflight {
     try { $cached = ([System.IO.File]::ReadAllText($marker)).Trim() } catch { }
     if ($cached -eq $tenant) { return }
   }
-  & az account get-access-token --resource https://analysis.windows.net/powerbi/api > $null 2>&1
+  & az account get-access-token --tenant $tenant --resource https://analysis.windows.net/powerbi/api > $null 2>&1
   if ($LASTEXITCODE -eq 0) {
     try {
       New-Item -ItemType Directory -Force -Path $agentDir -ErrorAction SilentlyContinue | Out-Null
@@ -752,7 +752,20 @@ function Invoke-CoopAzPreflight {
   if (Coop-Confirm "Run 'az login' for tenant $tenant now?") {
     & az login --tenant $tenant --allow-no-subscriptions
     if ($LASTEXITCODE -ne 0) { Coop-Warn 'az login failed; continuing anyway.' }
-    else { try { [System.IO.File]::WriteAllText($marker, $tenant) } catch { } }
+    else {
+      # A zero login exit does not prove that conditional access produced the
+      # Power BI token this project needs. Verify the exact tenant before caching.
+      & az account get-access-token --tenant $tenant --resource https://analysis.windows.net/powerbi/api > $null 2>&1
+      if ($LASTEXITCODE -eq 0) {
+        try {
+          New-Item -ItemType Directory -Force -Path $agentDir -ErrorAction SilentlyContinue | Out-Null
+          [System.IO.File]::WriteAllText($marker, $tenant)
+        } catch { }
+        Coop-Ok 'Azure sign-in verified for the project tenant.'
+      } else {
+        Coop-Warn "Azure sign-in finished, but Power BI access was not verified for tenant $tenant; run: az login --tenant $tenant --allow-no-subscriptions"
+      }
+    }
   }
 }
 

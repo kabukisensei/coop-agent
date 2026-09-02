@@ -6,6 +6,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Changed
+- Fresh installation now uses a short first-run path: one Microsoft-cloud choice
+  replaces the individual MCP toggles, recommended integrations are applied
+  automatically, and advanced choices remain in `coop onboard --config-only`.
 - `logging.require_task_log: true` is now enforced as a per-turn completion
   postcondition: Coop explicitly invokes `daily-logger` after meaningful work and
   warns if a settled task changed/reviewed/validated the project without updating
@@ -39,6 +42,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   default rotation now also includes `coop-internal`, since Coop is an internal tool.
 
 ### Fixed
+- Azure onboarding now preserves and parses the tenant returned directly by
+  `az login --allow-no-subscriptions`, so Fabric-only and guest tenants work even
+  when `az account show` has no default subscription. Multiple tenants get an
+  explicit picker, failed browser auth offers device-code recovery, success is
+  confirmed in place, and project launch verifies a Power BI token for the exact
+  pinned tenant before caching the sign-in.
 - Windows install/update now repairs a Fabric CLI pipx environment that inherited
   Python 3.14 even when the VM has no `winget`, `py`, or `pymanager`: pipx fetches
   an isolated standalone Python 3.12, rebuilds `ms-fabric-cli`, and reinjects the

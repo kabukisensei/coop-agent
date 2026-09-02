@@ -99,9 +99,12 @@ cd coop-agent
 ./bin/coop install        # bootstraps pi, extensions, pipx tools, Fabric CLI, links coop onto PATH
 ```
 
-`coop install` runs a 7-step bootstrap: prerequisites → Pi → Pi extensions →
-Microsoft Fabric CLI → standalone Coop tools → link `coop` onto your `PATH` → sync
-brand assets and run `coop doctor`. It is idempotent; re-run it any time.
+`coop install` handles the complete bootstrap: prerequisites → Pi → extensions →
+Microsoft Fabric CLI → standalone Coop tools → PATH/shortcuts → a short first-run
+setup → sync and Doctor. First-run setup asks only for your profile and whether to
+connect to client Fabric/Power BI; Coop applies the recommended integrations. The
+detailed switches remain available later with `coop onboard --config-only`.
+It is idempotent; re-run it any time.
 
 Useful flags:
 

@@ -276,7 +276,7 @@ trap 'coop_progress_end; _coop_unit_cleanup' EXIT
 trap 'coop_progress_end; _coop_unit_cleanup; exit 130' INT TERM
 
 # --- 1. Prerequisites (auto-install missing tools if package manager is available)
-coop_head "1/8  Prerequisites"
+coop_head "1/9  Prerequisites"
 
 # Git
 if [ "$NO_PREREQS" != 1 ] && ! have git; then
@@ -412,7 +412,7 @@ PATH="$HOME/.local/bin:$PATH"   # pipx default PIPX_BIN_DIR (fab, coop-* land he
 hash -r 2>/dev/null || true
 
 # --- 2. Pi itself ------------------------------------------------------------
-coop_head "2/8  Pi (@earendil-works/pi-coding-agent)"
+coop_head "2/9  Pi (@earendil-works/pi-coding-agent)"
 coop_unit "pi (@earendil-works/pi-coding-agent)" _unit_pi || INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
 # Make a just-npm-installed `pi` visible to step 3 in the same run (npm's global
 # bin dir is often not yet on PATH right after install).
@@ -420,13 +420,13 @@ if have npm; then _np="$(npm prefix -g 2>/dev/null)"; [ -n "${_np:-}" ] && PATH=
 hash -r 2>/dev/null || true
 
 # --- 3. Pi extensions (MCP / memory / usage / web / ask-user) ----------------
-coop_head "3/8  Pi extensions"
+coop_head "3/9  Pi extensions"
 for ext in "${PI_EXTENSIONS[@]}"; do
   coop_unit "$ext" _unit_ext "$ext" || INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
 done
 
 # --- 4. Microsoft Fabric CLI -------------------------------------------------
-coop_head "4/8  Microsoft Fabric CLI (fab)"
+coop_head "4/9  Microsoft Fabric CLI (fab)"
 if [ "$NO_FABRIC" = 1 ]; then
   coop_warn "skipped (--no-fabric)"
 else
@@ -435,13 +435,13 @@ else
 fi
 
 # --- 5. Standalone Coop tools ------------------------------------------------
-coop_head "5/8  Coop tools (coop-data-doc / coop-sql-review / coop-dax-review)"
+coop_head "5/9  Coop tools (coop-data-doc / coop-sql-review / coop-dax-review)"
 for pkg in "${PY_TOOLS[@]}"; do
   coop_unit "$pkg" _unit_pytool "$pkg" || INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
 done
 
 # --- 6. Microsoft Fabric / Power BI authoring tools (npm) --------------------
-coop_head "6/8  Fabric / Power BI authoring tools"
+coop_head "6/9  Fabric / Power BI authoring tools"
 coop_unit "Power BI/Fabric authoring tools" _unit_pbih_tools || INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
 hash -r 2>/dev/null || true
 
@@ -450,7 +450,7 @@ coop_progress_end
 [ "${COOP_FLEET_TEST_MODE:-0}" = 1 ] && { [ "$INSTALL_FAILURES" -eq 0 ]; exit; }
 
 # --- 7. Put `coop` on PATH ---------------------------------------------------
-coop_head "7/8  Link 'coop' onto your PATH"
+coop_head "7/9  Link 'coop' onto your PATH"
 LOCALBIN="$HOME/.local/bin"
 mkdir -p "$LOCALBIN"
 chmod +x "$COOP_ROOT/bin/coop" "$COOP_ROOT"/scripts/*.sh 2>/dev/null || true
@@ -475,6 +475,7 @@ esac
 # If this is an interactive install and there's no local profile yet, ask the user
 # for their name and communication preference before the first real session.
 if [ -t 0 ] && [ "${COOP_NO_ONBOARD:-0}" != "1" ]; then
+  coop_head "8/9  Personalize Coop"
   coop_maybe_onboard || coop_warn "onboarding could not complete; run: coop onboard"
 fi
 

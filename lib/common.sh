@@ -650,7 +650,7 @@ coop_az_preflight() {
      && [ "$(cat "$marker" 2>/dev/null)" = "$tenant" ]; then
     return 0
   fi
-  if az account get-access-token --resource https://analysis.windows.net/powerbi/api >/dev/null 2>&1; then
+  if az account get-access-token --tenant "$tenant" --resource https://analysis.windows.net/powerbi/api >/dev/null 2>&1; then
     { mkdir -p "$(coop_effective_agent_dir)" && printf '%s' "$tenant" > "$marker"; } 2>/dev/null || true
     return 0
   fi
@@ -658,7 +658,14 @@ coop_az_preflight() {
   coop_warn "Azure / Power BI token missing or expired."
   if coop_confirm "Run 'az login' for tenant ${tenant} now?"; then
     if az login --tenant "$tenant" --allow-no-subscriptions; then
-      { printf '%s' "$tenant" > "$marker"; } 2>/dev/null || true
+      # Login returning zero is not enough: tenant-only and conditional-access
+      # flows can finish without yielding the Power BI token Coop needs.
+      if az account get-access-token --tenant "$tenant" --resource https://analysis.windows.net/powerbi/api >/dev/null 2>&1; then
+        { mkdir -p "$(coop_effective_agent_dir)" && printf '%s' "$tenant" > "$marker"; } 2>/dev/null || true
+        coop_ok "Azure sign-in verified for the project tenant."
+      else
+        coop_warn "Azure sign-in finished, but Power BI access was not verified for tenant ${tenant}; run: az login --tenant ${tenant} --allow-no-subscriptions"
+      fi
     else
       coop_warn "az login failed; continuing anyway."
     fi

@@ -42,7 +42,14 @@ git clone <coop-agent-repo>; cd coop-agent
 > `powershell -ExecutionPolicy Bypass -File .\bin\coop.ps1 install`
 
 This installs Pi, its extensions, the Coop tools, and the Microsoft Fabric CLI, and
-links `coop` onto your `PATH`. **Open a new shell afterward** so `coop` is found.
+links `coop` onto your `PATH`. During a fresh interactive install, the short setup
+asks for your name, communication preference, and whether Coop should connect to a
+client Fabric/Power BI environment. Choose **yes** and finish the Azure browser
+sign-in; Coop waits for it, detects the tenant (including tenants without Azure
+subscriptions), and confirms the exact tenant before continuing. If browser sign-in
+cannot complete, Coop offers a device-code retry. Recommended integrations are then
+enabled automatically; run `coop onboard --config-only` later for detailed choices.
+**Open a new shell afterward** so `coop` is found.
 
 ## 3. Verify
 

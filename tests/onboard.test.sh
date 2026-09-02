@@ -31,6 +31,15 @@ preset="$(printf '%s' "$out" | "$PY" -c 'import sys,json; print(json.load(sys.st
 cp "$COOP_DIR/.coop/user.json" "$COOP_DIR/user-before.json"
 printf '\n\n\n\n\n\n\n\n\n' | HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" onboard --config-only >/dev/null 2>&1
 cmp -s "$COOP_DIR/.coop/user.json" "$COOP_DIR/user-before.json" && ok "config-only edit preserves user profile" || ko "config-only edit changed profile"
+# A repeat onboarding run (including install repairing a missing config) should
+# not ask an already-complete user profile again unless --edit was requested.
+rm "$COOP_DIR/.coop/config"
+repeat_out="$(printf 'n\n' | HOME="$COOP_DIR" COOP_DIR="$COOP_DIR" COOP_AZ_BIN=/nonexistent/az \
+  "$PY" "$ROOT/scripts/onboard.py" onboard 2>&1 >/dev/null)"
+case "$repeat_out" in
+  *"What should COOP call you?"*) ko "repeat onboarding unnecessarily re-asked the profile" ;;
+  *) ok "repeat onboarding keeps the completed user profile" ;;
+esac
 # Malformed config fails safely and remains byte-identical.
 printf '{broken\n' > "$COOP_DIR/.coop/config"; cp "$COOP_DIR/.coop/config" "$COOP_DIR/config-before"
 printf '\n' | HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" onboard --config-only >/dev/null 2>&1; bad_rc=$?
@@ -98,7 +107,7 @@ rm -f "$COOP_DIR/.coop/user.json"
 out="$(cd "$mig_dir" && printf 'Y\n\n2\n' | HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" onboard --json 2>/dev/null)"
 name="$(printf '%s' "$out" | "$PY" -c 'import sys,json; print(json.load(sys.stdin)["name"])')"
 [ "$name" = "Legacy Name" ] && ok "onboard seeds profile from legacy consultant_name" || ko "migration name: $name"
-out="$(printf 'bad/name\nGood Name\n1\n' | HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" onboard --json 2>/dev/null)"
+out="$(printf 'bad/name\nGood Name\n1\n' | HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" onboard --edit --json 2>/dev/null)"
 name="$(printf '%s' "$out" | "$PY" -c 'import sys,json; print(json.load(sys.stdin)["name"])')"
 [ "$name" = "Good Name" ] && ok "invalid name is rejected and re-asked" || ko "name after reject: $name"
 
@@ -127,7 +136,7 @@ run_config() {
 d1="$(mktemp -d "$COOP_DIR/c1.XXXXXX")"
 GUID="11111111-2222-3333-4444-555555555555"
 run_config "$d1" "y" "$GUID" "" "" "" "n" ""
-grep -q "client" "$d1/stderr.txt" && grep -qi "Cooptimize" "$d1/stderr.txt" \
+grep -qi "client" "$d1/stderr.txt" && grep -qi "Cooptimize" "$d1/stderr.txt" \
   && ok "tenant prompt names client vs Cooptimize ownership" || ko "tenant prompt lacks ownership guidance"
 grep -q "Fabric and Power BI resources Coop should access" "$d1/stderr.txt" \
   && ok "tenant prompt says whose resources Coop accesses" || ko "tenant prompt vague about resource ownership"
@@ -163,11 +172,13 @@ az_login_stub="$d2b/az-login-stub"
 cat > "$az_login_stub" <<'SH'
 #!/bin/sh
 state="${COOP_TEST_AZ_STATE:?}"
-if [ "$1" = "login" ]; then touch "$state"; exit 0; fi
-if [ "$1 $2" = "account show" ] && [ -f "$state" ]; then
-  printf '%s\n' '{"tenantId":"tenant-after-login","name":"Signed In Tenant"}'
+if [ "$1" = "login" ]; then
+  touch "$state"
+  printf '%s\n' '[{"tenantId":"tenant-after-login","name":"Signed In Tenant"}]'
   exit 0
 fi
+# Regression: Fabric-only/no-subscription sign-ins may never make account show
+# succeed. Coop must preserve the tenant returned directly by `az login`.
 exit 1
 SH
 chmod +x "$az_login_stub"
@@ -176,8 +187,7 @@ if command -v cygpath >/dev/null 2>&1; then
   az_login_stub_bat="$d2b/az-login-stub.bat"
   printf '%s\r\n' \
     '@echo off' \
-    'if "%1"=="login" (type nul > "%COOP_TEST_AZ_STATE%" & exit /b 0)' \
-    'if "%1"=="account" if "%2"=="show" if exist "%COOP_TEST_AZ_STATE%" (echo {"tenantId":"tenant-after-login","name":"Signed In Tenant"} & exit /b 0)' \
+    'if "%1"=="login" (type nul > "%COOP_TEST_AZ_STATE%" & echo [{"tenantId":"tenant-after-login","name":"Signed In Tenant"}] & exit /b 0)' \
     'exit /b 1' > "$az_login_stub_bat"
   az_login_stub="$(cygpath -w "$az_login_stub_bat")"
   az_login_state="$(cygpath -w "$az_login_state")"
@@ -187,9 +197,67 @@ out2b="$(printf 'y\ny\n\n\n\nn\n\n' | HOME="$d2b" COOP_DIR="$d2b" COOP_AZ_BIN="$
 tenant2b="$(cfg_json "$d2b/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure"]["tenant_id"])')"
 case "$out2b" in
   *"Sign in now so Coop can detect the client tenant automatically?"*)
-    [ "$tenant2b" = "tenant-after-login" ] && ok "Azure sign-in automatically detects tenant" || ko "tenant not detected after login: $tenant2b" ;;
+    [ "$tenant2b" = "tenant-after-login" ] && [[ "$out2b" == *"Signed in. Detected client tenant"* ]] \
+      && ok "Azure login JSON detects no-subscription tenant and confirms success" \
+      || ko "tenant not detected directly from login: tenant=$tenant2b output=$out2b" ;;
   *) ko "signed-out Azure CLI did not offer automatic login: $out2b" ;;
 esac
+
+# (2c) Multiple tenants returned by login require an explicit client selection.
+d2c="$(mktemp -d "$COOP_DIR/c2c.XXXXXX")"
+az_multi_stub="$d2c/az-multi-stub"
+cat > "$az_multi_stub" <<'SH'
+#!/bin/sh
+if [ "$1" = "login" ]; then
+  printf '%s\n' '[{"tenantId":"tenant-one","name":"One"},{"tenantId":"tenant-two","name":"Two"}]'
+  exit 0
+fi
+exit 1
+SH
+chmod +x "$az_multi_stub"
+if command -v cygpath >/dev/null 2>&1; then
+  az_multi_stub_bat="$d2c/az-multi-stub.bat"
+  printf '%s\r\n' \
+    '@echo off' \
+    'if "%1"=="login" (echo [{"tenantId":"tenant-one","name":"One"},{"tenantId":"tenant-two","name":"Two"}] & exit /b 0)' \
+    'exit /b 1' > "$az_multi_stub_bat"
+  az_multi_stub="$(cygpath -w "$az_multi_stub_bat")"
+fi
+out2c="$(printf 'y\n2\n\n\n\nn\n\n' | HOME="$d2c" COOP_DIR="$d2c" COOP_AZ_BIN="$az_multi_stub" \
+  "$PY" "$ROOT/scripts/onboard.py" onboard --config-only 2>&1 >/dev/null)"
+tenant2c="$(cfg_json "$d2c/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure"]["tenant_id"])')"
+[ "$tenant2c" = "tenant-two" ] && [[ "$out2c" == *"Which tenant owns the client's Fabric and Power BI environment?"* ]] \
+  && ok "multiple Azure tenants require an explicit client selection" \
+  || ko "multiple-tenant selection failed: tenant=$tenant2c output=$out2c"
+
+# (2d) Failed browser auth offers device-code recovery and uses its login JSON.
+d2d="$(mktemp -d "$COOP_DIR/c2d.XXXXXX")"
+az_device_stub="$d2d/az-device-stub"
+cat > "$az_device_stub" <<'SH'
+#!/bin/sh
+if [ "$1" = "login" ]; then
+  case " $* " in
+    *" --use-device-code "*) printf '%s\n' '[{"tenantId":"tenant-device","name":"Device Tenant"}]'; exit 0 ;;
+    *) exit 1 ;;
+  esac
+fi
+exit 1
+SH
+chmod +x "$az_device_stub"
+if command -v cygpath >/dev/null 2>&1; then
+  az_device_stub_bat="$d2d/az-device-stub.bat"
+  printf '%s\r\n' \
+    '@echo off' \
+    'if "%1"=="login" echo %* | findstr /c:"--use-device-code" >nul && (echo [{"tenantId":"tenant-device","name":"Device Tenant"}] & exit /b 0)' \
+    'exit /b 1' > "$az_device_stub_bat"
+  az_device_stub="$(cygpath -w "$az_device_stub_bat")"
+fi
+out2d="$(printf 'y\ny\n\n\n\nn\n\n' | HOME="$d2d" COOP_DIR="$d2d" COOP_AZ_BIN="$az_device_stub" \
+  "$PY" "$ROOT/scripts/onboard.py" onboard --config-only 2>&1 >/dev/null)"
+tenant2d="$(cfg_json "$d2d/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure"]["tenant_id"])')"
+[ "$tenant2d" = "tenant-device" ] && [[ "$out2d" == *"Try again with a device code?"* ]] \
+  && ok "device-code retry recovers a failed browser sign-in" \
+  || ko "device-code recovery failed: tenant=$tenant2d output=$out2d"
 
 # (3) Tenant declined -> Power BI MCP cannot be enabled and says why.
 d3="$(mktemp -d "$COOP_DIR/c3.XXXXXX")"
@@ -249,6 +317,14 @@ fabric="$(cfg_json "$d8/.coop/config" | "$PY" -c 'import json,sys; print(json.lo
 d9a="$(mktemp -d "$COOP_DIR/c9a.XXXXXX")"
 out9="$(printf '\n1\nn\n\n\nn\n\n' | HOME="$d9a" COOP_DIR="$d9a" COOP_AZ_BIN=/nonexistent/az \
   "$PY" "$ROOT/scripts/onboard.py" onboard 2>&1 >/dev/null)"
+case "$out9" in
+  *"Connect Coop to client Microsoft Fabric and Power BI now?"*"Using the recommended integrations."*)
+    case "$out9" in
+      *"Enable Azure DevOps MCP?"*) ko "fresh setup still asks expert integration toggles" ;;
+      *) ok "fresh setup uses one cloud choice and recommended integrations" ;;
+    esac ;;
+  *) ko "fresh setup did not use the streamlined path: $out9" ;;
+esac
 case "$out9" in
   *"Setup complete. Run 'coop' to start."*) ok "explicit onboard ends with start instructions" ;;
   *) ko "explicit onboard completion message missing: $(tail -2 <<<"$out9")" ;;

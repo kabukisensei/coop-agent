@@ -8,11 +8,16 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
+
+from azure_auth import azure_cli_available, discover_azure_tenants, login_azure, tenant_label
 
 COOP_DIR = Path(os.environ.get("COOP_DIR", Path.home())) / ".coop"
 USER_JSON = COOP_DIR / "user.json"
@@ -174,49 +179,55 @@ def read_confirm(prompt: str, default: bool) -> bool:
     return answer.lower() in ("y", "yes", "true", "1")
 
 
-def detect_azure_account() -> dict:
-    az_cmd = os.environ.get("COOP_AZ_BIN", "az")
-    if az_cmd == "az" and not shutil.which("az"):
+def choose_tenant(tenants: list[dict[str, str]], *, login_result: bool = False) -> dict[str, str]:
+    """Choose one tenant, avoiding another confirmation when login found one."""
+    if not tenants:
         return {}
-    try:
-        # On Windows, .bat/.cmd stubs need cmd.exe /c because CreateProcess
-        # can't execute batch files directly.
-        if sys.platform == "win32" and az_cmd.lower().endswith((".bat", ".cmd")):
-            result = subprocess.run(["cmd.exe", "/c", az_cmd, "account", "show", "--output", "json"], capture_output=True, text=True, timeout=15)
-        else:
-            result = subprocess.run([az_cmd, "account", "show", "--output", "json"], capture_output=True, text=True, timeout=15)
-        value = json.loads(result.stdout) if result.returncode == 0 else {}
-        return value if isinstance(value, dict) else {}
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+    if len(tenants) == 1:
+        tenant = tenants[0]
+        if login_result:
+            sys.stderr.write(f"✓ Signed in. Detected client tenant {tenant_label(tenant)}.\n")
+            return tenant
+        if read_confirm(
+            f"Detected Azure tenant {tenant_label(tenant)}.\n"
+            "Use this as the client resource tenant for Fabric and Power BI?",
+            True,
+        ):
+            return tenant
         return {}
 
+    labels = [tenant_label(tenant) for tenant in tenants]
+    sys.stderr.write("✓ Azure sign-in succeeded.\n" if login_result else "Multiple signed-in Azure tenants detected.\n")
+    selected = read_choice(
+        "Which tenant owns the client's Fabric and Power BI environment?",
+        labels,
+        default=labels[0],
+    )
+    return tenants[labels.index(selected)]
 
-def azure_cli_available() -> bool:
-    az_cmd = os.environ.get("COOP_AZ_BIN", "az")
-    if az_cmd == "az":
-        return bool(shutil.which("az"))
-    return Path(az_cmd).is_file() or bool(shutil.which(az_cmd))
 
+def sign_in_and_detect_tenant() -> dict[str, str]:
+    """Complete browser sign-in, with a visible device-code recovery path."""
+    sys.stderr.write("Opening Azure sign-in. Coop will wait here until it finishes…\n")
+    ok, tenants = login_azure()
+    if ok and tenants:
+        return choose_tenant(tenants, login_result=True)
 
-def run_azure_login() -> bool:
-    """Let Azure CLI own the interactive browser/device-code login flow."""
-    az_cmd = os.environ.get("COOP_AZ_BIN", "az")
-    try:
-        if sys.platform == "win32" and az_cmd.lower().endswith((".bat", ".cmd")):
-            result = subprocess.run(
-                ["cmd.exe", "/c", az_cmd, "login", "--allow-no-subscriptions"],
-                stdout=sys.stderr,
-                stderr=sys.stderr,
-            )
-        else:
-            result = subprocess.run(
-                [az_cmd, "login", "--allow-no-subscriptions"],
-                stdout=sys.stderr,
-                stderr=sys.stderr,
-            )
-        return result.returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
+    if ok:
+        sys.stderr.write(
+            "Azure accepted the sign-in, but did not expose a tenant. This can happen with older Azure CLI versions.\n"
+        )
+    else:
+        sys.stderr.write("Azure sign-in did not complete.\n")
+    if read_confirm("Try again with a device code?", True):
+        sys.stderr.write("Starting device-code sign-in. Follow the Azure instructions below…\n")
+        ok, tenants = login_azure(use_device_code=True)
+        if ok and tenants:
+            return choose_tenant(tenants, login_result=True)
+    sys.stderr.write(
+        "Azure is not connected. You can enter the client tenant manually now or run `coop onboard --config-only` later.\n"
+    )
+    return {}
 
 
 def validate_ado_organization(value: str) -> str | None:
@@ -237,21 +248,11 @@ def validate_ado_organization(value: str) -> str | None:
     return None
 
 
-def run_config_questions(existing: dict | None = None) -> dict:
+def run_config_questions(existing: dict | None = None, *, quick_start: bool = False) -> dict:
     existing = existing or load_config()
     old_azure = existing.get("azure", {}) if isinstance(existing.get("azure", {}), dict) else {}
     old_i = existing.get("integrations", {}) if isinstance(existing.get("integrations", {}), dict) else {}
-    account = detect_azure_account()
-    if not account.get("tenantId") and not old_azure.get("tenant_id") and azure_cli_available():
-        sys.stderr.write("\nAzure CLI is installed, but no active Azure sign-in was detected.\n")
-        if read_confirm("Sign in now so Coop can detect the client tenant automatically?", True):
-            sys.stderr.write("Opening Azure sign-in…\n")
-            if run_azure_login():
-                account = detect_azure_account()
-            if not account.get("tenantId"):
-                sys.stderr.write("Azure sign-in did not return a tenant; you can enter one manually or skip it.\n")
-    detected_tenant = str(account.get("tenantId", ""))
-    detected_name = str(account.get("name", ""))
+    discovered = discover_azure_tenants()
     tenant = str(old_azure.get("tenant_id", ""))
     tenant_name = str(old_azure.get("tenant_name", ""))
 
@@ -259,24 +260,41 @@ def run_config_questions(existing: dict | None = None) -> dict:
     # will use a separate `knowledge` config, authentication flow, and token cache;
     # it must never reuse or replace the client's Azure CLI session.
     sys.stderr.write(
-        "\nClient environment identity\n"
-        "This tenant is used only for the client's Fabric, Power BI, Azure, and D365 resources.\n"
-        "Do not enter the Cooptimize tenant here. Cooptimize Shared Knowledge will use a\n"
-        "separate sign-in and will never replace the client Azure session.\n"
-        f"This workstation default is saved in {CONFIG_JSON}; a project's `.coop/project.yml`\n"
-        "can pin the client tenant used when that project launches.\n"
+        "\nClient Microsoft environment\n"
+        "This is the tenant whose Fabric and Power BI resources Coop should access.\n"
+        "Do not enter the Cooptimize tenant here unless this is internal Cooptimize work.\n"
+        "Cooptimize Shared Knowledge always uses a separate sign-in and identity.\n"
     )
-    if detected_tenant and read_confirm(
-        f"Detected Azure tenant {account.get('name', detected_tenant)} ({detected_tenant}).\n"
-        "Use this as the client resource tenant for Fabric and Power BI?",
-        True,
+
+    configure_cloud = True
+    if quick_start and not tenant:
+        configure_cloud = read_confirm("Connect Coop to client Microsoft Fabric and Power BI now?", True)
+
+    selected: dict[str, str] = {}
+    if configure_cloud and discovered:
+        selected = choose_tenant(discovered)
+    elif configure_cloud and not tenant and azure_cli_available():
+        sys.stderr.write("Azure CLI is ready, but it is not signed in.\n")
+        if read_confirm("Sign in now so Coop can detect the client tenant automatically?", True):
+            selected = sign_in_and_detect_tenant()
+
+    if selected:
+        tenant = selected["tenant_id"]
+        tenant_name = selected.get("domain") or selected.get("name", "")
+    elif configure_cloud and tenant and not quick_start:
+        # Keep configuration editing explicit and preserve the established prompt
+        # cadence for users who only want to review other integration choices.
+        if read_confirm("Change the saved client Azure tenant ID?", False):
+            sys.stderr.write("Find it in Azure Portal > Microsoft Entra ID > Overview > Tenant ID.\n")
+            tenant = read_input("Azure tenant ID (GUID): ", tenant)
+            tenant_name = ""
+    elif configure_cloud and not tenant and read_confirm(
+        "Configure the Azure tenant whose Fabric and Power BI resources Coop should access now?",
+        False if quick_start else bool(tenant),
     ):
-        tenant = detected_tenant
-        tenant_name = detected_name
-    elif read_confirm("Configure the Azure tenant whose Fabric and Power BI resources Coop should access now?", bool(tenant)):
         sys.stderr.write(
             "Find it in Azure Portal > Microsoft Entra ID > Overview > Tenant ID.\n"
-            "You can also run `az login`, then rerun `coop onboard --edit` for automatic detection.\n"
+            "You can also sign in later with `coop onboard --config-only`.\n"
         )
         tenant = read_input("Azure tenant ID (GUID): ", tenant)
         tenant_name = ""  # only Azure CLI can resolve display names
@@ -284,24 +302,41 @@ def run_config_questions(existing: dict | None = None) -> dict:
     integrations = {}
     omitted = {}  # key -> reason shown in the summary
 
-    # Fabric MCP follows the active Azure CLI login; it works without an
-    # explicitly stored tenant (the login itself carries the tenant).
-    integrations["fabric"] = read_confirm("Enable Microsoft Fabric MCP? (follows your active Azure CLI login)", bool(old_i.get("fabric", True)))
-
-    # Power BI MCP needs an explicit tenant ID. Never offer an enable toggle we
-    # cannot honor: without a tenant it stays disabled, visibly.
-    if tenant:
-        integrations["power_bi"] = read_confirm("Enable Power BI MCP?", bool(old_i.get("power_bi", True)))
-    else:
-        integrations["power_bi"] = False
-        omitted["power_bi"] = "requires an Azure tenant"
-        sys.stderr.write("Power BI MCP requires an Azure tenant and will remain disabled.\n")
-
-    integrations["power_bi_modeling"] = read_confirm("Enable Power BI Modeling MCP?", bool(old_i.get("power_bi_modeling", True)))
-
     old_ado = existing.get("azure_devops", {}) if isinstance(existing.get("azure_devops", {}), dict) else {}
     organization = str(old_ado.get("organization", ""))
-    integrations["azure_devops"] = read_confirm("Enable Azure DevOps MCP?", bool(old_i.get("azure_devops", True)))
+
+    if quick_start:
+        integrations.update({
+            "fabric": bool(tenant),
+            "power_bi": bool(tenant),
+            "power_bi_modeling": True,
+            "azure_devops": False,
+            "microsoft_learn": True,
+        })
+        if not tenant:
+            omitted["fabric"] = "connect Azure later"
+            omitted["power_bi"] = "requires an Azure tenant"
+        omitted["azure_devops"] = "set up later if needed"
+        sys.stderr.write(
+            "Using the recommended integrations. Customize them anytime with `coop onboard --config-only`.\n"
+        )
+    else:
+        # Fabric MCP follows the active Azure CLI login; it works without an
+        # explicitly stored tenant (the login itself carries the tenant).
+        integrations["fabric"] = read_confirm("Enable Microsoft Fabric MCP? (follows your active Azure CLI login)", bool(old_i.get("fabric", True)))
+
+        # Power BI MCP needs an explicit tenant ID. Never offer an enable toggle we
+        # cannot honor: without a tenant it stays disabled, visibly.
+        if tenant:
+            integrations["power_bi"] = read_confirm("Enable Power BI MCP?", bool(old_i.get("power_bi", True)))
+        else:
+            integrations["power_bi"] = False
+            omitted["power_bi"] = "requires an Azure tenant"
+            sys.stderr.write("Power BI MCP requires an Azure tenant and will remain disabled.\n")
+
+        integrations["power_bi_modeling"] = read_confirm("Enable Power BI Modeling MCP?", bool(old_i.get("power_bi_modeling", True)))
+        integrations["azure_devops"] = read_confirm("Enable Azure DevOps MCP?", bool(old_i.get("azure_devops", True)))
+
     if integrations["azure_devops"]:
         while True:
             organization, eof = read_line_bounded("Azure DevOps organization (short name or full URL): ", organization)
@@ -321,10 +356,11 @@ def run_config_questions(existing: dict | None = None) -> dict:
                 integrations["azure_devops"] = False
                 omitted["azure_devops"] = "no valid organization"
                 break
-    else:
+    elif "azure_devops" not in omitted:
         omitted["azure_devops"] = "not enabled"
 
-    integrations["microsoft_learn"] = read_confirm("Enable Microsoft Learn MCP?", bool(old_i.get("microsoft_learn", True)))
+    if not quick_start:
+        integrations["microsoft_learn"] = read_confirm("Enable Microsoft Learn MCP?", bool(old_i.get("microsoft_learn", True)))
 
     # Honest summary BEFORE anything is saved.
     labels = {
@@ -477,14 +513,24 @@ def cmd_onboard(args: argparse.Namespace) -> int:
 
     if args.config_only:
         profile = load_user()
-    elif args.edit or USER_JSON.exists():
+    elif args.edit:
         profile = run_profile_questions()
         save_user(profile)
         sys.stderr.write(f"Updated profile for {profile['name']}.\n")
+    elif USER_JSON.exists():
+        profile = load_user()
+        try:
+            validate_name(str(profile.get("name", "")))
+        except ValueError:
+            # A corrupt/incomplete profile still needs the guarded repair flow;
+            # a healthy existing profile should not be re-asked during install.
+            profile = run_profile_questions(profile)
+            save_user(profile)
+            sys.stderr.write(f"Repaired profile for {profile['name']}.\n")
     else:
         profile = run_full_onboarding()
 
-    config = run_config_questions(existing_config)
+    config = run_config_questions(existing_config, quick_start=not existing_config and not args.config_only)
     save_config(config)
     try:
         refresh_mcp()

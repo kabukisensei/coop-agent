@@ -38,9 +38,9 @@ az_login_stub="$TMP/az-login-stub"
 cat > "$az_login_stub" <<'SH'
 #!/bin/sh
 state="${COOP_TEST_AZ_STATE:?}"
-if [ "$1" = "login" ]; then touch "$state"; exit 0; fi
-if [ "$1 $2" = "account show" ] && [ -f "$state" ]; then
-  printf '%s\n' '{"tenantId":"tenant-from-login"}'
+if [ "$1" = "login" ]; then
+  touch "$state"
+  printf '%s\n' '[{"tenantId":"tenant-from-login"}]'
   exit 0
 fi
 exit 1
@@ -51,8 +51,7 @@ if command -v cygpath >/dev/null 2>&1; then
   az_login_stub_bat="$TMP/az-login-stub.bat"
   printf '%s\r\n' \
     '@echo off' \
-    'if "%1"=="login" (type nul > "%COOP_TEST_AZ_STATE%" & exit /b 0)' \
-    'if "%1"=="account" if "%2"=="show" if exist "%COOP_TEST_AZ_STATE%" (echo {"tenantId":"tenant-from-login"} & exit /b 0)' \
+    'if "%1"=="login" (type nul > "%COOP_TEST_AZ_STATE%" & echo [{"tenantId":"tenant-from-login"}] & exit /b 0)' \
     'exit /b 1' > "$az_login_stub_bat"
   az_login_stub="$(cygpath -w "$az_login_stub_bat")"
   az_login_state="$(cygpath -w "$az_login_state")"
@@ -67,7 +66,11 @@ case "$(cat "$TMP/login.out")" in
   *) ko "Fabric setup did not offer inline Azure sign-in" ;;
 esac
 case "$login_text" in
-  *"tenant_id: 'tenant-from-login'"*) ok "Azure login tenant written to project contract" ;;
+  *"tenant_id: 'tenant-from-login'"*)
+    case "$(cat "$TMP/login.out")" in
+      *"Signed in. Detected client tenant"*) ok "Azure login JSON tenant written and visibly confirmed" ;;
+      *) ko "Azure login tenant was not visibly confirmed" ;;
+    esac ;;
   *) ko "Azure login tenant was not detected" ;;
 esac
 
