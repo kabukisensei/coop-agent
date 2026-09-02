@@ -874,7 +874,9 @@ export function dataDocPrefillFromProject(cwd: string): DataDocSetupPrefill {
   let sql = false, powerbi = false;
   const fromRoot = (raw: string): string => {
     const absolute = isAbsolute(raw) ? raw : resolve(projectRoot, raw);
-    return relative(cwd, absolute) || ".";
+    // project.yml and coop-data-doc.yml are portable contracts, so keep their
+    // relative paths stable when the same project is opened on Windows.
+    return relative(cwd, absolute).replace(/\\/g, "/") || ".";
   };
   for (const name of repositoryNames(text)) {
     const role = projectYamlScalar(text, ["repositories", name, "role"]) || "generic";

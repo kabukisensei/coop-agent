@@ -5,6 +5,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- Data-doc paths prefilled from `project.yml` now use portable forward slashes on
+  Windows, so `/setup-docs` receives the same relative paths on every platform.
+
 ## [0.23.0] — 2026-09-02
 
 ### Changed
