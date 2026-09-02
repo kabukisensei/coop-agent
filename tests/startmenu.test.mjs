@@ -26,6 +26,7 @@ t("buildStartMenu returns runnable task items with unique labels", () => {
   // The dispatcher matches the picked label back to its item, so labels must be unique.
   const labels = items.map((i) => i.label);
   assert.equal(new Set(labels).size, labels.length, "menu labels must be unique");
+  assert.ok(labels.some((label) => label.includes("Set up or edit this Coop project")), "project wizard must be discoverable from /start");
 });
 
 t("COOP_NO_START_MENU disables the auto menu (power-user opt-out)", () => {

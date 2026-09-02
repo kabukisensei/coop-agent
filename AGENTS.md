@@ -45,6 +45,10 @@ conflict with a Cooptimize skill — yours always win.
 The in-agent `/setup-docs` command (and a `setup-docs` skill) runs a native wizard to
 create or rebuild lineage docs for the current folder without leaving the session;
 `coop-data-doc.yml` and the built docs are committable, source is never touched.
+The in-agent `/setup-project` command and the first `/start` menu item create or
+edit `.coop/project.yml`; a missing contract is proactively offered on startup in
+a Git repository. Contract edits preserve unowned fields and require `/new` or a
+restart before the guardrails use the new trusted snapshot.
 
 For setup and commands — including `coop install`'s automatic `PATH` linking
 (it adds `~/.local/bin` / `%LOCALAPPDATA%\coop\bin` and prompts you to open a new

@@ -79,7 +79,9 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      human-hidden (`display:false`) note — once per folder — telling the agent to
      consult that lineage **before** touching any SQL/DAX/semantic-model object;
      it stays silent when no built docs exist (the docs are an aid, not a gate).
-     The extension also hosts the in-agent `coop-data-doc` setup wizard built on
+     The extension also hosts the in-agent project contract wizard
+     (`/setup-project`, the Start Here menu, and a missing-contract startup offer)
+     plus the `coop-data-doc` setup wizard built on
      Pi's native dialogs (the `/setup-docs` command, plus a `session_start`
      first-run offer when a folder has no built docs), since coop-data-doc's own
      questionary wizard can't be driven from a non-TTY child. (The `setup-docs`

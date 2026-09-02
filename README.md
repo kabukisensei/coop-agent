@@ -148,6 +148,12 @@ launch, coop greets you with a **Start Here menu** of common tasks (or run `/sta
 anytime); power users can dismiss it with one key or turn it off with
 `COOP_NO_START_MENU=1`.
 
+When Coop starts inside a Git repository that has no `.coop/project.yml`, it
+offers a native **Set up this Coop project** wizard before work begins. Users do
+not need to know `coop init` or edit YAML: the same create/edit flow is always
+available from the Start Here menu and through **`/setup-project`**. Edits make a
+backup and preserve comments, custom policies, and fields the wizard does not own.
+
 **No-terminal first-time setup (for non-technical members).** Hand them the
 `coop-agent` folder (a zip or a shared drive) and have them double-click
 **`Install coop.cmd`** in it. That runs the same `coop install` for them — no
@@ -200,7 +206,7 @@ shows anything still missing.
 | --- | --- |
 | **Pi** | installed globally via `npm` |
 | **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits), `pi-web-access` (web search/fetch — read-only), `@juicesharp/rpiv-ask-user-question` (structured questions) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
-| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `sql_review`/`dax_review`/`data_doc` + `/setup-docs`), `coop-guardrails` (enforces never-commit-source + destructive-command confirm) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
+| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `sql_review`/`dax_review`/`data_doc` + `/setup-project` + `/setup-docs`), `coop-guardrails` (enforces never-commit-source + destructive-command confirm) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
 | **Standalone tools** — `coop-data-doc`, `coop-sql-review`, `coop-dax-review` | installed via `pipx` from PyPI |
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
@@ -270,6 +276,13 @@ don't have to drop to a shell: when you launch `coop` in a folder with no
 through a strict JSONL bridge. It is the same questionnaire used by `coop data-doc
 setup`; older tool versions stop with upgrade guidance rather than a reduced fallback. See
 [`extensions/coop-tools/README.md`](extensions/coop-tools/README.md#data-doc-setup-setup-docs).
+
+Project configuration has the same no-shell path: run **`/setup-project`** or
+choose **Set up or edit this Coop project** from `/start`. The wizard creates a
+missing `.coop/project.yml` or safely edits the nearest existing one, covering
+client details, repositories, Fabric/Power BI workspaces, and Tabular Editor.
+After an edit, run `/new` (or restart Coop) so the guardrails take a fresh trusted
+snapshot of the contract.
 
 ---
 

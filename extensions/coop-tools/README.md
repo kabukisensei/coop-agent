@@ -15,12 +15,28 @@ findings or build documentation, but they never edit source.
 
 It also adds a friendly **Start Here menu** (the `/start` command, plus an
 auto-open on a fresh session) so newcomers get guided choices instead of a blank
-prompt, a **first-run setup** for `coop-data-doc` (the `/setup-docs` command and a
+prompt, a native **project contract wizard** (`/setup-project`), a **first-run
+setup** for `coop-data-doc` (the `/setup-docs` command and a
 startup offer) so lineage docs can be established without leaving the agent, and a
 **native lineage announcement** that points the agent at built docs before it
 touches an object — see [Start Here menu](#start-here-menu-start),
 [Data-doc setup](#data-doc-setup-setup-docs) and
 [Lineage awareness](#lineage-awareness-before_agent_start) below.
+
+## Project setup (`/setup-project`)
+
+Users do not need to know `coop init` or manually edit YAML. On initial startup
+inside a Git repository with no `.coop/project.yml`, Coop offers to launch the
+project wizard. The same flow is always available as the first `/start` menu item
+or through `/setup-project`.
+
+The wizard configures the organization/client, one or more repository paths and
+roles, default branches, Fabric/Power BI tenant and workspace defaults, and the
+optional Tabular Editor CLI. A new project receives conservative commit policies
+and approval defaults. Editing an existing project creates a backup and patches
+only wizard-owned scalar fields; comments, custom sections, commit allow/deny
+rules, and future unknown settings are preserved. Run `/new` or restart Coop after
+editing so `coop-guardrails` loads a fresh trusted contract snapshot.
 
 ## Start Here menu (`/start`)
 

@@ -23,6 +23,10 @@
  *
  * Older coop-data-doc versions stop with upgrade guidance; there is no reduced
  * local fallback questionnaire.
+ *
+ * Project configuration is likewise available without leaving Coop: a missing
+ * .coop/project.yml is offered on first launch, /setup-project creates or edits
+ * it, and the Start Here menu always exposes the same native-dialog wizard.
  * Everything here is feature-detected and try/catch-wrapped so it can never crash pi.
  */
 
@@ -30,9 +34,9 @@ import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendi
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import { existsSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const SEVERITY = Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info")]);
 
@@ -890,6 +894,629 @@ async function maybeOfferSetup(pi: ExtensionAPI, ctx: any): Promise<void> {
   else if (choice === "never") writeSkip(skipPath);
 }
 
+// --- Project contract wizard (.coop/project.yml) ----------------------------
+// This is the in-Coop counterpart to `coop init`: newcomers discover it from the
+// startup menu or /setup-project, and existing contracts can be safely edited
+// without replacing fields the wizard does not own. The text patcher deliberately
+// touches only scalar paths exposed below; comments, custom sections, policies,
+// and future/unknown keys stay byte-for-byte intact.
+const PROJECT_SETUP_SKIP = ".coop-project-setup.skip";
+
+export interface ProjectRepositorySettings {
+  name: string;
+  description: string;
+  role: "sql" | "powerbi" | "generic";
+  localPath: string;
+  remoteName: string;
+  defaultBranch: string;
+  isNew?: boolean;
+}
+
+export interface ProjectWizardSettings {
+  organization: string;
+  client: string;
+  timezone: string;
+  defaultBranch: string;
+  repositories: ProjectRepositorySettings[];
+  fabricEnabled: boolean;
+  tenantId: string;
+  fabricWorkspaceName: string;
+  fabricWorkspaceId: string;
+  powerBiWorkspaceName: string;
+  powerBiWorkspaceId: string;
+  tabularEditorEnabled: boolean;
+  tabularEditorPath: string;
+  bpaRulesPath: string;
+}
+
+function yamlLineKey(raw: string): string | null {
+  const body = raw.trim();
+  if (!body || body.startsWith("#") || body.startsWith("-")) return null;
+  const m = /^(?:'((?:[^']|'')*)'|"((?:[^"\\]|\\.)*)"|([A-Za-z0-9_.-]+))\s*:/.exec(body);
+  if (!m) return null;
+  if (m[1] !== undefined) return m[1].replace(/''/g, "'");
+  if (m[2] !== undefined) {
+    try { return JSON.parse(`"${m[2]}"`); } catch { return m[2]; }
+  }
+  return m[3];
+}
+
+function yamlIndent(raw: string): number {
+  return raw.length - raw.trimStart().length;
+}
+
+function yamlBlockEnd(lines: string[], line: number, indent: number): number {
+  let i = line + 1;
+  for (; i < lines.length; i++) {
+    const body = lines[i].trim();
+    if (!body || body.startsWith("#")) continue;
+    if (yamlIndent(lines[i]) <= indent) break;
+  }
+  return i;
+}
+
+function findYamlKey(lines: string[], key: string, start: number, end: number, indent: number): number {
+  for (let i = start; i < end; i++) {
+    if (yamlIndent(lines[i]) === indent && yamlLineKey(lines[i]) === key) return i;
+  }
+  return -1;
+}
+
+/** Read a scalar at a simple mapping path. Exported for contract-wizard tests. */
+export function projectYamlScalar(text: string, path: string[]): string {
+  const lines = text.split(/\r?\n/);
+  let start = 0;
+  let end = lines.length;
+  let indent = 0;
+  for (let depth = 0; depth < path.length; depth++) {
+    const hit = findYamlKey(lines, path[depth], start, end, indent);
+    if (hit < 0) return "";
+    const body = lines[hit].trim();
+    if (depth === path.length - 1) return scalarValue(body.slice(body.indexOf(":") + 1));
+    start = hit + 1;
+    end = yamlBlockEnd(lines, hit, indent);
+    indent += 2;
+  }
+  return "";
+}
+
+function yamlQuoted(value: string): string {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function yamlKey(value: string): string {
+  return /^[A-Za-z0-9_.-]+$/.test(value) ? value : yamlQuoted(value);
+}
+
+/** Update or insert one scalar mapping path while preserving every unrelated line. */
+export function upsertProjectYamlScalar(text: string, path: string[], value: string | boolean): string {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const rendered = typeof value === "boolean" ? String(value) : yamlQuoted(value);
+  let start = 0;
+  let end = lines.length;
+  let indent = 0;
+  for (let depth = 0; depth < path.length; depth++) {
+    const key = path[depth];
+    const hit = findYamlKey(lines, key, start, end, indent);
+    if (hit >= 0) {
+      if (depth === path.length - 1) {
+        lines[hit] = `${" ".repeat(indent)}${yamlKey(key)}: ${rendered}`;
+        return lines.join("\n");
+      }
+      // A scalar/flow value cannot contain child mappings; convert only this
+      // parent line to a block mapping before inserting the wizard-owned child.
+      const after = lines[hit].trim().slice(lines[hit].trim().indexOf(":") + 1).trim();
+      if (after && !after.startsWith("#")) lines[hit] = `${" ".repeat(indent)}${yamlKey(key)}:`;
+      start = hit + 1;
+      end = yamlBlockEnd(lines, hit, indent);
+      indent += 2;
+      continue;
+    }
+
+    const addition: string[] = [];
+    for (let j = depth; j < path.length; j++) {
+      const pad = " ".repeat(indent + (j - depth) * 2);
+      addition.push(j === path.length - 1
+        ? `${pad}${yamlKey(path[j])}: ${rendered}`
+        : `${pad}${yamlKey(path[j])}:`);
+    }
+    // Keep top-level sections visually separated, but never disturb the current
+    // section's existing content when adding a nested value.
+    if (depth === 0 && lines.length && lines[lines.length - 1].trim()) lines.push("");
+    const at = depth === 0 ? lines.length : end;
+    lines.splice(at, 0, ...addition);
+    return lines.join("\n");
+  }
+  return lines.join("\n");
+}
+
+function repositoryNames(text: string): string[] {
+  const lines = text.split(/\r?\n/);
+  const repos = findYamlKey(lines, "repositories", 0, lines.length, 0);
+  if (repos < 0) return [];
+  const end = yamlBlockEnd(lines, repos, 0);
+  const names: string[] = [];
+  for (let i = repos + 1; i < end; i++) {
+    if (yamlIndent(lines[i]) !== 2) continue;
+    const key = yamlLineKey(lines[i]);
+    if (key) names.push(key);
+  }
+  return names;
+}
+
+function boolValue(value: string, fallback = false): boolean {
+  if (/^(true|yes|1|on)$/i.test(value)) return true;
+  if (/^(false|no|0|off)$/i.test(value)) return false;
+  return fallback;
+}
+
+/** Parse the wizard-owned subset; unknown project fields are intentionally ignored. */
+export function parseProjectWizardSettings(text: string, projectRoot: string): ProjectWizardSettings {
+  const defaultBranch = projectYamlScalar(text, ["profile", "default_branch"]) || "main";
+  const repositories = repositoryNames(text).map((name): ProjectRepositorySettings => ({
+    name,
+    description: projectYamlScalar(text, ["repositories", name, "description"]) || "Project source and docs",
+    role: (projectYamlScalar(text, ["repositories", name, "role"]) as ProjectRepositorySettings["role"]) || "generic",
+    localPath: projectYamlScalar(text, ["repositories", name, "local_path"]) || ".",
+    remoteName: projectYamlScalar(text, ["repositories", name, "remote_name"]) || "origin",
+    defaultBranch: projectYamlScalar(text, ["repositories", name, "default_branch"]) || defaultBranch,
+  }));
+  const fabricFlag = projectYamlScalar(text, ["tools", "fabric_cli", "enabled"]);
+  const teFlag = projectYamlScalar(text, ["tools", "tabular_editor_cli", "enabled"]);
+  return {
+    organization: projectYamlScalar(text, ["profile", "organization"]) || "Cooptimize",
+    client: projectYamlScalar(text, ["profile", "client"]),
+    timezone: projectYamlScalar(text, ["profile", "timezone"]) || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    defaultBranch,
+    repositories: repositories.length ? repositories : [{
+      name: basename(projectRoot) || "project",
+      description: "Project source and docs",
+      role: "generic",
+      localPath: ".",
+      remoteName: "origin",
+      defaultBranch,
+      isNew: true,
+    }],
+    fabricEnabled: boolValue(fabricFlag, Boolean(projectYamlScalar(text, ["fabric", "tenant_id"]))),
+    tenantId: projectYamlScalar(text, ["fabric", "tenant_id"]),
+    fabricWorkspaceName: projectYamlScalar(text, ["fabric", "default_workspace_name"]),
+    fabricWorkspaceId: projectYamlScalar(text, ["fabric", "default_workspace_id"]),
+    powerBiWorkspaceName: projectYamlScalar(text, ["power_bi", "default_workspace_name"]),
+    powerBiWorkspaceId: projectYamlScalar(text, ["power_bi", "default_workspace_id"]),
+    tabularEditorEnabled: boolValue(teFlag, false),
+    tabularEditorPath: projectYamlScalar(text, ["tools", "tabular_editor_cli", "executable_path"]) || "te",
+    bpaRulesPath: projectYamlScalar(text, ["tools", "tabular_editor_cli", "bpa_rules_path"]),
+  };
+}
+
+function safeRepositoryBlock(repo: ProjectRepositorySettings): string[] {
+  return [
+    `  ${yamlKey(repo.name)}:`,
+    `    description: ${yamlQuoted(repo.description)}`,
+    `    role: ${yamlQuoted(repo.role)}`,
+    `    local_path: ${yamlQuoted(repo.localPath)}`,
+    `    remote_name: ${yamlQuoted(repo.remoteName)}`,
+    `    default_branch: ${yamlQuoted(repo.defaultBranch)}`,
+    "    agent_allowed_to_commit:",
+    "      - 'docs/**'",
+    "      - 'site/**'",
+    "      - 'docs/agent/logs/**'",
+    "      - 'docs/agent/diagrams/**'",
+    "    agent_never_commit:",
+    "      - '**/*.sql'",
+    "      - '**/*.py'",
+    "      - '**/*.ipynb'",
+    "      - '**/*.pbip'",
+    "      - '**/*.pbir'",
+    "      - '**/*.bim'",
+    "      - '**/*.tmdl'",
+    "      - '**/*.dax'",
+    "      - '**/*.rdl'",
+    "      - '**/*.SemanticModel/**'",
+    "      - '**/*.Report/**'",
+  ];
+}
+
+function appendNewRepository(text: string, repo: ProjectRepositorySettings): string {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  let repos = findYamlKey(lines, "repositories", 0, lines.length, 0);
+  if (repos < 0) {
+    if (lines.length && lines[lines.length - 1].trim()) lines.push("");
+    lines.push("repositories:", ...safeRepositoryBlock(repo), "");
+    return lines.join("\n");
+  }
+  const end = yamlBlockEnd(lines, repos, 0);
+  lines.splice(end, 0, ...safeRepositoryBlock(repo));
+  return lines.join("\n");
+}
+
+/** Apply wizard answers to an existing contract without replacing unknown fields. */
+export function applyProjectWizardSettings(text: string, settings: ProjectWizardSettings): string {
+  let out = text;
+  const set = (path: string[], value: string | boolean) => { out = upsertProjectYamlScalar(out, path, value); };
+  set(["profile", "organization"], settings.organization);
+  set(["profile", "client"], settings.client);
+  set(["profile", "timezone"], settings.timezone);
+  set(["profile", "default_branch"], settings.defaultBranch);
+  set(["profile", "work_mode"], "consultant_review_first");
+  for (const repo of settings.repositories) {
+    if (repo.isNew && !repositoryNames(out).includes(repo.name)) out = appendNewRepository(out, repo);
+    else {
+      set(["repositories", repo.name, "description"], repo.description);
+      set(["repositories", repo.name, "role"], repo.role);
+      set(["repositories", repo.name, "local_path"], repo.localPath);
+      set(["repositories", repo.name, "remote_name"], repo.remoteName);
+      set(["repositories", repo.name, "default_branch"], repo.defaultBranch);
+    }
+  }
+  set(["tools", "fabric_cli", "enabled"], settings.fabricEnabled);
+  set(["tools", "fabric_cicd", "enabled"], settings.fabricEnabled);
+  set(["mcp", "fabric", "enabled"], settings.fabricEnabled);
+  set(["mcp", "powerbi", "enabled"], settings.fabricEnabled);
+  if (settings.fabricEnabled) {
+    set(["fabric", "tenant_id"], settings.tenantId);
+    set(["fabric", "default_workspace_name"], settings.fabricWorkspaceName);
+    set(["fabric", "default_workspace_id"], settings.fabricWorkspaceId);
+    set(["power_bi", "default_workspace_name"], settings.powerBiWorkspaceName);
+    set(["power_bi", "default_workspace_id"], settings.powerBiWorkspaceId);
+  }
+  set(["tools", "tabular_editor_cli", "enabled"], settings.tabularEditorEnabled);
+  if (settings.tabularEditorEnabled) {
+    set(["tools", "tabular_editor_cli", "executable_path"], settings.tabularEditorPath);
+    set(["tools", "tabular_editor_cli", "bpa_rules_path"], settings.bpaRulesPath);
+  }
+  return out.endsWith("\n") ? out : `${out}\n`;
+}
+
+/** Render a complete safe contract for first-time setup. */
+export function renderProjectWizardSettings(settings: ProjectWizardSettings): string {
+  const lines = [
+    "# Cooptimize agent — project contract (.coop/project.yml)",
+    "# Generated by Coop's in-app /setup-project wizard.",
+    "",
+    "profile:",
+    `  organization: ${yamlQuoted(settings.organization)}`,
+    `  client: ${yamlQuoted(settings.client)}`,
+    `  timezone: ${yamlQuoted(settings.timezone)}`,
+    `  default_branch: ${yamlQuoted(settings.defaultBranch)}`,
+    "  work_mode: 'consultant_review_first'",
+    "",
+    "repositories:",
+  ];
+  for (const repo of settings.repositories) lines.push(...safeRepositoryBlock(repo));
+  if (settings.fabricEnabled) lines.push(
+    "",
+    "fabric:",
+    `  tenant_id: ${yamlQuoted(settings.tenantId)}`,
+    `  default_workspace_name: ${yamlQuoted(settings.fabricWorkspaceName)}`,
+    `  default_workspace_id: ${yamlQuoted(settings.fabricWorkspaceId)}`,
+    "  lakehouse_names: []",
+    "  warehouse_names: []",
+    "  environment_names:",
+    "    dev: ''",
+    "    test: ''",
+    "    prod: ''",
+    "",
+    "power_bi:",
+    `  default_workspace_name: ${yamlQuoted(settings.powerBiWorkspaceName)}`,
+    `  default_workspace_id: ${yamlQuoted(settings.powerBiWorkspaceId)}`,
+    "  semantic_models: []",
+    "  reports: []",
+  );
+  lines.push(
+    "",
+    "tools:",
+    "  fabric_cli:",
+    "    command: 'fab'",
+    `    enabled: ${settings.fabricEnabled}`,
+    "    default_mode: 'read_only_first'",
+    "  fabric_cicd:",
+    "    library: 'fabric_cicd'",
+    "    injected_into: 'ms-fabric-cli'",
+    `    enabled: ${settings.fabricEnabled}`,
+    "    default_mode: 'validate_only'",
+    "  tabular_editor_cli:",
+    `    enabled: ${settings.tabularEditorEnabled}`,
+  );
+  if (settings.tabularEditorEnabled) lines.push(
+    `    executable_path: ${yamlQuoted(settings.tabularEditorPath)}`,
+    `    bpa_rules_path: ${yamlQuoted(settings.bpaRulesPath)}`,
+  );
+  lines.push(
+    "  coop_data_doc:",
+    "    command: 'coop-data-doc'",
+    "    enabled: true",
+    "    default_command: 'build'",
+    "    machine_outputs: ['graph.json', 'manifest.json']",
+    "  coop_sql_review:",
+    "    command: 'coop-sql-review'",
+    "    enabled: true",
+    "    invoke: 'check {paths} --format json'",
+    "    advisory_only: true",
+    "  coop_dax_review:",
+    "    command: 'coop-dax-review'",
+    "    enabled: true",
+    "    invoke: 'check {paths} --format json'",
+    "    advisory_only: true",
+    "",
+    "mcp:",
+    "  fabric:",
+    `    enabled: ${settings.fabricEnabled}`,
+    "    allowed_default_actions: ['list', 'read', 'inspect']",
+    "    requires_approval_actions: ['create', 'update', 'delete', 'deploy']",
+    "  powerbi:",
+    `    enabled: ${settings.fabricEnabled}`,
+    "    readonly_flag: true",
+    "    allowed_default_actions: ['list', 'read', 'inspect']",
+    "    requires_approval_actions: ['create', 'update', 'delete', 'publish']",
+    "  microsoft_learn:",
+    "    enabled: true",
+    "  context_mode:",
+    "    enabled: true",
+    "",
+    "memory:",
+    "  extension: 'pi-hermes-memory'",
+    "  enabled: true",
+    "  secret_scanning: true",
+    "",
+    "microsoft_skills:",
+    "  source: 'https://github.com/microsoft/skills'",
+    "  load_dir: 'skills/_microsoft'",
+    "  allow:",
+    "    - 'kql'",
+    "    - 'microsoft-docs'",
+    "",
+    "fabric_skills:",
+    "  source: 'https://github.com/microsoft/skills-for-fabric'",
+    "  load_dir: 'skills/_microsoft_fabric'",
+    "  allow: []",
+    "",
+    "standards:",
+    "  sql: 'docs/standards/sql-standards.md'",
+    "  dax: 'docs/standards/dax-standards.md'",
+    "  documentation: 'docs/standards/documentation-standards.md'",
+    "  fabric: 'docs/standards/fabric-standards.md'",
+    "",
+    "backup:",
+    "  root: '.backups'",
+    "  timestamp_format: '%Y%m%d_%H%M%S'",
+    "  naming_pattern: '{original_name}.{timestamp}.bak'",
+    "  required_before_edit: true",
+    "",
+    "logging:",
+    "  daily_log_path: 'docs/agent/logs/daily/{yyyy-mm-dd}.md'",
+    "  weekly_log_path: 'docs/agent/logs/weekly/{yyyy}-W{ww}.md'",
+    "  require_task_log: true",
+    "",
+    "documentation:",
+    "  agent_docs_root: 'docs/agent'",
+    "  human_site_root: 'site'",
+    "  glossary_path: 'docs/agent/glossary/index.md'",
+    "  diagrams_path: 'docs/agent/diagrams'",
+    "  source_of_truth: 'markdown_first_html_generated'",
+    "  use_coop_data_doc: true",
+    "",
+    "workflow:",
+    "  skill: 'coop-workflow'",
+    "  steps:",
+    "    - 'Read .coop/project.yml and the relevant standards'",
+    "    - 'Identify upstream and downstream impact before edits'",
+    "    - 'Write a short plan and get approval before editing'",
+    "    - 'Create backups before changing source files'",
+    "    - 'Make the smallest safe edit and run the applicable review'",
+    "    - 'Show the diff, update documentation, and append to the work log'",
+    "    - 'Commit docs/logs/site only with approval; never commit source'",
+    "",
+    "approval_policy:",
+    "  always_allowed:",
+    "    - 'read files'",
+    "    - 'git status / git diff / git pull'",
+    "    - 'create backups'",
+    "    - 'run advisory Coop review and documentation tools'",
+    "    - 'MCP list / read / inspect'",
+    "  ask_first:",
+    "    - 'delete files'",
+    "    - 'deploy or publish'",
+    "    - 'change production workspace'",
+    "    - 'commit documentation changes'",
+    "  never_without_explicit_instruction:",
+    "    - 'commit SQL/DAX/model/report source changes'",
+    "    - 'push to remote'",
+    "    - 'deploy to test/prod'",
+    "    - 'MCP create/update/delete/deploy/publish'",
+    "    - 'print secrets, tokens, connection strings, or .env contents'",
+    "",
+    "tests:",
+    "  live_data:",
+    "    enabled: false",
+    "    between_slices: true",
+    "    command: ''",
+    "    workspace: 'dev'",
+    "    require_approval: true",
+    "",
+  );
+  return lines.join("\n");
+}
+
+function findGitRoot(cwd: string): string | null {
+  let dir = resolve(cwd || ".");
+  for (;;) {
+    if (existsSync(join(dir, ".git"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+function projectSetupSkipPath(root: string): string {
+  return join(root, ".coop", PROJECT_SETUP_SKIP);
+}
+
+function writeProjectContract(path: string, text: string): string | null {
+  mkdirSync(dirname(path), { recursive: true });
+  let backup: string | null = null;
+  if (existsSync(path)) {
+    backup = `${path}.bak`;
+    copyFileSync(path, backup);
+    writeFileSync(path, text, "utf8");
+  } else {
+    const temp = `${path}.tmp-${process.pid}`;
+    writeFileSync(temp, text, "utf8");
+    renameSync(temp, path);
+  }
+  return backup;
+}
+
+async function chooseRole(ctx: any, label: string, current: ProjectRepositorySettings["role"]): Promise<ProjectRepositorySettings["role"] | null> {
+  if (typeof ctx.ui?.select !== "function") return null;
+  const choices = [
+    { label: "SQL / Warehouse", value: "sql" as const },
+    { label: "Power BI / Semantic models", value: "powerbi" as const },
+    { label: "General project", value: "generic" as const },
+  ];
+  const ordered = [...choices.filter((c) => c.value === current), ...choices.filter((c) => c.value !== current)];
+  const picked = await ctx.ui.select(label, ordered.map((c) => c.label));
+  if (picked === null || picked === undefined) return null;
+  return ordered.find((c) => c.label === picked)?.value || current;
+}
+
+async function editRepository(ctx: any, root: string, repo: ProjectRepositorySettings, askName: boolean): Promise<ProjectRepositorySettings | null> {
+  let name = repo.name;
+  if (askName) {
+    const raw = await askText(ctx, "Repository short name", name);
+    if (raw === null) return null;
+    name = raw.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || name;
+  }
+  const description = await askText(ctx, `${name}: description`, repo.description);
+  if (description === null) return null;
+  const role = await chooseRole(ctx, `${name}: what kind of repository is this?`, repo.role);
+  if (role === null) return null;
+  const localPath = await renderPathPrompt({ ...ctx, cwd: root }, {
+    type: "prompt", id: `repo-${name}`, kind: "path", message: `${name}: choose its local folder`, default: repo.localPath,
+  });
+  if (localPath === null) return null;
+  const remoteName = await askText(ctx, `${name}: Git remote name`, repo.remoteName);
+  if (remoteName === null) return null;
+  const defaultBranch = await askText(ctx, `${name}: default branch`, repo.defaultBranch);
+  if (defaultBranch === null) return null;
+  return { ...repo, name, description, role, localPath, remoteName, defaultBranch };
+}
+
+/** Native UI project setup/edit flow. Returns true only after a contract write. */
+export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<boolean> {
+  if (!ctx.hasUI || typeof ctx.ui?.input !== "function" || typeof ctx.ui?.confirm !== "function") {
+    notify(ctx, "Project setup needs an interactive Coop UI. In a shell, run: coop init", "warning");
+    return false;
+  }
+  const existing = findProjectYml(ctx.cwd);
+  const root = existing ? resolve(existing, "..", "..") : (findGitRoot(ctx.cwd) || resolve(ctx.cwd));
+  const original = existing ? safeRead(existing) : "";
+  const settings = parseProjectWizardSettings(original, root);
+  const title = existing ? "Edit this Coop project" : "Set up this Coop project";
+  notify(ctx, `${title}. Press Esc at any prompt to cancel without changing files.`, "info");
+
+  const organization = await askText(ctx, "Organization", settings.organization);
+  if (organization === null) return false;
+  const client = await askText(ctx, "Client / engagement", settings.client);
+  if (client === null) return false;
+  const timezone = await askText(ctx, "Timezone", settings.timezone);
+  if (timezone === null) return false;
+  const defaultBranch = await askText(ctx, "Project default branch", settings.defaultBranch);
+  if (defaultBranch === null) return false;
+  settings.organization = organization;
+  settings.client = client;
+  settings.timezone = timezone;
+  settings.defaultBranch = defaultBranch;
+
+  const editedRepos: ProjectRepositorySettings[] = [];
+  for (const repo of settings.repositories) {
+    const shouldEdit = repo.isNew || await askConfirm(ctx, `Repository: ${repo.name}`, `Edit ${repo.name}'s path, role, and branch?`);
+    if (!shouldEdit) { editedRepos.push(repo); continue; }
+    const edited = await editRepository(ctx, root, repo, Boolean(repo.isNew));
+    if (!edited) return false;
+    editedRepos.push(edited);
+  }
+  while (await askConfirm(ctx, "Repositories", "Add another repository to this project?")) {
+    const seed: ProjectRepositorySettings = {
+      name: `repo${editedRepos.length + 1}`,
+      description: "Project source and docs",
+      role: "generic",
+      localPath: ".",
+      remoteName: "origin",
+      defaultBranch,
+      isNew: true,
+    };
+    const added = await editRepository(ctx, root, seed, true);
+    if (!added) return false;
+    if (editedRepos.some((r) => r.name === added.name)) {
+      notify(ctx, `A repository named ${added.name} already exists; choose a unique short name.`, "error");
+      continue;
+    }
+    editedRepos.push(added);
+  }
+  settings.repositories = editedRepos;
+
+  settings.fabricEnabled = await askConfirm(ctx, "Microsoft Fabric / Power BI", "Does this project use Microsoft Fabric or Power BI?");
+  if (settings.fabricEnabled) {
+    const tenant = await askText(ctx, "Azure tenant ID (optional)", settings.tenantId);
+    if (tenant === null) return false;
+    const fwName = await askText(ctx, "Default Fabric workspace name (optional)", settings.fabricWorkspaceName);
+    if (fwName === null) return false;
+    const fwId = await askText(ctx, "Default Fabric workspace ID (optional)", settings.fabricWorkspaceId);
+    if (fwId === null) return false;
+    const pbiName = await askText(ctx, "Default Power BI workspace name (optional)", settings.powerBiWorkspaceName || fwName);
+    if (pbiName === null) return false;
+    const pbiId = await askText(ctx, "Default Power BI workspace ID (optional)", settings.powerBiWorkspaceId);
+    if (pbiId === null) return false;
+    Object.assign(settings, { tenantId: tenant, fabricWorkspaceName: fwName, fabricWorkspaceId: fwId, powerBiWorkspaceName: pbiName, powerBiWorkspaceId: pbiId });
+  }
+
+  settings.tabularEditorEnabled = await askConfirm(ctx, "Tabular Editor", "Use the Tabular Editor CLI for semantic-model BPA reviews?");
+  if (settings.tabularEditorEnabled) {
+    const te = await askText(ctx, "Tabular Editor CLI command or path", settings.tabularEditorPath || "te");
+    if (te === null) return false;
+    const rules = await askText(ctx, "BPA rules file path (optional)", settings.bpaRulesPath);
+    if (rules === null) return false;
+    settings.tabularEditorPath = te;
+    settings.bpaRulesPath = rules;
+  }
+
+  const repoSummary = settings.repositories.map((r) => `${r.name} (${r.role}: ${r.localPath})`).join("\n");
+  const confirmed = await askConfirm(ctx, title, `${existing ? "Update" : "Create"} .coop/project.yml for ${client || "this project"}?\n\n${repoSummary}`);
+  if (!confirmed) { notify(ctx, "Project setup cancelled — no files changed.", "info"); return false; }
+  const output = existing ? applyProjectWizardSettings(original, settings) : renderProjectWizardSettings(settings);
+  const path = existing || join(root, ".coop", "project.yml");
+  const backup = writeProjectContract(path, output);
+  const skip = projectSetupSkipPath(root);
+  if (existsSync(skip)) { try { unlinkSync(skip); } catch { /* best effort */ } }
+  notify(ctx, `Project contract ${existing ? "updated" : "created"}: ${path}${backup ? ` (backup: ${backup})` : ""}`, "info");
+  notify(ctx, "Run /new or restart Coop before governed work so the guardrails load the updated contract.", "info");
+
+  if (!existsSync(join(root, DATADOC_CONFIG)) && await askConfirm(ctx, "Lineage documentation", "Set up SQL + Power BI lineage documentation next?")) {
+    await runQuickSetup(pi, { ...ctx, cwd: root }, {});
+  }
+  return true;
+}
+
+async function maybeOfferProjectSetup(pi: ExtensionAPI, ctx: any): Promise<boolean> {
+  if (findProjectYml(ctx.cwd)) return false;
+  const root = findGitRoot(ctx.cwd);
+  if (!root || existsSync(projectSetupSkipPath(root))) return false;
+  const choice = await askOffer(
+    ctx,
+    "Set up this Coop project?",
+    "This Git repository has no .coop/project.yml yet. The project wizard configures repositories, guardrails, Fabric/Power BI, and review tools without editing YAML by hand.",
+    "Yes, set it up",
+  );
+  if (choice === "never") {
+    mkdirSync(join(root, ".coop"), { recursive: true });
+    writeFileSync(projectSetupSkipPath(root), "coop: project setup offer declined here. Run /setup-project anytime.\n", "utf8");
+    return false;
+  }
+  if (choice !== "yes") return false;
+  return await runProjectWizard(pi, { ...ctx, cwd: root });
+}
+
 // --- "Start Here" menu (friendly front door) ---------------------------------
 // A guided menu of common Cooptimize tasks so a fresh session opens with clear
 // choices instead of a blank prompt — the #1 thing that intimidates non-terminal
@@ -966,6 +1593,7 @@ async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
  *  a newcomer would otherwise have to compose); the agent then asks for specifics. */
 export function buildStartMenu(): MenuItem[] {
   return [
+    { label: "⚙️  Set up or edit this Coop project", run: runProjectWizard },
     { label: "📚  Document my data (SQL + Power BI lineage)", run: documentDataFlow },
     {
       label: "🔎  Review SQL against our standards",
@@ -1294,6 +1922,7 @@ export default function coopTools(pi: ExtensionAPI) {
     const frontDoor = async () => {
       if (wantMenu) {
         try {
+          if (await maybeOfferProjectSetup(pi, ctx)) return;
           await showStartMenu(pi, ctx, true);
           return; // menu is the front door here; don't stack the setup offer on top
         } catch {
@@ -1359,6 +1988,17 @@ export default function coopTools(pi: ExtensionAPI) {
         await showStartMenu(pi, ctx, false);
       } catch (e: any) {
         notify(ctx, `Couldn't open the menu: ${errMsg(e)}. Just type what you'd like to do.`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("setup-project", {
+    description: "Set up or edit this folder's .coop/project.yml (interactive wizard)",
+    handler: async (_args, ctx) => {
+      try {
+        await runProjectWizard(pi, ctx);
+      } catch (e: any) {
+        notify(ctx, `Project setup failed: ${errMsg(e)}. No source files were changed.`, "error");
       }
     },
   });

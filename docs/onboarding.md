@@ -87,9 +87,14 @@ In each Fabric / D365 repo you work in:
 ```bash
 cd /path/to/your/fabric-repo
 coop onboard              # writes ~/.coop/user.json + versioned ~/.coop/config and managed MCP entries
-coop init                  # guided .coop/project.yml; repository paths are collected once
+coop init                  # optional shell path; normal Coop startup offers the same project wizard
 coop doctor
 ```
+
+Non-terminal users can simply launch `coop`: when the current Git repository has
+no `.coop/project.yml`, Coop offers to create it with native dialogs. The wizard
+is also available anytime from `/start` or `/setup-project`, and can edit an
+existing contract without replacing custom fields or policies.
 
 The first time you launch `coop` in a repo, it offers to set up **lineage docs**
 (`coop-data-doc`) so the agent understands up/downstream impact — accept it, or run

@@ -6,6 +6,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Changed
+- Project setup no longer depends on users knowing `coop init` or editing YAML:
+  Coop now offers a native wizard on first launch in an unconfigured Git repo,
+  exposes it from `/start` and `/setup-project`, and safely edits existing
+  contracts while preserving comments, custom policies, and unknown fields.
 - Coop is now the single update voice: Pi and managed-extension self-update notices
   are suppressed, `context-mode` self-upgrades are redirected to manifest-safe
   `coop update`, and the useful daily checkout-behind nudge remains unchanged.
