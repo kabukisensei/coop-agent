@@ -60,7 +60,7 @@ Browser (Chromium --app)  ⇄  web/server.mjs  ⇄  pi --mode rpc -a  (the real 
 - The bridge relays Pi's JSONL events to the browser over **Server-Sent Events**
   and forwards prompts + dialog answers back to Pi's stdin. Node built-ins only
   (no npm deps).
-- Because `ctx.hasUI` is true in RPC mode, coop's **Start Here menu** and
+- Because `ctx.hasUI` is true in RPC mode, the on-demand **Start Here menu** and
   **guardrail confirmations** arrive as `extension_ui_request` dialogs and render
   as clickable cards — the governance you get in the terminal, with buttons.
 

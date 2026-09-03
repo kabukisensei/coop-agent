@@ -6,6 +6,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Changed
+- Normal Coop startup now goes directly to the prompt instead of auto-opening the
+  Start Here or missing-project wizard. `/start`, `/setup-project`, and
+  `/setup-docs` remain available on demand, including all discovery, partial,
+  mixed-repository, and connected-estate project options.
 - Data-doc setup is now fully opt-in: Coop no longer opens the lineage wizard
   during session startup or after project setup. `/setup-docs`, the `/start`
   *Document my data* action, and `coop data-doc setup` remain available anytime.

@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 // COOP_TEST_DIST is an ABSOLUTE path; a bare `C:\...` is not a valid ESM URL on
 // Windows (ERR_UNSUPPORTED_ESM_URL_SCHEME), so import it via a file:// URL.
 const dist = process.env.COOP_TEST_DIST;
-const { buildStartMenu, startMenuDisabled } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
+const { buildStartMenu } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 
 let n = 0;
 const t = (name, fn) => {
@@ -27,19 +27,7 @@ t("buildStartMenu returns runnable task items with unique labels", () => {
   const labels = items.map((i) => i.label);
   assert.equal(new Set(labels).size, labels.length, "menu labels must be unique");
   assert.ok(labels.some((label) => label.includes("Set up or edit this Coop project")), "project wizard must be discoverable from /start");
-});
-
-t("COOP_NO_START_MENU disables the auto menu (power-user opt-out)", () => {
-  const prev = process.env.COOP_NO_START_MENU;
-  try {
-    process.env.COOP_NO_START_MENU = "1";
-    assert.equal(startMenuDisabled(), true);
-    process.env.COOP_NO_START_MENU = "yes";
-    assert.equal(startMenuDisabled(), true);
-  } finally {
-    if (prev === undefined) delete process.env.COOP_NO_START_MENU;
-    else process.env.COOP_NO_START_MENU = prev;
-  }
+  assert.ok(labels.some((label) => label.includes("Document the data sources")), "data-doc setup must be discoverable from /start");
 });
 
 console.log(`  ${n} start-menu tests passed`);

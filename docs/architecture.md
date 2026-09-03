@@ -80,7 +80,7 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      consult that lineage **before** touching any SQL/DAX/semantic-model object;
      it stays silent when no built docs exist (the docs are an aid, not a gate).
      The extension also hosts the in-agent project contract wizard
-     (`/setup-project`, the Start Here menu, and a missing-contract startup offer)
+     (`/setup-project` and the on-demand Start Here menu)
      plus the `coop-data-doc` setup wizard built on
      Pi's native dialogs (the on-demand `/setup-docs` command and the explicit
      *Document my data* `/start` action), since coop-data-doc's own

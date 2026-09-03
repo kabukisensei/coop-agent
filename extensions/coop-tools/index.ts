@@ -20,9 +20,9 @@
  * Older coop-data-doc versions stop with upgrade guidance; there is no reduced
  * local fallback questionnaire.
  *
- * Project configuration is likewise available without leaving Coop: a missing
- * .coop/project.yml is offered on first launch, /setup-project creates or edits
- * it, and the Start Here menu always exposes the same native-dialog wizard.
+ * Project configuration is likewise available without leaving Coop: /setup-project
+ * creates or edits .coop/project.yml, and /start exposes the same native-dialog
+ * wizard alongside common tasks. Normal startup goes straight to the prompt.
  * Everything here is feature-detected and try/catch-wrapped so it can never crash pi.
  */
 
@@ -30,7 +30,7 @@ import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendi
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -141,19 +141,6 @@ async function askText(ctx: any, label: string, def: string): Promise<string | n
 async function askConfirm(ctx: any, title: string, message: string): Promise<boolean> {
   if (typeof ctx?.ui?.confirm !== "function") throw new Error("no confirm UI");
   return await ctx.ui.confirm(title, message);
-}
-
-/** A first-run OFFER with an explicit Not-now vs Never. Esc/dismiss == "later"
- *  (never permanently suppresses), so an accidental keypress can't silence setup
- *  forever — only the explicit "Don't ask again" writes the skip marker.
- *  Throws if no select UI is available (caller decides fallback). */
-async function askOffer(ctx: any, title: string, message: string, yesLabel: string): Promise<"yes" | "later" | "never"> {
-  if (typeof ctx?.ui?.select !== "function") throw new Error("no select UI");
-  const NEVER = "Don't ask again in this folder";
-  const choice = await ctx.ui.select(`${title}\n${message}`, [yesLabel, "Not now", NEVER]);
-  if (choice === yesLabel) return "yes";
-  if (choice === NEVER) return "never";
-  return "later"; // "Not now" or Esc/dismiss
 }
 
 function safeRead(p: string): string {
@@ -897,8 +884,6 @@ async function runQuickSetup(pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPr
 // without replacing fields the wizard does not own. The text patcher deliberately
 // touches only scalar paths exposed below; comments, custom sections, policies,
 // and future/unknown keys stay byte-for-byte intact.
-const PROJECT_SETUP_SKIP = ".coop-project-setup.skip";
-
 export interface ProjectRepositorySettings {
   name: string;
   description: string;
@@ -1506,10 +1491,6 @@ function findGitRoot(cwd: string): string | null {
   }
 }
 
-function projectSetupSkipPath(root: string): string {
-  return join(root, ".coop", PROJECT_SETUP_SKIP);
-}
-
 function writeProjectContract(path: string, text: string): string | null {
   mkdirSync(dirname(path), { recursive: true });
   let backup: string | null = null;
@@ -1658,8 +1639,6 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   const output = existing ? applyProjectWizardSettings(original, settings) : renderProjectWizardSettings(settings);
   const path = existing || join(root, ".coop", "project.yml");
   const backup = writeProjectContract(path, output);
-  const skip = projectSetupSkipPath(root);
-  if (existsSync(skip)) { try { unlinkSync(skip); } catch { /* best effort */ } }
   notify(ctx, `Project contract ${existing ? "updated" : "created"}: ${path}${backup ? ` (backup: ${backup})` : ""}`, "info");
   notify(ctx, "Run /new or restart Coop before governed work so the guardrails load the updated contract.", "info");
 
@@ -1669,71 +1648,13 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   return true;
 }
 
-async function maybeOfferProjectSetup(pi: ExtensionAPI, ctx: any): Promise<boolean> {
-  if (findProjectYml(ctx.cwd)) return false;
-  const root = findGitRoot(ctx.cwd);
-  if (!root || existsSync(projectSetupSkipPath(root))) return false;
-  const choice = await askOffer(
-    ctx,
-    "Set up this Coop project?",
-    "This Git repository has no .coop/project.yml yet. The project wizard configures repositories, guardrails, Fabric/Power BI, and review tools without editing YAML by hand.",
-    "Yes, set it up",
-  );
-  if (choice === "never") {
-    mkdirSync(join(root, ".coop"), { recursive: true });
-    writeFileSync(projectSetupSkipPath(root), "coop: project setup offer declined here. Run /setup-project anytime.\n", "utf8");
-    return false;
-  }
-  if (choice !== "yes") return false;
-  return await runProjectWizard(pi, { ...ctx, cwd: root });
-}
-
-// --- "Start Here" menu (friendly front door) ---------------------------------
-// A guided menu of common Cooptimize tasks so a fresh session opens with clear
-// choices instead of a blank prompt — the #1 thing that intimidates non-terminal
-// users. STRICTLY ADDITIVE and OPT-OUTABLE: it only auto-opens on the initial
-// launch of an interactive session, ALWAYS offers "I'll type it myself" (one key
-// → the normal blank prompt), and can be turned off for good (a marker file, or
-// COOP_NO_START_MENU=1). Power users who live in the terminal lose nothing; the
-// menu is also available on demand via /start. Everything is best-effort so it
-// can never break a session.
-const START_MENU_OFF = "start-menu.off";
+// --- "Start Here" menu (on demand via /start) --------------------------------
+// A guided menu of common Cooptimize tasks for people who want it. Normal Coop
+// startup goes straight to the prompt; this menu opens only when the user runs
+// /start. Everything is best-effort so it can never break a session.
 const MENU_TITLE = "Welcome to coop 👋  What would you like to do?";
 const MENU_HELP = 'Pick an option — or choose "I\'ll type it myself" to just start chatting.';
 const TYPE_IT = "Something else — I'll type it myself";
-const DISABLE_MENU = "Don't show this automatically";
-
-/** Where to persist the "don't auto-open" preference. Prefer coop's isolated agent
- *  dir (PI_CODING_AGENT_DIR — always set when launched via coop); fall back to a
- *  dot-file in the home dir so bare-pi loads don't drop a visible file there. */
-function startMenuMarkerPath(): string {
-  const d = process.env.PI_CODING_AGENT_DIR;
-  if (d && d.trim()) return join(d, START_MENU_OFF);
-  return join(process.env.HOME || process.env.USERPROFILE || ".", `.coop-${START_MENU_OFF}`);
-}
-
-/** Power-user opt-out: the COOP_NO_START_MENU env var OR a persisted marker file. */
-export function startMenuDisabled(): boolean {
-  if (/^(1|true|yes|on)$/i.test(process.env.COOP_NO_START_MENU || "")) return true;
-  try {
-    return existsSync(startMenuMarkerPath());
-  } catch {
-    return false;
-  }
-}
-
-function disableStartMenu(ctx: any): void {
-  try {
-    writeFileSync(
-      startMenuMarkerPath(),
-      "coop: the Start Here menu won't auto-open. Delete this file to re-enable it. Run /start anytime to open it manually.\n",
-      "utf8",
-    );
-    notify(ctx, "Got it — the menu won't auto-open. Run /start anytime to bring it back.", "info");
-  } catch {
-    notify(ctx, "To disable the auto menu, set COOP_NO_START_MENU=1. Run /start anytime to open it.", "info");
-  }
-}
 
 const MODEL_LOGIN_COMMAND = "/login openai-codex";
 
@@ -1863,22 +1784,16 @@ export function buildStartMenu(): MenuItem[] {
   ];
 }
 
-/** Render the Start Here menu and dispatch the choice. `auto` = opened automatically
- *  on launch (adds the "don't show automatically" opt-out); false = user ran /start. */
-async function showStartMenu(pi: ExtensionAPI, ctx: any, auto: boolean): Promise<void> {
+/** Render the on-demand Start Here menu and dispatch the choice. */
+async function showStartMenu(pi: ExtensionAPI, ctx: any): Promise<void> {
   if (typeof ctx?.ui?.select !== "function") {
-    if (!auto) notify(ctx, "This coop build has no menu UI here — just type what you'd like to do.", "info");
+    notify(ctx, "This coop build has no menu UI here — just type what you'd like to do.", "info");
     return;
   }
   const items = buildStartMenu();
   const options = [...items.map((i) => i.label), TYPE_IT];
-  if (auto) options.push(DISABLE_MENU);
   const choice = await ctx.ui.select(`${MENU_TITLE}\n${MENU_HELP}`, options);
   if (!choice || choice === TYPE_IT) return; // Esc / dismiss / "type it myself" → normal blank prompt
-  if (choice === DISABLE_MENU) {
-    disableStartMenu(ctx);
-    return;
-  }
   const item = items.find((i) => i.label === choice);
   if (item) await item.run(pi, ctx);
 }
@@ -2128,43 +2043,10 @@ export default function coopTools(pi: ExtensionAPI) {
     },
   });
 
-  // --- Fresh-session front door (native dialogs) -----------------------------
-  // Track folders handled in THIS process — session_start re-fires on /new,
-  // /resume, /fork (and the cwd can change), so a single bool would silence every
-  // later session. Keyed by cwd instead.
-  //
-  // On the INITIAL launch (reason "startup") of an interactive session we open the
-  // friendly Start Here menu, which surfaces data-doc setup as an explicit choice.
-  // Data-doc setup is never launched automatically: users can run /setup-docs or
-  // choose "Document my data" from /start whenever they are ready.
-  const startedCwds = new Set<string>();
-  pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext) => {
-    if (!ctx.hasUI || startedCwds.has(ctx.cwd)) return;
-    startedCwds.add(ctx.cwd);
-    // Model authentication is the final onboarding step and must take precedence
-    // over the normal Start Here/project dialogs so the user sees one clear action.
-    if (primeModelLogin(ctx)) return;
-    const wantMenu = event?.reason === "startup" && !startMenuDisabled();
-    if (!wantMenu) return;
-    const frontDoor = async () => {
-      try {
-        if (await maybeOfferProjectSetup(pi, ctx)) return;
-        await showStartMenu(pi, ctx, true);
-      } catch {
-        // Interactive dialogs may not be safe at startup on every Pi build.
-        notify(ctx, "Type /start for a menu of common coop tasks.", "info");
-      }
-    };
-    if (ctx.mode === "tui") {
-      // TUI: await, so the front door renders before the first prompt.
-      await frontDoor();
-    } else {
-      // RPC (coop web) and other modes: fire-and-forget. Blocking session_start on
-      // a dialog that only a (possibly not-yet-connected) client can answer starves
-      // pi's event loop — pi 0.80.2 then exits 0 before serving a single command,
-      // which killed the coop web bridge seconds after startup.
-      void frontDoor().catch(() => { /* never break a session */ });
-    }
+  // Normal sessions start at the prompt. The only automatic handoff is the model
+  // provider login required when a fresh install has no credentials yet.
+  pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
+    primeModelLogin(ctx);
   });
 
   // --- Native lineage awareness + required daily-log postcondition ----------
@@ -2278,7 +2160,7 @@ export default function coopTools(pi: ExtensionAPI) {
     description: 'Open the coop "Start Here" menu of common tasks',
     handler: async (_args, ctx) => {
       try {
-        await showStartMenu(pi, ctx, false);
+        await showStartMenu(pi, ctx);
       } catch (e: any) {
         notify(ctx, `Couldn't open the menu: ${errMsg(e)}. Just type what you'd like to do.`, "error");
       }

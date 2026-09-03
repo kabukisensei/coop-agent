@@ -1,6 +1,6 @@
 // A stub `pi --mode rpc` for tests/webbridge.test.mjs: speaks just enough of the
 // JSONL protocol to exercise the bridge. Emits a select dialog + a notify at
-// startup (like coop's Start Here menu), then answers every `prompt` command with
+// startup to simulate an on-demand Start Here card, then answers every `prompt` command with
 // a streamed "polo:<message>" text delta.
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 

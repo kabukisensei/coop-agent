@@ -65,9 +65,17 @@ await t("new-project renderer produces a parseable, governed contract", () => {
   const parsed = parseProjectWizardSettings(text, "/work/analytics");
   assert.equal(parsed.repositories[0].role, "sql");
   assert.equal(parsed.tenantId, "tenant-123");
+});
+
+await t("estate modes preserve discovery, partial, mixed, and connected options", () => {
+  const sql = { ...settings.repositories[0], role: "sql" };
+  const powerbi = { ...settings.repositories[0], name: "reports", role: "powerbi" };
+  const mixed = { ...settings.repositories[0], role: "mixed" };
   assert.equal(estateMode([]), "discovery");
-  assert.equal(estateMode([{ ...settings.repositories[0], role: "mixed" }]), "connected");
-  assert.equal(estateMode([{ ...settings.repositories[0], role: "powerbi" }, settings.repositories[0]]), "connected");
+  assert.equal(estateMode([sql]), "partial");
+  assert.equal(estateMode([powerbi]), "partial");
+  assert.equal(estateMode([mixed]), "connected");
+  assert.equal(estateMode([sql, powerbi]), "connected");
 });
 
 await t("existing-project merge preserves comments, custom keys, and commit policy", () => {
@@ -212,72 +220,36 @@ repositories:
   });
 });
 
-await t("startup offers project setup in an unconfigured Git repository", async () => {
-  const root = mkdtempSync(join(tmpdir(), "coop-project-offer-"));
+await t("normal startup goes straight to the prompt while setup commands remain available", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-direct-start-"));
   mkdirSync(join(root, ".git"));
   const handlers = new Map();
   const commands = new Map();
-  const prompts = [];
+  let dialogs = 0;
+  let execs = 0;
   const pi = {
     registerTool: () => {},
     registerCommand: (name, config) => commands.set(name, config),
     on: (name, handler) => handlers.set(name, handler),
-    exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+    exec: async () => { execs++; return { code: 0, stdout: "", stderr: "" }; },
     sendUserMessage: () => {},
   };
   coopTools(pi);
-  assert.ok(commands.has("setup-project"), "/setup-project command should be registered");
   const ctx = {
     cwd: root,
     hasUI: true,
     mode: "tui",
     ui: {
-      select: async (title, options) => {
-        prompts.push(title);
-        return prompts.length === 1 ? "Not now" : options.find((x) => x.includes("type it myself"));
-      },
+      select: async () => { dialogs++; return "Not now"; },
       notify: () => {},
     },
   };
   await handlers.get("session_start")({ reason: "startup" }, ctx);
-  assert.match(prompts[0], /Set up this Coop project\?/);
-  assert.match(prompts[0], /no \.coop\/project\.yml/);
-});
-
-await t("startup never offers data-doc setup automatically", async () => {
-  const root = mkdtempSync(join(tmpdir(), "coop-no-auto-data-doc-"));
-  mkdirSync(join(root, ".coop"));
-  writeFileSync(join(root, ".coop", "project.yml"), "profile:\n  client: 'Contoso'\n");
-  const handlers = new Map();
-  const commands = new Map();
-  let prompts = 0;
-  let execs = 0;
-  const previous = process.env.COOP_NO_START_MENU;
-  process.env.COOP_NO_START_MENU = "1";
-  try {
-    coopTools({
-      registerTool: () => {},
-      registerCommand: (name, config) => commands.set(name, config),
-      on: (name, handler) => handlers.set(name, handler),
-      exec: async () => { execs++; return { code: 0, stdout: "", stderr: "" }; },
-      sendUserMessage: () => {},
-    });
-    await handlers.get("session_start")({ reason: "startup" }, {
-      cwd: root,
-      hasUI: true,
-      mode: "tui",
-      ui: {
-        select: async () => { prompts++; return "Not now"; },
-        notify: () => {},
-      },
-    });
-  } finally {
-    if (previous === undefined) delete process.env.COOP_NO_START_MENU;
-    else process.env.COOP_NO_START_MENU = previous;
+  assert.equal(dialogs, 0, "startup should not display project, menu, or data-doc dialogs");
+  assert.equal(execs, 0, "startup should not invoke setup subprocesses");
+  for (const name of ["start", "setup-project", "setup-docs"]) {
+    assert.ok(commands.has(name), `manual /${name} command remains available`);
   }
-  assert.equal(prompts, 0, "startup should not display a data-doc setup dialog");
-  assert.equal(execs, 0, "startup should not invoke coop-data-doc");
-  assert.ok(commands.has("setup-docs"), "manual /setup-docs command remains available");
 });
 
 await t("editing through /setup-project writes a backup and keeps custom settings", async () => {

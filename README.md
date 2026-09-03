@@ -148,16 +148,15 @@ clicking an icon:
   minimized window stops coop).
 - **coop (terminal)** — the classic terminal agent.
 
-Both are purely additive: running `coop` in any terminal is unchanged. On first
-launch, coop greets you with a **Start Here menu** of common tasks (or run `/start`
-anytime); power users can dismiss it with one key or turn it off with
-`COOP_NO_START_MENU=1`.
+Both are purely additive: running `coop` in any terminal is unchanged. Coop starts
+directly at the prompt without opening setup dialogs. Run **`/start`** anytime for
+a menu of common tasks.
 
-When Coop starts inside a Git repository that has no `.coop/project.yml`, it
-offers a native **Set up this Coop project** wizard before work begins. Users do
-not need to know `coop init` or edit YAML: the same create/edit flow is always
-available from the Start Here menu and through **`/setup-project`**. Edits make a
-backup and preserve comments, custom policies, and fields the wizard does not own.
+Project setup is available on demand through **`/setup-project`**, the first item
+in `/start`, or `coop init` from a shell. The wizard supports discovery projects
+with no local source, partial and one-sided estates, mixed repositories, and fully
+connected estates. Edits make a backup and preserve comments, custom policies,
+and fields the wizard does not own.
 
 **No-terminal first-time setup (for non-technical members).** Hand them the
 `coop-agent` folder (a zip or a shared drive) and have them double-click

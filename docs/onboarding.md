@@ -102,16 +102,16 @@ In each Fabric / D365 repo you work in:
 ```bash
 cd /path/to/your/fabric-repo
 coop onboard              # writes ~/.coop/user.json + versioned ~/.coop/config and managed MCP entries
-coop init                  # optional shell path; normal Coop startup offers the same project wizard
+coop init                  # optional shell path for project setup
 coop doctor
 ```
 
-Non-terminal users can simply launch `coop`: when the current Git repository has
-no `.coop/project.yml`, Coop offers to create it with native dialogs. The wizard
-is also available anytime from `/start` or `/setup-project`, and can edit an
-existing contract without replacing custom fields or policies. Choose discovery
-mode when no local source exists yet; SQL-only, Power-BI-only, partial-folder, and
-fully connected projects can all be expanded later through the same wizard.
+Coop launches directly at the prompt without opening setup dialogs. Run
+`/setup-project` or choose *Set up or edit this Coop project* from `/start` when
+you are ready; the wizard can create or edit a contract without replacing custom
+fields or policies. Choose discovery mode when no local source exists yet;
+SQL-only, Power-BI-only, partial-folder, mixed-repository, and fully connected
+projects can all be expanded later through the same wizard.
 
 Lineage docs (`coop-data-doc`) are optional and do not block first use. Coop does
 not launch their setup wizard automatically. When you want lineage-aware impact

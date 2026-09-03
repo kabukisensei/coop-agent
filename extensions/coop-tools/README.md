@@ -13,10 +13,9 @@ result, and returns it as structured `details` on the tool result so the model
 can reason over it. All three are **advisory / read-only**: they report
 findings or build documentation, but they never edit source.
 
-It also adds a friendly **Start Here menu** (the `/start` command, plus an
-auto-open on a fresh session) so newcomers get guided choices instead of a blank
-prompt, a native **project contract wizard** (`/setup-project`), a **first-run
-setup** for `coop-data-doc` (the manual `/setup-docs` command) so lineage docs can
+It also adds an on-demand **Start Here menu** (the `/start` command), a native
+**project contract wizard** (`/setup-project`), and setup for `coop-data-doc`
+(the manual `/setup-docs` command) so lineage docs can
 be established without leaving the agent when the user is ready, and a
 **native lineage announcement** that points the agent at built docs before it
 touches an object — see [Start Here menu](#start-here-menu-start),
@@ -27,10 +26,9 @@ touches an object — see [Start Here menu](#start-here-menu-start),
 
 ## Project setup (`/setup-project`)
 
-Users do not need to know `coop init` or manually edit YAML. On initial startup
-inside a Git repository with no `.coop/project.yml`, Coop offers to launch the
-project wizard. The same flow is always available as the first `/start` menu item
-or through `/setup-project`.
+Users do not need to know `coop init` or manually edit YAML. Run `/setup-project`
+or choose the first `/start` menu item whenever the project is ready to configure.
+Normal Coop startup does not open the wizard.
 
 The wizard configures the organization/client, zero or more repository paths and
 roles (including mixed SQL + Power BI repos), default branches, Fabric/Power BI
@@ -44,33 +42,23 @@ editing so `coop-guardrails` loads a fresh trusted contract snapshot.
 
 ## Start Here menu (`/start`)
 
-A guided menu of common Cooptimize tasks so a fresh session opens with clear
-choices instead of a blank prompt — the thing that most intimidates people who
-aren't at home in a terminal. Each choice sends a friendly, first-person request
-**as you** (the menu just pre-writes the prompt a newcomer would otherwise have to
-compose); the agent then asks for specifics. The *Document my data* choice routes
-into the `/setup-docs` wizard (or a build) when needed. Choices are wired to the
-tools/skills coop already ships: SQL review, DAX review, impact/lineage, Fabric
-workspace/architecture review, and work logs.
+A guided, on-demand menu of common Cooptimize tasks. Each choice sends a friendly,
+first-person request **as you** (the menu just pre-writes the prompt a newcomer
+would otherwise have to compose); the agent then asks for specifics. The
+*Document my data* choice routes into the `/setup-docs` wizard (or a build) when
+needed. Choices are wired to the tools/skills coop already ships: SQL review, DAX
+review, impact/lineage, Fabric workspace/architecture review, and work logs.
 
-**Strictly additive and opt-outable — power users lose nothing:**
+**Strictly on demand — normal startup goes straight to the prompt:**
 
 - **`/start`** opens the menu on demand, anytime.
-- It **auto-opens only on the initial launch** of an interactive session (reason
-  `startup`) — never on `/new`, `/resume`, `/fork`, or `/reload`. (Note: launching
-  with `coop -c` / `--continue` counts as an initial launch, so the menu appears
-  over the continued session too — one keypress dismisses it, or disable auto-open.)
-- Every menu always offers **"Something else — I'll type it myself"** (one key →
-  the normal blank prompt), and when auto-opened also **"Don't show this
-  automatically"**.
-- Turn it off for good with `COOP_NO_START_MENU=1`, or the `start-menu.off` marker
-  (written in the coop agent dir when you pick *Don't show this automatically*).
+- It never auto-opens on startup, `/new`, `/resume`, `/fork`, or `/reload`.
+- The menu offers **"Something else — I'll type it myself"** to return to the prompt.
 - Data-doc setup is never opened automatically. The menu's *Document my data*
   choice launches it only when selected; `/setup-docs` remains available anytime.
 
-It requires dialog-capable UI (`ctx.hasUI`), degrades to a one-line breadcrumb
-("Type /start …") when dialogs aren't available, and is wrapped so it can never
-break a session.
+It requires dialog-capable UI (`ctx.hasUI`), provides a one-line explanation when
+dialogs aren't available, and is wrapped so it can never break a session.
 
 ## Tools
 

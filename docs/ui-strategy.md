@@ -14,9 +14,9 @@ security model, known limitations).
 - **Entry friction** — opening a terminal, installing, facing a blank prompt.
   Fixed cheaply by **phase 1**: the double-click launchers (`Install coop.cmd`,
   `bin/coop-desktop.ps1`, Start Menu/Desktop shortcuts created by
-  `scripts/install.ps1`) plus the **Start Here menu** in
-  `extensions/coop-tools` (auto-opens on first launch, `/start` anytime,
-  opt out with `COOP_NO_START_MENU=1`).
+  `scripts/install.ps1`) plus the on-demand **Start Here menu** in
+  `extensions/coop-tools` (`/start` anytime). Normal startup now goes straight to
+  the prompt; setup flows run only when requested.
 - **Experience friction** — raw diffs, JSON review dumps, keyboard-only
   confirm dialogs. Only a rendered UI fixes it. That is **phase 2**:
   `coop web`, a localhost browser chat over the *same governed agent*.
@@ -65,12 +65,12 @@ over a locally installed CLI, there is no signing/notarization cost at all.
 - **Never frame Pi's JSONL with Node `readline`** — it mis-splits on
   U+2028/U+2029 inside JSON strings and corrupts messages. Use a `\n`-only
   splitter (strip a trailing `\r`), as `web/server.mjs` does.
-- **Never await a UI dialog inside a `session_start` hook outside the TUI.**
-  Awaiting the Start Here dialog starved Pi's event loop in RPC mode and Pi
+- **Keep setup UI out of `session_start`.** Awaiting the Start Here dialog once
+  starved Pi's event loop in RPC mode and Pi
   exited moments after start — the bridge died and the page showed
-  "reconnecting…" (the v0.5.2 bug). In RPC mode the Start Here menu is
-  **fire-and-forget** (the `ctx.mode !== "tui"` branch in
-  `extensions/coop-tools/index.ts`); only the TUI awaits.
+  "reconnecting…" (the v0.5.2 bug). Coop now opens no project, menu, or data-doc
+  dialog from that hook; the only automatic handoff is required model sign-in on
+  a fresh unauthenticated install.
 - **Security hardening is table stakes, not polish** — the bridge puts a
   listening port in front of a bash-capable, file-editing agent. Shipped
   layers: bind **127.0.0.1 only** + Host-header guard (DNS rebinding), a
