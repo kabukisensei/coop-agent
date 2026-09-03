@@ -16,8 +16,8 @@ findings or build documentation, but they never edit source.
 It also adds a friendly **Start Here menu** (the `/start` command, plus an
 auto-open on a fresh session) so newcomers get guided choices instead of a blank
 prompt, a native **project contract wizard** (`/setup-project`), a **first-run
-setup** for `coop-data-doc` (the `/setup-docs` command and a
-startup offer) so lineage docs can be established without leaving the agent, and a
+setup** for `coop-data-doc` (the manual `/setup-docs` command) so lineage docs can
+be established without leaving the agent when the user is ready, and a
 **native lineage announcement** that points the agent at built docs before it
 touches an object — see [Start Here menu](#start-here-menu-start),
 [Data-doc setup](#data-doc-setup-setup-docs) and
@@ -65,10 +65,8 @@ workspace/architecture review, and work logs.
   automatically"**.
 - Turn it off for good with `COOP_NO_START_MENU=1`, or the `start-menu.off` marker
   (written in the coop agent dir when you pick *Don't show this automatically*).
-- On the initial launch the menu is the front door, so it **replaces** the
-  separate data-doc startup offer for that session (the menu surfaces data-doc
-  setup as a choice). On `/resume` / `/fork` / `/reload`, the original data-doc
-  offer still fires exactly as before.
+- Data-doc setup is never opened automatically. The menu's *Document my data*
+  choice launches it only when selected; `/setup-docs` remains available anytime.
 
 It requires dialog-capable UI (`ctx.hasUI`), degrades to a one-line breadcrumb
 ("Type /start …") when dialogs aren't available, and is wrapped so it can never
@@ -135,14 +133,6 @@ these **degrade gracefully** — the docs are an aid, not a requirement.
 same authoritative setup questionnaire with `--transport jsonl`, renders its prompts
 through Pi dialogs, and returns answers over stdin. No local/reduced wizard exists.
 
-- **Startup offer.** On `session_start`, if the working folder has no
-  `coop-data-doc.yml` (and no `.coop-data-doc.skip` marker), coop offers to set it
-  up — **Yes / Not now / Don't ask again**. Only *Don't ask again* writes
-  `.coop-data-doc.skip` (so an accidental Esc/dismiss never silences setup forever;
-  delete the marker, or run `/setup-docs`, to re-enable). If a config exists but the
-  docs aren't built yet, it offers to build them instead. The offer fires once per
-  folder per process (keyed by cwd, so `/new` / `/resume` / `/fork` into a new folder
-  still get offered).
 - **`/setup-docs` command.** Run or re-run the full native questionnaire anytime.
   Choose SQL + Power BI, SQL only, Power BI only, or no local source yet; existing
   config values prefill prompts. Completion/cancellation/error events and
@@ -152,6 +142,10 @@ through Pi dialogs, and returns answers over stdin. No local/reduced wizard exis
 - **Transport safety.** Stdout is strict LF-framed JSONL with a 1 MiB line limit;
   stderr is diagnostics only. Windows resolves `coop-data-doc.exe` directly and
   rejects `.cmd`/`.bat` shell shims. Older tool versions stop with upgrade guidance.
+
+Coop does not prompt for or run this wizard during session or project startup.
+The same setup is also available by selecting *Document my data* from `/start` or
+running `coop data-doc setup` in a shell.
 
 ## Lineage awareness (`before_agent_start`)
 

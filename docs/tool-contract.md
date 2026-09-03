@@ -83,10 +83,11 @@ plus the non-interactive agent/CI helpers `folders`, `set-folders`, `show-config
 **`coop-data-doc.yml`** — which is **separate** from coop's `.coop/project.yml`. It
 points the tool at the repos to crawl and the doc output. Two ways to create it:
 
-- **In the agent (recommended):** run **`/setup-docs`**, or accept the launch offer.
-  `extensions/coop-tools` bridges the full native questionnaire over strict JSONL;
-  prompt definitions remain solely in `coop-data-doc`. "Don't ask again" drops a
-  `.coop-data-doc.skip` marker. Older tool versions stop with upgrade guidance.
+- **In the agent (recommended):** run **`/setup-docs`**, or choose *Document my
+  data* from `/start`. `extensions/coop-tools` bridges the full native
+  questionnaire over strict JSONL; prompt definitions remain solely in
+  `coop-data-doc`. Setup is never launched automatically. Older tool versions stop
+  with upgrade guidance.
 - **In a shell (the same wizard):**
 
 ```
@@ -196,14 +197,14 @@ still proceed without it. `object` is required: a blank one returns a usage note
 an error.
 
 > The model can call `scan` / `build` / `check` / `lineage`. Interactive setup is
-> user-driven through **`/setup-docs`** / the launch offer (the full native wizard over
-> JSONL), or through the same wizard in a shell with `coop data-doc setup`.
+> user-driven through **`/setup-docs`** or the `/start` menu (the full native
+> wizard over JSONL), or through the same wizard in a shell with `coop data-doc setup`.
 
 > Note: the native `data_doc` tool defaults to **`scan`** (read-only first per
 > the workflow), whereas the `coop data-doc` subcommand defaults to **`build`**.
 
-**Auto-detection (lineage grounding).** Two hooks make coop consult lineage
-without the user asking:
+**Auto-detection (lineage grounding).** When docs already exist, one hook makes
+coop consult lineage without the user asking:
 
 - `before_agent_start` — once per folder, when **built** docs exist (the config's
   markdown output dir has `manifest.json` or `index.md`), it injects an
@@ -211,10 +212,10 @@ without the user asking:
   coop to look up an object's up/downstream via `data_doc (command="lineage")`
   before touching it. **Silent when no built docs exist** — the docs are an aid,
   not a gate.
-- `session_start` — when the folder has **no** `coop-data-doc.yml` (and no
-  `.coop-data-doc.skip` marker), it offers `/setup-docs`; when a config exists but
-  isn't built, it offers to build. Esc/"Not now" never suppresses; only an explicit
-  "Don't ask again" writes the skip marker.
+
+There is deliberately no data-doc `session_start` hook: missing or unbuilt docs
+stay silent, and users opt into setup later with `/setup-docs`, `/start`, or
+`coop data-doc setup`.
 
 ---
 

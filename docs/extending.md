@@ -110,10 +110,10 @@ Pi extension in TypeScript. Use the three in `extensions/` as templates:
   `data_doc` with `pi.registerTool(...)`. Copy the pattern to wrap another CLI. The
   `data_doc` tool takes `command` = `scan` / `build` / `check` / `lineage` (the last
   returns one object's up/downstream + relationships as JSON). It also shows the event
-  hooks: a `session_start` hook that offers the in-agent `/setup-docs` wizard when a
-  folder has no lineage docs, and a `before_agent_start` hook that — only when BUILT
-  docs exist — injects an agent-visible, human-hidden (`display: false`) note so coop
-  consults the lineage before touching an object; both degrade silently when absent.
+  hook: `before_agent_start` — only when BUILT docs exist — injects an agent-visible,
+  human-hidden (`display: false`) note so coop consults the lineage before touching
+  an object. Missing docs stay silent; setup is explicitly launched with
+  `/setup-docs` or the `/start` menu.
 - `extensions/coop-powerline/index.ts` — coop renders its **own** footer and splash
   here (it does **not** use a third-party powerline footer; `pi-powerline-footer` was
   removed). The splash is the truecolor block-art Cooptimize logo; the footer shows

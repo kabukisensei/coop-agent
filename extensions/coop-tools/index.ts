@@ -14,12 +14,8 @@
  *
  * It ALSO bridges coop-data-doc's single authoritative setup questionnaire over
  * strict JSONL so users can establish lineage docs without leaving the agent. Pi
- * dialogs render the native wizard's prompt events and return its answers:
- *
- *   • on session_start, if the cwd has no coop-data-doc.yml (and no skip marker),
- *     offer to set it up — Yes / Not now / "Don't ask again" (only the last writes
- *     .coop-data-doc.skip, so an accidental dismissal never silences setup forever)
- *   • /setup-docs runs (or re-runs) that same full wizard anytime
+ * dialogs render the native wizard's prompt events and return its answers when the
+ * user deliberately runs /setup-docs or chooses the data-doc action from /start.
  *
  * Older coop-data-doc versions stop with upgrade guidance; there is no reduced
  * local fallback questionnaire.
@@ -102,7 +98,6 @@ function summarizeReview(bin: string, parsed: any, stdout: string, code: number)
 // only a SUBSET of known keys — safe because Config uses extra="forbid" (only
 // UNKNOWN keys are rejected) and every omitted field has a default.
 const DATADOC_CONFIG = "coop-data-doc.yml";
-const SKIP_MARKER = ".coop-data-doc.skip";
 const DEFAULT_SQL_INCLUDE = ["**/*.sql"];
 const DEFAULT_SQL_EXCLUDE = ["**/archive/**"];
 const DEFAULT_PBI_INCLUDE = ["**/*.tmdl", "**/*.bim", "**/report.json", "**/visual.json", "**/page.json", "**/*.pbix"];
@@ -203,18 +198,6 @@ export function outputDirsConflict(outAbs: string, siteAbs: string): boolean {
 export function siblingSite(outputDir: string): string {
   const trimmed = outputDir.replace(/[/\\]+$/, "") || DEFAULT_OUTPUT_DIR;
   return `${trimmed}-site`;
-}
-
-function writeSkip(skipPath: string): void {
-  try {
-    writeFileSync(
-      skipPath,
-      "coop-data-doc: setup declined here. Delete this file (or run /setup-docs) to be asked again.\n",
-      "utf8",
-    );
-  } catch {
-    /* best effort */
-  }
 }
 
 /** Read just the scalar value off a `key: value` line, quote- and comment-aware.
@@ -906,35 +889,6 @@ async function runQuickSetup(pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPr
     else notify(ctx, "Build them whenever you're ready with `coop data-doc build`.", "info");
   }
   return ok;
-}
-
-/** session_start hook: detect a folder with no built data docs and offer to set them up. */
-async function maybeOfferSetup(pi: ExtensionAPI, ctx: any): Promise<void> {
-  const cwd: string = ctx.cwd;
-  const ymlPath = join(cwd, DATADOC_CONFIG);
-  const skipPath = join(cwd, SKIP_MARKER);
-  if (existsSync(skipPath)) return;
-
-  if (existsSync(ymlPath)) {
-    const cfg = parseExisting(safeRead(ymlPath));
-    const outAbs = resolveRel(cwd, cfg.outputDir || DEFAULT_OUTPUT_DIR);
-    if (isBuilt(outAbs)) return; // docs already present → coop will consult them
-    // A transient build failure must NOT write the skip marker (don't permanently
-    // suppress an existing config); only an explicit "never" does.
-    const choice = await askOffer(ctx, "Build data docs?", `Found ${DATADOC_CONFIG} here, but the docs aren't built yet.`, "Build them now");
-    if (choice === "yes") await runBuild(pi, ctx, cfg.outputDir);
-    else if (choice === "never") writeSkip(skipPath);
-    return;
-  }
-
-  const choice = await askOffer(
-    ctx,
-    "Set up data docs?",
-    `No ${DATADOC_CONFIG} in this folder yet. coop uses lineage docs to understand up/downstream impact when you touch SQL, DAX, or semantic models.`,
-    "Yes, set them up",
-  );
-  if (choice === "yes") await runQuickSetup(pi, ctx, {});
-  else if (choice === "never") writeSkip(skipPath);
 }
 
 // --- Project contract wizard (.coop/project.yml) ----------------------------
@@ -1709,9 +1663,7 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   notify(ctx, `Project contract ${existing ? "updated" : "created"}: ${path}${backup ? ` (backup: ${backup})` : ""}`, "info");
   notify(ctx, "Run /new or restart Coop before governed work so the guardrails load the updated contract.", "info");
 
-  if (settings.repositories.length && !existsSync(join(root, DATADOC_CONFIG)) && await askConfirm(ctx, "Lineage documentation", "Set up lineage documentation for the local source available now?")) {
-    await runQuickSetup(pi, { ...ctx, cwd: root }, {});
-  } else if (!settings.repositories.length) {
+  if (!settings.repositories.length) {
     notify(ctx, "Discovery mode is ready. Coop can inspect dev/test metadata read-only; row data and production access still ask first.", "info");
   }
   return true;
@@ -2176,17 +2128,15 @@ export default function coopTools(pi: ExtensionAPI) {
     },
   });
 
-  // --- Fresh-session front door + first-run data-doc setup (native dialogs) ---
+  // --- Fresh-session front door (native dialogs) -----------------------------
   // Track folders handled in THIS process — session_start re-fires on /new,
   // /resume, /fork (and the cwd can change), so a single bool would silence every
   // later session. Keyed by cwd instead.
   //
   // On the INITIAL launch (reason "startup") of an interactive session we open the
-  // friendly Start Here menu, which also surfaces data-doc setup as a choice — so
-  // we don't ALSO stack the separate setup offer. On /resume, /fork, /reload, or
-  // when a power user has opted out of the menu, we skip it and keep the original
-  // proactive data-doc nudge exactly as before. Nothing here changes the terminal
-  // experience for people who just want to start typing.
+  // friendly Start Here menu, which surfaces data-doc setup as an explicit choice.
+  // Data-doc setup is never launched automatically: users can run /setup-docs or
+  // choose "Document my data" from /start whenever they are ready.
   const startedCwds = new Set<string>();
   pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext) => {
     if (!ctx.hasUI || startedCwds.has(ctx.cwd)) return;
@@ -2195,22 +2145,14 @@ export default function coopTools(pi: ExtensionAPI) {
     // over the normal Start Here/project dialogs so the user sees one clear action.
     if (primeModelLogin(ctx)) return;
     const wantMenu = event?.reason === "startup" && !startMenuDisabled();
+    if (!wantMenu) return;
     const frontDoor = async () => {
-      if (wantMenu) {
-        try {
-          if (await maybeOfferProjectSetup(pi, ctx)) return;
-          await showStartMenu(pi, ctx, true);
-          return; // menu is the front door here; don't stack the setup offer on top
-        } catch {
-          // Interactive dialogs may not be safe at startup on every Pi build —
-          // breadcrumb, then fall through to the data-doc nudge so nothing is lost.
-          notify(ctx, "Type /start for a menu of common coop tasks.", "info");
-        }
-      }
       try {
-        await maybeOfferSetup(pi, ctx);
+        if (await maybeOfferProjectSetup(pi, ctx)) return;
+        await showStartMenu(pi, ctx, true);
       } catch {
-        notify(ctx, "No data docs for this folder — run /setup-docs to document whatever local sources are available.", "info");
+        // Interactive dialogs may not be safe at startup on every Pi build.
+        notify(ctx, "Type /start for a menu of common coop tasks.", "info");
       }
     };
     if (ctx.mode === "tui") {
@@ -2363,16 +2305,8 @@ export default function coopTools(pi: ExtensionAPI) {
           return;
         }
         const ymlPath = join(ctx.cwd, DATADOC_CONFIG);
-        const skipPath = join(ctx.cwd, SKIP_MARKER);
         const prefill = existsSync(ymlPath) ? parseExisting(safeRead(ymlPath)) : {};
-        const ok = await runQuickSetup(pi, ctx, prefill);
-        if (ok && existsSync(skipPath)) {
-          try {
-            unlinkSync(skipPath);
-          } catch {
-            /* best effort */
-          }
-        }
+        await runQuickSetup(pi, ctx, prefill);
       } catch (e: any) {
         notify(ctx, `setup-docs failed: ${errMsg(e)}. You can run the same wizard in a shell: coop data-doc setup`, "error");
       }

@@ -113,10 +113,11 @@ existing contract without replacing custom fields or policies. Choose discovery
 mode when no local source exists yet; SQL-only, Power-BI-only, partial-folder, and
 fully connected projects can all be expanded later through the same wizard.
 
-The first time you launch `coop` in a repo, it offers to set up **lineage docs**
-(`coop-data-doc`) so the agent understands up/downstream impact — accept it, or run
-**`/setup-docs`** anytime inside the agent. It bridges the same full native
-`coop-data-doc` questionnaire used by `coop data-doc setup`; no reduced fallback exists.
+Lineage docs (`coop-data-doc`) are optional and do not block first use. Coop does
+not launch their setup wizard automatically. When you want lineage-aware impact
+analysis, run **`/setup-docs`** inside the agent, choose *Document my data* from
+`/start`, or run `coop data-doc setup` in a shell. These paths use the same full
+native questionnaire; no reduced fallback exists.
 
 ## 5. Use it
 

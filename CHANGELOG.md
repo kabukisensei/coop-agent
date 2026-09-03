@@ -6,6 +6,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Changed
+- Data-doc setup is now fully opt-in: Coop no longer opens the lineage wizard
+  during session startup or after project setup. `/setup-docs`, the `/start`
+  *Document my data* action, and `coop data-doc setup` remain available anytime.
 - New project contracts now separate Warehouse/Lakehouse and semantic-model
   DEV/TEST/PROD workspace mappings under `fabric.environment_names` and
   `power_bi.environment_names`. Both terminal and in-Coop setup paths generate the

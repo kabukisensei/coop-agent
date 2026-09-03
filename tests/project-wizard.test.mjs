@@ -120,7 +120,8 @@ tools:
 await t("native wizard is reachable inside Coop and creates the contract", async () => {
   const root = mkdtempSync(join(tmpdir(), "coop-project-wizard-"));
   mkdirSync(join(root, ".git"));
-  const confirms = [true, false, false, false, true, false]; // local source, add repo, Fabric, TE, write, lineage
+  const confirms = [true, false, false, false, true]; // local source, add repo, Fabric, TE, write
+  const confirmTitles = [];
   let selectCount = 0;
   const ctx = {
     cwd: root,
@@ -128,7 +129,10 @@ await t("native wizard is reachable inside Coop and creates the contract", async
     mode: "tui",
     ui: {
       input: async (label, def) => label.startsWith("Client / engagement") ? "Contoso" : def,
-      confirm: async () => confirms.shift() ?? false,
+      confirm: async (title) => {
+        confirmTitles.push(title);
+        return confirms.shift() ?? false;
+      },
       select: async (_label, options) => {
         selectCount++;
         if (selectCount === 1) return options.find((x) => x.includes("General project"));
@@ -143,6 +147,7 @@ await t("native wizard is reachable inside Coop and creates the contract", async
   const text = readFileSync(contract, "utf8");
   assert.equal(projectYamlScalar(text, ["profile", "client"]), "Contoso");
   assert.equal(projectYamlScalar(text, ["repositories", root.split(/[\\/]/).pop(), "local_path"]), ".");
+  assert.ok(!confirmTitles.includes("Lineage documentation"), "project setup must not launch data-doc setup");
 });
 
 await t("native wizard can create a repository-free discovery project", async () => {
@@ -239,6 +244,42 @@ await t("startup offers project setup in an unconfigured Git repository", async 
   assert.match(prompts[0], /no \.coop\/project\.yml/);
 });
 
+await t("startup never offers data-doc setup automatically", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-no-auto-data-doc-"));
+  mkdirSync(join(root, ".coop"));
+  writeFileSync(join(root, ".coop", "project.yml"), "profile:\n  client: 'Contoso'\n");
+  const handlers = new Map();
+  const commands = new Map();
+  let prompts = 0;
+  let execs = 0;
+  const previous = process.env.COOP_NO_START_MENU;
+  process.env.COOP_NO_START_MENU = "1";
+  try {
+    coopTools({
+      registerTool: () => {},
+      registerCommand: (name, config) => commands.set(name, config),
+      on: (name, handler) => handlers.set(name, handler),
+      exec: async () => { execs++; return { code: 0, stdout: "", stderr: "" }; },
+      sendUserMessage: () => {},
+    });
+    await handlers.get("session_start")({ reason: "startup" }, {
+      cwd: root,
+      hasUI: true,
+      mode: "tui",
+      ui: {
+        select: async () => { prompts++; return "Not now"; },
+        notify: () => {},
+      },
+    });
+  } finally {
+    if (previous === undefined) delete process.env.COOP_NO_START_MENU;
+    else process.env.COOP_NO_START_MENU = previous;
+  }
+  assert.equal(prompts, 0, "startup should not display a data-doc setup dialog");
+  assert.equal(execs, 0, "startup should not invoke coop-data-doc");
+  assert.ok(commands.has("setup-docs"), "manual /setup-docs command remains available");
+});
+
 await t("editing through /setup-project writes a backup and keeps custom settings", async () => {
   const root = mkdtempSync(join(tmpdir(), "coop-project-edit-"));
   mkdirSync(join(root, ".git"));
@@ -246,7 +287,7 @@ await t("editing through /setup-project writes a backup and keeps custom setting
   const contract = join(root, ".coop", "project.yml");
   const original = `profile:\n  organization: 'Cooptimize'\n  client: 'Contoso'\n  default_branch: 'main'\nrepositories:\n  app:\n    description: 'App'\n    role: 'generic'\n    local_path: '.'\n    remote_name: 'origin'\n    default_branch: 'main'\ncustom_section:\n  keep: 'yes'\ntools:\n  fabric_cli:\n    enabled: false\n  tabular_editor_cli:\n    enabled: false\n`;
   writeFileSync(contract, original);
-  const confirms = [false, false, false, false, true, false]; // edit repo, add repo, Fabric, TE, write, lineage
+  const confirms = [false, false, false, false, true]; // edit repo, add repo, Fabric, TE, write
   const ctx = {
     cwd: root,
     hasUI: true,

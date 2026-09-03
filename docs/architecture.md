@@ -82,8 +82,8 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      The extension also hosts the in-agent project contract wizard
      (`/setup-project`, the Start Here menu, and a missing-contract startup offer)
      plus the `coop-data-doc` setup wizard built on
-     Pi's native dialogs (the `/setup-docs` command, plus a `session_start`
-     first-run offer when a folder has no built docs), since coop-data-doc's own
+     Pi's native dialogs (the on-demand `/setup-docs` command and the explicit
+     *Document my data* `/start` action), since coop-data-doc's own
      questionary wizard can't be driven from a non-TTY child. (The `setup-docs`
      skill + prompt launch coop-data-doc's authoritative questionnaire over JSONL;
      terminal and in-agent setup both end at the same `coop-data-doc.yml`.)

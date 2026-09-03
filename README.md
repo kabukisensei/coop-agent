@@ -274,12 +274,12 @@ The AI agent gets machine-readable JSON through the native `sql_review` / `dax_r
 commands — including `data_doc`'s `lineage` command (see
 [Lineage-grounded edits](#lineage-grounded-edits)).
 
-For **`coop-data-doc`'s first-run setup**, coop also offers an **in-agent** path so you
-don't have to drop to a shell: when you launch `coop` in a folder with no
-`coop-data-doc.yml`, it offers to set up lineage docs right there, and the
-**`/setup-docs`** command runs (or re-runs) the full native `coop-data-doc` wizard
-through a strict JSONL bridge. It is the same questionnaire used by `coop data-doc
-setup`; older tool versions stop with upgrade guidance rather than a reduced fallback. See
+For **`coop-data-doc` setup**, coop offers an **on-demand in-agent** path so you
+don't have to drop to a shell: run **`/setup-docs`** or choose *Document my data*
+from `/start` when you are ready. Coop does not launch this wizard automatically
+during startup. The command runs (or re-runs) the full native `coop-data-doc`
+wizard through a strict JSONL bridge; it is the same questionnaire used by
+`coop data-doc setup`. Older tool versions stop with upgrade guidance rather than a reduced fallback. See
 [`extensions/coop-tools/README.md`](extensions/coop-tools/README.md#data-doc-setup-setup-docs).
 
 Project configuration has the same no-shell path: run **`/setup-project`** or
