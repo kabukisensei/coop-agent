@@ -5,6 +5,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- New project contracts now separate Warehouse/Lakehouse and semantic-model
+  DEV/TEST/PROD workspace mappings under `fabric.environment_names` and
+  `power_bi.environment_names`. Both terminal and in-Coop setup paths generate the
+  same layout; updates leave existing client contracts unchanged.
+
 ## [0.23.1] — 2026-09-02
 
 ### Fixed

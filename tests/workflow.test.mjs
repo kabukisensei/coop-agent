@@ -58,10 +58,12 @@ assert.ok(example.includes("tests:"), "example project has tests section");
 assert.ok(example.includes("live_data:"), "example project has live_data section");
 assert.ok(example.includes("between_slices:"), "example project has between_slices key");
 assert.ok(example.includes("require_approval:"), "example project has require_approval key");
+assert.equal((example.match(/^  environment_names:$/gm) || []).length, 2, "example project separates Warehouse and semantic-model environments");
 
 const fallback = readFileSync(join(ROOT, ".coop/project.yml"), "utf8");
 assert.ok(fallback.includes("tests:"), "fallback project has tests section");
 assert.ok(fallback.includes("live_data:"), "fallback project has live_data section");
+assert.equal((fallback.match(/^  environment_names:$/gm) || []).length, 2, "fallback project separates Warehouse and semantic-model environments");
 
 const guardrails = readFileSync(join(ROOT, "docs/guardrails.md"), "utf8");
 assert.ok(guardrails.includes("vertical slices"), "guardrails reference vertical slices");

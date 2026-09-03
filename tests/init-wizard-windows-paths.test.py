@@ -27,4 +27,9 @@ assert parsed["tools"]["tabular_editor_cli"]["executable_path"] == r"C:\Program 
 assert parsed["tools"]["tabular_editor_cli"]["bpa_rules_path"] == r"C:\Rules\BPA Rules.json"
 assert parsed["repositories"]["sql repo"]["role"] == "sql"
 assert len(parsed["repositories"]) == 2
+fabric_answers = dict(answers)
+fabric_answers["use_fabric"] = True
+fabric_contract = yaml_mod._load_fallback(mod.build_project_yml(fabric_answers))
+assert set(fabric_contract["fabric"]["environment_names"]) == {"dev", "test", "prod"}
+assert set(fabric_contract["power_bi"]["environment_names"]) == {"dev", "test", "prod"}
 print("OK: init YAML round-trips Windows paths, apostrophes, punctuation, Unicode, and multiple repos")

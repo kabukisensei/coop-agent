@@ -68,18 +68,24 @@ repositories:
 # --- Microsoft Fabric ---------------------------------------------------------
 fabric:
   tenant_id: "TODO: tenant id (used for az login + Power BI MCP)"
-  default_workspace_name: "TODO: workspace name"
-  default_workspace_id: "TODO: workspace id"
+  default_workspace_name: "TODO: dev Warehouse / Lakehouse workspace name"
+  default_workspace_id: "TODO: dev Warehouse / Lakehouse workspace id"
   lakehouse_names: ["TODO: lakehouse"]
   warehouse_names: ["TODO: warehouse"]
+  # Warehouse / Lakehouse workspace for each deployment environment.
   environment_names:
-    dev:  "TODO: dev workspace"
-    test: "TODO: test workspace"
-    prod: "TODO: prod workspace"
+    dev:  "TODO: dev Warehouse / Lakehouse workspace"
+    test: "TODO: test Warehouse / Lakehouse workspace"
+    prod: "TODO: prod Warehouse / Lakehouse workspace"
 
 power_bi:
-  default_workspace_name: "TODO: Power BI workspace name"
-  default_workspace_id: "TODO: Power BI workspace id"
+  default_workspace_name: "TODO: dev semantic-model workspace name"
+  default_workspace_id: "TODO: dev semantic-model workspace id"
+  # Semantic-model workspace for each deployment environment.
+  environment_names:
+    dev:  "TODO: dev semantic-model workspace"
+    test: "TODO: test semantic-model workspace"
+    prod: "TODO: prod semantic-model workspace"
   semantic_models:
     - name: "TODO: semantic model name"
       path: "TODO: relative path in fabric repo"

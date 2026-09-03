@@ -454,6 +454,12 @@ and the approval policy is the project contract `.coop/project.yml`. Copy
 [`.coop/project.example.yml`](.coop/project.example.yml) into your work repo's
 `.coop/project.yml` and replace every `TODO`.
 
+Fabric projects may use two workspaces per environment. Record Warehouse/Lakehouse
+DEV/TEST/PROD workspaces in `fabric.environment_names` and semantic-model
+DEV/TEST/PROD workspaces in `power_bi.environment_names`; keep both default workspace
+entries pointed at DEV. Coop install and update refresh the bundled template but do
+not overwrite an existing client's `.coop/project.yml`.
+
 `logging.require_task_log: true` makes that log step a completion postcondition for
 meaningful project work. Coop injects the requirement every turn and warns if a
 settled task made changes or ran substantive review/validation without updating

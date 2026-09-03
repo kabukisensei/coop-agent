@@ -56,6 +56,9 @@ await t("new-project renderer produces a parseable, governed contract", () => {
   assert.equal(projectYamlScalar(text, ["logging", "require_task_log"]), "true");
   assert.equal(projectYamlScalar(text, ["estate", "mode"]), "partial");
   assert.equal(projectYamlScalar(text, ["estate", "live_discovery", "production_rows"]), "explicit_scope_and_approval");
+  assert.equal((text.match(/^  environment_names:$/gm) || []).length, 2);
+  assert.match(text, /# Warehouse \/ Lakehouse workspace for each deployment environment\./);
+  assert.match(text, /# Semantic-model workspace for each deployment environment\./);
   assert.match(text, /- 'update markdown docs, html site, logs'/);
   assert.match(text, /agent_never_commit:/);
   assert.match(text, /never_without_explicit_instruction:/);
