@@ -779,3 +779,28 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   retention; Windows implementation/acceptance and final capability/journey evidence;
   fresh managed-profile real model work; production feed/signing/notarization and
   release provisioning. Overall goal remains active.
+
+## Prepared-copy cleanup packaged acceptance passed
+
+- Verified committed source a5dc57e05c361862bcda8c5dcd1b52b95701e577 using
+  disposable packaged 0.0.0 and 0.0.1 apps. Both package/resource/fuse verifiers
+  passed before the update; the signed local DMG was authenticated by an ephemeral
+  test descriptor. Production signing and release publication were not involved.
+- Actual helper IPC prepared the candidate and armed a real recovery LaunchAgent,
+  then the old runtime and fixture parent exited. Atomic activation reached healthy
+  after the default runtime and native-window probes. The reopened app displayed
+  “Update installed — Coop Desktop 0.0.1 is ready”; Continue opened the saved Ready
+  workspace. The disposable app was then closed normally.
+- The one recorded prepared release directory was removed. Installed 0.0.1 and
+  adjacent rollback 0.0.0 remained and passed strict deep signature checks after
+  use. The original DMG remained and passed its signed SHA-256/size check. The plain
+  Cooptimize icon matched source bytes. The recovery request finished, its exact
+  service and plist were absent, and parent/runtime/helper/reopened app PIDs exited.
+- Evidence: /private/tmp/coop-desktop-home-20260907-state/prepared-cleanup-native-completed.json
+  and prepared-cleanup-verification.log (exit 0). This validates the committed
+  cleanup implementation through packaged helper IPC, not the download-menu flow.
+  Existing 42 focused tests and full Bash/PowerShell suites apply to unchanged code.
+- Runtime/native health profiles remain; this result does not establish general
+  cache, orphan preparation, download or transaction-archive retention. Native
+  Windows work, real reboot/login acceptance, fresh managed-profile model work,
+  companion-source packaging and production provisioning remain open.

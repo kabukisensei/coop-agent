@@ -49,9 +49,11 @@ preview profile, session recovery, icon/copy behavior, signed update preparation
 atomic activation/rollback, runtime/native-window health checks, independent
 recovery and completed-recovery retention. Production signing/feed provisioning,
 real reboot/login acceptance and complete fresh-managed-profile model work remain
-open. The last prepared-copy cleanup change has source tests but has not yet been
-repeated through the packaged Mac updater. Do not infer its native acceptance
-from the earlier update run.
+open. Prepared-copy cleanup at the pinned agent revision also passed a subsequent
+packaged Mac helper update: healthy activation, visible success notice, Ready
+workspace, removed prepared duplicate, retained and verified installed/rollback
+apps and original DMG, and disarmed recovery job. Health-probe profiles remain;
+this is not proof of general cache retention or Windows behavior.
 
 Windows update preparation/replacement/recovery is still explicitly unsupported
 in the current implementation. NSIS configuration alone is not a complete Windows
