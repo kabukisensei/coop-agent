@@ -1,4 +1,6 @@
 import vm from "node:vm";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { normalizeSavedChat, normalizeSavedChats, restoreSavedChats } from "../desktop/src/session-restoration.mjs";
 import { strict as assert } from "node:assert";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -288,6 +290,38 @@ await test("model login opens the fixed Pi TUI handoff without renderer-supplied
   assert.deepEqual(result, { ok: true, pid: 43, providerId: "model.openai-codex" });
   assert.equal(call.options.shell, false);
   assert.equal(call.unref, true);
+});
+
+await test("failed runtime startup confirms exit even when the process ignores termination", async () => {
+  for (const mode of ["malformed", "timeout"]) {
+    let child, closed = false;
+    try {
+      await assert.rejects(startCoopRuntime({ workspace: ROOT, coopCommand: process.execPath,
+        commandPrefix: ["-e", `process.on("SIGTERM", () => {}); setInterval(() => {}, 1000); ${mode === "malformed" ? 'console.log("not-json");' : ''}`],
+        readyTimeoutMs: 1000,
+        spawnImpl(...args) { child = spawn(...args); child.once("close", () => { closed = true; }); return child; },
+      }), mode === "timeout" ? /did not become ready/ : /JSON/);
+      assert.equal(closed, true, "startup failure must not leave a live runtime behind");
+      assert.throws(() => process.kill(child.pid, 0), { code: "ESRCH" });
+    } finally {
+      if (child && !closed) { const done = once(child, "close"); child.kill("SIGKILL"); await done; }
+    }
+  }
+});
+
+await test("concurrent runtime stops both wait until the child has exited", async () => {
+  const ready = { type: "runtime.ready", contractVersion: 1, transport: "http", endpoint: "http://127.0.0.1:12345", oneTimeToken: "a".repeat(32), runtimePid: 1 };
+  const runtime = await startCoopRuntime({ workspace: ROOT, coopCommand: process.execPath,
+    commandPrefix: ["-e", `process.on("SIGTERM", () => setTimeout(() => process.exit(0), 250)); setInterval(() => {}, 1000); console.log(JSON.stringify({...${JSON.stringify(ready)}, runtimePid: process.pid}));`] });
+  let closed = false;
+  runtime.child.once("close", () => { closed = true; });
+  const first = runtime.stop({ graceMs: 1000 });
+  try {
+    await runtime.stop({ graceMs: 1000 });
+    assert.equal(closed, true, "a second stop must await the in-flight shutdown");
+    await first;
+    await runtime.stop();
+  } finally { await first; if (!closed) { const done = once(runtime.child, "close"); runtime.child.kill("SIGKILL"); await done; } }
 });
 
 await test("runtime restart callback fires only for an unexpected child exit", async () => {

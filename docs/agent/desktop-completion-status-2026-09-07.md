@@ -1076,3 +1076,48 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   no screenshot or visual pass is claimed. The previous native app remains open.
   Next: visually confirm the corrected History fixture when UI access returns,
   restore the original disposable conversation, and continue Windows acceptance.
+
+## Runtime shutdown confirms process termination
+
+- A real-process regression reproduced a startup leak: malformed readiness output
+  caused startCoopRuntime to reject immediately after SIGTERM, leaving a runtime
+  that ignored that signal alive. Startup timeout had the same cleanup path.
+- desktop/src/runtime-supervisor.mjs now observes the child's close event from
+  spawn onward. Failed startup waits for shutdown, escalates to SIGKILL when
+  needed and preserves the original startup error after confirmed cleanup.
+  An unconfirmed shutdown produces an explicit error rather than reporting success.
+  Concurrent stop calls share the in-flight operation; completed calls are safe
+  to repeat. Expected shutdown still suppresses the unexpected-exit callback.
+- tests/desktop-preview-shell.test.mjs adds real-process malformed/timeout and
+  concurrent-stop checks. The first regression failed before the implementation;
+  all 19 focused shell checks passed afterward. PowerShell completed with exit 0;
+  Bash regression remains running. Syntax, parity/BOM and whitespace checks passed.
+- Built a separate managed app at
+  /private/tmp/coop-runtime-shutdown-app-20260907/mac-arm64/Coop Desktop.app.
+  Ad-hoc signing, strict deep signature and package/fuse verification passed.
+  Source and helper closure both contain the corrected supervisor. Packaged managed
+  runtime acceptance is running in an isolated profile without copying credentials
+  or requesting model generation. Native visual checks remain pending locked UI.
+- Evidence prefix: /private/tmp/coop-desktop-home-20260907-state/runtime-shutdown-.
+  Before-edit backups are in .backups/runtime_shutdown_20260907_*/.
+  This change confirms the owned child process closes; it does not establish
+  native Windows acceptance or a general orphan-descendant/retention policy.
+  Next: finish full Bash and packaged runtime checks, then commit/push under the
+  existing source-sharing authorization. No release or version bump performed.
+
+- Packaged acceptance completed with exit 0 using the shipped update-helper copy
+  and bundled Node. Real runtime PID 7672 returned authenticated capabilities
+  (contract 1, Pi 0.84.3), then two concurrent stop calls awaited close; both child
+  and advertised runtime PIDs were verified absent. Receipt:
+  runtime-shutdown-managed-evidence.json; script/log: runtime-shutdown-managed.*.
+- A controlled non-exiting child check against that packaged module confirmed
+  shutdown rejects after failed escalation, then retries the same child and
+  resolves only after its close event. Evidence: runtime-shutdown-unconfirmed.*.
+  The ASAR supervisor and helper supervisor both equal current source bytes;
+  bundled Cooptimize icon equals original artwork. Native UI remains unverified.
+
+- Final full Bash suite completed with observed exit 0 and all tests passed,
+  including the two new shutdown regressions. Full PowerShell, syntax/parity/BOM,
+  whitespace and post-use strict package signature checks passed. No test process
+  handles remain active from this slice. The prior native test app/profile was
+  left intact; the corrected package is available for the pending visual check.

@@ -20,12 +20,14 @@ export function validateRuntimeReady(value) {
   return { ...value, endpoint: endpoint.origin };
 }
 
-function waitForExit(child, timeoutMs) {
-  if (child.exitCode !== null) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    child.once("close", () => { clearTimeout(timer); resolve(); });
-  });
+async function waitForExit(closed, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      closed.then(() => true),
+      new Promise(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); }),
+    ]);
+  } finally { clearTimeout(timer); }
 }
 
 export async function startCoopRuntime({
@@ -48,7 +50,27 @@ export async function startCoopRuntime({
     shell: false,
   });
 
-  let ready;
+  let ready, exited = false, stopRequested = false, stopTask;
+  const closed = new Promise(resolve => child.once("close", (code, signal) => {
+    exited = true;
+    resolve();
+    if (ready && !stopRequested) onExit({ code, signal });
+  }));
+  const stop = ({ graceMs = 3000 } = {}) => {
+    if (!Number.isFinite(graceMs) || graceMs < 0) return Promise.reject(new RangeError("Runtime shutdown grace period is invalid."));
+    if (stopTask) return stopTask;
+    if (exited) return Promise.resolve();
+    stopRequested = true;
+    stopTask = (async () => {
+      try {
+        child.kill("SIGTERM");
+        if (await waitForExit(closed, graceMs)) return;
+        child.kill("SIGKILL");
+        if (!await waitForExit(closed, 1000)) throw new Error("Coop Runtime shutdown could not be confirmed.");
+      } finally { stopTask = null; }
+    })();
+    return stopTask;
+  };
   try {
     ready = await new Promise((resolveReady, reject) => {
       let stdout = "";
@@ -78,28 +100,12 @@ export async function startCoopRuntime({
       child.once("close", (code) => finish(reject, new Error(`Coop Runtime exited before ready (${code ?? "unknown"}).${stderr.trim() ? " Check Coop Health for details." : ""}`)));
     });
   } catch (error) {
-    if (child.exitCode === null) child.kill();
+    // A failed ready handshake still owns a child. Reap it before surfacing the
+    // startup failure; otherwise retry/update cleanup can overlap that runtime.
+    try { await stop({ graceMs: 1000 }); }
+    catch (shutdownError) { throw new AggregateError([error, shutdownError], "Coop Runtime startup failed and shutdown could not be confirmed."); }
     throw error;
   }
 
-  let stopped = false;
-  child.once("close", (code, signal) => {
-    if (!stopped) onExit({ code, signal });
-  });
-  return {
-    ready,
-    child,
-    invocation,
-    async stop({ graceMs = 3000 } = {}) {
-      if (stopped) return;
-      stopped = true;
-      if (child.exitCode !== null) return;
-      child.kill("SIGTERM");
-      await waitForExit(child, graceMs);
-      if (child.exitCode === null) {
-        child.kill("SIGKILL");
-        await waitForExit(child, 1000);
-      }
-    },
-  };
+  return { ready, child, invocation, stop };
 }
