@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/clipboard-interoperability.v1.json",
+  "title": "Coop Desktop Windows clipboard interoperability evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "platform", "overallStatus", "automatedChecks", "applications"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "platform": { "const": "windows" },
+    "overallStatus": { "enum": ["pending", "pass", "fail"] },
+    "automatedChecks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "applications": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "required", "status", "cases", "evidence"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+          "name": { "type": "string", "minLength": 1 },
+          "required": { "type": "boolean" },
+          "status": { "enum": ["pending", "pass", "fail", "not-applicable"] },
+          "cases": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "evidence": { "type": ["string", "null"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "testId"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "status": { "const": "pass" },
+        "testId": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

@@ -6,6 +6,7 @@ import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { renderKnowledgeMarkdown } from "../lib/knowledge-service.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -21,10 +22,39 @@ const t = (name, ok) => {
 // --- start the bridge against the stub pi ------------------------------------
 // A fake agent dir with one prior session for THIS cwd, so /sessions and /resume
 // can be exercised (the bridge mirrors pi's session-dir encoding).
-import { mkdirSync, writeFileSync, mkdtempSync, symlinkSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, mkdtempSync, realpathSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir as osTmp } from "node:os";
 import { resolve as resolvePath } from "node:path";
 const agentDir = mkdtempSync(join(osTmp(), "coop-web-test-"));
+const teamKnowledgeRoot = mkdtempSync(join(osTmp(), "coop-web-knowledge-"));
+spawnSync("git", ["init", "--quiet", teamKnowledgeRoot]);
+const knowledgeRecord = (overrides = {}) => ({
+  schemaVersion: 1,
+  id: "knowledge.sql.bridge.001",
+  title: "Bridge SQL knowledge",
+  kind: "pattern",
+  scope: "team",
+  sensitivity: "internal",
+  status: "approved",
+  confidence: "high",
+  tags: ["sql", "bridge"],
+  appliesTo: ["coop-sql-review"],
+  source: { type: "human-authored", references: ["sanitized-bridge-fixture"] },
+  createdAt: "2026-09-04T20:00:00.000Z",
+  createdBy: "test-author",
+  review: { reviewedAt: "2026-09-04T21:00:00.000Z", reviewedBy: "test-reviewer" },
+  project: { organizationId: null, projectId: null },
+  sanitization: { clientData: "none", checkedAt: "2026-09-04T20:30:00.000Z", checkedBy: "test-sanitizer" },
+  supersedes: null,
+  supersededBy: null,
+  body: {
+    context: "SQL bridge fixture.", problem: "A repeatable SQL problem.", why: "A known cause.",
+    approvedPattern: "Use the approved bridge pattern.", antiPattern: "Avoid the old pattern.",
+    detection: "Run the deterministic review.", example: "SELECT 1.", exceptions: "None.", sources: "Sanitized fixture.",
+  },
+  ...overrides,
+});
+writeFileSync(join(teamKnowledgeRoot, "knowledge.sql.bridge.001.md"), renderKnowledgeMarkdown(knowledgeRecord()));
 
 // A controlled working folder with known files, for the Files-panel endpoints
 // (/files, /file) and their path jail. `outside` is a sibling the jail must never
@@ -32,6 +62,7 @@ const agentDir = mkdtempSync(join(osTmp(), "coop-web-test-"));
 const workDir = mkdtempSync(join(osTmp(), "coop-web-work-"));
 const outside = mkdtempSync(join(osTmp(), "coop-web-outside-"));
 writeFileSync(join(outside, "secret.txt"), "TOP SECRET — must never be served\n");
+writeFileSync(join(outside, "outside-session.jsonl"), "{}\n");
 writeFileSync(join(workDir, "notes.md"), "# Title\n\nHello **world**.\n");
 writeFileSync(join(workDir, "data.csv"), "name,age\nAlice,30\nBob,25\n");
 writeFileSync(join(workDir, ".env"), "SECRET_KEY=abc123\n"); // hidden by the listing; /file must not serve it either
@@ -98,11 +129,11 @@ writeFileSync(join(workSessDir, WORK_SESSION), [
   JSON.stringify({ type: "message", id: "wa1", parentId: "wu1", timestamp: "2026-07-02T00:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "work answer" }] } }),
 ].join("\n") + "\n");
 
-const spec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: agentDir } });
+const spec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: agentDir, OPENAI_API_KEY: "fixture-launch-spec-key" } });
 const server = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT)], {
   // COOP_WEB_MAX_CHATS=3 gives the multi-chat cap test a deterministic, cheap bound;
   // it affects nothing earlier in the file (all pre-multi-chat tests use one chat).
-  env: { ...process.env, COOP_LAUNCH_SPEC: spec, COOP_WEB_NO_OPEN: "1", COOP_WEB_MAX_CHATS: "3" },
+  env: { ...process.env, OPENAI_API_KEY: "", COOP_DIR: agentDir, COOP_LAUNCH_SPEC: spec, COOP_WEB_NO_OPEN: "1", COOP_WEB_MAX_CHATS: "3", COOP_TEAM_KNOWLEDGE_ROOT: teamKnowledgeRoot },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let serverErr = "";
@@ -140,6 +171,27 @@ t("landing sends a strict CSP", /default-src 'none'/.test(r.headers.get("content
 const cookie = setCookie.split(";")[0];
 const html = await r.text();
 t("serves the SPA shell", html.includes("<title>coop</title>") && html.includes("/app.js"));
+t("SPA exposes the session-tree entry point", html.includes('id="sessionTreeBtn"'));
+t("SPA exposes session export, automation, and retry controls",
+  html.includes('id="sessionBtn"') && html.includes('id="abortRetry"'));
+t("SPA exposes commands, explicit queues, and image attachment controls",
+  html.includes('id="commandsBtn"') && html.includes('id="steer"') && html.includes('id="followUp"') &&
+  html.includes('id="imageInput"') && html.includes('/interaction-model.js'));
+t("SPA loads bounded text attachments and plain-text portability controls",
+  html.includes('/content-portability.js') && html.includes('.sql,.dax,.m,.tmdl,.bim,.pbir') &&
+  html.includes('aria-label="Attach screenshots, images, or supported text files"'));
+t("SPA exposes the shared workspace Health entry point",
+  html.includes('id="healthBtn"') && html.includes('/workspace-health-model.js'));
+t("SPA exposes guided impact analysis and its typed presentation model",
+  html.includes('id="impactBtn"') && html.includes('/impact-model.js'));
+t("SPA exposes the governed Knowledge Hub and shared projection",
+  html.includes('id="knowledgeBtn"') && html.includes('/knowledge-model.js'));
+t("SPA exposes workspace-first Mission Control through a shared projection",
+  html.includes('id="missionControlBtn"') && html.includes('/mission-control-model.js'));
+t("SPA exposes one shared three-theme design system",
+  html.includes('id="themeBtn"') && html.includes('/theme-system.js') && html.includes('data-theme="modern-dark"'));
+t("SPA loads the allowlisted capability-view registry and structured workbench models",
+  html.includes('/capability-view-registry.js') && html.includes('/findings-model.js') && html.includes('/lineage-model.js'));
 
 r = await fetch(base + "/app.js", { headers: { cookie } });
 const appJsSrc = await r.text();
@@ -148,9 +200,152 @@ t("app.js served with cookie", r.status === 200 && /javascript/.test(r.headers.g
 // after load (the cookie is the real gate). No DOM harness for app.js, so assert the guard.
 t("app.js strips the token from the address bar after load (Fix B)",
   appJsSrc.includes('location.search.includes("token=")') && /history\.replaceState\(null, "", location\.pathname\)/.test(appJsSrc));
+t("session-tree UI uses real get_tree/fork/clone RPC commands",
+  appJsSrc.includes('type: "get_tree"') && appJsSrc.includes('type: "fork"') && appJsSrc.includes('type: "clone"'));
+t("session-tree UI exposes extension-backed existing-branch checkout and summarization",
+  appJsSrc.includes('fetch("/tree-navigate"') && appJsSrc.includes("Summarize + switch"));
+t("interaction UI uses real Pi discovery, cycle, steer, and follow-up commands",
+  appJsSrc.includes('type: "get_commands"') && appJsSrc.includes('type: "get_available_thinking_levels"') &&
+  appJsSrc.includes('type: "cycle_model"') && appJsSrc.includes('type: "steer"') && appJsSrc.includes('type: "follow_up"'));
+t("session controls use real export, compaction, and retry RPC commands",
+  appJsSrc.includes('type: "export_html"') && appJsSrc.includes('type: "set_auto_compaction"') &&
+  appJsSrc.includes('type: "set_auto_retry"') && appJsSrc.includes('type: "abort_retry"'));
+t("clipboard image handling leaves ordinary text paste untouched",
+  appJsSrc.includes("clipboardData?.items") && appJsSrc.includes("ordinary SQL/DAX/YAML/text paste remains untouched"));
+t("clipboard and copy controls preserve native selection and emit plain source payloads",
+  appJsSrc.includes('data-copy-kind="code"') && appJsSrc.includes('data-copy-kind="table"') &&
+  appJsSrc.includes('copy.dataset.copyKind = "message"') &&
+  !appJsSrc.includes('addEventListener("copy"') && !appJsSrc.includes("addEventListener('copy'"));
+t("text-file replay uses the shared length-delimited decoder",
+  appJsSrc.includes("CoopPortability.unwrapTextAttachments") && appJsSrc.includes("CoopPortability.wrapTextAttachments"));
+t("Mission Control auto-opens only when the Desktop bridge is present",
+  appJsSrc.includes("!window.coopDesktop || desktopMissionControlOpened") && !appJsSrc.includes("if (!window.coopDesktop) openMissionControl"));
+t("theme UI applies one shared presentation contract without reloading",
+  appJsSrc.includes("window.CoopThemes.apply") && appJsSrc.includes("window.coopDesktop?.setTheme") && !appJsSrc.includes("location.reload()"));
+
+r = await fetch(base + "/interaction-model.js", { headers: { cookie } });
+const interactionModelSrc = await r.text();
+t("interaction model is served from the authenticated static allowlist",
+  r.status === 200 && /javascript/.test(r.headers.get("content-type") || "") && interactionModelSrc.includes("CoopInteraction"));
+r = await fetch(base + "/theme-system.js", { headers: { cookie } });
+const themeSystemSrc = await r.text();
+t("theme system is served from the authenticated static allowlist",
+  r.status === 200 && themeSystemSrc.includes("modern-dark") && themeSystemSrc.includes("modern-light") && themeSystemSrc.includes("retro-messenger") && !themeSystemSrc.includes("node:fs"));
+r = await fetch(base + "/content-portability.js", { headers: { cookie } });
+const contentPortabilitySrc = await r.text();
+t("content portability is served from the authenticated static allowlist without local-machine authority",
+  r.status === 200 && contentPortabilitySrc.includes("CoopPortability") &&
+  contentPortabilitySrc.includes("unwrapTextAttachments") && !contentPortabilitySrc.includes("node:fs") &&
+  !contentPortabilitySrc.includes("child_process"));
+
+r = await fetch(base + "/workspace-health-model.js", { headers: { cookie } });
+const healthModelSrc = await r.text();
+t("workspace Health model is served from the authenticated static allowlist",
+  r.status === 200 && /javascript/.test(r.headers.get("content-type") || "") && healthModelSrc.includes("CoopWorkspaceHealth"));
+
+r = await fetch(base + "/capability-view-registry.js", { headers: { cookie } });
+const capabilityViewSrc = await r.text();
+t("capability-view registry is served only from the authenticated static allowlist",
+  r.status === 200 && capabilityViewSrc.includes("CoopCapabilityViews") && !capabilityViewSrc.includes("shell.openExternal"));
+r = await fetch(base + "/findings-model.js", { headers: { cookie } });
+const findingsModelSrc = await r.text();
+t("generic findings model is served from the authenticated static allowlist",
+  r.status === 200 && findingsModelSrc.includes("CoopFindings"));
+r = await fetch(base + "/lineage-model.js", { headers: { cookie } });
+const lineageModelSrc = await r.text();
+t("focused lineage model is served from the authenticated static allowlist",
+  r.status === 200 && lineageModelSrc.includes("CoopLineage"));
+r = await fetch(base + "/impact-model.js", { headers: { cookie } });
+const impactModelSrc = await r.text();
+t("guided impact model is served from the authenticated static allowlist",
+  r.status === 200 && impactModelSrc.includes("CoopImpact") && impactModelSrc.includes("impact_analysis_result"));
+r = await fetch(base + "/knowledge-model.js", { headers: { cookie } });
+const knowledgeModelSrc = await r.text();
+t("knowledge projection is served from the authenticated static allowlist",
+  r.status === 200 && knowledgeModelSrc.includes("CoopKnowledge") && !knowledgeModelSrc.includes("node:fs"));
+r = await fetch(base + "/mission-control-model.js", { headers: { cookie } });
+const missionControlModelSrc = await r.text();
+t("Mission Control projection is served from the authenticated static allowlist",
+  r.status === 200 && missionControlModelSrc.includes("CoopMissionControl") && !missionControlModelSrc.includes("node:fs"));
 
 r = await fetch(base + "/viewer.js", { headers: { cookie } });
 t("viewer.js served with cookie", r.status === 200 && /javascript/.test(r.headers.get("content-type") || ""));
+
+r = await fetch(base + "/capabilities", { headers: { cookie } });
+const runtimeCapabilities = await r.json();
+const expectedPlatform = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
+t("/capabilities -> versioned authenticated runtime contract",
+  r.status === 200 && runtimeCapabilities.contractVersion === 1 && runtimeCapabilities.versions.pi === "0.84.3" &&
+  runtimeCapabilities.contracts.executionEnvelope === 1 && runtimeCapabilities.contracts.authProviders === 1 &&
+  runtimeCapabilities.contracts.doctorReport === 1 && runtimeCapabilities.contracts.projectConfigProposal === 1 &&
+  runtimeCapabilities.contracts.environmentDiscovery === 1 &&
+  runtimeCapabilities.contracts.projectSetupState === 1 &&
+  runtimeCapabilities.contracts.userProfile === 1 &&
+  runtimeCapabilities.contracts.runtimeEvent === 1 && runtimeCapabilities.contracts.serviceExtension === 1 &&
+  runtimeCapabilities.contracts.workflowDefinition === 1 && runtimeCapabilities.contracts.workflowRun === 1 &&
+  runtimeCapabilities.contracts.impactAnalysis === 1 && runtimeCapabilities.contracts.knowledgeRecord === 1 &&
+  runtimeCapabilities.contracts.knowledgeIndex === 1 && runtimeCapabilities.contracts.knowledgeService === 1);
+t("/capabilities reports platform state for renderer decisions",
+  runtimeCapabilities.platform.os === expectedPlatform && typeof runtimeCapabilities.platform.powerBiDesktopBridge === "boolean");
+t("/capabilities carries every registry descriptor plus resolved runtime/client state",
+  runtimeCapabilities.capabilities.length === 47 && runtimeCapabilities.capabilities.every((c) => c.runtime && c.clients));
+t("/capabilities advertises the explicit existing-branch checkout provider",
+  runtimeCapabilities.rpc.existingBranchCheckout === true && runtimeCapabilities.rpc.existingBranchCheckoutProvider === "coop-extension");
+t("/capabilities publishes the image limits enforced by the RPC adapter",
+  runtimeCapabilities.limits.promptImages.maxImages === 5 &&
+  runtimeCapabilities.limits.promptImages.maxImageBytes === 4 * 1024 * 1024 &&
+  runtimeCapabilities.limits.promptImages.maxTotalImageBytes === 8 * 1024 * 1024 &&
+  runtimeCapabilities.limits.promptImages.mimeTypes.includes("image/png"));
+t("/capabilities publishes declarative service extensions without renderer code",
+  runtimeCapabilities.extensions?.service?.some((item) => item.capabilityId === "coop.review.sql" && item.invocation?.name === "sql_review"));
+t("/capabilities publishes declarative workflow extensions without executable renderer fields",
+  runtimeCapabilities.extensions?.workflow?.some((item) => item.capabilityId === "coop.workflow.review-changes" && Array.isArray(item.stageIds)) &&
+  !/command|callback/.test(JSON.stringify(runtimeCapabilities.extensions.workflow)));
+
+r = await fetch(base + "/doctor", { headers: { cookie } });
+const doctorReport = await r.json();
+t("/doctor exposes the shared versioned Health contract",
+  r.status === 200 && doctorReport.ok === true && doctorReport.report?.schemaVersion === 1 && Array.isArray(doctorReport.report?.checks));
+r = await fetch(base + "/auth/providers", { headers: { cookie } });
+const authReport = await r.json();
+t("/auth/providers keeps model, client Microsoft, and knowledge trust contexts separate",
+  r.status === 200 && authReport.schemaVersion === 1 &&
+  authReport.providers?.map((provider) => provider.trustContext).join(",") === "model,client-microsoft,cooptimize-knowledge" &&
+  !/accessToken|refreshToken/i.test(JSON.stringify(authReport)));
+t("/auth/providers recognizes the child runtime key from the launch spec without exposing it",
+  authReport.providers[0].state === "authenticated" &&
+  !JSON.stringify(authReport).includes("fixture-launch-spec-key"));
+r = await fetch(base + "/knowledge/catalog", { headers: { cookie } });
+const knowledgeCatalog = await r.json();
+t("/knowledge/catalog exposes governed records with source provenance",
+  r.status === 200 && knowledgeCatalog.catalog?.records?.[0]?.id === "knowledge.sql.bridge.001" &&
+  knowledgeCatalog.catalog.records[0].sourceId === "team.general" && !JSON.stringify(knowledgeCatalog).includes(teamKnowledgeRoot));
+r = await fetch(base + "/knowledge/search?q=bridge&scope=team", { headers: { cookie } });
+const knowledgeSearch = await r.json();
+t("/knowledge/search returns only approved scope-filtered guidance",
+  r.status === 200 && knowledgeSearch.results?.length === 1 && knowledgeSearch.results[0].id === "knowledge.sql.bridge.001");
+t("Health UI consumes shared contracts and the fixed Desktop model-login bridge",
+  appJsSrc.includes('fetch(`/doctor${suffix}`)') && appJsSrc.includes('fetch(`/auth/providers${suffix}`)') &&
+  appJsSrc.includes('fetch(`/setup/state${suffix}`)') && appJsSrc.includes('fetch(`/profile${suffix}`)') &&
+  appJsSrc.includes('fetch("/profile/apply"') && appJsSrc.includes("window.coopDesktop.startModelLogin()"));
+t("project-contract UI reads, previews, and applies through the shared two-step service",
+  appJsSrc.includes('fetch(`/config/current?sid=') && appJsSrc.includes('fetch("/config/proposal"') &&
+  appJsSrc.includes('fetch("/config/apply"') && appJsSrc.includes("Apply approved contract"));
+t("structured findings UI consumes execution envelopes and never labels partial evidence clean",
+  appJsSrc.includes('case "__execution_envelope"') && appJsSrc.includes("CoopCapabilityViews") &&
+  appJsSrc.includes("CoopFindings") && appJsSrc.includes("absence of another finding is not a clean pass"));
+t("focused lineage UI renders Data Doc evidence without reconstructing the graph",
+  appJsSrc.includes("CoopLineage") && appJsSrc.includes("Evidence paths") &&
+  appJsSrc.includes("Data Doc returned multiple candidates and did not guess") &&
+  appJsSrc.includes("Treat missing dependencies as unknown, not absent"));
+t("guided impact UI invokes the existing skill and renders attributed evidence",
+  appJsSrc.includes("window.CoopImpact.guidedPrompt") && appJsSrc.includes("Impact evidence is incomplete") &&
+  appJsSrc.includes("Implementation approval:") && !appJsSrc.includes("JSON.parse(impact"));
+r = await fetch(base + "/profile", { headers: { cookie } });
+const profileBefore = await r.json();
+t("/profile exposes the authoritative questionnaire without requiring an existing profile",
+  r.status === 200 && profileBefore.report?.state === "not-configured" &&
+  profileBefore.report?.questionnaire?.fields?.communication?.preset?.options?.length === 4);
 
 // fetch() forbids overriding Host, so use raw http for the rebinding-guard probe.
 const rebindStatus = await new Promise((resolve) => {
@@ -197,6 +392,27 @@ async function readSse(ms) {
     .filter(Boolean);
 }
 
+async function readRuntimeSse(sid, since = 0) {
+  const ctrl = new AbortController();
+  const resp = await fetch(base + `/runtime-events?sid=${encodeURIComponent(sid)}&since=${since}`, { headers: { cookie }, signal: ctrl.signal });
+  const reader = resp.body.getReader();
+  let buf = "";
+  const until = Date.now() + 1500;
+  while (!buf.includes("\n\n") && Date.now() < until) {
+    const race = await Promise.race([
+      reader.read(),
+      new Promise((resolve) => setTimeout(() => resolve(null), 100)),
+    ]);
+    if (!race || race.done) continue;
+    buf += Buffer.from(race.value).toString("utf8");
+  }
+  ctrl.abort();
+  const frame = buf.split("\n\n").find((part) => part.includes("data: ")) || "";
+  const id = Number((/^id: (\d+)$/m.exec(frame) || [])[1]);
+  const data = (/^data: (.*)$/m.exec(frame) || [])[1];
+  return { status: resp.status, id, event: data ? JSON.parse(data) : null };
+}
+
 // --- SSE envelope: a GLOBAL __hello carrying the chats list (replay moved to poll) --
 let events = await readSse(1500);
 t("SSE starts with a global __hello carrying the chats list",
@@ -204,12 +420,121 @@ t("SSE starts with a global __hello carrying the chats list",
 const sid1 = events[0].ev.chats[0].sid;
 t("__hello lists exactly one chat at boot", events[0].ev.chats.length === 1 && typeof sid1 === "string");
 
+const liveDomain = await readRuntimeSse(sid1);
+t("runtime domain SSE replays a resumable event with its sequence as the SSE ID",
+  liveDomain.status === 200 && liveDomain.id === liveDomain.event?.sequence && liveDomain.event?.type === "session.started");
+
 const post = (path, body) =>
   fetch(base + path, {
     method: "POST",
     headers: { cookie, "content-type": "application/json", "x-coop-csrf": "1" },
     body: JSON.stringify(body),
   });
+
+const proposedKnowledge = knowledgeRecord({
+  id: "knowledge.sql.bridge-proposal.001",
+  title: "Proposed bridge lesson",
+  status: "proposed",
+  review: { reviewedAt: null, reviewedBy: null },
+});
+r = await post("/knowledge/preview", { sid: sid1, action: "create", sourceId: "team.general", record: proposedKnowledge });
+const knowledgeProposal = await r.json();
+t("knowledge proposal previews exact source bytes without writing",
+  r.status === 200 && knowledgeProposal.proposal?.preview?.before === null &&
+  /status: proposed/.test(knowledgeProposal.proposal?.preview?.after || "") &&
+  !existsSync(join(teamKnowledgeRoot, "knowledge.sql.bridge-proposal.001.md")));
+r = await post("/knowledge/apply", { sid: sid1, proposalId: knowledgeProposal.proposal.proposalId, approved: false });
+t("knowledge source write fails closed without explicit approval", r.status === 400);
+r = await post("/knowledge/apply", { sid: sid1, proposalId: knowledgeProposal.proposal.proposalId, approved: true });
+const appliedKnowledge = await r.json();
+t("approved knowledge proposal writes an uncommitted auditable source change",
+  r.status === 200 && appliedKnowledge.result?.gitCommitCreated === false &&
+  existsSync(join(teamKnowledgeRoot, "knowledge.sql.bridge-proposal.001.md")) &&
+  /knowledge\.sql\.bridge-proposal\.001\.md/.test(spawnSync("git", ["-C", teamKnowledgeRoot, "status", "--short"], { encoding: "utf8" }).stdout));
+const approvedKnowledge = { ...proposedKnowledge, status: "approved", review: { reviewedAt: "2026-09-04T22:00:00.000Z", reviewedBy: "test-human-reviewer" } };
+r = await post("/knowledge/preview", { sid: sid1, action: "transition", sourceId: "team.general", recordId: approvedKnowledge.id, record: approvedKnowledge });
+const approvalProposal = await r.json();
+t("knowledge approval is a separate previewed human lifecycle change",
+  r.status === 200 && approvalProposal.proposal?.operation === "knowledge.approve" && /status: approved/.test(approvalProposal.proposal?.preview?.after || ""));
+r = await post("/knowledge/apply", { sid: sid1, proposalId: approvalProposal.proposal.proposalId, approved: true });
+const approvedKnowledgeResult = await r.json();
+t("knowledge approval preserves prior bytes and still creates no Git commit",
+  r.status === 200 && approvedKnowledgeResult.result?.backupId && approvedKnowledgeResult.result?.gitCommitCreated === false &&
+  /status: approved/.test(readFileSync(join(teamKnowledgeRoot, "knowledge.sql.bridge-proposal.001.md"), "utf8")));
+
+// Additive Core stream: current Web continues using the raw replay above, while
+// Desktop consumes versioned domain events and opaque raw-result artifacts.
+r = await fetch(base + `/runtime-events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
+let domain = await r.json();
+t("runtime domain stream starts with a versioned session event",
+  r.status === 200 && domain.contractVersion === 1 && domain.events[0]?.type === "session.started");
+const workflowCursor = domain.nextSequence;
+r = await fetch(base + "/workflows", { headers: { cookie } });
+const workflowDefinitions = await r.json();
+t("runtime lists versioned declarative workflow definitions",
+  r.status === 200 && workflowDefinitions.schemaVersion === 1 && workflowDefinitions.workflows?.[0]?.id === "coop-workflow.review-changes");
+r = await post("/workflow/start", { sid: sid1, workflowId: "coop-workflow.review-changes", input: { changedFilesOnly: true } });
+const startedWorkflow = await r.json();
+t("runtime starts a chat-scoped resumable workflow checkpoint",
+  r.status === 200 && startedWorkflow.run?.state === "active" && startedWorkflow.run?.currentStageId === "scope-changes");
+r = await post("/workflow/transition", { sid: sid1, runId: startedWorkflow.run.runId, operation: "start-stage" });
+const runningWorkflow = await r.json();
+t("runtime applies only named workflow transitions",
+  r.status === 200 && runningWorkflow.run?.revision === 2 && runningWorkflow.run?.stages?.[0]?.status === "running");
+r = await fetch(base + `/workflow/run?sid=${sid1}&runId=${encodeURIComponent(startedWorkflow.run.runId)}`, { headers: { cookie } });
+const resumedWorkflow = await r.json();
+t("workflow checkpoint is recovered after client reconnect without rerunning a stage",
+  r.status === 200 && resumedWorkflow.run?.revision === 2 && resumedWorkflow.run?.stages?.[0]?.attempt === 1);
+r = await fetch(base + `/runtime-events-poll?sid=${sid1}&since=${workflowCursor}`, { headers: { cookie } });
+const workflowEvents = await r.json();
+t("workflow state changes use the reconnectable runtime event stream",
+  workflowEvents.events?.map((event) => event.type).join(",") === "workflow.started,workflow.updated");
+const domainCursor = domain.nextSequence;
+await post("/prompt", { sid: sid1, message: "__domain_tool__" });
+await new Promise((resolve) => setTimeout(resolve, 50));
+r = await fetch(base + `/runtime-events-poll?sid=${sid1}&since=${domainCursor}`, { headers: { cookie } });
+domain = await r.json();
+const completedDomain = domain.events.find((event) => event.type === "tool.completed");
+t("tool lifecycle is normalized into reconnectable domain events",
+  domain.events.some((event) => event.type === "tool.started") && domain.events.some((event) => event.type === "tool.progress") && Boolean(completedDomain));
+t("structured execution envelope keeps partial evidence distinct from execution success",
+  completedDomain?.payload?.envelope?.executionStatus === "completed" && completedDomain.payload.envelope.evidenceStatus === "partial" && completedDomain.payload.envelope.verdict === "findings");
+r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
+const normalizedReplay = await r.json();
+const normalizedLine = normalizedReplay.events.find((line) => line.includes('"type":"__execution_envelope"'));
+const normalizedReview = normalizedLine ? JSON.parse(normalizedLine) : null;
+t("Web replay receives the same structured execution envelope as Desktop/Core",
+  normalizedReview?.envelope?.capabilityId === "coop.review.sql" && normalizedReview.envelope.evidenceStatus === "partial");
+const artifactId = completedDomain.payload.envelope.artifacts[0].id;
+r = await fetch(base + `/runtime-artifact?sid=${sid1}&id=${encodeURIComponent(artifactId)}`, { headers: { cookie } });
+const artifact = await r.json();
+t("raw deterministic-tool output remains available by opaque artifact ID",
+  r.status === 200 && artifact.artifact.details.report.findings[0].rule_id === "SQL-STUB");
+r = await fetch(base + `/runtime-artifact?sid=${sid1}&id=${encodeURIComponent("c1:artifact:missing")}`, { headers: { cookie } });
+t("runtime artifact lookup cannot resolve arbitrary paths or unknown IDs", r.status === 404);
+
+const lineageCursor = normalizedReview ? normalizedReplay.next : 0;
+await post("/prompt", { sid: sid1, message: "__lineage_tool__" });
+await new Promise((resolve) => setTimeout(resolve, 50));
+r = await fetch(base + `/events-poll?sid=${sid1}&since=${lineageCursor}`, { headers: { cookie } });
+const lineageReplay = await r.json();
+const lineageLine = lineageReplay.events.find((line) => line.includes('"capabilityId":"coop.lineage.explorer"'));
+const lineageEnvelope = lineageLine ? JSON.parse(lineageLine).envelope : null;
+t("Data Doc focused lineage reaches Web/Desktop through the shared execution envelope",
+  lineageEnvelope?.evidenceStatus === "partial" && lineageEnvelope.results?.data?.edges?.[0]?.evidence === "INSERT INTO dbo.fact_sales" &&
+  lineageEnvelope.results.data.upstream[0].trust.dynamic_sql_untraced === true);
+
+const impactCursor = lineageReplay.next;
+await post("/prompt", { sid: sid1, message: "__impact_tool__" });
+await new Promise((resolve) => setTimeout(resolve, 50));
+r = await fetch(base + `/events-poll?sid=${sid1}&since=${impactCursor}`, { headers: { cookie } });
+const impactReplay = await r.json();
+const impactLine = impactReplay.events.find((line) => line.includes('"capabilityId":"coop.impact.guided"'));
+const impactEnvelope = impactLine ? JSON.parse(impactLine).envelope : null;
+t("existing impact skill result reaches clients as a typed attributable artifact",
+  impactEnvelope?.evidenceStatus === "partial" && impactEnvelope.results?.data?.risk?.level === "high" &&
+  impactEnvelope.results.data.paths[1].evidenceSourceIds.join(",") === "data-doc-1,pbi-1" &&
+  impactEnvelope.results.data.approval.status === "pending");
 
 // Per-chat REPLAY now lives on /events-poll?sid (/events no longer replays). The stub's
 // startup select dialog is replayed; the transient notify is not.
@@ -239,6 +564,18 @@ const utf8Frame = events.find((e) => e.ev && e.ev.type === "message_update" && e
 t("prompt body preserves UTF-8 round-trip", !!utf8Frame);
 t("prompt reached the stub pi and its reply streamed back (enveloped)", !!echoFrame);
 t("the live frame carries the chat's sid and an integer n", !!echoFrame && echoFrame.sid === sid1 && Number.isInteger(echoFrame.n));
+
+// Pi image content is structured input, not a prose attachment shim. The bridge
+// sanitizes and forwards supported base64 images while rejecting data URLs.
+const tinyPng = Buffer.from("stub-png").toString("base64");
+r = await post("/prompt", { message: "inspect image", images: [{ type: "image", mimeType: "image/png", data: tinyPng, injected: "drop-me" }] });
+t("POST /prompt accepts a bounded structured image", r.status === 200);
+await new Promise((res) => setTimeout(res, 200));
+r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
+rep = await r.json();
+t("prompt image reaches Pi with supported MIME/base64 fields", rep.events.some((line) => line.includes(`\"data\":\"${tinyPng}\"`) && line.includes('"mimeType":"image/png"')));
+r = await post("/prompt", { message: "bad image", images: [{ type: "image", mimeType: "image/png", data: "data:image/png;base64,AAAA" }] });
+t("POST /prompt rejects a data-URL image", r.status === 400);
 
 // --- ui-response marks the dialog answered (skipped on the next replay) -----------
 r = await post("/ui-response", { id: dialog.id, value: dialog.options[0] });
@@ -360,6 +697,118 @@ r = await post("/rpc", { type: "set_session_name", name: "My named chat" });
 state = await r.json();
 t("/rpc set_session_name round-trips", state.success === true);
 
+// --- Pi 0.84.3 parity adapters: one integration assertion per command family ---
+r = await post("/rpc", { type: "cycle_model" });
+state = await r.json();
+t("/rpc cycle_model returns model + thinking state", r.status === 200 && state.data.model.id === "stub-2" && state.data.thinkingLevel === "high");
+r = await post("/rpc", { type: "get_available_thinking_levels" });
+state = await r.json();
+t("/rpc lists Pi-reported thinking levels", r.status === 200 && state.data.levels.includes("medium"));
+r = await post("/rpc", { type: "cycle_thinking_level" });
+state = await r.json();
+t("/rpc cycle_thinking_level round-trips", r.status === 200 && state.data.level === "high");
+
+r = await post("/rpc", { type: "set_steering_mode", mode: "one-at-a-time" });
+t("/rpc set_steering_mode round-trips", r.status === 200 && (await r.json()).success === true);
+r = await post("/rpc", { type: "set_follow_up_mode", mode: "all" });
+t("/rpc set_follow_up_mode round-trips", r.status === 200 && (await r.json()).success === true);
+r = await post("/rpc", { type: "steer", message: "adjust now", images: [{ type: "image", mimeType: "image/png", data: tinyPng }] });
+t("/rpc steer supports structured images", r.status === 200 && (await r.json()).success === true);
+r = await post("/rpc", { type: "follow_up", message: "do this next" });
+t("/rpc follow_up round-trips", r.status === 200 && (await r.json()).success === true);
+r = await post("/rpc", { type: "set_steering_mode", mode: "sometimes" });
+t("/rpc rejects invalid queue modes before Pi", r.status === 400);
+
+r = await post("/rpc", { type: "set_auto_compaction", enabled: false });
+t("/rpc set_auto_compaction round-trips", r.status === 200 && (await r.json()).success === true);
+r = await post("/rpc", { type: "set_auto_retry", enabled: true });
+t("/rpc set_auto_retry round-trips", r.status === 200 && (await r.json()).success === true);
+r = await post("/rpc", { type: "abort_retry" });
+t("/rpc abort_retry round-trips", r.status === 200 && (await r.json()).success === true);
+
+r = await post("/rpc", { type: "get_fork_messages" });
+state = await r.json();
+t("/rpc get_fork_messages returns eligible user entries", r.status === 200 && state.data.messages[0].entryId === "u1");
+r = await post("/rpc", { type: "get_entries", since: "u1" });
+state = await r.json();
+t("/rpc get_entries returns entries + active leaf", r.status === 200 && Array.isArray(state.data.entries) && state.data.leafId === "a1");
+r = await post("/rpc", { type: "get_tree" });
+state = await r.json();
+t("/rpc get_tree returns the session tree + active leaf", r.status === 200 && Array.isArray(state.data.tree) && state.data.leafId === "a1");
+r = await post("/rpc", { type: "get_last_assistant_text" });
+state = await r.json();
+t("/rpc get_last_assistant_text round-trips", r.status === 200 && state.data.text === "old answer");
+r = await post("/rpc", { type: "get_commands" });
+state = await r.json();
+t("/rpc get_commands preserves command source metadata", r.status === 200 && state.data.commands[0].source === "skill" && state.data.commands[0].sourceInfo.path.includes("power-bi-impact-analysis"));
+
+r = await post("/rpc", { type: "export_html" });
+state = await r.json();
+t("/rpc export_html uses Pi's safe default path", r.status === 200 && state.data.path.endsWith("stub-session.html"));
+r = await post("/rpc", { type: "export_html", outputPath: join(outside, "export.html") });
+t("/rpc does not expose arbitrary export paths to the renderer", r.status === 400);
+r = await post("/rpc", { type: "switch_session", sessionPath: join(outside, "outside-session.jsonl") });
+t("/rpc switch_session rejects paths outside Coop's session store", r.status === 400);
+r = await post("/rpc", { type: "switch_session", sessionPath: join(sessDir, FAKE_SESSION) });
+t("/rpc switch_session accepts an existing jailed Coop session", r.status === 200 && (await r.json()).success === true);
+r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
+let branchPoll = await r.json();
+t("switch_session resets and backfills the selected transcript", branchPoll.events.some((line) => line.includes('"type":"__message"')));
+
+const beforeTreeNavigation = branchPoll;
+r = await post("/tree-navigate", { entryId: "../bad" });
+t("/tree-navigate rejects malformed entry IDs before Pi", r.status === 400);
+r = await post("/tree-navigate", { entryId: "cancel" });
+state = await r.json();
+t("/tree-navigate preserves Pi cancellation", r.status === 200 && state.success === true && state.data.cancelled === true);
+r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
+branchPoll = await r.json();
+t("cancelled existing-branch navigation preserves transcript and epoch",
+  branchPoll.epoch === beforeTreeNavigation.epoch && branchPoll.next === beforeTreeNavigation.next);
+r = await post("/tree-navigate", { entryId: "missing" });
+state = await r.json();
+t("/tree-navigate reports Pi navigation errors without claiming success",
+  r.status === 200 && state.success === false && /not found/.test(state.error));
+r = await post("/tree-navigate", { entryId: "b1" });
+state = await r.json();
+t("/tree-navigate selects an existing branch through the Coop extension adapter",
+  r.status === 200 && state.success === true && state.data.currentLeafId === "b1");
+r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
+branchPoll = await r.json();
+t("successful existing-branch navigation resets and backfills the selected transcript",
+  branchPoll.epoch > beforeTreeNavigation.epoch && branchPoll.events.some((line) => line.includes('"type":"__message"')));
+const switchedEpoch = branchPoll.epoch;
+r = await post("/tree-navigate", { entryId: "a1", summarize: true });
+state = await r.json();
+t("/tree-navigate preserves Pi branch-summary semantics",
+  r.status === 200 && state.success === true && state.data.previousLeafId === "b1" && state.data.currentLeafId === "summary-a1");
+r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
+branchPoll = await r.json();
+t("internal tree-navigation result events are not replayed as status UI",
+  branchPoll.epoch > switchedEpoch && !branchPoll.events.some((line) => line.includes("coop-tree-navigate:")));
+
+const beforeCancelledFork = branchPoll;
+r = await post("/rpc", { type: "fork", entryId: "cancel" });
+state = await r.json();
+t("/rpc fork reports Pi cancellation", r.status === 200 && state.data.cancelled === true);
+r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
+branchPoll = await r.json();
+t("cancelled fork preserves transcript and epoch", branchPoll.epoch === beforeCancelledFork.epoch && branchPoll.next === beforeCancelledFork.next);
+
+r = await post("/rpc", { type: "fork", entryId: "u1" });
+state = await r.json();
+t("/rpc fork round-trips supported Pi branch creation", r.status === 200 && state.data.cancelled === false && state.data.text === "fork point");
+r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
+branchPoll = await r.json();
+t("successful fork resets and backfills the selected branch", branchPoll.epoch > beforeCancelledFork.epoch && branchPoll.events.some((line) => line.includes('"type":"__message"')));
+const forkEpoch = branchPoll.epoch;
+r = await post("/rpc", { type: "clone" });
+state = await r.json();
+t("/rpc clone round-trips supported Pi session cloning", r.status === 200 && state.data.cancelled === false);
+r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
+branchPoll = await r.json();
+t("successful clone resets and backfills the cloned session", branchPoll.epoch > forkEpoch && branchPoll.events.some((line) => line.includes('"type":"__message"')));
+
 // Capture the pre-reset epoch + the REAL monotonic cursor, to prove the polling
 // path learns of the reset (the __hello reset frame is SSE-broadcast-only).
 r = await fetch(base + `/events-poll?since=0`, { headers: { cookie } });
@@ -377,6 +826,14 @@ t("new_session resets the replay history", poll.next === 0 && poll.events.length
 r = await fetch(base + `/events-poll?since=${beforeReset.next}`, { headers: { cookie } });
 const afterReset = await r.json();
 t("poll signals the reset via a bumped epoch", typeof afterReset.epoch === "number" && afterReset.epoch !== beforeReset.epoch);
+
+// Metadata for Desktop checkpoints must not replay transcripts or expose session paths.
+r = await fetch(base + "/chat-state", { headers: { cookie } });
+const navigation = await r.json();
+t("/chat-state returns bounded authenticated navigation metadata", r.status === 200 && navigation.ok && navigation.chats.length > 0 && navigation.maxChats <= 8);
+t("/chat-state excludes replay and session-file contents", !navigation.events && navigation.chats.every(chat => !chat.sessionFile && !chat.messages));
+r = await fetch(base + "/chat-state");
+t("/chat-state requires authentication", r.status === 401);
 
 // --- /sessions + /resume ------------------------------------------------------------
 r = await fetch(base + "/sessions", { headers: { cookie } });
@@ -698,7 +1155,7 @@ t("known-ignored event is forwarded but NOT drift-flagged",
 //    framer and /events-poll (integration-level regression guard for the "NEVER
 //    readline" rule). Template literal → guarantees a literal U+2028 in the line.
 const U2028 = String.fromCharCode(0x2028); // LINE SEPARATOR — must never split a JSONL line
-const u2028Line = `{"type":"message_update","message":{},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"sep${U2028}test"}}`;
+const u2028Line = `{"type":"message_update","usage":{},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"sep${U2028}test"}}`;
 await post("/prompt", { message: "emit:" + u2028Line });
 await new Promise((res) => setTimeout(res, 400));
 r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
@@ -764,11 +1221,19 @@ t("POST /chat-new without CSRF -> 403", r.status === 403);
 // 2. Open chat 2 and observe the SSE __chats frame naming both chats.
 const chatsWatch = readSse(1600);
 await new Promise((res) => setTimeout(res, 400));
-r = await post("/chat-new", {});
+r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
+const writableCwd = (await r.json()).cwd;
+r = await post("/chat-new", { cwd: writableCwd });
+const workspaceConflict = await r.json();
+t("a second writable chat in one checkout fails closed with exactly three choices",
+  r.status === 409 && workspaceConflict.code === "workspace-write-conflict" &&
+  workspaceConflict.choices.map((choice) => choice.mode).join(",") === "worktree,read-only,override");
+r = await post("/chat-new", { cwd: writableCwd, workspaceAccess: "override", approved: true });
 const d2 = await r.json();
 const sid2 = d2.sid;
 t("POST /chat-new -> 200 with a fresh sid", r.status === 200 && typeof sid2 === "string" && sid2 !== sid1);
-t("/chat-new defaults to the startup cwd", d2.cwd === resolvePath(process.cwd()));
+t("/chat-new keeps the requested writable checkout", d2.cwd === writableCwd);
+t("/chat-new records the explicit concurrent-write override", d2.workspaceAccess?.mode === "override" && typeof d2.workspaceAccess?.overridesLeaseId === "string");
 events = await chatsWatch;
 const chatsFrame = events.find((e) => e.ev && e.ev.type === "__chats");
 t("an SSE __chats frame lists both chats",
@@ -805,6 +1270,42 @@ t("/files?sid=sid2 lists workDir's files", (files2.tree || []).some((n) => n.nam
 r = await fetch(base + `/file?sid=${sid2}&p=.env`, { headers: { cookie } });
 t("/file?sid=sid2&p=.env stays jailed per chat -> 400", r.status === 400);
 
+r = await post("/discovery", { sid: sid2, kind: "local-repositories" });
+const localDiscovery = await r.json();
+t("local repository discovery is read-only and fixed to the chat workspace",
+  r.status === 200 && localDiscovery.report?.readOnly === true && localDiscovery.report?.scope?.workspacePath === realpathSync(workDir));
+r = await post("/discovery", { sid: sid2, kind: "semantic-models", workspaceId: "not-a-guid" });
+t("Fabric discovery rejects an invalid workspace ID before external execution", r.status === 400);
+r = await fetch(base + `/setup/state?sid=${sid2}&capabilityId=coop.lineage.explorer`, { headers: { cookie } });
+const setupState = await r.json();
+t("progressive setup routes a capability to its exact missing setup step",
+  r.status === 200 && setupState.report?.capability?.available === false && setupState.report?.capability?.nextAction?.operationId === "project.configure");
+r = await fetch(base + `/config/current?sid=${sid2}`, { headers: { cookie } });
+const configBefore = await r.json();
+t("project config inspection is fixed to the chat workspace",
+  r.status === 200 && configBefore.report?.state === "not-configured" && configBefore.report?.targetPath === join(workDir, ".coop", "project.yml"));
+
+r = await post("/config/proposal", { sid: sid2, candidate: "profile:\n  organization: Cooptimize\n  default_branch: main\n" });
+const configProposal = await r.json();
+t("project config proposal validates and previews without writing", r.status === 200 && configProposal.proposal?.state === "proposed" && !existsSync(join(workDir, ".coop", "project.yml")));
+r = await post("/config/apply", { sid: sid2, proposalId: configProposal.proposal.proposalId, approved: false });
+t("project config write fails closed without explicit approval", r.status === 400 && !existsSync(join(workDir, ".coop", "project.yml")));
+r = await post("/config/apply", { sid: sid2, proposalId: configProposal.proposal.proposalId, approved: true });
+const configApplied = await r.json();
+t("approved project config is written only inside the chat workspace", r.status === 200 && configApplied.result?.state === "applied" && existsSync(join(workDir, ".coop", "project.yml")));
+r = await fetch(base + `/config/current?sid=${sid2}`, { headers: { cookie } });
+const configAfter = await r.json();
+t("project config inspection returns the applied authoritative bytes",
+  r.status === 200 && configAfter.report?.state === "configured" && configAfter.report?.content === configApplied.result?.preview?.after);
+
+r = await post("/profile/apply", { sid: sid2, approved: false, profile: { name: "Consultant", communication: { preset: "balanced" } } });
+t("profile write fails closed without explicit approval", r.status === 400 && !existsSync(join(agentDir, ".coop", "user.json")));
+r = await post("/profile/apply", { sid: sid2, approved: true, profile: { name: "Consultant", communication: { preset: "concise", custom_instructions: "ignored" } } });
+const profileApplied = await r.json();
+t("approved profile uses the shared owner and clears inapplicable custom instructions",
+  r.status === 200 && profileApplied.report?.profile?.name === "Consultant" &&
+  profileApplied.report?.profile?.communication?.custom_instructions === "" && existsSync(join(agentDir, ".coop", "user.json")));
+
 // 5. Ambiguity + unknown sid (with the chats-bearing 400 body for polling recovery).
 r = await post("/prompt", { message: "x" }); // no sid, 2 chats -> ambiguous
 t("a no-sid POST with 2 chats open -> 400", r.status === 400);
@@ -814,10 +1315,24 @@ const zbody = await r.json();
 t("the stale-sid 400 body carries the chats list (polling recovery)", Array.isArray(zbody.chats) && zbody.chats.length >= 2);
 
 // 6. Cap (MAX_CHATS=3): open the 3rd; the 4th is refused; close the 3rd.
-r = await post("/chat-new", {});
+r = await post("/chat-new", { cwd: workDir, workspaceAccess: "read-only" });
 const d3 = await r.json();
 const sid3 = d3.sid;
 t("/chat-new opens the 3rd chat (registry at the cap)", r.status === 200 && typeof sid3 === "string");
+const configBytesBeforeReadOnlyAttempt = readFileSync(join(workDir, ".coop", "project.yml"), "utf8");
+r = await post("/config/proposal", { sid: sid3, candidate: "profile:\n  organization: MustNotWrite\n  default_branch: main\n" });
+const readOnlyProposal = await r.json();
+r = await post("/config/apply", { sid: sid3, proposalId: readOnlyProposal.proposal?.proposalId, approved: true });
+const readOnlyApply = await r.json();
+t("read-only attachment blocks Core-owned project writes",
+  r.status === 409 && readOnlyApply.code === "workspace-read-only" && readFileSync(join(workDir, ".coop", "project.yml"), "utf8") === configBytesBeforeReadOnlyAttempt);
+const readOnlyKnowledge = knowledgeRecord({ id: "knowledge.sql.read-only.001", title: "Must not be written", status: "proposed", review: { reviewedAt: null, reviewedBy: null } });
+r = await post("/knowledge/preview", { sid: sid3, action: "create", sourceId: "team.general", record: readOnlyKnowledge });
+const readOnlyKnowledgeProposal = await r.json();
+r = await post("/knowledge/apply", { sid: sid3, proposalId: readOnlyKnowledgeProposal.proposal?.proposalId, approved: true });
+const readOnlyKnowledgeApply = await r.json();
+t("read-only attachment blocks governed knowledge source writes",
+  r.status === 409 && readOnlyKnowledgeApply.code === "workspace-read-only" && !existsSync(join(teamKnowledgeRoot, "knowledge.sql.read-only.001.md")));
 r = await post("/chat-new", {});
 t("a 4th /chat-new is refused with the friendly cap message", r.status === 400);
 // Closing a FRESH, still-running chat must NOT record a spurious __fatal crash card

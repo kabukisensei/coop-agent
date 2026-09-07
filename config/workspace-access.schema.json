@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/workspace-access.v1.json",
+  "title": "Coop workspace access",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "mode", "workspacePath", "leaseId", "overridesLeaseId", "delegated"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "mode": { "enum": ["write", "read-only", "override"] },
+    "workspacePath": { "type": "string", "minLength": 1 },
+    "leaseId": { "type": ["string", "null"] },
+    "overridesLeaseId": { "type": ["string", "null"] },
+    "delegated": { "type": "boolean" }
+  }
+}

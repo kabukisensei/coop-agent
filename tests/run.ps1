@@ -20,6 +20,7 @@
 $ErrorActionPreference = 'Stop'
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$env:COOP_ROOT = $root
 $coop = Join-Path (Join-Path $root 'bin') 'coop.ps1'
 $update = Join-Path (Join-Path $root 'scripts') 'update.ps1'
 
@@ -40,6 +41,215 @@ $fail = 0
 function Ok   { param([string]$m) Write-Host "  $G_CHECK $m" }
 function Ko   { param([string]$m) Write-Host "  $G_CROSS $m"; $script:fail = 1 }
 function Head { param([string]$m) Write-Host "$G_ARROW $m" }
+
+# These contracts are platform-neutral but run here as well so Windows CI cannot
+# drift away from the same capability and Desktop release baseline as Bash CI.
+Head 'Desktop capability and parity contract tests'
+& node (Join-Path $root 'tests\desktop-contracts.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Desktop capability and parity contracts pass' }
+else { Ko 'Desktop capability and parity contracts failed' }
+
+Head 'Desktop shell selection contract tests'
+& node (Join-Path $root 'tests\desktop-shell-spike.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Desktop shell selection contracts pass' }
+else { Ko 'Desktop shell selection contracts failed' }
+
+Head 'Desktop preview lifecycle and native-boundary tests'
+& node (Join-Path $root 'tests\desktop-preview-shell.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Desktop preview lifecycle and native-boundary contracts pass' }
+else { Ko 'Desktop preview lifecycle and native-boundary contracts failed' }
+
+Head 'Managed Desktop runtime bundle tests'
+& node (Join-Path $root 'tests\managed-runtime-build-plan.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Managed Desktop runtime build-plan contracts pass' }
+else { Ko 'Managed Desktop runtime build-plan contracts failed' }
+& node (Join-Path $root 'tests\prepare-managed-runtime.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Managed Desktop runtime preparation contracts pass' }
+else { Ko 'Managed Desktop runtime preparation contracts failed' }
+& node (Join-Path $root 'tests\managed-runtime.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Managed Desktop runtime bundle contracts pass' }
+else { Ko 'Managed Desktop runtime bundle contracts failed' }
+& node (Join-Path $root 'tests\managed-package-security.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Managed Desktop packaged security contracts pass' }
+else { Ko 'Managed Desktop packaged security contracts failed' }
+
+Head 'Signed Desktop update and rollback contract tests'
+& node (Join-Path $root 'tests\update-service.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Signed Desktop update and rollback contracts pass' }
+else { Ko 'Signed Desktop update and rollback contracts failed' }
+& node (Join-Path $root 'tests\update-trust.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Packaged Desktop update trust boundary passes' }
+else { Ko 'Packaged Desktop update trust boundary failed' }
+
+Head 'Desktop release evidence and parity gate tests'
+& node (Join-Path $root 'tests\desktop-release-gate.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Desktop release evidence and parity gate contracts pass' }
+else { Ko 'Desktop release evidence and parity gate contracts failed' }
+
+Head 'Commands, images, and live queue projection tests'
+& node (Join-Path $root 'tests\interaction-model.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Commands, images, and live queue projection contracts pass' }
+else { Ko 'Commands, images, and live queue projection contracts failed' }
+
+Head 'Workspace onboarding and Health projection tests'
+& node (Join-Path $root 'tests\workspace-health-model.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Workspace onboarding and Health projection contracts pass' }
+else { Ko 'Workspace onboarding and Health projection contracts failed' }
+
+Head 'Allowlisted capability-view and generic findings projection tests'
+& node (Join-Path $root 'tests\capability-view-registry.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Capability-view extension contracts pass' }
+else { Ko 'Capability-view extension contracts failed' }
+& node (Join-Path $root 'tests\findings-model.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Generic findings projection contracts pass' }
+else { Ko 'Generic findings projection contracts failed' }
+& node (Join-Path $root 'tests\findings-golden.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Pinned SQL/DAX golden parity contracts pass' }
+else { Ko 'Pinned SQL/DAX golden parity contracts failed' }
+& node (Join-Path $root 'tests\lineage-model.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Focused Data Doc lineage projection contracts pass' }
+else { Ko 'Focused Data Doc lineage projection contracts failed' }
+& node (Join-Path $root 'tests\impact-analysis.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Guided impact analysis contracts pass' }
+else { Ko 'Guided impact analysis contracts failed' }
+
+Head 'Resumable workflow extension contract tests'
+& node (Join-Path $root 'tests\workflow-extensions.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Workflow extension contracts pass' }
+else { Ko 'Workflow extension contracts failed' }
+
+Head 'Shared user profile owner/service tests'
+& node (Join-Path $root 'tests\profile-service.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Shared user profile owner/service contracts pass' }
+else { Ko 'Shared user profile owner/service contracts failed' }
+
+Head 'Runtime capability negotiation tests'
+& node (Join-Path $root 'tests\runtime-capabilities.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Runtime capability negotiation contracts pass' }
+else { Ko 'Runtime capability negotiation contracts failed' }
+
+Head 'Structured execution and runtime event contract tests'
+& node (Join-Path $root 'tests\runtime-domain.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Structured execution and runtime event contracts pass' }
+else { Ko 'Structured execution and runtime event contracts failed' }
+
+Head 'Declarative service extension contract tests'
+& node (Join-Path $root 'tests\service-extensions.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Declarative service extension contracts pass' }
+else { Ko 'Declarative service extension contracts failed' }
+
+Head 'Shared Doctor service contract tests'
+& node (Join-Path $root 'tests\doctor-service.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Shared Doctor service contracts pass' }
+else { Ko 'Shared Doctor service contracts failed' }
+
+Head 'Shared authentication provider contract tests'
+& node (Join-Path $root 'tests\auth-service.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Shared authentication provider contracts pass' }
+else { Ko 'Shared authentication provider contracts failed' }
+
+Head 'Shared project configuration proposal/write contract tests'
+& node (Join-Path $root 'tests\project-config-service.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Shared project configuration proposal/write contracts pass' }
+else { Ko 'Shared project configuration proposal/write contracts failed' }
+
+Head 'Read-only environment discovery contract tests'
+& node (Join-Path $root 'tests\environment-discovery.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Read-only environment discovery contracts pass' }
+else { Ko 'Read-only environment discovery contracts failed' }
+
+Head 'Progressive project setup state contract tests'
+& node (Join-Path $root 'tests\project-setup-service.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Progressive project setup state contracts pass' }
+else { Ko 'Progressive project setup state contracts failed' }
+
+Head 'Pi RPC adapter and runtime client tests'
+& node (Join-Path $root 'tests\rpc-adapter.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Pi RPC adapter and runtime client contracts pass' }
+else { Ko 'Pi RPC adapter and runtime client contracts failed' }
+
+Head 'Session tree projection tests'
+& node (Join-Path $root 'tests\session-tree-model.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Session tree projection contracts pass' }
+else { Ko 'Session tree projection contracts failed' }
+
+Head 'Existing-branch navigation adapter tests'
+& node (Join-Path $root 'tests\tree-navigation.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Existing-branch navigation adapter passes' }
+else { Ko 'Existing-branch navigation adapter failed' }
+
+Head 'Cross-client workspace isolation tests'
+& node (Join-Path $root 'tests\workspace-isolation.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Cross-client workspace isolation contracts pass' }
+else { Ko 'Cross-client workspace isolation contracts failed' }
+
+Head 'Governed knowledge scope and lifecycle policy tests'
+& node (Join-Path $root 'tests\knowledge-policy.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Governed knowledge policy contracts pass' }
+else { Ko 'Governed knowledge policy contracts failed' }
+
+Head 'Disposable Git-backed knowledge index tests'
+& node (Join-Path $root 'tests\knowledge-index.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Disposable knowledge index contracts pass' }
+else { Ko 'Disposable knowledge index contracts failed' }
+
+Head 'Governed knowledge source-change and presentation tests'
+& node (Join-Path $root 'tests\knowledge-service.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Governed knowledge source-change contracts pass' }
+else { Ko 'Governed knowledge source-change contracts failed' }
+& node (Join-Path $root 'tests\knowledge-model.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Governed knowledge presentation contracts pass' }
+else { Ko 'Governed knowledge presentation contracts failed' }
+
+Head 'Workspace-first Mission Control projection tests'
+& node (Join-Path $root 'tests\mission-control-model.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Mission Control projection contracts pass' }
+else { Ko 'Mission Control projection contracts failed' }
+
+Head 'Shared three-theme design-system tests'
+& node (Join-Path $root 'tests\theme-system.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Three-theme design-system contracts pass' }
+else { Ko 'Three-theme design-system contracts failed' }
+
+Head 'Clipboard and attachment portability tests'
+& node (Join-Path $root 'tests\content-portability.test.mjs')
+& node (Join-Path $root 'tests\clipboard-interoperability.test.mjs')
+& node (Join-Path $root 'tests\session-export.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Clipboard and attachment portability contracts pass' }
+else { Ko 'Clipboard and attachment portability contracts failed' }
+
+Head 'Cross-client writable session lease tests'
+$leaseDist = Join-Path ([System.IO.Path]::GetTempPath()) ("coop-lease-build-" + [System.IO.Path]::GetRandomFileName())
+New-Item -ItemType Directory -Path $leaseDist -Force | Out-Null
+try {
+  $entry = Join-Path $root 'extensions\coop-tools\index.ts'
+  $typebox = Join-Path $root 'tests\typebox-stub.mjs'
+  $outfile = Join-Path $leaseDist 'coop-tools.mjs'
+  & npx -y esbuild $entry --bundle --format=esm --platform=node --packages=external "--alias:typebox=$typebox" "--outfile=$outfile"
+  if ($LASTEXITCODE -ne 0) {
+    Ko 'Could not bundle coop-tools for session lease tests'
+  } else {
+    $priorTestDist = $env:COOP_TEST_DIST
+    $env:COOP_TEST_DIST = $leaseDist
+    & node (Join-Path $root 'tests\session-lease.test.mjs')
+    if ($LASTEXITCODE -eq 0) { Ok 'Cross-client writable session lease contracts pass' }
+    else { Ko 'Cross-client writable session lease contracts failed' }
+    & node (Join-Path $root 'tests\terminal-handoff.test.mjs')
+    if ($LASTEXITCODE -eq 0) { Ok 'Safe terminal handoff contracts pass' }
+    else { Ko 'Safe terminal handoff contracts failed' }
+    if ($null -eq $priorTestDist) { Remove-Item Env:\COOP_TEST_DIST -ErrorAction SilentlyContinue }
+    else { $env:COOP_TEST_DIST = $priorTestDist }
+  }
+} finally {
+  Remove-Item -LiteralPath $leaseDist -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Head 'Supported Coop Runtime entry-point tests'
+$env:PWSH_EXE = $psExe
+& node (Join-Path $root 'tests\runtime-entrypoint.test.mjs')
+Remove-Item Env:\PWSH_EXE -ErrorAction SilentlyContinue
+if ($LASTEXITCODE -eq 0) { Ok 'Coop Runtime entry point passes' }
+else { Ko 'Coop Runtime entry point failed' }
 
 # --- pi/npm stubs on a scratch PATH -----------------------------------------
 # The gate + --check need a `pi` (reporting 0.84.3) and an `npm` that Get-Command

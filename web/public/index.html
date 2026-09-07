@@ -1,23 +1,30 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="modern-dark">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>coop</title>
+<script src="/theme-system.js"></script>
 <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <header>
+    <button id="sidebarToggle" class="chip" aria-controls="sessionSidebar" aria-expanded="true">Chats</button>
     <span class="mark"></span>
     <b>coop</b><button class="tag folder" id="cwd" title="Working folder — click to change">Cooptimize agent</button>
     <nav class="toolbar">
-      <button id="newChat" class="chip" title="Start a fresh conversation">＋ New chat</button>
-      <button id="historyBtn" class="chip" title="Resume a previous conversation in this folder">🕘 History</button>
+      <button id="missionControlBtn" class="chip" title="Workspace health, activity, and engineering entry points">Mission Control</button>
+      <button id="themeBtn" class="chip" title="Choose a visual theme">Theme: Dark</button>
+      <button id="commandsBtn" class="chip" title="Discover skills, prompts, extensions, and Desktop actions">⌘ Commands</button>
       <button id="modelChip" class="chip" title="Change model">model…</button>
       <button id="thinkChip" class="chip" title="Thinking effort (click to change)">🧠 …</button>
+      <button id="queueBtn" class="chip" title="Steering and follow-up queue settings">Queue</button>
       <button id="compactBtn" class="chip" title="Compact the conversation to free up memory">♻ Compact</button>
       <button id="diffBtn" class="chip" title="File changes in this folder (git)">± Changes</button>
       <button id="filesBtn" class="chip" title="Browse and preview files in the working folder">📁 Files</button>
+      <button id="healthBtn" class="chip" title="Workspace setup, identity, and runtime health">Health</button>
+      <button id="impactBtn" class="chip" title="Run an evidence-backed impact analysis">Impact</button>
+      <button id="knowledgeBtn" class="chip" title="Search and review governed project and team knowledge">Knowledge</button>
     </nav>
     <span class="ctxg" id="ctx" hidden>
       <span class="bar"><i id="ctxBar"></i></span>
@@ -30,10 +37,37 @@
     <span class="status"><span class="dot" id="dot"></span><span id="statusText">ready</span></span>
   </header>
 
-  <nav id="tabs"></nav>
+  <aside id="sessionSidebar" aria-label="Chat navigation">
+    <div class="sidebar-heading">Chats</div>
+    <nav id="tabs" aria-label="Open chats"></nav>
+    <button id="historyBtn" class="chip" title="Resume a previous conversation in this folder">🕘 History</button>
+    <div class="sidebar-session">
+      <div class="sidebar-heading">Current session</div>
+      <button id="sessionTreeBtn" class="chip" title="Inspect, fork, or clone this session">⑂ Session tree</button>
+      <button id="sessionBtn" class="chip" title="Name, export, and configure this session">Session</button>
+      <button id="newChat" class="chip" title="Start a fresh conversation in the current chat">Start fresh</button>
+    </div>
+  </aside>
 
   <div id="main">
-    <div id="scroll"><div id="transcript"></div></div>
+    <section id="conversation" aria-label="Conversation">
+      <div id="scroll"><div id="transcript"></div></div>
+      <footer>
+        <div id="extDock" hidden></div>
+        <div id="queueLane" hidden></div>
+        <div id="attachmentLane" hidden></div>
+        <div class="composer">
+          <button id="attachImages" class="ghost attach-button" title="Attach screenshots, images, or supported text files" aria-label="Attach screenshots, images, or supported text files">📎</button>
+          <input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,.txt,.md,.markdown,.sql,.dax,.m,.tmdl,.bim,.pbir,.json,.jsonl,.ndjson,.yaml,.yml,.xml,.csv,.tsv,.py,.js,.mjs,.cjs,.ts,.tsx,.ps1,.sh" multiple hidden />
+          <textarea id="input" rows="1" placeholder="Ask coop anything…  (Enter to send, Shift+Enter for a new line)"></textarea>
+          <button id="stop" class="stop" hidden>Stop</button>
+          <button id="abortRetry" class="stop" hidden>Stop retry</button>
+          <button id="steer" hidden>Steer now</button>
+          <button id="followUp" hidden>Send next</button>
+          <button id="send">Send</button>
+        </div>
+      </footer>
+    </section>
     <aside id="files" hidden>
       <div class="files-head">
         <b>📁 Files</b>
@@ -56,18 +90,27 @@
         <div id="diffBody"></div>
       </div>
     </div>
+    <aside id="utilityPanel" aria-labelledby="utilityTitle" hidden>
+      <div class="utility-head">
+        <h2 id="utilityTitle" tabindex="-1">Workspace</h2>
+        <button id="utilityClose" class="ghost" aria-label="Close side panel">Close</button>
+      </div>
+      <div id="utilityBody"></div>
+    </aside>
   </div>
   <div id="toasts"></div>
 
-  <footer>
-    <div id="extDock" hidden></div>
-    <div class="composer">
-      <textarea id="input" rows="1" placeholder="Ask coop anything…  (Enter to send, Shift+Enter for a new line)"></textarea>
-      <button id="stop" class="stop" hidden>Stop</button>
-      <button id="send">Send</button>
-    </div>
-  </footer>
 
+<script src="/session-tree-model.js"></script>
+<script src="/interaction-model.js"></script>
+<script src="/workspace-health-model.js"></script>
+<script src="/capability-view-registry.js"></script>
+<script src="/findings-model.js"></script>
+<script src="/lineage-model.js"></script>
+<script src="/impact-model.js"></script>
+<script src="/knowledge-model.js"></script>
+<script src="/mission-control-model.js"></script>
+<script src="/content-portability.js"></script>
 <script src="/app.js"></script>
 <script src="/viewer.js"></script>
 <script src="/diff.js"></script>

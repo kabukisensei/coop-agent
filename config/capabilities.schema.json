@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/capabilities.v1.json",
+  "title": "Coop capability registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "capabilities"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/capability" }
+    }
+  },
+  "$defs": {
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "presentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "entrypoint"],
+      "properties": {
+        "kind": { "enum": ["native", "generic", "fallback", "unavailable"] },
+        "entrypoint": { "type": ["string", "null"] }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "name", "description", "version", "category", "inputs",
+        "outputs", "streamedEvents", "sideEffects", "permissions",
+        "integrations", "availability", "approval", "presentations",
+        "documentation", "healthChecks", "testIds"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^coop\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "category": {
+          "enum": ["agent", "session", "workspace", "review", "lineage", "impact", "workflow", "knowledge", "auth", "integration", "runtime"]
+        },
+        "inputs": { "type": "object" },
+        "outputs": { "type": "object" },
+        "streamedEvents": { "$ref": "#/$defs/stringArray" },
+        "sideEffects": {
+          "type": "array",
+          "items": {
+            "enum": ["none", "process-control", "session-write", "workspace-read", "workspace-write", "user-config-write", "external-read", "external-write", "credential-state"]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "permissions": { "$ref": "#/$defs/stringArray" },
+        "integrations": { "$ref": "#/$defs/stringArray" },
+        "availability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["platforms", "limitations"],
+          "properties": {
+            "platforms": {
+              "type": "array",
+              "items": { "enum": ["windows", "macos", "linux"] },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "limitations": { "$ref": "#/$defs/stringArray" }
+          }
+        },
+        "approval": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "operations"],
+          "properties": {
+            "mode": { "enum": ["never", "when-mutating", "always"] },
+            "operations": { "$ref": "#/$defs/stringArray" }
+          }
+        },
+        "presentations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cli", "web", "desktop"],
+          "properties": {
+            "cli": { "$ref": "#/$defs/presentation" },
+            "web": { "$ref": "#/$defs/presentation" },
+            "desktop": { "$ref": "#/$defs/presentation" }
+          }
+        },
+        "documentation": { "$ref": "#/$defs/stringArray" },
+        "healthChecks": { "$ref": "#/$defs/stringArray" },
+        "testIds": { "$ref": "#/$defs/stringArray" }
+      }
+    }
+  }
+}

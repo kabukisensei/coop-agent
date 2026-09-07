@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "platform": "windows",
+  "overallStatus": "pending",
+  "automatedChecks": [
+    { "id": "bounded-attachments", "status": "pass", "testId": "contract.content-portability" },
+    { "id": "plain-text-copy", "status": "pass", "testId": "contract.content-portability" },
+    { "id": "native-selection-preserved", "status": "pass", "testId": "parity.web-bridge" }
+  ],
+  "applications": [
+    { "id": "ssms", "name": "SQL Server Management Studio", "required": true, "status": "pending", "cases": ["paste-sql-whitespace", "copy-source-crlf", "copy-table-tsv"], "evidence": null },
+    { "id": "vs-code", "name": "Visual Studio Code", "required": true, "status": "pending", "cases": ["paste-code-whitespace", "copy-source-crlf", "drag-drop-text-file", "paste-screenshot"], "evidence": null },
+    { "id": "power-bi", "name": "Power BI-related editors", "required": true, "status": "pending", "cases": ["paste-dax-whitespace", "copy-dax-crlf", "paste-screenshot"], "evidence": null },
+    { "id": "teams", "name": "Microsoft Teams", "required": true, "status": "pending", "cases": ["copy-plain-summary", "copy-table-tsv", "paste-screenshot"], "evidence": null },
+    { "id": "browser", "name": "Supported Chromium browser", "required": true, "status": "pending", "cases": ["native-selected-text", "copy-source-crlf", "copy-table-tsv", "paste-screenshot"], "evidence": null },
+    { "id": "azure-devops", "name": "Azure DevOps text fields", "required": true, "status": "pending", "cases": ["copy-plain-summary", "paste-code-whitespace", "copy-table-tsv"], "evidence": null }
+  ]
+}

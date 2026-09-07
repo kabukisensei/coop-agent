@@ -1,13 +1,14 @@
 /**
  * coop-tools — native, LLM-callable Cooptimize tools for Pi.
  *
- * Registers three read-only / advisory tools that shell out to the standalone
+ * Registers read-only / advisory tools that shell out to the standalone
  * Coop CLIs and return machine-readable JSON the model can reason over:
  *
  *   sql_review  -> coop-sql-review check <paths> --format json   (advisory; never edits/blocks)
  *   dax_review  -> coop-dax-review check <paths> --format json   (advisory; never edits/blocks)
  *   data_doc    -> coop-data-doc <scan|build|check|lineage>      (lineage graph + manifest.json;
  *                                                                lineage = one object's up/downstream)
+ *   impact_analysis_result -> validates/publishes the existing impact skill's typed result
  *
  * These let the agent call the review/documentation tools directly instead of
  * asking the user to run them. They are advisory: they never modify source.
@@ -29,10 +30,22 @@
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
+import { timingSafeEqual } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { formatSessionLeaseConflict, SessionLeaseManager } from "./session-lease.ts";
+import { applyProjectConfig, proposeProjectConfig } from "../../web/project-config-service.mjs";
+import { normalizeImpactAnalysis } from "../../web/impact-analysis.mjs";
+
+export {
+  defaultProcessAlive,
+  formatSessionLeaseConflict,
+  normalizeSessionLeasePath,
+  sessionLeaseKey,
+  SessionLeaseManager,
+} from "./session-lease.ts";
 
 const SEVERITY = Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info")]);
 
@@ -67,6 +80,13 @@ const DATADOC_PARAMS = Type.Object({
   depth: Type.Optional(
     Type.Number({ description: "For command='lineage': hops up/downstream to include (default 1)." }),
   ),
+});
+
+const IMPACT_ANALYSIS_RESULT_PARAMS = Type.Object({
+  analysis: Type.Any({
+    description:
+      "A complete impact-analysis.v1 object. Use only after the power-bi-impact-analysis skill has inspected the available evidence; do not invent missing dependencies.",
+  }),
 });
 
 interface ReviewParams {
@@ -118,12 +138,150 @@ interface DataDocSetupPrefill extends Partial<DataDocSettings> {
 
 const errMsg = (e: any): string => (e && e.message ? e.message : String(e));
 
+const TREE_NAV_STATUS_PREFIX = "coop-tree-navigate:";
+const TREE_NAV_REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
+const TREE_NAV_ENTRY_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+const RUNTIME_CONTROL_REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
+
+interface TreeNavigationRequest {
+  requestId: string;
+  bridgeSecret: string;
+  targetId: string;
+  summarize: boolean;
+  customInstructions?: string;
+  replaceInstructions?: boolean;
+  label?: string;
+}
+
+function sameSecret(actual: string, expected: string): boolean {
+  const a = Buffer.from(actual, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export function navigationEditorText(entry: any): string | undefined {
+  const content = entry?.type === "message" && entry?.message?.role === "user"
+    ? entry.message.content
+    : entry?.type === "custom_message"
+      ? entry.content
+      : undefined;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .filter((part: any) => part && part.type === "text" && typeof part.text === "string")
+    .map((part: any) => part.text)
+    .join("");
+  return text || undefined;
+}
+
+export function decodeTreeNavigationRequest(encoded: string): TreeNavigationRequest {
+  if (typeof encoded !== "string" || !encoded || encoded.length > 20_000 || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
+    throw new Error("invalid tree-navigation request");
+  }
+  let value: any;
+  try {
+    value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+  } catch {
+    throw new Error("invalid tree-navigation request");
+  }
+  if (!value || typeof value !== "object" || !TREE_NAV_REQUEST_ID.test(value.requestId || "") ||
+      !TREE_NAV_ENTRY_ID.test(value.targetId || "") || typeof value.bridgeSecret !== "string" ||
+      typeof value.summarize !== "boolean") {
+    throw new Error("invalid tree-navigation request");
+  }
+  if (value.customInstructions !== undefined &&
+      (typeof value.customInstructions !== "string" || !value.customInstructions || value.customInstructions.length > 10_000)) {
+    throw new Error("invalid tree-navigation custom instructions");
+  }
+  if (value.replaceInstructions !== undefined && typeof value.replaceInstructions !== "boolean") {
+    throw new Error("invalid tree-navigation replaceInstructions flag");
+  }
+  if (value.replaceInstructions === true && value.customInstructions === undefined) {
+    throw new Error("tree-navigation replaceInstructions requires customInstructions");
+  }
+  if (value.label !== undefined && (typeof value.label !== "string" || !value.label || value.label.length > 200)) {
+    throw new Error("invalid tree-navigation label");
+  }
+  return value as TreeNavigationRequest;
+}
+
+export async function navigateTreeFromRuntime(encoded: string, ctx: any, expectedSecret = process.env.COOP_TREE_NAVIGATION_SECRET || ""): Promise<void> {
+  if (ctx?.mode !== "rpc" || !expectedSecret) throw new Error("tree navigation is available through Coop Runtime only");
+  const request = decodeTreeNavigationRequest(encoded);
+  if (!sameSecret(request.bridgeSecret, expectedSecret)) throw new Error("tree-navigation bridge authentication failed");
+  const statusKey = `${TREE_NAV_STATUS_PREFIX}${request.requestId}`;
+  const previousLeafId = ctx.sessionManager.getLeafId();
+  const targetEntry = ctx.sessionManager.getEntry(request.targetId);
+  const editorText = navigationEditorText(targetEntry);
+  try {
+    const navigation = await ctx.navigateTree(request.targetId, {
+      summarize: request.summarize,
+      customInstructions: request.customInstructions,
+      replaceInstructions: request.replaceInstructions,
+      label: request.label,
+    });
+    const currentLeafId = ctx.sessionManager.getLeafId();
+    ctx.ui.setStatus(statusKey, JSON.stringify({
+      requestId: request.requestId,
+      targetId: request.targetId,
+      cancelled: navigation.cancelled,
+      previousLeafId,
+      currentLeafId,
+      ...(navigation.cancelled || editorText === undefined ? {} : { editorText }),
+    }));
+  } catch (error: any) {
+    ctx.ui.setStatus(statusKey, JSON.stringify({
+      requestId: request.requestId,
+      targetId: request.targetId,
+      cancelled: false,
+      previousLeafId,
+      currentLeafId: ctx.sessionManager.getLeafId(),
+      error: errMsg(error),
+    }));
+    throw error;
+  }
+}
+
+export function decodeRuntimeShutdownRequest(encoded: string): { requestId: string; bridgeSecret: string } {
+  if (typeof encoded !== "string" || !encoded || encoded.length > 1_000 || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
+    throw new Error("invalid runtime shutdown request");
+  }
+  let value: any;
+  try {
+    value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+  } catch {
+    throw new Error("invalid runtime shutdown request");
+  }
+  if (!value || typeof value !== "object" || !RUNTIME_CONTROL_REQUEST_ID.test(value.requestId || "") ||
+      typeof value.bridgeSecret !== "string") {
+    throw new Error("invalid runtime shutdown request");
+  }
+  return { requestId: value.requestId, bridgeSecret: value.bridgeSecret };
+}
+
+export function shutdownFromRuntime(encoded: string, ctx: any, expectedSecret = process.env.COOP_RUNTIME_CONTROL_SECRET || ""): void {
+  if (ctx?.mode !== "rpc" || !expectedSecret) throw new Error("runtime shutdown is available through Coop Runtime only");
+  const request = decodeRuntimeShutdownRequest(encoded);
+  if (!sameSecret(request.bridgeSecret, expectedSecret)) throw new Error("runtime control authentication failed");
+  ctx.shutdown();
+}
+
 function notify(ctx: any, message: string, type: "info" | "warning" | "error" = "info"): void {
   try {
     if (typeof ctx?.ui?.notify === "function") ctx.ui.notify(message, type);
   } catch {
     /* never break pi */
   }
+}
+
+function workspaceIsReadOnly(): boolean {
+  return process.env.COOP_WORKSPACE_ACCESS_MODE === "read-only";
+}
+
+function rejectReadOnlyWorkspace(ctx: any, operation: string): boolean {
+  if (!workspaceIsReadOnly()) return false;
+  notify(ctx, `${operation} is unavailable because this session is attached read-only. Create an isolated worktree or explicitly approve a concurrent-write override first.`, "warning");
+  return true;
 }
 
 /** Prompt for text; Enter (blank) accepts `def`; returns null when cancelled.
@@ -1491,21 +1649,6 @@ function findGitRoot(cwd: string): string | null {
   }
 }
 
-function writeProjectContract(path: string, text: string): string | null {
-  mkdirSync(dirname(path), { recursive: true });
-  let backup: string | null = null;
-  if (existsSync(path)) {
-    backup = `${path}.bak`;
-    copyFileSync(path, backup);
-    writeFileSync(path, text, "utf8");
-  } else {
-    const temp = `${path}.tmp-${process.pid}`;
-    writeFileSync(temp, text, "utf8");
-    renameSync(temp, path);
-  }
-  return backup;
-}
-
 async function chooseRole(ctx: any, label: string, current: ProjectRepositorySettings["role"]): Promise<ProjectRepositorySettings["role"] | null> {
   if (typeof ctx.ui?.select !== "function") return null;
   const choices = [
@@ -1544,6 +1687,7 @@ async function editRepository(ctx: any, root: string, repo: ProjectRepositorySet
 
 /** Native UI project setup/edit flow. Returns true only after a contract write. */
 export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<boolean> {
+  if (rejectReadOnlyWorkspace(ctx, "Project setup")) return false;
   if (!ctx.hasUI || typeof ctx.ui?.input !== "function" || typeof ctx.ui?.confirm !== "function") {
     notify(ctx, "Project setup needs an interactive Coop UI. In a shell, run: coop init", "warning");
     return false;
@@ -1638,8 +1782,24 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   if (!confirmed) { notify(ctx, "Project setup cancelled — no files changed.", "info"); return false; }
   const output = existing ? applyProjectWizardSettings(original, settings) : renderProjectWizardSettings(settings);
   const path = existing || join(root, ".coop", "project.yml");
-  const backup = writeProjectContract(path, output);
-  notify(ctx, `Project contract ${existing ? "updated" : "created"}: ${path}${backup ? ` (backup: ${backup})` : ""}`, "info");
+  let applied;
+  try {
+    const proposal = await proposeProjectConfig({ workspace: root, candidate: output });
+    if (proposal.state !== "proposed") {
+      const message = proposal.validation.diagnostics.map((item: any) => item.message || item.code).join("; ") || "The generated project configuration is invalid.";
+      notify(ctx, `Project setup was not written: ${message}`, "error");
+      return false;
+    }
+    applied = applyProjectConfig(proposal);
+    if (applied.state !== "applied") {
+      notify(ctx, "Project setup changed while the confirmation was open. Review the latest project contract and retry.", "warning");
+      return false;
+    }
+  } catch (error: any) {
+    notify(ctx, `Project setup was not written: ${error?.message || "atomic configuration update failed"}`, "error");
+    return false;
+  }
+  notify(ctx, `Project contract ${existing ? "updated" : "created"}: ${path}${applied.backupPath ? ` (backup: ${applied.backupPath})` : ""}`, "info");
   notify(ctx, "Run /new or restart Coop before governed work so the guardrails load the updated contract.", "info");
 
   if (!settings.repositories.length) {
@@ -1799,6 +1959,32 @@ async function showStartMenu(pi: ExtensionAPI, ctx: any): Promise<void> {
 }
 
 export default function coopTools(pi: ExtensionAPI) {
+  let leaseContext: ExtensionContext | undefined;
+  const leaseManager = new SessionLeaseManager({
+    agentDir: process.env.PI_CODING_AGENT_DIR || join(homedir(), ".coop", "agent"),
+    clientInterface: process.env.COOP_CLIENT_INTERFACE || "unknown",
+    onLost: (message) => {
+      try { leaseContext?.ui.notify(message, "error"); } catch { /* best effort */ }
+      try { leaseContext?.shutdown(); } catch { /* fail closed on lease loss */ }
+    },
+  });
+
+  // A process may inspect session history freely, but only one Coop/Pi process
+  // may append to a persisted session. Preflight explicit switches while the old
+  // lease is still held, then acquire the destination from its session_start.
+  pi.on("session_before_switch", async (event, ctx: ExtensionContext) => {
+    if (!event.targetSessionFile) return;
+    const status = leaseManager.inspect(event.targetSessionFile);
+    if (status.ok) return;
+    try { ctx.ui.notify(formatSessionLeaseConflict(status), "error"); } catch { /* best effort */ }
+    return { cancel: true };
+  });
+
+  pi.on("session_shutdown", async () => {
+    leaseContext = undefined;
+    leaseManager.release();
+  });
+
   const runReview = async (
     bin: string,
     params: ReviewParams,
@@ -1951,6 +2137,40 @@ export default function coopTools(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "impact_analysis_result",
+    label: "Impact Analysis Result",
+    description:
+      "Validate and publish the structured impact-analysis.v1 result produced by the existing power-bi-impact-analysis skill. This records no source change and never replaces Data Doc, Fabric, or Power BI evidence.",
+    promptSnippet: "Publish an evidence-attributed impact-analysis.v1 artifact after read-only impact analysis",
+    promptGuidelines: [
+      "Call only after using power-bi-impact-analysis under coop-workflow.",
+      "Every path and impacted object must cite evidenceSourceIds; use kind='agent-inference' and an evidence gap for anything inferred rather than observed.",
+      "Do not claim complete evidence when a source failed, parsing was partial, or an evidence gap remains.",
+      "Approval status is pending until the human approves a separate implementation plan; this tool never performs edits.",
+    ],
+    parameters: IMPACT_ANALYSIS_RESULT_PARAMS,
+    executionMode: "sequential",
+    async execute(_id, params) {
+      try {
+        const report = normalizeImpactAnalysis((params as { analysis?: unknown }).analysis);
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Impact analysis recorded: ${report.target.name} · ${report.risk.level} risk · evidence ${report.evidenceStatus}.`,
+          }],
+          details: { tool: "impact_analysis_result", version: "1", report },
+        };
+      } catch (error: any) {
+        return {
+          content: [{ type: "text" as const, text: `Impact analysis result was rejected: ${errMsg(error)}` }],
+          details: { tool: "impact_analysis_result", version: "1", error: errMsg(error) },
+          isError: true,
+        };
+      }
+    },
+  });
+
+  pi.registerTool({
     name: "data_doc",
     label: "Data Documentation",
     description:
@@ -1967,6 +2187,13 @@ export default function coopTools(pi: ExtensionAPI) {
     async execute(_id, params, signal, _onUpdate, ctx) {
       const p = params as { command?: string; object?: string; depth?: number };
       const command = p.command || "scan";
+      if (!["lineage", "check"].includes(command) && rejectReadOnlyWorkspace(ctx, `Data Doc ${command}`)) {
+        return {
+          content: [{ type: "text" as const, text: `Data Doc ${command} was blocked because this workspace is attached read-only.` }],
+          details: { tool: "coop-data-doc", command, error: "workspace-read-only" },
+          isError: true,
+        };
+      }
 
       // --- lineage: one object's up/downstream from the BUILT graph (read-only) ---
       if (command === "lineage") {
@@ -2046,6 +2273,16 @@ export default function coopTools(pi: ExtensionAPI) {
   // Normal sessions start at the prompt. The only automatic handoff is the model
   // provider login required when a fresh install has no credentials yet.
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
+    leaseContext = ctx;
+    const lease = leaseManager.acquire(ctx.sessionManager?.getSessionFile?.());
+    if (!lease.ok) {
+      const message = formatSessionLeaseConflict(lease);
+      try { ctx.ui.notify(message, "error"); } catch { /* best effort */ }
+      try { ctx.ui.setStatus("coop-session-lease", message); } catch { /* best effort */ }
+      ctx.shutdown();
+      return;
+    }
+    try { ctx.ui.setStatus("coop-session-lease", undefined); } catch { /* best effort */ }
     primeModelLogin(ctx);
   });
 
@@ -2167,6 +2404,27 @@ export default function coopTools(pi: ExtensionAPI) {
     },
   });
 
+  // Pi 0.84.3 exposes public session-tree navigation to extension commands but
+  // omits it from the RPC command union. Coop Runtime invokes this authenticated,
+  // narrowly scoped adapter and correlates the setStatus result. It never edits
+  // session JSONL and follows Pi's normal summary/cancellation hooks.
+  pi.registerCommand("coop-tree-navigate", {
+    description: "Internal Coop Runtime session-tree navigation adapter",
+    handler: async (args, ctx) => {
+      await navigateTreeFromRuntime(args.trim(), ctx);
+    },
+  });
+
+  // Used only by the authenticated Desktop runtime when moving ownership to a
+  // terminal. ctx.shutdown() follows Pi's graceful disposal path, so every
+  // session_shutdown handler releases its lease before the child exits.
+  pi.registerCommand("coop-runtime-shutdown", {
+    description: "Internal Coop Runtime graceful shutdown adapter",
+    handler: async (args, ctx) => {
+      shutdownFromRuntime(args.trim(), ctx);
+    },
+  });
+
   pi.registerCommand("setup-project", {
     description: "Set up or edit this folder's .coop/project.yml (interactive wizard)",
     handler: async (_args, ctx) => {
@@ -2182,6 +2440,7 @@ export default function coopTools(pi: ExtensionAPI) {
     description: "Set up or rebuild coop-data-doc lineage docs for this folder (interactive wizard)",
     handler: async (_args, ctx) => {
       try {
+        if (rejectReadOnlyWorkspace(ctx, "Data Doc setup")) return;
         if (!ctx.hasUI) {
           notify(ctx, "setup-docs needs an interactive terminal. In a shell, run: coop data-doc setup", "warning");
           return;

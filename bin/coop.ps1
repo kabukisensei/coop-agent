@@ -132,11 +132,16 @@ $(Coop-Bold)$(Coop-Navy)coop$(Coop-Rst) $(Coop-Dim)v$v$(Coop-Rst) — the Coopti
 $(Coop-Bold)Usage$(Coop-Rst)
   coop                      Launch the branded Pi agent
   coop doctor               Check dependencies and configuration
+  coop auth --json          Report model, client Microsoft, and knowledge identity state
   coop update               Update Pi + Coop tools + vibes/skills, then run doctor
   coop install              Fresh-install / bootstrap everything (idempotent)
   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
   coop web                  Open a friendly browser UI over the agent (experimental)
+  coop runtime              Start the supported local HTTP runtime for clients
+                            (--transport http --json [--port PORT] [--cwd DIR])
+  coop discover             Discover repositories, Fabric workspaces, or items as JSON
+  coop setup-state --json   Report progressive project setup and exact next actions
   coop onboard              First-run global onboarding (creates ~/.coop/user.json)
   coop profile              Show your COOP user profile
   coop profile edit         Edit your COOP user profile
@@ -294,6 +299,21 @@ function Build-CoopPiArgs {
   if (Test-Path -LiteralPath $extGuardrails) { $piArgs += @('-e', $extGuardrails) }
   $extProfile = Join-Path $script:CoopRoot 'extensions\coop-profile'
   if (Test-Path -LiteralPath $extProfile) { $piArgs += @('-e', $extProfile) }
+  # Managed Desktop loads immutable, exactly pinned extension packages from its
+  # runtime bundle while keeping auth/settings/sessions in versioned user data.
+  if ($env:COOP_DESKTOP_MANAGED_RUNTIME -eq '1') {
+    $managedRoot = $env:COOP_MANAGED_EXTENSIONS_ROOT
+    if (-not $managedRoot -or -not [IO.Path]::IsPathRooted($managedRoot)) { throw 'managed Desktop extension root is invalid' }
+    $manifest = Get-Content -LiteralPath $script:CoopReleaseManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    foreach ($property in $manifest.extensions.PSObject.Properties) {
+      $managedPath = Join-Path $managedRoot $property.Name
+      $packageJson = Join-Path $managedPath 'package.json'
+      if (-not (Test-Path -LiteralPath $packageJson -PathType Leaf)) { throw "managed Desktop extension is missing: $($property.Name)" }
+      $actual = (Get-Content -LiteralPath $packageJson -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop).version
+      if ($actual -ne [string]$property.Value) { throw "managed Desktop extension $($property.Name) is $actual; expected $($property.Value)" }
+      $piArgs += @('-e', $managedPath)
+    }
+  }
   # Coop owns fleet updates. Hide Pi's upstream self-update banner so users do not
   # drift Pi away from the release-manifest pins; Invoke-CoopUpdateNudge still
   # reports when THIS checkout is behind and directs the user to `coop update`.
@@ -348,6 +368,9 @@ function Invoke-LaunchPi {
     $env:COOP_PRIME_MODEL_LOGIN = '1'
   }
 
+  $env:COOP_CLIENT_INTERFACE = 'terminal'
+  $runtimePython = Get-CoopPython
+  if ($runtimePython) { $env:COOP_PYTHON = $runtimePython }
   $piArgs = Build-CoopPiArgs
   $allArgs = @($piArgs + $PassArgs)
   & pi @allArgs
@@ -377,20 +400,82 @@ function Invoke-CoopLaunchSpec {
   }
 }
 
-# --- coop web (experimental): friendly browser UI over `pi --mode rpc` --------
-# Spawns the SAME governed coop the terminal runs, but drives it from a local
-# browser window (SSE bridge). Uses the shared launch spec so it can never drift
-# from the terminal. Localhost + one-time token; see web\server.mjs.
-function Invoke-CoopWeb {
-  param([string[]] $WebArgs = @())
+# --- Shared local runtime launcher ------------------------------------------
+# Both Web and Desktop consume this one path and therefore the same launch spec.
+function Start-CoopRuntimeProcess {
+  param(
+    [ValidateSet('web', 'runtime')][string] $Surface,
+    [string[]] $RuntimeArgs = @()
+  )
   if (-not (Test-Have 'pi'))   { Coop-Die 'pi is not installed. Run: coop install' }
-  if (-not (Test-Have 'node')) { Coop-Die 'Node.js is required for coop web. Run: coop install' }
+  if (-not (Test-Have 'node')) { Coop-Die "Node.js is required for coop $Surface. Run: coop install" }
+  $runtimePython = Get-CoopPython
+  if (-not $runtimePython) { Coop-Die "python3 is required for coop $Surface" }
   Invoke-CoopLaunchPreflight
   Invoke-CoopAzPreflight   # same Fabric/Power BI token check the terminal launch does
   $env:COOP_LAUNCH_SPEC = (Invoke-CoopLaunchSpec @('--json'))
+  $env:COOP_PYTHON = $runtimePython
   $server = Join-Path $script:CoopRoot 'web\server.mjs'
-  & node $server @WebArgs
+  if ($Surface -eq 'runtime') {
+    $env:COOP_RUNTIME_MODE = '1'
+    & node $server --runtime @RuntimeArgs
+  } else {
+    & node $server @RuntimeArgs
+  }
   exit $LASTEXITCODE
+}
+
+# --- coop web (experimental): friendly browser UI over the local runtime ----
+function Invoke-CoopWeb {
+  param([string[]] $WebArgs = @())
+  Start-CoopRuntimeProcess -Surface 'web' -RuntimeArgs $WebArgs
+}
+
+function Write-CoopRuntimeError {
+  param([bool] $AsJson, [string] $Message)
+  if ($AsJson) {
+    [pscustomobject]@{
+      type = 'runtime.error'
+      contractVersion = 1
+      error = $Message
+    } | ConvertTo-Json -Compress
+  } else {
+    [Console]::Error.WriteLine("coop: $Message")
+  }
+}
+
+function Invoke-CoopRuntime {
+  param([string[]] $RuntimeArgs = @())
+  $transport = 'http'
+  $wantJson = $false
+  $serverArgs = New-Object System.Collections.Generic.List[string]
+  for ($i = 0; $i -lt $RuntimeArgs.Count; $i++) {
+    $arg = $RuntimeArgs[$i]
+    if ($arg -eq '--transport') {
+      if ($i + 1 -ge $RuntimeArgs.Count) { Write-CoopRuntimeError $wantJson 'missing value for --transport'; exit 2 }
+      $i++; $transport = $RuntimeArgs[$i]
+    } elseif ($arg.StartsWith('--transport=')) {
+      $transport = $arg.Substring('--transport='.Length)
+    } elseif ($arg -eq '--json') {
+      $wantJson = $true; $serverArgs.Add('--json')
+    } elseif ($arg -eq '--port' -or $arg -eq '--cwd') {
+      if ($i + 1 -ge $RuntimeArgs.Count) { Write-CoopRuntimeError $wantJson "missing value for $arg"; exit 2 }
+      $serverArgs.Add($arg); $i++; $serverArgs.Add($RuntimeArgs[$i])
+    } elseif ($arg -eq '-h' -or $arg -eq '--help') {
+      Write-Output 'Usage: coop runtime [--transport http] [--json] [--port PORT] [--cwd DIR]'
+      Write-Output ''
+      Write-Output "Starts Coop's supported loopback runtime using the same governed Pi launch spec as terminal and Web."
+      Write-Output '--json emits one runtime.ready or runtime.error JSON object.'
+      return
+    } else {
+      Write-CoopRuntimeError $wantJson "unknown coop runtime argument: $arg"; exit 2
+    }
+  }
+  if ($transport -ne 'http') {
+    Write-CoopRuntimeError $wantJson "unsupported runtime transport '$transport' (supported: http)"
+    exit 2
+  }
+  Start-CoopRuntimeProcess -Surface 'runtime' -RuntimeArgs @($serverArgs)
 }
 
 # --- Tool wrappers -----------------------------------------------------------
@@ -1047,7 +1132,33 @@ switch -CaseSensitive ($cmd) {
   # invocation instead of launching (the flag used to launch — the opposite of its name).
   # Same stdout as `coop launch-spec`; trailing args (e.g. --json) pass through.
   '--no-launch' { Invoke-CoopLaunchPreflight; Invoke-CoopLaunchSpec $rest; break }
-  'doctor' { & (Join-Path $script:CoopRoot 'scripts\doctor.ps1') @rest; exit $LASTEXITCODE }
+  'doctor' {
+    if ($rest.Count -eq 1 -and $rest[0] -eq '--service-json') {
+      if (-not (Test-Have 'node')) { Coop-Die 'node is required for the shared Doctor service' }
+      & node (Join-Path $script:CoopRoot 'scripts\doctor-service.mjs')
+      exit $LASTEXITCODE
+    }
+    & (Join-Path $script:CoopRoot 'scripts\doctor.ps1') @rest
+    exit $LASTEXITCODE
+  }
+  'auth' {
+    if ($rest.Count -ne 1 -or $rest[0] -ne '--json') { Coop-Die 'usage: coop auth --json' }
+    if (-not (Test-Have 'node')) { Coop-Die 'node is required for the shared authentication service' }
+    & node (Join-Path $script:CoopRoot 'scripts\auth-service.mjs')
+    exit $LASTEXITCODE
+  }
+  'discover' {
+    if (-not (Test-Have 'node')) { Coop-Die 'node is required for environment discovery' }
+    & node (Join-Path $script:CoopRoot 'scripts\environment-discovery.mjs') @rest
+    exit $LASTEXITCODE
+  }
+  'setup-state' {
+    if ($rest.Count -lt 1 -or $rest[0] -ne '--json') { Coop-Die 'usage: coop setup-state --json [--for-capability ID]' }
+    if (-not (Test-Have 'node')) { Coop-Die 'node is required for project setup state' }
+    $setupArgs = if ($rest.Count -gt 1) { @($rest[1..($rest.Count - 1)]) } else { @() }
+    & node (Join-Path $script:CoopRoot 'scripts\project-setup-state.mjs') @setupArgs
+    exit $LASTEXITCODE
+  }
   'update' { & (Join-Path $script:CoopRoot 'scripts\update.ps1') @rest; exit $LASTEXITCODE }
   'bootstrap' { & (Join-Path $script:CoopRoot 'scripts\install.ps1') @rest; exit $LASTEXITCODE }
   'install' {
@@ -1063,6 +1174,7 @@ switch -CaseSensitive ($cmd) {
   }
   'sync' { & (Join-Path $script:CoopRoot 'scripts\sync.ps1') @rest; exit $LASTEXITCODE }
   'web' { Invoke-CoopWeb $rest; break }
+  'runtime' { Invoke-CoopRuntime $rest; break }
   'launch-spec' { Invoke-CoopLaunchSpec $rest; break }
   'onboard' { Invoke-CoopOnboard $rest; break }
   'profile' { Invoke-CoopProfile $rest; break }
