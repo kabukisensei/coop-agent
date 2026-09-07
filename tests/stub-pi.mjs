@@ -26,7 +26,7 @@ out({ type: "extension_ui_request", id: "stub-mystery-1", method: "holo_display"
 
 let buf = "";
 let currentLeaf = "a1";
-let currentSessionFile = process.env.COOP_STUB_SESSION_FILE || "stub.jsonl";
+let currentSessionFile = process.argv.includes("--session") ? process.argv[process.argv.indexOf("--session") + 1] : process.env.COOP_STUB_SESSION_FILE || "stub.jsonl";
 process.stdin.on("data", (chunk) => {
   buf += chunk.toString("utf8");
   let nl;
@@ -268,7 +268,15 @@ process.stdin.on("data", (chunk) => {
         data: { messages: [{ entryId: "u1", text: "old question" }] } });
     } else if (cmd.type === "get_entries") {
       out({ id: cmd.id, type: "response", command: "get_entries", success: true,
-        data: { entries: [{ type: "message", id: "u1", parentId: null }], leafId: "a1" } });
+        data: (() => {
+          if (cmd.since !== undefined && process.argv.includes("--session")) {
+            try {
+              const entries = readFileSync(currentSessionFile, "utf8").trim().split("\n").map(JSON.parse).filter(e => e.type !== "session" && e.id);
+              return { entries: [], leafId: entries.some(e => e.id === "a2") ? "a2" : entries.at(-1)?.id ?? null };
+            } catch { return { entries: [], leafId: "missing" }; }
+          }
+          return { entries: [{ type: "message", id: "u1", parentId: null }], leafId: "a1" };
+        })() });
     } else if (cmd.type === "get_tree") {
       out({ id: cmd.id, type: "response", command: "get_tree", success: true,
         data: { tree: [{ entry: { type: "message", id: "u1", parentId: null }, children: [] }], leafId: currentLeaf } });

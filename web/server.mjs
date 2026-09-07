@@ -44,7 +44,7 @@ import { applyProjectConfig, getProjectConfig, proposeProjectConfig } from "./pr
 import { discoverFabricItems, discoverFabricWorkspaces, discoverLocalRepositories } from "./environment-discovery.mjs";
 import { getProjectSetupState } from "./project-setup-service.mjs";
 import { buildExecutionEnvelope, capabilityForTool } from "./execution-envelope.mjs";
-import { projectTranscriptMessages, REPLAY_THINKING_MAX, REPLAY_TOOL_OUT_MAX } from "./transcript-replay.mjs";
+import { projectTranscriptMessages, selectSessionChain, REPLAY_THINKING_MAX, REPLAY_TOOL_OUT_MAX } from "./transcript-replay.mjs";
 import { buildPromptCommand, buildRpcCommand, listAvailableModels } from "./rpc-adapter.mjs";
 import { RuntimeEventStream } from "./runtime-events.mjs";
 import { WorkflowService } from "./workflow-service.mjs";
@@ -1279,7 +1279,7 @@ async function backfillMessages(chat) {
 // __replay lines. get_messages stays the fallback for oversized/corrupt files.
 const SESSION_READ_MAX = 16 * 1024 * 1024; // 16 MiB — bigger files fall back to get_messages
 
-function loadSessionTranscript(fullPath) {
+function readSessionEntries(fullPath) {
   let size = 0;
   try { size = statSync(fullPath).size; } catch { return null; }
   if (size > SESSION_READ_MAX) return null; // caller falls back to get_messages
@@ -1294,35 +1294,13 @@ function loadSessionTranscript(fullPath) {
     try { entries.push(JSON.parse(line)); } catch { /* torn/odd line — skip */ }
   }
   if (!entries.length) return null;
-  // Index entries with a string id, EXCLUDING the header (type:"session"): the header
-  // has an id too, but nothing ever points at it (the first real entry carries
-  // parentId:null), so indexing it would make the header an eternal extra "leaf" and
-  // flag EVERY session — even strictly linear ones — as branched.
-  const byId = new Map();
-  entries.forEach((e, pos) => { if (e && typeof e.id === "string" && e.type !== "session") byId.set(e.id, { e, pos }); });
-  const referenced = new Set();
-  for (const { e } of byId.values()) { if (e.parentId != null) referenced.add(e.parentId); }
-  const leaves = [];
-  for (const rec of byId.values()) { if (!referenced.has(rec.e.id)) leaves.push(rec); }
-  if (!leaves.length) return null;
-  const ts = (e) => { const v = e.timestamp; if (typeof v === "number") return v; const p = Date.parse(v); return isNaN(p) ? 0 : p; };
-  // Active leaf = max timestamp; ties -> later file position wins.
-  let active = leaves[0];
-  for (const rec of leaves) {
-    const c = ts(rec.e), a = ts(active.e);
-    if (c > a || (c === a && rec.pos > active.pos)) active = rec;
-  }
-  // Walk parentId links to the root, then reverse -> the active chain (root-first).
-  const chain = [];
-  const guard = new Set();
-  let cur = active;
-  while (cur && !guard.has(cur.e.id)) {
-    guard.add(cur.e.id);
-    chain.push(cur.e);
-    cur = cur.e.parentId != null ? byId.get(cur.e.parentId) : null;
-  }
-  chain.reverse();
-  const branched = leaves.length > 1;
+  return entries;
+}
+
+function loadSessionTranscript(entries, leafId) {
+  const selected = selectSessionChain(entries, leafId);
+  if (!selected) return null;
+  const { chain, branched } = selected;
   // Pre-scan the chain's toolResults: toolCallId -> {output, isError}.
   const toolResults = new Map();
   for (const e of chain) {
@@ -1373,18 +1351,28 @@ function loadSessionTranscript(fullPath) {
     }
     // toolResult messages are consumed into the assistant tool parts (pre-scan above).
   }
-  if (!lines.length) return null;
-  if (branched) lines.unshift(JSON.stringify({ type: "__replay", kind: "info", text: "This conversation has other branches — showing the most recent." }));
+  if (!lines.length) return { lines, branched };
+  if (branched) lines.unshift(JSON.stringify({ type: "__replay", kind: "info", text: "This conversation has other branches — showing Pi's selected branch." }));
   return { lines, branched };
 }
 
 // Backfill from the session file; on non-null, record+broadcast each __replay line
 // (same loop shape as backfillMessages) and return true; else return false so the
 // caller falls back to get_messages.
-function backfillFromFile(chat, fullPath) {
+async function backfillFromFile(chat, fullPath) {
+  let entries;
+  try { entries = readSessionEntries(fullPath); } catch { return false; }
+  if (!entries) return false;
+  const lastId = entries.findLast(entry => entry?.type !== "session" && typeof entry?.id === "string")?.id;
+  if (!lastId) return false;
+  // Asking since the final known ID returns the authoritative leaf without
+  // transferring the whole tree again. Entries appended during startup are also
+  // returned, so a new active leaf can be resolved against the same snapshot.
+  const reply = await rpcCall(chat, { type: "get_entries", since: lastId }, 5000);
+  if (!reply?.success || !Array.isArray(reply.data?.entries) || !Object.hasOwn(reply.data, "leafId")) return false;
   let res;
-  try { res = loadSessionTranscript(fullPath); } catch { return false; }
-  if (!res || !res.lines.length) return false;
+  try { res = loadSessionTranscript([...entries, ...reply.data.entries], reply.data.leafId); } catch { return false; }
+  if (!res) return false;
   for (const line of res.lines) {
     recordAndBroadcast(chat, line, { type: "__replay" });
   }
@@ -2390,9 +2378,9 @@ async function handle(req, res) {
       }
       console.error(`  resuming session ${name}${switched ? ` in ${targetCwd}` : ""}`);
       if (switched) broadcastChats(); // the tab's cwd (label) changed
-      // Rebuild the transcript FROM THE FILE (synchronous, high fidelity); fall back to
-      // the get_messages backfill only for oversized/corrupt files.
-      if (!backfillFromFile(chat, full)) await backfillMessages(chat);
+      // Retain full file history, with the active chain selected by Pi. Fall back
+      // to public messages when file/leaf evidence cannot be reconciled.
+      if (!await backfillFromFile(chat, full)) await backfillMessages(chat);
       res.writeHead(200, baseHeaders("application/json")).end(JSON.stringify({ ok: true }));
       return;
     }

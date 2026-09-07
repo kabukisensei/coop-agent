@@ -76,9 +76,9 @@ mkdirSync(sessDir, { recursive: true });
 // A full v3 tree that mirrors a real session file: header (NO parentId — never a
 // leaf), session_info (no id — metadata, not part of the tree), a linear
 // user->assistant(thinking+toolCall)->toolResult->assistant chain, PLUS a stale
-// second leaf (b1) so `branched` is true. The user text stays "hello from the past"
-// (the /sessions preview assertion depends on it). a2 has the latest timestamp, so
-// it is the active leaf; b1 (older) is the abandoned branch.
+// second leaf (b1) with a future timestamp so `branched` is true. The user text stays "hello from the past"
+// (the /sessions preview assertion depends on it). Pi selects a2; b1 is an
+// abandoned branch whose clock must not override the selected leaf.
 const FAKE_SESSION = "2026-07-01T00-00-00-000Z_test-session.jsonl";
 writeFileSync(join(sessDir, FAKE_SESSION), [
   JSON.stringify({ type: "session", version: 3, id: "test-session", timestamp: "2026-07-01T00:00:00.000Z", cwd: process.cwd() }),
@@ -87,7 +87,7 @@ writeFileSync(join(sessDir, FAKE_SESSION), [
   JSON.stringify({ type: "message", id: "a1", parentId: "u1", timestamp: "2026-07-01T00:00:02.000Z", message: { role: "assistant", content: [{ type: "thinking", thinking: "pondering deeply" }, { type: "toolCall", id: "tc1", name: "read", arguments: { path: "notes.md" } }] } }),
   JSON.stringify({ type: "message", id: "t1", parentId: "a1", timestamp: "2026-07-01T00:00:03.000Z", message: { role: "toolResult", toolCallId: "tc1", toolName: "read", content: [{ type: "text", text: "tool output payload" }] } }),
   JSON.stringify({ type: "message", id: "a2", parentId: "t1", timestamp: "2026-07-01T00:00:05.000Z", message: { role: "assistant", content: [{ type: "text", text: "rich old answer" }] } }),
-  JSON.stringify({ type: "message", id: "b1", parentId: "u1", timestamp: "2026-07-01T00:00:04.000Z", message: { role: "assistant", content: [{ type: "text", text: "stale branch answer" }] } }),
+  JSON.stringify({ type: "message", id: "b1", parentId: "u1", timestamp: "2099-07-01T00:00:04.000Z", message: { role: "assistant", content: [{ type: "text", text: "stale branch answer" }] } }),
 ].join("\n") + "\n");
 
 // A session whose FIRST user message was sent with a Files-panel attachment, so it is
@@ -882,6 +882,8 @@ await new Promise((res) => setTimeout(res, 300)); // file backfill is synchronou
 r = await fetch(base + `/events-poll?since=${preCursor}`, { headers: { cookie } });
 let staleP = await r.json();
 t("stale pre-resume cursor sees the bumped epoch", typeof staleP.epoch === "number" && staleP.epoch !== preEpoch);
+t("History follows Pi's selected leaf despite a newer abandoned branch timestamp",
+  staleP.events.some(line => line.includes("rich old answer")) && !staleP.events.some(line => line.includes("stale branch answer")));
 t("stale-cursor poll still delivers the __replay backfill (clamp works)",
   staleP.events.some((l) => l.includes("pondering deeply")) &&
   staleP.events.some((l) => l.includes("tool output payload")) &&

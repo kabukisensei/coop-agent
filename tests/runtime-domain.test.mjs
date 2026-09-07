@@ -1,4 +1,4 @@
-import { projectTranscriptMessages, REPLAY_THINKING_MAX, REPLAY_TOOL_OUT_MAX } from "../web/transcript-replay.mjs";
+import { projectTranscriptMessages, selectSessionChain, REPLAY_THINKING_MAX, REPLAY_TOOL_OUT_MAX } from "../web/transcript-replay.mjs";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import vm from "node:vm";
@@ -86,6 +86,20 @@ await test("active-branch replay retains ordered reasoning, tool evidence and un
   assert.match(events[2].parts[0].output, /1 more chars/);
   assert.deepEqual(projectTranscriptMessages(null), []);
   assert.deepEqual(projectTranscriptMessages([{ role: "assistant", content: [null, {}] }]), []);
+});
+
+await test("History branch selection follows Pi's leaf and rejects ambiguous or broken chains", () => {
+  const entries = [{ type: "session", id: "header" },
+    { id: "root", parentId: null }, { id: "selected", parentId: "root", timestamp: 1 },
+    { id: "other", parentId: "root", timestamp: Number.MAX_SAFE_INTEGER }];
+  assert.deepEqual(selectSessionChain(entries, "selected"), { chain: entries.slice(1, 3), branched: true });
+  assert.deepEqual(selectSessionChain(entries, "root").chain, [entries[1]]);
+  assert.deepEqual(selectSessionChain(entries, null).chain, []);
+  assert.equal(selectSessionChain(entries, undefined), null);
+  assert.equal(selectSessionChain(entries, "missing"), null);
+  assert.equal(selectSessionChain([...entries, entries[1]], "selected"), null);
+  assert.equal(selectSessionChain([{ id: "a", parentId: "b" }, { id: "b", parentId: "a" }], "a"), null);
+  assert.equal(selectSessionChain([{ id: "a", parentId: "missing" }], "a"), null);
 });
 
 await test("execution and evidence states remain independent", () => {

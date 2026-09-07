@@ -571,9 +571,11 @@ a mismatch). When you bump Pi:
   oversized (>16 MiB) or corrupt files also preserves reasoning and tool evidence.
   Fork, clone and in-process branch switching use that public active-branch RPC.
   Missing tool results display an unknown state, never an inferred success.
-  On the file-based History path, the active branch is
-  picked by most-recent timestamp, so after a fork the shown branch may differ from
-  Pi's (an honest "has other branches" notice appears).
+  History asks Pi for its selected leaf using `get_entries` after the final known
+  file entry, then follows parent links to that exact point. It never picks a
+  branch by timestamp. Entries appended during startup are included; missing,
+  ambiguous or broken chains fall back to Pi's active-branch messages. Selecting
+  the empty root displays no old conversation. Other branches remain in the file.
 - Image attachments are not rendered.
 - The Files panel is **read-only** and preview-only: a 1 MB text cap, ~2000-entry
   / 6-level tree, and 1000-row × 60-column table clip; binary files show no

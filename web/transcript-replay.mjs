@@ -37,3 +37,27 @@ export function projectTranscriptMessages(messages) {
   }
   return events;
 }
+
+// The running Pi session is the authority for selection, including an interior
+// entry or the empty root. Timestamps and physical file order never pick a branch.
+export function selectSessionChain(entries, leafId) {
+  if (!Array.isArray(entries) || (leafId !== null && (typeof leafId !== 'string' || !leafId))) return null;
+  const byId = new Map(), referenced = new Set();
+  for (const entry of entries) {
+    if (!entry || entry.type === 'session' || typeof entry.id !== 'string') continue;
+    if (byId.has(entry.id)) return null;
+    byId.set(entry.id, entry);
+    if (entry.parentId != null) referenced.add(entry.parentId);
+  }
+  const branched = [...byId.keys()].filter(id => !referenced.has(id)).length > 1;
+  const chain = [], seen = new Set();
+  let id = leafId;
+  while (id !== null) {
+    if (seen.has(id) || !byId.has(id)) return null;
+    seen.add(id);
+    const entry = byId.get(id);
+    chain.push(entry);
+    id = entry.parentId ?? null;
+  }
+  return { chain: chain.reverse(), branched };
+}
