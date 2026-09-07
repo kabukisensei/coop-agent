@@ -753,7 +753,7 @@ r = await post("/rpc", { type: "switch_session", sessionPath: join(sessDir, FAKE
 t("/rpc switch_session accepts an existing jailed Coop session", r.status === 200 && (await r.json()).success === true);
 r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
 let branchPoll = await r.json();
-t("switch_session resets and backfills the selected transcript", branchPoll.events.some((line) => line.includes('"type":"__message"')));
+t("switch_session resets and backfills the selected transcript", branchPoll.events.some((line) => line.includes('"type":"__replay"')));
 
 const beforeTreeNavigation = branchPoll;
 r = await post("/tree-navigate", { entryId: "../bad" });
@@ -776,7 +776,7 @@ t("/tree-navigate selects an existing branch through the Coop extension adapter"
 r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
 branchPoll = await r.json();
 t("successful existing-branch navigation resets and backfills the selected transcript",
-  branchPoll.epoch > beforeTreeNavigation.epoch && branchPoll.events.some((line) => line.includes('"type":"__message"')));
+  branchPoll.epoch > beforeTreeNavigation.epoch && branchPoll.events.some((line) => line.includes('"type":"__replay"')));
 const switchedEpoch = branchPoll.epoch;
 r = await post("/tree-navigate", { entryId: "a1", summarize: true });
 state = await r.json();
@@ -800,14 +800,19 @@ state = await r.json();
 t("/rpc fork round-trips supported Pi branch creation", r.status === 200 && state.data.cancelled === false && state.data.text === "fork point");
 r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
 branchPoll = await r.json();
-t("successful fork resets and backfills the selected branch", branchPoll.epoch > beforeCancelledFork.epoch && branchPoll.events.some((line) => line.includes('"type":"__message"')));
+t("successful fork resets and backfills the selected branch", branchPoll.epoch > beforeCancelledFork.epoch && branchPoll.events.some((line) => line.includes('"type":"__replay"')));
 const forkEpoch = branchPoll.epoch;
 r = await post("/rpc", { type: "clone" });
 state = await r.json();
 t("/rpc clone round-trips supported Pi session cloning", r.status === 200 && state.data.cancelled === false);
 r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
 branchPoll = await r.json();
-t("successful clone resets and backfills the cloned session", branchPoll.epoch > forkEpoch && branchPoll.events.some((line) => line.includes('"type":"__message"')));
+t("successful clone resets and backfills the cloned session", branchPoll.epoch > forkEpoch && branchPoll.events.some((line) => line.includes('"type":"__replay"')));
+
+const clonedParts = branchPoll.events.map(JSON.parse).flatMap(event => event.parts || []);
+t("cloned transcript retains thinking, tool arguments, aborted output and failure state",
+  clonedParts.some(part => part.kind === "thinking" && part.text === "old reasoning") &&
+  clonedParts.some(part => part.kind === "tool" && part.args.path === "query.sql" && part.output === "Command aborted" && part.isError === true));
 
 // Capture the pre-reset epoch + the REAL monotonic cursor, to prove the polling
 // path learns of the reset (the __hello reset frame is SSE-broadcast-only).
@@ -895,8 +900,8 @@ t("/resume FALLBACK_SESSION -> 200", r.status === 200);
 await new Promise((res) => setTimeout(res, 900)); // get_messages fallback polls the stub
 r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
 poll = await r.json();
-t("an unparseable file falls back to the get_messages __message backfill",
-  poll.events.some((l) => l.includes('"__message"') && l.includes("old question")) &&
+t("an unparseable file falls back to the get_messages rich backfill",
+  poll.events.some((l) => l.includes('"__replay"') && l.includes("old question")) &&
   poll.events.some((l) => l.includes("old answer") && l.includes("sql_review")));
 
 // --- /folders (recent working folders from the session store) ---------------------

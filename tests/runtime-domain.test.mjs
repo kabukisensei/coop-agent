@@ -1,3 +1,4 @@
+import { projectTranscriptMessages, REPLAY_THINKING_MAX, REPLAY_TOOL_OUT_MAX } from "../web/transcript-replay.mjs";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import vm from "node:vm";
@@ -62,6 +63,29 @@ await test("renderer forced reconnect replays the active session while ordinary 
   assert.equal(context.activeSid, "one");
   assert.equal(context.switching, false);
   assert.match(source, /else \{ ensureActiveExists\(\); if \(!desktopNavigationRestoring && activeSid\) switchChat\(activeSid, \{ force: true \}\); \}/);
+});
+
+await test("active-branch replay retains ordered reasoning, tool evidence and unknown completion", () => {
+  const input = [null, { role: "user", content: "Question\u2028second line" },
+    { role: "assistant", content: [{ type: "thinking", thinking: "x".repeat(REPLAY_THINKING_MAX + 1) },
+      { type: "toolCall", id: "failed", name: "bash", arguments: { command: "sleep 90" } },
+      { type: "toolCall", id: "missing", name: "write", arguments: {} },
+      { type: "text", text: "Done" }] },
+    { role: "toolResult", toolCallId: "failed", isError: true, content: [{ type: "text", text: "Command aborted" }] },
+    { role: "assistant", content: [{ type: "toolCall", id: "ok", name: "read", arguments: {} }] },
+    { role: "toolResult", toolCallId: "ok", isError: false, content: "a".repeat(REPLAY_TOOL_OUT_MAX + 1) }];
+  const before = JSON.stringify(input);
+  const events = projectTranscriptMessages(input);
+  assert.equal(JSON.stringify(input), before);
+  assert.equal(events[0].text, "Question\u2028second line");
+  assert.equal(events[1].parts[0].text.length, REPLAY_THINKING_MAX);
+  assert.deepEqual(events[1].parts[1], { kind: "tool", name: "bash", args: { command: "sleep 90" }, output: "Command aborted", isError: true, incomplete: false });
+  assert.equal(events[1].parts[2].incomplete, true);
+  assert.equal(events[1].parts[3].text, "Done");
+  assert.equal(events[2].parts[0].incomplete, false);
+  assert.match(events[2].parts[0].output, /1 more chars/);
+  assert.deepEqual(projectTranscriptMessages(null), []);
+  assert.deepEqual(projectTranscriptMessages([{ role: "assistant", content: [null, {}] }]), []);
 });
 
 await test("execution and evidence states remain independent", () => {

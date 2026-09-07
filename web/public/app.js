@@ -1032,7 +1032,7 @@ function handle(evt) {
         for (const name of evt.tools || []) {
           const el = document.createElement("div");
           el.className = "tool";
-          el.innerHTML = '<span class="ok">✓</span> ' + esc(name);
+          el.innerHTML = '<span title="No recorded result">?</span> ' + esc(name);
           transcript.appendChild(el);
         }
       }
@@ -1040,7 +1040,7 @@ function handle(evt) {
       break;
     }
     case "__replay": {
-      // High-fidelity backfill from the session file (bridge-synthesized): dividers,
+      // High-fidelity backfill from Pi messages or the session file: dividers,
       // user bubbles, and assistant turns with thinking / tool calls (args + output).
       if (evt.kind === "info" || evt.kind === "compaction") {
         const div = document.createElement("div");
@@ -1069,7 +1069,7 @@ function handle(evt) {
             const sum = document.createElement("summary");
             // Same escaped-summary idiom as tool_execution_end: esc() the name,
             // toolHint() escapes its own hint — no unescaped input reaches innerHTML.
-            sum.innerHTML = (part.isError ? '<span class="bad">✗</span> ' : '<span class="ok">✓</span> ') + esc(part.name || "tool") + toolHint(part.args);
+            sum.innerHTML = (part.incomplete ? '<span title="No recorded result">?</span> ' : part.isError ? '<span class="bad">✗</span> ' : '<span class="ok">✓</span> ') + esc(part.name || "tool") + toolHint(part.args);
             const body = document.createElement("div");
             body.className = "tool-body";
             const args = document.createElement("pre");

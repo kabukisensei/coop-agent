@@ -233,7 +233,8 @@ process.stdin.on("data", (chunk) => {
       out({ id: cmd.id, type: "response", command: "get_messages", success: true,
         data: { messages: [
           { role: "user", content: [{ type: "text", text: "old question" }] },
-          { role: "assistant", content: [{ type: "text", text: "old answer" }, { type: "toolCall", id: "t1", name: "sql_review", arguments: {} }] },
+          { role: "assistant", content: [{ type: "thinking", thinking: "old reasoning" }, { type: "text", text: "old answer" }, { type: "toolCall", id: "t1", name: "sql_review", arguments: { path: "query.sql" } }] },
+          { role: "toolResult", toolCallId: "t1", content: [{ type: "text", text: "Command aborted" }], isError: true },
         ] } });
     } else if (cmd.type === "compact") {
       const reply = { id: cmd.id, type: "response", command: "compact", success: true,

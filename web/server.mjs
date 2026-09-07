@@ -44,6 +44,7 @@ import { applyProjectConfig, getProjectConfig, proposeProjectConfig } from "./pr
 import { discoverFabricItems, discoverFabricWorkspaces, discoverLocalRepositories } from "./environment-discovery.mjs";
 import { getProjectSetupState } from "./project-setup-service.mjs";
 import { buildExecutionEnvelope, capabilityForTool } from "./execution-envelope.mjs";
+import { projectTranscriptMessages, REPLAY_THINKING_MAX, REPLAY_TOOL_OUT_MAX } from "./transcript-replay.mjs";
 import { buildPromptCommand, buildRpcCommand, listAvailableModels } from "./rpc-adapter.mjs";
 import { RuntimeEventStream } from "./runtime-events.mjs";
 import { WorkflowService } from "./workflow-service.mjs";
@@ -1256,19 +1257,13 @@ function parseNameStatusZ(text, records) {
 }
 
 // After resuming, pull the active branch and backfill the browser transcript as
-// synthetic __message events (recorded, so replay/polling see them too).
+// rich __replay events (recorded, so replay/polling see them too).
 async function backfillMessages(chat) {
   for (let attempt = 0; attempt < 12; attempt++) {
     const reply = await rpcCall(chat, { type: "get_messages" }, 5000);
     if (reply && reply.success && reply.data && Array.isArray(reply.data.messages)) {
-      for (const m of reply.data.messages) {
-        if (!m || (m.role !== "user" && m.role !== "assistant")) continue;
-        const c = m.content;
-        const text = typeof c === "string" ? c : Array.isArray(c) ? c.filter((b) => b.type === "text").map((b) => b.text).join("\n") : "";
-        const tools = Array.isArray(c) ? c.filter((b) => b.type === "toolCall").map((b) => b.name) : [];
-        if (!text.trim() && !tools.length) continue;
-        const line = JSON.stringify({ type: "__message", role: m.role, text, tools });
-        recordAndBroadcast(chat, line, { type: "__message" });
+      for (const event of projectTranscriptMessages(reply.data.messages)) {
+        recordAndBroadcast(chat, JSON.stringify(event), { type: "__replay" });
       }
       return;
     }
@@ -1280,11 +1275,9 @@ async function backfillMessages(chat) {
 // --- File-based transcript backfill (the primary resume path) --------------------
 // Rebuild a resumed conversation FROM THE SESSION FILE — thinking blocks, tool calls
 // with their arguments + outputs, and compaction markers, in original order —
-// instead of the flat text get_messages produces. Emitted as recorded+broadcast
+// including pre-compaction history. Emitted as recorded+broadcast
 // __replay lines. get_messages stays the fallback for oversized/corrupt files.
 const SESSION_READ_MAX = 16 * 1024 * 1024; // 16 MiB — bigger files fall back to get_messages
-const REPLAY_THINKING_MAX = 8000;
-const REPLAY_TOOL_OUT_MAX = 6000; // matches the live tool_execution_end cap in app.js
 
 function loadSessionTranscript(fullPath) {
   let size = 0;
@@ -1371,7 +1364,7 @@ function loadSessionTranscript(fullPath) {
           else if (b.type === "thinking" && b.thinking) parts.push({ kind: "thinking", text: String(b.thinking).slice(0, REPLAY_THINKING_MAX) });
           else if (b.type === "toolCall") {
             const tr = toolResults.get(b.id) || {};
-            parts.push({ kind: "tool", name: b.name || "tool", args: b.arguments, output: tr.output || "", isError: !!tr.isError });
+            parts.push({ kind: "tool", name: b.name || "tool", args: b.arguments, output: tr.output || "", isError: !!tr.isError, incomplete: !toolResults.has(b.id) });
           }
         }
       }

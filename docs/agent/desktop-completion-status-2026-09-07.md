@@ -981,3 +981,49 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   the already-authorized commit/push; no release, tag or version bump. Windows
   native acceptance, additional model-specific quota bucket coverage and the
   previously listed broader completion requirements remain outstanding.
+
+## Native fork/clone acceptance and transcript replay correction
+
+- The packaged Clone action created a new session ID with identical branch entries
+  and retained the original session byte for byte. Native inspection nevertheless
+  exposed a renderer regression: the RPC backfill discarded reasoning, tool args
+  and results, and displayed the interrupted tool with a success mark.
+- Added web/transcript-replay.mjs to project Pi's public active-branch messages into
+  rich replay events. It associates tool results with tool calls, retains order,
+  arguments/output/error state, and preserves existing reasoning/output limits.
+  Missing results are explicitly incomplete; both file replay and the legacy
+  text-event renderer now avoid claiming success without recorded evidence.
+  Existing file-based History branch-selection heuristics are unchanged.
+- A real bridge regression failed before the fix on the discarded aborted result
+  and passed afterward. All 277 bridge checks and eight runtime-domain checks
+  passed, including malformed blocks, Unicode separators, size limits and input
+  immutability. Full Bash/PowerShell regression runs were started afterward.
+- Built a separate APFS-cloned disposable app at
+  /private/tmp/coop-session-replay-app-20260907/mac-arm64/Coop Desktop.app,
+  overlaying server, renderer and projection module. Ad-hoc signing, strict
+  verification and package/fuse/compatibility checks passed. The native Clone
+  action now retained the thinking disclosures, failure mark, command arguments
+  and Command aborted output. The fixed clone had an independent ID and every
+  original entry matched exactly.
+- Native Fork from the final user prompt created a third distinct session ID and
+  exactly the entries preceding that prompt. The selected prompt appeared in the
+  composer without being submitted. Original and fixed clone remained byte for
+  byte unchanged. Cleared that disposable draft and used native History to restore
+  the original session; persisted Desktop state confirmed the original file.
+  No model generation or workspace file edits were needed for this acceptance.
+- Evidence: session-branch-evidence.json, session-branch-original.jsonl,
+  session-replay-before.log, session-replay-after.log and
+  session-replay-package-verification.json under
+  /private/tmp/coop-desktop-home-20260907-state/. Session fixture copies contain
+  only the authorized disposable acceptance conversation, not credentials.
+  Backups: .backups/session_replay_20260907/. Updated web/README.md to describe
+  replay fidelity and the already-shipped usage-status behavior accurately.
+- Native Windows branching and remaining named release/quality/journey requirements
+  are still open. No formal final-artifact parity status was promoted from this
+  development build, and no release, tag or version bump was performed.
+- Final full Bash and PowerShell suites completed with observed exit 0. Syntax,
+  parity/BOM and whitespace checks passed. Post-use strict signature verification,
+  exact equality of the three changed runtime sources and original-logo equality
+  passed. Final suite logs: session-replay-bash.log and
+  session-replay-powershell.log in the evidence directory. The corrected native app
+  remains open on the restored original conversation.
