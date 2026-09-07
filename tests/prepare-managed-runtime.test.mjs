@@ -105,4 +105,49 @@ await test("missing integrity is recorded only after full archive comparison, wi
   } finally { rmSync(base, { recursive: true, force: true }); }
 });
 
+await test("development wheels authenticate snapshots, retain exact pins, and bind installed provenance", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { createHash } = await import("node:crypto");
+  const { snapshotDevelopmentWheels, recordDevelopmentSource, readDevelopmentSource, validateDevelopmentSource } = await import("../desktop/src/development-wheels.mjs");
+  const { buildDependencyInventory, validateDependencyInventory } = await import("../desktop/src/dependency-inventory.mjs");
+  const base = mkdtempSync(join(tmpdir(), "coop-development-wheel-"));
+  try {
+    const plan = managedRuntimeBuildPlan("win32-x64"), version = plan.pipSpecs.find(spec => spec.startsWith("coop-data-doc==")).split("==")[1];
+    const source = { name: "coop-data-doc", version, file: `coop_data_doc-${version}-py3-none-any.whl`, sha256: createHash("sha256").update("wheel bytes").digest("hex"), repository: "https://github.com/kabukisensei/coop-data-doc.git", revision: "a".repeat(40) };
+    const manifest = join(base, "development-wheels.json");
+    const writeManifest = wheels => writeFileSync(manifest, JSON.stringify({ schemaVersion: 1, wheels }));
+    writeManifest([source]); writeFileSync(join(base, source.file), "wheel bytes");
+    const development = snapshotDevelopmentWheels(manifest, join(base, "snapshot with spaces"), plan.pipSpecs);
+    writeFileSync(join(base, source.file), "changed original");
+    assert.equal(readFileSync(join(base, "snapshot with spaces", source.file), "utf8"), "wheel bytes");
+    assert.match(development[source.name].spec, /%20.*#sha256=/);
+    const paths = { work: base, output: join(base, "out"), nodeRoot: base, npmPrefix: base, pythonRoot: base };
+    const command = preparationCommands(plan, paths, development).pythonTools.find(tool => tool.name === source.name);
+    assert.deepEqual(command.args.slice(-2), [`${source.name}==${version}`, development[source.name].spec]);
+    assert.throws(() => snapshotDevelopmentWheels(manifest, join(base, "bad-hash"), plan.pipSpecs), /provenance/);
+    writeManifest([source, source]);
+    assert.throws(() => snapshotDevelopmentWheels(manifest, join(base, "duplicate"), plan.pipSpecs), /provenance/);
+    writeManifest([source]);
+    assert.throws(() => snapshotDevelopmentWheels(manifest, join(base, "wrong-pin"), []), /provenance/);
+    for (const change of [{ file: "../outside.whl" }, { revision: "main" }, { name: "untrusted" }, { repository: "https://example.test/repo.git" }, { extra: true }]) assert.throws(() => validateDevelopmentSource({ ...source, ...change }), /provenance/);
+    const installed = join(base, "installed"), info = join(installed, `coop_data_doc-${version}.dist-info`);
+    mkdirSync(info, { recursive: true });
+    writeFileSync(join(info, "METADATA"), `Name: coop-data-doc\nVersion: ${version}\n`);
+    const receipt = hash => writeFileSync(join(info, "direct_url.json"), JSON.stringify({ archive_info: { hashes: { sha256: hash } } }));
+    receipt("b".repeat(64)); assert.throws(() => recordDevelopmentSource(installed, source), /provenance/);
+    receipt(source.sha256); recordDevelopmentSource(installed, source);
+    assert.deepEqual(readDevelopmentSource(installed), source);
+    const npm = join(base, "npm"); mkdirSync(join(npm, "node_modules"), { recursive: true });
+    writeFileSync(join(npm, "node_modules/.package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: {} }));
+    const target = { platform: "win32", arch: "x64" };
+    const inventory = buildDependencyInventory({ npmPrefix: npm, pythonTools: [{ name: source.name, root: installed }], target });
+    validateDependencyInventory(inventory, target);
+    assert.deepEqual(inventory.python.tools[0].developmentSource, source);
+    const altered = structuredClone(inventory); altered.python.tools[0].developmentSource.version = "9.9.9";
+    assert.throws(() => validateDependencyInventory(altered, target));
+    receipt("b".repeat(64)); assert.throws(() => buildDependencyInventory({ npmPrefix: npm, pythonTools: [{ name: source.name, root: installed }], target }), /provenance/);
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
 console.log(`prepare managed runtime: ${count} tests passed`);

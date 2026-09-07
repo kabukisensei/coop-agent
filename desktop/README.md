@@ -80,6 +80,30 @@ treated as execution evidence: each bundle records and enforces its actual
 platform and architecture. Production signing and clean-machine verification
 remain separate gates.
 
+For development acceptance of unpublished companion fixes, build wheels from the
+exact Git commits in `config/development-companions.json`. The builder reads sibling
+`coop-data-doc-desktop`, `coop-sql-review-desktop`, and `coop-dax-review-desktop`
+repositories and archives the pinned commits; working-tree changes are excluded.
+Use a Python installation with pip and a fresh output directory whose parent exists:
+
+```text
+python scripts/build-development-wheels.py --repositories /absolute/parent --output /absolute/new-wheels
+node scripts/prepare-managed-runtime.mjs --target darwin-arm64 --work /absolute/new-work --output /absolute/managed-runtime --development-wheels /absolute/new-wheels/development-wheels.json
+```
+
+On Windows use native absolute paths and `--target win32-x64`. `--pins` on the wheel
+builder accepts a JSON object with the same three names and full commit IDs, allowing
+validation branches to test later committed fixes. The preparer authenticates a
+private wheel snapshot by SHA-256, retains each exact release-version constraint,
+and checks pip's installed archive receipt before recording provenance. Staging
+places each source repository, commit, wheel filename and hash in the dependency
+inventory; the package verifier reports them as `developmentSources`. Builds without
+the explicit development input continue using published pins. These wheels retain
+existing version numbers for development compatibility and are not published
+releases; record the inventory and source commits with acceptance evidence. The
+build backend and transitive dependencies may resolve differently on another
+worker, so record actual wheel hashes and the generated dependency inventory.
+
 A packaged app uses `resources/managed-runtime` when present. It validates the
 bundle contract, target, jailed paths, and Coop/Pi/Node/Python version agreement
 before launch. A present but invalid bundle fails closed; it never falls back to

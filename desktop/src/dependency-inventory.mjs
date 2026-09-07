@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
+import { readDevelopmentSource, validateDevelopmentSource } from "./development-wheels.mjs";
 
 const VERSION = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 // Distribution metadata uses PEP 440 (including post/dev releases), not semver.
@@ -63,7 +64,9 @@ export function buildDependencyInventory({ npmPrefix, pythonTools, target } = {}
     }
     if (!distributions.length) fail(`Python dependency inventory is empty: ${tool.name}.`);
     distributions.sort((left, right) => normalizeName(left.name).localeCompare(normalizeName(right.name), "en"));
-    return Object.freeze({ name: tool.name, distributions: Object.freeze(distributions) });
+    const developmentSource = readDevelopmentSource(tool.root);
+    if (developmentSource && (developmentSource.name !== tool.name || !distributions.some(entry => normalizeName(entry.name) === tool.name && entry.version === developmentSource.version))) fail("Development wheel does not match its Python inventory tool.");
+    return Object.freeze({ name: tool.name, distributions: Object.freeze(distributions), ...(developmentSource ? { developmentSource } : {}) });
   }).sort((left, right) => left.name.localeCompare(right.name, "en"));
 
   return Object.freeze({
@@ -91,7 +94,7 @@ export function validateDependencyInventory(value, { platform, arch } = {}) {
   }
   let priorTool = "";
   for (const tool of value.python.tools) {
-    exactKeys(tool, ["name", "distributions"], "Dependency inventory Python tool");
+    exactKeys(tool, ["name", "distributions", ...(Object.hasOwn(tool, "developmentSource") ? ["developmentSource"] : [])], "Dependency inventory Python tool");
     if (!PACKAGE.test(tool.name || "") || (priorTool && tool.name.localeCompare(priorTool, "en") <= 0) || !Array.isArray(tool.distributions) || !tool.distributions.length) fail("Dependency inventory Python tool is invalid or unsorted.");
     priorTool = tool.name;
     let priorName = "";
@@ -100,6 +103,10 @@ export function validateDependencyInventory(value, { platform, arch } = {}) {
       const normalized = normalizeName(distribution.name || "");
       if (!PACKAGE.test(distribution.name || "") || !PYTHON_VERSION.test(distribution.version || "") || typeof distribution.metadata !== "string" || !/^[a-z0-9_.+!-]+\.dist-info$/i.test(distribution.metadata) || (priorName && normalized.localeCompare(priorName, "en") <= 0)) fail("Dependency inventory Python distribution is invalid or unsorted.");
       priorName = normalized;
+    }
+    if (Object.hasOwn(tool, "developmentSource")) {
+      const source = validateDevelopmentSource(tool.developmentSource);
+      if (source.name !== tool.name || !tool.distributions.some(entry => normalizeName(entry.name) === source.name && entry.version === source.version)) fail("Dependency inventory development source does not match its tool.");
     }
   }
   if (value.npm.completeIntegrity !== value.npm.packages.every((entry) => entry.integrity !== null)) fail("Dependency inventory npm integrity state is inconsistent.");

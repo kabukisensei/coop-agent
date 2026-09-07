@@ -79,6 +79,7 @@ export async function verifyManagedPackage({ root, platform = process.platform, 
     appAsar: asar,
     managedRuntime: managedRoot,
     versions: managed.versions,
+    developmentSources: managed.dependencyInventory.python.tools.flatMap(tool => tool.developmentSource ? [tool.developmentSource] : []),
     fuses: Object.freeze(Object.fromEntries([...EXPECTED].map(([option, state]) => [FuseV1Options[option], state === ON ? "enabled" : "disabled"]))),
   });
 }

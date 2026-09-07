@@ -8,6 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { managedRuntimeBuildPlan } from "./managed-runtime-build-plan.mjs";
 import { completeNpmIntegrity } from "./complete-npm-integrity.mjs";
+import { snapshotDevelopmentWheels, recordDevelopmentSource } from "../desktop/src/development-wheels.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -17,7 +18,7 @@ function parseArgs(argv) {
   const options = {};
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i];
-    if (!new Set(["--target", "--work", "--output"]).has(key) || !argv[i + 1]) fail(`Unknown or incomplete argument: ${key || "<missing>"}.`);
+    if (!new Set(["--target", "--work", "--output", "--development-wheels"]).has(key) || !argv[i + 1] || options[key.slice(2)]) fail(`Unknown, duplicate or incomplete argument: ${key || "<missing>"}.`);
     options[key.slice(2)] = key === "--target" ? argv[i + 1] : resolve(argv[i + 1]);
     i += 1;
   }
@@ -64,7 +65,7 @@ function pythonVersion(python) {
   return output;
 }
 
-export function preparationCommands(plan, paths) {
+export function preparationCommands(plan, paths, developmentWheels = {}) {
   const windows = plan.target.startsWith("win32-");
   const node = join(paths.nodeRoot, windows ? "node.exe" : "bin/node");
   const npmCli = join(paths.nodeRoot, windows ? "node_modules/npm/bin/npm-cli.js" : "lib/node_modules/npm/bin/npm-cli.js");
@@ -79,7 +80,8 @@ export function preparationCommands(plan, paths) {
     pythonTools: Object.freeze(pythonTools.map((tool) => Object.freeze({
       ...tool,
       command: python,
-      args: Object.freeze(["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--no-compile", "--target", tool.root, tool.spec]),
+      args: Object.freeze(["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--no-compile", "--target", tool.root, tool.spec,
+        ...(developmentWheels[tool.name] ? [developmentWheels[tool.name].spec] : [])]),
     }))),
     stage: Object.freeze({
       command: process.execPath,
@@ -103,6 +105,8 @@ async function prepare() {
   if (existsSync(options.output)) fail(`Output already exists; refusing to overwrite: ${options.output}`);
   const plan = managedRuntimeBuildPlan(options.target);
   mkdirSync(options.work, { recursive: false });
+  const developmentWheels = options["development-wheels"]
+    ? snapshotDevelopmentWheels(options["development-wheels"], join(options.work, "development-wheels"), plan.pipSpecs) : {};
   const nodeArchive = join(options.work, plan.node.file);
   const pythonArchive = join(options.work, plan.python.file);
   await downloadPinned(plan.node, nodeArchive, "Node");
@@ -117,7 +121,7 @@ async function prepare() {
   const pythonRoot = realpathSync(join(pythonExtract, plan.python.root));
   const npmPrefix = join(options.work, "npm");
   const paths = { work: options.work, output: options.output, nodeRoot, npmPrefix, pythonRoot };
-  const commands = preparationCommands(plan, paths);
+  const commands = preparationCommands(plan, paths, developmentWheels);
   const pyVersion = pythonVersion(commands.python.command);
   if (pyVersion !== plan.python.version) fail(`Managed Python ${pyVersion} does not match pinned ${plan.python.version}.`);
   const nodeBin = dirname(commands.npm.command);
@@ -128,6 +132,7 @@ async function prepare() {
   const pythonEnv = { ...env, PYTHONNOUSERSITE: "1", PIP_DISABLE_PIP_VERSION_CHECK: "1", PIP_NO_INPUT: "1" };
   for (const tool of commands.pythonTools) {
     run(tool.command, tool.args, { env: pythonEnv, label: `Pinned Python package ${tool.spec} installation` });
+    if (developmentWheels[tool.name]) recordDevelopmentSource(tool.root, developmentWheels[tool.name].source);
   }
   run(commands.stage.command, commands.stage.args, { label: "Managed runtime staging" });
   process.stdout.write(`${JSON.stringify({ ok: true, target: plan.target, output: options.output, node: plan.node.version, python: pyVersion })}\n`);

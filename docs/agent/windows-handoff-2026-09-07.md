@@ -60,11 +60,13 @@ in the current implementation. NSIS configuration alone is not a complete Window
 updater. Implement and verify the required Windows behavior; never bypass the
 platform check and reuse macOS filesystem or process assumptions.
 
-The managed preparer currently acquires published pinned Python tools. Testing
-editable companion sources does not prove those changes are in a managed app.
-Track both source revisions and actual packaged wheel bytes. Resolve that gap with
-an explicit development packaging mechanism and regenerated inventory/evidence;
-do not silently weaken pinned version, integrity or signature checks.
+The managed preparer defaults to published pinned Python tools. For unpublished
+companion fixes use `scripts/build-development-wheels.py` and the preparer's
+`--development-wheels` input, documented in `desktop/README.md`. Build the three
+pinned commits into wheels, then pass their generated manifest when preparing the
+Windows runtime. Record `developmentSources` from the package verifier and the
+full dependency inventory. Editable source tests alone do not prove the installed
+app contains the fixes. Native Windows acceptance of this mechanism remains open.
 
 ## Native Windows work
 
@@ -82,7 +84,8 @@ do not silently weaken pinned version, integrity or signature checks.
    ```powershell
    npm ci --prefix desktop
    node scripts/managed-runtime-build-plan.mjs win32-x64
-   node scripts/prepare-managed-runtime.mjs --target win32-x64 --work C:\CoopTestBuild\work --output C:\CoopTestBuild\managed-runtime
+   python scripts/build-development-wheels.py --repositories C:\path\to\sibling-repositories --output C:\CoopTestBuild\wheels
+   node scripts/prepare-managed-runtime.mjs --target win32-x64 --work C:\CoopTestBuild\work --output C:\CoopTestBuild\managed-runtime --development-wheels C:\CoopTestBuild\wheels\development-wheels.json
    node scripts/verify-managed-runtime.mjs --bundle C:\CoopTestBuild\managed-runtime --workspace C:\CoopTestBuild\workspace --agent C:\CoopTestBuild\agent
    $env:COOP_DESKTOP_MANAGED_RUNTIME_DIR = 'C:\CoopTestBuild\managed-runtime'
    npm run package:managed:win --prefix desktop
