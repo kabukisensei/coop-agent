@@ -1877,12 +1877,14 @@ let autoCompactionEnabled = null;
 let autoRetryPreference = null; // Pi 0.84.3 does not expose this value through get_state.
 
 function shortModel(m) {
-  const label = (m && (m.name || m.id)) || "model…";
+  const label = [m?.name, m?.id].find(value => typeof value === "string" && value.trim() && value !== "unknown") || "Choose model";
   return label.length > 26 ? label.slice(0, 25) + "…" : label;
 }
 function setModelChip(m) {
   modelChip.textContent = shortModel(m);
-  if (m) modelChip.title = `Model: ${m.id || ""} (${m.provider || ""}) — click to change`;
+  modelChip.title = m?.id && m.id !== "unknown"
+    ? `Model: ${m.id}${m.provider && m.provider !== "unknown" ? ` (${m.provider})` : ""} — click to change`
+    : "Choose a model or set up model access";
 }
 function setThinkChip(level) {
   if (level) currentThink = level;

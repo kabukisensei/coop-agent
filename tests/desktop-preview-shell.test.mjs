@@ -272,10 +272,12 @@ await test("model login opens the fixed Pi TUI handoff without renderer-supplied
   assert.equal(mac.args.includes("/client work/repo"), true);
   assert.equal(mac.args[1].includes("/client work/repo"), false);
   assert.match(mac.args[1], /COOP_PRIME_MODEL_LOGIN=1 COOP_LOGIN_ONLY=1/);
+  assert.equal((mac.args[1].match(/COOP_WORKSPACE_ACCESS_MODE=read-only/g) || []).length, 2, "both managed and preview login are read-only");
   const windows = buildNativeModelLoginProcess({ cwd: "C:\\Client Work\\Repo", coopExecutable: "C:\\Coop\\coop.cmd", platform: "win32" });
   assert.equal(windows.command, "cmd.exe");
   assert.equal(windows.args.join(" ").includes("Client Work"), false);
   assert.equal(windows.options.env.COOP_TERMINAL_BIN, "C:\\Coop\\coop.cmd");
+  assert.equal(windows.options.env.COOP_WORKSPACE_ACCESS_MODE, "read-only");
   const isolated = buildNativeModelLoginProcess({ cwd: "C:\\Client Work\\Repo", coopExecutable: "C:\\Coop\\coop.cmd", agentDir: "C:\\Users\\consultant\\AppData\\Coop Desktop\\managed-agent", platform: "win32" });
   assert.equal(isolated.options.env.PI_CODING_AGENT_DIR, isolated.options.env.COOP_DESKTOP_AGENT_DIR);
   let call;

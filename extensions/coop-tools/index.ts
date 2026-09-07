@@ -30,7 +30,7 @@
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -1834,6 +1834,22 @@ export function shouldPrimeModelLogin(ctx: Pick<ExtensionContext, "hasUI" | "mod
   return ctx.hasUI && ctx.mode === "tui" && /^(1|true|yes|on)$/i.test(process.env.COOP_PRIME_MODEL_LOGIN || "");
 }
 
+/** Observe only a complete Codex OAuth record. Keep its contents private and
+ * distinguish a new login from credentials that predate this handoff. */
+export function modelLoginCredentialFingerprint(): string | null {
+  try {
+    const path = modelLoginAuthPath();
+    const metadata = statSync(path);
+    if (!metadata.isFile() || metadata.size > 1024 * 1024) return null;
+    const bytes = readFileSync(path, "utf8");
+    if (Buffer.byteLength(bytes) > 1024 * 1024) return null;
+    const record = JSON.parse(bytes)?.["openai-codex"];
+    if (record?.type !== "oauth" || typeof record.access !== "string" || !record.access.trim() ||
+        typeof record.refresh !== "string" || !record.refresh.trim() || !Number.isFinite(record.expires) || record.expires <= Date.now()) return null;
+    return createHash("sha256").update(JSON.stringify(record)).digest("hex");
+  } catch { return null; }
+}
+
 /**
  * Put Pi's real built-in login command in the editor. Pi does not execute slash
  * commands supplied as CLI arguments; those become model prompts instead. During
@@ -1847,11 +1863,12 @@ function primeModelLogin(ctx: ExtensionContext): boolean {
   delete process.env.COOP_PRIME_MODEL_LOGIN;
 
   if (/^(1|true|yes|on)$/i.test(process.env.COOP_LOGIN_ONLY || "")) {
-    const authPath = modelLoginAuthPath();
+    const initialCredential = modelLoginCredentialFingerprint();
     let credentialSeenAt = 0;
     const timer = setInterval(() => {
       try {
-        if (!existsSync(authPath) || statSync(authPath).size === 0) return;
+        const credential = modelLoginCredentialFingerprint();
+        if (!credential || credential === initialCredential) { credentialSeenAt = 0; return; }
         if (!credentialSeenAt) credentialSeenAt = Date.now();
         // Fresh login selects OpenAI's default model after credentials are saved.
         // Prefer that positive readiness signal; the timeout covers a preselected
@@ -2401,6 +2418,13 @@ export default function coopTools(pi: ExtensionAPI) {
       } catch (e: any) {
         notify(ctx, `Couldn't open the menu: ${errMsg(e)}. Just type what you'd like to do.`, "error");
       }
+    },
+  });
+
+  pi.registerCommand("coop-refresh-models", {
+    description: "Refresh model availability after provider sign-in",
+    handler: async (_args, ctx) => {
+      await ctx.modelRegistry.refresh({ allowNetwork: false });
     },
   });
 

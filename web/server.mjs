@@ -44,7 +44,7 @@ import { applyProjectConfig, getProjectConfig, proposeProjectConfig } from "./pr
 import { discoverFabricItems, discoverFabricWorkspaces, discoverLocalRepositories } from "./environment-discovery.mjs";
 import { getProjectSetupState } from "./project-setup-service.mjs";
 import { buildExecutionEnvelope, capabilityForTool } from "./execution-envelope.mjs";
-import { buildPromptCommand, buildRpcCommand } from "./rpc-adapter.mjs";
+import { buildPromptCommand, buildRpcCommand, listAvailableModels } from "./rpc-adapter.mjs";
 import { RuntimeEventStream } from "./runtime-events.mjs";
 import { WorkflowService } from "./workflow-service.mjs";
 import {
@@ -2210,7 +2210,9 @@ async function handle(req, res) {
         return;
       }
       const cmd = adapted.command;
-      const reply = await rpcCall(chat, cmd, RPC_TIMEOUTS[type] || 30000);
+      const reply = type === "get_available_models"
+        ? await listAvailableModels(command => rpcCall(chat, command, 15000))
+        : await rpcCall(chat, cmd, RPC_TIMEOUTS[type] || 30000);
       if (!reply) {
         res.writeHead(504, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "pi did not answer in time" }));
         return;

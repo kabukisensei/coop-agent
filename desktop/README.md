@@ -175,8 +175,15 @@ the existing Python onboarding owner. The project-contract action offers an
 advanced YAML editor with server-side validation, exact before/after preview,
 explicit apply approval, stale-write detection, and recoverable backup; guided
 setup still routes to `/setup-project`. Data Doc setup routes to its existing
-owner. Model login uses the fixed preview terminal bridge because Pi 0.84.3 has
-no structured RPC auth flow. Microsoft login execution and Doctor repairs remain
+owner. Model login uses the fixed native terminal bridge because Pi 0.84.3 has
+no structured RPC auth flow. The sign-in helper attaches read-only to the workspace
+so it can share Desktop's profile without competing for the active writer lease.
+Login-only mode closes after a new, complete Codex OAuth record is saved; empty,
+unrelated, expired or pre-existing credentials do not count as a new sign-in.
+Opening the model picker refreshes availability through Pi's public model registry
+after external sign-in, without restarting the chat or making a model request.
+Older runtimes without the refresh command retain their existing listing behavior.
+Microsoft login execution and Doctor repairs remain
 disabled until their shared Core operations exist.
 
 On Windows, a normal installed `coop.cmd` is mapped to its trusted sibling

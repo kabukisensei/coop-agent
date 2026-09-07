@@ -108,6 +108,22 @@ await t("terminal guardrails acquire and release the shared workspace lease", as
   await second.session_start({}, makeLeaseCtx(() => { secondShutdowns++; }));
   assert.equal(firstShutdowns, 0);
   assert.equal(secondShutdowns, 1, "second terminal writer must fail closed");
+  const { buildNativeModelLoginProcess } = await import("../desktop/src/native-terminal.mjs");
+  const login = makeExtension();
+  let loginShutdowns = 0;
+  const loginSpec = buildNativeModelLoginProcess({ cwd: workspace, coopExecutable: "/test/coop", agentDir: AUDIT_DIR, platform: "win32" });
+  process.env.COOP_WORKSPACE_ACCESS_MODE = loginSpec.options.env.COOP_WORKSPACE_ACCESS_MODE;
+  try {
+    await login.session_start({}, makeLeaseCtx(() => { loginShutdowns++; }));
+    assert.equal(loginShutdowns, 0, "model login must coexist with the active Desktop writer");
+    const mutation = await login.tool_call({ toolName: "write", input: { path: join(workspace, "file") } }, ctx);
+    assert.equal(mutation.block, true, "login cannot gain workspace write access");
+    await login.session_shutdown();
+  } finally { delete process.env.COOP_WORKSPACE_ACCESS_MODE; }
+  const competingWriter = makeExtension();
+  let competingShutdowns = 0;
+  await competingWriter.session_start({}, makeLeaseCtx(() => { competingShutdowns++; }));
+  assert.equal(competingShutdowns, 1, "login must preserve the original writer's lease");
   await first.session_shutdown();
   const third = makeExtension();
   let thirdShutdowns = 0;

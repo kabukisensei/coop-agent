@@ -21,8 +21,8 @@ const MODEL_LOGIN_APPLE_SCRIPT = `on run argv
   set targetDir to item 1 of argv
   set coopExecutable to item 2 of argv
   set agentDir to item 3 of argv
-  set commandText to "cd " & quoted form of targetDir & "; export COOP_PRIME_MODEL_LOGIN=1 COOP_LOGIN_ONLY=1; exec " & quoted form of coopExecutable
-  if agentDir is not "" then set commandText to "cd " & quoted form of targetDir & "; export COOP_DESKTOP_AGENT_DIR=" & quoted form of agentDir & " COOP_AGENT_DIR=" & quoted form of agentDir & " PI_CODING_AGENT_DIR=" & quoted form of agentDir & " COOP_PRIME_MODEL_LOGIN=1 COOP_LOGIN_ONLY=1; exec " & quoted form of coopExecutable
+  set commandText to "cd " & quoted form of targetDir & "; export COOP_PRIME_MODEL_LOGIN=1 COOP_LOGIN_ONLY=1 COOP_WORKSPACE_ACCESS_MODE=read-only; exec " & quoted form of coopExecutable
+  if agentDir is not "" then set commandText to "cd " & quoted form of targetDir & "; export COOP_DESKTOP_AGENT_DIR=" & quoted form of agentDir & " COOP_AGENT_DIR=" & quoted form of agentDir & " PI_CODING_AGENT_DIR=" & quoted form of agentDir & " COOP_PRIME_MODEL_LOGIN=1 COOP_LOGIN_ONLY=1 COOP_WORKSPACE_ACCESS_MODE=read-only; exec " & quoted form of coopExecutable
   tell application "Terminal"
     activate
     do script commandText
@@ -90,10 +90,10 @@ export function buildNativeModelLoginProcess({ cwd, coopExecutable, agentDir = n
     return {
       command: "cmd.exe",
       args: ["/d", "/s", "/c", `start "" powershell.exe -NoLogo -NoExit -NoProfile -Command "${WINDOWS_MODEL_LOGIN}"`],
-      options: { cwd, env: { ...process.env, COOP_TERMINAL_BIN: coopExecutable, COOP_TERMINAL_CWD: cwd, ...(isolatedAgentDir ? { COOP_DESKTOP_AGENT_DIR: isolatedAgentDir, COOP_AGENT_DIR: isolatedAgentDir, PI_CODING_AGENT_DIR: isolatedAgentDir } : {}) } },
+      options: { cwd, env: { ...process.env, COOP_WORKSPACE_ACCESS_MODE: "read-only", COOP_TERMINAL_BIN: coopExecutable, COOP_TERMINAL_CWD: cwd, ...(isolatedAgentDir ? { COOP_DESKTOP_AGENT_DIR: isolatedAgentDir, COOP_AGENT_DIR: isolatedAgentDir, PI_CODING_AGENT_DIR: isolatedAgentDir } : {}) } },
     };
   }
-  return { command: "x-terminal-emulator", args: ["-e", "/usr/bin/env", "COOP_PRIME_MODEL_LOGIN=1", "COOP_LOGIN_ONLY=1", coopExecutable], options: { cwd } };
+  return { command: "x-terminal-emulator", args: ["-e", "/usr/bin/env", "COOP_PRIME_MODEL_LOGIN=1", "COOP_LOGIN_ONLY=1", "COOP_WORKSPACE_ACCESS_MODE=read-only", coopExecutable], options: { cwd } };
 }
 
 export function launchNativeModelLogin({ cwd, coopExecutable, agentDir = null, platform = process.platform, spawnImpl = spawn }) {
