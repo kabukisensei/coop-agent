@@ -280,6 +280,7 @@ npm_selected="$(PATH="$TMP/npm-broken:$BASE_PATH:/usr/local/bin:/opt/homebrew/bi
   && ok "broken npm shim falls back to a working managed launcher" \
   || ko "working npm fallback was not selected (got '$npm_selected')"
 
+COOP_USAGE_FIXTURE="$ROOT/tests/fixtures/pi-better-openai-0.1.22/usage.ts"; export COOP_USAGE_FIXTURE
 sync_run() { # <behave-file> [extra-path-prefix] -> stdout, rc
   local behave="$1"; local pfx="${2:-}"
   cat "$ROOT/tests/fixtures/sync-fake-pi.sh" > "$FAKEBIN/pi"
@@ -363,6 +364,7 @@ run_sync_with_extdeps_rc() { # <rc> <line-fields...>
   rm -rf "$sandbox"
   mkdir -p "$sandbox/lib" "$sandbox/config" "$sandbox/scripts" "$sandbox/bin" "$sandbox/home"
   cp "$ROOT/lib/common.sh" "$sandbox/lib/"
+  cp "$ROOT/lib/openai-usage-compat.mjs" "$sandbox/lib/"
   cp "$ROOT/lib/pi_settings.py" "$sandbox/lib/"
   cp "$ROOT/lib/pins.js" "$sandbox/lib/" 2>/dev/null || true
   cp "$ROOT/config/release-manifest.json" "$sandbox/config/"

@@ -183,6 +183,20 @@ unrelated, expired or pre-existing credentials do not count as a new sign-in.
 Opening the model picker refreshes availability through Pi's public model registry
 after external sign-in, without restarting the chat or making a model request.
 Older runtimes without the refresh command retain their existing listing behavior.
+
+The pinned pi-better-openai 0.1.22 package receives the checked
+`lib/openai-usage-compat.mjs` correction during `coop sync` and managed staging.
+It labels quota windows using the response's `limit_window_seconds`; absent
+window lengths are labelled Primary/Secondary instead of guessed. Staging
+preserves the acquired npm tree and records upstream and corrected source hashes
+in `coop-compatibility.json`. Package verification checks both the exact corrected
+source and receipt. A changed upstream version or source requires reviewing this
+correction before setup can pass. Its fetch, authentication and model-scope logic
+remain owned by pi-better-openai. npm inventory integrity describes the acquired
+archive; the compatibility receipt describes the subsequent local correction.
+Desktop consumes the shared extension status (including session replay), clears
+missing values and does not submit background `/openai-usage` prompts.
+
 Microsoft login execution and Doctor repairs remain
 disabled until their shared Core operations exist.
 

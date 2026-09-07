@@ -52,12 +52,13 @@ await test("renderer forced reconnect replays the active session while ordinary 
     fetch: async url => { seen.push(url); return { ok: true, json: async () => ({ next: 1, events: [JSON.stringify({ type: "extension_ui_request", id: "approval" })] }) }; },
     handle: event => seen.push(event.id), renderTabs() {}, renderQueue() {}, resetTranscript() {},
     setCwd() {}, refreshState() {}, resetPanels() {}, maybeOpenDesktopMissionControl() {},
+    clearUsage() { seen.push("usage-cleared"); },
   });
   vm.runInContext(source.slice(start, end), context);
   await context.switchChat("one");
   assert.deepEqual(seen, []);
   await context.switchChat("one", { force: true });
-  assert.deepEqual(seen, ["/events-poll?sid=one&since=0", "approval"]);
+  assert.deepEqual(seen, ["usage-cleared", "/events-poll?sid=one&since=0", "approval"]);
   assert.equal(context.activeSid, "one");
   assert.equal(context.switching, false);
   assert.match(source, /else \{ ensureActiveExists\(\); if \(!desktopNavigationRestoring && activeSid\) switchChat\(activeSid, \{ force: true \}\); \}/);

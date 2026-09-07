@@ -168,6 +168,11 @@ Head 'Pi RPC adapter and runtime client tests'
 if ($LASTEXITCODE -eq 0) { Ok 'Pi RPC adapter and runtime client contracts pass' }
 else { Ko 'Pi RPC adapter and runtime client contracts failed' }
 
+Head 'Provider usage window compatibility tests'
+& node (Join-Path $root 'tests\usage-windows.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Provider usage window compatibility passes' }
+else { Ko 'Provider usage window compatibility failed' }
+
 Head 'Session tree projection tests'
 & node (Join-Path $root 'tests\session-tree-model.test.mjs')
 if ($LASTEXITCODE -eq 0) { Ok 'Session tree projection contracts pass' }

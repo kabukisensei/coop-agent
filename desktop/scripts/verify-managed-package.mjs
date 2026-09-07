@@ -4,6 +4,8 @@ import { dirname, isAbsolute, join, resolve, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspectManagedRuntime } from "../src/managed-runtime.mjs";
 
+import { ensureUsageCompatibility } from "../../lib/openai-usage-compat.mjs";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DESKTOP = resolve(HERE, "..");
 const OFF = "0".charCodeAt(0);
@@ -73,7 +75,11 @@ export async function verifyManagedPackage({ root, platform = process.platform, 
   }
   const managedRoot = join(paths.resources, "managed-runtime");
   const managed = inspectManagedRuntime(managedRoot, { platform, arch });
+  const usageCorrection = ensureUsageCompatibility(join(managedRoot, "npm/node_modules/pi-better-openai"), { check: true });
+  const corrections = JSON.parse(readFileSync(join(managedRoot, "coop-compatibility.json"), "utf8"));
+  if (JSON.stringify(corrections) !== JSON.stringify([usageCorrection])) fail("Packaged compatibility receipt does not match the installed correction.");
   return Object.freeze({
+    compatibilityPatches: corrections,
     ok: true,
     target: `${platform}-${arch}`,
     appAsar: asar,

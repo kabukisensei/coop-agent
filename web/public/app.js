@@ -853,6 +853,12 @@ const stripAnsi = (s) => String(s).replace(ANSI_RE, "");
 // Rebuild #extDock from scratch each call — the dock is tiny, so an O(n) idempotent
 // rebuild is the simple-correct choice for replay bursts. CSP-clean (textContent).
 function renderExtDock() {
+  clearUsage();
+  for (const value of extStatus.values()) {
+    const text = stripAnsi(String(value));
+    const offset = text.indexOf("Usage:");
+    if (offset >= 0) maybeUsage(text.slice(offset));
+  }
   if (!extDock) return;
   if (!extStatus.size && !extWidgets.size) { extDock.hidden = true; extDock.textContent = ""; return; }
   extDock.hidden = false;
@@ -1397,6 +1403,7 @@ async function switchChat(sid, { force = false } = {}) {
   if (!c) return;
   if (sid === activeSid && !switching && !force) return;
   activeSid = sid;
+  clearUsage();
   window.coopDesktop?.setActiveChat?.(sid).catch(() => {});
   window.coopSid = sid; // set before any Files/diff fetch can carry a sid
   c.unread = false;
@@ -1912,7 +1919,6 @@ async function refreshState() {
     const queue = queueFor();
     queue.pendingUnknown = Number.isSafeInteger(d.pendingMessageCount) ? d.pendingMessageCount : 0;
     renderQueue();
-    startUsagePolling(d.model);
   } catch {
     /* toolbar stays generic — chat still works */
   }
@@ -3438,41 +3444,32 @@ $("#compactBtn").onclick = async () => {
   }
 };
 
-// --- usage meter (pi-better-openai subscription snapshot) -----------------------
-// The extension's footer meter is TUI-only, but its /openai-usage command reports
-// the same snapshot via notify ("Usage: 5h: 62% | 7d: 81% | …"). We poll it and
-// render the header meter (values are % LEFT in each window).
+// --- usage meter (shared extension status, including session replay) ------------
+// The usage extension owns polling, model eligibility and errors. Render its
+// status instead of submitting periodic slash commands into the conversation.
 const usageEl = $("#usage"), usageText = $("#usageText");
 const bar5 = $("#bar5"), bar7 = $("#bar7");
-let usagePolling = false;
 
-function maybeUsage(text) {
-  if (!/^Usage:\s*5h:/i.test(text)) return false;
-  const m5 = /5h:\s*([\d.]+)%/i.exec(text);
-  const m7 = /7d:\s*([\d.]+)%/i.exec(text);
-  usageEl.hidden = false;
-  usageText.textContent = [m5 && `5h ${m5[1]}%`, m7 && `7d ${m7[1]}%`].filter(Boolean).join(" · ") || "usage";
-  usageEl.querySelector(".meter").title = text + "  (percent remaining)";
-  if (m5) bar5.style.width = Math.min(100, Number(m5[1])) + "%";
-  if (m7) bar7.style.width = Math.min(100, Number(m7[1])) + "%";
-  return true;
+function clearUsage() {
+  usageEl.hidden = true;
+  usageText.textContent = "";
+  usageEl.querySelector(".meter").title = "";
+  bar5.style.width = bar7.style.width = "0%";
 }
 
-function startUsagePolling(model) {
-  // Only when an OpenAI-family model is active — the /openai-usage command comes
-  // from pi-better-openai, which coop installs alongside it.
-  const sig = `${(model && model.provider) || ""} ${(model && model.id) || ""}`;
-  if (usagePolling || !/openai|codex/i.test(sig)) return;
-  usagePolling = true;
-  const ask = () => {
-    // Skip a tick while the active chat is busy or crashed — otherwise this /openai-usage
-    // prompt would be STEERED into the running turn (the /prompt handler steers when busy).
-    const c = chatsState.get(activeSid);
-    if (!c || c.busy || c.status === "exited") return;
-    post("/prompt", { message: "/openai-usage" }).catch(() => { /* retry next tick */ });
-  };
-  ask();
-  setInterval(ask, 120000);
+function maybeUsage(text) {
+  if (/^Usage (?:unavailable|hidden|display is disabled)/i.test(text)) { clearUsage(); return true; }
+  const parsed = window.CoopUsage.parse(text);
+  if (!parsed) return false;
+  usageEl.hidden = false;
+  usageText.textContent = parsed.windows.map(w => `${w.label} ${w.remaining === null ? "--" : w.remaining + "%"}`).join(" · ");
+  usageEl.querySelector(".meter").title = parsed.title;
+  [bar5, bar7].forEach((bar, index) => {
+    const w = parsed.windows[index];
+    bar.style.width = `${w?.remaining ?? 0}%`;
+    bar.hidden = !w || w.remaining === null;
+  });
+  return true;
 }
 
 const input = $("#input");

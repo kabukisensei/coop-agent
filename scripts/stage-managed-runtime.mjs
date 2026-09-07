@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { managedRuntimeBuildPlan } from "./managed-runtime-build-plan.mjs";
 import { buildDependencyInventory, dependencyInventoryDigest, serializeDependencyInventory } from "../desktop/src/dependency-inventory.mjs";
 
+import { ensureUsageCompatibility } from "../lib/openai-usage-compat.mjs";
+
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const COOP_FILES = ["bin", "config", "docs", "extensions", "lib", "prompts", "scripts", "skills", "themes", "vibes", "web", "LICENSE", "VERSION"];
 
@@ -294,6 +296,8 @@ function stage() {
     }
     copyTree(args.nodeRoot, join(staging, "node"));
     copyTree(args.npmPrefix, join(staging, "npm"));
+    const usageCorrection = ensureUsageCompatibility(join(staging, "npm/node_modules/pi-better-openai"));
+    writeFileSync(join(staging, "coop-compatibility.json"), JSON.stringify([usageCorrection], null, 2) + "\n");
     copyTree(args.pythonRoot, join(staging, "python", "runtime"));
     const stagedTools = args.pythonTools.map((tool) => {
       const destination = `python/tools/${tool.name}/site-packages`;

@@ -41,6 +41,8 @@ await test("inventory retains Python post releases and missing npm integrity; re
     const pythonRoot = join(base, "python");
     const target = { platform: TEST_PLATFORM, arch: TEST_ARCH };
     write(join(npmPrefix, "node_modules", "example", "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
+    const upstreamUsage = readFileSync(join(ROOT, "tests/fixtures/pi-better-openai-0.1.22/usage.ts"), "utf8");
+    write(join(npmPrefix, "node_modules/pi-better-openai/src/usage.ts"), upstreamUsage);
     write(join(npmPrefix, "node_modules", ".package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: { "node_modules/example": { version: "1.0.0", resolved: "https://registry.npmjs.org/example/-/example-1.0.0.tgz" } } }));
     write(join(pythonRoot, "example-2.9.0.post0.dist-info", "METADATA"), "Name: example\nVersion: 2.9.0.post0\n");
     const build = () => buildDependencyInventory({ npmPrefix, pythonTools: [{ name: "example", root: pythonRoot }], target });
@@ -281,6 +283,8 @@ await test("the offline staging command validates every release pin and never ov
     const stageTarget = { platform: process.platform, arch: TEST_ARCH };
     const stageNpmPackages = expectedNpmPackages(stageTarget);
     for (const [name, version] of Object.entries(stageNpmPackages)) write(join(npmPrefix, "node_modules", ...name.split("/"), "package.json"), `${JSON.stringify({ name, version })}\n`);
+    const upstreamUsage = readFileSync(join(ROOT, "tests/fixtures/pi-better-openai-0.1.22/usage.ts"), "utf8");
+    write(join(npmPrefix, "node_modules/pi-better-openai/src/usage.ts"), upstreamUsage);
     write(join(npmPrefix, "node_modules", ".package-lock.json"), `${JSON.stringify({ lockfileVersion: 3, requires: true, packages: Object.fromEntries(Object.entries(stageNpmPackages).map(([name, version]) => [`node_modules/${name}`, { version, resolved: `https://registry.npmjs.org/${name}/-/${name.split("/").at(-1)}-${version}.tgz`, integrity: "sha512-YQ==" }])) }, null, 2)}\n`);
     write(join(npmPrefix, "node_modules", ".bin", process.platform === "win32" ? "pi.cmd" : "pi"), process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n", 0o755);
     if (process.platform !== "win32") {
@@ -310,6 +314,9 @@ await test("the offline staging command validates every release pin and never ov
     }
     assert.equal(first.status, 0, first.stderr);
     assert.equal(JSON.parse(first.stdout).ok, true);
+    assert.equal(readFileSync(join(npmPrefix, "node_modules/pi-better-openai/src/usage.ts"), "utf8"), upstreamUsage, "staging preserves acquired package source");
+    assert.match(readFileSync(join(output, "npm/node_modules/pi-better-openai/src/usage.ts"), "utf8"), /windowLabels/);
+    assert.equal(JSON.parse(readFileSync(join(output, "coop-compatibility.json"), "utf8"))[0].id, "usage-window-duration-v1");
     const inspected = inspectManagedRuntime(output);
     assert.equal(inspected.versions.pi, RELEASE.pi.version);
     assert.equal(inspected.versions.python, "3.12.14");

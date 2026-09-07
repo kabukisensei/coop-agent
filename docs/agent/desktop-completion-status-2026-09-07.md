@@ -916,3 +916,68 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   its icon matched the original plain Cooptimize logo. Syntax, parity and whitespace
   checks passed. Native evidence: model-native-work-evidence.json and
   model-login-final-source-equality.json in the same evidence directory.
+
+## Provider usage window correction
+
+- Investigation traced the native 5h label paired with a multi-day reset to pinned
+  pi-better-openai 0.1.22: its parser hard-codes primary/secondary as 5h/7d and
+  discards the provider's actual duration. The npm registry still reports 0.1.22
+  as current. OpenAI's own client maps limit_window_seconds from each window:
+  https://github.com/openai/codex/blob/main/codex-rs/backend-client/src/client.rs .
+- Added an exact-source compatibility correction in lib/openai-usage-compat.mjs,
+  applied by both sync scripts and managed staging. It rejects unknown versions,
+  modified input, symlinks and non-files; repeated application is idempotent.
+  Managed staging changes only its fresh output copy and records original/corrected
+  hashes in coop-compatibility.json; the package verifier checks that receipt.
+  The dependency's original auth/fetch/model-scope owner remains in place.
+- Desktop now parses variable-duration usage labels, clears absent/unknown bars,
+  consumes automatic extension status/replay, clears quota state on chat switches
+  and no longer sends periodic slash-command prompts. Registered the parser route.
+- Five focused tests reproduce the upstream weekly-primary defect, then verify
+  corrected percentages/reset labels, custom/unknown durations, missing quota,
+  Spark selection, countdown aging, patch provenance/idempotence/rejection and
+  meter clearing. Real upstream usage.ts is retained only as an MIT-licensed test
+  fixture. Package and sync test fixtures now include that source; reconnect
+  coverage verifies quota clearing before replay.
+- Created a separate APFS-cloned test app at
+  /private/tmp/coop-usage-windows-app-20260907/mac-arm64/Coop Desktop.app with the
+  corrected dependency and renderer. Ad-hoc signing, strict verification and the
+  package/fuse/compatibility verifier passed. The prior authenticated app/profile
+  was preserved. Native visual acceptance is pending because Computer Use reports
+  the Mac is locked; Aaron was asked to unlock it. No workaround screen access was
+  attempted. Full Bash/PowerShell and isolated packaged HTTP checks are in progress.
+- Backups: .backups/usage_windows_20260907/. Evidence prefix usage-windows- in
+  /private/tmp/coop-desktop-home-20260907-state/. README documents the correction
+  and how it differs from acquired npm archive integrity. Existing release,
+  Windows and broader journey requirements remain open; no release performed.
+
+### Usage correction acceptance results
+
+- Aaron unlocked the Mac. Quit the original test app through its native menu and
+  launched the separate corrected app with the same managed profile/workspace.
+  Native accessibility and screenshot inspection confirmed a 7d header meter and
+  matching 7d reset label in the footer, Ready status, preserved GPT-5.5 selection
+  and restored prior conversation. No new model task was submitted for this check.
+  Exact equality of eight overlaid runtime source files and the original plain
+  logo passed, as did post-use strict code-signature verification. Evidence:
+  usage-windows-native-evidence.json and usage-windows-package-verification.json.
+- Final full Bash and PowerShell suites both completed with exit 0. ShellCheck,
+  Bash/JavaScript syntax, script parity/BOM and whitespace checks passed. Logs:
+  usage-windows-bash.log, usage-windows-powershell.log,
+  usage-windows-shellcheck.log and usage-windows-parity.log. Earlier suite failures
+  exposed incomplete staged dependency fixtures, a missing reconnect test stub and
+  a runtime test whose inherited home/PATH selected a pre-existing August 21 fake
+  ~/.local/bin/pi. The runtime lifecycle test now isolates HOME and pins its stub
+  path. That unrelated machine-local launcher was not modified.
+- An additional exploratory HTTP fixture using synthetic OAuth data did not pass:
+  its NODE_OPTIONS fetch replacement loaded but did not intercept the extension's
+  actual quota request, which returned 401 for the synthetic token. This fixture
+  is not credited as offline integration evidence, nor as a product authentication
+  failure. No real credentials were read or copied by it; no model generation was
+  requested. The production acceptance evidence is the authenticated native app,
+  plus the deterministic parser/formatter and staging/sync tests. Diagnostic log:
+  usage-windows-http.log. A reliably intercepted HTTP fixture remains follow-up.
+- The authenticated native test app remains open for use. Source is prepared for
+  the already-authorized commit/push; no release, tag or version bump. Windows
+  native acceptance, additional model-specific quota bucket coverage and the
+  previously listed broader completion requirements remain outstanding.

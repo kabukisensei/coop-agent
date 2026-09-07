@@ -1402,6 +1402,7 @@ function backfillFromFile(chat, fullPath) {
 const STATIC = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/theme-system.js": { file: "theme-system.js", type: "text/javascript; charset=utf-8" },
+  "/usage-model.js": { file: "usage-model.js", type: "text/javascript; charset=utf-8" },
   "/session-tree-model.js": { file: "session-tree-model.js", type: "text/javascript; charset=utf-8" },
   "/interaction-model.js": { file: "interaction-model.js", type: "text/javascript; charset=utf-8" },
   "/workspace-health-model.js": { file: "workspace-health-model.js", type: "text/javascript; charset=utf-8" },
