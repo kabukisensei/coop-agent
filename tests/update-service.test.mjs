@@ -1,3 +1,4 @@
+import { createHealthProfile, waitForProbeGroupExit } from "../desktop/src/update-health-profile.mjs";
 import { canStartMacApplication } from "../desktop/src/update-startup.mjs";
 import { pruneCompletedRecoveryJobs, recoveryJobIsIdle } from "../desktop/src/update-recovery-retention.mjs";
 import { createMacRecoveryJob, recoveryJobPlist } from "../desktop/src/update-recovery-job.mjs";
@@ -6,7 +7,7 @@ import { swapMacDirectories } from "../desktop/src/update-swap.mjs";
 import { nativeApplicationHealth } from "../desktop/src/update-native-health.mjs";
 import { presentUpdateOutcome } from "../desktop/src/update-outcome.mjs";
 import { launchUpdateHelper } from "../desktop/src/update-handoff.mjs";
-import { runUpdateHelper, validateHelperRequest, waitForStoppedProcesses } from "../desktop/src/update-helper.mjs";
+import { runtimeHealth, runUpdateHelper, validateHelperRequest, waitForStoppedProcesses } from "../desktop/src/update-helper.mjs";
 import { replaceMacApplication, recoverMacReplacement, inspectMacReplacement } from "../desktop/src/update-replacement.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { prepareMacUpdate, runUpdateCommand } from "../desktop/src/update-installer.mjs";
@@ -792,16 +793,75 @@ await test("update results display fixed copy once and preserve unread or newer 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+await test("runtime health removes only a successful profile after confirmed shutdown", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-runtime-health-cleanup-"));
+  try {
+    for (const mode of ["healthy", "mismatch", "stop-failure", "start-failure", "fetch-failure"]) {
+      let path, stopped = false;
+      const options = { start: async ({ env }) => {
+        path = env.COOP_DESKTOP_AGENT_DIR;
+        assert.ok(existsSync(path));
+        if (mode === "start-failure") throw new Error("start failed");
+        return { ready: { endpoint: "http://127.0.0.1", oneTimeToken: "fixture" }, stop: async () => {
+          assert.ok(existsSync(path), "profile stays present until stop finishes");
+          if (mode === "stop-failure") throw new Error("stop failed");
+          stopped = true;
+        } };
+      }, fetchImpl: async url => {
+        if (mode === "fetch-failure") throw new Error("fetch failed");
+        return { ok: true, headers: new Headers({ "set-cookie": "fixture=1" }), json: async () => ({ contractVersion: 1, versions: { coop: mode === "mismatch" ? "0.0.0" : "1.2.3" } }) };
+      } };
+      const result = runtimeHealth(root, { versionRoot: root, workspace: root }, { protocolVersion: 1, coopVersion: "1.2.3" }, new AbortController().signal, options);
+      if (mode.endsWith("failure")) await assert.rejects(result, /failed/);
+      else assert.equal(await result, mode === "healthy");
+      assert.equal(existsSync(path), mode !== "healthy");
+      if (mode === "healthy") assert.equal(stopped, true);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("health cleanup preserves replaced directories and external symlink targets", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-health-owned-"));
+  try {
+    const external = join(root, "external"); mkdirSync(external); writeFileSync(join(external, "keep"), "keep");
+    const profile = await createHealthProfile(root, "runtime");
+    symlinkSync(external, join(profile.path, "link"), process.platform === "win32" ? "junction" : "dir");
+    assert.equal(await profile.discard(), true); assert.ok(existsSync(join(external, "keep")));
+    assert.equal(await profile.discard(), false);
+    const replaced = await createHealthProfile(root, "native");
+    renameSync(replaced.path, replaced.path + "-original"); mkdirSync(replaced.path);
+    assert.equal(await replaced.discard(), false); assert.ok(existsSync(replaced.path));
+    const linked = await createHealthProfile(root, "native");
+    renameSync(linked.path, linked.path + "-original"); symlinkSync(external, linked.path, process.platform === "win32" ? "junction" : "dir");
+    assert.equal(await linked.discard(), false); assert.ok(existsSync(join(external, "keep")));
+    const parent = join(root, "parent"); mkdirSync(parent);
+    const moved = await createHealthProfile(parent, "runtime");
+    renameSync(parent, parent + "-original"); mkdirSync(parent);
+    assert.equal(await moved.discard(), false);
+    assert.equal(await waitForProbeGroupExit(undefined), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+if (process.platform !== "win32") await test("health cleanup waits for a live probe process group to disappear", async () => {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
+  const closed = new Promise(resolve => child.once("close", resolve));
+  try {
+    assert.equal(await waitForProbeGroupExit(child.pid, { timeoutMs: 50 }), false);
+  } finally { child.kill("SIGKILL"); await closed; }
+  assert.equal(await waitForProbeGroupExit(child.pid), true);
+});
+
 if (process.platform !== "win32") await test("native health requires its challenge, matching version and clean process exit", async () => {
   const root = mkdtempSync(join(tmpdir(), "coop-native-health-"));
   const request = { versionRoot: root, workspace: root };
   const descriptor = { desktopVersion: "1.2.3" };
   try {
     for (const mode of ["healthy", "wrong-version", "wrong-token", "crash", "hang", "cancel"]) {
-      let pid;
+      let pid, profile;
       const abort = new AbortController();
       const spawnImpl = (_command, args, options) => {
         assert.ok(args[0].startsWith("--user-data-dir="));
+        profile = args[0].slice("--user-data-dir=".length);
         assert.equal(options.env.OPENAI_API_KEY, undefined);
         const code = `const mode=${JSON.stringify(mode)};
           if(mode==='hang'||mode==='cancel')setInterval(()=>{},1000);
@@ -814,6 +874,7 @@ if (process.platform !== "win32") await test("native health requires its challen
       if (mode === "cancel") await assert.rejects(probe, /abort/i);
       else assert.equal(await probe, mode === "healthy", mode);
       assert.throws(() => process.kill(pid, 0), error => error.code === "ESRCH");
+      assert.equal(existsSync(profile), mode !== "healthy", "only successful native health profiles should be removed");
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

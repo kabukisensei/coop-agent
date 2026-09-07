@@ -361,7 +361,12 @@ It never loads trust-key overrides from workspace or user data. The native healt
 probes check the runtime contract and Coop version, then launch the packaged app
 with temporary user data and require renderer startup through the preload bridge,
 a working chat RPC, a matching one-time health response and clean shutdown. Probe
-timeout/cancellation terminates its process group. Native interruption/reboot
+timeout/cancellation terminates its process group. Successful probes discard their
+own temporary profiles after confirmed shutdown; native cleanup also requires the
+probe process group to be gone. Failed/interrupted checks retain their profiles for
+diagnosis, and replaced directories or cleanup errors preserve the stored data.
+This does not sweep older profiles, update downloads or transaction archives.
+Native interruption/reboot
 acceptance, Windows support and production feed/signing acceptance remain tracked
 release requirements.
 Passing controller/helper tests does not establish a complete production updater.

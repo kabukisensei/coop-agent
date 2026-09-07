@@ -1121,3 +1121,47 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   whitespace and post-use strict package signature checks passed. No test process
   handles remain active from this slice. The prior native test app/profile was
   left intact; the corrected package is available for the pending visual check.
+
+## Successful health probes dispose of their temporary profiles
+
+- The native health regression failed because successful probes left temporary
+  user data behind. Added desktop/src/update-health-profile.mjs to own only the
+  directory created by the current probe and verify parent/profile device and
+  inode before disposal. Replaced or linked paths and cleanup errors preserve data.
+  Contained symlinks are removed without deleting their external targets.
+- Runtime health removes its profile only after both matching authenticated
+  capabilities and confirmed runtime shutdown. Start/fetch/version/stop failures
+  retain diagnostic data. Native health additionally waits for its detached probe
+  process group to disappear after the matching challenge, version and clean exit.
+  Unknown or still-live groups preserve the profile. No older profile sweep occurs.
+- Updated update-helper.mjs and update-native-health.mjs; package helper discovery
+  includes the new update-prefixed module. desktop/README.md documents the policy.
+  All 45 focused update checks passed, including real native process modes,
+  busy/exited process groups, runtime failure modes and directory replacement.
+  Full PowerShell exited 0; syntax, parity/BOM and whitespace checks passed.
+  Full Bash and rebuilt package acceptance are running.
+- Test package: /private/tmp/coop-health-profiles-app-20260907/mac-arm64/Coop Desktop.app.
+  Evidence prefix: /private/tmp/coop-desktop-home-20260907-state/health-profiles-.
+  Backups: .backups/health_profiles_20260907_*/. Tests use isolated disposable
+  profiles; no existing user profile or credentials are copied or cleaned up.
+  This closes successful-probe storage cleanup, not failed-probe retention,
+  preparation/download/archive pruning, Windows or final release acceptance.
+
+- Packaged acceptance exited 0. The shipped helper's real runtime health check
+  passed and removed its profile; an intentionally wrong Coop version failed and
+  kept its separate diagnostic profile. The real Electron native health probe
+  passed renderer/chat readiness and shutdown, then removed its temporary user data.
+  Runtime PIDs 27854/28056 and native PID 28348 were absent; the native process
+  group was also absent. Receipt: health-profiles-managed-evidence.json; script
+  and output: health-profiles-managed.mjs/.log in the evidence directory.
+- This was automated native acceptance with an isolated home/workspace, not a
+  screenshot or visual check. No model generation or credential copying occurred.
+  Package verification passed; the three changed modules match source in both
+  app.asar and the helper closure, and original-logo byte equality passed.
+  Asked for the current Windows VM acceptance result while full Bash continued.
+
+- Final Bash suite completed with observed exit 0 and all tests passed, including
+  all 45 update checks. PowerShell, syntax/parity/BOM, whitespace and post-use strict
+  signature checks passed. Test processes from this slice have exited. The prior
+  user-facing test app/profile remains intact. Native visual checks, Windows,
+  remaining retention categories and final release provisioning remain open.

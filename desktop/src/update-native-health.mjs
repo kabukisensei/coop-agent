@@ -1,18 +1,22 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createHealthProfile, waitForProbeGroupExit } from "./update-health-profile.mjs";
 
 export async function nativeApplicationHealth(appPath, request, descriptor, signal, { spawnImpl = spawn, timeoutMs = 90000 } = {}) {
   signal?.throwIfAborted();
-  const userData = await mkdtemp(join(request.versionRoot, ".native-health-"));
+  const profile = await createHealthProfile(request.versionRoot, "native");
+  const userData = profile.path;
   await writeFile(join(userData, "desktop-state.json"), JSON.stringify({ schemaVersion: 1, lastWorkspace: request.workspace }), { mode: 0o600 });
   const token = randomBytes(32).toString("hex");
-  return new Promise((resolve, reject) => {
+  let pid;
+  const healthy = await new Promise((resolve, reject) => {
     const child = spawnImpl(join(appPath, "Contents", "MacOS", "Coop Desktop"), [`--user-data-dir=${userData}`], {
       cwd: request.workspace, detached: true, stdio: ["ignore", "pipe", "ignore"],
       env: { HOME: process.env.HOME, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", COOP_SKIP_AZ: "1", COOP_NO_ONBOARD: "1", COOP_DESKTOP_UPDATE_PROBE: token },
     });
+    pid = child.pid;
     let output = "", ready = false, failed = false, killTimer;
     const killGroup = strength => {
       if (!child.pid) return;
@@ -47,4 +51,6 @@ export async function nativeApplicationHealth(appPath, request, descriptor, sign
       else resolve(code === 0 && ready && !failed);
     });
   });
+  if (healthy && await waitForProbeGroupExit(pid)) await profile.discard();
+  return healthy;
 }
