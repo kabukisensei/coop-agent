@@ -6,6 +6,7 @@ import { inspectManagedRuntime, resolveDesktopCoopLauncher } from "../desktop/sr
 import { startCoopRuntime } from "../desktop/src/runtime-supervisor.mjs";
 import { buildNativeProbeEnvironment } from "../desktop/scripts/verify-native-application.mjs";
 import { verifyManagedToolWork, verifyManagedExtensionWork } from "./verify-managed-tool-work.mjs";
+import { verifyManagedContextWork } from "./verify-managed-context-work.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -40,6 +41,7 @@ async function verifyBundle() {
   if (!existsSync(options.workspace)) fail("Workspace is unavailable.");
   mkdirSync(options.agent, { recursive: true });
   const bundle = inspectManagedRuntime(options.bundle);
+  const contextWork = verifyManagedContextWork(bundle);
   const toolWork = verifyManagedToolWork(bundle);
   const extensionWork = await verifyManagedExtensionWork(bundle);
   const resourcesPath = dirname(options.bundle);
@@ -91,7 +93,7 @@ async function verifyBundle() {
     }
     runtimePids.push(runtime.ready.runtimePid);
   }
-  process.stdout.write(`${JSON.stringify({ ok: true, environment: options.environment, launcher: launcher.command, startupMilliseconds, target: `${process.platform}-${process.arch}`, versions: bundle.versions, runtimePid: runtimePids[0], restartRuntimePid: runtimePids[1], shutdownConfirmed: true, immediateWritableRestart: true, toolWork, extensionWork })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, environment: options.environment, launcher: launcher.command, startupMilliseconds, target: `${process.platform}-${process.arch}`, versions: bundle.versions, runtimePid: runtimePids[0], restartRuntimePid: runtimePids[1], shutdownConfirmed: true, immediateWritableRestart: true, toolWork, extensionWork, contextWork })}\n`);
 }
 
 verifyBundle().catch((error) => { process.stderr.write(`verify-managed-runtime: ${error.message}\n`); process.exitCode = 1; });

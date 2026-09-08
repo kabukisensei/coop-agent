@@ -41,10 +41,10 @@ OutFile "${nsis(installer)}"
 RequestExecutionLevel user
 SilentInstall silent
 SilentUnInstall silent
-!include LogicLib.nsh
 !define BUILD_UNINSTALLER
-!define UNINSTALL_FILENAME "uninstall.exe"
 !include "${nsis(include)}"
+!define UNINSTALL_FILENAME "uninstall.exe"
+!insertmacro customHeader
 Section
  WriteUninstaller "${nsis(uninstaller)}"
 SectionEnd
