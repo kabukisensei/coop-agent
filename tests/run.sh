@@ -37,6 +37,8 @@ echo "→ contract-driven daily log default tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/daily-log-default.test.mjs"
 echo "→ team knowledge recall note tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/team-knowledge-recall.test.mjs"
+echo "→ share-learning prompt and friction nudge tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/share-learning.test.mjs"
 
 echo "→ setup-docs JSONL bridge (renderPrompt / askCheckbox) tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge.test.mjs"

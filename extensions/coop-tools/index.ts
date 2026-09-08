@@ -1765,6 +1765,27 @@ export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | 
   }
 }
 
+export interface ShareLearningSessionSignals {
+  knowledgeAvailable: boolean;
+  toolFailures?: number;
+  userSteers?: number;
+  retries?: number;
+  alreadySuggested?: boolean;
+}
+
+/**
+ * Heuristic for suggesting /share-learning at turn settle when the session involved
+ * corrections, user steers, or repeated tool failures.
+ */
+export function shouldSuggestShareLearning(signals: ShareLearningSessionSignals): boolean {
+  if (!signals.knowledgeAvailable) return false;
+  if (signals.alreadySuggested) return false;
+  const failures = signals.toolFailures ?? 0;
+  const steers = signals.userSteers ?? 0;
+  const retries = signals.retries ?? 0;
+  return failures >= 2 || steers >= 1 || retries >= 1;
+}
+
 /** The task menu — wired to tools/skills coop already ships. Each choice sends a
  *  friendly, first-person request AS the user (the menu just pre-writes the prompt
  *  a newcomer would otherwise have to compose); the agent then asks for specifics. */
@@ -2088,6 +2109,8 @@ export default function coopTools(pi: ExtensionAPI) {
   // contract/logging guidance can never break a turn.
   const announcedCwds = new Set<string>();
   let announcedTeamKnowledge = false;
+  let sessionToolFailures = 0;
+  let learningNudgeAnnounced = false;
   let dailyRun: {
     requirement: DailyLogRequirement;
     baselineMtime: number;
@@ -2174,6 +2197,9 @@ export default function coopTools(pi: ExtensionAPI) {
   });
 
   pi.on("tool_result", async (event: any) => {
+    if (event.isError) {
+      sessionToolFailures++;
+    }
     if (!dailyRun) return;
     const effect = pendingDailyEffects.get(event.toolCallId);
     pendingDailyEffects.delete(event.toolCallId);
@@ -2184,6 +2210,21 @@ export default function coopTools(pi: ExtensionAPI) {
 
   pi.on("agent_settled", async (_event, ctx: ExtensionContext) => {
     try {
+      if (!learningNudgeAnnounced) {
+        const kbNote = teamKnowledgeNote();
+        if (
+          kbNote &&
+          shouldSuggestShareLearning({
+            knowledgeAvailable: true,
+            toolFailures: sessionToolFailures,
+            alreadySuggested: false,
+          })
+        ) {
+          learningNudgeAnnounced = true;
+          notify(ctx, "This session may be worth a team learning — run /share-learning", "info");
+        }
+      }
+
       if (!dailyRun) return;
       const run = dailyRun;
       dailyRun = null;
