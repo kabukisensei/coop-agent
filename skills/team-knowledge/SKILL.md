@@ -23,10 +23,14 @@ Search team knowledge:
    ```bash
    teamai recall "<topic or search query>"
    ```
-2. **Fallback: search the local clone directly**:
-   Read configured local paths in `~/.coop/config` (`knowledge.repos[*].local_path`, typically `~/.coop/knowledge/incremental-bi`). Use ripgrep or file view:
+2. **Fallback: search the local clones directly**:
+   Read configured local paths in `~/.coop/config` (`knowledge.repos[*].local_path`, typically `~/.coop/knowledge/incremental-bi`). If multiple repos are configured, search across each configured repo path:
    ```bash
-   rg -i "<topic>" ~/.coop/knowledge/incremental-bi
+   rg -i "<topic>" ~/.coop/knowledge/incremental-bi ~/.coop/knowledge/<other-repo>
+   ```
+   Or across all clones under the knowledge directory:
+   ```bash
+   rg -i "<topic>" ~/.coop/knowledge/
    ```
 3. **Always cite the note path** used in your response (e.g., `Gold/Fact Patterns/Fact Partition Rebuild.md`).
 

@@ -104,6 +104,27 @@ try {
     assert.equal(note, null);
   });
 
+  await t("formats multiple repo paths when multiple clones exist on disk", () => {
+    const kb2 = join(tmp, "kb", "second-repo");
+    mkdirSync(kb2, { recursive: true });
+    writeFileSync(
+      join(coopDir, ".coop", "config"),
+      JSON.stringify({
+        schema_version: 1,
+        knowledge: {
+          enabled: true,
+          repos: [
+            { url: "https://example.com/repo1.git", local_path: kbDir },
+            { url: "https://example.com/repo2.git", local_path: kb2 },
+          ],
+        },
+      })
+    );
+    const note = teamKnowledgeNote(coopDir, homeDir);
+    assert.ok(note);
+    assert.equal(note, `Team knowledge available at ${kbDir}, ${kb2}; see the team-knowledge skill`);
+  });
+
   await t("returns null when config file does not exist", () => {
     const emptyCoop = join(tmp, "empty-coop");
     mkdirSync(emptyCoop, { recursive: true });

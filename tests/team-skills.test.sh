@@ -99,4 +99,32 @@ case "$OUT_ABSENT" in
   *) ok "absent knowledge config omits team skills" ;;
 esac
 
+# 4. Multi-repo test: a second fixture repo also contributes skills to launch-spec (Phase 2.5)
+KB2="$TMP/knowledge/second-repo"
+mkdir -p "$KB2/skills/second-team-skill"
+cat > "$KB2/skills/second-team-skill/SKILL.md" <<'EOF'
+---
+name: second-team-skill
+description: Second team skill
+---
+# Second Team Skill
+EOF
+
+cat > "$CFG/.coop/config" <<JSON
+{"schema_version":1,"knowledge":{"enabled":true,"repos":[{"url":"https://example.com/team-repo.git","local_path":"$KB"},{"url":"https://example.com/second-repo.git","local_path":"$KB2"}]}}
+JSON
+
+OUT_MULTI="$(COOP_DIR="$CFG" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" launch-spec --json 2>&1)"
+RC=$?
+[ "$RC" -eq 0 ] || ko "launch-spec multi-repo exited $RC: $OUT_MULTI"
+case "$OUT_MULTI" in
+  *"$KB/skills/valid-team-skill"*) ok "multi-repo: first repo skill included in launch-spec" ;;
+  *) ko "multi-repo: first repo skill missing: $OUT_MULTI" ;;
+esac
+case "$OUT_MULTI" in
+  *"$KB2/skills/second-team-skill"*) ok "multi-repo: second repo skill included in launch-spec" ;;
+  *) ko "multi-repo: second repo skill missing: $OUT_MULTI" ;;
+esac
+
 exit $fail
+
