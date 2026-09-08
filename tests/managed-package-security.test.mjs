@@ -31,8 +31,8 @@ test("post-package verification runs on both native managed build workers", () =
 
 test("platform paths select the fixed packaged binary and resource directory", () => {
   const mac = packagedPaths("/build", "darwin", "arm64");
-  assert.equal(mac.fuseTarget, "/build/mac-arm64/Coop Desktop.app");
-  assert.equal(mac.resources, "/build/mac-arm64/Coop Desktop.app/Contents/Resources");
+  assert.equal(mac.fuseTarget, join("/build", "mac-arm64", "Coop Desktop.app"));
+  assert.equal(mac.resources, join("/build", "mac-arm64", "Coop Desktop.app", "Contents", "Resources"));
   const windows = packagedPaths("C:\\build", "win32", "x64");
   assert.match(windows.fuseTarget, /win-unpacked[\\/]Coop Desktop\.exe$/);
   assert.match(windows.resources, /win-unpacked[\\/]resources$/);

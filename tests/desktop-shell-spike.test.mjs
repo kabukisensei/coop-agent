@@ -28,8 +28,13 @@ await test("runtime supervisor reads the structured handshake and cleans up its 
   const runtime = await startCoopRuntime({ workspace: ROOT, coopCommand: process.execPath, commandPrefix: [fixture], readyTimeoutMs: 5000 });
   assert.equal(runtime.ready.piVersion, "0.84.3");
   assert.equal(runtime.child.exitCode, null);
+  let closed = false;
+  runtime.child.once("close", () => { closed = true; });
   await runtime.stop({ graceMs: 1000 });
-  assert.notEqual(runtime.child.exitCode, null);
+  // Windows may report termination as a signal, leaving exitCode null. Check
+  // the actual lifecycle and PID instead of requiring a numeric exit status.
+  assert.equal(closed, true);
+  assert.throws(() => process.kill(runtime.child.pid, 0), { code: "ESRCH" });
 });
 
 await test("Electron renderer is sandboxed and receives only named IPC methods", () => {

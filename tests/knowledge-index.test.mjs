@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
+import vm from "node:vm";
 import { buildKnowledgeIndex, knowledgeIndexDigest, parseKnowledgeMarkdown, searchKnowledgeIndex } from "../lib/knowledge-index.mjs";
 
 let count = 0;
@@ -173,6 +174,24 @@ test("the checked-in index schema is versioned and embeds governed records", () 
   assert.equal(schema.properties.schemaVersion.const, 1);
   assert.deepEqual(schema.properties.status.enum, ["complete", "partial", "failed", "not-applicable"]);
   assert.equal(schema.properties.records.items.properties.record.$ref, "knowledge-record.schema.json");
+});
+
+
+// Git prints forward slashes on Windows; filesystem paths may also differ in case.
+test("Windows Git containment accepts equivalent spelling and rejects sibling or other-drive paths", () => {
+  const source = readFileSync(new URL("../lib/knowledge-index.mjs", import.meta.url), "utf8");
+  const from = source.indexOf("function normalizeSource(");
+  const context = vm.createContext({
+    resolve: win32.resolve, relative: win32.relative, isAbsolute: win32.isAbsolute, sep: win32.sep,
+    realpathSync: path => path, statSync: () => ({ isDirectory: () => true }),
+    execFileSync: () => "C:/Client/Repo\n",
+  });
+  vm.runInContext(source.slice(from, source.indexOf("function entryFor(", from)), context);
+  const input = { id: "project", scope: "project", projectId: "client", root: "c:\\client\\repo\\docs" };
+  assert.equal(context.normalizeSource(input).root, input.root);
+  for (const root of ["C:\\Client\\Repo-other", "D:\\Client\\Repo"]) {
+    assert.throws(() => context.normalizeSource({ ...input, root }), /outside/);
+  }
 });
 
 console.log(`knowledge index: ${count} tests passed`);

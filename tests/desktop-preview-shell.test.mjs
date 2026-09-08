@@ -165,10 +165,10 @@ await test("startup uses another saved workspace when the selected folder disapp
     chooseWorkspace: async () => { pickerCalls++; return "/chosen"; },
   });
   vm.runInContext(source.slice(from, source.indexOf("function configurePermissions", from)), ctx);
-  assert.equal(await ctx.selectInitialWorkspace(), "/available");
+  assert.equal(await ctx.selectInitialWorkspace(), resolve("/available"));
   assert.equal(pickerCalls, 0);
   ctx.process.env.COOP_WORKSPACE = "/explicit";
-  assert.equal(await ctx.selectInitialWorkspace(), "/explicit");
+  assert.equal(await ctx.selectInitialWorkspace(), resolve("/explicit"));
   delete ctx.process.env.COOP_WORKSPACE;
   ctx.desktopState.openChats = [];
   assert.equal(await ctx.selectInitialWorkspace(), "/chosen");

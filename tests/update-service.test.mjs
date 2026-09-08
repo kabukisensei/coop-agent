@@ -145,7 +145,7 @@ await test("downloaded artifacts require exact signed size/hash and cannot be sy
   writeFileSync(target, bytes);
   const link = join(dir, "link.pkg");
   symlinkSync(target, link);
-  await assert.rejects(() => verifyUpdateArtifact(link, valid), /metadata/);
+  await assert.rejects(() => verifyUpdateArtifact(link, valid), /metadata|path changed/);
 });
 
 await test("artifact download is direct, bounded, exclusive, verified, and cleans failed partials", async () => {

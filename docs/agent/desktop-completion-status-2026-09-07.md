@@ -1410,3 +1410,54 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
 - The full local Bash suite completed with observed exit 0. Post-use strict deep
   signature verification passed. All local validation/package processes for the
   corrections exited. Native Windows rerun results remain pending.
+
+
+## Windows CI path and dependency-free setup corrections
+
+- CI run 34180000805 at 49df041 completed: Linux logic, shell/config lint,
+  extension transpilation, stock macOS Bash parsing and Windows Pi compatibility
+  passed. The Windows wizard's nine tests and standalone-Python installer/updater
+  fixture now pass, confirming the previous writable fsync/SystemRoot corrections.
+  Both completed Windows Pi jobs (34179489431 and 34180000805) report 18 passed,
+  zero failed and zero skipped, including installation, repeated sync and repair
+  of a deliberately mismatched pi-ai dependency.
+- Windows logic and the aggregating PowerShell behavioral runner exposed further
+  failures. Fixed Knowledge source containment using native relative/isAbsolute
+  path checks, accepting Git/filesystem case and separator differences while
+  rejecting sibling paths and other drives. Added a before/after Windows-path
+  regression; all ten Knowledge index tests pass locally.
+- Project readiness now requires profile to be a mapping, matching proposal
+  validation. A malformed flow-style profile previously appeared configured when
+  the dependency-free YAML reader was used. The new test runs actual Python with
+  -S and verifies a broken state without exposing config content. All seven setup
+  service tests pass locally, including the before/after regression.
+- Corrected test-only path expectations for startup workspaces, managed preparation,
+  package paths, findings fixtures and isolated authentication. The shell-spike
+  shutdown test observes close and an absent PID instead of requiring a numeric
+  exit code after signal termination. The update symlink test accepts both native
+  rejection diagnostics while still requiring rejection. The published usage.ts
+  fixture is marked -text in .gitattributes so Windows Git cannot change its
+  authenticated bytes. An actual core.autocrlf=true checkout preserves SHA-256
+  e08a1c4b6de6f5ac4fbac24b8fced4608fc270b19846a4be47022cb3c0b20976.
+- Full local Bash and PowerShell suites completed with observed exit 0. JavaScript,
+  Python and Bash syntax, parity/BOM and whitespace checks pass. The existing CI
+  workflow already collects PowerShell test failures; no duplicate collector was
+  added. These changes still require the next native Windows CI run.
+- Updated isolated package:
+  /private/tmp/coop-windows-paths-app-20260907/mac-arm64/Coop Desktop.app.
+  Package/fuse checks and source-byte comparisons pass. The original themes/coop.icns
+  equals the packaged icon. Ad-hoc signing and strict verification passed before use.
+  The first native probe returned healthy but retained its temporary profile;
+  cleanup is best-effort and the exact cause was not captured. A diagnostic repeat
+  passed readiness and cleanup: PID 17179, process group and probe profile were
+  gone. Do not erase the first cleanup anomaly or treat this as visual acceptance.
+  The earlier retained disposable profile remains available for investigation at
+  /var/folders/3x/3kp1q26n3q19svvrm403ldp00000gn/T/coop-windows-paths-native-bPP9NY.
+- Backups: .backups/windows_desktop_ci_20260907_212932/. Evidence:
+  /private/tmp/coop-desktop-home-20260907-state/windows-paths-* and
+  desktop-pr48-rerun-*. Native Windows installer/sign-in/clipboard/Power BI,
+  Intel macOS and release gates remain open. User-authenticated profiles were
+  untouched; no release, merge, tag or version bump occurred.
+
+- Post-use strict deep signature verification also passed. All local validation,
+  packaging and native-probe handles for this slice have exited.

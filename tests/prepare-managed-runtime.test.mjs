@@ -14,8 +14,8 @@ await test("preparation invokes the pinned Node npm CLI without a shell or globa
   const plan = managedRuntimeBuildPlan("darwin-arm64");
   const paths = { work: "/safe/work", output: "/safe/output", nodeRoot: "/safe/node", npmPrefix: "/safe/npm", pythonRoot: "/safe/python" };
   const commands = preparationCommands(plan, paths);
-  assert.equal(commands.npm.command, "/safe/node/bin/node");
-  assert.equal(commands.npm.args[0], "/safe/node/lib/node_modules/npm/bin/npm-cli.js");
+  assert.equal(commands.npm.command, join(paths.nodeRoot, "bin/node"));
+  assert.equal(commands.npm.args[0], join(paths.nodeRoot, "lib/node_modules/npm/bin/npm-cli.js"));
   assert.equal(commands.npm.args.includes("--global"), false);
   assert.equal(commands.npm.args.includes("--prefix"), true);
   assert.equal(commands.npm.args[1], "ci", "fresh preparation must consume a fixed resolution");
@@ -26,7 +26,7 @@ await test("each Python pin gets an isolated package root driven by the bundled 
   const plan = managedRuntimeBuildPlan("darwin-arm64");
   const paths = { work: "/safe/work", output: "/safe/output", nodeRoot: "/safe/node", npmPrefix: "/safe/npm", pythonRoot: "/safe/python" };
   const commands = preparationCommands(plan, paths);
-  assert.equal(commands.python.command, "/safe/python/bin/python3");
+  assert.equal(commands.python.command, join(paths.pythonRoot, "bin/python3"));
   assert.equal(commands.pythonTools.length, plan.pipSpecs.length);
   assert.equal(new Set(commands.pythonTools.map(({ root }) => root)).size, plan.pipSpecs.length);
   assert.equal(commands.pythonTools.every(tool => tool.args.includes("--require-hashes")), true, "Python acquisition must require locked hashes");

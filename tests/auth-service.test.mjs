@@ -20,12 +20,12 @@ await test("an isolated model profile never falls back to another profile", asyn
     globalAgentDir: "/global",
     stat: (path) => {
       calls.push(path);
-      if (path === "/global/auth.json") return { isFile: () => true, size: 42 };
+      if (path === join("/global", "auth.json")) return { isFile: () => true, size: 42 };
       throw Object.assign(new Error("missing"), { code: "ENOENT" });
     },
   });
   assert.equal(state, "unauthenticated");
-  assert.deepEqual(calls, ["/isolated/auth.json"]);
+  assert.deepEqual(calls, [join("/isolated", "auth.json")]);
 });
 
 await test("empty, unrelated and malformed credentials do not report successful sign-in", () => {
