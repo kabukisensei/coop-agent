@@ -507,7 +507,9 @@ $script:SpinFrames   = @(
   [char]0x280B, [char]0x2819, [char]0x2839, [char]0x2838, [char]0x283C,
   [char]0x2834, [char]0x2826, [char]0x2827, [char]0x2807, [char]0x280F
 )
-$script:UseThreadJob = [bool](Get-Command Start-ThreadJob -ErrorAction SilentlyContinue)
+# Discover the optional backend only when an install/update unit needs a job.
+# Windows PowerShell 5.1 can scan every module when this command is absent.
+$script:UseThreadJob = $null
 
 function Test-ProgTty { $script:CoopColor }   # already folds in -not IsErrorRedirected
 
@@ -987,6 +989,9 @@ function Invoke-CoopMaybeOnboard {
 # --- Background units (install/update items) ----------------------------------
 function Start-CoopJob {
   param([scriptblock]$Sb, [object[]]$JobArgs)
+  if ($null -eq $script:UseThreadJob) {
+    $script:UseThreadJob = [bool](Get-Command Start-ThreadJob -ErrorAction SilentlyContinue)
+  }
   if ($script:UseThreadJob) { Start-ThreadJob -ScriptBlock $Sb -ArgumentList $JobArgs }
   else                      { Start-Job       -ScriptBlock $Sb -ArgumentList $JobArgs }
 }

@@ -528,6 +528,8 @@ _coop_unit_cleanup() {
   COOP_UNIT_PID=''; COOP_UNIT_TMP=''
 }
 
+# Background work begins only when a unit is requested; sourcing the helper
+# library does not probe optional job support (common.ps1 follows the same rule).
 # coop_unit "<label>" <fn> [args…]
 #   Runs `<fn args>` in the background; its stdout becomes the permanent result
 #   message, its exit status decides ✓ (0) vs ! (non-zero). While it runs, the

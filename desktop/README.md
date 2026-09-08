@@ -64,7 +64,10 @@ modules from `PSHOME` before its first cmdlet. Automatic module loading is disab
 only for these fixed imports, then the previous policy is restored. This avoids
 initial command discovery for the bootstrap's required cmdlets; the optional
 `bootstrap-modules-ready` trace marks completion. Ordinary terminal launch keeps
-its existing module-loading behavior.
+its existing module-loading behavior. Shared PowerShell helpers defer discovery
+of the optional installer job backend until an install/update unit requests it;
+normal startup no longer scans modules for `Start-ThreadJob`. The selected thread
+or process backend is cached for subsequent units.
 
 The runtime supervisor closes a pipe to launcher stdin immediately; clients
 send work over HTTP. Windows diagnostics compare null-device and closed-pipe

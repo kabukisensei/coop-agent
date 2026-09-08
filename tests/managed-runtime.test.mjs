@@ -443,13 +443,36 @@ await test("Windows shell diagnosis varies machine fields and input without copy
   assert.equal(cases[2].env.ProgramFiles, "C:\\Programs");
 });
 
-await test("managed Windows bootstrap explicitly loads OS cmdlets and restores module policy", () => {
+await test("managed Windows bootstrap loads OS cmdlets and helpers without optional job discovery", () => {
   const root = mkdtempSync(join(tmpdir(), "coop-module-prelude é & "));
   try {
     const script = join(root, "bootstrap.ps1");
     writeFileSync(script, "\uFEFF" + "$ErrorActionPreference = 'Stop'\n$PSModuleAutoLoadingPreference = 'ModuleQualified'\n" + WINDOWS_MANAGED_MODULE_PRELUDE
       + "if ($PSModuleAutoLoadingPreference -ne 'ModuleQualified') { throw 'Module policy was not restored' }\n"
-      + "$parent = Split-Path -Parent $PSScriptRoot\n[Console]::WriteLine((@{ parent = $parent; ready = $true } | ConvertTo-Json -Compress))\n");
+      + `$coopTestJobRequested = $false
+function Get-Command {
+  param([string]$Name)
+  if ($Name -ne 'Start-ThreadJob') { throw ('Unexpected command lookup: ' + $Name) }
+  if (-not $script:coopTestJobRequested) { throw 'Optional job discovery ran during helper loading' }
+  $script:coopTestJobLookups++
+  if ($script:coopTestThreadSupport) { return @{ Name = 'Start-ThreadJob' } }
+}
+. '${join(ROOT, "lib/common.ps1").replaceAll("'", "''")}'
+if ($script:CoopVersion -eq '0.0.0') { throw 'Helper initialization did not finish' }
+function Start-ThreadJob { param($ScriptBlock, $ArgumentList) return 'thread' }
+function Start-Job { param($ScriptBlock, $ArgumentList) return 'process' }
+$coopTestJobRequested = $true
+foreach ($coopTestThreadSupport in @($true, $false)) {
+  $script:UseThreadJob = $null
+  $coopTestJobLookups = 0
+  $coopTestExpected = if ($coopTestThreadSupport) { 'thread' } else { 'process' }
+  if ((Start-CoopJob {} @()) -ne $coopTestExpected) { throw 'Wrong job backend' }
+  if ((Start-CoopJob {} @()) -ne $coopTestExpected) { throw 'Cached job backend changed' }
+  if ($coopTestJobLookups -ne 1) { throw 'Job discovery was not cached' }
+}
+$parent = Split-Path -Parent $PSScriptRoot
+[Console]::WriteLine((@{ parent = $parent; ready = $true } | ConvertTo-Json -Compress))
+`);
     const env = buildNativeProbeEnvironment(root, undefined);
     delete env.COOP_DESKTOP_UPDATE_PROBE;
     for (const path of [env.TEMP, env.APPDATA, env.LOCALAPPDATA].filter(Boolean)) mkdirSync(path, { recursive: true });
@@ -466,7 +489,10 @@ await test("managed Windows bootstrap explicitly loads OS cmdlets and restores m
       { env, cwd: root, encoding: "utf8", timeout: 10000, maxBuffer: 65536 });
     if (!windows && result.error?.code === "ENOENT") return;
     assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(JSON.parse(result.stdout), { parent: dirname(root), ready: true });
+    const receipt = JSON.parse(result.stdout);
+    assert.equal(receipt.ready, true);
+    // Windows PowerShell expands 8.3 TEMP aliases in PSScriptRoot.
+    assert.equal(realpathSync(receipt.parent), realpathSync(dirname(root)));
     assert.throws(() => process.kill(result.pid, 0), { code: "ESRCH" });
     assert.match(readFileSync(join(ROOT, "scripts/stage-managed-runtime.mjs"), "utf8"), /\$\{WINDOWS_MANAGED_MODULE_PRELUDE\}if \(-not \$env:COOP_DESKTOP_AGENT_DIR\)/);
   } finally { rmSync(root, { recursive: true, force: true }); }

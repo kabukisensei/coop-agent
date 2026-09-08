@@ -2640,3 +2640,23 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   Mac passed and Windows still failed before this bootstrap change. Native
   Windows acceptance of the new prelude, installer/update lifecycle and the
   remaining release requirements stay open. No release or production signing.
+
+
+## September 8 — Windows bootstrap and shutdown follow-up
+
+- Commit 29ea58e managed run 34202506504 is terminal: Mac package/native checks
+  pass. Windows staged/packaged runtime and tools pass in the inherited CI
+  environment. The native isolated case now passes bootstrap module, root and
+  dispatch stages, but times out loading shared helpers before helpers-ready.
+  Native app launch and installer journeys remain unexecuted in that run.
+- Regular run 34202506424 is terminal failure: Windows Pi compatibility passed;
+  Windows logic/PowerShell suites failed the bootstrap fixture's short-vs-long
+  temporary path assertion. Compare canonical directories, preserving the actual
+  path assertion rather than removing it.
+- a5e75a3 fixes shutdown fallback's early rejection while inherited pipes are
+  still closing; local focused/full checks pass. This does not prove all Windows
+  descendants, reboot recovery or installer lifecycle for the final artifact.
+- Next startup candidate defers optional Start-ThreadJob discovery until an
+  install/update job is actually requested. Local regression exercises actual
+  helper loading, both backend choices and one-time discovery. Native isolated
+  runtime acceptance must confirm whether this removes the remaining stall.
