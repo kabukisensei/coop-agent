@@ -43,6 +43,13 @@ node scripts/stage-managed-runtime.mjs \
   --python-tool coop-sql-review=/absolute/python-tools/coop-sql-review
 ```
 
+Managed SQL Review, DAX Review, Data Doc and its JSONL setup wizard invoke
+the bundle-owned Python interpreter and entrypoints directly through
+`lib/managed-tool-invocation.mjs`. Windows command shims are not spawned by Pi.
+Arguments remain literal; isolated UTF-8 execution disables bytecode writes to
+signed resources. Internal macOS interpreter symlinks are accepted only when
+they resolve inside the bundle. Ordinary terminal tool resolution is unchanged.
+
 The command is network-free, validates all versions against
 `config/release-manifest.json`, rejects external symlinks, stages into a fresh
 temporary sibling, and refuses to overwrite an existing output. Managed package

@@ -1,11 +1,11 @@
 import { strict as assert } from "node:assert";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
-const { JsonlLineDecoder, resolveDataDocExecutable, runJsonlSetup } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
+const { JsonlLineDecoder, resolveDataDocExecutable, resolveDataDocInvocation, runJsonlSetup } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 const d = new JsonlLineDecoder(100);
 assert.deepEqual(d.push('{"x":"a\u2028b\u2029c"}\r\n{"y":'), ['{"x":"a\u2028b\u2029c"}']);
 assert.deepEqual(d.push('1}\n'), ['{"y":1}']); d.finish();
@@ -21,6 +21,18 @@ assert.equal(resolveDataDocExecutable("win32", { PATH: winRoot }), join(winRoot,
 const cmdOnly = join(winRoot, "cmd-only"); mkdirSync(cmdOnly); writeFileSync(join(cmdOnly, "coop-data-doc.cmd"), "echo unsafe");
 assert.throws(() => resolveDataDocExecutable("win32", { PATH: cmdOnly }), /unsafe \.cmd/);
 console.log("  ✓ Windows resolver prefers direct .exe and rejects shell shims/metacharacter injection");
+
+const managedRoot = realpathSync(mkdtempSync(join(tmpdir(), "coop-managed-jsonl-")));
+try {
+  for (const path of ["coop", "python/runtime", "python/entrypoints"]) mkdirSync(join(managedRoot, path), { recursive: true });
+  const python = join(managedRoot, "python/runtime/python.exe"), entry = join(managedRoot, "python/entrypoints/coop-data-doc.py");
+  writeFileSync(python, "fixture"); writeFileSync(entry, "fixture");
+  writeFileSync(join(managedRoot, "manifest.json"), JSON.stringify({ schemaVersion: 1, target: { platform: "win32" }, paths: { coopRoot: "coop", python: "python/runtime/python.exe", pythonCommands: ["coop-data-doc"] } }));
+  const env = { COOP_DESKTOP_MANAGED_RUNTIME: "1", COOP_ROOT: join(managedRoot, "coop"), PATH: cmdOnly };
+  const invocation = resolveDataDocInvocation ? resolveDataDocInvocation("win32", env) : { command: resolveDataDocExecutable("win32", env), args: [] };
+  assert.deepEqual(invocation, { command: python, args: ["-I", "-B", "-X", "utf8", entry] });
+  console.log("  ✓ managed Windows JSONL wizard uses private Python despite command-only shims");
+} finally { rmSync(managedRoot, { recursive: true, force: true }); }
 
 if (process.platform !== "win32") {
   const dir = mkdtempSync(join(tmpdir(), "coop-jsonl-"));

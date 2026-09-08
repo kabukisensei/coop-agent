@@ -1,9 +1,10 @@
 import { windowsShellCases, observeWindowsShell } from "../desktop/scripts/diagnose-windows-shell.mjs";
+import { resolveManagedToolInvocation, execCoopTool } from "../lib/managed-tool-invocation.mjs";
 import { assertDisposableInstallerHost, buildNsisInvocation } from "../desktop/scripts/verify-windows-installer.mjs";
 import { buildNativeProbeEnvironment, probeNativeApplication } from "../desktop/scripts/verify-native-application.mjs";
 import { resolveManagedDesktopProfile } from "../desktop/src/managed-profile.mjs";
 import assert from "node:assert/strict";
-import { existsSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -493,6 +494,73 @@ await test("managed shared helpers preserve PATH even when global fallback folde
     { env, encoding: "utf8", timeout: 10000 });
     assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("managed Python tools preserve literal arguments and use only private immutable UTF-8 execution", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop managed tools café &-"));
+  try {
+    const coop = join(root, "coop"), python = join(root, "python/runtime/python.exe");
+    mkdirSync(coop); write(python, "fixture");
+    const names = ["coop-data-doc", "coop-sql-review", "coop-dax-review", "fab"];
+    for (const name of names) write(join(root, `python/entrypoints/${name}.py`), "fixture");
+    write(join(root, "manifest.json"), JSON.stringify({ schemaVersion: 1, target: { platform: "win32" }, paths: { coopRoot: "coop", python: "python/runtime/python.exe", pythonCommands: names } }));
+    const env = { COOP_DESKTOP_MANAGED_RUNTIME: "1", COOP_ROOT: coop, PATH: "C:\\external-tools" };
+    const args = ["--config", 'C:\\café & 中文 (1)\\literal"%value%.yml'];
+    for (const name of names) {
+      const result = resolveManagedToolInvocation(name, args, env, "win32");
+      assert.equal(result.command, realpathSync(python));
+      assert.deepEqual(result.args, ["-I", "-B", "-X", "utf8", realpathSync(join(root, `python/entrypoints/${name}.py`)), ...args]);
+    }
+    assert.equal(resolveManagedToolInvocation("unrelated", args, env, "win32"), null);
+    assert.equal(resolveManagedToolInvocation("coop-data-doc", args, {}, "win32"), null);
+    assert.throws(() => resolveManagedToolInvocation("coop-data-doc", ["bad\0argument"], env, "win32"), /arguments/);
+    assert.throws(() => resolveManagedToolInvocation("coop-data-doc", [], { ...env, COOP_ROOT: "relative" }, "win32"), /root/);
+    assert.throws(() => resolveManagedToolInvocation("coop-data-doc", [], env, "darwin"), /contract/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+if (process.platform !== "win32") await test("managed invocation accepts an internal Python link but rejects escaping links and unlisted tools", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-tool-links-"));
+  try {
+    const coop = join(root, "coop"), python = join(root, "python/runtime/bin/python3"), target = join(root, "python/runtime/bin/python3.12");
+    mkdirSync(coop); write(target, "fixture"); symlinkSync(target, python);
+    write(join(root, "python/entrypoints/coop-data-doc.py"), "fixture");
+    const manifest = { schemaVersion: 1, target: { platform: "darwin" }, paths: { coopRoot: "coop", python: "python/runtime/bin/python3", pythonCommands: ["coop-data-doc"] } };
+    write(join(root, "manifest.json"), JSON.stringify(manifest));
+    const env = { COOP_DESKTOP_MANAGED_RUNTIME: "1", COOP_ROOT: coop };
+    assert.equal(resolveManagedToolInvocation("coop-data-doc", [], env, "darwin").command, realpathSync(target));
+    assert.throws(() => resolveManagedToolInvocation("coop-sql-review", [], env, "darwin"), /contract/);
+    rmSync(python); symlinkSync(process.execPath, python);
+    assert.throws(() => resolveManagedToolInvocation("coop-data-doc", [], env, "darwin"), /escapes/);
+    rmSync(python); symlinkSync(target, python);
+    const script = join(root, "python/entrypoints/coop-data-doc.py");
+    rmSync(script); symlinkSync(target, script);
+    assert.throws(() => resolveManagedToolInvocation("coop-data-doc", [], env, "darwin"), /regular/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("managed tool invocation rejects a runtime directory linked outside its bundle", () => {
+  const base = mkdtempSync(join(tmpdir(), "coop-tool-junction-"));
+  try {
+    const root = join(base, "bundle"), outside = join(base, "outside");
+    mkdirSync(join(root, "coop"), { recursive: true }); mkdirSync(join(root, "python"));
+    write(join(outside, "python.exe"), "external");
+    symlinkSync(outside, join(root, "python/runtime"), process.platform === "win32" ? "junction" : "dir");
+    write(join(root, "python/entrypoints/coop-data-doc.py"), "fixture");
+    write(join(root, "manifest.json"), JSON.stringify({ schemaVersion: 1, target: { platform: "win32" }, paths: { coopRoot: "coop", python: "python/runtime/python.exe", pythonCommands: ["coop-data-doc"] } }));
+    assert.throws(() => resolveManagedToolInvocation("coop-data-doc", [], { COOP_DESKTOP_MANAGED_RUNTIME: "1", COOP_ROOT: join(root, "coop") }, "win32"), /escapes/);
+    assert.equal(readFileSync(join(outside, "python.exe"), "utf8"), "external");
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+await test("ordinary tool execution preserves the original command, arguments and cancellation options", async () => {
+  const saved = process.env.COOP_DESKTOP_MANAGED_RUNTIME;
+  delete process.env.COOP_DESKTOP_MANAGED_RUNTIME;
+  try {
+    const args = ["scan"], options = { cwd: ROOT, signal: new AbortController().signal };
+    const pi = { exec: async (command, received, config) => { assert.equal(command, "coop-data-doc"); assert.equal(received, args); assert.equal(config, options); return "result"; } };
+    assert.equal(await execCoopTool(pi, "coop-data-doc", args, options), "result");
+  } finally { if (saved === undefined) delete process.env.COOP_DESKTOP_MANAGED_RUNTIME; else process.env.COOP_DESKTOP_MANAGED_RUNTIME = saved; }
 });
 
 console.log(`managed runtime: ${count} tests passed`);

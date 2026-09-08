@@ -2267,3 +2267,40 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
 - c19e996 managed CI 34192689333 is terminal failure as recorded above; regular CI
   34192689328 still has a live Windows Pi compatibility job 101953809434. Earlier
   5adc79c regular CI 34192066034 is terminal success. No live run was restarted.
+
+## Managed extension tool invocation and packaged Pi verification
+
+- Adapted the Windows VM managed-tool invocation fix into the current extension:
+  SQL/DAX review, Data Doc scan/build/check/lineage, setup capability detection,
+  and the JSONL wizard use the manifest-owned Python interpreter and entrypoint.
+  Windows .cmd/.ps1 shims are no longer required by these Pi exec calls. Arguments
+  remain an array and cancellation/options remain under Pi's execution API.
+- Corrected the VM helper's rejection of the shipped Mac python3 symlink; only
+  interpreter links resolving within the bundle are accepted. Entry scripts must
+  be regular non-link files. Python -I -B -X utf8 prevents host Python injection,
+  bytecode writes into signed resources, and Windows pipe encoding ambiguity.
+- Before-change wizard regression fails on command-only Windows shims; the current
+  resolver passes. Full Bash, PowerShell behavioral, Bash syntax, ShellCheck,
+  parity/BOM and whitespace checks pass. Managed-runtime tests now total 25 on Mac
+  (the POSIX file-symlink case is skipped on Windows; junction coverage remains).
+- A disposable Mac package loaded the actual shipped TypeScript extension through
+  bundled Pi loadExtensions, then invoked its registered tools with Pi's real exec
+  implementation under an isolated, credential-free environment. Synthetic paths
+  contain spaces, accented characters and ampersands. SQL Review produced the
+  expected SQL-NO-SELECT-STAR finding; DAX Review produced five findings including
+  DAX-BIDI-RELATIONSHIP; Data Doc produced six nodes/five edges and returned the
+  silver.dim_customer lineage slice. This is local Mac package execution evidence,
+  not native Windows or model-generation evidence.
+- Package verification, native renderer/chat readiness, native profile cleanup,
+  and process/group absence passed. Packaged helper/extension bytes match source.
+  Disposable app: /private/tmp/coop-managed-tools-app-20260908/mac-arm64/Coop Desktop.app.
+  Evidence: /private/tmp/coop-desktop-home-20260907-state/managed-tools-*;
+  backup: .backups/managed_tool_invocation_20260908_011139/.
+- Prior HEAD 1de488d regular CI 34193425232 completed successfully. Managed CI
+  34193425283 completed with Mac success and Windows isolated-environment runtime
+  timeout; native Windows app/installer stages were skipped. The managed PATH
+  guard did not resolve that timeout. Windows startup diagnostics and remaining
+  VM changes still need reconciliation. No release gate is promoted by this slice.
+- Standards applied: managed dependency isolation, literal invocation, ordinary
+  terminal compatibility, process-owned verification, backups and daily logging.
+  TeamAI remains an assessed integration option only; no installation/configuration.
