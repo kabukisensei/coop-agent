@@ -175,6 +175,12 @@ if ($mcpPy) {
   Coop-Warn 'python missing — cannot generate MCP config'
 }
 
+# --- 5b. Team knowledge (optional; fail-soft — never blocks sync) -------------
+if (Test-CoopKnowledgeEnabled) {
+  Coop-Head 'Team knowledge'
+  & (Join-Path $script:CoopRoot 'scripts\sync-knowledge.ps1')
+}
+
 # --- 6. Brand assets ---------------------------------------------------------
 Coop-Head 'Brand assets'
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi') -PathType Leaf) { Coop-Ok 'splash present' } else { Coop-Warn 'splash.ansi missing (regenerate from the logo)' }

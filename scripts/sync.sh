@@ -168,6 +168,12 @@ else
   coop_warn "could not generate MCP config" "run: coop onboard --edit, then coop sync"
 fi
 
+# --- 5b. Team knowledge (optional; fail-soft — never blocks sync) -------------
+if coop_knowledge_enabled; then
+  coop_head "Team knowledge"
+  bash "$COOP_ROOT/scripts/sync-knowledge.sh" || coop_warn "team knowledge sync reported issues (continuing)"
+fi
+
 # --- 6. Brand assets ---------------------------------------------------------
 coop_head "Brand assets"
 [ -f "$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi" ] && coop_ok "splash present" || coop_warn "splash.ansi missing (regenerate from the logo)"
