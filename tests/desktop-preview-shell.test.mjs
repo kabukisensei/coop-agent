@@ -11,6 +11,7 @@ import { resolveCoopLauncher } from "../desktop/src/coop-launcher.mjs";
 import { loadDesktopState, normalizeDesktopState, restoreWindowBounds, saveDesktopState } from "../desktop/src/desktop-state.mjs";
 import { selectRuntimeWorkspace } from "../desktop/src/workspace-selection.mjs";
 import { buildNativeModelLoginProcess, buildNativeTerminalProcess, launchNativeModelLogin, launchNativeTerminal, validateTerminalLaunch } from "../desktop/src/native-terminal.mjs";
+import { waitForRuntimeState } from "../desktop/src/runtime-readiness.mjs";
 import { startCoopRuntime, terminateWindowsRuntimeTree } from "../desktop/src/runtime-supervisor.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -180,7 +181,7 @@ await test("an interrupted restore cannot issue commands against a replacement r
   const calls = [];
   const saved = { openChats: [{ cwd: "/project", file: "saved.jsonl", access: "write" }], activeChatIndex: 0 };
   const ctx = vm.createContext({ navigationRestore: null, runtimeGeneration: 1, quitting: false,
-    desktopState: saved, workspace: "/project", navigationReady: false, restoreSavedChats,
+    desktopState: saved, workspace: "/project", navigationReady: false, restoreSavedChats, waitForRuntimeState,
     runtimeChatState: async () => ({ chats: [{ sid: "initial", busy: false }] }),
     runtimeRpc: async () => ({ data: { messageCount: 0 } }),
     runtimePost: async path => { calls.push(path); if (path === "/chat-new") ctx.runtimeGeneration++; return { sid: "restored" }; },
@@ -462,6 +463,105 @@ await test("shared SPA uses native features only when the Desktop bridge exists"
   assert.match(app, /!window\.coopDesktop \|\| desktopMissionControlOpened/);
   assert.match(app, /void openMissionControl\(\)/);
   assert.match(app, /Browser\/Web clients retain the existing/);
+});
+
+await test("fresh navigation stays pending until the agent answers even without saved chats", async () => {
+  const source = readFileSync(join(ROOT, "desktop/src/main.mjs"), "utf8");
+  const start = source.indexOf("async function restoreNavigation(initialSid)");
+  let respond;
+  const pending = new Promise(resolve => { respond = resolve; });
+  let calls = 0;
+  const ctx = vm.createContext({ navigationRestore: null, runtimeGeneration: 1, quitting: false,
+    desktopState: { openChats: [] }, workspace: "/project", navigationReady: false,
+    recoveryFailures: [], activeChatSid: null, checkpointTimer: null,
+    waitForRuntimeState, restoreSavedChats, setInterval: () => 1, checkpointNavigation: async () => {},
+    runtimeChatState: async () => ({ chats: [{ sid: "initial", busy: false }] }),
+    runtimeRpc: async () => { calls++; return pending; },
+    runtimePost: async () => { throw new Error("Unexpected navigation mutation"); },
+  });
+  vm.runInContext(source.slice(start, source.indexOf("function registerIpc", start)), ctx);
+  const restored = ctx.restoreNavigation("initial");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ctx.navigationReady, false);
+  assert.equal(calls, 1);
+  respond({ success: true, data: { messageCount: 0 } });
+  await restored;
+  assert.equal(ctx.navigationReady, true);
+  assert.equal(ctx.activeChatSid, "initial");
+});
+
+await test("polling chat switches request state for the selected agent", async () => {
+  const source = readFileSync(join(ROOT, "web/public/app.js"), "utf8");
+  const start = source.indexOf("async function switchChat(");
+  const end = source.indexOf("  const my = ++switchSeq;", start);
+  const requests = [];
+  const ctx = vm.createContext({ activeSid: "old", agentReadySid: "old", switching: false,
+    chatsState: new Map([["new", { cwd: "/new", unread: true }]]), mode: "poll", window: {},
+    clearUsage: () => {}, renderTabs: () => {}, renderQueue: () => {}, setCwd: () => {},
+    refreshState: async () => { requests.push(ctx.activeSid); },
+  });
+  vm.runInContext(source.slice(start, end) + "\n}", ctx);
+  await ctx.switchChat("new");
+  assert.deepEqual(requests, ["new"]);
+  assert.equal(ctx.agentReadySid, null);
+});
+
+await test("cold agent startup retries only read-only timeouts and rejects runtime replacement", async () => {
+  const timeout = Object.assign(new Error("initializing"), { status: 504 });
+  const calls = [];
+  const ready = { success: true, data: { messageCount: 0 } };
+  assert.equal(await waitForRuntimeState(async command => {
+    calls.push(command);
+    if (calls.length === 1) throw timeout;
+    return ready;
+  }, "startup"), ready);
+  assert.deepEqual(calls, [{ type: "get_state", sid: "startup" }, { type: "get_state", sid: "startup" }]);
+  let denied = 0;
+  await assert.rejects(waitForRuntimeState(async () => { denied++; throw Object.assign(new Error("denied"), { status: 401 }); }, "startup"), /denied/);
+  assert.equal(denied, 1);
+  let tries = 0;
+  await assert.rejects(waitForRuntimeState(async () => { tries++; throw timeout; }, "startup"), /initializing/);
+  assert.equal(tries, 3);
+  let current = true;
+  await assert.rejects(waitForRuntimeState(async () => { current = false; return ready; }, "startup", { isCurrent: () => current }), /interrupted/);
+});
+
+await test("renderer recovers model state after startup timeout without overwriting a switched chat", async () => {
+  const source = readFileSync(join(ROOT, "web/public/app.js"), "utf8");
+  const start = source.indexOf("let stateRefreshSeq = 0;");
+  const timers = [];
+  const chips = [];
+  let fail = true;
+  const ctx = vm.createContext({
+    activeSid: "initial", agentReadySid: null, statusPhase: "", statusText: {}, window: {},
+    dot: { classList: { contains: () => false } }, idleStatus: () => "ready",
+    setTimeout: fn => { timers.push(fn); return timers.length; }, clearTimeout: () => {},
+    rpc: async command => {
+      if (fail) throw Object.assign(new Error("initializing"), { status: 504 });
+      return { success: true, data: command.type === "get_state" ? { model: { id: "fixture-model" }, thinkingLevel: "low" } : { levels: ["low"] } };
+    },
+    setModelChip: model => chips.push(model.id), setThinkChip: () => {},
+    steeringMode: "one-at-a-time", followUpMode: "one-at-a-time", autoCompactionEnabled: null,
+    availableThinkLevels: [], queueFor: () => ({}), renderQueue: () => {}, refreshCtx: () => {},
+  });
+  vm.runInContext(source.slice(start, source.indexOf("// --- context gauge", start)), ctx);
+  await ctx.refreshState();
+  assert.match(ctx.statusText.textContent, /retrying/);
+  assert.equal(ctx.agentReadySid, null);
+  assert.equal(timers.length, 1);
+  fail = false;
+  timers.shift()();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(chips, ["fixture-model"]);
+  assert.equal(ctx.agentReadySid, "initial");
+  assert.equal(ctx.statusText.textContent, "ready");
+  fail = true;
+  await ctx.refreshState();
+  ctx.activeSid = "replacement";
+  fail = false;
+  timers.shift()();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(chips, ["fixture-model"]);
 });
 
 console.log(`desktop preview shell: ${count} tests passed`);

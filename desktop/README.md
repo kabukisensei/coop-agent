@@ -322,8 +322,13 @@ attempt fails, Desktop attempts a read-only fallback in the startup workspace.
 If the last selected folder disappeared, another existing saved folder is used
 before showing a folder picker.
 
-During startup recovery the renderer defers input and reconnect replay. Incomplete
-or stale checkpoints cannot replace saved recovery state, and a runtime restart
+During startup recovery the renderer defers input and reconnect replay. It waits
+for the agent to answer `get_state` before declaring navigation ready, including
+fresh starts without saved chats. Only that read-only startup request retries a
+504 timeout, up to three attempts; authentication errors and runtime replacement
+stop recovery. The toolbar shows connection state until an agent responds and
+refreshes model/thinking controls after a startup timeout or polling chat switch.
+Incomplete or stale checkpoints cannot replace saved recovery state, and a runtime restart
 invalidates commands from an interrupted restoration. Runtime metadata is read
 through authenticated `/chat-state` and Pi's supported `get_state` command;
 restoration uses the existing `/chat-new`, `/resume` and `/chat-close` boundaries.

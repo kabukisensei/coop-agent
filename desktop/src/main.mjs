@@ -9,6 +9,7 @@ import { resolveManagedDesktopProfile } from "./managed-profile.mjs";
 import { inspectManagedRuntime, resolveDesktopCoopLauncher } from "./managed-runtime.mjs";
 import { launchNativeModelLogin, launchNativeTerminal } from "./native-terminal.mjs";
 import { startCoopRuntime } from "./runtime-supervisor.mjs";
+import { waitForRuntimeState } from "./runtime-readiness.mjs";
 import { runtimeExportSource, saveRuntimeExport } from "./session-export.mjs";
 import { launchUpdateHelper } from "./update-handoff.mjs";
 import { presentUpdateOutcome } from "./update-outcome.mjs";
@@ -230,7 +231,11 @@ async function runtimeRpc(body) {
     body: JSON.stringify(body),
   });
   const result = await response.json().catch(() => null);
-  if (!response.ok || result?.success !== true) throw new Error(result?.error || `Coop Runtime request failed (${response.status}).`);
+  if (!response.ok || result?.success !== true) {
+    const error = new Error(result?.error || `Coop Runtime request failed (${response.status}).`);
+    error.status = response.status;
+    throw error;
+  }
   return result;
 }
 
@@ -294,9 +299,14 @@ async function restoreNavigation(initialSid) {
     const post = (path, body) => { currentGeneration(); return runtimePost(path, body); };
     const saved = desktopState.openChats;
     const initial = await runtimeChatState();
+    // HTTP readiness precedes extension initialization on a cold managed install.
+    // Keep the recovery overlay until a real agent answers; retain saved chats if
+    // startup fails, and never retry a session mutation against a new runtime.
+    const state = await waitForRuntimeState(runtimeRpc, initialSid, {
+      isCurrent: () => generation === runtimeGeneration && !quitting,
+    });
     let result = { restored: [], failures: [], activeSid: initialSid };
     if (saved.length && initial.chats.length === 1 && initial.chats[0].sid === initialSid) {
-      const state = await runtimeRpc({ type: "get_state", sid: initialSid });
       if (state.data?.messageCount === 0 && !initial.chats[0].busy) {
         await post("/chat-close", { sid: initialSid });
         result = await restoreSavedChats({

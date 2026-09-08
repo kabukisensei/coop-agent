@@ -227,7 +227,9 @@ await test("toolbar state ignores stale chat and out-of-order refresh replies", 
   const end = source.indexOf("// --- context gauge", start);
   const updates = [], pending = [];
   const ctx = vm.createContext({
-    activeSid: "alpha", stateRefreshSeq: 0,
+    activeSid: "alpha", stateRefreshSeq: 0, stateRefreshTimer: null, agentReadySid: null,
+    clearTimeout: () => {}, setTimeout: () => { throw new Error("Unexpected retry"); },
+    statusPhase: "", statusText: {}, idleStatus: () => "ready", dot: { classList: { contains: () => false } },
     steeringMode: "all", followUpMode: "all", autoCompactionEnabled: true,
     availableThinkLevels: [],
     rpc: command => new Promise(resolve => pending.push({ command, resolve })),
@@ -238,20 +240,22 @@ await test("toolbar state ignores stale chat and out-of-order refresh replies", 
   vm.runInContext(source.slice(start, end), ctx);
   const oldChat = ctx.refreshState();
   ctx.activeSid = "beta";
-  pending.shift().resolve({ data: { model: "wrong-chat", autoCompactionEnabled: false } });
-  pending.shift().resolve({ data: { levels: ["high"] } });
+  pending.shift().resolve({ success: true, data: { model: "wrong-chat", autoCompactionEnabled: false } });
+  pending.shift().resolve({ success: true, data: { levels: ["high"] } });
   await oldChat;
   assert.deepEqual(updates, [], "an old chat response must not mutate the new chat toolbar");
   assert.equal(ctx.autoCompactionEnabled, true);
+  assert.equal(ctx.agentReadySid, null);
   const older = ctx.refreshState(), newer = ctx.refreshState();
   const requests = pending.splice(0);
-  requests[2].resolve({ data: { model: "newest" } });
-  requests[3].resolve({ data: { levels: ["medium"] } });
+  requests[2].resolve({ success: true, data: { model: "newest" } });
+  requests[3].resolve({ success: true, data: { levels: ["medium"] } });
   await newer;
-  requests[0].resolve({ data: { model: "obsolete" } });
-  requests[1].resolve({ data: { levels: ["high"] } });
+  requests[0].resolve({ success: true, data: { model: "obsolete" } });
+  requests[1].resolve({ success: true, data: { levels: ["high"] } });
   await older;
   assert.deepEqual(updates, ["newest", "context"], "latest request wins even within one chat");
+  assert.equal(ctx.agentReadySid, "beta");
   assert.ok(requests.every(request => request.command.sid === "beta"), "both RPCs pin the requested session");
 });
 

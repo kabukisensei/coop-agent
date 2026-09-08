@@ -2493,3 +2493,48 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   authoritative process cleanup, backup and daily logging. Source backup:
   .backups/vm_companion_pins_20260908_021436/; documentation backup recorded below.
 - Documentation backup: .backups/vm_pins_acceptance_20260908_022733/
+
+
+## Agent readiness and toolbar recovery from VM validation
+
+- Previous goal turn was progress: 2708b6b committed verified companion pins and
+  corrected Windows verifier environment casing. CI 34199451531 is now terminal:
+  Mac 101974649281 passed; Windows 101974648923 passed staged/packaged real tool
+  execution, package/fuse checks and inherited-environment restart, then stalled
+  at bootstrap-enter in native isolation. Artifact 10045371105 is retained under
+  /private/tmp/coop-desktop-home-20260907-state/windows-2708b6b. Packaged Windows
+  startup/restart was 1155/1216 ms. The earlier _overlapped import failure is no
+  longer present after the environment fix. Windows native startup is unresolved.
+- Ported the reviewed cf59082 agent-readiness handling into current main/renderer
+  code without replacing the other VM branch changes. Fresh navigation now waits
+  for a real get_state answer even when there are no saved chats. Only read-only
+  startup timeouts retry (three attempts); authentication failures and runtime
+  replacement stop recovery. Saved navigation retains its existing protections.
+- Toolbar status reflects agent connection readiness; model/thinking controls
+  refresh after a timeout. Completed replies and deferred retries cannot overwrite
+  another selected chat. Extended the VM change to refresh state on polling-mode
+  selection/bootstrap and to avoid unconditional ready labels after compaction or
+  retry cancellation. Kept the final native health RPC as a separate single check.
+- Reproduced the missing toolbar-retry behavior before the port in
+  vm-readiness-before.log. Focused Desktop checks now pass (26), including fresh
+  navigation waiting, timeout/replacement handling and polling selection. Full
+  suites exposed an outdated isolated toolbar fixture; updated its timer/readiness
+  globals and realistic success response envelope, retaining and extending stale
+  reply assertions. Focused theme tests and final PowerShell suite pass. Original
+  failed runs are retained; the final full Bash run remains tracked separately.
+- Restaged managed assets from the already verified private dependency inputs,
+  rebuilt /private/tmp/coop-readiness-app-20260908/mac-arm64/Coop Desktop.app, and
+  verified its renderer, main and readiness module bytes equal source. Native
+  renderer/chat readiness and profile cleanup passed; PID 5946 is absent. Post-use
+  deep strict ad-hoc signature verification passed. No visual or real-model
+  acceptance is claimed. Bash/JS syntax, ShellCheck and parity/BOM checks pass.
+- Evidence: /private/tmp/coop-desktop-home-20260907-state/vm-readiness-*; backup:
+  .backups/vm_readiness_20260908_023045/. Files: main.mjs, runtime-readiness.mjs,
+  app.js, Desktop/theme tests and README. Standards: actual readiness, read-only
+  retries, session/generation isolation, preserved recovery state, backups/logs.
+- Next: diagnose first-cmdlet loading in isolated Windows PowerShell (stdin is
+  already ruled out); complete native Windows installer/update acceptance and
+  remaining VM reconciliation. Regular CI 34199451527 was last confirmed live
+  in its Windows Pi compatibility job; do not restart it. Goal remains active.
+- Final full Bash regression completed successfully after the fixture update.
+  Both full local suites are green; all local build/test/probe handles are terminal.
