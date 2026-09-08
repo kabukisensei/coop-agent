@@ -13,6 +13,9 @@ if (location.search.includes("token=")) {
 const $ = (s) => document.querySelector(s);
 const transcript = $("#transcript"), scroll = $("#scroll");
 const dot = $("#dot"), statusText = $("#statusText");
+let agentReadySid = null;
+const idleStatus = () => agentReadySid === activeSid && activeSid ? "ready" : "connecting to agent…";
+statusText.textContent = "connecting to agent…";
 const stopBtn = $("#stop");
 const abortRetryBtn = $("#abortRetry");
 const sendBtn = $("#send"), steerBtn = $("#steer"), followUpBtn = $("#followUp");
@@ -249,7 +252,7 @@ function setBusy(b) {
   } else {
     busySince = 0; curTool = "";
     if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
-    if (!statusPhase) statusText.textContent = "ready";
+    if (!statusPhase) statusText.textContent = idleStatus();
   }
 }
 
@@ -1899,7 +1902,10 @@ function setThinkChip(level) {
 }
 
 let stateRefreshSeq = 0;
+let stateRefreshTimer = null;
 async function refreshState() {
+  clearTimeout(stateRefreshTimer);
+  stateRefreshTimer = null;
   const sid = activeSid;
   const sequence = ++stateRefreshSeq;
   const isCurrent = () => sid === activeSid && sequence === stateRefreshSeq;
@@ -1909,6 +1915,9 @@ async function refreshState() {
       rpc({ type: "get_available_thinking_levels", sid }),
     ]);
     if (!isCurrent()) return;
+    if (st?.success !== true) throw new Error("Agent state is unavailable.");
+    agentReadySid = sid;
+    if (!dot.classList.contains("busy") && !statusPhase) statusText.textContent = idleStatus();
     const d = (st && st.data) || {};
     setModelChip(d.model);
     setThinkChip(d.thinkingLevel);
@@ -1919,8 +1928,18 @@ async function refreshState() {
     const queue = queueFor();
     queue.pendingUnknown = Number.isSafeInteger(d.pendingMessageCount) ? d.pendingMessageCount : 0;
     renderQueue();
-  } catch {
-    /* toolbar stays generic — chat still works */
+  } catch (error) {
+    if (!isCurrent()) return;
+    agentReadySid = null;
+    if (!dot.classList.contains("busy") && !statusPhase) {
+      statusText.textContent = error.status === 504 ? "agent starting — retrying…" : "agent connection unavailable";
+    }
+    // Only repeat these read-only state requests. A tab switch invalidates the
+    // callback, and a successful refresh restores the model and thinking chips.
+    if (error.status === 504) stateRefreshTimer = setTimeout(() => {
+      if (isCurrent()) void refreshState();
+    }, 2000);
+    return;
   }
   if (!isCurrent()) return;
   refreshCtx();

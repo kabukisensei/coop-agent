@@ -6,6 +6,7 @@ import { createMacRecoveryJob, recoveryJobPlist } from "../desktop/src/update-re
 import { recoveryPaths, runRecoveryWorker, readRecoveryRecord } from "../desktop/src/update-recovery-worker.mjs";
 import { swapMacDirectories } from "../desktop/src/update-swap.mjs";
 import { nativeApplicationHealth } from "../desktop/src/update-native-health.mjs";
+import { waitForRuntimeState } from "../desktop/src/runtime-readiness.mjs";
 import { presentUpdateOutcome } from "../desktop/src/update-outcome.mjs";
 import { launchUpdateHelper } from "../desktop/src/update-handoff.mjs";
 import { runtimeHealth, runUpdateHelper, validateHelperRequest, waitForStoppedProcesses } from "../desktop/src/update-helper.mjs";
@@ -952,7 +953,7 @@ await test("native main health acknowledgement follows renderer readiness and ru
   const begin = source.indexOf("  if (updateProbeToken) {", source.indexOf("async function createWindow()"));
   const end = source.indexOf("  if (managedResourcePresent", begin);
   const calls = [];
-  const ctx = vm.createContext({ updateProbeToken: "fixture", navigationReady: true, quitting: false, activeChatSid: "chat",
+  const ctx = vm.createContext({ updateProbeToken: "fixture", navigationReady: true, quitting: false, activeChatSid: "chat", waitForRuntimeState,
     runtimeRpc: async () => calls.push("rpc"), runtime: { stop: async () => calls.push("stop") },
     process: { stdout: { write: value => { assert.equal(JSON.parse(value).token, "fixture"); calls.push("ack"); } } },
     app: { quit: () => calls.push("quit"), getVersion: () => "1.2.3" }, Date, setTimeout });
