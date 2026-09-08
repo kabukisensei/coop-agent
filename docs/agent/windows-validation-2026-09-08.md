@@ -104,3 +104,39 @@ completed. This first stage predates the ownership restart correction and is a
 recorded intermediate artifact. Fresh final staging, full integration suites,
 packaged native checks, installed GUI acceptance and update/rollback remain
 required. The Windows updater components are still not a complete updater flow.
+
+### Pushed native verification result
+
+Integration commit `cc6d4808a9cb1703beaff5998c9faa7b655b44d5` is pushed on
+`feature/coop-desktop-windows-validation-c22f6f7`. Its exact tree
+`7dae77570bb106830300b637de3ccc4173496f10` passed the full Git Bash, Windows
+PowerShell 5.1 and PowerShell 7 runners, paired-script/BOM parity, Bash syntax and
+PowerShell parsing. Git's patch whitespace check reported extra blank lines at
+EOF in three imported Markdown files and `scripts/verify-managed-tool-work.mjs`;
+these cosmetic lines were retained to preserve the exact tested build input.
+
+Fresh `c22-app-v1` passed package ASAR/fuse/inventory checks and the default
+`desktop/scripts/verify-native-application.mjs` probe: renderer/chat ready, runtime
+shutdown reported, main process exited, and disposable profile removed. The
+production `nativeApplicationHealth` path also passed with its Windows Job Object
+supervisor in 17103 ms at the unchanged 90000 ms deadline. These probes performed
+no model generation and copied no credentials; they are not visual acceptance.
+
+Verification against the managed runtime inside that final package repeated real
+direct and Pi-loaded SQL/DAX/Data Doc/lineage work and two writable starts at
+6794 ms and 6182 ms, with confirmed shutdown and immediate writable restart.
+The real non-managed JSONL questionnaire also passed 19 prompts with
+`PYTHONUTF8=0` and `PYTHONIOENCODING=cp1252`, using the isolated Data Doc source
+executable at `8ed8344`. Its earlier UTF-8 wire fix already covers this behavior.
+The first full Bash attempt used a different executable because its development
+PATH was omitted; the corrected full run passed, with the failed log retained.
+
+Unpacked artifact hashes:
+
+- EXE, 246535168 bytes: `28F637DFCCD1A5B815D1349BFDA75D3181AFAB28452DB5D97683723A37AE2CBD`.
+- ASAR, 225119 bytes: `C634E4C2FA9EF3C84D9A29C6F76165742744753B5BBB9FF757A867F2CA40EA7D`.
+
+Authenticode is NotSigned under the distinct Windows validation identity. The
+matching NSIS build is still compressing at this checkpoint. Installed GUI
+workflows and complete Windows update/rollback remain outstanding. GUI control
+is still paused pending the previously requested VM unlock/ready response.

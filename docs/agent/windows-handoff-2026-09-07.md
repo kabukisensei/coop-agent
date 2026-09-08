@@ -5,6 +5,16 @@ Aaron explicitly requested committing and pushing the Desktop work so the VM can
 pull a reproducible checkout. Use isolated test folders; preserve the VM's existing
 Coop installation and business workspaces.
 
+Windows VM result, September 8: integrated commit
+`cc6d4808a9cb1703beaff5998c9faa7b655b44d5` is pushed on
+`feature/coop-desktop-windows-validation-c22f6f7`. All three full native source
+runners pass. The fresh packaged app passes the default renderer/chat readiness,
+shutdown and profile-cleanup probe, the Windows Job Object update health probe,
+and real bundled/Pi-loaded SQL, DAX, documentation and lineage work. Installed
+visual workflows and full Windows update/rollback remain incomplete. See
+[the Windows evidence handoff](windows-validation-2026-09-08.md) for exact tested
+tree, hashes, earlier failures and acceptance limits.
+
 ## Repositories
 
 All four use branch `feature/coop-desktop-platform`. Clone them as siblings with

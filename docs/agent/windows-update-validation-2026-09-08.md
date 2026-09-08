@@ -59,4 +59,10 @@ production signature/identity policy. These are component checks, not an install
 update or rollback acceptance result.
 
 No production installation, user data, certificate store, release feed, release
-version or version tag was changed. This checkout's changes are uncommitted.
+version or version tag was changed. Preparation was committed and pushed as
+`8d6b0ab542f3100812372182ad6a4b7d49cd6541` after full native Bash, Windows
+PowerShell 5.1 and PowerShell 7 suites passed. The preparation patch is also
+included in integrated agent commit `cc6d4808a9cb1703beaff5998c9faa7b655b44d5`.
+The integrated Windows Job Object native health probe passed on the real packaged
+application in 17103 ms. Candidate preparation and health success still do not
+establish full installed update/rollback or independent recovery acceptance.
