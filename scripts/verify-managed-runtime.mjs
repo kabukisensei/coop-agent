@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspectManagedRuntime, resolveDesktopCoopLauncher } from "../desktop/src/managed-runtime.mjs";
 import { startCoopRuntime } from "../desktop/src/runtime-supervisor.mjs";
+import { verifyManagedToolWork } from "./verify-managed-tool-work.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -35,6 +36,7 @@ async function verifyBundle() {
   if (!existsSync(options.workspace)) fail("Workspace is unavailable.");
   mkdirSync(options.agent, { recursive: true });
   const bundle = inspectManagedRuntime(options.bundle);
+  const toolWork = verifyManagedToolWork(bundle);
   const resourcesPath = dirname(options.bundle);
   if (join(resourcesPath, "managed-runtime") !== options.bundle) fail("Bundle must be named managed-runtime for packaged resolution verification.");
   const launcher = resolveDesktopCoopLauncher({ packaged: true, resourcesPath });
@@ -64,7 +66,7 @@ async function verifyBundle() {
     }
     const authPath = join(options.agent, "auth.json");
     if (existsSync(authPath) && readFileSync(authPath).length > 2) fail("Managed smoke unexpectedly populated model credentials.");
-    process.stdout.write(`${JSON.stringify({ ok: true, target: bundle.manifestPath ? `${process.platform}-${process.arch}` : null, versions: bundle.versions, runtimePid: runtime.ready.runtimePid })}\n`);
+    process.stdout.write(`${JSON.stringify({ ok: true, target: bundle.manifestPath ? `${process.platform}-${process.arch}` : null, versions: bundle.versions, runtimePid: runtime.ready.runtimePid, toolWork })}\n`);
   } finally {
     await runtime.stop({ graceMs: 5000 });
   }

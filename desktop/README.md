@@ -141,6 +141,13 @@ and regex binaries before a managed bundle can pass verification. Cross-target
 installation with lifecycle scripts disabled is a dependency check only; the
 native CI build must also execute the platform's install scripts and runtime.
 
+The managed-runtime verifier also runs the installed SQL Review, DAX Review and
+Data Doc Python entrypoints against synthetic repository fixtures. It requires
+the expected findings and SQL/model lineage, using bundled Python and temporary
+home/work folders. Both staged and packaged CI checks record this tool-work
+evidence. This exercises local analysis; it does not require a model account or
+establish live Microsoft integration acceptance.
+
 A packaged app uses `resources/managed-runtime` when present. It validates the
 bundle contract, target, jailed paths, and Coop/Pi/Node/Python version agreement
 before launch. A present but invalid bundle fails closed; it never falls back to
