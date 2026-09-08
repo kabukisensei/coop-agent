@@ -1,3 +1,4 @@
+import { WINDOWS_MANAGED_MODULE_PRELUDE } from "../scripts/windows-managed-modules.mjs";
 import { windowsShellCases, observeWindowsShell, writeWindowsShellFixtures } from "../desktop/scripts/diagnose-windows-shell.mjs";
 import { resolveManagedToolInvocation, execCoopTool } from "../lib/managed-tool-invocation.mjs";
 import { assertDisposableInstallerHost, buildNsisInvocation } from "../desktop/scripts/verify-windows-installer.mjs";
@@ -440,6 +441,35 @@ await test("Windows shell diagnosis varies machine fields and input without copy
   }
   assert.equal(cases[0].env.ProgramFiles, undefined);
   assert.equal(cases[2].env.ProgramFiles, "C:\\Programs");
+});
+
+await test("managed Windows bootstrap explicitly loads OS cmdlets and restores module policy", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-module-prelude é & "));
+  try {
+    const script = join(root, "bootstrap.ps1");
+    writeFileSync(script, "\uFEFF" + "$ErrorActionPreference = 'Stop'\n$PSModuleAutoLoadingPreference = 'ModuleQualified'\n" + WINDOWS_MANAGED_MODULE_PRELUDE
+      + "if ($PSModuleAutoLoadingPreference -ne 'ModuleQualified') { throw 'Module policy was not restored' }\n"
+      + "$parent = Split-Path -Parent $PSScriptRoot\n[Console]::WriteLine((@{ parent = $parent; ready = $true } | ConvertTo-Json -Compress))\n");
+    const env = buildNativeProbeEnvironment(root, undefined);
+    delete env.COOP_DESKTOP_UPDATE_PROBE;
+    for (const path of [env.TEMP, env.APPDATA, env.LOCALAPPDATA].filter(Boolean)) mkdirSync(path, { recursive: true });
+    const windows = process.platform === "win32";
+    // Non-Windows workers can omit PowerShell; Windows always exercises OS 5.1.
+    const shell = windows ? join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe") : "pwsh";
+    if (!windows) {
+      env.PATH = process.env.PATH;
+      // Homebrew's framework-dependent pwsh needs its host runtime location.
+      // Windows continues to use the unchanged native isolated environment.
+      for (const key of ["DOTNET_ROOT", "DOTNET_ROOT_ARM64", "DOTNET_ROOT_X64"]) if (process.env[key]) env[key] = process.env[key];
+    }
+    const result = spawnSync(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script],
+      { env, cwd: root, encoding: "utf8", timeout: 10000, maxBuffer: 65536 });
+    if (!windows && result.error?.code === "ENOENT") return;
+    assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { parent: dirname(root), ready: true });
+    assert.throws(() => process.kill(result.pid, 0), { code: "ESRCH" });
+    assert.match(readFileSync(join(ROOT, "scripts/stage-managed-runtime.mjs"), "utf8"), /\$\{WINDOWS_MANAGED_MODULE_PRELUDE\}if \(-not \$env:COOP_DESKTOP_AGENT_DIR\)/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 await test("Windows module diagnostics isolate cache, discovery paths and explicit built-in import", () => {

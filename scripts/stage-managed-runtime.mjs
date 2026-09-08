@@ -3,6 +3,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, re
 import { spawnSync } from "node:child_process";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { WINDOWS_MANAGED_MODULE_PRELUDE } from "./windows-managed-modules.mjs";
 import { managedRuntimeBuildPlan } from "./managed-runtime-build-plan.mjs";
 import { buildDependencyInventory, dependencyInventoryDigest, serializeDependencyInventory } from "../desktop/src/dependency-inventory.mjs";
 
@@ -232,7 +233,7 @@ function writeLaunchers(root, platform, executableDirs) {
   }
   const ps1 = join(bin, "coop-desktop.ps1");
   const pathParts = executableDirs.map((item) => `$runtimeRoot\\${item.replaceAll("/", "\\")}`).join(";");
-  writeFileSync(ps1, `\uFEFF$ErrorActionPreference = 'Stop'\nif ($env:COOP_RUNTIME_STARTUP_TRACE -eq '1') { [Console]::Error.WriteLine('[coop-startup] bootstrap-enter') }\nif (-not $env:COOP_DESKTOP_AGENT_DIR) { Write-Error 'Coop Desktop managed launcher requires an isolated agent directory.'; exit 64 }\n$runtimeRoot = Split-Path -Parent $PSScriptRoot\nif ($env:COOP_RUNTIME_STARTUP_TRACE -eq '1') { [Console]::Error.WriteLine('[coop-startup] bootstrap-root-ready') }\n$env:COOP_AGENT_DIR = $env:COOP_DESKTOP_AGENT_DIR\n$env:PI_CODING_AGENT_DIR = $env:COOP_DESKTOP_AGENT_DIR\n$env:PYTHONDONTWRITEBYTECODE = '1'\n$env:COOP_DESKTOP_MANAGED_RUNTIME = '1'\n$env:COOP_MANAGED_EXTENSIONS_ROOT = "$runtimeRoot\\npm\\node_modules"\n$env:Path = \"${pathParts};$env:Path\"\nif ($env:COOP_RUNTIME_STARTUP_TRACE -eq '1') { [Console]::Error.WriteLine('[coop-startup] bootstrap-dispatch') }\n& \"$runtimeRoot\\coop\\bin\\coop.ps1\" @args\nexit $LASTEXITCODE\n`);
+  writeFileSync(ps1, `\uFEFF$ErrorActionPreference = 'Stop'\nif ($env:COOP_RUNTIME_STARTUP_TRACE -eq '1') { [Console]::Error.WriteLine('[coop-startup] bootstrap-enter') }\n${WINDOWS_MANAGED_MODULE_PRELUDE}if (-not $env:COOP_DESKTOP_AGENT_DIR) { Write-Error 'Coop Desktop managed launcher requires an isolated agent directory.'; exit 64 }\n$runtimeRoot = Split-Path -Parent $PSScriptRoot\nif ($env:COOP_RUNTIME_STARTUP_TRACE -eq '1') { [Console]::Error.WriteLine('[coop-startup] bootstrap-root-ready') }\n$env:COOP_AGENT_DIR = $env:COOP_DESKTOP_AGENT_DIR\n$env:PI_CODING_AGENT_DIR = $env:COOP_DESKTOP_AGENT_DIR\n$env:PYTHONDONTWRITEBYTECODE = '1'\n$env:COOP_DESKTOP_MANAGED_RUNTIME = '1'\n$env:COOP_MANAGED_EXTENSIONS_ROOT = "$runtimeRoot\\npm\\node_modules"\n$env:Path = \"${pathParts};$env:Path\"\nif ($env:COOP_RUNTIME_STARTUP_TRACE -eq '1') { [Console]::Error.WriteLine('[coop-startup] bootstrap-dispatch') }\n& \"$runtimeRoot\\coop\\bin\\coop.ps1\" @args\nexit $LASTEXITCODE\n`);
   writeFileSync(join(bin, "coop-desktop.cmd"), "@echo off\r\npowershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"%~dp0coop-desktop.ps1\" %*\r\n");
   return "bin/coop-desktop.ps1";
 }

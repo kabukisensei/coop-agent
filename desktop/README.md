@@ -59,6 +59,13 @@ import with automatic module loading disabled. Import-stage markers distinguish
 module loading from executing `Split-Path`. These child-only probes do not change
 the acceptance environment.
 
+The managed Windows bootstrap explicitly imports the OS management and utility
+modules from `PSHOME` before its first cmdlet. Automatic module loading is disabled
+only for these fixed imports, then the previous policy is restored. This avoids
+initial command discovery for the bootstrap's required cmdlets; the optional
+`bootstrap-modules-ready` trace marks completion. Ordinary terminal launch keeps
+its existing module-loading behavior.
+
 The runtime supervisor closes a pipe to launcher stdin immediately; clients
 send work over HTTP. Windows diagnostics compare null-device and closed-pipe
 input for the bootstrap cmdlet as well as simple .NET output.
