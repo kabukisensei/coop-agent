@@ -179,6 +179,32 @@ review, diff summary, and human commit.
 Fetch with `scripts/fetch-microsoft-skills.sh` (fetched skills are gitignored). See
 `skills/_microsoft/README.md`.
 
+## 7. The team-knowledge slot (subordinate)
+
+Coop can load shared team skills and patterns from one or more external team knowledge repositories (such as `cooptimize/incremental-bi`).
+
+Configuration lives in `~/.coop/config` under the `knowledge` block:
+
+```json
+{
+  "schema_version": 1,
+  "knowledge": {
+    "enabled": true,
+    "repos": [
+      {
+        "url": "https://github.com/cooptimize/incremental-bi.git",
+        "local_path": "~/.coop/knowledge/incremental-bi"
+      }
+    ]
+  }
+}
+```
+
+- **Sync**: `scripts/sync-knowledge.sh` (or `scripts/sync-knowledge.ps1`) clones missing local paths and fast-forwards clean checkouts during `coop sync` and `coop update`. Offline or unauthenticated runs fail soft (warn and continue). Dirty checkouts are preserved and never reset.
+- **Skills launch slot**: If the local clone contains `skills/*/SKILL.md`, `bin/coop` and `bin/coop.ps1` append `--skill <dir>` to the Pi launch spec. Like the Microsoft drop-in slots, this is **subordinate**: if a team skill name or frontmatter name conflicts with a first-party Cooptimize skill in `skills/`, the Cooptimize skill wins and the team skill is skipped.
+- **Recall**: The `team-knowledge` skill guides the agent to query team patterns using `teamai recall "<query>"` or grep the local clone before non-trivial work, and injects a hidden startup note when knowledge is available.
+- **Contributing learnings**: Draft discoveries with `/share-learning`, which generates a YAML frontmatter note under `<clone>/learnings/` and routes publication via pull request or `teamai push`. Never commit directly to main.
+
 ---
 
 ## Sharing changes with the team

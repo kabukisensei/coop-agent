@@ -6,6 +6,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Added
+- Team knowledge integration:
+  - Optional `knowledge` configuration block in `~/.coop/config` prompted during onboarding, supporting multiple subscribed team repositories.
+  - Fail-soft sync script (`scripts/sync-knowledge.sh` / `scripts/sync-knowledge.ps1`) wired into `coop sync` and `coop update`.
+  - Subordinate team skills launch slot in `bin/coop` and `bin/coop.ps1`, surfacing external repository skills under first-party precedence.
+  - New `team-knowledge` skill and `before_agent_start` recall note hook.
+  - New `/share-learning` prompt with desktop-compatible frontmatter and quiet friction nudge on turn settle.
 - New `tips` vibe set (`vibes/tips.txt`): a curated, tips-only rotation of practical
   Coop commands and working habits with no easter eggs. Select it inside Coop with
   `/coop-vibe tips`; it also joins the default `/coop-vibe all` rotation.
