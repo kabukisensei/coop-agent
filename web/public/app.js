@@ -3479,6 +3479,8 @@ const attachmentLane = $("#attachmentLane");
 let imageLimits = window.CoopInteraction.imageLimits(null);
 let attachments = [];
 let textAttachments = [];
+let attachmentReads = Promise.resolve();
+let pendingAttachmentBatches = 0;
 const textAttachmentLimits = window.CoopPortability.DEFAULT_TEXT_LIMITS;
 
 async function refreshImageLimits() {
@@ -3519,7 +3521,15 @@ function renderAttachments() {
     remove.onclick = () => { textAttachments = textAttachments.filter((candidate) => candidate.id !== attachment.id); renderAttachments(); };
     item.append(icon, name, remove); attachmentLane.appendChild(item);
   }
-  attachmentLane.hidden = attachments.length === 0 && textAttachments.length === 0;
+  if (pendingAttachmentBatches) {
+    const loading = document.createElement("span");
+    loading.className = "attachment";
+    loading.setAttribute("role", "status");
+    loading.textContent = "Reading attachments…";
+    attachmentLane.appendChild(loading);
+  }
+  attachmentLane.hidden = attachments.length === 0 && textAttachments.length === 0 && !pendingAttachmentBatches;
+  for (const button of [sendBtn, steerBtn, followUpBtn]) button.disabled = pendingAttachmentBatches > 0;
 }
 
 function readImage(file) {
@@ -3574,7 +3584,22 @@ function readTextFile(file) {
   });
 }
 
-async function addFiles(files) {
+function addFiles(files) {
+  // FileList can be cleared by the picker immediately after this call. Snapshot
+  // now and serialize all picker, paste and drop reads against committed limits.
+  const selected = Array.from(files || []);
+  if (!selected.length) return Promise.resolve();
+  pendingAttachmentBatches++;
+  renderAttachments();
+  const result = attachmentReads.then(() => readFiles(selected));
+  attachmentReads = result.catch(() => {});
+  return result.finally(() => {
+    pendingAttachmentBatches--;
+    renderAttachments();
+  });
+}
+
+async function readFiles(files) {
   for (const file of Array.from(files || [])) {
     if (String(file.type || "").startsWith("image/")) { await addImages([file]); continue; }
     const admitted = window.CoopPortability.admitTextFile(textAttachments, file, textAttachmentLimits);
@@ -3595,7 +3620,7 @@ input.addEventListener("paste", (event) => {
     .map((item) => item.getAsFile()).filter(Boolean);
   if (!images.length) return; // ordinary SQL/DAX/YAML/text paste remains untouched
   event.preventDefault();
-  void addImages(images);
+  void addFiles(images);
 });
 composer.addEventListener("dragover", (event) => {
   if (![...(event.dataTransfer?.items || [])].some((item) => item.kind === "file")) return;
@@ -3613,6 +3638,10 @@ composer.addEventListener("drop", (event) => {
 
 async function submit(kind = "prompt") {
   if (desktopNavigationRestoring) return;
+  if (pendingAttachmentBatches) {
+    toast("Attachments are still loading. Please wait before sending.", "warning");
+    return;
+  }
   const rawMessage = input.value;
   const hasMessage = rawMessage.trim().length > 0;
   if (!hasMessage && !attachments.length && !textAttachments.length) return;

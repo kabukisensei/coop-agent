@@ -182,7 +182,12 @@ The runtime-hosted renderer now includes the DSK-013 interaction controls shared
 with `coop web`: provenance-preserving command discovery, runtime-reported
 thinking levels, native Pi model/thinking cycle actions, explicit steer/follow-up
 queues and modes, and bounded screenshot/image picker, paste, and drag/drop with
-pre-send previews. Shared session controls also use Pi's native HTML export,
+pre-send previews. Picker, paste and drop operations share a serialized read
+queue, so overlapping imports enforce the same count/byte limits. While files
+load, the composer shows a reading status and temporarily disables Send, Steer
+and Follow-up; keyboard submission preserves the draft and explains the wait.
+A failed read releases the queue so later files can still be attached.
+Shared session controls also use Pi's native HTML export,
 auto-compaction, auto-retry, and retry-abort commands. Desktop HTML export is
 saved through a named main-process operation: the renderer supplies only the
 session ID, the runtime owns the source artifact, and a native dialog owns the

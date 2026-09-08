@@ -1280,3 +1280,44 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
 
 - Post-use strict deep signature verification passed. All acquisition, download,
   suite, smoke, package and native-probe process handles in this slice exited.
+
+
+## Attachment read ordering and premature submission
+
+- Goal: preserve attachment limits and draft contents when picker, paste or drop
+  actions overlap asynchronous browser FileReader work. The prior renderer let
+  separate imports check the same pre-read attachment state, and allowed Send
+  before the pending image entered the outgoing message.
+- Added deterministic timing tests that execute the actual composer functions
+  from web/public/app.js with controlled FileReader completions. Before the fix,
+  the overlapping-image regression failed: two readers started despite a one-image
+  limit. This proves the stale-state race independently of the runtime's later
+  request rejection.
+- The shared Web/Desktop composer now snapshots picker files synchronously and
+  serializes all picker, paste and drop imports. It shows Reading attachments…
+  with a status role and disables Send, Steer and Follow-up while reads are pending.
+  Keyboard submission keeps the draft and reports the wait. Each completed batch,
+  including read failures, releases pending state; later files can still load.
+- Ten content-portability tests pass, including overlapping image count limits,
+  combined text byte limits, picker-list mutation, all three submit modes during
+  a pending read, and recovery from failed reads. PowerShell behavioral tests,
+  JavaScript/Bash syntax, parity/BOM and whitespace checks passed. The full Bash
+  suite is still running at this entry; its terminal result will be recorded below.
+- Made an APFS clone of the previously validated Python-locked development app,
+  overlaid the corrected renderer, and ad-hoc signed the disposable copy at
+  /private/tmp/coop-attachment-reads-app-20260907/mac-arm64/Coop Desktop.app.
+  Package/fuse validation passed. The packaged renderer and original logo match
+  source bytes. Automated native renderer/chat readiness and shutdown passed;
+  PID 7570, its process group and temporary probe profile were gone. No credentials
+  were copied or model generation requested. This does not establish visual or
+  native Windows attachment acceptance.
+- Updated desktop/README.md with the visible behavior. Backups are in
+  .backups/attachment_reads_20260907_210122/. Evidence files use prefix
+  /private/tmp/coop-desktop-home-20260907-state/attachment-reads-.
+  Windows/Intel and remaining visual/release gates stay open. User-authenticated
+  profiles and the existing interactive test app were preserved.
+
+- The full Bash suite completed with observed exit 0, including the shared Web
+  bridge and new composer timing regressions. Post-use strict deep signature
+  verification passed. All suite, package, signing and native-probe handles in
+  this slice have exited. No release, version bump, tag or production signing.
