@@ -60,8 +60,22 @@ must match the release manifest. Preparation rejects stale pins before acquisiti
 and rejects added/missing required packages or changed versions, archive URLs and
 integrities after installation. The completion receipt includes the lock SHA-256.
 Dependency updates require an explicitly refreshed target lock and fresh target
-worker validation; preparation never refreshes a lock automatically. These locks
-cover npm resolution; Python transitive distribution locking remains separate.
+worker validation; preparation never refreshes a lock automatically.
+Python uses per-target locks in `config/managed-python/` for every tool's exact
+transitive versions and allowed archive SHA-256 hashes. Pip requires these hashes;
+preparation then reconciles its download report and installed distribution metadata
+against the lock. Authenticated development wheels retain the release version
+constraint and use their recorded source hash. The receipt includes the Python
+lock digest and verified package counts. The checked-in resolutions were generated
+with uv 0.11.7 for CPython 3.12.14 using the previously tested inventory as exact
+constraints; uv is not required to prepare a bundle.
+
+macOS arm64 and Windows x64 require wheels throughout. Intel macOS explicitly
+allows only cryptography 50.0.1 to build from its locked source archive in the
+Fabric CLI and fabric-cicd environments: upstream removed Intel macOS wheel
+support in version 49. See the [cryptography changelog](https://cryptography.io/en/49.0.0/changelog/).
+Native Intel compilation and its build-toolchain/build-dependency locking remain
+unverified. Runtime dependency locks do not establish reproducible Intel builds.
 When an upstream npm shrinkwrap omits integrity, `scripts/complete-npm-integrity.mjs` downloads the
 exact resolved HTTPS archive and compares its file set and every file's bytes
 against the installed package. Only a complete match adds the archive's SHA-512

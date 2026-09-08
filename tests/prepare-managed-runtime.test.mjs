@@ -1,3 +1,4 @@
+import { loadManagedPythonLock, writeManagedPythonInputs, verifyManagedPythonInstallation } from "../scripts/managed-python-lock.mjs";
 import { loadManagedNpmLock, writeManagedNpmInputs, verifyManagedNpmResolution } from "../scripts/managed-npm-lock.mjs";
 import assert from "node:assert/strict";
 import { dirname, join, resolve } from "node:path";
@@ -28,6 +29,7 @@ await test("each Python pin gets an isolated package root driven by the bundled 
   assert.equal(commands.python.command, "/safe/python/bin/python3");
   assert.equal(commands.pythonTools.length, plan.pipSpecs.length);
   assert.equal(new Set(commands.pythonTools.map(({ root }) => root)).size, plan.pipSpecs.length);
+  assert.equal(commands.pythonTools.every(tool => tool.args.includes("--require-hashes")), true, "Python acquisition must require locked hashes");
   assert.equal(commands.pythonTools.every(({ command, args }) => command === commands.python.command && args.includes("--target") && !args.includes("venv")), true);
   assert.equal(commands.stage.command, process.execPath);
   assert.equal(commands.stage.args[0], join(ROOT, "scripts", "stage-managed-runtime.mjs"));
@@ -125,8 +127,12 @@ await test("development wheels authenticate snapshots, retain exact pins, and bi
     assert.equal(readFileSync(join(base, "snapshot with spaces", source.file), "utf8"), "wheel bytes");
     assert.match(development[source.name].spec, /%20.*#sha256=/);
     const paths = { work: base, output: join(base, "out"), nodeRoot: base, npmPrefix: base, pythonRoot: base };
-    const command = preparationCommands(plan, paths, development).pythonTools.find(tool => tool.name === source.name);
-    assert.deepEqual(command.args.slice(-2), [`${source.name}==${version}`, development[source.name].spec]);
+    const resolution = loadManagedPythonLock(plan);
+    writeManagedPythonInputs(base, resolution, development);
+    const command = preparationCommands(plan, paths, resolution).pythonTools.find(tool => tool.name === source.name);
+    assert.equal(command.args.includes("--require-hashes"), true);
+    assert.equal(readFileSync(command.constraints, "utf8"), `${source.name}==${version}\n`);
+    assert.ok(readFileSync(command.requirements, "utf8").includes(`${source.name} @ ${development[source.name].spec} --hash=sha256:${source.sha256}`));
     assert.throws(() => snapshotDevelopmentWheels(manifest, join(base, "bad-hash"), plan.pipSpecs), /provenance/);
     writeManifest([source, source]);
     assert.throws(() => snapshotDevelopmentWheels(manifest, join(base, "duplicate"), plan.pipSpecs), /provenance/);
@@ -198,6 +204,49 @@ await test("managed npm locks reject manifest mismatch, unhashed archives and in
     const bad = structuredClone(lock); bad.packages["node_modules/../escape"] = entry; save(bad);
     assert.throws(() => loadManagedNpmLock(plan, path), /invalid/);
     assert.ok(readFileSync(join(prefix, "package.json"), "utf8").includes('"private": true'));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("all Python targets lock the manifest tools and scope source builds explicitly", () => {
+  for (const target of ["darwin-arm64", "darwin-x64", "win32-x64"]) {
+    const plan = managedRuntimeBuildPlan(target), result = loadManagedPythonLock(plan);
+    assert.equal(result.sha256.length, 64);
+    assert.equal(result.lock.tools.length, plan.pipSpecs.length);
+    assert.equal(result.lock.tools.flatMap(tool => tool.packages).length, 101);
+    assert.deepEqual([...new Set(result.lock.tools.flatMap(tool => tool.sourceBuilds))], target === "darwin-x64" ? ["cryptography"] : []);
+  }
+});
+
+await test("Python locks reconcile downloaded hashes and exact installed distributions", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const root = mkdtempSync(join(tmpdir(), "coop-python-lock-")), lockPath = join(root, "lock.json"), report = join(root, "report.json");
+  const hash = "a".repeat(64);
+  const tool = { name: "example", version: "1.0.0", sourceBuilds: [], packages: [{ name: "example", version: "1.0.0", sha256: [hash] }] };
+  const lock = { schemaVersion: 1, target: "darwin-arm64", pythonVersion: "3.12.14", tools: [tool] };
+  const plan = { target: lock.target, python: { version: lock.pythonVersion }, pipSpecs: ["example==1.0.0"] };
+  const saveLock = value => writeFileSync(lockPath, JSON.stringify(value));
+  const item = { metadata: { name: "example", version: "1.0.0" }, download_info: { url: "https://files.pythonhosted.org/example.whl", archive_info: { hashes: { sha256: hash } } } };
+  const saveReport = install => writeFileSync(report, JSON.stringify({ version: "1", install }));
+  const info = join(root, "example-1.0.0.dist-info"); mkdirSync(info);
+  const metadata = version => writeFileSync(join(info, "METADATA"), `Name: example\nVersion: ${version}\n`);
+  const verify = () => verifyManagedPythonInstallation({ root, report, tool });
+  try {
+    saveLock(lock); loadManagedPythonLock(plan, lockPath); saveReport([item]); metadata("1.0.0");
+    assert.equal(verify().packages, 1);
+    saveReport([]); assert.throws(verify, /package set differs/);
+    saveReport([item, item]); assert.throws(verify, /differs/);
+    for (const url of ["http://example.test/example.whl", "https://user:secret@example.test/example.whl", "https://example.test/example.tar.gz"]) {
+      const bad = structuredClone(item); bad.download_info.url = url; saveReport([bad]); assert.throws(verify, /archive/);
+    }
+    const bad = structuredClone(item); bad.download_info.archive_info.hashes.sha256 = "b".repeat(64); saveReport([bad]); assert.throws(verify, /download differs/);
+    saveReport([item]); metadata("2.0.0"); assert.throws(verify, /installed package differs/); metadata("1.0.0");
+    const extra = join(root, "extra-1.0.0.dist-info"); mkdirSync(extra); writeFileSync(join(extra, "METADATA"), "Name: extra\nVersion: 1.0.0\n");
+    assert.throws(verify, /installed package differs/); rmSync(extra, { recursive: true });
+    assert.throws(() => loadManagedPythonLock({ ...plan, pipSpecs: ["example==2.0.0"] }, lockPath), /pins/);
+    for (const alter of [value => { value.tools[0].packages[0].sha256 = []; }, value => { value.tools[0].packages.push(value.tools[0].packages[0]); }, value => { value.tools[0].sourceBuilds = ["example"]; }]) {
+      const changed = structuredClone(lock); alter(changed); saveLock(changed); assert.throws(() => loadManagedPythonLock(plan, lockPath), /invalid|unexpected/);
+    }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

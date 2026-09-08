@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { managedRuntimeBuildPlan } from "./managed-runtime-build-plan.mjs";
 import { completeNpmIntegrity } from "./complete-npm-integrity.mjs";
 import { loadManagedNpmLock, writeManagedNpmInputs, verifyManagedNpmResolution } from "./managed-npm-lock.mjs";
+import { loadManagedPythonLock, writeManagedPythonInputs, verifyManagedPythonInstallation } from "./managed-python-lock.mjs";
 import { snapshotDevelopmentWheels, recordDevelopmentSource } from "../desktop/src/development-wheels.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -66,14 +67,17 @@ function pythonVersion(python) {
   return output;
 }
 
-export function preparationCommands(plan, paths, developmentWheels = {}) {
+export function preparationCommands(plan, paths, pythonResolution = loadManagedPythonLock(plan)) {
   const windows = plan.target.startsWith("win32-");
   const node = join(paths.nodeRoot, windows ? "node.exe" : "bin/node");
   const npmCli = join(paths.nodeRoot, windows ? "node_modules/npm/bin/npm-cli.js" : "lib/node_modules/npm/bin/npm-cli.js");
   const python = join(paths.pythonRoot, windows ? "python.exe" : "bin/python3");
   const pythonTools = plan.pipSpecs.map((spec) => {
     const name = spec.slice(0, spec.indexOf("=="));
-    return Object.freeze({ name, spec, root: join(paths.work, "python-tools", name) });
+    const locked = pythonResolution.lock.tools.find(tool => tool.name === name);
+    return Object.freeze({ name, spec, root: join(paths.work, "python-tools", name), locked,
+      requirements: join(paths.work, "python-locks", `${name}.txt`), constraints: join(paths.work, "python-locks", `${name}.constraints.txt`),
+      report: join(paths.work, "python-locks", `${name}.report.json`) });
   });
   return Object.freeze({
     npm: Object.freeze({ command: node, args: Object.freeze([npmCli, "ci", "--prefix", paths.npmPrefix, "--no-audit", "--no-fund"]) }),
@@ -81,8 +85,9 @@ export function preparationCommands(plan, paths, developmentWheels = {}) {
     pythonTools: Object.freeze(pythonTools.map((tool) => Object.freeze({
       ...tool,
       command: python,
-      args: Object.freeze(["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--no-compile", "--target", tool.root, tool.spec,
-        ...(developmentWheels[tool.name] ? [developmentWheels[tool.name].spec] : [])]),
+      args: Object.freeze(["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--no-compile", "--ignore-installed", "--target", tool.root,
+        "--require-hashes", "--only-binary", ":all:", ...(tool.locked.sourceBuilds.length ? ["--no-binary", tool.locked.sourceBuilds.join(",")] : []),
+        "--requirement", tool.requirements, "--constraint", tool.constraints, "--report", tool.report]),
     }))),
     stage: Object.freeze({
       command: process.execPath,
@@ -106,9 +111,11 @@ async function prepare() {
   if (existsSync(options.output)) fail(`Output already exists; refusing to overwrite: ${options.output}`);
   const plan = managedRuntimeBuildPlan(options.target);
   const npmResolution = loadManagedNpmLock(plan);
+  const pythonResolution = loadManagedPythonLock(plan);
   mkdirSync(options.work, { recursive: false });
   const developmentWheels = options["development-wheels"]
     ? snapshotDevelopmentWheels(options["development-wheels"], join(options.work, "development-wheels"), plan.pipSpecs) : {};
+  writeManagedPythonInputs(options.work, pythonResolution, developmentWheels);
   const nodeArchive = join(options.work, plan.node.file);
   const pythonArchive = join(options.work, plan.python.file);
   await downloadPinned(plan.node, nodeArchive, "Node");
@@ -123,7 +130,7 @@ async function prepare() {
   const pythonRoot = realpathSync(join(pythonExtract, plan.python.root));
   const npmPrefix = join(options.work, "npm");
   const paths = { work: options.work, output: options.output, nodeRoot, npmPrefix, pythonRoot };
-  const commands = preparationCommands(plan, paths, developmentWheels);
+  const commands = preparationCommands(plan, paths, pythonResolution);
   writeManagedNpmInputs(npmPrefix, npmResolution);
   const pyVersion = pythonVersion(commands.python.command);
   if (pyVersion !== plan.python.version) fail(`Managed Python ${pyVersion} does not match pinned ${plan.python.version}.`);
@@ -134,12 +141,15 @@ async function prepare() {
   await completeNpmIntegrity({ npmPrefix, npmCli: commands.npm.args[0] });
   const npmReceipt = verifyManagedNpmResolution(npmPrefix, npmResolution);
   const pythonEnv = { ...env, PYTHONNOUSERSITE: "1", PIP_DISABLE_PIP_VERSION_CHECK: "1", PIP_NO_INPUT: "1" };
+  const pythonReceipts = [];
   for (const tool of commands.pythonTools) {
     run(tool.command, tool.args, { env: pythonEnv, label: `Pinned Python package ${tool.spec} installation` });
+    pythonReceipts.push(verifyManagedPythonInstallation({ root: tool.root, report: tool.report, tool: tool.locked, developmentWheel: developmentWheels[tool.name] }));
     if (developmentWheels[tool.name]) recordDevelopmentSource(tool.root, developmentWheels[tool.name].source);
   }
   run(commands.stage.command, commands.stage.args, { label: "Managed runtime staging" });
-  process.stdout.write(`${JSON.stringify({ ok: true, target: plan.target, output: options.output, node: plan.node.version, python: pyVersion, npmResolution: npmReceipt })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, target: plan.target, output: options.output, node: plan.node.version, python: pyVersion,
+    npmResolution: npmReceipt, pythonResolution: { sha256: pythonResolution.sha256, tools: pythonReceipts } })}\n`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
