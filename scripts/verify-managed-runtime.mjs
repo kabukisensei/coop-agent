@@ -4,18 +4,22 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspectManagedRuntime, resolveDesktopCoopLauncher } from "../desktop/src/managed-runtime.mjs";
 import { startCoopRuntime } from "../desktop/src/runtime-supervisor.mjs";
+import { buildNativeProbeEnvironment } from "../desktop/scripts/verify-native-application.mjs";
 import { verifyManagedToolWork } from "./verify-managed-tool-work.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function fail(message) { throw new Error(message); }
 function parseArgs(argv) {
-  const result = {};
+  const result = { environment: "inherited" };
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
     const value = argv[index + 1];
-    if (!new Set(["--bundle", "--workspace", "--agent"]).has(key) || !value) fail(`Unknown or incomplete argument: ${key || "<missing>"}.`);
-    result[key.slice(2)] = resolve(value);
+    if (!new Set(["--bundle", "--workspace", "--agent", "--environment"]).has(key) || !value) fail(`Unknown or incomplete argument: ${key || "<missing>"}.`);
+    if (key === "--environment") {
+      if (!["inherited", "native"].includes(value)) fail("--environment must be inherited or native.");
+      result.environment = value;
+    } else result[key.slice(2)] = resolve(value);
   }
   for (const key of ["bundle", "workspace", "agent"]) if (!result[key] || !isAbsolute(result[key])) fail(`--${key} must be absolute.`);
   return result;
@@ -39,27 +43,36 @@ async function verifyBundle() {
   const toolWork = verifyManagedToolWork(bundle);
   const resourcesPath = dirname(options.bundle);
   if (join(resourcesPath, "managed-runtime") !== options.bundle) fail("Bundle must be named managed-runtime for packaged resolution verification.");
-  const launcher = resolveDesktopCoopLauncher({ packaged: true, resourcesPath });
+  const launchEnv = options.environment === "native"
+    ? buildNativeProbeEnvironment(join(options.agent, "launch-environment"), undefined)
+    : process.env;
+  if (options.environment === "native") {
+    delete launchEnv.COOP_DESKTOP_UPDATE_PROBE;
+    for (const path of new Set([launchEnv.HOME, launchEnv.TEMP, launchEnv.APPDATA, launchEnv.LOCALAPPDATA].filter(Boolean))) mkdirSync(path, { recursive: true });
+  }
+  const launcher = resolveDesktopCoopLauncher({ packaged: true, resourcesPath, env: launchEnv });
   if (launcher.source !== "managed" || realpathSync(launcher.managedRoot) !== realpathSync(options.bundle)) fail("Desktop did not select the managed runtime.");
 
   const env = {
-    ...process.env,
+    ...launchEnv,
     COOP_DESKTOP_AGENT_DIR: options.agent,
     COOP_AGENT_DIR: options.agent,
     PI_CODING_AGENT_DIR: options.agent,
     COOP_SKIP_AZ: "1",
     COOP_NO_ONBOARD: "1",
   };
-  const runtimePids = [];
+  const runtimePids = [], startupMilliseconds = [];
   for (let cycle = 0; cycle < 2; cycle++) {
+    const started = performance.now();
     const runtime = await startCoopRuntime({
       workspace: options.workspace,
       coopCommand: launcher.command,
       commandPrefix: launcher.commandPrefix,
       env,
-      readyTimeoutMs: 60_000,
+      readyTimeoutMs: options.environment === "native" ? 20_000 : 60_000,
       onStderr: (text) => process.stderr.write(text),
     });
+    startupMilliseconds.push(Math.round(performance.now() - started));
     try {
       if (runtime.ready.shutdownProtocol !== "http-v1") fail("Runtime does not support owner-controlled shutdown.");
       const access = await authenticatedGet(runtime.ready.endpoint, runtime.ready.oneTimeToken, "/workspace/access");
@@ -76,7 +89,7 @@ async function verifyBundle() {
     }
     runtimePids.push(runtime.ready.runtimePid);
   }
-  process.stdout.write(`${JSON.stringify({ ok: true, target: `${process.platform}-${process.arch}`, versions: bundle.versions, runtimePid: runtimePids[0], restartRuntimePid: runtimePids[1], shutdownConfirmed: true, immediateWritableRestart: true, toolWork })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, environment: options.environment, launcher: launcher.command, startupMilliseconds, target: `${process.platform}-${process.arch}`, versions: bundle.versions, runtimePid: runtimePids[0], restartRuntimePid: runtimePids[1], shutdownConfirmed: true, immediateWritableRestart: true, toolWork })}\n`);
 }
 
 verifyBundle().catch((error) => { process.stderr.write(`verify-managed-runtime: ${error.message}\n`); process.exitCode = 1; });

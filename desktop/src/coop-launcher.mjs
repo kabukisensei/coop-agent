@@ -53,7 +53,7 @@ export function resolveCoopLauncher(input = "coop", { platform = process.platfor
   if (!powershell) throw new Error("PowerShell is required to start Coop Runtime on Windows.");
   return {
     command: powershell,
-    commandPrefix: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script],
+    commandPrefix: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script],
     terminalExecutable: target,
   };
 }

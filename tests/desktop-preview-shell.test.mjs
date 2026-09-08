@@ -246,7 +246,7 @@ await test("Windows resolves the installed cmd shim through its trusted PowerShe
     available,
   });
   assert.equal(result.command, "C:\\Windows\\pwsh.exe");
-  assert.deepEqual(result.commandPrefix, ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:\\Coop\\coop.ps1"]);
+  assert.deepEqual(result.commandPrefix, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "C:\\Coop\\coop.ps1"]);
   assert.equal(result.terminalExecutable, "C:\\Coop\\coop.cmd");
   assert.throws(() => resolveCoopLauncher(".\\coop", { platform: "win32" }), /relative/);
   assert.throws(() => resolveCoopLauncher("coop", { platform: "darwin", env: { PATH: "." }, available: () => true }), /not installed/);

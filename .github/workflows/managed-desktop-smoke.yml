@@ -118,6 +118,25 @@ jobs:
           if (result.error) throw result.error;
           process.exitCode = result.status ?? 1;
           NODE
+      - name: Exercise Windows runtime with the native application's isolated environment
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          node --input-type=module - <<'NODE' | tee '${{ runner.temp }}/native-environment-runtime-check.json'
+          import { spawnSync } from 'node:child_process';
+          import { mkdirSync } from 'node:fs';
+          import { join, resolve } from 'node:path';
+          import { packagedPaths } from './desktop/scripts/verify-managed-package.mjs';
+          const resources = packagedPaths(resolve('desktop/dist-managed')).resources;
+          const workspace = join(process.env.RUNNER_TEMP, 'coop-native-environment-workspace');
+          mkdirSync(workspace);
+          const result = spawnSync(process.execPath, ['scripts/verify-managed-runtime.mjs',
+            '--bundle', join(resources, 'managed-runtime'), '--workspace', workspace,
+            '--agent', join(process.env.RUNNER_TEMP, 'coop-native-environment-agent'),
+            '--environment', 'native'], { stdio: 'inherit' });
+          if (result.error) throw result.error;
+          process.exitCode = result.status ?? 1;
+          NODE
       - name: Launch the native application and verify renderer/chat readiness
         shell: bash
         run: node desktop/scripts/verify-native-application.mjs --output '${{ runner.temp }}/native-application-check.json'
@@ -144,6 +163,7 @@ jobs:
             ${{ runner.temp }}/managed-runtime-check.json
             ${{ runner.temp }}/managed-package-check.json
             ${{ runner.temp }}/packaged-runtime-check.json
+            ${{ runner.temp }}/native-environment-runtime-check.json
             ${{ runner.temp }}/native-application-check.json
             ${{ runner.temp }}/windows-installer-check.json
             ${{ runner.temp }}/managed-runtime/manifest.json
