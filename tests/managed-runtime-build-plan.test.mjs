@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { managedRuntimeBuildPlan } from "../scripts/managed-runtime-build-plan.mjs";
-import { validateReviewWork, validateLineageWork } from "../scripts/verify-managed-tool-work.mjs";
+import { validateReviewWork, validateLineageWork, verifyManagedExtensionWork } from "../scripts/verify-managed-tool-work.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const release = JSON.parse(readFileSync(resolve(ROOT, "config", "release-manifest.json"), "utf8"));
@@ -91,5 +92,17 @@ test("installed-tool evidence rejects no-op reviews, wrong versions, diagnostics
   assert.throws(() => validateLineageWork({ ...graph, edges: graph.edges.slice(0, 1) }), /lineage/);
   assert.throws(() => validateLineageWork({ ...graph, edges: graph.edges.slice(1) }), /lineage/);
 });
+
+{
+  const root = mkdtempSync(join(tmpdir(), "coop-extension-verifier-failure-"));
+  const environment = { ...process.env };
+  try {
+    await assert.rejects(verifyManagedExtensionWork({ root: join(root, "missing-bundle"), node: process.execPath, coopRoot: root }, { tempRoot: root }), /Cannot find module/);
+    assert.ok(Object.keys(process.env).length === Object.keys(environment).length && Object.keys(environment).every(key => process.env[key] === environment[key]), "Failed extension verification must restore the caller environment.");
+    assert.deepEqual(readdirSync(root), [], "Failed extension verification must remove its temporary profile and source fixtures.");
+    count += 1;
+    console.log("  ✓ failed extension loading restores caller environment and cleans disposable state");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}
 
 console.log(`managed runtime build plan: ${count} tests passed`);

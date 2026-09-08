@@ -55,6 +55,17 @@ bootstrap cmdlet (`Split-Path`), using isolated and diagnostic machine-field
 environments. Receipts contain only known stage labels, byte counts, timings and
 process-exit observations. These probes do not change the acceptance environment.
 
+The runtime supervisor closes a pipe to launcher stdin immediately; clients
+send work over HTTP. Windows diagnostics compare null-device and closed-pipe
+input for the bootstrap cmdlet as well as simple .NET output.
+
+The managed runtime verifier also loads the packaged Coop tool extension through
+Pi and calls SQL Review, DAX Review, Data Doc scan and lineage on disposable
+Unicode paths. It validates findings and graph content alongside direct Python
+entrypoint checks. This serial CLI check isolates its temporary environment before
+loading Pi, restores the caller environment, and removes its temporary profile.
+It does not generate a model response.
+
 Managed SQL Review, DAX Review, Data Doc and its JSONL setup wizard invoke
 the bundle-owned Python interpreter and entrypoints directly through
 `lib/managed-tool-invocation.mjs`. Windows command shims are not spawned by Pi.

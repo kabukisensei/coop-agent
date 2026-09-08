@@ -60,10 +60,15 @@ export async function startCoopRuntime({
   const child = spawnImpl(invocation.command, invocation.args, {
     cwd: workspace,
     env: { ...env, COOP_DESKTOP_SHELL: "1", COOP_DESKTOP_RUNTIME_OWNER_TOKEN: ownerToken },
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
     shell: false,
   });
+
+  // Runtime clients use HTTP; finish launcher stdin immediately. A closed pipe
+  // provides EOF without relying on the Windows NUL-device input path.
+  child.stdin?.on("error", () => {}); // Spawn failure or early exit can close it first.
+  child.stdin?.end();
 
   let ready, exited = false, stopRequested = false, stopTask;
   const closed = new Promise(resolve => child.once("close", (code, signal) => {

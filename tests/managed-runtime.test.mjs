@@ -431,7 +431,7 @@ await test("NSIS preserves its unquoted final path argument and never enables el
 
 await test("Windows shell diagnosis varies machine fields and input without copying credentials or real profiles", () => {
   const cases = windowsShellCases("C:\\isolated", { SystemRoot: "C:\\Windows", ProgramFiles: "C:\\Programs", USERNAME: "fixture", HOME: "C:\\real", USERPROFILE: "C:\\real", APPDATA: "C:\\real-appdata", OPENAI_API_KEY: "fixture", NODE_OPTIONS: "fixture" });
-  assert.deepEqual(cases.map(value => value.stdin), ["ignore", "pipe", "ignore", "pipe", "ignore", "ignore", "ignore", "ignore"]);
+  assert.deepEqual(cases.map(value => value.stdin), ["ignore", "pipe", "ignore", "pipe", "ignore", "ignore", "ignore", "ignore", "pipe", "pipe"]);
   for (const value of cases) {
     assert.equal(value.env.HOME, "C:\\isolated"); assert.equal(value.env.USERPROFILE, "C:\\isolated");
     assert.equal(value.env.OPENAI_API_KEY, undefined); assert.equal(value.env.NODE_OPTIONS, undefined);

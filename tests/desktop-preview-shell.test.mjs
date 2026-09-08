@@ -292,6 +292,21 @@ await test("model login opens the fixed Pi TUI handoff without renderer-supplied
   assert.equal(call.unref, true);
 });
 
+await test("runtime input is an empty closed pipe and its child exits cleanly", async () => {
+  const fixture = `
+    if (require('node:fs').fstatSync(0).isCharacterDevice()) process.exit(7);
+    process.stdin.on('end', () => console.log(JSON.stringify({
+      type:'runtime.ready',contractVersion:1,transport:'http',endpoint:'http://127.0.0.1:12345',
+      oneTimeToken:'a'.repeat(32),runtimePid:process.pid
+    })));
+    process.stdin.resume();setInterval(()=>{},1000);
+  `;
+  const runtime = await startCoopRuntime({ workspace: ROOT, coopCommand: process.execPath, commandPrefix: ["-e", fixture], readyTimeoutMs: 5000 });
+  try { assert.equal(runtime.ready.runtimePid, runtime.child.pid); }
+  finally { await runtime.stop(); }
+  assert.throws(() => process.kill(runtime.child.pid, 0), { code: "ESRCH" });
+});
+
 await test("failed runtime startup confirms exit even when the process ignores termination", async () => {
   for (const mode of ["malformed", "timeout"]) {
     let child, closed = false;

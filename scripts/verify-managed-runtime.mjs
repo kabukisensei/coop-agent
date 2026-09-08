@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { inspectManagedRuntime, resolveDesktopCoopLauncher } from "../desktop/src/managed-runtime.mjs";
 import { startCoopRuntime } from "../desktop/src/runtime-supervisor.mjs";
 import { buildNativeProbeEnvironment } from "../desktop/scripts/verify-native-application.mjs";
-import { verifyManagedToolWork } from "./verify-managed-tool-work.mjs";
+import { verifyManagedToolWork, verifyManagedExtensionWork } from "./verify-managed-tool-work.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -41,6 +41,7 @@ async function verifyBundle() {
   mkdirSync(options.agent, { recursive: true });
   const bundle = inspectManagedRuntime(options.bundle);
   const toolWork = verifyManagedToolWork(bundle);
+  const extensionWork = await verifyManagedExtensionWork(bundle);
   const resourcesPath = dirname(options.bundle);
   if (join(resourcesPath, "managed-runtime") !== options.bundle) fail("Bundle must be named managed-runtime for packaged resolution verification.");
   const launchEnv = options.environment === "native"
@@ -90,7 +91,7 @@ async function verifyBundle() {
     }
     runtimePids.push(runtime.ready.runtimePid);
   }
-  process.stdout.write(`${JSON.stringify({ ok: true, environment: options.environment, launcher: launcher.command, startupMilliseconds, target: `${process.platform}-${process.arch}`, versions: bundle.versions, runtimePid: runtimePids[0], restartRuntimePid: runtimePids[1], shutdownConfirmed: true, immediateWritableRestart: true, toolWork })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, environment: options.environment, launcher: launcher.command, startupMilliseconds, target: `${process.platform}-${process.arch}`, versions: bundle.versions, runtimePid: runtimePids[0], restartRuntimePid: runtimePids[1], shutdownConfirmed: true, immediateWritableRestart: true, toolWork, extensionWork })}\n`);
 }
 
 verifyBundle().catch((error) => { process.stderr.write(`verify-managed-runtime: ${error.message}\n`); process.exitCode = 1; });

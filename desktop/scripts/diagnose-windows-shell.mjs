@@ -35,6 +35,8 @@ export function windowsShellCases(profile, source) {
     { name: "machine-fields-file-minimal", env: machine, stdin: "ignore", fileKind: "minimal" },
     { name: "native-file-cmdlets", env: native, stdin: "ignore", fileKind: "cmdlets" },
     { name: "machine-fields-file-cmdlets", env: machine, stdin: "ignore", fileKind: "cmdlets" },
+    { name: "native-file-cmdlets-closed-pipe", env: native, stdin: "pipe", fileKind: "cmdlets" },
+    { name: "machine-fields-file-cmdlets-closed-pipe", env: machine, stdin: "pipe", fileKind: "cmdlets" },
   ];
 }
 
