@@ -187,6 +187,12 @@ queue, so overlapping imports enforce the same count/byte limits. While files
 load, the composer shows a reading status and temporarily disables Send, Steer
 and Follow-up; keyboard submission preserves the draft and explains the wait.
 A failed read releases the queue so later files can still be attached.
+Only one send request can await acknowledgement at a time; the text field stays
+editable for the next draft. In-flight files retain their attachment capacity
+until the result is known. On failure, the original text returns before any newer
+draft and all admitted attachments remain available, including reads that finish
+after recovery. Steer and Follow-up require Pi's successful acknowledgement before
+showing a queued notice; a rejected command restores the draft.
 Shared session controls also use Pi's native HTML export,
 auto-compaction, auto-retry, and retry-abort commands. Desktop HTML export is
 saved through a named main-process operation: the renderer supplies only the

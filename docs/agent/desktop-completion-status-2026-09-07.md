@@ -1321,3 +1321,43 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   bridge and new composer timing regressions. Post-use strict deep signature
   verification passed. All suite, package, signing and native-probe handles in
   this slice have exited. No release, version bump, tag or production signing.
+
+
+## Failed-send draft and attachment recovery
+
+- Fixed the shared composer failure path in web/public/app.js. A rejected send
+  previously overwrote text entered while the request was pending and truncated
+  restored attachment lists. A FileReader completion could also append into an
+  obsolete array after recovery replaced it, silently losing the new file.
+- The renderer permits one unacknowledged submission at a time while keeping the
+  next draft editable. Sending files reserve count/byte capacity until settlement.
+  Failure prepends the original message to newer text and restores every admitted
+  image/text file without slicing. File reads append into the current state after
+  awaiting completion. A Sending status and guarded buttons explain pending work.
+- Found and fixed a related acknowledgement bug: HTTP 200 can carry Pi success:
+  false for steer/follow_up. The composer now requires success:true before showing
+  queued confirmation; rejection uses the same draft-preserving recovery path.
+  Runtime /prompt responds after dispatch rather than waiting for model generation,
+  so the new pending guard does not cover the whole generation turn.
+- Controlled tests execute the actual renderer composer functions. Before/after
+  regressions demonstrated overwritten newer text and discarded RPC-rejected
+  drafts. All 15 final content-portability tests pass, covering all submit modes,
+  success preserving the next draft, duplicate prevention, pending count/byte
+  reservations, and image/text reads completing after restoration. The full Bash
+  and PowerShell suites completed with observed exit 0. Final JavaScript syntax,
+  Bash syntax, parity/BOM and whitespace checks passed.
+- Updated the disposable APFS-cloned development app at
+  /private/tmp/coop-send-recovery-app-20260907/mac-arm64/Coop Desktop.app with the
+  final renderer. Ad-hoc signing, package/fuse validation and post-use strict deep
+  signature checks passed. Native automated renderer/chat readiness and shutdown
+  passed; PID 40765, its group and its temporary health profile were gone. Packaged
+  renderer and original logo equal source bytes. No credentials were copied or
+  model generation requested; this does not establish visual acceptance.
+- desktop/README.md documents pending-send and recovery behavior. Backups:
+  .backups/send_recovery_20260907_210852/. Evidence:
+  /private/tmp/coop-desktop-home-20260907-state/send-recovery-*.
+- GitHub has no runs for this development branch and no existing PR. The managed
+  smoke workflow is present on the branch but not registered on the default branch.
+  The existing pull-request CI includes native Windows logic, PowerShell 5.1 and
+  Pi compatibility checks. Prepare a draft PR for that validation; do not merge,
+  release, tag, version-bump or claim Windows installer acceptance from CI alone.

@@ -79,7 +79,7 @@ await test("table copy has a predictable TSV representation", () => {
 });
 
 // Exercise the real composer functions with deliberately delayed browser reads.
-function composerHarness() {
+function composerHarness(request = async () => ({ success: true })) {
   const makeNode = () => ({ value: "", style: {}, children: [], classList: { add() {}, remove() {} },
     append(...items) { this.children.push(...items); }, appendChild(item) { this.children.push(item); },
     setAttribute() {}, addEventListener() {}, dispatchEvent() {}, click() {} });
@@ -91,7 +91,8 @@ function composerHarness() {
     FileReader: class { readAsDataURL(file) { this.file = file; readers.push(this); } readAsText(file) { this.file = file; readers.push(this); } },
     toast: message => notices.push(message), desktopNavigationRestoring: false,
     sendBtn: get("#send"), steerBtn: get("#steer"), followUpBtn: get("#followUp"),
-    post: async (path, payload) => calls.push({ path, payload }), rpc: async payload => calls.push({ payload }),
+    post: async (path, payload) => { calls.push({ path, payload }); return await request(); },
+    rpc: async payload => { calls.push({ payload }); return await request(); },
     Event: class {},
   });
   const source = readFileSync(new URL("../web/public/app.js", import.meta.url), "utf8");
@@ -161,6 +162,79 @@ await test("failed reads release the composer and do not block later text import
   assert.equal(h.run('attachments.length'), 0);
   assert.equal(h.run('textAttachments[0].content'), "SELECT 1");
   assert.equal(h.get("#send").disabled, false);
+});
+
+function delayedRequest() {
+  let resolve, reject;
+  const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+await test("failed sends restore the original message without replacing a newer draft", async () => {
+  for (const kind of ["prompt", "steer", "follow_up"]) {
+    const request = delayedRequest(), h = composerHarness(() => request.promise);
+    h.get("#input").value = "Original request";
+    const sending = h.run(`submit("${kind}")`);
+    h.get("#input").value = "New draft typed while sending";
+    request.reject(new Error("offline")); await sending;
+    assert.equal(h.get("#input").value, "Original request\n\nNew draft typed while sending");
+    assert.equal(h.get("#send").disabled, false);
+  }
+});
+
+await test("only one submission is in flight and success preserves the next draft", async () => {
+  const request = delayedRequest(), h = composerHarness(() => request.promise);
+  h.get("#input").value = "First";
+  const sending = h.run('submit("prompt")');
+  h.get("#input").value = "Next";
+  await h.run('submit("follow_up")');
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.get("#send").disabled, true);
+  request.resolve({ success: true }); await sending;
+  assert.equal(h.get("#input").value, "Next");
+  assert.equal(h.get("#send").disabled, false);
+  await h.run('submit("follow_up")');
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.calls[1].payload.message, "Next");
+});
+
+await test("read completion after failed send commits into the restored attachment arrays", async () => {
+  for (const image of [true, false]) {
+    const request = delayedRequest(), h = composerHarness(() => request.promise);
+    h.run('attachments = [{id:"old-image", name:"old.png", mimeType:"image/png", bytes:1, data:"YQ=="}]; textAttachments = [{id:"old-text", name:"old.sql", bytes:8, content:"SELECT 0"}];');
+    h.get("#input").value = "Original";
+    const sending = h.run('submit("prompt")');
+    const loading = h.run(image ? 'addFiles([{name:"new.png", type:"image/png", size:1}])' : 'addFiles([{name:"new.sql", type:"text/plain", size:8}])');
+    await tick();
+    request.reject(new Error("offline")); await sending;
+    h.finish(h.readers[0], image ? "data:image/png;base64,Yg==" : "SELECT 1"); await loading;
+    assert.equal(h.run('attachments.length'), image ? 2 : 1);
+    assert.equal(h.run('textAttachments.length'), image ? 1 : 2);
+    assert.equal(h.get("#send").disabled, false);
+  }
+});
+
+await test("pending sends reserve attachment capacity until their result is known", async () => {
+  const request = delayedRequest(), h = composerHarness(() => request.promise);
+  h.run('imageLimits = {...imageLimits, maxImages:1}; attachments = [{id:"old", name:"old.png", mimeType:"image/png", bytes:1, data:"YQ=="}]; textAttachments = Array.from({length:3}, (_,i) => ({id:"text"+i,name:"old"+i+".sql",bytes:262144,content:"SELECT 1"}));');
+  const sending = h.run('submit("prompt")');
+  await h.run('addFiles([{name:"extra.png",type:"image/png",size:1},{name:"extra.sql",type:"text/plain",size:1}])');
+  assert.equal(h.readers.length, 0, "in-flight attachments still reserve count and bytes for failure recovery");
+  request.reject(new Error("offline")); await sending;
+  assert.equal(h.run('attachments.length'), 1);
+  assert.equal(h.run('textAttachments.length'), 3);
+  assert.equal(h.get("#input").value, "");
+});
+
+await test("Pi rejection responses restore steer and follow-up drafts without a queued notice", async () => {
+  for (const kind of ["steer", "follow_up"]) {
+    const h = composerHarness(async () => ({ success: false, error: "Turn cannot accept input" }));
+    h.get("#input").value = "Keep this request";
+    await h.run(`submit("${kind}")`);
+    assert.equal(h.get("#input").value, "Keep this request");
+    assert.equal(h.notices.some(message => /queued/.test(message)), false);
+    assert.equal(h.get("#send").disabled, false);
+  }
 });
 
 console.log(`content portability: ${count} tests passed`);

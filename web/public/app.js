@@ -3481,6 +3481,7 @@ let attachments = [];
 let textAttachments = [];
 let attachmentReads = Promise.resolve();
 let pendingAttachmentBatches = 0;
+let pendingSubmission = null;
 const textAttachmentLimits = window.CoopPortability.DEFAULT_TEXT_LIMITS;
 
 async function refreshImageLimits() {
@@ -3521,15 +3522,15 @@ function renderAttachments() {
     remove.onclick = () => { textAttachments = textAttachments.filter((candidate) => candidate.id !== attachment.id); renderAttachments(); };
     item.append(icon, name, remove); attachmentLane.appendChild(item);
   }
-  if (pendingAttachmentBatches) {
+  if (pendingAttachmentBatches || pendingSubmission) {
     const loading = document.createElement("span");
     loading.className = "attachment";
     loading.setAttribute("role", "status");
-    loading.textContent = "Reading attachments…";
+    loading.textContent = pendingAttachmentBatches ? "Reading attachments…" : "Sending…";
     attachmentLane.appendChild(loading);
   }
-  attachmentLane.hidden = attachments.length === 0 && textAttachments.length === 0 && !pendingAttachmentBatches;
-  for (const button of [sendBtn, steerBtn, followUpBtn]) button.disabled = pendingAttachmentBatches > 0;
+  attachmentLane.hidden = attachments.length === 0 && textAttachments.length === 0 && !pendingAttachmentBatches && !pendingSubmission;
+  for (const button of [sendBtn, steerBtn, followUpBtn]) button.disabled = pendingAttachmentBatches > 0 || pendingSubmission !== null;
 }
 
 function readImage(file) {
@@ -3554,10 +3555,11 @@ function readImage(file) {
 
 async function addImages(files) {
   for (const file of Array.from(files || [])) {
-    const admitted = window.CoopInteraction.admitImage(attachments, file, imageLimits);
+    const admitted = window.CoopInteraction.admitImage([...(pendingSubmission?.images || []), ...attachments], file, imageLimits);
     if (!admitted.ok) { toast(admitted.error, "warning"); continue; }
     try {
-      attachments.push(await readImage(file));
+      const attachment = await readImage(file);
+      attachments.push(attachment);
       renderAttachments();
     } catch (error) {
       toast(error.message || "Couldn't attach that image.", "error");
@@ -3602,9 +3604,9 @@ function addFiles(files) {
 async function readFiles(files) {
   for (const file of Array.from(files || [])) {
     if (String(file.type || "").startsWith("image/")) { await addImages([file]); continue; }
-    const admitted = window.CoopPortability.admitTextFile(textAttachments, file, textAttachmentLimits);
+    const admitted = window.CoopPortability.admitTextFile([...(pendingSubmission?.textFiles || []), ...textAttachments], file, textAttachmentLimits);
     if (!admitted.ok) { toast(admitted.error, "warning"); continue; }
-    try { textAttachments.push(await readTextFile(file)); renderAttachments(); }
+    try { const attachment = await readTextFile(file); textAttachments.push(attachment); renderAttachments(); }
     catch (error) { toast(error.message || "Couldn't attach that text file.", "error"); }
   }
 }
@@ -3638,6 +3640,10 @@ composer.addEventListener("drop", (event) => {
 
 async function submit(kind = "prompt") {
   if (desktopNavigationRestoring) return;
+  if (pendingSubmission) {
+    toast("The previous message is still sending. Your draft is saved here.", "warning");
+    return;
+  }
   if (pendingAttachmentBatches) {
     toast("Attachments are still loading. Please wait before sending.", "warning");
     return;
@@ -3657,6 +3663,9 @@ async function submit(kind = "prompt") {
   // reconnect, and steered messages that Pi delivers later).
   const sentAttachments = attachments;
   const sentTextAttachments = textAttachments;
+  // Reserve capacity until the response settles so failure can restore every
+  // attachment without dropping files added to the next draft.
+  pendingSubmission = { images: sentAttachments, textFiles: sentTextAttachments };
   input.value = ""; input.style.height = "auto";
   attachments = [];
   textAttachments = [];
@@ -3664,22 +3673,26 @@ async function submit(kind = "prompt") {
   try {
     const images = sentAttachments.map(({ mimeType, data }) => ({ type: "image", mimeType, data }));
     if (kind === "steer") {
-      await rpc({ type: "steer", message: outgoing, images });
+      const reply = await rpc({ type: "steer", message: outgoing, images });
+      if (reply?.success !== true) throw new Error("Steering message was not accepted.");
       toast("Steering message queued for the active turn.");
     } else if (kind === "follow_up") {
-      await rpc({ type: "follow_up", message: outgoing, images });
+      const reply = await rpc({ type: "follow_up", message: outgoing, images });
+      if (reply?.success !== true) throw new Error("Follow-up was not accepted.");
       toast("Follow-up queued for the next turn.");
     } else {
       await post("/prompt", { message: outgoing, images });
     }
   } catch {
-    // Never lose the user's words or images: put both back in the composer.
-    toast("Couldn't send — is coop web still running?", "error");
-    input.value = rawMessage;
-    attachments = [...sentAttachments, ...attachments].slice(0, imageLimits.maxImages);
-    textAttachments = [...sentTextAttachments, ...textAttachments].slice(0, textAttachmentLimits.maxFiles);
-    renderAttachments();
+    // Preserve both the failed message and anything typed or attached meanwhile.
+    toast("Couldn't send. Your message and attachments are restored before the newer draft.", "error");
+    input.value = rawMessage + (rawMessage && input.value ? "\n\n" : "") + input.value;
+    attachments = [...sentAttachments, ...attachments];
+    textAttachments = [...sentTextAttachments, ...textAttachments];
     input.dispatchEvent(new Event("input"));
+  } finally {
+    pendingSubmission = null;
+    renderAttachments();
   }
 }
 sendBtn.onclick = () => submit("prompt");
