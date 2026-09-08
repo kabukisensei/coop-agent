@@ -387,10 +387,13 @@ coop_manifest_status() {
   echo "wrong-version"
 }
 
+# Managed Desktop must retain its bundled PATH without global fallback bins.
+if [ "${COOP_DESKTOP_MANAGED_RUNTIME:-0}" != "1" ]; then
 # Ensure user tool bins (pipx, Homebrew, standard local bins) are on PATH in-process
 [ -d "$HOME/.local/bin" ] && case ":$PATH:" in *":$HOME/.local/bin:"*) : ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
 [ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
 [ -d "/usr/local/bin" ] && case ":$PATH:" in *":/usr/local/bin:"*) : ;; *) PATH="/usr/local/bin:$PATH" ;; esac
+fi
 # Offline fleet tests explicitly re-prepend their stub bin after workstation PATH normalization.
 [ -n "${COOP_TEST_STUB_PATH:-}" ] && PATH="$COOP_TEST_STUB_PATH:$PATH"
 

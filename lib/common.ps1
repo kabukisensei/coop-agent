@@ -443,6 +443,8 @@ function Get-CoopExtInstalledVersion([string]$AgentDir, [string]$Name) {
   return ''
 }
 
+# Managed Desktop must retain its bundled PATH without global fallback bins.
+if ($env:COOP_DESKTOP_MANAGED_RUNTIME -ne '1') {
 # Ensure user tool bins (pipx, Azure CLI) are on PATH in-process
 $script:PathSep = [System.IO.Path]::PathSeparator
 $pipxBin = Join-Path $HOME '.local\bin'
@@ -457,6 +459,8 @@ foreach ($d in (@(
   if ((Test-Path -LiteralPath $d) -and (($env:PATH -split $script:PathSep) -notcontains $d)) {
     $env:PATH = "$d$script:PathSep$env:PATH"
   }
+}
+
 }
 
 # --- Colors (respect NO_COLOR and non-TTY) -----------------------------------

@@ -458,4 +458,41 @@ await test("Windows shell diagnosis observes real child exit after success and t
   }
 });
 
+await test("managed launch skips global npm discovery while ordinary terminal launch retains it", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-managed-path-"));
+  try {
+    for (const managed of ["0", "1"]) {
+      const marker = join(root, `npm-${managed}`);
+      const windows = process.platform === "win32";
+      const command = windows ? process.env.PWSH_EXE || "powershell.exe" : "bash";
+      const args = windows
+        ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "function global:npm { [IO.File]::WriteAllText($env:COOP_NPM_PROBE, 'called') }; & $env:COOP_FIXTURE_SCRIPT help"]
+        : ["-c", 'npm() { : > "$COOP_NPM_PROBE"; }; export -f npm; exec bash "$COOP_FIXTURE_SCRIPT" help'];
+      const result = spawnSync(command, args, { encoding: "utf8", timeout: 10000,
+        env: { ...process.env, HOME: root, COOP_AGENT_DIR: join(root, "agent"),
+          COOP_DESKTOP_MANAGED_RUNTIME: managed, COOP_NPM_PROBE: marker,
+          COOP_FIXTURE_SCRIPT: join(ROOT, "bin", windows ? "coop.ps1" : "coop") } });
+      assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
+      assert.equal(existsSync(marker), managed !== "1", "managed launch must not query a global npm installation");
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("managed shared helpers preserve PATH even when global fallback folders exist", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-managed-fallback-"));
+  try {
+    mkdirSync(join(root, ".local", "bin"), { recursive: true });
+    mkdirSync(join(root, "Programs", "Microsoft", "Azure CLI", "wbin"), { recursive: true });
+    const windows = process.platform === "win32";
+    const env = { ...process.env, HOME: root, LOCALAPPDATA: root,
+      COOP_DESKTOP_MANAGED_RUNTIME: "1", COOP_COMMON_FIXTURE: join(ROOT, "lib", windows ? "common.ps1" : "common.sh") };
+    delete env.COOP_TEST_STUB_PATH;
+    const result = spawnSync(windows ? process.env.PWSH_EXE || "powershell.exe" : "bash", windows
+      ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$originalPath = $env:PATH; . $env:COOP_COMMON_FIXTURE; if ($originalPath -cne $env:PATH) { throw 'Managed PATH changed' }"]
+      : ["-c", 'original_path="$PATH"; source "$COOP_COMMON_FIXTURE"; test "$original_path" = "$PATH"'],
+    { env, encoding: "utf8", timeout: 10000 });
+    assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 console.log(`managed runtime: ${count} tests passed`);

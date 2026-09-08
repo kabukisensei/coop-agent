@@ -1017,6 +1017,8 @@ EOF
 # this process so a shell whose persistent PATH predates the install still finds
 # them. Best-effort; only prepends dirs that exist.
 _coop_add_runtime_paths() {
+  # Managed Desktop already supplied the exact bundled tools on PATH.
+  [ "${COOP_DESKTOP_MANAGED_RUNTIME:-0}" = "1" ] && return 0
   local d p
   if have npm; then
     # `|| true`: a failing `npm prefix -g` (broken node, corrupt .npmrc, EACCES) must

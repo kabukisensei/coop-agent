@@ -60,6 +60,8 @@ if ($env:COOP_NO_ISOLATE -ne '1') {
 # `coop` / `coop doctor` falsely report them "not installed" right after a fresh
 # `coop install`. Best-effort, process-local: only PREPENDS dirs that exist.
 function Add-CoopRuntimePaths {
+  # Managed Desktop already supplied the exact bundled tools on PATH.
+  if ($env:COOP_DESKTOP_MANAGED_RUNTIME -eq '1') { return }
   $dirs = @()
   if (Test-Have 'npm') {
     $p = (& npm prefix -g 2>$null)

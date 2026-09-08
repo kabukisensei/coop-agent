@@ -437,3 +437,8 @@ Native interruption/reboot
 acceptance, Windows support and production feed/signing acceptance remain tracked
 release requirements.
 Passing controller/helper tests does not establish a complete production updater.
+
+Managed Desktop launchers preserve the bundle's tool PATH and skip global npm,
+pipx, Homebrew and Azure CLI fallback discovery. This keeps external installations
+from replacing the bundled tools during startup. Ordinary terminal launch retains
+its existing fallback discovery.
