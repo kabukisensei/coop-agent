@@ -2,6 +2,9 @@
 # Keep update failure restoration and ordinary uninstall behavior in sync with
 # app-builder-lib/templates/nsis/uninstaller.nsh. Extended Win32 paths work with
 # the bundled NSIS 3.0.4.1 without requiring a machine long-path policy change.
+# electron-builder loads custom includes before its own LogicLib include.
+!include LogicLib.nsh
+!macro customHeader
 !ifdef BUILD_UNINSTALLER
 Function un.coopAtomicRMDir
   Exch $R0
@@ -116,6 +119,7 @@ Function un.coopRestoreFiles
 FunctionEnd
 
 !endif
+!macroend
 
 !macro customRemoveFiles
   System::Call 'kernel32::GetFileAttributesW(w "\\?\$INSTDIR") i .R0'

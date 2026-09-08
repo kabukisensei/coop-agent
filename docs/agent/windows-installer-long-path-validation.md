@@ -31,6 +31,11 @@ than 260 characters, and uses a real Windows file handle to deny a later rename.
 It checks that the already-moved files, including the long path, are restored
 with their original contents. Evidence remains under the supplied directory.
 It does not install or unregister Coop, use credentials, or modify app profiles.
+The fixture includes the hook before LogicLib, matching electron-builder's
+include order. The hook must load its own LogicLib dependency; otherwise real
+installer compilation fails even when a fixture with LogicLib preloaded passes.
+Helper functions are emitted through `customHeader`, after electron-builder
+defines `UNINSTALL_FILENAME`; defining them in the initial include is too early.
 
 An already installed version still contains its old uninstaller. For native
 validation only, a short disposable TEMP/TMP path can allow that legacy program

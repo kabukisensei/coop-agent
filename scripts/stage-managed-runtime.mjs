@@ -313,7 +313,9 @@ function stage() {
     });
     const pythonCommands = writePythonLaunchers(staging, target.platform, stagedTools, build.requiredPythonCommands || []);
     removePythonCaches(join(staging, "coop"));
-    const executableDirs = [target.platform === "win32" ? "node" : "node/bin", "npm/node_modules/.bin", "python/bin"];
+    // Native consumers spawn python directly; cmd shims also fail quoted
+    // context-mode version probes. Prefer the bundled executable on Windows.
+    const executableDirs = [target.platform === "win32" ? "node" : "node/bin", "npm/node_modules/.bin", ...(target.platform === "win32" ? ["python/runtime"] : []), "python/bin"];
     const launcher = writeLaunchers(staging, target.platform, executableDirs);
     writeFileSync(join(staging, "node-version.txt"), `${nodeVersion}\n`);
     writeFileSync(join(staging, "python-version.txt"), `${pythonVersion}\n`);
