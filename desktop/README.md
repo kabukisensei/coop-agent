@@ -48,7 +48,12 @@ dispatchers and the server emit fixed startup-stage labels to stderr; runtime
 JSON on stdout stays unchanged. The managed runtime verifier enables these
 labels and records elapsed milliseconds per stderr chunk, preserving its existing
 readiness deadline. Tracing is off during normal use and contains no argument or
-environment values.
+environment values. The generated managed bootstrap reports its own entry,
+root resolution and dispatcher handoff before Coop loads. Windows CI separately
+compares fixed PowerShell `-Command`, minimal `-File`, and `-File` with the first
+bootstrap cmdlet (`Split-Path`), using isolated and diagnostic machine-field
+environments. Receipts contain only known stage labels, byte counts, timings and
+process-exit observations. These probes do not change the acceptance environment.
 
 Managed SQL Review, DAX Review, Data Doc and its JSONL setup wizard invoke
 the bundle-owned Python interpreter and entrypoints directly through

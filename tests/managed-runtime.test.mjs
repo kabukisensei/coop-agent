@@ -1,4 +1,4 @@
-import { windowsShellCases, observeWindowsShell } from "../desktop/scripts/diagnose-windows-shell.mjs";
+import { windowsShellCases, observeWindowsShell, writeWindowsShellFixtures } from "../desktop/scripts/diagnose-windows-shell.mjs";
 import { resolveManagedToolInvocation, execCoopTool } from "../lib/managed-tool-invocation.mjs";
 import { assertDisposableInstallerHost, buildNsisInvocation } from "../desktop/scripts/verify-windows-installer.mjs";
 import { buildNativeProbeEnvironment, probeNativeApplication } from "../desktop/scripts/verify-native-application.mjs";
@@ -341,6 +341,14 @@ await test("the offline staging command validates every release pin and never ov
       env: { ...process.env, COOP_DESKTOP_AGENT_DIR: join(dir, "desktop-agent") },
     });
     assert.equal(launchSpec.status, 0, launchSpec.stderr);
+    const traceSpec = spawnSync(join(output, "bin", "coop-desktop"), ["--no-launch"], {
+      cwd: ROOT, encoding: "utf8", env: { ...process.env, COOP_DESKTOP_AGENT_DIR: join(dir, "desktop-agent"), COOP_RUNTIME_STARTUP_TRACE: "1" },
+    });
+    assert.equal(traceSpec.status, 0, traceSpec.stderr);
+    assert.equal(traceSpec.stdout, launchSpec.stdout);
+    const stages = [...traceSpec.stderr.matchAll(/\[coop-startup\] ([a-z-]+)/g)].map(match => match[1]);
+    assert.deepEqual(stages.slice(0, 3), ["bootstrap-enter", "bootstrap-root-ready", "bootstrap-dispatch"]);
+
     for (const name of Object.keys(RELEASE.extensions)) assert.equal(launchSpec.stdout.includes(`/npm/node_modules/${name}`), true, name);
     const second = spawnSync(process.execPath, args, { cwd: ROOT, encoding: "utf8" });
     assert.notEqual(second.status, 0);
@@ -423,7 +431,7 @@ await test("NSIS preserves its unquoted final path argument and never enables el
 
 await test("Windows shell diagnosis varies machine fields and input without copying credentials or real profiles", () => {
   const cases = windowsShellCases("C:\\isolated", { SystemRoot: "C:\\Windows", ProgramFiles: "C:\\Programs", USERNAME: "fixture", HOME: "C:\\real", USERPROFILE: "C:\\real", APPDATA: "C:\\real-appdata", OPENAI_API_KEY: "fixture", NODE_OPTIONS: "fixture" });
-  assert.deepEqual(cases.map(value => value.stdin), ["ignore", "pipe", "ignore", "pipe"]);
+  assert.deepEqual(cases.map(value => value.stdin), ["ignore", "pipe", "ignore", "pipe", "ignore", "ignore", "ignore", "ignore"]);
   for (const value of cases) {
     assert.equal(value.env.HOME, "C:\\isolated"); assert.equal(value.env.USERPROFILE, "C:\\isolated");
     assert.equal(value.env.OPENAI_API_KEY, undefined); assert.equal(value.env.NODE_OPTIONS, undefined);
@@ -446,6 +454,32 @@ await test("Windows shell diagnosis never treats uncertain or timed-out processe
   }
   const result = observeWindowsShell("fixture", probe, { run: () => ({ pid: 0, error: { code: "ETIMEDOUT" } }) });
   assert.equal(result.processExited, false); assert.equal(result.healthy, false);
+});
+
+await test("Windows shell file diagnostics execute literal files and retain only known stage markers", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-file-probe é & "));
+  try {
+    writeWindowsShellFixtures(root);
+    for (const kind of ["minimal", "cmdlets"]) {
+      assert.equal(readFileSync(join(root, `probe-${kind}.ps1`)).subarray(0, 3).toString("hex"), "efbbbf");
+      const probe = { name: kind, fileKind: kind, env: { HOME: root }, stdin: "ignore" };
+      const result = observeWindowsShell("fixture", probe, { gone: () => true, run: (_exe, args, options) => {
+        assert.deepEqual(args.slice(-4), ["-ExecutionPolicy", "Bypass", "-File", join(root, `probe-${kind}.ps1`)]);
+        assert.equal(options.shell, false);
+        return { pid: 12345, status: 0, stdout: "coop-powershell-ready\n", stderr: "unrelated text\ncoop-powershell-stage:file-enter\r\ncoop-powershell-stage:unknown\ncoop-powershell-stage:split-path-ready\n" };
+      } });
+      assert.deepEqual(result.stages, ["file-enter", "split-path-ready"]); assert.equal(result.healthy, true);
+    }
+    assert.throws(() => observeWindowsShell("fixture", { fileKind: "../untrusted" }), /Unknown shell fixture/);
+    const shell = process.platform === "win32" ? process.env.PWSH_EXE || "powershell.exe" : "pwsh";
+    if (spawnSync(shell, ["-NoLogo", "-NoProfile", "-Command", "exit 0"], { timeout: 5000 }).status === 0) {
+      for (const fileKind of ["minimal", "cmdlets"]) {
+        const result = observeWindowsShell(shell, { name: fileKind, fileKind, env: { ...process.env, HOME: root, USERPROFILE: root }, stdin: "ignore" });
+        assert.equal(result.healthy, true, JSON.stringify(result));
+        assert.deepEqual(result.stages, fileKind === "minimal" ? ["file-enter"] : ["file-enter", "split-path-ready"]);
+      }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 await test("Windows shell diagnosis observes real child exit after success and timeout", () => {
