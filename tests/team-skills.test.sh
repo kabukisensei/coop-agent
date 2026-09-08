@@ -61,19 +61,19 @@ RC=$?
 
 # Assert valid team skill is present in args
 case "$OUT" in
-  *"$KB/skills/valid-team-skill"*) ok "fixture team skill is included in launch-spec args" ;;
+  *"knowledge/team-repo/skills/valid-team-skill"*) ok "fixture team skill is included in launch-spec args" ;;
   *) ko "valid-team-skill missing from args: $OUT" ;;
 esac
 
 # Assert colliding dir skill is NOT present in args
 case "$OUT" in
-  *"$KB/skills/azure-devops"*) ko "colliding folder skill was NOT skipped: $OUT" ;;
+  *"knowledge/team-repo/skills/azure-devops"*) ko "colliding folder skill was NOT skipped: $OUT" ;;
   *) ok "folder collision skipped with first-party precedence" ;;
 esac
 
 # Assert colliding frontmatter skill is NOT present in args
 case "$OUT" in
-  *"$KB/skills/colliding-fm-skill"*) ko "colliding frontmatter skill was NOT skipped: $OUT" ;;
+  *"knowledge/team-repo/skills/colliding-fm-skill"*) ko "colliding frontmatter skill was NOT skipped: $OUT" ;;
   *) ok "frontmatter collision skipped with first-party precedence" ;;
 esac
 
@@ -118,11 +118,11 @@ OUT_MULTI="$(COOP_DIR="$CFG" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" launch-spec
 RC=$?
 [ "$RC" -eq 0 ] || ko "launch-spec multi-repo exited $RC: $OUT_MULTI"
 case "$OUT_MULTI" in
-  *"$KB/skills/valid-team-skill"*) ok "multi-repo: first repo skill included in launch-spec" ;;
+  *"knowledge/team-repo/skills/valid-team-skill"*) ok "multi-repo: first repo skill included in launch-spec" ;;
   *) ko "multi-repo: first repo skill missing: $OUT_MULTI" ;;
 esac
 case "$OUT_MULTI" in
-  *"$KB2/skills/second-team-skill"*) ok "multi-repo: second repo skill included in launch-spec" ;;
+  *"knowledge/second-repo/skills/second-team-skill"*) ok "multi-repo: second repo skill included in launch-spec" ;;
   *) ko "multi-repo: second repo skill missing: $OUT_MULTI" ;;
 esac
 
