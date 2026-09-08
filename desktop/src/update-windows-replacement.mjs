@@ -140,6 +140,10 @@ export async function replaceWindowsApplication({ appPath, candidatePath, valida
       await save(paths.journal, { ...record, phase: "healthy" });
       return { status: "healthy", appPath: paths.app, previousPath: paths.previous };
     } catch (error) {
+      // A timed-out probe may still hold files or execute the candidate. Leave
+      // the journal and both app identities intact for the independent worker,
+      // which confirms probe shutdown before it attempts directory replacement.
+      if (error?.code === "UPDATE_HEALTH_PROCESS_EXIT_UNCONFIRMED") throw error;
       try { await recover(paths); }
       catch (recoveryError) { throw new AggregateError([error, recoveryError], "Update failed and recovery requires inspection; all application directories were preserved."); }
       throw new Error("Update failed; the previous application is restored.", { cause: error });

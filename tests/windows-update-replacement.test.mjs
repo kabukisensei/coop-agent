@@ -30,6 +30,25 @@ assert.equal(await version(failed.appPath), "old"); assert.equal((await inspectW
 assert.equal((await recoverWindowsReplacement(failed)).status, "rolled-back");
 console.log("PASS: failed native-health result restores the prior application; recovery is idempotent");
 
+const unconfirmed = await fixture("unconfirmed-probe-exit");
+const probe = spawn(process.execPath, ["-e", "process.stdout.write('ready'); setInterval(()=>{},1000)"],
+  { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+const probeClosed = once(probe, "close");
+await once(probe.stdout, "data");
+const exitError = Object.assign(new Error("Native health process exit could not be confirmed."),
+  { code: "UPDATE_HEALTH_PROCESS_EXIT_UNCONFIRMED" });
+try {
+  await assert.rejects(replaceWindowsApplication({ ...unconfirmed, checkHealth: async () => { throw exitError; } }),
+    error => error === exitError);
+  assert.equal((await inspectWindowsReplacement(unconfirmed)).status, "testing");
+  assert.equal(await version(unconfirmed.appPath), "new");
+  assert.equal(await version(join(root, "unconfirmed-probe-exit", ".Coop Desktop.coop-update", "previous")), "old");
+  process.kill(probe.pid, 0); // The consumer really is still alive; no rollback occurred.
+} finally { probe.kill(); await probeClosed; }
+assert.equal((await recoverWindowsReplacement(unconfirmed)).status, "rolled-back");
+assert.equal(await version(unconfirmed.appPath), "old");
+console.log("PASS: unconfirmed native probe exit defers rollback until independent recovery can run safely");
+
 const cancelled = await fixture("cancelled"), abort = new AbortController();
 await assert.rejects(replaceWindowsApplication({ ...cancelled, signal: abort.signal, checkHealth: async () => { abort.abort(); return true; } }), /previous application is restored/);
 assert.equal(await version(cancelled.appPath), "old");
