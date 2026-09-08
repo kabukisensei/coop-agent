@@ -4,11 +4,20 @@ import assert from "node:assert/strict";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { managedRuntimeBuildPlan } from "../scripts/managed-runtime-build-plan.mjs";
-import { preparationCommands } from "../scripts/prepare-managed-runtime.mjs";
+import { archiveExtractor, preparationCommands } from "../scripts/prepare-managed-runtime.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 let count = 0;
 async function test(name, fn) { await fn(); count += 1; console.log(`  ✓ ${name}`); }
+
+await test("Windows acquisition selects the system ZIP-capable tar independently of PATH", () => {
+  assert.equal(archiveExtractor({ platform: "win32", systemRoot: "D:\\Windows" }), "D:\\Windows\\System32\\tar.exe");
+  assert.equal(archiveExtractor({ platform: "win32", systemRoot: "C:/Windows" }), "C:\\Windows\\System32\\tar.exe");
+  assert.equal(archiveExtractor({ platform: "darwin", systemRoot: "" }), "tar");
+  for (const systemRoot of ["", "relative", "C:\\Windows\nother"]) {
+    assert.throws(() => archiveExtractor({ platform: "win32", systemRoot }), /SystemRoot/);
+  }
+});
 
 await test("preparation invokes the pinned Node npm CLI without a shell or global install", () => {
   const plan = managedRuntimeBuildPlan("darwin-arm64");

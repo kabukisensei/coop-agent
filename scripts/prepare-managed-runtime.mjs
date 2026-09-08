@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
@@ -37,6 +37,16 @@ function run(command, args, { env = process.env, label = command } = {}) {
     fail(`${label} failed${detail ? `: ${detail}` : "."}`);
   }
   return `${result.stdout || ""}`.trim();
+}
+
+export function archiveExtractor({ platform = process.platform, systemRoot = process.env.SystemRoot } = {}) {
+  if (platform !== "win32") return "tar";
+  if (typeof systemRoot !== "string" || !win32.isAbsolute(systemRoot) || /[\0\r\n]/.test(systemRoot)) {
+    fail("Windows archive extraction requires an absolute SystemRoot.");
+  }
+  // Git Bash can put GNU tar first; it treats a drive prefix as a remote archive
+  // and cannot unpack the official Node ZIP. Use Windows' native bsdtar.
+  return win32.join(systemRoot, "System32", "tar.exe");
 }
 
 async function sha256(path) {
@@ -124,8 +134,9 @@ async function prepare() {
   const pythonExtract = join(options.work, "python-extract");
   mkdirSync(nodeExtract);
   mkdirSync(pythonExtract);
-  run("tar", ["-xf", nodeArchive, "-C", nodeExtract], { label: "Node archive extraction" });
-  run("tar", ["-xf", pythonArchive, "-C", pythonExtract], { label: "Python archive extraction" });
+  const tar = archiveExtractor();
+  run(tar, ["-xf", nodeArchive, "-C", nodeExtract], { label: "Node archive extraction" });
+  run(tar, ["-xf", pythonArchive, "-C", pythonExtract], { label: "Python archive extraction" });
   const nodeRoot = realpathSync(join(nodeExtract, plan.node.root));
   const pythonRoot = realpathSync(join(pythonExtract, plan.python.root));
   const npmPrefix = join(options.work, "npm");

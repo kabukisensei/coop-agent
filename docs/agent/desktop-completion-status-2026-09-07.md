@@ -1568,3 +1568,50 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
 - Full Bash suite completed with observed exit 0. Post-use strict deep signature
   verification passed. All local validation/native/package handles in this slice
   have exited. Native CI execution of the expanded workflow is still pending.
+
+
+## Native Windows archive selection and update acknowledgement file release
+
+- The first managed build CI run 34182410220 at 4671c6c completed. Native arm64
+  macOS job 101923974924 passed wheel builds, exact runtime acquisition, staged
+  runtime checks, app packaging, fuse/ASAR verification and packaged-runtime
+  execution. Its receipt records 507 npm packages and 101 Python distributions
+  with the existing npm/Python resolution hashes. The native package ran bundled
+  Node 22.22.3, Python 3.12.14, Pi 0.84.3 and Coop 0.23.1. This is a clean hosted
+  development build, not production signing or full interactive acceptance.
+- Windows job 101923975079 checked out the three exact companion commits and built
+  all three development wheels. It then failed extracting the Node ZIP because
+  PATH selected Git Bash GNU tar, which interpreted D: as a remote archive host.
+  The preparer now resolves SystemRoot/System32/tar.exe on Windows and rejects an
+  absent/relative/invalid SystemRoot. Native Windows bsdtar supports the pinned ZIP
+  and tar.gz formats; the Mac tar path is unchanged. Eleven preparer tests pass.
+  Reference: https://learn.microsoft.com/en-us/windows/tar/.
+- Downloaded both CI evidence artifacts (10039408923 Mac, 10039366256 Windows).
+  The Windows artifact contains the successful development-wheel receipt; it does
+  not contain a managed-runtime/package success receipt. Per-platform wheel hashes
+  differ and are recorded independently; no cross-platform byte identity is claimed.
+- CI 34182410150 Windows tests progressed past symbolic-link rejection and failed
+  while a newer update result replaced the file during acknowledgement. The outcome
+  reader now closes its handle before awaiting the dialog, keeping only metadata
+  for the post-dialog identity check. A before/after regression uses real files and
+  counts open handles while replacing the result. It proves no handle stays open
+  across acknowledgement and that a newer result is preserved. All 48 update tests
+  pass locally; native Windows confirmation remains pending.
+- Refreshed isolated development package:
+  /private/tmp/coop-windows-archive-app-20260907/mac-arm64/Coop Desktop.app.
+  Updated both the ASAR and external outcome helper, plus the bundled preparer,
+  refreshed the ASAR header hash and ad-hoc signature, and verified source bytes
+  and the original Cooptimize icon. Package/fuse checks and native renderer/chat
+  readiness, shutdown and temporary-profile cleanup passed (PID 99047 and its
+  group gone). User-authenticated profiles were preserved; no model generation.
+- Local PowerShell, JavaScript/Bash syntax and parity/BOM checks pass. Full Bash
+  suite is still running and its terminal result will be recorded before commit.
+  Backups: .backups/windows_archive_outcome_20260907_221044/. Evidence prefixes:
+  /private/tmp/coop-desktop-home-20260907-state/windows-archive-*, outcome-handle-*,
+  managed-ci-first-* and desktop-pr48-fifth-*. Full native Windows, updater and
+  release requirements remain open; no merge, release, tag or version bump.
+
+- Full Bash suite completed with observed exit 0, and post-use strict deep
+  signature verification passed. All local validation handles are terminal.
+  The older Pi job 101922199885 also completed successfully; the Pi job for
+  34182410150 remains in progress at this checkpoint.

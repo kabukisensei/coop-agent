@@ -35,6 +35,9 @@ export async function presentUpdateOutcome({ userData, currentVersion, show }) {
         detail: "Coop Desktop has reopened. You can continue working and try again from Help → Check for Updates.",
         buttons: ["Continue"], defaultId: 0 };
     } else return false;
+    // Release the read handle before a potentially long-lived dialog. Windows
+    // must be able to replace this result while the acknowledgement is pending.
+    await handle.close(); handle = undefined;
     await show(options);
     // A newer helper result must not be consumed by an older dialog.
     if (sameFile(await lstat(path), stat)) await unlink(path);

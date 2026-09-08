@@ -818,6 +818,30 @@ await test("update outcomes reject links when O_NOFOLLOW is unavailable and pres
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+await test("update outcome releases its read handle before waiting for acknowledgement", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-outcome-handle-"));
+  const path = join(root, "update-result.json");
+  let handles = 0;
+  const wrappedOpen = async (...args) => {
+    const file = await open(...args); handles++;
+    return { stat: () => file.stat(), read: (...args) => file.read(...args), close: async () => { await file.close(); handles--; } };
+  };
+  const source = readFileSync(join(ROOT, "desktop/src/update-outcome.mjs"), "utf8");
+  const ctx = vm.createContext({ constants, open: wrappedOpen, unlink, lstat, join, Buffer });
+  vm.runInContext(source.slice(source.indexOf("const busy")).replace("export ", ""), ctx);
+  try {
+    writeFileSync(path, JSON.stringify({ status: "failed" }));
+    assert.equal(await ctx.presentUpdateOutcome({ userData: root, currentVersion: "1.2.3", show: async () => {
+      assert.equal(handles, 0, "an open dialog must not keep the result file locked");
+      const next = join(root, "next.json");
+      writeFileSync(next, JSON.stringify({ status: "healthy", version: "1.2.3" }));
+      renameSync(next, path);
+    } }), true);
+    assert.equal(handles, 0);
+    assert.equal(JSON.parse(readFileSync(path, "utf8")).status, "healthy");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 await test("runtime health removes only a successful profile after confirmed shutdown", async () => {
   const root = mkdtempSync(join(tmpdir(), "coop-runtime-health-cleanup-"));
   try {
