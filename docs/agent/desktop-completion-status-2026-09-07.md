@@ -1776,3 +1776,54 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
 - Full Bash suite completed with observed exit 0. All local source, package,
   native smoke and signature validation handles are terminal. The source is ready
   for the next native Windows CI run; no native result for this change is assumed.
+
+
+## Owner-controlled graceful runtime shutdown and immediate restart
+
+- Native managed CI 34185477300 at b51b065 completed successfully on both
+  Windows (job 101932838037) and arm64 Mac (101932837911). Downloaded artifacts
+  10040414329 and 10040397710. Staged and packaged Windows runtime checks include
+  shutdownConfirmed:true, expected SQL/DAX findings and Data Doc lineage. Package
+  fuse/ASAR checks pass. Windows staged/package runtime PIDs were 8896/1688; Mac
+  4995/6335. This proves managed acquisition, packaging and runtime execution,
+  not NSIS installation or native Windows interactive GUI/model/Power BI journeys.
+- Added a per-launch Desktop owner credential and advertised http-v1 shutdown
+  protocol. Runtime shutdown requires its authenticated cookie, CSRF header and
+  separate owner header. The credential is removed from inherited agent env and
+  launch-spec overrides. The supervisor bounds the request/wait and retains the
+  existing process-tree fallback for older/unresponsive runtimes.
+- Runtime shutdown now waits for agent termination before releasing leases and
+  exiting. It blocks new requests/chat starts/restarts once shutdown starts;
+  unconfirmed agent termination retains ownership for recovery. Native Windows
+  taskkill uses System32 and its helper result is observed during graceful stop.
+- A before/after test with the actual runtime and stub Pi verifies two immediate
+  writable starts, rejection of missing/wrong/previous-owner credentials, cookie
+  and CSRF enforcement, no owner-credential inheritance and actual Pi exit.
+  The pre-fix test failed on the absent protocol; all 21 local preview-shell tests
+  now pass. A deliberately stalled HTTP endpoint falls back and reaps its runtime
+  in 103 ms with a 100 ms request grace period (PID 31407).
+- Managed verification now requires two immediate writable starts using the same
+  agent profile and workspace; it reports success only after both stops. Refreshed
+  disposable Mac app: /private/tmp/coop-graceful-runtime-app-20260907/mac-arm64/Coop
+  Desktop.app. ASAR/helper supervisor and managed server match source; original
+  Cooptimize icon matches. Package/fuses, native renderer/chat readiness and probe
+  cleanup pass (PID/group 18369 gone). Two real bundled runtime starts passed
+  (18749/19045, both confirmed gone), with expected tool results and writable
+  restart receipt. Post-use strict deep signature verification passes.
+- Windows regular CI 34185477333 passed its PowerShell suite but Git Bash job
+  101932838249 failed the chat-crash assertion at webbridge.test.mjs:1366; this is
+  separate from managed packaging success and needs investigation. Pi job
+  101932838510 is still active. No all-Windows-tests claim is made.
+- Local PowerShell behavioral and Bash syntax/parity/BOM checks exited 0. Full
+  Bash remains active and must finish before commit. Backup:
+  .backups/runtime_graceful_20260907_230355/. Evidence under
+  /private/tmp/coop-desktop-home-20260907-state/: graceful-*.log/json,
+  managed-ci-native-success-summary.json, managed-ci-windows-success-evidence.zip,
+  managed-ci-sixth-macos-evidence.zip, desktop-pr48-tenth-windows-logic.log.
+  Windows graceful restart awaits native CI on this new change. Full installer,
+  reboot/login, updater, interactive and production distribution requirements
+  remain open. Authenticated user profiles and real business data were preserved.
+
+- Full Bash suite completed with observed exit 0. All local validation, native
+  package, restart and signature handles are terminal. The new source is ready
+  for native Windows graceful-restart validation; that result remains pending.

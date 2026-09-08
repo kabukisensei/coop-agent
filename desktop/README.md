@@ -148,11 +148,14 @@ home/work folders. Both staged and packaged CI checks record this tool-work
 evidence. This exercises local analysis; it does not require a model account or
 establish live Microsoft integration acceptance.
 
-Windows runtime shutdown terminates the owned launcher process tree through the
-native `System32/taskkill.exe`, then waits for its process handles to close.
-Managed verification emits a success receipt only after shutdown completes.
-Graceful Windows state cleanup and immediate restart/lease recovery remain native
-acceptance requirements; forced process termination alone does not prove them.
+Desktop requests graceful runtime shutdown using a per-launch owner credential,
+separate from the renderer cookie. The runtime stops its agents and releases
+workspace ownership before exiting; the credential is excluded from agent
+environments. Older or unresponsive Windows runtimes fall back to terminating the
+owned launcher tree through native `System32/taskkill.exe`. Managed verification
+checks two consecutive writable starts with the same workspace/profile and emits
+success only after both runtimes have stopped. Native CI must verify this behavior
+on each target; it does not establish reboot/login or installer acceptance.
 
 A packaged app uses `resources/managed-runtime` when present. It validates the
 bundle contract, target, jailed paths, and Coop/Pi/Node/Python version agreement

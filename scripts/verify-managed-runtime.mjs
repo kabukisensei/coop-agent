@@ -50,26 +50,33 @@ async function verifyBundle() {
     COOP_SKIP_AZ: "1",
     COOP_NO_ONBOARD: "1",
   };
-  const runtime = await startCoopRuntime({
-    workspace: options.workspace,
-    coopCommand: launcher.command,
-    commandPrefix: launcher.commandPrefix,
-    env,
-    readyTimeoutMs: 60_000,
-    onStderr: (text) => process.stderr.write(text),
-  });
-  try {
-    const capabilities = await authenticatedGet(runtime.ready.endpoint, runtime.ready.oneTimeToken, "/capabilities");
-    if (capabilities.contractVersion !== 1 || capabilities.versions?.coop !== bundle.versions.coop || capabilities.versions?.pi !== bundle.versions.pi) fail("Runtime capability versions do not match the managed bundle.");
-    for (const [integration, expected] of [["coop-data-doc", bundle.versions.pythonTools["coop-data-doc"]], ["coop-sql-review", bundle.versions.pythonTools["coop-sql-review"]], ["coop-dax-review", bundle.versions.pythonTools["coop-dax-review"]]]) {
-      if (capabilities.versions?.[integration === "coop-data-doc" ? "dataDoc" : integration === "coop-sql-review" ? "sqlReview" : "daxReview"] !== expected) fail(`Runtime capability version mismatch: ${integration}.`);
+  const runtimePids = [];
+  for (let cycle = 0; cycle < 2; cycle++) {
+    const runtime = await startCoopRuntime({
+      workspace: options.workspace,
+      coopCommand: launcher.command,
+      commandPrefix: launcher.commandPrefix,
+      env,
+      readyTimeoutMs: 60_000,
+      onStderr: (text) => process.stderr.write(text),
+    });
+    try {
+      if (runtime.ready.shutdownProtocol !== "http-v1") fail("Runtime does not support owner-controlled shutdown.");
+      const access = await authenticatedGet(runtime.ready.endpoint, runtime.ready.oneTimeToken, "/workspace/access");
+      if (access.access?.mode !== "write") fail("Runtime did not acquire writable workspace access during start/restart.");
+      const capabilities = await authenticatedGet(runtime.ready.endpoint, runtime.ready.oneTimeToken, "/capabilities");
+      if (capabilities.contractVersion !== 1 || capabilities.versions?.coop !== bundle.versions.coop || capabilities.versions?.pi !== bundle.versions.pi) fail("Runtime capability versions do not match the managed bundle.");
+      for (const [integration, expected] of [["coop-data-doc", bundle.versions.pythonTools["coop-data-doc"]], ["coop-sql-review", bundle.versions.pythonTools["coop-sql-review"]], ["coop-dax-review", bundle.versions.pythonTools["coop-dax-review"]]]) {
+        if (capabilities.versions?.[integration === "coop-data-doc" ? "dataDoc" : integration === "coop-sql-review" ? "sqlReview" : "daxReview"] !== expected) fail(`Runtime capability version mismatch: ${integration}.`);
+      }
+      const authPath = join(options.agent, "auth.json");
+      if (existsSync(authPath) && readFileSync(authPath).length > 2) fail("Managed smoke unexpectedly populated model credentials.");
+    } finally {
+      await runtime.stop({ graceMs: 5000 });
     }
-    const authPath = join(options.agent, "auth.json");
-    if (existsSync(authPath) && readFileSync(authPath).length > 2) fail("Managed smoke unexpectedly populated model credentials.");
-  } finally {
-    await runtime.stop({ graceMs: 5000 });
+    runtimePids.push(runtime.ready.runtimePid);
   }
-  process.stdout.write(`${JSON.stringify({ ok: true, target: bundle.manifestPath ? `${process.platform}-${process.arch}` : null, versions: bundle.versions, runtimePid: runtime.ready.runtimePid, shutdownConfirmed: true, toolWork })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, target: `${process.platform}-${process.arch}`, versions: bundle.versions, runtimePid: runtimePids[0], restartRuntimePid: runtimePids[1], shutdownConfirmed: true, immediateWritableRestart: true, toolWork })}\n`);
 }
 
 verifyBundle().catch((error) => { process.stderr.write(`verify-managed-runtime: ${error.message}\n`); process.exitCode = 1; });

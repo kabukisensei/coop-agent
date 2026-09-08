@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { win32 } from "node:path";
+import { randomBytes } from "node:crypto";
 
 const READY_LIMIT = 64 * 1024;
 
@@ -55,9 +56,10 @@ export async function startCoopRuntime({
   onExit = () => {},
 } = {}) {
   const invocation = buildRuntimeInvocation({ coopCommand, commandPrefix, workspace, port });
+  const ownerToken = randomBytes(32).toString("hex");
   const child = spawnImpl(invocation.command, invocation.args, {
     cwd: workspace,
-    env: { ...env, COOP_DESKTOP_SHELL: "1" },
+    env: { ...env, COOP_DESKTOP_SHELL: "1", COOP_DESKTOP_RUNTIME_OWNER_TOKEN: ownerToken },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
     shell: false,
@@ -76,6 +78,18 @@ export async function startCoopRuntime({
     stopRequested = true;
     stopTask = (async () => {
       try {
+        if (ready?.shutdownProtocol === "http-v1" && graceMs > 0) {
+          const deadline = Date.now() + graceMs;
+          try {
+            const response = await fetch(`${ready.endpoint}/runtime/shutdown`, {
+              method: "POST", redirect: "error", signal: AbortSignal.timeout(Math.max(1, Math.ceil(graceMs))),
+              headers: { cookie: `coop_token=${ready.oneTimeToken}`, "x-coop-csrf": "1", "x-coop-runtime-owner": ownerToken },
+            });
+            await response.body?.cancel();
+            if (response.ok && await waitForExit(closed, Math.max(0, deadline - Date.now()))) return;
+          } catch { /* Fall back to terminating the owned process below. */ }
+          if (exited) return;
+        }
         if (!child.pid) {
           if (await waitForExit(closed, 1000)) return;
           throw new Error("Failed runtime launch did not close its process handles.");

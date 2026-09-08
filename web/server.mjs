@@ -76,6 +76,10 @@ const HOST = "127.0.0.1";
 const TOKEN = randomBytes(16).toString("hex");
 const TREE_NAVIGATION_SECRET = randomBytes(24).toString("hex");
 const RUNTIME_CONTROL_SECRET = randomBytes(24).toString("hex");
+const RUNTIME_OWNER_TOKEN = RUNTIME_MODE && /^[a-f0-9]{64}$/.test(process.env.COOP_DESKTOP_RUNTIME_OWNER_TOKEN || "")
+  ? process.env.COOP_DESKTOP_RUNTIME_OWNER_TOKEN : null;
+delete process.env.COOP_DESKTOP_RUNTIME_OWNER_TOKEN;
+let shutdownRequested = false, shutdownTask;
 
 function startupError(message, exitCode = 1) {
   if (RUNTIME_JSON) {
@@ -196,6 +200,9 @@ function spawnPi(cwd, extraArgs = [], workspaceAccess = null) {
       ...(workspaceAccess.mode === "override" ? { COOP_WORKSPACE_OVERRIDE_APPROVED: "1" } : {}),
     } : {}),
   };
+  // The Desktop shutdown credential belongs to the runtime owner, never Pi or
+  // its tools (including a launch spec captured before this process started).
+  delete env.COOP_DESKTOP_RUNTIME_OWNER_TOKEN;
   if (process.platform === "win32") {
     // npm-global `pi` is a .cmd shim, which Node can only launch through cmd.exe.
     // cmd has no safe escape for embedded `"` or `%` inside a quoted argument, so
@@ -228,11 +235,26 @@ function killPi(child) {
   if (!child) return;
   try {
     if (process.platform === "win32" && child.pid) {
-      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      const killer = spawn(join(process.env.SystemRoot, "System32", "taskkill.exe"), ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      killer.on("error", () => {}); // Shutdown observes errors; fire-and-forget callers must not crash.
+      return killer;
     } else {
       child.kill();
     }
   } catch { /* already gone */ }
+}
+
+async function stopPiForShutdown(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return true;
+  const killer = killPi(child);
+  if (killer) {
+    if (!await waitForChildExit(killer, 4000)) { try { killer.kill(); } catch {} return false; }
+    if (killer.exitCode !== 0) return false;
+  }
+  if (await waitForChildExit(child, 1000)) return true;
+  if (process.platform === "win32") return false;
+  try { child.kill("SIGKILL"); } catch { return false; }
+  return waitForChildExit(child, 1000);
 }
 
 // --- Chat registry -------------------------------------------------------------
@@ -270,6 +292,7 @@ function closeRuntimeEventClients(chat) {
 async function makeChat(cwd, extraArgs = [], accessRequest = { mode: "write", approved: false }) {
   const sid = `c${++chatSeq}`;
   const repository = await inspectWorkspace(cwd);
+  if (shutdownRequested) throw new Error("Coop Runtime is shutting down.");
   const workspaceLease = new WorkspaceLeaseManager({
     agentDir: AGENT_DIR,
     ownerId: sid,
@@ -637,6 +660,7 @@ async function restartChat(chat, newCwd, extraArgs = []) {
   let nextLease = chat.workspaceLease;
   let nextAccess = chat.workspaceAccess;
   const repository = await inspectWorkspace(newCwd);
+  if (shutdownRequested) throw new Error("Coop Runtime is shutting down.");
   const targetOwnershipPath = repository.repositoryRoot || repository.workspacePath || newCwd;
   if (!samePath(chat.workspaceAccess?.workspacePath, targetOwnershipPath)) {
     nextLease = new WorkspaceLeaseManager({
@@ -1507,6 +1531,10 @@ async function handle(req, res) {
     res.writeHead(401, baseHeaders("text/plain")).end("unauthorized");
     return;
   }
+  if (shutdownRequested && url.pathname !== "/runtime/shutdown") {
+    res.writeHead(503, baseHeaders("text/plain")).end("runtime is shutting down");
+    return;
+  }
 
   if (req.method === "GET" && STATIC[url.pathname] && url.pathname !== "/") {
     const s = STATIC[url.pathname];
@@ -1869,6 +1897,17 @@ async function handle(req, res) {
   if (req.method === "POST") {
     if (req.headers["x-coop-csrf"] !== "1") {
       res.writeHead(403, baseHeaders("text/plain")).end("missing CSRF header");
+      return;
+    }
+
+    if (url.pathname === "/runtime/shutdown") {
+      if (!RUNTIME_OWNER_TOKEN || !safeEqual(req.headers["x-coop-runtime-owner"] || "", RUNTIME_OWNER_TOKEN)) {
+        res.writeHead(403, baseHeaders("text/plain")).end("runtime owner required");
+        return;
+      }
+      shutdownRequested = true;
+      res.writeHead(202, baseHeaders("application/json")).end('{"ok":true}');
+      setImmediate(shutdown);
       return;
     }
 
@@ -2573,6 +2612,7 @@ server.listen(PORT, HOST, () => {
         endpoint,
         oneTimeToken: TOKEN,
         runtimePid: process.pid,
+        ...(RUNTIME_OWNER_TOKEN ? { shutdownProtocol: "http-v1" } : {}),
         coopVersion: runtimeCapabilities.versions.coop,
         piVersion: runtimeCapabilities.versions.pi,
       })}\n`);
@@ -2586,11 +2626,20 @@ server.listen(PORT, HOST, () => {
 });
 
 function shutdown() {
-  for (const c of chats.values()) {
-    killPi(c.child); // reap every chat's subtree — never orphan a bash-capable agent
-    c.workspaceLease?.release();
-  }
-  process.exit(0);
+  if (shutdownTask) return shutdownTask;
+  shutdownRequested = true;
+  shutdownTask = (async () => {
+    const active = [...chats.values()];
+    const stopped = await Promise.all(active.map(c => stopPiForShutdown(c.child)));
+    if (stopped.some(value => !value)) {
+      console.error("Coop Runtime could not confirm agent shutdown; retaining workspace ownership for recovery.");
+      return;
+    }
+    for (const c of active) c.workspaceLease?.release();
+    process.exit(0);
+  })();
+  shutdownTask.catch(() => console.error("Coop Runtime shutdown failed; retaining workspace ownership for recovery."));
+  return shutdownTask;
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

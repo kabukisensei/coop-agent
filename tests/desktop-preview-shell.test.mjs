@@ -3,10 +3,10 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { normalizeSavedChat, normalizeSavedChats, restoreSavedChats } from "../desktop/src/session-restoration.mjs";
 import { strict as assert } from "node:assert";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveCoopLauncher } from "../desktop/src/coop-launcher.mjs";
 import { loadDesktopState, normalizeDesktopState, restoreWindowBounds, saveDesktopState } from "../desktop/src/desktop-state.mjs";
 import { selectRuntimeWorkspace } from "../desktop/src/workspace-selection.mjs";
@@ -365,6 +365,45 @@ await test("runtime restart callback fires only for an unexpected child exit", a
   crashed.child.kill("SIGKILL");
   for (let i = 0; i < 50 && !unexpected; i++) await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(Boolean(unexpected), true);
+});
+
+await test("owner-controlled shutdown releases workspace ownership before immediate restart", async () => {
+  const agent = mkdtempSync(join(tmpdir(), "coop-owner-stop-agent-"));
+  const workspace = mkdtempSync(join(tmpdir(), "coop-owner-stop-work-"));
+  const probe = join(agent, "probe.mjs"), evidence = join(agent, "probe.json");
+  writeFileSync(probe, `import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(evidence)},JSON.stringify({pid:process.pid,ownerInherited:Object.hasOwn(process.env,'COOP_DESKTOP_RUNTIME_OWNER_TOKEN')})); await import(${JSON.stringify(pathToFileURL(join(ROOT, "tests/stub-pi.mjs")).href)});`);
+  let runtime, previousOwner;
+  try {
+    for (let cycle = 0; cycle < 2; cycle++) {
+      rmSync(evidence, { force: true });
+      let owner;
+      runtime = await startCoopRuntime({ workspace, coopCommand: process.execPath,
+        commandPrefix: [join(ROOT, "web/server.mjs"), "--runtime"],
+        env: { ...process.env, COOP_LAUNCH_SPEC: JSON.stringify({ bin: process.execPath, args: [probe], env: { PI_CODING_AGENT_DIR: agent, COOP_DESKTOP_RUNTIME_OWNER_TOKEN: "must-not-inherit" } }) },
+        spawnImpl(command, args, options) { owner = options.env.COOP_DESKTOP_RUNTIME_OWNER_TOKEN; return spawn(command, args, options); },
+      });
+      assert.equal(runtime.ready.shutdownProtocol, "http-v1");
+      for (let attempt = 0; attempt < 100 && !existsSync(evidence); attempt++) await new Promise(resolve => setTimeout(resolve, 20));
+      const pi = JSON.parse(readFileSync(evidence, "utf8"));
+      assert.equal(pi.ownerInherited, false, "Pi must not inherit the owner's shutdown credential");
+      const headers = { cookie: `coop_token=${runtime.ready.oneTimeToken}`, "x-coop-csrf": "1" };
+      const access = await fetch(`${runtime.ready.endpoint}/workspace/access`, { headers }).then(response => response.json());
+      assert.equal(access.access.mode, "write", "immediate restart must retain writable access, without a stale-lease fallback");
+      const stopUrl = `${runtime.ready.endpoint}/runtime/shutdown`;
+      assert.equal((await fetch(stopUrl, { method: "POST", headers })).status, 403);
+      assert.equal((await fetch(stopUrl, { method: "POST", headers: { ...headers, "x-coop-runtime-owner": previousOwner || "0".repeat(64) } })).status, 403);
+      assert.equal((await fetch(stopUrl, { method: "POST", headers: { "x-coop-runtime-owner": owner } })).status, 401);
+      assert.equal((await fetch(stopUrl, { method: "POST", headers: { cookie: headers.cookie, "x-coop-runtime-owner": owner } })).status, 403);
+      await runtime.stop({ graceMs: 5000 });
+      assert.throws(() => process.kill(pi.pid, 0), { code: "ESRCH" });
+      previousOwner = owner;
+      runtime = null;
+    }
+  } finally {
+    if (runtime) await runtime.stop({ graceMs: 5000 });
+    rmSync(agent, { recursive: true, force: true });
+    rmSync(workspace, { recursive: true, force: true });
+  }
 });
 
 await test("production renderer bridge is sandboxed and individually allowlisted", () => {
