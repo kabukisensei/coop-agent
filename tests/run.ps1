@@ -77,6 +77,13 @@ else { Ko 'Managed tool invocation contracts failed' }
 & node (Join-Path $root 'tests\windows-update-replacement.test.mjs')
 if ($LASTEXITCODE -eq 0) { Ok 'Windows replacement and recovery contracts pass' }
 else { Ko 'Windows replacement and recovery contracts failed' }
+& node (Join-Path $root 'tests\windows-update-archive.test.mjs')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& node (Join-Path $root 'tests\windows-update-application.test.mjs')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& node (Join-Path $root 'tests\windows-update-prepare.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Windows update archive extraction contracts pass' }
+else { Ko 'Windows update archive extraction contracts failed' }
 & node (Join-Path $root 'tests\managed-runtime-build-plan.test.mjs')
 if ($LASTEXITCODE -eq 0) { Ok 'Managed Desktop runtime build-plan contracts pass' }
 else { Ko 'Managed Desktop runtime build-plan contracts failed' }

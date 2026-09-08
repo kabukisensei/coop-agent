@@ -8,7 +8,7 @@ import { verifySignedUpdateDescriptor, verifyUpdateArtifact } from "./update-ser
 export function runUpdateCommand(command, args, { signal } = {}) {
   signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { shell: false, stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawn(command, args, { shell: false, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
     let output = "", failure, killTimer;
     const stop = error => {
       failure ||= error;
