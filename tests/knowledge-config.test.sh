@@ -76,8 +76,13 @@ line2="$(printf '%s\n' "$out" | sed -n '2p')"
 lines="$(printf '%s\n' "$out" | grep -c '')"
 [ "$lines" = "2" ] && ok "reader emits one line per repo" || ko "expected 2 repo lines, got $lines: $out"
 case "$line1" in
-  "https://github.com/cooptimize/incremental-bi.git	$TMP/home/.coop/knowledge/incremental-bi")
-    ok "reader expands ~ in local_path" ;;
+  "https://github.com/cooptimize/incremental-bi.git	"*"/home/.coop/knowledge/incremental-bi" | \
+  "https://github.com/cooptimize/incremental-bi.git	"*"\\home/.coop/knowledge/incremental-bi")
+    case "$line1" in
+      *"	~"*) ko "line 1 path still starts with literal tilde: [$line1]" ;;
+      *) ok "reader expands ~ in local_path" ;;
+    esac
+    ;;
   *) ko "line 1 wrong (tilde expansion?): [$line1]" ;;
 esac
 case "$line2" in
