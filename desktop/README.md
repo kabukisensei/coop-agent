@@ -148,6 +148,12 @@ home/work folders. Both staged and packaged CI checks record this tool-work
 evidence. This exercises local analysis; it does not require a model account or
 establish live Microsoft integration acceptance.
 
+Windows runtime shutdown terminates the owned launcher process tree through the
+native `System32/taskkill.exe`, then waits for its process handles to close.
+Managed verification emits a success receipt only after shutdown completes.
+Graceful Windows state cleanup and immediate restart/lease recovery remain native
+acceptance requirements; forced process termination alone does not prove them.
+
 A packaged app uses `resources/managed-runtime` when present. It validates the
 bundle contract, target, jailed paths, and Coop/Pi/Node/Python version agreement
 before launch. A present but invalid bundle fails closed; it never falls back to

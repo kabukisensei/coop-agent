@@ -1730,3 +1730,49 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   this slice are terminal. Regular CI 34183933661 is terminal; its Windows Pi
   compatibility job 101928387982 passed. Windows job 101929741872 on the next
   revision reproduced the same bridge assertion, corroborating the fixture fix.
+
+
+## Windows runtime process-tree shutdown
+
+- Fixed Desktop supervisor shutdown on Windows to run the native
+  SystemRoot/System32/taskkill.exe with the owned launcher PID and /T /F before
+  waiting for child handles to close. It no longer kills the PowerShell launcher
+  first and strands the runtime/Pi descendants. The executable is selected outside
+  PATH, its arguments are structured, execution is bounded, and failures propagate.
+  Failed spawn without a PID instead waits for its handles to close.
+- Added native Windows regression coverage for a launcher with a nested runtime,
+  concurrent stops and confirmed exit of both PIDs. Cross-platform checks cover
+  invalid PID/root, exact native invocation and termination failure. Twenty local
+  preview-shell checks pass; native Windows execution of the new case is pending.
+- Managed runtime success receipts now appear only after stop completes and include
+  shutdownConfirmed:true. The prior logs' pre-shutdown ok:true must not be treated
+  as whole-run success.
+- Refreshed isolated Mac package at
+  /private/tmp/coop-runtime-tree-app-20260907/mac-arm64/Coop Desktop.app. Both ASAR
+  and external update-helper supervisor copies match current source; the original
+  Cooptimize logo is byte-identical. Refreshed ASAR integrity/ad-hoc signing,
+  package/fuse checks, native renderer/chat readiness, process/group exit and
+  temporary profile cleanup passed (PID 95147). Combined analysis/runtime verifier
+  also exited 0 (runtime PID 95354), with post-shutdown receipt. Post-use strict
+  deep signature verification passed. Authenticated user profiles were preserved.
+- Regular CI at 9487870 now passes native Windows logic and PowerShell suites,
+  confirming the bridge-fixture isolation fix. Pi job 101931529322 remains active.
+- Superseded managed run 34184404526 was cancelled for diagnostic collection after
+  reaching the already-confirmed shutdown hang; newer run 34185027191 was left
+  active. Windows log proves bundled SQL and DAX entrypoints produced the expected
+  one/five findings and Data Doc six nodes/five edges, then runtime startup/auth/
+  capabilities succeeded (PID 6412). Shutdown failed, so no complete Windows
+  managed-runtime/package success is claimed. Mac job 101929742193 passed.
+- Forced tree termination does not establish graceful persistence or immediate
+  restart/lease recovery. Those native Windows requirements remain open, along
+  with installer, model login, clipboard, Power BI and updater/release acceptance.
+  Reference: https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/taskkill.
+- PowerShell behavioral and Bash syntax/parity/BOM checks pass locally. Full Bash
+  remains active and its terminal result must be recorded before commit.
+  Backup: .backups/windows_runtime_tree_20260907_225528/. Evidence under
+  /private/tmp/coop-desktop-home-20260907-state/: runtime-tree-*.log/json,
+  managed-ci-fourth-windows-cancelled.log. No release, tag or version bump.
+
+- Full Bash suite completed with observed exit 0. All local source, package,
+  native smoke and signature validation handles are terminal. The source is ready
+  for the next native Windows CI run; no native result for this change is assumed.

@@ -66,10 +66,10 @@ async function verifyBundle() {
     }
     const authPath = join(options.agent, "auth.json");
     if (existsSync(authPath) && readFileSync(authPath).length > 2) fail("Managed smoke unexpectedly populated model credentials.");
-    process.stdout.write(`${JSON.stringify({ ok: true, target: bundle.manifestPath ? `${process.platform}-${process.arch}` : null, versions: bundle.versions, runtimePid: runtime.ready.runtimePid, toolWork })}\n`);
   } finally {
     await runtime.stop({ graceMs: 5000 });
   }
+  process.stdout.write(`${JSON.stringify({ ok: true, target: bundle.manifestPath ? `${process.platform}-${process.arch}` : null, versions: bundle.versions, runtimePid: runtime.ready.runtimePid, shutdownConfirmed: true, toolWork })}\n`);
 }
 
 verifyBundle().catch((error) => { process.stderr.write(`verify-managed-runtime: ${error.message}\n`); process.exitCode = 1; });

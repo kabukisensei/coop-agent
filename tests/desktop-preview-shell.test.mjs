@@ -11,7 +11,7 @@ import { resolveCoopLauncher } from "../desktop/src/coop-launcher.mjs";
 import { loadDesktopState, normalizeDesktopState, restoreWindowBounds, saveDesktopState } from "../desktop/src/desktop-state.mjs";
 import { selectRuntimeWorkspace } from "../desktop/src/workspace-selection.mjs";
 import { buildNativeModelLoginProcess, buildNativeTerminalProcess, launchNativeModelLogin, launchNativeTerminal, validateTerminalLaunch } from "../desktop/src/native-terminal.mjs";
-import { startCoopRuntime } from "../desktop/src/runtime-supervisor.mjs";
+import { startCoopRuntime, terminateWindowsRuntimeTree } from "../desktop/src/runtime-supervisor.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 let count = 0;
@@ -306,6 +306,34 @@ await test("failed runtime startup confirms exit even when the process ignores t
     } finally {
       if (child && !closed) { const done = once(child, "close"); child.kill("SIGKILL"); await done; }
     }
+  }
+});
+
+await test("Windows tree termination uses the native executable and propagates failure", async () => {
+  let invocation;
+  await terminateWindowsRuntimeTree(123, { systemRoot: "C:\\Windows", execFileImpl(...args) { invocation = args; args.at(-1)(null); } });
+  assert.equal(invocation[0], "C:\\Windows\\System32\\taskkill.exe");
+  assert.deepEqual(invocation[1], ["/PID", "123", "/T", "/F"]);
+  assert.equal(invocation[2].shell, false);
+  assert.equal(invocation[2].timeout, 5000);
+  await assert.rejects(terminateWindowsRuntimeTree(0), /process ID/);
+  await assert.rejects(terminateWindowsRuntimeTree(123, { systemRoot: "Windows" }), /SystemRoot/);
+  await assert.rejects(terminateWindowsRuntimeTree(123, { systemRoot: "C:\\Windows", execFileImpl(...args) { args.at(-1)(new Error("denied")); } }), /termination failed/);
+});
+
+if (process.platform === "win32") await test("native Windows runtime stop reaps a launcher and its nested process", async () => {
+  const ready = { type: "runtime.ready", contractVersion: 1, transport: "http", endpoint: "http://127.0.0.1:12345", oneTimeToken: "a".repeat(32) };
+  const nested = `setInterval(() => {}, 1000); console.log(JSON.stringify({...${JSON.stringify(ready)}, runtimePid:process.pid}));`;
+  const wrapper = `const {spawn}=require('node:child_process'); spawn(process.execPath,['-e',${JSON.stringify(nested)}],{stdio:'inherit'}); setInterval(()=>{},1000);`;
+  const runtime = await startCoopRuntime({ workspace: ROOT, coopCommand: process.execPath, commandPrefix: ["-e", wrapper] });
+  try {
+    assert.notEqual(runtime.child.pid, runtime.ready.runtimePid);
+    await Promise.all([runtime.stop({ graceMs: 1000 }), runtime.stop({ graceMs: 1000 })]);
+    assert.throws(() => process.kill(runtime.child.pid, 0), { code: "ESRCH" });
+    assert.throws(() => process.kill(runtime.ready.runtimePid, 0), { code: "ESRCH" });
+  } finally {
+    // Retain cleanup even when the pre-fix supervisor leaves a descendant alive.
+    for (const pid of [runtime.ready.runtimePid, runtime.child.pid]) { try { process.kill(pid, "SIGKILL"); } catch {} }
   }
 });
 

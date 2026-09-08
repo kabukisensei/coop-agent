@@ -1,6 +1,19 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { win32 } from "node:path";
 
 const READY_LIMIT = 64 * 1024;
+
+export function terminateWindowsRuntimeTree(pid, { systemRoot = process.env.SystemRoot, execFileImpl = execFile } = {}) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return Promise.reject(new TypeError("Runtime process ID is invalid."));
+  if (typeof systemRoot !== "string" || !win32.isAbsolute(systemRoot) || /[\x00-\x1f]/.test(systemRoot)) {
+    return Promise.reject(new Error("Windows SystemRoot is required to stop the runtime tree."));
+  }
+  return new Promise((resolve, reject) => {
+    execFileImpl(win32.join(systemRoot, "System32", "taskkill.exe"), ["/PID", String(pid), "/T", "/F"],
+      { windowsHide: true, shell: false, timeout: 5000, maxBuffer: 64 * 1024 },
+      error => error ? reject(new Error("Windows runtime process-tree termination failed.", { cause: error })) : resolve());
+  });
+}
 
 export function buildRuntimeInvocation({ coopCommand = "coop", commandPrefix = [], workspace, port = 0 }) {
   if (typeof workspace !== "string" || !workspace.trim()) throw new TypeError("A workspace path is required.");
@@ -63,6 +76,18 @@ export async function startCoopRuntime({
     stopRequested = true;
     stopTask = (async () => {
       try {
+        if (!child.pid) {
+          if (await waitForExit(closed, 1000)) return;
+          throw new Error("Failed runtime launch did not close its process handles.");
+        }
+        if (process.platform === "win32") {
+          // The launcher is PowerShell. Killing it first loses the parent needed
+          // to reap its runtime/Pi descendants, which also keep our pipes open.
+          try { await terminateWindowsRuntimeTree(child.pid); }
+          catch (error) { if (!exited) throw error; }
+          if (!await waitForExit(closed, Math.max(graceMs, 1000))) throw new Error("Coop Runtime shutdown could not be confirmed.");
+          return;
+        }
         child.kill("SIGTERM");
         if (await waitForExit(closed, graceMs)) return;
         child.kill("SIGKILL");
