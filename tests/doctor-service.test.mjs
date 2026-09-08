@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { normalizeDoctorReport, runDoctor } from "../web/doctor-service.mjs";
+import { runManagedDoctor } from "../web/managed-doctor-service.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 let count = 0;
@@ -22,6 +23,30 @@ const legacy = {
   fail: 1,
   warn: 1,
 };
+
+await test("managed Doctor probes only bundled tools and reports import failures without global repairs", async () => {
+  const runtime = join(ROOT, "managed-fixture");
+  const python = join(runtime, "python", "python.exe");
+  const calls = [];
+  const report = await runManagedDoctor({
+    root: join(runtime, "coop"),
+    inspect: () => ({ node: join(runtime, "node", "node.exe"), python,
+      versions: { node: "22.22.3", python: "3.12.14", npmPackages: { "example": "1.0.0" } },
+      pythonToolRoots: Object.fromEntries(["coop-data-doc", "coop-sql-review", "coop-dax-review", "ms-fabric-cli", "fabric-cicd"].map((name) => [name, join(runtime, name)])) }),
+    probe: async (command, args, options) => {
+      calls.push({ command, args, options });
+      if (args.join(" ").includes("coop_sql_review")) throw new Error("probe timed out");
+      return { code: 0, stdout: args.includes("--version") ? (command === python ? "3.12.14" : "22.22.3") : "import-ok" };
+    },
+  });
+  assert.equal(report.fail, 1);
+  assert.equal(calls.length, 7);
+  assert.ok(calls.every((call) => call.command.startsWith(runtime)));
+  assert.ok(calls.filter((call) => call.args[0] === "-c").every((call) => call.options.env.PYTHONNOUSERSITE === "1" && call.options.env.PYTHONPATH.startsWith(runtime)));
+  const normalized = normalizeDoctorReport(report);
+  assert.equal(normalized.counts.error, 1);
+  assert.equal(normalized.checks.find((check) => check.state === "error").repair, null);
+});
 
 await test("normalizes legacy checks into stable shared health states", async () => {
   const report = normalizeDoctorReport(legacy, { now: new Date("2026-09-04T12:00:00Z"), runId: "run-1" });

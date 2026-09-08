@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, screen, session, shell } from "electron";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadDesktopState, restoreWindowBounds, saveDesktopState } from "./desktop-state.mjs";
@@ -9,6 +9,7 @@ import { resolveManagedDesktopProfile } from "./managed-profile.mjs";
 import { inspectManagedRuntime, resolveDesktopCoopLauncher } from "./managed-runtime.mjs";
 import { launchNativeModelLogin, launchNativeTerminal } from "./native-terminal.mjs";
 import { startCoopRuntime } from "./runtime-supervisor.mjs";
+import { waitForRuntimeState } from "./runtime-readiness.mjs";
 import { runtimeExportSource, saveRuntimeExport } from "./session-export.mjs";
 import { launchUpdateHelper } from "./update-handoff.mjs";
 import { presentUpdateOutcome } from "./update-outcome.mjs";
@@ -49,7 +50,11 @@ let checkpointTimer = null;
 const managedResourcePresent = app.isPackaged && existsSync(join(process.resourcesPath, "managed-runtime", "manifest.json"));
 const updateProbeToken = managedResourcePresent && /^[a-f0-9]{64}$/.test(process.env.COOP_DESKTOP_UPDATE_PROBE || "") ? process.env.COOP_DESKTOP_UPDATE_PROBE : null;
 if (updateProbeToken) process.on("SIGTERM", () => app.quit());
-app.setName(managedResourcePresent ? "Coop Desktop" : "Coop Desktop Preview");
+const developmentBuild = JSON.parse(readFileSync(join(app.getAppPath(), "package.json"), "utf8")).coopDesktopDevelopment === true;
+app.setName(developmentBuild ? "Coop Desktop Windows Validation" : managedResourcePresent ? "Coop Desktop" : "Coop Desktop Preview");
+if (developmentBuild && !app.commandLine.hasSwitch("user-data-dir")) {
+  app.setPath("userData", join(app.getPath("appData"), "Coop Desktop Windows Validation"));
+}
 app.enableSandbox();
 
 function directoryExists(path) {
@@ -163,6 +168,8 @@ async function startRuntime() {
     coopCommand: launcher.command,
     commandPrefix: launcher.commandPrefix,
     env: runtimeEnv,
+    // Cold bundled Python/extension discovery can exceed 20 seconds on Windows VMs.
+    readyTimeoutMs: launcher.source === "managed" ? 90_000 : 20_000,
     onStderr: (text) => process.stderr.write(text),
     onExit: (info) => { void handleUnexpectedRuntimeExit(generation, info); },
   });
@@ -230,7 +237,11 @@ async function runtimeRpc(body) {
     body: JSON.stringify(body),
   });
   const result = await response.json().catch(() => null);
-  if (!response.ok || result?.success !== true) throw new Error(result?.error || `Coop Runtime request failed (${response.status}).`);
+  if (!response.ok || result?.success !== true) {
+    const error = new Error(result?.error || `Coop Runtime request failed (${response.status}).`);
+    error.status = response.status;
+    throw error;
+  }
   return result;
 }
 
@@ -294,9 +305,14 @@ async function restoreNavigation(initialSid) {
     const post = (path, body) => { currentGeneration(); return runtimePost(path, body); };
     const saved = desktopState.openChats;
     const initial = await runtimeChatState();
+    // HTTP readiness precedes extension initialization on a cold managed install.
+    // Keep the recovery overlay until a real agent answers; retain saved chats if
+    // startup fails, and never retry a session mutation against a new runtime.
+    const state = await waitForRuntimeState(runtimeRpc, initialSid, {
+      isCurrent: () => generation === runtimeGeneration && !quitting,
+    });
     let result = { restored: [], failures: [], activeSid: initialSid };
     if (saved.length && initial.chats.length === 1 && initial.chats[0].sid === initialSid) {
-      const state = await runtimeRpc({ type: "get_state", sid: initialSid });
       if (state.data?.messageCount === 0 && !initial.chats[0].busy) {
         await post("/chat-close", { sid: initialSid });
         result = await restoreSavedChats({
@@ -607,9 +623,13 @@ async function createWindow() {
     // after the app script has connected to a real chat through the preload.
     while (!navigationReady && !quitting && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
     if (!navigationReady || quitting || !activeChatSid) throw new Error("Desktop UI did not become ready.");
-    await runtimeRpc({ type: "get_state", sid: activeChatSid });
+    await waitForRuntimeState(runtimeRpc, activeChatSid, { isCurrent: () => !quitting });
     await runtime.stop({ graceMs: 5000 });
-    process.stdout.write(JSON.stringify({ type: "desktop.update-health", token: updateProbeToken, version: app.getVersion() }) + "\n");
+    // Flush the acknowledgement before Electron shuts down Windows pipes.
+    await new Promise((resolveWrite, rejectWrite) => {
+      process.stdout.write(JSON.stringify({ type: "desktop.update-health", token: updateProbeToken, version: app.getVersion() }) + "\n",
+        error => error ? rejectWrite(error) : resolveWrite());
+    });
     app.quit();
     return;
   }
@@ -637,7 +657,9 @@ else {
       app.quit(); return;
     }
     if (error.code === "PROFILE_SELECTION_CANCELLED") { app.quit(); return; }
-    dialog.showErrorBox("Coop Desktop could not start", `${error.message}\n\nRun coop doctor from an existing Coop installation for detailed prerequisite checks.`);
+    dialog.showErrorBox("Coop Desktop could not start", `${error.message}\n\n${managedResourcePresent
+      ? "Retry Coop Desktop. If startup keeps failing, report this message with the Desktop build version."
+      : "Run coop doctor from the selected Coop installation for prerequisite checks."}`);
     app.quit();
   });
 }

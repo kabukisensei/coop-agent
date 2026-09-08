@@ -1,6 +1,7 @@
 import vm from "node:vm";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
+import { randomBytes } from "node:crypto";
 import { normalizeSavedChat, normalizeSavedChats, restoreSavedChats } from "../desktop/src/session-restoration.mjs";
 import { strict as assert } from "node:assert";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -11,7 +12,9 @@ import { resolveCoopLauncher } from "../desktop/src/coop-launcher.mjs";
 import { loadDesktopState, normalizeDesktopState, restoreWindowBounds, saveDesktopState } from "../desktop/src/desktop-state.mjs";
 import { selectRuntimeWorkspace } from "../desktop/src/workspace-selection.mjs";
 import { buildNativeModelLoginProcess, buildNativeTerminalProcess, launchNativeModelLogin, launchNativeTerminal, validateTerminalLaunch } from "../desktop/src/native-terminal.mjs";
-import { startCoopRuntime, terminateWindowsRuntimeTree } from "../desktop/src/runtime-supervisor.mjs";
+import { buildRuntimeInvocation, validateRuntimeReady, startCoopRuntime, terminateWindowsRuntimeTree } from "../desktop/src/runtime-supervisor.mjs";
+import { waitForRuntimeState } from "../desktop/src/runtime-readiness.mjs";
+
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 let count = 0;
@@ -180,7 +183,7 @@ await test("an interrupted restore cannot issue commands against a replacement r
   const calls = [];
   const saved = { openChats: [{ cwd: "/project", file: "saved.jsonl", access: "write" }], activeChatIndex: 0 };
   const ctx = vm.createContext({ navigationRestore: null, runtimeGeneration: 1, quitting: false,
-    desktopState: saved, workspace: "/project", navigationReady: false, restoreSavedChats,
+    desktopState: saved, workspace: "/project", navigationReady: false, restoreSavedChats, waitForRuntimeState,
     runtimeChatState: async () => ({ chats: [{ sid: "initial", busy: false }] }),
     runtimeRpc: async () => ({ data: { messageCount: 0 } }),
     runtimePost: async path => { calls.push(path); if (path === "/chat-new") ctx.runtimeGeneration++; return { sid: "restored" }; },
@@ -225,7 +228,8 @@ await test("terminal launch accepts only the runtime's fixed Coop descriptor", (
   assert.equal(mac.args[1].includes("/users/consultant/.coop/sessions/one.jsonl"), false);
   assert.equal(mac.args.includes("/opt/coop/bin/coop"), true);
   const windows = buildNativeTerminalProcess(launch("clone", "windows"), "win32", "C:\\Coop\\coop.cmd");
-  assert.equal(windows.command, "cmd.exe");
+  assert.match(windows.command, /WindowsPowerShell[\\/]v1\.0[\\/]powershell\.exe$/);
+  assert.equal(windows.args.at(-2), "-EncodedCommand");
   assert.equal(windows.args.join(" ").includes("Client Work"), false);
   assert.equal(windows.options.env.COOP_TERMINAL_CWD, "C:\\Client Work\\Repo");
   assert.equal(windows.options.env.COOP_TERMINAL_SESSION.endsWith("one.jsonl"), true);
@@ -276,7 +280,8 @@ await test("model login opens the fixed Pi TUI handoff without renderer-supplied
   assert.match(mac.args[1], /COOP_PRIME_MODEL_LOGIN=1 COOP_LOGIN_ONLY=1/);
   assert.equal((mac.args[1].match(/COOP_WORKSPACE_ACCESS_MODE=read-only/g) || []).length, 2, "both managed and preview login are read-only");
   const windows = buildNativeModelLoginProcess({ cwd: "C:\\Client Work\\Repo", coopExecutable: "C:\\Coop\\coop.cmd", platform: "win32" });
-  assert.equal(windows.command, "cmd.exe");
+  assert.match(windows.command, /WindowsPowerShell[\\/]v1\.0[\\/]powershell\.exe$/);
+  assert.equal(windows.args.at(-2), "-EncodedCommand");
   assert.equal(windows.args.join(" ").includes("Client Work"), false);
   assert.equal(windows.options.env.COOP_TERMINAL_BIN, "C:\\Coop\\coop.cmd");
   assert.equal(windows.options.env.COOP_WORKSPACE_ACCESS_MODE, "read-only");
@@ -290,6 +295,36 @@ await test("model login opens the fixed Pi TUI handoff without renderer-supplied
   assert.deepEqual(result, { ok: true, pid: 43, providerId: "model.openai-codex" });
   assert.equal(call.options.shell, false);
   assert.equal(call.unref, true);
+});
+
+await test("Windows shutdown requires pipe closure even after taskkill reports an exited wrapper", async () => {
+  const source = readFileSync(join(ROOT, "desktop/src/runtime-supervisor.mjs"), "utf8");
+  for (const closes of [true, false]) {
+    const child = new EventEmitter();
+    child.pid = 123; child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+    let closed = false;
+    child.once("close", () => { closed = true; });
+    const ctx = vm.createContext({ process: { platform: "win32", env: {} }, READY_LIMIT: 65536, Buffer,
+      setTimeout, clearTimeout, randomBytes, buildRuntimeInvocation, validateRuntimeReady,
+      spawn: () => {
+        setTimeout(() => child.stdout.emit("data", Buffer.from(JSON.stringify({ type: "runtime.ready", contractVersion: 1,
+          transport: "http", endpoint: "http://127.0.0.1:12345", oneTimeToken: "a".repeat(32), runtimePid: 123 }) + "\n")), 0);
+        return child;
+      },
+      terminateWindowsRuntimeTree: async () => {
+        child.emit("exit", 0);
+        if (closes) setTimeout(() => child.emit("close", 0), 25);
+        throw new Error("Windows runtime process-tree termination failed.");
+      },
+    });
+    vm.runInContext(source.slice(source.indexOf("async function waitForExit")).replace("export async", "async"), ctx);
+    const runtime = await ctx.startCoopRuntime({ workspace: ROOT });
+    if (closes) { await runtime.stop({ graceMs: 50 }); assert.equal(closed, true); }
+    else {
+      await assert.rejects(runtime.stop({ graceMs: 50 }), /process-tree termination failed/);
+      assert.equal(closed, false); child.emit("close", 0);
+    }
+  }
 });
 
 await test("runtime input is an empty closed pipe and its child exits cleanly", async () => {
@@ -313,7 +348,9 @@ await test("failed runtime startup confirms exit even when the process ignores t
     try {
       await assert.rejects(startCoopRuntime({ workspace: ROOT, coopCommand: process.execPath,
         commandPrefix: ["-e", `process.on("SIGTERM", () => {}); setInterval(() => {}, 1000); ${mode === "malformed" ? 'console.log("not-json");' : ''}`],
-        readyTimeoutMs: 1000,
+        // Malformed-output coverage must let Windows finish spawning Node;
+        // only the silent-child case deliberately exercises the short timeout.
+        readyTimeoutMs: mode === "malformed" ? 10000 : 1000,
         spawnImpl(...args) { child = spawn(...args); child.once("close", () => { closed = true; }); return child; },
       }), mode === "timeout" ? /did not become ready/ : /JSON/);
       assert.equal(closed, true, "startup failure must not leave a live runtime behind");
@@ -421,6 +458,33 @@ await test("owner-controlled shutdown releases workspace ownership before immedi
   }
 });
 
+await test("shutdown and failed startup reap a real runtime descendant", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-runtime-tree-"));
+  const fixture = join(ROOT, "tests", "fixtures", "stub-coop-runtime.mjs");
+  const pidFile = join(root, "pids.json");
+  const env = { ...process.env, COOP_TEST_DESCENDANT_FILE: pidFile };
+  async function assertGone() {
+    const pids = Object.values(JSON.parse(readFileSync(pidFile, "utf8")));
+    for (const pid of pids) {
+      let alive = true;
+      for (let i = 0; i < 100 && alive; i++) {
+        try { process.kill(pid, 0); await new Promise(resolve => setTimeout(resolve, 20)); }
+        catch (error) { assert.equal(error.code, "ESRCH"); alive = false; }
+      }
+      assert.equal(alive, false, `owned fixture PID ${pid} must exit`);
+    }
+  }
+  try {
+    const runtime = await startCoopRuntime({ workspace: root, coopCommand: process.execPath, commandPrefix: [fixture], env });
+    await Promise.all([runtime.stop(), runtime.stop()]);
+    await assertGone();
+    await assert.rejects(startCoopRuntime({ workspace: root, coopCommand: process.execPath, commandPrefix: [fixture],
+      env: { ...env, COOP_TEST_SUPPRESS_READY: "1" }, readyTimeoutMs: 1000 }), /ready in time/);
+    await assertGone();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+
+});
+
 await test("production renderer bridge is sandboxed and individually allowlisted", () => {
   const main = readFileSync(join(ROOT, "desktop", "src", "main.mjs"), "utf8");
   const preload = readFileSync(join(ROOT, "desktop", "src", "preload.cjs"), "utf8");
@@ -462,6 +526,64 @@ await test("shared SPA uses native features only when the Desktop bridge exists"
   assert.match(app, /!window\.coopDesktop \|\| desktopMissionControlOpened/);
   assert.match(app, /void openMissionControl\(\)/);
   assert.match(app, /Browser\/Web clients retain the existing/);
+});
+
+await test("cold agent startup retries only read-only timeouts and rejects runtime replacement", async () => {
+  const timeout = Object.assign(new Error("initializing"), { status: 504 });
+  const calls = [];
+  const ready = { success: true, data: { messageCount: 0 } };
+  assert.equal(await waitForRuntimeState(async command => {
+    calls.push(command);
+    if (calls.length === 1) throw timeout;
+    return ready;
+  }, "startup"), ready);
+  assert.deepEqual(calls, [{ type: "get_state", sid: "startup" }, { type: "get_state", sid: "startup" }]);
+  let denied = 0;
+  await assert.rejects(waitForRuntimeState(async () => { denied++; throw Object.assign(new Error("denied"), { status: 401 }); }, "startup"), /denied/);
+  assert.equal(denied, 1);
+  let tries = 0;
+  await assert.rejects(waitForRuntimeState(async () => { tries++; throw timeout; }, "startup"), /initializing/);
+  assert.equal(tries, 3);
+  let current = true;
+  await assert.rejects(waitForRuntimeState(async () => { current = false; return ready; }, "startup", { isCurrent: () => current }), /interrupted/);
+});
+
+await test("renderer recovers model state after startup timeout without overwriting a switched chat", async () => {
+  const source = readFileSync(join(ROOT, "web/public/app.js"), "utf8");
+  const start = source.indexOf("let stateRefreshSeq = 0;");
+  const timers = [];
+  const chips = [];
+  let fail = true;
+  const ctx = vm.createContext({
+    activeSid: "initial", agentReadySid: null, statusPhase: "", statusText: {}, window: {},
+    dot: { classList: { contains: () => false } }, idleStatus: () => "ready",
+    setTimeout: fn => { timers.push(fn); return timers.length; }, clearTimeout: () => {},
+    rpc: async command => {
+      if (fail) throw Object.assign(new Error("initializing"), { status: 504 });
+      return { success: true, data: command.type === "get_state" ? { model: { id: "fixture-model" }, thinkingLevel: "low" } : { levels: ["low"] } };
+    },
+    setModelChip: model => chips.push(model.id), setThinkChip: () => {},
+    steeringMode: "one-at-a-time", followUpMode: "one-at-a-time", autoCompactionEnabled: null,
+    availableThinkLevels: [], queueFor: () => ({}), renderQueue: () => {}, refreshCtx: () => {},
+  });
+  vm.runInContext(source.slice(start, source.indexOf("// --- context gauge", start)), ctx);
+  await ctx.refreshState();
+  assert.match(ctx.statusText.textContent, /retrying/);
+  assert.equal(ctx.agentReadySid, null);
+  assert.equal(timers.length, 1);
+  fail = false;
+  timers.shift()();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(chips, ["fixture-model"]);
+  assert.equal(ctx.agentReadySid, "initial");
+  assert.equal(ctx.statusText.textContent, "ready");
+  fail = true;
+  await ctx.refreshState();
+  ctx.activeSid = "replacement";
+  fail = false;
+  timers.shift()();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(chips, ["fixture-model"]);
 });
 
 console.log(`desktop preview shell: ${count} tests passed`);

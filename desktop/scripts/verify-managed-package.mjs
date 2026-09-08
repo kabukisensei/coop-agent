@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, resolve, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspectManagedRuntime } from "../src/managed-runtime.mjs";
 
+import { ensureMcpIsolationCompatibility } from "../../lib/mcp-isolation-compat.mjs";
 import { ensureUsageCompatibility } from "../../lib/openai-usage-compat.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -86,7 +87,7 @@ async function verifyManagedContents(paths, { platform, arch }) {
   const managed = inspectManagedRuntime(managedRoot, { platform, arch });
   const usageCorrection = ensureUsageCompatibility(join(managedRoot, "npm/node_modules/pi-better-openai"), { check: true });
   const corrections = JSON.parse(readFileSync(join(managedRoot, "coop-compatibility.json"), "utf8"));
-  if (JSON.stringify(corrections) !== JSON.stringify([usageCorrection])) fail("Packaged compatibility receipt does not match the installed correction.");
+  if (JSON.stringify(corrections) !== JSON.stringify([usageCorrection, ensureMcpIsolationCompatibility(join(managedRoot, "npm/node_modules/pi-mcp-adapter"), { check: true })])) fail("Packaged compatibility receipt does not match the installed correction.");
   return Object.freeze({
     compatibilityPatches: corrections,
     ok: true,

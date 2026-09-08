@@ -69,6 +69,24 @@ const t = async (name, fn) => {
   console.log(`  ✓ ${name}`);
 };
 
+await t("context-mode reference guidance leaves the real user request last", () => {
+  const oldUser = { role: "user", content: "Earlier request", timestamp: 1 };
+  const reply = { role: "assistant", content: [], timestamp: 2 };
+  const request = { role: "user", content: [{ type: "text", text: "Read the acceptance file" }], timestamp: 3 };
+  const hint = { role: "user", content: "context-mode active. Hierarchy: ctx_batch_execute > ctx_execute > ctx_execute_file > ctx_search. Read/edit files → ctx_execute_file." };
+  const original = [oldUser, reply, request, hint];
+  const result = handlers.context({ messages: original });
+  assert.deepEqual(result.messages, [oldUser, reply, hint, request]);
+  assert.deepEqual(original, [oldUser, reply, request, hint], "do not mutate the shared message list");
+  assert.equal(handlers.context({ messages: result.messages }), undefined, "idempotent across provider calls");
+  assert.equal(handlers.context({ messages: [request, { ...hint, timestamp: 4 }] }), undefined, "never move a genuine user message");
+  assert.equal(handlers.context({ messages: [request, { role: "user", content: "unrelated extension hint" }] }), undefined);
+  const toolCall = { role: "assistant", content: [{ type: "toolCall", id: "t1" }] };
+  const toolResult = { role: "toolResult", toolCallId: "t1", content: [] };
+  assert.deepEqual(handlers.context({ messages: [request, toolCall, toolResult, hint] }).messages,
+    [hint, request, toolCall, toolResult], "preserve tool-call/result ordering");
+});
+
 await t("read-only workspace attachment blocks every built-in mutation surface", async () => {
   process.env.COOP_WORKSPACE_ACCESS_MODE = "read-only";
   process.env.COOP_NO_GUARDRAILS = "1";

@@ -443,13 +443,13 @@ function Get-CoopExtInstalledVersion([string]$AgentDir, [string]$Name) {
   return ''
 }
 
-# Managed Desktop must retain its bundled PATH without global fallback bins.
-if ($env:COOP_DESKTOP_MANAGED_RUNTIME -ne '1') {
-# Ensure user tool bins (pipx, Azure CLI) are on PATH in-process
+# Add fallback tool bins without overriding an explicit or managed PATH.
+
 $script:PathSep = [System.IO.Path]::PathSeparator
+if ($env:COOP_DESKTOP_MANAGED_RUNTIME -ne '1') {
 $pipxBin = Join-Path $HOME '.local\bin'
 if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split $script:PathSep) -notcontains $pipxBin)) {
-  $env:PATH = "$pipxBin$script:PathSep$env:PATH"
+  $env:PATH = "$env:PATH$script:PathSep$pipxBin"
 }
 foreach ($d in (@(
   $(if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'Microsoft SDKs\Azure\CLI2\wbin' }),
@@ -457,7 +457,7 @@ foreach ($d in (@(
   $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\Microsoft\Azure CLI\wbin' })
 ) | Where-Object { $_ })) {
   if ((Test-Path -LiteralPath $d) -and (($env:PATH -split $script:PathSep) -notcontains $d)) {
-    $env:PATH = "$d$script:PathSep$env:PATH"
+    $env:PATH = "$env:PATH$script:PathSep$d"
   }
 }
 
@@ -1042,4 +1042,9 @@ function Invoke-CoopScript {
   $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
   & $psExe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @ScriptArgs
   return $LASTEXITCODE
+}
+
+# Match the running agent entry script, not npm install/view package arguments.
+function Test-CoopPiCommandLine([string]$CommandLine) {
+  return [bool]($CommandLine -and $CommandLine -match '(?:^|\s)(?:"[^"]*[\\/]pi-coding-agent[\\/]dist[\\/](bundle[\\/])?cli\.js"|[^\s"]*[\\/]pi-coding-agent[\\/]dist[\\/](bundle[\\/])?cli\.js)(?:\s|$)')
 }

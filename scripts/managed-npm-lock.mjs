@@ -8,27 +8,39 @@ const TARGETS = new Set(["darwin-arm64", "darwin-x64", "win32-x64"]);
 const ordered = value => JSON.stringify(Object.entries(value || {}).sort(([a], [b]) => a.localeCompare(b)));
 const fail = message => { throw new Error(`Managed npm resolution: ${message}`); };
 
-function nativeDependencyPaths(lock, target) {
-  const [platform, arch] = target.split("-");
-  const names = platform === "win32" ? "(?:win32|windows)" : "(?:darwin|macos)";
-  const pattern = new RegExp(`-${names}-${arch}(?:-|$)`);
+function resolveDependency(packages, owner, name) {
+  for (let scope = owner;;) {
+    const key = scope ? `${scope}/node_modules/${name}` : `node_modules/${name}`;
+    if (packages[key]) return key;
+    if (!scope) return null;
+    const split = scope.lastIndexOf("/node_modules/");
+    scope = split < 0 ? "" : scope.slice(0, split);
+  }
+}
+function supports(values, value) {
+  return !values || (!values.includes(`!${value}`) && (values.every(item => item.startsWith("!")) || values.includes(value)));
+}
+function nativeDependencies(packages, target) {
+  const [os, cpu] = target.split("-");
+  const platform = os === "win32" ? "(?:win32|windows)" : "(?:darwin|macos)";
+  const nativeName = new RegExp(`-${platform}-(?:${cpu}${os === "darwin" ? "|universal" : ""})(?:-|$)`);
   const required = new Set();
-  for (const [parent, entry] of Object.entries(lock.packages)) {
+  for (const [owner, entry] of Object.entries(packages)) {
+    if (!supports(entry.os, os) || !supports(entry.cpu, cpu)) continue;
     for (const [name, version] of Object.entries(entry.optionalDependencies || {})) {
-      if (!pattern.test(name)) continue;
-      let base = parent, found;
-      for (;;) {
-        const candidate = `${base ? `${base}/` : ""}node_modules/${name}`;
-        if (lock.packages[candidate]) { found = candidate; break; }
-        const boundary = base.lastIndexOf("node_modules/");
-        if (boundary < 0) break;
-        base = base.slice(0, boundary).replace(/\/$/, "");
+      if (!nativeName.test(name)) continue;
+      const path = resolveDependency(packages, owner, name);
+      if (!path) fail(`native dependency ${name} is missing for ${target}.`);
+      const dependency = packages[path];
+      if (!supports(dependency.os, os) || !supports(dependency.cpu, cpu) ||
+          (/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version) && dependency.version !== version)) {
+        fail(`native dependency ${name} does not match ${target} or its parent pin.`);
       }
-      if (!found || lock.packages[found].version !== version) fail(`target-native dependency is missing or mismatched: ${name}.`);
-      required.add(found);
+      required.add(path);
     }
   }
-  return [...required].sort();
+  return required;
+
 }
 
 export function loadManagedNpmLock(plan, path) {
@@ -52,7 +64,9 @@ export function loadManagedNpmLock(plan, path) {
   for (const [name, version] of Object.entries(dependencies)) {
     if (lock.packages[`node_modules/${name}`]?.version !== version) fail(`top-level pin differs for ${name}.`);
   }
-  return { lock, bytes, packageJson, nativeDependencies: nativeDependencyPaths(lock, plan.target), sha256: createHash("sha256").update(bytes).digest("hex") };
+  nativeDependencies(lock.packages, plan.target);
+  return { lock, bytes, packageJson, target: plan.target, sha256: createHash("sha256").update(bytes).digest("hex") };
+
 }
 
 export function writeManagedNpmInputs(prefix, resolution) {
@@ -74,8 +88,12 @@ export function verifyManagedNpmResolution(prefix, resolution) {
   for (const [name, entry] of Object.entries(resolution.lock.packages)) {
     if (name && !entry.optional && !installed.packages[name]) fail(`required dependency is missing at ${name}.`);
   }
-  for (const name of resolution.nativeDependencies) {
-    if (!installed.packages[name]) fail(`target-native dependency was not installed: ${name}.`);
+  // npm labels native payloads optional to support other operating systems.
+  // A payload for this target is required: wrappers can install successfully
+  // while clipboard, image processing, or MCP subsequently fails at runtime.
+  for (const name of nativeDependencies(resolution.lock.packages, resolution.target)) {
+    if (!installed.packages[name]) fail(`required native dependency is missing at ${name}.`);
+
   }
   if (!readFileSync(join(prefix, "package-lock.json")).equals(resolution.bytes)) fail("resolution lock changed during installation.");
   return { packages: Object.keys(installed.packages).length, sha256: resolution.sha256 };

@@ -1,10 +1,12 @@
 import { createHealthProfile, waitForProbeGroupExit } from "../desktop/src/update-health-profile.mjs";
+import { createReparseLink as symlinkSync } from "./fixtures/reparse-link.mjs";
 import { canStartMacApplication } from "../desktop/src/update-startup.mjs";
 import { pruneCompletedRecoveryJobs, recoveryJobIsIdle } from "../desktop/src/update-recovery-retention.mjs";
 import { createMacRecoveryJob, recoveryJobPlist } from "../desktop/src/update-recovery-job.mjs";
 import { recoveryPaths, runRecoveryWorker, readRecoveryRecord } from "../desktop/src/update-recovery-worker.mjs";
 import { swapMacDirectories } from "../desktop/src/update-swap.mjs";
 import { nativeApplicationHealth } from "../desktop/src/update-native-health.mjs";
+import { waitForRuntimeState } from "../desktop/src/runtime-readiness.mjs";
 import { presentUpdateOutcome } from "../desktop/src/update-outcome.mjs";
 import { launchUpdateHelper } from "../desktop/src/update-handoff.mjs";
 import { runtimeHealth, runUpdateHelper, validateHelperRequest, waitForStoppedProcesses } from "../desktop/src/update-helper.mjs";
@@ -17,7 +19,7 @@ import { PassThrough } from "node:stream";
 import { createUpdateController, loadPackagedUpdateFeed, validateUpdateFeed } from "../desktop/src/update-controller.mjs";
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { constants, cpSync, existsSync, realpathSync, renameSync, statSync, rmSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { constants, cpSync, existsSync, realpathSync, renameSync, statSync, rmSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { lstat, open, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -981,7 +983,14 @@ await test("native health bounds a missing close event and retains the uncertain
   try {
     await assert.rejects(nativeApplicationHealth(root, { versionRoot: root, workspace: root }, { desktopVersion: "1.2.3" }, undefined, {
       timeoutMs: 10, terminationTimeoutMs: 30,
-      spawnImpl: (_command, args) => { profile = args[0].slice("--user-data-dir=".length); return child; },
+      inspectRuntime: () => ({ python: process.execPath }),
+      spawnImpl: (_command, args, options) => {
+        profile = args.find(arg => arg.startsWith("--user-data-dir=")).slice("--user-data-dir=".length);
+        assert.equal(options.env.HOME, profile);
+        assert.equal(options.env.USERPROFILE, profile);
+        assert.equal(options.env.OPENAI_API_KEY, undefined);
+        return child;
+      },
     }), { code: "UPDATE_HEALTH_PROCESS_EXIT_UNCONFIRMED" });
     assert.ok(child.stdout.destroyed);
     assert.ok(unreferenced);
@@ -1008,11 +1017,16 @@ await test("native main health acknowledgement follows renderer readiness and ru
   const begin = source.indexOf("  if (updateProbeToken) {", source.indexOf("async function createWindow()"));
   const end = source.indexOf("  if (managedResourcePresent", begin);
   const calls = [];
-  const ctx = vm.createContext({ updateProbeToken: "fixture", navigationReady: true, quitting: false, activeChatSid: "chat",
+  let flush;
+  const ctx = vm.createContext({ updateProbeToken: "fixture", navigationReady: true, quitting: false, activeChatSid: "chat", waitForRuntimeState,
     runtimeRpc: async () => calls.push("rpc"), runtime: { stop: async () => calls.push("stop") },
-    process: { stdout: { write: value => { assert.equal(JSON.parse(value).token, "fixture"); calls.push("ack"); } } },
+    process: { stdout: { write: (value, callback) => { assert.equal(JSON.parse(value).token, "fixture"); calls.push("ack"); flush = callback; } } },
     app: { quit: () => calls.push("quit"), getVersion: () => "1.2.3" }, Date, setTimeout });
-  await vm.runInContext(`(async () => {${source.slice(begin, end)}})()`, ctx);
+  const healthy = vm.runInContext(`(async () => {${source.slice(begin, end)}})()`, ctx);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ["rpc", "stop", "ack"], "native exit must wait for the pipe flush");
+  flush();
+  await healthy;
   assert.deepEqual(calls, ["rpc", "stop", "ack", "quit"]);
   calls.length = 0; ctx.runtime.stop = async () => { throw new Error("stop failed"); };
   await assert.rejects(vm.runInContext(`(async () => {${source.slice(begin, end)}})()`, ctx), /stop failed/);

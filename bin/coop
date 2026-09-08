@@ -199,7 +199,6 @@ coop_build_pi_args() {
   # and the local user profile hidden instruction.
   [ -e "$COOP_ROOT/extensions/coop-powerline" ]  && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-powerline")
   [ -e "$COOP_ROOT/extensions/coop-tools" ]      && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-tools")
-  [ -e "$COOP_ROOT/extensions/coop-guardrails" ] && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-guardrails")
   [ -e "$COOP_ROOT/extensions/coop-profile" ]    && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-profile")
   # Managed Desktop keeps its agent/session state in a versioned user-data
   # directory, while loading the immutable pinned extension packages directly
@@ -221,6 +220,8 @@ coop_build_pi_args() {
 $(coop_manifest_keys extensions)
 EOF
   fi
+  # Run governance/context compatibility hooks after the pinned package hooks.
+  [ -e "$COOP_ROOT/extensions/coop-guardrails" ] && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-guardrails")
   # Coop owns fleet updates. Hide Pi's upstream self-update banner so users do not
   # drift Pi away from the release-manifest pins; coop_update_nudge still reports
   # when THIS checkout is behind and directs the user to `coop update`.
@@ -1028,9 +1029,10 @@ EOF
 
 # Surface freshly-installed tools (npm-global `pi`, pipx `fab`/coop-*) on PATH for
 # this process so a shell whose persistent PATH predates the install still finds
-# them. Best-effort; only prepends dirs that exist.
+# them. Preserve explicit PATH precedence; the managed runtime supplies its own tools.
 _coop_add_runtime_paths() {
   # Managed Desktop already supplied the exact bundled tools on PATH.
+
   [ "${COOP_DESKTOP_MANAGED_RUNTIME:-0}" = "1" ] && return 0
   local d p
   if have npm; then
@@ -1038,12 +1040,12 @@ _coop_add_runtime_paths() {
     # not abort coop under `set -euo pipefail` — that would brick even `coop help`.
     p="$(npm prefix -g 2>/dev/null || true)"
     if [ -n "$p" ] && [ -d "$p/bin" ]; then
-      case ":$PATH:" in *":$p/bin:"*) ;; *) PATH="$p/bin:$PATH" ;; esac
+      case ":$PATH:" in *":$p/bin:"*) ;; *) PATH="$PATH:$p/bin" ;; esac
     fi
   fi
   d="$HOME/.local/bin"
   if [ -d "$d" ]; then
-    case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
+    case ":$PATH:" in *":$d:"*) ;; *) PATH="$PATH:$d" ;; esac
   fi
   export PATH
   hash -r 2>/dev/null || true

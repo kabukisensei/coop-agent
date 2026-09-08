@@ -925,6 +925,7 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDo
   try { invocation = resolveDataDocInvocation(); }
   catch (e: any) { notify(ctx, errMsg(e), "error"); return false; }
   const child = spawn(invocation.command, [...invocation.args, "setup", "--transport", "jsonl"], { cwd: ctx.cwd, stdio: ["pipe", "pipe", "pipe"], shell: false, windowsHide: true });
+
   let stderrTail = "", terminal: "complete" | "cancelled" | "error" | null = null, protocolError = "";
   let helloSeen = false;
   child.stderr?.on("data", (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });

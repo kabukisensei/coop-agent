@@ -24,7 +24,9 @@ export async function waitForProbeGroupExit(pid, { timeoutMs = 1000 } = {}) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    try { process.kill(-pid, 0); }
+    // Windows probes are job supervisors. Their clean exit confirms that the
+    // job's active process count reached zero before its handle was closed.
+    try { process.kill(process.platform === "win32" ? pid : -pid, 0); }
     catch (error) {
       if (error.code === "ESRCH") return true;
       // An exiting macOS Electron group can briefly reject signal 0. EPERM

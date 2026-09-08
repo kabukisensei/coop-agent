@@ -187,6 +187,7 @@ checks two consecutive writable starts with the same workspace/profile and emits
 success only after both runtimes have stopped. Native CI must verify this behavior
 on each target; it does not establish reboot/login or installer acceptance.
 
+
 A packaged app uses `resources/managed-runtime` when present. It validates the
 bundle contract, target, jailed paths, and Coop/Pi/Node/Python version agreement
 before launch. A present but invalid bundle fails closed; it never falls back to
@@ -472,3 +473,32 @@ Managed Desktop launchers preserve the bundle's tool PATH and skip global npm,
 pipx, Homebrew and Azure CLI fallback discovery. This keeps external installations
 from replacing the bundled tools during startup. Ordinary terminal launch retains
 its existing fallback discovery.
+
+## Isolated Windows development acceptance
+
+Use `npm run package:validation:win --prefix desktop` or
+`npm run package:validation:installer:win --prefix desktop` with
+`COOP_DESKTOP_MANAGED_RUNTIME_DIR` set to a fresh staged Windows bundle.
+These select `electron-builder-windows-validation.cjs`, application ID
+`com.cooptimize.coop.desktop.windowsvalidation`, and product name
+`Coop Desktop Windows Validation`. They do not create automatic desktop/start-menu
+shortcuts. The packaged development marker selects a separate default user-data
+directory; an explicit `--user-data-dir` can choose a disposable profile on D:.
+Keep the existing Coop installation and real workspaces outside the test paths.
+
+Build companion wheels using the committed development pins above. The Windows
+branch pins include the verified Data Doc UTF-8/path fixes and DAX native sharing
+lock regression. Package version pins remain unchanged; inspect the verifier's
+`developmentSources` and full dependency inventory to establish actual inclusion.
+
+Managed `coop doctor` shares the shell's bundle inspection module, copied into
+the staged runtime by `stage-managed-runtime.mjs`, and probes its Node, Python and
+Python tool imports. Both terminal launchers and Desktop call this managed path.
+It does not inspect or repair unrelated global pipx/npm installations. Model
+authentication, workspace setup and connected integrations retain their separate
+shared health contracts. Managed Doctor is read-only; dependency repair belongs
+to Desktop install/update, and `--fix`/`--publish` are refused in the managed path.
+See `docs/agent/windows-validation-2026-09-07.md` for observed native results and
+open acceptance requirements; a source or package-verifier pass is not installed
+GUI acceptance.
+

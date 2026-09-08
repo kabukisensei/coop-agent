@@ -46,6 +46,9 @@ COOP_TEST_DATADOC_REQUIRED="${COOP_TEST_DATADOC_REQUIRED:-0}" COOP_TEST_DIST="$T
 echo "→ workflow slice tests"
 node "$ROOT/tests/workflow.test.mjs"
 
+echo "→ Pi process detection parity tests"
+node "$ROOT/tests/pi-process-guard.test.mjs"
+
 echo "→ Desktop capability and parity contract tests"
 node "$ROOT/tests/desktop-contracts.test.mjs"
 echo "→ Desktop shell selection contract tests"
@@ -56,6 +59,13 @@ echo "→ managed Desktop runtime bundle tests"
 node "$ROOT/tests/managed-runtime-build-plan.test.mjs"
 node "$ROOT/tests/prepare-managed-runtime.test.mjs"
 node "$ROOT/tests/managed-runtime.test.mjs"
+node "$ROOT/tests/managed-tool-invocation.test.mjs"
+node "$ROOT/tests/managed-mcp.test.mjs"
+node "$ROOT/tests/windows-health-job.test.mjs"
+node "$ROOT/tests/windows-update-replacement.test.mjs"
+node "$ROOT/tests/windows-update-archive.test.mjs"
+node "$ROOT/tests/windows-update-application.test.mjs"
+node "$ROOT/tests/windows-update-prepare.test.mjs"
 node "$ROOT/tests/managed-package-security.test.mjs"
 
 echo "→ signed Desktop update and rollback contract tests"

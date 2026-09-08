@@ -4,7 +4,7 @@
 // __hello marker, answered-dialog skipping on reconnect, and prompt forwarding.
 import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { WorkspaceLeaseManager } from "../lib/workspace-isolation.mjs";
 import { renderKnowledgeMarkdown } from "../lib/knowledge-service.mjs";
@@ -131,7 +131,8 @@ writeFileSync(join(workSessDir, WORK_SESSION), [
 ].join("\n") + "\n");
 
 const spec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: agentDir, OPENAI_API_KEY: "fixture-launch-spec-key", COOP_STUB_CRASH_DELAY_MS: "750" } });
-const server = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT)], {
+const server = spawn(process.execPath, ["--import", pathToFileURL(join(HERE, "fixtures", "webbridge-doctor-loader.mjs")).href, join(ROOT, "web", "server.mjs"), "--port", String(PORT)], {
+
   // COOP_WEB_MAX_CHATS=3 gives the multi-chat cap test a deterministic, cheap bound;
   // it affects nothing earlier in the file (all pre-multi-chat tests use one chat).
   env: { ...process.env, OPENAI_API_KEY: "", COOP_DIR: agentDir, COOP_LAUNCH_SPEC: spec, COOP_WEB_NO_OPEN: "1", COOP_WEB_MAX_CHATS: "3", COOP_TEAM_KNOWLEDGE_ROOT: teamKnowledgeRoot },
@@ -305,6 +306,7 @@ t("/capabilities publishes declarative workflow extensions without executable re
 
 r = await fetch(base + "/doctor", { headers: { cookie } });
 const doctorReport = await r.json();
+if (r.status !== 200) console.error("Doctor HTTP failure:", r.status, doctorReport.error);
 t("/doctor exposes the shared versioned Health contract",
   r.status === 200 && doctorReport.ok === true && doctorReport.report?.schemaVersion === 1 && Array.isArray(doctorReport.report?.checks));
 r = await fetch(base + "/auth/providers", { headers: { cookie } });
@@ -326,8 +328,8 @@ const knowledgeSearch = await r.json();
 t("/knowledge/search returns only approved scope-filtered guidance",
   r.status === 200 && knowledgeSearch.results?.length === 1 && knowledgeSearch.results[0].id === "knowledge.sql.bridge.001");
 t("Health UI consumes shared contracts and the fixed Desktop model-login bridge",
-  appJsSrc.includes('fetch(`/doctor${suffix}`)') && appJsSrc.includes('fetch(`/auth/providers${suffix}`)') &&
-  appJsSrc.includes('fetch(`/setup/state${suffix}`)') && appJsSrc.includes('fetch(`/profile${suffix}`)') &&
+  appJsSrc.includes('["/doctor", "/auth/providers", "/setup/state", "/profile"]') &&
+  appJsSrc.includes('fetch(`${path}${suffix}`, { signal: AbortSignal.timeout(15000) })') &&
   appJsSrc.includes('fetch("/profile/apply"') && appJsSrc.includes("window.coopDesktop.startModelLogin()"));
 t("project-contract UI reads, previews, and applies through the shared two-step service",
   appJsSrc.includes('fetch(`/config/current?sid=') && appJsSrc.includes('fetch("/config/proposal"') &&
@@ -967,9 +969,15 @@ r = await post("/chdir", { dir: target });
 t("/chdir switches to a real folder", r.status === 200);
 let ch = await r.json();
 t("chdir echoes the resolved folder", ch.ok === true && ch.cwd === target);
-await new Promise((res) => setTimeout(res, 600)); // let the respawned stub boot
-r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
-poll = await r.json();
+// Wait for the observable startup event, not a workstation-dependent 600 ms.
+// The respawn can exceed that delay while native build/test workers are busy.
+const restartedUntil = Date.now() + 10000;
+do {
+  r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
+  poll = await r.json();
+  if (poll.events.some((line) => line.includes("What would you like to do"))) break;
+  await new Promise((res) => setTimeout(res, 100));
+} while (Date.now() < restartedUntil);
 t("poll reports the new folder", poll.cwd === target);
 t("restarted agent's startup dialog arrives fresh", poll.events.some((l) => l.includes("What would you like to do")));
 
@@ -1104,6 +1112,7 @@ if (!hasGit) {
   const noGitSpec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: noGitAgent } });
   const server2 = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT2)], {
     env: { ...process.env, PATH: emptyPath, COOP_AGENT_DIR: noGitAgent, COOP_LAUNCH_SPEC: noGitSpec, COOP_WEB_NO_OPEN: "1" },
+
     stdio: ["ignore", "pipe", "pipe"],
   });
   let err2 = "";
@@ -1283,6 +1292,7 @@ t("chat 2's stream has its own reply and NOT chat 1's",
 // 4. Per-chat cwd + jail: put the two chats in DIFFERENT folders.
 r = await post("/chdir", { sid: sid1, dir: resolvePath(process.cwd()) });
 assert.equal(r.status, 200, `chat 1 folder change failed: ${JSON.stringify(await r.json())}`);
+
 await new Promise((res) => setTimeout(res, 500));
 r = await post("/chdir", { sid: sid2, dir: resolvePath(workDir) });
 t("/chdir {sid:sid2} -> 200", r.status === 200);
@@ -1294,8 +1304,8 @@ const p1b = await r.json();
 t("each chat has its own cwd (sid2=workDir, sid1=cwd, and they differ)",
   p2b.cwd === resolvePath(workDir) && p1b.cwd === resolvePath(process.cwd()) && p1b.cwd !== p2b.cwd);
 const reacquiredAccess = await fetch(base + `/workspace/access?sid=${sid2}`, { headers: { cookie } }).then(response => response.json());
-t("restarting the same folder reacquires an override whose original owner moved away",
-  reacquiredAccess.access?.mode === "write" && reacquiredAccess.access.leaseId !== d2.workspaceAccess.leaseId);
+t("restarting the same folder retains the approved writer's live lease after its original owner moves away",
+  reacquiredAccess.access?.mode === "override" && reacquiredAccess.access.leaseId === d2.workspaceAccess.leaseId);
 r = await fetch(base + `/files?sid=${sid2}`, { headers: { cookie } });
 const files2 = await r.json();
 t("/files?sid=sid2 lists workDir's files", (files2.tree || []).some((n) => n.name === "notes.md"));

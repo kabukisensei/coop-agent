@@ -2434,3 +2434,4 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   preview checks. Final focused build-plan/verification checks also passed after
   adding bounded synthetic-fixture failure detail. All local handles are terminal.
   Native Windows confirmation and installer acceptance remain open.
+

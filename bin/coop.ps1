@@ -65,9 +65,11 @@ if ($env:COOP_NO_ISOLATE -ne '1') {
 # Make tools in the npm global bin (`pi`) or the pipx bin (`fab`, coop-*) resolvable
 # even when the current shell's persistent PATH predates their install — otherwise
 # `coop` / `coop doctor` falsely report them "not installed" right after a fresh
-# `coop install`. Best-effort, process-local: only PREPENDS dirs that exist.
+# `coop install`. Append existing dirs, preserving explicit PATH precedence.
+# The managed runtime supplies its own tools and never discovers global installs.
 function Add-CoopRuntimePaths {
   # Managed Desktop already supplied the exact bundled tools on PATH.
+
   if ($env:COOP_DESKTOP_MANAGED_RUNTIME -eq '1') { return }
   $dirs = @()
   if (Test-Have 'npm') {
@@ -77,7 +79,7 @@ function Add-CoopRuntimePaths {
   $dirs += (Join-Path $HOME '.local\bin')                    # pipx default PIPX_BIN_DIR
   foreach ($d in $dirs) {
     if ($d -and (Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
-      $env:PATH = "$d;$env:PATH"
+      $env:PATH = "$env:PATH;$d"
     }
   }
 }
@@ -304,8 +306,6 @@ function Build-CoopPiArgs {
   if (Test-Path -LiteralPath $extPowerline) { $piArgs += @('-e', $extPowerline) }
   $extTools = Join-Path $script:CoopRoot 'extensions\coop-tools'
   if (Test-Path -LiteralPath $extTools) { $piArgs += @('-e', $extTools) }
-  $extGuardrails = Join-Path $script:CoopRoot 'extensions\coop-guardrails'
-  if (Test-Path -LiteralPath $extGuardrails) { $piArgs += @('-e', $extGuardrails) }
   $extProfile = Join-Path $script:CoopRoot 'extensions\coop-profile'
   if (Test-Path -LiteralPath $extProfile) { $piArgs += @('-e', $extProfile) }
   # Managed Desktop loads immutable, exactly pinned extension packages from its
@@ -323,6 +323,9 @@ function Build-CoopPiArgs {
       $piArgs += @('-e', $managedPath)
     }
   }
+  # Run governance/context compatibility hooks after the pinned package hooks.
+  $extGuardrails = Join-Path $script:CoopRoot 'extensions\coop-guardrails'
+  if (Test-Path -LiteralPath $extGuardrails) { $piArgs += @('-e', $extGuardrails) }
   # Coop owns fleet updates. Hide Pi's upstream self-update banner so users do not
   # drift Pi away from the release-manifest pins; Invoke-CoopUpdateNudge still
   # reports when THIS checkout is behind and directs the user to `coop update`.

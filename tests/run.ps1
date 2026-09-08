@@ -44,6 +44,11 @@ function Head { param([string]$m) Write-Host "$G_ARROW $m" }
 
 # These contracts are platform-neutral but run here as well so Windows CI cannot
 # drift away from the same capability and Desktop release baseline as Bash CI.
+Head 'Pi process detection parity tests'
+& node (Join-Path $root 'tests\pi-process-guard.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Pi process detection parity passes' }
+else { Ko 'Pi process detection parity failed' }
+
 Head 'Desktop capability and parity contract tests'
 & node (Join-Path $root 'tests\desktop-contracts.test.mjs')
 if ($LASTEXITCODE -eq 0) { Ok 'Desktop capability and parity contracts pass' }
@@ -60,6 +65,25 @@ if ($LASTEXITCODE -eq 0) { Ok 'Desktop preview lifecycle and native-boundary con
 else { Ko 'Desktop preview lifecycle and native-boundary contracts failed' }
 
 Head 'Managed Desktop runtime bundle tests'
+& node (Join-Path $root 'tests\windows-health-job.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Windows health job process cleanup passes' }
+else { Ko 'Windows health job process cleanup failed' }
+& node (Join-Path $root 'tests\managed-mcp.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Managed MCP isolation and bundled configuration pass' }
+else { Ko 'Managed MCP isolation and bundled configuration failed' }
+& node (Join-Path $root 'tests\managed-tool-invocation.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Managed tool invocation contracts pass' }
+else { Ko 'Managed tool invocation contracts failed' }
+& node (Join-Path $root 'tests\windows-update-replacement.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Windows replacement and recovery contracts pass' }
+else { Ko 'Windows replacement and recovery contracts failed' }
+& node (Join-Path $root 'tests\windows-update-archive.test.mjs')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& node (Join-Path $root 'tests\windows-update-application.test.mjs')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& node (Join-Path $root 'tests\windows-update-prepare.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Windows update archive extraction contracts pass' }
+else { Ko 'Windows update archive extraction contracts failed' }
 & node (Join-Path $root 'tests\managed-runtime-build-plan.test.mjs')
 if ($LASTEXITCODE -eq 0) { Ok 'Managed Desktop runtime build-plan contracts pass' }
 else { Ko 'Managed Desktop runtime build-plan contracts failed' }

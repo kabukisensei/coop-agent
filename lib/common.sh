@@ -387,12 +387,12 @@ coop_manifest_status() {
   echo "wrong-version"
 }
 
-# Managed Desktop must retain its bundled PATH without global fallback bins.
+# Add fallback tool bins without overriding an explicit or managed PATH.
 if [ "${COOP_DESKTOP_MANAGED_RUNTIME:-0}" != "1" ]; then
-# Ensure user tool bins (pipx, Homebrew, standard local bins) are on PATH in-process
-[ -d "$HOME/.local/bin" ] && case ":$PATH:" in *":$HOME/.local/bin:"*) : ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
-[ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
-[ -d "/usr/local/bin" ] && case ":$PATH:" in *":/usr/local/bin:"*) : ;; *) PATH="/usr/local/bin:$PATH" ;; esac
+[ -d "$HOME/.local/bin" ] && case ":$PATH:" in *":$HOME/.local/bin:"*) : ;; *) PATH="$PATH:$HOME/.local/bin" ;; esac
+[ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="$PATH:/opt/homebrew/bin" ;; esac
+[ -d "/usr/local/bin" ] && case ":$PATH:" in *":/usr/local/bin:"*) : ;; *) PATH="$PATH:/usr/local/bin" ;; esac
+
 fi
 # Offline fleet tests explicitly re-prepend their stub bin after workstation PATH normalization.
 [ -n "${COOP_TEST_STUB_PATH:-}" ] && PATH="$COOP_TEST_STUB_PATH:$PATH"
@@ -966,4 +966,10 @@ coop_confirm() {
   printf '%s%s%s [y/N] ' "$COOP_OLIVE" "$prompt" "$COOP_RST" >&2
   local ans; read -r ans
   case "$ans" in [yY]|[yY][eE][sS]) return 0 ;; *) return 1 ;; esac
+}
+
+# Twin of Test-CoopPiCommandLine; Windows update uses the process-lock guard.
+coop_is_pi_command_line() {
+  local pattern='(^|[[:space:]])("[^"]*[\\/]pi-coding-agent[\\/]dist[\\/](bundle[\\/])?cli\.js"|[^[:space:]"]*[\\/]pi-coding-agent[\\/]dist[\\/](bundle[\\/])?cli\.js)([[:space:]]|$)'
+  [[ "$1" =~ $pattern ]]
 }

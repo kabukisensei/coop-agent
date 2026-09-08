@@ -102,9 +102,12 @@ export async function startCoopRuntime({
         if (process.platform === "win32") {
           // The launcher is PowerShell. Killing it first loses the parent needed
           // to reap its runtime/Pi descendants, which also keep our pipes open.
+          let terminationError;
           try { await terminateWindowsRuntimeTree(child.pid); }
-          catch (error) { if (!exited) throw error; }
-          if (!await waitForExit(closed, Math.max(graceMs, 1000))) throw new Error("Coop Runtime shutdown could not be confirmed.");
+          catch (error) { terminationError = error; }
+          // taskkill can finish before the wrapper closes its inherited pipes.
+          // Require confirmed close even when taskkill reports no matching PID.
+          if (!await waitForExit(closed, Math.max(graceMs, 1000))) throw terminationError || new Error("Coop Runtime shutdown could not be confirmed.");
           return;
         }
         child.kill("SIGTERM");

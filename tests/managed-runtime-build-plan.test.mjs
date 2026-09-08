@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { managedRuntimeBuildPlan } from "../scripts/managed-runtime-build-plan.mjs";
 import { validateReviewWork, validateLineageWork, verifyManagedExtensionWork } from "../scripts/verify-managed-tool-work.mjs";
 
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const release = JSON.parse(readFileSync(resolve(ROOT, "config", "release-manifest.json"), "utf8"));
 const build = JSON.parse(readFileSync(resolve(ROOT, "config", "managed-runtime-build.json"), "utf8"));
@@ -104,5 +105,6 @@ test("installed-tool evidence rejects no-op reviews, wrong versions, diagnostics
     console.log("  ✓ failed extension loading restores caller environment and cleans disposable state");
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
+
 
 console.log(`managed runtime build plan: ${count} tests passed`);

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+
 const FIXTURES = fileURLToPath(new URL("../tests/fixtures/findings/", import.meta.url));
 
 export function validateReviewWork(report, tool, version, rule) {
@@ -105,3 +106,4 @@ export async function verifyManagedExtensionWork(bundle, { tempRoot = tmpdir() }
     rmSync(root, { recursive: true, force: true });
   }
 }
+
