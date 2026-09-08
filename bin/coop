@@ -150,8 +150,8 @@ EOF
 coop_load_team_knowledge() {
   local own_names="$1"
   coop_knowledge_enabled || return 0
-  local url path d name fm
-  while IFS="$(printf '\t')" read -r url path; do
+  local _url path d name fm
+  while IFS="$(printf '\t')" read -r _url path; do
     [ -n "$path" ] || continue
     [ -d "$path/skills" ] || continue
     for d in "$path"/skills/*/; do

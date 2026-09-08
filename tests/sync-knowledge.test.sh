@@ -65,14 +65,14 @@ grep -q "local edit" "$CLONE/note.md" && ok "dirty checkout left untouched" || k
 
 # --- disabled flag is a no-op --------------------------------------------------
 CFG2="$TMP/cfg2"
-write_config() { mkdir -p "$1/.coop"; printf '%s\n' "$2" > "$1/.coop/config"; }
-write_config "$CFG2" '{"schema_version":1,"knowledge":{"enabled":false,"repos":[{"url":"'"$REMOTE"'","local_path":"'"$TMP/kb2/x"'"}]}}'
+write_raw_config() { mkdir -p "$1/.coop"; printf '%s\n' "$2" > "$1/.coop/config"; }
+write_raw_config "$CFG2" '{"schema_version":1,"knowledge":{"enabled":false,"repos":[{"url":"'"$REMOTE"'","local_path":"'"$TMP/kb2/x"'"}]}}'
 out="$(run_sync "$CFG2")"; rc=$?
 [ "$rc" -eq 0 ] && [ ! -e "$TMP/kb2/x" ] && ok "disabled flag is a no-op (nothing cloned)" || ko "disabled: rc=$rc out=$out"
 
 # --- bogus URL warns and exits 0 ------------------------------------------------
 CFG3="$TMP/cfg3"
-write_config "$CFG3" '{"schema_version":1,"knowledge":{"enabled":true,"repos":[{"url":"file:///nonexistent/nowhere.git","local_path":"'"$TMP/kb3/x"'"}]}}'
+write_raw_config "$CFG3" '{"schema_version":1,"knowledge":{"enabled":true,"repos":[{"url":"file:///nonexistent/nowhere.git","local_path":"'"$TMP/kb3/x"'"}]}}'
 out="$(run_sync "$CFG3")"; rc=$?
 [ "$rc" -eq 0 ] || ko "bogus URL exited $rc"
 case "$out" in
@@ -83,7 +83,7 @@ esac
 
 # --- missing knowledge key is a clean no-op -------------------------------------
 CFG4="$TMP/cfg4"
-write_config "$CFG4" '{"schema_version":1,"integrations":{}}'
+write_raw_config "$CFG4" '{"schema_version":1,"integrations":{}}'
 out="$(run_sync "$CFG4")"; rc=$?
 [ "$rc" -eq 0 ] && ok "absent knowledge key exits 0" || ko "absent key exit $rc"
 

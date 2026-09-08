@@ -924,11 +924,18 @@ try:
     repos = (c.get("knowledge") or {}).get("repos") or []
     if not isinstance(repos, list):
         repos = []
+    home = (os.environ.get("HOME") or os.environ.get("USERPROFILE") or os.path.expanduser("~")).rstrip("/\\")
     for r in repos:
         if not isinstance(r, dict):
             continue
         url = str(r.get("url", "")).strip()
-        path = os.path.expanduser(str(r.get("local_path", "")).strip())
+        raw = str(r.get("local_path", "")).strip()
+        if raw == "~":
+            path = home
+        elif raw.startswith("~/") or raw.startswith("~\\"):
+            path = home + "/" + raw[2:].replace("\\", "/")
+        else:
+            path = os.path.expanduser(raw)
         if url and path:
             print(url + "\t" + path)
 except Exception:
