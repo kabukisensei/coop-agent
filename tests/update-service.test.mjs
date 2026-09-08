@@ -12,6 +12,8 @@ import { replaceMacApplication, recoverMacReplacement, inspectMacReplacement } f
 import { spawn, spawnSync } from "node:child_process";
 import { prepareMacUpdate, runUpdateCommand } from "../desktop/src/update-installer.mjs";
 import vm from "node:vm";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { createUpdateController, loadPackagedUpdateFeed, validateUpdateFeed } from "../desktop/src/update-controller.mjs";
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
@@ -661,6 +663,12 @@ await test("helper handoff preserves signed trust policy and waits for authoriza
   await assert.rejects(runUpdateHelper({ ...args, request: unavailableResult,
     replace: async () => { throw new Error("Recovery requires inspection."); } }), /inspection/);
   assert.ok(!calls.includes("/usr/bin/open"));
+  calls.length = 0; lifecycle.length = 0;
+  const uncertainExit = Object.assign(new Error("probe exit unconfirmed"), { code: "UPDATE_HEALTH_PROCESS_EXIT_UNCONFIRMED" });
+  await assert.rejects(runUpdateHelper({ ...args,
+    health: async () => { throw uncertainExit; } }), error => error === uncertainExit);
+  assert.deepEqual(lifecycle, ["armed"], "uncertain probes retain recovery and its prepared resources");
+  assert.ok(!calls.includes("/usr/bin/open"), "must not relaunch alongside an uncertain probe");
   calls.length = 0;
   await assert.rejects(runUpdateHelper({ ...args, request: { ...request, signature: "bad" } }), /signature/);
   assert.deepEqual(calls, []);
@@ -944,6 +952,55 @@ if (process.platform !== "win32") await test("native health requires its challen
       assert.equal(existsSync(profile), mode !== "healthy", "only successful native health profiles should be removed");
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+if (process.platform !== "win32") await test("native health preserves its profile and rejects uncertain process-group exit", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-native-health-uncertain-"));
+  let profile, pid;
+  try {
+    const probe = nativeApplicationHealth(root, { versionRoot: root, workspace: root }, { desktopVersion: "1.2.3" }, undefined, {
+      spawnImpl: (_command, args, options) => {
+        profile = args[0].slice("--user-data-dir=".length);
+        const child = spawn(process.execPath, ["-e", `console.log(JSON.stringify({type:'desktop.update-health', token:process.env.COOP_DESKTOP_UPDATE_PROBE, version:'1.2.3'}))`], options);
+        pid = child.pid; return child;
+      },
+      waitForGroupExit: async observedPid => { assert.equal(observedPid, pid); return false; },
+    });
+    await assert.rejects(probe, { code: "UPDATE_HEALTH_PROCESS_EXIT_UNCONFIRMED" });
+    assert.ok(existsSync(profile));
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("native health bounds a missing close event and retains the uncertain profile", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-native-health-open-pipe-"));
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  let unreferenced = false, profile;
+  child.unref = () => { unreferenced = true; };
+  try {
+    await assert.rejects(nativeApplicationHealth(root, { versionRoot: root, workspace: root }, { desktopVersion: "1.2.3" }, undefined, {
+      timeoutMs: 10, terminationTimeoutMs: 30,
+      spawnImpl: (_command, args) => { profile = args[0].slice("--user-data-dir=".length); return child; },
+    }), { code: "UPDATE_HEALTH_PROCESS_EXIT_UNCONFIRMED" });
+    assert.ok(child.stdout.destroyed);
+    assert.ok(unreferenced);
+    assert.ok(existsSync(profile));
+  } finally { child.stdout.destroy(); rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("uncertain health exit preserves the testing transaction until independent recovery", async () => {
+  const f = replacementFixture();
+  const error = Object.assign(new Error("fixture probe is still running"), { code: "UPDATE_HEALTH_PROCESS_EXIT_UNCONFIRMED" });
+  try {
+    await assert.rejects(replaceMacApplication({ ...f.options, checkHealth: async () => { throw error; } }), thrown => thrown === error);
+    assert.equal(f.read(f.options.appPath), "new", "must not swap a possibly running app");
+    assert.equal(f.read(join(f.transaction, "previous.app")), "old");
+    assert.equal((await inspectMacReplacement(f.options)).status, "testing");
+    const result = await recoverMacReplacement(f.options);
+    assert.equal(result.status, "rolled-back");
+    assert.equal(f.read(f.options.appPath), "old");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
 await test("native main health acknowledgement follows renderer readiness and runtime shutdown", async () => {

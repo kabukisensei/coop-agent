@@ -149,6 +149,7 @@ export async function replaceMacApplication({ appPath, candidatePath, validateCa
       await save(paths.journal, { ...record, phase: "healthy" });
       return { status: "healthy", appPath: paths.app, previousPath: paths.previous };
     } catch (error) {
+      if (error.code === "UPDATE_HEALTH_PROCESS_EXIT_UNCONFIRMED") throw error;
       try { await recover(paths, swap); }
       catch (recoveryError) { throw new AggregateError([error, recoveryError], "Update failed and recovery requires inspection; all application directories were preserved."); }
       throw new Error("Update failed; the previous application is restored.", { cause: error });

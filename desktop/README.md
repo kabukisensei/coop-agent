@@ -381,7 +381,10 @@ waits for both process IDs to exit and rechecks trust/expiry. It checks that the
 installed app still has the expected identity/version, replaces it through a
 journaled transaction, runs isolated runtime and native-app health probes, and relaunches
 Coop with its existing user-data directory. Failed health checks restore the prior
-app. New macOS replacements use an atomic directory exchange for activation and
+app after the probe has stopped. If native probe exit cannot be confirmed, the
+helper preserves the testing transaction and both app copies without rollback or
+relaunch. The independent recovery worker must stop probes before restoring the
+app. Native probes also bound termination when their close event never arrives. New macOS replacements use an atomic directory exchange for activation and
 rollback, keeping the normal app path present. The verified Python interpreter in
 the stable prepared release invokes the native swap; unsupported filesystems fail
 before replacement instead of falling back to two renames. Version 2 transaction
