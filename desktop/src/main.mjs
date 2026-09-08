@@ -619,7 +619,11 @@ async function createWindow() {
     if (!navigationReady || quitting || !activeChatSid) throw new Error("Desktop UI did not become ready.");
     await runtimeRpc({ type: "get_state", sid: activeChatSid });
     await runtime.stop({ graceMs: 5000 });
-    process.stdout.write(JSON.stringify({ type: "desktop.update-health", token: updateProbeToken, version: app.getVersion() }) + "\n");
+    // Windows pipes are asynchronous; finish the health response before quitting.
+    await new Promise((resolveWrite, rejectWrite) => {
+      process.stdout.write(JSON.stringify({ type: "desktop.update-health", token: updateProbeToken, version: app.getVersion() }) + "\n",
+        error => error ? rejectWrite(error) : resolveWrite());
+    });
     app.quit();
     return;
   }

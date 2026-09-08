@@ -466,8 +466,9 @@ The helper code is bundled under Resources/update-helper inside the signed app.
 It never loads trust-key overrides from workspace or user data. The native health
 probes check the runtime contract and Coop version, then launch the packaged app
 with temporary user data and require renderer startup through the preload bridge,
-a working chat RPC, a matching one-time health response and clean shutdown. Probe
-timeout/cancellation terminates its process group. Successful probes discard their
+a working chat RPC, a matching one-time health response and clean shutdown. The
+app waits for its health-response pipe write to finish before exiting; a write
+failure rejects the probe. Probe timeout/cancellation terminates its process group. Successful probes discard their
 own temporary profiles after confirmed shutdown; native cleanup also requires the
 probe process group to be gone. Failed/interrupted checks retain their profiles for
 diagnosis, and replaced directories or cleanup errors preserve the stored data.

@@ -2575,3 +2575,34 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
 - Final full Bash suite passed; all local handles are terminal. Managed CI
   34200532260 is terminal: Mac 101978043788 passed, Windows 101978043603
   failed at isolated bootstrap startup. Regular CI 34200532244 remains live.
+
+
+## Flush native health acknowledgement before exit
+
+- Previous turn was progress: 0e517e5 added module-loading diagnostics. Ported the
+  compatible health-write change from VM commit 867c987 into the current main
+  process. Runtime shutdown still completes first; Electron now waits for the
+  stdout write callback before quitting. A write error rejects the health path.
+  The VM's separate taskkill/close-race change remains to be reconciled.
+- Baseline regression reproduced premature quit with a pending callback. The
+  updated test proves delayed completion, write-error rejection and no success
+  acknowledgement after runtime-stop failure. All 51 updater service checks pass.
+  Full local Bash and PowerShell suites, syntax, ShellCheck and parity/BOM passed.
+- Built /private/tmp/coop-health-flush-app-20260908/mac-arm64/Coop Desktop.app from
+  current main code and the previously verified runtime assets. Packaged main and
+  renderer bytes equal source. Native renderer/chat/health acknowledgement,
+  shutdown and temporary-profile cleanup passed; PID 62457 is absent. Post-use
+  deep strict ad-hoc signature verification passed. No real-model, visual or
+  Windows acceptance is inferred. All local handles are terminal.
+- Evidence: /private/tmp/coop-desktop-home-20260907-state/native-health-flush-*;
+  backup: .backups/native_health_flush_20260908_024901/. Files: main.mjs, updater
+  tests and README. Standards: evidence-bearing health responses, no acceptance
+  before shutdown, failed writes fail closed, backups and daily logging.
+- Windows artifact 10046001882 from run 34201125539 is retained in
+  windows-modules-0e517e5. The new explicit-management-module case passes in
+  532 ms, including import-ready and split-path-ready. Built-in-only module
+  search and disabled analysis cache both still time out around 10 s; all
+  diagnostic processes exited. This isolates a working alternative to automatic
+  command discovery. Next test: explicit trusted built-in module loading before
+  the managed bootstrap's first cmdlet, then native app/installer acceptance.
+  This diagnostic success alone does not establish a working Windows app.
