@@ -54,10 +54,16 @@ test("unsupported or ambiguous build targets fail closed", () => {
   assert.throws(() => managedRuntimeBuildPlan(""), /Unsupported/);
 });
 
-test("manual managed-runtime smoke covers native macOS and Windows build workers", () => {
+test("managed-runtime smoke covers pull requests and native macOS and Windows build workers", () => {
   const workflow = readFileSync(resolve(ROOT, ".github", "workflows", "managed-desktop-smoke.yml"), "utf8");
   const verifier = readFileSync(resolve(ROOT, "scripts", "verify-managed-runtime.mjs"), "utf8");
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /pull_request:/);
+  assert.match(workflow, /config\/development-companions\.json/);
+  assert.match(workflow, /build-development-wheels\.py/);
+  assert.match(workflow, /--development-wheels/);
+  assert.match(workflow, /packagedPaths/);
+  assert.match(workflow, /coop-packaged-agent/);
   assert.match(workflow, /macos-latest, windows-latest/);
   assert.match(workflow, /prepare-managed-runtime\.mjs/);
   assert.match(workflow, /verify-managed-runtime\.mjs/);

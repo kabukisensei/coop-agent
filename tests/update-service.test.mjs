@@ -15,7 +15,8 @@ import vm from "node:vm";
 import { createUpdateController, loadPackagedUpdateFeed, validateUpdateFeed } from "../desktop/src/update-controller.mjs";
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { cpSync, existsSync, realpathSync, renameSync, statSync, rmSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { constants, cpSync, existsSync, realpathSync, renameSync, statSync, rmSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { lstat, open, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -790,6 +791,30 @@ await test("update results display fixed copy once and preserve unread or newer 
       renameSync(next, path);
     } }), true);
     assert.equal(JSON.parse(readFileSync(path, "utf8")).status, "healthy");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("update outcomes reject links when O_NOFOLLOW is unavailable and preserve a newer linked outcome", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-outcome-no-follow-"));
+  const path = join(root, "update-result.json"), target = join(root, "target.json");
+  const source = readFileSync(join(ROOT, "desktop/src/update-outcome.mjs"), "utf8");
+  const ctx = vm.createContext({ constants: { ...constants, O_NOFOLLOW: 0 }, open, unlink, lstat, join, Buffer });
+  vm.runInContext(source.slice(source.indexOf("const busy")).replace("export ", ""), ctx);
+  let shown = 0;
+  const args = { userData: root, currentVersion: "1.2.3", show: async () => { shown++; } };
+  try {
+    writeFileSync(target, JSON.stringify({ status: "failed" }));
+    symlinkSync(target, path);
+    assert.equal(await ctx.presentUpdateOutcome(args), false);
+    assert.equal(shown, 0);
+    assert.equal(readFileSync(target, "utf8"), JSON.stringify({ status: "failed" }));
+    rmSync(path); writeFileSync(path, JSON.stringify({ status: "failed" }));
+    assert.equal(await ctx.presentUpdateOutcome({ ...args, show: async () => {
+      shown++; renameSync(path, join(root, "original.json")); symlinkSync(target, path);
+    } }), true);
+    assert.equal(shown, 1);
+    assert.equal((await lstat(path)).isSymbolicLink(), true);
+    assert.ok(existsSync(target));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

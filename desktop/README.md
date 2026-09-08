@@ -125,6 +125,15 @@ releases; record the inventory and source commits with acceptance evidence. The
 build backend and transitive dependencies may resolve differently on another
 worker, so record actual wheel hashes and the generated dependency inventory.
 
+The `managed desktop smoke` workflow runs on relevant pull-request changes and
+manual dispatch, on native macOS and Windows workers. It checks out the exact
+companion commits, builds their development wheels, prepares the locked runtime,
+and verifies both the staged runtime and the copy inside the native app. Package
+verification checks the ASAR boundary, Electron fuses and dependency provenance.
+Build/runtime receipts and dependency inventories are retained for seven days as
+CI evidence. These jobs create unsigned development apps; they do not publish a
+release or prove installer, model sign-in, clipboard or Power BI acceptance.
+
 A packaged app uses `resources/managed-runtime` when present. It validates the
 bundle contract, target, jailed paths, and Coop/Pi/Node/Python version agreement
 before launch. A present but invalid bundle fails closed; it never falls back to
