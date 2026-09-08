@@ -216,6 +216,35 @@ await test("managed npm locks reject manifest mismatch, unhashed archives and in
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+await test("target-native optional binaries must be locked and installed, including nested resolution", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const root = mkdtempSync(join(tmpdir(), "coop-native-lock-")), path = join(root, "lock.json");
+  const entry = { version: "1.0.0", resolved: "https://registry.npmjs.org/example/-/example-1.0.0.tgz", integrity: "sha512-YWJj" };
+  const native = "example-win32-x64", parent = "node_modules/wrapper";
+  const lock = { name: "coop-managed-runtime", version: "0.0.0", lockfileVersion: 3,
+    packages: { "": { dependencies: { wrapper: "1.0.0" } }, [parent]: { ...entry, optionalDependencies: { [native]: "1.0.0" } } } };
+  const plan = { target: "win32-x64", npmSpecs: ["wrapper@1.0.0"] };
+  const save = () => writeFileSync(path, JSON.stringify(lock));
+  try {
+    save(); assert.throws(() => loadManagedNpmLock(plan, path), /native/);
+    for (const name of [`node_modules/${native}`, `${parent}/node_modules/${native}`]) {
+      lock.packages[name] = { ...entry, optional: true }; save();
+      const result = loadManagedNpmLock(plan, path), prefix = join(root, `npm-${Object.keys(lock.packages).length}-${name.length}`);
+      writeManagedNpmInputs(prefix, result); mkdirSync(join(prefix, "node_modules"));
+      const installed = { lockfileVersion: 3, packages: { [parent]: lock.packages[parent] } };
+      const installedPath = join(prefix, "node_modules", ".package-lock.json");
+      writeFileSync(installedPath, JSON.stringify(installed));
+      assert.throws(() => verifyManagedNpmResolution(prefix, result), /native/);
+      installed.packages[name] = lock.packages[name]; writeFileSync(installedPath, JSON.stringify(installed));
+      assert.equal(verifyManagedNpmResolution(prefix, result).packages, 2);
+      lock.packages[name].version = "2.0.0"; save(); assert.throws(() => loadManagedNpmLock(plan, path), /native/);
+      delete lock.packages[name];
+    }
+    save(); assert.doesNotThrow(() => loadManagedNpmLock({ ...plan, target: "darwin-arm64" }, path));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 await test("all Python targets lock the manifest tools and scope source builds explicitly", () => {
   for (const target of ["darwin-arm64", "darwin-x64", "win32-x64"]) {
     const plan = managedRuntimeBuildPlan(target), result = loadManagedPythonLock(plan);

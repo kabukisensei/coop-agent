@@ -1108,7 +1108,7 @@ await test("native startup deferral exits before runtime setup and its notice cl
   class NoticeWindow { destroy() { destroyed++; } }
   const ctx = vm.createContext({ managedResourcePresent: true, updateProbeToken: null, resolve, dirname, AbortController,
     process: { platform: "darwin", execPath: "/fixture/Coop Desktop.app/Contents/MacOS/Coop Desktop", ppid: 123 },
-    canStartMacApplication: async args => { assert.equal(args.appPath, "/fixture/Coop Desktop.app");return false; },
+    canStartMacApplication: async args => { assert.equal(args.appPath, resolve("/fixture/Coop Desktop.app"));return false; },
     setTimeout: callback => { queueMicrotask(callback);return 1; }, clearTimeout: () => {},
     BrowserWindow: NoticeWindow,
     dialog: { showMessageBox: (parent, options) => { assert.ok(parent instanceof NoticeWindow, "macOS cancellation requires a parent window");dialogs++;return new Promise(resolve => options.signal.addEventListener("abort", resolve, { once: true })); } },

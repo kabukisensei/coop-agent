@@ -134,6 +134,13 @@ Build/runtime receipts and dependency inventories are retained for seven days as
 CI evidence. These jobs create unsigned development apps; they do not publish a
 release or prove installer, model sign-in, clipboard or Power BI acceptance.
 
+Native npm packages declared for the target platform must appear in the committed
+lock and the installed dependency tree, even when their parent declares them as
+optional. This catches missing Fabric/Power BI MCP, image-processing, clipboard
+and regex binaries before a managed bundle can pass verification. Cross-target
+installation with lifecycle scripts disabled is a dependency check only; the
+native CI build must also execute the platform's install scripts and runtime.
+
 A packaged app uses `resources/managed-runtime` when present. It validates the
 bundle contract, target, jailed paths, and Coop/Pi/Node/Python version agreement
 before launch. A present but invalid bundle fails closed; it never falls back to

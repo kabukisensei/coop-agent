@@ -1615,3 +1615,43 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   signature verification passed. All local validation handles are terminal.
   The older Pi job 101922199885 also completed successfully; the Pi job for
   34182410150 remains in progress at this checkpoint.
+
+
+## Target-native npm dependency completion and Windows test progress
+
+- Managed build CI 34182954735 at e70a41a passed a second fresh hosted arm64 Mac
+  build. Windows successfully extracted the Node/Python archives with native tar,
+  then stopped because the lock omitted @microsoft/fabric-mcp-win32-x64. Four
+  Windows and four Intel Mac optional native packages were absent. Added their
+  exact published versions, archive URLs and integrity hashes; every pre-existing
+  lock entry and top-level pin is unchanged.
+- Managed npm validation now resolves target-native optional dependencies through
+  nested/root node_modules paths and requires matching locked versions plus their
+  presence in the installed lock. A before/after regression covers missing locked
+  or installed binaries, nested resolution, wrong versions and other platforms.
+  All 12 preparer tests pass; the existing actual arm64 Mac bundle also passes
+  the stricter verification with its unchanged lock and 507 installed entries.
+- Fresh cross-target npm ci with lifecycle scripts disabled passed on the Mac:
+  Windows 507 entries, Intel Mac 506 entries. Input locks remained unchanged.
+  This proves dependency resolution only, not native postinstall or execution.
+  Native Windows CI must rerun the full build. Intel native runtime acceptance
+  and its Python source-build/toolchain requirements remain open.
+- Regular CI 34182954792 passed Linux, shell/config, Mac Bash parsing, extension
+  builds and native Windows Pi compatibility. Windows logic/PowerShell reached
+  one remaining native-startup test expecting a literal POSIX path. Corrected
+  the assertion to use native resolve; all 48 update tests pass locally. Older
+  run 34182410150 is also terminal and its Windows Pi compatibility job passed.
+- Full local Bash, PowerShell behavioral suite and Bash syntax/parity/BOM checks
+  completed with observed exit 0. All local validation processes are terminal.
+- Exercised actual packaged Mac Python entrypoints with isolated HOME and synthetic
+  fixtures: SQL review reported SQL-NO-SELECT-STAR (one finding); DAX review
+  reported DAX-BIDI-RELATIONSHIP (five findings); data-doc generated six nodes and
+  five edges, including the synthetic semantic model, measure, tables and SQL
+  view. All commands exited 0. No authenticated profile or business data was used.
+- Backups: .backups/windows_final_path_20260907_221908/. Evidence under
+  /private/tmp/coop-desktop-home-20260907-state/: npm-native-completion-metadata.json,
+  npm-native-completion-ci.json, npm-native-required-{before,after}.log,
+  npm-native-final-{bash,powershell,parity}.log, windows-final-path-focused.log,
+  managed-tool-work-evidence.json and managed-ci-second-windows.log.
+  This remains development verification; Windows interactive acceptance, updater
+  implementation and all outstanding release requirements remain open.
