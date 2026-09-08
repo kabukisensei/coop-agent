@@ -39,7 +39,7 @@ conditional on Desktop acceptance, not permission to delete `web/`.
 
 ## Baseline and known gaps
 
-The agent's final macOS development checks passed: 42 focused update tests, full
+The latest macOS development checks include 46 focused update tests, full
 Bash and PowerShell behavioral suites, shell syntax/parity and whitespace checks.
 Companion source suites passed: data-doc 634, SQL review 670, DAX review 624; all
 three lint and formatting checks passed. These are Mac results, not Windows proof.
@@ -47,13 +47,24 @@ three lint and formatting checks passed. These are Mac results, not Windows proo
 Native Mac evidence covers managed startup, model selection, real model work in a
 preview profile, session recovery, icon/copy behavior, signed update preparation,
 atomic activation/rollback, runtime/native-window health checks, independent
-recovery and completed-recovery retention. Production signing/feed provisioning,
-real reboot/login acceptance and complete fresh-managed-profile model work remain
-open. Prepared-copy cleanup at the pinned agent revision also passed a subsequent
-packaged Mac helper update: healthy activation, visible success notice, Ready
+recovery and completed-recovery retention. Production signing/feed provisioning
+and real reboot/login acceptance remain open. Real model work in the isolated
+managed Mac profile created Python source/tests and passed four tests; this does
+not establish fresh Windows sign-in or task execution. Prepared-copy cleanup also
+passed a subsequent packaged Mac helper update: healthy activation, visible success notice, Ready
 workspace, removed prepared duplicate, retained and verified installed/rollback
-apps and original DMG, and disarmed recovery job. Health-probe profiles remain;
-this is not proof of general cache retention or Windows behavior.
+apps and original DMG, and disarmed recovery job. Successful health-probe profiles
+are now discarded after confirmed process exit. Failed/interrupted or uncertain
+checks retain their profiles; general retention and Windows behavior remain open.
+
+Draft PR #48 runs native Windows Git Bash, PowerShell 5.1 and real Pi compatibility
+checks: https://github.com/kabukisensei/coop-agent/pull/48. The first two completed
+Pi matrices each passed 18 checks without skips. Subsequent Windows failures led
+to writable config flushes, preservation of SystemRoot, native canonical paths,
+dependency-free setup validation and exact fixture-byte checkout corrections.
+Inspect the latest run at the exact fetched agent commit; earlier CI success or
+failure is not evidence for a newer revision. These CI jobs do not replace the
+managed installer and interactive VM journeys below.
 
 Windows update preparation/replacement/recovery is still explicitly unsupported
 in the current implementation. NSIS configuration alone is not a complete Windows

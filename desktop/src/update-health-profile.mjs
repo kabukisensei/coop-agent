@@ -25,7 +25,12 @@ export async function waitForProbeGroupExit(pid, { timeoutMs = 1000 } = {}) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try { process.kill(-pid, 0); }
-    catch (error) { return error.code === "ESRCH"; }
+    catch (error) {
+      if (error.code === "ESRCH") return true;
+      // An exiting macOS Electron group can briefly reject signal 0. EPERM
+      // still means unconfirmed exit: retry within the same bounded deadline.
+      if (error.code !== "EPERM") return false;
+    }
     if (Date.now() >= deadline) return false;
     await new Promise(resolve => setTimeout(resolve, 25));
   }

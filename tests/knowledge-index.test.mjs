@@ -183,12 +183,13 @@ test("Windows Git containment accepts equivalent spelling and rejects sibling or
   const from = source.indexOf("function normalizeSource(");
   const context = vm.createContext({
     resolve: win32.resolve, relative: win32.relative, isAbsolute: win32.isAbsolute, sep: win32.sep,
-    realpathSync: path => path, statSync: () => ({ isDirectory: () => true }),
+    realpathSync: Object.assign(path => path, { native: path => path.replace(/CLIENT~1/i, "Client") }), statSync: () => ({ isDirectory: () => true }),
     execFileSync: () => "C:/Client/Repo\n",
   });
   vm.runInContext(source.slice(from, source.indexOf("function entryFor(", from)), context);
   const input = { id: "project", scope: "project", projectId: "client", root: "c:\\client\\repo\\docs" };
   assert.equal(context.normalizeSource(input).root, input.root);
+  assert.equal(context.normalizeSource({ ...input, root: "C:\\CLIENT~1\\Repo\\docs" }).root, "C:\\Client\\Repo\\docs");
   for (const root of ["C:\\Client\\Repo-other", "D:\\Client\\Repo"]) {
     assert.throws(() => context.normalizeSource({ ...input, root }), /outside/);
   }

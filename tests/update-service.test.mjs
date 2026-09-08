@@ -432,7 +432,7 @@ await test("signed macOS update preparation verifies before copy and promotes on
     const prepared = await prepareMacUpdate(f.options);
     assert.ok(existsSync(prepared.installPath));
     assert.equal(prepared.descriptor.desktopVersion, "1.0.1");
-    assert.ok(prepared.installPath.startsWith(realpathSync(f.options.versionRoot)));
+    assert.equal(realpathSync.native(dirname(dirname(prepared.installPath))), realpathSync.native(f.options.versionRoot));
     assert.equal(f.calls.filter(call => call[0].endsWith("codesign")).length, 2);
     assert.equal(f.calls.at(-1)[1], "detach");
     assert.equal(readdirSync(f.options.versionRoot).length, 1);
@@ -532,7 +532,7 @@ function fixtureSwap(left, right) {
 }
 
 function replacementFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-replacement-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "coop-replacement-")));
   const appPath = join(root, "Coop Desktop.app"), candidatePath = join(root, "downloaded.app");
   for (const [path, value] of [[appPath, "old"], [candidatePath, "new"]]) {
     mkdirSync(path); writeFileSync(join(path, "marker"), value);
@@ -687,7 +687,7 @@ await test("helper refuses live processes and honours cancellation while waiting
 });
 
 await test("private helper transport completes preparation, cancellation and apply over real Node IPC", async () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-helper-ipc-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "coop-helper-ipc-")));
   try {
     const helperPath = join(root, "fixture.mjs");
     writeFileSync(helperPath, `import {writeFileSync} from 'node:fs';
@@ -851,6 +851,24 @@ if (process.platform !== "win32") await test("health cleanup waits for a live pr
   assert.equal(await waitForProbeGroupExit(child.pid), true);
 });
 
+await test("health group polling retries transient EPERM but never accepts uncertain exit", async () => {
+  const source = readFileSync(join(ROOT, "desktop/src/update-health-profile.mjs"), "utf8");
+  const functionSource = source.slice(source.indexOf("export async function waitForProbeGroupExit")).replace("export ", "");
+  for (const mode of ["transient", "persistent", "unexpected"]) {
+    let calls = 0, now = 0;
+    const ctx = vm.createContext({
+      process: { kill: (pid, signal) => {
+        assert.equal(pid, -1234); assert.equal(signal, 0); calls++;
+        throw Object.assign(new Error("fixture"), { code: mode === "unexpected" ? "EINVAL" : mode === "transient" && calls > 1 ? "ESRCH" : "EPERM" });
+      } },
+      Date: { now: () => now }, setTimeout: callback => { now += 25; callback(); },
+    });
+    vm.runInContext(functionSource, ctx);
+    assert.equal(await ctx.waitForProbeGroupExit(1234, { timeoutMs: 50 }), mode === "transient", mode);
+    assert.equal(calls, mode === "transient" ? 2 : mode === "persistent" ? 3 : 1, mode);
+  }
+});
+
 if (process.platform !== "win32") await test("native health requires its challenge, matching version and clean process exit", async () => {
   const root = mkdtempSync(join(tmpdir(), "coop-native-health-"));
   const request = { versionRoot: root, workspace: root };
@@ -933,7 +951,7 @@ if (process.platform === "darwin") await test("Darwin directory exchange uses th
 });
 
 await test("independent recovery job is registered only after a verified stable app copy", async () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-recovery-job-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "coop-recovery-job-")));
   const calls = [];
   const request = { appPath: join(root, "Coop Desktop.app"), userData: join(root, "data"), versionRoot: join(root, "versions"), currentVersion: "1.0.0", parentPid: 10, runtimePid: 20 };
   const options = { request, targetVersion: "1.0.1", helperPid: 30, home: join(root, "home & space"), uid: 501,
@@ -967,7 +985,7 @@ await test("independent recovery job is registered only after a verified stable 
 });
 
 await test("recovery waits for live owners, survives a reboot and only reopens a verified app", async () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-recovery-worker-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "coop-recovery-worker-")));
   const id = "22222222-2222-2222-2222-222222222222";
   const requestPath = join(root, "update-recovery", id, "request.json");
   mkdirSync(dirname(requestPath), { recursive: true });
@@ -1055,7 +1073,7 @@ await test("native startup deferral exits before runtime setup and its notice cl
 });
 
 await test("recovery retention removes only older completed idle jobs and preserves external data", async () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-retention-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "coop-retention-")));
   const parent = join(root, "update-recovery");mkdirSync(parent);
   function job(n, phase = "finished") {
     const id = `11111111-1111-1111-1111-${String(n).padStart(12, "0")}`, dir = join(parent, id);
