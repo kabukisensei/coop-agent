@@ -149,7 +149,18 @@ jobs:
         shell: bash
         env:
           COOP_DESKTOP_MANAGED_RUNTIME_DIR: ${{ runner.temp }}/managed-runtime
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/nsis-builder-cache
         run: npm run package:installer:win --prefix desktop
+      - name: Verify native NSIS long paths and junction isolation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compilers = @(Get-ChildItem -LiteralPath '${{ runner.temp }}/nsis-builder-cache' -Recurse -Filter makensis.exe -File)
+          if ($compilers.Count -ne 1) { throw 'Expected the one compiler used by this installer build.' }
+          $evidence = '${{ runner.temp }}/nsis-path-evidence'
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          node desktop/scripts/verify-nsis-long-paths.mjs $compilers[0].FullName $evidence
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify Windows install, reinstall repair, and uninstall
         if: runner.os == 'Windows'
         shell: bash
@@ -171,6 +182,9 @@ jobs:
             ${{ runner.temp }}/native-environment-runtime-check.json
             ${{ runner.temp }}/native-application-check.json
             ${{ runner.temp }}/windows-installer-check.json
+            ${{ runner.temp }}/nsis-path-evidence/**/receipt.json
+            ${{ runner.temp }}/nsis-path-evidence/**/compile.log
+            ${{ runner.temp }}/nsis-path-evidence/**/*.nsi
             ${{ runner.temp }}/managed-runtime/manifest.json
             ${{ runner.temp }}/managed-runtime/dependency-inventory.json
             ${{ runner.temp }}/coop-development-wheels/development-wheels.json

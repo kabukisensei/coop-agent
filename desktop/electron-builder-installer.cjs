@@ -22,6 +22,7 @@ module.exports = {
     target: managed.win.target.map(({ arch }) => ({ target: "nsis", arch })),
   },
   nsis: {
+    include: "build/windows-uninstall.nsh",
     installerIcon: "../themes/coop.ico",
     uninstallerIcon: "../themes/coop.ico",
     oneClick: false,
