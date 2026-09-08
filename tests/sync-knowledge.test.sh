@@ -24,6 +24,7 @@ git clone -q "$REMOTE" "$WORK" 2>/dev/null
 git -C "$WORK" checkout -B main 2>/dev/null || true
 git -C "$WORK" config user.email test@example.com
 git -C "$WORK" config user.name "Test"
+git -C "$WORK" config core.autocrlf false
 printf 'one\n' > "$WORK/note.md"
 git -C "$WORK" add note.md
 git -C "$WORK" commit -qm "first"
@@ -50,7 +51,7 @@ printf 'two\n' >> "$WORK/note.md"
 git -C "$WORK" commit -qam "second"
 git -C "$WORK" push -q 2>/dev/null
 out="$(run_sync "$CFG")"; rc=$?
-content="$(cat "$CLONE/note.md" 2>/dev/null)"
+content="$(cat "$CLONE/note.md" 2>/dev/null | tr -d '\r')"
 [ "$rc" -eq 0 ] && [ "$content" = "$(printf 'one\ntwo')" ] && ok "second run fast-forwards the new commit" || ko "ff failed: rc=$rc content=[$content] out=$out"
 
 # --- dirty managed checkout: warn, skip, leave changes -------------------------
