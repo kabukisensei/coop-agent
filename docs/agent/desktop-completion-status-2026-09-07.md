@@ -2,6 +2,13 @@
 
 Objective: get the app to a final working state with all tests and improvements made. This checklist tracks the whole objective; a passing local slice does not complete it.
 
+## Current milestone — user direction September 8
+
+The next deliverable is a usable development build Aaron can test, followed by
+a stop for feedback. Work is paused until he resumes. Follow
+[test-build-handoff-2026-09-08.md](test-build-handoff-2026-09-08.md). The broader
+ledger below preserves future work; completing it is not the next build’s gate.
+
 ## Authority and evidence limits
 
 - Product/architecture: `COOP_DESKTOP_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md`, especially sections 5 and 12. Terminal remains first-class; browser retirement is deferred until Desktop acceptance per the user handoff.
