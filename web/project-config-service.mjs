@@ -14,8 +14,10 @@ function digest(text) {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-function syncFile(path) {
-  const fd = openSync(path, "r");
+function syncFile(path, flags = "r+") {
+  // Windows FlushFileBuffers requires write access. r+ preserves existing bytes
+  // while allowing the newly written temporary file or backup to be flushed.
+  const fd = openSync(path, flags);
   try { fsyncSync(fd); } finally { closeSync(fd); }
 }
 
@@ -23,7 +25,7 @@ function syncDirectory(path) {
   // POSIX permits fsync on a directory so the rename itself is durable. Some
   // Windows filesystems reject opening a directory as a file; atomic rename is
   // still preserved there and the managed updater/config tests cover recovery.
-  try { syncFile(path); } catch { /* unsupported by this filesystem */ }
+  try { syncFile(path, "r"); } catch { /* unsupported by this filesystem */ }
 }
 
 function readExisting(path) {

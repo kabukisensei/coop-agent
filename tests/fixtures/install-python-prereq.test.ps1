@@ -24,12 +24,12 @@ function Write-Shim {
 }
 
 $saved = @{}
-foreach ($name in @('PATH','HOME','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODING_AGENT_DIR','COOP_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','COOP_FABRIC_PYTHON','COOP_TEST_CALLS','COOP_TEST_PY_TEMPLATE','LOCALAPPDATA','ProgramFiles','SystemRoot')) {
+foreach ($name in @('PATH','HOME','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODING_AGENT_DIR','COOP_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','COOP_FABRIC_PYTHON','COOP_TEST_CALLS','COOP_TEST_PY_TEMPLATE','LOCALAPPDATA','ProgramFiles')) {
   $saved[$name] = [Environment]::GetEnvironmentVariable($name)
 }
 
 try {
-  New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $t 'pipx-home'), (Join-Path $t 'pipx-bin'), (Join-Path $t 'agent'), (Join-Path $t 'program-files'), (Join-Path $t 'local-app-data'), (Join-Path $t 'system-root') | Out-Null
+  New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $t 'pipx-home'), (Join-Path $t 'pipx-bin'), (Join-Path $t 'agent'), (Join-Path $t 'program-files'), (Join-Path $t 'local-app-data') | Out-Null
   $fabricPython = Join-Path $t $(if ($isWindowsHost) { 'python312.cmd' } else { 'python312' })
   $pythonTemplate = Join-Path $t $(if ($isWindowsHost) { 'python-template.cmd' } else { 'python-template' })
   if ($isWindowsHost) {
@@ -111,7 +111,8 @@ exit /b 0
   $env:COOP_TEST_PY_TEMPLATE = $pythonTemplate
   $env:LOCALAPPDATA = Join-Path $t 'local-app-data'
   $env:ProgramFiles = Join-Path $t 'program-files'
-  $env:SystemRoot = Join-Path $t 'system-root'
+  # COOP_FABRIC_PYTHON already forces missing-interpreter discovery. Preserve
+  # SystemRoot: Windows PowerShell 5.1 needs the real OS path for .NET loading.
   [System.IO.File]::WriteAllText($calls, '')
 
   $oldPreference = $ErrorActionPreference

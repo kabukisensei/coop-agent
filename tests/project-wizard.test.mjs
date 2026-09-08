@@ -130,6 +130,7 @@ await t("native wizard is reachable inside Coop and creates the contract", async
   mkdirSync(join(root, ".git"));
   const confirms = [true, false, false, false, true]; // local source, add repo, Fabric, TE, write
   const confirmTitles = [];
+  const notices = [];
   let selectCount = 0;
   const ctx = {
     cwd: root,
@@ -146,10 +147,10 @@ await t("native wizard is reachable inside Coop and creates the contract", async
         if (selectCount === 1) return options.find((x) => x.includes("General project"));
         return options.find((x) => x.startsWith("✓ Use this folder:"));
       },
-      notify: () => {},
+      notify: (message) => notices.push(message),
     },
   };
-  assert.equal(await runProjectWizard({}, ctx), true);
+  assert.equal(await runProjectWizard({}, ctx), true, notices.join("\n"));
   const contract = join(root, ".coop", "project.yml");
   assert.ok(existsSync(contract));
   const text = readFileSync(contract, "utf8");
