@@ -1,3 +1,4 @@
+import { loadManagedNpmLock, writeManagedNpmInputs, verifyManagedNpmResolution } from "../scripts/managed-npm-lock.mjs";
 import assert from "node:assert/strict";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +17,8 @@ await test("preparation invokes the pinned Node npm CLI without a shell or globa
   assert.equal(commands.npm.args[0], "/safe/node/lib/node_modules/npm/bin/npm-cli.js");
   assert.equal(commands.npm.args.includes("--global"), false);
   assert.equal(commands.npm.args.includes("--prefix"), true);
-  assert.deepEqual(commands.npm.args.slice(-plan.npmSpecs.length), [...plan.npmSpecs]);
+  assert.equal(commands.npm.args[1], "ci", "fresh preparation must consume a fixed resolution");
+  assert.equal(commands.npm.args.includes("--no-save"), false);
 });
 
 await test("each Python pin gets an isolated package root driven by the bundled relocatable interpreter", () => {
@@ -45,7 +47,7 @@ await test("Windows preparation uses only target-bundled Node and Python executa
   const commands = preparationCommands(plan, paths);
   assert.match(commands.npm.command, /node\.exe$/);
   assert.match(commands.python.command, /python\.exe$/);
-  assert.equal(commands.npm.args.some((value) => value.startsWith("@microsoft/powerbi-desktop-bridge-cli@")), true);
+  assert.equal(plan.npmSpecs.includes("@microsoft/powerbi-desktop-bridge-cli@0.1.2"), true);
 });
 
 
@@ -148,6 +150,55 @@ await test("development wheels authenticate snapshots, retain exact pins, and bi
     assert.throws(() => validateDependencyInventory(altered, target));
     receipt("b".repeat(64)); assert.throws(() => buildDependencyInventory({ npmPrefix: npm, pythonTools: [{ name: source.name, root: installed }], target }), /provenance/);
   } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+await test("every managed target has a hashed resolution matching its release plan", () => {
+  for (const target of ["darwin-arm64", "darwin-x64", "win32-x64"]) {
+    const plan = managedRuntimeBuildPlan(target), result = loadManagedNpmLock(plan);
+    assert.equal(result.sha256.length, 64);
+    assert.ok(Object.keys(result.lock.packages).length > 500);
+    assert.deepEqual(Object.entries(result.packageJson.dependencies).map(([name, version]) => `${name}@${version}`), [...plan.npmSpecs]);
+  }
+});
+
+await test("managed npm locks reject manifest mismatch, unhashed archives and installed drift", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const root = mkdtempSync(join(tmpdir(), "coop-npm-lock-")), path = join(root, "lock.json");
+  const entry = { version: "1.0.0", resolved: "https://registry.npmjs.org/example/-/example-1.0.0.tgz", integrity: "sha512-YWJj" };
+  const lock = { name: "coop-managed-runtime", version: "0.0.0", lockfileVersion: 3, packages: { "": { dependencies: { example: "1.0.0" } }, "node_modules/example": entry } };
+  const plan = { target: "darwin-arm64", npmSpecs: ["example@1.0.0"] };
+  const save = value => writeFileSync(path, JSON.stringify(value));
+  try {
+    save(lock);
+    const result = loadManagedNpmLock(plan, path), prefix = join(root, "npm");
+    writeManagedNpmInputs(prefix, result);
+    assert.throws(() => writeManagedNpmInputs(prefix, result), /exist/i);
+    mkdirSync(join(prefix, "node_modules"));
+    const installedPath = join(prefix, "node_modules", ".package-lock.json");
+    const installed = { lockfileVersion: 3, packages: { "node_modules/example": entry } };
+    const writeInstalled = value => writeFileSync(installedPath, JSON.stringify(value));
+    writeInstalled(installed);
+    assert.equal(verifyManagedNpmResolution(prefix, result).packages, 1);
+    for (const field of ["version", "resolved", "integrity"]) {
+      const drift = structuredClone(installed); drift.packages["node_modules/example"][field] += "changed"; writeInstalled(drift);
+      assert.throws(() => verifyManagedNpmResolution(prefix, result), /differs/);
+    }
+    writeInstalled({ ...installed, packages: {} });
+    assert.throws(() => verifyManagedNpmResolution(prefix, result), /missing/);
+    writeInstalled({ ...installed, packages: { ...installed.packages, "node_modules/extra": entry } });
+    assert.throws(() => verifyManagedNpmResolution(prefix, result), /differs/);
+    writeInstalled(installed); writeFileSync(join(prefix, "package-lock.json"), "{}");
+    assert.throws(() => verifyManagedNpmResolution(prefix, result), /changed/);
+    assert.throws(() => loadManagedNpmLock({ ...plan, npmSpecs: ["example@2.0.0"] }, path), /manifest/);
+    for (const change of [{ integrity: null }, { resolved: "https://user:secret@example.test/pkg.tgz" }, { resolved: "file:///tmp/pkg.tgz" }, { link: true }]) {
+      const bad = structuredClone(lock); Object.assign(bad.packages["node_modules/example"], change); save(bad);
+      assert.throws(() => loadManagedNpmLock(plan, path), /invalid|unhashed/);
+    }
+    const bad = structuredClone(lock); bad.packages["node_modules/../escape"] = entry; save(bad);
+    assert.throws(() => loadManagedNpmLock(plan, path), /invalid/);
+    assert.ok(readFileSync(join(prefix, "package.json"), "utf8").includes('"private": true'));
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 console.log(`prepare managed runtime: ${count} tests passed`);

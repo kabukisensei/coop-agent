@@ -54,8 +54,15 @@ python-build-standalone CPython 3.12.14 archives are pinned by primary HTTPS URL
 and SHA-256 in `config/managed-runtime-build.json`; all npm, extension, MCP, and
 Python package specs are derived from the release manifest rather than duplicated
 in a build script. The target-worker preparer downloads and verifies those two
-archives and installs packages only into its fresh build root. When an upstream
-npm shrinkwrap omits integrity, `scripts/complete-npm-integrity.mjs` downloads the
+archives and installs packages only into its fresh build root. npm uses `ci` with
+a checked-in target resolution in `config/managed-npm/`, whose root dependencies
+must match the release manifest. Preparation rejects stale pins before acquisition
+and rejects added/missing required packages or changed versions, archive URLs and
+integrities after installation. The completion receipt includes the lock SHA-256.
+Dependency updates require an explicitly refreshed target lock and fresh target
+worker validation; preparation never refreshes a lock automatically. These locks
+cover npm resolution; Python transitive distribution locking remains separate.
+When an upstream npm shrinkwrap omits integrity, `scripts/complete-npm-integrity.mjs` downloads the
 exact resolved HTTPS archive and compares its file set and every file's bytes
 against the installed package. Only a complete match adds the archive's SHA-512
 to the local resolution lock; a mismatch, unsafe archive, or partial failure
