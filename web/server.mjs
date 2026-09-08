@@ -298,6 +298,10 @@ function createChatWorkspaceLease(sid) {
       const chat = chats.get(sid);
       if (chat?.child) {
         chat.status = "exited";
+        chat.busy = false;
+        for (const [id, waiter] of chat.pendingRpc) {
+          clearTimeout(waiter.timer); waiter.resolve(null); chat.pendingRpc.delete(id);
+        }
         killPi(chat.child);
         chat.child = null;
         appendRuntimeEvent(chat, "workspace.changed", { cwd: chat.cwd, access: { mode: "lost" } });
@@ -474,15 +478,28 @@ function appendPiDomainEvent(chat, evt, rawSequence) {
 }
 
 // Write one JSONL command to a chat's pi stdin (LF-terminated, per the RPC contract).
-function sendTo(chat, obj) {
-  if (!chat || chat.status === "exited" || !chat.child) {
-    console.error("coop web: dropping a command to a chat with no live pi");
-    return;
-  }
+function chatCanReceive(chat, { allowHandoff = false } = {}) {
+  const child = chat?.child;
+  const accepting = chat?.status === "running" || (allowHandoff && chat?.status === "handing-off");
+  return accepting && Boolean(child) && child.exitCode === null
+    && child.signalCode === null && !child.killed && child.stdin.writable;
+}
+
+function respondChatUnavailable(res) {
+  res.writeHead(503, baseHeaders("application/json")).end(JSON.stringify({
+    ok: false, code: "chat-unavailable",
+    error: "This chat's agent has stopped. Start a new chat or reopen the workspace, then try again.",
+  }));
+}
+
+function sendTo(chat, obj, options) {
+  if (!chatCanReceive(chat, options)) return false;
   try {
     chat.child.stdin.write(JSON.stringify(obj) + "\n");
+    return true; // A false write() result is backpressure, not rejection.
   } catch (e) {
     console.error("coop web: could not write to pi:", e.message);
+    return false;
   }
 }
 
@@ -728,7 +745,8 @@ function resetChatReplay(chat) {
 }
 
 // One correlated RPC round-trip against a chat's pi child.
-function rpcCall(chat, cmd, timeoutMs = 30000) {
+function rpcCall(chat, cmd, timeoutMs = 30000, options) {
+  if (!chatCanReceive(chat, options)) return Promise.resolve(null);
   const id = `web-${++rpcSeq}`;
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
@@ -736,7 +754,9 @@ function rpcCall(chat, cmd, timeoutMs = 30000) {
       resolve(null);
     }, timeoutMs);
     chat.pendingRpc.set(id, { resolve, timer });
-    sendTo(chat, { ...cmd, id });
+    if (!sendTo(chat, { ...cmd, id }, options)) {
+      clearTimeout(timer); chat.pendingRpc.delete(id); resolve(null);
+    }
   });
 }
 
@@ -2187,7 +2207,7 @@ async function handle(req, res) {
         res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: adapted.error }));
         return;
       }
-      sendTo(chat, adapted.command);
+      if (!sendTo(chat, adapted.command)) { respondChatUnavailable(res); return; }
       res.writeHead(200, baseHeaders("application/json")).end(`{"ok":true}`);
       return;
     }
@@ -2196,6 +2216,7 @@ async function handle(req, res) {
       const body = await readJson(req);
       const chat = chatFor(body && body.sid);
       if (!chat) { res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "That chat is no longer open." })); return; }
+      if (!chatCanReceive(chat)) { respondChatUnavailable(res); return; }
       if (body && body.id) {
         const id = String(body.id);
         // Bound the dedupe set: an id that never matches a recorded dialog (a client bug
@@ -2205,14 +2226,14 @@ async function handle(req, res) {
         if (chat.answeredUi.size >= ANSWERED_UI_MAX && !chat.answeredUi.has(id)) {
           chat.answeredUi.delete(chat.answeredUi.values().next().value);
         }
-        chat.answeredUi.add(id); // don't replay this dialog card on reconnect
         // Whitelist the fields — never spread an untrusted body over a fixed
         // `type`, or the browser could relay arbitrary RPC commands to pi.
         const reply = { type: "extension_ui_response", id };
         if (body.value !== undefined) reply.value = body.value;
         if (body.confirmed !== undefined) reply.confirmed = Boolean(body.confirmed);
         if (body.cancelled !== undefined) reply.cancelled = Boolean(body.cancelled);
-        sendTo(chat, reply);
+        if (!sendTo(chat, reply)) { respondChatUnavailable(res); return; }
+        chat.answeredUi.add(id); // Mark answered only after the reply was accepted.
       }
       res.writeHead(200, baseHeaders("application/json")).end(`{"ok":true}`);
       return;
@@ -2222,6 +2243,7 @@ async function handle(req, res) {
       const body = await readJson(req);
       const chat = chatFor(body && body.sid);
       if (!chat) { res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "That chat is no longer open." })); return; }
+      if (!chatCanReceive(chat)) { respondChatUnavailable(res); return; }
       const type = body && body.type;
       if (!type || !RPC_ALLOWED.has(type)) {
         res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "command not allowed" }));
@@ -2237,6 +2259,7 @@ async function handle(req, res) {
         ? await listAvailableModels(command => rpcCall(chat, command, 15000))
         : await rpcCall(chat, cmd, RPC_TIMEOUTS[type] || 30000);
       if (!reply) {
+        if (!chatCanReceive(chat)) { respondChatUnavailable(res); return; }
         res.writeHead(504, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "pi did not answer in time" }));
         return;
       }
@@ -2318,7 +2341,8 @@ async function handle(req, res) {
       chat.status = "handing-off";
       chat.expectedExit = child;
       broadcastChats();
-      const shutdownReply = await rpcCall(chat, shutdown.command, 10000);
+      // Only this authenticated internal shutdown may write during handoff.
+      const shutdownReply = await rpcCall(chat, shutdown.command, 10000, { allowHandoff: true });
       const exited = shutdownReply?.success ? await waitForChildExit(child, 10000) : false;
       if (!exited) {
         chat.expectedExit = null;
@@ -2458,7 +2482,7 @@ async function handle(req, res) {
       const body = await readJson(req);
       const chat = chatFor(body && body.sid);
       if (!chat) { res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "That chat is no longer open." })); return; }
-      sendTo(chat, { type: "abort" });
+      if (!sendTo(chat, { type: "abort" })) { respondChatUnavailable(res); return; }
       res.writeHead(200, baseHeaders("application/json")).end(`{"ok":true}`);
       return;
     }

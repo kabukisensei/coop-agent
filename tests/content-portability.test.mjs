@@ -237,4 +237,39 @@ await test("Pi rejection responses restore steer and follow-up drafts without a 
   }
 });
 
+await test("stopped-chat rejection restores all drafts and explains recovery", async () => {
+  for (const kind of ["prompt", "steer", "follow_up"]) {
+    const request = delayedRequest(), h = composerHarness(() => request.promise);
+    h.run('attachments = [{id:"image",name:"chart.png",mimeType:"image/png",bytes:1,data:"YQ=="}]; textAttachments = [{id:"text",name:"query.sql",bytes:8,content:"SELECT 1"}];');
+    h.get("#input").value = "Keep this request";
+    const sending = h.run(`submit("${kind}")`);
+    h.get("#input").value = "New draft";
+    const error = new Error("unavailable"); error.data = { code: "chat-unavailable" };
+    request.reject(error); await sending;
+    assert.equal(h.get("#input").value, "Keep this request\n\nNew draft");
+    assert.equal(h.run("attachments.length"), 1);
+    assert.equal(h.run("textAttachments.length"), 1);
+    assert.ok(h.notices.some(message => /agent.*stopped.*new chat/i.test(message)));
+    assert.equal(h.get("#send").disabled, false);
+  }
+});
+
+await test("RPC transport and compact toolbar preserve stopped-chat recovery details", async () => {
+  const source = readFileSync(new URL("../web/public/app.js", import.meta.url), "utf8");
+  const button = {}, notices = [];
+  const context = vm.createContext({
+    activeSid: "stopped", $: () => button, toast: message => notices.push(message),
+    fetch: async () => ({ ok: false, status: 503, json: async () => ({ code: "chat-unavailable", error: "This chat's agent has stopped. Start a new chat." }) }),
+  });
+  const start = source.indexOf("async function rpc(body)");
+  vm.runInContext(source.slice(start, source.indexOf("async function navigateTree", start)), context);
+  await assert.rejects(vm.runInContext('rpc({type:"compact"})', context), error =>
+    error.status === 503 && error.data.code === "chat-unavailable" && /Start a new chat/.test(error.message));
+  const toolbar = source.indexOf('$("#compactBtn").onclick');
+  vm.runInContext(source.slice(toolbar, source.indexOf("// --- usage meter", toolbar)), context);
+  await button.onclick();
+  assert.ok(notices.some(message => /agent.*stopped.*new chat/i.test(message)));
+  assert.equal(notices.some(message => /may still finish/.test(message)), false);
+});
+
 console.log(`content portability: ${count} tests passed`);

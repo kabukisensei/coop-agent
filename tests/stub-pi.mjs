@@ -242,6 +242,10 @@ process.stdin.on("data", (chunk) => {
           { role: "toolResult", toolCallId: "t1", content: [{ type: "text", text: "Command aborted" }], isError: true },
         ] } });
     } else if (cmd.type === "compact") {
+      if (cmd.customInstructions === "__hold_until_exit__") {
+        out({ type: "compaction_start", reason: "fixture-hold-until-exit" });
+        continue;
+      }
       const reply = { id: cmd.id, type: "response", command: "compact", success: true,
         data: { summary: "stub summary", tokensBefore: 50000, estimatedTokensAfter: 8000 } };
       // COOP_STUB_COMPACT_DELAY_MS lets a test make compact slow (an LLM round-trip), to

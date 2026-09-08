@@ -1856,7 +1856,13 @@ async function rpc(body) {
     headers: { "content-type": "application/json", "x-coop-csrf": "1" },
     body: JSON.stringify(b),
   });
-  if (!res.ok) { const e = new Error(`/rpc ${b.type} -> ${res.status}`); e.status = res.status; throw e; }
+  if (!res.ok) {
+    const error = new Error(`/rpc ${b.type} -> ${res.status}`);
+    error.status = res.status;
+    try { error.data = await res.json(); } catch { error.data = null; }
+    if (error.data?.code === "chat-unavailable") error.message = error.data.error;
+    throw error;
+  }
   return res.json();
 }
 
@@ -3439,7 +3445,7 @@ $("#compactBtn").onclick = async () => {
       toast("Compaction is taking longer than expected — it may still finish; the context gauge will update when it does.");
       setTimeout(refreshCtx, 5000);
     } else {
-      toast("Compaction failed or timed out.", "error");
+      toast(e?.data?.code === "chat-unavailable" ? e.message : "Compaction failed or timed out.", "error");
     }
   }
 };
@@ -3683,9 +3689,12 @@ async function submit(kind = "prompt") {
     } else {
       await post("/prompt", { message: outgoing, images });
     }
-  } catch {
+  } catch (error) {
     // Preserve both the failed message and anything typed or attached meanwhile.
-    toast("Couldn't send. Your message and attachments are restored before the newer draft.", "error");
+    const message = error.data?.code === "chat-unavailable"
+      ? "This chat's agent has stopped. Start a new chat or reopen the workspace, then resend your restored draft and attachments."
+      : "Couldn't send. Your message and attachments are restored before the newer draft.";
+    toast(message, "error");
     input.value = rawMessage + (rawMessage && input.value ? "\n\n" : "") + input.value;
     attachments = [...sentAttachments, ...attachments];
     textAttachments = [...sentTextAttachments, ...textAttachments];

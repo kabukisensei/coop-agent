@@ -1493,10 +1493,35 @@ t("compact returns 200 on the default path (prompt answer)", r.status === 200);
 // Remove only this fixture's ownership record and wait through its next heartbeat.
 const fixtureLeasePaths = new WorkspaceLeaseManager({ agentDir, ownerId: "probe" }).paths(p1b.cwd);
 assert.ok(existsSync(fixtureLeasePaths.ownerPath));
+const pendingCompact = fetch(base + "/rpc", {
+  method: "POST", headers: { cookie, "content-type": "application/json", "x-coop-csrf": "1" },
+  body: JSON.stringify({ sid: sid1, type: "compact", customInstructions: "__hold_until_exit__" }),
+  signal: AbortSignal.timeout(12000),
+}).then(response => response, error => ({ error }));
+await waitForChatState(sid1, state => state.events.some(line => line.includes("fixture-hold-until-exit")), "pending compaction");
 rmSync(fixtureLeasePaths.ownerPath);
 const lostReplacement = await waitForChatState(sid1, state => state.status === "exited", "replacement lease loss", 8000);
 t("losing replacement workspace ownership stops the restarted chat",
   lostReplacement.status === "exited" && !lostReplacement.events.some(line => line.includes('"__fatal"')));
+
+const stoppedCompact = await pendingCompact;
+t("ownership loss immediately settles an in-flight compact as unavailable", stoppedCompact.status === 503);
+const stoppedReply = await stoppedCompact.json();
+t("unavailable command identifies the stopped chat and recovery action", stoppedReply.code === "chat-unavailable" && /new chat/i.test(stoppedReply.error));
+for (const [path, payload] of [
+  ["/prompt", { message: "do not silently lose this draft" }],
+  ["/rpc", { type: "compact" }],
+  ["/rpc", { type: "get_available_models" }],
+  ["/ui-response", { id: "lost-dialog", confirmed: true }],
+  ["/abort", {}],
+]) {
+  const response = await fetch(base + path, {
+    method: "POST", headers: { cookie, "content-type": "application/json", "x-coop-csrf": "1" },
+    body: JSON.stringify({ sid: sid1, ...payload }), signal: AbortSignal.timeout(1500),
+  });
+  const result = await response.json();
+  t(`${path} ${payload.type || ""} rejects an exited chat promptly`, response.status === 503 && result.code === "chat-unavailable");
+}
 
 // Wait for the bridge to actually exit (release its port) before we exit, so a
 // back-to-back run can't collide with a lingering listener.

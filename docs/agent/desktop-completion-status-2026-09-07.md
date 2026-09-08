@@ -1896,3 +1896,61 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   bridge checks, both ownership regressions, delayed crash containment and the
   existing compact success/timeout checks. All local validation and native package
   handles are terminal. The current source is ready for exact-source Windows CI.
+
+
+## Prompt and command recovery after an agent exits
+
+- Reproduced a pending compact request surviving workspace ownership loss until
+  the test's 12 s request deadline, despite the chat already being exited. Before
+  this fix, a new /prompt to an exited chat was also acknowledged while sendTo
+  dropped it; /rpc could wait up to compact's 180 s timeout with no live agent.
+- Added shared live-process/writable-stdin checks. /prompt, /rpc (including model
+  refresh), /ui-response and /abort now return HTTP 503 with chat-unavailable and
+  recovery guidance when the chat cannot receive a command. rpcCall avoids stale
+  waiters on unavailable chats or synchronous send failures. Backpressure remains
+  accepted delivery. Ownership loss clears busy state and settles pending RPCs;
+  responses distinguish agent unavailability from a live agent's actual timeout.
+- Dialog responses enter replay deduplication only after send acceptance. The
+  renderer preserves structured RPC errors, explains stopped-chat recovery for
+  compact and composer actions, and restores original text/images/text files
+  alongside a newer draft. Composer/transport checks pass (17 tests), including
+  prompt, steer and follow-up recovery and real RPC/compact-handler error decoding.
+- The initial full suites caught an interaction with the handing-off state:
+  rejecting all commands blocked Coop's internal authenticated shutdown command.
+  Only the internal handoff RPC now explicitly permits that state; public command
+  routes remain blocked. Focused runtime-entrypoint tests pass all 11 checks,
+  including successful terminal move and confirmed Pi exit. Corrected full Bash
+  is active; corrected PowerShell behavioral suite completed with exit 0.
+- Refreshed disposable package:
+  /private/tmp/coop-exited-chat-app-20260907/mac-arm64/Coop Desktop.app.
+  Both managed server and renderer match source, and the original Cooptimize icon
+  matches. Package/fuses, native renderer/chat readiness, isolated probe cleanup,
+  two real writable runtime starts and post-use deep strict ad-hoc signature checks
+  pass. Native PID/group 14427 and runtime PIDs 13881/14146 are gone. Bundled SQL/DAX
+  return one/five expected findings; Data Doc produces six nodes/five edges.
+- Previous ownership commit 1f66cae passed managed CI 34187762498 on Windows job
+  101939438694 and Mac job 101939438516. Downloaded artifacts 10041156734 and
+  10041150011 confirm staged/packaged immediate writable restart and actual tool
+  work on both platforms. Windows runtime PID pairs: 756/2284 and 10112/1780;
+  Mac: 4547/4749 and 5746/5949. Regular CI 34187762489 has passed Windows logic,
+  PowerShell, Linux logic, lint and parse; Pi compatibility remains active at the
+  latest observation. These CI results precede this exited-chat slice.
+- Backup: .backups/exited_chat_20260907_234150/. Source/fixtures changed:
+  web/server.mjs, web/public/app.js, tests/stub-pi.mjs, tests/webbridge.test.mjs,
+  tests/content-portability.test.mjs. Evidence under
+  /private/tmp/coop-desktop-home-20260907-state/: exited-chat-*.log/json,
+  ownership-ci-*-evidence.zip and ownership-ci-native-summary.json. Standards:
+  runtime lifecycle, command protocol, draft/attachment preservation and repository
+  workflow. No business data, credentials or authenticated user profiles changed.
+- Full native Windows GUI/installer, real sign-in/model, clipboard/Power BI,
+  reboot/login, updater and production distribution acceptance remain required.
+  No release/parity gate is promoted. Next: finish current full regression,
+  commit/push the authorized development fix, observe exact-source native CI and
+  extend Windows native application/installer acceptance.
+
+- Corrected full Bash suite completed with observed exit 0: all 287 bridge checks
+  and 17 content-portability checks pass, including pending compact settlement,
+  prompt/RPC/model-list/dialog/abort rejection for an exited chat and preserved
+  draft/attachment recovery. Local validation and native package handles are
+  terminal. Regular CI 34187762489 for preceding commit 1f66cae also completed
+  successfully, including Windows Pi compatibility job 101939438662.
