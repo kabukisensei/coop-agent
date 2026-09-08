@@ -1,7 +1,8 @@
+import { buildNativeProbeEnvironment, probeNativeApplication } from "../desktop/scripts/verify-native-application.mjs";
 import { resolveManagedDesktopProfile } from "../desktop/src/managed-profile.mjs";
 import assert from "node:assert/strict";
 import { existsSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -349,6 +350,46 @@ await test("the offline staging command validates every release pin and never ov
     renameSync(output, relocated);
     assert.equal(inspectManagedRuntime(relocated).versions.python, "3.12.14");
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+await test("native app probes isolate Windows credentials and profile paths", async () => {
+  const env = buildNativeProbeEnvironment("C:\\probe", "challenge", "win32", { SystemRoot: "C:\\Windows", OPENAI_API_KEY: "fixture", NODE_OPTIONS: "--inspect" });
+  assert.equal(env.USERPROFILE, "C:\\probe");
+  assert.equal(env.APPDATA, "C:\\probe\\AppData\\Roaming");
+  assert.equal(env.LOCALAPPDATA, "C:\\probe\\AppData\\Local");
+  assert.equal(env.OPENAI_API_KEY, undefined);
+  assert.equal(env.NODE_OPTIONS, undefined);
+  assert.equal(env.COOP_DESKTOP_UPDATE_PROBE, "challenge");
+});
+
+await test("native readiness requires the challenge, version and clean exit; failed profiles remain", async () => {
+  for (const mode of ["healthy", "wrong-token", "wrong-version", "bad-exit", "hang", "spawn-error"]) {
+    const root = mkdtempSync(join(tmpdir(), "coop-native-probe-test-"));
+    let profile, pid;
+    try {
+      const report = await probeNativeApplication({ executable: process.execPath, version: "0.0.1", workspace: root, profileRoot: root,
+        timeoutMs: mode === "hang" ? 200 : 5000 }, {
+        spawnImpl: (_command, args, options) => {
+          profile = args[0].slice("--user-data-dir=".length);
+          const script = mode === "hang" ? "setInterval(() => {}, 1000)" :
+            `process.stdout.write(JSON.stringify({type:"desktop.update-health",token:${mode === "wrong-token" ? '"wrong"' : 'process.env.COOP_DESKTOP_UPDATE_PROBE'},version:${JSON.stringify(mode === "wrong-version" ? "0.0.2" : "0.0.1")}})+"\\n");process.exitCode=${mode === "bad-exit" ? 7 : 0};`;
+          const child = spawn(mode === "spawn-error" ? join(root, "missing-program") : process.execPath, ["-e", script], options);
+          pid = child.pid; return child;
+        },
+      });
+      assert.equal(mode, "healthy");
+      assert.equal(report.rendererAndChatReady, true);
+      assert.equal(report.mainProcessExited, true);
+      assert.equal(report.profileRemoved, true);
+    } catch (error) {
+      if (mode === "healthy") throw error;
+      assert.match(error.message, /Native application/);
+      assert.equal(existsSync(profile), true);
+    } finally {
+      if (pid) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
 });
 
 console.log(`managed runtime: ${count} tests passed`);

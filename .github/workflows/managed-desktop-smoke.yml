@@ -118,6 +118,9 @@ jobs:
           if (result.error) throw result.error;
           process.exitCode = result.status ?? 1;
           NODE
+      - name: Launch the native application and verify renderer/chat readiness
+        shell: bash
+        run: node desktop/scripts/verify-native-application.mjs --output '${{ runner.temp }}/native-application-check.json'
       - name: Preserve build and runtime evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -129,6 +132,7 @@ jobs:
             ${{ runner.temp }}/managed-runtime-check.json
             ${{ runner.temp }}/managed-package-check.json
             ${{ runner.temp }}/packaged-runtime-check.json
+            ${{ runner.temp }}/native-application-check.json
             ${{ runner.temp }}/managed-runtime/manifest.json
             ${{ runner.temp }}/managed-runtime/dependency-inventory.json
             ${{ runner.temp }}/coop-development-wheels/development-wheels.json

@@ -1954,3 +1954,55 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   draft/attachment recovery. Local validation and native package handles are
   terminal. Regular CI 34187762489 for preceding commit 1f66cae also completed
   successfully, including Windows Pi compatibility job 101939438662.
+
+
+## Native Electron application acceptance in managed CI
+
+- Added desktop/scripts/verify-native-application.mjs and a managed-build CI step
+  that launches the actual packaged Electron executable on Windows and macOS.
+  The existing native probe mode creates a BrowserWindow, waits for trusted
+  renderer startup IPC and a real selected chat, calls get_state, and stops its
+  runtime before emitting a challenge/version-matched health receipt. Production
+  updater/platform policy remains unchanged.
+- The verifier first checks the package/fuses and reads the version from ASAR.
+  It supplies a fresh workspace and disposable profile with isolated HOME,
+  USERPROFILE, APPDATA, LOCALAPPDATA and temporary paths; credentials, NODE_OPTIONS
+  and unrelated runner environment are not inherited. Windows PATH contains only
+  system directories needed by the bundled launcher. It requests no model work.
+- Success requires the matching challenge/version, zero process exit, confirmed
+  main PID exit and profile removal. POSIX probe groups are also reaped/checked;
+  Windows timeout cleanup uses the existing structured taskkill process-tree
+  helper. Failed or unconfirmed probes retain their profiles and bounded,
+  challenge-redacted stderr diagnostics. CI preserves native-application-check.json
+  for success or diagnosed launch failure. This is native renderer/chat readiness,
+  not visual acceptance, whole Windows descendant-tree evidence, or an installer test.
+- Managed-runtime tests now cover environment isolation and real child-process
+  success, wrong challenge, wrong version, nonzero exit, timeout and failed spawn;
+  all 14 tests pass locally. The pre-implementation run failed because the native
+  verifier did not exist. Existing production updater tests remain separate.
+- Ran the new CLI against
+  /private/tmp/coop-exited-chat-app-20260907/mac-arm64/Coop Desktop.app:
+  rendererAndChatReady:true, runtimeShutdownReported:true, mainProcessExited:true,
+  profileRemoved:true. PID/group 33911 are gone; post-use deep strict signature
+  verification passes. No credentials copied or model generation requested.
+- Previous commit 031f572 passed managed CI 34188459434 on Mac job 101941440595
+  and Windows job 101941440651. Its regular CI 34188459477 still had Windows
+  logic/Pi jobs active at the latest observation; no terminal result is inferred.
+- Files: desktop/scripts/verify-native-application.mjs,
+  tests/managed-runtime.test.mjs, .github/workflows/managed-desktop-smoke.yml and
+  completion/daily evidence docs. Backup: .backups/native_app_ci_20260907_235440/.
+  Evidence: /private/tmp/coop-desktop-home-20260907-state/native-app-ci-*.log/json.
+  PowerShell behavioral and Bash syntax/parity/BOM checks pass; full Bash remains
+  active and its terminal result must be recorded before commit.
+- Standards: managed package trust/fuse policy, isolated profiles, runtime lifecycle
+  and repository workflow. No user profile, business data, version, release or tag
+  changed. The Windows native launch remains unproven until the new CI step runs.
+  Full installer/install/repair, interactive sign-in/model, clipboard/Power BI,
+  accessibility, reboot/login, updater and production distribution requirements
+  remain open. Next: finish local suite, push the authorized development change,
+  inspect native Windows launch evidence, then extend installer acceptance.
+
+- Full Bash suite completed with observed exit 0 after midnight September 8,
+  including 14 managed-runtime tests and all 287 bridge checks. All local probe,
+  validation and signature handles are terminal. The native Mac package launch
+  is proven; native Windows launch still awaits the new CI step on this commit.
