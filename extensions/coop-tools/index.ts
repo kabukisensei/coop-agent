@@ -1981,7 +1981,7 @@ async function showStartMenu(pi: ExtensionAPI, ctx: any): Promise<void> {
   if (item) await item.run(pi, ctx);
 }
 
-export default function coopTools(pi: ExtensionAPI) {
+export default async function coopTools(pi: ExtensionAPI) {
   let leaseContext: ExtensionContext | undefined;
   const leaseManager = new SessionLeaseManager({
     agentDir: process.env.PI_CODING_AGENT_DIR || join(homedir(), ".coop", "agent"),
@@ -2483,4 +2483,11 @@ export default function coopTools(pi: ExtensionAPI) {
       }
     },
   });
+  if (process.platform === "win32" && process.env.COOP_DESKTOP_MANAGED_RUNTIME === "1") {
+    const { registerManagedWindowsShellTools } = await import("../../lib/windows-shell-tools.mjs");
+    // Pi's loader supplies its public SDK as a virtual module. Reuse it rather
+    // than loading a second unbundled copy of the agent and provider graph.
+    const sdk = await import("@earendil-works/pi-coding-agent");
+    registerManagedWindowsShellTools(pi, sdk);
+  }
 }

@@ -47,6 +47,7 @@ await test("inventory retains Python post releases and missing npm integrity; re
     write(join(npmPrefix, "node_modules", "example", "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
     const upstreamUsage = readFileSync(join(ROOT, "tests/fixtures/pi-better-openai-0.1.22/usage.ts"), "utf8");
     write(join(npmPrefix, "node_modules/pi-better-openai/src/usage.ts"), upstreamUsage);
+    write(join(npmPrefix, "node_modules/@juicesharp/rpiv-ask-user-question/ask-user-question.ts"), readFileSync(join(ROOT, "tests/fixtures/rpiv-ask-user-question-1.20.0/ask-user-question.ts"), "utf8"));
     write(join(npmPrefix, "node_modules", ".package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: { "node_modules/example": { version: "1.0.0", resolved: "https://registry.npmjs.org/example/-/example-1.0.0.tgz" } } }));
     write(join(pythonRoot, "example-2.9.0.post0.dist-info", "METADATA"), "Name: example\nVersion: 2.9.0.post0\n");
     const build = () => buildDependencyInventory({ npmPrefix, pythonTools: [{ name: "example", root: pythonRoot }], target });

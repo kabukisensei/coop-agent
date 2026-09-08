@@ -8,6 +8,7 @@ import { buildDependencyInventory, dependencyInventoryDigest, serializeDependenc
 
 import { ensureMcpIsolationCompatibility } from "../lib/mcp-isolation-compat.mjs";
 import { ensureUsageCompatibility } from "../lib/openai-usage-compat.mjs";
+import { ensureQuestionnaireCompatibility } from "../lib/questionnaire-compat.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const COOP_FILES = ["bin", "config", "docs", "extensions", "lib", "prompts", "scripts", "skills", "themes", "vibes", "web", "LICENSE", "VERSION"];
@@ -304,7 +305,7 @@ function stage() {
     for (const name of ["managed-runtime.mjs", "coop-launcher.mjs", "dependency-inventory.mjs", "development-wheels.mjs"]) cpSync(join(REPO, "desktop/src", name), join(inspectionRoot, name));
     copyTree(args.npmPrefix, join(staging, "npm"));
     const usageCorrection = ensureUsageCompatibility(join(staging, "npm/node_modules/pi-better-openai"));
-    writeFileSync(join(staging, "coop-compatibility.json"), JSON.stringify([usageCorrection, ensureMcpIsolationCompatibility(join(staging, "npm/node_modules/pi-mcp-adapter"))], null, 2) + "\n");
+    writeFileSync(join(staging, "coop-compatibility.json"), JSON.stringify([usageCorrection, ensureMcpIsolationCompatibility(join(staging, "npm/node_modules/pi-mcp-adapter")), ensureQuestionnaireCompatibility(join(staging, "npm/node_modules/@juicesharp/rpiv-ask-user-question"))], null, 2) + "\n");
     copyTree(args.pythonRoot, join(staging, "python", "runtime"));
     const stagedTools = args.pythonTools.map((tool) => {
       const destination = `python/tools/${tool.name}/site-packages`;

@@ -93,6 +93,10 @@ jobs:
       - name: Verify real runtime, exact capabilities, isolated state, and cleanup
         shell: bash
         run: node scripts/verify-managed-runtime.mjs --bundle '${{ runner.temp }}/managed-runtime' --workspace '${{ github.workspace }}' --agent '${{ runner.temp }}/coop-managed-agent' | tee '${{ runner.temp }}/managed-runtime-check.json'
+      - name: Verify managed Windows shell completion, Stop, and timeout
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node scripts/verify-windows-shell-tools.mjs '${{ runner.temp }}/managed-runtime' '${{ runner.temp }}' | tee '${{ runner.temp }}/windows-shell-tools-check.json'
       - name: Package unsigned native development app
         if: runner.os == 'macOS'
         shell: bash
@@ -176,6 +180,7 @@ jobs:
           if-no-files-found: warn
           path: |
             ${{ runner.temp }}/windows-shell-diagnostics.json
+            ${{ runner.temp }}/windows-shell-tools-check.json
             ${{ runner.temp }}/managed-runtime-check.json
             ${{ runner.temp }}/managed-package-check.json
             ${{ runner.temp }}/packaged-runtime-check.json

@@ -197,6 +197,14 @@ Head 'Provider usage window compatibility tests'
 if ($LASTEXITCODE -eq 0) { Ok 'Provider usage window compatibility passes' }
 else { Ko 'Provider usage window compatibility failed' }
 
+Head 'RPC questionnaire behavior and pinned package compatibility'
+& node (Join-Path $root 'tests\rpc-questionnaire.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'RPC questionnaire behavior passes' }
+else { Ko 'RPC questionnaire behavior failed' }
+& node (Join-Path $root 'tests\questionnaire-compat.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Questionnaire package compatibility passes' }
+else { Ko 'Questionnaire package compatibility failed' }
+
 Head 'Session tree projection tests'
 & node (Join-Path $root 'tests\session-tree-model.test.mjs')
 if ($LASTEXITCODE -eq 0) { Ok 'Session tree projection contracts pass' }
