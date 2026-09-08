@@ -6,6 +6,7 @@ import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { WorkspaceLeaseManager } from "../lib/workspace-isolation.mjs";
 import { renderKnowledgeMarkdown } from "../lib/knowledge-service.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -129,7 +130,7 @@ writeFileSync(join(workSessDir, WORK_SESSION), [
   JSON.stringify({ type: "message", id: "wa1", parentId: "wu1", timestamp: "2026-07-02T00:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "work answer" }] } }),
 ].join("\n") + "\n");
 
-const spec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: agentDir, OPENAI_API_KEY: "fixture-launch-spec-key" } });
+const spec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: agentDir, OPENAI_API_KEY: "fixture-launch-spec-key", COOP_STUB_CRASH_DELAY_MS: "750" } });
 const server = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT)], {
   // COOP_WEB_MAX_CHATS=3 gives the multi-chat cap test a deterministic, cheap bound;
   // it affects nothing earlier in the file (all pre-multi-chat tests use one chat).
@@ -430,6 +431,21 @@ const post = (path, body) =>
     headers: { cookie, "content-type": "application/json", "x-coop-csrf": "1" },
     body: JSON.stringify(body),
   });
+
+async function waitForChatState(sid, predicate, label, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  let state;
+  while (Date.now() < deadline) {
+    const response = await fetch(base + `/events-poll?sid=${sid}&since=0`, {
+      headers: { cookie }, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+    });
+    assert.equal(response.status, 200, `${label}: polling failed`);
+    state = await response.json();
+    if (predicate(state)) return state;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.fail(`${label}: timed out; status=${state?.status}; recent events=${JSON.stringify(state?.events?.slice(-4))}`);
+}
 
 const proposedKnowledge = knowledgeRecord({
   id: "knowledge.sql.bridge-proposal.001",
@@ -1277,6 +1293,9 @@ r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie }
 const p1b = await r.json();
 t("each chat has its own cwd (sid2=workDir, sid1=cwd, and they differ)",
   p2b.cwd === resolvePath(workDir) && p1b.cwd === resolvePath(process.cwd()) && p1b.cwd !== p2b.cwd);
+const reacquiredAccess = await fetch(base + `/workspace/access?sid=${sid2}`, { headers: { cookie } }).then(response => response.json());
+t("restarting the same folder reacquires an override whose original owner moved away",
+  reacquiredAccess.access?.mode === "write" && reacquiredAccess.access.leaseId !== d2.workspaceAccess.leaseId);
 r = await fetch(base + `/files?sid=${sid2}`, { headers: { cookie } });
 const files2 = await r.json();
 t("/files?sid=sid2 lists workDir's files", (files2.tree || []).some((n) => n.name === "notes.md"));
@@ -1358,17 +1377,17 @@ events = await closeWatch;
 t("closing a live chat emits NO spurious __fatal for it", !events.some((e) => e.sid === sid3 && e.ev && e.ev.type === "__fatal"));
 
 // 7. Crash containment: crash chat 2; the bridge stays up; chat 1 still answers.
-await post("/prompt", { sid: sid2, message: "__crash__" });
-await new Promise((res) => setTimeout(res, 500));
+// The fixture deliberately delays this crash beyond the former 500 ms sleep.
+// Observe process completion, then still require the exact fatal exit code.
+r = await post("/prompt", { sid: sid2, message: "__crash__" });
+assert.equal(r.status, 200, "crash prompt must be accepted");
+const pcrash = await waitForChatState(sid2, state => state.status === "exited", "chat 2 crash");
 t("the bridge process is still alive after a chat crash", server.exitCode === null);
-r = await fetch(base + `/events-poll?sid=${sid2}&since=0`, { headers: { cookie } });
-const pcrash = await r.json();
 t("chat 2 reports status:exited + a recorded __fatal(code 3)",
   pcrash.status === "exited" && pcrash.events.some((l) => l.includes('"__fatal"') && l.includes('"code":3')));
-await post("/prompt", { sid: sid1, message: "still-alive" });
-await new Promise((res) => setTimeout(res, 400));
-r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
-const p1c = await r.json();
+r = await post("/prompt", { sid: sid1, message: "still-alive" });
+assert.equal(r.status, 200, "surviving chat must accept its prompt");
+const p1c = await waitForChatState(sid1, state => state.events.some(line => line.includes("polo:still-alive")), "surviving chat reply");
 t("chat 1 still answers after chat 2 crashed", p1c.events.some((l) => l.includes("polo:still-alive")));
 
 // 8. Close targets the EXPLICIT sid — the close-the-wrong-chat regression guard.
@@ -1376,10 +1395,9 @@ r = await post("/chat-close", { sid: sid2 });
 t("/chat-close sid2 -> 200", r.status === 200);
 r = await fetch(base + `/events-poll?sid=${sid2}&since=0`, { headers: { cookie } });
 t("polling the closed sid2 -> 400", r.status === 400);
-await post("/prompt", { sid: sid1, message: "after-close" });
-await new Promise((res) => setTimeout(res, 400));
-r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
-const p1d = await r.json();
+r = await post("/prompt", { sid: sid1, message: "after-close" });
+assert.equal(r.status, 200, "remaining chat must accept its prompt after close");
+const p1d = await waitForChatState(sid1, state => state.events.some(line => line.includes("polo:after-close")), "remaining chat reply");
 t("chat 1 still answers after chat 2 was closed (explicit-sid close guard)", p1d.events.some((l) => l.includes("polo:after-close")));
 
 // 9. RPC scoping: new_session resets ONLY chat 1's history.
@@ -1470,6 +1488,15 @@ t("compact returns 200 on the default path (prompt answer)", r.status === 200);
   t("a non-compact command is unaffected by the compact timeout override (200)", (await rpc3("get_state")).status === 200);
   await new Promise((resolve) => { const done = setTimeout(resolve, 2000); srv3.on("exit", () => { clearTimeout(done); resolve(); }); srv3.kill(); });
 }
+
+// A replacement lease must retain the loss callback installed for fresh chats.
+// Remove only this fixture's ownership record and wait through its next heartbeat.
+const fixtureLeasePaths = new WorkspaceLeaseManager({ agentDir, ownerId: "probe" }).paths(p1b.cwd);
+assert.ok(existsSync(fixtureLeasePaths.ownerPath));
+rmSync(fixtureLeasePaths.ownerPath);
+const lostReplacement = await waitForChatState(sid1, state => state.status === "exited", "replacement lease loss", 8000);
+t("losing replacement workspace ownership stops the restarted chat",
+  lostReplacement.status === "exited" && !lostReplacement.events.some(line => line.includes('"__fatal"')));
 
 // Wait for the bridge to actually exit (release its port) before we exit, so a
 // back-to-back run can't collide with a lingering listener.

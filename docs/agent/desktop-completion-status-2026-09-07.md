@@ -1827,3 +1827,72 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
 - Full Bash suite completed with observed exit 0. All local validation, native
   package, restart and signature handles are terminal. The new source is ready
   for native Windows graceful-restart validation; that result remains pending.
+
+
+## Workspace restart ownership and loss handling
+
+- Investigated the intermittent Windows chat-crash assertion. A deliberately
+  delayed 750 ms stub crash reproduced the fixed-500 ms test failure. Bounded
+  polling still failed, exposing stale ownership: a shared-folder override lost
+  its primary owner's marker when that owner moved away, but same-folder restart
+  reused the invalid lease. Restart now checks ownership and acquires a fresh
+  normal writer lease when required; conflicting ownership still rejects access.
+- A second regression removed only the fixture's replacement owner record. Before
+  the fix, the restarted chat remained running beyond the next heartbeat (8 s
+  bounded observation). Fresh and restarted chats now use the same lease factory,
+  preserving the stop-on-loss callback after every workspace change.
+- Bridge tests check lease reacquisition, delayed fatal code 3, surviving-chat
+  replies, and stop-on-loss for replacement leases. Polls have firm deadlines;
+  test timing no longer assumes process exit within half a second. Production
+  files: web/server.mjs; fixtures: tests/webbridge.test.mjs, tests/stub-pi.mjs.
+- Native CI 34186222160 at 7ec1b62 completed successfully on Windows and arm64 Mac.
+  Downloaded artifacts 10040644947/10040634540 prove staged and packaged runtime
+  shutdownConfirmed:true and immediateWritableRestart:true. Windows runtime PID
+  pairs: 8616/7352 and 3920/8244; Mac pairs: 4485/4741 and 6071/6273. All four
+  receipts include expected SQL/DAX findings and Data Doc graph results. This
+  evidence precedes the workspace ownership changes in this slice.
+- Refreshed disposable Mac package at
+  /private/tmp/coop-workspace-restart-app-20260907/mac-arm64/Coop Desktop.app.
+  Current managed server and original Cooptimize icon match source. Package/fuse
+  checks, native renderer/chat readiness, probe-profile cleanup, and post-use deep
+  strict ad-hoc signature verification pass. Native PID/group 65996 are gone.
+  Real bundled runtime PIDs 65563/65709 are gone after two writable starts; actual
+  SQL/DAX tools return one/five expected findings and Data Doc six nodes/five edges.
+  No credentials were copied and no model generation was requested by these probes.
+- PowerShell behavioral, Bash syntax/parity/BOM, Node syntax and diff whitespace
+  checks pass. Full Bash remains active and its terminal result will be appended
+  before commit. Earlier ownership-only full Bash passed all 279 bridge checks;
+  that result does not cover the newly added loss-callback assertion.
+- Backups: .backups/bridge_crash_wait_20260907_231458/ and
+  .backups/workspace_lease_callback_20260907_232802/. Evidence root:
+  /private/tmp/coop-desktop-home-20260907-state/; bridge-crash-*.log,
+  lease-callback-*.log/json, workspace-restart-native-evidence.json and
+  graceful-ci-native-summary.json. Standards: repository workflow/guardrails,
+  workspace isolation and runtime ownership contracts; no business source changed.
+- Full native Windows GUI, installer, sign-in/model, clipboard/Power BI, reboot,
+  updater and production distribution acceptance remain open. No release gate or
+  parity row is promoted from these development checks. PR #48 remains draft.
+  Next: complete local regression, commit/push the authorized development fix,
+  then observe exact-source Windows CI and extend native installer/GUI evidence.
+
+- Follow-up CI observation: regular run 34186222161 at 7ec1b62 completed with
+  success, including Windows Pi compatibility job 101934970552 and Windows Git
+  Bash logic job 101934970643. These are terminal results for the preceding commit;
+  the ownership/loss-callback changes still require their own native CI run.
+
+- Test-order correction: the first loss-callback run proved the new assertion
+  but intentionally stopped sid1 before a later compact test that still needs it.
+  Cancelled that invalid run and its observed descendant processes (61409, 82679,
+  82682), moved the destructive fixture assertion after all existing chat work,
+  and started a fresh full suite in lease-callback-ordered-final-bash.log. This
+  cancellation was due to a diagnosed fixture dependency, not an observation timeout.
+- Follow-up runtime issue identified for the next slice: /rpc on an already exited
+  chat still creates a waiter, while sendTo drops the command; compact can therefore
+  wait its 180 s ceiling. /prompt also currently acknowledges a dropped command.
+  Add explicit unavailable-chat responses and settle in-flight waiters on ownership
+  loss, with renderer recovery behavior checked, before claiming complete crash UX.
+
+- Corrected full Bash suite completed with observed exit 0, including all 280
+  bridge checks, both ownership regressions, delayed crash containment and the
+  existing compact success/timeout checks. All local validation and native package
+  handles are terminal. The current source is ready for exact-source Windows CI.

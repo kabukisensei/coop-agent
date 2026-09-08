@@ -289,11 +289,8 @@ function closeRuntimeEventClients(chat) {
   }
 }
 
-async function makeChat(cwd, extraArgs = [], accessRequest = { mode: "write", approved: false }) {
-  const sid = `c${++chatSeq}`;
-  const repository = await inspectWorkspace(cwd);
-  if (shutdownRequested) throw new Error("Coop Runtime is shutting down.");
-  const workspaceLease = new WorkspaceLeaseManager({
+function createChatWorkspaceLease(sid) {
+  return new WorkspaceLeaseManager({
     agentDir: AGENT_DIR,
     ownerId: sid,
     clientInterface: RUNTIME_MODE ? "desktop-runtime" : "web",
@@ -308,6 +305,13 @@ async function makeChat(cwd, extraArgs = [], accessRequest = { mode: "write", ap
       }
     },
   });
+}
+
+async function makeChat(cwd, extraArgs = [], accessRequest = { mode: "write", approved: false }) {
+  const sid = `c${++chatSeq}`;
+  const repository = await inspectWorkspace(cwd);
+  if (shutdownRequested) throw new Error("Coop Runtime is shutting down.");
+  const workspaceLease = createChatWorkspaceLease(sid);
   const leaseResult = workspaceLease.acquire(cwd, {
     mode: accessRequest.mode,
     approved: accessRequest.approved === true,
@@ -662,12 +666,10 @@ async function restartChat(chat, newCwd, extraArgs = []) {
   const repository = await inspectWorkspace(newCwd);
   if (shutdownRequested) throw new Error("Coop Runtime is shutting down.");
   const targetOwnershipPath = repository.repositoryRoot || repository.workspacePath || newCwd;
-  if (!samePath(chat.workspaceAccess?.workspacePath, targetOwnershipPath)) {
-    nextLease = new WorkspaceLeaseManager({
-      agentDir: AGENT_DIR,
-      ownerId: chat.sid,
-      clientInterface: RUNTIME_MODE ? "desktop-runtime" : "web",
-    });
+  // The pathname can remain the same while an override loses its original
+  // owner's lease. Revalidate before carrying ownership into a fresh Pi process.
+  if (!samePath(chat.workspaceAccess?.workspacePath, targetOwnershipPath) || !chat.workspaceLease?.heartbeat()) {
+    nextLease = createChatWorkspaceLease(chat.sid);
     const nextMode = chat.workspaceAccess?.mode === "read-only" ? "read-only" : "write";
     const result = nextLease.acquire(newCwd, { mode: nextMode, repository });
     if (!result.ok) {

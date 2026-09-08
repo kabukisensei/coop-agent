@@ -44,7 +44,12 @@ process.stdin.on("data", (chunk) => {
       continue;
     }
     // Simulate a pi crash — the bridge must CONTAIN it to this chat (M5), not exit.
-    if (cmd.type === "prompt" && cmd.message === "__crash__") process.exit(3);
+    if (cmd.type === "prompt" && cmd.message === "__crash__") {
+      const delay = Math.max(0, Math.min(5000, Number(process.env.COOP_STUB_CRASH_DELAY_MS) || 0));
+      if (!delay) process.exit(3);
+      setTimeout(() => process.exit(3), delay);
+      continue;
+    }
     if (cmd.type === "prompt" && cmd.message === "__domain_tool__") {
       out({ id: cmd.id, type: "response", command: "prompt", success: true });
       out({ type: "tool_execution_start", toolCallId: "domain-sql-1", toolName: "sql_review", args: { paths: ["sample.sql"] } });
