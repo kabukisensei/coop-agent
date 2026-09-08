@@ -45,10 +45,19 @@ export function packagedPaths(root, platform = process.platform, arch = process.
 }
 
 export async function verifyManagedPackage({ root, platform = process.platform, arch = process.arch } = {}) {
+  return verifyManagedContents(packagedPaths(resolve(root), platform, arch), { platform, arch });
+}
+
+export async function verifyManagedInstallation({ directory, platform = process.platform, arch = process.arch } = {}) {
+  if (platform !== "win32" || arch !== "x64") fail("Installed-package verification requires Windows x64.");
+  const installed = resolve(directory);
+  return verifyManagedContents({ fuseTarget: join(installed, "Coop Desktop.exe"), resources: join(installed, "resources") }, { platform, arch });
+}
+
+async function verifyManagedContents(paths, { platform, arch }) {
   // Build dependencies are needed only when inspecting an actual package.
   const { FuseV1Options, getCurrentFuseWire } = await import("@electron/fuses");
   const EXPECTED = expectedFuses(FuseV1Options);
-  const paths = packagedPaths(resolve(root), platform, arch);
   for (const [label, path] of [["Electron target", paths.fuseTarget], ["resources directory", paths.resources]]) {
     if (!existsSync(path)) fail(`Packaged Desktop ${label} is missing.`);
   }

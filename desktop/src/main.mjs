@@ -631,7 +631,11 @@ else {
     mainWindow.focus();
   });
   app.whenReady().then(createWindow).catch((error) => {
-    if (updateProbeToken) { app.quit(); return; }
+    if (updateProbeToken) {
+      const message = String(error?.message || "Unknown startup error").replace(/[a-f0-9]{32,64}/gi, "[redacted]").slice(0, 2048);
+      process.stderr.write(JSON.stringify({ type: "desktop.update-health-error", message }) + "\n");
+      app.quit(); return;
+    }
     if (error.code === "PROFILE_SELECTION_CANCELLED") { app.quit(); return; }
     dialog.showErrorBox("Coop Desktop could not start", `${error.message}\n\nRun coop doctor from an existing Coop installation for detailed prerequisite checks.`);
     app.quit();

@@ -121,6 +121,18 @@ jobs:
       - name: Launch the native application and verify renderer/chat readiness
         shell: bash
         run: node desktop/scripts/verify-native-application.mjs --output '${{ runner.temp }}/native-application-check.json'
+      - name: Build unsigned Windows development installer
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          COOP_DESKTOP_MANAGED_RUNTIME_DIR: ${{ runner.temp }}/managed-runtime
+        run: npm run package:installer:win --prefix desktop
+      - name: Verify Windows install, reinstall repair, and uninstall
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          COOP_DESKTOP_DISPOSABLE_INSTALL_TEST: '1'
+        run: node desktop/scripts/verify-windows-installer.mjs --output '${{ runner.temp }}/windows-installer-check.json'
       - name: Preserve build and runtime evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -133,6 +145,7 @@ jobs:
             ${{ runner.temp }}/managed-package-check.json
             ${{ runner.temp }}/packaged-runtime-check.json
             ${{ runner.temp }}/native-application-check.json
+            ${{ runner.temp }}/windows-installer-check.json
             ${{ runner.temp }}/managed-runtime/manifest.json
             ${{ runner.temp }}/managed-runtime/dependency-inventory.json
             ${{ runner.temp }}/coop-development-wheels/development-wheels.json

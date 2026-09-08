@@ -20,6 +20,8 @@ export function buildNativeProbeEnvironment(profile, token, platform = process.p
   };
   if (platform === "win32") {
     if (!source.SystemRoot || !win32.isAbsolute(source.SystemRoot)) throw new Error("Windows SystemRoot is required for the native probe.");
+    env.OS = "Windows_NT";
+    env.PATHEXT = ".COM;.EXE;.BAT;.CMD";
     env.SystemRoot = source.SystemRoot;
     env.WINDIR = source.SystemRoot;
     env.APPDATA = win32.join(profile, "AppData", "Roaming");
@@ -99,6 +101,7 @@ export async function probeNativeApplication({ executable, version, workspace, p
     await writeFile(join(profile.path, "native-probe-stderr.log"), diagnostics, { mode: 0o600 });
     const error = new Error(`Native application did not confirm renderer/chat readiness and clean exit; profile retained at ${profile.path}.`);
     error.diagnostics = diagnostics;
+    error.observation = { ready, exitCode: result?.code ?? null, signal: result?.signal ?? null, mainPid: child.pid ?? null, stdoutBytes: outputBytes, mainProcessExited: processGone(child.pid) };
     throw error;
   }
   const profileRemoved = await profile.discard();
@@ -126,7 +129,7 @@ async function main(argv) {
   let result;
   try { result = await probeNativeApplication({ executable, version, workspace, profileRoot: stateRoot }); }
   catch (error) {
-    if (output) await writeFile(output, `${JSON.stringify({ ok: false, platform: process.platform, version, error: error.message, diagnostics: error.diagnostics || "" }, null, 2)}\n`);
+    if (output) await writeFile(output, `${JSON.stringify({ ok: false, platform: process.platform, version, error: error.message, diagnostics: error.diagnostics || "", observation: error.observation || null }, null, 2)}\n`);
     throw error;
   }
   if (output) await writeFile(output, `${JSON.stringify(result, null, 2)}\n`);

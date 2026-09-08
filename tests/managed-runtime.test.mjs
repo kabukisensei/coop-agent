@@ -1,3 +1,4 @@
+import { assertDisposableInstallerHost, buildNsisInvocation } from "../desktop/scripts/verify-windows-installer.mjs";
 import { buildNativeProbeEnvironment, probeNativeApplication } from "../desktop/scripts/verify-native-application.mjs";
 import { resolveManagedDesktopProfile } from "../desktop/src/managed-profile.mjs";
 import assert from "node:assert/strict";
@@ -354,6 +355,8 @@ await test("the offline staging command validates every release pin and never ov
 
 await test("native app probes isolate Windows credentials and profile paths", async () => {
   const env = buildNativeProbeEnvironment("C:\\probe", "challenge", "win32", { SystemRoot: "C:\\Windows", OPENAI_API_KEY: "fixture", NODE_OPTIONS: "--inspect" });
+  assert.equal(env.OS, "Windows_NT");
+  assert.equal(env.PATHEXT, ".COM;.EXE;.BAT;.CMD");
   assert.equal(env.USERPROFILE, "C:\\probe");
   assert.equal(env.APPDATA, "C:\\probe\\AppData\\Roaming");
   assert.equal(env.LOCALAPPDATA, "C:\\probe\\AppData\\Local");
@@ -384,11 +387,35 @@ await test("native readiness requires the challenge, version and clean exit; fai
     } catch (error) {
       if (mode === "healthy") throw error;
       assert.match(error.message, /Native application/);
+      assert.equal(typeof error.observation.stdoutBytes, "number");
+      assert.equal(error.observation.ready, mode === "bad-exit");
       assert.equal(existsSync(profile), true);
     } finally {
       if (pid) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
       rmSync(root, { recursive: true, force: true });
     }
+  }
+});
+
+await test("installer mutation requires an explicitly enabled disposable Windows runner", async () => {
+  const allowed = { GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted", COOP_DESKTOP_DISPOSABLE_INSTALL_TEST: "1" };
+  assert.doesNotThrow(() => assertDisposableInstallerHost(allowed, "win32"));
+  for (const env of [{}, {...allowed, RUNNER_ENVIRONMENT:"self-hosted"}, {...allowed, COOP_DESKTOP_DISPOSABLE_INSTALL_TEST:"0"}]) {
+    assert.throws(() => assertDisposableInstallerHost(env, "win32"), /disposable/);
+  }
+  assert.throws(() => assertDisposableInstallerHost(allowed, "darwin"), /Windows/);
+});
+
+await test("NSIS preserves its unquoted final path argument and never enables elevation or CRC bypass", async () => {
+  const executable = "C:\\build files\\setup.exe", directory = "C:\\test files\\Coop Desktop";
+  const install = buildNsisInvocation(executable, directory);
+  assert.deepEqual(install.args, ["/S", "/currentuser", "/D=" + directory]);
+  assert.equal(install.options.windowsVerbatimArguments, true);
+  assert.equal(install.options.shell, false);
+  const uninstall = buildNsisInvocation(executable, directory, { uninstall: true });
+  assert.deepEqual(uninstall.args, ["/S", "/currentuser", "_?=" + directory]);
+  for (const path of ["relative", 'C:\\bad"path', "C:\\bad\npath"]) {
+    assert.throws(() => buildNsisInvocation(executable, path), /path/);
   }
 });
 
