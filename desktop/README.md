@@ -204,6 +204,13 @@ checks two consecutive writable starts with the same workspace/profile and emits
 success only after both runtimes have stopped. Native CI must verify this behavior
 on each target; it does not establish reboot/login or installer acceptance.
 
+When concurrent workspace writes were explicitly approved, closing the original
+session preserves the other writers' leases. A normal writer cannot recover the
+checkout until every recorded owner has expired and exited, or the original
+owner explicitly released and all approved writers have removed their leases.
+The last approved writer can then restart immediately with normal ownership.
+Malformed or mismatched override records prevent automatic recovery.
+
 A packaged app uses `resources/managed-runtime` when present. It validates the
 bundle contract, target, jailed paths, and Coop/Pi/Node/Python version agreement
 before launch. A present but invalid bundle fails closed; it never falls back to

@@ -1294,8 +1294,8 @@ const p1b = await r.json();
 t("each chat has its own cwd (sid2=workDir, sid1=cwd, and they differ)",
   p2b.cwd === resolvePath(workDir) && p1b.cwd === resolvePath(process.cwd()) && p1b.cwd !== p2b.cwd);
 const reacquiredAccess = await fetch(base + `/workspace/access?sid=${sid2}`, { headers: { cookie } }).then(response => response.json());
-t("restarting the same folder reacquires an override whose original owner moved away",
-  reacquiredAccess.access?.mode === "write" && reacquiredAccess.access.leaseId !== d2.workspaceAccess.leaseId);
+t("restarting the same folder retains the approved writer's live lease after its original owner moves away",
+  reacquiredAccess.access?.mode === "override" && reacquiredAccess.access.leaseId === d2.workspaceAccess.leaseId);
 r = await fetch(base + `/files?sid=${sid2}`, { headers: { cookie } });
 const files2 = await r.json();
 t("/files?sid=sid2 lists workDir's files", (files2.tree || []).some((n) => n.name === "notes.md"));

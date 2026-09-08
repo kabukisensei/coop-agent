@@ -86,6 +86,52 @@ await test("read-only attachment takes no writer lease and override requires exp
   }
 });
 
+await test("an approved second writer survives primary release and blocks recovery while alive", () => {
+  const f = makeRoot();
+  let at = Date.parse("2026-09-07T12:00:00Z");
+  const alive = new Set([101, 202]);
+  const options = { agentDir: f.agentDir, now: () => new Date(at), processAlive: pid => alive.has(pid), heartbeatMs: 1000, staleMs: 2000 };
+  const first = new WorkspaceLeaseManager({ ...options, ownerId: "primary", pid: 101 });
+  const second = new WorkspaceLeaseManager({ ...options, ownerId: "approved", pid: 202 });
+  const next = new WorkspaceLeaseManager({ ...options, ownerId: "next", pid: 303 });
+  try {
+    assert.equal(first.acquire(f.repo).ok, true);
+    assert.equal(second.acquire(f.repo, { mode: "override", approved: true }).ok, true);
+    assert.equal(first.release(), true);
+    assert.equal(second.heartbeat(), true, "primary departure must retain the second writer's lease");
+    alive.delete(101);
+    at += 3000;
+    assert.equal(next.acquire(f.repo).ok, false, "a live override still owns the checkout even after primary expiry");
+    assert.equal(second.heartbeat(), true);
+    assert.equal(second.release(), true);
+    assert.equal(next.acquire(f.repo).ok, true, "released group is recoverable after the final writer leaves");
+  } finally {
+    first.release(); second.release(); next.release();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+await test("the last approved writer can immediately restart after the original writer leaves", () => {
+  const f = makeRoot();
+  const options = { agentDir: f.agentDir, processAlive: () => true, now: () => new Date("2026-09-08T12:00:00Z") };
+  const first = new WorkspaceLeaseManager({ ...options, ownerId: "primary", pid: 101 });
+  const second = new WorkspaceLeaseManager({ ...options, ownerId: "approved", pid: 202 });
+  try {
+    assert.equal(first.acquire(f.repo).ok, true);
+    const original = second.acquire(f.repo, { mode: "override", approved: true });
+    assert.equal(original.access.mode, "override");
+    assert.equal(first.release(), true);
+    assert.equal(second.heartbeat(), true);
+    const restarted = second.acquire(f.repo, { mode: "override", approved: true });
+    assert.equal(restarted.ok, true);
+    assert.equal(restarted.access.mode, "write");
+    assert.notEqual(restarted.access.leaseId, original.access.leaseId);
+  } finally {
+    first.release(); second.release();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 await test("stale writer recovery requires both an expired heartbeat and a proven-dead process", () => {
   const f = makeRoot();
   try {
@@ -115,6 +161,64 @@ await test("stale writer recovery requires both an expired heartbeat and a prove
     assert.equal(second.release(), true);
   } finally {
     rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+await test("stale primary recovery waits for every approved writer to expire and exit", () => {
+  const f = makeRoot();
+  let at = Date.parse("2026-09-08T12:00:00Z");
+  const alive = new Set([101, 202]);
+  const options = { agentDir: f.agentDir, now: () => new Date(at), processAlive: pid => alive.has(pid), heartbeatMs: 1000, staleMs: 2000 };
+  const primary = new WorkspaceLeaseManager({ ...options, ownerId: "primary", pid: 101 });
+  const override = new WorkspaceLeaseManager({ ...options, ownerId: "approved", pid: 202 });
+  const next = new WorkspaceLeaseManager({ ...options, ownerId: "next", pid: 303 });
+  try {
+    assert.equal(primary.acquire(f.repo).ok, true);
+    assert.equal(override.acquire(f.repo, { mode: "override", approved: true }).ok, true);
+    primary.stopHeartbeat(); override.stopHeartbeat();
+    alive.delete(101);
+    at += 3000;
+    assert.equal(next.acquire(f.repo).ok, false, "a stale but live override prevents recovery");
+    assert.equal(override.heartbeat(), true);
+    alive.delete(202);
+    assert.equal(next.acquire(f.repo).ok, false, "a dead override with a fresh heartbeat still prevents recovery");
+    at += 3000;
+    assert.equal(next.acquire(f.repo).ok, true);
+    assert.equal(primary.heartbeat(), false);
+    assert.equal(override.heartbeat(), false);
+  } finally {
+    primary.release(); override.release(); next.release();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+await test("uncertain override records cannot authorize recovery or erase ownership", () => {
+  for (const corruption of ["invalid-json", "wrong-workspace", "wrong-primary", "invalid-heartbeat"]) {
+    const f = makeRoot();
+    let at = Date.parse("2026-09-08T12:00:00Z");
+    const options = { agentDir: f.agentDir, now: () => new Date(at), processAlive: () => false, heartbeatMs: 1000, staleMs: 2000 };
+    const primary = new WorkspaceLeaseManager({ ...options, ownerId: "primary", pid: 101 });
+    const override = new WorkspaceLeaseManager({ ...options, ownerId: "approved", pid: 202 });
+    const next = new WorkspaceLeaseManager({ ...options, ownerId: "next", pid: 303 });
+    try {
+      assert.equal(primary.acquire(f.repo).ok, true);
+      assert.equal(override.acquire(f.repo, { mode: "override", approved: true }).ok, true);
+      primary.stopHeartbeat(); override.stopHeartbeat();
+      const path = override.active.overridePath;
+      const record = JSON.parse(readFileSync(path, "utf8"));
+      if (corruption === "wrong-workspace") record.workspacePath = join(f.root, "another-checkout");
+      if (corruption === "wrong-primary") record.overridesLeaseId = "another-primary";
+      if (corruption === "invalid-heartbeat") record.lastHeartbeatAt = "unknown";
+      const bytes = corruption === "invalid-json" ? "{broken" : JSON.stringify(record);
+      writeFileSync(path, bytes);
+      assert.equal(primary.release(), true);
+      at += 3000;
+      assert.equal(next.acquire(f.repo).ok, false, corruption);
+      assert.equal(readFileSync(path, "utf8"), bytes, "uncertain ownership must remain available for inspection");
+    } finally {
+      primary.release(); override.release(); next.release();
+      rmSync(f.root, { recursive: true, force: true });
+    }
   }
 });
 

@@ -2660,3 +2660,14 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   install/update job is actually requested. Local regression exercises actual
   helper loading, both backend choices and one-time discovery. Native isolated
   runtime acceptance must confirm whether this removes the remaining stall.
+
+
+## September 8 — approved writer release and restart
+
+The shared lease manager now preserves approved concurrent writers when their
+original owner leaves. Stale recovery considers every override; explicit release
+with no remaining overrides permits immediate restart. Expanded tests preserve
+malformed/mismatched records and reject takeover, and a real two-process lifecycle
+check passes on Mac. This does not establish every concurrent interleaving, native
+Windows installed lifecycle, or recovery across reboot/login. Native CI for the
+preceding startup fixes remains separate evidence until the new tree is built.
