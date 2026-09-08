@@ -1082,8 +1082,12 @@ if (!hasGit) {
   // it fails fast rather than walking.
   const emptyPath = mkdtempSync(join(osTmp(), "coop-web-nopath-"));
   const PORT2 = PORT + 500;
+  // This independent server must not leave a shared workspace lease behind when
+  // Windows force-terminates it. Give it a separate agent/lease profile.
+  const noGitAgent = mkdtempSync(join(osTmp(), "coop-web-nogit-agent-"));
+  const noGitSpec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: noGitAgent } });
   const server2 = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT2)], {
-    env: { ...process.env, PATH: emptyPath, COOP_LAUNCH_SPEC: spec, COOP_WEB_NO_OPEN: "1" },
+    env: { ...process.env, PATH: emptyPath, COOP_AGENT_DIR: noGitAgent, COOP_LAUNCH_SPEC: noGitSpec, COOP_WEB_NO_OPEN: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let err2 = "";
@@ -1103,11 +1107,12 @@ if (!hasGit) {
   } else {
     t("second bridge (git-missing) started", false);
   }
-  // Wait for the second bridge to exit (release its port) before continuing.
+  // Force-stop on every platform so the Windows termination/leftover-lease case
+  // remains covered on macOS and Linux too. Wait for its port to be released.
   await new Promise((resolve) => {
     const done = setTimeout(resolve, 1500);
     server2.on("exit", () => { clearTimeout(done); resolve(); });
-    try { server2.kill(); } catch { resolve(); }
+    try { server2.kill("SIGKILL"); } catch { resolve(); }
   });
 
   r = await fetch(base + "/git/changes");
@@ -1260,7 +1265,8 @@ t("chat 2's stream has its own reply and NOT chat 1's",
   p2.events.some((l) => l.includes("polo:two")) && !p2.events.some((l) => l.includes("polo:one")));
 
 // 4. Per-chat cwd + jail: put the two chats in DIFFERENT folders.
-await post("/chdir", { sid: sid1, dir: resolvePath(process.cwd()) });
+r = await post("/chdir", { sid: sid1, dir: resolvePath(process.cwd()) });
+assert.equal(r.status, 200, `chat 1 folder change failed: ${JSON.stringify(await r.json())}`);
 await new Promise((res) => setTimeout(res, 500));
 r = await post("/chdir", { sid: sid2, dir: resolvePath(workDir) });
 t("/chdir {sid:sid2} -> 200", r.status === 200);

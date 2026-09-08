@@ -1692,3 +1692,41 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   This is the next source/test investigation; it is not attributed to the new
   tool verifier, which is not yet present in that CI revision. Managed Windows
   job 101928388101 and Pi job 101928387982 remain active.
+
+
+## Windows bridge fixture isolation and confirmed runtime shutdown failure
+
+- Windows Bash CI job 101928388014 at b0ebab8 failed the separate-chat cwd
+  assertion because the earlier no-Git bridge reused the main fixture's agent
+  profile. Windows force termination skips its lease release, leaving the lease
+  within the required 20-second stale window when chat 1 returns to that folder.
+  Reproduced the exact assertion locally by changing that helper's stop to
+  SIGKILL; the before run exited 1 at the same assertion.
+- The independent no-Git server now has its own agent and lease storage. Its forced
+  stop is retained on all platforms to cover the Windows behavior. The first
+  chat-folder change now asserts the actual response status/body instead of
+  silently continuing after a rejected change. All 278 focused bridge checks pass
+  with observed exit 0. Production lease expiry and ownership rules are unchanged.
+- PowerShell behavioral suite and Bash syntax/parity/BOM checks pass locally.
+  Full Bash is still running; its terminal result must be recorded before commit.
+  Backup: .backups/windows_bridge_fixture_20260907_224641/.
+- Superseded managed run 34183933653 was explicitly cancelled to retrieve logs
+  after Windows verification exceeded its own expected readiness/shutdown bounds.
+  Mac job 101928387931 passed. The Windows log confirms runtime startup, auth,
+  capability versions and PID 620 at 03:36:23Z, followed by shutdown-not-confirmed
+  at 03:36:29Z. The PowerShell launcher was terminated without reaping the runtime
+  descendant, leaving pipes/processes alive until CI cancellation. This is an
+  actual supervisor lifecycle bug, not successful managed Windows acceptance.
+  Newer managed run 34184404526 was left running; no timed-out process was restarted.
+- Next runtime slice must terminate the owned Windows process tree and verify
+  native shutdown/restart and orphan/lease handling. Success receipts should be
+  emitted only after shutdown verification, not before the finally block. No
+  Windows updater or release requirement is closed by current evidence.
+- Evidence under /private/tmp/coop-desktop-home-20260907-state/:
+  bridge-abrupt-{before,after}.log, bridge-fixture-final-*.log,
+  managed-ci-third-windows-cancelled.log, desktop-pr48-eighth-windows-logic.log.
+
+- Full Bash suite finished with observed exit 0. All local validation handles in
+  this slice are terminal. Regular CI 34183933661 is terminal; its Windows Pi
+  compatibility job 101928387982 passed. Windows job 101929741872 on the next
+  revision reproduced the same bridge assertion, corroborating the fixture fix.
