@@ -279,6 +279,31 @@ function Build-CoopPiArgs {
         }
       }
     }
+    if (Test-CoopKnowledgeEnabled) {
+      foreach ($repo in (Get-CoopKnowledgeRepos)) {
+        $path = $repo.LocalPath
+        if (-not $path) { continue }
+        $teamSkills = Join-Path $path 'skills'
+        if (-not (Test-Path -LiteralPath $teamSkills -PathType Container)) { continue }
+        Get-ChildItem -LiteralPath $teamSkills -Directory | ForEach-Object {
+          $sk = Join-Path $_.FullName 'SKILL.md'
+          if (Test-Path -LiteralPath $sk -PathType Leaf) {
+            if ($ownNames.Contains($_.Name)) {
+              Coop-Warn "skipping team skill '$($_.Name)' (conflicts with a Cooptimize skill)"
+            } else {
+              $fm = Get-CoopSkillName $sk
+              if ($fm -and $ownNames.Contains($fm)) {
+                Coop-Warn "skipping team skill '$($_.Name)' (name '$fm' conflicts with a Cooptimize skill)"
+              } else {
+                $piArgs += @('--skill', $_.FullName)
+                [void]$ownNames.Add($_.Name)
+                if ($fm) { [void]$ownNames.Add($fm) }
+              }
+            }
+          }
+        }
+      }
+    }
   }
   $prompts = Join-Path $script:CoopRoot 'prompts'
   if (Test-Path -LiteralPath $prompts -PathType Container) { $piArgs += @('--prompt-template', $prompts) }

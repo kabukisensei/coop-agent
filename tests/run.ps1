@@ -86,6 +86,20 @@ try {
   }
   if (-not $miss) { Ok 'launch-spec resolves guardrails, prompts, theme, and all 4 extensions' }
 
+  # --- 1b. launch-spec includes team skills from configured knowledge repo ---
+  $kbTmp = Join-Path $stub "team-kb"
+  New-Item -ItemType Directory -Path (Join-Path $kbTmp 'skills\team-fixture') -Force | Out-Null
+  Set-Content (Join-Path $kbTmp 'skills\team-fixture\SKILL.md') "---`nname: team-fixture`n---`n# Fixture"
+  $kbCfgDir = Join-Path $stub "kb-cfg"
+  New-Item -ItemType Directory -Path (Join-Path $kbCfgDir '.coop') -Force | Out-Null
+  $kbJson = '{"schema_version":1,"knowledge":{"enabled":true,"repos":[{"url":"https://example.com/repo.git","local_path":"' + ($kbTmp -replace '\\', '/') + '"}]}}'
+  Set-Content (Join-Path $kbCfgDir '.coop\config') $kbJson
+  $priorCoop = $env:COOP_DIR
+  $env:COOP_DIR = $kbCfgDir
+  $kbSpec = (& $coop launch-spec 2>&1 | Out-String) -replace '\\', '/'
+  $env:COOP_DIR = $priorCoop
+  if ($kbSpec -like "*team-fixture*") { Ok 'launch-spec includes team skills from configured knowledge repo' } else { Ko 'launch-spec missing team-fixture' }
+
   # --- 2. --no-launch is a dry-run: exits 0, prints the spec -----------------
   Head '--no-launch dry-run (must NOT start pi; prints the spec)'
   $nlOut = (& $coop --no-launch 2>&1 | Out-String) -replace '\\', '/'

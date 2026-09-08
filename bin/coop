@@ -145,6 +145,33 @@ $(coop_yaml_list "$proj" "$key.allow")
 EOF
 }
 
+# Load team knowledge skills from configured knowledge repos (~/.coop/config "knowledge" block).
+# Subordinate semantics: first-party Cooptimize skills always win on conflict.
+coop_load_team_knowledge() {
+  local own_names="$1"
+  coop_knowledge_enabled || return 0
+  local url path d name fm
+  while IFS="$(printf '\t')" read -r url path; do
+    [ -n "$path" ] || continue
+    [ -d "$path/skills" ] || continue
+    for d in "$path"/skills/*/; do
+      [ -d "$d" ] || continue
+      name="$(basename "$d")"
+      [ -f "${d}SKILL.md" ] || continue
+      case "$own_names" in *" $name "*) coop_warn "skipping team skill '$name' (conflicts with a Cooptimize skill)"; continue ;; esac
+      fm="$(coop_skill_name "${d}SKILL.md")"
+      if [ -n "$fm" ]; then
+        case "$own_names" in *" $fm "*) coop_warn "skipping team skill '$name' (name '$fm' conflicts with a Cooptimize skill)"; continue ;; esac
+      fi
+      COOP_PI_ARGS+=(--skill "$d")
+      own_names="$own_names$name "
+      [ -n "$fm" ] && own_names="$own_names$fm "
+    done
+  done <<EOF
+$(coop_knowledge_repos)
+EOF
+}
+
 # --- Assemble the exact Pi launch spec (args + brand env) --------------------
 # SINGLE SOURCE OF TRUTH for how coop launches Pi. Both `launch_pi` (the terminal
 # agent) and `coop launch-spec` (JSON for a future UI / coop web bridge) consume
@@ -176,6 +203,7 @@ coop_build_pi_args() {
       coop_load_ms_skills "microsoft_skills" "$proj" "$own_names"
       coop_load_ms_skills "fabric_skills" "$proj" "$own_names"
     fi
+    coop_load_team_knowledge "$own_names"
   fi
   [ -d "$COOP_ROOT/prompts" ]  && COOP_PI_ARGS+=(--prompt-template "$COOP_ROOT/prompts")
   [ -f "$COOP_ROOT/themes/cooptimize.json" ] && COOP_PI_ARGS+=(--theme "$COOP_ROOT/themes/cooptimize.json")
