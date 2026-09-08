@@ -1,0 +1,34 @@
+# tips — curated tips-only rotation: practical Coop commands and working habits, no easter eggs
+# Every line is an actionable tip; keep it client-safe, plain text, and under 100 chars.
+Type /coop-vibe tips for a tips-only rotation, or /coop-vibe all for the full mix.
+Type /coop-vibe <set> to switch pools any time; bare /coop-vibe shows a fresh one.
+Type /start when you forget which command does what; it opens the task menu.
+Read .coop/project.yml before file work; it is the contract for paths and approvals.
+Ask Coop to look up an object's lineage before renaming, deleting, or regraining it.
+Set fabric.environment_names in project.yml so DEV, TEST, and PROD stay separated.
+Set power_bi.environment_names in project.yml for the same separation on models.
+Configure tests.live_data in project.yml to run real checks between slices.
+Run /spec-first before any non-trivial edit so the plan is agreed first.
+Use /slice-next to break a big task into testable vertical slices.
+Use /handoff before ending a long session so the next one starts cold-safe.
+Type /compact before switching topics so old context does not pollute the new task.
+Type /new after a merge or deploy; the next task deserves a clean session.
+Use /annotate to apply only the review comments you actually accept.
+Run /pr-description to draft commit messages and PR text; it never commits for you.
+Run /daily-log at session end so the team's roll-up stays accurate.
+Use /impact-analysis before touching a shared table, measure, or schema.
+Ask Coop to validate a Fabric deployment plan without deploying it.
+Ask Coop to prove a measure change across slicers, not just one filter context.
+Ask Coop to compare review results against the baseline so only new findings count.
+Run SQL review on any T-SQL change before it reaches a shared branch.
+Ask Coop to run DAX review before a measure ships to a shared semantic model.
+Try /semantic-model-review quarterly to keep relationships and grain honest.
+Try /fabric-architecture-review before adding workspaces or deployment stages.
+Use /discovery when onboarding to an unfamiliar client estate.
+Ask Coop to inspect Fabric through its read-only-by-policy tools first.
+Ask Coop to stay read-only until you explicitly approve a commit.
+Save diagnostic queries with the conclusions they support, not as loose scripts.
+Ask Coop to run doctor when a capability seems missing after an update.
+Run /coop-guardrails before a risky operation to see the active protections.
+Try asking Coop for a dry run of any deploy or refresh before the real one.
+Ask Coop to check for skill-load conflicts before blaming the tool layer.

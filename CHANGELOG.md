@@ -5,6 +5,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+- New `tips` vibe set (`vibes/tips.txt`): a curated, tips-only rotation of practical
+  Coop commands and working habits with no easter eggs. Select it inside Coop with
+  `/coop-vibe tips`; it also joins the default `/coop-vibe all` rotation.
+
 ### Changed
 - Normal Coop startup now goes directly to the prompt instead of auto-opening the
   Start Here or missing-project wizard. `/start`, `/setup-project`, and
