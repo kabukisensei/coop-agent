@@ -1734,6 +1734,37 @@ async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
   );
 }
 
+/**
+ * Return the team-knowledge note string if at least one configured knowledge repo clone exists,
+ * or null otherwise.
+ */
+export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | null {
+  const base = coopDir || process.env.COOP_DIR || homedir();
+  const home = homeDir || process.env.HOME || homedir();
+  const cfgPath = join(base, ".coop", "config");
+  if (!existsSync(cfgPath)) return null;
+  try {
+    const raw = readFileSync(cfgPath, "utf8");
+    const cfg = JSON.parse(raw);
+    if (!cfg?.knowledge?.enabled || !Array.isArray(cfg?.knowledge?.repos)) return null;
+    const paths: string[] = [];
+    for (const r of cfg.knowledge.repos) {
+      if (!r || typeof r.local_path !== "string" || !r.local_path.trim()) continue;
+      let p = r.local_path.trim();
+      if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) {
+        p = join(home, p.slice(1).replace(/^[/\\]/, ""));
+      }
+      if (existsSync(p)) {
+        paths.push(p);
+      }
+    }
+    if (paths.length === 0) return null;
+    return `Team knowledge available at ${paths.join(", ")}; see the team-knowledge skill`;
+  } catch {
+    return null;
+  }
+}
+
 /** The task menu — wired to tools/skills coop already ships. Each choice sends a
  *  friendly, first-person request AS the user (the menu just pre-writes the prompt
  *  a newcomer would otherwise have to compose); the agent then asks for specifics. */
@@ -2056,6 +2087,7 @@ export default function coopTools(pi: ExtensionAPI) {
   // also gets a system-prompt postcondition. Silent when neither applies; wrapped so
   // contract/logging guidance can never break a turn.
   const announcedCwds = new Set<string>();
+  let announcedTeamKnowledge = false;
   let dailyRun: {
     requirement: DailyLogRequirement;
     baselineMtime: number;
@@ -2102,6 +2134,22 @@ export default function coopTools(pi: ExtensionAPI) {
                 `Cooptimize lineage docs ARE available for this estate (coop-data-doc outputs under ${relOut}: graph.json, manifest.json, per-object Markdown). ` +
                 `Use them: BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its up/downstream impact via the data_doc tool (command="lineage", object="<name>"), and read that object's doc (located via manifest.json) plus its immediate neighbors — don't re-derive lineage by hand. If the docs look stale, run data_doc (build) to refresh.`,
               details: { outputDir: relOut },
+            };
+          }
+        }
+      }
+
+      if (!announcedTeamKnowledge) {
+        const tk = teamKnowledgeNote();
+        if (tk) {
+          announcedTeamKnowledge = true;
+          if (message) {
+            message.content = `${message.content}\n\n${tk}`;
+          } else {
+            message = {
+              customType: "coop-team-knowledge",
+              display: false,
+              content: tk,
             };
           }
         }
