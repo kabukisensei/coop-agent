@@ -9,14 +9,27 @@ import { inspectWindowsReplacement, recoverWindowsReplacement, replaceWindowsApp
 
 const root = await mkdtemp(join(tmpdir(), "coop-windows-replacement-"));
 const platform = "win32";
+// Non-Windows CI exercises the filesystem state machine with an explicit owner
+// observer; native Windows uses real OS process creation times.
+const testOwnerIdentity = process.platform === 'win32' ? undefined : async pid => {
+  try { process.kill(pid, 0); } catch (error) { if (error.code === 'ESRCH') return null; throw error; }
+  return { pid, startedUtcTicks: String(638900000000000000n + BigInt(pid)) };
+};
 async function fixture(name) {
   const directory = join(root, name), appPath = join(directory, "Coop Desktop"), candidatePath = join(directory, "download");
   await mkdir(appPath, { recursive: true }); await mkdir(candidatePath);
   await writeFile(join(appPath, "version"), "old"); await writeFile(join(candidatePath, "version"), "new");
-  return { appPath, candidatePath, platform, runtimeStopped: true,
+  return { appPath, candidatePath, platform, runtimeStopped: true, readOwnerIdentity: testOwnerIdentity,
     validateCandidate: async path => assert.equal(await readFile(join(path, "version"), "utf8"), "new"), checkHealth: async () => true };
 }
 async function version(path) { return readFile(join(path, "version"), "utf8"); }
+
+const unavailable = await fixture('unavailable-owner-before-journal');
+await assert.rejects(replaceWindowsApplication({ ...unavailable, readOwnerIdentity: async () => { throw new Error('Owner unavailable'); } }), /Owner unavailable/);
+assert.equal((await inspectWindowsReplacement(unavailable)).status, 'none');
+assert.equal(await version(unavailable.appPath), 'old');
+assert.equal(await version(unavailable.candidatePath), 'new');
+console.log('PASS: unavailable owner identity leaves no incomplete journal and preserves both inputs');
 
 const healthy = await fixture("healthy");
 const result = await replaceWindowsApplication(healthy);
@@ -66,7 +79,8 @@ const interrupted = await fixture("helper-crash");
 const moduleUrl = pathToFileURL(resolve("desktop/src/update-windows-replacement.mjs")).href;
 const worker = spawn(process.execPath, ["--input-type=module", "-e", `
   import {replaceWindowsApplication} from ${JSON.stringify(moduleUrl)};
-  await replaceWindowsApplication({...JSON.parse(process.argv[1]), validateCandidate:async()=>{}, checkHealth:async()=>process.exit(77)});
+  const readOwnerIdentity = process.platform === 'win32' ? undefined : async pid => ({pid,startedUtcTicks:String(638900000000000000n+BigInt(pid))});
+  await replaceWindowsApplication({...JSON.parse(process.argv[1]), readOwnerIdentity, validateCandidate:async()=>{}, checkHealth:async()=>process.exit(77)});
 `, JSON.stringify(interrupted)], { windowsHide: true, stdio: "ignore" });
 assert.equal((await once(worker, "close"))[0], 77);
 assert.equal((await inspectWindowsReplacement(interrupted)).status, "testing");
@@ -86,6 +100,32 @@ await writeFile(join(transaction, "transaction.json"), JSON.stringify({ ...journ
 assert.equal((await recoverWindowsReplacement(gap)).status, "rolled-back");
 assert.equal(await version(gap.appPath), "old");
 console.log("PASS: recovery closes the gap between the two NTFS directory renames");
+
+const reused = await fixture('reused-owner-pid');
+await assert.rejects(replaceWindowsApplication({ ...reused, checkHealth: async () => { throw exitError; } }), error => error === exitError);
+const reusedPath = join(root, 'reused-owner-pid', '.Coop Desktop.coop-update', 'transaction.json');
+const reusedJournal = JSON.parse(await readFile(reusedPath, 'utf8'));
+const unrelatedPid = process.pid + 100000;
+await writeFile(reusedPath, JSON.stringify({ ...reusedJournal, ownerPid: unrelatedPid }));
+const liveOwner = async pid => ({ pid, startedUtcTicks: reusedJournal.ownerStartedUtcTicks });
+await assert.rejects(recoverWindowsReplacement({ ...reused, readOwnerIdentity: liveOwner }), /still running/);
+assert.equal(await version(reused.appPath), 'new');
+const anotherProcess = async pid => ({ pid, startedUtcTicks: String(BigInt(reusedJournal.ownerStartedUtcTicks) + 1n) });
+assert.equal((await recoverWindowsReplacement({ ...reused, readOwnerIdentity: anotherProcess })).status, 'rolled-back');
+assert.equal(await version(reused.appPath), 'old');
+console.log('PASS: matching live ownership blocks recovery; a reused PID with different creation time does not');
+
+const unknown = await fixture('unknown-owner');
+await assert.rejects(replaceWindowsApplication({ ...unknown, checkHealth: async () => { throw exitError; } }), error => error === exitError);
+await assert.rejects(recoverWindowsReplacement({ ...unknown, readOwnerIdentity: async () => { throw new Error('Access denied'); } }), /Access denied/);
+assert.equal(await version(unknown.appPath), 'new');
+const unknownPath = join(root, 'unknown-owner', '.Coop Desktop.coop-update', 'transaction.json');
+const unknownJournal = JSON.parse(await readFile(unknownPath, 'utf8'));
+delete unknownJournal.ownerStartedUtcTicks; unknownJournal.schemaVersion = 1;
+await writeFile(unknownPath, JSON.stringify(unknownJournal));
+await assert.rejects(recoverWindowsReplacement(unknown), /legacy update/);
+assert.equal(await version(unknown.appPath), 'new');
+console.log('PASS: unknown owner inspection and pending legacy PID-only journals preserve every application directory');
 
 const linked = await fixture("reparse-point"), outside = join(root, "outside");
 await mkdir(outside); await writeFile(join(outside, "keep"), "untouched");

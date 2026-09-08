@@ -1,14 +1,36 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
+import { win32 } from "node:path";
+
+export function updateHelperEnvironment({ platform = process.platform, env = process.env } = {}) {
+  if (platform !== "win32") return { HOME: env.HOME, PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
+  const values = new Map(Object.entries(env).map(([key, value]) => [key.toUpperCase(), value]));
+  const root = values.get("SYSTEMROOT");
+  if (typeof root !== "string" || !win32.isAbsolute(root) || /[\0\r\n]/.test(root)) {
+    throw new Error("Windows system directory is unavailable for update handoff.");
+  }
+  // Preserve only OS/profile locations needed by native helpers. In particular,
+  // never inherit NODE_OPTIONS, provider credentials or an arbitrary search PATH.
+  const result = { SystemRoot: root, WINDIR: root,
+    ComSpec: win32.join(root, "System32", "cmd.exe"),
+    PATH: [win32.join(root, "System32"), root, win32.join(root, "System32", "WindowsPowerShell", "v1.0")].join(";") };
+  for (const name of ["TEMP", "TMP", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "PROGRAMDATA"]) {
+    const value = values.get(name);
+    if (typeof value === "string" && value && !/[\0\r\n]/.test(value)) result[name] = value;
+  }
+  return result;
+}
 
 // Private Node IPC, not a renderer endpoint. Trust policy is transferred in
 // memory from the signed app; the helper never loads replacement keys from disk.
-export function launchUpdateHelper({ nodePath, helperPath, request, logPath, spawnImpl = spawn, timeoutMs = 300000 } = {}) {
+export function launchUpdateHelper({ nodePath, helperPath, request, logPath, spawnImpl = spawn, timeoutMs = 300000,
+  platform = process.platform, env = process.env } = {}) {
+  const helperEnv = updateHelperEnvironment({ platform, env });
   const log = openSync(logPath, "a", 0o600);
   let child;
   try {
     child = spawnImpl(nodePath, [helperPath], { detached: true, cwd: request.userData,
-      env: { HOME: process.env.HOME, PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, stdio: ["ignore", "ignore", log, "ipc"] });
+      env: helperEnv, windowsHide: true, stdio: ["ignore", "ignore", log, "ipc"] });
   } finally { closeSync(log); }
   let ready = false, closed = false, settleReady, failReady, settleClosed;
   const completion = new Promise(resolve => { settleClosed = resolve; });

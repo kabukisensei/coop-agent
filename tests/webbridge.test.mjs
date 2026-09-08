@@ -372,10 +372,17 @@ r = await fetch(base + "/prompt", {
 t("POST without X-Coop-CSRF -> 403", r.status === 403);
 
 // --- SSE: hello + replay of the stub's startup dialog ----------------------------
-async function readSse(ms) {
+async function readSse(ms, onConnected = null) {
   const ctrl = new AbortController();
   const resp = await fetch(base + "/events", { headers: { cookie }, signal: ctrl.signal });
   const reader = resp.body.getReader();
+  // Establish the subscription before triggering writes. Start the delivery
+  // window after the trigger completes so process startup is not mistaken for
+  // a missing SSE notification. Frames emitted meanwhile remain buffered.
+  if (onConnected) {
+    try { await onConnected(); }
+    catch (error) { ctrl.abort(); throw error; }
+  }
   let buf = "";
   const until = Date.now() + ms;
   while (Date.now() < until) {
@@ -1256,8 +1263,8 @@ r = await fetch(base + "/chat-new", { method: "POST", headers: { cookie, "conten
 t("POST /chat-new without CSRF -> 403", r.status === 403);
 
 // 2. Open chat 2 and observe the SSE __chats frame naming both chats.
-const chatsWatch = readSse(1600);
-await new Promise((res) => setTimeout(res, 400));
+let sid2, d2;
+events = await readSse(1600, async () => {
 r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
 const writableCwd = (await r.json()).cwd;
 r = await post("/chat-new", { cwd: writableCwd });
@@ -1266,13 +1273,14 @@ t("a second writable chat in one checkout fails closed with exactly three choice
   r.status === 409 && workspaceConflict.code === "workspace-write-conflict" &&
   workspaceConflict.choices.map((choice) => choice.mode).join(",") === "worktree,read-only,override");
 r = await post("/chat-new", { cwd: writableCwd, workspaceAccess: "override", approved: true });
-const d2 = await r.json();
-const sid2 = d2.sid;
+d2 = await r.json();
+sid2 = d2.sid;
 t("POST /chat-new -> 200 with a fresh sid", r.status === 200 && typeof sid2 === "string" && sid2 !== sid1);
 t("/chat-new keeps the requested writable checkout", d2.cwd === writableCwd);
 t("/chat-new records the explicit concurrent-write override", d2.workspaceAccess?.mode === "override" && typeof d2.workspaceAccess?.overridesLeaseId === "string");
-events = await chatsWatch;
-const chatsFrame = events.find((e) => e.ev && e.ev.type === "__chats");
+});
+const chatsFrame = events.find((e) => e.ev?.type === "__chats"
+  && e.ev.chats.some((c) => c.sid === sid1) && e.ev.chats.some((c) => c.sid === sid2));
 t("an SSE __chats frame lists both chats",
   !!chatsFrame && chatsFrame.ev.chats.some((c) => c.sid === sid1) && chatsFrame.ev.chats.some((c) => c.sid === sid2));
 

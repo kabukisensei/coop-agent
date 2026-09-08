@@ -8,7 +8,7 @@ import { swapMacDirectories } from "../desktop/src/update-swap.mjs";
 import { nativeApplicationHealth } from "../desktop/src/update-native-health.mjs";
 import { waitForRuntimeState } from "../desktop/src/runtime-readiness.mjs";
 import { presentUpdateOutcome } from "../desktop/src/update-outcome.mjs";
-import { launchUpdateHelper } from "../desktop/src/update-handoff.mjs";
+import { launchUpdateHelper, updateHelperEnvironment } from "../desktop/src/update-handoff.mjs";
 import { runtimeHealth, runUpdateHelper, validateHelperRequest, waitForStoppedProcesses } from "../desktop/src/update-helper.mjs";
 import { replaceMacApplication, recoverMacReplacement, inspectMacReplacement } from "../desktop/src/update-replacement.mjs";
 import { spawn, spawnSync } from "node:child_process";
@@ -697,16 +697,44 @@ await test("helper refuses live processes and honours cancellation while waiting
   await waitForStoppedProcesses([123], { alive: () => false });
 });
 
+await test("Windows update handoff preserves OS locations without inheriting execution overrides", () => {
+  const env = updateHelperEnvironment({ platform: "win32", env: {
+    systemroot: "C:\\Windows", temp: "D:\\fixture café & space", UserProfile: "D:\\test-profile",
+    Path: "D:\\untrusted", NODE_OPTIONS: "--require=untrusted", OPENAI_API_KEY: "synthetic-not-a-key",
+    ComSpec: "D:\\untrusted\\cmd.exe",
+  } });
+  assert.equal(env.SystemRoot, "C:\\Windows");
+  assert.equal(env.TEMP, "D:\\fixture café & space");
+  assert.equal(env.USERPROFILE, "D:\\test-profile");
+  assert.equal(env.ComSpec, "C:\\Windows\\System32\\cmd.exe");
+  assert.equal(env.PATH, "C:\\Windows\\System32;C:\\Windows;C:\\Windows\\System32\\WindowsPowerShell\\v1.0");
+  assert.equal(env.NODE_OPTIONS, undefined);
+  assert.equal(env.OPENAI_API_KEY, undefined);
+  assert.throws(() => updateHelperEnvironment({ platform: "win32", env: {} }), /system directory/);
+  assert.throws(() => updateHelperEnvironment({ platform: "win32", env: { SystemRoot: "relative" } }), /system directory/);
+  assert.deepEqual(updateHelperEnvironment({ platform: "darwin", env: { HOME: "/fixture", PATH: "/untrusted" } }),
+    { HOME: "/fixture", PATH: "/usr/bin:/bin:/usr/sbin:/sbin" });
+});
+
 await test("private helper transport completes preparation, cancellation and apply over real Node IPC", async () => {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "coop-helper-ipc-")));
   try {
     const helperPath = join(root, "fixture.mjs");
     writeFileSync(helperPath, `import {writeFileSync} from 'node:fs';
+      import {spawnSync} from 'node:child_process';
       let root;process.on('message',value=>{
-        if(value.type==='prepare'){root=value.userData;process.send({type:'ready'});}
+        if(value.type==='prepare'){
+          root=value.userData;
+          if(process.platform==='win32'){
+            const child=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',"[Console]::Write('native-helper-ok')"],{encoding:'utf8',windowsHide:true});
+            if(child.status!==0||child.stdout!=='native-helper-ok'||!process.env.SystemRoot||process.env.COOP_HANDOFF_SENTINEL){process.exit(71);}
+          }
+          process.send({type:'ready'});
+        }
         else {writeFileSync(root+'/receipt',value.type);process.disconnect();}
       });`);
-    const options = { nodePath: process.execPath, helperPath, request: { userData: root }, logPath: join(root, "helper.log"), timeoutMs: 5000 };
+    const options = { nodePath: process.execPath, helperPath, request: { userData: root }, logPath: join(root, "helper.log"), timeoutMs: 5000,
+      env: { ...process.env, COOP_HANDOFF_SENTINEL: "must-not-be-inherited" } };
     const cancelled = launchUpdateHelper(options);
     await cancelled.prepared; await cancelled.cancel();
     assert.equal(readFileSync(join(root, "receipt"), "utf8"), "cancel");

@@ -74,6 +74,9 @@ else { Ko 'Managed MCP isolation and bundled configuration failed' }
 & node (Join-Path $root 'tests\managed-tool-invocation.test.mjs')
 if ($LASTEXITCODE -eq 0) { Ok 'Managed tool invocation contracts pass' }
 else { Ko 'Managed tool invocation contracts failed' }
+& node (Join-Path $root 'tests\windows-update-process.test.mjs')
+if ($LASTEXITCODE -eq 0) { Ok 'Windows update process creation identity passes' }
+else { Ko 'Windows update process creation identity failed' }
 & node (Join-Path $root 'tests\windows-update-replacement.test.mjs')
 if ($LASTEXITCODE -eq 0) { Ok 'Windows replacement and recovery contracts pass' }
 else { Ko 'Windows replacement and recovery contracts failed' }

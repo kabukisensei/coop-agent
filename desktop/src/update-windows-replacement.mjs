@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, open, readdir, readFile, realpath, rename } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { readWindowsProcessIdentity, validateWindowsProcessIdentity } from './update-windows-process.mjs';
 
 const active = new Set();
 const phases = new Set(["copying", "ready", "testing", "healthy", "rolled-back"]);
@@ -41,21 +42,29 @@ async function load(paths) {
   } finally { await file.close(); }
   const keys = value => JSON.stringify(Object.keys(value).sort());
   const validIdentity = value => value && keys(value) === '["device","inode"]' && /^\d+$/.test(value.device) && /^\d+$/.test(value.inode);
-  if (!record || keys(record) !== '["candidate","original","ownerPid","phase","schemaVersion"]' || record.schemaVersion !== 1
+  const legacy = record?.schemaVersion === 1 && keys(record) === '["candidate","original","ownerPid","phase","schemaVersion"]';
+  const current = record?.schemaVersion === 2 && keys(record) === '["candidate","original","ownerPid","ownerStartedUtcTicks","phase","schemaVersion"]';
+  if (!record || (!legacy && !current)
     || !phases.has(record.phase) || !Number.isSafeInteger(record.ownerPid) || record.ownerPid < 1 || !validIdentity(record.original)
     || (record.candidate === null ? !["copying", "rolled-back"].includes(record.phase) : !validIdentity(record.candidate))) throw new Error("Update journal contract is invalid.");
+  if (current) validateWindowsProcessIdentity({ pid: record.ownerPid, startedUtcTicks: record.ownerStartedUtcTicks });
   return record;
 }
-function requireStoppedOwner(record) {
-  if (record.ownerPid === process.pid || ["healthy", "rolled-back"].includes(record.phase)) return;
-  try { process.kill(record.ownerPid, 0); }
-  catch (error) { if (error.code === "ESRCH") return; throw error; }
+async function requireStoppedOwner(record, readOwnerIdentity) {
+  if (["healthy", "rolled-back"].includes(record.phase)) return;
+  if (record.schemaVersion !== 2) throw new Error('Pending legacy update has no process creation identity; preserve it for recovery inspection.');
+  const current = await readOwnerIdentity(record.ownerPid);
+  if (current === null) return;
+  validateWindowsProcessIdentity(current);
+  if (current.pid !== record.ownerPid) throw new Error('Update owner inspection returned a different PID.');
+  if (current.startedUtcTicks !== record.ownerStartedUtcTicks) return;
+  if (record.ownerPid === process.pid) return; // This exact helper may roll back its own failed transaction.
   throw new Error("Another update helper is still running.");
 }
-async function recover(paths) {
+async function recover(paths, readOwnerIdentity) {
   const record = await load(paths);
   if (!record) return { status: "none" };
-  requireStoppedOwner(record);
+  await requireStoppedOwner(record, readOwnerIdentity);
   const current = await identity(paths.app), previous = await identity(paths.previous);
   if (record.phase === "healthy") {
     if (!same(current, record.candidate) || !same(previous, record.original)) throw new Error("Completed update directories changed; preserving the transaction.");
@@ -99,29 +108,31 @@ export async function inspectWindowsReplacement({ appPath, platform = process.pl
   const record = await load(await pathsFor(appPath, platform, true));
   return record ? { status: record.phase, ownerPid: record.ownerPid } : { status: "none" };
 }
-export async function recoverWindowsReplacement({ appPath, platform = process.platform, runtimeStopped = false } = {}) {
+export async function recoverWindowsReplacement({ appPath, platform = process.platform, runtimeStopped = false, readOwnerIdentity = readWindowsProcessIdentity } = {}) {
   const paths = await pathsFor(appPath, platform, runtimeStopped);
-  return exclusive(paths, () => recover(paths));
+  return exclusive(paths, () => recover(paths, readOwnerIdentity));
 }
 
 // The detached Windows helper must arm independent recovery BEFORE calling this.
 // NTFS lacks a directory exchange operation: the durable ready journal covers the
 // gap between the two renames, and every failure retains the previous application.
 export async function replaceWindowsApplication({ appPath, candidatePath, validateCandidate, checkHealth,
-  platform = process.platform, runtimeStopped = false, signal } = {}) {
+  platform = process.platform, runtimeStopped = false, signal, readOwnerIdentity = readWindowsProcessIdentity } = {}) {
   if (typeof validateCandidate !== "function" || typeof checkHealth !== "function") throw new Error("Trusted candidate validation and a stopped native health probe are required.");
   const paths = await pathsFor(appPath, platform, runtimeStopped);
   return exclusive(paths, async () => {
     signal?.throwIfAborted();
-    const prior = await recover(paths);
+    const prior = await recover(paths, readOwnerIdentity);
     if (prior.status !== "none") await rename(paths.root, `${paths.root}.archive-${randomUUID()}`);
     const original = await identity(paths.app);
     if (!original || !isAbsolute(candidatePath) || !await identity(candidatePath) || same(original, await identity(candidatePath))) throw new Error("Update application or candidate is invalid.");
     candidatePath = await realpath(candidatePath);
     if (inside(candidatePath, paths.app) || inside(paths.app, candidatePath) || inside(candidatePath, paths.root)) throw new Error("Update candidate overlaps the installed application or transaction directory.");
     await validateCandidate(candidatePath);
+    const owner = validateWindowsProcessIdentity(await readOwnerIdentity(process.pid));
+    if (owner.pid !== process.pid) throw new Error('Update helper process identity changed.');
     await mkdir(paths.root);
-    let record = { schemaVersion: 1, phase: "copying", ownerPid: process.pid, original, candidate: null };
+    let record = { schemaVersion: 2, phase: "copying", ownerPid: process.pid, ownerStartedUtcTicks: owner.startedUtcTicks, original, candidate: null };
     await save(paths.journal, record);
     try {
       await copyCandidate(candidatePath, paths.candidate, signal);
@@ -144,7 +155,7 @@ export async function replaceWindowsApplication({ appPath, candidatePath, valida
       // the journal and both app identities intact for the independent worker,
       // which confirms probe shutdown before it attempts directory replacement.
       if (error?.code === "UPDATE_HEALTH_PROCESS_EXIT_UNCONFIRMED") throw error;
-      try { await recover(paths); }
+      try { await recover(paths, readOwnerIdentity); }
       catch (recoveryError) { throw new AggregateError([error, recoveryError], "Update failed and recovery requires inspection; all application directories were preserved."); }
       throw new Error("Update failed; the previous application is restored.", { cause: error });
     }

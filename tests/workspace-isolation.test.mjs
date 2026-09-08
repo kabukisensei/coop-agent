@@ -202,6 +202,35 @@ await test("dirty managed worktree cleanup fails closed and preserves the checko
   }
 });
 
+await test("real worktree IDs support long profile paths and nested tracked files", async () => {
+  const f = makeRoot();
+  try {
+    // The old full hash bucket plus a real UUID exceeds Git for Windows' root
+    // buffer here. Short injected IDs in other fixtures concealed that failure.
+    const agentDir = join(f.root, "managed-profile-" + "p".repeat(Math.max(1, 120 - f.root.length - 17)));
+    execFileSync("git", ["config", "core.autocrlf", "false"], { cwd: f.repo });
+    const nested = join("nested-" + "n".repeat(70), "unicode-café-file.txt");
+    mkdirSync(dirname(join(f.repo, nested)), { recursive: true });
+    writeFileSync(join(f.repo, nested), "café 中文 ✓\n", "utf8");
+    execFileSync("git", ["-c", "core.longpaths=true", "add", "."], { cwd: f.repo });
+    execFileSync("git", ["-c", "core.longpaths=true", "commit", "-qm", "nested fixture"], { cwd: f.repo });
+    execFileSync("git", ["config", "core.longpaths", "false"], { cwd: f.repo });
+    const created = await createManagedWorktree({ cwd: f.repo, agentDir, ownerId: "native-long-profile", approved: true });
+    assert.equal(created.ok, true, created.message);
+    assert.match(created.record.id, /^wt-[0-9a-f-]{36}$/);
+    assert.equal(readFileSync(join(created.record.checkoutPath, nested), "utf8"), "café 中文 ✓\n");
+    assert.equal((await inspectWorkspace(created.record.checkoutPath)).isWorktree, true);
+    if (process.platform === "win32") {
+      assert.ok(created.record.checkoutPath.length < 256);
+      assert.ok(join(created.record.checkoutPath, nested).length > 260, "exercise long tracked paths, not just a short checkout");
+    }
+    assert.equal((await removeManagedWorktree({ agentDir, id: created.record.id, approved: true })).ok, true);
+    assert.equal(execFileSync("git", ["config", "core.longpaths"], { cwd: f.repo, encoding: "utf8" }).trim(), "false", "operations must not change repository or global Git settings");
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 await test("contract versions and metadata stay explicit", () => {
   assert.equal(WORKSPACE_LEASE_SCHEMA_VERSION, 1);
   assert.equal(MANAGED_WORKTREE_SCHEMA_VERSION, 1);
