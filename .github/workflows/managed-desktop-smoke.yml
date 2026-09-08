@@ -79,6 +79,10 @@ jobs:
         run: python scripts/build-development-wheels.py --repositories '${{ github.workspace }}/development-sources' --output '${{ runner.temp }}/coop-development-wheels'
       - name: Install pinned Desktop build dependencies
         run: npm ci --prefix desktop
+      - name: Diagnose Windows PowerShell with an isolated environment and input handles
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node desktop/scripts/diagnose-windows-shell.mjs --output '${{ runner.temp }}/windows-shell-diagnostics.json'
       - name: Determine native managed-runtime target
         id: target
         shell: bash
@@ -160,6 +164,7 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
           path: |
+            ${{ runner.temp }}/windows-shell-diagnostics.json
             ${{ runner.temp }}/managed-runtime-check.json
             ${{ runner.temp }}/managed-package-check.json
             ${{ runner.temp }}/packaged-runtime-check.json

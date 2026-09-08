@@ -2170,3 +2170,47 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   the injected observation. All local process/test handles for this slice are
   terminal. Windows managed CI 34191322027 is terminal failure; regular CI
   34191322025 was still running at the last authoritative observation.
+
+## Windows shell startup diagnosis
+
+- Latest inspected source is 5adc79c on the authorized Desktop development branch;
+  worktree was clean and origin fast-forward check succeeded before this slice.
+  Managed CI 34192066033 is terminal failure: Mac passed, Windows job 101951987534
+  again failed the isolated-environment runtime comparison. Regular CI 34192066034
+  and prior 34191322025 remained live at their last observations and were not restarted.
+- Added a Windows-CI-only diagnostic runner before runtime acquisition. It runs a
+  fixed in-process PowerShell command in four cases: native environment with null
+  stdin or a closed pipe, and a whitelisted set of standard Windows machine fields
+  with the same two input modes. It never inherits credentials, NODE_OPTIONS or the
+  real user-profile paths into these probes; it does not change acceptance settings.
+- Each command has a 10-second bound, bounded output, and an explicit PID-exit check.
+  An unknown exit stops the matrix. Receipts record case name, duration, PID, exit
+  status, error code and output byte counts; shell output and environment values are
+  not logged. The workflow preserves windows-shell-diagnostics.json even on failure.
+  These cases distinguish shell initialization/environment/input behavior; they do
+  not by themselves establish successful Coop script dispatch or runtime readiness.
+- All 19 targeted managed-runtime checks pass. New checks verify environment/profile
+  separation, rejection of unconfirmed exit, exact fixed invocation, and actual
+  Node child shutdown after both successful completion and timeout. Full Bash is
+  running; PowerShell behavioral checks passed. Existing Windows native app and
+  installer gates remain in place and unproven.
+- Files: desktop/scripts/diagnose-windows-shell.mjs, tests/managed-runtime.test.mjs,
+  .github/workflows/managed-desktop-smoke.yml, completion document and daily log.
+  Backup: .backups/windows_shell_diagnostics_20260908_005111/. Evidence prefix:
+  /private/tmp/coop-desktop-home-20260907-state/windows-shell-diagnostics-.
+  Standards: bounded owned-process observation, isolated profiles, test evidence,
+  backups and daily logging. Next: finish regression, push diagnostics, inspect
+  the native Windows result and fix the demonstrated cause. No user profile, app
+  install, release, TeamAI configuration or production distribution changed.
+
+- Final validation: full Bash exited 0 with 19 managed-runtime and 287 bridge checks;
+  PowerShell, ShellCheck, Bash/JS syntax, parity/BOM, YAML parsing and whitespace
+  checks pass. Final targeted 19 checks also pass after allowing five seconds for
+  a healthy Node fixture to start on loaded runners (the timeout fixture still
+  uses 500 ms). Prior regular CI 34191322025 is now terminal success. Regular CI
+  34192066034 remains live; its handles were not cancelled or restarted.
+
+- The commit hook flagged the new test's literal dummy credential value as a
+  possible secret. It was a verified fixture, not a credential; shortened that
+  literal to `fixture` and reran all 19 targeted checks successfully. The hook
+  remains enabled and no bypass was used.

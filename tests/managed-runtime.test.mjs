@@ -1,3 +1,4 @@
+import { windowsShellCases, observeWindowsShell } from "../desktop/scripts/diagnose-windows-shell.mjs";
 import { assertDisposableInstallerHost, buildNsisInvocation } from "../desktop/scripts/verify-windows-installer.mjs";
 import { buildNativeProbeEnvironment, probeNativeApplication } from "../desktop/scripts/verify-native-application.mjs";
 import { resolveManagedDesktopProfile } from "../desktop/src/managed-profile.mjs";
@@ -416,6 +417,44 @@ await test("NSIS preserves its unquoted final path argument and never enables el
   assert.deepEqual(uninstall.args, ["/S", "/currentuser", "_?=" + directory]);
   for (const path of ["relative", 'C:\\bad"path', "C:\\bad\npath"]) {
     assert.throws(() => buildNsisInvocation(executable, path), /path/);
+  }
+});
+
+await test("Windows shell diagnosis varies machine fields and input without copying credentials or real profiles", () => {
+  const cases = windowsShellCases("C:\\isolated", { SystemRoot: "C:\\Windows", ProgramFiles: "C:\\Programs", USERNAME: "fixture", HOME: "C:\\real", USERPROFILE: "C:\\real", APPDATA: "C:\\real-appdata", OPENAI_API_KEY: "fixture", NODE_OPTIONS: "fixture" });
+  assert.deepEqual(cases.map(value => value.stdin), ["ignore", "pipe", "ignore", "pipe"]);
+  for (const value of cases) {
+    assert.equal(value.env.HOME, "C:\\isolated"); assert.equal(value.env.USERPROFILE, "C:\\isolated");
+    assert.equal(value.env.OPENAI_API_KEY, undefined); assert.equal(value.env.NODE_OPTIONS, undefined);
+    assert.equal(value.env.COOP_DESKTOP_UPDATE_PROBE, undefined);
+    assert.notEqual(value.env.APPDATA, "C:\\real-appdata");
+  }
+  assert.equal(cases[0].env.ProgramFiles, undefined);
+  assert.equal(cases[2].env.ProgramFiles, "C:\\Programs");
+});
+
+await test("Windows shell diagnosis never treats uncertain or timed-out processes as healthy", () => {
+  const probe = { name: "fixture", env: { HOME: ROOT }, stdin: "pipe" };
+  for (const stopped of [true, false]) {
+    const result = observeWindowsShell("fixture", probe, { gone: () => stopped, run: (_exe, args, options) => {
+      assert.deepEqual(args, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "[Console]::WriteLine('coop-powershell-ready')"]);
+      assert.equal(options.shell, false); assert.equal(options.input, "");
+      return { pid: 12345, status: 0, signal: null, stdout: "coop-powershell-ready\n", stderr: "" };
+    } });
+    assert.equal(result.processExited, stopped); assert.equal(result.healthy, stopped);
+  }
+  const result = observeWindowsShell("fixture", probe, { run: () => ({ pid: 0, error: { code: "ETIMEDOUT" } }) });
+  assert.equal(result.processExited, false); assert.equal(result.healthy, false);
+});
+
+await test("Windows shell diagnosis observes real child exit after success and timeout", () => {
+  for (const mode of ["healthy", "timeout"]) {
+    const probe = { name: mode, env: { ...process.env, HOME: ROOT }, stdin: "ignore" };
+    const result = observeWindowsShell(process.execPath, probe, { timeoutMs: mode === "healthy" ? 5000 : 500, run: (exe, _args, options) => spawnSync(exe, ["-e", mode === "healthy" ? "console.log('coop-powershell-ready')" : "console.log('coop-powershell-ready');setInterval(()=>{},1000)"], options) });
+    assert.equal(result.healthy, mode === "healthy");
+    assert.equal(result.processExited, true);
+    assert.throws(() => process.kill(result.pid, 0), { code: "ESRCH" });
+    if (mode === "timeout") assert.equal(result.errorCode, "ETIMEDOUT");
   }
 });
 
