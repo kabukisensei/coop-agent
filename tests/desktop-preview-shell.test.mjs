@@ -1,6 +1,6 @@
 import vm from "node:vm";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { normalizeSavedChat, normalizeSavedChats, restoreSavedChats } from "../desktop/src/session-restoration.mjs";
 import { strict as assert } from "node:assert";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -12,7 +12,7 @@ import { loadDesktopState, normalizeDesktopState, restoreWindowBounds, saveDeskt
 import { selectRuntimeWorkspace } from "../desktop/src/workspace-selection.mjs";
 import { buildNativeModelLoginProcess, buildNativeTerminalProcess, launchNativeModelLogin, launchNativeTerminal, validateTerminalLaunch } from "../desktop/src/native-terminal.mjs";
 import { waitForRuntimeState } from "../desktop/src/runtime-readiness.mjs";
-import { startCoopRuntime, terminateWindowsRuntimeTree } from "../desktop/src/runtime-supervisor.mjs";
+import { buildRuntimeInvocation, validateRuntimeReady, startCoopRuntime, terminateWindowsRuntimeTree } from "../desktop/src/runtime-supervisor.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 let count = 0;
@@ -335,6 +335,40 @@ await test("Windows tree termination uses the native executable and propagates f
   await assert.rejects(terminateWindowsRuntimeTree(0), /process ID/);
   await assert.rejects(terminateWindowsRuntimeTree(123, { systemRoot: "Windows" }), /SystemRoot/);
   await assert.rejects(terminateWindowsRuntimeTree(123, { systemRoot: "C:\\Windows", execFileImpl(...args) { args.at(-1)(new Error("denied")); } }), /termination failed/);
+});
+
+await test("Windows termination errors still await pipe closure and cannot accept exit alone", async () => {
+  const source = readFileSync(join(ROOT, "desktop/src/runtime-supervisor.mjs"), "utf8");
+  for (const mode of ["delayed-close", "error-without-close", "success-without-close"]) {
+    const child = new EventEmitter();
+    child.pid = 123; child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+    let closed = false;
+    child.once("close", () => { closed = true; });
+    const ctx = vm.createContext({ process: { platform: "win32", env: {} }, READY_LIMIT: 65536, Buffer,
+      setTimeout, clearTimeout, buildRuntimeInvocation, validateRuntimeReady,
+      randomBytes: size => Buffer.alloc(size, 1),
+      terminateWindowsRuntimeTree: async () => {
+        child.emit("exit", 0);
+        if (mode === "delayed-close") setTimeout(() => child.emit("close", 0), 25);
+        if (mode !== "success-without-close") throw new Error("tree termination failed");
+      },
+    });
+    vm.runInContext(source.slice(source.indexOf("async function waitForExit")).replace("export async", "async"), ctx);
+    const runtime = await ctx.startCoopRuntime({ workspace: ROOT, spawnImpl: () => {
+      setTimeout(() => child.stdout.emit("data", Buffer.from(JSON.stringify({ type: "runtime.ready", contractVersion: 1,
+        transport: "http", endpoint: "http://127.0.0.1:12345", oneTimeToken: "a".repeat(32), runtimePid: 123 }) + "\n")), 0);
+      return child;
+    } });
+    try {
+      if (mode === "delayed-close") {
+        await runtime.stop({ graceMs: 50 });
+        assert.equal(closed, true, "a stop must wait for pipes to close after taskkill returns");
+      } else {
+        await assert.rejects(runtime.stop({ graceMs: 50 }), mode === "error-without-close" ? /tree termination failed/ : /shutdown could not be confirmed/);
+        assert.equal(closed, false);
+      }
+    } finally { if (!closed) child.emit("close", 0); }
+  }
 });
 
 if (process.platform === "win32") await test("native Windows runtime stop reaps a launcher and its nested process", async () => {

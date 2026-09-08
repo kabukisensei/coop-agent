@@ -193,7 +193,10 @@ Desktop requests graceful runtime shutdown using a per-launch owner credential,
 separate from the renderer cookie. The runtime stops its agents and releases
 workspace ownership before exiting; the credential is excluded from agent
 environments. Older or unresponsive Windows runtimes fall back to terminating the
-owned launcher tree through native `System32/taskkill.exe`. Managed verification
+owned launcher tree through native `System32/taskkill.exe`. The supervisor waits
+for the child process and its inherited pipes to close even when `taskkill` reports
+an error; an exit event alone cannot confirm shutdown. A missing close event
+within the existing grace period remains a failure. Managed verification
 checks two consecutive writable starts with the same workspace/profile and emits
 success only after both runtimes have stopped. Native CI must verify this behavior
 on each target; it does not establish reboot/login or installer acceptance.
