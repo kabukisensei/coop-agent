@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { managedRuntimeBuildPlan } from "../scripts/managed-runtime-build-plan.mjs";
-import { validateReviewWork, validateLineageWork, verifyManagedExtensionWork } from "../scripts/verify-managed-tool-work.mjs";
+import { validateReviewWork, validateLineageWork, verifyManagedExtensionWork, buildManagedExtensionEnvironment } from "../scripts/verify-managed-tool-work.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const release = JSON.parse(readFileSync(resolve(ROOT, "config", "release-manifest.json"), "utf8"));
@@ -91,6 +91,20 @@ test("installed-tool evidence rejects no-op reviews, wrong versions, diagnostics
   assert.throws(() => validateLineageWork({ nodes: {}, edges: [] }), /lineage/);
   assert.throws(() => validateLineageWork({ ...graph, edges: graph.edges.slice(0, 1) }), /lineage/);
   assert.throws(() => validateLineageWork({ ...graph, edges: graph.edges.slice(1) }), /lineage/);
+});
+
+test("extension verifier preserves Windows OS fields across casing and excludes caller configuration", () => {
+  const bundle = { node: join(ROOT, "fixture/node.exe"), coopRoot: join(ROOT, "fixture/coop") };
+  for (const rootKey of ["SystemRoot", "SYSTEMROOT", "systemroot"]) {
+    const env = buildManagedExtensionEnvironment(bundle, join(ROOT, "isolated-home"), {
+      [rootKey]: "C:\\Windows", windir: "C:\\Windows", COMSPEC: "C:\\Windows\\System32\\cmd.exe", pathext: ".EXE;.CMD",
+      HOME: "external-profile", PATH: "external-tools", NODE_OPTIONS: "external-options", OPENAI_API_KEY: "fixture",
+    });
+    assert.equal(env.SystemRoot, "C:\\Windows"); assert.equal(env.WINDIR, "C:\\Windows");
+    assert.equal(env.ComSpec, "C:\\Windows\\System32\\cmd.exe"); assert.equal(env.PATHEXT, ".EXE;.CMD");
+    assert.equal(env.HOME, join(ROOT, "isolated-home")); assert.equal(env.PATH, dirname(bundle.node));
+    assert.equal(env.OPENAI_API_KEY, undefined); assert.equal(env.NODE_OPTIONS, undefined);
+  }
 });
 
 {

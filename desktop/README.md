@@ -472,3 +472,13 @@ Managed Desktop launchers preserve the bundle's tool PATH and skip global npm,
 pipx, Homebrew and Azure CLI fallback discovery. This keeps external installations
 from replacing the bundled tools during startup. Ordinary terminal launch retains
 its existing fallback discovery.
+
+
+Development companion snapshots are pinned in `config/development-companions.json`.
+The current Data Doc snapshot includes Windows lineage path normalization and
+explicit UTF-8 JSONL setup transport; the DAX snapshot includes Windows file-lock
+regression coverage. Managed verification executes real SQL, DAX and lineage work
+through the packaged Pi extension loader as well as direct Python. The extension
+probe preserves only required Windows OS environment fields using case-insensitive
+lookup. Passing macOS checks does not establish Windows native startup or installer
+acceptance; see `docs/agent/desktop-completion-status-2026-09-07.md`.

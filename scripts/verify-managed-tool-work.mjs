@@ -56,6 +56,20 @@ export function verifyManagedToolWork(bundle) {
   }
 }
 
+export function buildManagedExtensionEnvironment(bundle, home, source = process.env) {
+  const env = { PATH: dirname(bundle.node), HOME: home, USERPROFILE: home, APPDATA: home, LOCALAPPDATA: home,
+    TMPDIR: home, TEMP: home, TMP: home, PI_CODING_AGENT_DIR: join(home, "agent"),
+    COOP_ROOT: bundle.coopRoot, COOP_DESKTOP_MANAGED_RUNTIME: "1", COOP_WORKSPACE_ACCESS_MODE: "writable",
+    COOP_SKIP_AZ: "1", COOP_NO_ONBOARD: "1", PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1" };
+  // A plain snapshot loses process.env's Windows case-insensitive property access.
+  // Preserve only the required operating-system fields, regardless of spelling.
+  for (const name of ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT"]) {
+    const key = Object.keys(source).find(key => key.toLowerCase() === name.toLowerCase());
+    if (key && typeof source[key] === "string") env[name] = source[key];
+  }
+  return env;
+}
+
 // Run serially in the dedicated verification CLI before starting runtime children.
 // The actual Pi loader must see only the disposable profile when it is imported.
 export async function verifyManagedExtensionWork(bundle, { tempRoot = tmpdir() } = {}) {
@@ -64,11 +78,7 @@ export async function verifyManagedExtensionWork(bundle, { tempRoot = tmpdir() }
   try {
     for (const name of ["home", "sql", "powerbi"]) mkdirSync(join(root, name));
     const home = join(root, "home");
-    const env = { PATH: dirname(bundle.node), HOME: home, USERPROFILE: home, APPDATA: home, LOCALAPPDATA: home,
-      TMPDIR: home, TEMP: home, TMP: home, PI_CODING_AGENT_DIR: join(home, "agent"),
-      COOP_ROOT: bundle.coopRoot, COOP_DESKTOP_MANAGED_RUNTIME: "1", COOP_WORKSPACE_ACCESS_MODE: "writable",
-      COOP_SKIP_AZ: "1", COOP_NO_ONBOARD: "1", PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1" };
-    for (const key of ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT"]) if (originalEnv[key]) env[key] = originalEnv[key];
+    const env = buildManagedExtensionEnvironment(bundle, home, originalEnv);
     for (const key of Object.keys(process.env)) delete process.env[key];
     Object.assign(process.env, env);
     copyFileSync(join(FIXTURES, "select-star.sql"), join(root, "sql", "é & select-star.sql"));
@@ -84,7 +94,7 @@ export async function verifyManagedExtensionWork(bundle, { tempRoot = tmpdir() }
       const definition = registered.get(name)?.definition;
       if (typeof definition?.execute !== "function") throw new Error(`Packaged Coop tool is missing: ${name}.`);
       const result = await definition.execute(`acceptance-${name}`, params, AbortSignal.timeout(60000), () => {}, context);
-      if (result?.isError || result?.details?.exitCode !== 0) throw new Error(`Packaged Coop tool failed through Pi: ${name}. ${String(result?.details?.error || result?.details?.stderr || "Missing successful exit result").slice(0, 2000)}`);
+      if (result?.isError || result?.details?.exitCode !== 0) throw new Error(`Packaged Coop tool failed through Pi: ${name}. ${String(result?.details?.error || result?.details?.stderr || "Missing successful exit result").slice(-4000)}`);
       return result.details;
     };
     const results = {};
