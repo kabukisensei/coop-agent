@@ -41,10 +41,17 @@
 # bash's per-command behavior and propagate exit codes explicitly.
 $ErrorActionPreference = 'Continue'
 
+# Opt-in fixed stage labels only: never include arguments or environment values.
+function Write-CoopRuntimeTrace([string]$Phase) {
+  if ($env:COOP_RUNTIME_STARTUP_TRACE -eq '1') { [Console]::Error.WriteLine('[coop-startup] ' + $Phase) }
+}
+Write-CoopRuntimeTrace 'dispatcher-enter'
+
 # --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
 # Resolves COOP_ROOT/COOP_VERSION and defines the loggers, Test-Have,
 # Get-CoopPython, YAML readers, Find-CoopProjectYml, Coop-Confirm, etc.
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
+Write-CoopRuntimeTrace 'helpers-ready'
 
 # Isolate coop's Pi config (extensions, settings, themes, MCP) from the user's personal
 # `pi` — for launching AND the coop add/remove/list/config/pi management aliases.
@@ -409,15 +416,19 @@ function Start-CoopRuntimeProcess {
     [ValidateSet('web', 'runtime')][string] $Surface,
     [string[]] $RuntimeArgs = @()
   )
+  Write-CoopRuntimeTrace 'runtime-prerequisites'
   if (-not (Test-Have 'pi'))   { Coop-Die 'pi is not installed. Run: coop install' }
   if (-not (Test-Have 'node')) { Coop-Die "Node.js is required for coop $Surface. Run: coop install" }
   $runtimePython = Get-CoopPython
   if (-not $runtimePython) { Coop-Die "python3 is required for coop $Surface" }
+  Write-CoopRuntimeTrace 'runtime-preflight'
   Invoke-CoopLaunchPreflight
   Invoke-CoopAzPreflight   # same Fabric/Power BI token check the terminal launch does
+  Write-CoopRuntimeTrace 'runtime-launch-spec'
   $env:COOP_LAUNCH_SPEC = (Invoke-CoopLaunchSpec @('--json'))
   $env:COOP_PYTHON = $runtimePython
   $server = Join-Path $script:CoopRoot 'web\server.mjs'
+  Write-CoopRuntimeTrace 'runtime-server'
   if ($Surface -eq 'runtime') {
     $env:COOP_RUNTIME_MODE = '1'
     & node $server --runtime @RuntimeArgs
@@ -1127,6 +1138,7 @@ if ($argList.Count -gt 1) { $rest = @($argList[1..($argList.Count - 1)]) }
 # Surface freshly-installed tools (npm-global `pi`, pipx `fab`/coop-*) on PATH for
 # this process so a shell whose persistent PATH predates the install still finds them.
 Add-CoopRuntimePaths
+Write-CoopRuntimeTrace 'paths-ready'
 
 switch -CaseSensitive ($cmd) {
   '' { Invoke-LaunchPi; break }

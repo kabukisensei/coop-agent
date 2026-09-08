@@ -43,6 +43,13 @@ node scripts/stage-managed-runtime.mjs \
   --python-tool coop-sql-review=/absolute/python-tools/coop-sql-review
 ```
 
+Set `COOP_RUNTIME_STARTUP_TRACE=1` when diagnosing a slow runtime launch. Both
+dispatchers and the server emit fixed startup-stage labels to stderr; runtime
+JSON on stdout stays unchanged. The managed runtime verifier enables these
+labels and records elapsed milliseconds per stderr chunk, preserving its existing
+readiness deadline. Tracing is off during normal use and contains no argument or
+environment values.
+
 Managed SQL Review, DAX Review, Data Doc and its JSONL setup wizard invoke
 the bundle-owned Python interpreter and entrypoints directly through
 `lib/managed-tool-invocation.mjs`. Windows command shims are not spawned by Pi.

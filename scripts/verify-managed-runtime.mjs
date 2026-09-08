@@ -60,6 +60,7 @@ async function verifyBundle() {
     PI_CODING_AGENT_DIR: options.agent,
     COOP_SKIP_AZ: "1",
     COOP_NO_ONBOARD: "1",
+    COOP_RUNTIME_STARTUP_TRACE: "1",
   };
   const runtimePids = [], startupMilliseconds = [];
   for (let cycle = 0; cycle < 2; cycle++) {
@@ -70,7 +71,7 @@ async function verifyBundle() {
       commandPrefix: launcher.commandPrefix,
       env,
       readyTimeoutMs: options.environment === "native" ? 20_000 : 60_000,
-      onStderr: (text) => process.stderr.write(text),
+      onStderr: (text) => process.stderr.write(`[runtime cycle ${cycle + 1} +${Math.round(performance.now() - started)}ms] ${text}`),
     });
     startupMilliseconds.push(Math.round(performance.now() - started));
     try {

@@ -563,4 +563,27 @@ await test("ordinary tool execution preserves the original command, arguments an
   } finally { if (saved === undefined) delete process.env.COOP_DESKTOP_MANAGED_RUNTIME; else process.env.COOP_DESKTOP_MANAGED_RUNTIME = saved; }
 });
 
+await test("startup diagnostics are opt-in, preserve stdout and report only fixed stages", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-startup-trace-"));
+  try {
+    const windows = process.platform === "win32";
+    const shells = windows ? [process.env.PWSH_EXE || "powershell.exe"] : ["bash"];
+    if (!windows && spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-Command", "exit 0"], { timeout: 5000 }).status === 0) shells.push("pwsh");
+    for (const shell of shells) {
+      const powershell = shell !== "bash";
+      const args = powershell ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", join(ROOT, "bin/coop.ps1"), "runtime", "--help"]
+        : [join(ROOT, "bin/coop"), "runtime", "--help"];
+      const env = { ...process.env, HOME: root, USERPROFILE: root, COOP_AGENT_DIR: join(root, "agent"), COOP_DESKTOP_MANAGED_RUNTIME: "1" };
+      delete env.COOP_RUNTIME_STARTUP_TRACE;
+      const plain = spawnSync(shell, args, { env, encoding: "utf8", timeout: 10000 });
+      assert.ifError(plain.error); assert.equal(plain.status, 0, plain.stderr);
+      assert.doesNotMatch(plain.stderr, /coop-startup/);
+      const traced = spawnSync(shell, args, { env: { ...env, COOP_RUNTIME_STARTUP_TRACE: "1" }, encoding: "utf8", timeout: 10000 });
+      assert.ifError(traced.error); assert.equal(traced.status, 0, traced.stderr);
+      assert.equal(traced.stdout, plain.stdout, "startup diagnostics must not corrupt runtime stdout");
+      assert.deepEqual(traced.stderr.trim().split(/\r?\n/), ["[coop-startup] dispatcher-enter", "[coop-startup] helpers-ready", "[coop-startup] paths-ready"]);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 console.log(`managed runtime: ${count} tests passed`);

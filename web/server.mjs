@@ -62,6 +62,8 @@ import {
 import { buildTreeNavigationInvocation, parseTreeNavigationResultEvent } from "./tree-navigation.mjs";
 import { KnowledgeService } from "../lib/knowledge-service.mjs";
 
+if (process.env.COOP_RUNTIME_STARTUP_TRACE === "1") process.stderr.write("[coop-startup] server-module-ready\n");
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const RUNTIME_MODE = argv.includes("--runtime") || process.env.COOP_RUNTIME_MODE === "1";
@@ -2625,6 +2627,7 @@ server.on("error", (e) => {
 });
 
 server.listen(PORT, HOST, () => {
+  if (process.env.COOP_RUNTIME_STARTUP_TRACE === "1") process.stderr.write("[coop-startup] server-listening\n");
   const address = server.address();
   const activePort = typeof address === "object" && address ? address.port : PORT;
   const endpoint = `http://${HOST}:${activePort}`;

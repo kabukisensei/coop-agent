@@ -35,6 +35,14 @@
 #
 set -euo pipefail
 
+# Opt-in fixed stage labels only: never include arguments or environment values.
+coop_runtime_trace() {
+  if [ "${COOP_RUNTIME_STARTUP_TRACE:-}" = "1" ]; then
+    printf '[coop-startup] %s\n' "$1" >&2
+  fi
+}
+coop_runtime_trace dispatcher-enter
+
 # --- Resolve COOP_ROOT and load the shared library ---------------------------
 _src="${BASH_SOURCE[0]}"
 while [ -h "$_src" ]; do
@@ -46,6 +54,7 @@ COOP_ROOT="$(cd -P "$(dirname "$_src")/.." >/dev/null 2>&1 && pwd)"
 export COOP_ROOT
 # shellcheck source=lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
+coop_runtime_trace helpers-ready
 
 # Isolate coop's Pi config (extensions, settings, themes, MCP, sessions) from the
 # user's personal `pi`. Applies to launching AND the `coop add/remove/list/config/pi`
@@ -306,14 +315,18 @@ PY
 # reconstructs Coop resources and only appends the mandatory `--mode rpc -a`.
 coop_start_runtime() {
   local surface="$1"; shift
+  coop_runtime_trace runtime-prerequisites
   have pi   || coop_die "pi is not installed. Run: coop install"
   have node || coop_die "Node.js is required for coop $surface. Run: coop install"
   local runtime_python
   runtime_python="$(coop_python)" || coop_die "python3 is required for coop $surface"
+  coop_runtime_trace runtime-preflight
   coop_launch_preflight
   coop_az_preflight   # same Fabric/Power BI token check the terminal launch does
   local spec
+  coop_runtime_trace runtime-launch-spec
   spec="$(coop_launch_spec --json)" || coop_die "couldn't build the launch spec for coop $surface"
+  coop_runtime_trace runtime-server
   if [ "$surface" = "runtime" ]; then
     COOP_LAUNCH_SPEC="$spec" COOP_PYTHON="$runtime_python" COOP_RUNTIME_MODE=1 exec node "$COOP_ROOT/web/server.mjs" --runtime "$@"
   fi
@@ -1036,6 +1049,7 @@ _coop_add_runtime_paths() {
   hash -r 2>/dev/null || true
 }
 _coop_add_runtime_paths
+coop_runtime_trace paths-ready
 
 coop_init_ci() {
   local dir="$1"
