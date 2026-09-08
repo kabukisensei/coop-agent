@@ -23,6 +23,16 @@ function Write-Shim {
   if (-not $isWindowsHost) { & chmod +x (Join-Path $bin $Name) }
 }
 
+# The fixture's Pi executable and package store are synthetic. Model the process
+# inventory too, so a real Desktop session cannot contaminate the repair test.
+# Process-command recognition has independent native regression coverage.
+function Get-CimInstance {
+  [CmdletBinding()]
+  param([string]$ClassName, [string]$Filter)
+  if ($ClassName -eq 'Win32_Process' -and $Filter -eq "Name='node.exe'") { return @() }
+  throw "Unexpected CIM query in isolated installer fixture: $ClassName / $Filter"
+}
+
 $saved = @{}
 foreach ($name in @('PATH','HOME','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODING_AGENT_DIR','COOP_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','COOP_FABRIC_PYTHON','COOP_TEST_CALLS','COOP_TEST_PY_TEMPLATE','LOCALAPPDATA','ProgramFiles')) {
   $saved[$name] = [Environment]::GetEnvironmentVariable($name)

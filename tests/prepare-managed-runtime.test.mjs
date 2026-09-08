@@ -216,6 +216,35 @@ await test("managed npm locks reject manifest mismatch, unhashed archives and in
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+await test("native npm payloads must exist in the lock and installed tree for their target", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const root = mkdtempSync(join(tmpdir(), "coop-native-lock-")), path = join(root, "lock.json");
+  const entry = { version: "1.0.0", resolved: "https://registry.npmjs.org/example/-/example-1.0.0.tgz", integrity: "sha512-YWJj" };
+  const owner = { ...entry, optionalDependencies: { "example-win32-x64": "1.0.0", "example-darwin-x64": "1.0.0" } };
+  const payload = { ...entry, optional: true, os: ["win32"], cpu: ["x64"] };
+  const lock = { name: "coop-managed-runtime", version: "0.0.0", lockfileVersion: 3,
+    packages: { "": { dependencies: { example: "1.0.0" } }, "node_modules/example": owner } };
+  const plan = { target: "win32-x64", npmSpecs: ["example@1.0.0"] };
+  const save = () => writeFileSync(path, JSON.stringify(lock));
+  try {
+    save(); assert.throws(() => loadManagedNpmLock(plan, path), /native dependency example-win32-x64 is missing/);
+    // Nested resolution is valid; an optional package for another OS is not required.
+    const nativePath = "node_modules/example/node_modules/example-win32-x64";
+    lock.packages[nativePath] = payload; save();
+    const resolution = loadManagedNpmLock(plan, path), prefix = join(root, "npm");
+    writeManagedNpmInputs(prefix, resolution); mkdirSync(join(prefix, "node_modules"));
+    const installed = { lockfileVersion: 3, packages: { "node_modules/example": owner } };
+    const installedPath = join(prefix, "node_modules", ".package-lock.json");
+    writeFileSync(installedPath, JSON.stringify(installed));
+    assert.throws(() => verifyManagedNpmResolution(prefix, resolution), /required native dependency is missing/);
+    installed.packages[nativePath] = payload; writeFileSync(installedPath, JSON.stringify(installed));
+    assert.equal(verifyManagedNpmResolution(prefix, resolution).packages, 2);
+    lock.packages[nativePath] = { ...payload, cpu: ["arm64"] }; save();
+    assert.throws(() => loadManagedNpmLock(plan, path), /does not match/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 await test("all Python targets lock the manifest tools and scope source builds explicitly", () => {
   for (const target of ["darwin-arm64", "darwin-x64", "win32-x64"]) {
     const plan = managedRuntimeBuildPlan(target), result = loadManagedPythonLock(plan);

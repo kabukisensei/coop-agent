@@ -1,0 +1,27 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { resolveManagedToolInvocation } from "../lib/managed-tool-invocation.mjs";
+
+const root = mkdtempSync(join(tmpdir(), "coop managed tools & unicode-"));
+mkdirSync(join(root, "coop")); mkdirSync(join(root, "python/runtime"), { recursive: true }); mkdirSync(join(root, "python/entrypoints"));
+writeFileSync(join(root, "python/runtime/python.exe"), "fixture");
+writeFileSync(join(root, "python/entrypoints/coop-data-doc.py"), "fixture");
+const manifest = { schemaVersion: 1, target: { platform: "win32" }, paths: { coopRoot: "coop", python: "python/runtime/python.exe", pythonCommands: ["coop-data-doc"] } };
+writeFileSync(join(root, "manifest.json"), JSON.stringify(manifest));
+const env = { COOP_DESKTOP_MANAGED_RUNTIME: "1", COOP_ROOT: join(root, "coop"), PATH: "C:\\unrelated-workstation-tools" };
+const args = ["--config", 'C:\\fixtures\\café & 中文 (1)\\literal"%value%.yml'];
+const invocation = resolveManagedToolInvocation("coop-data-doc", args, env, "win32");
+assert.equal(invocation.command, join(root, "python/runtime/python.exe"));
+assert.deepEqual(invocation.args, ["-I", join(root, "python/entrypoints/coop-data-doc.py"), ...args]);
+assert.equal(resolveManagedToolInvocation("coop-data-doc", args, {}, "win32"), null);
+assert.equal(resolveManagedToolInvocation("unrelated-tool", args, env, "win32"), null);
+assert.throws(() => resolveManagedToolInvocation("coop-sql-review", [], env, "win32"), /contract is invalid/);
+assert.throws(() => resolveManagedToolInvocation("coop-data-doc", [], { ...env, COOP_ROOT: "relative" }, "win32"), /root is unavailable/);
+const linkedRoot = mkdtempSync(join(tmpdir(), "coop-linked-tools-"));
+mkdirSync(join(linkedRoot, "coop")); mkdirSync(join(linkedRoot, "python"));
+symlinkSync(join(root, "python/runtime"), join(linkedRoot, "python/runtime"), process.platform === "win32" ? "junction" : "dir");
+writeFileSync(join(linkedRoot, "manifest.json"), JSON.stringify(manifest));
+assert.throws(() => resolveManagedToolInvocation("coop-data-doc", [], { ...env, COOP_ROOT: join(linkedRoot, "coop") }, "win32"), /escapes its bundle/);
+console.log("Managed tool invocation: direct private Python, isolated imports, literal arguments, terminal parity and reparse rejection pass.");

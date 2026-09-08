@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, screen, session, shell } from "electron";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadDesktopState, restoreWindowBounds, saveDesktopState } from "./desktop-state.mjs";
@@ -49,7 +49,11 @@ let checkpointTimer = null;
 const managedResourcePresent = app.isPackaged && existsSync(join(process.resourcesPath, "managed-runtime", "manifest.json"));
 const updateProbeToken = managedResourcePresent && /^[a-f0-9]{64}$/.test(process.env.COOP_DESKTOP_UPDATE_PROBE || "") ? process.env.COOP_DESKTOP_UPDATE_PROBE : null;
 if (updateProbeToken) process.on("SIGTERM", () => app.quit());
-app.setName(managedResourcePresent ? "Coop Desktop" : "Coop Desktop Preview");
+const developmentBuild = JSON.parse(readFileSync(join(app.getAppPath(), "package.json"), "utf8")).coopDesktopDevelopment === true;
+app.setName(developmentBuild ? "Coop Desktop Windows Validation" : managedResourcePresent ? "Coop Desktop" : "Coop Desktop Preview");
+if (developmentBuild && !app.commandLine.hasSwitch("user-data-dir")) {
+  app.setPath("userData", join(app.getPath("appData"), "Coop Desktop Windows Validation"));
+}
 app.enableSandbox();
 
 function directoryExists(path) {
@@ -163,6 +167,8 @@ async function startRuntime() {
     coopCommand: launcher.command,
     commandPrefix: launcher.commandPrefix,
     env: runtimeEnv,
+    // Cold bundled Python/extension discovery can exceed 20 seconds on Windows VMs.
+    readyTimeoutMs: launcher.source === "managed" ? 90_000 : 20_000,
     onStderr: (text) => process.stderr.write(text),
     onExit: (info) => { void handleUnexpectedRuntimeExit(generation, info); },
   });
@@ -633,7 +639,9 @@ else {
   app.whenReady().then(createWindow).catch((error) => {
     if (updateProbeToken) { app.quit(); return; }
     if (error.code === "PROFILE_SELECTION_CANCELLED") { app.quit(); return; }
-    dialog.showErrorBox("Coop Desktop could not start", `${error.message}\n\nRun coop doctor from an existing Coop installation for detailed prerequisite checks.`);
+    dialog.showErrorBox("Coop Desktop could not start", `${error.message}\n\n${managedResourcePresent
+      ? "Retry Coop Desktop. If startup keeps failing, report this message with the Desktop build version."
+      : "Run coop doctor from the selected Coop installation for prerequisite checks."}`);
     app.quit();
   });
 }

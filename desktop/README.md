@@ -134,6 +134,20 @@ Build/runtime receipts and dependency inventories are retained for seven days as
 CI evidence. These jobs create unsigned development apps; they do not publish a
 release or prove installer, model sign-in, clipboard or Power BI acceptance.
 
+Native npm packages declared for the target platform must appear in the committed
+lock and the installed dependency tree, even when their parent declares them as
+optional. This catches missing Fabric/Power BI MCP, image-processing, clipboard
+and regex binaries before a managed bundle can pass verification. Cross-target
+installation with lifecycle scripts disabled is a dependency check only; the
+native CI build must also execute the platform's install scripts and runtime.
+
+The managed-runtime verifier also runs the installed SQL Review, DAX Review and
+Data Doc Python entrypoints against synthetic repository fixtures. It requires
+the expected findings and SQL/model lineage, using bundled Python and temporary
+home/work folders. Both staged and packaged CI checks record this tool-work
+evidence. This exercises local analysis; it does not require a model account or
+establish live Microsoft integration acceptance.
+
 A packaged app uses `resources/managed-runtime` when present. It validates the
 bundle contract, target, jailed paths, and Coop/Pi/Node/Python version agreement
 before launch. A present but invalid bundle fails closed; it never falls back to
@@ -411,3 +425,31 @@ Native interruption/reboot
 acceptance, Windows support and production feed/signing acceptance remain tracked
 release requirements.
 Passing controller/helper tests does not establish a complete production updater.
+
+## Isolated Windows development acceptance
+
+Use `npm run package:validation:win --prefix desktop` or
+`npm run package:validation:installer:win --prefix desktop` with
+`COOP_DESKTOP_MANAGED_RUNTIME_DIR` set to a fresh staged Windows bundle.
+These select `electron-builder-windows-validation.cjs`, application ID
+`com.cooptimize.coop.desktop.windowsvalidation`, and product name
+`Coop Desktop Windows Validation`. They do not create automatic desktop/start-menu
+shortcuts. The packaged development marker selects a separate default user-data
+directory; an explicit `--user-data-dir` can choose a disposable profile on D:.
+Keep the existing Coop installation and real workspaces outside the test paths.
+
+Build companion wheels using the committed development pins above. The Windows
+branch pins include the verified Data Doc UTF-8/path fixes and DAX native sharing
+lock regression. Package version pins remain unchanged; inspect the verifier's
+`developmentSources` and full dependency inventory to establish actual inclusion.
+
+Managed `coop doctor` shares the shell's bundle inspection module, copied into
+the staged runtime by `stage-managed-runtime.mjs`, and probes its Node, Python and
+Python tool imports. Both terminal launchers and Desktop call this managed path.
+It does not inspect or repair unrelated global pipx/npm installations. Model
+authentication, workspace setup and connected integrations retain their separate
+shared health contracts. Managed Doctor is read-only; dependency repair belongs
+to Desktop install/update, and `--fix`/`--publish` are refused in the managed path.
+See `docs/agent/windows-validation-2026-09-07.md` for observed native results and
+open acceptance requirements; a source or package-verifier pass is not installed
+GUI acceptance.

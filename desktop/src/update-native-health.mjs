@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { inspectManagedRuntime } from "./managed-runtime.mjs";
 import { createHealthProfile, waitForProbeGroupExit } from "./update-health-profile.mjs";
 
 export async function nativeApplicationHealth(appPath, request, descriptor, signal, { spawnImpl = spawn, timeoutMs = 90000 } = {}) {
@@ -12,14 +14,22 @@ export async function nativeApplicationHealth(appPath, request, descriptor, sign
   const token = randomBytes(32).toString("hex");
   let pid;
   const healthy = await new Promise((resolve, reject) => {
-    const child = spawnImpl(join(appPath, "Contents", "MacOS", "Coop Desktop"), [`--user-data-dir=${userData}`], {
-      cwd: request.workspace, detached: true, stdio: ["ignore", "pipe", "ignore"],
-      env: { HOME: process.env.HOME, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", COOP_SKIP_AZ: "1", COOP_NO_ONBOARD: "1", COOP_DESKTOP_UPDATE_PROBE: token },
+    const windows = process.platform === "win32";
+    const command = windows ? inspectManagedRuntime(join(appPath, "resources", "managed-runtime")).python : join(appPath, "Contents", "MacOS", "Coop Desktop");
+    const args = windows ? ["-I", "-B", join(dirname(fileURLToPath(import.meta.url)), "update-windows-job.py"), join(appPath, "Coop Desktop.exe"), `--user-data-dir=${userData}`] : [`--user-data-dir=${userData}`];
+    // Windows needs its OS launch prerequisites, but no provider keys/tokens.
+    const osKeys = new Set(["SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "SYSTEMDRIVE"]);
+    const environment = windows ? Object.fromEntries(Object.entries(process.env).filter(([key]) => osKeys.has(key.toUpperCase()))) : { HOME: process.env.HOME, PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
+    const child = spawnImpl(command, args, {
+      cwd: request.workspace, detached: !windows, windowsHide: true, stdio: ["ignore", "pipe", "ignore"],
+      env: { ...environment, COOP_SKIP_AZ: "1", COOP_NO_ONBOARD: "1", COOP_DESKTOP_UPDATE_PROBE: token },
     });
     pid = child.pid;
     let output = "", ready = false, failed = false, killTimer;
     const killGroup = strength => {
       if (!child.pid) return;
+      // Closing the supervisor's job handle kills even detached descendants.
+      if (windows) { child.kill(); return; }
       try { process.kill(-child.pid, strength); } catch (error) { if (error.code !== "ESRCH") failed = true; }
     };
     const stop = () => {

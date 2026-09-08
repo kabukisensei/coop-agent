@@ -6,6 +6,10 @@
 # exit 1 when something required is missing.
 #
 $ErrorActionPreference = 'Continue'
+if ($env:COOP_DESKTOP_MANAGED_RUNTIME -eq '1') {
+  & node (Join-Path $PSScriptRoot 'doctor-managed.mjs') @args
+  exit $LASTEXITCODE
+}
 
 # --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
 # Resolves COOP_ROOT/COOP_VERSION and defines the loggers, Test-Have,

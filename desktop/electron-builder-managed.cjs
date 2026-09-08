@@ -31,7 +31,7 @@ module.exports = {
     mkdirSync(destination, { recursive: true });
     const shared = new Set(["managed-runtime.mjs", "coop-launcher.mjs", "dependency-inventory.mjs", "development-wheels.mjs", "runtime-supervisor.mjs"]);
     for (const name of readdirSync(join(__dirname, "src"))) {
-      if ((name.startsWith("update-") && name.endsWith(".mjs")) || shared.has(name)) copyFileSync(join(__dirname, "src", name), join(destination, name));
+      if ((name.startsWith("update-") && name.endsWith(".mjs")) || name === "update-windows-job.py" || shared.has(name)) copyFileSync(join(__dirname, "src", name), join(destination, name));
     }
   },
 };

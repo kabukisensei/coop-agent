@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { join } from "node:path";
 
 const READY_LIMIT = 64 * 1024;
 
@@ -28,6 +29,27 @@ async function waitForExit(closed, timeoutMs) {
       new Promise(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); }),
     ]);
   } finally { clearTimeout(timer); }
+}
+
+async function killWindowsTree(child, graceMs, hasClosed) {
+  // Terminate descendants while the PowerShell parent still owns them. Killing
+  // the wrapper first orphans Pi and leaves the inherited output pipes open.
+  const taskkill = join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe");
+  await new Promise((resolve, reject) => {
+    const killer = spawn(taskkill, ["/PID", String(child.pid), "/T", "/F"], {
+      shell: false, windowsHide: true, stdio: "ignore",
+    });
+    const timer = setTimeout(() => {
+      killer.kill();
+      reject(new Error("Runtime process-tree shutdown timed out."));
+    }, Math.max(10000, graceMs));
+    killer.once("error", error => { clearTimeout(timer); reject(error); });
+    killer.once("close", code => {
+      clearTimeout(timer);
+      if (code === 0 || hasClosed()) resolve();
+      else reject(new Error(`Runtime process-tree shutdown failed (${code}).`));
+    });
+  });
 }
 
 export async function startCoopRuntime({
@@ -63,6 +85,11 @@ export async function startCoopRuntime({
     stopRequested = true;
     stopTask = (async () => {
       try {
+        if (process.platform === "win32" && child.pid) {
+          await killWindowsTree(child, graceMs, () => exited);
+          if (!await waitForExit(closed, 1000)) throw new Error("Coop Runtime shutdown could not be confirmed.");
+          return;
+        }
         child.kill("SIGTERM");
         if (await waitForExit(closed, graceMs)) return;
         child.kill("SIGKILL");

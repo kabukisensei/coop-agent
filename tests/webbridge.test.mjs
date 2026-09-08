@@ -4,7 +4,7 @@
 // __hello marker, answered-dialog skipping on reconnect, and prompt forwarding.
 import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { renderKnowledgeMarkdown } from "../lib/knowledge-service.mjs";
 
@@ -130,7 +130,7 @@ writeFileSync(join(workSessDir, WORK_SESSION), [
 ].join("\n") + "\n");
 
 const spec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: agentDir, OPENAI_API_KEY: "fixture-launch-spec-key" } });
-const server = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT)], {
+const server = spawn(process.execPath, ["--import", pathToFileURL(join(HERE, "fixtures", "webbridge-doctor-loader.mjs")).href, join(ROOT, "web", "server.mjs"), "--port", String(PORT)], {
   // COOP_WEB_MAX_CHATS=3 gives the multi-chat cap test a deterministic, cheap bound;
   // it affects nothing earlier in the file (all pre-multi-chat tests use one chat).
   env: { ...process.env, OPENAI_API_KEY: "", COOP_DIR: agentDir, COOP_LAUNCH_SPEC: spec, COOP_WEB_NO_OPEN: "1", COOP_WEB_MAX_CHATS: "3", COOP_TEAM_KNOWLEDGE_ROOT: teamKnowledgeRoot },
@@ -304,6 +304,7 @@ t("/capabilities publishes declarative workflow extensions without executable re
 
 r = await fetch(base + "/doctor", { headers: { cookie } });
 const doctorReport = await r.json();
+if (r.status !== 200) console.error("Doctor HTTP failure:", r.status, doctorReport.error);
 t("/doctor exposes the shared versioned Health contract",
   r.status === 200 && doctorReport.ok === true && doctorReport.report?.schemaVersion === 1 && Array.isArray(doctorReport.report?.checks));
 r = await fetch(base + "/auth/providers", { headers: { cookie } });
@@ -325,8 +326,8 @@ const knowledgeSearch = await r.json();
 t("/knowledge/search returns only approved scope-filtered guidance",
   r.status === 200 && knowledgeSearch.results?.length === 1 && knowledgeSearch.results[0].id === "knowledge.sql.bridge.001");
 t("Health UI consumes shared contracts and the fixed Desktop model-login bridge",
-  appJsSrc.includes('fetch(`/doctor${suffix}`)') && appJsSrc.includes('fetch(`/auth/providers${suffix}`)') &&
-  appJsSrc.includes('fetch(`/setup/state${suffix}`)') && appJsSrc.includes('fetch(`/profile${suffix}`)') &&
+  appJsSrc.includes('["/doctor", "/auth/providers", "/setup/state", "/profile"]') &&
+  appJsSrc.includes('fetch(`${path}${suffix}`, { signal: AbortSignal.timeout(15000) })') &&
   appJsSrc.includes('fetch("/profile/apply"') && appJsSrc.includes("window.coopDesktop.startModelLogin()"));
 t("project-contract UI reads, previews, and applies through the shared two-step service",
   appJsSrc.includes('fetch(`/config/current?sid=') && appJsSrc.includes('fetch("/config/proposal"') &&
@@ -951,9 +952,15 @@ r = await post("/chdir", { dir: target });
 t("/chdir switches to a real folder", r.status === 200);
 let ch = await r.json();
 t("chdir echoes the resolved folder", ch.ok === true && ch.cwd === target);
-await new Promise((res) => setTimeout(res, 600)); // let the respawned stub boot
-r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
-poll = await r.json();
+// Wait for the observable startup event, not a workstation-dependent 600 ms.
+// The respawn can exceed that delay while native build/test workers are busy.
+const restartedUntil = Date.now() + 10000;
+do {
+  r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
+  poll = await r.json();
+  if (poll.events.some((line) => line.includes("What would you like to do"))) break;
+  await new Promise((res) => setTimeout(res, 100));
+} while (Date.now() < restartedUntil);
 t("poll reports the new folder", poll.cwd === target);
 t("restarted agent's startup dialog arrives fresh", poll.events.some((l) => l.includes("What would you like to do")));
 
@@ -1081,9 +1088,13 @@ if (!hasGit) {
   // collide with a main bridge from this or a back-to-back run; explicit --port means
   // it fails fast rather than walking.
   const emptyPath = mkdtempSync(join(osTmp(), "coop-web-nopath-"));
+  // Windows force-terminates child.kill(), so this independent fixture must
+  // not leave an unreaped workspace lease in the main bridge's agent profile.
+  const noGitAgentDir = mkdtempSync(join(osTmp(), "coop-web-nogit-agent-"));
+  const noGitSpec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: noGitAgentDir } });
   const PORT2 = PORT + 500;
   const server2 = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT2)], {
-    env: { ...process.env, PATH: emptyPath, COOP_LAUNCH_SPEC: spec, COOP_WEB_NO_OPEN: "1" },
+    env: { ...process.env, PATH: emptyPath, COOP_LAUNCH_SPEC: noGitSpec, COOP_WEB_NO_OPEN: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let err2 = "";
@@ -1260,7 +1271,9 @@ t("chat 2's stream has its own reply and NOT chat 1's",
   p2.events.some((l) => l.includes("polo:two")) && !p2.events.some((l) => l.includes("polo:one")));
 
 // 4. Per-chat cwd + jail: put the two chats in DIFFERENT folders.
-await post("/chdir", { sid: sid1, dir: resolvePath(process.cwd()) });
+r = await post("/chdir", { sid: sid1, dir: resolvePath(process.cwd()) });
+const firstChatMove = await r.json();
+assert.equal(r.status, 200, `first chat folder switch: ${JSON.stringify(firstChatMove)}`);
 await new Promise((res) => setTimeout(res, 500));
 r = await post("/chdir", { sid: sid2, dir: resolvePath(workDir) });
 t("/chdir {sid:sid2} -> 200", r.status === 200);

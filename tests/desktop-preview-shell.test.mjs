@@ -225,7 +225,8 @@ await test("terminal launch accepts only the runtime's fixed Coop descriptor", (
   assert.equal(mac.args[1].includes("/users/consultant/.coop/sessions/one.jsonl"), false);
   assert.equal(mac.args.includes("/opt/coop/bin/coop"), true);
   const windows = buildNativeTerminalProcess(launch("clone", "windows"), "win32", "C:\\Coop\\coop.cmd");
-  assert.equal(windows.command, "cmd.exe");
+  assert.match(windows.command, /WindowsPowerShell[\\/]v1\.0[\\/]powershell\.exe$/);
+  assert.equal(windows.args.at(-2), "-EncodedCommand");
   assert.equal(windows.args.join(" ").includes("Client Work"), false);
   assert.equal(windows.options.env.COOP_TERMINAL_CWD, "C:\\Client Work\\Repo");
   assert.equal(windows.options.env.COOP_TERMINAL_SESSION.endsWith("one.jsonl"), true);
@@ -276,7 +277,8 @@ await test("model login opens the fixed Pi TUI handoff without renderer-supplied
   assert.match(mac.args[1], /COOP_PRIME_MODEL_LOGIN=1 COOP_LOGIN_ONLY=1/);
   assert.equal((mac.args[1].match(/COOP_WORKSPACE_ACCESS_MODE=read-only/g) || []).length, 2, "both managed and preview login are read-only");
   const windows = buildNativeModelLoginProcess({ cwd: "C:\\Client Work\\Repo", coopExecutable: "C:\\Coop\\coop.cmd", platform: "win32" });
-  assert.equal(windows.command, "cmd.exe");
+  assert.match(windows.command, /WindowsPowerShell[\\/]v1\.0[\\/]powershell\.exe$/);
+  assert.equal(windows.args.at(-2), "-EncodedCommand");
   assert.equal(windows.args.join(" ").includes("Client Work"), false);
   assert.equal(windows.options.env.COOP_TERMINAL_BIN, "C:\\Coop\\coop.cmd");
   assert.equal(windows.options.env.COOP_WORKSPACE_ACCESS_MODE, "read-only");
@@ -337,6 +339,32 @@ await test("runtime restart callback fires only for an unexpected child exit", a
   crashed.child.kill("SIGKILL");
   for (let i = 0; i < 50 && !unexpected; i++) await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(Boolean(unexpected), true);
+});
+
+await test("shutdown and failed startup reap a real runtime descendant", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-runtime-tree-"));
+  const fixture = join(ROOT, "tests", "fixtures", "stub-coop-runtime.mjs");
+  const pidFile = join(root, "pids.json");
+  const env = { ...process.env, COOP_TEST_DESCENDANT_FILE: pidFile };
+  async function assertGone() {
+    const pids = Object.values(JSON.parse(readFileSync(pidFile, "utf8")));
+    for (const pid of pids) {
+      let alive = true;
+      for (let i = 0; i < 100 && alive; i++) {
+        try { process.kill(pid, 0); await new Promise(resolve => setTimeout(resolve, 20)); }
+        catch (error) { assert.equal(error.code, "ESRCH"); alive = false; }
+      }
+      assert.equal(alive, false, `owned fixture PID ${pid} must exit`);
+    }
+  }
+  try {
+    const runtime = await startCoopRuntime({ workspace: root, coopCommand: process.execPath, commandPrefix: [fixture], env });
+    await Promise.all([runtime.stop(), runtime.stop()]);
+    await assertGone();
+    await assert.rejects(startCoopRuntime({ workspace: root, coopCommand: process.execPath, commandPrefix: [fixture],
+      env: { ...env, COOP_TEST_SUPPRESS_READY: "1" }, readyTimeoutMs: 1000 }), /ready in time/);
+    await assertGone();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 await test("production renderer bridge is sandboxed and individually allowlisted", () => {

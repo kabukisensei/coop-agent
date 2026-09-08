@@ -1,4 +1,5 @@
 import { createHealthProfile, waitForProbeGroupExit } from "../desktop/src/update-health-profile.mjs";
+import { createReparseLink as symlinkSync } from "./fixtures/reparse-link.mjs";
 import { canStartMacApplication } from "../desktop/src/update-startup.mjs";
 import { pruneCompletedRecoveryJobs, recoveryJobIsIdle } from "../desktop/src/update-recovery-retention.mjs";
 import { createMacRecoveryJob, recoveryJobPlist } from "../desktop/src/update-recovery-job.mjs";
@@ -15,7 +16,7 @@ import vm from "node:vm";
 import { createUpdateController, loadPackagedUpdateFeed, validateUpdateFeed } from "../desktop/src/update-controller.mjs";
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { constants, cpSync, existsSync, realpathSync, renameSync, statSync, rmSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { constants, cpSync, existsSync, realpathSync, renameSync, statSync, rmSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { lstat, open, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -1108,7 +1109,7 @@ await test("native startup deferral exits before runtime setup and its notice cl
   class NoticeWindow { destroy() { destroyed++; } }
   const ctx = vm.createContext({ managedResourcePresent: true, updateProbeToken: null, resolve, dirname, AbortController,
     process: { platform: "darwin", execPath: "/fixture/Coop Desktop.app/Contents/MacOS/Coop Desktop", ppid: 123 },
-    canStartMacApplication: async args => { assert.equal(args.appPath, "/fixture/Coop Desktop.app");return false; },
+    canStartMacApplication: async args => { assert.equal(args.appPath, resolve("/fixture/Coop Desktop.app"));return false; },
     setTimeout: callback => { queueMicrotask(callback);return 1; }, clearTimeout: () => {},
     BrowserWindow: NoticeWindow,
     dialog: { showMessageBox: (parent, options) => { assert.ok(parent instanceof NoticeWindow, "macOS cancellation requires a parent window");dialogs++;return new Promise(resolve => options.signal.addEventListener("abort", resolve, { once: true })); } },

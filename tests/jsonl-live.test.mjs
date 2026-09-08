@@ -12,10 +12,10 @@ import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
 if (!dist) { console.error("COOP_TEST_DIST not set"); process.exit(1); }
-const { resolveDataDocExecutable } = await import(pathToFileURL(join(dist, "coop-tools.mjs")).href);
+const { resolveDataDocInvocation } = await import(pathToFileURL(join(dist, "coop-tools.mjs")).href);
 
-let exe;
-try { exe = resolveDataDocExecutable(process.platform, process.env); }
+let invocation;
+try { invocation = resolveDataDocInvocation(process.platform, process.env); }
 catch (e) {
   if (process.env.COOP_TEST_DATADOC_REQUIRED === "1") { console.error(e.message); process.exit(1); }
   console.log("  – coop-data-doc not on PATH; skipping live JSONL happy-path");
@@ -23,7 +23,7 @@ catch (e) {
 }
 
 const verResult = await new Promise((res) => {
-  const p = spawn(exe, ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
+  const p = spawn(invocation.command, [...invocation.args, "--version"], { stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
   p.stdout.on("data", (d) => { out += d; });
   let settled = false;
@@ -60,7 +60,7 @@ mkdirSync(join(work, "pbi"), { recursive: true });
 writeFileSync(join(sqlDir, "f.sql"), "CREATE OR REPLACE VIEW gold.f AS SELECT 1 AS x;\n");
 
 // --- drive the questionnaire ---------------------------------------------------
-const child = spawn(exe, ["setup", "--transport", "jsonl"], { cwd: work, stdio: ["pipe", "pipe", "pipe"] });
+const child = spawn(invocation.command, [...invocation.args, "setup", "--transport", "jsonl"], { cwd: work, stdio: ["pipe", "pipe", "pipe"] });
 const events = [];
 const rawLines = [];
 let stdoutNonJson = "";
@@ -162,6 +162,7 @@ const prompts = events.filter((e) => e.type === "prompt");
 ok(prompts.length > 0, `questionnaire asked ${prompts.length} prompts`);
 ok(!events.some((e) => e.type === "error"), "no error events during happy path");
 const terminals = events.filter((e) => ["complete", "cancelled", "error"].includes(e.type));
+for (const event of terminals.filter((event) => event.type === "error")) console.error(`  JSONL error: ${JSON.stringify(event)}`);
 ok(terminals.length === 1 && terminals[0].type === "complete",
    `exactly one terminal event, of type complete (got ${terminals.map((t) => t.type).join(",") || "none"})`);
 ok(exitCode === 0, `exit code is 0 (got ${exitCode}${stderrTail ? `; stderr: ${stderrTail.split("\n").pop()}` : ""})`);
@@ -176,7 +177,7 @@ ok(existsSync(cfg), `indicated config exists (${cfg.replace(work + "/", "")})`);
 if (existsSync(cfg)) {
   // Validity: the tool's own parser accepts it (show-config exits 0 with JSON).
   const show = await new Promise((res) => {
-    const p = spawn(exe, ["show-config"], { cwd: work, stdio: ["ignore", "pipe", "pipe"] });
+    const p = spawn(invocation.command, [...invocation.args, "show-config"], { cwd: work, stdio: ["ignore", "pipe", "pipe"] });
     let out = ""; p.stdout.on("data", (d) => { out += d; });
     p.once("close", (c) => res({ c, out }));
   });

@@ -2670,16 +2670,21 @@ function setupCommand(operationId) {
 
 async function readHealthContracts() {
   const suffix = `?sid=${encodeURIComponent(activeSid)}`;
-  const responses = await Promise.all([
-    fetch(`/doctor${suffix}`),
-    fetch(`/auth/providers${suffix}`),
-    fetch(`/setup/state${suffix}`),
-    fetch(`/profile${suffix}`),
-  ]);
-  const values = await Promise.all(responses.map(async (response) => ({ response, body: await response.json().catch(() => ({})) })));
-  const failed = values.find(({ response }) => !response.ok);
-  if (failed) throw new Error(failed.body?.error || "Workspace health could not be inspected.");
-  return window.CoopWorkspaceHealth.build({ doctor: values[0].body.report, auth: values[1].body, setup: values[2].body.report, profile: values[3].body.report });
+  const keys = ["doctor", "auth", "setup", "profile"];
+  const paths = ["/doctor", "/auth/providers", "/setup/state", "/profile"];
+  const failures = {};
+  const values = await Promise.all(paths.map(async (path, index) => {
+    try {
+      const response = await fetch(`${path}${suffix}`, { signal: AbortSignal.timeout(15000) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.error || "Service unavailable.");
+      return body;
+    } catch (error) {
+      failures[keys[index]] = error.name === "TimeoutError" ? "This check timed out. Other setup and sign-in actions remain available." : error.message || "Service unavailable.";
+      return {};
+    }
+  }));
+  return window.CoopWorkspaceHealth.build({ doctor: values[0].report, auth: values[1], setup: values[2].report, profile: values[3].report, failures });
 }
 
 function openProfileForm(card, item, refresh) {

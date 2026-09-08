@@ -8,6 +8,9 @@ set -uo pipefail
 
 COOP_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 export COOP_ROOT
+if [ "${COOP_DESKTOP_MANAGED_RUNTIME:-0}" = "1" ]; then
+  exec node "$COOP_ROOT/scripts/doctor-managed.mjs" "$@"
+fi
 # shellcheck source=../lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
 

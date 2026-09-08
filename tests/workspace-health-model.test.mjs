@@ -35,4 +35,22 @@ test("model login action is available only when the provider contract allows it"
   assert.deepEqual(model.sections[1].items[0].action, { kind: "auth", providerId: "model.openai-codex", method: "pi-terminal", available: true, reauthenticate: false });
 });
 
+test("Doctor failure preserves independently available model sign-in and setup", () => {
+  const model = build({ failures: { doctor: "Doctor timed out." },
+    auth: { providers: [{ id: "model.openai-codex", name: "Model", state: "unauthenticated", actions: ["login"], login: { method: "pi-terminal", available: true } }] },
+    setup: { sections: [{ id: "project", label: "Project", state: "not-configured", setupOperationId: "project.configure" }] } });
+  assert.equal(model.state, "error");
+  assert.equal(model.sections[1].items[0].action.available, true);
+  assert.equal(model.sections[0].items[1].action.operationId, "project.configure");
+  assert.equal(model.sections[2].items[0].detail, "Doctor timed out.");
+});
+
+test("failed identity and profile checks cannot fabricate sign-in or editable profile", () => {
+  const model = build({ failures: { auth: "Identity unavailable", profile: "Profile unavailable", setup: "Setup unavailable" } });
+  assert.equal(model.state, "error");
+  assert.equal(model.sections[0].items[0].action, null);
+  assert.equal(model.sections[1].items[0].action, null);
+  assert.equal(model.sections[0].items[1].state, "error");
+});
+
 console.log(`workspace health model: ${passed} tests passed`);

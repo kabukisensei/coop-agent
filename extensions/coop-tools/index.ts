@@ -30,6 +30,7 @@
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
+import { execCoopTool, resolveManagedToolInvocation } from "../../lib/managed-tool-invocation.mjs";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -681,7 +682,7 @@ async function runBuild(pi: ExtensionAPI, ctx: any, outputDir?: string): Promise
   notify(ctx, "Building data docs… (this can take a moment on a large estate)", "info");
   let res: { stdout: string; stderr: string; code: number };
   try {
-    res = await pi.exec("coop-data-doc", ["build"], { cwd: ctx.cwd, signal: ctx.signal });
+    res = await execCoopTool(pi, "coop-data-doc", ["build"], { cwd: ctx.cwd, signal: ctx.signal });
   } catch (e: any) {
     notify(ctx, `Couldn't run coop-data-doc: ${errMsg(e)}. Is it installed? (coop install)`, "error");
     return false;
@@ -835,7 +836,7 @@ let jsonlSupported: boolean | null = null;
 async function supportsJsonlTransport(pi: ExtensionAPI, ctx: any): Promise<boolean> {
   if (jsonlSupported !== null) return jsonlSupported;
   try {
-    const res = await pi.exec("coop-data-doc", ["setup", "--help"], { cwd: ctx.cwd, signal: ctx.signal });
+    const res = await execCoopTool(pi, "coop-data-doc", ["setup", "--help"], { cwd: ctx.cwd, signal: ctx.signal });
     jsonlSupported = /--transport/.test(`${res.stdout}\n${res.stderr}`);
   } catch {
     jsonlSupported = false;
@@ -914,12 +915,16 @@ export function resolveDataDocExecutable(platform = process.platform, env: NodeJ
   throw new Error("coop-data-doc.exe was not found on PATH. Run `coop install`.");
 }
 
+export function resolveDataDocInvocation(platform = process.platform, env: NodeJS.ProcessEnv = process.env) {
+  return resolveManagedToolInvocation("coop-data-doc", [], env, platform) || { command: resolveDataDocExecutable(platform, env), args: [] };
+}
+
 /** Drive the authoritative JSONL wizard. Terminal event and exit code must agree. */
 export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPrefill = {}): Promise<boolean> {
-  let executable: string;
-  try { executable = resolveDataDocExecutable(); }
+  let invocation: { command: string; args: string[] };
+  try { invocation = resolveDataDocInvocation(); }
   catch (e: any) { notify(ctx, errMsg(e), "error"); return false; }
-  const child = spawn(executable, ["setup", "--transport", "jsonl"], { cwd: ctx.cwd, stdio: ["pipe", "pipe", "pipe"], shell: false });
+  const child = spawn(invocation.command, [...invocation.args, "setup", "--transport", "jsonl"], { cwd: ctx.cwd, stdio: ["pipe", "pipe", "pipe"], shell: false });
   let stderrTail = "", terminal: "complete" | "cancelled" | "error" | null = null, protocolError = "";
   let helloSeen = false;
   child.stderr?.on("data", (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
@@ -2041,7 +2046,7 @@ export default function coopTools(pi: ExtensionAPI) {
 
     let res;
     try {
-      res = await pi.exec(bin, args, { cwd: ctx.cwd, signal });
+      res = await execCoopTool(pi, bin, args, { cwd: ctx.cwd, signal });
     } catch (e: any) {
       return {
         content: [{ type: "text" as const, text: `${bin} could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -2227,7 +2232,7 @@ export default function coopTools(pi: ExtensionAPI) {
         args.push("--", p.object.trim());
         let res;
         try {
-          res = await pi.exec("coop-data-doc", args, { cwd: ctx.cwd, signal });
+          res = await execCoopTool(pi, "coop-data-doc", args, { cwd: ctx.cwd, signal });
         } catch (e: any) {
           return {
             content: [{ type: "text" as const, text: `coop-data-doc could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -2258,7 +2263,7 @@ export default function coopTools(pi: ExtensionAPI) {
       // --- scan / build / check ---
       let res;
       try {
-        res = await pi.exec("coop-data-doc", [command], { cwd: ctx.cwd, signal });
+        res = await execCoopTool(pi, "coop-data-doc", [command], { cwd: ctx.cwd, signal });
       } catch (e: any) {
         return {
           content: [{ type: "text" as const, text: `coop-data-doc could not run: ${errMsg(e)}. Is it installed? (coop install)` }],

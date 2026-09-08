@@ -864,6 +864,23 @@ export function stripManagedUpdateNotices(text: string): string {
     .replace(/^[ \t]*Update available: v\S+ (?:->|→) v\S+[ \t]*\|[ \t]*ctx_upgrade[ \t]*(?:\r?\n|$)/gm, "");
 }
 
+/** context-mode 1.0.169 appends its routing/memory hint as an un-timestamped
+ * user message. Keep that reference context before the real user turn, so the
+ * model answers the request instead of acknowledging the extension's guidance.
+ * Only recognize the pinned extension's exact structural signature. */
+export function orderContextModeGuidance(messages: any[]): any[] | undefined {
+  if (!Array.isArray(messages) || messages.length < 2) return;
+  const hint = messages[messages.length - 1];
+  if (hint?.role !== "user" || hint.timestamp !== undefined || typeof hint.content !== "string" ||
+      !hint.content.startsWith("context-mode active. Hierarchy: ctx_batch_execute > ctx_execute > ctx_execute_file > ctx_search. ")) return;
+  let userIndex = messages.length - 2;
+  while (userIndex >= 0 && !(messages[userIndex]?.role === "user" && typeof messages[userIndex]?.timestamp === "number")) userIndex--;
+  if (userIndex < 0) return;
+  const ordered = messages.slice(0, -1);
+  ordered.splice(userIndex, 0, hint);
+  return ordered;
+}
+
 function contextModeToolName(event: any): string | null {
   const target = effectiveMutationTarget(event);
   const name = target.innerTool || target.outerTool;
@@ -888,6 +905,11 @@ export function workspaceReadOnlyReason(toolOrEvent: unknown): string | null {
 }
 
 export default function coopGuardrails(pi: ExtensionAPI) {
+  // Launchers register this extension last, after the pinned package hooks.
+  pi.on("context", (event: any) => {
+    const messages = orderContextModeGuidance(event.messages);
+    return messages ? { messages } : undefined;
+  });
   const enabled = () => process.env.COOP_NO_GUARDRAILS !== "1";
   const showUpstreamUpdates = () => process.env.COOP_SHOW_UPSTREAM_UPDATE_NOTICES === "1";
   let workspaceLease: WorkspaceLeaseManager | null = null;

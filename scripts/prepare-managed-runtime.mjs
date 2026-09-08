@@ -31,6 +31,7 @@ function parseArgs(argv) {
 }
 
 function run(command, args, { env = process.env, label = command } = {}) {
+  process.stderr.write(`managed-runtime: ${label}\n`);
   const result = spawnSync(command, args, { encoding: "utf8", env, windowsHide: true, shell: false, maxBuffer: 8 * 1024 * 1024 });
   if (result.error || result.status !== 0) {
     const detail = `${result.stderr || result.stdout || result.error?.message || ""}`.trim().slice(-3000);

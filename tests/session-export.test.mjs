@@ -1,5 +1,6 @@
+import { createReparseLink as symlinkSync } from "./fixtures/reparse-link.mjs";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MAX_EXPORT_BYTES, runtimeExportSource, saveRuntimeExport } from "../desktop/src/session-export.mjs";
