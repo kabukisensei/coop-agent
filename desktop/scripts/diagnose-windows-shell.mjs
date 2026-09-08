@@ -9,6 +9,7 @@ import { buildNativeProbeEnvironment } from "./verify-native-application.mjs";
 
 const MARKER = "coop-powershell-ready";
 const FILE_SCRIPTS = {
+  explicitManagement: "$ErrorActionPreference = 'Stop'\n[Console]::Error.WriteLine('coop-powershell-stage:file-enter')\n$PSModuleAutoLoadingPreference = 'None'\n$moduleFile = [IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1')\n[Console]::Error.WriteLine('coop-powershell-stage:management-import-start')\nMicrosoft.PowerShell.Core\\Import-Module -Name $moduleFile -ErrorAction Stop\n[Console]::Error.WriteLine('coop-powershell-stage:management-import-ready')\n$bootstrapRoot = Microsoft.PowerShell.Management\\Split-Path -Parent $PSScriptRoot\n[Console]::Error.WriteLine('coop-powershell-stage:split-path-ready')\n[Console]::WriteLine('coop-powershell-ready')\n",
   minimal: "$ErrorActionPreference = 'Stop'\n[Console]::Error.WriteLine('coop-powershell-stage:file-enter')\n[Console]::WriteLine('coop-powershell-ready')\n",
   cmdlets: "$ErrorActionPreference = 'Stop'\n[Console]::Error.WriteLine('coop-powershell-stage:file-enter')\n$bootstrapRoot = Split-Path -Parent $PSScriptRoot\n[Console]::Error.WriteLine('coop-powershell-stage:split-path-ready')\n[Console]::WriteLine('coop-powershell-ready')\n",
 };
@@ -26,6 +27,9 @@ export function windowsShellCases(profile, source) {
     const key = Object.keys(source).find(key => key.toLowerCase() === name.toLowerCase());
     if (key && typeof source[key] === "string") machine[name] = source[key];
   }
+  // Independent child-only probes; never change the actual acceptance environment.
+  const coreModules = { ...native, PSModulePath: win32.join(native.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules") };
+  const noCache = { ...native, PSModuleAnalysisCachePath: "NUL" };
   return [
     { name: "native-null-input", env: native, stdin: "ignore" },
     { name: "native-closed-pipe", env: native, stdin: "pipe" },
@@ -37,6 +41,9 @@ export function windowsShellCases(profile, source) {
     { name: "machine-fields-file-cmdlets", env: machine, stdin: "ignore", fileKind: "cmdlets" },
     { name: "native-file-cmdlets-closed-pipe", env: native, stdin: "pipe", fileKind: "cmdlets" },
     { name: "machine-fields-file-cmdlets-closed-pipe", env: machine, stdin: "pipe", fileKind: "cmdlets" },
+    { name: "native-core-module-path", env: coreModules, stdin: "pipe", fileKind: "cmdlets" },
+    { name: "native-module-cache-disabled", env: noCache, stdin: "pipe", fileKind: "cmdlets" },
+    { name: "native-explicit-management-module", env: native, stdin: "pipe", fileKind: "explicitManagement" },
   ];
 }
 
@@ -60,7 +67,7 @@ export function observeWindowsShell(executable, probe, { run = spawnSync, timeou
     pid: result.pid || null, processExited, exitCode: result.status, signal: result.signal,
     errorCode: result.error?.code || null, stdoutBytes: Buffer.byteLength(result.stdout || ""),
     stderrBytes: Buffer.byteLength(result.stderr || ""),
-    stages: [...(result.stderr || "").matchAll(/(?:^|\r?\n)coop-powershell-stage:(file-enter|split-path-ready)(?=\r?\n|$)/g)].map(match => match[1]),
+    stages: [...(result.stderr || "").matchAll(/(?:^|\r?\n)coop-powershell-stage:(file-enter|management-import-start|management-import-ready|split-path-ready)(?=\r?\n|$)/g)].map(match => match[1]),
     healthy: processExited && !result.error && result.status === 0 && result.stdout?.trim() === MARKER };
 }
 

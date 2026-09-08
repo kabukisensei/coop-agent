@@ -2538,3 +2538,40 @@ and quit cleanly. Packaged source comparison and runtime/fuse verifier passed.
   in its Windows Pi compatibility job; do not restart it. Goal remains active.
 - Final full Bash regression completed successfully after the fixture update.
   Both full local suites are green; all local build/test/probe handles are terminal.
+
+
+## Windows first-module diagnosis
+
+- Previous turn was progress: 12b6454 ported agent readiness and verified a rebuilt
+  native Mac app. This slice targets the remaining Windows first-Split-Path stall.
+- Added three child-only Windows CI cases to distinguish built-in module search,
+  module-analysis file cache, and explicit management-module import. The explicit
+  import disables automatic module loading, addresses the OS module manifest via
+  PSHOME and reports fixed before/after import markers before Split-Path.
+  Production launcher and native acceptance environment/deadlines are unchanged.
+- Preserved diagnostic privacy and lifecycle contracts: no caller credentials or
+  real profile paths are copied into the new cases; arguments remain literal,
+  generated files use UTF-8 BOM, output retains only known markers/counts/timing,
+  and uncertain process exit stops further probes. Local real-PowerShell execution
+  of all fixed file scripts passes, including explicit import. Focused managed
+  checks pass (28); baseline missing-case assertion and passing output are retained
+  in windows-module-diagnosis-before.log and windows-module-diagnosis-after.log.
+- Microsoft documents PSModulePath and the process-local NUL cache setting in
+  https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_environment_variables?view=powershell-5.1.
+  Those are diagnosis hypotheses, not a Windows fix or proof of root cause.
+- Full local PowerShell tests, Bash/JavaScript syntax, ShellCheck and parity/BOM
+  passed. Full Bash remains on its original live handle until completion. Evidence:
+  /private/tmp/coop-desktop-home-20260907-state/windows-module-diagnosis-*.
+  Backup: .backups/windows_module_diagnosis_20260908_024209/.
+- Read-only review of VM updater 8d6b0ab confirms its metadata helper already
+  limits module paths after a PowerShell 7 parent caused native signature lookup
+  failure. This is supporting evidence for checking discovery paths, not proof
+  that the isolated bootstrap has the same cause. Preparation components remain
+  unintegrated. Fetched and reviewed 867c987 (health pipe-write completion and
+  Windows taskkill/close race handling) for a subsequent compatible port.
+- No new runtime package was needed: this slice changes only the CI diagnostic,
+  its tests and documentation. Native Windows startup, installer/update acceptance,
+  remaining VM reconciliation and the full release requirements remain open.
+- Final full Bash suite passed; all local handles are terminal. Managed CI
+  34200532260 is terminal: Mac 101978043788 passed, Windows 101978043603
+  failed at isolated bootstrap startup. Regular CI 34200532244 remains live.

@@ -53,7 +53,11 @@ root resolution and dispatcher handoff before Coop loads. Windows CI separately
 compares fixed PowerShell `-Command`, minimal `-File`, and `-File` with the first
 bootstrap cmdlet (`Split-Path`), using isolated and diagnostic machine-field
 environments. Receipts contain only known stage labels, byte counts, timings and
-process-exit observations. These probes do not change the acceptance environment.
+process-exit observations. Additional cases isolate a built-in-only module search
+path, a disabled module-analysis file cache, and an explicit management-module
+import with automatic module loading disabled. Import-stage markers distinguish
+module loading from executing `Split-Path`. These child-only probes do not change
+the acceptance environment.
 
 The runtime supervisor closes a pipe to launcher stdin immediately; clients
 send work over HTTP. Windows diagnostics compare null-device and closed-pipe

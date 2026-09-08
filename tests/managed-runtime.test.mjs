@@ -431,7 +431,7 @@ await test("NSIS preserves its unquoted final path argument and never enables el
 
 await test("Windows shell diagnosis varies machine fields and input without copying credentials or real profiles", () => {
   const cases = windowsShellCases("C:\\isolated", { SystemRoot: "C:\\Windows", ProgramFiles: "C:\\Programs", USERNAME: "fixture", HOME: "C:\\real", USERPROFILE: "C:\\real", APPDATA: "C:\\real-appdata", OPENAI_API_KEY: "fixture", NODE_OPTIONS: "fixture" });
-  assert.deepEqual(cases.map(value => value.stdin), ["ignore", "pipe", "ignore", "pipe", "ignore", "ignore", "ignore", "ignore", "pipe", "pipe"]);
+  assert.deepEqual(cases.map(value => value.stdin), ["ignore", "pipe", "ignore", "pipe", "ignore", "ignore", "ignore", "ignore", "pipe", "pipe", "pipe", "pipe", "pipe"]);
   for (const value of cases) {
     assert.equal(value.env.HOME, "C:\\isolated"); assert.equal(value.env.USERPROFILE, "C:\\isolated");
     assert.equal(value.env.OPENAI_API_KEY, undefined); assert.equal(value.env.NODE_OPTIONS, undefined);
@@ -440,6 +440,22 @@ await test("Windows shell diagnosis varies machine fields and input without copy
   }
   assert.equal(cases[0].env.ProgramFiles, undefined);
   assert.equal(cases[2].env.ProgramFiles, "C:\\Programs");
+});
+
+await test("Windows module diagnostics isolate cache, discovery paths and explicit built-in import", () => {
+  const cases = windowsShellCases("C:\\isolated", { SystemRoot: "C:\\Windows", PSModulePath: "C:\\external", PSModuleAnalysisCachePath: "C:\\external-cache" });
+  const selected = name => cases.find(value => value.name === name);
+  const modules = selected("native-core-module-path");
+  assert.ok(modules, "diagnose module discovery separately");
+  assert.equal(modules.env.PSModulePath, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules");
+  assert.equal(modules.env.PSModuleAnalysisCachePath, undefined);
+  const cache = selected("native-module-cache-disabled");
+  assert.equal(cache.env.PSModuleAnalysisCachePath, "NUL");
+  assert.equal(cache.env.PSModulePath, undefined);
+  const explicit = selected("native-explicit-management-module");
+  assert.equal(explicit.fileKind, "explicitManagement");
+  assert.equal(explicit.env.PSModulePath, undefined);
+  assert.equal(explicit.env.PSModuleAnalysisCachePath, undefined);
 });
 
 await test("Windows shell diagnosis never treats uncertain or timed-out processes as healthy", () => {
@@ -460,7 +476,7 @@ await test("Windows shell file diagnostics execute literal files and retain only
   const root = mkdtempSync(join(tmpdir(), "coop-file-probe é & "));
   try {
     writeWindowsShellFixtures(root);
-    for (const kind of ["minimal", "cmdlets"]) {
+    for (const kind of ["minimal", "cmdlets", "explicitManagement"]) {
       assert.equal(readFileSync(join(root, `probe-${kind}.ps1`)).subarray(0, 3).toString("hex"), "efbbbf");
       const probe = { name: kind, fileKind: kind, env: { HOME: root }, stdin: "ignore" };
       const result = observeWindowsShell("fixture", probe, { gone: () => true, run: (_exe, args, options) => {
@@ -473,10 +489,10 @@ await test("Windows shell file diagnostics execute literal files and retain only
     assert.throws(() => observeWindowsShell("fixture", { fileKind: "../untrusted" }), /Unknown shell fixture/);
     const shell = process.platform === "win32" ? process.env.PWSH_EXE || "powershell.exe" : "pwsh";
     if (spawnSync(shell, ["-NoLogo", "-NoProfile", "-Command", "exit 0"], { timeout: 5000 }).status === 0) {
-      for (const fileKind of ["minimal", "cmdlets"]) {
+      for (const fileKind of ["minimal", "cmdlets", "explicitManagement"]) {
         const result = observeWindowsShell(shell, { name: fileKind, fileKind, env: { ...process.env, HOME: root, USERPROFILE: root }, stdin: "ignore" });
         assert.equal(result.healthy, true, JSON.stringify(result));
-        assert.deepEqual(result.stages, fileKind === "minimal" ? ["file-enter"] : ["file-enter", "split-path-ready"]);
+        assert.deepEqual(result.stages, fileKind === "minimal" ? ["file-enter"] : fileKind === "explicitManagement" ? ["file-enter", "management-import-start", "management-import-ready", "split-path-ready"] : ["file-enter", "split-path-ready"]);
       }
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
