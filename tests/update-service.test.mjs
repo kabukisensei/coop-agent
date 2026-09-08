@@ -953,11 +953,16 @@ await test("native main health acknowledgement follows renderer readiness and ru
   const begin = source.indexOf("  if (updateProbeToken) {", source.indexOf("async function createWindow()"));
   const end = source.indexOf("  if (managedResourcePresent", begin);
   const calls = [];
+  let flush;
   const ctx = vm.createContext({ updateProbeToken: "fixture", navigationReady: true, quitting: false, activeChatSid: "chat", waitForRuntimeState,
     runtimeRpc: async () => calls.push("rpc"), runtime: { stop: async () => calls.push("stop") },
-    process: { stdout: { write: value => { assert.equal(JSON.parse(value).token, "fixture"); calls.push("ack"); } } },
+    process: { stdout: { write: (value, callback) => { assert.equal(JSON.parse(value).token, "fixture"); calls.push("ack"); flush = callback; } } },
     app: { quit: () => calls.push("quit"), getVersion: () => "1.2.3" }, Date, setTimeout });
-  await vm.runInContext(`(async () => {${source.slice(begin, end)}})()`, ctx);
+  const healthy = vm.runInContext(`(async () => {${source.slice(begin, end)}})()`, ctx);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ["rpc", "stop", "ack"], "native exit must wait for the pipe flush");
+  flush();
+  await healthy;
   assert.deepEqual(calls, ["rpc", "stop", "ack", "quit"]);
   calls.length = 0; ctx.runtime.stop = async () => { throw new Error("stop failed"); };
   await assert.rejects(vm.runInContext(`(async () => {${source.slice(begin, end)}})()`, ctx), /stop failed/);

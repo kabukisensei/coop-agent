@@ -1,6 +1,6 @@
 import vm from "node:vm";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { normalizeSavedChat, normalizeSavedChats, restoreSavedChats } from "../desktop/src/session-restoration.mjs";
 import { strict as assert } from "node:assert";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -11,7 +11,7 @@ import { resolveCoopLauncher } from "../desktop/src/coop-launcher.mjs";
 import { loadDesktopState, normalizeDesktopState, restoreWindowBounds, saveDesktopState } from "../desktop/src/desktop-state.mjs";
 import { selectRuntimeWorkspace } from "../desktop/src/workspace-selection.mjs";
 import { buildNativeModelLoginProcess, buildNativeTerminalProcess, launchNativeModelLogin, launchNativeTerminal, validateTerminalLaunch } from "../desktop/src/native-terminal.mjs";
-import { startCoopRuntime } from "../desktop/src/runtime-supervisor.mjs";
+import { buildRuntimeInvocation, startCoopRuntime, validateRuntimeReady } from "../desktop/src/runtime-supervisor.mjs";
 import { waitForRuntimeState } from "../desktop/src/runtime-readiness.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -342,6 +342,34 @@ await test("runtime restart callback fires only for an unexpected child exit", a
   crashed.child.kill("SIGKILL");
   for (let i = 0; i < 50 && !unexpected; i++) await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(Boolean(unexpected), true);
+});
+
+await test("Windows tree shutdown waits for delayed close after taskkill failure and rejects an unconfirmed exit", async () => {
+  const source = readFileSync(join(ROOT, "desktop/src/runtime-supervisor.mjs"), "utf8");
+  for (const closes of [true, false]) {
+    const child = new EventEmitter();
+    child.pid = 123; child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+    let closed = false;
+    child.once("close", () => { closed = true; });
+    const ctx = vm.createContext({ process: { platform: "win32", env: {} }, READY_LIMIT: 65536, Buffer,
+      setTimeout, clearTimeout, buildRuntimeInvocation, validateRuntimeReady,
+      spawn: () => {
+        setTimeout(() => child.stdout.emit("data", Buffer.from(JSON.stringify({ type: "runtime.ready", contractVersion: 1,
+          transport: "http", endpoint: "http://127.0.0.1:12345", oneTimeToken: "a".repeat(32), runtimePid: 123 }) + "\n")), 0);
+        return child;
+      },
+      killWindowsTree: async () => {
+        child.emit("exit", 0); // Exit alone does not prove inherited pipes closed.
+        if (closes) setTimeout(() => child.emit("close", 0), 25);
+        throw new Error("Runtime process-tree shutdown failed (128).");
+      },
+    });
+    vm.runInContext(source.slice(source.indexOf("async function waitForExit"), source.indexOf("async function killWindowsTree"))
+      + source.slice(source.indexOf("export async function startCoopRuntime")).replace("export async", "async"), ctx);
+    const runtime = await ctx.startCoopRuntime({ workspace: ROOT });
+    if (closes) { await runtime.stop({ graceMs: 50 }); assert.equal(closed, true); }
+    else { await assert.rejects(runtime.stop({ graceMs: 50 }), /shutdown failed \(128\)/); assert.equal(closed, false); child.emit("close", 0); }
+  }
 });
 
 await test("shutdown and failed startup reap a real runtime descendant", async () => {

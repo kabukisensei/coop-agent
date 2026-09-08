@@ -86,8 +86,14 @@ export async function startCoopRuntime({
     stopTask = (async () => {
       try {
         if (process.platform === "win32" && child.pid) {
-          await killWindowsTree(child, graceMs, () => exited);
-          if (!await waitForExit(closed, 1000)) throw new Error("Coop Runtime shutdown could not be confirmed.");
+          let terminationError;
+          try { await killWindowsTree(child, graceMs, () => exited); }
+          catch (error) { terminationError = error; }
+          // taskkill can finish with a nonzero status while the wrapper's final
+          // pipe handles are still closing. Confirm the child close event before
+          // deciding whether tree termination failed; never accept status 128
+          // alone as evidence that the runtime has exited.
+          if (!await waitForExit(closed, Math.max(1000, graceMs))) throw terminationError || new Error("Coop Runtime shutdown could not be confirmed.");
           return;
         }
         child.kill("SIGTERM");

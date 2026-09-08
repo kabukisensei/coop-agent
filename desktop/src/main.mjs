@@ -625,7 +625,12 @@ async function createWindow() {
     if (!navigationReady || quitting || !activeChatSid) throw new Error("Desktop UI did not become ready.");
     await waitForRuntimeState(runtimeRpc, activeChatSid, { isCurrent: () => !quitting });
     await runtime.stop({ graceMs: 5000 });
-    process.stdout.write(JSON.stringify({ type: "desktop.update-health", token: updateProbeToken, version: app.getVersion() }) + "\n");
+    // Windows pipes are asynchronous. Do not enter Electron shutdown until the
+    // supervisor's acknowledgement has actually been flushed to its pipe.
+    await new Promise((resolveWrite, rejectWrite) => {
+      process.stdout.write(JSON.stringify({ type: "desktop.update-health", token: updateProbeToken, version: app.getVersion() }) + "\n",
+        error => error ? rejectWrite(error) : resolveWrite());
+    });
     app.quit();
     return;
   }
@@ -647,7 +652,7 @@ else {
     mainWindow.focus();
   });
   app.whenReady().then(createWindow).catch((error) => {
-    if (updateProbeToken) { app.quit(); return; }
+    if (updateProbeToken) { console.error("Desktop health probe failed:", error.message); app.quit(); return; }
     if (error.code === "PROFILE_SELECTION_CANCELLED") { app.quit(); return; }
     dialog.showErrorBox("Coop Desktop could not start", `${error.message}\n\n${managedResourcePresent
       ? "Retry Coop Desktop. If startup keeps failing, report this message with the Desktop build version."
