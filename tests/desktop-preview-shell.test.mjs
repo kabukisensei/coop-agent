@@ -157,19 +157,23 @@ await test("startup uses another saved workspace when the selected folder disapp
   const source = readFileSync(join(ROOT, "desktop/src/main.mjs"), "utf8");
   const from = source.indexOf("async function selectInitialWorkspace()");
   let pickerCalls = 0;
+  const missing = resolve("/missing");
+  const available = resolve("/available");
+  const explicit = resolve("/explicit");
+  const chosen = resolve("/chosen");
   const ctx = vm.createContext({ process: { env: {} }, resolve,
-    desktopState: { lastWorkspace: "/missing", openChats: [{ cwd: "/available" }] },
-    directoryExists: path => path === "/available" || path === "/explicit",
-    chooseWorkspace: async () => { pickerCalls++; return "/chosen"; },
+    desktopState: { lastWorkspace: missing, openChats: [{ cwd: available }] },
+    directoryExists: path => path === available || path === explicit,
+    chooseWorkspace: async () => { pickerCalls++; return chosen; },
   });
   vm.runInContext(source.slice(from, source.indexOf("function configurePermissions", from)), ctx);
-  assert.equal(await ctx.selectInitialWorkspace(), "/available");
+  assert.equal(await ctx.selectInitialWorkspace(), available);
   assert.equal(pickerCalls, 0);
-  ctx.process.env.COOP_WORKSPACE = "/explicit";
-  assert.equal(await ctx.selectInitialWorkspace(), "/explicit");
+  ctx.process.env.COOP_WORKSPACE = explicit;
+  assert.equal(await ctx.selectInitialWorkspace(), explicit);
   delete ctx.process.env.COOP_WORKSPACE;
   ctx.desktopState.openChats = [];
-  assert.equal(await ctx.selectInitialWorkspace(), "/chosen");
+  assert.equal(await ctx.selectInitialWorkspace(), chosen);
 });
 
 await test("an interrupted restore cannot issue commands against a replacement runtime", async () => {
