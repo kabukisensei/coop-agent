@@ -919,7 +919,16 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDo
   let executable: string;
   try { executable = resolveDataDocExecutable(); }
   catch (e: any) { notify(ctx, errMsg(e), "error"); return false; }
-  const child = spawn(executable, ["setup", "--transport", "jsonl"], { cwd: ctx.cwd, stdio: ["pipe", "pipe", "pipe"], shell: false });
+  const child = spawn(executable, ["setup", "--transport", "jsonl"], {
+    cwd: ctx.cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+    shell: false,
+    env: {
+      ...process.env,
+      PYTHONIOENCODING: "utf-8",
+      PYTHONUTF8: "1",
+    },
+  });
   let stderrTail = "", terminal: "complete" | "cancelled" | "error" | null = null, protocolError = "";
   let helloSeen = false;
   child.stderr?.on("data", (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
