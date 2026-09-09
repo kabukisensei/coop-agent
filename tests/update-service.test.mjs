@@ -131,21 +131,44 @@ await test("channel, target, expiry, URL credentials, and unknown descriptor fie
   assert.throws(() => validateUpdateDescriptor({ ...descriptor(), surprise: true }, { platform: "darwin", arch: "arm64", now: NOW }), /fields/);
 });
 
-await test("downloaded artifacts require exact signed size/hash and cannot be symlinks", async () => {
+await test("downloaded artifacts require exact signed size and checksum validation", async () => {
   const dir = mkdtempSync(join(tmpdir(), "coop-update-artifact-"));
-  const artifact = join(dir, "desktop.pkg");
-  const bytes = Buffer.from("package-v1");
-  writeFileSync(artifact, bytes);
-  const valid = validateUpdateDescriptor(descriptor({ artifact: { ...descriptor().artifact, size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") } }), { platform: "darwin", arch: "arm64", now: NOW });
-  assert.equal((await verifyUpdateArtifact(artifact, valid)).ok, true);
-  writeFileSync(artifact, "tampered");
-  await assert.rejects(() => verifyUpdateArtifact(artifact, valid), /metadata|checksum/);
-  const target = join(dir, "target.pkg");
-  writeFileSync(target, bytes);
-  const link = join(dir, "link.pkg");
-  symlinkSync(target, link);
-  await assert.rejects(() => verifyUpdateArtifact(link, valid), /metadata/);
+  try {
+    const artifact = join(dir, "desktop.pkg");
+    const bytes = Buffer.from("package-v1");
+    writeFileSync(artifact, bytes);
+    const valid = validateUpdateDescriptor(descriptor({ artifact: { ...descriptor().artifact, size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") } }), { platform: "darwin", arch: "arm64", now: NOW });
+    assert.equal((await verifyUpdateArtifact(artifact, valid)).ok, true);
+    writeFileSync(artifact, "tampered");
+    await assert.rejects(() => verifyUpdateArtifact(artifact, valid), /metadata|checksum/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
+
+let symlinkCreated = false;
+const symlinkDir = mkdtempSync(join(tmpdir(), "coop-update-symlink-"));
+try {
+  const target = join(symlinkDir, "target.pkg");
+  const link = join(symlinkDir, "link.pkg");
+  const bytes = Buffer.from("package-v1");
+  writeFileSync(target, bytes);
+  try {
+    symlinkSync(target, link);
+    symlinkCreated = true;
+  } catch (error) {
+    if (error.code !== "EPERM" && error.code !== "EACCES") throw error;
+    console.log("  – downloaded artifacts cannot be symlinks: skipped (host lacks symlink capability)");
+  }
+  if (symlinkCreated) {
+    await test("downloaded artifacts cannot be symlinks", async () => {
+      const valid = validateUpdateDescriptor(descriptor({ artifact: { ...descriptor().artifact, size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") } }), { platform: "darwin", arch: "arm64", now: NOW });
+      await assert.rejects(() => verifyUpdateArtifact(link, valid), /metadata/);
+    });
+  }
+} finally {
+  rmSync(symlinkDir, { recursive: true, force: true });
+}
 
 await test("artifact download is direct, bounded, exclusive, verified, and cleans failed partials", async () => {
   const dir = mkdtempSync(join(tmpdir(), "coop-update-download-"));
