@@ -2,7 +2,7 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packagedPaths } from "../desktop/scripts/verify-managed-package.mjs";
 
@@ -30,13 +30,14 @@ test("post-package verification runs on both native managed build workers", () =
 });
 
 test("platform paths select the fixed packaged binary and resource directory", () => {
-  const mac = packagedPaths("/build", "darwin", "arm64");
-  assert.equal(mac.fuseTarget, "/build/mac-arm64/Coop Desktop.app");
-  assert.equal(mac.resources, "/build/mac-arm64/Coop Desktop.app/Contents/Resources");
-  const windows = packagedPaths("C:\\build", "win32", "x64");
-  assert.match(windows.fuseTarget, /win-unpacked[\\/]Coop Desktop\.exe$/);
-  assert.match(windows.resources, /win-unpacked[\\/]resources$/);
-  assert.throws(() => packagedPaths("/build", "linux", "x64"), /Unsupported/);
+  const root = resolve("/build");
+  const mac = packagedPaths(root, "darwin", "arm64");
+  assert.equal(mac.fuseTarget, join(root, "mac-arm64", "Coop Desktop.app"));
+  assert.equal(mac.resources, join(root, "mac-arm64", "Coop Desktop.app", "Contents", "Resources"));
+  const windows = packagedPaths(root, "win32", "x64");
+  assert.equal(windows.fuseTarget, join(root, "win-unpacked", "Coop Desktop.exe"));
+  assert.equal(windows.resources, join(root, "win-unpacked", "resources"));
+  assert.throws(() => packagedPaths(root, "linux", "x64"), /Unsupported/);
 });
 
 test("installers preserve managed boundaries and user data without publishing or automatic launch", () => {
