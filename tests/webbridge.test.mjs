@@ -1440,13 +1440,22 @@ if (process.platform === "win32") {
     console.log("  ~ SKIP 8.3 short/long bridge test (no short name minted on this host)");
   } else {
     t("realpathSync.native equates the 8.3 and long spellings",
-      realpathSync.native(shortDir) === realpathSync(spacedDir));
+      realpathSync.native(shortDir) === realpathSync.native(spacedDir));
     let escapeLinked = false;
     try { symlinkSync(outside, join(spacedDir, "escape")); escapeLinked = true; } catch { /* no symlink privilege */ }
+    // Run the bridge with a SHORT-SPELLED process-local TEMP/TMP as well: on hosts
+    // where %TEMP% itself carries an 8.3 alias, the child's os.tmpdir() is short.
+    const shortTempDir = join(spacedBase, "Long Temporary Directory For Short Temp 67890");
+    mkdirSync(shortTempDir, { recursive: true });
+    const shortTemp = spawnSync("powershell.exe", ["-NoProfile", "-Command",
+      `(New-Object -ComObject Scripting.FileSystemObject).GetFolder('${shortTempDir.replace(/'/g, "''")}').ShortPath`], { encoding: "utf8" }).stdout.trim();
     const PORT3 = PORT + 2;
     const spec3 = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: agentDir } });
+    const childEnv = { ...process.env, COOP_LAUNCH_SPEC: spec3, COOP_WEB_NO_OPEN: "1" };
+    if (shortTemp && shortTemp.includes("~")) { childEnv.TEMP = shortTemp; childEnv.TMP = shortTemp; }
+    else console.log("  ~ note: no short TEMP spelling minted; bridge runs with the ambient TEMP");
     const srv3 = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT3), "--cwd", shortDir], {
-      env: { ...process.env, COOP_LAUNCH_SPEC: spec3, COOP_WEB_NO_OPEN: "1" },
+      env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let err3 = "";
@@ -1474,7 +1483,7 @@ if (process.platform === "win32") {
     }
     await new Promise((resolve) => { const done = setTimeout(resolve, 2000); srv3.on("exit", () => { clearTimeout(done); resolve(); }); srv3.kill(); });
   }
-  rmSync(spacedBase, { recursive: true, force: true });
+  try { rmSync(spacedBase, { recursive: true, force: true }); } catch { /* symlink removal may need privilege */ }
 }
 
 // --- issue #11: per-command /rpc timeout (compact gets a longer ceiling) --------------
