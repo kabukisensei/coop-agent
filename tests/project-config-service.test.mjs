@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -70,5 +70,153 @@ await test("invalid proposals cannot be applied", async () => {
   assert.equal(proposal.state, "invalid");
   assert.throws(() => applyProjectConfig(proposal), /valid proposed/);
 });
+
+await test("creating a new project configuration when none exists", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-config-new-"));
+  const target = join(root, ".coop", "project.yml");
+  const initialState = getProjectConfig({ workspace: root });
+  assert.equal(initialState.state, "not-configured");
+  assert.equal(initialState.content, null);
+
+  const proposal = await proposeProjectConfig({
+    workspace: root,
+    candidate: "profile:\n  client: New Project\n  language: 日本語\n",
+    validate: valid,
+    proposalId: "p-new",
+  });
+  assert.equal(proposal.state, "proposed");
+  assert.equal(proposal.baseDigest, null);
+  assert.equal(proposal.preview.before, null);
+  assert.equal(proposal.preview.after, "profile:\n  client: New Project\n  language: 日本語\n");
+
+  const applied = applyProjectConfig(proposal, { now: new Date("2026-09-04T19:30:00Z") });
+  assert.equal(applied.state, "applied");
+  assert.equal(applied.backupPath, null);
+  assert.ok(existsSync(target));
+  assert.equal(readFileSync(target, "utf8"), "profile:\n  client: New Project\n  language: 日本語\n");
+  assert.ok(!existsSync(join(root, ".backups")) || readdirSync(join(root, ".backups")).length === 0);
+
+  const coopFiles = readdirSync(join(root, ".coop"));
+  const tempFiles = coopFiles.filter((f) => f.startsWith(".project.yml.") && f.endsWith(".tmp"));
+  assert.equal(tempFiles.length, 0);
+
+  const finalState = getProjectConfig({ workspace: root });
+  assert.equal(finalState.state, "configured");
+  assert.equal(finalState.content, "profile:\n  client: New Project\n  language: 日本語\n");
+});
+
+await test("updating an existing configuration with an intact backup in .backups/", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-config-update-"));
+  mkdirSync(join(root, ".coop"));
+  const target = join(root, ".coop", "project.yml");
+  const originalContent = "profile:\n  client: Initial Client\n  notes: 初期設定 ⚡\n";
+  const updatedContent = "profile:\n  client: Updated Client\n  notes: 更新設定 🚀\n";
+  writeFileSync(target, originalContent);
+
+  const proposal = await proposeProjectConfig({
+    workspace: root,
+    candidate: updatedContent,
+    validate: valid,
+    proposalId: "p-update",
+  });
+  assert.equal(proposal.state, "proposed");
+  assert.equal(proposal.preview.before, originalContent);
+  assert.equal(proposal.preview.after, updatedContent);
+
+  const applied = applyProjectConfig(proposal, { now: new Date("2026-09-04T20:15:30Z") });
+  assert.equal(applied.state, "applied");
+  assert.ok(applied.backupPath);
+  assert.ok(applied.backupPath.endsWith("project.yml.20260904_201530.bak"));
+  assert.ok(existsSync(applied.backupPath));
+  assert.equal(readFileSync(applied.backupPath, "utf8"), originalContent);
+  assert.equal(readFileSync(target, "utf8"), updatedContent);
+
+  const coopFiles = readdirSync(join(root, ".coop"));
+  const tempFiles = coopFiles.filter((f) => f.startsWith(".project.yml.") && f.endsWith(".tmp"));
+  assert.equal(tempFiles.length, 0);
+});
+
+await test("write or replacement failure leaves original configuration intact and cleans up temporary files", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-config-fail-cleanup-"));
+  mkdirSync(join(root, ".coop"));
+  const target = join(root, ".coop", "project.yml");
+  const originalContent = "profile:\n  client: Untouched\n";
+  writeFileSync(target, originalContent);
+
+  const proposal = await proposeProjectConfig({
+    workspace: root,
+    candidate: "profile:\n  client: NeverWritten\n",
+    validate: valid,
+  });
+
+  assert.throws(
+    () => applyProjectConfig(proposal, { rename: () => { throw new Error("simulated rename failure"); } }),
+    /simulated rename failure/
+  );
+
+  assert.equal(readFileSync(target, "utf8"), originalContent);
+
+  const coopFiles = readdirSync(join(root, ".coop"));
+  const tempFiles = coopFiles.filter((f) => f.startsWith(".project.yml.") && f.endsWith(".tmp"));
+  assert.equal(tempFiles.length, 0);
+
+  const backupFiles = readdirSync(join(root, ".backups"));
+  assert.ok(backupFiles.length > 0);
+  assert.equal(readFileSync(join(root, ".backups", backupFiles[0]), "utf8"), originalContent);
+});
+
+await test("replacement failure when creating new configuration leaves target absent and cleans up temporary files", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-config-new-fail-"));
+  const target = join(root, ".coop", "project.yml");
+
+  const proposal = await proposeProjectConfig({
+    workspace: root,
+    candidate: "profile:\n  client: FailNew\n",
+    validate: valid,
+  });
+
+  assert.throws(
+    () => applyProjectConfig(proposal, { rename: () => { throw new Error("simulated new rename failure"); } }),
+    /simulated new rename failure/
+  );
+
+  assert.ok(!existsSync(target));
+  const coopFiles = readdirSync(join(root, ".coop"));
+  const tempFiles = coopFiles.filter((f) => f.startsWith(".project.yml.") && f.endsWith(".tmp"));
+  assert.equal(tempFiles.length, 0);
+});
+
+if (process.platform !== "win32") {
+  await test("POSIX: replacing a read-only (0444) configuration succeeds and preserves intact backup", async () => {
+    const root = mkdtempSync(join(tmpdir(), "coop-config-ro-"));
+    mkdirSync(join(root, ".coop"));
+    const target = join(root, ".coop", "project.yml");
+    const originalContent = "profile:\n  client: ReadOnly Baseline Client\n  version: 1\n";
+    const updatedContent = "profile:\n  client: ReadOnly Replaced Client\n  version: 2\n";
+    writeFileSync(target, originalContent);
+    chmodSync(target, 0o444);
+
+    const proposal = await proposeProjectConfig({
+      workspace: root,
+      candidate: updatedContent,
+      validate: valid,
+      proposalId: "p-ro",
+    });
+    assert.equal(proposal.state, "proposed");
+    assert.equal(proposal.preview.before, originalContent);
+    assert.equal(proposal.preview.after, updatedContent);
+
+    const applied = applyProjectConfig(proposal, { now: new Date("2026-09-04T21:00:00Z") });
+    assert.equal(applied.state, "applied");
+    assert.ok(applied.backupPath);
+    assert.ok(existsSync(applied.backupPath));
+    assert.equal(readFileSync(applied.backupPath, "utf8"), originalContent);
+    assert.equal(readFileSync(target, "utf8"), updatedContent);
+
+    const coopFiles = readdirSync(join(root, ".coop"));
+    const tempFiles = coopFiles.filter((f) => f.startsWith(".project.yml.") && f.endsWith(".tmp"));
+    assert.equal(tempFiles.length, 0);
+  });
+}
 
 console.log(`project config service: ${count} tests passed`);

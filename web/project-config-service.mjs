@@ -6,8 +6,11 @@ import { fileURLToPath } from "node:url";
 
 export const PROJECT_CONFIG_PROPOSAL_SCHEMA_VERSION = 1;
 // COOP_ROOT is exported by both supported launchers. The fallback keeps direct
-// module/unit-test use working when this file is not bundled into an extension.
-const ROOT = resolve(process.env.COOP_ROOT || join(dirname(fileURLToPath(import.meta.url)), ".."));
+const rawRoot = process.env.COOP_ROOT || join(dirname(fileURLToPath(import.meta.url)), "..");
+const normalizedRoot = process.platform === "win32" && /^\/([a-zA-Z])\//.test(rawRoot)
+  ? rawRoot.replace(/^\/([a-zA-Z])\//, "$1:/")
+  : rawRoot;
+const ROOT = resolve(normalizedRoot);
 const CONFIG_MAX = 512 * 1024;
 
 function digest(text) {
@@ -15,7 +18,10 @@ function digest(text) {
 }
 
 function syncFile(path) {
-  const fd = openSync(path, "r");
+  // Windows FlushFileBuffers requires a handle with GENERIC_WRITE (opened "r+").
+  // POSIX fsync succeeds on O_RDONLY ("r") and must not require write access so
+  // read-only files (e.g. 0444 backups) can be synced during replacement.
+  const fd = openSync(path, process.platform === "win32" ? "r+" : "r");
   try { fsyncSync(fd); } finally { closeSync(fd); }
 }
 
@@ -23,7 +29,10 @@ function syncDirectory(path) {
   // POSIX permits fsync on a directory so the rename itself is durable. Some
   // Windows filesystems reject opening a directory as a file; atomic rename is
   // still preserved there and the managed updater/config tests cover recovery.
-  try { syncFile(path); } catch { /* unsupported by this filesystem */ }
+  try {
+    const fd = openSync(path, "r");
+    try { fsyncSync(fd); } finally { closeSync(fd); }
+  } catch { /* unsupported by this filesystem */ }
 }
 
 function readExisting(path) {
