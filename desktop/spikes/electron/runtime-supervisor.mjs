@@ -21,7 +21,7 @@ export function validateRuntimeReady(value) {
 }
 
 function waitForExit(child, timeoutMs) {
-  if (child.exitCode !== null) return Promise.resolve();
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, timeoutMs);
     child.once("close", () => { clearTimeout(timer); resolve(); });
@@ -89,10 +89,10 @@ export async function startCoopRuntime({
     async stop({ graceMs = 3000 } = {}) {
       if (stopped) return;
       stopped = true;
-      if (child.exitCode !== null) return;
+      if (child.exitCode !== null || child.signalCode !== null) return;
       child.kill("SIGTERM");
       await waitForExit(child, graceMs);
-      if (child.exitCode === null) {
+      if (child.exitCode === null && child.signalCode === null) {
         child.kill("SIGKILL");
         await waitForExit(child, 1000);
       }

@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert";
+import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,8 +29,65 @@ await test("runtime supervisor reads the structured handshake and cleans up its 
   const runtime = await startCoopRuntime({ workspace: ROOT, coopCommand: process.execPath, commandPrefix: [fixture], readyTimeoutMs: 5000 });
   assert.equal(runtime.ready.piVersion, "0.84.3");
   assert.equal(runtime.child.exitCode, null);
+  assert.equal(runtime.child.signalCode, null);
   await runtime.stop({ graceMs: 1000 });
-  assert.notEqual(runtime.child.exitCode, null);
+  assert.notEqual(runtime.child.exitCode ?? runtime.child.signalCode, null);
+});
+
+await test("runtime supervisor handles signal termination without escalating to SIGKILL or re-killing", async () => {
+  function createMockSpawn({ preTerminated = false } = {}) {
+    const signals = [];
+    const spawnImpl = () => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.exitCode = null;
+      child.signalCode = preTerminated ? "SIGTERM" : null;
+      child.kill = (signal = "SIGTERM") => {
+        signals.push(signal);
+        child.exitCode = null;
+        child.signalCode = signal;
+        queueMicrotask(() => child.emit("close", null, signal));
+        return true;
+      };
+      queueMicrotask(() => {
+        child.stdout.emit("data", JSON.stringify({
+          type: "runtime.ready",
+          contractVersion: 1,
+          transport: "http",
+          endpoint: "http://127.0.0.1:54321",
+          oneTimeToken: "0123456789abcdef0123456789abcdef",
+          runtimePid: 12345,
+        }) + "\n");
+      });
+      return child;
+    };
+    return { spawnImpl, signals };
+  }
+
+  // 1. stop sends SIGTERM but does not escalate after confirmed termination
+  const { spawnImpl: spawnRunning, signals: runningSignals } = createMockSpawn();
+  const running = await startCoopRuntime({ workspace: ROOT, spawnImpl: spawnRunning });
+  assert.equal(running.child.exitCode, null);
+  assert.equal(running.child.signalCode, null);
+
+  await running.stop({ graceMs: 500 });
+  assert.deepEqual(runningSignals, ["SIGTERM"]);
+  assert.equal(running.child.exitCode, null);
+  assert.equal(running.child.signalCode, "SIGTERM");
+
+  // 2. Calling stop again sends no additional signals
+  await running.stop({ graceMs: 500 });
+  assert.deepEqual(runningSignals, ["SIGTERM"]);
+
+  // 3. A child already terminated by signal receives no kill request
+  const { spawnImpl: spawnTerminated, signals: terminatedSignals } = createMockSpawn({ preTerminated: true });
+  const terminated = await startCoopRuntime({ workspace: ROOT, spawnImpl: spawnTerminated });
+  assert.equal(terminated.child.exitCode, null);
+  assert.equal(terminated.child.signalCode, "SIGTERM");
+
+  await terminated.stop({ graceMs: 500 });
+  assert.deepEqual(terminatedSignals, []);
 });
 
 await test("Electron renderer is sandboxed and receives only named IPC methods", () => {
