@@ -12,11 +12,33 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   - Subordinate team skills launch slot in `bin/coop` and `bin/coop.ps1`, surfacing external repository skills under first-party precedence.
   - New `team-knowledge` skill and `before_agent_start` recall note hook.
   - New `/share-learning` prompt with desktop-compatible frontmatter and quiet friction nudge on turn settle.
+- Bounded, unattended git runner for knowledge sync (`scripts/knowledge-git.py`):
+  hard process-tree deadline (default 30s, `COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS`),
+  no interactive credential prompts, unattended BatchMode SSH that preserves
+  host-key checking, and distinct timeout reporting. Sync now treats a failed or
+  timed-out `git status` as UNKNOWN state (warn + skip) instead of reading empty
+  output as a clean checkout, and clones land in a unique temporary sibling that
+  is moved into place only on success — an interrupted clone can never leave a
+  husk at the configured destination.
+- Deterministic local keyword search across team-knowledge clones
+  (`scripts/search-knowledge.py`): stdlib-only, case-insensitive literal match
+  over Markdown files with `.git` pruned and symlinks never followed, emitting a
+  single capped JSON document per run.
 - New `tips` vibe set (`vibes/tips.txt`): a curated, tips-only rotation of practical
   Coop commands and working habits with no easter eggs. Select it inside Coop with
   `/coop-vibe tips`; it also joins the default `/coop-vibe all` rotation.
 
 ### Changed
+- The `/share-learning` friction nudge now fires only on repeated tool failures
+  (>= 2 distinct failed tool results, deduplicated by tool call). Automatic
+  user-steer/correction/retry detection is deferred — manual `/share-learning`
+  still covers corrections and discoveries. The failure tally, dedupe set, and
+  once-only nudge flags reset per session so a fresh session can be nudged
+  again.
+- Team-skill launch-slot parsing in `bin/coop` / `bin/coop.ps1` now validates
+  frontmatter before adding any launch argument: an external skill that cannot
+  identify itself is skipped with a warning instead of being added
+  half-validated, and the loader always exits cleanly under `set -e`.
 - Normal Coop startup now goes directly to the prompt instead of auto-opening the
   Start Here or missing-project wizard. `/start`, `/setup-project`, and
   `/setup-docs` remain available on demand, including all discovery, partial,

@@ -69,23 +69,35 @@ await t("returns true on repeated tool failures (>=2)", () => {
   );
 });
 
-await t("returns true on user steer / correction", () => {
+await t("returns false on a single tool failure", () => {
   assert.equal(
     shouldSuggestShareLearning({
       knowledgeAvailable: true,
-      userSteers: 1,
+      toolFailures: 1,
     }),
-    true
+    false
   );
 });
 
-await t("returns true on retry signal", () => {
+await t("steer/retry signals are deferred (not part of the contract)", () => {
+  // Automatic user-correction/steer/retry detection is deliberately deferred;
+  // the predicate only counts repeated tool failures today. Extra signal
+  // fields must not change the result.
   assert.equal(
     shouldSuggestShareLearning({
       knowledgeAvailable: true,
+      toolFailures: 0,
+      userSteers: 1,
+    }),
+    false
+  );
+  assert.equal(
+    shouldSuggestShareLearning({
+      knowledgeAvailable: true,
+      toolFailures: 0,
       retries: 1,
     }),
-    true
+    false
   );
 });
 

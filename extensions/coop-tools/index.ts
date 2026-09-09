@@ -1767,23 +1767,24 @@ export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | 
 
 export interface ShareLearningSessionSignals {
   knowledgeAvailable: boolean;
+  /** Distinct failed tool results observed this session (isError tool_results). */
   toolFailures?: number;
-  userSteers?: number;
-  retries?: number;
   alreadySuggested?: boolean;
 }
 
 /**
- * Heuristic for suggesting /share-learning at turn settle when the session involved
- * corrections, user steers, or repeated tool failures.
+ * Heuristic for suggesting /share-learning at turn settle. The ONLY runtime
+ * signal wired today is repeated tool failures (>= 2 distinct failed
+ * tool_result events with knowledge configured and not already suggested this
+ * session). Automatic user-correction/steer/retry-specific detection is
+ * DEFERRED — manual /share-learning still covers corrections and discoveries.
+ * Do not read this predicate as implementing correction detection.
  */
 export function shouldSuggestShareLearning(signals: ShareLearningSessionSignals): boolean {
   if (!signals.knowledgeAvailable) return false;
   if (signals.alreadySuggested) return false;
   const failures = signals.toolFailures ?? 0;
-  const steers = signals.userSteers ?? 0;
-  const retries = signals.retries ?? 0;
-  return failures >= 2 || steers >= 1 || retries >= 1;
+  return failures >= 2;
 }
 
 /** The task menu — wired to tools/skills coop already ships. Each choice sends a
@@ -2098,6 +2099,14 @@ export default function coopTools(pi: ExtensionAPI) {
   // Normal sessions start at the prompt. The only automatic handoff is the model
   // provider login required when a fresh install has no credentials yet.
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
+    // Learning-nudge lifecycle is per SESSION: reset the failure tally, the
+    // dedupe set, and the once-only flags so a fresh session can be nudged
+    // again. Turns within one session accumulate (two failures across two
+    // turns can trigger the nudge).
+    sessionToolFailures = 0;
+    seenToolErrorIds.clear();
+    learningNudgeAnnounced = false;
+    announcedTeamKnowledge = false;
     primeModelLogin(ctx);
   });
 
@@ -2110,6 +2119,9 @@ export default function coopTools(pi: ExtensionAPI) {
   const announcedCwds = new Set<string>();
   let announcedTeamKnowledge = false;
   let sessionToolFailures = 0;
+  // Distinct failed tool_result events (dedupe by toolCallId so a replayed
+  // result is never counted twice).
+  const seenToolErrorIds = new Set<string>();
   let learningNudgeAnnounced = false;
   let dailyRun: {
     requirement: DailyLogRequirement;

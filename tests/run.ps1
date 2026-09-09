@@ -100,6 +100,59 @@ try {
   $env:COOP_DIR = $priorCoop
   if ($kbSpec -like "*team-fixture*") { Ok 'launch-spec includes team skills from configured knowledge repo' } else { Ko 'launch-spec missing team-fixture' }
 
+  # --- 1c. invalid team skill cannot abort the PowerShell launcher -------------
+  Head 'invalid team skill is skipped (missing frontmatter name)'
+  $kbBad = Join-Path $stub 'team-kb-bad'
+  New-Item -ItemType Directory -Path (Join-Path $kbBad 'skills/aaa-valid-skill'), (Join-Path $kbBad 'skills/zzzz-invalid-final') -Force | Out-Null
+  Set-Content (Join-Path $kbBad 'skills/aaa-valid-skill/SKILL.md') "---`nname: aaa-valid-skill`n---`n# Valid"
+  Set-Content (Join-Path $kbBad 'skills/zzzz-invalid-final/SKILL.md') '# no frontmatter at all'
+  $kbBadCfg = Join-Path $stub 'kb-bad-cfg'
+  New-Item -ItemType Directory -Path (Join-Path $kbBadCfg '.coop') -Force | Out-Null
+  $badJson = '{"schema_version":1,"knowledge":{"enabled":true,"repos":[{"url":"https://example.com/repo.git","local_path":"' + ($kbBad -replace '\\', '/') + '"}]}}'
+  Set-Content (Join-Path $kbBadCfg '.coop/config') $badJson
+  $env:COOP_DIR = $kbBadCfg
+  $badSpec = (& $coop launch-spec 2>&1 | Out-String) -replace '\\', '/'
+  $badRc = $LASTEXITCODE
+  $env:COOP_DIR = $priorCoop
+  if ($badRc -eq 0) { Ok 'valid + invalid-final: PowerShell launcher exits 0' } else { Ko "invalid-final aborted PowerShell launcher: rc=$badRc" }
+  if ($badSpec -like '*aaa-valid-skill*') { Ok 'valid skill still loaded alongside invalid-final (PS)' } else { Ko 'valid skill lost (PS)' }
+  if ($badSpec -like '*zzzz-invalid-final*') { Ko 'invalid-final present in PS launch args' } else { Ok 'invalid-final absent from PS launch args' }
+  if ($badSpec -like '*missing frontmatter name*') { Ok 'invalid-final warned (PS)' } else { Ko 'no invalid-final warning (PS)' }
+
+  # --- 1d. duplicate team skill names across repositories: first wins ----------
+  Head 'duplicate team skill names across repositories (PS)'
+  $kbDupA = Join-Path $stub 'kb-dup-a'; $kbDupB = Join-Path $stub 'kb-dup-b'
+  New-Item -ItemType Directory -Path (Join-Path $kbDupA 'skills/shared-skill'), (Join-Path $kbDupB 'skills/shared-skill') -Force | Out-Null
+  Set-Content (Join-Path $kbDupA 'skills/shared-skill/SKILL.md') "---`nname: shared-skill`n---`n# First"
+  Set-Content (Join-Path $kbDupB 'skills/shared-skill/SKILL.md') "---`nname: shared-skill`n---`n# Second"
+  $kbDupCfg = Join-Path $stub 'kb-dup-cfg'
+  New-Item -ItemType Directory -Path (Join-Path $kbDupCfg '.coop') -Force | Out-Null
+  $dupJson = '{"schema_version":1,"knowledge":{"enabled":true,"repos":[' +
+    '{"url":"https://example.com/a.git","local_path":"' + ($kbDupA -replace '\\', '/') + '"},' +
+    '{"url":"https://example.com/b.git","local_path":"' + ($kbDupB -replace '\\', '/') + '"}]}}'
+  Set-Content (Join-Path $kbDupCfg '.coop/config') $dupJson
+  $env:COOP_DIR = $kbDupCfg
+  $dupSpec = (& $coop launch-spec 2>&1 | Out-String) -replace '\\', '/'
+  $dupRc = $LASTEXITCODE
+  $env:COOP_DIR = $priorCoop
+  if ($dupRc -eq 0) { Ok 'duplicate names: PowerShell launcher exits 0' } else { Ko "dup aborted PS launcher: rc=$dupRc" }
+  if ($dupSpec -like '*kb-dup-a*shared-skill*') { Ok 'first repository copy loaded (PS)' } else { Ko 'first copy missing (PS)' }
+  if ($dupSpec -like '*kb-dup-b*') { Ko 'second repository duplicate NOT skipped (PS)' } else { Ok 'second repository duplicate skipped (PS)' }
+
+  # --- 1e. bounded knowledge git (process-tree deadline; PS in-process return) --
+  Head 'knowledge git timeout (PowerShell)'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $kgOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\sync-knowledge-timeout.test.ps1') 2>&1
+  $kgRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($kgRc -eq 0) {
+    $kgOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "knowledge git timeout fixture failed: $($kgOut | Out-String)"
+  }
+
+
   # --- 2. --no-launch is a dry-run: exits 0, prints the spec -----------------
   Head '--no-launch dry-run (must NOT start pi; prints the spec)'
   $nlOut = (& $coop --no-launch 2>&1 | Out-String) -replace '\\', '/'
@@ -235,7 +288,20 @@ try {
     Ko "release transaction fixture failed: $($releaseOut | Out-String)"
   }
 
-  # --- 9. Fresh install repairs a Python 3.14-only Fabric prerequisite -------
+  # --- 9b. team knowledge local recall helper (configured-clone search) --------
+  Head 'team knowledge local recall helper'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $searchKbOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\search-knowledge.test.ps1') 2>&1
+  $searchKbRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($searchKbRc -eq 0) {
+    $searchKbOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "team knowledge recall fixture failed: $($searchKbOut | Out-String)"
+  }
+
+  # --- 9c. Fresh install repairs a Python 3.14-only Fabric prerequisite -------
   Head 'fresh-install Fabric Python prerequisite'
   $oldErrorAction = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'

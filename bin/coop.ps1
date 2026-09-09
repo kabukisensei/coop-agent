@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+﻿﻿#!/usr/bin/env pwsh
 #
 # coop.ps1 — the Cooptimize terminal agent (Windows / PowerShell mirror of bin/coop).
 #
@@ -285,22 +285,28 @@ function Build-CoopPiArgs {
         if (-not $path) { continue }
         $teamSkills = Join-Path $path 'skills'
         if (-not (Test-Path -LiteralPath $teamSkills -PathType Container)) { continue }
-        Get-ChildItem -LiteralPath $teamSkills -Directory | ForEach-Object {
-          $sk = Join-Path $_.FullName 'SKILL.md'
-          if (Test-Path -LiteralPath $sk -PathType Leaf) {
-            if ($ownNames.Contains($_.Name)) {
-              Coop-Warn "skipping team skill '$($_.Name)' (conflicts with a Cooptimize skill)"
-            } else {
-              $fm = Get-CoopSkillName $sk
-              if ($fm -and $ownNames.Contains($fm)) {
-                Coop-Warn "skipping team skill '$($_.Name)' (name '$fm' conflicts with a Cooptimize skill)"
-              } else {
-                $piArgs += @('--skill', $_.FullName)
-                [void]$ownNames.Add($_.Name)
-                if ($fm) { [void]$ownNames.Add($fm) }
-              }
-            }
+        # Parse the frontmatter name BEFORE adding any launch argument; an
+        # optional external skill that can't identify itself is skipped, never
+        # added half-validated.
+        foreach ($skillDir in (Get-ChildItem -LiteralPath $teamSkills -Directory)) {
+          $sk = Join-Path $skillDir.FullName 'SKILL.md'
+          if (-not (Test-Path -LiteralPath $sk -PathType Leaf)) { continue }
+          if ($ownNames.Contains($skillDir.Name)) {
+            Coop-Warn "skipping team skill '$($skillDir.Name)' (conflicts with a Cooptimize skill)"
+            continue
           }
+          $fm = Get-CoopSkillName $sk
+          if (-not $fm) {
+            Coop-Warn "skipping team skill '$($skillDir.Name)' (missing frontmatter name)"
+            continue
+          }
+          if ($ownNames.Contains($fm)) {
+            Coop-Warn "skipping team skill '$($skillDir.Name)' (name '$fm' conflicts with a Cooptimize skill)"
+            continue
+          }
+          $piArgs += @('--skill', $skillDir.FullName)
+          [void]$ownNames.Add($skillDir.Name)
+          [void]$ownNames.Add($fm)
         }
       }
     }

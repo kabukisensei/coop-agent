@@ -159,17 +159,26 @@ coop_load_team_knowledge() {
       name="$(basename "$d")"
       [ -f "${d}SKILL.md" ] || continue
       case "$own_names" in *" $name "*) coop_warn "skipping team skill '$name' (conflicts with a Cooptimize skill)"; continue ;; esac
-      fm="$(coop_skill_name "${d}SKILL.md")"
-      if [ -n "$fm" ]; then
-        case "$own_names" in *" $fm "*) coop_warn "skipping team skill '$name' (name '$fm' conflicts with a Cooptimize skill)"; continue ;; esac
+      # Parse the frontmatter name BEFORE adding any launch argument. An
+      # optional external skill that can't identify itself must be skipped,
+      # never added half-validated (and never allowed to leave this function
+      # with a failing status under set -e).
+      if ! fm="$(coop_skill_name "${d}SKILL.md")"; then
+        coop_warn "skipping team skill '$name' (could not read frontmatter name)"
+        continue
       fi
+      if [ -z "$fm" ]; then
+        coop_warn "skipping team skill '$name' (missing frontmatter name)"
+        continue
+      fi
+      case "$own_names" in *" $fm "*) coop_warn "skipping team skill '$name' (name '$fm' conflicts with a Cooptimize skill)"; continue ;; esac
       COOP_PI_ARGS+=(--skill "$d")
-      own_names="$own_names$name "
-      [ -n "$fm" ] && own_names="$own_names$fm "
+      own_names="$own_names$name $fm "
     done
   done <<EOF
 $(coop_knowledge_repos)
 EOF
+  return 0
 }
 
 # --- Assemble the exact Pi launch spec (args + brand env) --------------------
