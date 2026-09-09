@@ -857,12 +857,6 @@ await test("update results display fixed copy once and preserve unread or newer 
     assert.ok(existsSync(path));
     assert.equal(await presentUpdateOutcome(args), true);
     assert.ok(!JSON.stringify(shown).includes("UNTRUSTED"));
-    const target = join(root, "external.json");
-    writeFileSync(target, JSON.stringify({ status: "failed" }));
-    symlinkSync(target, path);
-    assert.equal(await presentUpdateOutcome(args), false);
-    assert.ok(existsSync(target));
-    rmSync(path);
     writeFileSync(path, JSON.stringify({ status: "failed" }));
     assert.equal(await presentUpdateOutcome({ ...args, show: async () => {
       assert.equal(await presentUpdateOutcome(args), false);
@@ -873,6 +867,45 @@ await test("update results display fixed copy once and preserve unread or newer 
     assert.equal(JSON.parse(readFileSync(path, "utf8")).status, "healthy");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+let outcomeSymlinkCreated = false;
+const outcomeSymlinkDir = mkdtempSync(join(tmpdir(), "coop-update-outcome-symlink-"));
+try {
+  const target = join(outcomeSymlinkDir, "external.json");
+  const link = join(outcomeSymlinkDir, "update-result.json");
+  const targetBytes = JSON.stringify({ status: "failed" });
+  writeFileSync(target, targetBytes);
+  try {
+    symlinkSync(target, link, "file");
+    outcomeSymlinkCreated = true;
+  } catch (error) {
+    if (error.code !== "EPERM" && error.code !== "EACCES" && error.code !== "ENOTSUP") throw error;
+    console.log("  – update results reject symlinks: skipped (host lacks file symlink capability)");
+  }
+  if (outcomeSymlinkCreated) {
+    await test("update results reject symlinks and preserve external targets", async () => {
+      let shown = [];
+      const args = { userData: outcomeSymlinkDir, currentVersion: "1.2.3", show: async options => { shown.push(options); } };
+      assert.equal(await presentUpdateOutcome(args), false);
+      assert.equal(shown.length, 0);
+      assert.ok(existsSync(target));
+      assert.equal(readFileSync(target, "utf8"), targetBytes);
+    });
+  }
+} finally {
+  try {
+    if (outcomeSymlinkCreated && existsSync(join(outcomeSymlinkDir, "update-result.json"))) {
+      try {
+        const st = lstatSync(join(outcomeSymlinkDir, "update-result.json"));
+        if (st.isSymbolicLink()) unlinkSync(join(outcomeSymlinkDir, "update-result.json"));
+      } catch {
+        rmSync(join(outcomeSymlinkDir, "update-result.json"), { force: true });
+      }
+    }
+  } finally {
+    rmSync(outcomeSymlinkDir, { recursive: true, force: true });
+  }
+}
 
 if (process.platform !== "win32") await test("native health requires its challenge, matching version and clean process exit", async () => {
   const root = mkdtempSync(join(tmpdir(), "coop-native-health-"));

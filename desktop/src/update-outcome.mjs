@@ -28,6 +28,8 @@ export async function presentUpdateOutcome({ userData, currentVersion, show }) {
         detail: "Coop Desktop has reopened. You can continue working and try again from Help → Check for Updates.",
         buttons: ["Continue"], defaultId: 0 };
     } else return false;
+    await handle.close();
+    handle = null;
     await show(options);
     // A newer helper result must not be consumed by an older dialog.
     const current = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
