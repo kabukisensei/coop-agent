@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildExecutionEnvelope } from "../web/execution-envelope.mjs";
 import "../web/public/findings-model.js";
@@ -80,7 +81,7 @@ assert.equal(bpaProjection.model.artifacts[0].id, "artifact-bpa-golden");
 // were captured from the pinned CLIs with:
 //   coop-sql-review check tests/fixtures/findings/select-star.sql --format json
 //   coop-dax-review check tests/fixtures/findings/legacy.bim --format json
-assert.equal(fileURLToPath(fixtureUrl("select-star.sql")).endsWith("tests/fixtures/findings/select-star.sql"), true);
-assert.equal(fileURLToPath(fixtureUrl("legacy.bim")).endsWith("tests/fixtures/findings/legacy.bim"), true);
+assert.equal(fileURLToPath(fixtureUrl("select-star.sql")).endsWith(join("tests", "fixtures", "findings", "select-star.sql")), true);
+assert.equal(fileURLToPath(fixtureUrl("legacy.bim")).endsWith(join("tests", "fixtures", "findings", "legacy.bim")), true);
 
 console.log("findings golden parity: 25 assertions passed");
