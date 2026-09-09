@@ -84,10 +84,12 @@ def expand_local_path(raw):
     return None
 
 
-def iter_markdown_files(root):
+def iter_markdown_files(root, onerror):
     """Yield sorted Markdown file paths under root, pruning .git and never
-    following symlinks (both directory and file symlinks are skipped)."""
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+    following symlinks (both directory and file symlinks are skipped).
+    Traversal errors (unreadable directories) are delivered to `onerror` so
+    they can be reported instead of silently disappearing."""
+    for dirpath, dirnames, filenames in os.walk(root, onerror=onerror, followlinks=False):
         dirnames[:] = sorted(d for d in dirnames if d != ".git" and not os.path.islink(os.path.join(dirpath, d)))
         for name in sorted(filenames):
             if not name.lower().endswith(MARKDOWN_SUFFIXES):
@@ -99,13 +101,21 @@ def iter_markdown_files(root):
 
 
 def search_root(root, query, warnings):
-    """Search one root. Returns (matches, total_found, truncated). Unreadable
-    files are reported in warnings and skipped."""
+    """Search one root. Returns (matches, total_found, truncated, partial).
+    Unreadable files and subdirectories are reported in warnings and skipped;
+    `partial` is True when traversal errors were hit anywhere under the root.
+    An unreadable ROOT is the caller's job (verified before claiming searched)
+    but is still reported here defensively."""
     matches = []
     total = 0
     truncated = False
+    walk_errors = []
+
+    def onerror(exc):
+        walk_errors.append(exc)
+
     needle = query.lower()
-    for full in iter_markdown_files(root):
+    for full in iter_markdown_files(root, onerror):
         try:
             with open(full, "r", encoding="utf-8", errors="replace") as fh:
                 for lineno, line in enumerate(fh, 1):
@@ -115,7 +125,7 @@ def search_root(root, query, warnings):
                     if len(matches) < MAX_MATCHES_PER_REPO:
                         snippet = line.strip()
                         if len(snippet) > SNIPPET_CAP:
-                            snippet = snippet[: SNIPPET_CAP - 1] + "\u2026"
+                            snippet = snippet[: SNIPPET_CAP - 1] + "…"
                         matches.append(
                             {
                                 "root": root,
@@ -129,7 +139,14 @@ def search_root(root, query, warnings):
                         truncated = True
         except OSError as exc:
             warnings.append("unreadable file skipped: %s (%s)" % (full, exc))
-    return matches, total, truncated
+    root_abs = os.path.abspath(root)
+    for exc in walk_errors:
+        err_path = os.path.abspath(getattr(exc, "filename", None) or root)
+        if err_path == root_abs:
+            warnings.append("unreadable root: %s (%s)" % (root, exc))
+        else:
+            warnings.append("unreadable subdirectory skipped: %s (%s)" % (err_path, exc))
+    return matches, total, truncated, bool(walk_errors)
 
 
 def main(argv=None):
@@ -201,12 +218,16 @@ def main(argv=None):
                     if not os.path.isdir(root):
                         warnings.append("unavailable root skipped: %s" % root)
                         continue
-                    searched_roots.append(root)
+                    # Verify access BEFORE claiming the root was searched: an
+                    # unreadable root must never be reported as successfully
+                    # searched with zero matches.
                     try:
-                        root_matches, total, truncated = search_root(root, query, warnings)
+                        os.listdir(root)
                     except OSError as exc:
                         warnings.append("unavailable root skipped: %s (%s)" % (root, exc))
                         continue
+                    root_matches, total, truncated, partial = search_root(root, query, warnings)
+                    searched_roots.append(root)
                     matches.extend(root_matches)
                     truncated_any = truncated_any or truncated
                     per_repo[root] = {
@@ -214,6 +235,8 @@ def main(argv=None):
                         "total": total,
                         "truncated": truncated,
                     }
+                    if partial:
+                        per_repo[root]["partial"] = True
                 if not searched_roots:
                     status = STATUS_UNAVAILABLE
 

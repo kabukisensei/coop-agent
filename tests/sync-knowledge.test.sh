@@ -101,21 +101,129 @@ PROBEOUT="$TMP/probe-env.txt"
 REALGIT="$(command -v git)"
 PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
 mkdir -p "$FAKEBIN"
+
+# Windows detection. On Git Bash, Python's subprocess (CreateProcess) resolves
+# `git` via the native PATH/PATHEXT — an extensionless shell script is INVISIBLE
+# to it (review finding: the timeout fixtures never executed on Windows, so no
+# heartbeat/invocation-log/env-probe files ever appeared). The fixture must
+# therefore be a real PE binary on Windows, compiled here from a small C shim.
+# A missing compiler or an unwritten fixture log is a LOUD test failure, never
+# a silent pass.
+case "$(uname -s 2>/dev/null || echo unknown)" in
+  MINGW*|CYGWIN*|MSYS*) WIN=1 ;;
+  *) WIN=0 ;;
+esac
+
+# Env values consumed by the NATIVE (Windows) fixture must be Windows paths;
+# the POSIX fixture keeps the POSIX forms.
+winpath() { if [ "$WIN" = "1" ]; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
+FAKELOG_ENV="$(winpath "$FAKELOG")"
+PROBEOUT_ENV="$(winpath "$PROBEOUT")"
+SLEEPERFILE_ENV="$(winpath "$SLEEPERFILE")"
+if [ "$WIN" = "1" ]; then
+  REALGIT_UNIX="$REALGIT"
+  case "$REALGIT_UNIX" in
+    *.exe) : ;;
+    *) [ -f "$REALGIT_UNIX.exe" ] && REALGIT_UNIX="$REALGIT_UNIX.exe" ;;
+  esac
+  REALGIT_ENV="$(cygpath -w "$REALGIT_UNIX")"
+else
+  REALGIT_ENV="$REALGIT"
+fi
+if [ "$WIN" = "1" ]; then
+  cat > "$TMP/fake-git.c" <<'CEOF'
+/* Test fixture: a fake `git` the Windows subprocess launcher actually
+ * executes (a real PE binary). Mirrors the POSIX shell fixture contract:
+ * log argv, optionally dump GIT_* env, hang past the deadline for marker
+ * repos, delegate everything else to the real git. */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <process.h>
+#include <windows.h>
+
+int main(int argc, char **argv) {
+    const char *fakelog = getenv("FAKELOG");
+    if (fakelog) {
+        FILE *f = fopen(fakelog, "a");
+        if (f) {
+            for (int i = 1; i < argc; i++) fprintf(f, "%s%s", i > 1 ? " " : "", argv[i]);
+            fputc('\n', f);
+            fclose(f);
+        }
+    }
+    const char *probe = getenv("PROBEENV");
+    if (probe && probe[0] == '1') {
+        const char *out = getenv("PROBEOUT");
+        FILE *f = out ? fopen(out, "a") : NULL;
+        if (f) {
+            const char *names[] = {"GIT_TERMINAL_PROMPT","GCM_INTERACTIVE","GIT_ASKPASS",
+                                   "SSH_ASKPASS","GIT_SSH","GIT_SSH_COMMAND", NULL};
+            for (int i = 0; names[i]; i++) {
+                const char *v = getenv(names[i]);
+                if (v) fprintf(f, "%s=%s\n", names[i], v);
+            }
+            fclose(f);
+        }
+    }
+    char buf[4096] = {0};
+    for (int i = 1; i < argc; i++) {
+        strncat(buf, argv[i], sizeof(buf) - strlen(buf) - 2);
+        strncat(buf, " ", sizeof(buf) - strlen(buf) - 1);
+    }
+    int hang = 0;
+    if (strstr(buf, "status --porcelain") && strstr(buf, "hanghere-status")) hang = 1;
+    if (strstr(buf, " pull ") && strstr(buf, "hanghere-pull")) hang = 1;
+    if (strstr(buf, "clone") && strstr(buf, "hanghere")) hang = 1;
+    if (hang) { Sleep(30000); return 0; }
+    const char *realgit = getenv("REALGIT");
+    if (!realgit) return 127;
+    return _spawnv(_P_WAIT, realgit, (const char * const *)argv);
+}
+CEOF
+  CC=""
+  for cand in gcc cc clang /c/mingw64/bin/gcc.exe \
+              "/c/ProgramData/chocolatey/lib/mingw/tools/install/mingw64/bin/gcc.exe"; do
+    if command -v "$cand" >/dev/null 2>&1; then CC="$cand"; break; fi
+  done
+  if [ -z "$CC" ]; then
+    ko "no C compiler found to build the Windows git fixture (fixture must execute)"
+    exit 1
+  fi
+  if ! "$CC" -O1 -o "$FAKEBIN/git.exe" "$TMP/fake-git.c" 2>"$TMP/cc.err"; then
+    ko "compiling the Windows git fixture failed: $(cat "$TMP/cc.err")"
+    exit 1
+  fi
+  # Bash-side lookups (`have git`) need an executable `git` too — delegate to
+  # the real one; only the native-side git.exe drives the bounded ops.
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$REALGIT" > "$FAKEBIN/git"
+  chmod +x "$FAKEBIN/git"
+else
 cat > "$FAKEBIN/git" <<EOF
 #!/bin/sh
-printf '%s\n' "\$*" >> "$FAKELOG"
+printf '%s\n' "\$*" >> "$FAKELOG_ENV"
 if [ -n "\$PROBEENV" ]; then
-  env | grep -E '^(GIT_TERMINAL_PROMPT|GCM_INTERACTIVE|GIT_ASKPASS|SSH_ASKPASS|GIT_SSH|GIT_SSH_COMMAND)=' > "$PROBEOUT" || true
+  env | grep -E '^(GIT_TERMINAL_PROMPT|GCM_INTERACTIVE|GIT_ASKPASS|SSH_ASKPASS|GIT_SSH|GIT_SSH_COMMAND)=' > "$PROBEOUT_ENV" || true
 fi
+orphan() {
+  # Parent exits FIRST; the child keeps the inherited stdout open, so a
+  # capturing caller (a Bash command substitution) stays blocked until it dies.
+  sleep 30 &
+  echo \$! > "$SLEEPERFILE_ENV"
+  exit 0
+}
 hang() {
   sleep 30 &
-  echo \$! > "$SLEEPERFILE"
+  echo \$! > "$SLEEPERFILE_ENV"
   wait
   exit 0
 }
 # Dispatch by SUBCOMMAND first, then by repo marker, so e.g. a status probe on
 # the pull-hang repo passes through while its pull hangs.
 case "\$*" in
+  *hanghere-orphan*)
+    case "\$*" in *"status --porcelain"*) orphan ;; esac
+    ;;
   *"status --porcelain"*)
     case "\$*" in *hanghere-status*) hang ;; esac
     ;;
@@ -126,9 +234,10 @@ case "\$*" in
     case "\$*" in *hanghere*) hang ;; esac
     ;;
 esac
-exec "$REALGIT" "\$@"
+exec "$REALGIT_ENV" "\$@"
 EOF
 chmod +x "$FAKEBIN/git"
+fi
 
 run_sync_bounded() { # <cfg> — 60s independent outer deadline so a regression cannot hang CI
   HOME="$TMP/home" COOP_DIR="$1" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=1 PATH="$FAKEBIN:$PATH" \
@@ -166,12 +275,17 @@ write_raw_config "$CFG5" '{"schema_version":1,"knowledge":{"enabled":true,"repos
   {"url":"'"$REMOTE"'","local_path":"'"$CLONE-bounded"'"}]}}'
 rm -f "$FAKELOG"
 run_sync_bounded "$CFG5"
+[ -s "$FAKELOG" ] && ok "A: fixture executed (invocation log written)" || ko "A: fixture never ran — missing invocation log"
 [ "$OUTER_TIMED_OUT" = "0" ] && ok "A: sync completed inside the outer deadline" || ko "A: sync hung past the outer deadline"
 [ "$BOUNDED_RC" -eq 0 ] && ok "A: timed-out clone still fails soft (exit 0)" || ko "A: exit $BOUNDED_RC"
 grep -q "timed out" "$TMP/bounded.out" && ok "A: timeout warning surfaced" || ko "A: no timeout warning: $(cat "$TMP/bounded.out")"
 [ -f "$CLONE-bounded/note.md" ] && ok "A: second healthy repo cloned in the same run" || ko "A: healthy repo missing"
 assert_sleeper_dead
-ls -d "$TMP/kbh"/.coop-knowledge-clone-* 2>/dev/null | grep . && ko "A: owned temp clone left behind" || ok "A: owned temp clone cleaned up"
+husk_found=0
+for d in "$TMP/kbh"/.coop-knowledge-clone-*; do
+  [ -e "$d" ] && { husk_found=1; break; }
+done
+[ "$husk_found" -eq 1 ] && ko "A: owned temp clone left behind" || ok "A: owned temp clone cleaned up"
 
 # --- B. status-probe hang: unknown state, NEVER pulls ---------------------------
 CFG6="$TMP/cfg6"
@@ -180,6 +294,7 @@ write_raw_config "$CFG6" '{"schema_version":1,"knowledge":{"enabled":true,"repos
   {"url":"'"$REMOTE"'","local_path":"'"$TMP/kbh2/hanghere-status"'"}]}}'
 rm -f "$FAKELOG" "$SLEEPERFILE"
 run_sync_bounded "$CFG6"
+[ -s "$FAKELOG" ] && ok "B: fixture executed (invocation log written)" || ko "B: fixture never ran — missing invocation log"
 grep -q "state unknown" "$TMP/bounded.out" && ok "B: unknown-state warning on status timeout" || ko "B: no unknown-state warning: $(cat "$TMP/bounded.out")"
 [ "$BOUNDED_RC" -eq 0 ] && ok "B: fails soft (exit 0)" || ko "B: exit $BOUNDED_RC"
 grep "hanghere-status" "$FAKELOG" | grep -q "status --porcelain" && ok "B: status probe invoked" || ko "B: status probe missing from log"
@@ -197,6 +312,7 @@ write_raw_config "$CFG7" '{"schema_version":1,"knowledge":{"enabled":true,"repos
   {"url":"'"$REMOTE"'","local_path":"'"$TMP/kbh3/hanghere-pull"'"}]}}'
 rm -f "$FAKELOG" "$SLEEPERFILE"
 run_sync_bounded "$CFG7"
+[ -s "$FAKELOG" ] && ok "C: fixture executed (invocation log written)" || ko "C: fixture never ran — missing invocation log"
 grep -q "timed out" "$TMP/bounded.out" && ok "C: pull timeout warned" || ko "C: no pull timeout warning: $(cat "$TMP/bounded.out")"
 [ -f "$TMP/kbh3/hanghere-pull/note.md" ] && ok "C: existing checkout preserved" || ko "C: checkout damaged"
 assert_sleeper_dead
@@ -228,6 +344,7 @@ write_raw_config "$CFG9" '{"schema_version":1,"knowledge":{"enabled":true,"repos
 rm -f "$PROBEOUT"
 PROBEENV=1 HOME="$TMP/home" COOP_DIR="$CFG9" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=1 PATH="$FAKEBIN:$PATH" \
   bash "$ROOT/scripts/sync-knowledge.sh" >/dev/null 2>&1
+[ -s "$PROBEOUT" ] && ok "E: fixture executed (environment probe written)" || ko "E: fixture never ran — missing environment probe"
 grep -q "^GIT_TERMINAL_PROMPT=0$" "$PROBEOUT" && ok "E: child GIT_TERMINAL_PROMPT=0" || ko "E: GIT_TERMINAL_PROMPT not bounded: $(cat "$PROBEOUT" 2>/dev/null)"
 grep -q "^GCM_INTERACTIVE=never$" "$PROBEOUT" && ok "E: child GCM_INTERACTIVE=never" || ko "E: GCM_INTERACTIVE not bounded"
 if grep -q "^GIT_SSH" "$PROBEOUT" 2>/dev/null; then
@@ -255,5 +372,94 @@ rc=$?
 "$PY" "$ROOT/scripts/knowledge-git.py" >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 2 ] && ok "F: malformed usage maps to 2" || ko "F: usage rc=$rc (want 2)"
+
+# ==============================================================================
+# SSH transport respect (review finding 4): the runner must honor the EFFECTIVE
+# SSH configuration — env transports untouched, core.sshCommand preserved
+# (BatchMode only ever appended to a plain `ssh`), non-ssh custom transports
+# skipped with an actionable warning.
+# ==============================================================================
+
+# --- G1. environment-configured SSH command is never replaced -------------------
+rm -f "$PROBEOUT"
+GIT_SSH_COMMAND='custom-ssh-wrapper -x' PROBEENV=1 PATH="$FAKEBIN:$PATH" \
+  COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=5 "$PY" "$ROOT/scripts/knowledge-git.py" \
+  -- git -C "$TMP/kbh5/envprobe" status --porcelain >/dev/null 2>&1
+grep -q "^GIT_SSH_COMMAND=custom-ssh-wrapper -x$" "$PROBEOUT" \
+  && ok "G1: env GIT_SSH_COMMAND preserved untouched" \
+  || ko "G1: env transport replaced: $(cat "$PROBEOUT" 2>/dev/null)"
+
+# --- G2. git-configured core.sshCommand (plain ssh) gains BatchMode -------------
+git -C "$TMP/kbh5/envprobe" config core.sshCommand "ssh -i /tmp/identity_file"
+rm -f "$PROBEOUT"
+PROBEENV=1 PATH="$FAKEBIN:$PATH" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=5 \
+  "$PY" "$ROOT/scripts/knowledge-git.py" -- git -C "$TMP/kbh5/envprobe" status --porcelain \
+  >/dev/null 2>&1
+grep -q "^GIT_SSH_COMMAND=ssh -i /tmp/identity_file -o BatchMode=yes$" "$PROBEOUT" \
+  && ok "G2: core.sshCommand (ssh) kept as the transport, made unattended" \
+  || ko "G2: configured transport not honored: $(cat "$PROBEOUT" 2>/dev/null)"
+git -C "$TMP/kbh5/envprobe" config --unset core.sshCommand
+
+# --- G3. non-ssh custom transport: skipped with an actionable warning -----------
+git -C "$TMP/kbh5/envprobe" config core.sshCommand "/tmp/corp-ssh-wrapper"
+rm -f "$PROBEOUT" "$TMP/g3.err"
+PROBEENV=1 PATH="$FAKEBIN:$PATH" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=5 \
+  "$PY" "$ROOT/scripts/knowledge-git.py" -- git -C "$TMP/kbh5/envprobe" status --porcelain \
+  >/dev/null 2>"$TMP/g3.err"
+if grep -q "^GIT_SSH" "$PROBEOUT" 2>/dev/null; then
+  ko "G3: non-ssh custom transport was replaced: $(cat "$PROBEOUT")"
+else
+  ok "G3: non-ssh custom transport preserved (no env override)"
+fi
+grep -q "custom SSH transport preserved" "$TMP/g3.err" \
+  && ok "G3: actionable warning emitted" || ko "G3: no warning: $(cat "$TMP/g3.err")"
+git -C "$TMP/kbh5/envprobe" config --unset core.sshCommand
+
+# ==============================================================================
+# Orphaned-descendant deadline (review finding 3): the child exits FIRST while
+# its descendant keeps the inherited stdout open. The runner must bound the
+# COMPLETE operation — the caller's capture must not block past the deadline —
+# and kill the owned process group (identity captured at spawn) on expiry.
+# (Process groups are POSIX semantics; Windows keeps the taskkill /T contract
+# while the spawned root lives, so this section is POSIX-only.)
+# ==============================================================================
+if [ "$WIN" != "1" ]; then
+  CFG10="$TMP/cfg10"
+  git clone -q "$REMOTE" "$TMP/kbh6/hanghere-orphan" 2>/dev/null
+  write_raw_config "$CFG10" '{"schema_version":1,"knowledge":{"enabled":true,"repos":[
+    {"url":"'"$REMOTE"'","local_path":"'"$TMP/kbh6/hanghere-orphan"'"}]}}'
+
+  # Direct runner, through the SAME $(...) capture pattern sync uses.
+  rm -f "$FAKELOG" "$SLEEPERFILE"
+  start=$SECONDS
+  orphan_out="$(PATH="$FAKEBIN:$PATH" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=1 \
+    "$PY" "$ROOT/scripts/knowledge-git.py" -- git -C "$TMP/kbh6/hanghere-orphan" \
+    status --porcelain 2>"$TMP/orphan.err")"; orphan_rc=$?
+  orphan_elapsed=$((SECONDS-start))
+  [ -z "$orphan_out" ] && ok "H: captured status output is empty (orphan printed nothing)" || ko "H: unexpected output: $orphan_out"
+[ "$orphan_rc" -eq 124 ] && ok "H: parent-exits-first still bounded (rc=124)" || ko "H: rc=$orphan_rc (want 124)"
+  [ "$orphan_elapsed" -lt 10 ] \
+    && ok "H: capture returned within the deadline (${orphan_elapsed}s, not the child's 30s)" \
+    || ko "H: capture blocked ${orphan_elapsed}s past the deadline"
+  grep -q "descendants" "$TMP/orphan.err" \
+    && ok "H: actionable stderr message" || ko "H: no message: $(cat "$TMP/orphan.err")"
+  assert_sleeper_dead
+
+  # End-to-end through sync: unknown state, never pull, never blocks.
+  rm -f "$FAKELOG" "$SLEEPERFILE"
+  run_sync_bounded "$CFG10"
+  [ "$OUTER_TIMED_OUT" = "0" ] && ok "H: sync completes inside the outer deadline" || ko "H: sync blocked by the orphaned descendant"
+  grep -q "state unknown" "$TMP/bounded.out" \
+    && ok "H: sync reports unknown state (empty output never read as clean)" \
+    || ko "H: no unknown-state warning: $(cat "$TMP/bounded.out")"
+  if grep "hanghere-orphan" "$FAKELOG" 2>/dev/null | grep -q "pull"; then
+    ko "H: pull invoked despite the unknown state"
+  else
+    ok "H: failed status probe never pulls"
+  fi
+  assert_sleeper_dead
+else
+  echo "  – POSIX-only: orphaned-descendant process-group semantics not testable on Windows"
+fi
 
 exit $fail

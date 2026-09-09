@@ -7,7 +7,7 @@ description: "Search and apply Cooptimize team knowledge before non-trivial BI, 
 
 ## Purpose
 
-Consult Cooptimize shared knowledge and patterns before designing or implementing BI, Fabric, or data warehouse solutions. Always cite the note path consulted.
+Consult Cooptimize shared knowledge and patterns before designing or implementing BI, Fabric, or data warehouse solutions. Always cite the repository identity and note path consulted.
 
 ## When to search
 
@@ -19,20 +19,39 @@ Search team knowledge:
 
 ## How to search
 
-1. **If `teamai` is available on PATH**, use BM25 semantic recall:
+Team knowledge is searched ONLY through the bundled local-search helper.
+`teamai` is never part of the workflow — do not invoke it, and never treat its
+presence, absence, or configuration as changing how knowledge is found.
+
+1. **Resolve the helper and interpreter.** `COOP_ROOT` is exported by the
+   coop launcher and contains `bin/`, `scripts/`, `skills/`. The helper is
+   `$COOP_ROOT/scripts/search-knowledge.py`. Use the discovered Python
+   interpreter — the first of `python3`, `python`, or `py -3` that runs.
+2. **Run the search** (search every configured repository in one call):
    ```bash
-   teamai recall "<topic or search query>"
+   python3 "$COOP_ROOT/scripts/search-knowledge.py" --query "<topic>"
    ```
-2. **Fallback: search the local clones directly**:
-   Read configured local paths in `~/.coop/config` (`knowledge.repos[*].local_path`, typically `~/.coop/knowledge/incremental-bi`). If multiple repos are configured, search across each configured repo path:
-   ```bash
-   rg -i "<topic>" ~/.coop/knowledge/incremental-bi ~/.coop/knowledge/<other-repo>
-   ```
-   Or across all clones under the knowledge directory:
-   ```bash
-   rg -i "<topic>" ~/.coop/knowledge/
-   ```
-3. **Always cite the note path** used in your response (e.g., `Gold/Fact Patterns/Fact Partition Rebuild.md`).
+   PowerShell: `py -3 "$env:COOP_ROOT\scripts\search-knowledge.py" --query "<topic>"`
+3. **Handle the structured JSON status on stdout** — never guess:
+   - `ok` — read each matched note at `<root>/<path>` before citing it, then
+     answer with the repository identity plus the note path
+     (e.g., `incremental-bi — Gold/Fact Patterns/Fact Partition Rebuild.md`).
+     Zero matches under `ok` genuinely means the team knowledge has no note
+     on the topic — say so explicitly; it never means "search failed".
+   - `unavailable` — the configured clones are missing or unreadable. Run
+     `coop sync` (or `coop update`) to fetch them, retry the search once,
+     then proceed without knowledge if still unavailable. Never present
+     `unavailable` as "the team has no relevant knowledge".
+   - `disabled` — knowledge is not configured for this machine; proceed
+     without it.
+   - `invalid_config` — surface the warning from the `warnings` array to the
+     user and proceed without knowledge.
+   - Exit code `2` means the invocation itself was malformed (fix your
+     command); exit code `1` means the helper failed. Neither is ever a
+     successful search.
+4. **Respect `warnings` and `truncated`** — a searched root with a `partial`
+   flag (or subdirectory warnings) had inaccessible subdirectories; say the
+   search was partial rather than exhaustive.
 
 ## Vault layer guide
 

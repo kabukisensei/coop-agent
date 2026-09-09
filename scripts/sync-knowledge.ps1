@@ -1,4 +1,4 @@
-﻿﻿#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 #
 # coop sync-knowledge (Windows / PowerShell mirror of scripts/sync-knowledge.sh) —
 # sync the configured team knowledge repos (~/.coop/config "knowledge" block):

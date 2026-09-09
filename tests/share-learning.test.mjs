@@ -116,5 +116,35 @@ await t("prompts/share-learning.md exists, is non-empty, and includes expected f
   assert.match(content, /sensitivity:/);
   assert.match(content, /status:/);
   assert.match(content, /confidence:/);
-  assert.match(content, /teamai push/);
+});
+
+await t("share-learning prompt routes publication through PR only — no teamai push route", () => {
+  const content = readFileSync(join(process.cwd(), "prompts", "share-learning.md"), "utf8");
+  assert.ok(!/teamai/i.test(content), "teamai must not appear in the sharing prompt");
+  assert.match(content, /NEVER commit directly to main/i);
+  assert.match(content, /pull request/i);
+});
+
+await t("share-learning prompt requires selecting the knowledge repository before drafting", () => {
+  const content = readFileSync(join(process.cwd(), "prompts", "share-learning.md"), "utf8");
+  assert.match(content, /Select the knowledge repository FIRST/i);
+  assert.match(content, /WHICH repository this learning belongs to/i);
+  assert.match(content, /Never publish a note to a\s*repository the user did not pick/i);
+});
+
+await t("team-knowledge skill drives the local-search helper, never teamai", () => {
+  const skillPath = join(process.cwd(), "skills", "team-knowledge", "SKILL.md");
+  assert.ok(existsSync(skillPath), "skills/team-knowledge/SKILL.md must exist");
+  const content = readFileSync(skillPath, "utf8");
+  assert.match(content, /scripts\/search-knowledge\.py/);
+  assert.match(content, /search-knowledge\.py.*--query/s);
+  assert.match(content, /\$COOP_ROOT/);
+  // Handle the structured statuses instead of guessing.
+  for (const status of ["ok", "unavailable", "disabled", "invalid_config"]) {
+    assert.ok(content.includes(`\`${status}\``), `skill must explain status ${status}`);
+  }
+  // Repository identity + note path must be cited together.
+  assert.match(content, /repository identity plus the note path|repository \(root label\/path\)/);
+  // No teamai recall route may remain.
+  assert.ok(!/teamai recall/.test(content), "teamai recall route must be removed from the skill");
 });

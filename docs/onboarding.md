@@ -159,7 +159,7 @@ Enable it during `coop onboard` (or `coop onboard --config-only`):
 
 - `coop sync` and `coop update` automatically clone and fast-forward the knowledge repos.
 - Skills defined in the knowledge repo under `skills/*/SKILL.md` are automatically surfaced to Coop on launch.
-- Query team knowledge anytime using `team-knowledge` skill guidance (or `teamai recall "<query>"`).
+- Query team knowledge anytime using `team-knowledge` skill guidance — it runs the bundled `scripts/search-knowledge.py` helper against the configured clones.
 - Publish session learnings and patterns via `/share-learning`, which drafts a note in `learnings/` and opens a PR for review.
 
 ## Try it — a safe first task (nothing gets changed)

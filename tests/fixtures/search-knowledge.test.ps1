@@ -1,4 +1,4 @@
-﻿﻿#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # PowerShell twin of tests/search-knowledge.test.sh — exercises the real
 # scripts/search-knowledge.py helper (via Get-CoopPython discovery) against
 # temporary fixture roots. No network, no real subscriptions or credentials.

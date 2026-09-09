@@ -35,6 +35,28 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   still covers corrections and discoveries. The failure tally, dedupe set, and
   once-only nudge flags reset per session so a fresh session can be nudged
   again.
+- Review corrections on the team-knowledge pass (PR #49):
+  - Fixed a duplicate UTF-8 BOM in `bin/coop.ps1` and `scripts/sync-knowledge.ps1`
+    that made PowerShell parse the shebang line as a command; a byte-level gate
+    now rejects any `.ps1` with zero or duplicate BOMs (`scripts/check-parity.sh`,
+    `tests/bom.test.sh`, `tests/run.ps1`).
+  - `team-knowledge` skill and `/share-learning` prompt are bound to the
+    supported workflow: the skill drives `scripts/search-knowledge.py` through
+    its structured statuses and cites repository identity + note path; the
+    TeamAI recall/push routes are removed; the prompt requires selecting the
+    intended knowledge repository before publication (PR-only).
+  - `scripts/knowledge-git.py` applies ONE deadline to the complete operation —
+    after the child exits, the owned process group (identity captured at spawn)
+    is bounded and killed on expiry so descendants can never hold a capturing
+    caller open past the deadline. SSH: env transports stay untouched,
+    `core.sshCommand` is honored (BatchMode only appended to plain `ssh`;
+    non-ssh custom transports are preserved with an actionable warning).
+  - `scripts/search-knowledge.py` captures traversal errors: an unreadable root
+    is `unavailable` and never claimed searched; an accessible root with an
+    unreadable subdirectory is a marked-partial search with an explicit warning.
+  - Test fixtures on Windows are compiled to a real `git.exe` (an extensionless
+    shell script is invisible to `CreateProcess`), and every bounded-git test
+    asserts the fixture actually ran — a missing invocation log fails the test.
 - Team-skill launch-slot parsing in `bin/coop` / `bin/coop.ps1` now validates
   frontmatter before adding any launch argument: an external skill that cannot
   identify itself is skipped with a warning instead of being added

@@ -1,4 +1,4 @@
-﻿﻿#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 #
 # coop.ps1 — the Cooptimize terminal agent (Windows / PowerShell mirror of bin/coop).
 #

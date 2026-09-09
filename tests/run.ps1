@@ -73,6 +73,22 @@ try {
   $env:PI_CODING_AGENT_DIR = $env:COOP_AGENT_DIR
   $env:COOP_NO_ONBOARD = '1'
 
+  # --- 0. byte-level BOM gate: exactly ONE UTF-8 BOM on every .ps1 ------------
+  # A duplicate BOM is invisible to parsers but makes PowerShell read the
+  # shebang line as a command — the launcher dies at startup (review finding 1).
+  Head 'byte-level BOM check (exactly one UTF-8 BOM per .ps1)'
+  $bomFail = $false
+  Get-ChildItem -Path $root -Recurse -Filter '*.ps1' |
+    Where-Object { $_.FullName -notmatch '\\(node_modules|\.git|\.cache)[\\/]' } |
+    ForEach-Object {
+      $bytes = [System.IO.File]::ReadAllBytes($_.FullName)[0..5]
+      $hasBom = ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+      $dupBom = $hasBom -and ($bytes.Count -ge 6 -and $bytes[3] -eq 0xEF -and $bytes[4] -eq 0xBB -and $bytes[5] -eq 0xBF)
+      if ($dupBom) { Ko "duplicate UTF-8 BOM: $($_.FullName)"; $bomFail = $true }
+      elseif (-not $hasBom) { Ko "missing UTF-8 BOM: $($_.FullName)"; $bomFail = $true }
+    }
+  if (-not $bomFail) { Ok 'every .ps1 carries exactly one UTF-8 BOM' }
+
   # --- 1. launch-spec resolves the governed pi invocation --------------------
   Head 'launch-spec (shared launch builder) test'
   # Join-Path emits native separators, so on Windows PowerShell 5.1 the spec paths

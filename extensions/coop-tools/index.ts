@@ -2210,7 +2210,15 @@ export default function coopTools(pi: ExtensionAPI) {
 
   pi.on("tool_result", async (event: any) => {
     if (event.isError) {
-      sessionToolFailures++;
+      // Count DISTINCT failed calls: a replayed delivery of the same
+      // toolCallId must never increment the tally twice.
+      const id = event.toolCallId;
+      if (id === undefined || id === null) {
+        sessionToolFailures++;
+      } else if (!seenToolErrorIds.has(id)) {
+        seenToolErrorIds.add(id);
+        sessionToolFailures++;
+      }
     }
     if (!dailyRun) return;
     const effect = pendingDailyEffects.get(event.toolCallId);

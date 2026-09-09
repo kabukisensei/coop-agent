@@ -202,8 +202,8 @@ Configuration lives in `~/.coop/config` under the `knowledge` block:
 
 - **Sync**: `scripts/sync-knowledge.sh` (or `scripts/sync-knowledge.ps1`) clones missing local paths and fast-forwards clean checkouts during `coop sync` and `coop update`. Offline or unauthenticated runs fail soft (warn and continue). Dirty checkouts are preserved and never reset.
 - **Skills launch slot**: If the local clone contains `skills/*/SKILL.md`, `bin/coop` and `bin/coop.ps1` append `--skill <dir>` to the Pi launch spec. Like the Microsoft drop-in slots, this is **subordinate**: if a team skill name or frontmatter name conflicts with a first-party Cooptimize skill in `skills/`, the Cooptimize skill wins and the team skill is skipped.
-- **Recall**: The `team-knowledge` skill guides the agent to query team patterns using `teamai recall "<query>"` or grep the local clone before non-trivial work, and injects a hidden startup note when knowledge is available.
-- **Contributing learnings**: Draft discoveries with `/share-learning`, which generates a YAML frontmatter note under `<clone>/learnings/` and routes publication via pull request or `teamai push`. Never commit directly to main.
+- **Recall**: The `team-knowledge` skill guides the agent to query team patterns via the bundled local-search helper (`scripts/search-knowledge.py`, repository-bound, structured JSON status) before non-trivial work, and injects a hidden startup note when knowledge is available.
+- **Contributing learnings**: Draft discoveries with `/share-learning`, which generates a YAML frontmatter note under the user-selected clone's `learnings/` and routes publication via a plain Git pull request. Never commit directly to main.
 
 ---
 
