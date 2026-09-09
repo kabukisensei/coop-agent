@@ -9,13 +9,31 @@ an overall deadline).
 Usage:
     <python> scripts/knowledge-git.py --timeout-seconds 30 -- <git> [args...]
 
-Deadline: ONE deadline bounds the COMPLETE operation, not just the immediate
-child. After the child exits, descendants may still hold the inherited output
-streams open (a Bash `$(...)` capture stays blocked until every writer closes);
-the runner therefore keeps watching the OWNED PROCESS GROUP — captured at spawn
-so it survives the child's exit — and, once the deadline passes, kills the
-group so the streams close and cleanup actually happens. Exceeding the
-deadline anywhere in that chain exits 124, even if git itself finished.
+Deadline: ONE deadline bounds the COMPLETE operation — configuration
+discovery, the immediate child, and every descendant — not just the child.
+
+  * The deadline is established BEFORE configuration discovery, and the
+    core.sshCommand probe runs through the SAME owned-process mechanism with
+    the remaining time. A probe that exceeds the deadline fails the whole
+    operation (exit 124): the transport is "could not be determined", and the
+    runner never silently proceeds with a guessed default.
+  * After the child exits, descendants may still hold the inherited output
+    streams open (a Bash `$(...)` capture stays blocked until every writer
+    closes). The runner keeps watching the ownership it captured at spawn —
+    which survives the child's exit — and, once the deadline passes, kills it
+    so the streams close and cleanup actually happens. Exceeding the deadline
+    anywhere in that chain exits 124, even if git itself finished.
+
+Ownership: on POSIX the child starts a new session and the owned PROCESS
+GROUP (id captured at spawn) is the kill/wait unit. On Windows the child is
+spawned suspended, assigned to a Job Object created with
+KILL_ON_JOB_CLOSE, then resumed — job membership is inherited by every
+grandchild and PERSISTS after the immediate parent exits, so an orphaned
+descendant holding the output handles is still owned and can be terminated;
+job emptiness is the output-completion signal. If job setup fails the runner
+degrades to the previous taskkill /T contract (bounded to the parent's
+lifetime). Never kills by executable name. Cleanup is bounded — no unlimited
+wait after a kill.
 
 Timeout source: the --timeout-seconds flag wins; otherwise
 COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS (a positive integer); otherwise 30.
@@ -40,19 +58,16 @@ silently replacing the selected transport:
     the injection and prints an actionable warning — the overall deadline is
     the enforcement. Git's own precedence (env over config) is otherwise
     respected.
-  * no custom transport anywhere               -> GIT_SSH_COMMAND defaults to
-    "ssh -o BatchMode=yes".
-
-Process-tree discipline: POSIX starts the child in a new session; the owned
-process GROUP is killed on deadline (including credential-helper/SSH
-descendants, even ones whose parent already exited). Windows kills the spawned
-PID's tree via `taskkill /PID <pid> /T /F` while the root lives. Never kills
-by executable name. Cleanup is bounded — no unlimited wait after a kill.
+  * config probe could not be determined (start failure) -> an actionable
+    warning is printed and NO default transport is guessed; the environment
+    is left unchanged.
+  * configuration not set anywhere                -> GIT_SSH_COMMAND defaults
+    to "ssh -o BatchMode=yes".
 
 Exit codes:
     0-125   the child's exit status (a signal death maps to 128+signum)
-    124     the deadline passed — child, descendants, or output completion
-            were terminated
+    124     the deadline passed — probe, child, descendants, or output
+            completion were terminated
     127     the requested executable could not be started
     2       invalid CLI usage
 """
@@ -69,8 +84,309 @@ EXIT_TIMEOUT = 124
 EXIT_CANNOT_START = 127
 EXIT_USAGE = 2
 CLEANUP_GRACE_SECONDS = 5
-CONFIG_PROBE_TIMEOUT_SECONDS = 5
 POLL_INTERVAL_SECONDS = 0.05
+
+# Probe result states.
+PROBE_VALUE = "value"            # core.sshCommand is set (possibly empty -> unset)
+PROBE_UNSET = "unset"            # read succeeded; key absent
+PROBE_INDETERMINATE = "indeterminate"  # probe could not start at all
+PROBE_TIMED_OUT = "timed_out"    # probe exceeded the operation deadline
+
+_CREATE_SUSPENDED = 0x00000004
+
+
+# ---------------------------------------------------------------------------
+# Windows Job Object support (loaded only on nt). Wrapped so any failure
+# degrades to the taskkill fallback rather than crashing the runner.
+# ---------------------------------------------------------------------------
+_KERNEL32 = None
+if os.name == "nt":
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        _KERNEL32 = ctypes.windll.kernel32
+        _KERNEL32.CreateJobObjectW.restype = wintypes.HANDLE
+        _KERNEL32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        _KERNEL32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+        ]
+        _KERNEL32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        _KERNEL32.OpenProcess.restype = wintypes.HANDLE
+        _KERNEL32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        _KERNEL32.CloseHandle.argtypes = [wintypes.HANDLE]
+        _KERNEL32.QueryInformationJobObject.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+            wintypes.LPVOID,
+        ]
+        _KERNEL32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        _KERNEL32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        _KERNEL32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        _KERNEL32.OpenThread.restype = wintypes.HANDLE
+        _KERNEL32.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        _KERNEL32.ResumeThread.argtypes = [wintypes.HANDLE]
+
+        _INVALID_HANDLE = ctypes.c_void_p(-1).value
+        _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+        _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
+        _PROCESS_SET_QUOTA = 0x0100
+        _PROCESS_TERMINATE = 0x0001
+        _THREAD_SUSPEND_RESUME = 0x0002
+        _TH32CS_SNAPTHREAD = 0x00000004
+
+        class _IO_COUNTERS(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_ulonglong) for name in (
+                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount",
+            )]
+
+        class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", _IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        class _JOBOBJECT_BASIC_ACCOUNTING_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("TotalUserTime", ctypes.c_longlong),
+                ("TotalKernelTime", ctypes.c_longlong),
+                ("ThisPeriodTotalUserTime", ctypes.c_longlong),
+                ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
+                ("TotalPageFaultCount", wintypes.DWORD),
+                ("TotalProcesses", wintypes.DWORD),
+                ("ActiveProcesses", wintypes.DWORD),
+                ("TotalTerminatedProcesses", wintypes.DWORD),
+            ]
+
+        class _THREADENTRY32(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ThreadID", wintypes.DWORD),
+                ("th32OwnerProcessID", wintypes.DWORD),
+                ("tpBasePri", wintypes.LONG),
+                ("tpDeltaPri", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+            ]
+    except (ImportError, AttributeError, ValueError):
+        _KERNEL32 = None
+
+
+def _win_job_create():
+    """A job object that kills all its processes when the handle closes."""
+    if _KERNEL32 is None:
+        return None
+    try:
+        job = _KERNEL32.CreateJobObjectW(None, None)
+        if not job or job == _INVALID_HANDLE:
+            return None
+        info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not _KERNEL32.SetInformationJobObject(
+            job, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(info), ctypes.sizeof(info),
+        ):
+            _KERNEL32.CloseHandle(job)
+            return None
+        return job
+    except (OSError, ValueError):
+        return None
+
+
+def _win_job_assign(job, pid):
+    if _KERNEL32 is None or not job:
+        return False
+    try:
+        proc = _KERNEL32.OpenProcess(_PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, pid)
+        if not proc or proc == _INVALID_HANDLE:
+            return False
+        try:
+            return bool(_KERNEL32.AssignProcessToJobObject(job, proc))
+        finally:
+            _KERNEL32.CloseHandle(proc)
+    except (OSError, ValueError):
+        return False
+
+
+def _win_job_active_processes(job):
+    if _KERNEL32 is None or not job:
+        return None
+    try:
+        info = _JOBOBJECT_BASIC_ACCOUNTING_INFORMATION()
+        if not _KERNEL32.QueryInformationJobObject(
+            job, _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION,
+            ctypes.byref(info), ctypes.sizeof(info), None,
+        ):
+            return None
+        return int(info.ActiveProcesses)
+    except (OSError, ValueError):
+        return None
+
+
+def _win_job_terminate(job):
+    if _KERNEL32 is None or not job:
+        return
+    try:
+        _KERNEL32.TerminateJobObject(job, 1)
+    except (OSError, ValueError):
+        pass
+
+
+def _win_job_close(job):
+    if _KERNEL32 is None or not job:
+        return
+    try:
+        _KERNEL32.CloseHandle(job)
+    except (OSError, ValueError):
+        pass
+
+
+def _win_resume_pid(pid):
+    """Resume a CREATE_SUSPENDED child by resuming its primary thread."""
+    if _KERNEL32 is None:
+        return False
+    try:
+        snap = _KERNEL32.CreateToolhelp32Snapshot(_TH32CS_SNAPTHREAD, pid)
+        if not snap or snap == _INVALID_HANDLE:
+            return False
+        try:
+            entry = _THREADENTRY32()
+            entry.dwSize = ctypes.sizeof(_THREADENTRY32)
+            have = _KERNEL32.Thread32First(snap, ctypes.byref(entry))
+            while have:
+                if entry.th32OwnerProcessID == pid:
+                    thread = _KERNEL32.OpenThread(_THREAD_SUSPEND_RESUME, False, entry.th32ThreadID)
+                    if thread and thread != _INVALID_HANDLE:
+                        try:
+                            _KERNEL32.ResumeThread(thread)
+                        finally:
+                            _KERNEL32.CloseHandle(thread)
+                        return True
+                have = _KERNEL32.Thread32Next(snap, ctypes.byref(entry))
+            return False
+        finally:
+            _KERNEL32.CloseHandle(snap)
+    except (OSError, ValueError):
+        return False
+
+
+class Ownership:
+    """Owned-process tracking that survives the immediate child's exit.
+
+    POSIX: the process-group id, captured at spawn (start_new_session).
+    Windows: a Job Object (KILL_ON_JOB_CLOSE) the suspended child is assigned
+    to before resume — membership is inherited by grandchildren and persists
+    after the parent exits, so orphaned descendants stay owned.
+
+    `available` is False when Windows job setup failed; the kill/wait unit then
+    degrades to the immediate child (taskkill tree), as before.
+    """
+
+    def __init__(self):
+        self.pgid = None
+        self.job = None
+        self.child = None
+
+    @property
+    def available(self):
+        if os.name == "nt":
+            return self.job is not None
+        return self.pgid is not None
+
+    def spawn_kwargs(self):
+        if os.name == "nt":
+            # Suspended so assignment to the job closes the race in which a
+            # grandchild spawns before being captured. Resumed after adopt().
+            return {"creationflags": _CREATE_SUSPENDED}
+        return {"start_new_session": True}
+
+    def adopt(self, proc):
+        """Capture the kill/wait identity of a just-spawned child."""
+        self.child = proc
+        if os.name == "nt":
+            self.job = _win_job_create()
+            if self.job:
+                _win_job_assign(self.job, proc.pid)
+            _win_resume_pid(proc.pid)  # always resume, assigned or not
+        else:
+            try:
+                self.pgid = os.getpgid(proc.pid)
+            except OSError:
+                self.pgid = None
+
+    def wait_empty(self, deadline):
+        """True when no owned process remains; bounded by `deadline`."""
+        if os.name == "nt":
+            if self.job is None:
+                # Degraded: without a job we cannot see or reach orphans
+                # whose parent already exited (pre-existing limitation).
+                return True
+            while time.monotonic() < deadline:
+                active = _win_job_active_processes(self.job)
+                if active == 0:
+                    return True
+                if active is None:
+                    return True  # cannot query — do not busy-loop forever
+                time.sleep(POLL_INTERVAL_SECONDS)
+            return _win_job_active_processes(self.job) == 0
+        while group_alive(self.pgid) and time.monotonic() < deadline:
+            time.sleep(POLL_INTERVAL_SECONDS)
+        return not group_alive(self.pgid)
+
+    def terminate(self):
+        """Kill every owned process, never a global executable sweep."""
+        if os.name == "nt":
+            if self.job is not None:
+                _win_job_terminate(self.job)
+            # Fallback for the degraded path: tree-kill while the root lives.
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(self.child.pid), "/T", "/F"],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, timeout=CLEANUP_GRACE_SECONDS,
+                )
+            except (OSError, subprocess.SubprocessError):
+                pass
+            return
+        killed = False
+        if self.pgid is not None:
+            try:
+                os.killpg(self.pgid, signal.SIGKILL)
+                killed = True
+            except (ProcessLookupError, PermissionError, OSError):
+                killed = False
+        if not killed and self.child is not None:
+            try:
+                os.killpg(os.getpgid(self.child.pid), signal.SIGKILL)
+                killed = True
+            except (ProcessLookupError, PermissionError, OSError):
+                killed = False
+        if not killed and self.child is not None:
+            try:
+                self.child.kill()
+            except OSError:
+                pass
+
+    def close(self):
+        if os.name == "nt" and self.job is not None:
+            _win_job_close(self.job)
+            self.job = None
 
 
 def resolve_timeout(flag_value):
@@ -91,81 +407,6 @@ def resolve_timeout(flag_value):
         except (TypeError, ValueError):
             pass  # invalid override must not become an unlimited wait
     return DEFAULT_TIMEOUT_SECONDS
-
-
-def probe_core_ssh_command(git_argv):
-    """Return the effective core.sshCommand (system/global, plus repo-local
-    through any -C present in the git args), or None when unset/unreadable.
-    Never contacts the network — a pure config read with its own small bound.
-    """
-    if not git_argv:
-        return None
-    cmd = [git_argv[0]]
-    args = git_argv[1:]
-    i = 0
-    while i < len(args):
-        if args[i] == "-C" and i + 1 < len(args):
-            cmd += ["-C", args[i + 1]]
-            break
-        i += 1
-    cmd += ["config", "--get", "core.sshCommand"]
-    try:
-        res = subprocess.run(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            timeout=CONFIG_PROBE_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if res.returncode != 0:
-        return None
-    value = res.stdout.decode("utf-8", "replace").strip()
-    return value or None
-
-
-def is_plain_ssh_command(command):
-    """True only when the configured transport IS ssh(1) (BatchMode can be
-    appended safely). Wrappers, plink, proxy scripts: False — never guess."""
-    try:
-        tokens = shlex.split(command, posix=(os.name != "nt"))
-    except ValueError:
-        return False
-    if not tokens:
-        return False
-    base = os.path.basename(tokens[0].replace("\\", "/")).lower()
-    return base in ("ssh", "ssh.exe")
-
-
-def child_env(git_argv):
-    """Build the child environment plus an optional actionable warning.
-
-    Returns (env, warning). The warning is emitted on stderr by main; it never
-    changes the exit code.
-    """
-    env = os.environ.copy()
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    env["GCM_INTERACTIVE"] = "never"
-    env["GIT_ASKPASS"] = os.devnull
-    env["SSH_ASKPASS"] = os.devnull
-    # A user's environment-level transport is authoritative — never replaced.
-    if "GIT_SSH" in env or "GIT_SSH_COMMAND" in env:
-        return env, None
-    configured = probe_core_ssh_command(git_argv)
-    if configured:
-        if is_plain_ssh_command(configured):
-            # The CONFIGURED command stays the transport; BatchMode only makes
-            # it unattended (same precedence Git itself would apply).
-            env["GIT_SSH_COMMAND"] = configured + " -o BatchMode=yes"
-            return env, None
-        return env, (
-            "custom SSH transport preserved (core.sshCommand): %s — "
-            "unattended mode cannot be enforced for it; the operation is "
-            "bounded by the deadline" % configured
-        )
-    env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
-    return env, None
 
 
 def group_alive(pgid):
@@ -189,45 +430,6 @@ def wait_group_exit(pgid, deadline):
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
-def terminate_tree(proc, pgid):
-    """Kill the owned process tree, never a global executable sweep.
-
-    The group id is preferred (and was captured at spawn): after the immediate
-    child exits, descendants can keep the group — and the inherited output
-    streams — alive, and only a group-wide kill reaches them.
-    """
-    if os.name == "nt":
-        try:
-            subprocess.run(
-                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=CLEANUP_GRACE_SECONDS,
-            )
-        except (OSError, subprocess.SubprocessError):
-            pass
-        return
-    killed_group = False
-    if pgid is not None:
-        try:
-            os.killpg(pgid, signal.SIGKILL)
-            killed_group = True
-        except (ProcessLookupError, PermissionError, OSError):
-            killed_group = False
-    if not killed_group:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            killed_group = True
-        except (ProcessLookupError, PermissionError, OSError):
-            killed_group = False
-    if not killed_group:
-        try:
-            proc.kill()
-        except OSError:
-            pass
-
-
 def reap_bounded(proc):
     """Bounded final reap — never wait forever after a timeout kill."""
     try:
@@ -236,6 +438,164 @@ def reap_bounded(proc):
         # The child ignored SIGKILL/taskkill (or is stuck uninterruptible);
         # nothing more can be done safely — report rather than hang.
         pass
+
+
+def run_bounded_capture(argv, deadline):
+    """Run argv under owned-process discipline with the REMAINING deadline.
+
+    Returns (state, stdout_bytes):
+      ("ok", bytes)          process exited AND output completed in time
+      ("timed_out", None)    deadline passed — owned tree terminated, pipes
+                             drained as far as the kill allows
+      ("start_failed", None) the executable could not be started at all
+    """
+    ownership = Ownership()
+    try:
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                env=os.environ.copy(),
+                **ownership.spawn_kwargs(),
+            )
+        except (OSError, subprocess.SubprocessError):
+            return "start_failed", None
+        ownership.adopt(proc)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            ownership.terminate()
+            reap_bounded(proc)
+            return "timed_out", None
+        try:
+            out, _ = proc.communicate(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            # Parent done or not, the operation is not: something owned still
+            # holds the output pipe. Kill the whole ownership, then drain.
+            ownership.terminate()
+            reap_bounded(proc)
+            try:
+                out, _ = proc.communicate(timeout=CLEANUP_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.stdout.close()
+                except OSError:
+                    pass
+                out = None
+            return "timed_out", None
+        # Process exited — but output completion is part of the operation:
+        # descendants may still hold the pipe (parent-exits-first).
+        if not ownership.wait_empty(deadline):
+            ownership.terminate()
+            reap_bounded(proc)
+            try:
+                proc.communicate(timeout=CLEANUP_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+            return "timed_out", None
+        return "ok", out
+    finally:
+        ownership.close()
+
+
+def probe_core_ssh_command(git_argv, deadline):
+    """Read the effective core.sshCommand through the bounded mechanism.
+
+    Returns (state, value): state is one of PROBE_VALUE / PROBE_UNSET /
+    PROBE_INDETERMINATE / PROBE_TIMED_OUT. "unset" means the read succeeded and
+    the key is absent; "indeterminate" means the probe could not even start;
+    neither is ever silently conflated with the other, and a timed-out probe
+    fails the operation instead of guessing a default transport.
+    """
+    if not git_argv:
+        return PROBE_UNSET, None
+    cmd = [git_argv[0]]
+    args = git_argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] == "-C" and i + 1 < len(args):
+            cmd += ["-C", args[i + 1]]
+            break
+        i += 1
+    cmd += ["config", "--get", "core.sshCommand"]
+    state, out = run_bounded_capture(cmd, deadline)
+    if state == "start_failed":
+        return PROBE_INDETERMINATE, None
+    if state == "timed_out":
+        return PROBE_TIMED_OUT, None
+    if out is None:
+        return PROBE_INDETERMINATE, None
+    # A probe that died on its own (nonzero rc) with empty output means unset;
+    # `git config --get` exits 1 for an absent key.
+    value = out.decode("utf-8", "replace").strip()
+    if not value:
+        return PROBE_UNSET, None
+    return PROBE_VALUE, value
+
+
+def is_plain_ssh_command(command):
+    """True only when the configured transport IS ssh(1) (BatchMode can be
+    appended safely). Wrappers, plink, proxy scripts: False — never guess."""
+    try:
+        tokens = shlex.split(command, posix=(os.name != "nt"))
+    except ValueError:
+        return False
+    if not tokens:
+        return False
+    base = os.path.basename(tokens[0].replace("\\", "/")).lower()
+    return base in ("ssh", "ssh.exe")
+
+
+def child_env(git_argv, deadline):
+    """Build the child environment under the operation deadline.
+
+    Returns (env, warning, probe_state). The probe consumes part of the SAME
+    deadline the main command gets; the caller fails the operation when the
+    probe_state is PROBE_TIMED_OUT. The warning is emitted on stderr by main;
+    it never changes the exit code.
+    """
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "never"
+    env["GIT_ASKPASS"] = os.devnull
+    env["SSH_ASKPASS"] = os.devnull
+    # A user's environment-level transport is authoritative — never replaced.
+    if "GIT_SSH" in env or "GIT_SSH_COMMAND" in env:
+        return env, None, PROBE_UNSET
+    probe_state, configured = probe_core_ssh_command(git_argv, deadline)
+    if probe_state == PROBE_TIMED_OUT:
+        return env, None, probe_state
+    if probe_state == PROBE_INDETERMINATE:
+        # Distinguish "not set" from "could not be determined": with an
+        # indeterminate configuration the runner must NOT inject a guessed
+        # default transport — the environment is left unchanged.
+        return env, (
+            "SSH configuration could not be determined (config probe failed) "
+            "— leaving the transport unchanged; the operation is bounded by "
+            "the deadline"
+        ), probe_state
+    if configured:
+        if is_plain_ssh_command(configured):
+            # The CONFIGURED command stays the transport; BatchMode only makes
+            # it unattended (same precedence Git itself would apply).
+            env["GIT_SSH_COMMAND"] = configured + " -o BatchMode=yes"
+            return env, None, probe_state
+        return env, (
+            "custom SSH transport preserved (core.sshCommand): %s — "
+            "unattended mode cannot be enforced for it; the operation is "
+            "bounded by the deadline" % configured
+        ), probe_state
+    env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+    return env, None, probe_state
+
+
+def operation_deadline_exceeded(timeout, what="git operation"):
+    print(
+        "error: %s exceeded the %ds deadline — %s outlived it and were "
+        "terminated" % (what, timeout, "descendants" if what == "git operation" else "owned processes"),
+        file=sys.stderr,
+    )
 
 
 def main(argv):
@@ -261,7 +621,18 @@ def main(argv):
         return EXIT_USAGE
 
     timeout = resolve_timeout(timeout_flag)
-    env, env_warning = child_env(command)
+    # The deadline bounds the COMPLETE operation: configuration discovery
+    # happens under it, with whatever time remains for the command itself.
+    deadline = time.monotonic() + timeout
+    env, env_warning, probe_state = child_env(command, deadline)
+    if probe_state == PROBE_TIMED_OUT:
+        print(
+            "error: SSH configuration probe exceeded the %ds deadline — the "
+            "transport could not be determined, so the runner refuses to "
+            "proceed with a guessed default" % timeout,
+            file=sys.stderr,
+        )
+        return EXIT_TIMEOUT
     if env_warning:
         print("warning: %s" % env_warning, file=sys.stderr)
 
@@ -269,68 +640,59 @@ def main(argv):
         "stdin": subprocess.DEVNULL,
         "env": env,
     }
-    if os.name == "nt":
-        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        popen_kwargs["start_new_session"] = True
+    ownership = Ownership()
+    popen_kwargs.update(ownership.spawn_kwargs())
 
     try:
-        proc = subprocess.Popen(command, **popen_kwargs)
-    except (FileNotFoundError, PermissionError, OSError) as exc:
-        print("error: cannot start %r: %s" % (command[0], exc), file=sys.stderr)
-        return EXIT_CANNOT_START
-
-    # The owned process-group identity, captured NOW: it survives the child's
-    # exit, which is exactly when descendant cleanup becomes the problem.
-    pgid = None
-    if os.name != "nt":
         try:
-            pgid = os.getpgid(proc.pid)
-        except OSError:
-            pgid = None
+            proc = subprocess.Popen(command, **popen_kwargs)
+        except (FileNotFoundError, PermissionError, OSError) as exc:
+            print("error: cannot start %r: %s" % (command[0], exc), file=sys.stderr)
+            return EXIT_CANNOT_START
+        ownership.adopt(proc)
 
-    deadline = time.monotonic() + timeout
-    try:
-        rc = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
-    except subprocess.TimeoutExpired:
-        terminate_tree(proc, pgid)
-        reap_bounded(proc)
-        wait_group_exit(pgid, time.monotonic() + CLEANUP_GRACE_SECONDS)
-        print(
-            "error: git operation timed out after %ds and was terminated" % timeout,
-            file=sys.stderr,
-        )
-        return EXIT_TIMEOUT
-    except KeyboardInterrupt:
-        terminate_tree(proc, pgid)
-        reap_bounded(proc)
-        wait_group_exit(pgid, time.monotonic() + CLEANUP_GRACE_SECONDS)
-        return 130
+        try:
+            rc = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            ownership.terminate()
+            reap_bounded(proc)
+            if os.name != "nt":
+                wait_group_exit(ownership.pgid, time.monotonic() + CLEANUP_GRACE_SECONDS)
+            else:
+                ownership.wait_empty(time.monotonic() + CLEANUP_GRACE_SECONDS)
+            print(
+                "error: git operation timed out after %ds and was terminated" % timeout,
+                file=sys.stderr,
+            )
+            return EXIT_TIMEOUT
+        except KeyboardInterrupt:
+            ownership.terminate()
+            reap_bounded(proc)
+            if os.name != "nt":
+                wait_group_exit(ownership.pgid, time.monotonic() + CLEANUP_GRACE_SECONDS)
+            else:
+                ownership.wait_empty(time.monotonic() + CLEANUP_GRACE_SECONDS)
+            return 130
 
-    if os.name != "nt":
         # The child finished, but the operation has not: descendants may still
         # hold the inherited stdout/stderr open, leaving the caller's capture
         # (e.g. Bash $(...)) blocked past the deadline. The SAME deadline
-        # bounds them; on expiry the owned group is killed so the streams
-        # close and cleanup actually happens.
-        if pgid is not None and group_alive(pgid):
-            wait_group_exit(pgid, deadline)
-            if group_alive(pgid):
-                try:
-                    os.killpg(pgid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError, OSError):
-                    pass
-                wait_group_exit(pgid, time.monotonic() + CLEANUP_GRACE_SECONDS)
-                print(
-                    "error: git operation exceeded the %ds deadline — "
-                    "descendants outlived it and were terminated" % timeout,
-                    file=sys.stderr,
-                )
-                return EXIT_TIMEOUT
+        # bounds them; on expiry the ownership is terminated so the streams
+        # close and cleanup actually happens. On Windows the job object keeps
+        # orphaned descendants owned after the parent's exit, so this wait is
+        # as valid there as the POSIX group wait.
+        if not ownership.wait_empty(deadline):
+            ownership.terminate()
+            reap_bounded(proc)
+            ownership.wait_empty(time.monotonic() + CLEANUP_GRACE_SECONDS)
+            operation_deadline_exceeded(timeout)
+            return EXIT_TIMEOUT
 
-    if rc < 0:
-        return 128 + (-rc)
-    return rc
+        if rc < 0:
+            return 128 + (-rc)
+        return rc
+    finally:
+        ownership.close()
 
 
 if __name__ == "__main__":

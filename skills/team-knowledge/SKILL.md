@@ -36,8 +36,12 @@ presence, absence, or configuration as changing how knowledge is found.
    - `ok` — read each matched note at `<root>/<path>` before citing it, then
      answer with the repository identity plus the note path
      (e.g., `incremental-bi — Gold/Fact Patterns/Fact Partition Rebuild.md`).
-     Zero matches under `ok` genuinely means the team knowledge has no note
-     on the topic — say so explicitly; it never means "search failed".
+     Zero matches under `ok` means no note matched THIS QUERY — the helper is
+     a literal phrase search, not a semantic search. Before concluding
+     nothing relevant exists, retry once or twice with simpler or broader
+     keywords. Then say "no matches for this query" explicitly; it never
+     means "search failed", and it is not proof the team has no note on the
+     broader topic.
    - `unavailable` — the configured clones are missing or unreadable. Run
      `coop sync` (or `coop update`) to fetch them, retry the search once,
      then proceed without knowledge if still unavailable. Never present

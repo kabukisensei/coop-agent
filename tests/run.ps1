@@ -119,9 +119,13 @@ try {
   # --- 1c. invalid team skill cannot abort the PowerShell launcher -------------
   Head 'invalid team skill is skipped (missing frontmatter name)'
   $kbBad = Join-Path $stub 'team-kb-bad'
-  New-Item -ItemType Directory -Path (Join-Path $kbBad 'skills/aaa-valid-skill'), (Join-Path $kbBad 'skills/zzzz-invalid-final') -Force | Out-Null
+  New-Item -ItemType Directory -Path (Join-Path $kbBad 'skills/aaa-valid-skill'), (Join-Path $kbBad 'skills/zzzz-invalid-final'), (Join-Path $kbBad 'skills/bbb-empty-invalid'), (Join-Path $kbBad 'skills/ccc-multiline-no-name') -Force | Out-Null
   Set-Content (Join-Path $kbBad 'skills/aaa-valid-skill/SKILL.md') "---`nname: aaa-valid-skill`n---`n# Valid"
   Set-Content (Join-Path $kbBad 'skills/zzzz-invalid-final/SKILL.md') '# no frontmatter at all'
+  # Review shape 1: a completely EMPTY skill file (0 bytes).
+  New-Item -ItemType File -Path (Join-Path $kbBad 'skills/bbb-empty-invalid/SKILL.md') -Force | Out-Null
+  # Review shape 3: frontmatter present but NO name key anywhere.
+  Set-Content (Join-Path $kbBad 'skills/ccc-multiline-no-name/SKILL.md') "---`ndescription: no name key here`n---`n# Body without a name"
   $kbBadCfg = Join-Path $stub 'kb-bad-cfg'
   New-Item -ItemType Directory -Path (Join-Path $kbBadCfg '.coop') -Force | Out-Null
   $badJson = '{"schema_version":1,"knowledge":{"enabled":true,"repos":[{"url":"https://example.com/repo.git","local_path":"' + ($kbBad -replace '\\', '/') + '"}]}}'
@@ -134,6 +138,8 @@ try {
   if ($badSpec -like '*aaa-valid-skill*') { Ok 'valid skill still loaded alongside invalid-final (PS)' } else { Ko 'valid skill lost (PS)' }
   if ($badSpec -like '*zzzz-invalid-final*') { Ko 'invalid-final present in PS launch args' } else { Ok 'invalid-final absent from PS launch args' }
   if ($badSpec -like '*missing frontmatter name*') { Ok 'invalid-final warned (PS)' } else { Ko 'no invalid-final warning (PS)' }
+  if ($badSpec -like '*bbb-empty-invalid*') { Ko 'empty skill present in PS launch args' } else { Ok 'empty skill absent from PS launch args' }
+  if ($badSpec -like '*ccc-multiline-no-name*') { Ko 'multiline-no-name skill present in PS launch args' } else { Ok 'multiline-no-name skill absent from PS launch args' }
 
   # --- 1d. duplicate team skill names across repositories: first wins ----------
   Head 'duplicate team skill names across repositories (PS)'

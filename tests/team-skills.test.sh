@@ -215,6 +215,33 @@ PY
 )"
 [ "$nargs" = "1" ] && ok "exactly one team --skill argument (the valid one)" || ko "team skill arg count: $nargs"
 
+# --- all malformed shapes from the review: empty / one-line / multiline-no-name --
+# The bash launcher already rejects each via coop_skill_name; these cases pin the
+# contract the PowerShell twin (Get-CoopSkillName) must also meet — a one-line
+# file there used to crash the launcher with [System.Char].Trim().
+KB8="$TMP/knowledge/shapes-repo"
+mkdir -p "$KB8/skills/aaa-valid-skill" "$KB8/skills/bbb-empty-invalid" "$KB8/skills/ccc-one-line-invalid" "$KB8/skills/ddd-multiline-no-name"
+printf -- '---\nname: aaa-valid-skill\n---\n# Valid\n' > "$KB8/skills/aaa-valid-skill/SKILL.md"
+: > "$KB8/skills/bbb-empty-invalid/SKILL.md"
+printf '# no frontmatter at all — one line only\n' > "$KB8/skills/ccc-one-line-invalid/SKILL.md"
+printf -- '---\ndescription: no name key here\n---\n# Body without a name\n' > "$KB8/skills/ddd-multiline-no-name/SKILL.md"
+cat > "$CFG/.coop/config" <<JSON
+{"schema_version":1,"knowledge":{"enabled":true,"repos":[{"url":"https://example.com/shapes.git","local_path":"$KB8"}]}}
+JSON
+run_spec_separate
+[ "$SPEC_RC" -eq 0 ] && ok "malformed shapes: launcher exits 0" || ko "malformed shapes aborted startup: rc=$SPEC_RC err=$(cat "$TMP/spec.err")"
+assert_valid_json && ok "malformed shapes: stdout is valid JSON" || ko "stdout contaminated"
+case "$(cat "$TMP/spec.json")" in
+  *"aaa-valid-skill"*) ok "valid skill still loaded alongside all malformed shapes" ;;
+  *) ko "valid skill lost: $(cat "$TMP/spec.json")" ;;
+esac
+for bad in bbb-empty-invalid ccc-one-line-invalid ddd-multiline-no-name; do
+  case "$(cat "$TMP/spec.json")" in
+    *"$bad"*) ko "$bad present in args" ;;
+    *) ok "$bad absent from args" ;;
+  esac
+done
+
 # --- no skill directories at all ------------------------------------------------
 KB5="$TMP/knowledge/empty-repo"
 mkdir -p "$KB5"

@@ -57,6 +57,31 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   - Test fixtures on Windows are compiled to a real `git.exe` (an extensionless
     shell script is invisible to `CreateProcess`), and every bounded-git test
     asserts the fixture actually ran — a missing invocation log fails the test.
+- Second review corrections on the team-knowledge pass (PR #49):
+  - `Get-CoopSkillName` in `lib/common.ps1` no longer crashes the PowerShell
+    launcher on a one-line or unreadable team skill (`Get-Content` returns a
+    scalar string for one-line files; indexing it yielded a `[System.Char]`
+    with no `.Trim()`) — empty, one-line, and multiline-without-name skills
+    are rejected while valid skills still load.
+  - `scripts/knowledge-git.py` bounds the COMPLETE operation on Windows too:
+    the child spawns suspended, is assigned to a Job Object created with
+    KILL_ON_JOB_CLOSE, then resumes — orphaned descendants holding the
+    inherited output handles stay owned after the parent exits, job emptiness
+    is the output-completion signal, and the job is terminated on deadline
+    (taskkill fallback retained when job setup is unavailable).
+  - The operation deadline is established BEFORE configuration discovery: the
+    `core.sshCommand` probe runs through the same owned-process mechanism with
+    the remaining time; a timed-out probe fails the operation (exit 124)
+    instead of silently proceeding with a guessed default transport, and a
+    probe that cannot start is distinguished from a key that is not set.
+  - Windows timeout fixtures compile a real `git.exe` that receives its target
+    paths through the environment, spawn a real child sleeper whose PID the
+    tests verify terminated, and pass a standalone smoke test before any
+    timeout assertion depends on them; the extensionless shim that shadowed
+    `git.exe` (WinError 216) is removed.
+  - `team-knowledge` skill: zero literal matches now mean "no matches for this
+    query" with a simpler-keywords retry — a literal search is not a semantic
+    search — not "the team has no note on the topic".
 - Team-skill launch-slot parsing in `bin/coop` / `bin/coop.ps1` now validates
   frontmatter before adding any launch argument: an external skill that cannot
   identify itself is skipped with a warning instead of being added

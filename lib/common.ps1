@@ -943,7 +943,18 @@ function Get-CoopKnowledgeRepos {
 function Get-CoopSkillName {
   param([string]$File)
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { return '' }
-  $lines = Get-Content -LiteralPath $File -ErrorAction SilentlyContinue
+  # Get-Content returns a SCALAR STRING for a one-line file, not an array:
+  # $lines[0] would then be the first CHARACTER (a [System.Char] has no
+  # .Trim()), which crashed the launcher on a malformed one-line team skill.
+  # @(...) forces an array so $lines[0] is always the first LINE. -ErrorAction
+  # Stop + try/catch: an unreadable file is a rejected skill (''), never a
+  # launcher abort.
+  try {
+    $lines = @(Get-Content -LiteralPath $File -Encoding UTF8 -ErrorAction Stop)
+  }
+  catch {
+    return ''
+  }
   if (-not $lines -or $lines.Count -eq 0 -or $lines[0].Trim() -ne '---') { return '' }
   for ($i = 1; $i -lt $lines.Count; $i++) {
     if ($lines[$i].Trim() -eq '---') { break }

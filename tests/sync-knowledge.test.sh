@@ -130,52 +130,112 @@ if [ "$WIN" = "1" ]; then
 else
   REALGIT_ENV="$REALGIT"
 fi
+# The C fixture reads its target paths from the ENVIRONMENT at runtime (it
+# cannot see values baked into a bash heredoc), so export them for every
+# bounded invocation. On POSIX the shell fixture has these values baked in and
+# ignores the environment — the exports are simply unused there.
+export FAKELOG="$FAKELOG_ENV"
+export PROBEOUT="$PROBEOUT_ENV"
+export REALGIT="$REALGIT_ENV"
+export SLEEPERFILE="$SLEEPERFILE_ENV"
 if [ "$WIN" = "1" ]; then
   cat > "$TMP/fake-git.c" <<'CEOF'
 /* Test fixture: a fake `git` the Windows subprocess launcher actually
  * executes (a real PE binary). Mirrors the POSIX shell fixture contract:
- * log argv, optionally dump GIT_* env, hang past the deadline for marker
- * repos, delegate everything else to the real git. */
+ * log argv (FAKELOG), optionally dump GIT_* env (PROBEENV/PROBEOUT),
+ * hang/orphan past the deadline for marker repos — spawning a REAL child
+ * process whose PID is recorded in SLEEPERFILE so the tests can demand
+ * evidence it existed and was terminated — and delegate everything else to
+ * the real git (REALGIT).
+ *
+ * Orphan mode: the parent exits FIRST while the child keeps the inherited
+ * stdout pipe open, so a capturing caller stays blocked until the runner
+ * kills the owned tree. Exercised on Windows via the Job Object ownership in
+ * knowledge-git.py (parent-exits-first was the gap the taskkill fallback
+ * could not cover). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <process.h>
 #include <windows.h>
 
-int main(int argc, char **argv) {
+static void logargv(int argc, char **argv) {
     const char *fakelog = getenv("FAKELOG");
-    if (fakelog) {
-        FILE *f = fopen(fakelog, "a");
-        if (f) {
-            for (int i = 1; i < argc; i++) fprintf(f, "%s%s", i > 1 ? " " : "", argv[i]);
-            fputc('\n', f);
-            fclose(f);
-        }
-    }
+    if (!fakelog) return;
+    FILE *f = fopen(fakelog, "a");
+    if (!f) return;
+    for (int i = 1; i < argc; i++) fprintf(f, "%s%s", i > 1 ? " " : "", argv[i]);
+    fputc('\n', f);
+    fclose(f);
+}
+
+static void probeenv(void) {
     const char *probe = getenv("PROBEENV");
-    if (probe && probe[0] == '1') {
-        const char *out = getenv("PROBEOUT");
-        FILE *f = out ? fopen(out, "a") : NULL;
-        if (f) {
-            const char *names[] = {"GIT_TERMINAL_PROMPT","GCM_INTERACTIVE","GIT_ASKPASS",
-                                   "SSH_ASKPASS","GIT_SSH","GIT_SSH_COMMAND", NULL};
-            for (int i = 0; names[i]; i++) {
-                const char *v = getenv(names[i]);
-                if (v) fprintf(f, "%s=%s\n", names[i], v);
-            }
-            fclose(f);
-        }
+    if (!probe || probe[0] != '1') return;
+    const char *out = getenv("PROBEOUT");
+    FILE *f = out ? fopen(out, "a") : NULL;
+    if (!f) return;
+    const char *names[] = {"GIT_TERMINAL_PROMPT","GCM_INTERACTIVE","GIT_ASKPASS",
+                           "SSH_ASKPASS","GIT_SSH","GIT_SSH_COMMAND", NULL};
+    for (int i = 0; names[i]; i++) {
+        const char *v = getenv(names[i]);
+        if (v) fprintf(f, "%s=%s\n", names[i], v);
     }
+    fclose(f);
+}
+
+/* Spawn a real child that outlives (orphan) or accompanies (hang) this
+ * process, recording its PID. Candidate sleep programs in priority order;
+ * every Git for Windows ships usr\bin\sleep.exe. */
+static intptr_t spawn_sleeper(void) {
+    static const char *git_sleep = "C:\\Program Files\\Git\\usr\\bin\\sleep.exe";
+    const char *argv_sleep[] = {"sleep", "30", NULL};
+    intptr_t kid = _spawnvp(_P_NOWAIT, "sleep", argv_sleep);
+    if (kid != -1) return kid;
+    kid = _spawnv(_P_NOWAIT, git_sleep, argv_sleep);
+    if (kid != -1) return kid;
+    return -1;
+}
+
+static int record_sleeper(intptr_t kid) {
+    const char *sl = getenv("SLEEPERFILE");
+    if (!sl || kid == -1) return 3;
+    FILE *f = fopen(sl, "w");
+    if (!f) return 3;
+    fprintf(f, "%ld", (long)kid);
+    fclose(f);
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    logargv(argc, argv);
+    probeenv();
     char buf[4096] = {0};
     for (int i = 1; i < argc; i++) {
         strncat(buf, argv[i], sizeof(buf) - strlen(buf) - 2);
         strncat(buf, " ", sizeof(buf) - strlen(buf) - 1);
     }
-    int hang = 0;
-    if (strstr(buf, "status --porcelain") && strstr(buf, "hanghere-status")) hang = 1;
-    if (strstr(buf, " pull ") && strstr(buf, "hanghere-pull")) hang = 1;
-    if (strstr(buf, "clone") && strstr(buf, "hanghere")) hang = 1;
-    if (hang) { Sleep(30000); return 0; }
+    int orphan = 0, hang = 0;
+    if (strstr(buf, "probehang") && strstr(buf, "config --get")) orphan = 1;
+    if (strstr(buf, "hanghere-orphan") && strstr(buf, "status --porcelain")) orphan = 1;
+    if (!orphan) {
+        if (strstr(buf, "status --porcelain") && strstr(buf, "hanghere-status")) hang = 1;
+        if (strstr(buf, " pull ") && strstr(buf, "hanghere-pull")) hang = 1;
+        if (strstr(buf, "clone") && strstr(buf, "hanghere")) hang = 1;
+    }
+    if (orphan) {
+        intptr_t kid = spawn_sleeper();
+        int rc = record_sleeper(kid);
+        if (rc != 0) return rc;
+        return 0;  /* parent exits FIRST; child holds the inherited stdout */
+    }
+    if (hang) {
+        intptr_t kid = spawn_sleeper();
+        int rc = record_sleeper(kid);
+        if (rc != 0) return rc;
+        Sleep(30000);
+        return 0;
+    }
     const char *realgit = getenv("REALGIT");
     if (!realgit) return 127;
     return _spawnv(_P_WAIT, realgit, (const char * const *)argv);
@@ -194,10 +254,24 @@ CEOF
     ko "compiling the Windows git fixture failed: $(cat "$TMP/cc.err")"
     exit 1
   fi
-  # Bash-side lookups (`have git`) need an executable `git` too — delegate to
-  # the real one; only the native-side git.exe drives the bounded ops.
-  printf '#!/bin/sh\nexec "%s" "$@"\n' "$REALGIT" > "$FAKEBIN/git"
-  chmod +x "$FAKEBIN/git"
+  # Standalone smoke gate: the executable must RUN and DELEGATE before any
+  # timeout assertion depends on it. (An incompatible binary surfaces here as
+  # a loud failure instead of a silent "fixture never ran" downstream.)
+  rm -f "$FAKELOG"
+  if ! "$FAKEBIN/git.exe" --version > /dev/null 2>&1; then
+    ko "compiled git fixture did not execute standalone (executable-compatibility error)"
+    exit 1
+  fi
+  if ! grep -q -- "--version" "$FAKELOG" 2>/dev/null; then
+    ko "compiled git fixture ran but wrote no invocation log"
+    exit 1
+  fi
+  ok "win fixture smoke: executable runs, argv logged, real git delegated"
+  rm -f "$FAKELOG"
+  # NOTE: no extensionless shim in $FAKEBIN. Native CreateProcess resolves the
+  # exact name "git" BEFORE appending .exe, so a POSIX sh script here shadows
+  # git.exe with a non-PE file and every spawn dies with WinError 216. Bash-side
+  # `have git` finds the real git later in PATH — nothing else needs a shim.
 else
 cat > "$FAKEBIN/git" <<EOF
 #!/bin/sh
@@ -221,6 +295,8 @@ hang() {
 # Dispatch by SUBCOMMAND first, then by repo marker, so e.g. a status probe on
 # the pull-hang repo passes through while its pull hangs.
 case "\$*" in
+  *probehang*"config --get"*)
+    orphan ;;  # the SSH-config probe's parent exits FIRST; child holds stdout
   *hanghere-orphan*)
     case "\$*" in *"status --porcelain"*) orphan ;; esac
     ;;
@@ -461,5 +537,35 @@ if [ "$WIN" != "1" ]; then
 else
   echo "  – POSIX-only: orphaned-descendant process-group semantics not testable on Windows"
 fi
+
+# ==============================================================================
+# Probe deadline (review finding 2b): the core.sshCommand probe is PART OF the
+# operation. It runs under the SAME deadline and owned-process mechanism with
+# the time remaining. A probe whose parent exits while its descendant holds
+# stdout must fail the whole operation (rc 124) within the deadline, leave no
+# surviving child, and must NOT silently proceed with a guessed default
+# transport. (The Windows twin of this case lives in
+# tests/fixtures/sync-knowledge-timeout.test.ps1 via the C fixture's
+# probehang mode.)
+# ==============================================================================
+git init -q "$TMP/kbh7/probehang"
+rm -f "$FAKELOG" "$SLEEPERFILE"
+start=$SECONDS
+PATH="$FAKEBIN:$PATH" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=1 \
+  "$PY" "$ROOT/scripts/knowledge-git.py" -- git -C "$TMP/kbh7/probehang" \
+  status --porcelain > "$TMP/probe-orphan.out" 2> "$TMP/probe-orphan.err"; prc=$?
+pelapsed=$((SECONDS-start))
+[ "$prc" -eq 124 ] && ok "I: probe orphan bounded (rc=124)" || ko "I: rc=$prc (want 124)"
+[ "$pelapsed" -lt 10 ] \
+  && ok "I: returned within the deadline (${pelapsed}s, not the probe's own 5s + the child's 30s)" \
+  || ko "I: blocked ${pelapsed}s past the deadline"
+grep -q "configuration probe exceeded" "$TMP/probe-orphan.err" \
+  && ok "I: actionable probe-timeout message" || ko "I: no message: $(cat "$TMP/probe-orphan.err")"
+if grep -q "status --porcelain" "$FAKELOG" 2>/dev/null; then
+  ko "I: main command ran despite the timed-out probe"
+else
+  ok "I: operation aborted before the main command (no guessed transport)"
+fi
+assert_sleeper_dead
 
 exit $fail
