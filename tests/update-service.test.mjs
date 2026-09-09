@@ -1110,7 +1110,7 @@ await test("native startup deferral exits before runtime setup and its notice cl
   await assert.rejects(ctx.createWindow(), /runtime setup reached/);
 });
 
-await test("recovery retention removes only older completed idle jobs and preserves external data", async () => {
+await test("recovery retention removes only older completed idle jobs", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-retention-")));
   const parent = join(root, "update-recovery");mkdirSync(parent);
   function job(n, phase = "finished") {
@@ -1122,11 +1122,11 @@ await test("recovery retention removes only older completed idle jobs and preser
     writeFileSync(join(dir, "request.json"), JSON.stringify(record));utimesSync(join(dir, "request.json"), n, n);
     return dir;
   }
+  const dirLinkType = process.platform === "win32" ? "junction" : "dir";
   try {
     const old = job(1), busy = job(2), changing = job(3), newest = job(4), pending = job(5, "watching"), malformed = job(6);
     writeFileSync(join(malformed, "request.json"), "{}");
-    const outside = join(root, "keep.txt");writeFileSync(outside, "retained");symlinkSync(outside, join(old, "outside-link"));
-    const linked = join(parent, "22222222-2222-2222-2222-222222222222");symlinkSync(newest, linked, "dir");
+    const linked = join(parent, "22222222-2222-2222-2222-222222222222");symlinkSync(newest, linked, dirLinkType);
     const options = { userData: root, home: root, platform: "darwin", isIdle: async paths => {
       if (paths.root === busy) return false;
       if (paths.root === changing) {
@@ -1138,13 +1138,91 @@ await test("recovery retention removes only older completed idle jobs and preser
     assert.equal(pruneCompletedRecoveryJobs(options), first, "concurrent startup calls share cleanup");
     assert.deepEqual((await first).removed, [old]);
     for (const dir of [busy, changing, newest, pending, malformed, linked]) assert.ok(existsSync(dir));
-    assert.equal(readFileSync(outside, "utf8"), "retained");
     assert.deepEqual(await pruneCompletedRecoveryJobs({ ...options, platform: "win32" }), { removed: [] });
-    renameSync(parent, parent + "-saved");symlinkSync(parent + "-saved", parent, "dir");
+    renameSync(parent, parent + "-saved");symlinkSync(parent + "-saved", parent, dirLinkType);
     assert.deepEqual(await pruneCompletedRecoveryJobs(options), { removed: [] });
     assert.ok(existsSync(busy));
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    try {
+      if (existsSync(parent)) {
+        try {
+          const st = lstatSync(parent);
+          if (st.isSymbolicLink()) unlinkSync(parent);
+        } catch {
+          rmSync(parent, { force: true });
+        }
+      }
+      if (existsSync(parent + "-saved")) {
+        renameSync(parent + "-saved", parent);
+      }
+      const linked = join(parent, "22222222-2222-2222-2222-222222222222");
+      if (existsSync(linked)) {
+        try {
+          const st = lstatSync(linked);
+          if (st.isSymbolicLink()) unlinkSync(linked);
+        } catch {
+          rmSync(linked, { force: true });
+        }
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
 });
+
+let retentionSymlinkCreated = false;
+const retentionSymlinkRoot = realpathSync(mkdtempSync(join(tmpdir(), "coop-retention-symlink-")));
+const retentionSymlinkParent = join(retentionSymlinkRoot, "update-recovery");
+mkdirSync(retentionSymlinkParent);
+const outsideFile = join(retentionSymlinkRoot, "keep.txt");
+const outsideBytes = Buffer.from("retained-external-content");
+const oldJobDir = join(retentionSymlinkParent, "11111111-1111-1111-1111-000000000001");
+mkdirSync(oldJobDir);
+mkdirSync(join(oldJobDir, "Recovery.app"));
+const record = { schemaVersion: 1, phase: "finished", appPath: join(retentionSymlinkRoot, "Coop Desktop.app"), userData: retentionSymlinkRoot,
+  versionRoot: join(retentionSymlinkRoot, "versions"), currentVersion: "1.0.0", targetVersion: "1.0.1", helperPid: 10,
+  parentPid: 11, runtimePid: 12, bootId: "11111111-1111-1111-1111-111111111111" };
+writeFileSync(join(oldJobDir, "request.json"), JSON.stringify(record));
+utimesSync(join(oldJobDir, "request.json"), 1, 1);
+const newestJobDir = join(retentionSymlinkParent, "11111111-1111-1111-1111-000000000002");
+mkdirSync(newestJobDir);
+mkdirSync(join(newestJobDir, "Recovery.app"));
+writeFileSync(join(newestJobDir, "request.json"), JSON.stringify(record));
+utimesSync(join(newestJobDir, "request.json"), 2, 2);
+
+const symlinkPath = join(oldJobDir, "outside-link");
+try {
+  writeFileSync(outsideFile, outsideBytes);
+  try {
+    symlinkSync(outsideFile, symlinkPath, "file");
+    retentionSymlinkCreated = true;
+  } catch (error) {
+    if (error.code !== "EPERM" && error.code !== "EACCES" && error.code !== "ENOTSUP") throw error;
+    console.log("  – recovery retention preserves external symlink targets: skipped (host lacks file symlink capability)");
+  }
+  if (retentionSymlinkCreated) {
+    await test("recovery retention preserves external symlink targets", async () => {
+      const result = await pruneCompletedRecoveryJobs({ userData: retentionSymlinkRoot, home: retentionSymlinkRoot, platform: "darwin", isIdle: async () => true });
+      assert.deepEqual(result.removed, [oldJobDir]);
+      assert.equal(existsSync(oldJobDir), false);
+      assert.ok(existsSync(outsideFile));
+      assert.deepEqual(readFileSync(outsideFile), outsideBytes);
+    });
+  }
+} finally {
+  try {
+    if (retentionSymlinkCreated && existsSync(symlinkPath)) {
+      try {
+        const st = lstatSync(symlinkPath);
+        if (st.isSymbolicLink()) unlinkSync(symlinkPath);
+      } catch {
+        rmSync(symlinkPath, { force: true });
+      }
+    }
+  } finally {
+    rmSync(retentionSymlinkRoot, { recursive: true, force: true });
+  }
+}
 
 await test("recovery cleanup requires explicit absence of both service and worker processes", async () => {
   const paths = { label: "fixture", root: "/fixture/recovery (one)", plist: "/fixture/absent-recovery.plist" };
