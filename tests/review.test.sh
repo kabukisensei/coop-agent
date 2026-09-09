@@ -40,6 +40,7 @@ echo "\$*" >> "$TMP/coop-data-doc.args.log"
 exit "\${COOP_TEST_DD_RC:-0}"
 EOF
 chmod +x "$TMP/bin/coop-data-doc"
+export COOP_TEST_STUB_PATH="$TMP/bin"
 
 # A work repo with a contract: one existing repo path, one TODO leftover, one
 # path that doesn't exist on this machine.
@@ -56,7 +57,7 @@ repositories:
 EOF
 
 run_review() {  # [extra coop args...] — runs `coop review` from $TMP/proj with the shims first on PATH
-  ( cd "$TMP/proj" && PATH="$TMP/bin:$PATH" NO_COLOR=1 bash "$ROOT/bin/coop" review "$@" )
+  ( cd "$TMP/proj" && COOP_TEST_STUB_PATH="$TMP/bin" PATH="$TMP/bin:$PATH" NO_COLOR=1 bash "$ROOT/bin/coop" review "$@" )
 }
 
 # 1. Contract scope: both JSON reports land in .coop/reviews/, the resolved repo
@@ -106,10 +107,10 @@ pass "--strict flows to both linters and exits 2 on a failing linter"
 # 5. data-doc's friendly "no config" exit 1 is a hint, not a failure; a hard
 #    exit 2 propagates.
 rc=0
-( cd "$TMP/proj" && PATH="$TMP/bin:$PATH" NO_COLOR=1 COOP_TEST_DD_RC=1 bash "$ROOT/bin/coop" review ) >/dev/null 2>&1 || rc=$?
+( cd "$TMP/proj" && COOP_TEST_STUB_PATH="$TMP/bin" PATH="$TMP/bin:$PATH" NO_COLOR=1 COOP_TEST_DD_RC=1 bash "$ROOT/bin/coop" review ) >/dev/null 2>&1 || rc=$?
 [ "$rc" -eq 0 ] || fail "data-doc exit 1 (no config) must not fail the run (got $rc)"
 rc=0
-( cd "$TMP/proj" && PATH="$TMP/bin:$PATH" NO_COLOR=1 COOP_TEST_DD_RC=2 bash "$ROOT/bin/coop" review ) >/dev/null 2>&1 || rc=$?
+( cd "$TMP/proj" && COOP_TEST_STUB_PATH="$TMP/bin" PATH="$TMP/bin:$PATH" NO_COLOR=1 COOP_TEST_DD_RC=2 bash "$ROOT/bin/coop" review ) >/dev/null 2>&1 || rc=$?
 [ "$rc" -eq 2 ] || fail "data-doc exit 2 (hard failure) must propagate (got $rc)"
 pass "data-doc no-config is a hint; a hard failure propagates"
 
@@ -122,7 +123,7 @@ ln -s "$ROOT/lib" "$TMP/fakeroot/lib"
 cp "$ROOT/VERSION" "$TMP/fakeroot/VERSION"
 rm -f "$TMP"/coop-*.args.log
 rc=0
-out="$(cd "$TMP/nowhere" && PATH="$TMP/bin:$PATH" NO_COLOR=1 bash "$TMP/fakeroot/bin/coop" review 2>&1)" || rc=$?
+out="$(cd "$TMP/nowhere" && COOP_TEST_STUB_PATH="$TMP/bin" PATH="$TMP/bin:$PATH" NO_COLOR=1 bash "$TMP/fakeroot/bin/coop" review 2>&1)" || rc=$?
 [ "$rc" -ne 0 ] || fail "no-contract + no-paths must exit non-zero"
 case "$out" in
   *".coop/project.yml"*"pass paths"*) ;;
