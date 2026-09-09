@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
@@ -66,12 +66,13 @@ function pythonVersion(python) {
 
 export function preparationCommands(plan, paths) {
   const windows = plan.target.startsWith("win32-");
-  const node = join(paths.nodeRoot, windows ? "node.exe" : "bin/node");
-  const npmCli = join(paths.nodeRoot, windows ? "node_modules/npm/bin/npm-cli.js" : "lib/node_modules/npm/bin/npm-cli.js");
-  const python = join(paths.pythonRoot, windows ? "python.exe" : "bin/python3");
+  const path = windows ? win32 : posix;
+  const node = path.join(paths.nodeRoot, windows ? "node.exe" : "bin/node");
+  const npmCli = path.join(paths.nodeRoot, windows ? "node_modules/npm/bin/npm-cli.js" : "lib/node_modules/npm/bin/npm-cli.js");
+  const python = path.join(paths.pythonRoot, windows ? "python.exe" : "bin/python3");
   const pythonTools = plan.pipSpecs.map((spec) => {
     const name = spec.slice(0, spec.indexOf("=="));
-    return Object.freeze({ name, spec, root: join(paths.work, "python-tools", name) });
+    return Object.freeze({ name, spec, root: path.join(paths.work, "python-tools", name) });
   });
   return Object.freeze({
     npm: Object.freeze({ command: node, args: Object.freeze([npmCli, "install", "--prefix", paths.npmPrefix, "--no-save", "--no-audit", "--no-fund", ...plan.npmSpecs]) }),

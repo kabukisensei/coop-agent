@@ -43,9 +43,20 @@ await test("Windows preparation uses only target-bundled Node and Python executa
   const plan = managedRuntimeBuildPlan("win32-x64");
   const paths = { work: "C:\\safe\\work", output: "C:\\safe\\output", nodeRoot: "C:\\safe\\node", npmPrefix: "C:\\safe\\npm", pythonRoot: "C:\\safe\\python" };
   const commands = preparationCommands(plan, paths);
-  assert.match(commands.npm.command, /node\.exe$/);
-  assert.match(commands.python.command, /python\.exe$/);
+  assert.equal(commands.npm.command, "C:\\safe\\node\\node.exe");
+  assert.equal(commands.npm.args[0], "C:\\safe\\node\\node_modules\\npm\\bin\\npm-cli.js");
+  assert.equal(commands.npm.args.includes("--global"), false);
+  assert.equal(commands.npm.args.includes("--prefix"), true);
   assert.equal(commands.npm.args.some((value) => value.startsWith("@microsoft/powerbi-desktop-bridge-cli@")), true);
+  assert.equal(commands.python.command, "C:\\safe\\python\\python.exe");
+  assert.equal(commands.pythonTools.length, plan.pipSpecs.length);
+  assert.equal(new Set(commands.pythonTools.map(({ root }) => root)).size, plan.pipSpecs.length);
+  assert.equal(commands.pythonTools.every(({ command, root, args }) => command === "C:\\safe\\python\\python.exe" && root.startsWith("C:\\safe\\work\\python-tools\\") && args.includes("--target") && !args.includes("venv")), true);
+  assert.equal(commands.stage.command, process.execPath);
+  assert.equal(commands.stage.args[0], join(ROOT, "scripts", "stage-managed-runtime.mjs"));
+  assert.equal(commands.stage.args.filter((value) => value === "--python-tool").length, plan.pipSpecs.length);
+  assert.equal(commands.stage.args.includes("--python-root"), true);
+  assert.equal(commands.stage.args.includes("--python-env"), false);
 });
 
 
