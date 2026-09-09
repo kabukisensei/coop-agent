@@ -38,7 +38,7 @@ async function verifyBundle() {
   const resourcesPath = dirname(options.bundle);
   if (join(resourcesPath, "managed-runtime") !== options.bundle) fail("Bundle must be named managed-runtime for packaged resolution verification.");
   const launcher = resolveDesktopCoopLauncher({ packaged: true, resourcesPath });
-  if (launcher.source !== "managed" || realpathSync(launcher.managedRoot) !== realpathSync(options.bundle)) fail("Desktop did not select the managed runtime.");
+  if (launcher.source !== "managed" || realpathSync.native(launcher.managedRoot) !== realpathSync.native(options.bundle)) fail("Desktop did not select the managed runtime.");
 
   const env = {
     ...process.env,

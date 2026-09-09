@@ -781,12 +781,12 @@ function resolveStoredSessionPath(value) {
   const agentDir = (spec.env && spec.env.PI_CODING_AGENT_DIR) || process.env.PI_CODING_AGENT_DIR || "";
   if (!agentDir) return null;
   try {
-    let root = realpathSync(join(resolvePath(agentDir), "sessions"));
-    let full = realpathSync(resolvePath(value));
+    let root = realpathSync.native(join(resolvePath(agentDir), "sessions"));
+    let full = realpathSync.native(resolvePath(value));
     const st = statSync(full);
     if (!st.isFile()) return null;
     if (process.platform === "win32") { root = root.toLowerCase(); full = full.toLowerCase(); }
-    return full === root || full.startsWith(root + sep) ? realpathSync(resolvePath(value)) : null;
+    return full === root || full.startsWith(root + sep) ? realpathSync.native(resolvePath(value)) : null;
   } catch {
     return null;
   }
@@ -1079,8 +1079,8 @@ function jailPath(cwd, rel) {
   const full = resolvePath(root, rel);
   if (full !== root && !full.startsWith(root + sep)) return null;
   try {
-    const real = realpathSync(full);
-    const realRoot = realpathSync(root);
+    const real = realpathSync.native(full);
+    const realRoot = realpathSync.native(root);
     if (real !== realRoot && !real.startsWith(realRoot + sep)) return null;
     return real;
   } catch {
@@ -1097,7 +1097,7 @@ function readFilePreview(cwd, rel) {
   // macOS /var -> /private/var doesn't spuriously produce ".." segments). Splitting
   // on both separators also catches Windows-style input. Refusing returns null ->
   // the same 400 as a missing file.
-  for (const seg of relPath(realpathSync(resolvePath(cwd)), full).split(/[/\\]/)) {
+  for (const seg of relPath(realpathSync.native(resolvePath(cwd)), full).split(/[/\\]/)) {
     if (seg && isHidden(seg)) return null;
   }
   let st;
@@ -1148,8 +1148,8 @@ function jailGitPath(cwd, rel) {
   }
   try {
     if (existsSync(full)) {
-      const real = realpathSync(full);
-      const realRoot = realpathSync(root);
+      const real = realpathSync.native(full);
+      const realRoot = realpathSync.native(root);
       if (real !== realRoot && !real.startsWith(realRoot + sep)) return null; // symlink escape
     }
   } catch {

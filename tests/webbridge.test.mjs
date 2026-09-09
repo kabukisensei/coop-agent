@@ -1425,6 +1425,58 @@ t("chat 1's history reset to 0 by its own new_session", p1e.next === 0);
   await new Promise((resolve) => { const done = setTimeout(resolve, 2000); srv2.on("exit", () => { clearTimeout(done); resolve(); }); srv2.kill(); });
 }
 
+// --- Windows 8.3 short/long path identity --------------------------------------
+// The same directory can arrive as a short 8.3 spelling (e.g. a short %TEMP%) or its
+// long form. The bridge's realpath-based jails must treat them as one directory while
+// still rejecting escapes. Skips visibly when the host mints no short names.
+if (process.platform === "win32") {
+  const spacedBase = mkdtempSync(join(osTmp(), "coop-web-shortpath-"));
+  const spacedDir = join(spacedBase, "Long Directory Name With Spaces 12345");
+  mkdirSync(spacedDir, { recursive: true });
+  writeFileSync(join(spacedDir, "hello file.txt"), "short/long identity contents\n");
+  const shortDir = spawnSync("powershell.exe", ["-NoProfile", "-Command",
+    `(New-Object -ComObject Scripting.FileSystemObject).GetFolder('${spacedDir.replace(/'/g, "''")}').ShortPath`], { encoding: "utf8" }).stdout.trim();
+  if (!shortDir || shortDir === spacedDir || !shortDir.includes("~")) {
+    console.log("  ~ SKIP 8.3 short/long bridge test (no short name minted on this host)");
+  } else {
+    t("realpathSync.native equates the 8.3 and long spellings",
+      realpathSync.native(shortDir) === realpathSync(spacedDir));
+    let escapeLinked = false;
+    try { symlinkSync(outside, join(spacedDir, "escape")); escapeLinked = true; } catch { /* no symlink privilege */ }
+    const PORT3 = PORT + 2;
+    const spec3 = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: agentDir } });
+    const srv3 = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT3), "--cwd", shortDir], {
+      env: { ...process.env, COOP_LAUNCH_SPEC: spec3, COOP_WEB_NO_OPEN: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let err3 = "";
+    srv3.stderr.on("data", (d) => (err3 += d));
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("bridge3 didn't start in 10s")), 10000);
+      const poll = setInterval(() => {
+        if (/http:\/\/127\.0\.0\.1:\d+\/\?token=[a-f0-9]+/.test(err3)) { clearTimeout(timer); clearInterval(poll); resolve(); }
+      }, 100);
+    }).catch((e) => die("bridge3: " + e.message + "\n" + err3));
+    const base3 = `http://127.0.0.1:${PORT3}`;
+    const url3 = err3.match(/http:\/\/127\.0\.0\.1:\d+\/\?token=[a-f0-9]+/)[0];
+    const cookie3 = ((await fetch(url3)).headers.get("set-cookie") || "").split(";")[0];
+    r = await fetch(base3 + "/file?p=" + encodeURIComponent("hello file.txt"), { headers: { cookie: cookie3 } });
+    const f3 = r.status === 200 ? await r.json() : null;
+    t("/file works from an 8.3 short-spelled cwd with spaces",
+      r.status === 200 && f3.ok === true && f3.content.includes("short/long identity contents"));
+    r = await fetch(base3 + "/file?p=" + encodeURIComponent("../secret.txt"), { headers: { cookie: cookie3 } });
+    t("/file still rejects ../ traversal from a short-spelled cwd", r.status === 400);
+    if (escapeLinked) {
+      r = await fetch(base3 + "/file?p=" + encodeURIComponent("escape/secret.txt"), { headers: { cookie: cookie3 } });
+      t("/file still rejects a symlink escape from a short-spelled cwd", r.status === 400);
+    } else {
+      console.log("  ~ SKIP short-cwd symlink-escape jail test (symlinks unavailable on this host)");
+    }
+    await new Promise((resolve) => { const done = setTimeout(resolve, 2000); srv3.on("exit", () => { clearTimeout(done); resolve(); }); srv3.kill(); });
+  }
+  rmSync(spacedBase, { recursive: true, force: true });
+}
+
 // --- issue #11: per-command /rpc timeout (compact gets a longer ceiling) --------------
 // (a) On the default-timeout main bridge, a promptly-answered compact returns 200.
 r = await post("/rpc", { sid: sid1, type: "compact" });

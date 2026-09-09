@@ -45,6 +45,33 @@ await test("canonical checkout keys are stable and Windows paths are case-insens
   );
 });
 
+// Windows identity: an 8.3 short-name spelling and the long spelling of the SAME
+// directory must produce the same normalized path and lease key (short TEMP paths
+// appear when %TEMP% or the profile has an alias). Skips visibly when the host
+// does not mint short names for new directories.
+if (process.platform === "win32") {
+  await test("Windows 8.3 short and long spellings identify the same directory", () => {
+    const base = mkdtempSync(join(os.tmpdir(), "coop-shortpath-"));
+    try {
+      const longDir = join(base, "Long Directory Name With Spaces 12345");
+      const otherDir = join(base, "Other Directory Name With Spaces 67890");
+      mkdirSync(longDir, { recursive: true });
+      mkdirSync(otherDir, { recursive: true });
+      const shortDir = execFileSync("powershell.exe", ["-NoProfile", "-Command",
+        `(New-Object -ComObject Scripting.FileSystemObject).GetFolder('${longDir.replace(/'/g, "''")}').ShortPath`], { encoding: "utf8" }).trim();
+      if (shortDir === longDir || !shortDir.includes("~")) {
+        console.log("  ~ SKIP 8.3 alias body (no short name minted on this host)");
+        return;
+      }
+      assert.equal(normalizeWorkspacePath(shortDir), normalizeWorkspacePath(longDir));
+      assert.equal(workspaceLeaseKey(shortDir), workspaceLeaseKey(longDir));
+      assert.notEqual(workspaceLeaseKey(shortDir), workspaceLeaseKey(otherDir));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+}
+
 await test("a second writer receives only worktree, read-only, or explicit-override choices", async () => {
   const f = makeRoot();
   try {
