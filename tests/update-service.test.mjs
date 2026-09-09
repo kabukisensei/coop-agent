@@ -14,9 +14,9 @@ import vm from "node:vm";
 import { createUpdateController, loadPackagedUpdateFeed, validateUpdateFeed } from "../desktop/src/update-controller.mjs";
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { cpSync, existsSync, realpathSync, renameSync, statSync, rmSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, realpathSync, renameSync, statSync, rmSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   downloadUpdateArtifact,
@@ -467,24 +467,83 @@ await test("signed macOS update preparation verifies before copy and promotes on
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-await test("prepared copy disposal refuses replaced directories and parent links", async () => {
-  for (const mode of ["directory", "parent"]) {
-    const f = preparationFixture();
-    try {
-      const prepared = await prepareMacUpdate(f.options);
-      if (mode === "directory") {
-        renameSync(dirname(prepared.installPath), dirname(prepared.installPath) + "-saved");
-        mkdirSync(dirname(prepared.installPath));writeFileSync(join(dirname(prepared.installPath), "keep"), "replacement");
-      } else {
-        renameSync(f.options.versionRoot, f.options.versionRoot + "-saved");
-        symlinkSync(f.options.versionRoot + "-saved", f.options.versionRoot, "dir");
+await test("prepared copy disposal refuses replaced directories", async () => {
+  const f = preparationFixture();
+  let prepared;
+  try {
+    prepared = await prepareMacUpdate(f.options);
+    const destination = dirname(prepared.installPath);
+    const saved = destination + "-saved";
+    renameSync(destination, saved);
+    mkdirSync(destination);
+    const sentinel = join(destination, "keep");
+    writeFileSync(sentinel, "replacement");
+
+    await assert.rejects(prepared.discard(), /changed/);
+    assert.ok(existsSync(destination));
+    assert.equal(readFileSync(sentinel, "utf8"), "replacement");
+    assert.ok(existsSync(f.options.artifactPath));
+    assert.ok(existsSync(join(saved, "Coop Desktop.app")));
+  } finally {
+    if (prepared) {
+      const destination = dirname(prepared.installPath);
+      const saved = destination + "-saved";
+      if (existsSync(saved)) {
+        rmSync(destination, { recursive: true, force: true });
+        renameSync(saved, destination);
       }
-      await assert.rejects(prepared.discard(), /changed/);
-      assert.ok(existsSync(dirname(prepared.installPath)));
-      assert.ok(existsSync(f.options.artifactPath));
-    } finally { rmSync(f.root, { recursive: true, force: true }); }
+    }
+    rmSync(f.root, { recursive: true, force: true });
   }
 });
+
+let parentLinkCreated = false;
+// On Windows, unprivileged accounts cannot create directory symlinks without SeCreateSymbolicLinkPrivilege.
+// An NTFS junction is a directory reparse point that exercises the same lstat.isSymbolicLink() / !isDirectory()
+// parent redirection rejection in prepareMacUpdate's discard(). On POSIX, use "dir" symlinks.
+const parentLinkType = process.platform === "win32" ? "junction" : "dir";
+const fParent = preparationFixture();
+let preparedParent;
+const savedRoot = fParent.options.versionRoot + "-saved";
+try {
+  preparedParent = await prepareMacUpdate(fParent.options);
+  const destination = dirname(preparedParent.installPath);
+  const sentinel = join(destination, "sentinel.txt");
+  writeFileSync(sentinel, "parent-link-intact");
+  renameSync(fParent.options.versionRoot, savedRoot);
+  try {
+    symlinkSync(savedRoot, fParent.options.versionRoot, parentLinkType);
+    parentLinkCreated = true;
+  } catch (error) {
+    if (error.code !== "EPERM" && error.code !== "EACCES" && error.code !== "ENOTSUP") throw error;
+    console.log("  – prepared copy disposal refuses parent links: skipped (host lacks directory link capability)");
+  }
+  if (parentLinkCreated) {
+    await test("prepared copy disposal refuses parent links", async () => {
+      await assert.rejects(preparedParent.discard(), /changed/);
+      assert.ok(existsSync(destination));
+      assert.equal(readFileSync(sentinel, "utf8"), "parent-link-intact");
+      assert.ok(existsSync(fParent.options.artifactPath));
+      assert.ok(existsSync(join(savedRoot, basename(destination), "Coop Desktop.app")));
+    });
+  }
+} finally {
+  try {
+    if (parentLinkCreated && existsSync(fParent.options.versionRoot)) {
+      try {
+        const st = lstatSync(fParent.options.versionRoot);
+        if (st.isSymbolicLink()) unlinkSync(fParent.options.versionRoot);
+      } catch {
+        rmSync(fParent.options.versionRoot, { recursive: true, force: true });
+      }
+    }
+    if (existsSync(savedRoot)) {
+      renameSync(savedRoot, fParent.options.versionRoot);
+    }
+  } finally {
+    rmSync(fParent.root, { recursive: true, force: true });
+  }
+}
 
 await test("bad app identity, runtime, signature, links and cancellation never promote a candidate", async () => {
   for (const mode of ["identity", "runtime", "signature", "symlink", "cancel"]) {
