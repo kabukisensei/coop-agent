@@ -1075,7 +1075,7 @@ if (!hasGit) {
   // it fails fast rather than walking.
   const emptyPath = mkdtempSync(join(osTmp(), "coop-web-nopath-"));
   const PORT2 = PORT + 500;
-  const server2 = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT2)], {
+  const server2 = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT2), "--cwd", emptyPath], {
     env: { ...process.env, PATH: emptyPath, COOP_LAUNCH_SPEC: spec, COOP_WEB_NO_OPEN: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1253,7 +1253,8 @@ t("chat 2's stream has its own reply and NOT chat 1's",
   p2.events.some((l) => l.includes("polo:two")) && !p2.events.some((l) => l.includes("polo:one")));
 
 // 4. Per-chat cwd + jail: put the two chats in DIFFERENT folders.
-await post("/chdir", { sid: sid1, dir: resolvePath(process.cwd()) });
+const chdir1 = await post("/chdir", { sid: sid1, dir: resolvePath(process.cwd()) });
+t("/chdir {sid:sid1} -> 200", chdir1.status === 200);
 await new Promise((res) => setTimeout(res, 500));
 r = await post("/chdir", { sid: sid2, dir: resolvePath(workDir) });
 t("/chdir {sid:sid2} -> 200", r.status === 200);
