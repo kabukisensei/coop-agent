@@ -35,6 +35,7 @@ import {
   checkEvent,
   checkResponseData,
   createJsonlSplitter,
+  sanitizeErrorMessage,
 } from "./protocol.mjs";
 import { buildRuntimeCapabilities, detectIntegrationStates } from "./runtime-capabilities.mjs";
 import { getAuthProviders } from "./auth-service.mjs";
@@ -1374,6 +1375,11 @@ function loadSessionTranscript(fullPath) {
             parts.push({ kind: "tool", name: b.name || "tool", args: b.arguments, output: tr.output || "", isError: !!tr.isError });
           }
         }
+      }
+      const isError = m.stopReason === "error" || (typeof m.errorMessage === "string" && m.errorMessage.trim().length > 0);
+      if (isError) {
+        const errMsg = sanitizeErrorMessage(m.errorMessage, m.stopReason ? `Request stopped with error (${m.stopReason}).` : "Model request failed.");
+        parts.push({ kind: "error", text: errMsg });
       }
       if (!parts.length) continue;
       lines.push(JSON.stringify({ type: "__replay", role: "assistant", parts }));

@@ -73,4 +73,14 @@ await test("checked-in schema pins states and repair metadata", async () => {
   assert.ok(check.required.includes("repair"));
 });
 
+await test("runner surfaces helpful error when doctor stdout is polluted with non-JSON text", async () => {
+  await assert.rejects(
+    () => runDoctor({
+      platform: "win32",
+      execute: async () => ({ code: 1, stdout: "reinstall so the pinned coop-data-doc is first on PATH\n" + JSON.stringify(legacy), stderr: "" }),
+    }),
+    /Doctor did not return valid JSON \(exit 1\)\./
+  );
+});
+
 console.log(`doctor service: ${count} tests passed`);

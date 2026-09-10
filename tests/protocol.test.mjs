@@ -7,6 +7,7 @@ import {
   RPC_ALLOWED, COMMANDS_SENT, EVENTS_CONSUMED, EVENTS_KNOWN_IGNORED, RESPONSE_DATA,
   ASSISTANT_MESSAGE_EVENTS, UI_METHODS, BRIDGE_EVENTS, PI_PROTOCOL_VERSION,
   checkShape, checkEvent, checkResponseData, createJsonlSplitter,
+  sanitizeErrorMessage,
 } from "../web/protocol.mjs";
 
 const manifest = JSON.parse(readFileSync(new URL("../config/release-manifest.json", import.meta.url), "utf8"));
@@ -218,6 +219,23 @@ t("real isolated Pi 0.84.3 RPC smoke transcript produces zero drift",
 t("real Pi smoke covers state, command discovery, and session tree reads",
   ["get_state", "get_available_thinking_levels", "get_commands", "get_tree", "get_entries"]
     .every((command) => realPiSmoke.some((event) => event.command === command && event.success === true)));
+
+// --- sanitizeErrorMessage ----------------------------------------------------
+t("sanitizeErrorMessage: redacts sk-* API keys",
+  sanitizeErrorMessage("Error with key sk-or-v1-abcdef0123456789") === "Error with key [REDACTED]");
+t("sanitizeErrorMessage: redacts Bearer authorization tokens",
+  sanitizeErrorMessage("Failed with Bearer eyJhbGciOiJIUzI1NiIsInR5cCI") === "Failed with Bearer [REDACTED]");
+t("sanitizeErrorMessage: redacts query param key=",
+  sanitizeErrorMessage("Endpoint https://api.com?key=AIzaSy0123456789 failed") === "Endpoint https://api.com?key=[REDACTED] failed");
+t("sanitizeErrorMessage: redacts api_key parameter",
+  sanitizeErrorMessage("Config error: api_key='secret12345678'") === "Config error: api_key='[REDACTED]'");
+t("sanitizeErrorMessage: preserves harmless error payloads without secrets",
+  sanitizeErrorMessage('401: {"message":"User not found.","code":401}') === '401: {"message":"User not found.","code":401}');
+t("sanitizeErrorMessage: applies fallback on null, undefined, or empty string",
+  sanitizeErrorMessage(null, "Fallback error") === "Fallback error" &&
+  sanitizeErrorMessage(undefined, "Fallback error") === "Fallback error" &&
+  sanitizeErrorMessage("   ", "Fallback error") === "Fallback error");
+
 
 console.log(`  ${n} protocol contract tests passed`);
 process.exit(0);

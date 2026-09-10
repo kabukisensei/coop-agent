@@ -1,14 +1,16 @@
 import vm from "node:vm";
+import { EventEmitter } from "node:events";
 import { normalizeSavedChat, normalizeSavedChats, restoreSavedChats } from "../desktop/src/session-restoration.mjs";
 import { strict as assert } from "node:assert";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveCoopLauncher } from "../desktop/src/coop-launcher.mjs";
 import { loadDesktopState, normalizeDesktopState, restoreWindowBounds, saveDesktopState } from "../desktop/src/desktop-state.mjs";
 import { selectRuntimeWorkspace } from "../desktop/src/workspace-selection.mjs";
-import { buildNativeModelLoginProcess, buildNativeTerminalProcess, launchNativeModelLogin, launchNativeTerminal, validateTerminalLaunch } from "../desktop/src/native-terminal.mjs";
+import { buildNativeModelLoginProcess, buildNativeTerminalProcess, launchNativeModelLogin, launchNativeProcess, launchNativeTerminal, validateTerminalLaunch } from "../desktop/src/native-terminal.mjs";
 import { startCoopRuntime } from "../desktop/src/runtime-supervisor.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -232,6 +234,9 @@ await test("terminal launch accepts only the runtime's fixed Coop descriptor", (
   assert.equal(windows.options.env.COOP_TERMINAL_CWD, "C:\\Client Work\\Repo");
   assert.equal(windows.options.env.COOP_TERMINAL_SESSION.endsWith("one.jsonl"), true);
   assert.equal(windows.options.env.COOP_TERMINAL_BIN, "C:\\Coop\\coop.cmd");
+  assert.equal(windows.args[3], "start");
+  assert.equal(windows.args[4], "");
+  assert.equal(windows.args[5], "powershell.exe");
   const isolated = buildNativeTerminalProcess(launch("clone", "windows"), "win32", "C:\\Coop\\coop.cmd", "C:\\Users\\consultant\\AppData\\Coop Desktop\\managed-agent");
   assert.equal(isolated.options.env.COOP_AGENT_DIR, isolated.options.env.COOP_DESKTOP_AGENT_DIR);
   assert.equal(isolated.options.env.PI_CODING_AGENT_DIR, isolated.options.env.COOP_DESKTOP_AGENT_DIR);
@@ -254,9 +259,9 @@ await test("Windows resolves the installed cmd shim through its trusted PowerShe
   assert.throws(() => resolveCoopLauncher("coop", { platform: "darwin", env: { PATH: "." }, available: () => true }), /not installed/);
 });
 
-await test("terminal process launch is detached, shell-free, and injectable for tests", () => {
+await test("terminal process launch is detached, shell-free, and injectable for tests", async () => {
   let call;
-  const result = launchNativeTerminal(launch(), {
+  const result = await launchNativeTerminal(launch(), {
     platform: "darwin",
     coopExecutable: "/opt/coop/bin/coop",
     spawnImpl(command, args, options) {
@@ -270,7 +275,7 @@ await test("terminal process launch is detached, shell-free, and injectable for 
   assert.equal(call.unref, true);
 });
 
-await test("model login opens the fixed Pi TUI handoff without renderer-supplied arguments", () => {
+await test("model login opens the fixed Pi TUI handoff without renderer-supplied arguments", async () => {
   const mac = buildNativeModelLoginProcess({ cwd: "/client work/repo", coopExecutable: "/opt/coop/bin/coop", platform: "darwin" });
   assert.equal(mac.command, "/usr/bin/osascript");
   assert.equal(mac.args.includes("/client work/repo"), true);
@@ -280,10 +285,13 @@ await test("model login opens the fixed Pi TUI handoff without renderer-supplied
   assert.equal(windows.command, "cmd.exe");
   assert.equal(windows.args.join(" ").includes("Client Work"), false);
   assert.equal(windows.options.env.COOP_TERMINAL_BIN, "C:\\Coop\\coop.cmd");
+  assert.equal(windows.args[3], "start");
+  assert.equal(windows.args[4], "");
+  assert.equal(windows.args[5], "powershell.exe");
   const isolated = buildNativeModelLoginProcess({ cwd: "C:\\Client Work\\Repo", coopExecutable: "C:\\Coop\\coop.cmd", agentDir: "C:\\Users\\consultant\\AppData\\Coop Desktop\\managed-agent", platform: "win32" });
   assert.equal(isolated.options.env.PI_CODING_AGENT_DIR, isolated.options.env.COOP_DESKTOP_AGENT_DIR);
   let call;
-  const result = launchNativeModelLogin({ cwd: "/repo", coopExecutable: "/opt/coop/bin/coop", platform: "darwin", spawnImpl(command, args, options) {
+  const result = await launchNativeModelLogin({ cwd: "/repo", coopExecutable: "/opt/coop/bin/coop", platform: "darwin", spawnImpl(command, args, options) {
     call = { command, args, options, unref: false };
     return { pid: 43, unref() { call.unref = true; } };
   } });
@@ -291,6 +299,365 @@ await test("model login opens the fixed Pi TUI handoff without renderer-supplied
   assert.equal(call.options.shell, false);
   assert.equal(call.unref, true);
 });
+
+await test("terminal and model login launchers report errors instead of misleading success", async () => {
+  // Synchronous failure: null PID
+  const failedTerminal = await launchNativeTerminal(launch(), {
+    platform: "darwin",
+    coopExecutable: "/opt/coop/bin/coop",
+    spawnImpl() { return { pid: null }; },
+  });
+  assert.equal(failedTerminal.ok, false);
+  assert.equal(failedTerminal.pid, null);
+  assert.match(failedTerminal.error, /Failed to obtain process PID/);
+
+  // Synchronous spawn exception
+  const thrownTerminal = await launchNativeTerminal(launch(), {
+    platform: "darwin",
+    coopExecutable: "/opt/coop/bin/coop",
+    spawnImpl() { throw new Error("spawn ENOENT"); },
+  });
+  assert.equal(thrownTerminal.ok, false);
+  assert.match(thrownTerminal.error, /spawn ENOENT/);
+
+  // Asynchronous child 'error' event
+  const asyncErrTerminalChild = new EventEmitter();
+  asyncErrTerminalChild.pid = 901;
+  asyncErrTerminalChild.unref = () => {};
+  process.nextTick(() => asyncErrTerminalChild.emit("error", new Error("spawn ENOENT async")));
+  const asyncErrTerminal = await launchNativeTerminal(launch(), {
+    platform: "darwin",
+    coopExecutable: "/opt/coop/bin/coop",
+    spawnImpl: () => asyncErrTerminalChild,
+  });
+  assert.equal(asyncErrTerminal.ok, false);
+  assert.equal(asyncErrTerminal.pid, null);
+  assert.match(asyncErrTerminal.error, /spawn ENOENT async/);
+
+  // Unsuccessful launcher exit (non-zero code)
+  const exitFailTerminalChild = new EventEmitter();
+  exitFailTerminalChild.pid = 902;
+  exitFailTerminalChild.unref = () => {};
+  process.nextTick(() => exitFailTerminalChild.emit("exit", 1, null));
+  const exitFailTerminal = await launchNativeTerminal(launch(), {
+    platform: "darwin",
+    coopExecutable: "/opt/coop/bin/coop",
+    spawnImpl: () => exitFailTerminalChild,
+  });
+  assert.equal(exitFailTerminal.ok, false);
+  assert.equal(exitFailTerminal.pid, 902);
+  assert.match(exitFailTerminal.error, /Launcher process exited with code 1/);
+
+  // Model login: Synchronous failure
+  const failedModelLogin = await launchNativeModelLogin({
+    cwd: "/repo",
+    coopExecutable: "/opt/coop/bin/coop",
+    platform: "darwin",
+    spawnImpl() { return { pid: null }; },
+  });
+  assert.equal(failedModelLogin.ok, false);
+  assert.equal(failedModelLogin.pid, null);
+  assert.match(failedModelLogin.error, /Failed to obtain process PID/);
+
+  // Model login: Synchronous spawn exception
+  const thrownModelLogin = await launchNativeModelLogin({
+    cwd: "/repo",
+    coopExecutable: "/opt/coop/bin/coop",
+    platform: "darwin",
+    spawnImpl() { throw new Error("spawn EACCES"); },
+  });
+  assert.equal(thrownModelLogin.ok, false);
+  assert.match(thrownModelLogin.error, /spawn EACCES/);
+
+  // Model login: Asynchronous child 'error' event
+  const asyncErrLoginChild = new EventEmitter();
+  asyncErrLoginChild.pid = 903;
+  asyncErrLoginChild.unref = () => {};
+  process.nextTick(() => asyncErrLoginChild.emit("error", new Error("spawn EACCES async")));
+  const asyncErrLogin = await launchNativeModelLogin({
+    cwd: "/repo",
+    coopExecutable: "/opt/coop/bin/coop",
+    platform: "darwin",
+    spawnImpl: () => asyncErrLoginChild,
+  });
+  assert.equal(asyncErrLogin.ok, false);
+  assert.equal(asyncErrLogin.pid, null);
+  assert.match(asyncErrLogin.error, /spawn EACCES async/);
+
+  // Model login: Unsuccessful launcher exit (non-zero code)
+  const exitFailLoginChild = new EventEmitter();
+  exitFailLoginChild.pid = 904;
+  exitFailLoginChild.unref = () => {};
+  process.nextTick(() => exitFailLoginChild.emit("exit", 127, null));
+  const exitFailLogin = await launchNativeModelLogin({
+    cwd: "/repo",
+    coopExecutable: "/opt/coop/bin/coop",
+    platform: "darwin",
+    spawnImpl: () => exitFailLoginChild,
+  });
+  assert.equal(exitFailLogin.ok, false);
+  assert.equal(exitFailLogin.pid, 904);
+  assert.match(exitFailLogin.error, /Launcher process exited with code 127/);
+
+  // Terminal: Launcher terminated by signal (SIGTERM)
+  const sigTermTerminalChild = new EventEmitter();
+  sigTermTerminalChild.pid = 905;
+  sigTermTerminalChild.unref = () => {};
+  process.nextTick(() => sigTermTerminalChild.emit("exit", null, "SIGTERM"));
+  const sigTermTerminal = await launchNativeTerminal(launch(), {
+    platform: "darwin",
+    coopExecutable: "/opt/coop/bin/coop",
+    spawnImpl: () => sigTermTerminalChild,
+  });
+  assert.equal(sigTermTerminal.ok, false);
+  assert.equal(sigTermTerminal.pid, 905);
+  assert.match(sigTermTerminal.error, /SIGTERM/);
+
+  // Terminal: Delayed nonzero exit (e.g. exit with code 7 after 50ms)
+  const delayedExitTerminalChild = new EventEmitter();
+  delayedExitTerminalChild.pid = 906;
+  delayedExitTerminalChild.unref = () => {};
+  setTimeout(() => delayedExitTerminalChild.emit("exit", 7, null), 50);
+  const delayedExitTerminal = await launchNativeTerminal(launch(), {
+    platform: "darwin",
+    coopExecutable: "/opt/coop/bin/coop",
+    spawnImpl: () => delayedExitTerminalChild,
+  });
+  assert.equal(delayedExitTerminal.ok, false);
+  assert.equal(delayedExitTerminal.pid, 906);
+  assert.match(delayedExitTerminal.error, /Launcher process exited with code 7/);
+
+  // Model login: Launcher terminated by signal (SIGTERM)
+  const sigTermLoginChild = new EventEmitter();
+  sigTermLoginChild.pid = 907;
+  sigTermLoginChild.unref = () => {};
+  process.nextTick(() => sigTermLoginChild.emit("exit", null, "SIGTERM"));
+  const sigTermLogin = await launchNativeModelLogin({
+    cwd: "/repo",
+    coopExecutable: "/opt/coop/bin/coop",
+    platform: "darwin",
+    spawnImpl: () => sigTermLoginChild,
+  });
+  assert.equal(sigTermLogin.ok, false);
+  assert.equal(sigTermLogin.pid, 907);
+  assert.match(sigTermLogin.error, /SIGTERM/);
+
+  // Model login: Delayed nonzero exit (e.g. exit with code 7 after 50ms)
+  const delayedExitLoginChild = new EventEmitter();
+  delayedExitLoginChild.pid = 908;
+  delayedExitLoginChild.unref = () => {};
+  setTimeout(() => delayedExitLoginChild.emit("exit", 7, null), 50);
+  const delayedExitLogin = await launchNativeModelLogin({
+    cwd: "/repo",
+    coopExecutable: "/opt/coop/bin/coop",
+    platform: "darwin",
+    spawnImpl: () => delayedExitLoginChild,
+  });
+  assert.equal(delayedExitLogin.ok, false);
+  assert.equal(delayedExitLogin.pid, 908);
+  assert.match(delayedExitLogin.error, /Launcher process exited with code 7/);
+
+  // Launcher timeout reports error and does not report fake success
+  const hungChild = new EventEmitter();
+  hungChild.pid = 909;
+  hungChild.unref = () => {};
+  hungChild.kill = () => {};
+  const timeoutResult = await launchNativeProcess(
+    { command: "hung-launcher", args: [], options: {} },
+    { spawnImpl: () => hungChild, timeoutMs: 30 }
+  );
+  assert.equal(timeoutResult.ok, false);
+  assert.match(timeoutResult.error, /timed out/i);
+
+  // Confirmed clean launcher exit reports ok: true
+  const cleanChild = new EventEmitter();
+  cleanChild.pid = 910;
+  cleanChild.unref = () => {};
+  process.nextTick(() => cleanChild.emit("exit", 0, null));
+  const cleanResult = await launchNativeProcess(
+    { command: "clean-launcher", args: [], options: {} },
+    { spawnImpl: () => cleanChild, timeoutMs: 1000 }
+  );
+  assert.equal(cleanResult.ok, true);
+  assert.equal(cleanResult.pid, 910);
+
+  // Linux interactive terminal: long-lived session is confirmed on spawn and not killed or failed at timeout
+  let linuxTerminalKilled = false;
+  const linuxTerminalChild = new EventEmitter();
+  linuxTerminalChild.pid = 920;
+  linuxTerminalChild.unref = () => {};
+  linuxTerminalChild.kill = () => { linuxTerminalKilled = true; };
+  const linuxTerminal = await launchNativeTerminal(launch(), {
+    platform: "linux",
+    coopExecutable: "/opt/coop/bin/coop",
+    spawnImpl: () => linuxTerminalChild,
+    timeoutMs: 50,
+  });
+  assert.equal(linuxTerminal.ok, true);
+  assert.equal(linuxTerminal.pid, 920);
+  assert.equal(linuxTerminal.mode, "open");
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(linuxTerminalKilled, false, "Long-lived Linux terminal must not be killed after launcher timeout");
+
+  // Linux interactive terminal: asynchronous spawn error is still caught and reported
+  const linuxErrChild = new EventEmitter();
+  linuxErrChild.pid = 921;
+  linuxErrChild.unref = () => {};
+  process.nextTick(() => linuxErrChild.emit("error", new Error("spawn x-terminal-emulator ENOENT")));
+  const linuxErrTerminal = await launchNativeTerminal(launch(), {
+    platform: "linux",
+    coopExecutable: "/opt/coop/bin/coop",
+    spawnImpl: () => linuxErrChild,
+  });
+  assert.equal(linuxErrTerminal.ok, false);
+  assert.equal(linuxErrTerminal.pid, null);
+  assert.match(linuxErrTerminal.error, /spawn x-terminal-emulator ENOENT/);
+
+  // Linux model login: long-lived session confirmed on spawn without being killed at timeout
+  let linuxLoginKilled = false;
+  const linuxLoginChild = new EventEmitter();
+  linuxLoginChild.pid = 922;
+  linuxLoginChild.unref = () => {};
+  linuxLoginChild.kill = () => { linuxLoginKilled = true; };
+  const linuxLogin = await launchNativeModelLogin({
+    cwd: "/repo",
+    coopExecutable: "/opt/coop/bin/coop",
+    platform: "linux",
+    spawnImpl: () => linuxLoginChild,
+    timeoutMs: 50,
+  });
+  assert.equal(linuxLogin.ok, true);
+  assert.equal(linuxLogin.pid, 922);
+  assert.equal(linuxLogin.providerId, "model.openai-codex");
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(linuxLoginKilled, false, "Long-lived Linux model login terminal must not be killed after launcher timeout");
+});
+
+if (process.platform === "win32") {
+  await test("Windows native launch probe executes model login and terminal handoff with metacharacters and spaces", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "coop-probe-"));
+  try {
+    const specialWorkspace = join(tempDir, "workspace (special & %VAR% $dollar)");
+    const specialAgentDir = join(tempDir, "agent profile (special & ^ $)");
+    const specialSession = join(tempDir, "session (with space & symbol).jsonl");
+    mkdirSync(specialWorkspace, { recursive: true });
+    mkdirSync(specialAgentDir, { recursive: true });
+    writeFileSync(specialSession, '{"type":"test"}\n', "utf8");
+
+    const recordOutput = join(tempDir, "recorded-launch.json");
+    const shimCmd = join(tempDir, "probe-coop.cmd");
+    const shimPs1 = join(tempDir, "probe-coop.ps1");
+
+    const ps1Content = `
+[PSCustomObject]@{
+  Cwd = (Get-Location).Path
+  Bin = $env:COOP_TERMINAL_BIN
+  Session = $env:COOP_TERMINAL_SESSION
+  AgentDir = $env:COOP_AGENT_DIR
+  DesktopAgentDir = $env:COOP_DESKTOP_AGENT_DIR
+  PiAgentDir = $env:PI_CODING_AGENT_DIR
+  PrimeModelLogin = $env:COOP_PRIME_MODEL_LOGIN
+  LoginOnly = $env:COOP_LOGIN_ONLY
+  Args = $args
+} | ConvertTo-Json -Compress | Set-Content -LiteralPath '${recordOutput}'
+[System.Environment]::Exit(0)
+`;
+    writeFileSync(shimPs1, ps1Content, "utf8");
+    writeFileSync(shimCmd, `@echo off\npowershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0probe-coop.ps1" %*\n`, "utf8");
+
+    // Verify resolveCoopLauncher resolves the production launcher contract
+    const resolved = resolveCoopLauncher(shimCmd, { platform: "win32", env: { Path: tempDir, PATHEXT: ".CMD;.EXE" }, available: () => true });
+    assert.equal(resolved.terminalExecutable, shimCmd);
+
+    // 1. Probe model login execution via launchNativeModelLogin
+    const loginResult = await launchNativeModelLogin({
+      cwd: specialWorkspace,
+      coopExecutable: resolved.terminalExecutable,
+      agentDir: specialAgentDir,
+      platform: "win32",
+    });
+    assert.equal(loginResult.ok, true);
+    assert.ok(loginResult.pid > 0);
+
+    function readJsonWithRetry(filePath) {
+      for (let i = 0; i < 50; i++) {
+        try {
+          return JSON.parse(readFileSync(filePath, "utf8"));
+        } catch (e) {
+          if ((e.code === "EBUSY" || e instanceof SyntaxError) && i < 49) {
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+            continue;
+          }
+          throw e;
+        }
+      }
+    }
+
+    let attempts = 0;
+    while (!existsSync(recordOutput) && attempts < 100) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+      attempts++;
+    }
+    assert.equal(existsSync(recordOutput), true, "Probe record file was not created by model login execution");
+    let recorded = readJsonWithRetry(recordOutput);
+    assert.equal(recorded.Cwd, specialWorkspace);
+    assert.equal(recorded.Bin, shimCmd);
+    assert.equal(recorded.AgentDir, specialAgentDir);
+    assert.equal(recorded.DesktopAgentDir, specialAgentDir);
+    assert.equal(recorded.PiAgentDir, specialAgentDir);
+    assert.equal(recorded.PrimeModelLogin, "1");
+    assert.equal(recorded.LoginOnly, "1");
+
+    rmSync(recordOutput, { force: true });
+
+    // 2. Probe terminal handoff execution via launchNativeTerminal
+    const terminalDescriptor = {
+      ok: true,
+      launch: {
+        schemaVersion: 1,
+        kind: "native-terminal",
+        handoffId: "handoff-probe",
+        mode: "clone",
+        cwd: specialWorkspace,
+        executable: "coop",
+        args: ["--session", specialSession],
+      },
+    };
+    const terminalResult = await launchNativeTerminal(terminalDescriptor, {
+      platform: "win32",
+      coopExecutable: resolved.terminalExecutable,
+      agentDir: specialAgentDir,
+    });
+    assert.equal(terminalResult.ok, true);
+    assert.ok(terminalResult.pid > 0);
+
+    attempts = 0;
+    while (!existsSync(recordOutput) && attempts < 100) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+      attempts++;
+    }
+    assert.equal(existsSync(recordOutput), true, "Probe record file was not created by terminal handoff execution");
+    recorded = readJsonWithRetry(recordOutput);
+    assert.equal(recorded.Cwd, specialWorkspace);
+    assert.equal(recorded.Bin, shimCmd);
+    assert.equal(recorded.Session, specialSession);
+    assert.equal(recorded.AgentDir, specialAgentDir);
+    assert.equal(recorded.Args[0], "--session");
+    assert.equal(recorded.Args[1], specialSession);
+  } finally {
+    for (let i = 0; i < 20; i++) {
+      try {
+        rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        break;
+      } catch {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+      }
+    }
+  }
+});
+} else {
+  console.log("  – Windows native launch probe executes model login and terminal handoff with metacharacters and spaces: skipped (Windows platform required)");
+}
 
 await test("runtime restart callback fires only for an unexpected child exit", async () => {
   const fixture = join(ROOT, "tests", "fixtures", "stub-coop-runtime.mjs");

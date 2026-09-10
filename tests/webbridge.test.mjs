@@ -115,6 +115,22 @@ writeFileSync(join(sessDir, FALLBACK_SESSION), [
   "{ broken json",
 ].join("\n") + "\n");
 
+const ERROR_SESSION = "2026-07-01T00-00-30-000Z_error.jsonl";
+writeFileSync(join(sessDir, ERROR_SESSION), [
+  JSON.stringify({ type: "session", version: 3, id: "error-session", timestamp: "2026-07-01T00:00:30.000Z", cwd: process.cwd() }),
+  JSON.stringify({ type: "message", id: "eu1", parentId: null, timestamp: "2026-07-01T00:00:31.000Z", message: { role: "user", content: [{ type: "text", text: "trigger error" }] } }),
+  JSON.stringify({ type: "message", id: "ea1", parentId: "eu1", timestamp: "2026-07-01T00:00:32.000Z", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "401: User not found" } }),
+].join("\n") + "\n");
+
+const ERROR_PARTIAL_SESSION = "2026-07-01T00-00-40-000Z_error-partial.jsonl";
+writeFileSync(join(sessDir, ERROR_PARTIAL_SESSION), [
+  JSON.stringify({ type: "session", version: 3, id: "error-partial-session", timestamp: "2026-07-01T00:00:40.000Z", cwd: process.cwd() }),
+  JSON.stringify({ type: "message", id: "epu1", parentId: null, timestamp: "2026-07-01T00:00:41.000Z", message: { role: "user", content: [{ type: "text", text: "partial output error test" }] } }),
+  JSON.stringify({ type: "message", id: "epa1", parentId: "epu1", timestamp: "2026-07-01T00:00:42.000Z", message: { role: "assistant", content: [{ type: "text", text: "partial answer before crash" }], stopReason: "error", errorMessage: "Rate limit exceeded for key sk-proj-1234567890abcdef" } }),
+].join("\n") + "\n");
+
+
+
 // A STRICTLY LINEAR session in a SECOND workspace (workDir) — the cross-workspace
 // group AND the linear-session control for the branch heuristic (one leaf ⇒ NOT
 // branched, guarding the header-as-leaf false positive).
@@ -888,6 +904,28 @@ poll = await r.json();
 t("file backfill restores thinking + tool + final answer as __replay",
   poll.events.some((l) => l.includes('"__replay"') && l.includes("rich old answer")) &&
   poll.events.some((l) => l.includes("pondering deeply")));
+
+// Error path: an assistant message with an errorMessage/error stopReason is preserved in __replay.
+r = await post("/resume", { file: ERROR_SESSION });
+t("/resume ERROR_SESSION -> 200", r.status === 200);
+await new Promise((res) => setTimeout(res, 300));
+r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
+poll = await r.json();
+t("file backfill preserves errored assistant turns as __replay error parts",
+  poll.events.some((l) => l.includes('"__replay"') && l.includes("401: User not found")));
+
+// Partial output error path: partial text is preserved and leaked secrets are redacted in __replay.
+r = await post("/resume", { file: ERROR_PARTIAL_SESSION });
+t("/resume ERROR_PARTIAL_SESSION -> 200", r.status === 200);
+await new Promise((res) => setTimeout(res, 300));
+r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
+poll = await r.json();
+t("file backfill preserves partial output on errored assistant turn",
+  poll.events.some((l) => l.includes('"__replay"') && l.includes("partial answer before crash")));
+t("file backfill preserves error and redacts leaked key in __replay",
+  poll.events.some((l) => l.includes('"__replay"') && l.includes("Rate limit exceeded for key [REDACTED]") && !l.includes("sk-proj-")));
+
+
 
 // Fallback path: FALLBACK_SESSION yields no parseable turns -> get_messages backfill.
 r = await post("/resume", { file: FALLBACK_SESSION });

@@ -220,6 +220,9 @@ bash "$ROOT/tests/doctor.test.sh"
 echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
 node "$ROOT/tests/webbridge.test.mjs"
 
+echo "→ web UI error-display and credential redaction tests"
+node "$ROOT/tests/error-display.test.mjs"
+
 echo "→ BPA runner resolution tests (te bpa run; TE2 must never be invoked)"
 bash "$ROOT/tests/bpa-runner.test.sh"
 

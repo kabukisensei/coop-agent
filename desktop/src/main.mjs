@@ -372,11 +372,15 @@ function registerIpc() {
     if (!trustedSender(event)) throw new Error("Untrusted renderer.");
     if (!input || !TERMINAL_MODES.has(input.mode) || !SID.test(input.sid || "")) throw new Error("Invalid terminal handoff request.");
     const prepared = await runtimePost("/terminal-handoff", { mode: input.mode, sid: input.sid });
-    return launchNativeTerminal(prepared, { coopExecutable, agentDir: managedAgentDir });
+    const result = await launchNativeTerminal(prepared, { coopExecutable, agentDir: managedAgentDir });
+    if (!result?.ok) throw new Error(result?.error || "The terminal did not open.");
+    return result;
   });
-  ipcMain.handle("coop:start-model-login", (event) => {
+  ipcMain.handle("coop:start-model-login", async (event) => {
     if (!trustedSender(event)) throw new Error("Untrusted renderer.");
-    return launchNativeModelLogin({ cwd: workspace, coopExecutable, agentDir: managedAgentDir });
+    const result = await launchNativeModelLogin({ cwd: workspace, coopExecutable, agentDir: managedAgentDir });
+    if (!result?.ok) throw new Error(result?.error || "Model sign-in could not start.");
+    return result;
   });
   ipcMain.handle("coop:export-session", async (event, input) => {
     if (!trustedSender(event)) throw new Error("Untrusted renderer.");

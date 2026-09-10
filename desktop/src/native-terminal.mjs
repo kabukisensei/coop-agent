@@ -60,23 +60,127 @@ export function buildNativeTerminalProcess(value, platform = process.platform, c
   const sessionPath = launch.args[1] || "";
   const isolatedAgentDir = validatedAgentDir(agentDir);
   if (platform === "darwin") {
-    return { command: "/usr/bin/osascript", args: ["-e", APPLE_SCRIPT, "--", launch.cwd, sessionPath, coopExecutable, isolatedAgentDir], options: { cwd: launch.cwd } };
+    return {
+      command: "/usr/bin/osascript",
+      args: ["-e", APPLE_SCRIPT, "--", launch.cwd, sessionPath, coopExecutable, isolatedAgentDir],
+      options: { cwd: launch.cwd },
+      waitForExit: true,
+    };
   }
   if (platform === "win32") {
     return {
       command: "cmd.exe",
-      args: ["/d", "/s", "/c", `start "" powershell.exe -NoLogo -NoExit -NoProfile -Command "${WINDOWS_COMMAND}"`],
+      args: ["/d", "/s", "/c", "start", "", "powershell.exe", "-NoLogo", "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", WINDOWS_COMMAND],
       options: { cwd: launch.cwd, env: { ...process.env, COOP_TERMINAL_BIN: coopExecutable, COOP_TERMINAL_CWD: launch.cwd, COOP_TERMINAL_SESSION: sessionPath, ...(isolatedAgentDir ? { COOP_DESKTOP_AGENT_DIR: isolatedAgentDir, COOP_AGENT_DIR: isolatedAgentDir, PI_CODING_AGENT_DIR: isolatedAgentDir } : {}) } },
+      waitForExit: true,
     };
   }
-  return { command: "x-terminal-emulator", args: ["-e", coopExecutable, ...launch.args], options: { cwd: launch.cwd } };
+  return {
+    command: "x-terminal-emulator",
+    args: ["-e", coopExecutable, ...launch.args],
+    options: { cwd: launch.cwd },
+    waitForExit: false,
+  };
 }
 
-export function launchNativeTerminal(value, { platform = process.platform, coopExecutable, agentDir = null, spawnImpl = spawn } = {}) {
+export function launchNativeProcess(spec, { spawnImpl = spawn, timeoutMs = 10_000 } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+
+    function finish(result) {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    }
+
+    const isInteractiveTerminal = spec.waitForExit === false || spec.command === "x-terminal-emulator";
+    const waitForExit = spec.waitForExit ?? !isInteractiveTerminal;
+
+    let child;
+    try {
+      child = spawnImpl(spec.command, spec.args, {
+        ...spec.options,
+        detached: true,
+        stdio: "ignore",
+        shell: false,
+        windowsHide: false,
+      });
+    } catch (error) {
+      return finish({ ok: false, error: error?.message || "Failed to spawn process.", pid: null });
+    }
+
+    if (typeof child?.on === "function") {
+      child.on("error", (error) => {
+        finish({ ok: false, error: error?.message || "Process spawn failed.", pid: null });
+      });
+
+      child.on("exit", (code, signal) => {
+        if (code === 0 && !signal) {
+          finish({ ok: true, pid: child?.pid || null });
+        } else {
+          const detail = signal
+            ? (code !== null && code !== undefined ? `code ${code} (${signal})` : `signal ${signal}`)
+            : `code ${code}`;
+          finish({
+            ok: false,
+            error: `Launcher process exited with ${detail}.`,
+            pid: child?.pid || null,
+          });
+        }
+      });
+    }
+
+    if (typeof child?.unref === "function") {
+      child.unref();
+    }
+
+    const pid = child?.pid || null;
+    if (!pid) {
+      if (typeof child?.on === "function") {
+        setImmediate(() => {
+          finish({ ok: false, error: "Failed to obtain process PID.", pid: null });
+        });
+        return;
+      }
+      return finish({ ok: false, error: "Failed to obtain process PID.", pid: null });
+    }
+
+    if (typeof child?.on !== "function") {
+      return finish({ ok: true, pid });
+    }
+
+    if (!waitForExit) {
+      // For long-lived interactive terminal sessions (e.g. Linux x-terminal-emulator),
+      // confirm successful process spawn without waiting for session exit or killing the child after timeout.
+      // Defers to next tick/turn to allow immediate spawn errors (e.g. ENOENT) to be delivered.
+      setImmediate(() => {
+        finish({ ok: true, pid });
+      });
+      return;
+    }
+
+    // For short-lived launchers (Windows cmd/start, macOS osascript), await confirmed launcher completion.
+    if (timeoutMs && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      timer = setTimeout(() => {
+        try {
+          if (typeof child?.kill === "function") child.kill();
+        } catch {}
+        finish({
+          ok: false,
+          error: `Launcher process timed out after ${timeoutMs}ms without confirmation.`,
+          pid: child?.pid || null,
+        });
+      }, timeoutMs);
+    }
+  });
+}
+
+export async function launchNativeTerminal(value, { platform = process.platform, coopExecutable, agentDir = null, spawnImpl = spawn, timeoutMs = 10_000 } = {}) {
   const spec = buildNativeTerminalProcess(value, platform, coopExecutable, agentDir);
-  const child = spawnImpl(spec.command, spec.args, { ...spec.options, detached: true, stdio: "ignore", shell: false, windowsHide: false });
-  child.unref();
-  return { ok: true, pid: child.pid || null, mode: value.launch.mode };
+  const result = await launchNativeProcess(spec, { spawnImpl, timeoutMs });
+  return { ...result, mode: value.launch.mode };
 }
 
 export function buildNativeModelLoginProcess({ cwd, coopExecutable, agentDir = null, platform = process.platform }) {
@@ -84,21 +188,31 @@ export function buildNativeModelLoginProcess({ cwd, coopExecutable, agentDir = n
   if (typeof coopExecutable !== "string" || !isAbsolute(coopExecutable) || /[\0\r\n]/.test(coopExecutable)) throw new Error("Coop executable is invalid.");
   const isolatedAgentDir = validatedAgentDir(agentDir);
   if (platform === "darwin") {
-    return { command: "/usr/bin/osascript", args: ["-e", MODEL_LOGIN_APPLE_SCRIPT, "--", cwd, coopExecutable, isolatedAgentDir], options: { cwd } };
+    return {
+      command: "/usr/bin/osascript",
+      args: ["-e", MODEL_LOGIN_APPLE_SCRIPT, "--", cwd, coopExecutable, isolatedAgentDir],
+      options: { cwd },
+      waitForExit: true,
+    };
   }
   if (platform === "win32") {
     return {
       command: "cmd.exe",
-      args: ["/d", "/s", "/c", `start "" powershell.exe -NoLogo -NoExit -NoProfile -Command "${WINDOWS_MODEL_LOGIN}"`],
+      args: ["/d", "/s", "/c", "start", "", "powershell.exe", "-NoLogo", "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", WINDOWS_MODEL_LOGIN],
       options: { cwd, env: { ...process.env, COOP_TERMINAL_BIN: coopExecutable, COOP_TERMINAL_CWD: cwd, ...(isolatedAgentDir ? { COOP_DESKTOP_AGENT_DIR: isolatedAgentDir, COOP_AGENT_DIR: isolatedAgentDir, PI_CODING_AGENT_DIR: isolatedAgentDir } : {}) } },
+      waitForExit: true,
     };
   }
-  return { command: "x-terminal-emulator", args: ["-e", "/usr/bin/env", "COOP_PRIME_MODEL_LOGIN=1", "COOP_LOGIN_ONLY=1", coopExecutable], options: { cwd } };
+  return {
+    command: "x-terminal-emulator",
+    args: ["-e", "/usr/bin/env", "COOP_PRIME_MODEL_LOGIN=1", "COOP_LOGIN_ONLY=1", coopExecutable],
+    options: { cwd },
+    waitForExit: false,
+  };
 }
 
-export function launchNativeModelLogin({ cwd, coopExecutable, agentDir = null, platform = process.platform, spawnImpl = spawn }) {
+export async function launchNativeModelLogin({ cwd, coopExecutable, agentDir = null, platform = process.platform, spawnImpl = spawn, timeoutMs = 10_000 } = {}) {
   const spec = buildNativeModelLoginProcess({ cwd, coopExecutable, agentDir, platform });
-  const child = spawnImpl(spec.command, spec.args, { ...spec.options, detached: true, stdio: "ignore", shell: false, windowsHide: false });
-  child.unref();
-  return { ok: true, pid: child.pid || null, providerId: "model.openai-codex" };
+  const result = await launchNativeProcess(spec, { spawnImpl, timeoutMs });
+  return { ...result, providerId: "model.openai-codex" };
 }

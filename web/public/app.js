@@ -164,6 +164,48 @@ function bubble(role, text = "") {
   scroll.scrollTop = scroll.scrollHeight;
   return b;
 }
+
+function sanitizeErrorMessage(raw, fallback = "Model request failed.") {
+  if (typeof raw !== "string" || !raw.trim()) return fallback;
+  return raw
+    .replace(/(sk-[A-Za-z0-9_-]{8,})/gi, "[REDACTED]")
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]{8,}/gi, "$1[REDACTED]")
+    .replace(/((?:api[_-]?key|token|secret|password)[=:]\s*['"]?)[A-Za-z0-9._~+/-]{8,}(['"]?)/gi, "$1[REDACTED]$2")
+    .replace(/((?:[?&]key=))[A-Za-z0-9._~+/-]{8,}/gi, "$1[REDACTED]");
+}
+
+function renderAssistantError(text, targetBubble = null) {
+  const sanitized = sanitizeErrorMessage(text);
+  const errDiv = document.createElement("div");
+  errDiv.className = "error-callout";
+  errDiv.style.marginTop = targetBubble ? "8px" : "0px";
+  errDiv.style.padding = "6px 10px";
+  errDiv.style.borderRadius = "4px";
+  errDiv.style.backgroundColor = "rgba(239, 68, 68, 0.12)";
+  errDiv.style.border = "1px solid rgba(239, 68, 68, 0.35)";
+  errDiv.style.color = "var(--bad, #f87171)";
+  errDiv.style.wordBreak = "break-word";
+  const icon = document.createElement("span");
+  icon.textContent = "⚠️ ";
+  const msg = document.createElement("span");
+  msg.textContent = sanitized;
+  errDiv.append(icon, msg);
+
+  if (targetBubble) {
+    targetBubble.appendChild(errDiv);
+    return targetBubble;
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "msg assistant error";
+  const b = document.createElement("div");
+  b.className = "bubble";
+  b.appendChild(errDiv);
+  wrap.appendChild(b);
+  transcript.appendChild(wrap);
+  scroll.scrollTop = scroll.scrollHeight;
+  return b;
+}
+
 let current = null; // current streaming assistant bubble
 let tools = new Map(); // toolCallId -> { sum, outp, hint }
 let thinkingEl = null; // current streaming thinking <details> (open while streaming)
@@ -1044,6 +1086,7 @@ function handle(evt) {
       } else if (evt.role === "user") {
         userBubble(evt.text || "");
       } else if (evt.role === "assistant") {
+        let lastBubble = null;
         for (const part of evt.parts || []) {
           if (part.kind === "thinking") {
             const det = document.createElement("details");
@@ -1056,7 +1099,9 @@ function handle(evt) {
             det.append(sum, content);
             transcript.appendChild(det);
           } else if (part.kind === "text") {
-            bubble("assistant", part.text || "");
+            lastBubble = bubble("assistant", part.text || "");
+          } else if (part.kind === "error") {
+            lastBubble = renderAssistantError(part.text || "Model request failed.", lastBubble);
           } else if (part.kind === "tool") {
             const det = document.createElement("details");
             det.className = "toolblock";
@@ -1105,27 +1150,35 @@ function handle(evt) {
       // tokens, throughput, cache reads, model. Only when the turn produced a
       // visible bubble and the message actually carries usage.
       const m = evt.message || {};
-      if (m.role === "assistant" && current) {
-        const parts = [];
-        const u = m.usage || {};
-        const secs = assistantT0 ? (Date.now() - assistantT0) / 1000 : 0;
-        if (u.output) {
-          parts.push(`${fmtTok(u.output)} out`);
-          // Live timing only: replayed events arrive in a burst, so the >1s
-          // guard naturally excludes nonsense tok/s on reconnect.
-          if (secs > 1) {
-            const tps = u.output / secs;
-            parts.push(`${tps >= 100 ? Math.round(tps) : tps.toFixed(1)} tok/s`);
-          }
+      if (m.role === "assistant") {
+        if (m.stopReason === "error" || (typeof m.errorMessage === "string" && m.errorMessage.trim().length > 0)) {
+          const fallback = m.stopReason ? `Request stopped with error (${m.stopReason}).` : "Model request failed.";
+          const errMsg = sanitizeErrorMessage(m.errorMessage, fallback);
+          toast(errMsg, "error");
+          renderAssistantError(errMsg, current);
         }
-        if (u.cacheRead) parts.push(`${fmtTok(u.cacheRead)} cached`);
-        const model = m.responseModel || m.model;
-        if (typeof model === "string" && model) parts.push(model);
-        if (parts.length) {
-          const el = document.createElement("div");
-          el.className = "msg-stats";
-          el.textContent = parts.join("  ·  ");
-          transcript.appendChild(el);
+        if (current) {
+          const parts = [];
+          const u = m.usage || {};
+          const secs = assistantT0 ? (Date.now() - assistantT0) / 1000 : 0;
+          if (u.output) {
+            parts.push(`${fmtTok(u.output)} out`);
+            // Live timing only: replayed events arrive in a burst, so the >1s
+            // guard naturally excludes nonsense tok/s on reconnect.
+            if (secs > 1) {
+              const tps = u.output / secs;
+              parts.push(`${tps >= 100 ? Math.round(tps) : tps.toFixed(1)} tok/s`);
+            }
+          }
+          if (u.cacheRead) parts.push(`${fmtTok(u.cacheRead)} cached`);
+          const model = m.responseModel || m.model;
+          if (typeof model === "string" && model) parts.push(model);
+          if (parts.length) {
+            const el = document.createElement("div");
+            el.className = "msg-stats";
+            el.textContent = parts.join("  ·  ");
+            transcript.appendChild(el);
+          }
         }
       }
       current = null;
