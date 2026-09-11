@@ -87,6 +87,41 @@ test('malformed optional finding fields are dropped with diagnostics', () => {
   assert.equal(validateResult(env).ok, true);
 });
 
+test('sparse findings and redactions are materialized before validation', () => {
+  const provenance = { tool: 'review', rev: 'abc' };
+  const env = normalizeResult({
+    state: 'success', findings: new Array(1), redactions: new Array(1),
+    provenance, zeroFindings: true,
+  });
+  assert.equal(env.state, 'incomplete');
+  assert.deepEqual(env.findings, []);
+  assert.deepEqual(env.redactions, []);
+  assert.ok(env.errors.includes('ToolResult: finding 0 is malformed'));
+  assert.ok(env.errors.includes('ToolResult: redactions must be an array of strings'));
+  assert.equal(validateResult({ ...env, findings: new Array(1), redactions: [] }).ok, false);
+  assert.equal(validateResult({ ...env, findings: [], redactions: new Array(1) }).ok, false);
+});
+
+test('findings require a non-empty id', () => {
+  const provenance = { tool: 'review', rev: 'abc' };
+  const env = normalizeResult({
+    state: 'success', findings: [{ severity: 'major', message: 'problem' }], provenance,
+  });
+  assert.equal(env.state, 'incomplete');
+  assert.deepEqual(env.findings, []);
+  assert.ok(env.errors.includes('ToolResult: finding 0.id is invalid'));
+  assert.equal(validateResult({ ...env, findings: [{ severity: 'major', message: 'problem' }] }).ok, false);
+});
+
+test('sha-only provenance normalizes to rev', () => {
+  const env = normalizeResult({
+    state: 'success', findings: [], zeroFindings: true,
+    provenance: { tool: 'review', sha: 'abc' },
+  });
+  assert.deepEqual(env.provenance, { tool: 'review', rev: 'abc' });
+  assert.equal(validateResult(env).ok, true);
+});
+
 test('exception formatting never reads properties from the thrown value', () => {
   const hostile = {};
   Object.defineProperty(hostile, 'message', { get() { throw new Error('second failure'); } });
