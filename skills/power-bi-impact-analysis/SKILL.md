@@ -46,7 +46,12 @@ not stand in for the PLAN/approval gate at step 4.
 
 ## Output
 
-An impact report:
+Produce both a concise narrative and one typed `impact-analysis.v1` artifact by
+calling `impact_analysis_result` after the evidence pass. The tool validates and
+publishes the artifact for CLI/Web/Desktop; do not paste a JSON blob into prose
+as a substitute.
+
+The artifact and narrative include:
 
 - **Target** — object, change intent.
 - **Upstream dependencies** — sources and references the change relies on.
@@ -55,6 +60,17 @@ An impact report:
 - **Risk rating** — low / medium / high, with the reasoning.
 - **Recommendation** — safer alternatives (e.g., deprecate-then-remove) and the
   PLAN the user should approve before any edit.
+
+Every dependency path and impacted object cites one or more evidence-source IDs.
+Use source kinds `data-doc`, `fabric`, `powerbi`, `source`, or
+`microsoft-learn` for observed facts. If a relationship is reasoned rather than
+observed, register it as `agent-inference`, lower its confidence, and add an
+explicit evidence gap. A failed/partial source or any unresolved evidence gap
+means the overall evidence state cannot be `complete`.
+
+Set artifact approval to `pending` when implementation would change source. The
+artifact is advisory and cannot authorize edits; the separate `coop-workflow`
+PLAN approval remains authoritative.
 
 Log the analysis per step 10. Commit **docs/logs/diagrams only**, with approval.
 Never commit semantic model or report source.

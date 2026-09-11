@@ -158,6 +158,59 @@ def save_user(data: dict) -> None:
     atomic_save(USER_JSON, data)
 
 
+def normalize_profile_candidate(value: object) -> dict:
+    """Validate the non-interactive profile shape used by shared UI clients.
+
+    This lives beside the interactive questionnaire so CLI/Desktop never grow
+    separate name, preset, or custom-instruction rules.
+    """
+    if not isinstance(value, dict):
+        raise ValueError("Profile input must be an object.")
+    if value.get("schema_version") != 1:
+        raise ValueError("Profile schema_version must be 1.")
+    name = validate_name(str(value.get("name", "")))
+    communication = value.get("communication")
+    if not isinstance(communication, dict):
+        raise ValueError("Profile communication settings are required.")
+    preset = communication.get("preset")
+    if preset not in PRESET_KEYS:
+        raise ValueError("Profile communication preset is invalid.")
+    custom = communication.get("custom_instructions", "")
+    if not isinstance(custom, str):
+        raise ValueError("Custom communication instructions must be text.")
+    custom = re.sub(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]+", " ", custom)
+    custom = re.sub(r"\s+", " ", custom).strip()
+    if len(custom) > 1000:
+        raise ValueError("Custom communication instructions are too long (max 1000 characters).")
+    if preset != "custom":
+        custom = ""
+    return {
+        "schema_version": 1,
+        "name": name,
+        "communication": {"preset": preset, "custom_instructions": custom},
+    }
+
+
+def profile_contract() -> dict:
+    """Return the shared, presentation-neutral profile questionnaire contract."""
+    return {
+        "schema_version": 1,
+        "fields": {
+            "name": {"required": True, "max_length": 100},
+            "communication": {
+                "preset": {
+                    "required": True,
+                    "options": [
+                        {"id": key, "description": PRESETS.get(key, "Write your own communication preference.")}
+                        for key in PRESET_KEYS
+                    ],
+                },
+                "custom_instructions": {"max_length": 1000, "enabled_when_preset": "custom"},
+            },
+        },
+    }
+
+
 def load_config() -> dict:
     if not CONFIG_JSON.exists():
         return {}
@@ -557,6 +610,21 @@ def cmd_onboard(args: argparse.Namespace) -> int:
 
 
 def cmd_profile(args: argparse.Namespace) -> int:
+    if args.contract_json:
+        print(json.dumps(profile_contract(), ensure_ascii=False))
+        return 0
+    if args.apply_json:
+        raw = sys.stdin.read(65537)
+        if len(raw) > 65536:
+            raise ValueError("Profile input exceeds the 64 KiB limit.")
+        try:
+            candidate = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Profile input is not valid JSON.") from exc
+        profile = normalize_profile_candidate(candidate)
+        save_user(profile)
+        print(json.dumps(profile, ensure_ascii=False))
+        return 0
     profile = load_user()
     if args.reset:
         if USER_JSON.exists():
@@ -600,6 +668,8 @@ def main(argv: list[str] | None = None) -> int:
     profile.add_argument("--edit", action="store_true", help="Edit profile.")
     profile.add_argument("--reset", action="store_true", help="Remove local profile.")
     profile.add_argument("--json", action="store_true", help="Emit profile as JSON.")
+    profile.add_argument("--apply-json", action="store_true", help=argparse.SUPPRESS)
+    profile.add_argument("--contract-json", action="store_true", help=argparse.SUPPRESS)
 
     args = parser.parse_args(argv)
     if args.command == "onboard":

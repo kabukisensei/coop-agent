@@ -1,6 +1,6 @@
 // Tests for the in-Coop /setup-project wizard's contract rendering and safe merge.
 import { strict as assert } from "node:assert";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -130,6 +130,7 @@ await t("native wizard is reachable inside Coop and creates the contract", async
   mkdirSync(join(root, ".git"));
   const confirms = [true, false, false, false, true]; // local source, add repo, Fabric, TE, write
   const confirmTitles = [];
+  const notices = [];
   let selectCount = 0;
   const ctx = {
     cwd: root,
@@ -146,10 +147,10 @@ await t("native wizard is reachable inside Coop and creates the contract", async
         if (selectCount === 1) return options.find((x) => x.includes("General project"));
         return options.find((x) => x.startsWith("✓ Use this folder:"));
       },
-      notify: () => {},
+      notify: (message) => notices.push(message),
     },
   };
-  assert.equal(await runProjectWizard({}, ctx), true);
+  assert.equal(await runProjectWizard({}, ctx), true, notices.join("\n"));
   const contract = join(root, ".coop", "project.yml");
   assert.ok(existsSync(contract));
   const text = readFileSync(contract, "utf8");
@@ -271,8 +272,9 @@ await t("editing through /setup-project writes a backup and keeps custom setting
     },
   };
   assert.equal(await runProjectWizard({}, ctx), true);
-  assert.ok(existsSync(`${contract}.bak`));
-  assert.equal(readFileSync(`${contract}.bak`, "utf8"), original);
+  const backups = readdirSync(join(root, ".backups")).filter((name) => /^project\.yml\.\d{8}_\d{6}(?:\.[0-9a-f-]+)?\.bak$/.test(name));
+  assert.equal(backups.length, 1);
+  assert.equal(readFileSync(join(root, ".backups", backups[0]), "utf8"), original);
   assert.match(readFileSync(contract, "utf8"), /custom_section:\n  keep: 'yes'/);
 });
 

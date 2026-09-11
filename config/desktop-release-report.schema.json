@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/desktop-release-report-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "revision", "generatedAt", "ready", "summary", "checks", "blockers"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "ready": { "type": "boolean" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parity", "protocol", "evidence"],
+      "properties": {
+        "parity": { "enum": ["pass", "blocked"] },
+        "protocol": { "enum": ["pass", "blocked"] },
+        "evidence": { "enum": ["pass", "blocked"] }
+      }
+    },
+    "checks": { "type": "array", "items": { "type": "object" } },
+    "blockers": { "type": "array", "items": { "type": "object" } }
+  }
+}

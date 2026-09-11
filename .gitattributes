@@ -1,0 +1,2 @@
+# This upstream fixture is authenticated by its exact published SHA-256.
+/tests/fixtures/pi-better-openai-0.1.22/usage.ts -text

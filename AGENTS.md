@@ -1,5 +1,13 @@
 # coop-agent — agent context
 
+## Resuming the Desktop effort
+
+Aaron’s latest direction is to deliver a **usable development build for his testing**,
+then stop for feedback. Work is paused until he resumes. Read
+`docs/agent/test-build-handoff-2026-09-08.md` first; it supersedes the older
+open-ended completion plan for the next milestone. Do not start release/updater
+polish or unrelated improvements as prerequisites for that test build.
+
 This repository is **coop**, the Cooptimize terminal agent: a branded layer on top
 of Pi (`@earendil-works/pi-coding-agent`). It is **not** a fork of Pi. coop runs Pi in
 its own isolated agent dir (`~/.coop/agent`, via `PI_CODING_AGENT_DIR`) so only

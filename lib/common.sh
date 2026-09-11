@@ -387,10 +387,13 @@ coop_manifest_status() {
   echo "wrong-version"
 }
 
+# Managed Desktop must retain its bundled PATH without global fallback bins.
+if [ "${COOP_DESKTOP_MANAGED_RUNTIME:-0}" != "1" ]; then
 # Ensure user tool bins (pipx, Homebrew, standard local bins) are on PATH in-process
 [ -d "$HOME/.local/bin" ] && case ":$PATH:" in *":$HOME/.local/bin:"*) : ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
 [ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
 [ -d "/usr/local/bin" ] && case ":$PATH:" in *":/usr/local/bin:"*) : ;; *) PATH="/usr/local/bin:$PATH" ;; esac
+fi
 # Offline fleet tests explicitly re-prepend their stub bin after workstation PATH normalization.
 [ -n "${COOP_TEST_STUB_PATH:-}" ] && PATH="$COOP_TEST_STUB_PATH:$PATH"
 
@@ -525,6 +528,8 @@ _coop_unit_cleanup() {
   COOP_UNIT_PID=''; COOP_UNIT_TMP=''
 }
 
+# Background work begins only when a unit is requested; sourcing the helper
+# library does not probe optional job support (common.ps1 follows the same rule).
 # coop_unit "<label>" <fn> [args…]
 #   Runs `<fn args>` in the background; its stdout becomes the permanent result
 #   message, its exit status decides ✓ (0) vs ! (non-zero). While it runs, the

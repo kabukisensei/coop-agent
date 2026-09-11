@@ -1,0 +1,179 @@
+name: managed desktop smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/managed-desktop-smoke.yml'
+      - 'desktop/**'
+      - 'bin/**'
+      - 'config/**'
+      - 'extensions/**'
+      - 'lib/**'
+      - 'prompts/**'
+      - 'scripts/**'
+      - 'skills/**'
+      - 'themes/**'
+      - 'vibes/**'
+      - 'web/**'
+      - 'VERSION'
+
+permissions:
+  contents: read
+
+jobs:
+  managed-runtime:
+    name: managed runtime (${{ matrix.os }})
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.3'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Read exact development companion commits
+        id: companions
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const pins = JSON.parse(fs.readFileSync('config/development-companions.json', 'utf8'));
+          for (const [name, output] of [['coop-data-doc', 'data'], ['coop-sql-review', 'sql'], ['coop-dax-review', 'dax']]) {
+            if (!/^[0-9a-f]{40}$/.test(pins[name])) throw new Error(`Invalid companion pin: ${name}`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output}=${pins[name]}\n`);
+          }
+          NODE
+      - uses: actions/checkout@v5
+        with:
+          repository: kabukisensei/coop-data-doc
+          ref: ${{ steps.companions.outputs.data }}
+          path: development-sources/coop-data-doc-desktop
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: kabukisensei/coop-sql-review
+          ref: ${{ steps.companions.outputs.sql }}
+          path: development-sources/coop-sql-review-desktop
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: kabukisensei/coop-dax-review
+          ref: ${{ steps.companions.outputs.dax }}
+          path: development-sources/coop-dax-review-desktop
+          persist-credentials: false
+      - name: Build wheels from the committed companion snapshots
+        shell: bash
+        run: python scripts/build-development-wheels.py --repositories '${{ github.workspace }}/development-sources' --output '${{ runner.temp }}/coop-development-wheels'
+      - name: Install pinned Desktop build dependencies
+        run: npm ci --prefix desktop
+      - name: Diagnose Windows PowerShell with an isolated environment and input handles
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node desktop/scripts/diagnose-windows-shell.mjs --output '${{ runner.temp }}/windows-shell-diagnostics.json'
+      - name: Determine native managed-runtime target
+        id: target
+        shell: bash
+        run: echo "value=$(node -p 'process.platform+"-"+process.arch')" >> "$GITHUB_OUTPUT"
+      - name: Build checksum-pinned managed runtime with development companions
+        shell: bash
+        run: node scripts/prepare-managed-runtime.mjs --target '${{ steps.target.outputs.value }}' --work '${{ runner.temp }}/coop-managed-work' --output '${{ runner.temp }}/managed-runtime' --development-wheels '${{ runner.temp }}/coop-development-wheels/development-wheels.json'
+      - name: Verify real runtime, exact capabilities, isolated state, and cleanup
+        shell: bash
+        run: node scripts/verify-managed-runtime.mjs --bundle '${{ runner.temp }}/managed-runtime' --workspace '${{ github.workspace }}' --agent '${{ runner.temp }}/coop-managed-agent' | tee '${{ runner.temp }}/managed-runtime-check.json'
+      - name: Package unsigned native development app
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          COOP_DESKTOP_MANAGED_RUNTIME_DIR: ${{ runner.temp }}/managed-runtime
+        run: npm run package:managed:mac --prefix desktop
+      - name: Package unsigned native development app
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          COOP_DESKTOP_MANAGED_RUNTIME_DIR: ${{ runner.temp }}/managed-runtime
+        run: npm run package:managed:win --prefix desktop
+      - name: Verify packaged fuses, ASAR boundary, and embedded runtime
+        shell: bash
+        run: npm run verify:managed-package --prefix desktop --silent | tee '${{ runner.temp }}/managed-package-check.json'
+      - name: Exercise the runtime from inside the native package
+        shell: bash
+        run: |
+          node --input-type=module - <<'NODE' | tee '${{ runner.temp }}/packaged-runtime-check.json'
+          import { spawnSync } from 'node:child_process';
+          import { join, resolve } from 'node:path';
+          import { packagedPaths } from './desktop/scripts/verify-managed-package.mjs';
+          const resources = packagedPaths(resolve('desktop/dist-managed')).resources;
+          const result = spawnSync(process.execPath, ['scripts/verify-managed-runtime.mjs',
+            '--bundle', join(resources, 'managed-runtime'), '--workspace', process.env.GITHUB_WORKSPACE,
+            '--agent', join(process.env.RUNNER_TEMP, 'coop-packaged-agent')], { stdio: 'inherit' });
+          if (result.error) throw result.error;
+          process.exitCode = result.status ?? 1;
+          NODE
+      - name: Exercise Windows runtime with the native application's isolated environment
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          node --input-type=module - <<'NODE' | tee '${{ runner.temp }}/native-environment-runtime-check.json'
+          import { spawnSync } from 'node:child_process';
+          import { mkdirSync } from 'node:fs';
+          import { join, resolve } from 'node:path';
+          import { packagedPaths } from './desktop/scripts/verify-managed-package.mjs';
+          const resources = packagedPaths(resolve('desktop/dist-managed')).resources;
+          const workspace = join(process.env.RUNNER_TEMP, 'coop-native-environment-workspace');
+          mkdirSync(workspace);
+          const result = spawnSync(process.execPath, ['scripts/verify-managed-runtime.mjs',
+            '--bundle', join(resources, 'managed-runtime'), '--workspace', workspace,
+            '--agent', join(process.env.RUNNER_TEMP, 'coop-native-environment-agent'),
+            '--environment', 'native'], { stdio: 'inherit' });
+          if (result.error) throw result.error;
+          process.exitCode = result.status ?? 1;
+          NODE
+      - name: Launch the native application and verify renderer/chat readiness
+        shell: bash
+        run: node desktop/scripts/verify-native-application.mjs --output '${{ runner.temp }}/native-application-check.json'
+      - name: Build unsigned Windows development installer
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          COOP_DESKTOP_MANAGED_RUNTIME_DIR: ${{ runner.temp }}/managed-runtime
+        run: npm run package:installer:win --prefix desktop
+      - name: Verify Windows install, reinstall repair, and uninstall
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          COOP_DESKTOP_DISPOSABLE_INSTALL_TEST: '1'
+        run: node desktop/scripts/verify-windows-installer.mjs --output '${{ runner.temp }}/windows-installer-check.json'
+      - name: Preserve build and runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: managed-runtime-evidence-${{ matrix.os }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/windows-shell-diagnostics.json
+            ${{ runner.temp }}/managed-runtime-check.json
+            ${{ runner.temp }}/managed-package-check.json
+            ${{ runner.temp }}/packaged-runtime-check.json
+            ${{ runner.temp }}/native-environment-runtime-check.json
+            ${{ runner.temp }}/native-application-check.json
+            ${{ runner.temp }}/windows-installer-check.json
+            ${{ runner.temp }}/managed-runtime/manifest.json
+            ${{ runner.temp }}/managed-runtime/dependency-inventory.json
+            ${{ runner.temp }}/coop-development-wheels/development-wheels.json
+      - name: Record unpacked artifact size
+        shell: bash
+        run: du -sh desktop/dist-managed || true
