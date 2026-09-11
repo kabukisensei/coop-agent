@@ -34,9 +34,20 @@ t("explicit v2 source wins and is not duplicated", () => {
   assert.equal(result.sources[0].id, "patterns.kb");
   assert.ok(result.errors.some((entry) => entry.includes("conflicting-binding")));
 });
+t("explicit IDs conflict with matching legacy-generated IDs", () => {
+  const result = normalizeSources({ sources: [{ id: "one-kb", repository: "other/repo" }], repos: [{ repository: "one/kb" }] });
+  assert.equal(result.sources.length, 1);
+  assert.equal(result.sources[0].id, "one-kb");
+  assert.ok(result.errors.some((entry) => entry.includes("conflicting-binding")));
+});
 t("preserves unknown source fields", () => assert.equal(normalizeSources({ sources: [{ repository: "a/b", future_flag: { x: 1 } }] }).sources[0].future_flag.x, 1));
 t("does not create colliding generated IDs", () => {
   const sources = normalizeSources({ repos: [{ repository: "one/kb" }, { repository: "two/kb" }] }).sources;
+  assert.equal(new Set(sources.map((source) => source.id)).size, 2);
+});
+t("keeps colliding generated v2 slugs as distinct sources", () => {
+  const sources = normalizeSources({ sources: [{ repository: "one/a-b" }, { repository: "one/a/b" }] }).sources;
+  assert.equal(sources.length, 2);
   assert.equal(new Set(sources.map((source) => source.id)).size, 2);
 });
 t("generates order-independent IDs from canonical identity", () => {
@@ -44,6 +55,11 @@ t("generates order-independent IDs from canonical identity", () => {
   const reverse = normalizeSources({ repos: [{ repository: "two/kb" }, { repository: "one/kb" }] }).sources.map(({ repository, id }) => [repository, id]);
   assert.deepEqual(Object.fromEntries(forward), Object.fromEntries(reverse));
   assert.deepEqual(Object.fromEntries(forward), { "one/kb": "one-kb", "two/kb": "two-kb" });
+});
+t("keeps a legacy ID stable when another colliding slug is configured", () => {
+  const alone = normalizeSources({ repos: [{ repository: "one/kb" }] }).sources[0].id;
+  const withOther = normalizeSources({ repos: [{ repository: "one/kb" }, { repository: "one-kb" }] }).sources[0].id;
+  assert.equal(withOther, alone);
 });
 t("uses local paths as bindings even when repositories are present", () => {
   const result = normalizeSources({
