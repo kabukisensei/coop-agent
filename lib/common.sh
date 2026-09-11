@@ -886,6 +886,63 @@ coop_yaml_list() {
   "$py" "$COOP_ROOT/lib/_yaml.py" list "$file" "$key" 2>/dev/null | tr -d '\r' || true
 }
 
+# --- Team knowledge config (~/.coop/config "knowledge" block) -----------------
+# The fleet config JSON (schema_version 1, written by scripts/onboard.py) carries
+# an OPTIONAL "knowledge" block: { "enabled": bool, "repos": [{url, local_path}] }.
+# Absent/disabled/unreadable is a clean no-op everywhere. COOP_DIR overrides the
+# parent of .coop (same convention as onboard.py and the test suite).
+coop_config_file() { printf '%s' "${COOP_DIR:-$HOME}/.coop/config"; }
+
+# True (0) when knowledge.enabled is truthy in the fleet config.
+coop_knowledge_enabled() {
+  local f py
+  f="$(coop_config_file)"
+  [ -f "$f" ] || return 1
+  py="$(coop_python)" || return 1
+  [ "$("$py" - "$f" <<'PY' 2>/dev/null
+import json, sys
+try:
+    c = json.load(open(sys.argv[1], encoding="utf-8-sig"))
+    k = c.get("knowledge") or {}
+    print("1" if isinstance(k, dict) and k.get("enabled") else "")
+except Exception:
+    pass
+PY
+)" = "1" ]
+}
+
+# Print one "url<TAB>local_path" line per configured knowledge repo (only when
+# knowledge.enabled), expanding a leading ~ in local_path. Empty output + exit 0
+# when disabled/absent/malformed.
+coop_knowledge_repos() {
+  coop_knowledge_enabled || return 0
+  local py; py="$(coop_python)" || return 0
+  "$py" - "$(coop_config_file)" <<'PY' 2>/dev/null | tr -d '\r'
+import json, os, sys
+try:
+    c = json.load(open(sys.argv[1], encoding="utf-8-sig"))
+    repos = (c.get("knowledge") or {}).get("repos") or []
+    if not isinstance(repos, list):
+        repos = []
+    home = (os.environ.get("HOME") or os.environ.get("USERPROFILE") or os.path.expanduser("~")).rstrip("/\\")
+    for r in repos:
+        if not isinstance(r, dict):
+            continue
+        url = str(r.get("url", "")).strip()
+        raw = str(r.get("local_path", "")).strip()
+        if raw == "~":
+            path = home
+        elif raw.startswith("~/") or raw.startswith("~\\"):
+            path = home + "/" + raw[2:].replace("\\", "/")
+        else:
+            path = os.path.expanduser(raw)
+        if url and path:
+            print(url + "\t" + path)
+except Exception:
+    pass
+PY
+}
+
 # Extract the YAML frontmatter `name:` from a SKILL.md (first match). Echoes "" if none.
 coop_skill_name() {
   local file="$1"

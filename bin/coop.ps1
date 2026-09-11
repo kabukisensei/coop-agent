@@ -279,6 +279,37 @@ function Build-CoopPiArgs {
         }
       }
     }
+    if (Test-CoopKnowledgeEnabled) {
+      foreach ($repo in (Get-CoopKnowledgeRepos)) {
+        $path = $repo.LocalPath
+        if (-not $path) { continue }
+        $teamSkills = Join-Path $path 'skills'
+        if (-not (Test-Path -LiteralPath $teamSkills -PathType Container)) { continue }
+        # Parse the frontmatter name BEFORE adding any launch argument; an
+        # optional external skill that can't identify itself is skipped, never
+        # added half-validated.
+        foreach ($skillDir in (Get-ChildItem -LiteralPath $teamSkills -Directory)) {
+          $sk = Join-Path $skillDir.FullName 'SKILL.md'
+          if (-not (Test-Path -LiteralPath $sk -PathType Leaf)) { continue }
+          if ($ownNames.Contains($skillDir.Name)) {
+            Coop-Warn "skipping team skill '$($skillDir.Name)' (conflicts with a Cooptimize skill)"
+            continue
+          }
+          $fm = Get-CoopSkillName $sk
+          if (-not $fm) {
+            Coop-Warn "skipping team skill '$($skillDir.Name)' (missing frontmatter name)"
+            continue
+          }
+          if ($ownNames.Contains($fm)) {
+            Coop-Warn "skipping team skill '$($skillDir.Name)' (name '$fm' conflicts with a Cooptimize skill)"
+            continue
+          }
+          $piArgs += @('--skill', $skillDir.FullName)
+          [void]$ownNames.Add($skillDir.Name)
+          [void]$ownNames.Add($fm)
+        }
+      }
+    }
   }
   $prompts = Join-Path $script:CoopRoot 'prompts'
   if (Test-Path -LiteralPath $prompts -PathType Container) { $piArgs += @('--prompt-template', $prompts) }
