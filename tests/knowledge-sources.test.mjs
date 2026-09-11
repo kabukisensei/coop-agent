@@ -269,4 +269,18 @@ t("gated v2 disabled identity emits legacy source as disabled project", () => {
   assert.ok(!errors.some((e) => e.includes("scope-broadening")));
 });
 
+t("malformed enabled flag on any definition binds identity disabled (fail closed)", () => {
+  const { sources } = normalizeSources({ knowledge: {
+    sources: [{ repository: "org/kb", enabled: "no" }],
+    repos: [{ repository: "org/kb", scope: "project" }],
+  } });
+  assert.ok(sources.every((s) => s.enabled === false));
+});
+
+t("health searched requires completed search, capability alone is not searched", () => {
+  assert.equal(getSourceHealth({}, { searchable: true }).searched, false);
+  assert.equal(getSourceHealth({}, { searched: false, searchable: true }).searched, false);
+  assert.equal(getSourceHealth({}, { searched: true }).searched, true);
+});
+
 console.log(`✓ ${n} knowledge source tests passed`);
