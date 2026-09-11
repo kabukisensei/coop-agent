@@ -300,4 +300,12 @@ t("explicit opt-in winners inherit identity-level disabled marks", () => {
   assert.ok(sources.every((s) => s.enabled === false));
 });
 
+t("aliases declared by gated v2 defs propagate restrictions to legacy entries", () => {
+  const { sources } = normalizeSources({ knowledge: {
+    sources: [{ repository: "org/kb", scope: "project", enabled: false }, { repository: "org/kb", local_path: "/cache/kb" }],
+    repos: [{ local_path: "/cache/kb" }],
+  } });
+  assert.ok(!sources.some((s) => s.scope === "team" && s.enabled !== false));
+});
+
 console.log(`✓ ${n} knowledge source tests passed`);
