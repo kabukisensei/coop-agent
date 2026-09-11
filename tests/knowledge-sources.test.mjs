@@ -132,6 +132,31 @@ t("does not broaden project scope", () => {
   assert.equal(result.sources[0].scope, "project");
   assert.ok(!result.sources.some((source) => source.scope === "team"));
 });
+t("finalizes explicit v2 scope without widening project declarations", () => {
+  const result = normalizeSources({ sources: [
+    { id: "project", repository: "a/b", scope: "project" },
+    { id: "disabled-default", repository: "https://github.com/a/b.git", enabled: false },
+  ] });
+  assert.equal(result.sources[0].scope, "project");
+});
+t("keeps explicitly declared v2 team scope", () => {
+  const result = normalizeSources({ sources: [{ repository: "team/kb", scope: "team" }] });
+  assert.equal(result.sources[0].scope, "team");
+});
+t("keeps the legacy-only default scope", () => {
+  const result = normalizeSources({ repos: [{ repository: "legacy/kb" }] });
+  assert.equal(result.sources[0].scope, "team");
+});
+t("keeps explicit v2 project scope with additional legacy identities", () => {
+  const result = normalizeSources({
+    sources: [{ repository: "project/kb", scope: "project" }],
+    repos: [
+      { repository: "https://github.com/project/kb.git" },
+      { repository: "git@github.com:project/kb.git" },
+    ],
+  });
+  assert.equal(result.sources[0].scope, "project");
+});
 t("allows explicit project downgrade", () => assert.equal(normalizeSources({ repos: [{ repository: "a/b" }], sources: [{ repository: "a/b", scope: "project" }] }).sources[0].scope, "project"));
 t("rejects a later explicit team definition that would broaden project scope", () => {
   const result = normalizeSources({ sources: [
