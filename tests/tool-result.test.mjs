@@ -128,6 +128,7 @@ test('arrays with lying iterators cannot spoof zero findings', () => {
 test('zeroFindings:true with nonempty findings is rejected as contradictory', () => {
   const finding = { id: 'f1', severity: 'major', message: 'real problem' };
   const env = normalizeResult({ state: 'success', findings: [finding], errors: [], redactions: [], provenance: { tool: 'review', rev: 'abc' }, zeroFindings: true });
+  assert.equal(env.state, 'incomplete');
   assert.equal(env.zeroFindings, false);
   assert.ok(env.errors.some((e) => e.includes('contradicts nonempty findings')));
   const rawEnvelope = { state: 'success', findings: [finding], errors: [], redactions: [], provenance: { tool: 'review', rev: 'abc' }, scope: 'team', zeroFindings: true };
