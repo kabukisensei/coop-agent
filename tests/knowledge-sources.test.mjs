@@ -308,4 +308,13 @@ t("aliases declared by gated v2 defs propagate restrictions to legacy entries", 
   assert.ok(!sources.some((s) => s.scope === "team" && s.enabled !== false));
 });
 
+t("aliased legacy entries dedupe to one source via union classes", () => {
+  const { sources, errors } = normalizeSources({ knowledge: {
+    sources: [{ repository: "org/kb", local_path: "/cache/kb" }],
+    repos: [{ repository: "org/kb" }, { local_path: "/cache/kb" }],
+  } });
+  assert.equal(sources.length, 1);
+  assert.ok(errors.some((e) => e.includes("conflicting-binding")));
+});
+
 console.log(`✓ ${n} knowledge source tests passed`);
