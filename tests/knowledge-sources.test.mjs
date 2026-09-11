@@ -250,4 +250,23 @@ t("boolean disabled controls still work end to end", () => {
   assert.equal(sources[0].configEnabled, false);
 });
 
+t("gated v2 project+disabled restrictions bind legacy reappearance", () => {
+  const { sources } = normalizeSources({ knowledge: {
+    sources: [{ repository: "org/kb", scope: "project", enabled: false }],
+    repos: [{ repository: "org/kb" }],
+  } });
+  assert.ok(!sources.some((s) => s.repository === "org/kb" && s.scope === "team" && s.enabled !== false));
+});
+
+t("gated v2 disabled identity emits legacy source as disabled project", () => {
+  const { sources, errors } = normalizeSources({ knowledge: {
+    sources: [{ repository: "org/kb", scope: "project", enabled: false }],
+    repos: [{ repository: "org/kb", scope: "project" }],
+  } });
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].scope, "project");
+  assert.equal(sources[0].enabled, false);
+  assert.ok(!errors.some((e) => e.includes("scope-broadening")));
+});
+
 console.log(`✓ ${n} knowledge source tests passed`);
