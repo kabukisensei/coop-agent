@@ -283,4 +283,21 @@ t("health searched requires completed search, capability alone is not searched",
   assert.equal(getSourceHealth({}, { searched: true }).searched, true);
 });
 
+t("remote repository and local path are distinct identity namespaces for gated restrictions", () => {
+  const { sources } = normalizeSources({ knowledge: {
+    sources: [{ repository: "org/kb", scope: "project", enabled: false }],
+    repos: [{ local_path: "/kb" }],
+  } });
+  assert.equal(sources.length, 1);
+  assert.notEqual(sources[0].enabled, false);
+});
+
+t("explicit opt-in winners inherit identity-level disabled marks", () => {
+  const { sources } = normalizeV2({ knowledge: {
+    sources: [{ repository: "org/kb", scope: "project" }, { repository: "org/kb", scope: "project", enabled: false, id: "kb2" }],
+    repos: [],
+  } });
+  assert.ok(sources.every((s) => s.enabled === false));
+});
+
 console.log(`✓ ${n} knowledge source tests passed`);
