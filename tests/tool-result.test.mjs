@@ -41,7 +41,7 @@ test('malformed errors invalidate an otherwise successful result', () => {
 });
 
 test('success without provenance is invalid', () => {
-  const result = validateResult(normalizeResult({ state: 'success', findings: [{ id: 'a', severity: 'low', message: 'x' }] }));
+  const result = validateResult(normalizeResult({ state: 'success', findings: [{ id: 'a', severity: 'minor', message: 'x' }] }));
   assert.equal(result.ok, false);
 });
 
@@ -51,12 +51,65 @@ test('zero-findings success requires marker and provenance', () => {
   assert.equal(validateResult(normalizeResult({ ...base, zeroFindings: true })).ok, true);
 });
 
+test('zero-findings success rejects undefined provenance', () => {
+  const env = {
+    state: 'success', findings: [], errors: [], provenance: undefined,
+    redactions: [], scope: 'team', zeroFindings: true,
+  };
+  assert.equal(validateResult(env).ok, false);
+});
+
 test('cancellation preserves partial findings and errors', () => {
-  const original = normalizeResult({ state: 'incomplete', findings: [{ id: '1', severity: 'high', message: 'found' }], errors: ['ToolResult: partial'] });
+  const original = normalizeResult({ state: 'incomplete', findings: [{ id: '1', severity: 'major', message: 'found' }], errors: ['ToolResult: partial'] });
   const cancelled = markCancelled(original);
   assert.equal(cancelled.state, 'cancelled');
   assert.deepEqual(cancelled.findings, original.findings);
   assert.deepEqual(cancelled.errors, original.errors);
+});
+
+test('exception fallback preserves legal project scope', () => {
+  const raw = { state: 'success', scope: 'project' };
+  Object.defineProperty(raw, 'findings', { get() { throw new Error('bad findings'); } });
+  const env = normalizeResult(raw);
+  assert.equal(env.state, 'incomplete');
+  assert.equal(env.scope, 'project');
+});
+
+test('malformed optional finding fields are dropped with diagnostics', () => {
+  const env = normalizeResult({
+    state: 'success',
+    findings: [{ id: 'a', severity: 'major', message: 'x', line: 0 }],
+    provenance: { tool: 'review', rev: 'abc' },
+  });
+  assert.equal(env.state, 'incomplete');
+  assert.deepEqual(env.findings, []);
+  assert.ok(env.errors.includes('ToolResult: finding 0.line is invalid'));
+  assert.equal(validateResult(env).ok, true);
+});
+
+test('exception formatting never reads properties from the thrown value', () => {
+  const hostile = {};
+  Object.defineProperty(hostile, 'message', { get() { throw new Error('second failure'); } });
+  const raw = {};
+  Object.defineProperty(raw, 'state', { get() { throw hostile; } });
+  assert.deepEqual(normalizeResult(raw), {
+    state: 'incomplete',
+    findings: [],
+    errors: ['ToolResult: input could not be normalized'],
+    provenance: null,
+    redactions: [],
+    scope: 'team',
+    zeroFindings: false,
+  });
+});
+
+test('invalid scope diagnostics are accumulated', () => {
+  const env = normalizeResult({
+    state: 'success', scope: 'invalid', findings: [], zeroFindings: true,
+    provenance: { tool: 'review', rev: 'abc' },
+  });
+  assert.equal(env.state, 'incomplete');
+  assert.ok(env.errors.includes('ToolResult: scope is invalid'));
 });
 
 test('all states round-trip through normalization and validation', () => {
