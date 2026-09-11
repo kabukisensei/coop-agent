@@ -33,7 +33,7 @@ try {
   & git -C $work commit -qm first
   & git -C $work push -q -u origin main 2>$null
 
-  # --- compile the fake git as a real PE binary ------------------------------
+  # --- prepare the fake git --------------------------------------------------
   $fakeBin = Join-Path $temp 'fakebin'
   New-Item -ItemType Directory -Force -Path $fakeBin | Out-Null
   $fakeLog = Join-Path $temp 'fake-git.log'
@@ -46,6 +46,20 @@ try {
   if (-not $pyCmd) { Ko 'no python interpreter found for knowledge-git.py'; exit 1 }
   $pyExe = $pyCmd.Source
 
+  $windowsHost = $false
+  $isWindowsVar = Get-Variable IsWindows -ErrorAction SilentlyContinue
+  if ($isWindowsVar) {
+    $windowsHost = [bool]$IsWindows
+  } else {
+    $uname = (& uname -s 2>$null)
+    if ($uname) {
+      $windowsHost = ($uname -match '^(Windows|MINGW|MSYS|CYGWIN)')
+    } else {
+      $windowsHost = ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)
+    }
+  }
+
+  $fakeGit = if ($windowsHost) { Join-Path $fakeBin 'git.exe' } else { Join-Path $fakeBin 'git' }
   $cSource = @'
 /* Test fixture: a fake `git` the native subprocess launcher actually
  * executes. Mirrors the Git Bash fixture contract: log argv (FAKELOG),
@@ -119,25 +133,59 @@ int main(int argc, char **argv) {
     return _spawnv(_P_WAIT, realgit, (const char * const *)argv);
 }
 '@
-  $cFile = Join-Path $temp 'fake-git.c'
-  Set-Content -LiteralPath $cFile -Value $cSource -Encoding ascii
-  $cc = $null
-  foreach ($cand in @('gcc', 'cc', 'clang')) {
-    $found = Get-Command $cand -ErrorAction SilentlyContinue
-    if ($found) { $cc = $found.Source; break }
-  }
-  if (-not $cc) {
-    foreach ($cand in @('C:\mingw64\bin\gcc.exe', 'C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin\gcc.exe')) {
-      if (Test-Path -LiteralPath $cand) { $cc = $cand; break }
+  if ($windowsHost) {
+    $cFile = Join-Path $temp 'fake-git.c'
+    Set-Content -LiteralPath $cFile -Value $cSource -Encoding ascii
+    $cc = $null
+    foreach ($cand in @('gcc', 'cc', 'clang')) {
+      $found = Get-Command $cand -ErrorAction SilentlyContinue
+      if ($found) { $cc = $found.Source; break }
+    }
+    if (-not $cc) {
+      foreach ($cand in @('C:\mingw64\bin\gcc.exe', 'C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin\gcc.exe')) {
+        if (Test-Path -LiteralPath $cand) { $cc = $cand; break }
+      }
+    }
+    if (-not $cc) { Ko 'no C compiler found to build the Windows git fixture (fixture must execute)'; exit 1 }
+    $compileOut = & $cc -O1 -o $fakeGit $cFile 2>&1 | Out-String
+    if (-not (Test-Path -LiteralPath $fakeGit)) {
+      Ko "compiling the Windows git fixture failed: $compileOut"; exit 1
+    }
+  } else {
+    $fakeScript = @'
+#!/bin/sh
+logargv() {
+  [ -n "$FAKELOG" ] || return
+  printf '%s\n' "$*" >> "$FAKELOG"
+}
+spawn_sleeper() {
+  sleep 30 &
+  kid=$!
+  printf '%s' "$kid" > "$SLEEPERFILE"
+}
+logargv "$@"
+args="$*"
+case "$args" in
+  *probehang*config\ --get*|*hanghere-orphan*status\ --porcelain*)
+    spawn_sleeper
+    exit 0
+    ;;
+  *clone*hanghere*|*hanghere*clone*)
+    spawn_sleeper
+    sleep 30
+    exit 0
+    ;;
+esac
+exec "$REALGIT" "$@"
+'@
+    Set-Content -LiteralPath $fakeGit -Value $fakeScript -Encoding ascii
+    & chmod +x $fakeGit
+    if (-not (Test-Path -LiteralPath $fakeGit)) {
+      Ko 'creating the POSIX git fixture failed'; exit 1
     }
   }
-  if (-not $cc) { Ko 'no C compiler found to build the Windows git fixture (fixture must execute)'; exit 1 }
-  $compileOut = & $cc -O1 -o (Join-Path $fakeBin 'git.exe') $cFile 2>&1 | Out-String
-  if (-not (Test-Path -LiteralPath (Join-Path $fakeBin 'git.exe'))) {
-    Ko "compiling the Windows git fixture failed: $compileOut"; exit 1
-  }
 
-  # Fixture environment, consumed by the native exe at runtime.
+  # Fixture environment, consumed by the fake git at runtime.
   $priorPath = $env:PATH
   $priorTimeout = $env:COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS
   $priorCoopDir = $env:COOP_DIR
@@ -147,16 +195,16 @@ int main(int argc, char **argv) {
   $env:SLEEPERFILE = $sleeperFile
   $env:PATH = "$fakeBin$([System.IO.Path]::PathSeparator)$priorPath"
 
-  # Standalone smoke gate: the executable must RUN and DELEGATE before any
+  # Standalone smoke gate: the fixture must RUN and DELEGATE before any
   # timeout assertion depends on it (an incompatible binary surfaces here as
   # a loud failure instead of a silent "fixture never ran" downstream).
-  & (Join-Path $fakeBin 'git.exe') --version *> $null
+  & $fakeGit --version *> $null
   if (Test-Path -LiteralPath $fakeLog) {
     $smokeLog = Get-Content -LiteralPath $fakeLog -Raw
     if ($smokeLog -like '*--version*') { Ok 'win fixture smoke: executable runs, argv logged, real git delegated' }
-    else { Ko 'win fixture smoke: invocation log written but argv missing' }
+    else { Ko 'fixture smoke: invocation log written but argv missing' }
   } else {
-    Ko 'compiled git fixture did not execute standalone (executable-compatibility error)'; exit 1
+    Ko 'git fixture did not execute standalone (executable-compatibility error)'; exit 1
   }
   Remove-Item -LiteralPath $fakeLog -ErrorAction SilentlyContinue
 
@@ -173,12 +221,22 @@ int main(int argc, char **argv) {
   $env:COOP_DIR = $cfg
   try {
     # Independent outer deadline so a regression cannot hang CI.
+    $jobOutput = Join-Path $temp 'sync-knowledge-job.log'
     $job = Start-Job -ScriptBlock {
-      param($scriptPath)
-      & $scriptPath 2>&1 | Out-String
-    } -ArgumentList (Join-Path $root 'scripts\sync-knowledge.ps1')
+      param($scriptPath, $outputPath)
+      $oldError = [Console]::Error
+      $writer = New-Object System.IO.StreamWriter($outputPath)
+      [Console]::SetError($writer)
+      try { & $scriptPath }
+      finally {
+        $writer.Flush()
+        $writer.Dispose()
+        [Console]::SetError($oldError)
+      }
+    } -ArgumentList (Join-Path $root 'scripts\sync-knowledge.ps1'), $jobOutput
     if (Wait-Job $job -Timeout 60) {
-      $out = (Receive-Job $job) -join "`n"
+      Receive-Job $job | Out-Null
+      $out = if (Test-Path -LiteralPath $jobOutput) { Get-Content -LiteralPath $jobOutput -Raw } else { '' }
       Ok 'sync completed inside the outer deadline'
     } else {
       Stop-Job $job -PassThru | Remove-Job -Force
