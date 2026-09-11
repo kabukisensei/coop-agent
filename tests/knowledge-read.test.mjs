@@ -51,6 +51,16 @@ await t("reports provider failures as failures with no documents", async () => {
   assert.match(result.errors[0], /read-files-failed/);
 });
 
+await t("reports incomplete reads as failures with no documents", async () => {
+  const result = await readSourceDocuments(source, {
+    async listFiles() { return ["a.md", "b.md"]; },
+    async readFiles() { return [{ path: "a.md", text: "A" }]; },
+  });
+  assert.deepEqual(result.documents, []);
+  assert.match(result.errors[0], /incomplete-read-files/);
+  assert.match(result.errors[0], /b\.md/);
+});
+
 await t("checks the permission gate before provider calls", async () => {
   let calls = 0;
   const result = await readSourceDocuments({ ...source, agent_read: false }, {
@@ -64,7 +74,7 @@ await t("checks the permission gate before provider calls", async () => {
 
 await t("skips malformed files with per-file diagnostics", async () => {
   const result = await readSourceDocuments(source, {
-    async listFiles() { return ["good.md", "bad.md", "missing.md"]; },
+    async listFiles() { return ["good.md"]; },
     async readFiles() { return [
       { path: "good.md", text: "# Good" },
       { path: "bad.md", text: 42 },
@@ -75,6 +85,14 @@ await t("skips malformed files with per-file diagnostics", async () => {
   assert.equal(result.errors.length, 2);
   assert.ok(result.errors.some((error) => error.includes("bad.md")));
   assert.ok(result.errors.some((error) => error.includes("invalid-file")));
+});
+
+await t("finds the first real H1 without consuming newlines or changing literal hashes", async () => {
+  const { documents } = await readSourceDocuments(source, {
+    async listFiles() { return ["heading.md"]; },
+    async readFiles() { return [{ path: "heading.md", text: "```md\n# Fenced\n```\n# Real#\nNext" }]; },
+  });
+  assert.equal(documents[0].title, "Real#");
 });
 
 await t("returns a truthful empty result for an empty source", async () => {
