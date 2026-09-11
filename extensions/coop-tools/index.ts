@@ -1734,6 +1734,59 @@ async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
   );
 }
 
+/**
+ * Return the team-knowledge note string if at least one configured knowledge repo clone exists,
+ * or null otherwise.
+ */
+export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | null {
+  const base = coopDir || process.env.COOP_DIR || homedir();
+  const home = homeDir || process.env.HOME || homedir();
+  const cfgPath = join(base, ".coop", "config");
+  if (!existsSync(cfgPath)) return null;
+  try {
+    const raw = readFileSync(cfgPath, "utf8");
+    const cfg = JSON.parse(raw);
+    if (!cfg?.knowledge?.enabled || !Array.isArray(cfg?.knowledge?.repos)) return null;
+    const paths: string[] = [];
+    for (const r of cfg.knowledge.repos) {
+      if (!r || typeof r.local_path !== "string" || !r.local_path.trim()) continue;
+      let p = r.local_path.trim();
+      if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) {
+        p = join(home, p.slice(1).replace(/^[/\\]/, ""));
+      }
+      if (existsSync(p)) {
+        paths.push(p);
+      }
+    }
+    if (paths.length === 0) return null;
+    return `Team knowledge available at ${paths.join(", ")}; see the team-knowledge skill`;
+  } catch {
+    return null;
+  }
+}
+
+export interface ShareLearningSessionSignals {
+  knowledgeAvailable: boolean;
+  /** Distinct failed tool results observed this session (isError tool_results). */
+  toolFailures?: number;
+  alreadySuggested?: boolean;
+}
+
+/**
+ * Heuristic for suggesting /share-learning at turn settle. The ONLY runtime
+ * signal wired today is repeated tool failures (>= 2 distinct failed
+ * tool_result events with knowledge configured and not already suggested this
+ * session). Automatic user-correction/steer/retry-specific detection is
+ * DEFERRED — manual /share-learning still covers corrections and discoveries.
+ * Do not read this predicate as implementing correction detection.
+ */
+export function shouldSuggestShareLearning(signals: ShareLearningSessionSignals): boolean {
+  if (!signals.knowledgeAvailable) return false;
+  if (signals.alreadySuggested) return false;
+  const failures = signals.toolFailures ?? 0;
+  return failures >= 2;
+}
+
 /** The task menu — wired to tools/skills coop already ships. Each choice sends a
  *  friendly, first-person request AS the user (the menu just pre-writes the prompt
  *  a newcomer would otherwise have to compose); the agent then asks for specifics. */
@@ -2046,6 +2099,14 @@ export default function coopTools(pi: ExtensionAPI) {
   // Normal sessions start at the prompt. The only automatic handoff is the model
   // provider login required when a fresh install has no credentials yet.
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
+    // Learning-nudge lifecycle is per SESSION: reset the failure tally, the
+    // dedupe set, and the once-only flags so a fresh session can be nudged
+    // again. Turns within one session accumulate (two failures across two
+    // turns can trigger the nudge).
+    sessionToolFailures = 0;
+    seenToolErrorIds.clear();
+    learningNudgeAnnounced = false;
+    announcedTeamKnowledge = false;
     primeModelLogin(ctx);
   });
 
@@ -2056,6 +2117,12 @@ export default function coopTools(pi: ExtensionAPI) {
   // also gets a system-prompt postcondition. Silent when neither applies; wrapped so
   // contract/logging guidance can never break a turn.
   const announcedCwds = new Set<string>();
+  let announcedTeamKnowledge = false;
+  let sessionToolFailures = 0;
+  // Distinct failed tool_result events (dedupe by toolCallId so a replayed
+  // result is never counted twice).
+  const seenToolErrorIds = new Set<string>();
+  let learningNudgeAnnounced = false;
   let dailyRun: {
     requirement: DailyLogRequirement;
     baselineMtime: number;
@@ -2107,6 +2174,22 @@ export default function coopTools(pi: ExtensionAPI) {
         }
       }
 
+      if (!announcedTeamKnowledge) {
+        const tk = teamKnowledgeNote();
+        if (tk) {
+          announcedTeamKnowledge = true;
+          if (message) {
+            message.content = `${message.content}\n\n${tk}`;
+          } else {
+            message = {
+              customType: "coop-team-knowledge",
+              display: false,
+              content: tk,
+            };
+          }
+        }
+      }
+
       if (!message && !requirement) return;
       return {
         ...(message ? { message } : {}),
@@ -2126,6 +2209,17 @@ export default function coopTools(pi: ExtensionAPI) {
   });
 
   pi.on("tool_result", async (event: any) => {
+    if (event.isError) {
+      // Count DISTINCT failed calls: a replayed delivery of the same
+      // toolCallId must never increment the tally twice.
+      const id = event.toolCallId;
+      if (id === undefined || id === null) {
+        sessionToolFailures++;
+      } else if (!seenToolErrorIds.has(id)) {
+        seenToolErrorIds.add(id);
+        sessionToolFailures++;
+      }
+    }
     if (!dailyRun) return;
     const effect = pendingDailyEffects.get(event.toolCallId);
     pendingDailyEffects.delete(event.toolCallId);
@@ -2136,6 +2230,21 @@ export default function coopTools(pi: ExtensionAPI) {
 
   pi.on("agent_settled", async (_event, ctx: ExtensionContext) => {
     try {
+      if (!learningNudgeAnnounced) {
+        const kbNote = teamKnowledgeNote();
+        if (
+          kbNote &&
+          shouldSuggestShareLearning({
+            knowledgeAvailable: true,
+            toolFailures: sessionToolFailures,
+            alreadySuggested: false,
+          })
+        ) {
+          learningNudgeAnnounced = true;
+          notify(ctx, "This session may be worth a team learning — run /share-learning", "info");
+        }
+      }
+
       if (!dailyRun) return;
       const run = dailyRun;
       dailyRun = null;
