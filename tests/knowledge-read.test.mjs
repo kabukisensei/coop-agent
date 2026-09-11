@@ -87,12 +87,33 @@ await t("skips malformed files with per-file diagnostics", async () => {
   assert.ok(result.errors.some((error) => error.includes("invalid-file")));
 });
 
+await t("keeps valid files when a malformed record is missing its path", async () => {
+  const result = await readSourceDocuments(source, {
+    async listFiles() { return ["good.md"]; },
+    async readFiles() { return [
+      { path: "good.md", text: "# Good" },
+      { text: "missing path" },
+    ]; },
+  });
+  assert.deepEqual(result.documents.map((document) => document.path), ["good.md"]);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /invalid-file/);
+});
+
 await t("finds the first real H1 without consuming newlines or changing literal hashes", async () => {
   const { documents } = await readSourceDocuments(source, {
     async listFiles() { return ["heading.md"]; },
     async readFiles() { return [{ path: "heading.md", text: "```md\n# Fenced\n```\n# Real#\nNext" }]; },
   });
   assert.equal(documents[0].title, "Real#");
+});
+
+await t("finds H1 headings in CRLF markdown and respects fence markers", async () => {
+  const { documents } = await readSourceDocuments(source, {
+    async listFiles() { return ["heading.md"]; },
+    async readFiles() { return [{ path: "heading.md", text: "```md\r\n~~~\r\n# Fenced\r\n```\r\n# Real\r\nNext" }]; },
+  });
+  assert.equal(documents[0].title, "Real");
 });
 
 await t("returns a truthful empty result for an empty source", async () => {
