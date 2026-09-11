@@ -125,6 +125,34 @@ test('arrays with lying iterators cannot spoof zero findings', () => {
   assert.equal(env.findings[0].id, 'f1');
 });
 
+test('materialize snapshots length before copying (lying length cannot extend or shrink the copy)', () => {
+  let reads = 0;
+  const proxy = new Proxy([{ id: 'f1', severity: 'major', message: 'x' }], {
+    get(t, p) {
+      if (p === 'length') { reads += 1; return 1; }
+      return t[p];
+    },
+  });
+  const env = normalizeResult({ state: 'success', findings: proxy, errors: [], redactions: [], provenance: { tool: 'review', rev: 'abc' } });
+  assert.equal(reads, 1, 'length must be read exactly once (snapshot)');
+  assert.equal(env.findings.length, 1);
+  assert.equal(env.state, 'success');
+  const growing = new Proxy([], {
+    get(t, p) {
+      if (p === 'length') return t.length === 0 ? 2 : 0;
+      return t[p];
+    },
+  });
+  const env2 = normalizeResult({ state: 'success', findings: [{ id: 'a', severity: 'minor', message: 'm' }].concat(growing), errors: [], redactions: [], provenance: { tool: 'review', rev: 'abc' } });
+  assert.ok(env2.state === 'incomplete' || env2.findings.length === 1, 'growing length must not smuggle extra elements');
+});
+
+test('non-array length is rejected fail-closed', () => {
+  const bad = {};
+  Object.defineProperty(bad, 'length', { get: () => -1 });
+  const env = normalizeResult({ state: 'success', findings: bad, errors: [], redactions: [], provenance: { tool: 'review', rev: 'abc' } });
+  assert.equal(env.state, 'incomplete');
+});
 test('zeroFindings:true with nonempty findings is rejected as contradictory', () => {
   const finding = { id: 'f1', severity: 'major', message: 'real problem' };
   const env = normalizeResult({ state: 'success', findings: [finding], errors: [], redactions: [], provenance: { tool: 'review', rev: 'abc' }, zeroFindings: true });
