@@ -1,0 +1,20 @@
+{
+  "version": "1.0.7.dev0",
+  "integration_state_schema": 1,
+  "installed_integrations": [
+    "hermes",
+    "codex"
+  ],
+  "integration_settings": {
+    "hermes": {
+      "script": "sh",
+      "invoke_separator": "-"
+    },
+    "codex": {
+      "script": "sh",
+      "invoke_separator": "-"
+    }
+  },
+  "integration": "hermes",
+  "default_integration": "hermes"
+}
