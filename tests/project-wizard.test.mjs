@@ -59,12 +59,13 @@ process.on("uncaughtException", (e) => {
 });
 
 const foreignMarkerAbove = (dir) => {
-  const stop = resolve(tmpdir());
+  // Mirror production's unbounded upward walk (findProjectYml/findGitRoot walk
+  // to the filesystem root), so the skip fires whenever production discovery
+  // could actually misresolve — scaffolding may sit ABOVE os.tmpdir().
   let cur = resolve(dir, "..");
   for (;;) {
     if (existsSync(join(cur, ".git"))) return join(cur, ".git");
     if (existsSync(join(cur, ".coop", "project.yml"))) return join(cur, ".coop", "project.yml");
-    if (cur === stop) return null;
     const parent = resolve(cur, "..");
     if (parent === cur) return null;
     cur = parent;

@@ -258,6 +258,17 @@ case "$UNAME_S" in
     ;;
 esac
 
+# r8-test-hygiene: sandboxed environments may deny setpriv (uid changes return
+# EPERM even though the binary exists). Probe once with the exact drop command;
+# if denied, skip the chmod-000 assertions explicitly rather than failing them
+# in an environment where they cannot run.
+if [ "$LOW_PRIV" = "setpriv" ]; then
+  if ! setpriv --reuid=65534 --regid=65534 --clear-groups /bin/true 2>/dev/null; then
+    echo "  ↷ SKIP chmod-000 permission assertions — setpriv is installed but denied in this environment (probe failed)"
+    LOW_PRIV=skip
+  fi
+fi
+
 run_helper_low() { # run the helper unprivileged so chmod 000 is real
   if [ "$LOW_PRIV" = "setpriv" ]; then
     COOP_DIR="$CFG" HOME="$HOME_FAKE" setpriv --reuid=65534 --regid=65534 --clear-groups \
