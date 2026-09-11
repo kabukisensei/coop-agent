@@ -297,7 +297,7 @@ function Build-CoopPiArgs {
           }
           $fm = Get-CoopSkillName $sk
           if (-not $fm) {
-            Coop-Warn "skipping team skill '$($skillDir.Name)' (missing frontmatter name)"
+            Write-Error 'missing frontmatter name'
             continue
           }
           if ($ownNames.Contains($fm)) {
