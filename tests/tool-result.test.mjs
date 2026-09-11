@@ -25,6 +25,19 @@ test('malformed input is incomplete and never a zero-findings success', () => {
   assert.deepEqual(result.findings, []);
   assert.match(result.errors[0], /^ToolResult:/);
   assert.notEqual(result.state === 'success' && result.findings.length === 0, true);
+  assert.equal(normalizeResult({ state: 'unknown', scope: 'project' }).scope, 'project');
+});
+
+test('malformed errors invalidate an otherwise successful result', () => {
+  const result = normalizeResult({
+    state: 'success',
+    findings: [],
+    errors: 'not-an-array',
+    provenance: { tool: 'review', sha: 'abc' },
+    zeroFindings: true,
+  });
+  assert.equal(result.state, 'incomplete');
+  assert.equal(validateResult(result).ok, true);
 });
 
 test('success without provenance is invalid', () => {
