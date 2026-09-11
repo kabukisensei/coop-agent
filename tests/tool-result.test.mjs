@@ -112,7 +112,17 @@ test('sparse errors are materialized and can never yield a clean success', () =>
   });
   assert.equal(env.state, 'incomplete');
   assert.ok(env.errors.some((e) => e.includes('errors must be an array of strings')));
-  assert.equal(validateResult({ ...env, state: 'success', zeroFindings: true }).ok, false);
+  const rawEnvelope = { state: 'success', findings: [], errors: sparse, redactions: [], provenance: { tool: 'review', rev: 'abc' }, scope: 'team', zeroFindings: true };
+  assert.equal(validateResult(rawEnvelope).ok, false);
+});
+
+test('arrays with lying iterators cannot spoof zero findings', () => {
+  const sneaky = [];
+  sneaky[0] = { id: 'f1', severity: 'major', message: 'real problem' };
+  Object.defineProperty(sneaky, Symbol.iterator, { value: function* () { /* yields nothing */ } });
+  const env = normalizeResult({ state: 'success', findings: sneaky, errors: [], redactions: [], provenance: { tool: 'review', rev: 'abc' } });
+  assert.equal(env.findings.length, 1);
+  assert.equal(env.findings[0].id, 'f1');
 });
 
 test('findings require a non-empty id', () => {
