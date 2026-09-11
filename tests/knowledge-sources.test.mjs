@@ -83,8 +83,7 @@ t("removes every collided record without stale id mappings", () => {
     { id: "shared", repository: "two/b" },
     { id: "narrow", repository: "git@github.com:two/b.git", scope: "project" },
   ] });
-  assert.equal(result.sources.length, 1);
-  assert.equal(result.sources[0].id, "narrow");
+  assert.equal(result.sources.length, 0);
   assert.equal(new Set(result.sources.map((source) => source.id)).size, result.sources.length);
 });
 t("excludes every identity that claims a reused explicit ID", () => {
@@ -94,8 +93,20 @@ t("excludes every identity that claims a reused explicit ID", () => {
     { id: "narrow", repository: "two/b", scope: "project" },
     { id: "shared", repository: "three/c" },
   ] });
-  assert.deepEqual(result.sources.map((source) => source.id), ["narrow"]);
+  assert.deepEqual(result.sources.map((source) => source.id), []);
   assert.ok(result.errors.some((entry) => entry.includes("explicit id is claimed by multiple source identities")));
+});
+t("keeps conflict-excluded project identities blocked from broader re-entry", () => {
+  const result = normalizeSources({
+    sources: [
+      { id: "shared", repository: "a/b", scope: "project" },
+      { id: "shared", repository: "c/d", scope: "team" },
+      { id: "broader", repository: "https://github.com/a/b.git", scope: "team" },
+    ],
+    repos: [{ repository: "a/b" }],
+  });
+  assert.equal(result.sources.some((source) => source.repository?.includes("a/b")), false);
+  assert.ok(result.errors.filter((entry) => entry.includes("source identity is blocked")).length >= 2);
 });
 t("does not broaden project scope", () => {
   const result = normalizeSources({ sources: [{ repository: "a/b", scope: "project" }], repos: [{ repository: "a/b" }] });
