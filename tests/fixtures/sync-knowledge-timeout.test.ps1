@@ -51,12 +51,7 @@ try {
   if ($isWindowsVar) {
     $windowsHost = [bool]$IsWindows
   } else {
-    $uname = (& uname -s 2>$null)
-    if ($uname) {
-      $windowsHost = ($uname -match '^(Windows|MINGW|MSYS|CYGWIN)')
-    } else {
-      $windowsHost = ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)
-    }
+    $windowsHost = ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)
   }
 
   $fakeGit = if ($windowsHost) { Join-Path $fakeBin 'git.exe' } else { Join-Path $fakeBin 'git' }
