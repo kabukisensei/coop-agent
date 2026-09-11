@@ -16,6 +16,12 @@ t("normalizes legacy repositories with safe defaults", () => {
   assert.equal(sources[0].publication, "disabled");
   assert.deepEqual(sources[0].capabilities, ["browse", "agent-read"]);
 });
+t("globally disabled legacy config disables every normalized source", () => {
+  const { sources } = normalizeSources({ knowledge: { enabled: false, repos: [{ repository: "org/kb", enabled: true }] } });
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].configEnabled, false);
+  assert.equal(getSourceHealth(sources[0], { status: "ready", searched: true }).status, "disabled");
+});
 t("accepts a knowledge block directly", () => assert.equal(normalizeSources({ repos: [{ url: "https://x/y.git" }] }).sources[0].repository, "https://x/y.git"));
 t("canonicalizes GitHub shorthand and URL identities", () => {
   const result = normalizeSources({
@@ -33,6 +39,19 @@ t("explicit v2 source wins and is not duplicated", () => {
   assert.equal(result.sources.length, 1);
   assert.equal(result.sources[0].id, "patterns.kb");
   assert.ok(result.errors.some((entry) => entry.includes("conflicting-binding")));
+});
+t("disabled explicit v2 source outranks narrower legacy source", () => {
+  const result = normalizeSources({
+    sources: [
+      { id: "patterns.kb", repository: "org/kb", scope: "team", enabled: false },
+      { id: "patterns.kb-enabled", repository: "git@github.com:org/kb.git", scope: "project", enabled: true },
+    ],
+    repos: [{ repository: "https://github.com/org/kb.git", scope: "project", enabled: true }],
+  });
+  assert.equal(result.sources.length, 1);
+  assert.equal(result.sources[0].id, "patterns.kb");
+  assert.equal(result.sources[0].enabled, false);
+  assert.equal(getSourceHealth(result.sources[0], { searched: true }).status, "disabled");
 });
 t("explicit IDs conflict with matching legacy-generated IDs", () => {
   const result = normalizeSources({ sources: [{ id: "one-kb--cfceedae", repository: "other/repo" }], repos: [{ repository: "one/kb" }] });
