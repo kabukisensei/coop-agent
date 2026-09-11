@@ -317,4 +317,13 @@ t("aliased legacy entries dedupe to one source via union classes", () => {
   assert.ok(errors.some((e) => e.includes("conflicting-binding")));
 });
 
+t("gated v2 explicit ids are reserved against legacy reuse (fail closed)", () => {
+  const { sources, errors } = normalizeSources({ knowledge: {
+    sources: [{ id: "priv", repository: "org/private", scope: "project", enabled: false }],
+    repos: [{ id: "priv", repository: "org/other" }],
+  } });
+  assert.equal(sources.length, 0);
+  assert.ok(errors.some((e) => e.includes("id-reserved-by-disabled-v2")));
+});
+
 console.log(`✓ ${n} knowledge source tests passed`);
