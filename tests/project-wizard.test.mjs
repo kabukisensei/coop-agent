@@ -1,8 +1,8 @@
 // Tests for the in-Coop /setup-project wizard's contract rendering and safe merge.
 import { strict as assert } from "node:assert";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
@@ -18,10 +18,64 @@ const {
 } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 
 let n = 0;
+const skips = [];
 const t = async (name, fn) => {
-  await fn();
+  try {
+    await fn();
+  } catch (e) {
+    if (e && e.__skip === true) {
+      skips.push(`${name} — ${e.detail}`);
+      console.log(`  ↷ SKIP ${name} — ${e.detail}`);
+      return;
+    }
+    cleanupFixtures();
+    throw e;
+  }
   n++;
   console.log(`  ✓ ${name}`);
+};
+
+// --- Hermetic, test-owned fixture trees (r8-test-hygiene) -------------------
+// The wizard resolves a fixture's project root by walking UP the filesystem
+// (findProjectYml / findGitRoot in extensions/coop-tools). That production
+// behavior is intentional and preserved. Wizard tests therefore SKIP — loudly,
+// naming the foreign marker — when a foreign `.git` or `.coop/project.yml`
+// exists between the fixture and the tmp root. Sandbox session scaffolding
+// seeds exactly such markers into TMPDIR; see tests/repro-tmp-contamination.sh
+// for a deterministic reproducer. Fixtures are tracked and removed afterward:
+// this file never deletes anything it did not create.
+const fixtureRoots = [];
+const trackFixture = (dir) => { fixtureRoots.push(dir); return dir; };
+const cleanupFixtures = () => {
+  while (fixtureRoots.length) {
+    const d = fixtureRoots.pop();
+    try { rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+};
+process.on("uncaughtException", (e) => {
+  cleanupFixtures();
+  console.error(e);
+  process.exit(1);
+});
+
+const foreignMarkerAbove = (dir) => {
+  const stop = resolve(tmpdir());
+  let cur = resolve(dir, "..");
+  for (;;) {
+    if (existsSync(join(cur, ".git"))) return join(cur, ".git");
+    if (existsSync(join(cur, ".coop", "project.yml"))) return join(cur, ".coop", "project.yml");
+    if (cur === stop) return null;
+    const parent = resolve(cur, "..");
+    if (parent === cur) return null;
+    cur = parent;
+  }
+};
+
+const skipIfContaminated = (root) => {
+  const foreign = foreignMarkerAbove(root);
+  if (foreign) {
+    throw { __skip: true, detail: `foreign marker above fixture: ${foreign}` };
+  }
 };
 
 const settings = {
@@ -126,8 +180,9 @@ tools:
 });
 
 await t("native wizard is reachable inside Coop and creates the contract", async () => {
-  const root = mkdtempSync(join(tmpdir(), "coop-project-wizard-"));
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-project-wizard-")));
   mkdirSync(join(root, ".git"));
+  skipIfContaminated(root);
   const confirms = [true, false, false, false, true]; // local source, add repo, Fabric, TE, write
   const confirmTitles = [];
   let selectCount = 0;
@@ -159,7 +214,8 @@ await t("native wizard is reachable inside Coop and creates the contract", async
 });
 
 await t("native wizard can create a repository-free discovery project", async () => {
-  const root = mkdtempSync(join(tmpdir(), "coop-project-discovery-"));
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-project-discovery-")));
+  skipIfContaminated(root);
   const confirms = [false, false, false, false, true]; // no local source, add repo, Fabric, TE, write
   const notices = [];
   const ctx = {
@@ -180,7 +236,7 @@ await t("native wizard can create a repository-free discovery project", async ()
 });
 
 await t("data-doc setup reuses source roles and paths from the project contract", () => {
-  const root = mkdtempSync(join(tmpdir(), "coop-project-prefill-"));
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-project-prefill-")));
   mkdirSync(join(root, ".coop"));
   mkdirSync(join(root, "warehouse"));
   mkdirSync(join(root, "analytics"));
@@ -203,7 +259,7 @@ repositories:
 });
 
 await t("a mixed repository prefills both data-doc source slots", () => {
-  const root = mkdtempSync(join(tmpdir(), "coop-project-mixed-"));
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-project-mixed-")));
   mkdirSync(join(root, ".coop"));
   writeFileSync(join(root, ".coop", "project.yml"), `profile:
   client: 'Fabrikam'
@@ -221,7 +277,7 @@ repositories:
 });
 
 await t("normal startup goes straight to the prompt while setup commands remain available", async () => {
-  const root = mkdtempSync(join(tmpdir(), "coop-direct-start-"));
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-direct-start-")));
   mkdirSync(join(root, ".git"));
   const handlers = new Map();
   const commands = new Map();
@@ -253,7 +309,7 @@ await t("normal startup goes straight to the prompt while setup commands remain 
 });
 
 await t("editing through /setup-project writes a backup and keeps custom settings", async () => {
-  const root = mkdtempSync(join(tmpdir(), "coop-project-edit-"));
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-project-edit-")));
   mkdirSync(join(root, ".git"));
   mkdirSync(join(root, ".coop"));
   const contract = join(root, ".coop", "project.yml");
@@ -276,4 +332,6 @@ await t("editing through /setup-project writes a backup and keeps custom setting
   assert.match(readFileSync(contract, "utf8"), /custom_section:\n  keep: 'yes'/);
 });
 
-console.log(`  ${n} project-wizard tests passed`);
+cleanupFixtures();
+for (const s of skips) console.log(`  skipped: ${s}`);
+console.log(`  ${n} project-wizard tests passed${skips.length ? ` (${skips.length} skipped)` : ""}`);
