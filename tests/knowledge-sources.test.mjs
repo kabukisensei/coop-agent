@@ -8,7 +8,7 @@ t("exports schema version 2", () => assert.equal(SCHEMA_VERSION, 2));
 t("normalizes legacy repositories with safe defaults", () => {
   const { sources } = normalizeSources({ knowledge: { enabled: true, repos: [{ repository: "org/Team-KB.git", local_path: "/kb" }] } });
   assert.equal(sources.length, 1);
-  assert.equal(sources[0].id, "org-team-kb");
+  assert.equal(sources[0].id, "org-team-kb--3aafde32");
   assert.equal(sources[0].scope, "team");
   assert.equal(sources[0].sensitivity, "internal");
   assert.equal(sources[0].agent_read, true);
@@ -35,9 +35,9 @@ t("explicit v2 source wins and is not duplicated", () => {
   assert.ok(result.errors.some((entry) => entry.includes("conflicting-binding")));
 });
 t("explicit IDs conflict with matching legacy-generated IDs", () => {
-  const result = normalizeSources({ sources: [{ id: "one-kb", repository: "other/repo" }], repos: [{ repository: "one/kb" }] });
+  const result = normalizeSources({ sources: [{ id: "one-kb--cfceedae", repository: "other/repo" }], repos: [{ repository: "one/kb" }] });
   assert.equal(result.sources.length, 1);
-  assert.equal(result.sources[0].id, "one-kb");
+  assert.equal(result.sources[0].id, "one-kb--cfceedae");
   assert.ok(result.errors.some((entry) => entry.includes("conflicting-binding")));
 });
 t("preserves unknown source fields", () => assert.equal(normalizeSources({ sources: [{ repository: "a/b", future_flag: { x: 1 } }] }).sources[0].future_flag.x, 1));
@@ -54,12 +54,18 @@ t("generates order-independent IDs from canonical identity", () => {
   const forward = normalizeSources({ repos: [{ repository: "one/kb" }, { repository: "two/kb" }] }).sources.map(({ repository, id }) => [repository, id]);
   const reverse = normalizeSources({ repos: [{ repository: "two/kb" }, { repository: "one/kb" }] }).sources.map(({ repository, id }) => [repository, id]);
   assert.deepEqual(Object.fromEntries(forward), Object.fromEntries(reverse));
-  assert.deepEqual(Object.fromEntries(forward), { "one/kb": "one-kb", "two/kb": "two-kb" });
+  assert.deepEqual(Object.fromEntries(forward), { "one/kb": "one-kb--cfceedae", "two/kb": "two-kb--f6da22b6" });
 });
 t("keeps a legacy ID stable when another colliding slug is configured", () => {
   const alone = normalizeSources({ repos: [{ repository: "one/kb" }] }).sources[0].id;
   const withOther = normalizeSources({ repos: [{ repository: "one/kb" }, { repository: "one-kb" }] }).sources[0].id;
   assert.equal(withOther, alone);
+});
+t("keeps a generated ID stable when a colliding slug is added later", () => {
+  const alone = normalizeSources({ sources: [{ repository: "one/a-b" }] }).sources[0].id;
+  const together = normalizeSources({ sources: [{ repository: "one/a-b" }, { repository: "one/a/b" }] }).sources;
+  assert.equal(together.find((source) => source.repository === "one/a-b").id, alone);
+  assert.match(alone, /^learnings\.one-a-b--[0-9a-f]{8}$/);
 });
 t("uses local paths as bindings even when repositories are present", () => {
   const result = normalizeSources({
@@ -80,6 +86,16 @@ t("removes every collided record without stale id mappings", () => {
   assert.equal(result.sources.length, 1);
   assert.equal(result.sources[0].id, "narrow");
   assert.equal(new Set(result.sources.map((source) => source.id)).size, result.sources.length);
+});
+t("excludes every identity that claims a reused explicit ID", () => {
+  const result = normalizeSources({ sources: [
+    { id: "shared", repository: "one/a" },
+    { id: "shared", repository: "two/b" },
+    { id: "narrow", repository: "two/b", scope: "project" },
+    { id: "shared", repository: "three/c" },
+  ] });
+  assert.deepEqual(result.sources.map((source) => source.id), ["narrow"]);
+  assert.ok(result.errors.some((entry) => entry.includes("explicit id is claimed by multiple source identities")));
 });
 t("does not broaden project scope", () => {
   const result = normalizeSources({ sources: [{ repository: "a/b", scope: "project" }], repos: [{ repository: "a/b" }] });
