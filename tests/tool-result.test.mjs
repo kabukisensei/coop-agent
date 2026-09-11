@@ -147,6 +147,46 @@ test('materialize snapshots length before copying (lying length cannot extend or
   assert.ok(env2.state === 'incomplete' || env2.findings.length === 1, 'growing length must not smuggle extra elements');
 });
 
+test('a false length snapshot that disagrees with numeric own keys fails closed', () => {
+  const finding = { id: 'f1', severity: 'major', message: 'hidden problem' };
+  const hiddenByLength = new Proxy([finding], {
+    get(target, property, receiver) {
+      if (property === 'length') return 0;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const raw = {
+    state: 'success', findings: hiddenByLength, errors: [], redactions: [],
+    provenance: { tool: 'review', rev: 'abc' }, scope: 'team', zeroFindings: true,
+  };
+  const normalized = normalizeResult(raw);
+  assert.equal(normalized.state, 'incomplete');
+  assert.ok(normalized.errors.includes('ToolResult: array length disagrees with numeric own keys'));
+  const validation = validateResult(raw);
+  assert.equal(validation.ok, false);
+  assert.ok(validation.errors.includes('ToolResult: array length disagrees with numeric own keys'));
+});
+
+test('validation uses materialized findings length for the zero-findings proof', () => {
+  let lengthReads = 0;
+  const changingLength = new Proxy([], {
+    get(target, property, receiver) {
+      if (property === 'length') {
+        lengthReads += 1;
+        return lengthReads === 1 ? 0 : 1;
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const validation = validateResult({
+    state: 'success', findings: changingLength, errors: [], redactions: [],
+    provenance: { tool: 'review', rev: 'abc' }, scope: 'team', zeroFindings: false,
+  });
+  assert.equal(validation.ok, false);
+  assert.ok(validation.errors.includes('ToolResult: successful zero-findings claim requires zeroFindings: true'));
+  assert.equal(lengthReads, 1, 'validation must not reread producer findings.length');
+});
+
 test('non-array length is rejected fail-closed', () => {
   const bad = {};
   Object.defineProperty(bad, 'length', { get: () => -1 });
