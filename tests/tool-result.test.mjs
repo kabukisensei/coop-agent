@@ -103,14 +103,16 @@ test('sparse findings and redactions are materialized before validation', () => 
 });
 
 test('sparse errors are materialized and can never yield a clean success', () => {
-  const sparse = new Array(1);
+  const sparse = [];
   sparse[0] = 'real error';
+  sparse[2] = 'another error';
   const env = normalizeResult({
     state: 'success', errors: sparse,
     findings: [], provenance: { tool: 'review', rev: 'abc' }, zeroFindings: true,
   });
   assert.equal(env.state, 'incomplete');
   assert.ok(env.errors.some((e) => e.includes('errors must be an array of strings')));
+  assert.equal(validateResult({ ...env, state: 'success', zeroFindings: true }).ok, false);
 });
 
 test('findings require a non-empty id', () => {
