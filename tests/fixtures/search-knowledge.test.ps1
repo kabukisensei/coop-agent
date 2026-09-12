@@ -32,11 +32,23 @@ try {
   function Write-Cfg([string]$Json) {
     Set-Content -Encoding utf8 (Join-Path $cfg '.coop\config') $Json
   }
+  # Windows PowerShell 5.1 turns native stderr into terminating
+  # NativeCommandError records under $ErrorActionPreference='Stop' even with
+  # call-site redirection when invoked nested (run.ps1 spawns this fixture via
+  # powershell -File and captures its streams) — confirmed on CI run
+  # 34672102094 (job 103495262351). Lower EAP for the native invocation only.
+  function Invoke-Native([Parameter(Mandatory=$true)][scriptblock]$Command) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $Command } finally { $ErrorActionPreference = $prevEap }
+  }
   function Invoke-Helper([string]$Query) {
     $oldCoopDir = $env:COOP_DIR; $oldHome = $env:HOME
     $env:COOP_DIR = $cfg; $env:HOME = $homeFake
     try {
-      $out = & $py $helper --query $Query 2>$null
+      # stderr is merged (2>&1) so negative cases keep their diagnostics in
+      # $out; Invoke-Native keeps PS 5.1 from terminating on those records.
+      $out = Invoke-Native { & $py $helper --query $Query 2>&1 }
       $rc = $LASTEXITCODE
     } finally {
       if ($null -eq $oldCoopDir) { Remove-Item Env:\COOP_DIR -ErrorAction SilentlyContinue } else { $env:COOP_DIR = $oldCoopDir }

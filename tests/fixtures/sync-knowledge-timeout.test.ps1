@@ -17,21 +17,35 @@ $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-knowledge-timeout-ps-
 $failed = $false
 function Ok([string]$Message) { Write-Host "  OK  $Message" }
 function Ko([string]$Message) { Write-Host "  FAIL $Message"; $script:failed = $true }
+# Windows PowerShell 5.1 converts native-command stderr into terminating
+# NativeCommandError records under $ErrorActionPreference='Stop' — even with
+# call-site 2>$null or 2>&1-into-$null redirection when the fixture runs
+# nested (powershell -File under a capturing parent, as tests/run.ps1 does).
+# Empirically confirmed on CI (run 34673322072, sync-knowledge-timeout fixture
+# line 32). Lowering EAP for the native invocation is the 5.1-safe form;
+# $LASTEXITCODE is unaffected. Assertions are unchanged.
+function Invoke-Native([Parameter(Mandatory=$true)][scriptblock]$Command) {
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { & $Command } finally { $ErrorActionPreference = $prevEap }
+}
 
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 try {
   # --- healthy local bare remote (real git, file:// URL, no network) ---------
   $remote = Join-Path $temp 'remote.git'
   $work = Join-Path $temp 'work'
-  & git init --bare -b main -q $remote 2>$null
-  if ($LASTEXITCODE -ne 0) { & git init --bare -q $remote; & git -C $remote symbolic-ref HEAD refs/heads/main }
-  & git clone -q $remote $work 2>$null
-  & git -C $work config user.email test@example.com
-  & git -C $work config user.name 'Test'
+  # Native setup calls run through Invoke-Native: see its header for the PS 5.1
+  # NativeCommandError semantics. $LASTEXITCODE is preserved across the call.
+  $null = Invoke-Native { & git init --bare -b main -q $remote 2>&1 }
+  if ($LASTEXITCODE -ne 0) { $null = Invoke-Native { & git init --bare -q $remote 2>&1 }; $null = Invoke-Native { & git -C $remote symbolic-ref HEAD refs/heads/main 2>&1 } }
+  $null = Invoke-Native { & git clone -q $remote $work 2>&1 }
+  $null = Invoke-Native { & git -C $work config user.email test@example.com 2>&1 }
+  $null = Invoke-Native { & git -C $work config user.name 'Test' 2>&1 }
   Set-Content (Join-Path $work 'note.md') 'one'
-  & git -C $work add note.md
-  & git -C $work commit -qm first
-  & git -C $work push -q -u origin main 2>$null
+  $null = Invoke-Native { & git -C $work add note.md 2>&1 }
+  $null = Invoke-Native { & git -C $work commit -qm first 2>&1 }
+  $null = Invoke-Native { & git -C $work push -q -u origin main 2>&1 }
 
   # --- prepare the fake git --------------------------------------------------
   $fakeBin = Join-Path $temp 'fakebin'
@@ -90,9 +104,25 @@ static intptr_t spawn_sleeper(void) {
 static int record_sleeper(intptr_t kid) {
     const char *sl = getenv("SLEEPERFILE");
     if (!sl || kid == -1) return 3;
+    /* _spawnvp(_P_NOWAIT) returns a process HANDLE, not a PID. Convert,
+       prove the spawned instance is alive NOW (before the parent exits),
+       close the handle, and log the identity proof for the fixture. */
+    HANDLE h = (HANDLE)kid;
+    DWORD pid = GetProcessId(h);
+    if (pid == 0) { CloseHandle(h); return 4; }
+    if (WaitForSingleObject(h, 0) != WAIT_TIMEOUT) { CloseHandle(h); return 5; }
+    CloseHandle(h);
+    const char *fakelog = getenv("FAKELOG");
+    if (fakelog) {
+        FILE *lg = fopen(fakelog, "a");
+        if (lg) {
+            fprintf(lg, "spawned-sleeper pid=%lu\n", (unsigned long)pid);
+            fclose(lg);
+        }
+    }
     FILE *f = fopen(sl, "w");
     if (!f) return 3;
-    fprintf(f, "%ld", (long)kid);
+    fprintf(f, "%lu", (unsigned long)pid);
     fclose(f);
     return 0;
 }
@@ -142,7 +172,7 @@ int main(int argc, char **argv) {
       }
     }
     if (-not $cc) { Ko 'no C compiler found to build the Windows git fixture (fixture must execute)'; exit 1 }
-    $compileOut = & $cc -O1 -o $fakeGit $cFile 2>&1 | Out-String
+    $compileOut = Invoke-Native { & $cc -O1 -o $fakeGit $cFile 2>&1 } | Out-String
     if (-not (Test-Path -LiteralPath $fakeGit)) {
       Ko "compiling the Windows git fixture failed: $compileOut"; exit 1
     }
@@ -157,6 +187,7 @@ spawn_sleeper() {
   sleep 30 &
   kid=$!
   printf '%s' "$kid" > "$SLEEPERFILE"
+  printf 'spawned-sleeper pid=%s\n' "$kid" >> "$FAKELOG"
 }
 logargv "$@"
 args="$*"
@@ -202,6 +233,34 @@ exec "$REALGIT" "$@"
     Ko 'git fixture did not execute standalone (executable-compatibility error)'; exit 1
   }
   Remove-Item -LiteralPath $fakeLog -ErrorAction SilentlyContinue
+
+  # Instance-identity discipline for all sleeper checks: the fake git proves
+  # the spawned instance existed (real PID + spawn-time liveness, logged to
+  # FAKELOG); Assert-SleeperGone then verifies THAT SAME process is gone.
+  # $sentinelJob is an unrelated long-lived process that must survive every
+  # timeout test — evidence the kill path never strays outside the owned tree.
+  $sentinelJob = Start-Job -ScriptBlock { Start-Sleep -Seconds 300 }
+  function Assert-SleeperGone([string]$label) {
+    Start-Sleep -Seconds 2   # allow the killed tree to be reaped
+    if (-not (Test-Path -LiteralPath $sleeperFile)) {
+      Ko "${label}: fake git never spawned its sleeper"
+      return
+    }
+    $sleeperPid = [int]((Get-Content -LiteralPath $sleeperFile) -join '')
+    $proof = $false
+    if (Test-Path -LiteralPath $fakeLog) {
+      $proof = (Get-Content -LiteralPath $fakeLog -Raw) -match ("spawned-sleeper pid=" + $sleeperPid + "(?!\d)")
+    }
+    if (-not $proof) {
+      Ko "${label}: no spawn-time existence proof for pid $sleeperPid (recorded value was not a real PID?)"
+      Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue
+      return
+    }
+    $alive = Get-Process -Id $sleeperPid -ErrorAction SilentlyContinue
+    if ($alive) { Ko "${label}: sleeper $sleeperPid survived the deadline" }
+    else { Ok "${label}: sleeper $sleeperPid provably existed and is gone" }
+    Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue
+  }
 
   # --- A (PS). clone hang is bounded; the healthy repo still syncs ------------
   $cfg = Join-Path $temp 'cfg'
@@ -249,15 +308,7 @@ exec "$REALGIT" "$@"
   if ($out -like '*timed out*') { Ok 'timeout warning surfaced (PS)' } else { Ko "no timeout warning (PS): $out" }
   if ($out -like '*sync complete*') { Ok 'sync still fails soft and completes (PS)' } else { Ko "sync did not complete (PS): $out" }
   if (Test-Path -LiteralPath (Join-Path $cloneOk 'note.md')) { Ok 'second healthy repo cloned in the same run (PS)' } else { Ko 'healthy repo missing (PS)' }
-  Start-Sleep -Seconds 2   # allow the killed tree to be reaped
-  if (Test-Path -LiteralPath $sleeperFile) {
-    $sleeperPid = [int]((Get-Content -LiteralPath $sleeperFile) -join '')
-    $alive = Get-Process -Id $sleeperPid -ErrorAction SilentlyContinue
-    if ($alive) { Ko 'sleeper descendant survived the timeout (PS)' } else { Ok 'sleeper descendant terminated with the owned tree (PS)' }
-    Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue
-  } else {
-    Ko 'fake git never spawned its sleeper descendant (PS)'
-  }
+  Assert-SleeperGone 'sleeper descendant'
 
   # --- B (PS). parent-exits-first orphan: deadline still bounds the operation -
   # The fake git spawns a child holding the inherited stdout and exits. The
@@ -269,7 +320,7 @@ exec "$REALGIT" "$@"
   $env:PATH = "$fakeBin$([System.IO.Path]::PathSeparator)$priorPath"
   try {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $orphanOut = & $pyExe (Join-Path $root 'scripts\knowledge-git.py') '--' git -C $orphanRepo status --porcelain 2>&1 | Out-String
+    $orphanOut = Invoke-Native { & $pyExe (Join-Path $root 'scripts\\knowledge-git.py') '--' git -C $orphanRepo status --porcelain 2>&1 } | Out-String
     $orphanRc = $LASTEXITCODE
     $sw.Stop()
   } finally {
@@ -279,15 +330,7 @@ exec "$REALGIT" "$@"
   if ($orphanRc -eq 124) { Ok 'orphan classified as a timeout, not success (rc=124) (PS)' } else { Ko "orphan rc=$orphanRc (want 124) (PS): $orphanOut" }
   if ($sw.Elapsed.TotalSeconds -lt 10) { Ok ("caller returned within the deadline + bounded cleanup ({0:n1}s, not the child's 30s) (PS)" -f $sw.Elapsed.TotalSeconds) } else { Ko "caller blocked $($sw.Elapsed.TotalSeconds)s (PS)" }
   if ($orphanOut -like '*deadline*') { Ok 'actionable deadline message on the orphan timeout (PS)' } else { Ko "no deadline message (PS): $orphanOut" }
-  Start-Sleep -Seconds 2
-  if (Test-Path -LiteralPath $sleeperFile) {
-    $sleeperPid = [int]((Get-Content -LiteralPath $sleeperFile) -join '')
-    $alive = Get-Process -Id $sleeperPid -ErrorAction SilentlyContinue
-    if ($alive) { Ko 'orphaned child survived the deadline (PS)' } else { Ok 'orphaned child terminated after the deadline (PS)' }
-    Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue
-  } else {
-    Ko 'fake git never spawned its orphan child (PS)'
-  }
+  Assert-SleeperGone 'orphaned child'
 
   # --- C (PS). the probe orphan: a timed-out config probe fails the operation -
   $probeRepo = Join-Path $temp 'kb\probehang'
@@ -296,7 +339,7 @@ exec "$REALGIT" "$@"
   $env:PATH = "$fakeBin$([System.IO.Path]::PathSeparator)$priorPath"
   try {
     $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
-    $probeOrphanOut = & $pyExe (Join-Path $root 'scripts\knowledge-git.py') '--' git -C $probeRepo status --porcelain 2>&1 | Out-String
+    $probeOrphanOut = Invoke-Native { & $pyExe (Join-Path $root 'scripts\\knowledge-git.py') '--' git -C $probeRepo status --porcelain 2>&1 } | Out-String
     $probeOrphanRc = $LASTEXITCODE
     $sw2.Stop()
   } finally {
@@ -304,16 +347,8 @@ exec "$REALGIT" "$@"
     if ($null -eq $priorTimeout) { Remove-Item Env:\COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS -ErrorAction SilentlyContinue } else { $env:COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS = $priorTimeout }
   }
   if ($probeOrphanRc -eq 124) { Ok 'probe orphan bounded (rc=124) (PS)' } else { Ko "probe orphan rc=$probeOrphanRc (want 124) (PS): $probeOrphanOut" }
-  if ($sw2.Elapsed.TotalSeconds -lt 10) { Ok ("probe orphan returned within the deadline ({0:n1}s) (PS)" -f $sw2.Elapsed.TotalSeconds) } else { Ko "probe orphan blocked $($sw2.Elapsed.TotalSeconds)s (PS)" }
-  Start-Sleep -Seconds 2
-  if (Test-Path -LiteralPath $sleeperFile) {
-    $sleeperPid = [int]((Get-Content -LiteralPath $sleeperFile) -join '')
-    $alive = Get-Process -Id $sleeperPid -ErrorAction SilentlyContinue
-    if ($alive) { Ko 'probe orphan child survived the deadline (PS)' } else { Ok 'probe orphan child terminated after the deadline (PS)' }
-    Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue
-  } else {
-    Ko 'fake git never spawned its probe orphan child (PS)'
-  }
+  if ($sw2.Elapsed.TotalSeconds -lt 10) { Ok ("probe orphan returned within the deadline ({0:n1}s) (PS)" -f $sw2.Elapsed.TotalSeconds) } else { Ko "probe orphan blocked $($sw2.Elapsed.TotalSeconds)s (PS) — resolved deadline evidence: $($probeOrphanOut.Trim())" }
+  Assert-SleeperGone 'probe orphan child'
 
   # In-process contract: & sync-knowledge.ps1 must RETURN (never exit), so the
   # sentinel line after the call is always reached — even on total failure.
@@ -330,6 +365,9 @@ exec "$REALGIT" "$@"
     if ($null -eq $priorCoopDir) { Remove-Item Env:\COOP_DIR -ErrorAction SilentlyContinue } else { $env:COOP_DIR = $priorCoopDir }
   }
   if (Test-Path -LiteralPath $sentinel) { Ok 'in-process invocation returned; sentinel reached after failure' } else { Ko 'sync-knowledge.ps1 exited the parent instead of returning' }
+  if ($sentinelJob.State -eq 'Running') { Ok 'unrelated sentinel process survived the timeout tests' } else { Ko 'unrelated sentinel process did not survive the timeout tests' }
+  Stop-Job $sentinelJob -ErrorAction SilentlyContinue
+  Remove-Job $sentinelJob -Force -ErrorAction SilentlyContinue
 }
 finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue

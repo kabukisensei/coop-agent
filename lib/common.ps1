@@ -573,12 +573,34 @@ function Coop-ProgEnd {
 # doctor/sync/dispatcher) this is a plain WriteLine, exactly as before.
 function Coop-Emit {
   param([string]$Line)
+  # Non-TTY branch. The [Console]::Error contract is load-bearing: callers and
+  # fixtures replace it via [Console]::SetError($writer) to capture output, so
+  # emission MUST go through [Console]::Error. But on Windows PowerShell 5.1 in
+  # a nested `powershell -File` context (CI legs invoke fixtures this way)
+  # [Console]::Error.WriteLine can throw System.IO.FileLoadException ("assembly
+  # name or codebase ... was invalid", observed on GitHub Actions run
+  # 34696119275: fresh-install prerequisite leg at this line, and inside the
+  # knowledge-timeout fixture's Start-Job). Emission is cosmetic status output:
+  # never let it crash install/update/doctor, so fall back in tiers —
+  #   1. [Console]::Error.WriteLine  (normal, honors SetError capture)
+  #   2. the replaced TextWriter via the [Console]::Error property (same
+  #      contract, avoids the method that fails to JIT on those hosts)
+  #   3. the PowerShell host API (redirectable; last resort)
+  # TTY redraw branch below is unchanged. POSIX twin: printf >&2 in
+  # lib/common.sh (already redirectable — parity preserved).
   if ($script:ProgActive -and (Test-ProgTty)) {
     Coop-ProgLift
     [Console]::Error.WriteLine($Line)
     Coop-ProgDraw
   } else {
-    [Console]::Error.WriteLine($Line)
+    $emitted = $false
+    try { [Console]::Error.WriteLine($Line); $emitted = $true } catch { }
+    if (-not $emitted) {
+      try { $writer = [Console]::Error; $writer.WriteLine($Line); $emitted = $true } catch { }
+    }
+    if (-not $emitted) {
+      if ($Host.UI -and $Host.UI.WriteErrorLine) { $Host.UI.WriteErrorLine($Line) }
+    }
   }
 }
 function Coop-Say  { param([string]$m) Coop-Emit $m }
