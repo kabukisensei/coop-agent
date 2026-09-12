@@ -24,12 +24,12 @@ function Write-Shim {
 }
 
 $saved = @{}
-foreach ($name in @('PATH','HOME','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODING_AGENT_DIR','COOP_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','COOP_FABRIC_PYTHON','COOP_TEST_CALLS','COOP_TEST_PY_TEMPLATE','LOCALAPPDATA','ProgramFiles','SystemRoot')) {
+foreach ($name in @('PATH','HOME','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODING_AGENT_DIR','COOP_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','COOP_FABRIC_PYTHON','COOP_TEST_CALLS','COOP_TEST_PY_TEMPLATE','LOCALAPPDATA','ProgramFiles')) {
   $saved[$name] = [Environment]::GetEnvironmentVariable($name)
 }
 
 try {
-  New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $t 'pipx-home'), (Join-Path $t 'pipx-bin'), (Join-Path $t 'agent'), (Join-Path $t 'program-files'), (Join-Path $t 'local-app-data'), (Join-Path $t 'system-root') | Out-Null
+  New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $t 'pipx-home'), (Join-Path $t 'pipx-bin'), (Join-Path $t 'agent'), (Join-Path $t 'program-files'), (Join-Path $t 'local-app-data') | Out-Null
   $fabricPython = Join-Path $t $(if ($isWindowsHost) { 'python312.cmd' } else { 'python312' })
   $pythonTemplate = Join-Path $t $(if ($isWindowsHost) { 'python-template.cmd' } else { 'python-template' })
   if ($isWindowsHost) {
@@ -143,11 +143,12 @@ exit /b 0
   $env:COOP_TEST_PY_TEMPLATE = $pythonTemplate
   $env:LOCALAPPDATA = Join-Path $t 'local-app-data'
   $env:ProgramFiles = Join-Path $t 'program-files'
-  $env:SystemRoot = Join-Path $t 'system-root'
   [System.IO.File]::WriteAllText($calls, '')
 
   # Defect D bounded comparison, stage B: the SAME harmless job under the
-  # fixture's fully controlled environment (synthetic SystemRoot/PATH/HOME...).
+  # fixture's fully controlled environment (synthetic PATH/HOME/shims; SystemRoot
+  # stays real — an empty SystemRoot prevents the PS 5.1 job child from loading
+  # managed PowerShell, which was Defect D's root cause).
   # The child writes a phase marker FIRST, before any other work, so "child
   # process started and runspace entered" is proven independently of the job's
   # final state. Distinguishes job STARTUP failure (environment) from failure
@@ -189,7 +190,7 @@ exit /b 0
   # Start-ThreadJob, so Coop-Unit uses process-backed Start-Job. Exercise that
   # exact isolation boundary before install.ps1: record whether the child
   # runspace materializes (phase-entered marker written before any other work),
-  # what SystemRoot it inherits, which synthetic pipx executable it resolves,
+  # which synthetic pipx executable it resolves,
   # the harmless exact argv, its exit status, and its sanitized output. Bound
   # the probe to 15s and always remove its owned job.
   $diagPhase = Join-Path $t 'materialize-phase.log'
