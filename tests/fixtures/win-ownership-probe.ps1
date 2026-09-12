@@ -55,6 +55,12 @@ function Emit-StepResult($name, $lines) {
 
 Section 'identity' {
   $head = (& git -C $root rev-parse HEAD 2>$null)
+  $gitRc = $LASTEXITCODE
+  Write-Host "PROBE| identity.git_rev_parse_rc=$gitRc"
+  if ($gitRc -ne 0 -or -not $head) {
+    $script:probeFailed = $true
+    Write-Host 'PROBE| identity.git_rev_parse_failed=1'
+  }
   Write-Host "PROBE| identity.ps_version=$($PSVersionTable.PSVersion)"
   Write-Host "PROBE| identity.os_arch=$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
   Write-Host "PROBE| identity.source_sha=$head"
@@ -69,6 +75,12 @@ print("PROBE| identity.python_exe=%s" % sys.executable)
   if ($gcc) {
     Write-Host "PROBE| identity.compiler=$($gcc.Source)"
     $v = (& gcc --version 2>$null | Select-Object -First 1)
+    $gccRc = $LASTEXITCODE
+    Write-Host "PROBE| identity.compiler_version_rc=$gccRc"
+    if ($gccRc -ne 0 -or -not $v) {
+      $script:probeFailed = $true
+      Write-Host 'PROBE| identity.compiler_version_failed=1'
+    }
     Write-Host "PROBE| identity.compiler_version=$v"
   } else {
     Write-Host 'PROBE| identity.compiler=NONE (gcc not found)'
@@ -166,44 +178,125 @@ kg = importlib.util.module_from_spec(spec); spec.loader.exec_module(kg)
 t0 = time.monotonic()
 own = kg.Ownership()
 child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], **own.spawn_kwargs())
+own.child = child
 t_spawn = time.monotonic() - t0
+failed = False
 try:
-    own.adopt(child)
-    t_adopt = time.monotonic() - t0
     k32 = kg._KERNEL32
-    print("PROBE| assignment.ownership_available=%s" % own.available)
     print("PROBE| assignment.child_pid=%s" % child.pid)
-    if k32 is not None and own.job:
-        active = kg._win_job_active_processes(own.job)
-        print("PROBE| assignment.job_active_after_adopt=%s (>=1=child captured; 0=adopt silently failed; None=query failed)" % active)
+    if k32 is None:
+        print("PROBE| assignment.error=_KERNEL32 unavailable")
+        failed = True
+    else:
+        # Explicitly report an OpenProcess result with the same access mask used
+        # by the product assignment helper; the helper then performs its own
+        # independently checked OpenProcess + AssignProcessToJobObject sequence.
         k32.SetLastError(0)
-        h = k32.OpenProcess(0x1000, False, child.pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        preflight = k32.OpenProcess(kg._PROCESS_SET_QUOTA | kg._PROCESS_TERMINATE, False, child.pid)
+        open_err = ctypes.get_last_error()
+        print("PROBE| assignment.open_process_ok=%s getlasterror=%d" % (bool(preflight), open_err))
+        if preflight:
+            k32.CloseHandle(preflight)
+        else:
+            failed = True
+
+        job, create_error = kg._win_job_create()
+        print("PROBE| assignment.job_create_ok=%s error=%s" % (bool(job), create_error))
+        own.job = job
+        if not job:
+            failed = True
+        else:
+            assign_ok, assign_error = kg._win_job_assign(job, child.pid)
+            print("PROBE| assignment.assign_ok=%s error=%s" % (assign_ok, assign_error))
+            if not assign_ok:
+                failed = True
+            else:
+                # Exercise the declared DWORD ResumeThread return contract and
+                # report its actual previous suspend count. Do not resume until
+                # containment has succeeded.
+                k32.SetLastError(0)
+                snap = k32.CreateToolhelp32Snapshot(kg._TH32CS_SNAPTHREAD, child.pid)
+                snap_err = ctypes.get_last_error()
+                print("PROBE| assignment.thread_snapshot_ok=%s getlasterror=%d" % (bool(snap and snap != kg._INVALID_HANDLE), snap_err))
+                if not snap or snap == kg._INVALID_HANDLE:
+                    failed = True
+                else:
+                    try:
+                        entry = kg._THREADENTRY32()
+                        entry.dwSize = ctypes.sizeof(kg._THREADENTRY32)
+                        have = k32.Thread32First(snap, ctypes.byref(entry))
+                        resumed = False
+                        while have:
+                            if entry.th32OwnerProcessID == child.pid:
+                                k32.SetLastError(0)
+                                thread = k32.OpenThread(kg._THREAD_SUSPEND_RESUME, False, entry.th32ThreadID)
+                                thread_err = ctypes.get_last_error()
+                                print("PROBE| assignment.open_thread_ok=%s getlasterror=%d thread_id=%d" % (bool(thread and thread != kg._INVALID_HANDLE), thread_err, entry.th32ThreadID))
+                                if thread and thread != kg._INVALID_HANDLE:
+                                    try:
+                                        k32.SetLastError(0)
+                                        previous_count = k32.ResumeThread(thread)
+                                        resume_error = ctypes.get_last_error()
+                                        resume_ok, resume_verdict = kg._win_resume_verdict(previous_count)
+                                        print("PROBE| assignment.resume_previous_count=%d getlasterror=%d ok=%s verdict=%s" % (previous_count, resume_error, resume_ok, resume_verdict))
+                                        resumed = resume_ok
+                                    finally:
+                                        k32.CloseHandle(thread)
+                                break
+                            have = k32.Thread32Next(snap, ctypes.byref(entry))
+                        if not resumed:
+                            failed = True
+                    finally:
+                        k32.CloseHandle(snap)
+
+        print("PROBE| assignment.ownership_available=%s" % own.available)
+        if own.job:
+            active = kg._win_job_active_processes(own.job)
+            print("PROBE| assignment.job_active_after_assign=%s (>=1=child captured; 0=assignment absent; None=query failed)" % active)
+            if active is None or active < 1:
+                failed = True
+        k32.SetLastError(0)
+        h = k32.OpenProcess(0x1000, False, child.pid)
         e = ctypes.get_last_error()
         print("PROBE| assignment.exists_before_terminate=%s getlasterror=%d" % (bool(h), e))
         if h: k32.CloseHandle(h)
-    print("PROBE| timing.spawn=%.3f adopt_done=%.3f" % (t_spawn, t_adopt))
+    t_done = time.monotonic() - t0
+    print("PROBE| timing.spawn=%.3f native_stages_done=%.3f" % (t_spawn, t_done))
     t_term0 = time.monotonic() - t0
-    own.terminate()
+    if own.job:
+        own.terminate()
+    elif child.poll() is None:
+        stop_ok, stop_error = kg._win_terminate_pid(child.pid)
+        print("PROBE| cleanup.suspended_child_terminate_ok=%s error=%s" % (stop_ok, stop_error))
+        if not stop_ok: failed = True
     t_term1 = time.monotonic() - t0
     print("PROBE| timing.terminate_start=%.3f terminate_done=%.3f" % (t_term0, t_term1))
     t_wait0 = time.monotonic() - t0
-    empty = own.wait_empty(time.monotonic() + 8)
+    empty = own.wait_empty(time.monotonic() + 8) if own.job else True
     t_wait1 = time.monotonic() - t0
     print("PROBE| timing.reap_start=%.3f reap_done=%.3f wait_empty=%s" % (t_wait0, t_wait1, empty))
+    if not empty: failed = True
     if k32 is not None:
         k32.SetLastError(0)
         h = k32.OpenProcess(0x1000, False, child.pid)
         e = ctypes.get_last_error()
         print("PROBE| assignment.exists_after_terminate=%s getlasterror=%d (87=ERROR_INVALID_PARAMETER, gone)" % (bool(h), e))
-        if h: k32.CloseHandle(h)
+        if h:
+            k32.CloseHandle(h)
+            failed = True
     own.close()
     print("PROBE| timing.close_done=%.3f total=%.3f" % (time.monotonic() - t0, time.monotonic() - t0))
 finally:
-    # Safe cleanup of everything this section owns: the suspended child must
-    # never be left behind, even when a mid-section step raises.
+    # Safe cleanup of everything this section owns. If create/assign/resume fails,
+    # terminate the still-suspended owned child rather than letting it execute.
     if child.poll() is None:
-        own.terminate()
+        if own.job:
+            own.terminate()
+        else:
+            kg._win_terminate_pid(child.pid)
     own.close()
+if failed:
+    sys.exit(1)
 '@.Replace('ROOT', ($root -replace '\\', '/')) | & $py.Source -)
   Emit-StepResult 'assignment' $out
 }
