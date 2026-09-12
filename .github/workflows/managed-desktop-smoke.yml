@@ -90,17 +90,27 @@ jobs:
       - name: Build checksum-pinned managed runtime with development companions
         shell: bash
         run: node scripts/prepare-managed-runtime.mjs --target '${{ steps.target.outputs.value }}' --work '${{ runner.temp }}/coop-managed-work' --output '${{ runner.temp }}/managed-runtime' --development-wheels '${{ runner.temp }}/coop-development-wheels/development-wheels.json'
-      - name: PROBE staged CPython extension modules (diagnostic only)
+      - name: PROBE 2 exact verify-spawn matrix (diagnostic only)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           set -u
-          echo "PROBE-DLLS-COUNT=$(ls '${{ runner.temp }}/managed-runtime/python/runtime/DLLs/' 2>/dev/null | grep -c '\.pyd$' || echo 0)"
-          ls '${{ runner.temp }}/managed-runtime/python/runtime/DLLs/' 2>/dev/null | head -40 || echo PROBE-DLLS-DIR-MISSING
-          echo "PROBE-ROOT-PYD=$(ls '${{ runner.temp }}/managed-runtime/python/runtime/' | grep -c '\.pyd$' || echo 0)"
-          echo PROBE-IMPORT-START
-          '${{ runner.temp }}/managed-runtime/python/runtime/python.exe' -c "import sys; print('PROBE-PATH', [p for p in sys.path if 'DLLs' in p or 'runtime' in p]); import _overlapped; print('PROBE-OVERLAPPED-OK')" 2>&1 || echo PROBE-IMPORT-FAILED=$?
-          echo PROBE-IMPORT-DONE
+          PY='${{ runner.temp }}/managed-runtime/python/runtime/python.exe'
+          EP='${{ runner.temp }}/managed-runtime/python/entrypoints/coop-data-doc.py'
+          HOME_DIR='${{ runner.temp }}/probe2-home'
+          mkdir -p "$HOME_DIR"
+          run_case() {
+            name="$1"; shift
+            echo "===== $name ====="
+            env -i PATH="$(dirname "$PY")" HOME="$HOME_DIR" USERPROFILE="$HOME_DIR" APPDATA="$HOME_DIR" LOCALAPPDATA="$HOME_DIR" TMPDIR="$HOME_DIR" TEMP="$HOME_DIR" TMP="$HOME_DIR" PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1 SystemRoot="${SystemRoot:-}" WINDIR="${WINDIR:-}" COMSPEC="${COMSPEC:-}" "$@" > "$HOME_DIR/out.txt" 2> "$HOME_DIR/err.txt"
+            echo "EXIT=$?"
+            echo "--- stdout tail ---"; tail -3 "$HOME_DIR/out.txt" || true
+            echo "--- stderr tail ---"; tail -6 "$HOME_DIR/err.txt" || true
+          }
+          run_case fullenv-import "$PY" -c "import _overlapped; print('OVERLAPPED-OK')"
+          run_case stripped-import "$PY" -c "import _overlapped; print('OVERLAPPED-OK')"
+          run_case stripped-flags-import "$PY" -I -B -X utf8 -c "import _overlapped; print('OVERLAPPED-OK')"
+          run_case stripped-entrypoint "$PY" -I -B -X utf8 "$EP" --help
       - name: Verify real runtime, exact capabilities, isolated state, and cleanup
         shell: bash
         run: node scripts/verify-managed-runtime.mjs --bundle '${{ runner.temp }}/managed-runtime' --workspace '${{ github.workspace }}' --agent '${{ runner.temp }}/coop-managed-agent' | tee '${{ runner.temp }}/managed-runtime-check.json'
