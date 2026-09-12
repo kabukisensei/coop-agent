@@ -228,4 +228,23 @@ await t("F2 positive control: valid provider PR URLs across hosts are accepted",
   assert.equal(parsePrIdentity("no pr here https://github.com/o/r/pull/1"), null);
 });
 
+await t("F1 round-3: a clean mode: self cannot mask a conflicting malformed declaration", async () => {
+  const mk = (name, yaml) => {
+    const wt = join(profile, name); mkdirSync(join(wt, ".teamai"), { recursive: true });
+    writeFileSync(join(wt, ".teamai", "teamai.yaml"), yaml);
+    return wt;
+  };
+  for (const [name, yaml] of [
+    ["wt-mask-inline", "mode: self\nmode: team # actual\n"],
+    ["wt-mask-malformed", "mode: self\nmode: [self, team]\n"],
+    ["wt-mask-case", "mode: self\nMode: team\n"],
+  ]) {
+    const wt = mk(name, yaml);
+    const cfg = resolveTeamaiConfig(enabledEnv({ COOP_TEAMAI_WORKTREE: wt }));
+    const res = await contributeTeamaiKnowledge(cfg, { file: join(profile, "synthetic-note.md") });
+    assert.equal(res.ok, false, name);
+    assert.equal(res.reason, "unsafe-mode", name);
+  }
+});
+
 console.log(`  ${n} teamai-adapter tests passed`);
