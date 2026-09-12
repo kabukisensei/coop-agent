@@ -156,6 +156,69 @@ jobs:
         env:
           COOP_DESKTOP_DISPOSABLE_INSTALL_TEST: '1'
         run: node desktop/scripts/verify-windows-installer.mjs --output '${{ runner.temp }}/windows-installer-check.json'
+      - name: Preserve Windows installer handoff artifact
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          installers=(desktop/dist-installers/*.exe)
+          if [ "${#installers[@]}" -ne 1 ]; then
+            echo "::error::MISSING HANDOFF ARTIFACT: expected exactly 1 installer in desktop/dist-installers, found ${#installers[@]}"
+            ls -la desktop/dist-installers || true
+            exit 1
+          fi
+          installer="${installers[0]}"
+          sha="$(sha256sum "$installer" | awk '{print $1}')"
+          export INSTALLER_NAME="$installer" INSTALLER_SHA256="$sha"
+          node - <<'NODE' > desktop/dist-installers/build-identity.json
+          const fs = require('node:fs');
+          const manifest = JSON.parse(fs.readFileSync('config/release-manifest.json', 'utf8'));
+          const companions = JSON.parse(fs.readFileSync('config/development-companions.json', 'utf8'));
+          const identity = {
+            schema_version: 1,
+            desktop_pr_head_sha: process.env.GITHUB_PR_HEAD || process.env.GITHUB_SHA,
+            actual_build_sha: process.env.GITHUB_SHA,
+            included_terminal_shared_core_revision: process.env.GIT_HEAD || process.env.GITHUB_SHA,
+            workflow_run_id: process.env.GITHUB_RUN_ID,
+            workflow_run_attempt: process.env.GITHUB_RUN_ATTEMPT,
+            target: process.env.TARGET_VALUE,
+            runtime_dependency_pins: {
+              coop_version: manifest.coop_version,
+              node_min: manifest.node && manifest.node.min,
+              pi: manifest.pi,
+              python_tools: manifest.python_tools,
+              mcp_servers: manifest.mcp_servers,
+            },
+            development_companion_shas: companions,
+            signing_status: 'unsigned test candidate (CSC_IDENTITY_AUTO_DISCOVERY=false)',
+            installer_filename: process.env.INSTALLER_NAME,
+            installer_sha256: process.env.INSTALLER_SHA256,
+          };
+          console.log(JSON.stringify(identity, null, 2));
+          NODE
+          cp '${{ runner.temp }}/windows-installer-check.json' desktop/dist-installers/verification-summary.json
+          echo "handoff_installer=$installer" >> "$GITHUB_OUTPUT"
+          echo "handoff_sha256=$sha" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          GITHUB_SHA: ${{ github.sha }}
+          GIT_HEAD: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          TARGET_VALUE: ${{ steps.target.outputs.value }}
+        id: installer_handoff
+      - name: Upload Windows installer handoff artifact
+        if: runner.os == 'Windows' && always() && steps.installer_handoff.outputs.handoff_sha256 != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer-handoff-run${{ github.run_id }}-attempt${{ github.run_attempt }}
+          retention-days: 21
+          if-no-files-found: error
+          path: |
+            desktop/dist-installers/*.exe
+            desktop/dist-installers/build-identity.json
+            desktop/dist-installers/verification-summary.json
       - name: Preserve build and runtime evidence
         if: always()
         uses: actions/upload-artifact@v7
