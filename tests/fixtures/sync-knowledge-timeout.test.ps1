@@ -23,15 +23,19 @@ try {
   # --- healthy local bare remote (real git, file:// URL, no network) ---------
   $remote = Join-Path $temp 'remote.git'
   $work = Join-Path $temp 'work'
-  & git init --bare -b main -q $remote 2>$null
-  if ($LASTEXITCODE -ne 0) { & git init --bare -q $remote; & git -C $remote symbolic-ref HEAD refs/heads/main }
-  & git clone -q $remote $work 2>$null
-  & git -C $work config user.email test@example.com
-  & git -C $work config user.name 'Test'
+  # PS 5.1 converts native stderr into terminating NativeCommandError records
+  # under $ErrorActionPreference='Stop'; 2>$null does NOT suppress them there.
+  # Merge-and-discard (2>&1 into $null) is the 5.1-safe suppression form and
+  # keeps $LASTEXITCODE intact.
+  $null = & git init --bare -b main -q $remote 2>&1
+  if ($LASTEXITCODE -ne 0) { $null = & git init --bare -q $remote 2>&1; $null = & git -C $remote symbolic-ref HEAD refs/heads/main 2>&1 }
+  $null = & git clone -q $remote $work 2>&1
+  $null = & git -C $work config user.email test@example.com 2>&1
+  $null = & git -C $work config user.name 'Test' 2>&1
   Set-Content (Join-Path $work 'note.md') 'one'
-  & git -C $work add note.md
-  & git -C $work commit -qm first
-  & git -C $work push -q -u origin main 2>$null
+  $null = & git -C $work add note.md 2>&1
+  $null = & git -C $work commit -qm first 2>&1
+  $null = & git -C $work push -q -u origin main 2>&1
 
   # --- prepare the fake git --------------------------------------------------
   $fakeBin = Join-Path $temp 'fakebin'
