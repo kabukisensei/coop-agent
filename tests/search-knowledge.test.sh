@@ -38,13 +38,55 @@ B="$TMP/knowledge/repo-b"
 C="$TMP/knowledge/unconfigured"    # contains the marker but is NOT configured
 mkdir -p "$CFG/.coop" "$HOME_FAKE" "$A" "$B" "$C"
 
+# --- native path forms (Windows Git Bash legs) ---------------------------------
+# The Git Bash CI leg has no setup-python, so $PY resolves to a NATIVE Windows
+# python. A native python resolves MSYS paths like /tmp/... against the
+# current drive (e.g. D:\tmp\...), which is NOT where Git Bash's mktemp
+# creates the directory — every configured root then reports "unavailable
+# root skipped" (CI run 34703990216, job 103580600375; the PowerShell leg,
+# which writes native paths, passes the same cases). Paths written into the
+# config must therefore be in the native Windows form on Windows legs, and
+# python-returned paths (searched_roots, per_repo keys, citations) must be
+# compared in that same form. Filesystem operations stay in Git Bash (MSYS)
+# space; cygpath -w maps to the same real directories. On POSIX hosts
+# native_path/json_path are the identity, so this block changes nothing there.
+native_path() {
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) cygpath -w "$1" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+# Escape a native path for embedding inside a JSON string (Windows backslashes
+# must be doubled) or a python single-quoted literal (same doubling).
+json_path() {
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) printf '%s' "${1//\\/\\\\}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+TMP_RAW="$(native_path "$TMP")"          # native form for shell comparisons
+HOME_FAKE_RAW="$(native_path "$HOME_FAKE")"
+A_RAW="$(native_path "$A")";   A_N="$(json_path "$A_RAW")"
+B_RAW="$(native_path "$B")";   B_N="$(json_path "$B_RAW")"
+C_RAW="$(native_path "$C")";   C_N="$(json_path "$C_RAW")"
+ABSENT_N="$(json_path "$(native_path "$TMP/knowledge/absent")")"
+UNREADABLE_RAW="$(native_path "$TMP/kb-unreadable")"; UNREADABLE_N="$(json_path "$UNREADABLE_RAW")"
+LINK_N="$(json_path "$(native_path "$TMP/kb-link/inside")")"
+MANYA_RAW="$(native_path "$TMP/kb-many-a")"; MANYA_N="$(json_path "$MANYA_RAW")"
+MANYB_RAW="$(native_path "$TMP/kb-many-b")"; MANYB_N="$(json_path "$MANYB_RAW")"
+ROOT_BLOCKED_N="$(json_path "$(native_path "$TMP/kb-root-blocked")")"
+SUBDIR_BLOCKED_N="$(json_path "$(native_path "$TMP/kb-subdir-blocked")")"
+
 MARKER="xzqunique_marker_7731"
 echo "alpha note mentions $MARKER here" > "$A/note-one.md"
 echo "beta note mentions $MARKER too"   > "$B/note-two.md"
 echo "rogue note mentions $MARKER"      > "$C/rogue.md"
 
-run_helper() { # env: COOP_DIR, HOME, PATH ; args passed through
-  COOP_DIR="$CFG" HOME="$HOME_FAKE" "$PY" "$HELPER" "$@" 2>"$TMP/stderr.txt"
+run_helper() { # env: COOP_DIR, HOME, USERPROFILE ; args passed through
+  # USERPROFILE is set alongside HOME because a native Windows python expands
+  # ~ via USERPROFILE and never via HOME (CPython ntpath.expanduser); POSIX
+  # pythons use HOME and ignore USERPROFILE.
+  COOP_DIR="$CFG" HOME="$HOME_FAKE" USERPROFILE="$HOME_FAKE_RAW" "$PY" "$HELPER" "$@" 2>"$TMP/stderr.txt"
 }
 
 jget() { # <json-file> <python-expr-with-d>
@@ -54,8 +96,8 @@ jget() { # <json-file> <python-expr-with-d>
 write_cfg() { printf '%s\n' "$1" > "$CFG/.coop/config"; }
 
 write_cfg "{\"schema_version\":1,\"knowledge\":{\"enabled\":true,\"repos\":[
-  {\"url\":\"https://example.com/a.git\",\"local_path\":\"$A\"},
-  {\"url\":\"https://example.com/b.git\",\"local_path\":\"$B\"}]}}"
+  {\"url\":\"https://example.com/a.git\",\"local_path\":\"$A_N\"},
+  {\"url\":\"https://example.com/b.git\",\"local_path\":\"$B_N\"}]}}"
 
 # --- A and B searched, C never returned ---------------------------------------
 out="$(run_helper --query "$MARKER")"; rc=$?
@@ -65,7 +107,7 @@ echo "$out" > "$TMP/out.json"
 [ "$(jget "$TMP/out.json" "len(d['searched_roots'])")" = "2" ] && ok "both configured roots searched" || ko "searched_roots: $out"
 roots="$(jget "$TMP/out.json" "sorted(d['searched_roots'])")"
 case "$roots" in *"repo a"*"repo-b"*) ok "searched roots include path with space + repo-b" ;; *) ko "roots: $roots" ;; esac
-if jget "$TMP/out.json" "any('$C' in (m['root'] + '/' + m['path']) or 'rogue' in m['path'] for m in d['matches'])" | grep -q True; then
+if jget "$TMP/out.json" "any('$C_N' in (m['root'] + '/' + m['path']) or 'rogue' in m['path'] for m in d['matches'])" | grep -q True; then
   ko "UNCONFIGURED root C leaked into matches"
 else
   ok "unconfigured root C is never returned"
@@ -76,7 +118,7 @@ jget "$TMP/out.json" "all(m['path'].endswith('.md') and m['line']>=1 and len(m['
 
 # --- citations contain root identity + relative path --------------------------
 rel="$(jget "$TMP/out.json" "d['matches'][0]['root'] + '/' + d['matches'][0]['path']")"
-case "$rel" in "$TMP"*) ok "citation root identity + relative path" ;; *) ko "citation root: $rel" ;; esac
+case "$rel" in "$TMP_RAW"*) ok "citation root identity + relative path" ;; *) ko "citation root: $rel" ;; esac
 
 # --- case-insensitive literal substring ---------------------------------------
 out="$(run_helper --query "xzqunique")"; echo "$out" > "$TMP/out.json"
@@ -88,7 +130,7 @@ out="$(run_helper --query "definitely_not_present_anywhere_99887")"; echo "$out"
   && ok "zero matches is status ok with empty matches" || ko "zero-match: $out"
 
 # --- disabled config -----------------------------------------------------------
-write_cfg "{\"schema_version\":1,\"knowledge\":{\"enabled\":false,\"repos\":[{\"url\":\"u\",\"local_path\":\"$A\"}]}}"
+write_cfg "{\"schema_version\":1,\"knowledge\":{\"enabled\":false,\"repos\":[{\"url\":\"u\",\"local_path\":\"$A_N\"}]}}"
 out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
 [ "$(jget "$TMP/out.json" "d['status']")" = "disabled" ] && [ "$(jget "$TMP/out.json" "len(d['matches'])")" = "0" ] \
   && ok "disabled config -> status disabled, exit 0" || ko "disabled: $out"
@@ -124,8 +166,8 @@ out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
 
 # --- missing A with valid B still returns B's matches ---------------------------
 write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[
-  {\"url\":\"https://example.com/missing.git\",\"local_path\":\"$TMP/knowledge/absent\"},
-  {\"url\":\"https://example.com/b.git\",\"local_path\":\"$B\"}]}}"
+  {\"url\":\"https://example.com/missing.git\",\"local_path\":\"$ABSENT_N\"},
+  {\"url\":\"https://example.com/b.git\",\"local_path\":\"$B_N\"}]}}"
 out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
 [ "$(jget "$TMP/out.json" "d['status']")" = "ok" ] && [ "$(jget "$TMP/out.json" "len(d['matches'])")" = "1" ] \
   && ok "missing A skipped with warning; B still searched" || ko "missing-A: $out"
@@ -134,8 +176,8 @@ jget "$TMP/out.json" "any('absent' in w for w in d['warnings'])" | grep -q True 
 
 # --- duplicate roots are deduplicated -------------------------------------------
 write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[
-  {\"url\":\"https://example.com/a.git\",\"local_path\":\"$A\"},
-  {\"url\":\"https://example.com/a-dup.git\",\"local_path\":\"$A/\"}]}}"
+  {\"url\":\"https://example.com/a.git\",\"local_path\":\"$A_N\"},
+  {\"url\":\"https://example.com/a-dup.git\",\"local_path\":\"$A_N/\"}]}}"
 out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
 [ "$(jget "$TMP/out.json" "len(d['searched_roots'])")" = "1" ] && [ "$(jget "$TMP/out.json" "len(d['matches'])")" = "1" ] \
   && ok "duplicate roots deduplicated" || ko "dedupe: $out"
@@ -156,7 +198,7 @@ out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
 mkdir -p "$TMP/kb-unreadable"
 echo "unreadable $MARKER" > "$TMP/kb-unreadable/secret.md"
 chmod 000 "$TMP/kb-unreadable/secret.md"
-write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$TMP/kb-unreadable\"}]}}"
+write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$UNREADABLE_N\"}]}}"
 out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
 chmod 644 "$TMP/kb-unreadable/secret.md"
 if [ "$(id -u)" = "0" ]; then
@@ -172,12 +214,12 @@ echo "outside secret $MARKER" > "$TMP/kb-link/outside/out.md"
 mkdir -p "$TMP/kb-link/inside"
 ln -s "$TMP/kb-link/outside" "$TMP/kb-link/inside/escape-link"
 echo "inside note fine" > "$TMP/kb-link/inside/in.md"
-write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$TMP/kb-link/inside\"}]}}"
+write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$LINK_N\"}]}}"
 out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
 [ "$(jget "$TMP/out.json" "len(d['matches'])")" = "0" ] && ok "symlinked directory cannot escape the root" || ko "symlink escape: $out"
 
 # --- literal metacharacters, not regex/shell --------------------------------------
-write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$A\"}]}}"
+write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$A_N\"}]}}"
 echo 'grep (a|b)* $MARKER.* [ok]? "quoted" here' > "$A/meta.md"
 out="$(run_helper --query '(a|b)* $MARKER.* [ok]?')"; echo "$out" > "$TMP/out.json"
 [ "$(jget "$TMP/out.json" "len(d['matches'])")" = "1" ] && ok "shell/regex metacharacters matched literally" || ko "meta: $out"
@@ -187,13 +229,13 @@ mkdir -p "$TMP/kb-many-a" "$TMP/kb-many-b"
 i=1; while [ "$i" -le 25 ]; do echo "line $i has $MARKER" >> "$TMP/kb-many-a/many.md"; i=$((i+1)); done
 echo "single $MARKER in b" > "$TMP/kb-many-b/b.md"
 write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[
-  {\"url\":\"u\",\"local_path\":\"$TMP/kb-many-a\"},
-  {\"url\":\"u\",\"local_path\":\"$TMP/kb-many-b\"}]}}"
+  {\"url\":\"u\",\"local_path\":\"$MANYA_N\"},
+  {\"url\":\"u\",\"local_path\":\"$MANYB_N\"}]}}"
 out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
-[ "$(jget "$TMP/out.json" "d['per_repo']['$TMP/kb-many-a']['truncated']")" = "True" ] \
-  && [ "$(jget "$TMP/out.json" "d['per_repo']['$TMP/kb-many-a']['total']")" = "25" ] \
+[ "$(jget "$TMP/out.json" "d['per_repo']['$MANYA_N']['truncated']")" = "True" ] \
+  && [ "$(jget "$TMP/out.json" "d['per_repo']['$MANYA_N']['total']")" = "25" ] \
   && ok "repo A truncated at 10 with total recorded" || ko "truncation: $out"
-[ "$(jget "$TMP/out.json" "d['per_repo']['$TMP/kb-many-b']['matches']")" = "1" ] \
+[ "$(jget "$TMP/out.json" "d['per_repo']['$MANYB_N']['matches']")" = "1" ] \
   && ok "second repository still searched despite A's truncation" || ko "starved B: $out"
 
 # --- empty query is invalid usage (exit 2) -----------------------------------------
@@ -220,8 +262,8 @@ EOF
   chmod +x "$1/teamai"
 }
 write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[
-  {\"url\":\"u\",\"local_path\":\"$A\"},
-  {\"url\":\"u\",\"local_path\":\"$B\"}]}}"
+  {\"url\":\"u\",\"local_path\":\"$A_N\"},
+  {\"url\":\"u\",\"local_path\":\"$B_N\"}]}}"
 
 # (a) no TeamAI on PATH
 out1="$(run_helper --query "$MARKER")"
@@ -287,7 +329,7 @@ if [ "$LOW_PRIV" != "skip" ]; then
   mkdir -p "$TMP/kb-root-blocked"
   echo "hidden $MARKER" > "$TMP/kb-root-blocked/hidden.md"
   chmod 000 "$TMP/kb-root-blocked"
-  write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$TMP/kb-root-blocked\"}]}}"
+  write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$ROOT_BLOCKED_N\"}]}}"
   out="$(run_helper_low --query "$MARKER")"; echo "$out" > "$TMP/out.json"
   chmod 755 "$TMP/kb-root-blocked"   # restore so cleanup can descend
   [ "$(jget "$TMP/out.json" "d['status']")" = "unavailable" ] \
@@ -304,7 +346,7 @@ if [ "$LOW_PRIV" != "skip" ]; then
   echo "visible $MARKER" > "$TMP/kb-subdir-blocked/open/vis.md"
   echo "sealed $MARKER" > "$TMP/kb-subdir-blocked/sealed/secret.md"
   chmod 000 "$TMP/kb-subdir-blocked/sealed"
-  write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$TMP/kb-subdir-blocked\"}]}}"
+  write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$SUBDIR_BLOCKED_N\"}]}}"
   out="$(run_helper_low --query "$MARKER")"; echo "$out" > "$TMP/out.json"
   chmod 755 "$TMP/kb-subdir-blocked/sealed"   # restore so cleanup can descend
   [ "$(jget "$TMP/out.json" "d['status']")" = "ok" ] \
