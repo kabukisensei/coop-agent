@@ -132,4 +132,45 @@ await t("recall on uninitialized checkout reports unavailable", async () => {
   assert.equal(res.ok, false); assert.equal(res.reason, "unavailable");
 });
 
+await t("F1 regression: commented-out or prefixed mode values are refused", async () => {
+  const mk = (name, yaml) => {
+    const wt = join(profile, name); mkdirSync(join(wt, ".teamai"), { recursive: true });
+    writeFileSync(join(wt, ".teamai", "teamai.yaml"), yaml);
+    return wt;
+  };
+  for (const [name, yaml] of [
+    ["wt-comment", "mode: team\n# mode: self\n"],
+    ["wt-prefix", "mode: self-destruct\n"],
+    ["wt-double", "mode: self\nmode: team\n"],
+  ]) {
+    const wt = mk(name, yaml);
+    const cfg = resolveTeamaiConfig(enabledEnv({ COOP_TEAMAI_WORKTREE: wt }));
+    const res = await contributeTeamaiKnowledge(cfg, { file: join(profile, "synthetic-note.md") });
+    assert.equal(res.ok, false, name);
+    assert.equal(res.reason, "unsafe-mode", name);
+  }
+});
+
+await t("F2 regression: malformed PR URLs do not satisfy the publication gate", async () => {
+  const wt = join(profile, "wt-badurl"); mkdirSync(join(wt, ".teamai"), { recursive: true });
+  writeFileSync(join(wt, ".teamai", "teamai.yaml"), "mode: self\n");
+  const cfg = resolveTeamaiConfig(enabledEnv({ COOP_TEAMAI_WORKTREE: wt, COOP_TEAMAI_CLI: process.execPath }));
+  for (const bad of ["Contributed via PR:\nhttps://]/pull/7\n", "Contributed via PR:\nhttp://github.com/a/b/pull/7\n", "Contributed via PR:\nhttps://localhost/pull/7\n", "Contributed via PR:\nhttps://github.com/a/b/issues/7\n"]) {
+    const execImpl = (cmd, args, opts) => {
+      if (cmd === process.execPath) return bad;
+      return execFileSync(cmd, args, { ...opts, encoding: "utf8" });
+    };
+    const res = await contributeTeamaiKnowledge(cfg, { file: join(profile, "synthetic-note.md") }, { execFileImpl: execImpl });
+    assert.equal(res.ok, false, bad);
+    assert.equal(res.reason, "publication-unverified", bad);
+  }
+});
+
+await t("parsePrIdentity accepts GitHub and GitLab merge-request URLs", async () => {
+  const { parsePrIdentity } = await import("../lib/teamai-adapter.mjs");
+  assert.equal(parsePrIdentity("Contributed via PR: x\nPR https://github.com/o/r/pull/42"), "https://github.com/o/r/pull/42");
+  assert.equal(parsePrIdentity("Contributed via PR: x\nsee https://gitlab.example.com/o/r/merge_requests/9"), "https://gitlab.example.com/o/r/merge_requests/9");
+  assert.equal(parsePrIdentity("no pr here https://github.com/o/r/pull/1"), null);
+});
+
 console.log(`  ${n} teamai-adapter tests passed`);
