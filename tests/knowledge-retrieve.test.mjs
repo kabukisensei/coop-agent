@@ -129,7 +129,12 @@ await t("malformed inputs → diagnostics, no crash", async () => {
 });
 
 await t("malformed embeddings never claim semantic success (F1)", async () => {
-  const base = { query: "guardrails", sources, authorize: teamSession, readProvider: provider };
+  // Single-document source: embed request is [query, doc] = 2 texts, matching
+  // the two-vector fixtures, so malformed CONTENT reaches the validator
+  // (count-mismatch alone must not be what rejects them — reviewer round 2
+  // mutation-tested this).
+  const oneDoc = [{ id: "kb-team", scope: "team", agent_read: true, sensitivity: "internal", paths: ["fabric-refresh"] }];
+  const base = { query: "guardrails", sources: oneDoc, authorize: teamSession, readProvider: provider };
   for (const [label, out] of [
     ["non-numeric", [["oops"], ["oops"]]],
     ["ragged", [[1, 0], [1]]],
