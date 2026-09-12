@@ -81,7 +81,6 @@ A_EXPECTED="$(resolved_path "$A")"
 HOME_FAKE_RAW="$(native_path "$HOME_FAKE")"
 A_RAW="$(native_path "$A")";   A_N="$(json_path "$A_RAW")"
 B_RAW="$(native_path "$B")";   B_N="$(json_path "$B_RAW")"
-C_RAW="$(native_path "$C")";   C_N="$(json_path "$C_RAW")"
 ABSENT_N="$(json_path "$(native_path "$TMP/knowledge/absent")")"
 UNREADABLE_RAW="$(native_path "$TMP/kb-unreadable")"; UNREADABLE_N="$(json_path "$UNREADABLE_RAW")"
 LINK_N="$(json_path "$(native_path "$TMP/kb-link/inside")")"
@@ -120,11 +119,17 @@ echo "$out" > "$TMP/out.json"
 [ "$(jget "$TMP/out.json" "len(d['searched_roots'])")" = "2" ] && ok "both configured roots searched" || ko "searched_roots: $out"
 roots="$(jget "$TMP/out.json" "sorted(d['searched_roots'])")"
 case "$roots" in *"repo a"*"repo-b"*) ok "searched roots include path with space + repo-b" ;; *) ko "roots: $roots" ;; esac
-if jget "$TMP/out.json" "any('$C_N' in (m['root'] + '/' + m['path']) or 'rogue' in m['path'] for m in d['matches'])" | grep -q True; then
-  ko "UNCONFIGURED root C leaked into matches"
-else
-  ok "unconfigured root C is never returned"
-fi
+leak="$("$PY" - "$(native_path "$TMP/out.json")" "$(native_path "$TMP/knowledge/unconfigured")" <<'PYEOF'
+import json, os, sys
+d = json.load(open(sys.argv[1]))
+c_root = os.path.realpath(sys.argv[2])
+if any(os.path.normcase(os.path.realpath(m['root'])) == os.path.normcase(c_root) or 'rogue' in m['path'] for m in d['matches']):
+    print('leaked')
+else:
+    print('clean')
+PYEOF
+)"
+[ "$leak" = "clean" ] && ok "unconfigured root C is never returned" || ko "UNCONFIGURED root C leaked into matches"
 [ "$(jget "$TMP/out.json" "len(d['matches'])")" = "2" ] && ok "one match per configured repo" || ko "matches: $out"
 jget "$TMP/out.json" "all(m['path'].endswith('.md') and m['line']>=1 and len(m['snippet'])<=240 for m in d['matches'])" | grep -q True \
   && ok "matches carry relative path, line number, capped snippet" || ko "match shape: $out"
@@ -246,27 +251,41 @@ out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
 mkdir -p "$TMP/kb-unreadable"
 echo "unreadable $MARKER" > "$TMP/kb-unreadable/secret.md"
 SECRET_NATIVE="$(native_path "$TMP/kb-unreadable/secret.md")"
-if ! "$PY" - "$SECRET_NATIVE" <<'PYEOF' 2>/dev/null
+read_probe() { # prints readable|denied|setup-error; exit 1 only on invocation failure
+  "$PY" - "$SECRET_NATIVE" <<'PYEOF'
 import sys
-open(sys.argv[1], "rb").close()
+try:
+    open(sys.argv[1], "rb").close()
+except PermissionError:
+    print("denied")
+except OSError as exc:
+    print(f"setup-error {exc}")
+else:
+    print("readable")
 PYEOF
-then
-  ko "unreadable setup: secret.md exists but is not initially readable"
-elif
-  chmod 000 "$TMP/kb-unreadable/secret.md"
-  "$PY" - "$SECRET_NATIVE" <<'PYEOF' 2>/dev/null
-import sys
-open(sys.argv[1], "rb").close()
-PYEOF
-then
-  chmod 644 "$TMP/kb-unreadable/secret.md"
-  skip "unreadable-file assertion: permission denial not effective for this identity on this host"
+}
+if ! initial="$(read_probe 2>/dev/null)" || [ -z "$initial" ]; then
+  ko "unreadable setup: initial read probe did not run (interpreter failure)"
+elif [ "$initial" != "readable" ]; then
+  ko "unreadable setup: secret.md exists but is not initially readable ($initial)"
+elif ! chmod 000 "$TMP/kb-unreadable/secret.md" 2>"$TMP/chmod-err.txt"; then
+  ko "unreadable setup: chmod failed: $(cat "$TMP/chmod-err.txt")"
 else
-  write_cfg "{\"schema_version\":1,\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$UNREADABLE_N\"}]}}"
-  out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
-  chmod 644 "$TMP/kb-unreadable/secret.md"
-  jget "$TMP/out.json" "any('unreadable file' in w for w in d['warnings'])" | grep -q True \
-    && ok "unreadable file warned, not claimed searched" || ko "unreadable: $out"
+  after="$(read_probe 2>/dev/null)" || after=""
+  case "$after" in
+    readable)
+      chmod 644 "$TMP/kb-unreadable/secret.md"
+      skip "unreadable-file assertion: permission denial not effective for this identity on this host" ;;
+    denied)
+      write_cfg "{\"schema_version\":1,\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$UNREADABLE_N\"}]}}"
+      out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
+      chmod 644 "$TMP/kb-unreadable/secret.md"
+      jget "$TMP/out.json" "any('unreadable file' in w for w in d['warnings'])" | grep -q True \
+        && ok "unreadable file warned, not claimed searched" || ko "unreadable: $out" ;;
+    *)
+      chmod 644 "$TMP/kb-unreadable/secret.md" 2>/dev/null || true
+      ko "unreadable setup: read probe after chmod unusable ($after)" ;;
+  esac
 fi
 
 # --- symlink escape blocked ---------------------------------------------------
@@ -278,7 +297,9 @@ fi
 mkdir -p "$TMP/kb-link/outside"
 echo "outside secret $MARKER" > "$TMP/kb-link/outside/out.md"
 mkdir -p "$TMP/kb-link/inside"
-ln -s "$TMP/kb-link/outside" "$TMP/kb-link/inside/escape-link"
+if ! ln -s "$TMP/kb-link/outside" "$TMP/kb-link/inside/escape-link" 2>"$TMP/ln-err.txt"; then
+  ko "symlink setup: ln failed: $(cat "$TMP/ln-err.txt")"
+else
 echo "inside note fine" > "$TMP/kb-link/inside/in.md"
 LINK_NATIVE="$(native_path "$TMP/kb-link/inside/escape-link")"
 OUTSIDE_NATIVE="$(native_path "$TMP/kb-link/outside")"
@@ -304,6 +325,7 @@ case "$linkcheck" in
   *)
     ko "symlink setup: link does not target the intended outside fixture" ;;
 esac
+fi
 
 # --- literal metacharacters, not regex/shell --------------------------------------
 write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$A_N\"}]}}"
@@ -325,33 +347,40 @@ write_cfg "{\"schema_version\":1,\"knowledge\":{\"enabled\":true,\"repos\":[
   {\"url\":\"u\",\"local_path\":\"$MANYA_N\"},
   {\"url\":\"u\",\"local_path\":\"$MANYB_N\"}]}}"
 out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
-trunc="$("$PY" - "$(native_path "$TMP/out.json")" "$(resolved_path "$TMP/kb-many-a")" "$(resolved_path "$TMP/kb-many-b")" <<'PYEOF'
+if ! trunc="$("$PY" - "$(native_path "$TMP/out.json")" "$(resolved_path "$TMP/kb-many-a")" "$(resolved_path "$TMP/kb-many-b")" <<'PYEOF'
 import json, sys
 d = json.load(open(sys.argv[1]))
 a, b = sys.argv[2], sys.argv[3]
+per_repo = d.get('per_repo')
 checks = [
-    ("repo A capped at 10 matches", lambda: d['per_repo'][a]['matches'] == 10),
-    ("repo A total=25 recorded", lambda: d['per_repo'][a]['total'] == 25),
-    ("repo A truncated=true", lambda: d['per_repo'][a]['truncated'] is True),
+    ("repo A capped at 10 matches", lambda: per_repo[a]['matches'] == 10),
+    ("repo A total=25 recorded", lambda: per_repo[a]['total'] == 25),
+    ("repo A truncated=true", lambda: per_repo[a]['truncated'] is True),
     ("repo B fully searched: 1 match, total 1, truncated=false",
-     lambda: d['per_repo'][b]['matches'] == 1 and d['per_repo'][b]['total'] == 1 and d['per_repo'][b]['truncated'] is False),
+     lambda: per_repo[b]['matches'] == 1 and per_repo[b]['total'] == 1 and per_repo[b]['truncated'] is False),
     ("combined matches=11 across both repos", lambda: len(d['matches']) == 11),
     ("overall truncated=true", lambda: d['truncated'] is True),
 ]
 for name, check in checks:
     try:
-        passed = check()
-    except KeyError as exc:
-        passed, name = False, f"{name} (missing key {exc})"
+        passed = check() if isinstance(per_repo, dict) else False
+    except (KeyError, TypeError) as exc:
+        passed, name = False, f"{name} (lookup failed: {exc})"
     print(("ok " if passed else "ko ") + name)
 PYEOF
-)"
-while IFS= read -r line; do
-  case "$line" in
-    ok*) ok "${line#ok }" ;;
-    ko*) ko "${line#ko }" ;;
-  esac
-done <<< "$trunc"
+)"; then
+  ko "truncation: identity checker failed to execute"
+elif [ "$(printf '%s\n' "$trunc" | sed '/^$/d' | wc -l)" -ne 6 ]; then
+  ko "truncation: identity checker produced incomplete output: $trunc"
+else
+  while IFS= read -r line; do
+    case "$line" in
+      ok*) ok "${line#ok }" ;;
+      ko*) ko "${line#ko }" ;;
+      *)   ko "truncation: unparseable checker line: $line" ;;
+    esac
+  done <<< "$trunc"
+fi
 
 # --- empty query is invalid usage (exit 2) -----------------------------------------
 run_helper --query "   " > /dev/null 2>"$TMP/err.txt"; rc=$?
