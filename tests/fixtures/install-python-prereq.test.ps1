@@ -116,10 +116,25 @@ exit /b 0
 
   $oldPreference = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
-  $output = & $install --force 2>&1 | Out-String
+  # Defect D evidence (bounded native investigation): capture ALL streams —
+  # the bootstrap banner is host/Information output, invisible to 2>&1, which
+  # is why the previous failure message showed an empty $output. Stream-
+  # tagged, sanitized evidence is persisted and echoed on failure so the
+  # exact failing operation, its resolved executable, arguments, and exit
+  # status are identifiable on the Windows CI leg. No stream is suppressed;
+  # no assertion below is altered.
+  $evidencePath = Join-Path $t 'install-evidence.log'
+  $outItems = & $install --force *>&1
   $rc = $LASTEXITCODE
+  $evidence = ($outItems | ForEach-Object {
+    if ($_ -is [System.Management.Automation.ErrorRecord]) { "ERROR| $($_.Exception.Message)" }
+    elseif ($_ -is [System.Management.Automation.WarningRecord]) { "WARN| $($_)" }
+    else { "OUT| $_" }
+  }) -join "`n"
+  [System.IO.File]::WriteAllText($evidencePath, "exit=$rc`n$evidence")
+  $output = $outItems | Out-String
   $ErrorActionPreference = $oldPreference
-  if ($rc -ne 0) { Write-Error "install fixture exited $rc`n$output`n$(Get-Content $calls -Raw)" }
+  if ($rc -ne 0) { Write-Error "install fixture exited $rc`nevidence file: $evidencePath`n$output`n--- stream-tagged ---`n$evidence`nCALLS:`n$(Get-Content $calls -Raw)" }
   $transcript = Get-Content $calls -Raw
   if ($transcript -like '*WINGET*') { Write-Error "Python 3.14-only install unexpectedly required winget`n$transcript" }
   if ($transcript -notlike '*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0*') { Write-Error "Fabric CLI did not fetch and use a standalone Python 3.12`n$transcript" }
@@ -128,10 +143,18 @@ exit /b 0
   [System.IO.File]::WriteAllText($calls, '')
   $oldPreference = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
-  $output = & $update 2>&1 | Out-String
+  $evidencePath = Join-Path $t 'update-evidence.log'
+  $outItems = & $update *>&1
   $rc = $LASTEXITCODE
+  $evidence = ($outItems | ForEach-Object {
+    if ($_ -is [System.Management.Automation.ErrorRecord]) { "ERROR| $($_.Exception.Message)" }
+    elseif ($_ -is [System.Management.Automation.WarningRecord]) { "WARN| $($_)" }
+    else { "OUT| $_" }
+  }) -join "`n"
+  [System.IO.File]::WriteAllText($evidencePath, "exit=$rc`n$evidence")
+  $output = $outItems | Out-String
   $ErrorActionPreference = $oldPreference
-  if ($rc -ne 0) { Write-Error "update fixture exited $rc`n$output`n$(Get-Content $calls -Raw)" }
+  if ($rc -ne 0) { Write-Error "update fixture exited $rc`nevidence file: $evidencePath`n$output`n--- stream-tagged ---`n$evidence`nCALLS:`n$(Get-Content $calls -Raw)" }
   $transcript = Get-Content $calls -Raw
   if ($transcript -notlike '*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0*') { Write-Error "Updater did not rebuild Fabric CLI with standalone Python 3.12`n$transcript" }
   if ($transcript -notlike '*PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force*') { Write-Error "Updater did not reinject fabric-cicd after rebuilding Fabric CLI`n$transcript" }
