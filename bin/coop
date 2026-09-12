@@ -11,6 +11,7 @@
 # Usage:
 #   coop                      Launch the branded Pi agent (passes extra args to pi)
 #   coop doctor               Check dependencies and configuration
+#   coop support               Collect a sanitized support bundle (health, versions, events); preview + export
 #   coop update               Update Pi, Coop tools, vibes, skills/prompts, then doctor
 #   coop install              Fresh-install / bootstrap everything (idempotent)
 #   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
@@ -77,6 +78,8 @@ ${COOP_BOLD}Usage${COOP_RST}
   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
   coop review [paths...]    Run both linters + compose findings onto the lineage docs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
+  coop support [--json]     Collect a sanitized support bundle (health, versions, events)
+                            (--incident: incident record; --export PATH: write bundle)
   coop fabric [args]        Pass through to the Microsoft Fabric CLI (fab)
   coop version              Print coop + pi versions
   coop help                 Show this help
@@ -1047,6 +1050,7 @@ case "$cmd" in
   sql-review)    shift; run_tool coop-sql-review "$@" ;;
   dax-review)    shift; run_tool coop-dax-review "$@" ;;
   review)        shift; run_review "$@" ;;
+  support)       shift; exec "$COOP_ROOT/scripts/support-center.sh" "$@" ;;
   fabric|fab)    shift; have fab || coop_die "Microsoft Fabric CLI (fab) not found. Run: coop install"; exec fab "$@" ;;
   # --- Pi management, aliased under coop ---
   add)           shift; have pi || coop_die "pi not installed. Run: coop bootstrap"; exec pi install "$@" ;;
