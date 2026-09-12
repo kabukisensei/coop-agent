@@ -7,8 +7,12 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = resolve(new URL("..", import.meta.url).pathname);
+// Windows: import.meta.url.pathname yields "/D:/a/..." (leading slash keeps
+// the drive), and resolve() then produces "D:\D:\a\..." — fileURLToPath is
+// the correct URL→path conversion on every platform.
+const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const SH = join(ROOT, "scripts", "support-center.sh");
 const profile = mkdtempSync(join(tmpdir(), "support-test-"));
 const coopDir = join(profile, "coop");
