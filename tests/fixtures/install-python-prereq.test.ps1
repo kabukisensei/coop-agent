@@ -114,6 +114,62 @@ exit /b 0
   $env:SystemRoot = Join-Path $t 'system-root'
   [System.IO.File]::WriteAllText($calls, '')
 
+  # Defect D bounded materialization probe. Windows PowerShell 5.1 lacks
+  # Start-ThreadJob, so Coop-Unit uses process-backed Start-Job. Exercise that
+  # exact isolation boundary before install.ps1: record whether the child
+  # runspace materializes, what SystemRoot it inherits, which synthetic pipx
+  # executable it resolves, the harmless exact argv, its exit status, and its
+  # sanitized output. Bound the probe to 15s and always remove its owned job.
+  $jobEvidencePath = Join-Path $t 'start-job-evidence.log'
+  $jobEvidence = New-Object System.Collections.Generic.List[string]
+  $jobEvidence.Add("parent.ps=$($PSVersionTable.PSVersion)")
+  $jobEvidence.Add("parent.start_thread_job_available=$([bool](Get-Command Start-ThreadJob -ErrorAction SilentlyContinue))")
+  $diagJob = $null
+  try {
+    $diagJob = Start-Job -ScriptBlock {
+      $argv = @('install', '--help')
+      $cmd = Get-Command pipx -ErrorAction SilentlyContinue
+      $resolved = if ($cmd) { $cmd.Source } else { '<unresolved>' }
+      $out = if ($cmd) { (& $resolved @argv 2>&1 | Out-String).Trim() } else { '' }
+      $rc = if ($cmd) { $LASTEXITCODE } else { 127 }
+      [pscustomobject]@{
+        system_root = $env:SystemRoot
+        resolved_executable = $resolved
+        arguments = ($argv -join ' ')
+        exit_status = $rc
+        output = $out
+      }
+    }
+    $null = Wait-Job $diagJob -Timeout 15
+    $jobEvidence.Add("job.state=$($diagJob.State)")
+    if ($diagJob.State -eq 'Running') {
+      $jobEvidence.Add('job.timeout=15s')
+      Stop-Job $diagJob -ErrorAction SilentlyContinue
+    } else {
+      $jobErrors = @()
+      $jobResult = @(Receive-Job $diagJob -ErrorVariable jobErrors -ErrorAction SilentlyContinue | Select-Object -Last 1)
+      $reason = $diagJob.ChildJobs[0].JobStateInfo.Reason
+      $jobEvidence.Add("job.reason=$(if ($reason) { $reason.Exception.Message } else { '<none>' })")
+      $jobEvidence.Add("job.error=$(if ($jobErrors) { ($jobErrors | ForEach-Object { $_.Exception.Message }) -join ' | ' } else { '<none>' })")
+      if ($jobResult.Count -eq 1) {
+        $r = $jobResult[0]
+        $jobEvidence.Add("child.system_root=$($r.system_root)")
+        $jobEvidence.Add("child.resolved_executable=$($r.resolved_executable)")
+        $jobEvidence.Add("child.arguments=$($r.arguments)")
+        $jobEvidence.Add("child.exit_status=$($r.exit_status)")
+        $jobEvidence.Add("child.output=$($r.output)")
+      } else {
+        $jobEvidence.Add("child.result_count=$($jobResult.Count)")
+      }
+    }
+  } catch {
+    $jobEvidence.Add("probe.exception=$($_.Exception.Message)")
+  } finally {
+    if ($diagJob) { Remove-Job $diagJob -Force -ErrorAction SilentlyContinue }
+    [System.IO.File]::WriteAllLines($jobEvidencePath, $jobEvidence)
+  }
+  $jobEvidence | ForEach-Object { Write-Host "DEFECTD| $_" }
+
   $oldPreference = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   # Defect D evidence (bounded native investigation): capture ALL streams —
