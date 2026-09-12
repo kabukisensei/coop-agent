@@ -17,25 +17,35 @@ $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-knowledge-timeout-ps-
 $failed = $false
 function Ok([string]$Message) { Write-Host "  OK  $Message" }
 function Ko([string]$Message) { Write-Host "  FAIL $Message"; $script:failed = $true }
+# Windows PowerShell 5.1 converts native-command stderr into terminating
+# NativeCommandError records under $ErrorActionPreference='Stop' — even with
+# call-site 2>$null or 2>&1-into-$null redirection when the fixture runs
+# nested (powershell -File under a capturing parent, as tests/run.ps1 does).
+# Empirically confirmed on CI (run 34673322072, sync-knowledge-timeout fixture
+# line 32). Lowering EAP for the native invocation is the 5.1-safe form;
+# $LASTEXITCODE is unaffected. Assertions are unchanged.
+function Invoke-Native([Parameter(Mandatory=$true)][scriptblock]$Command) {
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { & $Command } finally { $ErrorActionPreference = $prevEap }
+}
 
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 try {
   # --- healthy local bare remote (real git, file:// URL, no network) ---------
   $remote = Join-Path $temp 'remote.git'
   $work = Join-Path $temp 'work'
-  # PS 5.1 converts native stderr into terminating NativeCommandError records
-  # under $ErrorActionPreference='Stop'; 2>$null does NOT suppress them there.
-  # Merge-and-discard (2>&1 into $null) is the 5.1-safe suppression form and
-  # keeps $LASTEXITCODE intact.
-  $null = & git init --bare -b main -q $remote 2>&1
-  if ($LASTEXITCODE -ne 0) { $null = & git init --bare -q $remote 2>&1; $null = & git -C $remote symbolic-ref HEAD refs/heads/main 2>&1 }
-  $null = & git clone -q $remote $work 2>&1
-  $null = & git -C $work config user.email test@example.com 2>&1
-  $null = & git -C $work config user.name 'Test' 2>&1
+  # Native setup calls run through Invoke-Native: see its header for the PS 5.1
+  # NativeCommandError semantics. $LASTEXITCODE is preserved across the call.
+  $null = Invoke-Native { & git init --bare -b main -q $remote 2>&1 }
+  if ($LASTEXITCODE -ne 0) { $null = Invoke-Native { & git init --bare -q $remote 2>&1 }; $null = Invoke-Native { & git -C $remote symbolic-ref HEAD refs/heads/main 2>&1 } }
+  $null = Invoke-Native { & git clone -q $remote $work 2>&1 }
+  $null = Invoke-Native { & git -C $work config user.email test@example.com 2>&1 }
+  $null = Invoke-Native { & git -C $work config user.name 'Test' 2>&1 }
   Set-Content (Join-Path $work 'note.md') 'one'
-  $null = & git -C $work add note.md 2>&1
-  $null = & git -C $work commit -qm first 2>&1
-  $null = & git -C $work push -q -u origin main 2>&1
+  $null = Invoke-Native { & git -C $work add note.md 2>&1 }
+  $null = Invoke-Native { & git -C $work commit -qm first 2>&1 }
+  $null = Invoke-Native { & git -C $work push -q -u origin main 2>&1 }
 
   # --- prepare the fake git --------------------------------------------------
   $fakeBin = Join-Path $temp 'fakebin'
@@ -146,7 +156,7 @@ int main(int argc, char **argv) {
       }
     }
     if (-not $cc) { Ko 'no C compiler found to build the Windows git fixture (fixture must execute)'; exit 1 }
-    $compileOut = & $cc -O1 -o $fakeGit $cFile 2>&1 | Out-String
+    $compileOut = Invoke-Native { & $cc -O1 -o $fakeGit $cFile 2>&1 } | Out-String
     if (-not (Test-Path -LiteralPath $fakeGit)) {
       Ko "compiling the Windows git fixture failed: $compileOut"; exit 1
     }
@@ -273,7 +283,7 @@ exec "$REALGIT" "$@"
   $env:PATH = "$fakeBin$([System.IO.Path]::PathSeparator)$priorPath"
   try {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $orphanOut = & $pyExe (Join-Path $root 'scripts\knowledge-git.py') '--' git -C $orphanRepo status --porcelain 2>&1 | Out-String
+    $orphanOut = Invoke-Native { & $pyExe (Join-Path $root 'scripts\\knowledge-git.py') '--' git -C $orphanRepo status --porcelain 2>&1 } | Out-String
     $orphanRc = $LASTEXITCODE
     $sw.Stop()
   } finally {
@@ -300,7 +310,7 @@ exec "$REALGIT" "$@"
   $env:PATH = "$fakeBin$([System.IO.Path]::PathSeparator)$priorPath"
   try {
     $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
-    $probeOrphanOut = & $pyExe (Join-Path $root 'scripts\knowledge-git.py') '--' git -C $probeRepo status --porcelain 2>&1 | Out-String
+    $probeOrphanOut = Invoke-Native { & $pyExe (Join-Path $root 'scripts\\knowledge-git.py') '--' git -C $probeRepo status --porcelain 2>&1 } | Out-String
     $probeOrphanRc = $LASTEXITCODE
     $sw2.Stop()
   } finally {
