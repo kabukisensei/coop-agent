@@ -90,27 +90,30 @@ jobs:
       - name: Build checksum-pinned managed runtime with development companions
         shell: bash
         run: node scripts/prepare-managed-runtime.mjs --target '${{ steps.target.outputs.value }}' --work '${{ runner.temp }}/coop-managed-work' --output '${{ runner.temp }}/managed-runtime' --development-wheels '${{ runner.temp }}/coop-development-wheels/development-wheels.json'
-      - name: PROBE 2 exact verify-spawn matrix (diagnostic only)
+      - name: PROBE 3 env-variable isolation matrix (diagnostic only)
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          set -u
+          set +e
           PY='${{ runner.temp }}/managed-runtime/python/runtime/python.exe'
-          EP='${{ runner.temp }}/managed-runtime/python/entrypoints/coop-data-doc.py'
-          HOME_DIR='${{ runner.temp }}/probe2-home'
+          HOME_DIR='${{ runner.temp }}/probe3-home'
           mkdir -p "$HOME_DIR"
-          run_case() {
+          echo "BASH-SEES SystemRoot='${SystemRoot:-<unset>}' WINDIR='${WINDIR:-<unset>}' COMSPEC='${COMSPEC:-<unset>}'"
+          case_run() {
             name="$1"; shift
             echo "===== $name ====="
-            env -i PATH="$(dirname "$PY")" HOME="$HOME_DIR" USERPROFILE="$HOME_DIR" APPDATA="$HOME_DIR" LOCALAPPDATA="$HOME_DIR" TMPDIR="$HOME_DIR" TEMP="$HOME_DIR" TMP="$HOME_DIR" PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1 SystemRoot="${SystemRoot:-}" WINDIR="${WINDIR:-}" COMSPEC="${COMSPEC:-}" "$@" > "$HOME_DIR/out.txt" 2> "$HOME_DIR/err.txt"
+            "$@" > "$HOME_DIR/out.txt" 2> "$HOME_DIR/err.txt"
             echo "EXIT=$?"
-            echo "--- stdout tail ---"; tail -3 "$HOME_DIR/out.txt" || true
-            echo "--- stderr tail ---"; tail -6 "$HOME_DIR/err.txt" || true
+            echo "--- stderr tail ---"; tail -4 "$HOME_DIR/err.txt" || true
           }
-          run_case fullenv-import "$PY" -c "import _overlapped; print('OVERLAPPED-OK')"
-          run_case stripped-import "$PY" -c "import _overlapped; print('OVERLAPPED-OK')"
-          run_case stripped-flags-import "$PY" -I -B -X utf8 -c "import _overlapped; print('OVERLAPPED-OK')"
-          run_case stripped-entrypoint "$PY" -I -B -X utf8 "$EP" --help
+          BASE_ENV="PATH=$(dirname "$PY") HOME=$HOME_DIR USERPROFILE=$HOME_DIR APPDATA=$HOME_DIR LOCALAPPDATA=$HOME_DIR TMPDIR=$HOME_DIR TEMP=$HOME_DIR TMP=$HOME_DIR PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1"
+          PYEXE="$(cygpath -w "$PY" 2>/dev/null || echo "$PY")"
+          case_run a-true-full-env "$PYEXE" -c "import _overlapped; print('OVERLAPPED-OK')"
+          case_run b-stripped-systemroot-ok env -i $BASE_ENV SystemRoot="${SystemRoot}" WINDIR="${WINDIR}" COMSPEC="${COMSPEC}" "$PYEXE" -c "import _overlapped; print('OVERLAPPED-OK')"
+          case_run c-stripped-systemroot-empty env -i $BASE_ENV SystemRoot="" "$PYEXE" -c "import _overlapped; print('OVERLAPPED-OK')"
+          case_run d-stripped-no-systemroot env -i $BASE_ENV "$PYEXE" -c "import _overlapped; print('OVERLAPPED-OK')"
+          case_run e-stripped-all-three-empty env -i $BASE_ENV SystemRoot="" WINDIR="" COMSPEC="" "$PYEXE" -c "import _overlapped; print('OVERLAPPED-OK')"
+          echo PROBE3-DONE
       - name: Verify real runtime, exact capabilities, isolated state, and cleanup
         shell: bash
         run: node scripts/verify-managed-runtime.mjs --bundle '${{ runner.temp }}/managed-runtime' --workspace '${{ github.workspace }}' --agent '${{ runner.temp }}/coop-managed-agent' | tee '${{ runner.temp }}/managed-runtime-check.json'
