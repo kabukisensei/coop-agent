@@ -1211,4 +1211,51 @@ await test("acquire aborts transition when releasing existing workspace fails an
   }
 });
 
+await test("base owner release with only recoverable-dead overrides retains the group and marks releasedAt", () => {
+  const f = makeRoot();
+  let primary, overrideB, observer;
+  try {
+    let currentTime = Date.parse("2026-09-04T12:00:00.000Z");
+    const alive = new Set([101, 102]);
+    const manager = (ownerId, pid) => new WorkspaceLeaseManager({
+      agentDir: f.agentDir, ownerId, pid,
+      now: () => new Date(currentTime),
+      processAlive: (p) => alive.has(p),
+      heartbeatMs: 5_000,
+      staleMs: 20_000,
+    });
+    primary = manager("a", 101);
+    overrideB = manager("b", 102);
+    observer = manager("obs", 999);
+
+    assert.equal(primary.acquire(f.repo, { mode: "write" }).ok, true);
+    assert.equal(overrideB.acquire(f.repo, { mode: "override", approved: true }).ok, true);
+
+    // The override writer dies without releasing; its heartbeat later expires.
+    alive.delete(102);
+    currentTime += 30_000;
+
+    const lockDir = primary.active.lockDir;
+    const overrideRecordDir = join(lockDir, "overrides");
+
+    // Base owner departs while a recoverable-dead override record remains.
+    assert.equal(primary.release(), true);
+
+    // The group must survive: the released base record is marked, the override
+    // writer's record is not revoked, and stale recovery owns the teardown.
+    assert.equal(existsSync(overrideRecordDir), true);
+    const insp = observer.inspect(f.repo);
+    assert.equal(insp.ok, false);
+    assert.equal(insp.state, "held");
+    assert.equal(insp.owner.ownerId, "a");
+    assert.equal(typeof insp.owner.releasedAt, "string");
+    assert.equal(insp.recoverable, true);
+  } finally {
+    primary?.stopHeartbeat();
+    overrideB?.stopHeartbeat();
+    observer?.stopHeartbeat();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 console.log(`workspace isolation: ${count} tests passed`);
