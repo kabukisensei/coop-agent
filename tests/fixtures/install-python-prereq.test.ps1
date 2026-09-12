@@ -97,6 +97,28 @@ exit /b 0
   Write-Shim 'fab' "#!/bin/sh`necho 'fab version 1.7.0'`n" "@echo off`r`necho fab version 1.7.0`r`n"
   Write-Shim 'az' "#!/bin/sh`necho 'azure-cli 2.80.0'`n" "@echo off`r`necho azure-cli 2.80.0`r`n"
 
+  # Defect D bounded comparison, stage A: a harmless Start-Job returning a
+  # fixed synthetic value in a CLEAN session (real SystemRoot, unmodified
+  # PATH/HOME). Establishes whether process-backed job startup works at all on
+  # this runner before any fixture environment is applied. Evidence only; no
+  # assertion depends on it and no stream is suppressed.
+  $jobEvidencePath = Join-Path $t 'start-job-evidence.log'
+  $jobEvidence = New-Object System.Collections.Generic.List[string]
+  $jobEvidence.Add("parent.ps=$($PSVersionTable.PSVersion)")
+  $jobEvidence.Add("parent.start_thread_job_available=$([bool](Get-Command Start-ThreadJob -ErrorAction SilentlyContinue))")
+  $jobEvidence.Add("control_a.system_root=$env:SystemRoot")
+  $controlA = Start-Job -ScriptBlock { 'CONTROL_A_OK' }
+  $null = Wait-Job $controlA -Timeout 15
+  $jobEvidence.Add("control_a.state=$($controlA.State)")
+  if ($controlA.State -eq 'Completed') {
+    $aResults = @(Receive-Job $controlA)
+    $jobEvidence.Add("control_a.result=$($aResults -join ',')")
+  } else {
+    $aReason = $controlA.ChildJobs[0].JobStateInfo.Reason
+    $jobEvidence.Add("control_a.reason=$(if ($aReason) { [string]$aReason.Message } else { '<none>' })")
+  }
+  Remove-Job $controlA -Force -ErrorAction SilentlyContinue
+
   $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$($saved['PATH'])"
   $env:HOME = Join-Path $t 'home'
   $env:COOP_DIR = Join-Path $t 'coop-dir'
@@ -114,19 +136,48 @@ exit /b 0
   $env:SystemRoot = Join-Path $t 'system-root'
   [System.IO.File]::WriteAllText($calls, '')
 
+  # Defect D bounded comparison, stage B: the SAME harmless job under the
+  # fixture's fully controlled environment (synthetic SystemRoot/PATH/HOME...).
+  # The child writes a phase marker FIRST, before any other work, so "child
+  # process started and runspace entered" is proven independently of the job's
+  # final state. Distinguishes job STARTUP failure (environment) from failure
+  # inside the materialization body.
+  $phaseB = Join-Path $t 'control-b-phase.log'
+  $controlB = Start-Job -ArgumentList $phaseB -ScriptBlock {
+    param($phasePath)
+    [System.IO.File]::WriteAllText($phasePath, 'phase=entered')
+    [pscustomobject]@{ result = 'CONTROL_B_OK'; system_root = $env:SystemRoot }
+  }
+  $null = Wait-Job $controlB -Timeout 15
+  $jobEvidence.Add("control_b.state=$($controlB.State)")
+  $jobEvidence.Add("control_b.phase_entered=$([System.IO.File]::Exists($phaseB))")
+  if ($controlB.State -eq 'Completed') {
+    $bResults = @($controlB | Receive-Job)
+    if ($bResults.Count -gt 0) {
+      $jobEvidence.Add("control_b.result=$($bResults[0].result)")
+      $jobEvidence.Add("control_b.child_system_root=$($bResults[0].system_root)")
+    } else {
+      $jobEvidence.Add('control_b.result=<zero-results>')
+    }
+  } else {
+    $bReason = $controlB.ChildJobs[0].JobStateInfo.Reason
+    $jobEvidence.Add("control_b.reason=$(if ($bReason) { [string]$bReason.Message } else { '<none>' })")
+  }
+  Remove-Job $controlB -Force -ErrorAction SilentlyContinue
+
   # Defect D bounded materialization probe. Windows PowerShell 5.1 lacks
   # Start-ThreadJob, so Coop-Unit uses process-backed Start-Job. Exercise that
   # exact isolation boundary before install.ps1: record whether the child
-  # runspace materializes, what SystemRoot it inherits, which synthetic pipx
-  # executable it resolves, the harmless exact argv, its exit status, and its
-  # sanitized output. Bound the probe to 15s and always remove its owned job.
-  $jobEvidencePath = Join-Path $t 'start-job-evidence.log'
-  $jobEvidence = New-Object System.Collections.Generic.List[string]
-  $jobEvidence.Add("parent.ps=$($PSVersionTable.PSVersion)")
-  $jobEvidence.Add("parent.start_thread_job_available=$([bool](Get-Command Start-ThreadJob -ErrorAction SilentlyContinue))")
+  # runspace materializes (phase-entered marker written before any other work),
+  # what SystemRoot it inherits, which synthetic pipx executable it resolves,
+  # the harmless exact argv, its exit status, and its sanitized output. Bound
+  # the probe to 15s and always remove its owned job.
+  $diagPhase = Join-Path $t 'materialize-phase.log'
   $diagJob = $null
   try {
-    $diagJob = Start-Job -ScriptBlock {
+    $diagJob = Start-Job -ArgumentList $diagPhase -ScriptBlock {
+      param($phasePath)
+      [System.IO.File]::WriteAllText($phasePath, 'phase=entered')
       $argv = @('install', '--help')
       $cmd = Get-Command pipx -ErrorAction SilentlyContinue
       $resolved = if ($cmd) { $cmd.Source } else { '<unresolved>' }
@@ -142,6 +193,7 @@ exit /b 0
     }
     $null = Wait-Job $diagJob -Timeout 15
     $jobEvidence.Add("job.state=$($diagJob.State)")
+    $jobEvidence.Add("job.phase_entered=$([System.IO.File]::Exists($diagPhase))")
     if ($diagJob.State -eq 'Running') {
       $jobEvidence.Add('job.timeout=15s')
       Stop-Job $diagJob -ErrorAction SilentlyContinue
