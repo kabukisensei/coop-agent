@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, chmodSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -119,6 +119,11 @@ export function applyProjectConfig(proposal, { now = new Date(), rename = rename
   if (backupPath && existsSync(backupPath)) backupPath = join(backupDir, `project.yml.${stamp}.${randomUUID()}.bak`);
   if (backupPath) {
     copyFileSync(target, backupPath);
+    // The backup preserves content, not the source's read-only mode: a 0444
+    // source would otherwise leave the backup unopenable for the durability
+    // fsync (r+ is required on Windows for FlushFileBuffers), and unwritable
+    // for the operator. Backups are owner-only artifacts like the temp write.
+    chmodSync(backupPath, 0o600);
     syncFile(backupPath);
   }
   const temporary = join(coopDir, `.project.yml.${process.pid}.${randomUUID()}.tmp`);

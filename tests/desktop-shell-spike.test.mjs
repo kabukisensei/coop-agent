@@ -41,8 +41,11 @@ await test("runtime supervisor reads the structured handshake and cleans up its 
 await test("runtime supervisor handles signal termination without escalating to SIGKILL or re-killing", async () => {
   function createMockSpawn({ preTerminated = false } = {}) {
     const signals = [];
+    const terminatedPids = [];
+    let spawned = null;
     const spawnImpl = () => {
       const child = new EventEmitter();
+      spawned = child;
       child.pid = 43210;
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
@@ -68,32 +71,43 @@ await test("runtime supervisor handles signal termination without escalating to 
       });
       return child;
     };
-    return { spawnImpl, signals };
+    // On Windows the supervisor stops the tree via taskkill on child.pid rather
+    // than child.kill; route the injected terminator through the mock kill so
+    // the signal contract is exercised on every platform and no real PID is
+    // ever touched.
+    const terminateTreeImpl = async (pid) => {
+      terminatedPids.push(pid);
+      spawned.kill("SIGTERM");
+    };
+    return { spawnImpl, signals, terminatedPids, terminateTreeImpl };
   }
 
   // 1. stop sends SIGTERM but does not escalate after confirmed termination
-  const { spawnImpl: spawnRunning, signals: runningSignals } = createMockSpawn();
-  const running = await startCoopRuntime({ workspace: ROOT, spawnImpl: spawnRunning });
+  const { spawnImpl: spawnRunning, signals: runningSignals, terminatedPids: runningTerminated, terminateTreeImpl: runningTerminate } = createMockSpawn();
+  const running = await startCoopRuntime({ workspace: ROOT, spawnImpl: spawnRunning, terminateTreeImpl: runningTerminate });
   assert.equal(running.child.exitCode, null);
   assert.equal(running.child.signalCode, null);
 
   await running.stop({ graceMs: 500 });
   assert.deepEqual(runningSignals, ["SIGTERM"]);
+  if (process.platform === "win32") assert.deepEqual(runningTerminated, [43210]);
   assert.equal(running.child.exitCode, null);
   assert.equal(running.child.signalCode, "SIGTERM");
 
   // 2. Calling stop again sends no additional signals
   await running.stop({ graceMs: 500 });
   assert.deepEqual(runningSignals, ["SIGTERM"]);
+  if (process.platform === "win32") assert.deepEqual(runningTerminated, [43210]);
 
   // 3. A child already terminated by signal receives no kill request
-  const { spawnImpl: spawnTerminated, signals: terminatedSignals } = createMockSpawn({ preTerminated: true });
-  const terminated = await startCoopRuntime({ workspace: ROOT, spawnImpl: spawnTerminated });
+  const { spawnImpl: spawnTerminated, signals: terminatedSignals, terminatedPids: terminatedTreePids, terminateTreeImpl: terminatedTerminate } = createMockSpawn({ preTerminated: true });
+  const terminated = await startCoopRuntime({ workspace: ROOT, spawnImpl: spawnTerminated, terminateTreeImpl: terminatedTerminate });
   assert.equal(terminated.child.exitCode, null);
   assert.equal(terminated.child.signalCode, "SIGTERM");
 
   await terminated.stop({ graceMs: 500 });
   assert.deepEqual(terminatedSignals, []);
+  assert.deepEqual(terminatedTreePids, []);
 
 });
 

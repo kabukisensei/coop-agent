@@ -1,2 +1,4 @@
-# This upstream fixture is authenticated by its exact published SHA-256.
+# These upstream fixtures are authenticated by their exact published SHA-256;
+# line-ending conversion on Windows checkout would break the pinned hashes.
 /tests/fixtures/pi-better-openai-0.1.22/usage.ts -text
+/tests/fixtures/pi-mcp-adapter-2.10.0/*.ts -text

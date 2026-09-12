@@ -2,7 +2,7 @@ import vm from "node:vm";
 
 import { normalizeSavedChat, normalizeSavedChats, restoreSavedChats } from "../desktop/src/session-restoration.mjs";
 import { strict as assert } from "node:assert";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
@@ -600,7 +600,9 @@ if (process.platform === "win32") {
     }
     assert.equal(existsSync(recordOutput), true, "Probe record file was not created by model login execution");
     let recorded = readJsonWithRetry(recordOutput);
-    assert.equal(recorded.Cwd, specialWorkspace);
+    // PowerShell reports the canonical long path while tmpdir() on some Windows
+    // runners is an 8.3 short path (RUNNER~1); compare canonical forms.
+    assert.equal(realpathSync(recorded.Cwd), realpathSync(specialWorkspace));
     assert.equal(recorded.Bin, shimCmd);
     assert.equal(recorded.AgentDir, specialAgentDir);
     assert.equal(recorded.DesktopAgentDir, specialAgentDir);
@@ -638,7 +640,7 @@ if (process.platform === "win32") {
     }
     assert.equal(existsSync(recordOutput), true, "Probe record file was not created by terminal handoff execution");
     recorded = readJsonWithRetry(recordOutput);
-    assert.equal(recorded.Cwd, specialWorkspace);
+    assert.equal(realpathSync(recorded.Cwd), realpathSync(specialWorkspace));
     assert.equal(recorded.Bin, shimCmd);
     assert.equal(recorded.Session, specialSession);
     assert.equal(recorded.AgentDir, specialAgentDir);

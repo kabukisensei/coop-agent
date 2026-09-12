@@ -51,6 +51,7 @@ export async function startCoopRuntime({
   port = 0,
   env = process.env,
   spawnImpl = spawn,
+  terminateTreeImpl = terminateWindowsRuntimeTree,
   readyTimeoutMs = 20_000,
   onStderr = () => {},
   onExit = () => {},
@@ -103,7 +104,7 @@ export async function startCoopRuntime({
           // The launcher is PowerShell. Killing it first loses the parent needed
           // to reap its runtime/Pi descendants, which also keep our pipes open.
           let terminationError;
-          try { await terminateWindowsRuntimeTree(child.pid); }
+          try { await terminateTreeImpl(child.pid); }
           catch (error) { terminationError = error; }
           // taskkill can finish before the wrapper closes its inherited pipes.
           // Require confirmed close even when taskkill reports no matching PID.
