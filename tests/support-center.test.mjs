@@ -30,6 +30,12 @@ await t("component health: rejects unknown status and bad input with diagnostics
   const cyclic = { component: "c", status: undefined }; cyclic.self = cyclic;
   const r = normalizeComponentHealth({ component: "x", status: cyclic });
   assert.equal(r.ok, false); // describe() must not throw on cycles
+  // hostile getters (toJSON / Symbol.toStringTag) must not throw (round 2 F1)
+  const hostile = { toJSON() { throw new Error("bad JSON"); }, get [Symbol.toStringTag]() { throw new Error("bad tag"); } };
+  const h = normalizeComponentHealth({ component: "x", status: hostile });
+  assert.equal(h.ok, false);
+  const hb = supportBundleManifest({ components: [{ component: "c", status: hostile }] });
+  assert.equal(hb.ok, true); assert.equal(hb.value.componentDiagnostics.length, 1);
   // a malformed component never breaks the bundle (diagnostic preserved)
   const m = supportBundleManifest({ components: [cyclic] });
   assert.equal(m.ok, true); assert.equal(m.value.componentDiagnostics.length, 1);
@@ -45,6 +51,9 @@ await t("run/incident IDs: validated constructors in envelopes (F2)", async () =
   assert.equal(makeRunId("12-09-2026", "deadbeef").ok, false);
   assert.equal(makeRunId("2026-09-12", "DEADBEEF").ok, false);
   assert.equal(makeIncidentId(null, "cafebabe").ok, false);
+  // exotic inputs must produce diagnostics, not TypeError (round 2 F2)
+  assert.equal(makeRunId(Symbol("date"), "deadbeef").ok, false);
+  assert.equal(makeIncidentId("2026-09-12", Object.create(null)).ok, false);
   const parsed = parseSupportId(run.value);
   assert.equal(parsed.ok, true);
   assert.equal(parsed.value.kind, "run");
@@ -58,8 +67,12 @@ await t("build fingerprint: stable, order-independent, content-bound, validated 
   assert.equal(a.ok, true); assert.equal(a.value, b.value);
   assert.match(a.value, /^build-[0-9a-f]{8}$/);
   assert.notEqual(fingerprintBuild({ version: "1.2.4", commit: "abc123", channel: "dev" }).value, a.value);
-  assert.equal(fingerprintBuild(null).ok, false);
-  assert.equal(fingerprintBuild({ version: "1.2.3" }).ok, false);          // commit required
+  // missing identifying fields -> diagnostic carrying the build-unavailable sentinel
+  for (const bad of [null, { version: "1.2.3" }, { commit: "abc" }]) {
+    const r = fingerprintBuild(bad);
+    assert.equal(r.ok, false);
+    assert.equal(r.value, "build-unavailable");
+  }
   assert.equal(fingerprintBuild({ version: "1.2.3", commit: "abc", extra: { nested: 1 } }).ok, false); // no nested content hashing
 });
 
