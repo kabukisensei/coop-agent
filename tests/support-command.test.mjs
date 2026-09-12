@@ -14,13 +14,13 @@ const profile = mkdtempSync(join(tmpdir(), "support-test-"));
 const coopDir = join(profile, "coop");
 
 // Environment probe (r8 precedent): constrained sandboxes may deny spawning
-// bash from node. Skip explicitly instead of failing the suite — native runs
-// execute the full journey.
+// bash from node — possibly with status 0 AND an error set. Skip explicitly
+// instead of failing the suite — native runs execute the full journey.
 const bashProbe = spawnSync("bash", ["-c", "true"], { encoding: "utf8" });
-if (bashProbe.status !== 0) {
-  console.log("  (7 skipped: bash spawn unavailable in this environment (EPERM) —");
+if (bashProbe.status !== 0 || bashProbe.error) {
+  console.log(`  (8 skipped: bash spawn unavailable in this environment (${bashProbe.error?.code ?? `status ${bashProbe.status}`}) —`);
   console.log("   run natively for the full support-command journey; no product defect)");
-  console.log("  1 support-command tests passed (environment skips)");
+  console.log("  0 support-command tests passed (8 environment skips)");
   process.exit(0);
 }
 mkdirSync(join(coopDir, "support"), { recursive: true });
