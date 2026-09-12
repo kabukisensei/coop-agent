@@ -22,8 +22,10 @@ set -uo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 HELPER="$ROOT/scripts/search-knowledge.py"
 fail=0
+skips=0
 ok()  { printf '  ✓ %s\n' "$1"; }
 ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
+skip(){ printf '  – SKIP %s\n' "$1"; skips=$((skips + 1)); }
 
 PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
 [ -n "$PY" ] || { echo "FATAL: python3 required"; exit 1; }
@@ -64,7 +66,18 @@ json_path() {
     *) printf '%s' "$1" ;;
   esac
 }
-TMP_RAW="$(native_path "$TMP")"          # native form for shell comparisons
+# Independently resolved expected identity of a fixture directory: the same
+# native Python interpreter the helper runs under, stdlib only (os.path.realpath
+# — the documented root-keying contract), never the product helper as oracle.
+# cygpath may emit 8.3 short-name spellings (RUNNER~1) where realpath returns
+# the long form (runneradmin); raw-prefix/spelling comparisons against cygpath
+# output are what failed natively (KeyError in per_repo lookups). The path is
+# passed as an argument, not embedded in source.
+resolved_path() {
+  "$PY" -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$(native_path "$1")"
+}
+A_EXPECTED="$(resolved_path "$A")"
+
 HOME_FAKE_RAW="$(native_path "$HOME_FAKE")"
 A_RAW="$(native_path "$A")";   A_N="$(json_path "$A_RAW")"
 B_RAW="$(native_path "$B")";   B_N="$(json_path "$B_RAW")"
@@ -116,9 +129,39 @@ fi
 jget "$TMP/out.json" "all(m['path'].endswith('.md') and m['line']>=1 and len(m['snippet'])<=240 for m in d['matches'])" | grep -q True \
   && ok "matches carry relative path, line number, capped snippet" || ko "match shape: $out"
 
-# --- citations contain root identity + relative path --------------------------
-rel="$(jget "$TMP/out.json" "d['matches'][0]['root'] + '/' + d['matches'][0]['path']")"
-case "$rel" in "$TMP_RAW"*) ok "citation root identity + relative path" ;; *) ko "citation root: $rel" ;; esac
+# --- citations: expected root identity, relative path, containment, shape ------
+# Expected root identity is computed independently (resolved_path, stdlib
+# realpath — the documented root-keying contract), never from actual results
+# and never via the product helper as oracle. The product contract is
+# preserved as-is: resolved native root identity, '/'-joined relative note
+# path, line/snippet fields. Fixture values are passed as arguments.
+cit="$("$PY" - "$(native_path "$TMP/out.json")" "$A_EXPECTED" "$MARKER" <<'PYEOF'
+import json, os, sys
+d = json.load(open(sys.argv[1]))
+expected_root, marker = sys.argv[2], sys.argv[3]
+m = next((x for x in d['matches'] if x['path'] == 'note-one.md'), None)
+problems = []
+if m is None:
+    problems.append('no match carries the relative note path note-one.md')
+else:
+    if os.path.normcase(os.path.realpath(m['root'])) != os.path.normcase(os.path.realpath(expected_root)):
+        problems.append(f"root {m['root']!r} does not identify the expected configured directory {expected_root!r}")
+    if os.path.isabs(m['path']) or m['path'] != 'note-one.md':
+        problems.append(f"path {m['path']!r} is not the expected relative note path")
+    resolved = os.path.realpath(os.path.join(m['root'], m['path']))
+    intended = os.path.realpath(os.path.join(expected_root, 'note-one.md'))
+    if os.path.normcase(resolved) != os.path.normcase(intended):
+        problems.append('resolving root + path lands outside the expected root')
+    if not (m['line'] >= 1 and marker in m['snippet'] and len(m['snippet']) <= 240):
+        problems.append(f"line/snippet contract broken (line={m['line']})")
+for p in problems:
+    print('ko ' + p)
+if not problems:
+    print('ok')
+PYEOF
+)"
+[ "$cit" = "ok" ] && ok "citation: expected root identity + relative note path + containment + line/snippet" \
+  || ko "citation: $cit"
 
 # --- case-insensitive literal substring ---------------------------------------
 out="$(run_helper --query "xzqunique")"; echo "$out" > "$TMP/out.json"
@@ -194,29 +237,73 @@ write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_pa
 out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
 [ "$(jget "$TMP/out.json" "len(d['matches'])")" = "1" ] && ok "~\\\\ tilde form expands too" || ko "backslash tilde: $out"
 
-# --- unreadable file is a warning, never a claimed match --------------------------
+# --- unreadable file is a warning, never a claimed match ----------------------
+# Privilege-dependent: preconditions are probed with the helper's own
+# interpreter and identity. (1) the file must exist and be readable; (2) after
+# the test-owned chmod the same read must be DENIED; only then does the
+# assertion run. A host where denial cannot be established reports an explicit
+# capability skip — setup problems are failures, never skips.
 mkdir -p "$TMP/kb-unreadable"
 echo "unreadable $MARKER" > "$TMP/kb-unreadable/secret.md"
-chmod 000 "$TMP/kb-unreadable/secret.md"
-write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$UNREADABLE_N\"}]}}"
-out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
-chmod 644 "$TMP/kb-unreadable/secret.md"
-if [ "$(id -u)" = "0" ]; then
-  echo "  – running as root: chmod 000 is ineffective; skipping unreadable-file assertion"
+SECRET_NATIVE="$(native_path "$TMP/kb-unreadable/secret.md")"
+if ! "$PY" - "$SECRET_NATIVE" <<'PYEOF' 2>/dev/null
+import sys
+open(sys.argv[1], "rb").close()
+PYEOF
+then
+  ko "unreadable setup: secret.md exists but is not initially readable"
+elif
+  chmod 000 "$TMP/kb-unreadable/secret.md"
+  "$PY" - "$SECRET_NATIVE" <<'PYEOF' 2>/dev/null
+import sys
+open(sys.argv[1], "rb").close()
+PYEOF
+then
+  chmod 644 "$TMP/kb-unreadable/secret.md"
+  skip "unreadable-file assertion: permission denial not effective for this identity on this host"
 else
+  write_cfg "{\"schema_version\":1,\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$UNREADABLE_N\"}]}}"
+  out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
+  chmod 644 "$TMP/kb-unreadable/secret.md"
   jget "$TMP/out.json" "any('unreadable file' in w for w in d['warnings'])" | grep -q True \
     && ok "unreadable file warned, not claimed searched" || ko "unreadable: $out"
 fi
 
-# --- symlink escape blocked --------------------------------------------------------
+# --- symlink escape blocked ---------------------------------------------------
+# Privilege-dependent: the test first establishes that a GENUINE native symlink
+# to the intended outside-root fixture exists (a copy/emulated link is not
+# accepted as setup). Only with a verified genuine link does the assertion run;
+# if a genuine link then leaks out-of-root content the failure is preserved as
+# a product defect. Skip only on a verified capability limitation.
 mkdir -p "$TMP/kb-link/outside"
 echo "outside secret $MARKER" > "$TMP/kb-link/outside/out.md"
 mkdir -p "$TMP/kb-link/inside"
 ln -s "$TMP/kb-link/outside" "$TMP/kb-link/inside/escape-link"
 echo "inside note fine" > "$TMP/kb-link/inside/in.md"
-write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$LINK_N\"}]}}"
-out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
-[ "$(jget "$TMP/out.json" "len(d['matches'])")" = "0" ] && ok "symlinked directory cannot escape the root" || ko "symlink escape: $out"
+LINK_NATIVE="$(native_path "$TMP/kb-link/inside/escape-link")"
+OUTSIDE_NATIVE="$(native_path "$TMP/kb-link/outside")"
+linkcheck="$("$PY" - "$LINK_NATIVE" "$OUTSIDE_NATIVE" <<'PYEOF'
+import os, sys
+link, target = sys.argv[1], sys.argv[2]
+if not os.path.islink(link):
+    print("capability"); sys.exit(0)
+if os.path.normcase(os.path.realpath(os.readlink(link))) != os.path.normcase(os.path.realpath(target)):
+    print("setup-mismatch"); sys.exit(0)
+print("genuine")
+PYEOF
+)"
+case "$linkcheck" in
+  genuine)
+    write_cfg "{\"schema_version\":1,\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$LINK_N\"}]}}"
+    out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
+    [ "$(jget "$TMP/out.json" "len(d['matches'])")" = "0" ] \
+      && ok "symlinked directory cannot escape the root" \
+      || ko "symlink escape: genuine link leaked out-of-root content (product defect): $out" ;;
+  capability)
+    skip "symlink-escape assertion: genuine native symlink could not be created (verified capability limitation)" ;;
+  *)
+    ko "symlink setup: link does not target the intended outside fixture" ;;
+esac
 
 # --- literal metacharacters, not regex/shell --------------------------------------
 write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[{\"url\":\"u\",\"local_path\":\"$A_N\"}]}}"
@@ -224,19 +311,47 @@ echo 'grep (a|b)* $MARKER.* [ok]? "quoted" here' > "$A/meta.md"
 out="$(run_helper --query '(a|b)* $MARKER.* [ok]?')"; echo "$out" > "$TMP/out.json"
 [ "$(jget "$TMP/out.json" "len(d['matches'])")" = "1" ] && ok "shell/regex metacharacters matched literally" || ko "meta: $out"
 
-# --- per-repo truncation without starving the second repo --------------------------
+# --- per-repo truncation without starving the second repo ----------------------
+# Expected per_repo keys are independently resolved identities (stdlib realpath
+# via the helper's own interpreter), passed as arguments — not cygpath raw
+# spellings (RUNNER~1 vs runneradmin 8.3 forms KeyError'd here natively).
+# Expected outcomes are fixed by contract: A caps at 10 of 25 with
+# truncated=true; B is fully searched (1/1, truncated=false); combined 11
+# matches with overall truncated=true.
 mkdir -p "$TMP/kb-many-a" "$TMP/kb-many-b"
 i=1; while [ "$i" -le 25 ]; do echo "line $i has $MARKER" >> "$TMP/kb-many-a/many.md"; i=$((i+1)); done
 echo "single $MARKER in b" > "$TMP/kb-many-b/b.md"
-write_cfg "{\"knowledge\":{\"enabled\":true,\"repos\":[
+write_cfg "{\"schema_version\":1,\"knowledge\":{\"enabled\":true,\"repos\":[
   {\"url\":\"u\",\"local_path\":\"$MANYA_N\"},
   {\"url\":\"u\",\"local_path\":\"$MANYB_N\"}]}}"
 out="$(run_helper --query "$MARKER")"; echo "$out" > "$TMP/out.json"
-[ "$(jget "$TMP/out.json" "d['per_repo']['$MANYA_N']['truncated']")" = "True" ] \
-  && [ "$(jget "$TMP/out.json" "d['per_repo']['$MANYA_N']['total']")" = "25" ] \
-  && ok "repo A truncated at 10 with total recorded" || ko "truncation: $out"
-[ "$(jget "$TMP/out.json" "d['per_repo']['$MANYB_N']['matches']")" = "1" ] \
-  && ok "second repository still searched despite A's truncation" || ko "starved B: $out"
+trunc="$("$PY" - "$(native_path "$TMP/out.json")" "$(resolved_path "$TMP/kb-many-a")" "$(resolved_path "$TMP/kb-many-b")" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+a, b = sys.argv[2], sys.argv[3]
+checks = [
+    ("repo A capped at 10 matches", lambda: d['per_repo'][a]['matches'] == 10),
+    ("repo A total=25 recorded", lambda: d['per_repo'][a]['total'] == 25),
+    ("repo A truncated=true", lambda: d['per_repo'][a]['truncated'] is True),
+    ("repo B fully searched: 1 match, total 1, truncated=false",
+     lambda: d['per_repo'][b]['matches'] == 1 and d['per_repo'][b]['total'] == 1 and d['per_repo'][b]['truncated'] is False),
+    ("combined matches=11 across both repos", lambda: len(d['matches']) == 11),
+    ("overall truncated=true", lambda: d['truncated'] is True),
+]
+for name, check in checks:
+    try:
+        passed = check()
+    except KeyError as exc:
+        passed, name = False, f"{name} (missing key {exc})"
+    print(("ok " if passed else "ko ") + name)
+PYEOF
+)"
+while IFS= read -r line; do
+  case "$line" in
+    ok*) ok "${line#ok }" ;;
+    ko*) ko "${line#ko }" ;;
+  esac
+done <<< "$trunc"
 
 # --- empty query is invalid usage (exit 2) -----------------------------------------
 run_helper --query "   " > /dev/null 2>"$TMP/err.txt"; rc=$?
@@ -364,4 +479,5 @@ else
   echo "  – POSIX permissions unavailable (root without setpriv, or Windows): skipping unreadable-root/subdir assertions"
 fi
 
+echo "  — summary: failures=$fail capability_skips=$skips"
 exit $fail
