@@ -19,8 +19,6 @@
 #   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
 #   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
 #   coop review [paths...]    Run both linters + compose findings onto the lineage docs
-  coop support [--json]     Collect a sanitized support bundle (health, versions, events)
-                            (--incident: incident record; --export PATH: write bundle)
 #   coop support [--json]     Collect a sanitized support bundle (health, versions, events); preview + export
 #   coop fabric [args]        Pass through to the Microsoft Fabric CLI (`fab`)
 #   coop version              Print coop + pi versions
