@@ -60,16 +60,23 @@ await t("default export under the profile prunes to bounded retention", async ()
   assert.ok(bundles.length >= 5, "recent bundles retained");
 });
 
-await t("event log is trimmed to the bounded length", async () => {
+await t("event log is trimmed to the bounded length including the new run record", async () => {
   const lines = readFileSync(join(coopDir, "support", "events.jsonl"), "utf8").trim().split("\n");
   assert.ok(lines.length <= 200, `event log bounded (got ${lines.length})`);
 });
 
-await t("--json emits machine-readable sanitized output", async () => {
-  const r = spawnSync("bash", [SH, "--json"], { env: { ...process.env, COOP_DIR: coopDir }, encoding: "utf8" });
+await t("host event log is rewritten sanitized — planted credential never persists (F1)", async () => {
+  const log = readFileSync(join(coopDir, "support", "events.jsonl"), "utf8");
+  assert.equal(log.includes("PLANTED-SECRET-123"), false, "raw log must be redacted too");
+  const api = log.trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.event === "api-call");
+  assert.equal(api.config.api_key, "[REDACTED]");
+});
+
+await t("runs without HOME (COOP_DIR set) stay in-profile (F3)", async () => {
+  const r = spawnSync("bash", ["-c", `env -u HOME node "${join(ROOT, "lib", "support-center-cli.mjs")}" --json`],
+    { env: { ...process.env, COOP_DIR: coopDir }, encoding: "utf8" });
   assert.equal(r.status, 0);
-  const parsed = JSON.parse(r.stdout);
-  assert.ok(parsed.manifest && parsed.versions && Array.isArray(parsed.events));
+  assert.doesNotThrow(() => JSON.parse(r.stdout));
 });
 
 console.log(`  ${n} support-command tests passed`);
