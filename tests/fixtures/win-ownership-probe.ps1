@@ -181,8 +181,26 @@ child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], 
 own.child = child
 t_spawn = time.monotonic() - t0
 failed = False
+verify_handle = None
 try:
     k32 = kg._KERNEL32
+    if k32 is not None:
+        k32.WaitForSingleObject.restype = ctypes.c_ulong
+        k32.GetExitCodeProcess.restype = ctypes.c_ulong
+    def wait_terminated(handle, timeout_ms):
+        # Bounded wait on a handle that identifies THIS process instance.
+        # Distinguishes signaled (terminated), timeout (still running) and
+        # API failure; never infers state from a fresh PID lookup.
+        k32.SetLastError(0)
+        r = k32.WaitForSingleObject(handle, timeout_ms)
+        if r == 0:  # WAIT_OBJECT_0
+            code = ctypes.c_ulong(0)
+            if k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return "signaled", code.value, 0
+            return "signaled_exit_code_unavailable", None, ctypes.get_last_error()
+        if r == 0x102:  # WAIT_TIMEOUT
+            return "timeout", None, 0
+        return "api_failure", None, ctypes.get_last_error()
     print("PROBE| assignment.child_pid=%s" % child.pid)
     if k32 is None:
         print("PROBE| assignment.error=_KERNEL32 unavailable")
@@ -200,6 +218,17 @@ try:
         else:
             failed = True
             raise RuntimeError("open_process_failed")
+
+        # Retain a handle identifying THIS process instance, opened before any
+        # termination, so post-termination verification cannot be confused by
+        # PID reuse or by the process object lingering in the kernel.
+        k32.SetLastError(0)
+        verify_handle = k32.OpenProcess(0x100000 | 0x1000, False, child.pid)  # SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION
+        vh_err = ctypes.get_last_error()
+        print("PROBE| assignment.verify_handle_ok=%s getlasterror=%d" % (bool(verify_handle and verify_handle != kg._INVALID_HANDLE), vh_err))
+        if not verify_handle or verify_handle == kg._INVALID_HANDLE:
+            failed = True
+            raise RuntimeError("verify_handle_open_failed")
 
         job, create_error = kg._win_job_create()
         print("PROBE| assignment.job_create_ok=%s error=%s" % (bool(job), create_error))
@@ -286,22 +315,62 @@ try:
     t_wait1 = time.monotonic() - t0
     print("PROBE| timing.reap_start=%.3f reap_done=%.3f wait_empty=%s" % (t_wait0, t_wait1, empty))
     if not empty: failed = True
-    if k32 is not None:
-        k32.SetLastError(0)
-        h = k32.OpenProcess(0x1000, False, child.pid)
-        e = ctypes.get_last_error()
-        print("PROBE| assignment.exists_after_terminate=%s getlasterror=%d (87=ERROR_INVALID_PARAMETER, gone)" % (bool(h), e))
-        if h:
-            k32.CloseHandle(h)
+    if verify_handle:
+        state, exit_code, werr = wait_terminated(verify_handle, 5000)
+        print("PROBE| assignment.terminate_verify=%s exit_code=%s getlasterror=%d" % (state, exit_code, werr))
+        if state not in ("signaled", "signaled_exit_code_unavailable"):
+            # timeout = still running; api_failure = state unknown. Neither is
+            # proof of termination.
             failed = True
     own.close()
     print("PROBE| timing.close_done=%.3f total=%.3f" % (time.monotonic() - t0, time.monotonic() - t0))
+    # Focused control: a genuinely RUNNING process must NOT be accepted as
+    # terminated by the same predicate. 250ms bounded wait must report timeout;
+    # only after an explicit terminate may the handle signal.
+    ctrl = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        k32.SetLastError(0)
+        ch = k32.OpenProcess(0x100000 | 0x1000, False, ctrl.pid)
+        ch_err = ctypes.get_last_error()
+        print("PROBE| control.verify_handle_ok=%s getlasterror=%d" % (bool(ch and ch != kg._INVALID_HANDLE), ch_err))
+        if not ch or ch == kg._INVALID_HANDLE:
+            failed = True
+        else:
+            try:
+                state, _, _ = wait_terminated(ch, 250)
+                print("PROBE| control.running_process_state=%s (require timeout)" % state)
+                if state != "timeout":
+                    failed = True
+                stop_ok, stop_error = kg._win_terminate_pid(ctrl.pid)
+                print("PROBE| control.terminate_ok=%s error=%s" % (stop_ok, stop_error))
+                if not stop_ok:
+                    failed = True
+                state2, exit_code2, werr2 = wait_terminated(ch, 5000)
+                print("PROBE| control.terminated_verify=%s exit_code=%s getlasterror=%d" % (state2, exit_code2, werr2))
+                if state2 not in ("signaled", "signaled_exit_code_unavailable"):
+                    failed = True
+            finally:
+                k32.CloseHandle(ch)
+    finally:
+        if ctrl.poll() is None:
+            kg._win_terminate_pid(ctrl.pid)
+        ctrl.wait()
 finally:
     # Safe cleanup of everything this section owns. If create/assign/resume fails,
     # terminate the still-suspended owned child rather than letting it execute.
     # This path is reached via exception, so it must verify and emit its own
     # cleanup result instead of relying on the staged checks above.
     if child.poll() is None:
+        vh = None
+        if k32 is not None:
+            # Open the verification handle BEFORE terminating so it identifies
+            # this exact process instance.
+            k32.SetLastError(0)
+            vh = k32.OpenProcess(0x100000 | 0x1000, False, child.pid)
+            vh_err = ctypes.get_last_error()
+            print("PROBE| cleanup.verify_handle_ok=%s getlasterror=%d" % (bool(vh and vh != kg._INVALID_HANDLE), vh_err))
+            if not vh or vh == kg._INVALID_HANDLE:
+                failed = True
         if own.job:
             own.terminate()
         else:
@@ -309,14 +378,14 @@ finally:
             print("PROBE| cleanup.suspended_child_terminate_ok=%s error=%s" % (stop_ok, stop_error))
             if not stop_ok:
                 failed = True
-        if k32 is not None:
-            k32.SetLastError(0)
-            h = k32.OpenProcess(0x1000, False, child.pid)
-            e = ctypes.get_last_error()
-            print("PROBE| cleanup.exists_after_suspended_terminate=%s getlasterror=%d" % (bool(h), e))
-            if h:
-                k32.CloseHandle(h)
+        if vh and vh != kg._INVALID_HANDLE:
+            state, exit_code, werr = wait_terminated(vh, 5000)
+            print("PROBE| cleanup.terminated_verify=%s exit_code=%s getlasterror=%d" % (state, exit_code, werr))
+            if state not in ("signaled", "signaled_exit_code_unavailable"):
                 failed = True
+            k32.CloseHandle(vh)
+    if verify_handle:
+        k32.CloseHandle(verify_handle)
     own.close()
 if failed:
     sys.exit(1)
