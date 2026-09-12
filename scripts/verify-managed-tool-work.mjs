@@ -85,7 +85,21 @@ export async function verifyManagedExtensionWork(bundle, { tempRoot = tmpdir() }
       const definition = registered.get(name)?.definition;
       if (typeof definition?.execute !== "function") throw new Error(`Packaged Coop tool is missing: ${name}.`);
       const result = await definition.execute(`acceptance-${name}`, params, AbortSignal.timeout(60000), () => {}, context);
-      if (result?.isError || result?.details?.exitCode !== 0) throw new Error(`Packaged Coop tool failed through Pi: ${name}. ${String(result?.details?.error || result?.details?.stderr || "Missing successful exit result").slice(0, 2000)}`);
+      if (result?.isError || result?.details?.exitCode !== 0) {
+        // PROBE 6 (diagnostic only): capture the COMPLETE child result before
+        // the 2000-char error slice hides the real exit mode.
+        try {
+          writeFileSync(process.env.RUNNER_TEMP + "/probe6-child-result.json", JSON.stringify({
+            tool: name, isError: result?.isError ?? null,
+            exitCode: result?.details?.exitCode ?? null,
+            signal: result?.details?.signal ?? null,
+            error: result?.details?.error ?? null,
+            stderrFull: result?.details?.stderr ?? null,
+            stderrLength: typeof result?.details?.stderr === "string" ? result.details.stderr.length : null,
+          }, null, 2));
+        } catch {}
+        throw new Error(`Packaged Coop tool failed through Pi: ${name}. ${String(result?.details?.error || result?.details?.stderr || "Missing successful exit result").slice(0, 2000)}`);
+      }
       return result.details;
     };
     const results = {};

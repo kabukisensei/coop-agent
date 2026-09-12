@@ -271,6 +271,13 @@ jobs:
           path: |
             D:/a/_temp/probe5-full-stderr.txt
             D:/a/_temp/probe5-full-stdout.txt
+      - name: Upload probe 6 child result (diagnostic only)
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe6-child-result
+          retention-days: 7
+          path: ${{ runner.temp }}/probe6-child-result.json
       - name: Preserve build and runtime evidence
         if: always()
         uses: actions/upload-artifact@v7
