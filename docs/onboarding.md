@@ -137,6 +137,31 @@ coop data-doc                          # build lineage + Markdown docs
 coop list / coop config          # manage Pi extensions
 ```
 
+## Team knowledge (optional)
+
+Coop can subscribe to team knowledge and pattern repositories (such as `cooptimize/incremental-bi`).
+Enable it during `coop onboard` (or `coop onboard --config-only`):
+
+```json
+{
+  "schema_version": 1,
+  "knowledge": {
+    "enabled": true,
+    "repos": [
+      {
+        "url": "https://github.com/cooptimize/incremental-bi.git",
+        "local_path": "~/.coop/knowledge/incremental-bi"
+      }
+    ]
+  }
+}
+```
+
+- `coop sync` and `coop update` automatically clone and fast-forward the knowledge repos.
+- Skills defined in the knowledge repo under `skills/*/SKILL.md` are automatically surfaced to Coop on launch.
+- Query team knowledge anytime using `team-knowledge` skill guidance — it runs the bundled `scripts/search-knowledge.py` helper against the configured clones.
+- Publish session learnings and patterns via `/share-learning`, which drafts a note in `learnings/` and opens a PR for review.
+
 ## Try it — a safe first task (nothing gets changed)
 
 **1. See an advisory review on a throwaway file.**

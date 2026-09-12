@@ -19,6 +19,7 @@
 #   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
 #   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
 #   coop review [paths...]    Run both linters + compose findings onto the lineage docs
+#   coop support [--json]     Collect a sanitized support bundle (health, versions, events); preview + export
 #   coop fabric [args]        Pass through to the Microsoft Fabric CLI (`fab`)
 #   coop version              Print coop + pi versions
 #   coop help                 Show this help
@@ -147,6 +148,8 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
   coop review [paths...]    Run both linters + compose findings onto the lineage docs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
+  coop support [--json]     Collect a sanitized support bundle (health, versions, events)
+                            (--incident: incident record; --export PATH: write bundle)
   coop fabric [args]        Pass through to the Microsoft Fabric CLI (fab)
   coop version              Print coop + pi versions
   coop help                 Show this help
@@ -276,6 +279,37 @@ function Build-CoopPiArgs {
           $fm = Get-CoopSkillName $sk
           if ($fm -and $ownNames.Contains($fm)) { Coop-Warn "skipping $slot skill '$allow' (name '$fm' conflicts with a Cooptimize skill)"; continue }
           $piArgs += @('--skill', $cand)
+        }
+      }
+    }
+    if (Test-CoopKnowledgeEnabled) {
+      foreach ($repo in (Get-CoopKnowledgeRepos)) {
+        $path = $repo.LocalPath
+        if (-not $path) { continue }
+        $teamSkills = Join-Path $path 'skills'
+        if (-not (Test-Path -LiteralPath $teamSkills -PathType Container)) { continue }
+        # Parse the frontmatter name BEFORE adding any launch argument; an
+        # optional external skill that can't identify itself is skipped, never
+        # added half-validated.
+        foreach ($skillDir in (Get-ChildItem -LiteralPath $teamSkills -Directory)) {
+          $sk = Join-Path $skillDir.FullName 'SKILL.md'
+          if (-not (Test-Path -LiteralPath $sk -PathType Leaf)) { continue }
+          if ($ownNames.Contains($skillDir.Name)) {
+            Coop-Warn "skipping team skill '$($skillDir.Name)' (conflicts with a Cooptimize skill)"
+            continue
+          }
+          $fm = Get-CoopSkillName $sk
+          if (-not $fm) {
+            Write-Error 'missing frontmatter name'
+            continue
+          }
+          if ($ownNames.Contains($fm)) {
+            Coop-Warn "skipping team skill '$($skillDir.Name)' (name '$fm' conflicts with a Cooptimize skill)"
+            continue
+          }
+          $piArgs += @('--skill', $skillDir.FullName)
+          [void]$ownNames.Add($skillDir.Name)
+          [void]$ownNames.Add($fm)
         }
       }
     }
@@ -1075,6 +1109,7 @@ switch -CaseSensitive ($cmd) {
   'sql-review' { Invoke-Tool 'coop-sql-review' $rest; break }
   'dax-review' { Invoke-Tool 'coop-dax-review' $rest; break }
   'review' { Invoke-CoopReview $rest; break }
+  'support' { & (Join-Path $script:CoopRoot 'scripts\support-center.ps1') @rest; exit $LASTEXITCODE }
   { $_ -ceq 'fabric' -or $_ -ceq 'fab' } {
     if (-not (Test-Have 'fab')) { Coop-Die 'Microsoft Fabric CLI (fab) not found. Run: coop install' }
     & fab @rest

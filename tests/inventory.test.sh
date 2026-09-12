@@ -45,7 +45,9 @@ EOF
 FIXHOME="$TMP/home"; FAKEBIN="$FIXHOME/.local/bin"; mkdir -p "$FAKEBIN"
 # Dedicated python dir: never reuse ~/.local/bin (this workstation keeps
 # python3 AND the real fab/coop shims there, which would defeat isolation).
-NODE_DIR="$(dirname "$(command -v node)")"
+NODE_BIN="$TMP/nodebin"; mkdir -p "$NODE_BIN"
+ln -s "$(command -v node)" "$NODE_BIN/node"
+ln -s "$(command -v npm)" "$NODE_BIN/npm"
 PY_DIR="$TMP/pybin"; mkdir -p "$PY_DIR"
 # Use a real wrapper rather than a symlink. Git Bash on Windows may materialize
 # `ln -s` as a plain text file when symlink creation is unavailable, which made
@@ -55,7 +57,7 @@ cat > "$PY_DIR/python3" <<EOF
 exec "$PY" "\$@"
 EOF
 chmod +x "$PY_DIR/python3"
-BASE_PATH="$NODE_DIR:$PY_DIR:/usr/bin:/bin"
+BASE_PATH="$NODE_BIN:$PY_DIR:/usr/bin:/bin"
 PIPXHOME="$TMP/pipxhome"; mkdir -p "$PIPXHOME/venvs/ms-fabric-cli/bin" "$PIPXHOME/venvs/coop-data-doc/bin"
 
 # --- fake pipx: `runpip <venv> show <dist>` reads <fixture>/<venv>--<dist>.meta

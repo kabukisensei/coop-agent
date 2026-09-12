@@ -35,6 +35,14 @@ echo "→ in-Coop project contract wizard tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/project-wizard.test.mjs"
 echo "→ contract-driven daily log default tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/daily-log-default.test.mjs"
+echo "→ team knowledge recall note tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/team-knowledge-recall.test.mjs"
+echo "→ .ps1 UTF-8 BOM byte-level tests"
+bash "$ROOT/tests/bom.test.sh"
+echo "→ share-learning prompt and friction nudge tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/share-learning.test.mjs"
+echo "→ learning-nudge runtime (registered handler) tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/learning-nudge-runtime.test.mjs"
 
 echo "→ setup-docs JSONL bridge (renderPrompt / askCheckbox) tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge.test.mjs"
@@ -101,6 +109,39 @@ echo "→ fabric-compatible Python discovery (side-by-side, off-PATH)"
 bash "$ROOT/tests/fixtures/fabric-python-finder.test.sh"
 bash "$ROOT/tests/mcp-config.test.sh"
 bash "$ROOT/tests/onboard.test.sh"
+echo "→ team knowledge config block + readers tests"
+bash "$ROOT/tests/knowledge-config.test.sh"
+echo "→ team knowledge sync script tests"
+bash "$ROOT/tests/sync-knowledge.test.sh"
+echo "→ team knowledge local recall helper tests"
+bash "$ROOT/tests/search-knowledge.test.sh"
+echo "→ windows owned-kill native evidence probe (Defect A diagnostics)"
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) pwsh -NoProfile -File "$ROOT/tests/fixtures/win-ownership-probe.ps1" ;;
+  *) echo "  – Windows-only probe; skipped on POSIX (covered by the Windows CI legs)" ;;
+esac
+echo "→ ResumeThread previous-suspend-count contract (Defect A)"
+COOP_KG_PATH="$ROOT/scripts/knowledge-git.py" python3 - <<'PY'
+import importlib.util
+import os
+spec = importlib.util.spec_from_file_location("kg", os.environ["COOP_KG_PATH"])
+kg = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(kg)
+cases = [
+    (0xFFFFFFFF, False, "failure_sentinel"),
+    (1, True, None),
+    (0, False, "already_running"),
+    (2, False, "still_suspended:2"),
+]
+for prev, ok, detail in cases:
+    got_ok, got_code = kg._win_resume_verdict(prev)
+    assert got_ok is ok, (prev, got_ok, ok)
+    got_detail = got_code[1] if got_code else None
+    assert got_detail == detail, (prev, got_detail, detail)
+print("  OK  resume verdict: failure sentinel / expected prev=1 / already-running / still-suspended")
+PY
+echo "→ team knowledge skills launch slot tests"
+bash "$ROOT/tests/team-skills.test.sh"
 echo "→ truthful inventory (doctor pipx probes / sync postconditions)"
 bash "$ROOT/tests/inventory.test.sh"
 echo "→ first-run continuation through plain coop (pty-driven)"
@@ -149,5 +190,6 @@ node "$ROOT/tests/protocol.test.mjs"
 
 echo "→ diff model (unified + side-by-side parsing) tests"
 node "$ROOT/tests/diffmodel.test.mjs"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/support-command.test.mjs"
 
 echo "✓ all tests passed"

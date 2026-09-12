@@ -362,6 +362,29 @@ def run_config_questions(existing: dict | None = None, *, quick_start: bool = Fa
     if not quick_start:
         integrations["microsoft_learn"] = read_confirm("Enable Microsoft Learn MCP?", bool(old_i.get("microsoft_learn", True)))
 
+    # Cooptimize Shared Knowledge (teamai-cli-style team knowledge repos, first:
+    # github.com/cooptimize/incremental-bi). Optional; declining/absent/disabled is
+    # a clean no-op everywhere. repos is a LIST from day one (multi-KB future), and
+    # an existing list is preserved verbatim across re-runs — onboarding never edits it.
+    old_k = existing.get("knowledge", {}) if isinstance(existing.get("knowledge", {}), dict) else {}
+    knowledge_enabled = read_confirm(
+        "Enable Cooptimize Shared Knowledge sync? (clones team knowledge repos; `coop sync` keeps them fresh)",
+        bool(old_k.get("enabled", False)),
+    )
+    old_repos = old_k.get("repos") if isinstance(old_k.get("repos"), list) else []
+    if knowledge_enabled:
+        knowledge = {
+            "enabled": True,
+            "repos": old_repos or [
+                {
+                    "url": "https://github.com/cooptimize/incremental-bi.git",
+                    "local_path": "~/.coop/knowledge/incremental-bi",
+                }
+            ],
+        }
+    else:
+        knowledge = {"enabled": False, "repos": old_repos}
+
     # Honest summary BEFORE anything is saved.
     labels = {
         "fabric": "Microsoft Fabric MCP", "power_bi": "Power BI MCP",
@@ -375,7 +398,10 @@ def run_config_questions(existing: dict | None = None, *, quick_start: bool = Fa
         sys.stderr.write(f"- Client Azure tenant: {tenant_name or '(display name unknown)'} ({tenant})\n")
     else:
         sys.stderr.write("- Client Azure tenant: not configured\n")
-    sys.stderr.write("- Cooptimize Shared Knowledge identity: separate; not configured by this release\n")
+    if knowledge["enabled"]:
+        sys.stderr.write(f"- Cooptimize Shared Knowledge: enabled ({len(knowledge['repos'])} repo(s))\n")
+    else:
+        sys.stderr.write("- Cooptimize Shared Knowledge: disabled\n")
     sys.stderr.write(f"- Enabled: {', '.join(enabled_labels) if enabled_labels else 'none'}\n")
     for line in omitted_lines:
         sys.stderr.write(f"- Omitted: {line}\n")
@@ -392,6 +418,7 @@ def run_config_questions(existing: dict | None = None, *, quick_start: bool = Fa
         "integrations": integrations,
         "azure_devops": {"organization": organization},
         "mcp": {"safe_mode": "read_only_first"},
+        "knowledge": knowledge,
         "fleet": {"publish_dir": str(existing.get("fleet", {}).get("publish_dir", "")) if isinstance(existing.get("fleet", {}), dict) else ""},
     }
 

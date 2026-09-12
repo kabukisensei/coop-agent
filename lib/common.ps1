@@ -569,12 +569,34 @@ function Coop-ProgEnd {
 # doctor/sync/dispatcher) this is a plain WriteLine, exactly as before.
 function Coop-Emit {
   param([string]$Line)
+  # Non-TTY branch. The [Console]::Error contract is load-bearing: callers and
+  # fixtures replace it via [Console]::SetError($writer) to capture output, so
+  # emission MUST go through [Console]::Error. But on Windows PowerShell 5.1 in
+  # a nested `powershell -File` context (CI legs invoke fixtures this way)
+  # [Console]::Error.WriteLine can throw System.IO.FileLoadException ("assembly
+  # name or codebase ... was invalid", observed on GitHub Actions run
+  # 34696119275: fresh-install prerequisite leg at this line, and inside the
+  # knowledge-timeout fixture's Start-Job). Emission is cosmetic status output:
+  # never let it crash install/update/doctor, so fall back in tiers —
+  #   1. [Console]::Error.WriteLine  (normal, honors SetError capture)
+  #   2. the replaced TextWriter via the [Console]::Error property (same
+  #      contract, avoids the method that fails to JIT on those hosts)
+  #   3. the PowerShell host API (redirectable; last resort)
+  # TTY redraw branch below is unchanged. POSIX twin: printf >&2 in
+  # lib/common.sh (already redirectable — parity preserved).
   if ($script:ProgActive -and (Test-ProgTty)) {
     Coop-ProgLift
     [Console]::Error.WriteLine($Line)
     Coop-ProgDraw
   } else {
-    [Console]::Error.WriteLine($Line)
+    $emitted = $false
+    try { [Console]::Error.WriteLine($Line); $emitted = $true } catch { }
+    if (-not $emitted) {
+      try { $writer = [Console]::Error; $writer.WriteLine($Line); $emitted = $true } catch { }
+    }
+    if (-not $emitted) {
+      if ($Host.UI -and $Host.UI.WriteErrorLine) { $Host.UI.WriteErrorLine($Line) }
+    }
   }
 }
 function Coop-Say  { param([string]$m) Coop-Emit $m }
@@ -894,12 +916,67 @@ function Get-CoopYamlList {
   } catch { return @() }
 }
 
+# --- Team knowledge config (~/.coop/config "knowledge" block) -----------------
+# The fleet config JSON (schema_version 1, written by scripts/onboard.py) carries
+# an OPTIONAL "knowledge" block: { "enabled": bool, "repos": [{url, local_path}] }.
+# Absent/disabled/unreadable is a clean no-op everywhere. COOP_DIR overrides the
+# parent of .coop (same convention as onboard.py and the test suite).
+# (mirrors of coop_config_file / coop_knowledge_enabled / coop_knowledge_repos)
+function Get-CoopConfigFile {
+  $base = if ($env:COOP_DIR) { $env:COOP_DIR } else { $HOME }
+  return (Join-Path $base '.coop\config')
+}
+
+function Get-CoopKnowledgeBlock {
+  $f = Get-CoopConfigFile
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $null }
+  try {
+    $cfg = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($cfg.knowledge) { return $cfg.knowledge }
+  } catch { return $null }
+  return $null
+}
+
+# True when knowledge.enabled is truthy in the fleet config.
+function Test-CoopKnowledgeEnabled {
+  $k = Get-CoopKnowledgeBlock
+  return [bool]($k -and $k.enabled)
+}
+
+# One PSCustomObject per configured knowledge repo (Url, LocalPath with ~ expanded),
+# only when knowledge.enabled. Empty array when disabled/absent/malformed.
+function Get-CoopKnowledgeRepos {
+  if (-not (Test-CoopKnowledgeEnabled)) { return @() }
+  $k = Get-CoopKnowledgeBlock
+  $repos = @()
+  foreach ($r in @($k.repos)) {
+    $url = [string]$r.url
+    $path = [string]$r.local_path
+    if (-not $url -or -not $path) { continue }
+    if ($path -eq '~') { $path = $HOME }
+    elseif ($path.StartsWith('~/') -or $path.StartsWith('~\')) { $path = Join-Path $HOME $path.Substring(2) }
+    $repos += [pscustomobject]@{ Url = $url.Trim(); LocalPath = $path }
+  }
+  return $repos
+}
+
 # Extract the YAML frontmatter `name:` from a SKILL.md (first match), or '' if none.
 # (mirror of coop_skill_name)
 function Get-CoopSkillName {
   param([string]$File)
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { return '' }
-  $lines = Get-Content -LiteralPath $File -ErrorAction SilentlyContinue
+  # Get-Content returns a SCALAR STRING for a one-line file, not an array:
+  # $lines[0] would then be the first CHARACTER (a [System.Char] has no
+  # .Trim()), which crashed the launcher on a malformed one-line team skill.
+  # @(...) forces an array so $lines[0] is always the first LINE. -ErrorAction
+  # Stop + try/catch: an unreadable file is a rejected skill (''), never a
+  # launcher abort.
+  try {
+    $lines = @(Get-Content -LiteralPath $File -Encoding UTF8 -ErrorAction Stop)
+  }
+  catch {
+    return ''
+  }
   if (-not $lines -or $lines.Count -eq 0 -or $lines[0].Trim() -ne '---') { return '' }
   for ($i = 1; $i -lt $lines.Count; $i++) {
     if ($lines[$i].Trim() -eq '---') { break }

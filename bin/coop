@@ -11,6 +11,7 @@
 # Usage:
 #   coop                      Launch the branded Pi agent (passes extra args to pi)
 #   coop doctor               Check dependencies and configuration
+#   coop support               Collect a sanitized support bundle (health, versions, events); preview + export
 #   coop update               Update Pi, Coop tools, vibes, skills/prompts, then doctor
 #   coop install              Fresh-install / bootstrap everything (idempotent)
 #   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
@@ -77,6 +78,8 @@ ${COOP_BOLD}Usage${COOP_RST}
   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
   coop review [paths...]    Run both linters + compose findings onto the lineage docs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
+  coop support [--json]     Collect a sanitized support bundle (health, versions, events)
+                            (--incident: incident record; --export PATH: write bundle)
   coop fabric [args]        Pass through to the Microsoft Fabric CLI (fab)
   coop version              Print coop + pi versions
   coop help                 Show this help
@@ -145,6 +148,42 @@ $(coop_yaml_list "$proj" "$key.allow")
 EOF
 }
 
+# Load team knowledge skills from configured knowledge repos (~/.coop/config "knowledge" block).
+# Subordinate semantics: first-party Cooptimize skills always win on conflict.
+coop_load_team_knowledge() {
+  local own_names="$1"
+  coop_knowledge_enabled || return 0
+  local _url path d name fm
+  while IFS="$(printf '\t')" read -r _url path; do
+    [ -n "$path" ] || continue
+    [ -d "$path/skills" ] || continue
+    for d in "$path"/skills/*/; do
+      [ -d "$d" ] || continue
+      name="$(basename "$d")"
+      [ -f "${d}SKILL.md" ] || continue
+      case "$own_names" in *" $name "*) coop_warn "skipping team skill '$name' (conflicts with a Cooptimize skill)"; continue ;; esac
+      # Parse the frontmatter name BEFORE adding any launch argument. An
+      # optional external skill that can't identify itself must be skipped,
+      # never added half-validated (and never allowed to leave this function
+      # with a failing status under set -e).
+      if ! fm="$(coop_skill_name "${d}SKILL.md")"; then
+        coop_warn "skipping team skill '$name' (could not read frontmatter name)"
+        continue
+      fi
+      if [ -z "$fm" ]; then
+        coop_warn "skipping team skill '$name' (missing frontmatter name)"
+        continue
+      fi
+      case "$own_names" in *" $fm "*) coop_warn "skipping team skill '$name' (name '$fm' conflicts with a Cooptimize skill)"; continue ;; esac
+      COOP_PI_ARGS+=(--skill "$d")
+      own_names="$own_names$name $fm "
+    done
+  done <<EOF
+$(coop_knowledge_repos)
+EOF
+  return 0
+}
+
 # --- Assemble the exact Pi launch spec (args + brand env) --------------------
 # SINGLE SOURCE OF TRUTH for how coop launches Pi. Both `launch_pi` (the terminal
 # agent) and `coop launch-spec` (JSON for a future UI / coop web bridge) consume
@@ -176,6 +215,7 @@ coop_build_pi_args() {
       coop_load_ms_skills "microsoft_skills" "$proj" "$own_names"
       coop_load_ms_skills "fabric_skills" "$proj" "$own_names"
     fi
+    coop_load_team_knowledge "$own_names"
   fi
   [ -d "$COOP_ROOT/prompts" ]  && COOP_PI_ARGS+=(--prompt-template "$COOP_ROOT/prompts")
   [ -f "$COOP_ROOT/themes/cooptimize.json" ] && COOP_PI_ARGS+=(--theme "$COOP_ROOT/themes/cooptimize.json")
@@ -1010,6 +1050,7 @@ case "$cmd" in
   sql-review)    shift; run_tool coop-sql-review "$@" ;;
   dax-review)    shift; run_tool coop-dax-review "$@" ;;
   review)        shift; run_review "$@" ;;
+  support)       shift; exec "$COOP_ROOT/scripts/support-center.sh" "$@" ;;
   fabric|fab)    shift; have fab || coop_die "Microsoft Fabric CLI (fab) not found. Run: coop install"; exec fab "$@" ;;
   # --- Pi management, aliased under coop ---
   add)           shift; have pi || coop_die "pi not installed. Run: coop bootstrap"; exec pi install "$@" ;;
