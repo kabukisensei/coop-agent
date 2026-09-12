@@ -107,17 +107,27 @@ exit /b 0
   $jobEvidence.Add("parent.ps=$($PSVersionTable.PSVersion)")
   $jobEvidence.Add("parent.start_thread_job_available=$([bool](Get-Command Start-ThreadJob -ErrorAction SilentlyContinue))")
   $jobEvidence.Add("control_a.system_root=$env:SystemRoot")
-  $controlA = Start-Job -ScriptBlock { 'CONTROL_A_OK' }
-  $null = Wait-Job $controlA -Timeout 15
-  $jobEvidence.Add("control_a.state=$($controlA.State)")
-  if ($controlA.State -eq 'Completed') {
-    $aResults = @(Receive-Job $controlA)
-    $jobEvidence.Add("control_a.result=$($aResults -join ',')")
-  } else {
-    $aReason = $controlA.ChildJobs[0].JobStateInfo.Reason
-    $jobEvidence.Add("control_a.reason=$(if ($aReason) { [string]$aReason.Message } else { '<none>' })")
+  $controlA = $null
+  try {
+    $controlA = Start-Job -ScriptBlock { 'CONTROL_A_OK' }
+    $null = Wait-Job $controlA -Timeout 15
+    if ($controlA.State -eq 'Running') {
+      $jobEvidence.Add('control_a.timeout=15s')
+      Stop-Job $controlA -ErrorAction SilentlyContinue
+    }
+    $jobEvidence.Add("control_a.state=$($controlA.State)")
+    if ($controlA.State -eq 'Completed') {
+      $aResults = @(Receive-Job $controlA -ErrorAction SilentlyContinue)
+      $jobEvidence.Add("control_a.result=$($aResults -join ',')")
+    } else {
+      $aReason = $controlA.ChildJobs[0].JobStateInfo.Reason
+      $jobEvidence.Add("control_a.reason=$(if ($aReason) { [string]$aReason.Message } else { '<none>' })")
+    }
+  } catch {
+    $jobEvidence.Add("control_a.exception=$($_.Exception.Message)")
+  } finally {
+    if ($controlA) { Remove-Job $controlA -Force -ErrorAction SilentlyContinue }
   }
-  Remove-Job $controlA -Force -ErrorAction SilentlyContinue
 
   $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$($saved['PATH'])"
   $env:HOME = Join-Path $t 'home'
@@ -143,27 +153,37 @@ exit /b 0
   # final state. Distinguishes job STARTUP failure (environment) from failure
   # inside the materialization body.
   $phaseB = Join-Path $t 'control-b-phase.log'
-  $controlB = Start-Job -ArgumentList $phaseB -ScriptBlock {
-    param($phasePath)
-    [System.IO.File]::WriteAllText($phasePath, 'phase=entered')
-    [pscustomobject]@{ result = 'CONTROL_B_OK'; system_root = $env:SystemRoot }
-  }
-  $null = Wait-Job $controlB -Timeout 15
-  $jobEvidence.Add("control_b.state=$($controlB.State)")
-  $jobEvidence.Add("control_b.phase_entered=$([System.IO.File]::Exists($phaseB))")
-  if ($controlB.State -eq 'Completed') {
-    $bResults = @($controlB | Receive-Job)
-    if ($bResults.Count -gt 0) {
-      $jobEvidence.Add("control_b.result=$($bResults[0].result)")
-      $jobEvidence.Add("control_b.child_system_root=$($bResults[0].system_root)")
-    } else {
-      $jobEvidence.Add('control_b.result=<zero-results>')
+  $controlB = $null
+  try {
+    $controlB = Start-Job -ArgumentList $phaseB -ScriptBlock {
+      param($phasePath)
+      [System.IO.File]::WriteAllText($phasePath, 'phase=entered')
+      [pscustomobject]@{ result = 'CONTROL_B_OK'; system_root = $env:SystemRoot }
     }
-  } else {
-    $bReason = $controlB.ChildJobs[0].JobStateInfo.Reason
-    $jobEvidence.Add("control_b.reason=$(if ($bReason) { [string]$bReason.Message } else { '<none>' })")
+    $null = Wait-Job $controlB -Timeout 15
+    if ($controlB.State -eq 'Running') {
+      $jobEvidence.Add('control_b.timeout=15s')
+      Stop-Job $controlB -ErrorAction SilentlyContinue
+    }
+    $jobEvidence.Add("control_b.state=$($controlB.State)")
+    $jobEvidence.Add("control_b.phase_entered=$([System.IO.File]::Exists($phaseB))")
+    if ($controlB.State -eq 'Completed') {
+      $bResults = @($controlB | Receive-Job -ErrorAction SilentlyContinue)
+      if ($bResults.Count -gt 0) {
+        $jobEvidence.Add("control_b.result=$($bResults[0].result)")
+        $jobEvidence.Add("control_b.child_system_root=$($bResults[0].system_root)")
+      } else {
+        $jobEvidence.Add('control_b.result=<zero-results>')
+      }
+    } else {
+      $bReason = $controlB.ChildJobs[0].JobStateInfo.Reason
+      $jobEvidence.Add("control_b.reason=$(if ($bReason) { [string]$bReason.Message } else { '<none>' })")
+    }
+  } catch {
+    $jobEvidence.Add("control_b.exception=$($_.Exception.Message)")
+  } finally {
+    if ($controlB) { Remove-Job $controlB -Force -ErrorAction SilentlyContinue }
   }
-  Remove-Job $controlB -Force -ErrorAction SilentlyContinue
 
   # Defect D bounded materialization probe. Windows PowerShell 5.1 lacks
   # Start-ThreadJob, so Coop-Unit uses process-backed Start-Job. Exercise that
