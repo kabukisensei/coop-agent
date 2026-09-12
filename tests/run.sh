@@ -115,6 +115,11 @@ echo "→ team knowledge sync script tests"
 bash "$ROOT/tests/sync-knowledge.test.sh"
 echo "→ team knowledge local recall helper tests"
 bash "$ROOT/tests/search-knowledge.test.sh"
+echo "→ windows owned-kill native evidence probe (Defect A diagnostics)"
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) pwsh -NoProfile -File "$ROOT/tests/fixtures/win-ownership-probe.ps1" ;;
+  *) echo "  – Windows-only probe; skipped on POSIX (covered by the Windows CI legs)" ;;
+esac
 echo "→ team knowledge skills launch slot tests"
 bash "$ROOT/tests/team-skills.test.sh"
 echo "→ truthful inventory (doctor pipx probes / sync postconditions)"

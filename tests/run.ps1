@@ -174,6 +174,21 @@ try {
     Ko "knowledge git timeout fixture failed: $($kgOut | Out-String)"
   }
 
+  # --- 1f. Windows owned-kill native evidence probe (Defect A diagnostics) ---
+  # Evidence-only synthetic probe; asserts nothing about product correctness.
+  Head 'windows ownership native probe (evidence only)'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $probeOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\win-ownership-probe.ps1') 2>&1
+  $probeRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($probeRc -eq 0) {
+    $probeOut | ForEach-Object { Write-Host $_ }
+    Ok 'ownership probe completed; PROBE| evidence above'
+  } else {
+    Ko "ownership probe failed: $($probeOut | Out-String)"
+  }
+
 
   # --- 2. --no-launch is a dry-run: exits 0, prints the spec -----------------
   Head '--no-launch dry-run (must NOT start pi; prints the spec)'
