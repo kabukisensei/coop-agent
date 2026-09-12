@@ -170,6 +170,7 @@ try {
   const clonedSession = join(sessionDir, "clone.jsonl");
   mkdirSync(stubBin);
   mkdirSync(workspace);
+  mkdirSync(join(scratch, "home"));
   mkdirSync(sessionDir, { recursive: true });
   writeFileSync(originalSession, "{}\n", "utf8");
   writeFileSync(clonedSession, "{}\n", "utf8");
@@ -191,6 +192,8 @@ await import(pathToFileURL(process.env.COOP_TEST_STUB_PI).href);
 
   const env = {
     ...process.env,
+    HOME: join(scratch, "home"),
+    COOP_TEST_STUB_PATH: stubBin,
     PATH: `${stubBin}${delimiter}${process.env.PATH || ""}`,
     COOP_DIR: join(scratch, "coop"),
     COOP_AGENT_DIR: join(scratch, "agent"),

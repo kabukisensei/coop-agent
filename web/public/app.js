@@ -13,6 +13,9 @@ if (location.search.includes("token=")) {
 const $ = (s) => document.querySelector(s);
 const transcript = $("#transcript"), scroll = $("#scroll");
 const dot = $("#dot"), statusText = $("#statusText");
+let agentReadySid = null;
+const idleStatus = () => agentReadySid === activeSid && activeSid ? "ready" : "connecting to agent…";
+statusText.textContent = "connecting to agent…";
 const stopBtn = $("#stop");
 const abortRetryBtn = $("#abortRetry");
 const sendBtn = $("#send"), steerBtn = $("#steer"), followUpBtn = $("#followUp");
@@ -291,7 +294,7 @@ function setBusy(b) {
   } else {
     busySince = 0; curTool = "";
     if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
-    if (!statusPhase) statusText.textContent = "ready";
+    if (!statusPhase) statusText.textContent = idleStatus();
   }
 }
 
@@ -895,6 +898,12 @@ const stripAnsi = (s) => String(s).replace(ANSI_RE, "");
 // Rebuild #extDock from scratch each call — the dock is tiny, so an O(n) idempotent
 // rebuild is the simple-correct choice for replay bursts. CSP-clean (textContent).
 function renderExtDock() {
+  clearUsage();
+  for (const value of extStatus.values()) {
+    const text = stripAnsi(String(value));
+    const offset = text.indexOf("Usage:");
+    if (offset >= 0) maybeUsage(text.slice(offset));
+  }
   if (!extDock) return;
   if (!extStatus.size && !extWidgets.size) { extDock.hidden = true; extDock.textContent = ""; return; }
   extDock.hidden = false;
@@ -1068,7 +1077,7 @@ function handle(evt) {
         for (const name of evt.tools || []) {
           const el = document.createElement("div");
           el.className = "tool";
-          el.innerHTML = '<span class="ok">✓</span> ' + esc(name);
+          el.innerHTML = '<span title="No recorded result">?</span> ' + esc(name);
           transcript.appendChild(el);
         }
       }
@@ -1076,7 +1085,7 @@ function handle(evt) {
       break;
     }
     case "__replay": {
-      // High-fidelity backfill from the session file (bridge-synthesized): dividers,
+      // High-fidelity backfill from Pi messages or the session file: dividers,
       // user bubbles, and assistant turns with thinking / tool calls (args + output).
       if (evt.kind === "info" || evt.kind === "compaction") {
         const div = document.createElement("div");
@@ -1108,7 +1117,7 @@ function handle(evt) {
             const sum = document.createElement("summary");
             // Same escaped-summary idiom as tool_execution_end: esc() the name,
             // toolHint() escapes its own hint — no unescaped input reaches innerHTML.
-            sum.innerHTML = (part.isError ? '<span class="bad">✗</span> ' : '<span class="ok">✓</span> ') + esc(part.name || "tool") + toolHint(part.args);
+            sum.innerHTML = (part.incomplete ? '<span title="No recorded result">?</span> ' : part.isError ? '<span class="bad">✗</span> ' : '<span class="ok">✓</span> ') + esc(part.name || "tool") + toolHint(part.args);
             const body = document.createElement("div");
             body.className = "tool-body";
             const args = document.createElement("pre");
@@ -1450,6 +1459,7 @@ async function switchChat(sid, { force = false } = {}) {
   if (!c) return;
   if (sid === activeSid && !switching && !force) return;
   activeSid = sid;
+  clearUsage();
   window.coopDesktop?.setActiveChat?.(sid).catch(() => {});
   window.coopSid = sid; // set before any Files/diff fetch can carry a sid
   c.unread = false;
@@ -1902,7 +1912,13 @@ async function rpc(body) {
     headers: { "content-type": "application/json", "x-coop-csrf": "1" },
     body: JSON.stringify(b),
   });
-  if (!res.ok) { const e = new Error(`/rpc ${b.type} -> ${res.status}`); e.status = res.status; throw e; }
+  if (!res.ok) {
+    const error = new Error(`/rpc ${b.type} -> ${res.status}`);
+    error.status = res.status;
+    try { error.data = await res.json(); } catch { error.data = null; }
+    if (error.data?.code === "chat-unavailable") error.message = error.data.error;
+    throw error;
+  }
   return res.json();
 }
 
@@ -1930,12 +1946,14 @@ let autoCompactionEnabled = null;
 let autoRetryPreference = null; // Pi 0.84.3 does not expose this value through get_state.
 
 function shortModel(m) {
-  const label = (m && (m.name || m.id)) || "model…";
+  const label = [m?.name, m?.id].find(value => typeof value === "string" && value.trim() && value !== "unknown") || "Choose model";
   return label.length > 26 ? label.slice(0, 25) + "…" : label;
 }
 function setModelChip(m) {
   modelChip.textContent = shortModel(m);
-  if (m) modelChip.title = `Model: ${m.id || ""} (${m.provider || ""}) — click to change`;
+  modelChip.title = m?.id && m.id !== "unknown"
+    ? `Model: ${m.id}${m.provider && m.provider !== "unknown" ? ` (${m.provider})` : ""} — click to change`
+    : "Choose a model or set up model access";
 }
 function setThinkChip(level) {
   if (level) currentThink = level;
@@ -1943,7 +1961,10 @@ function setThinkChip(level) {
 }
 
 let stateRefreshSeq = 0;
+let stateRefreshTimer = null;
 async function refreshState() {
+  clearTimeout(stateRefreshTimer);
+  stateRefreshTimer = null;
   const sid = activeSid;
   const sequence = ++stateRefreshSeq;
   const isCurrent = () => sid === activeSid && sequence === stateRefreshSeq;
@@ -1953,6 +1974,9 @@ async function refreshState() {
       rpc({ type: "get_available_thinking_levels", sid }),
     ]);
     if (!isCurrent()) return;
+    if (st?.success !== true) throw new Error("Agent state is unavailable.");
+    agentReadySid = sid;
+    if (!dot.classList.contains("busy") && !statusPhase) statusText.textContent = idleStatus();
     const d = (st && st.data) || {};
     setModelChip(d.model);
     setThinkChip(d.thinkingLevel);
@@ -1963,9 +1987,18 @@ async function refreshState() {
     const queue = queueFor();
     queue.pendingUnknown = Number.isSafeInteger(d.pendingMessageCount) ? d.pendingMessageCount : 0;
     renderQueue();
-    startUsagePolling(d.model);
-  } catch {
-    /* toolbar stays generic — chat still works */
+  } catch (error) {
+    if (!isCurrent()) return;
+    agentReadySid = null;
+    if (!dot.classList.contains("busy") && !statusPhase) {
+      statusText.textContent = error.status === 504 ? "agent starting — retrying…" : "agent connection unavailable";
+    }
+    // Only repeat these read-only state requests. A tab switch invalidates the
+    // callback, and a successful refresh restores the model and thinking chips.
+    if (error.status === 504) stateRefreshTimer = setTimeout(() => {
+      if (isCurrent()) void refreshState();
+    }, 2000);
+    return;
   }
   if (!isCurrent()) return;
   refreshCtx();
@@ -2715,16 +2748,21 @@ function setupCommand(operationId) {
 
 async function readHealthContracts() {
   const suffix = `?sid=${encodeURIComponent(activeSid)}`;
-  const responses = await Promise.all([
-    fetch(`/doctor${suffix}`),
-    fetch(`/auth/providers${suffix}`),
-    fetch(`/setup/state${suffix}`),
-    fetch(`/profile${suffix}`),
-  ]);
-  const values = await Promise.all(responses.map(async (response) => ({ response, body: await response.json().catch(() => ({})) })));
-  const failed = values.find(({ response }) => !response.ok);
-  if (failed) throw new Error(failed.body?.error || "Workspace health could not be inspected.");
-  return window.CoopWorkspaceHealth.build({ doctor: values[0].body.report, auth: values[1].body, setup: values[2].body.report, profile: values[3].body.report });
+  const keys = ["doctor", "auth", "setup", "profile"];
+  const paths = ["/doctor", "/auth/providers", "/setup/state", "/profile"];
+  const failures = {};
+  const values = await Promise.all(paths.map(async (path, index) => {
+    try {
+      const response = await fetch(`${path}${suffix}`, { signal: AbortSignal.timeout(15000) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.error || "Service unavailable.");
+      return body;
+    } catch (error) {
+      failures[keys[index]] = error.name === "TimeoutError" ? "This check timed out. Other setup and sign-in actions remain available." : error.message || "Service unavailable.";
+      return {};
+    }
+  }));
+  return window.CoopWorkspaceHealth.build({ doctor: values[0].report, auth: values[1], setup: values[2].report, profile: values[3].report, failures });
 }
 
 function openProfileForm(card, item, refresh) {
@@ -3484,46 +3522,37 @@ $("#compactBtn").onclick = async () => {
       toast("Compaction is taking longer than expected — it may still finish; the context gauge will update when it does.");
       setTimeout(refreshCtx, 5000);
     } else {
-      toast("Compaction failed or timed out.", "error");
+      toast(e?.data?.code === "chat-unavailable" ? e.message : "Compaction failed or timed out.", "error");
     }
   }
 };
 
-// --- usage meter (pi-better-openai subscription snapshot) -----------------------
-// The extension's footer meter is TUI-only, but its /openai-usage command reports
-// the same snapshot via notify ("Usage: 5h: 62% | 7d: 81% | …"). We poll it and
-// render the header meter (values are % LEFT in each window).
+// --- usage meter (shared extension status, including session replay) ------------
+// The usage extension owns polling, model eligibility and errors. Render its
+// status instead of submitting periodic slash commands into the conversation.
 const usageEl = $("#usage"), usageText = $("#usageText");
 const bar5 = $("#bar5"), bar7 = $("#bar7");
-let usagePolling = false;
 
-function maybeUsage(text) {
-  if (!/^Usage:\s*5h:/i.test(text)) return false;
-  const m5 = /5h:\s*([\d.]+)%/i.exec(text);
-  const m7 = /7d:\s*([\d.]+)%/i.exec(text);
-  usageEl.hidden = false;
-  usageText.textContent = [m5 && `5h ${m5[1]}%`, m7 && `7d ${m7[1]}%`].filter(Boolean).join(" · ") || "usage";
-  usageEl.querySelector(".meter").title = text + "  (percent remaining)";
-  if (m5) bar5.style.width = Math.min(100, Number(m5[1])) + "%";
-  if (m7) bar7.style.width = Math.min(100, Number(m7[1])) + "%";
-  return true;
+function clearUsage() {
+  usageEl.hidden = true;
+  usageText.textContent = "";
+  usageEl.querySelector(".meter").title = "";
+  bar5.style.width = bar7.style.width = "0%";
 }
 
-function startUsagePolling(model) {
-  // Only when an OpenAI-family model is active — the /openai-usage command comes
-  // from pi-better-openai, which coop installs alongside it.
-  const sig = `${(model && model.provider) || ""} ${(model && model.id) || ""}`;
-  if (usagePolling || !/openai|codex/i.test(sig)) return;
-  usagePolling = true;
-  const ask = () => {
-    // Skip a tick while the active chat is busy or crashed — otherwise this /openai-usage
-    // prompt would be STEERED into the running turn (the /prompt handler steers when busy).
-    const c = chatsState.get(activeSid);
-    if (!c || c.busy || c.status === "exited") return;
-    post("/prompt", { message: "/openai-usage" }).catch(() => { /* retry next tick */ });
-  };
-  ask();
-  setInterval(ask, 120000);
+function maybeUsage(text) {
+  if (/^Usage (?:unavailable|hidden|display is disabled)/i.test(text)) { clearUsage(); return true; }
+  const parsed = window.CoopUsage.parse(text);
+  if (!parsed) return false;
+  usageEl.hidden = false;
+  usageText.textContent = parsed.windows.map(w => `${w.label} ${w.remaining === null ? "--" : w.remaining + "%"}`).join(" · ");
+  usageEl.querySelector(".meter").title = parsed.title;
+  [bar5, bar7].forEach((bar, index) => {
+    const w = parsed.windows[index];
+    bar.style.width = `${w?.remaining ?? 0}%`;
+    bar.hidden = !w || w.remaining === null;
+  });
+  return true;
 }
 
 const input = $("#input");
@@ -3533,6 +3562,9 @@ const attachmentLane = $("#attachmentLane");
 let imageLimits = window.CoopInteraction.imageLimits(null);
 let attachments = [];
 let textAttachments = [];
+let attachmentReads = Promise.resolve();
+let pendingAttachmentBatches = 0;
+let pendingSubmission = null;
 const textAttachmentLimits = window.CoopPortability.DEFAULT_TEXT_LIMITS;
 
 async function refreshImageLimits() {
@@ -3573,7 +3605,15 @@ function renderAttachments() {
     remove.onclick = () => { textAttachments = textAttachments.filter((candidate) => candidate.id !== attachment.id); renderAttachments(); };
     item.append(icon, name, remove); attachmentLane.appendChild(item);
   }
-  attachmentLane.hidden = attachments.length === 0 && textAttachments.length === 0;
+  if (pendingAttachmentBatches || pendingSubmission) {
+    const loading = document.createElement("span");
+    loading.className = "attachment";
+    loading.setAttribute("role", "status");
+    loading.textContent = pendingAttachmentBatches ? "Reading attachments…" : "Sending…";
+    attachmentLane.appendChild(loading);
+  }
+  attachmentLane.hidden = attachments.length === 0 && textAttachments.length === 0 && !pendingAttachmentBatches && !pendingSubmission;
+  for (const button of [sendBtn, steerBtn, followUpBtn]) button.disabled = pendingAttachmentBatches > 0 || pendingSubmission !== null;
 }
 
 function readImage(file) {
@@ -3598,10 +3638,11 @@ function readImage(file) {
 
 async function addImages(files) {
   for (const file of Array.from(files || [])) {
-    const admitted = window.CoopInteraction.admitImage(attachments, file, imageLimits);
+    const admitted = window.CoopInteraction.admitImage([...(pendingSubmission?.images || []), ...attachments], file, imageLimits);
     if (!admitted.ok) { toast(admitted.error, "warning"); continue; }
     try {
-      attachments.push(await readImage(file));
+      const attachment = await readImage(file);
+      attachments.push(attachment);
       renderAttachments();
     } catch (error) {
       toast(error.message || "Couldn't attach that image.", "error");
@@ -3628,12 +3669,27 @@ function readTextFile(file) {
   });
 }
 
-async function addFiles(files) {
+function addFiles(files) {
+  // FileList can be cleared by the picker immediately after this call. Snapshot
+  // now and serialize all picker, paste and drop reads against committed limits.
+  const selected = Array.from(files || []);
+  if (!selected.length) return Promise.resolve();
+  pendingAttachmentBatches++;
+  renderAttachments();
+  const result = attachmentReads.then(() => readFiles(selected));
+  attachmentReads = result.catch(() => {});
+  return result.finally(() => {
+    pendingAttachmentBatches--;
+    renderAttachments();
+  });
+}
+
+async function readFiles(files) {
   for (const file of Array.from(files || [])) {
     if (String(file.type || "").startsWith("image/")) { await addImages([file]); continue; }
-    const admitted = window.CoopPortability.admitTextFile(textAttachments, file, textAttachmentLimits);
+    const admitted = window.CoopPortability.admitTextFile([...(pendingSubmission?.textFiles || []), ...textAttachments], file, textAttachmentLimits);
     if (!admitted.ok) { toast(admitted.error, "warning"); continue; }
-    try { textAttachments.push(await readTextFile(file)); renderAttachments(); }
+    try { const attachment = await readTextFile(file); textAttachments.push(attachment); renderAttachments(); }
     catch (error) { toast(error.message || "Couldn't attach that text file.", "error"); }
   }
 }
@@ -3649,7 +3705,7 @@ input.addEventListener("paste", (event) => {
     .map((item) => item.getAsFile()).filter(Boolean);
   if (!images.length) return; // ordinary SQL/DAX/YAML/text paste remains untouched
   event.preventDefault();
-  void addImages(images);
+  void addFiles(images);
 });
 composer.addEventListener("dragover", (event) => {
   if (![...(event.dataTransfer?.items || [])].some((item) => item.kind === "file")) return;
@@ -3667,6 +3723,14 @@ composer.addEventListener("drop", (event) => {
 
 async function submit(kind = "prompt") {
   if (desktopNavigationRestoring) return;
+  if (pendingSubmission) {
+    toast("The previous message is still sending. Your draft is saved here.", "warning");
+    return;
+  }
+  if (pendingAttachmentBatches) {
+    toast("Attachments are still loading. Please wait before sending.", "warning");
+    return;
+  }
   const rawMessage = input.value;
   const hasMessage = rawMessage.trim().length > 0;
   if (!hasMessage && !attachments.length && !textAttachments.length) return;
@@ -3682,6 +3746,9 @@ async function submit(kind = "prompt") {
   // reconnect, and steered messages that Pi delivers later).
   const sentAttachments = attachments;
   const sentTextAttachments = textAttachments;
+  // Reserve capacity until the response settles so failure can restore every
+  // attachment without dropping files added to the next draft.
+  pendingSubmission = { images: sentAttachments, textFiles: sentTextAttachments };
   input.value = ""; input.style.height = "auto";
   attachments = [];
   textAttachments = [];
@@ -3689,22 +3756,29 @@ async function submit(kind = "prompt") {
   try {
     const images = sentAttachments.map(({ mimeType, data }) => ({ type: "image", mimeType, data }));
     if (kind === "steer") {
-      await rpc({ type: "steer", message: outgoing, images });
+      const reply = await rpc({ type: "steer", message: outgoing, images });
+      if (reply?.success !== true) throw new Error("Steering message was not accepted.");
       toast("Steering message queued for the active turn.");
     } else if (kind === "follow_up") {
-      await rpc({ type: "follow_up", message: outgoing, images });
+      const reply = await rpc({ type: "follow_up", message: outgoing, images });
+      if (reply?.success !== true) throw new Error("Follow-up was not accepted.");
       toast("Follow-up queued for the next turn.");
     } else {
       await post("/prompt", { message: outgoing, images });
     }
-  } catch {
-    // Never lose the user's words or images: put both back in the composer.
-    toast("Couldn't send — is coop web still running?", "error");
-    input.value = rawMessage;
-    attachments = [...sentAttachments, ...attachments].slice(0, imageLimits.maxImages);
-    textAttachments = [...sentTextAttachments, ...textAttachments].slice(0, textAttachmentLimits.maxFiles);
-    renderAttachments();
+  } catch (error) {
+    // Preserve both the failed message and anything typed or attached meanwhile.
+    const message = error.data?.code === "chat-unavailable"
+      ? "This chat's agent has stopped. Start a new chat or reopen the workspace, then resend your restored draft and attachments."
+      : "Couldn't send. Your message and attachments are restored before the newer draft.";
+    toast(message, "error");
+    input.value = rawMessage + (rawMessage && input.value ? "\n\n" : "") + input.value;
+    attachments = [...sentAttachments, ...attachments];
+    textAttachments = [...sentTextAttachments, ...textAttachments];
     input.dispatchEvent(new Event("input"));
+  } finally {
+    pendingSubmission = null;
+    renderAttachments();
   }
 }
 sendBtn.onclick = () => submit("prompt");

@@ -5,6 +5,16 @@ Aaron explicitly requested committing and pushing the Desktop work so the VM can
 pull a reproducible checkout. Use isolated test folders; preserve the VM's existing
 Coop installation and business workspaces.
 
+Windows VM result, September 8: integrated commit
+`cc6d4808a9cb1703beaff5998c9faa7b655b44d5` is pushed on
+`feature/coop-desktop-windows-validation-c22f6f7`. All three full native source
+runners pass. The fresh packaged app passes the default renderer/chat readiness,
+shutdown and profile-cleanup probe, the Windows Job Object update health probe,
+and real bundled/Pi-loaded SQL, DAX, documentation and lineage work. Installed
+visual workflows and full Windows update/rollback remain incomplete. See
+[the Windows evidence handoff](windows-validation-2026-09-08.md) for exact tested
+tree, hashes, earlier failures and acceptance limits.
+
 ## Repositories
 
 All four use branch `feature/coop-desktop-platform`. Clone them as siblings with
@@ -39,7 +49,7 @@ conditional on Desktop acceptance, not permission to delete `web/`.
 
 ## Baseline and known gaps
 
-The agent's final macOS development checks passed: 42 focused update tests, full
+The latest macOS development checks include 46 focused update tests, full
 Bash and PowerShell behavioral suites, shell syntax/parity and whitespace checks.
 Companion source suites passed: data-doc 634, SQL review 670, DAX review 624; all
 three lint and formatting checks passed. These are Mac results, not Windows proof.
@@ -47,22 +57,37 @@ three lint and formatting checks passed. These are Mac results, not Windows proo
 Native Mac evidence covers managed startup, model selection, real model work in a
 preview profile, session recovery, icon/copy behavior, signed update preparation,
 atomic activation/rollback, runtime/native-window health checks, independent
-recovery and completed-recovery retention. Production signing/feed provisioning,
-real reboot/login acceptance and complete fresh-managed-profile model work remain
-open. The last prepared-copy cleanup change has source tests but has not yet been
-repeated through the packaged Mac updater. Do not infer its native acceptance
-from the earlier update run.
+recovery and completed-recovery retention. Production signing/feed provisioning
+and real reboot/login acceptance remain open. Real model work in the isolated
+managed Mac profile created Python source/tests and passed four tests; this does
+not establish fresh Windows sign-in or task execution. Prepared-copy cleanup also
+passed a subsequent packaged Mac helper update: healthy activation, visible success notice, Ready
+workspace, removed prepared duplicate, retained and verified installed/rollback
+apps and original DMG, and disarmed recovery job. Successful health-probe profiles
+are now discarded after confirmed process exit. Failed/interrupted or uncertain
+checks retain their profiles; general retention and Windows behavior remain open.
+
+Draft PR #48 runs native Windows Git Bash, PowerShell 5.1 and real Pi compatibility
+checks: https://github.com/kabukisensei/coop-agent/pull/48. The first two completed
+Pi matrices each passed 18 checks without skips. Subsequent Windows failures led
+to writable config flushes, preservation of SystemRoot, native canonical paths,
+dependency-free setup validation and exact fixture-byte checkout corrections.
+Inspect the latest run at the exact fetched agent commit; earlier CI success or
+failure is not evidence for a newer revision. These CI jobs do not replace the
+managed installer and interactive VM journeys below.
 
 Windows update preparation/replacement/recovery is still explicitly unsupported
 in the current implementation. NSIS configuration alone is not a complete Windows
 updater. Implement and verify the required Windows behavior; never bypass the
 platform check and reuse macOS filesystem or process assumptions.
 
-The managed preparer currently acquires published pinned Python tools. Testing
-editable companion sources does not prove those changes are in a managed app.
-Track both source revisions and actual packaged wheel bytes. Resolve that gap with
-an explicit development packaging mechanism and regenerated inventory/evidence;
-do not silently weaken pinned version, integrity or signature checks.
+The managed preparer defaults to published pinned Python tools. For unpublished
+companion fixes use `scripts/build-development-wheels.py` and the preparer's
+`--development-wheels` input, documented in `desktop/README.md`. Build the three
+pinned commits into wheels, then pass their generated manifest when preparing the
+Windows runtime. Record `developmentSources` from the package verifier and the
+full dependency inventory. Editable source tests alone do not prove the installed
+app contains the fixes. Native Windows acceptance of this mechanism remains open.
 
 ## Native Windows work
 
@@ -80,7 +105,8 @@ do not silently weaken pinned version, integrity or signature checks.
    ```powershell
    npm ci --prefix desktop
    node scripts/managed-runtime-build-plan.mjs win32-x64
-   node scripts/prepare-managed-runtime.mjs --target win32-x64 --work C:\CoopTestBuild\work --output C:\CoopTestBuild\managed-runtime
+   python scripts/build-development-wheels.py --repositories C:\path\to\sibling-repositories --output C:\CoopTestBuild\wheels
+   node scripts/prepare-managed-runtime.mjs --target win32-x64 --work C:\CoopTestBuild\work --output C:\CoopTestBuild\managed-runtime --development-wheels C:\CoopTestBuild\wheels\development-wheels.json
    node scripts/verify-managed-runtime.mjs --bundle C:\CoopTestBuild\managed-runtime --workspace C:\CoopTestBuild\workspace --agent C:\CoopTestBuild\agent
    $env:COOP_DESKTOP_MANAGED_RUNTIME_DIR = 'C:\CoopTestBuild\managed-runtime'
    npm run package:managed:win --prefix desktop

@@ -42,10 +42,17 @@
 # bash's per-command behavior and propagate exit codes explicitly.
 $ErrorActionPreference = 'Continue'
 
+# Opt-in fixed stage labels only: never include arguments or environment values.
+function Write-CoopRuntimeTrace([string]$Phase) {
+  if ($env:COOP_RUNTIME_STARTUP_TRACE -eq '1') { [Console]::Error.WriteLine('[coop-startup] ' + $Phase) }
+}
+Write-CoopRuntimeTrace 'dispatcher-enter'
+
 # --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
 # Resolves COOP_ROOT/COOP_VERSION and defines the loggers, Test-Have,
 # Get-CoopPython, YAML readers, Find-CoopProjectYml, Coop-Confirm, etc.
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
+Write-CoopRuntimeTrace 'helpers-ready'
 
 # Isolate coop's Pi config (extensions, settings, themes, MCP) from the user's personal
 # `pi` — for launching AND the coop add/remove/list/config/pi management aliases.
@@ -59,8 +66,12 @@ if ($env:COOP_NO_ISOLATE -ne '1') {
 # Make tools in the npm global bin (`pi`) or the pipx bin (`fab`, coop-*) resolvable
 # even when the current shell's persistent PATH predates their install — otherwise
 # `coop` / `coop doctor` falsely report them "not installed" right after a fresh
-# `coop install`. Best-effort, process-local: only PREPENDS dirs that exist.
+# `coop install`. Append existing dirs, preserving explicit PATH precedence.
+# The managed runtime supplies its own tools and never discovers global installs.
 function Add-CoopRuntimePaths {
+  # Managed Desktop already supplied the exact bundled tools on PATH.
+
+  if ($env:COOP_DESKTOP_MANAGED_RUNTIME -eq '1') { return }
   $dirs = @()
   if (Test-Have 'npm') {
     $p = (& npm prefix -g 2>$null)
@@ -69,7 +80,7 @@ function Add-CoopRuntimePaths {
   $dirs += (Join-Path $HOME '.local\bin')                    # pipx default PIPX_BIN_DIR
   foreach ($d in $dirs) {
     if ($d -and (Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
-      $env:PATH = "$d;$env:PATH"
+      $env:PATH = "$env:PATH;$d"
     }
   }
 }
@@ -329,8 +340,6 @@ function Build-CoopPiArgs {
   if (Test-Path -LiteralPath $extPowerline) { $piArgs += @('-e', $extPowerline) }
   $extTools = Join-Path $script:CoopRoot 'extensions\coop-tools'
   if (Test-Path -LiteralPath $extTools) { $piArgs += @('-e', $extTools) }
-  $extGuardrails = Join-Path $script:CoopRoot 'extensions\coop-guardrails'
-  if (Test-Path -LiteralPath $extGuardrails) { $piArgs += @('-e', $extGuardrails) }
   $extProfile = Join-Path $script:CoopRoot 'extensions\coop-profile'
   if (Test-Path -LiteralPath $extProfile) { $piArgs += @('-e', $extProfile) }
   # Managed Desktop loads immutable, exactly pinned extension packages from its
@@ -348,6 +357,9 @@ function Build-CoopPiArgs {
       $piArgs += @('-e', $managedPath)
     }
   }
+  # Run governance/context compatibility hooks after the pinned package hooks.
+  $extGuardrails = Join-Path $script:CoopRoot 'extensions\coop-guardrails'
+  if (Test-Path -LiteralPath $extGuardrails) { $piArgs += @('-e', $extGuardrails) }
   # Coop owns fleet updates. Hide Pi's upstream self-update banner so users do not
   # drift Pi away from the release-manifest pins; Invoke-CoopUpdateNudge still
   # reports when THIS checkout is behind and directs the user to `coop update`.
@@ -441,15 +453,19 @@ function Start-CoopRuntimeProcess {
     [ValidateSet('web', 'runtime')][string] $Surface,
     [string[]] $RuntimeArgs = @()
   )
+  Write-CoopRuntimeTrace 'runtime-prerequisites'
   if (-not (Test-Have 'pi'))   { Coop-Die 'pi is not installed. Run: coop install' }
   if (-not (Test-Have 'node')) { Coop-Die "Node.js is required for coop $Surface. Run: coop install" }
   $runtimePython = Get-CoopPython
   if (-not $runtimePython) { Coop-Die "python3 is required for coop $Surface" }
+  Write-CoopRuntimeTrace 'runtime-preflight'
   Invoke-CoopLaunchPreflight
   Invoke-CoopAzPreflight   # same Fabric/Power BI token check the terminal launch does
+  Write-CoopRuntimeTrace 'runtime-launch-spec'
   $env:COOP_LAUNCH_SPEC = (Invoke-CoopLaunchSpec @('--json'))
   $env:COOP_PYTHON = $runtimePython
   $server = Join-Path $script:CoopRoot 'web\server.mjs'
+  Write-CoopRuntimeTrace 'runtime-server'
   if ($Surface -eq 'runtime') {
     $env:COOP_RUNTIME_MODE = '1'
     & node $server --runtime @RuntimeArgs
@@ -1159,6 +1175,7 @@ if ($argList.Count -gt 1) { $rest = @($argList[1..($argList.Count - 1)]) }
 # Surface freshly-installed tools (npm-global `pi`, pipx `fab`/coop-*) on PATH for
 # this process so a shell whose persistent PATH predates the install still finds them.
 Add-CoopRuntimePaths
+Write-CoopRuntimeTrace 'paths-ready'
 
 switch -CaseSensitive ($cmd) {
   '' { Invoke-LaunchPi; break }

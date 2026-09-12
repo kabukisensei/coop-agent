@@ -43,6 +43,36 @@ node scripts/stage-managed-runtime.mjs \
   --python-tool coop-sql-review=/absolute/python-tools/coop-sql-review
 ```
 
+Set `COOP_RUNTIME_STARTUP_TRACE=1` when diagnosing a slow runtime launch. Both
+dispatchers and the server emit fixed startup-stage labels to stderr; runtime
+JSON on stdout stays unchanged. The managed runtime verifier enables these
+labels and records elapsed milliseconds per stderr chunk, preserving its existing
+readiness deadline. Tracing is off during normal use and contains no argument or
+environment values. The generated managed bootstrap reports its own entry,
+root resolution and dispatcher handoff before Coop loads. Windows CI separately
+compares fixed PowerShell `-Command`, minimal `-File`, and `-File` with the first
+bootstrap cmdlet (`Split-Path`), using isolated and diagnostic machine-field
+environments. Receipts contain only known stage labels, byte counts, timings and
+process-exit observations. These probes do not change the acceptance environment.
+
+The runtime supervisor closes a pipe to launcher stdin immediately; clients
+send work over HTTP. Windows diagnostics compare null-device and closed-pipe
+input for the bootstrap cmdlet as well as simple .NET output.
+
+The managed runtime verifier also loads the packaged Coop tool extension through
+Pi and calls SQL Review, DAX Review, Data Doc scan and lineage on disposable
+Unicode paths. It validates findings and graph content alongside direct Python
+entrypoint checks. This serial CLI check isolates its temporary environment before
+loading Pi, restores the caller environment, and removes its temporary profile.
+It does not generate a model response.
+
+Managed SQL Review, DAX Review, Data Doc and its JSONL setup wizard invoke
+the bundle-owned Python interpreter and entrypoints directly through
+`lib/managed-tool-invocation.mjs`. Windows command shims are not spawned by Pi.
+Arguments remain literal; isolated UTF-8 execution disables bytecode writes to
+signed resources. Internal macOS interpreter symlinks are accepted only when
+they resolve inside the bundle. Ordinary terminal tool resolution is unchanged.
+
 The command is network-free, validates all versions against
 `config/release-manifest.json`, rejects external symlinks, stages into a fresh
 temporary sibling, and refuses to overwrite an existing output. Managed package
@@ -54,8 +84,29 @@ python-build-standalone CPython 3.12.14 archives are pinned by primary HTTPS URL
 and SHA-256 in `config/managed-runtime-build.json`; all npm, extension, MCP, and
 Python package specs are derived from the release manifest rather than duplicated
 in a build script. The target-worker preparer downloads and verifies those two
-archives and installs packages only into its fresh build root. When an upstream
-npm shrinkwrap omits integrity, `scripts/complete-npm-integrity.mjs` downloads the
+archives and installs packages only into its fresh build root. npm uses `ci` with
+a checked-in target resolution in `config/managed-npm/`, whose root dependencies
+must match the release manifest. Preparation rejects stale pins before acquisition
+and rejects added/missing required packages or changed versions, archive URLs and
+integrities after installation. The completion receipt includes the lock SHA-256.
+Dependency updates require an explicitly refreshed target lock and fresh target
+worker validation; preparation never refreshes a lock automatically.
+Python uses per-target locks in `config/managed-python/` for every tool's exact
+transitive versions and allowed archive SHA-256 hashes. Pip requires these hashes;
+preparation then reconciles its download report and installed distribution metadata
+against the lock. Authenticated development wheels retain the release version
+constraint and use their recorded source hash. The receipt includes the Python
+lock digest and verified package counts. The checked-in resolutions were generated
+with uv 0.11.7 for CPython 3.12.14 using the previously tested inventory as exact
+constraints; uv is not required to prepare a bundle.
+
+macOS arm64 and Windows x64 require wheels throughout. Intel macOS explicitly
+allows only cryptography 50.0.1 to build from its locked source archive in the
+Fabric CLI and fabric-cicd environments: upstream removed Intel macOS wheel
+support in version 49. See the [cryptography changelog](https://cryptography.io/en/49.0.0/changelog/).
+Native Intel compilation and its build-toolchain/build-dependency locking remain
+unverified. Runtime dependency locks do not establish reproducible Intel builds.
+When an upstream npm shrinkwrap omits integrity, `scripts/complete-npm-integrity.mjs` downloads the
 exact resolved HTTPS archive and compares its file set and every file's bytes
 against the installed package. Only a complete match adds the archive's SHA-512
 to the local resolution lock; a mismatch, unsafe archive, or partial failure
@@ -79,6 +130,63 @@ Use `package:managed:win` on a Windows x64 worker. Cross-platform staging is not
 treated as execution evidence: each bundle records and enforces its actual
 platform and architecture. Production signing and clean-machine verification
 remain separate gates.
+
+For development acceptance of unpublished companion fixes, build wheels from the
+exact Git commits in `config/development-companions.json`. The builder reads sibling
+`coop-data-doc-desktop`, `coop-sql-review-desktop`, and `coop-dax-review-desktop`
+repositories and archives the pinned commits; working-tree changes are excluded.
+Use a Python installation with pip and a fresh output directory whose parent exists:
+
+```text
+python scripts/build-development-wheels.py --repositories /absolute/parent --output /absolute/new-wheels
+node scripts/prepare-managed-runtime.mjs --target darwin-arm64 --work /absolute/new-work --output /absolute/managed-runtime --development-wheels /absolute/new-wheels/development-wheels.json
+```
+
+On Windows use native absolute paths and `--target win32-x64`. `--pins` on the wheel
+builder accepts a JSON object with the same three names and full commit IDs, allowing
+validation branches to test later committed fixes. The preparer authenticates a
+private wheel snapshot by SHA-256, retains each exact release-version constraint,
+and checks pip's installed archive receipt before recording provenance. Staging
+places each source repository, commit, wheel filename and hash in the dependency
+inventory; the package verifier reports them as `developmentSources`. Builds without
+the explicit development input continue using published pins. These wheels retain
+existing version numbers for development compatibility and are not published
+releases; record the inventory and source commits with acceptance evidence. The
+build backend and transitive dependencies may resolve differently on another
+worker, so record actual wheel hashes and the generated dependency inventory.
+
+The `managed desktop smoke` workflow runs on relevant pull-request changes and
+manual dispatch, on native macOS and Windows workers. It checks out the exact
+companion commits, builds their development wheels, prepares the locked runtime,
+and verifies both the staged runtime and the copy inside the native app. Package
+verification checks the ASAR boundary, Electron fuses and dependency provenance.
+Build/runtime receipts and dependency inventories are retained for seven days as
+CI evidence. These jobs create unsigned development apps; they do not publish a
+release or prove installer, model sign-in, clipboard or Power BI acceptance.
+
+Native npm packages declared for the target platform must appear in the committed
+lock and the installed dependency tree, even when their parent declares them as
+optional. This catches missing Fabric/Power BI MCP, image-processing, clipboard
+and regex binaries before a managed bundle can pass verification. Cross-target
+installation with lifecycle scripts disabled is a dependency check only; the
+native CI build must also execute the platform's install scripts and runtime.
+
+The managed-runtime verifier also runs the installed SQL Review, DAX Review and
+Data Doc Python entrypoints against synthetic repository fixtures. It requires
+the expected findings and SQL/model lineage, using bundled Python and temporary
+home/work folders. Both staged and packaged CI checks record this tool-work
+evidence. This exercises local analysis; it does not require a model account or
+establish live Microsoft integration acceptance.
+
+Desktop requests graceful runtime shutdown using a per-launch owner credential,
+separate from the renderer cookie. The runtime stops its agents and releases
+workspace ownership before exiting; the credential is excluded from agent
+environments. Older or unresponsive Windows runtimes fall back to terminating the
+owned launcher tree through native `System32/taskkill.exe`. Managed verification
+checks two consecutive writable starts with the same workspace/profile and emits
+success only after both runtimes have stopped. Native CI must verify this behavior
+on each target; it does not establish reboot/login or installer acceptance.
+
 
 A packaged app uses `resources/managed-runtime` when present. It validates the
 bundle contract, target, jailed paths, and Coop/Pi/Node/Python version agreement
@@ -137,7 +245,18 @@ The runtime-hosted renderer now includes the DSK-013 interaction controls shared
 with `coop web`: provenance-preserving command discovery, runtime-reported
 thinking levels, native Pi model/thinking cycle actions, explicit steer/follow-up
 queues and modes, and bounded screenshot/image picker, paste, and drag/drop with
-pre-send previews. Shared session controls also use Pi's native HTML export,
+pre-send previews. Picker, paste and drop operations share a serialized read
+queue, so overlapping imports enforce the same count/byte limits. While files
+load, the composer shows a reading status and temporarily disables Send, Steer
+and Follow-up; keyboard submission preserves the draft and explains the wait.
+A failed read releases the queue so later files can still be attached.
+Only one send request can await acknowledgement at a time; the text field stays
+editable for the next draft. In-flight files retain their attachment capacity
+until the result is known. On failure, the original text returns before any newer
+draft and all admitted attachments remain available, including reads that finish
+after recovery. Steer and Follow-up require Pi's successful acknowledgement before
+showing a queued notice; a rejected command restores the draft.
+Shared session controls also use Pi's native HTML export,
 auto-compaction, auto-retry, and retry-abort commands. Desktop HTML export is
 saved through a named main-process operation: the renderer supplies only the
 session ID, the runtime owns the source artifact, and a native dialog owns the
@@ -151,8 +270,29 @@ the existing Python onboarding owner. The project-contract action offers an
 advanced YAML editor with server-side validation, exact before/after preview,
 explicit apply approval, stale-write detection, and recoverable backup; guided
 setup still routes to `/setup-project`. Data Doc setup routes to its existing
-owner. Model login uses the fixed preview terminal bridge because Pi 0.84.3 has
-no structured RPC auth flow. Microsoft login execution and Doctor repairs remain
+owner. Model login uses the fixed native terminal bridge because Pi 0.84.3 has
+no structured RPC auth flow. The sign-in helper attaches read-only to the workspace
+so it can share Desktop's profile without competing for the active writer lease.
+Login-only mode closes after a new, complete Codex OAuth record is saved; empty,
+unrelated, expired or pre-existing credentials do not count as a new sign-in.
+Opening the model picker refreshes availability through Pi's public model registry
+after external sign-in, without restarting the chat or making a model request.
+Older runtimes without the refresh command retain their existing listing behavior.
+
+The pinned pi-better-openai 0.1.22 package receives the checked
+`lib/openai-usage-compat.mjs` correction during `coop sync` and managed staging.
+It labels quota windows using the response's `limit_window_seconds`; absent
+window lengths are labelled Primary/Secondary instead of guessed. Staging
+preserves the acquired npm tree and records upstream and corrected source hashes
+in `coop-compatibility.json`. Package verification checks both the exact corrected
+source and receipt. A changed upstream version or source requires reviewing this
+correction before setup can pass. Its fetch, authentication and model-scope logic
+remain owned by pi-better-openai. npm inventory integrity describes the acquired
+archive; the compatibility receipt describes the subsequent local correction.
+Desktop consumes the shared extension status (including session replay), clears
+missing values and does not submit background `/openai-usage` prompts.
+
+Microsoft login execution and Doctor repairs remain
 disabled until their shared Core operations exist.
 
 On Windows, a normal installed `coop.cmd` is mapped to its trusted sibling
@@ -272,7 +412,10 @@ waits for both process IDs to exit and rechecks trust/expiry. It checks that the
 installed app still has the expected identity/version, replaces it through a
 journaled transaction, runs isolated runtime and native-app health probes, and relaunches
 Coop with its existing user-data directory. Failed health checks restore the prior
-app. New macOS replacements use an atomic directory exchange for activation and
+app after the probe has stopped. If native probe exit cannot be confirmed, the
+helper preserves the testing transaction and both app copies without rollback or
+relaunch. The independent recovery worker must stop probes before restoring the
+app. Native probes also bound termination when their close event never arrives. New macOS replacements use an atomic directory exchange for activation and
 rollback, keeping the normal app path present. The verified Python interpreter in
 the stable prepared release invokes the native swap; unsupported filesystems fail
 before replacement instead of falling back to two renames. Version 2 transaction
@@ -316,7 +459,46 @@ It never loads trust-key overrides from workspace or user data. The native healt
 probes check the runtime contract and Coop version, then launch the packaged app
 with temporary user data and require renderer startup through the preload bridge,
 a working chat RPC, a matching one-time health response and clean shutdown. Probe
-timeout/cancellation terminates its process group. Native interruption/reboot
+timeout/cancellation terminates its process group. Successful probes discard their
+own temporary profiles after confirmed shutdown; native cleanup also requires the
+probe process group to be gone. Failed/interrupted checks retain their profiles for
+diagnosis, and replaced directories or cleanup errors preserve the stored data.
+This does not sweep older profiles, update downloads or transaction archives.
+Native interruption/reboot
 acceptance, Windows support and production feed/signing acceptance remain tracked
 release requirements.
 Passing controller/helper tests does not establish a complete production updater.
+
+Managed Desktop launchers preserve the bundle's tool PATH and skip global npm,
+pipx, Homebrew and Azure CLI fallback discovery. This keeps external installations
+from replacing the bundled tools during startup. Ordinary terminal launch retains
+its existing fallback discovery.
+
+## Isolated Windows development acceptance
+
+Use `npm run package:validation:win --prefix desktop` or
+`npm run package:validation:installer:win --prefix desktop` with
+`COOP_DESKTOP_MANAGED_RUNTIME_DIR` set to a fresh staged Windows bundle.
+These select `electron-builder-windows-validation.cjs`, application ID
+`com.cooptimize.coop.desktop.windowsvalidation`, and product name
+`Coop Desktop Windows Validation`. They do not create automatic desktop/start-menu
+shortcuts. The packaged development marker selects a separate default user-data
+directory; an explicit `--user-data-dir` can choose a disposable profile on D:.
+Keep the existing Coop installation and real workspaces outside the test paths.
+
+Build companion wheels using the committed development pins above. The Windows
+branch pins include the verified Data Doc UTF-8/path fixes and DAX native sharing
+lock regression. Package version pins remain unchanged; inspect the verifier's
+`developmentSources` and full dependency inventory to establish actual inclusion.
+
+Managed `coop doctor` shares the shell's bundle inspection module, copied into
+the staged runtime by `stage-managed-runtime.mjs`, and probes its Node, Python and
+Python tool imports. Both terminal launchers and Desktop call this managed path.
+It does not inspect or repair unrelated global pipx/npm installations. Model
+authentication, workspace setup and connected integrations retain their separate
+shared health contracts. Managed Doctor is read-only; dependency repair belongs
+to Desktop install/update, and `--fix`/`--publish` are refused in the managed path.
+See `docs/agent/windows-validation-2026-09-07.md` for observed native results and
+open acceptance requirements; a source or package-verifier pass is not installed
+GUI acceptance.
+

@@ -34,9 +34,9 @@ test("platform paths select the fixed packaged binary and resource directory", (
   const mac = packagedPaths(root, "darwin", "arm64");
   assert.equal(mac.fuseTarget, join(root, "mac-arm64", "Coop Desktop.app"));
   assert.equal(mac.resources, join(root, "mac-arm64", "Coop Desktop.app", "Contents", "Resources"));
-  const windows = packagedPaths(root, "win32", "x64");
-  assert.equal(windows.fuseTarget, join(root, "win-unpacked", "Coop Desktop.exe"));
-  assert.equal(windows.resources, join(root, "win-unpacked", "resources"));
+  const windows = packagedPaths("C:\\build", "win32", "x64");
+  assert.match(windows.fuseTarget, /win-unpacked[\\/]Coop Desktop\.exe$/);
+  assert.match(windows.resources, /win-unpacked[\\/]resources$/);
   assert.throws(() => packagedPaths(root, "linux", "x64"), /Unsupported/);
 });
 

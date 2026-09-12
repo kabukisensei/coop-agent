@@ -2,6 +2,8 @@ import { strict as assert } from "node:assert";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { getProjectSetupState } from "../web/project-setup-service.mjs";
 
 let count = 0;
@@ -61,6 +63,19 @@ await test("checked-in schema pins progressive and not-configured states", async
   assert.equal(schema.properties.schemaVersion.const, 1);
   assert.ok(schema.properties.state.enum.includes("progressive"));
   assert.ok(schema.properties.sections.items.properties.state.enum.includes("not-configured"));
+});
+
+
+await test("dependency-free Python rejects a non-mapping profile without exposing raw content", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-setup-no-site-"));
+  mkdirSync(join(root, ".coop"));
+  writeFileSync(join(root, ".coop", "project.yml"), "profile: [unterminated\nsecret: do-not-return\n");
+  const python = process.env.COOP_PYTHON || (process.platform === "win32" ? "python" : "python3");
+  const result = spawnSync(python, ["-S", fileURLToPath(new URL("../lib/project_setup_state.py", import.meta.url)), root], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.contractState, "broken");
+  assert.equal(JSON.stringify(report).includes("do-not-return"), false);
 });
 
 console.log(`project setup service: ${count} tests passed`);

@@ -4,17 +4,22 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspectManagedRuntime, resolveDesktopCoopLauncher } from "../desktop/src/managed-runtime.mjs";
 import { startCoopRuntime } from "../desktop/src/runtime-supervisor.mjs";
+import { buildNativeProbeEnvironment } from "../desktop/scripts/verify-native-application.mjs";
+import { verifyManagedToolWork, verifyManagedExtensionWork } from "./verify-managed-tool-work.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function fail(message) { throw new Error(message); }
 function parseArgs(argv) {
-  const result = {};
+  const result = { environment: "inherited" };
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
     const value = argv[index + 1];
-    if (!new Set(["--bundle", "--workspace", "--agent"]).has(key) || !value) fail(`Unknown or incomplete argument: ${key || "<missing>"}.`);
-    result[key.slice(2)] = resolve(value);
+    if (!new Set(["--bundle", "--workspace", "--agent", "--environment"]).has(key) || !value) fail(`Unknown or incomplete argument: ${key || "<missing>"}.`);
+    if (key === "--environment") {
+      if (!["inherited", "native"].includes(value)) fail("--environment must be inherited or native.");
+      result.environment = value;
+    } else result[key.slice(2)] = resolve(value);
   }
   for (const key of ["bundle", "workspace", "agent"]) if (!result[key] || !isAbsolute(result[key])) fail(`--${key} must be absolute.`);
   return result;
@@ -35,39 +40,58 @@ async function verifyBundle() {
   if (!existsSync(options.workspace)) fail("Workspace is unavailable.");
   mkdirSync(options.agent, { recursive: true });
   const bundle = inspectManagedRuntime(options.bundle);
+  const toolWork = verifyManagedToolWork(bundle);
+  const extensionWork = await verifyManagedExtensionWork(bundle);
   const resourcesPath = dirname(options.bundle);
   if (join(resourcesPath, "managed-runtime") !== options.bundle) fail("Bundle must be named managed-runtime for packaged resolution verification.");
-  const launcher = resolveDesktopCoopLauncher({ packaged: true, resourcesPath });
-  if (launcher.source !== "managed" || realpathSync.native(launcher.managedRoot) !== realpathSync.native(options.bundle)) fail("Desktop did not select the managed runtime.");
+  const launchEnv = options.environment === "native"
+    ? buildNativeProbeEnvironment(join(options.agent, "launch-environment"), undefined)
+    : process.env;
+  if (options.environment === "native") {
+    delete launchEnv.COOP_DESKTOP_UPDATE_PROBE;
+    for (const path of new Set([launchEnv.HOME, launchEnv.TEMP, launchEnv.APPDATA, launchEnv.LOCALAPPDATA].filter(Boolean))) mkdirSync(path, { recursive: true });
+  }
+  const launcher = resolveDesktopCoopLauncher({ packaged: true, resourcesPath, env: launchEnv });
+  if (launcher.source !== "managed" || realpathSync(launcher.managedRoot) !== realpathSync(options.bundle)) fail("Desktop did not select the managed runtime.");
 
   const env = {
-    ...process.env,
+    ...launchEnv,
     COOP_DESKTOP_AGENT_DIR: options.agent,
     COOP_AGENT_DIR: options.agent,
     PI_CODING_AGENT_DIR: options.agent,
     COOP_SKIP_AZ: "1",
     COOP_NO_ONBOARD: "1",
+    COOP_RUNTIME_STARTUP_TRACE: "1",
   };
-  const runtime = await startCoopRuntime({
-    workspace: options.workspace,
-    coopCommand: launcher.command,
-    commandPrefix: launcher.commandPrefix,
-    env,
-    readyTimeoutMs: 60_000,
-    onStderr: (text) => process.stderr.write(text),
-  });
-  try {
-    const capabilities = await authenticatedGet(runtime.ready.endpoint, runtime.ready.oneTimeToken, "/capabilities");
-    if (capabilities.contractVersion !== 1 || capabilities.versions?.coop !== bundle.versions.coop || capabilities.versions?.pi !== bundle.versions.pi) fail("Runtime capability versions do not match the managed bundle.");
-    for (const [integration, expected] of [["coop-data-doc", bundle.versions.pythonTools["coop-data-doc"]], ["coop-sql-review", bundle.versions.pythonTools["coop-sql-review"]], ["coop-dax-review", bundle.versions.pythonTools["coop-dax-review"]]]) {
-      if (capabilities.versions?.[integration === "coop-data-doc" ? "dataDoc" : integration === "coop-sql-review" ? "sqlReview" : "daxReview"] !== expected) fail(`Runtime capability version mismatch: ${integration}.`);
+  const runtimePids = [], startupMilliseconds = [];
+  for (let cycle = 0; cycle < 2; cycle++) {
+    const started = performance.now();
+    const runtime = await startCoopRuntime({
+      workspace: options.workspace,
+      coopCommand: launcher.command,
+      commandPrefix: launcher.commandPrefix,
+      env,
+      readyTimeoutMs: options.environment === "native" ? 20_000 : 60_000,
+      onStderr: (text) => process.stderr.write(`[runtime cycle ${cycle + 1} +${Math.round(performance.now() - started)}ms] ${text}`),
+    });
+    startupMilliseconds.push(Math.round(performance.now() - started));
+    try {
+      if (runtime.ready.shutdownProtocol !== "http-v1") fail("Runtime does not support owner-controlled shutdown.");
+      const access = await authenticatedGet(runtime.ready.endpoint, runtime.ready.oneTimeToken, "/workspace/access");
+      if (access.access?.mode !== "write") fail("Runtime did not acquire writable workspace access during start/restart.");
+      const capabilities = await authenticatedGet(runtime.ready.endpoint, runtime.ready.oneTimeToken, "/capabilities");
+      if (capabilities.contractVersion !== 1 || capabilities.versions?.coop !== bundle.versions.coop || capabilities.versions?.pi !== bundle.versions.pi) fail("Runtime capability versions do not match the managed bundle.");
+      for (const [integration, expected] of [["coop-data-doc", bundle.versions.pythonTools["coop-data-doc"]], ["coop-sql-review", bundle.versions.pythonTools["coop-sql-review"]], ["coop-dax-review", bundle.versions.pythonTools["coop-dax-review"]]]) {
+        if (capabilities.versions?.[integration === "coop-data-doc" ? "dataDoc" : integration === "coop-sql-review" ? "sqlReview" : "daxReview"] !== expected) fail(`Runtime capability version mismatch: ${integration}.`);
+      }
+      const authPath = join(options.agent, "auth.json");
+      if (existsSync(authPath) && readFileSync(authPath).length > 2) fail("Managed smoke unexpectedly populated model credentials.");
+    } finally {
+      await runtime.stop({ graceMs: 5000 });
     }
-    const authPath = join(options.agent, "auth.json");
-    if (existsSync(authPath) && readFileSync(authPath).length > 2) fail("Managed smoke unexpectedly populated model credentials.");
-    process.stdout.write(`${JSON.stringify({ ok: true, target: bundle.manifestPath ? `${process.platform}-${process.arch}` : null, versions: bundle.versions, runtimePid: runtime.ready.runtimePid })}\n`);
-  } finally {
-    await runtime.stop({ graceMs: 5000 });
+    runtimePids.push(runtime.ready.runtimePid);
   }
+  process.stdout.write(`${JSON.stringify({ ok: true, environment: options.environment, launcher: launcher.command, startupMilliseconds, target: `${process.platform}-${process.arch}`, versions: bundle.versions, runtimePid: runtimePids[0], restartRuntimePid: runtimePids[1], shutdownConfirmed: true, immediateWritableRestart: true, toolWork, extensionWork })}\n`);
 }
 
 verifyBundle().catch((error) => { process.stderr.write(`verify-managed-runtime: ${error.message}\n`); process.exitCode = 1; });

@@ -29,9 +29,13 @@ await test("runtime supervisor reads the structured handshake and cleans up its 
   const runtime = await startCoopRuntime({ workspace: ROOT, coopCommand: process.execPath, commandPrefix: [fixture], readyTimeoutMs: 5000 });
   assert.equal(runtime.ready.piVersion, "0.84.3");
   assert.equal(runtime.child.exitCode, null);
-  assert.equal(runtime.child.signalCode, null);
+  let closed = false;
+  runtime.child.once("close", () => { closed = true; });
   await runtime.stop({ graceMs: 1000 });
-  assert.notEqual(runtime.child.exitCode ?? runtime.child.signalCode, null);
+  // Windows may report termination as a signal, leaving exitCode null. Check
+  // the actual lifecycle and PID instead of requiring a numeric exit status.
+  assert.equal(closed, true);
+  assert.throws(() => process.kill(runtime.child.pid, 0), { code: "ESRCH" });
 });
 
 await test("runtime supervisor handles signal termination without escalating to SIGKILL or re-killing", async () => {
@@ -39,6 +43,7 @@ await test("runtime supervisor handles signal termination without escalating to 
     const signals = [];
     const spawnImpl = () => {
       const child = new EventEmitter();
+      child.pid = 43210;
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.exitCode = null;
@@ -59,6 +64,7 @@ await test("runtime supervisor handles signal termination without escalating to 
           oneTimeToken: "0123456789abcdef0123456789abcdef",
           runtimePid: 12345,
         }) + "\n");
+        if (preTerminated) queueMicrotask(() => child.emit("close", null, "SIGTERM"));
       });
       return child;
     };
@@ -88,6 +94,7 @@ await test("runtime supervisor handles signal termination without escalating to 
 
   await terminated.stop({ graceMs: 500 });
   assert.deepEqual(terminatedSignals, []);
+
 });
 
 await test("Electron renderer is sandboxed and receives only named IPC methods", () => {

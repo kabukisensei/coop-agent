@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { managedRuntimeBuildPlan } from "../scripts/managed-runtime-build-plan.mjs";
+import { validateReviewWork, validateLineageWork, verifyManagedExtensionWork } from "../scripts/verify-managed-tool-work.mjs";
+
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const release = JSON.parse(readFileSync(resolve(ROOT, "config", "release-manifest.json"), "utf8"));
@@ -54,10 +57,16 @@ test("unsupported or ambiguous build targets fail closed", () => {
   assert.throws(() => managedRuntimeBuildPlan(""), /Unsupported/);
 });
 
-test("manual managed-runtime smoke covers native macOS and Windows build workers", () => {
+test("managed-runtime smoke covers pull requests and native macOS and Windows build workers", () => {
   const workflow = readFileSync(resolve(ROOT, ".github", "workflows", "managed-desktop-smoke.yml"), "utf8");
   const verifier = readFileSync(resolve(ROOT, "scripts", "verify-managed-runtime.mjs"), "utf8");
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /pull_request:/);
+  assert.match(workflow, /config\/development-companions\.json/);
+  assert.match(workflow, /build-development-wheels\.py/);
+  assert.match(workflow, /--development-wheels/);
+  assert.match(workflow, /packagedPaths/);
+  assert.match(workflow, /coop-packaged-agent/);
   assert.match(workflow, /macos-latest, windows-latest/);
   assert.match(workflow, /prepare-managed-runtime\.mjs/);
   assert.match(workflow, /verify-managed-runtime\.mjs/);
@@ -66,5 +75,36 @@ test("manual managed-runtime smoke covers native macOS and Windows build workers
   assert.match(verifier, /COOP_DESKTOP_AGENT_DIR/);
   assert.match(verifier, /runtime\.stop/);
 });
+
+test("installed-tool evidence rejects no-op reviews, wrong versions, diagnostics and incomplete lineage", () => {
+  const report = { tool: "coop-sql-review", version: "1.0.0", diagnostics: [], findings: [{ rule_id: "SQL-NO-SELECT-STAR" }] };
+  const validate = value => validateReviewWork(value, report.tool, report.version, "SQL-NO-SELECT-STAR");
+  assert.equal(validate(report).findings, 1);
+  for (const patch of [{ tool: "other" }, { version: "0.9.0" }, { diagnostics: ["unreadable file"] }, { findings: [] }, { findings: [{ rule_id: "other" }] }]) {
+    assert.throws(() => validate({ ...report, ...patch }), /did not analyze/);
+  }
+  const ids = ["view:silver.dim_customer", "semantic_model:legacy", "measure:legacy.total rev", "pbi_table:legacy.factsales", "silver_table:bronze.raw_erp_contact"];
+  const graph = { nodes: Object.fromEntries(ids.map(id => [id, { id, name: id.endsWith("raw_erp_contact") ? "raw_erp_contact" : id }])), edges: [
+    { source_id: ids[2], target_id: ids[3], edge_type: "references" },
+    { source_id: ids[0], target_id: ids[4], edge_type: "reads" },
+  ] };
+  assert.deepEqual(validateLineageWork(graph), { nodes: 5, edges: 2 });
+  assert.throws(() => validateLineageWork({ nodes: {}, edges: [] }), /lineage/);
+  assert.throws(() => validateLineageWork({ ...graph, edges: graph.edges.slice(0, 1) }), /lineage/);
+  assert.throws(() => validateLineageWork({ ...graph, edges: graph.edges.slice(1) }), /lineage/);
+});
+
+{
+  const root = mkdtempSync(join(tmpdir(), "coop-extension-verifier-failure-"));
+  const environment = { ...process.env };
+  try {
+    await assert.rejects(verifyManagedExtensionWork({ root: join(root, "missing-bundle"), node: process.execPath, coopRoot: root }, { tempRoot: root }), /Cannot find module/);
+    assert.ok(Object.keys(process.env).length === Object.keys(environment).length && Object.keys(environment).every(key => process.env[key] === environment[key]), "Failed extension verification must restore the caller environment.");
+    assert.deepEqual(readdirSync(root), [], "Failed extension verification must remove its temporary profile and source fixtures.");
+    count += 1;
+    console.log("  ✓ failed extension loading restores caller environment and cleans disposable state");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
 
 console.log(`managed runtime build plan: ${count} tests passed`);

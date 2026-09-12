@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runManagedDoctor } from "./managed-doctor-service.mjs";
 
 export const DOCTOR_REPORT_SCHEMA_VERSION = 1;
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -105,6 +106,7 @@ export async function runDoctor({
   timeoutMs = 60_000,
   execute,
 } = {}) {
+  if (env.COOP_DESKTOP_MANAGED_RUNTIME === "1" && !execute) return normalizeDoctorReport(await runManagedDoctor({ root, env }));
   const invoke = execute || ((spec) => new Promise((resolve, reject) => {
     const child = spawn(spec.bin, spec.args, { cwd, env: { ...env, COOP_ROOT: root }, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";

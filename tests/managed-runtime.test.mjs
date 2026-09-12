@@ -1,7 +1,11 @@
+import { windowsShellCases, observeWindowsShell, writeWindowsShellFixtures } from "../desktop/scripts/diagnose-windows-shell.mjs";
+import { resolveManagedToolInvocation, execCoopTool } from "../lib/managed-tool-invocation.mjs";
+import { assertDisposableInstallerHost, buildNsisInvocation } from "../desktop/scripts/verify-windows-installer.mjs";
+import { buildNativeProbeEnvironment, probeNativeApplication } from "../desktop/scripts/verify-native-application.mjs";
 import { resolveManagedDesktopProfile } from "../desktop/src/managed-profile.mjs";
 import assert from "node:assert/strict";
-import { existsSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { existsSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,6 +45,8 @@ await test("inventory retains Python post releases and missing npm integrity; re
     const pythonRoot = join(base, "python");
     const target = { platform: TEST_PLATFORM, arch: TEST_ARCH };
     write(join(npmPrefix, "node_modules", "example", "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
+    const upstreamUsage = readFileSync(join(ROOT, "tests/fixtures/pi-better-openai-0.1.22/usage.ts"), "utf8");
+    write(join(npmPrefix, "node_modules/pi-better-openai/src/usage.ts"), upstreamUsage);
     write(join(npmPrefix, "node_modules", ".package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: { "node_modules/example": { version: "1.0.0", resolved: "https://registry.npmjs.org/example/-/example-1.0.0.tgz" } } }));
     write(join(pythonRoot, "example-2.9.0.post0.dist-info", "METADATA"), "Name: example\nVersion: 2.9.0.post0\n");
     const build = () => buildDependencyInventory({ npmPrefix, pythonTools: [{ name: "example", root: pythonRoot }], target });
@@ -281,6 +287,8 @@ await test("the offline staging command validates every release pin and never ov
     const stageTarget = { platform: process.platform, arch: TEST_ARCH };
     const stageNpmPackages = expectedNpmPackages(stageTarget);
     for (const [name, version] of Object.entries(stageNpmPackages)) write(join(npmPrefix, "node_modules", ...name.split("/"), "package.json"), `${JSON.stringify({ name, version })}\n`);
+    const upstreamUsage = readFileSync(join(ROOT, "tests/fixtures/pi-better-openai-0.1.22/usage.ts"), "utf8");
+    write(join(npmPrefix, "node_modules/pi-better-openai/src/usage.ts"), upstreamUsage);
     write(join(npmPrefix, "node_modules", ".package-lock.json"), `${JSON.stringify({ lockfileVersion: 3, requires: true, packages: Object.fromEntries(Object.entries(stageNpmPackages).map(([name, version]) => [`node_modules/${name}`, { version, resolved: `https://registry.npmjs.org/${name}/-/${name.split("/").at(-1)}-${version}.tgz`, integrity: "sha512-YQ==" }])) }, null, 2)}\n`);
     write(join(npmPrefix, "node_modules", ".bin", process.platform === "win32" ? "pi.cmd" : "pi"), process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n", 0o755);
     if (process.platform !== "win32") {
@@ -310,6 +318,9 @@ await test("the offline staging command validates every release pin and never ov
     }
     assert.equal(first.status, 0, first.stderr);
     assert.equal(JSON.parse(first.stdout).ok, true);
+    assert.equal(readFileSync(join(npmPrefix, "node_modules/pi-better-openai/src/usage.ts"), "utf8"), upstreamUsage, "staging preserves acquired package source");
+    assert.match(readFileSync(join(output, "npm/node_modules/pi-better-openai/src/usage.ts"), "utf8"), /windowLabels/);
+    assert.equal(JSON.parse(readFileSync(join(output, "coop-compatibility.json"), "utf8"))[0].id, "usage-window-duration-v1");
     const inspected = inspectManagedRuntime(output);
     assert.equal(inspected.versions.pi, RELEASE.pi.version);
     assert.equal(inspected.versions.python, "3.12.14");
@@ -330,6 +341,14 @@ await test("the offline staging command validates every release pin and never ov
       env: { ...process.env, COOP_DESKTOP_AGENT_DIR: join(dir, "desktop-agent") },
     });
     assert.equal(launchSpec.status, 0, launchSpec.stderr);
+    const traceSpec = spawnSync(join(output, "bin", "coop-desktop"), ["--no-launch"], {
+      cwd: ROOT, encoding: "utf8", env: { ...process.env, COOP_DESKTOP_AGENT_DIR: join(dir, "desktop-agent"), COOP_RUNTIME_STARTUP_TRACE: "1" },
+    });
+    assert.equal(traceSpec.status, 0, traceSpec.stderr);
+    assert.equal(traceSpec.stdout, launchSpec.stdout);
+    const stages = [...traceSpec.stderr.matchAll(/\[coop-startup\] ([a-z-]+)/g)].map(match => match[1]);
+    assert.deepEqual(stages.slice(0, 3), ["bootstrap-enter", "bootstrap-root-ready", "bootstrap-dispatch"]);
+
     for (const name of Object.keys(RELEASE.extensions)) assert.equal(launchSpec.stdout.includes(`/npm/node_modules/${name}`), true, name);
     const second = spawnSync(process.execPath, args, { cwd: ROOT, encoding: "utf8" });
     assert.notEqual(second.status, 0);
@@ -342,6 +361,263 @@ await test("the offline staging command validates every release pin and never ov
     renameSync(output, relocated);
     assert.equal(inspectManagedRuntime(relocated).versions.python, "3.12.14");
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+await test("native app probes isolate Windows credentials and profile paths", async () => {
+  const env = buildNativeProbeEnvironment("C:\\probe", "challenge", "win32", { SystemRoot: "C:\\Windows", OPENAI_API_KEY: "fixture", NODE_OPTIONS: "--inspect" });
+  assert.equal(env.OS, "Windows_NT");
+  assert.equal(env.PATHEXT, ".COM;.EXE;.BAT;.CMD");
+  assert.equal(env.USERPROFILE, "C:\\probe");
+  assert.equal(env.APPDATA, "C:\\probe\\AppData\\Roaming");
+  assert.equal(env.LOCALAPPDATA, "C:\\probe\\AppData\\Local");
+  assert.equal(env.OPENAI_API_KEY, undefined);
+  assert.equal(env.NODE_OPTIONS, undefined);
+  assert.equal(env.COOP_DESKTOP_UPDATE_PROBE, "challenge");
+});
+
+await test("native readiness requires the challenge, version and clean exit; failed profiles remain", async () => {
+  for (const mode of ["healthy", "wrong-token", "wrong-version", "bad-exit", "hang", "spawn-error"]) {
+    const root = mkdtempSync(join(tmpdir(), "coop-native-probe-test-"));
+    let profile, pid;
+    try {
+      const report = await probeNativeApplication({ executable: process.execPath, version: "0.0.1", workspace: root, profileRoot: root,
+        timeoutMs: mode === "hang" ? 200 : 5000 }, {
+        spawnImpl: (_command, args, options) => {
+          profile = args[0].slice("--user-data-dir=".length);
+          const script = mode === "hang" ? "setInterval(() => {}, 1000)" :
+            `process.stdout.write(JSON.stringify({type:"desktop.update-health",token:${mode === "wrong-token" ? '"wrong"' : 'process.env.COOP_DESKTOP_UPDATE_PROBE'},version:${JSON.stringify(mode === "wrong-version" ? "0.0.2" : "0.0.1")}})+"\\n");process.exitCode=${mode === "bad-exit" ? 7 : 0};`;
+          const child = spawn(mode === "spawn-error" ? join(root, "missing-program") : process.execPath, ["-e", script], options);
+          pid = child.pid; return child;
+        },
+      });
+      assert.equal(mode, "healthy");
+      assert.equal(report.rendererAndChatReady, true);
+      assert.equal(report.mainProcessExited, true);
+      assert.equal(report.profileRemoved, true);
+    } catch (error) {
+      if (mode === "healthy") throw error;
+      assert.match(error.message, /Native application/);
+      assert.equal(typeof error.observation.stdoutBytes, "number");
+      assert.equal(error.observation.ready, mode === "bad-exit");
+      assert.equal(existsSync(profile), true);
+    } finally {
+      if (pid) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+await test("installer mutation requires an explicitly enabled disposable Windows runner", async () => {
+  const allowed = { GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted", COOP_DESKTOP_DISPOSABLE_INSTALL_TEST: "1" };
+  assert.doesNotThrow(() => assertDisposableInstallerHost(allowed, "win32"));
+  for (const env of [{}, {...allowed, RUNNER_ENVIRONMENT:"self-hosted"}, {...allowed, COOP_DESKTOP_DISPOSABLE_INSTALL_TEST:"0"}]) {
+    assert.throws(() => assertDisposableInstallerHost(env, "win32"), /disposable/);
+  }
+  assert.throws(() => assertDisposableInstallerHost(allowed, "darwin"), /Windows/);
+});
+
+await test("NSIS preserves its unquoted final path argument and never enables elevation or CRC bypass", async () => {
+  const executable = "C:\\build files\\setup.exe", directory = "C:\\test files\\Coop Desktop";
+  const install = buildNsisInvocation(executable, directory);
+  assert.deepEqual(install.args, ["/S", "/currentuser", "/D=" + directory]);
+  assert.equal(install.options.windowsVerbatimArguments, true);
+  assert.equal(install.options.shell, false);
+  const uninstall = buildNsisInvocation(executable, directory, { uninstall: true });
+  assert.deepEqual(uninstall.args, ["/S", "/currentuser", "_?=" + directory]);
+  for (const path of ["relative", 'C:\\bad"path', "C:\\bad\npath"]) {
+    assert.throws(() => buildNsisInvocation(executable, path), /path/);
+  }
+});
+
+await test("Windows shell diagnosis varies machine fields and input without copying credentials or real profiles", () => {
+  const cases = windowsShellCases("C:\\isolated", { SystemRoot: "C:\\Windows", ProgramFiles: "C:\\Programs", USERNAME: "fixture", HOME: "C:\\real", USERPROFILE: "C:\\real", APPDATA: "C:\\real-appdata", OPENAI_API_KEY: "fixture", NODE_OPTIONS: "fixture" });
+  assert.deepEqual(cases.map(value => value.stdin), ["ignore", "pipe", "ignore", "pipe", "ignore", "ignore", "ignore", "ignore", "pipe", "pipe"]);
+  for (const value of cases) {
+    assert.equal(value.env.HOME, "C:\\isolated"); assert.equal(value.env.USERPROFILE, "C:\\isolated");
+    assert.equal(value.env.OPENAI_API_KEY, undefined); assert.equal(value.env.NODE_OPTIONS, undefined);
+    assert.equal(value.env.COOP_DESKTOP_UPDATE_PROBE, undefined);
+    assert.notEqual(value.env.APPDATA, "C:\\real-appdata");
+  }
+  assert.equal(cases[0].env.ProgramFiles, undefined);
+  assert.equal(cases[2].env.ProgramFiles, "C:\\Programs");
+});
+
+await test("Windows shell diagnosis never treats uncertain or timed-out processes as healthy", () => {
+  const probe = { name: "fixture", env: { HOME: ROOT }, stdin: "pipe" };
+  for (const stopped of [true, false]) {
+    const result = observeWindowsShell("fixture", probe, { gone: () => stopped, run: (_exe, args, options) => {
+      assert.deepEqual(args, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "[Console]::WriteLine('coop-powershell-ready')"]);
+      assert.equal(options.shell, false); assert.equal(options.input, "");
+      return { pid: 12345, status: 0, signal: null, stdout: "coop-powershell-ready\n", stderr: "" };
+    } });
+    assert.equal(result.processExited, stopped); assert.equal(result.healthy, stopped);
+  }
+  const result = observeWindowsShell("fixture", probe, { run: () => ({ pid: 0, error: { code: "ETIMEDOUT" } }) });
+  assert.equal(result.processExited, false); assert.equal(result.healthy, false);
+});
+
+await test("Windows shell file diagnostics execute literal files and retain only known stage markers", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-file-probe é & "));
+  try {
+    writeWindowsShellFixtures(root);
+    for (const kind of ["minimal", "cmdlets"]) {
+      assert.equal(readFileSync(join(root, `probe-${kind}.ps1`)).subarray(0, 3).toString("hex"), "efbbbf");
+      const probe = { name: kind, fileKind: kind, env: { HOME: root }, stdin: "ignore" };
+      const result = observeWindowsShell("fixture", probe, { gone: () => true, run: (_exe, args, options) => {
+        assert.deepEqual(args.slice(-4), ["-ExecutionPolicy", "Bypass", "-File", join(root, `probe-${kind}.ps1`)]);
+        assert.equal(options.shell, false);
+        return { pid: 12345, status: 0, stdout: "coop-powershell-ready\n", stderr: "unrelated text\ncoop-powershell-stage:file-enter\r\ncoop-powershell-stage:unknown\ncoop-powershell-stage:split-path-ready\n" };
+      } });
+      assert.deepEqual(result.stages, ["file-enter", "split-path-ready"]); assert.equal(result.healthy, true);
+    }
+    assert.throws(() => observeWindowsShell("fixture", { fileKind: "../untrusted" }), /Unknown shell fixture/);
+    const shell = process.platform === "win32" ? process.env.PWSH_EXE || "powershell.exe" : "pwsh";
+    if (spawnSync(shell, ["-NoLogo", "-NoProfile", "-Command", "exit 0"], { timeout: 5000 }).status === 0) {
+      for (const fileKind of ["minimal", "cmdlets"]) {
+        const result = observeWindowsShell(shell, { name: fileKind, fileKind, env: { ...process.env, HOME: root, USERPROFILE: root }, stdin: "ignore" });
+        assert.equal(result.healthy, true, JSON.stringify(result));
+        assert.deepEqual(result.stages, fileKind === "minimal" ? ["file-enter"] : ["file-enter", "split-path-ready"]);
+      }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("Windows shell diagnosis observes real child exit after success and timeout", () => {
+  for (const mode of ["healthy", "timeout"]) {
+    const probe = { name: mode, env: { ...process.env, HOME: ROOT }, stdin: "ignore" };
+    const result = observeWindowsShell(process.execPath, probe, { timeoutMs: mode === "healthy" ? 5000 : 500, run: (exe, _args, options) => spawnSync(exe, ["-e", mode === "healthy" ? "console.log('coop-powershell-ready')" : "console.log('coop-powershell-ready');setInterval(()=>{},1000)"], options) });
+    assert.equal(result.healthy, mode === "healthy");
+    assert.equal(result.processExited, true);
+    assert.throws(() => process.kill(result.pid, 0), { code: "ESRCH" });
+    if (mode === "timeout") assert.equal(result.errorCode, "ETIMEDOUT");
+  }
+});
+
+await test("managed launch skips global npm discovery while ordinary terminal launch retains it", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-managed-path-"));
+  try {
+    for (const managed of ["0", "1"]) {
+      const marker = join(root, `npm-${managed}`);
+      const windows = process.platform === "win32";
+      const command = windows ? process.env.PWSH_EXE || "powershell.exe" : "bash";
+      const args = windows
+        ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "function global:npm { [IO.File]::WriteAllText($env:COOP_NPM_PROBE, 'called') }; & $env:COOP_FIXTURE_SCRIPT help"]
+        : ["-c", 'npm() { : > "$COOP_NPM_PROBE"; }; export -f npm; exec bash "$COOP_FIXTURE_SCRIPT" help'];
+      const result = spawnSync(command, args, { encoding: "utf8", timeout: 10000,
+        env: { ...process.env, HOME: root, COOP_AGENT_DIR: join(root, "agent"),
+          COOP_DESKTOP_MANAGED_RUNTIME: managed, COOP_NPM_PROBE: marker,
+          COOP_FIXTURE_SCRIPT: join(ROOT, "bin", windows ? "coop.ps1" : "coop") } });
+      assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
+      assert.equal(existsSync(marker), managed !== "1", "managed launch must not query a global npm installation");
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("managed shared helpers preserve PATH even when global fallback folders exist", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-managed-fallback-"));
+  try {
+    mkdirSync(join(root, ".local", "bin"), { recursive: true });
+    mkdirSync(join(root, "Programs", "Microsoft", "Azure CLI", "wbin"), { recursive: true });
+    const windows = process.platform === "win32";
+    const env = { ...process.env, HOME: root, LOCALAPPDATA: root,
+      COOP_DESKTOP_MANAGED_RUNTIME: "1", COOP_COMMON_FIXTURE: join(ROOT, "lib", windows ? "common.ps1" : "common.sh") };
+    delete env.COOP_TEST_STUB_PATH;
+    const result = spawnSync(windows ? process.env.PWSH_EXE || "powershell.exe" : "bash", windows
+      ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$originalPath = $env:PATH; . $env:COOP_COMMON_FIXTURE; if ($originalPath -cne $env:PATH) { throw 'Managed PATH changed' }"]
+      : ["-c", 'original_path="$PATH"; source "$COOP_COMMON_FIXTURE"; test "$original_path" = "$PATH"'],
+    { env, encoding: "utf8", timeout: 10000 });
+    assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("managed Python tools preserve literal arguments and use only private immutable UTF-8 execution", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop managed tools café &-"));
+  try {
+    const coop = join(root, "coop"), python = join(root, "python/runtime/python.exe");
+    mkdirSync(coop); write(python, "fixture");
+    const names = ["coop-data-doc", "coop-sql-review", "coop-dax-review", "fab"];
+    for (const name of names) write(join(root, `python/entrypoints/${name}.py`), "fixture");
+    write(join(root, "manifest.json"), JSON.stringify({ schemaVersion: 1, target: { platform: "win32" }, paths: { coopRoot: "coop", python: "python/runtime/python.exe", pythonCommands: names } }));
+    const env = { COOP_DESKTOP_MANAGED_RUNTIME: "1", COOP_ROOT: coop, PATH: "C:\\external-tools" };
+    const args = ["--config", 'C:\\café & 中文 (1)\\literal"%value%.yml'];
+    for (const name of names) {
+      const result = resolveManagedToolInvocation(name, args, env, "win32");
+      assert.equal(result.command, realpathSync(python));
+      assert.deepEqual(result.args, ["-I", "-B", "-X", "utf8", realpathSync(join(root, `python/entrypoints/${name}.py`)), ...args]);
+    }
+    assert.equal(resolveManagedToolInvocation("unrelated", args, env, "win32"), null);
+    assert.equal(resolveManagedToolInvocation("coop-data-doc", args, {}, "win32"), null);
+    assert.throws(() => resolveManagedToolInvocation("coop-data-doc", ["bad\0argument"], env, "win32"), /arguments/);
+    assert.throws(() => resolveManagedToolInvocation("coop-data-doc", [], { ...env, COOP_ROOT: "relative" }, "win32"), /root/);
+    assert.throws(() => resolveManagedToolInvocation("coop-data-doc", [], env, "darwin"), /contract/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+if (process.platform !== "win32") await test("managed invocation accepts an internal Python link but rejects escaping links and unlisted tools", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-tool-links-"));
+  try {
+    const coop = join(root, "coop"), python = join(root, "python/runtime/bin/python3"), target = join(root, "python/runtime/bin/python3.12");
+    mkdirSync(coop); write(target, "fixture"); symlinkSync(target, python);
+    write(join(root, "python/entrypoints/coop-data-doc.py"), "fixture");
+    const manifest = { schemaVersion: 1, target: { platform: "darwin" }, paths: { coopRoot: "coop", python: "python/runtime/bin/python3", pythonCommands: ["coop-data-doc"] } };
+    write(join(root, "manifest.json"), JSON.stringify(manifest));
+    const env = { COOP_DESKTOP_MANAGED_RUNTIME: "1", COOP_ROOT: coop };
+    assert.equal(resolveManagedToolInvocation("coop-data-doc", [], env, "darwin").command, realpathSync(target));
+    assert.throws(() => resolveManagedToolInvocation("coop-sql-review", [], env, "darwin"), /contract/);
+    rmSync(python); symlinkSync(process.execPath, python);
+    assert.throws(() => resolveManagedToolInvocation("coop-data-doc", [], env, "darwin"), /escapes/);
+    rmSync(python); symlinkSync(target, python);
+    const script = join(root, "python/entrypoints/coop-data-doc.py");
+    rmSync(script); symlinkSync(target, script);
+    assert.throws(() => resolveManagedToolInvocation("coop-data-doc", [], env, "darwin"), /regular/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("managed tool invocation rejects a runtime directory linked outside its bundle", () => {
+  const base = mkdtempSync(join(tmpdir(), "coop-tool-junction-"));
+  try {
+    const root = join(base, "bundle"), outside = join(base, "outside");
+    mkdirSync(join(root, "coop"), { recursive: true }); mkdirSync(join(root, "python"));
+    write(join(outside, "python.exe"), "external");
+    symlinkSync(outside, join(root, "python/runtime"), process.platform === "win32" ? "junction" : "dir");
+    write(join(root, "python/entrypoints/coop-data-doc.py"), "fixture");
+    write(join(root, "manifest.json"), JSON.stringify({ schemaVersion: 1, target: { platform: "win32" }, paths: { coopRoot: "coop", python: "python/runtime/python.exe", pythonCommands: ["coop-data-doc"] } }));
+    assert.throws(() => resolveManagedToolInvocation("coop-data-doc", [], { COOP_DESKTOP_MANAGED_RUNTIME: "1", COOP_ROOT: join(root, "coop") }, "win32"), /escapes/);
+    assert.equal(readFileSync(join(outside, "python.exe"), "utf8"), "external");
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+await test("ordinary tool execution preserves the original command, arguments and cancellation options", async () => {
+  const saved = process.env.COOP_DESKTOP_MANAGED_RUNTIME;
+  delete process.env.COOP_DESKTOP_MANAGED_RUNTIME;
+  try {
+    const args = ["scan"], options = { cwd: ROOT, signal: new AbortController().signal };
+    const pi = { exec: async (command, received, config) => { assert.equal(command, "coop-data-doc"); assert.equal(received, args); assert.equal(config, options); return "result"; } };
+    assert.equal(await execCoopTool(pi, "coop-data-doc", args, options), "result");
+  } finally { if (saved === undefined) delete process.env.COOP_DESKTOP_MANAGED_RUNTIME; else process.env.COOP_DESKTOP_MANAGED_RUNTIME = saved; }
+});
+
+await test("startup diagnostics are opt-in, preserve stdout and report only fixed stages", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-startup-trace-"));
+  try {
+    const windows = process.platform === "win32";
+    const shells = windows ? [process.env.PWSH_EXE || "powershell.exe"] : ["bash"];
+    if (!windows && spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-Command", "exit 0"], { timeout: 5000 }).status === 0) shells.push("pwsh");
+    for (const shell of shells) {
+      const powershell = shell !== "bash";
+      const args = powershell ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", join(ROOT, "bin/coop.ps1"), "runtime", "--help"]
+        : [join(ROOT, "bin/coop"), "runtime", "--help"];
+      const env = { ...process.env, HOME: root, USERPROFILE: root, COOP_AGENT_DIR: join(root, "agent"), COOP_DESKTOP_MANAGED_RUNTIME: "1" };
+      delete env.COOP_RUNTIME_STARTUP_TRACE;
+      const plain = spawnSync(shell, args, { env, encoding: "utf8", timeout: 10000 });
+      assert.ifError(plain.error); assert.equal(plain.status, 0, plain.stderr);
+      assert.doesNotMatch(plain.stderr, /coop-startup/);
+      const traced = spawnSync(shell, args, { env: { ...env, COOP_RUNTIME_STARTUP_TRACE: "1" }, encoding: "utf8", timeout: 10000 });
+      assert.ifError(traced.error); assert.equal(traced.status, 0, traced.stderr);
+      assert.equal(traced.stdout, plain.stdout, "startup diagnostics must not corrupt runtime stdout");
+      assert.deepEqual(traced.stderr.trim().split(/\r?\n/), ["[coop-startup] dispatcher-enter", "[coop-startup] helpers-ready", "[coop-startup] paths-ready"]);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 console.log(`managed runtime: ${count} tests passed`);

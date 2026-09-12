@@ -461,16 +461,19 @@ Browser (Chromium --app)  ⇄  web/server.mjs  ⇄  pi --mode rpc -a  (the real 
   `session_before_tree` / `session_tree` summary and cancellation behavior, and
   returns a correlated structured result. The runtime suppresses the internal
   correlation status event, then resets and rehydrates replay through Pi's public
-  `get_messages` RPC. Neither the bridge nor renderer reads or edits session JSONL.
+  `get_messages` RPC, preserving reasoning, tool arguments, outputs and failure
+  status. This navigation path does not read or edit session JSONL; the file-based
+  History resume path is described below.
 - **Working-folder switcher** — clicking the folder chip lists the folders you've
   used coop in before (derived from pi's session store — the authoritative `cwd`
   from each session header, existence-checked) for one-click switching, and still
   accepts a pasted path. Switching restarts the governed agent in that folder.
 - **Usage meter** — when an OpenAI/Codex model is active, the header shows the
-  `pi-better-openai` subscription snapshot (percent **remaining** in the 5-hour
-  and 7-day windows) as two mini bars + text, refreshed every 2 minutes via the
-  extension's `/openai-usage` command. Hover for reset times. (The extension's
-  TUI footer meter doesn't cross RPC; this is the same data by another path.)
+  `pi-better-openai` subscription snapshot (percent **remaining**) with the
+  provider-reported window durations. Shared extension status updates drive the
+  meter and session replay; Desktop submits no background usage prompts. Missing
+  values clear their bars. Hover for reset times. `coop sync` and managed staging
+  apply the exact-source correction described in `../desktop/README.md`.
 - **Slash commands typed in the chat box**: extension commands (`/start`,
   `/setup-docs`, `/openai-usage`) execute immediately; prompt templates
   (`/discovery`, `/impact-analysis`, …) and `/skill:<name>` expand before
@@ -564,10 +567,15 @@ a mismatch). When you bump Pi:
   override modes. Deferred: idle-process eviction and a crashed-chat restart
   button (close the tab / resume from History instead).
 - Resuming rebuilds the transcript from the session file with full detail — thinking,
-  tool arguments/outputs, and compaction markers; a text-only `get_messages` backfill
-  remains the fallback for oversized (>16 MiB) or corrupt files. The active branch is
-  picked by most-recent timestamp, so after a fork the shown branch may differ from
-  Pi's (an honest "has other branches" notice appears).
+  tool arguments/outputs, and compaction markers. The `get_messages` fallback for
+  oversized (>16 MiB) or corrupt files also preserves reasoning and tool evidence.
+  Fork, clone and in-process branch switching use that public active-branch RPC.
+  Missing tool results display an unknown state, never an inferred success.
+  History asks Pi for its selected leaf using `get_entries` after the final known
+  file entry, then follows parent links to that exact point. It never picks a
+  branch by timestamp. Entries appended during startup are included; missing,
+  ambiguous or broken chains fall back to Pi's active-branch messages. Selecting
+  the empty root displays no old conversation. Other branches remain in the file.
 - Image attachments are not rendered.
 - The Files panel is **read-only** and preview-only: a 1 MB text cap, ~2000-entry
   / 6-level tree, and 1000-row × 60-column table clip; binary files show no

@@ -14,7 +14,9 @@
     "package:managed:win": "electron-builder --config electron-builder-managed.cjs --dir --win",
     "verify:managed-package": "node scripts/verify-managed-package.mjs",
     "package:installer:mac": "electron-builder --config electron-builder-installer.cjs --mac --publish never",
-    "package:installer:win": "electron-builder --config electron-builder-installer.cjs --win --publish never"
+    "package:installer:win": "electron-builder --config electron-builder-installer.cjs --win --publish never",
+    "package:validation:win": "electron-builder --config electron-builder-windows-validation.cjs --dir --win --publish never",
+    "package:validation:installer:win": "electron-builder --config electron-builder-windows-validation.cjs --win --publish never"
   },
   "devDependencies": {
     "electron": "44.2.0",

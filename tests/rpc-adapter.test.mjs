@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildPromptCommand, buildRpcCommand, sanitizeImages } from "../web/rpc-adapter.mjs";
+import { buildPromptCommand, buildRpcCommand, sanitizeImages, listAvailableModels } from "../web/rpc-adapter.mjs";
 import { CoopRuntimeClient, RuntimeClientError } from "../web/runtime-client.mjs";
 
 let passed = 0;
@@ -8,6 +8,27 @@ const test = async (name, fn) => {
   passed++;
   console.log(`  ✓ ${name}`);
 };
+
+await test("model listing refreshes registered availability without sending unknown model prompts", async () => {
+  for (const supported of [true, false]) {
+    const calls = [];
+    let refreshed = false;
+    const result = await listAvailableModels(async command => {
+      calls.push(command);
+      if (command.type === "get_commands") return { success: true, data: { commands: supported ? [{ name: "coop-refresh-models" }] : [] } };
+      if (command.type === "prompt") { assert.equal(command.message, "/coop-refresh-models"); refreshed = true; return { success: true }; }
+      assert.equal(refreshed, supported);
+      return { success: true, data: { models: [{ id: "newly-available" }] } };
+    });
+    assert.equal(result.data.models[0].id, "newly-available");
+    assert.equal(calls.filter(command => command.type === "prompt").length, supported ? 1 : 0);
+  }
+  const failed = await listAvailableModels(async command => command.type === "get_commands"
+    ? { success: true, data: { commands: [{ name: "coop-refresh-models" }] } }
+    : { success: false, error: "refresh failed" });
+  assert.equal(failed.success, false); assert.equal(failed.command, "get_available_models");
+  assert.equal(await listAvailableModels(async () => null), null);
+});
 
 await test("prompt images are copied field-by-field and busy prompts steer", () => {
   const image = { type: "image", mimeType: "image/png", data: Buffer.from("png").toString("base64"), ignored: "no" };

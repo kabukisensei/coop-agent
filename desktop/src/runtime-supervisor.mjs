@@ -1,6 +1,20 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { win32 } from "node:path";
+import { randomBytes } from "node:crypto";
 
 const READY_LIMIT = 64 * 1024;
+
+export function terminateWindowsRuntimeTree(pid, { systemRoot = process.env.SystemRoot, execFileImpl = execFile } = {}) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return Promise.reject(new TypeError("Runtime process ID is invalid."));
+  if (typeof systemRoot !== "string" || !win32.isAbsolute(systemRoot) || /[\x00-\x1f]/.test(systemRoot)) {
+    return Promise.reject(new Error("Windows SystemRoot is required to stop the runtime tree."));
+  }
+  return new Promise((resolve, reject) => {
+    execFileImpl(win32.join(systemRoot, "System32", "taskkill.exe"), ["/PID", String(pid), "/T", "/F"],
+      { windowsHide: true, shell: false, timeout: 5000, maxBuffer: 64 * 1024 },
+      error => error ? reject(new Error("Windows runtime process-tree termination failed.", { cause: error })) : resolve());
+  });
+}
 
 export function buildRuntimeInvocation({ coopCommand = "coop", commandPrefix = [], workspace, port = 0 }) {
   if (typeof workspace !== "string" || !workspace.trim()) throw new TypeError("A workspace path is required.");
@@ -20,12 +34,14 @@ export function validateRuntimeReady(value) {
   return { ...value, endpoint: endpoint.origin };
 }
 
-function waitForExit(child, timeoutMs) {
-  if (child.exitCode !== null) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    child.once("close", () => { clearTimeout(timer); resolve(); });
-  });
+async function waitForExit(closed, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      closed.then(() => true),
+      new Promise(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); }),
+    ]);
+  } finally { clearTimeout(timer); }
 }
 
 export async function startCoopRuntime({
@@ -40,15 +56,68 @@ export async function startCoopRuntime({
   onExit = () => {},
 } = {}) {
   const invocation = buildRuntimeInvocation({ coopCommand, commandPrefix, workspace, port });
+  const ownerToken = randomBytes(32).toString("hex");
   const child = spawnImpl(invocation.command, invocation.args, {
     cwd: workspace,
-    env: { ...env, COOP_DESKTOP_SHELL: "1" },
-    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...env, COOP_DESKTOP_SHELL: "1", COOP_DESKTOP_RUNTIME_OWNER_TOKEN: ownerToken },
+    stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
     shell: false,
   });
 
-  let ready;
+  // Runtime clients use HTTP; finish launcher stdin immediately. A closed pipe
+  // provides EOF without relying on the Windows NUL-device input path.
+  child.stdin?.on("error", () => {}); // Spawn failure or early exit can close it first.
+  child.stdin?.end();
+
+  let ready, exited = false, stopRequested = false, stopTask;
+  const closed = new Promise(resolve => child.once("close", (code, signal) => {
+    exited = true;
+    resolve();
+    if (ready && !stopRequested) onExit({ code, signal });
+  }));
+  const stop = ({ graceMs = 3000 } = {}) => {
+    if (!Number.isFinite(graceMs) || graceMs < 0) return Promise.reject(new RangeError("Runtime shutdown grace period is invalid."));
+    if (stopTask) return stopTask;
+    if (exited) return Promise.resolve();
+    stopRequested = true;
+    stopTask = (async () => {
+      try {
+        if (ready?.shutdownProtocol === "http-v1" && graceMs > 0) {
+          const deadline = Date.now() + graceMs;
+          try {
+            const response = await fetch(`${ready.endpoint}/runtime/shutdown`, {
+              method: "POST", redirect: "error", signal: AbortSignal.timeout(Math.max(1, Math.ceil(graceMs))),
+              headers: { cookie: `coop_token=${ready.oneTimeToken}`, "x-coop-csrf": "1", "x-coop-runtime-owner": ownerToken },
+            });
+            await response.body?.cancel();
+            if (response.ok && await waitForExit(closed, Math.max(0, deadline - Date.now()))) return;
+          } catch { /* Fall back to terminating the owned process below. */ }
+          if (exited) return;
+        }
+        if (!child.pid) {
+          if (await waitForExit(closed, 1000)) return;
+          throw new Error("Failed runtime launch did not close its process handles.");
+        }
+        if (process.platform === "win32") {
+          // The launcher is PowerShell. Killing it first loses the parent needed
+          // to reap its runtime/Pi descendants, which also keep our pipes open.
+          let terminationError;
+          try { await terminateWindowsRuntimeTree(child.pid); }
+          catch (error) { terminationError = error; }
+          // taskkill can finish before the wrapper closes its inherited pipes.
+          // Require confirmed close even when taskkill reports no matching PID.
+          if (!await waitForExit(closed, Math.max(graceMs, 1000))) throw terminationError || new Error("Coop Runtime shutdown could not be confirmed.");
+          return;
+        }
+        child.kill("SIGTERM");
+        if (await waitForExit(closed, graceMs)) return;
+        child.kill("SIGKILL");
+        if (!await waitForExit(closed, 1000)) throw new Error("Coop Runtime shutdown could not be confirmed.");
+      } finally { stopTask = null; }
+    })();
+    return stopTask;
+  };
   try {
     ready = await new Promise((resolveReady, reject) => {
       let stdout = "";
@@ -78,28 +147,12 @@ export async function startCoopRuntime({
       child.once("close", (code) => finish(reject, new Error(`Coop Runtime exited before ready (${code ?? "unknown"}).${stderr.trim() ? " Check Coop Health for details." : ""}`)));
     });
   } catch (error) {
-    if (child.exitCode === null) child.kill();
+    // A failed ready handshake still owns a child. Reap it before surfacing the
+    // startup failure; otherwise retry/update cleanup can overlap that runtime.
+    try { await stop({ graceMs: 1000 }); }
+    catch (shutdownError) { throw new AggregateError([error, shutdownError], "Coop Runtime startup failed and shutdown could not be confirmed."); }
     throw error;
   }
 
-  let stopped = false;
-  child.once("close", (code, signal) => {
-    if (!stopped) onExit({ code, signal });
-  });
-  return {
-    ready,
-    child,
-    invocation,
-    async stop({ graceMs = 3000 } = {}) {
-      if (stopped) return;
-      stopped = true;
-      if (child.exitCode !== null) return;
-      child.kill("SIGTERM");
-      await waitForExit(child, graceMs);
-      if (child.exitCode === null) {
-        child.kill("SIGKILL");
-        await waitForExit(child, 1000);
-      }
-    },
-  };
+  return { ready, child, invocation, stop };
 }

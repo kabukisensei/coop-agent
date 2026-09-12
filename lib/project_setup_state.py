@@ -61,6 +61,10 @@ def inspect(workspace):
         config = _yaml.load(contract)
         if not isinstance(config, dict):
             raise ValueError("Project configuration must be a YAML mapping.")
+        # Match the proposal validator even when the dependency-free YAML reader
+        # conservatively treats unsupported/malformed flow syntax as a scalar.
+        if "profile" in config and not isinstance(config["profile"], dict):
+            raise ValueError("Project profile must be a YAML mapping.")
     except Exception:
         return {
             "workspace": str(root),

@@ -21,14 +21,41 @@ const MODEL_LOGIN_APPLE_SCRIPT = `on run argv
   set targetDir to item 1 of argv
   set coopExecutable to item 2 of argv
   set agentDir to item 3 of argv
-  set commandText to "cd " & quoted form of targetDir & "; export COOP_PRIME_MODEL_LOGIN=1 COOP_LOGIN_ONLY=1; exec " & quoted form of coopExecutable
-  if agentDir is not "" then set commandText to "cd " & quoted form of targetDir & "; export COOP_DESKTOP_AGENT_DIR=" & quoted form of agentDir & " COOP_AGENT_DIR=" & quoted form of agentDir & " PI_CODING_AGENT_DIR=" & quoted form of agentDir & " COOP_PRIME_MODEL_LOGIN=1 COOP_LOGIN_ONLY=1; exec " & quoted form of coopExecutable
+  set commandText to "cd " & quoted form of targetDir & "; export COOP_PRIME_MODEL_LOGIN=1 COOP_LOGIN_ONLY=1 COOP_WORKSPACE_ACCESS_MODE=read-only; exec " & quoted form of coopExecutable
+  if agentDir is not "" then set commandText to "cd " & quoted form of targetDir & "; export COOP_DESKTOP_AGENT_DIR=" & quoted form of agentDir & " COOP_AGENT_DIR=" & quoted form of agentDir & " PI_CODING_AGENT_DIR=" & quoted form of agentDir & " COOP_PRIME_MODEL_LOGIN=1 COOP_LOGIN_ONLY=1 COOP_WORKSPACE_ACCESS_MODE=read-only; exec " & quoted form of coopExecutable
   tell application "Terminal"
     activate
     do script commandText
   end tell
 end run`;
 const WINDOWS_MODEL_LOGIN = "$ErrorActionPreference='Stop'; Set-Location -LiteralPath $env:COOP_TERMINAL_CWD; $env:COOP_PRIME_MODEL_LOGIN='1'; $env:COOP_LOGIN_ONLY='1'; & $env:COOP_TERMINAL_BIN";
+
+function windowsConsoleProcess(script, cwd, env) {
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  // Start-Process gives the interactive child its own real console handles. A
+  // Node child with ignored stdio cannot itself host the interactive Pi TUI.
+  // Both commands are fixed code; workspace/session paths travel only in env.
+  const bootstrap = `$ErrorActionPreference='Stop'; $p=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @('-NoLogo','-NoExit','-NoProfile','-WindowStyle','Normal','-ExecutionPolicy','Bypass','-EncodedCommand','${encoded}') -Verb Open -WindowStyle Normal -PassThru; [Console]::Out.WriteLine($p.Id)`;
+  return { command: win32.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(bootstrap, "utf16le").toString("base64")], options: { cwd, env } };
+}
+
+function launchWindowsConsole(spec, spawnImpl, fields) {
+  return new Promise((resolve, reject) => {
+    const child = spawnImpl(spec.command, spec.args, { ...spec.options, detached: false, stdio: ["ignore", "pipe", "pipe"], shell: false, windowsHide: true });
+    let output = "";
+    const timeout = setTimeout(() => { child.kill(); reject(new Error("Windows terminal launch timed out.")); }, 15000);
+    child.stdout.on("data", data => { output += data; if (output.length > 128) child.kill(); });
+    child.stderr.resume();
+    child.once("error", () => { clearTimeout(timeout); reject(new Error("Windows terminal could not start.")); });
+    child.once("close", code => {
+      clearTimeout(timeout);
+      const pid = Number(output.trim());
+      if (code !== 0 || !/^\d+$/.test(output.trim()) || !Number.isSafeInteger(pid) || pid < 1) reject(new Error("Windows terminal could not start."));
+      else resolve({ ok: true, pid, ...fields });
+    });
+  });
+}
 
 function isAbsolute(path) {
   return posix.isAbsolute(path) || win32.isAbsolute(path);
@@ -60,30 +87,40 @@ export function buildNativeTerminalProcess(value, platform = process.platform, c
   const sessionPath = launch.args[1] || "";
   const isolatedAgentDir = validatedAgentDir(agentDir);
   if (platform === "darwin") {
-    return {
-      command: "/usr/bin/osascript",
-      args: ["-e", APPLE_SCRIPT, "--", launch.cwd, sessionPath, coopExecutable, isolatedAgentDir],
-      options: { cwd: launch.cwd },
-      waitForExit: true,
-    };
+    return { command: "/usr/bin/osascript", args: ["-e", APPLE_SCRIPT, "--", launch.cwd, sessionPath, coopExecutable, isolatedAgentDir], options: { cwd: launch.cwd } };
   }
   if (platform === "win32") {
-    return {
-      command: "cmd.exe",
-      args: ["/d", "/s", "/c", "start", "", "powershell.exe", "-NoLogo", "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", WINDOWS_COMMAND],
-      options: { cwd: launch.cwd, env: { ...process.env, COOP_TERMINAL_BIN: coopExecutable, COOP_TERMINAL_CWD: launch.cwd, COOP_TERMINAL_SESSION: sessionPath, ...(isolatedAgentDir ? { COOP_DESKTOP_AGENT_DIR: isolatedAgentDir, COOP_AGENT_DIR: isolatedAgentDir, PI_CODING_AGENT_DIR: isolatedAgentDir } : {}) } },
-      waitForExit: true,
-    };
+    return windowsConsoleProcess(WINDOWS_COMMAND, launch.cwd, { ...process.env, COOP_TERMINAL_BIN: coopExecutable, COOP_TERMINAL_CWD: launch.cwd, COOP_TERMINAL_SESSION: sessionPath, ...(isolatedAgentDir ? { COOP_DESKTOP_AGENT_DIR: isolatedAgentDir, COOP_AGENT_DIR: isolatedAgentDir, PI_CODING_AGENT_DIR: isolatedAgentDir } : {}) });
   }
-  return {
-    command: "x-terminal-emulator",
-    args: ["-e", coopExecutable, ...launch.args],
-    options: { cwd: launch.cwd },
-    waitForExit: false,
-  };
+  return { command: "x-terminal-emulator", args: ["-e", coopExecutable, ...launch.args], options: { cwd: launch.cwd } };
 }
 
-export function launchNativeProcess(spec, { spawnImpl = spawn, timeoutMs = 10_000 } = {}) {
+export async function launchNativeTerminal(value, { platform = process.platform, coopExecutable, agentDir = null, spawnImpl = spawn, timeoutMs = 10_000 } = {}) {
+  const spec = buildNativeTerminalProcess(value, platform, coopExecutable, agentDir);
+  if (platform === "win32") return launchWindowsConsole(spec, spawnImpl, { mode: value.launch.mode });
+  const result = await launchNativeProcess(spec, { spawnImpl, timeoutMs });
+  return { ...result, mode: value.launch.mode };
+}
+
+export function buildNativeModelLoginProcess({ cwd, coopExecutable, agentDir = null, platform = process.platform }) {
+  if (typeof cwd !== "string" || !isAbsolute(cwd) || /[\0\r\n]/.test(cwd)) throw new Error("Model login working folder is invalid.");
+  if (typeof coopExecutable !== "string" || !isAbsolute(coopExecutable) || /[\0\r\n]/.test(coopExecutable)) throw new Error("Coop executable is invalid.");
+  const isolatedAgentDir = validatedAgentDir(agentDir);
+  if (platform === "darwin") {
+    return { command: "/usr/bin/osascript", args: ["-e", MODEL_LOGIN_APPLE_SCRIPT, "--", cwd, coopExecutable, isolatedAgentDir], options: { cwd } };
+  }
+  if (platform === "win32") {
+    return windowsConsoleProcess(WINDOWS_MODEL_LOGIN, cwd, { ...process.env, COOP_WORKSPACE_ACCESS_MODE: "read-only", COOP_TERMINAL_BIN: coopExecutable, COOP_TERMINAL_CWD: cwd, ...(isolatedAgentDir ? { COOP_DESKTOP_AGENT_DIR: isolatedAgentDir, COOP_AGENT_DIR: isolatedAgentDir, PI_CODING_AGENT_DIR: isolatedAgentDir } : {}) });
+  }
+  return { command: "x-terminal-emulator", args: ["-e", "/usr/bin/env", "COOP_PRIME_MODEL_LOGIN=1", "COOP_LOGIN_ONLY=1", "COOP_WORKSPACE_ACCESS_MODE=read-only", coopExecutable], options: { cwd } };
+}
+
+export async function launchNativeModelLogin({ cwd, coopExecutable, agentDir = null, platform = process.platform, spawnImpl = spawn, timeoutMs = 10_000 } = {}) {
+  const spec = buildNativeModelLoginProcess({ cwd, coopExecutable, agentDir, platform });
+  if (platform === "win32") return launchWindowsConsole(spec, spawnImpl, { providerId: "model.openai-codex" });
+  const result = await launchNativeProcess(spec, { spawnImpl, timeoutMs });
+  return { ...result, providerId: "model.openai-codex" };
+}export function launchNativeProcess(spec, { spawnImpl = spawn, timeoutMs = 10_000 } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     let timer = null;
@@ -177,42 +214,4 @@ export function launchNativeProcess(spec, { spawnImpl = spawn, timeoutMs = 10_00
   });
 }
 
-export async function launchNativeTerminal(value, { platform = process.platform, coopExecutable, agentDir = null, spawnImpl = spawn, timeoutMs = 10_000 } = {}) {
-  const spec = buildNativeTerminalProcess(value, platform, coopExecutable, agentDir);
-  const result = await launchNativeProcess(spec, { spawnImpl, timeoutMs });
-  return { ...result, mode: value.launch.mode };
-}
 
-export function buildNativeModelLoginProcess({ cwd, coopExecutable, agentDir = null, platform = process.platform }) {
-  if (typeof cwd !== "string" || !isAbsolute(cwd) || /[\0\r\n]/.test(cwd)) throw new Error("Model login working folder is invalid.");
-  if (typeof coopExecutable !== "string" || !isAbsolute(coopExecutable) || /[\0\r\n]/.test(coopExecutable)) throw new Error("Coop executable is invalid.");
-  const isolatedAgentDir = validatedAgentDir(agentDir);
-  if (platform === "darwin") {
-    return {
-      command: "/usr/bin/osascript",
-      args: ["-e", MODEL_LOGIN_APPLE_SCRIPT, "--", cwd, coopExecutable, isolatedAgentDir],
-      options: { cwd },
-      waitForExit: true,
-    };
-  }
-  if (platform === "win32") {
-    return {
-      command: "cmd.exe",
-      args: ["/d", "/s", "/c", "start", "", "powershell.exe", "-NoLogo", "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", WINDOWS_MODEL_LOGIN],
-      options: { cwd, env: { ...process.env, COOP_TERMINAL_BIN: coopExecutable, COOP_TERMINAL_CWD: cwd, ...(isolatedAgentDir ? { COOP_DESKTOP_AGENT_DIR: isolatedAgentDir, COOP_AGENT_DIR: isolatedAgentDir, PI_CODING_AGENT_DIR: isolatedAgentDir } : {}) } },
-      waitForExit: true,
-    };
-  }
-  return {
-    command: "x-terminal-emulator",
-    args: ["-e", "/usr/bin/env", "COOP_PRIME_MODEL_LOGIN=1", "COOP_LOGIN_ONLY=1", coopExecutable],
-    options: { cwd },
-    waitForExit: false,
-  };
-}
-
-export async function launchNativeModelLogin({ cwd, coopExecutable, agentDir = null, platform = process.platform, spawnImpl = spawn, timeoutMs = 10_000 } = {}) {
-  const spec = buildNativeModelLoginProcess({ cwd, coopExecutable, agentDir, platform });
-  const result = await launchNativeProcess(spec, { spawnImpl, timeoutMs });
-  return { ...result, providerId: "model.openai-codex" };
-}

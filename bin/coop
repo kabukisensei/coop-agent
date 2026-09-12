@@ -36,6 +36,14 @@
 #
 set -euo pipefail
 
+# Opt-in fixed stage labels only: never include arguments or environment values.
+coop_runtime_trace() {
+  if [ "${COOP_RUNTIME_STARTUP_TRACE:-}" = "1" ]; then
+    printf '[coop-startup] %s\n' "$1" >&2
+  fi
+}
+coop_runtime_trace dispatcher-enter
+
 # --- Resolve COOP_ROOT and load the shared library ---------------------------
 _src="${BASH_SOURCE[0]}"
 while [ -h "$_src" ]; do
@@ -47,6 +55,7 @@ COOP_ROOT="$(cd -P "$(dirname "$_src")/.." >/dev/null 2>&1 && pwd)"
 export COOP_ROOT
 # shellcheck source=lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
+coop_runtime_trace helpers-ready
 
 # Isolate coop's Pi config (extensions, settings, themes, MCP, sessions) from the
 # user's personal `pi`. Applies to launching AND the `coop add/remove/list/config/pi`
@@ -230,7 +239,6 @@ coop_build_pi_args() {
   # and the local user profile hidden instruction.
   [ -e "$COOP_ROOT/extensions/coop-powerline" ]  && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-powerline")
   [ -e "$COOP_ROOT/extensions/coop-tools" ]      && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-tools")
-  [ -e "$COOP_ROOT/extensions/coop-guardrails" ] && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-guardrails")
   [ -e "$COOP_ROOT/extensions/coop-profile" ]    && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-profile")
   # Managed Desktop keeps its agent/session state in a versioned user-data
   # directory, while loading the immutable pinned extension packages directly
@@ -252,6 +260,8 @@ coop_build_pi_args() {
 $(coop_manifest_keys extensions)
 EOF
   fi
+  # Run governance/context compatibility hooks after the pinned package hooks.
+  [ -e "$COOP_ROOT/extensions/coop-guardrails" ] && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-guardrails")
   # Coop owns fleet updates. Hide Pi's upstream self-update banner so users do not
   # drift Pi away from the release-manifest pins; coop_update_nudge still reports
   # when THIS checkout is behind and directs the user to `coop update`.
@@ -346,14 +356,18 @@ PY
 # reconstructs Coop resources and only appends the mandatory `--mode rpc -a`.
 coop_start_runtime() {
   local surface="$1"; shift
+  coop_runtime_trace runtime-prerequisites
   have pi   || coop_die "pi is not installed. Run: coop install"
   have node || coop_die "Node.js is required for coop $surface. Run: coop install"
   local runtime_python
   runtime_python="$(coop_python)" || coop_die "python3 is required for coop $surface"
+  coop_runtime_trace runtime-preflight
   coop_launch_preflight
   coop_az_preflight   # same Fabric/Power BI token check the terminal launch does
   local spec
+  coop_runtime_trace runtime-launch-spec
   spec="$(coop_launch_spec --json)" || coop_die "couldn't build the launch spec for coop $surface"
+  coop_runtime_trace runtime-server
   if [ "$surface" = "runtime" ]; then
     COOP_LAUNCH_SPEC="$spec" COOP_PYTHON="$runtime_python" COOP_RUNTIME_MODE=1 exec node "$COOP_ROOT/web/server.mjs" --runtime "$@"
   fi
@@ -1055,25 +1069,29 @@ EOF
 
 # Surface freshly-installed tools (npm-global `pi`, pipx `fab`/coop-*) on PATH for
 # this process so a shell whose persistent PATH predates the install still finds
-# them. Best-effort; only prepends dirs that exist.
+# them. Preserve explicit PATH precedence; the managed runtime supplies its own tools.
 _coop_add_runtime_paths() {
+  # Managed Desktop already supplied the exact bundled tools on PATH.
+
+  [ "${COOP_DESKTOP_MANAGED_RUNTIME:-0}" = "1" ] && return 0
   local d p
   if have npm; then
     # `|| true`: a failing `npm prefix -g` (broken node, corrupt .npmrc, EACCES) must
     # not abort coop under `set -euo pipefail` — that would brick even `coop help`.
     p="$(npm prefix -g 2>/dev/null || true)"
     if [ -n "$p" ] && [ -d "$p/bin" ]; then
-      case ":$PATH:" in *":$p/bin:"*) ;; *) PATH="$p/bin:$PATH" ;; esac
+      case ":$PATH:" in *":$p/bin:"*) ;; *) PATH="$PATH:$p/bin" ;; esac
     fi
   fi
   d="$HOME/.local/bin"
   if [ -d "$d" ]; then
-    case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
+    case ":$PATH:" in *":$d:"*) ;; *) PATH="$PATH:$d" ;; esac
   fi
   export PATH
   hash -r 2>/dev/null || true
 }
 _coop_add_runtime_paths
+coop_runtime_trace paths-ready
 
 coop_init_ci() {
   local dir="$1"

@@ -1,20 +1,26 @@
+import { createHealthProfile, waitForProbeGroupExit } from "../desktop/src/update-health-profile.mjs";
+import { createReparseLink as symlinkSync } from "./fixtures/reparse-link.mjs";
 import { canStartMacApplication } from "../desktop/src/update-startup.mjs";
 import { pruneCompletedRecoveryJobs, recoveryJobIsIdle } from "../desktop/src/update-recovery-retention.mjs";
 import { createMacRecoveryJob, recoveryJobPlist } from "../desktop/src/update-recovery-job.mjs";
 import { recoveryPaths, runRecoveryWorker, readRecoveryRecord } from "../desktop/src/update-recovery-worker.mjs";
 import { swapMacDirectories } from "../desktop/src/update-swap.mjs";
 import { nativeApplicationHealth } from "../desktop/src/update-native-health.mjs";
+import { waitForRuntimeState } from "../desktop/src/runtime-readiness.mjs";
 import { presentUpdateOutcome } from "../desktop/src/update-outcome.mjs";
 import { launchUpdateHelper } from "../desktop/src/update-handoff.mjs";
-import { runUpdateHelper, validateHelperRequest, waitForStoppedProcesses } from "../desktop/src/update-helper.mjs";
+import { runtimeHealth, runUpdateHelper, validateHelperRequest, waitForStoppedProcesses } from "../desktop/src/update-helper.mjs";
 import { replaceMacApplication, recoverMacReplacement, inspectMacReplacement } from "../desktop/src/update-replacement.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { prepareMacUpdate, runUpdateCommand } from "../desktop/src/update-installer.mjs";
 import vm from "node:vm";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { createUpdateController, loadPackagedUpdateFeed, validateUpdateFeed } from "../desktop/src/update-controller.mjs";
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { cpSync, existsSync, lstatSync, realpathSync, renameSync, statSync, rmSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { constants, cpSync, existsSync, lstatSync, realpathSync, renameSync, statSync, rmSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { lstat, open, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -163,7 +169,7 @@ try {
   if (symlinkCreated) {
     await test("downloaded artifacts cannot be symlinks", async () => {
       const valid = validateUpdateDescriptor(descriptor({ artifact: { ...descriptor().artifact, size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") } }), { platform: "darwin", arch: "arm64", now: NOW });
-      await assert.rejects(() => verifyUpdateArtifact(link, valid), /metadata/);
+      await assert.rejects(() => verifyUpdateArtifact(link, valid), /metadata|path changed/);
     });
   }
 } finally {
@@ -454,7 +460,7 @@ await test("signed macOS update preparation verifies before copy and promotes on
     const prepared = await prepareMacUpdate(f.options);
     assert.ok(existsSync(prepared.installPath));
     assert.equal(prepared.descriptor.desktopVersion, "1.0.1");
-    assert.ok(prepared.installPath.startsWith(realpathSync(f.options.versionRoot)));
+    assert.equal(realpathSync.native(dirname(dirname(prepared.installPath))), realpathSync.native(f.options.versionRoot));
     assert.equal(f.calls.filter(call => call[0].endsWith("codesign")).length, 2);
     assert.equal(f.calls.at(-1)[1], "detach");
     assert.equal(readdirSync(f.options.versionRoot).length, 1);
@@ -613,7 +619,7 @@ function fixtureSwap(left, right) {
 }
 
 function replacementFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-replacement-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "coop-replacement-")));
   const appPath = join(root, "Coop Desktop.app"), candidatePath = join(root, "downloaded.app");
   for (const [path, value] of [[appPath, "old"], [candidatePath, "new"]]) {
     mkdirSync(path); writeFileSync(join(path, "marker"), value);
@@ -741,6 +747,12 @@ await test("helper handoff preserves signed trust policy and waits for authoriza
   await assert.rejects(runUpdateHelper({ ...args, request: unavailableResult,
     replace: async () => { throw new Error("Recovery requires inspection."); } }), /inspection/);
   assert.ok(!calls.includes("/usr/bin/open"));
+  calls.length = 0; lifecycle.length = 0;
+  const uncertainExit = Object.assign(new Error("probe exit unconfirmed"), { code: "UPDATE_HEALTH_PROCESS_EXIT_UNCONFIRMED" });
+  await assert.rejects(runUpdateHelper({ ...args,
+    health: async () => { throw uncertainExit; } }), error => error === uncertainExit);
+  assert.deepEqual(lifecycle, ["armed"], "uncertain probes retain recovery and its prepared resources");
+  assert.ok(!calls.includes("/usr/bin/open"), "must not relaunch alongside an uncertain probe");
   calls.length = 0;
   await assert.rejects(runUpdateHelper({ ...args, request: { ...request, signature: "bad" } }), /signature/);
   assert.deepEqual(calls, []);
@@ -768,7 +780,7 @@ await test("helper refuses live processes and honours cancellation while waiting
 });
 
 await test("private helper transport completes preparation, cancellation and apply over real Node IPC", async () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-helper-ipc-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "coop-helper-ipc-")));
   try {
     const helperPath = join(root, "fixture.mjs");
     writeFileSync(helperPath, `import {writeFileSync} from 'node:fs';
@@ -907,16 +919,140 @@ try {
   }
 }
 
+await test("update outcomes reject links when O_NOFOLLOW is unavailable and preserve a newer linked outcome", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-outcome-no-follow-"));
+  const path = join(root, "update-result.json"), target = join(root, "target.json");
+  const source = readFileSync(join(ROOT, "desktop/src/update-outcome.mjs"), "utf8");
+  const ctx = vm.createContext({ constants: { ...constants, O_NOFOLLOW: 0 }, open, unlink, lstat, join, Buffer });
+  vm.runInContext(source.slice(source.indexOf("const busy")).replace("export ", ""), ctx);
+  let shown = 0;
+  const args = { userData: root, currentVersion: "1.2.3", show: async () => { shown++; } };
+  try {
+    writeFileSync(target, JSON.stringify({ status: "failed" }));
+    symlinkSync(target, path);
+    assert.equal(await ctx.presentUpdateOutcome(args), false);
+    assert.equal(shown, 0);
+    assert.equal(readFileSync(target, "utf8"), JSON.stringify({ status: "failed" }));
+    rmSync(path); writeFileSync(path, JSON.stringify({ status: "failed" }));
+    assert.equal(await ctx.presentUpdateOutcome({ ...args, show: async () => {
+      shown++; renameSync(path, join(root, "original.json")); symlinkSync(target, path);
+    } }), true);
+    assert.equal(shown, 1);
+    assert.equal((await lstat(path)).isSymbolicLink(), true);
+    assert.ok(existsSync(target));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("update outcome releases its read handle before waiting for acknowledgement", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-outcome-handle-"));
+  const path = join(root, "update-result.json");
+  let handles = 0;
+  const wrappedOpen = async (...args) => {
+    const file = await open(...args); handles++;
+    return { stat: () => file.stat(), read: (...args) => file.read(...args), close: async () => { await file.close(); handles--; } };
+  };
+  const source = readFileSync(join(ROOT, "desktop/src/update-outcome.mjs"), "utf8");
+  const ctx = vm.createContext({ constants, open: wrappedOpen, unlink, lstat, join, Buffer });
+  vm.runInContext(source.slice(source.indexOf("const busy")).replace("export ", ""), ctx);
+  try {
+    writeFileSync(path, JSON.stringify({ status: "failed" }));
+    assert.equal(await ctx.presentUpdateOutcome({ userData: root, currentVersion: "1.2.3", show: async () => {
+      assert.equal(handles, 0, "an open dialog must not keep the result file locked");
+      const next = join(root, "next.json");
+      writeFileSync(next, JSON.stringify({ status: "healthy", version: "1.2.3" }));
+      renameSync(next, path);
+    } }), true);
+    assert.equal(handles, 0);
+    assert.equal(JSON.parse(readFileSync(path, "utf8")).status, "healthy");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("runtime health removes only a successful profile after confirmed shutdown", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-runtime-health-cleanup-"));
+  try {
+    for (const mode of ["healthy", "mismatch", "stop-failure", "start-failure", "fetch-failure"]) {
+      let path, stopped = false;
+      const options = { start: async ({ env }) => {
+        path = env.COOP_DESKTOP_AGENT_DIR;
+        assert.ok(existsSync(path));
+        if (mode === "start-failure") throw new Error("start failed");
+        return { ready: { endpoint: "http://127.0.0.1", oneTimeToken: "fixture" }, stop: async () => {
+          assert.ok(existsSync(path), "profile stays present until stop finishes");
+          if (mode === "stop-failure") throw new Error("stop failed");
+          stopped = true;
+        } };
+      }, fetchImpl: async url => {
+        if (mode === "fetch-failure") throw new Error("fetch failed");
+        return { ok: true, headers: new Headers({ "set-cookie": "fixture=1" }), json: async () => ({ contractVersion: 1, versions: { coop: mode === "mismatch" ? "0.0.0" : "1.2.3" } }) };
+      } };
+      const result = runtimeHealth(root, { versionRoot: root, workspace: root }, { protocolVersion: 1, coopVersion: "1.2.3" }, new AbortController().signal, options);
+      if (mode.endsWith("failure")) await assert.rejects(result, /failed/);
+      else assert.equal(await result, mode === "healthy");
+      assert.equal(existsSync(path), mode !== "healthy");
+      if (mode === "healthy") assert.equal(stopped, true);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("health cleanup preserves replaced directories and external symlink targets", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-health-owned-"));
+  try {
+    const external = join(root, "external"); mkdirSync(external); writeFileSync(join(external, "keep"), "keep");
+    const profile = await createHealthProfile(root, "runtime");
+    symlinkSync(external, join(profile.path, "link"), process.platform === "win32" ? "junction" : "dir");
+    assert.equal(await profile.discard(), true); assert.ok(existsSync(join(external, "keep")));
+    assert.equal(await profile.discard(), false);
+    const replaced = await createHealthProfile(root, "native");
+    renameSync(replaced.path, replaced.path + "-original"); mkdirSync(replaced.path);
+    assert.equal(await replaced.discard(), false); assert.ok(existsSync(replaced.path));
+    const linked = await createHealthProfile(root, "native");
+    renameSync(linked.path, linked.path + "-original"); symlinkSync(external, linked.path, process.platform === "win32" ? "junction" : "dir");
+    assert.equal(await linked.discard(), false); assert.ok(existsSync(join(external, "keep")));
+    const parent = join(root, "parent"); mkdirSync(parent);
+    const moved = await createHealthProfile(parent, "runtime");
+    renameSync(parent, parent + "-original"); mkdirSync(parent);
+    assert.equal(await moved.discard(), false);
+    assert.equal(await waitForProbeGroupExit(undefined), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+if (process.platform !== "win32") await test("health cleanup waits for a live probe process group to disappear", async () => {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
+  const closed = new Promise(resolve => child.once("close", resolve));
+  try {
+    assert.equal(await waitForProbeGroupExit(child.pid, { timeoutMs: 50 }), false);
+  } finally { child.kill("SIGKILL"); await closed; }
+  assert.equal(await waitForProbeGroupExit(child.pid), true);
+});
+
+await test("health group polling retries transient EPERM but never accepts uncertain exit", async () => {
+  const source = readFileSync(join(ROOT, "desktop/src/update-health-profile.mjs"), "utf8");
+  const functionSource = source.slice(source.indexOf("export async function waitForProbeGroupExit")).replace("export ", "");
+  for (const mode of ["transient", "persistent", "unexpected"]) {
+    let calls = 0, now = 0;
+    const ctx = vm.createContext({
+      process: { kill: (pid, signal) => {
+        assert.equal(pid, -1234); assert.equal(signal, 0); calls++;
+        throw Object.assign(new Error("fixture"), { code: mode === "unexpected" ? "EINVAL" : mode === "transient" && calls > 1 ? "ESRCH" : "EPERM" });
+      } },
+      Date: { now: () => now }, setTimeout: callback => { now += 25; callback(); },
+    });
+    vm.runInContext(functionSource, ctx);
+    assert.equal(await ctx.waitForProbeGroupExit(1234, { timeoutMs: 50 }), mode === "transient", mode);
+    assert.equal(calls, mode === "transient" ? 2 : mode === "persistent" ? 3 : 1, mode);
+  }
+});
 if (process.platform !== "win32") await test("native health requires its challenge, matching version and clean process exit", async () => {
   const root = mkdtempSync(join(tmpdir(), "coop-native-health-"));
   const request = { versionRoot: root, workspace: root };
   const descriptor = { desktopVersion: "1.2.3" };
   try {
     for (const mode of ["healthy", "wrong-version", "wrong-token", "crash", "hang", "cancel"]) {
-      let pid;
+      let pid, profile;
       const abort = new AbortController();
       const spawnImpl = (_command, args, options) => {
         assert.ok(args[0].startsWith("--user-data-dir="));
+        profile = args[0].slice("--user-data-dir=".length);
         assert.equal(options.env.OPENAI_API_KEY, undefined);
         const code = `const mode=${JSON.stringify(mode)};
           if(mode==='hang'||mode==='cancel')setInterval(()=>{},1000);
@@ -929,8 +1065,65 @@ if (process.platform !== "win32") await test("native health requires its challen
       if (mode === "cancel") await assert.rejects(probe, /abort/i);
       else assert.equal(await probe, mode === "healthy", mode);
       assert.throws(() => process.kill(pid, 0), error => error.code === "ESRCH");
+      assert.equal(existsSync(profile), mode !== "healthy", "only successful native health profiles should be removed");
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+if (process.platform !== "win32") await test("native health preserves its profile and rejects uncertain process-group exit", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-native-health-uncertain-"));
+  let profile, pid;
+  try {
+    const probe = nativeApplicationHealth(root, { versionRoot: root, workspace: root }, { desktopVersion: "1.2.3" }, undefined, {
+      spawnImpl: (_command, args, options) => {
+        profile = args[0].slice("--user-data-dir=".length);
+        const child = spawn(process.execPath, ["-e", `console.log(JSON.stringify({type:'desktop.update-health', token:process.env.COOP_DESKTOP_UPDATE_PROBE, version:'1.2.3'}))`], options);
+        pid = child.pid; return child;
+      },
+      waitForGroupExit: async observedPid => { assert.equal(observedPid, pid); return false; },
+    });
+    await assert.rejects(probe, { code: "UPDATE_HEALTH_PROCESS_EXIT_UNCONFIRMED" });
+    assert.ok(existsSync(profile));
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("native health bounds a missing close event and retains the uncertain profile", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-native-health-open-pipe-"));
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  let unreferenced = false, profile;
+  child.unref = () => { unreferenced = true; };
+  try {
+    await assert.rejects(nativeApplicationHealth(root, { versionRoot: root, workspace: root }, { desktopVersion: "1.2.3" }, undefined, {
+      timeoutMs: 10, terminationTimeoutMs: 30,
+      inspectRuntime: () => ({ python: process.execPath }),
+      spawnImpl: (_command, args, options) => {
+        profile = args.find(arg => arg.startsWith("--user-data-dir=")).slice("--user-data-dir=".length);
+        assert.equal(options.env.HOME, profile);
+        assert.equal(options.env.USERPROFILE, profile);
+        assert.equal(options.env.OPENAI_API_KEY, undefined);
+        return child;
+      },
+    }), { code: "UPDATE_HEALTH_PROCESS_EXIT_UNCONFIRMED" });
+    assert.ok(child.stdout.destroyed);
+    assert.ok(unreferenced);
+    assert.ok(existsSync(profile));
+  } finally { child.stdout.destroy(); rmSync(root, { recursive: true, force: true }); }
+});
+
+await test("uncertain health exit preserves the testing transaction until independent recovery", async () => {
+  const f = replacementFixture();
+  const error = Object.assign(new Error("fixture probe is still running"), { code: "UPDATE_HEALTH_PROCESS_EXIT_UNCONFIRMED" });
+  try {
+    await assert.rejects(replaceMacApplication({ ...f.options, checkHealth: async () => { throw error; } }), thrown => thrown === error);
+    assert.equal(f.read(f.options.appPath), "new", "must not swap a possibly running app");
+    assert.equal(f.read(join(f.transaction, "previous.app")), "old");
+    assert.equal((await inspectMacReplacement(f.options)).status, "testing");
+    const result = await recoverMacReplacement(f.options);
+    assert.equal(result.status, "rolled-back");
+    assert.equal(f.read(f.options.appPath), "old");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
 await test("native main health acknowledgement follows renderer readiness and runtime shutdown", async () => {
@@ -938,11 +1131,16 @@ await test("native main health acknowledgement follows renderer readiness and ru
   const begin = source.indexOf("  if (updateProbeToken) {", source.indexOf("async function createWindow()"));
   const end = source.indexOf("  if (managedResourcePresent", begin);
   const calls = [];
-  const ctx = vm.createContext({ updateProbeToken: "fixture", navigationReady: true, quitting: false, activeChatSid: "chat",
+  let flush;
+  const ctx = vm.createContext({ updateProbeToken: "fixture", navigationReady: true, quitting: false, activeChatSid: "chat", waitForRuntimeState,
     runtimeRpc: async () => calls.push("rpc"), runtime: { stop: async () => calls.push("stop") },
-    process: { stdout: { write: value => { assert.equal(JSON.parse(value).token, "fixture"); calls.push("ack"); } } },
+    process: { stdout: { write: (value, callback) => { assert.equal(JSON.parse(value).token, "fixture"); calls.push("ack"); flush = callback; } } },
     app: { quit: () => calls.push("quit"), getVersion: () => "1.2.3" }, Date, setTimeout });
-  await vm.runInContext(`(async () => {${source.slice(begin, end)}})()`, ctx);
+  const healthy = vm.runInContext(`(async () => {${source.slice(begin, end)}})()`, ctx);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ["rpc", "stop", "ack"], "native exit must wait for the pipe flush");
+  flush();
+  await healthy;
   assert.deepEqual(calls, ["rpc", "stop", "ack", "quit"]);
   calls.length = 0; ctx.runtime.stop = async () => { throw new Error("stop failed"); };
   await assert.rejects(vm.runInContext(`(async () => {${source.slice(begin, end)}})()`, ctx), /stop failed/);
@@ -987,7 +1185,7 @@ if (process.platform === "darwin") await test("Darwin directory exchange uses th
 });
 
 await test("independent recovery job is registered only after a verified stable app copy", async () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-recovery-job-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "coop-recovery-job-")));
   const calls = [];
   const request = { appPath: join(root, "Coop Desktop.app"), userData: join(root, "data"), versionRoot: join(root, "versions"), currentVersion: "1.0.0", parentPid: 10, runtimePid: 20 };
   const options = { request, targetVersion: "1.0.1", helperPid: 30, home: join(root, "home & space"), uid: 501,
@@ -1021,7 +1219,7 @@ await test("independent recovery job is registered only after a verified stable 
 });
 
 await test("recovery waits for live owners, survives a reboot and only reopens a verified app", async () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-recovery-worker-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "coop-recovery-worker-")));
   const id = "22222222-2222-2222-2222-222222222222";
   const requestPath = join(root, "update-recovery", id, "request.json");
   mkdirSync(dirname(requestPath), { recursive: true });
@@ -1097,7 +1295,7 @@ await test("native startup deferral exits before runtime setup and its notice cl
   const execPath = join(appPath, "Contents", "MacOS", "Coop Desktop");
   const ctx = vm.createContext({ managedResourcePresent: true, updateProbeToken: null, resolve, dirname, AbortController,
     process: { platform: "darwin", execPath, ppid: 123 },
-    canStartMacApplication: async args => { assert.equal(args.appPath, appPath);return false; },
+    canStartMacApplication: async args => { assert.equal(args.appPath, resolve(appPath));return false; },
     setTimeout: callback => { queueMicrotask(callback);return 1; }, clearTimeout: () => {},
     BrowserWindow: NoticeWindow,
     dialog: { showMessageBox: (parent, options) => { assert.ok(parent instanceof NoticeWindow, "macOS cancellation requires a parent window");dialogs++;return new Promise(resolve => options.signal.addEventListener("abort", resolve, { once: true })); } },
@@ -1111,7 +1309,7 @@ await test("native startup deferral exits before runtime setup and its notice cl
 });
 
 await test("recovery retention removes only older completed idle jobs", async () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-retention-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "coop-retention-")));
   const parent = join(root, "update-recovery");mkdirSync(parent);
   function job(n, phase = "finished") {
     const id = `11111111-1111-1111-1111-${String(n).padStart(12, "0")}`, dir = join(parent, id);

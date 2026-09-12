@@ -9,6 +9,20 @@ const MAX_IMAGES = 5;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_TOTAL_IMAGE_BYTES = 8 * 1024 * 1024;
 
+// Pi's model-list RPC reads a snapshot. Its public extension API can refresh
+// that snapshot after the separate login process saves credentials. Check that
+// the command exists first: an unknown slash command must never become a prompt.
+export async function listAvailableModels(rpc) {
+  const commands = await rpc({ type: "get_commands" });
+  if (!commands) return null;
+  if (commands.success && commands.data?.commands?.some(command => command.name === "coop-refresh-models")) {
+    const refreshed = await rpc({ type: "prompt", message: "/coop-refresh-models" });
+    if (!refreshed) return null;
+    if (!refreshed.success) return { ...refreshed, command: "get_available_models" };
+  }
+  return rpc({ type: "get_available_models" });
+}
+
 export const IMAGE_INPUT_LIMITS = Object.freeze({
   mimeTypes: Object.freeze([...IMAGE_MIME_TYPES]),
   maxImages: MAX_IMAGES,

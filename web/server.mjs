@@ -45,7 +45,8 @@ import { applyProjectConfig, getProjectConfig, proposeProjectConfig } from "./pr
 import { discoverFabricItems, discoverFabricWorkspaces, discoverLocalRepositories } from "./environment-discovery.mjs";
 import { getProjectSetupState } from "./project-setup-service.mjs";
 import { buildExecutionEnvelope, capabilityForTool } from "./execution-envelope.mjs";
-import { buildPromptCommand, buildRpcCommand } from "./rpc-adapter.mjs";
+import { projectTranscriptMessages, selectSessionChain, REPLAY_THINKING_MAX, REPLAY_TOOL_OUT_MAX } from "./transcript-replay.mjs";
+import { buildPromptCommand, buildRpcCommand, listAvailableModels } from "./rpc-adapter.mjs";
 import { RuntimeEventStream } from "./runtime-events.mjs";
 import { WorkflowService } from "./workflow-service.mjs";
 import {
@@ -62,6 +63,8 @@ import {
 import { buildTreeNavigationInvocation, parseTreeNavigationResultEvent } from "./tree-navigation.mjs";
 import { KnowledgeService } from "../lib/knowledge-service.mjs";
 
+if (process.env.COOP_RUNTIME_STARTUP_TRACE === "1") process.stderr.write("[coop-startup] server-module-ready\n");
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const RUNTIME_MODE = argv.includes("--runtime") || process.env.COOP_RUNTIME_MODE === "1";
@@ -76,6 +79,10 @@ const HOST = "127.0.0.1";
 const TOKEN = randomBytes(16).toString("hex");
 const TREE_NAVIGATION_SECRET = randomBytes(24).toString("hex");
 const RUNTIME_CONTROL_SECRET = randomBytes(24).toString("hex");
+const RUNTIME_OWNER_TOKEN = RUNTIME_MODE && /^[a-f0-9]{64}$/.test(process.env.COOP_DESKTOP_RUNTIME_OWNER_TOKEN || "")
+  ? process.env.COOP_DESKTOP_RUNTIME_OWNER_TOKEN : null;
+delete process.env.COOP_DESKTOP_RUNTIME_OWNER_TOKEN;
+let shutdownRequested = false, shutdownTask;
 
 function startupError(message, exitCode = 1) {
   if (RUNTIME_JSON) {
@@ -196,6 +203,9 @@ function spawnPi(cwd, extraArgs = [], workspaceAccess = null) {
       ...(workspaceAccess.mode === "override" ? { COOP_WORKSPACE_OVERRIDE_APPROVED: "1" } : {}),
     } : {}),
   };
+  // The Desktop shutdown credential belongs to the runtime owner, never Pi or
+  // its tools (including a launch spec captured before this process started).
+  delete env.COOP_DESKTOP_RUNTIME_OWNER_TOKEN;
   if (process.platform === "win32") {
     // npm-global `pi` is a .cmd shim, which Node can only launch through cmd.exe.
     // cmd has no safe escape for embedded `"` or `%` inside a quoted argument, so
@@ -228,11 +238,26 @@ function killPi(child) {
   if (!child) return;
   try {
     if (process.platform === "win32" && child.pid) {
-      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      const killer = spawn(join(process.env.SystemRoot, "System32", "taskkill.exe"), ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      killer.on("error", () => {}); // Shutdown observes errors; fire-and-forget callers must not crash.
+      return killer;
     } else {
       child.kill();
     }
   } catch { /* already gone */ }
+}
+
+async function stopPiForShutdown(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return true;
+  const killer = killPi(child);
+  if (killer) {
+    if (!await waitForChildExit(killer, 4000)) { try { killer.kill(); } catch {} return false; }
+    if (killer.exitCode !== 0) return false;
+  }
+  if (await waitForChildExit(child, 1000)) return true;
+  if (process.platform === "win32") return false;
+  try { child.kill("SIGKILL"); } catch { return false; }
+  return waitForChildExit(child, 1000);
 }
 
 // --- Chat registry -------------------------------------------------------------
@@ -267,10 +292,8 @@ function closeRuntimeEventClients(chat) {
   }
 }
 
-async function makeChat(cwd, extraArgs = [], accessRequest = { mode: "write", approved: false }) {
-  const sid = `c${++chatSeq}`;
-  const repository = await inspectWorkspace(cwd);
-  const workspaceLease = new WorkspaceLeaseManager({
+function createChatWorkspaceLease(sid) {
+  return new WorkspaceLeaseManager({
     agentDir: AGENT_DIR,
     ownerId: sid,
     clientInterface: RUNTIME_MODE ? "desktop-runtime" : "web",
@@ -278,6 +301,10 @@ async function makeChat(cwd, extraArgs = [], accessRequest = { mode: "write", ap
       const chat = chats.get(sid);
       if (chat?.child) {
         chat.status = "exited";
+        chat.busy = false;
+        for (const [id, waiter] of chat.pendingRpc) {
+          clearTimeout(waiter.timer); waiter.resolve(null); chat.pendingRpc.delete(id);
+        }
         killPi(chat.child);
         chat.child = null;
         appendRuntimeEvent(chat, "workspace.changed", { cwd: chat.cwd, access: { mode: "lost" } });
@@ -285,6 +312,13 @@ async function makeChat(cwd, extraArgs = [], accessRequest = { mode: "write", ap
       }
     },
   });
+}
+
+async function makeChat(cwd, extraArgs = [], accessRequest = { mode: "write", approved: false }) {
+  const sid = `c${++chatSeq}`;
+  const repository = await inspectWorkspace(cwd);
+  if (shutdownRequested) throw new Error("Coop Runtime is shutting down.");
+  const workspaceLease = createChatWorkspaceLease(sid);
   const leaseResult = workspaceLease.acquire(cwd, {
     mode: accessRequest.mode,
     approved: accessRequest.approved === true,
@@ -447,15 +481,28 @@ function appendPiDomainEvent(chat, evt, rawSequence) {
 }
 
 // Write one JSONL command to a chat's pi stdin (LF-terminated, per the RPC contract).
-function sendTo(chat, obj) {
-  if (!chat || chat.status === "exited" || !chat.child) {
-    console.error("coop web: dropping a command to a chat with no live pi");
-    return;
-  }
+function chatCanReceive(chat, { allowHandoff = false } = {}) {
+  const child = chat?.child;
+  const accepting = chat?.status === "running" || (allowHandoff && chat?.status === "handing-off");
+  return accepting && Boolean(child) && child.exitCode === null
+    && child.signalCode === null && !child.killed && child.stdin.writable;
+}
+
+function respondChatUnavailable(res) {
+  res.writeHead(503, baseHeaders("application/json")).end(JSON.stringify({
+    ok: false, code: "chat-unavailable",
+    error: "This chat's agent has stopped. Start a new chat or reopen the workspace, then try again.",
+  }));
+}
+
+function sendTo(chat, obj, options) {
+  if (!chatCanReceive(chat, options)) return false;
   try {
     chat.child.stdin.write(JSON.stringify(obj) + "\n");
+    return true; // A false write() result is backpressure, not rejection.
   } catch (e) {
     console.error("coop web: could not write to pi:", e.message);
+    return false;
   }
 }
 
@@ -637,13 +684,12 @@ async function restartChat(chat, newCwd, extraArgs = []) {
   let nextLease = chat.workspaceLease;
   let nextAccess = chat.workspaceAccess;
   const repository = await inspectWorkspace(newCwd);
+  if (shutdownRequested) throw new Error("Coop Runtime is shutting down.");
   const targetOwnershipPath = repository.repositoryRoot || repository.workspacePath || newCwd;
-  if (!samePath(chat.workspaceAccess?.workspacePath, targetOwnershipPath)) {
-    nextLease = new WorkspaceLeaseManager({
-      agentDir: AGENT_DIR,
-      ownerId: chat.sid,
-      clientInterface: RUNTIME_MODE ? "desktop-runtime" : "web",
-    });
+  // The pathname can remain the same while an override loses its original
+  // owner's lease. Revalidate before carrying ownership into a fresh Pi process.
+  if (!samePath(chat.workspaceAccess?.workspacePath, targetOwnershipPath) || !chat.workspaceLease?.heartbeat()) {
+    nextLease = createChatWorkspaceLease(chat.sid);
     const nextMode = chat.workspaceAccess?.mode === "read-only" ? "read-only" : "write";
     const result = nextLease.acquire(newCwd, { mode: nextMode, repository });
     if (!result.ok) {
@@ -702,7 +748,8 @@ function resetChatReplay(chat) {
 }
 
 // One correlated RPC round-trip against a chat's pi child.
-function rpcCall(chat, cmd, timeoutMs = 30000) {
+function rpcCall(chat, cmd, timeoutMs = 30000, options) {
+  if (!chatCanReceive(chat, options)) return Promise.resolve(null);
   const id = `web-${++rpcSeq}`;
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
@@ -710,7 +757,9 @@ function rpcCall(chat, cmd, timeoutMs = 30000) {
       resolve(null);
     }, timeoutMs);
     chat.pendingRpc.set(id, { resolve, timer });
-    sendTo(chat, { ...cmd, id });
+    if (!sendTo(chat, { ...cmd, id }, options)) {
+      clearTimeout(timer); chat.pendingRpc.delete(id); resolve(null);
+    }
   });
 }
 
@@ -1257,19 +1306,13 @@ function parseNameStatusZ(text, records) {
 }
 
 // After resuming, pull the active branch and backfill the browser transcript as
-// synthetic __message events (recorded, so replay/polling see them too).
+// rich __replay events (recorded, so replay/polling see them too).
 async function backfillMessages(chat) {
   for (let attempt = 0; attempt < 12; attempt++) {
     const reply = await rpcCall(chat, { type: "get_messages" }, 5000);
     if (reply && reply.success && reply.data && Array.isArray(reply.data.messages)) {
-      for (const m of reply.data.messages) {
-        if (!m || (m.role !== "user" && m.role !== "assistant")) continue;
-        const c = m.content;
-        const text = typeof c === "string" ? c : Array.isArray(c) ? c.filter((b) => b.type === "text").map((b) => b.text).join("\n") : "";
-        const tools = Array.isArray(c) ? c.filter((b) => b.type === "toolCall").map((b) => b.name) : [];
-        if (!text.trim() && !tools.length) continue;
-        const line = JSON.stringify({ type: "__message", role: m.role, text, tools });
-        recordAndBroadcast(chat, line, { type: "__message" });
+      for (const event of projectTranscriptMessages(reply.data.messages)) {
+        recordAndBroadcast(chat, JSON.stringify(event), { type: "__replay" });
       }
       return;
     }
@@ -1281,13 +1324,11 @@ async function backfillMessages(chat) {
 // --- File-based transcript backfill (the primary resume path) --------------------
 // Rebuild a resumed conversation FROM THE SESSION FILE — thinking blocks, tool calls
 // with their arguments + outputs, and compaction markers, in original order —
-// instead of the flat text get_messages produces. Emitted as recorded+broadcast
+// including pre-compaction history. Emitted as recorded+broadcast
 // __replay lines. get_messages stays the fallback for oversized/corrupt files.
 const SESSION_READ_MAX = 16 * 1024 * 1024; // 16 MiB — bigger files fall back to get_messages
-const REPLAY_THINKING_MAX = 8000;
-const REPLAY_TOOL_OUT_MAX = 6000; // matches the live tool_execution_end cap in app.js
 
-function loadSessionTranscript(fullPath) {
+function readSessionEntries(fullPath) {
   let size = 0;
   try { size = statSync(fullPath).size; } catch { return null; }
   if (size > SESSION_READ_MAX) return null; // caller falls back to get_messages
@@ -1302,35 +1343,13 @@ function loadSessionTranscript(fullPath) {
     try { entries.push(JSON.parse(line)); } catch { /* torn/odd line — skip */ }
   }
   if (!entries.length) return null;
-  // Index entries with a string id, EXCLUDING the header (type:"session"): the header
-  // has an id too, but nothing ever points at it (the first real entry carries
-  // parentId:null), so indexing it would make the header an eternal extra "leaf" and
-  // flag EVERY session — even strictly linear ones — as branched.
-  const byId = new Map();
-  entries.forEach((e, pos) => { if (e && typeof e.id === "string" && e.type !== "session") byId.set(e.id, { e, pos }); });
-  const referenced = new Set();
-  for (const { e } of byId.values()) { if (e.parentId != null) referenced.add(e.parentId); }
-  const leaves = [];
-  for (const rec of byId.values()) { if (!referenced.has(rec.e.id)) leaves.push(rec); }
-  if (!leaves.length) return null;
-  const ts = (e) => { const v = e.timestamp; if (typeof v === "number") return v; const p = Date.parse(v); return isNaN(p) ? 0 : p; };
-  // Active leaf = max timestamp; ties -> later file position wins.
-  let active = leaves[0];
-  for (const rec of leaves) {
-    const c = ts(rec.e), a = ts(active.e);
-    if (c > a || (c === a && rec.pos > active.pos)) active = rec;
-  }
-  // Walk parentId links to the root, then reverse -> the active chain (root-first).
-  const chain = [];
-  const guard = new Set();
-  let cur = active;
-  while (cur && !guard.has(cur.e.id)) {
-    guard.add(cur.e.id);
-    chain.push(cur.e);
-    cur = cur.e.parentId != null ? byId.get(cur.e.parentId) : null;
-  }
-  chain.reverse();
-  const branched = leaves.length > 1;
+  return entries;
+}
+
+function loadSessionTranscript(entries, leafId) {
+  const selected = selectSessionChain(entries, leafId);
+  if (!selected) return null;
+  const { chain, branched } = selected;
   // Pre-scan the chain's toolResults: toolCallId -> {output, isError}.
   const toolResults = new Map();
   for (const e of chain) {
@@ -1372,7 +1391,7 @@ function loadSessionTranscript(fullPath) {
           else if (b.type === "thinking" && b.thinking) parts.push({ kind: "thinking", text: String(b.thinking).slice(0, REPLAY_THINKING_MAX) });
           else if (b.type === "toolCall") {
             const tr = toolResults.get(b.id) || {};
-            parts.push({ kind: "tool", name: b.name || "tool", args: b.arguments, output: tr.output || "", isError: !!tr.isError });
+            parts.push({ kind: "tool", name: b.name || "tool", args: b.arguments, output: tr.output || "", isError: !!tr.isError, incomplete: !toolResults.has(b.id) });
           }
         }
       }
@@ -1386,18 +1405,28 @@ function loadSessionTranscript(fullPath) {
     }
     // toolResult messages are consumed into the assistant tool parts (pre-scan above).
   }
-  if (!lines.length) return null;
-  if (branched) lines.unshift(JSON.stringify({ type: "__replay", kind: "info", text: "This conversation has other branches — showing the most recent." }));
+  if (!lines.length) return { lines, branched };
+  if (branched) lines.unshift(JSON.stringify({ type: "__replay", kind: "info", text: "This conversation has other branches — showing Pi's selected branch." }));
   return { lines, branched };
 }
 
 // Backfill from the session file; on non-null, record+broadcast each __replay line
 // (same loop shape as backfillMessages) and return true; else return false so the
 // caller falls back to get_messages.
-function backfillFromFile(chat, fullPath) {
+async function backfillFromFile(chat, fullPath) {
+  let entries;
+  try { entries = readSessionEntries(fullPath); } catch { return false; }
+  if (!entries) return false;
+  const lastId = entries.findLast(entry => entry?.type !== "session" && typeof entry?.id === "string")?.id;
+  if (!lastId) return false;
+  // Asking since the final known ID returns the authoritative leaf without
+  // transferring the whole tree again. Entries appended during startup are also
+  // returned, so a new active leaf can be resolved against the same snapshot.
+  const reply = await rpcCall(chat, { type: "get_entries", since: lastId }, 5000);
+  if (!reply?.success || !Array.isArray(reply.data?.entries) || !Object.hasOwn(reply.data, "leafId")) return false;
   let res;
-  try { res = loadSessionTranscript(fullPath); } catch { return false; }
-  if (!res || !res.lines.length) return false;
+  try { res = loadSessionTranscript([...entries, ...reply.data.entries], reply.data.leafId); } catch { return false; }
+  if (!res) return false;
   for (const line of res.lines) {
     recordAndBroadcast(chat, line, { type: "__replay" });
   }
@@ -1408,6 +1437,7 @@ function backfillFromFile(chat, fullPath) {
 const STATIC = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/theme-system.js": { file: "theme-system.js", type: "text/javascript; charset=utf-8" },
+  "/usage-model.js": { file: "usage-model.js", type: "text/javascript; charset=utf-8" },
   "/session-tree-model.js": { file: "session-tree-model.js", type: "text/javascript; charset=utf-8" },
   "/interaction-model.js": { file: "interaction-model.js", type: "text/javascript; charset=utf-8" },
   "/workspace-health-model.js": { file: "workspace-health-model.js", type: "text/javascript; charset=utf-8" },
@@ -1529,6 +1559,10 @@ async function handle(req, res) {
   // Everything below requires the cookie.
   if (!authed(req)) {
     res.writeHead(401, baseHeaders("text/plain")).end("unauthorized");
+    return;
+  }
+  if (shutdownRequested && url.pathname !== "/runtime/shutdown") {
+    res.writeHead(503, baseHeaders("text/plain")).end("runtime is shutting down");
     return;
   }
 
@@ -1896,6 +1930,17 @@ async function handle(req, res) {
       return;
     }
 
+    if (url.pathname === "/runtime/shutdown") {
+      if (!RUNTIME_OWNER_TOKEN || !safeEqual(req.headers["x-coop-runtime-owner"] || "", RUNTIME_OWNER_TOKEN)) {
+        res.writeHead(403, baseHeaders("text/plain")).end("runtime owner required");
+        return;
+      }
+      shutdownRequested = true;
+      res.writeHead(202, baseHeaders("application/json")).end('{"ok":true}');
+      setImmediate(shutdown);
+      return;
+    }
+
     if (url.pathname === "/knowledge/preview") {
       const body = await readJson(req);
       const chat = chatFor(body && body.sid);
@@ -2170,7 +2215,7 @@ async function handle(req, res) {
         res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: adapted.error }));
         return;
       }
-      sendTo(chat, adapted.command);
+      if (!sendTo(chat, adapted.command)) { respondChatUnavailable(res); return; }
       res.writeHead(200, baseHeaders("application/json")).end(`{"ok":true}`);
       return;
     }
@@ -2179,6 +2224,7 @@ async function handle(req, res) {
       const body = await readJson(req);
       const chat = chatFor(body && body.sid);
       if (!chat) { res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "That chat is no longer open." })); return; }
+      if (!chatCanReceive(chat)) { respondChatUnavailable(res); return; }
       if (body && body.id) {
         const id = String(body.id);
         // Bound the dedupe set: an id that never matches a recorded dialog (a client bug
@@ -2188,14 +2234,14 @@ async function handle(req, res) {
         if (chat.answeredUi.size >= ANSWERED_UI_MAX && !chat.answeredUi.has(id)) {
           chat.answeredUi.delete(chat.answeredUi.values().next().value);
         }
-        chat.answeredUi.add(id); // don't replay this dialog card on reconnect
         // Whitelist the fields — never spread an untrusted body over a fixed
         // `type`, or the browser could relay arbitrary RPC commands to pi.
         const reply = { type: "extension_ui_response", id };
         if (body.value !== undefined) reply.value = body.value;
         if (body.confirmed !== undefined) reply.confirmed = Boolean(body.confirmed);
         if (body.cancelled !== undefined) reply.cancelled = Boolean(body.cancelled);
-        sendTo(chat, reply);
+        if (!sendTo(chat, reply)) { respondChatUnavailable(res); return; }
+        chat.answeredUi.add(id); // Mark answered only after the reply was accepted.
       }
       res.writeHead(200, baseHeaders("application/json")).end(`{"ok":true}`);
       return;
@@ -2205,6 +2251,7 @@ async function handle(req, res) {
       const body = await readJson(req);
       const chat = chatFor(body && body.sid);
       if (!chat) { res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "That chat is no longer open." })); return; }
+      if (!chatCanReceive(chat)) { respondChatUnavailable(res); return; }
       const type = body && body.type;
       if (!type || !RPC_ALLOWED.has(type)) {
         res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "command not allowed" }));
@@ -2216,8 +2263,11 @@ async function handle(req, res) {
         return;
       }
       const cmd = adapted.command;
-      const reply = await rpcCall(chat, cmd, RPC_TIMEOUTS[type] || 30000);
+      const reply = type === "get_available_models"
+        ? await listAvailableModels(command => rpcCall(chat, command, 15000))
+        : await rpcCall(chat, cmd, RPC_TIMEOUTS[type] || 30000);
       if (!reply) {
+        if (!chatCanReceive(chat)) { respondChatUnavailable(res); return; }
         res.writeHead(504, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "pi did not answer in time" }));
         return;
       }
@@ -2299,7 +2349,8 @@ async function handle(req, res) {
       chat.status = "handing-off";
       chat.expectedExit = child;
       broadcastChats();
-      const shutdownReply = await rpcCall(chat, shutdown.command, 10000);
+      // Only this authenticated internal shutdown may write during handoff.
+      const shutdownReply = await rpcCall(chat, shutdown.command, 10000, { allowHandoff: true });
       const exited = shutdownReply?.success ? await waitForChildExit(child, 10000) : false;
       if (!exited) {
         chat.expectedExit = null;
@@ -2400,9 +2451,9 @@ async function handle(req, res) {
       }
       console.error(`  resuming session ${name}${switched ? ` in ${targetCwd}` : ""}`);
       if (switched) broadcastChats(); // the tab's cwd (label) changed
-      // Rebuild the transcript FROM THE FILE (synchronous, high fidelity); fall back to
-      // the get_messages backfill only for oversized/corrupt files.
-      if (!backfillFromFile(chat, full)) await backfillMessages(chat);
+      // Retain full file history, with the active chain selected by Pi. Fall back
+      // to public messages when file/leaf evidence cannot be reconciled.
+      if (!await backfillFromFile(chat, full)) await backfillMessages(chat);
       res.writeHead(200, baseHeaders("application/json")).end(JSON.stringify({ ok: true }));
       return;
     }
@@ -2439,7 +2490,7 @@ async function handle(req, res) {
       const body = await readJson(req);
       const chat = chatFor(body && body.sid);
       if (!chat) { res.writeHead(400, baseHeaders("application/json")).end(JSON.stringify({ ok: false, error: "That chat is no longer open." })); return; }
-      sendTo(chat, { type: "abort" });
+      if (!sendTo(chat, { type: "abort" })) { respondChatUnavailable(res); return; }
       res.writeHead(200, baseHeaders("application/json")).end(`{"ok":true}`);
       return;
     }
@@ -2582,6 +2633,7 @@ server.on("error", (e) => {
 });
 
 server.listen(PORT, HOST, () => {
+  if (process.env.COOP_RUNTIME_STARTUP_TRACE === "1") process.stderr.write("[coop-startup] server-listening\n");
   const address = server.address();
   const activePort = typeof address === "object" && address ? address.port : PORT;
   const endpoint = `http://${HOST}:${activePort}`;
@@ -2595,6 +2647,7 @@ server.listen(PORT, HOST, () => {
         endpoint,
         oneTimeToken: TOKEN,
         runtimePid: process.pid,
+        ...(RUNTIME_OWNER_TOKEN ? { shutdownProtocol: "http-v1" } : {}),
         coopVersion: runtimeCapabilities.versions.coop,
         piVersion: runtimeCapabilities.versions.pi,
       })}\n`);
@@ -2608,11 +2661,20 @@ server.listen(PORT, HOST, () => {
 });
 
 function shutdown() {
-  for (const c of chats.values()) {
-    killPi(c.child); // reap every chat's subtree — never orphan a bash-capable agent
-    c.workspaceLease?.release();
-  }
-  process.exit(0);
+  if (shutdownTask) return shutdownTask;
+  shutdownRequested = true;
+  shutdownTask = (async () => {
+    const active = [...chats.values()];
+    const stopped = await Promise.all(active.map(c => stopPiForShutdown(c.child)));
+    if (stopped.some(value => !value)) {
+      console.error("Coop Runtime could not confirm agent shutdown; retaining workspace ownership for recovery.");
+      return;
+    }
+    for (const c of active) c.workspaceLease?.release();
+    process.exit(0);
+  })();
+  shutdownTask.catch(() => console.error("Coop Runtime shutdown failed; retaining workspace ownership for recovery."));
+  return shutdownTask;
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

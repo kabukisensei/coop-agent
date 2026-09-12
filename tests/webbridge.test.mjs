@@ -4,8 +4,9 @@
 // __hello marker, answered-dialog skipping on reconnect, and prompt forwarding.
 import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
+import { WorkspaceLeaseManager } from "../lib/workspace-isolation.mjs";
 import { renderKnowledgeMarkdown } from "../lib/knowledge-service.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -76,9 +77,9 @@ mkdirSync(sessDir, { recursive: true });
 // A full v3 tree that mirrors a real session file: header (NO parentId — never a
 // leaf), session_info (no id — metadata, not part of the tree), a linear
 // user->assistant(thinking+toolCall)->toolResult->assistant chain, PLUS a stale
-// second leaf (b1) so `branched` is true. The user text stays "hello from the past"
-// (the /sessions preview assertion depends on it). a2 has the latest timestamp, so
-// it is the active leaf; b1 (older) is the abandoned branch.
+// second leaf (b1) with a future timestamp so `branched` is true. The user text stays "hello from the past"
+// (the /sessions preview assertion depends on it). Pi selects a2; b1 is an
+// abandoned branch whose clock must not override the selected leaf.
 const FAKE_SESSION = "2026-07-01T00-00-00-000Z_test-session.jsonl";
 writeFileSync(join(sessDir, FAKE_SESSION), [
   JSON.stringify({ type: "session", version: 3, id: "test-session", timestamp: "2026-07-01T00:00:00.000Z", cwd: process.cwd() }),
@@ -87,7 +88,7 @@ writeFileSync(join(sessDir, FAKE_SESSION), [
   JSON.stringify({ type: "message", id: "a1", parentId: "u1", timestamp: "2026-07-01T00:00:02.000Z", message: { role: "assistant", content: [{ type: "thinking", thinking: "pondering deeply" }, { type: "toolCall", id: "tc1", name: "read", arguments: { path: "notes.md" } }] } }),
   JSON.stringify({ type: "message", id: "t1", parentId: "a1", timestamp: "2026-07-01T00:00:03.000Z", message: { role: "toolResult", toolCallId: "tc1", toolName: "read", content: [{ type: "text", text: "tool output payload" }] } }),
   JSON.stringify({ type: "message", id: "a2", parentId: "t1", timestamp: "2026-07-01T00:00:05.000Z", message: { role: "assistant", content: [{ type: "text", text: "rich old answer" }] } }),
-  JSON.stringify({ type: "message", id: "b1", parentId: "u1", timestamp: "2026-07-01T00:00:04.000Z", message: { role: "assistant", content: [{ type: "text", text: "stale branch answer" }] } }),
+  JSON.stringify({ type: "message", id: "b1", parentId: "u1", timestamp: "2099-07-01T00:00:04.000Z", message: { role: "assistant", content: [{ type: "text", text: "stale branch answer" }] } }),
 ].join("\n") + "\n");
 
 // A session whose FIRST user message was sent with a Files-panel attachment, so it is
@@ -168,8 +169,8 @@ writeFileSync(join(workSessDir, WORK_SESSION), [
   }
 }
 
-const spec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: agentDir, OPENAI_API_KEY: "fixture-launch-spec-key" } });
-const server = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT)], {
+const spec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: agentDir, OPENAI_API_KEY: "fixture-launch-spec-key", COOP_STUB_CRASH_DELAY_MS: "750" } });
+const server = spawn(process.execPath, ["--import", pathToFileURL(join(HERE, "fixtures", "webbridge-doctor-loader.mjs")).href, join(ROOT, "web", "server.mjs"), "--port", String(PORT)], {
   // COOP_WEB_MAX_CHATS=3 gives the multi-chat cap test a deterministic, cheap bound;
   // it affects nothing earlier in the file (all pre-multi-chat tests use one chat).
   env: { ...process.env, OPENAI_API_KEY: "", COOP_DIR: agentDir, COOP_LAUNCH_SPEC: spec, COOP_WEB_NO_OPEN: "1", COOP_WEB_MAX_CHATS: "3", COOP_TEAM_KNOWLEDGE_ROOT: teamKnowledgeRoot },
@@ -343,6 +344,7 @@ t("/capabilities publishes declarative workflow extensions without executable re
 
 r = await fetch(base + "/doctor", { headers: { cookie } });
 const doctorReport = await r.json();
+if (r.status !== 200) console.error("Doctor HTTP failure:", r.status, doctorReport.error);
 t("/doctor exposes the shared versioned Health contract",
   r.status === 200 && doctorReport.ok === true && doctorReport.report?.schemaVersion === 1 && Array.isArray(doctorReport.report?.checks));
 r = await fetch(base + "/auth/providers", { headers: { cookie } });
@@ -364,8 +366,8 @@ const knowledgeSearch = await r.json();
 t("/knowledge/search returns only approved scope-filtered guidance",
   r.status === 200 && knowledgeSearch.results?.length === 1 && knowledgeSearch.results[0].id === "knowledge.sql.bridge.001");
 t("Health UI consumes shared contracts and the fixed Desktop model-login bridge",
-  appJsSrc.includes('fetch(`/doctor${suffix}`)') && appJsSrc.includes('fetch(`/auth/providers${suffix}`)') &&
-  appJsSrc.includes('fetch(`/setup/state${suffix}`)') && appJsSrc.includes('fetch(`/profile${suffix}`)') &&
+  appJsSrc.includes('["/doctor", "/auth/providers", "/setup/state", "/profile"]') &&
+  appJsSrc.includes('fetch(`${path}${suffix}`, { signal: AbortSignal.timeout(15000) })') &&
   appJsSrc.includes('fetch("/profile/apply"') && appJsSrc.includes("window.coopDesktop.startModelLogin()"));
 t("project-contract UI reads, previews, and applies through the shared two-step service",
   appJsSrc.includes('fetch(`/config/current?sid=') && appJsSrc.includes('fetch("/config/proposal"') &&
@@ -469,6 +471,21 @@ const post = (path, body) =>
     headers: { cookie, "content-type": "application/json", "x-coop-csrf": "1" },
     body: JSON.stringify(body),
   });
+
+async function waitForChatState(sid, predicate, label, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  let state;
+  while (Date.now() < deadline) {
+    const response = await fetch(base + `/events-poll?sid=${sid}&since=0`, {
+      headers: { cookie }, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+    });
+    assert.equal(response.status, 200, `${label}: polling failed`);
+    state = await response.json();
+    if (predicate(state)) return state;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.fail(`${label}: timed out; status=${state?.status}; recent events=${JSON.stringify(state?.events?.slice(-4))}`);
+}
 
 const proposedKnowledge = knowledgeRecord({
   id: "knowledge.sql.bridge-proposal.001",
@@ -792,7 +809,7 @@ r = await post("/rpc", { type: "switch_session", sessionPath: join(sessDir, FAKE
 t("/rpc switch_session accepts an existing jailed Coop session", r.status === 200 && (await r.json()).success === true);
 r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
 let branchPoll = await r.json();
-t("switch_session resets and backfills the selected transcript", branchPoll.events.some((line) => line.includes('"type":"__message"')));
+t("switch_session resets and backfills the selected transcript", branchPoll.events.some((line) => line.includes('"type":"__replay"')));
 
 const beforeTreeNavigation = branchPoll;
 r = await post("/tree-navigate", { entryId: "../bad" });
@@ -815,7 +832,7 @@ t("/tree-navigate selects an existing branch through the Coop extension adapter"
 r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
 branchPoll = await r.json();
 t("successful existing-branch navigation resets and backfills the selected transcript",
-  branchPoll.epoch > beforeTreeNavigation.epoch && branchPoll.events.some((line) => line.includes('"type":"__message"')));
+  branchPoll.epoch > beforeTreeNavigation.epoch && branchPoll.events.some((line) => line.includes('"type":"__replay"')));
 const switchedEpoch = branchPoll.epoch;
 r = await post("/tree-navigate", { entryId: "a1", summarize: true });
 state = await r.json();
@@ -839,14 +856,19 @@ state = await r.json();
 t("/rpc fork round-trips supported Pi branch creation", r.status === 200 && state.data.cancelled === false && state.data.text === "fork point");
 r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
 branchPoll = await r.json();
-t("successful fork resets and backfills the selected branch", branchPoll.epoch > beforeCancelledFork.epoch && branchPoll.events.some((line) => line.includes('"type":"__message"')));
+t("successful fork resets and backfills the selected branch", branchPoll.epoch > beforeCancelledFork.epoch && branchPoll.events.some((line) => line.includes('"type":"__replay"')));
 const forkEpoch = branchPoll.epoch;
 r = await post("/rpc", { type: "clone" });
 state = await r.json();
 t("/rpc clone round-trips supported Pi session cloning", r.status === 200 && state.data.cancelled === false);
 r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
 branchPoll = await r.json();
-t("successful clone resets and backfills the cloned session", branchPoll.epoch > forkEpoch && branchPoll.events.some((line) => line.includes('"type":"__message"')));
+t("successful clone resets and backfills the cloned session", branchPoll.epoch > forkEpoch && branchPoll.events.some((line) => line.includes('"type":"__replay"')));
+
+const clonedParts = branchPoll.events.map(JSON.parse).flatMap(event => event.parts || []);
+t("cloned transcript retains thinking, tool arguments, aborted output and failure state",
+  clonedParts.some(part => part.kind === "thinking" && part.text === "old reasoning") &&
+  clonedParts.some(part => part.kind === "tool" && part.args.path === "query.sql" && part.output === "Command aborted" && part.isError === true));
 
 // Capture the pre-reset epoch + the REAL monotonic cursor, to prove the polling
 // path learns of the reset (the __hello reset frame is SSE-broadcast-only).
@@ -916,6 +938,8 @@ await new Promise((res) => setTimeout(res, 300)); // file backfill is synchronou
 r = await fetch(base + `/events-poll?since=${preCursor}`, { headers: { cookie } });
 let staleP = await r.json();
 t("stale pre-resume cursor sees the bumped epoch", typeof staleP.epoch === "number" && staleP.epoch !== preEpoch);
+t("History follows Pi's selected leaf despite a newer abandoned branch timestamp",
+  staleP.events.some(line => line.includes("rich old answer")) && !staleP.events.some(line => line.includes("stale branch answer")));
 t("stale-cursor poll still delivers the __replay backfill (clamp works)",
   staleP.events.some((l) => l.includes("pondering deeply")) &&
   staleP.events.some((l) => l.includes("tool output payload")) &&
@@ -956,8 +980,8 @@ t("/resume FALLBACK_SESSION -> 200", r.status === 200);
 await new Promise((res) => setTimeout(res, 900)); // get_messages fallback polls the stub
 r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
 poll = await r.json();
-t("an unparseable file falls back to the get_messages __message backfill",
-  poll.events.some((l) => l.includes('"__message"') && l.includes("old question")) &&
+t("an unparseable file falls back to the get_messages rich backfill",
+  poll.events.some((l) => l.includes('"__replay"') && l.includes("old question")) &&
   poll.events.some((l) => l.includes("old answer") && l.includes("sql_review")));
 
 // --- /folders (recent working folders from the session store) ---------------------
@@ -1005,9 +1029,15 @@ r = await post("/chdir", { dir: target });
 t("/chdir switches to a real folder", r.status === 200);
 let ch = await r.json();
 t("chdir echoes the resolved folder", ch.ok === true && ch.cwd === target);
-await new Promise((res) => setTimeout(res, 600)); // let the respawned stub boot
-r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
-poll = await r.json();
+// Wait for the observable startup event, not a workstation-dependent 600 ms.
+// The respawn can exceed that delay while native build/test workers are busy.
+const restartedUntil = Date.now() + 10000;
+do {
+  r = await fetch(base + "/events-poll?since=0", { headers: { cookie } });
+  poll = await r.json();
+  if (poll.events.some((line) => line.includes("What would you like to do"))) break;
+  await new Promise((res) => setTimeout(res, 100));
+} while (Date.now() < restartedUntil);
 t("poll reports the new folder", poll.cwd === target);
 t("restarted agent's startup dialog arrives fresh", poll.events.some((l) => l.includes("What would you like to do")));
 
@@ -1136,8 +1166,12 @@ if (!hasGit) {
   // it fails fast rather than walking.
   const emptyPath = mkdtempSync(join(osTmp(), "coop-web-nopath-"));
   const PORT2 = PORT + 500;
+  // This independent server must not leave a shared workspace lease behind when
+  // Windows force-terminates it. Give it a separate agent/lease profile.
+  const noGitAgent = mkdtempSync(join(osTmp(), "coop-web-nogit-agent-"));
+  const noGitSpec = JSON.stringify({ bin: process.execPath, args: [join(HERE, "stub-pi.mjs")], env: { PI_CODING_AGENT_DIR: noGitAgent } });
   const server2 = spawn(process.execPath, [join(ROOT, "web", "server.mjs"), "--port", String(PORT2), "--cwd", emptyPath], {
-    env: { ...process.env, PATH: emptyPath, COOP_LAUNCH_SPEC: spec, COOP_WEB_NO_OPEN: "1" },
+    env: { ...process.env, PATH: emptyPath, COOP_AGENT_DIR: noGitAgent, COOP_LAUNCH_SPEC: noGitSpec, COOP_WEB_NO_OPEN: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let err2 = "";
@@ -1157,11 +1191,12 @@ if (!hasGit) {
   } else {
     t("second bridge (git-missing) started", false);
   }
-  // Wait for the second bridge to exit (release its port) before continuing.
+  // Force-stop on every platform so the Windows termination/leftover-lease case
+  // remains covered on macOS and Linux too. Wait for its port to be released.
   await new Promise((resolve) => {
     const done = setTimeout(resolve, 1500);
     server2.on("exit", () => { clearTimeout(done); resolve(); });
-    try { server2.kill(); } catch { resolve(); }
+    try { server2.kill("SIGKILL"); } catch { resolve(); }
   });
 
   r = await fetch(base + "/git/changes");
@@ -1314,8 +1349,8 @@ t("chat 2's stream has its own reply and NOT chat 1's",
   p2.events.some((l) => l.includes("polo:two")) && !p2.events.some((l) => l.includes("polo:one")));
 
 // 4. Per-chat cwd + jail: put the two chats in DIFFERENT folders.
-const chdir1 = await post("/chdir", { sid: sid1, dir: resolvePath(process.cwd()) });
-t("/chdir {sid:sid1} -> 200", chdir1.status === 200);
+r = await post("/chdir", { sid: sid1, dir: resolvePath(process.cwd()) });
+assert.equal(r.status, 200, `chat 1 folder change failed: ${JSON.stringify(await r.json())}`);
 await new Promise((res) => setTimeout(res, 500));
 r = await post("/chdir", { sid: sid2, dir: resolvePath(workDir) });
 t("/chdir {sid:sid2} -> 200", r.status === 200);
@@ -1326,6 +1361,9 @@ r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie }
 const p1b = await r.json();
 t("each chat has its own cwd (sid2=workDir, sid1=cwd, and they differ)",
   p2b.cwd === resolvePath(workDir) && p1b.cwd === resolvePath(process.cwd()) && p1b.cwd !== p2b.cwd);
+const reacquiredAccess = await fetch(base + `/workspace/access?sid=${sid2}`, { headers: { cookie } }).then(response => response.json());
+t("restarting the same folder retains the approved writer's live lease after its original owner moves away",
+  reacquiredAccess.access?.mode === "override" && reacquiredAccess.access.leaseId === d2.workspaceAccess.leaseId);
 r = await fetch(base + `/files?sid=${sid2}`, { headers: { cookie } });
 const files2 = await r.json();
 t("/files?sid=sid2 lists workDir's files", (files2.tree || []).some((n) => n.name === "notes.md"));
@@ -1407,17 +1445,17 @@ events = await closeWatch;
 t("closing a live chat emits NO spurious __fatal for it", !events.some((e) => e.sid === sid3 && e.ev && e.ev.type === "__fatal"));
 
 // 7. Crash containment: crash chat 2; the bridge stays up; chat 1 still answers.
-await post("/prompt", { sid: sid2, message: "__crash__" });
-await new Promise((res) => setTimeout(res, 500));
+// The fixture deliberately delays this crash beyond the former 500 ms sleep.
+// Observe process completion, then still require the exact fatal exit code.
+r = await post("/prompt", { sid: sid2, message: "__crash__" });
+assert.equal(r.status, 200, "crash prompt must be accepted");
+const pcrash = await waitForChatState(sid2, state => state.status === "exited", "chat 2 crash");
 t("the bridge process is still alive after a chat crash", server.exitCode === null);
-r = await fetch(base + `/events-poll?sid=${sid2}&since=0`, { headers: { cookie } });
-const pcrash = await r.json();
 t("chat 2 reports status:exited + a recorded __fatal(code 3)",
   pcrash.status === "exited" && pcrash.events.some((l) => l.includes('"__fatal"') && l.includes('"code":3')));
-await post("/prompt", { sid: sid1, message: "still-alive" });
-await new Promise((res) => setTimeout(res, 400));
-r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
-const p1c = await r.json();
+r = await post("/prompt", { sid: sid1, message: "still-alive" });
+assert.equal(r.status, 200, "surviving chat must accept its prompt");
+const p1c = await waitForChatState(sid1, state => state.events.some(line => line.includes("polo:still-alive")), "surviving chat reply");
 t("chat 1 still answers after chat 2 crashed", p1c.events.some((l) => l.includes("polo:still-alive")));
 
 // 8. Close targets the EXPLICIT sid — the close-the-wrong-chat regression guard.
@@ -1425,10 +1463,9 @@ r = await post("/chat-close", { sid: sid2 });
 t("/chat-close sid2 -> 200", r.status === 200);
 r = await fetch(base + `/events-poll?sid=${sid2}&since=0`, { headers: { cookie } });
 t("polling the closed sid2 -> 400", r.status === 400);
-await post("/prompt", { sid: sid1, message: "after-close" });
-await new Promise((res) => setTimeout(res, 400));
-r = await fetch(base + `/events-poll?sid=${sid1}&since=0`, { headers: { cookie } });
-const p1d = await r.json();
+r = await post("/prompt", { sid: sid1, message: "after-close" });
+assert.equal(r.status, 200, "remaining chat must accept its prompt after close");
+const p1d = await waitForChatState(sid1, state => state.events.some(line => line.includes("polo:after-close")), "remaining chat reply");
 t("chat 1 still answers after chat 2 was closed (explicit-sid close guard)", p1d.events.some((l) => l.includes("polo:after-close")));
 
 // 9. RPC scoping: new_session resets ONLY chat 1's history.
@@ -1579,6 +1616,40 @@ t("compact returns 200 on the default path (prompt answer)", r.status === 200);
   t("compact times out -> 504 when COOP_WEB_RPC_TIMEOUT_COMPACT is short and pi is slow", (await rpc3("compact")).status === 504);
   t("a non-compact command is unaffected by the compact timeout override (200)", (await rpc3("get_state")).status === 200);
   await new Promise((resolve) => { const done = setTimeout(resolve, 2000); srv3.on("exit", () => { clearTimeout(done); resolve(); }); srv3.kill(); });
+}
+
+// A replacement lease must retain the loss callback installed for fresh chats.
+// Remove only this fixture's ownership record and wait through its next heartbeat.
+const fixtureLeasePaths = new WorkspaceLeaseManager({ agentDir, ownerId: "probe" }).paths(p1b.cwd);
+assert.ok(existsSync(fixtureLeasePaths.ownerPath));
+const pendingCompact = fetch(base + "/rpc", {
+  method: "POST", headers: { cookie, "content-type": "application/json", "x-coop-csrf": "1" },
+  body: JSON.stringify({ sid: sid1, type: "compact", customInstructions: "__hold_until_exit__" }),
+  signal: AbortSignal.timeout(12000),
+}).then(response => response, error => ({ error }));
+await waitForChatState(sid1, state => state.events.some(line => line.includes("fixture-hold-until-exit")), "pending compaction");
+rmSync(fixtureLeasePaths.ownerPath);
+const lostReplacement = await waitForChatState(sid1, state => state.status === "exited", "replacement lease loss", 8000);
+t("losing replacement workspace ownership stops the restarted chat",
+  lostReplacement.status === "exited" && !lostReplacement.events.some(line => line.includes('"__fatal"')));
+
+const stoppedCompact = await pendingCompact;
+t("ownership loss immediately settles an in-flight compact as unavailable", stoppedCompact.status === 503);
+const stoppedReply = await stoppedCompact.json();
+t("unavailable command identifies the stopped chat and recovery action", stoppedReply.code === "chat-unavailable" && /new chat/i.test(stoppedReply.error));
+for (const [path, payload] of [
+  ["/prompt", { message: "do not silently lose this draft" }],
+  ["/rpc", { type: "compact" }],
+  ["/rpc", { type: "get_available_models" }],
+  ["/ui-response", { id: "lost-dialog", confirmed: true }],
+  ["/abort", {}],
+]) {
+  const response = await fetch(base + path, {
+    method: "POST", headers: { cookie, "content-type": "application/json", "x-coop-csrf": "1" },
+    body: JSON.stringify({ sid: sid1, ...payload }), signal: AbortSignal.timeout(1500),
+  });
+  const result = await response.json();
+  t(`${path} ${payload.type || ""} rejects an exited chat promptly`, response.status === 503 && result.code === "chat-unavailable");
 }
 
 // Wait for the bridge to actually exit (release its port) before we exit, so a

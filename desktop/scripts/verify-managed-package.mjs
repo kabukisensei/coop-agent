@@ -4,6 +4,9 @@ import { dirname, isAbsolute, join, resolve, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspectManagedRuntime } from "../src/managed-runtime.mjs";
 
+import { ensureMcpIsolationCompatibility } from "../../lib/mcp-isolation-compat.mjs";
+import { ensureUsageCompatibility } from "../../lib/openai-usage-compat.mjs";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DESKTOP = resolve(HERE, "..");
 const OFF = "0".charCodeAt(0);
@@ -43,10 +46,19 @@ export function packagedPaths(root, platform = process.platform, arch = process.
 }
 
 export async function verifyManagedPackage({ root, platform = process.platform, arch = process.arch } = {}) {
+  return verifyManagedContents(packagedPaths(resolve(root), platform, arch), { platform, arch });
+}
+
+export async function verifyManagedInstallation({ directory, platform = process.platform, arch = process.arch } = {}) {
+  if (platform !== "win32" || arch !== "x64") fail("Installed-package verification requires Windows x64.");
+  const installed = resolve(directory);
+  return verifyManagedContents({ fuseTarget: join(installed, "Coop Desktop.exe"), resources: join(installed, "resources") }, { platform, arch });
+}
+
+async function verifyManagedContents(paths, { platform, arch }) {
   // Build dependencies are needed only when inspecting an actual package.
   const { FuseV1Options, getCurrentFuseWire } = await import("@electron/fuses");
   const EXPECTED = expectedFuses(FuseV1Options);
-  const paths = packagedPaths(resolve(root), platform, arch);
   for (const [label, path] of [["Electron target", paths.fuseTarget], ["resources directory", paths.resources]]) {
     if (!existsSync(path)) fail(`Packaged Desktop ${label} is missing.`);
   }
@@ -73,12 +85,17 @@ export async function verifyManagedPackage({ root, platform = process.platform, 
   }
   const managedRoot = join(paths.resources, "managed-runtime");
   const managed = inspectManagedRuntime(managedRoot, { platform, arch });
+  const usageCorrection = ensureUsageCompatibility(join(managedRoot, "npm/node_modules/pi-better-openai"), { check: true });
+  const corrections = JSON.parse(readFileSync(join(managedRoot, "coop-compatibility.json"), "utf8"));
+  if (JSON.stringify(corrections) !== JSON.stringify([usageCorrection, ensureMcpIsolationCompatibility(join(managedRoot, "npm/node_modules/pi-mcp-adapter"), { check: true })])) fail("Packaged compatibility receipt does not match the installed correction.");
   return Object.freeze({
+    compatibilityPatches: corrections,
     ok: true,
     target: `${platform}-${arch}`,
     appAsar: asar,
     managedRuntime: managedRoot,
     versions: managed.versions,
+    developmentSources: managed.dependencyInventory.python.tools.flatMap(tool => tool.developmentSource ? [tool.developmentSource] : []),
     fuses: Object.freeze(Object.fromEntries([...EXPECTED].map(([option, state]) => [FuseV1Options[option], state === ON ? "enabled" : "disabled"]))),
   });
 }

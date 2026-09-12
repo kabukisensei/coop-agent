@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url";
 import { managedRuntimeBuildPlan } from "./managed-runtime-build-plan.mjs";
 import { buildDependencyInventory, dependencyInventoryDigest, serializeDependencyInventory } from "../desktop/src/dependency-inventory.mjs";
 
+import { ensureMcpIsolationCompatibility } from "../lib/mcp-isolation-compat.mjs";
+import { ensureUsageCompatibility } from "../lib/openai-usage-compat.mjs";
+
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const COOP_FILES = ["bin", "config", "docs", "extensions", "lib", "prompts", "scripts", "skills", "themes", "vibes", "web", "LICENSE", "VERSION"];
 
@@ -225,12 +228,14 @@ function writeLaunchers(root, platform, executableDirs) {
   if (platform === "darwin") {
     const path = join(bin, "coop-desktop");
     const dirs = executableDirs.map((item) => `\"$runtime_root/${item}\"`).join(":");
-    writeFileSync(path, `#!/usr/bin/env bash\nset -euo pipefail\nif [ -z \"${"${COOP_DESKTOP_AGENT_DIR:-}"}\" ]; then echo \"Coop Desktop managed launcher requires an isolated agent directory.\" >&2; exit 64; fi\nruntime_root=\"$(cd -P \"$(dirname \"${"${BASH_SOURCE[0]}"}\")/..\" && pwd)\"\nexport COOP_AGENT_DIR=\"$COOP_DESKTOP_AGENT_DIR\" PI_CODING_AGENT_DIR=\"$COOP_DESKTOP_AGENT_DIR\"\nexport PYTHONDONTWRITEBYTECODE=1\nexport COOP_DESKTOP_MANAGED_RUNTIME=1 COOP_MANAGED_EXTENSIONS_ROOT=\"$runtime_root/npm/node_modules\"\nexport PATH=${dirs}:\"$PATH\"\nexec \"$runtime_root/coop/bin/coop\" \"$@\"\n`, { mode: 0o755 });
+    writeFileSync(path, `#!/usr/bin/env bash\nset -euo pipefail\nif [ "${"${COOP_RUNTIME_STARTUP_TRACE:-}"}" = "1" ]; then printf '[coop-startup] bootstrap-enter\\n' >&2; fi\nif [ -z \"${"${COOP_DESKTOP_AGENT_DIR:-}"}\" ]; then echo \"Coop Desktop managed launcher requires an isolated agent directory.\" >&2; exit 64; fi\nruntime_root=\"$(cd -P \"$(dirname \"${"${BASH_SOURCE[0]}"}\")/..\" && pwd)\"\nif [ "${"${COOP_RUNTIME_STARTUP_TRACE:-}"}" = "1" ]; then printf '[coop-startup] bootstrap-root-ready\\n' >&2; fi\nexport COOP_AGENT_DIR=\"$COOP_DESKTOP_AGENT_DIR\" PI_CODING_AGENT_DIR=\"$COOP_DESKTOP_AGENT_DIR\"\nexport PYTHONDONTWRITEBYTECODE=1\nexport COOP_DESKTOP_MANAGED_RUNTIME=1 COOP_MANAGED_EXTENSIONS_ROOT=\"$runtime_root/npm/node_modules\"\nexport PATH=${dirs}:\"$PATH\"\nif [ "${"${COOP_RUNTIME_STARTUP_TRACE:-}"}" = "1" ]; then printf '[coop-startup] bootstrap-dispatch\\n' >&2; fi\n\"$runtime_root/node/bin/node\" \"$runtime_root/coop/lib/managed-mcp-config.mjs\" \"$runtime_root\" \"$COOP_DESKTOP_AGENT_DIR\"\nexec \"$runtime_root/coop/bin/coop\" \"$@\"\n`, { mode: 0o755 });
+
     return "bin/coop-desktop";
   }
   const ps1 = join(bin, "coop-desktop.ps1");
   const pathParts = executableDirs.map((item) => `$runtimeRoot\\${item.replaceAll("/", "\\")}`).join(";");
-  writeFileSync(ps1, `\uFEFF$ErrorActionPreference = 'Stop'\nif (-not $env:COOP_DESKTOP_AGENT_DIR) { Write-Error 'Coop Desktop managed launcher requires an isolated agent directory.'; exit 64 }\n$runtimeRoot = Split-Path -Parent $PSScriptRoot\n$env:COOP_AGENT_DIR = $env:COOP_DESKTOP_AGENT_DIR\n$env:PI_CODING_AGENT_DIR = $env:COOP_DESKTOP_AGENT_DIR\n$env:PYTHONDONTWRITEBYTECODE = '1'\n$env:COOP_DESKTOP_MANAGED_RUNTIME = '1'\n$env:COOP_MANAGED_EXTENSIONS_ROOT = "$runtimeRoot\\npm\\node_modules"\n$env:Path = \"${pathParts};$env:Path\"\n& \"$runtimeRoot\\coop\\bin\\coop.ps1\" @args\nexit $LASTEXITCODE\n`);
+  writeFileSync(ps1, `\uFEFF$ErrorActionPreference = 'Stop'\nif ($env:COOP_RUNTIME_STARTUP_TRACE -eq '1') { [Console]::Error.WriteLine('[coop-startup] bootstrap-enter') }\nif (-not $env:COOP_DESKTOP_AGENT_DIR) { Write-Error 'Coop Desktop managed launcher requires an isolated agent directory.'; exit 64 }\n$runtimeRoot = Split-Path -Parent $PSScriptRoot\nif ($env:COOP_RUNTIME_STARTUP_TRACE -eq '1') { [Console]::Error.WriteLine('[coop-startup] bootstrap-root-ready') }\n$env:COOP_AGENT_DIR = $env:COOP_DESKTOP_AGENT_DIR\n$env:PI_CODING_AGENT_DIR = $env:COOP_DESKTOP_AGENT_DIR\n$env:PYTHONDONTWRITEBYTECODE = '1'\n$env:COOP_DESKTOP_MANAGED_RUNTIME = '1'\n$env:COOP_MANAGED_EXTENSIONS_ROOT = "$runtimeRoot\\npm\\node_modules"\n$env:Path = \"${pathParts};$env:Path\"\nif ($env:COOP_RUNTIME_STARTUP_TRACE -eq '1') { [Console]::Error.WriteLine('[coop-startup] bootstrap-dispatch') }\n& \"$runtimeRoot\\node\\node.exe\" \"$runtimeRoot\\coop\\lib\\managed-mcp-config.mjs\" $runtimeRoot $env:COOP_DESKTOP_AGENT_DIR\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n& \"$runtimeRoot\\coop\\bin\\coop.ps1\" @args\nexit $LASTEXITCODE\n`);
+
   writeFileSync(join(bin, "coop-desktop.cmd"), "@echo off\r\npowershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"%~dp0coop-desktop.ps1\" %*\r\n");
   return "bin/coop-desktop.ps1";
 }
@@ -293,7 +298,13 @@ function stage() {
       else cpSync(source, destination, { preserveTimestamps: true });
     }
     copyTree(args.nodeRoot, join(staging, "node"));
+    // Share the shell's immutable bundle inspection with managed Doctor.
+    const inspectionRoot = join(staging, "lib/desktop-inspection");
+    mkdirSync(inspectionRoot, { recursive: true });
+    for (const name of ["managed-runtime.mjs", "coop-launcher.mjs", "dependency-inventory.mjs", "development-wheels.mjs"]) cpSync(join(REPO, "desktop/src", name), join(inspectionRoot, name));
     copyTree(args.npmPrefix, join(staging, "npm"));
+    const usageCorrection = ensureUsageCompatibility(join(staging, "npm/node_modules/pi-better-openai"));
+    writeFileSync(join(staging, "coop-compatibility.json"), JSON.stringify([usageCorrection, ensureMcpIsolationCompatibility(join(staging, "npm/node_modules/pi-mcp-adapter"))], null, 2) + "\n");
     copyTree(args.pythonRoot, join(staging, "python", "runtime"));
     const stagedTools = args.pythonTools.map((tool) => {
       const destination = `python/tools/${tool.name}/site-packages`;

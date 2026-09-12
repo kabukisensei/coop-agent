@@ -26,7 +26,7 @@ out({ type: "extension_ui_request", id: "stub-mystery-1", method: "holo_display"
 
 let buf = "";
 let currentLeaf = "a1";
-let currentSessionFile = process.env.COOP_STUB_SESSION_FILE || "stub.jsonl";
+let currentSessionFile = process.argv.includes("--session") ? process.argv[process.argv.indexOf("--session") + 1] : process.env.COOP_STUB_SESSION_FILE || "stub.jsonl";
 process.stdin.on("data", (chunk) => {
   buf += chunk.toString("utf8");
   let nl;
@@ -44,7 +44,12 @@ process.stdin.on("data", (chunk) => {
       continue;
     }
     // Simulate a pi crash — the bridge must CONTAIN it to this chat (M5), not exit.
-    if (cmd.type === "prompt" && cmd.message === "__crash__") process.exit(3);
+    if (cmd.type === "prompt" && cmd.message === "__crash__") {
+      const delay = Math.max(0, Math.min(5000, Number(process.env.COOP_STUB_CRASH_DELAY_MS) || 0));
+      if (!delay) process.exit(3);
+      setTimeout(() => process.exit(3), delay);
+      continue;
+    }
     if (cmd.type === "prompt" && cmd.message === "__domain_tool__") {
       out({ id: cmd.id, type: "response", command: "prompt", success: true });
       out({ type: "tool_execution_start", toolCallId: "domain-sql-1", toolName: "sql_review", args: { paths: ["sample.sql"] } });
@@ -233,9 +238,14 @@ process.stdin.on("data", (chunk) => {
       out({ id: cmd.id, type: "response", command: "get_messages", success: true,
         data: { messages: [
           { role: "user", content: [{ type: "text", text: "old question" }] },
-          { role: "assistant", content: [{ type: "text", text: "old answer" }, { type: "toolCall", id: "t1", name: "sql_review", arguments: {} }] },
+          { role: "assistant", content: [{ type: "thinking", thinking: "old reasoning" }, { type: "text", text: "old answer" }, { type: "toolCall", id: "t1", name: "sql_review", arguments: { path: "query.sql" } }] },
+          { role: "toolResult", toolCallId: "t1", content: [{ type: "text", text: "Command aborted" }], isError: true },
         ] } });
     } else if (cmd.type === "compact") {
+      if (cmd.customInstructions === "__hold_until_exit__") {
+        out({ type: "compaction_start", reason: "fixture-hold-until-exit" });
+        continue;
+      }
       const reply = { id: cmd.id, type: "response", command: "compact", success: true,
         data: { summary: "stub summary", tokensBefore: 50000, estimatedTokensAfter: 8000 } };
       // COOP_STUB_COMPACT_DELAY_MS lets a test make compact slow (an LLM round-trip), to
@@ -267,7 +277,15 @@ process.stdin.on("data", (chunk) => {
         data: { messages: [{ entryId: "u1", text: "old question" }] } });
     } else if (cmd.type === "get_entries") {
       out({ id: cmd.id, type: "response", command: "get_entries", success: true,
-        data: { entries: [{ type: "message", id: "u1", parentId: null }], leafId: "a1" } });
+        data: (() => {
+          if (cmd.since !== undefined && process.argv.includes("--session")) {
+            try {
+              const entries = readFileSync(currentSessionFile, "utf8").trim().split("\n").map(JSON.parse).filter(e => e.type !== "session" && e.id);
+              return { entries: [], leafId: entries.some(e => e.id === "a2") ? "a2" : entries.at(-1)?.id ?? null };
+            } catch { return { entries: [], leafId: "missing" }; }
+          }
+          return { entries: [{ type: "message", id: "u1", parentId: null }], leafId: "a1" };
+        })() });
     } else if (cmd.type === "get_tree") {
       out({ id: cmd.id, type: "response", command: "get_tree", success: true,
         data: { tree: [{ entry: { type: "message", id: "u1", parentId: null }, children: [] }], leafId: currentLeaf } });

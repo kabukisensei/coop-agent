@@ -30,7 +30,8 @@
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { timingSafeEqual } from "node:crypto";
+import { execCoopTool, resolveManagedToolInvocation } from "../../lib/managed-tool-invocation.mjs";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -681,7 +682,7 @@ async function runBuild(pi: ExtensionAPI, ctx: any, outputDir?: string): Promise
   notify(ctx, "Building data docs… (this can take a moment on a large estate)", "info");
   let res: { stdout: string; stderr: string; code: number };
   try {
-    res = await pi.exec("coop-data-doc", ["build"], { cwd: ctx.cwd, signal: ctx.signal });
+    res = await execCoopTool(pi, "coop-data-doc", ["build"], { cwd: ctx.cwd, signal: ctx.signal });
   } catch (e: any) {
     notify(ctx, `Couldn't run coop-data-doc: ${errMsg(e)}. Is it installed? (coop install)`, "error");
     return false;
@@ -835,7 +836,7 @@ let jsonlSupported: boolean | null = null;
 async function supportsJsonlTransport(pi: ExtensionAPI, ctx: any): Promise<boolean> {
   if (jsonlSupported !== null) return jsonlSupported;
   try {
-    const res = await pi.exec("coop-data-doc", ["setup", "--help"], { cwd: ctx.cwd, signal: ctx.signal });
+    const res = await execCoopTool(pi, "coop-data-doc", ["setup", "--help"], { cwd: ctx.cwd, signal: ctx.signal });
     jsonlSupported = /--transport/.test(`${res.stdout}\n${res.stderr}`);
   } catch {
     jsonlSupported = false;
@@ -914,15 +915,20 @@ export function resolveDataDocExecutable(platform = process.platform, env: NodeJ
   throw new Error("coop-data-doc.exe was not found on PATH. Run `coop install`.");
 }
 
+export function resolveDataDocInvocation(platform = process.platform, env: NodeJS.ProcessEnv = process.env) {
+  return resolveManagedToolInvocation("coop-data-doc", [], env, platform) || { command: resolveDataDocExecutable(platform, env), args: [] };
+}
+
 /** Drive the authoritative JSONL wizard. Terminal event and exit code must agree. */
 export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPrefill = {}): Promise<boolean> {
-  let executable: string;
-  try { executable = resolveDataDocExecutable(); }
+  let invocation: { command: string; args: string[] };
+  try { invocation = resolveDataDocInvocation(); }
   catch (e: any) { notify(ctx, errMsg(e), "error"); return false; }
-  const child = spawn(executable, ["setup", "--transport", "jsonl"], {
+  const child = spawn(invocation.command, [...invocation.args, "setup", "--transport", "jsonl"], {
     cwd: ctx.cwd,
     stdio: ["pipe", "pipe", "pipe"],
     shell: false,
+    windowsHide: true,
     env: {
       ...process.env,
       PYTHONIOENCODING: "utf-8",
@@ -1843,6 +1849,22 @@ export function shouldPrimeModelLogin(ctx: Pick<ExtensionContext, "hasUI" | "mod
   return ctx.hasUI && ctx.mode === "tui" && /^(1|true|yes|on)$/i.test(process.env.COOP_PRIME_MODEL_LOGIN || "");
 }
 
+/** Observe only a complete Codex OAuth record. Keep its contents private and
+ * distinguish a new login from credentials that predate this handoff. */
+export function modelLoginCredentialFingerprint(): string | null {
+  try {
+    const path = modelLoginAuthPath();
+    const metadata = statSync(path);
+    if (!metadata.isFile() || metadata.size > 1024 * 1024) return null;
+    const bytes = readFileSync(path, "utf8");
+    if (Buffer.byteLength(bytes) > 1024 * 1024) return null;
+    const record = JSON.parse(bytes)?.["openai-codex"];
+    if (record?.type !== "oauth" || typeof record.access !== "string" || !record.access.trim() ||
+        typeof record.refresh !== "string" || !record.refresh.trim() || !Number.isFinite(record.expires) || record.expires <= Date.now()) return null;
+    return createHash("sha256").update(JSON.stringify(record)).digest("hex");
+  } catch { return null; }
+}
+
 /**
  * Put Pi's real built-in login command in the editor. Pi does not execute slash
  * commands supplied as CLI arguments; those become model prompts instead. During
@@ -1856,11 +1878,12 @@ function primeModelLogin(ctx: ExtensionContext): boolean {
   delete process.env.COOP_PRIME_MODEL_LOGIN;
 
   if (/^(1|true|yes|on)$/i.test(process.env.COOP_LOGIN_ONLY || "")) {
-    const authPath = modelLoginAuthPath();
+    const initialCredential = modelLoginCredentialFingerprint();
     let credentialSeenAt = 0;
     const timer = setInterval(() => {
       try {
-        if (!existsSync(authPath) || statSync(authPath).size === 0) return;
+        const credential = modelLoginCredentialFingerprint();
+        if (!credential || credential === initialCredential) { credentialSeenAt = 0; return; }
         if (!credentialSeenAt) credentialSeenAt = Date.now();
         // Fresh login selects OpenAI's default model after credentials are saved.
         // Prefer that positive readiness signal; the timeout covers a preselected
@@ -2086,7 +2109,7 @@ export default function coopTools(pi: ExtensionAPI) {
 
     let res;
     try {
-      res = await pi.exec(bin, args, { cwd: ctx.cwd, signal });
+      res = await execCoopTool(pi, bin, args, { cwd: ctx.cwd, signal });
     } catch (e: any) {
       return {
         content: [{ type: "text" as const, text: `${bin} could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -2272,7 +2295,7 @@ export default function coopTools(pi: ExtensionAPI) {
         args.push("--", p.object.trim());
         let res;
         try {
-          res = await pi.exec("coop-data-doc", args, { cwd: ctx.cwd, signal });
+          res = await execCoopTool(pi, "coop-data-doc", args, { cwd: ctx.cwd, signal });
         } catch (e: any) {
           return {
             content: [{ type: "text" as const, text: `coop-data-doc could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -2303,7 +2326,7 @@ export default function coopTools(pi: ExtensionAPI) {
       // --- scan / build / check ---
       let res;
       try {
-        res = await pi.exec("coop-data-doc", [command], { cwd: ctx.cwd, signal });
+        res = await execCoopTool(pi, "coop-data-doc", [command], { cwd: ctx.cwd, signal });
       } catch (e: any) {
         return {
           content: [{ type: "text" as const, text: `coop-data-doc could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -2519,6 +2542,13 @@ export default function coopTools(pi: ExtensionAPI) {
       } catch (e: any) {
         notify(ctx, `Couldn't open the menu: ${errMsg(e)}. Just type what you'd like to do.`, "error");
       }
+    },
+  });
+
+  pi.registerCommand("coop-refresh-models", {
+    description: "Refresh model availability after provider sign-in",
+    handler: async (_args, ctx) => {
+      await ctx.modelRegistry.refresh({ allowNetwork: false });
     },
   });
 

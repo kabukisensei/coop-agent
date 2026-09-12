@@ -1,5 +1,6 @@
 import { createMacRecoveryJob } from "./update-recovery-job.mjs";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
+import { createHealthProfile } from "./update-health-profile.mjs";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { prepareMacUpdate, runUpdateCommand, verifyMacUpdateApplication } from "./update-installer.mjs";
@@ -34,22 +35,26 @@ export async function waitForStoppedProcesses(pids, { signal, timeoutMs = 60000,
   signal?.throwIfAborted();
 }
 
-async function runtimeHealth(appPath, request, descriptor, signal) {
-  const profile = await mkdtemp(join(request.versionRoot, ".health-"));
-  const runtime = await startCoopRuntime({ workspace: request.workspace,
+export async function runtimeHealth(appPath, request, descriptor, signal, { start = startCoopRuntime, fetchImpl = fetch } = {}) {
+  const profile = await createHealthProfile(request.versionRoot, "runtime");
+  const runtime = await start({ workspace: request.workspace,
     coopCommand: join(appPath, "Contents", "Resources", "managed-runtime", "bin", "coop-desktop"),
-    env: { HOME: process.env.HOME, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", COOP_DESKTOP_AGENT_DIR: profile, COOP_SKIP_AZ: "1", COOP_NO_ONBOARD: "1" },
+    env: { HOME: process.env.HOME, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", COOP_DESKTOP_AGENT_DIR: profile.path, COOP_SKIP_AZ: "1", COOP_NO_ONBOARD: "1" },
     readyTimeoutMs: 60000 });
+  let healthy = false;
   try {
     signal.throwIfAborted();
     const origin = runtime.ready.endpoint;
-    const landing = await fetch(`${origin}/?token=${runtime.ready.oneTimeToken}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) });
+    const landing = await fetchImpl(`${origin}/?token=${runtime.ready.oneTimeToken}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) });
     const cookie = landing.headers.get("set-cookie")?.split(";")[0];
     if (!landing.ok || !cookie) return false;
-    const response = await fetch(`${origin}/capabilities`, { headers: { cookie }, signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) });
+    const response = await fetchImpl(`${origin}/capabilities`, { headers: { cookie }, signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) });
     const capabilities = await response.json();
-    return response.ok && capabilities.contractVersion === descriptor.protocolVersion && capabilities.versions?.coop === descriptor.coopVersion;
-  } finally { await runtime.stop({ graceMs: 5000 }); }
+    return healthy = response.ok && capabilities.contractVersion === descriptor.protocolVersion && capabilities.versions?.coop === descriptor.coopVersion;
+  } finally {
+    await runtime.stop({ graceMs: 5000 });
+    if (healthy) await profile.discard();
+  }
 }
 
 async function applicationHealth(appPath, request, descriptor, signal) {

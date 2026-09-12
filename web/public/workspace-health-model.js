@@ -18,7 +18,7 @@
     return selected;
   }
 
-  function build({ doctor, auth, setup, profile }) {
+  function build({ doctor, auth, setup, profile, failures = {} }) {
     const doctorItems = Array.isArray(doctor?.checks) ? doctor.checks.map((check) => ({
       id: check.id,
       title: check.summary,
@@ -52,11 +52,16 @@
       detail: profile?.profile?.name
         ? `${profile.profile.name} · ${profile.profile.communication?.preset || "balanced"}`
         : "Add your name and preferred communication style.",
-      state: profile?.state === "configured" ? "configured" : "not-configured",
-      action: { kind: "profile" },
+      state: failures.profile ? "error" : profile?.state === "configured" ? "configured" : "not-configured",
+      action: failures.profile ? null : { kind: "profile" },
       profile: profile?.profile || null,
       questionnaire: profile?.questionnaire || null,
     };
+    const failedItem = (id, title) => ({ id: `${id}-unavailable`, title, detail: failures[id], state: "error", action: null });
+    if (failures.doctor) doctorItems.push(failedItem("doctor", "Coop Doctor"));
+    if (failures.auth) authItems.push(failedItem("auth", "Identity and access"));
+    if (failures.setup) setupItems.push(failedItem("setup", "Project setup"));
+    if (failures.profile) profileItem.detail = failures.profile;
     const workspaceItems = [profileItem, ...setupItems];
     const items = [...doctorItems, ...authItems, ...workspaceItems];
     return {
