@@ -134,6 +134,7 @@ if os.name == "nt":
         _KERNEL32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
         _KERNEL32.OpenThread.restype = wintypes.HANDLE
         _KERNEL32.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        _KERNEL32.ResumeThread.restype = wintypes.DWORD
         _KERNEL32.ResumeThread.argtypes = [wintypes.HANDLE]
 
         _INVALID_HANDLE = ctypes.c_void_p(-1).value
@@ -309,6 +310,30 @@ def _win_terminate_pid(pid):
         _KERNEL32.CloseHandle(handle)
 
 
+def _win_resume_verdict(prev):
+    """Classify a ResumeThread previous-suspend-count return value.
+
+    ResumeThread returns the thread's PREVIOUS suspend count (DWORD), not a
+    boolean success flag:
+      0xFFFFFFFF  failure sentinel — the caller must read GetLastError
+      1           expected result for a CREATE_SUSPENDED child's first resume
+      0           thread was not suspended (already running)
+      >1          thread remains suspended (nested suspends)
+    Returns (ok, code): (True, None) on the expected single resume, else
+    (False, ("resume", detail)) where detail names the observed state
+    ("failure_sentinel" — read GetLastError, "already_running", or
+    "still_suspended:<prev>"). Pure and deterministic; unit-testable off
+    Windows. Never raises.
+    """
+    if prev == 0xFFFFFFFF:
+        return False, ("resume", "failure_sentinel")
+    if prev == 1:
+        return True, None
+    if prev == 0:
+        return False, ("resume", "already_running")
+    return False, ("resume", "still_suspended:%d" % prev)
+
+
 def _win_resume_pid(pid):
     """Resume a CREATE_SUSPENDED child by resuming its primary thread.
 
@@ -329,9 +354,13 @@ def _win_resume_pid(pid):
                     thread = _KERNEL32.OpenThread(_THREAD_SUSPEND_RESUME, False, entry.th32ThreadID)
                     if thread and thread != _INVALID_HANDLE:
                         try:
-                            if not _KERNEL32.ResumeThread(thread):
+                            prev = _KERNEL32.ResumeThread(thread)
+                            ok, verdict = _win_resume_verdict(prev)
+                            if ok:
+                                return True, None
+                            if verdict and verdict[1] == "failure_sentinel":
                                 return False, ("resume", _win_last_error())
-                            return True, None
+                            return False, verdict
                         finally:
                             _KERNEL32.CloseHandle(thread)
                     return False, ("open_thread", _win_last_error())

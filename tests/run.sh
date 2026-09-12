@@ -120,6 +120,26 @@ case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*) pwsh -NoProfile -File "$ROOT/tests/fixtures/win-ownership-probe.ps1" ;;
   *) echo "  – Windows-only probe; skipped on POSIX (covered by the Windows CI legs)" ;;
 esac
+echo "→ ResumeThread previous-suspend-count contract (Defect A)"
+COOP_KG_PATH="$ROOT/scripts/knowledge-git.py" python3 - <<'PY'
+import importlib.util
+import os
+spec = importlib.util.spec_from_file_location("kg", os.environ["COOP_KG_PATH"])
+kg = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(kg)
+cases = [
+    (0xFFFFFFFF, False, "failure_sentinel"),
+    (1, True, None),
+    (0, False, "already_running"),
+    (2, False, "still_suspended:2"),
+]
+for prev, ok, detail in cases:
+    got_ok, got_code = kg._win_resume_verdict(prev)
+    assert got_ok is ok, (prev, got_ok, ok)
+    got_detail = got_code[1] if got_code else None
+    assert got_detail == detail, (prev, got_detail, detail)
+print("  OK  resume verdict: failure sentinel / expected prev=1 / already-running / still-suspended")
+PY
 echo "→ team knowledge skills launch slot tests"
 bash "$ROOT/tests/team-skills.test.sh"
 echo "→ truthful inventory (doctor pipx probes / sync postconditions)"

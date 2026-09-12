@@ -190,6 +190,42 @@ try {
   }
 
 
+  # --- 1g. ResumeThread previous-suspend-count contract (Defect A) ----------
+  # Deterministic unit test of the pure verdict classifier: failure sentinel,
+  # expected prev=1 for a CREATE_SUSPENDED first resume, already-running (0),
+  # and still-suspended (>1). Fail-safe cleanup paths are unchanged.
+  Head 'resume thread suspend-count contract'
+  $resumePy = @'
+import importlib.util
+spec = importlib.util.spec_from_file_location("kg", r"ROOT/scripts/knowledge-git.py")
+kg = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(kg)
+cases = [
+    (0xFFFFFFFF, False, "failure_sentinel"),
+    (1, True, None),
+    (0, False, "already_running"),
+    (2, False, "still_suspended:2"),
+]
+for prev, ok, detail in cases:
+    got_ok, got_code = kg._win_resume_verdict(prev)
+    assert got_ok is ok, (prev, got_ok, ok)
+    got_detail = got_code[1] if got_code else None
+    assert got_detail == detail, (prev, got_detail, detail)
+print("resume verdict contract OK")
+'@
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $resumeOut = @($resumePy.Replace('ROOT', ($root -replace '\\', '/')) | python -)
+  $resumeRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  $resumeOut | ForEach-Object { Write-Host $_ }
+  if (($resumeRc -eq 0) -and ($resumeOut -join ' ' -like '*resume verdict contract OK*')) {
+    Ok 'resume verdict: failure sentinel / expected prev=1 / already-running / still-suspended'
+  } else {
+    Ko "resume verdict contract failed: $($resumeOut | Out-String)"
+  }
+
+
   # --- 2. --no-launch is a dry-run: exits 0, prints the spec -----------------
   Head '--no-launch dry-run (must NOT start pi; prints the spec)'
   $nlOut = (& $coop --no-launch 2>&1 | Out-String) -replace '\\', '/'
