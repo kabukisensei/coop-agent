@@ -253,6 +253,24 @@ jobs:
             desktop/dist-installers/*.exe
             desktop/dist-installers/build-identity.json
             desktop/dist-installers/verification-summary.json
+      - name: PROBE 5 capture full verify stderr (diagnostic only)
+        if: runner.os == 'Windows' && always()
+        shell: bash
+        run: |
+          set +e
+          node scripts/verify-managed-runtime.mjs --bundle "$RUNTIME_DIR" --workspace "${{ github.workspace }}" --agent "$AGENT_DIR" > "$RUNTIME_DIR/../probe5-full-stdout.txt" 2> "$RUNTIME_DIR/../probe5-full-stderr.txt"
+          echo "PROBE5_EXIT=$?"
+          echo "----- STDERR TAIL (full file uploaded as artifact) -----"
+          tail -n 60 "$RUNTIME_DIR/../probe5-full-stderr.txt"
+      - name: Upload probe 5 full output (diagnostic only)
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe5-full-output
+          retention-days: 7
+          path: |
+            D:/a/_temp/probe5-full-stderr.txt
+            D:/a/_temp/probe5-full-stdout.txt
       - name: Preserve build and runtime evidence
         if: always()
         uses: actions/upload-artifact@v7
