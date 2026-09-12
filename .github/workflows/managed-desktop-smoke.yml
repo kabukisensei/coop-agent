@@ -258,10 +258,10 @@ jobs:
         shell: bash
         run: |
           set +e
-          node scripts/verify-managed-runtime.mjs --bundle "$RUNTIME_DIR" --workspace "${{ github.workspace }}" --agent "$AGENT_DIR" > "$RUNTIME_DIR/../probe5-full-stdout.txt" 2> "$RUNTIME_DIR/../probe5-full-stderr.txt"
+          node scripts/verify-managed-runtime.mjs --bundle "${{ runner.temp }}/managed-runtime" --workspace "${{ github.workspace }}" --agent "${{ runner.temp }}/coop-managed-agent" > "${{ runner.temp }}/probe5-full-stdout.txt" 2> "${{ runner.temp }}/probe5-full-stderr.txt"
           echo "PROBE5_EXIT=$?"
           echo "----- STDERR TAIL (full file uploaded as artifact) -----"
-          tail -n 60 "$RUNTIME_DIR/../probe5-full-stderr.txt"
+          tail -n 80 "${{ runner.temp }}/probe5-full-stderr.txt"
       - name: Upload probe 5 full output (diagnostic only)
         if: runner.os == 'Windows' && always()
         uses: actions/upload-artifact@v4
