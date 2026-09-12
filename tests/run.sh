@@ -165,5 +165,6 @@ node "$ROOT/tests/protocol.test.mjs"
 
 echo "→ diff model (unified + side-by-side parsing) tests"
 node "$ROOT/tests/diffmodel.test.mjs"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/support-command.test.mjs"
 
 echo "✓ all tests passed"
