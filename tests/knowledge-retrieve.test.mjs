@@ -128,4 +128,35 @@ await t("malformed inputs → diagnostics, no crash", async () => {
   assert.deepEqual(empty.errors, []);
 });
 
+await t("malformed embeddings never claim semantic success (F1)", async () => {
+  const base = { query: "guardrails", sources, authorize: teamSession, readProvider: provider };
+  for (const [label, out] of [
+    ["non-numeric", [["oops"], ["oops"]]],
+    ["ragged", [[1, 0], [1]]],
+    ["NaN", [[NaN], [1]]],
+    ["Infinity", [[Infinity], [1]]],
+    ["sparse-crash", Array(2)],
+  ]) {
+    const r = await retrieveKnowledge({ ...base, embedder: { embed: async () => out } });
+    assert.equal(r.mode, "lexical-only", `${label}: must not claim semantic`);
+    assert.equal(r.degraded, true, `${label}: must be degraded`);
+    assert.ok(r.warnings.some((w) => w.startsWith("embedder-malformed-output")), `${label}: malformed warning`);
+  }
+});
+
+await t("malformed args container and limit return diagnostics, never crash (F2)", async () => {
+  for (const bad of [undefined, null, 42, "nope"]) {
+    const r = await retrieveKnowledge(bad);
+    assert.ok(r.errors.some((e) => e.startsWith("invalid-args")), `args=${String(bad)}`);
+  }
+  for (const bad of ["oops", 1.5, -1]) {
+    const r = await retrieveKnowledge({ query: "guardrails", sources, authorize: teamSession, readProvider: provider, limit: bad });
+    assert.ok(r.errors.some((e) => e.startsWith("invalid-limit")), `limit=${String(bad)}`);
+    assert.equal(r.results.length, 0);
+  }
+  const limited = await retrieveKnowledge({ query: "guardrails", sources, authorize: teamSession, readProvider: provider, limit: 1 });
+  assert.equal(limited.results.length, 1);
+  assert.equal(limited.errors.length, 0);
+});
+
 console.log(`  ${n} knowledge-retrieve tests passed`);
