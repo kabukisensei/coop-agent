@@ -147,19 +147,27 @@ exit /b 0
       Stop-Job $diagJob -ErrorAction SilentlyContinue
     } else {
       $jobErrors = @()
-      $jobResult = @(Receive-Job $diagJob -ErrorVariable jobErrors -ErrorAction SilentlyContinue | Select-Object -Last 1)
+      $jobResults = @(Receive-Job $diagJob -ErrorVariable jobErrors -ErrorAction SilentlyContinue)
+      $jobEvidence.Add("child.result_count=$($jobResults.Count)")
+      $r = if ($jobResults.Count -gt 0) { $jobResults | Select-Object -Last 1 } else { $null }
       $reason = $diagJob.ChildJobs[0].JobStateInfo.Reason
-      $jobEvidence.Add("job.reason=$(if ($reason) { $reason.Exception.Message } else { '<none>' })")
+      $reasonMessage = if (-not $reason) {
+        '<none>'
+      } elseif ($reason.PSObject.Properties.Name -contains 'Message') {
+        [string]$reason.Message
+      } elseif (($reason.PSObject.Properties.Name -contains 'Exception') -and $reason.Exception) {
+        [string]$reason.Exception.Message
+      } else {
+        [string]$reason
+      }
+      $jobEvidence.Add("job.reason=$reasonMessage")
       $jobEvidence.Add("job.error=$(if ($jobErrors) { ($jobErrors | ForEach-Object { $_.Exception.Message }) -join ' | ' } else { '<none>' })")
-      if ($jobResult.Count -eq 1) {
-        $r = $jobResult[0]
+      if ($null -ne $r) {
         $jobEvidence.Add("child.system_root=$($r.system_root)")
         $jobEvidence.Add("child.resolved_executable=$($r.resolved_executable)")
         $jobEvidence.Add("child.arguments=$($r.arguments)")
         $jobEvidence.Add("child.exit_status=$($r.exit_status)")
         $jobEvidence.Add("child.output=$($r.output)")
-      } else {
-        $jobEvidence.Add("child.result_count=$($jobResult.Count)")
       }
     }
   } catch {
@@ -172,13 +180,14 @@ exit /b 0
 
   $oldPreference = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
-  # Defect D evidence (bounded native investigation): capture ALL streams —
-  # the bootstrap banner is host/Information output, invisible to 2>&1, which
-  # is why the previous failure message showed an empty $output. Stream-
-  # tagged, sanitized evidence is persisted and echoed on failure so the
-  # exact failing operation, its resolved executable, arguments, and exit
-  # status are identifiable on the Windows CI leg. No stream is suppressed;
-  # no assertion below is altered.
+  # Defect D supplemental stream evidence: capture every REDIRECTABLE pipeline
+  # stream and preserve its record kind. Native run 34705091770 established that
+  # Windows PowerShell 5.1 child Write-Host/host output can bypass *>&1, leaving
+  # this tagged payload empty even while the host visibly prints the installer.
+  # Therefore this block does NOT claim complete host-output capture or identify
+  # the failing operation by itself; the bounded Start-Job probe above supplies
+  # the materialization/executable/argv/status evidence. No stream is globally
+  # suppressed and no assertion below is altered.
   $evidencePath = Join-Path $t 'install-evidence.log'
   $outItems = & $install --force *>&1
   $rc = $LASTEXITCODE
