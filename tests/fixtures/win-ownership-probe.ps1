@@ -299,11 +299,24 @@ try:
 finally:
     # Safe cleanup of everything this section owns. If create/assign/resume fails,
     # terminate the still-suspended owned child rather than letting it execute.
+    # This path is reached via exception, so it must verify and emit its own
+    # cleanup result instead of relying on the staged checks above.
     if child.poll() is None:
         if own.job:
             own.terminate()
         else:
-            kg._win_terminate_pid(child.pid)
+            stop_ok, stop_error = kg._win_terminate_pid(child.pid)
+            print("PROBE| cleanup.suspended_child_terminate_ok=%s error=%s" % (stop_ok, stop_error))
+            if not stop_ok:
+                failed = True
+        if k32 is not None:
+            k32.SetLastError(0)
+            h = k32.OpenProcess(0x1000, False, child.pid)
+            e = ctypes.get_last_error()
+            print("PROBE| cleanup.exists_after_suspended_terminate=%s getlasterror=%d" % (bool(h), e))
+            if h:
+                k32.CloseHandle(h)
+                failed = True
     own.close()
 if failed:
     sys.exit(1)
