@@ -105,7 +105,9 @@ if os.name == "nt":
         import ctypes
         from ctypes import wintypes
 
-        _KERNEL32 = ctypes.windll.kernel32
+        # use_last_error so assignment failures report the real Win32 code
+        # (e.g. ERROR_ACCESS_DENIED when the runner already jobs its steps).
+        _KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
         _KERNEL32.CreateJobObjectW.restype = wintypes.HANDLE
         _KERNEL32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
         _KERNEL32.SetInformationJobObject.argtypes = [
@@ -122,6 +124,10 @@ if os.name == "nt":
         _KERNEL32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
         _KERNEL32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
         _KERNEL32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        _KERNEL32.Process32FirstW.restype = wintypes.BOOL
+        _KERNEL32.Process32FirstW.argtypes = [wintypes.HANDLE, wintypes.LPVOID]
+        _KERNEL32.Process32NextW.restype = wintypes.BOOL
+        _KERNEL32.Process32NextW.argtypes = [wintypes.HANDLE, wintypes.LPVOID]
         _KERNEL32.OpenThread.restype = wintypes.HANDLE
         _KERNEL32.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         _KERNEL32.ResumeThread.argtypes = [wintypes.HANDLE]
@@ -132,7 +138,9 @@ if os.name == "nt":
         _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
         _PROCESS_SET_QUOTA = 0x0100
         _PROCESS_TERMINATE = 0x0001
+        _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         _THREAD_SUSPEND_RESUME = 0x0002
+        _TH32CS_SNAPPROCESS = 0x00000002
         _TH32CS_SNAPTHREAD = 0x00000004
 
         class _IO_COUNTERS(ctypes.Structure):
@@ -183,6 +191,20 @@ if os.name == "nt":
                 ("tpBasePri", wintypes.LONG),
                 ("tpDeltaPri", wintypes.LONG),
                 ("dwFlags", wintypes.DWORD),
+            ]
+
+        class _PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", ctypes.c_wchar * 260),
             ]
     except (ImportError, AttributeError, ValueError):
         _KERNEL32 = None
@@ -257,6 +279,83 @@ def _win_job_close(job):
         pass
 
 
+def _win_last_error():
+    if _KERNEL32 is None:
+        return None
+    return ctypes.get_last_error()
+
+
+def _win_process_parent_map():
+    """{parent_pid: [child_pid, ...]} from a live process snapshot."""
+    if _KERNEL32 is None:
+        return {}
+    snap = _KERNEL32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
+    if not snap or snap == _INVALID_HANDLE:
+        return {}
+    try:
+        parents = {}
+        entry = _PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(_PROCESSENTRY32W)
+        have = _KERNEL32.Process32FirstW(snap, ctypes.byref(entry))
+        while have:
+            parents.setdefault(int(entry.th32ParentProcessID), []).append(
+                int(entry.th32ProcessID)
+            )
+            have = _KERNEL32.Process32NextW(snap, ctypes.byref(entry))
+        return parents
+    except (OSError, ValueError):
+        return {}
+    finally:
+        _KERNEL32.CloseHandle(snap)
+
+
+def _win_descendant_pids(root_pid):
+    """PID closure of root_pid via snapshot parent links.
+
+    The parent link recorded at a process's creation persists after the
+    parent's exit, so orphans spawned parent-exits-first remain reachable.
+    """
+    parents = _win_process_parent_map()
+    seen = set()
+    frontier = [int(root_pid)]
+    while frontier:
+        current = frontier.pop()
+        for child in parents.get(current, ()):
+            child = int(child)
+            if child != int(root_pid) and child not in seen:
+                seen.add(child)
+                frontier.append(child)
+    return sorted(seen)
+
+
+def _win_pids_alive(pids):
+    if _KERNEL32 is None:
+        return []
+    alive = []
+    for pid in pids:
+        handle = _KERNEL32.OpenProcess(
+            _PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid)
+        )
+        if handle and handle != _INVALID_HANDLE:
+            _KERNEL32.CloseHandle(handle)
+            alive.append(int(pid))
+    return alive
+
+
+def _win_kill_pids(pids):
+    if _KERNEL32 is None:
+        return
+    for pid in pids:
+        handle = _KERNEL32.OpenProcess(_PROCESS_TERMINATE, False, int(pid))
+        if handle and handle != _INVALID_HANDLE:
+            try:
+                _KERNEL32.TerminateProcess(handle, 1)
+            except (OSError, ValueError):
+                pass
+            finally:
+                _KERNEL32.CloseHandle(handle)
+
+
 def _win_resume_pid(pid):
     """Resume a CREATE_SUSPENDED child by resuming its primary thread."""
     if _KERNEL32 is None:
@@ -322,7 +421,24 @@ class Ownership:
         if os.name == "nt":
             self.job = _win_job_create()
             if self.job:
-                _win_job_assign(self.job, proc.pid)
+                if _win_job_assign(self.job, proc.pid):
+                    pass  # owned: job emptiness is the completion signal
+                else:
+                    # Honest degradation: an assigned-but-empty job would
+                    # make every emptiness check pass while orphans go
+                    # unowned (observed on CI runners that already job
+                    # their steps — AssignProcessToJobObject then fails
+                    # with ERROR_ACCESS_DENIED). Close the empty job and
+                    # fall back to the PID-tree snapshot, visibly.
+                    err = _win_last_error()
+                    _win_job_close(self.job)
+                    self.job = None
+                    print(
+                        "warning: Windows Job Object assignment failed "
+                        "(error %s) — orphaned-descendant cleanup uses the "
+                        "PID-tree snapshot fallback" % err,
+                        file=sys.stderr,
+                    )
             _win_resume_pid(proc.pid)  # always resume, assigned or not
         else:
             try:
@@ -334,9 +450,19 @@ class Ownership:
         """True when no owned process remains; bounded by `deadline`."""
         if os.name == "nt":
             if self.job is None:
-                # Degraded: without a job we cannot see or reach orphans
-                # whose parent already exited (pre-existing limitation).
-                return True
+                # Degraded: without job membership, reach orphans through
+                # the snapshot's parent links (they survive the parent's
+                # exit). The same deadline bounds the wait — an owned-tree
+                # that never empties is a timeout, exactly as with a job.
+                while time.monotonic() < deadline:
+                    if not _win_pids_alive(
+                        _win_descendant_pids(self.child.pid)
+                    ):
+                        return True
+                    time.sleep(POLL_INTERVAL_SECONDS)
+                return not _win_pids_alive(
+                    _win_descendant_pids(self.child.pid)
+                )
             while time.monotonic() < deadline:
                 active = _win_job_active_processes(self.job)
                 if active == 0:
@@ -363,6 +489,12 @@ class Ownership:
                 )
             except (OSError, subprocess.SubprocessError):
                 pass
+            if self.job is None:
+                # Orphan reach for the degraded path: the direct child may
+                # already have exited (parent-exits-first), leaving the
+                # taskkill tree-walk without a root. The snapshot's parent
+                # links still find its descendants, by PID — never by name.
+                _win_kill_pids(_win_descendant_pids(self.child.pid))
             return
         killed = False
         if self.pgid is not None:
