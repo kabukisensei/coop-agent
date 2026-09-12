@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/execution-envelope.v1.json",
+  "title": "Coop structured execution envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "runId", "capabilityId", "capabilityVersion",
+    "executionStatus", "evidenceStatus", "verdict", "coverage", "results",
+    "diagnostics", "artifacts", "markdownSummary"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "capabilityId": { "type": "string", "minLength": 1 },
+    "capabilityVersion": { "type": "string", "minLength": 1 },
+    "executionStatus": { "enum": ["completed", "failed", "cancelled"] },
+    "evidenceStatus": { "enum": ["complete", "partial", "failed", "not-applicable"] },
+    "verdict": { "type": "string", "minLength": 1 },
+    "coverage": { "type": "object" },
+    "results": { "type": "object" },
+    "diagnostics": { "type": "array", "items": { "type": "object" } },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "mediaType": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "markdownSummary": { "type": ["string", "null"] }
+  }
+}

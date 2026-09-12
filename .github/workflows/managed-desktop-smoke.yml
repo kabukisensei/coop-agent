@@ -1,0 +1,53 @@
+name: managed desktop smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  managed-runtime:
+    name: managed runtime (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.3'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install pinned Desktop build dependencies
+        run: npm ci --prefix desktop
+      - name: Determine native managed-runtime target
+        id: target
+        shell: bash
+        run: echo "value=$(node -p 'process.platform+\"-\"+process.arch')" >> "$GITHUB_OUTPUT"
+      - name: Build checksum-pinned managed runtime
+        shell: bash
+        run: node scripts/prepare-managed-runtime.mjs --target '${{ steps.target.outputs.value }}' --work '${{ runner.temp }}/coop-managed-work' --output '${{ runner.temp }}/managed-runtime'
+      - name: Verify real runtime, exact capabilities, isolated state, and cleanup
+        shell: bash
+        run: node scripts/verify-managed-runtime.mjs --bundle '${{ runner.temp }}/managed-runtime' --workspace '${{ github.workspace }}' --agent '${{ runner.temp }}/coop-managed-agent'
+      - name: Package unsigned native development app
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          COOP_DESKTOP_MANAGED_RUNTIME_DIR: ${{ runner.temp }}/managed-runtime
+        run: npm run package:managed:mac --prefix desktop
+      - name: Package unsigned native development app
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          COOP_DESKTOP_MANAGED_RUNTIME_DIR: ${{ runner.temp }}/managed-runtime
+        run: npm run package:managed:win --prefix desktop
+      - name: Verify packaged fuses, ASAR boundary, and embedded runtime
+        shell: bash
+        run: npm run verify:managed-package --prefix desktop
+      - name: Record unpacked artifact size
+        shell: bash
+        run: du -sh desktop/dist-managed || true

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Coop Desktop Tauri Spike",
+  "version": "0.0.1",
+  "identifier": "com.cooptimize.coop-desktop-tauri-spike",
+  "build": {
+    "frontendDist": "../shell-placeholder"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self' http://127.0.0.1:*; connect-src 'self' http://127.0.0.1:*; img-src 'self' data: blob: http://127.0.0.1:*; style-src 'self' 'unsafe-inline' http://127.0.0.1:*; script-src 'self' http://127.0.0.1:*"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "icon": ["../../electron/node_modules/app-builder-lib/templates/icons/electron-linux/256x256.png"],
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  }
+}

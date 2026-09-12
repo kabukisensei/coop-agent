@@ -16,6 +16,8 @@
 #   coop install              Fresh-install / bootstrap everything (idempotent)
 #   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
 #   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
+#   coop runtime [args]       Start the supported local runtime for Web/Desktop clients
+#   coop discover [args]      Discover local repositories or read-only Fabric metadata
 #   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
 #   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
 #   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
@@ -63,11 +65,16 @@ ${COOP_BOLD}${COOP_NAVY}coop${COOP_RST} ${COOP_DIM}v${COOP_VERSION}${COOP_RST} â
 ${COOP_BOLD}Usage${COOP_RST}
   coop                      Launch the branded Pi agent
   coop doctor               Check dependencies and configuration
+  coop auth --json          Report model, client Microsoft, and knowledge identity state
   coop update               Update Pi + Coop tools + vibes/skills, then run doctor
   coop install              Fresh-install / bootstrap everything (idempotent)
   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
   coop web                  Open a friendly browser UI over the agent (experimental)
+  coop runtime              Start the supported local HTTP runtime for clients
+                            (--transport http --json [--port PORT] [--cwd DIR])
+  coop discover             Discover repositories, Fabric workspaces, or items as JSON
+  coop setup-state --json   Report progressive project setup and exact next actions
   coop onboard              First-run global onboarding (creates ~/.coop/user.json)
   coop profile              Show your COOP user profile
   coop profile edit         Edit your COOP user profile
@@ -225,6 +232,26 @@ coop_build_pi_args() {
   [ -e "$COOP_ROOT/extensions/coop-tools" ]      && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-tools")
   [ -e "$COOP_ROOT/extensions/coop-guardrails" ] && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-guardrails")
   [ -e "$COOP_ROOT/extensions/coop-profile" ]    && COOP_PI_ARGS+=(-e "$COOP_ROOT/extensions/coop-profile")
+  # Managed Desktop keeps its agent/session state in a versioned user-data
+  # directory, while loading the immutable pinned extension packages directly
+  # from the signed runtime bundle. This avoids a first-launch network install
+  # and never converges the existing terminal user's ~/.coop/agent tree.
+  if [ "${COOP_DESKTOP_MANAGED_RUNTIME:-0}" = "1" ]; then
+    local managed_root managed_name managed_expected managed_path managed_actual
+    managed_root="${COOP_MANAGED_EXTENSIONS_ROOT:-}"
+    case "$managed_root" in /*) ;; *) coop_die "managed Desktop extension root is invalid" ;; esac
+    while IFS= read -r managed_name; do
+      [ -n "$managed_name" ] || continue
+      managed_expected="$(coop_manifest_object_get extensions "$managed_name")"
+      managed_path="$managed_root/$managed_name"
+      [ -f "$managed_path/package.json" ] || coop_die "managed Desktop extension is missing: $managed_name"
+      managed_actual="$(node -e 'try { const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if (p.version) process.stdout.write(p.version) } catch {}' "$managed_path/package.json")"
+      [ "$managed_actual" = "$managed_expected" ] || coop_die "managed Desktop extension $managed_name is $managed_actual; expected $managed_expected"
+      COOP_PI_ARGS+=(-e "$managed_path")
+    done <<EOF
+$(coop_manifest_keys extensions)
+EOF
+  fi
   # Coop owns fleet updates. Hide Pi's upstream self-update banner so users do not
   # drift Pi away from the release-manifest pins; coop_update_nudge still reports
   # when THIS checkout is behind and directs the user to `coop update`.
@@ -269,6 +296,10 @@ launch_pi() {
     export COOP_PRIME_MODEL_LOGIN=1
   fi
 
+  export COOP_CLIENT_INTERFACE="terminal"
+  local runtime_python
+  runtime_python="$(coop_python || true)"
+  [ -n "$runtime_python" ] && export COOP_PYTHON="$runtime_python"
   coop_build_pi_args
   exec pi ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} "$@"
 }
@@ -308,19 +339,77 @@ PY
   fi
 }
 
-# --- coop web (experimental): friendly browser UI over `pi --mode rpc` --------
-# Spawns the SAME governed coop the terminal runs, but drives it from a local
-# browser window (SSE bridge). Uses the shared launch spec so it can never drift
-# from the terminal. Localhost + one-time token; see web/server.mjs and
-# docs/coop-web-plan.md.
-coop_web() {
+# --- Shared local runtime launcher -------------------------------------------
+# Both `coop web` and the supported `coop runtime` entry point pass through this
+# function. It is the ONLY client-runtime launcher and consumes the same governed
+# launch spec as the terminal. web/server.mjs remains a transport adapter; it never
+# reconstructs Coop resources and only appends the mandatory `--mode rpc -a`.
+coop_start_runtime() {
+  local surface="$1"; shift
   have pi   || coop_die "pi is not installed. Run: coop install"
-  have node || coop_die "Node.js is required for coop web. Run: coop install"
+  have node || coop_die "Node.js is required for coop $surface. Run: coop install"
+  local runtime_python
+  runtime_python="$(coop_python)" || coop_die "python3 is required for coop $surface"
   coop_launch_preflight
   coop_az_preflight   # same Fabric/Power BI token check the terminal launch does
   local spec
-  spec="$(coop_launch_spec --json)" || coop_die "couldn't build the launch spec for coop web"
-  COOP_LAUNCH_SPEC="$spec" exec node "$COOP_ROOT/web/server.mjs" "$@"
+  spec="$(coop_launch_spec --json)" || coop_die "couldn't build the launch spec for coop $surface"
+  if [ "$surface" = "runtime" ]; then
+    COOP_LAUNCH_SPEC="$spec" COOP_PYTHON="$runtime_python" COOP_RUNTIME_MODE=1 exec node "$COOP_ROOT/web/server.mjs" --runtime "$@"
+  fi
+  COOP_LAUNCH_SPEC="$spec" COOP_PYTHON="$runtime_python" exec node "$COOP_ROOT/web/server.mjs" "$@"
+}
+
+# --- coop web (experimental): friendly browser UI over the local runtime -----
+coop_web() {
+  coop_start_runtime web "$@"
+}
+
+coop_runtime_error() {
+  local json="$1" message="$2"
+  if [ "$json" = "1" ]; then
+    local py; py="$(coop_python)" || { printf '{"type":"runtime.error","contractVersion":1,"error":"runtime argument validation failed"}\n'; return 2; }
+    "$py" - "$message" <<'PY'
+import json, sys
+print(json.dumps({"type": "runtime.error", "contractVersion": 1, "error": sys.argv[1]}))
+PY
+    return 2
+  fi
+  coop_die "$message"
+}
+
+# Supported shell-neutral entry point for Desktop and other local clients. HTTP
+# is the first production transport; rejecting unsupported transports explicitly
+# keeps callers from accidentally depending on an unimplemented contract.
+coop_runtime() {
+  local transport="http" want_json=0 value
+  local -a server_args=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --transport)
+        [ "$#" -ge 2 ] || { coop_runtime_error "$want_json" "missing value for --transport"; return $?; }
+        transport="$2"; shift 2 ;;
+      --transport=*) transport="${1#*=}"; shift ;;
+      --json) want_json=1; server_args+=(--json); shift ;;
+      --port|--cwd)
+        [ "$#" -ge 2 ] || { coop_runtime_error "$want_json" "missing value for $1"; return $?; }
+        value="$1"; server_args+=("$value" "$2"); shift 2 ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: coop runtime [--transport http] [--json] [--port PORT] [--cwd DIR]
+
+Starts Coop's supported loopback runtime using the same governed Pi launch spec
+as terminal and Web. --json emits one runtime.ready or runtime.error JSON object.
+EOF
+        return 0 ;;
+      *) coop_runtime_error "$want_json" "unknown coop runtime argument: $1"; return $? ;;
+    esac
+  done
+  if [ "$transport" != "http" ]; then
+    coop_runtime_error "$want_json" "unsupported runtime transport '$transport' (supported: http)"
+    return $?
+  fi
+  coop_start_runtime runtime "${server_args[@]}"
 }
 
 # --- Tool passthrough --------------------------------------------------------
@@ -1023,7 +1112,34 @@ case "$cmd" in
   # stdout as `coop launch-spec`; trailing args (e.g. --json) pass through. Preflight is
   # a no-op when pi is absent, so this exits 0 even on a machine without pi installed.
   --no-launch)   shift; coop_launch_preflight; coop_launch_spec "$@" ;;
-  doctor)        shift; exec "$COOP_ROOT/scripts/doctor.sh" "$@" ;;
+  doctor)
+    shift
+    if [ "${1:-}" = "--service-json" ]; then
+      shift
+      [ "$#" -eq 0 ] || coop_die "usage: coop doctor --service-json"
+      have node || coop_die "node is required for the shared Doctor service"
+      exec node "$COOP_ROOT/scripts/doctor-service.mjs"
+    fi
+    exec "$COOP_ROOT/scripts/doctor.sh" "$@"
+    ;;
+  auth)
+    shift
+    [ "${1:-}" = "--json" ] && shift || coop_die "usage: coop auth --json"
+    [ "$#" -eq 0 ] || coop_die "usage: coop auth --json"
+    have node || coop_die "node is required for the shared authentication service"
+    exec node "$COOP_ROOT/scripts/auth-service.mjs"
+    ;;
+  discover)
+    shift
+    have node || coop_die "node is required for environment discovery"
+    exec node "$COOP_ROOT/scripts/environment-discovery.mjs" "$@"
+    ;;
+  setup-state)
+    shift
+    [ "${1:-}" = "--json" ] && shift || coop_die "usage: coop setup-state --json [--for-capability ID]"
+    have node || coop_die "node is required for project setup state"
+    exec node "$COOP_ROOT/scripts/project-setup-state.mjs" "$@"
+    ;;
   update)        shift; exec "$COOP_ROOT/scripts/update.sh" "$@" ;;
   bootstrap)     shift; exec "$COOP_ROOT/scripts/install.sh" "$@" ;;
   install)
@@ -1038,6 +1154,7 @@ case "$cmd" in
     ;;
   sync)          shift; exec "$COOP_ROOT/scripts/sync.sh" "$@" ;;
   web)           shift; coop_web "$@" ;;
+  runtime)       shift; coop_runtime "$@" ;;
   launch-spec)   shift; coop_launch_spec "$@" ;;
   onboard)       shift; run_onboard onboard "$@" ;;
   profile)       shift; run_profile "$@" ;;

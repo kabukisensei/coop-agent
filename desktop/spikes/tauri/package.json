@@ -1,0 +1,12 @@
+{
+  "name": "coop-desktop-tauri-spike",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "build:mac": "tauri build --bundles app"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.2"
+  }
+}
