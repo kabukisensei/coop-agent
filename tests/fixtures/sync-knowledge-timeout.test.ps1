@@ -318,7 +318,7 @@ exec "$REALGIT" "$@"
     if ($null -eq $priorTimeout) { Remove-Item Env:\COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS -ErrorAction SilentlyContinue } else { $env:COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS = $priorTimeout }
   }
   if ($probeOrphanRc -eq 124) { Ok 'probe orphan bounded (rc=124) (PS)' } else { Ko "probe orphan rc=$probeOrphanRc (want 124) (PS): $probeOrphanOut" }
-  if ($sw2.Elapsed.TotalSeconds -lt 10) { Ok ("probe orphan returned within the deadline ({0:n1}s) (PS)" -f $sw2.Elapsed.TotalSeconds) } else { Ko "probe orphan blocked $($sw2.Elapsed.TotalSeconds)s (PS)" }
+  if ($sw2.Elapsed.TotalSeconds -lt 10) { Ok ("probe orphan returned within the deadline ({0:n1}s) (PS)" -f $sw2.Elapsed.TotalSeconds) } else { Ko "probe orphan blocked $($sw2.Elapsed.TotalSeconds)s (PS) — resolved deadline evidence: $($probeOrphanOut.Trim())" }
   Start-Sleep -Seconds 2
   if (Test-Path -LiteralPath $sleeperFile) {
     $sleeperPid = [int]((Get-Content -LiteralPath $sleeperFile) -join '')

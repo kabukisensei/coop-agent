@@ -558,7 +558,7 @@ pelapsed=$((SECONDS-start))
 [ "$prc" -eq 124 ] && ok "I: probe orphan bounded (rc=124)" || ko "I: rc=$prc (want 124)"
 [ "$pelapsed" -lt 10 ] \
   && ok "I: returned within the deadline (${pelapsed}s, not the probe's own 5s + the child's 30s)" \
-  || ko "I: blocked ${pelapsed}s past the deadline"
+  || ko "I: blocked ${pelapsed}s past the deadline — resolved-deadline evidence: $(cat "$TMP/probe-orphan.err")"
 grep -q "configuration probe exceeded" "$TMP/probe-orphan.err" \
   && ok "I: actionable probe-timeout message" || ko "I: no message: $(cat "$TMP/probe-orphan.err")"
 if grep -q "status --porcelain" "$FAKELOG" 2>/dev/null; then
