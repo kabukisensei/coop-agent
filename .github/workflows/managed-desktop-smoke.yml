@@ -90,30 +90,40 @@ jobs:
       - name: Build checksum-pinned managed runtime with development companions
         shell: bash
         run: node scripts/prepare-managed-runtime.mjs --target '${{ steps.target.outputs.value }}' --work '${{ runner.temp }}/coop-managed-work' --output '${{ runner.temp }}/managed-runtime' --development-wheels '${{ runner.temp }}/coop-development-wheels/development-wheels.json'
-      - name: PROBE 3 env-variable isolation matrix (diagnostic only)
+      - name: PROBE 4 exact verify-env via node spawnSync (diagnostic only)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           set +e
-          PY='${{ runner.temp }}/managed-runtime/python/runtime/python.exe'
-          HOME_DIR='${{ runner.temp }}/probe3-home'
-          mkdir -p "$HOME_DIR"
-          echo "BASH-SEES SystemRoot='${SystemRoot:-<unset>}' WINDIR='${WINDIR:-<unset>}' COMSPEC='${COMSPEC:-<unset>}'"
-          case_run() {
-            name="$1"; shift
-            echo "===== $name ====="
-            "$@" > "$HOME_DIR/out.txt" 2> "$HOME_DIR/err.txt"
-            echo "EXIT=$?"
-            echo "--- stderr tail ---"; tail -4 "$HOME_DIR/err.txt" || true
+          node <<'NODE'
+          const { spawnSync } = require("node:child_process");
+          const path = require("node:path");
+          const fs = require("node:fs");
+          const os = require("node:os");
+          const bundle = path.join(process.env.RUNNER_TEMP, "managed-runtime");
+          const py = path.join(bundle, "python", "runtime", "python.exe");
+          const ep = path.join(bundle, "python", "entrypoints", "coop-data-doc.py");
+          const home = fs.mkdtempSync(path.join(os.tmpdir(), "probe4-home-"));
+          console.log("NODE-SEES SystemRoot=", JSON.stringify(process.env.SystemRoot), "WINDIR=", JSON.stringify(process.env.WINDIR));
+          function baseEnv(extra = {}) {
+            const env = { PATH: path.dirname(py), HOME: home, USERPROFILE: home, APPDATA: home, LOCALAPPDATA: home,
+              TMPDIR: home, TEMP: home, TMP: home, PYTHONDONTWRITEBYTECODE: "1", PYTHONUTF8: "1" };
+            for (const key of ["SystemRoot", "WINDIR", "COMSPEC"]) if (process.env[key]) env[key] = process.env[key];
+            return Object.assign(env, extra);
           }
-          BASE_ENV="PATH=$(dirname "$PY") HOME=$HOME_DIR USERPROFILE=$HOME_DIR APPDATA=$HOME_DIR LOCALAPPDATA=$HOME_DIR TMPDIR=$HOME_DIR TEMP=$HOME_DIR TMP=$HOME_DIR PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1"
-          PYEXE="$(cygpath -w "$PY" 2>/dev/null || echo "$PY")"
-          case_run a-true-full-env "$PYEXE" -c "import _overlapped; print('OVERLAPPED-OK')"
-          case_run b-stripped-systemroot-ok env -i $BASE_ENV SystemRoot="${SystemRoot}" WINDIR="${WINDIR}" COMSPEC="${COMSPEC}" "$PYEXE" -c "import _overlapped; print('OVERLAPPED-OK')"
-          case_run c-stripped-systemroot-empty env -i $BASE_ENV SystemRoot="" "$PYEXE" -c "import _overlapped; print('OVERLAPPED-OK')"
-          case_run d-stripped-no-systemroot env -i $BASE_ENV "$PYEXE" -c "import _overlapped; print('OVERLAPPED-OK')"
-          case_run e-stripped-all-three-empty env -i $BASE_ENV SystemRoot="" WINDIR="" COMSPEC="" "$PYEXE" -c "import _overlapped; print('OVERLAPPED-OK')"
-          echo PROBE3-DONE
+          function run(name, args, env, cwd) {
+            const r = spawnSync(py, args, { env, cwd: cwd || home, encoding: "utf8", timeout: 60_000, windowsHide: true });
+            console.log("=====", name, "=====");
+            console.log("STATUS", r.status, "SIGNAL", r.signal, "ERROR", r.error ? String(r.error) : "none");
+            const err = (r.stderr || "").trim().split("\n").slice(-3).join(" | ");
+            console.log("STDERR-TAIL", err.slice(-400));
+          }
+          run("node-exact-verify-env-import", ["-I", "-B", "-X", "utf8", "-c", "import _overlapped; print('OVERLAPPED-OK')"], baseEnv());
+          run("node-exact-verify-env-entrypoint", ["-I", "-B", "-X", "utf8", ep, "--help"], baseEnv());
+          run("node-exact-verify-env-empty-systemroot", ["-I", "-B", "-X", "utf8", "-c", "import _overlapped"], baseEnv({ SystemRoot: "" }));
+          run("node-no-systemroot-import", ["-I", "-B", "-X", "utf8", "-c", "import _overlapped; print('OVERLAPPED-OK')"], baseEnv({ SystemRoot: undefined }));
+          console.log("PROBE4-DONE");
+          NODE
       - name: Verify real runtime, exact capabilities, isolated state, and cleanup
         shell: bash
         run: node scripts/verify-managed-runtime.mjs --bundle '${{ runner.temp }}/managed-runtime' --workspace '${{ github.workspace }}' --agent '${{ runner.temp }}/coop-managed-agent' | tee '${{ runner.temp }}/managed-runtime-check.json'
