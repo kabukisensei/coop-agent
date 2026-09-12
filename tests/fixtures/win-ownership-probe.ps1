@@ -199,6 +199,7 @@ try:
             k32.CloseHandle(preflight)
         else:
             failed = True
+            raise RuntimeError("open_process_failed")
 
         job, create_error = kg._win_job_create()
         print("PROBE| assignment.job_create_ok=%s error=%s" % (bool(job), create_error))
@@ -210,6 +211,9 @@ try:
             print("PROBE| assignment.assign_ok=%s error=%s" % (assign_ok, assign_error))
             if not assign_ok:
                 failed = True
+                k32.CloseHandle(job)
+                own.job = None
+                raise RuntimeError("assign_failed")
             else:
                 # Exercise the declared DWORD ResumeThread return contract and
                 # report its actual previous suspend count. Do not resume until
@@ -224,10 +228,15 @@ try:
                     try:
                         entry = kg._THREADENTRY32()
                         entry.dwSize = ctypes.sizeof(kg._THREADENTRY32)
+                        k32.SetLastError(0)
                         have = k32.Thread32First(snap, ctypes.byref(entry))
+                        enum_err = ctypes.get_last_error()
+                        print("PROBE| assignment.thread32first=%s getlasterror=%d" % (bool(have), enum_err))
                         resumed = False
+                        thread_found = False
                         while have:
                             if entry.th32OwnerProcessID == child.pid:
+                                thread_found = True
                                 k32.SetLastError(0)
                                 thread = k32.OpenThread(kg._THREAD_SUSPEND_RESUME, False, entry.th32ThreadID)
                                 thread_err = ctypes.get_last_error()
@@ -244,6 +253,7 @@ try:
                                         k32.CloseHandle(thread)
                                 break
                             have = k32.Thread32Next(snap, ctypes.byref(entry))
+                        print("PROBE| assignment.child_thread_found=%s" % thread_found)
                         if not resumed:
                             failed = True
                     finally:
