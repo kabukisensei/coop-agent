@@ -173,4 +173,59 @@ await t("parsePrIdentity accepts GitHub and GitLab merge-request URLs", async ()
   assert.equal(parsePrIdentity("no pr here https://github.com/o/r/pull/1"), null);
 });
 
+await t("F1 round-2: nested mode keys and inline-commented root mode fail closed", async () => {
+  const mk = (name, yaml) => {
+    const wt = join(profile, name); mkdirSync(join(wt, ".teamai"), { recursive: true });
+    writeFileSync(join(wt, ".teamai", "teamai.yaml"), yaml);
+    return wt;
+  };
+  for (const [name, yaml] of [
+    ["wt-nested", "mode: team\nmetadata:\n  mode: self\n"],
+    ["wt-inline", "mode: team # actual mode\n"],
+    ["wt-inline-self", "mode: self # note\n"],
+  ]) {
+    const wt = mk(name, yaml);
+    const cfg = resolveTeamaiConfig(enabledEnv({ COOP_TEAMAI_WORKTREE: wt }));
+    const res = await contributeTeamaiKnowledge(cfg, { file: join(profile, "synthetic-note.md") });
+    assert.equal(res.ok, false, name);
+    assert.equal(res.reason, "unsafe-mode", name);
+  }
+});
+
+await t("F1 positive control: clean root-level mode: self configurations still pass the gate", async () => {
+  const mk = (name, yaml) => {
+    const wt = join(profile, name); mkdirSync(join(wt, ".teamai"), { recursive: true });
+    writeFileSync(join(wt, ".teamai", "teamai.yaml"), yaml);
+    return wt;
+  };
+  for (const [name, yaml] of [
+    ["wt-plain", "mode: self\n"],
+    ["wt-with-keys", "mode: self\nrepo: cooptimize/coop-team-knowledge\n"],
+    ["wt-comment-above", "# teamai configuration\nmode: self\n"],
+  ]) {
+    const wt = mk(name, yaml);
+    const cfg = resolveTeamaiConfig(enabledEnv({ COOP_TEAMAI_WORKTREE: wt, COOP_TEAMAI_CLI: process.execPath }));
+    const execImpl = (cmd, args, opts) => {
+      if (cmd === process.execPath) return "Contributed via PR: learnings/x.md\nPR: https://github.com/cooptimize/coop-team-knowledge/pull/7\n";
+      return execFileSync(cmd, args, { ...opts, encoding: "utf8" });
+    };
+    const res = await contributeTeamaiKnowledge(cfg, { file: join(profile, "synthetic-note.md") }, { execFileImpl: execImpl });
+    assert.equal(res.ok, true, name);
+  }
+});
+
+await t("F2 round-2: fabricated dotted hosts do not satisfy the publication gate", async () => {
+  const { parsePrIdentity } = await import("../lib/teamai-adapter.mjs");
+  for (const bad of ["https://./a/b/pull/7", "https://a..b/c/pull/1", "https://-bad-.x.com/a/b/pull/2", "https://github.c/a/b/pull/1"]) {
+    assert.equal(parsePrIdentity(`Contributed via PR:\n${bad}`), null, bad);
+  }
+});
+
+await t("F2 positive control: valid provider PR URLs across hosts are accepted", async () => {
+  const { parsePrIdentity } = await import("../lib/teamai-adapter.mjs");
+  assert.equal(parsePrIdentity("Contributed via PR:\nhttps://github.com/o/r/pull/42"), "https://github.com/o/r/pull/42");
+  assert.equal(parsePrIdentity("Contributed via PR:\nhttps://gitlab.example.com/o/r/merge_requests/9"), "https://gitlab.example.com/o/r/merge_requests/9");
+  assert.equal(parsePrIdentity("no pr here https://github.com/o/r/pull/1"), null);
+});
+
 console.log(`  ${n} teamai-adapter tests passed`);
