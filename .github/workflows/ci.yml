@@ -126,6 +126,24 @@ jobs:
         shell: bash
         run: bash tests/run.sh
 
+  knowledge-search-windows:
+    # Focused NATIVE VALIDATION ONLY: runs just the knowledge-search fixture
+    # under Git Bash on windows-latest, independent of the full timeout suite
+    # (which legitimately remains red on unrelated open defects). Adds no
+    # continue-on-error, weakens no assertion, and gates nothing by itself.
+    name: knowledge search focused (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: interpreter + candidate identity
+        shell: bash
+        run: |
+          bash --version | head -1
+          git rev-parse HEAD
+      - name: run only the knowledge-search fixture
+        shell: bash
+        run: bash tests/search-knowledge.test.sh
+
   windows:
     name: powershell parse (Windows)
     runs-on: windows-latest
