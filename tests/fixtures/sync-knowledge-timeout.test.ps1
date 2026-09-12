@@ -104,9 +104,25 @@ static intptr_t spawn_sleeper(void) {
 static int record_sleeper(intptr_t kid) {
     const char *sl = getenv("SLEEPERFILE");
     if (!sl || kid == -1) return 3;
+    /* _spawnvp(_P_NOWAIT) returns a process HANDLE, not a PID. Convert,
+       prove the spawned instance is alive NOW (before the parent exits),
+       close the handle, and log the identity proof for the fixture. */
+    HANDLE h = (HANDLE)kid;
+    DWORD pid = GetProcessId(h);
+    if (pid == 0) { CloseHandle(h); return 4; }
+    if (WaitForSingleObject(h, 0) != WAIT_TIMEOUT) { CloseHandle(h); return 5; }
+    CloseHandle(h);
+    const char *fakelog = getenv("FAKELOG");
+    if (fakelog) {
+        FILE *lg = fopen(fakelog, "a");
+        if (lg) {
+            fprintf(lg, "spawned-sleeper pid=%lu\n", (unsigned long)pid);
+            fclose(lg);
+        }
+    }
     FILE *f = fopen(sl, "w");
     if (!f) return 3;
-    fprintf(f, "%ld", (long)kid);
+    fprintf(f, "%lu", (unsigned long)pid);
     fclose(f);
     return 0;
 }
@@ -171,6 +187,7 @@ spawn_sleeper() {
   sleep 30 &
   kid=$!
   printf '%s' "$kid" > "$SLEEPERFILE"
+  printf 'spawned-sleeper pid=%s\n' "$kid" >> "$FAKELOG"
 }
 logargv "$@"
 args="$*"
@@ -216,6 +233,34 @@ exec "$REALGIT" "$@"
     Ko 'git fixture did not execute standalone (executable-compatibility error)'; exit 1
   }
   Remove-Item -LiteralPath $fakeLog -ErrorAction SilentlyContinue
+
+  # Instance-identity discipline for all sleeper checks: the fake git proves
+  # the spawned instance existed (real PID + spawn-time liveness, logged to
+  # FAKELOG); Assert-SleeperGone then verifies THAT SAME process is gone.
+  # $sentinelJob is an unrelated long-lived process that must survive every
+  # timeout test — evidence the kill path never strays outside the owned tree.
+  $sentinelJob = Start-Job -ScriptBlock { Start-Sleep -Seconds 300 }
+  function Assert-SleeperGone([string]$label) {
+    Start-Sleep -Seconds 2   # allow the killed tree to be reaped
+    if (-not (Test-Path -LiteralPath $sleeperFile)) {
+      Ko "${label}: fake git never spawned its sleeper"
+      return
+    }
+    $sleeperPid = [int]((Get-Content -LiteralPath $sleeperFile) -join '')
+    $proof = $false
+    if (Test-Path -LiteralPath $fakeLog) {
+      $proof = (Get-Content -LiteralPath $fakeLog -Raw) -match ("spawned-sleeper pid=" + $sleeperPid + "(?!\d)")
+    }
+    if (-not $proof) {
+      Ko "${label}: no spawn-time existence proof for pid $sleeperPid (recorded value was not a real PID?)"
+      Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue
+      return
+    }
+    $alive = Get-Process -Id $sleeperPid -ErrorAction SilentlyContinue
+    if ($alive) { Ko "${label}: sleeper $sleeperPid survived the deadline" }
+    else { Ok "${label}: sleeper $sleeperPid provably existed and is gone" }
+    Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue
+  }
 
   # --- A (PS). clone hang is bounded; the healthy repo still syncs ------------
   $cfg = Join-Path $temp 'cfg'
@@ -263,15 +308,7 @@ exec "$REALGIT" "$@"
   if ($out -like '*timed out*') { Ok 'timeout warning surfaced (PS)' } else { Ko "no timeout warning (PS): $out" }
   if ($out -like '*sync complete*') { Ok 'sync still fails soft and completes (PS)' } else { Ko "sync did not complete (PS): $out" }
   if (Test-Path -LiteralPath (Join-Path $cloneOk 'note.md')) { Ok 'second healthy repo cloned in the same run (PS)' } else { Ko 'healthy repo missing (PS)' }
-  Start-Sleep -Seconds 2   # allow the killed tree to be reaped
-  if (Test-Path -LiteralPath $sleeperFile) {
-    $sleeperPid = [int]((Get-Content -LiteralPath $sleeperFile) -join '')
-    $alive = Get-Process -Id $sleeperPid -ErrorAction SilentlyContinue
-    if ($alive) { Ko 'sleeper descendant survived the timeout (PS)' } else { Ok 'sleeper descendant terminated with the owned tree (PS)' }
-    Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue
-  } else {
-    Ko 'fake git never spawned its sleeper descendant (PS)'
-  }
+  Assert-SleeperGone 'sleeper descendant'
 
   # --- B (PS). parent-exits-first orphan: deadline still bounds the operation -
   # The fake git spawns a child holding the inherited stdout and exits. The
@@ -293,15 +330,7 @@ exec "$REALGIT" "$@"
   if ($orphanRc -eq 124) { Ok 'orphan classified as a timeout, not success (rc=124) (PS)' } else { Ko "orphan rc=$orphanRc (want 124) (PS): $orphanOut" }
   if ($sw.Elapsed.TotalSeconds -lt 10) { Ok ("caller returned within the deadline + bounded cleanup ({0:n1}s, not the child's 30s) (PS)" -f $sw.Elapsed.TotalSeconds) } else { Ko "caller blocked $($sw.Elapsed.TotalSeconds)s (PS)" }
   if ($orphanOut -like '*deadline*') { Ok 'actionable deadline message on the orphan timeout (PS)' } else { Ko "no deadline message (PS): $orphanOut" }
-  Start-Sleep -Seconds 2
-  if (Test-Path -LiteralPath $sleeperFile) {
-    $sleeperPid = [int]((Get-Content -LiteralPath $sleeperFile) -join '')
-    $alive = Get-Process -Id $sleeperPid -ErrorAction SilentlyContinue
-    if ($alive) { Ko 'orphaned child survived the deadline (PS)' } else { Ok 'orphaned child terminated after the deadline (PS)' }
-    Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue
-  } else {
-    Ko 'fake git never spawned its orphan child (PS)'
-  }
+  Assert-SleeperGone 'orphaned child'
 
   # --- C (PS). the probe orphan: a timed-out config probe fails the operation -
   $probeRepo = Join-Path $temp 'kb\probehang'
@@ -319,15 +348,7 @@ exec "$REALGIT" "$@"
   }
   if ($probeOrphanRc -eq 124) { Ok 'probe orphan bounded (rc=124) (PS)' } else { Ko "probe orphan rc=$probeOrphanRc (want 124) (PS): $probeOrphanOut" }
   if ($sw2.Elapsed.TotalSeconds -lt 10) { Ok ("probe orphan returned within the deadline ({0:n1}s) (PS)" -f $sw2.Elapsed.TotalSeconds) } else { Ko "probe orphan blocked $($sw2.Elapsed.TotalSeconds)s (PS) — resolved deadline evidence: $($probeOrphanOut.Trim())" }
-  Start-Sleep -Seconds 2
-  if (Test-Path -LiteralPath $sleeperFile) {
-    $sleeperPid = [int]((Get-Content -LiteralPath $sleeperFile) -join '')
-    $alive = Get-Process -Id $sleeperPid -ErrorAction SilentlyContinue
-    if ($alive) { Ko 'probe orphan child survived the deadline (PS)' } else { Ok 'probe orphan child terminated after the deadline (PS)' }
-    Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue
-  } else {
-    Ko 'fake git never spawned its probe orphan child (PS)'
-  }
+  Assert-SleeperGone 'probe orphan child'
 
   # In-process contract: & sync-knowledge.ps1 must RETURN (never exit), so the
   # sentinel line after the call is always reached — even on total failure.
@@ -344,6 +365,9 @@ exec "$REALGIT" "$@"
     if ($null -eq $priorCoopDir) { Remove-Item Env:\COOP_DIR -ErrorAction SilentlyContinue } else { $env:COOP_DIR = $priorCoopDir }
   }
   if (Test-Path -LiteralPath $sentinel) { Ok 'in-process invocation returned; sentinel reached after failure' } else { Ko 'sync-knowledge.ps1 exited the parent instead of returning' }
+  if ($sentinelJob.State -eq 'Running') { Ok 'unrelated sentinel process survived the timeout tests' } else { Ko 'unrelated sentinel process did not survive the timeout tests' }
+  Stop-Job $sentinelJob -ErrorAction SilentlyContinue
+  Remove-Job $sentinelJob -Force -ErrorAction SilentlyContinue
 }
 finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue

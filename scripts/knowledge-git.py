@@ -68,6 +68,9 @@ Exit codes:
     0-125   the child's exit status (a signal death maps to 128+signum)
     124     the deadline passed — probe, child, descendants, or output
             completion were terminated
+    126     (Windows) process containment could not be established before the
+            child ran — the suspended child was stopped and the operation was
+            not attempted (never silent unowned execution)
     127     the requested executable could not be started
     2       invalid CLI usage
 """
@@ -83,6 +86,11 @@ DEFAULT_TIMEOUT_SECONDS = 30
 EXIT_TIMEOUT = 124
 EXIT_CANNOT_START = 127
 EXIT_USAGE = 2
+# Windows-only: the Job Object could not be created or the child could not
+# be assigned before resume, so the suspended child was stopped and the
+# operation was NOT attempted. Explicit unavailability, never silent
+# unowned execution.
+EXIT_OWNERSHIP_UNAVAILABLE = 126
 CLEANUP_GRACE_SECONDS = 5
 POLL_INTERVAL_SECONDS = 0.05
 
@@ -124,10 +132,6 @@ if os.name == "nt":
         _KERNEL32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
         _KERNEL32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
         _KERNEL32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-        _KERNEL32.Process32FirstW.restype = wintypes.BOOL
-        _KERNEL32.Process32FirstW.argtypes = [wintypes.HANDLE, wintypes.LPVOID]
-        _KERNEL32.Process32NextW.restype = wintypes.BOOL
-        _KERNEL32.Process32NextW.argtypes = [wintypes.HANDLE, wintypes.LPVOID]
         _KERNEL32.OpenThread.restype = wintypes.HANDLE
         _KERNEL32.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         _KERNEL32.ResumeThread.argtypes = [wintypes.HANDLE]
@@ -138,9 +142,7 @@ if os.name == "nt":
         _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
         _PROCESS_SET_QUOTA = 0x0100
         _PROCESS_TERMINATE = 0x0001
-        _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         _THREAD_SUSPEND_RESUME = 0x0002
-        _TH32CS_SNAPPROCESS = 0x00000002
         _TH32CS_SNAPTHREAD = 0x00000004
 
         class _IO_COUNTERS(ctypes.Structure):
@@ -150,7 +152,13 @@ if os.name == "nt":
             )]
 
         class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            # SDK layout — the two LARGE_INTEGER time limits LEAD the struct.
+            # Omitting them (the previous shape) shifted every later field,
+            # so SetInformationJobObject read LimitFlags from
+            # MaximumWorkingSetSize's slot: KILL_ON_JOB_CLOSE was never set.
             _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),  # LARGE_INTEGER
+                ("PerJobUserTimeLimit", ctypes.c_longlong),      # LARGE_INTEGER
                 ("LimitFlags", wintypes.DWORD),
                 ("MinimumWorkingSetSize", ctypes.c_size_t),
                 ("MaximumWorkingSetSize", ctypes.c_size_t),
@@ -192,58 +200,55 @@ if os.name == "nt":
                 ("tpDeltaPri", wintypes.LONG),
                 ("dwFlags", wintypes.DWORD),
             ]
-
-        class _PROCESSENTRY32W(ctypes.Structure):
-            _fields_ = [
-                ("dwSize", wintypes.DWORD),
-                ("cntUsage", wintypes.DWORD),
-                ("th32ProcessID", wintypes.DWORD),
-                ("th32DefaultHeapID", ctypes.c_size_t),
-                ("th32ModuleID", wintypes.DWORD),
-                ("cntThreads", wintypes.DWORD),
-                ("th32ParentProcessID", wintypes.DWORD),
-                ("pcPriClassBase", wintypes.LONG),
-                ("dwFlags", wintypes.DWORD),
-                ("szExeFile", ctypes.c_wchar * 260),
-            ]
     except (ImportError, AttributeError, ValueError):
         _KERNEL32 = None
 
 
 def _win_job_create():
-    """A job object that kills all its processes when the handle closes."""
+    """A job object that kills all its processes when the handle closes.
+
+    Returns (job, error): error is None on success, else (stage, code)
+    with the Win32 code captured IMMEDIATELY after the failing call —
+    before any cleanup (CloseHandle resets the thread's last error).
+    """
     if _KERNEL32 is None:
-        return None
+        return None, ("unsupported", None)
     try:
         job = _KERNEL32.CreateJobObjectW(None, None)
         if not job or job == _INVALID_HANDLE:
-            return None
+            return None, ("create", _win_last_error())
         info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
         info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         if not _KERNEL32.SetInformationJobObject(
             job, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
             ctypes.byref(info), ctypes.sizeof(info),
         ):
+            err = _win_last_error()  # capture BEFORE CloseHandle replaces it
             _KERNEL32.CloseHandle(job)
-            return None
-        return job
-    except (OSError, ValueError):
-        return None
+            return None, ("setinfo", err)
+        return job, None
+    except (OSError, ValueError) as exc:
+        return None, ("exception", repr(exc))
 
 
 def _win_job_assign(job, pid):
+    """Assign pid to job. Returns (ok, error); error is (stage, code) —
+    'open' distinguishes handle-acquisition failure from the assignment
+    itself, each code captured immediately after its own call."""
     if _KERNEL32 is None or not job:
-        return False
+        return False, ("unsupported", None)
     try:
         proc = _KERNEL32.OpenProcess(_PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, pid)
         if not proc or proc == _INVALID_HANDLE:
-            return False
+            return False, ("open", _win_last_error())
         try:
-            return bool(_KERNEL32.AssignProcessToJobObject(job, proc))
+            if _KERNEL32.AssignProcessToJobObject(job, proc):
+                return True, None
+            return False, ("assign", _win_last_error())
         finally:
             _KERNEL32.CloseHandle(proc)
-    except (OSError, ValueError):
-        return False
+    except (OSError, ValueError) as exc:
+        return False, ("exception", repr(exc))
 
 
 def _win_job_active_processes(job):
@@ -285,85 +290,36 @@ def _win_last_error():
     return ctypes.get_last_error()
 
 
-def _win_process_parent_map():
-    """{parent_pid: [child_pid, ...]} from a live process snapshot."""
+def _win_terminate_pid(pid):
+    """Terminate one process we own outright (the still-suspended child).
+
+    Used only when containment cannot be established: the child has never
+    run, so stopping it loses nothing. Returns (ok, code), code captured
+    immediately after TerminateProcess."""
     if _KERNEL32 is None:
-        return {}
-    snap = _KERNEL32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
-    if not snap or snap == _INVALID_HANDLE:
-        return {}
+        return False, ("unsupported", None)
+    handle = _KERNEL32.OpenProcess(_PROCESS_TERMINATE, False, int(pid))
+    if not handle or handle == _INVALID_HANDLE:
+        return False, ("open", _win_last_error())
     try:
-        parents = {}
-        entry = _PROCESSENTRY32W()
-        entry.dwSize = ctypes.sizeof(_PROCESSENTRY32W)
-        have = _KERNEL32.Process32FirstW(snap, ctypes.byref(entry))
-        while have:
-            parents.setdefault(int(entry.th32ParentProcessID), []).append(
-                int(entry.th32ProcessID)
-            )
-            have = _KERNEL32.Process32NextW(snap, ctypes.byref(entry))
-        return parents
-    except (OSError, ValueError):
-        return {}
+        if _KERNEL32.TerminateProcess(handle, 1):
+            return True, None
+        return False, ("terminate", _win_last_error())
     finally:
-        _KERNEL32.CloseHandle(snap)
-
-
-def _win_descendant_pids(root_pid):
-    """PID closure of root_pid via snapshot parent links.
-
-    The parent link recorded at a process's creation persists after the
-    parent's exit, so orphans spawned parent-exits-first remain reachable.
-    """
-    parents = _win_process_parent_map()
-    seen = set()
-    frontier = [int(root_pid)]
-    while frontier:
-        current = frontier.pop()
-        for child in parents.get(current, ()):
-            child = int(child)
-            if child != int(root_pid) and child not in seen:
-                seen.add(child)
-                frontier.append(child)
-    return sorted(seen)
-
-
-def _win_pids_alive(pids):
-    if _KERNEL32 is None:
-        return []
-    alive = []
-    for pid in pids:
-        handle = _KERNEL32.OpenProcess(
-            _PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid)
-        )
-        if handle and handle != _INVALID_HANDLE:
-            _KERNEL32.CloseHandle(handle)
-            alive.append(int(pid))
-    return alive
-
-
-def _win_kill_pids(pids):
-    if _KERNEL32 is None:
-        return
-    for pid in pids:
-        handle = _KERNEL32.OpenProcess(_PROCESS_TERMINATE, False, int(pid))
-        if handle and handle != _INVALID_HANDLE:
-            try:
-                _KERNEL32.TerminateProcess(handle, 1)
-            except (OSError, ValueError):
-                pass
-            finally:
-                _KERNEL32.CloseHandle(handle)
+        _KERNEL32.CloseHandle(handle)
 
 
 def _win_resume_pid(pid):
-    """Resume a CREATE_SUSPENDED child by resuming its primary thread."""
+    """Resume a CREATE_SUSPENDED child by resuming its primary thread.
+
+    Returns (ok, code); code is the Win32 error captured after the
+    resuming ResumeThread call (or after the failing step)."""
     if _KERNEL32 is None:
-        return False
+        return False, ("unsupported", None)
     try:
         snap = _KERNEL32.CreateToolhelp32Snapshot(_TH32CS_SNAPTHREAD, pid)
         if not snap or snap == _INVALID_HANDLE:
-            return False
+            return False, ("snapshot", _win_last_error())
         try:
             entry = _THREADENTRY32()
             entry.dwSize = ctypes.sizeof(_THREADENTRY32)
@@ -373,16 +329,18 @@ def _win_resume_pid(pid):
                     thread = _KERNEL32.OpenThread(_THREAD_SUSPEND_RESUME, False, entry.th32ThreadID)
                     if thread and thread != _INVALID_HANDLE:
                         try:
-                            _KERNEL32.ResumeThread(thread)
+                            if not _KERNEL32.ResumeThread(thread):
+                                return False, ("resume", _win_last_error())
+                            return True, None
                         finally:
                             _KERNEL32.CloseHandle(thread)
-                        return True
+                    return False, ("open_thread", _win_last_error())
                 have = _KERNEL32.Thread32Next(snap, ctypes.byref(entry))
-            return False
+            return False, ("no_thread", None)
         finally:
             _KERNEL32.CloseHandle(snap)
-    except (OSError, ValueError):
-        return False
+    except (OSError, ValueError) as exc:
+        return False, ("exception", repr(exc))
 
 
 class Ownership:
@@ -416,30 +374,53 @@ class Ownership:
         return {"start_new_session": True}
 
     def adopt(self, proc):
-        """Capture the kill/wait identity of a just-spawned child."""
+        """Capture the kill/wait identity of a just-spawned child.
+
+        On Windows the child is suspended at spawn. Containment MUST be
+        established before it runs: if the job cannot be created or the
+        child cannot be assigned, the still-suspended child is stopped
+        (it is ours and has never executed) and `available` stays False —
+        the caller then refuses to run the operation unowned rather than
+        silently losing orphan cleanup. Every stage reports its own
+        Win32 error, captured before cleanup can replace it.
+        """
         self.child = proc
+        self.unavailable_reason = None
         if os.name == "nt":
-            self.job = _win_job_create()
-            if self.job:
-                if _win_job_assign(self.job, proc.pid):
-                    pass  # owned: job emptiness is the completion signal
-                else:
-                    # Honest degradation: an assigned-but-empty job would
-                    # make every emptiness check pass while orphans go
-                    # unowned (observed on CI runners that already job
-                    # their steps — AssignProcessToJobObject then fails
-                    # with ERROR_ACCESS_DENIED). Close the empty job and
-                    # fall back to the PID-tree snapshot, visibly.
-                    err = _win_last_error()
+            self.job, err = _win_job_create()
+            if self.job is None:
+                stage, code = err
+                _win_terminate_pid(proc.pid)  # stop the suspended child
+                self.unavailable_reason = "job create failed at %s (error %s)" % (
+                    stage, code,
+                )
+            else:
+                assigned, err = _win_job_assign(self.job, proc.pid)
+                if not assigned:
+                    stage, code = err
+                    _win_terminate_pid(proc.pid)  # stop the suspended child
                     _win_job_close(self.job)
                     self.job = None
+                    self.unavailable_reason = (
+                        "job assignment failed at %s (error %s)" % (stage, code)
+                    )
+            if self.unavailable_reason:
+                print(
+                    "warning: Windows process containment unavailable — %s; "
+                    "the operation was not started" % self.unavailable_reason,
+                    file=sys.stderr,
+                )
+            if self.unavailable_reason is None:
+                resumed, rerr = _win_resume_pid(proc.pid)
+                if not resumed:
                     print(
-                        "warning: Windows Job Object assignment failed "
-                        "(error %s) — orphaned-descendant cleanup uses the "
-                        "PID-tree snapshot fallback" % err,
+                        "warning: could not resume the suspended child "
+                        "(error %s); it will be terminated at the deadline"
+                        % (rerr[1],),
                         file=sys.stderr,
                     )
-            _win_resume_pid(proc.pid)  # always resume, assigned or not
+            else:
+                _win_resume_pid(proc.pid)  # no-op on the terminated child
         else:
             try:
                 self.pgid = os.getpgid(proc.pid)
@@ -450,19 +431,10 @@ class Ownership:
         """True when no owned process remains; bounded by `deadline`."""
         if os.name == "nt":
             if self.job is None:
-                # Degraded: without job membership, reach orphans through
-                # the snapshot's parent links (they survive the parent's
-                # exit). The same deadline bounds the wait — an owned-tree
-                # that never empties is a timeout, exactly as with a job.
-                while time.monotonic() < deadline:
-                    if not _win_pids_alive(
-                        _win_descendant_pids(self.child.pid)
-                    ):
-                        return True
-                    time.sleep(POLL_INTERVAL_SECONDS)
-                return not _win_pids_alive(
-                    _win_descendant_pids(self.child.pid)
-                )
+                # Unreachable in normal operation: adopt() refuses to run
+                # unowned, so callers never wait on a jobless Windows
+                # ownership. Kept defensive only.
+                return True
             while time.monotonic() < deadline:
                 active = _win_job_active_processes(self.job)
                 if active == 0:
@@ -489,12 +461,6 @@ class Ownership:
                 )
             except (OSError, subprocess.SubprocessError):
                 pass
-            if self.job is None:
-                # Orphan reach for the degraded path: the direct child may
-                # already have exited (parent-exits-first), leaving the
-                # taskkill tree-walk without a root. The snapshot's parent
-                # links still find its descendants, by PID — never by name.
-                _win_kill_pids(_win_descendant_pids(self.child.pid))
             return
         killed = False
         if self.pgid is not None:
@@ -595,6 +561,9 @@ def run_bounded_capture(argv, deadline):
         except (OSError, subprocess.SubprocessError):
             return "start_failed", None
         ownership.adopt(proc)
+        if not ownership.available:
+            # adopt() stopped the still-suspended child and printed why.
+            return "unavailable", None
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             ownership.terminate()
@@ -652,6 +621,10 @@ def probe_core_ssh_command(git_argv, deadline):
         i += 1
     cmd += ["config", "--get", "core.sshCommand"]
     state, out = run_bounded_capture(cmd, deadline)
+    if state == "unavailable":
+        # Containment could not be established; adopt() said why. The
+        # configuration is indeterminate — never guess a transport.
+        return PROBE_INDETERMINATE, None
     if state == "start_failed":
         return PROBE_INDETERMINATE, None
     if state == "timed_out":
@@ -782,6 +755,15 @@ def main(argv):
             print("error: cannot start %r: %s" % (command[0], exc), file=sys.stderr)
             return EXIT_CANNOT_START
         ownership.adopt(proc)
+        if not ownership.available:
+            # Containment could not be established before the child ran;
+            # adopt() already stopped it and printed the per-stage reason.
+            print(
+                "error: process containment unavailable (%s) — the operation "
+                "was not started" % ownership.unavailable_reason,
+                file=sys.stderr,
+            )
+            return EXIT_OWNERSHIP_UNAVAILABLE
 
         try:
             rc = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
