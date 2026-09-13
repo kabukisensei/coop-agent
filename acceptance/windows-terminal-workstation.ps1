@@ -9,7 +9,7 @@ param(
   [string]$ReceiptPath = '',
   [string]$ExpectedHarnessSha = '',
   [switch]$VmOperatorMode,
-  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','BoundedCommandSuccess','BoundedProcessTree','SuccessfulParentDescendant','OwnershipUnavailable','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
+  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
   [string]$Value = '',
   [string]$Root = '',
   [string]$Canary = ''
@@ -351,12 +351,7 @@ function Invoke-Bounded {
   $stderr = "$LogBase.stderr.txt"
   $logParent = Split-Path -Parent $LogBase
   if ($logParent -and -not (Test-Path -LiteralPath $logParent)) { New-Item -ItemType Directory -Force -Path $logParent | Out-Null }
-  if ($env:COOP_ACCEPTANCE_FORCE_OWNERSHIP_UNAVAILABLE -eq '1') {
-    $script:ProcessCleanupUncertain = $true
-    [System.IO.File]::WriteAllText($stdout, '', (New-Object System.Text.UTF8Encoding($false)))
-    [System.IO.File]::WriteAllText($stderr, "forced ownership-unavailable fixture; payload was not started`n", (New-Object System.Text.UTF8Encoding($false)))
-    return [pscustomobject]@{ ExitCode = 126; Stdout = $stdout; Stderr = $stderr }
-  }
+
   $helper = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\scripts\knowledge-git.py'))
   $python = @(Get-Command python3,python -ErrorAction SilentlyContinue | Select-Object -First 1)
   if ($python.Count -ne 1 -or -not (Test-Path -LiteralPath $helper -PathType Leaf)) {
@@ -365,20 +360,17 @@ function Invoke-Bounded {
     [System.IO.File]::WriteAllText($stderr, "ownership helper unavailable; payload was not started`n", (New-Object System.Text.UTF8Encoding($false)))
     return [pscustomobject]@{ ExitCode = 126; Stdout = $stdout; Stderr = $stderr }
   }
-  $ownedFilePath = $FilePath
-  $ownedArguments = @($Arguments)
-  if ($InputPath) {
-    if ($env:OS -ne 'Windows_NT') { throw 'bounded stdin redirection is supported only by the native Windows harness' }
-    $cmdPath = "$LogBase.stdin.cmd"
-    $tokens = @($FilePath) + @($Arguments)
-    $escaped = @($tokens | ForEach-Object { '"' + ([string]$_).Replace('%','%%').Replace('"','""') + '"' })
-    $inputToken = '"' + ([string]$InputPath).Replace('%','%%').Replace('"','""') + '"'
-    [System.IO.File]::WriteAllText($cmdPath, "@echo off`r`n$($escaped -join ' ') < $inputToken`r`nexit /b %errorlevel%`r`n", (New-Object System.Text.ASCIIEncoding))
-    $ownedFilePath = 'cmd.exe'
-    $ownedArguments = @('/d','/s','/c',$cmdPath)
-  }
+  # Serialize the payload vector as UTF-8 JSON. The Python helper reconstructs
+  # the exact argv list and opens InputPath directly for the same owned child;
+  # no cmd.exe command line or lossy ASCII intermediary is involved.
+  $argvPath = "$LogBase.argv.json"
+  $payloadArgv = [object[]](@($FilePath) + @($Arguments))
+  [System.IO.File]::WriteAllText($argvPath, (ConvertTo-Json -InputObject $payloadArgv -Compress), (New-Object System.Text.UTF8Encoding($false)))
+  $helperArguments = @($helper,'--timeout-seconds',[string]$TimeoutSeconds)
+  if ($InputPath) { $helperArguments += @('--stdin-file',$InputPath) }
+  $helperArguments += @('--argv-file',$argvPath)
   $quoted = @()
-  foreach ($arg in @($helper,'--timeout-seconds',[string]$TimeoutSeconds,'--',$ownedFilePath) + $ownedArguments) { $quoted += ('"' + ([string]$arg).Replace('"','\"') + '"') }
+  foreach ($arg in $helperArguments) { $quoted += ('"' + ([string]$arg).Replace('"','\"') + '"') }
   $params = @{
     FilePath = $python[0].Source
     ArgumentList = ($quoted -join ' ')
@@ -400,6 +392,7 @@ function Invoke-Bounded {
     return [pscustomobject]@{ ExitCode = 126; Stdout = $stdout; Stderr = $stderr }
   } finally {
     $env:GIT_SSH_COMMAND = $oldSshCommand
+    Remove-Item -LiteralPath $argvPath -Force -ErrorAction SilentlyContinue
   }
   if ($process.ExitCode -eq 124 -or $process.ExitCode -eq 126) { $script:ProcessCleanupUncertain = $true }
   return [pscustomobject]@{ ExitCode = [int]$process.ExitCode; Stdout = $stdout; Stderr = $stderr }
@@ -450,6 +443,19 @@ if ($Mode -eq 'Probe') {
       Stop-TrackedProcessTrees
       Write-Output 'PASS'
     }
+    'BoundedUnicodeFidelity' {
+      $expectedArgs = @('雪 λ','space arg','&|<>^%!','quote"arg','backslash\tail','')
+      $result = Invoke-Bounded 'node' (@($Value,'unicode') + $expectedArgs) $Root 10 $Canary
+      if ($result.ExitCode -ne 0) { throw "Unicode fidelity payload exited $($result.ExitCode)" }
+      $observed = Get-Content -LiteralPath $result.Stdout -Raw | ConvertFrom-Json
+      if (@($observed.argv).Count -ne $expectedArgs.Count) { throw 'Unicode fidelity argument count changed' }
+      for ($i = 0; $i -lt $expectedArgs.Count; $i++) {
+        if ([string]$observed.argv[$i] -cne $expectedArgs[$i]) { throw "Unicode fidelity argument $i changed" }
+      }
+      if ([string]$observed.stdin -cne "Zażółć 雪`nsecond`n") { throw 'Unicode stdin content changed' }
+      Stop-TrackedProcessTrees
+      Write-Output 'PASS'
+    }
     'BoundedProcessTree' {
       $result = Invoke-Bounded 'node' @($Value,'cleanup-race',$Canary) $Root 1
       if ($result.ExitCode -ne 124) { throw "process-tree probe did not return timeout 124: $($result.ExitCode)" }
@@ -470,13 +476,24 @@ if ($Mode -eq 'Probe') {
       if (Test-Path -LiteralPath $marker) { throw 'surviving descendant incorrectly allowed an upload marker' }
       Write-Output 'PASS'
     }
-    'OwnershipUnavailable' {
-      $result = Invoke-Bounded 'node' @($Value,$Canary) $Root 5
-      if ($result.ExitCode -ne 126) { throw "ownership-unavailable fixture did not return 126: $($result.ExitCode)" }
+    'OwnershipLifecycleFailure' {
+      $fault = $env:COOP_KNOWLEDGE_GIT_TEST_FAULT
+      if ($fault -in @('job-create','job-assign','resume')) {
+        $result = Invoke-Bounded 'node' @($Value,$Canary) $Root 5
+        if ($result.ExitCode -ne 126) { throw "$fault did not return ownership uncertainty 126: $($result.ExitCode)" }
+        if (Test-Path -LiteralPath $Canary) { throw "$fault allowed the suspended payload to execute" }
+      } elseif ($fault -in @('job-query','job-close')) {
+        $result = Invoke-Bounded 'node' @($Value,'success') $Root 5
+        if ($result.ExitCode -ne 126) { throw "$fault preserved payload success instead of uncertainty: $($result.ExitCode)" }
+      } elseif ($fault -eq 'job-terminate') {
+        $result = Invoke-Bounded 'node' @($Value,'parent-success',$Canary) $Root 1
+        if ($result.ExitCode -ne 124) { throw "termination failure did not preserve timeout 124: $($result.ExitCode)" }
+      } else {
+        throw "unsupported ownership lifecycle fault: $fault"
+      }
       $marker = "$ReceiptPath.evidence-uploadable"
       try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
-      if (Test-Path -LiteralPath $Canary) { throw 'payload ran without ownership' }
-      if (Test-Path -LiteralPath $marker) { throw 'ownership unavailability incorrectly allowed an upload marker' }
+      if (Test-Path -LiteralPath $marker) { throw "$fault incorrectly allowed an upload marker" }
       Write-Output 'PASS'
     }
     'FinalizeArtifacts' {

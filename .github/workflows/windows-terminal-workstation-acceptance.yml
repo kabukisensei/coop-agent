@@ -53,6 +53,14 @@ jobs:
           ) | Out-Null
           if ($errors) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
 
+      - name: Exercise ownership faults and Unicode transport
+        shell: powershell
+        run: |
+          python .\harness\tests\knowledge-git.test.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test --test-name-pattern "Unicode|lifecycle" .\harness\tests\terminal-workstation-acceptance.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run native acceptance (cannot close human gate)
         shell: powershell
         run: |

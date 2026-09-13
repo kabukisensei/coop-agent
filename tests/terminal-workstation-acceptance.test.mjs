@@ -269,9 +269,10 @@ test("failure-path canary contamination removes evidence and emits no upload mar
 
 function writeOwnershipFixture(dir) {
   const writer = join(dir, "ownership-fixture.mjs");
-  writeFileSync(writer, `import {spawn} from "node:child_process"; import {writeFileSync} from "node:fs";
+  writeFileSync(writer, `import {spawn} from "node:child_process"; import {readFileSync,writeFileSync} from "node:fs";
 const mode=process.argv[2], target=process.argv[3], self=process.argv[1];
 if(mode==="success"){process.stdout.write("exact-stdout\\n");process.stderr.write("exact-stderr\\n");process.exit(23)}
+if(mode==="unicode"){process.stdout.write(JSON.stringify({argv:process.argv.slice(3),stdin:readFileSync(0,"utf8")}));process.exit(0)}
 if(mode==="leaf"){setTimeout(()=>writeFileSync(target,"late-write"),1800);setInterval(()=>{},1000)}
 else if(mode==="churn"){setInterval(()=>spawn(process.execPath,[self,"leaf",target],{stdio:"ignore"}),5)}
 else if(mode==="cleanup-race"){spawn(process.execPath,[self,"churn",target],{stdio:"ignore"});setInterval(()=>{},1000)}
@@ -287,6 +288,24 @@ test("bounded command preserves exact stdout, stderr, and child status", { skip:
   assert.equal(result.status, 0, result.stderr); assert.equal(readFileSync(`${logBase}.stdout.txt`, "utf8"), "exact-stdout\n"); assert.equal(readFileSync(`${logBase}.stderr.txt`, "utf8"), "exact-stderr\n");
 });
 
+test("knowledge-git preserves Unicode stdin paths, content, and exact argv directly", () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-unicode-雪-")); const writer = writeOwnershipFixture(dir);
+  const input = join(dir, "入力 space.txt"); const argvPath = join(dir, "引数 vector.json");
+  const content = "Zażółć 雪\nsecond\n"; const difficult = ["雪 λ", "space arg", "&|<>^%!", 'quote"arg', "backslash\\tail", ""];
+  writeFileSync(input, content, "utf8"); writeFileSync(argvPath, JSON.stringify([process.execPath, writer, "unicode", ...difficult]), "utf8");
+  const result = spawnSync("python3", [join(ROOT, "scripts", "knowledge-git.py"), "--timeout-seconds", "10", "--stdin-file", input, "--argv-file", argvPath], {
+    encoding: "utf8", env: { ...process.env, GIT_SSH_COMMAND: "ssh -o BatchMode=yes" },
+  });
+  assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout), { argv: difficult, stdin: content });
+});
+
+test("PowerShell bounded wrapper preserves Unicode stdin and difficult arguments", { skip: !havePwsh }, () => {
+  const parent = mkdtempSync(join(tmpdir(), "coop-wrapper-unicode-")); const dir = join(parent, "雪 profile"); mkdirSync(dir);
+  const writer = writeOwnershipFixture(dir); const input = join(dir, "入力 answers.txt"); writeFileSync(input, "Zażółć 雪\nsecond\n", "utf8");
+  const result = runPs(["-Mode", "Probe", "-Probe", "BoundedUnicodeFidelity", "-Value", writer, "-Root", join(dir, "証拠 log"), "-Canary", input]);
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test("timeout owns descendants spawned during cleanup and suppresses upload", { skip: !havePwsh }, () => {
   const dir = mkdtempSync(join(tmpdir(), "coop-process-race-")); const writer = writeOwnershipFixture(dir); const lateWrite = join(dir, "late.txt"); const receiptPath = join(dir, "receipt.json");
   const result = runPs(["-Mode", "Probe", "-Probe", "BoundedProcessTree", "-Value", writer, "-Root", join(dir, "evidence", "bounded"), "-Canary", lateWrite, "-ReceiptPath", receiptPath]);
@@ -299,11 +318,18 @@ test("successful parent with surviving descendant waits to timeout and suppresse
   assert.equal(result.status, 0, result.stderr); assert.equal(existsSync(lateWrite), false); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false);
 });
 
-test("ownership-unavailable 126 runs no payload and suppresses upload", { skip: !havePwsh }, () => {
-  const dir = mkdtempSync(join(tmpdir(), "coop-owner-unavailable-")); const writer = writeOwnershipFixture(dir); const payloadMarker = join(dir, "payload.txt"); const receiptPath = join(dir, "receipt.json");
-  const env = { ...process.env, COOP_ACCEPTANCE_FORCE_OWNERSHIP_UNAVAILABLE: "1" };
-  const result = runPs(["-Mode", "Probe", "-Probe", "OwnershipUnavailable", "-Value", writer, "-Root", join(dir, "evidence", "bounded"), "-Canary", payloadMarker, "-ReceiptPath", receiptPath], { env });
-  assert.equal(result.status, 0, result.stderr); assert.equal(existsSync(payloadMarker), false); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false);
+test("native Windows lifecycle faults fail closed through real ownership branches", { skip: !havePwsh || process.platform !== "win32" }, () => {
+  for (const fault of ["job-create", "job-assign", "resume", "job-query", "job-terminate", "job-close"]) {
+    const dir = mkdtempSync(join(tmpdir(), `coop-owner-${fault}-`)); const writer = writeOwnershipFixture(dir); const payloadMarker = join(dir, "payload.txt"); const receiptPath = join(dir, "receipt.json"); const pidPath = join(dir, "spawned.pid");
+    const env = { ...process.env, COOP_KNOWLEDGE_GIT_TEST_FAULT: fault, COOP_KNOWLEDGE_GIT_TEST_PID_FILE: pidPath };
+    const result = runPs(["-Mode", "Probe", "-Probe", "OwnershipLifecycleFailure", "-Value", writer, "-Root", join(dir, "evidence", "bounded"), "-Canary", payloadMarker, "-ReceiptPath", receiptPath], { env });
+    assert.equal(result.status, 0, `${fault}: ${result.stderr}`); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false, fault);
+    if (["job-create", "job-assign", "resume"].includes(fault)) {
+      assert.equal(existsSync(pidPath), true, `${fault}: real suspended child PID was not recorded`);
+      const pid = Number.parseInt(readFileSync(pidPath, "utf8"), 10);
+      assert.throws(() => process.kill(pid, 0), (error) => error?.code === "ESRCH", `${fault}: suspended child ${pid} survived`);
+    }
+  }
 });
 
 test("product agent path is one effective onboarding/install/Doctor path", () => {

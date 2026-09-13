@@ -60,9 +60,20 @@ the helper creates the child suspended, assigns it to a KILL_ON_JOB_CLOSE Job
 Object, and only then resumes it; descendants inherit membership and remain owned
 after the immediate parent exits. On POSIX, the equivalent ownership unit is a
 new process group. The helper preserves the child status and does not return
-success until the ownership unit is empty. Timeout `124` and ownership-unavailable
-`126` are distinct hard failures; either suppresses the upload marker and removes
-the evidence directory. There is no PID snapshot or parent-only fallback.
+success until the ownership unit is positively verified empty. A failed Job
+membership query, Job close, or other ownership uncertainty returns `126`; timeout
+remains `124`. Either hard failure suppresses the upload marker and removes the
+evidence directory. Bounded stdin is opened directly by the helper, and payload argv
+is transferred as UTF-8 JSON rather than a shell command, preserving Unicode paths,
+metacharacters, spaces, and empty arguments. There is no PID snapshot, parent-only
+fallback, or `.cmd` serialization.
+
+The workflow runs fixed, test-only ownership fault seams for Job creation,
+assignment, resume, membership query, termination, and close before the acceptance
+run. Creation/assignment/resume faults must terminate the still-suspended child
+without executing it; query/close uncertainty must override payload success; and a
+termination fault on a live descendant must remain a hard timeout. It also probes
+Unicode stdin and difficult argument vectors through both the helper and wrapper.
 
 Candidate Support must report the exact build fingerprint `build-24297cf9`,
 produced by the product fingerprint function from the candidate VERSION and SHA.
@@ -89,7 +100,9 @@ it with local testing.
 ### Prepare
 
 1. Power off the VM and take snapshot `pre-coop-terminal-295693a`.
-2. Start it and clone the candidate into an ASCII-safe disposable path.
+2. Start it and clone the candidate into a disposable path. Include at least one
+   non-ASCII path segment in the operator exercise; ASCII-only paths do not verify
+   the harness's Unicode contract.
 3. Verify before installation:
 
 ```powershell

@@ -311,10 +311,10 @@ try:
     t_term1 = time.monotonic() - t0
     print("PROBE| timing.terminate_start=%.3f terminate_done=%.3f" % (t_term0, t_term1))
     t_wait0 = time.monotonic() - t0
-    empty = own.wait_empty(time.monotonic() + 8) if own.job else True
+    empty_state = own.wait_empty(time.monotonic() + 8) if own.job else kg.OWNERSHIP_EMPTY
     t_wait1 = time.monotonic() - t0
-    print("PROBE| timing.reap_start=%.3f reap_done=%.3f wait_empty=%s" % (t_wait0, t_wait1, empty))
-    if not empty: failed = True
+    print("PROBE| timing.reap_start=%.3f reap_done=%.3f wait_empty=%s" % (t_wait0, t_wait1, empty_state))
+    if empty_state != kg.OWNERSHIP_EMPTY: failed = True
     if verify_handle:
         state, exit_code, werr = wait_terminated(verify_handle, 5000)
         print("PROBE| assignment.terminate_verify=%s exit_code=%s getlasterror=%d" % (state, exit_code, werr))

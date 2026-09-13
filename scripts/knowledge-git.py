@@ -7,7 +7,8 @@ indefinitely (http.lowSpeedTime only bounds HTTP low-speed stalls — it is not
 an overall deadline).
 
 Usage:
-    <python> scripts/knowledge-git.py --timeout-seconds 30 -- <git> [args...]
+    <python> scripts/knowledge-git.py --timeout-seconds 30 [--stdin-file PATH] -- <git> [args...]
+    <python> scripts/knowledge-git.py --timeout-seconds 30 [--stdin-file PATH] --argv-file PATH
 
 Deadline: ONE deadline bounds the COMPLETE operation — configuration
 discovery, the immediate child, and every descendant — not just the child.
@@ -30,10 +31,10 @@ spawned suspended, assigned to a Job Object created with
 KILL_ON_JOB_CLOSE, then resumed — job membership is inherited by every
 grandchild and PERSISTS after the immediate parent exits, so an orphaned
 descendant holding the output handles is still owned and can be terminated;
-job emptiness is the output-completion signal. If job setup fails the runner
-degrades to the previous taskkill /T contract (bounded to the parent's
-lifetime). Never kills by executable name. Cleanup is bounded — no unlimited
-wait after a kill.
+job emptiness is the output-completion signal. If setup, membership query, or
+handle close cannot be proven, the runner terminates/closes what it owns and
+fails closed with ownership-unavailable status 126. Never kills by executable
+name. Cleanup is bounded — no unlimited wait after a kill.
 
 Timeout source: the --timeout-seconds flag wins; otherwise
 COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS (a positive integer); otherwise 30.
@@ -45,7 +46,8 @@ Child-only environment (the parent is never modified):
     GIT_ASKPASS / SSH_ASKPASS  pointed at the platform null device so no GUI
                                prompt program can open (terminal prompt stays
                                disabled via GIT_TERMINAL_PROMPT=0 / BatchMode)
-    stdin                      /dev/null (closed)
+    stdin                      /dev/null (closed), unless --stdin-file opens a
+                               file directly for the owned child
 SSH stays unattended WITHOUT weakening host-key checking, and WITHOUT
 silently replacing the selected transport:
   * GIT_SSH / GIT_SSH_COMMAND set by the user  -> preserved untouched.
@@ -75,6 +77,7 @@ Exit codes:
     2       invalid CLI usage
 """
 
+import json
 import os
 import shlex
 import signal
@@ -94,11 +97,43 @@ EXIT_OWNERSHIP_UNAVAILABLE = 126
 CLEANUP_GRACE_SECONDS = 5
 POLL_INTERVAL_SECONDS = 0.05
 
+OWNERSHIP_EMPTY = "empty"
+OWNERSHIP_TIMED_OUT = "timed_out"
+OWNERSHIP_UNCERTAIN = "uncertain"
+
+# Explicit fail-closed test seam. Values select fixed lifecycle stages only;
+# arbitrary code or callables are never accepted. Inert unless deliberately set.
+_TEST_FAULT_ENV = "COOP_KNOWLEDGE_GIT_TEST_FAULT"
+_TEST_PID_FILE_ENV = "COOP_KNOWLEDGE_GIT_TEST_PID_FILE"
+_TEST_FAULTS = frozenset((
+    "job-create", "job-assign", "resume", "job-query", "job-terminate", "job-close",
+))
+
+
+def _test_fault(stage):
+    value = os.environ.get(_TEST_FAULT_ENV, "")
+    return value in _TEST_FAULTS and value == stage
+
+
+def _record_test_pid(proc):
+    """Expose the real spawned PID only while a fixed pre-execution fault is active."""
+    if not any(_test_fault(stage) for stage in ("job-create", "job-assign", "resume")):
+        return
+    path = os.environ.get(_TEST_PID_FILE_ENV)
+    if not path:
+        return
+    try:
+        with open(path, "w", encoding="ascii") as stream:
+            stream.write("%d\n" % proc.pid)
+    except OSError:
+        pass  # The behavioral test fails loudly if its requested evidence is absent.
+
 # Probe result states.
 PROBE_VALUE = "value"            # core.sshCommand is set (possibly empty -> unset)
 PROBE_UNSET = "unset"            # read succeeded; key absent
 PROBE_INDETERMINATE = "indeterminate"  # probe could not start at all
 PROBE_TIMED_OUT = "timed_out"    # probe exceeded the operation deadline
+PROBE_OWNERSHIP_UNCERTAIN = "ownership_uncertain"
 
 _CREATE_SUSPENDED = 0x00000004
 
@@ -212,6 +247,8 @@ def _win_job_create():
     with the Win32 code captured IMMEDIATELY after the failing call —
     before any cleanup (CloseHandle resets the thread's last error).
     """
+    if _test_fault("job-create"):
+        return None, ("test-job-create", 1)
     if _KERNEL32 is None:
         return None, ("unsupported", None)
     try:
@@ -236,6 +273,8 @@ def _win_job_assign(job, pid):
     """Assign pid to job. Returns (ok, error); error is (stage, code) —
     'open' distinguishes handle-acquisition failure from the assignment
     itself, each code captured immediately after its own call."""
+    if _test_fault("job-assign"):
+        return False, ("test-job-assign", 1)
     if _KERNEL32 is None or not job:
         return False, ("unsupported", None)
     try:
@@ -253,6 +292,8 @@ def _win_job_assign(job, pid):
 
 
 def _win_job_active_processes(job):
+    if _test_fault("job-query"):
+        return None
     if _KERNEL32 is None or not job:
         return None
     try:
@@ -268,21 +309,29 @@ def _win_job_active_processes(job):
 
 
 def _win_job_terminate(job):
+    if _test_fault("job-terminate"):
+        return False, ("test-job-terminate", 1)
     if _KERNEL32 is None or not job:
-        return
+        return False, ("unsupported", None)
     try:
-        _KERNEL32.TerminateJobObject(job, 1)
-    except (OSError, ValueError):
-        pass
+        if _KERNEL32.TerminateJobObject(job, 1):
+            return True, None
+        return False, ("terminate", _win_last_error())
+    except (OSError, ValueError) as exc:
+        return False, ("exception", repr(exc))
 
 
 def _win_job_close(job):
+    if _test_fault("job-close"):
+        return False, ("test-job-close", 1)
     if _KERNEL32 is None or not job:
-        return
+        return False, ("unsupported", None)
     try:
-        _KERNEL32.CloseHandle(job)
-    except (OSError, ValueError):
-        pass
+        if _KERNEL32.CloseHandle(job):
+            return True, None
+        return False, ("close", _win_last_error())
+    except (OSError, ValueError) as exc:
+        return False, ("exception", repr(exc))
 
 
 def _win_last_error():
@@ -339,6 +388,8 @@ def _win_resume_pid(pid):
 
     Returns (ok, code); code is the Win32 error captured after the
     resuming ResumeThread call (or after the failing step)."""
+    if _test_fault("resume"):
+        return False, ("test-resume", 1)
     if _KERNEL32 is None:
         return False, ("unsupported", None)
     try:
@@ -380,8 +431,8 @@ class Ownership:
     to before resume — membership is inherited by grandchildren and persists
     after the parent exits, so orphaned descendants stay owned.
 
-    `available` is False when Windows job setup failed; the kill/wait unit then
-    degrades to the immediate child (taskkill tree), as before.
+    `available` is False when Windows job setup or resume failed. The caller
+    refuses to accept unowned execution and returns status 126.
     """
 
     def __init__(self):
@@ -419,20 +470,26 @@ class Ownership:
             self.job, err = _win_job_create()
             if self.job is None:
                 stage, code = err
-                _win_terminate_pid(proc.pid)  # stop the suspended child
+                stopped, stop_err = _win_terminate_pid(proc.pid)
                 self.unavailable_reason = "job create failed at %s (error %s)" % (
                     stage, code,
                 )
+                if not stopped:
+                    self.unavailable_reason += "; suspended-child termination failed (%s)" % (stop_err,)
             else:
                 assigned, err = _win_job_assign(self.job, proc.pid)
                 if not assigned:
                     stage, code = err
-                    _win_terminate_pid(proc.pid)  # stop the suspended child
-                    _win_job_close(self.job)
+                    stopped, stop_err = _win_terminate_pid(proc.pid)
+                    closed, close_err = _win_job_close(self.job)
                     self.job = None
                     self.unavailable_reason = (
                         "job assignment failed at %s (error %s)" % (stage, code)
                     )
+                    if not stopped:
+                        self.unavailable_reason += "; suspended-child termination failed (%s)" % (stop_err,)
+                    if not closed:
+                        self.unavailable_reason += "; Job close failed (%s)" % (close_err,)
             if self.unavailable_reason:
                 print(
                     "warning: Windows process containment unavailable — %s; "
@@ -442,14 +499,20 @@ class Ownership:
             if self.unavailable_reason is None:
                 resumed, rerr = _win_resume_pid(proc.pid)
                 if not resumed:
+                    terminated, term_err = _win_job_terminate(self.job)
+                    stopped, stop_err = _win_terminate_pid(proc.pid)
+                    closed, close_err = _win_job_close(self.job)
+                    self.job = None
+                    self.unavailable_reason = "child resume failed (%s)" % (rerr,)
+                    if not terminated and not stopped:
+                        self.unavailable_reason += "; suspended-child termination failed (job=%s pid=%s)" % (term_err, stop_err)
+                    if not closed:
+                        self.unavailable_reason += "; Job close failed (%s)" % (close_err,)
                     print(
-                        "warning: could not resume the suspended child "
-                        "(error %s); it will be terminated at the deadline"
-                        % (rerr[1],),
+                        "warning: Windows process containment unavailable — %s; "
+                        "the operation was not started" % self.unavailable_reason,
                         file=sys.stderr,
                     )
-            else:
-                _win_resume_pid(proc.pid)  # no-op on the terminated child
         else:
             try:
                 self.pgid = os.getpgid(proc.pid)
@@ -457,40 +520,43 @@ class Ownership:
                 self.pgid = None
 
     def wait_empty(self, deadline):
-        """True when no owned process remains; bounded by `deadline`."""
+        """Return verified empty, deadline expiry, or ownership uncertainty."""
         if os.name == "nt":
             if self.job is None:
-                # Unreachable in normal operation: adopt() refuses to run
-                # unowned, so callers never wait on a jobless Windows
-                # ownership. Kept defensive only.
-                return True
+                # A missing Windows Job can never prove ownership empty.
+                return OWNERSHIP_UNCERTAIN
             while time.monotonic() < deadline:
                 active = _win_job_active_processes(self.job)
                 if active == 0:
-                    return True
+                    return OWNERSHIP_EMPTY
                 if active is None:
-                    return True  # cannot query — do not busy-loop forever
+                    return OWNERSHIP_UNCERTAIN
                 time.sleep(POLL_INTERVAL_SECONDS)
-            return _win_job_active_processes(self.job) == 0
+            active = _win_job_active_processes(self.job)
+            if active is None:
+                return OWNERSHIP_UNCERTAIN
+            return OWNERSHIP_EMPTY if active == 0 else OWNERSHIP_TIMED_OUT
         while group_alive(self.pgid) and time.monotonic() < deadline:
             time.sleep(POLL_INTERVAL_SECONDS)
-        return not group_alive(self.pgid)
+        return OWNERSHIP_EMPTY if not group_alive(self.pgid) else OWNERSHIP_TIMED_OUT
 
     def terminate(self):
         """Kill every owned process, never a global executable sweep."""
         if os.name == "nt":
+            terminated = False
             if self.job is not None:
-                _win_job_terminate(self.job)
+                terminated, _ = _win_job_terminate(self.job)
             # Fallback for the degraded path: tree-kill while the root lives.
             try:
-                subprocess.run(
+                result = subprocess.run(
                     ["taskkill", "/PID", str(self.child.pid), "/T", "/F"],
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL, timeout=CLEANUP_GRACE_SECONDS,
                 )
+                terminated = terminated or result.returncode == 0
             except (OSError, subprocess.SubprocessError):
                 pass
-            return
+            return terminated
         killed = False
         if self.pgid is not None:
             try:
@@ -507,13 +573,17 @@ class Ownership:
         if not killed and self.child is not None:
             try:
                 self.child.kill()
+                killed = True
             except OSError:
                 pass
+        return killed
 
     def close(self):
         if os.name == "nt" and self.job is not None:
-            _win_job_close(self.job)
+            closed, _ = _win_job_close(self.job)
             self.job = None
+            return closed
+        return True
 
 
 def resolve_timeout(flag_value):
@@ -589,6 +659,7 @@ def run_bounded_capture(argv, deadline):
             )
         except (OSError, subprocess.SubprocessError):
             return "start_failed", None
+        _record_test_pid(proc)
         ownership.adopt(proc)
         if not ownership.available:
             # adopt() stopped the still-suspended child and printed why.
@@ -616,14 +687,19 @@ def run_bounded_capture(argv, deadline):
             return "timed_out", None
         # Process exited — but output completion is part of the operation:
         # descendants may still hold the pipe (parent-exits-first).
-        if not ownership.wait_empty(deadline):
+        empty_state = ownership.wait_empty(deadline)
+        if empty_state != OWNERSHIP_EMPTY:
             ownership.terminate()
             reap_bounded(proc)
             try:
                 proc.communicate(timeout=CLEANUP_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
                 pass
+            if empty_state == OWNERSHIP_UNCERTAIN:
+                return "uncertain", None
             return "timed_out", None
+        if not ownership.close():
+            return "uncertain", None
         return "ok", out
     finally:
         ownership.close()
@@ -651,13 +727,16 @@ def probe_core_ssh_command(git_argv, deadline):
     cmd += ["config", "--get", "core.sshCommand"]
     state, out = run_bounded_capture(cmd, deadline)
     if state == "unavailable":
-        # Containment could not be established; adopt() said why. The
-        # configuration is indeterminate — never guess a transport.
-        return PROBE_INDETERMINATE, None
+        # Containment could not be established; adopt() stopped the suspended
+        # probe child. This is ownership uncertainty, not an ordinary config
+        # lookup failure, so the main payload must not be attempted.
+        return PROBE_OWNERSHIP_UNCERTAIN, None
     if state == "start_failed":
         return PROBE_INDETERMINATE, None
     if state == "timed_out":
         return PROBE_TIMED_OUT, None
+    if state == "uncertain":
+        return PROBE_OWNERSHIP_UNCERTAIN, None
     if out is None:
         return PROBE_INDETERMINATE, None
     # A probe that died on its own (nonzero rc) with empty output means unset;
@@ -698,7 +777,7 @@ def child_env(git_argv, deadline):
     if "GIT_SSH" in env or "GIT_SSH_COMMAND" in env:
         return env, None, PROBE_UNSET
     probe_state, configured = probe_core_ssh_command(git_argv, deadline)
-    if probe_state == PROBE_TIMED_OUT:
+    if probe_state in (PROBE_TIMED_OUT, PROBE_OWNERSHIP_UNCERTAIN):
         return env, None, probe_state
     if probe_state == PROBE_INDETERMINATE:
         # Distinguish "not set" from "could not be determined": with an
@@ -732,9 +811,23 @@ def operation_deadline_exceeded(timeout, what="git operation"):
     )
 
 
+def finish_owned(ownership, status):
+    """Close ownership before publishing status; close uncertainty fails closed."""
+    if ownership.close():
+        return status
+    print(
+        "error: Windows process ownership could not be closed cleanly — "
+        "operation status is uncertain",
+        file=sys.stderr,
+    )
+    return EXIT_TIMEOUT if status == EXIT_TIMEOUT else EXIT_OWNERSHIP_UNAVAILABLE
+
+
 def main(argv):
     timeout_flag = None
     command = None
+    argv_file = None
+    stdin_path = None
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -748,10 +841,35 @@ def main(argv):
             timeout_flag = argv[i + 1]
             i += 2
             continue
+        if arg in ("--stdin-file", "--argv-file"):
+            if i + 1 >= len(argv):
+                print("error: %s requires a value" % arg, file=sys.stderr)
+                return EXIT_USAGE
+            if arg == "--stdin-file":
+                stdin_path = argv[i + 1]
+            else:
+                argv_file = argv[i + 1]
+            i += 2
+            continue
         print("error: unknown argument: %s" % arg, file=sys.stderr)
         return EXIT_USAGE
+    if command is not None and argv_file is not None:
+        print("error: use either --argv-file or --, not both", file=sys.stderr)
+        return EXIT_USAGE
+    if argv_file is not None:
+        try:
+            with open(argv_file, "r", encoding="utf-8") as stream:
+                command = json.load(stream)
+        except (OSError, ValueError) as exc:
+            print("error: cannot read argv file: %s" % exc, file=sys.stderr)
+            return EXIT_USAGE
+        if not isinstance(command, list) or not command or not all(
+            isinstance(value, str) for value in command
+        ) or not command[0]:
+            print("error: argv file must contain a non-empty JSON string array", file=sys.stderr)
+            return EXIT_USAGE
     if not command:
-        print("error: missing command after --", file=sys.stderr)
+        print("error: missing command after -- or --argv-file", file=sys.stderr)
         return EXIT_USAGE
 
     timeout = resolve_timeout(timeout_flag)
@@ -767,13 +885,24 @@ def main(argv):
             file=sys.stderr,
         )
         return EXIT_TIMEOUT
+    if probe_state == PROBE_OWNERSHIP_UNCERTAIN:
+        print(
+            "error: SSH configuration probe ownership became uncertain — "
+            "the operation was not started",
+            file=sys.stderr,
+        )
+        return EXIT_OWNERSHIP_UNAVAILABLE
     if env_warning:
         print("warning: %s" % env_warning, file=sys.stderr)
 
-    popen_kwargs = {
-        "stdin": subprocess.DEVNULL,
-        "env": env,
-    }
+    stdin_stream = None
+    if stdin_path is not None:
+        try:
+            stdin_stream = open(stdin_path, "rb")
+        except OSError as exc:
+            print("error: cannot open stdin file %r: %s" % (stdin_path, exc), file=sys.stderr)
+            return EXIT_CANNOT_START
+    popen_kwargs = {"stdin": stdin_stream or subprocess.DEVNULL, "env": env}
     ownership = Ownership()
     popen_kwargs.update(ownership.spawn_kwargs())
 
@@ -783,6 +912,7 @@ def main(argv):
         except (FileNotFoundError, PermissionError, OSError) as exc:
             print("error: cannot start %r: %s" % (command[0], exc), file=sys.stderr)
             return EXIT_CANNOT_START
+        _record_test_pid(proc)
         ownership.adopt(proc)
         if not ownership.available:
             # Containment could not be established before the child ran;
@@ -792,7 +922,7 @@ def main(argv):
                 "was not started" % ownership.unavailable_reason,
                 file=sys.stderr,
             )
-            return EXIT_OWNERSHIP_UNAVAILABLE
+            return finish_owned(ownership, EXIT_OWNERSHIP_UNAVAILABLE)
 
         try:
             rc = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
@@ -807,7 +937,7 @@ def main(argv):
                 "error: git operation timed out after %ds and was terminated" % timeout,
                 file=sys.stderr,
             )
-            return EXIT_TIMEOUT
+            return finish_owned(ownership, EXIT_TIMEOUT)
         except KeyboardInterrupt:
             ownership.terminate()
             reap_bounded(proc)
@@ -815,7 +945,7 @@ def main(argv):
                 wait_group_exit(ownership.pgid, time.monotonic() + CLEANUP_GRACE_SECONDS)
             else:
                 ownership.wait_empty(time.monotonic() + CLEANUP_GRACE_SECONDS)
-            return 130
+            return finish_owned(ownership, 130)
 
         # The child finished, but the operation has not: descendants may still
         # hold the inherited stdout/stderr open, leaving the caller's capture
@@ -824,18 +954,28 @@ def main(argv):
         # close and cleanup actually happens. On Windows the job object keeps
         # orphaned descendants owned after the parent's exit, so this wait is
         # as valid there as the POSIX group wait.
-        if not ownership.wait_empty(deadline):
+        empty_state = ownership.wait_empty(deadline)
+        if empty_state != OWNERSHIP_EMPTY:
             ownership.terminate()
             reap_bounded(proc)
             ownership.wait_empty(time.monotonic() + CLEANUP_GRACE_SECONDS)
+            if empty_state == OWNERSHIP_UNCERTAIN:
+                print(
+                    "error: Windows Job membership could not be verified — "
+                    "owned processes were terminated and status is uncertain",
+                    file=sys.stderr,
+                )
+                return finish_owned(ownership, EXIT_OWNERSHIP_UNAVAILABLE)
             operation_deadline_exceeded(timeout)
-            return EXIT_TIMEOUT
+            return finish_owned(ownership, EXIT_TIMEOUT)
 
         if rc < 0:
-            return 128 + (-rc)
-        return rc
+            return finish_owned(ownership, 128 + (-rc))
+        return finish_owned(ownership, rc)
     finally:
         ownership.close()
+        if stdin_stream is not None:
+            stdin_stream.close()
 
 
 if __name__ == "__main__":
