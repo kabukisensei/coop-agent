@@ -14,11 +14,15 @@ pending; the cross-platform tests below are not substitutes for either gate.
 
 ## Automated native-Windows evidence
 
-Manually dispatch **Windows Terminal workstation acceptance** from the exact
-harness revision to be assessed. Do not pass a branch or candidate input: the
-workflow checks out the two immutable product SHAs itself. It runs only on a
-GitHub-hosted `windows-latest` runner with `contents: read`, does not persist Git
-credentials, and receives no product/provider secret.
+Before merge, the workflow runs automatically only for a same-repository pull
+request into `main` whose head branch is exactly
+`terminal/workstation-acceptance-2026-09-20`; every other pull-request head leaves
+the native job skipped. `workflow_dispatch` remains available once GitHub has
+registered the workflow on the default branch. Neither path accepts a branch or
+candidate input: the workflow checks out the two immutable product SHAs itself.
+It runs only on a GitHub-hosted `windows-latest` runner with `contents: read`,
+does not persist Git credentials, receives no product/provider secret, and uses
+no write-capable event.
 
 The harness refuses pre-existing owned roots and creates disposable profile,
 npm, pipx, local-app-data, and evidence roots. Its effective agent directory is

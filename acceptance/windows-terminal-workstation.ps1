@@ -9,7 +9,7 @@ param(
   [string]$ReceiptPath = '',
   [string]$ExpectedHarnessSha = '',
   [switch]$VmOperatorMode,
-  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
+  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','ValidateLifecycleEvent','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
   [string]$Value = '',
   [string]$Root = '',
   [string]$Canary = ''
@@ -339,6 +339,28 @@ function Assert-FrozenArtifactsSafe([string]$EvidencePath, [string]$Needle, [str
   if ($canaryHits.Count -gt 0) { throw 'credential canary found in uploadable evidence' }
 }
 
+function Remove-UploadMarker([string]$Path) {
+  if ([string]::IsNullOrWhiteSpace($Path)) { return }
+  $marker = "$Path.evidence-uploadable"
+  if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker -Force -ErrorAction Stop }
+  if (Test-Path -LiteralPath $marker) { throw "could not revoke stale upload marker: $marker" }
+}
+
+function Assert-LifecycleFaultEvent([string]$Path, [string]$Nonce, [string]$RequestedStage) {
+  $stages = @('job-create','job-assign','resume','job-query','job-terminate','job-close')
+  if ($RequestedStage -notin $stages) { throw "unsupported ownership lifecycle fault: $RequestedStage" }
+  if ($Nonce -cnotmatch '^[0-9a-f]{32}$') { throw 'lifecycle event nonce is invalid' }
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "observed lifecycle event missing for requested fault: $RequestedStage" }
+  try { $event = [System.IO.File]::ReadAllText($Path) | ConvertFrom-Json } catch { throw "observed lifecycle event is unreadable for requested fault: $RequestedStage" }
+  Assert-ExactProperties $event @('schema_version','nonce','stage','outcome') 'observed lifecycle event'
+  if (($event.schema_version -isnot [int] -and $event.schema_version -isnot [long]) -or $event.schema_version -ne 1) { throw 'observed lifecycle event schema version mismatch' }
+  if (-not (Test-JsonString $event.nonce) -or $event.nonce -cne $Nonce) { throw "stale lifecycle event rejected for requested fault: $RequestedStage" }
+  if (-not (Test-JsonString $event.stage) -or $event.stage -cne $RequestedStage) { throw "wrong observed lifecycle stage for requested fault: $RequestedStage" }
+  $expectedOutcome = if ($RequestedStage -eq 'job-query') { 'indeterminate' } else { 'failure' }
+  if (-not (Test-JsonString $event.outcome) -or $event.outcome -cne $expectedOutcome) { throw "wrong observed lifecycle outcome for requested fault: $RequestedStage" }
+  return $event
+}
+
 function Invoke-Bounded {
   param(
     [string]$FilePath,
@@ -424,20 +446,46 @@ function Assert-ExitZero([object]$Result, [string]$Label) {
 
 function Invoke-OwnershipLifecycleFault([string]$Fixture, [string]$LogBase, [string]$PayloadMarker) {
   $fault = $env:COOP_KNOWLEDGE_GIT_TEST_FAULT
-  if ($fault -in @('job-create','job-assign','resume')) {
-    $result = Invoke-Bounded 'node' @($Fixture,$PayloadMarker) $LogBase 5
-    if ($result.ExitCode -ne 126) { throw "$fault did not return ownership uncertainty 126: $($result.ExitCode)" }
-    if (Test-Path -LiteralPath $PayloadMarker) { throw "$fault allowed the suspended payload to execute" }
-  } elseif ($fault -eq 'job-query') {
-    $result = Invoke-Bounded 'node' @($Fixture,'parent-with-descendant',$PayloadMarker) $LogBase 5
-    if ($result.ExitCode -ne 126) { throw "$fault preserved payload execution instead of uncertainty: $($result.ExitCode)" }
-  } elseif ($fault -in @('job-terminate','job-close')) {
-    $result = Invoke-Bounded 'node' @($Fixture,'parent-with-descendant',$PayloadMarker) $LogBase 1
-    if ($result.ExitCode -ne 124) { throw "$fault did not preserve timeout 124: $($result.ExitCode)" }
-  } else {
-    throw "unsupported ownership lifecycle fault: $fault"
+  $eventPath = "$LogBase.lifecycle-event.json"
+  $eventNonce = [guid]::NewGuid().ToString('N')
+  Remove-Item -LiteralPath $eventPath -Force -ErrorAction SilentlyContinue
+  $oldEventPath = $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_FILE
+  $oldEventNonce = $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_NONCE
+  try {
+    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_FILE = $eventPath
+    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_NONCE = $eventNonce
+    if ($fault -in @('job-create','job-assign','resume')) {
+      $result = Invoke-Bounded 'node' @($Fixture,$PayloadMarker) $LogBase 5
+      if ($result.ExitCode -ne 126) { throw "$fault did not return ownership uncertainty 126: $($result.ExitCode)" }
+      if (Test-Path -LiteralPath $PayloadMarker) { throw "$fault allowed the suspended payload to execute" }
+    } elseif ($fault -eq 'job-query') {
+      $result = Invoke-Bounded 'node' @($Fixture,'parent-with-descendant',$PayloadMarker) $LogBase 5
+      if ($result.ExitCode -ne 126) { throw "$fault preserved payload execution instead of uncertainty: $($result.ExitCode)" }
+    } elseif ($fault -in @('job-terminate','job-close')) {
+      $result = Invoke-Bounded 'node' @($Fixture,'parent-with-descendant',$PayloadMarker) $LogBase 1
+      if ($result.ExitCode -ne 124) { throw "$fault did not preserve timeout 124: $($result.ExitCode)" }
+    } else {
+      throw "unsupported ownership lifecycle fault: $fault"
+    }
+  } finally {
+    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_FILE = $oldEventPath
+    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_NONCE = $oldEventNonce
   }
-  return [pscustomobject]@{ Fault = $fault; ExitCode = [int]$result.ExitCode }
+  $eventMutation = $env:COOP_TERMINAL_ACCEPTANCE_EVENT_MUTATION
+  if ($eventMutation -and $eventMutation -notin @('no-event','wrong-event','stale-event')) { throw "unsupported lifecycle event mutation: $eventMutation" }
+  if ($eventMutation -eq 'no-event') {
+    Remove-Item -LiteralPath $eventPath -Force -ErrorAction SilentlyContinue
+  } elseif ($eventMutation -eq 'wrong-event') {
+    $mutated = Get-Content -LiteralPath $eventPath -Raw | ConvertFrom-Json
+    $mutated.stage = if ($fault -eq 'job-create') { 'job-close' } else { 'job-create' }
+    [System.IO.File]::WriteAllText($eventPath, ($mutated | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
+  } elseif ($eventMutation -eq 'stale-event') {
+    $mutated = Get-Content -LiteralPath $eventPath -Raw | ConvertFrom-Json
+    $mutated.nonce = '00000000000000000000000000000000'
+    [System.IO.File]::WriteAllText($eventPath, ($mutated | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
+  }
+  $observed = Assert-LifecycleFaultEvent $eventPath $eventNonce $fault
+  return [pscustomobject]@{ Fault = $fault; ExitCode = [int]$result.ExitCode; ObservedStage = $observed.stage; ObservedOutcome = $observed.outcome }
 }
 
 if ($Mode -eq 'Probe') {
@@ -455,6 +503,7 @@ if ($Mode -eq 'Probe') {
       Assert-ManifestPinProof $proof $manifest 'probe'
       Write-Output 'PASS'
     }
+    'ValidateLifecycleEvent' { Assert-LifecycleFaultEvent $Value $Canary $Root | Out-Null; Write-Output 'PASS' }
     'BoundedCommandSuccess' {
       $result = Invoke-Bounded 'node' @($Value,'success') $Root 10
       if ($result.ExitCode -ne 23) { throw "bounded command status was not preserved: $($result.ExitCode)" }
@@ -542,6 +591,7 @@ $runFailure = $null
 $artifactsUploadable = $false
 
 try {
+  Remove-UploadMarker $ReceiptPath
   if ($env:OS -ne 'Windows_NT') { throw 'native Windows is required' }
   if (-not $VmOperatorMode) {
     if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
@@ -605,7 +655,7 @@ try {
 
   if ($env:COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE) {
     $faultResult = Invoke-OwnershipLifecycleFault $env:COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE (Join-Path $logs 'ownership-lifecycle-fault') (Join-Path $ownedRoot 'ownership-payload.txt')
-    throw "ownership lifecycle fault $($faultResult.Fault) failed closed with exit $($faultResult.ExitCode)"
+    throw "observed ownership lifecycle $($faultResult.ObservedStage) outcome $($faultResult.ObservedOutcome) failed closed with exit $($faultResult.ExitCode)"
   }
 
   $sentinel = Join-Path $npmRoot 'unrelated-owner.sentinel'
@@ -748,6 +798,7 @@ try {
 } finally {
   $artifactFailure = $null
   try {
+    Remove-UploadMarker $ReceiptPath
     Assert-FrozenArtifactsSafe $EvidenceRoot $canary $CandidateRoot $BaselineRoot
   } catch {
     $artifactFailure = 'artifact finalization failed closed; process-tree termination, checkout cleanliness, or evidence sanitization was not proven'
@@ -793,12 +844,15 @@ try {
     if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
     [System.IO.File]::WriteAllText($ReceiptPath, ($receipt | ConvertTo-Json -Depth 12), (New-Object System.Text.UTF8Encoding($false)))
     try {
+      if ($env:COOP_TERMINAL_ACCEPTANCE_RECEIPT_SANITIZATION_FAULT -eq 'fail') { throw 'test receipt sanitization failure' }
       $receiptHits = @(Find-Canary $ReceiptPath $canary)
       if ($receiptHits.Count -gt 0) { throw 'canary found in receipt' }
+      Assert-Receipt (Read-Receipt $ReceiptPath) | Out-Null
       if ($artifactsUploadable) { [System.IO.File]::WriteAllText("$ReceiptPath.evidence-uploadable", "scanned`n", (New-Object System.Text.UTF8Encoding($false))) }
     } catch {
       $artifactsUploadable = $false
       $runFailure = 'artifact finalization failed closed; only a controlled minimal receipt was retained'
+      Remove-UploadMarker $ReceiptPath
       if ($EvidenceRoot -and (Test-Path -LiteralPath $EvidenceRoot)) { Remove-Item -LiteralPath $EvidenceRoot -Recurse -Force -ErrorAction SilentlyContinue }
       $claims = @(
         (New-Claim 'sanitized-read-only-evidence' 'SECURITY' 'FAIL' $true $true $false 'Receipt scan could not prove sanitization; evidence was removed from upload eligibility.' @((New-Evidence 'COMMAND' 'final receipt scan failed closed' 'final exact canary scan' 1 'harness'))),

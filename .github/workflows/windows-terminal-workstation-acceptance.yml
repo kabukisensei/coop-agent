@@ -2,6 +2,9 @@ name: Windows Terminal workstation acceptance
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -13,6 +16,7 @@ concurrency:
 jobs:
   native-windows-p0:
     name: Native Windows P0 (automated evidence only)
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'terminal/workstation-acceptance-2026-09-20' && github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: windows-latest
     timeout-minutes: 90
     env:

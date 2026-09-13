@@ -268,6 +268,40 @@ test("failure-path canary contamination removes evidence and emits no upload mar
   assert.notEqual(result.status, 0); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false); assert.equal(existsSync(evidenceRoot), false);
 });
 
+test("lifecycle event validation rejects absent, wrong, stale, and malformed evidence", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-lifecycle-event-")); const path = join(dir, "fault.lifecycle-event.json");
+  const nonce = "0123456789abcdef0123456789abcdef"; const stage = "job-terminate";
+  const validate = () => runPs(["-Mode", "Probe", "-Probe", "ValidateLifecycleEvent", "-Value", path, "-Root", stage, "-Canary", nonce]);
+  assert.notEqual(validate().status, 0, "absent event was accepted");
+  writeFileSync(path, JSON.stringify({ schema_version: 1, nonce, stage, outcome: "failure" }));
+  assert.equal(validate().status, 0, validate().stderr);
+  writeFileSync(path, JSON.stringify({ schema_version: 1, nonce, stage: "job-close", outcome: "failure" }));
+  assert.notEqual(validate().status, 0, "wrong-stage event was accepted");
+  writeFileSync(path, JSON.stringify({ schema_version: 1, nonce: "00000000000000000000000000000000", stage, outcome: "failure" }));
+  assert.notEqual(validate().status, 0, "stale event was accepted");
+  writeFileSync(path, JSON.stringify({ schema_version: 1, nonce, stage, outcome: "success" }));
+  assert.notEqual(validate().status, 0, "wrong-outcome event was accepted");
+  writeFileSync(path, JSON.stringify({ schema_version: 1, nonce, stage, outcome: "failure", injected: true }));
+  assert.notEqual(validate().status, 0, "event with unknown properties was accepted");
+});
+
+test("Run revokes a stale upload marker when receipt sanitization fails", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-stale-upload-")); const owned = join(dir, "owned");
+  const evidenceRoot = join(owned, "evidence"); const receiptPath = join(dir, "receipt.json"); const marker = `${receiptPath}.evidence-uploadable`;
+  writeFileSync(marker, "stale authorization\n");
+  const result = runPs([
+    "-Mode", "Run", "-HarnessRoot", join(dir, "missing-harness"), "-CandidateRoot", join(dir, "missing-candidate"),
+    "-BaselineRoot", join(dir, "missing-baseline"), "-EvidenceRoot", evidenceRoot, "-ReceiptPath", receiptPath, "-ExpectedHarnessSha", HARNESS,
+  ], { env: { ...process.env, COOP_TERMINAL_ACCEPTANCE_RECEIPT_SANITIZATION_FAULT: "fail" } });
+  assert.notEqual(result.status, 0); assert.equal(existsSync(marker), false, "stale upload authorization survived failed receipt sanitization");
+  assert.equal(existsSync(receiptPath), true); assertBoth(receiptPath, true, "receipt-sanitization failure receipt");
+  const generated = JSON.parse(readFileSync(receiptPath, "utf8"));
+  assert.equal(generated.terminal_workstation_ready, false);
+  assert.deepEqual(generated.claims.map((item) => [item.id, item.status]), [
+    ["sanitized-read-only-evidence", "FAIL"], ["automated-harness-completion", "FAIL"],
+  ]);
+});
+
 function writeOwnershipFixture(dir) {
   const writer = join(dir, "ownership-fixture.mjs");
   writeFileSync(writer, `import {spawn} from "node:child_process"; import {existsSync,readFileSync,writeFileSync} from "node:fs"; import {createServer} from "node:net";
@@ -365,6 +399,7 @@ test("native Windows lifecycle faults fail closed through real receipt finalizat
         COOP_KNOWLEDGE_GIT_TEST_PID_FILE: pidPath,
         COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE: writer,
       };
+      writeFileSync(`${receiptPath}.evidence-uploadable`, "stale authorization\n");
       const result = runPs([
         "-Mode", "Run", "-HarnessRoot", ROOT, "-CandidateRoot", candidateRoot, "-BaselineRoot", baselineRoot,
         "-EvidenceRoot", join(owned, "evidence"), "-ReceiptPath", receiptPath, "-ExpectedHarnessSha", harnessSha,
@@ -377,8 +412,8 @@ test("native Windows lifecycle faults fail closed through real receipt finalizat
       const completion = generated.claims.filter((item) => item.id === "automated-harness-completion");
       assert.equal(completion.length, 1, `${fault}: exact completion failure claim missing`);
       assert.equal(completion[0].status, "FAIL", `${fault}: completion claim was not FAIL`);
-      assert.match(completion[0].summary, new RegExp(`ownership lifecycle fault ${fault} failed closed`));
-      assert.match(completion[0].evidence[0].observed, new RegExp(`ownership lifecycle fault ${fault} failed closed`));
+      assert.match(completion[0].summary, new RegExp(`observed ownership lifecycle ${fault} outcome (failure|indeterminate) failed closed`));
+      assert.match(completion[0].evidence[0].observed, new RegExp(`observed ownership lifecycle ${fault} outcome (failure|indeterminate) failed closed`));
       for (const item of generated.claims) {
         if (item.id !== "identity-and-isolation") assert.notEqual(item.status, "PASS", `${fault}: ${item.id} incorrectly passed`);
       }
@@ -405,6 +440,14 @@ test("native Windows lifecycle faults fail closed through real receipt finalizat
       unrelated.kill();
     }
   }
+  for (const mutation of ["no-event", "wrong-event", "stale-event"]) {
+    const dir = mkdtempSync(join(tmpdir(), `coop-owner-event-${mutation}-`)); const writer = writeOwnershipFixture(dir);
+    const result = runPs([
+      "-Mode", "Probe", "-Probe", "OwnershipLifecycleFailure", "-Value", writer,
+      "-Root", join(dir, "evidence", "bounded"), "-Canary", join(dir, "payload.txt"), "-ReceiptPath", join(dir, "receipt.json"),
+    ], { env: { ...process.env, COOP_KNOWLEDGE_GIT_TEST_FAULT: "job-terminate", COOP_TERMINAL_ACCEPTANCE_EVENT_MUTATION: mutation } });
+    assert.notEqual(result.status, 0, `${mutation}: lifecycle harness accepted unauthentic event evidence`);
+  }
 });
 
 test("product agent path is one effective onboarding/install/Doctor path", () => {
@@ -413,17 +456,30 @@ test("product agent path is one effective onboarding/install/Doctor path", () =>
   contract(source); assert.throws(() => contract(source.replace("$agentRoot = Join-Path $profileRoot '.coop\\agent'", "$agentRoot = Join-Path $ownedRoot 'split-agent'")));
 });
 
-test("workflow is manual, read-only, immutable, schema-validating, and credential-free", () => {
+test("workflow preserves dispatch and gates pre-merge native execution to the named same-repo PR head", () => {
   const workflow = readFileSync(WORKFLOW, "utf8");
-  assert.match(workflow, /on:\s*\n\s*workflow_dispatch:/); assert.match(workflow, /permissions:\s*\n\s*contents: read/);
-  assert.doesNotMatch(workflow, /permissions:\s*write|contents:\s*write|pull-requests:\s*write/); assert.equal((workflow.match(/persist-credentials: false/g) || []).length, 3);
-  assert.match(workflow, new RegExp(`ref: ${CANDIDATE}`)); assert.match(workflow, new RegExp(`ref: ${BASELINE}`)); assert.match(workflow, /ExpectedHarnessSha '\$\{\{ github\.sha \}\}'/);
-  assert.match(workflow, /ajv-cli@5\.0\.0/); assert.match(workflow, /terminal-workstation-receipt\.schema\.json/); assert.match(workflow, /runs-on: windows-latest/);
-  assert.match(workflow, /--test-name-pattern "Unicode\|lifecycle"/);
+  const expectedGate = "if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'terminal/workstation-acceptance-2026-09-20' && github.event.pull_request.head.repo.full_name == github.repository) }}";
+  const contract = (source) => {
+    assert.match(source, /on:\s*\n\s*workflow_dispatch:\s*\n\s*pull_request:\s*\n\s*branches:\s*\n\s*- main/);
+    assert.ok(source.includes(expectedGate), "native job must reject unauthorized PR heads and forks");
+    assert.match(source, /permissions:\s*\n\s*contents: read/);
+    assert.doesNotMatch(source, /pull_request_target|permissions:\s*write|contents:\s*write|pull-requests:\s*write/);
+    assert.equal((source.match(/persist-credentials: false/g) || []).length, 3);
+    assert.match(source, /concurrency:\s*\n\s*group: windows-terminal-workstation-acceptance-\$\{\{ github\.ref \}\}\s*\n\s*cancel-in-progress: false/);
+    assert.match(source, /timeout-minutes: 90/);
+    assert.match(source, new RegExp(`ref: ${CANDIDATE}`)); assert.match(source, new RegExp(`ref: ${BASELINE}`));
+    assert.match(source, /ExpectedHarnessSha '\$\{\{ github\.sha \}\}'/);
+    assert.match(source, /ajv-cli@5\.0\.0/); assert.match(source, /terminal-workstation-receipt\.schema\.json/); assert.match(source, /runs-on: windows-latest/);
+    assert.match(source, /if: always\(\) && env\.EVIDENCE_UPLOADABLE == 'true'/);
+    assert.match(source, /--test-name-pattern "Unicode\|lifecycle"/);
+    assert.doesNotMatch(source, /secrets\.|GITHUB_TOKEN|repository_dispatch|workflow_run|\bgit push\b/);
+  };
+  contract(workflow);
+  assert.throws(() => contract(workflow.replace("github.head_ref == 'terminal/workstation-acceptance-2026-09-20'", "github.head_ref != ''")), /unauthorized PR heads/);
+  assert.throws(() => contract(workflow.replace("github.event.pull_request.head.repo.full_name == github.repository", "true")), /unauthorized PR heads/);
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
   assert.match(testSource, /COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE[\s\S]*"-Mode", "Run"/);
   assert.match(testSource, /unrelatedIdentity\.startedAtMs[\s\S]*assertBoth\(receiptPath[\s\S]*completion\[0\]\.status/);
-  assert.doesNotMatch(workflow, /secrets\.|GITHUB_TOKEN|repository_dispatch|workflow_run|\bgit push\b/);
 });
 
 test("operator runbook preserves observation boundaries and every journey", () => {

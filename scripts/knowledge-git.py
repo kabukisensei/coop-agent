@@ -105,14 +105,56 @@ OWNERSHIP_UNCERTAIN = "uncertain"
 # arbitrary code or callables are never accepted. Inert unless deliberately set.
 _TEST_FAULT_ENV = "COOP_KNOWLEDGE_GIT_TEST_FAULT"
 _TEST_PID_FILE_ENV = "COOP_KNOWLEDGE_GIT_TEST_PID_FILE"
+_TEST_EVENT_FILE_ENV = "COOP_KNOWLEDGE_GIT_TEST_EVENT_FILE"
+_TEST_EVENT_NONCE_ENV = "COOP_KNOWLEDGE_GIT_TEST_EVENT_NONCE"
 _TEST_FAULTS = frozenset((
     "job-create", "job-assign", "resume", "job-query", "job-terminate", "job-close",
 ))
+_TEST_FAULT_OUTCOMES = {
+    "job-create": "failure",
+    "job-assign": "failure",
+    "resume": "failure",
+    "job-query": "indeterminate",
+    "job-terminate": "failure",
+    "job-close": "failure",
+}
 
 
 def _test_fault(stage):
     value = os.environ.get(_TEST_FAULT_ENV, "")
     return value in _TEST_FAULTS and value == stage
+
+
+def _consume_test_fault(stage):
+    """Record a fixed event only when the selected lifecycle seam is consumed."""
+    if not _test_fault(stage):
+        return False
+    path = os.environ.get(_TEST_EVENT_FILE_ENV, "")
+    nonce = os.environ.get(_TEST_EVENT_NONCE_ENV, "")
+    if path.endswith(".lifecycle-event.json") and len(nonce) == 32 and all(
+        char in "0123456789abcdef" for char in nonce
+    ):
+        event = {
+            "schema_version": 1,
+            "nonce": nonce,
+            "stage": stage,
+            "outcome": _TEST_FAULT_OUTCOMES[stage],
+        }
+        temporary = "%s.tmp.%d" % (path, os.getpid())
+        try:
+            with open(temporary, "w", encoding="utf-8", newline="\n") as stream:
+                json.dump(event, stream, sort_keys=True, separators=(",", ":"))
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        except OSError:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            # The harness independently requires the event and fails closed.
+    return True
 
 
 def _record_test_pid(proc):
@@ -247,7 +289,7 @@ def _win_job_create():
     with the Win32 code captured IMMEDIATELY after the failing call —
     before any cleanup (CloseHandle resets the thread's last error).
     """
-    if _test_fault("job-create"):
+    if _consume_test_fault("job-create"):
         return None, ("test-job-create", 1)
     if _KERNEL32 is None:
         return None, ("unsupported", None)
@@ -273,7 +315,7 @@ def _win_job_assign(job, pid):
     """Assign pid to job. Returns (ok, error); error is (stage, code) —
     'open' distinguishes handle-acquisition failure from the assignment
     itself, each code captured immediately after its own call."""
-    if _test_fault("job-assign"):
+    if _consume_test_fault("job-assign"):
         return False, ("test-job-assign", 1)
     if _KERNEL32 is None or not job:
         return False, ("unsupported", None)
@@ -292,7 +334,7 @@ def _win_job_assign(job, pid):
 
 
 def _win_job_active_processes(job):
-    if _test_fault("job-query"):
+    if _consume_test_fault("job-query"):
         return None
     if _KERNEL32 is None or not job:
         return None
@@ -309,7 +351,7 @@ def _win_job_active_processes(job):
 
 
 def _win_job_terminate(job):
-    if _test_fault("job-terminate"):
+    if _consume_test_fault("job-terminate"):
         return False, ("test-job-terminate", 1)
     if _KERNEL32 is None or not job:
         return False, ("unsupported", None)
@@ -322,7 +364,7 @@ def _win_job_terminate(job):
 
 
 def _win_job_close(job):
-    if _test_fault("job-close"):
+    if _consume_test_fault("job-close"):
         return False, ("test-job-close", 1)
     if _KERNEL32 is None or not job:
         return False, ("unsupported", None)
@@ -388,7 +430,7 @@ def _win_resume_pid(pid):
 
     Returns (ok, code); code is the Win32 error captured after the
     resuming ResumeThread call (or after the failing step)."""
-    if _test_fault("resume"):
+    if _consume_test_fault("resume"):
         return False, ("test-resume", 1)
     if _KERNEL32 is None:
         return False, ("unsupported", None)

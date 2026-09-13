@@ -435,7 +435,12 @@ fi
 [ -z "${GIT_TERMINAL_PROMPT:-}" ] && [ -z "${GCM_INTERACTIVE:-}" ] && ok "E: overrides do not leak into the parent shell"
 
 # --- F. no watchdog survives; normal + nonzero exits remain meaningful ------------
-if pgrep -f "knowledge-git.py" >/dev/null 2>&1; then
+# Match only a Python process whose script argument is knowledge-git.py. A broad
+# `pgrep -f knowledge-git.py` also matches parent shells whose later command text
+# merely mentions the filename (for example a py_compile gate), creating a false
+# failure unrelated to a surviving runner.
+_runner_pattern='(^|/)(python|python3)([0-9.]*)?[[:space:]]+[^[:space:]]*/knowledge-git[.]py([[:space:]]|$)'
+if pgrep -f "$_runner_pattern" >/dev/null 2>&1; then
   ko "F: knowledge-git.py still running after sync"
 else
   ok "F: no watchdog/leftover runner after sync"

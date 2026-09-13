@@ -2,9 +2,11 @@
 """Focused cross-platform tests for knowledge-git ownership contracts."""
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
+import tempfile
 import unittest
 from unittest import mock
 
@@ -24,7 +26,13 @@ class KnowledgeGitOwnershipTests(unittest.TestCase):
     def setUp(self):
         self.env = mock.patch.dict(os.environ, {}, clear=False)
         self.env.start()
-        os.environ.pop(kg._TEST_FAULT_ENV, None)
+        for name in (
+            kg._TEST_FAULT_ENV,
+            kg._TEST_PID_FILE_ENV,
+            kg._TEST_EVENT_FILE_ENV,
+            kg._TEST_EVENT_NONCE_ENV,
+        ):
+            os.environ.pop(name, None)
 
     def tearDown(self):
         self.env.stop()
@@ -39,6 +47,36 @@ class KnowledgeGitOwnershipTests(unittest.TestCase):
         for stage in kg._TEST_FAULTS:
             os.environ[kg._TEST_FAULT_ENV] = stage
             self.assertTrue(kg._test_fault(stage))
+
+    def test_consumed_fault_records_exact_atomic_nonce_bound_event(self):
+        nonce = "0123456789abcdef0123456789abcdef"
+        with tempfile.TemporaryDirectory() as directory:
+            for stage in sorted(kg._TEST_FAULTS):
+                path = Path(directory) / (stage + ".lifecycle-event.json")
+                os.environ[kg._TEST_FAULT_ENV] = stage
+                os.environ[kg._TEST_EVENT_FILE_ENV] = str(path)
+                os.environ[kg._TEST_EVENT_NONCE_ENV] = nonce
+                self.assertTrue(kg._consume_test_fault(stage))
+                self.assertEqual(
+                    json.loads(path.read_text(encoding="utf-8")),
+                    {
+                        "schema_version": 1,
+                        "nonce": nonce,
+                        "stage": stage,
+                        "outcome": kg._TEST_FAULT_OUTCOMES[stage],
+                    },
+                )
+                self.assertEqual(list(Path(directory).glob("*.tmp.*")), [])
+
+    def test_unselected_or_malformed_event_input_cannot_create_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "event.lifecycle-event.json"
+            os.environ[kg._TEST_FAULT_ENV] = "job-close"
+            os.environ[kg._TEST_EVENT_FILE_ENV] = str(path)
+            os.environ[kg._TEST_EVENT_NONCE_ENV] = "not-a-valid-nonce"
+            self.assertFalse(kg._consume_test_fault("job-terminate"))
+            self.assertTrue(kg._consume_test_fault("job-close"))
+            self.assertFalse(path.exists())
 
     def test_create_failure_reaches_adopt_and_stops_suspended_child(self):
         os.environ[kg._TEST_FAULT_ENV] = "job-create"
