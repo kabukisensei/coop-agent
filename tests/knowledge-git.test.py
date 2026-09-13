@@ -64,7 +64,7 @@ class KnowledgeGitOwnershipTests(unittest.TestCase):
         stop.assert_called_once_with(FakeProcess.pid)
         close.assert_called_once_with(job)
 
-    def test_resume_failure_reaches_adopt_and_terminates_before_execution(self):
+    def test_resume_failure_reaches_adopt_and_closes_owned_job_without_pid_fallback(self):
         os.environ[kg._TEST_FAULT_ENV] = "resume"
         job = object()
         with mock.patch.object(kg, "os", self.windows_os()), \
@@ -78,8 +78,38 @@ class KnowledgeGitOwnershipTests(unittest.TestCase):
         self.assertFalse(ownership.available)
         self.assertIn("test-resume", ownership.unavailable_reason)
         terminate.assert_called_once_with(job)
-        stop.assert_called_once_with(FakeProcess.pid)
+        stop.assert_not_called()
         close.assert_called_once_with(job)
+
+    def test_resume_failure_closes_immediately_after_failed_job_termination(self):
+        job = object()
+        calls = []
+
+        def record(name, result):
+            def invoke(*_args):
+                calls.append(name)
+                return result
+            return invoke
+
+        with mock.patch.object(kg, "os", self.windows_os()), \
+             mock.patch.object(kg, "_win_job_create", side_effect=record("create", (job, None))), \
+             mock.patch.object(kg, "_win_job_assign", side_effect=record("assign", (True, None))), \
+             mock.patch.object(kg, "_win_resume_pid", side_effect=record("resume", (False, ("resume", "already_running")))), \
+             mock.patch.object(kg, "_win_job_terminate", side_effect=record("terminate-failed", (False, ("terminate", 5)))), \
+             mock.patch.object(kg, "_win_terminate_pid", side_effect=record("PID-fallback", (True, None))) as stop, \
+             mock.patch.object(kg, "_win_job_close", side_effect=record("close-job", (True, None))) as close, \
+             mock.patch.object(kg.time, "sleep") as sleep:
+            ownership = kg.Ownership()
+            ownership.adopt(FakeProcess())
+            self.assertTrue(ownership.close())
+
+        self.assertEqual(calls, ["create", "assign", "resume", "terminate-failed", "close-job"])
+        stop.assert_not_called()
+        sleep.assert_not_called()
+        close.assert_called_once_with(job)
+        self.assertFalse(ownership.available)
+        self.assertIn("already_running", ownership.unavailable_reason)
+        self.assertIn("Job termination failed", ownership.unavailable_reason)
 
     def test_query_failure_is_uncertain_not_empty(self):
         os.environ[kg._TEST_FAULT_ENV] = "job-query"

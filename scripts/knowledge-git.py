@@ -116,8 +116,8 @@ def _test_fault(stage):
 
 
 def _record_test_pid(proc):
-    """Expose the real spawned PID only while a fixed pre-execution fault is active."""
-    if not any(_test_fault(stage) for stage in ("job-create", "job-assign", "resume")):
+    """Expose the real spawned root PID only while a fixed lifecycle fault is active."""
+    if not any(_test_fault(stage) for stage in _TEST_FAULTS):
         return
     path = os.environ.get(_TEST_PID_FILE_ENV)
     if not path:
@@ -501,12 +501,12 @@ class Ownership:
                 resumed, rerr = _win_resume_pid(proc.pid)
                 if not resumed:
                     terminated, term_err = _win_job_terminate(self.job)
-                    stopped, stop_err = _win_terminate_pid(proc.pid)
                     closed, close_err = _win_job_close(self.job)
                     self.job = None
+                    self._close_result = closed
                     self.unavailable_reason = "child resume failed (%s)" % (rerr,)
-                    if not terminated and not stopped:
-                        self.unavailable_reason += "; suspended-child termination failed (job=%s pid=%s)" % (term_err, stop_err)
+                    if not terminated:
+                        self.unavailable_reason += "; Job termination failed (%s)" % (term_err,)
                     if not closed:
                         self.unavailable_reason += "; Job close failed (%s)" % (close_err,)
                     print(

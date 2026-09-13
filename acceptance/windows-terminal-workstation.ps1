@@ -422,6 +422,24 @@ function Assert-ExitZero([object]$Result, [string]$Label) {
   if ($Result.ExitCode -ne 0) { throw "$Label exited $($Result.ExitCode); inspect $($Result.Stderr)" }
 }
 
+function Invoke-OwnershipLifecycleFault([string]$Fixture, [string]$LogBase, [string]$PayloadMarker) {
+  $fault = $env:COOP_KNOWLEDGE_GIT_TEST_FAULT
+  if ($fault -in @('job-create','job-assign','resume')) {
+    $result = Invoke-Bounded 'node' @($Fixture,$PayloadMarker) $LogBase 5
+    if ($result.ExitCode -ne 126) { throw "$fault did not return ownership uncertainty 126: $($result.ExitCode)" }
+    if (Test-Path -LiteralPath $PayloadMarker) { throw "$fault allowed the suspended payload to execute" }
+  } elseif ($fault -eq 'job-query') {
+    $result = Invoke-Bounded 'node' @($Fixture,'parent-with-descendant',$PayloadMarker) $LogBase 5
+    if ($result.ExitCode -ne 126) { throw "$fault preserved payload execution instead of uncertainty: $($result.ExitCode)" }
+  } elseif ($fault -in @('job-terminate','job-close')) {
+    $result = Invoke-Bounded 'node' @($Fixture,'parent-with-descendant',$PayloadMarker) $LogBase 1
+    if ($result.ExitCode -ne 124) { throw "$fault did not preserve timeout 124: $($result.ExitCode)" }
+  } else {
+    throw "unsupported ownership lifecycle fault: $fault"
+  }
+  return [pscustomobject]@{ Fault = $fault; ExitCode = [int]$result.ExitCode }
+}
+
 if ($Mode -eq 'Probe') {
   switch ($Probe) {
     'ValidateSha' { if (-not (Test-StrictSha $Value)) { throw 'invalid strict SHA' }; Write-Output 'PASS' }
@@ -477,20 +495,8 @@ if ($Mode -eq 'Probe') {
       Write-Output 'PASS'
     }
     'OwnershipLifecycleFailure' {
-      $fault = $env:COOP_KNOWLEDGE_GIT_TEST_FAULT
-      if ($fault -in @('job-create','job-assign','resume')) {
-        $result = Invoke-Bounded 'node' @($Value,$Canary) $Root 5
-        if ($result.ExitCode -ne 126) { throw "$fault did not return ownership uncertainty 126: $($result.ExitCode)" }
-        if (Test-Path -LiteralPath $Canary) { throw "$fault allowed the suspended payload to execute" }
-      } elseif ($fault -in @('job-query','job-close')) {
-        $result = Invoke-Bounded 'node' @($Value,'success') $Root 5
-        if ($result.ExitCode -ne 126) { throw "$fault preserved payload success instead of uncertainty: $($result.ExitCode)" }
-      } elseif ($fault -eq 'job-terminate') {
-        $result = Invoke-Bounded 'node' @($Value,'parent-success',$Canary) $Root 1
-        if ($result.ExitCode -ne 124) { throw "termination failure did not preserve timeout 124: $($result.ExitCode)" }
-      } else {
-        throw "unsupported ownership lifecycle fault: $fault"
-      }
+      $faultResult = Invoke-OwnershipLifecycleFault $Value $Root $Canary
+      $fault = $faultResult.Fault
       $marker = "$ReceiptPath.evidence-uploadable"
       try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
       if (Test-Path -LiteralPath $marker) { throw "$fault incorrectly allowed an upload marker" }
@@ -596,6 +602,11 @@ try {
   [void]$claims.Add((New-Claim 'identity-and-isolation' 'PRECHECK' 'PASS' $true $true $false 'Harness, candidate, and baseline identities are exact and owned roots were initially absent.' @(
     (New-Evidence 'COMMAND' "harness=$harnessObservedSha candidate=$candidateObservedSha baseline=$baselineObservedSha" 'git rev-parse HEAD (three separate checkouts)' 0 "harness:$harnessObservedSha")
   )))
+
+  if ($env:COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE) {
+    $faultResult = Invoke-OwnershipLifecycleFault $env:COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE (Join-Path $logs 'ownership-lifecycle-fault') (Join-Path $ownedRoot 'ownership-payload.txt')
+    throw "ownership lifecycle fault $($faultResult.Fault) failed closed with exit $($faultResult.ExitCode)"
+  }
 
   $sentinel = Join-Path $npmRoot 'unrelated-owner.sentinel'
   [System.IO.File]::WriteAllText($sentinel, 'not-owned-by-coop' + [Environment]::NewLine)
@@ -755,7 +766,7 @@ try {
   }
   if ($runFailure) {
     [void]$claims.Add((New-Claim 'automated-harness-completion' 'SECURITY' 'FAIL' $true $true $false "Automated harness failed closed: $runFailure" @(
-      (New-Evidence 'COMMAND' 'harness terminated before all required claims passed' 'acceptance/windows-terminal-workstation.ps1 -Mode Run' 1 $(if ($harnessObservedSha) { "harness:$harnessObservedSha" } else { 'harness' }))
+      (New-Evidence 'COMMAND' "harness terminated before all required claims passed: $runFailure" 'acceptance/windows-terminal-workstation.ps1 -Mode Run' 1 $(if ($harnessObservedSha) { "harness:$harnessObservedSha" } else { 'harness' }))
     )))
   }
   foreach ($id in $script:RequiredOperatorIds) {

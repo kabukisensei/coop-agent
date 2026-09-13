@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -270,14 +270,15 @@ test("failure-path canary contamination removes evidence and emits no upload mar
 
 function writeOwnershipFixture(dir) {
   const writer = join(dir, "ownership-fixture.mjs");
-  writeFileSync(writer, `import {spawn} from "node:child_process"; import {readFileSync,writeFileSync} from "node:fs"; import {createServer} from "node:net";
+  writeFileSync(writer, `import {spawn} from "node:child_process"; import {existsSync,readFileSync,writeFileSync} from "node:fs"; import {createServer} from "node:net";
 const mode=process.argv[2], target=process.argv[3], self=process.argv[1];
 if(mode==="success"){process.stdout.write("exact-stdout\\n");process.stderr.write("exact-stderr\\n");process.exit(23)}
 if(mode==="unicode"){process.stdout.write(JSON.stringify({argv:process.argv.slice(3),stdin:readFileSync(0,"utf8")}));process.exit(0)}
-if(mode==="leaf"){const token=process.pid+":"+Date.now();const server=createServer(socket=>socket.end(token));server.listen(0,"127.0.0.1",()=>{writeFileSync(target+".identity.json",JSON.stringify({pid:process.pid,port:server.address().port,token}));setTimeout(()=>writeFileSync(target,"late-write"),1800)})}
+if(mode==="leaf"){const startedAtMs=Date.now(),token=process.pid+":"+startedAtMs;const server=createServer(socket=>socket.end(token));server.listen(0,"127.0.0.1",()=>{writeFileSync(target+".identity.json",JSON.stringify({pid:process.pid,port:server.address().port,startedAtMs,token}));setTimeout(()=>writeFileSync(target,"late-write"),1800)})}
 else if(mode==="churn"){setInterval(()=>spawn(process.execPath,[self,"leaf",target],{stdio:"ignore"}),5)}
 else if(mode==="cleanup-race"){spawn(process.execPath,[self,"churn",target],{stdio:"ignore"});setInterval(()=>{},1000)}
 else if(mode==="parent-success"){spawn(process.execPath,[self,"leaf",target],{stdio:"ignore"})}
+else if(mode==="parent-with-descendant"){spawn(process.execPath,[self,"leaf",target],{stdio:"ignore"});const deadline=Date.now()+1000;const wait=setInterval(()=>{if(existsSync(target+".identity.json")||Date.now()>deadline){clearInterval(wait);process.exit(0)}},10)}
 else{writeFileSync(mode,"payload-ran")}
 `);
   return writer;
@@ -294,6 +295,12 @@ function originalDescendantResponds(identityPath) {
     socket.on("end", () => finish(response === identity.token));
     socket.on("error", () => finish(false));
   });
+}
+
+async function waitForFile(path, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(path) && Date.now() < deadline) await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  assert.equal(existsSync(path), true, `timed out waiting for ${path}`);
 }
 
 test("bounded command preserves exact stdout, stderr, and child status", { skip: !havePwsh }, () => {
@@ -332,24 +339,70 @@ test("successful parent with surviving descendant waits to timeout and suppresse
   assert.equal(result.status, 0, result.stderr); assert.equal(existsSync(lateWrite), false); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false);
 });
 
-test("native Windows lifecycle faults fail closed through real ownership branches", { skip: !havePwsh || process.platform !== "win32" }, async () => {
+test("native Windows lifecycle faults fail closed through real receipt finalization", { skip: !havePwsh || process.platform !== "win32" }, async () => {
+  const candidateRoot = resolve(ROOT, "..", "candidate");
+  const baselineRoot = resolve(ROOT, "..", "baseline");
+  assert.equal(existsSync(candidateRoot), true, "workflow candidate checkout is required");
+  assert.equal(existsSync(baselineRoot), true, "workflow baseline checkout is required");
+  const harnessSha = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   for (const fault of ["job-create", "job-assign", "resume", "job-query", "job-terminate", "job-close"]) {
-    const dir = mkdtempSync(join(tmpdir(), `coop-owner-${fault}-`)); const writer = writeOwnershipFixture(dir); const payloadMarker = join(dir, "payload.txt"); const receiptPath = join(dir, "receipt.json"); const pidPath = join(dir, "spawned.pid");
-    const env = { ...process.env, COOP_KNOWLEDGE_GIT_TEST_FAULT: fault, COOP_KNOWLEDGE_GIT_TEST_PID_FILE: pidPath };
-    const result = runPs(["-Mode", "Probe", "-Probe", "OwnershipLifecycleFailure", "-Value", writer, "-Root", join(dir, "evidence", "bounded"), "-Canary", payloadMarker, "-ReceiptPath", receiptPath], { env });
-    assert.equal(result.status, 0, `${fault}: ${result.stderr}`); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false, fault);
-    if (["job-create", "job-assign", "resume"].includes(fault)) {
-      assert.equal(existsSync(pidPath), true, `${fault}: real suspended child PID was not recorded`);
+    const dir = mkdtempSync(join(tmpdir(), `coop-owner-${fault}-`)); const writer = writeOwnershipFixture(dir);
+    const owned = join(dir, "owned"); const payloadMarker = join(owned, "ownership-payload.txt"); const receiptPath = join(dir, "receipt.json"); const pidPath = join(dir, "spawned.pid");
+    const unrelatedMarker = join(dir, "unrelated.txt"); const unrelatedIdentityPath = `${unrelatedMarker}.identity.json`;
+    const unrelated = spawn(process.execPath, [writer, "leaf", unrelatedMarker], { stdio: "ignore" });
+    try {
+      await waitForFile(unrelatedIdentityPath);
+      const unrelatedIdentity = JSON.parse(readFileSync(unrelatedIdentityPath, "utf8"));
+      assert.equal(unrelatedIdentity.pid, unrelated.pid, `${fault}: unrelated PID identity changed at spawn`);
+      assert.equal(unrelatedIdentity.token, `${unrelatedIdentity.pid}:${unrelatedIdentity.startedAtMs}`, `${fault}: unrelated start identity is incomplete`);
+      assert.equal(await originalDescendantResponds(unrelatedIdentityPath), true, `${fault}: unrelated process was not alive before mutation`);
+
+      const env = {
+        ...process.env,
+        GITHUB_ACTIONS: "true",
+        RUNNER_ENVIRONMENT: "github-hosted",
+        COOP_KNOWLEDGE_GIT_TEST_FAULT: fault,
+        COOP_KNOWLEDGE_GIT_TEST_PID_FILE: pidPath,
+        COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE: writer,
+      };
+      const result = runPs([
+        "-Mode", "Run", "-HarnessRoot", ROOT, "-CandidateRoot", candidateRoot, "-BaselineRoot", baselineRoot,
+        "-EvidenceRoot", join(owned, "evidence"), "-ReceiptPath", receiptPath, "-ExpectedHarnessSha", harnessSha,
+      ], { env });
+      assert.notEqual(result.status, 0, `${fault}: injected lifecycle failure unexpectedly passed`);
+      assert.equal(existsSync(receiptPath), true, `${fault}: fail-closed receipt was not generated`);
+      assertBoth(receiptPath, true, `${fault}: generated receipt`);
+      const generated = JSON.parse(readFileSync(receiptPath, "utf8"));
+      assert.equal(generated.terminal_workstation_ready, false, `${fault}: failure receipt claimed readiness`);
+      const completion = generated.claims.filter((item) => item.id === "automated-harness-completion");
+      assert.equal(completion.length, 1, `${fault}: exact completion failure claim missing`);
+      assert.equal(completion[0].status, "FAIL", `${fault}: completion claim was not FAIL`);
+      assert.match(completion[0].summary, new RegExp(`ownership lifecycle fault ${fault} failed closed`));
+      assert.match(completion[0].evidence[0].observed, new RegExp(`ownership lifecycle fault ${fault} failed closed`));
+      for (const item of generated.claims) {
+        if (item.id !== "identity-and-isolation") assert.notEqual(item.status, "PASS", `${fault}: ${item.id} incorrectly passed`);
+      }
+      assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false, `${fault}: upload marker appeared`);
+      assert.equal(existsSync(join(owned, "evidence")), false, `${fault}: uncertain evidence was retained`);
+
+      assert.equal(existsSync(pidPath), true, `${fault}: real owned root PID was not recorded`);
       const pid = Number.parseInt(readFileSync(pidPath, "utf8"), 10);
-      assert.throws(() => process.kill(pid, 0), (error) => error?.code === "ESRCH", `${fault}: suspended child ${pid} survived`);
-    }
-    if (fault === "job-terminate") {
-      const identityPath = `${payloadMarker}.identity.json`;
-      assert.equal(existsSync(identityPath), true, `${fault}: descendant identity was not captured`);
+      assert.throws(() => process.kill(pid, 0), (error) => error?.code === "ESRCH", `${fault}: owned root ${pid} survived`);
+      if (["job-create", "job-assign", "resume"].includes(fault)) {
+        assert.equal(existsSync(`${payloadMarker}.identity.json`), false, `${fault}: suspended payload created a descendant`);
+      } else {
+        const identityPath = `${payloadMarker}.identity.json`;
+        assert.equal(existsSync(identityPath), true, `${fault}: owned descendant identity was not captured`);
+        const ownedIdentityBefore = readFileSync(identityPath, "utf8");
+        assert.equal(await originalDescendantResponds(identityPath), false, `${fault}: original owned descendant survived cleanup`);
+        assert.equal(readFileSync(identityPath, "utf8"), ownedIdentityBefore, `${fault}: owned descendant identity evidence changed`);
+      }
       await new Promise((resolveWait) => setTimeout(resolveWait, 2200));
-      assert.equal(existsSync(payloadMarker), false, `${fault}: orphan mutated state after timeout`);
-      assert.equal(await originalDescendantResponds(identityPath), false, `${fault}: original descendant survived cleanup`);
-      assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false, `${fault}: upload marker appeared after orphan check`);
+      assert.equal(existsSync(payloadMarker), false, `${fault}: owned descendant mutated state after finalization`);
+      assert.deepEqual(JSON.parse(readFileSync(unrelatedIdentityPath, "utf8")), unrelatedIdentity, `${fault}: unrelated retained identity changed`);
+      assert.equal(await originalDescendantResponds(unrelatedIdentityPath), true, `${fault}: unrelated retained process identity did not survive`);
+    } finally {
+      unrelated.kill();
     }
   }
 });
@@ -366,6 +419,10 @@ test("workflow is manual, read-only, immutable, schema-validating, and credentia
   assert.doesNotMatch(workflow, /permissions:\s*write|contents:\s*write|pull-requests:\s*write/); assert.equal((workflow.match(/persist-credentials: false/g) || []).length, 3);
   assert.match(workflow, new RegExp(`ref: ${CANDIDATE}`)); assert.match(workflow, new RegExp(`ref: ${BASELINE}`)); assert.match(workflow, /ExpectedHarnessSha '\$\{\{ github\.sha \}\}'/);
   assert.match(workflow, /ajv-cli@5\.0\.0/); assert.match(workflow, /terminal-workstation-receipt\.schema\.json/); assert.match(workflow, /runs-on: windows-latest/);
+  assert.match(workflow, /--test-name-pattern "Unicode\|lifecycle"/);
+  const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
+  assert.match(testSource, /COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE[\s\S]*"-Mode", "Run"/);
+  assert.match(testSource, /unrelatedIdentity\.startedAtMs[\s\S]*assertBoth\(receiptPath[\s\S]*completion\[0\]\.status/);
   assert.doesNotMatch(workflow, /secrets\.|GITHUB_TOKEN|repository_dispatch|workflow_run|\bgit push\b/);
 });
 
