@@ -40,9 +40,14 @@ jobs:
       - uses: actions/checkout@v5
         with:
           repository: kabukisensei/coop-agent
-          ref: tmp/win-bootstrap-probe-ed516b2
+          ref: c383be8f4f50a2ff61e4eb9edb798e856872a4f7
           path: _probe-control
           persist-credentials: false
+      - name: Verify exact candidate and diagnostic checkouts
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "ed516b2a183f3e6346344a669d6e37b321a4dcf8"
+          test "$(git -C _probe-control rev-parse HEAD)" = "c383be8f4f50a2ff61e4eb9edb798e856872a4f7"
       - uses: actions/setup-node@v5
         with:
           node-version: '22.22.3'
