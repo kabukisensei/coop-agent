@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/desktop-parity.v1.json",
+  "title": "Coop Desktop parity manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "capabilityRegistry", "entries"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "capabilityRegistry": { "const": "config/capabilities.json" },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "fallback": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["kind", "description", "approved"],
+      "properties": {
+        "kind": { "enum": ["terminal", "platform-limited", "deferred"] },
+        "description": { "type": "string", "minLength": 1 },
+        "approved": { "type": "boolean" }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capabilityId", "terminalSource", "piCommand", "terminalState",
+        "webState", "desktopState", "requiredPlatforms", "fallback",
+        "testIds", "releaseGate"
+      ],
+      "properties": {
+        "capabilityId": { "type": "string", "minLength": 1 },
+        "terminalSource": { "type": "string", "minLength": 1 },
+        "piCommand": { "type": ["string", "null"] },
+        "terminalState": { "enum": ["implemented", "partial", "not-applicable"] },
+        "webState": { "enum": ["implemented", "partial", "missing", "not-applicable"] },
+        "desktopState": { "enum": ["planned", "implemented", "partial", "blocked", "not-applicable"] },
+        "requiredPlatforms": {
+          "type": "array",
+          "items": { "enum": ["windows", "macos"] },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "fallback": { "$ref": "#/$defs/fallback" },
+        "testIds": { "$ref": "#/$defs/stringArray" },
+        "releaseGate": { "type": "boolean" }
+      }
+    }
+  }
+}

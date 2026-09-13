@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/desktop-release-evidence-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "revision", "platform", "generatedAt", "runId", "results"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "platform": { "enum": ["windows", "macos"] },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "runId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$" },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "evidence", "sha256"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
+          "status": { "enum": ["pass", "fail", "skipped"] },
+          "evidence": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    }
+  }
+}

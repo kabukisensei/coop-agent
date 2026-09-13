@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cooptimize.dev/contracts/environment-discovery.v1.schema.json",
+  "title": "Coop environment discovery result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "requestId", "kind", "status", "readOnly", "coverage", "candidates", "diagnostics"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "requestId": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["local-repositories", "fabric-workspaces", "fabric-items", "semantic-models"] },
+    "status": { "enum": ["complete", "partial", "failed", "unavailable", "not-configured"] },
+    "readOnly": { "const": true },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspacePath": { "type": ["string", "null"] },
+        "workspaceId": { "type": ["string", "null"] },
+        "itemTypes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempted", "completed", "pages", "complete"],
+      "properties": {
+        "attempted": { "type": "integer", "minimum": 0 },
+        "completed": { "type": "integer", "minimum": 0 },
+        "pages": { "type": "integer", "minimum": 0 },
+        "complete": { "type": "boolean" }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidateId", "resourceType", "resourceId", "displayName", "workspaceId", "workspaceName", "metadata"],
+        "properties": {
+          "candidateId": { "type": "string", "minLength": 1 },
+          "resourceType": { "type": "string", "minLength": 1 },
+          "resourceId": { "type": "string", "minLength": 1 },
+          "displayName": { "type": "string", "minLength": 1 },
+          "workspaceId": { "type": ["string", "null"] },
+          "workspaceName": { "type": ["string", "null"] },
+          "metadata": { "type": "object" }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "severity", "message"],
+        "properties": {
+          "code": { "type": "string", "minLength": 1 },
+          "severity": { "enum": ["info", "warning", "error"] },
+          "message": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

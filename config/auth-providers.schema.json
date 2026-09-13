@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/auth-providers.v1.json",
+  "title": "Coop authentication providers",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "checkedAt", "providers"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "checkedAt": { "type": "string", "format": "date-time" },
+    "providers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "trustContext", "state", "account", "login", "actions", "unlocks", "diagnostics"],
+        "properties": {
+          "id": { "enum": ["model.openai-codex", "microsoft.client", "knowledge.cooptimize"] },
+          "name": { "type": "string", "minLength": 1 },
+          "trustContext": { "enum": ["model", "client-microsoft", "cooptimize-knowledge"] },
+          "state": { "enum": ["authenticated", "unauthenticated", "unavailable", "unknown", "expired", "error"] },
+          "account": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["label", "tenantId", "accountType"],
+                "properties": {
+                  "label": { "type": ["string", "null"] },
+                  "tenantId": { "type": ["string", "null"] },
+                  "accountType": { "type": ["string", "null"] }
+                }
+              }
+            ]
+          },
+          "login": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["method", "available", "requiresExternalBrowser"],
+            "properties": {
+              "method": { "enum": ["pi-terminal", "browser-device-code", "none"] },
+              "available": { "type": "boolean" },
+              "requiresExternalBrowser": { "type": "boolean" }
+            }
+          },
+          "actions": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+          "unlocks": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+          "diagnostics": { "type": "array", "items": { "type": "object" } }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "Legacy",
+  "model": {
+    "tables": [
+      {
+        "name": "FactSales",
+        "columns": [
+          {"name": "Revenue", "dataType": "double"},
+          {"name": "Margin", "type": "calculated", "expression": "FactSales[Revenue] * 0.1"}
+        ],
+        "partitions": [{"name": "p", "mode": "directLake", "source": {"type": "entity"}}],
+        "measures": [
+          {"name": "Total Rev", "expression": "SUM(FactSales[Revenue])"}
+        ]
+      },
+      {
+        "name": "DimDate",
+        "columns": [{"name": "Date", "dataType": "dateTime", "dataCategory": "Time"}]
+      }
+    ],
+    "relationships": [
+      {"fromTable": "FactSales", "fromColumn": "DateKey", "toTable": "DimDate", "toColumn": "Date", "crossFilteringBehavior": "bothDirections"}
+    ]
+  }
+}

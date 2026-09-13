@@ -1,0 +1,17 @@
+{
+  "tool": "bpa-review",
+  "findings": [
+    {
+      "rule": "Unneeded columns in tables",
+      "severity": "info",
+      "file": "",
+      "object": "Revenue",
+      "message": "fake finding"
+    }
+  ],
+  "summary": {
+    "error": 0,
+    "warning": 0,
+    "info": 1
+  }
+}

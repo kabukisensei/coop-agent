@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/desktop-update-v1.json",
+  "title": "Signed Coop Desktop update descriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "keyId", "releaseId", "channel", "desktopVersion", "coopVersion", "protocolVersion", "target", "issuedAt", "expiresAt", "artifact", "notesUrl"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "keyId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$" },
+    "releaseId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$" },
+    "channel": { "enum": ["stable", "beta"] },
+    "desktopVersion": { "$ref": "#/$defs/version" },
+    "coopVersion": { "$ref": "#/$defs/version" },
+    "protocolVersion": { "type": "integer", "const": 1 },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "arch"],
+      "properties": {
+        "platform": { "enum": ["darwin", "win32"] },
+        "arch": { "enum": ["arm64", "x64"] }
+      }
+    },
+    "issuedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "sha256", "size"],
+      "properties": {
+        "url": { "type": "string", "pattern": "^https://" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size": { "type": "integer", "minimum": 1, "maximum": 8589934592 }
+      }
+    },
+    "notesUrl": { "type": "string", "pattern": "^https://" }
+  },
+  "$defs": {
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" }
+  }
+}

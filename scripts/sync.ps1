@@ -112,6 +112,11 @@ try {
     $piRuntime = Get-CoopPiVersion
     if ($piRuntime) { Coop-Info "Aligning shared Pi libraries with the installed Pi runtime ${piRuntime}…" }
     Sync-CoopExtDeps -AgentDir $PI_AGENT
+    & node (Join-Path $script:CoopRoot 'lib/openai-usage-compat.mjs') (Join-Path $PI_AGENT 'npm/node_modules/pi-better-openai')
+    if ($LASTEXITCODE -ne 0) {
+      Coop-Warn 'usage window compatibility correction failed' 'run: coop sync after reviewing the dependency'
+      $script:SyncFailures++
+    }
 
     # Postconditions: fleet at manifest versions AND shared libs satisfying the
     # ACTIVE runtime's own metadata, verified after all installs.

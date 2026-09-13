@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/desktop-update-state-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "channel", "active", "previous"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "channel": { "enum": ["stable", "beta"] },
+    "active": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/installed" }] },
+    "previous": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/installed" }] }
+  },
+  "$defs": {
+    "installed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["releaseId", "desktopVersion", "coopVersion", "keyId", "artifactSha256", "installPath", "activatedAt", "healthEvidenceId"],
+      "properties": {
+        "releaseId": { "type": "string" },
+        "desktopVersion": { "type": "string" },
+        "coopVersion": { "type": "string" },
+        "keyId": { "type": "string" },
+        "artifactSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "installPath": { "type": "string" },
+        "activatedAt": { "type": "string", "format": "date-time" },
+        "healthEvidenceId": { "type": "string" }
+      }
+    }
+  }
+}

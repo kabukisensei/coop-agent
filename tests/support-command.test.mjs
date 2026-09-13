@@ -113,4 +113,62 @@ await t("runs without HOME (COOP_DIR set) stay in-profile (F3)", async () => {
   assert.doesNotThrow(() => JSON.parse(r.stdout));
 });
 
+// --- build identity (support build fingerprint) -----------------------------
+const { resolveCoopBuildIdentity } = await import("../lib/coop-build-identity.mjs");
+const { fingerprintBuild } = await import("../lib/support-center.mjs");
+
+await t("build identity resolves the checkout VERSION and a 40-hex revision", () => {
+  const r = resolveCoopBuildIdentity(ROOT, {
+    execFileImpl: () => "356998f3e8415698cd7651ba1a3fafa25a725506",
+    readVersionImpl: () => "0.23.1",
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.value.version, "0.23.1");
+  assert.equal(r.value.commit, "356998f3e8415698cd7651ba1a3fafa25a725506");
+});
+
+await t("build identity refuses a missing or malformed revision", () => {
+  const noGit = resolveCoopBuildIdentity(ROOT, { execFileImpl: () => { throw new Error("no git"); }, readVersionImpl: () => "0.23.1" });
+  assert.equal(noGit.ok, false);
+  const badCommit = resolveCoopBuildIdentity(ROOT, { execFileImpl: () => "not-a-commit", readVersionImpl: () => "0.23.1" });
+  assert.equal(badCommit.ok, false);
+});
+
+await t("build identity refuses a missing VERSION", () => {
+  const r = resolveCoopBuildIdentity(ROOT, { execFileImpl: () => "356998f3e8415698cd7651ba1a3fafa25a725506", readVersionImpl: () => { throw new Error("ENOENT"); } });
+  assert.equal(r.ok, false);
+});
+
+await t("support CLI fingerprints this checkout, not a hard-coded build", () => {
+  const r = spawnSync(process.execPath, [join(ROOT, "lib", "support-center-cli.mjs"), "--json"], { env: { ...process.env, COOP_DIR: coopDir }, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const bundle = JSON.parse(r.stdout);
+  assert.match(bundle.versions.coopBuild, /^build-[0-9a-f]{8}$/);
+  const stale = fingerprintBuild({ version: "integration-2026-09-20", commit: "8a57991", channel: "candidate" });
+  assert.notEqual(bundle.versions.coopBuild, stale.value, "must not pin the old hard-coded build identity");
+});
+
+await t("support identity equals the expected COOP source/build identity", () => {
+  const expectedVersion = readFileSync(join(ROOT, "VERSION"), "utf8").trim();
+  const expectedCommit = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const expected = fingerprintBuild({ version: expectedVersion, commit: expectedCommit });
+  assert.equal(expected.ok, true);
+  const r = spawnSync(process.execPath, [join(ROOT, "lib", "support-center-cli.mjs"), "--json"], { env: { ...process.env, COOP_DIR: coopDir }, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const bundle = JSON.parse(r.stdout);
+  assert.equal(bundle.versions.coopBuild, expected.value, "identity must equal the checkout VERSION+HEAD fingerprint");
+});
+
+await t("invocation from an unrelated git project still identifies COOP, never the project HEAD", () => {
+  const foreign = mkdtempSync(join(tmpdir(), "foreign-project-"));
+  execFileSync("git", ["-C", foreign, "init", "-q"], { encoding: "utf8" });
+  execFileSync("git", ["-C", foreign, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"], { encoding: "utf8" });
+  const foreignHead = execFileSync("git", ["-C", foreign, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const r = spawnSync(process.execPath, [join(ROOT, "lib", "support-center-cli.mjs"), "--json"], { cwd: foreign, env: { ...process.env, COOP_DIR: coopDir }, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const bundle = JSON.parse(r.stdout);
+  assert.match(bundle.versions.coopBuild, /^build-[0-9a-f]{8}$/);
+  assert.notEqual(bundle.versions.coopBuild, fingerprintBuild({ version: "0.0.0", commit: foreignHead }).value, "must never use the invoking project's HEAD");
+});
+
 console.log(`  ${n} support-command tests passed`);

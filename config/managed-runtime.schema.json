@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/managed-runtime-v1.json",
+  "title": "Coop Desktop managed runtime bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "target", "versions", "minimums", "inventory", "paths"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "arch"],
+      "properties": {
+        "platform": { "enum": ["darwin", "win32"] },
+        "arch": { "enum": ["arm64", "x64"] }
+      }
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coop", "pi", "node", "python", "npmPackages", "pythonTools"],
+      "properties": {
+        "coop": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+        "pi": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+        "node": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+        "python": { "type": "string", "pattern": "^3\\.12\\.[0-9]+$" },
+        "npmPackages": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" }
+        },
+        "pythonTools": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" }
+        }
+      }
+    },
+    "minimums": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node", "python"],
+      "properties": {
+        "node": { "type": "string" },
+        "python": { "type": "string", "pattern": "^3\\.12\\.[0-9]+$" }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "npmPackages", "pythonDistributions", "completeNpmIntegrity"],
+      "properties": {
+        "path": { "const": "dependency-inventory.json" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "npmPackages": { "type": "integer", "minimum": 1 },
+        "pythonDistributions": { "type": "integer", "minimum": 1 },
+        "completeNpmIntegrity": { "type": "boolean" }
+      }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coopRoot", "launcher", "node", "nodeVersionFile", "python", "pythonVersionFile", "pythonCommands", "pythonToolRoots", "piPackage", "executableDirs"],
+      "properties": {
+        "coopRoot": { "type": "string" },
+        "launcher": { "type": "string" },
+        "node": { "type": "string" },
+        "nodeVersionFile": { "type": "string" },
+        "python": { "type": "string" },
+        "pythonVersionFile": { "type": "string" },
+        "pythonCommands": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" } },
+        "pythonToolRoots": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string" }
+        },
+        "piPackage": { "type": "string" },
+        "executableDirs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } }
+      }
+    }
+  }
+}

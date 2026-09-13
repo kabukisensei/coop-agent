@@ -24,6 +24,8 @@ fi
 # Doctor discovers mcp.json from the cwd first (as $PWD/.mcp.json), so run each
 # case from its own scratch directory.
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+. "$ROOT/tests/fixtures/doctor-config-tools.sh"
+doctor_config_tools "$TMP/tool-fixture"
 
 doctor_out() {
   ( cd "$1" && COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null )

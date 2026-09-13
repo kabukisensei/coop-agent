@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cooptimize.dev/contracts/project-setup-state.v1.schema.json",
+  "title": "Coop progressive project setup state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "workspace", "contractPath", "state", "sections", "nextActions", "capability"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "workspace": { "type": "string", "minLength": 1 },
+    "contractPath": { "type": "string", "minLength": 1 },
+    "state": { "enum": ["ready", "progressive", "broken"] },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "state", "optional", "selected", "summary", "setupOperationId"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "state": { "enum": ["configured", "not-configured", "broken", "platform-unavailable"] },
+          "optional": { "type": "boolean" },
+          "selected": { "type": "boolean" },
+          "summary": { "type": "string", "minLength": 1 },
+          "setupOperationId": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "nextActions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operationId", "sectionId", "label", "requiresApproval", "entrypoints"],
+        "properties": {
+          "operationId": { "type": "string", "minLength": 1 },
+          "sectionId": { "type": "string", "minLength": 1 },
+          "label": { "type": "string", "minLength": 1 },
+          "requiresApproval": { "type": "boolean" },
+          "entrypoints": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["cli", "desktop"],
+            "properties": { "cli": { "type": "string", "minLength": 1 }, "desktop": { "type": "string", "minLength": 1 } }
+          }
+        }
+      }
+    },
+    "capability": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["id", "available", "missingSections", "nextAction"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "available": { "type": "boolean" },
+        "missingSections": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "nextAction": { "type": ["object", "null"] }
+      }
+    }
+  }
+}

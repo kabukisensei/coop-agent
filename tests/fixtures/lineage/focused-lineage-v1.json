@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "query": "dbo.fact_sales",
+  "depth": 1,
+  "evidence_status": "partial",
+  "coverage": {
+    "diagnostics": {
+      "status": "complete",
+      "severity_counts": {"error": 0, "warning": 1, "info": 0}
+    }
+  },
+  "object": {
+    "id": "gold_table:dbo.fact_sales",
+    "name": "dbo.fact_sales",
+    "type": "gold_table",
+    "schema": "dbo",
+    "layer": "gold",
+    "source_file": "warehouse/tables/fact_sales.sql",
+    "source_path": "warehouse/tables/fact_sales.sql",
+    "doc": "gold_table/dbo-fact-sales.md",
+    "doc_path": "data-docs/gold_table/dbo-fact-sales.md",
+    "trust": {}
+  },
+  "upstream": [
+    {
+      "id": "stored_proc:dbo.load_fact_sales",
+      "name": "dbo.load_fact_sales",
+      "type": "stored_proc",
+      "schema": "dbo",
+      "layer": "gold",
+      "source_file": "warehouse/procedures/load_fact_sales.sql",
+      "source_path": "warehouse/procedures/load_fact_sales.sql",
+      "doc": "stored_proc/dbo-load-fact-sales.md",
+      "doc_path": "data-docs/stored_proc/dbo-load-fact-sales.md",
+      "trust": {"dynamic_sql_untraced": true}
+    }
+  ],
+  "downstream": [
+    {
+      "id": "pbi_table:sales.fact_sales",
+      "name": "Sales.Fact Sales",
+      "type": "pbi_table",
+      "schema": "Sales",
+      "layer": "",
+      "source_file": "Sales.SemanticModel/definition/tables/Fact Sales.tmdl",
+      "source_path": "Sales.SemanticModel/definition/tables/Fact Sales.tmdl",
+      "doc": "pbi_table/sales-fact-sales.md",
+      "doc_path": "data-docs/pbi_table/sales-fact-sales.md",
+      "trust": {"external_source": false}
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "stored_proc:dbo.load_fact_sales",
+      "target_id": "gold_table:dbo.fact_sales",
+      "type": "writes",
+      "evidence": "INSERT INTO dbo.fact_sales",
+      "flow": {
+        "upstream_id": "stored_proc:dbo.load_fact_sales",
+        "downstream_id": "gold_table:dbo.fact_sales"
+      }
+    },
+    {
+      "source_id": "gold_table:dbo.fact_sales",
+      "target_id": "pbi_table:sales.fact_sales",
+      "type": "feeds",
+      "evidence": "partition source dbo.fact_sales",
+      "flow": {
+        "upstream_id": "gold_table:dbo.fact_sales",
+        "downstream_id": "pbi_table:sales.fact_sales"
+      }
+    }
+  ],
+  "relationships": [
+    {"from": "Fact Sales.DateKey", "to": "Date.DateKey", "active": true, "bidirectional": false}
+  ],
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "category": "dynamic_sql",
+      "file": "warehouse/procedures/load_fact_sales.sql",
+      "message": "Dynamic SQL could hide additional dependencies."
+    }
+  ]
+}

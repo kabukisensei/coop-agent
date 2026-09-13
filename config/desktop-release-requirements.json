@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "evidenceMaxAgeHours": 72,
+  "requirements": [
+    { "id": "suite.bash", "kind": "test-suite", "platforms": ["windows", "macos"] },
+    { "id": "suite.powershell", "kind": "test-suite", "platforms": ["windows", "macos"] },
+    { "id": "suite.protocol-real-pi", "kind": "test-suite", "platforms": ["windows", "macos"] },
+    { "id": "journey.install-repair", "kind": "journey", "platforms": ["windows", "macos"] },
+    { "id": "journey.model-sign-in", "kind": "journey", "platforms": ["windows", "macos"] },
+    { "id": "journey.workspace-open", "kind": "journey", "platforms": ["windows", "macos"] },
+    { "id": "journey.agent-chat", "kind": "journey", "platforms": ["windows", "macos"] },
+    { "id": "journey.sql-dax-review", "kind": "journey", "platforms": ["windows", "macos"] },
+    { "id": "journey.git-diff", "kind": "journey", "platforms": ["windows", "macos"] },
+    { "id": "journey.session-fork-clone", "kind": "journey", "platforms": ["windows", "macos"] },
+    { "id": "journey.terminal-handoff", "kind": "journey", "platforms": ["windows", "macos"] },
+    { "id": "journey.clean-shutdown", "kind": "journey", "platforms": ["windows", "macos"] },
+    { "id": "journey.clipboard-interoperability", "kind": "manual-interoperability", "platforms": ["windows"] },
+    { "id": "journey.powerbi-desktop", "kind": "manual-interoperability", "platforms": ["windows"] },
+    { "id": "journey.platform-limited-powerbi", "kind": "manual-interoperability", "platforms": ["macos"] },
+    { "id": "distribution.signed-installer", "kind": "distribution", "platforms": ["windows", "macos"] },
+    { "id": "distribution.signed-update", "kind": "distribution", "platforms": ["windows", "macos"] },
+    { "id": "distribution.failed-update-rollback", "kind": "distribution", "platforms": ["windows", "macos"] },
+    { "id": "quality.accessibility", "kind": "quality", "platforms": ["windows", "macos"] },
+    { "id": "quality.renderer-security", "kind": "quality", "platforms": ["windows", "macos"] }
+  ]
+}

@@ -35,6 +35,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { appendFileSync, existsSync, readFileSync, renameSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { WorkspaceLeaseManager, inspectWorkspace } from "../../lib/workspace-isolation.mjs";
 
 // Paths the agent MAY commit; everything else counts as source. The .coop/project.yml
 // `approval_policy.agent_allowed_to_commit` globs are merged in on top of these.
@@ -863,21 +864,98 @@ export function stripManagedUpdateNotices(text: string): string {
     .replace(/^[ \t]*Update available: v\S+ (?:->|→) v\S+[ \t]*\|[ \t]*ctx_upgrade[ \t]*(?:\r?\n|$)/gm, "");
 }
 
+/** context-mode 1.0.169 appends its routing/memory hint as an un-timestamped
+ * user message. Keep that reference context before the real user turn, so the
+ * model answers the request instead of acknowledging the extension's guidance.
+ * Only recognize the pinned extension's exact structural signature. */
+export function orderContextModeGuidance(messages: any[]): any[] | undefined {
+  if (!Array.isArray(messages) || messages.length < 2) return;
+  const hint = messages[messages.length - 1];
+  if (hint?.role !== "user" || hint.timestamp !== undefined || typeof hint.content !== "string" ||
+      !hint.content.startsWith("context-mode active. Hierarchy: ctx_batch_execute > ctx_execute > ctx_execute_file > ctx_search. ")) return;
+  let userIndex = messages.length - 2;
+  while (userIndex >= 0 && !(messages[userIndex]?.role === "user" && typeof messages[userIndex]?.timestamp === "number")) userIndex--;
+  if (userIndex < 0) return;
+  const ordered = messages.slice(0, -1);
+  ordered.splice(userIndex, 0, hint);
+  return ordered;
+}
+
 function contextModeToolName(event: any): string | null {
   const target = effectiveMutationTarget(event);
   const name = target.innerTool || target.outerTool;
   return /^ctx_[a-z0-9_]+$/i.test(name) ? name : null;
 }
 
+export function workspaceAccessMode(): "write" | "read-only" | "override" {
+  const value = process.env.COOP_WORKSPACE_ACCESS_MODE;
+  return value === "read-only" || value === "override" ? value : "write";
+}
+
+/** Read-only attachment is an enforcement state, not merely a UI label. Pi's
+ * built-in mutation surfaces are blocked even when ordinary guardrails are
+ * disabled; read/search/advisory tools remain available. */
+export function workspaceReadOnlyReason(toolOrEvent: unknown): string | null {
+  if (workspaceAccessMode() !== "read-only") return null;
+  const event = toolOrEvent && typeof toolOrEvent === "object" ? toolOrEvent as any : null;
+  const tool = String(event?.toolName ?? toolOrEvent ?? "").toLowerCase();
+  if (tool === "data_doc" && ["lineage", "check"].includes(String(event?.input?.command || "scan"))) return null;
+  if (!["edit", "write", "apply_patch", "bash", "powershell", "data_doc"].includes(tool)) return null;
+  return `coop workspace isolation: blocked ${tool || "mutation"} because this session is attached read-only. Create an isolated worktree or explicitly approve a concurrent-write override first.`;
+}
+
 export default function coopGuardrails(pi: ExtensionAPI) {
+  // Launchers register this extension last, after the pinned package hooks.
+  pi.on("context", (event: any) => {
+    const messages = orderContextModeGuidance(event.messages);
+    return messages ? { messages } : undefined;
+  });
   const enabled = () => process.env.COOP_NO_GUARDRAILS !== "1";
   const showUpstreamUpdates = () => process.env.COOP_SHOW_UPSTREAM_UPDATE_NOTICES === "1";
+  let workspaceLease: WorkspaceLeaseManager | null = null;
   rotateAuditIfLarge();
   // One Pi process can serve multiple sessions (/new, /resume, /fork fire
   // session_shutdown + session_start without reloading this module). Drop the
   // stale governance snapshot so THIS session's project contract is re-read on
   // its next governed call — never carry policy across session switches.
-  pi.on("session_start", async () => { resetSessionGovernance(); });
+  pi.on("session_start", async (_event: any, ctx: ExtensionContext) => {
+    resetSessionGovernance();
+    workspaceLease?.release();
+    workspaceLease = null;
+    const mode = workspaceAccessMode();
+    // Coop Runtime owns the cross-process lease for its child and passes only the
+    // opaque lease ID. Terminal Pi processes acquire the same shared lease here.
+    if (process.env.COOP_WORKSPACE_LEASE_DELEGATED || mode === "read-only") return;
+    try {
+      workspaceLease = new WorkspaceLeaseManager({
+        agentDir: process.env.PI_CODING_AGENT_DIR || join(homedir(), ".coop", "agent"),
+        ownerId: `pi-${process.pid}`,
+        clientInterface: process.env.COOP_CLIENT_INTERFACE || ctx.mode || "terminal",
+        onLost: (message: string) => {
+          ctx.ui?.setStatus?.("coop-workspace", "workspace ownership lost");
+          ctx.ui?.notify?.(message, "error");
+          ctx.shutdown?.();
+        },
+      });
+      const repository = await inspectWorkspace(ctx.cwd);
+      const result = workspaceLease.acquire(ctx.cwd, {
+        mode,
+        approved: mode === "override" && process.env.COOP_WORKSPACE_OVERRIDE_APPROVED === "1",
+        repository,
+      });
+      if (!result.ok) {
+        ctx.ui?.notify?.(`${result.message} Use a separate Git worktree, attach read-only, or explicitly approve an override.`, "error");
+        ctx.shutdown?.();
+      }
+    } catch (error: any) {
+      ctx.ui?.notify?.(`Workspace ownership could not be established: ${error?.message || error}`, "error");
+      ctx.shutdown?.();
+    }
+  });
+  pi.on("session_shutdown", async () => {
+    workspaceLease?.release();
+    workspaceLease = null;
+  });
 
   // context-mode performs its own npm registry check outside Pi's update system.
   // Filter only its exact warning lines. Maintainers can restore upstream notices
@@ -906,6 +984,8 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       if (!showUpstreamUpdates() && contextModeToolName(event)?.toLowerCase() === "ctx_upgrade") {
         return { block: true, reason: "coop update policy: context-mode is manifest-pinned. Use `coop update` so Pi and every extension move together." };
       }
+      const readOnlyReason = workspaceReadOnlyReason(event);
+      if (readOnlyReason) return { block: true, reason: readOnlyReason };
       if (!enabled()) return;
       const tool = event?.toolName;
 

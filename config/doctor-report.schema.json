@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/doctor-report.v1.json",
+  "title": "Coop Doctor report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "runId", "checkedAt", "status", "counts", "checks", "diagnostics"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "checkedAt": { "type": "string", "format": "date-time" },
+    "status": { "enum": ["healthy", "warning", "error"] },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["healthy", "warning", "error", "unavailable", "skipped"],
+      "properties": {
+        "healthy": { "type": "integer", "minimum": 0 },
+        "warning": { "type": "integer", "minimum": 0 },
+        "error": { "type": "integer", "minimum": 0 },
+        "unavailable": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "category", "state", "summary", "evidence", "recommendedAction", "repair"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^doctor\\.[a-z0-9.-]+$" },
+          "category": { "type": "string", "minLength": 1 },
+          "state": { "enum": ["healthy", "warning", "error", "unavailable", "skipped"] },
+          "summary": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "object" },
+          "recommendedAction": { "type": ["string", "null"] },
+          "repair": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["operationId", "available", "approvalRequired"],
+                "properties": {
+                  "operationId": { "type": "string", "pattern": "^doctor\\.repair\\.[a-z0-9.-]+$" },
+                  "available": { "type": "boolean" },
+                  "approvalRequired": { "type": "boolean" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "diagnostics": { "type": "array", "items": { "type": "object" } }
+  }
+}

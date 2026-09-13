@@ -46,7 +46,7 @@ function Test-CoopPiRunning {
     $procs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue
     foreach ($p in $procs) {
       if ($p.ProcessId -eq $PID) { continue }
-      if ($p.CommandLine -and $p.CommandLine -match 'pi-coding-agent') { return $true }
+      if (Test-CoopPiCommandLine $p.CommandLine) { return $true }
     }
   } catch { }
   return $false

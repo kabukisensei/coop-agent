@@ -4,6 +4,12 @@
 
 # Node (companion extensions resolve against pi's node_modules; none committed here)
 node_modules/
+desktop/spikes/*/dist/
+desktop/dist/
+desktop/dist-managed/
+desktop/.managed-runtime/
+desktop/spikes/*/src-tauri/target/
+desktop/spikes/*/src-tauri/gen/
 
 # Python
 .venv/

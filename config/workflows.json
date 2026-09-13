@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "workflows": [
+    {
+      "id": "coop-workflow.review-changes",
+      "version": 1,
+      "capabilityId": "coop.workflow.review-changes",
+      "name": "Review changes",
+      "description": "Scope changed artifacts, run applicable deterministic reviews, assess evidence, inspect the diff, and prepare a handoff without duplicating review logic.",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "baseRef": { "type": "string" },
+          "changedFilesOnly": { "type": "boolean" },
+          "allowApprovedFixes": { "type": "boolean" }
+        }
+      },
+      "prerequisites": ["coop.workspace.git-changes"],
+      "stages": [
+        {
+          "id": "scope-changes",
+          "name": "Scope changed artifacts",
+          "description": "Read the Git change set and classify applicable SQL, semantic-model, and report artifacts.",
+          "required": true,
+          "dependsOn": [],
+          "execution": { "kind": "capability", "capabilityId": "coop.workspace.git-changes", "operationId": null },
+          "permissions": ["workspace.read"],
+          "requiresApprovalOperation": null,
+          "acceptedEvidenceStates": ["complete", "partial"]
+        },
+        {
+          "id": "review-sql",
+          "name": "Run SQL Review",
+          "description": "Run the authoritative SQL Review capability when SQL artifacts are in scope.",
+          "required": false,
+          "dependsOn": ["scope-changes"],
+          "execution": { "kind": "capability", "capabilityId": "coop.review.sql", "operationId": null },
+          "permissions": ["workspace.read"],
+          "requiresApprovalOperation": null,
+          "acceptedEvidenceStates": ["complete", "partial", "not-applicable"]
+        },
+        {
+          "id": "review-dax",
+          "name": "Run DAX Review",
+          "description": "Run the authoritative DAX Review capability when model or report artifacts are in scope.",
+          "required": false,
+          "dependsOn": ["scope-changes"],
+          "execution": { "kind": "capability", "capabilityId": "coop.review.dax", "operationId": null },
+          "permissions": ["workspace.read"],
+          "requiresApprovalOperation": null,
+          "acceptedEvidenceStates": ["complete", "partial", "not-applicable"]
+        },
+        {
+          "id": "review-bpa",
+          "name": "Run BPA",
+          "description": "Run the authoritative BPA capability when it is applicable and available.",
+          "required": false,
+          "dependsOn": ["scope-changes"],
+          "execution": { "kind": "capability", "capabilityId": "coop.review.bpa", "operationId": null },
+          "permissions": ["workspace.read"],
+          "requiresApprovalOperation": null,
+          "acceptedEvidenceStates": ["complete", "partial", "not-applicable"]
+        },
+        {
+          "id": "assess-evidence",
+          "name": "Assess review evidence",
+          "description": "Combine coverage and diagnostics while keeping partial evidence distinct from a clean result.",
+          "required": true,
+          "dependsOn": ["scope-changes"],
+          "execution": { "kind": "core-operation", "capabilityId": null, "operationId": "workflow.assess-evidence" },
+          "permissions": ["workspace.read"],
+          "requiresApprovalOperation": null,
+          "acceptedEvidenceStates": ["complete", "partial"]
+        },
+        {
+          "id": "approve-fixes",
+          "name": "Approve proposed fixes",
+          "description": "Ask for a named workspace-write grant only when the user elects to apply a reviewed change plan.",
+          "required": false,
+          "dependsOn": ["assess-evidence"],
+          "execution": { "kind": "approval", "capabilityId": null, "operationId": "workspace.write" },
+          "permissions": ["workspace.write"],
+          "requiresApprovalOperation": null,
+          "acceptedEvidenceStates": []
+        },
+        {
+          "id": "apply-approved-fixes",
+          "name": "Apply approved fixes",
+          "description": "Delegate the approved change plan to the governed agent and tools.",
+          "required": false,
+          "dependsOn": ["approve-fixes"],
+          "execution": { "kind": "capability", "capabilityId": "coop.agent.tools.live-output", "operationId": null },
+          "permissions": ["workspace.write", "session.write"],
+          "requiresApprovalOperation": "workspace.write",
+          "acceptedEvidenceStates": ["complete", "partial"]
+        },
+        {
+          "id": "inspect-diff",
+          "name": "Inspect Git diff",
+          "description": "Read the resulting Git diff, or confirm the original review-only diff when no fixes were applied.",
+          "required": true,
+          "dependsOn": ["scope-changes"],
+          "execution": { "kind": "capability", "capabilityId": "coop.workspace.git-changes", "operationId": null },
+          "permissions": ["workspace.read"],
+          "requiresApprovalOperation": null,
+          "acceptedEvidenceStates": ["complete", "partial"]
+        },
+        {
+          "id": "prepare-handoff",
+          "name": "Prepare review handoff",
+          "description": "Produce the evidence-aware review summary and next actions; source commits remain human-controlled.",
+          "required": true,
+          "dependsOn": ["assess-evidence", "inspect-diff"],
+          "execution": { "kind": "core-operation", "capabilityId": null, "operationId": "workflow.prepare-handoff" },
+          "permissions": ["session.write"],
+          "requiresApprovalOperation": null,
+          "acceptedEvidenceStates": ["complete", "partial"]
+        }
+      ],
+      "completionCriteria": {
+        "requiredStageIds": ["scope-changes", "assess-evidence", "inspect-diff", "prepare-handoff"],
+        "allowPartialEvidence": true,
+        "requiredArtifactKinds": ["review-handoff"]
+      }
+    }
+  ]
+}

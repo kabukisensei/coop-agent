@@ -1,0 +1,88 @@
+{
+  "agent_review": [
+    {
+      "file": "tests/fixtures/findings/legacy.bim",
+      "fingerprint": "b75c9aa2865c",
+      "line": 0,
+      "model": "Legacy",
+      "note": "visible numeric column 'FactSales[Revenue]' auto-aggregates — judge whether to replace the implicit aggregation with an explicit measure (and hide the column / set summarizeBy: none) (§20).",
+      "object": "FactSales[Revenue]",
+      "rule_id": "DAX-IMPLICIT-MEASURE",
+      "standard_ref": "§20"
+    }
+  ],
+  "diagnostics": [],
+  "findings": [
+    {
+      "file": "tests/fixtures/findings/legacy.bim",
+      "fingerprint": "0fb179c27d12",
+      "line": 0,
+      "message": "bidirectional relationship — avoid by default; use a targeted CROSSFILTER(...) inside the measures that need it (§7).",
+      "model": "Legacy",
+      "object": "FactSales[DateKey] -> DimDate[Date]",
+      "rule_id": "DAX-BIDI-RELATIONSHIP",
+      "severity": "warning",
+      "standard_ref": "§7"
+    },
+    {
+      "file": "tests/fixtures/findings/legacy.bim",
+      "fingerprint": "4f1a8e519299",
+      "line": 0,
+      "message": "calculated column in a Direct Lake model — calculated columns are not supported in Direct Lake; move the logic upstream into the lakehouse/source instead (§13).",
+      "model": "Legacy",
+      "object": "FactSales[Margin]",
+      "rule_id": "DAX-DIRECTLAKE-NO-CALC-COL",
+      "severity": "warning",
+      "standard_ref": "§13"
+    },
+    {
+      "file": "tests/fixtures/findings/legacy.bim",
+      "fingerprint": "9297cee37fbe",
+      "line": 0,
+      "message": "measure 'Total Rev' has no formatString — declare one so it renders consistently across visuals (§15).",
+      "model": "Legacy",
+      "object": "[Total Rev]",
+      "rule_id": "DAX-FORMAT-STRING",
+      "severity": "warning",
+      "standard_ref": "§15"
+    },
+    {
+      "file": "tests/fixtures/findings/legacy.bim",
+      "fingerprint": "5c73a4a5428e",
+      "line": 0,
+      "message": "measure 'Total Rev' is not named '[Category: Name]' (e.g. '[Sales: Total Revenue]') (§1).",
+      "model": "Legacy",
+      "object": "[Total Rev]",
+      "rule_id": "DAX-MEASURE-CATEGORY",
+      "severity": "warning",
+      "standard_ref": "§1"
+    },
+    {
+      "file": "tests/fixtures/findings/legacy.bim",
+      "fingerprint": "02e55014e1cd",
+      "line": 0,
+      "message": "visible measure 'Total Rev' has no description — add a /// doc-comment (TMDL) or description (.bim); descriptions are what report authors and Copilot/Q&A read (§25).",
+      "model": "Legacy",
+      "object": "[Total Rev]",
+      "rule_id": "DAX-MEASURE-DESCRIPTION",
+      "severity": "info",
+      "standard_ref": "§25"
+    }
+  ],
+  "models_checked": 1,
+  "schema_version": 3,
+  "standards": {
+    "sha256": "1d5945eafcebe19023883dcf8b19565ce9abc7bc9d84278a5452a004d2407f2d"
+  },
+  "summary": {
+    "error": 0,
+    "info": 1,
+    "warning": 4
+  },
+  "tool": "coop-dax-review",
+  "verdict": {
+    "clean": false,
+    "highest_severity": "warning"
+  },
+  "version": "0.22.0"
+}

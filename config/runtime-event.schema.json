@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/runtime-event.v1.json",
+  "title": "Coop runtime domain event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "eventId", "streamId", "sequence", "snapshotRevision", "type", "occurredAt", "sessionId", "payload", "raw"],
+  "properties": {
+    "contractVersion": { "const": 1 },
+    "eventId": { "type": "string", "minLength": 1 },
+    "streamId": { "type": "string", "minLength": 1 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "snapshotRevision": { "type": "integer", "minimum": 0 },
+    "type": { "type": "string", "minLength": 1 },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "commandId": { "type": "string", "minLength": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "causationId": { "type": "string", "minLength": 1 },
+    "payload": {},
+    "raw": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["type", "sequence"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "sequence": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

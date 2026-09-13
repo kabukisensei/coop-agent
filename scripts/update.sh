@@ -49,6 +49,8 @@ PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"; export PI_CODING_AGENT_DIR
 # The old tested-version gates (--pi-latest / "Jump to the untested …?" prompts) are
 # gone: they queried latest versions merely to ask about them, and normal update
 # resolved back to manifest pins anyway.
+# Windows uses common's entry-script matcher to reject live sessions without
+# confusing npm package acquisition with a running Pi. POSIX allows open-file replacement.
 PI_PKG="@earendil-works/pi-coding-agent"
 
 # Overall-bar denominator: the update ITEMS we will attempt (pi update + each

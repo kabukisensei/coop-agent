@@ -1,0 +1,32 @@
+{
+  "agent_review": [],
+  "diagnostics": [],
+  "files_checked": 1,
+  "findings": [
+    {
+      "file": "tests/fixtures/findings/select-star.sql",
+      "fingerprint": "5efa667dfe9b",
+      "line": 10,
+      "message": "SELECT * in production code — list the columns explicitly (§11).",
+      "object": "silver.dim_customer",
+      "rule_id": "SQL-NO-SELECT-STAR",
+      "severity": "warning",
+      "standard_ref": "§11"
+    }
+  ],
+  "schema_version": 4,
+  "standards": {
+    "sha256": "bfc80cb4f8c0cd6d00b70715ac8c2735b23a3acc3560bb1f0731e1f69c134d37"
+  },
+  "summary": {
+    "error": 0,
+    "info": 0,
+    "warning": 1
+  },
+  "tool": "coop-sql-review",
+  "verdict": {
+    "clean": false,
+    "highest_severity": "warning"
+  },
+  "version": "0.15.2"
+}

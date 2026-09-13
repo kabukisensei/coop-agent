@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "analysisId": "impact-sales-margin-1",
+  "evidenceStatus": "partial",
+  "generatedAt": "2026-09-04T23:55:00.000Z",
+  "target": {
+    "id": "measure:Sales[Margin]",
+    "name": "Sales[Margin]",
+    "type": "measure",
+    "changeIntent": "redefine",
+    "intendedOutcome": "Exclude internal transfers",
+    "environment": "QE Dev",
+    "deploymentScope": "Development semantic model and linked reports"
+  },
+  "evidenceSources": [
+    { "id": "data-doc-1", "kind": "data-doc", "label": "Focused lineage", "observedAt": "2026-09-04T23:50:00.000Z", "status": "complete", "reference": "measure:Sales[Margin]" },
+    { "id": "pbi-1", "kind": "powerbi", "label": "QE Dev model inspection", "observedAt": "2026-09-04T23:52:00.000Z", "status": "partial", "reference": "workspace:QE Dev/model:Sales" },
+    { "id": "inference-1", "kind": "agent-inference", "label": "Potential Excel consumers", "observedAt": null, "status": "not-applicable", "reference": null }
+  ],
+  "paths": [
+    {
+      "id": "path-up-1",
+      "direction": "upstream",
+      "nodes": [
+        { "id": "sql:dbo.fact_sales", "name": "dbo.fact_sales", "type": "table", "path": "sql/fact_sales.sql", "classification": "non-breaking", "evidenceSourceIds": ["data-doc-1"] },
+        { "id": "measure:Sales[Margin]", "name": "Sales[Margin]", "type": "measure", "path": "model/Sales.tmdl", "classification": "breaking", "evidenceSourceIds": ["data-doc-1"] }
+      ],
+      "evidenceSourceIds": ["data-doc-1"],
+      "confidence": "high",
+      "explanation": "The measure reads fact_sales margin columns."
+    },
+    {
+      "id": "path-down-1",
+      "direction": "downstream",
+      "nodes": [
+        { "id": "measure:Sales[Margin]", "name": "Sales[Margin]", "type": "measure", "path": "model/Sales.tmdl", "classification": "breaking", "evidenceSourceIds": ["data-doc-1"] },
+        { "id": "report:Executive/Page:Overview/Visual:Margin", "name": "Executive overview margin visual", "type": "visual", "path": "report/definition/pages/overview/visuals/margin/visual.json", "classification": "breaking", "evidenceSourceIds": ["pbi-1"] }
+      ],
+      "evidenceSourceIds": ["data-doc-1", "pbi-1"],
+      "confidence": "medium",
+      "explanation": "The visual binds the target measure."
+    }
+  ],
+  "impacts": {
+    "upstream": [
+      { "id": "sql:dbo.fact_sales", "name": "dbo.fact_sales", "type": "table", "path": "sql/fact_sales.sql", "classification": "non-breaking", "evidenceSourceIds": ["data-doc-1"] }
+    ],
+    "downstream": [
+      { "id": "report:Executive/Page:Overview/Visual:Margin", "name": "Executive overview margin visual", "type": "visual", "path": "report/definition/pages/overview/visuals/margin/visual.json", "classification": "breaking", "evidenceSourceIds": ["pbi-1"] }
+    ],
+    "reports": [
+      { "id": "report:Executive", "name": "Executive", "type": "report", "path": "report", "classification": "breaking", "evidenceSourceIds": ["pbi-1"] }
+    ],
+    "apps": [],
+    "rls": [],
+    "refresh": [],
+    "consumers": [
+      { "id": "consumer:excel-unknown", "name": "Possible Excel Analyze-in consumer", "type": "consumer", "path": null, "classification": "unknown", "evidenceSourceIds": ["inference-1"] }
+    ]
+  },
+  "evidenceGaps": [
+    { "id": "gap-apps", "severity": "warning", "message": "Power BI app membership was unavailable.", "affects": ["apps", "consumers"] }
+  ],
+  "risk": {
+    "level": "high",
+    "rationale": "A user-facing executive report depends directly on the measure and external consumers are not fully enumerated.",
+    "drivers": ["user-facing report", "partial consumer evidence"]
+  },
+  "saferAlternatives": [
+    { "title": "Create a replacement measure", "rationale": "Validate the new definition before deprecating the existing measure." }
+  ],
+  "plan": {
+    "summary": "Introduce and validate a replacement measure before changing consumers.",
+    "steps": [
+      { "id": "step-1", "title": "Add replacement", "description": "Add a separately named measure for comparison.", "approvalRequired": true, "affectedObjects": ["measure:Sales[Margin]"] },
+      { "id": "step-2", "title": "Validate consumers", "description": "Compare results and inspect downstream report behavior.", "approvalRequired": false, "affectedObjects": ["report:Executive"] }
+    ]
+  },
+  "approval": { "required": true, "status": "pending" }
+}

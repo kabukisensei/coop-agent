@@ -6,6 +6,10 @@
 # exit 1 when something required is missing.
 #
 $ErrorActionPreference = 'Continue'
+if ($env:COOP_DESKTOP_MANAGED_RUNTIME -eq '1') {
+  & node (Join-Path $PSScriptRoot 'doctor-managed.mjs') @args
+  exit $LASTEXITCODE
+}
 
 # --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
 # Resolves COOP_ROOT/COOP_VERSION and defines the loggers, Test-Have,
@@ -57,7 +61,7 @@ function Check {
   if (Test-Have $Bin) {
     $ver = ''
     if ($VCmd.Count -gt 0) {
-      $vArgs = if ($VCmd.Count -gt 1) { @($VCmd[1..($VCmd.Count-1)]) } else { @() }
+      [string[]]$vArgs = if ($VCmd.Count -gt 1) { @($VCmd[1..($VCmd.Count-1)]) } else { @() }
       $vout = (& $VCmd[0] @vArgs 2>$null | Select-Object -First 1)
       # Show only a version-looking token, so a stray REPL banner (node ->
       # "Welcome to Node.js v24..."), an "Unknown command: -" error, or a version-
@@ -171,7 +175,7 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
     return
   }
   if ($meta -and $cli -and ($meta -ne $cli)) {
-    D-Bad "$Dist pipx environment is stale/corrupt: metadata says $meta but $Exe reports $(if ($cli) { $cli } else { 'nothing' })" \
+    D-Bad "$Dist pipx environment is stale/corrupt: metadata says $meta but $Exe reports $(if ($cli) { $cli } else { 'nothing' })" `
       "$repair   (metadata/CLI disagreement; recreate the environment)"
     return
   }
@@ -183,7 +187,7 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   # Executable ownership: an unrelated binary must never be correlated with
   # this distribution's pipx metadata.
   if ((Get-CoopExePipxVenv $Exe) -ne $Dist) {
-    D-Warn "$Dist skipped: resolved $Exe does not belong to its pipx environment" \
+    D-Warn "$Dist skipped: resolved $Exe does not belong to its pipx environment" `
       "reinstall so the pinned $Exe is first on PATH: $repair"
     return
   }
@@ -220,7 +224,7 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   } else {
     # Only the Fabric CLI env carries the injected fabric-cicd library.
     $cicdPin = if ($Dist -eq 'ms-fabric-cli') { Coop-ManifestGet 'python_tools.fabric-cicd' } else { '' }
-    D-Warn "$Dist environment uses Python $pyver — violates its own requires-python '$rp'" \
+    D-Warn "$Dist environment uses Python $pyver — violates its own requires-python '$rp'" `
       "$repair --python 3.12   (or --python 3.13)$(if ($cicdPin) { ", then: pipx inject $Dist fabric-cicd==$cicdPin" })"
   }
 }

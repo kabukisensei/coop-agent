@@ -157,14 +157,22 @@
     }
   }
 
-  // Line-numbered code (escape-first; no highlighting — keeps us dependency-free).
+  // Plain source code. Line numbers are intentionally omitted so both explicit
+  // Copy and native text selection carry source only, never a UI gutter.
   function codeBlock(text) {
+    const wrap = document.createElement("div");
+    wrap.className = "portable-code file-code";
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "copy-plain";
+    copy.dataset.copyKind = "code";
+    copy.textContent = "Copy source";
+    copy._coopCopyText = String(text);
     const pre = document.createElement("pre");
     pre.className = "code-preview";
-    const lines = String(text).split("\n");
-    const gutter = String(lines.length).length;
-    pre.textContent = lines.map((l, i) => String(i + 1).padStart(gutter, " ") + "  " + l).join("\n");
-    return pre;
+    pre.textContent = String(text);
+    wrap.append(copy, pre);
+    return wrap;
   }
 
   // --- tabular preview (sortable) -------------------------------------------------
@@ -238,7 +246,15 @@
 
   function sortableTable(header, body) {
     const wrap = document.createElement("div");
-    wrap.className = "sheet-scroll";
+    wrap.className = "sheet-scroll portable-table";
+    const copybar = document.createElement("div");
+    copybar.className = "portable-copybar";
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "copy-plain";
+    copy.dataset.copyKind = "table";
+    copy.textContent = "Copy table as TSV";
+    copybar.appendChild(copy);
     const table = document.createElement("table");
     table.className = "sheet-table";
     const thead = document.createElement("thead");
@@ -277,7 +293,7 @@
     };
     paint();
     table.append(thead, tbody);
-    wrap.appendChild(table);
+    wrap.append(copybar, table);
     return wrap;
   }
 
@@ -312,6 +328,13 @@
 
   // --- public surface for app.js --------------------------------------------------
   window.coopFiles = {
+    async openPath(path) {
+      if (typeof path !== "string" || !path) return;
+      if (!open) toggle();
+      if (!loadedTree) await loadTree();
+      const row = treeEl.querySelector(`.fnode.file[data-path="${cssEscape(path)}"]`);
+      await openFile(path, row);
+    },
     // The absolute-ish path to wrap the next prompt with, or "" when nothing is
     // eligible (panel closed, no selection, or attach unchecked). app.js turns a
     // non-empty value into a viewing-context block + 📎 chip.
