@@ -106,13 +106,24 @@ try {
   const beforeRegistry = queryRegistry();
   report.registry.before = beforeRegistry;
   if (beforeRegistry.errors.length || beforeRegistry.installations.length) throw new Error("Refusing discriminator because registry precondition is not clean.");
-  appData = join(process.env.APPDATA, "Coop Desktop");
-  if (!win32.isAbsolute(appData) || existsSync(appData)) throw new Error("Refusing discriminator because disposable application-data path is unavailable or occupied.");
+  const runnerTemp = win32.resolve(process.env.RUNNER_TEMP);
+  const appDataRoot = win32.resolve(process.env.APPDATA);
+  const appDataRelative = win32.relative(runnerTemp, appDataRoot);
+  if (!win32.isAbsolute(appDataRoot)
+      || !appDataRelative
+      || appDataRelative.startsWith(`..${win32.sep}`)
+      || appDataRelative === ".."
+      || win32.isAbsolute(appDataRelative)
+      || existsSync(appDataRoot)) {
+    throw new Error("Refusing discriminator because disposable application-data root is outside RUNNER_TEMP or occupied.");
+  }
+  appData = join(appDataRoot, "Coop Desktop");
 
   state = await mkdtemp(join(process.env.RUNNER_TEMP, "coop-installer-first-install-"));
   installed = join(state, "Coop Desktop");
   const workspace = join(state, "workspace");
   await mkdir(workspace);
+  await mkdir(appDataRoot);
   await mkdir(appData);
   marker = join(appData, "installer-acceptance-sentinel.txt");
   sentinel = randomBytes(32).toString("hex");
