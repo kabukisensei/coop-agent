@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -269,17 +270,30 @@ test("failure-path canary contamination removes evidence and emits no upload mar
 
 function writeOwnershipFixture(dir) {
   const writer = join(dir, "ownership-fixture.mjs");
-  writeFileSync(writer, `import {spawn} from "node:child_process"; import {readFileSync,writeFileSync} from "node:fs";
+  writeFileSync(writer, `import {spawn} from "node:child_process"; import {readFileSync,writeFileSync} from "node:fs"; import {createServer} from "node:net";
 const mode=process.argv[2], target=process.argv[3], self=process.argv[1];
 if(mode==="success"){process.stdout.write("exact-stdout\\n");process.stderr.write("exact-stderr\\n");process.exit(23)}
 if(mode==="unicode"){process.stdout.write(JSON.stringify({argv:process.argv.slice(3),stdin:readFileSync(0,"utf8")}));process.exit(0)}
-if(mode==="leaf"){setTimeout(()=>writeFileSync(target,"late-write"),1800);setInterval(()=>{},1000)}
+if(mode==="leaf"){const token=process.pid+":"+Date.now();const server=createServer(socket=>socket.end(token));server.listen(0,"127.0.0.1",()=>{writeFileSync(target+".identity.json",JSON.stringify({pid:process.pid,port:server.address().port,token}));setTimeout(()=>writeFileSync(target,"late-write"),1800)})}
 else if(mode==="churn"){setInterval(()=>spawn(process.execPath,[self,"leaf",target],{stdio:"ignore"}),5)}
 else if(mode==="cleanup-race"){spawn(process.execPath,[self,"churn",target],{stdio:"ignore"});setInterval(()=>{},1000)}
 else if(mode==="parent-success"){spawn(process.execPath,[self,"leaf",target],{stdio:"ignore"})}
 else{writeFileSync(mode,"payload-ran")}
 `);
   return writer;
+}
+
+function originalDescendantResponds(identityPath) {
+  const identity = JSON.parse(readFileSync(identityPath, "utf8"));
+  return new Promise((resolveAlive) => {
+    let response = "";
+    const socket = connect({ host: "127.0.0.1", port: identity.port });
+    const finish = (alive) => { socket.destroy(); resolveAlive(alive); };
+    socket.setEncoding("utf8"); socket.setTimeout(1000, () => finish(false));
+    socket.on("data", (chunk) => { response += chunk; });
+    socket.on("end", () => finish(response === identity.token));
+    socket.on("error", () => finish(false));
+  });
 }
 
 test("bounded command preserves exact stdout, stderr, and child status", { skip: !havePwsh }, () => {
@@ -318,7 +332,7 @@ test("successful parent with surviving descendant waits to timeout and suppresse
   assert.equal(result.status, 0, result.stderr); assert.equal(existsSync(lateWrite), false); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false);
 });
 
-test("native Windows lifecycle faults fail closed through real ownership branches", { skip: !havePwsh || process.platform !== "win32" }, () => {
+test("native Windows lifecycle faults fail closed through real ownership branches", { skip: !havePwsh || process.platform !== "win32" }, async () => {
   for (const fault of ["job-create", "job-assign", "resume", "job-query", "job-terminate", "job-close"]) {
     const dir = mkdtempSync(join(tmpdir(), `coop-owner-${fault}-`)); const writer = writeOwnershipFixture(dir); const payloadMarker = join(dir, "payload.txt"); const receiptPath = join(dir, "receipt.json"); const pidPath = join(dir, "spawned.pid");
     const env = { ...process.env, COOP_KNOWLEDGE_GIT_TEST_FAULT: fault, COOP_KNOWLEDGE_GIT_TEST_PID_FILE: pidPath };
@@ -328,6 +342,14 @@ test("native Windows lifecycle faults fail closed through real ownership branche
       assert.equal(existsSync(pidPath), true, `${fault}: real suspended child PID was not recorded`);
       const pid = Number.parseInt(readFileSync(pidPath, "utf8"), 10);
       assert.throws(() => process.kill(pid, 0), (error) => error?.code === "ESRCH", `${fault}: suspended child ${pid} survived`);
+    }
+    if (fault === "job-terminate") {
+      const identityPath = `${payloadMarker}.identity.json`;
+      assert.equal(existsSync(identityPath), true, `${fault}: descendant identity was not captured`);
+      await new Promise((resolveWait) => setTimeout(resolveWait, 2200));
+      assert.equal(existsSync(payloadMarker), false, `${fault}: orphan mutated state after timeout`);
+      assert.equal(await originalDescendantResponds(identityPath), false, `${fault}: original descendant survived cleanup`);
+      assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false, `${fault}: upload marker appeared after orphan check`);
     }
   }
 });

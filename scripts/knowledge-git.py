@@ -439,6 +439,7 @@ class Ownership:
         self.pgid = None
         self.job = None
         self.child = None
+        self._close_result = None
 
     @property
     def available(self):
@@ -543,20 +544,27 @@ class Ownership:
     def terminate(self):
         """Kill every owned process, never a global executable sweep."""
         if os.name == "nt":
-            terminated = False
             if self.job is not None:
                 terminated, _ = _win_job_terminate(self.job)
-            # Fallback for the degraded path: tree-kill while the root lives.
+                if terminated:
+                    return True
+                # The Job already owns the complete descendant tree. If its
+                # explicit termination call fails, close it immediately so
+                # KILL_ON_JOB_CLOSE fires before any PID fallback can stall or
+                # miss an orphaned child. terminate_and_wait interprets the
+                # close result and keeps uncertainty fail-closed.
+                self.close()
+                return False
+            # Only a degraded no-Job path may use the root-PID tree fallback.
             try:
                 result = subprocess.run(
                     ["taskkill", "/PID", str(self.child.pid), "/T", "/F"],
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL, timeout=CLEANUP_GRACE_SECONDS,
                 )
-                terminated = terminated or result.returncode == 0
+                return result.returncode == 0
             except (OSError, subprocess.SubprocessError):
-                pass
-            return terminated
+                return False
         killed = False
         if self.pgid is not None:
             try:
@@ -578,11 +586,31 @@ class Ownership:
                 pass
         return killed
 
+    def terminate_and_wait(self, deadline, proc=None):
+        """Terminate ownership and verify it without delaying kill-on-close."""
+        terminated = self.terminate()
+        if proc is not None:
+            # Reap before checking emptiness so a dead POSIX group leader does
+            # not remain visible as a zombie for the whole cleanup grace.
+            reap_bounded(proc)
+        if os.name == "nt":
+            if not terminated:
+                # terminate() already invoked the Job-close fallback. There is
+                # no live Job handle to query and waiting would only recreate
+                # the orphan mutation window.
+                return OWNERSHIP_EMPTY if self._close_result else OWNERSHIP_UNCERTAIN
+            return self.wait_empty(deadline)
+        wait_group_exit(self.pgid, deadline)
+        return OWNERSHIP_EMPTY if not group_alive(self.pgid) else OWNERSHIP_TIMED_OUT
+
     def close(self):
         if os.name == "nt" and self.job is not None:
             closed, _ = _win_job_close(self.job)
             self.job = None
+            self._close_result = closed
             return closed
+        if os.name == "nt" and self._close_result is not None:
+            return self._close_result
         return True
 
 
@@ -666,16 +694,14 @@ def run_bounded_capture(argv, deadline):
             return "unavailable", None
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            ownership.terminate()
-            reap_bounded(proc)
+            ownership.terminate_and_wait(time.monotonic() + CLEANUP_GRACE_SECONDS, proc)
             return "timed_out", None
         try:
             out, _ = proc.communicate(timeout=remaining)
         except subprocess.TimeoutExpired:
             # Parent done or not, the operation is not: something owned still
             # holds the output pipe. Kill the whole ownership, then drain.
-            ownership.terminate()
-            reap_bounded(proc)
+            ownership.terminate_and_wait(time.monotonic() + CLEANUP_GRACE_SECONDS, proc)
             try:
                 out, _ = proc.communicate(timeout=CLEANUP_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
@@ -689,8 +715,7 @@ def run_bounded_capture(argv, deadline):
         # descendants may still hold the pipe (parent-exits-first).
         empty_state = ownership.wait_empty(deadline)
         if empty_state != OWNERSHIP_EMPTY:
-            ownership.terminate()
-            reap_bounded(proc)
+            ownership.terminate_and_wait(time.monotonic() + CLEANUP_GRACE_SECONDS, proc)
             try:
                 proc.communicate(timeout=CLEANUP_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
@@ -927,24 +952,14 @@ def main(argv):
         try:
             rc = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
-            ownership.terminate()
-            reap_bounded(proc)
-            if os.name != "nt":
-                wait_group_exit(ownership.pgid, time.monotonic() + CLEANUP_GRACE_SECONDS)
-            else:
-                ownership.wait_empty(time.monotonic() + CLEANUP_GRACE_SECONDS)
+            ownership.terminate_and_wait(time.monotonic() + CLEANUP_GRACE_SECONDS, proc)
             print(
                 "error: git operation timed out after %ds and was terminated" % timeout,
                 file=sys.stderr,
             )
             return finish_owned(ownership, EXIT_TIMEOUT)
         except KeyboardInterrupt:
-            ownership.terminate()
-            reap_bounded(proc)
-            if os.name != "nt":
-                wait_group_exit(ownership.pgid, time.monotonic() + CLEANUP_GRACE_SECONDS)
-            else:
-                ownership.wait_empty(time.monotonic() + CLEANUP_GRACE_SECONDS)
+            ownership.terminate_and_wait(time.monotonic() + CLEANUP_GRACE_SECONDS, proc)
             return finish_owned(ownership, 130)
 
         # The child finished, but the operation has not: descendants may still
@@ -956,9 +971,7 @@ def main(argv):
         # as valid there as the POSIX group wait.
         empty_state = ownership.wait_empty(deadline)
         if empty_state != OWNERSHIP_EMPTY:
-            ownership.terminate()
-            reap_bounded(proc)
-            ownership.wait_empty(time.monotonic() + CLEANUP_GRACE_SECONDS)
+            ownership.terminate_and_wait(time.monotonic() + CLEANUP_GRACE_SECONDS, proc)
             if empty_state == OWNERSHIP_UNCERTAIN:
                 print(
                     "error: Windows Job membership could not be verified — "

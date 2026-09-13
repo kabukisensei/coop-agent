@@ -102,6 +102,26 @@ class KnowledgeGitOwnershipTests(unittest.TestCase):
             ownership.job = object()
             self.assertFalse(ownership.close())
 
+    def test_failed_job_termination_closes_immediately_without_grace_wait_or_double_close(self):
+        job = object()
+        with mock.patch.object(kg, "os", self.windows_os()), \
+             mock.patch.object(kg, "_win_job_terminate", return_value=(False, ("terminate", 5))) as terminate, \
+             mock.patch.object(kg.subprocess, "run") as taskkill, \
+             mock.patch.object(kg, "_win_job_close", return_value=(True, None)) as close:
+            ownership = kg.Ownership()
+            ownership.job = job
+            ownership.child = FakeProcess()
+            with mock.patch.object(ownership, "wait_empty") as wait_empty:
+                self.assertEqual(
+                    ownership.terminate_and_wait(kg.time.monotonic() + kg.CLEANUP_GRACE_SECONDS),
+                    kg.OWNERSHIP_EMPTY,
+                )
+            self.assertTrue(ownership.close())
+        terminate.assert_called_once_with(job)
+        taskkill.assert_not_called()
+        wait_empty.assert_not_called()
+        close.assert_called_once_with(job)
+
     def test_close_uncertainty_overrides_payload_success(self):
         ownership = mock.Mock()
         ownership.close.return_value = False
