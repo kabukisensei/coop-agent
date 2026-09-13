@@ -186,6 +186,7 @@ test("decisive receipt mutations are rejected equivalently", { skip: !havePwsh }
     ["object claim evidence", (x) => { x.claims[0].evidence = { item: structuredClone(x.claims[0].evidence[0]) }; }],
     ["scalar operator evidence", (x) => { x.operator_evidence[0].evidence = "observed"; }],
     ["string evidence exit code", (x) => { x.claims[0].evidence[0].exit_code = "0"; }],
+    ["COMMAND null exit code", (x) => { x.claims[0].evidence[0].exit_code = null; }],
     ["numeric evidence observed", (x) => { x.claims[0].evidence[0].observed = 1; }],
     ["scalar claims collection", (x) => { x.claims = structuredClone(x.claims[0]); }],
     ["null operator collection", (x) => { x.operator_evidence = null; }],
@@ -194,6 +195,15 @@ test("decisive receipt mutations are rejected equivalently", { skip: !havePwsh }
   ];
   const dir = mkdtempSync(join(tmpdir(), "coop-mutations-"));
   for (const [name, mutate] of mutations) { const value = receipt({ ready: true, layer: "DISPOSABLE_VM_OPERATOR", humanStatus: "PASS" }); mutate(value); assertBoth(writeReceipt(dir, value, `${name.replaceAll(" ", "-")}.json`), false, name); }
+});
+
+test("schema and PowerShell retain null/integer exit codes for non-COMMAND evidence", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-non-command-exit-"));
+  for (const value of [null, 17]) {
+    const candidate = receipt({ ready: true, layer: "DISPOSABLE_VM_OPERATOR", humanStatus: "PASS" });
+    candidate.claims[0].evidence[0] = evidence("HASH"); candidate.claims[0].evidence[0].exit_code = value;
+    assertBoth(writeReceipt(dir, candidate, `hash-${value ?? "null"}.json`), true, `HASH exit_code ${value}`);
+  }
 });
 
 test("automated layer can never claim readiness", { skip: !havePwsh }, () => {
@@ -257,12 +267,43 @@ test("failure-path canary contamination removes evidence and emits no upload mar
   assert.notEqual(result.status, 0); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false); assert.equal(existsSync(evidenceRoot), false);
 });
 
-test("timeout kills a parent and descendant before the descendant can write", { skip: !havePwsh }, () => {
-  const dir = mkdtempSync(join(tmpdir(), "coop-process-tree-")); const writer = join(dir, "writer.mjs"); const escapedWriter = JSON.stringify(writer);
-  writeFileSync(writer, `import {spawn} from "node:child_process"; import {writeFileSync} from "node:fs";\nif(process.argv[2]==="child"){setTimeout(()=>writeFileSync(process.argv[3],"late-write"),1800);setInterval(()=>{},1000)}else{spawn(process.execPath,[${escapedWriter},"child",process.argv[2]],{stdio:"ignore"});setInterval(()=>{},1000)}\n`);
-  const lateWrite = join(dir, "late.txt"); const logBase = join(dir, "bounded");
-  const result = runPs(["-Mode", "Probe", "-Probe", "BoundedProcessTree", "-Value", writer, "-Root", logBase, "-Canary", lateWrite]);
-  assert.equal(result.status, 0, result.stderr); assert.equal(existsSync(lateWrite), false);
+function writeOwnershipFixture(dir) {
+  const writer = join(dir, "ownership-fixture.mjs");
+  writeFileSync(writer, `import {spawn} from "node:child_process"; import {writeFileSync} from "node:fs";
+const mode=process.argv[2], target=process.argv[3], self=process.argv[1];
+if(mode==="success"){process.stdout.write("exact-stdout\\n");process.stderr.write("exact-stderr\\n");process.exit(23)}
+if(mode==="leaf"){setTimeout(()=>writeFileSync(target,"late-write"),1800);setInterval(()=>{},1000)}
+else if(mode==="churn"){setInterval(()=>spawn(process.execPath,[self,"leaf",target],{stdio:"ignore"}),5)}
+else if(mode==="cleanup-race"){spawn(process.execPath,[self,"churn",target],{stdio:"ignore"});setInterval(()=>{},1000)}
+else if(mode==="parent-success"){spawn(process.execPath,[self,"leaf",target],{stdio:"ignore"})}
+else{writeFileSync(mode,"payload-ran")}
+`);
+  return writer;
+}
+
+test("bounded command preserves exact stdout, stderr, and child status", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-bounded-success-")); const writer = writeOwnershipFixture(dir); const logBase = join(dir, "bounded");
+  const result = runPs(["-Mode", "Probe", "-Probe", "BoundedCommandSuccess", "-Value", writer, "-Root", logBase]);
+  assert.equal(result.status, 0, result.stderr); assert.equal(readFileSync(`${logBase}.stdout.txt`, "utf8"), "exact-stdout\n"); assert.equal(readFileSync(`${logBase}.stderr.txt`, "utf8"), "exact-stderr\n");
+});
+
+test("timeout owns descendants spawned during cleanup and suppresses upload", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-process-race-")); const writer = writeOwnershipFixture(dir); const lateWrite = join(dir, "late.txt"); const receiptPath = join(dir, "receipt.json");
+  const result = runPs(["-Mode", "Probe", "-Probe", "BoundedProcessTree", "-Value", writer, "-Root", join(dir, "evidence", "bounded"), "-Canary", lateWrite, "-ReceiptPath", receiptPath]);
+  assert.equal(result.status, 0, result.stderr); assert.equal(existsSync(lateWrite), false); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false);
+});
+
+test("successful parent with surviving descendant waits to timeout and suppresses upload", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-parent-success-")); const writer = writeOwnershipFixture(dir); const lateWrite = join(dir, "late.txt"); const receiptPath = join(dir, "receipt.json");
+  const result = runPs(["-Mode", "Probe", "-Probe", "SuccessfulParentDescendant", "-Value", writer, "-Root", join(dir, "evidence", "bounded"), "-Canary", lateWrite, "-ReceiptPath", receiptPath]);
+  assert.equal(result.status, 0, result.stderr); assert.equal(existsSync(lateWrite), false); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false);
+});
+
+test("ownership-unavailable 126 runs no payload and suppresses upload", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-owner-unavailable-")); const writer = writeOwnershipFixture(dir); const payloadMarker = join(dir, "payload.txt"); const receiptPath = join(dir, "receipt.json");
+  const env = { ...process.env, COOP_ACCEPTANCE_FORCE_OWNERSHIP_UNAVAILABLE: "1" };
+  const result = runPs(["-Mode", "Probe", "-Probe", "OwnershipUnavailable", "-Value", writer, "-Root", join(dir, "evidence", "bounded"), "-Canary", payloadMarker, "-ReceiptPath", receiptPath], { env });
+  assert.equal(result.status, 0, result.stderr); assert.equal(existsSync(payloadMarker), false); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false);
 });
 
 test("product agent path is one effective onboarding/install/Doctor path", () => {

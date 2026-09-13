@@ -8,7 +8,9 @@ third, dynamic identity and is recorded separately in every receipt.
 Automated evidence is necessary but **cannot** prove authentication, a real model
 response, or interactive workstation usability. It always writes
 `terminal_workstation_ready: false`. A completed disposable-VM operator receipt
-is mandatory before any readiness decision.
+is mandatory before any readiness decision. At this harness revision, native
+Windows Job Object execution and every interactive disposable-VM journey remain
+pending; the cross-platform tests below are not substitutes for either gate.
 
 ## Automated native-Windows evidence
 
@@ -52,12 +54,15 @@ checkout, state drift, or canary hit produces a non-ready fail-closed receipt.
 The canary is initialized before fallible prechecks. Finalization scans every
 retained artifact on success and failure; unscannable or leaking evidence is
 deleted from upload eligibility while a separately located controlled receipt is
-retained. Every launched root process is tracked. Before the final canary scan,
-the harness recursively enumerates and terminates any remaining descendants and
-confirms every observed process ID is gone. A timeout requires successful
-`taskkill /T /F` plus recursive exit confirmation; any enumeration, kill, wait,
-or confirmation uncertainty suppresses the upload marker and removes the
-evidence directory. No parent-only fallback is accepted.
+retained. Every bounded payload runs through `scripts/knowledge-git.py` with its Git
+transport probe bypassed by a child-only noninteractive environment. On Windows,
+the helper creates the child suspended, assigns it to a KILL_ON_JOB_CLOSE Job
+Object, and only then resumes it; descendants inherit membership and remain owned
+after the immediate parent exits. On POSIX, the equivalent ownership unit is a
+new process group. The helper preserves the child status and does not return
+success until the ownership unit is empty. Timeout `124` and ownership-unavailable
+`126` are distinct hard failures; either suppresses the upload marker and removes
+the evidence directory. There is no PID snapshot or parent-only fallback.
 
 Candidate Support must report the exact build fingerprint `build-24297cf9`,
 produced by the product fingerprint function from the candidate VERSION and SHA.
@@ -148,7 +153,8 @@ Snapshot revert—not uninstall or recursive deletion—is the recovery procedur
    - `kind`: `OPERATOR_OBSERVATION`
    - a concise redacted `observed` value
    - `command`: the command used, or `human interaction`
-   - `exit_code`: the observed integer or `null` for interaction-only evidence
+   - `exit_code`: an integer for every `COMMAND`; an observed integer or `null`
+     for non-command interaction evidence
    - `identity`: `operator`
    - `path`: redacted evidence path or empty string
    - `sha256`: evidence hash or empty string

@@ -9,7 +9,7 @@ param(
   [string]$ReceiptPath = '',
   [string]$ExpectedHarnessSha = '',
   [switch]$VmOperatorMode,
-  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','BoundedProcessTree','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
+  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','BoundedCommandSuccess','BoundedProcessTree','SuccessfulParentDescendant','OwnershipUnavailable','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
   [string]$Value = '',
   [string]$Root = '',
   [string]$Canary = ''
@@ -20,8 +20,6 @@ $script:CandidateSha = '295693a3eb08e9988594971d87bc4de751e6b551'
 $script:BaselineSha = 'd60300780b565aabf15b172b2bc32abad12b9ca6'
 $script:AllowedStatuses = @('PASS','FAIL','BLOCKED','INCONCLUSIVE','NOT_REACHED','NOT_AVAILABLE','CAPABILITY_SKIP','BETA_LIMITATION')
 $script:CandidateSupportBuild = 'build-24297cf9'
-$script:OwnedProcessRootIds = New-Object System.Collections.ArrayList
-$script:OwnedObservedProcessIds = New-Object System.Collections.ArrayList
 $script:ProcessCleanupUncertain = $false
 $script:RequiredAutomatedIds = @(
   'identity-and-isolation',
@@ -279,6 +277,7 @@ function Assert-Receipt([object]$Receipt) {
       if (-not (Test-JsonString $e.observed) -or [string]::IsNullOrWhiteSpace($e.observed)) { throw "claim $($claim.id) has incomplete observed evidence" }
       if (-not (Test-JsonString $e.kind) -or $e.kind -notin @('COMMAND','HASH','FILE','OPERATOR_OBSERVATION')) { throw "claim $($claim.id) has invalid evidence kind" }
       if ($null -ne $e.exit_code -and $e.exit_code -isnot [int] -and $e.exit_code -isnot [long]) { throw "claim $($claim.id) evidence exit_code must be integer or null" }
+      if ($e.kind -eq 'COMMAND' -and $null -eq $e.exit_code) { throw "claim $($claim.id) COMMAND evidence exit_code must be an integer" }
       foreach ($name in @('command','identity','path','sha256')) { if (-not (Test-JsonString $e.$name)) { throw "claim $($claim.id) evidence $name must be a string" } }
       if ($e.identity -cnotmatch '^(harness|candidate|baseline|operator)(:[0-9a-f]{40})?$') { throw "claim $($claim.id) has invalid evidence identity" }
       if ($e.sha256 -and $e.sha256 -cnotmatch '^[0-9a-f]{64}$') { throw "claim $($claim.id) has invalid evidence SHA-256" }
@@ -320,72 +319,11 @@ function Read-Receipt([string]$Path) {
   return ($raw | ConvertFrom-Json)
 }
 
-function Get-ProcessTable {
-  $rows = @()
-  try {
-    if ($env:OS -eq 'Windows_NT') {
-      foreach ($p in @(Get-CimInstance Win32_Process -ErrorAction Stop)) {
-        $rows += [pscustomobject]@{ Id = [int]$p.ProcessId; ParentId = [int]$p.ParentProcessId }
-      }
-    } else {
-      foreach ($line in @(& ps -e -o pid= -o ppid= 2>$null)) {
-        if ([string]$line -match '^\s*(\d+)\s+(\d+)\s*$') { $rows += [pscustomobject]@{ Id = [int]$matches[1]; ParentId = [int]$matches[2] } }
-      }
-      if ($LASTEXITCODE -ne 0) { throw 'ps failed' }
-    }
-  } catch {
-    $script:ProcessCleanupUncertain = $true
-    throw 'owned process enumeration failed closed'
-  }
-  return @($rows)
-}
-
-function Get-DescendantProcessIds([int]$RootId, [array]$Table) {
-  $found = New-Object System.Collections.ArrayList
-  $frontier = @($RootId)
-  while ($frontier.Count -gt 0) {
-    $next = @()
-    foreach ($parentId in $frontier) {
-      foreach ($row in @($Table | Where-Object { $_.ParentId -eq $parentId })) {
-        if ($found -notcontains $row.Id) { [void]$found.Add([int]$row.Id); $next += [int]$row.Id }
-      }
-    }
-    $frontier = @($next)
-  }
-  return @($found)
-}
-
-function Wait-ProcessIdsGone([int[]]$Ids, [int]$TimeoutMilliseconds = 10000) {
-  $deadline = [datetime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
-  do {
-    $live = @((Get-ProcessTable).Id | Where-Object { $Ids -contains $_ })
-    if ($live.Count -eq 0) { return $true }
-    Start-Sleep -Milliseconds 100
-  } while ([datetime]::UtcNow -lt $deadline)
-  return $false
-}
-
 function Stop-TrackedProcessTrees {
   if ($script:ProcessCleanupUncertain) { throw 'owned process cleanup was previously uncertain' }
-  $table = @(Get-ProcessTable)
-  $targets = New-Object System.Collections.ArrayList
-  foreach ($rootId in @($script:OwnedProcessRootIds)) {
-    if ($table.Id -contains $rootId) { [void]$targets.Add([int]$rootId) }
-    foreach ($id in @(Get-DescendantProcessIds $rootId $table)) { if ($targets -notcontains $id) { [void]$targets.Add([int]$id) } }
-  }
-  foreach ($id in @($script:OwnedObservedProcessIds)) { if ($table.Id -contains $id -and $targets -notcontains $id) { [void]$targets.Add([int]$id) } }
-  try {
-    foreach ($id in @($targets | Sort-Object -Descending)) { Stop-Process -Id $id -Force -ErrorAction Stop }
-  } catch {
-    $script:ProcessCleanupUncertain = $true
-    throw 'owned process tree termination failed closed'
-  }
-  if ($targets.Count -gt 0 -and -not (Wait-ProcessIdsGone @($targets) 10000)) {
-    $script:ProcessCleanupUncertain = $true
-    throw 'owned process tree termination could not be confirmed'
-  }
-  $script:OwnedProcessRootIds.Clear()
-  $script:OwnedObservedProcessIds.Clear()
+  # Invoke-Bounded does not return until knowledge-git.py has observed its owned
+  # Job Object/process group empty. There is deliberately no PID enumeration:
+  # kernel-owned inherited membership is the safety boundary.
 }
 
 function Assert-FrozenArtifactsSafe([string]$EvidencePath, [string]$Needle, [string]$CandidatePath = '', [string]$BaselinePath = '') {
@@ -411,50 +349,60 @@ function Invoke-Bounded {
   )
   $stdout = "$LogBase.stdout.txt"
   $stderr = "$LogBase.stderr.txt"
+  $logParent = Split-Path -Parent $LogBase
+  if ($logParent -and -not (Test-Path -LiteralPath $logParent)) { New-Item -ItemType Directory -Force -Path $logParent | Out-Null }
+  if ($env:COOP_ACCEPTANCE_FORCE_OWNERSHIP_UNAVAILABLE -eq '1') {
+    $script:ProcessCleanupUncertain = $true
+    [System.IO.File]::WriteAllText($stdout, '', (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText($stderr, "forced ownership-unavailable fixture; payload was not started`n", (New-Object System.Text.UTF8Encoding($false)))
+    return [pscustomobject]@{ ExitCode = 126; Stdout = $stdout; Stderr = $stderr }
+  }
+  $helper = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\scripts\knowledge-git.py'))
+  $python = @(Get-Command python3,python -ErrorAction SilentlyContinue | Select-Object -First 1)
+  if ($python.Count -ne 1 -or -not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+    $script:ProcessCleanupUncertain = $true
+    [System.IO.File]::WriteAllText($stdout, '', (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText($stderr, "ownership helper unavailable; payload was not started`n", (New-Object System.Text.UTF8Encoding($false)))
+    return [pscustomobject]@{ ExitCode = 126; Stdout = $stdout; Stderr = $stderr }
+  }
+  $ownedFilePath = $FilePath
+  $ownedArguments = @($Arguments)
+  if ($InputPath) {
+    if ($env:OS -ne 'Windows_NT') { throw 'bounded stdin redirection is supported only by the native Windows harness' }
+    $cmdPath = "$LogBase.stdin.cmd"
+    $tokens = @($FilePath) + @($Arguments)
+    $escaped = @($tokens | ForEach-Object { '"' + ([string]$_).Replace('%','%%').Replace('"','""') + '"' })
+    $inputToken = '"' + ([string]$InputPath).Replace('%','%%').Replace('"','""') + '"'
+    [System.IO.File]::WriteAllText($cmdPath, "@echo off`r`n$($escaped -join ' ') < $inputToken`r`nexit /b %errorlevel%`r`n", (New-Object System.Text.ASCIIEncoding))
+    $ownedFilePath = 'cmd.exe'
+    $ownedArguments = @('/d','/s','/c',$cmdPath)
+  }
   $quoted = @()
-  foreach ($arg in $Arguments) { $quoted += ('"' + ([string]$arg).Replace('"','\"') + '"') }
+  foreach ($arg in @($helper,'--timeout-seconds',[string]$TimeoutSeconds,'--',$ownedFilePath) + $ownedArguments) { $quoted += ('"' + ([string]$arg).Replace('"','\"') + '"') }
   $params = @{
-    FilePath = $FilePath
+    FilePath = $python[0].Source
     ArgumentList = ($quoted -join ' ')
     PassThru = $true
     NoNewWindow = $true
     RedirectStandardOutput = $stdout
     RedirectStandardError = $stderr
   }
-  if ($InputPath) { $params['RedirectStandardInput'] = $InputPath }
-  $process = Start-Process @params
-  [void]$script:OwnedProcessRootIds.Add([int]$process.Id)
-  if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-    $snapshot = @(Get-ProcessTable)
-    $timedOutIds = @([int]$process.Id) + @(Get-DescendantProcessIds $process.Id $snapshot)
-    foreach ($id in $timedOutIds) { if ($script:OwnedObservedProcessIds -notcontains $id) { [void]$script:OwnedObservedProcessIds.Add([int]$id) } }
-    if ($env:OS -eq 'Windows_NT') {
-      $treeKillSucceeded = $false
-      try {
-        & taskkill.exe /PID $process.Id /T /F *> $null
-        $treeKillSucceeded = ($LASTEXITCODE -eq 0)
-      } catch { }
-      if (-not $treeKillSucceeded) {
-        $script:ProcessCleanupUncertain = $true
-        throw "timed-out process tree termination failed closed: $FilePath"
-      }
-      if (-not (Wait-ProcessIdsGone $timedOutIds 10000)) {
-        $script:ProcessCleanupUncertain = $true
-        throw "timed-out process tree could not be confirmed terminated: $FilePath"
-      }
-      # Re-enumerate from the original root after taskkill so a descendant created
-      # between the first snapshot and taskkill cannot escape confirmation.
-      Stop-TrackedProcessTrees
-    } else {
-      Stop-TrackedProcessTrees
-    }
-    throw "command timed out after $TimeoutSeconds seconds; process tree terminated: $FilePath"
+  $oldSshCommand = $env:GIT_SSH_COMMAND
+  try {
+    # This child-only value bypasses knowledge-git's Git transport probe, so an
+    # ordinary generic payload cannot cause a preliminary command invocation.
+    $env:GIT_SSH_COMMAND = 'ssh -o BatchMode=yes'
+    $process = Start-Process @params
+    $process.WaitForExit()
+  } catch {
+    $script:ProcessCleanupUncertain = $true
+    [System.IO.File]::WriteAllText($stderr, "ownership helper could not start; payload was not started: $($_.Exception.Message)`n", (New-Object System.Text.UTF8Encoding($false)))
+    return [pscustomobject]@{ ExitCode = 126; Stdout = $stdout; Stderr = $stderr }
+  } finally {
+    $env:GIT_SSH_COMMAND = $oldSshCommand
   }
-  $process.WaitForExit()
-  # A successful parent exit is not permission for detached descendants to keep
-  # writing. Freeze each command tree immediately while the root PID is fresh.
-  Stop-TrackedProcessTrees
-  return [pscustomobject]@{ ExitCode = $process.ExitCode; Stdout = $stdout; Stderr = $stderr }
+  if ($process.ExitCode -eq 124 -or $process.ExitCode -eq 126) { $script:ProcessCleanupUncertain = $true }
+  return [pscustomobject]@{ ExitCode = [int]$process.ExitCode; Stdout = $stdout; Stderr = $stderr }
 }
 
 function New-Evidence([string]$Kind, [string]$Observed, [string]$Command, [object]$ExitCode, [string]$Identity, [string]$Path = '') {
@@ -496,13 +444,39 @@ if ($Mode -eq 'Probe') {
       Assert-ManifestPinProof $proof $manifest 'probe'
       Write-Output 'PASS'
     }
-    'BoundedProcessTree' {
-      $timedOut = $false
-      try { [void](Invoke-Bounded 'node' @($Value,$Canary) $Root 1) } catch { $timedOut = ($_.Exception.Message -match 'timed out') }
-      if (-not $timedOut) { throw 'process-tree probe did not exercise timeout cleanup' }
+    'BoundedCommandSuccess' {
+      $result = Invoke-Bounded 'node' @($Value,'success') $Root 10
+      if ($result.ExitCode -ne 23) { throw "bounded command status was not preserved: $($result.ExitCode)" }
       Stop-TrackedProcessTrees
+      Write-Output 'PASS'
+    }
+    'BoundedProcessTree' {
+      $result = Invoke-Bounded 'node' @($Value,'cleanup-race',$Canary) $Root 1
+      if ($result.ExitCode -ne 124) { throw "process-tree probe did not return timeout 124: $($result.ExitCode)" }
+      $marker = "$ReceiptPath.evidence-uploadable"
+      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
       Start-Sleep -Milliseconds 2500
       if (Test-Path -LiteralPath $Canary) { throw 'descendant wrote after process-tree finalization' }
+      if (Test-Path -LiteralPath $marker) { throw 'timeout incorrectly allowed an upload marker' }
+      Write-Output 'PASS'
+    }
+    'SuccessfulParentDescendant' {
+      $result = Invoke-Bounded 'node' @($Value,'parent-success',$Canary) $Root 1
+      if ($result.ExitCode -ne 124) { throw "surviving descendant was incorrectly treated as complete: $($result.ExitCode)" }
+      $marker = "$ReceiptPath.evidence-uploadable"
+      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
+      Start-Sleep -Milliseconds 2500
+      if (Test-Path -LiteralPath $Canary) { throw 'successful-parent descendant wrote after ownership timeout' }
+      if (Test-Path -LiteralPath $marker) { throw 'surviving descendant incorrectly allowed an upload marker' }
+      Write-Output 'PASS'
+    }
+    'OwnershipUnavailable' {
+      $result = Invoke-Bounded 'node' @($Value,$Canary) $Root 5
+      if ($result.ExitCode -ne 126) { throw "ownership-unavailable fixture did not return 126: $($result.ExitCode)" }
+      $marker = "$ReceiptPath.evidence-uploadable"
+      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
+      if (Test-Path -LiteralPath $Canary) { throw 'payload ran without ownership' }
+      if (Test-Path -LiteralPath $marker) { throw 'ownership unavailability incorrectly allowed an upload marker' }
       Write-Output 'PASS'
     }
     'FinalizeArtifacts' {
