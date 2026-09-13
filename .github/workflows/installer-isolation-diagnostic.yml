@@ -157,6 +157,7 @@ jobs:
           COOP_DESKTOP_DISPOSABLE_INSTALL_TEST: '1'
           INSTALLER_PROBE_OUT: ${{ runner.temp }}/windows-installer-check.json
           INSTALLER_BUILD_IDENTITY: ${{ runner.temp }}/installer-isolation-identity.json
+          APPDATA: ${{ runner.temp }}/installer-activity-appdata-root
         run: node _probe-control/scripts/probe-windows-installer-first-install.mjs
       - name: Validate diagnostic evidence linkage
         if: always()
