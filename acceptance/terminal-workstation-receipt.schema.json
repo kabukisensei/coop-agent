@@ -19,13 +19,13 @@
       "const": 1
     },
     "candidate": {
-      "$ref": "#/$defs/identity"
+      "$ref": "#/$defs/candidateIdentity"
     },
     "baseline": {
-      "$ref": "#/$defs/identity"
+      "$ref": "#/$defs/baselineIdentity"
     },
     "harness": {
-      "$ref": "#/$defs/identity"
+      "$ref": "#/$defs/harnessIdentity"
     },
     "execution": {
       "type": "object",
@@ -57,23 +57,323 @@
           "format": "date-time"
         },
         "owned_root": {
-          "type": "string",
-          "minLength": 1
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
         }
       }
     },
     "claims": {
       "type": "array",
-      "minItems": 1,
       "items": {
-        "$ref": "#/$defs/claim"
-      }
+        "$ref": "#/$defs/automatedClaim"
+      },
+      "uniqueItems": true,
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "identity-and-isolation"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "baseline-source-install"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "candidate-upgrade-preservation"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "candidate-health-and-tools"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "same-candidate-reinstall"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "baseline-rollback-preservation"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "sanitized-read-only-evidence"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "automated-harness-completion"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        }
+      ]
     },
     "operator_evidence": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/operatorClaim"
-      }
+      },
+      "uniqueItems": true,
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "fresh-candidate-install"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "real-provider-auth"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "real-model-response"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "copied-repo-workflow"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "decline-no-partial-write"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "stop-and-continue"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "reopen-resume"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "teamai-failure-isolation"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "rollback-instructions"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "snapshot-recovery"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        }
+      ]
     },
     "terminal_workstation_ready": {
       "type": "boolean"
@@ -89,271 +389,898 @@
         },
         "required": [
           "terminal_workstation_ready"
-        ]
+        ],
+        "type": "object"
       },
       "then": {
         "properties": {
+          "candidate": {
+            "properties": {
+              "observed_sha": {
+                "const": "295693a3eb08e9988594971d87bc4de751e6b551"
+              },
+              "observed_version": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "type": "object"
+          },
+          "baseline": {
+            "properties": {
+              "observed_sha": {
+                "const": "d60300780b565aabf15b172b2bc32abad12b9ca6"
+              },
+              "observed_version": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "type": "object"
+          },
+          "harness": {
+            "properties": {
+              "observed_sha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$",
+                "not": {
+                  "enum": [
+                    "295693a3eb08e9988594971d87bc4de751e6b551",
+                    "d60300780b565aabf15b172b2bc32abad12b9ca6"
+                  ]
+                }
+              },
+              "observed_version": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "type": "object"
+          },
           "execution": {
             "properties": {
               "layer": {
                 "const": "DISPOSABLE_VM_OPERATOR"
               }
-            }
+            },
+            "type": "object"
+          },
+          "claims": {
+            "minItems": 7,
+            "maxItems": 7,
+            "type": "array"
           },
           "operator_evidence": {
             "minItems": 10,
             "maxItems": 10,
-            "items": {
-              "allOf": [
-                {
-                  "$ref": "#/$defs/operatorClaim"
-                },
-                {
-                  "properties": {
-                    "status": {
-                      "const": "PASS"
-                    }
-                  },
-                  "required": [
-                    "status"
-                  ]
-                }
-              ]
-            }
+            "type": "array"
           }
         },
         "allOf": [
           {
             "properties": {
-              "operator_evidence": {
+              "claims": {
                 "contains": {
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "status"
-                  ],
-                  "properties": {
-                    "id": {
-                      "const": "fresh-candidate-install"
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/automatedClaim"
                     },
-                    "status": {
-                      "const": "PASS"
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "identity-and-isolation"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        }
+                      }
                     }
-                  }
+                  ]
                 },
                 "minContains": 1,
-                "maxContains": 1
+                "maxContains": 1,
+                "type": "array"
               }
-            }
+            },
+            "type": "object"
+          },
+          {
+            "properties": {
+              "claims": {
+                "contains": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/automatedClaim"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "baseline-source-install"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        }
+                      }
+                    }
+                  ]
+                },
+                "minContains": 1,
+                "maxContains": 1,
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          {
+            "properties": {
+              "claims": {
+                "contains": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/automatedClaim"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "candidate-upgrade-preservation"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        }
+                      }
+                    }
+                  ]
+                },
+                "minContains": 1,
+                "maxContains": 1,
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          {
+            "properties": {
+              "claims": {
+                "contains": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/automatedClaim"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "candidate-health-and-tools"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        }
+                      }
+                    }
+                  ]
+                },
+                "minContains": 1,
+                "maxContains": 1,
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          {
+            "properties": {
+              "claims": {
+                "contains": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/automatedClaim"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "same-candidate-reinstall"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        }
+                      }
+                    }
+                  ]
+                },
+                "minContains": 1,
+                "maxContains": 1,
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          {
+            "properties": {
+              "claims": {
+                "contains": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/automatedClaim"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "baseline-rollback-preservation"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        }
+                      }
+                    }
+                  ]
+                },
+                "minContains": 1,
+                "maxContains": 1,
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          {
+            "properties": {
+              "claims": {
+                "contains": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/automatedClaim"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "sanitized-read-only-evidence"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        }
+                      }
+                    }
+                  ]
+                },
+                "minContains": 1,
+                "maxContains": 1,
+                "type": "array"
+              }
+            },
+            "type": "object"
           },
           {
             "properties": {
               "operator_evidence": {
                 "contains": {
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "status"
-                  ],
-                  "properties": {
-                    "id": {
-                      "const": "real-provider-auth"
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/operatorClaim"
                     },
-                    "status": {
-                      "const": "PASS"
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required",
+                        "evidence"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "fresh-candidate-install"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        },
+                        "evidence": {
+                          "contains": {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "observed"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "const": "OPERATOR_OBSERVATION"
+                              },
+                              "observed": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          },
+                          "minContains": 1,
+                          "type": "array"
+                        }
+                      }
                     }
-                  }
+                  ]
                 },
                 "minContains": 1,
-                "maxContains": 1
+                "maxContains": 1,
+                "type": "array"
               }
-            }
+            },
+            "type": "object"
           },
           {
             "properties": {
               "operator_evidence": {
                 "contains": {
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "status"
-                  ],
-                  "properties": {
-                    "id": {
-                      "const": "real-model-response"
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/operatorClaim"
                     },
-                    "status": {
-                      "const": "PASS"
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required",
+                        "evidence"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "real-provider-auth"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        },
+                        "evidence": {
+                          "contains": {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "observed"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "const": "OPERATOR_OBSERVATION"
+                              },
+                              "observed": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          },
+                          "minContains": 1,
+                          "type": "array"
+                        }
+                      }
                     }
-                  }
+                  ]
                 },
                 "minContains": 1,
-                "maxContains": 1
+                "maxContains": 1,
+                "type": "array"
               }
-            }
+            },
+            "type": "object"
           },
           {
             "properties": {
               "operator_evidence": {
                 "contains": {
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "status"
-                  ],
-                  "properties": {
-                    "id": {
-                      "const": "copied-repo-workflow"
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/operatorClaim"
                     },
-                    "status": {
-                      "const": "PASS"
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required",
+                        "evidence"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "real-model-response"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        },
+                        "evidence": {
+                          "contains": {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "observed"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "const": "OPERATOR_OBSERVATION"
+                              },
+                              "observed": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          },
+                          "minContains": 1,
+                          "type": "array"
+                        }
+                      }
                     }
-                  }
+                  ]
                 },
                 "minContains": 1,
-                "maxContains": 1
+                "maxContains": 1,
+                "type": "array"
               }
-            }
+            },
+            "type": "object"
           },
           {
             "properties": {
               "operator_evidence": {
                 "contains": {
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "status"
-                  ],
-                  "properties": {
-                    "id": {
-                      "const": "decline-no-partial-write"
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/operatorClaim"
                     },
-                    "status": {
-                      "const": "PASS"
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required",
+                        "evidence"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "copied-repo-workflow"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        },
+                        "evidence": {
+                          "contains": {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "observed"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "const": "OPERATOR_OBSERVATION"
+                              },
+                              "observed": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          },
+                          "minContains": 1,
+                          "type": "array"
+                        }
+                      }
                     }
-                  }
+                  ]
                 },
                 "minContains": 1,
-                "maxContains": 1
+                "maxContains": 1,
+                "type": "array"
               }
-            }
+            },
+            "type": "object"
           },
           {
             "properties": {
               "operator_evidence": {
                 "contains": {
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "status"
-                  ],
-                  "properties": {
-                    "id": {
-                      "const": "stop-and-continue"
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/operatorClaim"
                     },
-                    "status": {
-                      "const": "PASS"
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required",
+                        "evidence"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "decline-no-partial-write"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        },
+                        "evidence": {
+                          "contains": {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "observed"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "const": "OPERATOR_OBSERVATION"
+                              },
+                              "observed": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          },
+                          "minContains": 1,
+                          "type": "array"
+                        }
+                      }
                     }
-                  }
+                  ]
                 },
                 "minContains": 1,
-                "maxContains": 1
+                "maxContains": 1,
+                "type": "array"
               }
-            }
+            },
+            "type": "object"
           },
           {
             "properties": {
               "operator_evidence": {
                 "contains": {
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "status"
-                  ],
-                  "properties": {
-                    "id": {
-                      "const": "reopen-resume"
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/operatorClaim"
                     },
-                    "status": {
-                      "const": "PASS"
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required",
+                        "evidence"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "stop-and-continue"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        },
+                        "evidence": {
+                          "contains": {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "observed"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "const": "OPERATOR_OBSERVATION"
+                              },
+                              "observed": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          },
+                          "minContains": 1,
+                          "type": "array"
+                        }
+                      }
                     }
-                  }
+                  ]
                 },
                 "minContains": 1,
-                "maxContains": 1
+                "maxContains": 1,
+                "type": "array"
               }
-            }
+            },
+            "type": "object"
           },
           {
             "properties": {
               "operator_evidence": {
                 "contains": {
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "status"
-                  ],
-                  "properties": {
-                    "id": {
-                      "const": "teamai-failure-isolation"
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/operatorClaim"
                     },
-                    "status": {
-                      "const": "PASS"
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required",
+                        "evidence"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "reopen-resume"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        },
+                        "evidence": {
+                          "contains": {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "observed"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "const": "OPERATOR_OBSERVATION"
+                              },
+                              "observed": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          },
+                          "minContains": 1,
+                          "type": "array"
+                        }
+                      }
                     }
-                  }
+                  ]
                 },
                 "minContains": 1,
-                "maxContains": 1
+                "maxContains": 1,
+                "type": "array"
               }
-            }
+            },
+            "type": "object"
           },
           {
             "properties": {
               "operator_evidence": {
                 "contains": {
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "status"
-                  ],
-                  "properties": {
-                    "id": {
-                      "const": "rollback-instructions"
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/operatorClaim"
                     },
-                    "status": {
-                      "const": "PASS"
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required",
+                        "evidence"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "teamai-failure-isolation"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        },
+                        "evidence": {
+                          "contains": {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "observed"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "const": "OPERATOR_OBSERVATION"
+                              },
+                              "observed": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          },
+                          "minContains": 1,
+                          "type": "array"
+                        }
+                      }
                     }
-                  }
+                  ]
                 },
                 "minContains": 1,
-                "maxContains": 1
+                "maxContains": 1,
+                "type": "array"
               }
-            }
+            },
+            "type": "object"
           },
           {
             "properties": {
               "operator_evidence": {
                 "contains": {
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "status"
-                  ],
-                  "properties": {
-                    "id": {
-                      "const": "snapshot-recovery"
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/operatorClaim"
                     },
-                    "status": {
-                      "const": "PASS"
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required",
+                        "evidence"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "rollback-instructions"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        },
+                        "evidence": {
+                          "contains": {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "observed"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "const": "OPERATOR_OBSERVATION"
+                              },
+                              "observed": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          },
+                          "minContains": 1,
+                          "type": "array"
+                        }
+                      }
                     }
-                  }
+                  ]
                 },
                 "minContains": 1,
-                "maxContains": 1
+                "maxContains": 1,
+                "type": "array"
               }
-            }
+            },
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operator_evidence": {
+                "contains": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/operatorClaim"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required",
+                        "evidence"
+                      ],
+                      "properties": {
+                        "id": {
+                          "const": "snapshot-recovery"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        },
+                        "evidence": {
+                          "contains": {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "observed"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "const": "OPERATOR_OBSERVATION"
+                              },
+                              "observed": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          },
+                          "minContains": 1,
+                          "type": "array"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "minContains": 1,
+                "maxContains": 1,
+                "type": "array"
+              }
+            },
+            "type": "object"
           }
-        ]
+        ],
+        "type": "object"
       }
     }
   ],
@@ -370,21 +1297,123 @@
         "BETA_LIMITATION"
       ]
     },
-    "identity": {
+    "candidateIdentity": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "sha",
-        "version"
+        "expected_sha",
+        "observed_sha",
+        "expected_version",
+        "observed_version"
       ],
       "properties": {
-        "sha": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
+        "expected_sha": {
+          "const": "295693a3eb08e9988594971d87bc4de751e6b551"
         },
-        "version": {
+        "observed_sha": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          ]
+        },
+        "expected_version": {
           "type": "string",
           "minLength": 1
+        },
+        "observed_version": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        }
+      }
+    },
+    "baselineIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_sha",
+        "observed_sha",
+        "expected_version",
+        "observed_version"
+      ],
+      "properties": {
+        "expected_sha": {
+          "const": "d60300780b565aabf15b172b2bc32abad12b9ca6"
+        },
+        "observed_sha": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          ]
+        },
+        "expected_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observed_version": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        }
+      }
+    },
+    "harnessIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_sha",
+        "observed_version"
+      ],
+      "properties": {
+        "observed_sha": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$",
+              "not": {
+                "enum": [
+                  "295693a3eb08e9988594971d87bc4de751e6b551",
+                  "d60300780b565aabf15b172b2bc32abad12b9ca6"
+                ]
+              }
+            }
+          ]
+        },
+        "observed_version": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
         }
       }
     },
@@ -433,7 +1462,30 @@
           "type": "string",
           "pattern": "^$|^[0-9a-f]{64}$"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "COMMAND"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "exit_code": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          }
+        }
+      ]
     },
     "claim": {
       "type": "object",
@@ -488,6 +1540,41 @@
         }
       }
     },
+    "automatedClaim": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/claim"
+        },
+        {
+          "properties": {
+            "automated": {
+              "const": true
+            },
+            "human_required": {
+              "const": false
+            },
+            "phase": {
+              "not": {
+                "const": "OPERATOR"
+              }
+            },
+            "id": {
+              "enum": [
+                "identity-and-isolation",
+                "baseline-source-install",
+                "candidate-upgrade-preservation",
+                "candidate-health-and-tools",
+                "same-candidate-reinstall",
+                "baseline-rollback-preservation",
+                "sanitized-read-only-evidence",
+                "automated-harness-completion"
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
     "operatorClaim": {
       "allOf": [
         {
@@ -503,8 +1590,23 @@
             },
             "human_required": {
               "const": true
+            },
+            "id": {
+              "enum": [
+                "fresh-candidate-install",
+                "real-provider-auth",
+                "real-model-response",
+                "copied-repo-workflow",
+                "decline-no-partial-write",
+                "stop-and-continue",
+                "reopen-resume",
+                "teamai-failure-isolation",
+                "rollback-instructions",
+                "snapshot-recovery"
+              ]
             }
-          }
+          },
+          "type": "object"
         }
       ]
     }

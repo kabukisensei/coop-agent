@@ -58,7 +58,8 @@ jobs:
         run: |
           $owned = Join-Path $env:RUNNER_TEMP 'coop-terminal-p0-owned'
           $evidence = Join-Path $owned 'evidence'
-          $receipt = Join-Path $evidence 'terminal-workstation-receipt.json'
+          $receipt = Join-Path $owned 'terminal-workstation-receipt.json'
+          "RECEIPT_PATH=$receipt" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
             .\harness\acceptance\windows-terminal-workstation.ps1 `
             -Mode Run `
@@ -69,9 +70,6 @@ jobs:
             -ReceiptPath $receipt `
             -ExpectedHarnessSha '${{ github.sha }}'
           $harnessRc = $LASTEXITCODE
-          if (Test-Path -LiteralPath $receipt) {
-            "RECEIPT_PATH=$receipt" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          }
           if ($harnessRc -ne 0) { exit $harnessRc }
 
       - name: Validate fail-closed receipt
@@ -85,13 +83,31 @@ jobs:
             .\harness\acceptance\windows-terminal-workstation.ps1 `
             -Mode ValidateReceipt -ReceiptPath $env:RECEIPT_PATH
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx --yes --package ajv-cli@5.0.0 --package ajv-formats@3.0.1 ajv validate `
+            --spec=draft2020 -c ajv-formats `
+            -s .\harness\acceptance\terminal-workstation-receipt.schema.json `
+            -d $env:RECEIPT_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'committed JSON Schema rejected the receipt' }
           $receipt = Get-Content -LiteralPath $env:RECEIPT_PATH -Raw | ConvertFrom-Json
           if ($receipt.terminal_workstation_ready -ne $false) {
             throw 'automated workflow must never set TERMINAL_WORKSTATION_READY'
           }
+          if (Test-Path -LiteralPath "$env:RECEIPT_PATH.evidence-uploadable" -PathType Leaf) {
+            "EVIDENCE_UPLOADABLE=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
 
-      - name: Upload sanitized automated evidence
+      - name: Upload fail-closed receipt
         if: always() && env.RECEIPT_PATH != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-workstation-receipt-${{ github.sha }}
+          path: ${{ env.RECEIPT_PATH }}
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
+
+      - name: Upload fully scanned automated evidence
+        if: always() && env.EVIDENCE_UPLOADABLE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: terminal-workstation-automated-${{ github.sha }}

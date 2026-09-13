@@ -18,9 +18,11 @@ workflow checks out the two immutable product SHAs itself. It runs only on a
 GitHub-hosted `windows-latest` runner with `contents: read`, does not persist Git
 credentials, and receives no product/provider secret.
 
-The harness refuses pre-existing owned roots, creates separate profile, agent,
-npm, pipx, local-app-data, and evidence roots, and then uses the product's real
-PowerShell surfaces:
+The harness refuses pre-existing owned roots and creates disposable profile,
+npm, pipx, local-app-data, and evidence roots. Its effective agent directory is
+the product layout `$COOP_DIR/.coop/agent`; `COOP_AGENT_DIR` points to that exact
+directory, so onboarding, install, Doctor, and launch-spec exercise and hash the
+same MCP state. It then uses the product's real PowerShell surfaces:
 
 1. v0.23.1 source `scripts/install.ps1 --yes --no-prereqs`;
 2. supported onboarding and `coop init --template` against non-secret fixtures;
@@ -30,12 +32,33 @@ PowerShell surfaces:
 6. same-candidate reinstall;
 7. v0.23.1 source install as rollback.
 
+A ready receipt contains exactly one passing instance of every required automated
+claim—no aliases or substitutes:
+
+- `identity-and-isolation`
+- `baseline-source-install`
+- `candidate-upgrade-preservation`
+- `candidate-health-and-tools`
+- `same-candidate-reinstall`
+- `baseline-rollback-preservation`
+- `sanitized-read-only-evidence`
+
 Profile files and a representative Git repository are hashed before and after
 each transition. An unrelated npm-root sentinel must survive. Both product
 checkouts must remain clean. A planted synthetic credential canary exercises
 Support redaction and must not occur in uploaded evidence. Every process is
 bounded; any unproved prerequisite, command failure, identity mismatch, dirty
 checkout, state drift, or canary hit produces a non-ready fail-closed receipt.
+The canary is initialized before fallible prechecks. Finalization scans every
+retained artifact on success and failure; unscannable or leaking evidence is
+deleted from upload eligibility while a separately located controlled receipt is
+retained. Timeout cleanup recursively terminates the Windows process tree and
+confirms that the parent exited.
+
+Candidate Support must report the exact build fingerprint `build-24297cf9` for
+the candidate SHA and version. Candidate and rollback Doctor JSON must each have
+one `ok` check proving every corresponding manifest pin; exit zero or warning-only
+Doctor output does not establish convergence.
 
 The v0.23.1 release has no historical installer asset. Evidence must call this a
 **source installation baseline**, not a historical installer.
@@ -102,7 +125,11 @@ Snapshot revert—not uninstall or recursive deletion—is the recovery procedur
 ## Complete and validate the operator receipt
 
 1. Copy the automated JSON receipt to `terminal-workstation-operator.json`.
-2. Keep its exact candidate, baseline, and harness SHAs.
+2. Keep `candidate.expected_sha` and `baseline.expected_sha` unchanged. Keep the
+   observed identity fields exactly as emitted; `observed_sha`/`observed_version`
+   remain `null` when the automated run never observed that checkout. Never copy
+   an expected SHA into an unobserved field. Keep the harness `observed_sha` and
+   `observed_version` unchanged.
 3. Change `execution.layer` to `DISPOSABLE_VM_OPERATOR`; set VM start/finish
    timestamps and the disposable VM evidence root.
 4. For each existing `operator_evidence` entry, set the observed status. Add at
@@ -124,6 +151,9 @@ Snapshot revert—not uninstall or recursive deletion—is the recovery procedur
 powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\acceptance\windows-terminal-workstation.ps1 `
   -Mode ValidateReceipt -ReceiptPath C:\evidence\terminal-workstation-operator.json
 if ($LASTEXITCODE -ne 0) { throw "operator receipt is invalid" }
+
+# CI also validates this same receipt against the committed Draft 2020-12 schema
+# with pinned ajv-cli 5.0.0 + ajv-formats 3.0.1; neither validator may be skipped.
 ```
 
 Never paste credentials, access tokens, cookies, authorization headers, tenant
