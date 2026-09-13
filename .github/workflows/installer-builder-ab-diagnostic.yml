@@ -19,7 +19,7 @@ jobs:
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       PRODUCT_CANDIDATE_SHA: ed516b2a183f3e6346344a669d6e37b321a4dcf8
-      DIAGNOSTIC_CONTROL_SHA: 19f449bb816ec6c07aa15c9d6c5be7eba7156819
+      DIAGNOSTIC_CONTROL_SHA: 697654b1c6114c451c6a458362043c8460360ccc
     steps:
       - name: Check out exact product candidate
         uses: actions/checkout@v5
@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: kabukisensei/coop-agent
-          ref: 19f449bb816ec6c07aa15c9d6c5be7eba7156819
+          ref: 697654b1c6114c451c6a458362043c8460360ccc
           path: _probe-control
           persist-credentials: false
       - name: Verify immutable checkout identities
