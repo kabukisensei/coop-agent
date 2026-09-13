@@ -1,7 +1,9 @@
 ﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
-  [ValidateSet('Run','ValidateReceipt','Probe')][string]$Mode = 'Run',
+  [ValidateSet('Run','ValidateReceipt','ValidateUploadAuthorization','Probe')][string]$Mode = 'Run',
+  [ValidateSet('Receipt','Evidence')][string]$AuthorizationKind = 'Receipt',
+  [string]$RunNonce = '',
   [string]$HarnessRoot = '',
   [string]$CandidateRoot = '',
   [string]$BaselineRoot = '',
@@ -9,7 +11,7 @@ param(
   [string]$ReceiptPath = '',
   [string]$ExpectedHarnessSha = '',
   [switch]$VmOperatorMode,
-  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','ValidateLifecycleEvent','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
+  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','ValidateLifecycleEvent','AuthorizeArtifacts','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
   [string]$Value = '',
   [string]$Root = '',
   [string]$Canary = ''
@@ -339,11 +341,104 @@ function Assert-FrozenArtifactsSafe([string]$EvidencePath, [string]$Needle, [str
   if ($canaryHits.Count -gt 0) { throw 'credential canary found in uploadable evidence' }
 }
 
-function Remove-UploadMarker([string]$Path) {
+function Get-AuthorizationPath([string]$Path, [string]$Kind) {
+  if ($Kind -eq 'Receipt') { return "$Path.receipt-authorization.json" }
+  if ($Kind -eq 'Evidence') { return "$Path.evidence-authorization.json" }
+  throw "unknown upload authorization kind: $Kind"
+}
+
+function Assert-NoReparseAncestry([string]$Path) {
+  $parent = Split-Path -Parent ([System.IO.Path]::GetFullPath($Path))
+  if (-not $parent -or -not (Test-Path -LiteralPath $parent -PathType Container)) { throw "authorization parent is missing: $parent" }
+  $current = Get-Item -LiteralPath $parent -Force
+  while ($null -ne $current) {
+    if (($current.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse ancestry rejected: $($current.FullName)" }
+    $current = $current.Parent
+  }
+}
+
+function Write-ExclusiveText([string]$Path, [string]$Text) {
+  Assert-NoReparseAncestry $Path
+  if (Test-Path -LiteralPath $Path) { throw "exclusive publication collision: $Path" }
+  $parent = Split-Path -Parent ([System.IO.Path]::GetFullPath($Path))
+  $temporary = Join-Path $parent ('.authorization-' + [guid]::NewGuid().ToString('N') + '.tmp')
+  $stream = $null
+  try {
+    $stream = New-Object System.IO.FileStream($temporary, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($Text)
+    $stream.Write($bytes, 0, $bytes.Length)
+    $stream.Flush($true)
+    $stream.Dispose(); $stream = $null
+    [System.IO.File]::Move($temporary, [System.IO.Path]::GetFullPath($Path))
+  } finally {
+    if ($null -ne $stream) { $stream.Dispose() }
+    if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+  }
+}
+
+function Write-ControlledReceipt([string]$Path, [string]$Text) {
+  Assert-NoReparseAncestry $Path
+  $parent = Split-Path -Parent ([System.IO.Path]::GetFullPath($Path))
+  $temporary = Join-Path $parent ('.receipt-' + [guid]::NewGuid().ToString('N') + '.tmp')
+  $stream = $null
+  try {
+    $stream = New-Object System.IO.FileStream($temporary, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($Text)
+    $stream.Write($bytes, 0, $bytes.Length)
+    $stream.Flush($true)
+    $stream.Dispose(); $stream = $null
+    if ($env:COOP_TERMINAL_ACCEPTANCE_AUTHORIZATION_FAULT -eq 'receipt-replace-fail') { throw 'test receipt replacement failure' }
+    if (Test-Path -LiteralPath $Path) {
+      [System.IO.File]::Replace($temporary, [System.IO.Path]::GetFullPath($Path), [System.Management.Automation.Language.NullString]::Value)
+    } else {
+      [System.IO.File]::Move($temporary, [System.IO.Path]::GetFullPath($Path))
+    }
+  } finally {
+    if ($null -ne $stream) { $stream.Dispose() }
+    if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+  }
+}
+
+function Remove-UploadAuthorizations([string]$Path) {
   if ([string]::IsNullOrWhiteSpace($Path)) { return }
-  $marker = "$Path.evidence-uploadable"
-  if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker -Force -ErrorAction Stop }
-  if (Test-Path -LiteralPath $marker) { throw "could not revoke stale upload marker: $marker" }
+  if ($env:COOP_TERMINAL_ACCEPTANCE_AUTHORIZATION_FAULT -eq 'revoke-fail') { throw 'test upload authorization revocation failure' }
+  foreach ($kind in @('Receipt','Evidence')) {
+    $authorization = Get-AuthorizationPath $Path $kind
+    if (Test-Path -LiteralPath $authorization) { Remove-Item -LiteralPath $authorization -Force -ErrorAction Stop }
+    if (Test-Path -LiteralPath $authorization) { throw "could not revoke stale $kind upload authorization" }
+  }
+}
+
+function New-UploadAuthorization([string]$Kind, [string]$Path, [string]$Nonce, [string]$HarnessSha, [string]$EvidencePath = '') {
+  if ($Nonce -cnotmatch '^[0-9a-f]{32}$' -or -not (Test-StrictSha $HarnessSha)) { throw 'upload authorization identity is invalid' }
+  $receiptSha = Get-FileSha $Path
+  if ($receiptSha -cnotmatch '^[0-9a-f]{64}$') { throw 'receipt hash unavailable for authorization' }
+  $record = [ordered]@{ schema_version = 1; kind = $Kind.ToLowerInvariant(); run_nonce = $Nonce; harness_sha = $HarnessSha; receipt_sha256 = $receiptSha }
+  if ($Kind -eq 'Evidence') {
+    if (-not $EvidencePath) { throw 'evidence path is required for evidence authorization' }
+    $record.evidence_root = [System.IO.Path]::GetFullPath($EvidencePath)
+    $record.evidence_sha256 = Get-TreeHash $EvidencePath
+  }
+  Write-ExclusiveText (Get-AuthorizationPath $Path $Kind) (($record | ConvertTo-Json -Compress) + "`n")
+}
+
+function Assert-UploadAuthorization([string]$Kind, [string]$Path, [string]$Nonce, [string]$HarnessSha, [string]$EvidencePath = '') {
+  if ($Nonce -cnotmatch '^[0-9a-f]{32}$' -or -not (Test-StrictSha $HarnessSha)) { throw 'current upload identity is invalid' }
+  $authorizationPath = Get-AuthorizationPath $Path $Kind
+  if (-not (Test-Path -LiteralPath $authorizationPath -PathType Leaf)) { throw "$Kind upload authorization is absent" }
+  Assert-NoReparseAncestry $authorizationPath
+  $record = Get-Content -LiteralPath $authorizationPath -Raw | ConvertFrom-Json
+  $properties = @('schema_version','kind','run_nonce','harness_sha','receipt_sha256')
+  if ($Kind -eq 'Evidence') { $properties += @('evidence_root','evidence_sha256') }
+  Assert-ExactProperties $record $properties "$Kind upload authorization"
+  if (($record.schema_version -isnot [int] -and $record.schema_version -isnot [long]) -or $record.schema_version -ne 1) { throw 'upload authorization schema mismatch' }
+  if ($record.kind -cne $Kind.ToLowerInvariant() -or $record.run_nonce -cne $Nonce -or $record.harness_sha -cne $HarnessSha) { throw 'stale or wrong upload authorization identity' }
+  if ($record.receipt_sha256 -cne (Get-FileSha $Path)) { throw 'upload authorization receipt hash mismatch' }
+  if ($Kind -eq 'Evidence') {
+    $fullEvidence = [System.IO.Path]::GetFullPath($EvidencePath)
+    if ($record.evidence_root -cne $fullEvidence -or $record.evidence_sha256 -cne (Get-TreeHash $EvidencePath)) { throw 'evidence authorization state mismatch' }
+  }
+  return $true
 }
 
 function Assert-LifecycleFaultEvent([string]$Path, [string]$Nonce, [string]$RequestedStage) {
@@ -446,13 +541,17 @@ function Assert-ExitZero([object]$Result, [string]$Label) {
 
 function Invoke-OwnershipLifecycleFault([string]$Fixture, [string]$LogBase, [string]$PayloadMarker) {
   $fault = $env:COOP_KNOWLEDGE_GIT_TEST_FAULT
-  $eventPath = "$LogBase.lifecycle-event.json"
   $eventNonce = [guid]::NewGuid().ToString('N')
-  Remove-Item -LiteralPath $eventPath -Force -ErrorAction SilentlyContinue
-  $oldEventPath = $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_FILE
+  $eventDirectory = Join-Path (Split-Path -Parent $LogBase) "lifecycle-events-$eventNonce"
+  if (Test-Path -LiteralPath $eventDirectory) { throw 'lifecycle event directory unexpectedly exists' }
+  New-Item -ItemType Directory -Path $eventDirectory -ErrorAction Stop | Out-Null
+  $eventPath = Join-Path $eventDirectory "$eventNonce.$fault.lifecycle-event.json"
+  $oldEventRoot = $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_ROOT
+  $oldEventDirectory = $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_DIR
   $oldEventNonce = $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_NONCE
   try {
-    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_FILE = $eventPath
+    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_ROOT = Split-Path -Parent $eventDirectory
+    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_DIR = $eventDirectory
     $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_NONCE = $eventNonce
     if ($fault -in @('job-create','job-assign','resume')) {
       $result = Invoke-Bounded 'node' @($Fixture,$PayloadMarker) $LogBase 5
@@ -468,7 +567,8 @@ function Invoke-OwnershipLifecycleFault([string]$Fixture, [string]$LogBase, [str
       throw "unsupported ownership lifecycle fault: $fault"
     }
   } finally {
-    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_FILE = $oldEventPath
+    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_ROOT = $oldEventRoot
+    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_DIR = $oldEventDirectory
     $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_NONCE = $oldEventNonce
   }
   $eventMutation = $env:COOP_TERMINAL_ACCEPTANCE_EVENT_MUTATION
@@ -504,6 +604,16 @@ if ($Mode -eq 'Probe') {
       Write-Output 'PASS'
     }
     'ValidateLifecycleEvent' { Assert-LifecycleFaultEvent $Value $Canary $Root | Out-Null; Write-Output 'PASS' }
+    'AuthorizeArtifacts' {
+      Remove-UploadAuthorizations $ReceiptPath
+      Assert-Receipt (Read-Receipt $ReceiptPath) | Out-Null
+      Assert-FrozenArtifactsSafe $Root 'NO-SUCH-CANARY'
+      New-UploadAuthorization 'Receipt' $ReceiptPath $Value $Canary
+      New-UploadAuthorization 'Evidence' $ReceiptPath $Value $Canary $Root
+      Assert-UploadAuthorization 'Receipt' $ReceiptPath $Value $Canary | Out-Null
+      Assert-UploadAuthorization 'Evidence' $ReceiptPath $Value $Canary $Root | Out-Null
+      Write-Output 'PASS'
+    }
     'BoundedCommandSuccess' {
       $result = Invoke-Bounded 'node' @($Value,'success') $Root 10
       if ($result.ExitCode -ne 23) { throw "bounded command status was not preserved: $($result.ExitCode)" }
@@ -526,7 +636,7 @@ if ($Mode -eq 'Probe') {
     'BoundedProcessTree' {
       $result = Invoke-Bounded 'node' @($Value,'cleanup-race',$Canary) $Root 1
       if ($result.ExitCode -ne 124) { throw "process-tree probe did not return timeout 124: $($result.ExitCode)" }
-      $marker = "$ReceiptPath.evidence-uploadable"
+      $marker = "$ReceiptPath.evidence-authorization.json"
       try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
       Start-Sleep -Milliseconds 2500
       if (Test-Path -LiteralPath $Canary) { throw 'descendant wrote after process-tree finalization' }
@@ -536,7 +646,7 @@ if ($Mode -eq 'Probe') {
     'SuccessfulParentDescendant' {
       $result = Invoke-Bounded 'node' @($Value,'parent-success',$Canary) $Root 1
       if ($result.ExitCode -ne 124) { throw "surviving descendant was incorrectly treated as complete: $($result.ExitCode)" }
-      $marker = "$ReceiptPath.evidence-uploadable"
+      $marker = "$ReceiptPath.evidence-authorization.json"
       try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
       Start-Sleep -Milliseconds 2500
       if (Test-Path -LiteralPath $Canary) { throw 'successful-parent descendant wrote after ownership timeout' }
@@ -546,13 +656,13 @@ if ($Mode -eq 'Probe') {
     'OwnershipLifecycleFailure' {
       $faultResult = Invoke-OwnershipLifecycleFault $Value $Root $Canary
       $fault = $faultResult.Fault
-      $marker = "$ReceiptPath.evidence-uploadable"
+      $marker = "$ReceiptPath.evidence-authorization.json"
       try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
       if (Test-Path -LiteralPath $marker) { throw "$fault incorrectly allowed an upload marker" }
       Write-Output 'PASS'
     }
     'FinalizeArtifacts' {
-      $marker = "$Value.evidence-uploadable"
+      $marker = "$Value.evidence-authorization.json"
       try {
         Assert-FrozenArtifactsSafe $Root $Canary
         $receiptHits = @(Find-Canary $Value $Canary)
@@ -576,6 +686,14 @@ if ($Mode -eq 'ValidateReceipt') {
   exit 0
 }
 
+if ($Mode -eq 'ValidateUploadAuthorization') {
+  $receipt = Read-Receipt $ReceiptPath
+  Assert-Receipt $receipt | Out-Null
+  Assert-UploadAuthorization $AuthorizationKind $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot | Out-Null
+  Write-Output "$AuthorizationKind upload authorization valid"
+  exit 0
+}
+
 $started = (Get-Date).ToUniversalTime().ToString('o')
 $claims = New-Object System.Collections.ArrayList
 $operator = New-Object System.Collections.ArrayList
@@ -588,10 +706,19 @@ $baselineObservedVersion = $null
 $ownedRoot = if ($EvidenceRoot) { Split-Path -Parent $EvidenceRoot } else { $null }
 $canary = ('COOP' + '-ACCEPTANCE-CANARY-' + [guid]::NewGuid().ToString('N'))
 $runFailure = $null
-$artifactsUploadable = $false
+$evidenceEligible = $false
+$authorizationRevoked = $false
 
 try {
-  Remove-UploadMarker $ReceiptPath
+  Remove-UploadAuthorizations $ReceiptPath
+  $authorizationRevoked = $true
+} catch {
+  $runFailure = "upload authorization revocation failed: $($_.Exception.Message)"
+}
+
+try {
+  if (-not $authorizationRevoked) { throw $runFailure }
+  if ($RunNonce -cnotmatch '^[0-9a-f]{32}$') { throw 'RunNonce must be exact 32-hex current-run identity' }
   if ($env:OS -ne 'Windows_NT') { throw 'native Windows is required' }
   if (-not $VmOperatorMode) {
     if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
@@ -794,25 +921,28 @@ try {
   )))
 
 } catch {
-  $runFailure = $_.Exception.Message
+  if ($runFailure) { $runFailure = "$runFailure; $($_.Exception.Message)" } else { $runFailure = $_.Exception.Message }
 } finally {
   $artifactFailure = $null
-  try {
-    Remove-UploadMarker $ReceiptPath
-    Assert-FrozenArtifactsSafe $EvidenceRoot $canary $CandidateRoot $BaselineRoot
-  } catch {
-    $artifactFailure = 'artifact finalization failed closed; process-tree termination, checkout cleanliness, or evidence sanitization was not proven'
+  if ($runFailure) {
+    $artifactFailure = 'artifact finalization failed closed because the current run did not fully succeed'
+  } else {
+    try {
+      Assert-FrozenArtifactsSafe $EvidenceRoot $canary $CandidateRoot $BaselineRoot
+      $evidenceEligible = $true
+    } catch {
+      $artifactFailure = 'artifact finalization failed closed; process-tree termination, checkout cleanliness, or evidence sanitization was not proven'
+    }
   }
   if ($artifactFailure) {
-    if ($runFailure) { $runFailure = "$runFailure; $artifactFailure" } else { $runFailure = $artifactFailure }
+    if (-not $runFailure) { $runFailure = $artifactFailure }
     if ($EvidenceRoot -and (Test-Path -LiteralPath $EvidenceRoot)) { Remove-Item -LiteralPath $EvidenceRoot -Recurse -Force -ErrorAction SilentlyContinue }
     [void]$claims.Add((New-Claim 'sanitized-read-only-evidence' 'SECURITY' 'FAIL' $true $true $false $artifactFailure @(
-      (New-Evidence 'COMMAND' 'artifact scan failed or detected the planted canary; evidence was removed from upload eligibility' 'final artifact canary and checkout scan' 1 $(if ($harnessObservedSha) { "harness:$harnessObservedSha" } else { 'harness' }))
+      (New-Evidence 'COMMAND' 'evidence was removed from upload eligibility' 'current-run success plus final artifact canary and checkout scan' 1 $(if ($harnessObservedSha) { "harness:$harnessObservedSha" } else { 'harness' }))
     )))
   } else {
-    $artifactsUploadable = $true
-    [void]$claims.Add((New-Claim 'sanitized-read-only-evidence' 'SECURITY' 'PASS' $true $true $false 'Every retained evidence artifact was scanned after success or failure; product checkouts remained clean and the planted canary was absent.' @(
-      (New-Evidence 'COMMAND' 'both source checkouts clean when present; final canary scan had zero hits' 'git status --porcelain; final exact canary scan' 0 $(if ($harnessObservedSha) { "harness:$harnessObservedSha" } else { 'harness' }))
+    [void]$claims.Add((New-Claim 'sanitized-read-only-evidence' 'SECURITY' 'PASS' $true $true $false 'Every retained evidence artifact was scanned after a fully successful current run; product checkouts remained clean and the planted canary was absent.' @(
+      (New-Evidence 'COMMAND' 'both source checkouts clean; final canary scan had zero hits' 'git status --porcelain; final exact canary scan' 0 "harness:$harnessObservedSha")
     )))
   }
   if ($runFailure) {
@@ -842,17 +972,12 @@ try {
   if ($ReceiptPath) {
     $parent = Split-Path -Parent $ReceiptPath
     if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-    [System.IO.File]::WriteAllText($ReceiptPath, ($receipt | ConvertTo-Json -Depth 12), (New-Object System.Text.UTF8Encoding($false)))
-    try {
-      if ($env:COOP_TERMINAL_ACCEPTANCE_RECEIPT_SANITIZATION_FAULT -eq 'fail') { throw 'test receipt sanitization failure' }
-      $receiptHits = @(Find-Canary $ReceiptPath $canary)
-      if ($receiptHits.Count -gt 0) { throw 'canary found in receipt' }
-      Assert-Receipt (Read-Receipt $ReceiptPath) | Out-Null
-      if ($artifactsUploadable) { [System.IO.File]::WriteAllText("$ReceiptPath.evidence-uploadable", "scanned`n", (New-Object System.Text.UTF8Encoding($false))) }
-    } catch {
-      $artifactsUploadable = $false
+    $sanitizationFailed = $env:COOP_TERMINAL_ACCEPTANCE_RECEIPT_SANITIZATION_FAULT -eq 'fail'
+    $receiptText = $receipt | ConvertTo-Json -Depth 12
+    if ($env:COOP_TERMINAL_ACCEPTANCE_AUTHORIZATION_FAULT -eq 'receipt-contamination') { $receiptText += $canary }
+    if ($sanitizationFailed -or $receiptText.Contains($canary)) {
+      $evidenceEligible = $false
       $runFailure = 'artifact finalization failed closed; only a controlled minimal receipt was retained'
-      Remove-UploadMarker $ReceiptPath
       if ($EvidenceRoot -and (Test-Path -LiteralPath $EvidenceRoot)) { Remove-Item -LiteralPath $EvidenceRoot -Recurse -Force -ErrorAction SilentlyContinue }
       $claims = @(
         (New-Claim 'sanitized-read-only-evidence' 'SECURITY' 'FAIL' $true $true $false 'Receipt scan could not prove sanitization; evidence was removed from upload eligibility.' @((New-Evidence 'COMMAND' 'final receipt scan failed closed' 'final exact canary scan' 1 'harness'))),
@@ -860,7 +985,24 @@ try {
       )
       $receipt.claims = @($claims)
       $receipt.execution.finished_utc = (Get-Date).ToUniversalTime().ToString('o')
-      [System.IO.File]::WriteAllText($ReceiptPath, ($receipt | ConvertTo-Json -Depth 12), (New-Object System.Text.UTF8Encoding($false)))
+      $receiptText = $receipt | ConvertTo-Json -Depth 12
+    }
+    try {
+      Assert-Receipt ($receiptText | ConvertFrom-Json) | Out-Null
+      Write-ControlledReceipt $ReceiptPath $receiptText
+      if ($env:COOP_TERMINAL_ACCEPTANCE_AUTHORIZATION_FAULT -eq 'validator-fail') { throw 'test current receipt validator failure' }
+      Assert-Receipt (Read-Receipt $ReceiptPath) | Out-Null
+      if ($authorizationRevoked) {
+        New-UploadAuthorization 'Receipt' $ReceiptPath $RunNonce $ExpectedHarnessSha
+        if ($evidenceEligible -and -not $runFailure) {
+          New-UploadAuthorization 'Evidence' $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot
+        }
+      }
+    } catch {
+      $evidenceEligible = $false
+      if ($runFailure) { $runFailure = "$runFailure; upload authorization failed: $($_.Exception.Message)" } else { $runFailure = "upload authorization failed: $($_.Exception.Message)" }
+      try { Remove-UploadAuthorizations $ReceiptPath } catch { $runFailure = "$runFailure; authorization revocation failed: $($_.Exception.Message)" }
+      if ($EvidenceRoot -and (Test-Path -LiteralPath $EvidenceRoot)) { Remove-Item -LiteralPath $EvidenceRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
   }
 }

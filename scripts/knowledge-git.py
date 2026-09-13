@@ -79,8 +79,10 @@ Exit codes:
 
 import json
 import os
+import secrets
 import shlex
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -105,7 +107,8 @@ OWNERSHIP_UNCERTAIN = "uncertain"
 # arbitrary code or callables are never accepted. Inert unless deliberately set.
 _TEST_FAULT_ENV = "COOP_KNOWLEDGE_GIT_TEST_FAULT"
 _TEST_PID_FILE_ENV = "COOP_KNOWLEDGE_GIT_TEST_PID_FILE"
-_TEST_EVENT_FILE_ENV = "COOP_KNOWLEDGE_GIT_TEST_EVENT_FILE"
+_TEST_EVENT_ROOT_ENV = "COOP_KNOWLEDGE_GIT_TEST_EVENT_ROOT"
+_TEST_EVENT_DIR_ENV = "COOP_KNOWLEDGE_GIT_TEST_EVENT_DIR"
 _TEST_EVENT_NONCE_ENV = "COOP_KNOWLEDGE_GIT_TEST_EVENT_NONCE"
 _TEST_FAULTS = frozenset((
     "job-create", "job-assign", "resume", "job-query", "job-terminate", "job-close",
@@ -118,6 +121,8 @@ _TEST_FAULT_OUTCOMES = {
     "job-terminate": "failure",
     "job-close": "failure",
 }
+_PROCESS_ID = os.getpid()
+_CONSUMED_TEST_FAULTS = set()
 
 
 def _test_fault(stage):
@@ -125,35 +130,136 @@ def _test_fault(stage):
     return value in _TEST_FAULTS and value == stage
 
 
-def _consume_test_fault(stage):
-    """Record a fixed event only when the selected lifecycle seam is consumed."""
-    if not _test_fault(stage):
-        return False
-    path = os.environ.get(_TEST_EVENT_FILE_ENV, "")
-    nonce = os.environ.get(_TEST_EVENT_NONCE_ENV, "")
-    if path.endswith(".lifecycle-event.json") and len(nonce) == 32 and all(
-        char in "0123456789abcdef" for char in nonce
-    ):
-        event = {
-            "schema_version": 1,
-            "nonce": nonce,
-            "stage": stage,
-            "outcome": _TEST_FAULT_OUTCOMES[stage],
-        }
-        temporary = "%s.tmp.%d" % (path, os.getpid())
+def _is_reparse_or_symlink(path):
+    info = os.lstat(path)
+    return os.path.islink(path) or bool(
+        getattr(info, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
+def _verified_event_directory(directory, root, nonce):
+    """Return an existing run-owned directory without link/reparse ancestry."""
+    if not directory or not root or not os.path.isabs(directory) or not os.path.isabs(root):
+        return None
+    normalized = os.path.normpath(directory)
+    normalized_root = os.path.normpath(root)
+    if os.path.dirname(normalized) != normalized_root:
+        return None
+    if os.path.basename(normalized) != "lifecycle-events-%s" % nonce:
+        return None
+    drive, tail = os.path.splitdrive(normalized)
+    current = drive + os.path.sep if drive else os.path.sep
+    for component in [item for item in tail.split(os.path.sep) if item]:
+        current = os.path.join(current, component)
         try:
-            with open(temporary, "w", encoding="utf-8", newline="\n") as stream:
-                json.dump(event, stream, sort_keys=True, separators=(",", ":"))
-                stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, path)
+            if _is_reparse_or_symlink(current):
+                return None
         except OSError:
+            return None
+    return normalized if os.path.isdir(normalized) else None
+
+
+def _publish_test_event(directory, nonce, stage):
+    """Publish complete event bytes once, without replacement or link following."""
+    directory = _verified_event_directory(
+        directory, os.environ.get(_TEST_EVENT_ROOT_ENV, ""), nonce
+    )
+    if directory is None:
+        return
+    final_name = "%s.%s.lifecycle-event.json" % (nonce, stage)
+    temporary_name = ".event-%s.tmp" % secrets.token_hex(16)
+    final_path = os.path.join(directory, final_name)
+    temporary = os.path.join(directory, temporary_name)
+    event = {
+        "schema_version": 1,
+        "nonce": nonce,
+        "stage": stage,
+        "outcome": _TEST_FAULT_OUTCOMES[stage],
+    }
+    payload = (json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = None
+    directory_fd = None
+    temporary_created = False
+    published = False
+    try:
+        if os.name == "nt":
+            fd = os.open(temporary, flags, 0o600)
+        else:
+            expected_directory = os.stat(directory, follow_symlinks=False)
+            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+            directory_fd = os.open(directory, directory_flags)
+            opened_directory = os.fstat(directory_fd)
+            if (opened_directory.st_dev, opened_directory.st_ino) != (
+                expected_directory.st_dev, expected_directory.st_ino
+            ):
+                raise OSError("lifecycle event directory identity changed")
+            fd = os.open(temporary_name, flags, 0o600, dir_fd=directory_fd)
+        temporary_created = True
+        view = memoryview(payload)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OSError("short lifecycle event write")
+            view = view[written:]
+        os.fsync(fd)
+        os.close(fd)
+        fd = None
+        # Hard-link publication is atomic and fails when the final name exists.
+        if os.name == "nt":
+            os.link(temporary, final_path)
+        else:
+            os.link(
+                temporary_name, final_name,
+                src_dir_fd=directory_fd, dst_dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+        published = True
+        if os.name != "nt":
+            os.fsync(directory_fd)
+    except OSError:
+        if published:
             try:
-                os.unlink(temporary)
+                if os.name == "nt":
+                    os.unlink(final_path)
+                else:
+                    os.unlink(final_name, dir_fd=directory_fd)
             except OSError:
                 pass
-            # The harness independently requires the event and fails closed.
+        # The harness independently requires the event and fails closed.
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if temporary_created:
+            try:
+                if os.name == "nt":
+                    os.unlink(temporary)
+                else:
+                    os.unlink(temporary_name, dir_fd=directory_fd)
+            except OSError:
+                pass
+        if directory_fd is not None:
+            try:
+                os.close(directory_fd)
+            except OSError:
+                pass
+
+
+def _consume_test_fault(stage):
+    """Record a fixed event only once when the selected lifecycle seam is consumed."""
+    if not _test_fault(stage):
+        return False
+    nonce = os.environ.get(_TEST_EVENT_NONCE_ENV, "")
+    consumption = (_PROCESS_ID, nonce, stage)
+    if consumption in _CONSUMED_TEST_FAULTS:
+        return True
+    _CONSUMED_TEST_FAULTS.add(consumption)
+    if len(nonce) == 32 and all(char in "0123456789abcdef" for char in nonce):
+        _publish_test_event(os.environ.get(_TEST_EVENT_DIR_ENV, ""), nonce, stage)
     return True
 
 

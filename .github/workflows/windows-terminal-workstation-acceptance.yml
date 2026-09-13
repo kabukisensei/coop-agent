@@ -57,6 +57,14 @@ jobs:
           ) | Out-Null
           if ($errors) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
 
+      - name: Establish current-run upload identity
+        shell: powershell
+        run: |
+          $nonce = [guid]::NewGuid().ToString('N')
+          "RUN_NONCE=$nonce" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RECEIPT_UPLOADABLE=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "EVIDENCE_UPLOADABLE=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Exercise ownership faults and Unicode transport
         shell: powershell
         run: |
@@ -80,6 +88,7 @@ jobs:
             -BaselineRoot (Resolve-Path .\baseline) `
             -EvidenceRoot $evidence `
             -ReceiptPath $receipt `
+            -RunNonce $env:RUN_NONCE `
             -ExpectedHarnessSha '${{ github.sha }}'
           $harnessRc = $LASTEXITCODE
           if ($harnessRc -ne 0) { exit $harnessRc }
@@ -104,12 +113,25 @@ jobs:
           if ($receipt.terminal_workstation_ready -ne $false) {
             throw 'automated workflow must never set TERMINAL_WORKSTATION_READY'
           }
-          if (Test-Path -LiteralPath "$env:RECEIPT_PATH.evidence-uploadable" -PathType Leaf) {
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
+            .\harness\acceptance\windows-terminal-workstation.ps1 `
+            -Mode ValidateUploadAuthorization -AuthorizationKind Receipt `
+            -ReceiptPath $env:RECEIPT_PATH -RunNonce $env:RUN_NONCE `
+            -ExpectedHarnessSha '${{ github.sha }}'
+          if ($LASTEXITCODE -ne 0) { throw 'current receipt upload authorization failed' }
+          "RECEIPT_UPLOADABLE=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if (Test-Path -LiteralPath "$env:RECEIPT_PATH.evidence-authorization.json" -PathType Leaf) {
+            powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
+              .\harness\acceptance\windows-terminal-workstation.ps1 `
+              -Mode ValidateUploadAuthorization -AuthorizationKind Evidence `
+              -ReceiptPath $env:RECEIPT_PATH -EvidenceRoot "${{ runner.temp }}\coop-terminal-p0-owned\evidence" `
+              -RunNonce $env:RUN_NONCE -ExpectedHarnessSha '${{ github.sha }}'
+            if ($LASTEXITCODE -ne 0) { throw 'current evidence upload authorization failed' }
             "EVIDENCE_UPLOADABLE=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 
       - name: Upload fail-closed receipt
-        if: always() && env.RECEIPT_PATH != ''
+        if: always() && env.RECEIPT_UPLOADABLE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: terminal-workstation-receipt-${{ github.sha }}

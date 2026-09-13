@@ -90,6 +90,12 @@ function assertBoth(path, expected, label) {
   assert.equal(ps.status === 0, expected, `${label}: PowerShell: ${ps.stderr}`);
 }
 
+function validateAuthorization(kind, path, nonce, harness = HARNESS, evidenceRoot = "") {
+  const args = ["-Mode", "ValidateUploadAuthorization", "-AuthorizationKind", kind, "-ReceiptPath", path, "-RunNonce", nonce, "-ExpectedHarnessSha", harness];
+  if (evidenceRoot) args.push("-EvidenceRoot", evidenceRoot);
+  return runPs(args);
+}
+
 function observedManifestState(manifest) {
   const checks = [{ name: `pi ${manifest.pi.version} matches manifest (${manifest.pi.version})`, status: "ok" }];
   for (const [name, version] of Object.entries(manifest.extensions)) checks.push({ name: `${name} ${version} matches manifest (${version})`, status: "ok" });
@@ -211,13 +217,17 @@ test("automated layer can never claim readiness", { skip: !havePwsh }, () => {
   const dir = mkdtempSync(join(tmpdir(), "coop-layer-")); assertBoth(writeReceipt(dir, receipt({ ready: true, layer: "AUTOMATED_WINDOWS", humanStatus: "PASS" })), false, "automated ready");
 });
 
-test("early native-precheck failure emits a schema-valid honest receipt", { skip: !havePwsh || process.platform === "win32" }, () => {
+test("early native-precheck failure authorizes only its current safe receipt", { skip: !havePwsh || process.platform === "win32" }, () => {
+  const nonce = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const owned = join(mkdtempSync(join(tmpdir(), "coop-early-")), "owned"); const evidenceRoot = join(owned, "evidence"); const receiptPath = join(owned, "receipt.json");
-  const r = runPs(["-Mode", "Run", "-HarnessRoot", join(owned, "missing-harness"), "-CandidateRoot", join(owned, "missing-candidate"), "-BaselineRoot", join(owned, "missing-baseline"), "-EvidenceRoot", evidenceRoot, "-ReceiptPath", receiptPath, "-ExpectedHarnessSha", HARNESS]);
+  const r = runPs(["-Mode", "Run", "-HarnessRoot", join(owned, "missing-harness"), "-CandidateRoot", join(owned, "missing-candidate"), "-BaselineRoot", join(owned, "missing-baseline"), "-EvidenceRoot", evidenceRoot, "-ReceiptPath", receiptPath, "-RunNonce", nonce, "-ExpectedHarnessSha", HARNESS]);
   assert.notEqual(r.status, 0); assert.ok(existsSync(receiptPath), r.stderr);
   const value = JSON.parse(readFileSync(receiptPath, "utf8"));
   assert.equal(value.candidate.observed_sha, null); assert.equal(value.baseline.observed_sha, null); assert.equal(value.harness.observed_sha, null); assert.equal(value.execution.owned_root, owned);
   assertBoth(receiptPath, true, "early failure receipt");
+  assert.equal(validateAuthorization("Receipt", receiptPath, nonce).status, 0);
+  assert.equal(existsSync(`${receiptPath}.evidence-authorization.json`), false);
+  assert.notEqual(validateAuthorization("Receipt", receiptPath, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").status, 0);
 });
 
 test("Support identity probe derives the candidate fingerprint through product code", { skip: !havePwsh }, () => {
@@ -265,7 +275,7 @@ test("failure-path canary contamination removes evidence and emits no upload mar
   const receiptPath = join(dir, "receipt.json"); const canary = "FINALIZATION-CANARY";
   writeFileSync(join(evidenceRoot, "unsafe.log"), `leaked=${canary}`); writeFileSync(receiptPath, "{}");
   const result = runPs(["-Mode", "Probe", "-Probe", "FinalizeArtifacts", "-Root", evidenceRoot, "-Value", receiptPath, "-Canary", canary]);
-  assert.notEqual(result.status, 0); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false); assert.equal(existsSync(evidenceRoot), false);
+  assert.notEqual(result.status, 0); assert.equal(existsSync(`${receiptPath}.evidence-authorization.json`), false); assert.equal(existsSync(evidenceRoot), false);
 });
 
 test("lifecycle event validation rejects absent, wrong, stale, and malformed evidence", { skip: !havePwsh }, () => {
@@ -285,21 +295,60 @@ test("lifecycle event validation rejects absent, wrong, stale, and malformed evi
   assert.notEqual(validate().status, 0, "event with unknown properties was accepted");
 });
 
-test("Run revokes a stale upload marker when receipt sanitization fails", { skip: !havePwsh }, () => {
+test("Run replaces stale authorization with current safe receipt authorization only", { skip: !havePwsh }, () => {
+  const nonce = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const dir = mkdtempSync(join(tmpdir(), "coop-stale-upload-")); const owned = join(dir, "owned");
-  const evidenceRoot = join(owned, "evidence"); const receiptPath = join(dir, "receipt.json"); const marker = `${receiptPath}.evidence-uploadable`;
-  writeFileSync(marker, "stale authorization\n");
+  const evidenceRoot = join(owned, "evidence"); const receiptPath = join(dir, "receipt.json"); const receiptAuthorization = `${receiptPath}.receipt-authorization.json`; const evidenceAuthorization = `${receiptPath}.evidence-authorization.json`;
+  writeFileSync(receiptPath, JSON.stringify(receipt()));
+  writeFileSync(receiptAuthorization, JSON.stringify({ schema_version: 1, kind: "receipt", run_nonce: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", harness_sha: HARNESS, receipt_sha256: "0".repeat(64) }));
+  writeFileSync(evidenceAuthorization, "stale evidence authorization\n");
   const result = runPs([
     "-Mode", "Run", "-HarnessRoot", join(dir, "missing-harness"), "-CandidateRoot", join(dir, "missing-candidate"),
-    "-BaselineRoot", join(dir, "missing-baseline"), "-EvidenceRoot", evidenceRoot, "-ReceiptPath", receiptPath, "-ExpectedHarnessSha", HARNESS,
+    "-BaselineRoot", join(dir, "missing-baseline"), "-EvidenceRoot", evidenceRoot, "-ReceiptPath", receiptPath, "-RunNonce", nonce, "-ExpectedHarnessSha", HARNESS,
   ], { env: { ...process.env, COOP_TERMINAL_ACCEPTANCE_RECEIPT_SANITIZATION_FAULT: "fail" } });
-  assert.notEqual(result.status, 0); assert.equal(existsSync(marker), false, "stale upload authorization survived failed receipt sanitization");
+  assert.notEqual(result.status, 0); assert.equal(existsSync(evidenceAuthorization), false, "stale evidence authorization survived");
   assert.equal(existsSync(receiptPath), true); assertBoth(receiptPath, true, "receipt-sanitization failure receipt");
+  assert.equal(validateAuthorization("Receipt", receiptPath, nonce).status, 0);
+  assert.notEqual(validateAuthorization("Receipt", receiptPath, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").status, 0);
   const generated = JSON.parse(readFileSync(receiptPath, "utf8"));
   assert.equal(generated.terminal_workstation_ready, false);
   assert.deepEqual(generated.claims.map((item) => [item.id, item.status]), [
     ["sanitized-read-only-evidence", "FAIL"], ["automated-harness-completion", "FAIL"],
   ]);
+});
+
+test("revocation, replacement, validator, hash, and harness mutations fail closed", { skip: !havePwsh }, () => {
+  const nonce = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  for (const fault of ["revoke-fail", "receipt-replace-fail", "validator-fail"]) {
+    const dir = mkdtempSync(join(tmpdir(), `coop-auth-${fault}-`)); const owned = join(dir, "owned");
+    const receiptPath = join(dir, "receipt.json"); const evidenceRoot = join(owned, "evidence");
+    writeFileSync(receiptPath, JSON.stringify(receipt()));
+    writeFileSync(`${receiptPath}.receipt-authorization.json`, JSON.stringify({ schema_version: 1, kind: "receipt", run_nonce: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", harness_sha: HARNESS, receipt_sha256: "0".repeat(64) }));
+    const result = runPs(["-Mode", "Run", "-HarnessRoot", join(dir, "missing"), "-CandidateRoot", join(dir, "missing-candidate"), "-BaselineRoot", join(dir, "missing-baseline"), "-EvidenceRoot", evidenceRoot, "-ReceiptPath", receiptPath, "-RunNonce", nonce, "-ExpectedHarnessSha", HARNESS], { env: { ...process.env, COOP_TERMINAL_ACCEPTANCE_AUTHORIZATION_FAULT: fault } });
+    assert.notEqual(result.status, 0, `${fault} unexpectedly passed`);
+    assert.notEqual(validateAuthorization("Receipt", receiptPath, nonce).status, 0, `${fault} authorized receipt`);
+    assert.equal(existsSync(`${receiptPath}.evidence-authorization.json`), false, `${fault} authorized evidence`);
+  }
+  const dir = mkdtempSync(join(tmpdir(), "coop-auth-mutations-")); const owned = join(dir, "owned"); const receiptPath = join(dir, "receipt.json");
+  runPs(["-Mode", "Run", "-HarnessRoot", join(dir, "missing"), "-CandidateRoot", join(dir, "missing-candidate"), "-BaselineRoot", join(dir, "missing-baseline"), "-EvidenceRoot", join(owned, "evidence"), "-ReceiptPath", receiptPath, "-RunNonce", nonce, "-ExpectedHarnessSha", HARNESS]);
+  assert.equal(validateAuthorization("Receipt", receiptPath, nonce).status, 0);
+  assert.notEqual(validateAuthorization("Receipt", receiptPath, nonce, "2222222222222222222222222222222222222222").status, 0);
+  const changed = JSON.parse(readFileSync(receiptPath, "utf8")); changed.execution.runner = "mutated"; writeFileSync(receiptPath, JSON.stringify(changed));
+  assert.notEqual(validateAuthorization("Receipt", receiptPath, nonce).status, 0, "receipt hash mutation accepted");
+});
+
+test("fully safe authorization binds receipt and exact evidence state independently", { skip: !havePwsh }, () => {
+  const nonce = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const dir = mkdtempSync(join(tmpdir(), "coop-both-auth-")); const evidenceRoot = join(dir, "evidence"); mkdirSync(evidenceRoot);
+  writeFileSync(join(evidenceRoot, "proof.txt"), "safe proof\n");
+  const receiptPath = writeReceipt(dir, receipt());
+  const authorized = runPs(["-Mode", "Probe", "-Probe", "AuthorizeArtifacts", "-ReceiptPath", receiptPath, "-Root", evidenceRoot, "-Value", nonce, "-Canary", HARNESS]);
+  assert.equal(authorized.status, 0, authorized.stderr);
+  assert.equal(validateAuthorization("Receipt", receiptPath, nonce).status, 0);
+  assert.equal(validateAuthorization("Evidence", receiptPath, nonce, HARNESS, evidenceRoot).status, 0);
+  writeFileSync(join(evidenceRoot, "proof.txt"), "changed proof\n");
+  assert.notEqual(validateAuthorization("Evidence", receiptPath, nonce, HARNESS, evidenceRoot).status, 0, "changed evidence retained authority");
+  assert.equal(validateAuthorization("Receipt", receiptPath, nonce).status, 0, "evidence state improperly controls safe receipt authority");
 });
 
 function writeOwnershipFixture(dir) {
@@ -364,13 +413,13 @@ test("PowerShell bounded wrapper preserves Unicode stdin and difficult arguments
 test("timeout owns descendants spawned during cleanup and suppresses upload", { skip: !havePwsh }, () => {
   const dir = mkdtempSync(join(tmpdir(), "coop-process-race-")); const writer = writeOwnershipFixture(dir); const lateWrite = join(dir, "late.txt"); const receiptPath = join(dir, "receipt.json");
   const result = runPs(["-Mode", "Probe", "-Probe", "BoundedProcessTree", "-Value", writer, "-Root", join(dir, "evidence", "bounded"), "-Canary", lateWrite, "-ReceiptPath", receiptPath]);
-  assert.equal(result.status, 0, result.stderr); assert.equal(existsSync(lateWrite), false); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false);
+  assert.equal(result.status, 0, result.stderr); assert.equal(existsSync(lateWrite), false); assert.equal(existsSync(`${receiptPath}.evidence-authorization.json`), false);
 });
 
 test("successful parent with surviving descendant waits to timeout and suppresses upload", { skip: !havePwsh }, () => {
   const dir = mkdtempSync(join(tmpdir(), "coop-parent-success-")); const writer = writeOwnershipFixture(dir); const lateWrite = join(dir, "late.txt"); const receiptPath = join(dir, "receipt.json");
   const result = runPs(["-Mode", "Probe", "-Probe", "SuccessfulParentDescendant", "-Value", writer, "-Root", join(dir, "evidence", "bounded"), "-Canary", lateWrite, "-ReceiptPath", receiptPath]);
-  assert.equal(result.status, 0, result.stderr); assert.equal(existsSync(lateWrite), false); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false);
+  assert.equal(result.status, 0, result.stderr); assert.equal(existsSync(lateWrite), false); assert.equal(existsSync(`${receiptPath}.evidence-authorization.json`), false);
 });
 
 test("native Windows lifecycle faults fail closed through real receipt finalization", { skip: !havePwsh || process.platform !== "win32" }, async () => {
@@ -399,10 +448,12 @@ test("native Windows lifecycle faults fail closed through real receipt finalizat
         COOP_KNOWLEDGE_GIT_TEST_PID_FILE: pidPath,
         COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE: writer,
       };
-      writeFileSync(`${receiptPath}.evidence-uploadable`, "stale authorization\n");
+      const runNonce = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+      writeFileSync(`${receiptPath}.receipt-authorization.json`, "stale receipt authorization\n");
+      writeFileSync(`${receiptPath}.evidence-authorization.json`, "stale evidence authorization\n");
       const result = runPs([
         "-Mode", "Run", "-HarnessRoot", ROOT, "-CandidateRoot", candidateRoot, "-BaselineRoot", baselineRoot,
-        "-EvidenceRoot", join(owned, "evidence"), "-ReceiptPath", receiptPath, "-ExpectedHarnessSha", harnessSha,
+        "-EvidenceRoot", join(owned, "evidence"), "-ReceiptPath", receiptPath, "-RunNonce", runNonce, "-ExpectedHarnessSha", harnessSha,
       ], { env });
       assert.notEqual(result.status, 0, `${fault}: injected lifecycle failure unexpectedly passed`);
       assert.equal(existsSync(receiptPath), true, `${fault}: fail-closed receipt was not generated`);
@@ -417,7 +468,8 @@ test("native Windows lifecycle faults fail closed through real receipt finalizat
       for (const item of generated.claims) {
         if (item.id !== "identity-and-isolation") assert.notEqual(item.status, "PASS", `${fault}: ${item.id} incorrectly passed`);
       }
-      assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false, `${fault}: upload marker appeared`);
+      assert.equal(validateAuthorization("Receipt", receiptPath, runNonce, harnessSha).status, 0, `${fault}: safe failure receipt was not authorized`);
+      assert.equal(existsSync(`${receiptPath}.evidence-authorization.json`), false, `${fault}: evidence authorization appeared`);
       assert.equal(existsSync(join(owned, "evidence")), false, `${fault}: uncertain evidence was retained`);
 
       assert.equal(existsSync(pidPath), true, `${fault}: real owned root PID was not recorded`);
@@ -470,7 +522,11 @@ test("workflow preserves dispatch and gates pre-merge native execution to the na
     assert.match(source, new RegExp(`ref: ${CANDIDATE}`)); assert.match(source, new RegExp(`ref: ${BASELINE}`));
     assert.match(source, /ExpectedHarnessSha '\$\{\{ github\.sha \}\}'/);
     assert.match(source, /ajv-cli@5\.0\.0/); assert.match(source, /terminal-workstation-receipt\.schema\.json/); assert.match(source, /runs-on: windows-latest/);
+    assert.match(source, /if: always\(\) && env\.RECEIPT_UPLOADABLE == 'true'/);
     assert.match(source, /if: always\(\) && env\.EVIDENCE_UPLOADABLE == 'true'/);
+    assert.match(source, /RunNonce \$env:RUN_NONCE/);
+    assert.match(source, /ValidateUploadAuthorization -AuthorizationKind Receipt/);
+    assert.match(source, /ValidateUploadAuthorization -AuthorizationKind Evidence/);
     assert.match(source, /--test-name-pattern "Unicode\|lifecycle"/);
     assert.doesNotMatch(source, /secrets\.|GITHUB_TOKEN|repository_dispatch|workflow_run|\bgit push\b/);
   };

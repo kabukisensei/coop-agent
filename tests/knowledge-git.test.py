@@ -16,6 +16,13 @@ if SPEC is None or SPEC.loader is None:
     raise RuntimeError("could not load scripts/knowledge-git.py")
 kg = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(kg)
+INSPECTOR_SPEC = importlib.util.spec_from_file_location(
+    "knowledge_git_process_inspector", ROOT / "tests" / "knowledge-git-process-inspector.py"
+)
+if INSPECTOR_SPEC is None or INSPECTOR_SPEC.loader is None:
+    raise RuntimeError("could not load knowledge-git process inspector")
+inspector = importlib.util.module_from_spec(INSPECTOR_SPEC)
+INSPECTOR_SPEC.loader.exec_module(inspector)
 
 
 class FakeProcess:
@@ -29,10 +36,12 @@ class KnowledgeGitOwnershipTests(unittest.TestCase):
         for name in (
             kg._TEST_FAULT_ENV,
             kg._TEST_PID_FILE_ENV,
-            kg._TEST_EVENT_FILE_ENV,
+            kg._TEST_EVENT_ROOT_ENV,
+            kg._TEST_EVENT_DIR_ENV,
             kg._TEST_EVENT_NONCE_ENV,
         ):
             os.environ.pop(name, None)
+        kg._CONSUMED_TEST_FAULTS.clear()
 
     def tearDown(self):
         self.env.stop()
@@ -48,13 +57,16 @@ class KnowledgeGitOwnershipTests(unittest.TestCase):
             os.environ[kg._TEST_FAULT_ENV] = stage
             self.assertTrue(kg._test_fault(stage))
 
-    def test_consumed_fault_records_exact_atomic_nonce_bound_event(self):
+    def test_consumed_fault_records_exact_exclusive_nonce_bound_event_once(self):
         nonce = "0123456789abcdef0123456789abcdef"
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as parent:
             for stage in sorted(kg._TEST_FAULTS):
-                path = Path(directory) / (stage + ".lifecycle-event.json")
+                directory = Path(parent) / ("lifecycle-events-" + nonce)
+                directory.mkdir(exist_ok=True)
+                path = directory / (nonce + "." + stage + ".lifecycle-event.json")
                 os.environ[kg._TEST_FAULT_ENV] = stage
-                os.environ[kg._TEST_EVENT_FILE_ENV] = str(path)
+                os.environ[kg._TEST_EVENT_ROOT_ENV] = str(Path(parent))
+                os.environ[kg._TEST_EVENT_DIR_ENV] = str(directory)
                 os.environ[kg._TEST_EVENT_NONCE_ENV] = nonce
                 self.assertTrue(kg._consume_test_fault(stage))
                 self.assertEqual(
@@ -66,17 +78,80 @@ class KnowledgeGitOwnershipTests(unittest.TestCase):
                         "outcome": kg._TEST_FAULT_OUTCOMES[stage],
                     },
                 )
-                self.assertEqual(list(Path(directory).glob("*.tmp.*")), [])
+                original = path.read_bytes()
+                self.assertTrue(kg._consume_test_fault(stage))
+                self.assertEqual(path.read_bytes(), original)
+                self.assertEqual(list(directory.glob(".event-*.tmp")), [])
+                path.unlink()
+
+    def test_event_publication_rejects_outside_relative_and_linked_directories(self):
+        nonce = "0123456789abcdef0123456789abcdef"
+        with tempfile.TemporaryDirectory() as parent:
+            parent_path = Path(parent)
+            outside = parent_path / "outside"
+            outside.mkdir()
+            link = parent_path / ("lifecycle-events-" + nonce)
+            try:
+                link.symlink_to(outside, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("directory symlinks unavailable")
+            os.environ[kg._TEST_FAULT_ENV] = "job-close"
+            os.environ[kg._TEST_EVENT_NONCE_ENV] = nonce
+            os.environ[kg._TEST_EVENT_ROOT_ENV] = str(parent_path)
+            os.environ[kg._TEST_EVENT_DIR_ENV] = str(link)
+            self.assertTrue(kg._consume_test_fault("job-close"))
+            self.assertEqual(list(outside.iterdir()), [])
+            kg._CONSUMED_TEST_FAULTS.clear()
+            outside_directory = outside / ("lifecycle-events-" + nonce)
+            outside_directory.mkdir()
+            os.environ[kg._TEST_EVENT_DIR_ENV] = str(outside_directory)
+            self.assertTrue(kg._consume_test_fault("job-close"))
+            self.assertEqual(list(outside_directory.iterdir()), [])
+            kg._CONSUMED_TEST_FAULTS.clear()
+            os.environ[kg._TEST_EVENT_DIR_ENV] = "lifecycle-events-" + nonce
+            self.assertTrue(kg._consume_test_fault("job-close"))
+            self.assertEqual(list(outside_directory.iterdir()), [])
+
+    def test_event_publication_never_replaces_preexisting_final_or_temp(self):
+        nonce = "0123456789abcdef0123456789abcdef"
+        with tempfile.TemporaryDirectory() as parent:
+            directory = Path(parent) / ("lifecycle-events-" + nonce)
+            directory.mkdir()
+            final = directory / (nonce + ".job-close.lifecycle-event.json")
+            final.write_text("preexisting\n", encoding="utf-8")
+            planted = directory / ".event-preplanted.tmp"
+            outside = Path(parent) / "outside-target"
+            outside.write_text("outside\n", encoding="utf-8")
+            planted_is_link = False
+            try:
+                planted.symlink_to(outside)
+                planted_is_link = True
+            except (OSError, NotImplementedError):
+                planted.write_text("preplanted\n", encoding="utf-8")
+            os.environ[kg._TEST_FAULT_ENV] = "job-close"
+            os.environ[kg._TEST_EVENT_NONCE_ENV] = nonce
+            os.environ[kg._TEST_EVENT_ROOT_ENV] = str(Path(parent))
+            os.environ[kg._TEST_EVENT_DIR_ENV] = str(directory)
+            with mock.patch.object(kg.secrets, "token_hex", return_value="preplanted"):
+                self.assertTrue(kg._consume_test_fault("job-close"))
+            self.assertEqual(final.read_text(encoding="utf-8"), "preexisting\n")
+            self.assertEqual(outside.read_text(encoding="utf-8"), "outside\n")
+            if planted_is_link:
+                self.assertTrue(planted.is_symlink())
+            else:
+                self.assertEqual(planted.read_text(encoding="utf-8"), "preplanted\n")
 
     def test_unselected_or_malformed_event_input_cannot_create_evidence(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "event.lifecycle-event.json"
+        with tempfile.TemporaryDirectory() as parent:
+            directory = Path(parent) / "lifecycle-events-not-a-valid-nonce"
+            directory.mkdir()
             os.environ[kg._TEST_FAULT_ENV] = "job-close"
-            os.environ[kg._TEST_EVENT_FILE_ENV] = str(path)
+            os.environ[kg._TEST_EVENT_ROOT_ENV] = str(Path(parent))
+            os.environ[kg._TEST_EVENT_DIR_ENV] = str(directory)
             os.environ[kg._TEST_EVENT_NONCE_ENV] = "not-a-valid-nonce"
             self.assertFalse(kg._consume_test_fault("job-terminate"))
             self.assertTrue(kg._consume_test_fault("job-close"))
-            self.assertFalse(path.exists())
+            self.assertEqual(list(directory.iterdir()), [])
 
     def test_create_failure_reaches_adopt_and_stops_suspended_child(self):
         os.environ[kg._TEST_FAULT_ENV] = "job-create"
@@ -195,6 +270,24 @@ class KnowledgeGitOwnershipTests(unittest.TestCase):
         ownership.close.return_value = False
         self.assertEqual(kg.finish_owned(ownership, 0), kg.EXIT_OWNERSHIP_UNAVAILABLE)
         self.assertEqual(kg.finish_owned(ownership, kg.EXIT_TIMEOUT), kg.EXIT_TIMEOUT)
+
+
+class ProcessInspectorTests(unittest.TestCase):
+    def test_direct_script_parser_accepts_spaces_and_rejects_python_command_text(self):
+        target = "/tmp/helper path/scripts/knowledge-git.py"
+        self.assertEqual(inspector.direct_python_script(["/usr/bin/python3", target, "--", "git"]), target)
+        self.assertIsNone(inspector.direct_python_script(["/usr/bin/python3", "-c", "mention " + target]))
+        self.assertIsNone(inspector.direct_python_script(["bash", "-c", "/usr/bin/python3 " + target]))
+
+    def test_macos_ps_filter_uses_exact_kernel_argv_not_flattened_command_text(self):
+        ps_result = SimpleNamespace(returncode=0, stdout="101 python3\n102 bash\n")
+        target = "/tmp/helper path/scripts/knowledge-git.py"
+        with mock.patch.object(inspector.subprocess, "run", return_value=ps_result), \
+             mock.patch.object(inspector, "macos_process_argv", return_value=["/usr/bin/python3", target, "--", "git"]):
+            self.assertEqual(inspector.macos_matches(target), [101])
+        with mock.patch.object(inspector.subprocess, "run", return_value=ps_result), \
+             mock.patch.object(inspector, "macos_process_argv", return_value=["/usr/bin/python3", "/tmp/helper", "path/scripts/knowledge-git.py"]):
+            self.assertEqual(inspector.macos_matches(target), [])
 
 
 if __name__ == "__main__":

@@ -435,15 +435,45 @@ fi
 [ -z "${GIT_TERMINAL_PROMPT:-}" ] && [ -z "${GCM_INTERACTIVE:-}" ] && ok "E: overrides do not leak into the parent shell"
 
 # --- F. no watchdog survives; normal + nonzero exits remain meaningful ------------
-# Match only a Python process whose script argument is knowledge-git.py. A broad
-# `pgrep -f knowledge-git.py` also matches parent shells whose later command text
-# merely mentions the filename (for example a py_compile gate), creating a false
-# failure unrelated to a surviving runner.
-_runner_pattern='(^|/)(python|python3)([0-9.]*)?[[:space:]]+[^[:space:]]*/knowledge-git[.]py([[:space:]]|$)'
-if pgrep -f "$_runner_pattern" >/dev/null 2>&1; then
-  ko "F: knowledge-git.py still running after sync"
-else
+# Inspect argv boundaries, not regex-rendered parent command text.
+PROCESS_INSPECTOR="$ROOT/tests/knowledge-git-process-inspector.py"
+if "$PY" "$PROCESS_INSPECTOR" "$ROOT/scripts/knowledge-git.py" >/dev/null 2>&1; then
   ok "F: no watchdog/leftover runner after sync"
+else
+  ko "F: knowledge-git.py still running after sync or process state uncertain"
+fi
+if [ "$WIN" != "1" ]; then
+  GIT_SSH_COMMAND='ssh -o BatchMode=yes' "$PY" "$ROOT/scripts/knowledge-git.py" --timeout-seconds 3 -- "$PY" -c 'import time; time.sleep(10)' >/dev/null 2>&1 &
+  real_helper_pid=$!
+  sleep 1
+  if "$PY" "$PROCESS_INSPECTOR" "$ROOT/scripts/knowledge-git.py" >/dev/null 2>&1; then
+    ko "F: real helper was not detected"
+  else
+    ok "F: real helper detected from direct argv"
+  fi
+  wait "$real_helper_pid" 2>/dev/null || true
+
+  bash -c 'sleep 3; : /usr/bin/python3 /tmp/knowledge-git.py' & decoy_pid=$!
+  if "$PY" "$PROCESS_INSPECTOR" /tmp/knowledge-git.py >/dev/null 2>&1; then
+    ok "F: unrelated shell text is not a helper"
+  else
+    ko "F: unrelated shell text produced a false helper match"
+  fi
+  kill "$decoy_pid" 2>/dev/null || true
+  wait "$decoy_pid" 2>/dev/null || true
+
+  spaced_root="$TMP/helper path with spaces"
+  mkdir -p "$spaced_root/scripts"
+  cp "$ROOT/scripts/knowledge-git.py" "$spaced_root/scripts/knowledge-git.py"
+  GIT_SSH_COMMAND='ssh -o BatchMode=yes' "$PY" "$spaced_root/scripts/knowledge-git.py" --timeout-seconds 3 -- "$PY" -c 'import time; time.sleep(10)' >/dev/null 2>&1 &
+  spaced_helper_pid=$!
+  sleep 1
+  if "$PY" "$PROCESS_INSPECTOR" "$spaced_root/scripts/knowledge-git.py" >/dev/null 2>&1; then
+    ko "F: real helper under a spaced path was not detected"
+  else
+    ok "F: real helper path containing spaces detected"
+  fi
+  wait "$spaced_helper_pid" 2>/dev/null || true
 fi
 "$PY" "$ROOT/scripts/knowledge-git.py" --timeout-seconds 1 -- "$REALGIT" --version >/dev/null 2>&1
 [ "$?" -eq 0 ] && ok "F: runner passes through a normal exit" || ko "F: normal exit not passed through"
