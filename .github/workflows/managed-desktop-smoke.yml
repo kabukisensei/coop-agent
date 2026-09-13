@@ -122,6 +122,46 @@ jobs:
           if (result.error) throw result.error;
           process.exitCode = result.status ?? 1;
           NODE
+      - name: Probe native launcher hops after bootstrap dispatch
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          node --input-type=module - <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          import { mkdirSync, writeFileSync } from 'node:fs';
+          import { join, resolve } from 'node:path';
+          import { packagedPaths } from './desktop/scripts/verify-managed-package.mjs';
+          import { buildNativeProbeEnvironment } from './desktop/scripts/verify-native-application.mjs';
+          const resources = packagedPaths(resolve('desktop/dist-managed')).resources;
+          const runtime = join(resources, 'managed-runtime');
+          const profile = join(process.env.RUNNER_TEMP, 'probe7-native-profile');
+          const agent = join(process.env.RUNNER_TEMP, 'probe7-agent');
+          const workspace = join(process.env.RUNNER_TEMP, 'probe7-workspace');
+          const env = buildNativeProbeEnvironment(profile, undefined, 'win32', process.env);
+          delete env.COOP_DESKTOP_UPDATE_PROBE;
+          Object.assign(env, { COOP_DESKTOP_AGENT_DIR: agent, COOP_AGENT_DIR: agent, PI_CODING_AGENT_DIR: agent, COOP_SKIP_AZ: '1', COOP_NO_ONBOARD: '1', COOP_RUNTIME_STARTUP_TRACE: '1' });
+          for (const path of [profile, env.TEMP, env.APPDATA, env.LOCALAPPDATA, agent, workspace]) mkdirSync(path, { recursive: true });
+          function run(name, command, args) {
+            const result = spawnSync(command, args, { cwd: workspace, env, shell: false, windowsHide: true, timeout: 10000, encoding: 'utf8', maxBuffer: 64 * 1024 });
+            return { name, status: result.status, signal: result.signal, errorCode: result.error?.code || null,
+              stdout: String(result.stdout || ''), stderr: String(result.stderr || ''), pid: result.pid || null };
+          }
+          const results = [
+            run('managed-mcp-config', join(runtime, 'node', 'node.exe'), [join(runtime, 'coop', 'lib', 'managed-mcp-config.mjs'), runtime, agent]),
+            run('coop-dispatcher', join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+              ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(runtime, 'coop', 'bin', 'coop.ps1'), 'runtime', '--transport', 'http', '--json', '--port', '0', '--cwd', workspace]),
+          ];
+          const output = join(process.env.RUNNER_TEMP, 'probe7-launcher-hops.json');
+          writeFileSync(output, JSON.stringify({ diagnosticOnly: true, candidate: 'ed516b2a183f3e6346344a669d6e37b321a4dcf8', results }, null, 2));
+          console.log(JSON.stringify(results.map(({name,status,signal,errorCode,stdout,stderr}) => ({name,status,signal,errorCode,stdoutBytes:stdout.length,stderrBytes:stderr.length,stages:[...stderr.matchAll(/\[coop-startup\] ([^\r\n]+)/g)].map(match => match[1])}))));
+          NODE
+      - name: Upload native launcher-hop probe
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe7-launcher-hops
+          path: ${{ runner.temp }}/probe7-launcher-hops.json
+          if-no-files-found: error
       - name: Exercise Windows runtime with the native application's isolated environment
         if: runner.os == 'Windows'
         shell: bash
