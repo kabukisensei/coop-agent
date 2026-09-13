@@ -197,10 +197,13 @@ try {
 
   const finalRegistry = queryRegistry();
   report.registry.afterProcess = finalRegistry;
+  const finalRegistration = finalRegistry.installations.find(entry => entry.values.DisplayVersion
+    && entry.values.UninstallString
+    && entry.values.UninstallString.toLowerCase().includes(installed.toLowerCase()));
+  const finalRegistryComplete = finalRegistry.errors.length === 0 && Boolean(finalRegistration);
   const finalFiles = report.samples.at(-1)?.files || {};
   const anyPayload = Object.values(finalFiles).some(value => value.exists);
   const payloadComplete = Object.values(finalFiles).every(value => value.exists);
-  const registryComplete = Boolean(report.registry.completedAt);
   if (finalFiles.executable?.exists && finalFiles.appAsar?.exists && finalFiles.managedRuntime?.exists) {
     const installedIdentity = {
       executableSha256: await digestFile(paths.executable),
@@ -216,12 +219,14 @@ try {
   }
   const payloadIdentityMatchesBuild = report.installedPayloadIdentity?.matchesBuiltPackage === true;
   const recentlyChanging = report.filesystemLastChangedAt && Date.parse(report.process.boundExceededAt || processExitAt || now()) - Date.parse(report.filesystemLastChangedAt) < POLL_MS * 2;
-  const descendants = report.samples.at(-1)?.processTree?.processes?.filter(process => process.pid !== pid) || [];
-  if (!timedOut && processExitCode === 0 && payloadComplete && registryComplete && payloadIdentityMatchesBuild && !descendants.length) report.decision = "FIRST_INSTALL_COMPLETE";
+  const finalTree = report.samples.at(-1)?.processTree;
+  const treeEvidenceConclusive = Boolean(finalTree && !finalTree.error && finalTree.rootPresent === false && Array.isArray(finalTree.processes));
+  const descendants = Array.isArray(finalTree?.processes) ? finalTree.processes.filter(process => process.pid !== pid) : [];
+  if (!timedOut && processExitCode === 0 && payloadComplete && finalRegistryComplete && payloadIdentityMatchesBuild && treeEvidenceConclusive && !descendants.length) report.decision = "FIRST_INSTALL_COMPLETE";
   else if (timedOut && !anyPayload && !finalRegistry.installations.length) report.decision = "INSTALLER_STARTUP_HANG";
   else if (timedOut && recentlyChanging) report.decision = "INSTALLER_TOO_SLOW_FOR_ACCEPTANCE";
-  else if (payloadComplete && registryComplete && descendants.length) report.decision = "INSTALLER_CHILD_LIFECYCLE";
-  else if (timedOut && payloadComplete && registryComplete) report.decision = "INSTALLER_EXIT_HANG";
+  else if (payloadComplete && finalRegistryComplete && descendants.length) report.decision = "INSTALLER_CHILD_LIFECYCLE";
+  else if (timedOut && payloadComplete && finalRegistryComplete) report.decision = "INSTALLER_EXIT_HANG";
   else report.decision = "INSTALLER_INCONCLUSIVE";
   report.ok = report.decision === "FIRST_INSTALL_COMPLETE";
 } catch (error) {
