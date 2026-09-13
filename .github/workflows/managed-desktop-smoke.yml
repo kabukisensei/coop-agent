@@ -32,7 +32,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      PROBE6C_OUT: ${{ runner.temp }}/probe6c.jsonl
     steps:
       - uses: actions/checkout@v5
         with:
@@ -158,6 +157,8 @@ jobs:
           NODE
       - name: Verify real runtime, exact capabilities, isolated state, and cleanup
         shell: bash
+        env:
+          PROBE6C_OUT: ${{ runner.temp }}/probe6c.jsonl
         run: node scripts/verify-managed-runtime.mjs --bundle '${{ runner.temp }}/managed-runtime' --workspace '${{ github.workspace }}' --agent '${{ runner.temp }}/coop-managed-agent' | tee '${{ runner.temp }}/managed-runtime-check.json'
       - name: Package unsigned native development app
         if: runner.os == 'macOS'
