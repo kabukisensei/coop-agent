@@ -238,11 +238,7 @@ def _load_fallback(text):
     return result if result is not None else {}
 
 
-def load(path):
-    # utf-8-sig strips a leading BOM (Windows editors / PowerShell add one), so the
-    # first key never glues to a BOM. Universal newlines handle CRLF.
-    with open(path, encoding='utf-8-sig') as f:
-        text = f.read()
+def loads(text):
     try:
         import yaml
     except ImportError:
@@ -250,6 +246,14 @@ def load(path):
     # A genuine YAML *syntax* error propagates (main() maps it to the default) rather
     # than silently falling through to the naive parser's best-effort guess.
     return yaml.safe_load(text) or {}
+
+
+def load(path):
+    # utf-8-sig strips a leading BOM (Windows editors / PowerShell add one), so the
+    # first key never glues to a BOM. Universal newlines handle CRLF.
+    with open(path, encoding='utf-8-sig') as f:
+        text = f.read()
+    return loads(text)
 
 
 def dig(data, dotted):

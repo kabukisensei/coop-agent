@@ -1,0 +1,26 @@
+{
+  "name": "coop-desktop-electron-spike",
+  "version": "0.0.1",
+  "description": "Measured Electron architecture spike for Coop Desktop",
+  "author": "Cooptimize",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "package:mac": "electron-builder --dir --mac",
+    "package:win": "electron-builder --dir --win --x64"
+  },
+  "devDependencies": {
+    "electron": "44.2.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "coop.cooptimize.desktop.spike",
+    "productName": "Coop Desktop Spike",
+    "asar": true,
+    "files": ["main.mjs", "preload.cjs", "runtime-supervisor.mjs", "package.json"],
+    "mac": { "target": ["dir"], "category": "public.app-category.developer-tools" },
+    "win": { "target": ["dir"] }
+  }
+}

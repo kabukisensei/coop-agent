@@ -11,6 +11,8 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+. "$ROOT/tests/fixtures/doctor-config-tools.sh"
+doctor_config_tools "$TMP/tool-fixture"
 
 # --- valid minimal contract (Fabric disabled) passes validation ---------------
 mkdir -p "$TMP/good/.coop"
