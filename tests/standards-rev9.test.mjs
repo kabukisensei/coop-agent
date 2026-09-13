@@ -36,7 +36,7 @@ const gitInit = (root, message = "fixture") => {
 };
 const makeReviewer = (domain, standardPath, version) => {
   const script = join(tmp, `${domain}-reviewer.mjs`);
-  writeFileSync(script, `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; import {resolve} from "node:path";\nconst a=process.argv.slice(2), i=a.indexOf("--standards"), p=resolve(i>=0?a[i+1]:${JSON.stringify(standardPath)}), h=createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({tool:${JSON.stringify(`coop-${domain}-review`)},version:${JSON.stringify(version)},standards:{path:p,sha256:h},findings:[]}));\n`);
+  writeFileSync(script, `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; import {resolve} from "node:path";\nconst a=process.argv.slice(2), i=a.indexOf("--standards"), p=resolve(i>=0?a[i+1]:${JSON.stringify(standardPath)}), h=createHash("sha256").update(readFileSync(p)).digest("hex"), count=${JSON.stringify(domain === "sql" ? "files_checked" : "models_checked")}; process.stdout.write(JSON.stringify({tool:${JSON.stringify(`coop-${domain}-review`)},schema_version:${domain === "sql" ? 4 : 3},version:${JSON.stringify(version)},[count]:0,standards:{path:p,sha256:h},findings:[],diagnostics:[],agent_review:[],summary:{error:0,warning:0,info:0},verdict:{clean:true,highest_severity:null}}));\n`);
   return { command: process.execPath, args: [script], script };
 };
 const reviewerReport = (reviewer, resolution) => JSON.parse(execFileSync(
@@ -99,7 +99,7 @@ try {
     assert.match(verifyReviewerProvenance(r, report, { ...bound.binding, revision: "tampered" }).error, /binding mismatch/);
     delete report.standards;
     assert.match(verifyReviewerProvenance(r, report).error, /provenance is missing/);
-    assert.match(verifyReviewerProvenance(r, null).error, /provenance is missing/);
+    assert.match(verifyReviewerProvenance(r, null).error, /envelope is missing|provenance is missing/);
   });
 
   test("STD-04", "semantic model, DAX, documentation and selective Incremental BI stay separate", () => {
@@ -156,9 +156,9 @@ try {
     const auth = resolveStandard("sql", opts({ cwd: tmp, canonicalRoot: join(tmp, "missing"), staleRoot: join(tmp, "missing2"), reviewerBins: { sql: missing }, authRequired: true }));
     assert.equal(auth.state, "auth_required");
 
-    const explicitRevision = reviewerScript("explicit-revision-reviewer", `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; import {resolve} from "node:path"; const a=process.argv.slice(2), i=a.indexOf("--standards"), p=resolve(i>=0?a[i+1]:${JSON.stringify(sqlBundled)}), sha256=createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({standards:{path:p,sha256,revision:"standard-r7"},findings:[]}));`);
+    const explicitRevision = reviewerScript("explicit-revision-reviewer", `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; import {resolve} from "node:path"; const a=process.argv.slice(2), i=a.indexOf("--standards"), p=resolve(i>=0?a[i+1]:${JSON.stringify(sqlBundled)}), sha256=createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({tool:"coop-sql-review",schema_version:4,version:"test",files_checked:0,standards:{path:p,sha256,revision:"standard-r7"},findings:[],diagnostics:[],agent_review:[],summary:{error:0,warning:0,info:0},verdict:{clean:true,highest_severity:null}}));`);
     const explicit = resolveStandard("sql", opts({ cwd: tmp, canonicalRoot: join(tmp, "missing"), staleRoot: join(tmp, "missing2"), reviewerBins: { sql: explicitRevision } }));
-    assert.equal(explicit.state, "bundled_fallback"); assert.equal(explicit.revision, "reviewer-standard-standard-r7");
+    assert.equal(explicit.state, "bundled_fallback"); assert.equal(explicit.revision, "reviewer-test");
     assert.deepEqual(verifyReviewerProvenance(explicit, reviewerReport(explicitRevision, explicit)), { ok: true });
 
     const malformedRevision = reviewerScript("malformed-revision-reviewer", `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; const p=${JSON.stringify(sqlBundled)}, sha256=createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({standards:{path:p,sha256,revision:7},findings:[]}));`);
@@ -204,10 +204,10 @@ try {
     assert.equal(status.canonical_remote, CANONICAL_REMOTE_STATE); assert.equal(status.sources[0].state, "available");
     const env = { ...process.env, COOP_STANDARDS_ROOT: canonical, COOP_STANDARDS_LKG_ROOT: join(tmp, "none"), COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "support-home"), NO_COLOR: "1" };
     const lines = execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
-    assert.match(lines, /canonical-remote\tPENDING_OWNER_PROVISIONING/); assert.match(lines, /cooptimize-formal-standards\tavailable/);
+    assert.match(lines, /canonical-remote\tconfigured\thttps:\/\/github\.com\/cooptimize\/coop-standards\.git\|main/); assert.match(lines, /cooptimize-formal-standards\tstale_last_known_good/);
     const doctor = spawnSync("bash", [join(ROOT, "scripts", "doctor.sh")], { cwd: tmp, encoding: "utf8", env });
-    assert.match(`${doctor.stdout}\n${doctor.stderr}`, /source canonical-remote: PENDING_OWNER_PROVISIONING/);
-    assert.match(`${doctor.stdout}\n${doctor.stderr}`, /source cooptimize-formal-standards: available/);
+    assert.match(`${doctor.stdout}\n${doctor.stderr}`, /source canonical-remote: configured/);
+    assert.match(`${doctor.stdout}\n${doctor.stderr}`, /source cooptimize-formal-standards: stale_last_known_good/);
     const support = JSON.parse(execFileSync(process.execPath, [join(ROOT, "lib", "support-center-cli.mjs"), "--json"], { encoding: "utf8", env }));
     assert.equal(support.manifest.components.find((x) => x.component === "standards").status, "ok");
     assert.equal(support.standards.canonical_remote, CANONICAL_REMOTE_STATE);
@@ -310,6 +310,8 @@ try {
     assert.deepEqual(identifyTaskDomains("Create a measure in Power BI"), ["dax"]);
     assert.deepEqual(identifyTaskDomains("Review relationship cardinality and filter direction in this Power BI model"), ["semantic_model"]);
     assert.deepEqual(identifyTaskDomains("Review the table relationships in this Power BI dataset"), ["semantic_model"]);
+    assert.deepEqual(identifyTaskDomains("Review the model relationships in Power BI"), ["semantic_model"]);
+    assert.deepEqual(identifyTaskDomains("Review the medallion architecture in Fabric"), ["fabric"]);
     assert.deepEqual(identifyTaskDomains("Review the deployment pipeline for the mobile app"), []);
     assert.deepEqual(identifyTaskDomains("Analyze warehouse inventory calculations"), []);
     assert.deepEqual(identifyTaskDomains("Review customer relationships in the CRM"), []);

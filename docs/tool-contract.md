@@ -177,9 +177,16 @@ Pinned reviewer source references used to verify this contract are
 `/tmp/std-ref-sql` at `cd9bf347548375801df0abf86b13f72781e1d360` and
 `/tmp/std-ref-dax` at `fe39270168c08a6360c99aadcb51a9ad73678a65`.
 
-The canonical remote is intentionally `PENDING_OWNER_PROVISIONING`; no URL is
-configured or inferred. `coop sync`, Doctor, and Support report this state and
-degrade without blocking normal certification or bundled SQL/DAX operation.
+The canonical remote is the private `https://github.com/cooptimize/coop-standards.git`
+repository. Only its configured authoritative/default `main` branch is consumed. Coop
+performs a bounded, noninteractive, fail-soft refresh at launch and before applicable
+work when the last successful check is at least 15 minutes old; `coop sync` forces a
+check. A verified change atomically replaces the cache and rebuilds its retrieval index.
+Invalid, partial, offline, or authentication-failed fetches preserve the prior verified
+cache as stale last-known-good. Each task uses immutable content-addressed snapshots,
+so generation and SQL/DAX review retain one path, commit and SHA-256 even if a later
+refresh lands during that task. Doctor and Support report source, branch, successful
+check/sync times, commit, freshness, degraded state and per-domain fallback truthfully.
 
 ### `sql_review` / `dax_review`
 

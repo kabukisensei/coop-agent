@@ -5,6 +5,6 @@
 - **team_knowledge** — Approved shared learning governed through TeamAI. `cooptimize/coop-team-knowledge` remains in this class and is not a formal standard.
 - **project_local** — A project/client-specific standard or exception. It has the highest resolution precedence and existing v0.23.1 paths remain valid.
 - **effective standard** — The one exact file selected for a domain and passed to both the COOP agent context and the deterministic reviewer for that run.
-- **canonical standard** — The domain file from the synchronized Cooptimize formal-standards repository. The preferred remote is not provisioned; real synchronization state is `PENDING_OWNER_PROVISIONING`.
+- **canonical standard** — The domain file from the synchronized private `cooptimize/coop-standards` repository's configured authoritative `main` branch.
 - **bundled fallback** — The packaged reviewer standard used offline or when no higher-precedence standard can safely resolve.
 - **stale last-known-good** — A previously verified canonical file retained when refresh is unavailable; it must retain its source revision and hash and be reported as stale.

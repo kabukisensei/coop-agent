@@ -368,6 +368,12 @@ function Invoke-LaunchPi {
   # origin/main (throttled fetch, bounded wait — never blocks or fails the launch).
   Invoke-CoopUpdateNudge
 
+  # Bounded, noninteractive and fail-soft. Native stderr is suppressed so
+  # PowerShell 5.1 cannot turn an offline credential diagnostic into a launch error.
+  if (Test-Have 'node') {
+    try { & node (Join-Path $script:CoopRoot 'lib\standards-cli.mjs') refresh 2>$null | Out-Null } catch { }
+  }
+
   Invoke-CoopAzPreflight
 
   # A plain interactive launch with no stored provider credential should lead
@@ -560,12 +566,11 @@ function Invoke-CoopReview {
   $sqlJson = Join-Path $outdir 'coop-sql-review.json'
   $daxJson = Join-Path $outdir 'coop-dax-review.json'
   $bpaJson = Join-Path $outdir 'bpa-review.json'
-  $sqlBinding = Join-Path $outdir 'coop-sql-review.provenance.json'
-  $daxBinding = Join-Path $outdir 'coop-dax-review.provenance.json'
   $sqlRun = Join-Path $outdir ('.coop-sql-review.current.' + [System.IO.Path]::GetRandomFileName() + '.json')
   $daxRun = Join-Path $outdir ('.coop-dax-review.current.' + [System.IO.Path]::GetRandomFileName() + '.json')
-  [System.IO.File]::WriteAllText($sqlRun, '', (New-Object System.Text.UTF8Encoding($false)))
-  [System.IO.File]::WriteAllText($daxRun, '', (New-Object System.Text.UTF8Encoding($false)))
+  $sqlResolutionPath = $null; $daxResolutionPath = $null; $sqlPrev = $null; $daxPrev = $null
+  try {
+  foreach ($temp in @($sqlRun, $daxRun)) { $stream = [System.IO.File]::Open($temp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None); $stream.Dispose() }
   # A suite HTML file always describes one complete current run.
   Remove-Item -LiteralPath (Join-Path $outdir 'suite.html') -Force -ErrorAction SilentlyContinue
   $extra = @(); if ($strict) { $extra = @('--strict') }
@@ -592,19 +597,26 @@ function Invoke-CoopReview {
     if (-not $sqlPrev -and -not $daxPrev) { Coop-Info 'no previous review to compare against yet — this run becomes the baseline' }
   }
 
-  # Run into per-run files and promote only after provenance acceptance.
+  # Run both reviewers first; Node validates the complete envelopes and publishes
+  # reports plus bindings as one rollback-capable transaction.
   Coop-Head "coop-sql-review check → $sqlJson"
   & coop-sql-review check @scope --format json @sqlStandards -o $sqlRun @sqlDiff @extra
   $sqlRc = $LASTEXITCODE
   if ($sqlRc -ne 0) { Coop-Warn "coop-sql-review exited $sqlRc" }
-  $provenanceError = (& node $standardsCli verify-report $sqlResolutionPath $sqlRun 2>&1) -join "`n"
-  if ($LASTEXITCODE -eq 0) { $sqlProvenance = $true; Move-Item -LiteralPath $sqlRun -Destination $sqlJson -Force; [System.IO.File]::WriteAllText("$sqlBinding.tmp", $provenanceError, $utf8NoBom); Move-Item -LiteralPath "$sqlBinding.tmp" -Destination $sqlBinding -Force } else { Coop-Err "coop-sql-review report rejected: $provenanceError"; $sqlRc = 2; $rejected = Join-Path $outdir 'rejected'; New-Item -ItemType Directory -Force -Path $rejected | Out-Null; if (Test-Path -LiteralPath $sqlRun) { Move-Item -LiteralPath $sqlRun -Destination (Join-Path $rejected ([System.IO.Path]::GetFileName($sqlRun))) -Force } }
   Coop-Head "coop-dax-review check → $daxJson"
   & coop-dax-review check @scope --format json @daxStandards -o $daxRun @daxDiff @extra
   $daxRc = $LASTEXITCODE
   if ($daxRc -ne 0) { Coop-Warn "coop-dax-review exited $daxRc" }
-  $provenanceError = (& node $standardsCli verify-report $daxResolutionPath $daxRun 2>&1) -join "`n"
-  if ($LASTEXITCODE -eq 0) { $daxProvenance = $true; Move-Item -LiteralPath $daxRun -Destination $daxJson -Force; [System.IO.File]::WriteAllText("$daxBinding.tmp", $provenanceError, $utf8NoBom); Move-Item -LiteralPath "$daxBinding.tmp" -Destination $daxBinding -Force } else { Coop-Err "coop-dax-review report rejected: $provenanceError"; $daxRc = 2; $rejected = Join-Path $outdir 'rejected'; New-Item -ItemType Directory -Force -Path $rejected | Out-Null; if (Test-Path -LiteralPath $daxRun) { Move-Item -LiteralPath $daxRun -Destination (Join-Path $rejected ([System.IO.Path]::GetFileName($daxRun))) -Force } }
+  $savedEap = $ErrorActionPreference
+  try { $ErrorActionPreference = 'Continue'; $provenanceError = (& node $standardsCli promote-run $outdir $sqlResolutionPath $sqlRun $daxResolutionPath $daxRun 2>&1) -join "`n"; $promoteRc = $LASTEXITCODE }
+  finally { $ErrorActionPreference = $savedEap }
+  if ($promoteRc -eq 0) {
+    $sqlProvenance = $true; $daxProvenance = $true
+  } else {
+    Coop-Err "review run rejected: $provenanceError"; $sqlRc = 2; $daxRc = 2
+    $rejected = Join-Path $outdir 'rejected'; New-Item -ItemType Directory -Force -Path $rejected | Out-Null
+    foreach ($run in @($sqlRun, $daxRun)) { if ((Test-Path -LiteralPath $run -PathType Leaf) -and (Get-Item -LiteralPath $run).Length -gt 0) { Move-Item -LiteralPath $run -Destination (Join-Path $rejected ([System.IO.Path]::GetFileName($run))) -Force -ErrorAction Stop } }
+  }
   Remove-Item -LiteralPath $sqlResolutionPath,$daxResolutionPath -Force -ErrorAction SilentlyContinue
   
   $bpaRc = 0
@@ -652,11 +664,11 @@ function Invoke-CoopReview {
     }
   }
 
-  # Summary: use coop_review_core.suite to aggregate.
-  # Feed the script via stdin (single-quoted here-string, quoting-proof on Windows
-  # PowerShell 5.1 which mangles embedded double quotes in a native `-c` arg).
+  # Summary/HTML publishes only a coherent current SQL+DAX run.
   $py = Get-CoopPython
-  if ($py) {
+  if (-not $sqlProvenance -or -not $daxProvenance) {
+    Coop-Warn 'skipping suite summary/HTML because the complete review run was not accepted'
+  } elseif ($py) {
     $htmlFlag = if ($doHtml) { "1" } else { "0" }
     $suiteHtml = Join-Path $outdir "suite.html"
     $summaryPy = @'
@@ -704,6 +716,11 @@ except Exception as exc:
     if ($sqlRc -ne 0 -or $daxRc -ne 0 -or $bpaRc -ne 0) { exit 2 }
   }
   exit 0
+  } finally {
+    foreach ($temp in @($sqlRun, $daxRun, $sqlResolutionPath, $daxResolutionPath, $sqlPrev, $daxPrev)) {
+      if ($temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+    }
+  }
 }
 
 # --- Authoring scaffolders (mirror of bin/coop) ------------------------------

@@ -181,6 +181,15 @@ if (Test-CoopKnowledgeEnabled) {
   & (Join-Path $script:CoopRoot 'scripts\sync-knowledge.ps1')
 }
 
+# --- 5c. Canonical standards (forced, bounded, fail-soft) ---------------------
+if (Test-Have 'node') {
+  $standardsCli = Join-Path $script:CoopRoot 'lib\standards-cli.mjs'
+  try {
+    $standardsSync = (& node $standardsCli refresh --force 2>$null) -join ''
+    Coop-Info "canonical standards: $standardsSync"
+  } catch { Coop-Warn 'canonical standards refresh unavailable; LKG preserved' }
+}
+
 # --- 6. Brand assets ---------------------------------------------------------
 Coop-Head 'Brand assets'
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi') -PathType Leaf) { Coop-Ok 'splash present' } else { Coop-Warn 'splash.ansi missing (regenerate from the logo)' }
@@ -200,8 +209,8 @@ if ($script:SyncFailures -gt 0) {
   exit 1
 }
 
-# Canonical remote provisioning is owner-controlled. Sync never invents a URL;
-# report all three independent sources and retain verified local fallbacks.
+# Report the configured canonical source plus independent optional sources and
+# retain verified local fallbacks on any refresh failure.
 if (Test-Have 'node') {
   $standardsCli = Join-Path $env:COOP_ROOT 'lib\standards-cli.mjs'
   foreach ($line in (& node $standardsCli doctor-lines '' $PWD.Path 2>$null)) {

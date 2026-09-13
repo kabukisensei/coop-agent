@@ -21,6 +21,7 @@ PY="$(command -v python3 || command -v python)" || fail "python required for thi
 # records argv and exits with COOP_TEST_DD_RC (default 0).
 mkdir -p "$TMP/bin"
 for t in coop-sql-review coop-dax-review; do
+  schema=4; [ "$t" = coop-dax-review ] && schema=3
   cat > "$TMP/bin/$t" <<EOF
 #!/bin/sh
 echo "\$*" >> "$TMP/$t.args.log"
@@ -33,14 +34,17 @@ for a in "\$@"; do
 done
 hash=""; [ -n "\$standard" ] && hash="\$("$PY" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "\$standard")"
 if [ -n "\$out" ]; then
-  case "\${COOP_TEST_PROVENANCE_MODE:-valid}" in
+  mode="\${COOP_TEST_PROVENANCE_MODE:-valid}"
+  [ "$t" = coop-sql-review ] && mode="\${COOP_TEST_SQL_MODE:-\$mode}"
+  [ "$t" = coop-dax-review ] && mode="\${COOP_TEST_DAX_MODE:-\$mode}"
+  case "\$mode" in
     no_report) rm -f "\$out" ;;
     malformed) printf 'not-json' > "\$out" ;;
-    missing) printf '{"version":"test","findings":[]}' > "\$out" ;;
-    bad_path) printf '{"version":"test","standards":{"path":"/wrong/path","sha256":"%s"},"findings":[]}' "\$hash" > "\$out" ;;
-    bad_hash) printf '{"version":"test","standards":{"path":"%s","sha256":"%064d"},"findings":[]}' "\$standard" 0 > "\$out" ;;
-    bad_revision) printf '{"version":"test","standards":{"path":"%s","sha256":"%s","revision":7},"findings":[]}' "\$standard" "\$hash" > "\$out" ;;
-    *) printf '{"tool":"%s","version":"test","standards":{"path":"%s","sha256":"%s"},"findings":[{"severity":"warning"}],"summary":{"error":0,"warning":1,"info":0}}' "$t" "\$standard" "\$hash" > "\$out" ;;
+    missing) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" > "\$out" ;;
+    bad_path) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":"/wrong/path","sha256":"%s"},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$hash" > "\$out" ;;
+    bad_hash) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":"%s","sha256":"%064d"},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$standard" 0 > "\$out" ;;
+    bad_revision) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":"%s","sha256":"%s","revision":7},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$standard" "\$hash" > "\$out" ;;
+    *) count_key=files_checked; [ "$t" = coop-dax-review ] && count_key=models_checked; printf '{"tool":"%s","schema_version":$schema,"version":"test","%s":1,"standards":{"path":"%s","sha256":"%s"},"findings":[{"file":"fixture","line":1,"rule_id":"TEST","message":"test finding","severity":"warning"}],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":1,"info":0},"verdict":{"clean":false,"highest_severity":"warning"}}' "$t" "\$count_key" "\$standard" "\$hash" > "\$out" ;;
   esac
 fi
 exit "\$rc"
@@ -124,7 +128,7 @@ for mode in no_report malformed missing bad_path bad_hash bad_revision; do
   rc=0
   out="$(COOP_TEST_PROVENANCE_MODE="$mode" run_review --html 2>&1)" || rc=$?
   [ "$rc" -eq 2 ] || fail "$mode provenance should fail closed with exit 2 (got $rc)"
-  case "$out" in *"report rejected"*) ;; *) fail "$mode rejection diagnostic missing" ;; esac
+  case "$out" in *"run rejected"*) ;; *) fail "$mode rejection diagnostic missing" ;; esac
   cmp -s "$TMP/sql.accepted" "$TMP/proj/.coop/reviews/coop-sql-review.json" || fail "$mode replaced the accepted SQL report"
   cmp -s "$TMP/dax.accepted" "$TMP/proj/.coop/reviews/coop-dax-review.json" || fail "$mode replaced the accepted DAX report"
   cmp -s "$TMP/sql-binding.accepted" "$TMP/proj/.coop/reviews/coop-sql-review.provenance.json" || fail "$mode replaced the trusted SQL binding"
@@ -137,6 +141,21 @@ for mode in no_report malformed missing bad_path bad_hash bad_revision; do
   fi
 done
 pass "rejected reports are quarantined; accepted LKG/configured docs/suite HTML stay isolated"
+
+# 1c. One valid/one rejected is one rejected run: neither report/binding advances.
+for pair in "valid bad_hash" "bad_hash valid"; do
+  set -- $pair
+  rm -f "$TMP/coop-data-doc.args.log"
+  rc=0; out="$(COOP_TEST_SQL_MODE="$1" COOP_TEST_DAX_MODE="$2" run_review --html 2>&1)" || rc=$?
+  [ "$rc" -eq 2 ] || fail "asymmetric $pair should fail closed"
+  cmp -s "$TMP/sql.accepted" "$TMP/proj/.coop/reviews/coop-sql-review.json" || fail "asymmetric $pair advanced SQL"
+  cmp -s "$TMP/dax.accepted" "$TMP/proj/.coop/reviews/coop-dax-review.json" || fail "asymmetric $pair advanced DAX"
+  cmp -s "$TMP/sql-binding.accepted" "$TMP/proj/.coop/reviews/coop-sql-review.provenance.json" || fail "asymmetric $pair advanced SQL binding"
+  cmp -s "$TMP/dax-binding.accepted" "$TMP/proj/.coop/reviews/coop-dax-review.provenance.json" || fail "asymmetric $pair advanced DAX binding"
+  [ ! -f "$TMP/proj/.coop/reviews/suite.html" ] || fail "asymmetric $pair emitted partial suite HTML"
+  [ ! -f "$TMP/coop-data-doc.args.log" ] || fail "asymmetric $pair reached data-doc"
+done
+pass "asymmetric SQL/DAX mutation preserves one coherent accepted run"
 
 # 2. --skip-docs: linters run, data-doc is never called.
 rm -f "$TMP/coop-data-doc.args.log" "$TMP"/coop-*-review.args.log

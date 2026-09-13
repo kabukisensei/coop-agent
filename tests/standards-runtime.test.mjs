@@ -2,12 +2,15 @@ import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
 const root = mkdtempSync(join(tmpdir(), "coop-std-runtime-"));
 process.env.COOP_STANDARDS_SNAPSHOT_ROOT = join(root, "snapshots");
+process.env.COOP_STANDARDS_STATE = join(root, "status.json");
+process.env.COOP_STANDARDS_REGISTRY = join(dirname(fileURLToPath(import.meta.url)), "..", "config", "standards-registry.json");
+writeFileSync(process.env.COOP_STANDARDS_STATE, JSON.stringify({ ok: true, last_successful_check_ms: Date.now(), last_successful_sync_ms: Date.now(), revision: "fixture" }));
 const mod = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 const project = join(root, "project");
 mkdirSync(join(project, ".coop"), { recursive: true });
@@ -35,7 +38,8 @@ const pi = {
     if (reportMode === "bad_hash" && standards) standards.sha256 = "0".repeat(64);
     if (reportMode === "bad_path" && standards) standards.path = join(root, "wrong.md");
     if (reportMode === "malformed_revision" && standards) standards.revision = 7;
-    const stdout = reportMode === "malformed" ? "not-json" : JSON.stringify({ standards: reportMode === "missing" ? undefined : standards, findings: [] });
+    const reviewDomain = String(bin).includes("dax") ? "dax" : "sql";
+    const stdout = reportMode === "malformed" ? "not-json" : JSON.stringify({ tool: `coop-${reviewDomain}-review`, schema_version: reviewDomain === "dax" ? 3 : 4, version: "test", [reviewDomain === "dax" ? "models_checked" : "files_checked"]: 0, standards: reportMode === "missing" ? undefined : standards, findings: [], diagnostics: [], agent_review: [], summary: { error: 0, warning: 0, info: 0 }, verdict: { clean: true, highest_severity: null } });
     return { stdout, stderr: "reviewer diagnostic", code: 0 };
   },
 };
@@ -69,7 +73,7 @@ try {
   const semanticReview = await tools.get("dax_review").execute("3", { paths: ["model.tmdl"] }, undefined, undefined, ctx);
   assert.deepEqual(semanticReview.details.standards, semanticDax);
 
-  for (const [mode, error] of [["bad_hash", /hash mismatch/], ["bad_path", /path mismatch|cannot be verified/], ["malformed_revision", /revision claim is malformed/], ["missing", /provenance is missing/], ["malformed", /provenance is missing/]]) {
+  for (const [mode, error] of [["bad_hash", /hash mismatch/], ["bad_path", /path mismatch|cannot be verified/], ["malformed_revision", /revision claim is malformed/], ["missing", /provenance is missing/], ["malformed", /envelope is missing|provenance is missing/]]) {
     reportMode = mode;
     const rejected = await tools.get("dax_review").execute("4", { paths: ["measure.dax"] }, undefined, undefined, ctx);
     assert.equal(rejected.details.reportRejected, true, mode);

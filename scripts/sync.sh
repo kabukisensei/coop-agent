@@ -174,6 +174,12 @@ if coop_knowledge_enabled; then
   bash "$COOP_ROOT/scripts/sync-knowledge.sh" || coop_warn "team knowledge sync reported issues (continuing)"
 fi
 
+# --- 5c. Canonical standards (forced, bounded, fail-soft) ---------------------
+if have node; then
+  _standards_sync="$(node "$COOP_ROOT/lib/standards-cli.mjs" refresh --force 2>/dev/null || true)"
+  coop_info "canonical standards: ${_standards_sync:-refresh unavailable; LKG preserved}"
+fi
+
 # --- 6. Brand assets ---------------------------------------------------------
 coop_head "Brand assets"
 [ -f "$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi" ] && coop_ok "splash present" || coop_warn "splash.ansi missing (regenerate from the logo)"
@@ -186,8 +192,8 @@ if [ "$SYNC_FAILURES" -gt 0 ]; then
   exit 1
 fi
 
-# Canonical remote provisioning is owner-controlled. Sync never invents a URL;
-# report all three independent sources and retain verified local fallbacks.
+# Report the configured canonical source plus independent optional sources and
+# retain verified local fallbacks on any refresh failure.
 if have node; then
   node "$COOP_ROOT/lib/standards-cli.mjs" doctor-lines "" "$PWD" 2>/dev/null | while IFS="$(printf '\t')" read -r kind name state revision; do
     [ "$kind" = source ] && coop_info "standards source $name: $state${revision:+ @ $revision}"
