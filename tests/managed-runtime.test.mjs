@@ -333,7 +333,10 @@ await test("the offline staging command validates every release pin and never ov
     assert.match(launcher, /PI_CODING_AGENT_DIR/);
     assert.match(launcher, /COOP_MANAGED_EXTENSIONS_ROOT/);
     assert.match(launcher, /export PYTHONDONTWRITEBYTECODE=1/);
-    assert.equal(readFileSync(join(ROOT, "scripts/stage-managed-runtime.mjs"), "utf8").includes("$env:PYTHONDONTWRITEBYTECODE = '1'"), true);
+    const stageSource = readFileSync(join(ROOT, "scripts/stage-managed-runtime.mjs"), "utf8");
+    assert.equal(stageSource.includes("$env:PYTHONDONTWRITEBYTECODE = '1'"), true);
+    assert.equal(stageSource.includes("$runtimeRoot = [System.IO.Directory]::GetParent($PSScriptRoot).FullName"), true, "Windows bootstrap root resolution must avoid PowerShell cmdlet auto-loading under the native isolated environment.");
+    assert.equal(stageSource.includes("$runtimeRoot = Split-Path -Parent $PSScriptRoot"), false);
     assert.equal(existsSync(join(output, "coop/lib/__pycache__")), false);
     const launchSpec = spawnSync(join(output, "bin", "coop-desktop"), ["--no-launch"], {
       cwd: ROOT,
