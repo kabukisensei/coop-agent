@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AUTHORITY_CLASSES, CANONICAL_REMOTE_STATE, buildStandardsContext, identifyTaskDomains,
-  bindReviewerProvenance, projectStandardPaths, resolveStandard, reviewStandardsArgs, sourceStatus,
+  bindReviewerProvenance, projectStandardPaths, promoteReviewRun, resolveAcceptedReviewRun, resolveStandard, reviewStandardsArgs, sourceStatus,
   syncCanonicalLocal, validateManifest, verifyReviewerProvenance,
 } from "../lib/standards.mjs";
 
@@ -141,6 +141,20 @@ try {
       const report = reviewerReport(reviewer, record.resolution);
       assert.deepEqual(verifyReviewerProvenance(record.resolution, report), { ok: true });
     }
+  });
+
+  test("STD-07P", "accepted bundled provenance is re-derived from each reviewer contract", () => {
+    const outdir = join(tmp, "bundled-reviews"), entries = []; mkdirSync(outdir);
+    for (const [domain, reviewer] of [["sql", sqlReviewer], ["dax", daxReviewer]]) {
+      const resolution = resolveStandard(domain, opts({ cwd: tmp, canonicalRoot: join(tmp, "missing-bundled"), staleRoot: join(tmp, "missing-bundled-stale") }));
+      const report = reviewerReport(reviewer, resolution), resolutionPath = join(tmp, `bundled-${domain}-resolution.json`), reportPath = join(tmp, `bundled-${domain}-report.json`);
+      writeFileSync(resolutionPath, JSON.stringify(resolution)); writeFileSync(reportPath, JSON.stringify(report)); entries.push({ domain, resolutionPath, reportPath });
+    }
+    assert.equal(promoteReviewRun(outdir, entries, { reviewerBins }).ok, true);
+    assert.equal(resolveAcceptedReviewRun(outdir, { reviewerBins }).ok, true);
+    writeFileSync(daxBundled, readFileSync(sqlBundled));
+    assert.equal(resolveAcceptedReviewRun(outdir, { reviewerBins }).ok, false);
+    writeFileSync(daxBundled, "# DAX reviewer standard\n## Measures\nUse explicit measures and variables.\n");
   });
 
   test("STD-07F", "failed bundled discovery is truthful", () => {

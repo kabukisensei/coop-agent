@@ -181,12 +181,20 @@ The canonical remote is the private `https://github.com/cooptimize/coop-standard
 repository. Only its configured authoritative/default `main` branch is consumed. Coop
 performs a bounded, noninteractive, fail-soft refresh at launch and before applicable
 work when the last successful check is at least 15 minutes old; `coop sync` forces a
-check. A verified change atomically replaces the cache and rebuilds its retrieval index.
-Invalid, partial, offline, or authentication-failed fetches preserve the prior verified
-cache as stale last-known-good. Each task uses immutable content-addressed snapshots,
-so generation and SQL/DAX review retain one path, commit and SHA-256 even if a later
-refresh lands during that task. Doctor and Support report source, branch, successful
-check/sync times, commit, freshness, degraded state and per-domain fallback truthfully.
+check. A verified change stages and durably validates one complete immutable generation,
+then atomically switches the single active pointer and rebuilds its retrieval index.
+Invalid, partial, offline, authentication-failed, or lock-timeout refreshes preserve the
+prior verified generation as degraded/stale last-known-good. Refreshes use one
+cross-process lock, but Monday P0 never guesses that an old or malformed lock is safe
+to recover: it does not steal, rename, or delete uncertain locks. A crash-abandoned lock
+requires later/manual cleanup. Canonical and accepted-review generations are not pruned
+and readers use no leases; bounded cleanup and disk-growth management are deferred beta
+limitations. Each task uses immutable content-addressed snapshots, so generation and
+SQL/DAX review retain one path, commit and SHA-256 even if a later refresh lands during
+that task. Accepted SQL+DAX review generations also retain captured report bytes,
+COOP-owned bindings, and independently revalidated authority provenance behind one
+atomic pointer. Doctor and Support report source, branch, successful check/sync times,
+commit, SHA-256, freshness, degraded state and per-domain fallback truthfully.
 
 ### `sql_review` / `dax_review`
 

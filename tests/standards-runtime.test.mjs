@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,7 +18,8 @@ mkdirSync(join(project, "standards"));
 const sqlSource = join(project, "standards", "sql.md");
 writeFileSync(sqlSource, "# SQL\n## Stored procedures\nSchema qualify names.\n");
 writeFileSync(join(project, "standards", "dax.md"), "# DAX\n## Measures\nUse explicit measures.\n");
-writeFileSync(join(project, ".coop", "project.yml"), "standards:\n  sql: standards/sql.md\n  dax: standards/dax.md\nrepositories:\n  source:\n    local_path: .\n");
+writeFileSync(join(project, "standards", "semantic-model.md"), "# Semantic Model\n## Relationships\nUse one-to-many relationships.\n");
+writeFileSync(join(project, ".coop", "project.yml"), "standards:\n  sql: standards/sql.md\n  dax: standards/dax.md\n  semantic_model: standards/semantic-model.md\nrepositories:\n  source:\n    local_path: .\n");
 
 const handlers = new Map();
 const tools = new Map();
@@ -50,6 +51,7 @@ try {
   const sqlContext = await handlers.get("before_agent_start")({ prompt: "Implement a stored SQL procedure", systemPrompt: "base" }, ctx);
   assert.equal(sqlContext.message.customType, "coop-standards");
   assert.match(sqlContext.message.content, /Stored procedures/);
+  assert.equal(sqlContext.message.details.domains.join("|"), "sql");
   const sqlRecord = sqlContext.message.details.records.find((x) => x.resolution.domain === "sql").resolution;
   assert.equal(sqlRecord.immutable, true); assert.notEqual(sqlRecord.path, sqlRecord.source_path);
   writeFileSync(sqlSource, "# MUTATED AFTER CONTEXT");
@@ -63,15 +65,38 @@ try {
 
   const daxContext = await handlers.get("before_agent_start")({ prompt: "Validate this DAX measure", systemPrompt: "base" }, ctx);
   const daxRecord = daxContext.message.details.records.find((x) => x.resolution.domain === "dax").resolution;
+  assert.match(daxContext.message.content, /explicit measures/);
   const daxResult = await tools.get("dax_review").execute("2", { paths: ["measure.dax"] }, undefined, undefined, ctx);
   assert.deepEqual(daxResult.details.standards, daxRecord);
   assert.deepEqual(daxResult.details.args.slice(-2), ["--standards", daxRecord.path]);
 
   const semantic = await handlers.get("before_agent_start")({ prompt: "Assess semantic model relationships and DAX measures", systemPrompt: "base" }, ctx);
   assert.deepEqual(semantic.message.details.domains, ["semantic_model", "dax"]);
+  assert.match(semantic.message.content, /one-to-many relationships/);
+  assert.match(semantic.message.content, /explicit measures/);
+  const semanticModel = semantic.message.details.records.find((x) => x.resolution.domain === "semantic_model").resolution;
   const semanticDax = semantic.message.details.records.find((x) => x.resolution.domain === "dax").resolution;
+  assert.equal(semanticModel.immutable, true); assert.equal(semanticDax.immutable, true);
   const semanticReview = await tools.get("dax_review").execute("3", { paths: ["model.tmdl"] }, undefined, undefined, ctx);
   assert.deepEqual(semanticReview.details.standards, semanticDax);
+  assert.deepEqual(semanticReview.details.args.slice(-2), ["--standards", semanticDax.path]);
+
+  // The prompts above intentionally never mention standards. Optional TeamAI
+  // presence/configuration must not affect the normal Terminal standards path.
+  const baselineWithoutTeamAi = await handlers.get("before_agent_start")({ prompt: "Check this SQL query", systemPrompt: "base" }, ctx);
+  const baselineSql = baselineWithoutTeamAi.message.details.records.find((x) => x.resolution.domain === "sql").resolution;
+  const fakeBin = join(root, "fake-teamai"), sentinel = join(fakeBin, "invoked"); mkdirSync(fakeBin);
+  const fakeTeamAi = join(fakeBin, "teamai"); writeFileSync(fakeTeamAi, `#!/bin/sh\nprintf invoked > ${JSON.stringify(sentinel)}\n`); chmodSync(fakeTeamAi, 0o755);
+  const coopHome = join(root, "coop-home"); mkdirSync(join(coopHome, ".coop"), { recursive: true });
+  writeFileSync(join(coopHome, ".coop", "config"), JSON.stringify({ knowledge: { enabled: false, repos: [] } }));
+  const savedPath = process.env.PATH, savedCoopDir = process.env.COOP_DIR;
+  process.env.PATH = `${fakeBin}:${savedPath}`; process.env.COOP_DIR = coopHome;
+  const withoutTeamAi = await handlers.get("before_agent_start")({ prompt: "Check this SQL query", systemPrompt: "base" }, ctx);
+  process.env.PATH = savedPath;
+  if (savedCoopDir === undefined) delete process.env.COOP_DIR; else process.env.COOP_DIR = savedCoopDir;
+  const independentSql = withoutTeamAi.message.details.records.find((x) => x.resolution.domain === "sql").resolution;
+  assert.equal(independentSql.revision, baselineSql.revision); assert.equal(independentSql.sha256, baselineSql.sha256); assert.equal(independentSql.path, baselineSql.path);
+  assert.equal(existsSync(sentinel), false, "standards path invoked TeamAI");
 
   for (const [mode, error] of [["bad_hash", /hash mismatch/], ["bad_path", /path mismatch|cannot be verified/], ["malformed_revision", /revision claim is malformed|provenance schema is invalid/], ["missing", /provenance is missing|unknown or missing fields/], ["malformed", /envelope is missing|provenance is missing/]]) {
     reportMode = mode;

@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { bindReviewerProvenance, promoteReviewRun, resolveAcceptedReviewRun, resolveStandard, validateReviewerReport } from "../lib/standards.mjs";
@@ -54,7 +54,7 @@ try {
     }
   });
 
-  const stages = ["review:sql:report", "review:sql:binding", "review:dax:report", "review:dax:binding", "review:metadata", "review:generation", "review:before-pointer", "review:after-pointer"];
+  const stages = ["review:sql:report", "review:sql:binding", "review:sql:authority", "review:dax:report", "review:dax:binding", "review:dax:authority", "review:metadata", "review:generation", "review:before-pointer", "review:after-pointer"];
   for (const stage of stages) test(`atomic review generation survives fault at ${stage}`, () => {
     rmSync(outdir, { recursive: true, force: true }); mkdirSync(outdir); assert.equal(publish("old").ok, true);
     const old = resolveAcceptedReviewRun(outdir); const result = publish("new", { fault: stage }); assert.equal(result.ok, false);
@@ -66,7 +66,7 @@ try {
   });
 
   test("abrupt process death before/after pointer leaves one complete accepted set", () => {
-    for (const stage of ["review:sql:report", "review:dax:binding", "review:metadata", "review:generation", "review:before-pointer", "review:after-pointer"]) {
+    for (const stage of ["review:sql:report", "review:sql:authority", "review:dax:binding", "review:dax:authority", "review:metadata", "review:generation", "review:before-pointer", "review:after-pointer"]) {
       rmSync(outdir, { recursive: true, force: true }); mkdirSync(outdir); assert.equal(publish("old").ok, true);
       const entries = writeInputs("new");
       const script = `import {promoteReviewRun} from ${JSON.stringify(new URL("../lib/standards.mjs", import.meta.url).href)}; const entries=${JSON.stringify(entries)}; promoteReviewRun(${JSON.stringify(outdir)},entries,{fault:(s)=>{if(s===${JSON.stringify(stage)})process.exit(77)}});`;
@@ -104,6 +104,33 @@ try {
     }
     writeFileSync(metadataPath, JSON.stringify(metadata)); pointer.metadata_sha256 = h(readFileSync(metadataPath)); writeFileSync(pointerPath, JSON.stringify(pointer));
     assert.equal(resolveAcceptedReviewRun(outdir).ok, false);
+  });
+  test("accepted reader rejects independently ungrounded domain/revision forgery", () => {
+    rmSync(outdir, { recursive: true, force: true }); mkdirSync(outdir); assert.equal(publish("authority-forgery").ok, true);
+    const active = resolveAcceptedReviewRun(outdir), pointerPath = join(outdir, "active-review-generation.json"), pointer = JSON.parse(readFileSync(pointerPath));
+    const metadataPath = join(active.generation, "generation.json"), metadata = JSON.parse(readFileSync(metadataPath));
+    const sqlAuthority = JSON.parse(readFileSync(join(active.generation, metadata.files.sql_authority.file)));
+    for (const domain of ["sql", "dax"]) {
+      const reportPath = join(active.generation, metadata.files[`${domain}_report`].file), report = JSON.parse(readFileSync(reportPath));
+      const bindingPath = join(active.generation, metadata.files[`${domain}_binding`].file), binding = JSON.parse(readFileSync(bindingPath));
+      const authorityPath = join(active.generation, metadata.files[`${domain}_authority`].file);
+      report.standards.path = sqlAuthority.immutable_path; report.standards.sha256 = sqlAuthority.sha256;
+      binding.path = sqlAuthority.immutable_path; binding.sha256 = sqlAuthority.sha256; binding.revision = "invented-revision-not-derived-from-any-resolver";
+      const authority = { ...sqlAuthority, domain, revision: binding.revision };
+      writeFileSync(reportPath, JSON.stringify(report)); writeFileSync(bindingPath, JSON.stringify(binding)); writeFileSync(authorityPath, JSON.stringify(authority));
+      metadata.files[`${domain}_report`].sha256 = h(readFileSync(reportPath)); metadata.files[`${domain}_binding`].sha256 = h(readFileSync(bindingPath)); metadata.files[`${domain}_authority`].sha256 = h(readFileSync(authorityPath));
+      metadata.standards_bindings[domain] = { path: binding.path, sha256: binding.sha256, revision: binding.revision };
+    }
+    writeFileSync(metadataPath, JSON.stringify(metadata)); pointer.metadata_sha256 = h(readFileSync(metadataPath)); writeFileSync(pointerPath, JSON.stringify(pointer));
+    const rejected = resolveAcceptedReviewRun(outdir); assert.equal(rejected.ok, false); assert.match(rejected.error, /independent|authority provenance/);
+  });
+  test("accepted review generations are never pruned and require no reader lease", () => {
+    rmSync(outdir, { recursive: true, force: true }); mkdirSync(outdir); assert.equal(publish("retained-old").ok, true);
+    const old = resolveAcceptedReviewRun(outdir); assert.equal(old.ok, true);
+    for (const tag of ["retained-new-1", "retained-new-2", "retained-new-3"]) assert.equal(publish(tag, { retainReviewGenerations: 1, reviewRetentionMinAgeMs: 0 }).ok, true);
+    assert.equal(existsSync(old.reports.sql), true); assert.equal(existsSync(old.reports.dax), true);
+    assert.equal(existsSync(join(old.generation, ".consumption-lease.json")), false);
+    assert.equal(readdirSync(join(outdir, "accepted-generations")).filter((name) => !name.startsWith(".")).length, 4);
   });
   test("unsafe review pointer and symlink root fail closed", () => {
     const pointer = join(outdir, "active-review-generation.json"), saved = readFileSync(pointer), real = `${pointer}.real`; writeFileSync(real, saved); rmSync(pointer); symlinkSync(real, pointer); assert.equal(resolveAcceptedReviewRun(outdir).ok, false);

@@ -1,11 +1,11 @@
 import { strict as assert } from "node:assert";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { activeCanonicalGeneration, fsyncDirectory, pinStandardsTask, refreshCanonical, resolveStandard, standardsRegistry } from "../lib/standards.mjs";
+import { activeCanonicalGeneration, fsyncDirectory, pinStandardsTask, promoteReviewRun, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "coop-standards-live-"));
@@ -67,6 +67,10 @@ try {
       const childOptions = { canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, remote, force: true };
       const script = `import {refreshCanonical} from ${JSON.stringify(new URL("../lib/standards.mjs", import.meta.url).href)}; refreshCanonical({...${JSON.stringify(childOptions)},fault:(s)=>{if(s===${JSON.stringify(step)})process.exit(77)}});`;
       const child = spawnSync(process.execPath, ["--input-type=module", "-e", script]); assert.equal(child.status, 77, step);
+      const abandonedLock = join(tmp, "cache", ".canonical-storage.lock");
+      const degraded = activeCanonicalGeneration(options({ lockTimeoutMs: 25 })); assert.equal(degraded.ok, true, step); assert.equal(degraded.degraded, true, step);
+      assert.equal(existsSync(abandonedLock), true, `${step}: crash-abandoned lock was removed`);
+      rmSync(abandonedLock, { recursive: true }); // explicit fixture/manual cleanup
       const active = activeCanonicalGeneration(options()); assert.equal(active.ok, true, step);
       assert.equal(active.revision, ["canonical:after-pointer", "canonical:before-state", "canonical:after-state"].includes(step) ? r2 : r1, step);
       assert.equal(JSON.parse(readFileSync(active.index)).revision, active.revision, step);
@@ -113,6 +117,55 @@ try {
     const sql = lazy.resolve("sql"); assert.equal(fetches, 1); assert.equal(lazy.taskPin.revision, r3);
     writeCanonical("r4"); commit("r4");
     const dax = lazy.resolve("dax"); assert.equal(fetches, 1); assert.equal(dax.revision, r3); assert.match(readFileSync(sql.path, "utf8"), /r3/); assert.match(readFileSync(dax.path, "utf8"), /r3/);
+  });
+  test("canonical generations are never pruned by the Monday refresh path", () => {
+    writeCanonical("retained-old"); commit("retained-old"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const old = activeCanonicalGeneration(options()); assert.equal(old.ok, true);
+    for (const tag of ["retained-new-1", "retained-new-2", "retained-new-3"]) {
+      writeCanonical(tag); commit(tag); now += 1;
+      assert.equal(refreshCanonical(options({ force: true, retainGenerations: 1, canonicalRetentionMinAgeMs: 0 })).ok, true);
+    }
+    assert.equal(existsSync(old.checkout), true); assert.equal(existsSync(old.index), true);
+    assert.equal(existsSync(join(old.generation, ".consumption-lease.json")), false);
+    assert.equal(readdirSync(join(tmp, "cache", "canonical-generations")).filter((name) => !name.startsWith(".")).length >= 4, true);
+  });
+  test("uncertain or abandoned canonical lock returns degraded LKG without touching the lock", () => {
+    const old = activeCanonicalGeneration(options()); assert.equal(old.ok, true);
+    const lock = join(tmp, "cache", ".canonical-storage.lock"), owner = "{}\n";
+    mkdirSync(lock); writeFileSync(join(lock, "owner.json"), owner);
+    const failed = refreshCanonical(options({ force: true, lockTimeoutMs: 25 }));
+    assert.equal(failed.ok, false); assert.equal(failed.state, "stale_last_known_good"); assert.equal(failed.degraded, true); assert.equal(failed.uncertain, true);
+    assert.equal(failed.revision, old.revision); assert.equal(failed.generation_id, old.generation_id);
+    assert.equal(readFileSync(join(lock, "owner.json"), "utf8"), owner);
+    const status = sourceStatus(options({ lockTimeoutMs: 25 }));
+    assert.equal(status.degraded, true); assert.equal(status.freshness, "uncertain");
+    assert.equal(status.sources[0].revision, old.revision); assert.equal(status.sources[0].state, "stale_last_known_good");
+    assert.equal(status.domains.sql.revision, old.revision); assert.equal(status.domains.sql.sha256, old.domains.sql.sha256); assert.equal(status.domains.sql.state, "stale_last_known_good");
+    const pin = pinStandardsTask(["sql"], options({ refresh: false, lockTimeoutMs: 25 }));
+    assert.equal(pin.resolutions[0].revision, old.revision); assert.equal(pin.resolutions[0].sha256, old.domains.sql.sha256);
+    assert.equal(pin.resolutions[0].state, "stale_last_known_good"); assert.equal(pin.resolutions[0].degraded, true);
+    rmSync(lock, { recursive: true });
+  });
+  test("accepted canonical provenance maps to its retained immutable generation", () => {
+    const outdir = join(tmp, "canonical-reviews"); mkdirSync(outdir);
+    const entries = [];
+    for (const domain of ["sql", "dax"]) {
+      const resolution = resolveStandard(domain, options({ cwd: tmp, refresh: false }));
+      const report = { tool: `coop-${domain}-review`, schema_version: domain === "sql" ? 4 : 3, version: "canonical-test", [domain === "sql" ? "files_checked" : "models_checked"]: 0,
+        standards: { path: resolution.path, sha256: resolution.sha256 }, findings: [], diagnostics: [], agent_review: [], summary: { error: 0, warning: 0, info: 0 }, verdict: { clean: true, highest_severity: null } };
+      const resolutionPath = join(tmp, `canonical-${domain}-resolution.json`), reportPath = join(tmp, `canonical-${domain}-report.json`);
+      writeFileSync(resolutionPath, JSON.stringify(resolution)); writeFileSync(reportPath, JSON.stringify(report)); entries.push({ domain, resolutionPath, reportPath });
+    }
+    assert.equal(promoteReviewRun(outdir, entries, options()).ok, true);
+    writeCanonical("after-canonical-review"); commit("after-canonical-review"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const accepted = resolveAcceptedReviewRun(outdir, options()); assert.equal(accepted.ok, true, JSON.stringify(accepted));
+    assert.equal(JSON.parse(readFileSync(accepted.reports.sql)).version, "canonical-test");
+    const acceptedMetadata = JSON.parse(readFileSync(join(accepted.generation, "generation.json")));
+    const authority = JSON.parse(readFileSync(join(accepted.generation, acceptedMetadata.files.sql_authority.file)));
+    writeFileSync(join(dirname(authority.source_root), "generation.json"), "{}\n");
+    assert.equal(resolveAcceptedReviewRun(outdir, options()).ok, false);
   });
   test("remote-main binding rejects a clean local descendant and missing authoritative ref", () => {
     const active = activeCanonicalGeneration(options()); assert.equal(active.ok, true);
