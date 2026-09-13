@@ -430,7 +430,7 @@ if have node; then
   while IFS="$(printf '\t')" read -r _kind _name _state _detail; do
     [ -n "$_name" ] || continue
     case "$_state" in
-      *unavailable*|*auth_required*|PENDING_OWNER_PROVISIONING) warn "$_kind $_name: $_state" "${_detail:-standards remain fail-soft}" ;;
+      *unavailable*|*auth_required*|*dirty_preserved*|*invalid_preserved*|*stale_last_known_good*|PENDING_OWNER_PROVISIONING) warn "$_kind $_name: $_state" "${_detail:-standards remain fail-soft}" ;;
       *) ok "$_kind $_name: $_state${_detail:+ @ $_detail}" ;;
     esac
   done <<EOF

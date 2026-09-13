@@ -1,50 +1,76 @@
 import { strict as assert } from "node:assert";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
-const mod = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 const root = mkdtempSync(join(tmpdir(), "coop-std-runtime-"));
+process.env.COOP_STANDARDS_SNAPSHOT_ROOT = join(root, "snapshots");
+const mod = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 const project = join(root, "project");
 mkdirSync(join(project, ".coop"), { recursive: true });
 mkdirSync(join(project, "standards"));
-writeFileSync(join(project, "standards", "sql.md"), "# SQL\n## Stored procedures\nSchema qualify names.\n");
+const sqlSource = join(project, "standards", "sql.md");
+writeFileSync(sqlSource, "# SQL\n## Stored procedures\nSchema qualify names.\n");
 writeFileSync(join(project, "standards", "dax.md"), "# DAX\n## Measures\nUse explicit measures.\n");
 writeFileSync(join(project, ".coop", "project.yml"), "standards:\n  sql: standards/sql.md\n  dax: standards/dax.md\nrepositories:\n  source:\n    local_path: .\n");
 
 const handlers = new Map();
 const tools = new Map();
 const executions = [];
+let mismatch = false;
 const pi = {
   on(name, fn) { handlers.set(name, fn); },
   registerTool(tool) { tools.set(tool.name, tool); },
   registerCommand() {},
   sendUserMessage() {},
-  async exec(bin, args) { executions.push({ bin, args }); return { stdout: '{"findings":[]}', stderr: "", code: 0 }; },
+  async exec(bin, args) {
+    executions.push({ bin, args });
+    const index = args.indexOf("--standards");
+    const path = index >= 0 ? args[index + 1] : null;
+    const sha256 = path ? createHash("sha256").update(readFileSync(path)).digest("hex") : null;
+    return { stdout: JSON.stringify({ standards: path ? { path, sha256: mismatch ? "0".repeat(64) : sha256 } : undefined, findings: [] }), stderr: "", code: 0 };
+  },
 };
 const ctx = { cwd: project, hasUI: false, mode: "rpc", ui: { setStatus() {}, notify() {} } };
 
 try {
   mod.default(pi);
-  const sqlContext = await handlers.get("before_agent_start")({ prompt: "Write a stored procedure", systemPrompt: "base" }, ctx);
+  const sqlContext = await handlers.get("before_agent_start")({ prompt: "Implement a stored SQL procedure", systemPrompt: "base" }, ctx);
   assert.equal(sqlContext.message.customType, "coop-standards");
   assert.match(sqlContext.message.content, /Stored procedures/);
   const sqlRecord = sqlContext.message.details.records.find((x) => x.resolution.domain === "sql").resolution;
+  assert.equal(sqlRecord.immutable, true); assert.notEqual(sqlRecord.path, sqlRecord.source_path);
+  writeFileSync(sqlSource, "# MUTATED AFTER CONTEXT");
   const sqlResult = await tools.get("sql_review").execute("1", { paths: ["query.sql"] }, undefined, undefined, ctx);
   assert.deepEqual(sqlResult.details.standards, sqlRecord);
   assert.deepEqual(sqlResult.details.args.slice(-2), ["--standards", sqlRecord.path]);
+  assert.equal(sqlResult.details.reportRejected, undefined);
+  assert.match(readFileSync(sqlRecord.path, "utf8"), /Schema qualify names/);
 
-  const daxContext = await handlers.get("before_agent_start")({ prompt: "Repair this DAX measure", systemPrompt: "base" }, ctx);
+  const daxContext = await handlers.get("before_agent_start")({ prompt: "Validate this DAX measure", systemPrompt: "base" }, ctx);
   const daxRecord = daxContext.message.details.records.find((x) => x.resolution.domain === "dax").resolution;
   const daxResult = await tools.get("dax_review").execute("2", { paths: ["measure.dax"] }, undefined, undefined, ctx);
   assert.deepEqual(daxResult.details.standards, daxRecord);
   assert.deepEqual(daxResult.details.args.slice(-2), ["--standards", daxRecord.path]);
 
-  const unrelated = await handlers.get("before_agent_start")({ prompt: "What time is the meeting?", systemPrompt: "base" }, ctx);
+  const semantic = await handlers.get("before_agent_start")({ prompt: "Assess semantic model relationships and DAX measures", systemPrompt: "base" }, ctx);
+  assert.deepEqual(semantic.message.details.domains, ["semantic_model", "dax"]);
+  const semanticDax = semantic.message.details.records.find((x) => x.resolution.domain === "dax").resolution;
+  const semanticReview = await tools.get("dax_review").execute("3", { paths: ["model.tmdl"] }, undefined, undefined, ctx);
+  assert.deepEqual(semanticReview.details.standards, semanticDax);
+
+  mismatch = true;
+  const rejected = await tools.get("dax_review").execute("4", { paths: ["measure.dax"] }, undefined, undefined, ctx);
+  assert.equal(rejected.details.reportRejected, true);
+  assert.match(rejected.details.provenanceError, /hash mismatch/);
+  assert.equal(Object.hasOwn(rejected.details, "report"), false);
+
+  const unrelated = await handlers.get("before_agent_start")({ prompt: "Review this Power Query transformation", systemPrompt: "base" }, ctx);
   assert.equal(unrelated, undefined);
-  console.log("  ✓ automatic prompt context and native SQL/DAX reviewer same-source runtime wiring");
+  console.log("  ✓ automatic SQL/DAX/semantic-model context uses immutable reviewer-verified snapshots and rejects mismatches");
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

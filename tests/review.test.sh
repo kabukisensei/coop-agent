@@ -61,7 +61,7 @@ repositories:
 EOF
 
 run_review() {  # [extra coop args...] — runs `coop review` from $TMP/proj with the shims first on PATH
-  ( cd "$TMP/proj" && PATH="$TMP/bin:$PATH" NO_COLOR=1 bash "$ROOT/bin/coop" review "$@" )
+  ( cd "$TMP/proj" && PATH="$TMP/bin:$PATH" NO_COLOR=1 COOP_STANDARDS_SNAPSHOT_ROOT="$TMP/snapshots" bash "$ROOT/bin/coop" review "$@" )
 }
 
 # 1. Contract scope: both JSON reports land in .coop/reviews/, the resolved repo
@@ -78,8 +78,12 @@ for t in coop-sql-review coop-dax-review; do
   grep -q -- "TODO" "$TMP/$t.args.log" && fail "$t was handed a TODO placeholder path"
   grep -q -- "no-such-dir" "$TMP/$t.args.log" && fail "$t was handed a missing path"
 done
-grep -q -- "--standards $TMP/proj/standards/sql.md" "$TMP/coop-sql-review.args.log" || fail "SQL aggregate review did not get the resolved SQL standard"
-grep -q -- "--standards $TMP/proj/standards/dax.md" "$TMP/coop-dax-review.args.log" || fail "DAX aggregate review did not get the resolved DAX standard"
+sql_snapshot="$("$PY" -c 'import sys; a=open(sys.argv[1]).read().split(); print(a[a.index("--standards")+1])' "$TMP/coop-sql-review.args.log")"
+dax_snapshot="$("$PY" -c 'import sys; a=open(sys.argv[1]).read().split(); print(a[a.index("--standards")+1])' "$TMP/coop-dax-review.args.log")"
+case "$sql_snapshot" in "$TMP"/snapshots/*-sql.md) ;; *) fail "SQL aggregate review did not get an immutable snapshot" ;; esac
+case "$dax_snapshot" in "$TMP"/snapshots/*-dax.md) ;; *) fail "DAX aggregate review did not get an immutable snapshot" ;; esac
+cmp -s "$sql_snapshot" "$TMP/proj/standards/sql.md" || fail "SQL snapshot is not byte-identical to the project standard"
+cmp -s "$dax_snapshot" "$TMP/proj/standards/dax.md" || fail "DAX snapshot is not byte-identical to the project standard"
 grep -q -- "build --non-interactive" "$TMP/coop-data-doc.args.log" || fail "data-doc build --non-interactive not invoked"
 grep -q -- "--reviews $TMP/proj/.coop/reviews/coop-sql-review.json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the sql --reviews file"
 grep -q -- "--reviews $TMP/proj/.coop/reviews/coop-dax-review.json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the dax --reviews file"

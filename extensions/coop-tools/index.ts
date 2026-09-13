@@ -39,6 +39,7 @@ import {
   resolveStandard,
   reviewStandardsArgs,
   sourceStatus,
+  verifyReviewerProvenance,
 } from "../../lib/standards.mjs";
 
 const SEVERITY = Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info")]);
@@ -1920,6 +1921,13 @@ export default function coopTools(pi: ExtensionAPI) {
     } catch {
       /* leave parsed null */
     }
+    const provenance = verifyReviewerProvenance(standards, parsed);
+    if (!provenance.ok) {
+      return {
+        content: [{ type: "text" as const, text: `${bin} output rejected: ${provenance.error}. Same-source validation failed closed.` }],
+        details: { tool: bin, args, scope, scopeNotes, standards, exitCode: res.code, reportRejected: true, provenanceError: provenance.error, stderr: res.stderr },
+      };
+    }
     const scopeLine = `Scope: ${scope}${scopeNotes} — ${paths.join(", ")}`;
     return {
       content: [{ type: "text" as const, text: `${summarizeReview(bin, parsed, res.stdout, res.code)}\n${scopeLine}` }],
@@ -2149,6 +2157,7 @@ export default function coopTools(pi: ExtensionAPI) {
   const missedLogAt = new Map<string, number>();
 
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
+    operationStandards = new Map();
     try {
       const cwd: string = ctx.cwd;
       const standardsContext = buildStandardsContext(event.prompt || "", { cwd });

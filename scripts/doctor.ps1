@@ -504,7 +504,7 @@ if (Test-Have 'node') {
     $parts = $line -split "`t", 4
     if ($parts.Count -lt 3) { continue }
     $kind = $parts[0]; $name = $parts[1]; $state = $parts[2]; $detail = if ($parts.Count -gt 3) { $parts[3] } else { '' }
-    if ($state -match 'unavailable|auth_required|PENDING_OWNER_PROVISIONING') { D-Warn "$kind ${name}: $state" $(if ($detail) { $detail } else { 'standards remain fail-soft' }) }
+    if ($state -match 'unavailable|auth_required|dirty_preserved|invalid_preserved|stale_last_known_good|PENDING_OWNER_PROVISIONING') { D-Warn "$kind ${name}: $state" $(if ($detail) { $detail } else { 'standards remain fail-soft' }) }
     else { D-Ok "$kind ${name}: $state$(if ($detail) { " @ $detail" } else { '' })" }
   }
 } else {
