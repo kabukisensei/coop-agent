@@ -4,12 +4,19 @@ const { writeFileSync } = require("node:fs");
 const { createRequire } = require("node:module");
 const { resolve } = require("node:path");
 
+function hashText(value) { return createHash("sha256").update(value).digest("hex"); }
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
   return JSON.stringify(value);
 }
-function sha256(value) { return createHash("sha256").update(canonicalJson(value)).digest("hex"); }
+function describe(value) {
+  if (typeof value === "function") return { functionSha256: hashText(Function.prototype.toString.call(value)) };
+  if (Array.isArray(value)) return value.map(describe);
+  if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map(key => [key, describe(value[key])]));
+  return value;
+}
+function valueSha256(value) { return hashText(canonicalJson(value)); }
 
 async function main() {
   const projectDir = resolve("desktop");
@@ -18,23 +25,29 @@ async function main() {
   if (!output) throw new Error("EFFECTIVE_CONFIG_OUT is required.");
   const sourceRequire = createRequire(configPath);
   const electronBuilder = sourceRequire("electron-builder");
-  const beforeConfig = structuredClone(sourceRequire(configPath));
+  const beforeConfig = sourceRequire(configPath);
   if (!beforeConfig.nsis || Object.hasOwn(beforeConfig.nsis, "useZip")) throw new Error("Expected candidate NSIS config without useZip.");
-  const afterConfig = structuredClone(beforeConfig);
-  afterConfig.nsis.useZip = true;
-  const afterWithoutTreatment = structuredClone(afterConfig);
-  delete afterWithoutTreatment.nsis.useZip;
-  if (canonicalJson(beforeConfig) !== canonicalJson(afterWithoutTreatment)) throw new Error("Treatment changed more than nsis.useZip.");
+  const afterConfig = { ...beforeConfig, nsis: { ...beforeConfig.nsis, useZip: true } };
+  const beforeKeys = Reflect.ownKeys(beforeConfig);
+  const afterKeys = Reflect.ownKeys(afterConfig);
+  if (canonicalJson(beforeKeys) !== canonicalJson(afterKeys)) throw new Error("Treatment changed top-level config keys.");
+  for (const key of beforeKeys) if (key !== "nsis" && beforeConfig[key] !== afterConfig[key]) throw new Error(`Treatment changed non-NSIS config property: ${String(key)}`);
+  const afterNsis = { ...afterConfig.nsis };
+  delete afterNsis.useZip;
+  if (canonicalJson(beforeConfig.nsis) !== canonicalJson(afterNsis)) throw new Error("Treatment changed more than nsis.useZip.");
+  const beforeDescriptor = describe(beforeConfig);
+  const afterDescriptor = describe(afterConfig);
   writeFileSync(output, `${JSON.stringify({
     schemaVersion: 1,
     diagnosticOnly: true,
     treatment: "nsis.useZip=true",
-    beforeSha256: sha256(beforeConfig),
-    afterSha256: sha256(afterConfig),
-    beforeConfig,
-    afterConfig,
+    beforeSha256: valueSha256(beforeDescriptor),
+    afterSha256: valueSha256(afterDescriptor),
+    beforeConfigDescriptor: beforeDescriptor,
+    afterConfigDescriptor: afterDescriptor,
     beforeNsis: beforeConfig.nsis,
     afterNsis: afterConfig.nsis,
+    nonNsisPropertiesIdenticalByReference: true,
     onlyDifferenceConfirmed: true,
   }, null, 2)}\n`);
   await electronBuilder.build({

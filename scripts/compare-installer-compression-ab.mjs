@@ -31,7 +31,7 @@ function rootMetrics(report) {
 function classify(report) {
   if (report.decision === "FIRST_INSTALL_COMPLETE" && report.ok === true) return "FIRST_INSTALL_COMPLETE";
   if (report.process?.exceededBound !== true) return "INSTALLER_INCONCLUSIVE";
-  const metrics = rootMetrics(report).filter(item => item.elapsedMs >= report.boundMs - 45000);
+  const metrics = rootMetrics(report).filter(item => item.elapsedMs >= report.boundMs - 45000 && item.elapsedMs <= report.boundMs + 15000);
   const last = metrics.at(-1);
   const intervals = metrics.slice(1).map((item, index) => {
     const previous = metrics[index];
@@ -40,7 +40,7 @@ function classify(report) {
     const ioDelta = sameProcess ? (item.process.metrics.readBytes + item.process.metrics.writeBytes) - (previous.process.metrics.readBytes + previous.process.metrics.writeBytes) : 0;
     return { sameProcess, cpuDelta, ioDelta };
   });
-  const activeNearBound = metrics.length >= 4 && last?.elapsedMs >= report.boundMs - 15000 && intervals.length >= 3 && intervals.every(interval => interval.sameProcess && interval.cpuDelta > 0 && interval.ioDelta > 0);
+  const activeNearBound = metrics.length >= 4 && Math.abs(last?.elapsedMs - report.boundMs) <= 15000 && intervals.length >= 3 && intervals.every(interval => interval.sameProcess && interval.cpuDelta > 0 && interval.ioDelta > 0);
   if (activeNearBound) return "INSTALLER_TOO_SLOW_FOR_ACCEPTANCE";
   const material = (report.samples || []).some(sample => ["executable", "appAsar", "managedRuntime"].some(name => sample.files?.[name]?.exists));
   const registry = (report.samples || []).some(sample => (sample.registry?.count || 0) > 0);
@@ -65,17 +65,18 @@ for (const key of ["managedConfigSha256", "installerConfigSha256"]) if (ci.nsisC
 for (const key of ["releaseManifestSha256", "developmentCompanionsSha256", "desktopPackageLockSha256", "managedRuntimeManifestSha256", "managedRuntimeInventorySha256", "packagedAppAsarSha256", "packagedExecutableSha256"]) if (ci.checksums[key] !== ti.checksums[key]) fail(`A/B product/runtime input mismatch: ${key}.`);
 if (effective.diagnosticOnly !== true || effective.treatment !== "nsis.useZip=true" || effective.onlyDifferenceConfirmed !== true) fail("Effective treatment config evidence invalid.");
 if (ti.checksums.effectiveConfigSha256 !== fileSha256(options["effective-config"]) || ci.checksums.effectiveConfigSha256 !== null) fail("Effective config evidence is not bound to treatment identity only.");
-if (valueSha256(effective.beforeConfig) !== effective.beforeSha256 || valueSha256(effective.afterConfig) !== effective.afterSha256) fail("Effective config hashes do not match their recorded values.");
+if (valueSha256(effective.beforeConfigDescriptor) !== effective.beforeSha256 || valueSha256(effective.afterConfigDescriptor) !== effective.afterSha256) fail("Effective config descriptor hashes do not match their recorded values.");
 if (Object.hasOwn(effective.beforeNsis, "useZip") || effective.afterNsis?.useZip !== true) fail("Effective treatment did not add exactly useZip=true.");
-if (canonicalJson(effective.beforeNsis) !== canonicalJson(effective.beforeConfig?.nsis) || canonicalJson(effective.afterNsis) !== canonicalJson(effective.afterConfig?.nsis)) fail("Effective NSIS views do not match full configs.");
-const beforeComparable = structuredClone(effective.beforeConfig);
-const afterComparable = structuredClone(effective.afterConfig);
+if (canonicalJson(effective.beforeNsis) !== canonicalJson(effective.beforeConfigDescriptor?.nsis) || canonicalJson(effective.afterNsis) !== canonicalJson(effective.afterConfigDescriptor?.nsis)) fail("Effective NSIS views do not match config descriptors.");
+if (effective.nonNsisPropertiesIdenticalByReference !== true) fail("Wrapper did not confirm non-NSIS identity preservation.");
+const beforeComparable = structuredClone(effective.beforeConfigDescriptor);
+const afterComparable = structuredClone(effective.afterConfigDescriptor);
 delete afterComparable.nsis.useZip;
 if (canonicalJson(beforeComparable) !== canonicalJson(afterComparable)) fail("Effective builder config differs beyond useZip.");
-const controlArchives = ci.characteristics?.installerArchive?.filter(item => /\\app-64\.7z$/i.test(item.path) && item.folder === false) || [];
-const treatmentArchives = ti.characteristics?.installerArchive?.filter(item => /\\app-64\.zip$/i.test(item.path) && item.folder === false) || [];
-if (controlArchives.length !== 1 || treatmentArchives.length !== 1) fail("Built installers do not contain exactly one expected LZMA/ZIP application archive.");
-if (ci.characteristics.installerArchive.some(item => /\\app-64\.zip$/i.test(item.path)) || ti.characteristics.installerArchive.some(item => /\\app-64\.7z$/i.test(item.path))) fail("Built installer contains opposite-arm application archive format.");
+const controlArchives = ci.characteristics?.installerArchive?.filter(item => item.path === "$PLUGINSDIR\\app-64.7z" && item.folder === false) || [];
+const treatmentArchives = ti.characteristics?.installerArchive?.filter(item => item.path === "$PLUGINSDIR\\app-64.zip" && item.folder === false) || [];
+if (controlArchives.length !== 1 || treatmentArchives.length !== 1) fail("Built installers do not contain exactly one expected $PLUGINSDIR application archive.");
+if (ci.characteristics.installerArchive.some(item => /(^|[\\/])app-64\.zip$/i.test(item.path)) || ti.characteristics.installerArchive.some(item => /(^|[\\/])app-64\.7z$/i.test(item.path))) fail("Built installer contains opposite-arm application archive format.");
 
 const controlClassification = classify(cp);
 const treatmentClassification = classify(tp);
