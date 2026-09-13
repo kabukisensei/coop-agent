@@ -425,6 +425,21 @@ else
   warn "no MCP config found" "coop sync   (writes a read-only fabric/powerbi/learn config)"
 fi
 
+section "Standards"
+if have node; then
+  while IFS="$(printf '\t')" read -r _kind _name _state _detail; do
+    [ -n "$_name" ] || continue
+    case "$_state" in
+      *unavailable*|*auth_required*|*dirty_preserved*|*invalid_preserved*|*stale_last_known_good*|PENDING_OWNER_PROVISIONING) warn "$_kind $_name: $_state" "${_detail:-standards remain fail-soft}" ;;
+      *) ok "$_kind $_name: $_state${_detail:+ @ $_detail}" ;;
+    esac
+  done <<EOF
+$(node "$COOP_ROOT/lib/standards-cli.mjs" doctor-lines "" "$PWD" 2>/dev/null)
+EOF
+else
+  warn "standards status unavailable" "Node is required to discover and verify any SQL/DAX bundled fallback"
+fi
+
 section "Optional"
 check az optional "Azure CLI for Fabric/Power BI auth: https://learn.microsoft.com/cli/azure"
 check jq optional "nice-to-have for JSON in your own scripts (coop uses python3)"

@@ -33,8 +33,18 @@ import { StringDecoder } from "node:string_decoder";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import {
+  buildStandardsContext,
+  provenanceText,
+  reviewStandardsArgs,
+  sourceStatus,
+  bindReviewerProvenance,
+} from "../../lib/standards.mjs";
 
 const SEVERITY = Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info")]);
+type StandardsBindingResult =
+  | { ok: true; binding: { owner: "coop"; path: string; sha256: string; revision: string } }
+  | { ok: false; error: string };
 
 const REVIEW_PARAMS = Type.Object({
   paths: Type.Optional(
@@ -1413,6 +1423,7 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "standards:",
     "  sql: 'docs/standards/sql-standards.md'",
     "  dax: 'docs/standards/dax-standards.md'",
+    "  semantic_model: 'docs/standards/semantic-model-standards.md'",
     "  documentation: 'docs/standards/documentation-standards.md'",
     "  fabric: 'docs/standards/fabric-standards.md'",
     "",
@@ -1852,6 +1863,11 @@ async function showStartMenu(pi: ExtensionAPI, ctx: any): Promise<void> {
 }
 
 export default function coopTools(pi: ExtensionAPI) {
+  // One immutable resolution record per domain/agent operation. The task hook
+  // creates it before work starts; the deterministic reviewer consumes the
+  // same object rather than resolving again mid-operation.
+  let operationStandards = new Map<string, any>();
+  let operationStandardsResolve: ((domain: string) => any) | null = null;
   const runReview = async (
     bin: string,
     params: ReviewParams,
@@ -1885,12 +1901,17 @@ export default function coopTools(pi: ExtensionAPI) {
     // Neutralize argument injection: a model-supplied path starting with "-" would be
     // read as a CLI flag by the review tool. Prefix "./" so it stays a positional path.
     const paths = rawPaths.map((p) => (String(p).startsWith("-") ? "./" + p : p));
-    const args = ["check", ...paths, "--format", "json"];
+    const domain = bin === "coop-sql-review" ? "sql" : "dax";
+    const standards = operationStandards.get(domain) || operationStandardsResolve?.(domain) || { domain, authority_class: "formal_standard", state: "unavailable", path: null, revision: null, sha256: null, source: "task-resolver-unavailable" };
+    operationStandards.set(domain, standards);
+    const args = ["check", ...paths, "--format", "json", ...reviewStandardsArgs(standards)];
     if (params.min_severity) args.push("--min-severity", params.min_severity);
     if (params.strict) args.push("--strict");
 
     let res;
     try {
+      // Pi ExecOptions supports only cwd, signal, and timeout. Provenance comes
+      // from the reviewer's supported --standards report contract.
       res = await pi.exec(bin, args, { cwd: ctx.cwd, signal });
     } catch (e: any) {
       return {
@@ -1905,10 +1926,17 @@ export default function coopTools(pi: ExtensionAPI) {
     } catch {
       /* leave parsed null */
     }
+    const provenance = bindReviewerProvenance(standards, parsed) as StandardsBindingResult;
+    if (!provenance.ok) {
+      return {
+        content: [{ type: "text" as const, text: `${bin} output rejected: ${provenance.error}. Same-source validation failed closed.` }],
+        details: { tool: bin, args, scope, scopeNotes, standards, exitCode: res.code, reportRejected: true, provenanceError: provenance.error, stderr: res.stderr },
+      };
+    }
     const scopeLine = `Scope: ${scope}${scopeNotes} — ${paths.join(", ")}`;
     return {
       content: [{ type: "text" as const, text: `${summarizeReview(bin, parsed, res.stdout, res.code)}\n${scopeLine}` }],
-      details: { tool: bin, args, scope, scopeNotes, exitCode: res.code, report: parsed ?? res.stdout, stderr: res.stderr },
+      details: { tool: bin, args, scope, scopeNotes, standards, standardsBinding: provenance.binding, exitCode: res.code, report: parsed ?? res.stdout, stderr: res.stderr },
     };
   };
 
@@ -2107,6 +2135,8 @@ export default function coopTools(pi: ExtensionAPI) {
     seenToolErrorIds.clear();
     learningNudgeAnnounced = false;
     announcedTeamKnowledge = false;
+    operationStandards = new Map();
+    operationStandardsResolve = null;
     primeModelLogin(ctx);
   });
 
@@ -2133,8 +2163,13 @@ export default function coopTools(pi: ExtensionAPI) {
   const missedLogAt = new Map<string, number>();
 
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
+    operationStandards = new Map();
+    operationStandardsResolve = null;
     try {
       const cwd: string = ctx.cwd;
+      const standardsContext = buildStandardsContext(event.prompt || "", { cwd });
+      operationStandards = new Map(standardsContext.records.map((record: any) => [record.resolution.domain, record.resolution]));
+      operationStandardsResolve = standardsContext.resolve;
       pendingDailyEffects.clear();
       const requirement = requiredDailyLog(cwd);
       dailyRun = requirement && !dailyLogOptOut(event.prompt || "")
@@ -2188,6 +2223,19 @@ export default function coopTools(pi: ExtensionAPI) {
             };
           }
         }
+      }
+
+      if (standardsContext.records.length) {
+        const content = [
+          "Cooptimize standards apply automatically to this task. Follow: identify domain → resolve authority → use only the relevant sections below → perform work → validate SQL/DAX with the same immutable authority record.",
+          ...standardsContext.records.map((record: any) => provenanceText(record)),
+          ...standardsContext.patterns.map((pattern: any) => {
+            const snippets = pattern.sections.map((section: any) => `### ${section.heading} (${section.path})\n${section.content}`).join("\n\n");
+            return `[semantic_model] optional authority=${pattern.authority_class} source=${pattern.source} root=${pattern.source_root} selective=true (relevant Incremental BI excerpts only; not mandatory)${snippets ? `\n${snippets}` : ""}`;
+          }),
+        ].join("\n\n");
+        if (message) message.content = `${message.content}\n\n${content}`;
+        else message = { customType: "coop-standards", display: false, content, details: standardsContext };
       }
 
       if (!message && !requirement) return;
@@ -2300,6 +2348,19 @@ export default function coopTools(pi: ExtensionAPI) {
         await runQuickSetup(pi, ctx, prefill);
       } catch (e: any) {
         notify(ctx, `setup-docs failed: ${errMsg(e)}. You can run the same wizard in a shell: coop data-doc setup`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("standards-status", {
+    description: "Show effective standards and independent source states",
+    handler: async (_args: string, ctx: ExtensionContext) => {
+      try {
+        const status = sourceStatus({ cwd: ctx.cwd });
+        notify(ctx, `Canonical remote: ${status.canonical_remote}. See the JSON status in the conversation.`, "info");
+        pi.sendUserMessage(`Standards status (read-only):\n\n\`\`\`json\n${JSON.stringify(status, null, 2)}\n\`\`\``);
+      } catch (e: any) {
+        notify(ctx, `Standards status unavailable: ${errMsg(e)}`, "warning");
       }
     },
   });

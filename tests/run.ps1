@@ -323,6 +323,15 @@ print("resume verdict contract OK")
   & $coop review --bogus-flag *> $null
   if ($LASTEXITCODE -ne 0) { Ok 'review with an unknown flag dies non-zero' } else { Ko 'review --bogus-flag did not die' }
 
+  Head 'review transaction asymmetric mutation'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $reviewTxnOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\review-transaction.test.ps1') 2>&1
+  $reviewTxnRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($reviewTxnRc -eq 0) { $reviewTxnOut | ForEach-Object { Write-Host $_ }; Ok 'asymmetric review transaction preserved all artifacts' }
+  else { Ko "PowerShell asymmetric review transaction failed: $($reviewTxnOut | Out-String)" }
+
   # --- 7. pipx launcher ownership (Windows .exe metadata fallback) ----------
   Head 'pipx executable ownership'
   $ownerOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\pipx-ownership.test.ps1') 2>&1

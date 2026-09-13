@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "canonical": {
+    "id": "cooptimize-formal-standards",
+    "repository": "https://github.com/cooptimize/coop-standards.git",
+    "authoritative_branch": "main",
+    "manifest": "standards.yml",
+    "initial_verified_commit": "fa109f11129742358ff1e078cd4c4433e356afb4",
+    "initial_archive_sha256": "07820c5dcd912551554bb801c5fb4bd699ebdf9c126af9f558444f1651305104",
+    "freshness_seconds": 900,
+    "timeout_seconds": 12,
+    "domains": {
+      "sql": "standards/sql.md",
+      "dax": "standards/dax.md",
+      "semantic_model": "standards/semantic-model.md"
+    }
+  }
+}

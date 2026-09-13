@@ -181,6 +181,15 @@ if (Test-CoopKnowledgeEnabled) {
   & (Join-Path $script:CoopRoot 'scripts\sync-knowledge.ps1')
 }
 
+# --- 5c. Canonical standards (forced, bounded, fail-soft) ---------------------
+if (Test-Have 'node') {
+  $standardsCli = Join-Path $script:CoopRoot 'lib\standards-cli.mjs'
+  try {
+    $standardsSync = (& node $standardsCli refresh --force 2>$null) -join ''
+    Coop-Info "canonical standards: $standardsSync"
+  } catch { Coop-Warn 'canonical standards refresh unavailable; LKG preserved' }
+}
+
 # --- 6. Brand assets ---------------------------------------------------------
 Coop-Head 'Brand assets'
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi') -PathType Leaf) { Coop-Ok 'splash present' } else { Coop-Warn 'splash.ansi missing (regenerate from the logo)' }
@@ -198,6 +207,19 @@ if ($vibeCount -gt 0) { Coop-Ok "$vibeCount vibe file(s) present" } else { Coop-
 if ($script:SyncFailures -gt 0) {
   Coop-Warn "sync finished WITH $($script:SyncFailures) failure(s) — see above" 're-run: coop sync'
   exit 1
+}
+
+# Report the configured canonical source plus independent optional sources and
+# retain verified local fallbacks on any refresh failure.
+if (Test-Have 'node') {
+  $standardsCli = Join-Path $env:COOP_ROOT 'lib\standards-cli.mjs'
+  foreach ($line in (& node $standardsCli doctor-lines '' $PWD.Path 2>$null)) {
+    $parts = $line -split "`t", 4
+    if ($parts.Count -ge 3 -and $parts[0] -eq 'source') {
+      $suffix = if ($parts.Count -gt 3 -and $parts[3]) { " @ $($parts[3])" } else { '' }
+      Coop-Info "standards source $($parts[1]): $($parts[2])$suffix"
+    }
+  }
 }
 
 Coop-Ok 'sync complete.'
