@@ -60,6 +60,25 @@ try {
     assert.equal(JSON.parse(readFileSync(active.index)).revision, active.revision);
   });
 
+  for (const [artifact, relativePath] of [
+    ["index", "retrieval-index.json"],
+    ["metadata", "generation.json"],
+    ["authority", join("checkout", "standards", "sql.md")],
+  ]) test(`final-location ${artifact} corruption cannot activate a canonical generation`, () => {
+    git(["reset", "--hard", r1]); resetStorage(); now += 1; assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const old = activeCanonicalGeneration(options()); git(["reset", "--hard", r2]);
+    const failed = refreshCanonical(options({ force: true, fault(step) {
+      if (step !== "canonical:generation") return;
+      const generations = join(tmp, "cache", "canonical-generations");
+      const candidate = readdirSync(generations).find((name) => !name.startsWith(".") && name !== old.generation_id);
+      writeFileSync(join(generations, candidate, relativePath), "{}\n");
+    } }));
+    assert.equal(failed.ok, false, artifact);
+    const active = activeCanonicalGeneration(options()); assert.equal(active.ok, true, JSON.stringify(active));
+    assert.equal(active.generation_id, old.generation_id); assert.equal(active.revision, old.revision);
+    assert.equal(resolveStandard("sql", options({ refresh: false })).revision, old.revision);
+  });
+
   test("process death at every build/pointer/state step preserves one complete generation", () => {
     for (const step of [...beforePointer, "canonical:after-pointer", "canonical:before-state", "canonical:after-state"]) {
       git(["reset", "--hard", r1]); resetStorage(); now += 1; assert.equal(refreshCanonical(options({ force: true })).ok, true);

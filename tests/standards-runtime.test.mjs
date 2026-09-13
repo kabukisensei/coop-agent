@@ -70,7 +70,7 @@ try {
   assert.deepEqual(daxResult.details.standards, daxRecord);
   assert.deepEqual(daxResult.details.args.slice(-2), ["--standards", daxRecord.path]);
 
-  const semantic = await handlers.get("before_agent_start")({ prompt: "Assess semantic model relationships and DAX measures", systemPrompt: "base" }, ctx);
+  const semantic = await handlers.get("before_agent_start")({ prompt: "Assess semantic model relationships", systemPrompt: "base" }, ctx);
   assert.deepEqual(semantic.message.details.domains, ["semantic_model", "dax"]);
   assert.match(semantic.message.content, /one-to-many relationships/);
   assert.match(semantic.message.content, /explicit measures/);

@@ -33,7 +33,9 @@ import {join} from "node:path";
 import {__testWithStorageLock} from ${JSON.stringify(moduleUrl)};
 const [root,role]=process.argv.slice(2), sleep=(ms)=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,ms), wait=(p)=>{while(!existsSync(p))sleep(5)};
 try {
-  __testWithStorageLock(root,"probe",{lockTimeoutMs:Number(process.env.TIMEOUT||3000)},()=>{
+  __testWithStorageLock(root,"probe",{lockTimeoutMs:Number(process.env.TIMEOUT||3000),lockFault:(step,{lock})=>{
+    if(process.env.REPLACE_AT===step){mkdirSync(lock);writeFileSync(join(lock,"owner.json"),JSON.stringify({schema_version:1,pid:process.pid,acquired_ms:Date.now(),token:"d".repeat(32)})+"\\n");}
+  }},()=>{
     const marker=join(root,"critical");
     try{writeFileSync(marker,role,{flag:"wx"});}catch{appendFileSync(join(root,"overlap"),role+"\\n");throw new Error("overlapping critical section");}
     writeFileSync(join(root,role+"-entered"),"1"); appendFileSync(join(root,"events"),role+":enter\\n");
@@ -83,6 +85,18 @@ try {
     const replacement = JSON.parse(readFileSync(join(root, ".probe.lock", "owner.json")));
     assert.equal(replacement.token, "b".repeat(32));
     assert.equal(readFileSync(join(root, ".probe.lock.original", "owner.json"), "utf8").includes("\"token\""), true);
+  });
+
+  for (const seam of ["unlock:owner-observed", "unlock:before-delete"]) await test(`replacement at ${seam} survives claimed-lock deletion`, async () => {
+    const root = join(tmp, seam.replaceAll(":", "-")); mkdirSync(root);
+    const result = spawnSync(process.execPath, [worker, root, seam], { env: { ...process.env, REPLACE_AT: seam }, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    const replacement = JSON.parse(readFileSync(join(root, ".probe.lock", "owner.json")));
+    assert.equal(replacement.token, "d".repeat(32));
+    assert.equal(readdirSync(root).some((entry) => entry.startsWith(".probe.lock.release-")), false);
+    const contender = spawnSync(process.execPath, [worker, root, `${seam}-contender`], { env: { ...process.env, TIMEOUT: "100" }, encoding: "utf8" });
+    assert.equal(contender.status, 2); assert.match(contender.stderr, /automatic recovery is disabled/);
+    assert.equal(readdirSync(root).includes(`${seam}-contender-entered`), false);
   });
 
   console.log(`standards conservative lock: ${count} tests passed`);

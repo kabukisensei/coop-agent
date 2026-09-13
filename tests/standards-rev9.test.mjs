@@ -308,7 +308,7 @@ try {
   test("CLASSIFIER", "ordinary SQL, DAX, model, Fabric, and documentation work is automatic", () => {
     assert.deepEqual(identifyTaskDomains("Implement a SQL stored procedure"), ["sql"]);
     assert.deepEqual(identifyTaskDomains("Validate a DAX measure"), ["dax"]);
-    assert.deepEqual(identifyTaskDomains("Assess semantic model relationships"), ["semantic_model"]);
+    assert.deepEqual(identifyTaskDomains("Assess semantic model relationships"), ["semantic_model", "dax"]);
     assert.deepEqual(identifyTaskDomains("Analyze a Fabric lakehouse architecture"), ["fabric"]);
     assert.deepEqual(identifyTaskDomains("Update README documentation"), ["documentation"]);
   });
@@ -322,13 +322,13 @@ try {
     assert.deepEqual(identifyTaskDomains("Analyze how to measure API latency"), []);
     assert.deepEqual(identifyTaskDomains("Update documentation for the customer relationship process"), ["documentation"]);
     assert.deepEqual(identifyTaskDomains("Review the workspace settings in VS Code"), []);
-    assert.deepEqual(identifyTaskDomains("Review semantic model architecture and relationships"), ["semantic_model"]);
+    assert.deepEqual(identifyTaskDomains("Review semantic model architecture and relationships"), ["semantic_model", "dax"]);
     assert.deepEqual(identifyTaskDomains("Review semantic model DAX measures"), ["semantic_model", "dax"]);
     assert.deepEqual(identifyTaskDomains("Create measures in the semantic model"), ["semantic_model", "dax"]);
     assert.deepEqual(identifyTaskDomains("Create a measure in Power BI"), ["dax"]);
-    assert.deepEqual(identifyTaskDomains("Review relationship cardinality and filter direction in this Power BI model"), ["semantic_model"]);
-    assert.deepEqual(identifyTaskDomains("Review the table relationships in this Power BI dataset"), ["semantic_model"]);
-    assert.deepEqual(identifyTaskDomains("Review the model relationships in Power BI"), ["semantic_model"]);
+    assert.deepEqual(identifyTaskDomains("Review relationship cardinality and filter direction in this Power BI model"), ["semantic_model", "dax"]);
+    assert.deepEqual(identifyTaskDomains("Review the table relationships in this Power BI dataset"), ["semantic_model", "dax"]);
+    assert.deepEqual(identifyTaskDomains("Review the model relationships in Power BI"), ["semantic_model", "dax"]);
     assert.deepEqual(identifyTaskDomains("Review the medallion architecture in Fabric"), ["fabric"]);
     assert.deepEqual(identifyTaskDomains("Review the deployment pipeline for the mobile app"), []);
     assert.deepEqual(identifyTaskDomains("Analyze warehouse inventory calculations"), []);

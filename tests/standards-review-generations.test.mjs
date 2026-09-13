@@ -65,6 +65,27 @@ try {
     assert.equal(JSON.parse(readFileSync(old.reports.sql)).findings[0].message, "old");
   });
 
+  for (const [artifact, fileFor] of [
+    ["metadata", () => "generation.json"],
+    ["report", (metadata) => metadata.files.sql_report.file],
+    ["binding", (metadata) => metadata.files.sql_binding.file],
+    ["authority", (metadata) => metadata.files.sql_authority.file],
+  ]) test(`final-location ${artifact} corruption cannot activate an accepted review generation`, () => {
+    rmSync(outdir, { recursive: true, force: true }); mkdirSync(outdir); assert.equal(publish("old").ok, true);
+    const old = resolveAcceptedReviewRun(outdir); assert.equal(old.ok, true);
+    const result = promoteReviewRun(outdir, writeInputs("new"), { fault(step) {
+      if (step !== "review:generation") return;
+      const generations = join(outdir, "accepted-generations");
+      const candidate = readdirSync(generations).find((name) => !name.startsWith(".") && join(generations, name) !== old.generation);
+      const generation = join(generations, candidate), metadata = JSON.parse(readFileSync(join(generation, "generation.json")));
+      writeFileSync(join(generation, fileFor(metadata)), "{}\n");
+    } });
+    assert.equal(result.ok, false, artifact);
+    const active = resolveAcceptedReviewRun(outdir); assert.equal(active.ok, true, JSON.stringify(active));
+    assert.equal(active.generation_id, old.generation_id);
+    assert.equal(JSON.parse(readFileSync(active.reports.sql)).findings[0].message, "old");
+  });
+
   test("abrupt process death before/after pointer leaves one complete accepted set", () => {
     for (const stage of ["review:sql:report", "review:sql:authority", "review:dax:binding", "review:dax:authority", "review:metadata", "review:generation", "review:before-pointer", "review:after-pointer"]) {
       rmSync(outdir, { recursive: true, force: true }); mkdirSync(outdir); assert.equal(publish("old").ok, true);
