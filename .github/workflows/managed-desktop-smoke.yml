@@ -32,6 +32,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      PROBE6C_OUT: ${{ runner.temp }}/probe6c.jsonl
     steps:
       - uses: actions/checkout@v5
         with:
@@ -90,6 +91,37 @@ jobs:
       - name: Build checksum-pinned managed runtime with development companions
         shell: bash
         run: node scripts/prepare-managed-runtime.mjs --target '${{ steps.target.outputs.value }}' --work '${{ runner.temp }}/coop-managed-work' --output '${{ runner.temp }}/managed-runtime' --development-wheels '${{ runner.temp }}/coop-development-wheels/development-wheels.json'
+      - name: PROBE 6c inject child env/exception recorder (diagnostic only)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          SITE="${{ runner.temp }}/managed-runtime/python/runtime/Lib/site-packages"
+          mkdir -p "$SITE"
+          cat > "$SITE/sitecustomize.py" <<'PYEOF'
+          import json, os, sys, traceback
+          rec = {}
+          for k in ("SystemRoot", "WINDIR", "COMSPEC"):
+              v = os.environ.get(k)
+              rec[k] = ("len=%d" % len(v)) if v is not None else "MISSING"
+          rec["PATH_len"] = len(os.environ.get("PATH", ""))
+          rec["managed"] = os.environ.get("COOP_DESKTOP_MANAGED_RUNTIME")
+          rec["argv_tail"] = [os.path.basename(a) for a in sys.argv[1:3]]
+          try:
+              import _overlapped  # noqa
+              rec["overlapped"] = "OK"
+          except BaseException:
+              rec["overlapped"] = "FAIL " + traceback.format_exc().strip().splitlines()[-1][:200]
+          payload = (json.dumps(rec) + "\n").encode()
+          cands = [os.environ.get("PROBE6C_OUT"), os.environ.get("TEMP"), os.environ.get("TMP"),
+                   os.environ.get("USERPROFILE"), os.path.expanduser("~"), r"C:\Windows\Temp"]
+          for cand in dict.fromkeys(c for c in cands if c):
+              try:
+                  with open(cand if cand.endswith(".jsonl") else os.path.join(cand, "probe6c.jsonl"), "ab") as f:
+                      f.write(payload)
+              except Exception:
+                  pass
+          PYEOF
+          echo "PROBE6C_INJECTED=$(wc -c < "$SITE/sitecustomize.py")"
       - name: PROBE 4 exact verify-env via node spawnSync (diagnostic only)
         if: runner.os == 'Windows'
         shell: bash
@@ -271,13 +303,26 @@ jobs:
           path: |
             D:/a/_temp/probe5-full-stderr.txt
             D:/a/_temp/probe5-full-stdout.txt
+      - name: PROBE 6c collect recorder output (diagnostic only)
+        if: runner.os == 'Windows' && always()
+        shell: bash
+        run: |
+          echo "----- PROBE6C RECORDER LINES -----"
+          for f in "${{ runner.temp }}/probe6c.jsonl" "C:/Windows/Temp/probe6c.jsonl"; do
+            if [ -f "$f" ]; then echo "SOURCE=$f"; cat "$f"; fi
+          done
+          echo "PROBE6C_COLLECT_DONE"
       - name: Upload probe 6 child result (diagnostic only)
         if: runner.os == 'Windows' && always()
         uses: actions/upload-artifact@v4
         with:
           name: probe6-child-result
           retention-days: 7
-          path: ${{ runner.temp }}/probe6-child-result.json
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/probe6-child-result.json
+            ${{ runner.temp }}/probe6c.jsonl
+            C:/Windows/Temp/probe6c.jsonl
       - name: Preserve build and runtime evidence
         if: always()
         uses: actions/upload-artifact@v7
