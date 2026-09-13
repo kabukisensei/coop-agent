@@ -57,6 +57,21 @@ export function verifyManagedToolWork(bundle) {
   }
 }
 
+// The runner's environment block may store machine variables in any case
+// (e.g. SYSTEMROOT/COMSPEC uppercase). A plain-object snapshot of process.env
+// loses case-sensitive lookups, silently dropping the vars python needs to
+// initialize Winsock (import _overlapped -> WinError 10106). Resolve
+// case-insensitively and publish under the canonical mixed-case name.
+export function resolveMachineEnvironment(originalEnv) {
+  const env = {};
+  const envKeys = Object.keys(originalEnv);
+  for (const key of ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT"]) {
+    const match = envKeys.find((k) => k.toLowerCase() === key.toLowerCase());
+    if (match && originalEnv[match]) env[key] = originalEnv[match];
+  }
+  return env;
+}
+
 // Run serially in the dedicated verification CLI before starting runtime children.
 // The actual Pi loader must see only the disposable profile when it is imported.
 export async function verifyManagedExtensionWork(bundle, { tempRoot = tmpdir() } = {}) {
@@ -69,7 +84,7 @@ export async function verifyManagedExtensionWork(bundle, { tempRoot = tmpdir() }
       TMPDIR: home, TEMP: home, TMP: home, PI_CODING_AGENT_DIR: join(home, "agent"),
       COOP_ROOT: bundle.coopRoot, COOP_DESKTOP_MANAGED_RUNTIME: "1", COOP_WORKSPACE_ACCESS_MODE: "writable",
       COOP_SKIP_AZ: "1", COOP_NO_ONBOARD: "1", PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1" };
-    for (const key of ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT"]) if (originalEnv[key]) env[key] = originalEnv[key];
+    Object.assign(env, resolveMachineEnvironment(originalEnv));
     for (const key of Object.keys(process.env)) delete process.env[key];
     Object.assign(process.env, env);
     copyFileSync(join(FIXTURES, "select-star.sql"), join(root, "sql", "é & select-star.sql"));

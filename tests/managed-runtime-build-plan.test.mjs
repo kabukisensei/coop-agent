@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { managedRuntimeBuildPlan } from "../scripts/managed-runtime-build-plan.mjs";
-import { validateReviewWork, validateLineageWork, verifyManagedExtensionWork } from "../scripts/verify-managed-tool-work.mjs";
+import { validateReviewWork, validateLineageWork, verifyManagedExtensionWork, resolveMachineEnvironment } from "../scripts/verify-managed-tool-work.mjs";
 
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -104,6 +104,15 @@ test("installed-tool evidence rejects no-op reviews, wrong versions, diagnostics
     count += 1;
     console.log("  ✓ failed extension loading restores caller environment and cleans disposable state");
   } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+{
+  const resolved = resolveMachineEnvironment({ SYSTEMROOT: "C:\\Windows", windir: "C:\\Windows", COMSPEC: "C:\\Windows\\System32\\cmd.exe", pathext: ".EXE;.CMD", unrelated: "secret" });
+  assert.deepEqual(resolved, { SystemRoot: "C:\\Windows", WINDIR: "C:\\Windows", ComSpec: "C:\\Windows\\System32\\cmd.exe", PATHEXT: ".EXE;.CMD" });
+  assert.deepEqual(resolveMachineEnvironment({ SYSTEMROOT: "", COMSPEC: "" }), {}, "Empty machine variables must not override the isolated environment.");
+  assert.equal(Object.hasOwn(resolved, "unrelated"), false, "Environment repair must remain allowlisted.");
+  count += 1;
+  console.log("  ✓ Windows machine environment is copied case-insensitively with an explicit allowlist");
 }
 
 
