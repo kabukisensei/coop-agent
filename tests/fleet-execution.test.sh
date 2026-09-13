@@ -5,6 +5,7 @@ ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 # Fully isolate EVERY location the fleet scripts can touch. Tests must never
 # write to the real home directory — see tests/home-guard.test.sh. This runs in
 # the CURRENT shell (no command substitution: subshell exports would die).
+COOP_USAGE_FIXTURE="$ROOT/tests/fixtures/pi-better-openai-0.1.22/usage.ts"; export COOP_USAGE_FIXTURE
 isolate_block() { # [n] -> sets env + STUB[/MARKER] or STUBn/MARKERn
   ISOL_D="$(mktemp -d)"
   HOME="$ISOL_D/home"
@@ -44,6 +45,10 @@ if [ "$1" = "install" ]; then
   spec="$2"; rest="${spec#npm:}"; name="${rest%@*}"; ver="${rest##*@}"
   dir="${PI_CODING_AGENT_DIR:?}/npm/node_modules/$name"
   mkdir -p "$dir"
+  if [ "$name" = "pi-better-openai" ]; then
+    mkdir -p "$dir/src"
+    cp "$COOP_USAGE_FIXTURE" "$dir/src/usage.ts"
+  fi
   printf '{"name":"%s","version":"%s"}\n' "$name" "$ver" > "$dir/package.json"
 fi
 exit 0

@@ -1,0 +1,381 @@
+{
+  "schemaVersion": 1,
+  "capabilities": [
+    {
+      "id": "coop.agent.chat.streaming", "name": "Streaming chat", "description": "Stream user, assistant, and completion state for an agent turn.", "version": "1.0.0", "category": "agent",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["agent.message.delta", "session.updated"],
+      "sideEffects": ["session-write"], "permissions": ["session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop" }, "web": { "kind": "native", "entrypoint": "Agent" }, "desktop": { "kind": "native", "entrypoint": "Agent" } },
+      "documentation": ["web/README.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.streaming-chat"]
+    },
+    {
+      "id": "coop.agent.tools.live-output", "name": "Tool calls and live output", "description": "Show tool invocation, progress, output, and completion state.", "version": "1.0.0", "category": "agent",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["tool.started", "tool.progress", "tool.completed", "tool.failed"],
+      "sideEffects": ["none"], "permissions": ["tool.observe"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "when-mutating", "operations": ["tool.execute.mutating"] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop" }, "web": { "kind": "native", "entrypoint": "Tool activity" }, "desktop": { "kind": "native", "entrypoint": "Tool activity" } },
+      "documentation": ["web/README.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.tool-output"]
+    },
+    {
+      "id": "coop.agent.thinking.display", "name": "Thinking display", "description": "Render available model thinking streams and state.", "version": "1.0.0", "category": "agent",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["agent.thinking.changed"],
+      "sideEffects": ["none"], "permissions": ["session.read"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Only shown when the selected provider exposes thinking events."] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop" }, "web": { "kind": "native", "entrypoint": "Thinking lane" }, "desktop": { "kind": "native", "entrypoint": "Thinking lane" } },
+      "documentation": ["web/README.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.thinking-display"]
+    },
+    {
+      "id": "coop.agent.model.select", "name": "Select model", "description": "List configured models and select one for the active session.", "version": "1.0.0", "category": "agent",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["session-write"], "permissions": ["session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "/model" }, "web": { "kind": "native", "entrypoint": "Model picker" }, "desktop": { "kind": "native", "entrypoint": "Model picker" } },
+      "documentation": ["web/README.md"], "healthChecks": ["auth.model"], "testIds": ["parity.model-select"]
+    },
+    {
+      "id": "coop.agent.model.cycle", "name": "Cycle model", "description": "Advance through available models using Pi ordering.", "version": "1.0.0", "category": "agent",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["session-write"], "permissions": ["session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi model cycle" }, "web": { "kind": "fallback", "entrypoint": "Model picker" }, "desktop": { "kind": "native", "entrypoint": "Cycle model" } },
+      "documentation": ["COOP_DESKTOP_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.model-cycle"]
+    },
+    {
+      "id": "coop.agent.thinking-levels.list", "name": "Available thinking levels", "description": "List only the thinking levels supported by the active model.", "version": "1.0.0", "category": "agent",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": [],
+      "sideEffects": ["none"], "permissions": ["session.read"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Available levels vary by provider and model."] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi thinking controls" }, "web": { "kind": "fallback", "entrypoint": "Hard-coded thinking chip" }, "desktop": { "kind": "native", "entrypoint": "Thinking selector" } },
+      "documentation": ["web/README.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.thinking-levels-list"]
+    },
+    {
+      "id": "coop.agent.thinking-level.set-cycle", "name": "Set or cycle thinking level", "description": "Set or cycle the active thinking level through supported Pi commands.", "version": "1.0.0", "category": "agent",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["agent.thinking.changed", "session.updated"],
+      "sideEffects": ["session-write"], "permissions": ["session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Available levels vary by provider and model."] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi thinking controls" }, "web": { "kind": "native", "entrypoint": "Thinking chip" }, "desktop": { "kind": "native", "entrypoint": "Thinking selector" } },
+      "documentation": ["web/README.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.thinking-level-set-cycle"]
+    },
+    {
+      "id": "coop.agent.queue.steer", "name": "Steer active turn", "description": "Send steering input to the currently streaming agent turn.", "version": "1.0.0", "category": "agent",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["session-write"], "permissions": ["session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi steer" }, "web": { "kind": "native", "entrypoint": "Composer while busy" }, "desktop": { "kind": "native", "entrypoint": "Steer now" } },
+      "documentation": ["web/server.mjs"], "healthChecks": ["runtime.pi"], "testIds": ["parity.queue-steer"]
+    },
+    {
+      "id": "coop.agent.queue.follow-up", "name": "Follow-up queue", "description": "Queue a message to run after the active agent turn completes.", "version": "1.0.0", "category": "agent",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["session-write"], "permissions": ["session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi follow-up" }, "web": { "kind": "unavailable", "entrypoint": null }, "desktop": { "kind": "native", "entrypoint": "Send next" } },
+      "documentation": ["COOP_DESKTOP_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.queue-follow-up"]
+    },
+    {
+      "id": "coop.agent.compaction.auto", "name": "Automatic compaction", "description": "Expose and control Pi automatic context compaction state.", "version": "1.0.0", "category": "agent",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["session-write"], "permissions": ["session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi auto compaction" }, "web": { "kind": "native", "entrypoint": "Session controls" }, "desktop": { "kind": "native", "entrypoint": "Session controls" } },
+      "documentation": ["web/README.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.auto-compaction"]
+    },
+    {
+      "id": "coop.agent.retry.auto", "name": "Automatic retry", "description": "Expose and control Pi automatic retry state.", "version": "1.0.0", "category": "agent",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["session-write"], "permissions": ["session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi auto retry" }, "web": { "kind": "native", "entrypoint": "Session controls" }, "desktop": { "kind": "native", "entrypoint": "Session controls" } },
+      "documentation": ["COOP_DESKTOP_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.auto-retry"]
+    },
+    {
+      "id": "coop.agent.abort-retry", "name": "Abort turn or retry", "description": "Stop an active turn or Pi automatic retry sequence without ending the session.", "version": "1.0.0", "category": "agent",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["session-write"], "permissions": ["session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi abort/retry" }, "web": { "kind": "native", "entrypoint": "Stop / Stop retry" }, "desktop": { "kind": "native", "entrypoint": "Stop / Stop retry" } },
+      "documentation": ["web/README.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.abort-retry"]
+    },
+    {
+      "id": "coop.session.multiple", "name": "Independent sessions", "description": "Run multiple independent governed agent sessions.", "version": "1.0.0", "category": "session",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.started", "session.updated"],
+      "sideEffects": ["process-control", "session-write"], "permissions": ["session.create"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop" }, "web": { "kind": "native", "entrypoint": "Session tabs" }, "desktop": { "kind": "native", "entrypoint": "Session tabs" } },
+      "documentation": ["web/README.md"], "healthChecks": ["session.storage"], "testIds": ["parity.sessions-multiple"]
+    },
+    {
+      "id": "coop.session.history", "name": "Session history", "description": "List and resume prior sessions across workspaces.", "version": "1.0.0", "category": "session",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["session-write"], "permissions": ["session.read", "session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop -c" }, "web": { "kind": "native", "entrypoint": "History" }, "desktop": { "kind": "native", "entrypoint": "History" } },
+      "documentation": ["web/README.md"], "healthChecks": ["session.storage"], "testIds": ["parity.session-history"]
+    },
+    {
+      "id": "coop.session.name", "name": "Session naming", "description": "Assign a human-readable name to a session.", "version": "1.0.0", "category": "session",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["session-write"], "permissions": ["session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi session name" }, "web": { "kind": "native", "entrypoint": "Name current chat" }, "desktop": { "kind": "native", "entrypoint": "Rename session" } },
+      "documentation": ["web/README.md"], "healthChecks": ["session.storage"], "testIds": ["parity.session-name"]
+    },
+    {
+      "id": "coop.session.export", "name": "Session export", "description": "Export a selected session through a supported Pi format.", "version": "1.0.0", "category": "session",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": [],
+      "sideEffects": ["workspace-write"], "permissions": ["session.read", "workspace.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "when-mutating", "operations": ["export.write"] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi export" }, "web": { "kind": "native", "entrypoint": "Session controls" }, "desktop": { "kind": "native", "entrypoint": "Native save dialog" } },
+      "documentation": ["COOP_DESKTOP_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md"], "healthChecks": ["session.storage"], "testIds": ["parity.session-export", "contract.session-export"]
+    },
+    {
+      "id": "coop.session.switch-path", "name": "Switch session by path", "description": "Open a supported session path while respecting exclusive ownership.", "version": "1.0.0", "category": "session",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.started", "session.updated"],
+      "sideEffects": ["process-control", "session-write"], "permissions": ["session.read", "session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi session path" }, "web": { "kind": "native", "entrypoint": "History" }, "desktop": { "kind": "native", "entrypoint": "Open session" } },
+      "documentation": ["web/README.md"], "healthChecks": ["session.storage"], "testIds": ["parity.session-switch-path"]
+    },
+    {
+      "id": "coop.session.fork", "name": "Fork session", "description": "Fork from an eligible prior user message through supported Pi RPC.", "version": "1.0.0", "category": "session",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["session-write"], "permissions": ["session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi fork" }, "web": { "kind": "unavailable", "entrypoint": null }, "desktop": { "kind": "native", "entrypoint": "Fork" } },
+      "documentation": ["COOP_DESKTOP_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md"], "healthChecks": ["session.storage"], "testIds": ["parity.session-fork"]
+    },
+    {
+      "id": "coop.session.clone", "name": "Clone session branch", "description": "Clone the current branch into an independent session through supported Pi RPC.", "version": "1.0.0", "category": "session",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.started"],
+      "sideEffects": ["session-write"], "permissions": ["session.read", "session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi clone" }, "web": { "kind": "unavailable", "entrypoint": null }, "desktop": { "kind": "native", "entrypoint": "Clone" } },
+      "documentation": ["COOP_DESKTOP_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md"], "healthChecks": ["session.storage"], "testIds": ["parity.session-clone"]
+    },
+    {
+      "id": "coop.session.tree.read", "name": "Read session tree", "description": "Read complete session entries and branch topology through supported Pi RPC.", "version": "1.0.0", "category": "session",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": [],
+      "sideEffects": ["none"], "permissions": ["session.read"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "/tree" }, "web": { "kind": "unavailable", "entrypoint": null }, "desktop": { "kind": "native", "entrypoint": "Session tree" } },
+      "documentation": ["COOP_DESKTOP_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md"], "healthChecks": ["session.storage"], "testIds": ["parity.session-tree-read"]
+    },
+    {
+      "id": "coop.session.tree.checkout", "name": "Checkout existing session branch", "description": "Navigate to an existing tree entry using supported Pi session APIs.", "version": "1.0.0", "category": "session",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["session-write"], "permissions": ["session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Pi 0.84.3 omits direct RPC checkout; Coop Runtime uses an authenticated extension adapter over Pi's public navigateTree API."] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "/tree" }, "web": { "kind": "native", "entrypoint": "Session tree" }, "desktop": { "kind": "native", "entrypoint": "Session tree" } },
+      "documentation": ["COOP_DESKTOP_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.session-tree-checkout"]
+    },
+    {
+      "id": "coop.runtime.commands.discover", "name": "Command discovery", "description": "Discover Pi, skill, prompt, extension, workflow, and Desktop-native commands with provenance.", "version": "1.0.0", "category": "runtime",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": [],
+      "sideEffects": ["none"], "permissions": ["runtime.read"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi command completion" }, "web": { "kind": "fallback", "entrypoint": "Composer" }, "desktop": { "kind": "native", "entrypoint": "Command palette" } },
+      "documentation": ["docs/extending.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.command-discovery"]
+    },
+    {
+      "id": "coop.runtime.resources", "name": "Skills and prompt templates", "description": "Load and invoke governed skills and prompt templates with source metadata.", "version": "1.0.0", "category": "runtime",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": [],
+      "sideEffects": ["none"], "permissions": ["runtime.read"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "when-mutating", "operations": ["resource.invoke.mutating"] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop" }, "web": { "kind": "native", "entrypoint": "Composer" }, "desktop": { "kind": "native", "entrypoint": "Command palette" } },
+      "documentation": ["docs/extending.md"], "healthChecks": ["runtime.resources"], "testIds": ["parity.resources"]
+    },
+    {
+      "id": "coop.runtime.extension-dialogs", "name": "Extension dialogs", "description": "Render supported extension confirmations, choices, inputs, editors, and notifications.", "version": "1.0.0", "category": "runtime",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["approval.requested", "approval.resolved"],
+      "sideEffects": ["none"], "permissions": ["approval.respond"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "always", "operations": ["approval.respond"] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi TUI" }, "web": { "kind": "native", "entrypoint": "Dialog cards" }, "desktop": { "kind": "native", "entrypoint": "Approval cards" } },
+      "documentation": ["web/README.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.extension-dialogs"]
+    },
+    {
+      "id": "coop.agent.prompt-images", "name": "Images in prompts", "description": "Attach supported images and screenshots to a prompt with preview and limits.", "version": "1.0.0", "category": "agent",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["workspace-read", "session-write"], "permissions": ["attachment.read", "session.write"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Support depends on the selected model's image-input capability."] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "Pi image input" }, "web": { "kind": "unavailable", "entrypoint": null }, "desktop": { "kind": "native", "entrypoint": "Prompt attachments" } },
+      "documentation": ["COOP_DESKTOP_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.prompt-images"]
+    },
+    {
+      "id": "coop.workspace.files", "name": "Workspace files", "description": "Browse and preview files within the validated workspace jail.", "version": "1.0.0", "category": "workspace",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["workspace.changed"],
+      "sideEffects": ["workspace-read"], "permissions": ["workspace.read"], "integrations": [],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "generic", "entrypoint": "Pi file tools" }, "web": { "kind": "native", "entrypoint": "Files" }, "desktop": { "kind": "native", "entrypoint": "Files" } },
+      "documentation": ["web/README.md"], "healthChecks": ["workspace.path"], "testIds": ["parity.workspace-files"]
+    },
+    {
+      "id": "coop.workspace.user-profile", "name": "User profile", "description": "Inspect and edit the private Coop user name and communication preference through the authoritative onboarding owner.", "version": "1.0.0", "category": "workspace",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["config.changed"],
+      "sideEffects": ["user-config-write"], "permissions": ["profile.read", "profile.write"], "integrations": [],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["The profile is private user state and is never project or shared-team knowledge."] }, "approval": { "mode": "always", "operations": ["profile.write"] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop profile" }, "web": { "kind": "native", "entrypoint": "Health / User profile" }, "desktop": { "kind": "native", "entrypoint": "Health / User profile" } },
+      "documentation": ["docs/onboarding.md", "web/README.md"], "healthChecks": ["profile.user"], "testIds": ["parity.user-profile"]
+    },
+    {
+      "id": "coop.workspace.project-config", "name": "Project configuration", "description": "Validate, preview, approve, and atomically write the workspace project contract with recoverable backup.", "version": "1.0.0", "category": "workspace",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["config.changed"],
+      "sideEffects": ["workspace-read", "workspace-write"], "permissions": ["workspace.read", "workspace.write"], "integrations": [],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Candidate content must come from an authoritative Coop setup protocol or explicit advanced-user edit."] }, "approval": { "mode": "always", "operations": ["config.write"] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop init / /setup-project" }, "web": { "kind": "native", "entrypoint": "/setup-project" }, "desktop": { "kind": "native", "entrypoint": "Project setup" } },
+      "documentation": ["web/README.md"], "healthChecks": ["project.contract"], "testIds": ["parity.project-config"]
+    },
+    {
+      "id": "coop.workspace.environment-discovery", "name": "Environment discovery", "description": "Discover bounded local Git repositories and authorized Fabric workspaces/items by recognizable names through read-only structured providers.", "version": "1.0.0", "category": "workspace",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": [],
+      "sideEffects": ["workspace-read", "external-read"], "permissions": ["workspace.read", "integration.read"], "integrations": [],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Fabric discovery requires Azure CLI authentication and delegated read scope; local repository discovery remains available without it."] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop discover" }, "web": { "kind": "generic", "entrypoint": "Runtime discovery API" }, "desktop": { "kind": "native", "entrypoint": "Project setup" } },
+      "documentation": ["docs/onboarding.md", "web/README.md"], "healthChecks": ["workspace.path", "auth.microsoft", "integration.fabric"], "testIds": ["parity.environment-discovery"]
+    },
+    {
+      "id": "coop.workspace.progressive-setup", "name": "Progressive project setup", "description": "Inspect configured, skipped, incomplete, and broken project sections and route a capability to its exact missing setup step.", "version": "1.0.0", "category": "workspace",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["config.changed"],
+      "sideEffects": ["workspace-read"], "permissions": ["workspace.read"], "integrations": [],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Detailed Data Doc questions remain owned by the Data Doc JSONL setup protocol."] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop setup-state --json" }, "web": { "kind": "generic", "entrypoint": "Runtime setup-state API" }, "desktop": { "kind": "native", "entrypoint": "Project setup / Health" } },
+      "documentation": ["docs/onboarding.md", "web/README.md"], "healthChecks": ["project.contract"], "testIds": ["parity.progressive-setup"]
+    },
+    {
+      "id": "coop.workspace.git-changes", "name": "Git changes", "description": "Inspect repository status and diffs without mutating Git state.", "version": "1.0.0", "category": "workspace",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["git.changed"],
+      "sideEffects": ["workspace-read"], "permissions": ["workspace.read", "git.read"], "integrations": ["git"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "generic", "entrypoint": "git diff" }, "web": { "kind": "native", "entrypoint": "Changes" }, "desktop": { "kind": "native", "entrypoint": "Changes" } },
+      "documentation": ["web/README.md"], "healthChecks": ["workspace.git"], "testIds": ["parity.git-changes"]
+    },
+    {
+      "id": "coop.workspace.worktree-isolation", "name": "Worktree isolation", "description": "Isolate concurrent write-capable sessions in distinct Git worktrees.", "version": "1.0.0", "category": "workspace",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["workspace.changed"],
+      "sideEffects": ["workspace-write", "process-control"], "permissions": ["workspace.create", "git.worktree"], "integrations": ["git"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Non-Git workspaces can be lease-protected or read-only but cannot create an isolated Git worktree."] }, "approval": { "mode": "when-mutating", "operations": ["worktree.create", "worktree.remove", "workspace.write.override"] },
+      "presentations": { "cli": { "kind": "generic", "entrypoint": "Workspace ownership guard" }, "web": { "kind": "native", "entrypoint": "Session isolation choice" }, "desktop": { "kind": "native", "entrypoint": "Session isolation choice" } },
+      "documentation": ["docs/adr/desktop-shell-and-runtime.md", "docs/desktop-extension-contracts.md"], "healthChecks": ["workspace.git"], "testIds": ["parity.worktree-isolation", "contract.workspace-isolation"]
+    },
+    {
+      "id": "coop.session.crash-restart", "name": "Crashed-session restart", "description": "Restart or safely resume a crashed governed Pi process.", "version": "1.0.0", "category": "session",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["process-control", "session-write"], "permissions": ["session.write", "process.manage"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "fallback", "entrypoint": "Restart coop" }, "web": { "kind": "fallback", "entrypoint": "Close and resume" }, "desktop": { "kind": "native", "entrypoint": "Restart session" } },
+      "documentation": ["web/README.md"], "healthChecks": ["runtime.pi"], "testIds": ["parity.session-crash-restart"]
+    },
+    {
+      "id": "coop.review.sql", "name": "SQL Review", "description": "Run and render deterministic Coop SQL Review findings and agent-review items.", "version": "1.0.0", "category": "review",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["review.completed"],
+      "sideEffects": ["workspace-read"], "permissions": ["workspace.read"], "integrations": ["coop-sql-review"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop sql-review" }, "web": { "kind": "native", "entrypoint": "Findings workbench" }, "desktop": { "kind": "native", "entrypoint": "Findings workbench" } },
+      "documentation": ["docs/tool-contract.md", "docs/desktop-extension-contracts.md"], "healthChecks": ["tool.coop-sql-review"], "testIds": ["parity.review-sql"]
+    },
+    {
+      "id": "coop.review.dax", "name": "DAX Review", "description": "Run and render model/report-aware Coop DAX Review results with evidence completeness.", "version": "1.0.0", "category": "review",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["review.completed"],
+      "sideEffects": ["workspace-read"], "permissions": ["workspace.read"], "integrations": ["coop-dax-review"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop dax-review" }, "web": { "kind": "native", "entrypoint": "Findings workbench" }, "desktop": { "kind": "native", "entrypoint": "Findings workbench" } },
+      "documentation": ["docs/tool-contract.md", "docs/desktop-extension-contracts.md"], "healthChecks": ["tool.coop-dax-review"], "testIds": ["parity.review-dax"]
+    },
+    {
+      "id": "coop.lineage.explorer", "name": "Data Doc lineage explorer", "description": "Explore focused slices of the authoritative Data Doc graph with evidence and diagnostics.", "version": "1.0.0", "category": "lineage",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["lineage.updated"],
+      "sideEffects": ["workspace-read"], "permissions": ["workspace.read"], "integrations": ["coop-data-doc"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop data-doc lineage" }, "web": { "kind": "native", "entrypoint": "Focused lineage workbench" }, "desktop": { "kind": "native", "entrypoint": "Focused lineage workbench" } },
+      "documentation": ["docs/tool-contract.md", "docs/desktop-extension-contracts.md"], "healthChecks": ["tool.coop-data-doc"], "testIds": ["parity.lineage-explorer"]
+    },
+    {
+      "id": "coop.lineage.setup", "name": "Data Doc setup", "description": "Render the authoritative versioned Data Doc setup protocol without duplicating its questionnaire.", "version": "1.0.0", "category": "lineage",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["config.changed"],
+      "sideEffects": ["workspace-write", "process-control"], "permissions": ["workspace.write"], "integrations": ["coop-data-doc"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "always", "operations": ["config.write"] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop data-doc setup" }, "web": { "kind": "native", "entrypoint": "/setup-docs" }, "desktop": { "kind": "native", "entrypoint": "Data Doc setup" } },
+      "documentation": ["docs/tool-contract.md"], "healthChecks": ["tool.coop-data-doc", "project.data-doc-config"], "testIds": ["parity.lineage-setup"]
+    },
+    {
+      "id": "coop.impact.guided", "name": "Guided impact analysis", "description": "Invoke the existing impact-analysis workflow and render attributable evidence, gaps, risk, and plan.", "version": "1.0.0", "category": "impact",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["tool.started", "tool.progress", "tool.completed"],
+      "sideEffects": ["workspace-read", "external-read", "session-write"], "permissions": ["workspace.read", "integration.read", "session.write"], "integrations": ["pi", "coop-data-doc", "fabric", "powerbi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Live evidence depends on configured read-only integrations."] }, "approval": { "mode": "when-mutating", "operations": ["lineage.refresh"] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "/impact-analysis" }, "web": { "kind": "native", "entrypoint": "Guided impact workbench" }, "desktop": { "kind": "native", "entrypoint": "Impact" } },
+      "documentation": ["skills/power-bi-impact-analysis/SKILL.md", "docs/desktop-extension-contracts.md"], "healthChecks": ["tool.coop-data-doc", "integration.fabric", "integration.powerbi"], "testIds": ["parity.impact-guided"]
+    },
+    {
+      "id": "coop.workflow.review-changes", "name": "Review changes workflow", "description": "Run a resumable, approval-aware review across changed artifacts by composing existing Git, SQL, DAX, BPA, agent, and handoff capabilities.", "version": "1.0.0", "category": "workflow",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["workflow.started", "workflow.updated", "workflow.completed", "workflow.blocked"],
+      "sideEffects": ["workspace-read", "workspace-write", "session-write"], "permissions": ["workspace.read", "workspace.write", "session.write"], "integrations": ["git"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Only stages applicable to the changed artifacts and available integrations are run."] }, "approval": { "mode": "when-mutating", "operations": ["workspace.write"] },
+      "presentations": { "cli": { "kind": "generic", "entrypoint": "coop-workflow / review tools" }, "web": { "kind": "generic", "entrypoint": "Runtime workflow API" }, "desktop": { "kind": "native", "entrypoint": "Review changes" } },
+      "documentation": ["docs/desktop-extension-contracts.md", "skills/coop-workflow/SKILL.md"], "healthChecks": ["project.git"], "testIds": ["parity.workflow-review-changes"]
+    },
+    {
+      "id": "coop.review.bpa", "name": "Best Practice Analyzer review", "description": "Run and render Tabular Editor BPA findings with tool and platform availability.", "version": "1.0.0", "category": "review",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["review.completed"],
+      "sideEffects": ["workspace-read"], "permissions": ["workspace.read"], "integrations": ["tabular-editor"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Requires the separately installed and authenticated Tabular Editor CLI."] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "bpa_review" }, "web": { "kind": "native", "entrypoint": "Findings workbench" }, "desktop": { "kind": "native", "entrypoint": "Findings workbench" } },
+      "documentation": ["docs/tool-contract.md", "docs/desktop-extension-contracts.md"], "healthChecks": ["tool.tabular-editor"], "testIds": ["parity.review-bpa"]
+    },
+    {
+      "id": "coop.knowledge.private-memory", "name": "Private persistent memory", "description": "Preserve private user memory and session recall through the existing Pi extension.", "version": "1.0.0", "category": "knowledge",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": [],
+      "sideEffects": ["session-write"], "permissions": ["memory.private"], "integrations": ["pi-hermes-memory"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": [] }, "approval": { "mode": "never", "operations": [] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop" }, "web": { "kind": "generic", "entrypoint": "Agent" }, "desktop": { "kind": "generic", "entrypoint": "Agent" } },
+      "documentation": ["README.md"], "healthChecks": ["extension.pi-hermes-memory"], "testIds": ["parity.private-memory"]
+    },
+    {
+      "id": "coop.knowledge.shared", "name": "Shared team knowledge", "description": "Search, propose, review, approve, deprecate, and supersede governed Git-backed knowledge records.", "version": "1.0.0", "category": "knowledge",
+      "inputs": { "oneOf": [{ "$ref": "config/knowledge-record.schema.json" }, { "type": "object", "required": ["query"], "properties": { "query": { "type": "string" } } }] }, "outputs": { "oneOf": [{ "$ref": "config/knowledge-record.schema.json" }, { "$ref": "config/knowledge-index.schema.json" }] }, "streamedEvents": ["knowledge.proposed"],
+      "sideEffects": ["workspace-read", "workspace-write"], "permissions": ["knowledge.read", "knowledge.propose"], "integrations": ["git", "knowledge-repository"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Shared approval requires a human-reviewed source change."] }, "approval": { "mode": "always", "operations": ["knowledge.propose", "knowledge.approve", "knowledge.supersede"] },
+      "presentations": { "cli": { "kind": "fallback", "entrypoint": "Git-backed project docs" }, "web": { "kind": "native", "entrypoint": "Knowledge Hub" }, "desktop": { "kind": "native", "entrypoint": "Knowledge Hub" } },
+      "documentation": ["COOP_DESKTOP_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md", "docs/knowledge-policy.md"], "healthChecks": ["knowledge.repository"], "testIds": ["parity.shared-knowledge", "contract.knowledge-policy", "contract.knowledge-index", "contract.knowledge-review"]
+    },
+    {
+      "id": "coop.runtime.doctor", "name": "Coop Doctor", "description": "Inspect runtime, tool, integration, and project health through one structured cross-client service.", "version": "1.0.0", "category": "runtime",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["doctor.changed"],
+      "sideEffects": ["workspace-read", "process-control"], "permissions": ["workspace.read", "process.inspect"], "integrations": [],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Repair operations are separately identified and require approval before mutation."] }, "approval": { "mode": "when-mutating", "operations": ["doctor.repair"] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop doctor / coop doctor --service-json" }, "web": { "kind": "generic", "entrypoint": "Runtime health API" }, "desktop": { "kind": "native", "entrypoint": "Health" } },
+      "documentation": ["web/README.md"], "healthChecks": ["runtime.doctor"], "testIds": ["parity.doctor-service"]
+    },
+    {
+      "id": "coop.auth.model", "name": "Model-provider authentication", "description": "Detect and complete supported model-provider sign-in without reading or writing credential contents.", "version": "1.0.0", "category": "auth",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["auth.changed"],
+      "sideEffects": ["credential-state", "process-control"], "permissions": ["auth.login"], "integrations": ["pi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Pi 0.84.3 model-login priming remains TUI-only."] }, "approval": { "mode": "always", "operations": ["auth.login", "auth.logout"] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "/login" }, "web": { "kind": "fallback", "entrypoint": "External login flow" }, "desktop": { "kind": "native", "entrypoint": "Sign in" } },
+      "documentation": ["docs/onboarding.md"], "healthChecks": ["auth.model"], "testIds": ["parity.auth-model"]
+    },
+    {
+      "id": "coop.auth.microsoft", "name": "Microsoft authentication", "description": "Expose supported Azure, Fabric, and Power BI account state and login progress.", "version": "1.0.0", "category": "auth",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["auth.changed"],
+      "sideEffects": ["credential-state", "process-control", "external-read"], "permissions": ["auth.login", "integration.read"], "integrations": ["azure-cli", "fabric", "powerbi"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["Provider and tenant access depend on client policy."] }, "approval": { "mode": "always", "operations": ["auth.login", "auth.logout", "production.access"] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop onboard" }, "web": { "kind": "fallback", "entrypoint": "External login flow" }, "desktop": { "kind": "native", "entrypoint": "Connections" } },
+      "documentation": ["docs/onboarding.md"], "healthChecks": ["auth.microsoft", "integration.fabric", "integration.powerbi"], "testIds": ["parity.auth-microsoft"]
+    },
+    {
+      "id": "coop.integration.powerbi-desktop", "name": "Power BI Desktop bridge", "description": "Inspect and control supported Power BI Desktop bridge operations on Windows.", "version": "1.0.0", "category": "integration",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["tool.started", "tool.completed"],
+      "sideEffects": ["external-read", "external-write"], "permissions": ["integration.read", "integration.write"], "integrations": ["powerbi-desktop"],
+      "availability": { "platforms": ["windows"], "limitations": ["Power BI Desktop and its bridge are unavailable on macOS and Linux."] }, "approval": { "mode": "when-mutating", "operations": ["powerbi-desktop.reload", "powerbi-desktop.write"] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "powerbi-desktop" }, "web": { "kind": "generic", "entrypoint": "Tool activity" }, "desktop": { "kind": "native", "entrypoint": "Power BI Desktop" } },
+      "documentation": ["README.md"], "healthChecks": ["tool.powerbi-desktop-bridge"], "testIds": ["parity.powerbi-desktop"]
+    },
+    {
+      "id": "coop.session.terminal-handoff", "name": "Terminal handoff", "description": "Open, clone, or safely move a session between Desktop and terminal ownership.", "version": "1.0.0", "category": "session",
+      "inputs": { "type": "object" }, "outputs": { "type": "object" }, "streamedEvents": ["session.updated"],
+      "sideEffects": ["process-control", "session-write"], "permissions": ["process.manage", "session.write"], "integrations": ["pi", "native-terminal"],
+      "availability": { "platforms": ["windows", "macos", "linux"], "limitations": ["The runtime prepares a fixed Coop launch request; the native Desktop shell performs the OS terminal launch.", "Available terminal applications vary by platform and policy."] }, "approval": { "mode": "when-mutating", "operations": ["session.move"] },
+      "presentations": { "cli": { "kind": "native", "entrypoint": "coop" }, "web": { "kind": "fallback", "entrypoint": "Manual terminal launch" }, "desktop": { "kind": "native", "entrypoint": "Open in terminal" } },
+      "documentation": ["docs/adr/desktop-shell-and-runtime.md", "web/README.md"], "healthChecks": ["platform.terminal", "session.storage"], "testIds": ["parity.session-lease", "parity.terminal-handoff"]
+    }
+  ]
+}

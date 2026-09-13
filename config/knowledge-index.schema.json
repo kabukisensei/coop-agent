@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/knowledge-index.v1.json",
+  "title": "Coop disposable knowledge index",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "status", "coverage", "sources", "records", "diagnostics"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "status": { "enum": ["complete", "partial", "failed", "not-applicable"] },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempted", "parsed", "approved", "ignored", "failed", "complete"],
+      "properties": {
+        "attempted": { "type": "integer", "minimum": 0 },
+        "parsed": { "type": "integer", "minimum": 0 },
+        "approved": { "type": "integer", "minimum": 0 },
+        "ignored": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "complete": { "type": "boolean" }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "scope", "projectId"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "scope": { "enum": ["project", "team"] },
+          "projectId": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "scope", "title", "kind", "confidence", "tags", "appliesTo", "sourceId", "relativePath", "record"],
+        "properties": {
+          "id": { "type": "string" },
+          "scope": { "enum": ["project", "team"] },
+          "title": { "type": "string" },
+          "kind": { "type": "string" },
+          "confidence": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "appliesTo": { "type": "array", "items": { "type": "string" } },
+          "sourceId": { "type": "string" },
+          "relativePath": { "type": "string" },
+          "record": { "$ref": "knowledge-record.schema.json" }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message", "sourceId", "relativePath"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "sourceId": { "type": ["string", "null"] },
+          "relativePath": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

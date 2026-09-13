@@ -81,6 +81,7 @@ cat > "$TMP/dd-stdin.json"
 exit 0
 EOF
 chmod +x "$TMP/bin/coop-data-doc"
+export COOP_TEST_STUB_PATH="$TMP/bin"
 PATH="$TMP/bin:$PATH" COOP_ASSUME_YES=1 NO_COLOR=1 bash "$ROOT/bin/coop" init --seed-docs "$TMP/proj" >/dev/null 2>&1 \
   || fail "coop init --seed-docs should succeed"
 grep -q -- "--from-json -" "$TMP/dd-args.log" || fail "config-set --from-json - not invoked"

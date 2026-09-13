@@ -1,0 +1,187 @@
+name: diagnostic installer isolation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/installer-isolation-diagnostic.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  first-install-isolation:
+    name: diagnostic first install (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      PRODUCT_CANDIDATE_SHA: ed516b2a183f3e6346344a669d6e37b321a4dcf8
+      DIAGNOSTIC_CONTROL_SHA: 49f37fb59215a31c70d671cdfc422f6d9b1580f3
+    steps:
+      - name: Check out exact product candidate
+        uses: actions/checkout@v5
+        with:
+          ref: ed516b2a183f3e6346344a669d6e37b321a4dcf8
+          persist-credentials: false
+      - name: Check out immutable diagnostic control
+        uses: actions/checkout@v5
+        with:
+          repository: kabukisensei/coop-agent
+          ref: 49f37fb59215a31c70d671cdfc422f6d9b1580f3
+          path: _probe-control
+          persist-credentials: false
+      - name: Verify immutable checkout identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PRODUCT_CANDIDATE_SHA"
+          test "$(git -C _probe-control rev-parse HEAD)" = "$DIAGNOSTIC_CONTROL_SHA"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.3'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Read exact development companion commits
+        id: companions
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const pins = JSON.parse(fs.readFileSync('config/development-companions.json', 'utf8'));
+          for (const [name, output] of [['coop-data-doc', 'data'], ['coop-sql-review', 'sql'], ['coop-dax-review', 'dax']]) {
+            if (!/^[0-9a-f]{40}$/.test(pins[name])) throw new Error(`Invalid companion pin: ${name}`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output}=${pins[name]}\n`);
+          }
+          NODE
+      - uses: actions/checkout@v5
+        with:
+          repository: kabukisensei/coop-data-doc
+          ref: ${{ steps.companions.outputs.data }}
+          path: development-sources/coop-data-doc-desktop
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: kabukisensei/coop-sql-review
+          ref: ${{ steps.companions.outputs.sql }}
+          path: development-sources/coop-sql-review-desktop
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: kabukisensei/coop-dax-review
+          ref: ${{ steps.companions.outputs.dax }}
+          path: development-sources/coop-dax-review-desktop
+          persist-credentials: false
+      - name: Build wheels from committed companion snapshots
+        shell: bash
+        run: python scripts/build-development-wheels.py --repositories '${{ github.workspace }}/development-sources' --output '${{ runner.temp }}/coop-development-wheels'
+      - name: Install pinned Desktop build dependencies
+        run: npm ci --prefix desktop
+      - name: Determine exact native managed-runtime target
+        id: target
+        shell: bash
+        run: echo "value=$(node -p 'process.platform+"-"+process.arch')" >> "$GITHUB_OUTPUT"
+      - name: Rebuild checksum-pinned managed runtime
+        shell: bash
+        run: node scripts/prepare-managed-runtime.mjs --target '${{ steps.target.outputs.value }}' --work '${{ runner.temp }}/coop-managed-work' --output '${{ runner.temp }}/managed-runtime' --development-wheels '${{ runner.temp }}/coop-development-wheels/development-wheels.json'
+      - name: Package exact unsigned native application
+        shell: bash
+        env:
+          COOP_DESKTOP_MANAGED_RUNTIME_DIR: ${{ runner.temp }}/managed-runtime
+        run: npm run package:managed:win --prefix desktop
+      - name: Verify static package identity and embedded managed runtime
+        shell: bash
+        run: npm run verify:managed-package --prefix desktop --silent | tee '${{ runner.temp }}/managed-package-check.json'
+      - name: Build exact unsigned Windows installer
+        shell: bash
+        env:
+          COOP_DESKTOP_MANAGED_RUNTIME_DIR: ${{ runner.temp }}/managed-runtime
+        run: npm run package:installer:win --prefix desktop
+      - name: Record candidate, package, runtime, and installer identity
+        shell: bash
+        env:
+          IDENTITY_OUT: ${{ runner.temp }}/installer-isolation-identity.json
+          TARGET_VALUE: ${{ steps.target.outputs.value }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PRODUCT_CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          node --input-type=module - <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { createHash } from 'node:crypto';
+          import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+          import { join, resolve } from 'node:path';
+          import { packagedPaths } from './desktop/scripts/verify-managed-package.mjs';
+          const sha256 = path => createHash('sha256').update(readFileSync(path)).digest('hex');
+          const candidate = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+          if (candidate !== process.env.PRODUCT_CANDIDATE_SHA) throw new Error('Candidate checkout moved.');
+          const packaged = packagedPaths(resolve('desktop/dist-managed'));
+          const installers = readdirSync('desktop/dist-installers').filter(name => /^Coop-Desktop-.*\.exe$/i.test(name));
+          if (installers.length !== 1) throw new Error(`Expected one installer, found ${installers.length}.`);
+          const installer = resolve('desktop/dist-installers', installers[0]);
+          const identity = {
+            schemaVersion: 1,
+            diagnosticOnly: true,
+            releaseAcceptance: false,
+            runtimeGateClaimedPassed: false,
+            productCandidateSha: candidate,
+            productCandidateTree: tree,
+            diagnosticControlSha: process.env.DIAGNOSTIC_CONTROL_SHA,
+            target: process.env.TARGET_VALUE,
+            workflowRunId: process.env.GITHUB_RUN_ID,
+            workflowRunAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            developmentCompanions: JSON.parse(readFileSync('config/development-companions.json', 'utf8')),
+            checksums: {
+              releaseManifestSha256: sha256('config/release-manifest.json'),
+              developmentCompanionsSha256: sha256('config/development-companions.json'),
+              desktopPackageLockSha256: sha256('desktop/package-lock.json'),
+              managedRuntimeManifestSha256: sha256(join(packaged.resources, 'managed-runtime', 'manifest.json')),
+              managedRuntimeInventorySha256: sha256(join(packaged.resources, 'managed-runtime', 'dependency-inventory.json')),
+              packagedAppAsarSha256: sha256(join(packaged.resources, 'app.asar')),
+              packagedExecutableSha256: sha256(packaged.fuseTarget),
+              managedPackageCheckSha256: sha256(process.env.RUNNER_TEMP + '/managed-package-check.json'),
+              developmentWheelsReceiptSha256: sha256(process.env.RUNNER_TEMP + '/coop-development-wheels/development-wheels.json'),
+              installerSha256: sha256(installer),
+            },
+            installer: { filename: installers[0], size: statSync(installer).size },
+          };
+          writeFileSync(process.env.IDENTITY_OUT, `${JSON.stringify(identity, null, 2)}\n`);
+          NODE
+      - name: Run first-install discriminator only
+        shell: bash
+        env:
+          COOP_DESKTOP_DISPOSABLE_INSTALL_TEST: '1'
+          INSTALLER_PROBE_OUT: ${{ runner.temp }}/windows-installer-check.json
+          INSTALLER_BUILD_IDENTITY: ${{ runner.temp }}/installer-isolation-identity.json
+        run: node _probe-control/scripts/probe-windows-installer-first-install.mjs
+      - name: Validate diagnostic evidence linkage
+        if: always()
+        shell: bash
+        env:
+          IDENTITY_OUT: ${{ runner.temp }}/installer-isolation-identity.json
+          PROBE_OUT: ${{ runner.temp }}/windows-installer-check.json
+        run: |
+          node --input-type=module - <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const identity = JSON.parse(readFileSync(process.env.IDENTITY_OUT, 'utf8'));
+          const probe = JSON.parse(readFileSync(process.env.PROBE_OUT, 'utf8'));
+          if (identity.productCandidateSha !== process.env.PRODUCT_CANDIDATE_SHA) throw new Error('Identity candidate mismatch.');
+          if (probe.candidate !== identity.productCandidateSha) throw new Error('Probe candidate mismatch.');
+          if (probe.installerSha256 !== identity.checksums.installerSha256) throw new Error('Installer checksum mismatch.');
+          if (probe.cleanup?.confirmed !== true) throw new Error('Disposable cleanup was not confirmed.');
+          console.log(JSON.stringify({ diagnosticOnly: true, releaseAcceptance: false, runtimeGateClaimedPassed: false, candidate: identity.productCandidateSha, installerSha256: probe.installerSha256, decision: probe.decision, cleanupConfirmed: true }));
+          NODE
+      - name: Upload JSON diagnostic evidence only
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-isolation-json
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/installer-isolation-identity.json
+            ${{ runner.temp }}/windows-installer-check.json

@@ -99,6 +99,10 @@ if have pi; then
   _pi_runtime="$(coop_pi_version 2>/dev/null || true)"
   [ -n "$_pi_runtime" ] && coop_info "Aligning shared Pi libraries with the installed Pi runtime ${_pi_runtime}…"
   coop_align_ext_deps
+  if ! node "$COOP_ROOT/lib/openai-usage-compat.mjs" "$PI_AGENT/npm/node_modules/pi-better-openai"; then
+    coop_warn "usage window compatibility correction failed" "run: coop sync after reviewing the dependency"
+    SYNC_FAILURES=$((SYNC_FAILURES + 1))
+  fi
 
   # Postcondition verification over every required extension.
   for i in "${!FLEET_NAMES[@]}"; do

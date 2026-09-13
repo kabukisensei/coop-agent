@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/workflow-definitions.v1.json",
+  "title": "Coop workflow extension definitions",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "workflows"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "workflows": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/workflow" }
+    }
+  },
+  "$defs": {
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "capabilityId", "operationId"],
+      "properties": {
+        "kind": { "enum": ["capability", "core-operation", "approval"] },
+        "capabilityId": { "type": ["string", "null"] },
+        "operationId": { "type": ["string", "null"] }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "name", "description", "required", "dependsOn", "execution",
+        "permissions", "requiresApprovalOperation", "acceptedEvidenceStates"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" },
+        "dependsOn": { "$ref": "#/$defs/stringArray" },
+        "execution": { "$ref": "#/$defs/execution" },
+        "permissions": { "$ref": "#/$defs/stringArray" },
+        "requiresApprovalOperation": { "type": ["string", "null"] },
+        "acceptedEvidenceStates": {
+          "type": "array",
+          "items": { "enum": ["complete", "partial", "failed", "not-applicable"] },
+          "uniqueItems": true
+        }
+      }
+    },
+    "completionCriteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredStageIds", "allowPartialEvidence", "requiredArtifactKinds"],
+      "properties": {
+        "requiredStageIds": { "$ref": "#/$defs/stringArray" },
+        "allowPartialEvidence": { "type": "boolean" },
+        "requiredArtifactKinds": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "version", "capabilityId", "name", "description", "inputs",
+        "prerequisites", "stages", "completionCriteria"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^coop-workflow\\.[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "version": { "type": "integer", "minimum": 1 },
+        "capabilityId": { "type": "string", "pattern": "^coop\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "inputs": { "type": "object" },
+        "prerequisites": { "$ref": "#/$defs/stringArray" },
+        "stages": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/stage" }
+        },
+        "completionCriteria": { "$ref": "#/$defs/completionCriteria" }
+      }
+    }
+  }
+}

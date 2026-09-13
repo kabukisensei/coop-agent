@@ -27,6 +27,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - New `tips` vibe set (`vibes/tips.txt`): a curated, tips-only rotation of practical
   Coop commands and working habits with no easter eggs. Select it inside Coop with
   `/coop-vibe tips`; it also joins the default `/coop-vibe all` rotation.
+### Windows Desktop validation
+- Stop and startup failure now terminate the owned Windows runtime process tree,
+  including Pi and MCP descendants, and concurrent stop requests share cleanup.
+- Project configuration writes use a writable file handle for Windows fsync;
+  update-outcome dialogs release their read handle so a newer result can replace
+  the file while the dialog remains open.
+- Managed Doctor inspects and probes bundled dependencies instead of examining
+  global pipx/npm installations. Health preserves other setup and sign-in actions
+  when an individual service fails.
+- A separate Windows validation package identity and user-data directory support
+  isolated installer acceptance. The Power BI Desktop bridge pin is 0.1.2;
+  the previous 0.0.1 pin was not available from the registry.
 
 ### Changed
 - The `/share-learning` friction nudge now fires only on repeated tool failures

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/project-config-proposal.v1.json",
+  "title": "Coop project configuration proposal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "proposalId", "workspace", "targetPath", "state", "baseDigest", "candidateDigest", "changed", "preview", "validation", "requiresApproval"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "proposalId": { "type": "string", "minLength": 1 },
+    "workspace": { "type": "string", "minLength": 1 },
+    "targetPath": { "type": "string", "minLength": 1 },
+    "state": { "enum": ["proposed", "applied", "stale", "invalid"] },
+    "baseDigest": { "type": ["string", "null"] },
+    "candidateDigest": { "type": "string", "minLength": 1 },
+    "changed": { "type": "boolean" },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before", "after"],
+      "properties": { "before": { "type": ["string", "null"] }, "after": { "type": "string" } }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["valid", "diagnostics"],
+      "properties": { "valid": { "type": "boolean" }, "diagnostics": { "type": "array", "items": { "type": "object" } } }
+    },
+    "requiresApproval": { "const": true }
+  }
+}
