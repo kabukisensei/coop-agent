@@ -5,17 +5,17 @@
 // (CI with a pinned tool) to turn a skip into a failure.
 import { strict as assert } from "node:assert";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, copyFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
 if (!dist) { console.error("COOP_TEST_DIST not set"); process.exit(1); }
-const { resolveDataDocExecutable } = await import(pathToFileURL(join(dist, "coop-tools.mjs")).href);
+const { resolveDataDocInvocation, runJsonlSetup } = await import(pathToFileURL(join(dist, "coop-tools.mjs")).href);
 
-let exe;
-try { exe = resolveDataDocExecutable(process.platform, process.env); }
+let invocation;
+try { invocation = resolveDataDocInvocation(process.platform, process.env); }
 catch (e) {
   if (process.env.COOP_TEST_DATADOC_REQUIRED === "1") { console.error(e.message); process.exit(1); }
   console.log("  – coop-data-doc not on PATH; skipping live JSONL happy-path");
@@ -23,7 +23,7 @@ catch (e) {
 }
 
 const verResult = await new Promise((res) => {
-  const p = spawn(exe, ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
+  const p = spawn(invocation.command, [...invocation.args, "--version"], { stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
   p.stdout.on("data", (d) => { out += d; });
   let settled = false;
@@ -60,7 +60,17 @@ mkdirSync(join(work, "pbi"), { recursive: true });
 writeFileSync(join(sqlDir, "f.sql"), "CREATE OR REPLACE VIEW gold.f AS SELECT 1 AS x;\n");
 
 // --- drive the questionnaire ---------------------------------------------------
-const child = spawn(exe, ["setup", "--transport", "jsonl"], { cwd: work, stdio: ["pipe", "pipe", "pipe"] });
+const childEnv = {
+  ...process.env,
+  PYTHONIOENCODING: "utf-8",
+  PYTHONUTF8: "1",
+  COOP_DATA_DOC_CONFIG: "coop-data-doc.yml",
+};
+const child = spawn(invocation.command, [...invocation.args, "setup", "--transport", "jsonl"], {
+  cwd: work,
+  stdio: ["pipe", "pipe", "pipe"],
+  env: childEnv,
+});
 const events = [];
 const rawLines = [];
 let stdoutNonJson = "";
@@ -111,8 +121,8 @@ const answerFor = (p) => {
     }
     return [];
   }
+  if (/name/i.test(id)) return "CleanRoom — Estate ✓";
   if (typeof p.default === "string" && p.default) return p.default;
-  if (/name/i.test(id)) return "CleanRoom Estate";
   return "yes";
 };
 
@@ -162,9 +172,15 @@ const prompts = events.filter((e) => e.type === "prompt");
 ok(prompts.length > 0, `questionnaire asked ${prompts.length} prompts`);
 ok(!events.some((e) => e.type === "error"), "no error events during happy path");
 const terminals = events.filter((e) => ["complete", "cancelled", "error"].includes(e.type));
+for (const event of terminals.filter((event) => event.type === "error")) console.error(`  JSONL error: ${JSON.stringify(event)}`);
 ok(terminals.length === 1 && terminals[0].type === "complete",
    `exactly one terminal event, of type complete (got ${terminals.map((t) => t.type).join(",") || "none"})`);
 ok(exitCode === 0, `exit code is 0 (got ${exitCode}${stderrTail ? `; stderr: ${stderrTail.split("\n").pop()}` : ""})`);
+
+const expectedPromptId = "SQL repo path — the folder with your procs, tables, views_path";
+ok(prompts.some((p) => p.id === expectedPromptId),
+   `exact Unicode prompt ID ('${expectedPromptId}') received`);
+ok(!rawLines.some((l) => l.includes("\uFFFD")), "no Unicode replacement characters (\\uFFFD) in JSONL stream");
 
 const cfgPath = (evt) => {
   const c = evt && evt.data && evt.data.config;
@@ -174,15 +190,109 @@ const completeEvt = terminals.find((t) => t.type === "complete");
 const cfg = cfgPath(completeEvt) || join(work, "coop-data-doc.yml");
 ok(existsSync(cfg), `indicated config exists (${cfg.replace(work + "/", "")})`);
 if (existsSync(cfg)) {
+  const cfgText = readFileSync(cfg, "utf-8");
+  const nameMatch = cfgText.includes("CleanRoom — Estate ✓") || cfgText.includes("CleanRoom \\u2014 Estate \\u2713");
+  ok(nameMatch, "exact Unicode project name round-tripped into config");
   // Validity: the tool's own parser accepts it (show-config exits 0 with JSON).
   const show = await new Promise((res) => {
-    const p = spawn(exe, ["show-config"], { cwd: work, stdio: ["ignore", "pipe", "pipe"] });
+    const p = spawn(invocation.command, [...invocation.args, "show-config"], { cwd: work, stdio: ["ignore", "pipe", "pipe"], env: childEnv });
     let out = ""; p.stdout.on("data", (d) => { out += d; });
     p.once("close", (c) => res({ c, out }));
   });
-  ok(show.c === 0 && (() => { try { JSON.parse(show.out); return true; } catch { return false; } })(),
+  let parsedConfig = null;
+  try { parsedConfig = JSON.parse(show.out); } catch {}
+  ok(show.c === 0 && parsedConfig !== null,
      "config is valid (show-config parses it as JSON)");
+  ok(parsedConfig && parsedConfig.project_name === "CleanRoom — Estate ✓",
+     "show-config returns exact Unicode project name ('CleanRoom — Estate ✓')");
 }
+
+// --- production runJsonlSetup verification with Unicode round-trip -------------
+console.log("→ production runJsonlSetup verification (UTF-8 encoding round-trip)");
+const prodWork = mkdtempSync(join(tmpdir(), "coop-jsonl-prod-"));
+const prodSqlDir = join(prodWork, "sql", "models");
+mkdirSync(prodSqlDir, { recursive: true });
+mkdirSync(join(prodWork, "pbi"), { recursive: true });
+writeFileSync(join(prodSqlDir, "f.sql"), "CREATE OR REPLACE VIEW gold.f AS SELECT 1 AS x;\n");
+
+const prevCfgEnv = process.env.COOP_DATA_DOC_CONFIG;
+process.env.COOP_DATA_DOC_CONFIG = join(prodWork, "coop-data-doc.yml");
+
+const prodPrompts = [];
+const expectedProjectName = "CleanRoom — Estate ✓";
+
+const prodCtx = {
+  cwd: prodWork,
+  ui: {
+    notify: (_msg, _level) => {},
+    confirm: async (_title, msg) => {
+      prodPrompts.push({ kind: "confirm", message: msg });
+      return true;
+    },
+    select: async (msg, choices) => {
+      prodPrompts.push({ kind: "select", message: msg, choices });
+      const unchecked = choices.find((c) => typeof c === "string" && c.startsWith("☐ "));
+      if (unchecked) return unchecked;
+      const done = choices.find((c) => c === "✓ Done");
+      if (done) return done;
+      const folder = choices.find((c) => typeof c === "string" && c.startsWith("✓ Use this folder:"));
+      if (folder) return folder;
+      return choices[0];
+    },
+    input: async (msg, def) => {
+      prodPrompts.push({ kind: "input", message: msg, def });
+      if (/project name/i.test(msg)) return expectedProjectName;
+      if (/schemas.*accept/i.test(msg)) return "gold";
+      if (/schemas.*drop/i.test(msg)) return "staging, tmp";
+      if (/folder globs/i.test(msg)) return "models";
+      return def || "";
+    },
+  },
+};
+
+const prefill = {
+  projectName: expectedProjectName,
+  sourceMode: "both",
+  sqlPath: "sql/models",
+  pbiPath: "pbi",
+};
+
+let prodSuccess = false;
+try {
+  prodSuccess = await runJsonlSetup({}, prodCtx, prefill);
+} finally {
+  if (prevCfgEnv !== undefined) process.env.COOP_DATA_DOC_CONFIG = prevCfgEnv;
+  else delete process.env.COOP_DATA_DOC_CONFIG;
+}
+
+ok(prodSuccess === true, "production runJsonlSetup completed successfully (returned true)");
+
+// Assert exact Unicode prompt received over wire by runJsonlSetup
+const matchingPrompt = prodPrompts.find((p) => p.message && p.message.includes("SQL repo path — the folder"));
+ok(!!matchingPrompt, "exact Unicode prompt message with em-dash (\\u2014) received by runJsonlSetup");
+
+// Assert exact Unicode answer round-tripped into written config
+const prodCfgPath = join(prodWork, "coop-data-doc.yml");
+ok(existsSync(prodCfgPath), "production runJsonlSetup wrote config file");
+if (existsSync(prodCfgPath)) {
+  const cfgText = readFileSync(prodCfgPath, "utf-8");
+  const nameMatch = cfgText.includes(expectedProjectName) || cfgText.includes("CleanRoom \\u2014 Estate \\u2713");
+  ok(nameMatch, `exact Unicode answer '${expectedProjectName}' round-tripped into config`);
+  // Also verify via show-config for production runJsonlSetup
+  const prodShow = await new Promise((res) => {
+    const p = spawn(invocation.command, [...invocation.args, "show-config"], { cwd: prodWork, stdio: ["ignore", "pipe", "pipe"], env: childEnv });
+    let out = ""; p.stdout.on("data", (d) => { out += d; });
+    p.once("close", (c) => res({ c, out }));
+  });
+  let prodParsed = null;
+  try { prodParsed = JSON.parse(prodShow.out); } catch {}
+  ok(prodShow.c === 0 && prodParsed !== null,
+     "production config is valid (show-config parses it as JSON)");
+  ok(prodParsed && prodParsed.project_name === expectedProjectName,
+     `production config show-config returns exact Unicode project name ('${expectedProjectName}')`);
+}
+
+try { rmSync(prodWork, { recursive: true, force: true }); } catch {}
 
 console.log(failures === 0 ? `  ✓ live JSONL happy-path passed (${prompts.length} prompts answered)` : "  ✗ live JSONL happy-path FAILED");
 process.exit(failures === 0 ? 0 : 1);

@@ -1,5 +1,24 @@
 # UI strategy — why `coop web`, and what we learned
 
+> **Historical decision notice (2026-09-04):** This document remains the record
+> of why `coop web` was selected and how it was hardened. Its decision to keep a
+> native Desktop client out of scope is superseded by
+> [`docs/adr/desktop-shell-and-runtime.md`](adr/desktop-shell-and-runtime.md).
+> The Web architecture and security lessons below remain authoritative unless
+> that ADR explicitly changes them.
+
+Desktop presentation now uses one semantic design system with three user modes:
+Modern Dark, Modern Light, and Retro Messenger. They share identical component,
+accessibility, workflow, and capability semantics; the theme choice is personal
+Desktop/Web UI state and never part of a client project contract.
+
+The shared SPA also owns one bounded content-portability layer. Screenshot paste
+intercepts only image clipboard items, text/file attachment admission is explicit
+and size-limited, and copy buttons always write predictable plain text. Native
+selection remains browser-owned. Windows interoperability evidence is tracked
+separately from platform-independent unit tests so a macOS development run cannot
+silently satisfy the SSMS, Power BI, Teams, or Azure DevOps release gate.
+
 The friendly-UI work shipped through phase 2 (`coop web` landed in v0.5.0 and
 grew through v0.8.x). This page records the strategy and the hard-won
 implementation lessons so future UI work doesn't re-learn them. Companion
@@ -41,8 +60,10 @@ security model, known limitations).
    Electron/Tauri**: no code signing, no bundled runtime, no Rust, and `coop
    web` dominates a native desktop shell on cost. (`COOP_WEB_NO_APP=1` falls back
    to a normal tab.)
-4. **Beyond** (only on proven demand): VS Code extension or a hosted Teams
-   surface. Native desktop stays off the table.
+4. **Beyond (historical decision):** At the time, the next candidates were a VS
+   Code extension or hosted Teams surface and native Desktop remained out of
+   scope. The 2026-09-04 Desktop ADR supersedes that scope decision while
+   preserving `coop web` as a first-class client.
 
 ## Windows-first
 

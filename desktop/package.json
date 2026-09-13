@@ -1,0 +1,62 @@
+{
+  "name": "coop-desktop-preview",
+  "version": "0.0.1",
+  "description": "Secure production-oriented preview shell for Coop Runtime",
+  "author": "Cooptimize",
+  "private": true,
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "package:mac": "electron-builder --dir --mac",
+    "package:win": "electron-builder --dir --win --x64",
+    "package:managed:mac": "electron-builder --config electron-builder-managed.cjs --dir --mac",
+    "package:managed:win": "electron-builder --config electron-builder-managed.cjs --dir --win",
+    "verify:managed-package": "node scripts/verify-managed-package.mjs",
+    "package:installer:mac": "electron-builder --config electron-builder-installer.cjs --mac --publish never",
+    "package:installer:win": "electron-builder --config electron-builder-installer.cjs --win --publish never",
+    "package:validation:win": "electron-builder --config electron-builder-windows-validation.cjs --dir --win --publish never",
+    "package:validation:installer:win": "electron-builder --config electron-builder-windows-validation.cjs --win --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.2.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.cooptimize.coop.desktop.preview",
+    "productName": "Coop Desktop Preview",
+    "asar": true,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "loadBrowserProcessSpecificV8Snapshot": false,
+      "grantFileProtocolExtraPrivileges": false
+    },
+    "files": [
+      "src/**/*",
+      "resources/desktop-update-trust.json",
+      "resources/desktop-update-feed.json",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "../themes/coop.icns"
+    },
+    "win": {
+      "target": [
+        "dir"
+      ],
+      "icon": "../themes/coop.ico"
+    }
+  }
+}

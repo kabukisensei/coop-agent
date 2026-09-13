@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coop.local/schemas/impact-analysis.v1.json",
+  "title": "Coop guided impact analysis artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "analysisId", "evidenceStatus", "generatedAt", "target",
+    "evidenceSources", "paths", "impacts", "evidenceGaps", "risk",
+    "saferAlternatives", "plan", "approval"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "analysisId": { "type": "string", "minLength": 1 },
+    "evidenceStatus": { "enum": ["complete", "partial", "failed", "not-applicable"] },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "target": { "$ref": "#/$defs/target" },
+    "evidenceSources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/evidenceSource" }
+    },
+    "paths": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "impacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["upstream", "downstream", "reports", "apps", "rls", "refresh", "consumers"],
+      "properties": {
+        "upstream": { "$ref": "#/$defs/objectRefs" },
+        "downstream": { "$ref": "#/$defs/objectRefs" },
+        "reports": { "$ref": "#/$defs/objectRefs" },
+        "apps": { "$ref": "#/$defs/objectRefs" },
+        "rls": { "$ref": "#/$defs/objectRefs" },
+        "refresh": { "$ref": "#/$defs/objectRefs" },
+        "consumers": { "$ref": "#/$defs/objectRefs" }
+      }
+    },
+    "evidenceGaps": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidenceGap" }
+    },
+    "risk": { "$ref": "#/$defs/risk" },
+    "saferAlternatives": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/alternative" }
+    },
+    "plan": { "$ref": "#/$defs/plan" },
+    "approval": { "$ref": "#/$defs/approval" }
+  },
+  "$defs": {
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "evidenceIds": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "type", "changeIntent", "intendedOutcome", "environment", "deploymentScope"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 },
+        "changeIntent": { "enum": ["add", "remove", "rename", "retype", "redefine", "move", "deprecate", "investigate"] },
+        "intendedOutcome": { "type": "string" },
+        "environment": { "type": "string" },
+        "deploymentScope": { "type": "string" }
+      }
+    },
+    "evidenceSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "label", "observedAt", "status", "reference"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["data-doc", "fabric", "powerbi", "source", "microsoft-learn", "agent-inference"] },
+        "label": { "type": "string", "minLength": 1 },
+        "observedAt": { "type": ["string", "null"] },
+        "status": { "enum": ["complete", "partial", "failed", "not-applicable"] },
+        "reference": { "type": ["string", "null"] }
+      }
+    },
+    "objectRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "type", "path", "classification", "evidenceSourceIds"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 },
+        "path": { "type": ["string", "null"] },
+        "classification": { "enum": ["breaking", "non-breaking", "cosmetic", "unknown"] },
+        "evidenceSourceIds": { "$ref": "#/$defs/evidenceIds" }
+      }
+    },
+    "objectRefs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/objectRef" }
+    },
+    "path": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "direction", "nodes", "evidenceSourceIds", "confidence", "explanation"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "direction": { "enum": ["upstream", "downstream", "cross-artifact"] },
+        "nodes": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/objectRef" } },
+        "evidenceSourceIds": { "$ref": "#/$defs/evidenceIds" },
+        "confidence": { "enum": ["high", "medium", "low", "unknown"] },
+        "explanation": { "type": "string" }
+      }
+    },
+    "evidenceGap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "severity", "message", "affects"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "severity": { "enum": ["error", "warning", "info"] },
+        "message": { "type": "string", "minLength": 1 },
+        "affects": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "rationale", "drivers"],
+      "properties": {
+        "level": { "enum": ["low", "medium", "high", "unknown"] },
+        "rationale": { "type": "string", "minLength": 1 },
+        "drivers": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "alternative": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "rationale"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "rationale": { "type": "string", "minLength": 1 }
+      }
+    },
+    "planStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "description", "approvalRequired", "affectedObjects"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "approvalRequired": { "type": "boolean" },
+        "affectedObjects": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "steps"],
+      "properties": {
+        "summary": { "type": "string", "minLength": 1 },
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/planStep" } }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "status"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "status": { "enum": ["pending", "approved", "declined", "not-required"] }
+      }
+    }
+  }
+}

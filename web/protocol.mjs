@@ -16,10 +16,11 @@
 // transports); it is a pure, side-effect-free ESM module — importable in Node
 // without spawning anything.
 //
-// VERIFIED AGAINST Pi 0.80.2 — the contract entries below were checked against
-// the installed `pi-agent-core` / `pi-ai` dist type unions (notably
-// `AssistantMessageEvent` in dist/types.d.ts, which includes the `toolcall_*`
-// members) and against `rpc-mode.js`, which forwards session events wholesale.
+// VERIFIED AGAINST Pi 0.84.3 — the contract entries below were checked against
+// the published `pi-coding-agent`, `pi-agent-core`, and `pi-ai` 0.84.3 dist type
+// unions (notably RpcCommand, RpcResponse, AgentSessionEvent, and
+// AssistantMessageEvent) and against rpc-mode.js, which forwards session events
+// through the delta-only JSON event adapter.
 // Every entry must exist in the REAL protocol — no aspirational entries. When Pi
 // is upgraded, follow the "Protocol contract (when Pi is upgraded)" checklist in
 // web/README.md and re-verify against the new package's types.
@@ -31,19 +32,40 @@
 
 import { StringDecoder } from "node:string_decoder";
 
+export const PI_PROTOCOL_VERSION = "0.84.3";
+
 // --- Contract data: commands the bridge SENDS to pi stdin ----------------------
 // Whitelist of RPC commands the browser may relay through POST /rpc. Kept HERE,
 // next to the rest of the contract, so the whitelist and the contract can never
 // drift apart; server.mjs imports it (and its `.has()` usage requires a Set).
 export const RPC_ALLOWED = new Set([
+  "steer",
+  "follow_up",
   "new_session",
   "get_state",
   "get_available_models",
   "set_model",
+  "cycle_model",
   "set_thinking_level",
+  "cycle_thinking_level",
+  "get_available_thinking_levels",
+  "set_steering_mode",
+  "set_follow_up_mode",
   "compact",
+  "set_auto_compaction",
+  "set_auto_retry",
+  "abort_retry",
   "get_session_stats", // read-only: tokens, cost, context usage (header gauge)
+  "export_html",
+  "switch_session",
+  "fork",
+  "clone",
+  "get_fork_messages",
+  "get_entries",
+  "get_tree",
+  "get_last_assistant_text",
   "set_session_name", // names the current conversation (History list)
+  "get_commands",
 ]);
 
 // Every command the bridge ever writes to pi stdin, mapped to a field spec (see
@@ -54,40 +76,61 @@ export const RPC_ALLOWED = new Set([
 //   spawn = launch-spec `bin`/`args` + "--mode" "rpc" "-a" (+ "--session <file>"
 //   on resume). NEVER drop `-a` — the agent runs silently ungoverned otherwise.
 export const COMMANDS_SENT = {
-  prompt: { message: "string", streamingBehavior: "string?" },
-  extension_ui_response: { id: "string", value: "any?", confirmed: "boolean?", cancelled: "boolean?" },
+  prompt: { message: "string", images: "array?", streamingBehavior: "string?" },
+  extension_ui_response: { id: "string", value: "string?", confirmed: "boolean?", cancelled: "boolean?" },
   abort: {},
   get_messages: {},
-  // The eight RPC_ALLOWED commands with their whitelisted fields (see the /rpc
-  // handler in server.mjs — only these fields are ever forwarded).
+  // RPC_ALLOWED commands with their whitelisted fields. web/rpc-adapter.mjs
+  // constructs every command explicitly; request bodies are never spread to Pi.
+  steer: { message: "string", images: "array?" },
+  follow_up: { message: "string", images: "array?" },
   new_session: {},
   get_state: {},
   get_available_models: {},
   set_model: { provider: "string", modelId: "string" },
+  cycle_model: {},
   set_thinking_level: { level: "string" },
+  cycle_thinking_level: {},
+  get_available_thinking_levels: {},
+  set_steering_mode: { mode: "string" },
+  set_follow_up_mode: { mode: "string" },
   // compact is an LLM round-trip — the /rpc handler gives it a 180 s timeout (RPC_TIMEOUTS
   // in server.mjs; COOP_WEB_RPC_TIMEOUT_COMPACT overrides), vs the 30 s default for the
   // rest, so a long compaction on a big session isn't reported as a false failure.
   compact: { customInstructions: "string?" },
+  set_auto_compaction: { enabled: "boolean" },
+  set_auto_retry: { enabled: "boolean" },
+  abort_retry: {},
   get_session_stats: {},
+  export_html: {},
+  switch_session: { sessionPath: "string" },
+  fork: { entryId: "string" },
+  clone: {},
+  get_fork_messages: {},
+  get_entries: { since: "string?" },
+  get_tree: {},
+  get_last_assistant_text: {},
   set_session_name: { name: "string" },
+  get_commands: {},
 };
 
 // --- Contract data: events the bridge / SPA CONSUME ----------------------------
-// The nine assistant-message event kinds Pi streams inside `message_update`. The
-// `toolcall_*` members are load-bearing: Pi 0.80.2's `AssistantMessageEvent`
-// union includes them and rpc-mode forwards session events wholesale, so EVERY
+// The twelve assistant-message event kinds Pi streams inside `message_update`.
+// The `toolcall_*` members are load-bearing: Pi's `AssistantMessageEvent` union
+// includes them and rpc-mode forwards session events wholesale, so EVERY
 // real tool call produces `message_update` events with `assistantMessageEvent.type:
 // "toolcall_*"`. The SPA falls through on them today (no renderer), but omitting
 // them here would make the drift detector fire a permanent false positive in
 // essentially every real session.
 export const ASSISTANT_MESSAGE_EVENTS = [
+  "start",
   "text_start", "text_delta", "text_end",
   "thinking_start", "thinking_delta", "thinking_end",
   "toolcall_start", "toolcall_delta", "toolcall_end",
+  "done", "error",
 ];
 
-// Every extension-UI method Pi 0.80.x can send on an `extension_ui_request`. Must
+// Every extension-UI method Pi 0.84.3 can send on an `extension_ui_request`. Must
 // stay in sync with the dispatcher in app.js (M4 renders the ones beyond the four
 // dialogs; anything not here is drift-flagged and renders as a fallback card).
 export const UI_METHODS = [
@@ -102,42 +145,71 @@ export const UI_METHODS = [
 // and `extension_ui_request.method`.
 export const EVENTS_CONSUMED = {
   agent_start: {}, // toggles `busy`
-  agent_end: { messages: "array?", willRetry: "boolean?" },
+  agent_end: { messages: "array", willRetry: "boolean" },
   message_start: { message: "object" }, // SPA reads message.role, message.content
-  message_update: { message: "object?", assistantMessageEvent: "object?" },
-  message_end: { message: "object?" }, // SPA reads message.usage, .role, .responseModel|model
-  tool_execution_start: { toolCallId: "string", toolName: "string", args: "any?" },
-  tool_execution_update: { toolCallId: "string", toolName: "string?", partialResult: "any?" },
-  tool_execution_end: { toolCallId: "string", toolName: "string?", result: "any?", isError: "boolean?" },
-  compaction_start: { reason: "string?" },
-  compaction_end: {},
+  // Pi 0.84.3 deliberately removes the cumulative message snapshot here. Deltas
+  // plus usage are the wire contract; message_end is the final authority.
+  message_update: { usage: "object", assistantMessageEvent: "object" },
+  message_end: { message: "object" }, // SPA reads message.usage, .role, .responseModel|model
+  tool_execution_start: { toolCallId: "string", toolName: "string", args: "any" },
+  tool_execution_update: { toolCallId: "string", toolName: "string", args: "any", partialResult: "any" },
+  tool_execution_end: { toolCallId: "string", toolName: "string", result: "any", isError: "boolean" },
+  compaction_start: { reason: "string" },
+  compaction_end: { reason: "string", result: "object?", aborted: "boolean", willRetry: "boolean", errorMessage: "string?" },
+  auto_retry_start: { attempt: "number", maxAttempts: "number", delayMs: "number", errorMessage: "string" },
+  auto_retry_end: { success: "boolean", attempt: "number", finalError: "string?" },
+  queue_update: {}, // SPA renders queue transitions; action/queueType vary by Pi queue operation
   extension_ui_request: { id: "string", method: "string" },
-  response: { command: "string?", success: "boolean", id: "any?", data: "any?", error: "string?" },
+  response: { command: "string", success: "boolean", id: "any?", data: "any?", error: "string?" },
 };
 
-// Types Pi 0.80.x emits that coop-web deliberately ignores but must NOT warn
-// about. Each was verified to exist in the installed Pi 0.80.2 package (grep of
-// `pi-coding-agent` / `pi-agent-core` dist). Do not add aspirational entries: an
-// earlier draft listed `streaming_state`, which does not exist in 0.80.2 and was
-// dropped.
+// Types Pi 0.84.3 emits that coop-web deliberately ignores but must NOT warn
+// about. Each was verified against the published AgentSessionEvent union or
+// rpc-mode's extension-error output. Do not add aspirational entries.
 export const EVENTS_KNOWN_IGNORED = [
-  "turn_start", "turn_end", "queue_update", "auto_retry_start", "auto_retry_end",
-  "thinking_level_changed", "extension_error", "session_info_changed",
+  "turn_start", "turn_end",
+  "thinking_level_changed", "extension_error", "session_info_changed", "agent_settled",
+  "entry_appended", "summarization_retry_scheduled", "summarization_retry_attempt_start",
+  "summarization_retry_finished", "bash_execution_update",
 ];
 
 // The `data` fields the SPA actually dereferences per claimed /rpc command,
 // checked only when `success === true`. Loose ({}) where the SPA reads nothing
 // structural. Every key here must be a member of COMMANDS_SENT (self-consistency).
 export const RESPONSE_DATA = {
-  get_state: { model: "object?", thinkingLevel: "string?" },
+  get_state: {
+    model: "object?", thinkingLevel: "string", isStreaming: "boolean", isCompacting: "boolean",
+    steeringMode: "string", followUpMode: "string", sessionFile: "string?", sessionId: "string",
+    sessionName: "string?", autoCompactionEnabled: "boolean", messageCount: "number",
+    pendingMessageCount: "number",
+  },
   get_available_models: { models: "array" },
   get_session_stats: { contextUsage: "object?", tokens: "object?", cost: "number?" },
   new_session: { cancelled: "boolean?" },
   get_messages: { messages: "array" },
   compact: {},
+  steer: {},
+  follow_up: {},
   set_model: {},
+  cycle_model: {},
   set_thinking_level: {},
+  cycle_thinking_level: {},
+  get_available_thinking_levels: { levels: "array" },
+  set_steering_mode: {},
+  set_follow_up_mode: {},
+  set_auto_compaction: {},
+  set_auto_retry: {},
+  abort_retry: {},
+  export_html: { path: "string" },
+  switch_session: { cancelled: "boolean" },
+  fork: { text: "string", cancelled: "boolean" },
+  clone: { cancelled: "boolean" },
+  get_fork_messages: { messages: "array" },
+  get_entries: { entries: "array", leafId: "any" },
+  get_tree: { tree: "array", leafId: "any" },
+  get_last_assistant_text: { text: "any" },
   set_session_name: {},
+  get_commands: { commands: "array" },
 };
 
 // Bridge-synthesized event types (always skipped by the validator — they never
@@ -321,4 +393,16 @@ export function createJsonlSplitter(onLine, opts = {}) {
       pendingLen = newLen;
     }
   };
+}
+
+// --- Error message sanitization & redaction ------------------------------------
+// Redacts leaked API keys, authorization bearer tokens, and secret parameters
+// from model error messages before rendering or recording into session replays.
+export function sanitizeErrorMessage(raw, fallback = "Model request failed.") {
+  if (typeof raw !== "string" || !raw.trim()) return fallback;
+  return raw
+    .replace(/(sk-[A-Za-z0-9_-]{8,})/gi, "[REDACTED]")
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]{8,}/gi, "$1[REDACTED]")
+    .replace(/((?:api[_-]?key|token|secret|password)[=:]\s*['"]?)[A-Za-z0-9._~+/-]{8,}(['"]?)/gi, "$1[REDACTED]$2")
+    .replace(/((?:[?&]key=))[A-Za-z0-9._~+/-]{8,}/gi, "$1[REDACTED]");
 }

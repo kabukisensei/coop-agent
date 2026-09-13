@@ -27,6 +27,10 @@ case "${1:-}" in
     esac
     dir="${PI_CODING_AGENT_DIR:?}/npm/node_modules/$name"
     mkdir -p "$dir"
+    if [ "$name" = "pi-better-openai" ]; then
+      mkdir -p "$dir/src"
+      cp "$COOP_USAGE_FIXTURE" "$dir/src/usage.ts"
+    fi
     printf '{"name":"%s","version":"%s"}\n' "$name" "$ver" > "$dir/package.json"
     exit 0
     ;;
