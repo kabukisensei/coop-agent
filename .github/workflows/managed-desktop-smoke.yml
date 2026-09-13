@@ -122,57 +122,18 @@ jobs:
           if (result.error) throw result.error;
           process.exitCode = result.status ?? 1;
           NODE
-      - name: Probe explicit modules through runtime dispatcher
+      - name: Probe 60-second native PowerShell behavior
         if: runner.os == 'Windows'
         shell: bash
-        run: |
-          node --input-type=module - <<'NODE'
-          import { spawnSync } from 'node:child_process';
-          import { mkdirSync, writeFileSync } from 'node:fs';
-          import { join, resolve } from 'node:path';
-          import { packagedPaths } from './desktop/scripts/verify-managed-package.mjs';
-          import { buildNativeProbeEnvironment } from './desktop/scripts/verify-native-application.mjs';
-          const resources = packagedPaths(resolve('desktop/dist-managed')).resources;
-          const runtime = join(resources, 'managed-runtime');
-          const profile = join(process.env.RUNNER_TEMP, 'probe7-native-profile');
-          const agent = join(process.env.RUNNER_TEMP, 'probe7-agent');
-          const workspace = join(process.env.RUNNER_TEMP, 'probe7-workspace');
-          const env = buildNativeProbeEnvironment(profile, undefined, 'win32', process.env);
-          delete env.COOP_DESKTOP_UPDATE_PROBE;
-          Object.assign(env, { COOP_DESKTOP_AGENT_DIR: agent, COOP_AGENT_DIR: agent, PI_CODING_AGENT_DIR: agent, COOP_SKIP_AZ: '1', COOP_NO_ONBOARD: '1', COOP_RUNTIME_STARTUP_TRACE: '1' });
-          for (const path of [profile, env.TEMP, env.APPDATA, env.LOCALAPPDATA, agent, workspace]) mkdirSync(path, { recursive: true });
-          function run(name, command, args, runEnv = env) {
-            const result = spawnSync(command, args, { cwd: workspace, env: runEnv, shell: false, windowsHide: true, timeout: 10000, encoding: 'utf8', maxBuffer: 64 * 1024 });
-            return { name, status: result.status, signal: result.signal, errorCode: result.error?.code || null,
-              stdout: String(result.stdout || ''), stderr: String(result.stderr || ''), pid: result.pid || null };
-          }
-          const powershell = join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-          const builtInModules = join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
-          const builtInEnv = { ...env, PSModulePath: builtInModules };
-          const commandArgs = script => ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script];
-          const psQuote = value => `'${String(value).replaceAll("'", "''")}'`;
-          const dispatcherScript = imports => `${imports}; & ${psQuote(join(runtime, 'coop', 'bin', 'coop.ps1'))} runtime --transport http --json --port 0 --cwd ${psQuote(workspace)}`;
-          const results = [
-            run('managed-mcp-config', join(runtime, 'node', 'node.exe'), [join(runtime, 'coop', 'lib', 'managed-mcp-config.mjs'), runtime, agent]),
-            run('cmdlet-native-module-path', powershell, commandArgs("[Console]::Error.WriteLine('phase:enter'); Split-Path -Parent 'C:\\probe\\file.txt'; [Console]::Error.WriteLine('phase:done')")),
-            run('cmdlet-built-in-module-path', powershell, commandArgs("[Console]::Error.WriteLine('phase:enter'); Split-Path -Parent 'C:\\probe\\file.txt'; [Console]::Error.WriteLine('phase:done')"), builtInEnv),
-            run('explicit-management-import', powershell, commandArgs("[Console]::Error.WriteLine('phase:enter'); Import-Module Microsoft.PowerShell.Management; [Console]::Error.WriteLine('phase:imported'); Split-Path -Parent 'C:\\probe\\file.txt'; [Console]::Error.WriteLine('phase:done')"), builtInEnv),
-            run('dotnet-path-control', powershell, commandArgs("[Console]::Error.WriteLine('phase:enter'); [System.IO.Path]::GetDirectoryName('C:\\probe\\file.txt'); [Console]::Error.WriteLine('phase:done')")),
-            run('dispatcher-explicit-management', powershell, commandArgs(dispatcherScript("Import-Module Microsoft.PowerShell.Management")), builtInEnv),
-            run('dispatcher-explicit-management-utility', powershell, commandArgs(dispatcherScript("Import-Module Microsoft.PowerShell.Management; Import-Module Microsoft.PowerShell.Utility")), builtInEnv),
-            run('coop-dispatcher', powershell,
-              ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(runtime, 'coop', 'bin', 'coop.ps1'), 'runtime', '--transport', 'http', '--json', '--port', '0', '--cwd', workspace]),
-          ];
-          const output = join(process.env.RUNNER_TEMP, 'probe9-explicit-modules.json');
-          writeFileSync(output, JSON.stringify({ diagnosticOnly: true, candidate: 'ed516b2a183f3e6346344a669d6e37b321a4dcf8', results }, null, 2));
-          console.log(JSON.stringify(results.map(({name,status,signal,errorCode,stdout,stderr}) => ({name,status,signal,errorCode,stdoutBytes:stdout.length,stderrBytes:stderr.length,stages:[...stderr.matchAll(/\[coop-startup\] ([^\r\n]+)/g)].map(match => match[1])}))));
-          NODE
-      - name: Upload explicit-module runtime probe
+        env:
+          PROBE10_OUT: ${{ runner.temp }}/probe10-60s-repetitions.json
+        run: node scripts/probe-windows-powershell-60s.mjs
+      - name: Upload 60-second PowerShell discriminator
         if: always() && runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: probe9-explicit-modules
-          path: ${{ runner.temp }}/probe9-explicit-modules.json
+          name: probe10-60s-repetitions
+          path: ${{ runner.temp }}/probe10-60s-repetitions.json
           if-no-files-found: error
       - name: Exercise Windows runtime with the native application's isolated environment
         if: runner.os == 'Windows'
