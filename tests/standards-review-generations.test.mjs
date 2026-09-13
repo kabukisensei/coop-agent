@@ -49,6 +49,7 @@ try {
         (x) => { x.agent_review = [{ rule_id: "X", ...(domain === "dax" ? { model: "M" } : {}), file: "x", object: "o", line: 1, note: "judge", standard_ref: "§1", fingerprint: h("judge"), extra: true }]; },
       ];
       for (const mutate of mutations) { const copy = structuredClone(report); mutate(copy); assert.equal(validateReviewerReport(domain, copy).ok, false, JSON.stringify(copy)); }
+      for (const sha256 of [[report.standards.sha256], 7, {}, null]) { const copy = structuredClone(report); copy.standards.sha256 = sha256; assert.equal(validateReviewerReport(domain, copy).ok, false); }
       if (domain === "dax") { const copy = validReport(domain, resolution, "finding"); delete copy.findings[0].model; assert.equal(validateReviewerReport(domain, copy).ok, false); }
     }
   });
@@ -81,6 +82,28 @@ try {
     assert.equal(publish("new").ok, true); const current = resolveAcceptedReviewRun(outdir);
     assert.equal(JSON.parse(readFileSync(old.reports.sql)).findings[0].message, "old"); assert.equal(JSON.parse(readFileSync(old.reports.dax)).findings[0].message, "old");
     assert.equal(JSON.parse(readFileSync(current.reports.sql)).findings[0].message, "new"); assert.equal(JSON.parse(readFileSync(current.reports.dax)).findings[0].message, "new");
+  });
+  test("publisher stages captured report bytes and returns its own generation", () => {
+    rmSync(outdir, { recursive: true, force: true }); mkdirSync(outdir);
+    const captured = writeInputs("captured"), daxInput = captured.find((entry) => entry.domain === "dax").reportPath;
+    const first = promoteReviewRun(outdir, captured, { fault(step) { if (step === "review:sql:report") writeFileSync(daxInput, "{}\n"); } });
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.equal(JSON.parse(readFileSync(first.reports.dax)).findings[0].message, "captured");
+    let nested;
+    const outer = promoteReviewRun(outdir, writeInputs("outer"), { fault(step) { if (step === "review:after-pointer") nested = publish("nested"); } });
+    assert.equal(outer.ok, true, JSON.stringify(outer)); assert.equal(nested.ok, true, JSON.stringify(nested));
+    assert.equal(JSON.parse(readFileSync(outer.reports.sql)).findings[0].message, "outer");
+    assert.equal(JSON.parse(readFileSync(resolveAcceptedReviewRun(outdir).reports.sql)).findings[0].message, "nested");
+  });
+  test("accepted reader rejects consistently rehashed empty envelopes", () => {
+    rmSync(outdir, { recursive: true, force: true }); mkdirSync(outdir); assert.equal(publish("forgery").ok, true);
+    const active = resolveAcceptedReviewRun(outdir), pointerPath = join(outdir, "active-review-generation.json"), pointer = JSON.parse(readFileSync(pointerPath));
+    const metadataPath = join(active.generation, "generation.json"), metadata = JSON.parse(readFileSync(metadataPath));
+    for (const key of ["sql_report", "dax_report", "sql_binding", "dax_binding"]) {
+      const path = join(active.generation, metadata.files[key].file); writeFileSync(path, "{}\n"); metadata.files[key].sha256 = h(readFileSync(path));
+    }
+    writeFileSync(metadataPath, JSON.stringify(metadata)); pointer.metadata_sha256 = h(readFileSync(metadataPath)); writeFileSync(pointerPath, JSON.stringify(pointer));
+    assert.equal(resolveAcceptedReviewRun(outdir).ok, false);
   });
   test("unsafe review pointer and symlink root fail closed", () => {
     const pointer = join(outdir, "active-review-generation.json"), saved = readFileSync(pointer), real = `${pointer}.real`; writeFileSync(real, saved); rmSync(pointer); symlinkSync(real, pointer); assert.equal(resolveAcceptedReviewRun(outdir).ok, false);

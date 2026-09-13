@@ -36,7 +36,6 @@ import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } fro
 import {
   buildStandardsContext,
   provenanceText,
-  resolveStandard,
   reviewStandardsArgs,
   sourceStatus,
   bindReviewerProvenance,
@@ -1868,7 +1867,6 @@ export default function coopTools(pi: ExtensionAPI) {
   // creates it before work starts; the deterministic reviewer consumes the
   // same object rather than resolving again mid-operation.
   let operationStandards = new Map<string, any>();
-  let operationStandardsPin: any = null;
   let operationStandardsResolve: ((domain: string) => any) | null = null;
   const runReview = async (
     bin: string,
@@ -1904,7 +1902,7 @@ export default function coopTools(pi: ExtensionAPI) {
     // read as a CLI flag by the review tool. Prefix "./" so it stays a positional path.
     const paths = rawPaths.map((p) => (String(p).startsWith("-") ? "./" + p : p));
     const domain = bin === "coop-sql-review" ? "sql" : "dax";
-    const standards = operationStandards.get(domain) || operationStandardsResolve?.(domain) || resolveStandard(domain, { cwd: ctx.cwd, taskPin: operationStandardsPin, refresh: false });
+    const standards = operationStandards.get(domain) || operationStandardsResolve?.(domain) || { domain, authority_class: "formal_standard", state: "unavailable", path: null, revision: null, sha256: null, source: "task-resolver-unavailable" };
     operationStandards.set(domain, standards);
     const args = ["check", ...paths, "--format", "json", ...reviewStandardsArgs(standards)];
     if (params.min_severity) args.push("--min-severity", params.min_severity);
@@ -2138,7 +2136,6 @@ export default function coopTools(pi: ExtensionAPI) {
     learningNudgeAnnounced = false;
     announcedTeamKnowledge = false;
     operationStandards = new Map();
-    operationStandardsPin = null;
     operationStandardsResolve = null;
     primeModelLogin(ctx);
   });
@@ -2167,13 +2164,11 @@ export default function coopTools(pi: ExtensionAPI) {
 
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
     operationStandards = new Map();
-    operationStandardsPin = null;
     operationStandardsResolve = null;
     try {
       const cwd: string = ctx.cwd;
       const standardsContext = buildStandardsContext(event.prompt || "", { cwd });
       operationStandards = new Map(standardsContext.records.map((record: any) => [record.resolution.domain, record.resolution]));
-      operationStandardsPin = standardsContext.taskPin;
       operationStandardsResolve = standardsContext.resolve;
       pendingDailyEffects.clear();
       const requirement = requiredDailyLog(cwd);
