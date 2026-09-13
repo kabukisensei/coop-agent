@@ -23,6 +23,10 @@ bundle coop-guardrails
 bundle coop-profile
 bundle coop-powerline
 
+echo "→ Revision 9 standards registry/resolver and automatic application tests"
+node "$ROOT/tests/standards-rev9.test.mjs"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/standards-runtime.test.mjs"
+
 echo "→ data-doc config tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/datadoc.test.mjs"
 echo "→ coop-guardrails enforcement tests"

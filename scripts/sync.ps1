@@ -200,6 +200,19 @@ if ($script:SyncFailures -gt 0) {
   exit 1
 }
 
+# Canonical remote provisioning is owner-controlled. Sync never invents a URL;
+# report all three independent sources and retain verified local fallbacks.
+if (Test-Have 'node') {
+  $standardsCli = Join-Path $env:COOP_ROOT 'lib\standards-cli.mjs'
+  foreach ($line in (& node $standardsCli doctor-lines '' $PWD.Path 2>$null)) {
+    $parts = $line -split "`t", 4
+    if ($parts.Count -ge 3 -and $parts[0] -eq 'source') {
+      $suffix = if ($parts.Count -gt 3 -and $parts[3]) { " @ $($parts[3])" } else { '' }
+      Coop-Info "standards source $($parts[1]): $($parts[2])$suffix"
+    }
+  }
+}
+
 Coop-Ok 'sync complete.'
 # Explicit success code so `coop sync` / the launch preflight's child call don't
 # inherit an incidental non-zero $LASTEXITCODE from the last native call above.

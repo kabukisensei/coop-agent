@@ -186,4 +186,12 @@ if [ "$SYNC_FAILURES" -gt 0 ]; then
   exit 1
 fi
 
+# Canonical remote provisioning is owner-controlled. Sync never invents a URL;
+# report all three independent sources and retain verified local fallbacks.
+if have node; then
+  node "$COOP_ROOT/lib/standards-cli.mjs" doctor-lines "" "$PWD" 2>/dev/null | while IFS="$(printf '\t')" read -r kind name state revision; do
+    [ "$kind" = source ] && coop_info "standards source $name: $state${revision:+ @ $revision}"
+  done
+fi
+
 coop_ok "sync complete."

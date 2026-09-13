@@ -561,6 +561,14 @@ function Invoke-CoopReview {
   $daxJson = Join-Path $outdir 'coop-dax-review.json'
   $bpaJson = Join-Path $outdir 'bpa-review.json'
   $extra = @(); if ($strict) { $extra = @('--strict') }
+  $sqlStandards = @(); $daxStandards = @()
+  if (Test-Have 'node') {
+    $standardsCli = Join-Path $script:CoopRoot 'lib\standards-cli.mjs'
+    $sqlStandard = (& node $standardsCli path sql $PWD.Path 2>$null) -join ''
+    $daxStandard = (& node $standardsCli path dax $PWD.Path 2>$null) -join ''
+    if ($sqlStandard) { $sqlStandards = @('--standards', $sqlStandard) }
+    if ($daxStandard) { $daxStandards = @('--standards', $daxStandard) }
+  }
 
   # --compare: snapshot each linter's previous saved report, then hand it to the linter as
   # --diff-against so it prints a new/fixed/persisting delta (the run overwrites the saved
@@ -574,11 +582,11 @@ function Invoke-CoopReview {
 
   # Run both linters over the SAME scope; capture exit codes, never abort here.
   Coop-Head "coop-sql-review check → $sqlJson"
-  & coop-sql-review check @scope --format json -o $sqlJson @sqlDiff @extra
+  & coop-sql-review check @scope --format json @sqlStandards -o $sqlJson @sqlDiff @extra
   $sqlRc = $LASTEXITCODE
   if ($sqlRc -ne 0) { Coop-Warn "coop-sql-review exited $sqlRc" }
   Coop-Head "coop-dax-review check → $daxJson"
-  & coop-dax-review check @scope --format json -o $daxJson @daxDiff @extra
+  & coop-dax-review check @scope --format json @daxStandards -o $daxJson @daxDiff @extra
   $daxRc = $LASTEXITCODE
   if ($daxRc -ne 0) { Coop-Warn "coop-dax-review exited $daxRc" }
   

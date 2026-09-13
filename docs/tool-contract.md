@@ -136,6 +136,36 @@ Registered with Pi so the model can call them directly. All advisory /
 read-only. Each returns a short text summary in `content` and the full structured
 data in `details`.
 
+### Revision 9 standards resolution
+
+Applicable SQL, DAX, and semantic-model prompts automatically run the task-time
+sequence `identify domain → resolve authority → retrieve relevant sections → do
+the work → validate against the same authority`. The hidden `before_agent_start`
+context is bounded by relevant headings; a complete authority document is used
+only when the task explicitly needs it. Unrelated prompts receive no standards
+content. `/standards-status` reports the effective standard for each domain and
+the independent states/revisions of formal standards, the Incremental BI
+`approved_pattern`, and governed TeamAI `team_knowledge`.
+
+Resolution precedence is project/client override, verified canonical checkout,
+verified stale last-known-good, SQL/DAX reviewer bundled fallback, then truthful
+unavailable/auth-required. Existing `standards.sql` and `standards.dax` paths in
+v0.23.1 project contracts remain project-local overrides. `semantic_model`,
+`dax`, and `documentation` resolve separately; Incremental BI is retrieved only
+for relevant semantic-model tasks and never becomes mandatory authority.
+
+For a resolved project/canonical SQL or DAX file, the automatic context and
+native reviewer details expose the same immutable `path`, source `revision`, and
+SHA-256, and the invocation adds `--standards <that exact path>`. `coop review`
+does the same. Direct `coop sql-review` / `coop dax-review` remains verbatim.
+Pinned reviewer source references used to verify this contract are
+`/tmp/std-ref-sql` at `cd9bf347548375801df0abf86b13f72781e1d360` and
+`/tmp/std-ref-dax` at `fe39270168c08a6360c99aadcb51a9ad73678a65`.
+
+The canonical remote is intentionally `PENDING_OWNER_PROVISIONING`; no URL is
+configured or inferred. `coop sync`, Doctor, and Support report this state and
+degrade without blocking normal certification or bundled SQL/DAX operation.
+
 ### `sql_review` / `dax_review`
 
 | Param | Type | Notes |

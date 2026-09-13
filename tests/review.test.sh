@@ -43,8 +43,13 @@ chmod +x "$TMP/bin/coop-data-doc"
 
 # A work repo with a contract: one existing repo path, one TODO leftover, one
 # path that doesn't exist on this machine.
-mkdir -p "$TMP/proj/.coop" "$TMP/proj/sqlrepo"
+mkdir -p "$TMP/proj/.coop" "$TMP/proj/sqlrepo" "$TMP/proj/standards"
+printf '# SQL test standard\n' > "$TMP/proj/standards/sql.md"
+printf '# DAX test standard\n' > "$TMP/proj/standards/dax.md"
 cat > "$TMP/proj/.coop/project.yml" <<EOF
+standards:
+  sql: "standards/sql.md"
+  dax: "standards/dax.md"
 repositories:
   fabric_dw:
     description: "Warehouse SQL"
@@ -73,10 +78,12 @@ for t in coop-sql-review coop-dax-review; do
   grep -q -- "TODO" "$TMP/$t.args.log" && fail "$t was handed a TODO placeholder path"
   grep -q -- "no-such-dir" "$TMP/$t.args.log" && fail "$t was handed a missing path"
 done
+grep -q -- "--standards $TMP/proj/standards/sql.md" "$TMP/coop-sql-review.args.log" || fail "SQL aggregate review did not get the resolved SQL standard"
+grep -q -- "--standards $TMP/proj/standards/dax.md" "$TMP/coop-dax-review.args.log" || fail "DAX aggregate review did not get the resolved DAX standard"
 grep -q -- "build --non-interactive" "$TMP/coop-data-doc.args.log" || fail "data-doc build --non-interactive not invoked"
 grep -q -- "--reviews $TMP/proj/.coop/reviews/coop-sql-review.json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the sql --reviews file"
 grep -q -- "--reviews $TMP/proj/.coop/reviews/coop-dax-review.json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the dax --reviews file"
-pass "contract scope: JSONs in .coop/reviews/, TODO/missing skipped, data-doc got both --reviews"
+pass "contract scope + same-source standards: JSONs saved, missing skipped, exact standards and reviews passed"
 
 # 2. --skip-docs: linters run, data-doc is never called.
 rm -f "$TMP/coop-data-doc.args.log" "$TMP"/coop-*-review.args.log

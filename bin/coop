@@ -483,9 +483,16 @@ EOF
     fi
   fi
   local sql_json="$outdir/coop-sql-review.json" dax_json="$outdir/coop-dax-review.json" bpa_json="$outdir/bpa-review.json"
-  local sql_rc=0 dax_rc=0 bpa_rc=0 dd_rc=0
+  local sql_rc=0 dax_rc=0 bpa_rc=0 dd_rc=0 sql_standard="" dax_standard=""
   local extra=()
   [ "$strict" = 1 ] && extra=(--strict)
+  local sql_standards=() dax_standards=()
+  if have node; then
+    sql_standard="$(node "$COOP_ROOT/lib/standards-cli.mjs" path sql "$PWD" 2>/dev/null || true)"
+    dax_standard="$(node "$COOP_ROOT/lib/standards-cli.mjs" path dax "$PWD" 2>/dev/null || true)"
+    [ -n "$sql_standard" ] && sql_standards=(--standards "$sql_standard")
+    [ -n "$dax_standard" ] && dax_standards=(--standards "$dax_standard")
+  fi
 
   # --compare: snapshot each linter's previous saved report to a temp file, then hand it
   # to the linter as --diff-against so it prints a new/fixed/persisting delta (the run
@@ -501,10 +508,10 @@ EOF
 
   # Run both linters over the SAME scope; capture exit codes, never abort here.
   coop_head "coop-sql-review check → $sql_json"
-  coop-sql-review check ${scope[@]+"${scope[@]}"} --format json -o "$sql_json" ${sql_diff[@]+"${sql_diff[@]}"} ${extra[@]+"${extra[@]}"} || sql_rc=$?
+  coop-sql-review check ${scope[@]+"${scope[@]}"} --format json ${sql_standards[@]+"${sql_standards[@]}"} -o "$sql_json" ${sql_diff[@]+"${sql_diff[@]}"} ${extra[@]+"${extra[@]}"} || sql_rc=$?
   [ "$sql_rc" -eq 0 ] || coop_warn "coop-sql-review exited $sql_rc"
   coop_head "coop-dax-review check → $dax_json"
-  coop-dax-review check ${scope[@]+"${scope[@]}"} --format json -o "$dax_json" ${dax_diff[@]+"${dax_diff[@]}"} ${extra[@]+"${extra[@]}"} || dax_rc=$?
+  coop-dax-review check ${scope[@]+"${scope[@]}"} --format json ${dax_standards[@]+"${dax_standards[@]}"} -o "$dax_json" ${dax_diff[@]+"${dax_diff[@]}"} ${extra[@]+"${extra[@]}"} || dax_rc=$?
   [ "$dax_rc" -eq 0 ] || coop_warn "coop-dax-review exited $dax_rc"
   
   # Tabular Editor BPA check (if enabled in project.yml)

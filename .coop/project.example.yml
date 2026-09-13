@@ -197,6 +197,7 @@ fabric_skills:
 standards:
   sql: "docs/standards/sql-standards.md"
   dax: "docs/standards/dax-standards.md"
+  semantic_model: "docs/standards/semantic-model-standards.md"
   documentation: "docs/standards/documentation-standards.md"
   fabric: "docs/standards/fabric-standards.md"
 
