@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -13,6 +14,13 @@ function parseArgs(argv) {
   return out;
 }
 function load(path) { return JSON.parse(readFileSync(path, "utf8")); }
+function fileSha256(path) { return createHash("sha256").update(readFileSync(path)).digest("hex"); }
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+function valueSha256(value) { return createHash("sha256").update(canonicalJson(value)).digest("hex"); }
 function rootMetrics(report) {
   const pid = report.process?.pid;
   return (report.samples || []).map(sample => ({
@@ -23,13 +31,16 @@ function rootMetrics(report) {
 function classify(report) {
   if (report.decision === "FIRST_INSTALL_COMPLETE" && report.ok === true) return "FIRST_INSTALL_COMPLETE";
   if (report.process?.exceededBound !== true) return "INSTALLER_INCONCLUSIVE";
-  const metrics = rootMetrics(report).filter(item => item.elapsedMs >= report.boundMs / 2);
-  const first = metrics[0];
+  const metrics = rootMetrics(report).filter(item => item.elapsedMs >= report.boundMs - 45000);
   const last = metrics.at(-1);
-  const sameProcess = first && last && first.process.metrics.creationTime100ns === last.process.metrics.creationTime100ns;
-  const cpuDelta = sameProcess ? (last.process.metrics.kernelTime100ns + last.process.metrics.userTime100ns) - (first.process.metrics.kernelTime100ns + first.process.metrics.userTime100ns) : 0;
-  const ioDelta = sameProcess ? (last.process.metrics.readBytes + last.process.metrics.writeBytes) - (first.process.metrics.readBytes + first.process.metrics.writeBytes) : 0;
-  const activeNearBound = sameProcess && last.elapsedMs >= report.boundMs - 15000 && cpuDelta > 0 && ioDelta > 0;
+  const intervals = metrics.slice(1).map((item, index) => {
+    const previous = metrics[index];
+    const sameProcess = previous.process.metrics.creationTime100ns === item.process.metrics.creationTime100ns;
+    const cpuDelta = sameProcess ? (item.process.metrics.kernelTime100ns + item.process.metrics.userTime100ns) - (previous.process.metrics.kernelTime100ns + previous.process.metrics.userTime100ns) : 0;
+    const ioDelta = sameProcess ? (item.process.metrics.readBytes + item.process.metrics.writeBytes) - (previous.process.metrics.readBytes + previous.process.metrics.writeBytes) : 0;
+    return { sameProcess, cpuDelta, ioDelta };
+  });
+  const activeNearBound = metrics.length >= 4 && last?.elapsedMs >= report.boundMs - 15000 && intervals.length >= 3 && intervals.every(interval => interval.sameProcess && interval.cpuDelta > 0 && interval.ioDelta > 0);
   if (activeNearBound) return "INSTALLER_TOO_SLOW_FOR_ACCEPTANCE";
   const material = (report.samples || []).some(sample => ["executable", "appAsar", "managedRuntime"].some(name => sample.files?.[name]?.exists));
   const registry = (report.samples || []).some(sample => (sample.registry?.count || 0) > 0);
@@ -53,11 +64,18 @@ if (JSON.stringify(ci.builderFamily) !== JSON.stringify(ti.builderFamily)) fail(
 for (const key of ["managedConfigSha256", "installerConfigSha256"]) if (ci.nsisConfig[key] !== ti.nsisConfig[key]) fail(`A/B source config mismatch: ${key}.`);
 for (const key of ["releaseManifestSha256", "developmentCompanionsSha256", "desktopPackageLockSha256", "managedRuntimeManifestSha256", "managedRuntimeInventorySha256", "packagedAppAsarSha256", "packagedExecutableSha256"]) if (ci.checksums[key] !== ti.checksums[key]) fail(`A/B product/runtime input mismatch: ${key}.`);
 if (effective.diagnosticOnly !== true || effective.treatment !== "nsis.useZip=true" || effective.onlyDifferenceConfirmed !== true) fail("Effective treatment config evidence invalid.");
+if (ti.checksums.effectiveConfigSha256 !== fileSha256(options["effective-config"]) || ci.checksums.effectiveConfigSha256 !== null) fail("Effective config evidence is not bound to treatment identity only.");
+if (valueSha256(effective.beforeConfig) !== effective.beforeSha256 || valueSha256(effective.afterConfig) !== effective.afterSha256) fail("Effective config hashes do not match their recorded values.");
 if (Object.hasOwn(effective.beforeNsis, "useZip") || effective.afterNsis?.useZip !== true) fail("Effective treatment did not add exactly useZip=true.");
-const beforeComparable = structuredClone(effective.beforeNsis);
-const afterComparable = structuredClone(effective.afterNsis);
-delete afterComparable.useZip;
-if (JSON.stringify(beforeComparable) !== JSON.stringify(afterComparable)) fail("Effective NSIS config differs beyond useZip.");
+if (canonicalJson(effective.beforeNsis) !== canonicalJson(effective.beforeConfig?.nsis) || canonicalJson(effective.afterNsis) !== canonicalJson(effective.afterConfig?.nsis)) fail("Effective NSIS views do not match full configs.");
+const beforeComparable = structuredClone(effective.beforeConfig);
+const afterComparable = structuredClone(effective.afterConfig);
+delete afterComparable.nsis.useZip;
+if (canonicalJson(beforeComparable) !== canonicalJson(afterComparable)) fail("Effective builder config differs beyond useZip.");
+const controlArchives = ci.characteristics?.installerArchive?.filter(item => /\\app-64\.7z$/i.test(item.path) && item.folder === false) || [];
+const treatmentArchives = ti.characteristics?.installerArchive?.filter(item => /\\app-64\.zip$/i.test(item.path) && item.folder === false) || [];
+if (controlArchives.length !== 1 || treatmentArchives.length !== 1) fail("Built installers do not contain exactly one expected LZMA/ZIP application archive.");
+if (ci.characteristics.installerArchive.some(item => /\\app-64\.zip$/i.test(item.path)) || ti.characteristics.installerArchive.some(item => /\\app-64\.7z$/i.test(item.path))) fail("Built installer contains opposite-arm application archive format.");
 
 const controlClassification = classify(cp);
 const treatmentClassification = classify(tp);

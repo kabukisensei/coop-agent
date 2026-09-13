@@ -11,19 +11,16 @@ function canonicalJson(value) {
 }
 function sha256(value) { return createHash("sha256").update(canonicalJson(value)).digest("hex"); }
 
-const builderPath = resolve("desktop/electron-builder-installer.cjs");
-const output = process.env.EFFECTIVE_CONFIG_OUT ? resolve(process.env.EFFECTIVE_CONFIG_OUT) : null;
-if (!output) throw new Error("EFFECTIVE_CONFIG_OUT is required.");
-const sourceRequire = createRequire(builderPath);
-const electronBuilder = sourceRequire("electron-builder");
-const originalBuild = electronBuilder.build;
-if (typeof originalBuild !== "function") throw new Error("electron-builder build export is unavailable.");
-let intercepted = false;
-electronBuilder.build = (options) => {
-  if (intercepted) throw new Error("Expected exactly one electron-builder build invocation.");
-  if (!options?.config?.nsis || Object.hasOwn(options.config.nsis, "useZip")) throw new Error("Expected candidate NSIS config without useZip.");
-  const beforeConfig = structuredClone(options.config);
-  const afterConfig = structuredClone(options.config);
+async function main() {
+  const projectDir = resolve("desktop");
+  const configPath = resolve(projectDir, "electron-builder-installer.cjs");
+  const output = process.env.EFFECTIVE_CONFIG_OUT ? resolve(process.env.EFFECTIVE_CONFIG_OUT) : null;
+  if (!output) throw new Error("EFFECTIVE_CONFIG_OUT is required.");
+  const sourceRequire = createRequire(configPath);
+  const electronBuilder = sourceRequire("electron-builder");
+  const beforeConfig = structuredClone(sourceRequire(configPath));
+  if (!beforeConfig.nsis || Object.hasOwn(beforeConfig.nsis, "useZip")) throw new Error("Expected candidate NSIS config without useZip.");
+  const afterConfig = structuredClone(beforeConfig);
   afterConfig.nsis.useZip = true;
   const afterWithoutTreatment = structuredClone(afterConfig);
   delete afterWithoutTreatment.nsis.useZip;
@@ -34,12 +31,21 @@ electronBuilder.build = (options) => {
     treatment: "nsis.useZip=true",
     beforeSha256: sha256(beforeConfig),
     afterSha256: sha256(afterConfig),
+    beforeConfig,
+    afterConfig,
     beforeNsis: beforeConfig.nsis,
     afterNsis: afterConfig.nsis,
     onlyDifferenceConfirmed: true,
   }, null, 2)}\n`);
-  intercepted = true;
-  return originalBuild({ ...options, config: afterConfig });
-};
-sourceRequire(builderPath);
-if (!intercepted) throw new Error("Candidate installer builder did not invoke electron-builder synchronously.");
+  await electronBuilder.build({
+    projectDir,
+    targets: electronBuilder.Platform.WINDOWS.createTarget(["nsis"], electronBuilder.Arch.x64),
+    config: afterConfig,
+    publish: "never",
+  });
+}
+
+main().catch((error) => {
+  console.error(error?.stack || error);
+  process.exitCode = 1;
+});

@@ -144,7 +144,7 @@ jobs:
           node desktop/scripts/verify-managed-package.mjs --root desktop/dist-installers | tee '${{ runner.temp }}/treatment-package-check.json'
       - name: Record ZIP treatment package and archive identity
         shell: bash
-        run: node _probe-control/scripts/record-installer-ab-identity.mjs --label treatment --builder 26.15.3 --compression zip --output '${{ runner.temp }}/treatment-identity.json'
+        run: node _probe-control/scripts/record-installer-ab-identity.mjs --label treatment --builder 26.15.3 --compression zip --effective-config '${{ runner.temp }}/zip-effective-config.json' --output '${{ runner.temp }}/treatment-identity.json'
       - name: Run ZIP treatment first-install discriminator
         shell: bash
         env:

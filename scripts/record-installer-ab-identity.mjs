@@ -18,6 +18,7 @@ function parseArgs(argv) {
   if (!/^(control|treatment)$/.test(values.label || "")) fail("--label must be control or treatment.");
   if (!/^26\.15\.(3|6)$/.test(values.builder || "")) fail("--builder must be 26.15.3 or 26.15.6.");
   if (values.compression && !/^(lzma|zip)$/.test(values.compression)) fail("--compression must be lzma or zip when provided.");
+  if (values.compression === "zip" && !values["effective-config"]) fail("--effective-config is required for zip treatment.");
   if (!values.output) fail("--output is required.");
   return values;
 }
@@ -96,6 +97,7 @@ const identity = {
     packagedAppAsarSha256: sha256(join(packaged.resources, "app.asar")),
     packagedExecutableSha256: sha256(packaged.fuseTarget),
     installerSha256: sha256(installer),
+    effectiveConfigSha256: options["effective-config"] ? sha256(resolve(options["effective-config"])) : null,
   },
   characteristics: {
     packagedResources: treeStats(packaged.resources),
