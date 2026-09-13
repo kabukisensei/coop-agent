@@ -1,0 +1,199 @@
+name: diagnostic electron-builder installer A-B
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/installer-builder-ab-diagnostic.yml'
+      - 'scripts/record-installer-ab-identity.mjs'
+      - 'scripts/compare-installer-builder-ab.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  installer-builder-ab:
+    name: electron-builder 26.15.3 vs 26.15.6 (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      PRODUCT_CANDIDATE_SHA: ed516b2a183f3e6346344a669d6e37b321a4dcf8
+      DIAGNOSTIC_CONTROL_SHA: 19f449bb816ec6c07aa15c9d6c5be7eba7156819
+    steps:
+      - name: Check out exact product candidate
+        uses: actions/checkout@v5
+        with:
+          ref: ed516b2a183f3e6346344a669d6e37b321a4dcf8
+          persist-credentials: false
+      - name: Check out immutable diagnostic control
+        uses: actions/checkout@v5
+        with:
+          repository: kabukisensei/coop-agent
+          ref: 19f449bb816ec6c07aa15c9d6c5be7eba7156819
+          path: _probe-control
+          persist-credentials: false
+      - name: Verify immutable checkout identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PRODUCT_CANDIDATE_SHA"
+          test "$(git -C _probe-control rev-parse HEAD)" = "$DIAGNOSTIC_CONTROL_SHA"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.3'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Read exact development companion commits
+        id: companions
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const pins = JSON.parse(fs.readFileSync('config/development-companions.json', 'utf8'));
+          for (const [name, output] of [['coop-data-doc', 'data'], ['coop-sql-review', 'sql'], ['coop-dax-review', 'dax']]) {
+            if (!/^[0-9a-f]{40}$/.test(pins[name])) throw new Error(`Invalid companion pin: ${name}`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output}=${pins[name]}\n`);
+          }
+          NODE
+      - uses: actions/checkout@v5
+        with:
+          repository: kabukisensei/coop-data-doc
+          ref: ${{ steps.companions.outputs.data }}
+          path: development-sources/coop-data-doc-desktop
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: kabukisensei/coop-sql-review
+          ref: ${{ steps.companions.outputs.sql }}
+          path: development-sources/coop-sql-review-desktop
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: kabukisensei/coop-dax-review
+          ref: ${{ steps.companions.outputs.dax }}
+          path: development-sources/coop-dax-review-desktop
+          persist-credentials: false
+      - name: Preserve exact control dependency inputs
+        shell: bash
+        run: |
+          cp desktop/package.json '${{ runner.temp }}/control-package.json'
+          cp desktop/package-lock.json '${{ runner.temp }}/control-package-lock.json'
+      - name: Build wheels from committed companion snapshots
+        shell: bash
+        run: python scripts/build-development-wheels.py --repositories '${{ github.workspace }}/development-sources' --output '${{ runner.temp }}/coop-development-wheels'
+      - name: Determine exact native managed-runtime target
+        id: target
+        shell: bash
+        run: echo "value=$(node -p 'process.platform+"-"+process.arch')" >> "$GITHUB_OUTPUT"
+      - name: Rebuild one checksum-pinned managed runtime shared by A and B
+        shell: bash
+        run: node scripts/prepare-managed-runtime.mjs --target '${{ steps.target.outputs.value }}' --work '${{ runner.temp }}/coop-managed-work' --output '${{ runner.temp }}/managed-runtime' --development-wheels '${{ runner.temp }}/coop-development-wheels/development-wheels.json'
+
+      - name: Install control dependencies from exact candidate lock
+        run: npm ci --prefix desktop
+      - name: Verify control builder and Electron versions
+        shell: bash
+        run: |
+          test "$(node -p "require('./desktop/node_modules/electron-builder/package.json').version")" = '26.15.3'
+          test "$(node -p "require('./desktop/node_modules/electron/package.json').version")" = '44.2.0'
+      - name: Build control installer with electron-builder 26.15.3
+        shell: bash
+        env:
+          COOP_DESKTOP_MANAGED_RUNTIME_DIR: ${{ runner.temp }}/managed-runtime
+        run: npm run package:installer:win --prefix desktop
+      - name: Verify control installer package statically
+        shell: bash
+        run: node desktop/scripts/verify-managed-package.mjs --root desktop/dist-installers | tee '${{ runner.temp }}/control-package-check.json'
+      - name: Record control package and archive identity
+        shell: bash
+        run: node _probe-control/scripts/record-installer-ab-identity.mjs --label control --builder 26.15.3 --output '${{ runner.temp }}/control-identity.json'
+      - name: Run control first-install discriminator
+        shell: bash
+        env:
+          COOP_DESKTOP_DISPOSABLE_INSTALL_TEST: '1'
+          INSTALLER_PROBE_OUT: ${{ runner.temp }}/control-first-install.json
+          INSTALLER_BUILD_IDENTITY: ${{ runner.temp }}/control-identity.json
+          APPDATA: ${{ runner.temp }}/control-appdata-root
+        run: node _probe-control/scripts/probe-windows-installer-first-install.mjs
+
+      - name: Prepare treatment dependency lock only
+        shell: bash
+        run: |
+          rm -rf desktop/dist-installers desktop/node_modules
+          cp '${{ runner.temp }}/control-package.json' desktop/package.json
+          cp '${{ runner.temp }}/control-package-lock.json' desktop/package-lock.json
+          npm install --prefix desktop --package-lock-only --ignore-scripts --save-dev --save-exact electron-builder@26.15.6
+      - name: Verify treatment changes only the electron-builder package family
+        shell: bash
+        env:
+          DELTA_OUT: ${{ runner.temp }}/builder-treatment-lock-delta.json
+        run: |
+          node --input-type=module - <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const beforePackage = JSON.parse(readFileSync(process.env.RUNNER_TEMP + '/control-package.json', 'utf8'));
+          const afterPackage = JSON.parse(readFileSync('desktop/package.json', 'utf8'));
+          const expectedPackage = structuredClone(beforePackage);
+          expectedPackage.devDependencies['electron-builder'] = '26.15.6';
+          assert.deepEqual(afterPackage, expectedPackage, 'package.json changed beyond electron-builder version');
+          const before = JSON.parse(readFileSync(process.env.RUNNER_TEMP + '/control-package-lock.json', 'utf8'));
+          const after = JSON.parse(readFileSync('desktop/package-lock.json', 'utf8'));
+          const keys = new Set([...Object.keys(before.packages), ...Object.keys(after.packages)]);
+          const changed = [...keys].filter(key => JSON.stringify(before.packages[key]) !== JSON.stringify(after.packages[key]));
+          const allowed = new Set(['', 'node_modules/electron-builder', 'node_modules/app-builder-lib', 'node_modules/dmg-builder', 'node_modules/electron-builder-squirrel-windows']);
+          assert.deepEqual(new Set(changed), allowed, `unexpected treatment lock delta: ${changed.join(', ')}`);
+          assert.equal(after.packages[''].devDependencies.electron, '44.2.0');
+          for (const name of ['electron-builder', 'app-builder-lib', 'dmg-builder', 'electron-builder-squirrel-windows']) assert.equal(after.packages[`node_modules/${name}`].version, '26.15.6', name);
+          const delta = changed.map(key => ({ package: key, before: before.packages[key]?.version || before.packages[key]?.devDependencies?.['electron-builder'], after: after.packages[key]?.version || after.packages[key]?.devDependencies?.['electron-builder'], integrity: after.packages[key]?.integrity || null }));
+          writeFileSync(process.env.DELTA_OUT, `${JSON.stringify({ diagnosticOnly: true, allowedPackages: [...allowed], delta }, null, 2)}\n`);
+          NODE
+      - name: Install treatment dependencies from generated lock
+        run: npm ci --prefix desktop
+      - name: Verify treatment builder and unchanged Electron versions
+        shell: bash
+        run: |
+          test "$(node -p "require('./desktop/node_modules/electron-builder/package.json').version")" = '26.15.6'
+          test "$(node -p "require('./desktop/node_modules/electron/package.json').version")" = '44.2.0'
+      - name: Build treatment installer with electron-builder 26.15.6
+        shell: bash
+        env:
+          COOP_DESKTOP_MANAGED_RUNTIME_DIR: ${{ runner.temp }}/managed-runtime
+        run: npm run package:installer:win --prefix desktop
+      - name: Verify treatment installer package statically
+        shell: bash
+        run: node desktop/scripts/verify-managed-package.mjs --root desktop/dist-installers | tee '${{ runner.temp }}/treatment-package-check.json'
+      - name: Record treatment package and archive identity
+        shell: bash
+        run: node _probe-control/scripts/record-installer-ab-identity.mjs --label treatment --builder 26.15.6 --output '${{ runner.temp }}/treatment-identity.json'
+      - name: Run treatment first-install discriminator
+        shell: bash
+        env:
+          COOP_DESKTOP_DISPOSABLE_INSTALL_TEST: '1'
+          INSTALLER_PROBE_OUT: ${{ runner.temp }}/treatment-first-install.json
+          INSTALLER_BUILD_IDENTITY: ${{ runner.temp }}/treatment-identity.json
+          APPDATA: ${{ runner.temp }}/treatment-appdata-root
+        run: node _probe-control/scripts/probe-windows-installer-first-install.mjs
+      - name: Compare A-B evidence and classify treatment effect
+        if: always()
+        shell: bash
+        run: node _probe-control/scripts/compare-installer-builder-ab.mjs --control-identity '${{ runner.temp }}/control-identity.json' --control-probe '${{ runner.temp }}/control-first-install.json' --treatment-identity '${{ runner.temp }}/treatment-identity.json' --treatment-probe '${{ runner.temp }}/treatment-first-install.json' --output '${{ runner.temp }}/installer-builder-ab-comparison.json'
+      - name: Upload JSON A-B diagnostic evidence only
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-builder-ab-json
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/control-package-check.json
+            ${{ runner.temp }}/control-identity.json
+            ${{ runner.temp }}/control-first-install.json
+            ${{ runner.temp }}/builder-treatment-lock-delta.json
+            ${{ runner.temp }}/treatment-package-check.json
+            ${{ runner.temp }}/treatment-identity.json
+            ${{ runner.temp }}/treatment-first-install.json
+            ${{ runner.temp }}/installer-builder-ab-comparison.json
