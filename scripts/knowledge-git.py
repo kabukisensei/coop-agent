@@ -152,7 +152,8 @@ def _emit_test_record(nonce, stage):
         "outcome": _TEST_FAULT_OUTCOMES[stage],
     }
     record = (
-        _TEST_RECORD_PREFIX
+        "\n"
+        + _TEST_RECORD_PREFIX
         + json.dumps(event, sort_keys=True, separators=(",", ":"))
         + "\n"
     )

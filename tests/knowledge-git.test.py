@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Focused cross-platform tests for knowledge-git ownership contracts."""
 
+import ctypes
 import importlib.util
 import io
 import json
@@ -92,6 +93,31 @@ class KnowledgeGitOwnershipTests(unittest.TestCase):
                     "outcome": kg._TEST_FAULT_OUTCOMES[stage],
                 },
             )
+
+    def test_lifecycle_record_is_line_framed_after_any_payload_stderr(self):
+        nonce = "0123456789abcdef0123456789abcdef"
+        for payload in ("ordinary payload progress", "ordinary payload progress\n"):
+            self.select_fault("job-query")
+            stream = io.StringIO()
+            stream.write(payload)
+            with mock.patch.object(kg.sys, "stderr", stream):
+                self.assertTrue(kg._consume_test_fault("job-query"))
+            records = [
+                line
+                for line in stream.getvalue().splitlines()
+                if line.startswith(kg._TEST_RECORD_PREFIX)
+            ]
+            self.assertEqual(len(records), 1, stream.getvalue())
+            self.assertEqual(
+                json.loads(records[0][len(kg._TEST_RECORD_PREFIX) :]),
+                {
+                    "schema_version": 1,
+                    "nonce": nonce,
+                    "stage": "job-query",
+                    "outcome": "indeterminate",
+                },
+            )
+            kg._CONSUMED_TEST_FAULTS.clear()
 
     def test_emission_failure_is_distinct_unconsumed_and_retryable(self):
         self.select_fault("job-create")
@@ -415,6 +441,66 @@ class ProcessInspectorTests(unittest.TestCase):
         for argv in (["python3", "-Z", target], ["python3", "-W"]):
             self.assertEqual(inspector.parse_direct_python_script(argv)[0], "uncertain")
         self.assertIsNone(inspector.direct_python_script(["bash", "-c", target]))
+        self.assertEqual(
+            inspector.parse_direct_python_script(
+                ["worker-python", "-EI", target], executable_proven=True
+            ),
+            ("script", target),
+        )
+
+    def test_macos_vnodepathinfo_matches_apple_lp64_abi(self):
+        self.assertEqual(ctypes.sizeof(inspector._VinfoStat), 136)
+        self.assertEqual(ctypes.sizeof(inspector._VnodeInfo), 152)
+        self.assertEqual(ctypes.sizeof(inspector._VnodeInfoPath), 1176)
+        self.assertEqual(ctypes.sizeof(inspector._ProcVnodePathInfo), 2352)
+        self.assertEqual(inspector._VnodeInfo.vi_type.offset, 136)
+        self.assertEqual(inspector._VnodeInfo.vi_fsid.offset, 144)
+        self.assertEqual(inspector._VnodeInfoPath.vip_path.offset, 152)
+        self.assertEqual(inspector._ProcVnodePathInfo.pvi_rdir.offset, 1176)
+
+    def test_macos_cwd_requests_complete_buffer_and_requires_exact_nul_terminated_result(
+        self,
+    ):
+        class FakeProcPidInfo:
+            def __init__(self, returned=None, path=b"/tmp/helper cwd\0"):
+                self.argtypes = None
+                self.restype = None
+                self.returned = returned
+                self.path = path
+                self.requested = None
+
+            def __call__(self, pid, flavor, arg, buffer, size):
+                self.requested = (pid, flavor, arg, size)
+                info = ctypes.cast(
+                    buffer, ctypes.POINTER(inspector._ProcVnodePathInfo)
+                ).contents
+                ctypes.memmove(
+                    ctypes.addressof(info.pvi_cdir)
+                    + inspector._VnodeInfoPath.vip_path.offset,
+                    self.path,
+                    len(self.path),
+                )
+                return size if self.returned is None else self.returned
+
+        success = FakeProcPidInfo()
+        with mock.patch.object(
+            inspector.ctypes,
+            "CDLL",
+            return_value=SimpleNamespace(proc_pidinfo=success),
+        ):
+            self.assertEqual(inspector.macos_process_cwd(101), "/tmp/helper cwd")
+        self.assertEqual(success.requested, (101, 9, 0, 2352))
+
+        for failed in (
+            FakeProcPidInfo(returned=2351),
+            FakeProcPidInfo(path=b"x" * 1024),
+        ):
+            with mock.patch.object(
+                inspector.ctypes,
+                "CDLL",
+                return_value=SimpleNamespace(proc_pidinfo=failed),
+            ):
+                self.assertIsNone(inspector.macos_process_cwd(101))
 
     def test_macos_ps_filter_uses_exact_kernel_argv_and_target_cwd(self):
         ps_result = SimpleNamespace(returncode=0, stdout="101 python3\n102 bash\n")
@@ -428,6 +514,11 @@ class ProcessInspectorTests(unittest.TestCase):
             ),
             mock.patch.object(
                 inspector, "macos_process_cwd", return_value="/tmp/helper path/scripts"
+            ),
+            mock.patch.object(
+                inspector,
+                "_resolve_existing_regular_script",
+                return_value=(target, None),
             ),
         ):
             self.assertEqual(inspector.macos_inspect(target), ([101], []))
@@ -503,6 +594,81 @@ class ProcessInspectorTests(unittest.TestCase):
         ):
             self.assertEqual(inspector.linux_inspect(target), ([], []))
 
+    def test_missing_script_operand_is_uncertain_only_while_candidate_is_live(self):
+        missing = "/definitely-missing-coop-review/knowledge-git.py"
+        with (
+            mock.patch.object(inspector.os, "listdir", return_value=["101"]),
+            mock.patch.object(
+                inspector, "_linux_same_user_python", return_value=(True, None)
+            ),
+            mock.patch.object(
+                inspector,
+                "proc_argv",
+                return_value=(["worker-python", missing], None),
+            ),
+            mock.patch.object(inspector, "_pid_exited", return_value=False),
+        ):
+            matches, uncertainties = inspector.linux_inspect("/tmp/knowledge-git.py")
+            self.assertEqual(matches, [])
+            self.assertIn("script path unresolved", uncertainties[0])
+        with (
+            mock.patch.object(inspector.os, "listdir", return_value=["101"]),
+            mock.patch.object(
+                inspector, "_linux_same_user_python", return_value=(True, None)
+            ),
+            mock.patch.object(
+                inspector,
+                "proc_argv",
+                return_value=(["worker-python", missing], None),
+            ),
+            mock.patch.object(inspector, "_pid_exited", return_value=True),
+        ):
+            self.assertEqual(inspector.linux_inspect("/tmp/knowledge-git.py"), ([], []))
+
+        ps_result = SimpleNamespace(returncode=0, stdout="101 python3\n", stderr="")
+        with (
+            mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
+            mock.patch.object(
+                inspector,
+                "macos_process_argv",
+                return_value=["worker-python", missing],
+            ),
+            mock.patch.object(inspector, "_macos_pid_exists", return_value=True),
+        ):
+            self.assertIn(
+                "script path unresolved",
+                inspector.macos_inspect("/tmp/knowledge-git.py")[1][0],
+            )
+        with (
+            mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
+            mock.patch.object(
+                inspector,
+                "macos_process_argv",
+                return_value=["worker-python", missing],
+            ),
+            mock.patch.object(inspector, "_macos_pid_exists", return_value=False),
+        ):
+            self.assertEqual(inspector.macos_inspect("/tmp/knowledge-git.py"), ([], []))
+
+    def test_script_replacement_during_resolution_is_uncertain(self):
+        first = SimpleNamespace(st_dev=1, st_ino=10, st_mode=0o100644)
+        replacement = SimpleNamespace(st_dev=1, st_ino=11, st_mode=0o100644)
+        with (
+            mock.patch.object(
+                inspector.os, "stat", side_effect=(first, replacement, replacement)
+            ),
+            mock.patch.object(inspector.os.path, "realpath", return_value="/resolved"),
+        ):
+            resolved, error = inspector._resolve_existing_regular_script("/operand")
+        self.assertIsNone(resolved)
+        self.assertIn("changed while resolving", error)
+        with mock.patch.object(
+            inspector.os, "stat", side_effect=PermissionError("denied")
+        ):
+            resolved, error = inspector._resolve_existing_regular_script("/unreadable")
+        self.assertIsNone(resolved)
+        self.assertIn("denied", error)
+
     def test_inspector_main_distinguishes_present_uncertain_and_absent(self):
         old_argv = inspector.sys.argv
         inspector.sys.argv = ["inspector", "/tmp/knowledge-git.py"]
@@ -562,6 +728,72 @@ class ProcessInspectorTests(unittest.TestCase):
                     self.assertEqual(uncertainties, [], command)
                 finally:
                     proc.wait(timeout=5)
+
+    @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
+    def test_live_execve_argv0_alias_is_detected_by_inspector_cli(self):
+        helper = ROOT / "scripts" / "knowledge-git.py"
+        command = [
+            "worker-python",
+            str(helper),
+            "--timeout-seconds",
+            "4",
+            "--",
+            sys.executable,
+            "-c",
+            "import time; time.sleep(1)",
+        ]
+        proc = subprocess.Popen(command, executable=sys.executable)
+        try:
+            time.sleep(0.15)
+            observed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "tests" / "knowledge-git-process-inspector.py"),
+                    str(helper.resolve()),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            self.assertEqual(observed.returncode, 1, observed.stderr)
+            self.assertIn(str(proc.pid), observed.stderr)
+        finally:
+            proc.wait(timeout=5)
+
+    @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
+    def test_live_deleted_symlink_script_operand_is_uncertain(self):
+        helper = ROOT / "scripts" / "knowledge-git.py"
+        with tempfile.TemporaryDirectory(prefix="coop deleted alias ") as directory:
+            alias = Path(directory) / "knowledge-git.py"
+            alias.symlink_to(helper)
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(alias),
+                    "--timeout-seconds",
+                    "4",
+                    "--",
+                    sys.executable,
+                    "-c",
+                    "import time; time.sleep(1)",
+                ]
+            )
+            try:
+                time.sleep(0.15)
+                alias.unlink()
+                matches, uncertainties = inspector.linux_inspect(str(helper.resolve()))
+                self.assertNotIn(proc.pid, matches)
+                self.assertTrue(
+                    any(
+                        "script path unresolved for pid %d" % proc.pid in item
+                        for item in uncertainties
+                    ),
+                    uncertainties,
+                )
+            finally:
+                proc.wait(timeout=5)
 
     @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
     def test_live_dash_c_and_dash_m_decoys_are_not_matches(self):

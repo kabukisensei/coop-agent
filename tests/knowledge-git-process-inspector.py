@@ -4,6 +4,7 @@
 import ctypes
 import os
 import re
+import stat
 import struct
 import subprocess
 import sys
@@ -21,13 +22,17 @@ _NO_VALUE_LONG_OPTIONS = frozenset(
 )
 
 
-def parse_direct_python_script(argv):
+def parse_direct_python_script(argv, executable_proven=False):
     """Return (classification, script) using Python's invocation grammar.
 
     classification is script, not-script (-c/-m/non-Python), or uncertain for
     an unknown, malformed, or ambiguous interpreter option.
     """
-    if not argv or not PYTHON_NAME.match(os.path.basename(argv[0])):
+    if not argv:
+        return "not-script", None
+    # argv[0] is caller-controlled under execve(2). Inspectors may bypass its
+    # spelling only after independently proving the executable is Python.
+    if not executable_proven and not PYTHON_NAME.match(os.path.basename(argv[0])):
         return "not-script", None
     index = 1
     while index < len(argv):
@@ -133,14 +138,14 @@ def _linux_same_user_python(pid, uid):
         return None, "uid metadata malformed for pid %d" % pid
     if observed_uid != uid:
         return False, None
-    # Status metadata safely excludes non-Python processes before executable
-    # identity is requested (important for same-UID kernel/host processes whose
-    # /proc/<pid>/exe is intentionally unreadable in a PID namespace).
-    if process_name and not PYTHON_NAME.match(process_name):
-        return False, None
     executable, error = _linux_read(pid, "exe")
     if error:
-        return (False, None) if error == "exited" else (None, error)
+        # A non-Python comm can safely exclude an unreadable executable, but it
+        # must never override readable executable identity: execve through a
+        # symlink may set comm to the alias while /proc/<pid>/exe proves Python.
+        if error == "exited" or (process_name and not PYTHON_NAME.match(process_name)):
+            return False, None
+        return None, error
     return bool(PYTHON_NAME.match(os.path.basename(executable))), None
 
 
@@ -160,6 +165,29 @@ def proc_argv(pid):
 
 def proc_cwd(pid):
     return _linux_read(pid, "cwd")
+
+
+def _resolve_existing_regular_script(path):
+    """Resolve a stable, existing regular-file operand or explain uncertainty."""
+    try:
+        before = os.stat(path)
+        if not stat.S_ISREG(before.st_mode):
+            return None, "script operand is not a regular file"
+        resolved = os.path.realpath(path, strict=True)
+        after = os.stat(path)
+        resolved_stat = os.stat(resolved)
+    except (OSError, ValueError) as exc:
+        return None, "script operand unavailable: %s" % exc
+    before_identity = (before.st_dev, before.st_ino, before.st_mode)
+    after_identity = (after.st_dev, after.st_ino, after.st_mode)
+    resolved_identity = (
+        resolved_stat.st_dev,
+        resolved_stat.st_ino,
+        resolved_stat.st_mode,
+    )
+    if before_identity != after_identity or after_identity != resolved_identity:
+        return None, "script operand changed while resolving"
+    return resolved, None
 
 
 def linux_inspect(target):
@@ -187,7 +215,9 @@ def linux_inspect(target):
             if error != "exited":
                 uncertainties.append(error)
             continue
-        classification, script = parse_direct_python_script(argv)
+        classification, script = parse_direct_python_script(
+            argv, executable_proven=True
+        )
         if classification == "uncertain":
             uncertainties.append("python argv ambiguous for pid %d" % pid)
             continue
@@ -200,11 +230,15 @@ def linux_inspect(target):
                     uncertainties.append(error)
                 continue
             script = os.path.join(cwd, script)
-        try:
-            if os.path.realpath(script) == target:
-                matches.append(pid)
-        except OSError as exc:
-            uncertainties.append("script path unresolved for pid %d: %s" % (pid, exc))
+        resolved, error = _resolve_existing_regular_script(script)
+        if error:
+            if not _pid_exited(pid):
+                uncertainties.append(
+                    "script path unresolved for pid %d: %s" % (pid, error)
+                )
+            continue
+        if resolved == target:
+            matches.append(pid)
     return matches, uncertainties
 
 
@@ -259,23 +293,44 @@ def macos_process_argv(pid):
     return argv
 
 
+# Apple XNU bsd/sys/proc_info.h LP64 contract. Keep these declarations complete:
+# proc_pidinfo(PROC_PIDVNODEPATHINFO) requires the full 2352-byte result buffer.
+class _VinfoStat(ctypes.Structure):
+    _fields_ = [
+        ("vst_dev", ctypes.c_uint32),
+        ("vst_mode", ctypes.c_uint16),
+        ("vst_nlink", ctypes.c_uint16),
+        ("vst_ino", ctypes.c_uint64),
+        ("vst_uid", ctypes.c_uint32),
+        ("vst_gid", ctypes.c_uint32),
+        ("vst_atime", ctypes.c_int64),
+        ("vst_atimensec", ctypes.c_int64),
+        ("vst_mtime", ctypes.c_int64),
+        ("vst_mtimensec", ctypes.c_int64),
+        ("vst_ctime", ctypes.c_int64),
+        ("vst_ctimensec", ctypes.c_int64),
+        ("vst_birthtime", ctypes.c_int64),
+        ("vst_birthtimensec", ctypes.c_int64),
+        ("vst_size", ctypes.c_int64),
+        ("vst_blocks", ctypes.c_int64),
+        ("vst_blksize", ctypes.c_int32),
+        ("vst_flags", ctypes.c_uint32),
+        ("vst_gen", ctypes.c_uint32),
+        ("vst_rdev", ctypes.c_uint32),
+        ("vst_qspare", ctypes.c_int64 * 2),
+    ]
+
+
+class _Fsid(ctypes.Structure):
+    _fields_ = [("val", ctypes.c_int32 * 2)]
+
+
 class _VnodeInfo(ctypes.Structure):
     _fields_ = [
-        ("vi_type", ctypes.c_uint32),
-        ("vi_pad", ctypes.c_uint32),
-        ("vi_fsid", ctypes.c_uint64),
-        ("vi_fileid", ctypes.c_uint64),
-        ("vi_mode", ctypes.c_uint32),
-        ("vi_nlink", ctypes.c_uint32),
-        ("vi_uid", ctypes.c_uint32),
-        ("vi_gid", ctypes.c_uint32),
-        ("vi_rdev", ctypes.c_uint64),
-        ("vi_size", ctypes.c_int64),
-        ("vi_blocks", ctypes.c_int64),
-        ("vi_blksize", ctypes.c_int32),
-        ("vi_flags", ctypes.c_uint32),
-        ("vi_gen", ctypes.c_uint64),
-        ("vi_dev", ctypes.c_uint64),
+        ("vi_stat", _VinfoStat),
+        ("vi_type", ctypes.c_int32),
+        ("vi_pad", ctypes.c_int32),
+        ("vi_fsid", _Fsid),
     ]
 
 
@@ -301,10 +356,16 @@ def macos_process_cwd(pid):
     proc_pidinfo.restype = ctypes.c_int
     info = _ProcVnodePathInfo()
     size = ctypes.sizeof(info)
-    if proc_pidinfo(pid, 9, 0, ctypes.byref(info), size) != size:
+    ctypes.set_errno(0)
+    returned = proc_pidinfo(pid, 9, 0, ctypes.byref(info), size)
+    if returned != size:
         return None
-    raw = bytes(info.pvi_cdir.vip_path).split(b"\0", 1)[0]
-    return raw.decode("utf-8", "surrogateescape") if raw else None
+    path_offset = _VnodeInfoPath.vip_path.offset
+    raw = ctypes.string_at(ctypes.addressof(info.pvi_cdir) + path_offset, 1024)
+    nul = raw.find(b"\0")
+    if nul <= 0:
+        return None
+    return raw[:nul].decode("utf-8", "surrogateescape")
 
 
 def _macos_pid_exists(pid):
@@ -344,7 +405,9 @@ def macos_inspect(target):
             if _macos_pid_exists(pid):
                 uncertainties.append("KERN_PROCARGS2 unavailable for pid %d" % pid)
             continue
-        classification, script = parse_direct_python_script(argv)
+        classification, script = parse_direct_python_script(
+            argv, executable_proven=True
+        )
         if classification == "uncertain":
             uncertainties.append("python argv ambiguous for pid %d" % pid)
             continue
@@ -357,7 +420,14 @@ def macos_inspect(target):
                     uncertainties.append("process cwd unavailable for pid %d" % pid)
                 continue
             script = os.path.join(cwd, script)
-        if os.path.realpath(script) == target:
+        resolved, error = _resolve_existing_regular_script(script)
+        if error:
+            if _macos_pid_exists(pid):
+                uncertainties.append(
+                    "script path unresolved for pid %d: %s" % (pid, error)
+                )
+            continue
+        if resolved == target:
             matches.append(pid)
     return matches, uncertainties
 
