@@ -21,6 +21,10 @@ const depthFour = new Map();
 const largestFiles = [];
 const digest = createHash("sha256");
 
+function compareName(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function add(map, key, size) {
   const value = map.get(key) || { files: 0, bytes: 0 };
   value.files += 1;
@@ -49,7 +53,7 @@ function classFor(parts, filename, extension) {
 const pending = [root];
 while (pending.length) {
   const directory = pending.pop();
-  const entries = readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name, "en"));
+  const entries = readdirSync(directory, { withFileTypes: true }).sort((a, b) => compareName(a.name, b.name));
   for (const entry of entries) {
     const path = resolve(directory, entry.name);
     const rel = relative(root, path).split(sep).join("/");
@@ -78,13 +82,12 @@ while (pending.length) {
   }
 }
 
-function rows(map, limit = null) {
-  const values = [...map].map(([name, value]) => ({ name, ...value }))
-    .sort((a, b) => b.bytes - a.bytes || b.files - a.files || a.name.localeCompare(b.name, "en"));
-  return limit === null ? values : values.slice(0, limit);
+function rows(map) {
+  return [...map].map(([name, value]) => ({ name, ...value }))
+    .sort((a, b) => b.bytes - a.bytes || b.files - a.files || compareName(a.name, b.name));
 }
 
-largestFiles.sort((a, b) => b.bytes - a.bytes || a.path.localeCompare(b.path, "en"));
+largestFiles.sort((a, b) => b.bytes - a.bytes || compareName(a.path, b.path));
 const report = {
   schemaVersion: 1,
   diagnosticOnly: true,
@@ -93,8 +96,8 @@ const report = {
   inventoryPathSizeSha256: digest.digest("hex"),
   groups: rows(groups),
   semanticClasses: rows(classes),
-  extensions: rows(extensions, 50),
-  depthFour: rows(depthFour, 100),
+  extensions: rows(extensions),
+  depthFour: rows(depthFour),
   largestFiles: largestFiles.slice(0, 50),
 };
 writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
