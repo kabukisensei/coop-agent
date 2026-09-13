@@ -125,11 +125,7 @@ def _linux_same_user_python(pid, uid):
     if error:
         return None, error
     observed_uid = None
-    process_name = None
     for line in status.splitlines():
-        if line.startswith("Name:"):
-            fields = line.split(None, 1)
-            process_name = fields[1].strip() if len(fields) == 2 else None
         if line.startswith("Uid:"):
             fields = line.split()
             if len(fields) >= 2 and fields[1].isdigit():
@@ -140,11 +136,15 @@ def _linux_same_user_python(pid, uid):
         return False, None
     executable, error = _linux_read(pid, "exe")
     if error:
-        # A non-Python comm can safely exclude an unreadable executable, but it
-        # must never override readable executable identity: execve through a
-        # symlink may set comm to the alias while /proc/<pid>/exe proves Python.
-        if error == "exited" or (process_name and not PYTHON_NAME.match(process_name)):
+        # Name/comm is caller-controlled and cannot replace executable identity.
+        # Empty-cmdline kernel threads are not executable candidates; every live
+        # user process whose executable identity is unreadable stays uncertain.
+        if error == "exited":
             return False, None
+        if "Errno 2" in error:
+            cmdline, cmdline_error = _linux_read(pid, "cmdline", binary=True)
+            if cmdline_error == "exited" or cmdline == b"":
+                return False, None
         return None, error
     return bool(PYTHON_NAME.match(os.path.basename(executable))), None
 
@@ -167,8 +167,50 @@ def proc_cwd(pid):
     return _linux_read(pid, "cwd")
 
 
-def _resolve_existing_regular_script(path):
+def _is_descriptor_indirection(path):
+    return bool(
+        re.match(
+            r"^/proc/(?:[0-9]+|self|thread-self|curproc)"
+            r"/(?:task/(?:[0-9]+|self)/)?fd/[0-9]+$",
+            path,
+        )
+        or re.match(r"^/dev/fd/[0-9]+$", path)
+    )
+
+
+def _retargetable_operand(path):
+    """Whether path or its symlink chain names a retargetable descriptor."""
+    candidate = os.path.normpath(os.path.abspath(path))
+    seen = set()
+    for _depth in range(41):
+        if _is_descriptor_indirection(candidate):
+            return True
+        if candidate in seen:
+            return True
+        seen.add(candidate)
+        components = candidate.split(os.sep)[1:]
+        prefix = os.sep
+        for index, component in enumerate(components):
+            prefix = os.path.join(prefix, component)
+            try:
+                destination = os.readlink(prefix)
+            except OSError:
+                continue
+            if not os.path.isabs(destination):
+                destination = os.path.join(os.path.dirname(prefix), destination)
+            candidate = os.path.normpath(
+                os.path.join(destination, *components[index + 1 :])
+            )
+            break
+        else:
+            return False
+    return True
+
+
+def _resolve_existing_regular_script(path, target=None):
     """Resolve a stable, existing regular-file operand or explain uncertainty."""
+    if _retargetable_operand(path):
+        return None, "script operand uses retargetable descriptor indirection"
     try:
         before = os.stat(path)
         if not stat.S_ISREG(before.st_mode):
@@ -187,6 +229,14 @@ def _resolve_existing_regular_script(path):
     )
     if before_identity != after_identity or after_identity != resolved_identity:
         return None, "script operand changed while resolving"
+    lexical = os.path.normpath(os.path.abspath(path))
+    if (
+        target is not None
+        and lexical != resolved
+        and resolved != target
+        and os.path.basename(lexical) == os.path.basename(target)
+    ):
+        return None, "script operand symlink resolves to a non-target file"
     return resolved, None
 
 
@@ -230,7 +280,7 @@ def linux_inspect(target):
                     uncertainties.append(error)
                 continue
             script = os.path.join(cwd, script)
-        resolved, error = _resolve_existing_regular_script(script)
+        resolved, error = _resolve_existing_regular_script(script, target)
         if error:
             if not _pid_exited(pid):
                 uncertainties.append(
@@ -291,6 +341,33 @@ def macos_process_argv(pid):
         argv.append(data[position:end].decode("utf-8", "surrogateescape"))
         position = end + 1
     return argv
+
+
+def macos_process_executable(pid):
+    """Read the kernel-backed executable path through libproc proc_pidpath."""
+    libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    proc_pidpath = libproc.proc_pidpath
+    proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+    proc_pidpath.restype = ctypes.c_int
+    size = 4096  # PROC_PIDPATHINFO_MAXSIZE (4 * MAXPATHLEN)
+    buffer = ctypes.create_string_buffer(size)
+    ctypes.set_errno(0)
+    returned = proc_pidpath(pid, buffer, size)
+    saved_errno = ctypes.get_errno()
+    if returned <= 0:
+        return None, "proc_pidpath unavailable for pid %d: errno %d" % (
+            pid,
+            saved_errno,
+        )
+    if returned >= size:
+        return None, "proc_pidpath malformed for pid %d: oversized result" % pid
+    raw = buffer.raw
+    if raw[returned] != 0 or raw.find(b"\0") != returned:
+        return (
+            None,
+            "proc_pidpath malformed for pid %d: result is not NUL-terminated" % pid,
+        )
+    return raw[:returned].decode("utf-8", "surrogateescape"), None
 
 
 # Apple XNU bsd/sys/proc_info.h LP64 contract. Keep these declarations complete:
@@ -379,9 +456,9 @@ def _macos_pid_exists(pid):
 
 
 def macos_inspect(target):
-    """Use bounded ps candidates, then native APIs for exact argv and cwd."""
+    """Use ps only for same-UID candidates, then native APIs for identity/data."""
     result = subprocess.run(
-        ["ps", "-ww", "-axo", "pid=,comm="],
+        ["ps", "-ww", "-axo", "pid=,uid="],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -393,13 +470,25 @@ def macos_inspect(target):
     matches = []
     uncertainties = []
     own_pid = os.getpid()
+    uid = os.geteuid()
     for line in result.stdout.splitlines():
         fields = line.strip().split(None, 1)
         if len(fields) != 2 or not fields[0].isdigit() or int(fields[0]) == own_pid:
             continue
-        if not PYTHON_NAME.match(os.path.basename(fields[1])):
+        if not fields[1].isdigit() or int(fields[1]) != uid:
             continue
         pid = int(fields[0])
+        executable, error = macos_process_executable(pid)
+        if error:
+            if _macos_pid_exists(pid):
+                uncertainties.append(error)
+            continue
+        if executable is None:
+            if _macos_pid_exists(pid):
+                uncertainties.append("proc_pidpath returned no path for pid %d" % pid)
+            continue
+        if not PYTHON_NAME.match(os.path.basename(executable)):
+            continue
         argv = macos_process_argv(pid)
         if argv is None:
             if _macos_pid_exists(pid):
@@ -420,7 +509,7 @@ def macos_inspect(target):
                     uncertainties.append("process cwd unavailable for pid %d" % pid)
                 continue
             script = os.path.join(cwd, script)
-        resolved, error = _resolve_existing_regular_script(script)
+        resolved, error = _resolve_existing_regular_script(script, target)
         if error:
             if _macos_pid_exists(pid):
                 uncertainties.append(

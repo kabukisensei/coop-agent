@@ -502,15 +502,123 @@ class ProcessInspectorTests(unittest.TestCase):
             ):
                 self.assertIsNone(inspector.macos_process_cwd(101))
 
-    def test_macos_ps_filter_uses_exact_kernel_argv_and_target_cwd(self):
-        ps_result = SimpleNamespace(returncode=0, stdout="101 python3\n102 bash\n")
+    def test_macos_executable_uses_proc_pidpath_abi_and_validates_result(self):
+        class FakeProcPidPath:
+            def __init__(self, path=b"/usr/bin/python3", returned=None, error=0):
+                self.argtypes = None
+                self.restype = None
+                self.path = path
+                self.returned = returned
+                self.error = error
+                self.requested = None
+
+            def __call__(self, pid, buffer, size):
+                self.requested = (pid, size)
+                ctypes.set_errno(self.error)
+                ctypes.memmove(buffer, self.path, min(len(self.path), size))
+                return len(self.path) if self.returned is None else self.returned
+
+        success = FakeProcPidPath()
+        with mock.patch.object(
+            inspector.ctypes,
+            "CDLL",
+            return_value=SimpleNamespace(proc_pidpath=success),
+        ):
+            self.assertEqual(
+                inspector.macos_process_executable(101), ("/usr/bin/python3", None)
+            )
+        self.assertEqual(success.requested, (101, 4096))
+        self.assertEqual(
+            success.argtypes, [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+        )
+        self.assertIs(success.restype, ctypes.c_int)
+
+        failed = FakeProcPidPath(returned=0, error=13)
+        with mock.patch.object(
+            inspector.ctypes,
+            "CDLL",
+            return_value=SimpleNamespace(proc_pidpath=failed),
+        ):
+            path, error = inspector.macos_process_executable(101)
+        self.assertIsNone(path)
+        self.assertIn("errno 13", error)
+
+        unterminated = FakeProcPidPath(path=b"/usr/bin/python3X", returned=16)
+        with mock.patch.object(
+            inspector.ctypes,
+            "CDLL",
+            return_value=SimpleNamespace(proc_pidpath=unterminated),
+        ):
+            self.assertIn("NUL-terminated", inspector.macos_process_executable(101)[1])
+
+    def test_macos_native_executable_identity_rejects_spoof_and_inspects_alias(self):
+        uid = os.geteuid()
+        ps_result = SimpleNamespace(returncode=0, stdout="101 %d\n" % uid, stderr="")
+        target = "/tmp/knowledge-git.py"
+        scenarios = (
+            ("/usr/bin/python3", ["worker-alias", target], ([101], []), True),
+            ("/bin/not-python", ["python3", target], ([], []), False),
+        )
+        for executable, argv, expected, argv_read in scenarios:
+            with (
+                mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
+                mock.patch.object(
+                    inspector,
+                    "macos_process_executable",
+                    return_value=(executable, None),
+                ),
+                mock.patch.object(
+                    inspector, "macos_process_argv", return_value=argv
+                ) as read,
+                mock.patch.object(
+                    inspector,
+                    "_resolve_existing_regular_script",
+                    return_value=(target, None),
+                ),
+            ):
+                self.assertEqual(inspector.macos_inspect(target), expected)
+            self.assertEqual(read.called, argv_read)
+
+    def test_macos_unavailable_executable_identity_is_uncertain_only_while_live(self):
+        uid = os.geteuid()
+        ps_result = SimpleNamespace(returncode=0, stdout="101 %d\n" % uid, stderr="")
+        for live, expected_uncertainty in ((True, True), (False, False)):
+            with (
+                mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
+                mock.patch.object(
+                    inspector,
+                    "macos_process_executable",
+                    return_value=(
+                        None,
+                        "proc_pidpath unavailable for pid 101: errno 1",
+                    ),
+                ),
+                mock.patch.object(inspector, "_macos_pid_exists", return_value=live),
+            ):
+                matches, uncertainties = inspector.macos_inspect(
+                    "/tmp/knowledge-git.py"
+                )
+            self.assertEqual(matches, [])
+            self.assertEqual(bool(uncertainties), expected_uncertainty)
+
+    def test_macos_ps_uid_filter_uses_native_executable_argv_and_target_cwd(self):
+        uid = os.geteuid()
+        ps_result = SimpleNamespace(
+            returncode=0,
+            stdout="101 %d\n102 %d\n103 %d\n" % (uid, uid, uid + 1),
+            stderr="",
+        )
         target = "/tmp/helper path/scripts/knowledge-git.py"
+        native_paths = (("/usr/bin/python3", None), ("/bin/bash", None))
         with (
             mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
             mock.patch.object(
+                inspector, "macos_process_executable", side_effect=native_paths
+            ),
+            mock.patch.object(
                 inspector,
                 "macos_process_argv",
-                return_value=["/usr/bin/python3", "knowledge-git.py"],
+                return_value=["worker-python", "knowledge-git.py"],
             ),
             mock.patch.object(
                 inspector, "macos_process_cwd", return_value="/tmp/helper path/scripts"
@@ -524,17 +632,25 @@ class ProcessInspectorTests(unittest.TestCase):
             self.assertEqual(inspector.macos_inspect(target), ([101], []))
         with (
             mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
+            mock.patch.object(
+                inspector, "macos_process_executable", side_effect=native_paths
+            ),
             mock.patch.object(inspector, "macos_process_argv", return_value=None),
             mock.patch.object(inspector, "_macos_pid_exists", return_value=True),
         ):
-            self.assertEqual(inspector.macos_inspect(target)[0], [])
-            self.assertTrue(inspector.macos_inspect(target)[1])
+            self.assertEqual(
+                inspector.macos_inspect(target)[1],
+                ["KERN_PROCARGS2 unavailable for pid 101"],
+            )
         with (
             mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
             mock.patch.object(
+                inspector, "macos_process_executable", side_effect=native_paths
+            ),
+            mock.patch.object(
                 inspector,
                 "macos_process_argv",
-                return_value=["/usr/bin/python3", "knowledge-git.py"],
+                return_value=["worker-python", "knowledge-git.py"],
             ),
             mock.patch.object(inspector, "macos_process_cwd", return_value=None),
             mock.patch.object(inspector, "_macos_pid_exists", return_value=True),
@@ -542,6 +658,9 @@ class ProcessInspectorTests(unittest.TestCase):
             self.assertIn("cwd unavailable", inspector.macos_inspect(target)[1][0])
         with (
             mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
+            mock.patch.object(
+                inspector, "macos_process_executable", side_effect=native_paths
+            ),
             mock.patch.object(inspector, "macos_process_argv", return_value=None),
             mock.patch.object(inspector, "_macos_pid_exists", return_value=False),
         ):
@@ -625,9 +744,15 @@ class ProcessInspectorTests(unittest.TestCase):
         ):
             self.assertEqual(inspector.linux_inspect("/tmp/knowledge-git.py"), ([], []))
 
-        ps_result = SimpleNamespace(returncode=0, stdout="101 python3\n", stderr="")
+        uid = os.geteuid()
+        ps_result = SimpleNamespace(returncode=0, stdout="101 %d\n" % uid, stderr="")
         with (
             mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
+            mock.patch.object(
+                inspector,
+                "macos_process_executable",
+                return_value=("/usr/bin/python3", None),
+            ),
             mock.patch.object(
                 inspector,
                 "macos_process_argv",
@@ -641,6 +766,11 @@ class ProcessInspectorTests(unittest.TestCase):
             )
         with (
             mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
+            mock.patch.object(
+                inspector,
+                "macos_process_executable",
+                return_value=("/usr/bin/python3", None),
+            ),
             mock.patch.object(
                 inspector,
                 "macos_process_argv",
@@ -668,6 +798,52 @@ class ProcessInspectorTests(unittest.TestCase):
             resolved, error = inspector._resolve_existing_regular_script("/unreadable")
         self.assertIsNone(resolved)
         self.assertIn("denied", error)
+
+    def test_retargetable_and_nonmatching_symlink_operands_are_uncertain(self):
+        for path in ("/proc/123/fd/7", "/proc/self/fd/7", "/dev/fd/7"):
+            resolved, error = inspector._resolve_existing_regular_script(
+                path, "/target/knowledge-git.py"
+            )
+            self.assertIsNone(resolved)
+            self.assertIn("retargetable", error)
+        with tempfile.TemporaryDirectory(prefix="coop fd alias ") as directory:
+            alias = Path(directory) / "knowledge-git.py"
+            alias.symlink_to("/dev/fd/7")
+            resolved, error = inspector._resolve_existing_regular_script(
+                str(alias), "/target/knowledge-git.py"
+            )
+            self.assertIsNone(resolved)
+            self.assertIn("retargetable", error)
+        regular = SimpleNamespace(st_dev=1, st_ino=10, st_mode=0o100644)
+        with (
+            mock.patch.object(inspector.os, "stat", return_value=regular),
+            mock.patch.object(
+                inspector.os.path, "realpath", return_value="/elsewhere/decoy.py"
+            ),
+        ):
+            resolved, error = inspector._resolve_existing_regular_script(
+                "/alias/knowledge-git.py", "/target/knowledge-git.py"
+            )
+        self.assertIsNone(resolved)
+        self.assertIn("non-target", error)
+
+    def test_linux_unreadable_executable_is_uncertain_regardless_of_name(self):
+        uid = os.geteuid()
+        status = "Name:\tworker-alias\nUid:\t%d\t%d\t%d\t%d\n" % (
+            uid,
+            uid,
+            uid,
+            uid,
+        )
+        with mock.patch.object(
+            inspector,
+            "_linux_read",
+            side_effect=((status, None), (None, "exe unreadable for pid 101: denied")),
+        ):
+            self.assertEqual(
+                inspector._linux_same_user_python(101, uid),
+                (None, "exe unreadable for pid 101: denied"),
+            )
 
     def test_inspector_main_distinguishes_present_uncertain_and_absent(self):
         old_argv = inspector.sys.argv
@@ -721,9 +897,12 @@ class ProcessInspectorTests(unittest.TestCase):
                 )
                 try:
                     time.sleep(0.15)
-                    matches, uncertainties = inspector.linux_inspect(
-                        str(helper.resolve())
-                    )
+                    with mock.patch.object(
+                        inspector.os, "listdir", return_value=[str(proc.pid)]
+                    ):
+                        matches, uncertainties = inspector.linux_inspect(
+                            str(helper.resolve())
+                        )
                     self.assertIn(proc.pid, matches, command)
                     self.assertEqual(uncertainties, [], command)
                 finally:
@@ -796,6 +975,126 @@ class ProcessInspectorTests(unittest.TestCase):
                 proc.wait(timeout=5)
 
     @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
+    def test_live_different_regular_python_script_is_absent_not_uncertain(self):
+        target = str((ROOT / "scripts" / "knowledge-git.py").resolve())
+        with tempfile.TemporaryDirectory(prefix="coop different script ") as directory:
+            script = Path(directory) / "different.py"
+            script.write_text("import time; time.sleep(2)\n", encoding="utf-8")
+            proc = subprocess.Popen([sys.executable, str(script)])
+            try:
+                time.sleep(0.1)
+                with mock.patch.object(
+                    inspector.os, "listdir", return_value=[str(proc.pid)]
+                ):
+                    self.assertEqual(inspector.linux_inspect(target), ([], []))
+            finally:
+                proc.terminate()
+                proc.wait(timeout=5)
+
+    @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
+    def test_live_proc_fd_retarget_never_becomes_absent_while_helper_lives(self):
+        helper = ROOT / "scripts" / "knowledge-git.py"
+        decoy = ROOT / "tests" / "knowledge-git.test.py"
+        helper_fd = os.open(helper, os.O_RDONLY)
+        decoy_fd = None
+        operand = "/proc/%d/fd/%d" % (os.getpid(), helper_fd)
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                operand,
+                "--timeout-seconds",
+                "4",
+                "--",
+                sys.executable,
+                "-c",
+                "import time; time.sleep(2)",
+            ],
+            env={**os.environ, "GIT_SSH_COMMAND": "ssh -o BatchMode=yes"},
+        )
+        try:
+            time.sleep(0.15)
+            with mock.patch.object(
+                inspector.os, "listdir", return_value=[str(proc.pid)]
+            ):
+                before = inspector.linux_inspect(str(helper.resolve()))
+            self.assertIsNone(proc.poll())
+            self.assertEqual(before[0], [])
+            self.assertTrue(any("retargetable" in item for item in before[1]), before)
+
+            decoy_fd = os.open(decoy, os.O_RDONLY)
+            os.dup2(decoy_fd, helper_fd)
+            with mock.patch.object(
+                inspector.os, "listdir", return_value=[str(proc.pid)]
+            ):
+                after = inspector.linux_inspect(str(helper.resolve()))
+            self.assertIsNone(proc.poll())
+            self.assertEqual(after[0], [])
+            self.assertTrue(any("retargetable" in item for item in after[1]), after)
+        finally:
+            os.close(helper_fd)
+            if decoy_fd is not None:
+                os.close(decoy_fd)
+            proc.wait(timeout=5)
+
+    @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
+    def test_live_prctl_alias_unreadable_executable_fails_closed_until_exit(self):
+        code = (
+            "import ctypes,time;libc=ctypes.CDLL(None);"
+            "libc.prctl(15,b'worker-alias',0,0,0);"
+            "libc.prctl(4,0,0,0,0);print('ready',flush=True);time.sleep(2)"
+        )
+        run_as_uid = 65534 if os.geteuid() == 0 else os.geteuid()
+
+        def drop_uid():
+            if os.geteuid() == 0:
+                os.setuid(run_as_uid)
+
+        with tempfile.TemporaryDirectory(prefix="coop inspector ") as directory:
+            os.chmod(directory, 0o755)
+            inspector_copy = Path(directory) / "inspector.py"
+            inspector_copy.write_bytes(
+                (ROOT / "tests" / "knowledge-git-process-inspector.py").read_bytes()
+            )
+            inspector_copy.chmod(0o755)
+            proc = subprocess.Popen(
+                [sys.executable, "-c", code],
+                stdout=subprocess.PIPE,
+                text=True,
+                preexec_fn=drop_uid,
+            )
+            try:
+                self.assertIsNotNone(proc.stdout)
+                self.assertEqual(proc.stdout.readline().strip(), "ready")
+                observed = subprocess.run(
+                    [sys.executable, str(inspector_copy), "/tmp/knowledge-git.py"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                    preexec_fn=drop_uid,
+                )
+                self.assertEqual(observed.returncode, 2, observed.stderr)
+                self.assertIn("exe", observed.stderr)
+                self.assertIn(str(proc.pid), observed.stderr)
+                self.assertIsNone(proc.poll())
+            finally:
+                proc.terminate()
+                proc.wait(timeout=5)
+                if proc.stdout is not None:
+                    proc.stdout.close()
+            observed = subprocess.run(
+                [sys.executable, str(inspector_copy), "/tmp/knowledge-git.py"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=3,
+                check=False,
+                preexec_fn=drop_uid,
+            )
+            self.assertEqual(observed.returncode, 0, observed.stderr)
+
+    @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
     def test_live_dash_c_and_dash_m_decoys_are_not_matches(self):
         target = str((ROOT / "scripts" / "knowledge-git.py").resolve())
         commands = (
@@ -816,7 +1115,10 @@ class ProcessInspectorTests(unittest.TestCase):
             proc = subprocess.Popen(command)
             try:
                 time.sleep(0.1)
-                matches, uncertainties = inspector.linux_inspect(target)
+                with mock.patch.object(
+                    inspector.os, "listdir", return_value=[str(proc.pid)]
+                ):
+                    matches, uncertainties = inspector.linux_inspect(target)
                 self.assertNotIn(proc.pid, matches)
                 self.assertEqual(uncertainties, [])
             finally:
