@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: kabukisensei/coop-agent
-          ref: 3d5009a93c4e28e8c36948aa814dd7c733c73d1e
+          ref: 17cb4018113c55d3d3a53a48dc21246cca01de26
           path: _probe-control
           persist-credentials: false
       - name: Verify immutable checkout identities
