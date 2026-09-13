@@ -278,21 +278,29 @@ test("failure-path canary contamination removes evidence and emits no upload mar
   assert.notEqual(result.status, 0); assert.equal(existsSync(`${receiptPath}.evidence-authorization.json`), false); assert.equal(existsSync(evidenceRoot), false);
 });
 
-test("lifecycle event validation rejects absent, wrong, stale, and malformed evidence", { skip: !havePwsh }, () => {
-  const dir = mkdtempSync(join(tmpdir(), "coop-lifecycle-event-")); const path = join(dir, "fault.lifecycle-event.json");
+test("lifecycle stderr validation rejects absent, duplicate, wrong, stale, malformed, and payload-spoofed records", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-lifecycle-record-")); const path = join(dir, "helper.stderr.txt");
   const nonce = "0123456789abcdef0123456789abcdef"; const stage = "job-terminate";
+  const prefix = "COOP_KNOWLEDGE_GIT_LIFECYCLE:";
+  const exact = `${prefix}${JSON.stringify({ schema_version: 1, nonce, stage, outcome: "failure" })}`;
   const validate = () => runPs(["-Mode", "Probe", "-Probe", "ValidateLifecycleEvent", "-Value", path, "-Root", stage, "-Canary", nonce]);
-  assert.notEqual(validate().status, 0, "absent event was accepted");
-  writeFileSync(path, JSON.stringify({ schema_version: 1, nonce, stage, outcome: "failure" }));
+  assert.notEqual(validate().status, 0, "absent helper stderr log was accepted");
+  writeFileSync(path, `ordinary helper diagnostic\n${exact}\n`);
   assert.equal(validate().status, 0, validate().stderr);
-  writeFileSync(path, JSON.stringify({ schema_version: 1, nonce, stage: "job-close", outcome: "failure" }));
-  assert.notEqual(validate().status, 0, "wrong-stage event was accepted");
-  writeFileSync(path, JSON.stringify({ schema_version: 1, nonce: "00000000000000000000000000000000", stage, outcome: "failure" }));
-  assert.notEqual(validate().status, 0, "stale event was accepted");
-  writeFileSync(path, JSON.stringify({ schema_version: 1, nonce, stage, outcome: "success" }));
-  assert.notEqual(validate().status, 0, "wrong-outcome event was accepted");
-  writeFileSync(path, JSON.stringify({ schema_version: 1, nonce, stage, outcome: "failure", injected: true }));
-  assert.notEqual(validate().status, 0, "event with unknown properties was accepted");
+  writeFileSync(path, `${exact}\n${exact}\n`);
+  assert.notEqual(validate().status, 0, "duplicate record was accepted");
+  writeFileSync(path, `${prefix}${JSON.stringify({ schema_version: 1, nonce, stage: "job-close", outcome: "failure" })}\n`);
+  assert.notEqual(validate().status, 0, "wrong-stage record was accepted");
+  writeFileSync(path, `${prefix}${JSON.stringify({ schema_version: 1, nonce: "00000000000000000000000000000000", stage, outcome: "failure" })}\n`);
+  assert.notEqual(validate().status, 0, "stale record was accepted");
+  writeFileSync(path, `${prefix}{malformed\n`);
+  assert.notEqual(validate().status, 0, "malformed record was accepted");
+  writeFileSync(path, `${exact}\n${prefix}${JSON.stringify({ schema_version: 1, nonce: "0".repeat(32), stage, outcome: "failure" })}\n`);
+  assert.notEqual(validate().status, 0, "payload-spoofed second record was accepted");
+  writeFileSync(path, `${prefix}${JSON.stringify({ schema_version: 1, nonce, stage, outcome: "success" })}\n`);
+  assert.notEqual(validate().status, 0, "wrong-outcome record was accepted");
+  writeFileSync(path, `${prefix}${JSON.stringify({ schema_version: 1, nonce, stage, outcome: "failure", injected: true })}\n`);
+  assert.notEqual(validate().status, 0, "record with unknown properties was accepted");
 });
 
 test("Run replaces stale authorization with current safe receipt authorization only", { skip: !havePwsh }, () => {
@@ -492,7 +500,7 @@ test("native Windows lifecycle faults fail closed through real receipt finalizat
       unrelated.kill();
     }
   }
-  for (const mutation of ["no-event", "wrong-event", "stale-event"]) {
+  for (const mutation of ["no-event", "duplicate-event", "wrong-event", "stale-event", "malformed-event", "payload-spoofed"]) {
     const dir = mkdtempSync(join(tmpdir(), `coop-owner-event-${mutation}-`)); const writer = writeOwnershipFixture(dir);
     const result = runPs([
       "-Mode", "Probe", "-Probe", "OwnershipLifecycleFailure", "-Value", writer,

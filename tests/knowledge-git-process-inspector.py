@@ -1,59 +1,218 @@
 #!/usr/bin/env python3
-"""Exit nonzero when an exact knowledge-git Python script process is alive."""
+"""Inspect exact argv/cwd; exit 0 absent, 1 present, 2 uncertain."""
 
+import ctypes
 import os
 import re
-import ctypes
 import struct
 import subprocess
 import sys
 
 PYTHON_NAME = re.compile(r"^python(?:[0-9]+(?:\.[0-9]+)*)?(?:\.exe)?$", re.IGNORECASE)
-PYTHON_OPTIONS_WITH_VALUE = frozenset(("-W", "-X"))
+_NO_VALUE_SHORT_OPTIONS = frozenset("bBdEhiIOPqRsSuvVx?")
+_NO_VALUE_LONG_OPTIONS = frozenset(
+    (
+        "--help",
+        "--help-env",
+        "--help-xoptions",
+        "--help-all",
+        "--version",
+    )
+)
 
 
-def direct_python_script(argv):
+def parse_direct_python_script(argv):
+    """Return (classification, script) using Python's invocation grammar.
+
+    classification is script, not-script (-c/-m/non-Python), or uncertain for
+    an unknown, malformed, or ambiguous interpreter option.
+    """
     if not argv or not PYTHON_NAME.match(os.path.basename(argv[0])):
-        return None
+        return "not-script", None
     index = 1
     while index < len(argv):
         value = argv[index]
         if value == "--":
             index += 1
             break
-        if not value.startswith("-") or value == "-":
+        if value == "-":
+            return "not-script", None
+        if not value.startswith("-"):
             break
-        if value in ("-c", "-m") or value.startswith("-c") or value.startswith("-m"):
-            return None
-        if value in PYTHON_OPTIONS_WITH_VALUE:
-            index += 2
-        else:
-            index += 1
-    return argv[index] if index < len(argv) else None
+        if value.startswith("--"):
+            if value in _NO_VALUE_LONG_OPTIONS:
+                index += 1
+                continue
+            if value == "--check-hash-based-pycs":
+                if index + 1 >= len(argv):
+                    return "uncertain", None
+                index += 2
+                continue
+            if value.startswith("--check-hash-based-pycs=") and value.split("=", 1)[1]:
+                index += 1
+                continue
+            return "uncertain", None
+
+        cluster = value[1:]
+        if not cluster:
+            break
+        position = 0
+        consumed_next = False
+        while position < len(cluster):
+            option = cluster[position]
+            if option in ("c", "m"):
+                return "not-script", None
+            if option in ("W", "X"):
+                # The rest of this token is the option value; otherwise the
+                # following argv element is consumed (for example -EW ignore).
+                if position + 1 < len(cluster):
+                    position = len(cluster)
+                elif index + 1 < len(argv):
+                    consumed_next = True
+                    position += 1
+                else:
+                    return "uncertain", None
+                break
+            if option not in _NO_VALUE_SHORT_OPTIONS:
+                return "uncertain", None
+            position += 1
+        index += 2 if consumed_next else 1
+    if index >= len(argv):
+        return "not-script", None
+    return "script", argv[index]
+
+
+def direct_python_script(argv):
+    """Compatibility wrapper: return only a proven direct script operand."""
+    classification, script = parse_direct_python_script(argv)
+    return script if classification == "script" else None
+
+
+def _pid_exited(pid):
+    proc_dir = "/proc/%d" % pid
+    if not os.path.exists(proc_dir):
+        return True
+    try:
+        with open(proc_dir + "/stat", "rb") as stream:
+            fields = stream.read().split()
+        return len(fields) > 2 and fields[2] == b"Z"
+    except OSError:
+        return not os.path.exists(proc_dir)
+
+
+def _linux_read(pid, leaf, binary=False):
+    path = "/proc/%d/%s" % (pid, leaf)
+    try:
+        if leaf in ("exe", "cwd"):
+            return os.readlink(path), None
+        mode = "rb" if binary else "r"
+        kwargs = {} if binary else {"encoding": "ascii", "errors": "replace"}
+        with open(path, mode, **kwargs) as stream:
+            return stream.read(), None
+    except (OSError, ValueError) as exc:
+        if _pid_exited(pid):
+            return None, "exited"
+        return None, "%s unreadable for pid %d: %s" % (leaf, pid, exc)
+
+
+def _linux_same_user_python(pid, uid):
+    status, error = _linux_read(pid, "status")
+    if error:
+        return None, error
+    observed_uid = None
+    process_name = None
+    for line in status.splitlines():
+        if line.startswith("Name:"):
+            fields = line.split(None, 1)
+            process_name = fields[1].strip() if len(fields) == 2 else None
+        if line.startswith("Uid:"):
+            fields = line.split()
+            if len(fields) >= 2 and fields[1].isdigit():
+                observed_uid = int(fields[1])
+    if observed_uid is None:
+        return None, "uid metadata malformed for pid %d" % pid
+    if observed_uid != uid:
+        return False, None
+    # Status metadata safely excludes non-Python processes before executable
+    # identity is requested (important for same-UID kernel/host processes whose
+    # /proc/<pid>/exe is intentionally unreadable in a PID namespace).
+    if process_name and not PYTHON_NAME.match(process_name):
+        return False, None
+    executable, error = _linux_read(pid, "exe")
+    if error:
+        return (False, None) if error == "exited" else (None, error)
+    return bool(PYTHON_NAME.match(os.path.basename(executable))), None
 
 
 def proc_argv(pid):
+    raw, error = _linux_read(pid, "cmdline", binary=True)
+    if error:
+        return None, error
+    if not raw:
+        if _pid_exited(pid):
+            return None, "exited"
+        return None, "cmdline empty for live pid %d" % pid
+    return [
+        part.decode("utf-8", "surrogateescape")
+        for part in raw.rstrip(b"\0").split(b"\0")
+    ], None
+
+
+def proc_cwd(pid):
+    return _linux_read(pid, "cwd")
+
+
+def linux_inspect(target):
+    own_pid = os.getpid()
+    matches = []
+    uncertainties = []
+    uid = os.geteuid()
     try:
-        raw = open("/proc/%d/cmdline" % pid, "rb").read()
-    except (OSError, ValueError):
-        return None
-    return [part.decode("utf-8", "surrogateescape") for part in raw.rstrip(b"\0").split(b"\0")]
+        names = os.listdir("/proc")
+    except OSError as exc:
+        return [], ["cannot enumerate /proc: %s" % exc]
+    for name in names:
+        if not name.isdigit() or int(name) == own_pid:
+            continue
+        pid = int(name)
+        candidate, error = _linux_same_user_python(pid, uid)
+        if error:
+            if error != "exited":
+                uncertainties.append(error)
+            continue
+        if not candidate:
+            continue
+        argv, error = proc_argv(pid)
+        if error:
+            if error != "exited":
+                uncertainties.append(error)
+            continue
+        classification, script = parse_direct_python_script(argv)
+        if classification == "uncertain":
+            uncertainties.append("python argv ambiguous for pid %d" % pid)
+            continue
+        if classification != "script":
+            continue
+        if not os.path.isabs(script):
+            cwd, error = proc_cwd(pid)
+            if error:
+                if error != "exited":
+                    uncertainties.append(error)
+                continue
+            script = os.path.join(cwd, script)
+        try:
+            if os.path.realpath(script) == target:
+                matches.append(pid)
+        except OSError as exc:
+            uncertainties.append("script path unresolved for pid %d: %s" % (pid, exc))
+    return matches, uncertainties
 
 
 def linux_matches(target):
-    own_pid = os.getpid()
-    matches = []
-    for name in os.listdir("/proc"):
-        if not name.isdigit() or int(name) == own_pid:
-            continue
-        argv = proc_argv(int(name))
-        script = direct_python_script(argv or [])
-        if script:
-            try:
-                if os.path.realpath(script) == target:
-                    matches.append(int(name))
-            except OSError:
-                pass
+    """Compatibility wrapper; uncertainty is an error, never absence."""
+    matches, uncertainties = linux_inspect(target)
+    if uncertainties:
+        raise RuntimeError("; ".join(uncertainties))
     return matches
 
 
@@ -62,9 +221,12 @@ def macos_process_argv(pid):
     libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
     sysctl = libc.sysctl
     sysctl.argtypes = [
-        ctypes.POINTER(ctypes.c_int), ctypes.c_uint,
-        ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
-        ctypes.c_void_p, ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_size_t),
+        ctypes.c_void_p,
+        ctypes.c_size_t,
     ]
     argmax = ctypes.c_int()
     size = ctypes.c_size_t(ctypes.sizeof(argmax))
@@ -76,7 +238,7 @@ def macos_process_argv(pid):
     args_mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2
     if sysctl(args_mib, 3, buffer, ctypes.byref(size), None, 0) != 0:
         return None
-    data = buffer.raw[:size.value]
+    data = buffer.raw[: size.value]
     if len(data) < 4:
         return None
     argc = struct.unpack_from("i", data)[0]
@@ -97,19 +259,78 @@ def macos_process_argv(pid):
     return argv
 
 
-def macos_matches(target):
-    """Use bounded ps enumeration, then kernel argv for exact boundaries."""
+class _VnodeInfo(ctypes.Structure):
+    _fields_ = [
+        ("vi_type", ctypes.c_uint32),
+        ("vi_pad", ctypes.c_uint32),
+        ("vi_fsid", ctypes.c_uint64),
+        ("vi_fileid", ctypes.c_uint64),
+        ("vi_mode", ctypes.c_uint32),
+        ("vi_nlink", ctypes.c_uint32),
+        ("vi_uid", ctypes.c_uint32),
+        ("vi_gid", ctypes.c_uint32),
+        ("vi_rdev", ctypes.c_uint64),
+        ("vi_size", ctypes.c_int64),
+        ("vi_blocks", ctypes.c_int64),
+        ("vi_blksize", ctypes.c_int32),
+        ("vi_flags", ctypes.c_uint32),
+        ("vi_gen", ctypes.c_uint64),
+        ("vi_dev", ctypes.c_uint64),
+    ]
+
+
+class _VnodeInfoPath(ctypes.Structure):
+    _fields_ = [("vip_vi", _VnodeInfo), ("vip_path", ctypes.c_char * 1024)]
+
+
+class _ProcVnodePathInfo(ctypes.Structure):
+    _fields_ = [("pvi_cdir", _VnodeInfoPath), ("pvi_rdir", _VnodeInfoPath)]
+
+
+def macos_process_cwd(pid):
+    """Read cwd through proc_pidinfo(PROC_PIDVNODEPATHINFO)."""
+    libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    proc_pidinfo = libproc.proc_pidinfo
+    proc_pidinfo.argtypes = [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_uint64,
+        ctypes.c_void_p,
+        ctypes.c_int,
+    ]
+    proc_pidinfo.restype = ctypes.c_int
+    info = _ProcVnodePathInfo()
+    size = ctypes.sizeof(info)
+    if proc_pidinfo(pid, 9, 0, ctypes.byref(info), size) != size:
+        return None
+    raw = bytes(info.pvi_cdir.vip_path).split(b"\0", 1)[0]
+    return raw.decode("utf-8", "surrogateescape") if raw else None
+
+
+def _macos_pid_exists(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def macos_inspect(target):
+    """Use bounded ps candidates, then native APIs for exact argv and cwd."""
     result = subprocess.run(
         ["ps", "-ww", "-axo", "pid=,comm="],
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         text=True,
         timeout=5,
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError("ps process inspection failed")
+        return [], ["ps process inspection failed: %s" % result.stderr.strip()]
     matches = []
+    uncertainties = []
     own_pid = os.getpid()
     for line in result.stdout.splitlines():
         fields = line.strip().split(None, 1)
@@ -117,10 +338,34 @@ def macos_matches(target):
             continue
         if not PYTHON_NAME.match(os.path.basename(fields[1])):
             continue
-        argv = macos_process_argv(int(fields[0]))
-        script = direct_python_script(argv)
-        if script and os.path.realpath(script) == target:
-            matches.append(int(fields[0]))
+        pid = int(fields[0])
+        argv = macos_process_argv(pid)
+        if argv is None:
+            if _macos_pid_exists(pid):
+                uncertainties.append("KERN_PROCARGS2 unavailable for pid %d" % pid)
+            continue
+        classification, script = parse_direct_python_script(argv)
+        if classification == "uncertain":
+            uncertainties.append("python argv ambiguous for pid %d" % pid)
+            continue
+        if classification != "script":
+            continue
+        if not os.path.isabs(script):
+            cwd = macos_process_cwd(pid)
+            if cwd is None:
+                if _macos_pid_exists(pid):
+                    uncertainties.append("process cwd unavailable for pid %d" % pid)
+                continue
+            script = os.path.join(cwd, script)
+        if os.path.realpath(script) == target:
+            matches.append(pid)
+    return matches, uncertainties
+
+
+def macos_matches(target):
+    matches, uncertainties = macos_inspect(target)
+    if uncertainties:
+        raise RuntimeError("; ".join(uncertainties))
     return matches
 
 
@@ -130,13 +375,25 @@ def main():
         return 2
     target = os.path.realpath(sys.argv[1])
     try:
-        matches = linux_matches(target) if os.path.isdir("/proc") else macos_matches(target)
+        matches, uncertainties = (
+            linux_inspect(target) if os.path.isdir("/proc") else macos_inspect(target)
+        )
     except (OSError, subprocess.SubprocessError, RuntimeError) as error:
         print("process inspection uncertain: %s" % error, file=sys.stderr)
         return 2
     if matches:
-        print("knowledge-git.py still running: %s" % ",".join(str(pid) for pid in matches), file=sys.stderr)
+        print(
+            "knowledge-git.py still running: %s"
+            % ",".join(str(pid) for pid in matches),
+            file=sys.stderr,
+        )
         return 1
+    if uncertainties:
+        print(
+            "process inspection uncertain: %s" % "; ".join(uncertainties),
+            file=sys.stderr,
+        )
+        return 2
     return 0
 
 

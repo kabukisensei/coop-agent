@@ -79,10 +79,8 @@ Exit codes:
 
 import json
 import os
-import secrets
 import shlex
 import signal
-import stat
 import subprocess
 import sys
 import time
@@ -107,12 +105,18 @@ OWNERSHIP_UNCERTAIN = "uncertain"
 # arbitrary code or callables are never accepted. Inert unless deliberately set.
 _TEST_FAULT_ENV = "COOP_KNOWLEDGE_GIT_TEST_FAULT"
 _TEST_PID_FILE_ENV = "COOP_KNOWLEDGE_GIT_TEST_PID_FILE"
-_TEST_EVENT_ROOT_ENV = "COOP_KNOWLEDGE_GIT_TEST_EVENT_ROOT"
-_TEST_EVENT_DIR_ENV = "COOP_KNOWLEDGE_GIT_TEST_EVENT_DIR"
 _TEST_EVENT_NONCE_ENV = "COOP_KNOWLEDGE_GIT_TEST_EVENT_NONCE"
-_TEST_FAULTS = frozenset((
-    "job-create", "job-assign", "resume", "job-query", "job-terminate", "job-close",
-))
+_TEST_RECORD_PREFIX = "COOP_KNOWLEDGE_GIT_LIFECYCLE:"
+_TEST_FAULTS = frozenset(
+    (
+        "job-create",
+        "job-assign",
+        "resume",
+        "job-query",
+        "job-terminate",
+        "job-close",
+    )
+)
 _TEST_FAULT_OUTCOMES = {
     "job-create": "failure",
     "job-assign": "failure",
@@ -123,143 +127,61 @@ _TEST_FAULT_OUTCOMES = {
 }
 _PROCESS_ID = os.getpid()
 _CONSUMED_TEST_FAULTS = set()
+_SELECTED_TEST_FAULT = os.environ.get(_TEST_FAULT_ENV, "")
+if _SELECTED_TEST_FAULT not in _TEST_FAULTS:
+    _SELECTED_TEST_FAULT = ""
+_TEST_EVENT_NONCE = os.environ.get(_TEST_EVENT_NONCE_ENV, "")
+_TEST_PID_FILE = os.environ.get(_TEST_PID_FILE_ENV, "")
+_TEST_FAULT_ARMED = False
+
+
+class TestEvidenceError(RuntimeError):
+    """The internal fault seam could not emit authentic helper evidence."""
 
 
 def _test_fault(stage):
-    value = os.environ.get(_TEST_FAULT_ENV, "")
-    return value in _TEST_FAULTS and value == stage
+    return _TEST_FAULT_ARMED and _SELECTED_TEST_FAULT == stage
 
 
-def _is_reparse_or_symlink(path):
-    info = os.lstat(path)
-    return os.path.islink(path) or bool(
-        getattr(info, "st_file_attributes", 0)
-        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    )
-
-
-def _verified_event_directory(directory, root, nonce):
-    """Return an existing run-owned directory without link/reparse ancestry."""
-    if not directory or not root or not os.path.isabs(directory) or not os.path.isabs(root):
-        return None
-    normalized = os.path.normpath(directory)
-    normalized_root = os.path.normpath(root)
-    if os.path.dirname(normalized) != normalized_root:
-        return None
-    if os.path.basename(normalized) != "lifecycle-events-%s" % nonce:
-        return None
-    drive, tail = os.path.splitdrive(normalized)
-    current = drive + os.path.sep if drive else os.path.sep
-    for component in [item for item in tail.split(os.path.sep) if item]:
-        current = os.path.join(current, component)
-        try:
-            if _is_reparse_or_symlink(current):
-                return None
-        except OSError:
-            return None
-    return normalized if os.path.isdir(normalized) else None
-
-
-def _publish_test_event(directory, nonce, stage):
-    """Publish complete event bytes once, without replacement or link following."""
-    directory = _verified_event_directory(
-        directory, os.environ.get(_TEST_EVENT_ROOT_ENV, ""), nonce
-    )
-    if directory is None:
-        return
-    final_name = "%s.%s.lifecycle-event.json" % (nonce, stage)
-    temporary_name = ".event-%s.tmp" % secrets.token_hex(16)
-    final_path = os.path.join(directory, final_name)
-    temporary = os.path.join(directory, temporary_name)
+def _emit_test_record(nonce, stage):
+    """Synchronously emit one exact record at the helper-owned stderr seam."""
     event = {
         "schema_version": 1,
         "nonce": nonce,
         "stage": stage,
         "outcome": _TEST_FAULT_OUTCOMES[stage],
     }
-    payload = (json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    fd = None
-    directory_fd = None
-    temporary_created = False
-    published = False
+    record = (
+        _TEST_RECORD_PREFIX
+        + json.dumps(event, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    )
     try:
-        if os.name == "nt":
-            fd = os.open(temporary, flags, 0o600)
-        else:
-            expected_directory = os.stat(directory, follow_symlinks=False)
-            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-            directory_fd = os.open(directory, directory_flags)
-            opened_directory = os.fstat(directory_fd)
-            if (opened_directory.st_dev, opened_directory.st_ino) != (
-                expected_directory.st_dev, expected_directory.st_ino
-            ):
-                raise OSError("lifecycle event directory identity changed")
-            fd = os.open(temporary_name, flags, 0o600, dir_fd=directory_fd)
-        temporary_created = True
-        view = memoryview(payload)
-        while view:
-            written = os.write(fd, view)
-            if written <= 0:
-                raise OSError("short lifecycle event write")
-            view = view[written:]
-        os.fsync(fd)
-        os.close(fd)
-        fd = None
-        # Hard-link publication is atomic and fails when the final name exists.
-        if os.name == "nt":
-            os.link(temporary, final_path)
-        else:
-            os.link(
-                temporary_name, final_name,
-                src_dir_fd=directory_fd, dst_dir_fd=directory_fd,
-                follow_symlinks=False,
-            )
-        published = True
-        if os.name != "nt":
-            os.fsync(directory_fd)
-    except OSError:
-        if published:
-            try:
-                if os.name == "nt":
-                    os.unlink(final_path)
-                else:
-                    os.unlink(final_name, dir_fd=directory_fd)
-            except OSError:
-                pass
-        # The harness independently requires the event and fails closed.
-    finally:
-        if fd is not None:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        if temporary_created:
-            try:
-                if os.name == "nt":
-                    os.unlink(temporary)
-                else:
-                    os.unlink(temporary_name, dir_fd=directory_fd)
-            except OSError:
-                pass
-        if directory_fd is not None:
-            try:
-                os.close(directory_fd)
-            except OSError:
-                pass
+        written = sys.stderr.write(record)
+        if written != len(record):
+            raise OSError("short lifecycle record write")
+        sys.stderr.flush()
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise TestEvidenceError(
+            "internal test lifecycle evidence emission failed at %s: %s" % (stage, exc)
+        )
 
 
 def _consume_test_fault(stage):
-    """Record a fixed event only once when the selected lifecycle seam is consumed."""
+    """Emit authentic evidence once before returning an injected lifecycle result."""
     if not _test_fault(stage):
         return False
-    nonce = os.environ.get(_TEST_EVENT_NONCE_ENV, "")
+    nonce = _TEST_EVENT_NONCE
     consumption = (_PROCESS_ID, nonce, stage)
     if consumption in _CONSUMED_TEST_FAULTS:
         return True
+    if len(nonce) != 32 or any(char not in "0123456789abcdef" for char in nonce):
+        raise TestEvidenceError(
+            "internal test lifecycle evidence nonce is invalid at %s" % stage
+        )
+    _emit_test_record(nonce, stage)
+    # Consumption becomes durable only after the record was written and flushed.
     _CONSUMED_TEST_FAULTS.add(consumption)
-    if len(nonce) == 32 and all(char in "0123456789abcdef" for char in nonce):
-        _publish_test_event(os.environ.get(_TEST_EVENT_DIR_ENV, ""), nonce, stage)
     return True
 
 
@@ -267,7 +189,7 @@ def _record_test_pid(proc):
     """Expose the real spawned root PID only while a fixed lifecycle fault is active."""
     if not any(_test_fault(stage) for stage in _TEST_FAULTS):
         return
-    path = os.environ.get(_TEST_PID_FILE_ENV)
+    path = _TEST_PID_FILE
     if not path:
         return
     try:
@@ -276,11 +198,32 @@ def _record_test_pid(proc):
     except OSError:
         pass  # The behavioral test fails loudly if its requested evidence is absent.
 
+
+def _payload_environment():
+    """Return an environment with every internal acceptance control removed."""
+    env = os.environ.copy()
+    for name in tuple(env):
+        if name.startswith("COOP_KNOWLEDGE_GIT_TEST_") or name.startswith(
+            "COOP_TERMINAL_ACCEPTANCE_"
+        ):
+            env.pop(name, None)
+    return env
+
+
+def _purge_test_environment():
+    """Retain captured controls only in helper memory before doing any work."""
+    for name in tuple(os.environ):
+        if name.startswith("COOP_KNOWLEDGE_GIT_TEST_") or name.startswith(
+            "COOP_TERMINAL_ACCEPTANCE_"
+        ):
+            os.environ.pop(name, None)
+
+
 # Probe result states.
-PROBE_VALUE = "value"            # core.sshCommand is set (possibly empty -> unset)
-PROBE_UNSET = "unset"            # read succeeded; key absent
+PROBE_VALUE = "value"  # core.sshCommand is set (possibly empty -> unset)
+PROBE_UNSET = "unset"  # read succeeded; key absent
 PROBE_INDETERMINATE = "indeterminate"  # probe could not start at all
-PROBE_TIMED_OUT = "timed_out"    # probe exceeded the operation deadline
+PROBE_TIMED_OUT = "timed_out"  # probe exceeded the operation deadline
 PROBE_OWNERSHIP_UNCERTAIN = "ownership_uncertain"
 
 _CREATE_SUSPENDED = 0x00000004
@@ -302,14 +245,20 @@ if os.name == "nt":
         _KERNEL32.CreateJobObjectW.restype = wintypes.HANDLE
         _KERNEL32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
         _KERNEL32.SetInformationJobObject.argtypes = [
-            wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
         ]
         _KERNEL32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         _KERNEL32.OpenProcess.restype = wintypes.HANDLE
         _KERNEL32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         _KERNEL32.CloseHandle.argtypes = [wintypes.HANDLE]
         _KERNEL32.QueryInformationJobObject.argtypes = [
-            wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
             wintypes.LPVOID,
         ]
         _KERNEL32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
@@ -330,10 +279,17 @@ if os.name == "nt":
         _TH32CS_SNAPTHREAD = 0x00000004
 
         class _IO_COUNTERS(ctypes.Structure):
-            _fields_ = [(name, ctypes.c_ulonglong) for name in (
-                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
-                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount",
-            )]
+            _fields_ = [
+                (name, ctypes.c_ulonglong)
+                for name in (
+                    "ReadOperationCount",
+                    "WriteOperationCount",
+                    "OtherOperationCount",
+                    "ReadTransferCount",
+                    "WriteTransferCount",
+                    "OtherTransferCount",
+                )
+            ]
 
         class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
             # SDK layout — the two LARGE_INTEGER time limits LEAD the struct.
@@ -342,7 +298,7 @@ if os.name == "nt":
             # MaximumWorkingSetSize's slot: KILL_ON_JOB_CLOSE was never set.
             _fields_ = [
                 ("PerProcessUserTimeLimit", ctypes.c_longlong),  # LARGE_INTEGER
-                ("PerJobUserTimeLimit", ctypes.c_longlong),      # LARGE_INTEGER
+                ("PerJobUserTimeLimit", ctypes.c_longlong),  # LARGE_INTEGER
                 ("LimitFlags", wintypes.DWORD),
                 ("MinimumWorkingSetSize", ctypes.c_size_t),
                 ("MaximumWorkingSetSize", ctypes.c_size_t),
@@ -395,8 +351,12 @@ def _win_job_create():
     with the Win32 code captured IMMEDIATELY after the failing call —
     before any cleanup (CloseHandle resets the thread's last error).
     """
-    if _consume_test_fault("job-create"):
-        return None, ("test-job-create", 1)
+    try:
+        if _consume_test_fault("job-create"):
+            return None, ("test-job-create", 1)
+    except TestEvidenceError as exc:
+        # There is no Job yet. adopt() will terminate the suspended child.
+        return None, ("test-evidence", str(exc))
     if _KERNEL32 is None:
         return None, ("unsupported", None)
     try:
@@ -406,8 +366,10 @@ def _win_job_create():
         info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
         info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         if not _KERNEL32.SetInformationJobObject(
-            job, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
-            ctypes.byref(info), ctypes.sizeof(info),
+            job,
+            _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
         ):
             err = _win_last_error()  # capture BEFORE CloseHandle replaces it
             _KERNEL32.CloseHandle(job)
@@ -421,12 +383,18 @@ def _win_job_assign(job, pid):
     """Assign pid to job. Returns (ok, error); error is (stage, code) —
     'open' distinguishes handle-acquisition failure from the assignment
     itself, each code captured immediately after its own call."""
-    if _consume_test_fault("job-assign"):
-        return False, ("test-job-assign", 1)
+    try:
+        if _consume_test_fault("job-assign"):
+            return False, ("test-job-assign", 1)
+    except TestEvidenceError as exc:
+        # adopt() will terminate the still-suspended child and close the Job.
+        return False, ("test-evidence", str(exc))
     if _KERNEL32 is None or not job:
         return False, ("unsupported", None)
     try:
-        proc = _KERNEL32.OpenProcess(_PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, pid)
+        proc = _KERNEL32.OpenProcess(
+            _PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, pid
+        )
         if not proc or proc == _INVALID_HANDLE:
             return False, ("open", _win_last_error())
         try:
@@ -440,15 +408,23 @@ def _win_job_assign(job, pid):
 
 
 def _win_job_active_processes(job):
-    if _consume_test_fault("job-query"):
+    try:
+        if _consume_test_fault("job-query"):
+            return None
+    except TestEvidenceError:
+        # The caller treats an unreadable ownership count as uncertainty and
+        # immediately terminates/closes the owned Job.
         return None
     if _KERNEL32 is None or not job:
         return None
     try:
         info = _JOBOBJECT_BASIC_ACCOUNTING_INFORMATION()
         if not _KERNEL32.QueryInformationJobObject(
-            job, _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION,
-            ctypes.byref(info), ctypes.sizeof(info), None,
+            job,
+            _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+            None,
         ):
             return None
         return int(info.ActiveProcesses)
@@ -457,8 +433,12 @@ def _win_job_active_processes(job):
 
 
 def _win_job_terminate(job):
-    if _consume_test_fault("job-terminate"):
-        return False, ("test-job-terminate", 1)
+    try:
+        if _consume_test_fault("job-terminate"):
+            return False, ("test-job-terminate", 1)
+    except TestEvidenceError as exc:
+        # terminate() will immediately invoke the Job-close fallback.
+        return False, ("test-evidence", str(exc))
     if _KERNEL32 is None or not job:
         return False, ("unsupported", None)
     try:
@@ -469,9 +449,8 @@ def _win_job_terminate(job):
         return False, ("exception", repr(exc))
 
 
-def _win_job_close(job):
-    if _consume_test_fault("job-close"):
-        return False, ("test-job-close", 1)
+def _win_job_close_raw(job):
+    """Close a Job handle without consulting the test seam."""
     if _KERNEL32 is None or not job:
         return False, ("unsupported", None)
     try:
@@ -480,6 +459,19 @@ def _win_job_close(job):
         return False, ("close", _win_last_error())
     except (OSError, ValueError) as exc:
         return False, ("exception", repr(exc))
+
+
+def _win_job_close(job):
+    try:
+        if _consume_test_fault("job-close"):
+            return False, ("test-job-close", 1)
+    except TestEvidenceError as exc:
+        # Evidence failure may not prevent KILL_ON_JOB_CLOSE cleanup. Close the
+        # real handle, but preserve an uncertain result because the requested
+        # injected seam was not authentically observed.
+        closed, close_error = _win_job_close_raw(job)
+        return False, ("test-evidence", str(exc), "cleanup-close", closed, close_error)
+    return _win_job_close_raw(job)
 
 
 def _win_last_error():
@@ -536,8 +528,12 @@ def _win_resume_pid(pid):
 
     Returns (ok, code); code is the Win32 error captured after the
     resuming ResumeThread call (or after the failing step)."""
-    if _consume_test_fault("resume"):
-        return False, ("test-resume", 1)
+    try:
+        if _consume_test_fault("resume"):
+            return False, ("test-resume", 1)
+    except TestEvidenceError as exc:
+        # adopt() still owns the suspended child and will terminate/close it.
+        return False, ("test-evidence", str(exc))
     if _KERNEL32 is None:
         return False, ("unsupported", None)
     try:
@@ -550,7 +546,9 @@ def _win_resume_pid(pid):
             have = _KERNEL32.Thread32First(snap, ctypes.byref(entry))
             while have:
                 if entry.th32OwnerProcessID == pid:
-                    thread = _KERNEL32.OpenThread(_THREAD_SUSPEND_RESUME, False, entry.th32ThreadID)
+                    thread = _KERNEL32.OpenThread(
+                        _THREAD_SUSPEND_RESUME, False, entry.th32ThreadID
+                    )
                     if thread and thread != _INVALID_HANDLE:
                         try:
                             prev = _KERNEL32.ResumeThread(thread)
@@ -621,10 +619,13 @@ class Ownership:
                 stage, code = err
                 stopped, stop_err = _win_terminate_pid(proc.pid)
                 self.unavailable_reason = "job create failed at %s (error %s)" % (
-                    stage, code,
+                    stage,
+                    code,
                 )
                 if not stopped:
-                    self.unavailable_reason += "; suspended-child termination failed (%s)" % (stop_err,)
+                    self.unavailable_reason += (
+                        "; suspended-child termination failed (%s)" % (stop_err,)
+                    )
             else:
                 assigned, err = _win_job_assign(self.job, proc.pid)
                 if not assigned:
@@ -636,9 +637,13 @@ class Ownership:
                         "job assignment failed at %s (error %s)" % (stage, code)
                     )
                     if not stopped:
-                        self.unavailable_reason += "; suspended-child termination failed (%s)" % (stop_err,)
+                        self.unavailable_reason += (
+                            "; suspended-child termination failed (%s)" % (stop_err,)
+                        )
                     if not closed:
-                        self.unavailable_reason += "; Job close failed (%s)" % (close_err,)
+                        self.unavailable_reason += "; Job close failed (%s)" % (
+                            close_err,
+                        )
             if self.unavailable_reason:
                 print(
                     "warning: Windows process containment unavailable — %s; "
@@ -654,9 +659,13 @@ class Ownership:
                     self._close_result = closed
                     self.unavailable_reason = "child resume failed (%s)" % (rerr,)
                     if not terminated:
-                        self.unavailable_reason += "; Job termination failed (%s)" % (term_err,)
+                        self.unavailable_reason += "; Job termination failed (%s)" % (
+                            term_err,
+                        )
                     if not closed:
-                        self.unavailable_reason += "; Job close failed (%s)" % (close_err,)
+                        self.unavailable_reason += "; Job close failed (%s)" % (
+                            close_err,
+                        )
                     print(
                         "warning: Windows process containment unavailable — %s; "
                         "the operation was not started" % self.unavailable_reason,
@@ -707,8 +716,10 @@ class Ownership:
             try:
                 result = subprocess.run(
                     ["taskkill", "/PID", str(self.child.pid), "/T", "/F"],
-                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL, timeout=CLEANUP_GRACE_SECONDS,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=CLEANUP_GRACE_SECONDS,
                 )
                 return result.returncode == 0
             except (OSError, subprocess.SubprocessError):
@@ -830,7 +841,7 @@ def run_bounded_capture(argv, deadline):
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                env=os.environ.copy(),
+                env=_payload_environment(),
                 **ownership.spawn_kwargs(),
             )
         except (OSError, subprocess.SubprocessError):
@@ -941,7 +952,7 @@ def child_env(git_argv, deadline):
     probe_state is PROBE_TIMED_OUT. The warning is emitted on stderr by main;
     it never changes the exit code.
     """
-    env = os.environ.copy()
+    env = _payload_environment()
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GCM_INTERACTIVE"] = "never"
     env["GIT_ASKPASS"] = os.devnull
@@ -956,22 +967,30 @@ def child_env(git_argv, deadline):
         # Distinguish "not set" from "could not be determined": with an
         # indeterminate configuration the runner must NOT inject a guessed
         # default transport — the environment is left unchanged.
-        return env, (
-            "SSH configuration could not be determined (config probe failed) "
-            "— leaving the transport unchanged; the operation is bounded by "
-            "the deadline"
-        ), probe_state
+        return (
+            env,
+            (
+                "SSH configuration could not be determined (config probe failed) "
+                "— leaving the transport unchanged; the operation is bounded by "
+                "the deadline"
+            ),
+            probe_state,
+        )
     if configured:
         if is_plain_ssh_command(configured):
             # The CONFIGURED command stays the transport; BatchMode only makes
             # it unattended (same precedence Git itself would apply).
             env["GIT_SSH_COMMAND"] = configured + " -o BatchMode=yes"
             return env, None, probe_state
-        return env, (
-            "custom SSH transport preserved (core.sshCommand): %s — "
-            "unattended mode cannot be enforced for it; the operation is "
-            "bounded by the deadline" % configured
-        ), probe_state
+        return (
+            env,
+            (
+                "custom SSH transport preserved (core.sshCommand): %s — "
+                "unattended mode cannot be enforced for it; the operation is "
+                "bounded by the deadline" % configured
+            ),
+            probe_state,
+        )
     env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
     return env, None, probe_state
 
@@ -979,7 +998,12 @@ def child_env(git_argv, deadline):
 def operation_deadline_exceeded(timeout, what="git operation"):
     print(
         "error: %s exceeded the %ds deadline — %s outlived it and were "
-        "terminated" % (what, timeout, "descendants" if what == "git operation" else "owned processes"),
+        "terminated"
+        % (
+            what,
+            timeout,
+            "descendants" if what == "git operation" else "owned processes",
+        ),
         file=sys.stderr,
     )
 
@@ -997,6 +1021,10 @@ def finish_owned(ownership, status):
 
 
 def main(argv):
+    global _TEST_FAULT_ARMED
+    # No payload, descendant, probe, or cleanup utility may inherit test-only
+    # controls. Needed allowlisted values were captured at module startup.
+    _purge_test_environment()
     timeout_flag = None
     command = None
     argv_file = None
@@ -1036,10 +1064,16 @@ def main(argv):
         except (OSError, ValueError) as exc:
             print("error: cannot read argv file: %s" % exc, file=sys.stderr)
             return EXIT_USAGE
-        if not isinstance(command, list) or not command or not all(
-            isinstance(value, str) for value in command
-        ) or not command[0]:
-            print("error: argv file must contain a non-empty JSON string array", file=sys.stderr)
+        if (
+            not isinstance(command, list)
+            or not command
+            or not all(isinstance(value, str) for value in command)
+            or not command[0]
+        ):
+            print(
+                "error: argv file must contain a non-empty JSON string array",
+                file=sys.stderr,
+            )
             return EXIT_USAGE
     if not command:
         print("error: missing command after -- or --argv-file", file=sys.stderr)
@@ -1068,12 +1102,19 @@ def main(argv):
     if env_warning:
         print("warning: %s" % env_warning, file=sys.stderr)
 
+    # Configuration discovery is preliminary and may never consume lifecycle
+    # evidence. Arm the seam only at the exact main-payload ownership boundary.
+    _TEST_FAULT_ARMED = True
+
     stdin_stream = None
     if stdin_path is not None:
         try:
             stdin_stream = open(stdin_path, "rb")
         except OSError as exc:
-            print("error: cannot open stdin file %r: %s" % (stdin_path, exc), file=sys.stderr)
+            print(
+                "error: cannot open stdin file %r: %s" % (stdin_path, exc),
+                file=sys.stderr,
+            )
             return EXIT_CANNOT_START
     popen_kwargs = {"stdin": stdin_stream or subprocess.DEVNULL, "env": env}
     ownership = Ownership()
@@ -1142,5 +1183,8 @@ def main(argv):
 if __name__ == "__main__":
     try:
         sys.exit(main(sys.argv[1:]))
+    except TestEvidenceError as exc:
+        print("error: %s; injected operation refused" % exc, file=sys.stderr)
+        sys.exit(EXIT_OWNERSHIP_UNAVAILABLE)
     except KeyboardInterrupt:
         sys.exit(130)

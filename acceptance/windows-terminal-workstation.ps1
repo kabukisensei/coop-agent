@@ -23,6 +23,7 @@ $script:BaselineSha = 'd60300780b565aabf15b172b2bc32abad12b9ca6'
 $script:AllowedStatuses = @('PASS','FAIL','BLOCKED','INCONCLUSIVE','NOT_REACHED','NOT_AVAILABLE','CAPABILITY_SKIP','BETA_LIMITATION')
 $script:CandidateSupportBuild = 'build-24297cf9'
 $script:ProcessCleanupUncertain = $false
+$script:LifecycleFaultEvidence = $null
 $script:RequiredAutomatedIds = @(
   'identity-and-isolation',
   'baseline-source-install',
@@ -444,12 +445,20 @@ function Assert-UploadAuthorization([string]$Kind, [string]$Path, [string]$Nonce
 function Assert-LifecycleFaultEvent([string]$Path, [string]$Nonce, [string]$RequestedStage) {
   $stages = @('job-create','job-assign','resume','job-query','job-terminate','job-close')
   if ($RequestedStage -notin $stages) { throw "unsupported ownership lifecycle fault: $RequestedStage" }
-  if ($Nonce -cnotmatch '^[0-9a-f]{32}$') { throw 'lifecycle event nonce is invalid' }
-  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "observed lifecycle event missing for requested fault: $RequestedStage" }
-  try { $event = [System.IO.File]::ReadAllText($Path) | ConvertFrom-Json } catch { throw "observed lifecycle event is unreadable for requested fault: $RequestedStage" }
-  Assert-ExactProperties $event @('schema_version','nonce','stage','outcome') 'observed lifecycle event'
-  if (($event.schema_version -isnot [int] -and $event.schema_version -isnot [long]) -or $event.schema_version -ne 1) { throw 'observed lifecycle event schema version mismatch' }
-  if (-not (Test-JsonString $event.nonce) -or $event.nonce -cne $Nonce) { throw "stale lifecycle event rejected for requested fault: $RequestedStage" }
+  if ($Nonce -cnotmatch '^[0-9a-f]{32}$') { throw 'lifecycle record nonce is invalid' }
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "helper stderr log missing for requested fault: $RequestedStage" }
+  $prefix = 'COOP_KNOWLEDGE_GIT_LIFECYCLE:'
+  $records = @()
+  foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+    if (-not $line.StartsWith($prefix, [StringComparison]::Ordinal)) { continue }
+    $raw = $line.Substring($prefix.Length)
+    try { $records += ,($raw | ConvertFrom-Json) } catch { throw "observed lifecycle record is malformed for requested fault: $RequestedStage" }
+  }
+  if ($records.Count -ne 1) { throw "expected exactly one helper lifecycle record for requested fault $RequestedStage; observed $($records.Count)" }
+  $event = $records[0]
+  Assert-ExactProperties $event @('schema_version','nonce','stage','outcome') 'observed lifecycle record'
+  if (($event.schema_version -isnot [int] -and $event.schema_version -isnot [long]) -or $event.schema_version -ne 1) { throw 'observed lifecycle record schema version mismatch' }
+  if (-not (Test-JsonString $event.nonce) -or $event.nonce -cne $Nonce) { throw "stale lifecycle record rejected for requested fault: $RequestedStage" }
   if (-not (Test-JsonString $event.stage) -or $event.stage -cne $RequestedStage) { throw "wrong observed lifecycle stage for requested fault: $RequestedStage" }
   $expectedOutcome = if ($RequestedStage -eq 'job-query') { 'indeterminate' } else { 'failure' }
   if (-not (Test-JsonString $event.outcome) -or $event.outcome -cne $expectedOutcome) { throw "wrong observed lifecycle outcome for requested fault: $RequestedStage" }
@@ -542,16 +551,8 @@ function Assert-ExitZero([object]$Result, [string]$Label) {
 function Invoke-OwnershipLifecycleFault([string]$Fixture, [string]$LogBase, [string]$PayloadMarker) {
   $fault = $env:COOP_KNOWLEDGE_GIT_TEST_FAULT
   $eventNonce = [guid]::NewGuid().ToString('N')
-  $eventDirectory = Join-Path (Split-Path -Parent $LogBase) "lifecycle-events-$eventNonce"
-  if (Test-Path -LiteralPath $eventDirectory) { throw 'lifecycle event directory unexpectedly exists' }
-  New-Item -ItemType Directory -Path $eventDirectory -ErrorAction Stop | Out-Null
-  $eventPath = Join-Path $eventDirectory "$eventNonce.$fault.lifecycle-event.json"
-  $oldEventRoot = $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_ROOT
-  $oldEventDirectory = $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_DIR
   $oldEventNonce = $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_NONCE
   try {
-    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_ROOT = Split-Path -Parent $eventDirectory
-    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_DIR = $eventDirectory
     $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_NONCE = $eventNonce
     if ($fault -in @('job-create','job-assign','resume')) {
       $result = Invoke-Bounded 'node' @($Fixture,$PayloadMarker) $LogBase 5
@@ -567,25 +568,30 @@ function Invoke-OwnershipLifecycleFault([string]$Fixture, [string]$LogBase, [str
       throw "unsupported ownership lifecycle fault: $fault"
     }
   } finally {
-    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_ROOT = $oldEventRoot
-    $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_DIR = $oldEventDirectory
     $env:COOP_KNOWLEDGE_GIT_TEST_EVENT_NONCE = $oldEventNonce
   }
   $eventMutation = $env:COOP_TERMINAL_ACCEPTANCE_EVENT_MUTATION
-  if ($eventMutation -and $eventMutation -notin @('no-event','wrong-event','stale-event')) { throw "unsupported lifecycle event mutation: $eventMutation" }
+  if ($eventMutation -and $eventMutation -notin @('no-event','duplicate-event','wrong-event','stale-event','malformed-event','payload-spoofed')) { throw "unsupported lifecycle event mutation: $eventMutation" }
+  $prefix = 'COOP_KNOWLEDGE_GIT_LIFECYCLE:'
+  $lines = @([System.IO.File]::ReadAllLines($result.Stderr))
   if ($eventMutation -eq 'no-event') {
-    Remove-Item -LiteralPath $eventPath -Force -ErrorAction SilentlyContinue
+    $lines = @($lines | Where-Object { -not $_.StartsWith($prefix, [StringComparison]::Ordinal) })
+  } elseif ($eventMutation -eq 'duplicate-event') {
+    $record = @($lines | Where-Object { $_.StartsWith($prefix, [StringComparison]::Ordinal) }) | Select-Object -First 1
+    $lines += $record
   } elseif ($eventMutation -eq 'wrong-event') {
-    $mutated = Get-Content -LiteralPath $eventPath -Raw | ConvertFrom-Json
-    $mutated.stage = if ($fault -eq 'job-create') { 'job-close' } else { 'job-create' }
-    [System.IO.File]::WriteAllText($eventPath, ($mutated | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
+    $wrong = if ($fault -eq 'job-create') { 'job-close' } else { 'job-create' }
+    $lines = @($lines | ForEach-Object { if ($_.StartsWith($prefix, [StringComparison]::Ordinal)) { $_.Replace(('"stage":"' + $fault + '"'), ('"stage":"' + $wrong + '"')) } else { $_ } })
   } elseif ($eventMutation -eq 'stale-event') {
-    $mutated = Get-Content -LiteralPath $eventPath -Raw | ConvertFrom-Json
-    $mutated.nonce = '00000000000000000000000000000000'
-    [System.IO.File]::WriteAllText($eventPath, ($mutated | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
+    $lines = @($lines | ForEach-Object { if ($_.StartsWith($prefix, [StringComparison]::Ordinal)) { $_.Replace($eventNonce, '00000000000000000000000000000000') } else { $_ } })
+  } elseif ($eventMutation -eq 'malformed-event') {
+    $lines += ($prefix + '{malformed')
+  } elseif ($eventMutation -eq 'payload-spoofed') {
+    $lines += ($prefix + '{"schema_version":1,"nonce":"00000000000000000000000000000000","stage":"' + $fault + '","outcome":"failure"}')
   }
-  $observed = Assert-LifecycleFaultEvent $eventPath $eventNonce $fault
-  return [pscustomobject]@{ Fault = $fault; ExitCode = [int]$result.ExitCode; ObservedStage = $observed.stage; ObservedOutcome = $observed.outcome }
+  if ($eventMutation) { [System.IO.File]::WriteAllLines($result.Stderr, $lines, (New-Object System.Text.UTF8Encoding($false))) }
+  $observed = Assert-LifecycleFaultEvent $result.Stderr $eventNonce $fault
+  return [pscustomobject]@{ Fault = $fault; ExitCode = [int]$result.ExitCode; ObservedStage = $observed.stage; ObservedOutcome = $observed.outcome; Log = $result.Stderr; LogSha256 = Get-FileSha $result.Stderr }
 }
 
 if ($Mode -eq 'Probe') {
@@ -782,6 +788,7 @@ try {
 
   if ($env:COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE) {
     $faultResult = Invoke-OwnershipLifecycleFault $env:COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE (Join-Path $logs 'ownership-lifecycle-fault') (Join-Path $ownedRoot 'ownership-payload.txt')
+    $script:LifecycleFaultEvidence = New-Evidence 'FILE' "one authentic helper stderr lifecycle record; sha256=$($faultResult.LogSha256)" 'knowledge-git.py captured stderr lifecycle seam' $faultResult.ExitCode "harness:$harnessObservedSha" $faultResult.Log
     throw "observed ownership lifecycle $($faultResult.ObservedStage) outcome $($faultResult.ObservedOutcome) failed closed with exit $($faultResult.ExitCode)"
   }
 
@@ -946,9 +953,10 @@ try {
     )))
   }
   if ($runFailure) {
-    [void]$claims.Add((New-Claim 'automated-harness-completion' 'SECURITY' 'FAIL' $true $true $false "Automated harness failed closed: $runFailure" @(
-      (New-Evidence 'COMMAND' "harness terminated before all required claims passed: $runFailure" 'acceptance/windows-terminal-workstation.ps1 -Mode Run' 1 $(if ($harnessObservedSha) { "harness:$harnessObservedSha" } else { 'harness' }))
-    )))
+    $completionEvidence = if ($script:LifecycleFaultEvidence) { @($script:LifecycleFaultEvidence) } else { @(
+        (New-Evidence 'COMMAND' "harness terminated before all required claims passed: $runFailure" 'acceptance/windows-terminal-workstation.ps1 -Mode Run' 1 $(if ($harnessObservedSha) { "harness:$harnessObservedSha" } else { 'harness' }))
+      ) }
+    [void]$claims.Add((New-Claim 'automated-harness-completion' 'SECURITY' 'FAIL' $true $true $false "Automated harness failed closed: $runFailure" $completionEvidence))
   }
   foreach ($id in $script:RequiredOperatorIds) {
     [void]$operator.Add((New-Claim $id 'OPERATOR' 'NOT_REACHED' $true $false $true 'Must be completed by a human in a snapshot-capable disposable Windows VM; CI makes no claim.' @()))
