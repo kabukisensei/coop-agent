@@ -483,7 +483,13 @@ EOF
     fi
   fi
   local sql_json="$outdir/coop-sql-review.json" dax_json="$outdir/coop-dax-review.json" bpa_json="$outdir/bpa-review.json"
-  local sql_rc=0 dax_rc=0 bpa_rc=0 dd_rc=0 sql_standard="" dax_standard="" sql_revision="" dax_revision="" sql_sha256="" dax_sha256=""
+  local sql_run dax_run sql_binding="$outdir/coop-sql-review.provenance.json" dax_binding="$outdir/coop-dax-review.provenance.json"
+  sql_run="$(mktemp "$outdir/.coop-sql-review.current.XXXXXX.json")"
+  dax_run="$(mktemp "$outdir/.coop-dax-review.current.XXXXXX.json")"
+  # A suite HTML file always describes one complete current run; never leave a
+  # stale prior artifact where this invocation's output is expected.
+  rm -f "$outdir/suite.html"
+  local sql_rc=0 dax_rc=0 bpa_rc=0 dd_rc=0 sql_standard="" dax_standard=""
   local sql_provenance=0 dax_provenance=0 provenance_error=""
   local extra=()
   [ "$strict" = 1 ] && extra=(--strict)
@@ -495,10 +501,7 @@ EOF
   node "$COOP_ROOT/lib/standards-cli.mjs" resolve dax "$PWD" >"$dax_resolution"
   sql_standard="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$sql_resolution" path 2>/dev/null || true)"
   dax_standard="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$dax_resolution" path 2>/dev/null || true)"
-  sql_revision="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$sql_resolution" revision 2>/dev/null || true)"
-  dax_revision="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$dax_resolution" revision 2>/dev/null || true)"
-  sql_sha256="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$sql_resolution" sha256 2>/dev/null || true)"
-  dax_sha256="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$dax_resolution" sha256 2>/dev/null || true)"
+
   [ -n "$sql_standard" ] && sql_standards=(--standards "$sql_standard")
   [ -n "$dax_standard" ] && dax_standards=(--standards "$dax_standard")
 
@@ -514,28 +517,36 @@ EOF
     { [ -n "$sql_prev" ] || [ -n "$dax_prev" ]; } || coop_info "no previous review to compare against yet — this run becomes the baseline"
   fi
 
-  # Run both linters over the SAME scope; capture exit codes, never abort here.
-  # Never let a prior valid report stand in for a missing report from this run.
-  rm -f "$sql_json" "$dax_json"
+  # Run both linters into per-run files. Only a provenance-accepted report is
+  # atomically promoted; a rejected report can never replace the accepted/LKG
+  # canonical path or be discovered by configured downstream consumers.
   coop_head "coop-sql-review check → $sql_json"
-  COOP_STANDARDS_PATH="$sql_standard" COOP_STANDARDS_SHA256="$sql_sha256" COOP_STANDARDS_REVISION="$sql_revision" \
-    coop-sql-review check ${scope[@]+"${scope[@]}"} --format json ${sql_standards[@]+"${sql_standards[@]}"} -o "$sql_json" ${sql_diff[@]+"${sql_diff[@]}"} ${extra[@]+"${extra[@]}"} || sql_rc=$?
+  coop-sql-review check ${scope[@]+"${scope[@]}"} --format json ${sql_standards[@]+"${sql_standards[@]}"} -o "$sql_run" ${sql_diff[@]+"${sql_diff[@]}"} ${extra[@]+"${extra[@]}"} || sql_rc=$?
   [ "$sql_rc" -eq 0 ] || coop_warn "coop-sql-review exited $sql_rc"
-  if provenance_error="$(node "$COOP_ROOT/lib/standards-cli.mjs" verify-report "$sql_resolution" "$sql_json" 2>&1)"; then
+  if provenance_error="$(node "$COOP_ROOT/lib/standards-cli.mjs" verify-report "$sql_resolution" "$sql_run" 2>&1)"; then
     sql_provenance=1
+    mv -f "$sql_run" "$sql_json"
+    printf '%s\n' "$provenance_error" >"$sql_binding.tmp"
+    mv -f "$sql_binding.tmp" "$sql_binding"
   else
     coop_err "coop-sql-review report rejected: $provenance_error"
     sql_rc=2
+    mkdir -p "$outdir/rejected"
+    [ ! -e "$sql_run" ] || mv -f "$sql_run" "$outdir/rejected/$(basename "$sql_run")"
   fi
   coop_head "coop-dax-review check → $dax_json"
-  COOP_STANDARDS_PATH="$dax_standard" COOP_STANDARDS_SHA256="$dax_sha256" COOP_STANDARDS_REVISION="$dax_revision" \
-    coop-dax-review check ${scope[@]+"${scope[@]}"} --format json ${dax_standards[@]+"${dax_standards[@]}"} -o "$dax_json" ${dax_diff[@]+"${dax_diff[@]}"} ${extra[@]+"${extra[@]}"} || dax_rc=$?
+  coop-dax-review check ${scope[@]+"${scope[@]}"} --format json ${dax_standards[@]+"${dax_standards[@]}"} -o "$dax_run" ${dax_diff[@]+"${dax_diff[@]}"} ${extra[@]+"${extra[@]}"} || dax_rc=$?
   [ "$dax_rc" -eq 0 ] || coop_warn "coop-dax-review exited $dax_rc"
-  if provenance_error="$(node "$COOP_ROOT/lib/standards-cli.mjs" verify-report "$dax_resolution" "$dax_json" 2>&1)"; then
+  if provenance_error="$(node "$COOP_ROOT/lib/standards-cli.mjs" verify-report "$dax_resolution" "$dax_run" 2>&1)"; then
     dax_provenance=1
+    mv -f "$dax_run" "$dax_json"
+    printf '%s\n' "$provenance_error" >"$dax_binding.tmp"
+    mv -f "$dax_binding.tmp" "$dax_binding"
   else
     coop_err "coop-dax-review report rejected: $provenance_error"
     dax_rc=2
+    mkdir -p "$outdir/rejected"
+    [ ! -e "$dax_run" ] || mv -f "$dax_run" "$outdir/rejected/$(basename "$dax_run")"
   fi
   rm -f "$sql_resolution" "$dax_resolution"
   
@@ -558,6 +569,8 @@ EOF
   # Compose the findings onto the lineage docs (unless --skip-docs).
   if [ "$skip_docs" = 1 ]; then
     coop_info "skipping the lineage-docs step (--skip-docs)"
+  elif [ "$sql_provenance" != 1 ] || [ "$dax_provenance" != 1 ]; then
+    coop_warn "skipping lineage-docs composition because this run contains a rejected review report"
   else
     coop_head "coop-data-doc build (composing review findings)"
     local dd_args=(build --non-interactive)
@@ -582,7 +595,7 @@ EOF
   # Summary: use coop_review_core.suite to aggregate.
   local py_cmd
   if py_cmd="$(coop_python)"; then
-    "$py_cmd" - "$sql_json" "$dax_json" "$bpa_json" "$do_html" "$outdir/suite.html" <<'PY' || true
+    "$py_cmd" - "$([ "$sql_provenance" = 1 ] && printf '%s' "$sql_json")" "$([ "$dax_provenance" = 1 ] && printf '%s' "$dax_json")" "$bpa_json" "$do_html" "$outdir/suite.html" <<'PY' || true
 import sys, os
 from coop_review_core.suite import load_envelopes, suite_summary, suite_text, suite_html
 

@@ -560,6 +560,14 @@ function Invoke-CoopReview {
   $sqlJson = Join-Path $outdir 'coop-sql-review.json'
   $daxJson = Join-Path $outdir 'coop-dax-review.json'
   $bpaJson = Join-Path $outdir 'bpa-review.json'
+  $sqlBinding = Join-Path $outdir 'coop-sql-review.provenance.json'
+  $daxBinding = Join-Path $outdir 'coop-dax-review.provenance.json'
+  $sqlRun = Join-Path $outdir ('.coop-sql-review.current.' + [System.IO.Path]::GetRandomFileName() + '.json')
+  $daxRun = Join-Path $outdir ('.coop-dax-review.current.' + [System.IO.Path]::GetRandomFileName() + '.json')
+  [System.IO.File]::WriteAllText($sqlRun, '', (New-Object System.Text.UTF8Encoding($false)))
+  [System.IO.File]::WriteAllText($daxRun, '', (New-Object System.Text.UTF8Encoding($false)))
+  # A suite HTML file always describes one complete current run.
+  Remove-Item -LiteralPath (Join-Path $outdir 'suite.html') -Force -ErrorAction SilentlyContinue
   $extra = @(); if ($strict) { $extra = @('--strict') }
   $sqlStandards = @(); $daxStandards = @(); $sqlProvenance = $false; $daxProvenance = $false
   if (-not (Test-Have 'node')) { Coop-Die 'Node is required to resolve and verify review standards provenance' }
@@ -584,24 +592,19 @@ function Invoke-CoopReview {
     if (-not $sqlPrev -and -not $daxPrev) { Coop-Info 'no previous review to compare against yet — this run becomes the baseline' }
   }
 
-  # Run both linters over the SAME scope; capture exit codes, never abort here.
-  # Never let a prior valid report stand in for a missing report from this run.
-  Remove-Item -LiteralPath $sqlJson,$daxJson -Force -ErrorAction SilentlyContinue
+  # Run into per-run files and promote only after provenance acceptance.
   Coop-Head "coop-sql-review check → $sqlJson"
-  $env:COOP_STANDARDS_PATH = $sqlStandard; $env:COOP_STANDARDS_SHA256 = [string]$sqlResolution.sha256; $env:COOP_STANDARDS_REVISION = [string]$sqlResolution.revision
-  & coop-sql-review check @scope --format json @sqlStandards -o $sqlJson @sqlDiff @extra
+  & coop-sql-review check @scope --format json @sqlStandards -o $sqlRun @sqlDiff @extra
   $sqlRc = $LASTEXITCODE
   if ($sqlRc -ne 0) { Coop-Warn "coop-sql-review exited $sqlRc" }
-  $provenanceError = (& node $standardsCli verify-report $sqlResolutionPath $sqlJson 2>&1) -join "`n"
-  if ($LASTEXITCODE -eq 0) { $sqlProvenance = $true } else { Coop-Err "coop-sql-review report rejected: $provenanceError"; $sqlRc = 2 }
+  $provenanceError = (& node $standardsCli verify-report $sqlResolutionPath $sqlRun 2>&1) -join "`n"
+  if ($LASTEXITCODE -eq 0) { $sqlProvenance = $true; Move-Item -LiteralPath $sqlRun -Destination $sqlJson -Force; [System.IO.File]::WriteAllText("$sqlBinding.tmp", $provenanceError, $utf8NoBom); Move-Item -LiteralPath "$sqlBinding.tmp" -Destination $sqlBinding -Force } else { Coop-Err "coop-sql-review report rejected: $provenanceError"; $sqlRc = 2; $rejected = Join-Path $outdir 'rejected'; New-Item -ItemType Directory -Force -Path $rejected | Out-Null; if (Test-Path -LiteralPath $sqlRun) { Move-Item -LiteralPath $sqlRun -Destination (Join-Path $rejected ([System.IO.Path]::GetFileName($sqlRun))) -Force } }
   Coop-Head "coop-dax-review check → $daxJson"
-  $env:COOP_STANDARDS_PATH = $daxStandard; $env:COOP_STANDARDS_SHA256 = [string]$daxResolution.sha256; $env:COOP_STANDARDS_REVISION = [string]$daxResolution.revision
-  & coop-dax-review check @scope --format json @daxStandards -o $daxJson @daxDiff @extra
+  & coop-dax-review check @scope --format json @daxStandards -o $daxRun @daxDiff @extra
   $daxRc = $LASTEXITCODE
   if ($daxRc -ne 0) { Coop-Warn "coop-dax-review exited $daxRc" }
-  $provenanceError = (& node $standardsCli verify-report $daxResolutionPath $daxJson 2>&1) -join "`n"
-  if ($LASTEXITCODE -eq 0) { $daxProvenance = $true } else { Coop-Err "coop-dax-review report rejected: $provenanceError"; $daxRc = 2 }
-  Remove-Item Env:COOP_STANDARDS_PATH,Env:COOP_STANDARDS_SHA256,Env:COOP_STANDARDS_REVISION -ErrorAction SilentlyContinue
+  $provenanceError = (& node $standardsCli verify-report $daxResolutionPath $daxRun 2>&1) -join "`n"
+  if ($LASTEXITCODE -eq 0) { $daxProvenance = $true; Move-Item -LiteralPath $daxRun -Destination $daxJson -Force; [System.IO.File]::WriteAllText("$daxBinding.tmp", $provenanceError, $utf8NoBom); Move-Item -LiteralPath "$daxBinding.tmp" -Destination $daxBinding -Force } else { Coop-Err "coop-dax-review report rejected: $provenanceError"; $daxRc = 2; $rejected = Join-Path $outdir 'rejected'; New-Item -ItemType Directory -Force -Path $rejected | Out-Null; if (Test-Path -LiteralPath $daxRun) { Move-Item -LiteralPath $daxRun -Destination (Join-Path $rejected ([System.IO.Path]::GetFileName($daxRun))) -Force } }
   Remove-Item -LiteralPath $sqlResolutionPath,$daxResolutionPath -Force -ErrorAction SilentlyContinue
   
   $bpaRc = 0
@@ -626,6 +629,8 @@ function Invoke-CoopReview {
   $ddRc = 0
   if ($skipDocs) {
     Coop-Info 'skipping the lineage-docs step (--skip-docs)'
+  } elseif (-not $sqlProvenance -or -not $daxProvenance) {
+    Coop-Warn 'skipping lineage-docs composition because this run contains a rejected review report'
   } else {
     Coop-Head 'coop-data-doc build (composing review findings)'
     $ddArgs = @('build', '--non-interactive')
@@ -684,7 +689,9 @@ try:
 except Exception as exc:
     print(f"Suite summary error: {exc}", file=sys.stderr)
 '@
-    $summaryPy | & $py - $sqlJson $daxJson $bpaJson $htmlFlag $suiteHtml
+    $sqlSummary = if ($sqlProvenance) { $sqlJson } else { '' }
+    $daxSummary = if ($daxProvenance) { $daxJson } else { '' }
+    $summaryPy | & $py - $sqlSummary $daxSummary $bpaJson $htmlFlag $suiteHtml
   } else {
     Coop-Ok "Reports: $sqlJson $daxJson $bpaJson"
   }

@@ -39,10 +39,13 @@ import {
   resolveStandard,
   reviewStandardsArgs,
   sourceStatus,
-  verifyReviewerProvenance,
+  bindReviewerProvenance,
 } from "../../lib/standards.mjs";
 
 const SEVERITY = Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info")]);
+type StandardsBindingResult =
+  | { ok: true; binding: { owner: "coop"; path: string; sha256: string; revision: string } }
+  | { ok: false; error: string };
 
 const REVIEW_PARAMS = Type.Object({
   paths: Type.Optional(
@@ -1907,15 +1910,9 @@ export default function coopTools(pi: ExtensionAPI) {
 
     let res;
     try {
-      res = await pi.exec(bin, args, {
-        cwd: ctx.cwd,
-        signal,
-        env: {
-          COOP_STANDARDS_PATH: standards?.path || "",
-          COOP_STANDARDS_SHA256: standards?.sha256 || "",
-          COOP_STANDARDS_REVISION: standards?.revision || "",
-        },
-      });
+      // Pi ExecOptions supports only cwd, signal, and timeout. Provenance comes
+      // from the reviewer's supported --standards report contract.
+      res = await pi.exec(bin, args, { cwd: ctx.cwd, signal });
     } catch (e: any) {
       return {
         content: [{ type: "text" as const, text: `${bin} could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -1929,7 +1926,7 @@ export default function coopTools(pi: ExtensionAPI) {
     } catch {
       /* leave parsed null */
     }
-    const provenance = verifyReviewerProvenance(standards, parsed);
+    const provenance = bindReviewerProvenance(standards, parsed) as StandardsBindingResult;
     if (!provenance.ok) {
       return {
         content: [{ type: "text" as const, text: `${bin} output rejected: ${provenance.error}. Same-source validation failed closed.` }],
@@ -1939,7 +1936,7 @@ export default function coopTools(pi: ExtensionAPI) {
     const scopeLine = `Scope: ${scope}${scopeNotes} — ${paths.join(", ")}`;
     return {
       content: [{ type: "text" as const, text: `${summarizeReview(bin, parsed, res.stdout, res.code)}\n${scopeLine}` }],
-      details: { tool: bin, args, scope, scopeNotes, standards, exitCode: res.code, report: parsed ?? res.stdout, stderr: res.stderr },
+      details: { tool: bin, args, scope, scopeNotes, standards, standardsBinding: provenance.binding, exitCode: res.code, report: parsed ?? res.stdout, stderr: res.stderr },
     };
   };
 

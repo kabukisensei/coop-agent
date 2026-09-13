@@ -24,21 +24,23 @@ for t in coop-sql-review coop-dax-review; do
   cat > "$TMP/bin/$t" <<EOF
 #!/bin/sh
 echo "\$*" >> "$TMP/$t.args.log"
-out=""; prev=""; rc=0
+out=""; prev=""; standard=""; rc=0
 for a in "\$@"; do
   [ "\$prev" = "-o" ] && out="\$a"
+  [ "\$prev" = "--standards" ] && standard="\$a"
   [ "\$a" = "--strict" ] && rc=2
   prev="\$a"
 done
+hash=""; [ -n "\$standard" ] && hash="\$("$PY" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "\$standard")"
 if [ -n "\$out" ]; then
   case "\${COOP_TEST_PROVENANCE_MODE:-valid}" in
-    no_report) : ;;
+    no_report) rm -f "\$out" ;;
     malformed) printf 'not-json' > "\$out" ;;
-    missing) printf '{"findings":[]}' > "\$out" ;;
-    bad_path) printf '{"standards":{"path":"/wrong/path","sha256":"%s","revision":"%s"},"findings":[]}' "\$COOP_STANDARDS_SHA256" "\$COOP_STANDARDS_REVISION" > "\$out" ;;
-    bad_hash) printf '{"standards":{"path":"%s","sha256":"%064d","revision":"%s"},"findings":[]}' "\$COOP_STANDARDS_PATH" 0 "\$COOP_STANDARDS_REVISION" > "\$out" ;;
-    bad_revision) printf '{"standards":{"path":"%s","sha256":"%s","revision":"wrong"},"findings":[]}' "\$COOP_STANDARDS_PATH" "\$COOP_STANDARDS_SHA256" > "\$out" ;;
-    *) printf '{"standards":{"path":"%s","sha256":"%s","revision":"%s"},"findings":[{"severity":"warning"}],"summary":{"error":0,"warning":1,"info":0}}' "\$COOP_STANDARDS_PATH" "\$COOP_STANDARDS_SHA256" "\$COOP_STANDARDS_REVISION" > "\$out" ;;
+    missing) printf '{"version":"test","findings":[]}' > "\$out" ;;
+    bad_path) printf '{"version":"test","standards":{"path":"/wrong/path","sha256":"%s"},"findings":[]}' "\$hash" > "\$out" ;;
+    bad_hash) printf '{"version":"test","standards":{"path":"%s","sha256":"%064d"},"findings":[]}' "\$standard" 0 > "\$out" ;;
+    bad_revision) printf '{"version":"test","standards":{"path":"%s","sha256":"%s","revision":7},"findings":[]}' "\$standard" "\$hash" > "\$out" ;;
+    *) printf '{"tool":"%s","version":"test","standards":{"path":"%s","sha256":"%s"},"findings":[{"severity":"warning"}],"summary":{"error":0,"warning":1,"info":0}}' "$t" "\$standard" "\$hash" > "\$out" ;;
   esac
 fi
 exit "\$rc"
@@ -84,6 +86,9 @@ out="$(run_review 2>&1)"; rc=$?
 [ -f "$TMP/proj/.coop/reviews/coop-dax-review.json" ] || fail "dax JSON missing from .coop/reviews/"
 "$PY" -c "import json,sys; json.load(open(sys.argv[1]))" "$TMP/proj/.coop/reviews/coop-sql-review.json" \
   || fail "the saved sql report is not valid JSON"
+"$PY" -c 'import json,sys; r=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2])); assert "revision" not in r["standards"]; assert b["owner"]=="coop" and b["revision"]=="project-local" and b["path"]==r["standards"]["path"] and b["sha256"]==r["standards"]["sha256"]' \
+  "$TMP/proj/.coop/reviews/coop-sql-review.json" "$TMP/proj/.coop/reviews/coop-sql-review.provenance.json" \
+  || fail "aggregate wrapper provenance binding is missing or rewrote reviewer claims"
 for t in coop-sql-review coop-dax-review; do
   grep -q "check $TMP/proj/sqlrepo --format json" "$TMP/$t.args.log" || fail "$t did not get the contract scope"
   grep -q -- "TODO" "$TMP/$t.args.log" && fail "$t was handed a TODO placeholder path"
@@ -100,18 +105,38 @@ grep -q -- "--reviews $TMP/proj/.coop/reviews/coop-sql-review.json" "$TMP/coop-d
 grep -q -- "--reviews $TMP/proj/.coop/reviews/coop-dax-review.json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the dax --reviews file"
 pass "contract scope + same-source standards: JSONs saved, missing skipped, exact standards and reviews passed"
 
-# 1b. Aggregate review rejects every absent/malformed/mismatched provenance form
-# even when the reviewer itself exits zero. Raw diagnostics remain saved.
+# 1b. Configured canonical review paths must never expose a rejected current
+# report. Keep the accepted reports as LKG, skip configured docs composition,
+# quarantine raw output, and exclude it from suite HTML.
+cat > "$TMP/proj/coop-data-doc.yml" <<EOF
+reviews:
+  - .coop/reviews/coop-sql-review.json
+  - .coop/reviews/coop-dax-review.json
+EOF
+cp "$TMP/proj/.coop/reviews/coop-sql-review.json" "$TMP/sql.accepted"
+cp "$TMP/proj/.coop/reviews/coop-dax-review.json" "$TMP/dax.accepted"
+cp "$TMP/proj/.coop/reviews/coop-sql-review.provenance.json" "$TMP/sql-binding.accepted"
+cp "$TMP/proj/.coop/reviews/coop-dax-review.provenance.json" "$TMP/dax-binding.accepted"
+mkdir -p "$TMP/proj/.coop/reviews/rejected"
 for mode in no_report malformed missing bad_path bad_hash bad_revision; do
+  before_quarantine="$(find "$TMP/proj/.coop/reviews/rejected" -type f -size +0c | wc -l | tr -d ' ')"
+  rm -f "$TMP/coop-data-doc.args.log"
   rc=0
-  out="$(COOP_TEST_PROVENANCE_MODE="$mode" run_review --skip-docs 2>&1)" || rc=$?
+  out="$(COOP_TEST_PROVENANCE_MODE="$mode" run_review --html 2>&1)" || rc=$?
   [ "$rc" -eq 2 ] || fail "$mode provenance should fail closed with exit 2 (got $rc)"
   case "$out" in *"report rejected"*) ;; *) fail "$mode rejection diagnostic missing" ;; esac
+  cmp -s "$TMP/sql.accepted" "$TMP/proj/.coop/reviews/coop-sql-review.json" || fail "$mode replaced the accepted SQL report"
+  cmp -s "$TMP/dax.accepted" "$TMP/proj/.coop/reviews/coop-dax-review.json" || fail "$mode replaced the accepted DAX report"
+  cmp -s "$TMP/sql-binding.accepted" "$TMP/proj/.coop/reviews/coop-sql-review.provenance.json" || fail "$mode replaced the trusted SQL binding"
+  cmp -s "$TMP/dax-binding.accepted" "$TMP/proj/.coop/reviews/coop-dax-review.provenance.json" || fail "$mode replaced the trusted DAX binding"
+  [ ! -f "$TMP/coop-data-doc.args.log" ] || fail "$mode reached configured coop-data-doc ingestion"
+  [ ! -f "$TMP/proj/.coop/reviews/suite.html" ] || fail "$mode generated suite HTML from a rejected or stale report"
   if [ "$mode" != no_report ]; then
-    [ -f "$TMP/proj/.coop/reviews/coop-sql-review.json" ] || fail "$mode raw reviewer report was not preserved"
+    after_quarantine="$(find "$TMP/proj/.coop/reviews/rejected" -type f -size +0c | wc -l | tr -d ' ')"
+    [ "$after_quarantine" -gt "$before_quarantine" ] || fail "$mode raw reviewer output was not quarantined"
   fi
 done
-pass "aggregate review fails closed on malformed, missing, path/hash/revision-mismatched provenance"
+pass "rejected reports are quarantined; accepted LKG/configured docs/suite HTML stay isolated"
 
 # 2. --skip-docs: linters run, data-doc is never called.
 rm -f "$TMP/coop-data-doc.args.log" "$TMP"/coop-*-review.args.log

@@ -161,11 +161,18 @@ authority.
 At task start, resolved bytes are copied once into a read-only, content-addressed
 snapshot. The context reads that snapshot and the SQL/DAX reviewer receives the
 same snapshot through `--standards`; the original authority path remains in
-`source_path` for provenance. Reviewer-returned path/hash provenance is checked
-when present, and the snapshot hash is always rechecked before output is accepted.
-A mismatch fails closed. Bundled fallback is discovered through the installed
-reviewer's own JSON provenance and is snapshotted the same way, so its real,
-bounded guidance is available before work rather than only after review.
+`source_path` for provenance. Reviewer-returned path/hash provenance is mandatory,
+and the snapshot path, realpath, and hash are rechecked before output is accepted.
+The reviewer report remains unchanged: any reviewer-owned revision claim is retained
+as a claim, while COOP records the trusted resolver's revision separately in a
+wrapper-owned `standardsBinding` after path/hash verification. A mismatch fails
+closed. Aggregate review writes into per-run files and atomically promotes only
+accepted reports; rejected output is quarantined away from canonical configured
+review paths and cannot enter docs, suite summaries, comparison baselines, or HTML.
+Bundled fallback is discovered through the installed reviewer's own JSON provenance;
+legacy top-level-version and explicit standards-revision envelopes use the same
+path/hash compatibility rule as actual review and are snapshotted the same way, so
+its real, bounded guidance is available before work rather than only after review.
 Pinned reviewer source references used to verify this contract are
 `/tmp/std-ref-sql` at `cd9bf347548375801df0abf86b13f72781e1d360` and
 `/tmp/std-ref-dax` at `fe39270168c08a6360c99aadcb51a9ad73678a65`.

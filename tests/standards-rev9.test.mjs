@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AUTHORITY_CLASSES, CANONICAL_REMOTE_STATE, buildStandardsContext, identifyTaskDomains,
-  projectStandardPaths, resolveStandard, reviewStandardsArgs, sourceStatus,
+  bindReviewerProvenance, projectStandardPaths, resolveStandard, reviewStandardsArgs, sourceStatus,
   syncCanonicalLocal, validateManifest, verifyReviewerProvenance,
 } from "../lib/standards.mjs";
 
@@ -36,13 +36,13 @@ const gitInit = (root, message = "fixture") => {
 };
 const makeReviewer = (domain, standardPath, version) => {
   const script = join(tmp, `${domain}-reviewer.mjs`);
-  writeFileSync(script, `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; import {resolve} from "node:path";\nconst a=process.argv.slice(2), i=a.indexOf("--standards"), p=resolve(i>=0?a[i+1]:${JSON.stringify(standardPath)}), h=createHash("sha256").update(readFileSync(p)).digest("hex"), revision=process.env.COOP_STANDARDS_REVISION||${JSON.stringify(`reviewer-${version}`)}; process.stdout.write(JSON.stringify({tool:${JSON.stringify(`coop-${domain}-review`)},version:${JSON.stringify(version)},standards:{path:p,sha256:h,revision},findings:[]}));\n`);
+  writeFileSync(script, `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; import {resolve} from "node:path";\nconst a=process.argv.slice(2), i=a.indexOf("--standards"), p=resolve(i>=0?a[i+1]:${JSON.stringify(standardPath)}), h=createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({tool:${JSON.stringify(`coop-${domain}-review`)},version:${JSON.stringify(version)},standards:{path:p,sha256:h},findings:[]}));\n`);
   return { command: process.execPath, args: [script], script };
 };
 const reviewerReport = (reviewer, resolution) => JSON.parse(execFileSync(
   process.execPath,
   [reviewer.script, "check", tmp, "--format", "json", ...reviewStandardsArgs(resolution)],
-  { encoding: "utf8", env: { ...process.env, COOP_STANDARDS_REVISION: resolution.revision } },
+  { encoding: "utf8" },
 ));
 
 try {
@@ -89,8 +89,14 @@ try {
     report.standards.sha256 = "0".repeat(64);
     assert.match(verifyReviewerProvenance(r, report).error, /hash mismatch/);
     report.standards.sha256 = r.sha256;
-    report.standards.revision = "wrong-revision";
-    assert.match(verifyReviewerProvenance(r, report).error, /revision mismatch/);
+    report.standards.revision = "reviewer-owned-revision";
+    assert.deepEqual(verifyReviewerProvenance(r, report), { ok: true });
+    report.standards.revision = 7;
+    assert.match(verifyReviewerProvenance(r, report).error, /revision claim is malformed/);
+    delete report.standards.revision;
+    const bound = bindReviewerProvenance(r, report);
+    assert.equal(bound.binding.owner, "coop"); assert.equal(bound.binding.revision, r.revision);
+    assert.match(verifyReviewerProvenance(r, report, { ...bound.binding, revision: "tampered" }).error, /binding mismatch/);
     delete report.standards;
     assert.match(verifyReviewerProvenance(r, report).error, /provenance is missing/);
     assert.match(verifyReviewerProvenance(r, null).error, /provenance is missing/);
@@ -136,7 +142,7 @@ try {
     const reviewerScript = (name, body) => {
       const script = join(tmp, `${name}.mjs`);
       writeFileSync(script, body);
-      return { command: process.execPath, args: [script] };
+      return { command: process.execPath, args: [script], script };
     };
     const missing = { command: join(tmp, "does-not-exist") };
     const malformed = reviewerScript("malformed-reviewer", 'process.stdout.write("not-json")');
@@ -150,9 +156,24 @@ try {
     const auth = resolveStandard("sql", opts({ cwd: tmp, canonicalRoot: join(tmp, "missing"), staleRoot: join(tmp, "missing2"), reviewerBins: { sql: missing }, authRequired: true }));
     assert.equal(auth.state, "auth_required");
 
+    const explicitRevision = reviewerScript("explicit-revision-reviewer", `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; import {resolve} from "node:path"; const a=process.argv.slice(2), i=a.indexOf("--standards"), p=resolve(i>=0?a[i+1]:${JSON.stringify(sqlBundled)}), sha256=createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({standards:{path:p,sha256,revision:"standard-r7"},findings:[]}));`);
+    const explicit = resolveStandard("sql", opts({ cwd: tmp, canonicalRoot: join(tmp, "missing"), staleRoot: join(tmp, "missing2"), reviewerBins: { sql: explicitRevision } }));
+    assert.equal(explicit.state, "bundled_fallback"); assert.equal(explicit.revision, "reviewer-standard-standard-r7");
+    assert.deepEqual(verifyReviewerProvenance(explicit, reviewerReport(explicitRevision, explicit)), { ok: true });
+
+    const malformedRevision = reviewerScript("malformed-revision-reviewer", `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; const p=${JSON.stringify(sqlBundled)}, sha256=createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({standards:{path:p,sha256,revision:7},findings:[]}));`);
+    assert.equal(resolveStandard("sql", opts({ cwd: tmp, canonicalRoot: join(tmp, "missing"), staleRoot: join(tmp, "missing2"), reviewerBins: { sql: malformedRevision } })).state, "unavailable");
+
+    const discoveryOnly = reviewerScript("discovery-only-reviewer", `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; const a=process.argv.slice(2), p=${JSON.stringify(sqlBundled)}, sha256=a.includes("--standards")?"${"0".repeat(64)}":createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({version:"1.0.0",standards:{path:p,sha256},findings:[]}));`);
+    const incompatibleOptions = opts({ cwd: tmp, canonicalRoot: join(tmp, "missing"), staleRoot: join(tmp, "missing2"), reviewerBins: { sql: discoveryOnly } });
+    assert.equal(resolveStandard("sql", incompatibleOptions).state, "unavailable");
+    assert.equal(sourceStatus(incompatibleOptions).domains.sql.state, "unavailable");
+
     const badBin = join(tmp, "bad-reviewer-bin"); mkdirSync(badBin);
-    for (const name of ["coop-sql-review", "coop-dax-review"]) {
-      const script = join(badBin, name); writeFileSync(script, "#!/bin/sh\nprintf not-json\n"); chmodSync(script, 0o755);
+    for (const [name, standardPath] of [["coop-sql-review", sqlBundled], ["coop-dax-review", daxBundled]]) {
+      const script = join(badBin, name);
+      writeFileSync(script, `#!/usr/bin/env node\nimport {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; const a=process.argv.slice(2), i=a.indexOf("--standards"), p=i>=0?a[i+1]:${JSON.stringify(standardPath)}, sha256=i>=0?"${"0".repeat(64)}":createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({version:"1.0.0",standards:{path:p,sha256},findings:[]}));\n`);
+      chmodSync(script, 0o755);
     }
     const env = { ...process.env, PATH: `${badBin}:${process.env.PATH}`, COOP_STANDARDS_ROOT: join(tmp, "missing"), COOP_STANDARDS_LKG_ROOT: join(tmp, "missing2"), COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "failed-support-home"), NO_COLOR: "1" };
     const lines = execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
@@ -287,6 +308,11 @@ try {
     assert.deepEqual(identifyTaskDomains("Review semantic model DAX measures"), ["semantic_model", "dax"]);
     assert.deepEqual(identifyTaskDomains("Create measures in the semantic model"), ["semantic_model", "dax"]);
     assert.deepEqual(identifyTaskDomains("Create a measure in Power BI"), ["dax"]);
+    assert.deepEqual(identifyTaskDomains("Review relationship cardinality and filter direction in this Power BI model"), ["semantic_model"]);
+    assert.deepEqual(identifyTaskDomains("Review the table relationships in this Power BI dataset"), ["semantic_model"]);
+    assert.deepEqual(identifyTaskDomains("Review the deployment pipeline for the mobile app"), []);
+    assert.deepEqual(identifyTaskDomains("Analyze warehouse inventory calculations"), []);
+    assert.deepEqual(identifyTaskDomains("Review customer relationships in the CRM"), []);
   });
 
   test("CONTEXT", "retrieval is bounded and full authority remains opt-in", () => {

@@ -27,14 +27,14 @@ const pi = {
   registerCommand() {},
   sendUserMessage() {},
   async exec(bin, args, options) {
-    executions.push({ bin, args });
+    executions.push({ bin, args, optionKeys: Object.keys(options).sort() });
     const index = args.indexOf("--standards");
     const path = index >= 0 ? args[index + 1] : null;
     const sha256 = path ? createHash("sha256").update(readFileSync(path)).digest("hex") : null;
-    const standards = path ? { path, sha256, revision: options.env.COOP_STANDARDS_REVISION } : undefined;
+    const standards = path ? { path, sha256 } : undefined;
     if (reportMode === "bad_hash" && standards) standards.sha256 = "0".repeat(64);
     if (reportMode === "bad_path" && standards) standards.path = join(root, "wrong.md");
-    if (reportMode === "bad_revision" && standards) standards.revision = "wrong";
+    if (reportMode === "malformed_revision" && standards) standards.revision = 7;
     const stdout = reportMode === "malformed" ? "not-json" : JSON.stringify({ standards: reportMode === "missing" ? undefined : standards, findings: [] });
     return { stdout, stderr: "reviewer diagnostic", code: 0 };
   },
@@ -52,6 +52,8 @@ try {
   const sqlResult = await tools.get("sql_review").execute("1", { paths: ["query.sql"] }, undefined, undefined, ctx);
   assert.deepEqual(sqlResult.details.standards, sqlRecord);
   assert.deepEqual(sqlResult.details.args.slice(-2), ["--standards", sqlRecord.path]);
+  assert.deepEqual(executions.at(-1).optionKeys, ["cwd", "signal"]);
+  assert.deepEqual(sqlResult.details.standardsBinding, { owner: "coop", path: sqlRecord.path, sha256: sqlRecord.sha256, revision: sqlRecord.revision });
   assert.equal(sqlResult.details.reportRejected, undefined);
   assert.match(readFileSync(sqlRecord.path, "utf8"), /Schema qualify names/);
 
@@ -67,7 +69,7 @@ try {
   const semanticReview = await tools.get("dax_review").execute("3", { paths: ["model.tmdl"] }, undefined, undefined, ctx);
   assert.deepEqual(semanticReview.details.standards, semanticDax);
 
-  for (const [mode, error] of [["bad_hash", /hash mismatch/], ["bad_path", /path mismatch|cannot be verified/], ["bad_revision", /revision mismatch/], ["missing", /provenance is missing/], ["malformed", /provenance is missing/]]) {
+  for (const [mode, error] of [["bad_hash", /hash mismatch/], ["bad_path", /path mismatch|cannot be verified/], ["malformed_revision", /revision claim is malformed/], ["missing", /provenance is missing/], ["malformed", /provenance is missing/]]) {
     reportMode = mode;
     const rejected = await tools.get("dax_review").execute("4", { paths: ["measure.dax"] }, undefined, undefined, ctx);
     assert.equal(rejected.details.reportRejected, true, mode);
