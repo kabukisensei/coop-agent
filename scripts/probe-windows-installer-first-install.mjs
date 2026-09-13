@@ -13,6 +13,7 @@ const now = () => new Date().toISOString();
 const delay = milliseconds => new Promise(done => setTimeout(done, milliseconds));
 const root = resolve("desktop/dist-installers");
 const output = process.env.INSTALLER_PROBE_OUT;
+const identityPath = process.env.INSTALLER_BUILD_IDENTITY;
 const controlRoot = resolve("_probe-control");
 const treeProbe = join(controlRoot, "scripts", "windows-process-tree-snapshot.py");
 const reg = win32.join(process.env.SystemRoot, "System32", "reg.exe");
@@ -24,7 +25,7 @@ const registryRoots = [
 ];
 
 if (process.platform !== "win32" || process.env.GITHUB_ACTIONS !== "true" || process.env.RUNNER_ENVIRONMENT !== "github-hosted" || process.env.COOP_DESKTOP_DISPOSABLE_INSTALL_TEST !== "1") throw new Error("Installer discriminator requires an explicitly enabled disposable GitHub-hosted Windows runner.");
-if (!output || !process.env.RUNNER_TEMP || !win32.isAbsolute(process.env.RUNNER_TEMP)) throw new Error("Bounded output and runner temporary directory are required.");
+if (!output || !identityPath || !process.env.RUNNER_TEMP || !win32.isAbsolute(process.env.RUNNER_TEMP)) throw new Error("Bounded output, build identity, and runner temporary directory are required.");
 
 function queryRegistryRoot(registryRoot) {
   let text = "";
@@ -80,6 +81,7 @@ let lastSignature = null;
 let stableTicks = 0;
 let payloadStatsStableAt = null;
 let lastKnownTree = [];
+let buildIdentity = null;
 
 try {
   const files = (await readdir(root, { withFileTypes: true })).filter(entry => entry.isFile() && /^Coop-Desktop-.*\.exe$/i.test(entry.name));
@@ -88,6 +90,18 @@ try {
   report.installer = files[0].name;
   report.installerSha256 = await digestFile(installer);
   report.installerSize = (await stat(installer)).size;
+  if (identityPath) {
+    buildIdentity = JSON.parse(await readFile(identityPath, "utf8"));
+    if (buildIdentity.productCandidateSha !== CANDIDATE || buildIdentity.checksums?.installerSha256 !== report.installerSha256) {
+      throw new Error("Installer build identity does not match the exact product candidate and installer bytes.");
+    }
+    report.buildIdentity = {
+      productCandidateSha: buildIdentity.productCandidateSha,
+      productCandidateTree: buildIdentity.productCandidateTree,
+      diagnosticOnly: buildIdentity.diagnosticOnly === true,
+      releaseAcceptance: buildIdentity.releaseAcceptance === true,
+    };
+  }
 
   const beforeRegistry = queryRegistry();
   report.registry.before = beforeRegistry;
@@ -187,9 +201,23 @@ try {
   const anyPayload = Object.values(finalFiles).some(value => value.exists);
   const payloadComplete = Object.values(finalFiles).every(value => value.exists);
   const registryComplete = Boolean(report.registry.completedAt);
+  if (finalFiles.executable?.exists && finalFiles.appAsar?.exists && finalFiles.managedRuntime?.exists) {
+    const installedIdentity = {
+      executableSha256: await digestFile(paths.executable),
+      appAsarSha256: await digestFile(paths.appAsar),
+      managedRuntimeManifestSha256: await digestFile(join(paths.managedRuntime, "manifest.json")),
+      managedRuntimeInventorySha256: await digestFile(join(paths.managedRuntime, "dependency-inventory.json")),
+    };
+    installedIdentity.matchesBuiltPackage = installedIdentity.executableSha256 === buildIdentity.checksums.packagedExecutableSha256
+      && installedIdentity.appAsarSha256 === buildIdentity.checksums.packagedAppAsarSha256
+      && installedIdentity.managedRuntimeManifestSha256 === buildIdentity.checksums.managedRuntimeManifestSha256
+      && installedIdentity.managedRuntimeInventorySha256 === buildIdentity.checksums.managedRuntimeInventorySha256;
+    report.installedPayloadIdentity = installedIdentity;
+  }
+  const payloadIdentityMatchesBuild = report.installedPayloadIdentity?.matchesBuiltPackage === true;
   const recentlyChanging = report.filesystemLastChangedAt && Date.parse(report.process.boundExceededAt || processExitAt || now()) - Date.parse(report.filesystemLastChangedAt) < POLL_MS * 2;
   const descendants = report.samples.at(-1)?.processTree?.processes?.filter(process => process.pid !== pid) || [];
-  if (!timedOut && processExitCode === 0 && !descendants.length) report.decision = "FIRST_INSTALL_COMPLETE";
+  if (!timedOut && processExitCode === 0 && payloadComplete && registryComplete && payloadIdentityMatchesBuild && !descendants.length) report.decision = "FIRST_INSTALL_COMPLETE";
   else if (timedOut && !anyPayload && !finalRegistry.installations.length) report.decision = "INSTALLER_STARTUP_HANG";
   else if (timedOut && recentlyChanging) report.decision = "INSTALLER_TOO_SLOW_FOR_ACCEPTANCE";
   else if (payloadComplete && registryComplete && descendants.length) report.decision = "INSTALLER_CHILD_LIFECYCLE";
