@@ -1,0 +1,512 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cooptimize.invalid/schemas/terminal-workstation-receipt.schema.json",
+  "title": "Coop Terminal workstation acceptance receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidate",
+    "baseline",
+    "harness",
+    "execution",
+    "claims",
+    "operator_evidence",
+    "terminal_workstation_ready"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "candidate": {
+      "$ref": "#/$defs/identity"
+    },
+    "baseline": {
+      "$ref": "#/$defs/identity"
+    },
+    "harness": {
+      "$ref": "#/$defs/identity"
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "layer",
+        "runner",
+        "started_utc",
+        "finished_utc",
+        "owned_root"
+      ],
+      "properties": {
+        "layer": {
+          "enum": [
+            "AUTOMATED_WINDOWS",
+            "DISPOSABLE_VM_OPERATOR"
+          ]
+        },
+        "runner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "started_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finished_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "owned_root": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/claim"
+      }
+    },
+    "operator_evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/operatorClaim"
+      }
+    },
+    "terminal_workstation_ready": {
+      "type": "boolean"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "terminal_workstation_ready": {
+            "const": true
+          }
+        },
+        "required": [
+          "terminal_workstation_ready"
+        ]
+      },
+      "then": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "layer": {
+                "const": "DISPOSABLE_VM_OPERATOR"
+              }
+            }
+          },
+          "operator_evidence": {
+            "minItems": 10,
+            "maxItems": 10,
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/operatorClaim"
+                },
+                {
+                  "properties": {
+                    "status": {
+                      "const": "PASS"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        "allOf": [
+          {
+            "properties": {
+              "operator_evidence": {
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "properties": {
+                    "id": {
+                      "const": "fresh-candidate-install"
+                    },
+                    "status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "operator_evidence": {
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "properties": {
+                    "id": {
+                      "const": "real-provider-auth"
+                    },
+                    "status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "operator_evidence": {
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "properties": {
+                    "id": {
+                      "const": "real-model-response"
+                    },
+                    "status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "operator_evidence": {
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "properties": {
+                    "id": {
+                      "const": "copied-repo-workflow"
+                    },
+                    "status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "operator_evidence": {
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "properties": {
+                    "id": {
+                      "const": "decline-no-partial-write"
+                    },
+                    "status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "operator_evidence": {
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "properties": {
+                    "id": {
+                      "const": "stop-and-continue"
+                    },
+                    "status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "operator_evidence": {
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "properties": {
+                    "id": {
+                      "const": "reopen-resume"
+                    },
+                    "status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "operator_evidence": {
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "properties": {
+                    "id": {
+                      "const": "teamai-failure-isolation"
+                    },
+                    "status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "operator_evidence": {
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "properties": {
+                    "id": {
+                      "const": "rollback-instructions"
+                    },
+                    "status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "operator_evidence": {
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "properties": {
+                    "id": {
+                      "const": "snapshot-recovery"
+                    },
+                    "status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "status": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCKED",
+        "INCONCLUSIVE",
+        "NOT_REACHED",
+        "NOT_AVAILABLE",
+        "CAPABILITY_SKIP",
+        "BETA_LIMITATION"
+      ]
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha",
+        "version"
+      ],
+      "properties": {
+        "sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "observed",
+        "command",
+        "exit_code",
+        "identity",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "COMMAND",
+            "HASH",
+            "FILE",
+            "OPERATOR_OBSERVATION"
+          ]
+        },
+        "observed": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "identity": {
+          "type": "string",
+          "pattern": "^(harness|candidate|baseline|operator)(:[0-9a-f]{40})?$"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^$|^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "phase",
+        "status",
+        "required",
+        "automated",
+        "human_required",
+        "summary",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "phase": {
+          "enum": [
+            "PRECHECK",
+            "BASELINE",
+            "UPGRADE",
+            "REINSTALL",
+            "ROLLBACK",
+            "SECURITY",
+            "OPERATOR"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "automated": {
+          "type": "boolean"
+        },
+        "human_required": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        }
+      }
+    },
+    "operatorClaim": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/claim"
+        },
+        {
+          "properties": {
+            "phase": {
+              "const": "OPERATOR"
+            },
+            "automated": {
+              "const": false
+            },
+            "human_required": {
+              "const": true
+            }
+          }
+        }
+      ]
+    }
+  }
+}

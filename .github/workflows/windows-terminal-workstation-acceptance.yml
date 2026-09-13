@@ -1,0 +1,101 @@
+name: Windows Terminal workstation acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-terminal-workstation-acceptance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-windows-p0:
+    name: Native Windows P0 (automated evidence only)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CANDIDATE_SHA: 295693a3eb08e9988594971d87bc4de751e6b551
+      BASELINE_SHA: d60300780b565aabf15b172b2bc32abad12b9ca6
+    steps:
+      - name: Checkout acceptance harness identity
+        uses: actions/checkout@v5
+        with:
+          path: harness
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout immutable Terminal candidate
+        uses: actions/checkout@v5
+        with:
+          ref: 295693a3eb08e9988594971d87bc4de751e6b551
+          path: candidate
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout immutable v0.23.1 source baseline
+        uses: actions/checkout@v5
+        with:
+          ref: d60300780b565aabf15b172b2bc32abad12b9ca6
+          path: baseline
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Parse acceptance harness under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.\harness\acceptance\windows-terminal-workstation.ps1'),
+            [ref]$null,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+
+      - name: Run native acceptance (cannot close human gate)
+        shell: powershell
+        run: |
+          $owned = Join-Path $env:RUNNER_TEMP 'coop-terminal-p0-owned'
+          $evidence = Join-Path $owned 'evidence'
+          $receipt = Join-Path $evidence 'terminal-workstation-receipt.json'
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
+            .\harness\acceptance\windows-terminal-workstation.ps1 `
+            -Mode Run `
+            -HarnessRoot (Resolve-Path .\harness) `
+            -CandidateRoot (Resolve-Path .\candidate) `
+            -BaselineRoot (Resolve-Path .\baseline) `
+            -EvidenceRoot $evidence `
+            -ReceiptPath $receipt `
+            -ExpectedHarnessSha '${{ github.sha }}'
+          $harnessRc = $LASTEXITCODE
+          if (Test-Path -LiteralPath $receipt) {
+            "RECEIPT_PATH=$receipt" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+          if ($harnessRc -ne 0) { exit $harnessRc }
+
+      - name: Validate fail-closed receipt
+        if: always()
+        shell: powershell
+        run: |
+          if (-not $env:RECEIPT_PATH -or -not (Test-Path -LiteralPath $env:RECEIPT_PATH)) {
+            throw 'acceptance receipt was not emitted'
+          }
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
+            .\harness\acceptance\windows-terminal-workstation.ps1 `
+            -Mode ValidateReceipt -ReceiptPath $env:RECEIPT_PATH
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $receipt = Get-Content -LiteralPath $env:RECEIPT_PATH -Raw | ConvertFrom-Json
+          if ($receipt.terminal_workstation_ready -ne $false) {
+            throw 'automated workflow must never set TERMINAL_WORKSTATION_READY'
+          }
+
+      - name: Upload sanitized automated evidence
+        if: always() && env.RECEIPT_PATH != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-workstation-automated-${{ github.sha }}
+          path: ${{ runner.temp }}/coop-terminal-p0-owned/evidence
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
