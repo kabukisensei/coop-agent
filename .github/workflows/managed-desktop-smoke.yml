@@ -122,7 +122,7 @@ jobs:
           if (result.error) throw result.error;
           process.exitCode = result.status ?? 1;
           NODE
-      - name: Probe native PowerShell module autoload
+      - name: Probe explicit modules through runtime dispatcher
         if: runner.os == 'Windows'
         shell: bash
         run: |
@@ -150,25 +150,29 @@ jobs:
           const builtInModules = join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
           const builtInEnv = { ...env, PSModulePath: builtInModules };
           const commandArgs = script => ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script];
+          const psQuote = value => `'${String(value).replaceAll("'", "''")}'`;
+          const dispatcherScript = imports => `${imports}; & ${psQuote(join(runtime, 'coop', 'bin', 'coop.ps1'))} runtime --transport http --json --port 0 --cwd ${psQuote(workspace)}`;
           const results = [
             run('managed-mcp-config', join(runtime, 'node', 'node.exe'), [join(runtime, 'coop', 'lib', 'managed-mcp-config.mjs'), runtime, agent]),
             run('cmdlet-native-module-path', powershell, commandArgs("[Console]::Error.WriteLine('phase:enter'); Split-Path -Parent 'C:\\probe\\file.txt'; [Console]::Error.WriteLine('phase:done')")),
             run('cmdlet-built-in-module-path', powershell, commandArgs("[Console]::Error.WriteLine('phase:enter'); Split-Path -Parent 'C:\\probe\\file.txt'; [Console]::Error.WriteLine('phase:done')"), builtInEnv),
             run('explicit-management-import', powershell, commandArgs("[Console]::Error.WriteLine('phase:enter'); Import-Module Microsoft.PowerShell.Management; [Console]::Error.WriteLine('phase:imported'); Split-Path -Parent 'C:\\probe\\file.txt'; [Console]::Error.WriteLine('phase:done')"), builtInEnv),
             run('dotnet-path-control', powershell, commandArgs("[Console]::Error.WriteLine('phase:enter'); [System.IO.Path]::GetDirectoryName('C:\\probe\\file.txt'); [Console]::Error.WriteLine('phase:done')")),
+            run('dispatcher-explicit-management', powershell, commandArgs(dispatcherScript("Import-Module Microsoft.PowerShell.Management")), builtInEnv),
+            run('dispatcher-explicit-management-utility', powershell, commandArgs(dispatcherScript("Import-Module Microsoft.PowerShell.Management; Import-Module Microsoft.PowerShell.Utility")), builtInEnv),
             run('coop-dispatcher', powershell,
               ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(runtime, 'coop', 'bin', 'coop.ps1'), 'runtime', '--transport', 'http', '--json', '--port', '0', '--cwd', workspace]),
           ];
-          const output = join(process.env.RUNNER_TEMP, 'probe8-module-autoload.json');
+          const output = join(process.env.RUNNER_TEMP, 'probe9-explicit-modules.json');
           writeFileSync(output, JSON.stringify({ diagnosticOnly: true, candidate: 'ed516b2a183f3e6346344a669d6e37b321a4dcf8', results }, null, 2));
           console.log(JSON.stringify(results.map(({name,status,signal,errorCode,stdout,stderr}) => ({name,status,signal,errorCode,stdoutBytes:stdout.length,stderrBytes:stderr.length,stages:[...stderr.matchAll(/\[coop-startup\] ([^\r\n]+)/g)].map(match => match[1])}))));
           NODE
-      - name: Upload native module-autoload probe
+      - name: Upload explicit-module runtime probe
         if: always() && runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: probe8-module-autoload
-          path: ${{ runner.temp }}/probe8-module-autoload.json
+          name: probe9-explicit-modules
+          path: ${{ runner.temp }}/probe9-explicit-modules.json
           if-no-files-found: error
       - name: Exercise Windows runtime with the native application's isolated environment
         if: runner.os == 'Windows'
