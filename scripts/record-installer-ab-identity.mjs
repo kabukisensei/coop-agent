@@ -17,6 +17,7 @@ function parseArgs(argv) {
   }
   if (!/^(control|treatment)$/.test(values.label || "")) fail("--label must be control or treatment.");
   if (!/^26\.15\.(3|6)$/.test(values.builder || "")) fail("--builder must be 26.15.3 or 26.15.6.");
+  if (values.compression && !/^(lzma|zip)$/.test(values.compression)) fail("--compression must be lzma or zip when provided.");
   if (!values.output) fail("--output is required.");
   return values;
 }
@@ -75,6 +76,7 @@ const identity = {
   releaseAcceptance: false,
   runtimeGateClaimedPassed: false,
   abLabel: options.label,
+  compressionTreatment: options.compression || null,
   productCandidateSha: candidate,
   productCandidateTree: tree,
   target: `${process.platform}-${process.arch}`,
