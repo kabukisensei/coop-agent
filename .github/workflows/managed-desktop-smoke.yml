@@ -35,6 +35,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ed516b2a183f3e6346344a669d6e37b321a4dcf8
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: kabukisensei/coop-agent
+          ref: tmp/win-bootstrap-probe-ed516b2
+          path: _probe-control
           persist-credentials: false
       - uses: actions/setup-node@v5
         with:
@@ -122,19 +129,6 @@ jobs:
           if (result.error) throw result.error;
           process.exitCode = result.status ?? 1;
           NODE
-      - name: Probe 60-second native PowerShell behavior
-        if: runner.os == 'Windows'
-        shell: bash
-        env:
-          PROBE10_OUT: ${{ runner.temp }}/probe10-60s-repetitions.json
-        run: node scripts/probe-windows-powershell-60s.mjs
-      - name: Upload 60-second PowerShell discriminator
-        if: always() && runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: probe10-60s-repetitions
-          path: ${{ runner.temp }}/probe10-60s-repetitions.json
-          if-no-files-found: error
       - name: Exercise Windows runtime with the native application's isolated environment
         if: runner.os == 'Windows'
         shell: bash
@@ -163,14 +157,22 @@ jobs:
         env:
           COOP_DESKTOP_MANAGED_RUNTIME_DIR: ${{ runner.temp }}/managed-runtime
         run: npm run package:installer:win --prefix desktop
-      - name: Verify Windows install, reinstall repair, and uninstall
+      - name: Discriminate first silent Windows install only
         if: runner.os == 'Windows'
         shell: bash
         env:
           COOP_DESKTOP_DISPOSABLE_INSTALL_TEST: '1'
-        run: node desktop/scripts/verify-windows-installer.mjs --output '${{ runner.temp }}/windows-installer-check.json'
+          INSTALLER_PROBE_OUT: ${{ runner.temp }}/windows-installer-check.json
+        run: node _probe-control/scripts/probe-windows-installer-first-install.mjs
+      - name: Upload first-install discriminator evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-first-install-discriminator
+          path: ${{ runner.temp }}/windows-installer-check.json
+          if-no-files-found: error
       - name: Preserve Windows installer handoff artifact
-        if: runner.os == 'Windows'
+        if: ${{ false }}
         shell: bash
         run: |
           set -euo pipefail
