@@ -435,10 +435,61 @@ fi
 [ -z "${GIT_TERMINAL_PROMPT:-}" ] && [ -z "${GCM_INTERACTIVE:-}" ] && ok "E: overrides do not leak into the parent shell"
 
 # --- F. no watchdog survives; normal + nonzero exits remain meaningful ------------
-if pgrep -f "knowledge-git.py" >/dev/null 2>&1; then
+# Inspect argv boundaries, not regex-rendered parent command text.
+PROCESS_INSPECTOR="$ROOT/tests/knowledge-git-process-inspector.py"
+"$PY" "$PROCESS_INSPECTOR" "$ROOT/scripts/knowledge-git.py" >/dev/null 2>&1
+inspector_rc=$?
+if [ "$inspector_rc" -eq 0 ]; then
+  ok "F: no watchdog/leftover runner after sync"
+elif [ "$inspector_rc" -eq 1 ]; then
   ko "F: knowledge-git.py still running after sync"
 else
-  ok "F: no watchdog/leftover runner after sync"
+  ko "F: process state inspection uncertain"
+fi
+if [ "$WIN" != "1" ]; then
+  GIT_SSH_COMMAND='ssh -o BatchMode=yes' "$PY" "$ROOT/scripts/knowledge-git.py" --timeout-seconds 3 -- "$PY" -c 'import time; time.sleep(10)' >/dev/null 2>&1 &
+  real_helper_pid=$!
+  sleep 1
+  "$PY" "$PROCESS_INSPECTOR" "$ROOT/scripts/knowledge-git.py" >/dev/null 2>&1
+  inspector_rc=$?
+  if [ "$inspector_rc" -eq 1 ]; then
+    ok "F: real helper detected from direct argv"
+  elif [ "$inspector_rc" -eq 2 ]; then
+    ko "F: real helper inspection was uncertain"
+  else
+    ko "F: real helper was not detected"
+  fi
+  wait "$real_helper_pid" 2>/dev/null || true
+
+  bash -c 'sleep 3; : /usr/bin/python3 /tmp/knowledge-git.py' & decoy_pid=$!
+  "$PY" "$PROCESS_INSPECTOR" /tmp/knowledge-git.py >/dev/null 2>&1
+  inspector_rc=$?
+  if [ "$inspector_rc" -eq 0 ]; then
+    ok "F: unrelated shell text is not a helper"
+  elif [ "$inspector_rc" -eq 2 ]; then
+    ko "F: unrelated shell inspection was uncertain"
+  else
+    ko "F: unrelated shell text produced a false helper match"
+  fi
+  kill "$decoy_pid" 2>/dev/null || true
+  wait "$decoy_pid" 2>/dev/null || true
+
+  spaced_root="$TMP/helper path with spaces"
+  mkdir -p "$spaced_root/scripts"
+  cp "$ROOT/scripts/knowledge-git.py" "$spaced_root/scripts/knowledge-git.py"
+  GIT_SSH_COMMAND='ssh -o BatchMode=yes' "$PY" "$spaced_root/scripts/knowledge-git.py" --timeout-seconds 3 -- "$PY" -c 'import time; time.sleep(10)' >/dev/null 2>&1 &
+  spaced_helper_pid=$!
+  sleep 1
+  "$PY" "$PROCESS_INSPECTOR" "$spaced_root/scripts/knowledge-git.py" >/dev/null 2>&1
+  inspector_rc=$?
+  if [ "$inspector_rc" -eq 1 ]; then
+    ok "F: real helper path containing spaces detected"
+  elif [ "$inspector_rc" -eq 2 ]; then
+    ko "F: spaced helper inspection was uncertain"
+  else
+    ko "F: real helper under a spaced path was not detected"
+  fi
+  wait "$spaced_helper_pid" 2>/dev/null || true
 fi
 "$PY" "$ROOT/scripts/knowledge-git.py" --timeout-seconds 1 -- "$REALGIT" --version >/dev/null 2>&1
 [ "$?" -eq 0 ] && ok "F: runner passes through a normal exit" || ko "F: normal exit not passed through"
