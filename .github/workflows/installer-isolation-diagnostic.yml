@@ -87,6 +87,12 @@ jobs:
       - name: Rebuild checksum-pinned managed runtime
         shell: bash
         run: node scripts/prepare-managed-runtime.mjs --target '${{ steps.target.outputs.value }}' --work '${{ runner.temp }}/coop-managed-work' --output '${{ runner.temp }}/managed-runtime' --development-wheels '${{ runner.temp }}/coop-development-wheels/development-wheels.json'
+      - name: Record managed-runtime composition
+        shell: bash
+        env:
+          MANAGED_RUNTIME_ROOT: ${{ runner.temp }}/managed-runtime
+          COMPOSITION_OUT: ${{ runner.temp }}/managed-runtime-composition.json
+        run: node _probe-control/scripts/record-managed-runtime-composition.mjs
       - name: Package exact unsigned native application
         shell: bash
         env:
@@ -165,16 +171,19 @@ jobs:
         env:
           IDENTITY_OUT: ${{ runner.temp }}/installer-isolation-identity.json
           PROBE_OUT: ${{ runner.temp }}/windows-installer-check.json
+          COMPOSITION_OUT: ${{ runner.temp }}/managed-runtime-composition.json
         run: |
           node --input-type=module - <<'NODE'
           import { readFileSync } from 'node:fs';
           const identity = JSON.parse(readFileSync(process.env.IDENTITY_OUT, 'utf8'));
           const probe = JSON.parse(readFileSync(process.env.PROBE_OUT, 'utf8'));
+          const composition = JSON.parse(readFileSync(process.env.COMPOSITION_OUT, 'utf8'));
           if (identity.productCandidateSha !== process.env.PRODUCT_CANDIDATE_SHA) throw new Error('Identity candidate mismatch.');
           if (probe.candidate !== identity.productCandidateSha) throw new Error('Probe candidate mismatch.');
           if (probe.installerSha256 !== identity.checksums.installerSha256) throw new Error('Installer checksum mismatch.');
           if (probe.cleanup?.confirmed !== true) throw new Error('Disposable cleanup was not confirmed.');
-          console.log(JSON.stringify({ diagnosticOnly: true, releaseAcceptance: false, runtimeGateClaimedPassed: false, candidate: identity.productCandidateSha, installerSha256: probe.installerSha256, decision: probe.decision, cleanupConfirmed: true }));
+          if (composition.diagnosticOnly !== true || composition.totals?.files <= 0 || composition.totals?.bytes <= 0) throw new Error('Managed-runtime composition evidence is invalid.');
+          console.log(JSON.stringify({ diagnosticOnly: true, releaseAcceptance: false, runtimeGateClaimedPassed: false, candidate: identity.productCandidateSha, installerSha256: probe.installerSha256, decision: probe.decision, cleanupConfirmed: true, managedRuntimeFiles: composition.totals.files, managedRuntimeBytes: composition.totals.bytes }));
           NODE
       - name: Upload JSON diagnostic evidence only
         if: always()
@@ -186,3 +195,4 @@ jobs:
           path: |
             ${{ runner.temp }}/installer-isolation-identity.json
             ${{ runner.temp }}/windows-installer-check.json
+            ${{ runner.temp }}/managed-runtime-composition.json
