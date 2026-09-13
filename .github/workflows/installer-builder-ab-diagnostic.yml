@@ -22,12 +22,12 @@ jobs:
       DIAGNOSTIC_CONTROL_SHA: 697654b1c6114c451c6a458362043c8460360ccc
     steps:
       - name: Check out exact product candidate
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ed516b2a183f3e6346344a669d6e37b321a4dcf8
           persist-credentials: false
       - name: Check out immutable diagnostic control
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: kabukisensei/coop-agent
           ref: 697654b1c6114c451c6a458362043c8460360ccc
@@ -39,12 +39,12 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PRODUCT_CANDIDATE_SHA"
           test "$(git -C _probe-control rev-parse HEAD)" = "$DIAGNOSTIC_CONTROL_SHA"
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '22.22.3'
           cache: npm
           cache-dependency-path: desktop/package-lock.json
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
       - name: Read exact development companion commits
@@ -59,19 +59,19 @@ jobs:
             fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output}=${pins[name]}\n`);
           }
           NODE
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: kabukisensei/coop-data-doc
           ref: ${{ steps.companions.outputs.data }}
           path: development-sources/coop-data-doc-desktop
           persist-credentials: false
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: kabukisensei/coop-sql-review
           ref: ${{ steps.companions.outputs.sql }}
           path: development-sources/coop-sql-review-desktop
           persist-credentials: false
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: kabukisensei/coop-dax-review
           ref: ${{ steps.companions.outputs.dax }}
@@ -183,7 +183,7 @@ jobs:
         run: node _probe-control/scripts/compare-installer-builder-ab.mjs --control-identity '${{ runner.temp }}/control-identity.json' --control-probe '${{ runner.temp }}/control-first-install.json' --treatment-identity '${{ runner.temp }}/treatment-identity.json' --treatment-probe '${{ runner.temp }}/treatment-first-install.json' --output '${{ runner.temp }}/installer-builder-ab-comparison.json'
       - name: Upload JSON A-B diagnostic evidence only
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: installer-builder-ab-json
           retention-days: 7
