@@ -1907,7 +1907,15 @@ export default function coopTools(pi: ExtensionAPI) {
 
     let res;
     try {
-      res = await pi.exec(bin, args, { cwd: ctx.cwd, signal });
+      res = await pi.exec(bin, args, {
+        cwd: ctx.cwd,
+        signal,
+        env: {
+          COOP_STANDARDS_PATH: standards?.path || "",
+          COOP_STANDARDS_SHA256: standards?.sha256 || "",
+          COOP_STANDARDS_REVISION: standards?.revision || "",
+        },
+      });
     } catch (e: any) {
       return {
         content: [{ type: "text" as const, text: `${bin} could not run: ${errMsg(e)}. Is it installed? (coop install)` }],

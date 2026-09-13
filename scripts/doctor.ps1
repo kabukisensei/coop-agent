@@ -508,7 +508,7 @@ if (Test-Have 'node') {
     else { D-Ok "$kind ${name}: $state$(if ($detail) { " @ $detail" } else { '' })" }
   }
 } else {
-  D-Warn 'standards status unavailable' 'Node is required; SQL/DAX bundled fallback remains available'
+  D-Warn 'standards status unavailable' 'Node is required to discover and verify any SQL/DAX bundled fallback'
 }
 
 D-Head 'Optional'

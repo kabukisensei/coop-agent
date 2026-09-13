@@ -15,8 +15,9 @@ pass() { printf '  ✓ %s\n' "$1"; }
 PY="$(command -v python3 || command -v python)" || fail "python required for this test"
 
 # Shim the three tools. The linter shims record argv, honor `-o FILE` by writing a
-# canned JSON report there, and mimic the real exit contract (exit 2 under --strict,
-# since the canned report "has findings"; exit 0 otherwise). The data-doc shim
+# provenance-complete canned JSON report there, and mimic the real exit contract
+# (exit 2 under --strict, since the canned report "has findings"; exit 0 otherwise).
+# The data-doc shim
 # records argv and exits with COOP_TEST_DD_RC (default 0).
 mkdir -p "$TMP/bin"
 for t in coop-sql-review coop-dax-review; do
@@ -29,7 +30,17 @@ for a in "\$@"; do
   [ "\$a" = "--strict" ] && rc=2
   prev="\$a"
 done
-[ -n "\$out" ] && printf '{"findings": [{"severity": "warning"}], "summary": {"error": 0, "warning": 1, "info": 0}}' > "\$out"
+if [ -n "\$out" ]; then
+  case "\${COOP_TEST_PROVENANCE_MODE:-valid}" in
+    no_report) : ;;
+    malformed) printf 'not-json' > "\$out" ;;
+    missing) printf '{"findings":[]}' > "\$out" ;;
+    bad_path) printf '{"standards":{"path":"/wrong/path","sha256":"%s","revision":"%s"},"findings":[]}' "\$COOP_STANDARDS_SHA256" "\$COOP_STANDARDS_REVISION" > "\$out" ;;
+    bad_hash) printf '{"standards":{"path":"%s","sha256":"%064d","revision":"%s"},"findings":[]}' "\$COOP_STANDARDS_PATH" 0 "\$COOP_STANDARDS_REVISION" > "\$out" ;;
+    bad_revision) printf '{"standards":{"path":"%s","sha256":"%s","revision":"wrong"},"findings":[]}' "\$COOP_STANDARDS_PATH" "\$COOP_STANDARDS_SHA256" > "\$out" ;;
+    *) printf '{"standards":{"path":"%s","sha256":"%s","revision":"%s"},"findings":[{"severity":"warning"}],"summary":{"error":0,"warning":1,"info":0}}' "\$COOP_STANDARDS_PATH" "\$COOP_STANDARDS_SHA256" "\$COOP_STANDARDS_REVISION" > "\$out" ;;
+  esac
+fi
 exit "\$rc"
 EOF
   chmod +x "$TMP/bin/$t"
@@ -88,6 +99,19 @@ grep -q -- "build --non-interactive" "$TMP/coop-data-doc.args.log" || fail "data
 grep -q -- "--reviews $TMP/proj/.coop/reviews/coop-sql-review.json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the sql --reviews file"
 grep -q -- "--reviews $TMP/proj/.coop/reviews/coop-dax-review.json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the dax --reviews file"
 pass "contract scope + same-source standards: JSONs saved, missing skipped, exact standards and reviews passed"
+
+# 1b. Aggregate review rejects every absent/malformed/mismatched provenance form
+# even when the reviewer itself exits zero. Raw diagnostics remain saved.
+for mode in no_report malformed missing bad_path bad_hash bad_revision; do
+  rc=0
+  out="$(COOP_TEST_PROVENANCE_MODE="$mode" run_review --skip-docs 2>&1)" || rc=$?
+  [ "$rc" -eq 2 ] || fail "$mode provenance should fail closed with exit 2 (got $rc)"
+  case "$out" in *"report rejected"*) ;; *) fail "$mode rejection diagnostic missing" ;; esac
+  if [ "$mode" != no_report ]; then
+    [ -f "$TMP/proj/.coop/reviews/coop-sql-review.json" ] || fail "$mode raw reviewer report was not preserved"
+  fi
+done
+pass "aggregate review fails closed on malformed, missing, path/hash/revision-mismatched provenance"
 
 # 2. --skip-docs: linters run, data-doc is never called.
 rm -f "$TMP/coop-data-doc.args.log" "$TMP"/coop-*-review.args.log

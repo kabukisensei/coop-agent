@@ -20,18 +20,23 @@ writeFileSync(join(project, ".coop", "project.yml"), "standards:\n  sql: standar
 const handlers = new Map();
 const tools = new Map();
 const executions = [];
-let mismatch = false;
+let reportMode = "valid";
 const pi = {
   on(name, fn) { handlers.set(name, fn); },
   registerTool(tool) { tools.set(tool.name, tool); },
   registerCommand() {},
   sendUserMessage() {},
-  async exec(bin, args) {
+  async exec(bin, args, options) {
     executions.push({ bin, args });
     const index = args.indexOf("--standards");
     const path = index >= 0 ? args[index + 1] : null;
     const sha256 = path ? createHash("sha256").update(readFileSync(path)).digest("hex") : null;
-    return { stdout: JSON.stringify({ standards: path ? { path, sha256: mismatch ? "0".repeat(64) : sha256 } : undefined, findings: [] }), stderr: "", code: 0 };
+    const standards = path ? { path, sha256, revision: options.env.COOP_STANDARDS_REVISION } : undefined;
+    if (reportMode === "bad_hash" && standards) standards.sha256 = "0".repeat(64);
+    if (reportMode === "bad_path" && standards) standards.path = join(root, "wrong.md");
+    if (reportMode === "bad_revision" && standards) standards.revision = "wrong";
+    const stdout = reportMode === "malformed" ? "not-json" : JSON.stringify({ standards: reportMode === "missing" ? undefined : standards, findings: [] });
+    return { stdout, stderr: "reviewer diagnostic", code: 0 };
   },
 };
 const ctx = { cwd: project, hasUI: false, mode: "rpc", ui: { setStatus() {}, notify() {} } };
@@ -62,11 +67,14 @@ try {
   const semanticReview = await tools.get("dax_review").execute("3", { paths: ["model.tmdl"] }, undefined, undefined, ctx);
   assert.deepEqual(semanticReview.details.standards, semanticDax);
 
-  mismatch = true;
-  const rejected = await tools.get("dax_review").execute("4", { paths: ["measure.dax"] }, undefined, undefined, ctx);
-  assert.equal(rejected.details.reportRejected, true);
-  assert.match(rejected.details.provenanceError, /hash mismatch/);
-  assert.equal(Object.hasOwn(rejected.details, "report"), false);
+  for (const [mode, error] of [["bad_hash", /hash mismatch/], ["bad_path", /path mismatch|cannot be verified/], ["bad_revision", /revision mismatch/], ["missing", /provenance is missing/], ["malformed", /provenance is missing/]]) {
+    reportMode = mode;
+    const rejected = await tools.get("dax_review").execute("4", { paths: ["measure.dax"] }, undefined, undefined, ctx);
+    assert.equal(rejected.details.reportRejected, true, mode);
+    assert.match(rejected.details.provenanceError, error, mode);
+    assert.equal(rejected.details.stderr, "reviewer diagnostic", mode);
+    assert.equal(Object.hasOwn(rejected.details, "report"), false, mode);
+  }
 
   const unrelated = await handlers.get("before_agent_start")({ prompt: "Review this Power Query transformation", systemPrompt: "base" }, ctx);
   assert.equal(unrelated, undefined);

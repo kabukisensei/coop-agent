@@ -36,9 +36,14 @@ const gitInit = (root, message = "fixture") => {
 };
 const makeReviewer = (domain, standardPath, version) => {
   const script = join(tmp, `${domain}-reviewer.mjs`);
-  writeFileSync(script, `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; import {resolve} from "node:path";\nconst a=process.argv.slice(2), i=a.indexOf("--standards"), p=resolve(i>=0?a[i+1]:${JSON.stringify(standardPath)}), h=createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({tool:${JSON.stringify(`coop-${domain}-review`)},version:${JSON.stringify(version)},standards:{path:p,sha256:h},findings:[]}));\n`);
+  writeFileSync(script, `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; import {resolve} from "node:path";\nconst a=process.argv.slice(2), i=a.indexOf("--standards"), p=resolve(i>=0?a[i+1]:${JSON.stringify(standardPath)}), h=createHash("sha256").update(readFileSync(p)).digest("hex"), revision=process.env.COOP_STANDARDS_REVISION||${JSON.stringify(`reviewer-${version}`)}; process.stdout.write(JSON.stringify({tool:${JSON.stringify(`coop-${domain}-review`)},version:${JSON.stringify(version)},standards:{path:p,sha256:h,revision},findings:[]}));\n`);
   return { command: process.execPath, args: [script], script };
 };
+const reviewerReport = (reviewer, resolution) => JSON.parse(execFileSync(
+  process.execPath,
+  [reviewer.script, "check", tmp, "--format", "json", ...reviewStandardsArgs(resolution)],
+  { encoding: "utf8", env: { ...process.env, COOP_STANDARDS_REVISION: resolution.revision } },
+));
 
 try {
   const bundledDir = join(tmp, "reviewer-bundles"); mkdirSync(bundledDir);
@@ -72,17 +77,23 @@ try {
     const record = operation.records[0];
     assert.deepEqual(operation.domains, ["sql"]); assert.match(record.sections.map((x) => x.heading).join(" "), /Stored procedures/);
     assert.equal(record.resolution.immutable, true); assert.notEqual(record.resolution.path, record.resolution.source_path);
-    const report = JSON.parse(execFileSync(process.execPath, [sqlReviewer.script, "check", tmp, "--format", "json", ...reviewStandardsArgs(record.resolution)], { encoding: "utf8" }));
+    const report = reviewerReport(sqlReviewer, record.resolution);
     assert.deepEqual(verifyReviewerProvenance(record.resolution, report), { ok: true });
   });
 
   test("STD-03", "DAX provenance mismatch is rejected", () => {
     const operation = buildStandardsContext("Repair this DAX measure expression", opts({ cwd: tmp, canonicalRoot: canonical, staleRoot: join(tmp, "none") }));
     const r = operation.records[0].resolution;
-    const report = JSON.parse(execFileSync(process.execPath, [daxReviewer.script, "check", tmp, "--format", "json", ...reviewStandardsArgs(r)], { encoding: "utf8" }));
+    const report = reviewerReport(daxReviewer, r);
     assert.deepEqual(verifyReviewerProvenance(r, report), { ok: true });
     report.standards.sha256 = "0".repeat(64);
     assert.match(verifyReviewerProvenance(r, report).error, /hash mismatch/);
+    report.standards.sha256 = r.sha256;
+    report.standards.revision = "wrong-revision";
+    assert.match(verifyReviewerProvenance(r, report).error, /revision mismatch/);
+    delete report.standards;
+    assert.match(verifyReviewerProvenance(r, report).error, /provenance is missing/);
+    assert.match(verifyReviewerProvenance(r, null).error, /provenance is missing/);
   });
 
   test("STD-04", "semantic model, DAX, documentation and selective Incremental BI stay separate", () => {
@@ -116,9 +127,40 @@ try {
       const operation = buildStandardsContext(prompt, opts({ cwd: tmp, canonicalRoot: join(tmp, "missing"), staleRoot: join(tmp, "missing2") }));
       const record = operation.records.find((x) => x.resolution.domain === domain);
       assert.equal(record.resolution.state, "bundled_fallback"); assert.match(record.sections.map((x) => x.content).join("\n"), expected);
-      const report = JSON.parse(execFileSync(process.execPath, [reviewer.script, "check", tmp, "--format", "json", ...reviewStandardsArgs(record.resolution)], { encoding: "utf8" }));
+      const report = reviewerReport(reviewer, record.resolution);
       assert.deepEqual(verifyReviewerProvenance(record.resolution, report), { ok: true });
     }
+  });
+
+  test("STD-07F", "failed bundled discovery is truthful", () => {
+    const reviewerScript = (name, body) => {
+      const script = join(tmp, `${name}.mjs`);
+      writeFileSync(script, body);
+      return { command: process.execPath, args: [script] };
+    };
+    const missing = { command: join(tmp, "does-not-exist") };
+    const malformed = reviewerScript("malformed-reviewer", 'process.stdout.write("not-json")');
+    const absent = reviewerScript("absent-provenance-reviewer", 'process.stdout.write(JSON.stringify({version:"1.0.0",findings:[]}))');
+    const badHash = reviewerScript("bad-hash-reviewer", `process.stdout.write(JSON.stringify({version:"1.0.0",standards:{path:${JSON.stringify(sqlBundled)},sha256:"${"0".repeat(64)}"}}))`);
+    for (const reviewer of [missing, malformed, absent, badHash]) {
+      const r = resolveStandard("sql", opts({ cwd: tmp, canonicalRoot: join(tmp, "missing"), staleRoot: join(tmp, "missing2"), reviewerBins: { sql: reviewer } }));
+      assert.equal(r.state, "unavailable");
+      assert.equal(r.path, null); assert.equal(r.revision, null); assert.equal(r.sha256, null);
+    }
+    const auth = resolveStandard("sql", opts({ cwd: tmp, canonicalRoot: join(tmp, "missing"), staleRoot: join(tmp, "missing2"), reviewerBins: { sql: missing }, authRequired: true }));
+    assert.equal(auth.state, "auth_required");
+
+    const badBin = join(tmp, "bad-reviewer-bin"); mkdirSync(badBin);
+    for (const name of ["coop-sql-review", "coop-dax-review"]) {
+      const script = join(badBin, name); writeFileSync(script, "#!/bin/sh\nprintf not-json\n"); chmodSync(script, 0o755);
+    }
+    const env = { ...process.env, PATH: `${badBin}:${process.env.PATH}`, COOP_STANDARDS_ROOT: join(tmp, "missing"), COOP_STANDARDS_LKG_ROOT: join(tmp, "missing2"), COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "failed-support-home"), NO_COLOR: "1" };
+    const lines = execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
+    assert.match(lines, /domain\tsql\tformal_standard\/unavailable/);
+    const doctor = spawnSync("bash", [join(ROOT, "scripts", "doctor.sh")], { cwd: tmp, encoding: "utf8", env });
+    assert.match(`${doctor.stdout}\n${doctor.stderr}`, /domain sql: formal_standard\/unavailable/);
+    const support = JSON.parse(execFileSync(process.execPath, [join(ROOT, "lib", "support-center-cli.mjs"), "--json"], { encoding: "utf8", env }));
+    assert.equal(support.manifest.components.find((x) => x.component === "standards").status, "degraded");
   });
 
   test("STD-08", "v0.23.1 paths resolve without rewriting the contract", () => {
@@ -184,7 +226,7 @@ try {
     const record = buildStandardsContext("Inspect this SQL", opts({ cwd: project, canonicalRoot: canonical })).records[0];
     writeFileSync(record.resolution.source_path, "# MUTATED SECRET");
     assert.match(record.sections.map((x) => x.content).join("\n"), /Parameterize/); assert.equal(readFileSync(record.resolution.path, "utf8").includes("MUTATED"), false);
-    const report = JSON.parse(execFileSync(process.execPath, [sqlReviewer.script, "check", tmp, "--format", "json", ...reviewStandardsArgs(record.resolution)], { encoding: "utf8" }));
+    const report = reviewerReport(sqlReviewer, record.resolution);
     assert.deepEqual(verifyReviewerProvenance(record.resolution, report), { ok: true });
   });
 
@@ -227,16 +269,24 @@ try {
   test("CLASSIFIER", "ordinary SQL, DAX, model, Fabric, and documentation work is automatic", () => {
     assert.deepEqual(identifyTaskDomains("Implement a SQL stored procedure"), ["sql"]);
     assert.deepEqual(identifyTaskDomains("Validate a DAX measure"), ["dax"]);
-    assert.deepEqual(identifyTaskDomains("Assess semantic model relationships"), ["semantic_model", "dax"]);
+    assert.deepEqual(identifyTaskDomains("Assess semantic model relationships"), ["semantic_model"]);
     assert.deepEqual(identifyTaskDomains("Analyze a Fabric lakehouse architecture"), ["fabric"]);
     assert.deepEqual(identifyTaskDomains("Update README documentation"), ["documentation"]);
   });
 
-  test("CLASSIFIER", "adjacent technical tasks do not become SQL", () => {
+  test("CLASSIFIER", "adjacent technical tasks do not collide with standards domains", () => {
     assert.deepEqual(identifyTaskDomains("Review this Power Query transformation"), []);
     assert.deepEqual(identifyTaskDomains("Design a lakehouse architecture"), ["fabric"]);
     assert.deepEqual(identifyTaskDomains("Optimize a search query"), []);
     assert.deepEqual(identifyTaskDomains("What time is the meeting?"), []);
+    assert.deepEqual(identifyTaskDomains("Fix this regular expression in the JavaScript parser"), []);
+    assert.deepEqual(identifyTaskDomains("Analyze how to measure API latency"), []);
+    assert.deepEqual(identifyTaskDomains("Update documentation for the customer relationship process"), ["documentation"]);
+    assert.deepEqual(identifyTaskDomains("Review the workspace settings in VS Code"), []);
+    assert.deepEqual(identifyTaskDomains("Review semantic model architecture and relationships"), ["semantic_model"]);
+    assert.deepEqual(identifyTaskDomains("Review semantic model DAX measures"), ["semantic_model", "dax"]);
+    assert.deepEqual(identifyTaskDomains("Create measures in the semantic model"), ["semantic_model", "dax"]);
+    assert.deepEqual(identifyTaskDomains("Create a measure in Power BI"), ["dax"]);
   });
 
   test("CONTEXT", "retrieval is bounded and full authority remains opt-in", () => {

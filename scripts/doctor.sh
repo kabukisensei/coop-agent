@@ -437,7 +437,7 @@ if have node; then
 $(node "$COOP_ROOT/lib/standards-cli.mjs" doctor-lines "" "$PWD" 2>/dev/null)
 EOF
 else
-  warn "standards status unavailable" "Node is required; SQL/DAX bundled fallback remains available"
+  warn "standards status unavailable" "Node is required to discover and verify any SQL/DAX bundled fallback"
 fi
 
 section "Optional"

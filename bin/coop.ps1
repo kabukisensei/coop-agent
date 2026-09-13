@@ -561,14 +561,18 @@ function Invoke-CoopReview {
   $daxJson = Join-Path $outdir 'coop-dax-review.json'
   $bpaJson = Join-Path $outdir 'bpa-review.json'
   $extra = @(); if ($strict) { $extra = @('--strict') }
-  $sqlStandards = @(); $daxStandards = @()
-  if (Test-Have 'node') {
-    $standardsCli = Join-Path $script:CoopRoot 'lib\standards-cli.mjs'
-    $sqlStandard = (& node $standardsCli path sql $PWD.Path 2>$null) -join ''
-    $daxStandard = (& node $standardsCli path dax $PWD.Path 2>$null) -join ''
-    if ($sqlStandard) { $sqlStandards = @('--standards', $sqlStandard) }
-    if ($daxStandard) { $daxStandards = @('--standards', $daxStandard) }
-  }
+  $sqlStandards = @(); $daxStandards = @(); $sqlProvenance = $false; $daxProvenance = $false
+  if (-not (Test-Have 'node')) { Coop-Die 'Node is required to resolve and verify review standards provenance' }
+  $standardsCli = Join-Path $script:CoopRoot 'lib\standards-cli.mjs'
+  $sqlResolutionPath = [System.IO.Path]::GetTempFileName(); $daxResolutionPath = [System.IO.Path]::GetTempFileName()
+  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($sqlResolutionPath, ((& node $standardsCli resolve sql $PWD.Path) -join ''), $utf8NoBom)
+  [System.IO.File]::WriteAllText($daxResolutionPath, ((& node $standardsCli resolve dax $PWD.Path) -join ''), $utf8NoBom)
+  $sqlResolution = Get-Content -LiteralPath $sqlResolutionPath -Raw | ConvertFrom-Json
+  $daxResolution = Get-Content -LiteralPath $daxResolutionPath -Raw | ConvertFrom-Json
+  $sqlStandard = [string]$sqlResolution.path; $daxStandard = [string]$daxResolution.path
+  if ($sqlStandard) { $sqlStandards = @('--standards', $sqlStandard) }
+  if ($daxStandard) { $daxStandards = @('--standards', $daxStandard) }
 
   # --compare: snapshot each linter's previous saved report, then hand it to the linter as
   # --diff-against so it prints a new/fixed/persisting delta (the run overwrites the saved
@@ -581,14 +585,24 @@ function Invoke-CoopReview {
   }
 
   # Run both linters over the SAME scope; capture exit codes, never abort here.
+  # Never let a prior valid report stand in for a missing report from this run.
+  Remove-Item -LiteralPath $sqlJson,$daxJson -Force -ErrorAction SilentlyContinue
   Coop-Head "coop-sql-review check → $sqlJson"
+  $env:COOP_STANDARDS_PATH = $sqlStandard; $env:COOP_STANDARDS_SHA256 = [string]$sqlResolution.sha256; $env:COOP_STANDARDS_REVISION = [string]$sqlResolution.revision
   & coop-sql-review check @scope --format json @sqlStandards -o $sqlJson @sqlDiff @extra
   $sqlRc = $LASTEXITCODE
   if ($sqlRc -ne 0) { Coop-Warn "coop-sql-review exited $sqlRc" }
+  $provenanceError = (& node $standardsCli verify-report $sqlResolutionPath $sqlJson 2>&1) -join "`n"
+  if ($LASTEXITCODE -eq 0) { $sqlProvenance = $true } else { Coop-Err "coop-sql-review report rejected: $provenanceError"; $sqlRc = 2 }
   Coop-Head "coop-dax-review check → $daxJson"
+  $env:COOP_STANDARDS_PATH = $daxStandard; $env:COOP_STANDARDS_SHA256 = [string]$daxResolution.sha256; $env:COOP_STANDARDS_REVISION = [string]$daxResolution.revision
   & coop-dax-review check @scope --format json @daxStandards -o $daxJson @daxDiff @extra
   $daxRc = $LASTEXITCODE
   if ($daxRc -ne 0) { Coop-Warn "coop-dax-review exited $daxRc" }
+  $provenanceError = (& node $standardsCli verify-report $daxResolutionPath $daxJson 2>&1) -join "`n"
+  if ($LASTEXITCODE -eq 0) { $daxProvenance = $true } else { Coop-Err "coop-dax-review report rejected: $provenanceError"; $daxRc = 2 }
+  Remove-Item Env:COOP_STANDARDS_PATH,Env:COOP_STANDARDS_SHA256,Env:COOP_STANDARDS_REVISION -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $sqlResolutionPath,$daxResolutionPath -Force -ErrorAction SilentlyContinue
   
   $bpaRc = 0
   Remove-Item -LiteralPath $bpaJson -Force -ErrorAction SilentlyContinue   # never let a stale report stand in for this run
@@ -614,7 +628,9 @@ function Invoke-CoopReview {
     Coop-Info 'skipping the lineage-docs step (--skip-docs)'
   } else {
     Coop-Head 'coop-data-doc build (composing review findings)'
-    $ddArgs = @('build', '--non-interactive', '--reviews', $sqlJson, '--reviews', $daxJson)
+    $ddArgs = @('build', '--non-interactive')
+    if ($sqlProvenance) { $ddArgs += '--reviews'; $ddArgs += $sqlJson }
+    if ($daxProvenance) { $ddArgs += '--reviews'; $ddArgs += $daxJson }
     if (Test-Path -LiteralPath $bpaJson -PathType Leaf) { $ddArgs += '--reviews'; $ddArgs += $bpaJson }
     & coop-data-doc @ddArgs
     $ddRc = $LASTEXITCODE
@@ -676,6 +692,7 @@ except Exception as exc:
 
   # Exit: hard data-doc failures propagate; --strict makes a failing linter exit 2.
   if ($ddRc -ge 2) { exit $ddRc }
+  if (-not $sqlProvenance -or -not $daxProvenance) { exit 2 }
   if ($strict) {
     if ($sqlRc -ne 0 -or $daxRc -ne 0 -or $bpaRc -ne 0) { exit 2 }
   }

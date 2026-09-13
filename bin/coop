@@ -483,16 +483,24 @@ EOF
     fi
   fi
   local sql_json="$outdir/coop-sql-review.json" dax_json="$outdir/coop-dax-review.json" bpa_json="$outdir/bpa-review.json"
-  local sql_rc=0 dax_rc=0 bpa_rc=0 dd_rc=0 sql_standard="" dax_standard=""
+  local sql_rc=0 dax_rc=0 bpa_rc=0 dd_rc=0 sql_standard="" dax_standard="" sql_revision="" dax_revision="" sql_sha256="" dax_sha256=""
+  local sql_provenance=0 dax_provenance=0 provenance_error=""
   local extra=()
   [ "$strict" = 1 ] && extra=(--strict)
   local sql_standards=() dax_standards=()
-  if have node; then
-    sql_standard="$(node "$COOP_ROOT/lib/standards-cli.mjs" path sql "$PWD" 2>/dev/null || true)"
-    dax_standard="$(node "$COOP_ROOT/lib/standards-cli.mjs" path dax "$PWD" 2>/dev/null || true)"
-    [ -n "$sql_standard" ] && sql_standards=(--standards "$sql_standard")
-    [ -n "$dax_standard" ] && dax_standards=(--standards "$dax_standard")
-  fi
+  have node || coop_die "Node is required to resolve and verify review standards provenance"
+  local sql_resolution dax_resolution
+  sql_resolution="$(mktemp)"; dax_resolution="$(mktemp)"
+  node "$COOP_ROOT/lib/standards-cli.mjs" resolve sql "$PWD" >"$sql_resolution"
+  node "$COOP_ROOT/lib/standards-cli.mjs" resolve dax "$PWD" >"$dax_resolution"
+  sql_standard="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$sql_resolution" path 2>/dev/null || true)"
+  dax_standard="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$dax_resolution" path 2>/dev/null || true)"
+  sql_revision="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$sql_resolution" revision 2>/dev/null || true)"
+  dax_revision="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$dax_resolution" revision 2>/dev/null || true)"
+  sql_sha256="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$sql_resolution" sha256 2>/dev/null || true)"
+  dax_sha256="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$dax_resolution" sha256 2>/dev/null || true)"
+  [ -n "$sql_standard" ] && sql_standards=(--standards "$sql_standard")
+  [ -n "$dax_standard" ] && dax_standards=(--standards "$dax_standard")
 
   # --compare: snapshot each linter's previous saved report to a temp file, then hand it
   # to the linter as --diff-against so it prints a new/fixed/persisting delta (the run
@@ -507,12 +515,29 @@ EOF
   fi
 
   # Run both linters over the SAME scope; capture exit codes, never abort here.
+  # Never let a prior valid report stand in for a missing report from this run.
+  rm -f "$sql_json" "$dax_json"
   coop_head "coop-sql-review check → $sql_json"
-  coop-sql-review check ${scope[@]+"${scope[@]}"} --format json ${sql_standards[@]+"${sql_standards[@]}"} -o "$sql_json" ${sql_diff[@]+"${sql_diff[@]}"} ${extra[@]+"${extra[@]}"} || sql_rc=$?
+  COOP_STANDARDS_PATH="$sql_standard" COOP_STANDARDS_SHA256="$sql_sha256" COOP_STANDARDS_REVISION="$sql_revision" \
+    coop-sql-review check ${scope[@]+"${scope[@]}"} --format json ${sql_standards[@]+"${sql_standards[@]}"} -o "$sql_json" ${sql_diff[@]+"${sql_diff[@]}"} ${extra[@]+"${extra[@]}"} || sql_rc=$?
   [ "$sql_rc" -eq 0 ] || coop_warn "coop-sql-review exited $sql_rc"
+  if provenance_error="$(node "$COOP_ROOT/lib/standards-cli.mjs" verify-report "$sql_resolution" "$sql_json" 2>&1)"; then
+    sql_provenance=1
+  else
+    coop_err "coop-sql-review report rejected: $provenance_error"
+    sql_rc=2
+  fi
   coop_head "coop-dax-review check → $dax_json"
-  coop-dax-review check ${scope[@]+"${scope[@]}"} --format json ${dax_standards[@]+"${dax_standards[@]}"} -o "$dax_json" ${dax_diff[@]+"${dax_diff[@]}"} ${extra[@]+"${extra[@]}"} || dax_rc=$?
+  COOP_STANDARDS_PATH="$dax_standard" COOP_STANDARDS_SHA256="$dax_sha256" COOP_STANDARDS_REVISION="$dax_revision" \
+    coop-dax-review check ${scope[@]+"${scope[@]}"} --format json ${dax_standards[@]+"${dax_standards[@]}"} -o "$dax_json" ${dax_diff[@]+"${dax_diff[@]}"} ${extra[@]+"${extra[@]}"} || dax_rc=$?
   [ "$dax_rc" -eq 0 ] || coop_warn "coop-dax-review exited $dax_rc"
+  if provenance_error="$(node "$COOP_ROOT/lib/standards-cli.mjs" verify-report "$dax_resolution" "$dax_json" 2>&1)"; then
+    dax_provenance=1
+  else
+    coop_err "coop-dax-review report rejected: $provenance_error"
+    dax_rc=2
+  fi
+  rm -f "$sql_resolution" "$dax_resolution"
   
   # Tabular Editor BPA check (if enabled in project.yml)
   rm -f "$bpa_json"   # never let a stale report stand in for this run
@@ -535,7 +560,9 @@ EOF
     coop_info "skipping the lineage-docs step (--skip-docs)"
   else
     coop_head "coop-data-doc build (composing review findings)"
-    local dd_args=(build --non-interactive --reviews "$sql_json" --reviews "$dax_json")
+    local dd_args=(build --non-interactive)
+    [ "$sql_provenance" = 1 ] && dd_args+=(--reviews "$sql_json")
+    [ "$dax_provenance" = 1 ] && dd_args+=(--reviews "$dax_json")
     [ -f "$bpa_json" ] && dd_args+=(--reviews "$bpa_json")
     coop-data-doc "${dd_args[@]}" || dd_rc=$?
     if [ "$dd_rc" -eq 1 ]; then
@@ -594,6 +621,7 @@ PY
 
   # Exit: hard data-doc failures propagate; --strict makes a failing linter exit 2.
   [ "$dd_rc" -ge 2 ] && exit "$dd_rc"
+  if [ "$sql_provenance" != 1 ] || [ "$dax_provenance" != 1 ]; then return 2; fi
   if [ "$strict" = 1 ]; then
     if [ "$sql_rc" -ne 0 ] || [ "$dax_rc" -ne 0 ] || [ "$bpa_rc" -ne 0 ]; then exit 2; fi
   fi
