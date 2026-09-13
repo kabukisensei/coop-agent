@@ -52,13 +52,24 @@ checkout, state drift, or canary hit produces a non-ready fail-closed receipt.
 The canary is initialized before fallible prechecks. Finalization scans every
 retained artifact on success and failure; unscannable or leaking evidence is
 deleted from upload eligibility while a separately located controlled receipt is
-retained. Timeout cleanup recursively terminates the Windows process tree and
-confirms that the parent exited.
+retained. Every launched root process is tracked. Before the final canary scan,
+the harness recursively enumerates and terminates any remaining descendants and
+confirms every observed process ID is gone. A timeout requires successful
+`taskkill /T /F` plus recursive exit confirmation; any enumeration, kill, wait,
+or confirmation uncertainty suppresses the upload marker and removes the
+evidence directory. No parent-only fallback is accepted.
 
-Candidate Support must report the exact build fingerprint `build-24297cf9` for
-the candidate SHA and version. Candidate and rollback Doctor JSON must each have
-one `ok` check proving every corresponding manifest pin; exit zero or warning-only
-Doctor output does not establish convergence.
+Candidate Support must report the exact build fingerprint `build-24297cf9`,
+produced by the product fingerprint function from the candidate VERSION and SHA.
+For both candidate and rollback, the complete proof is derived from that
+checkout's own `config/release-manifest.json`: checkout VERSION proves
+`coop_version`; npm inventory plus Doctor prove the Pi package/version; Doctor
+proves every extension and Python pin (including `ms-fabric-cli` and the injected
+`fabric-cicd` library); npm inventory proves every npm-tool pin; and each
+COOP-managed MCP entry must contain exactly one manifest-pinned package spec.
+Manifest MCP packages not enabled in the generated `_coop.managed_servers` list
+are recorded as `NOT_MANAGED` and are explicitly non-applicable—not claimed as
+installed or healthy. Warning-only Doctor output never establishes convergence.
 
 The v0.23.1 release has no historical installer asset. Evidence must call this a
 **source installation baseline**, not a historical installer.

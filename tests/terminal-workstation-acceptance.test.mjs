@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fingerprintBuild } from "../lib/support-center.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const SCRIPT = join(ROOT, "acceptance", "windows-terminal-workstation.ps1");
@@ -14,7 +15,6 @@ const DOC = join(ROOT, "docs", "terminal-workstation-acceptance.md");
 const CANDIDATE = "295693a3eb08e9988594971d87bc4de751e6b551";
 const BASELINE = "d60300780b565aabf15b172b2bc32abad12b9ca6";
 const HARNESS = "1111111111111111111111111111111111111111";
-const SUPPORT_BUILD = "build-24297cf9";
 const statuses = ["PASS", "FAIL", "BLOCKED", "INCONCLUSIVE", "NOT_REACHED", "NOT_AVAILABLE", "CAPABILITY_SKIP", "BETA_LIMITATION"];
 const automatedIds = [
   "identity-and-isolation", "baseline-source-install", "candidate-upgrade-preservation",
@@ -89,18 +89,17 @@ function assertBoth(path, expected, label) {
   assert.equal(ps.status === 0, expected, `${label}: PowerShell: ${ps.stderr}`);
 }
 
-function assertFinalizationContract(source) {
-  const finallyAt = source.indexOf("} finally {");
-  const scanAt = source.indexOf("Find-Canary $EvidenceRoot $canary", finallyAt);
-  assert.ok(finallyAt >= 0 && scanAt > finallyAt, "evidence scan must execute from finalization");
-  assert.match(source, /Remove-Item -LiteralPath \$EvidenceRoot -Recurse -Force/);
-  assert.match(source, /\.evidence-uploadable/);
-}
-
-function assertProcessCleanupContract(source) {
-  assert.match(source, /taskkill\.exe \/PID \$process\.Id \/T \/F/);
-  assert.match(source, /WaitForExit\(10000\)/);
-  assert.match(source, /-not \$process\.HasExited/);
+function observedManifestState(manifest) {
+  const checks = [{ name: `pi ${manifest.pi.version} matches manifest (${manifest.pi.version})`, status: "ok" }];
+  for (const [name, version] of Object.entries(manifest.extensions)) checks.push({ name: `${name} ${version} matches manifest (${version})`, status: "ok" });
+  for (const [name, version] of Object.entries(manifest.python_tools)) {
+    checks.push({ name: name === "fabric-cicd" ? `${name} ${version} (library, in the Fabric CLI env)` : `${name} ${version} matches manifest (${version})`, status: "ok" });
+  }
+  const dependencies = { [manifest.pi.package]: { version: manifest.pi.version } };
+  for (const [name, version] of Object.entries(manifest.npm_tools)) dependencies[name] = { version };
+  const mcpServers = {}; const managed_servers = [];
+  Object.entries(manifest.mcp_servers).forEach(([name, version], index) => { const server = `managed-${index}`; managed_servers.push(server); mcpServers[server] = { command: "npx", args: ["-y", `${name}@${version}`] }; });
+  return { coop_version: manifest.coop_version, doctor: { fail: 0, checks }, npm_inventory: { dependencies }, mcp_config: { mcpServers, _coop: { managed_servers } } };
 }
 
 test("committed Draft 2020-12 schema validator is available and enforces formats", () => {
@@ -170,9 +169,26 @@ test("decisive receipt mutations are rejected equivalently", { skip: !havePwsh }
     ["missing observation", (x) => { x.operator_evidence[0].evidence = []; }],
     ["invalid date-time", (x) => { x.execution.finished_utc = "yesterday"; }],
     ["timezone-less date-time", (x) => { x.execution.started_utc = "2026-09-13T00:00:00"; }],
-    ["missing expected version", (x) => { x.candidate.expected_version = null; }],
+    ["numeric date-time", (x) => { x.execution.started_utc = 20260913; }],
+    ["numeric runner", (x) => { x.execution.runner = 7; }],
+    ["string schema version", (x) => { x.schema_version = "1"; }],
+    ["numeric candidate expected SHA", (x) => { x.candidate.expected_sha = 295693; }],
+    ["missing candidate expected version", (x) => { x.candidate.expected_version = null; }],
+    ["numeric candidate expected version", (x) => { x.candidate.expected_version = 231; }],
+    ["numeric candidate observed version", (x) => { x.candidate.observed_version = 231; }],
+    ["numeric baseline expected version", (x) => { x.baseline.expected_version = 231; }],
+    ["numeric harness observed version", (x) => { x.harness.observed_version = 231; }],
     ["invalid claim ID", (x) => { x.claims[0].id = "Bad_ID"; }],
+    ["numeric claim ID", (x) => { x.claims[0].id = 7; }],
     ["invalid automated flags", (x) => { x.claims[0].human_required = true; }],
+    ["scalar claim evidence", (x) => { x.claims[0].evidence = structuredClone(x.claims[0].evidence[0]); }],
+    ["null claim evidence", (x) => { x.claims[0].evidence = null; }],
+    ["object claim evidence", (x) => { x.claims[0].evidence = { item: structuredClone(x.claims[0].evidence[0]) }; }],
+    ["scalar operator evidence", (x) => { x.operator_evidence[0].evidence = "observed"; }],
+    ["string evidence exit code", (x) => { x.claims[0].evidence[0].exit_code = "0"; }],
+    ["numeric evidence observed", (x) => { x.claims[0].evidence[0].observed = 1; }],
+    ["scalar claims collection", (x) => { x.claims = structuredClone(x.claims[0]); }],
+    ["null operator collection", (x) => { x.operator_evidence = null; }],
     ["candidate observation mismatch", (x) => { x.candidate.observed_sha = BASELINE; }],
     ["harness aliases product", (x) => { x.harness.observed_sha = CANDIDATE; }],
   ];
@@ -193,37 +209,66 @@ test("early native-precheck failure emits a schema-valid honest receipt", { skip
   assertBoth(receiptPath, true, "early failure receipt");
 });
 
-test("Support identity probe requires the exact candidate fingerprint", { skip: !havePwsh }, () => {
-  assert.equal(runPs(["-Mode", "Probe", "-Probe", "VerifySupportBuild", "-Value", SUPPORT_BUILD]).status, 0);
+test("Support identity probe derives the candidate fingerprint through product code", { skip: !havePwsh }, () => {
+  const candidateVersion = execFileSync("git", ["-C", ROOT, "show", `${CANDIDATE}:VERSION`], { encoding: "utf8" }).trim();
+  const expected = fingerprintBuild({ version: candidateVersion, commit: CANDIDATE });
+  assert.equal(expected.ok, true);
+  assert.equal(runPs(["-Mode", "Probe", "-Probe", "VerifySupportBuild", "-Value", expected.value]).status, 0);
   assert.notEqual(runPs(["-Mode", "Probe", "-Probe", "VerifySupportBuild", "-Value", "build-deadbeef"]).status, 0);
 });
 
-test("Doctor pin probe rejects rollback drift despite fail=0", { skip: !havePwsh }, () => {
+test("complete candidate and rollback manifest proofs reject drift in every pin category", { skip: !havePwsh }, () => {
   const dir = mkdtempSync(join(tmpdir(), "coop-pins-"));
-  const manifest = { python_tools: { "coop-data-doc": "1.0.0", "coop-sql-review": "2.0.0", "coop-dax-review": "3.0.0" } };
-  const good = { fail: 0, checks: Object.entries(manifest.python_tools).map(([name, version]) => ({ name: `${name} ${version} matches manifest (${version})`, section: "Tools", status: "ok", hint: "" })) };
-  const manifestPath = join(dir, "manifest.json"); const goodPath = join(dir, "good.json"); const badPath = join(dir, "bad.json");
-  writeFileSync(manifestPath, JSON.stringify(manifest)); writeFileSync(goodPath, JSON.stringify(good));
-  const bad = structuredClone(good); bad.checks[0] = { ...bad.checks[0], name: "coop-data-doc 9.9.9 differs from manifest (1.0.0)", status: "warn" }; writeFileSync(badPath, JSON.stringify(bad));
-  assert.equal(runPs(["-Mode", "Probe", "-Probe", "VerifyDoctorPins", "-Root", goodPath, "-Value", manifestPath]).status, 0);
-  assert.notEqual(runPs(["-Mode", "Probe", "-Probe", "VerifyDoctorPins", "-Root", badPath, "-Value", manifestPath]).status, 0);
+  const manifest = JSON.parse(readFileSync(join(ROOT, "config", "release-manifest.json"), "utf8"));
+  const manifestPath = join(dir, "manifest.json"); writeFileSync(manifestPath, JSON.stringify(manifest));
+  const good = observedManifestState(manifest); const goodPath = join(dir, "good.json"); writeFileSync(goodPath, JSON.stringify(good));
+  for (const phase of ["candidate", "rollback"]) {
+    const result = runPs(["-Mode", "Probe", "-Probe", "VerifyManifestPins", "-Root", goodPath, "-Value", manifestPath]);
+    assert.equal(result.status, 0, `${phase} complete proof: ${result.stderr}`);
+  }
+  const extensionName = Object.keys(manifest.extensions)[0]; const extensionVersion = manifest.extensions[extensionName];
+  const pythonName = Object.keys(manifest.python_tools)[0]; const pythonVersion = manifest.python_tools[pythonName];
+  const npmName = Object.keys(manifest.npm_tools)[0];
+  const mutations = [
+    ["coop_version", (x) => { x.coop_version = "9.9.9"; }],
+    ["pi", (x) => { x.npm_inventory.dependencies[manifest.pi.package].version = "9.9.9"; }],
+    ["extensions", (x) => { const c = x.doctor.checks.find((item) => item.name.startsWith(`${extensionName} `)); c.name = c.name.replaceAll(extensionVersion, "9.9.9"); }],
+    ["python_tools", (x) => { const c = x.doctor.checks.find((item) => item.name.startsWith(`${pythonName} `)); c.name = c.name.replaceAll(pythonVersion, "9.9.9"); }],
+    ["npm_tools", (x) => { x.npm_inventory.dependencies[npmName].version = "9.9.9"; }],
+    ["mcp_servers", (x) => { x.mcp_config.mcpServers["managed-0"].args[1] = x.mcp_config.mcpServers["managed-0"].args[1].replace(/@[^@]+$/, "@9.9.9"); }],
+  ];
+  for (const [category, mutate] of mutations) {
+    const bad = structuredClone(good); mutate(bad); const path = join(dir, `${category}.json`); writeFileSync(path, JSON.stringify(bad));
+    for (const phase of ["candidate", "rollback"]) {
+      const result = runPs(["-Mode", "Probe", "-Probe", "VerifyManifestPins", "-Root", path, "-Value", manifestPath]);
+      assert.notEqual(result.status, 0, `${phase} must reject ${category} drift`);
+    }
+  }
+  const nonManaged = structuredClone(good); nonManaged.mcp_config._coop.managed_servers = []; nonManaged.mcp_config.mcpServers = {};
+  const nonManagedPath = join(dir, "mcp-not-managed.json"); writeFileSync(nonManagedPath, JSON.stringify(nonManaged));
+  assert.equal(runPs(["-Mode", "Probe", "-Probe", "VerifyManifestPins", "-Root", nonManagedPath, "-Value", manifestPath]).status, 0);
 });
 
-test("failure-path finalization cannot be mutated out", () => {
-  const source = readFileSync(SCRIPT, "utf8"); assertFinalizationContract(source);
-  assert.throws(() => assertFinalizationContract(source.replace("Find-Canary $EvidenceRoot $canary", "@()")));
-  const workflow = readFileSync(WORKFLOW, "utf8"); assert.match(workflow, /evidence-uploadable/); assert.match(workflow, /env\.EVIDENCE_UPLOADABLE == 'true'/);
+test("failure-path canary contamination removes evidence and emits no upload marker", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-finalize-")); const evidenceRoot = join(dir, "evidence"); mkdirSync(evidenceRoot);
+  const receiptPath = join(dir, "receipt.json"); const canary = "FINALIZATION-CANARY";
+  writeFileSync(join(evidenceRoot, "unsafe.log"), `leaked=${canary}`); writeFileSync(receiptPath, "{}");
+  const result = runPs(["-Mode", "Probe", "-Probe", "FinalizeArtifacts", "-Root", evidenceRoot, "-Value", receiptPath, "-Canary", canary]);
+  assert.notEqual(result.status, 0); assert.equal(existsSync(`${receiptPath}.evidence-uploadable`), false); assert.equal(existsSync(evidenceRoot), false);
+});
+
+test("timeout kills a parent and descendant before the descendant can write", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-process-tree-")); const writer = join(dir, "writer.mjs"); const escapedWriter = JSON.stringify(writer);
+  writeFileSync(writer, `import {spawn} from "node:child_process"; import {writeFileSync} from "node:fs";\nif(process.argv[2]==="child"){setTimeout(()=>writeFileSync(process.argv[3],"late-write"),1800);setInterval(()=>{},1000)}else{spawn(process.execPath,[${escapedWriter},"child",process.argv[2]],{stdio:"ignore"});setInterval(()=>{},1000)}\n`);
+  const lateWrite = join(dir, "late.txt"); const logBase = join(dir, "bounded");
+  const result = runPs(["-Mode", "Probe", "-Probe", "BoundedProcessTree", "-Value", writer, "-Root", logBase, "-Canary", lateWrite]);
+  assert.equal(result.status, 0, result.stderr); assert.equal(existsSync(lateWrite), false);
 });
 
 test("product agent path is one effective onboarding/install/Doctor path", () => {
   const source = readFileSync(SCRIPT, "utf8");
   const contract = (s) => { assert.match(s, /\$agentRoot = Join-Path \$profileRoot '\.coop\\agent'/); assert.match(s, /\$env:COOP_AGENT_DIR = \$agentRoot/); assert.match(s, /Join-Path \$agentRoot 'mcp\.json'/); };
   contract(source); assert.throws(() => contract(source.replace("$agentRoot = Join-Path $profileRoot '.coop\\agent'", "$agentRoot = Join-Path $ownedRoot 'split-agent'")));
-});
-
-test("timeout cleanup contract requires recursive kill and confirmed exit", () => {
-  const source = readFileSync(SCRIPT, "utf8"); assertProcessCleanupContract(source);
-  assert.throws(() => assertProcessCleanupContract(source.replace("/T /F", "/F").replace("WaitForExit(10000)", "WaitForExit(0)")));
 });
 
 test("workflow is manual, read-only, immutable, schema-validating, and credential-free", () => {
