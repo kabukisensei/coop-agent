@@ -73,7 +73,7 @@ try {
   const semanticReview = await tools.get("dax_review").execute("3", { paths: ["model.tmdl"] }, undefined, undefined, ctx);
   assert.deepEqual(semanticReview.details.standards, semanticDax);
 
-  for (const [mode, error] of [["bad_hash", /hash mismatch/], ["bad_path", /path mismatch|cannot be verified/], ["malformed_revision", /revision claim is malformed/], ["missing", /provenance is missing/], ["malformed", /envelope is missing|provenance is missing/]]) {
+  for (const [mode, error] of [["bad_hash", /hash mismatch/], ["bad_path", /path mismatch|cannot be verified/], ["malformed_revision", /revision claim is malformed|provenance schema is invalid/], ["missing", /provenance is missing|unknown or missing fields/], ["malformed", /envelope is missing|provenance is missing/]]) {
     reportMode = mode;
     const rejected = await tools.get("dax_review").execute("4", { paths: ["measure.dax"] }, undefined, undefined, ctx);
     assert.equal(rejected.details.reportRejected, true, mode);

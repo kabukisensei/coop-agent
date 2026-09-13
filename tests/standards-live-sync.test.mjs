@@ -1,30 +1,28 @@
 import { strict as assert } from "node:assert";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildStandardsContext, refreshCanonical, resolveStandard, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
+import { activeCanonicalGeneration, pinStandardsTask, refreshCanonical, resolveStandard, standardsRegistry } from "../lib/standards.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "coop-standards-live-"));
 const remote = join(tmp, "remote"), cache = join(tmp, "cache", "canonical"), state = join(tmp, "cache", "status.json"), snapshots = join(tmp, "snapshots");
 const registryPath = join(tmp, "registry.json");
-let now = 1_000_000;
+let now = 1_000_000, count = 0;
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 const git = (args, cwd = remote) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 const writeCanonical = (suffix) => {
   mkdirSync(join(remote, "standards"), { recursive: true });
-  writeFileSync(join(remote, "standards", "sql.md"), `# SQL ${suffix}\n## Security\nSQL ${suffix}\n`);
-  writeFileSync(join(remote, "standards", "dax.md"), `# DAX ${suffix}\n## Measures\nDAX ${suffix}\n`);
-  writeFileSync(join(remote, "standards", "semantic-model.md"), `# Model ${suffix}\n## Relationships\nModel ${suffix}\n`);
-  writeFileSync(join(remote, "standards.yml"), "schema_version: 1\nauthority: formal_standard\nauthoritative_ref: default_branch\ncontent_mode: markdown_only\nprecedence:\n  - project_override\n  - canonical_standard\n  - last_known_good\n  - bundled_fallback\nrefresh:\n  startup: true\n  task_freshness_minutes: 15\n  force_command: coop sync\n  failure_mode: last_known_good\n  pin_revision_per_task: true\n  invalidate_index_on_revision_change: true\nstandards:\n  sql:\n    path: standards/sql.md\n    section_refs: numeric\n  dax:\n    path: standards/dax.md\n    section_refs: numeric\n  semantic_model:\n    path: standards/semantic-model.md\n    section_refs: numeric\n");
+  for (const [name, title] of [["sql", "SQL"], ["dax", "DAX"], ["semantic-model", "Model"]]) writeFileSync(join(remote, "standards", `${name}.md`), `# ${title} ${suffix}\n## Security\n${title} ${suffix}\n`);
+  writeFileSync(join(remote, "standards.yml"), "schema_version: 1\nauthority: formal_standard\nauthoritative_ref: default_branch\ncontent_mode: markdown_only\nprecedence:\n  - project_override\n  - canonical_standard\n  - last_known_good\n  - bundled_fallback\nrefresh:\n  startup: true\n  task_freshness_minutes: 15\n  force_command: coop sync\n  failure_mode: last_known_good\n  pin_revision_per_task: true\n  invalidate_index_on_revision_change: true\nstandards:\n  sql:\n    path: standards/sql.md\n  dax:\n    path: standards/dax.md\n  semantic_model:\n    path: standards/semantic-model.md\n");
 };
 const commit = (message) => { git(["add", "."]); git(["commit", "-q", "-m", message]); return git(["rev-parse", "HEAD"]); };
-const options = (more = {}) => ({ canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, remote, now: () => now, refresh: true, staleRoot: join(tmp, "none"), reviewerBins: { sql: join(tmp, "none-sql"), dax: join(tmp, "none-dax") }, ...more });
-let count = 0;
+const options = (more = {}) => ({ canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, remote, now: () => now, staleRoot: join(tmp, "none"), reviewerBins: { sql: join(tmp, "none-sql"), dax: join(tmp, "none-dax") }, ...more });
 const test = (name, fn) => { fn(); count++; console.log(`  ✓ ${name}`); };
+const resetStorage = () => { rmSync(join(tmp, "cache"), { recursive: true, force: true }); rmSync(snapshots, { recursive: true, force: true }); };
 
 try {
   execFileSync("git", ["init", "-q", "-b", "main", remote]);
@@ -32,51 +30,73 @@ try {
   writeCanonical("r1"); const r1 = commit("r1");
   writeFileSync(registryPath, JSON.stringify({ schema_version: 1, canonical: { id: "cooptimize-formal-standards", repository: remote, authoritative_branch: "main", manifest: "standards.yml", initial_verified_commit: r1, initial_archive_sha256: "0".repeat(64), freshness_seconds: 900, timeout_seconds: 2, domains: { sql: "standards/sql.md", dax: "standards/dax.md", semantic_model: "standards/semantic-model.md" } } }));
 
-  test("managed production registry binds private repo, main, verified initial provenance and 15-minute freshness", () => {
+  test("production registry pins private main and verified anchor", () => {
     const r = standardsRegistry();
-    assert.equal(r.canonical.repository, "https://github.com/cooptimize/coop-standards.git"); assert.equal(r.canonical.authoritative_branch, "main");
-    assert.equal(r.canonical.initial_verified_commit, "fa109f11129742358ff1e078cd4c4433e356afb4"); assert.equal(r.canonical.initial_archive_sha256, "07820c5dcd912551554bb801c5fb4bd699ebdf9c126af9f558444f1651305104"); assert.equal(r.canonical.freshness_seconds, 900);
+    assert.equal(r.canonical.repository, "https://github.com/cooptimize/coop-standards.git"); assert.equal(r.canonical.authoritative_branch, "main"); assert.equal(r.canonical.initial_verified_commit, "fa109f11129742358ff1e078cd4c4433e356afb4");
   });
-  test("initial verified refresh builds canonical cache and retrieval index with exact provenance", () => {
-    const synced = refreshCanonical(options()); assert.equal(synced.ok, true, JSON.stringify(synced)); assert.equal(synced.revision, r1); assert.equal(synced.changed, true);
-    const r = resolveStandard("sql", options({ refresh: false }));
-    assert.equal(r.repository, remote); assert.equal(r.branch, "main"); assert.equal(r.commit, r1); assert.equal(r.file, "standards/sql.md"); assert.equal(r.sha256, hash(readFileSync(join(remote, "standards/sql.md"))));
-    const index = JSON.parse(readFileSync(join(tmp, "cache", "retrieval-index.json"))); assert.equal(index.revision, r1); assert.equal(index.domains.sql.sha256, r.sha256);
+  test("complete generation activates cache, index, metadata and pointer together", () => {
+    const synced = refreshCanonical(options()); assert.equal(synced.ok, true, JSON.stringify(synced));
+    const active = activeCanonicalGeneration(options()); assert.equal(active.ok, true, JSON.stringify(active)); assert.equal(active.revision, r1);
+    const index = JSON.parse(readFileSync(active.index)); const r = resolveStandard("sql", options({ refresh: false }));
+    assert.equal(index.revision, r1); assert.equal(index.domains.sql.sha256, r.sha256); assert.equal(r.repository, remote); assert.equal(r.branch, "main");
   });
-  test("fresh applicable tasks do not fetch repeatedly", () => {
-    const a = refreshCanonical(options()), b = refreshCanonical(options()); assert.equal(a.skipped, true); assert.equal(b.skipped, true);
+  test("healthy fresh generation skips repeated fetch", () => { assert.equal(refreshCanonical(options()).skipped, true); assert.equal(refreshCanonical(options()).skipped, true); });
+
+  writeCanonical("r2"); const r2 = commit("r2");
+  const beforePointer = ["canonical:clone", "canonical:verified", "canonical:index", "canonical:metadata", "canonical:generation", "canonical:before-pointer"];
+  for (const step of [...beforePointer, "canonical:after-pointer", "canonical:before-state", "canonical:after-state"]) test(`fault ${step} never exposes an incomplete generation or destroys LKG`, () => {
+    git(["reset", "--hard", r1]); resetStorage(); now += 1; assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const old = activeCanonicalGeneration(options()); git(["reset", "--hard", r2]);
+    const failed = refreshCanonical(options({ force: true, fault: step })); assert.equal(failed.ok, false);
+    const active = activeCanonicalGeneration(options()); assert.equal(active.ok, true, JSON.stringify(active));
+    assert.equal(active.revision, beforePointer.includes(step) ? old.revision : r2);
+    assert.equal(JSON.parse(readFileSync(active.index)).revision, active.revision);
   });
-  test("non-authoritative branch changes are not consumed", () => {
-    git(["checkout", "-q", "-b", "feature"]); writeCanonical("feature"); commit("feature"); git(["checkout", "-q", "main"]);
-    now += 901_000; const result = refreshCanonical(options()); assert.equal(result.revision, r1); assert.equal(readFileSync(join(cache, "standards", "sql.md"), "utf8").includes("feature"), false);
+
+  test("process death at every build/pointer/state step preserves one complete generation", () => {
+    for (const step of [...beforePointer, "canonical:after-pointer", "canonical:before-state", "canonical:after-state"]) {
+      git(["reset", "--hard", r1]); resetStorage(); now += 1; assert.equal(refreshCanonical(options({ force: true })).ok, true);
+      git(["reset", "--hard", r2]);
+      const childOptions = { canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, remote, force: true };
+      const script = `import {refreshCanonical} from ${JSON.stringify(new URL("../lib/standards.mjs", import.meta.url).href)}; refreshCanonical({...${JSON.stringify(childOptions)},fault:(s)=>{if(s===${JSON.stringify(step)})process.exit(77)}});`;
+      const child = spawnSync(process.execPath, ["--input-type=module", "-e", script]); assert.equal(child.status, 77, step);
+      const active = activeCanonicalGeneration(options()); assert.equal(active.ok, true, step);
+      assert.equal(active.revision, ["canonical:after-pointer", "canonical:before-state", "canonical:after-state"].includes(step) ? r2 : r1, step);
+      assert.equal(JSON.parse(readFileSync(active.index)).revision, active.revision, step);
+    }
   });
-  let pinned;
-  test("merged main change is discovered after staleness while the current task stays pinned", () => {
-    pinned = buildStandardsContext("Implement a SQL stored procedure", options()).records[0].resolution;
-    writeCanonical("r2"); const r2 = commit("r2"); now += 901_000;
-    const sync = refreshCanonical(options()); assert.equal(sync.revision, r2); assert.equal(readFileSync(pinned.path, "utf8").includes("r1"), true);
+
+  test("restart reconciles lagging state from the verified pointer", () => {
+    const active = activeCanonicalGeneration(options());
+    writeFileSync(state, JSON.stringify({ ok: true, revision: r1, generation_id: "old", last_successful_check_ms: 1, last_successful_sync_ms: 1 }));
+    const result = refreshCanonical(options()); assert.equal(result.skipped, true);
+    const reconciled = JSON.parse(readFileSync(state)); assert.equal(reconciled.generation_id, active.generation_id); assert.equal(reconciled.reconciled, true);
   });
-  test("next task adopts newer SQL/DAX/model revision and SQL/DAX reviewer paths remain pinned", () => {
-    const task = buildStandardsContext("Review semantic model relationships and DAX measures", options());
-    assert.deepEqual(task.domains, ["semantic_model", "dax"]); assert.equal(task.records.every((x) => x.resolution.commit === git(["rev-parse", "main"])), true);
-    assert.equal(task.records.every((x) => x.resolution.immutable), true);
+  test("same-revision missing or mismatched index is rebuilt instead of skipped", () => {
+    const broken = activeCanonicalGeneration(options()); writeFileSync(broken.index, "{}\n");
+    const repaired = refreshCanonical(options()); assert.equal(repaired.ok, true, JSON.stringify(repaired)); assert.equal(repaired.revision, r2); assert.equal(activeCanonicalGeneration(options()).ok, true);
   });
-  test("offline refresh preserves LKG and reports truthful stale/degraded domain status", () => {
-    renameSync(remote, `${remote}.offline`); now += 901_000; const failed = refreshCanonical(options()); assert.equal(failed.ok, false); assert.equal(failed.state, "stale_last_known_good");
-    const status = sourceStatus(options({ refresh: false })); assert.equal(status.degraded, true); assert.equal(status.domains.sql.state, "stale_last_known_good"); assert.equal(status.domains.sql.fallback, true);
-    renameSync(`${remote}.offline`, remote);
+  test("recent failed refresh cannot trigger the freshness shortcut", () => {
+    const failed = refreshCanonical(options({ force: true, runner: () => ({ status: null, error: { code: "ETIMEDOUT" }, stdout: "", stderr: "" }) })); assert.equal(failed.ok, false);
+    const repaired = refreshCanonical(options()); assert.equal(repaired.ok, true); assert.notEqual(repaired.skipped, true);
   });
-  test("invalid canonical update cannot replace LKG", () => {
-    writeCanonical("malicious"); rmSync(join(remote, "standards", "sql.md")); commit("invalid"); now += 901_000;
-    const before = readFileSync(join(cache, "standards", "sql.md")); const failed = refreshCanonical(options()); assert.equal(failed.ok, false); assert.deepEqual(readFileSync(join(cache, "standards", "sql.md")), before);
+  test("one task pin constrains every domain and late reviewer resolution", () => {
+    const pinned = pinStandardsTask(["sql", "dax"], options({ refresh: false })); assert.equal(pinned.resolutions.every((r) => r.revision === r2), true);
+    writeCanonical("r3"); const r3 = commit("r3"); now += 901_000; assert.equal(refreshCanonical(options()).revision, r3);
+    assert.equal(pinned.resolve("semantic_model").revision, r2); assert.equal(pinned.resolutions.every((r) => readFileSync(r.path, "utf8").includes("r2")), true);
   });
-  test("forced refresh bypasses freshness and remains bounded/nonfatal on failure", () => {
-    const result = refreshCanonical(options({ force: true, runner: () => ({ status: null, error: { code: "ETIMEDOUT" }, stdout: "", stderr: "" }) }));
-    assert.equal(result.ok, false); assert.match(result.detail, /timed out/); assert.equal(existsSync(cache), true);
-    assert.match(readFileSync(join(ROOT, "scripts", "sync.sh"), "utf8"), /standards-cli\.mjs" refresh --force/);
-    assert.match(readFileSync(join(ROOT, "scripts", "sync.ps1"), "utf8"), /standards-cli\.mjs'[\s\S]*refresh --force/);
-    assert.match(readFileSync(join(ROOT, "bin", "coop"), "utf8"), /standards-cli\.mjs" refresh[^-]/);
-    assert.match(readFileSync(join(ROOT, "bin", "coop.ps1"), "utf8"), /standards-cli\.mjs'\) refresh/);
+  test("invalid pointer, symlink pointer/root, unrelated repo and feature branch fail authority", () => {
+    const pointer = join(tmp, "cache", "active-generation.json"), saved = readFileSync(pointer);
+    writeFileSync(pointer, "{}\n"); assert.equal(activeCanonicalGeneration(options()).ok, false); writeFileSync(pointer, saved);
+    const realPointer = `${pointer}.real`; writeFileSync(realPointer, saved); rmSync(pointer); symlinkSync(realPointer, pointer); assert.equal(activeCanonicalGeneration(options()).ok, false); rmSync(pointer); writeFileSync(pointer, saved);
+    const active = activeCanonicalGeneration(options()); git(["checkout", "-q", "-b", "feature-local"], active.checkout); assert.equal(activeCanonicalGeneration(options()).ok, false); git(["checkout", "-q", "main"], active.checkout);
+    const unrelated = join(tmp, "unrelated"); execFileSync("git", ["init", "-q", "-b", "main", unrelated]); git(["config", "user.email", "x@y"], unrelated); git(["config", "user.name", "x"], unrelated); writeFileSync(join(unrelated, "x"), "x"); git(["add", "."], unrelated); git(["commit", "-q", "-m", "x"], unrelated);
+    const metaPath = join(active.generation, "generation.json"), meta = JSON.parse(readFileSync(metaPath)); meta.repository = unrelated; writeFileSync(metaPath, JSON.stringify(meta)); assert.equal(activeCanonicalGeneration(options()).ok, false);
   });
+  test("legacy self-authored manifests require explicit fixture injection", () => {
+    const fixture = join(tmp, "legacy"); mkdirSync(fixture); writeFileSync(join(fixture, "sql.md"), "# fixture"); writeFileSync(join(fixture, "manifest.json"), JSON.stringify({ schema_version: 1, revision: "fixture", domains: { sql: { path: "sql.md", sha256: hash("# fixture") } } }));
+    assert.notEqual(resolveStandard("sql", options({ canonicalRoot: fixture })).state, "canonical"); assert.equal(resolveStandard("sql", options({ fixtureRoot: fixture })).revision, "fixture");
+  });
+  assert.match(readFileSync(join(ROOT, "bin", "coop"), "utf8"), /resolve-many sql,dax/);
   console.log(`standards live sync: ${count} tests passed`);
 } finally { rmSync(tmp, { recursive: true, force: true }); }

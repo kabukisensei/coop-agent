@@ -563,12 +563,11 @@ function Invoke-CoopReview {
 
   New-Item -ItemType Directory -Force -Path $outdir -ErrorAction SilentlyContinue | Out-Null
   if (-not (Test-Path -LiteralPath $outdir -PathType Container)) { Coop-Die "cannot create $outdir" }
-  $sqlJson = Join-Path $outdir 'coop-sql-review.json'
-  $daxJson = Join-Path $outdir 'coop-dax-review.json'
+  $sqlJson = ''; $daxJson = ''
   $bpaJson = Join-Path $outdir 'bpa-review.json'
   $sqlRun = Join-Path $outdir ('.coop-sql-review.current.' + [System.IO.Path]::GetRandomFileName() + '.json')
   $daxRun = Join-Path $outdir ('.coop-dax-review.current.' + [System.IO.Path]::GetRandomFileName() + '.json')
-  $sqlResolutionPath = $null; $daxResolutionPath = $null; $sqlPrev = $null; $daxPrev = $null
+  $sqlResolutionPath = $null; $daxResolutionPath = $null; $taskResolutionsPath = $null; $promotionPath = $null; $acceptedPath = $null; $sqlPrev = $null; $daxPrev = $null
   try {
   foreach ($temp in @($sqlRun, $daxRun)) { $stream = [System.IO.File]::Open($temp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None); $stream.Dispose() }
   # A suite HTML file always describes one complete current run.
@@ -577,15 +576,23 @@ function Invoke-CoopReview {
   $sqlStandards = @(); $daxStandards = @(); $sqlProvenance = $false; $daxProvenance = $false
   if (-not (Test-Have 'node')) { Coop-Die 'Node is required to resolve and verify review standards provenance' }
   $standardsCli = Join-Path $script:CoopRoot 'lib\standards-cli.mjs'
-  $sqlResolutionPath = [System.IO.Path]::GetTempFileName(); $daxResolutionPath = [System.IO.Path]::GetTempFileName()
+  $sqlResolutionPath = [System.IO.Path]::GetTempFileName(); $daxResolutionPath = [System.IO.Path]::GetTempFileName(); $taskResolutionsPath = [System.IO.Path]::GetTempFileName(); $promotionPath = [System.IO.Path]::GetTempFileName(); $acceptedPath = [System.IO.Path]::GetTempFileName()
   $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-  [System.IO.File]::WriteAllText($sqlResolutionPath, ((& node $standardsCli resolve sql $PWD.Path) -join ''), $utf8NoBom)
-  [System.IO.File]::WriteAllText($daxResolutionPath, ((& node $standardsCli resolve dax $PWD.Path) -join ''), $utf8NoBom)
+  [System.IO.File]::WriteAllText($taskResolutionsPath, ((& node $standardsCli resolve-many 'sql,dax' $PWD.Path) -join ''), $utf8NoBom)
+  [System.IO.File]::WriteAllText($sqlResolutionPath, ((& node $standardsCli resolution-domain $taskResolutionsPath sql) -join ''), $utf8NoBom)
+  [System.IO.File]::WriteAllText($daxResolutionPath, ((& node $standardsCli resolution-domain $taskResolutionsPath dax) -join ''), $utf8NoBom)
   $sqlResolution = Get-Content -LiteralPath $sqlResolutionPath -Raw | ConvertFrom-Json
   $daxResolution = Get-Content -LiteralPath $daxResolutionPath -Raw | ConvertFrom-Json
   $sqlStandard = [string]$sqlResolution.path; $daxStandard = [string]$daxResolution.path
   if ($sqlStandard) { $sqlStandards = @('--standards', $sqlStandard) }
   if ($daxStandard) { $daxStandards = @('--standards', $daxStandard) }
+  $savedEap = $ErrorActionPreference
+  try { $ErrorActionPreference = 'Continue'; [System.IO.File]::WriteAllText($acceptedPath, ((& node $standardsCli accepted-run $outdir 2>$null) -join ''), $utf8NoBom); $acceptedRc = $LASTEXITCODE }
+  finally { $ErrorActionPreference = $savedEap }
+  if ($acceptedRc -eq 0) {
+    $accepted = Get-Content -LiteralPath $acceptedPath -Raw | ConvertFrom-Json
+    $sqlJson = [string]$accepted.reports.sql; $daxJson = [string]$accepted.reports.dax
+  }
 
   # --compare: snapshot each linter's previous saved report, then hand it to the linter as
   # --diff-against so it prints a new/fixed/persisting delta (the run overwrites the saved
@@ -598,26 +605,29 @@ function Invoke-CoopReview {
   }
 
   # Run both reviewers first; Node validates the complete envelopes and publishes
-  # reports plus bindings as one rollback-capable transaction.
-  Coop-Head "coop-sql-review check → $sqlJson"
+  # reports plus bindings as one immutable generation behind one atomic pointer.
+  Coop-Head "coop-sql-review check → accepted review generation"
   & coop-sql-review check @scope --format json @sqlStandards -o $sqlRun @sqlDiff @extra
   $sqlRc = $LASTEXITCODE
   if ($sqlRc -ne 0) { Coop-Warn "coop-sql-review exited $sqlRc" }
-  Coop-Head "coop-dax-review check → $daxJson"
+  Coop-Head "coop-dax-review check → accepted review generation"
   & coop-dax-review check @scope --format json @daxStandards -o $daxRun @daxDiff @extra
   $daxRc = $LASTEXITCODE
   if ($daxRc -ne 0) { Coop-Warn "coop-dax-review exited $daxRc" }
   $savedEap = $ErrorActionPreference
-  try { $ErrorActionPreference = 'Continue'; $provenanceError = (& node $standardsCli promote-run $outdir $sqlResolutionPath $sqlRun $daxResolutionPath $daxRun 2>&1) -join "`n"; $promoteRc = $LASTEXITCODE }
+  try { $ErrorActionPreference = 'Continue'; [System.IO.File]::WriteAllText($promotionPath, ((& node $standardsCli promote-run $outdir $sqlResolutionPath $sqlRun $daxResolutionPath $daxRun 2>&1) -join "`n"), $utf8NoBom); $promoteRc = $LASTEXITCODE }
   finally { $ErrorActionPreference = $savedEap }
   if ($promoteRc -eq 0) {
+    $promotion = Get-Content -LiteralPath $promotionPath -Raw | ConvertFrom-Json
+    $sqlJson = [string]$promotion.reports.sql; $daxJson = [string]$promotion.reports.dax
     $sqlProvenance = $true; $daxProvenance = $true
   } else {
+    $provenanceError = Get-Content -LiteralPath $promotionPath -Raw
     Coop-Err "review run rejected: $provenanceError"; $sqlRc = 2; $daxRc = 2
     $rejected = Join-Path $outdir 'rejected'; New-Item -ItemType Directory -Force -Path $rejected | Out-Null
     foreach ($run in @($sqlRun, $daxRun)) { if ((Test-Path -LiteralPath $run -PathType Leaf) -and (Get-Item -LiteralPath $run).Length -gt 0) { Move-Item -LiteralPath $run -Destination (Join-Path $rejected ([System.IO.Path]::GetFileName($run))) -Force -ErrorAction Stop } }
   }
-  Remove-Item -LiteralPath $sqlResolutionPath,$daxResolutionPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $sqlResolutionPath,$daxResolutionPath,$taskResolutionsPath -Force -ErrorAction SilentlyContinue
   
   $bpaRc = 0
   Remove-Item -LiteralPath $bpaJson -Force -ErrorAction SilentlyContinue   # never let a stale report stand in for this run
@@ -695,8 +705,14 @@ try:
                 if os.path.exists(html_file):
                     html_paths[t] = f"{t}.html"
         
-        with open(html_out, "w", encoding="utf-8") as f:
-            f.write(suite_html(envs, summary, html_paths))
+        html_tmp = f"{html_out}.{os.getpid()}.tmp"
+        try:
+            with open(html_tmp, "x", encoding="utf-8") as f:
+                f.write(suite_html(envs, summary, html_paths))
+                f.flush(); os.fsync(f.fileno())
+            os.replace(html_tmp, html_out)
+        finally:
+            if os.path.exists(html_tmp): os.unlink(html_tmp)
         print(f"Suite HTML Report: {html_out}\n")
 except Exception as exc:
     print(f"Suite summary error: {exc}", file=sys.stderr)
@@ -717,7 +733,7 @@ except Exception as exc:
   }
   exit 0
   } finally {
-    foreach ($temp in @($sqlRun, $daxRun, $sqlResolutionPath, $daxResolutionPath, $sqlPrev, $daxPrev)) {
+    foreach ($temp in @($sqlRun, $daxRun, $sqlResolutionPath, $daxResolutionPath, $taskResolutionsPath, $promotionPath, $acceptedPath, $sqlPrev, $daxPrev)) {
       if ($temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
     }
   }

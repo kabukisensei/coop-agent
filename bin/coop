@@ -486,7 +486,7 @@ EOF
       return 0
     fi
   fi
-  local sql_json="$outdir/coop-sql-review.json" dax_json="$outdir/coop-dax-review.json" bpa_json="$outdir/bpa-review.json"
+  local sql_json="" dax_json="" bpa_json="$outdir/bpa-review.json"
   local sql_run dax_run
   sql_run="$(mktemp "$outdir/.coop-sql-review.current.XXXXXX.json")"
   dax_run="$(mktemp "$outdir/.coop-dax-review.current.XXXXXX.json")"
@@ -499,10 +499,11 @@ EOF
   [ "$strict" = 1 ] && extra=(--strict)
   local sql_standards=() dax_standards=()
   have node || coop_die "Node is required to resolve and verify review standards provenance"
-  local sql_resolution dax_resolution
-  sql_resolution="$(mktemp)"; dax_resolution="$(mktemp)"
-  node "$COOP_ROOT/lib/standards-cli.mjs" resolve sql "$PWD" >"$sql_resolution"
-  node "$COOP_ROOT/lib/standards-cli.mjs" resolve dax "$PWD" >"$dax_resolution"
+  local sql_resolution dax_resolution task_resolutions promotion accepted
+  sql_resolution="$(mktemp)"; dax_resolution="$(mktemp)"; task_resolutions="$(mktemp)"; promotion="$(mktemp)"; accepted="$(mktemp)"
+  node "$COOP_ROOT/lib/standards-cli.mjs" resolve-many sql,dax "$PWD" >"$task_resolutions"
+  node "$COOP_ROOT/lib/standards-cli.mjs" resolution-domain "$task_resolutions" sql >"$sql_resolution"
+  node "$COOP_ROOT/lib/standards-cli.mjs" resolution-domain "$task_resolutions" dax >"$dax_resolution"
   sql_standard="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$sql_resolution" path 2>/dev/null || true)"
   dax_standard="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$dax_resolution" path 2>/dev/null || true)"
 
@@ -515,26 +516,33 @@ EOF
   # has nothing to diff — it just becomes the baseline for the next --compare.
   local sql_prev="" dax_prev=""
   local sql_diff=() dax_diff=()
-  coop_review_cleanup() { rm -f "$sql_run" "$dax_run" "$sql_resolution" "$dax_resolution" ${sql_prev:+"$sql_prev"} ${dax_prev:+"$dax_prev"}; }
+  coop_review_cleanup() { rm -f "$sql_run" "$dax_run" "$sql_resolution" "$dax_resolution" "$task_resolutions" "$promotion" "$promotion.error" "$accepted" ${sql_prev:+"$sql_prev"} ${dax_prev:+"$dax_prev"}; }
   trap 'coop_review_cleanup; exit 130' HUP INT TERM
   trap 'coop_review_cleanup' EXIT
+  if node "$COOP_ROOT/lib/standards-cli.mjs" accepted-run "$outdir" >"$accepted" 2>/dev/null; then
+    sql_json="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$accepted" reports.sql 2>/dev/null || true)"
+    dax_json="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$accepted" reports.dax 2>/dev/null || true)"
+  fi
   if [ "$compare" = 1 ]; then
     if [ -f "$sql_json" ]; then sql_prev="$(mktemp)"; cp "$sql_json" "$sql_prev"; sql_diff=(--diff-against "$sql_prev"); fi
     if [ -f "$dax_json" ]; then dax_prev="$(mktemp)"; cp "$dax_json" "$dax_prev"; dax_diff=(--diff-against "$dax_prev"); fi
     { [ -n "$sql_prev" ] || [ -n "$dax_prev" ]; } || coop_info "no previous review to compare against yet — this run becomes the baseline"
   fi
 
-  # Run both reviewers first. Validate and publish the complete pair in one
-  # rollback-capable transaction; an asymmetric failure advances neither LKG.
-  coop_head "coop-sql-review check → $sql_json"
+  # Run both reviewers first. Validate and publish the complete pair as one
+  # immutable generation behind one atomic pointer.
+  coop_head "coop-sql-review check → accepted review generation"
   coop-sql-review check ${scope[@]+"${scope[@]}"} --format json ${sql_standards[@]+"${sql_standards[@]}"} -o "$sql_run" ${sql_diff[@]+"${sql_diff[@]}"} ${extra[@]+"${extra[@]}"} || sql_rc=$?
   [ "$sql_rc" -eq 0 ] || coop_warn "coop-sql-review exited $sql_rc"
-  coop_head "coop-dax-review check → $dax_json"
+  coop_head "coop-dax-review check → accepted review generation"
   coop-dax-review check ${scope[@]+"${scope[@]}"} --format json ${dax_standards[@]+"${dax_standards[@]}"} -o "$dax_run" ${dax_diff[@]+"${dax_diff[@]}"} ${extra[@]+"${extra[@]}"} || dax_rc=$?
   [ "$dax_rc" -eq 0 ] || coop_warn "coop-dax-review exited $dax_rc"
-  if provenance_error="$(node "$COOP_ROOT/lib/standards-cli.mjs" promote-run "$outdir" "$sql_resolution" "$sql_run" "$dax_resolution" "$dax_run" 2>&1)"; then
+  if node "$COOP_ROOT/lib/standards-cli.mjs" promote-run "$outdir" "$sql_resolution" "$sql_run" "$dax_resolution" "$dax_run" >"$promotion" 2>"$promotion.error"; then
     sql_provenance=1; dax_provenance=1
+    sql_json="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$promotion" reports.sql)"
+    dax_json="$(node "$COOP_ROOT/lib/standards-cli.mjs" resolution-field "$promotion" reports.dax)"
   else
+    provenance_error="$(<"$promotion.error")"
     coop_err "review run rejected: $provenance_error"
     sql_rc=2; dax_rc=2
     mkdir -p "$outdir/rejected"
@@ -616,8 +624,14 @@ try:
                 if os.path.exists(html_file):
                     html_paths[t] = f"{t}.html"
         
-        with open(html_out, "w", encoding="utf-8") as f:
-            f.write(suite_html(envs, summary, html_paths))
+        html_tmp = f"{html_out}.{os.getpid()}.tmp"
+        try:
+            with open(html_tmp, "x", encoding="utf-8") as f:
+                f.write(suite_html(envs, summary, html_paths))
+                f.flush(); os.fsync(f.fileno())
+            os.replace(html_tmp, html_out)
+        finally:
+            if os.path.exists(html_tmp): os.unlink(html_tmp)
         print(f"Suite HTML Report: {html_out}\n")
 except Exception as exc:
     print(f"Suite summary error: {exc}", file=sys.stderr)

@@ -53,7 +53,12 @@ try {
   const sqlReviewer = makeReviewer("sql", sqlBundled, "0.15.2");
   const daxReviewer = makeReviewer("dax", daxBundled, "0.22.0");
   const reviewerBins = { sql: sqlReviewer, dax: daxReviewer };
-  const opts = (more = {}) => ({ snapshotRoot: snapshots, reviewerBins, ...more });
+  const opts = (more = {}) => {
+    const merged = { snapshotRoot: snapshots, reviewerBins, ...more };
+    if (merged.canonicalRoot) { merged.fixtureRoot = merged.canonicalRoot; merged.canonicalRoot = join(tmp, "managed-none", "canonical"); }
+    if (merged.staleRoot) merged.fixtureAuthority = true;
+    return merged;
+  };
 
   const remote = join(tmp, "fake-remote");
   writeAuthority(remote, {
@@ -90,15 +95,15 @@ try {
     assert.match(verifyReviewerProvenance(r, report).error, /hash mismatch/);
     report.standards.sha256 = r.sha256;
     report.standards.revision = "reviewer-owned-revision";
-    assert.deepEqual(verifyReviewerProvenance(r, report), { ok: true });
+    assert.match(verifyReviewerProvenance(r, report).error, /provenance schema is invalid/);
     report.standards.revision = 7;
-    assert.match(verifyReviewerProvenance(r, report).error, /revision claim is malformed/);
+    assert.match(verifyReviewerProvenance(r, report).error, /revision claim is malformed|provenance schema is invalid/);
     delete report.standards.revision;
     const bound = bindReviewerProvenance(r, report);
     assert.equal(bound.binding.owner, "coop"); assert.equal(bound.binding.revision, r.revision);
     assert.match(verifyReviewerProvenance(r, report, { ...bound.binding, revision: "tampered" }).error, /binding mismatch/);
     delete report.standards;
-    assert.match(verifyReviewerProvenance(r, report).error, /provenance is missing/);
+    assert.match(verifyReviewerProvenance(r, report).error, /provenance is missing|unknown or missing fields/);
     assert.match(verifyReviewerProvenance(r, null).error, /envelope is missing|provenance is missing/);
   });
 
@@ -158,8 +163,7 @@ try {
 
     const explicitRevision = reviewerScript("explicit-revision-reviewer", `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; import {resolve} from "node:path"; const a=process.argv.slice(2), i=a.indexOf("--standards"), p=resolve(i>=0?a[i+1]:${JSON.stringify(sqlBundled)}), sha256=createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({tool:"coop-sql-review",schema_version:4,version:"test",files_checked:0,standards:{path:p,sha256,revision:"standard-r7"},findings:[],diagnostics:[],agent_review:[],summary:{error:0,warning:0,info:0},verdict:{clean:true,highest_severity:null}}));`);
     const explicit = resolveStandard("sql", opts({ cwd: tmp, canonicalRoot: join(tmp, "missing"), staleRoot: join(tmp, "missing2"), reviewerBins: { sql: explicitRevision } }));
-    assert.equal(explicit.state, "bundled_fallback"); assert.equal(explicit.revision, "reviewer-test");
-    assert.deepEqual(verifyReviewerProvenance(explicit, reviewerReport(explicitRevision, explicit)), { ok: true });
+    assert.equal(explicit.state, "unavailable");
 
     const malformedRevision = reviewerScript("malformed-revision-reviewer", `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; const p=${JSON.stringify(sqlBundled)}, sha256=createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({standards:{path:p,sha256,revision:7},findings:[]}));`);
     assert.equal(resolveStandard("sql", opts({ cwd: tmp, canonicalRoot: join(tmp, "missing"), staleRoot: join(tmp, "missing2"), reviewerBins: { sql: malformedRevision } })).state, "unavailable");
@@ -201,15 +205,15 @@ try {
   test("STD-10", "sync, Doctor lines, and Support independently report truthful canonical state", () => {
     assert.equal(syncCanonicalLocal(remote, canonical).ok, true);
     const status = sourceStatus(opts({ cwd: tmp, canonicalRoot: canonical }));
-    assert.equal(status.canonical_remote, CANONICAL_REMOTE_STATE); assert.equal(status.sources[0].state, "available");
+    assert.equal(status.canonical_remote, CANONICAL_REMOTE_STATE); assert.equal(status.sources[0].state, "unavailable");
     const env = { ...process.env, COOP_STANDARDS_ROOT: canonical, COOP_STANDARDS_LKG_ROOT: join(tmp, "none"), COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "support-home"), NO_COLOR: "1" };
     const lines = execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
-    assert.match(lines, /canonical-remote\tconfigured\thttps:\/\/github\.com\/cooptimize\/coop-standards\.git\|main/); assert.match(lines, /cooptimize-formal-standards\tstale_last_known_good/);
+    assert.match(lines, /canonical-remote\tconfigured\thttps:\/\/github\.com\/cooptimize\/coop-standards\.git\|main/); assert.match(lines, /cooptimize-formal-standards\tunavailable/);
     const doctor = spawnSync("bash", [join(ROOT, "scripts", "doctor.sh")], { cwd: tmp, encoding: "utf8", env });
     assert.match(`${doctor.stdout}\n${doctor.stderr}`, /source canonical-remote: configured/);
-    assert.match(`${doctor.stdout}\n${doctor.stderr}`, /source cooptimize-formal-standards: stale_last_known_good/);
+    assert.match(`${doctor.stdout}\n${doctor.stderr}`, /source cooptimize-formal-standards: unavailable/);
     const support = JSON.parse(execFileSync(process.execPath, [join(ROOT, "lib", "support-center-cli.mjs"), "--json"], { encoding: "utf8", env }));
-    assert.equal(support.manifest.components.find((x) => x.component === "standards").status, "ok");
+    assert.equal(support.manifest.components.find((x) => x.component === "standards").status, "degraded");
     assert.equal(support.standards.canonical_remote, CANONICAL_REMOTE_STATE);
   });
 
@@ -266,8 +270,8 @@ try {
       assert.notEqual(resolveStandard("sql", opts({ cwd: tmp, canonicalRoot: root, staleRoot: join(tmp, "none") })).state, "canonical");
     }
     const dirty = join(tmp, "canonical-dirty"); execFileSync("git", ["clone", "-q", canonical, dirty]); writeFileSync(join(dirty, "dirty.txt"), "preserve");
-    assert.equal(sourceStatus(opts({ canonicalRoot: dirty })).sources[0].state, "dirty_preserved");
-    assert.notEqual(resolveStandard("sql", opts({ cwd: tmp, canonicalRoot: dirty, staleRoot: join(tmp, "none") })).state, "canonical");
+    assert.equal(sourceStatus(opts({ canonicalRoot: dirty })).sources[0].state, "unavailable");
+    assert.notEqual(resolveStandard("sql", { cwd: tmp, canonicalRoot: dirty, snapshotRoot: snapshots, reviewerBins, refresh: false }).state, "canonical");
     assert.equal(readFileSync(join(dirty, "dirty.txt"), "utf8"), "preserve");
   });
 

@@ -44,7 +44,7 @@ if [ -n "\$out" ]; then
     bad_path) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":"/wrong/path","sha256":"%s"},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$hash" > "\$out" ;;
     bad_hash) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":"%s","sha256":"%064d"},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$standard" 0 > "\$out" ;;
     bad_revision) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":"%s","sha256":"%s","revision":7},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$standard" "\$hash" > "\$out" ;;
-    *) count_key=files_checked; [ "$t" = coop-dax-review ] && count_key=models_checked; printf '{"tool":"%s","schema_version":$schema,"version":"test","%s":1,"standards":{"path":"%s","sha256":"%s"},"findings":[{"file":"fixture","line":1,"rule_id":"TEST","message":"test finding","severity":"warning"}],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":1,"info":0},"verdict":{"clean":false,"highest_severity":"warning"}}' "$t" "\$count_key" "\$standard" "\$hash" > "\$out" ;;
+    *) count_key=files_checked; model_field=''; [ "$t" = coop-dax-review ] && { count_key=models_checked; model_field='"model":"fixture-model",'; }; printf '{"tool":"%s","schema_version":$schema,"version":"test","%s":1,"standards":{"path":"%s","sha256":"%s"},"findings":[{"file":"fixture","line":1,"rule_id":"TEST","message":"test finding","severity":"warning",%s"object":"fixture","standard_ref":"§1","fingerprint":"%064d"}],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":1,"info":0},"verdict":{"clean":false,"highest_severity":"warning"}}' "$t" "\$count_key" "\$standard" "\$hash" "\$model_field" 0 > "\$out" ;;
   esac
 fi
 exit "\$rc"
@@ -86,12 +86,18 @@ run_review() {  # [extra coop args...] — runs `coop review` from $TMP/proj wit
 #    build received BOTH --reviews files.
 out="$(run_review 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] || { printf '%s\n' "$out" >&2; fail "coop review should exit 0 (got $rc)"; }
-[ -f "$TMP/proj/.coop/reviews/coop-sql-review.json" ] || fail "sql JSON missing from .coop/reviews/"
-[ -f "$TMP/proj/.coop/reviews/coop-dax-review.json" ] || fail "dax JSON missing from .coop/reviews/"
-"$PY" -c "import json,sys; json.load(open(sys.argv[1]))" "$TMP/proj/.coop/reviews/coop-sql-review.json" \
-  || fail "the saved sql report is not valid JSON"
+accepted_json="$TMP/accepted-run.json"
+node "$ROOT/lib/standards-cli.mjs" accepted-run "$TMP/proj/.coop/reviews" >"$accepted_json" || fail "accepted generation pointer missing"
+sql_json="$(node "$ROOT/lib/standards-cli.mjs" resolution-field "$accepted_json" reports.sql)"
+dax_json="$(node "$ROOT/lib/standards-cli.mjs" resolution-field "$accepted_json" reports.dax)"
+sql_binding="$(node "$ROOT/lib/standards-cli.mjs" resolution-field "$accepted_json" bindings.sql)"
+dax_binding="$(node "$ROOT/lib/standards-cli.mjs" resolution-field "$accepted_json" bindings.dax)"
+[ -f "$sql_json" ] || fail "sql JSON missing from accepted generation"
+[ -f "$dax_json" ] || fail "dax JSON missing from accepted generation"
+"$PY" -c "import json,sys; json.load(open(sys.argv[1]))" "$sql_json" \
+  || fail "the accepted sql report is not valid JSON"
 "$PY" -c 'import json,sys; r=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2])); assert "revision" not in r["standards"]; assert b["owner"]=="coop" and b["revision"]=="project-local" and b["path"]==r["standards"]["path"] and b["sha256"]==r["standards"]["sha256"]' \
-  "$TMP/proj/.coop/reviews/coop-sql-review.json" "$TMP/proj/.coop/reviews/coop-sql-review.provenance.json" \
+  "$sql_json" "$sql_binding" \
   || fail "aggregate wrapper provenance binding is missing or rewrote reviewer claims"
 for t in coop-sql-review coop-dax-review; do
   grep -q "check $TMP/proj/sqlrepo --format json" "$TMP/$t.args.log" || fail "$t did not get the contract scope"
@@ -105,8 +111,8 @@ case "$dax_snapshot" in "$TMP"/snapshots/*-dax.md) ;; *) fail "DAX aggregate rev
 cmp -s "$sql_snapshot" "$TMP/proj/standards/sql.md" || fail "SQL snapshot is not byte-identical to the project standard"
 cmp -s "$dax_snapshot" "$TMP/proj/standards/dax.md" || fail "DAX snapshot is not byte-identical to the project standard"
 grep -q -- "build --non-interactive" "$TMP/coop-data-doc.args.log" || fail "data-doc build --non-interactive not invoked"
-grep -q -- "--reviews $TMP/proj/.coop/reviews/coop-sql-review.json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the sql --reviews file"
-grep -q -- "--reviews $TMP/proj/.coop/reviews/coop-dax-review.json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the dax --reviews file"
+grep -q -- "--reviews $sql_json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the pinned sql report"
+grep -q -- "--reviews $dax_json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the pinned dax report"
 pass "contract scope + same-source standards: JSONs saved, missing skipped, exact standards and reviews passed"
 
 # 1b. Configured canonical review paths must never expose a rejected current
@@ -117,10 +123,10 @@ reviews:
   - .coop/reviews/coop-sql-review.json
   - .coop/reviews/coop-dax-review.json
 EOF
-cp "$TMP/proj/.coop/reviews/coop-sql-review.json" "$TMP/sql.accepted"
-cp "$TMP/proj/.coop/reviews/coop-dax-review.json" "$TMP/dax.accepted"
-cp "$TMP/proj/.coop/reviews/coop-sql-review.provenance.json" "$TMP/sql-binding.accepted"
-cp "$TMP/proj/.coop/reviews/coop-dax-review.provenance.json" "$TMP/dax-binding.accepted"
+cp "$sql_json" "$TMP/sql.accepted"
+cp "$dax_json" "$TMP/dax.accepted"
+cp "$sql_binding" "$TMP/sql-binding.accepted"
+cp "$dax_binding" "$TMP/dax-binding.accepted"
 mkdir -p "$TMP/proj/.coop/reviews/rejected"
 for mode in no_report malformed missing bad_path bad_hash bad_revision; do
   before_quarantine="$(find "$TMP/proj/.coop/reviews/rejected" -type f -size +0c | wc -l | tr -d ' ')"
@@ -129,10 +135,11 @@ for mode in no_report malformed missing bad_path bad_hash bad_revision; do
   out="$(COOP_TEST_PROVENANCE_MODE="$mode" run_review --html 2>&1)" || rc=$?
   [ "$rc" -eq 2 ] || fail "$mode provenance should fail closed with exit 2 (got $rc)"
   case "$out" in *"run rejected"*) ;; *) fail "$mode rejection diagnostic missing" ;; esac
-  cmp -s "$TMP/sql.accepted" "$TMP/proj/.coop/reviews/coop-sql-review.json" || fail "$mode replaced the accepted SQL report"
-  cmp -s "$TMP/dax.accepted" "$TMP/proj/.coop/reviews/coop-dax-review.json" || fail "$mode replaced the accepted DAX report"
-  cmp -s "$TMP/sql-binding.accepted" "$TMP/proj/.coop/reviews/coop-sql-review.provenance.json" || fail "$mode replaced the trusted SQL binding"
-  cmp -s "$TMP/dax-binding.accepted" "$TMP/proj/.coop/reviews/coop-dax-review.provenance.json" || fail "$mode replaced the trusted DAX binding"
+  node "$ROOT/lib/standards-cli.mjs" accepted-run "$TMP/proj/.coop/reviews" >"$accepted_json" || fail "$mode destroyed accepted pointer"
+  cmp -s "$TMP/sql.accepted" "$(node "$ROOT/lib/standards-cli.mjs" resolution-field "$accepted_json" reports.sql)" || fail "$mode replaced the accepted SQL report"
+  cmp -s "$TMP/dax.accepted" "$(node "$ROOT/lib/standards-cli.mjs" resolution-field "$accepted_json" reports.dax)" || fail "$mode replaced the accepted DAX report"
+  cmp -s "$TMP/sql-binding.accepted" "$(node "$ROOT/lib/standards-cli.mjs" resolution-field "$accepted_json" bindings.sql)" || fail "$mode replaced the trusted SQL binding"
+  cmp -s "$TMP/dax-binding.accepted" "$(node "$ROOT/lib/standards-cli.mjs" resolution-field "$accepted_json" bindings.dax)" || fail "$mode replaced the trusted DAX binding"
   [ ! -f "$TMP/coop-data-doc.args.log" ] || fail "$mode reached configured coop-data-doc ingestion"
   [ ! -f "$TMP/proj/.coop/reviews/suite.html" ] || fail "$mode generated suite HTML from a rejected or stale report"
   if [ "$mode" != no_report ]; then
@@ -148,10 +155,11 @@ for pair in "valid bad_hash" "bad_hash valid"; do
   rm -f "$TMP/coop-data-doc.args.log"
   rc=0; out="$(COOP_TEST_SQL_MODE="$1" COOP_TEST_DAX_MODE="$2" run_review --html 2>&1)" || rc=$?
   [ "$rc" -eq 2 ] || fail "asymmetric $pair should fail closed"
-  cmp -s "$TMP/sql.accepted" "$TMP/proj/.coop/reviews/coop-sql-review.json" || fail "asymmetric $pair advanced SQL"
-  cmp -s "$TMP/dax.accepted" "$TMP/proj/.coop/reviews/coop-dax-review.json" || fail "asymmetric $pair advanced DAX"
-  cmp -s "$TMP/sql-binding.accepted" "$TMP/proj/.coop/reviews/coop-sql-review.provenance.json" || fail "asymmetric $pair advanced SQL binding"
-  cmp -s "$TMP/dax-binding.accepted" "$TMP/proj/.coop/reviews/coop-dax-review.provenance.json" || fail "asymmetric $pair advanced DAX binding"
+  node "$ROOT/lib/standards-cli.mjs" accepted-run "$TMP/proj/.coop/reviews" >"$accepted_json" || fail "asymmetric $pair destroyed accepted pointer"
+  cmp -s "$TMP/sql.accepted" "$(node "$ROOT/lib/standards-cli.mjs" resolution-field "$accepted_json" reports.sql)" || fail "asymmetric $pair advanced SQL"
+  cmp -s "$TMP/dax.accepted" "$(node "$ROOT/lib/standards-cli.mjs" resolution-field "$accepted_json" reports.dax)" || fail "asymmetric $pair advanced DAX"
+  cmp -s "$TMP/sql-binding.accepted" "$(node "$ROOT/lib/standards-cli.mjs" resolution-field "$accepted_json" bindings.sql)" || fail "asymmetric $pair advanced SQL binding"
+  cmp -s "$TMP/dax-binding.accepted" "$(node "$ROOT/lib/standards-cli.mjs" resolution-field "$accepted_json" bindings.dax)" || fail "asymmetric $pair advanced DAX binding"
   [ ! -f "$TMP/proj/.coop/reviews/suite.html" ] || fail "asymmetric $pair emitted partial suite HTML"
   [ ! -f "$TMP/coop-data-doc.args.log" ] || fail "asymmetric $pair reached data-doc"
 done
@@ -213,14 +221,16 @@ pass "no contract + no paths dies with guidance, no blind cwd scan"
 # 7. --compare: after a prior report exists, each linter is handed --diff-against a
 #    snapshot of the previous report; a first run (no prior report) passes none.
 reviews="$TMP/proj/.coop/reviews"
-rm -f "$TMP"/coop-*.args.log "$reviews"/*.json
+rm -f "$TMP"/coop-*.args.log "$reviews"/active-review-generation.json
+rm -rf "$reviews"/accepted-generations
 run_review --skip-docs >/dev/null 2>&1                       # baseline run: writes the reports
 rm -f "$TMP"/coop-*.args.log
 out="$(run_review --skip-docs --compare 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] || { printf '%s\n' "$out" >&2; fail "coop review --compare should exit 0 (got $rc)"; }
 grep -q -- "--diff-against" "$TMP/coop-sql-review.args.log" || fail "--compare did not pass --diff-against to coop-sql-review"
 grep -q -- "--diff-against" "$TMP/coop-dax-review.args.log" || fail "--compare did not pass --diff-against to coop-dax-review"
-rm -f "$TMP"/coop-*.args.log "$reviews"/*.json               # no prior report now
+rm -f "$TMP"/coop-*.args.log "$reviews"/active-review-generation.json
+rm -rf "$reviews"/accepted-generations               # no prior report now
 run_review --skip-docs --compare >/dev/null 2>&1
 grep -q -- "--diff-against" "$TMP/coop-sql-review.args.log" && fail "--compare on a first run must not pass --diff-against"
 pass "--compare diffs against the previous report (baseline no-op on the first run)"
