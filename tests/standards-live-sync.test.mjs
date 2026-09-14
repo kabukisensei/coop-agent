@@ -35,7 +35,9 @@ try {
     const error = (code) => { const value = new Error(code); value.code = code; return value; };
     assert.throws(() => fsyncDirectory(tmp, { platform: "linux", fsync: () => { throw error("EIO"); } }), /EIO/);
     assert.throws(() => fsyncDirectory(tmp, { platform: "win32", fsync: () => { throw error("ENOSPC"); } }), /ENOSPC/);
-    assert.doesNotThrow(() => fsyncDirectory(tmp, { platform: "win32", fsync: () => { throw error("EINVAL"); } }));
+    for (const code of ["EINVAL", "EPERM"]) {
+      assert.doesNotThrow(() => fsyncDirectory(tmp, { platform: "win32", fsync: () => { throw error(code); } }));
+    }
   });
   test("production registry pins private main and verified anchor", () => {
     const r = standardsRegistry();

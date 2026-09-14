@@ -56,7 +56,11 @@ def git_repo(base: Path, name: str, skills: dict[str, str]) -> tuple[str, str]:
     for skill, body in skills.items():
         d = repo / "skills" / skill
         d.mkdir(parents=True)
-        (d / "SKILL.md").write_text(body, encoding="utf-8")
+        skill_md = d / "SKILL.md"
+        payload = body.encode("utf-8")
+        # Keep fixture hashes independent of Windows text-mode newline translation.
+        skill_md.write_bytes(payload)
+        assert skill_md.read_bytes() == payload
     run(["git", "add", "."], repo)
     run(["git", "commit", "-q", "-m", "seed"], repo)
     return repo.as_uri(), run(["git", "rev-parse", "HEAD"], repo)
