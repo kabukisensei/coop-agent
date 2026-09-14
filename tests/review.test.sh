@@ -120,8 +120,9 @@ dax_snapshot="$("$PY" -c 'import sys; a=open(sys.argv[1]).read().split(); print(
   "$dax_snapshot" "$TMP/proj/standards/dax.md" \
   || fail "DAX snapshot is not byte-identical to the project standard"
 grep -q -- "build --non-interactive" "$TMP/coop-data-doc.args.log" || fail "data-doc build --non-interactive not invoked"
-grep -q -- "--reviews $sql_json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the pinned sql report"
-grep -q -- "--reviews $dax_json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the pinned dax report"
+"$PY" -c 'from pathlib import Path; import sys; a=Path(sys.argv[1]).read_text().split(); got=[Path(a[i+1]).resolve() for i,v in enumerate(a[:-1]) if v=="--reviews"]; expected=[Path(v).resolve() for v in sys.argv[2:]]; raise SystemExit(0 if got==expected else 1)' \
+  "$TMP/coop-data-doc.args.log" "$sql_json" "$dax_json" \
+  || fail "data-doc did not receive the exact pinned SQL and DAX reports"
 pass "contract scope + same-source standards: JSONs saved, missing skipped, exact standards and reviews passed"
 
 # 1b. Configured canonical review paths must never expose a rejected current
