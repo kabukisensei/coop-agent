@@ -50,6 +50,12 @@ try {
       assert.equal(Object.isFrozen(r) && Object.isFrozen(r.canonical) && Object.isFrozen(r.canonical.domains), true);
       assert.throws(() => { r.canonical.repository = remote; }, TypeError);
       assert.throws(() => standardsRegistry({ registryPath }), /explicit fixture/);
+      assert.throws(() => standardsRegistry({ remote }), /explicit fixture/);
+      const registryUrl = new URL("../config/standards-registry.json", import.meta.url).href;
+      const standardsUrl = new URL("../lib/standards.mjs", import.meta.url).href;
+      const mutationProbe = `const r=(await import(${JSON.stringify(registryUrl)},{with:{type:"json"}})).default;r.canonical.repository="https://attacker.invalid/standards.git";try{await import(${JSON.stringify(standardsUrl)}+"?mutated-authority");process.exit(9)}catch(e){if(!String(e).includes("differs from immutable managed authority")){console.error(e);process.exit(8)}}`;
+      const mutationResult = spawnSync(process.execPath, ["--input-type=module", "-e", mutationProbe], { encoding: "utf8" });
+      assert.equal(mutationResult.status, 0, mutationResult.stderr || mutationResult.stdout);
       const productionRoot = join(tmp, "production-cache", "canonical");
       const productionState = join(tmp, "production-cache", "status.json");
       const status = sourceStatus({ canonicalRoot: productionRoot, statePath: productionState, snapshotRoot: join(tmp, "production-snapshots"), refresh: false });
