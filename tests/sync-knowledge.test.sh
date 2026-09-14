@@ -470,7 +470,7 @@ if [ "$WIN" = "1" ]; then
   # MSYS may expose a POSIX-emulation PID in $$; native Windows process APIs
   # require bash.exe's real Win32 PID. Run a direct child (not $(...), which
   # adds a subshell) and have it record that exact parent.
-  if ! "$PY" -c 'import os,sys; open(sys.argv[1], "w").write(str(os.getppid()) + "\n")' \
+  if ! "$PY" -c 'import os,sys; open(sys.argv[1], "wb").write((str(os.getppid()) + "\n").encode("ascii"))' \
     "$TMP/native-root.pid"; then
     ko "F: native Windows root PID discovery command failed"
     exit 1
