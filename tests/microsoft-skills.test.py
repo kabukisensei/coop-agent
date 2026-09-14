@@ -269,7 +269,9 @@ with tempfile.TemporaryDirectory() as td:
 
     rc, dirs = capture(mskills.launch_dirs, project)
     assert rc == 0
-    assert len(dirs) == 4 and all("/catalogs/microsoft/generations/" in d for d in dirs)
+    assert len(dirs) == 4 and all(
+        "/catalogs/microsoft/generations/" in Path(d).as_posix() for d in dirs
+    )
 
     # The writable pointer and receipt cannot authorize coordinated skill,
     # generation, repository, revision, path, or manifest-metadata forgeries.
