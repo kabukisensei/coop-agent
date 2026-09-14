@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -118,9 +120,14 @@ def fixture_manifest(ms_url: str, ms_rev: str, fab_url: str, fab_rev: str) -> di
             },
         },
     }
+
+    def file_url_path(url: str) -> Path:
+        parsed = urllib.parse.urlparse(url)
+        return Path(urllib.request.url2pathname(parsed.path))
+
     roots = {
-        "microsoft_skills": Path(ms_url.removeprefix("file://")),
-        "fabric_skills": Path(fab_url.removeprefix("file://")),
+        "microsoft_skills": file_url_path(ms_url),
+        "fabric_skills": file_url_path(fab_url),
     }
     for repo_key, repo in manifest["repositories"].items():
         for meta in repo["skills"].values():
