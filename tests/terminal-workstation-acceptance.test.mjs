@@ -26,7 +26,7 @@ const automatedIds = [
 const operatorIds = [
   "fresh-candidate-install", "real-provider-auth", "real-model-response", "copied-repo-workflow",
   "decline-no-partial-write", "stop-and-continue", "reopen-resume", "teamai-failure-isolation",
-  "rollback-instructions", "snapshot-recovery",
+  "rollback-instructions", "warehouse-mcp-live-acceptance", "snapshot-recovery",
 ];
 const phaseFor = {
   "identity-and-isolation": "PRECHECK", "baseline-source-install": "BASELINE",

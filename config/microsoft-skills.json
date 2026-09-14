@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "policy_default": "baseline",
+  "dependencies": {
+    "refresh": [
+      "git",
+      "python3"
+    ],
+    "launch": [
+      "python3"
+    ],
+    "mcp": {
+      "mcp-remote": "0.1.38"
+    }
+  },
+  "repositories": {
+    "microsoft_skills": {
+      "url": "https://github.com/microsoft/skills.git",
+      "revision": "903dc62b1e4c833235b54db918a9a51cb6d3cc8f",
+      "approved_domains": [
+        "github.com"
+      ],
+      "baseline": [
+        "kql",
+        "microsoft-docs"
+      ],
+      "skills": {
+        "kql": {
+          "path": "skills/kql",
+          "approved_optional": true
+        },
+        "microsoft-docs": {
+          "path": "skills/microsoft-docs",
+          "approved_optional": true
+        }
+      }
+    },
+    "fabric_skills": {
+      "url": "https://github.com/microsoft/skills-for-fabric.git",
+      "revision": "28f29abf3838e13f63a38e8664042b7d9f7cd69c",
+      "version": "v0.3.10",
+      "approved_domains": [
+        "github.com"
+      ],
+      "baseline": [
+        "sqldw-authoring-cli",
+        "sqldw-consumption-cli"
+      ],
+      "skills": {
+        "sqldw-authoring-cli": {
+          "path": "skills/sqldw-authoring-cli",
+          "frontmatter_name": "sqldw-authoring-cli",
+          "approved_optional": true
+        },
+        "sqldw-consumption-cli": {
+          "path": "skills/sqldw-consumption-cli",
+          "frontmatter_name": "sqldw-consumption-cli",
+          "approved_optional": true
+        },
+        "sqldw-operations-cli": {
+          "path": "skills/sqldw-operations-cli",
+          "frontmatter_name": "sqldw-operations-cli",
+          "approved_optional": false,
+          "deferred": true
+        }
+      }
+    }
+  }
+}

@@ -180,6 +180,17 @@ if have node; then
   coop_info "canonical standards: ${_standards_sync:-refresh unavailable; LKG preserved}"
 fi
 
+# --- 5d. Official Microsoft skills catalog (fail-soft; launch uses LKG only) --
+if [ -n "$_mcp_py" ]; then
+  if "$_mcp_py" "$COOP_ROOT/lib/microsoft_skills.py" refresh >/dev/null 2>&1; then
+    coop_ok "Microsoft skills catalog refreshed"
+  else
+    coop_warn "Microsoft skills catalog refresh unavailable; launch will use last-known-good if present"
+  fi
+else
+  coop_warn "python missing — cannot refresh Microsoft skills catalog"
+fi
+
 # --- 6. Brand assets ---------------------------------------------------------
 coop_head "Brand assets"
 [ -f "$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi" ] && coop_ok "splash present" || coop_warn "splash.ansi missing (regenerate from the logo)"

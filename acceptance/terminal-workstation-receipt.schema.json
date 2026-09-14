@@ -365,6 +365,22 @@
             ],
             "properties": {
               "id": {
+                "const": "warehouse-mcp-live-acceptance"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
                 "const": "snapshot-recovery"
               }
             }
@@ -454,8 +470,8 @@
             "type": "array"
           },
           "operator_evidence": {
-            "minItems": 10,
-            "maxItems": 10,
+            "minItems": 11,
+            "maxItems": 11,
             "type": "array"
           }
         },
@@ -1243,6 +1259,63 @@
                       ],
                       "properties": {
                         "id": {
+                          "const": "warehouse-mcp-live-acceptance"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        },
+                        "evidence": {
+                          "contains": {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "observed"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "const": "OPERATOR_OBSERVATION"
+                              },
+                              "observed": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          },
+                          "minContains": 1,
+                          "type": "array"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "minContains": 1,
+                "maxContains": 1,
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operator_evidence": {
+                "contains": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/operatorClaim"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required",
+                        "evidence"
+                      ],
+                      "properties": {
+                        "id": {
                           "const": "snapshot-recovery"
                         },
                         "status": {
@@ -1617,6 +1690,7 @@
                 "reopen-resume",
                 "teamai-failure-isolation",
                 "rollback-instructions",
+                "warehouse-mcp-live-acceptance",
                 "snapshot-recovery"
               ]
             }

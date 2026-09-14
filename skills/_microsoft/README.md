@@ -1,102 +1,79 @@
-# `_microsoft/` — official Microsoft skills (subordinate, opt-in)
+# Official Microsoft Skills Catalog
 
-This folder holds **official Microsoft agent skills**. They are wired to be
-**subordinate to Cooptimize skills**: yours always win.
+Official Microsoft skills are not vendored into this repository. `coop sync`
+refreshes a pinned, immutable catalog under the effective Coop/Pi agent directory:
 
-Two sources are configured in `.coop/project.yml`:
-
-- [`github.com/microsoft/skills`](https://github.com/microsoft/skills) — Azure SDK
-  / AI-Foundry / KQL / Microsoft Docs skills. Fetched into `skills/_microsoft/`.
-- [`github.com/microsoft/skills-for-fabric`](https://github.com/microsoft/skills-for-fabric) —
-  Power BI and Microsoft Fabric authoring skills (PBIR, TMDL/DAX, SQL, KQL,
-  notebooks, pipelines, deployment). Fetched into `skills/_microsoft_fabric/`.
-
-Both are fetched by `scripts/fetch-microsoft-skills.sh` into their configured
-`load_dir`.
-
-A Microsoft skill is surfaced by coop only when **all** of these are true:
-
-1. it is **allow-listed** in its source block (`microsoft_skills.allow[]` or
-   `fabric_skills.allow[]`) in `.coop/project.yml`, and
-2. it does **not conflict** with a Cooptimize skill — by folder name *or* by
-   frontmatter `name:`. On any conflict, coop **skips the Microsoft skill** and
-   keeps ours (you'll see a `skipping Microsoft skill …` warning).
-
-Empty `allow[]` (the default) loads **none** — matching Microsoft's own guidance to
-"use skills selectively" and avoid context rot.
-
-## Fetching
-
-Fetched skills are **not vendored** into this repo (they're gitignored), so coop-agent
-stays small and the Microsoft skills update independently. Pull the allow-listed,
-non-conflicting ones with:
-
-```bash
-scripts/fetch-microsoft-skills.sh
+```text
+catalogs/microsoft/generations/<generation>/
+catalogs/microsoft/current.json
+catalogs/microsoft/fetch-state.json
 ```
 
-It shallow-clones each source into `.cache/microsoft-skills` and
-`.cache/microsoft-skills-for-fabric` (gitignored) and copies each allow-listed skill
-into `skills/_microsoft/<name>/` or `skills/_microsoft_fabric/<name>/`.
+Launch reads only `current.json` and the local generation it points to. Launch does
+not clone, fetch, or contact GitHub. If refresh is offline or unavailable, Coop
+continues from the last-known-good catalog; if no catalog has ever been fetched, no
+Microsoft skills load.
 
-## Required tooling for Fabric/Power BI authoring skills
+The only approved upstreams, exact commits, paths, and skill names live in
+[`config/microsoft-skills.json`](../../config/microsoft-skills.json):
 
-The `skills-for-fabric` skills need extra tooling that `coop install` / `coop update`
-will install automatically:
+- `microsoft/skills` at `903dc62b1e4c833235b54db918a9a51cb6d3cc8f`: `kql`,
+  `microsoft-docs`.
+- `microsoft/skills-for-fabric` v0.3.10 at
+  `28f29abf3838e13f63a38e8664042b7d9f7cd69c`: `sqldw-authoring-cli`,
+  `sqldw-consumption-cli`.
+- `sqldw-operations-cli` is deferred metadata and is not fetched or launched by
+  default.
 
-| Tool | Package | Used by |
-|---|---|---|
-| `powerbi-report-author` | `@microsoft/powerbi-report-authoring-cli` | `powerbi-report-authoring` — validate and edit PBIR files |
-| `powerbi-desktop` | `@microsoft/powerbi-desktop-bridge-cli` | `powerbi-report-authoring` — reload Desktop, screenshots *(Windows + Power BI Desktop only)* |
-| `powerbi-modeling-mcp` | `@microsoft/powerbi-modeling-mcp` | `semantic-model-authoring`, `powerbi-report-*` — edit semantic models / query metadata |
+## Project Policy
 
-Install/update them manually if you skipped `coop install`:
+Project contracts select from the pinned catalog:
 
-```bash
-npm install -g @microsoft/powerbi-report-authoring-cli @microsoft/powerbi-modeling-mcp
-# Windows only, requires Power BI Desktop:
-npm install -g @microsoft/powerbi-desktop-bridge-cli
+```yaml
+microsoft_skills:
+  policy: restricted
+  allow:
+    - "kql"
+    - "microsoft-docs"
+
+fabric_skills:
+  policy: baseline
 ```
 
-`powerbi-modeling-mcp` is generated from the release manifest and `~/.coop/config`;
-`coop sync` converges its managed entry in `~/.coop/agent/mcp.json`.
+Policies are `baseline`, `restricted`, or `disabled`. Legacy `source` and
+`load_dir` fields are ignored and reported as migration notices by `coop doctor`.
+The compatibility script `scripts/fetch-microsoft-skills.sh` delegates to the same
+catalog refresh path as `coop sync`; new docs and workflows should use `coop sync`.
 
-### Remote Fabric MCP servers
+Every Microsoft skill remains subordinate: it loads only when the current project
+policy allows it and it does not conflict by folder or frontmatter `name:` with a
+Cooptimize skill.
 
-Some Fabric skills talk to **remote HTTP MCP servers** hosted by Microsoft Fabric
-(rather than local packages). These cannot be auto-installed; you must add them to
-your MCP config with a valid bearer token:
+## Warehouse MCP
 
-- **FabricIQ** — natural-language Q&A over Power BI reports (`fabriciq` skill).  
-  URL: `https://api.fabric.microsoft.com/v1/mcp/fabricaihub/integrations/m365`  
-  Header: `X-VARIANTS: Fabric.Routing.PowerBIDataExploration`  
-  Token audience: `https://analysis.windows.net/powerbi/api`
-- **Fabric Warehouse / SQL endpoint** — T-SQL execution (`sqldw-*` skills).  
-  URL: provided by your organization / Microsoft Fabric tenant.
+Fabric Warehouse SQL uses the managed remote HTTP MCP server registered as
+`fabric-sqlendpoint`, distinct from the general Fabric MCP server. `coop sync`
+generates an `mcp-remote@0.1.38` entry with native OAuth:
 
-See the upstream [`mcp-setup/README.md`](https://github.com/microsoft/skills-for-fabric/tree/main/mcp-setup)
-for the exact config shape. `coop doctor` will warn if the local `powerbi-report-author`
-or `powerbi-modeling-mcp` tooling is missing; it does not check remote server URLs.
+```text
+npx -y mcp-remote@0.1.38 <url> --transport http-only --silent
+```
 
-## Adding a Microsoft skill
+Global URL:
 
-1. Find the skill's folder name in the source (e.g. `kql` or `powerbi-report-authoring`).
-2. Add it to the right `allow[]` block in `.coop/project.yml`
-   (`microsoft_skills.allow[]` for `github.com/microsoft/skills`,
-   `fabric_skills.allow[]` for `github.com/microsoft/skills-for-fabric`).
-3. Run `scripts/fetch-microsoft-skills.sh`.
-4. Run `coop` — it loads only allow-listed, non-conflicting skills.
+```text
+https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint
+```
 
-## Guardrails
+Item URL:
 
-- Subordinate + opt-in: presence is never enough; a skill must be allow-listed and
-  conflict-free to activate.
-- Fabric/Power BI authoring skills may edit PBIR, TMDL, SQL, KQL, notebooks, and
-  Fabric item definitions, but they still run under the Cooptimize guardrails
-  (`docs/guardrails.md`) and the `coop-workflow` skill: read-only first,
-  plan-and-approve before edits, back up, review, show the diff, and **never commit
-  source**. A human at Cooptimize reviews and commits.
-- MCP servers remain read-only by policy; any create/update/delete/deploy/publish
-  action requires explicit approval.
-- Only files inside `coop-agent` are managed here; the upstream Microsoft source is
-  never modified.
+```text
+https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/{workspaceId}/items/{itemId}/sqlEndpoint
+```
+
+Lakehouse item targets use `sqlEndpointProperties.id` for the SQL endpoint item id.
+Coop does not place bearer tokens in MCP config or argv. `coop doctor` performs
+bounded metadata/tool discovery and reports `registered`, `auth_required`,
+`unavailable`, `tool_missing`, or `target_invalid`; it never executes SQL or starts
+an interactive login. Every Warehouse SQL tool call remains approval-gated by the
+guardrails.

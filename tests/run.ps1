@@ -354,6 +354,45 @@ print("resume verdict contract OK")
     Ko "fabric python finder fixture failed: $($finderOut | Out-String)"
   }
 
+  # --- 7c. Microsoft skills catalog deterministic fixture -------------------
+  Head 'Microsoft skills catalog fixture'
+  $pyExe = (Get-Command python3 -ErrorAction SilentlyContinue)
+  if (-not $pyExe) { $pyExe = (Get-Command python -ErrorAction SilentlyContinue) }
+  if ($pyExe) {
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $msOut = & $pyExe.Source (Join-Path $root 'tests\microsoft-skills.test.py') 2>&1
+    $msRc = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorAction
+    if ($msRc -eq 0) {
+      $msOut | ForEach-Object { Write-Host $_ }
+    } else {
+      Ko "Microsoft skills catalog fixture failed: $($msOut | Out-String)"
+    }
+  } else {
+    Ko 'python not available; Microsoft skills catalog fixture cannot run'
+  }
+
+  # --- 7d. Warehouse MCP doctor + P0 acceptance fixtures --------------------
+  Head 'Warehouse MCP and P0 vertical slice fixtures'
+  if ($pyExe) {
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $whOut = & $pyExe.Source (Join-Path $root 'tests\warehouse-mcp.test.py') 2>&1
+    $whRc = $LASTEXITCODE
+    $p0Out = & $pyExe.Source (Join-Path $root 'tests\p0-vertical-slice.test.py') 2>&1
+    $p0Rc = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorAction
+    if ($whRc -eq 0 -and $p0Rc -eq 0) {
+      $whOut | ForEach-Object { Write-Host $_ }
+      $p0Out | ForEach-Object { Write-Host $_ }
+    } else {
+      Ko "Warehouse/P0 fixtures failed: $($whOut | Out-String) $($p0Out | Out-String)"
+    }
+  } else {
+    Ko 'python not available; Warehouse/P0 fixtures cannot run'
+  }
+
   # --- 8. release transaction ------------------------------------------------
   Head 'release transaction consistency'
   # Coop status output intentionally uses stderr. Windows PowerShell 5.1 turns

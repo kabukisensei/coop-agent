@@ -421,8 +421,47 @@ PYEOF
   # Legacy/unmanaged placeholder configs remain actionable; generated COOP entries never contain TODOs.
   mcp_todo="$(grep -c 'TODO-' "$mcp_found" 2>/dev/null)" || mcp_todo=0
   [ "${mcp_todo:-0}" -gt 0 ] && warn "$mcp_todo TODO placeholder(s) remain in mcp.json" "set your tenant/org before live Power BI / Azure DevOps work"
+  _sql_py="$(coop_python 2>/dev/null || true)"
+  if [ -n "$_sql_py" ]; then
+    _sql_project="$(coop_find_project_yml)"
+    _sql_cmd=( "$_sql_py" "$COOP_ROOT/lib/warehouse_mcp.py" doctor-json "$mcp_found" )
+    if [ -n "$_sql_project" ]; then _sql_cmd=( "${_sql_cmd[@]}" --project "$_sql_project" ); fi
+    _sql_cmd=( "${_sql_cmd[@]}" --probe )
+    _sql_doctor="$("${_sql_cmd[@]}" 2>/dev/null || true)"
+    _sql_state="$(printf '%s' "$_sql_doctor" | "$_sql_py" -c 'import json,sys; print((json.load(sys.stdin) if not sys.stdin.isatty() else {}).get("state","unavailable"))' 2>/dev/null || printf unavailable)"
+    _sql_scope="$(printf '%s' "$_sql_doctor" | "$_sql_py" -c 'import json,sys; d=json.load(sys.stdin); print((d.get("target") or {}).get("scope","unknown"))' 2>/dev/null || printf unknown)"
+    case "$_sql_state" in
+      registered) ok "  • fabric-sqlendpoint registered (${_sql_scope} target; managed remote HTTP, native OAuth)" ;;
+      auth_required) warn "  • fabric-sqlendpoint auth_required (${_sql_scope} target)" "sign in with Azure CLI/tenant access; doctor never triggers login" ;;
+      tool_missing) warn "  • fabric-sqlendpoint tool_missing (${_sql_scope} target)" "managed MCP did not advertise executeSQL/execute_query" ;;
+      target_invalid) warn "  • fabric-sqlendpoint target_invalid" "run: coop sync after fixing fabric.default_sql_endpoint / registered URL" ;;
+      unavailable) warn "  • fabric-sqlendpoint unavailable" "run: coop sync; if already configured, retry when network/auth is available" ;;
+      *) warn "  • fabric-sqlendpoint $_sql_state" "run: coop sync" ;;
+    esac
+  else
+    warn "  fabric-sqlendpoint status unavailable" "Python is required"
+  fi
 else
   warn "no MCP config found" "coop sync   (writes a read-only fabric/powerbi/learn config)"
+fi
+
+section "Microsoft skills catalog"
+_cat_py="$(coop_python 2>/dev/null || true)"
+if [ -n "$_cat_py" ]; then
+  while IFS="$(printf '\t')" read -r _kind _name _state _revision _count _target _detail; do
+    [ -n "$_name" ] || continue
+    _catalog_detail="${_detail:+ details $_detail}"
+    case "$_state" in
+      current) ok "$_name: current${_revision:+ @ $_revision} (${_count:-0} skill(s); target ${_target:-unknown})${_catalog_detail}" ;;
+      stale_LKG) warn "$_name: stale_LKG${_revision:+ @ $_revision} (target ${_target:-unknown})${_catalog_detail}" "offline or fetch failed; launch continues from LKG" ;;
+      unavailable|tampered|never_fetched) warn "$_name: $_state${_catalog_detail}" "run: coop sync" ;;
+      *) warn "$_name: $_state${_catalog_detail}" "run: coop sync" ;;
+    esac
+  done <<EOF
+$("$_cat_py" "$COOP_ROOT/lib/microsoft_skills.py" doctor-lines 2>/dev/null)
+EOF
+else
+  warn "Microsoft skills catalog status unavailable" "Python is required"
 fi
 
 section "Standards"
@@ -471,27 +510,7 @@ if [ -n "$proj" ]; then
     case "$_te_path" in ""|TODO*) warn "Tabular Editor enabled but executable_path not set" "set tools.tabular_editor_cli.executable_path in .coop/project.yml" ;; esac
   fi
 
-  # Subordinate skill sources: warn when configured but not yet fetched.
-  for key in microsoft_skills fabric_skills; do
-    src="$(coop_yaml_get "$proj" "$key.source" "")"
-    case "$src" in ""|TODO*) continue ;; esac
-    load_dir="$(coop_yaml_get "$proj" "$key.load_dir" "skills/$key")"
-    allowed="$(coop_yaml_list "$proj" "$key.allow")"
-    [ -n "$allowed" ] || continue
-    missing=0
-    while IFS= read -r skill; do
-      [ -z "$skill" ] && continue
-      case "$skill" in TODO*) continue ;; esac
-      [ -f "$COOP_ROOT/$load_dir/$skill/SKILL.md" ] || missing=$((missing+1))
-    done <<EOF
-$allowed
-EOF
-    if [ "$missing" -gt 0 ]; then
-      warn "$key: $missing allow-listed skill(s) not fetched" "run: scripts/fetch-microsoft-skills.sh"
-    else
-      ok "$key: all allow-listed skills fetched"
-    fi
-  done
+  ok "Microsoft skills project policy is covered by the pinned catalog doctor section"
 else
   warn "no .coop/project.yml found" "copy $COOP_ROOT/.coop/project.example.yml to your repo's .coop/project.yml"
 fi

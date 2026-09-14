@@ -95,7 +95,11 @@ const settings = {
   fabricEnabled: true,
   tenantId: "tenant-123",
   fabricWorkspaceName: "Contoso Dev",
-  fabricWorkspaceId: "workspace-123",
+  fabricWorkspaceId: "11111111-1111-1111-1111-111111111111",
+  sqlEndpointItemType: "Warehouse",
+  sqlEndpointItemName: "Contoso Warehouse",
+  sqlEndpointItemId: "22222222-2222-2222-2222-222222222222",
+  sqlEndpointPropertiesId: "33333333-3333-3333-3333-333333333333",
   powerBiWorkspaceName: "Contoso Dev",
   powerBiWorkspaceId: "pbi-123",
   tabularEditorEnabled: false,
@@ -108,6 +112,13 @@ await t("new-project renderer produces a parseable, governed contract", () => {
   assert.equal(projectYamlScalar(text, ["profile", "client"]), "Contoso");
   assert.equal(projectYamlScalar(text, ["repositories", "analytics", "local_path"]), ".");
   assert.equal(projectYamlScalar(text, ["tools", "fabric_cli", "enabled"]), "true");
+  assert.equal(projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_type"]), "Warehouse");
+  assert.equal(projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_id"]), "22222222-2222-2222-2222-222222222222");
+  assert.equal(projectYamlScalar(text, ["fabric", "default_sql_endpoint", "sqlEndpointProperties", "id"]), "33333333-3333-3333-3333-333333333333");
+  assert.equal(projectYamlScalar(text, ["mcp", "fabric_sqlendpoint", "enabled"]), "true");
+  assert.equal(projectYamlScalar(text, ["fabric_skills", "policy"]), "baseline");
+  assert.doesNotMatch(text, /fabric_skills:\n(?:.*\n){0,4}\s+allow:\s*\[\]/);
+  assert.doesNotMatch(text, /(?:microsoft_skills|fabric_skills):\n(?:.*\n){0,4}\s+(?:source|load_dir):/);
   assert.equal(projectYamlScalar(text, ["logging", "require_task_log"]), "true");
   assert.equal(projectYamlScalar(text, ["estate", "mode"]), "partial");
   assert.equal(projectYamlScalar(text, ["estate", "live_discovery", "production_rows"]), "explicit_scope_and_approval");
@@ -120,6 +131,8 @@ await t("new-project renderer produces a parseable, governed contract", () => {
   const parsed = parseProjectWizardSettings(text, "/work/analytics");
   assert.equal(parsed.repositories[0].role, "sql");
   assert.equal(parsed.tenantId, "tenant-123");
+  assert.equal(parsed.sqlEndpointItemName, "Contoso Warehouse");
+  assert.equal(parsed.sqlEndpointPropertiesId, "33333333-3333-3333-3333-333333333333");
 });
 
 await t("estate modes preserve discovery, partial, mixed, and connected options", () => {

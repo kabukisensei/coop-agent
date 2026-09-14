@@ -8,7 +8,7 @@ At launch, `bin/coop` loads, from this repo:
 
 | What | Where | How it's loaded |
 |------|-------|-----------------|
-| Skills | `skills/<name>/SKILL.md` | each folder auto-loaded (except the allow-listed `skills/_microsoft/`) |
+| Skills | `skills/<name>/SKILL.md` | each first-party folder auto-loaded; Microsoft skills come from the pinned catalog launch slot |
 | Prompt templates | `prompts/<name>.md` | whole folder via `--prompt-template` |
 | Theme | `themes/cooptimize.json` | via `--theme` |
 | Guardrails prompt | `docs/guardrails.md` | via `--append-system-prompt` (advisory; the `coop-guardrails` extension enforces it) |
@@ -162,22 +162,20 @@ and `coop review`.
 
 ## 6. The official-Microsoft-skills slot (subordinate)
 
-Two Microsoft skill sources are supported and are **subordinate to your skills**:
+The pinned Microsoft skills catalog is **subordinate to your skills**:
 
-- `skills/_microsoft/` — [github.com/microsoft/skills](https://github.com/microsoft/skills)
+- [github.com/microsoft/skills](https://github.com/microsoft/skills)
   (Azure SDK / AI-Foundry / KQL / Microsoft Docs).
-- `skills/_microsoft_fabric/` — [github.com/microsoft/skills-for-fabric](https://github.com/microsoft/skills-for-fabric)
+- [github.com/microsoft/skills-for-fabric](https://github.com/microsoft/skills-for-fabric)
   (Power BI / Fabric authoring: PBIR, TMDL/DAX, SQL, KQL, notebooks, pipelines).
 
-A Microsoft skill loads only if it is allow-listed in its source block
-(`microsoft_skills.allow[]` or `fabric_skills.allow[]`) **and** doesn't conflict
-(by folder or frontmatter name) with one of yours — on conflict, yours wins and
-the Microsoft one is skipped. Fabric authoring skills may edit source files, but
+A Microsoft skill loads only if the pinned manifest, current project policy, and
+conflict checks all allow it. Fabric authoring skills may edit source files, but
 they still fall under the coop-workflow guardrails: plan approval, backups,
 review, diff summary, and human commit.
 
-Fetch with `scripts/fetch-microsoft-skills.sh` (fetched skills are gitignored). See
-`skills/_microsoft/README.md`.
+Refresh with `coop sync`; launch uses the local last-known-good catalog and never
+networks. See `skills/_microsoft/README.md`.
 
 ## 7. The team-knowledge slot (subordinate)
 

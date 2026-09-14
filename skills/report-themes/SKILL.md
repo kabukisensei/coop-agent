@@ -172,8 +172,8 @@ plus a sandbox publish (with approval).
 
 ## Deep mechanics
 
-When the subordinate Microsoft `powerbi-report-authoring` skill is loaded
-(`skills/_microsoft_fabric/`), defer to its `references/theming.md` for the full
+When an approved subordinate Microsoft `powerbi-report-authoring` skill is present
+in the pinned catalog, defer to its `references/theming.md` for the full
 theme.json property surface (style presets, ThemeDataColor reference) and
 `references/re-theming.md` for the complete re-theming workflow, color-mapping
 sweep, and dark-mode checklist.

@@ -45,6 +45,7 @@ $script:RequiredOperatorIds = @(
   'reopen-resume',
   'teamai-failure-isolation',
   'rollback-instructions',
+  'warehouse-mcp-live-acceptance',
   'snapshot-recovery'
 )
 
@@ -316,6 +317,10 @@ function Assert-Receipt([object]$Receipt) {
       if ($matches.Count -ne 1 -or $matches[0].status -ne 'PASS' -or -not [bool]$matches[0].required) { throw "required human evidence is not uniquely PASS: $id" }
       $observations = @($matches[0].evidence | Where-Object { $_.kind -eq 'OPERATOR_OBSERVATION' -and -not [string]::IsNullOrWhiteSpace([string]$_.observed) })
       if ($observations.Count -lt 1) { throw "redacted operator observation missing: $id" }
+    }
+    $warehouse = @($Receipt.operator_evidence | Where-Object { $_.id -eq 'warehouse-mcp-live-acceptance' })
+    if ($warehouse.Count -ne 1 -or $warehouse[0].status -ne 'PASS') {
+      throw 'Warehouse MCP live acceptance is a certification blocker until auth, target validation, and tools/list succeed'
     }
   }
   return $true

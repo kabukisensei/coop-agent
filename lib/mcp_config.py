@@ -5,17 +5,32 @@ Unknown and unmarked same-name servers are preserved. COOP updates command/args/
 only for entries listed in top-level `_coop.managed_servers`. A narrow migration removes
 or adopts only legacy COOP placeholders containing TODO-/@latest. No secrets are read.
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
+LIB_DIR = Path(__file__).resolve().parent
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
+
+from warehouse_mcp import (  # noqa: E402
+    find_project_yml,
+    load_project,
+    machine_sqlendpoint_enabled,
+    project_sqlendpoint_enabled,
+    select_target,
+)
+
 SERVER_PACKAGES = {
     "fabric": "@microsoft/fabric-mcp",
+    "fabric-sqlendpoint": "mcp-remote",
     "powerbi": "powerbi-mcp-server",
     "powerbi-modeling-mcp": "@microsoft/powerbi-modeling-mcp",
     "azure-devops": "@azure-devops/mcp",
@@ -52,33 +67,132 @@ def spec(manifest: dict[str, Any], package: str) -> str:
     return f"{package}@{version(manifest, package)}"
 
 
-def desired_servers(manifest: dict[str, Any], config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def remote_http_server(manifest: dict[str, Any], url: str) -> dict[str, Any]:
+    return {
+        "command": "npx",
+        "args": [
+            "-y",
+            spec(manifest, "mcp-remote"),
+            url,
+            "--transport",
+            "http-only",
+            "--silent",
+        ],
+    }
+
+
+def desired_servers(
+    manifest: dict[str, Any],
+    config: dict[str, Any],
+    project: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
     if config and config.get("schema_version") != 1:
         raise ValueError("~/.coop/config schema_version must be 1")
-    integrations = config.get("integrations", {}) if isinstance(config.get("integrations", {}), dict) else {}
+    integrations = (
+        config.get("integrations", {})
+        if isinstance(config.get("integrations", {}), dict)
+        else {}
+    )
     azure = config.get("azure", {}) if isinstance(config.get("azure", {}), dict) else {}
-    ado = config.get("azure_devops", {}) if isinstance(config.get("azure_devops", {}), dict) else {}
-    enabled = lambda name, default=True: integrations.get(name, default) is True
-    tenant = azure.get("tenant_id", "") if isinstance(azure.get("tenant_id", ""), str) else ""
+    ado = (
+        config.get("azure_devops", {})
+        if isinstance(config.get("azure_devops", {}), dict)
+        else {}
+    )
+
+    def enabled(name: str, default: bool = True) -> bool:
+        return integrations.get(name, default) is True
+
+    tenant = (
+        azure.get("tenant_id", "")
+        if isinstance(azure.get("tenant_id", ""), str)
+        else ""
+    )
     tenant_purpose = azure.get("purpose", "client_resources")
     if tenant and tenant_purpose != "client_resources":
-        raise ValueError("~/.coop/config azure.tenant_id is reserved for client resources")
-    org = ado.get("organization", "") if isinstance(ado.get("organization", ""), str) else ""
+        raise ValueError(
+            "~/.coop/config azure.tenant_id is reserved for client resources"
+        )
+    org = (
+        ado.get("organization", "")
+        if isinstance(ado.get("organization", ""), str)
+        else ""
+    )
     out: dict[str, dict[str, Any]] = {}
     env = {"AZURE_TOKEN_CREDENTIALS": "AzureCliCredential"}
     if enabled("fabric"):
-        out["fabric"] = {"command": "npx", "args": ["-y", spec(manifest, SERVER_PACKAGES["fabric"]), "server", "start", "--mode", "namespace"], "env": env}
+        out["fabric"] = {
+            "command": "npx",
+            "args": [
+                "-y",
+                spec(manifest, SERVER_PACKAGES["fabric"]),
+                "server",
+                "start",
+                "--mode",
+                "namespace",
+            ],
+            "env": env,
+        }
+    if machine_sqlendpoint_enabled(config) and project_sqlendpoint_enabled(
+        project or {}
+    ):
+        target = select_target(project or {})
+        sql_entry = remote_http_server(manifest, target.url)
+        sql_entry["_coop_target"] = {
+            "scope": target.scope,
+            "workspace_id": target.workspace_id,
+            "item_id": target.item_id,
+            "item_type": target.item_type,
+            "reason": target.reason,
+        }
+        out["fabric-sqlendpoint"] = sql_entry
     # Current Azure-backed MCP servers are exclusively client-facing. The future
     # Shared Knowledge server must read a separate `knowledge` config and use its
     # own authentication/token cache, never this Azure CLI credential domain.
     if enabled("power_bi") and tenant:
-        out["powerbi"] = {"command": "npx", "args": ["-y", spec(manifest, SERVER_PACKAGES["powerbi"]), "--authentication", "azcli", "--tenant", tenant, "--readonly"], "env": env}
+        out["powerbi"] = {
+            "command": "npx",
+            "args": [
+                "-y",
+                spec(manifest, SERVER_PACKAGES["powerbi"]),
+                "--authentication",
+                "azcli",
+                "--tenant",
+                tenant,
+                "--readonly",
+            ],
+            "env": env,
+        }
     if enabled("power_bi_modeling"):
-        out["powerbi-modeling-mcp"] = {"command": "npx", "args": ["-y", spec(manifest, SERVER_PACKAGES["powerbi-modeling-mcp"]), "--start", "--readonly"]}
+        out["powerbi-modeling-mcp"] = {
+            "command": "npx",
+            "args": [
+                "-y",
+                spec(manifest, SERVER_PACKAGES["powerbi-modeling-mcp"]),
+                "--start",
+                "--readonly",
+            ],
+        }
     if enabled("azure_devops") and org:
-        out["azure-devops"] = {"command": "npx", "args": ["-y", spec(manifest, SERVER_PACKAGES["azure-devops"]), org, "--authentication", "azcli", "-d", "core", "work", "work-items", "search"]}
+        out["azure-devops"] = {
+            "command": "npx",
+            "args": [
+                "-y",
+                spec(manifest, SERVER_PACKAGES["azure-devops"]),
+                org,
+                "--authentication",
+                "azcli",
+                "-d",
+                "core",
+                "work",
+                "work-items",
+                "search",
+            ],
+        }
     if enabled("microsoft_learn"):
-        out["microsoft-learn"] = {"command": "npx", "args": ["-y", spec(manifest, SERVER_PACKAGES["microsoft-learn"]), "https://learn.microsoft.com/api/mcp"]}
+        out["microsoft-learn"] = remote_http_server(
+            manifest, "https://learn.microsoft.com/api/mcp"
+        )
     return out
 
 
@@ -91,15 +205,28 @@ def legacy_seeded(name: str, entry: Any) -> bool:
     if name not in SERVER_PACKAGES or not isinstance(entry, dict):
         return False
     args = entry.get("args", [])
-    return entry.get("command") == "npx" and isinstance(args, list) and any(
-        "TODO-" in str(a) or "@latest" in str(a) for a in args
+    return (
+        entry.get("command") == "npx"
+        and isinstance(args, list)
+        and any("TODO-" in str(a) or "@latest" in str(a) for a in args)
     )
 
 
-def generate(manifest: dict[str, Any], config: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
-    desired = desired_servers(manifest, config)
-    old_servers = existing.get("mcpServers", {}) if isinstance(existing.get("mcpServers", {}), dict) else {}
-    meta = existing.get("_coop", {}) if isinstance(existing.get("_coop", {}), dict) else {}
+def generate(
+    manifest: dict[str, Any],
+    config: dict[str, Any],
+    existing: dict[str, Any],
+    project: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    desired = desired_servers(manifest, config, project)
+    old_servers = (
+        existing.get("mcpServers", {})
+        if isinstance(existing.get("mcpServers", {}), dict)
+        else {}
+    )
+    meta = (
+        existing.get("_coop", {}) if isinstance(existing.get("_coop", {}), dict) else {}
+    )
     managed = set(x for x in meta.get("managed_servers", []) if isinstance(x, str))
     result = dict(existing)
     servers = dict(old_servers)
@@ -112,7 +239,7 @@ def generate(manifest: dict[str, Any], config: dict[str, Any], existing: dict[st
         current = servers.get(name)
         if current is None or name in managed or legacy_seeded(name, current):
             merged = dict(current) if isinstance(current, dict) else {}
-            for field in ("command", "args", "env"):
+            for field in ("command", "args", "env", "_coop_target"):
                 if field in definition:
                     merged[field] = definition[field]
                 else:
@@ -120,7 +247,10 @@ def generate(manifest: dict[str, Any], config: dict[str, Any], existing: dict[st
             servers[name] = merged
             managed.add(name)
     result["mcpServers"] = {k: servers[k] for k in sorted(servers)}
-    result["_coop"] = {"schema_version": 1, "managed_servers": sorted(managed & set(desired))}
+    result["_coop"] = {
+        "schema_version": 1,
+        "managed_servers": sorted(managed & set(desired)),
+    }
     return result
 
 
@@ -142,15 +272,23 @@ def atomic_write(path: Path, value: dict[str, Any]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     root = Path(__file__).resolve().parent.parent
-    parser.add_argument("--manifest", type=Path, default=root / "config" / "release-manifest.json")
+    parser.add_argument(
+        "--manifest", type=Path, default=root / "config" / "release-manifest.json"
+    )
     parser.add_argument("--config", type=Path, default=Path.home() / ".coop" / "config")
-    parser.add_argument("--output", type=Path, default=Path.home() / ".coop" / "agent" / "mcp.json")
+    parser.add_argument(
+        "--output", type=Path, default=Path.home() / ".coop" / "agent" / "mcp.json"
+    )
+    parser.add_argument("--project", type=Path, default=None)
+    parser.add_argument("--project-cwd", type=Path, default=Path.cwd())
     args = parser.parse_args()
     try:
         manifest = load_json(args.manifest, required=True)
         config = load_json(args.config)
         existing = load_json(args.output)
-        atomic_write(args.output, generate(manifest, config, existing))
+        project_path = args.project or find_project_yml(args.project_cwd)
+        project = load_project(project_path)
+        atomic_write(args.output, generate(manifest, config, existing, project))
     except ValueError as exc:
         print(f"mcp config: {exc}", file=os.sys.stderr)
         return 2

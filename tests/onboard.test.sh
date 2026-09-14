@@ -273,7 +273,7 @@ power_bi="$(cfg_json "$d3/.coop/config" | "$PY" -c 'import json,sys; print(json.
 
 # (4) Blank Azure DevOps organization is rejected, then a URL is accepted.
 d4="$(mktemp -d "$COOP_DIR/c4.XXXXXX")"
-run_config "$d4" "y" "$GUID" "" "" "" "y" "" "y" "https://dev.azure.com/myorg" ""
+run_config "$d4" "y" "$GUID" "" "" "" "" "y" "" "y" "https://dev.azure.com/myorg" ""
 case "$(cat "$d4/stderr.txt")" in
   *"cannot be empty"*) ok "blank Azure DevOps organization rejected" ;;
   *) ko "blank ADO organization accepted: $(tail -3 "$d4/stderr.txt")" ;;
@@ -283,19 +283,19 @@ org="$(cfg_json "$d4/.coop/config" | "$PY" -c 'import json,sys; print(json.load(
 
 # (5) Giving up on the organization disables the integration instead of saving it broken.
 d5="$(mktemp -d "$COOP_DIR/c5.XXXXXX")"
-run_config "$d5" "y" "$GUID" "" "" "" "y" "" "n" ""
+run_config "$d5" "y" "$GUID" "" "" "" "" "y" "" "n" ""
 ado_enabled="$(cfg_json "$d5/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["integrations"]["azure_devops"])')"
 [ "$ado_enabled" = "False" ] && ok "backing out of ADO org prompt disables the integration" || ko "ADO saved enabled without org: $ado_enabled"
 
 # (6) Short organization name is also accepted.
 d6="$(mktemp -d "$COOP_DIR/c6.XXXXXX")"
-run_config "$d6" "y" "$GUID" "" "" "" "y" "myorg" ""
+run_config "$d6" "y" "$GUID" "" "" "" "" "y" "myorg" ""
 org="$(cfg_json "$d6/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure_devops"]["organization"])')"
 [ "$org" = "myorg" ] && ok "short ADO organization name accepted" || ko "short org: $org"
 
 # (7) All optional integrations declined.
 d7="$(mktemp -d "$COOP_DIR/c7.XXXXXX")"
-run_config "$d7" "n" "n" "n" "n" "n"
+run_config "$d7" "n" "n" "n" "n" "n" "n" "n"
 "$PY" - "$d7/.coop/config" <<'PYEOF'
 import json,sys
 c=json.load(open(sys.argv[1]))
@@ -306,8 +306,8 @@ PYEOF
 
 # (8) Editing an existing configuration updates it in place.
 d8="$(mktemp -d "$COOP_DIR/c8.XXXXXX")"
-run_config "$d8" "y" "$GUID" "n" "n" "n" "n" "n"
-run_config "$d8" "n" "n" "y" "n" "n" "y"
+run_config "$d8" "y" "$GUID" "n" "n" "n" "n" "n" "n"
+run_config "$d8" "n" "n" "n" "y" "n" "n" "y"
 learn="$(cfg_json "$d8/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["integrations"]["microsoft_learn"])')"
 fabric="$(cfg_json "$d8/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["integrations"]["fabric"])')"
 [ "$learn" = "True" ] && [ "$fabric" = "False" ] && ok "editing an existing configuration updates integrations" || ko "edit: learn=$learn fabric=$fabric"

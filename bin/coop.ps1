@@ -240,10 +240,8 @@ function Build-CoopPiArgs {
   # Governance system prompt (read-only-first guardrails). Appended, not replaced.
   $guardrails = Join-Path $script:CoopRoot 'docs\guardrails.md'
   if (Test-Path -LiteralPath $guardrails -PathType Leaf) { $piArgs += @('--append-system-prompt', $guardrails) }
-  # Cooptimize skills — load each folder individually. The official Microsoft
-  # drop-in slots are SUBORDINATE: an external skill is surfaced only if it is
-  # allow-listed in its source block AND does not conflict (by folder name or
-  # frontmatter name) with one of our own skills. Cooptimize skills always win.
+  # Cooptimize skills — load each first-party folder individually. Official
+  # Microsoft skills are resolved separately from the pinned immutable catalog.
   $skills = Join-Path $script:CoopRoot 'skills'
   $subordinateSlots = @('_microsoft', '_microsoft_fabric')
   if (Test-Path -LiteralPath $skills -PathType Container) {
@@ -257,28 +255,20 @@ function Build-CoopPiArgs {
         if ($fm) { [void]$ownNames.Add($fm) }
       }
     }
-    $proj = Find-CoopProjectYml
-    if ($proj) {
-      foreach ($slot in $subordinateSlots) {
-        $slotDir = Join-Path $skills $slot
-        if (-not (Test-Path -LiteralPath $slotDir -PathType Container)) { continue }
-        # Map slot folder to project.yml source block key.
-        switch ($slot) {
-          '_microsoft'       { $yamlKey = 'microsoft_skills.allow' }
-          '_microsoft_fabric'{ $yamlKey = 'fabric_skills.allow' }
-        }
-        foreach ($allow in (Get-CoopYamlList $proj $yamlKey)) {
-          if ([string]::IsNullOrWhiteSpace($allow) -or $allow.StartsWith('TODO')) { continue }
-          # Validate the name so a hostile project.yml can't traverse out of the
-          # slot and inject an arbitrary SKILL.md into the model.
-          if (-not (Test-CoopValidName $allow)) { Coop-Warn "ignoring invalid subordinate skill name '$allow'"; continue }
-          $cand = Join-Path $slotDir $allow
-          $sk = Join-Path $cand 'SKILL.md'
-          if (-not (Test-Path -LiteralPath $sk -PathType Leaf)) { continue }
-          if ($ownNames.Contains($allow)) { Coop-Warn "skipping $slot skill '$allow' (conflicts with a Cooptimize skill)"; continue }
-          $fm = Get-CoopSkillName $sk
-          if ($fm -and $ownNames.Contains($fm)) { Coop-Warn "skipping $slot skill '$allow' (name '$fm' conflicts with a Cooptimize skill)"; continue }
-          $piArgs += @('--skill', $cand)
+    $catPy = Get-CoopPython
+    if ($catPy) {
+      $effectiveAgentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } elseif ($env:COOP_NO_ISOLATE -match '^(1|true|yes|on)$') { Join-Path $HOME '.pi\agent' } else { Join-Path $HOME '.coop\agent' }
+      $catArgs = @((Join-Path $script:CoopRoot 'lib\microsoft_skills.py'))
+      $proj = Find-CoopProjectYml
+      if ($proj) { $catArgs += @('--project', $proj) }
+      $catArgs += 'launch-dirs'
+      foreach ($msDir in (& $catPy @catArgs 2>$null)) {
+        if ([string]::IsNullOrWhiteSpace($msDir)) { continue }
+        $expectedPrefix = Join-Path $effectiveAgentDir 'catalogs\microsoft\generations'
+        if ($msDir.StartsWith($expectedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+          $piArgs += @('--skill', $msDir)
+        } else {
+          Coop-Warn "ignoring Microsoft catalog path outside agent catalog: $msDir"
         }
       }
     }

@@ -518,70 +518,44 @@ run **`/setup-docs`** in the agent (or `coop data-doc setup` in a shell).
 
 ---
 
-## Official Microsoft skills (subordinate, opt-in)
+## Official Microsoft Skills Catalog
 
 coop can use the **official Microsoft agent skills**, but they are **subordinate to
-Cooptimize skills**: yours always win. Two sources are supported:
+Cooptimize skills**: yours always win. The allowed upstream paths and revisions are
+pinned in [`config/microsoft-skills.json`](config/microsoft-skills.json):
 
 - [`github.com/microsoft/skills`](https://github.com/microsoft/skills) — Azure SDK /
-  AI-Foundry / KQL / Microsoft Docs skills (MIT).
+  AI-Foundry / KQL / Microsoft Docs skills, pinned at
+  `903dc62b1e4c833235b54db918a9a51cb6d3cc8f`.
 - [`github.com/microsoft/skills-for-fabric`](https://github.com/microsoft/skills-for-fabric)
-  — Power BI and Fabric authoring skills (PBIR, TMDL/DAX, SQL, KQL, notebooks,
-  pipelines, deployment) (MIT).
+  — Fabric Warehouse authoring/consumption skills from v0.3.10, pinned at
+  `28f29abf3838e13f63a38e8664042b7d9f7cd69c`.
 
-A Microsoft skill is surfaced only if it is **allow-listed** in its source block
-(`microsoft_skills.allow[]` or `fabric_skills.allow[]`) **and** does not conflict
-(by folder name or frontmatter `name:`) with one of ours — conflicts are skipped
-with a warning.
+`coop sync` refreshes an immutable catalog under the isolated Coop/Pi agent
+directory and atomically advances a last-known-good pointer. Launch resolves only
+that local catalog; it never networks. A Microsoft skill is surfaced only if the
+current project policy allows it and it does not conflict by folder or frontmatter
+`name:` with one of ours.
 
 ```yaml
 microsoft_skills:
-  source: "https://github.com/microsoft/skills"
-  load_dir: "skills/_microsoft"
+  policy: restricted
   allow:
     - "kql"
     - "microsoft-docs"
 
 fabric_skills:
-  source: "https://github.com/microsoft/skills-for-fabric"
-  load_dir: "skills/_microsoft_fabric"
-  allow:
-    - "check-updates"
-    - "powerbi-report-design"
-    - "powerbi-report-planning"
-    - "powerbi-report-authoring"
-    - "powerbi-report-management"
-    - "semantic-model-authoring"
-    - "eventhouse-cli"
-    - "sqldw-authoring-cli"
-    - "sqldw-consumption-cli"
-    - "dataflows-cli"
-    - "e2e-medallion-architecture"
-    - "spark-authoring-cli"
-    - "fabriciq"
-    # Add when needed:
-    # - "sqldw-operations-cli"
-    # - "deployment-pipelines-authoring-cli"
-
+  policy: baseline
 ```
 
-`coop install` automatically installs the npm tools these skills need
-(`@microsoft/powerbi-report-authoring-cli`, `@microsoft/powerbi-modeling-mcp`, and
-`@microsoft/powerbi-desktop-bridge-cli` on Windows). Remote Fabric MCP servers
-(FabricIQ, Fabric Warehouse SQL endpoint) require org-specific URLs/tokens — see
-`skills/_microsoft/README.md`.
+Baseline enables `kql`, `microsoft-docs`, `sqldw-authoring-cli`, and
+`sqldw-consumption-cli`. `sqldw-operations-cli` is recorded as deferred metadata
+and is not fetched or launched by default. Legacy `source` and `load_dir` fields
+are ignored with migration notices in `coop doctor`.
 
-Fabric authoring skills may edit PBIR, TMDL, SQL, KQL, notebooks, and Fabric item
-definitions. They remain governed by the Cooptimize workflow: plan-and-approve
-before edits, back up, review, show the diff, and **never commit source** — a human
-reviews and commits.
-
-Fetch the allow-listed, non-conflicting skills (they're **gitignored**, not vendored,
-so this repo stays small):
-
-```bash
-scripts/fetch-microsoft-skills.sh
-```
+Fabric authoring skills may edit SQL and Fabric item definitions. They remain
+governed by the Cooptimize workflow: plan-and-approve before edits, back up,
+review, show the diff, and **never commit source** — a human reviews and commits.
 
 See [`skills/_microsoft/README.md`](skills/_microsoft/README.md) for details.
 

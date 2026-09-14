@@ -28,7 +28,7 @@ trap 'rm -rf "$PARITY_TMP"' EXIT
 # script goes here — with a reason — instead of growing a pointless twin.
 ALLOWLIST=(
   "scripts/check-parity.sh"                    # this gate: CI + dev only, bash runners
-  "scripts/fetch-microsoft-skills.sh"          # maintainer-side skill vendoring, bash only
+  "scripts/fetch-microsoft-skills.sh"          # compatibility catalog delegator, bash only
   "scripts/migrate-from-pi-analytics-agent.sh" # one-time migration, predates Windows support
   "scripts/validate-resources.sh"              # CI-only skill/prompt lint, bash runners
   "scripts/test-pi-matrix.ps1"                 # Slice-4 Windows matrix leg: needs a Windows host; bash twin is scripts/test-pi-matrix.sh
