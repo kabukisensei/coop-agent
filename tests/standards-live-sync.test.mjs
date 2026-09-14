@@ -35,6 +35,9 @@ try {
     const error = (code) => { const value = new Error(code); value.code = code; return value; };
     assert.throws(() => fsyncDirectory(tmp, { platform: "linux", fsync: () => { throw error("EIO"); } }), /EIO/);
     assert.throws(() => fsyncDirectory(tmp, { platform: "win32", fsync: () => { throw error("ENOSPC"); } }), /ENOSPC/);
+    assert.throws(() => fsyncDirectory(tmp, { platform: "linux", fsync: () => { throw error("EPERM"); } }), /EPERM/);
+    assert.throws(() => fsyncDirectory(tmp, { platform: "win32", open: () => { throw error("EPERM"); } }), /EPERM/);
+    assert.throws(() => fsyncDirectory(tmp, { platform: "win32", open: () => 123, fsync: () => {}, close: () => { throw error("EPERM"); } }), /EPERM/);
     for (const code of ["EINVAL", "EPERM"]) {
       assert.doesNotThrow(() => fsyncDirectory(tmp, { platform: "win32", fsync: () => { throw error(code); } }));
     }
