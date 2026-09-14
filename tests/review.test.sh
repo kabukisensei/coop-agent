@@ -33,6 +33,7 @@ for a in "\$@"; do
   prev="\$a"
 done
 hash=""; [ -n "\$standard" ] && hash="\$("$PY" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "\$standard")"
+standard_json=null; [ -n "\$standard" ] && standard_json="\$("$PY" -c 'import json,sys; print(json.dumps(sys.argv[1]))' "\$standard")"
 if [ -n "\$out" ]; then
   mode="\${COOP_TEST_PROVENANCE_MODE:-valid}"
   [ "$t" = coop-sql-review ] && mode="\${COOP_TEST_SQL_MODE:-\$mode}"
@@ -42,9 +43,9 @@ if [ -n "\$out" ]; then
     malformed) printf 'not-json' > "\$out" ;;
     missing) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" > "\$out" ;;
     bad_path) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":"/wrong/path","sha256":"%s"},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$hash" > "\$out" ;;
-    bad_hash) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":"%s","sha256":"%064d"},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$standard" 0 > "\$out" ;;
-    bad_revision) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":"%s","sha256":"%s","revision":7},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$standard" "\$hash" > "\$out" ;;
-    *) count_key=files_checked; model_field=''; [ "$t" = coop-dax-review ] && { count_key=models_checked; model_field='"model":"fixture-model",'; }; printf '{"tool":"%s","schema_version":$schema,"version":"test","%s":1,"standards":{"path":"%s","sha256":"%s"},"findings":[{"file":"fixture","line":1,"rule_id":"TEST","message":"test finding","severity":"warning",%s"object":"fixture","standard_ref":"§1","fingerprint":"%064d"}],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":1,"info":0},"verdict":{"clean":false,"highest_severity":"warning"}}' "$t" "\$count_key" "\$standard" "\$hash" "\$model_field" 0 > "\$out" ;;
+    bad_hash) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":%s,"sha256":"%064d"},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$standard_json" 0 > "\$out" ;;
+    bad_revision) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":%s,"sha256":"%s","revision":7},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$standard_json" "\$hash" > "\$out" ;;
+    *) count_key=files_checked; model_field=''; [ "$t" = coop-dax-review ] && { count_key=models_checked; model_field='"model":"fixture-model",'; }; printf '{"tool":"%s","schema_version":$schema,"version":"test","%s":1,"standards":{"path":%s,"sha256":"%s"},"findings":[{"file":"fixture","line":1,"rule_id":"TEST","message":"test finding","severity":"warning",%s"object":"fixture","standard_ref":"§1","fingerprint":"%064d"}],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":1,"info":0},"verdict":{"clean":false,"highest_severity":"warning"}}' "$t" "\$count_key" "\$standard_json" "\$hash" "\$model_field" 0 > "\$out" ;;
   esac
 fi
 exit "\$rc"
