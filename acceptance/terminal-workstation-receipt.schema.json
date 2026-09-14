@@ -397,11 +397,20 @@
           "candidate": {
             "properties": {
               "observed_sha": {
-                "const": "295693a3eb08e9988594971d87bc4de751e6b551"
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
               },
               "observed_version": {
                 "type": "string",
                 "minLength": 1
+              },
+              "expected_build": {
+                "type": "string",
+                "pattern": "^build-[0-9a-f]{8}$"
+              },
+              "observed_build": {
+                "type": "string",
+                "pattern": "^build-[0-9a-f]{8}$"
               }
             },
             "type": "object"
@@ -422,13 +431,7 @@
             "properties": {
               "observed_sha": {
                 "type": "string",
-                "pattern": "^[0-9a-f]{40}$",
-                "not": {
-                  "enum": [
-                    "295693a3eb08e9988594971d87bc4de751e6b551",
-                    "d60300780b565aabf15b172b2bc32abad12b9ca6"
-                  ]
-                }
+                "pattern": "^[0-9a-f]{40}$"
               },
               "observed_version": {
                 "type": "string",
@@ -1304,11 +1307,14 @@
         "expected_sha",
         "observed_sha",
         "expected_version",
-        "observed_version"
+        "observed_version",
+        "expected_build",
+        "observed_build"
       ],
       "properties": {
         "expected_sha": {
-          "const": "295693a3eb08e9988594971d87bc4de751e6b551"
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
         },
         "observed_sha": {
           "anyOf": [
@@ -1333,6 +1339,21 @@
             {
               "type": "string",
               "minLength": 1
+            }
+          ]
+        },
+        "expected_build": {
+          "type": "string",
+          "pattern": "^build-[0-9a-f]{8}$"
+        },
+        "observed_build": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^build-[0-9a-f]{8}$"
             }
           ]
         }
@@ -1394,13 +1415,7 @@
             },
             {
               "type": "string",
-              "pattern": "^[0-9a-f]{40}$",
-              "not": {
-                "enum": [
-                  "295693a3eb08e9988594971d87bc4de751e6b551",
-                  "d60300780b565aabf15b172b2bc32abad12b9ca6"
-                ]
-              }
+              "pattern": "^[0-9a-f]{40}$"
             }
           ]
         },

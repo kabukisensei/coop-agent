@@ -1,9 +1,9 @@
-# Terminal workstation P0 acceptance — candidate `295693a`
+# Terminal workstation P0 acceptance — runtime-bound candidate
 
-This gate applies only to Terminal candidate
-`295693a3eb08e9988594971d87bc4de751e6b551`. Its source baseline is v0.23.1 at
-`d60300780b565aabf15b172b2bc32abad12b9ca6`. The workflow/harness SHA is a
-third, dynamic identity and is recorded separately in every receipt.
+This gate binds at runtime to the immutable candidate SHA authorized by the GitHub
+event. Its source baseline is v0.23.1 at
+`d60300780b565aabf15b172b2bc32abad12b9ca6`. The verified candidate SHA and its
+Support build fingerprint are recorded in every receipt and artifact name.
 
 Automated evidence is necessary but **cannot** prove authentication, a real model
 response, or interactive workstation usability. It always writes
@@ -16,10 +16,12 @@ pending; the cross-platform tests below are not substitutes for either gate.
 
 Before merge, the workflow runs automatically only for a same-repository pull
 request into `main` whose head branch is exactly
-`terminal/workstation-acceptance-2026-09-20`; every other pull-request head leaves
-the native job skipped. `workflow_dispatch` remains available once GitHub has
-registered the workflow on the default branch. Neither path accepts a branch or
-candidate input: the workflow checks out the two immutable product SHAs itself.
+`integration/presentation-2026-09-20`; every other pull-request head leaves
+the native job skipped. `workflow_dispatch` requires an explicit full lowercase
+40-hex candidate SHA. The PR route uses `pull_request.head.sha`; both routes check
+out that immutable SHA directly and compare `git rev-parse HEAD` before any install
+or harness work. Synthetic merge refs and payload-provided candidate identities are
+not accepted.
 It runs only on a GitHub-hosted `windows-latest` runner with `contents: read`,
 does not persist Git credentials, receives no product/provider secret, and uses
 no write-capable event.
@@ -79,8 +81,10 @@ without executing it; query/close uncertainty must override payload success; and
 termination fault on a live descendant must remain a hard timeout. It also probes
 Unicode stdin and difficult argument vectors through both the helper and wrapper.
 
-Candidate Support must report the exact build fingerprint `build-24297cf9`,
-produced by the product fingerprint function from the candidate VERSION and SHA.
+Candidate Support must report the exact build fingerprint computed at runtime by
+the production `fingerprintBuild` contract from the candidate checkout's `VERSION`
+and verified full SHA. The receipt records both the expected and observed fingerprint;
+no committed hard-coded candidate fingerprint is authoritative.
 For both candidate and rollback, the complete proof is derived from that
 checkout's own `config/release-manifest.json`: checkout VERSION proves
 `coop_version`; npm inventory plus Doctor prove the Pi package/version; Doctor
@@ -103,17 +107,18 @@ it with local testing.
 
 ### Prepare
 
-1. Power off the VM and take snapshot `pre-coop-terminal-295693a`.
+1. Power off the VM and take snapshot `pre-coop-terminal-candidate`.
 2. Start it and clone the candidate into a disposable path. Include at least one
    non-ASCII path segment in the operator exercise; ASCII-only paths do not verify
    the harness's Unicode contract.
 3. Verify before installation:
 
 ```powershell
-git -C C:\coop-candidate-295693a rev-parse HEAD
-if ((git -C C:\coop-candidate-295693a rev-parse HEAD) -ne "295693a3eb08e9988594971d87bc4de751e6b551") { throw "unexpected candidate SHA" }
+$CandidateSha = '<full lowercase 40-hex event-authorized candidate SHA>'
+git -C C:\coop-candidate rev-parse HEAD
+if ((git -C C:\coop-candidate rev-parse HEAD) -cne $CandidateSha) { throw "unexpected candidate SHA" }
 $env:COOP_DIR = "C:\coop-p0-profile"
-cd C:\coop-candidate-295693a
+cd C:\coop-candidate
 .\scripts\install.ps1 --yes
 if ($LASTEXITCODE -ne 0) { throw "candidate install failed: $LASTEXITCODE" }
 .\scripts\doctor.ps1
@@ -139,7 +144,7 @@ exit code alone is not evidence for an interactive behavior.
 | `reopen-resume` | Close and reopen Coop, list the prior session, resume it, and continue successfully. |
 | `teamai-failure-isolation` | With TeamAI missing, offline, or pending approval, the integration reports that state truthfully while core terminal use remains available. Do not install or fake an adapter. |
 | `rollback-instructions` | Verify the documented v0.23.1 source rollback commands and expected manifest pins without claiming that file deletion is recovery. |
-| `snapshot-recovery` | Copy redacted evidence off-VM, power off, revert `pre-coop-terminal-295693a`, and verify the candidate footprint is gone. |
+| `snapshot-recovery` | Copy redacted evidence off-VM, power off, revert `pre-coop-terminal-candidate`, and verify the candidate footprint is gone. |
 
 For rollback verification, use the same profile without wiping it:
 
@@ -183,7 +188,9 @@ Snapshot revert—not uninstall or recursive deletion—is the recovery procedur
 
 ```powershell
 powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\acceptance\windows-terminal-workstation.ps1 `
-  -Mode ValidateReceipt -ReceiptPath C:\evidence\terminal-workstation-operator.json
+  -Mode ValidateReceipt -ReceiptPath C:\evidence\terminal-workstation-operator.json `
+  -ExpectedHarnessSha $CandidateSha -ExpectedCandidateSha $CandidateSha `
+  -ExpectedCandidateBuild '<runtime-computed build fingerprint>'
 if ($LASTEXITCODE -ne 0) { throw "operator receipt is invalid" }
 
 # CI also validates this same receipt against the committed Draft 2020-12 schema

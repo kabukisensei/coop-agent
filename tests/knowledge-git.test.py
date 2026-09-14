@@ -415,6 +415,23 @@ class KnowledgeGitOwnershipTests(unittest.TestCase):
         self.assertEqual(kg.finish_owned(ownership, 0), kg.EXIT_OWNERSHIP_UNAVAILABLE)
         self.assertEqual(kg.finish_owned(ownership, kg.EXIT_TIMEOUT), kg.EXIT_TIMEOUT)
 
+    @unittest.skipIf(os.name == "nt", "POSIX process-group contract")
+    def test_posix_termination_signals_only_spawn_captured_pgid(self):
+        ownership = kg.Ownership()
+        child = mock.Mock(pid=4242)
+        ownership.adopt(child)
+        self.assertEqual(ownership.pgid, 4242)
+        with (
+            mock.patch.object(
+                kg.os, "killpg", side_effect=ProcessLookupError
+            ) as killpg,
+            mock.patch.object(kg.os, "getpgid") as getpgid,
+        ):
+            self.assertFalse(ownership.terminate())
+        killpg.assert_called_once_with(4242, kg.signal.SIGKILL)
+        getpgid.assert_not_called()
+        child.kill.assert_not_called()
+
 
 class ProcessInspectorTests(unittest.TestCase):
     def test_direct_script_parser_matches_python_option_rules(self):

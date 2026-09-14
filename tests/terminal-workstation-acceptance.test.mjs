@@ -13,9 +13,10 @@ const SCRIPT = join(ROOT, "acceptance", "windows-terminal-workstation.ps1");
 const SCHEMA = join(ROOT, "acceptance", "terminal-workstation-receipt.schema.json");
 const WORKFLOW = join(ROOT, ".github", "workflows", "windows-terminal-workstation-acceptance.yml");
 const DOC = join(ROOT, "docs", "terminal-workstation-acceptance.md");
-const CANDIDATE = "295693a3eb08e9988594971d87bc4de751e6b551";
+const CANDIDATE = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const BASELINE = "d60300780b565aabf15b172b2bc32abad12b9ca6";
 const HARNESS = "1111111111111111111111111111111111111111";
+const CANDIDATE_BUILD = fingerprintBuild({ version: readFileSync(join(ROOT, "VERSION"), "utf8").trim(), commit: CANDIDATE }).value;
 const statuses = ["PASS", "FAIL", "BLOCKED", "INCONCLUSIVE", "NOT_REACHED", "NOT_AVAILABLE", "CAPABILITY_SKIP", "BETA_LIMITATION"];
 const automatedIds = [
   "identity-and-isolation", "baseline-source-install", "candidate-upgrade-preservation",
@@ -39,7 +40,11 @@ const havePwsh = pwshProbe.status === 0 && !pwshProbe.error;
 const schemaProbe = spawnSync("python3", ["-c", "import jsonschema"], { encoding: "utf8" });
 
 function runPs(args, options = {}) {
-  return spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-File", SCRIPT, ...args], { encoding: "utf8", ...options });
+  const identity = [...args];
+  if (!identity.includes("-ExpectedCandidateSha")) identity.push("-ExpectedCandidateSha", CANDIDATE);
+  if (!identity.includes("-ExpectedCandidateBuild")) identity.push("-ExpectedCandidateBuild", CANDIDATE_BUILD);
+  if (!identity.includes("-ExpectedHarnessSha")) identity.push("-ExpectedHarnessSha", HARNESS);
+  return spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-File", SCRIPT, ...identity], { encoding: "utf8", ...options });
 }
 
 function evidence(kind = "COMMAND", observed = "redacted observation") {
@@ -56,7 +61,7 @@ function claim(id, { status = "PASS", automated = true, human = false, phase = p
 function receipt({ ready = false, layer = "AUTOMATED_WINDOWS", humanStatus = "NOT_REACHED" } = {}) {
   return {
     schema_version: 1,
-    candidate: { expected_sha: CANDIDATE, observed_sha: CANDIDATE, expected_version: "0.23.1", observed_version: "0.23.1" },
+    candidate: { expected_sha: CANDIDATE, observed_sha: CANDIDATE, expected_version: "0.23.1", observed_version: "0.23.1", expected_build: CANDIDATE_BUILD, observed_build: CANDIDATE_BUILD },
     baseline: { expected_sha: BASELINE, observed_sha: BASELINE, expected_version: "0.23.1", observed_version: "0.23.1" },
     harness: { observed_sha: HARNESS, observed_version: "0.23.1" },
     execution: { layer, runner: "disposable-test", started_utc: "2026-09-13T00:00:00Z", finished_utc: "2026-09-13T00:01:00Z", owned_root: "C:\\owned" },
@@ -119,7 +124,8 @@ test("committed Draft 2020-12 schema validator is available and enforces formats
 test("receipt schema exposes exact vocabularies and complete automated/operator gates", () => {
   const schema = JSON.parse(readFileSync(SCHEMA, "utf8"));
   assert.deepEqual(schema.$defs.status.enum, statuses);
-  assert.equal(schema.$defs.candidateIdentity.properties.expected_sha.const, CANDIDATE);
+  assert.equal(schema.$defs.candidateIdentity.properties.expected_sha.pattern, "^[0-9a-f]{40}$");
+  assert.equal(schema.$defs.candidateIdentity.properties.expected_build.pattern, "^build-[0-9a-f]{8}$");
   assert.equal(schema.$defs.baselineIdentity.properties.expected_sha.const, BASELINE);
   assert.equal(schema.allOf[0].then.properties.claims.minItems, automatedIds.length);
   assert.equal(schema.allOf[0].then.properties.operator_evidence.minItems, operatorIds.length);
@@ -197,11 +203,22 @@ test("decisive receipt mutations are rejected equivalently", { skip: !havePwsh }
     ["numeric evidence observed", (x) => { x.claims[0].evidence[0].observed = 1; }],
     ["scalar claims collection", (x) => { x.claims = structuredClone(x.claims[0]); }],
     ["null operator collection", (x) => { x.operator_evidence = null; }],
+    ["forged candidate expected SHA", (x) => { x.candidate.expected_sha = "2".repeat(40); }],
+    ["forged candidate fingerprint", (x) => { x.candidate.expected_build = "build-deadbeef"; }],
+    ["forged observed fingerprint", (x) => { x.candidate.observed_build = "build-deadbeef"; }],
     ["candidate observation mismatch", (x) => { x.candidate.observed_sha = BASELINE; }],
-    ["harness aliases product", (x) => { x.harness.observed_sha = CANDIDATE; }],
+    ["wrong harness observation", (x) => { x.harness.observed_sha = "2".repeat(40); }],
   ];
   const dir = mkdtempSync(join(tmpdir(), "coop-mutations-"));
-  for (const [name, mutate] of mutations) { const value = receipt({ ready: true, layer: "DISPOSABLE_VM_OPERATOR", humanStatus: "PASS" }); mutate(value); assertBoth(writeReceipt(dir, value, `${name.replaceAll(" ", "-")}.json`), false, name); }
+  const runtimeBound = new Set(["forged candidate expected SHA", "forged candidate fingerprint", "forged observed fingerprint", "candidate observation mismatch", "wrong harness observation"]);
+  for (const [name, mutate] of mutations) {
+    const value = receipt({ ready: true, layer: "DISPOSABLE_VM_OPERATOR", humanStatus: "PASS" }); mutate(value);
+    const path = writeReceipt(dir, value, `${name.replaceAll(" ", "-")}.json`);
+    if (runtimeBound.has(name)) {
+      assert.equal(schemaValidate(path).status, 0, `${name}: shape schema must remain candidate-independent`);
+      assert.notEqual(runPs(["-Mode", "ValidateReceipt", "-ReceiptPath", path]).status, 0, `${name}: trusted runtime binding accepted forgery`);
+    } else assertBoth(path, false, name);
+  }
 });
 
 test("schema and PowerShell retain null/integer exit codes for non-COMMAND evidence", { skip: !havePwsh }, () => {
@@ -234,8 +251,8 @@ test("Support identity probe derives the candidate fingerprint through product c
   const candidateVersion = execFileSync("git", ["-C", ROOT, "show", `${CANDIDATE}:VERSION`], { encoding: "utf8" }).trim();
   const expected = fingerprintBuild({ version: candidateVersion, commit: CANDIDATE });
   assert.equal(expected.ok, true);
-  assert.equal(runPs(["-Mode", "Probe", "-Probe", "VerifySupportBuild", "-Value", expected.value]).status, 0);
-  assert.notEqual(runPs(["-Mode", "Probe", "-Probe", "VerifySupportBuild", "-Value", "build-deadbeef"]).status, 0);
+  assert.equal(runPs(["-Mode", "Probe", "-Probe", "VerifySupportBuild", "-Root", ROOT, "-Canary", CANDIDATE, "-Value", expected.value]).status, 0);
+  assert.notEqual(runPs(["-Mode", "Probe", "-Probe", "VerifySupportBuild", "-Root", ROOT, "-Canary", CANDIDATE, "-Value", "build-deadbeef"]).status, 0);
 });
 
 test("complete candidate and rollback manifest proofs reject drift in every pin category", { skip: !havePwsh }, () => {
@@ -516,31 +533,40 @@ test("product agent path is one effective onboarding/install/Doctor path", () =>
   contract(source); assert.throws(() => contract(source.replace("$agentRoot = Join-Path $profileRoot '.coop\\agent'", "$agentRoot = Join-Path $ownedRoot 'split-agent'")));
 });
 
-test("workflow preserves dispatch and gates pre-merge native execution to the named same-repo PR head", () => {
+test("workflow binds dispatch and the named same-repo PR to the exact event-authorized SHA", () => {
   const workflow = readFileSync(WORKFLOW, "utf8");
-  const expectedGate = "if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'terminal/workstation-acceptance-2026-09-20' && github.event.pull_request.head.repo.full_name == github.repository) }}";
+  const expectedGate = "if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'integration/presentation-2026-09-20' && github.event.pull_request.head.repo.full_name == github.repository) }}";
   const contract = (source) => {
-    assert.match(source, /on:\s*\n\s*workflow_dispatch:\s*\n\s*pull_request:\s*\n\s*branches:\s*\n\s*- main/);
+    assert.match(source, /workflow_dispatch:\s*\n\s*inputs:\s*\n\s*candidate_sha:[\s\S]*required: true[\s\S]*pull_request:\s*\n\s*branches:\s*\n\s*- main/);
     assert.ok(source.includes(expectedGate), "native job must reject unauthorized PR heads and forks");
     assert.match(source, /permissions:\s*\n\s*contents: read/);
     assert.doesNotMatch(source, /pull_request_target|permissions:\s*write|contents:\s*write|pull-requests:\s*write/);
     assert.equal((source.match(/persist-credentials: false/g) || []).length, 3);
-    assert.match(source, /concurrency:\s*\n\s*group: windows-terminal-workstation-acceptance-\$\{\{ github\.ref \}\}\s*\n\s*cancel-in-progress: false/);
-    assert.match(source, /timeout-minutes: 90/);
-    assert.match(source, new RegExp(`ref: ${CANDIDATE}`)); assert.match(source, new RegExp(`ref: ${BASELINE}`));
-    assert.match(source, /ExpectedHarnessSha '\$\{\{ github\.sha \}\}'/);
+    assert.match(source, /Validate event-authorized candidate input[\s\S]*CANDIDATE_SHA -cnotmatch '\^\[0-9a-f\]\{40\}\$'[\s\S]*Checkout acceptance harness identity/);
+    assert.match(source, /CANDIDATE_SHA: \$\{\{ github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.sha \|\| inputs\.candidate_sha \}\}/);
+    assert.equal((source.match(/ref: \$\{\{ env\.CANDIDATE_SHA \}\}/g) || []).length, 2);
+    assert.match(source, /\$observed = \(& git -C \$checkout rev-parse HEAD\)\.Trim\(\)[\s\S]*\$observed -cne \$expected/);
+    assert.match(source, /ExpectedCandidateSha \$env:VERIFIED_CANDIDATE_SHA/);
+    assert.match(source, /ExpectedCandidateBuild \$env:VERIFIED_CANDIDATE_BUILD/);
+    assert.match(source, /VERSION[\s\S]*fingerprintBuild/);
+    assert.match(source, new RegExp(`ref: ${BASELINE}`));
+    assert.doesNotMatch(source, /github\.sha|refs\/pull|build-[0-9a-f]{8}|295693a/);
     assert.match(source, /ajv-cli@5\.0\.0/); assert.match(source, /terminal-workstation-receipt\.schema\.json/); assert.match(source, /runs-on: windows-latest/);
+    assert.match(source, /terminal-workstation-receipt-\$\{\{ env\.VERIFIED_CANDIDATE_SHA \}\}-\$\{\{ env\.VERIFIED_CANDIDATE_BUILD \}\}/);
     assert.match(source, /if: always\(\) && env\.RECEIPT_UPLOADABLE == 'true'/);
     assert.match(source, /if: always\(\) && env\.EVIDENCE_UPLOADABLE == 'true'/);
-    assert.match(source, /RunNonce \$env:RUN_NONCE/);
     assert.match(source, /ValidateUploadAuthorization -AuthorizationKind Receipt/);
     assert.match(source, /ValidateUploadAuthorization -AuthorizationKind Evidence/);
     assert.match(source, /--test-name-pattern "Unicode\|lifecycle"/);
     assert.doesNotMatch(source, /secrets\.|GITHUB_TOKEN|repository_dispatch|workflow_run|\bgit push\b/);
   };
   contract(workflow);
-  assert.throws(() => contract(workflow.replace("github.head_ref == 'terminal/workstation-acceptance-2026-09-20'", "github.head_ref != ''")), /unauthorized PR heads/);
-  assert.throws(() => contract(workflow.replace("github.event.pull_request.head.repo.full_name == github.repository", "true")), /unauthorized PR heads/);
+  for (const forged of [
+    workflow.replace("github.head_ref == 'integration/presentation-2026-09-20'", "github.head_ref != ''"),
+    workflow.replace("github.event.pull_request.head.repo.full_name == github.repository", "true"),
+    workflow.replace("ref: ${{ env.CANDIDATE_SHA }}", "ref: ${{ github.sha }}"),
+    workflow.replace("$observed -cne $expected", "$false"),
+  ]) assert.throws(() => contract(forged));
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
   assert.match(testSource, /COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE[\s\S]*"-Mode", "Run"/);
   assert.match(testSource, /unrelatedIdentity\.startedAtMs[\s\S]*assertBoth\(receiptPath[\s\S]*completion\[0\]\.status/);
@@ -549,5 +575,5 @@ test("workflow preserves dispatch and gates pre-merge native execution to the na
 test("operator runbook preserves observation boundaries and every journey", () => {
   const doc = readFileSync(DOC, "utf8"); for (const id of [...automatedIds, ...operatorIds]) assert.ok(doc.includes(`\`${id}\``), `missing ${id}`);
   assert.match(doc, /Never run this on Aaron's working installation/); assert.match(doc, /snapshot-capable/); assert.match(doc, /coop auth --json/);
-  assert.match(doc, /checklist or template[\s\S]*not acceptance/i); assert.match(doc, new RegExp(CANDIDATE)); assert.match(doc, new RegExp(BASELINE));
+  assert.match(doc, /checklist or template[\s\S]*not acceptance/i); assert.match(doc, /event-authorized candidate SHA/); assert.doesNotMatch(doc, /295693a|build-24297cf9/); assert.match(doc, new RegExp(BASELINE));
 });

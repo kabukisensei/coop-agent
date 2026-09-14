@@ -673,10 +673,10 @@ class Ownership:
                         file=sys.stderr,
                     )
         else:
-            try:
-                self.pgid = os.getpgid(proc.pid)
-            except OSError:
-                self.pgid = None
+            # start_new_session makes the successfully spawned child the leader
+            # of the owned process group, so its spawn-captured PID is the PGID.
+            # Never rediscover group ownership through a potentially reused PID.
+            self.pgid = proc.pid
 
     def wait_empty(self, deadline):
         """Return verified empty, deadline expiry, or ownership uncertainty."""
@@ -725,26 +725,15 @@ class Ownership:
                 return result.returncode == 0
             except (OSError, subprocess.SubprocessError):
                 return False
-        killed = False
-        if self.pgid is not None:
-            try:
-                os.killpg(self.pgid, signal.SIGKILL)
-                killed = True
-            except (ProcessLookupError, PermissionError, OSError):
-                killed = False
-        if not killed and self.child is not None:
-            try:
-                os.killpg(os.getpgid(self.child.pid), signal.SIGKILL)
-                killed = True
-            except (ProcessLookupError, PermissionError, OSError):
-                killed = False
-        if not killed and self.child is not None:
-            try:
-                self.child.kill()
-                killed = True
-            except OSError:
-                pass
-        return killed
+        if self.pgid is None:
+            return False
+        try:
+            os.killpg(self.pgid, signal.SIGKILL)
+            return True
+        except (ProcessLookupError, PermissionError, OSError):
+            # Ownership is uncertain after a failed signal. Do not rediscover a
+            # PGID or fall back to a possibly reused child PID.
+            return False
 
     def terminate_and_wait(self, deadline, proc=None):
         """Terminate ownership and verify it without delaying kill-on-close."""

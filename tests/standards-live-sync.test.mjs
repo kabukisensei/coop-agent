@@ -21,7 +21,7 @@ const writeCanonical = (suffix) => {
   writeFileSync(join(remote, "standards.yml"), "schema_version: 1\nauthority: formal_standard\nauthoritative_ref: default_branch\ncontent_mode: markdown_only\nprecedence:\n  - project_override\n  - canonical_standard\n  - last_known_good\n  - bundled_fallback\nrefresh:\n  startup: true\n  task_freshness_minutes: 15\n  force_command: coop sync\n  failure_mode: last_known_good\n  pin_revision_per_task: true\n  invalidate_index_on_revision_change: true\nstandards:\n  sql:\n    path: standards/sql.md\n  dax:\n    path: standards/dax.md\n  semantic_model:\n    path: standards/semantic-model.md\n");
 };
 const commit = (message) => { git(["add", "."]); git(["commit", "-q", "-m", message]); return git(["rev-parse", "HEAD"]); };
-const options = (more = {}) => ({ canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, remote, now: () => now, staleRoot: join(tmp, "none"), reviewerBins: { sql: join(tmp, "none-sql"), dax: join(tmp, "none-dax") }, ...more });
+const options = (more = {}) => ({ canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, fixtureRegistry: true, remote, now: () => now, staleRoot: join(tmp, "none"), reviewerBins: { sql: join(tmp, "none-sql"), dax: join(tmp, "none-dax") }, ...more });
 const test = (name, fn) => { fn(); count++; console.log(`  ✓ ${name}`); };
 const resetStorage = () => { rmSync(join(tmp, "cache"), { recursive: true, force: true }); rmSync(snapshots, { recursive: true, force: true }); };
 
@@ -40,6 +40,27 @@ try {
   test("production registry pins private main and verified anchor", () => {
     const r = standardsRegistry();
     assert.equal(r.canonical.repository, "https://github.com/cooptimize/coop-standards.git"); assert.equal(r.canonical.authoritative_branch, "main"); assert.equal(r.canonical.initial_verified_commit, "fa109f11129742358ff1e078cd4c4433e356afb4");
+  });
+  test("production registry ignores inherited redirection and source/status/refresh retain committed authority", () => {
+    const old = process.env.COOP_STANDARDS_REGISTRY;
+    process.env.COOP_STANDARDS_REGISTRY = registryPath;
+    try {
+      const r = standardsRegistry();
+      assert.equal(r.canonical.repository, "https://github.com/cooptimize/coop-standards.git");
+      assert.equal(Object.isFrozen(r) && Object.isFrozen(r.canonical) && Object.isFrozen(r.canonical.domains), true);
+      assert.throws(() => { r.canonical.repository = remote; }, TypeError);
+      assert.throws(() => standardsRegistry({ registryPath }), /explicit fixture/);
+      const productionRoot = join(tmp, "production-cache", "canonical");
+      const productionState = join(tmp, "production-cache", "status.json");
+      const status = sourceStatus({ canonicalRoot: productionRoot, statePath: productionState, snapshotRoot: join(tmp, "production-snapshots"), refresh: false });
+      assert.equal(status.sources[0].repository, r.canonical.repository);
+      let clone = null;
+      const refreshed = refreshCanonical({ canonicalRoot: productionRoot, statePath: productionState, snapshotRoot: join(tmp, "production-snapshots"), force: true, runner: (args) => { if (args[0] === "clone") clone = args; return { status: 1, stdout: "", stderr: "offline fixture" }; } });
+      assert.equal(refreshed.ok, false);
+      assert.equal(clone.includes(r.canonical.repository), true);
+    } finally {
+      if (old === undefined) delete process.env.COOP_STANDARDS_REGISTRY; else process.env.COOP_STANDARDS_REGISTRY = old;
+    }
   });
   test("complete generation activates cache, index, metadata and pointer together", () => {
     const synced = refreshCanonical(options()); assert.equal(synced.ok, true, JSON.stringify(synced));
@@ -83,7 +104,7 @@ try {
     for (const step of [...beforePointer, "canonical:after-pointer", "canonical:before-state", "canonical:after-state"]) {
       git(["reset", "--hard", r1]); resetStorage(); now += 1; assert.equal(refreshCanonical(options({ force: true })).ok, true);
       git(["reset", "--hard", r2]);
-      const childOptions = { canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, remote, force: true };
+      const childOptions = { canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, fixtureRegistry: true, remote, force: true };
       const script = `import {refreshCanonical} from ${JSON.stringify(new URL("../lib/standards.mjs", import.meta.url).href)}; refreshCanonical({...${JSON.stringify(childOptions)},fault:(s)=>{if(s===${JSON.stringify(step)})process.exit(77)}});`;
       const child = spawnSync(process.execPath, ["--input-type=module", "-e", script]); assert.equal(child.status, 77, step);
       const abandonedLock = join(tmp, "cache", ".canonical-storage.lock");

@@ -10,6 +10,8 @@ param(
   [string]$EvidenceRoot = '',
   [string]$ReceiptPath = '',
   [string]$ExpectedHarnessSha = '',
+  [string]$ExpectedCandidateSha = '',
+  [string]$ExpectedCandidateBuild = '',
   [switch]$VmOperatorMode,
   [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','ValidateLifecycleEvent','AuthorizeArtifacts','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
   [string]$Value = '',
@@ -18,10 +20,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$script:CandidateSha = '295693a3eb08e9988594971d87bc4de751e6b551'
+$script:CandidateSha = $ExpectedCandidateSha
 $script:BaselineSha = 'd60300780b565aabf15b172b2bc32abad12b9ca6'
 $script:AllowedStatuses = @('PASS','FAIL','BLOCKED','INCONCLUSIVE','NOT_REACHED','NOT_AVAILABLE','CAPABILITY_SKIP','BETA_LIMITATION')
-$script:CandidateSupportBuild = 'build-24297cf9'
+$script:CandidateSupportBuild = $ExpectedCandidateBuild
 $script:ProcessCleanupUncertain = $false
 $script:LifecycleFaultEvidence = $null
 $script:RequiredAutomatedIds = @(
@@ -129,10 +131,16 @@ function Test-JsonArray([object]$Value) {
 }
 
 function Assert-ObservedIdentity([object]$Identity, [string]$Label, [string]$ExpectedSha, [bool]$Ready) {
-  Assert-ExactProperties $Identity @('expected_sha','observed_sha','expected_version','observed_version') "$Label identity"
+  Assert-ExactProperties $Identity $(if ($Label -eq 'candidate') { @('expected_sha','observed_sha','expected_version','observed_version','expected_build','observed_build') } else { @('expected_sha','observed_sha','expected_version','observed_version') }) "$Label identity"
   if (-not (Test-JsonString $Identity.expected_sha) -or $Identity.expected_sha -cne $ExpectedSha) { throw "$Label expected SHA mismatch" }
   if (-not (Test-JsonString $Identity.expected_version) -or [string]::IsNullOrWhiteSpace($Identity.expected_version)) { throw "$Label expected version must be a non-empty string" }
+  if ($Label -eq 'candidate') {
+    if ($script:CandidateSupportBuild -cnotmatch '^build-[0-9a-f]{8}$' -or $Identity.expected_build -cne $script:CandidateSupportBuild) { throw 'candidate expected build mismatch' }
+    if ($null -ne $Identity.observed_build -and (-not (Test-JsonString $Identity.observed_build) -or $Identity.observed_build -cnotmatch '^build-[0-9a-f]{8}$')) { throw 'candidate observed build must be an exact build fingerprint or null' }
+    if ($null -ne $Identity.observed_build -and $Identity.observed_build -cne $script:CandidateSupportBuild) { throw 'candidate observed build does not match the required build' }
+  }
   if ($null -ne $Identity.observed_sha -and (-not (Test-JsonString $Identity.observed_sha) -or -not (Test-StrictSha $Identity.observed_sha))) { throw "$Label observed SHA must be exact 40-hex string or null" }
+  if ($null -ne $Identity.observed_sha -and $Identity.observed_sha -cne $ExpectedSha) { throw "$Label observed SHA mismatch" }
   if ($null -ne $Identity.observed_version -and (-not (Test-JsonString $Identity.observed_version) -or [string]::IsNullOrWhiteSpace($Identity.observed_version))) { throw "$Label observed version must be a non-empty string or null" }
   if ($Ready -and ($Identity.observed_sha -cne $ExpectedSha -or [string]::IsNullOrWhiteSpace($Identity.observed_version))) {
     throw "$Label observed identity does not match the required build"
@@ -252,7 +260,8 @@ function Assert-Receipt([object]$Receipt) {
   Assert-ObservedIdentity $Receipt.baseline 'baseline' $script:BaselineSha $ready
   Assert-ExactProperties $Receipt.harness @('observed_sha','observed_version') 'harness identity'
   if ($null -ne $Receipt.harness.observed_sha -and (-not (Test-JsonString $Receipt.harness.observed_sha) -or -not (Test-StrictSha $Receipt.harness.observed_sha))) { throw 'harness observed_sha must be exact 40-hex string or null' }
-  if ($Receipt.harness.observed_sha -eq $script:CandidateSha -or $Receipt.harness.observed_sha -eq $script:BaselineSha) { throw 'harness identity must remain distinct from product identities' }
+  if ($null -ne $Receipt.harness.observed_sha -and $Receipt.harness.observed_sha -cne $ExpectedHarnessSha) { throw 'harness observed SHA mismatch' }
+  if ($Receipt.harness.observed_sha -eq $script:BaselineSha) { throw 'harness identity must remain distinct from baseline identity' }
   if ($null -ne $Receipt.harness.observed_version -and (-not (Test-JsonString $Receipt.harness.observed_version) -or [string]::IsNullOrWhiteSpace($Receipt.harness.observed_version))) { throw 'harness observed_version must be a non-empty string or null' }
   if ($ready) {
     if (-not (Test-StrictSha $Receipt.harness.observed_sha)) { throw 'harness observed SHA is required for readiness' }
@@ -414,7 +423,7 @@ function New-UploadAuthorization([string]$Kind, [string]$Path, [string]$Nonce, [
   if ($Nonce -cnotmatch '^[0-9a-f]{32}$' -or -not (Test-StrictSha $HarnessSha)) { throw 'upload authorization identity is invalid' }
   $receiptSha = Get-FileSha $Path
   if ($receiptSha -cnotmatch '^[0-9a-f]{64}$') { throw 'receipt hash unavailable for authorization' }
-  $record = [ordered]@{ schema_version = 1; kind = $Kind.ToLowerInvariant(); run_nonce = $Nonce; harness_sha = $HarnessSha; receipt_sha256 = $receiptSha }
+  $record = [ordered]@{ schema_version = 1; kind = $Kind.ToLowerInvariant(); run_nonce = $Nonce; harness_sha = $HarnessSha; candidate_sha = $script:CandidateSha; candidate_build = $script:CandidateSupportBuild; receipt_sha256 = $receiptSha }
   if ($Kind -eq 'Evidence') {
     if (-not $EvidencePath) { throw 'evidence path is required for evidence authorization' }
     $record.evidence_root = [System.IO.Path]::GetFullPath($EvidencePath)
@@ -429,11 +438,11 @@ function Assert-UploadAuthorization([string]$Kind, [string]$Path, [string]$Nonce
   if (-not (Test-Path -LiteralPath $authorizationPath -PathType Leaf)) { throw "$Kind upload authorization is absent" }
   Assert-NoReparseAncestry $authorizationPath
   $record = Get-Content -LiteralPath $authorizationPath -Raw | ConvertFrom-Json
-  $properties = @('schema_version','kind','run_nonce','harness_sha','receipt_sha256')
+  $properties = @('schema_version','kind','run_nonce','harness_sha','candidate_sha','candidate_build','receipt_sha256')
   if ($Kind -eq 'Evidence') { $properties += @('evidence_root','evidence_sha256') }
   Assert-ExactProperties $record $properties "$Kind upload authorization"
   if (($record.schema_version -isnot [int] -and $record.schema_version -isnot [long]) -or $record.schema_version -ne 1) { throw 'upload authorization schema mismatch' }
-  if ($record.kind -cne $Kind.ToLowerInvariant() -or $record.run_nonce -cne $Nonce -or $record.harness_sha -cne $HarnessSha) { throw 'stale or wrong upload authorization identity' }
+  if ($record.kind -cne $Kind.ToLowerInvariant() -or $record.run_nonce -cne $Nonce -or $record.harness_sha -cne $HarnessSha -or $record.candidate_sha -cne $script:CandidateSha -or $record.candidate_build -cne $script:CandidateSupportBuild) { throw 'stale or wrong upload authorization identity' }
   if ($record.receipt_sha256 -cne (Get-FileSha $Path)) { throw 'upload authorization receipt hash mismatch' }
   if ($Kind -eq 'Evidence') {
     $fullEvidence = [System.IO.Path]::GetFullPath($EvidencePath)
@@ -601,7 +610,16 @@ if ($Mode -eq 'Probe') {
     'HashTree' { Write-Output (Get-TreeHash $Root) }
     'ScanCanary' { $hits = @(Find-Canary $Root $Canary); if ($hits.Count -gt 0) { throw "credential canary found in evidence" }; Write-Output 'PASS' }
     'EvaluateReadiness' { $receipt = Read-Receipt $ReceiptPath; Assert-Receipt $receipt | Out-Null; Write-Output ([bool]$receipt.terminal_workstation_ready).ToString().ToLowerInvariant() }
-    'VerifySupportBuild' { if ($Value -cne $script:CandidateSupportBuild) { throw "candidate Support build mismatch: $Value" }; Write-Output 'PASS' }
+    'VerifySupportBuild' {
+      if (-not (Test-StrictSha $Canary)) { throw 'candidate SHA is invalid' }
+      if (-not (Test-Path -LiteralPath $Root -PathType Container)) { throw 'candidate root is required' }
+      $version = (Get-Content -LiteralPath (Join-Path $Root 'VERSION') -Raw).Trim()
+      $module = (New-Object System.Uri((Resolve-Path (Join-Path $Root 'lib\support-center.mjs')).Path)).AbsoluteUri
+      $code = 'const {fingerprintBuild}=await import(process.argv[1]);const r=fingerprintBuild({version:process.argv[2],commit:process.argv[3]});if(!r.ok)process.exit(2);console.log(r.value)'
+      $expected = (& node --input-type=module -e $code $module $version $Canary | Out-String).Trim()
+      if ($LASTEXITCODE -ne 0 -or $Value -cne $expected) { throw "candidate Support build mismatch: $Value" }
+      Write-Output 'PASS'
+    }
     'VerifyManifestPins' {
       $observed = Get-Content -LiteralPath $Root -Raw | ConvertFrom-Json
       $manifest = Get-Content -LiteralPath $Value -Raw | ConvertFrom-Json
@@ -707,6 +725,7 @@ $harnessObservedSha = $null
 $harnessObservedVersion = $null
 $candidateObservedSha = $null
 $candidateObservedVersion = $null
+$candidateObservedBuild = $null
 $baselineObservedSha = $null
 $baselineObservedVersion = $null
 $ownedRoot = if ($EvidenceRoot) { Split-Path -Parent $EvidenceRoot } else { $null }
@@ -732,6 +751,8 @@ try {
     }
   }
   if (-not (Test-StrictSha $ExpectedHarnessSha)) { throw 'ExpectedHarnessSha must be exact 40-hex' }
+  if (-not (Test-StrictSha $ExpectedCandidateSha)) { throw 'ExpectedCandidateSha must be exact lowercase 40-hex' }
+  if ($ExpectedCandidateBuild -cnotmatch '^build-[0-9a-f]{8}$') { throw 'ExpectedCandidateBuild must be an exact build fingerprint' }
   foreach ($path in @($HarnessRoot,$CandidateRoot,$BaselineRoot)) {
     if (-not (Test-Path -LiteralPath $path -PathType Container)) { throw "checkout missing: $path" }
   }
@@ -747,7 +768,11 @@ try {
   if ($harnessObservedSha -cne $ExpectedHarnessSha) { throw "harness SHA mismatch: $harnessObservedSha" }
   if ($candidateObservedSha -cne $script:CandidateSha) { throw "candidate SHA mismatch: $candidateObservedSha" }
   if ($baselineObservedSha -cne $script:BaselineSha) { throw "baseline SHA mismatch: $baselineObservedSha" }
-  if ($harnessObservedSha -eq $candidateObservedSha -or $harnessObservedSha -eq $baselineObservedSha) { throw 'harness checkout must be distinct from product checkouts' }
+  if ($harnessObservedSha -eq $baselineObservedSha) { throw 'harness checkout must be distinct from baseline checkout' }
+  $supportModule = (New-Object System.Uri((Resolve-Path (Join-Path $CandidateRoot 'lib\support-center.mjs')).Path)).AbsoluteUri
+  $supportCode = 'const {fingerprintBuild}=await import(process.argv[1]);const r=fingerprintBuild({version:process.argv[2],commit:process.argv[3]});if(!r.ok)process.exit(2);console.log(r.value)'
+  $computedCandidateBuild = (& node --input-type=module -e $supportCode $supportModule $candidateObservedVersion $candidateObservedSha | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or $computedCandidateBuild -cne $script:CandidateSupportBuild) { throw "candidate computed Support build mismatch: $computedCandidateBuild" }
 
   if (-not $EvidenceRoot) { throw 'EvidenceRoot is required' }
   if (-not $ReceiptPath) { throw 'ReceiptPath is required' }
@@ -870,6 +895,7 @@ try {
   Copy-Item -LiteralPath $candidateSupport.Stdout -Destination $candidateSupportPath
   $supportJson = Get-Content -LiteralPath $candidateSupportPath -Raw | ConvertFrom-Json
   if ([string]$supportJson.versions.coopBuild -cne $script:CandidateSupportBuild) { throw "candidate Support build identity mismatch: $($supportJson.versions.coopBuild)" }
+  $candidateObservedBuild = [string]$supportJson.versions.coopBuild
 
   $manifest = Get-Content -LiteralPath (Join-Path $CandidateRoot 'config\release-manifest.json') -Raw | ConvertFrom-Json
   $candidateNpm = Invoke-Bounded 'npm.cmd' @('ls','-g','--depth=0','--json') (Join-Path $logs 'candidate-npm-inventory') 300
@@ -963,7 +989,7 @@ try {
   }
   $receipt = [ordered]@{
     schema_version = 1
-    candidate = [ordered]@{ expected_sha = $script:CandidateSha; observed_sha = $candidateObservedSha; expected_version = '0.23.1'; observed_version = $candidateObservedVersion }
+    candidate = [ordered]@{ expected_sha = $script:CandidateSha; observed_sha = $candidateObservedSha; expected_version = '0.23.1'; observed_version = $candidateObservedVersion; expected_build = $script:CandidateSupportBuild; observed_build = $candidateObservedBuild }
     baseline = [ordered]@{ expected_sha = $script:BaselineSha; observed_sha = $baselineObservedSha; expected_version = '0.23.1'; observed_version = $baselineObservedVersion }
     harness = [ordered]@{ observed_sha = $harnessObservedSha; observed_version = $harnessObservedVersion }
     execution = [ordered]@{
