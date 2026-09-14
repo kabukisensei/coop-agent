@@ -467,12 +467,16 @@ sys.exit(result.returncode)
 PY
 }
 if [ "$WIN" = "1" ]; then
-  # MSYS may expose a POSIX-emulation PID in $$; native Windows process APIs
-  # require bash.exe's real Win32 PID. Run a direct child (not $(...), which
-  # adds a subshell) and have it record that exact parent.
-  if ! "$PY" -c 'import os,sys; open(sys.argv[1], "wb").write((str(os.getppid()) + "\n").encode("ascii"))' \
-    "$TMP/native-root.pid"; then
-    ko "F: native Windows root PID discovery command failed"
+  # MSYS exposes a virtual PID in $$ and its stable native bash.exe PID in
+  # the WINPID column. Resolve that mapping directly; a spawned Python child's
+  # native parent may be a transient MSYS wrapper that exits before inspection.
+  if ! ps -p "$$" > "$TMP/msys-root.ps" 2>"$TMP/msys-root.err"; then
+    ko "F: native Windows root PID discovery command failed: $(cat "$TMP/msys-root.err")"
+    exit 1
+  fi
+  if ! "$PY" -c 'import sys; rows=[line.split() for line in open(sys.argv[1], encoding="utf-8-sig") if line.strip()]; header=rows[0]; value=rows[1][header.index("WINPID")]; assert len(rows)==2 and value.isdigit() and int(value)>0; sys.stdout.buffer.write(value.encode("ascii") + b"\n")' \
+    "$TMP/msys-root.ps" > "$TMP/native-root.pid"; then
+    ko "F: native Windows root PID mapping was malformed"
     exit 1
   fi
   if ! IFS= read -r INSPECTOR_ROOT_PID < "$TMP/native-root.pid"; then
