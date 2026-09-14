@@ -240,42 +240,94 @@ def _resolve_existing_regular_script(path, target=None):
     return resolved, None
 
 
-def _same_process_group(pid, scope_pgid):
-    """Return membership in the inspector-owned group or bounded uncertainty."""
-    if scope_pgid is None:
-        return True, None
-    try:
-        return os.getpgid(pid) == scope_pgid, None
-    except ProcessLookupError:
-        return False, None
-    except OSError as exc:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False, None
-        except PermissionError:
-            pass
-        return False, "process-group identity unavailable for pid %d: %s" % (pid, exc)
+def _linux_process_identity(pid):
+    """Return the kernel start identity for one live Linux process."""
+    raw, error = _linux_read(pid, "stat", binary=True)
+    if error:
+        return None, error
+    # comm is parenthesized and may contain spaces or closing parentheses. Split
+    # at the final ')' before the fixed-position fields; starttime is field 22.
+    closing = raw.rfind(b")")
+    fields = raw[closing + 1 :].split() if closing >= 0 else []
+    if len(fields) < 20 or not fields[19].isdigit():
+        return None, "stat metadata malformed for pid %d" % pid
+    if fields[0] == b"Z":
+        return None, "exited"
+    return (pid, int(fields[19])), None
 
 
-def linux_inspect(target, scope_pgid=None):
+def _linux_descendants(root_pid):
+    """Enumerate one validated root subtree without inspecting ambient PIDs."""
+    root_identity, error = _linux_process_identity(root_pid)
+    if error:
+        return [], ["root pid %d unavailable: %s" % (root_pid, error)]
+    pending = [root_identity]
+    identities = {root_pid: root_identity}
+    descendants = []
+    uncertainties = []
+    while pending:
+        identity = pending.pop()
+        pid = identity[0]
+        if pid != root_pid:
+            descendants.append(pid)
+        raw, error = _linux_read(pid, "task/%d/children" % pid)
+        if error:
+            current, current_error = _linux_process_identity(pid)
+            if pid != root_pid and current_error == "exited":
+                continue
+            if current == identity:
+                uncertainties.append(
+                    "descendant traversal failed for pid %d: %s" % (pid, error)
+                )
+            else:
+                uncertainties.append(
+                    "process identity changed during traversal for pid %d" % pid
+                )
+            continue
+        fields = raw.split()
+        if any(not value.isdigit() for value in fields):
+            uncertainties.append("children metadata malformed for pid %d" % pid)
+            continue
+        current, current_error = _linux_process_identity(pid)
+        if current_error:
+            if pid == root_pid or current_error != "exited":
+                uncertainties.append(
+                    "process identity changed during traversal for pid %d" % pid
+                )
+                continue
+        elif current != identity:
+            uncertainties.append(
+                "process identity changed during traversal for pid %d" % pid
+            )
+            continue
+        for value in fields:
+            child_pid = int(value)
+            if child_pid in identities:
+                continue
+            child_identity, child_error = _linux_process_identity(child_pid)
+            if child_error == "exited":
+                continue
+            if child_error:
+                uncertainties.append(
+                    "descendant identity unavailable for pid %d: %s"
+                    % (child_pid, child_error)
+                )
+                continue
+            identities[child_pid] = child_identity
+            pending.append(child_identity)
+    final_root, final_error = _linux_process_identity(root_pid)
+    if final_error or final_root != root_identity:
+        uncertainties.append("root pid %d changed during traversal" % root_pid)
+    return descendants, uncertainties
+
+
+def linux_inspect(target, root_pid):
     own_pid = os.getpid()
     matches = []
-    uncertainties = []
     uid = os.geteuid()
-    try:
-        names = os.listdir("/proc")
-    except OSError as exc:
-        return [], ["cannot enumerate /proc: %s" % exc]
-    for name in names:
-        if not name.isdigit() or int(name) == own_pid:
-            continue
-        pid = int(name)
-        in_scope, group_error = _same_process_group(pid, scope_pgid)
-        if group_error:
-            uncertainties.append(group_error)
-            continue
-        if not in_scope:
+    pids, uncertainties = _linux_descendants(root_pid)
+    for pid in pids:
+        if pid == own_pid:
             continue
         candidate, error = _linux_same_user_python(pid, uid)
         if error:
@@ -316,9 +368,9 @@ def linux_inspect(target, scope_pgid=None):
     return matches, uncertainties
 
 
-def linux_matches(target):
+def linux_matches(target, root_pid):
     """Compatibility wrapper; uncertainty is an error, never absence."""
-    matches, uncertainties = linux_inspect(target)
+    matches, uncertainties = linux_inspect(target, root_pid)
     if uncertainties:
         raise RuntimeError("; ".join(uncertainties))
     return matches
@@ -479,10 +531,41 @@ def _macos_pid_exists(pid):
         return False
 
 
-def macos_inspect(target, scope_pgid=None):
+def _macos_descendants(root_pid, rows):
+    """Return the root closure from one pid/ppid/uid process snapshot."""
+    records = {}
+    uncertainties = []
+    for line in rows:
+        fields = line.strip().split()
+        if len(fields) != 3 or not all(value.isdigit() for value in fields):
+            uncertainties.append("ps process metadata malformed: %s" % line.strip())
+            continue
+        pid, ppid, uid = (int(value) for value in fields)
+        if pid in records:
+            uncertainties.append("ps process metadata duplicates pid %d" % pid)
+            continue
+        records[pid] = (ppid, uid)
+    if root_pid not in records:
+        uncertainties.append("root pid %d unavailable in process snapshot" % root_pid)
+        return [], records, uncertainties
+    closure = []
+    pending = [root_pid]
+    seen = set()
+    while pending:
+        pid = pending.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        closure.append(pid)
+        children = [child for child, (parent, _uid) in records.items() if parent == pid]
+        pending.extend(reversed(children))
+    return [pid for pid in closure if pid != root_pid], records, uncertainties
+
+
+def macos_inspect(target, root_pid):
     """Use ps only for same-UID candidates, then native APIs for identity/data."""
     result = subprocess.run(
-        ["ps", "-ww", "-axo", "pid=,uid="],
+        ["ps", "-ww", "-axo", "pid=,ppid=,uid="],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -492,21 +575,17 @@ def macos_inspect(target, scope_pgid=None):
     if result.returncode != 0:
         return [], ["ps process inspection failed: %s" % result.stderr.strip()]
     matches = []
-    uncertainties = []
+    pids, records, uncertainties = _macos_descendants(
+        root_pid, result.stdout.splitlines()
+    )
+    if root_pid not in records:
+        return [], uncertainties
     own_pid = os.getpid()
     uid = os.geteuid()
-    for line in result.stdout.splitlines():
-        fields = line.strip().split(None, 1)
-        if len(fields) != 2 or not fields[0].isdigit() or int(fields[0]) == own_pid:
+    for pid in pids:
+        if pid == own_pid:
             continue
-        if not fields[1].isdigit() or int(fields[1]) != uid:
-            continue
-        pid = int(fields[0])
-        in_scope, group_error = _same_process_group(pid, scope_pgid)
-        if group_error:
-            uncertainties.append(group_error)
-            continue
-        if not in_scope:
+        if records[pid][1] != uid:
             continue
         executable, error = macos_process_executable(pid)
         if error:
@@ -551,24 +630,32 @@ def macos_inspect(target, scope_pgid=None):
     return matches, uncertainties
 
 
-def macos_matches(target):
-    matches, uncertainties = macos_inspect(target)
+def macos_matches(target, root_pid):
+    matches, uncertainties = macos_inspect(target, root_pid)
     if uncertainties:
         raise RuntimeError("; ".join(uncertainties))
     return matches
 
 
 def main():
-    if len(sys.argv) != 2:
-        print("usage: knowledge-git-process-inspector.py PATH", file=sys.stderr)
+    if (
+        len(sys.argv) != 4
+        or sys.argv[1] != "--root-pid"
+        or not sys.argv[2].isdigit()
+        or int(sys.argv[2]) <= 0
+    ):
+        print(
+            "usage: knowledge-git-process-inspector.py --root-pid PID PATH",
+            file=sys.stderr,
+        )
         return 2
-    target = os.path.realpath(sys.argv[1])
+    root_pid = int(sys.argv[2])
+    target = os.path.realpath(sys.argv[3])
     try:
-        scope_pgid = os.getpgrp()
         matches, uncertainties = (
-            linux_inspect(target, scope_pgid)
+            linux_inspect(target, root_pid)
             if os.path.isdir("/proc")
-            else macos_inspect(target, scope_pgid)
+            else macos_inspect(target, root_pid)
         )
     except (OSError, subprocess.SubprocessError, RuntimeError) as error:
         print("process inspection uncertain: %s" % error, file=sys.stderr)

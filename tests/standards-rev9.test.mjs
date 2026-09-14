@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   AUTHORITY_CLASSES, CANONICAL_REMOTE_STATE, buildStandardsContext, identifyTaskDomains,
   bindReviewerProvenance, projectStandardPaths, promoteReviewRun, resolveAcceptedReviewRun, resolveStandard, reviewStandardsArgs, sourceStatus,
@@ -87,6 +87,16 @@ try {
     assert.equal(record.resolution.immutable, true); assert.notEqual(record.resolution.path, record.resolution.source_path);
     const report = reviewerReport(sqlReviewer, record.resolution);
     assert.deepEqual(verifyReviewerProvenance(record.resolution, report), { ok: true });
+  });
+
+  test("STD-02W", "content-addressed snapshots are reusable across fresh processes", () => {
+    const script = join(tmp, "reuse-snapshot.mjs");
+    writeFileSync(script, `import {buildStandardsContext} from ${JSON.stringify(pathToFileURL(join(ROOT, "lib", "standards.mjs")).href)};\nconst [canonical,snapshotRoot,cwd]=process.argv.slice(2); const record=buildStandardsContext("Write a stored procedure",{cwd,fixtureRoot:canonical,canonicalRoot:cwd+"/missing",staleRoot:cwd+"/missing-lkg",snapshotRoot,fixtureAuthority:true}).records[0]; process.stdout.write(JSON.stringify({path:record.resolution.path,headings:record.sections.map((section)=>section.heading)}));\n`);
+    const run = () => JSON.parse(execFileSync(process.execPath, [script, canonical, snapshots, tmp], { encoding: "utf8" }));
+    const first = run(), second = run();
+    assert.equal(first.path, second.path);
+    assert.match(first.headings.join(" "), /Stored procedures/);
+    assert.match(second.headings.join(" "), /Stored procedures/);
   });
 
   test("STD-03", "DAX provenance mismatch is rejected", () => {

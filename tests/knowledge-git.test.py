@@ -570,7 +570,11 @@ class ProcessInspectorTests(unittest.TestCase):
 
     def test_macos_native_executable_identity_rejects_spoof_and_inspects_alias(self):
         uid = os.geteuid()
-        ps_result = SimpleNamespace(returncode=0, stdout="101 %d\n" % uid, stderr="")
+        ps_result = SimpleNamespace(
+            returncode=0,
+            stdout="100 1 %d\n101 100 %d\n" % (uid, uid),
+            stderr="",
+        )
         target = "/tmp/knowledge-git.py"
         scenarios = (
             ("/usr/bin/python3", ["worker-alias", target], ([101], []), True),
@@ -593,12 +597,39 @@ class ProcessInspectorTests(unittest.TestCase):
                     return_value=(target, None),
                 ),
             ):
-                self.assertEqual(inspector.macos_inspect(target), expected)
+                self.assertEqual(inspector.macos_inspect(target, 100), expected)
             self.assertEqual(read.called, argv_read)
+
+    def test_macos_snapshot_closure_excludes_ambient_and_rejects_bad_root_metadata(
+        self,
+    ):
+        rows = [
+            "100 1 501",
+            "101 100 501",
+            "102 101 501",
+            "200 1 501",
+        ]
+        pids, records, uncertainties = inspector._macos_descendants(100, rows)
+        self.assertEqual(pids, [101, 102])
+        self.assertNotIn(200, pids)
+        self.assertEqual(records[102], (101, 501))
+        self.assertEqual(uncertainties, [])
+        self.assertEqual(
+            inspector._macos_descendants(999, rows)[2],
+            ["root pid 999 unavailable in process snapshot"],
+        )
+        self.assertIn(
+            "malformed",
+            inspector._macos_descendants(100, rows + ["unreadable"])[2][0],
+        )
 
     def test_macos_unavailable_executable_identity_is_uncertain_only_while_live(self):
         uid = os.geteuid()
-        ps_result = SimpleNamespace(returncode=0, stdout="101 %d\n" % uid, stderr="")
+        ps_result = SimpleNamespace(
+            returncode=0,
+            stdout="100 1 %d\n101 100 %d\n" % (uid, uid),
+            stderr="",
+        )
         for live, expected_uncertainty in ((True, True), (False, False)):
             with (
                 mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
@@ -613,7 +644,7 @@ class ProcessInspectorTests(unittest.TestCase):
                 mock.patch.object(inspector, "_macos_pid_exists", return_value=live),
             ):
                 matches, uncertainties = inspector.macos_inspect(
-                    "/tmp/knowledge-git.py"
+                    "/tmp/knowledge-git.py", 100
                 )
             self.assertEqual(matches, [])
             self.assertEqual(bool(uncertainties), expected_uncertainty)
@@ -622,7 +653,8 @@ class ProcessInspectorTests(unittest.TestCase):
         uid = os.geteuid()
         ps_result = SimpleNamespace(
             returncode=0,
-            stdout="101 %d\n102 %d\n103 %d\n" % (uid, uid, uid + 1),
+            stdout="100 1 %d\n101 100 %d\n102 100 %d\n103 1 %d\n"
+            % (uid, uid, uid, uid + 1),
             stderr="",
         )
         target = "/tmp/helper path/scripts/knowledge-git.py"
@@ -646,7 +678,7 @@ class ProcessInspectorTests(unittest.TestCase):
                 return_value=(target, None),
             ),
         ):
-            self.assertEqual(inspector.macos_inspect(target), ([101], []))
+            self.assertEqual(inspector.macos_inspect(target, 100), ([101], []))
         with (
             mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
             mock.patch.object(
@@ -656,7 +688,7 @@ class ProcessInspectorTests(unittest.TestCase):
             mock.patch.object(inspector, "_macos_pid_exists", return_value=True),
         ):
             self.assertEqual(
-                inspector.macos_inspect(target)[1],
+                inspector.macos_inspect(target, 100)[1],
                 ["KERN_PROCARGS2 unavailable for pid 101"],
             )
         with (
@@ -672,7 +704,7 @@ class ProcessInspectorTests(unittest.TestCase):
             mock.patch.object(inspector, "macos_process_cwd", return_value=None),
             mock.patch.object(inspector, "_macos_pid_exists", return_value=True),
         ):
-            self.assertIn("cwd unavailable", inspector.macos_inspect(target)[1][0])
+            self.assertIn("cwd unavailable", inspector.macos_inspect(target, 100)[1][0])
         with (
             mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
             mock.patch.object(
@@ -681,7 +713,7 @@ class ProcessInspectorTests(unittest.TestCase):
             mock.patch.object(inspector, "macos_process_argv", return_value=None),
             mock.patch.object(inspector, "_macos_pid_exists", return_value=False),
         ):
-            self.assertEqual(inspector.macos_inspect(target), ([], []))
+            self.assertEqual(inspector.macos_inspect(target, 100), ([], []))
 
     def test_linux_cmdline_and_cwd_failures_are_uncertain_but_exit_is_ignored(self):
         target = "/tmp/knowledge-git.py"
@@ -693,7 +725,9 @@ class ProcessInspectorTests(unittest.TestCase):
             self.assertIsNone(value)
             self.assertIn("unreadable", error)
         with (
-            mock.patch.object(inspector.os, "listdir", return_value=["101"]),
+            mock.patch.object(
+                inspector, "_linux_descendants", return_value=([101], [])
+            ),
             mock.patch.object(
                 inspector, "_linux_same_user_python", return_value=(True, None)
             ),
@@ -702,10 +736,12 @@ class ProcessInspectorTests(unittest.TestCase):
             ),
         ):
             self.assertEqual(
-                inspector.linux_inspect(target), ([], ["cmdline unreadable"])
+                inspector.linux_inspect(target, 100), ([], ["cmdline unreadable"])
             )
         with (
-            mock.patch.object(inspector.os, "listdir", return_value=["101"]),
+            mock.patch.object(
+                inspector, "_linux_descendants", return_value=([101], [])
+            ),
             mock.patch.object(
                 inspector, "_linux_same_user_python", return_value=(True, None)
             ),
@@ -719,21 +755,25 @@ class ProcessInspectorTests(unittest.TestCase):
             ),
         ):
             self.assertEqual(
-                inspector.linux_inspect(target), ([], ["cwd permission denied"])
+                inspector.linux_inspect(target, 100), ([], ["cwd permission denied"])
             )
         with (
-            mock.patch.object(inspector.os, "listdir", return_value=["101"]),
+            mock.patch.object(
+                inspector, "_linux_descendants", return_value=([101], [])
+            ),
             mock.patch.object(
                 inspector, "_linux_same_user_python", return_value=(True, None)
             ),
             mock.patch.object(inspector, "proc_argv", return_value=(None, "exited")),
         ):
-            self.assertEqual(inspector.linux_inspect(target), ([], []))
+            self.assertEqual(inspector.linux_inspect(target, 100), ([], []))
 
     def test_missing_script_operand_is_uncertain_only_while_candidate_is_live(self):
         missing = "/definitely-missing-coop-review/knowledge-git.py"
         with (
-            mock.patch.object(inspector.os, "listdir", return_value=["101"]),
+            mock.patch.object(
+                inspector, "_linux_descendants", return_value=([101], [])
+            ),
             mock.patch.object(
                 inspector, "_linux_same_user_python", return_value=(True, None)
             ),
@@ -744,11 +784,15 @@ class ProcessInspectorTests(unittest.TestCase):
             ),
             mock.patch.object(inspector, "_pid_exited", return_value=False),
         ):
-            matches, uncertainties = inspector.linux_inspect("/tmp/knowledge-git.py")
+            matches, uncertainties = inspector.linux_inspect(
+                "/tmp/knowledge-git.py", 100
+            )
             self.assertEqual(matches, [])
             self.assertIn("script path unresolved", uncertainties[0])
         with (
-            mock.patch.object(inspector.os, "listdir", return_value=["101"]),
+            mock.patch.object(
+                inspector, "_linux_descendants", return_value=([101], [])
+            ),
             mock.patch.object(
                 inspector, "_linux_same_user_python", return_value=(True, None)
             ),
@@ -759,10 +803,16 @@ class ProcessInspectorTests(unittest.TestCase):
             ),
             mock.patch.object(inspector, "_pid_exited", return_value=True),
         ):
-            self.assertEqual(inspector.linux_inspect("/tmp/knowledge-git.py"), ([], []))
+            self.assertEqual(
+                inspector.linux_inspect("/tmp/knowledge-git.py", 100), ([], [])
+            )
 
         uid = os.geteuid()
-        ps_result = SimpleNamespace(returncode=0, stdout="101 %d\n" % uid, stderr="")
+        ps_result = SimpleNamespace(
+            returncode=0,
+            stdout="100 1 %d\n101 100 %d\n" % (uid, uid),
+            stderr="",
+        )
         with (
             mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
             mock.patch.object(
@@ -779,7 +829,7 @@ class ProcessInspectorTests(unittest.TestCase):
         ):
             self.assertIn(
                 "script path unresolved",
-                inspector.macos_inspect("/tmp/knowledge-git.py")[1][0],
+                inspector.macos_inspect("/tmp/knowledge-git.py", 100)[1][0],
             )
         with (
             mock.patch.object(inspector.subprocess, "run", return_value=ps_result),
@@ -795,7 +845,9 @@ class ProcessInspectorTests(unittest.TestCase):
             ),
             mock.patch.object(inspector, "_macos_pid_exists", return_value=False),
         ):
-            self.assertEqual(inspector.macos_inspect("/tmp/knowledge-git.py"), ([], []))
+            self.assertEqual(
+                inspector.macos_inspect("/tmp/knowledge-git.py", 100), ([], [])
+            )
 
     def test_script_replacement_during_resolution_is_uncertain(self):
         first = SimpleNamespace(st_dev=1, st_ino=10, st_mode=0o100644)
@@ -844,41 +896,84 @@ class ProcessInspectorTests(unittest.TestCase):
         self.assertIsNone(resolved)
         self.assertIn("non-target", error)
 
-    def test_process_group_scope_ignores_ambient_uncertainty_but_keeps_owned_uncertainty(
-        self,
-    ):
+    def test_root_descendant_scope_ignores_ambient_processes_before_inspection(self):
         target = "/tmp/knowledge-git.py"
+
+        def identity(pid, _uid):
+            if pid == 100:
+                return False, None
+            self.assertEqual(pid, 102)
+            return None, "exe unreadable"
+
         with (
-            mock.patch.object(inspector.os, "listdir", return_value=["101", "102"]),
+            mock.patch.object(
+                inspector,
+                "_linux_descendants",
+                return_value=([102], ["owned traversal uncertain"]),
+            ),
             mock.patch.object(inspector.os, "geteuid", return_value=1000),
             mock.patch.object(
-                inspector.os,
-                "getpgid",
-                side_effect=lambda pid: 900 if pid == 101 else 700,
+                inspector, "_linux_same_user_python", side_effect=identity
+            ) as inspect_identity,
+        ):
+            self.assertEqual(
+                inspector.linux_inspect(target, 100),
+                ([], ["owned traversal uncertain", "exe unreadable"]),
+            )
+        self.assertEqual(
+            inspect_identity.call_args_list,
+            [mock.call(102, 1000)],
+        )
+
+    def test_linux_descendant_traversal_is_recursive_and_fails_closed_while_live(self):
+        identities = iter(
+            [
+                ((100, 1), None),
+                ((100, 1), None),
+                ((101, 2), None),
+                ((101, 2), None),
+                ((100, 1), None),
+            ]
+        )
+        with (
+            mock.patch.object(
+                inspector, "_linux_process_identity", side_effect=identities
             ),
             mock.patch.object(
                 inspector,
-                "_linux_same_user_python",
-                return_value=(None, "exe unreadable"),
-            ) as identity,
+                "_linux_read",
+                side_effect=(("101", None), (None, "children unreadable")),
+            ),
+        ):
+            pids, uncertainties = inspector._linux_descendants(100)
+        self.assertEqual(pids, [101])
+        self.assertEqual(
+            uncertainties,
+            ["descendant traversal failed for pid 101: children unreadable"],
+        )
+
+    def test_linux_missing_root_is_uncertain_without_ambient_enumeration(self):
+        with mock.patch.object(
+            inspector, "_linux_process_identity", return_value=(None, "exited")
         ):
             self.assertEqual(
-                inspector.linux_inspect(target, 700), ([], ["exe unreadable"])
+                inspector._linux_descendants(100),
+                ([], ["root pid 100 unavailable: exited"]),
             )
-        identity.assert_called_once_with(102, 1000)
+
+    def test_linux_changed_root_never_follows_untrusted_children(self):
         with (
-            mock.patch.object(inspector.os, "listdir", return_value=["103"]),
-            mock.patch.object(inspector.os, "geteuid", return_value=1000),
             mock.patch.object(
-                inspector.os, "getpgid", side_effect=PermissionError("denied")
-            ),
-            mock.patch.object(inspector.os, "kill", return_value=None),
+                inspector,
+                "_linux_process_identity",
+                side_effect=(((100, 1), None), ((100, 2), None), ((100, 2), None)),
+            ) as identity,
+            mock.patch.object(inspector, "_linux_read", return_value=("999", None)),
         ):
-            matches, uncertainties = inspector.linux_inspect(target, 700)
-        self.assertEqual(matches, [])
-        self.assertIn(
-            "process-group identity unavailable for pid 103", uncertainties[0]
-        )
+            pids, uncertainties = inspector._linux_descendants(100)
+        self.assertEqual(pids, [])
+        self.assertTrue(any("identity changed" in item for item in uncertainties))
+        self.assertEqual(identity.call_args_list, [mock.call(100)] * 3)
 
     def test_linux_unreadable_executable_is_uncertain_regardless_of_name(self):
         uid = os.geteuid()
@@ -900,7 +995,12 @@ class ProcessInspectorTests(unittest.TestCase):
 
     def test_inspector_main_distinguishes_present_uncertain_and_absent(self):
         old_argv = inspector.sys.argv
-        inspector.sys.argv = ["inspector", "/tmp/knowledge-git.py"]
+        inspector.sys.argv = [
+            "inspector",
+            "--root-pid",
+            str(os.getpid()),
+            "/tmp/knowledge-git.py",
+        ]
         try:
             with mock.patch.object(
                 inspector, "linux_inspect", return_value=([101], [])
@@ -912,6 +1012,19 @@ class ProcessInspectorTests(unittest.TestCase):
                 self.assertEqual(inspector.main(), 2)
             with mock.patch.object(inspector, "linux_inspect", return_value=([], [])):
                 self.assertEqual(inspector.main(), 0)
+        finally:
+            inspector.sys.argv = old_argv
+
+    def test_inspector_main_requires_explicit_valid_root_pid(self):
+        old_argv = inspector.sys.argv
+        try:
+            for argv in (
+                ["inspector", "/tmp/knowledge-git.py"],
+                ["inspector", "--root-pid", "0", "/tmp/knowledge-git.py"],
+                ["inspector", "--root-pid", "not-a-pid", "/tmp/knowledge-git.py"],
+            ):
+                inspector.sys.argv = argv
+                self.assertEqual(inspector.main(), 2)
         finally:
             inspector.sys.argv = old_argv
 
@@ -951,10 +1064,12 @@ class ProcessInspectorTests(unittest.TestCase):
                 try:
                     time.sleep(0.15)
                     with mock.patch.object(
-                        inspector.os, "listdir", return_value=[str(proc.pid)]
+                        inspector,
+                        "_linux_descendants",
+                        return_value=([proc.pid], []),
                     ):
                         matches, uncertainties = inspector.linux_inspect(
-                            str(helper.resolve())
+                            str(helper.resolve()), os.getpid()
                         )
                     self.assertIn(proc.pid, matches, command)
                     self.assertEqual(uncertainties, [], command)
@@ -981,6 +1096,8 @@ class ProcessInspectorTests(unittest.TestCase):
                 [
                     sys.executable,
                     str(ROOT / "tests" / "knowledge-git-process-inspector.py"),
+                    "--root-pid",
+                    str(os.getpid()),
                     str(helper.resolve()),
                 ],
                 stdout=subprocess.PIPE,
@@ -1015,7 +1132,9 @@ class ProcessInspectorTests(unittest.TestCase):
             try:
                 time.sleep(0.15)
                 alias.unlink()
-                matches, uncertainties = inspector.linux_inspect(str(helper.resolve()))
+                matches, uncertainties = inspector.linux_inspect(
+                    str(helper.resolve()), os.getpid()
+                )
                 self.assertNotIn(proc.pid, matches)
                 self.assertTrue(
                     any(
@@ -1037,9 +1156,11 @@ class ProcessInspectorTests(unittest.TestCase):
             try:
                 time.sleep(0.1)
                 with mock.patch.object(
-                    inspector.os, "listdir", return_value=[str(proc.pid)]
+                    inspector,
+                    "_linux_descendants",
+                    return_value=([proc.pid], []),
                 ):
-                    self.assertEqual(inspector.linux_inspect(target), ([], []))
+                    self.assertEqual(inspector.linux_inspect(target, 100), ([], []))
             finally:
                 proc.terminate()
                 proc.wait(timeout=5)
@@ -1067,9 +1188,11 @@ class ProcessInspectorTests(unittest.TestCase):
         try:
             time.sleep(0.15)
             with mock.patch.object(
-                inspector.os, "listdir", return_value=[str(proc.pid)]
+                inspector,
+                "_linux_descendants",
+                return_value=([proc.pid], []),
             ):
-                before = inspector.linux_inspect(str(helper.resolve()))
+                before = inspector.linux_inspect(str(helper.resolve()), os.getpid())
             self.assertIsNone(proc.poll())
             self.assertEqual(before[0], [])
             self.assertTrue(any("retargetable" in item for item in before[1]), before)
@@ -1077,9 +1200,11 @@ class ProcessInspectorTests(unittest.TestCase):
             decoy_fd = os.open(decoy, os.O_RDONLY)
             os.dup2(decoy_fd, helper_fd)
             with mock.patch.object(
-                inspector.os, "listdir", return_value=[str(proc.pid)]
+                inspector,
+                "_linux_descendants",
+                return_value=([proc.pid], []),
             ):
-                after = inspector.linux_inspect(str(helper.resolve()))
+                after = inspector.linux_inspect(str(helper.resolve()), os.getpid())
             self.assertIsNone(proc.poll())
             self.assertEqual(after[0], [])
             self.assertTrue(any("retargetable" in item for item in after[1]), after)
@@ -1119,7 +1244,13 @@ class ProcessInspectorTests(unittest.TestCase):
                 self.assertIsNotNone(proc.stdout)
                 self.assertEqual(proc.stdout.readline().strip(), "ready")
                 observed = subprocess.run(
-                    [sys.executable, str(inspector_copy), "/tmp/knowledge-git.py"],
+                    [
+                        sys.executable,
+                        str(inspector_copy),
+                        "--root-pid",
+                        str(os.getpid()),
+                        "/tmp/knowledge-git.py",
+                    ],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -1137,7 +1268,13 @@ class ProcessInspectorTests(unittest.TestCase):
                 if proc.stdout is not None:
                     proc.stdout.close()
             observed = subprocess.run(
-                [sys.executable, str(inspector_copy), "/tmp/knowledge-git.py"],
+                [
+                    sys.executable,
+                    str(inspector_copy),
+                    "--root-pid",
+                    str(os.getpid()),
+                    "/tmp/knowledge-git.py",
+                ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -1169,9 +1306,11 @@ class ProcessInspectorTests(unittest.TestCase):
             try:
                 time.sleep(0.1)
                 with mock.patch.object(
-                    inspector.os, "listdir", return_value=[str(proc.pid)]
+                    inspector,
+                    "_linux_descendants",
+                    return_value=([proc.pid], []),
                 ):
-                    matches, uncertainties = inspector.linux_inspect(target)
+                    matches, uncertainties = inspector.linux_inspect(target, 100)
                 self.assertNotIn(proc.pid, matches)
                 self.assertEqual(uncertainties, [])
             finally:
