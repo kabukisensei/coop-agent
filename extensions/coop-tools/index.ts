@@ -33,8 +33,18 @@ import { StringDecoder } from "node:string_decoder";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import {
+  buildStandardsContext,
+  provenanceText,
+  reviewStandardsArgs,
+  sourceStatus,
+  bindReviewerProvenance,
+} from "../../lib/standards.mjs";
 
 const SEVERITY = Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info")]);
+type StandardsBindingResult =
+  | { ok: true; binding: { owner: "coop"; path: string; sha256: string; revision: string } }
+  | { ok: false; error: string };
 
 const REVIEW_PARAMS = Type.Object({
   paths: Type.Optional(
@@ -1413,6 +1423,7 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "standards:",
     "  sql: 'docs/standards/sql-standards.md'",
     "  dax: 'docs/standards/dax-standards.md'",
+    "  semantic_model: 'docs/standards/semantic-model-standards.md'",
     "  documentation: 'docs/standards/documentation-standards.md'",
     "  fabric: 'docs/standards/fabric-standards.md'",
     "",
@@ -1734,6 +1745,59 @@ async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
   );
 }
 
+/**
+ * Return the team-knowledge note string if at least one configured knowledge repo clone exists,
+ * or null otherwise.
+ */
+export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | null {
+  const base = coopDir || process.env.COOP_DIR || homedir();
+  const home = homeDir || process.env.HOME || homedir();
+  const cfgPath = join(base, ".coop", "config");
+  if (!existsSync(cfgPath)) return null;
+  try {
+    const raw = readFileSync(cfgPath, "utf8");
+    const cfg = JSON.parse(raw);
+    if (!cfg?.knowledge?.enabled || !Array.isArray(cfg?.knowledge?.repos)) return null;
+    const paths: string[] = [];
+    for (const r of cfg.knowledge.repos) {
+      if (!r || typeof r.local_path !== "string" || !r.local_path.trim()) continue;
+      let p = r.local_path.trim();
+      if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) {
+        p = join(home, p.slice(1).replace(/^[/\\]/, ""));
+      }
+      if (existsSync(p)) {
+        paths.push(p);
+      }
+    }
+    if (paths.length === 0) return null;
+    return `Team knowledge available at ${paths.join(", ")}; see the team-knowledge skill`;
+  } catch {
+    return null;
+  }
+}
+
+export interface ShareLearningSessionSignals {
+  knowledgeAvailable: boolean;
+  /** Distinct failed tool results observed this session (isError tool_results). */
+  toolFailures?: number;
+  alreadySuggested?: boolean;
+}
+
+/**
+ * Heuristic for suggesting /share-learning at turn settle. The ONLY runtime
+ * signal wired today is repeated tool failures (>= 2 distinct failed
+ * tool_result events with knowledge configured and not already suggested this
+ * session). Automatic user-correction/steer/retry-specific detection is
+ * DEFERRED — manual /share-learning still covers corrections and discoveries.
+ * Do not read this predicate as implementing correction detection.
+ */
+export function shouldSuggestShareLearning(signals: ShareLearningSessionSignals): boolean {
+  if (!signals.knowledgeAvailable) return false;
+  if (signals.alreadySuggested) return false;
+  const failures = signals.toolFailures ?? 0;
+  return failures >= 2;
+}
+
 /** The task menu — wired to tools/skills coop already ships. Each choice sends a
  *  friendly, first-person request AS the user (the menu just pre-writes the prompt
  *  a newcomer would otherwise have to compose); the agent then asks for specifics. */
@@ -1799,6 +1863,11 @@ async function showStartMenu(pi: ExtensionAPI, ctx: any): Promise<void> {
 }
 
 export default function coopTools(pi: ExtensionAPI) {
+  // One immutable resolution record per domain/agent operation. The task hook
+  // creates it before work starts; the deterministic reviewer consumes the
+  // same object rather than resolving again mid-operation.
+  let operationStandards = new Map<string, any>();
+  let operationStandardsResolve: ((domain: string) => any) | null = null;
   const runReview = async (
     bin: string,
     params: ReviewParams,
@@ -1832,12 +1901,17 @@ export default function coopTools(pi: ExtensionAPI) {
     // Neutralize argument injection: a model-supplied path starting with "-" would be
     // read as a CLI flag by the review tool. Prefix "./" so it stays a positional path.
     const paths = rawPaths.map((p) => (String(p).startsWith("-") ? "./" + p : p));
-    const args = ["check", ...paths, "--format", "json"];
+    const domain = bin === "coop-sql-review" ? "sql" : "dax";
+    const standards = operationStandards.get(domain) || operationStandardsResolve?.(domain) || { domain, authority_class: "formal_standard", state: "unavailable", path: null, revision: null, sha256: null, source: "task-resolver-unavailable" };
+    operationStandards.set(domain, standards);
+    const args = ["check", ...paths, "--format", "json", ...reviewStandardsArgs(standards)];
     if (params.min_severity) args.push("--min-severity", params.min_severity);
     if (params.strict) args.push("--strict");
 
     let res;
     try {
+      // Pi ExecOptions supports only cwd, signal, and timeout. Provenance comes
+      // from the reviewer's supported --standards report contract.
       res = await pi.exec(bin, args, { cwd: ctx.cwd, signal });
     } catch (e: any) {
       return {
@@ -1852,10 +1926,17 @@ export default function coopTools(pi: ExtensionAPI) {
     } catch {
       /* leave parsed null */
     }
+    const provenance = bindReviewerProvenance(standards, parsed) as StandardsBindingResult;
+    if (!provenance.ok) {
+      return {
+        content: [{ type: "text" as const, text: `${bin} output rejected: ${provenance.error}. Same-source validation failed closed.` }],
+        details: { tool: bin, args, scope, scopeNotes, standards, exitCode: res.code, reportRejected: true, provenanceError: provenance.error, stderr: res.stderr },
+      };
+    }
     const scopeLine = `Scope: ${scope}${scopeNotes} — ${paths.join(", ")}`;
     return {
       content: [{ type: "text" as const, text: `${summarizeReview(bin, parsed, res.stdout, res.code)}\n${scopeLine}` }],
-      details: { tool: bin, args, scope, scopeNotes, exitCode: res.code, report: parsed ?? res.stdout, stderr: res.stderr },
+      details: { tool: bin, args, scope, scopeNotes, standards, standardsBinding: provenance.binding, exitCode: res.code, report: parsed ?? res.stdout, stderr: res.stderr },
     };
   };
 
@@ -2046,6 +2127,16 @@ export default function coopTools(pi: ExtensionAPI) {
   // Normal sessions start at the prompt. The only automatic handoff is the model
   // provider login required when a fresh install has no credentials yet.
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
+    // Learning-nudge lifecycle is per SESSION: reset the failure tally, the
+    // dedupe set, and the once-only flags so a fresh session can be nudged
+    // again. Turns within one session accumulate (two failures across two
+    // turns can trigger the nudge).
+    sessionToolFailures = 0;
+    seenToolErrorIds.clear();
+    learningNudgeAnnounced = false;
+    announcedTeamKnowledge = false;
+    operationStandards = new Map();
+    operationStandardsResolve = null;
     primeModelLogin(ctx);
   });
 
@@ -2056,6 +2147,12 @@ export default function coopTools(pi: ExtensionAPI) {
   // also gets a system-prompt postcondition. Silent when neither applies; wrapped so
   // contract/logging guidance can never break a turn.
   const announcedCwds = new Set<string>();
+  let announcedTeamKnowledge = false;
+  let sessionToolFailures = 0;
+  // Distinct failed tool_result events (dedupe by toolCallId so a replayed
+  // result is never counted twice).
+  const seenToolErrorIds = new Set<string>();
+  let learningNudgeAnnounced = false;
   let dailyRun: {
     requirement: DailyLogRequirement;
     baselineMtime: number;
@@ -2066,8 +2163,13 @@ export default function coopTools(pi: ExtensionAPI) {
   const missedLogAt = new Map<string, number>();
 
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
+    operationStandards = new Map();
+    operationStandardsResolve = null;
     try {
       const cwd: string = ctx.cwd;
+      const standardsContext = buildStandardsContext(event.prompt || "", { cwd });
+      operationStandards = new Map(standardsContext.records.map((record: any) => [record.resolution.domain, record.resolution]));
+      operationStandardsResolve = standardsContext.resolve;
       pendingDailyEffects.clear();
       const requirement = requiredDailyLog(cwd);
       dailyRun = requirement && !dailyLogOptOut(event.prompt || "")
@@ -2107,6 +2209,35 @@ export default function coopTools(pi: ExtensionAPI) {
         }
       }
 
+      if (!announcedTeamKnowledge) {
+        const tk = teamKnowledgeNote();
+        if (tk) {
+          announcedTeamKnowledge = true;
+          if (message) {
+            message.content = `${message.content}\n\n${tk}`;
+          } else {
+            message = {
+              customType: "coop-team-knowledge",
+              display: false,
+              content: tk,
+            };
+          }
+        }
+      }
+
+      if (standardsContext.records.length) {
+        const content = [
+          "Cooptimize standards apply automatically to this task. Follow: identify domain → resolve authority → use only the relevant sections below → perform work → validate SQL/DAX with the same immutable authority record.",
+          ...standardsContext.records.map((record: any) => provenanceText(record)),
+          ...standardsContext.patterns.map((pattern: any) => {
+            const snippets = pattern.sections.map((section: any) => `### ${section.heading} (${section.path})\n${section.content}`).join("\n\n");
+            return `[semantic_model] optional authority=${pattern.authority_class} source=${pattern.source} root=${pattern.source_root} selective=true (relevant Incremental BI excerpts only; not mandatory)${snippets ? `\n${snippets}` : ""}`;
+          }),
+        ].join("\n\n");
+        if (message) message.content = `${message.content}\n\n${content}`;
+        else message = { customType: "coop-standards", display: false, content, details: standardsContext };
+      }
+
       if (!message && !requirement) return;
       return {
         ...(message ? { message } : {}),
@@ -2126,6 +2257,17 @@ export default function coopTools(pi: ExtensionAPI) {
   });
 
   pi.on("tool_result", async (event: any) => {
+    if (event.isError) {
+      // Count DISTINCT failed calls: a replayed delivery of the same
+      // toolCallId must never increment the tally twice.
+      const id = event.toolCallId;
+      if (id === undefined || id === null) {
+        sessionToolFailures++;
+      } else if (!seenToolErrorIds.has(id)) {
+        seenToolErrorIds.add(id);
+        sessionToolFailures++;
+      }
+    }
     if (!dailyRun) return;
     const effect = pendingDailyEffects.get(event.toolCallId);
     pendingDailyEffects.delete(event.toolCallId);
@@ -2136,6 +2278,21 @@ export default function coopTools(pi: ExtensionAPI) {
 
   pi.on("agent_settled", async (_event, ctx: ExtensionContext) => {
     try {
+      if (!learningNudgeAnnounced) {
+        const kbNote = teamKnowledgeNote();
+        if (
+          kbNote &&
+          shouldSuggestShareLearning({
+            knowledgeAvailable: true,
+            toolFailures: sessionToolFailures,
+            alreadySuggested: false,
+          })
+        ) {
+          learningNudgeAnnounced = true;
+          notify(ctx, "This session may be worth a team learning — run /share-learning", "info");
+        }
+      }
+
       if (!dailyRun) return;
       const run = dailyRun;
       dailyRun = null;
@@ -2191,6 +2348,19 @@ export default function coopTools(pi: ExtensionAPI) {
         await runQuickSetup(pi, ctx, prefill);
       } catch (e: any) {
         notify(ctx, `setup-docs failed: ${errMsg(e)}. You can run the same wizard in a shell: coop data-doc setup`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("standards-status", {
+    description: "Show effective standards and independent source states",
+    handler: async (_args: string, ctx: ExtensionContext) => {
+      try {
+        const status = sourceStatus({ cwd: ctx.cwd });
+        notify(ctx, `Canonical remote: ${status.canonical_remote}. See the JSON status in the conversation.`, "info");
+        pi.sendUserMessage(`Standards status (read-only):\n\n\`\`\`json\n${JSON.stringify(status, null, 2)}\n\`\`\``);
+      } catch (e: any) {
+        notify(ctx, `Standards status unavailable: ${errMsg(e)}`, "warning");
       }
     },
   });

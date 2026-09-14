@@ -136,6 +136,66 @@ Registered with Pi so the model can call them directly. All advisory /
 read-only. Each returns a short text summary in `content` and the full structured
 data in `details`.
 
+### Revision 9 standards resolution
+
+Applicable SQL, DAX, and semantic-model prompts automatically run the task-time
+sequence `identify domain → resolve authority → retrieve relevant sections → do
+the work → validate against the same authority`. The hidden `before_agent_start`
+context is bounded by relevant headings; a complete authority document is used
+only when the task explicitly needs it. Unrelated prompts receive no standards
+content. `/standards-status` reports the effective standard for each domain and
+the independent states/revisions of formal standards, the Incremental BI
+`approved_pattern`, and governed TeamAI `team_knowledge`.
+
+Resolution precedence is project/client override, verified canonical checkout,
+verified stale last-known-good, SQL/DAX reviewer bundled fallback, then truthful
+unavailable/auth-required. Existing relative `standards.sql` and `standards.dax`
+paths in v0.23.1 project contracts remain project-local overrides without rewriting
+the contract. Project-controlled paths must resolve to regular files whose real
+paths stay inside the project root; traversal, absolute POSIX/Windows paths, and
+escaping symlinks are ignored in favor of the next verified authority.
+`semantic_model`, `dax`, and `documentation` resolve separately; Incremental BI
+is retrieved only for relevant semantic-model tasks and never becomes mandatory
+authority.
+
+At task start, resolved bytes are copied once into a read-only, content-addressed
+snapshot. The context reads that snapshot and the SQL/DAX reviewer receives the
+same snapshot through `--standards`; the original authority path remains in
+`source_path` for provenance. Reviewer-returned path/hash provenance is mandatory,
+and the snapshot path, realpath, and hash are rechecked before output is accepted.
+The reviewer report remains unchanged: any reviewer-owned revision claim is retained
+as a claim, while COOP records the trusted resolver's revision separately in a
+wrapper-owned `standardsBinding` after path/hash verification. A mismatch fails
+closed. Aggregate review writes into per-run files and atomically promotes only
+accepted reports; rejected output is quarantined away from canonical configured
+review paths and cannot enter docs, suite summaries, comparison baselines, or HTML.
+Bundled fallback is discovered through the installed reviewer's own JSON provenance;
+legacy top-level-version and explicit standards-revision envelopes use the same
+path/hash compatibility rule as actual review and are snapshotted the same way, so
+its real, bounded guidance is available before work rather than only after review.
+Pinned reviewer source references used to verify this contract are
+`/tmp/std-ref-sql` at `cd9bf347548375801df0abf86b13f72781e1d360` and
+`/tmp/std-ref-dax` at `fe39270168c08a6360c99aadcb51a9ad73678a65`.
+
+The canonical remote is the private `https://github.com/cooptimize/coop-standards.git`
+repository. Only its configured authoritative/default `main` branch is consumed. Coop
+performs a bounded, noninteractive, fail-soft refresh at launch and before applicable
+work when the last successful check is at least 15 minutes old; `coop sync` forces a
+check. A verified change stages and durably validates one complete immutable generation,
+then atomically switches the single active pointer and rebuilds its retrieval index.
+Invalid, partial, offline, authentication-failed, or lock-timeout refreshes preserve the
+prior verified generation as degraded/stale last-known-good. Refreshes use one
+cross-process lock, but Monday P0 never guesses that an old or malformed lock is safe
+to recover: it does not steal, rename, or delete uncertain locks. A crash-abandoned lock
+requires later/manual cleanup. Canonical and accepted-review generations are not pruned
+and readers use no leases; bounded cleanup and disk-growth management are deferred beta
+limitations. Each task uses immutable content-addressed snapshots, so generation and
+SQL/DAX review retain one path, commit and SHA-256 even if a later refresh lands during
+that task. Accepted SQL+DAX review generations also retain captured report bytes,
+COOP-owned bindings, and independently revalidated authority provenance behind one
+atomic pointer. Doctor and Support report source, branch, successful check/sync times,
+commit, SHA-256, freshness, degraded state and per-domain fallback truthfully.
+
 ### `sql_review` / `dax_review`
 
 | Param | Type | Notes |

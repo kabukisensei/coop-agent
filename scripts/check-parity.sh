@@ -91,10 +91,13 @@ for f in lib/common.sh lib/common.ps1; do
   fi
 done
 
-echo "→ UTF-8 BOM on every .ps1"
+echo "→ UTF-8 BOM on every .ps1 (exactly one — a duplicate BOM breaks the launcher)"
 BOM="$(printf '\357\273\277')"
 while IFS= read -r f; do
-  if [ "$(head -c 3 "$f")" = "$BOM" ]; then
+  head6="$(head -c 6 "$f")"
+  if [ "$head6" = "$BOM$BOM" ]; then
+    ko "$f starts with TWO UTF-8 BOMs — the extra BOM makes PowerShell parse the shebang as a command. Fix: strip all leading BOMs, then prepend exactly one"
+  elif [ "$(head -c 3 "$f")" = "$BOM" ]; then
     ok "$f"
   else
     ko "$f is missing the UTF-8 BOM — fix: printf '\\357\\273\\277' | cat - '$f' > '$f.bom' && mv '$f.bom' '$f'"

@@ -6,11 +6,86 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Added
+- Team knowledge integration:
+  - Optional `knowledge` configuration block in `~/.coop/config` prompted during onboarding, supporting multiple subscribed team repositories.
+  - Fail-soft sync script (`scripts/sync-knowledge.sh` / `scripts/sync-knowledge.ps1`) wired into `coop sync` and `coop update`.
+  - Subordinate team skills launch slot in `bin/coop` and `bin/coop.ps1`, surfacing external repository skills under first-party precedence.
+  - New `team-knowledge` skill and `before_agent_start` recall note hook.
+  - New `/share-learning` prompt with desktop-compatible frontmatter and quiet friction nudge on turn settle.
+- Bounded, unattended git runner for knowledge sync (`scripts/knowledge-git.py`):
+  hard process-tree deadline (default 30s, `COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS`),
+  no interactive credential prompts, unattended BatchMode SSH that preserves
+  host-key checking, and distinct timeout reporting. Sync now treats a failed or
+  timed-out `git status` as UNKNOWN state (warn + skip) instead of reading empty
+  output as a clean checkout, and clones land in a unique temporary sibling that
+  is moved into place only on success — an interrupted clone can never leave a
+  husk at the configured destination.
+- Deterministic local keyword search across team-knowledge clones
+  (`scripts/search-knowledge.py`): stdlib-only, case-insensitive literal match
+  over Markdown files with `.git` pruned and symlinks never followed, emitting a
+  single capped JSON document per run.
 - New `tips` vibe set (`vibes/tips.txt`): a curated, tips-only rotation of practical
   Coop commands and working habits with no easter eggs. Select it inside Coop with
   `/coop-vibe tips`; it also joins the default `/coop-vibe all` rotation.
 
 ### Changed
+- The `/share-learning` friction nudge now fires only on repeated tool failures
+  (>= 2 distinct failed tool results, deduplicated by tool call). Automatic
+  user-steer/correction/retry detection is deferred — manual `/share-learning`
+  still covers corrections and discoveries. The failure tally, dedupe set, and
+  once-only nudge flags reset per session so a fresh session can be nudged
+  again.
+- Review corrections on the team-knowledge pass (PR #49):
+  - Fixed a duplicate UTF-8 BOM in `bin/coop.ps1` and `scripts/sync-knowledge.ps1`
+    that made PowerShell parse the shebang line as a command; a byte-level gate
+    now rejects any `.ps1` with zero or duplicate BOMs (`scripts/check-parity.sh`,
+    `tests/bom.test.sh`, `tests/run.ps1`).
+  - `team-knowledge` skill and `/share-learning` prompt are bound to the
+    supported workflow: the skill drives `scripts/search-knowledge.py` through
+    its structured statuses and cites repository identity + note path; the
+    TeamAI recall/push routes are removed; the prompt requires selecting the
+    intended knowledge repository before publication (PR-only).
+  - `scripts/knowledge-git.py` applies ONE deadline to the complete operation —
+    after the child exits, the owned process group (identity captured at spawn)
+    is bounded and killed on expiry so descendants can never hold a capturing
+    caller open past the deadline. SSH: env transports stay untouched,
+    `core.sshCommand` is honored (BatchMode only appended to plain `ssh`;
+    non-ssh custom transports are preserved with an actionable warning).
+  - `scripts/search-knowledge.py` captures traversal errors: an unreadable root
+    is `unavailable` and never claimed searched; an accessible root with an
+    unreadable subdirectory is a marked-partial search with an explicit warning.
+  - Test fixtures on Windows are compiled to a real `git.exe` (an extensionless
+    shell script is invisible to `CreateProcess`), and every bounded-git test
+    asserts the fixture actually ran — a missing invocation log fails the test.
+- Second review corrections on the team-knowledge pass (PR #49):
+  - `Get-CoopSkillName` in `lib/common.ps1` no longer crashes the PowerShell
+    launcher on a one-line or unreadable team skill (`Get-Content` returns a
+    scalar string for one-line files; indexing it yielded a `[System.Char]`
+    with no `.Trim()`) — empty, one-line, and multiline-without-name skills
+    are rejected while valid skills still load.
+  - `scripts/knowledge-git.py` bounds the COMPLETE operation on Windows too:
+    the child spawns suspended, is assigned to a Job Object created with
+    KILL_ON_JOB_CLOSE, then resumes — orphaned descendants holding the
+    inherited output handles stay owned after the parent exits, job emptiness
+    is the output-completion signal, and the job is terminated on deadline
+    (taskkill fallback retained when job setup is unavailable).
+  - The operation deadline is established BEFORE configuration discovery: the
+    `core.sshCommand` probe runs through the same owned-process mechanism with
+    the remaining time; a timed-out probe fails the operation (exit 124)
+    instead of silently proceeding with a guessed default transport, and a
+    probe that cannot start is distinguished from a key that is not set.
+  - Windows timeout fixtures compile a real `git.exe` that receives its target
+    paths through the environment, spawn a real child sleeper whose PID the
+    tests verify terminated, and pass a standalone smoke test before any
+    timeout assertion depends on them; the extensionless shim that shadowed
+    `git.exe` (WinError 216) is removed.
+  - `team-knowledge` skill: zero literal matches now mean "no matches for this
+    query" with a simpler-keywords retry — a literal search is not a semantic
+    search — not "the team has no note on the topic".
+- Team-skill launch-slot parsing in `bin/coop` / `bin/coop.ps1` now validates
+  frontmatter before adding any launch argument: an external skill that cannot
+  identify itself is skipped with a warning instead of being added
+  half-validated, and the loader always exits cleanly under `set -e`.
 - Normal Coop startup now goes directly to the prompt instead of auto-opening the
   Start Here or missing-project wizard. `/start`, `/setup-project`, and
   `/setup-docs` remain available on demand, including all discovery, partial,

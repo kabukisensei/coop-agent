@@ -24,12 +24,12 @@ function Write-Shim {
 }
 
 $saved = @{}
-foreach ($name in @('PATH','HOME','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODING_AGENT_DIR','COOP_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','COOP_FABRIC_PYTHON','COOP_TEST_CALLS','COOP_TEST_PY_TEMPLATE','LOCALAPPDATA','ProgramFiles','SystemRoot')) {
+foreach ($name in @('PATH','HOME','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODING_AGENT_DIR','COOP_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','COOP_FABRIC_PYTHON','COOP_TEST_CALLS','COOP_TEST_PY_TEMPLATE','LOCALAPPDATA','ProgramFiles')) {
   $saved[$name] = [Environment]::GetEnvironmentVariable($name)
 }
 
 try {
-  New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $t 'pipx-home'), (Join-Path $t 'pipx-bin'), (Join-Path $t 'agent'), (Join-Path $t 'program-files'), (Join-Path $t 'local-app-data'), (Join-Path $t 'system-root') | Out-Null
+  New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $t 'pipx-home'), (Join-Path $t 'pipx-bin'), (Join-Path $t 'agent'), (Join-Path $t 'program-files'), (Join-Path $t 'local-app-data') | Out-Null
   $fabricPython = Join-Path $t $(if ($isWindowsHost) { 'python312.cmd' } else { 'python312' })
   $pythonTemplate = Join-Path $t $(if ($isWindowsHost) { 'python-template.cmd' } else { 'python-template' })
   if ($isWindowsHost) {
@@ -97,6 +97,38 @@ exit /b 0
   Write-Shim 'fab' "#!/bin/sh`necho 'fab version 1.7.0'`n" "@echo off`r`necho fab version 1.7.0`r`n"
   Write-Shim 'az' "#!/bin/sh`necho 'azure-cli 2.80.0'`n" "@echo off`r`necho azure-cli 2.80.0`r`n"
 
+  # Defect D bounded comparison, stage A: a harmless Start-Job returning a
+  # fixed synthetic value in a CLEAN session (real SystemRoot, unmodified
+  # PATH/HOME). Establishes whether process-backed job startup works at all on
+  # this runner before any fixture environment is applied. Evidence only; no
+  # assertion depends on it and no stream is suppressed.
+  $jobEvidencePath = Join-Path $t 'start-job-evidence.log'
+  $jobEvidence = New-Object System.Collections.Generic.List[string]
+  $jobEvidence.Add("parent.ps=$($PSVersionTable.PSVersion)")
+  $jobEvidence.Add("parent.start_thread_job_available=$([bool](Get-Command Start-ThreadJob -ErrorAction SilentlyContinue))")
+  $jobEvidence.Add("control_a.system_root=$env:SystemRoot")
+  $controlA = $null
+  try {
+    $controlA = Start-Job -ScriptBlock { 'CONTROL_A_OK' }
+    $null = Wait-Job $controlA -Timeout 15
+    if ($controlA.State -eq 'Running') {
+      $jobEvidence.Add('control_a.timeout=15s')
+      Stop-Job $controlA -ErrorAction SilentlyContinue
+    }
+    $jobEvidence.Add("control_a.state=$($controlA.State)")
+    if ($controlA.State -eq 'Completed') {
+      $aResults = @(Receive-Job $controlA -ErrorAction SilentlyContinue)
+      $jobEvidence.Add("control_a.result=$($aResults -join ',')")
+    } else {
+      $aReason = $controlA.ChildJobs[0].JobStateInfo.Reason
+      $jobEvidence.Add("control_a.reason=$(if ($aReason) { [string]$aReason.Message } else { '<none>' })")
+    }
+  } catch {
+    $jobEvidence.Add("control_a.exception=$($_.Exception.Message)")
+  } finally {
+    if ($controlA) { Remove-Job $controlA -Force -ErrorAction SilentlyContinue }
+  }
+
   $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$($saved['PATH'])"
   $env:HOME = Join-Path $t 'home'
   $env:COOP_DIR = Join-Path $t 'coop-dir'
@@ -111,15 +143,136 @@ exit /b 0
   $env:COOP_TEST_PY_TEMPLATE = $pythonTemplate
   $env:LOCALAPPDATA = Join-Path $t 'local-app-data'
   $env:ProgramFiles = Join-Path $t 'program-files'
-  $env:SystemRoot = Join-Path $t 'system-root'
   [System.IO.File]::WriteAllText($calls, '')
+
+  # Defect D bounded comparison, stage B: the SAME harmless job under the
+  # fixture's fully controlled environment (synthetic PATH/HOME/shims; SystemRoot
+  # stays real — an empty SystemRoot prevents the PS 5.1 job child from loading
+  # managed PowerShell, which was Defect D's root cause).
+  # The child writes a phase marker FIRST, before any other work, so "child
+  # process started and runspace entered" is proven independently of the job's
+  # final state. Distinguishes job STARTUP failure (environment) from failure
+  # inside the materialization body.
+  $phaseB = Join-Path $t 'control-b-phase.log'
+  $controlB = $null
+  try {
+    $controlB = Start-Job -ArgumentList $phaseB -ScriptBlock {
+      param($phasePath)
+      [System.IO.File]::WriteAllText($phasePath, 'phase=entered')
+      [pscustomobject]@{ result = 'CONTROL_B_OK'; system_root = $env:SystemRoot }
+    }
+    $null = Wait-Job $controlB -Timeout 15
+    if ($controlB.State -eq 'Running') {
+      $jobEvidence.Add('control_b.timeout=15s')
+      Stop-Job $controlB -ErrorAction SilentlyContinue
+    }
+    $jobEvidence.Add("control_b.state=$($controlB.State)")
+    $jobEvidence.Add("control_b.phase_entered=$([System.IO.File]::Exists($phaseB))")
+    if ($controlB.State -eq 'Completed') {
+      $bResults = @($controlB | Receive-Job -ErrorAction SilentlyContinue)
+      if ($bResults.Count -gt 0) {
+        $jobEvidence.Add("control_b.result=$($bResults[0].result)")
+        $jobEvidence.Add("control_b.child_system_root=$($bResults[0].system_root)")
+      } else {
+        $jobEvidence.Add('control_b.result=<zero-results>')
+      }
+    } else {
+      $bReason = $controlB.ChildJobs[0].JobStateInfo.Reason
+      $jobEvidence.Add("control_b.reason=$(if ($bReason) { [string]$bReason.Message } else { '<none>' })")
+    }
+  } catch {
+    $jobEvidence.Add("control_b.exception=$($_.Exception.Message)")
+  } finally {
+    if ($controlB) { Remove-Job $controlB -Force -ErrorAction SilentlyContinue }
+  }
+
+  # Defect D bounded materialization probe. Windows PowerShell 5.1 lacks
+  # Start-ThreadJob, so Coop-Unit uses process-backed Start-Job. Exercise that
+  # exact isolation boundary before install.ps1: record whether the child
+  # runspace materializes (phase-entered marker written before any other work),
+  # which synthetic pipx executable it resolves,
+  # the harmless exact argv, its exit status, and its sanitized output. Bound
+  # the probe to 15s and always remove its owned job.
+  $diagPhase = Join-Path $t 'materialize-phase.log'
+  $diagJob = $null
+  try {
+    $diagJob = Start-Job -ArgumentList $diagPhase -ScriptBlock {
+      param($phasePath)
+      [System.IO.File]::WriteAllText($phasePath, 'phase=entered')
+      $argv = @('install', '--help')
+      $cmd = Get-Command pipx -ErrorAction SilentlyContinue
+      $resolved = if ($cmd) { $cmd.Source } else { '<unresolved>' }
+      $out = if ($cmd) { (& $resolved @argv 2>&1 | Out-String).Trim() } else { '' }
+      $rc = if ($cmd) { $LASTEXITCODE } else { 127 }
+      [pscustomobject]@{
+        system_root = $env:SystemRoot
+        resolved_executable = $resolved
+        arguments = ($argv -join ' ')
+        exit_status = $rc
+        output = $out
+      }
+    }
+    $null = Wait-Job $diagJob -Timeout 15
+    $jobEvidence.Add("job.state=$($diagJob.State)")
+    $jobEvidence.Add("job.phase_entered=$([System.IO.File]::Exists($diagPhase))")
+    if ($diagJob.State -eq 'Running') {
+      $jobEvidence.Add('job.timeout=15s')
+      Stop-Job $diagJob -ErrorAction SilentlyContinue
+    } else {
+      $jobErrors = @()
+      $jobResults = @(Receive-Job $diagJob -ErrorVariable jobErrors -ErrorAction SilentlyContinue)
+      $jobEvidence.Add("child.result_count=$($jobResults.Count)")
+      $r = if ($jobResults.Count -gt 0) { $jobResults | Select-Object -Last 1 } else { $null }
+      $reason = $diagJob.ChildJobs[0].JobStateInfo.Reason
+      $reasonMessage = if (-not $reason) {
+        '<none>'
+      } elseif ($reason.PSObject.Properties.Name -contains 'Message') {
+        [string]$reason.Message
+      } elseif (($reason.PSObject.Properties.Name -contains 'Exception') -and $reason.Exception) {
+        [string]$reason.Exception.Message
+      } else {
+        [string]$reason
+      }
+      $jobEvidence.Add("job.reason=$reasonMessage")
+      $jobEvidence.Add("job.error=$(if ($jobErrors) { ($jobErrors | ForEach-Object { $_.Exception.Message }) -join ' | ' } else { '<none>' })")
+      if ($null -ne $r) {
+        $jobEvidence.Add("child.system_root=$($r.system_root)")
+        $jobEvidence.Add("child.resolved_executable=$($r.resolved_executable)")
+        $jobEvidence.Add("child.arguments=$($r.arguments)")
+        $jobEvidence.Add("child.exit_status=$($r.exit_status)")
+        $jobEvidence.Add("child.output=$($r.output)")
+      }
+    }
+  } catch {
+    $jobEvidence.Add("probe.exception=$($_.Exception.Message)")
+  } finally {
+    if ($diagJob) { Remove-Job $diagJob -Force -ErrorAction SilentlyContinue }
+    [System.IO.File]::WriteAllLines($jobEvidencePath, $jobEvidence)
+  }
+  $jobEvidence | ForEach-Object { Write-Host "DEFECTD| $_" }
 
   $oldPreference = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
-  $output = & $install --force 2>&1 | Out-String
+  # Defect D supplemental stream evidence: capture every REDIRECTABLE pipeline
+  # stream and preserve its record kind. Native run 34705091770 established that
+  # Windows PowerShell 5.1 child Write-Host/host output can bypass *>&1, leaving
+  # this tagged payload empty even while the host visibly prints the installer.
+  # Therefore this block does NOT claim complete host-output capture or identify
+  # the failing operation by itself; the bounded Start-Job probe above supplies
+  # the materialization/executable/argv/status evidence. No stream is globally
+  # suppressed and no assertion below is altered.
+  $evidencePath = Join-Path $t 'install-evidence.log'
+  $outItems = & $install --force *>&1
   $rc = $LASTEXITCODE
+  $evidence = ($outItems | ForEach-Object {
+    if ($_ -is [System.Management.Automation.ErrorRecord]) { "ERROR| $($_.Exception.Message)" }
+    elseif ($_ -is [System.Management.Automation.WarningRecord]) { "WARN| $($_)" }
+    else { "OUT| $_" }
+  }) -join "`n"
+  [System.IO.File]::WriteAllText($evidencePath, "exit=$rc`n$evidence")
+  $output = $outItems | Out-String
   $ErrorActionPreference = $oldPreference
-  if ($rc -ne 0) { Write-Error "install fixture exited $rc`n$output`n$(Get-Content $calls -Raw)" }
+  if ($rc -ne 0) { Write-Error "install fixture exited $rc`nevidence file: $evidencePath`n$output`n--- stream-tagged ---`n$evidence`nCALLS:`n$(Get-Content $calls -Raw)" }
   $transcript = Get-Content $calls -Raw
   if ($transcript -like '*WINGET*') { Write-Error "Python 3.14-only install unexpectedly required winget`n$transcript" }
   if ($transcript -notlike '*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0*') { Write-Error "Fabric CLI did not fetch and use a standalone Python 3.12`n$transcript" }
@@ -128,10 +281,18 @@ exit /b 0
   [System.IO.File]::WriteAllText($calls, '')
   $oldPreference = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
-  $output = & $update 2>&1 | Out-String
+  $evidencePath = Join-Path $t 'update-evidence.log'
+  $outItems = & $update *>&1
   $rc = $LASTEXITCODE
+  $evidence = ($outItems | ForEach-Object {
+    if ($_ -is [System.Management.Automation.ErrorRecord]) { "ERROR| $($_.Exception.Message)" }
+    elseif ($_ -is [System.Management.Automation.WarningRecord]) { "WARN| $($_)" }
+    else { "OUT| $_" }
+  }) -join "`n"
+  [System.IO.File]::WriteAllText($evidencePath, "exit=$rc`n$evidence")
+  $output = $outItems | Out-String
   $ErrorActionPreference = $oldPreference
-  if ($rc -ne 0) { Write-Error "update fixture exited $rc`n$output`n$(Get-Content $calls -Raw)" }
+  if ($rc -ne 0) { Write-Error "update fixture exited $rc`nevidence file: $evidencePath`n$output`n--- stream-tagged ---`n$evidence`nCALLS:`n$(Get-Content $calls -Raw)" }
   $transcript = Get-Content $calls -Raw
   if ($transcript -notlike '*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0*') { Write-Error "Updater did not rebuild Fabric CLI with standalone Python 3.12`n$transcript" }
   if ($transcript -notlike '*PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force*') { Write-Error "Updater did not reinject fabric-cicd after rebuilding Fabric CLI`n$transcript" }

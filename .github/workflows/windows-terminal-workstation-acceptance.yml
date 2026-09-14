@@ -1,0 +1,188 @@
+name: Windows Terminal workstation acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full immutable lowercase 40-hex candidate SHA
+        required: true
+        type: string
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-terminal-workstation-acceptance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-windows-p0:
+    name: Native Windows P0 (automated evidence only)
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'integration/presentation-2026-09-20' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.candidate_sha }}
+      BASELINE_SHA: d60300780b565aabf15b172b2bc32abad12b9ca6
+    steps:
+      - name: Validate event-authorized candidate input
+        shell: powershell
+        run: |
+          if ($env:CANDIDATE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'event-authorized candidate SHA must be full lowercase 40-hex' }
+
+      - name: Checkout acceptance harness identity
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          path: harness
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout immutable Terminal candidate
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          path: candidate
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout immutable v0.23.1 source baseline
+        uses: actions/checkout@v5
+        with:
+          ref: d60300780b565aabf15b172b2bc32abad12b9ca6
+          path: baseline
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify event-authorized exact checkout identity
+        shell: powershell
+        run: |
+          $expected = $env:CANDIDATE_SHA
+          if ($expected -cnotmatch '^[0-9a-f]{40}$') { throw 'event-authorized candidate SHA must be full lowercase 40-hex' }
+          foreach ($checkout in @('.\harness','.\candidate')) {
+            $observed = (& git -C $checkout rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0 -or $observed -cne $expected) { throw "checkout identity mismatch for ${checkout}: expected $expected observed $observed" }
+          }
+          $version = (Get-Content -LiteralPath '.\candidate\VERSION' -Raw).Trim()
+          $code = "import {fingerprintBuild} from './harness/lib/support-center.mjs';const r=fingerprintBuild({version:process.argv[1],commit:process.argv[2]});if(!r.ok)process.exit(2);console.log(r.value)"
+          $build = (& node --input-type=module -e $code $version $expected | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $build -cnotmatch '^build-[0-9a-f]{8}$') { throw 'candidate Support build fingerprint could not be computed' }
+          "VERIFIED_CANDIDATE_SHA=$expected" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VERIFIED_CANDIDATE_BUILD=$build" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Parse acceptance harness under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.\harness\acceptance\windows-terminal-workstation.ps1'),
+            [ref]$null,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+
+      - name: Establish current-run upload identity
+        shell: powershell
+        run: |
+          $nonce = [guid]::NewGuid().ToString('N')
+          "RUN_NONCE=$nonce" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RECEIPT_UPLOADABLE=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "EVIDENCE_UPLOADABLE=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Exercise ownership faults and Unicode transport
+        shell: powershell
+        run: |
+          python .\harness\tests\knowledge-git.test.py `
+            KnowledgeGitOwnershipTests.test_create_failure_reaches_adopt_and_stops_suspended_child `
+            KnowledgeGitOwnershipTests.test_assignment_failure_reaches_adopt_and_closes_job `
+            KnowledgeGitOwnershipTests.test_resume_failure_reaches_adopt_and_closes_owned_job_without_pid_fallback `
+            KnowledgeGitOwnershipTests.test_query_failure_is_uncertain_not_empty `
+            KnowledgeGitOwnershipTests.test_termination_and_close_faults_report_failure `
+            KnowledgeGitOwnershipTests.test_close_uncertainty_overrides_payload_success
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test --test-name-pattern "Unicode|lifecycle" .\harness\tests\terminal-workstation-acceptance.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run native acceptance (cannot close human gate)
+        shell: powershell
+        run: |
+          $owned = Join-Path $env:RUNNER_TEMP "coop-terminal-p0-$env:VERIFIED_CANDIDATE_SHA-$env:VERIFIED_CANDIDATE_BUILD"
+          $evidence = Join-Path $owned 'evidence'
+          $receipt = Join-Path $owned "terminal-workstation-receipt-$env:VERIFIED_CANDIDATE_SHA-$env:VERIFIED_CANDIDATE_BUILD.json"
+          "OWNED_PATH=$owned" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "EVIDENCE_PATH=$evidence" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RECEIPT_PATH=$receipt" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
+            .\harness\acceptance\windows-terminal-workstation.ps1 `
+            -Mode Run `
+            -HarnessRoot (Resolve-Path .\harness) `
+            -CandidateRoot (Resolve-Path .\candidate) `
+            -BaselineRoot (Resolve-Path .\baseline) `
+            -EvidenceRoot $evidence `
+            -ReceiptPath $receipt `
+            -RunNonce $env:RUN_NONCE `
+            -ExpectedHarnessSha $env:VERIFIED_CANDIDATE_SHA `
+            -ExpectedCandidateSha $env:VERIFIED_CANDIDATE_SHA `
+            -ExpectedCandidateBuild $env:VERIFIED_CANDIDATE_BUILD
+          $harnessRc = $LASTEXITCODE
+          if ($harnessRc -ne 0) { exit $harnessRc }
+
+      - name: Validate fail-closed receipt
+        if: always()
+        shell: powershell
+        run: |
+          if (-not $env:RECEIPT_PATH -or -not (Test-Path -LiteralPath $env:RECEIPT_PATH)) {
+            throw 'acceptance receipt was not emitted'
+          }
+          $identity = @('-ExpectedHarnessSha',$env:VERIFIED_CANDIDATE_SHA,'-ExpectedCandidateSha',$env:VERIFIED_CANDIDATE_SHA,'-ExpectedCandidateBuild',$env:VERIFIED_CANDIDATE_BUILD)
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
+            .\harness\acceptance\windows-terminal-workstation.ps1 `
+            -Mode ValidateReceipt -ReceiptPath $env:RECEIPT_PATH @identity
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx --yes --package ajv-cli@5.0.0 --package ajv-formats@3.0.1 ajv validate `
+            --spec=draft2020 -c ajv-formats `
+            -s .\harness\acceptance\terminal-workstation-receipt.schema.json `
+            -d $env:RECEIPT_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'committed JSON Schema rejected the receipt' }
+          $receipt = Get-Content -LiteralPath $env:RECEIPT_PATH -Raw | ConvertFrom-Json
+          if ($receipt.terminal_workstation_ready -ne $false) {
+            throw 'automated workflow must never set TERMINAL_WORKSTATION_READY'
+          }
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
+            .\harness\acceptance\windows-terminal-workstation.ps1 `
+            -Mode ValidateUploadAuthorization -AuthorizationKind Receipt `
+            -ReceiptPath $env:RECEIPT_PATH -RunNonce $env:RUN_NONCE @identity
+          if ($LASTEXITCODE -ne 0) { throw 'current receipt upload authorization failed' }
+          "RECEIPT_UPLOADABLE=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if (Test-Path -LiteralPath "$env:RECEIPT_PATH.evidence-authorization.json" -PathType Leaf) {
+            powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
+              .\harness\acceptance\windows-terminal-workstation.ps1 `
+              -Mode ValidateUploadAuthorization -AuthorizationKind Evidence `
+              -ReceiptPath $env:RECEIPT_PATH -EvidenceRoot $env:EVIDENCE_PATH `
+              -RunNonce $env:RUN_NONCE @identity
+            if ($LASTEXITCODE -ne 0) { throw 'current evidence upload authorization failed' }
+            "EVIDENCE_UPLOADABLE=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+
+      - name: Upload fail-closed receipt
+        if: always() && env.RECEIPT_UPLOADABLE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-workstation-receipt-${{ env.VERIFIED_CANDIDATE_SHA }}-${{ env.VERIFIED_CANDIDATE_BUILD }}
+          path: ${{ env.RECEIPT_PATH }}
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
+
+      - name: Upload fully scanned automated evidence
+        if: always() && env.EVIDENCE_UPLOADABLE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-workstation-automated-${{ env.VERIFIED_CANDIDATE_SHA }}-${{ env.VERIFIED_CANDIDATE_BUILD }}
+          path: ${{ env.EVIDENCE_PATH }}
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
