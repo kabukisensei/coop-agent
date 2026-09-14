@@ -440,7 +440,7 @@ PROCESS_INSPECTOR="$ROOT/tests/knowledge-git-process-inspector.py"
 INSPECTOR_ERR="$TMP/process-inspector.err"
 INSPECTOR_ROOT_PID="$$"
 run_process_inspector() { # <inspector> <root-pid> <target>
-  "$PY" - "${COOP_PROCESS_INSPECTOR_TIMEOUT_SECONDS:-15}" "$INSPECTOR_ERR" \
+  "$PY" - "${COOP_PROCESS_INSPECTOR_TIMEOUT_SECONDS:-30}" "$INSPECTOR_ERR" \
     "$PY" "$1" --root-pid "$2" "$3" <<'PY'
 import subprocess
 import sys

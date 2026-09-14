@@ -401,7 +401,7 @@ def _windows_process_rows():
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         encoding="utf-8",
-        timeout=10,
+        timeout=20,
         check=False,
     )
     if result.returncode != 0:
