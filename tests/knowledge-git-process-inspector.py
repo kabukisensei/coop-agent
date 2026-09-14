@@ -414,22 +414,13 @@ def _windows_process_rows():
     required = {"pid", "ppid", "creation_date", "executable", "command_line"}
     if any(not isinstance(row, dict) or set(row) != required for row in rows):
         return [], ["Windows CIM process metadata has an unexpected schema"]
-    if any(
-        type(row["pid"]) is not int
-        or row["pid"] <= 0
-        or type(row["ppid"]) is not int
-        or row["ppid"] < 0
-        or type(row["creation_date"]) is not int
-        or row["creation_date"] <= 0
-        for row in rows
-    ):
-        return [], ["Windows CIM process metadata has an invalid process identity"]
     return rows, []
 
 
 def _windows_descendants(root_pid, rows):
     """Return the creation-time-validated root closure from one CIM snapshot."""
     records = {}
+    invalid_rows = []
     uncertainties = []
     for row in rows:
         pid = row["pid"]
@@ -443,15 +434,17 @@ def _windows_descendants(root_pid, rows):
             or type(creation_date) is not int
             or creation_date <= 0
         ):
-            uncertainties.append(
-                "Windows CIM process metadata has an invalid process identity"
-            )
+            invalid_rows.append(row)
             continue
         if pid in records:
-            uncertainties.append("Windows CIM process metadata duplicates pid %d" % pid)
+            invalid_rows.append(row)
             continue
         records[pid] = row
     if root_pid not in records:
+        if any(row["pid"] == root_pid for row in invalid_rows):
+            uncertainties.append(
+                "Windows CIM process metadata has an invalid in-scope process identity"
+            )
         uncertainties.append("root pid %d unavailable in process snapshot" % root_pid)
         return [], uncertainties
     descendants = []
@@ -470,6 +463,15 @@ def _windows_descendants(root_pid, rows):
             seen.add(pid)
             descendants.append(row)
             pending.append(pid)
+    if any(
+        row["pid"] == root_pid
+        or row["pid"] in seen
+        or any(row["ppid"] == pid for pid in seen)
+        for row in invalid_rows
+    ):
+        uncertainties.append(
+            "Windows CIM process metadata has an invalid in-scope process identity"
+        )
     return descendants, uncertainties
 
 

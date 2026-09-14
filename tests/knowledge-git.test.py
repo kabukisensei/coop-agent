@@ -527,13 +527,16 @@ class ProcessInspectorTests(unittest.TestCase):
                 "command_line": "cmd.exe",
             }
 
-        for malformed in (row(True, 1), row(100, False)):
+        for malformed, root_pid in ((row(True, 1), 1), (row(100, False), 100)):
             descendants, uncertainties = inspector._windows_descendants(
-                100, [malformed]
+                root_pid, [malformed]
             )
             self.assertEqual(descendants, [])
             self.assertTrue(
-                any("invalid process identity" in item for item in uncertainties),
+                any(
+                    "invalid" in item and "process identity" in item
+                    for item in uncertainties
+                ),
                 uncertainties,
             )
 
@@ -569,8 +572,41 @@ class ProcessInspectorTests(unittest.TestCase):
             result.stdout = json.dumps([values])
             with mock.patch.object(inspector.subprocess, "run", return_value=result):
                 rows, uncertainties = inspector._windows_process_rows()
-            self.assertEqual(rows, [])
-            self.assertIn("invalid process identity", uncertainties[0])
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(uncertainties, [])
+            root_pid = 1 if field == "pid" else 100
+            descendants, uncertainties = inspector._windows_descendants(root_pid, rows)
+            self.assertEqual(descendants, [])
+            self.assertTrue(
+                any(
+                    "invalid" in item and "process identity" in item
+                    for item in uncertainties
+                ),
+                uncertainties,
+            )
+
+    def test_windows_snapshot_ignores_invalid_ambient_identity_but_not_child(self):
+        root = {
+            "pid": 100,
+            "ppid": 1,
+            "creation_date": 1000,
+            "executable": "bash.exe",
+            "command_line": "bash",
+        }
+        ambient = {
+            "pid": 4,
+            "ppid": 0,
+            "creation_date": None,
+            "executable": None,
+            "command_line": None,
+        }
+        self.assertEqual(inspector._windows_descendants(100, [root, ambient]), ([], []))
+        invalid_child = dict(ambient, pid=101, ppid=100)
+        descendants, uncertainties = inspector._windows_descendants(
+            100, [root, invalid_child]
+        )
+        self.assertEqual(descendants, [])
+        self.assertIn("invalid in-scope process identity", uncertainties[0])
 
     def test_windows_inspector_matches_only_exact_script_in_root_subtree(self):
         target = "/repo/scripts/knowledge-git.py"
