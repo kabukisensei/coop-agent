@@ -384,6 +384,8 @@ def _windows_process_rows():
         "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);"
         "$rows=@(Get-CimInstance Win32_Process|ForEach-Object{"
         "[pscustomobject]@{pid=[int]$_.ProcessId;ppid=[int]$_.ParentProcessId;"
+        "creation_date=$(if($null -eq $_.CreationDate){$null}else{"
+        "[Int64]$_.CreationDate.ToUniversalTime().Ticks});"
         "executable=$_.ExecutablePath;command_line=$_.CommandLine}});"
         "ConvertTo-Json -InputObject $rows -Compress"
     )
@@ -409,26 +411,41 @@ def _windows_process_rows():
     except (TypeError, ValueError) as error:
         return [], ["Windows CIM process metadata malformed: %s" % error]
     rows = decoded if isinstance(decoded, list) else [decoded]
-    required = {"pid", "ppid", "executable", "command_line"}
+    required = {"pid", "ppid", "creation_date", "executable", "command_line"}
     if any(not isinstance(row, dict) or set(row) != required for row in rows):
         return [], ["Windows CIM process metadata has an unexpected schema"]
+    if any(
+        type(row["pid"]) is not int
+        or row["pid"] <= 0
+        or type(row["ppid"]) is not int
+        or row["ppid"] < 0
+        or type(row["creation_date"]) is not int
+        or row["creation_date"] <= 0
+        for row in rows
+    ):
+        return [], ["Windows CIM process metadata has an invalid process identity"]
     return rows, []
 
 
 def _windows_descendants(root_pid, rows):
-    """Return the root closure from one CIM process snapshot."""
+    """Return the creation-time-validated root closure from one CIM snapshot."""
     records = {}
     uncertainties = []
     for row in rows:
         pid = row["pid"]
         ppid = row["ppid"]
+        creation_date = row["creation_date"]
         if (
-            not isinstance(pid, int)
+            type(pid) is not int
             or pid <= 0
-            or not isinstance(ppid, int)
+            or type(ppid) is not int
             or ppid < 0
+            or type(creation_date) is not int
+            or creation_date <= 0
         ):
-            uncertainties.append("Windows CIM process metadata has an invalid pid")
+            uncertainties.append(
+                "Windows CIM process metadata has an invalid process identity"
+            )
             continue
         if pid in records:
             uncertainties.append("Windows CIM process metadata duplicates pid %d" % pid)
@@ -442,8 +459,13 @@ def _windows_descendants(root_pid, rows):
     seen = {root_pid}
     while pending:
         parent = pending.pop()
+        parent_created = records[parent]["creation_date"]
         for pid, row in records.items():
-            if row["ppid"] != parent or pid in seen:
+            if (
+                row["ppid"] != parent
+                or pid in seen
+                or row["creation_date"] < parent_created
+            ):
                 continue
             seen.add(pid)
             descendants.append(row)

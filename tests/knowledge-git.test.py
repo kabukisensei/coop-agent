@@ -466,15 +466,27 @@ class ProcessInspectorTests(unittest.TestCase):
         )
 
     def test_windows_snapshot_closure_excludes_ambient_processes(self):
-        def row(pid, ppid, executable="cmd.exe", command_line="cmd.exe"):
+        def row(
+            pid,
+            ppid,
+            creation_date,
+            executable="cmd.exe",
+            command_line="cmd.exe",
+        ):
             return {
                 "pid": pid,
                 "ppid": ppid,
+                "creation_date": creation_date,
                 "executable": executable,
                 "command_line": command_line,
             }
 
-        rows = [row(100, 1), row(101, 100), row(102, 101), row(200, 1)]
+        rows = [
+            row(100, 1, 1000),
+            row(101, 100, 1100),
+            row(102, 101, 1200),
+            row(200, 1, 900),
+        ]
         descendants, uncertainties = inspector._windows_descendants(100, rows)
         self.assertEqual([item["pid"] for item in descendants], [101, 102])
         self.assertEqual(uncertainties, [])
@@ -483,10 +495,52 @@ class ProcessInspectorTests(unittest.TestCase):
             ([], ["root pid 999 unavailable in process snapshot"]),
         )
 
+    def test_windows_snapshot_rejects_pid_reuse_at_root_and_intermediate(self):
+        def row(pid, ppid, creation_date):
+            return {
+                "pid": pid,
+                "ppid": ppid,
+                "creation_date": creation_date,
+                "executable": "cmd.exe",
+                "command_line": "cmd.exe",
+            }
+
+        rows = [
+            row(100, 1, 500),
+            row(101, 100, 600),
+            row(102, 101, 700),
+            # These PPID values refer to earlier instances of the reused PIDs.
+            row(103, 100, 400),
+            row(104, 101, 550),
+        ]
+        descendants, uncertainties = inspector._windows_descendants(100, rows)
+        self.assertEqual([item["pid"] for item in descendants], [101, 102])
+        self.assertEqual(uncertainties, [])
+
+    def test_windows_snapshot_rejects_boolean_pid_and_ppid(self):
+        def row(pid, ppid):
+            return {
+                "pid": pid,
+                "ppid": ppid,
+                "creation_date": 100,
+                "executable": "cmd.exe",
+                "command_line": "cmd.exe",
+            }
+
+        for malformed in (row(True, 1), row(100, False)):
+            descendants, uncertainties = inspector._windows_descendants(
+                100, [malformed]
+            )
+            self.assertEqual(descendants, [])
+            self.assertTrue(
+                any("invalid process identity" in item for item in uncertainties),
+                uncertainties,
+            )
+
     def test_windows_snapshot_uses_cim_and_requires_exact_json_schema(self):
         result = SimpleNamespace(
             returncode=0,
-            stdout='[{"pid":100,"ppid":1,"executable":"python.exe","command_line":"python x.py"}]',
+            stdout='[{"pid":100,"ppid":1,"creation_date":1000,"executable":"python.exe","command_line":"python x.py"}]',
             stderr="",
         )
         with mock.patch.object(inspector.subprocess, "run", return_value=result) as run:
@@ -496,25 +550,49 @@ class ProcessInspectorTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(command[0], "powershell.exe")
         self.assertIn("Get-CimInstance Win32_Process", command[-1])
+        self.assertIn("CreationDate", command[-1])
         self.assertNotIn("ps ", command[-1])
 
         result.stdout = '[{"pid":100,"ppid":1}]'
         with mock.patch.object(inspector.subprocess, "run", return_value=result):
             self.assertIn("unexpected schema", inspector._windows_process_rows()[1][0])
 
+        for field in ("pid", "ppid"):
+            values = {
+                "pid": 100,
+                "ppid": 1,
+                "creation_date": 1000,
+                "executable": "python.exe",
+                "command_line": "python x.py",
+            }
+            values[field] = True
+            result.stdout = json.dumps([values])
+            with mock.patch.object(inspector.subprocess, "run", return_value=result):
+                rows, uncertainties = inspector._windows_process_rows()
+            self.assertEqual(rows, [])
+            self.assertIn("invalid process identity", uncertainties[0])
+
     def test_windows_inspector_matches_only_exact_script_in_root_subtree(self):
         target = "/repo/scripts/knowledge-git.py"
         rows = [
-            {"pid": 100, "ppid": 1, "executable": "bash.exe", "command_line": "bash"},
+            {
+                "pid": 100,
+                "ppid": 1,
+                "creation_date": 100,
+                "executable": "bash.exe",
+                "command_line": "bash",
+            },
             {
                 "pid": 101,
                 "ppid": 100,
+                "creation_date": 101,
                 "executable": "/Python/python.exe",
                 "command_line": "target helper",
             },
             {
                 "pid": 200,
                 "ppid": 1,
+                "creation_date": 101,
                 "executable": "/Python/python.exe",
                 "command_line": "ambient helper",
             },
@@ -544,7 +622,13 @@ class ProcessInspectorTests(unittest.TestCase):
         target = "/repo/scripts/knowledge-git.py"
         scenarios = (
             (
-                {"pid": 101, "ppid": 100, "executable": None, "command_line": None},
+                {
+                    "pid": 101,
+                    "ppid": 100,
+                    "creation_date": 101,
+                    "executable": None,
+                    "command_line": None,
+                },
                 None,
                 "executable path unavailable",
             ),
@@ -552,6 +636,7 @@ class ProcessInspectorTests(unittest.TestCase):
                 {
                     "pid": 101,
                     "ppid": 100,
+                    "creation_date": 101,
                     "executable": "/Python/python.exe",
                     "command_line": "python knowledge-git.py",
                 },
@@ -564,6 +649,7 @@ class ProcessInspectorTests(unittest.TestCase):
                 {
                     "pid": 100,
                     "ppid": 1,
+                    "creation_date": 100,
                     "executable": "bash.exe",
                     "command_line": "bash",
                 },
