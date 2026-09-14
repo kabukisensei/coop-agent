@@ -465,6 +465,24 @@ class ProcessInspectorTests(unittest.TestCase):
             ("script", target),
         )
 
+    def test_msys_winpid_parser_binds_unique_exact_current_pid(self):
+        canonical = "PID PPID PGID WINPID TTY UID STIME COMMAND\n42 1 42 900 pty0 1 00:00 bash\n"
+        self.assertEqual(inspector.parse_msys_ps_winpid(canonical, 42), 900)
+        status_prefixed = "PID PPID PGID WINPID TTY UID STIME COMMAND\nS 42 1 42 900 pty0 1 00:00 bash\n"
+        self.assertEqual(inspector.parse_msys_ps_winpid(status_prefixed, 42), 900)
+        malformed = (
+            "PID WINPID WINPID COMMAND\n42 900 901 bash\n",
+            "PID WINPID COMMAND\n42 900 bash extra\n",
+            "PID WINPID COMMAND\n43 900 bash\n",
+            "PID WINPID COMMAND\n42 900 bash\n43 901 bash\n",
+            "PID WINPID COMMAND\n",
+            "PID WINPID COMMAND\n42 nope bash\n",
+            "PID WINPID COMMAND\nXY 42 900 bash\n",
+        )
+        for text in malformed:
+            with self.assertRaises(ValueError):
+                inspector.parse_msys_ps_winpid(text, 42)
+
     def test_windows_snapshot_closure_excludes_ambient_processes(self):
         def row(
             pid,

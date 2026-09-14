@@ -546,6 +546,27 @@ def windows_inspect(target, root_pid):
     return matches, uncertainties
 
 
+def parse_msys_ps_winpid(text, expected_pid):
+    """Strictly map one MSYS ps row to its native Windows PID."""
+    rows = [line.split() for line in text.splitlines() if line.strip()]
+    if len(rows) != 2:
+        raise ValueError("expected exactly one MSYS ps process row")
+    header, values = rows
+    if header.count("PID") != 1 or header.count("WINPID") != 1:
+        raise ValueError("MSYS ps must contain unique PID and WINPID columns")
+    if len(values) == len(header) + 1 and re.fullmatch(r"[A-Za-z?]", values[0]):
+        values = values[1:]
+    if len(values) != len(header):
+        raise ValueError("MSYS ps header and process row widths differ")
+    pid = values[header.index("PID")]
+    winpid = values[header.index("WINPID")]
+    if pid != str(expected_pid):
+        raise ValueError("MSYS ps row does not match the requested PID")
+    if not pid.isdigit() or int(pid) <= 0 or not winpid.isdigit() or int(winpid) <= 0:
+        raise ValueError("MSYS ps PID values must be positive decimal integers")
+    return int(winpid)
+
+
 def macos_process_argv(pid):
     """Read an exact macOS argv vector through KERN_PROCARGS2."""
     libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
@@ -808,6 +829,18 @@ def macos_matches(target, root_pid):
 
 
 def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "--msys-winpid":
+        if not sys.argv[2].isdigit() or int(sys.argv[2]) <= 0:
+            print("MSYS PID must be a positive decimal integer", file=sys.stderr)
+            return 2
+        try:
+            with open(sys.argv[3], encoding="utf-8-sig") as stream:
+                winpid = parse_msys_ps_winpid(stream.read(), int(sys.argv[2]))
+        except (OSError, UnicodeError, ValueError) as error:
+            print("MSYS WINPID mapping uncertain: %s" % error, file=sys.stderr)
+            return 2
+        sys.stdout.buffer.write((str(winpid) + "\n").encode("ascii"))
+        return 0
     if (
         len(sys.argv) != 4
         or sys.argv[1] != "--root-pid"

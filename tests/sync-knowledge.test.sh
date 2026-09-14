@@ -474,7 +474,7 @@ if [ "$WIN" = "1" ]; then
     ko "F: native Windows root PID discovery command failed: $(cat "$TMP/msys-root.err")"
     exit 1
   fi
-  if ! "$PY" -c 'import sys; rows=[line.split() for line in open(sys.argv[1], encoding="utf-8-sig") if line.strip()]; header=rows[0]; value=rows[1][header.index("WINPID")]; assert len(rows)==2 and value.isdigit() and int(value)>0; sys.stdout.buffer.write(value.encode("ascii") + b"\n")' \
+  if ! "$PY" "$PROCESS_INSPECTOR" --msys-winpid "$$" \
     "$TMP/msys-root.ps" > "$TMP/native-root.pid"; then
     ko "F: native Windows root PID mapping was malformed"
     exit 1
