@@ -16,6 +16,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
+POSIX_TEST_UID = 1000
 SPEC = importlib.util.spec_from_file_location(
     "knowledge_git", ROOT / "scripts" / "knowledge-git.py"
 )
@@ -241,7 +242,8 @@ class KnowledgeGitOwnershipTests(unittest.TestCase):
             timeout=10,
             check=False,
         )
-        self.assertEqual(result.returncode, 0, result.stderr)
+        expected_returncode = kg.EXIT_OWNERSHIP_UNAVAILABLE if os.name == "nt" else 0
+        self.assertEqual(result.returncode, expected_returncode, result.stderr)
         self.assertEqual(json.loads(result.stdout), {name: None for name in names})
 
     def test_create_failure_reaches_adopt_and_stops_suspended_child(self):
@@ -849,8 +851,13 @@ class ProcessInspectorTests(unittest.TestCase):
         ):
             self.assertIn("NUL-terminated", inspector.macos_process_executable(101)[1])
 
-    def test_macos_native_executable_identity_rejects_spoof_and_inspects_alias(self):
-        uid = os.geteuid()
+    @mock.patch.object(
+        inspector.os, "geteuid", return_value=POSIX_TEST_UID, create=True
+    )
+    def test_macos_native_executable_identity_rejects_spoof_and_inspects_alias(
+        self, _geteuid
+    ):
+        uid = POSIX_TEST_UID
         ps_result = SimpleNamespace(
             returncode=0,
             stdout="100 1 %d\n101 100 %d\n" % (uid, uid),
@@ -904,8 +911,13 @@ class ProcessInspectorTests(unittest.TestCase):
             inspector._macos_descendants(100, rows + ["unreadable"])[2][0],
         )
 
-    def test_macos_unavailable_executable_identity_is_uncertain_only_while_live(self):
-        uid = os.geteuid()
+    @mock.patch.object(
+        inspector.os, "geteuid", return_value=POSIX_TEST_UID, create=True
+    )
+    def test_macos_unavailable_executable_identity_is_uncertain_only_while_live(
+        self, _geteuid
+    ):
+        uid = POSIX_TEST_UID
         ps_result = SimpleNamespace(
             returncode=0,
             stdout="100 1 %d\n101 100 %d\n" % (uid, uid),
@@ -930,8 +942,13 @@ class ProcessInspectorTests(unittest.TestCase):
             self.assertEqual(matches, [])
             self.assertEqual(bool(uncertainties), expected_uncertainty)
 
-    def test_macos_ps_uid_filter_uses_native_executable_argv_and_target_cwd(self):
-        uid = os.geteuid()
+    @mock.patch.object(
+        inspector.os, "geteuid", return_value=POSIX_TEST_UID, create=True
+    )
+    def test_macos_ps_uid_filter_uses_native_executable_argv_and_target_cwd(
+        self, _geteuid
+    ):
+        uid = POSIX_TEST_UID
         ps_result = SimpleNamespace(
             returncode=0,
             stdout="100 1 %d\n101 100 %d\n102 100 %d\n103 1 %d\n"
@@ -996,7 +1013,12 @@ class ProcessInspectorTests(unittest.TestCase):
         ):
             self.assertEqual(inspector.macos_inspect(target, 100), ([], []))
 
-    def test_linux_cmdline_and_cwd_failures_are_uncertain_but_exit_is_ignored(self):
+    @mock.patch.object(
+        inspector.os, "geteuid", return_value=POSIX_TEST_UID, create=True
+    )
+    def test_linux_cmdline_and_cwd_failures_are_uncertain_but_exit_is_ignored(
+        self, _geteuid
+    ):
         target = "/tmp/knowledge-git.py"
         with (
             mock.patch("builtins.open", side_effect=PermissionError("denied")),
@@ -1049,7 +1071,12 @@ class ProcessInspectorTests(unittest.TestCase):
         ):
             self.assertEqual(inspector.linux_inspect(target, 100), ([], []))
 
-    def test_missing_script_operand_is_uncertain_only_while_candidate_is_live(self):
+    @mock.patch.object(
+        inspector.os, "geteuid", return_value=POSIX_TEST_UID, create=True
+    )
+    def test_missing_script_operand_is_uncertain_only_while_candidate_is_live(
+        self, _geteuid
+    ):
         missing = "/definitely-missing-coop-review/knowledge-git.py"
         with (
             mock.patch.object(
@@ -1088,7 +1115,7 @@ class ProcessInspectorTests(unittest.TestCase):
                 inspector.linux_inspect("/tmp/knowledge-git.py", 100), ([], [])
             )
 
-        uid = os.geteuid()
+        uid = POSIX_TEST_UID
         ps_result = SimpleNamespace(
             returncode=0,
             stdout="100 1 %d\n101 100 %d\n" % (uid, uid),
@@ -1149,21 +1176,18 @@ class ProcessInspectorTests(unittest.TestCase):
         self.assertIsNone(resolved)
         self.assertIn("denied", error)
 
-    def test_retargetable_and_nonmatching_symlink_operands_are_uncertain(self):
+    def test_descriptor_and_nonmatching_operands_are_uncertain(self):
         for path in ("/proc/123/fd/7", "/proc/self/fd/7", "/dev/fd/7"):
-            resolved, error = inspector._resolve_existing_regular_script(
-                path, "/target/knowledge-git.py"
-            )
+            self.assertTrue(inspector._is_descriptor_indirection(path))
+            with mock.patch.object(
+                inspector, "_retargetable_operand", return_value=True
+            ):
+                resolved, error = inspector._resolve_existing_regular_script(
+                    path, "/target/knowledge-git.py"
+                )
             self.assertIsNone(resolved)
             self.assertIn("retargetable", error)
-        with tempfile.TemporaryDirectory(prefix="coop fd alias ") as directory:
-            alias = Path(directory) / "knowledge-git.py"
-            alias.symlink_to("/dev/fd/7")
-            resolved, error = inspector._resolve_existing_regular_script(
-                str(alias), "/target/knowledge-git.py"
-            )
-            self.assertIsNone(resolved)
-            self.assertIn("retargetable", error)
+
         regular = SimpleNamespace(st_dev=1, st_ino=10, st_mode=0o100644)
         with (
             mock.patch.object(inspector.os, "stat", return_value=regular),
@@ -1177,7 +1201,23 @@ class ProcessInspectorTests(unittest.TestCase):
         self.assertIsNone(resolved)
         self.assertIn("non-target", error)
 
-    def test_root_descendant_scope_ignores_ambient_processes_before_inspection(self):
+    @unittest.skipIf(os.name == "nt", "POSIX symlink-chain integration")
+    def test_symlink_to_descriptor_operand_is_retargetable(self):
+        with tempfile.TemporaryDirectory(prefix="coop fd alias ") as directory:
+            alias = Path(directory) / "knowledge-git.py"
+            alias.symlink_to("/dev/fd/7")
+            resolved, error = inspector._resolve_existing_regular_script(
+                str(alias), "/target/knowledge-git.py"
+            )
+            self.assertIsNone(resolved)
+            self.assertIn("retargetable", error)
+
+    @mock.patch.object(
+        inspector.os, "geteuid", return_value=POSIX_TEST_UID, create=True
+    )
+    def test_root_descendant_scope_ignores_ambient_processes_before_inspection(
+        self, _geteuid
+    ):
         target = "/tmp/knowledge-git.py"
 
         def identity(pid, _uid):
@@ -1192,7 +1232,6 @@ class ProcessInspectorTests(unittest.TestCase):
                 "_linux_descendants",
                 return_value=([102], ["owned traversal uncertain"]),
             ),
-            mock.patch.object(inspector.os, "geteuid", return_value=1000),
             mock.patch.object(
                 inspector, "_linux_same_user_python", side_effect=identity
             ) as inspect_identity,
@@ -1203,7 +1242,7 @@ class ProcessInspectorTests(unittest.TestCase):
             )
         self.assertEqual(
             inspect_identity.call_args_list,
-            [mock.call(102, 1000)],
+            [mock.call(102, POSIX_TEST_UID)],
         )
 
     def test_linux_descendant_traversal_is_recursive_and_fails_closed_while_live(self):
@@ -1257,7 +1296,7 @@ class ProcessInspectorTests(unittest.TestCase):
         self.assertEqual(identity.call_args_list, [mock.call(100)] * 3)
 
     def test_linux_unreadable_executable_is_uncertain_regardless_of_name(self):
-        uid = os.geteuid()
+        uid = POSIX_TEST_UID
         status = "Name:\tworker-alias\nUid:\t%d\t%d\t%d\t%d\n" % (
             uid,
             uid,
@@ -1283,16 +1322,23 @@ class ProcessInspectorTests(unittest.TestCase):
             "/tmp/knowledge-git.py",
         ]
         try:
-            with mock.patch.object(
-                inspector, "linux_inspect", return_value=([101], [])
+            with (
+                mock.patch.object(inspector.os, "name", "posix"),
+                mock.patch.object(inspector.sys, "platform", "linux"),
+                mock.patch.object(inspector.os.path, "isdir", return_value=True),
             ):
-                self.assertEqual(inspector.main(), 1)
-            with mock.patch.object(
-                inspector, "linux_inspect", return_value=([], ["denied"])
-            ):
-                self.assertEqual(inspector.main(), 2)
-            with mock.patch.object(inspector, "linux_inspect", return_value=([], [])):
-                self.assertEqual(inspector.main(), 0)
+                with mock.patch.object(
+                    inspector, "linux_inspect", return_value=([101], [])
+                ):
+                    self.assertEqual(inspector.main(), 1)
+                with mock.patch.object(
+                    inspector, "linux_inspect", return_value=([], ["denied"])
+                ):
+                    self.assertEqual(inspector.main(), 2)
+                with mock.patch.object(
+                    inspector, "linux_inspect", return_value=([], [])
+                ):
+                    self.assertEqual(inspector.main(), 0)
         finally:
             inspector.sys.argv = old_argv
 
