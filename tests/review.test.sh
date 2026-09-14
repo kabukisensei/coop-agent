@@ -107,10 +107,18 @@ for t in coop-sql-review coop-dax-review; do
 done
 sql_snapshot="$("$PY" -c 'import sys; a=open(sys.argv[1]).read().split(); print(a[a.index("--standards")+1])' "$TMP/coop-sql-review.args.log")"
 dax_snapshot="$("$PY" -c 'import sys; a=open(sys.argv[1]).read().split(); print(a[a.index("--standards")+1])' "$TMP/coop-dax-review.args.log")"
-case "$sql_snapshot" in "$TMP"/snapshots/*-sql.md) ;; *) fail "SQL aggregate review did not get an immutable snapshot" ;; esac
-case "$dax_snapshot" in "$TMP"/snapshots/*-dax.md) ;; *) fail "DAX aggregate review did not get an immutable snapshot" ;; esac
-cmp -s "$sql_snapshot" "$TMP/proj/standards/sql.md" || fail "SQL snapshot is not byte-identical to the project standard"
-cmp -s "$dax_snapshot" "$TMP/proj/standards/dax.md" || fail "DAX snapshot is not byte-identical to the project standard"
+"$PY" -c 'from pathlib import Path; import sys; p=Path(sys.argv[1]).resolve(); root=Path(sys.argv[2]).resolve(); raise SystemExit(0 if p.parent==root and p.name.endswith("-sql.md") else 1)' \
+  "$sql_snapshot" "$TMP/snapshots" \
+  || fail "SQL aggregate review did not get an immutable snapshot"
+"$PY" -c 'from pathlib import Path; import sys; p=Path(sys.argv[1]).resolve(); root=Path(sys.argv[2]).resolve(); raise SystemExit(0 if p.parent==root and p.name.endswith("-dax.md") else 1)' \
+  "$dax_snapshot" "$TMP/snapshots" \
+  || fail "DAX aggregate review did not get an immutable snapshot"
+"$PY" -c 'from pathlib import Path; import sys; raise SystemExit(0 if Path(sys.argv[1]).read_bytes()==Path(sys.argv[2]).read_bytes() else 1)' \
+  "$sql_snapshot" "$TMP/proj/standards/sql.md" \
+  || fail "SQL snapshot is not byte-identical to the project standard"
+"$PY" -c 'from pathlib import Path; import sys; raise SystemExit(0 if Path(sys.argv[1]).read_bytes()==Path(sys.argv[2]).read_bytes() else 1)' \
+  "$dax_snapshot" "$TMP/proj/standards/dax.md" \
+  || fail "DAX snapshot is not byte-identical to the project standard"
 grep -q -- "build --non-interactive" "$TMP/coop-data-doc.args.log" || fail "data-doc build --non-interactive not invoked"
 grep -q -- "--reviews $sql_json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the pinned sql report"
 grep -q -- "--reviews $dax_json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the pinned dax report"
