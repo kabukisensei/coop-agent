@@ -287,12 +287,17 @@ MS_HOME="$TMP/ms-home"
 MS_BIN="$TMP/ms-bin"
 MS_SKILL="$MS_HOME/.pi/agent/catalogs/microsoft/generations/fixture/skills/kql"
 mkdir -p "$MS_BIN" "$MS_SKILL"
+REAL_PYTHON="$(command -v python3)" || {
+  ko "python3 unavailable for Microsoft catalog fixture"
+  exit $fail
+}
+export REAL_PYTHON
 cat > "$MS_BIN/python3" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == */lib/microsoft_skills.py ]]; then
   printf '%s\n' "$HOME/.pi/agent/catalogs/microsoft/generations/fixture/skills/kql"
 else
-  exec /usr/bin/python3 "$@"
+  exec "$REAL_PYTHON" "$@"
 fi
 EOF
 chmod +x "$MS_BIN/python3"
