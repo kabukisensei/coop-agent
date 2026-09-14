@@ -2,6 +2,7 @@
 """Inspect exact argv/cwd; exit 0 absent, 1 present, 2 uncertain."""
 
 import ctypes
+import json
 import os
 import re
 import stat
@@ -376,6 +377,151 @@ def linux_matches(target, root_pid):
     return matches
 
 
+def _windows_process_rows():
+    """Read one Windows-native process snapshot through CIM."""
+    script = (
+        "$ErrorActionPreference='Stop';"
+        "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);"
+        "$rows=@(Get-CimInstance Win32_Process|ForEach-Object{"
+        "[pscustomobject]@{pid=[int]$_.ProcessId;ppid=[int]$_.ParentProcessId;"
+        "executable=$_.ExecutablePath;command_line=$_.CommandLine}});"
+        "ConvertTo-Json -InputObject $rows -Compress"
+    )
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+        timeout=10,
+        check=False,
+    )
+    if result.returncode != 0:
+        return [], ["Windows CIM process inspection failed: %s" % result.stderr.strip()]
+    try:
+        decoded = json.loads(result.stdout)
+    except (TypeError, ValueError) as error:
+        return [], ["Windows CIM process metadata malformed: %s" % error]
+    rows = decoded if isinstance(decoded, list) else [decoded]
+    required = {"pid", "ppid", "executable", "command_line"}
+    if any(not isinstance(row, dict) or set(row) != required for row in rows):
+        return [], ["Windows CIM process metadata has an unexpected schema"]
+    return rows, []
+
+
+def _windows_descendants(root_pid, rows):
+    """Return the root closure from one CIM process snapshot."""
+    records = {}
+    uncertainties = []
+    for row in rows:
+        pid = row["pid"]
+        ppid = row["ppid"]
+        if (
+            not isinstance(pid, int)
+            or pid <= 0
+            or not isinstance(ppid, int)
+            or ppid < 0
+        ):
+            uncertainties.append("Windows CIM process metadata has an invalid pid")
+            continue
+        if pid in records:
+            uncertainties.append("Windows CIM process metadata duplicates pid %d" % pid)
+            continue
+        records[pid] = row
+    if root_pid not in records:
+        uncertainties.append("root pid %d unavailable in process snapshot" % root_pid)
+        return [], uncertainties
+    descendants = []
+    pending = [root_pid]
+    seen = {root_pid}
+    while pending:
+        parent = pending.pop()
+        for pid, row in records.items():
+            if row["ppid"] != parent or pid in seen:
+                continue
+            seen.add(pid)
+            descendants.append(row)
+            pending.append(pid)
+    return descendants, uncertainties
+
+
+def _windows_command_line_argv(command_line):
+    """Split a kernel command line with Windows' native quoting rules."""
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    shell32.CommandLineToArgvW.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    shell32.CommandLineToArgvW.restype = ctypes.POINTER(ctypes.c_wchar_p)
+    argc = ctypes.c_int()
+    pointer = shell32.CommandLineToArgvW(command_line, ctypes.byref(argc))
+    if not pointer or argc.value <= 0:
+        return (
+            None,
+            "CommandLineToArgvW failed: Windows error %d" % ctypes.get_last_error(),
+        )
+    try:
+        return [pointer[index] for index in range(argc.value)], None
+    finally:
+        kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+        kernel32.LocalFree(pointer)
+
+
+def windows_inspect(target, root_pid):
+    """Inspect only one Windows process subtree; uncertainty is never absence."""
+    rows, uncertainties = _windows_process_rows()
+    if uncertainties:
+        return [], uncertainties
+    descendants, closure_uncertainties = _windows_descendants(root_pid, rows)
+    uncertainties.extend(closure_uncertainties)
+    matches = []
+    for row in descendants:
+        pid = row["pid"]
+        if pid == os.getpid():
+            continue
+        executable = row["executable"]
+        if not isinstance(executable, str) or not executable:
+            uncertainties.append("executable path unavailable for pid %d" % pid)
+            continue
+        if not PYTHON_NAME.match(os.path.basename(executable)):
+            continue
+        command_line = row["command_line"]
+        if not isinstance(command_line, str) or not command_line:
+            uncertainties.append("command line unavailable for python pid %d" % pid)
+            continue
+        argv, error = _windows_command_line_argv(command_line)
+        if error:
+            uncertainties.append("pid %d: %s" % (pid, error))
+            continue
+        classification, script = parse_direct_python_script(
+            argv, executable_proven=True
+        )
+        if classification == "uncertain":
+            uncertainties.append("python argv ambiguous for pid %d" % pid)
+            continue
+        if classification != "script":
+            continue
+        if not os.path.isabs(script):
+            uncertainties.append(
+                "relative python script path cannot be resolved for pid %d" % pid
+            )
+            continue
+        resolved, error = _resolve_existing_regular_script(script, target)
+        if error:
+            uncertainties.append("script path unresolved for pid %d: %s" % (pid, error))
+            continue
+        if os.path.normcase(resolved) == os.path.normcase(target):
+            matches.append(pid)
+    return matches, uncertainties
+
+
 def macos_process_argv(pid):
     """Read an exact macOS argv vector through KERN_PROCARGS2."""
     libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
@@ -652,11 +798,14 @@ def main():
     root_pid = int(sys.argv[2])
     target = os.path.realpath(sys.argv[3])
     try:
-        matches, uncertainties = (
-            linux_inspect(target, root_pid)
-            if os.path.isdir("/proc")
-            else macos_inspect(target, root_pid)
-        )
+        if os.name == "nt":
+            matches, uncertainties = windows_inspect(target, root_pid)
+        elif sys.platform == "darwin":
+            matches, uncertainties = macos_inspect(target, root_pid)
+        elif os.path.isdir("/proc"):
+            matches, uncertainties = linux_inspect(target, root_pid)
+        else:
+            matches, uncertainties = [], ["unsupported process inspection platform"]
     except (OSError, subprocess.SubprocessError, RuntimeError) as error:
         print("process inspection uncertain: %s" % error, file=sys.stderr)
         return 2

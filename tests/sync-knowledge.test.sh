@@ -438,7 +438,25 @@ fi
 # Inspect argv boundaries, not regex-rendered parent command text.
 PROCESS_INSPECTOR="$ROOT/tests/knowledge-git-process-inspector.py"
 INSPECTOR_ERR="$TMP/process-inspector.err"
-"$PY" "$PROCESS_INSPECTOR" --root-pid "$$" "$ROOT/scripts/knowledge-git.py" >/dev/null 2>"$INSPECTOR_ERR"
+INSPECTOR_ROOT_PID="$$"
+if [ "$WIN" = "1" ]; then
+  # MSYS may expose a POSIX-emulation PID in $$; native Windows process APIs
+  # require bash.exe's real Win32 PID. Run a direct child (not $(...), which
+  # adds a subshell) and have it record that exact parent.
+  if ! "$PY" -c 'import os,sys; open(sys.argv[1], "w").write(str(os.getppid()) + "\n")' \
+    "$TMP/native-root.pid"; then
+    ko "F: native Windows root PID discovery command failed"
+    exit 1
+  fi
+  if ! IFS= read -r INSPECTOR_ROOT_PID < "$TMP/native-root.pid"; then
+    ko "F: native Windows root PID discovery produced no result"
+    exit 1
+  fi
+  case "$INSPECTOR_ROOT_PID" in
+    ''|0|*[!0-9]*) ko "F: native Windows root PID discovery failed"; exit 1 ;;
+  esac
+fi
+"$PY" "$PROCESS_INSPECTOR" --root-pid "$INSPECTOR_ROOT_PID" "$ROOT/scripts/knowledge-git.py" >/dev/null 2>"$INSPECTOR_ERR"
 inspector_rc=$?
 if [ "$inspector_rc" -eq 0 ]; then
   ok "F: no watchdog/leftover runner after sync"
@@ -451,7 +469,7 @@ if [ "$WIN" != "1" ]; then
   GIT_SSH_COMMAND='ssh -o BatchMode=yes' "$PY" "$ROOT/scripts/knowledge-git.py" --timeout-seconds 3 -- "$PY" -c 'import time; time.sleep(10)' >/dev/null 2>&1 &
   real_helper_pid=$!
   sleep 1
-  "$PY" "$PROCESS_INSPECTOR" --root-pid "$$" "$ROOT/scripts/knowledge-git.py" >/dev/null 2>"$INSPECTOR_ERR"
+  "$PY" "$PROCESS_INSPECTOR" --root-pid "$INSPECTOR_ROOT_PID" "$ROOT/scripts/knowledge-git.py" >/dev/null 2>"$INSPECTOR_ERR"
   inspector_rc=$?
   if [ "$inspector_rc" -eq 1 ]; then
     ok "F: real helper detected from direct argv"
@@ -463,7 +481,7 @@ if [ "$WIN" != "1" ]; then
   wait "$real_helper_pid" 2>/dev/null || true
 
   bash -c 'sleep 3; : /usr/bin/python3 /tmp/knowledge-git.py' & decoy_pid=$!
-  "$PY" "$PROCESS_INSPECTOR" --root-pid "$$" /tmp/knowledge-git.py >/dev/null 2>"$INSPECTOR_ERR"
+  "$PY" "$PROCESS_INSPECTOR" --root-pid "$INSPECTOR_ROOT_PID" /tmp/knowledge-git.py >/dev/null 2>"$INSPECTOR_ERR"
   inspector_rc=$?
   if [ "$inspector_rc" -eq 0 ]; then
     ok "F: unrelated shell text is not a helper"
@@ -481,7 +499,7 @@ if [ "$WIN" != "1" ]; then
   GIT_SSH_COMMAND='ssh -o BatchMode=yes' "$PY" "$spaced_root/scripts/knowledge-git.py" --timeout-seconds 3 -- "$PY" -c 'import time; time.sleep(10)' >/dev/null 2>&1 &
   spaced_helper_pid=$!
   sleep 1
-  "$PY" "$PROCESS_INSPECTOR" --root-pid "$$" "$spaced_root/scripts/knowledge-git.py" >/dev/null 2>"$INSPECTOR_ERR"
+  "$PY" "$PROCESS_INSPECTOR" --root-pid "$INSPECTOR_ROOT_PID" "$spaced_root/scripts/knowledge-git.py" >/dev/null 2>"$INSPECTOR_ERR"
   inspector_rc=$?
   if [ "$inspector_rc" -eq 1 ]; then
     ok "F: real helper path containing spaces detected"

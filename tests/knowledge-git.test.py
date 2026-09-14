@@ -465,6 +465,144 @@ class ProcessInspectorTests(unittest.TestCase):
             ("script", target),
         )
 
+    def test_windows_snapshot_closure_excludes_ambient_processes(self):
+        def row(pid, ppid, executable="cmd.exe", command_line="cmd.exe"):
+            return {
+                "pid": pid,
+                "ppid": ppid,
+                "executable": executable,
+                "command_line": command_line,
+            }
+
+        rows = [row(100, 1), row(101, 100), row(102, 101), row(200, 1)]
+        descendants, uncertainties = inspector._windows_descendants(100, rows)
+        self.assertEqual([item["pid"] for item in descendants], [101, 102])
+        self.assertEqual(uncertainties, [])
+        self.assertEqual(
+            inspector._windows_descendants(999, rows),
+            ([], ["root pid 999 unavailable in process snapshot"]),
+        )
+
+    def test_windows_snapshot_uses_cim_and_requires_exact_json_schema(self):
+        result = SimpleNamespace(
+            returncode=0,
+            stdout='[{"pid":100,"ppid":1,"executable":"python.exe","command_line":"python x.py"}]',
+            stderr="",
+        )
+        with mock.patch.object(inspector.subprocess, "run", return_value=result) as run:
+            rows, uncertainties = inspector._windows_process_rows()
+        self.assertEqual(rows[0]["pid"], 100)
+        self.assertEqual(uncertainties, [])
+        command = run.call_args.args[0]
+        self.assertEqual(command[0], "powershell.exe")
+        self.assertIn("Get-CimInstance Win32_Process", command[-1])
+        self.assertNotIn("ps ", command[-1])
+
+        result.stdout = '[{"pid":100,"ppid":1}]'
+        with mock.patch.object(inspector.subprocess, "run", return_value=result):
+            self.assertIn("unexpected schema", inspector._windows_process_rows()[1][0])
+
+    def test_windows_inspector_matches_only_exact_script_in_root_subtree(self):
+        target = "/repo/scripts/knowledge-git.py"
+        rows = [
+            {"pid": 100, "ppid": 1, "executable": "bash.exe", "command_line": "bash"},
+            {
+                "pid": 101,
+                "ppid": 100,
+                "executable": "/Python/python.exe",
+                "command_line": "target helper",
+            },
+            {
+                "pid": 200,
+                "ppid": 1,
+                "executable": "/Python/python.exe",
+                "command_line": "ambient helper",
+            },
+        ]
+        with (
+            mock.patch.object(
+                inspector, "_windows_process_rows", return_value=(rows, [])
+            ),
+            mock.patch.object(
+                inspector,
+                "_windows_command_line_argv",
+                return_value=(["python.exe", target], None),
+            ) as parse,
+            mock.patch.object(
+                inspector,
+                "_resolve_existing_regular_script",
+                return_value=(target, None),
+            ),
+            mock.patch.object(inspector.os, "getpid", return_value=999),
+        ):
+            self.assertEqual(inspector.windows_inspect(target, 100), ([101], []))
+        parse.assert_called_once_with("target helper")
+
+    def test_windows_inspector_fails_closed_on_missing_or_relative_python_metadata(
+        self,
+    ):
+        target = "/repo/scripts/knowledge-git.py"
+        scenarios = (
+            (
+                {"pid": 101, "ppid": 100, "executable": None, "command_line": None},
+                None,
+                "executable path unavailable",
+            ),
+            (
+                {
+                    "pid": 101,
+                    "ppid": 100,
+                    "executable": "/Python/python.exe",
+                    "command_line": "python knowledge-git.py",
+                },
+                (["python.exe", "knowledge-git.py"], None),
+                "relative python script path",
+            ),
+        )
+        for child, parsed, expected in scenarios:
+            rows = [
+                {
+                    "pid": 100,
+                    "ppid": 1,
+                    "executable": "bash.exe",
+                    "command_line": "bash",
+                },
+                child,
+            ]
+            with (
+                mock.patch.object(
+                    inspector, "_windows_process_rows", return_value=(rows, [])
+                ),
+                mock.patch.object(
+                    inspector, "_windows_command_line_argv", return_value=parsed
+                ),
+                mock.patch.object(inspector.os, "getpid", return_value=999),
+            ):
+                matches, uncertainties = inspector.windows_inspect(target, 100)
+            self.assertEqual(matches, [])
+            self.assertTrue(
+                any(expected in item for item in uncertainties), uncertainties
+            )
+
+    def test_inspector_main_dispatches_windows_before_proc_or_macos(self):
+        old_argv = inspector.sys.argv
+        inspector.sys.argv = ["inspector", "--root-pid", "100", "/tmp/target.py"]
+        try:
+            with (
+                mock.patch.object(inspector.os, "name", "nt"),
+                mock.patch.object(
+                    inspector, "windows_inspect", return_value=([], [])
+                ) as windows,
+                mock.patch.object(inspector, "linux_inspect") as linux,
+                mock.patch.object(inspector, "macos_inspect") as macos,
+            ):
+                self.assertEqual(inspector.main(), 0)
+            windows.assert_called_once()
+            linux.assert_not_called()
+            macos.assert_not_called()
+        finally:
+            inspector.sys.argv = old_argv
+
     def test_macos_vnodepathinfo_matches_apple_lp64_abi(self):
         self.assertEqual(ctypes.sizeof(inspector._VinfoStat), 136)
         self.assertEqual(ctypes.sizeof(inspector._VnodeInfo), 152)
