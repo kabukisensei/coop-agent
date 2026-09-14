@@ -131,15 +131,18 @@ function Test-JsonArray([object]$Value) {
   return ($null -ne $Value -and $Value -is [System.Array])
 }
 
-function Assert-WarehouseLiveEvidence([object]$Claim) {
-  $proofs = @($Claim.evidence | Where-Object { $_.kind -ceq 'OPERATOR_OBSERVATION' -and $null -ne $_.warehouse_live })
-  if ($proofs.Count -ne 1) { throw 'Warehouse MCP readiness requires exactly one structured live proof' }
-  $live = $proofs[0].warehouse_live
-  Assert-ExactProperties $live @('auth_state','target_validation','target_scope','discovered_tool','provenance','mock') 'Warehouse MCP live proof'
+function Assert-WarehouseLiveObject([object]$live, [string]$Label = 'Warehouse MCP live proof') {
+  Assert-ExactProperties $live @('auth_state','target_validation','target_scope','discovered_tool','provenance','mock') $Label
   if ($live.auth_state -cne 'authenticated') { throw 'Warehouse MCP live auth was not authenticated' }
   if ($live.target_validation -cne 'validated' -or $live.target_scope -cne 'item') { throw 'Warehouse MCP live item target was not validated' }
   if ($live.discovered_tool -cnotin @('executeSQL','execute_query','fabric-sqlendpoint-execute_query','fabric_sqlendpoint_execute_query')) { throw 'Warehouse MCP live proof lacks an exact compatible discovered tool' }
   if ($live.provenance -cne 'live' -or $live.mock -isnot [bool] -or [bool]$live.mock) { throw 'Warehouse MCP evidence is mock, generic, or not explicitly live' }
+}
+
+function Assert-WarehouseLiveEvidence([object]$Claim) {
+  $proofs = @($Claim.evidence | Where-Object { $_.kind -ceq 'OPERATOR_OBSERVATION' -and $null -ne $_.warehouse_live })
+  if ($proofs.Count -ne 1) { throw 'Warehouse MCP readiness requires exactly one structured live proof' }
+  Assert-WarehouseLiveObject $proofs[0].warehouse_live
 }
 
 function Assert-ObservedIdentity([object]$Identity, [string]$Label, [string]$ExpectedSha, [bool]$Ready) {
@@ -303,7 +306,10 @@ function Assert-Receipt([object]$Receipt) {
       if ($null -ne $e.exit_code -and $e.exit_code -isnot [int] -and $e.exit_code -isnot [long]) { throw "claim $($claim.id) evidence exit_code must be integer or null" }
       if ($e.kind -eq 'COMMAND' -and $null -eq $e.exit_code) { throw "claim $($claim.id) COMMAND evidence exit_code must be an integer" }
       foreach ($name in @('command','identity','path','sha256')) { if (-not (Test-JsonString $e.$name)) { throw "claim $($claim.id) evidence $name must be a string" } }
-      if ($null -ne $e.warehouse_live -and $e.warehouse_live -isnot [pscustomobject]) { throw "claim $($claim.id) warehouse_live evidence must be an object or null" }
+      if ($null -ne $e.warehouse_live) {
+        if ($e.warehouse_live -isnot [pscustomobject]) { throw "claim $($claim.id) warehouse_live evidence must be an object or null" }
+        Assert-WarehouseLiveObject $e.warehouse_live "claim $($claim.id) Warehouse MCP live proof"
+      }
       if ($e.identity -cnotmatch '^(harness|candidate|baseline|operator)(:[0-9a-f]{40})?$') { throw "claim $($claim.id) has invalid evidence identity" }
       if ($e.sha256 -and $e.sha256 -cnotmatch '^[0-9a-f]{64}$') { throw "claim $($claim.id) has invalid evidence SHA-256" }
     }

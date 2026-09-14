@@ -61,6 +61,37 @@ assert (
     is True
 )
 assert wmcp.machine_sqlendpoint_enabled({"integrations": {}}) is True
+for malformed_flag in (None, "false", "true", 0, 1, {}, []):
+    assert (
+        wmcp.machine_sqlendpoint_enabled(
+            {"integrations": {"fabric": False, "fabric_sql_endpoint": malformed_flag}}
+        )
+        is False
+    )
+assert (
+    wmcp.machine_sqlendpoint_enabled(
+        {
+            "integrations": {
+                "fabric": False,
+                "fabric_sql_endpoint": None,
+                "fabric-sqlendpoint": True,
+            }
+        }
+    )
+    is False
+)
+assert (
+    wmcp.machine_sqlendpoint_enabled(
+        {
+            "integrations": {
+                "fabric": False,
+                "fabric_sql_endpoint": True,
+                "fabric-sqlendpoint": False,
+            }
+        }
+    )
+    is True
+)
 
 # Exact item scope requires complete UUIDs and canonicalizes them; mismatch fails.
 workspace = "11111111-1111-1111-1111-111111111111"

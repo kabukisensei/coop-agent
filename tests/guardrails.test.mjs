@@ -601,6 +601,18 @@ await t("Warehouse SQL mutation classifier covers INTO and permission variants",
     sqlMcpRisk({ toolName: "executeSQL", input: { sql: "/* DELETE FROM dbo.T */\n-- DROP TABLE dbo.T\nSELECT 1" } })?.kind,
     "row-data",
   );
+  const quotedCommentMutations = [
+    "SELECT '--' AS marker; DELETE FROM dbo.Secret",
+    "SELECT '/*' AS opener; UPDATE dbo.T SET x=1; SELECT '*/' AS closer",
+    'SELECT "--" AS marker; DENY SELECT ON dbo.Secret TO analyst',
+    "SELECT [/*] AS marker; COPY INTO dbo.T FROM 'https://example.invalid/source'",
+  ];
+  for (const sql of quotedCommentMutations) {
+    assert.equal(sqlMcpRisk({ toolName: "executeSQL", input: { sql } })?.kind, "ddl-dml-destructive", sql);
+  }
+  for (const sql of ["SELECT '-- DELETE' AS marker", "SELECT '/* UPDATE */' AS marker", "SELECT [DROP] FROM dbo.T"]) {
+    assert.equal(sqlMcpRisk({ toolName: "executeSQL", input: { sql } })?.kind, "row-data", sql);
+  }
 });
 
 await t("Warehouse SQL MCP audit never logs raw SQL or args", async () => {

@@ -672,9 +672,43 @@ const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DELETE|DENY|DROP|EXEC|EXECUTE|GRANT|I
 const SQL_MUTATING_INTO = /\b(?:SELECT|COPY)\b[\s\S]*?\bINTO\b/i;
 
 function sqlWithoutComments(sql: string): string {
-  // Remove comments before classification so examples/documentation cannot turn
-  // a read into a false mutation. Whitespace/newlines remain valid separators.
-  return sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\r\n]*/g, " ");
+  // Lex rather than regex-replace: comment delimiters inside SQL strings and
+  // quoted identifiers are data, not comments. Literal/identifier contents are
+  // blanked too, so words such as 'DELETE' do not create false mutations.
+  let out = "";
+  let i = 0;
+  let state: "normal" | "single" | "double" | "bracket" | "line" | "block" = "normal";
+  let blockDepth = 0;
+  while (i < sql.length) {
+    const ch = sql[i];
+    const next = sql[i + 1] || "";
+    if (state === "normal") {
+      if (ch === "-" && next === "-") { state = "line"; out += "  "; i += 2; continue; }
+      if (ch === "/" && next === "*") { state = "block"; blockDepth = 1; out += "  "; i += 2; continue; }
+      if (ch === "'") { state = "single"; out += " "; i += 1; continue; }
+      if (ch === '"') { state = "double"; out += " "; i += 1; continue; }
+      if (ch === "[") { state = "bracket"; out += " "; i += 1; continue; }
+      out += ch; i += 1; continue;
+    }
+    if (state === "line") {
+      if (ch === "\r" || ch === "\n") { state = "normal"; out += ch; } else out += " ";
+      i += 1; continue;
+    }
+    if (state === "block") {
+      if (ch === "/" && next === "*") { blockDepth += 1; out += "  "; i += 2; continue; }
+      if (ch === "*" && next === "/") {
+        blockDepth -= 1; out += "  "; i += 2;
+        if (blockDepth === 0) state = "normal";
+        continue;
+      }
+      out += ch === "\r" || ch === "\n" ? ch : " "; i += 1; continue;
+    }
+    const closing = state === "single" ? "'" : state === "double" ? '"' : "]";
+    if (ch === closing && next === closing) { out += "  "; i += 2; continue; }
+    if (ch === closing) { state = "normal"; out += " "; i += 1; continue; }
+    out += ch === "\r" || ch === "\n" ? ch : " "; i += 1;
+  }
+  return out;
 }
 
 /** The effective target of a proxied MCP call. The `pi-mcp-adapter` normally

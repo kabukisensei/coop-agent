@@ -92,9 +92,14 @@ def machine_sqlendpoint_enabled(config: dict[str, Any]) -> bool:
     integrations: dict[str, Any] = (
         raw_integrations if isinstance(raw_integrations, dict) else {}
     )
-    for key in ("fabric_sql_endpoint", "fabric-sqlendpoint"):
-        if key in integrations:
-            return integrations[key] is not False
+    # Match the other integration flags: only the JSON/YAML boolean true opts in.
+    # The canonical spelling wins when both are present, including when its value
+    # is malformed, so an alias cannot turn a rejected canonical value into an
+    # enabled SQL execution surface.
+    if "fabric_sql_endpoint" in integrations:
+        return integrations["fabric_sql_endpoint"] is True
+    if "fabric-sqlendpoint" in integrations:
+        return integrations["fabric-sqlendpoint"] is True
     # Migration safety: an existing explicit opt-out of the original Fabric
     # integration must not acquire a new SQL execution surface merely because
     # this more-specific setting did not exist yet. An explicit new setting is

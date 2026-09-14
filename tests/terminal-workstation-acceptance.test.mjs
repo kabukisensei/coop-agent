@@ -222,6 +222,7 @@ test("decisive receipt mutations are rejected equivalently", { skip: !havePwsh }
     ["global Warehouse target", (x) => { x.operator_evidence.find((i) => i.id === "warehouse-mcp-live-acceptance").evidence[0].warehouse_live.target_scope = "global"; }],
     ["undocumented Warehouse tool", (x) => { x.operator_evidence.find((i) => i.id === "warehouse-mcp-live-acceptance").evidence[0].warehouse_live.discovered_tool = "fabric-sqlendpoint-not_sql"; }],
     ["Warehouse proof extra property", (x) => { x.operator_evidence.find((i) => i.id === "warehouse-mcp-live-acceptance").evidence[0].warehouse_live.claimed_live = true; }],
+    ["malformed Warehouse object on unrelated evidence", (x) => { x.claims[0].evidence[0].warehouse_live = { foo: "bar" }; }],
   ];
   const dir = mkdtempSync(join(tmpdir(), "coop-mutations-"));
   const runtimeBound = new Set(["forged candidate expected SHA", "forged candidate fingerprint", "forged observed fingerprint", "candidate observation mismatch", "wrong harness observation"]);
