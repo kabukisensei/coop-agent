@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -48,6 +49,14 @@ def capture(fn, *args):
     finally:
         builtins.print = old_print
     return rc, lines
+
+
+def remove_tree(path):
+    def make_writable_and_retry(function, target, _error):
+        os.chmod(target, stat.S_IRWXU)
+        function(target)
+
+    shutil.rmtree(path, onerror=make_writable_and_retry)
 
 
 def git_repo(base: Path, name: str, skills: dict[str, str]) -> tuple[str, str]:
@@ -362,7 +371,7 @@ with tempfile.TemporaryDirectory() as td:
     assert detail["enabled_count"] == 4
     assert "microsoft_skills:baseline:2" in detail["policy"]
 
-    shutil.rmtree(t / "microsoft")
+    remove_tree(t / "microsoft")
     assert mskills.refresh(project) == 70
     state = json.loads((t / "agent/catalogs/microsoft/fetch-state.json").read_text())
     assert state["state"] == "stale_LKG"
