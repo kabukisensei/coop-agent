@@ -586,6 +586,23 @@ await t("Warehouse SQL MCP calls are approval-gated before generic row-read logi
   assert.equal(blocked(await handle({ toolName: "executeSQL", input: { sql: "select 1" } }, { ...ctx, ui: { confirm: async () => true, notify: () => {} } })), false);
 });
 
+await t("Warehouse SQL mutation classifier covers INTO and permission variants", () => {
+  const mutations = [
+    "SELECT customer_id\nINTO dbo.CustomerCopy FROM dbo.Customer",
+    "  /* bounded export */ COPY\nINTO 'https://storage.example.invalid/path' FROM dbo.Source",
+    "-- permission change follows\nDENY SELECT ON dbo.Secret TO analyst",
+    "\n\tALTER TABLE dbo.T ADD c int",
+    "/* leading comment */ MERGE dbo.T USING dbo.S ON 1=0 WHEN NOT MATCHED THEN INSERT DEFAULT VALUES;",
+  ];
+  for (const sql of mutations) {
+    assert.equal(sqlMcpRisk({ toolName: "executeSQL", input: { sql } })?.kind, "ddl-dml-destructive", sql);
+  }
+  assert.equal(
+    sqlMcpRisk({ toolName: "executeSQL", input: { sql: "/* DELETE FROM dbo.T */\n-- DROP TABLE dbo.T\nSELECT 1" } })?.kind,
+    "row-data",
+  );
+});
+
 await t("Warehouse SQL MCP audit never logs raw SQL or args", async () => {
   clearAudit();
   await handle(
@@ -595,6 +612,14 @@ await t("Warehouse SQL MCP audit never logs raw SQL or args", async () => {
   const e = readAudit().filter((x) => x.kind === "mcp-confirm");
   assert.ok(e.length > 0);
   assert.equal(JSON.stringify(e).includes("SecretTable"), false);
+  clearAudit();
+  await handle(
+    { toolName: "executeSQL", input: { sql: "SELECT secret_value INTO dbo.LeakedName FROM dbo.Source", arguments: { password: "never-log-me" } } },
+    { ...ctx, ui: { confirm: async () => false, notify: () => {} } },
+  );
+  const mutationAudit = JSON.stringify(readAudit());
+  assert.equal(mutationAudit.includes("LeakedName"), false);
+  assert.equal(mutationAudit.includes("never-log-me"), false);
 });
 
 // --- proxied MCP mutation gating (pi-mcp-adapter shape: toolName="mcp", input.tool=<remote>) --

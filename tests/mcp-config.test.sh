@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 PY="$(command -v python3 2>/dev/null || command -v python)"
 d="$(mktemp -d)"; trap 'rm -rf "$d"' EXIT
+mkdir -p "$d/no-project"
 cat > "$d/config" <<'JSON'
 {"schema_version":1,"azure":{"tenant_id":"tenant-1"},"integrations":{"fabric":true,"power_bi":true,"power_bi_modeling":true,"azure_devops":true,"microsoft_learn":true,"context_mode":true},"azure_devops":{"organization":"cooptimize"}}
 JSON
 cat > "$d/mcp.json" <<'JSON'
 {"mcpServers":{"custom":{"command":"custom","args":["x"]},"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp@old"],"customField":true}},"_coop":{"schema_version":1,"managed_servers":["fabric"]}}
 JSON
-"$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --output "$d/mcp.json" || exit 1
+"$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp.json"
 "$PY" - "$d/mcp.json" "$ROOT/config/release-manifest.json" <<'PY'
 import json,sys
 m=json.load(open(sys.argv[1])); manifest=json.load(open(sys.argv[2])); s=m['mcpServers']
@@ -116,7 +117,7 @@ assert json.load(open(sys.argv[1]))['state']=='unavailable'
 PY
 # Machine config can disable the distinct Warehouse MCP without disabling general Fabric.
 printf '%s\n' '{"schema_version":1,"integrations":{"fabric":true,"fabric_sql_endpoint":false}}' > "$d/config"
-"$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --output "$d/disabled-mcp.json" || exit 1
+"$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/disabled-mcp.json"
 "$PY" - "$d/disabled-mcp.json" <<'PY'
 import json,sys
 s=json.load(open(sys.argv[1]))['mcpServers']
@@ -124,10 +125,31 @@ assert 'fabric' in s and 'fabric-sqlendpoint' not in s
 PY
 # Missing tenant omits tenant-dependent Power BI server without placeholders.
 printf '%s\n' '{"schema_version":1,"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false,"context_mode":false}}' > "$d/config"
-"$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --output "$d/mcp2.json" || exit 1
+"$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp2.json"
 "$PY" - "$d/mcp2.json" <<'PY'
 import json,sys
-m=json.load(open(sys.argv[1])); assert 'powerbi' not in m['mcpServers']; assert 'TODO-' not in json.dumps(m)
+m=json.load(open(sys.argv[1])); assert 'powerbi' not in m['mcpServers']; assert 'fabric-sqlendpoint' not in m['mcpServers']; assert 'TODO-' not in json.dumps(m)
+PY
+# An explicit new SQL endpoint setting may override the legacy Fabric opt-out.
+printf '%s\n' '{"schema_version":1,"integrations":{"fabric":false,"fabric_sql_endpoint":true,"power_bi":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false}}' > "$d/config"
+"$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/sql-override.json"
+"$PY" - "$d/sql-override.json" <<'PY'
+import json,sys
+s=json.load(open(sys.argv[1]))['mcpServers']; assert 'fabric' not in s and 'fabric-sqlendpoint' in s
+PY
+# Explicit malformed item scope is fail-closed and never emits the global endpoint.
+cat > "$d/project/.coop/project.yml" <<'YAML'
+fabric:
+  default_workspace_id: "not-a-uuid"
+  default_sql_endpoint:
+    item_type: "Warehouse"
+    item_id: "22222222-2222-2222-2222-222222222222"
+YAML
+"$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/project" --output "$d/invalid-target.json" || exit 1
+"$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/invalid-target.json" --project "$d/project/.coop/project.yml" > "$d/invalid-target-doctor.json" || exit 1
+"$PY" - "$d/invalid-target.json" "$d/invalid-target-doctor.json" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1])); d=json.load(open(sys.argv[2])); assert 'fabric-sqlendpoint' not in m['mcpServers']; assert d['state']=='target_invalid'; assert d['target']['scope']=='invalid'
 PY
 # Unmarked same-package entries are user-owned and never seized.
 cat > "$d/user-owned.json" <<'JSON'

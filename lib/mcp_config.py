@@ -137,15 +137,19 @@ def desired_servers(
         project or {}
     ):
         target = select_target(project or {})
-        sql_entry = remote_http_server(manifest, target.url)
-        sql_entry["_coop_target"] = {
-            "scope": target.scope,
-            "workspace_id": target.workspace_id,
-            "item_id": target.item_id,
-            "item_type": target.item_type,
-            "reason": target.reason,
-        }
-        out["fabric-sqlendpoint"] = sql_entry
+        # Never turn an explicit malformed/partial item target into the global
+        # endpoint. Omitting the managed entry lets Doctor report target_invalid
+        # from the project contract without exposing an unintended broad scope.
+        if target.scope != "invalid":
+            sql_entry = remote_http_server(manifest, target.url)
+            sql_entry["_coop_target"] = {
+                "scope": target.scope,
+                "workspace_id": target.workspace_id,
+                "item_id": target.item_id,
+                "item_type": target.item_type,
+                "reason": target.reason,
+            }
+            out["fabric-sqlendpoint"] = sql_entry
     # Current Azure-backed MCP servers are exclusively client-facing. The future
     # Shared Knowledge server must read a separate `knowledge` config and use its
     # own authentication/token cache, never this Azure CLI credential domain.

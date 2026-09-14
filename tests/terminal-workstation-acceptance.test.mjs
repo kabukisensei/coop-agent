@@ -48,8 +48,13 @@ function runPs(args, options = {}) {
 }
 
 function evidence(kind = "COMMAND", observed = "redacted observation") {
-  return { kind, observed, command: kind === "OPERATOR_OBSERVATION" ? "human interaction" : "verified command", exit_code: kind === "COMMAND" ? 0 : null, identity: kind === "OPERATOR_OBSERVATION" ? "operator" : `candidate:${CANDIDATE}`, path: "", sha256: "" };
+  return { kind, observed, command: kind === "OPERATOR_OBSERVATION" ? "human interaction" : "verified command", exit_code: kind === "COMMAND" ? 0 : null, identity: kind === "OPERATOR_OBSERVATION" ? "operator" : `candidate:${CANDIDATE}`, path: "", sha256: "", warehouse_live: null };
 }
+
+const liveWarehouseProof = () => ({
+  auth_state: "authenticated", target_validation: "validated", target_scope: "item",
+  discovered_tool: "executeSQL", provenance: "live", mock: false,
+});
 
 function claim(id, { status = "PASS", automated = true, human = false, phase = phaseFor[id] || "PRECHECK", observation = true } = {}) {
   return {
@@ -59,7 +64,7 @@ function claim(id, { status = "PASS", automated = true, human = false, phase = p
 }
 
 function receipt({ ready = false, layer = "AUTOMATED_WINDOWS", humanStatus = "NOT_REACHED" } = {}) {
-  return {
+  const value = {
     schema_version: 1,
     candidate: { expected_sha: CANDIDATE, observed_sha: CANDIDATE, expected_version: "0.23.1", observed_version: "0.23.1", expected_build: CANDIDATE_BUILD, observed_build: CANDIDATE_BUILD },
     baseline: { expected_sha: BASELINE, observed_sha: BASELINE, expected_version: "0.23.1", observed_version: "0.23.1" },
@@ -69,6 +74,8 @@ function receipt({ ready = false, layer = "AUTOMATED_WINDOWS", humanStatus = "NO
     operator_evidence: operatorIds.map((id) => claim(id, { status: humanStatus, automated: false, human: true, phase: "OPERATOR" })),
     terminal_workstation_ready: ready,
   };
+  if (ready) value.operator_evidence.find((x) => x.id === "warehouse-mcp-live-acceptance").evidence[0].warehouse_live = liveWarehouseProof();
+  return value;
 }
 
 function writeReceipt(dir, value, name = "receipt.json") {
@@ -208,6 +215,13 @@ test("decisive receipt mutations are rejected equivalently", { skip: !havePwsh }
     ["forged observed fingerprint", (x) => { x.candidate.observed_build = "build-deadbeef"; }],
     ["candidate observation mismatch", (x) => { x.candidate.observed_sha = BASELINE; }],
     ["wrong harness observation", (x) => { x.harness.observed_sha = "2".repeat(40); }],
+    ["generic Warehouse text only", (x) => { x.operator_evidence.find((i) => i.id === "warehouse-mcp-live-acceptance").evidence[0].warehouse_live = null; }],
+    ["mock Warehouse provenance", (x) => { x.operator_evidence.find((i) => i.id === "warehouse-mcp-live-acceptance").evidence[0].warehouse_live.mock = true; }],
+    ["non-live Warehouse provenance", (x) => { x.operator_evidence.find((i) => i.id === "warehouse-mcp-live-acceptance").evidence[0].warehouse_live.provenance = "fixture"; }],
+    ["unvalidated Warehouse target", (x) => { x.operator_evidence.find((i) => i.id === "warehouse-mcp-live-acceptance").evidence[0].warehouse_live.target_validation = "registered"; }],
+    ["global Warehouse target", (x) => { x.operator_evidence.find((i) => i.id === "warehouse-mcp-live-acceptance").evidence[0].warehouse_live.target_scope = "global"; }],
+    ["undocumented Warehouse tool", (x) => { x.operator_evidence.find((i) => i.id === "warehouse-mcp-live-acceptance").evidence[0].warehouse_live.discovered_tool = "fabric-sqlendpoint-not_sql"; }],
+    ["Warehouse proof extra property", (x) => { x.operator_evidence.find((i) => i.id === "warehouse-mcp-live-acceptance").evidence[0].warehouse_live.claimed_live = true; }],
   ];
   const dir = mkdtempSync(join(tmpdir(), "coop-mutations-"));
   const runtimeBound = new Set(["forged candidate expected SHA", "forged candidate fingerprint", "forged observed fingerprint", "candidate observation mismatch", "wrong harness observation"]);

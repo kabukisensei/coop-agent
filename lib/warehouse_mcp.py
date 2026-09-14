@@ -88,20 +88,24 @@ def project_sqlendpoint_enabled(project: dict[str, Any]) -> bool:
 
 
 def machine_sqlendpoint_enabled(config: dict[str, Any]) -> bool:
-    integrations = (
-        config.get("integrations")
-        if isinstance(config.get("integrations"), dict)
-        else {}
+    raw_integrations = config.get("integrations")
+    integrations: dict[str, Any] = (
+        raw_integrations if isinstance(raw_integrations, dict) else {}
     )
-    value = integrations.get(
-        "fabric_sql_endpoint", integrations.get("fabric-sqlendpoint", True)
-    )
-    return value is not False
+    for key in ("fabric_sql_endpoint", "fabric-sqlendpoint"):
+        if key in integrations:
+            return integrations[key] is not False
+    # Migration safety: an existing explicit opt-out of the original Fabric
+    # integration must not acquire a new SQL execution surface merely because
+    # this more-specific setting did not exist yet. An explicit new setting is
+    # authoritative and may enable the endpoint independently.
+    return integrations.get("fabric", True) is not False
 
 
 def project_target(project: dict[str, Any]) -> SqlEndpointTarget:
     raw_fabric = project.get("fabric")
     fabric: dict[str, Any] = raw_fabric if isinstance(raw_fabric, dict) else {}
+    target_configured = "default_sql_endpoint" in fabric
     raw_default = fabric.get("default_sql_endpoint")
     default: dict[str, Any] = raw_default if isinstance(raw_default, dict) else {}
     workspace_id = fabric.get("default_workspace_id", "")
@@ -141,6 +145,22 @@ def project_target(project: dict[str, Any]) -> SqlEndpointTarget:
             item_type=item_type,
             reason="project_ids",
         )
+    if target_configured:
+        return SqlEndpointTarget(
+            url="",
+            scope="invalid",
+            workspace_id=(
+                canonical_uuid(workspace_id) if is_uuid(workspace_id) else ""
+            ),
+            item_id=(
+                canonical_uuid(endpoint_item_id) if is_uuid(endpoint_item_id) else ""
+            ),
+            validation_item_id=(
+                canonical_uuid(source_item_id) if is_uuid(source_item_id) else ""
+            ),
+            item_type=item_type,
+            reason="explicit_project_target_invalid",
+        )
     return SqlEndpointTarget(
         url=GLOBAL_SQL_ENDPOINT_URL,
         scope="global",
@@ -150,7 +170,7 @@ def project_target(project: dict[str, Any]) -> SqlEndpointTarget:
 
 def select_target(project: dict[str, Any]) -> SqlEndpointTarget:
     target = project_target(project)
-    if target.scope == "item":
+    if target.scope in {"item", "invalid"}:
         return target
     return SqlEndpointTarget(
         url=GLOBAL_SQL_ENDPOINT_URL, scope="global", reason=target.reason
@@ -164,10 +184,7 @@ def classify_tools(tools: list[Any]) -> str:
             names.add(tool["name"])
         elif isinstance(tool, str):
             names.add(tool)
-    if any(
-        name in COMPATIBLE_SQL_TOOLS or name.startswith("fabric-sqlendpoint-")
-        for name in names
-    ):
+    if any(name in COMPATIBLE_SQL_TOOLS for name in names):
         return "registered"
     return "tool_missing" if names else "unavailable"
 
@@ -316,6 +333,7 @@ def _mcp_post(
     *,
     timeout: int,
     session_id: str = "",
+    allow_empty_notification: bool = False,
 ) -> tuple[dict[str, Any], str, str]:
     """POST one streamable-HTTP MCP message without starting an OAuth client."""
     headers = {
@@ -335,6 +353,7 @@ def _mcp_post(
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read(1024 * 1024).decode("utf-8", errors="strict")
             returned_session = resp.headers.get("Mcp-Session-Id", session_id)
+            status_code = getattr(resp, "status", None) or resp.getcode()
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
             return {}, "auth_required", session_id
@@ -344,7 +363,13 @@ def _mcp_post(
     except (urllib.error.URLError, TimeoutError, UnicodeDecodeError):
         return {}, "unavailable", session_id
 
-    # Streamable HTTP may return JSON directly or SSE `data:` records.
+    # Streamable HTTP notifications have no JSON-RPC response. Microsoft's
+    # endpoint may acknowledge notifications/initialized with 202 or 204 and
+    # an empty body; request messages still fail closed on missing/invalid JSON.
+    if allow_empty_notification and not raw.strip() and status_code in (202, 204):
+        return {}, "ok", returned_session
+
+    # Streamable HTTP requests may return JSON directly or SSE `data:` records.
     candidates = [raw]
     candidates.extend(
         line[5:].strip() for line in raw.splitlines() if line.startswith("data:")
@@ -385,7 +410,12 @@ def mcp_tools_list(url: str, token: str, timeout: int = 8) -> tuple[list[Any], s
         "params": {},
     }
     _, state, session = _mcp_post(
-        url, token, initialized, timeout=timeout, session_id=session
+        url,
+        token,
+        initialized,
+        timeout=timeout,
+        session_id=session,
+        allow_empty_notification=True,
     )
     if state != "ok":
         return [], state
@@ -420,7 +450,9 @@ def doctor_status(
     state = sqlendpoint_config_status(entry) if registered else "unavailable"
     target = select_target(project or {})
     actual_target = registered_target(entry) if registered else None
-    if state == "registered" and not same_target(actual_target, target):
+    if target.scope == "invalid":
+        state = "target_invalid"
+    elif state == "registered" and not same_target(actual_target, target):
         state = "target_invalid"
     if state == "registered" and probe:
         token, auth = az_access_token()

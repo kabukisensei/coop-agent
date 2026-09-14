@@ -31,6 +31,7 @@ MANIFEST = ROOT / "config" / "microsoft-skills.json"
 MAX_SKILL_BYTES = 750_000
 MAX_FILE_BYTES = 500_000
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 APPROVED_HOSTS = {"github.com"}
 
@@ -151,6 +152,8 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(f"invalid manifest path for {name}")
             if meta.get("frontmatter_name") not in (None, name):
                 raise ValueError(f"frontmatter authority mismatch for {name}")
+            if not SHA256_RE.match(str(meta.get("sha256", ""))):
+                raise ValueError(f"missing trusted content hash for {name}")
             if (
                 meta.get("approved_optional", True) is not True
                 and meta.get("deferred") is not True
@@ -210,7 +213,9 @@ def policy_for(
     legacy_allow = block.get("allow")
     if explicit_mode in ("restricted", "disabled", "baseline"):
         mode = explicit_mode
-    elif isinstance(legacy_allow, list) and legacy_allow:
+    elif isinstance(legacy_allow, list):
+        # Presence is authoritative even when empty: the legacy contract used an
+        # empty allowlist as an explicit opt-out, never as "load the baseline".
         mode = "restricted"
     elif repo_key == "fabric_skills":
         fabric = project.get("fabric")
@@ -259,6 +264,13 @@ def validate_skill(src: Path, expected_name: str, own: set[str]) -> dict[str, An
         raise ValueError(f"subordinate conflict for {expected_name}")
     digest, files, total = sha_tree(src)
     return {"bytes": total, "hash": digest, "files": files, "real": str(real)}
+
+
+def generation_id(skills: list[dict[str, Any]]) -> str:
+    """Content address a generation from canonical, fully verified receipts."""
+    return hashlib.sha256(
+        json.dumps(skills, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def git_archive_exact(url: str, revision: str, dest: Path) -> None:
@@ -379,6 +391,8 @@ def refresh(project_path: Path | None, *, force: bool = False) -> int:
                 if expected_fm and expected_fm != name:
                     raise ValueError(f"frontmatter authority mismatch for {name}")
                 v = validate_skill(src, name, own)
+                if v["hash"] != meta["sha256"]:
+                    raise ValueError(f"trusted content hash mismatch for {name}")
                 dest_rel = Path(repo_key) / name
                 dest = stage / "skills" / dest_rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
@@ -394,9 +408,7 @@ def refresh(project_path: Path | None, *, force: bool = False) -> int:
                         "revision": repo["revision"],
                     }
                 )
-        gen_hash = hashlib.sha256(
-            json.dumps(enabled, sort_keys=True).encode("utf-8")
-        ).hexdigest()[:16]
+        gen_hash = generation_id(enabled)
         gen = cat / "generations" / gen_hash
         if gen.exists():
             current = {
@@ -420,6 +432,9 @@ def refresh(project_path: Path | None, *, force: bool = False) -> int:
             "skills": enabled,
             "fetched_at": int(time.time()),
         }
+        # Verify the final exported bytes and their content-addressed directory,
+        # not merely the checkout/staging source, before publishing the pointer.
+        verify_current(current)
         write_json_atomic(cat / "current.json", current)
         receipt["generation"] = gen_hash
         receipt["skills"] = enabled
@@ -446,6 +461,10 @@ def refresh(project_path: Path | None, *, force: bool = False) -> int:
 def verify_current(data: dict[str, Any]) -> dict[str, Any]:
     if data.get("schema_version") != 1:
         raise ValueError("bad current schema")
+    if set(data) - {"schema_version", "generation", "root", "skills", "fetched_at"}:
+        raise ValueError("unexpected current metadata")
+    if "fetched_at" in data and not isinstance(data["fetched_at"], int):
+        raise ValueError("bad current timestamp")
     cat = catalog_root().resolve()
     gen = data.get("generation")
     root = Path(str(data.get("root", ""))).expanduser().resolve()
@@ -457,20 +476,36 @@ def verify_current(data: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("current root is outside the active generation")
     if not root.is_dir():
         raise ValueError("current generation missing")
+    manifest = validate_manifest(read_json(MANIFEST))
     skills = data.get("skills")
     if not isinstance(skills, list):
         raise ValueError("current skills missing")
     seen: set[str] = set()
+    verified: list[dict[str, Any]] = []
     for skill in skills:
         if not isinstance(skill, dict):
             raise ValueError("bad skill receipt")
         name = skill.get("name")
+        repo_key = skill.get("repo")
         rel = skill.get("path")
         if not isinstance(name, str) or not NAME_RE.match(name) or name in seen:
             raise ValueError("duplicate or invalid skill receipt name")
         seen.add(name)
+        repositories = manifest["repositories"]
+        if not isinstance(repo_key, str) or repo_key not in repositories:
+            raise ValueError(f"untrusted repository for {name}")
+        repo = repositories[repo_key]
+        meta = repo["skills"].get(name)
+        if (
+            not isinstance(meta, dict)
+            or meta.get("approved_optional", True) is not True
+        ):
+            raise ValueError(f"skill is not approved by manifest: {name}")
         if not isinstance(rel, str):
             raise ValueError("bad skill receipt path")
+        expected_rel = f"{repo_key}/{name}"
+        if rel != expected_rel or skill.get("revision") != repo["revision"]:
+            raise ValueError(f"skill authority metadata mismatch for {name}")
         rel_path = Path(rel)
         if rel_path.is_absolute() or ".." in rel_path.parts:
             raise ValueError("bad skill receipt path")
@@ -478,12 +513,26 @@ def verify_current(data: dict[str, Any]) -> dict[str, Any]:
         if root not in p.parents or not (p / "SKILL.md").is_file():
             raise ValueError("skill path containment failed")
         digest, files, total = sha_tree(p)
-        if digest != skill.get("hash"):
+        if digest != meta["sha256"] or digest != skill.get("hash"):
             raise ValueError(f"tampered skill {name}")
-        if "files" in skill and files != skill["files"]:
+        if files != skill.get("files"):
             raise ValueError(f"tampered file receipt {name}")
-        if "bytes" in skill and total != skill["bytes"]:
+        if total != skill.get("bytes"):
             raise ValueError(f"tampered byte receipt {name}")
+        expected = {
+            "name": name,
+            "repo": repo_key,
+            "path": expected_rel,
+            "hash": digest,
+            "bytes": total,
+            "files": files,
+            "revision": repo["revision"],
+        }
+        if skill != expected:
+            raise ValueError(f"unexpected skill receipt metadata for {name}")
+        verified.append(expected)
+    if generation_id(verified) != gen:
+        raise ValueError("generation content address mismatch")
     return data
 
 

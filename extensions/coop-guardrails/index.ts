@@ -668,7 +668,14 @@ const DATA_SERVER = /(^|[_\-.:/])(fabric|powerbi|pbi|sql|database|db|warehouse|l
 const ROW_READ_VERB = /(^|[_\-.:/])(query|execute|evaluate|run_sql|runsql|sql_query|dax_query|preview|sample|row|rows|record|records|data|export|download)([_\-.:/]|$)/i;
 const PRODUCTION_WORD = /(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)/i;
 const SQL_ENDPOINT_TOOL = /(^|[_\-.:/])(executeSQL|execute_query|fabric-sqlendpoint-execute_query|fabric_sqlendpoint_execute_query)([_\-.:/]|$)/i;
-const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DELETE|DROP|EXEC|EXECUTE|GRANT|INSERT|MERGE|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE|UPSERT)\b/i;
+const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DELETE|DENY|DROP|EXEC|EXECUTE|GRANT|INSERT|MERGE|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE|UPSERT)\b/i;
+const SQL_MUTATING_INTO = /\b(?:SELECT|COPY)\b[\s\S]*?\bINTO\b/i;
+
+function sqlWithoutComments(sql: string): string {
+  // Remove comments before classification so examples/documentation cannot turn
+  // a read into a false mutation. Whitespace/newlines remain valid separators.
+  return sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\r\n]*/g, " ");
+}
 
 /** The effective target of a proxied MCP call. The `pi-mcp-adapter` normally
  *  registers a single `mcp` tool and carries the real server/tool in
@@ -763,10 +770,10 @@ export function sqlMcpRisk(event: any): SqlMcpRisk | null {
   const name = target.innerTool || target.outerTool;
   const server = target.server || "";
   if (!SQL_ENDPOINT_TOOL.test(name) && !/fabric-sqlendpoint/i.test(server)) return null;
-  const sql = extractSqlText(event?.input);
+  const sql = sqlWithoutComments(extractSqlText(event?.input));
   return {
     label: mutationName(target),
-    kind: SQL_MUTATION_VERB.test(sql) ? "ddl-dml-destructive" : "row-data",
+    kind: SQL_MUTATION_VERB.test(sql) || SQL_MUTATING_INTO.test(sql) ? "ddl-dml-destructive" : "row-data",
   };
 }
 

@@ -26,11 +26,13 @@
       ],
       "skills": {
         "kql": {
-          "path": "skills/kql",
+          "path": ".github/skills/kql",
+          "sha256": "30916ccc5de792e39fcf71789fb67535fb8c710e620b4dc80e28816e7d7879f3",
           "approved_optional": true
         },
         "microsoft-docs": {
-          "path": "skills/microsoft-docs",
+          "path": ".github/skills/microsoft-docs",
+          "sha256": "67afb0b35d13c74030fc837d2a92e02b62b4f0bdb0ff7b5dd90c09673f9dec46",
           "approved_optional": true
         }
       }
@@ -49,16 +51,19 @@
       "skills": {
         "sqldw-authoring-cli": {
           "path": "skills/sqldw-authoring-cli",
+          "sha256": "91dbb4f97fceb850d20c5a3cf1c0637f4648af79237674662645f6f3112ad62f",
           "frontmatter_name": "sqldw-authoring-cli",
           "approved_optional": true
         },
         "sqldw-consumption-cli": {
           "path": "skills/sqldw-consumption-cli",
+          "sha256": "c634888eaf3bee1e5a3f2f0ef3bef980eb746a5dc872ebe1dc252dbf6e0c3d29",
           "frontmatter_name": "sqldw-consumption-cli",
           "approved_optional": true
         },
         "sqldw-operations-cli": {
           "path": "skills/sqldw-operations-cli",
+          "sha256": "1724df78560f6138be3cd7486b3f77b6d1593d617cda20c93c4183ce420f0548",
           "frontmatter_name": "sqldw-operations-cli",
           "approved_optional": false,
           "deferred": true

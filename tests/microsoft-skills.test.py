@@ -63,7 +63,7 @@ def git_repo(base: Path, name: str, skills: dict[str, str]) -> tuple[str, str]:
 
 
 def fixture_manifest(ms_url: str, ms_rev: str, fab_url: str, fab_rev: str) -> dict:
-    return {
+    manifest = {
         "schema_version": 1,
         "policy_default": "baseline",
         "dependencies": {
@@ -112,6 +112,14 @@ def fixture_manifest(ms_url: str, ms_rev: str, fab_url: str, fab_rev: str) -> di
             },
         },
     }
+    roots = {
+        "microsoft_skills": Path(ms_url.removeprefix("file://")),
+        "fabric_skills": Path(fab_url.removeprefix("file://")),
+    }
+    for repo_key, repo in manifest["repositories"].items():
+        for meta in repo["skills"].values():
+            meta["sha256"] = mskills.sha_tree(roots[repo_key] / meta["path"])[0]
+    return manifest
 
 
 def write_manifest(path: Path, data: dict) -> None:
@@ -149,6 +157,13 @@ mode, names = mskills.policy_for(
 )
 assert mode == "restricted"
 assert names == ["sqldw-consumption-cli"]
+
+for repo_key in ("microsoft_skills", "fabric_skills"):
+    mode, names = mskills.policy_for(
+        {repo_key: {"allow": []}}, repo_key, real_manifest["repositories"][repo_key]
+    )
+    assert mode == "restricted"
+    assert names == []
 
 mode, names = mskills.policy_for(
     {"fabric_skills": {"policy": "restricted", "allow": []}},
@@ -215,6 +230,64 @@ with tempfile.TemporaryDirectory() as td:
     rc, dirs = capture(mskills.launch_dirs, project)
     assert rc == 0
     assert len(dirs) == 4 and all("/catalogs/microsoft/generations/" in d for d in dirs)
+
+    # The writable pointer and receipt cannot authorize coordinated skill,
+    # generation, repository, revision, path, or manifest-metadata forgeries.
+    def rejected(candidate):
+        try:
+            mskills.verify_current(candidate)
+            raise AssertionError("forged catalog metadata was accepted")
+        except ValueError:
+            pass
+
+    for mutate in (
+        lambda x: x["skills"][0].__setitem__("repo", "microsoft_skills"),
+        lambda x: x["skills"][0].__setitem__("revision", "0" * 40),
+        lambda x: x["skills"][0].__setitem__(
+            "path", "fabric_skills/sqldw-consumption-cli"
+        ),
+        lambda x: x.__setitem__("repository", "https://evil.example/skills.git"),
+        lambda x: x.__setitem__("manifest", {"trusted": True}),
+    ):
+        forged = json.loads(json.dumps(current))
+        mutate(forged)
+        rejected(forged)
+
+    tamper_path = Path(current["root"]) / "microsoft_skills/kql/SKILL.md"
+    original_text = tamper_path.read_text(encoding="utf-8")
+    tamper_path.write_text(original_text + "\ncoordinated rewrite\n", encoding="utf-8")
+    forged = json.loads(json.dumps(current))
+    forged_skill = next(s for s in forged["skills"] if s["name"] == "kql")
+    digest, files, total = mskills.sha_tree(tamper_path.parent)
+    forged_skill.update(hash=digest, files=files, bytes=total)
+    forged_generation = mskills.generation_id(forged["skills"])
+    forged_root = Path(current["root"]).parent / forged_generation
+    Path(current["root"]).rename(forged_root)
+    forged["generation"] = forged_generation
+    forged["root"] = str(forged_root)
+    rejected(forged)
+    forged_root.rename(Path(current["root"]))
+    tamper_path.write_text(original_text, encoding="utf-8")
+    assert mskills.verify_current(current)
+
+    # A copy-time mutation in the final generation is detected before current.json
+    # publication; source-checkout validation alone is not accepted as evidence.
+    original_copytree = mskills.shutil.copytree
+    os.environ["PI_CODING_AGENT_DIR"] = str(t / "export-tamper-agent")
+
+    def tampering_copytree(src, dest, **kwargs):
+        result = original_copytree(src, dest, **kwargs)
+        skill_md = Path(dest) / "SKILL.md"
+        skill_md.write_text(skill_md.read_text(encoding="utf-8") + "\nrace\n")
+        return result
+
+    mskills.shutil.copytree = tampering_copytree
+    try:
+        assert mskills.refresh(project) == 69
+        assert not (t / "export-tamper-agent/catalogs/microsoft/current.json").exists()
+    finally:
+        mskills.shutil.copytree = original_copytree
+        os.environ["PI_CODING_AGENT_DIR"] = str(t / "agent")
 
     restricted = t / "restricted.yml"
     restricted.write_text(

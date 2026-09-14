@@ -373,5 +373,9 @@ immutable generations under the effective Coop/Pi agent dir
 (`catalogs/microsoft`). Launch reads `current.json` only and never networks.
 Refresh is exact-commit, noninteractive, bounded, staged, validated, and
 fail-soft: a last-known-good generation keeps launch working when offline.
+Each approved skill has a committed tree SHA-256. Every launch recomputes the
+actual exported tree receipt and full generation content address, and rejects
+pointer, repository, revision, path, receipt, or generation rewrites that do not
+match that committed authority.
 Baseline loads Microsoft KQL, Microsoft Docs, and Fabric SQL DW authoring and
 consumption skills only; `sqldw-operations-cli` is recorded as deferred.

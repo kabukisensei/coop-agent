@@ -1268,24 +1268,36 @@
                           "const": true
                         },
                         "evidence": {
-                          "contains": {
-                            "type": "object",
-                            "required": [
-                              "kind",
-                              "observed"
-                            ],
-                            "properties": {
-                              "kind": {
-                                "const": "OPERATOR_OBSERVATION"
-                              },
-                              "observed": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            }
-                          },
+                          "type": "array",
                           "minContains": 1,
-                          "type": "array"
+                          "maxContains": 1,
+                          "contains": {
+                            "allOf": [
+                              {
+                                "$ref": "#/$defs/evidence"
+                              },
+                              {
+                                "type": "object",
+                                "required": [
+                                  "kind",
+                                  "observed",
+                                  "warehouse_live"
+                                ],
+                                "properties": {
+                                  "kind": {
+                                    "const": "OPERATOR_OBSERVATION"
+                                  },
+                                  "observed": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "warehouse_live": {
+                                    "$ref": "#/$defs/warehouseLiveEvidence"
+                                  }
+                                }
+                              }
+                            ]
+                          }
                         }
                       }
                     }
@@ -1515,7 +1527,8 @@
         "exit_code",
         "identity",
         "path",
-        "sha256"
+        "sha256",
+        "warehouse_live"
       ],
       "properties": {
         "kind": {
@@ -1549,6 +1562,16 @@
         "sha256": {
           "type": "string",
           "pattern": "^$|^[0-9a-f]{64}$"
+        },
+        "warehouse_live": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/warehouseLiveEvidence"
+            }
+          ]
         }
       },
       "allOf": [
@@ -1698,6 +1721,43 @@
           "type": "object"
         }
       ]
+    },
+    "warehouseLiveEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "auth_state",
+        "target_validation",
+        "target_scope",
+        "discovered_tool",
+        "provenance",
+        "mock"
+      ],
+      "properties": {
+        "auth_state": {
+          "const": "authenticated"
+        },
+        "target_validation": {
+          "const": "validated"
+        },
+        "target_scope": {
+          "const": "item"
+        },
+        "discovered_tool": {
+          "enum": [
+            "executeSQL",
+            "execute_query",
+            "fabric-sqlendpoint-execute_query",
+            "fabric_sqlendpoint_execute_query"
+          ]
+        },
+        "provenance": {
+          "const": "live"
+        },
+        "mock": {
+          "const": false
+        }
+      }
     }
   }
 }
