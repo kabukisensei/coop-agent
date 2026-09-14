@@ -296,8 +296,8 @@ with tempfile.TemporaryDirectory() as td:
         rejected(forged)
 
     tamper_path = Path(current["root"]) / "microsoft_skills/kql/SKILL.md"
-    original_text = tamper_path.read_text(encoding="utf-8")
-    tamper_path.write_text(original_text + "\ncoordinated rewrite\n", encoding="utf-8")
+    original_bytes = tamper_path.read_bytes()
+    tamper_path.write_bytes(original_bytes + b"\ncoordinated rewrite\n")
     forged = json.loads(json.dumps(current))
     forged_skill = next(s for s in forged["skills"] if s["name"] == "kql")
     digest, files, total = mskills.sha_tree(tamper_path.parent)
@@ -309,7 +309,7 @@ with tempfile.TemporaryDirectory() as td:
     forged["root"] = str(forged_root)
     rejected(forged)
     forged_root.rename(Path(current["root"]))
-    tamper_path.write_text(original_text, encoding="utf-8")
+    tamper_path.write_bytes(original_bytes)
     assert mskills.verify_current(current)
 
     # A copy-time mutation in the final generation is detected before current.json
