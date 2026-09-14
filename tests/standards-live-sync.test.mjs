@@ -64,6 +64,19 @@ try {
       const refreshed = refreshCanonical({ canonicalRoot: productionRoot, statePath: productionState, snapshotRoot: join(tmp, "production-snapshots"), force: true, runner: (args) => { if (args[0] === "clone") clone = args; return { status: 1, stdout: "", stderr: "offline fixture" }; } });
       assert.equal(refreshed.ok, false);
       assert.equal(clone.includes(r.canonical.repository), true);
+      let toctouClone = null;
+      const mutableOptions = {
+        canonicalRoot: join(tmp, "production-toctou-cache", "canonical"),
+        statePath: join(tmp, "production-toctou-cache", "status.json"),
+        snapshotRoot: join(tmp, "production-toctou-snapshots"),
+        force: true,
+        now: () => { mutableOptions.remote = remote; return now; },
+        runner: (args) => { if (args[0] === "clone") toctouClone = args; return { status: 1, stdout: "", stderr: "offline fixture" }; },
+      };
+      const toctou = refreshCanonical(mutableOptions);
+      assert.equal(toctou.ok, false);
+      assert.equal(toctouClone.includes(r.canonical.repository), true);
+      assert.equal(toctouClone.includes(remote), false);
     } finally {
       if (old === undefined) delete process.env.COOP_STANDARDS_REGISTRY; else process.env.COOP_STANDARDS_REGISTRY = old;
     }
