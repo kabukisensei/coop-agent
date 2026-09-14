@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import builtins
+import hashlib
 import importlib.util
 import json
 import os
@@ -123,7 +124,23 @@ def fixture_manifest(ms_url: str, ms_rev: str, fab_url: str, fab_rev: str) -> di
     }
     for repo_key, repo in manifest["repositories"].items():
         for meta in repo["skills"].values():
-            meta["sha256"] = mskills.sha_tree(roots[repo_key] / meta["path"])[0]
+            # Hash the immutable committed bytes that production checks out,
+            # not a Windows worktree that Git may later rewrite as CRLF.
+            blob = subprocess.check_output(
+                [
+                    "git",
+                    "-C",
+                    str(roots[repo_key]),
+                    "show",
+                    f"{repo['revision']}:{meta['path']}/SKILL.md",
+                ]
+            )
+            digest = hashlib.sha256(blob).hexdigest()
+            tree = hashlib.sha256()
+            tree.update(b"SKILL.md\0")
+            tree.update(digest.encode("ascii"))
+            tree.update(b"\0")
+            meta["sha256"] = tree.hexdigest()
     return manifest
 
 
@@ -207,6 +224,10 @@ with tempfile.TemporaryDirectory() as td:
             "sqldw-operations-cli": "---\nname: sqldw-operations-cli\n---\nDeferred\n",
         },
     )
+    # The trust manifest follows committed bytes even if a Windows worktree is
+    # rewritten to CRLF after commit.
+    source_skill = t / "fabric/skills/sqldw-authoring-cli/SKILL.md"
+    source_skill.write_bytes(source_skill.read_bytes().replace(b"\n", b"\r\n"))
     mf = t / "manifest.json"
     write_manifest(mf, fixture_manifest(ms_url, ms_rev, fab_url, fab_rev))
     project = t / "project.yml"
