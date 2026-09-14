@@ -212,7 +212,14 @@ with tempfile.TemporaryDirectory() as td:
     project = t / "project.yml"
     project.write_text("fabric:\n  default_workspace_id: ''\n", encoding="utf-8")
 
-    assert mskills.refresh(project) == 0
+    refresh_rc = mskills.refresh(project)
+    fetch_state_path = t / "agent/catalogs/microsoft/fetch-state.json"
+    fetch_state = (
+        json.loads(fetch_state_path.read_text(encoding="utf-8"))
+        if fetch_state_path.is_file()
+        else {"detail": "missing fetch-state.json"}
+    )
+    assert refresh_rc == 0, f"refresh rc={refresh_rc}: {fetch_state}"
     current = json.loads((t / "agent/catalogs/microsoft/current.json").read_text())
     assert [s["name"] for s in current["skills"]] == [
         "sqldw-authoring-cli",

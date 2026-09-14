@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { activeCanonicalGeneration, fsyncDirectory, pinStandardsTask, promoteReviewRun, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
+import { activeCanonicalGeneration, fsyncDirectory, fsyncFile, pinStandardsTask, promoteReviewRun, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "coop-standards-live-"));
@@ -41,6 +41,12 @@ try {
     for (const code of ["EINVAL", "EPERM"]) {
       assert.doesNotThrow(() => fsyncDirectory(tmp, { platform: "win32", fsync: () => { throw error(code); } }));
     }
+  });
+  test("file durability uses a write-capable Windows handle without suppressing errors", () => {
+    const calls = [];
+    fsyncFile("ignored", { platform: "win32", open: (_path, mode) => { calls.push(mode); return 123; }, fsync: () => calls.push("fsync"), close: () => calls.push("close") });
+    assert.deepEqual(calls, ["r+", "fsync", "close"]);
+    assert.throws(() => fsyncFile("ignored", { platform: "win32", open: () => 123, fsync: () => { const error = new Error("EPERM"); error.code = "EPERM"; throw error; }, close: () => {} }), /EPERM/);
   });
   test("production registry pins private main and verified anchor", () => {
     const r = standardsRegistry();
