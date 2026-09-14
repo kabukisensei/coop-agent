@@ -133,6 +133,9 @@ function Test-JsonArray([object]$Value) {
 
 function Assert-WarehouseLiveObject([object]$live, [string]$Label = 'Warehouse MCP live proof') {
   Assert-ExactProperties $live @('auth_state','target_validation','target_scope','discovered_tool','provenance','mock') $Label
+  foreach ($name in @('auth_state','target_validation','target_scope','discovered_tool','provenance')) {
+    if (-not (Test-JsonString $live.$name)) { throw "$Label property $name must be a string" }
+  }
   if ($live.auth_state -cne 'authenticated') { throw 'Warehouse MCP live auth was not authenticated' }
   if ($live.target_validation -cne 'validated' -or $live.target_scope -cne 'item') { throw 'Warehouse MCP live item target was not validated' }
   if ($live.discovered_tool -cnotin @('executeSQL','execute_query','fabric-sqlendpoint-execute_query','fabric_sqlendpoint_execute_query')) { throw 'Warehouse MCP live proof lacks an exact compatible discovered tool' }

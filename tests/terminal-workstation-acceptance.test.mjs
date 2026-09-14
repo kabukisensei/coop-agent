@@ -223,6 +223,11 @@ test("decisive receipt mutations are rejected equivalently", { skip: !havePwsh }
     ["undocumented Warehouse tool", (x) => { x.operator_evidence.find((i) => i.id === "warehouse-mcp-live-acceptance").evidence[0].warehouse_live.discovered_tool = "fabric-sqlendpoint-not_sql"; }],
     ["Warehouse proof extra property", (x) => { x.operator_evidence.find((i) => i.id === "warehouse-mcp-live-acceptance").evidence[0].warehouse_live.claimed_live = true; }],
     ["malformed Warehouse object on unrelated evidence", (x) => { x.claims[0].evidence[0].warehouse_live = { foo: "bar" }; }],
+    ["array Warehouse auth state", (x) => { x.claims[0].evidence[0].warehouse_live = { ...liveWarehouseProof(), auth_state: ["authenticated"] }; }],
+    ["array Warehouse target validation", (x) => { x.claims[0].evidence[0].warehouse_live = { ...liveWarehouseProof(), target_validation: ["validated"] }; }],
+    ["array Warehouse target scope", (x) => { x.claims[0].evidence[0].warehouse_live = { ...liveWarehouseProof(), target_scope: ["item"] }; }],
+    ["array Warehouse discovered tool", (x) => { x.claims[0].evidence[0].warehouse_live = { ...liveWarehouseProof(), discovered_tool: ["executeSQL"] }; }],
+    ["array Warehouse provenance", (x) => { x.claims[0].evidence[0].warehouse_live = { ...liveWarehouseProof(), provenance: ["live"] }; }],
   ];
   const dir = mkdtempSync(join(tmpdir(), "coop-mutations-"));
   const runtimeBound = new Set(["forged candidate expected SHA", "forged candidate fingerprint", "forged observed fingerprint", "candidate observation mismatch", "wrong harness observation"]);
