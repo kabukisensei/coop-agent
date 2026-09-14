@@ -554,7 +554,7 @@ def parse_msys_ps_winpid(text, expected_pid):
     header, values = rows
     if header.count("PID") != 1 or header.count("WINPID") != 1:
         raise ValueError("MSYS ps must contain unique PID and WINPID columns")
-    if len(values) == len(header) + 1 and re.fullmatch(r"[A-Za-z?]", values[0]):
+    if len(values) == len(header) + 1 and values[0] in {"S", "I", "O"}:
         values = values[1:]
     if len(values) != len(header):
         raise ValueError("MSYS ps header and process row widths differ")

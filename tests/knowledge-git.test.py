@@ -478,6 +478,9 @@ class ProcessInspectorTests(unittest.TestCase):
             "PID WINPID COMMAND\n",
             "PID WINPID COMMAND\n42 nope bash\n",
             "PID WINPID COMMAND\nXY 42 900 bash\n",
+            "PID WINPID COMMAND\nX 42 900 bash\n",
+            "PID WINPID COMMAND\nR 42 900 bash\n",
+            "PID WINPID COMMAND\n? 42 900 bash\n",
         )
         for text in malformed:
             with self.assertRaises(ValueError):
