@@ -95,7 +95,13 @@ jobs:
       - name: Exercise ownership faults and Unicode transport
         shell: powershell
         run: |
-          python .\harness\tests\knowledge-git.test.py
+          python .\harness\tests\knowledge-git.test.py `
+            KnowledgeGitOwnershipTests.test_create_failure_reaches_adopt_and_stops_suspended_child `
+            KnowledgeGitOwnershipTests.test_assignment_failure_reaches_adopt_and_closes_job `
+            KnowledgeGitOwnershipTests.test_resume_failure_reaches_adopt_and_closes_owned_job_without_pid_fallback `
+            KnowledgeGitOwnershipTests.test_query_failure_is_uncertain_not_empty `
+            KnowledgeGitOwnershipTests.test_termination_and_close_faults_report_failure `
+            KnowledgeGitOwnershipTests.test_close_uncertainty_overrides_payload_success
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --test --test-name-pattern "Unicode|lifecycle" .\harness\tests\terminal-workstation-acceptance.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

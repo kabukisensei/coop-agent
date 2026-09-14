@@ -844,6 +844,42 @@ class ProcessInspectorTests(unittest.TestCase):
         self.assertIsNone(resolved)
         self.assertIn("non-target", error)
 
+    def test_process_group_scope_ignores_ambient_uncertainty_but_keeps_owned_uncertainty(
+        self,
+    ):
+        target = "/tmp/knowledge-git.py"
+        with (
+            mock.patch.object(inspector.os, "listdir", return_value=["101", "102"]),
+            mock.patch.object(inspector.os, "geteuid", return_value=1000),
+            mock.patch.object(
+                inspector.os,
+                "getpgid",
+                side_effect=lambda pid: 900 if pid == 101 else 700,
+            ),
+            mock.patch.object(
+                inspector,
+                "_linux_same_user_python",
+                return_value=(None, "exe unreadable"),
+            ) as identity,
+        ):
+            self.assertEqual(
+                inspector.linux_inspect(target, 700), ([], ["exe unreadable"])
+            )
+        identity.assert_called_once_with(102, 1000)
+        with (
+            mock.patch.object(inspector.os, "listdir", return_value=["103"]),
+            mock.patch.object(inspector.os, "geteuid", return_value=1000),
+            mock.patch.object(
+                inspector.os, "getpgid", side_effect=PermissionError("denied")
+            ),
+            mock.patch.object(inspector.os, "kill", return_value=None),
+        ):
+            matches, uncertainties = inspector.linux_inspect(target, 700)
+        self.assertEqual(matches, [])
+        self.assertIn(
+            "process-group identity unavailable for pid 103", uncertainties[0]
+        )
+
     def test_linux_unreadable_executable_is_uncertain_regardless_of_name(self):
         uid = os.geteuid()
         status = "Name:\tworker-alias\nUid:\t%d\t%d\t%d\t%d\n" % (

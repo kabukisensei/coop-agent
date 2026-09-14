@@ -240,7 +240,25 @@ def _resolve_existing_regular_script(path, target=None):
     return resolved, None
 
 
-def linux_inspect(target):
+def _same_process_group(pid, scope_pgid):
+    """Return membership in the inspector-owned group or bounded uncertainty."""
+    if scope_pgid is None:
+        return True, None
+    try:
+        return os.getpgid(pid) == scope_pgid, None
+    except ProcessLookupError:
+        return False, None
+    except OSError as exc:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False, None
+        except PermissionError:
+            pass
+        return False, "process-group identity unavailable for pid %d: %s" % (pid, exc)
+
+
+def linux_inspect(target, scope_pgid=None):
     own_pid = os.getpid()
     matches = []
     uncertainties = []
@@ -253,6 +271,12 @@ def linux_inspect(target):
         if not name.isdigit() or int(name) == own_pid:
             continue
         pid = int(name)
+        in_scope, group_error = _same_process_group(pid, scope_pgid)
+        if group_error:
+            uncertainties.append(group_error)
+            continue
+        if not in_scope:
+            continue
         candidate, error = _linux_same_user_python(pid, uid)
         if error:
             if error != "exited":
@@ -455,7 +479,7 @@ def _macos_pid_exists(pid):
         return False
 
 
-def macos_inspect(target):
+def macos_inspect(target, scope_pgid=None):
     """Use ps only for same-UID candidates, then native APIs for identity/data."""
     result = subprocess.run(
         ["ps", "-ww", "-axo", "pid=,uid="],
@@ -478,6 +502,12 @@ def macos_inspect(target):
         if not fields[1].isdigit() or int(fields[1]) != uid:
             continue
         pid = int(fields[0])
+        in_scope, group_error = _same_process_group(pid, scope_pgid)
+        if group_error:
+            uncertainties.append(group_error)
+            continue
+        if not in_scope:
+            continue
         executable, error = macos_process_executable(pid)
         if error:
             if _macos_pid_exists(pid):
@@ -534,8 +564,11 @@ def main():
         return 2
     target = os.path.realpath(sys.argv[1])
     try:
+        scope_pgid = os.getpgrp()
         matches, uncertainties = (
-            linux_inspect(target) if os.path.isdir("/proc") else macos_inspect(target)
+            linux_inspect(target, scope_pgid)
+            if os.path.isdir("/proc")
+            else macos_inspect(target, scope_pgid)
         )
     except (OSError, subprocess.SubprocessError, RuntimeError) as error:
         print("process inspection uncertain: %s" % error, file=sys.stderr)

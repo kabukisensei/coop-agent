@@ -28,10 +28,11 @@ const writeAuthority = (root, contents, revision = "rev-test") => {
   writeFileSync(join(root, "manifest.json"), JSON.stringify({ schema_version: 1, revision, domains }, null, 2));
 };
 const git = (root, args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" });
-const gitInit = (root, message = "fixture") => {
+const gitInit = (root, message = "fixture", autocrlf = false) => {
   execFileSync("git", ["init", "-q", root]);
   git(root, ["config", "user.email", "standards@test.invalid"]);
   git(root, ["config", "user.name", "Standards Test"]);
+  if (autocrlf) git(root, ["config", "core.autocrlf", "true"]);
   git(root, ["add", "."]); git(root, ["commit", "-q", "-m", message]);
 };
 const makeReviewer = (domain, standardPath, version) => {
@@ -68,12 +69,14 @@ try {
     documentation: "# Docs\n## Metadata descriptions\nDescribe business meaning.",
     fabric: "# Fabric\n## Workspaces\nSeparate environments.",
   }, "fixture-r1");
-  gitInit(remote);
+  gitInit(remote, "fixture", true);
   const canonical = join(tmp, "cache", "canonical");
 
   test("STD-01", "fresh canonical bootstrap is verified from a local Git source", () => {
     const result = syncCanonicalLocal(remote, canonical);
     assert.equal(result.ok, true); assert.equal(result.state, "canonical");
+    const manifest = JSON.parse(readFileSync(join(canonical, "manifest.json"), "utf8"));
+    assert.equal(hash(readFileSync(join(canonical, "sql.md"))), manifest.domains.sql.sha256);
     assert.equal(resolveStandard("sql", opts({ cwd: tmp, canonicalRoot: canonical, staleRoot: join(tmp, "none") })).revision, "fixture-r1");
   });
 
