@@ -53,6 +53,7 @@ def git_repo(base: Path, name: str, skills: dict[str, str]) -> tuple[str, str]:
     run(["git", "init", "-q"], repo)
     run(["git", "config", "user.email", "test@example.test"], repo)
     run(["git", "config", "user.name", "Test"], repo)
+    run(["git", "config", "core.autocrlf", "false"], repo)
     for skill, body in skills.items():
         d = repo / "skills" / skill
         d.mkdir(parents=True)

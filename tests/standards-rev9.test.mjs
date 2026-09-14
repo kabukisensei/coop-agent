@@ -135,7 +135,7 @@ try {
     writeFileSync(join(project, "client", "sql.md"), "# Client SQL\nClient rule.");
     writeFileSync(join(project, ".coop", "project.yml"), "custom_key: keep-me\nstandards:\n  sql: client/sql.md # v0.23.1 shape\n");
     const r = resolveStandard("sql", opts({ cwd: project, canonicalRoot: canonical, staleRoot: join(tmp, "none") }));
-    assert.equal(r.state, "project_override"); assert.match(r.source_path, /client\/sql\.md$/); assert.match(r.path, /snapshots/);
+    assert.equal(r.state, "project_override"); assert.equal(r.source_path, resolve(project, "client", "sql.md")); assert.match(r.path, /snapshots/);
   });
 
   test("STD-06", "unavailable canonical uses verified stale, bundled, unavailable, and auth states", () => {
