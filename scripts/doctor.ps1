@@ -405,9 +405,12 @@ if (Test-Have 'pi') {
       continue
     }
     if (-not $exp) { D-Ok "$name installed (no manifest pin)"; continue }
-    $line = ($pilist -split "`n" | Where-Object { $_ -match [regex]::Escape($name) } | Select-Object -First 1)
-    $cur = ''
-    if ($line) { $m2 = [regex]::Match([string]$line, '\d+\.\d+\.\d+'); if ($m2.Success) { $cur = $m2.Value } }
+    # Count only real package specs: the install path beneath each spec also
+    # contains the extension name (and often a version), so matching any line
+    # made one installed version read as several.
+    $installed = @(Get-CoopPiExtensionVersions $pilist $name)
+    if ($installed.Count -gt 1) { D-Warn "$name installed at several versions ($($installed -join ', '); manifest: $exp)" 'coop sync   (pins the extension fleet)'; continue }
+    $cur = $installed[0]
     $st = Coop-ManifestStatus -Installed $cur -Expected $exp
     switch ($st) {
       'ok'                { D-Ok "$name $cur matches manifest ($exp)" }

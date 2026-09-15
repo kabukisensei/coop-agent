@@ -198,7 +198,13 @@ function Get-ManifestPinProof([object]$Doctor, [object]$Manifest, [string]$Obser
   $requireDoctorCheck = {
     param([string]$ExpectedName, [string]$AlternateName = '')
     $matches = @($Doctor.checks | Where-Object { $_.status -ceq 'ok' -and ($_.name -ceq $ExpectedName -or ($AlternateName -and $_.name -ceq $AlternateName)) })
-    if ($matches.Count -ne 1) { throw "$Label Doctor did not uniquely prove: $ExpectedName" }
+    if ($matches.Count -ne 1) {
+      # Name every look-alike so a non-unique proof is diagnosable from the run
+      # log alone (the evidence bundle cannot be built after a fail-closed run).
+      $lookalikes = @($Doctor.checks | Where-Object { $_.name -ceq $ExpectedName -or ($AlternateName -and $_.name -ceq $AlternateName) })
+      $detail = if ($lookalikes.Count -gt 0) { '; saw ' + (@($lookalikes | ForEach-Object { "$($_.status):$($_.name)" }) -join ' | ') } else { '' }
+      throw "$Label Doctor did not uniquely prove: $ExpectedName ($($matches.Count) ok match(es)$detail)"
+    }
   }
   $piPackage = $Manifest.pi.package
   $piVersion = $Manifest.pi.version

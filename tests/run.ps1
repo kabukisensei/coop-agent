@@ -127,12 +127,46 @@ try {
   # --- 0c. ConvertFrom-Json manifest objects expose all managed keys ----------
   Head 'PowerShell release-manifest key enumeration'
   $commonPath = Join-Path $root 'lib\common.ps1'
+  . $commonPath
   $manifestKeys = @(& $psExe -NoLogo -NoProfile -Command ". '$commonPath'; Coop-ManifestKeys 'extensions'")
   $expectedManifestKeys = @((Get-Content -LiteralPath (Join-Path $root 'config\release-manifest.json') -Raw | ConvertFrom-Json).extensions.PSObject.Properties.Name)
   if ($manifestKeys.Count -eq $expectedManifestKeys.Count -and @($expectedManifestKeys | Where-Object { $manifestKeys -cnotcontains $_ }).Count -eq 0) {
     Ok 'Coop-ManifestKeys enumerates every PSCustomObject manifest property'
   } else {
     Ko "Coop-ManifestKeys returned $($manifestKeys.Count) of $($expectedManifestKeys.Count) extension keys"
+  }
+
+  # --- 0d. Installed extension versions come from specs, never install paths --
+  # `pi list` prints a spec line and, beneath it, the install path — which also
+  # contains the extension name. Counting path lines made one installed version
+  # read as several and failed the fleet-pin proof closed on a correct machine.
+  Head 'Installed Pi extension version parsing'
+  $piListFixture = @(
+    '  npm:pi-mcp-adapter@2.10.0',
+    '    C:\Users\a\.coop\agent\npm\node_modules\pi-mcp-adapter',
+    '  npm:@juicesharp/rpiv-ask-user-question@1.20.0',
+    '    C:\Users\a\.coop\agent\npm\node_modules\@juicesharp\rpiv-ask-user-question',
+    '  npm:pi-mcp-adapter-tools@9.9.9',
+    '    C:\Users\a\.coop\agent\npm\node_modules\pi-mcp-adapter-tools',
+    '  npm:pi-mcp-adapter@2.10.0'
+  ) -join "`n"
+  $parsedAdapter = @(Get-CoopPiExtensionVersions $piListFixture 'pi-mcp-adapter')
+  if ($parsedAdapter.Count -eq 1 -and $parsedAdapter[0] -ceq '2.10.0') {
+    Ok 'install paths, name prefixes, and duplicate specs do not inflate the installed version'
+  } else {
+    Ko "pi-mcp-adapter parsed as [$($parsedAdapter -join ', ')] instead of exactly 2.10.0"
+  }
+  $parsedScoped = @(Get-CoopPiExtensionVersions $piListFixture '@juicesharp/rpiv-ask-user-question')
+  if ($parsedScoped.Count -eq 1 -and $parsedScoped[0] -ceq '1.20.0') {
+    Ok 'scoped extension names resolve to their own spec'
+  } else {
+    Ko "scoped extension parsed as [$($parsedScoped -join ', ')] instead of exactly 1.20.0"
+  }
+  $parsedConflict = @(Get-CoopPiExtensionVersions ($piListFixture + "`n  npm:pi-mcp-adapter@2.11.0") 'pi-mcp-adapter')
+  if ($parsedConflict.Count -eq 2) {
+    Ok 'two genuinely different installed versions stay visible for the caller to reject'
+  } else {
+    Ko "conflicting installed versions parsed as [$($parsedConflict -join ', ')] instead of two entries"
   }
 
   # --- 1. launch-spec resolves the governed pi invocation --------------------

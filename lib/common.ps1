@@ -54,6 +54,21 @@ function Coop-ManifestPythonSpec([string]$Package) { $v = Coop-ManifestObjectGet
 function Coop-ManifestNpmToolSpec([string]$Package) { $v = Coop-ManifestObjectGet 'npm_tools' $Package; if ($v) { return "${Package}@${v}" }; return '' }
 function Coop-ManifestMcpSpec([string]$Package) { $v = Coop-ManifestObjectGet 'mcp_servers' $Package; if ($v) { return "${Package}@${v}" }; return '' }
 
+# Every installed version `pi list` reports for one managed extension. Only real
+# package specs count: an extension's install path also contains its name (and
+# often a version), and counting those lines made one installed version read as
+# ambiguous — which failed the fleet-pin proof closed for a correct machine.
+# The name is exact-matched, so `pi-mcp-adapter-tools` is never mistaken for
+# `pi-mcp-adapter`. `pi list` lines look like:
+#   npm:pi-mcp-adapter@2.10.0
+#     C:\...\npm\node_modules\pi-mcp-adapter
+function Get-CoopPiExtensionVersions([string]$PiList, [string]$Package) {
+  if (-not $Package -or -not $PiList) { return @() }
+  $text = ($PiList -split "`r?`n") -join "`n"
+  $pattern = "^\s*(?:npm:)?$([regex]::Escape($Package))@(?<ver>[0-9]+\.[0-9]+\.[0-9]+)"
+  return @([regex]::Matches($text, $pattern, 'Multiline') | ForEach-Object { $_.Groups['ver'].Value } | Sort-Object -Unique)
+}
+
 function Coop-ManifestKeys([string]$Key) {
   try {
     $m = Get-Content -LiteralPath $script:CoopReleaseManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop

@@ -115,7 +115,7 @@ cat > "$stub_ok/pi" <<EOF
   cat "$ROOT/config/release-manifest.json" | python3 -c '
 import json,sys
 m=json.load(sys.stdin)
-for k,v in m["extensions"].items(): print(f"{k} {v}")'
+for k,v in m["extensions"].items(): print(f"  npm:{k}@{v}")'
   exit 0
 }
 echo "pi 0.84.3"
@@ -142,8 +142,9 @@ cat > "$stub_drift/pi" <<EOF
 import json,sys
 m=json.load(sys.stdin)
 first=sorted(m["extensions"])[0]
+drift = "9.9.9"
 for k,v in m["extensions"].items():
-    print(f"{k} 9.9.9" if k==first else f"{k} {v}")'
+    print(f"  npm:{k}@{drift if k==first else v}")'
   exit 0
 }
 echo "pi 0.84.3"
@@ -155,6 +156,60 @@ case "$out" in
   *) ko "doctor missed extension drift"; echo "$out" ;;
 esac
 rm -rf "$stub_drift"
+
+# Real `pi list` output (spec line + indented install path) and a duplicate spec
+# for the same extension. Only real package specs may count: the install path
+# also contains the extension name, which used to read as a second version and
+# turned an installed pin into a false "differs from manifest".
+stub_real="$(mktemp -d)"
+cat > "$stub_real/pi" <<EOF
+#!/bin/sh
+[ "\$1" = "list" ] && {
+  cat "$ROOT/config/release-manifest.json" | python3 -c '
+import json,sys
+m=json.load(sys.stdin)
+for k,v in m["extensions"].items():
+    shown = "9.9.9" if k == "pi-mcp-adapter" else v
+    print(f"  npm:{k}@{shown}")
+    print(f"    HOME/.coop/agent/npm/node_modules/{k}")'
+  exit 0
+}
+echo "pi 0.84.3"
+EOF
+chmod +x "$stub_real/pi"
+out="$(PATH="$stub_real:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
+real_section="$(printf '%s\n' "$out" | sed -n '/Pi extensions/,/MCP servers/p')"
+case "$real_section" in
+  *"pi-mcp-adapter 9.9.9 is newer than manifest"*|*"pi-mcp-adapter 9.9.9: differs from manifest"*) ok "doctor reads the spec line, not the install path, for the installed version" ;;
+  *"installed but version unknown"*) ko "doctor ignored the spec line and lost the installed version"; printf '%s\n' "$real_section" ;;
+  *) ko "doctor misread the installed extension version"; printf '%s\n' "$real_section" ;;
+esac
+# A same-version duplicate (pi listing a package under two sources) must stay a
+# single proof, never an ambiguity warning.
+stub_dup="$(mktemp -d)"
+cat > "$stub_dup/pi" <<EOF
+#!/bin/sh
+[ "\$1" = "list" ] && {
+  cat "$ROOT/config/release-manifest.json" | python3 -c '
+import json,sys
+m=json.load(sys.stdin)
+for k,v in m["extensions"].items():
+    print(f"  npm:{k}@{v}")
+    print(f"  npm:{k}@{v}")
+    print(f"    HOME/.coop/agent/npm/node_modules/{k}")'
+  exit 0
+}
+echo "pi 0.84.3"
+EOF
+chmod +x "$stub_dup/pi"
+out="$(PATH="$stub_dup:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
+dup_section="$(printf '%s\n' "$out" | sed -n '/Pi extensions/,/MCP servers/p')"
+case "$dup_section" in
+  *"several versions"*) ko "a same-version duplicate was reported as ambiguous" ;;
+  *"pi-mcp-adapter $(python3 -c 'import json;print(json.load(open("'"$ROOT"'/config/release-manifest.json"))["extensions"]["pi-mcp-adapter"])') matches manifest"*) ok "a same-version duplicate still proves the pin" ;;
+  *) ko "duplicate spec line broke the pin proof"; printf '%s\n' "$dup_section" ;;
+esac
+rm -rf "$stub_real" "$stub_dup"
 
 if [ "$fail" -ne 0 ]; then echo "  ✗ doctor-mcp-mode tests FAILED"; exit 1; fi
 echo "  doctor-mcp-mode tests passed"

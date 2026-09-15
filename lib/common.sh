@@ -59,6 +59,27 @@ coop_manifest_python_spec() { local p="$1" v; v="$(coop_manifest_object_get pyth
 coop_manifest_npm_tool_spec() { local p="$1" v; v="$(coop_manifest_object_get npm_tools "$p")"; [ -n "$v" ] && printf '%s@%s' "$p" "$v"; }
 coop_manifest_mcp_spec() { local p="$1" v; v="$(coop_manifest_object_get mcp_servers "$p")"; [ -n "$v" ] && printf '%s@%s' "$p" "$v"; }
 
+# Every installed version `pi list` reports for one managed extension, one per
+# line. Only real package specs count: an extension's *install path* also
+# contains its name (and often a version), and counting those lines made an
+# installed version read as ambiguous. Also exact-matches the name so
+# `pi-mcp-adapter-tools` can never be mistaken for `pi-mcp-adapter`.
+# Usage: coop_pi_extension_versions "$pilist" pi-mcp-adapter
+coop_pi_extension_versions() {
+  local pilist="$1" name="$2" esc
+  [ -n "$name" ] || return 0
+  esc="$(printf '%s' "$name" | sed 's/[][\.^$*+?(){}|]/\\&/g')"
+  printf '%s\n' "$pilist" \
+    | sed -e 's/^[[:space:]]*//' -e 's/^npm://' \
+    | grep -E "^${esc}@[0-9]+\.[0-9]+\.[0-9]+" \
+    | sed -e 's/.*@//' \
+    | sort -u
+}
+
+# Two-version ("1.2.3-beta.1") pins compare on the x.y.z triple, exactly like
+# coop_manifest_status.
+coop_extension_version_triple() { printf '%s' "$1" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1; }
+
 # Echo the keys of an object in the manifest (one per line), or nothing on missing/invalid.
 # Usage: coop_manifest_keys extensions
 coop_manifest_keys() {

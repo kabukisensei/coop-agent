@@ -339,7 +339,17 @@ if have pi; then
       continue
     fi
     if [ -z "$exp" ]; then ok "$name installed (no manifest pin)"; continue; fi
-    cur="$(printf '%s\n' "$pilist" | grep -i "$name" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    # Count only real package specs: the install path beneath each spec also
+    # contains the extension name (and often a version), so matching any line
+    # made one installed version read as several.
+    cur=""; cur_count=0
+    while IFS= read -r v; do
+      [ -n "$v" ] || continue
+      cur="$v"; cur_count=$((cur_count + 1))
+    done <<EOF
+$(coop_pi_extension_versions "$pilist" "$name")
+EOF
+    if [ "$cur_count" -gt 1 ]; then warn "$name installed at several versions (manifest: $exp)" "coop sync   (pins the extension fleet)"; continue; fi
     status="$(coop_manifest_status "${cur:-}" "$exp")"
     case "$status" in
       ok) ok "$name $cur matches manifest ($exp)" ;;
