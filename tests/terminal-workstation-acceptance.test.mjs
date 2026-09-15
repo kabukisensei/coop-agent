@@ -515,7 +515,7 @@ test("native Windows lifecycle faults fail closed through real receipt finalizat
       assert.equal(completion.length, 1, `${fault}: exact completion failure claim missing`);
       assert.equal(completion[0].status, "FAIL", `${fault}: completion claim was not FAIL`);
       assert.match(completion[0].summary, new RegExp(`observed ownership lifecycle ${fault} outcome (failure|indeterminate) failed closed`));
-      assert.match(completion[0].evidence[0].observed, new RegExp(`observed ownership lifecycle ${fault} outcome (failure|indeterminate) failed closed`));
+      assert.match(completion[0].evidence[0].observed, /^one authentic helper stderr lifecycle record; sha256=[0-9a-f]{64}$/);
       for (const item of generated.claims) {
         if (item.id !== "identity-and-isolation") assert.notEqual(item.status, "PASS", `${fault}: ${item.id} incorrectly passed`);
       }
