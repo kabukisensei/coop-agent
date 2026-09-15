@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -925,6 +926,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.doesNotMatch(source, /-HarnessRoot \(Resolve-Path|-CandidateRoot \(Resolve-Path|-BaselineRoot \(Resolve-Path/);
     const verifyStep = activeSteps.find((step) => step?.name === "Verify event-authorized exact checkout identity");
     const verifyRun = verifyStep?.run ?? "";
+    assert.equal(createHash("sha256").update(verifyRun).digest("hex"), "52e4a805007757b6c14ca9ed9a99f98c555ea62eb88ffb6822cd59d6f1601c18", "exact checkout precheck step changed");
     const safeLoop = "foreach ($checkout in @($harness,$candidate,$baseline)) { Assert-SafeCheckout $checkout }";
     assert.ok(verifyRun.split("\n").includes(safeLoop), "checkout scan must be an unconditional statement");
     assert.match(verifyRun, /if \(\(\$item\.Attributes -band \[System\.IO\.FileAttributes\]::ReparsePoint\) -ne 0\) \{ throw "checkout reparse ancestry rejected/);
@@ -945,9 +947,11 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.equal(validationStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success'");
     assert.equal(validationStep?.id, "validate_artifacts");
     const nativeRun = activeSteps[nativeAcceptanceIndex]?.run ?? "";
+    assert.equal(createHash("sha256").update(nativeRun).digest("hex"), "a0436a87f63b066037be47b3bdbfcda8caafe2854247980a9b564356e9732c74", "exact native Run step changed");
     assert.match(nativeRun, /-Mode Run `[\s\S]*-HarnessRoot \$harnessRoot `[\s\S]*-CandidateRoot \$candidateRoot `[\s\S]*-BaselineRoot \$baselineRoot `/);
     assert.doesNotMatch(nativeRun, /Resolve-Path/);
     const validationRun = validationStep?.run ?? "";
+    assert.equal(createHash("sha256").update(validationRun).digest("hex"), "c177691cd7aa3386bd23c31f74119c2fcd3c455804b108ae533b8e250cdb57ca", "exact artifact validation step changed");
     assert.match(validationRun, /receipt_uploadable=true[\s\S]*GITHUB_OUTPUT/);
     assert.match(validationRun, /evidence_uploadable=true[\s\S]*GITHUB_OUTPUT/);
     assert.doesNotMatch(validationRun, /Test-Path/i);
@@ -1036,14 +1040,19 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("steps.validate_artifacts.outcome == 'success' && steps.validate_artifacts.outputs.evidence_uploadable == 'true'", "true"),
     workflow.replace("& $env:CERT_PYTHON .\\harness\\tests\\knowledge-git.test.py", "python .\\harness\\tests\\knowledge-git.test.py"),
     workflow.replace("          $expected = $env:CANDIDATE_SHA", "          $early = (& git -C (Join-Path $env:GITHUB_WORKSPACE 'candidate') rev-parse HEAD)\n          $expected = $env:CANDIDATE_SHA"),
+    workflow.replace("          $expected = $env:CANDIDATE_SHA", "          $early = Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'candidate\\VERSION') -Raw\n          $expected = $env:CANDIDATE_SHA"),
+    workflow.replace("          $expected = $env:CANDIDATE_SHA", "          $early = (& git --git-dir (Join-Path $env:GITHUB_WORKSPACE 'candidate\\.git') rev-parse HEAD)\n          $expected = $env:CANDIDATE_SHA"),
     workflow.replace("          foreach ($checkout in @($harness,$candidate,$baseline)) { Assert-SafeCheckout $checkout }", "          if ($false) { foreach ($checkout in @($harness,$candidate,$baseline)) { Assert-SafeCheckout $checkout } }"),
     workflow.replace("if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw \"checkout reparse ancestry rejected", "if ($false) { throw \"checkout reparse ancestry rejected"),
     workflow.replace("if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw \"checkout contains a reparse point", "if ($false) { throw \"checkout contains a reparse point"),
     workflow.replace("@($harness,$candidate,$baseline)", "@($harness,$candidate)"),
+    workflow.replace("          $candidateRoot = Join-Path $env:GITHUB_WORKSPACE 'candidate'", "          $candidateRoot = Join-Path $env:GITHUB_WORKSPACE 'harness'"),
     workflow.replace("            -CandidateRoot $candidateRoot `", "            -CandidateRoot $harnessRoot `"),
     workflow.replace('          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append', '          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append\n          $marker = Join-Path (Split-Path $env:RECEIPT_PATH -Parent) "evidence-authorization.json"\n          if (Test-Path $marker) { Write-Output "marker exists" }'),
-    workflow.replace("          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `\n            .\\harness\\acceptance\\windows-terminal-workstation.ps1 `\n            -Mode ValidateUploadAuthorization -AuthorizationKind Evidence `", "          if ($false) {\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `\n            .\\harness\\acceptance\\windows-terminal-workstation.ps1 `\n            -Mode ValidateUploadAuthorization -AuthorizationKind Evidence `"),
+    workflow.replace('          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append', '          if ($false) {\n          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append').replace('          "evidence_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append', '          "evidence_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append\n          }'),
     workflow.replace('          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `', '          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append\n          "evidence_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `'),
+    workflow.replace('          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append', '          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "evidence_uploadable=true"\n          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'),
+    workflow.replace('          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append', '          if ([System.IO.File]::Exists("$env:RECEIPT_PATH.evidence-authorization.json")) { Write-Output "marker exists" }\n          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'),
   ].entries()) assert.throws(() => contract(forged), `workflow mutant ${index} was accepted`);
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
   assert.match(testSource, /COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE[\s\S]*"-Mode", "Run"/);
