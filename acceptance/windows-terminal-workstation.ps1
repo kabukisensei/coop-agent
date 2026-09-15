@@ -13,7 +13,7 @@ param(
   [string]$ExpectedCandidateSha = '',
   [string]$ExpectedCandidateBuild = '',
   [switch]$VmOperatorMode,
-  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','CollectExtensionInventory','ReconcileNpmState','ValidateLifecycleEvent','AuthorizeArtifacts','ResolvePython','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
+  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','HashDirectTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','CollectExtensionInventory','ReconcileNpmState','ValidateLifecycleEvent','AuthorizeArtifacts','ResolvePython','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
   [string]$Value = '',
   [string]$Root = '',
   [string]$Canary = ''
@@ -61,13 +61,16 @@ function Assert-CheckoutIdentity([string]$Path, [string]$Label, [string]$Expecte
 
 function Assert-EmptyOwnedRoot([string]$Path) {
   if ([string]::IsNullOrWhiteSpace($Path)) { throw 'owned root is required' }
+  Assert-NoReparseAncestry $Path $true $true
   if (Test-Path -LiteralPath $Path) {
     throw "refusing occupied owned root: $Path"
   }
   New-Item -ItemType Directory -Path $Path | Out-Null
+  Assert-NoReparseAncestry $Path $true
 }
 
 function Get-FileSha([string]$Path) {
+  Assert-NoReparseAncestry $Path $true $true
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
@@ -77,8 +80,8 @@ function Assert-NoReparsePoints([string]$Path, [string]$Label) {
 }
 
 function Get-SafeTreeItems([string]$Path, [string]$Label) {
-  if (-not (Test-Path -LiteralPath $Path)) { throw "$Label does not exist: $Path" }
   Assert-NoReparseAncestry $Path $true
+  if (-not (Test-Path -LiteralPath $Path)) { throw "$Label does not exist: $Path" }
   $root = Get-Item -LiteralPath $Path -Force
   if (-not $root.PSIsContainer) { return @($root) }
   $items = New-Object System.Collections.Generic.List[object]
@@ -96,9 +99,10 @@ function Get-SafeTreeItems([string]$Path, [string]$Label) {
 }
 
 function Remove-SafeTree([string]$Path) {
-  if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $true }
+  if (-not $Path) { return $true }
   try {
-    Assert-NoReparseAncestry $Path $true
+    Assert-NoReparseAncestry $Path $true $true
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
     Assert-NoReparsePoints $Path 'removal target'
   } catch {
     return $false
@@ -108,10 +112,11 @@ function Remove-SafeTree([string]$Path) {
 }
 
 function Get-TreeHash([string]$Path) {
-  if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "tree does not exist: $Path" }
-  $resolved = (Resolve-Path -LiteralPath $Path).Path
   $rows = New-Object System.Collections.Generic.List[string]
-  Get-SafeTreeItems $Path 'tree' |
+  $safeItems = @(Get-SafeTreeItems $Path 'tree')
+  if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "tree does not exist: $Path" }
+  $resolved = [System.IO.Path]::GetFullPath($Path).TrimEnd('\','/')
+  $safeItems |
     Where-Object { -not $_.PSIsContainer -and $_.FullName -notmatch '[\\/]\.git([\\/]|$)' } |
     Sort-Object FullName |
     ForEach-Object {
@@ -128,10 +133,11 @@ function Get-TreeHash([string]$Path) {
 }
 
 function Get-DirectTreeHash([string]$Path, [bool]$ExcludeGit = $false) {
-  if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "tree does not exist: $Path" }
-  $resolved = (Resolve-Path -LiteralPath $Path).Path
   $rows = New-Object System.Collections.Generic.List[string]
-  Get-SafeTreeItems $Path 'direct tree' |
+  $safeItems = @(Get-SafeTreeItems $Path 'direct tree')
+  if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "tree does not exist: $Path" }
+  $resolved = [System.IO.Path]::GetFullPath($Path).TrimEnd('\','/')
+  $safeItems |
     Where-Object { -not $ExcludeGit -or $_.FullName -notmatch '[\\/]\.git([\\/]|$)' } |
     Sort-Object FullName |
     ForEach-Object {
@@ -161,6 +167,7 @@ function Assert-CheckoutSnapshot([object]$Expected, [string]$Path, [string]$Labe
 
 function Find-Canary([string]$Path, [string]$Needle) {
   if (-not $Needle) { throw 'canary is required' }
+  Assert-NoReparseAncestry $Path $true $true
   if (-not (Test-Path -LiteralPath $Path)) { return @() }
   $hits = @()
   $files = @(Get-SafeTreeItems $Path 'canary scan target' | Where-Object { -not $_.PSIsContainer })
@@ -402,10 +409,12 @@ function Get-ManifestPinProof([object]$Doctor, [object]$Manifest, [string]$Obser
 }
 
 function Assert-Receipt([object]$Receipt) {
-  Assert-ExactProperties $Receipt @('schema_version','candidate','baseline','harness','execution','claims','operator_evidence','terminal_workstation_ready') 'receipt'
+  Assert-ExactProperties $Receipt @('schema_version','candidate','baseline','harness','trust_model','execution','claims','operator_evidence','terminal_workstation_ready') 'receipt'
   if ($null -eq $Receipt -or ($Receipt.schema_version -isnot [int] -and $Receipt.schema_version -isnot [long]) -or $Receipt.schema_version -ne 1) { throw 'receipt schema_version must be integer 1' }
   if ($null -eq $Receipt.terminal_workstation_ready -or $Receipt.terminal_workstation_ready -isnot [bool]) { throw 'terminal_workstation_ready must be boolean' }
   $ready = [bool]$Receipt.terminal_workstation_ready
+  Assert-ExactProperties $Receipt.trust_model @('name','candidate_admin_code_trusted','adversarial_admin_containment','deferred_hardening','limitation') 'trust model'
+  if ($Receipt.trust_model.name -cne 'reviewed-candidate-non-malicious' -or $Receipt.trust_model.candidate_admin_code_trusted -isnot [bool] -or -not $Receipt.trust_model.candidate_admin_code_trusted -or $Receipt.trust_model.adversarial_admin_containment -isnot [bool] -or $Receipt.trust_model.adversarial_admin_containment -or $Receipt.trust_model.deferred_hardening -cne 'post-release' -or $Receipt.trust_model.limitation -cne 'Certification does not contain intentionally malicious administrator-level candidate code.') { throw 'receipt trust model is missing or altered' }
   Assert-ObservedIdentity $Receipt.candidate 'candidate' $script:CandidateSha $ready
   Assert-ObservedIdentity $Receipt.baseline 'baseline' $script:BaselineSha $ready
   Assert-ExactProperties $Receipt.harness @('observed_sha','observed_version') 'harness identity'
@@ -481,6 +490,7 @@ function Assert-Receipt([object]$Receipt) {
 }
 
 function Read-Receipt([string]$Path) {
+  Assert-NoReparseAncestry $Path $true $true
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "receipt not found: $Path" }
   $raw = Get-Content -LiteralPath $Path -Raw
   foreach ($name in @('started_utc','finished_utc')) {
@@ -516,7 +526,7 @@ function Get-AuthorizationPath([string]$Path, [string]$Kind) {
   throw "unknown upload authorization kind: $Kind"
 }
 
-function Assert-NoReparseAncestry([string]$Path, [bool]$IncludeLeaf = $false) {
+function Assert-NoReparseAncestry([string]$Path, [bool]$IncludeLeaf = $false, [bool]$AllowMissing = $false) {
   $full = [System.IO.Path]::GetFullPath($Path)
   $target = if ($IncludeLeaf) { $full } else { Split-Path -Parent $full }
   if (-not $target) { throw "reparse ancestry target is missing: $Path" }
@@ -528,14 +538,17 @@ function Assert-NoReparseAncestry([string]$Path, [bool]$IncludeLeaf = $false) {
   $relative = $target.Substring($root.Length)
   foreach ($part in @($relative -split '[\\/]' | Where-Object { $_ })) {
     $current = Join-Path $current $part
-    if (-not (Test-Path -LiteralPath $current)) { throw "reparse ancestry component is missing: $current" }
+    if (-not (Test-Path -LiteralPath $current)) {
+      if ($AllowMissing) { return }
+      throw "reparse ancestry component is missing: $current"
+    }
     $item = Get-Item -LiteralPath $current -Force
     if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse ancestry rejected: $($item.FullName)" }
   }
 }
 
 function Write-ExclusiveText([string]$Path, [string]$Text) {
-  Assert-NoReparseAncestry $Path
+  Assert-NoReparseAncestry $Path $true $true
   if (Test-Path -LiteralPath $Path) { throw "exclusive publication collision: $Path" }
   $parent = Split-Path -Parent ([System.IO.Path]::GetFullPath($Path))
   $temporary = Join-Path $parent ('.authorization-' + [guid]::NewGuid().ToString('N') + '.tmp')
@@ -554,7 +567,7 @@ function Write-ExclusiveText([string]$Path, [string]$Text) {
 }
 
 function Write-ControlledReceipt([string]$Path, [string]$Text) {
-  Assert-NoReparseAncestry $Path
+  Assert-NoReparseAncestry $Path $true $true
   $parent = Split-Path -Parent ([System.IO.Path]::GetFullPath($Path))
   $temporary = Join-Path $parent ('.receipt-' + [guid]::NewGuid().ToString('N') + '.tmp')
   $stream = $null
@@ -581,6 +594,7 @@ function Remove-UploadAuthorizations([string]$Path) {
   if ($env:COOP_TERMINAL_ACCEPTANCE_AUTHORIZATION_FAULT -eq 'revoke-fail') { throw 'test upload authorization revocation failure' }
   foreach ($kind in @('Receipt','Evidence')) {
     $authorization = Get-AuthorizationPath $Path $kind
+    Assert-NoReparseAncestry $authorization $true $true
     if (Test-Path -LiteralPath $authorization) { Remove-Item -LiteralPath $authorization -Force -ErrorAction Stop }
     if (Test-Path -LiteralPath $authorization) { throw "could not revoke stale $kind upload authorization" }
   }
@@ -602,8 +616,8 @@ function New-UploadAuthorization([string]$Kind, [string]$Path, [string]$Nonce, [
 function Assert-UploadAuthorization([string]$Kind, [string]$Path, [string]$Nonce, [string]$HarnessSha, [string]$EvidencePath = '') {
   if ($Nonce -cnotmatch '^[0-9a-f]{32}$' -or -not (Test-StrictSha $HarnessSha)) { throw 'current upload identity is invalid' }
   $authorizationPath = Get-AuthorizationPath $Path $Kind
+  Assert-NoReparseAncestry $authorizationPath $true $true
   if (-not (Test-Path -LiteralPath $authorizationPath -PathType Leaf)) { throw "$Kind upload authorization is absent" }
-  Assert-NoReparseAncestry $authorizationPath
   $record = Get-Content -LiteralPath $authorizationPath -Raw | ConvertFrom-Json
   $properties = @('schema_version','kind','run_nonce','harness_sha','candidate_sha','candidate_build','receipt_sha256')
   if ($Kind -eq 'Evidence') { $properties += @('evidence_root','evidence_sha256') }
@@ -804,6 +818,7 @@ if ($Mode -eq 'Probe') {
     'ValidateSha' { if (-not (Test-StrictSha $Value)) { throw 'invalid strict SHA' }; Write-Output 'PASS' }
     'AssertEmptyRoot' { Assert-EmptyOwnedRoot $Root; Write-Output 'PASS' }
     'HashTree' { Write-Output (Get-TreeHash $Root) }
+    'HashDirectTree' { Write-Output (Get-DirectTreeHash $Root $false) }
     'ScanCanary' { $hits = @(Find-Canary $Root $Canary); if ($hits.Count -gt 0) { throw "credential canary found in evidence" }; Write-Output 'PASS' }
     'EvaluateReadiness' { $receipt = Read-Receipt $ReceiptPath; Assert-Receipt $receipt | Out-Null; Write-Output ([bool]$receipt.terminal_workstation_ready).ToString().ToLowerInvariant() }
     'VerifySupportBuild' {
@@ -1057,7 +1072,7 @@ try {
   $receiptFull = [System.IO.Path]::GetFullPath($ReceiptPath)
   if ($receiptFull.StartsWith($evidenceFull, [StringComparison]::OrdinalIgnoreCase)) { throw 'ReceiptPath must be outside EvidenceRoot so a safe failure receipt can be retained' }
   Assert-EmptyOwnedRoot $ownedRoot
-  New-Item -ItemType Directory -Path $EvidenceRoot | Out-Null
+  Assert-EmptyOwnedRoot $EvidenceRoot
   $logs = Join-Path $EvidenceRoot 'logs'; New-Item -ItemType Directory -Path $logs | Out-Null
   $profileRoot = Join-Path $ownedRoot 'profile'
   $npmRoot = Join-Path $ownedRoot 'npm-global'
@@ -1300,6 +1315,13 @@ try {
     candidate = [ordered]@{ expected_sha = $script:CandidateSha; observed_sha = $candidateObservedSha; expected_version = '0.23.1'; observed_version = $candidateObservedVersion; expected_build = $script:CandidateSupportBuild; observed_build = $candidateObservedBuild }
     baseline = [ordered]@{ expected_sha = $script:BaselineSha; observed_sha = $baselineObservedSha; expected_version = '0.23.1'; observed_version = $baselineObservedVersion }
     harness = [ordered]@{ observed_sha = $harnessObservedSha; observed_version = $harnessObservedVersion }
+    trust_model = [ordered]@{
+      name = 'reviewed-candidate-non-malicious'
+      candidate_admin_code_trusted = $true
+      adversarial_admin_containment = $false
+      deferred_hardening = 'post-release'
+      limitation = 'Certification does not contain intentionally malicious administrator-level candidate code.'
+    }
     execution = [ordered]@{
       layer = 'AUTOMATED_WINDOWS'
       runner = if ($env:RUNNER_NAME) { $env:RUNNER_NAME } else { [Environment]::MachineName }

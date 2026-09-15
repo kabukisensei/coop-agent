@@ -12,6 +12,20 @@ is mandatory before any readiness decision. At this harness revision, native
 Windows Job Object execution and every interactive disposable-VM journey remain
 pending; the cross-platform tests below are not substitutes for either gate.
 
+## Certification trust boundary
+
+This certification uses the **practical reviewed-candidate trust model**. The exact
+independently reviewed candidate SHA is assumed to be non-malicious, including when
+its installation and lifecycle code runs with administrator privileges. The gate
+proves installation, upgrade, same-candidate reinstall, rollback, lifecycle safety,
+fail-closed behavior, evidence integrity, and normal operational reliability. It
+does **not** claim to contain intentionally malicious administrator-level candidate
+code using Task Scheduler, WMI, or equivalent operating-system mechanisms.
+Adversarial administrator-level containment is deferred to post-release security
+hardening. Every receipt records this limitation in its required `trust_model`
+object. This boundary does not relax accidental-fault, evidence, process-lifecycle,
+or rollback safety checks.
+
 ## Automated native-Windows evidence
 
 Before merge, the workflow runs automatically only for a same-repository pull

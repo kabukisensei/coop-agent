@@ -9,6 +9,7 @@
     "candidate",
     "baseline",
     "harness",
+    "trust_model",
     "execution",
     "claims",
     "operator_evidence",
@@ -26,6 +27,34 @@
     },
     "harness": {
       "$ref": "#/$defs/harnessIdentity"
+    },
+    "trust_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "candidate_admin_code_trusted",
+        "adversarial_admin_containment",
+        "deferred_hardening",
+        "limitation"
+      ],
+      "properties": {
+        "name": {
+          "const": "reviewed-candidate-non-malicious"
+        },
+        "candidate_admin_code_trusted": {
+          "const": true
+        },
+        "adversarial_admin_containment": {
+          "const": false
+        },
+        "deferred_hardening": {
+          "const": "post-release"
+        },
+        "limitation": {
+          "const": "Certification does not contain intentionally malicious administrator-level candidate code."
+        }
+      }
     },
     "execution": {
       "type": "object",

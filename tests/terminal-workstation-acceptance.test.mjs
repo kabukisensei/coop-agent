@@ -73,6 +73,11 @@ function receipt({ ready = false, layer = "AUTOMATED_WINDOWS", humanStatus = "NO
     candidate: { expected_sha: CANDIDATE, observed_sha: CANDIDATE, expected_version: "0.23.1", observed_version: "0.23.1", expected_build: CANDIDATE_BUILD, observed_build: CANDIDATE_BUILD },
     baseline: { expected_sha: BASELINE, observed_sha: BASELINE, expected_version: "0.23.1", observed_version: "0.23.1" },
     harness: { observed_sha: HARNESS, observed_version: "0.23.1" },
+    trust_model: {
+      name: "reviewed-candidate-non-malicious", candidate_admin_code_trusted: true,
+      adversarial_admin_containment: false, deferred_hardening: "post-release",
+      limitation: "Certification does not contain intentionally malicious administrator-level candidate code.",
+    },
     execution: { layer, runner: "disposable-test", started_utc: "2026-09-13T00:00:00Z", finished_utc: "2026-09-13T00:01:00Z", owned_root: "C:\\owned" },
     claims: automatedIds.map((id) => claim(id)),
     operator_evidence: operatorIds.map((id) => claim(id, { status: humanStatus, automated: false, human: true, phase: "OPERATOR" })),
@@ -202,6 +207,10 @@ test("decisive receipt mutations are rejected equivalently", { skip: !havePwsh }
     ["numeric date-time", (x) => { x.execution.started_utc = 20260913; }],
     ["numeric runner", (x) => { x.execution.runner = 7; }],
     ["string schema version", (x) => { x.schema_version = "1"; }],
+    ["missing trust model", (x) => { delete x.trust_model; }],
+    ["malicious candidate incorrectly in scope", (x) => { x.trust_model.candidate_admin_code_trusted = false; }],
+    ["adversarial containment incorrectly claimed", (x) => { x.trust_model.adversarial_admin_containment = true; }],
+    ["trust limitation altered", (x) => { x.trust_model.limitation = "all administrator code is contained"; }],
     ["numeric candidate expected SHA", (x) => { x.candidate.expected_sha = 295693; }],
     ["missing candidate expected version", (x) => { x.candidate.expected_version = null; }],
     ["numeric candidate expected version", (x) => { x.candidate.expected_version = 231; }],
@@ -439,14 +448,15 @@ test("failure-path canary contamination removes evidence and emits no upload mar
 test("artifact finalization rejects directory links before hashing or canary scanning", { skip: !havePwsh }, () => {
   const dir = mkdtempSync(join(tmpdir(), "coop-reparse-finalize-"));
   const evidenceRoot = join(dir, "evidence"); const outside = join(dir, "outside");
-  mkdirSync(evidenceRoot); mkdirSync(outside); writeFileSync(join(outside, "unscanned.txt"), "external");
+  mkdirSync(evidenceRoot); mkdirSync(outside); writeFileSync(join(outside, "unscanned.txt"), "REPARSE-CANARY");
   symlinkSync(outside, join(evidenceRoot, "junction"), process.platform === "win32" ? "junction" : "dir");
   const receiptPath = join(dir, "receipt.json"); writeFileSync(receiptPath, "{}");
   const result = runPs(["-Mode", "Probe", "-Probe", "FinalizeArtifacts", "-Root", evidenceRoot, "-Value", receiptPath, "-Canary", "REPARSE-CANARY"]);
   assert.notEqual(result.status, 0, "directory link escaped artifact validation");
   assert.match(result.stderr, /reparse point/i);
   assert.equal(existsSync(`${receiptPath}.evidence-authorization.json`), false);
-  assert.equal(readFileSync(join(outside, "unscanned.txt"), "utf8"), "external", "reparse target was traversed or removed");
+  assert.equal(existsSync(evidenceRoot), true, "rejected evidence tree was recursively removed");
+  assert.equal(readFileSync(join(outside, "unscanned.txt"), "utf8"), "REPARSE-CANARY", "reparse target was traversed or removed");
 });
 
 test("artifact finalization rejects a junctioned ancestor before reading its target", { skip: !havePwsh }, () => {
@@ -456,12 +466,40 @@ test("artifact finalization rejects a junctioned ancestor before reading its tar
   const linkedParent = join(dir, "linked-parent");
   symlinkSync(actualParent, linkedParent, process.platform === "win32" ? "junction" : "dir");
   const receiptPath = join(dir, "receipt.json"); writeFileSync(receiptPath, "{}");
-  const result = runPs(["-Mode", "Probe", "-Probe", "FinalizeArtifacts", "-Root", join(linkedParent, "evidence"), "-Value", receiptPath, "-Canary", "ANCESTOR-CANARY"]);
-  assert.notEqual(result.status, 0, "junctioned ancestor escaped artifact validation");
-  assert.match(result.stderr, /reparse ancestry rejected/i);
-  assert.doesNotMatch(result.stderr, /credential canary found|canary found in receipt/i, "external target was scanned before ancestry rejection");
+  const linkedEvidence = join(linkedParent, "evidence");
+  for (const probe of ["FinalizeArtifacts", "HashTree", "HashDirectTree", "ScanCanary"]) {
+    const args = ["-Mode", "Probe", "-Probe", probe, "-Root", linkedEvidence];
+    if (probe === "FinalizeArtifacts") args.push("-Value", receiptPath);
+    if (probe === "FinalizeArtifacts" || probe === "ScanCanary") args.push("-Canary", "ANCESTOR-CANARY");
+    const result = runPs(args);
+    assert.notEqual(result.status, 0, `junctioned ancestor escaped ${probe}`);
+    assert.match(result.stderr, /reparse ancestry rejected/i);
+    assert.doesNotMatch(result.stderr, /credential canary found|canary found in receipt/i, "external target was scanned before ancestry rejection");
+  }
+  const create = runPs(["-Mode", "Probe", "-Probe", "AssertEmptyRoot", "-Root", join(linkedParent, "new-owned")]);
+  assert.notEqual(create.status, 0, "normal owned-root creation entered a junctioned ancestor");
+  assert.match(create.stderr, /reparse ancestry rejected/i);
+  assert.equal(existsSync(join(actualParent, "new-owned")), false, "owned root was created inside the junction target");
+  assert.equal(existsSync(actualEvidence), true, "rejected evidence tree was recursively removed");
   assert.equal(readFileSync(join(actualEvidence, "outside.txt"), "utf8"), "ANCESTOR-CANARY", "junction target was removed");
   assert.equal(existsSync(`${receiptPath}.evidence-authorization.json`), false);
+});
+
+test("authorization revocation and validation reject linked paths before reading or removal", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-reparse-authorization-"));
+  const evidenceRoot = join(dir, "evidence"); mkdirSync(evidenceRoot); writeFileSync(join(evidenceRoot, "safe.txt"), "safe");
+  const receiptPath = writeReceipt(dir, receipt());
+  const authorizationPath = `${receiptPath}.receipt-authorization.json`;
+  const outside = join(dir, "outside-authorization.json"); writeFileSync(outside, "EXTERNAL-AUTHORIZATION");
+  symlinkSync(outside, authorizationPath, "file");
+  const authorize = runPs(["-Mode", "Probe", "-Probe", "AuthorizeArtifacts", "-Root", evidenceRoot, "-ReceiptPath", receiptPath, "-Value", "a".repeat(32), "-Canary", HARNESS]);
+  assert.notEqual(authorize.status, 0, "revocation followed a linked authorization leaf");
+  assert.match(authorize.stderr, /reparse ancestry rejected/i);
+  assert.equal(readFileSync(outside, "utf8"), "EXTERNAL-AUTHORIZATION", "revocation removed or changed the external authorization target");
+  const validate = runPs(["-Mode", "ValidateUploadAuthorization", "-AuthorizationKind", "Receipt", "-ReceiptPath", receiptPath, "-RunNonce", "a".repeat(32)]);
+  assert.notEqual(validate.status, 0, "validator followed a linked authorization leaf");
+  assert.match(validate.stderr, /reparse ancestry rejected/i);
+  assert.equal(readFileSync(outside, "utf8"), "EXTERNAL-AUTHORIZATION", "validator changed the external authorization target");
 });
 
 test("lifecycle stderr validation rejects absent, duplicate, wrong, stale, malformed, and payload-spoofed records", { skip: !havePwsh }, () => {
@@ -901,7 +939,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.match(source, /steps\.exact_behavioral_suite\.outcome == 'success'/);
     assert.match(source, /ValidateUploadAuthorization -AuthorizationKind Receipt/);
     assert.match(source, /ValidateUploadAuthorization -AuthorizationKind Evidence/);
-    assert.match(source, /--test-name-pattern "Unicode\|lifecycle\|directory links\|junctioned ancestor"/);
+    assert.match(source, /--test-name-pattern "Unicode\|lifecycle\|directory links\|junctioned ancestor\|authorization revocation"/);
     assert.doesNotMatch(source, /secrets\.|GITHUB_TOKEN|repository_dispatch|workflow_run|\bgit push\b/);
   };
   contract(workflow);
