@@ -12,6 +12,7 @@ const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const SCRIPT = join(ROOT, "acceptance", "windows-terminal-workstation.ps1");
 const SCHEMA = join(ROOT, "acceptance", "terminal-workstation-receipt.schema.json");
 const WORKFLOW = join(ROOT, ".github", "workflows", "windows-terminal-workstation-acceptance.yml");
+const YAML_READER = join(ROOT, "lib", "_yaml.py");
 const DOC = join(ROOT, "docs", "terminal-workstation-acceptance.md");
 const CANDIDATE = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const BASELINE = "d60300780b565aabf15b172b2bc32abad12b9ca6";
@@ -602,14 +603,26 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.match(source, /CANDIDATE_SHA: \$\{\{ github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.sha \|\| inputs\.candidate_sha \}\}/);
     assert.equal((source.match(/ref: \$\{\{ env\.CANDIDATE_SHA \}\}/g) || []).length, 2);
     assert.match(source, /\$observed = \(& git -C \$checkout rev-parse HEAD\)\.Trim\(\)[\s\S]*\$observed -cne \$expected/);
-    const exactCandidateSuiteStep = source.match(/^      - name: Run exact-candidate behavioral tests under Windows PowerShell 5\.1[\s\S]*?(?=^      - name:)/m)?.[0];
-    assert.ok(exactCandidateSuiteStep, "exact-candidate Windows PowerShell 5.1 suite step is required");
-    assert.equal(exactCandidateSuiteStep.trimEnd(), [
+    const exactCandidateSuiteLiteral = [
       "      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1",
       "        shell: powershell",
       "        working-directory: candidate",
       "        run: .\\tests\\run.ps1",
-    ].join("\n"));
+    ].join("\n");
+    assert.equal((source.match(/^      - name: Run exact-candidate behavioral tests under Windows PowerShell 5\.1$/gm) || []).length, 1);
+    assert.ok(source.includes(`${exactCandidateSuiteLiteral}\n\n      - name:`), "exact-candidate suite step must be complete and scalar-free");
+    const yamlCode = "import importlib.util,json,sys;p=sys.argv[1];s=importlib.util.spec_from_file_location('_coop_yaml',p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(json.dumps(m._load_fallback(sys.stdin.read())))";
+    const yamlProbe = spawnSync("python3", ["-c", yamlCode, YAML_READER], { encoding: "utf8", input: source });
+    assert.equal(yamlProbe.status, 0, yamlProbe.stderr);
+    const activeSteps = JSON.parse(yamlProbe.stdout)?.jobs?.["native-windows-p0"]?.steps;
+    assert.ok(Array.isArray(activeSteps), "native Windows workflow steps must parse");
+    const exactCandidateSuiteSteps = activeSteps.filter((step) => step?.name === "Run exact-candidate behavioral tests under Windows PowerShell 5.1");
+    assert.deepEqual(exactCandidateSuiteSteps, [{
+      name: "Run exact-candidate behavioral tests under Windows PowerShell 5.1",
+      shell: "powershell",
+      "working-directory": "candidate",
+      run: ".\\tests\\run.ps1",
+    }]);
     assert.match(source, /ExpectedCandidateSha \$env:VERIFIED_CANDIDATE_SHA/);
     assert.match(source, /ExpectedCandidateBuild \$env:VERIFIED_CANDIDATE_BUILD/);
     assert.match(source, /VERSION[\s\S]*fingerprintBuild/);
@@ -625,7 +638,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.doesNotMatch(source, /secrets\.|GITHUB_TOKEN|repository_dispatch|workflow_run|\bgit push\b/);
   };
   contract(workflow);
-  for (const forged of [
+  for (const [index, forged] of [
     workflow.replace("github.head_ref == 'integration/presentation-2026-09-20'", "github.head_ref != ''"),
     workflow.replace("github.event.pull_request.head.repo.full_name == github.repository", "true"),
     workflow.replace("ref: ${{ env.CANDIDATE_SHA }}", "ref: ${{ github.sha }}"),
@@ -638,7 +651,8 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("        run: .\\tests\\run.ps1", "        \"continue-on-error\": true\n        run: .\\tests\\run.ps1"),
     workflow.replace("        run: .\\tests\\run.ps1", "        run: .\\tests\\run.ps1\n          ; exit 0"),
     workflow.replace("      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1", "      - continue-on-error: true\n        #      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1"),
-  ]) assert.throws(() => contract(forged));
+    workflow.replace("        working-directory: candidate\n        run: .\\tests\\run.ps1", "        working-directory: candidate\n        continue-on-error: true\n        run: .\\tests\\run.ps1").replace("    runs-on: windows-latest", "    name: |\n      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        shell: powershell\n        working-directory: candidate\n        run: .\\tests\\run.ps1\n      - name: scalar terminator\n    runs-on: windows-latest"),
+  ].entries()) assert.throws(() => contract(forged), `workflow mutant ${index} was accepted`);
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
   assert.match(testSource, /COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE[\s\S]*"-Mode", "Run"/);
   assert.match(testSource, /unrelatedIdentity\.startedAtMs[\s\S]*assertBoth\(receiptPath[\s\S]*completion\[0\]\.status/);
