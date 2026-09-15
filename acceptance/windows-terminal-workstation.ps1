@@ -73,20 +73,46 @@ function Get-FileSha([string]$Path) {
 }
 
 function Assert-NoReparsePoints([string]$Path, [string]$Label) {
+  [void]@(Get-SafeTreeItems $Path $Label)
+}
+
+function Get-SafeTreeItems([string]$Path, [string]$Label) {
   if (-not (Test-Path -LiteralPath $Path)) { throw "$Label does not exist: $Path" }
-  $items = @((Get-Item -LiteralPath $Path -Force)) + @(Get-ChildItem -LiteralPath $Path -Recurse -Force)
-  foreach ($item in $items) {
-    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "$Label contains a reparse point: $($item.FullName)" }
+  Assert-NoReparseAncestry $Path $true
+  $root = Get-Item -LiteralPath $Path -Force
+  if (-not $root.PSIsContainer) { return @($root) }
+  $items = New-Object System.Collections.Generic.List[object]
+  $pending = New-Object System.Collections.Generic.Stack[string]
+  $pending.Push($root.FullName)
+  while ($pending.Count -gt 0) {
+    $directory = $pending.Pop()
+    foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force)) {
+      if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "$Label contains a reparse point: $($item.FullName)" }
+      $items.Add($item)
+      if ($item.PSIsContainer) { $pending.Push($item.FullName) }
+    }
   }
+  return $items.ToArray()
+}
+
+function Remove-SafeTree([string]$Path) {
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $true }
+  try {
+    Assert-NoReparseAncestry $Path $true
+    Assert-NoReparsePoints $Path 'removal target'
+  } catch {
+    return $false
+  }
+  Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+  return $true
 }
 
 function Get-TreeHash([string]$Path) {
   if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "tree does not exist: $Path" }
-  Assert-NoReparsePoints $Path 'tree'
   $resolved = (Resolve-Path -LiteralPath $Path).Path
   $rows = New-Object System.Collections.Generic.List[string]
-  Get-ChildItem -LiteralPath $resolved -Recurse -File -Force |
-    Where-Object { $_.FullName -notmatch '[\\/]\.git([\\/]|$)' } |
+  Get-SafeTreeItems $Path 'tree' |
+    Where-Object { -not $_.PSIsContainer -and $_.FullName -notmatch '[\\/]\.git([\\/]|$)' } |
     Sort-Object FullName |
     ForEach-Object {
       $rel = $_.FullName.Substring($resolved.Length).TrimStart('\','/').Replace('\','/')
@@ -103,10 +129,9 @@ function Get-TreeHash([string]$Path) {
 
 function Get-DirectTreeHash([string]$Path, [bool]$ExcludeGit = $false) {
   if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "tree does not exist: $Path" }
-  Assert-NoReparsePoints $Path 'direct tree'
   $resolved = (Resolve-Path -LiteralPath $Path).Path
   $rows = New-Object System.Collections.Generic.List[string]
-  Get-ChildItem -LiteralPath $resolved -Recurse -Force |
+  Get-SafeTreeItems $Path 'direct tree' |
     Where-Object { -not $ExcludeGit -or $_.FullName -notmatch '[\\/]\.git([\\/]|$)' } |
     Sort-Object FullName |
     ForEach-Object {
@@ -137,11 +162,8 @@ function Assert-CheckoutSnapshot([object]$Expected, [string]$Path, [string]$Labe
 function Find-Canary([string]$Path, [string]$Needle) {
   if (-not $Needle) { throw 'canary is required' }
   if (-not (Test-Path -LiteralPath $Path)) { return @() }
-  Assert-NoReparsePoints $Path 'canary scan target'
   $hits = @()
-  $files = if (Test-Path -LiteralPath $Path -PathType Leaf) { @(Get-Item -LiteralPath $Path) } else {
-    @(Get-ChildItem -LiteralPath $Path -Recurse -File -Force)
-  }
+  $files = @(Get-SafeTreeItems $Path 'canary scan target' | Where-Object { -not $_.PSIsContainer })
   foreach ($file in $files) {
     try {
       $text = [System.IO.File]::ReadAllText($file.FullName)
@@ -494,13 +516,21 @@ function Get-AuthorizationPath([string]$Path, [string]$Kind) {
   throw "unknown upload authorization kind: $Kind"
 }
 
-function Assert-NoReparseAncestry([string]$Path) {
-  $parent = Split-Path -Parent ([System.IO.Path]::GetFullPath($Path))
-  if (-not $parent -or -not (Test-Path -LiteralPath $parent -PathType Container)) { throw "authorization parent is missing: $parent" }
-  $current = Get-Item -LiteralPath $parent -Force
-  while ($null -ne $current) {
-    if (($current.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse ancestry rejected: $($current.FullName)" }
-    $current = $current.Parent
+function Assert-NoReparseAncestry([string]$Path, [bool]$IncludeLeaf = $false) {
+  $full = [System.IO.Path]::GetFullPath($Path)
+  $target = if ($IncludeLeaf) { $full } else { Split-Path -Parent $full }
+  if (-not $target) { throw "reparse ancestry target is missing: $Path" }
+  $root = [System.IO.Path]::GetPathRoot($target)
+  if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) { throw "reparse ancestry root is missing: $root" }
+  $current = $root
+  $rootItem = Get-Item -LiteralPath $current -Force
+  if (($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse ancestry rejected: $($rootItem.FullName)" }
+  $relative = $target.Substring($root.Length)
+  foreach ($part in @($relative -split '[\\/]' | Where-Object { $_ })) {
+    $current = Join-Path $current $part
+    if (-not (Test-Path -LiteralPath $current)) { throw "reparse ancestry component is missing: $current" }
+    $item = Get-Item -LiteralPath $current -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse ancestry rejected: $($item.FullName)" }
   }
 }
 
@@ -875,7 +905,7 @@ if ($Mode -eq 'Probe') {
         [System.IO.File]::WriteAllText($marker, "scanned`n", (New-Object System.Text.UTF8Encoding($false)))
       } catch {
         Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
-        if ($Root -and (Test-Path -LiteralPath $Root)) { Remove-Item -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue }
+        [void](Remove-SafeTree $Root)
         throw
       }
       Write-Output 'PASS'
@@ -1247,7 +1277,7 @@ try {
   }
   if ($artifactFailure) {
     if (-not $runFailure) { $runFailure = $artifactFailure }
-    if ($EvidenceRoot -and (Test-Path -LiteralPath $EvidenceRoot)) { Remove-Item -LiteralPath $EvidenceRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    [void](Remove-SafeTree $EvidenceRoot)
     [void]$claims.Add((New-Claim 'sanitized-read-only-evidence' 'SECURITY' 'FAIL' $true $true $false $artifactFailure @(
       (New-Evidence 'COMMAND' 'evidence was removed from upload eligibility' 'current-run success plus final artifact canary and checkout scan' 1 $(if ($harnessObservedSha) { "harness:$harnessObservedSha" } else { 'harness' }))
     )))
@@ -1290,7 +1320,7 @@ try {
     if ($sanitizationFailed -or $receiptText.Contains($canary)) {
       $evidenceEligible = $false
       $runFailure = 'artifact finalization failed closed; only a controlled minimal receipt was retained'
-      if ($EvidenceRoot -and (Test-Path -LiteralPath $EvidenceRoot)) { Remove-Item -LiteralPath $EvidenceRoot -Recurse -Force -ErrorAction SilentlyContinue }
+      [void](Remove-SafeTree $EvidenceRoot)
       $claims = @(
         (New-Claim 'sanitized-read-only-evidence' 'SECURITY' 'FAIL' $true $true $false 'Receipt scan could not prove sanitization; evidence was removed from upload eligibility.' @((New-Evidence 'COMMAND' 'final receipt scan failed closed' 'final exact canary scan' 1 'harness'))),
         (New-Claim 'automated-harness-completion' 'SECURITY' 'FAIL' $true $true $false 'Automated harness failed closed during artifact finalization.' @((New-Evidence 'COMMAND' 'harness did not complete with uploadable evidence' 'acceptance/windows-terminal-workstation.ps1 -Mode Run' 1 'harness')))
@@ -1314,7 +1344,7 @@ try {
       $evidenceEligible = $false
       if ($runFailure) { $runFailure = "$runFailure; upload authorization failed: $($_.Exception.Message)" } else { $runFailure = "upload authorization failed: $($_.Exception.Message)" }
       try { Remove-UploadAuthorizations $ReceiptPath } catch { $runFailure = "$runFailure; authorization revocation failed: $($_.Exception.Message)" }
-      if ($EvidenceRoot -and (Test-Path -LiteralPath $EvidenceRoot)) { Remove-Item -LiteralPath $EvidenceRoot -Recurse -Force -ErrorAction SilentlyContinue }
+      [void](Remove-SafeTree $EvidenceRoot)
     }
   }
 }

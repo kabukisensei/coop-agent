@@ -548,5 +548,11 @@ finally {
   Remove-Item -LiteralPath $stub -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+Head 'terminal acceptance reparse boundary tests'
+$reparseOut = & node --test --test-name-pattern 'directory links|junctioned ancestor' (Join-Path $root 'tests\terminal-workstation-acceptance.test.mjs') 2>&1
+$reparseRc = $LASTEXITCODE
+if ($reparseRc -eq 0) { $reparseOut | ForEach-Object { Write-Host $_ }; Ok 'terminal acceptance rejects reparse evidence' }
+else { Ko "terminal acceptance reparse boundary tests failed: $($reparseOut | Out-String)" }
+
 if ($fail -ne 0) { Write-Host "$G_CROSS PowerShell behavioral tests FAILED"; exit 1 }
 Write-Host "$G_CHECK PowerShell behavioral tests passed"

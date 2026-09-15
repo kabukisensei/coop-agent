@@ -440,11 +440,27 @@ test("artifact finalization rejects directory links before hashing or canary sca
   const dir = mkdtempSync(join(tmpdir(), "coop-reparse-finalize-"));
   const evidenceRoot = join(dir, "evidence"); const outside = join(dir, "outside");
   mkdirSync(evidenceRoot); mkdirSync(outside); writeFileSync(join(outside, "unscanned.txt"), "external");
-  symlinkSync(outside, join(evidenceRoot, "junction"), "dir");
+  symlinkSync(outside, join(evidenceRoot, "junction"), process.platform === "win32" ? "junction" : "dir");
   const receiptPath = join(dir, "receipt.json"); writeFileSync(receiptPath, "{}");
   const result = runPs(["-Mode", "Probe", "-Probe", "FinalizeArtifacts", "-Root", evidenceRoot, "-Value", receiptPath, "-Canary", "REPARSE-CANARY"]);
   assert.notEqual(result.status, 0, "directory link escaped artifact validation");
   assert.match(result.stderr, /reparse point/i);
+  assert.equal(existsSync(`${receiptPath}.evidence-authorization.json`), false);
+  assert.equal(readFileSync(join(outside, "unscanned.txt"), "utf8"), "external", "reparse target was traversed or removed");
+});
+
+test("artifact finalization rejects a junctioned ancestor before reading its target", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-reparse-ancestor-"));
+  const actualParent = join(dir, "actual"); const actualEvidence = join(actualParent, "evidence");
+  mkdirSync(actualEvidence, { recursive: true }); writeFileSync(join(actualEvidence, "outside.txt"), "ANCESTOR-CANARY");
+  const linkedParent = join(dir, "linked-parent");
+  symlinkSync(actualParent, linkedParent, process.platform === "win32" ? "junction" : "dir");
+  const receiptPath = join(dir, "receipt.json"); writeFileSync(receiptPath, "{}");
+  const result = runPs(["-Mode", "Probe", "-Probe", "FinalizeArtifacts", "-Root", join(linkedParent, "evidence"), "-Value", receiptPath, "-Canary", "ANCESTOR-CANARY"]);
+  assert.notEqual(result.status, 0, "junctioned ancestor escaped artifact validation");
+  assert.match(result.stderr, /reparse ancestry rejected/i);
+  assert.doesNotMatch(result.stderr, /credential canary found|canary found in receipt/i, "external target was scanned before ancestry rejection");
+  assert.equal(readFileSync(join(actualEvidence, "outside.txt"), "utf8"), "ANCESTOR-CANARY", "junction target was removed");
   assert.equal(existsSync(`${receiptPath}.evidence-authorization.json`), false);
 });
 
@@ -885,7 +901,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.match(source, /steps\.exact_behavioral_suite\.outcome == 'success'/);
     assert.match(source, /ValidateUploadAuthorization -AuthorizationKind Receipt/);
     assert.match(source, /ValidateUploadAuthorization -AuthorizationKind Evidence/);
-    assert.match(source, /--test-name-pattern "Unicode\|lifecycle"/);
+    assert.match(source, /--test-name-pattern "Unicode\|lifecycle\|directory links\|junctioned ancestor"/);
     assert.doesNotMatch(source, /secrets\.|GITHUB_TOKEN|repository_dispatch|workflow_run|\bgit push\b/);
   };
   contract(workflow);

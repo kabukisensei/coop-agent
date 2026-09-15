@@ -191,6 +191,9 @@ bash "$ROOT/tests/doctor-project.test.sh"
 echo "→ doctor MCP mode reporting tests"
 bash "$ROOT/tests/doctor.test.sh"
 
+echo "→ terminal acceptance reparse boundary tests"
+node --test --test-name-pattern "directory links|junctioned ancestor" "$ROOT/tests/terminal-workstation-acceptance.test.mjs"
+
 echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
 node "$ROOT/tests/webbridge.test.mjs"
 
