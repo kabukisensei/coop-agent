@@ -319,6 +319,30 @@ test("complete candidate and rollback manifest proofs reject drift in every pin 
   assert.equal(runPs(["-Mode", "Probe", "-Probe", "VerifyManifestPins", "-Root", nonManagedPath, "-Value", manifestPath]).status, 0);
 });
 
+test("installed extension collector enumerates configured packages independently of the manifest", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-extension-inventory-"));
+  const agentRoot = join(dir, "agent");
+  const manifest = JSON.parse(readFileSync(join(ROOT, "config", "release-manifest.json"), "utf8"));
+  const manifestPath = join(dir, "manifest.json"); writeFileSync(manifestPath, JSON.stringify(manifest));
+  const packages = Object.entries(manifest.extensions).map(([name, version]) => `npm:${name}@${version}`);
+  const writePackage = (name, version) => {
+    const packageDir = join(agentRoot, "npm", "node_modules", ...name.split("/"));
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name, version }));
+  };
+  for (const [name, version] of Object.entries(manifest.extensions)) writePackage(name, version);
+  mkdirSync(agentRoot, { recursive: true });
+  writeFileSync(join(agentRoot, "settings.json"), JSON.stringify({ packages }));
+  const good = runPs(["-Mode", "Probe", "-Probe", "CollectExtensionInventory", "-Root", agentRoot, "-Value", manifestPath]);
+  assert.equal(good.status, 0, good.stderr);
+
+  const extraName = "unmanaged-extension"; const extraVersion = "1.0.0";
+  writePackage(extraName, extraVersion);
+  writeFileSync(join(agentRoot, "settings.json"), JSON.stringify({ packages: [...packages, `npm:${extraName}@${extraVersion}`] }));
+  const extra = runPs(["-Mode", "Probe", "-Probe", "CollectExtensionInventory", "-Root", agentRoot, "-Value", manifestPath]);
+  assert.notEqual(extra.status, 0, "collector silently excluded an extra configured extension");
+});
+
 test("failure-path canary contamination removes evidence and emits no upload marker", { skip: !havePwsh }, () => {
   const dir = mkdtempSync(join(tmpdir(), "coop-finalize-")); const evidenceRoot = join(dir, "evidence"); mkdirSync(evidenceRoot);
   const receiptPath = join(dir, "receipt.json"); const canary = "FINALIZATION-CANARY";

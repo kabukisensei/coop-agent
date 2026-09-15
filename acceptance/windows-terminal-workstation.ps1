@@ -13,7 +13,7 @@ param(
   [string]$ExpectedCandidateSha = '',
   [string]$ExpectedCandidateBuild = '',
   [switch]$VmOperatorMode,
-  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','ValidateLifecycleEvent','AuthorizeArtifacts','ResolvePython','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
+  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','CollectExtensionInventory','ValidateLifecycleEvent','AuthorizeArtifacts','ResolvePython','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
   [string]$Value = '',
   [string]$Root = '',
   [string]$Canary = ''
@@ -195,14 +195,31 @@ function Assert-ManifestPinProof([object]$Proof, [object]$Manifest, [string]$Lab
 
 function Get-InstalledExtensionInventory([object]$Manifest, [string]$AgentRoot, [string]$Label) {
   $inventory = [ordered]@{}
+  $settingsPath = Join-Path $AgentRoot 'settings.json'
+  if (-not (Test-Path -LiteralPath $settingsPath -PathType Leaf)) { throw "$Label Pi settings missing" }
+  $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+  if (-not (Test-JsonArray $settings.packages)) { throw "$Label Pi package list must be an array" }
   $packageRoot = Join-Path $AgentRoot 'npm\node_modules'
-  foreach ($name in @($Manifest.extensions.PSObject.Properties.Name)) {
+  $core = '(?:0|[1-9][0-9]*)'
+  $identifier = '(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+  $prerelease = "-$identifier(?:\.$identifier)*"
+  $build = '\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*'
+  $semver = "$core\.$core\.$core(?:$prerelease)?(?:$build)?"
+  $specPattern = "^npm:(?<name>@[^/@]+/[^/@]+|[^/@]+)@(?<version>$semver)$"
+  foreach ($spec in @($settings.packages)) {
+    if (-not (Test-JsonString $spec)) { throw "$Label Pi package spec must be a string" }
+    $match = [regex]::Match([string]$spec, $specPattern)
+    if (-not $match.Success) { throw "$Label Pi package spec is not canonical: $spec" }
+    $name = $match.Groups['name'].Value
+    $configuredVersion = $match.Groups['version'].Value
+    if ($inventory.Contains($name)) { throw "$Label duplicate installed extension spec: $name" }
     $packageJson = $packageRoot
     foreach ($part in ($name -split '/')) { $packageJson = Join-Path $packageJson $part }
     $packageJson = Join-Path $packageJson 'package.json'
     if (-not (Test-Path -LiteralPath $packageJson -PathType Leaf)) { throw "$Label installed extension metadata missing: $name" }
     $metadata = Get-Content -LiteralPath $packageJson -Raw | ConvertFrom-Json
     if (-not (Test-JsonString $metadata.version) -or [string]::IsNullOrWhiteSpace($metadata.version)) { throw "$Label installed extension version missing: $name" }
+    if ([string]$metadata.version -cne $configuredVersion) { throw "$Label configured and installed extension versions differ: $name" }
     $inventory[$name] = [string]$metadata.version
   }
   return [pscustomobject]$inventory
@@ -712,6 +729,12 @@ if ($Mode -eq 'Probe') {
       $proof = Get-ManifestPinProof $observed.doctor $manifest $observed.coop_version $observed.npm_inventory $observed.extension_inventory $observed.mcp_config 'probe'
       Assert-ManifestPinProof $proof $manifest 'probe'
       Write-Output 'PASS'
+    }
+    'CollectExtensionInventory' {
+      $manifest = Get-Content -LiteralPath $Value -Raw | ConvertFrom-Json
+      $inventory = Get-InstalledExtensionInventory $manifest $Root 'probe'
+      Assert-ExactProperties $inventory @($manifest.extensions.PSObject.Properties.Name) 'probe installed extension inventory'
+      Write-Output ($inventory | ConvertTo-Json -Compress)
     }
     'ValidateLifecycleEvent' { Assert-LifecycleFaultEvent $Value $Canary $Root | Out-Null; Write-Output 'PASS' }
     'AuthorizeArtifacts' {
