@@ -124,6 +124,18 @@ try {
   }
   if ($invalidExit -eq 2) { Ok 'coop.ps1 onboard propagates Python argument failures' } else { Ko "coop.ps1 onboard changed Python exit 2 to $invalidExit" }
 
+  # --- 0c. ConvertFrom-Json manifest objects expose all managed keys ----------
+  Head 'PowerShell release-manifest key enumeration'
+  $commonPath = Join-Path $root 'lib\common.ps1'
+  $manifestKeyJson = (& $psExe -NoLogo -NoProfile -Command ". '$commonPath'; @(Coop-ManifestKeys 'extensions') | ConvertTo-Json -Compress" | Out-String).Trim()
+  $manifestKeys = @($manifestKeyJson | ConvertFrom-Json)
+  $expectedManifestKeys = @((Get-Content -LiteralPath (Join-Path $root 'config\release-manifest.json') -Raw | ConvertFrom-Json).extensions.PSObject.Properties.Name)
+  if ($manifestKeys.Count -eq $expectedManifestKeys.Count -and @($expectedManifestKeys | Where-Object { $manifestKeys -cnotcontains $_ }).Count -eq 0) {
+    Ok 'Coop-ManifestKeys enumerates every PSCustomObject manifest property'
+  } else {
+    Ko "Coop-ManifestKeys returned $($manifestKeys.Count) of $($expectedManifestKeys.Count) extension keys"
+  }
+
   # --- 1. launch-spec resolves the governed pi invocation --------------------
   Head 'launch-spec (shared launch builder) test'
   # Join-Path emits native separators, so on Windows PowerShell 5.1 the spec paths

@@ -61,6 +61,7 @@ function Coop-ManifestKeys([string]$Key) {
     $v = $m
     foreach ($p in $parts) { if ($v -is [System.Collections.IDictionary]) { $v = $v[$p] } elseif ($v -and $v.PSObject.Properties[$p]) { $v = $v.$p } else { return @() } }
     if ($v -is [System.Collections.IDictionary]) { return $v.Keys }
+    if ($v -and $v.PSObject.Properties) { return @($v.PSObject.Properties.Name) }
     return @()
   } catch { return @() }
 }
