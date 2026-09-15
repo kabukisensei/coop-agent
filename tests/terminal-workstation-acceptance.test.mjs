@@ -620,7 +620,7 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
   for (const [index, mutant] of [
     source.replace("if ($env:CERT_PYTHON) {", "if ($false) {"),
     source.replace("return Resolve-AcceptancePythonExecutable $env:CERT_PYTHON", "return 'python'"),
-    source.replace("return Resolve-AcceptancePythonExecutable $python[0].Source", `return '${resolve(process.execPath).replaceAll("'", "''")}'`),
+    source.replace("try { return Resolve-AcceptancePythonExecutable $python.Source }", `try { return '${resolve(process.execPath).replaceAll("'", "''")}' }`),
     source.replace("if (-not [string]::Equals($Path, $expected, $comparison))", "if ($false)"),
     source.replace("if (-not [string]::Equals($actual, $expected, $comparison))", "if ($false)"),
   ].entries()) assert.throws(() => assertBehavior(mutant), `Python resolver behavioral mutant ${index} was accepted`);
@@ -700,7 +700,8 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
       name: "Pin runner Python for certification",
       shell: "powershell",
       run: [
-        "$python = (Get-Command python -CommandType Application -ErrorAction Stop).Source",
+        "$python = (& .\\harness\\acceptance\\windows-terminal-workstation.ps1 -Mode Probe -Probe ResolvePython | Out-String).Trim()",
+        "if ($LASTEXITCODE -ne 0 -or -not $python) { exit 1 }",
         "& $python --version",
         "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
         '"CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append',
@@ -740,7 +741,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("        run: .\\tests\\run.ps1", "        run: .\\tests\\run.ps1\n          ; exit 0"),
     workflow.replace("      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1", "      - continue-on-error: true\n        #      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1"),
     workflow.replace("        working-directory: candidate\n        run: .\\tests\\run.ps1", "        working-directory: candidate\n        continue-on-error: true\n        run: .\\tests\\run.ps1").replace("    runs-on: windows-latest", "    name: |\n      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        shell: powershell\n        working-directory: candidate\n        run: .\\tests\\run.ps1\n      - name: scalar terminator\n    runs-on: windows-latest"),
-    workflow.replace("Get-Command python -CommandType Application", "Get-Command py -CommandType Application"),
+    workflow.replace("-Probe ResolvePython", "-Probe ValidateSha"),
     workflow.replace("$env:GITHUB_PATH -Encoding utf8 -Append", "$env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append"),
     workflow.replace("& $env:CERT_PYTHON -m pip install", "python -m pip install"),
     workflow.replace("& $python --version", "# & $python --version"),

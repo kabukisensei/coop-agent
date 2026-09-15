@@ -518,9 +518,11 @@ function Get-AcceptancePython {
   if ($env:CERT_PYTHON) {
     return Resolve-AcceptancePythonExecutable $env:CERT_PYTHON
   }
-  $python = @(Get-Command python3,python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
-  if ($python.Count -ne 1) { throw 'acceptance Python is unavailable' }
-  return Resolve-AcceptancePythonExecutable $python[0].Source
+  $pythonCommands = @(Get-Command python3,python -CommandType Application -All -ErrorAction SilentlyContinue)
+  foreach ($python in $pythonCommands) {
+    try { return Resolve-AcceptancePythonExecutable $python.Source } catch { continue }
+  }
+  throw 'acceptance Python is unavailable'
 }
 
 function Invoke-Bounded {
