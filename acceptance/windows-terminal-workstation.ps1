@@ -937,6 +937,16 @@ try {
   $doctorBase = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'scripts\doctor.ps1'),'--json') (Join-Path $logs 'baseline-doctor') 600
   Assert-ExitZero $doctorBase 'baseline doctor'
   $doctorBaseJson = Get-Content -LiteralPath $doctorBase.Stdout -Raw | ConvertFrom-Json
+  $baselineManifest = Get-Content -LiteralPath (Join-Path $BaselineRoot 'config\release-manifest.json') -Raw | ConvertFrom-Json
+  $candidateManifest = Get-Content -LiteralPath (Join-Path $CandidateRoot 'config\release-manifest.json') -Raw | ConvertFrom-Json
+  $baselineNpm = Invoke-Bounded 'npm.cmd' @('ls','-g','--depth=0','--json') (Join-Path $logs 'baseline-npm-inventory') 300
+  Assert-ExitZero $baselineNpm 'baseline npm inventory'
+  $baselineNpmJson = Get-Content -LiteralPath $baselineNpm.Stdout -Raw | ConvertFrom-Json
+  $baselineNpmToolState = [ordered]@{}
+  foreach ($name in @($candidateManifest.npm_tools.PSObject.Properties.Name)) {
+    $property = $baselineNpmJson.dependencies.PSObject.Properties[$name]
+    $baselineNpmToolState[$name] = if ($null -eq $property) { 'NOT_INSTALLED' } else { [string]$property.Value.version }
+  }
   if ($doctorBaseJson.fail -ne 0) { throw 'baseline Doctor JSON contains required failures' }
 
   $answers = Join-Path $ownedRoot 'onboard-input.txt'
@@ -1012,7 +1022,7 @@ try {
   if ([string]$supportJson.versions.coopBuild -cne $script:CandidateSupportBuild) { throw "candidate Support build identity mismatch: $($supportJson.versions.coopBuild)" }
   $candidateObservedBuild = [string]$supportJson.versions.coopBuild
 
-  $manifest = Get-Content -LiteralPath (Join-Path $CandidateRoot 'config\release-manifest.json') -Raw | ConvertFrom-Json
+  $manifest = $candidateManifest
   $candidateNpm = Invoke-Bounded 'npm.cmd' @('ls','-g','--depth=0','--json') (Join-Path $logs 'candidate-npm-inventory') 300
   Assert-ExitZero $candidateNpm 'candidate npm inventory'
   $candidateNpmJson = Get-Content -LiteralPath $candidateNpm.Stdout -Raw | ConvertFrom-Json
@@ -1050,6 +1060,12 @@ try {
 
   $rollback = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'scripts\install.ps1'),'--yes','--no-prereqs') (Join-Path $logs 'baseline-rollback') 2700
   Assert-ExitZero $rollback 'v0.23.1 source rollback'
+  foreach ($name in @($baselineNpmToolState.Keys)) {
+    $expected = $baselineNpmToolState[$name]
+    $npmArgs = if ($expected -ceq 'NOT_INSTALLED') { @('uninstall','-g',$name) } else { @('install','-g',"$name@$expected") }
+    $reconcile = Invoke-Bounded 'npm.cmd' $npmArgs (Join-Path $logs ("baseline-rollback-npm-" + ($name -replace '[^A-Za-z0-9._-]','_'))) 600
+    Assert-ExitZero $reconcile "rollback npm reconciliation for $name"
+  }
   foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during rollback: $file" } }
   if ((Get-FileSha $managedMcpPath) -ne $baselineMcpSha) { throw 'managed MCP state did not converge to the baseline during rollback' }
   if ((Get-TreeHash $fixtureRepo) -ne $repoBefore) { throw 'repository changed during rollback' }
@@ -1057,19 +1073,29 @@ try {
   $rollbackDoctor = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'scripts\doctor.ps1'),'--json') (Join-Path $logs 'rollback-doctor') 600
   Assert-ExitZero $rollbackDoctor 'rollback Doctor'
   $rollbackDoctorJson = Get-Content -LiteralPath $rollbackDoctor.Stdout -Raw | ConvertFrom-Json
-  $baselineManifest = Get-Content -LiteralPath (Join-Path $BaselineRoot 'config\release-manifest.json') -Raw | ConvertFrom-Json
   $rollbackNpm = Invoke-Bounded 'npm.cmd' @('ls','-g','--depth=0','--json') (Join-Path $logs 'rollback-npm-inventory') 300
   Assert-ExitZero $rollbackNpm 'rollback npm inventory'
   $rollbackNpmJson = Get-Content -LiteralPath $rollbackNpm.Stdout -Raw | ConvertFrom-Json
+  foreach ($name in @($baselineNpmToolState.Keys)) {
+    $property = $rollbackNpmJson.dependencies.PSObject.Properties[$name]
+    $actual = if ($null -eq $property) { 'NOT_INSTALLED' } else { [string]$property.Value.version }
+    if ($actual -cne $baselineNpmToolState[$name]) { throw "rollback npm state did not return to observed baseline: $name" }
+  }
   $rollbackExtensionInventory = Get-InstalledExtensionInventory $baselineManifest $agentRoot 'rollback'
   $rollbackMcpJson = Get-Content -LiteralPath (Join-Path $agentRoot 'mcp.json') -Raw | ConvertFrom-Json
-  $rollbackPinProof = Get-ManifestPinProof $rollbackDoctorJson $baselineManifest $baselineObservedVersion $rollbackNpmJson $rollbackExtensionInventory $rollbackMcpJson 'rollback'
-  Assert-ManifestPinProof $rollbackPinProof $baselineManifest 'rollback'
+  $rollbackExpected = ($baselineManifest | ConvertTo-Json -Depth 20 | ConvertFrom-Json)
+  foreach ($name in @($rollbackExpected.npm_tools.PSObject.Properties.Name)) {
+    $expected = $baselineNpmToolState[$name]
+    if ($expected -ceq 'NOT_INSTALLED') { $rollbackExpected.npm_tools.PSObject.Properties.Remove($name) }
+    else { $rollbackExpected.npm_tools.PSObject.Properties[$name].Value = $expected }
+  }
+  $rollbackPinProof = Get-ManifestPinProof $rollbackDoctorJson $rollbackExpected $baselineObservedVersion $rollbackNpmJson $rollbackExtensionInventory $rollbackMcpJson 'rollback'
+  Assert-ManifestPinProof $rollbackPinProof $rollbackExpected 'rollback'
   $rollbackPinProofPath = Join-Path $EvidenceRoot 'rollback-manifest-pin-proof.json'
   [System.IO.File]::WriteAllText($rollbackPinProofPath, ($rollbackPinProof | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
-  [void]$claims.Add((New-Claim 'baseline-rollback-preservation' 'ROLLBACK' 'PASS' $true $true $false 'Actual baseline source install restored the complete observable baseline manifest pin set without wiping state, project data, or unrelated sentinel.' @(
+  [void]$claims.Add((New-Claim 'baseline-rollback-preservation' 'ROLLBACK' 'PASS' $true $true $false 'Actual baseline source install plus bounded npm reconciliation restored the observed pre-upgrade baseline state without wiping state, project data, or unrelated sentinel.' @(
     (New-Evidence 'COMMAND' 'rollback install and Doctor exited 0' '.\scripts\install.ps1 --yes --no-prereqs; .\scripts\doctor.ps1 --json' 0 "baseline:$baselineObservedSha" $rollbackDoctor.Stdout),
-    (New-Evidence 'FILE' 'COOP, Pi, extension, Python, npm, and managed MCP pins match the baseline manifest; unmanaged MCP pins are explicitly non-applicable' 'Doctor JSON plus installed extension metadata, npm global inventory, and managed mcp.json specs' 0 "baseline:$baselineObservedSha" $rollbackPinProofPath),
+    (New-Evidence 'FILE' 'COOP, Pi, extension, Python, and managed MCP pins match the baseline manifest; npm tools match the directly observed pre-upgrade baseline, including absence of its unpublished desktop-bridge pin; unmanaged MCP pins are explicitly non-applicable' 'Doctor JSON plus installed extension metadata, pre-upgrade/rollback npm inventories, and managed mcp.json specs' 0 "baseline:$baselineObservedSha" $rollbackPinProofPath),
     (New-Evidence 'HASH' "unrelated sentinel remained $sentinelBefore" 'SHA-256 before/after' 0 "baseline:$baselineObservedSha" $sentinel)
   )))
 
