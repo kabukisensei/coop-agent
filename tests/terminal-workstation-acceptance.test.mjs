@@ -897,12 +897,15 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.ok(Array.isArray(activeSteps), "native Windows workflow steps must parse");
     const exactCandidateSuiteSteps = activeSteps.filter((step) => step?.name === "Run exact-candidate behavioral tests under Windows PowerShell 5.1");
     const suiteRun = [
+      "$harnessRoot = Join-Path $env:GITHUB_WORKSPACE 'harness'",
+      "$candidateRoot = Join-Path $env:GITHUB_WORKSPACE 'candidate'",
+      "$baselineRoot = Join-Path $env:GITHUB_WORKSPACE 'baseline'",
       "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `",
       "..\\harness\\acceptance\\windows-terminal-workstation.ps1 `",
       "-Mode RunBehavioralSuite `",
-      "-HarnessRoot (Resolve-Path ..\\harness) `",
-      "-CandidateRoot (Resolve-Path .) `",
-      "-BaselineRoot (Resolve-Path ..\\baseline) `",
+      "-HarnessRoot $harnessRoot `",
+      "-CandidateRoot $candidateRoot `",
+      "-BaselineRoot $baselineRoot `",
       "-EvidenceRoot $env:EVIDENCE_PATH `",
       "-ReceiptPath $env:RECEIPT_PATH `",
       "-RunNonce $env:RUN_NONCE `",
@@ -919,6 +922,9 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
       "working-directory": "candidate",
       run: suiteRun,
     }]);
+    assert.doesNotMatch(source, /-HarnessRoot \(Resolve-Path|-CandidateRoot \(Resolve-Path|-BaselineRoot \(Resolve-Path/);
+    assert.match(source, /function Assert-SafeCheckout[\s\S]*checkout reparse ancestry rejected[\s\S]*checkout contains a reparse point[\s\S]*foreach \(\$checkout in @\(\$harness,\$candidate,\$baseline\)\) \{ Assert-SafeCheckout \$checkout \}[\s\S]*git -C \$checkout/);
+    assert.doesNotMatch(source, /Test-Path -LiteralPath "\$env:RECEIPT_PATH\.evidence-authorization\.json"/);
     const pythonPinIndex = activeSteps.findIndex((step) => step?.name === "Pin runner Python for certification");
     const exactSuiteIndex = activeSteps.findIndex((step) => step?.name === "Run exact-candidate behavioral tests under Windows PowerShell 5.1");
     const validationStep = activeSteps.find((step) => step?.name === "Validate fail-closed receipt");
@@ -991,7 +997,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("        shell: powershell\n        working-directory: candidate", "        # shell: powershell\n        shell: pwsh\n        working-directory: candidate"),
     workflow.replace("        working-directory: candidate\n        run: |", "        working-directory: candidate-other\n        run: |"),
     workflow.replace("-Mode RunBehavioralSuite `", "-Mode ValidateReceipt `"),
-    workflow.replace("        run: |\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `\n            ..\\harness\\acceptance", "        \"continue-on-error\": true\n        run: |\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `\n            ..\\harness\\acceptance"),
+    workflow.replace("        run: |\n          $harnessRoot = Join-Path $env:GITHUB_WORKSPACE 'harness'", "        \"continue-on-error\": true\n        run: |\n          $harnessRoot = Join-Path $env:GITHUB_WORKSPACE 'harness'"),
     workflow.replace("          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n\n      - name: Validate fail-closed receipt", "          if ($false) { exit $LASTEXITCODE }\n\n      - name: Validate fail-closed receipt"),
     workflow.replace("      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1", "      - continue-on-error: true\n        #      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1"),
     workflow.replace("        working-directory: candidate\n        run: |", "        working-directory: candidate\n        continue-on-error: true\n        run: |").replace("    runs-on: windows-latest", "    name: |\n      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        id: exact_behavioral_suite\n        shell: powershell\n        working-directory: candidate\n        run: .\\tests\\run.ps1\n      - name: scalar terminator\n    runs-on: windows-latest"),

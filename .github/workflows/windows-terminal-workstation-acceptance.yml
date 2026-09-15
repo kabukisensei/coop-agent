@@ -60,14 +60,41 @@ jobs:
       - name: Verify event-authorized exact checkout identity
         shell: powershell
         run: |
+          function Assert-SafeCheckout([string]$path) {
+            $full = [System.IO.Path]::GetFullPath($path)
+            $root = [System.IO.Path]::GetPathRoot($full)
+            $current = $root
+            foreach ($part in @(($full.Substring($root.Length)) -split '[\\/]' | Where-Object { $_ })) {
+              $current = Join-Path $current $part
+              if (-not (Test-Path -LiteralPath $current)) { throw "checkout component missing: $current" }
+              $item = Get-Item -LiteralPath $current -Force
+              if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "checkout reparse ancestry rejected: $($item.FullName)" }
+            }
+            $pending = New-Object System.Collections.Generic.Stack[string]
+            $pending.Push($full)
+            while ($pending.Count -gt 0) {
+              $directory = $pending.Pop()
+              foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force)) {
+                if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "checkout contains a reparse point: $($item.FullName)" }
+                if ($item.PSIsContainer) { $pending.Push($item.FullName) }
+              }
+            }
+          }
           $expected = $env:CANDIDATE_SHA
           if ($expected -cnotmatch '^[0-9a-f]{40}$') { throw 'event-authorized candidate SHA must be full lowercase 40-hex' }
-          foreach ($checkout in @('.\harness','.\candidate')) {
+          $harness = Join-Path $env:GITHUB_WORKSPACE 'harness'
+          $candidate = Join-Path $env:GITHUB_WORKSPACE 'candidate'
+          $baseline = Join-Path $env:GITHUB_WORKSPACE 'baseline'
+          foreach ($checkout in @($harness,$candidate,$baseline)) { Assert-SafeCheckout $checkout }
+          foreach ($checkout in @($harness,$candidate)) {
             $observed = (& git -C $checkout rev-parse HEAD).Trim()
             if ($LASTEXITCODE -ne 0 -or $observed -cne $expected) { throw "checkout identity mismatch for ${checkout}: expected $expected observed $observed" }
           }
-          $version = (Get-Content -LiteralPath '.\candidate\VERSION' -Raw).Trim()
-          $code = "import {fingerprintBuild} from './harness/lib/support-center.mjs';const r=fingerprintBuild({version:process.argv[1],commit:process.argv[2]});if(!r.ok)process.exit(2);console.log(r.value)"
+          $baselineObserved = (& git -C $baseline rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $baselineObserved -cne 'd60300780b565aabf15b172b2bc32abad12b9ca6') { throw 'baseline checkout identity mismatch' }
+          $version = (Get-Content -LiteralPath (Join-Path $candidate 'VERSION') -Raw).Trim()
+          $module = (New-Object System.Uri((Join-Path $harness 'lib\support-center.mjs'))).AbsoluteUri
+          $code = "import {fingerprintBuild} from '$module';const r=fingerprintBuild({version:process.argv[1],commit:process.argv[2]});if(!r.ok)process.exit(2);console.log(r.value)"
           $build = (& node --input-type=module -e $code $version $expected | Out-String).Trim()
           if ($LASTEXITCODE -ne 0 -or $build -cnotmatch '^build-[0-9a-f]{8}$') { throw 'candidate Support build fingerprint could not be computed' }
           "VERIFIED_CANDIDATE_SHA=$expected" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -133,12 +160,15 @@ jobs:
           "OWNED_PATH=$owned" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "EVIDENCE_PATH=$evidence" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "RECEIPT_PATH=$receipt" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $harnessRoot = Join-Path $env:GITHUB_WORKSPACE 'harness'
+          $candidateRoot = Join-Path $env:GITHUB_WORKSPACE 'candidate'
+          $baselineRoot = Join-Path $env:GITHUB_WORKSPACE 'baseline'
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
             .\harness\acceptance\windows-terminal-workstation.ps1 `
             -Mode Run `
-            -HarnessRoot (Resolve-Path .\harness) `
-            -CandidateRoot (Resolve-Path .\candidate) `
-            -BaselineRoot (Resolve-Path .\baseline) `
+            -HarnessRoot $harnessRoot `
+            -CandidateRoot $candidateRoot `
+            -BaselineRoot $baselineRoot `
             -EvidenceRoot $evidence `
             -ReceiptPath $receipt `
             -RunNonce $env:RUN_NONCE `
@@ -154,12 +184,15 @@ jobs:
         shell: powershell
         working-directory: candidate
         run: |
+          $harnessRoot = Join-Path $env:GITHUB_WORKSPACE 'harness'
+          $candidateRoot = Join-Path $env:GITHUB_WORKSPACE 'candidate'
+          $baselineRoot = Join-Path $env:GITHUB_WORKSPACE 'baseline'
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
             ..\harness\acceptance\windows-terminal-workstation.ps1 `
             -Mode RunBehavioralSuite `
-            -HarnessRoot (Resolve-Path ..\harness) `
-            -CandidateRoot (Resolve-Path .) `
-            -BaselineRoot (Resolve-Path ..\baseline) `
+            -HarnessRoot $harnessRoot `
+            -CandidateRoot $candidateRoot `
+            -BaselineRoot $baselineRoot `
             -EvidenceRoot $env:EVIDENCE_PATH `
             -ReceiptPath $env:RECEIPT_PATH `
             -RunNonce $env:RUN_NONCE `
@@ -174,9 +207,7 @@ jobs:
         if: always() && steps.exact_behavioral_suite.outcome == 'success'
         shell: powershell
         run: |
-          if (-not $env:RECEIPT_PATH -or -not (Test-Path -LiteralPath $env:RECEIPT_PATH)) {
-            throw 'acceptance receipt was not emitted'
-          }
+          if (-not $env:RECEIPT_PATH) { throw 'acceptance receipt path was not emitted' }
           $identity = @('-ExpectedHarnessSha',$env:VERIFIED_CANDIDATE_SHA,'-ExpectedCandidateSha',$env:VERIFIED_CANDIDATE_SHA,'-ExpectedCandidateBuild',$env:VERIFIED_CANDIDATE_BUILD)
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
             .\harness\acceptance\windows-terminal-workstation.ps1 `
@@ -197,15 +228,13 @@ jobs:
             -ReceiptPath $env:RECEIPT_PATH -RunNonce $env:RUN_NONCE @identity
           if ($LASTEXITCODE -ne 0) { throw 'current receipt upload authorization failed' }
           "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          if (Test-Path -LiteralPath "$env:RECEIPT_PATH.evidence-authorization.json" -PathType Leaf) {
-            powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
-              .\harness\acceptance\windows-terminal-workstation.ps1 `
-              -Mode ValidateUploadAuthorization -AuthorizationKind Evidence `
-              -ReceiptPath $env:RECEIPT_PATH -EvidenceRoot $env:EVIDENCE_PATH `
-              -RunNonce $env:RUN_NONCE @identity
-            if ($LASTEXITCODE -ne 0) { throw 'current evidence upload authorization failed' }
-            "evidence_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          }
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
+            .\harness\acceptance\windows-terminal-workstation.ps1 `
+            -Mode ValidateUploadAuthorization -AuthorizationKind Evidence `
+            -ReceiptPath $env:RECEIPT_PATH -EvidenceRoot $env:EVIDENCE_PATH `
+            -RunNonce $env:RUN_NONCE @identity
+          if ($LASTEXITCODE -ne 0) { throw 'current evidence upload authorization failed' }
+          "evidence_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Upload fail-closed receipt
         if: always() && steps.exact_behavioral_suite.outcome == 'success' && steps.validate_artifacts.outcome == 'success' && steps.validate_artifacts.outputs.receipt_uploadable == 'true'
