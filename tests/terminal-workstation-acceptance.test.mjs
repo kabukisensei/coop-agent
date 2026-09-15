@@ -708,20 +708,27 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     }]);
     const pythonPinIndex = activeSteps.findIndex((step) => step?.name === "Pin runner Python for certification");
     const exactSuiteIndex = activeSteps.findIndex((step) => step?.name === "Run exact-candidate behavioral tests under Windows PowerShell 5.1");
+    const pythonRepinIndex = activeSteps.findIndex((step) => step?.name === "Revalidate runner Python after behavioral tests");
     const dependencyIndex = activeSteps.findIndex((step) => step?.name === "Install receipt-schema test dependency");
-    assert.ok(pythonPinIndex >= 0 && pythonPinIndex < exactSuiteIndex && exactSuiteIndex < dependencyIndex);
+    assert.ok(pythonPinIndex >= 0 && pythonPinIndex < exactSuiteIndex && exactSuiteIndex < pythonRepinIndex && pythonRepinIndex < dependencyIndex);
+    const pythonPinRun = [
+      "$python = (& .\\harness\\acceptance\\windows-terminal-workstation.ps1 -Mode Probe -Probe ResolvePython | Out-String).Trim()",
+      "if ($LASTEXITCODE -ne 0 -or -not $python) { exit 1 }",
+      "& $python --version",
+      "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+      '"CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append',
+      "(Split-Path -Parent $python) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append",
+    ].join("\n");
     const pythonPin = activeSteps[pythonPinIndex];
     assert.deepEqual(pythonPin, {
       name: "Pin runner Python for certification",
       shell: "powershell",
-      run: [
-        "$python = (& .\\harness\\acceptance\\windows-terminal-workstation.ps1 -Mode Probe -Probe ResolvePython | Out-String).Trim()",
-        "if ($LASTEXITCODE -ne 0 -or -not $python) { exit 1 }",
-        "& $python --version",
-        "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
-        '"CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append',
-        "(Split-Path -Parent $python) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append",
-      ].join("\n"),
+      run: pythonPinRun,
+    });
+    assert.deepEqual(activeSteps[pythonRepinIndex], {
+      name: "Revalidate runner Python after behavioral tests",
+      shell: "powershell",
+      run: pythonPinRun,
     });
     assert.match(activeSteps[dependencyIndex].run, /& \$env:CERT_PYTHON -m pip install/);
     assert.match(activeSteps[dependencyIndex].run, /& \$env:CERT_PYTHON -c "import jsonschema"/);
@@ -763,6 +770,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }", "if ($false) { exit $LASTEXITCODE }"),
     workflow.replace('"CERT_PYTHON=$python"', '"CERT_PYTHON=python"'),
     workflow.replace("      - name: Pin runner Python for certification", "      - name: Pin runner Python for certification\n        continue-on-error: true"),
+    workflow.replace("Revalidate runner Python after behavioral tests", "Skip runner Python revalidation"),
     workflow.replace("& $env:CERT_PYTHON .\\harness\\tests\\knowledge-git.test.py", "python .\\harness\\tests\\knowledge-git.test.py"),
   ].entries()) assert.throws(() => contract(forged), `workflow mutant ${index} was accepted`);
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
