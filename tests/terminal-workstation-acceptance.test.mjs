@@ -405,14 +405,14 @@ test("fully safe authorization binds receipt and exact evidence state independen
 function writeOwnershipFixture(dir) {
   const writer = join(dir, "ownership-fixture.mjs");
   writeFileSync(writer, `import {spawn} from "node:child_process"; import {existsSync,readFileSync,writeFileSync} from "node:fs"; import {createServer} from "node:net";
-const mode=process.argv[2], target=process.argv[3], self=process.argv[1];
+const mode=process.argv[2], target=process.argv[3], self=process.argv[1], delay=Number(process.argv[4]||1800);
 if(mode==="success"){process.stdout.write("exact-stdout\\n");process.stderr.write("exact-stderr\\n");process.exit(23)}
 if(mode==="unicode"){process.stdout.write(JSON.stringify({argv:process.argv.slice(3),stdin:readFileSync(0,"utf8")}));process.exit(0)}
-if(mode==="leaf"){const startedAtMs=Date.now(),token=process.pid+":"+startedAtMs;const server=createServer(socket=>socket.end(token));server.listen(0,"127.0.0.1",()=>{writeFileSync(target+".identity.json",JSON.stringify({pid:process.pid,port:server.address().port,startedAtMs,token}));setTimeout(()=>writeFileSync(target,"late-write"),1800)})}
+if(mode==="leaf"){const startedAtMs=Date.now(),token=process.pid+":"+startedAtMs;const server=createServer(socket=>socket.end(token));server.listen(0,"127.0.0.1",()=>{writeFileSync(target+".identity.json",JSON.stringify({pid:process.pid,port:server.address().port,startedAtMs,token}));setTimeout(()=>writeFileSync(target,"late-write"),delay)})}
 else if(mode==="churn"){setInterval(()=>spawn(process.execPath,[self,"leaf",target],{stdio:"ignore"}),5)}
 else if(mode==="cleanup-race"){spawn(process.execPath,[self,"churn",target],{stdio:"ignore"});setInterval(()=>{},1000)}
 else if(mode==="parent-success"){spawn(process.execPath,[self,"leaf",target],{stdio:"ignore"})}
-else if(mode==="parent-with-descendant"){spawn(process.execPath,[self,"leaf",target],{stdio:"ignore"});const deadline=Date.now()+1000;const wait=setInterval(()=>{if(existsSync(target+".identity.json")||Date.now()>deadline){clearInterval(wait);process.exit(0)}},10)}
+else if(mode==="parent-with-descendant"){spawn(process.execPath,[self,"leaf",target,"4000"],{stdio:"ignore"});const deadline=Date.now()+1000;const wait=setInterval(()=>{if(existsSync(target+".identity.json")||Date.now()>deadline){clearInterval(wait);process.exit(0)}},10)}
 else{writeFileSync(mode,"payload-ran")}
 `);
   return writer;
