@@ -95,9 +95,9 @@ function schemaValidate(path) {
   return spawnSync("python3", ["-c", code, SCHEMA, path], { encoding: "utf8" });
 }
 
-function assertBoth(path, expected, label) {
+function assertBoth(path, expected, label, harness = HARNESS) {
   const schema = schemaValidate(path);
-  const ps = runPs(["-Mode", "ValidateReceipt", "-ReceiptPath", path]);
+  const ps = runPs(["-Mode", "ValidateReceipt", "-ReceiptPath", path, "-ExpectedHarnessSha", harness]);
   assert.equal(schema.status === 0, expected, `${label}: schema: ${schema.stderr}`);
   assert.equal(ps.status === 0, expected, `${label}: PowerShell: ${ps.stderr}`);
 }
@@ -126,6 +126,12 @@ test("committed Draft 2020-12 schema validator is available and enforces formats
   const dir = mkdtempSync(join(tmpdir(), "coop-schema-format-"));
   const bad = receipt(); bad.execution.started_utc = "not-a-date";
   assert.notEqual(schemaValidate(writeReceipt(dir, bad)).status, 0);
+});
+
+test("dual receipt validation binds an explicit harness identity", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-explicit-harness-"));
+  const harness = "2".repeat(40); const value = receipt(); value.harness.observed_sha = harness;
+  assertBoth(writeReceipt(dir, value), true, "explicit harness identity", harness);
 });
 
 test("receipt schema exposes exact vocabularies and complete automated/operator gates", () => {
@@ -502,7 +508,7 @@ test("native Windows lifecycle faults fail closed through real receipt finalizat
       ], { env });
       assert.notEqual(result.status, 0, `${fault}: injected lifecycle failure unexpectedly passed`);
       assert.equal(existsSync(receiptPath), true, `${fault}: fail-closed receipt was not generated`);
-      assertBoth(receiptPath, true, `${fault}: generated receipt`);
+      assertBoth(receiptPath, true, `${fault}: generated receipt`, harnessSha);
       const generated = JSON.parse(readFileSync(receiptPath, "utf8"));
       assert.equal(generated.terminal_workstation_ready, false, `${fault}: failure receipt claimed readiness`);
       const completion = generated.claims.filter((item) => item.id === "automated-harness-completion");
