@@ -84,6 +84,11 @@ jobs:
           ) | Out-Null
           if ($errors) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
 
+      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1
+        shell: powershell
+        working-directory: candidate
+        run: .\tests\run.ps1
+
       - name: Establish current-run upload identity
         shell: powershell
         run: |

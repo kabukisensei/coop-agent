@@ -602,6 +602,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.match(source, /CANDIDATE_SHA: \$\{\{ github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.sha \|\| inputs\.candidate_sha \}\}/);
     assert.equal((source.match(/ref: \$\{\{ env\.CANDIDATE_SHA \}\}/g) || []).length, 2);
     assert.match(source, /\$observed = \(& git -C \$checkout rev-parse HEAD\)\.Trim\(\)[\s\S]*\$observed -cne \$expected/);
+    assert.match(source, /Run exact-candidate behavioral tests under Windows PowerShell 5\.1[\s\S]*working-directory: candidate[\s\S]*run: \.\\tests\\run\.ps1/);
     assert.match(source, /ExpectedCandidateSha \$env:VERIFIED_CANDIDATE_SHA/);
     assert.match(source, /ExpectedCandidateBuild \$env:VERIFIED_CANDIDATE_BUILD/);
     assert.match(source, /VERSION[\s\S]*fingerprintBuild/);
