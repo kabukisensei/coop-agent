@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { fingerprintBuild } from "../lib/support-center.mjs";
@@ -39,14 +39,16 @@ const phaseFor = {
 
 const pwshProbe = spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"], { encoding: "utf8" });
 const havePwsh = pwshProbe.status === 0 && !pwshProbe.error;
+const PWSH = havePwsh ? spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-Command", "(Get-Command pwsh).Source"], { encoding: "utf8" }).stdout.trim() : "pwsh";
 const schemaProbe = spawnSync(PYTHON, ["-c", "import jsonschema"], { encoding: "utf8" });
+const PYTHON_PATH = spawnSync(PYTHON, ["-c", "import os,sys; print(os.path.abspath(sys.executable))"], { encoding: "utf8" }).stdout.trim();
 
 function runPs(args, options = {}) {
   const identity = [...args];
   if (!identity.includes("-ExpectedCandidateSha")) identity.push("-ExpectedCandidateSha", CANDIDATE);
   if (!identity.includes("-ExpectedCandidateBuild")) identity.push("-ExpectedCandidateBuild", CANDIDATE_BUILD);
   if (!identity.includes("-ExpectedHarnessSha")) identity.push("-ExpectedHarnessSha", HARNESS);
-  return spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-File", SCRIPT, ...identity], { encoding: "utf8", ...options });
+  return spawnSync(PWSH, ["-NoLogo", "-NoProfile", "-File", SCRIPT, ...identity], { encoding: "utf8", ...options });
 }
 
 function evidence(kind = "COMMAND", observed = "redacted observation") {
@@ -571,39 +573,49 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
   const probe = (candidate, env) => {
     const script = join(dir, `probe-${probeNumber++}.ps1`);
     writeFileSync(script, candidate, "utf8");
-    return spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-File", script, "-Mode", "Probe", "-Probe", "ResolvePython"], { encoding: "utf8", env });
+    return spawnSync(PWSH, ["-NoLogo", "-NoProfile", "-File", script, "-Mode", "Probe", "-Probe", "ResolvePython"], { encoding: "utf8", env, cwd: dir });
   };
   const contract = (candidate) => {
     const resolver = candidate.match(/function Get-AcceptancePython \{([\s\S]*?)\n\}/)?.[1] ?? "";
     assert.match(resolver, /IsPathRooted\(\$env:CERT_PYTHON\)/);
-    assert.match(resolver, /Get-Command -Name \$pinned -CommandType Application/);
+    assert.match(candidate, /Test-Path -LiteralPath \$expected -PathType Leaf/);
+    assert.match(candidate, /& \$expected -c 'import os,sys; print\(os\.path\.abspath\(sys\.executable\)\)'/);
     assert.equal((candidate.match(/Get-AcceptancePython/g) || []).length, 4);
     assert.match(candidate, /try \{ \$pythonPath = Get-AcceptancePython \} catch \{ \$pythonPath = '' \}/);
     assert.match(candidate, /FilePath = \$pythonPath/);
     assert.match(candidate, /\$onboardPython = Get-AcceptancePython[\s\S]*Invoke-Bounded \$onboardPython/);
 
-    const pinnedPath = resolve(process.execPath);
+    const pinnedPath = resolve(PYTHON_PATH);
     const pinned = probe(candidate, { ...process.env, CERT_PYTHON: pinnedPath });
     assert.equal(pinned.status, 0, pinned.stderr);
     assert.equal(normalize(pinned.stdout.trim()), normalize(pinnedPath));
 
     const fallbackEnv = { ...process.env };
     delete fallbackEnv.CERT_PYTHON;
+    fallbackEnv.PATH = dirname(pinnedPath);
     const fallback = probe(candidate, fallbackEnv);
     assert.equal(fallback.status, 0, fallback.stderr);
-    assert.ok(existsSync(fallback.stdout.trim()));
+    assert.equal(normalize(fallback.stdout.trim()), normalize(pinnedPath));
 
-    assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: "relative-python" }).status, 0);
+    assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: relative(dir, pinnedPath) }).status, 0);
     assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: join(dir, "missing-python.exe") }).status, 0);
+    assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: join(ROOT, "README.md") }).status, 0);
+    assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: pinnedPath.replace(/.(?=[^/\\]+$)/, "[$&]") }).status, 0);
+    assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: resolve(process.execPath) }).status, 0);
+    const wrapper = join(dir, process.platform === "win32" ? "python-wrapper.cmd" : "python-wrapper");
+    if (process.platform === "win32") writeFileSync(wrapper, `@echo off\r\n"${pinnedPath}" %*\r\n`, "utf8");
+    else { writeFileSync(wrapper, `#!/bin/sh\nexec '${pinnedPath.replaceAll("'", "'\\''")}' "$@"\n`, "utf8"); chmodSync(wrapper, 0o755); }
+    assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: wrapper }).status, 0);
   };
   contract(source);
-  for (const mutant of [
+  for (const [index, mutant] of [
     source.replace("if ($env:CERT_PYTHON) {", "if ($false) {"),
-    source.replace("return [System.IO.Path]::GetFullPath($pinnedCommand[0].Source)", "return 'python'"),
-    source.replace("return [System.IO.Path]::GetFullPath($python[0].Source)", "throw 'fallback disabled'"),
+    source.replace("return Resolve-AcceptancePythonExecutable $env:CERT_PYTHON", "return 'python'"),
+    source.replace("return Resolve-AcceptancePythonExecutable $python[0].Source", `return '${resolve(process.execPath).replaceAll("'", "''")}'`),
+    source.replace("if (-not [string]::Equals($actual, $expected, $comparison))", "if ($false)"),
     source.replace("FilePath = $pythonPath", "FilePath = 'python'"),
     source.replace("$onboardPython = Get-AcceptancePython", "$onboardPython = 'python'"),
-  ]) assert.throws(() => contract(mutant));
+  ].entries()) assert.throws(() => contract(mutant), `Python resolver mutant ${index} was accepted`);
 });
 
 test("upgrade preserves operator state while managed MCP converges by release", () => {

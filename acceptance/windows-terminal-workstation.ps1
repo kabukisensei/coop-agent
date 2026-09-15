@@ -501,17 +501,26 @@ function Assert-LifecycleFaultEvent([string]$Path, [string]$Nonce, [string]$Requ
   return $event
 }
 
+function Resolve-AcceptancePythonExecutable([string]$Path) {
+  if (-not [System.IO.Path]::IsPathRooted($Path)) { throw 'acceptance Python must be an absolute path' }
+  $expected = [System.IO.Path]::GetFullPath($Path)
+  if (-not (Test-Path -LiteralPath $expected -PathType Leaf)) { throw 'acceptance Python does not identify a file' }
+  $reported = @(& $expected -c 'import os,sys; print(os.path.abspath(sys.executable))' 2>$null)
+  if ($LASTEXITCODE -ne 0 -or $reported.Count -ne 1) { throw 'acceptance Python executable probe failed' }
+  $actual = [System.IO.Path]::GetFullPath(([string]$reported[0]).Trim())
+  $comparison = if ($env:OS -eq 'Windows_NT') { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+  if (-not [string]::Equals($actual, $expected, $comparison)) { throw 'acceptance Python executable identity mismatch' }
+  return $expected
+}
+
 function Get-AcceptancePython {
   if ($env:CERT_PYTHON) {
     if (-not [System.IO.Path]::IsPathRooted($env:CERT_PYTHON)) { throw 'CERT_PYTHON must be an absolute path' }
-    $pinned = [System.IO.Path]::GetFullPath($env:CERT_PYTHON)
-    $pinnedCommand = @(Get-Command -Name $pinned -CommandType Application -ErrorAction SilentlyContinue)
-    if ($pinnedCommand.Count -ne 1) { throw 'CERT_PYTHON does not identify an executable file' }
-    return [System.IO.Path]::GetFullPath($pinnedCommand[0].Source)
+    return Resolve-AcceptancePythonExecutable $env:CERT_PYTHON
   }
   $python = @(Get-Command python3,python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
   if ($python.Count -ne 1) { throw 'acceptance Python is unavailable' }
-  return [System.IO.Path]::GetFullPath($python[0].Source)
+  return Resolve-AcceptancePythonExecutable $python[0].Source
 }
 
 function Invoke-Bounded {
