@@ -174,12 +174,20 @@ try {
   } else {
     Ko "pre-release conflict parsed as [$($parsedSuffixConflict -join ', ')] instead of two entries"
   }
-  foreach ($malformed in @('npm:pi-mcp-adapter@2.10.0/path', 'npm:pi-mcp-adapter@2.10.0@9.9.9')) {
+  foreach ($package in @('pi-mcp-adapter', '@scope/extension')) {
+    $caseConflict = @(Get-CoopPiExtensionVersions "npm:${package}@2.10.0-beta.A`nnpm:${package}@2.10.0-beta.a" $package)
+    if ($caseConflict.Count -eq 2) { Ok "case-distinct prereleases remain conflicting: $package" } else { Ko "case-distinct prereleases collapsed for $package" }
+  }
+  foreach ($malformed in @('npm:pi-mcp-adapter@2.10.0/path', 'npm:pi-mcp-adapter@2.10.0@9.9.9', 'npm:pi-mcp-adapter@2.10.0-..', 'npm:pi-mcp-adapter@2.10.0+..', 'npm:pi-mcp-adapter@02.10.0')) {
     if (@(Get-CoopPiExtensionVersions $malformed 'pi-mcp-adapter').Count -eq 0) {
       Ok "malformed package spec is rejected: $malformed"
     } else {
       Ko "malformed package spec was accepted: $malformed"
     }
+  }
+  foreach ($terminated in @("npm:pi-mcp-adapter@2.10.0  ", "npm:pi-mcp-adapter@2.10.0`r`n")) {
+    $parsedTerminated = @(Get-CoopPiExtensionVersions $terminated 'pi-mcp-adapter')
+    if ($parsedTerminated.Count -eq 1 -and $parsedTerminated[0] -ceq '2.10.0') { Ok 'trailing whitespace/CRLF is normalized' } else { Ko 'valid whitespace/CRLF-terminated spec was rejected' }
   }
 
   # --- 1. launch-spec resolves the governed pi invocation --------------------

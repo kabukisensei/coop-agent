@@ -65,9 +65,19 @@ function Coop-ManifestMcpSpec([string]$Package) { $v = Coop-ManifestObjectGet 'm
 function Get-CoopPiExtensionVersions([string]$PiList, [string]$Package) {
   if (-not $Package -or -not $PiList) { return @() }
   $text = ($PiList -split "`r?`n") -join "`n"
-  $semver = '[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?'
+  $core = '(?:0|[1-9][0-9]*)'
+  $identifier = '(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+  $prerelease = "-$identifier(?:\.$identifier)*"
+  $build = '\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*'
+  $semver = "$core\.$core\.$core(?:$prerelease)?(?:$build)?"
   $pattern = "^\s*(?:npm:)?$([regex]::Escape($Package))@(?<ver>$semver)\s*$"
-  return @([regex]::Matches($text, $pattern, 'Multiline') | ForEach-Object { $_.Groups['ver'].Value } | Sort-Object -Unique)
+  $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+  $versions = @()
+  foreach ($match in [regex]::Matches($text, $pattern, 'Multiline')) {
+    $version = $match.Groups['ver'].Value
+    if ($seen.Add($version)) { $versions += $version }
+  }
+  return @($versions)
 }
 
 function Coop-ManifestKeys([string]$Key) {

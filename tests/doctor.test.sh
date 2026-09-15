@@ -220,10 +220,17 @@ case "$parser_versions" in
   $'2.10.0\n2.10.0-beta.1'|$'2.10.0-beta.1\n2.10.0') ok "bash parser preserves pre-release conflicts and ignores paths/name prefixes" ;;
   *) ko "bash parser returned unexpected versions: [$parser_versions]" ;;
 esac
-for malformed in 'npm:pi-mcp-adapter@2.10.0/path' 'npm:pi-mcp-adapter@2.10.0@9.9.9'; do
+for malformed in 'npm:pi-mcp-adapter@2.10.0/path' 'npm:pi-mcp-adapter@2.10.0@9.9.9' 'npm:pi-mcp-adapter@2.10.0-..' 'npm:pi-mcp-adapter@2.10.0+..' 'npm:pi-mcp-adapter@02.10.0'; do
   parsed="$(COOP_ROOT="$ROOT" bash -c '. "$1/lib/common.sh"; coop_pi_extension_versions "$2" pi-mcp-adapter' _ "$ROOT" "$malformed")"
   if [ -z "$parsed" ]; then ok "bash parser rejects malformed package spec: $malformed"; else ko "bash parser accepted malformed package spec: $malformed"; fi
 done
+for package in pi-mcp-adapter @scope/extension; do
+  case_versions="$(COOP_ROOT="$ROOT" bash -c '. "$1/lib/common.sh"; coop_pi_extension_versions "$2" "$3"' _ "$ROOT" "npm:${package}@2.10.0-beta.A
+npm:${package}@2.10.0-beta.a" "$package")"
+  [ "$(printf '%s\n' "$case_versions" | wc -l | tr -d ' ')" = 2 ] && ok "bash preserves case-distinct prereleases: $package" || ko "bash collapsed case-distinct prereleases: $package"
+done
+terminated_versions="$(COOP_ROOT="$ROOT" bash -c '. "$1/lib/common.sh"; coop_pi_extension_versions "$2" pi-mcp-adapter' _ "$ROOT" $'npm:pi-mcp-adapter@2.10.0  \r\n')"
+[ "$terminated_versions" = '2.10.0' ] && ok "bash normalizes trailing whitespace and CRLF" || ko "bash rejected a whitespace/CRLF-terminated spec"
 
 if [ "$fail" -ne 0 ]; then echo "  ✗ doctor-mcp-mode tests FAILED"; exit 1; fi
 echo "  doctor-mcp-mode tests passed"

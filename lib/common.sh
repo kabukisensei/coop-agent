@@ -66,12 +66,17 @@ coop_manifest_mcp_spec() { local p="$1" v; v="$(coop_manifest_object_get mcp_ser
 # `pi-mcp-adapter-tools` can never be mistaken for `pi-mcp-adapter`.
 # Usage: coop_pi_extension_versions "$pilist" pi-mcp-adapter
 coop_pi_extension_versions() {
-  local pilist="$1" name="$2" esc
+  local pilist="$1" name="$2" esc core identifier prerelease build semver
   [ -n "$name" ] || return 0
   esc="$(printf '%s' "$name" | sed 's/[][\.^$*+?(){}|]/\\&/g')"
+  core='(0|[1-9][0-9]*)'
+  identifier='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+  prerelease="-${identifier}(\.${identifier})*"
+  build='\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*'
+  semver="${core}\.${core}\.${core}(${prerelease})?(${build})?"
   printf '%s\n' "$pilist" \
-    | sed -e 's/^[[:space:]]*//' -e 's/^npm://' \
-    | grep -E "^${esc}@[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$" \
+    | sed -e 's/\r$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^npm://' \
+    | grep -E "^${esc}@${semver}$" \
     | sed -e 's/.*@//' \
     | sort -u
 }
