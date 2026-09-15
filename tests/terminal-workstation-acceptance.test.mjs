@@ -385,24 +385,33 @@ test("rollback npm reconciliation executes, fails closed, and precedes proof con
 test("bounded behavioral suite re-finalizes immutable artifacts and checkouts before upload", () => {
   const source = readFileSync(SCRIPT, "utf8");
   const contract = (candidate) => {
-    const identityHelper = candidate.match(/function Assert-CheckoutIdentity[\s\S]*?\n\}/)?.[0] ?? "";
-    assert.match(identityHelper, /git -C \$Path rev-parse HEAD/);
-    assert.match(identityHelper, /\$observed -cne \$ExpectedSha/);
+    const snapshotHelper = candidate.match(/function Get-CheckoutSnapshot[\s\S]*?\n\}/)?.[0] ?? "";
+    assert.match(snapshotHelper, /Get-DirectTreeHash \$Path \$true/);
+    assert.match(snapshotHelper, /Get-DirectTreeHash \$git \$false/);
     const block = candidate.match(/if \(\$Mode -eq 'RunBehavioralSuite'\) \{([\s\S]*?)\n\}\n\nif \(\$Mode -eq 'ValidateReceipt'\)/)?.[1] ?? "";
     assert.ok(block, "post-suite finalization mode missing");
     const receiptHash = block.indexOf("$receiptBefore = Get-FileSha $ReceiptPath");
     const evidenceHash = block.indexOf("$evidenceBefore = Get-TreeHash $EvidenceRoot");
+    const checkoutHash = block.indexOf("$checkoutSnapshots[$item.Label] = Get-CheckoutSnapshot $item.Path");
+    const commandHash = block.indexOf("$commandFileHashes[$name] = if ($path) { Get-FileSha $path } else { '' }");
+    const environmentClear = block.indexOf("[Environment]::SetEnvironmentVariable($name, $null, 'Process')");
     const bounded = block.indexOf("$suite = Invoke-Bounded 'powershell.exe'");
+    const environmentRestore = block.indexOf("[Environment]::SetEnvironmentVariable($name, $commandFileValues[$name], 'Process')", bounded);
     const exitGate = block.indexOf("Assert-ExitZero $suite 'exact-candidate behavioral suite'");
+    const processGate = block.indexOf("Stop-TrackedProcessTrees", exitGate);
     const mutationGate = block.indexOf("throw 'behavioral suite mutated frozen artifacts'");
-    const cleanGate = block.indexOf("Assert-FrozenArtifactsSafe $EvidenceRoot $Canary $CandidateRoot $BaselineRoot $HarnessRoot", mutationGate);
-    const identityGate = block.indexOf("foreach ($item in $suiteCheckouts) { Assert-CheckoutIdentity $item.Path $item.Label $item.Sha }", cleanGate);
-    const revoke = block.indexOf("Remove-UploadAuthorizations $ReceiptPath", identityGate);
+    const commandGate = block.indexOf("throw \"behavioral suite mutated GitHub command file: $name\"", mutationGate);
+    const snapshotGate = block.indexOf("Assert-CheckoutSnapshot $checkoutSnapshots[$item.Label] $item.Path $item.Label", commandGate);
+    const canaryGate = block.indexOf("$evidenceHits = @(Find-Canary $EvidenceRoot $Canary)", snapshotGate);
+    const revoke = block.indexOf("Remove-UploadAuthorizations $ReceiptPath", canaryGate);
     const receiptAuth = block.indexOf("\n    New-UploadAuthorization 'Receipt' $ReceiptPath $RunNonce $ExpectedHarnessSha", revoke);
     const evidenceAuth = block.indexOf("\n    New-UploadAuthorization 'Evidence' $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot", receiptAuth);
-    assert.ok(receiptHash >= 0 && evidenceHash >= 0 && receiptHash < bounded && evidenceHash < bounded, "artifact hashes must be frozen before the suite");
-    assert.ok(bounded < exitGate && exitGate < mutationGate && mutationGate < cleanGate && cleanGate < identityGate, "bounded completion, hash comparison, checkout cleanliness, and exact identity must be ordered");
-    assert.ok(identityGate < revoke && revoke < receiptAuth && receiptAuth < evidenceAuth, "only post-suite finalization may re-authorize uploads");
+    assert.ok(receiptHash >= 0 && evidenceHash >= 0 && checkoutHash >= 0 && commandHash >= 0 && receiptHash < bounded && evidenceHash < bounded && checkoutHash < bounded && commandHash < bounded, "artifacts, checkouts, git metadata, and command files must be frozen before the suite");
+    assert.ok(commandHash < environmentClear && environmentClear < bounded && bounded < environmentRestore && environmentRestore < exitGate, "GitHub command channels must be absent from the bounded child and restored only after it exits");
+    assert.ok(exitGate < processGate && processGate < mutationGate && mutationGate < commandGate && commandGate < snapshotGate && snapshotGate < canaryGate, "post-suite checks must be direct, process-closed, and ordered without git execution");
+    assert.doesNotMatch(block.slice(exitGate, revoke), /(?:^|\s)git(?:\s|$)|Assert-FrozenArtifactsSafe|Assert-CheckoutIdentity/, "post-suite finalization must not execute candidate-controlled git configuration");
+    assert.match(block, /try \{[\s\S]*\$suite = Invoke-Bounded[\s\S]*\} finally \{[\s\S]*SetEnvironmentVariable\(\$name, \$commandFileValues\[\$name\]/);
+    assert.ok(canaryGate < revoke && revoke < receiptAuth && receiptAuth < evidenceAuth, "only post-suite finalization may re-authorize uploads");
     assert.match(block, /catch \{[\s\S]*Remove-UploadAuthorizations \$ReceiptPath[\s\S]*throw/);
   };
   contract(source);
@@ -410,9 +419,11 @@ test("bounded behavioral suite re-finalizes immutable artifacts and checkouts be
     source.replace("$suite = Invoke-Bounded 'powershell.exe'", "$suite = Start-Process 'powershell.exe'"),
     source.replace("Assert-ExitZero $suite 'exact-candidate behavioral suite'", "Write-Output $suite.ExitCode"),
     source.replace("throw 'behavioral suite mutated frozen artifacts'", "Write-Output 'artifact mutation ignored'"),
-    source.replaceAll("Assert-FrozenArtifactsSafe $EvidenceRoot $Canary $CandidateRoot $BaselineRoot $HarnessRoot", "Assert-FrozenArtifactsSafe $EvidenceRoot $Canary"),
-    source.replaceAll("foreach ($item in $suiteCheckouts) { Assert-CheckoutIdentity $item.Path $item.Label $item.Sha }", "Write-Output 'identity skipped'"),
-    source.replace("$observed -cne $ExpectedSha", "$false"),
+    source.replace("[Environment]::SetEnvironmentVariable($name, $null, 'Process')", "# command channels left available"),
+    source.replace("$commandFileHashes[$name] = if ($path) { Get-FileSha $path } else { '' }", "$commandFileHashes[$name] = ''"),
+    source.replace("    Stop-TrackedProcessTrees\n    if ((Get-FileSha $ReceiptPath)", "    # process cleanup skipped\n    if ((Get-FileSha $ReceiptPath)"),
+    source.replace("Assert-CheckoutSnapshot $checkoutSnapshots[$item.Label] $item.Path $item.Label", "Write-Output 'snapshot skipped'"),
+    source.replace("Get-DirectTreeHash $git $false", "Get-DirectTreeHash $Path $true"),
     source.replace("New-UploadAuthorization 'Evidence' $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot", "# New-UploadAuthorization 'Evidence' $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot"),
   ].entries()) assert.throws(() => contract(mutant), `post-suite finalization mutant ${index} was accepted`);
 });
@@ -827,8 +838,12 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.ok(pythonPinIndex >= 0 && dependencyIndex >= 0 && ownershipIndex >= 0 && nativeAcceptanceIndex >= 0 && exactSuiteIndex >= 0);
     assert.ok(pythonPinIndex < dependencyIndex && dependencyIndex < ownershipIndex && ownershipIndex < nativeAcceptanceIndex && nativeAcceptanceIndex < exactSuiteIndex, "the exact behavioral suite must run only after every acceptance Python consumer");
     assert.equal(validationStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success'");
-    assert.equal(receiptUploadStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success' && env.RECEIPT_UPLOADABLE == 'true'");
-    assert.equal(evidenceUploadStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success' && env.EVIDENCE_UPLOADABLE == 'true'");
+    assert.equal(validationStep?.id, "validate_artifacts");
+    assert.match(validationStep?.run ?? "", /receipt_uploadable=true[\s\S]*GITHUB_OUTPUT/);
+    assert.match(validationStep?.run ?? "", /evidence_uploadable=true[\s\S]*GITHUB_OUTPUT/);
+    assert.equal(receiptUploadStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success' && steps.validate_artifacts.outcome == 'success' && steps.validate_artifacts.outputs.receipt_uploadable == 'true'");
+    assert.equal(evidenceUploadStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success' && steps.validate_artifacts.outcome == 'success' && steps.validate_artifacts.outputs.evidence_uploadable == 'true'");
+    assert.doesNotMatch(source, /RECEIPT_UPLOADABLE|EVIDENCE_UPLOADABLE/);
     const pythonPinRun = [
       "$python = (& .\\harness\\acceptance\\windows-terminal-workstation.ps1 -Mode Probe -Probe ResolvePython | Out-String).Trim()",
       "if ($LASTEXITCODE -ne 0 -or -not $python) { exit 1 }",
@@ -898,8 +913,8 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     moveStepBefore(workflow, "Run exact-candidate behavioral tests under Windows PowerShell 5.1", "Install receipt-schema test dependency"),
     moveStepBefore(workflow, "Run exact-candidate behavioral tests under Windows PowerShell 5.1", "Exercise ownership faults and Unicode transport"),
     workflow.replace("if: always() && steps.exact_behavioral_suite.outcome == 'success'\n        shell: powershell", "if: always()\n        shell: powershell"),
-    workflow.replace("if: always() && steps.exact_behavioral_suite.outcome == 'success' && env.RECEIPT_UPLOADABLE == 'true'", "if: always() && env.RECEIPT_UPLOADABLE == 'true'"),
-    workflow.replace("if: always() && steps.exact_behavioral_suite.outcome == 'success' && env.EVIDENCE_UPLOADABLE == 'true'", "if: always() && env.EVIDENCE_UPLOADABLE == 'true'"),
+    workflow.replace("steps.validate_artifacts.outcome == 'success' && steps.validate_artifacts.outputs.receipt_uploadable == 'true'", "true"),
+    workflow.replace("steps.validate_artifacts.outcome == 'success' && steps.validate_artifacts.outputs.evidence_uploadable == 'true'", "true"),
     workflow.replace("& $env:CERT_PYTHON .\\harness\\tests\\knowledge-git.test.py", "python .\\harness\\tests\\knowledge-git.test.py"),
   ].entries()) assert.throws(() => contract(forged), `workflow mutant ${index} was accepted`);
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");

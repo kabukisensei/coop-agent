@@ -92,6 +92,38 @@ function Get-TreeHash([string]$Path) {
   }
 }
 
+function Get-DirectTreeHash([string]$Path, [bool]$ExcludeGit = $false) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "tree does not exist: $Path" }
+  $resolved = (Resolve-Path -LiteralPath $Path).Path
+  $rows = New-Object System.Collections.Generic.List[string]
+  Get-ChildItem -LiteralPath $resolved -Recurse -Force |
+    Where-Object { -not $ExcludeGit -or $_.FullName -notmatch '[\\/]\.git([\\/]|$)' } |
+    Sort-Object FullName |
+    ForEach-Object {
+      $rel = $_.FullName.Substring($resolved.Length).TrimStart('\','/').Replace('\','/')
+      $digest = if (-not $_.PSIsContainer) { Get-FileSha $_.FullName } else { '' }
+      $rows.Add("$rel`t$([int]$_.Attributes)`t$digest")
+    }
+  $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes(($rows -join "`n"))
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant() }
+  finally { $sha.Dispose() }
+}
+
+function Get-CheckoutSnapshot([string]$Path) {
+  $git = Join-Path $Path '.git'
+  if (-not (Test-Path -LiteralPath $git -PathType Container)) { throw "checkout git metadata is not an ordinary directory: $Path" }
+  return [pscustomobject]@{
+    content = Get-DirectTreeHash $Path $true
+    git_control = Get-DirectTreeHash $git $false
+  }
+}
+
+function Assert-CheckoutSnapshot([object]$Expected, [string]$Path, [string]$Label) {
+  $actual = Get-CheckoutSnapshot $Path
+  if ($actual.content -cne $Expected.content -or $actual.git_control -cne $Expected.git_control) { throw "behavioral suite mutated checkout content or git metadata: $Label" }
+}
+
 function Find-Canary([string]$Path, [string]$Needle) {
   if (-not $Needle) { throw 'canary is required' }
   if (-not (Test-Path -LiteralPath $Path)) { return @() }
@@ -859,13 +891,35 @@ if ($Mode -eq 'RunBehavioralSuite') {
     Assert-FrozenArtifactsSafe $EvidenceRoot $Canary $CandidateRoot $BaselineRoot $HarnessRoot
     $receiptBefore = Get-FileSha $ReceiptPath
     $evidenceBefore = Get-TreeHash $EvidenceRoot
+    $checkoutSnapshots = [ordered]@{}
+    foreach ($item in $suiteCheckouts) { $checkoutSnapshots[$item.Label] = Get-CheckoutSnapshot $item.Path }
+    $commandFileNames = @('GITHUB_ENV','GITHUB_PATH','GITHUB_OUTPUT','GITHUB_STATE','GITHUB_STEP_SUMMARY')
+    $commandFileValues = [ordered]@{}
+    $commandFileHashes = [ordered]@{}
+    foreach ($name in $commandFileNames) {
+      $path = [Environment]::GetEnvironmentVariable($name, 'Process')
+      $commandFileValues[$name] = $path
+      $commandFileHashes[$name] = if ($path) { Get-FileSha $path } else { '' }
+      [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+    }
 
     $logBase = Join-Path (Split-Path -Parent $ReceiptPath) 'exact-behavioral-suite'
-    $suite = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'tests\run.ps1')) $logBase 1800
+    try {
+      $suite = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'tests\run.ps1')) $logBase 1800
+    } finally {
+      foreach ($name in $commandFileNames) { [Environment]::SetEnvironmentVariable($name, $commandFileValues[$name], 'Process') }
+    }
     Assert-ExitZero $suite 'exact-candidate behavioral suite'
+    Stop-TrackedProcessTrees
     if ((Get-FileSha $ReceiptPath) -cne $receiptBefore -or (Get-TreeHash $EvidenceRoot) -cne $evidenceBefore) { throw 'behavioral suite mutated frozen artifacts' }
-    Assert-FrozenArtifactsSafe $EvidenceRoot $Canary $CandidateRoot $BaselineRoot $HarnessRoot
-    foreach ($item in $suiteCheckouts) { Assert-CheckoutIdentity $item.Path $item.Label $item.Sha }
+    foreach ($name in $commandFileNames) {
+      $path = $commandFileValues[$name]
+      $actual = if ($path) { Get-FileSha $path } else { '' }
+      if ($actual -cne $commandFileHashes[$name]) { throw "behavioral suite mutated GitHub command file: $name" }
+    }
+    foreach ($item in $suiteCheckouts) { Assert-CheckoutSnapshot $checkoutSnapshots[$item.Label] $item.Path $item.Label }
+    $evidenceHits = @(Find-Canary $EvidenceRoot $Canary)
+    if ($evidenceHits.Count -gt 0) { throw 'credential canary found in evidence after behavioral suite' }
     $receiptHits = @(Find-Canary $ReceiptPath $Canary)
     if ($receiptHits.Count -gt 0) { throw 'credential canary found in receipt after behavioral suite' }
 
