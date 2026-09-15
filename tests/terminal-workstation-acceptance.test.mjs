@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
@@ -878,10 +878,27 @@ test("upgrade preserves operator state while managed MCP converges by release", 
 });
 
 test("workflow binds dispatch and the named same-repo PR to the exact event-authorized SHA", () => {
-  const workflow = readFileSync(WORKFLOW, "utf8");
+  for (let current = WORKFLOW; ; current = dirname(current)) {
+    assert.equal(lstatSync(current).isSymbolicLink(), false, `certification workflow ancestry must not contain a symbolic link: ${current}`);
+    if (current === ROOT) break;
+    assert.notEqual(dirname(current), current, "certification workflow path escaped the repository root");
+  }
+  const workflowStat = lstatSync(WORKFLOW);
+  assert.equal(workflowStat.isSymbolicLink(), false, "certification workflow path must not be a symbolic link");
+  assert.equal(workflowStat.isFile(), true, "certification workflow path must be a regular file");
+  const workflowBytes = readFileSync(WORKFLOW);
+  const workflow = workflowBytes.toString("utf8");
+  assert.equal(Buffer.from(workflow, "utf8").equals(workflowBytes), true, "certification workflow must be canonical UTF-8 bytes");
+  assert.match(readFileSync(join(ROOT, ".gitattributes"), "utf8"), /^\.github\/workflows\/windows-terminal-workstation-acceptance\.yml text eol=lf$/m, "certification workflow line endings must be pinned to LF");
+  const workflowRepoPath = ".github/workflows/windows-terminal-workstation-acceptance.yml";
+  const indexEntry = execFileSync("git", ["-C", ROOT, "ls-files", "-s", "--", workflowRepoPath], { encoding: "utf8" }).trim();
+  const indexMatch = indexEntry.match(/^100644 ([0-9a-f]{40}) 0\t\.github\/workflows\/windows-terminal-workstation-acceptance\.yml$/);
+  assert.ok(indexMatch, "certification workflow must be one ordinary 100644 Git index entry");
+  const gitBlob = createHash("sha1").update(`blob ${workflowBytes.length}\0`).update(workflowBytes).digest("hex");
+  assert.equal(gitBlob, indexMatch[1], "certification workflow bytes must match the indexed Git blob");
   const expectedGate = "if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'integration/presentation-2026-09-20' && github.event.pull_request.head.repo.full_name == github.repository) }}";
   const contract = (source) => {
-    assert.equal(createHash("sha256").update(source).digest("hex"), "81e2175aa448c5321978ec1f9b1349a03237c6923c053047dd71f0d041699624", "exact acceptance workflow source changed");
+    assert.equal(createHash("sha256").update(Buffer.from(source, "utf8")).digest("hex"), "81e2175aa448c5321978ec1f9b1349a03237c6923c053047dd71f0d041699624", "exact acceptance workflow source changed");
     assert.match(source, /workflow_dispatch:\s*\n\s*inputs:\s*\n\s*candidate_sha:[\s\S]*required: true[\s\S]*pull_request:\s*\n\s*branches:\s*\n\s*- main/);
     assert.ok(source.includes(expectedGate), "native job must reject unauthorized PR heads and forks");
     assert.match(source, /permissions:\s*\n\s*contents: read/);
