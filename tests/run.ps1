@@ -105,12 +105,12 @@ try {
     $env:COOP_DIR = $onboardRoot
     $env:COOP_AZ_BIN = Join-Path $stub 'missing-az'
     $onboardProcess = Start-Process -FilePath $psExe -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $coop + '"'),'onboard','--json') -PassThru -NoNewWindow -RedirectStandardInput $onboardInput -RedirectStandardOutput $onboardStdout -RedirectStandardError $onboardStderr
+    $null = $onboardProcess.Handle
     $onboardProcess.WaitForExit()
-    $onboardProcess.Refresh()
     $onboardExit = $onboardProcess.ExitCode
     $invalidProcess = Start-Process -FilePath $psExe -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $coop + '"'),'onboard','--invalid-acceptance-flag') -PassThru -NoNewWindow -RedirectStandardOutput $invalidStdout -RedirectStandardError $invalidStderr
+    $null = $invalidProcess.Handle
     $invalidProcess.WaitForExit()
-    $invalidProcess.Refresh()
     $invalidExit = $invalidProcess.ExitCode
   } finally {
     $env:COOP_DIR = $savedCoopDir
