@@ -406,6 +406,9 @@ class KnowledgeGitOwnershipTests(unittest.TestCase):
                     kg.OWNERSHIP_EMPTY,
                 )
             self.assertTrue(ownership.close())
+            self.assertEqual(
+                kg.finish_owned(ownership, kg.EXIT_TIMEOUT), kg.EXIT_TIMEOUT
+            )
         terminate.assert_called_once_with(job)
         taskkill.assert_not_called()
         wait_empty.assert_not_called()

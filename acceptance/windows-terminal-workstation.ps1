@@ -599,7 +599,10 @@ function Invoke-OwnershipLifecycleFault([string]$Fixture, [string]$LogBase, [str
       $result = Invoke-Bounded 'node' @($Fixture,'parent-with-descendant',$PayloadMarker) $LogBase 5
       if ($result.ExitCode -ne 126) { throw "$fault preserved payload execution instead of uncertainty: $($result.ExitCode)" }
     } elseif ($fault -in @('job-terminate','job-close')) {
-      $result = Invoke-Bounded 'node' @($Fixture,'parent-with-descendant',$PayloadMarker) $LogBase 1
+      # The fixture gives its descendant one second to publish its identity.
+      # Keep the helper deadline distinct so fixture setup cannot race the
+      # timeout branch whose lifecycle fault this case is meant to exercise.
+      $result = Invoke-Bounded 'node' @($Fixture,'parent-with-descendant',$PayloadMarker) $LogBase 5
       if ($result.ExitCode -ne 124) { throw "$fault did not preserve timeout 124: $($result.ExitCode)" }
     } else {
       throw "unsupported ownership lifecycle fault: $fault"
