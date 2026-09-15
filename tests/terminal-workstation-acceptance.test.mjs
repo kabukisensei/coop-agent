@@ -575,8 +575,7 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
     writeFileSync(script, candidate, "utf8");
     return spawnSync(PWSH, ["-NoLogo", "-NoProfile", "-File", script, "-Mode", "Probe", "-Probe", "ResolvePython"], { encoding: "utf8", env, cwd });
   };
-  const contract = (candidate) => {
-    const resolver = candidate.match(/function Get-AcceptancePython \{([\s\S]*?)\n\}/)?.[1] ?? "";
+  const assertWiring = (candidate) => {
     assert.match(candidate, /IsPathRooted\(\$Path\)/);
     assert.match(candidate, /Equals\(\$Path, \$expected, \$comparison\)/);
     assert.match(candidate, /Test-Path -LiteralPath \$expected -PathType Leaf/);
@@ -585,7 +584,8 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
     assert.match(candidate, /try \{ \$pythonPath = Get-AcceptancePython \} catch \{ \$pythonPath = '' \}/);
     assert.match(candidate, /FilePath = \$pythonPath/);
     assert.match(candidate, /\$onboardPython = Get-AcceptancePython[\s\S]*Invoke-Bounded \$onboardPython/);
-
+  };
+  const assertBehavior = (candidate) => {
     const pinnedPath = resolve(PYTHON_PATH);
     const pinned = probe(candidate, { ...process.env, CERT_PYTHON: pinnedPath });
     assert.equal(pinned.status, 0, pinned.stderr);
@@ -615,16 +615,19 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
     else { writeFileSync(wrapper, `#!/bin/sh\nexec '${pinnedPath.replaceAll("'", "'\\''")}' "$@"\n`, "utf8"); chmodSync(wrapper, 0o755); }
     assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: wrapper }).status, 0);
   };
-  contract(source);
+  assertWiring(source);
+  assertBehavior(source);
   for (const [index, mutant] of [
     source.replace("if ($env:CERT_PYTHON) {", "if ($false) {"),
     source.replace("return Resolve-AcceptancePythonExecutable $env:CERT_PYTHON", "return 'python'"),
     source.replace("return Resolve-AcceptancePythonExecutable $python[0].Source", `return '${resolve(process.execPath).replaceAll("'", "''")}'`),
     source.replace("if (-not [string]::Equals($Path, $expected, $comparison))", "if ($false)"),
     source.replace("if (-not [string]::Equals($actual, $expected, $comparison))", "if ($false)"),
+  ].entries()) assert.throws(() => assertBehavior(mutant), `Python resolver behavioral mutant ${index} was accepted`);
+  for (const [index, mutant] of [
     source.replace("FilePath = $pythonPath", "FilePath = 'python'"),
     source.replace("$onboardPython = Get-AcceptancePython", "$onboardPython = 'python'"),
-  ].entries()) assert.throws(() => contract(mutant), `Python resolver mutant ${index} was accepted`);
+  ].entries()) assert.throws(() => assertWiring(mutant), `Python resolver wiring mutant ${index} was accepted`);
 });
 
 test("upgrade preserves operator state while managed MCP converges by release", () => {
