@@ -102,6 +102,7 @@ jobs:
       - name: Revalidate runner Python after behavioral tests
         shell: powershell
         run: |
+          Remove-Item Env:CERT_PYTHON -ErrorAction SilentlyContinue
           $python = (& .\harness\acceptance\windows-terminal-workstation.ps1 -Mode Probe -Probe ResolvePython | Out-String).Trim()
           if ($LASTEXITCODE -ne 0 -or -not $python) { exit 1 }
           & $python --version

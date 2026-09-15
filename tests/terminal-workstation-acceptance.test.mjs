@@ -733,7 +733,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.deepEqual(activeSteps[pythonRepinIndex], {
       name: "Revalidate runner Python after behavioral tests",
       shell: "powershell",
-      run: pythonPinRun,
+      run: ["Remove-Item Env:CERT_PYTHON -ErrorAction SilentlyContinue", pythonPinRun].join("\n"),
     });
     assert.match(activeSteps[dependencyIndex].run, /& \$env:CERT_PYTHON -m pip install/);
     assert.match(activeSteps[dependencyIndex].run, /& \$env:CERT_PYTHON -c "import jsonschema"/);
@@ -788,6 +788,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace('"CERT_PYTHON=$python"', '"CERT_PYTHON=python"'),
     workflow.replace("      - name: Pin runner Python for certification", "      - name: Pin runner Python for certification\n        continue-on-error: true"),
     workflow.replace("Revalidate runner Python after behavioral tests", "Skip runner Python revalidation"),
+    workflow.replace("          Remove-Item Env:CERT_PYTHON -ErrorAction SilentlyContinue\n", ""),
     moveStepBefore(workflow, "Exercise ownership faults and Unicode transport", "Revalidate runner Python after behavioral tests"),
     moveStepBefore(workflow, "Run native acceptance (cannot close human gate)", "Revalidate runner Python after behavioral tests"),
     workflow.replace("& $env:CERT_PYTHON .\\harness\\tests\\knowledge-git.test.py", "python .\\harness\\tests\\knowledge-git.test.py"),
