@@ -149,12 +149,13 @@ jobs:
           if ($harnessRc -ne 0) { exit $harnessRc }
 
       - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1
+        id: exact_behavioral_suite
         shell: powershell
         working-directory: candidate
         run: .\tests\run.ps1
 
       - name: Validate fail-closed receipt
-        if: always()
+        if: always() && steps.exact_behavioral_suite.outcome == 'success'
         shell: powershell
         run: |
           if (-not $env:RECEIPT_PATH -or -not (Test-Path -LiteralPath $env:RECEIPT_PATH)) {
@@ -191,7 +192,7 @@ jobs:
           }
 
       - name: Upload fail-closed receipt
-        if: always() && env.RECEIPT_UPLOADABLE == 'true'
+        if: always() && steps.exact_behavioral_suite.outcome == 'success' && env.RECEIPT_UPLOADABLE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: terminal-workstation-receipt-${{ env.VERIFIED_CANDIDATE_SHA }}-${{ env.VERIFIED_CANDIDATE_BUILD }}
@@ -201,7 +202,7 @@ jobs:
           include-hidden-files: false
 
       - name: Upload fully scanned automated evidence
-        if: always() && env.EVIDENCE_UPLOADABLE == 'true'
+        if: always() && steps.exact_behavioral_suite.outcome == 'success' && env.EVIDENCE_UPLOADABLE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: terminal-workstation-automated-${{ env.VERIFIED_CANDIDATE_SHA }}-${{ env.VERIFIED_CANDIDATE_BUILD }}

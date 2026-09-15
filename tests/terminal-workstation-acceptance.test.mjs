@@ -688,6 +688,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.match(source, /\$observed = \(& git -C \$checkout rev-parse HEAD\)\.Trim\(\)[\s\S]*\$observed -cne \$expected/);
     const exactCandidateSuiteLiteral = [
       "      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1",
+      "        id: exact_behavioral_suite",
       "        shell: powershell",
       "        working-directory: candidate",
       "        run: .\\tests\\run.ps1",
@@ -702,17 +703,24 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     const exactCandidateSuiteSteps = activeSteps.filter((step) => step?.name === "Run exact-candidate behavioral tests under Windows PowerShell 5.1");
     assert.deepEqual(exactCandidateSuiteSteps, [{
       name: "Run exact-candidate behavioral tests under Windows PowerShell 5.1",
+      id: "exact_behavioral_suite",
       shell: "powershell",
       "working-directory": "candidate",
       run: ".\\tests\\run.ps1",
     }]);
     const pythonPinIndex = activeSteps.findIndex((step) => step?.name === "Pin runner Python for certification");
     const exactSuiteIndex = activeSteps.findIndex((step) => step?.name === "Run exact-candidate behavioral tests under Windows PowerShell 5.1");
+    const validationStep = activeSteps.find((step) => step?.name === "Validate fail-closed receipt");
+    const receiptUploadStep = activeSteps.find((step) => step?.name === "Upload fail-closed receipt");
+    const evidenceUploadStep = activeSteps.find((step) => step?.name === "Upload fully scanned automated evidence");
     const dependencyIndex = activeSteps.findIndex((step) => step?.name === "Install receipt-schema test dependency");
     const ownershipIndex = activeSteps.findIndex((step) => step?.name === "Exercise ownership faults and Unicode transport");
     const nativeAcceptanceIndex = activeSteps.findIndex((step) => step?.name === "Run native acceptance (cannot close human gate)");
     assert.ok(pythonPinIndex >= 0 && dependencyIndex >= 0 && ownershipIndex >= 0 && nativeAcceptanceIndex >= 0 && exactSuiteIndex >= 0);
     assert.ok(pythonPinIndex < dependencyIndex && dependencyIndex < ownershipIndex && ownershipIndex < nativeAcceptanceIndex && nativeAcceptanceIndex < exactSuiteIndex, "the exact behavioral suite must run only after every acceptance Python consumer");
+    assert.equal(validationStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success'");
+    assert.equal(receiptUploadStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success' && env.RECEIPT_UPLOADABLE == 'true'");
+    assert.equal(evidenceUploadStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success' && env.EVIDENCE_UPLOADABLE == 'true'");
     const pythonPinRun = [
       "$python = (& .\\harness\\acceptance\\windows-terminal-workstation.ps1 -Mode Probe -Probe ResolvePython | Out-String).Trim()",
       "if ($LASTEXITCODE -ne 0 -or -not $python) { exit 1 }",
@@ -739,8 +747,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.doesNotMatch(source, /github\.sha|refs\/pull|build-[0-9a-f]{8}|295693a/);
     assert.match(source, /ajv-cli@5\.0\.0/); assert.match(source, /terminal-workstation-receipt\.schema\.json/); assert.match(source, /runs-on: windows-latest/);
     assert.match(source, /terminal-workstation-receipt-\$\{\{ env\.VERIFIED_CANDIDATE_SHA \}\}-\$\{\{ env\.VERIFIED_CANDIDATE_BUILD \}\}/);
-    assert.match(source, /if: always\(\) && env\.RECEIPT_UPLOADABLE == 'true'/);
-    assert.match(source, /if: always\(\) && env\.EVIDENCE_UPLOADABLE == 'true'/);
+    assert.match(source, /steps\.exact_behavioral_suite\.outcome == 'success'/);
     assert.match(source, /ValidateUploadAuthorization -AuthorizationKind Receipt/);
     assert.match(source, /ValidateUploadAuthorization -AuthorizationKind Evidence/);
     assert.match(source, /--test-name-pattern "Unicode\|lifecycle"/);
@@ -764,7 +771,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("github.event.pull_request.head.repo.full_name == github.repository", "true"),
     workflow.replace("ref: ${{ env.CANDIDATE_SHA }}", "ref: ${{ github.sha }}"),
     workflow.replace("$observed -cne $expected", "$false"),
-    workflow.replace("Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        shell: powershell", "Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        shell: pwsh"),
+    workflow.replace("Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        id: exact_behavioral_suite\n        shell: powershell", "Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        id: exact_behavioral_suite\n        shell: pwsh"),
     workflow.replace("working-directory: candidate\n        run: .\\tests\\run.ps1", "working-directory: candidate\n        continue-on-error: true\n        run: .\\tests\\run.ps1"),
     workflow.replace("        shell: powershell\n        working-directory: candidate", "        # shell: powershell\n        shell: pwsh\n        working-directory: candidate"),
     workflow.replace("working-directory: candidate\n        run: .\\tests\\run.ps1", "working-directory: candidate-other\n        run: .\\tests\\run.ps1"),
@@ -772,7 +779,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("        run: .\\tests\\run.ps1", "        \"continue-on-error\": true\n        run: .\\tests\\run.ps1"),
     workflow.replace("        run: .\\tests\\run.ps1", "        run: .\\tests\\run.ps1\n          ; exit 0"),
     workflow.replace("      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1", "      - continue-on-error: true\n        #      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1"),
-    workflow.replace("        working-directory: candidate\n        run: .\\tests\\run.ps1", "        working-directory: candidate\n        continue-on-error: true\n        run: .\\tests\\run.ps1").replace("    runs-on: windows-latest", "    name: |\n      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        shell: powershell\n        working-directory: candidate\n        run: .\\tests\\run.ps1\n      - name: scalar terminator\n    runs-on: windows-latest"),
+    workflow.replace("        working-directory: candidate\n        run: .\\tests\\run.ps1", "        working-directory: candidate\n        continue-on-error: true\n        run: .\\tests\\run.ps1").replace("    runs-on: windows-latest", "    name: |\n      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        id: exact_behavioral_suite\n        shell: powershell\n        working-directory: candidate\n        run: .\\tests\\run.ps1\n      - name: scalar terminator\n    runs-on: windows-latest"),
     workflow.replace("-Probe ResolvePython", "-Probe ValidateSha"),
     workflow.replace("$env:GITHUB_PATH -Encoding utf8 -Append", "$env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append"),
     workflow.replace("& $env:CERT_PYTHON -m pip install", "python -m pip install"),
@@ -782,6 +789,9 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("      - name: Pin runner Python for certification", "      - name: Pin runner Python for certification\n        continue-on-error: true"),
     moveStepBefore(workflow, "Run exact-candidate behavioral tests under Windows PowerShell 5.1", "Install receipt-schema test dependency"),
     moveStepBefore(workflow, "Run exact-candidate behavioral tests under Windows PowerShell 5.1", "Exercise ownership faults and Unicode transport"),
+    workflow.replace("if: always() && steps.exact_behavioral_suite.outcome == 'success'\n        shell: powershell", "if: always()\n        shell: powershell"),
+    workflow.replace("if: always() && steps.exact_behavioral_suite.outcome == 'success' && env.RECEIPT_UPLOADABLE == 'true'", "if: always() && env.RECEIPT_UPLOADABLE == 'true'"),
+    workflow.replace("if: always() && steps.exact_behavioral_suite.outcome == 'success' && env.EVIDENCE_UPLOADABLE == 'true'", "if: always() && env.EVIDENCE_UPLOADABLE == 'true'"),
     workflow.replace("& $env:CERT_PYTHON .\\harness\\tests\\knowledge-git.test.py", "python .\\harness\\tests\\knowledge-git.test.py"),
   ].entries()) assert.throws(() => contract(forged), `workflow mutant ${index} was accepted`);
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
