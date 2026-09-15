@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { fingerprintBuild } from "../lib/support-center.mjs";
@@ -570,6 +570,11 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
   const dir = mkdtempSync(join(tmpdir(), "coop-python-pin-"));
   let probeNumber = 0;
   const normalize = (value) => process.platform === "win32" ? value.toLowerCase() : value;
+  const invalidFirstDir = join(dir, "invalid-first");
+  mkdirSync(invalidFirstDir);
+  const invalidPython = join(invalidFirstDir, process.platform === "win32" ? "python3.exe" : "python3");
+  copyFileSync(process.execPath, invalidPython);
+  chmodSync(invalidPython, 0o755);
   const probe = (candidate, env, cwd = dir) => {
     const script = join(dir, `probe-${probeNumber++}.ps1`);
     writeFileSync(script, candidate, "utf8");
@@ -597,6 +602,16 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
     const fallback = probe(candidate, fallbackEnv);
     assert.equal(fallback.status, 0, fallback.stderr);
     assert.equal(normalize(fallback.stdout.trim()), normalize(pinnedPath));
+
+    const invalidFirstEnv = { ...process.env, PATH: `${invalidFirstDir}${delimiter}${dirname(pinnedPath)}` };
+    delete invalidFirstEnv.CERT_PYTHON;
+    const invalidFirst = probe(candidate, invalidFirstEnv);
+    assert.equal(invalidFirst.status, 0, invalidFirst.stderr);
+    assert.equal(normalize(invalidFirst.stdout.trim()), normalize(pinnedPath));
+
+    const allInvalidEnv = { ...process.env, PATH: invalidFirstDir };
+    delete allInvalidEnv.CERT_PYTHON;
+    assert.notEqual(probe(candidate, allInvalidEnv).status, 0);
 
     assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: relative(dir, pinnedPath) }).status, 0);
     const separator = process.platform === "win32" ? "\\" : "/";
