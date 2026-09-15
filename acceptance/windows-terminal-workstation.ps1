@@ -13,7 +13,7 @@ param(
   [string]$ExpectedCandidateSha = '',
   [string]$ExpectedCandidateBuild = '',
   [switch]$VmOperatorMode,
-  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','ValidateLifecycleEvent','AuthorizeArtifacts','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
+  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','ValidateLifecycleEvent','AuthorizeArtifacts','ResolvePython','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
   [string]$Value = '',
   [string]$Root = '',
   [string]$Canary = ''
@@ -505,8 +505,9 @@ function Get-AcceptancePython {
   if ($env:CERT_PYTHON) {
     if (-not [System.IO.Path]::IsPathRooted($env:CERT_PYTHON)) { throw 'CERT_PYTHON must be an absolute path' }
     $pinned = [System.IO.Path]::GetFullPath($env:CERT_PYTHON)
-    if (-not (Test-Path -LiteralPath $pinned -PathType Leaf)) { throw 'CERT_PYTHON does not identify an executable file' }
-    return $pinned
+    $pinnedCommand = @(Get-Command -Name $pinned -CommandType Application -ErrorAction SilentlyContinue)
+    if ($pinnedCommand.Count -ne 1) { throw 'CERT_PYTHON does not identify an executable file' }
+    return [System.IO.Path]::GetFullPath($pinnedCommand[0].Source)
   }
   $python = @(Get-Command python3,python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
   if ($python.Count -ne 1) { throw 'acceptance Python is unavailable' }
@@ -682,6 +683,7 @@ if ($Mode -eq 'Probe') {
       Assert-UploadAuthorization 'Evidence' $ReceiptPath $Value $Canary $Root | Out-Null
       Write-Output 'PASS'
     }
+    'ResolvePython' { Write-Output (Get-AcceptancePython) }
     'BoundedCommandSuccess' {
       $result = Invoke-Bounded 'node' @($Value,'success') $Root 10
       if ($result.ExitCode -ne 23) { throw "bounded command status was not preserved: $($result.ExitCode)" }
