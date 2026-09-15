@@ -13,7 +13,7 @@ param(
   [string]$ExpectedCandidateSha = '',
   [string]$ExpectedCandidateBuild = '',
   [switch]$VmOperatorMode,
-  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','HashDirectTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','CollectExtensionInventory','ReconcileNpmState','ValidateLifecycleEvent','AuthorizeArtifacts','ResolvePython','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
+  [ValidateSet('ValidateSha','ValidateCheckout','AssertEmptyRoot','HashTree','HashDirectTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','CollectExtensionInventory','ReconcileNpmState','ValidateLifecycleEvent','AuthorizeArtifacts','ResolvePython','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
   [string]$Value = '',
   [string]$Root = '',
   [string]$Canary = ''
@@ -54,7 +54,9 @@ function Test-StrictSha([string]$Sha) {
 }
 
 function Assert-CheckoutIdentity([string]$Path, [string]$Label, [string]$ExpectedSha) {
+  Assert-NoReparseAncestry $Path $true
   if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "checkout missing: $Label" }
+  Assert-NoReparsePoints $Path "$Label checkout"
   $observed = (& git -C $Path rev-parse HEAD | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or $observed -cne $ExpectedSha) { throw "checkout identity mismatch: $Label" }
 }
@@ -111,6 +113,23 @@ function Remove-SafeTree([string]$Path) {
   return $true
 }
 
+function Test-SafeLeaf([string]$Path) {
+  Assert-NoReparseAncestry $Path $true $true
+  return [bool](Test-Path -LiteralPath $Path -PathType Leaf)
+}
+
+function Remove-SafeFile([string]$Path) {
+  try {
+    Assert-NoReparseAncestry $Path $true $true
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    return $true
+  } catch {
+    return $false
+  }
+}
+
 function Get-TreeHash([string]$Path) {
   $rows = New-Object System.Collections.Generic.List[string]
   $safeItems = @(Get-SafeTreeItems $Path 'tree')
@@ -153,6 +172,7 @@ function Get-DirectTreeHash([string]$Path, [bool]$ExcludeGit = $false) {
 
 function Get-CheckoutSnapshot([string]$Path) {
   $git = Join-Path $Path '.git'
+  Assert-NoReparseAncestry $git $true
   if (-not (Test-Path -LiteralPath $git -PathType Container)) { throw "checkout git metadata is not an ordinary directory: $Path" }
   return [pscustomobject]@{
     content = Get-DirectTreeHash $Path $true
@@ -511,7 +531,9 @@ function Assert-FrozenArtifactsSafe([string]$EvidencePath, [string]$Needle, [str
   Stop-TrackedProcessTrees
   if ($script:ProcessCleanupUncertain) { throw 'owned process cleanup uncertainty suppresses upload' }
   foreach ($item in @(@{ Path = $CandidatePath; Label = 'candidate' }, @{ Path = $BaselinePath; Label = 'baseline' }, @{ Path = $HarnessPath; Label = 'harness' })) {
+    if ($item.Path) { Assert-NoReparseAncestry $item.Path $true $true }
     if ($item.Path -and (Test-Path -LiteralPath $item.Path -PathType Container)) {
+      Assert-NoReparsePoints $item.Path "$($item.Label) checkout"
       $sourceStatus = (& git -C $item.Path status --porcelain --untracked-files=all | Out-String).Trim()
       if ($LASTEXITCODE -ne 0 -or $sourceStatus) { throw "immutable $($item.Label) checkout is dirty or unreadable" }
     }
@@ -816,6 +838,7 @@ function Invoke-OwnershipLifecycleFault([string]$Fixture, [string]$LogBase, [str
 if ($Mode -eq 'Probe') {
   switch ($Probe) {
     'ValidateSha' { if (-not (Test-StrictSha $Value)) { throw 'invalid strict SHA' }; Write-Output 'PASS' }
+    'ValidateCheckout' { Assert-CheckoutIdentity $Root 'probe' $Value; [void](Get-CheckoutSnapshot $Root); Write-Output 'PASS' }
     'AssertEmptyRoot' { Assert-EmptyOwnedRoot $Root; Write-Output 'PASS' }
     'HashTree' { Write-Output (Get-TreeHash $Root) }
     'HashDirectTree' { Write-Output (Get-DirectTreeHash $Root $false) }
@@ -887,28 +910,28 @@ if ($Mode -eq 'Probe') {
       $result = Invoke-Bounded 'node' @($Value,'cleanup-race',$Canary) $Root 1
       if ($result.ExitCode -ne 124) { throw "process-tree probe did not return timeout 124: $($result.ExitCode)" }
       $marker = "$ReceiptPath.evidence-authorization.json"
-      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
+      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; Write-ExclusiveText $marker 'unsafe' } catch { [void](Remove-SafeFile $marker) }
       Start-Sleep -Milliseconds 2500
-      if (Test-Path -LiteralPath $Canary) { throw 'descendant wrote after process-tree finalization' }
-      if (Test-Path -LiteralPath $marker) { throw 'timeout incorrectly allowed an upload marker' }
+      if (Test-SafeLeaf $Canary) { throw 'descendant wrote after process-tree finalization' }
+      if (Test-SafeLeaf $marker) { throw 'timeout incorrectly allowed an upload marker' }
       Write-Output 'PASS'
     }
     'SuccessfulParentDescendant' {
       $result = Invoke-Bounded 'node' @($Value,'parent-success',$Canary) $Root 1
       if ($result.ExitCode -ne 124) { throw "surviving descendant was incorrectly treated as complete: $($result.ExitCode)" }
       $marker = "$ReceiptPath.evidence-authorization.json"
-      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
+      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; Write-ExclusiveText $marker 'unsafe' } catch { [void](Remove-SafeFile $marker) }
       Start-Sleep -Milliseconds 2500
-      if (Test-Path -LiteralPath $Canary) { throw 'successful-parent descendant wrote after ownership timeout' }
-      if (Test-Path -LiteralPath $marker) { throw 'surviving descendant incorrectly allowed an upload marker' }
+      if (Test-SafeLeaf $Canary) { throw 'successful-parent descendant wrote after ownership timeout' }
+      if (Test-SafeLeaf $marker) { throw 'surviving descendant incorrectly allowed an upload marker' }
       Write-Output 'PASS'
     }
     'OwnershipLifecycleFailure' {
       $faultResult = Invoke-OwnershipLifecycleFault $Value $Root $Canary
       $fault = $faultResult.Fault
       $marker = "$ReceiptPath.evidence-authorization.json"
-      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
-      if (Test-Path -LiteralPath $marker) { throw "$fault incorrectly allowed an upload marker" }
+      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; Write-ExclusiveText $marker 'unsafe' } catch { [void](Remove-SafeFile $marker) }
+      if (Test-SafeLeaf $marker) { throw "$fault incorrectly allowed an upload marker" }
       Write-Output 'PASS'
     }
     'FinalizeArtifacts' {
@@ -917,9 +940,9 @@ if ($Mode -eq 'Probe') {
         Assert-FrozenArtifactsSafe $Root $Canary
         $receiptHits = @(Find-Canary $Value $Canary)
         if ($receiptHits.Count -gt 0) { throw 'canary found in receipt' }
-        [System.IO.File]::WriteAllText($marker, "scanned`n", (New-Object System.Text.UTF8Encoding($false)))
+        Write-ExclusiveText $marker "scanned`n"
       } catch {
-        Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+        [void](Remove-SafeFile $marker)
         [void](Remove-SafeTree $Root)
         throw
       }
@@ -940,6 +963,8 @@ if ($Mode -eq 'RunBehavioralSuite') {
       @{ Path = $BaselineRoot; Sha = $script:BaselineSha; Label = 'baseline' }
     )
     foreach ($item in $suiteCheckouts) { Assert-CheckoutIdentity $item.Path $item.Label $item.Sha }
+    Assert-NoReparseAncestry $EvidenceRoot $true
+    Assert-NoReparseAncestry $ReceiptPath $true
     if (-not (Test-Path -LiteralPath $EvidenceRoot -PathType Container) -or -not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) { throw 'behavioral suite artifacts are missing' }
     Assert-Receipt (Read-Receipt $ReceiptPath) | Out-Null
     Assert-UploadAuthorization 'Receipt' $ReceiptPath $RunNonce $ExpectedHarnessSha | Out-Null
@@ -1045,9 +1070,9 @@ try {
   if (-not (Test-StrictSha $ExpectedHarnessSha)) { throw 'ExpectedHarnessSha must be exact 40-hex' }
   if (-not (Test-StrictSha $ExpectedCandidateSha)) { throw 'ExpectedCandidateSha must be exact lowercase 40-hex' }
   if ($ExpectedCandidateBuild -cnotmatch '^build-[0-9a-f]{8}$') { throw 'ExpectedCandidateBuild must be an exact build fingerprint' }
-  foreach ($path in @($HarnessRoot,$CandidateRoot,$BaselineRoot)) {
-    if (-not (Test-Path -LiteralPath $path -PathType Container)) { throw "checkout missing: $path" }
-  }
+  Assert-CheckoutIdentity $HarnessRoot 'harness' $ExpectedHarnessSha
+  Assert-CheckoutIdentity $CandidateRoot 'candidate' $script:CandidateSha
+  Assert-CheckoutIdentity $BaselineRoot 'baseline' $script:BaselineSha
   $harnessObservedSha = (& git -C $HarnessRoot rev-parse HEAD).Trim()
   $candidateObservedSha = (& git -C $CandidateRoot rev-parse HEAD).Trim()
   $baselineObservedSha = (& git -C $BaselineRoot rev-parse HEAD).Trim()

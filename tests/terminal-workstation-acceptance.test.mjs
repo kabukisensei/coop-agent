@@ -502,6 +502,32 @@ test("authorization revocation and validation reject linked paths before reading
   assert.equal(readFileSync(outside, "utf8"), "EXTERNAL-AUTHORIZATION", "validator changed the external authorization target");
 });
 
+test("failure cleanup rejects a linked receipt ancestor without deleting its marker target", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-reparse-marker-cleanup-"));
+  const evidenceRoot = join(dir, "evidence"); const outsideEvidence = join(dir, "outside-evidence");
+  mkdirSync(evidenceRoot); mkdirSync(outsideEvidence); writeFileSync(join(outsideEvidence, "canary.txt"), "MARKER-CANARY");
+  symlinkSync(outsideEvidence, join(evidenceRoot, "junction"), process.platform === "win32" ? "junction" : "dir");
+  const actualReceiptParent = join(dir, "actual-receipts"); mkdirSync(actualReceiptParent);
+  const linkedReceiptParent = join(dir, "linked-receipts"); symlinkSync(actualReceiptParent, linkedReceiptParent, process.platform === "win32" ? "junction" : "dir");
+  const receiptPath = join(linkedReceiptParent, "receipt.json");
+  const outsideMarker = join(actualReceiptParent, "receipt.json.evidence-authorization.json"); writeFileSync(outsideMarker, "EXTERNAL-MARKER");
+  const result = runPs(["-Mode", "Probe", "-Probe", "FinalizeArtifacts", "-Root", evidenceRoot, "-Value", receiptPath, "-Canary", "MARKER-CANARY"]);
+  assert.notEqual(result.status, 0, "linked receipt ancestor survived failure cleanup");
+  assert.equal(readFileSync(outsideMarker, "utf8"), "EXTERNAL-MARKER", "failure cleanup deleted the linked marker target");
+  assert.equal(existsSync(evidenceRoot), true, "rejected evidence was recursively removed");
+});
+
+test("checkout ancestry is rejected before git or snapshot access", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-reparse-checkout-"));
+  const actualParent = join(dir, "actual"); const checkout = join(actualParent, "checkout"); mkdirSync(checkout, { recursive: true });
+  writeFileSync(join(checkout, "sentinel.txt"), "CHECKOUT-SENTINEL");
+  const linkedParent = join(dir, "linked"); symlinkSync(actualParent, linkedParent, process.platform === "win32" ? "junction" : "dir");
+  const result = runPs(["-Mode", "Probe", "-Probe", "ValidateCheckout", "-Root", join(linkedParent, "checkout"), "-Value", CANDIDATE]);
+  assert.notEqual(result.status, 0, "linked checkout ancestor reached git or snapshot access");
+  assert.match(result.stderr, /reparse ancestry rejected/i);
+  assert.equal(readFileSync(join(checkout, "sentinel.txt"), "utf8"), "CHECKOUT-SENTINEL");
+});
+
 test("lifecycle stderr validation rejects absent, duplicate, wrong, stale, malformed, and payload-spoofed records", { skip: !havePwsh }, () => {
   const dir = mkdtempSync(join(tmpdir(), "coop-lifecycle-record-")); const path = join(dir, "helper.stderr.txt");
   const nonce = "0123456789abcdef0123456789abcdef"; const stage = "job-terminate";
@@ -939,7 +965,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.match(source, /steps\.exact_behavioral_suite\.outcome == 'success'/);
     assert.match(source, /ValidateUploadAuthorization -AuthorizationKind Receipt/);
     assert.match(source, /ValidateUploadAuthorization -AuthorizationKind Evidence/);
-    assert.match(source, /--test-name-pattern "Unicode\|lifecycle\|directory links\|junctioned ancestor\|authorization revocation"/);
+    assert.match(source, /--test-name-pattern "Unicode\|lifecycle\|directory links\|junctioned ancestor\|authorization revocation\|failure cleanup\|checkout ancestry\|owned-root probe\|fully safe authorization\|decisive receipt mutations"/);
     assert.doesNotMatch(source, /secrets\.|GITHUB_TOKEN|repository_dispatch|workflow_run|\bgit push\b/);
   };
   contract(workflow);

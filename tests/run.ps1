@@ -549,7 +549,7 @@ finally {
 }
 
 Head 'terminal acceptance reparse boundary tests'
-$reparseOut = & node --test --test-name-pattern 'directory links|junctioned ancestor|authorization revocation' (Join-Path $root 'tests\terminal-workstation-acceptance.test.mjs') 2>&1
+$reparseOut = & node --test --test-name-pattern 'directory links|junctioned ancestor|authorization revocation|failure cleanup|checkout ancestry|owned-root probe|fully safe authorization|decisive receipt mutations' (Join-Path $root 'tests\terminal-workstation-acceptance.test.mjs') 2>&1
 $reparseRc = $LASTEXITCODE
 if ($reparseRc -eq 0) { $reparseOut | ForEach-Object { Write-Host $_ }; Ok 'terminal acceptance rejects reparse evidence' }
 else { Ko "terminal acceptance reparse boundary tests failed: $($reparseOut | Out-String)" }
