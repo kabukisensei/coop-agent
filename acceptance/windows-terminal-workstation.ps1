@@ -866,7 +866,9 @@ try {
   # v0.23.1's launcher omitted scripts/onboard.py's required `onboard`
   # subcommand. Seed realistic pre-upgrade state through that version's actual
   # onboarding implementation; the candidate launcher is exercised below.
-  $onboard = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'scripts\onboard.py'),'onboard','--json') (Join-Path $logs 'baseline-onboard') 300 $answers
+  $onboardPython = @(Get-Command python3,python -ErrorAction SilentlyContinue | Select-Object -First 1)
+  if ($onboardPython.Count -ne 1) { throw 'baseline onboarding Python is unavailable' }
+  $onboard = Invoke-Bounded $onboardPython[0].Source @((Join-Path $BaselineRoot 'scripts\onboard.py'),'onboard','--json') (Join-Path $logs 'baseline-onboard') 300 $answers
   Assert-ExitZero $onboard 'baseline supported onboarding'
   Remove-Item -LiteralPath $answers -Force
 

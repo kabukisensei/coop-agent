@@ -96,6 +96,8 @@ try {
   $onboardInput = Join-Path $stub 'onboard-input.txt'
   $onboardStdout = Join-Path $stub 'onboard-stdout.txt'
   $onboardStderr = Join-Path $stub 'onboard-stderr.txt'
+  $invalidStdout = Join-Path $stub 'onboard-invalid-stdout.txt'
+  $invalidStderr = Join-Path $stub 'onboard-invalid-stderr.txt'
   [System.IO.File]::WriteAllText($onboardInput, "PowerShell Operator`n1`n", (New-Object System.Text.UTF8Encoding($false)))
   $savedCoopDir = $env:COOP_DIR
   $savedAzureBin = $env:COOP_AZ_BIN
@@ -104,6 +106,8 @@ try {
     $env:COOP_AZ_BIN = Join-Path $stub 'missing-az'
     $onboardProcess = Start-Process -FilePath $psExe -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $coop + '"'),'onboard','--json') -PassThru -NoNewWindow -RedirectStandardInput $onboardInput -RedirectStandardOutput $onboardStdout -RedirectStandardError $onboardStderr
     $onboardProcess.WaitForExit()
+    $invalidProcess = Start-Process -FilePath $psExe -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $coop + '"'),'onboard','--invalid-acceptance-flag') -PassThru -NoNewWindow -RedirectStandardOutput $invalidStdout -RedirectStandardError $invalidStderr
+    $invalidProcess.WaitForExit()
   } finally {
     $env:COOP_DIR = $savedCoopDir
     $env:COOP_AZ_BIN = $savedAzureBin
@@ -114,6 +118,7 @@ try {
   } else {
     Ko "coop.ps1 onboard dispatcher failed with exit $($onboardProcess.ExitCode)"
   }
+  if ($invalidProcess.ExitCode -eq 2) { Ok 'coop.ps1 onboard propagates Python argument failures' } else { Ko "coop.ps1 onboard changed Python exit 2 to $($invalidProcess.ExitCode)" }
 
   # --- 1. launch-spec resolves the governed pi invocation --------------------
   Head 'launch-spec (shared launch builder) test'
