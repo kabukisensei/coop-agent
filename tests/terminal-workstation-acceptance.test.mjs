@@ -604,10 +604,14 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.match(source, /\$observed = \(& git -C \$checkout rev-parse HEAD\)\.Trim\(\)[\s\S]*\$observed -cne \$expected/);
     const exactCandidateSuiteStep = source.match(/      - name: Run exact-candidate behavioral tests under Windows PowerShell 5\.1[\s\S]*?(?=\n      - name:)/)?.[0];
     assert.ok(exactCandidateSuiteStep, "exact-candidate Windows PowerShell 5.1 suite step is required");
-    assert.match(exactCandidateSuiteStep, /shell: powershell/);
-    assert.match(exactCandidateSuiteStep, /working-directory: candidate/);
-    assert.match(exactCandidateSuiteStep, /run: \.\\tests\\run\.ps1/);
-    assert.doesNotMatch(exactCandidateSuiteStep, /continue-on-error:/);
+    const exactCandidateSuiteFields = Object.fromEntries(
+      [...exactCandidateSuiteStep.matchAll(/^        ([a-z][a-z-]*): (.*)$/gm)].map((match) => [match[1], match[2]]),
+    );
+    assert.deepEqual(exactCandidateSuiteFields, {
+      shell: "powershell",
+      "working-directory": "candidate",
+      run: ".\\tests\\run.ps1",
+    });
     assert.match(source, /ExpectedCandidateSha \$env:VERIFIED_CANDIDATE_SHA/);
     assert.match(source, /ExpectedCandidateBuild \$env:VERIFIED_CANDIDATE_BUILD/);
     assert.match(source, /VERSION[\s\S]*fingerprintBuild/);
@@ -630,6 +634,9 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("$observed -cne $expected", "$false"),
     workflow.replace("Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        shell: powershell", "Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        shell: pwsh"),
     workflow.replace("working-directory: candidate\n        run: .\\tests\\run.ps1", "working-directory: candidate\n        continue-on-error: true\n        run: .\\tests\\run.ps1"),
+    workflow.replace("        shell: powershell\n        working-directory: candidate", "        # shell: powershell\n        shell: pwsh\n        working-directory: candidate"),
+    workflow.replace("working-directory: candidate\n        run: .\\tests\\run.ps1", "working-directory: candidate-other\n        run: .\\tests\\run.ps1"),
+    workflow.replace("run: .\\tests\\run.ps1", "run: .\\tests\\run.ps1; exit 0"),
   ]) assert.throws(() => contract(forged));
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
   assert.match(testSource, /COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE[\s\S]*"-Mode", "Run"/);
