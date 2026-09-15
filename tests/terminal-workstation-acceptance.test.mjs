@@ -347,16 +347,28 @@ test("installed extension collector enumerates configured packages independently
   assert.notEqual(extra.status, 0, "collector silently excluded an extra configured extension");
 });
 
-test("rollback npm reconciliation is anchored to the observed pre-upgrade baseline", () => {
+test("rollback npm reconciliation executes, fails closed, and precedes proof construction", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-npm-reconcile-"));
+  const statePath = join(dir, "state.json");
+  writeFileSync(statePath, JSON.stringify({ "@scope/absent": "NOT_INSTALLED", "@scope/pinned": "1.2.3" }));
+  const success = runPs(["-Mode", "Probe", "-Probe", "ReconcileNpmState", "-Root", statePath, "-Value", "0"]);
+  assert.equal(success.status, 0, success.stderr);
+  assert.deepEqual(JSON.parse(success.stdout.trim()), ["uninstall -g @scope/absent", "install -g @scope/pinned@1.2.3"]);
+  const failure = runPs(["-Mode", "Probe", "-Probe", "ReconcileNpmState", "-Root", statePath, "-Value", "17"]);
+  assert.notEqual(failure.status, 0, "failed npm reconciliation was accepted");
+  assert.ok(failure.stderr.includes("exited 17"), "failed npm reconciliation did not propagate its exit code");
+
   const source = readFileSync(SCRIPT, "utf8");
   const baselineCapture = source.indexOf("$baselineNpmToolState = [ordered]@{}");
   const candidateInstall = source.indexOf("$candidateInstall = Invoke-Bounded");
   const rollbackInstall = source.indexOf("$rollback = Invoke-Bounded");
-  const reconciliation = source.indexOf("rollback npm reconciliation for $name");
+  const reconciliation = source.indexOf("[void](Invoke-NpmRollbackReconciliation ([pscustomobject]$baselineNpmToolState) $logs)");
   const rollbackInventory = source.indexOf("$rollbackNpm = Invoke-Bounded");
+  const rollbackComparison = source.indexOf("if ($actual -cne $baselineNpmToolState[$name])");
+  const proofConstruction = source.indexOf("$rollbackPinProof = Get-ManifestPinProof");
   assert.ok(baselineCapture > 0 && baselineCapture < candidateInstall, "baseline npm state must be captured before upgrade");
-  assert.ok(rollbackInstall < reconciliation && reconciliation < rollbackInventory, "npm reconciliation must run after baseline source install and before rollback proof");
-  assert.ok(source.includes("if ($actual -cne $baselineNpmToolState[$name])"), "rollback must compare actual npm state to the captured baseline");
+  assert.ok(rollbackInstall < reconciliation && reconciliation < rollbackInventory, "npm reconciliation must run after baseline source install and before rollback inventory");
+  assert.ok(rollbackInventory < rollbackComparison && rollbackComparison < proofConstruction, "actual baseline comparison must succeed before rollback proof construction");
   assert.ok(source.includes("$rollbackExpected.npm_tools.PSObject.Properties.Remove($name)"), "an initially absent npm tool must remain absent in rollback proof");
 });
 

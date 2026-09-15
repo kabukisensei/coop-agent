@@ -13,7 +13,7 @@ param(
   [string]$ExpectedCandidateSha = '',
   [string]$ExpectedCandidateBuild = '',
   [switch]$VmOperatorMode,
-  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','CollectExtensionInventory','ValidateLifecycleEvent','AuthorizeArtifacts','ResolvePython','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
+  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','CollectExtensionInventory','ReconcileNpmState','ValidateLifecycleEvent','AuthorizeArtifacts','ResolvePython','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
   [string]$Value = '',
   [string]$Root = '',
   [string]$Canary = ''
@@ -223,6 +223,19 @@ function Get-InstalledExtensionInventory([object]$Manifest, [string]$AgentRoot, 
     $inventory[$name] = [string]$metadata.version
   }
   return [pscustomobject]$inventory
+}
+
+function Invoke-NpmRollbackReconciliation([object]$BaselineState, [string]$LogRoot, [scriptblock]$Runner = $null) {
+  $commands = New-Object System.Collections.Generic.List[string]
+  foreach ($name in @($BaselineState.PSObject.Properties.Name)) {
+    $expected = [string]$BaselineState.PSObject.Properties[$name].Value
+    $npmArgs = if ($expected -ceq 'NOT_INSTALLED') { @('uninstall','-g',$name) } else { @('install','-g',"$name@$expected") }
+    $logPath = Join-Path $LogRoot ("baseline-rollback-npm-" + ($name -replace '[^A-Za-z0-9._-]','_'))
+    $result = if ($null -ne $Runner) { & $Runner -NpmArgs $npmArgs -LogPath $logPath } else { Invoke-Bounded 'npm.cmd' $npmArgs $logPath 600 }
+    Assert-ExitZero $result "rollback npm reconciliation for $name"
+    [void]$commands.Add(($npmArgs -join ' '))
+  }
+  return @($commands)
 }
 
 function Get-ManifestPinProof([object]$Doctor, [object]$Manifest, [string]$ObservedCoopVersion, [object]$NpmInventory, [object]$ExtensionInventory, [object]$McpConfig, [string]$Label) {
@@ -736,6 +749,14 @@ if ($Mode -eq 'Probe') {
       Assert-ExactProperties $inventory @($manifest.extensions.PSObject.Properties.Name) 'probe installed extension inventory'
       Write-Output ($inventory | ConvertTo-Json -Compress)
     }
+    'ReconcileNpmState' {
+      $state = Get-Content -LiteralPath $Root -Raw | ConvertFrom-Json
+      $probeExitCode = 0
+      if (-not [int]::TryParse($Value, [ref]$probeExitCode)) { throw 'probe exit code must be an integer' }
+      $runner = { param([string[]]$NpmArgs, [string]$LogPath); [pscustomobject]@{ ExitCode = $probeExitCode; Stderr = $LogPath } }.GetNewClosure()
+      $commands = @(Invoke-NpmRollbackReconciliation $state ([System.IO.Path]::GetTempPath()) $runner)
+      Write-Output ($commands | ConvertTo-Json -Compress)
+    }
     'ValidateLifecycleEvent' { Assert-LifecycleFaultEvent $Value $Canary $Root | Out-Null; Write-Output 'PASS' }
     'AuthorizeArtifacts' {
       Remove-UploadAuthorizations $ReceiptPath
@@ -1060,12 +1081,7 @@ try {
 
   $rollback = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'scripts\install.ps1'),'--yes','--no-prereqs') (Join-Path $logs 'baseline-rollback') 2700
   Assert-ExitZero $rollback 'v0.23.1 source rollback'
-  foreach ($name in @($baselineNpmToolState.Keys)) {
-    $expected = $baselineNpmToolState[$name]
-    $npmArgs = if ($expected -ceq 'NOT_INSTALLED') { @('uninstall','-g',$name) } else { @('install','-g',"$name@$expected") }
-    $reconcile = Invoke-Bounded 'npm.cmd' $npmArgs (Join-Path $logs ("baseline-rollback-npm-" + ($name -replace '[^A-Za-z0-9._-]','_'))) 600
-    Assert-ExitZero $reconcile "rollback npm reconciliation for $name"
-  }
+  [void](Invoke-NpmRollbackReconciliation ([pscustomobject]$baselineNpmToolState) $logs)
   foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during rollback: $file" } }
   if ((Get-FileSha $managedMcpPath) -ne $baselineMcpSha) { throw 'managed MCP state did not converge to the baseline during rollback' }
   if ((Get-TreeHash $fixtureRepo) -ne $repoBefore) { throw 'repository changed during rollback' }
