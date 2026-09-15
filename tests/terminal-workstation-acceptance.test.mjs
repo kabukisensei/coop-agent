@@ -40,12 +40,17 @@ const phaseFor = {
 const pwshProbe = spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"], { encoding: "utf8" });
 const havePwsh = pwshProbe.status === 0 && !pwshProbe.error;
 const PWSH = havePwsh ? spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-Command", "(Get-Command pwsh).Source"], { encoding: "utf8" }).stdout.trim() : "pwsh";
-const pythonCandidates = [...new Set([process.env.CERT_PYTHON, "python3", "python"].filter(Boolean))];
-const pythonDiscovery = pythonCandidates.map((command) => ({
+const pythonCandidates = [
+  ...(process.env.CERT_PYTHON ? [{ command: process.env.CERT_PYTHON, prefix: [] }] : []),
+  { command: "python3", prefix: [] },
+  { command: "python", prefix: [] },
+  ...(process.platform === "win32" ? [{ command: "py", prefix: ["-3"] }] : []),
+];
+const pythonDiscovery = pythonCandidates.map(({ command, prefix }) => ({
   command,
-  probe: spawnSync(command, ["-c", "import os,sys; print(os.path.abspath(sys.executable))"], { encoding: "utf8" }),
+  probe: spawnSync(command, [...prefix, "-c", "import os,sys; print(os.path.abspath(sys.executable))"], { encoding: "utf8" }),
 })).find(({ probe }) => probe.status === 0 && !probe.error && probe.stdout?.trim());
-assert.ok(pythonDiscovery, `Python is mandatory; tried: ${pythonCandidates.join(", ")}`);
+assert.ok(pythonDiscovery, `Python is mandatory; tried: ${pythonCandidates.map(({ command, prefix }) => [command, ...prefix].join(" ")).join(", ")}`);
 const PYTHON_PATH = pythonDiscovery.probe.stdout.trim();
 const schemaProbe = spawnSync(PYTHON_PATH, ["-c", "import jsonschema"], { encoding: "utf8" });
 
@@ -260,7 +265,8 @@ test("decisive receipt mutations are rejected equivalently", { skip: !havePwsh }
     const value = receipt({ ready: true, layer: "DISPOSABLE_VM_OPERATOR", humanStatus: "PASS" }); mutate(value);
     const path = writeReceipt(dir, value, `${name.replaceAll(" ", "-")}.json`);
     if (runtimeBound.has(name)) {
-      assert.equal(schemaValidate(path).status, 0, `${name}: shape schema must remain candidate-independent`);
+      const shape = schemaValidate(path);
+      assert.equal(shape.status, 0, `${name}: shape schema must remain candidate-independent: ${shape.error?.message || shape.stderr}`);
       assert.notEqual(runPs(["-Mode", "ValidateReceipt", "-ReceiptPath", path]).status, 0, `${name}: trusted runtime binding accepted forgery`);
     } else assertBoth(path, false, name);
   }
