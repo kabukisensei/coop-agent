@@ -881,13 +881,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
   const workflow = readFileSync(WORKFLOW, "utf8");
   const expectedGate = "if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'integration/presentation-2026-09-20' && github.event.pull_request.head.repo.full_name == github.repository) }}";
   const contract = (source) => {
-    const rawStep = (name) => {
-      const marker = `      - name: ${name}`;
-      const start = source.indexOf(marker);
-      assert.ok(start >= 0, `missing raw workflow step: ${name}`);
-      const next = source.indexOf("\n      - name:", start + marker.length);
-      return source.slice(start, next >= 0 ? next : source.length);
-    };
+    assert.equal(createHash("sha256").update(source).digest("hex"), "81e2175aa448c5321978ec1f9b1349a03237c6923c053047dd71f0d041699624", "exact acceptance workflow source changed");
     assert.match(source, /workflow_dispatch:\s*\n\s*inputs:\s*\n\s*candidate_sha:[\s\S]*required: true[\s\S]*pull_request:\s*\n\s*branches:\s*\n\s*- main/);
     assert.ok(source.includes(expectedGate), "native job must reject unauthorized PR heads and forks");
     assert.match(source, /permissions:\s*\n\s*contents: read/);
@@ -933,7 +927,6 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.doesNotMatch(source, /-HarnessRoot \(Resolve-Path|-CandidateRoot \(Resolve-Path|-BaselineRoot \(Resolve-Path/);
     const verifyStep = activeSteps.find((step) => step?.name === "Verify event-authorized exact checkout identity");
     const verifyRun = verifyStep?.run ?? "";
-    assert.equal(createHash("sha256").update(rawStep("Verify event-authorized exact checkout identity")).digest("hex"), "e184ae4b2e28ff1f160e843c81860b0a36f8a3c5571d3ac7af7a450e4ed5bacb", "exact checkout precheck step changed");
     const safeLoop = "foreach ($checkout in @($harness,$candidate,$baseline)) { Assert-SafeCheckout $checkout }";
     assert.ok(verifyRun.split("\n").includes(safeLoop), "checkout scan must be an unconditional statement");
     assert.match(verifyRun, /if \(\(\$item\.Attributes -band \[System\.IO\.FileAttributes\]::ReparsePoint\) -ne 0\) \{ throw "checkout reparse ancestry rejected/);
@@ -954,11 +947,9 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.equal(validationStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success'");
     assert.equal(validationStep?.id, "validate_artifacts");
     const nativeRun = activeSteps[nativeAcceptanceIndex]?.run ?? "";
-    assert.equal(createHash("sha256").update(rawStep("Run native acceptance (cannot close human gate)")).digest("hex"), "4a8e24297ccaba009e18e889e6b33f53619e9e49db4cf6b3109f3d32bd5468d7", "exact native Run step changed");
     assert.match(nativeRun, /-Mode Run `[\s\S]*-HarnessRoot \$harnessRoot `[\s\S]*-CandidateRoot \$candidateRoot `[\s\S]*-BaselineRoot \$baselineRoot `/);
     assert.doesNotMatch(nativeRun, /Resolve-Path/);
     const validationRun = validationStep?.run ?? "";
-    assert.equal(createHash("sha256").update(rawStep("Validate fail-closed receipt")).digest("hex"), "23abba955260c640b6e038ea644a844d9b1dfe443cf200b8f31cdfd4bf681495", "exact artifact validation step changed");
     assert.match(validationRun, /receipt_uploadable=true[\s\S]*GITHUB_OUTPUT/);
     assert.match(validationRun, /evidence_uploadable=true[\s\S]*GITHUB_OUTPUT/);
     assert.doesNotMatch(validationRun, /Test-Path/i);
