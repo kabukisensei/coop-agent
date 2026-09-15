@@ -582,7 +582,10 @@ test("upgrade preserves operator state while managed MCP converges by release", 
   };
   contract(source);
   for (const check of [upgradePreservation, reinstallPreservation, rollbackPreservation, candidateIdempotence, baselineConvergence]) {
-    assert.throws(() => contract(source.replace(check, check.replace(/^foreach \([^)]*\) \{ if \([^)]*\)/, "foreach ($file in $preservedStateFiles) { if ($false)").replace(/^if \([^)]*\)/, "if ($false)"))));
+    const removed = source.replace(check, "");
+    const inverted = source.replace(check, check.replace(" -ne ", " -eq "));
+    assert.throws(() => contract(removed), `removed check was accepted: ${check}`);
+    assert.throws(() => contract(inverted), `inverted check was accepted: ${check}`);
   }
 });
 
