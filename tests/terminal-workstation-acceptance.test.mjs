@@ -3,7 +3,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { fingerprintBuild } from "../lib/support-center.mjs";
@@ -570,14 +570,15 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
   const dir = mkdtempSync(join(tmpdir(), "coop-python-pin-"));
   let probeNumber = 0;
   const normalize = (value) => process.platform === "win32" ? value.toLowerCase() : value;
-  const probe = (candidate, env) => {
+  const probe = (candidate, env, cwd = dir) => {
     const script = join(dir, `probe-${probeNumber++}.ps1`);
     writeFileSync(script, candidate, "utf8");
-    return spawnSync(PWSH, ["-NoLogo", "-NoProfile", "-File", script, "-Mode", "Probe", "-Probe", "ResolvePython"], { encoding: "utf8", env, cwd: dir });
+    return spawnSync(PWSH, ["-NoLogo", "-NoProfile", "-File", script, "-Mode", "Probe", "-Probe", "ResolvePython"], { encoding: "utf8", env, cwd });
   };
   const contract = (candidate) => {
     const resolver = candidate.match(/function Get-AcceptancePython \{([\s\S]*?)\n\}/)?.[1] ?? "";
-    assert.match(resolver, /IsPathRooted\(\$env:CERT_PYTHON\)/);
+    assert.match(candidate, /IsPathRooted\(\$Path\)/);
+    assert.match(candidate, /Equals\(\$Path, \$expected, \$comparison\)/);
     assert.match(candidate, /Test-Path -LiteralPath \$expected -PathType Leaf/);
     assert.match(candidate, /& \$expected -c 'import os,sys; print\(os\.path\.abspath\(sys\.executable\)\)'/);
     assert.equal((candidate.match(/Get-AcceptancePython/g) || []).length, 4);
@@ -598,6 +599,13 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
     assert.equal(normalize(fallback.stdout.trim()), normalize(pinnedPath));
 
     assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: relative(dir, pinnedPath) }).status, 0);
+    const separator = process.platform === "win32" ? "\\" : "/";
+    const nonCanonical = `${dirname(pinnedPath)}${separator}unused-segment${separator}..${separator}${basename(pinnedPath)}`;
+    assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: nonCanonical }).status, 0);
+    if (process.platform === "win32") {
+      assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: `${pinnedPath.slice(0, 2)}${basename(pinnedPath)}` }, dirname(pinnedPath)).status, 0);
+      assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: pinnedPath.slice(2) }, dirname(pinnedPath)).status, 0);
+    }
     assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: join(dir, "missing-python.exe") }).status, 0);
     assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: join(ROOT, "README.md") }).status, 0);
     assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: pinnedPath.replace(/.(?=[^/\\]+$)/, "[$&]") }).status, 0);
@@ -612,6 +620,7 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
     source.replace("if ($env:CERT_PYTHON) {", "if ($false) {"),
     source.replace("return Resolve-AcceptancePythonExecutable $env:CERT_PYTHON", "return 'python'"),
     source.replace("return Resolve-AcceptancePythonExecutable $python[0].Source", `return '${resolve(process.execPath).replaceAll("'", "''")}'`),
+    source.replace("if (-not [string]::Equals($Path, $expected, $comparison))", "if ($false)"),
     source.replace("if (-not [string]::Equals($actual, $expected, $comparison))", "if ($false)"),
     source.replace("FilePath = $pythonPath", "FilePath = 'python'"),
     source.replace("$onboardPython = Get-AcceptancePython", "$onboardPython = 'python'"),
