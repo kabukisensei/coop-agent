@@ -923,8 +923,15 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
       run: suiteRun,
     }]);
     assert.doesNotMatch(source, /-HarnessRoot \(Resolve-Path|-CandidateRoot \(Resolve-Path|-BaselineRoot \(Resolve-Path/);
-    assert.match(source, /function Assert-SafeCheckout[\s\S]*checkout reparse ancestry rejected[\s\S]*checkout contains a reparse point[\s\S]*foreach \(\$checkout in @\(\$harness,\$candidate,\$baseline\)\) \{ Assert-SafeCheckout \$checkout \}[\s\S]*git -C \$checkout/);
-    assert.doesNotMatch(source, /Test-Path -LiteralPath "\$env:RECEIPT_PATH\.evidence-authorization\.json"/);
+    const verifyStep = activeSteps.find((step) => step?.name === "Verify event-authorized exact checkout identity");
+    const verifyRun = verifyStep?.run ?? "";
+    const safeLoop = "foreach ($checkout in @($harness,$candidate,$baseline)) { Assert-SafeCheckout $checkout }";
+    assert.ok(verifyRun.split("\n").includes(safeLoop), "checkout scan must be an unconditional statement");
+    assert.match(verifyRun, /if \(\(\$item\.Attributes -band \[System\.IO\.FileAttributes\]::ReparsePoint\) -ne 0\) \{ throw "checkout reparse ancestry rejected/);
+    assert.match(verifyRun, /if \(\(\$item\.Attributes -band \[System\.IO\.FileAttributes\]::ReparsePoint\) -ne 0\) \{ throw "checkout contains a reparse point/);
+    assert.ok(verifyRun.indexOf(safeLoop) >= 0 && verifyRun.indexOf(safeLoop) < verifyRun.indexOf("git -C"), "checkout scan must precede first git access");
+    assert.ok(verifyRun.indexOf(safeLoop) < verifyRun.indexOf("$version = (Get-Content"), "checkout scan must precede VERSION access");
+    assert.ok(verifyRun.indexOf(safeLoop) < verifyRun.indexOf("$module = (New-Object System.Uri"), "checkout scan must precede module access");
     const pythonPinIndex = activeSteps.findIndex((step) => step?.name === "Pin runner Python for certification");
     const exactSuiteIndex = activeSteps.findIndex((step) => step?.name === "Run exact-candidate behavioral tests under Windows PowerShell 5.1");
     const validationStep = activeSteps.find((step) => step?.name === "Validate fail-closed receipt");
@@ -937,8 +944,22 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.ok(pythonPinIndex < dependencyIndex && dependencyIndex < ownershipIndex && ownershipIndex < nativeAcceptanceIndex && nativeAcceptanceIndex < exactSuiteIndex, "the exact behavioral suite must run only after every acceptance Python consumer");
     assert.equal(validationStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success'");
     assert.equal(validationStep?.id, "validate_artifacts");
-    assert.match(validationStep?.run ?? "", /receipt_uploadable=true[\s\S]*GITHUB_OUTPUT/);
-    assert.match(validationStep?.run ?? "", /evidence_uploadable=true[\s\S]*GITHUB_OUTPUT/);
+    const nativeRun = activeSteps[nativeAcceptanceIndex]?.run ?? "";
+    assert.match(nativeRun, /-Mode Run `[\s\S]*-HarnessRoot \$harnessRoot `[\s\S]*-CandidateRoot \$candidateRoot `[\s\S]*-BaselineRoot \$baselineRoot `/);
+    assert.doesNotMatch(nativeRun, /Resolve-Path/);
+    const validationRun = validationStep?.run ?? "";
+    assert.match(validationRun, /receipt_uploadable=true[\s\S]*GITHUB_OUTPUT/);
+    assert.match(validationRun, /evidence_uploadable=true[\s\S]*GITHUB_OUTPUT/);
+    assert.doesNotMatch(validationRun, /Test-Path/i);
+    const receiptOutput = '"receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append';
+    const evidenceCommand = "-Mode ValidateUploadAuthorization -AuthorizationKind Evidence `";
+    const receiptOutputIndex = validationRun.indexOf(receiptOutput);
+    const evidenceCommandIndex = validationRun.indexOf(evidenceCommand, receiptOutputIndex + receiptOutput.length);
+    const evidenceCheckIndex = validationRun.indexOf("if ($LASTEXITCODE -ne 0) { throw 'current evidence upload authorization failed' }", evidenceCommandIndex);
+    const evidenceOutputIndex = validationRun.indexOf('"evidence_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append');
+    const evidencePrefix = validationRun.slice(receiptOutputIndex + receiptOutput.length, evidenceCommandIndex);
+    assert.ok(receiptOutputIndex >= 0 && evidenceCommandIndex > receiptOutputIndex && !/if\s*\(|Test-Path/i.test(evidencePrefix), "evidence validation must be unconditional after receipt authorization");
+    assert.ok(evidenceCheckIndex > evidenceCommandIndex && evidenceOutputIndex > evidenceCheckIndex, "evidence output must follow successful validation");
     assert.equal(receiptUploadStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success' && steps.validate_artifacts.outcome == 'success' && steps.validate_artifacts.outputs.receipt_uploadable == 'true'");
     assert.equal(evidenceUploadStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success' && steps.validate_artifacts.outcome == 'success' && steps.validate_artifacts.outputs.evidence_uploadable == 'true'");
     assert.doesNotMatch(source, /RECEIPT_UPLOADABLE|EVIDENCE_UPLOADABLE/);
@@ -1014,6 +1035,15 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("steps.validate_artifacts.outcome == 'success' && steps.validate_artifacts.outputs.receipt_uploadable == 'true'", "true"),
     workflow.replace("steps.validate_artifacts.outcome == 'success' && steps.validate_artifacts.outputs.evidence_uploadable == 'true'", "true"),
     workflow.replace("& $env:CERT_PYTHON .\\harness\\tests\\knowledge-git.test.py", "python .\\harness\\tests\\knowledge-git.test.py"),
+    workflow.replace("          $expected = $env:CANDIDATE_SHA", "          $early = (& git -C (Join-Path $env:GITHUB_WORKSPACE 'candidate') rev-parse HEAD)\n          $expected = $env:CANDIDATE_SHA"),
+    workflow.replace("          foreach ($checkout in @($harness,$candidate,$baseline)) { Assert-SafeCheckout $checkout }", "          if ($false) { foreach ($checkout in @($harness,$candidate,$baseline)) { Assert-SafeCheckout $checkout } }"),
+    workflow.replace("if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw \"checkout reparse ancestry rejected", "if ($false) { throw \"checkout reparse ancestry rejected"),
+    workflow.replace("if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw \"checkout contains a reparse point", "if ($false) { throw \"checkout contains a reparse point"),
+    workflow.replace("@($harness,$candidate,$baseline)", "@($harness,$candidate)"),
+    workflow.replace("            -CandidateRoot $candidateRoot `", "            -CandidateRoot $harnessRoot `"),
+    workflow.replace('          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append', '          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append\n          $marker = Join-Path (Split-Path $env:RECEIPT_PATH -Parent) "evidence-authorization.json"\n          if (Test-Path $marker) { Write-Output "marker exists" }'),
+    workflow.replace("          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `\n            .\\harness\\acceptance\\windows-terminal-workstation.ps1 `\n            -Mode ValidateUploadAuthorization -AuthorizationKind Evidence `", "          if ($false) {\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `\n            .\\harness\\acceptance\\windows-terminal-workstation.ps1 `\n            -Mode ValidateUploadAuthorization -AuthorizationKind Evidence `"),
+    workflow.replace('          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `', '          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append\n          "evidence_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `'),
   ].entries()) assert.throws(() => contract(forged), `workflow mutant ${index} was accepted`);
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
   assert.match(testSource, /COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE[\s\S]*"-Mode", "Run"/);
