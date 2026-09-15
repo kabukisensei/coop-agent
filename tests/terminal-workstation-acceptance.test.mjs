@@ -562,6 +562,29 @@ test("product agent path is one effective onboarding/install/Doctor path", () =>
   contract(source); assert.throws(() => contract(source.replace("$agentRoot = Join-Path $profileRoot '.coop\\agent'", "$agentRoot = Join-Path $ownedRoot 'split-agent'")));
 });
 
+test("certification Python pin reaches bounded helpers and baseline onboarding", () => {
+  const source = readFileSync(SCRIPT, "utf8");
+  const contract = (candidate) => {
+    const resolver = candidate.match(/function Get-AcceptancePython \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.match(resolver, /\$env:CERT_PYTHON/);
+    assert.match(resolver, /IsPathRooted\(\$env:CERT_PYTHON\)/);
+    assert.match(resolver, /GetFullPath\(\$env:CERT_PYTHON\)/);
+    assert.match(resolver, /Test-Path -LiteralPath \$pinned -PathType Leaf/);
+    assert.equal((candidate.match(/Get-AcceptancePython/g) || []).length, 3);
+    assert.match(candidate, /try \{ \$pythonPath = Get-AcceptancePython \} catch \{ \$pythonPath = '' \}/);
+    assert.match(candidate, /FilePath = \$pythonPath/);
+    assert.match(candidate, /\$onboardPython = Get-AcceptancePython[\s\S]*Invoke-Bounded \$onboardPython/);
+  };
+  contract(source);
+  for (const mutant of [
+    source.replace("[System.IO.Path]::IsPathRooted($env:CERT_PYTHON)", "$true"),
+    source.replace("[System.IO.Path]::GetFullPath($env:CERT_PYTHON)", "$env:CERT_PYTHON"),
+    source.replace("Test-Path -LiteralPath $pinned -PathType Leaf", "$true"),
+    source.replace("FilePath = $pythonPath", "FilePath = 'python'"),
+    source.replace("$onboardPython = Get-AcceptancePython", "$onboardPython = 'python'"),
+  ]) assert.throws(() => contract(mutant));
+});
+
 test("upgrade preserves operator state while managed MCP converges by release", () => {
   const source = readFileSync(SCRIPT, "utf8");
   const upgradePreservation = 'foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "preserved state changed during candidate upgrade: $file" } }';
@@ -628,13 +651,21 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     const dependencyIndex = activeSteps.findIndex((step) => step?.name === "Install receipt-schema test dependency");
     assert.ok(pythonPinIndex >= 0 && pythonPinIndex < exactSuiteIndex && exactSuiteIndex < dependencyIndex);
     const pythonPin = activeSteps[pythonPinIndex];
-    assert.equal(pythonPin.shell, "powershell");
-    assert.match(pythonPin.run, /Get-Command python -CommandType Application/);
-    assert.match(pythonPin.run, /CERT_PYTHON=.*GITHUB_ENV/);
-    assert.match(pythonPin.run, /GITHUB_PATH/);
-    assert.doesNotMatch(pythonPin.run, /continue-on-error/);
+    assert.deepEqual(pythonPin, {
+      name: "Pin runner Python for certification",
+      shell: "powershell",
+      run: [
+        "$python = (Get-Command python -CommandType Application -ErrorAction Stop).Source",
+        "& $python --version",
+        "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+        '"CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append',
+        "(Split-Path -Parent $python) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append",
+      ].join("\n"),
+    });
     assert.match(activeSteps[dependencyIndex].run, /& \$env:CERT_PYTHON -m pip install/);
     assert.match(activeSteps[dependencyIndex].run, /& \$env:CERT_PYTHON -c "import jsonschema"/);
+    const ownershipStep = activeSteps.find((step) => step?.name === "Exercise ownership faults and Unicode transport");
+    assert.match(ownershipStep?.run ?? "", /& \$env:CERT_PYTHON \.\\harness\\tests\\knowledge-git\.test\.py/);
     assert.match(source, /ExpectedCandidateSha \$env:VERIFIED_CANDIDATE_SHA/);
     assert.match(source, /ExpectedCandidateBuild \$env:VERIFIED_CANDIDATE_BUILD/);
     assert.match(source, /VERSION[\s\S]*fingerprintBuild/);
@@ -667,6 +698,11 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("Get-Command python -CommandType Application", "Get-Command py -CommandType Application"),
     workflow.replace("$env:GITHUB_PATH -Encoding utf8 -Append", "$env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append"),
     workflow.replace("& $env:CERT_PYTHON -m pip install", "python -m pip install"),
+    workflow.replace("& $python --version", "# & $python --version"),
+    workflow.replace("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }", "if ($false) { exit $LASTEXITCODE }"),
+    workflow.replace('"CERT_PYTHON=$python"', '"CERT_PYTHON=python"'),
+    workflow.replace("      - name: Pin runner Python for certification", "      - name: Pin runner Python for certification\n        continue-on-error: true"),
+    workflow.replace("& $env:CERT_PYTHON .\\harness\\tests\\knowledge-git.test.py", "python .\\harness\\tests\\knowledge-git.test.py"),
   ].entries()) assert.throws(() => contract(forged), `workflow mutant ${index} was accepted`);
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
   assert.match(testSource, /COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE[\s\S]*"-Mode", "Run"/);

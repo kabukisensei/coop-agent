@@ -501,6 +501,18 @@ function Assert-LifecycleFaultEvent([string]$Path, [string]$Nonce, [string]$Requ
   return $event
 }
 
+function Get-AcceptancePython {
+  if ($env:CERT_PYTHON) {
+    if (-not [System.IO.Path]::IsPathRooted($env:CERT_PYTHON)) { throw 'CERT_PYTHON must be an absolute path' }
+    $pinned = [System.IO.Path]::GetFullPath($env:CERT_PYTHON)
+    if (-not (Test-Path -LiteralPath $pinned -PathType Leaf)) { throw 'CERT_PYTHON does not identify an executable file' }
+    return $pinned
+  }
+  $python = @(Get-Command python3,python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+  if ($python.Count -ne 1) { throw 'acceptance Python is unavailable' }
+  return [System.IO.Path]::GetFullPath($python[0].Source)
+}
+
 function Invoke-Bounded {
   param(
     [string]$FilePath,
@@ -515,8 +527,8 @@ function Invoke-Bounded {
   if ($logParent -and -not (Test-Path -LiteralPath $logParent)) { New-Item -ItemType Directory -Force -Path $logParent | Out-Null }
 
   $helper = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\scripts\knowledge-git.py'))
-  $python = @(Get-Command python3,python -ErrorAction SilentlyContinue | Select-Object -First 1)
-  if ($python.Count -ne 1 -or -not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+  try { $pythonPath = Get-AcceptancePython } catch { $pythonPath = '' }
+  if (-not $pythonPath -or -not (Test-Path -LiteralPath $helper -PathType Leaf)) {
     $script:ProcessCleanupUncertain = $true
     [System.IO.File]::WriteAllText($stdout, '', (New-Object System.Text.UTF8Encoding($false)))
     [System.IO.File]::WriteAllText($stderr, "ownership helper unavailable; payload was not started`n", (New-Object System.Text.UTF8Encoding($false)))
@@ -534,7 +546,7 @@ function Invoke-Bounded {
   $quoted = @()
   foreach ($arg in $helperArguments) { $quoted += ('"' + ([string]$arg).Replace('"','\"') + '"') }
   $params = @{
-    FilePath = $python[0].Source
+    FilePath = $pythonPath
     ArgumentList = ($quoted -join ' ')
     PassThru = $true
     NoNewWindow = $true
@@ -866,9 +878,8 @@ try {
   # v0.23.1's launcher omitted scripts/onboard.py's required `onboard`
   # subcommand. Seed realistic pre-upgrade state through that version's actual
   # onboarding implementation; the candidate launcher is exercised below.
-  $onboardPython = @(Get-Command python3,python -ErrorAction SilentlyContinue | Select-Object -First 1)
-  if ($onboardPython.Count -ne 1) { throw 'baseline onboarding Python is unavailable' }
-  $onboard = Invoke-Bounded $onboardPython[0].Source @((Join-Path $BaselineRoot 'scripts\onboard.py'),'onboard','--json') (Join-Path $logs 'baseline-onboard') 300 $answers
+  $onboardPython = Get-AcceptancePython
+  $onboard = Invoke-Bounded $onboardPython @((Join-Path $BaselineRoot 'scripts\onboard.py'),'onboard','--json') (Join-Path $logs 'baseline-onboard') 300 $answers
   Assert-ExitZero $onboard 'baseline supported onboarding'
   Remove-Item -LiteralPath $answers -Force
 
