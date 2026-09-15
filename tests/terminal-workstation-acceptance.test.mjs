@@ -563,15 +563,27 @@ test("product agent path is one effective onboarding/install/Doctor path", () =>
 
 test("upgrade preserves operator state while managed MCP converges by release", () => {
   const source = readFileSync(SCRIPT, "utf8");
-  const preserved = source.match(/\$preservedStateFiles = @\(([\s\S]*?)\n  \)/)?.[1] ?? "";
-  assert.match(preserved, /user\.json/);
-  assert.match(preserved, /\.coop\\config/);
-  assert.match(preserved, /project\.yml/);
-  assert.doesNotMatch(preserved, /mcp\.json/);
-  assert.match(source, /\$baselineMcpSha = \$stateBefore\[\$managedMcpPath\]/);
-  assert.match(source, /\$candidateMcpSha = Get-FileSha \$managedMcpPath/);
-  assert.match(source, /managed MCP state changed during same-candidate reinstall/);
-  assert.match(source, /managed MCP state did not converge to the baseline during rollback/);
+  const upgradePreservation = 'foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "preserved state changed during candidate upgrade: $file" } }';
+  const reinstallPreservation = 'foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during same-candidate reinstall: $file" } }';
+  const rollbackPreservation = 'foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during rollback: $file" } }';
+  const candidateIdempotence = "if ((Get-FileSha $managedMcpPath) -ne $candidateMcpSha) { throw 'managed MCP state changed during same-candidate reinstall' }";
+  const baselineConvergence = "if ((Get-FileSha $managedMcpPath) -ne $baselineMcpSha) { throw 'managed MCP state did not converge to the baseline during rollback' }";
+  const contract = (candidate) => {
+    const preserved = candidate.match(/\$preservedStateFiles = @\(([\s\S]*?)\n  \)/)?.[1] ?? "";
+    assert.match(preserved, /user\.json/);
+    assert.match(preserved, /\.coop\\config/);
+    assert.match(preserved, /project\.yml/);
+    assert.doesNotMatch(preserved, /mcp\.json/);
+    assert.ok(candidate.includes("$baselineMcpSha = $stateBefore[$managedMcpPath]"));
+    assert.ok(candidate.includes("$candidateMcpSha = Get-FileSha $managedMcpPath"));
+    for (const check of [upgradePreservation, reinstallPreservation, rollbackPreservation, candidateIdempotence, baselineConvergence]) {
+      assert.ok(candidate.includes(check), `missing state-transition check: ${check}`);
+    }
+  };
+  contract(source);
+  for (const check of [upgradePreservation, reinstallPreservation, rollbackPreservation, candidateIdempotence, baselineConvergence]) {
+    assert.throws(() => contract(source.replace(check, check.replace(/^foreach \([^)]*\) \{ if \([^)]*\)/, "foreach ($file in $preservedStateFiles) { if ($false)").replace(/^if \([^)]*\)/, "if ($false)"))));
+  }
 });
 
 test("workflow binds dispatch and the named same-repo PR to the exact event-authorized SHA", () => {
