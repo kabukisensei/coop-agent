@@ -80,7 +80,7 @@ function Invoke-CoopOnboard {
   param([string[]]$Rest)
   $py = Get-CoopPython
   if (-not $py) { Coop-Die 'python3 is required for coop onboard' }
-  & $py (Join-Path $script:CoopRoot 'scripts\onboard.py') @Rest
+  & $py (Join-Path $script:CoopRoot 'scripts\onboard.py') onboard @Rest
   exit $LASTEXITCODE
 }
 

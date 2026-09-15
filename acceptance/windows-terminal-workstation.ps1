@@ -863,7 +863,10 @@ try {
 
   $answers = Join-Path $ownedRoot 'onboard-input.txt'
   [System.IO.File]::WriteAllText($answers, "Acceptance Operator`n2`nn`nn`n", (New-Object System.Text.UTF8Encoding($false)))
-  $onboard = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'bin\coop.ps1'),'onboard','--json') (Join-Path $logs 'baseline-onboard') 300 $answers
+  # v0.23.1's launcher omitted scripts/onboard.py's required `onboard`
+  # subcommand. Seed realistic pre-upgrade state through that version's actual
+  # onboarding implementation; the candidate launcher is exercised below.
+  $onboard = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'scripts\onboard.py'),'onboard','--json') (Join-Path $logs 'baseline-onboard') 300 $answers
   Assert-ExitZero $onboard 'baseline supported onboarding'
   Remove-Item -LiteralPath $answers -Force
 

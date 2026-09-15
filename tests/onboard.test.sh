@@ -28,6 +28,15 @@ preset="$(printf '%s' "$out" | "$PY" -c 'import sys,json; print(json.load(sys.st
 [ "$preset" = "concise" ] && ok "onboard captures preset by number" || ko "onboard preset: $preset"
 [ -f "$COOP_DIR/.coop/config" ] && "$PY" -c 'import json,sys; c=json.load(open(sys.argv[1])); assert c["schema_version"]==1 and "integrations" in c' "$COOP_DIR/.coop/config" && ok "onboard writes valid versioned integration config" || ko "integration config missing/invalid"
 [ -f "$COOP_DIR/.coop/agent/mcp.json" ] && ! grep -q 'TODO-\|@latest' "$COOP_DIR/.coop/agent/mcp.json" && ok "onboard generates placeholder-free pinned MCP config" || ko "managed MCP config missing/unpinned"
+
+# Exercise the public dispatcher, not only onboard.py directly. The launcher
+# must supply onboard.py's required `onboard` subcommand before user flags.
+LAUNCH_DIR="$COOP_DIR/launcher"; mkdir -p "$LAUNCH_DIR"
+launch_out="$(printf 'Launcher User\n1\n' | env HOME="$LAUNCH_DIR" COOP_DIR="$LAUNCH_DIR" COOP_AZ_BIN=/nonexistent/az \
+  bash "$ROOT/bin/coop" onboard --json 2>/dev/null)"
+launch_name="$(printf '%s' "$launch_out" | "$PY" -c 'import sys,json; print(json.load(sys.stdin)["name"])')"
+[ "$launch_name" = "Launcher User" ] && [ -f "$LAUNCH_DIR/.coop/user.json" ] && ok "coop onboard dispatcher supplies the required subcommand" || ko "coop onboard dispatcher failed"
+
 cp "$COOP_DIR/.coop/user.json" "$COOP_DIR/user-before.json"
 printf '\n\n\n\n\n\n\n\n\n' | HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" onboard --config-only >/dev/null 2>&1
 cmp -s "$COOP_DIR/.coop/user.json" "$COOP_DIR/user-before.json" && ok "config-only edit preserves user profile" || ko "config-only edit changed profile"

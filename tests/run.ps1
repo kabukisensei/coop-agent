@@ -89,6 +89,32 @@ try {
     }
   if (-not $bomFail) { Ok 'every .ps1 carries exactly one UTF-8 BOM' }
 
+  # --- 0b. public onboarding dispatcher supplies the Python subcommand -------
+  Head 'onboarding dispatcher contract test'
+  $onboardRoot = Join-Path $stub 'onboard-dispatch'
+  New-Item -ItemType Directory -Path $onboardRoot -Force | Out-Null
+  $onboardInput = Join-Path $stub 'onboard-input.txt'
+  $onboardStdout = Join-Path $stub 'onboard-stdout.txt'
+  $onboardStderr = Join-Path $stub 'onboard-stderr.txt'
+  [System.IO.File]::WriteAllText($onboardInput, "PowerShell Operator`n1`n", (New-Object System.Text.UTF8Encoding($false)))
+  $savedCoopDir = $env:COOP_DIR
+  $savedAzureBin = $env:COOP_AZ_BIN
+  try {
+    $env:COOP_DIR = $onboardRoot
+    $env:COOP_AZ_BIN = Join-Path $stub 'missing-az'
+    $onboardProcess = Start-Process -FilePath $psExe -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $coop + '"'),'onboard','--json') -PassThru -NoNewWindow -RedirectStandardInput $onboardInput -RedirectStandardOutput $onboardStdout -RedirectStandardError $onboardStderr
+    $onboardProcess.WaitForExit()
+  } finally {
+    $env:COOP_DIR = $savedCoopDir
+    $env:COOP_AZ_BIN = $savedAzureBin
+  }
+  $onboardProfile = if ($onboardProcess.ExitCode -eq 0) { Get-Content -LiteralPath $onboardStdout -Raw | ConvertFrom-Json } else { $null }
+  if ($onboardProcess.ExitCode -eq 0 -and $onboardProfile.name -ceq 'PowerShell Operator' -and (Test-Path -LiteralPath (Join-Path $onboardRoot '.coop\user.json') -PathType Leaf)) {
+    Ok 'coop.ps1 onboard supplies the required subcommand'
+  } else {
+    Ko "coop.ps1 onboard dispatcher failed with exit $($onboardProcess.ExitCode)"
+  }
+
   # --- 1. launch-spec resolves the governed pi invocation --------------------
   Head 'launch-spec (shared launch builder) test'
   # Join-Path emits native separators, so on Windows PowerShell 5.1 the spec paths
