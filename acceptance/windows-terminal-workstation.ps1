@@ -205,7 +205,7 @@ function Get-InstalledExtensionInventory([object]$Manifest, [string]$AgentRoot, 
   $prerelease = "-$identifier(?:\.$identifier)*"
   $build = '\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*'
   $semver = "$core\.$core\.$core(?:$prerelease)?(?:$build)?"
-  $specPattern = "^npm:(?<name>@[^/@]+/[^/@]+|[^/@]+)@(?<version>$semver)$"
+  $specPattern = "^npm:(?<name>@[^/@]+/[^/@]+|[^/@]+)@(?<version>$semver)\z"
   foreach ($spec in @($settings.packages)) {
     if (-not (Test-JsonString $spec)) { throw "$Label Pi package spec must be a string" }
     $match = [regex]::Match([string]$spec, $specPattern)

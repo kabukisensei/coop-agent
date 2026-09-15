@@ -336,6 +336,10 @@ test("installed extension collector enumerates configured packages independently
   const good = runPs(["-Mode", "Probe", "-Probe", "CollectExtensionInventory", "-Root", agentRoot, "-Value", manifestPath]);
   assert.equal(good.status, 0, good.stderr);
 
+  writeFileSync(join(agentRoot, "settings.json"), JSON.stringify({ packages: [...packages.slice(0, -1), `${packages.at(-1)}\n`] }));
+  const trailingNewline = runPs(["-Mode", "Probe", "-Probe", "CollectExtensionInventory", "-Root", agentRoot, "-Value", manifestPath]);
+  assert.notEqual(trailingNewline.status, 0, "collector accepted a package spec with a trailing newline");
+
   const extraName = "unmanaged-extension"; const extraVersion = "1.0.0";
   writePackage(extraName, extraVersion);
   writeFileSync(join(agentRoot, "settings.json"), JSON.stringify({ packages: [...packages, `npm:${extraName}@${extraVersion}`] }));
