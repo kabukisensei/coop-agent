@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
-  [ValidateSet('Run','ValidateReceipt','ValidateUploadAuthorization','Probe')][string]$Mode = 'Run',
+  [ValidateSet('Run','RunBehavioralSuite','ValidateReceipt','ValidateUploadAuthorization','Probe')][string]$Mode = 'Run',
   [ValidateSet('Receipt','Evidence')][string]$AuthorizationKind = 'Receipt',
   [string]$RunNonce = '',
   [string]$HarnessRoot = '',
@@ -51,6 +51,12 @@ $script:RequiredOperatorIds = @(
 
 function Test-StrictSha([string]$Sha) {
   return [bool]($Sha -cmatch '^[0-9a-f]{40}$')
+}
+
+function Assert-CheckoutIdentity([string]$Path, [string]$Label, [string]$ExpectedSha) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "checkout missing: $Label" }
+  $observed = (& git -C $Path rev-parse HEAD | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or $observed -cne $ExpectedSha) { throw "checkout identity mismatch: $Label" }
 }
 
 function Assert-EmptyOwnedRoot([string]$Path) {
@@ -218,6 +224,7 @@ function Get-InstalledExtensionInventory([object]$Manifest, [string]$AgentRoot, 
     $packageJson = Join-Path $packageJson 'package.json'
     if (-not (Test-Path -LiteralPath $packageJson -PathType Leaf)) { throw "$Label installed extension metadata missing: $name" }
     $metadata = Get-Content -LiteralPath $packageJson -Raw | ConvertFrom-Json
+    if (-not (Test-JsonString $metadata.name) -or [string]$metadata.name -cne $name) { throw "$Label installed extension name mismatch: $name" }
     if (-not (Test-JsonString $metadata.version) -or [string]::IsNullOrWhiteSpace($metadata.version)) { throw "$Label installed extension version missing: $name" }
     if ([string]$metadata.version -cne $configuredVersion) { throw "$Label configured and installed extension versions differ: $name" }
     $inventory[$name] = [string]$metadata.version
@@ -425,10 +432,10 @@ function Stop-TrackedProcessTrees {
   # kernel-owned inherited membership is the safety boundary.
 }
 
-function Assert-FrozenArtifactsSafe([string]$EvidencePath, [string]$Needle, [string]$CandidatePath = '', [string]$BaselinePath = '') {
+function Assert-FrozenArtifactsSafe([string]$EvidencePath, [string]$Needle, [string]$CandidatePath = '', [string]$BaselinePath = '', [string]$HarnessPath = '') {
   Stop-TrackedProcessTrees
   if ($script:ProcessCleanupUncertain) { throw 'owned process cleanup uncertainty suppresses upload' }
-  foreach ($item in @(@{ Path = $CandidatePath; Label = 'candidate' }, @{ Path = $BaselinePath; Label = 'baseline' })) {
+  foreach ($item in @(@{ Path = $CandidatePath; Label = 'candidate' }, @{ Path = $BaselinePath; Label = 'baseline' }, @{ Path = $HarnessPath; Label = 'harness' })) {
     if ($item.Path -and (Test-Path -LiteralPath $item.Path -PathType Container)) {
       $sourceStatus = (& git -C $item.Path status --porcelain --untracked-files=all | Out-String).Trim()
       if ($LASTEXITCODE -ne 0 -or $sourceStatus) { throw "immutable $($item.Label) checkout is dirty or unreadable" }
@@ -834,6 +841,47 @@ if ($Mode -eq 'Probe') {
   exit 0
 }
 
+if ($Mode -eq 'RunBehavioralSuite') {
+  try {
+    if ($env:OS -ne 'Windows_NT' -or $env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'behavioral suite finalization requires a GitHub-hosted Windows runner' }
+    if ($RunNonce -cnotmatch '^[0-9a-f]{32}$' -or -not (Test-StrictSha $ExpectedHarnessSha) -or -not (Test-StrictSha $ExpectedCandidateSha)) { throw 'behavioral suite identity is invalid' }
+    if ($ExpectedHarnessSha -cne $ExpectedCandidateSha -or $ExpectedCandidateBuild -cnotmatch '^build-[0-9a-f]{8}$') { throw 'behavioral suite candidate binding is invalid' }
+    $suiteCheckouts = @(
+      @{ Path = $HarnessRoot; Sha = $ExpectedHarnessSha; Label = 'harness' },
+      @{ Path = $CandidateRoot; Sha = $ExpectedCandidateSha; Label = 'candidate' },
+      @{ Path = $BaselineRoot; Sha = $script:BaselineSha; Label = 'baseline' }
+    )
+    foreach ($item in $suiteCheckouts) { Assert-CheckoutIdentity $item.Path $item.Label $item.Sha }
+    if (-not (Test-Path -LiteralPath $EvidenceRoot -PathType Container) -or -not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) { throw 'behavioral suite artifacts are missing' }
+    Assert-Receipt (Read-Receipt $ReceiptPath) | Out-Null
+    Assert-UploadAuthorization 'Receipt' $ReceiptPath $RunNonce $ExpectedHarnessSha | Out-Null
+    Assert-UploadAuthorization 'Evidence' $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot | Out-Null
+    Assert-FrozenArtifactsSafe $EvidenceRoot $Canary $CandidateRoot $BaselineRoot $HarnessRoot
+    $receiptBefore = Get-FileSha $ReceiptPath
+    $evidenceBefore = Get-TreeHash $EvidenceRoot
+
+    $logBase = Join-Path (Split-Path -Parent $ReceiptPath) 'exact-behavioral-suite'
+    $suite = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'tests\run.ps1')) $logBase 1800
+    Assert-ExitZero $suite 'exact-candidate behavioral suite'
+    if ((Get-FileSha $ReceiptPath) -cne $receiptBefore -or (Get-TreeHash $EvidenceRoot) -cne $evidenceBefore) { throw 'behavioral suite mutated frozen artifacts' }
+    Assert-FrozenArtifactsSafe $EvidenceRoot $Canary $CandidateRoot $BaselineRoot $HarnessRoot
+    foreach ($item in $suiteCheckouts) { Assert-CheckoutIdentity $item.Path $item.Label $item.Sha }
+    $receiptHits = @(Find-Canary $ReceiptPath $Canary)
+    if ($receiptHits.Count -gt 0) { throw 'credential canary found in receipt after behavioral suite' }
+
+    Remove-UploadAuthorizations $ReceiptPath
+    New-UploadAuthorization 'Receipt' $ReceiptPath $RunNonce $ExpectedHarnessSha
+    New-UploadAuthorization 'Evidence' $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot
+    Assert-UploadAuthorization 'Receipt' $ReceiptPath $RunNonce $ExpectedHarnessSha | Out-Null
+    Assert-UploadAuthorization 'Evidence' $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot | Out-Null
+    Write-Output 'behavioral suite and post-suite finalization passed'
+    exit 0
+  } catch {
+    try { Remove-UploadAuthorizations $ReceiptPath } catch {}
+    throw
+  }
+}
+
 if ($Mode -eq 'ValidateReceipt') {
   $receipt = Read-Receipt $ReceiptPath
   Assert-Receipt $receipt | Out-Null
@@ -860,7 +908,10 @@ $candidateObservedBuild = $null
 $baselineObservedSha = $null
 $baselineObservedVersion = $null
 $ownedRoot = if ($EvidenceRoot) { Split-Path -Parent $EvidenceRoot } else { $null }
-$canary = ('COOP' + '-ACCEPTANCE-CANARY-' + [guid]::NewGuid().ToString('N'))
+$canary = if ($Canary) {
+  if ($Canary -cnotmatch '^COOP-ACCEPTANCE-CANARY-[0-9a-f]{32}$') { throw 'Canary must be exact current-run acceptance canary' }
+  $Canary
+} else { 'COOP-ACCEPTANCE-CANARY-' + [guid]::NewGuid().ToString('N') }
 $runFailure = $null
 $evidenceEligible = $false
 $authorizationRevoked = $false
@@ -1123,7 +1174,7 @@ try {
     $artifactFailure = 'artifact finalization failed closed because the current run did not fully succeed'
   } else {
     try {
-      Assert-FrozenArtifactsSafe $EvidenceRoot $canary $CandidateRoot $BaselineRoot
+      Assert-FrozenArtifactsSafe $EvidenceRoot $canary $CandidateRoot $BaselineRoot $HarnessRoot
       $evidenceEligible = $true
     } catch {
       $artifactFailure = 'artifact finalization failed closed; process-tree termination, checkout cleanliness, or evidence sanitization was not proven'

@@ -98,7 +98,9 @@ jobs:
         shell: powershell
         run: |
           $nonce = [guid]::NewGuid().ToString('N')
+          $canary = 'COOP-ACCEPTANCE-CANARY-' + [guid]::NewGuid().ToString('N')
           "RUN_NONCE=$nonce" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "EVIDENCE_CANARY=$canary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "RECEIPT_UPLOADABLE=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "EVIDENCE_UPLOADABLE=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
@@ -142,6 +144,7 @@ jobs:
             -EvidenceRoot $evidence `
             -ReceiptPath $receipt `
             -RunNonce $env:RUN_NONCE `
+            -Canary $env:EVIDENCE_CANARY `
             -ExpectedHarnessSha $env:VERIFIED_CANDIDATE_SHA `
             -ExpectedCandidateSha $env:VERIFIED_CANDIDATE_SHA `
             -ExpectedCandidateBuild $env:VERIFIED_CANDIDATE_BUILD
@@ -152,7 +155,21 @@ jobs:
         id: exact_behavioral_suite
         shell: powershell
         working-directory: candidate
-        run: .\tests\run.ps1
+        run: |
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
+            ..\harness\acceptance\windows-terminal-workstation.ps1 `
+            -Mode RunBehavioralSuite `
+            -HarnessRoot (Resolve-Path ..\harness) `
+            -CandidateRoot (Resolve-Path .) `
+            -BaselineRoot (Resolve-Path ..\baseline) `
+            -EvidenceRoot $env:EVIDENCE_PATH `
+            -ReceiptPath $env:RECEIPT_PATH `
+            -RunNonce $env:RUN_NONCE `
+            -Canary $env:EVIDENCE_CANARY `
+            -ExpectedHarnessSha $env:VERIFIED_CANDIDATE_SHA `
+            -ExpectedCandidateSha $env:VERIFIED_CANDIDATE_SHA `
+            -ExpectedCandidateBuild $env:VERIFIED_CANDIDATE_BUILD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Validate fail-closed receipt
         if: always() && steps.exact_behavioral_suite.outcome == 'success'

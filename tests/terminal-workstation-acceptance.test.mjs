@@ -336,6 +336,16 @@ test("installed extension collector enumerates configured packages independently
   const good = runPs(["-Mode", "Probe", "-Probe", "CollectExtensionInventory", "-Root", agentRoot, "-Value", manifestPath]);
   assert.equal(good.status, 0, good.stderr);
 
+  const [firstName, firstVersion] = Object.entries(manifest.extensions)[0];
+  const firstMetadata = join(agentRoot, "npm", "node_modules", ...firstName.split("/"), "package.json");
+  writeFileSync(firstMetadata, JSON.stringify({ name: "wrong-extension", version: firstVersion }));
+  const wrongName = runPs(["-Mode", "Probe", "-Probe", "CollectExtensionInventory", "-Root", agentRoot, "-Value", manifestPath]);
+  assert.notEqual(wrongName.status, 0, "collector accepted mismatched package metadata identity");
+  writeFileSync(firstMetadata, JSON.stringify({ version: firstVersion }));
+  const missingName = runPs(["-Mode", "Probe", "-Probe", "CollectExtensionInventory", "-Root", agentRoot, "-Value", manifestPath]);
+  assert.notEqual(missingName.status, 0, "collector accepted missing package metadata identity");
+  writePackage(firstName, firstVersion);
+
   writeFileSync(join(agentRoot, "settings.json"), JSON.stringify({ packages: [...packages.slice(0, -1), `${packages.at(-1)}\n`] }));
   const trailingNewline = runPs(["-Mode", "Probe", "-Probe", "CollectExtensionInventory", "-Root", agentRoot, "-Value", manifestPath]);
   assert.notEqual(trailingNewline.status, 0, "collector accepted a package spec with a trailing newline");
@@ -370,6 +380,41 @@ test("rollback npm reconciliation executes, fails closed, and precedes proof con
   assert.ok(rollbackInstall < reconciliation && reconciliation < rollbackInventory, "npm reconciliation must run after baseline source install and before rollback inventory");
   assert.ok(rollbackInventory < rollbackComparison && rollbackComparison < proofConstruction, "actual baseline comparison must succeed before rollback proof construction");
   assert.ok(source.includes("$rollbackExpected.npm_tools.PSObject.Properties.Remove($name)"), "an initially absent npm tool must remain absent in rollback proof");
+});
+
+test("bounded behavioral suite re-finalizes immutable artifacts and checkouts before upload", () => {
+  const source = readFileSync(SCRIPT, "utf8");
+  const contract = (candidate) => {
+    const identityHelper = candidate.match(/function Assert-CheckoutIdentity[\s\S]*?\n\}/)?.[0] ?? "";
+    assert.match(identityHelper, /git -C \$Path rev-parse HEAD/);
+    assert.match(identityHelper, /\$observed -cne \$ExpectedSha/);
+    const block = candidate.match(/if \(\$Mode -eq 'RunBehavioralSuite'\) \{([\s\S]*?)\n\}\n\nif \(\$Mode -eq 'ValidateReceipt'\)/)?.[1] ?? "";
+    assert.ok(block, "post-suite finalization mode missing");
+    const receiptHash = block.indexOf("$receiptBefore = Get-FileSha $ReceiptPath");
+    const evidenceHash = block.indexOf("$evidenceBefore = Get-TreeHash $EvidenceRoot");
+    const bounded = block.indexOf("$suite = Invoke-Bounded 'powershell.exe'");
+    const exitGate = block.indexOf("Assert-ExitZero $suite 'exact-candidate behavioral suite'");
+    const mutationGate = block.indexOf("throw 'behavioral suite mutated frozen artifacts'");
+    const cleanGate = block.indexOf("Assert-FrozenArtifactsSafe $EvidenceRoot $Canary $CandidateRoot $BaselineRoot $HarnessRoot", mutationGate);
+    const identityGate = block.indexOf("foreach ($item in $suiteCheckouts) { Assert-CheckoutIdentity $item.Path $item.Label $item.Sha }", cleanGate);
+    const revoke = block.indexOf("Remove-UploadAuthorizations $ReceiptPath", identityGate);
+    const receiptAuth = block.indexOf("\n    New-UploadAuthorization 'Receipt' $ReceiptPath $RunNonce $ExpectedHarnessSha", revoke);
+    const evidenceAuth = block.indexOf("\n    New-UploadAuthorization 'Evidence' $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot", receiptAuth);
+    assert.ok(receiptHash >= 0 && evidenceHash >= 0 && receiptHash < bounded && evidenceHash < bounded, "artifact hashes must be frozen before the suite");
+    assert.ok(bounded < exitGate && exitGate < mutationGate && mutationGate < cleanGate && cleanGate < identityGate, "bounded completion, hash comparison, checkout cleanliness, and exact identity must be ordered");
+    assert.ok(identityGate < revoke && revoke < receiptAuth && receiptAuth < evidenceAuth, "only post-suite finalization may re-authorize uploads");
+    assert.match(block, /catch \{[\s\S]*Remove-UploadAuthorizations \$ReceiptPath[\s\S]*throw/);
+  };
+  contract(source);
+  for (const [index, mutant] of [
+    source.replace("$suite = Invoke-Bounded 'powershell.exe'", "$suite = Start-Process 'powershell.exe'"),
+    source.replace("Assert-ExitZero $suite 'exact-candidate behavioral suite'", "Write-Output $suite.ExitCode"),
+    source.replace("throw 'behavioral suite mutated frozen artifacts'", "Write-Output 'artifact mutation ignored'"),
+    source.replaceAll("Assert-FrozenArtifactsSafe $EvidenceRoot $Canary $CandidateRoot $BaselineRoot $HarnessRoot", "Assert-FrozenArtifactsSafe $EvidenceRoot $Canary"),
+    source.replaceAll("foreach ($item in $suiteCheckouts) { Assert-CheckoutIdentity $item.Path $item.Label $item.Sha }", "Write-Output 'identity skipped'"),
+    source.replace("$observed -cne $ExpectedSha", "$false"),
+    source.replace("New-UploadAuthorization 'Evidence' $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot", "# New-UploadAuthorization 'Evidence' $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot"),
+  ].entries()) assert.throws(() => contract(mutant), `post-suite finalization mutant ${index} was accepted`);
 });
 
 test("failure-path canary contamination removes evidence and emits no upload marker", { skip: !havePwsh }, () => {
@@ -741,27 +786,35 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.match(source, /CANDIDATE_SHA: \$\{\{ github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.sha \|\| inputs\.candidate_sha \}\}/);
     assert.equal((source.match(/ref: \$\{\{ env\.CANDIDATE_SHA \}\}/g) || []).length, 2);
     assert.match(source, /\$observed = \(& git -C \$checkout rev-parse HEAD\)\.Trim\(\)[\s\S]*\$observed -cne \$expected/);
-    const exactCandidateSuiteLiteral = [
-      "      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1",
-      "        id: exact_behavioral_suite",
-      "        shell: powershell",
-      "        working-directory: candidate",
-      "        run: .\\tests\\run.ps1",
-    ].join("\n");
     assert.equal((source.match(/^      - name: Run exact-candidate behavioral tests under Windows PowerShell 5\.1$/gm) || []).length, 1);
-    assert.ok(source.includes(`${exactCandidateSuiteLiteral}\n\n      - name:`), "exact-candidate suite step must be complete and scalar-free");
     const yamlCode = "import importlib.util,json,sys;p=sys.argv[1];s=importlib.util.spec_from_file_location('_coop_yaml',p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(json.dumps(m._load_fallback(sys.stdin.read())))";
     const yamlProbe = spawnSync(PYTHON, ["-c", yamlCode, YAML_READER], { encoding: "utf8", input: source });
     assert.equal(yamlProbe.status, 0, yamlProbe.stderr);
     const activeSteps = JSON.parse(yamlProbe.stdout)?.jobs?.["native-windows-p0"]?.steps;
     assert.ok(Array.isArray(activeSteps), "native Windows workflow steps must parse");
     const exactCandidateSuiteSteps = activeSteps.filter((step) => step?.name === "Run exact-candidate behavioral tests under Windows PowerShell 5.1");
+    const suiteRun = [
+      "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `",
+      "..\\harness\\acceptance\\windows-terminal-workstation.ps1 `",
+      "-Mode RunBehavioralSuite `",
+      "-HarnessRoot (Resolve-Path ..\\harness) `",
+      "-CandidateRoot (Resolve-Path .) `",
+      "-BaselineRoot (Resolve-Path ..\\baseline) `",
+      "-EvidenceRoot $env:EVIDENCE_PATH `",
+      "-ReceiptPath $env:RECEIPT_PATH `",
+      "-RunNonce $env:RUN_NONCE `",
+      "-Canary $env:EVIDENCE_CANARY `",
+      "-ExpectedHarnessSha $env:VERIFIED_CANDIDATE_SHA `",
+      "-ExpectedCandidateSha $env:VERIFIED_CANDIDATE_SHA `",
+      "-ExpectedCandidateBuild $env:VERIFIED_CANDIDATE_BUILD",
+      "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+    ].join("\n");
     assert.deepEqual(exactCandidateSuiteSteps, [{
       name: "Run exact-candidate behavioral tests under Windows PowerShell 5.1",
       id: "exact_behavioral_suite",
       shell: "powershell",
       "working-directory": "candidate",
-      run: ".\\tests\\run.ps1",
+      run: suiteRun,
     }]);
     const pythonPinIndex = activeSteps.findIndex((step) => step?.name === "Pin runner Python for certification");
     const exactSuiteIndex = activeSteps.findIndex((step) => step?.name === "Run exact-candidate behavioral tests under Windows PowerShell 5.1");
@@ -827,14 +880,14 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("ref: ${{ env.CANDIDATE_SHA }}", "ref: ${{ github.sha }}"),
     workflow.replace("$observed -cne $expected", "$false"),
     workflow.replace("Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        id: exact_behavioral_suite\n        shell: powershell", "Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        id: exact_behavioral_suite\n        shell: pwsh"),
-    workflow.replace("working-directory: candidate\n        run: .\\tests\\run.ps1", "working-directory: candidate\n        continue-on-error: true\n        run: .\\tests\\run.ps1"),
+    workflow.replace("        working-directory: candidate\n        run: |", "        working-directory: candidate\n        continue-on-error: true\n        run: |"),
     workflow.replace("        shell: powershell\n        working-directory: candidate", "        # shell: powershell\n        shell: pwsh\n        working-directory: candidate"),
-    workflow.replace("working-directory: candidate\n        run: .\\tests\\run.ps1", "working-directory: candidate-other\n        run: .\\tests\\run.ps1"),
-    workflow.replace("run: .\\tests\\run.ps1", "run: .\\tests\\run.ps1; exit 0"),
-    workflow.replace("        run: .\\tests\\run.ps1", "        \"continue-on-error\": true\n        run: .\\tests\\run.ps1"),
-    workflow.replace("        run: .\\tests\\run.ps1", "        run: .\\tests\\run.ps1\n          ; exit 0"),
+    workflow.replace("        working-directory: candidate\n        run: |", "        working-directory: candidate-other\n        run: |"),
+    workflow.replace("-Mode RunBehavioralSuite `", "-Mode ValidateReceipt `"),
+    workflow.replace("        run: |\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `\n            ..\\harness\\acceptance", "        \"continue-on-error\": true\n        run: |\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `\n            ..\\harness\\acceptance"),
+    workflow.replace("          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n\n      - name: Validate fail-closed receipt", "          if ($false) { exit $LASTEXITCODE }\n\n      - name: Validate fail-closed receipt"),
     workflow.replace("      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1", "      - continue-on-error: true\n        #      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1"),
-    workflow.replace("        working-directory: candidate\n        run: .\\tests\\run.ps1", "        working-directory: candidate\n        continue-on-error: true\n        run: .\\tests\\run.ps1").replace("    runs-on: windows-latest", "    name: |\n      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        id: exact_behavioral_suite\n        shell: powershell\n        working-directory: candidate\n        run: .\\tests\\run.ps1\n      - name: scalar terminator\n    runs-on: windows-latest"),
+    workflow.replace("        working-directory: candidate\n        run: |", "        working-directory: candidate\n        continue-on-error: true\n        run: |").replace("    runs-on: windows-latest", "    name: |\n      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        id: exact_behavioral_suite\n        shell: powershell\n        working-directory: candidate\n        run: .\\tests\\run.ps1\n      - name: scalar terminator\n    runs-on: windows-latest"),
     workflow.replace("-Probe ResolvePython", "-Probe ValidateSha"),
     workflow.replace("$env:GITHUB_PATH -Encoding utf8 -Append", "$env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append"),
     workflow.replace("& $env:CERT_PYTHON -m pip install", "python -m pip install"),
