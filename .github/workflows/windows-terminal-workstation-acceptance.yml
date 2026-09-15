@@ -84,6 +84,15 @@ jobs:
           ) | Out-Null
           if ($errors) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
 
+      - name: Pin runner Python for certification
+        shell: powershell
+        run: |
+          $python = (Get-Command python -CommandType Application -ErrorAction Stop).Source
+          & $python --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          (Split-Path -Parent $python) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1
         shell: powershell
         working-directory: candidate
@@ -100,15 +109,15 @@ jobs:
       - name: Install receipt-schema test dependency
         shell: powershell
         run: |
-          python -m pip install --disable-pip-version-check --no-input "jsonschema==4.25.1"
+          & $env:CERT_PYTHON -m pip install --disable-pip-version-check --no-input "jsonschema==4.25.1"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -c "import jsonschema"
+          & $env:CERT_PYTHON -c "import jsonschema"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Exercise ownership faults and Unicode transport
         shell: powershell
         run: |
-          python .\harness\tests\knowledge-git.test.py `
+          & $env:CERT_PYTHON .\harness\tests\knowledge-git.test.py `
             KnowledgeGitOwnershipTests.test_create_failure_reaches_adopt_and_stops_suspended_child `
             KnowledgeGitOwnershipTests.test_assignment_failure_reaches_adopt_and_closes_job `
             KnowledgeGitOwnershipTests.test_resume_failure_reaches_adopt_and_closes_owned_job_without_pid_fallback `

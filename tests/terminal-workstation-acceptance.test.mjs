@@ -623,6 +623,18 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
       "working-directory": "candidate",
       run: ".\\tests\\run.ps1",
     }]);
+    const pythonPinIndex = activeSteps.findIndex((step) => step?.name === "Pin runner Python for certification");
+    const exactSuiteIndex = activeSteps.findIndex((step) => step?.name === "Run exact-candidate behavioral tests under Windows PowerShell 5.1");
+    const dependencyIndex = activeSteps.findIndex((step) => step?.name === "Install receipt-schema test dependency");
+    assert.ok(pythonPinIndex >= 0 && pythonPinIndex < exactSuiteIndex && exactSuiteIndex < dependencyIndex);
+    const pythonPin = activeSteps[pythonPinIndex];
+    assert.equal(pythonPin.shell, "powershell");
+    assert.match(pythonPin.run, /Get-Command python -CommandType Application/);
+    assert.match(pythonPin.run, /CERT_PYTHON=.*GITHUB_ENV/);
+    assert.match(pythonPin.run, /GITHUB_PATH/);
+    assert.doesNotMatch(pythonPin.run, /continue-on-error/);
+    assert.match(activeSteps[dependencyIndex].run, /& \$env:CERT_PYTHON -m pip install/);
+    assert.match(activeSteps[dependencyIndex].run, /& \$env:CERT_PYTHON -c "import jsonschema"/);
     assert.match(source, /ExpectedCandidateSha \$env:VERIFIED_CANDIDATE_SHA/);
     assert.match(source, /ExpectedCandidateBuild \$env:VERIFIED_CANDIDATE_BUILD/);
     assert.match(source, /VERSION[\s\S]*fingerprintBuild/);
@@ -652,6 +664,9 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("        run: .\\tests\\run.ps1", "        run: .\\tests\\run.ps1\n          ; exit 0"),
     workflow.replace("      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1", "      - continue-on-error: true\n        #      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1"),
     workflow.replace("        working-directory: candidate\n        run: .\\tests\\run.ps1", "        working-directory: candidate\n        continue-on-error: true\n        run: .\\tests\\run.ps1").replace("    runs-on: windows-latest", "    name: |\n      - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1\n        shell: powershell\n        working-directory: candidate\n        run: .\\tests\\run.ps1\n      - name: scalar terminator\n    runs-on: windows-latest"),
+    workflow.replace("Get-Command python -CommandType Application", "Get-Command py -CommandType Application"),
+    workflow.replace("$env:GITHUB_PATH -Encoding utf8 -Append", "$env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append"),
+    workflow.replace("& $env:CERT_PYTHON -m pip install", "python -m pip install"),
   ].entries()) assert.throws(() => contract(forged), `workflow mutant ${index} was accepted`);
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
   assert.match(testSource, /COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE[\s\S]*"-Mode", "Run"/);
