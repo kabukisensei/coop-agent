@@ -710,7 +710,12 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     const exactSuiteIndex = activeSteps.findIndex((step) => step?.name === "Run exact-candidate behavioral tests under Windows PowerShell 5.1");
     const pythonRepinIndex = activeSteps.findIndex((step) => step?.name === "Revalidate runner Python after behavioral tests");
     const dependencyIndex = activeSteps.findIndex((step) => step?.name === "Install receipt-schema test dependency");
-    assert.ok(pythonPinIndex >= 0 && pythonPinIndex < exactSuiteIndex && exactSuiteIndex < pythonRepinIndex && pythonRepinIndex < dependencyIndex);
+    const ownershipIndex = activeSteps.findIndex((step) => step?.name === "Exercise ownership faults and Unicode transport");
+    const nativeAcceptanceIndex = activeSteps.findIndex((step) => step?.name === "Run native acceptance (cannot close human gate)");
+    assert.ok(pythonPinIndex >= 0 && pythonPinIndex < exactSuiteIndex && exactSuiteIndex < pythonRepinIndex);
+    for (const consumerIndex of [dependencyIndex, ownershipIndex, nativeAcceptanceIndex]) {
+      assert.ok(pythonRepinIndex < consumerIndex, "every later Python consumer must follow post-suite revalidation");
+    }
     const pythonPinRun = [
       "$python = (& .\\harness\\acceptance\\windows-terminal-workstation.ps1 -Mode Probe -Probe ResolvePython | Out-String).Trim()",
       "if ($LASTEXITCODE -ne 0 -or -not $python) { exit 1 }",
@@ -749,6 +754,18 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.doesNotMatch(source, /secrets\.|GITHUB_TOKEN|repository_dispatch|workflow_run|\bgit push\b/);
   };
   contract(workflow);
+  const moveStepBefore = (source, movedName, anchorName) => {
+    const movedMarker = `      - name: ${movedName}`;
+    const anchorMarker = `      - name: ${anchorName}`;
+    const start = source.indexOf(movedMarker);
+    const next = source.indexOf("\n      - name:", start + movedMarker.length);
+    assert.ok(start >= 0 && next > start, `missing workflow step to move: ${movedName}`);
+    const block = source.slice(start, next + 1);
+    const without = source.slice(0, start) + source.slice(next + 1);
+    const anchor = without.indexOf(anchorMarker);
+    assert.ok(anchor >= 0, `missing workflow anchor: ${anchorName}`);
+    return without.slice(0, anchor) + block + without.slice(anchor);
+  };
   for (const [index, forged] of [
     workflow.replace("github.head_ref == 'integration/presentation-2026-09-20'", "github.head_ref != ''"),
     workflow.replace("github.event.pull_request.head.repo.full_name == github.repository", "true"),
@@ -771,6 +788,8 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace('"CERT_PYTHON=$python"', '"CERT_PYTHON=python"'),
     workflow.replace("      - name: Pin runner Python for certification", "      - name: Pin runner Python for certification\n        continue-on-error: true"),
     workflow.replace("Revalidate runner Python after behavioral tests", "Skip runner Python revalidation"),
+    moveStepBefore(workflow, "Exercise ownership faults and Unicode transport", "Revalidate runner Python after behavioral tests"),
+    moveStepBefore(workflow, "Run native acceptance (cannot close human gate)", "Revalidate runner Python after behavioral tests"),
     workflow.replace("& $env:CERT_PYTHON .\\harness\\tests\\knowledge-git.test.py", "python .\\harness\\tests\\knowledge-git.test.py"),
   ].entries()) assert.throws(() => contract(forged), `workflow mutant ${index} was accepted`);
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
