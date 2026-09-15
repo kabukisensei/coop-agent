@@ -204,9 +204,10 @@ EOF
 chmod +x "$stub_dup/pi"
 out="$(PATH="$stub_dup:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
 dup_section="$(printf '%s\n' "$out" | sed -n '/Pi extensions/,/MCP servers/p')"
+pin_mcp="$(python3 -c 'import json,sys;print(json.load(sys.stdin)["extensions"]["pi-mcp-adapter"])' < "$ROOT/config/release-manifest.json")"
 case "$dup_section" in
   *"several versions"*) ko "a same-version duplicate was reported as ambiguous" ;;
-  *"pi-mcp-adapter $(python3 -c 'import json;print(json.load(open("'"$ROOT"'/config/release-manifest.json"))["extensions"]["pi-mcp-adapter"])') matches manifest"*) ok "a same-version duplicate still proves the pin" ;;
+  *"pi-mcp-adapter $pin_mcp matches manifest"*) ok "a same-version duplicate still proves the pin" ;;
   *) ko "duplicate spec line broke the pin proof"; printf '%s\n' "$dup_section" ;;
 esac
 rm -rf "$stub_real" "$stub_dup"
