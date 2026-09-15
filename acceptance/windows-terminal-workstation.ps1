@@ -72,8 +72,17 @@ function Get-FileSha([string]$Path) {
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Assert-NoReparsePoints([string]$Path, [string]$Label) {
+  if (-not (Test-Path -LiteralPath $Path)) { throw "$Label does not exist: $Path" }
+  $items = @((Get-Item -LiteralPath $Path -Force)) + @(Get-ChildItem -LiteralPath $Path -Recurse -Force)
+  foreach ($item in $items) {
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "$Label contains a reparse point: $($item.FullName)" }
+  }
+}
+
 function Get-TreeHash([string]$Path) {
   if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "tree does not exist: $Path" }
+  Assert-NoReparsePoints $Path 'tree'
   $resolved = (Resolve-Path -LiteralPath $Path).Path
   $rows = New-Object System.Collections.Generic.List[string]
   Get-ChildItem -LiteralPath $resolved -Recurse -File -Force |
@@ -94,6 +103,7 @@ function Get-TreeHash([string]$Path) {
 
 function Get-DirectTreeHash([string]$Path, [bool]$ExcludeGit = $false) {
   if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "tree does not exist: $Path" }
+  Assert-NoReparsePoints $Path 'direct tree'
   $resolved = (Resolve-Path -LiteralPath $Path).Path
   $rows = New-Object System.Collections.Generic.List[string]
   Get-ChildItem -LiteralPath $resolved -Recurse -Force |
@@ -127,6 +137,7 @@ function Assert-CheckoutSnapshot([object]$Expected, [string]$Path, [string]$Labe
 function Find-Canary([string]$Path, [string]$Needle) {
   if (-not $Needle) { throw 'canary is required' }
   if (-not (Test-Path -LiteralPath $Path)) { return @() }
+  Assert-NoReparsePoints $Path 'canary scan target'
   $hits = @()
   $files = if (Test-Path -LiteralPath $Path -PathType Leaf) { @(Get-Item -LiteralPath $Path) } else {
     @(Get-ChildItem -LiteralPath $Path -Recurse -File -Force)

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
@@ -434,6 +434,18 @@ test("failure-path canary contamination removes evidence and emits no upload mar
   writeFileSync(join(evidenceRoot, "unsafe.log"), `leaked=${canary}`); writeFileSync(receiptPath, "{}");
   const result = runPs(["-Mode", "Probe", "-Probe", "FinalizeArtifacts", "-Root", evidenceRoot, "-Value", receiptPath, "-Canary", canary]);
   assert.notEqual(result.status, 0); assert.equal(existsSync(`${receiptPath}.evidence-authorization.json`), false); assert.equal(existsSync(evidenceRoot), false);
+});
+
+test("artifact finalization rejects directory links before hashing or canary scanning", { skip: !havePwsh }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-reparse-finalize-"));
+  const evidenceRoot = join(dir, "evidence"); const outside = join(dir, "outside");
+  mkdirSync(evidenceRoot); mkdirSync(outside); writeFileSync(join(outside, "unscanned.txt"), "external");
+  symlinkSync(outside, join(evidenceRoot, "junction"), "dir");
+  const receiptPath = join(dir, "receipt.json"); writeFileSync(receiptPath, "{}");
+  const result = runPs(["-Mode", "Probe", "-Probe", "FinalizeArtifacts", "-Root", evidenceRoot, "-Value", receiptPath, "-Canary", "REPARSE-CANARY"]);
+  assert.notEqual(result.status, 0, "directory link escaped artifact validation");
+  assert.match(result.stderr, /reparse point/i);
+  assert.equal(existsSync(`${receiptPath}.evidence-authorization.json`), false);
 });
 
 test("lifecycle stderr validation rejects absent, duplicate, wrong, stale, malformed, and payload-spoofed records", { skip: !havePwsh }, () => {
