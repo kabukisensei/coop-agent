@@ -127,8 +127,7 @@ try {
   # --- 0c. ConvertFrom-Json manifest objects expose all managed keys ----------
   Head 'PowerShell release-manifest key enumeration'
   $commonPath = Join-Path $root 'lib\common.ps1'
-  $manifestKeyJson = (& $psExe -NoLogo -NoProfile -Command ". '$commonPath'; @(Coop-ManifestKeys 'extensions') | ConvertTo-Json -Compress" | Out-String).Trim()
-  $manifestKeys = @($manifestKeyJson | ConvertFrom-Json)
+  $manifestKeys = @(& $psExe -NoLogo -NoProfile -Command ". '$commonPath'; Coop-ManifestKeys 'extensions'")
   $expectedManifestKeys = @((Get-Content -LiteralPath (Join-Path $root 'config\release-manifest.json') -Raw | ConvertFrom-Json).extensions.PSObject.Properties.Name)
   if ($manifestKeys.Count -eq $expectedManifestKeys.Count -and @($expectedManifestKeys | Where-Object { $manifestKeys -cnotcontains $_ }).Count -eq 0) {
     Ok 'Coop-ManifestKeys enumerates every PSCustomObject manifest property'
