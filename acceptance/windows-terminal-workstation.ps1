@@ -896,18 +896,19 @@ try {
   Assert-ExitZero $supportBase 'baseline Support'
   if (@(Find-Canary $baselineSupportPath $canary).Count -gt 0) { throw 'Support exported planted credential canary' }
 
-  $profileStateFiles = @(
+  $managedMcpPath = Join-Path $agentRoot 'mcp.json'
+  $preservedStateFiles = @(
     (Join-Path $profileRoot '.coop\user.json'),
     (Join-Path $profileRoot '.coop\config'),
-    (Join-Path $agentRoot 'mcp.json'),
     (Join-Path $fixtureRepo '.coop\project.yml')
   )
   if ([System.IO.Path]::GetFullPath($env:COOP_AGENT_DIR) -ne [System.IO.Path]::GetFullPath((Join-Path $env:COOP_DIR '.coop\agent'))) { throw 'COOP_AGENT_DIR does not match the supported onboarding agent path' }
   $stateBefore = @{}
-  foreach ($file in $profileStateFiles) {
+  foreach ($file in @($preservedStateFiles) + @($managedMcpPath)) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "realistic state missing after baseline exercise: $file" }
     $stateBefore[$file] = Get-FileSha $file
   }
+  $baselineMcpSha = $stateBefore[$managedMcpPath]
   $repoBefore = Get-TreeHash $fixtureRepo
   [void]$claims.Add((New-Claim 'baseline-source-install' 'BASELINE' 'PASS' $true $true $false 'Actual v0.23.1 source install, Doctor, Support, onboarding, and project initialization completed.' @(
     (New-Evidence 'COMMAND' 'baseline install exited 0' '.\scripts\install.ps1 --yes --no-prereqs' $r.ExitCode "baseline:$baselineObservedSha" $r.Stdout),
@@ -917,7 +918,7 @@ try {
 
   $candidateInstall = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'scripts\install.ps1'),'--yes','--no-prereqs') (Join-Path $logs 'candidate-upgrade-install') 2700
   Assert-ExitZero $candidateInstall 'candidate source upgrade install'
-  foreach ($file in $profileStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "preserved state changed during candidate upgrade: $file" } }
+  foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "preserved state changed during candidate upgrade: $file" } }
   if ((Get-TreeHash $fixtureRepo) -ne $repoBefore) { throw 'representative repository mutated merely due to candidate upgrade' }
 
   $candidateDoctor = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'scripts\doctor.ps1'),'--json') (Join-Path $logs 'candidate-doctor') 600
@@ -941,6 +942,7 @@ try {
   $candidateMcpJson = Get-Content -LiteralPath (Join-Path $agentRoot 'mcp.json') -Raw | ConvertFrom-Json
   $candidatePinProof = Get-ManifestPinProof $candidateDoctorJson $manifest $candidateObservedVersion $candidateNpmJson $candidateMcpJson 'candidate'
   Assert-ManifestPinProof $candidatePinProof $manifest 'candidate'
+  $candidateMcpSha = Get-FileSha $managedMcpPath
   $candidatePinProofPath = Join-Path $EvidenceRoot 'candidate-manifest-pin-proof.json'
   [System.IO.File]::WriteAllText($candidatePinProofPath, ($candidatePinProof | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
   $launchSpec = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'bin\coop.ps1'),'launch-spec','--json') (Join-Path $logs 'candidate-launch-spec') 300
@@ -961,7 +963,8 @@ try {
 
   $reinstall = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'scripts\install.ps1'),'--yes','--no-prereqs') (Join-Path $logs 'candidate-reinstall') 2700
   Assert-ExitZero $reinstall 'same-candidate reinstall'
-  foreach ($file in $profileStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during same-candidate reinstall: $file" } }
+  foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during same-candidate reinstall: $file" } }
+  if ((Get-FileSha $managedMcpPath) -ne $candidateMcpSha) { throw 'managed MCP state changed during same-candidate reinstall' }
   if ((Get-TreeHash $fixtureRepo) -ne $repoBefore) { throw 'repository changed during same-candidate reinstall' }
   [void]$claims.Add((New-Claim 'same-candidate-reinstall' 'REINSTALL' 'PASS' $true $true $false 'Same-candidate reinstall was idempotent for exercised state and the fixture repository.' @(
     (New-Evidence 'COMMAND' 'same-candidate reinstall exited 0' '.\scripts\install.ps1 --yes --no-prereqs' $reinstall.ExitCode "candidate:$candidateObservedSha" $reinstall.Stdout)
@@ -969,7 +972,8 @@ try {
 
   $rollback = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'scripts\install.ps1'),'--yes','--no-prereqs') (Join-Path $logs 'baseline-rollback') 2700
   Assert-ExitZero $rollback 'v0.23.1 source rollback'
-  foreach ($file in $profileStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during rollback: $file" } }
+  foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during rollback: $file" } }
+  if ((Get-FileSha $managedMcpPath) -ne $baselineMcpSha) { throw 'managed MCP state did not converge to the baseline during rollback' }
   if ((Get-TreeHash $fixtureRepo) -ne $repoBefore) { throw 'repository changed during rollback' }
   if ((Get-FileSha $sentinel) -ne $sentinelBefore) { throw 'unrelated tool sentinel changed during install/reinstall/rollback' }
   $rollbackDoctor = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'scripts\doctor.ps1'),'--json') (Join-Path $logs 'rollback-doctor') 600

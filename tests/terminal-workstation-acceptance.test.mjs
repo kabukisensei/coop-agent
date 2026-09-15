@@ -561,6 +561,19 @@ test("product agent path is one effective onboarding/install/Doctor path", () =>
   contract(source); assert.throws(() => contract(source.replace("$agentRoot = Join-Path $profileRoot '.coop\\agent'", "$agentRoot = Join-Path $ownedRoot 'split-agent'")));
 });
 
+test("upgrade preserves operator state while managed MCP converges by release", () => {
+  const source = readFileSync(SCRIPT, "utf8");
+  const preserved = source.match(/\$preservedStateFiles = @\(([\s\S]*?)\n  \)/)?.[1] ?? "";
+  assert.match(preserved, /user\.json/);
+  assert.match(preserved, /\.coop\\config/);
+  assert.match(preserved, /project\.yml/);
+  assert.doesNotMatch(preserved, /mcp\.json/);
+  assert.match(source, /\$baselineMcpSha = \$stateBefore\[\$managedMcpPath\]/);
+  assert.match(source, /\$candidateMcpSha = Get-FileSha \$managedMcpPath/);
+  assert.match(source, /managed MCP state changed during same-candidate reinstall/);
+  assert.match(source, /managed MCP state did not converge to the baseline during rollback/);
+});
+
 test("workflow binds dispatch and the named same-repo PR to the exact event-authorized SHA", () => {
   const workflow = readFileSync(WORKFLOW, "utf8");
   const expectedGate = "if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'integration/presentation-2026-09-20' && github.event.pull_request.head.repo.full_name == github.repository) }}";
