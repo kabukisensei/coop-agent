@@ -122,7 +122,7 @@ function observedManifestState(manifest) {
   for (const [name, version] of Object.entries(manifest.npm_tools)) dependencies[name] = { version };
   const mcpServers = {}; const managed_servers = [];
   Object.entries(manifest.mcp_servers).forEach(([name, version], index) => { const server = `managed-${index}`; managed_servers.push(server); mcpServers[server] = { command: "npx", args: ["-y", `${name}@${version}`] }; });
-  return { coop_version: manifest.coop_version, doctor: { fail: 0, checks }, npm_inventory: { dependencies }, mcp_config: { mcpServers, _coop: { managed_servers } } };
+  return { coop_version: manifest.coop_version, doctor: { fail: 0, checks }, npm_inventory: { dependencies }, extension_inventory: structuredClone(manifest.extensions), mcp_config: { mcpServers, _coop: { managed_servers } } };
 }
 
 test("committed Draft 2020-12 schema validator is available and enforces formats", () => {
@@ -300,7 +300,9 @@ test("complete candidate and rollback manifest proofs reject drift in every pin 
   const mutations = [
     ["coop_version", (x) => { x.coop_version = "9.9.9"; }],
     ["pi", (x) => { x.npm_inventory.dependencies[manifest.pi.package].version = "9.9.9"; }],
-    ["extensions", (x) => { const c = x.doctor.checks.find((item) => item.name.startsWith(`${extensionName} `)); c.name = c.name.replaceAll(extensionVersion, "9.9.9"); }],
+    ["extensions", (x) => { x.extension_inventory[extensionName] = "9.9.9"; }],
+    ["extensions_missing", (x) => { delete x.extension_inventory[extensionName]; }],
+    ["extensions_extra", (x) => { x.extension_inventory["unmanaged-extension"] = "1.0.0"; }],
     ["python_tools", (x) => { const c = x.doctor.checks.find((item) => item.name.startsWith(`${pythonName} `)); c.name = c.name.replaceAll(pythonVersion, "9.9.9"); }],
     ["npm_tools", (x) => { x.npm_inventory.dependencies[npmName].version = "9.9.9"; }],
     ["mcp_servers", (x) => { x.mcp_config.mcpServers["managed-0"].args[1] = x.mcp_config.mcpServers["managed-0"].args[1].replace(/@[^@]+$/, "@9.9.9"); }],
@@ -310,9 +312,6 @@ test("complete candidate and rollback manifest proofs reject drift in every pin 
     for (const phase of ["candidate", "rollback"]) {
       const result = runPs(["-Mode", "Probe", "-Probe", "VerifyManifestPins", "-Root", path, "-Value", manifestPath]);
       assert.notEqual(result.status, 0, `${phase} must reject ${category} drift`);
-      if (category === "extensions") {
-        assert.ok(result.stderr.includes(`saw ok:${extensionName} `), `${phase} diagnostic must include the observed extension check`);
-      }
     }
   }
   const nonManaged = structuredClone(good); nonManaged.mcp_config._coop.managed_servers = []; nonManaged.mcp_config.mcpServers = {};

@@ -193,7 +193,22 @@ function Assert-ManifestPinProof([object]$Proof, [object]$Manifest, [string]$Lab
   }
 }
 
-function Get-ManifestPinProof([object]$Doctor, [object]$Manifest, [string]$ObservedCoopVersion, [object]$NpmInventory, [object]$McpConfig, [string]$Label) {
+function Get-InstalledExtensionInventory([object]$Manifest, [string]$AgentRoot, [string]$Label) {
+  $inventory = [ordered]@{}
+  $packageRoot = Join-Path $AgentRoot 'npm\node_modules'
+  foreach ($name in @($Manifest.extensions.PSObject.Properties.Name)) {
+    $packageJson = $packageRoot
+    foreach ($part in ($name -split '/')) { $packageJson = Join-Path $packageJson $part }
+    $packageJson = Join-Path $packageJson 'package.json'
+    if (-not (Test-Path -LiteralPath $packageJson -PathType Leaf)) { throw "$Label installed extension metadata missing: $name" }
+    $metadata = Get-Content -LiteralPath $packageJson -Raw | ConvertFrom-Json
+    if (-not (Test-JsonString $metadata.version) -or [string]::IsNullOrWhiteSpace($metadata.version)) { throw "$Label installed extension version missing: $name" }
+    $inventory[$name] = [string]$metadata.version
+  }
+  return [pscustomobject]$inventory
+}
+
+function Get-ManifestPinProof([object]$Doctor, [object]$Manifest, [string]$ObservedCoopVersion, [object]$NpmInventory, [object]$ExtensionInventory, [object]$McpConfig, [string]$Label) {
   if ($null -eq $Doctor -or $Doctor.fail -ne 0 -or -not (Test-JsonArray $Doctor.checks)) { throw "$Label Doctor JSON is incomplete or failing" }
   $requireDoctorCheck = {
     param([string]$ExpectedName, [string]$AlternateName = '')
@@ -220,10 +235,12 @@ function Get-ManifestPinProof([object]$Doctor, [object]$Manifest, [string]$Obser
   & $requireDoctorCheck "pi $piVersion matches manifest ($piVersion)"
 
   $extensionProof = [ordered]@{}
+  Assert-ExactProperties $ExtensionInventory @($Manifest.extensions.PSObject.Properties.Name) "$Label installed extension inventory"
   foreach ($name in @($Manifest.extensions.PSObject.Properties.Name)) {
     $version = $Manifest.extensions.PSObject.Properties[$name].Value
-    & $requireDoctorCheck "$name $version matches manifest ($version)"
-    $extensionProof[$name] = $version
+    $installed = $ExtensionInventory.PSObject.Properties[$name].Value
+    if ($installed -cne $version) { throw "$Label installed extension does not match manifest: $name" }
+    $extensionProof[$name] = $installed
   }
   $pythonProof = [ordered]@{}
   foreach ($name in @($Manifest.python_tools.PSObject.Properties.Name)) {
@@ -692,7 +709,7 @@ if ($Mode -eq 'Probe') {
     'VerifyManifestPins' {
       $observed = Get-Content -LiteralPath $Root -Raw | ConvertFrom-Json
       $manifest = Get-Content -LiteralPath $Value -Raw | ConvertFrom-Json
-      $proof = Get-ManifestPinProof $observed.doctor $manifest $observed.coop_version $observed.npm_inventory $observed.mcp_config 'probe'
+      $proof = Get-ManifestPinProof $observed.doctor $manifest $observed.coop_version $observed.npm_inventory $observed.extension_inventory $observed.mcp_config 'probe'
       Assert-ManifestPinProof $proof $manifest 'probe'
       Write-Output 'PASS'
     }
@@ -976,8 +993,9 @@ try {
   $candidateNpm = Invoke-Bounded 'npm.cmd' @('ls','-g','--depth=0','--json') (Join-Path $logs 'candidate-npm-inventory') 300
   Assert-ExitZero $candidateNpm 'candidate npm inventory'
   $candidateNpmJson = Get-Content -LiteralPath $candidateNpm.Stdout -Raw | ConvertFrom-Json
+  $candidateExtensionInventory = Get-InstalledExtensionInventory $manifest $agentRoot 'candidate'
   $candidateMcpJson = Get-Content -LiteralPath (Join-Path $agentRoot 'mcp.json') -Raw | ConvertFrom-Json
-  $candidatePinProof = Get-ManifestPinProof $candidateDoctorJson $manifest $candidateObservedVersion $candidateNpmJson $candidateMcpJson 'candidate'
+  $candidatePinProof = Get-ManifestPinProof $candidateDoctorJson $manifest $candidateObservedVersion $candidateNpmJson $candidateExtensionInventory $candidateMcpJson 'candidate'
   Assert-ManifestPinProof $candidatePinProof $manifest 'candidate'
   $candidateMcpSha = Get-FileSha $managedMcpPath
   $candidatePinProofPath = Join-Path $EvidenceRoot 'candidate-manifest-pin-proof.json'
@@ -994,7 +1012,7 @@ try {
   )))
   [void]$claims.Add((New-Claim 'candidate-health-and-tools' 'UPGRADE' 'PASS' $true $true $false 'Doctor, Support identity, governed launch spec, data-doc command, and complete observable manifest pin set were proven.' @(
     (New-Evidence 'COMMAND' "Doctor fail count 0; Support $($supportJson.versions.coopBuild)" '.\scripts\doctor.ps1 --json; coop support --json' 0 "candidate:$candidateObservedSha" $candidateSupportPath),
-    (New-Evidence 'FILE' 'COOP, Pi, extension, Python, npm, and managed MCP pins match the candidate manifest; unmanaged MCP pins are explicitly non-applicable' 'Doctor JSON plus npm global inventory and managed mcp.json specs' 0 "candidate:$candidateObservedSha" $candidatePinProofPath),
+    (New-Evidence 'FILE' 'COOP, Pi, extension, Python, npm, and managed MCP pins match the candidate manifest; unmanaged MCP pins are explicitly non-applicable' 'Doctor JSON plus installed extension metadata, npm global inventory, and managed mcp.json specs' 0 "candidate:$candidateObservedSha" $candidatePinProofPath),
     (New-Evidence 'COMMAND' 'data-doc command help exited 0' 'coop data-doc --help' $dataDocHelp.ExitCode "candidate:$candidateObservedSha" $dataDocHelp.Stdout)
   )))
 
@@ -1020,14 +1038,15 @@ try {
   $rollbackNpm = Invoke-Bounded 'npm.cmd' @('ls','-g','--depth=0','--json') (Join-Path $logs 'rollback-npm-inventory') 300
   Assert-ExitZero $rollbackNpm 'rollback npm inventory'
   $rollbackNpmJson = Get-Content -LiteralPath $rollbackNpm.Stdout -Raw | ConvertFrom-Json
+  $rollbackExtensionInventory = Get-InstalledExtensionInventory $baselineManifest $agentRoot 'rollback'
   $rollbackMcpJson = Get-Content -LiteralPath (Join-Path $agentRoot 'mcp.json') -Raw | ConvertFrom-Json
-  $rollbackPinProof = Get-ManifestPinProof $rollbackDoctorJson $baselineManifest $baselineObservedVersion $rollbackNpmJson $rollbackMcpJson 'rollback'
+  $rollbackPinProof = Get-ManifestPinProof $rollbackDoctorJson $baselineManifest $baselineObservedVersion $rollbackNpmJson $rollbackExtensionInventory $rollbackMcpJson 'rollback'
   Assert-ManifestPinProof $rollbackPinProof $baselineManifest 'rollback'
   $rollbackPinProofPath = Join-Path $EvidenceRoot 'rollback-manifest-pin-proof.json'
   [System.IO.File]::WriteAllText($rollbackPinProofPath, ($rollbackPinProof | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
   [void]$claims.Add((New-Claim 'baseline-rollback-preservation' 'ROLLBACK' 'PASS' $true $true $false 'Actual baseline source install restored the complete observable baseline manifest pin set without wiping state, project data, or unrelated sentinel.' @(
     (New-Evidence 'COMMAND' 'rollback install and Doctor exited 0' '.\scripts\install.ps1 --yes --no-prereqs; .\scripts\doctor.ps1 --json' 0 "baseline:$baselineObservedSha" $rollbackDoctor.Stdout),
-    (New-Evidence 'FILE' 'COOP, Pi, extension, Python, npm, and managed MCP pins match the baseline manifest; unmanaged MCP pins are explicitly non-applicable' 'Doctor JSON plus npm global inventory and managed mcp.json specs' 0 "baseline:$baselineObservedSha" $rollbackPinProofPath),
+    (New-Evidence 'FILE' 'COOP, Pi, extension, Python, npm, and managed MCP pins match the baseline manifest; unmanaged MCP pins are explicitly non-applicable' 'Doctor JSON plus installed extension metadata, npm global inventory, and managed mcp.json specs' 0 "baseline:$baselineObservedSha" $rollbackPinProofPath),
     (New-Evidence 'HASH' "unrelated sentinel remained $sentinelBefore" 'SHA-256 before/after' 0 "baseline:$baselineObservedSha" $sentinel)
   )))
 
