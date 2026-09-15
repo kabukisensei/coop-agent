@@ -881,6 +881,13 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
   const workflow = readFileSync(WORKFLOW, "utf8");
   const expectedGate = "if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref == 'integration/presentation-2026-09-20' && github.event.pull_request.head.repo.full_name == github.repository) }}";
   const contract = (source) => {
+    const rawStep = (name) => {
+      const marker = `      - name: ${name}`;
+      const start = source.indexOf(marker);
+      assert.ok(start >= 0, `missing raw workflow step: ${name}`);
+      const next = source.indexOf("\n      - name:", start + marker.length);
+      return source.slice(start, next >= 0 ? next : source.length);
+    };
     assert.match(source, /workflow_dispatch:\s*\n\s*inputs:\s*\n\s*candidate_sha:[\s\S]*required: true[\s\S]*pull_request:\s*\n\s*branches:\s*\n\s*- main/);
     assert.ok(source.includes(expectedGate), "native job must reject unauthorized PR heads and forks");
     assert.match(source, /permissions:\s*\n\s*contents: read/);
@@ -926,7 +933,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.doesNotMatch(source, /-HarnessRoot \(Resolve-Path|-CandidateRoot \(Resolve-Path|-BaselineRoot \(Resolve-Path/);
     const verifyStep = activeSteps.find((step) => step?.name === "Verify event-authorized exact checkout identity");
     const verifyRun = verifyStep?.run ?? "";
-    assert.equal(createHash("sha256").update(verifyRun).digest("hex"), "52e4a805007757b6c14ca9ed9a99f98c555ea62eb88ffb6822cd59d6f1601c18", "exact checkout precheck step changed");
+    assert.equal(createHash("sha256").update(rawStep("Verify event-authorized exact checkout identity")).digest("hex"), "e184ae4b2e28ff1f160e843c81860b0a36f8a3c5571d3ac7af7a450e4ed5bacb", "exact checkout precheck step changed");
     const safeLoop = "foreach ($checkout in @($harness,$candidate,$baseline)) { Assert-SafeCheckout $checkout }";
     assert.ok(verifyRun.split("\n").includes(safeLoop), "checkout scan must be an unconditional statement");
     assert.match(verifyRun, /if \(\(\$item\.Attributes -band \[System\.IO\.FileAttributes\]::ReparsePoint\) -ne 0\) \{ throw "checkout reparse ancestry rejected/);
@@ -947,11 +954,11 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.equal(validationStep?.if, "always() && steps.exact_behavioral_suite.outcome == 'success'");
     assert.equal(validationStep?.id, "validate_artifacts");
     const nativeRun = activeSteps[nativeAcceptanceIndex]?.run ?? "";
-    assert.equal(createHash("sha256").update(nativeRun).digest("hex"), "a0436a87f63b066037be47b3bdbfcda8caafe2854247980a9b564356e9732c74", "exact native Run step changed");
+    assert.equal(createHash("sha256").update(rawStep("Run native acceptance (cannot close human gate)")).digest("hex"), "4a8e24297ccaba009e18e889e6b33f53619e9e49db4cf6b3109f3d32bd5468d7", "exact native Run step changed");
     assert.match(nativeRun, /-Mode Run `[\s\S]*-HarnessRoot \$harnessRoot `[\s\S]*-CandidateRoot \$candidateRoot `[\s\S]*-BaselineRoot \$baselineRoot `/);
     assert.doesNotMatch(nativeRun, /Resolve-Path/);
     const validationRun = validationStep?.run ?? "";
-    assert.equal(createHash("sha256").update(validationRun).digest("hex"), "c177691cd7aa3386bd23c31f74119c2fcd3c455804b108ae533b8e250cdb57ca", "exact artifact validation step changed");
+    assert.equal(createHash("sha256").update(rawStep("Validate fail-closed receipt")).digest("hex"), "23abba955260c640b6e038ea644a844d9b1dfe443cf200b8f31cdfd4bf681495", "exact artifact validation step changed");
     assert.match(validationRun, /receipt_uploadable=true[\s\S]*GITHUB_OUTPUT/);
     assert.match(validationRun, /evidence_uploadable=true[\s\S]*GITHUB_OUTPUT/);
     assert.doesNotMatch(validationRun, /Test-Path/i);
@@ -1053,6 +1060,8 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace('          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `', '          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append\n          "evidence_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `'),
     workflow.replace('          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append', '          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "evidence_uploadable=true"\n          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'),
     workflow.replace('          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append', '          if ([System.IO.File]::Exists("$env:RECEIPT_PATH.evidence-authorization.json")) { Write-Output "marker exists" }\n          "receipt_uploadable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'),
+    workflow.replace("      - name: Run native acceptance (cannot close human gate)\n        shell: powershell\n        run: |", "      - name: Run native acceptance (cannot close human gate)\n        shell: powershell\n        run: >"),
+    workflow.replace("          $baselineRoot = Join-Path $env:GITHUB_WORKSPACE 'baseline'\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `\n            .\\harness\\acceptance\\windows-terminal-workstation.ps1 `", "          $baselineRoot = Join-Path $env:GITHUB_WORKSPACE 'baseline'\n          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `\n\n            .\\harness\\acceptance\\windows-terminal-workstation.ps1 `"),
   ].entries()) assert.throws(() => contract(forged), `workflow mutant ${index} was accepted`);
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
   assert.match(testSource, /COOP_TERMINAL_ACCEPTANCE_OWNERSHIP_FIXTURE[\s\S]*"-Mode", "Run"/);
