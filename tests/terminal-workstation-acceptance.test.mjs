@@ -413,6 +413,7 @@ else if(mode==="churn"){setInterval(()=>spawn(process.execPath,[self,"leaf",targ
 else if(mode==="cleanup-race"){spawn(process.execPath,[self,"churn",target],{stdio:"ignore"});setInterval(()=>{},1000)}
 else if(mode==="parent-success"){spawn(process.execPath,[self,"leaf",target],{stdio:"ignore"})}
 else if(mode==="parent-with-descendant"){spawn(process.execPath,[self,"leaf",target,"4000"],{stdio:"ignore"});const deadline=Date.now()+1000;const wait=setInterval(()=>{if(existsSync(target+".identity.json")||Date.now()>deadline){clearInterval(wait);process.exit(0)}},10)}
+else if(mode==="owned-timeout"){spawn(process.execPath,[self,"leaf",target,"6000"],{stdio:"ignore"});const deadline=Date.now()+3000;const wait=setInterval(()=>{if(existsSync(target+".identity.json")){clearInterval(wait);setInterval(()=>{},1000)}else if(Date.now()>deadline){clearInterval(wait);process.exit(2)}},10)}
 else{writeFileSync(mode,"payload-ran")}
 `);
   return writer;

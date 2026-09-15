@@ -599,11 +599,11 @@ function Invoke-OwnershipLifecycleFault([string]$Fixture, [string]$LogBase, [str
       $result = Invoke-Bounded 'node' @($Fixture,'parent-with-descendant',$PayloadMarker) $LogBase 5
       if ($result.ExitCode -ne 126) { throw "$fault preserved payload execution instead of uncertainty: $($result.ExitCode)" }
     } elseif ($fault -in @('job-terminate','job-close')) {
-      # The fixture gives its descendant one second to publish its identity and
-      # delays its canary write until four seconds. Keep the helper deadline
-      # between those boundaries so setup cannot race the timeout and a
-      # surviving descendant is still observable after finalization.
-      $result = Invoke-Bounded 'node' @($Fixture,'parent-with-descendant',$PayloadMarker) $LogBase 3
+      # The fixture fails its own setup after three seconds, keeps the owned
+      # parent alive once its descendant is ready, and delays the canary until
+      # six seconds. The five-second helper deadline therefore exercises the
+      # requested cleanup fault without racing normal parent completion.
+      $result = Invoke-Bounded 'node' @($Fixture,'owned-timeout',$PayloadMarker) $LogBase 5
       if ($result.ExitCode -ne 124) { throw "$fault did not preserve timeout 124: $($result.ExitCode)" }
     } else {
       throw "unsupported ownership lifecycle fault: $fault"
