@@ -177,17 +177,20 @@ try {
   foreach ($package in @('pi-mcp-adapter', '@scope/extension')) {
     $caseConflict = @(Get-CoopPiExtensionVersions "npm:${package}@2.10.0-beta.A`nnpm:${package}@2.10.0-beta.a" $package)
     if ($caseConflict.Count -eq 2) { Ok "case-distinct prereleases remain conflicting: $package" } else { Ko "case-distinct prereleases collapsed for $package" }
-  }
-  foreach ($malformed in @('npm:pi-mcp-adapter@2.10.0/path', 'npm:pi-mcp-adapter@2.10.0@9.9.9', 'npm:pi-mcp-adapter@2.10.0-..', 'npm:pi-mcp-adapter@2.10.0+..', 'npm:pi-mcp-adapter@02.10.0')) {
-    if (@(Get-CoopPiExtensionVersions $malformed 'pi-mcp-adapter').Count -eq 0) {
-      Ok "malformed package spec is rejected: $malformed"
-    } else {
-      Ko "malformed package spec was accepted: $malformed"
+    $buildConflict = @(Get-CoopPiExtensionVersions "npm:${package}@2.10.0+BUILD`nnpm:${package}@2.10.0+build" $package)
+    if ($buildConflict.Count -eq 2) { Ok "case-distinct builds remain conflicting: $package" } else { Ko "case-distinct builds collapsed for $package" }
+    foreach ($suffix in @('2.10.0/path', '2.10.0@9.9.9', '2.10.0-..', '2.10.0+..', '02.10.0')) {
+      $malformed = "npm:${package}@$suffix"
+      if (@(Get-CoopPiExtensionVersions $malformed $package).Count -eq 0) {
+        Ok "malformed package spec is rejected: $malformed"
+      } else {
+        Ko "malformed package spec was accepted: $malformed"
+      }
     }
-  }
-  foreach ($terminated in @("npm:pi-mcp-adapter@2.10.0  ", "npm:pi-mcp-adapter@2.10.0`r`n")) {
-    $parsedTerminated = @(Get-CoopPiExtensionVersions $terminated 'pi-mcp-adapter')
-    if ($parsedTerminated.Count -eq 1 -and $parsedTerminated[0] -ceq '2.10.0') { Ok 'trailing whitespace/CRLF is normalized' } else { Ko 'valid whitespace/CRLF-terminated spec was rejected' }
+    foreach ($terminated in @("npm:${package}@2.10.0  ", "npm:${package}@2.10.0`r`n")) {
+      $parsedTerminated = @(Get-CoopPiExtensionVersions $terminated $package)
+      if ($parsedTerminated.Count -eq 1 -and $parsedTerminated[0] -ceq '2.10.0') { Ok "trailing whitespace/CRLF is normalized: $package" } else { Ko "valid whitespace/CRLF-terminated spec was rejected: $package" }
+    }
   }
 
   # --- 1. launch-spec resolves the governed pi invocation --------------------
