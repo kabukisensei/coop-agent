@@ -536,7 +536,8 @@ test("native Windows lifecycle faults fail closed through real receipt finalizat
         assert.equal(await originalDescendantResponds(identityPath), false, `${fault}: original owned descendant survived cleanup`);
         assert.equal(readFileSync(identityPath, "utf8"), ownedIdentityBefore, `${fault}: owned descendant identity evidence changed`);
       }
-      await new Promise((resolveWait) => setTimeout(resolveWait, 2200));
+      const postFinalizationWaitMs = ["job-terminate", "job-close"].includes(fault) ? 5000 : 2200;
+      await new Promise((resolveWait) => setTimeout(resolveWait, postFinalizationWaitMs));
       assert.equal(existsSync(payloadMarker), false, `${fault}: owned descendant mutated state after finalization`);
       assert.deepEqual(JSON.parse(readFileSync(unrelatedIdentityPath, "utf8")), unrelatedIdentity, `${fault}: unrelated retained identity changed`);
       assert.equal(await originalDescendantResponds(unrelatedIdentityPath), true, `${fault}: unrelated retained process identity did not survive`);
