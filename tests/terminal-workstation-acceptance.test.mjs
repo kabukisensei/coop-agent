@@ -708,14 +708,11 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     }]);
     const pythonPinIndex = activeSteps.findIndex((step) => step?.name === "Pin runner Python for certification");
     const exactSuiteIndex = activeSteps.findIndex((step) => step?.name === "Run exact-candidate behavioral tests under Windows PowerShell 5.1");
-    const pythonRepinIndex = activeSteps.findIndex((step) => step?.name === "Revalidate runner Python after behavioral tests");
     const dependencyIndex = activeSteps.findIndex((step) => step?.name === "Install receipt-schema test dependency");
     const ownershipIndex = activeSteps.findIndex((step) => step?.name === "Exercise ownership faults and Unicode transport");
     const nativeAcceptanceIndex = activeSteps.findIndex((step) => step?.name === "Run native acceptance (cannot close human gate)");
-    assert.ok(pythonPinIndex >= 0 && pythonPinIndex < exactSuiteIndex && exactSuiteIndex < pythonRepinIndex);
-    for (const consumerIndex of [dependencyIndex, ownershipIndex, nativeAcceptanceIndex]) {
-      assert.ok(pythonRepinIndex < consumerIndex, "every later Python consumer must follow post-suite revalidation");
-    }
+    assert.ok(pythonPinIndex >= 0 && dependencyIndex >= 0 && ownershipIndex >= 0 && nativeAcceptanceIndex >= 0 && exactSuiteIndex >= 0);
+    assert.ok(pythonPinIndex < dependencyIndex && dependencyIndex < ownershipIndex && ownershipIndex < nativeAcceptanceIndex && nativeAcceptanceIndex < exactSuiteIndex, "the exact behavioral suite must run only after every acceptance Python consumer");
     const pythonPinRun = [
       "$python = (& .\\harness\\acceptance\\windows-terminal-workstation.ps1 -Mode Probe -Probe ResolvePython | Out-String).Trim()",
       "if ($LASTEXITCODE -ne 0 -or -not $python) { exit 1 }",
@@ -730,11 +727,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
       shell: "powershell",
       run: pythonPinRun,
     });
-    assert.deepEqual(activeSteps[pythonRepinIndex], {
-      name: "Revalidate runner Python after behavioral tests",
-      shell: "powershell",
-      run: ["Remove-Item Env:CERT_PYTHON -ErrorAction SilentlyContinue", pythonPinRun].join("\n"),
-    });
+
     assert.match(activeSteps[dependencyIndex].run, /& \$env:CERT_PYTHON -m pip install/);
     assert.match(activeSteps[dependencyIndex].run, /& \$env:CERT_PYTHON -c "import jsonschema"/);
     const ownershipStep = activeSteps.find((step) => step?.name === "Exercise ownership faults and Unicode transport");
@@ -787,10 +780,8 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     workflow.replace("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }", "if ($false) { exit $LASTEXITCODE }"),
     workflow.replace('"CERT_PYTHON=$python"', '"CERT_PYTHON=python"'),
     workflow.replace("      - name: Pin runner Python for certification", "      - name: Pin runner Python for certification\n        continue-on-error: true"),
-    workflow.replace("Revalidate runner Python after behavioral tests", "Skip runner Python revalidation"),
-    workflow.replace("          Remove-Item Env:CERT_PYTHON -ErrorAction SilentlyContinue\n", ""),
-    moveStepBefore(workflow, "Exercise ownership faults and Unicode transport", "Revalidate runner Python after behavioral tests"),
-    moveStepBefore(workflow, "Run native acceptance (cannot close human gate)", "Revalidate runner Python after behavioral tests"),
+    moveStepBefore(workflow, "Run exact-candidate behavioral tests under Windows PowerShell 5.1", "Install receipt-schema test dependency"),
+    moveStepBefore(workflow, "Run exact-candidate behavioral tests under Windows PowerShell 5.1", "Exercise ownership faults and Unicode transport"),
     workflow.replace("& $env:CERT_PYTHON .\\harness\\tests\\knowledge-git.test.py", "python .\\harness\\tests\\knowledge-git.test.py"),
   ].entries()) assert.throws(() => contract(forged), `workflow mutant ${index} was accepted`);
   const testSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
