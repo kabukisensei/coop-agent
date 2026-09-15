@@ -211,6 +211,20 @@ case "$dup_section" in
 esac
 rm -rf "$stub_real" "$stub_dup"
 
+parser_fixture='  npm:pi-mcp-adapter@2.10.0
+    HOME/.coop/agent/npm/node_modules/pi-mcp-adapter
+  npm:pi-mcp-adapter@2.10.0-beta.1
+  npm:pi-mcp-adapter-tools@9.9.9'
+parser_versions="$(COOP_ROOT="$ROOT" bash -c '. "$1/lib/common.sh"; coop_pi_extension_versions "$2" pi-mcp-adapter' _ "$ROOT" "$parser_fixture")"
+case "$parser_versions" in
+  $'2.10.0\n2.10.0-beta.1'|$'2.10.0-beta.1\n2.10.0') ok "bash parser preserves pre-release conflicts and ignores paths/name prefixes" ;;
+  *) ko "bash parser returned unexpected versions: [$parser_versions]" ;;
+esac
+for malformed in 'npm:pi-mcp-adapter@2.10.0/path' 'npm:pi-mcp-adapter@2.10.0@9.9.9'; do
+  parsed="$(COOP_ROOT="$ROOT" bash -c '. "$1/lib/common.sh"; coop_pi_extension_versions "$2" pi-mcp-adapter' _ "$ROOT" "$malformed")"
+  if [ -z "$parsed" ]; then ok "bash parser rejects malformed package spec: $malformed"; else ko "bash parser accepted malformed package spec: $malformed"; fi
+done
+
 if [ "$fail" -ne 0 ]; then echo "  ✗ doctor-mcp-mode tests FAILED"; exit 1; fi
 echo "  doctor-mcp-mode tests passed"
 

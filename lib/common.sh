@@ -71,14 +71,10 @@ coop_pi_extension_versions() {
   esc="$(printf '%s' "$name" | sed 's/[][\.^$*+?(){}|]/\\&/g')"
   printf '%s\n' "$pilist" \
     | sed -e 's/^[[:space:]]*//' -e 's/^npm://' \
-    | grep -E "^${esc}@[0-9]+\.[0-9]+\.[0-9]+" \
+    | grep -E "^${esc}@[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$" \
     | sed -e 's/.*@//' \
     | sort -u
 }
-
-# Two-version ("1.2.3-beta.1") pins compare on the x.y.z triple, exactly like
-# coop_manifest_status.
-coop_extension_version_triple() { printf '%s' "$1" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1; }
 
 # Echo the keys of an object in the manifest (one per line), or nothing on missing/invalid.
 # Usage: coop_manifest_keys extensions

@@ -201,7 +201,14 @@ function Get-ManifestPinProof([object]$Doctor, [object]$Manifest, [string]$Obser
     if ($matches.Count -ne 1) {
       # Name every look-alike so a non-unique proof is diagnosable from the run
       # log alone (the evidence bundle cannot be built after a fail-closed run).
-      $lookalikes = @($Doctor.checks | Where-Object { $_.name -ceq $ExpectedName -or ($AlternateName -and $_.name -ceq $AlternateName) })
+      $subject = ($ExpectedName -split ' ', 2)[0]
+      $alternateSubject = if ($AlternateName) { ($AlternateName -split ' ', 2)[0] } else { '' }
+      $lookalikes = @($Doctor.checks | Where-Object {
+        $_.name -ceq $ExpectedName -or
+        ($AlternateName -and $_.name -ceq $AlternateName) -or
+        $_.name.StartsWith("$subject ", [System.StringComparison]::Ordinal) -or
+        ($alternateSubject -and $_.name.StartsWith("$alternateSubject ", [System.StringComparison]::Ordinal))
+      })
       $detail = if ($lookalikes.Count -gt 0) { '; saw ' + (@($lookalikes | ForEach-Object { "$($_.status):$($_.name)" }) -join ' | ') } else { '' }
       throw "$Label Doctor did not uniquely prove: $ExpectedName ($($matches.Count) ok match(es)$detail)"
     }

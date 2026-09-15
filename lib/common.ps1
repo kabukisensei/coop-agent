@@ -65,7 +65,8 @@ function Coop-ManifestMcpSpec([string]$Package) { $v = Coop-ManifestObjectGet 'm
 function Get-CoopPiExtensionVersions([string]$PiList, [string]$Package) {
   if (-not $Package -or -not $PiList) { return @() }
   $text = ($PiList -split "`r?`n") -join "`n"
-  $pattern = "^\s*(?:npm:)?$([regex]::Escape($Package))@(?<ver>[0-9]+\.[0-9]+\.[0-9]+)"
+  $semver = '[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?'
+  $pattern = "^\s*(?:npm:)?$([regex]::Escape($Package))@(?<ver>$semver)\s*$"
   return @([regex]::Matches($text, $pattern, 'Multiline') | ForEach-Object { $_.Groups['ver'].Value } | Sort-Object -Unique)
 }
 

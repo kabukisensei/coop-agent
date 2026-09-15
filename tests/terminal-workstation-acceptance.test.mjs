@@ -310,6 +310,9 @@ test("complete candidate and rollback manifest proofs reject drift in every pin 
     for (const phase of ["candidate", "rollback"]) {
       const result = runPs(["-Mode", "Probe", "-Probe", "VerifyManifestPins", "-Root", path, "-Value", manifestPath]);
       assert.notEqual(result.status, 0, `${phase} must reject ${category} drift`);
+      if (category === "extensions") {
+        assert.ok(result.stderr.includes(`saw ok:${extensionName} `), `${phase} diagnostic must include the observed extension check`);
+      }
     }
   }
   const nonManaged = structuredClone(good); nonManaged.mcp_config._coop.managed_servers = []; nonManaged.mcp_config.mcpServers = {};

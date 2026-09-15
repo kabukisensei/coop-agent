@@ -168,6 +168,19 @@ try {
   } else {
     Ko "conflicting installed versions parsed as [$($parsedConflict -join ', ')] instead of two entries"
   }
+  $parsedSuffixConflict = @(Get-CoopPiExtensionVersions ($piListFixture + "`n  npm:pi-mcp-adapter@2.10.0-beta.1") 'pi-mcp-adapter')
+  if ($parsedSuffixConflict.Count -eq 2 -and $parsedSuffixConflict -ccontains '2.10.0-beta.1') {
+    Ok 'pre-release suffix conflicts remain visible'
+  } else {
+    Ko "pre-release conflict parsed as [$($parsedSuffixConflict -join ', ')] instead of two entries"
+  }
+  foreach ($malformed in @('npm:pi-mcp-adapter@2.10.0/path', 'npm:pi-mcp-adapter@2.10.0@9.9.9')) {
+    if (@(Get-CoopPiExtensionVersions $malformed 'pi-mcp-adapter').Count -eq 0) {
+      Ok "malformed package spec is rejected: $malformed"
+    } else {
+      Ko "malformed package spec was accepted: $malformed"
+    }
+  }
 
   # --- 1. launch-spec resolves the governed pi invocation --------------------
   Head 'launch-spec (shared launch builder) test'
