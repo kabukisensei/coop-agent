@@ -14,7 +14,6 @@ const SCRIPT = join(ROOT, "acceptance", "windows-terminal-workstation.ps1");
 const SCHEMA = join(ROOT, "acceptance", "terminal-workstation-receipt.schema.json");
 const WORKFLOW = join(ROOT, ".github", "workflows", "windows-terminal-workstation-acceptance.yml");
 const YAML_READER = join(ROOT, "lib", "_yaml.py");
-const PYTHON = process.env.CERT_PYTHON || "python3";
 const DOC = join(ROOT, "docs", "terminal-workstation-acceptance.md");
 const CANDIDATE = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const BASELINE = "d60300780b565aabf15b172b2bc32abad12b9ca6";
@@ -41,8 +40,14 @@ const phaseFor = {
 const pwshProbe = spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"], { encoding: "utf8" });
 const havePwsh = pwshProbe.status === 0 && !pwshProbe.error;
 const PWSH = havePwsh ? spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-Command", "(Get-Command pwsh).Source"], { encoding: "utf8" }).stdout.trim() : "pwsh";
-const schemaProbe = spawnSync(PYTHON, ["-c", "import jsonschema"], { encoding: "utf8" });
-const PYTHON_PATH = spawnSync(PYTHON, ["-c", "import os,sys; print(os.path.abspath(sys.executable))"], { encoding: "utf8" }).stdout.trim();
+const pythonCandidates = [...new Set([process.env.CERT_PYTHON, "python3", "python"].filter(Boolean))];
+const pythonDiscovery = pythonCandidates.map((command) => ({
+  command,
+  probe: spawnSync(command, ["-c", "import os,sys; print(os.path.abspath(sys.executable))"], { encoding: "utf8" }),
+})).find(({ probe }) => probe.status === 0 && !probe.error && probe.stdout?.trim());
+assert.ok(pythonDiscovery, `Python is mandatory; tried: ${pythonCandidates.join(", ")}`);
+const PYTHON_PATH = pythonDiscovery.probe.stdout.trim();
+const schemaProbe = spawnSync(PYTHON_PATH, ["-c", "import jsonschema"], { encoding: "utf8" });
 
 function runPs(args, options = {}) {
   const identity = [...args];
@@ -102,7 +107,7 @@ function schemaValidate(path) {
     "e=list(Draft202012Validator(s,format_checker=f).iter_errors(d))",
     "[print(x.message,file=sys.stderr) for x in e]", "sys.exit(1 if e else 0)",
   ].join(";");
-  return spawnSync(PYTHON, ["-c", code, SCHEMA, path], { encoding: "utf8" });
+  return spawnSync(PYTHON_PATH, ["-c", code, SCHEMA, path], { encoding: "utf8" });
 }
 
 function assertBoth(path, expected, label, harness = HARNESS) {
@@ -657,7 +662,7 @@ test("knowledge-git preserves Unicode stdin paths, content, and exact argv direc
   const input = join(dir, "入力 space.txt"); const argvPath = join(dir, "引数 vector.json");
   const content = "Zażółć 雪\nsecond\n"; const difficult = ["雪 λ", "space arg", "&|<>^%!", 'quote"arg', "backslash\\tail", ""];
   writeFileSync(input, content, "utf8"); writeFileSync(argvPath, JSON.stringify([process.execPath, writer, "unicode", ...difficult]), "utf8");
-  const result = spawnSync(PYTHON, [join(ROOT, "scripts", "knowledge-git.py"), "--timeout-seconds", "10", "--stdin-file", input, "--argv-file", argvPath], {
+  const result = spawnSync(PYTHON_PATH, [join(ROOT, "scripts", "knowledge-git.py"), "--timeout-seconds", "10", "--stdin-file", input, "--argv-file", argvPath], {
     encoding: "utf8", env: { ...process.env, GIT_SSH_COMMAND: "ssh -o BatchMode=yes" },
   });
   assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout), { argv: difficult, stdin: content });
@@ -910,7 +915,7 @@ test("workflow binds dispatch and the named same-repo PR to the exact event-auth
     assert.match(source, /\$observed = \(& git -C \$checkout rev-parse HEAD\)\.Trim\(\)[\s\S]*\$observed -cne \$expected/);
     assert.equal((source.match(/^      - name: Run exact-candidate behavioral tests under Windows PowerShell 5\.1$/gm) || []).length, 1);
     const yamlCode = "import importlib.util,json,sys;p=sys.argv[1];s=importlib.util.spec_from_file_location('_coop_yaml',p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(json.dumps(m._load_fallback(sys.stdin.read())))";
-    const yamlProbe = spawnSync(PYTHON, ["-c", yamlCode, YAML_READER], { encoding: "utf8", input: source });
+    const yamlProbe = spawnSync(PYTHON_PATH, ["-c", yamlCode, YAML_READER], { encoding: "utf8", input: source });
     assert.equal(yamlProbe.status, 0, yamlProbe.stderr);
     const activeSteps = JSON.parse(yamlProbe.stdout)?.jobs?.["native-windows-p0"]?.steps;
     assert.ok(Array.isArray(activeSteps), "native Windows workflow steps must parse");
