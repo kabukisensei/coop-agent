@@ -106,19 +106,23 @@ try {
     $env:COOP_AZ_BIN = Join-Path $stub 'missing-az'
     $onboardProcess = Start-Process -FilePath $psExe -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $coop + '"'),'onboard','--json') -PassThru -NoNewWindow -RedirectStandardInput $onboardInput -RedirectStandardOutput $onboardStdout -RedirectStandardError $onboardStderr
     $onboardProcess.WaitForExit()
+    $onboardProcess.Refresh()
+    $onboardExit = $onboardProcess.ExitCode
     $invalidProcess = Start-Process -FilePath $psExe -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $coop + '"'),'onboard','--invalid-acceptance-flag') -PassThru -NoNewWindow -RedirectStandardOutput $invalidStdout -RedirectStandardError $invalidStderr
     $invalidProcess.WaitForExit()
+    $invalidProcess.Refresh()
+    $invalidExit = $invalidProcess.ExitCode
   } finally {
     $env:COOP_DIR = $savedCoopDir
     $env:COOP_AZ_BIN = $savedAzureBin
   }
-  $onboardProfile = if ($onboardProcess.ExitCode -eq 0) { Get-Content -LiteralPath $onboardStdout -Raw | ConvertFrom-Json } else { $null }
-  if ($onboardProcess.ExitCode -eq 0 -and $onboardProfile.name -ceq 'PowerShell Operator' -and (Test-Path -LiteralPath (Join-Path $onboardRoot '.coop\user.json') -PathType Leaf)) {
+  $onboardProfile = if ($onboardExit -eq 0) { Get-Content -LiteralPath $onboardStdout -Raw | ConvertFrom-Json } else { $null }
+  if ($onboardExit -eq 0 -and $onboardProfile.name -ceq 'PowerShell Operator' -and (Test-Path -LiteralPath (Join-Path $onboardRoot '.coop\user.json') -PathType Leaf)) {
     Ok 'coop.ps1 onboard supplies the required subcommand'
   } else {
-    Ko "coop.ps1 onboard dispatcher failed with exit $($onboardProcess.ExitCode)"
+    Ko "coop.ps1 onboard dispatcher failed with exit $onboardExit"
   }
-  if ($invalidProcess.ExitCode -eq 2) { Ok 'coop.ps1 onboard propagates Python argument failures' } else { Ko "coop.ps1 onboard changed Python exit 2 to $($invalidProcess.ExitCode)" }
+  if ($invalidExit -eq 2) { Ok 'coop.ps1 onboard propagates Python argument failures' } else { Ko "coop.ps1 onboard changed Python exit 2 to $invalidExit" }
 
   # --- 1. launch-spec resolves the governed pi invocation --------------------
   Head 'launch-spec (shared launch builder) test'
