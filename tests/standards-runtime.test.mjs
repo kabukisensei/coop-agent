@@ -48,12 +48,26 @@ const pi = {
 };
 const ctx = { cwd: project, hasUI: false, mode: "rpc", ui: { setStatus() {}, notify() {} } };
 
+const assertCloneSafe = (value, label) => {
+  const visit = (current, path = label) => {
+    assert.notEqual(typeof current, "function", `${path} exposed a function`);
+    if (!current || typeof current !== "object") return;
+    for (const [key, child] of Object.entries(current)) visit(child, `${path}.${key}`);
+  };
+  visit(value);
+  const cloned = structuredClone(value);
+  assert.deepEqual(cloned, value, `${label} changed across structuredClone`);
+  assert.deepEqual(JSON.parse(JSON.stringify(value)), value, `${label} changed across JSON serialization`);
+};
+
 try {
   mod.default(pi);
   const sqlContext = await handlers.get("before_agent_start")({ prompt: "Implement a stored SQL procedure", systemPrompt: "base" }, ctx);
   assert.equal(sqlContext.message.customType, "coop-standards");
   assert.match(sqlContext.message.content, /Stored procedures/);
   assert.equal(sqlContext.message.details.domains.join("|"), "sql");
+  assert.deepEqual(Object.keys(sqlContext.message.details).sort(), ["domains", "patterns", "records"]);
+  assertCloneSafe(sqlContext.message.details, "sql details");
   const sqlRecord = sqlContext.message.details.records.find((x) => x.resolution.domain === "sql").resolution;
   assert.equal(sqlRecord.immutable, true); assert.notEqual(sqlRecord.path, sqlRecord.source_path);
   writeFileSync(sqlSource, "# MUTATED AFTER CONTEXT");
@@ -66,6 +80,7 @@ try {
   assert.match(readFileSync(sqlRecord.path, "utf8"), /Schema qualify names/);
 
   const daxContext = await handlers.get("before_agent_start")({ prompt: "Validate this DAX measure", systemPrompt: "base" }, ctx);
+  assertCloneSafe(daxContext.message.details, "dax details");
   const daxRecord = daxContext.message.details.records.find((x) => x.resolution.domain === "dax").resolution;
   assert.match(daxContext.message.content, /explicit measures/);
   const daxResult = await tools.get("dax_review").execute("2", { paths: ["measure.dax"] }, undefined, undefined, ctx);
@@ -74,6 +89,7 @@ try {
 
   const semantic = await handlers.get("before_agent_start")({ prompt: "Assess semantic model relationships", systemPrompt: "base" }, ctx);
   assert.deepEqual(semantic.message.details.domains, ["semantic_model", "dax"]);
+  assertCloneSafe(semantic.message.details, "semantic-model details");
   assert.match(semantic.message.content, /one-to-many relationships/);
   assert.match(semantic.message.content, /explicit measures/);
   const semanticModel = semantic.message.details.records.find((x) => x.resolution.domain === "semantic_model").resolution;
@@ -82,6 +98,11 @@ try {
   const semanticReview = await tools.get("dax_review").execute("3", { paths: ["model.tmdl"] }, undefined, undefined, ctx);
   assert.deepEqual(semanticReview.details.standards, semanticDax);
   assert.deepEqual(semanticReview.details.args.slice(-2), ["--standards", semanticDax.path]);
+
+  const multiple = await handlers.get("before_agent_start")({ prompt: "Implement a SQL procedure and validate this DAX measure", systemPrompt: "base" }, ctx);
+  assert.deepEqual(multiple.message.details.domains, ["sql", "dax"]);
+  assertCloneSafe(multiple.message.details, "multi-domain details");
+  assert.equal(multiple.message.details.records.length, 2);
 
   // The prompts above intentionally never mention standards. Optional TeamAI
   // presence/configuration must not affect the normal Terminal standards path.
@@ -111,6 +132,19 @@ try {
 
   const unrelated = await handlers.get("before_agent_start")({ prompt: "Review this Power Query transformation", systemPrompt: "base" }, ctx);
   assert.equal(unrelated, undefined);
+  const greeting = await handlers.get("before_agent_start")({ prompt: "hey", systemPrompt: "base" }, ctx);
+  assert.equal(greeting, undefined);
+
+  const savedSnapshotRoot = process.env.COOP_STANDARDS_SNAPSHOT_ROOT;
+  const blockedRoot = join(root, "blocked-snapshot-root");
+  writeFileSync(blockedRoot, "not a directory");
+  process.env.COOP_STANDARDS_SNAPSHOT_ROOT = join(blockedRoot, "snapshots");
+  try {
+    const degraded = await handlers.get("before_agent_start")({ prompt: "Validate this DAX measure", systemPrompt: "base" }, ctx);
+    if (degraded?.message?.details) assertCloneSafe(degraded.message.details, "degraded details");
+  } finally {
+    process.env.COOP_STANDARDS_SNAPSHOT_ROOT = savedSnapshotRoot;
+  }
   console.log("  ✓ automatic SQL/DAX/semantic-model context uses immutable reviewer-verified snapshots and rejects mismatches");
 } finally {
   rmSync(root, { recursive: true, force: true });
