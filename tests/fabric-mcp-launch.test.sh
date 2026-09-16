@@ -2,7 +2,12 @@
 set -euo pipefail
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+WEB_PID=""
+cleanup() {
+  if [ -n "$WEB_PID" ]; then kill "$WEB_PID" >/dev/null 2>&1 || true; fi
+  rm -rf "$TMP"
+}
+trap cleanup EXIT
 HOME_DIR="$TMP/home"
 AGENT_DIR="$HOME_DIR/.coop/agent"
 BIN="$TMP/bin"
@@ -78,6 +83,79 @@ spec = json.load(open(sys.argv[1], encoding="utf-8"))
 assert "COOP_FABRIC_MCP_TOKEN" not in spec.get("env", {})
 assert "stale-inherited-token" not in json.dumps(spec)
 PY
+
+# A damaged/unexecutable helper must not block raw Pi or coop web. The public
+# web entrypoint must fall back to Node for launch-spec JSON, then launch Pi
+# without inheriting a stale bearer even though its Python helper exits nonzero.
+cat > "$BIN/python3" <<'SH'
+#!/bin/sh
+exit 7
+SH
+chmod +x "$BIN/python3"
+rm -f "$MARKER/pi-state"
+COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
+  run_coop >"$TMP/helper-fail.out" 2>"$TMP/helper-fail.err"
+[ -f "$MARKER/pi-state" ]
+grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/helper-fail.err" >/dev/null
+
+rm -f "$MARKER/pi-state"
+HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
+  PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
+  COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
+  COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
+  bash "$ROOT/bin/coop" --fixture >"$TMP/normal-helper-fail.out" 2>"$TMP/normal-helper-fail.err"
+[ -f "$MARKER/pi-state" ]
+grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/normal-helper-fail.err" >/dev/null
+
+rm -f "$MARKER/pi-state"
+PORT=$((20000 + ($$ % 20000)))
+HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
+  PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
+  COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
+  COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
+  COOP_WEB_NO_OPEN=1 bash "$ROOT/bin/coop" web --port "$PORT" \
+  >"$TMP/web-helper-fail.out" 2>"$TMP/web-helper-fail.err" &
+WEB_PID=$!
+i=0
+while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 160 ]; do
+  sleep 0.05
+  i=$((i + 1))
+done
+[ -f "$MARKER/pi-state" ]
+grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/web-helper-fail.err" >/dev/null
+kill "$WEB_PID" >/dev/null 2>&1 || true
+wait "$WEB_PID" 2>/dev/null || true
+WEB_PID=""
+
+# Exercise the public web dispatcher with Python genuinely absent from PATH.
+# Only the commands needed by this bounded path are exposed in the fixture bin.
+NO_PY_BIN="$TMP/no-python-bin"
+mkdir -p "$NO_PY_BIN"
+for cmd in dirname find sort readlink uname mkdir date tr sed git; do
+  cmd_path="$(command -v "$cmd" 2>/dev/null || true)"
+  if [ -n "$cmd_path" ]; then ln -s "$cmd_path" "$NO_PY_BIN/$cmd"; fi
+done
+ln -s "$(command -v node)" "$NO_PY_BIN/node"
+ln -s "$BIN/pi" "$NO_PY_BIN/pi"
+rm -f "$MARKER/pi-state"
+PORT=$((21000 + ($$ % 19000)))
+HOME="$HOME_DIR" PATH="$NO_PY_BIN" COOP_AGENT_DIR="$AGENT_DIR" \
+  PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
+  COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
+  COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
+  COOP_WEB_NO_OPEN=1 "$BASH" "$ROOT/bin/coop" web --port "$PORT" \
+  >"$TMP/web-no-python.out" 2>"$TMP/web-no-python.err" &
+WEB_PID=$!
+i=0
+while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 160 ]; do
+  sleep 0.05
+  i=$((i + 1))
+done
+[ -f "$MARKER/pi-state" ]
+grep -F 'Fabric Warehouse MCP unavailable: token helper Python is unavailable' "$TMP/web-no-python.err" >/dev/null
+kill "$WEB_PID" >/dev/null 2>&1 || true
+wait "$WEB_PID" 2>/dev/null || true
+WEB_PID=""
 
 ! grep -R -F "$TOKEN" "$HOME_DIR" >/dev/null
 printf '  ✓ Fabric MCP token is launch-only, fail-soft, and absent from argv/config/output\n'

@@ -206,10 +206,14 @@ EOF
 
 # --- Launch the branded Pi agent ---------------------------------------------
 coop_fabric_mcp_token() {
-  local py config
+  local py config token
   py="$(coop_python)" || return 0
   config="${PI_CODING_AGENT_DIR:-$(coop_pi_agent_dir)}/mcp.json"
-  "$py" "$COOP_ROOT/lib/warehouse_mcp.py" launch-token "$config"
+  if ! token="$("$py" "$COOP_ROOT/lib/warehouse_mcp.py" launch-token "$config")"; then
+    coop_warn "Fabric Warehouse MCP unavailable: token helper failed"
+    return 0
+  fi
+  printf '%s' "$token"
 }
 
 launch_pi() {
@@ -281,12 +285,14 @@ coop_launch_spec() {
   for a in "$@"; do [ "$a" = "--json" ] && want_json=1; done
   coop_build_pi_args
   if [ "$want_json" = "1" ]; then
-    local py; py="$(coop_python)" || coop_die "python3 is required for: coop launch-spec --json"
-    COOP_LS_AGENT_DIR="${PI_CODING_AGENT_DIR:-}" \
-    COOP_LS_SKIP_VERSION="${PI_SKIP_VERSION_CHECK:-}" \
-    COOP_LS_VIBES="${COOP_VIBES_DIR:-}" \
-    COOP_LS_SPLASH="${COOP_SPLASH_FILE:-}" \
-    "$py" - ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} <<'PY'
+    local py rendered; py="$(coop_python 2>/dev/null || true)"
+    if [ -n "$py" ]; then
+      if rendered="$(
+        COOP_LS_AGENT_DIR="${PI_CODING_AGENT_DIR:-}" \
+        COOP_LS_SKIP_VERSION="${PI_SKIP_VERSION_CHECK:-}" \
+        COOP_LS_VIBES="${COOP_VIBES_DIR:-}" \
+        COOP_LS_SPLASH="${COOP_SPLASH_FILE:-}" \
+        "$py" - ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} <<'PY'
 import json, os, sys
 env = {}
 for out_key, src_key in (("PI_CODING_AGENT_DIR", "COOP_LS_AGENT_DIR"),
@@ -298,6 +304,31 @@ for out_key, src_key in (("PI_CODING_AGENT_DIR", "COOP_LS_AGENT_DIR"),
         env[out_key] = val
 print(json.dumps({"bin": "pi", "args": sys.argv[1:], "env": env}, indent=2))
 PY
+      )"; then
+        printf '%s\n' "$rendered"
+        return 0
+      fi
+    fi
+    if have node; then
+      COOP_LS_AGENT_DIR="${PI_CODING_AGENT_DIR:-}" \
+      COOP_LS_SKIP_VERSION="${PI_SKIP_VERSION_CHECK:-}" \
+      COOP_LS_VIBES="${COOP_VIBES_DIR:-}" \
+      COOP_LS_SPLASH="${COOP_SPLASH_FILE:-}" \
+      node - ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} <<'JS'
+const env = {};
+for (const [outKey, srcKey] of [
+  ["PI_CODING_AGENT_DIR", "COOP_LS_AGENT_DIR"],
+  ["PI_SKIP_VERSION_CHECK", "COOP_LS_SKIP_VERSION"],
+  ["COOP_VIBES_DIR", "COOP_LS_VIBES"],
+  ["COOP_SPLASH_FILE", "COOP_LS_SPLASH"],
+]) {
+  if (process.env[srcKey]) env[outKey] = process.env[srcKey];
+}
+console.log(JSON.stringify({ bin: "pi", args: process.argv.slice(2), env }, null, 2));
+JS
+    else
+      coop_die "python3 or Node.js is required for: coop launch-spec --json"
+    fi
   else
     printf 'pi'
     local x

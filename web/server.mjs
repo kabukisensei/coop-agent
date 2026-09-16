@@ -105,7 +105,11 @@ function acquireFabricMcpToken() {
     console.error("warning: Fabric Warehouse MCP unavailable: token helper could not be launched");
     return "";
   }
-  return result.status === 0 ? String(result.stdout || "").trim() : "";
+  if (result.status !== 0) {
+    console.error("warning: Fabric Warehouse MCP unavailable: token helper failed");
+    return "";
+  }
+  return String(result.stdout || "").trim();
 }
 const FABRIC_MCP_TOKEN = acquireFabricMcpToken();
 
