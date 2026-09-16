@@ -14,6 +14,7 @@ BIN="$TMP/bin"
 MARKER="$TMP/marker"
 mkdir -p "$AGENT_DIR" "$BIN" "$MARKER"
 TOKEN='fabric-launch-canary-7e5a3c'
+HELPER_DIAGNOSTIC='untrusted-helper-diagnostic-93b75a'
 
 cat > "$AGENT_DIR/mcp.json" <<'JSON'
 {
@@ -89,29 +90,35 @@ PY
 # without inheriting a stale bearer even though its Python helper exits nonzero.
 cat > "$BIN/python3" <<'SH'
 #!/bin/sh
+printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
 exit 7
 SH
 chmod +x "$BIN/python3"
 rm -f "$MARKER/pi-state"
 COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
+  COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" \
   run_coop >"$TMP/helper-fail.out" 2>"$TMP/helper-fail.err"
 [ -f "$MARKER/pi-state" ]
 grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/helper-fail.err" >/dev/null
+! grep -F "$HELPER_DIAGNOSTIC" "$TMP/helper-fail.out" "$TMP/helper-fail.err" >/dev/null
 
 rm -f "$MARKER/pi-state"
 HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
   COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
+  COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" \
   COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
   bash "$ROOT/bin/coop" --fixture >"$TMP/normal-helper-fail.out" 2>"$TMP/normal-helper-fail.err"
 [ -f "$MARKER/pi-state" ]
 grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/normal-helper-fail.err" >/dev/null
+! grep -F "$HELPER_DIAGNOSTIC" "$TMP/normal-helper-fail.out" "$TMP/normal-helper-fail.err" >/dev/null
 
 rm -f "$MARKER/pi-state"
 PORT=$((20000 + ($$ % 20000)))
 HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
   COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
+  COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" \
   COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
   COOP_WEB_NO_OPEN=1 bash "$ROOT/bin/coop" web --port "$PORT" \
   >"$TMP/web-helper-fail.out" 2>"$TMP/web-helper-fail.err" &
@@ -123,6 +130,7 @@ while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 160 ]; do
 done
 [ -f "$MARKER/pi-state" ]
 grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/web-helper-fail.err" >/dev/null
+! grep -F "$HELPER_DIAGNOSTIC" "$TMP/web-helper-fail.out" "$TMP/web-helper-fail.err" >/dev/null
 kill "$WEB_PID" >/dev/null 2>&1 || true
 wait "$WEB_PID" 2>/dev/null || true
 WEB_PID=""

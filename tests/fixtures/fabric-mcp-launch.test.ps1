@@ -6,6 +6,7 @@ $bin = Join-Path $temp 'bin'
 $agent = Join-Path $temp 'agent'
 $marker = Join-Path $temp 'marker'
 $token = 'fabric-launch-canary-7e5a3c'
+$helperDiagnostic = 'untrusted-helper-diagnostic-93b75a'
 New-Item -ItemType Directory -Force -Path $bin,$agent,$marker | Out-Null
 try {
   @'
@@ -95,6 +96,39 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
   if (-not $failedOutput.Contains('Azure authentication is required')) { throw 'truthful auth warning missing' }
   if ($failedOutput.Contains($token)) { throw 'token leaked from failed launch' }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi did not launch after token failure' }
+
+  Remove-Item -LiteralPath (Join-Path $marker 'pi-state') -Force
+  if ($env:OS -eq 'Windows_NT') {
+    @'
+@echo off
+if "%1"=="--version" (
+  echo Python 3.12.0
+  exit /b 0
+)
+>&2 echo %COOP_TEST_HELPER_DIAGNOSTIC%
+exit /b 7
+'@ | Set-Content -LiteralPath (Join-Path $bin 'python3.cmd') -Encoding ASCII
+  } else {
+    @'
+#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' 'Python 3.12.0'; exit 0; fi
+printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
+exit 7
+'@ | Set-Content -LiteralPath (Join-Path $bin 'python3') -Encoding ASCII
+    & chmod +x (Join-Path $bin 'python3')
+    if ($LASTEXITCODE -ne 0) { throw 'could not make Python failure fixture executable' }
+  }
+  $env:COOP_TEST_HELPER_DIAGNOSTIC = $helperDiagnostic
+  $env:COOP_TEST_EXPECT_TOKEN = 'absent'
+  $env:COOP_FABRIC_MCP_TOKEN = 'stale-inherited-token'
+  $ErrorActionPreference = 'Continue'
+  $helperFailedOutput = & $psHost -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'bin\coop.ps1') pi --fixture *>&1 | Out-String
+  $helperFailedRc = $LASTEXITCODE
+  $ErrorActionPreference = $priorEap
+  if ($helperFailedRc -ne 0) { throw "helper-process fail-soft launch failed rc=$helperFailedRc output=$helperFailedOutput" }
+  if (-not $helperFailedOutput.Contains('Fabric Warehouse MCP unavailable: token helper failed')) { throw 'sanitized helper warning missing' }
+  if ($helperFailedOutput.Contains($helperDiagnostic)) { throw 'untrusted helper diagnostic leaked to output' }
+  if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi did not launch after helper-process failure' }
 
   Write-Output 'FABRIC_MCP_FIXTURE_INJECTION_REACHED'
   if ($env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE -eq '1') {

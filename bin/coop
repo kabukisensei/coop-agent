@@ -206,14 +206,28 @@ EOF
 
 # --- Launch the branded Pi agent ---------------------------------------------
 coop_fabric_mcp_token() {
-  local py config token
+  local py config output
   py="$(coop_python)" || return 0
   config="${PI_CODING_AGENT_DIR:-$(coop_pi_agent_dir)}/mcp.json"
-  if ! token="$("$py" "$COOP_ROOT/lib/warehouse_mcp.py" launch-token "$config")"; then
+  # Capture both streams in memory. On abnormal helper failure, discard all
+  # untrusted diagnostics and emit only Coop's fixed warning.
+  if ! output="$("$py" "$COOP_ROOT/lib/warehouse_mcp.py" launch-token "$config" 2>&1)"; then
     coop_warn "Fabric Warehouse MCP unavailable: token helper failed"
     return 0
   fi
-  printf '%s' "$token"
+  case "$output" in
+    'warning: Fabric Warehouse MCP unavailable: managed configuration is invalid; run coop sync'|\
+    'warning: Fabric Warehouse MCP unavailable: Azure CLI is not installed or not on PATH'|\
+    'warning: Fabric Warehouse MCP unavailable: Azure CLI could not be launched'|\
+    'warning: Fabric Warehouse MCP unavailable: Azure CLI token acquisition timed out'|\
+    'warning: Fabric Warehouse MCP unavailable: Azure authentication is required; run az login'|\
+    'warning: Fabric Warehouse MCP unavailable: Azure CLI token acquisition failed'|\
+    'warning: Fabric Warehouse MCP unavailable: Azure CLI returned no usable Fabric token')
+      printf '%s\n' "$output" >&2
+      return 0
+      ;;
+  esac
+  printf '%s' "$output"
 }
 
 launch_pi() {

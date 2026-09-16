@@ -336,23 +336,43 @@ function Get-CoopFabricMcpToken {
   if (-not $py) { return '' }
   $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Get-CoopPiAgentDir }
   $config = Join-Path $agentDir 'mcp.json'
-  $warningFile = [System.IO.Path]::GetTempFileName()
   $previousEap = $ErrorActionPreference
-  $token = ''
+  $records = @()
+  $rc = 1
   try {
+    # Keep native stderr in memory as ErrorRecord objects. Never persist or
+    # replay arbitrary helper diagnostics; they may contain sensitive bytes.
     $ErrorActionPreference = 'Continue'
-    $token = (& $py (Join-Path $script:CoopRoot 'lib\warehouse_mcp.py') launch-token $config 2>$warningFile | Out-String).Trim()
+    $records = @(& $py (Join-Path $script:CoopRoot 'lib\warehouse_mcp.py') launch-token $config 2>&1)
+    $rc = $LASTEXITCODE
+  } catch {
+    $rc = 1
   } finally {
     $ErrorActionPreference = $previousEap
   }
-  try {
-    foreach ($line in @(Get-Content -LiteralPath $warningFile -ErrorAction SilentlyContinue)) {
-      if ($line) { Coop-Warn ($line -replace '^warning:\s*', '') }
-    }
-  } finally {
-    Remove-Item -LiteralPath $warningFile -Force -ErrorAction SilentlyContinue
+  if ($rc -ne 0) {
+    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper failed'
+    return ''
   }
-  return $token
+  $safeWarnings = @(
+    'warning: Fabric Warehouse MCP unavailable: managed configuration is invalid; run coop sync',
+    'warning: Fabric Warehouse MCP unavailable: Azure CLI is not installed or not on PATH',
+    'warning: Fabric Warehouse MCP unavailable: Azure CLI could not be launched',
+    'warning: Fabric Warehouse MCP unavailable: Azure CLI token acquisition timed out',
+    'warning: Fabric Warehouse MCP unavailable: Azure authentication is required; run az login',
+    'warning: Fabric Warehouse MCP unavailable: Azure CLI token acquisition failed',
+    'warning: Fabric Warehouse MCP unavailable: Azure CLI returned no usable Fabric token'
+  )
+  $stdout = @()
+  foreach ($record in $records) {
+    if ($record -is [System.Management.Automation.ErrorRecord]) {
+      $warning = $record.ToString().Trim()
+      if ($safeWarnings -contains $warning) { Coop-Warn ($warning -replace '^warning:\s*', '') }
+    } else {
+      $stdout += $record.ToString()
+    }
+  }
+  return (($stdout -join "`n").Trim())
 }
 
 function Invoke-CoopPiProcess {

@@ -100,7 +100,6 @@ function acquireFabricMcpToken() {
     [join(root, "lib", "warehouse_mcp.py"), "launch-token", join(agentDir, "mcp.json")],
     { env: helperEnv, encoding: "utf8", timeout: 10000, windowsHide: true },
   );
-  if (result.stderr) process.stderr.write(result.stderr);
   if (result.error) {
     console.error("warning: Fabric Warehouse MCP unavailable: token helper could not be launched");
     return "";
@@ -109,6 +108,17 @@ function acquireFabricMcpToken() {
     console.error("warning: Fabric Warehouse MCP unavailable: token helper failed");
     return "";
   }
+  const safeWarnings = new Set([
+    "warning: Fabric Warehouse MCP unavailable: managed configuration is invalid; run coop sync",
+    "warning: Fabric Warehouse MCP unavailable: Azure CLI is not installed or not on PATH",
+    "warning: Fabric Warehouse MCP unavailable: Azure CLI could not be launched",
+    "warning: Fabric Warehouse MCP unavailable: Azure CLI token acquisition timed out",
+    "warning: Fabric Warehouse MCP unavailable: Azure authentication is required; run az login",
+    "warning: Fabric Warehouse MCP unavailable: Azure CLI token acquisition failed",
+    "warning: Fabric Warehouse MCP unavailable: Azure CLI returned no usable Fabric token",
+  ]);
+  const warning = String(result.stderr || "").trim();
+  if (safeWarnings.has(warning)) console.error(warning);
   return String(result.stdout || "").trim();
 }
 const FABRIC_MCP_TOKEN = acquireFabricMcpToken();
