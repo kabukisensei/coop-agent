@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.23.2] — 2026-09-16
+
 ### Added
 - P0 Warehouse MCP and Microsoft skills catalog fixtures: bounded MCP tool
   discovery, target mismatch classification, project-policy launch filtering, and
