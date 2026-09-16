@@ -136,7 +136,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $python -c "import jsonschema,os,sys; print(os.path.abspath(sys.executable))"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sitePackages = (& $python -c "import jsonschema,os; print(os.path.dirname(os.path.dirname(jsonschema.__file__)))").Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $sitePackages) { exit 1 }
           "CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PYTHONPATH=$sitePackages" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: run test suite under Git Bash
         shell: bash
         run: bash tests/run.sh
@@ -178,7 +181,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $python -c "import jsonschema,os,sys; print(os.path.abspath(sys.executable))"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sitePackages = (& $python -c "import jsonschema,os; print(os.path.dirname(os.path.dirname(jsonschema.__file__)))").Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $sitePackages) { exit 1 }
           "CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PYTHONPATH=$sitePackages" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: parse every .ps1 with the PowerShell language parser
         shell: pwsh
         run: |
