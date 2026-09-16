@@ -313,6 +313,23 @@ class ProjectHealthTests(unittest.TestCase):
                 health._stat_identity(first), health._stat_identity(second)
             )
 
+    def test_read_uses_handle_identity_when_path_stat_identity_differs(self) -> None:
+        sample = self.root / "windows-identity.txt"
+        sample.write_bytes(b"stable")
+        real_fstat = health.os.fstat
+
+        def windows_style_fstat(descriptor: int):
+            result = real_fstat(descriptor)
+            return mock.Mock(
+                st_dev=result.st_dev + 100,
+                st_ino=result.st_ino + 100,
+                st_mode=result.st_mode,
+                st_size=result.st_size,
+            )
+
+        with mock.patch.object(health.os, "fstat", side_effect=windows_style_fstat):
+            self.assertEqual(health._read_capped(sample, 100), b"stable")
+
     def test_selecting_nested_skill_reference_archives_complete_skill(self) -> None:
         self.contract.write_text("profile:\n  organization: Test\n", encoding="utf-8")
         skill = self.root / ".pi" / "skills" / "old-generated"

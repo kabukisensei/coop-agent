@@ -125,6 +125,19 @@ def _stat_identity(metadata: os.stat_result) -> tuple[int, int, int]:
     return metadata.st_dev, metadata.st_ino, mode
 
 
+def _file_handle_identity(path: Path) -> tuple[int, int, int]:
+    if _is_link_or_reparse(path):
+        raise OSError(f"unsafe file identity path: {path}")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        identity = _stat_identity(os.fstat(descriptor))
+    finally:
+        os.close(descriptor)
+    if _is_link_or_reparse(path):
+        raise OSError(f"unsafe file identity path: {path}")
+    return identity
+
+
 def _bounded_children(directory: Path, limit: int) -> tuple[list[Path], bool]:
     children: list[Path] = []
     if not _is_safe_directory(directory):
@@ -145,14 +158,12 @@ def _read_capped(path: Path, limit: int) -> bytes:
     is_reparse_point = bool(getattr(metadata, "st_file_attributes", 0) & 0x400)
     if path.is_symlink() or is_reparse_point or not path.is_file():
         raise ValueError(f"cannot read unsafe file: {path}")
-    expected_identity = _stat_identity(metadata)
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     chunks: list[bytes] = []
     size = 0
     try:
         before = os.fstat(descriptor)
-        if _stat_identity(before) != expected_identity:
-            raise OSError(f"file identity changed before reading: {path}")
+        expected_identity = _stat_identity(before)
         while True:
             remaining = limit - size
             chunk = os.read(descriptor, min(128 * 1024, max(1, remaining + 1)))
@@ -167,8 +178,7 @@ def _read_capped(path: Path, limit: int) -> bytes:
             raise OSError(f"file changed while reading: {path}")
     finally:
         os.close(descriptor)
-    current = path.stat(follow_symlinks=False)
-    if _stat_identity(current) != expected_identity:
+    if _file_handle_identity(path) != expected_identity:
         raise OSError(f"file identity changed after reading: {path}")
     return b"".join(chunks)
 
@@ -583,7 +593,8 @@ def _copy_fsynced(
 
 
 def _bounded_hash(path: Path, budget: dict[str, int]) -> tuple[str, int]:
-    expected_identity = _path_identity(path)
+    if _is_link_or_reparse(path) or not path.is_file():
+        raise OSError(f"cannot hash unsafe file: {path}")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags)
     digest = hashlib.sha256()
@@ -591,8 +602,6 @@ def _bounded_hash(path: Path, budget: dict[str, int]) -> tuple[str, int]:
     try:
         before = os.fstat(descriptor)
         before_identity = _stat_identity(before)
-        if before_identity != expected_identity:
-            raise OSError(f"file identity changed before hashing: {path}")
         while True:
             remaining = MAX_ARCHIVE_BYTES - budget["bytes"]
             chunk = os.read(descriptor, min(128 * 1024, max(1, remaining + 1)))
@@ -611,7 +620,8 @@ def _bounded_hash(path: Path, budget: dict[str, int]) -> tuple[str, int]:
             raise OSError(f"archived file changed while hashing: {path}")
     finally:
         os.close(descriptor)
-    _require_identity(path, expected_identity)
+    if _file_handle_identity(path) != before_identity:
+        raise OSError(f"file identity changed after hashing: {path}")
     return digest.hexdigest(), size
 
 
