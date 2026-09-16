@@ -46,9 +46,10 @@ coop                   # launch the ready, branded Pi agent (after install + new
 > (the no-training-on-our-data terms attach to the business subscription). Details:
 > [docs/onboarding.md §3.5](docs/onboarding.md#35-first-launch--sign-in-one-time).
 
-`coop install` links `coop` into `~/.local/bin`. **That directory must be on your
-`PATH`.** If `coop` is not found after install, add this to your shell rc
-(`~/.zshrc`, `~/.bashrc`, …) and open a new shell:
+On macOS/Linux, `coop install` links `coop` into `~/.local/bin`; that directory must
+be on `PATH`. On Windows it installs `%LOCALAPPDATA%\coop\bin\coop.cmd`, adds that
+directory to the user `PATH`, and requires a new terminal before the change appears.
+If `coop` is not found on macOS/Linux, add this to your shell rc and open a new shell:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
@@ -84,8 +85,12 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
   3.14 and lack `winget` / `py`)
 - **pipx** (auto-installed by `coop install` via Python `pip`)
 - **git** — https://git-scm.com (auto-installed via `winget` / `brew` / `apt` if missing)
-- **Azure CLI** (`az`) — *optional* — https://learn.microsoft.com/cli/azure (auto-installed via `winget` / `brew` / `apt` if missing; needed only for Fabric / Power BI live authentication — local SQL/DAX review works without it)
+- **Azure CLI** (`az`) — *optional* — https://learn.microsoft.com/cli/azure (auto-installed via `winget` / `brew` / `apt` if missing; used for Fabric, Power BI, Azure DevOps, and the Warehouse Doctor probe — local SQL/DAX review works without it)
 - **Tabular Editor CLI (`te`)** — *optional* — https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (cross-platform CLI that runs Best Practice Analyzer rules on semantic models; requires a Tabular Editor account during the preview — place `te` in `~/.local/bin` or your `PATH`, then run `te auth login` once)
+
+Automatic prerequisite setup handles **missing** tools; it does not upgrade every incompatible
+installation already present. If Doctor reports Node below 22.19 or Python below 3.10, upgrade
+it and rerun install. The Windows Store Python alias is not treated as an interpreter.
 
 ---
 
@@ -111,7 +116,7 @@ It is idempotent; re-run it any time.
 Useful flags:
 
 - `--force` — reinstall pi tools / pipx packages even if already present
-- `--no-fabric` — skip installing the Microsoft Fabric CLI
+- `--no-fabric` — skip installing the Microsoft Fabric CLI (partial/diagnostic setup; a fresh machine will not pass full Doctor readiness until `fab` is installed)
 - `--no-prereqs` — skip auto-installing missing system prerequisites (still reports them)
 - `--yes`, `-y` — assume yes for prompts
 
@@ -158,48 +163,19 @@ with no local source, partial and one-sided estates, mixed repositories, and ful
 connected estates. Edits make a backup and preserve comments, custom policies,
 and fields the wizard does not own.
 
-**No-terminal first-time setup (for non-technical members).** Hand them the
-`coop-agent` folder (a zip or a shared drive) and have them double-click
-**`Install coop.cmd`** in it. That runs the same `coop install` for them — no
-terminal, no commands — and when it finishes they'll have the coop icon to
-double-click. Power users keep using `.\bin\coop.cmd install` exactly as above;
-`Install coop.cmd` just wraps it with a friendly window and a pause at the end.
+**No-terminal first-time setup (for non-technical members).** Prefer a Git clone, then
+have them double-click **`Install coop.cmd`**. A zip/shared-drive copy is suitable only
+for a one-time or offline install: `coop update` can update its tools but **cannot update
+the Coop repo layer** (skills, prompts, scripts, themes, or guardrails). Replace such a
+copy with a Git clone and rerun `.\bin\coop.cmd install`; `~/.coop` settings are preserved.
 
-### Manual install (any platform)
+### Manual assembly
 
-If you prefer to install the pieces yourself, the bootstrap is equivalent to:
-
-```bash
-# Pi itself
-npm install -g @earendil-works/pi-coding-agent
-
-# Pi extensions (into coop's isolated agent dir)
-pi install npm:pi-mcp-adapter        # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
-pi install npm:pi-hermes-memory      # persistent memory + session search + secret scanning
-pi install npm:pi-better-openai      # plan usage limits (5h + 7d windows), surfaced in coop's footer
-pi install npm:pi-web-access         # web search / URL fetch / GitHub clone / PDF / video (read-only)
-pi install npm:@juicesharp/rpiv-ask-user-question   # structured questions the model can put to you
-# coop renders its own footer + splash via extensions/coop-powerline — no third-party
-# powerline-footer extension is installed.
-
-# Standalone Coop tools (via pipx)
-pipx install coop-data-doc
-pipx install coop-sql-review
-pipx install coop-dax-review
-
-# Microsoft Fabric CLI (see the fab collision warning below)
-pipx install ms-fabric-cli
-
-# fabric-cicd is a Python LIBRARY (no CLI) — inject it into the Fabric CLI's env
-pipx inject ms-fabric-cli fabric-cicd
-
-# Link coop onto your PATH
-ln -sf "$PWD/bin/coop" "$HOME/.local/bin/coop"
-```
-
-Finish with `coop sync` (ensures the core Pi extensions are installed, places the
-read-only MCP config non-destructively, and verifies the splash/theme/vibe assets)
-and `coop doctor`.
+Use `coop install`. Manual assembly is unsupported because the release manifest pins the
+compatible Pi, extension, npm, pipx, and MCP versions and installs them into Coop's isolated
+agent directory. Bare `pi install` commands can modify your personal Pi profile and are not
+equivalent to the bootstrap. See `config/release-manifest.json` when diagnosing a managed
+installation.
 
 ### What `coop install` includes (turnkey)
 
@@ -210,11 +186,12 @@ shows anything still missing.
 | --- | --- |
 | **Pi** | installed globally via `npm` |
 | **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits), `pi-web-access` (web search/fetch — read-only), `@juicesharp/rpiv-ask-user-question` (structured questions) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
-| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `sql_review`/`dax_review`/`data_doc` + `/setup-project` + `/setup-docs`), `coop-guardrails` (enforces never-commit-source + destructive-command confirm) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
+| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `sql_review`/`dax_review`/`data_doc`/`bpa_review` + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
 | **Standalone tools** — `coop-data-doc`, `coop-sql-review`, `coop-dax-review` | installed via `pipx` from PyPI |
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
-| **MCP servers** — `fabric`, `powerbi`, `microsoft-learn`, `context-mode` | **fetched on first use via `npx`** (need Node + internet); placed read-only into coop's isolated MCP config by `coop sync`. No separate install. |
+| **Power BI authoring tools** — Report Authoring CLI, Power BI Modeling MCP, and Windows-only Desktop Bridge | installed globally from manifest-pinned npm packages; Doctor requires Report Authoring and validates Modeling MCP arguments |
+| **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
 
 > `pi-powerline-footer` is **not** used. coop renders its own footer and splash via
 > `extensions/coop-powerline` (see [Footer & splash](#footer--splash)).
@@ -225,8 +202,8 @@ shows anything still missing.
   package). Install it yourself, run `te auth login` once, and set
   `tools.tabular_editor_cli.executable_path` in `.coop/project.yml` if you want
   semantic-model BPA. coop works without it.
-- **Azure CLI** (`az`) — optional, for Fabric / Power BI auth. Install from Microsoft
-  if your team uses live MCP / Power BI access.
+- **Azure CLI** (`az`) — optional, for Fabric, Power BI, Azure DevOps, and Warehouse
+  Doctor authentication. Install from Microsoft if your team uses live integrations.
 
 ---
 
@@ -238,13 +215,17 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | Command | Description |
 | --- | --- |
 | `coop` | Launch the branded Pi agent (skills, prompts, theme, guardrails, splash) |
-| `coop doctor [--fix] [--json]` | Check dependencies and configuration; exit non-zero if required items missing. `--fix` auto-applies safe remediations (sync extensions/MCP/assets, pipx-install missing Coop tools), then re-checks. `--json` emits one machine-readable document on stdout (`{"checks":[{name,section,status,hint}…],"fail":N,"warn":N}`) for fleet-health digests |
-| `coop update [--no-fabric]` | Update Pi + Pi extensions + Coop tools + vibes/skills, then run doctor (`--no-fabric` skips the Fabric CLI, matching `install --no-fabric`) |
-| `coop uninstall [--keep-tools] [--yes]` | Remove coop from this machine (VM churn / offboarding): the PATH launcher/symlink, the Start Menu + Desktop shortcuts and user-PATH entry (Windows), and coop's isolated agent dir — plus, by default, Pi (npm) and the pipx tools. `--keep-tools` spares pi/pipx/fab for a fast re-install. Never touches the repo clone, work repos, the rest of `~/.coop`, or your personal `~/.pi/agent` |
-| `coop install` | Fresh-install / bootstrap everything (idempotent). With a source arg, alias of `coop add` |
+| `coop doctor [--fix] [--json] [--publish]` | Check dependencies/configuration; optionally apply safe fixes, emit JSON, or publish a fleet snapshot to `fleet.publish_dir` |
+| `coop update [--check] [--edge] [--yes] [--no-fabric]` | Converge the fleet to the release manifest and run Doctor. `--check` changes nothing; `--edge` deliberately takes upstream latest; `--pi-latest` is deprecated |
+| `coop support [--json] [--incident] [--export PATH]` | Offline Support Center: sanitized diagnostics, incident timeline, preview/export, and standards status; works without Pi/model availability |
+| `coop onboard [--edit|--config-only|--reset|--json]` | Configure profile and managed integrations without launching the agent |
+| `coop profile [--edit|--reset|--json]` | Inspect or update the private user profile |
+| `coop context-budget [--json]` | Inspect the active model/context budget |
+| `coop uninstall [--keep-tools] [--yes]` | Remove the launcher/shortcuts/user-PATH entry and isolated agent dir; by default also uninstall Pi, pipx tools/Fabric CLI, Power BI Report Authoring CLI, Power BI Modeling MCP, and the Windows Desktop Bridge. `--keep-tools` preserves all managed npm/pipx tools. Never touches repo clones, work repos, the rest of `~/.coop`, or personal `~/.pi/agent` |
+| `coop install [--edge] [--force] [--yes] [--no-prereqs] [--no-fabric]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest. With a source arg, alias of `coop add` |
 | `coop web` | Open a friendly browser UI over the same governed agent (experimental; loopback-only + one-time token — see `web/README.md`) |
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
-| `coop sync` | Ensure core Pi extensions are installed, place the read-only MCP config (non-destructive), verify brand assets |
+| `coop sync` | Ensure core Pi extensions are installed, place the governed MCP config non-destructively, refresh managed catalogs/team knowledge, and verify brand assets |
 | `coop data-doc [args]` | Run `coop-data-doc` (default: `build`) and summarize outputs |
 | `coop sql-review [args]` | Pass through to `coop-sql-review` (e.g. `check <paths>`, `rules`) |
 | `coop dax-review [args]` | Pass through to `coop-dax-review` (e.g. `check <paths>`, `rules`) |
@@ -253,7 +234,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop version` | Print `coop` + `pi` versions |
 | `coop help` | Show usage |
 | **Authoring** | |
-| `coop init [dir]` | Scaffold `.coop/project.yml` into a work repo (default: `.`). Once `repositories:` is filled, `coop init --seed-docs` generates/patches `coop-data-doc.yml` from it (via `coop-data-doc config-set`), so repo paths are typed once |
+| `coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
 | `coop new-skill <name>` | Scaffold `skills/<name>/SKILL.md` |
 | `coop new-prompt <name>` | Scaffold `prompts/<name>.md` |
 | `coop release [patch\|minor\|major] [--yes] [--no-push] [--no-check]` | Cut a release — bump version, roll CHANGELOG, commit + tag + push (default `patch`). Build-checks the extensions first (skip with `--no-check`); `--no-push` tags locally only; `--yes` skips the confirm |
@@ -267,9 +248,10 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 `coop data-doc` / `coop sql-review` / `coop dax-review` **flow straight through** to
 the underlying tool — every subcommand (`check`, `rules`, `upgrade`, the full
 `coop-data-doc setup` wizard, …) and the tools' own interactive prompts work, and
-the exit code propagates. Both reviews are **advisory** — they never edit or block.
-The AI agent gets machine-readable JSON through the native `sql_review` / `dax_review`
-/ `data_doc` tools (in `extensions/coop-tools`), independent of these passthrough
+the exit code propagates. Both reviews are **advisory by default** — they never edit, and findings do not change
+the default exit code; usage/tool errors and `--strict` propagate nonzero status.
+The AI agent gets machine-readable JSON through the four native `sql_review` / `dax_review`
+/ `data_doc` / `bpa_review` tools (in `extensions/coop-tools`), independent of these passthrough
 commands — including `data_doc`'s `lineage` command (see
 [Lineage-grounded edits](#lineage-grounded-edits)).
 
@@ -319,50 +301,56 @@ fab --version                # re-verify: should be the Microsoft Fabric CLI
 
 ---
 
-## MCP servers (read-only, optional)
+## Managed MCP integrations (optional)
 
-coop generates up to six MCP server entries via `pi-mcp-adapter`. They are **read-only first** and
-**all optional** — coop runs fine without them.
+Coop can generate six managed entries through `pi-mcp-adapter`. They are **read-only
+first**, not read-only-only, and all are optional. `context-mode` is installed separately
+as a native Pi extension and is deliberately excluded from generated MCP configuration.
 
-| Server | Provides | Mode |
+| Server | Provides | Enablement and policy |
 | --- | --- | --- |
-| `fabric` | `@microsoft/fabric-mcp` (AzureCliCredential) | read-only *by policy* † |
-| `powerbi` | `powerbi-mcp-server --readonly` | read-only (server-enforced `--readonly`) |
-| `powerbi-modeling-mcp` | `@microsoft/powerbi-modeling-mcp --start --readonly` | read-only (server-enforced) |
-| `azure-devops` | `@azure-devops/mcp` for configured organization | read-only first; mutations approval-gated |
-| `microsoft-learn` | `learn.microsoft.com/api/mcp` — always-current Microsoft docs | read-only |
-| `context-mode` | `npx -y context-mode` — intent-driven search + sandboxed exec | read-only |
+| `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login; metadata reads by default, mutations approval-gated |
+| `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint through pinned `mcp-remote` | every call approval-gated; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
+| `powerbi` | `powerbi-mcp-server --readonly` | requires a configured tenant; server-enforced read-only |
+| `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readonly` | no tenant/workspace required; server-enforced read-only |
+| `azure-devops` | Manifest-pinned Azure DevOps MCP for one organization | requires enabled toggle + valid organization; mutations approval-gated |
+| `microsoft-learn` | `learn.microsoft.com/api/mcp` | requires only its enabled toggle; always-current Microsoft docs |
 
-> † The Fabric MCP has **no** server-side read-only switch (unlike `powerbi`'s
-> `--readonly`), so its read-only posture is enforced by **policy**, not by the
-> server: Pi's tool-approval prompts, the advisory guardrails prompt, and
-> `coop-guardrails`, which **confirms** any Fabric/Power BI/MCP tool call whose name
-> looks like a mutation (create/update/delete/deploy/publish). That last check is
-> best-effort (MCP tool names vary). For hard, per-tool gating, enable the optional
-> `pi-permissions` extension.
+`coop onboard` writes versioned `~/.coop/config`; `coop sync` deterministically generates
+COOP-managed entries in `~/.coop/agent/mcp.json` while preserving unmarked user-owned
+servers. Generated config stores no OAuth token. The Azure DevOps MCP organization lives
+in `~/.coop/config`; batch digest client/project/team/recipient records live separately in
+private `~/.coop/devops/clients.yml`.
 
-`coop onboard` writes versioned `~/.coop/config`; `coop sync` deterministically
-generates manifest-pinned COOP-managed entries in `~/.coop/agent/mcp.json` while
-preserving custom and unmarked user-owned servers. Configure tenant and Azure DevOps
-organization with `coop onboard --edit`; generated entries contain no TODOs or latest pins.
+**Approval boundary.** Dev/test metadata reads proceed by default. Row reads, production
+access, mutation-looking MCP actions, and **every Warehouse SQL call** require explicit
+approval; approval-required calls fail closed when no UI is available. Warehouse SQL is
+classified as `row-data` or `ddl-dml-destructive`: bounded `SELECT`-style reads still ask,
+while DDL/DML, permissions, `SELECT … INTO`, and `COPY INTO` receive mutation-specific
+confirmation. Audit entries record the tool/risk decision, never raw SQL or arguments.
 
-MCP servers are for `list` / `read` / `inspect` only. coop **never** calls
-create/update/delete/deploy/publish MCP actions without explicit approval —
-regardless of what a server is capable of.
+**Warehouse targeting and auth.** Set machine enablement with
+`integrations.fabric_sql_endpoint`; an absent canonical flag inherits the legacy Fabric
+setting. A project may disable it with `mcp.fabric_sqlendpoint.enabled: false`. Complete
+Warehouse IDs create an item-scoped URL; Lakehouse projects must use
+`sqlEndpointProperties.id`, not the Lakehouse item ID. With no explicit target Coop uses
+the global endpoint. A malformed explicit target fails closed and emits no entry. Runtime
+uses `mcp-remote` OAuth; Doctor never initiates login and only uses an existing Azure CLI
+token for a bounded metadata-only initialization and `tools/list` probe.
 
-For live estate discovery, Coop may inspect dev/test metadata, schemas, and artifact
-code read-only by default. Actual row reads ask first. Production metadata and code
-also ask first; production row reads require an explicitly bounded target, columns,
-filters, and row limit. Results identify whether evidence came from a repo or a live
-environment and flag drift between them.
+Warehouse Doctor states are exact: `registered` (target/auth/tool proof passed),
+`auth_required` (no usable existing token), `tool_missing` (no compatible SQL tool),
+`target_invalid` (malformed or mismatched target), and `unavailable` (missing config,
+network/protocol failure, or unusable response). Other MCP checks are primarily
+presence/config checks; Power BI Modeling also verifies `--start --readonly`.
 
-> **Supply-chain note:** generated servers use exact versions from
-> `config/release-manifest.json`. Review COOP release updates before enabling them in
-> locked-down environments; MCP integrations remain optional.
+For live estate discovery, Coop labels repo versus live evidence and reports drift. Actual
+row reads ask first; production row reads require a bounded target, columns, filters, and
+row limit.
 
-The example MCP config also carries an optional **`azure-devops`** entry
-(`@azure-devops/mcp`, read-only verbs) for teams that manage Boards — see the
-section below.
+> **Supply-chain note:** generated npm-backed servers use exact versions from
+> `config/release-manifest.json`. Review Coop release updates before enabling them in
+> locked-down environments.
 
 ---
 
@@ -376,7 +364,7 @@ integration — nothing loads or runs unless you configure it.
   "what's stale/unassigned for `<team>`?", creates and updates work items
   (**confirm-first** — coop-guardrails flags any work-item write), and runs the
   weekly per-client digest. It uses the Entra-authenticated REST API, plus the
-  optional read-only `azure-devops` MCP entry generated from `~/.coop/config`.
+  optional read-only-first `azure-devops` MCP entry generated from `~/.coop/config`; writes require approval.
 - **Batch entry points** — paired bash/PowerShell launchers over a stdlib-only
   Python core:
   - `scripts/ado-digest.sh` / `scripts/ado-digest.ps1` — a read-only, per-client
@@ -385,10 +373,11 @@ integration — nothing loads or runs unless you configure it.
     see the skill).
   - `scripts/ado-onboard.sh` / `scripts/ado-onboard.ps1` — guided, read-only
     client discovery that writes only the local config.
-- **Config** — all client identifiers (org, project, people, mailboxes) live
-  **only** in the private `~/.coop/devops/clients.yml`, seeded from
-  [`config/devops.clients.example.yml`](config/devops.clients.example.yml)
-  (placeholders only — never commit real values to a repo).
+- **Config** — the MCP organization lives in `~/.coop/config`. Batch digest/onboarding
+  records (projects, teams, people, recipients, and per-client auth) live in private
+  `~/.coop/devops/clients.yml`, seeded from
+  [`config/devops.clients.example.yml`](config/devops.clients.example.yml). Never
+  commit real client values.
 
 Full guide, auth model, and scheduling:
 [`skills/azure-devops/SKILL.md`](skills/azure-devops/SKILL.md).
@@ -412,7 +401,7 @@ launch.
    Only docs / logs / diagrams / glossary / site may be committed, after approval.
 5. Dev/test metadata/schema/code is read-only by default; actual rows and all production access ask first.
 6. No production changes without explicit, specific confirmation.
-7. MCP is read-only.
+7. Managed integrations are read-only first; mutation and Warehouse SQL calls are approval-gated.
 8. Never expose secrets.
 
 **Audit trail.** Every guardrail decision the runtime `coop-guardrails` extension makes —
@@ -449,9 +438,9 @@ summary), and the **`git-helper`** skill / **`/pr-description`** (draft a commit
 message + PR description from the diff — drafts only, never commits).
 
 The single source of truth for repo paths, workspaces, standards, backup/log rules,
-and the approval policy is the project contract `.coop/project.yml`. Copy
-[`.coop/project.example.yml`](.coop/project.example.yml) into your work repo's
-`.coop/project.yml` and replace every `TODO`.
+and approval policy is `.coop/project.yml`. Run **`/setup-project`** inside Coop or
+`coop init` in the project directory. Use `coop init --template` only when you
+intentionally want the full legacy template.
 
 Fabric projects may use two workspaces per environment. Record Warehouse/Lakehouse
 DEV/TEST/PROD workspaces in `fabric.environment_names` and semantic-model
@@ -468,10 +457,27 @@ append, not a commit or push.
 
 ---
 
+## Standards resolution
+
+Coop resolves five governed domains: SQL, DAX, semantic model, Fabric, and
+documentation. Precedence is **project/client override → verified canonical generation →
+stale last-known-good → bundled SQL/DAX fallback → unavailable**. A project override is
+the effective authority when configured; Coop does not silently claim it is canonical.
+
+Launch performs a bounded, fail-soft refresh. Each task receives an immutable standards
+snapshot, and native reviewers bind to the same authority so prompt guidance and tool
+results cannot drift mid-task. Provenance or integrity failures reject a candidate rather
+than partially applying it. Run **`/standards-status`** to inspect effective authority,
+generation, freshness, and fallback state. Canonical sources and integrity metadata live
+in `config/standards-registry.json`.
+
+---
+
 ## Standalone tools
 
-coop wraps three standalone, advisory, **read-only** tools (installed via pipx;
-also exposed as the native LLM tools `sql_review` / `dax_review` / `data_doc`):
+coop wraps three standalone pipx tools and exposes four native LLM tools:
+`sql_review`, `dax_review`, `data_doc`, and optional/config-driven `bpa_review`.
+The review tools are read-only; `data_doc build` writes generated documentation.
 
 - **`coop-data-doc`** — progressive SQL and/or Power BI documentation, lineage, and machine-readable
   output. `scan` → `graph.json`; `build` → `manifest.json` + Markdown docs + a
@@ -483,7 +489,8 @@ also exposed as the native LLM tools `sql_review` / `dax_review` / `data_doc`):
   `coop-sql-review check <paths...> --format json [--min-severity error|warning|info] [--strict]`
 - **`coop-dax-review`** — advisory DAX standards linter (same shape as sql-review).
 
-The review tools are **advisory only**: they never edit files and never block work.
+The review tools are **advisory by default**: they never edit files, and findings do
+not change the default exit code. Usage/tool errors and `--strict` can return nonzero.
 
 Also available: **`fabric-cicd`** — a Python **library** (no CLI). coop installs it via
 `pipx inject ms-fabric-cli fabric-cicd` so `fabric_cicd` is importable in the Fabric
@@ -561,6 +568,45 @@ See [`skills/_microsoft/README.md`](skills/_microsoft/README.md) for details.
 
 ---
 
+## Team knowledge (optional)
+
+Configure approved repositories under `knowledge.repos`, then run `coop sync` (or normal
+`coop update`). Sync is fail-soft: a remote outage does not prevent launch, and an existing local
+Git checkout remains usable. Team skills load beneath Cooptimize's first-party skills, so
+local governance wins conflicts.
+
+At startup Coop checks configured knowledge paths and points the agent to the knowledge
+skill; literal Markdown retrieval is performed on demand. It can nudge `search-knowledge`
+after at least two distinct failed tool results in one session. Use **`/share-learning`** to prepare
+a reviewed pull request back to the knowledge source; it never silently publishes or
+commits. Experimental `knowledge.sources` v2 remains disabled by default, and semantic
+retrieval is not claimed as a production runtime feature.
+
+---
+
+## Support Center and fleet health
+
+`coop support [--json] [--incident] [--export PATH]` collects sanitized local diagnostics,
+standards status, and a bounded incident timeline without network access or model/Pi
+availability. It sanitizes before persistence, retains the newest 200 events and 10 default
+bundles, and exports a bundle by default for escalation.
+
+Set `fleet.publish_dir` in private Coop config, then run `coop doctor --publish` to write a
+per-host/user JSON snapshot. Aggregate snapshots with:
+
+```bash
+scripts/fleet-digest.sh --format md          # add --send or --dry-run
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\fleet-digest.ps1 --format md
+```
+
+The digest flags failures, warnings, and stale check-ins and can render Markdown/HTML or
+send through Microsoft Graph when configured.
+
+---
+
 ## Footer & splash
 
 coop renders its **own** footer and splash via `extensions/coop-powerline` — it does
@@ -598,21 +644,25 @@ its configured profile icon.
 ## Updating & maintenance
 
 ```bash
-coop update          # updates Pi + Pi extensions + Coop tools + vibes/skills, then runs doctor
-coop update --check  # dry-run: show current / latest / tested versions — installs NOTHING
-coop sync            # re-sync vibes/powerline + place the read-only MCP config (non-destructive)
-coop doctor          # re-check dependencies and configuration at any time
+coop update          # converge to the tested release manifest, then run Doctor
+coop update --check  # dry-run core tool status; changes nothing
+coop update --edge   # deliberately take latest upstream, then report manifest drift
+coop sync            # refresh governed MCP/catalog/team-knowledge/assets non-destructively
+coop doctor          # re-check dependencies and configuration
+coop support --incident  # export a sanitized escalation bundle
 ```
 
-`coop update` keeps Pi, its extensions, and the standalone tools current, then runs
-`coop doctor` so you immediately see anything left to fix.
+`coop update` keeps Pi, its extensions, standalone tools, and a Git-backed Coop repo
+current, then runs Doctor. Tracked local repo changes cause the repo pull to be skipped;
+untracked files do not. On Windows, a running Coop/Pi process causes the Pi update to be
+skipped and returns nonzero—close every Coop/Pi window and rerun. A zip/shared-drive copy
+can update tools but never the repo layer; replace it with a Git clone and rerun
+`.\bin\coop.cmd install`. Private `~/.coop` settings are preserved.
 
 **Fleet pinning.** `coop update` has exactly two fleet modes. **Normal** mode pins Pi,
 every extension, and all tools to the exact versions in the release manifest — no registry
-queries and no prompts. `--edge` is the only latest/upstream mode: it takes newest upstream
-across the fleet, and `coop doctor` reports any component that drifts from the manifest.
-Use `coop update --check` first to see what an update *would* do before telling the team to
-run it.
+queries and no prompts. `--edge` is the only latest/upstream mode. Use `--check` before rollout; it reports Pi, pipx tools, and authoring npm tools,
+but does not enumerate managed Pi extensions or the injected `fabric-cicd` library.
 
 **One update voice.** Coop suppresses Pi and managed-extension self-update notices and
 blocks `context-mode`'s `ctx_upgrade` shortcut so a component cannot drift away from the
