@@ -339,7 +339,7 @@ Per `.coop/project.yml` and `docs/guardrails.md`:
 | Server | Allowed by default | Requires explicit approval |
 |--------|--------------------|----------------------------|
 | `fabric` | `list`, `read`, `inspect` (read-only **by policy**) | `create`, `update`, `delete`, `deploy` |
-| `fabric-sqlendpoint` | separate managed remote HTTP SQL endpoint | every `executeSQL` / `execute_query` call; DDL/DML/destructive SQL is classified before row-read handling |
+| `fabric-sqlendpoint` | separate managed direct HTTP SQL endpoint | every `executeSQL` / `execute_query` call; DDL/DML/destructive SQL is classified before row-read handling |
 | `powerbi` (`--readonly`) | `list`, `read`, `inspect` | `create`, `update`, `delete`, `publish` |
 | `microsoft-learn` | docs lookups (always-current) | — |
 | `context-mode` | intent search + **sandboxed exec** over docs/graph | — |
@@ -358,9 +358,11 @@ and `fabric.default_sql_endpoint`, Coop uses the item URL
 For Lakehouse targets, `itemId` is the `sqlEndpointProperties.id`, not the
 Lakehouse item ID.
 
-The launch command is manifest-pinned and uses native OAuth only:
-`npx -y mcp-remote@0.1.38 URL --transport http-only --silent`. Coop does not
-write bearer tokens, static token helper commands, token config, or token argv.
+The managed entry uses direct Streamable HTTP with `auth: bearer` and
+`bearerTokenEnv: COOP_FABRIC_MCP_TOKEN`. Immediately before Pi starts, Coop obtains
+a Fabric token from the existing Azure CLI login and sets it only in that child
+environment. Coop does not write bearer tokens, token helper commands, token config,
+or token argv. Relaunch Coop to reconnect after the launch-time token expires.
 Doctor treats config registration as only one state; live tools-list discovery
 can still report `auth_required`, `unavailable`, `tool_missing`, or
 `target_invalid`. Live dev/test verification remains pending on the signed-in

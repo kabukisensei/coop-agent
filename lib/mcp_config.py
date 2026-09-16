@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate COOP's deterministic MCP runtime config from the release manifest and ~/.coop/config.
 
-Unknown and unmarked same-name servers are preserved. COOP updates command/args/env
+Unknown and unmarked same-name servers are preserved. COOP updates runtime fields
 only for entries listed in top-level `_coop.managed_servers`. A narrow migration removes
 or adopts only legacy COOP placeholders containing TODO-/@latest. No secrets are read.
 """
@@ -21,6 +21,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from warehouse_mcp import (  # noqa: E402
+    FABRIC_TOKEN_ENV,
     find_project_yml,
     load_project,
     machine_sqlendpoint_enabled,
@@ -78,6 +79,15 @@ def remote_http_server(manifest: dict[str, Any], url: str) -> dict[str, Any]:
             "http-only",
             "--silent",
         ],
+    }
+
+
+def fabric_sqlendpoint_server(url: str) -> dict[str, Any]:
+    return {
+        "url": url,
+        "auth": "bearer",
+        "bearerTokenEnv": FABRIC_TOKEN_ENV,
+        "lifecycle": "lazy",
     }
 
 
@@ -141,7 +151,7 @@ def desired_servers(
         # endpoint. Omitting the managed entry lets Doctor report target_invalid
         # from the project contract without exposing an unintended broad scope.
         if target.scope != "invalid":
-            sql_entry = remote_http_server(manifest, target.url)
+            sql_entry = fabric_sqlendpoint_server(target.url)
             sql_entry["_coop_target"] = {
                 "scope": target.scope,
                 "workspace_id": target.workspace_id,
@@ -243,7 +253,21 @@ def generate(
         current = servers.get(name)
         if current is None or name in managed or legacy_seeded(name, current):
             merged = dict(current) if isinstance(current, dict) else {}
-            for field in ("command", "args", "env", "_coop_target"):
+            # Own transport/auth fields for marked servers so migration cannot
+            # retain mcp-remote, OAuth state, or a literal bearer credential.
+            for field in (
+                "command",
+                "args",
+                "env",
+                "url",
+                "auth",
+                "bearerTokenEnv",
+                "lifecycle",
+                "bearerToken",
+                "headers",
+                "oauth",
+                "_coop_target",
+            ):
                 if field in definition:
                     merged[field] = definition[field]
                 else:

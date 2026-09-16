@@ -8,7 +8,7 @@ cat > "$d/config" <<'JSON'
 {"schema_version":1,"azure":{"tenant_id":"tenant-1"},"integrations":{"fabric":true,"power_bi":true,"power_bi_modeling":true,"azure_devops":true,"microsoft_learn":true,"context_mode":true},"azure_devops":{"organization":"cooptimize"}}
 JSON
 cat > "$d/mcp.json" <<'JSON'
-{"mcpServers":{"custom":{"command":"custom","args":["x"]},"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp@old"],"customField":true}},"_coop":{"schema_version":1,"managed_servers":["fabric"]}}
+{"mcpServers":{"custom":{"command":"custom","args":["x"]},"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp@old"],"customField":true},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"],"bearerToken":"stale-secret-fixture","headers":{"Authorization":"Bearer stale-secret-fixture"},"oauth":{"legacy":true}}},"_coop":{"schema_version":1,"managed_servers":["fabric","fabric-sqlendpoint"]}}
 JSON
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp.json"
 "$PY" - "$d/mcp.json" "$ROOT/config/release-manifest.json" <<'PY'
@@ -17,17 +17,26 @@ m=json.load(open(sys.argv[1])); manifest=json.load(open(sys.argv[2])); s=m['mcpS
 assert s['custom']=={'command':'custom','args':['x']}
 assert s['fabric']['customField'] is True
 sql=s['fabric-sqlendpoint']
-assert sql['args']==['-y','mcp-remote@'+manifest['mcp_servers']['mcp-remote'],'https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint','--transport','http-only','--silent']
-assert 'Bearer' not in json.dumps(sql) and 'accessToken' not in json.dumps(sql)
+assert sql['url']=='https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint'
+assert sql['auth']=='bearer' and sql['bearerTokenEnv']=='COOP_FABRIC_MCP_TOKEN'
+assert sql['lifecycle']=='lazy'
+assert 'command' not in sql and 'args' not in sql and 'mcp-remote' not in json.dumps(sql)
+assert 'bearerToken' not in sql and 'Authorization' not in json.dumps(sql)
 assert s['powerbi']['args'][-1]=='--readonly'
 model=s['powerbi-modeling-mcp']['args']
 assert '--start' in model and '--readonly' in model
 assert model[1].endswith('@'+manifest['npm_tools']['@microsoft/powerbi-modeling-mcp'])
 assert all('@latest' not in str(v) and 'TODO-' not in str(v) for v in s.values())
 assert s['azure-devops']['args'][1].endswith('@'+manifest['mcp_servers']['@azure-devops/mcp'])
+learn=s['microsoft-learn']
+assert learn['command']=='npx'
+assert learn['args']==['-y','mcp-remote@'+manifest['mcp_servers']['mcp-remote'],'https://learn.microsoft.com/api/mcp','--transport','http-only','--silent']
 # context-mode is a native Pi extension — never generated as an MCP server.
 assert 'context-mode' not in s
 PY
+cp "$d/mcp.json" "$d/mcp-first.json"
+"$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp.json"
+cmp "$d/mcp-first.json" "$d/mcp.json"
 # Project IDs select item-scoped Warehouse URL only when complete and canonical.
 mkdir -p "$d/project/.coop"
 cat > "$d/project/.coop/project.yml" <<'YAML'
@@ -42,7 +51,7 @@ YAML
 "$PY" - "$d/item-mcp.json" <<'PY'
 import json,sys
 s=json.load(open(sys.argv[1]))['mcpServers']['fabric-sqlendpoint']
-assert s['args'][2]=='https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/11111111-1111-1111-1111-111111111111/items/22222222-2222-2222-2222-222222222222/sqlEndpoint'
+assert s['url']=='https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/11111111-1111-1111-1111-111111111111/items/22222222-2222-2222-2222-222222222222/sqlEndpoint'
 assert s['_coop_target']['scope']=='item'
 PY
 # Lakehouse targets use sqlEndpointProperties.id, not the Lakehouse item id.
@@ -60,7 +69,7 @@ YAML
 "$PY" - "$d/lakehouse-mcp.json" <<'PY'
 import json,sys
 s=json.load(open(sys.argv[1]))['mcpServers']['fabric-sqlendpoint']
-assert '/items/44444444-4444-4444-4444-444444444444/sqlEndpoint' in s['args'][2]
+assert '/items/44444444-4444-4444-4444-444444444444/sqlEndpoint' in s['url']
 PY
 # Warehouse doctor never reports healthy from config alone; mocked tools/list
 # controls compatible spelling status, and item targets require auth/REST validation.
@@ -100,7 +109,7 @@ assert v['state']=='target_invalid'
 assert v['registered_target']['scope']=='item'
 PY
 cat > "$d/bad-sql-mcp.json" <<'JSON'
-{"mcpServers":{"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/not-a-uuid/items/22222222-2222-2222-2222-222222222222/sqlEndpoint","--transport","http-only","--silent"]}}}
+{"mcpServers":{"fabric-sqlendpoint":{"url":"https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/not-a-uuid/items/22222222-2222-2222-2222-222222222222/sqlEndpoint","auth":"bearer","bearerTokenEnv":"COOP_FABRIC_MCP_TOKEN","lifecycle":"lazy"}},"_coop":{"schema_version":1,"managed_servers":["fabric-sqlendpoint"]}}
 JSON
 "$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/bad-sql-mcp.json" > "$d/bad-sql-doctor.json" || exit 1
 "$PY" - "$d/bad-sql-doctor.json" <<'PY'
@@ -108,7 +117,7 @@ import json,sys
 assert json.load(open(sys.argv[1]))['state']=='target_invalid'
 PY
 cat > "$d/token-sql-mcp.json" <<'JSON'
-{"mcpServers":{"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent","Bearer secret"]}}}
+{"mcpServers":{"fabric-sqlendpoint":{"url":"https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","auth":"bearer","bearerTokenEnv":"COOP_FABRIC_MCP_TOKEN","lifecycle":"lazy","bearerToken":"secret"}},"_coop":{"schema_version":1,"managed_servers":["fabric-sqlendpoint"]}}
 JSON
 "$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/token-sql-mcp.json" > "$d/token-sql-doctor.json" || exit 1
 "$PY" - "$d/token-sql-doctor.json" <<'PY'

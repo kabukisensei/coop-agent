@@ -513,9 +513,10 @@ if ($mcpFound) {
       } catch { $sqlState = 'unavailable' }
     }
     switch ($sqlState) {
-      'registered'            { D-Ok "  • fabric-sqlendpoint registered ($sqlScope target; managed remote HTTP, native OAuth)" }
+      'registered'            { D-Ok "  • fabric-sqlendpoint registered ($sqlScope target; direct HTTP, Azure CLI bearer token)" }
       'auth_required'         { D-Warn "  • fabric-sqlendpoint auth_required ($sqlScope target)" 'sign in with Azure CLI/tenant access; doctor never triggers login' }
       'azure_cli_unavailable' { D-Warn "  • fabric-sqlendpoint azure_cli_unavailable ($sqlScope target)" 'install/repair Azure CLI and ensure az is on PATH; this is not an authentication diagnosis' }
+      'token_launch_failed'   { D-Warn "  • fabric-sqlendpoint token_launch_failed ($sqlScope target)" 'Azure CLI was found but could not be launched; this is not an authentication diagnosis' }
       'token_timeout'         { D-Warn "  • fabric-sqlendpoint token_timeout ($sqlScope target)" 'Azure CLI token command exceeded the bounded timeout; retry after checking Azure CLI responsiveness' }
       'token_command_failed'  { D-Warn "  • fabric-sqlendpoint token_command_failed ($sqlScope target)" 'Azure CLI launched but token acquisition failed; run: az account get-access-token --resource https://api.fabric.microsoft.com --output json' }
       'token_output_invalid'  { D-Warn "  • fabric-sqlendpoint token_output_invalid ($sqlScope target)" 'Azure CLI returned no usable accessToken JSON; verify the Fabric token command output' }

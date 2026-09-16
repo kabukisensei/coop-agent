@@ -331,6 +331,43 @@ function Build-CoopPiArgs {
 }
 
 # --- Launch the branded Pi agent ---------------------------------------------
+function Get-CoopFabricMcpToken {
+  $py = Get-CoopPython
+  if (-not $py) { return '' }
+  $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Get-CoopPiAgentDir }
+  $config = Join-Path $agentDir 'mcp.json'
+  $warningFile = [System.IO.Path]::GetTempFileName()
+  $previousEap = $ErrorActionPreference
+  $token = ''
+  try {
+    $ErrorActionPreference = 'Continue'
+    $token = (& $py (Join-Path $script:CoopRoot 'lib\warehouse_mcp.py') launch-token $config 2>$warningFile | Out-String).Trim()
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+  try {
+    foreach ($line in @(Get-Content -LiteralPath $warningFile -ErrorAction SilentlyContinue)) {
+      if ($line) { Coop-Warn ($line -replace '^warning:\s*', '') }
+    }
+  } finally {
+    Remove-Item -LiteralPath $warningFile -Force -ErrorAction SilentlyContinue
+  }
+  return $token
+}
+
+function Invoke-CoopPiProcess {
+  param([string[]] $PiArgs = @())
+  Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+  $token = Get-CoopFabricMcpToken
+  if ($token) { $env:COOP_FABRIC_MCP_TOKEN = $token }
+  try {
+    & pi @PiArgs
+    $script:CoopPiRc = $LASTEXITCODE
+  } finally {
+    Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+  }
+}
+
 function Invoke-LaunchPi {
   param([string[]] $PassArgs = @())
 
@@ -380,8 +417,8 @@ function Invoke-LaunchPi {
 
   $piArgs = Build-CoopPiArgs
   $allArgs = @($piArgs + $PassArgs)
-  & pi @allArgs
-  exit $LASTEXITCODE
+  Invoke-CoopPiProcess -PiArgs $allArgs
+  exit $script:CoopPiRc
 }
 
 # --- Emit the launch spec (for a UI / coop web bridge) -----------------------
@@ -418,6 +455,10 @@ function Invoke-CoopWeb {
   Invoke-CoopLaunchPreflight
   Invoke-CoopAzPreflight   # same Fabric/Power BI token check the terminal launch does
   $env:COOP_LAUNCH_SPEC = (Invoke-CoopLaunchSpec @('--json'))
+  $py = Get-CoopPython
+  if (-not $py) { Coop-Die 'python3 is required for Fabric Warehouse MCP authentication' }
+  $env:COOP_PYTHON_BIN = $py
+  Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
   $server = Join-Path $script:CoopRoot 'web\server.mjs'
   & node $server @WebArgs
   exit $LASTEXITCODE
@@ -1206,8 +1247,8 @@ switch -CaseSensitive ($cmd) {
   }
   'pi' {
     if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed.' }
-    & pi @rest
-    exit $LASTEXITCODE
+    Invoke-CoopPiProcess -PiArgs $rest
+    exit $script:CoopPiRc
   }
   { $_ -ceq 'version' -or $_ -ceq '--version' -or $_ -ceq '-V' } {
     Write-Host ("coop {0}" -f $script:CoopVersion)
