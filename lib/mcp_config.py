@@ -253,21 +253,21 @@ def generate(
         current = servers.get(name)
         if current is None or name in managed or legacy_seeded(name, current):
             merged = dict(current) if isinstance(current, dict) else {}
-            # Own transport/auth fields for marked servers so migration cannot
-            # retain mcp-remote, OAuth state, or a literal bearer credential.
-            for field in (
-                "command",
-                "args",
-                "env",
-                "url",
-                "auth",
-                "bearerTokenEnv",
-                "lifecycle",
-                "bearerToken",
-                "headers",
-                "oauth",
-                "_coop_target",
-            ):
+            # Preserve the long-standing narrow ownership contract for every
+            # managed command server. Only the Warehouse entry changed transport
+            # and authentication models, so only it owns and removes those fields.
+            owned_fields = ("command", "args", "env", "_coop_target")
+            if name == "fabric-sqlendpoint":
+                owned_fields += (
+                    "url",
+                    "auth",
+                    "bearerTokenEnv",
+                    "lifecycle",
+                    "bearerToken",
+                    "headers",
+                    "oauth",
+                )
+            for field in owned_fields:
                 if field in definition:
                     merged[field] = definition[field]
                 else:

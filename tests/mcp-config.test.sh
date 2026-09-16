@@ -8,7 +8,7 @@ cat > "$d/config" <<'JSON'
 {"schema_version":1,"azure":{"tenant_id":"tenant-1"},"integrations":{"fabric":true,"power_bi":true,"power_bi_modeling":true,"azure_devops":true,"microsoft_learn":true,"context_mode":true},"azure_devops":{"organization":"cooptimize"}}
 JSON
 cat > "$d/mcp.json" <<'JSON'
-{"mcpServers":{"custom":{"command":"custom","args":["x"]},"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp@old"],"customField":true},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"],"bearerToken":"stale-secret-fixture","headers":{"Authorization":"Bearer stale-secret-fixture"},"oauth":{"legacy":true}}},"_coop":{"schema_version":1,"managed_servers":["fabric","fabric-sqlendpoint"]}}
+{"mcpServers":{"custom":{"command":"custom","args":["x"]},"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp@old"],"customField":true,"lifecycle":"eager","auth":"custom-managed-auth","headers":{"X-Managed-Custom":"keep-me"},"extraSettings":{"retry":3}},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"],"auth":"oauth","bearerToken":"stale-secret-fixture","bearerTokenEnv":"STALE_FABRIC_TOKEN_ENV","headers":{"Authorization":"Bearer stale-secret-fixture"},"oauth":{"legacy":true},"lifecycle":"eager"}},"_coop":{"schema_version":1,"managed_servers":["fabric","fabric-sqlendpoint"]}}
 JSON
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp.json"
 "$PY" - "$d/mcp.json" "$ROOT/config/release-manifest.json" <<'PY'
@@ -16,12 +16,17 @@ import json,sys
 m=json.load(open(sys.argv[1])); manifest=json.load(open(sys.argv[2])); s=m['mcpServers']
 assert s['custom']=={'command':'custom','args':['x']}
 assert s['fabric']['customField'] is True
+assert s['fabric']['lifecycle']=='eager'
+assert s['fabric']['auth']=='custom-managed-auth'
+assert s['fabric']['headers']=={'X-Managed-Custom':'keep-me'}
+assert s['fabric']['extraSettings']=={'retry':3}
 sql=s['fabric-sqlendpoint']
 assert sql['url']=='https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint'
 assert sql['auth']=='bearer' and sql['bearerTokenEnv']=='COOP_FABRIC_MCP_TOKEN'
 assert sql['lifecycle']=='lazy'
 assert 'command' not in sql and 'args' not in sql and 'mcp-remote' not in json.dumps(sql)
 assert 'bearerToken' not in sql and 'Authorization' not in json.dumps(sql)
+assert 'oauth' not in sql and sql['bearerTokenEnv']=='COOP_FABRIC_MCP_TOKEN'
 assert s['powerbi']['args'][-1]=='--readonly'
 model=s['powerbi-modeling-mcp']['args']
 assert '--start' in model and '--readonly' in model

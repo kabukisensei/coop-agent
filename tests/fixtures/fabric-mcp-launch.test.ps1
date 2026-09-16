@@ -9,6 +9,7 @@ $token = 'fabric-launch-canary-7e5a3c'
 $helperDiagnostic = 'untrusted-helper-diagnostic-93b75a'
 $helperTokenlike = 'tokenlike-helper-value-2309'
 New-Item -ItemType Directory -Force -Path $bin,$agent,$marker | Out-Null
+$oldPythonPath = $env:PYTHONPATH
 try {
   @'
 {
@@ -99,58 +100,74 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi did not launch after token failure' }
 
   Remove-Item -LiteralPath (Join-Path $marker 'pi-state') -Force
-  if ($env:OS -eq 'Windows_NT') {
-    @'
-@echo off
-if "%1"=="--version" (
-  echo Python 3.12.0
-  exit /b 0
-)
-if "%COOP_TEST_HELPER_MODE%"=="success-stderr" (
-  echo token	%COOP_TEST_HELPER_TOKENLIKE%	end
-  >&2 echo %COOP_TEST_HELPER_DIAGNOSTIC%
-  exit /b 0
-)
-if "%COOP_TEST_HELPER_MODE%"=="control-token" (
-  powershell -NoProfile -Command "[Console]::Out.Write('token' + [char]9 + 'bad' + [char]7 + 'token' + [char]9 + 'end')"
-  exit /b 0
-)
-if "%COOP_TEST_HELPER_MODE%"=="whitespace-stderr" (
-  <nul set /p "=token	%COOP_TEST_HELPER_TOKENLIKE%	end"
-  >&2 echo.
-  exit /b 0
-)
->&2 echo %COOP_TEST_HELPER_DIAGNOSTIC%
-exit /b 7
-'@ | Set-Content -LiteralPath (Join-Path $bin 'python3.cmd') -Encoding ASCII
+  $helperFixture = Join-Path $temp 'python-fixture'
+  New-Item -ItemType Directory -Force -Path $helperFixture | Out-Null
+  @'
+import os
+import sys
+from pathlib import Path
+
+if (
+    len(sys.argv) >= 2
+    and Path(sys.argv[0]).name.lower() == "warehouse_mcp.py"
+    and sys.argv[1] == "launch-token"
+):
+    mode = os.environ.get("COOP_TEST_HELPER_MODE", "failure")
+    marker = Path(os.environ["COOP_TEST_MARKER"]) / f"helper-{mode}.reached"
+    marker.write_bytes(b"executed\n")
+    if mode == "success-stderr":
+        tokenlike = os.environ["COOP_TEST_HELPER_TOKENLIKE"].encode("ascii")
+        diagnostic = os.environ["COOP_TEST_HELPER_DIAGNOSTIC"].encode("ascii")
+        os.write(1, b"token	" + tokenlike + b"	end")
+        os.write(2, diagnostic + b"\n")
+        os._exit(0)
+    if mode == "control-token":
+        os.write(1, b"token	bad\x07token	end")
+        os._exit(0)
+    if mode == "whitespace-stderr":
+        tokenlike = os.environ["COOP_TEST_HELPER_TOKENLIKE"].encode("ascii")
+        os.write(1, b"token	" + tokenlike + b"	end")
+        os.write(2, b"\n")
+        os._exit(0)
+    diagnostic = os.environ["COOP_TEST_HELPER_DIAGNOSTIC"].encode("ascii")
+    os.write(2, diagnostic + b"\n")
+    os._exit(7)
+'@ | Set-Content -LiteralPath (Join-Path $helperFixture 'sitecustomize.py') -Encoding UTF8
+  $env:PYTHONPATH = if ($oldPythonPath) {
+    "$helperFixture$([System.IO.Path]::PathSeparator)$oldPythonPath"
   } else {
-    @'
-#!/bin/sh
-if [ "$1" = "--version" ]; then printf '%s\n' 'Python 3.12.0'; exit 0; fi
-if [ "$COOP_TEST_HELPER_MODE" = success-stderr ]; then
-  printf 'token\t%s\tend' "$COOP_TEST_HELPER_TOKENLIKE"
-  printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
-  exit 0
-fi
-if [ "$COOP_TEST_HELPER_MODE" = control-token ]; then printf 'token\tbad\007token\tend'; exit 0; fi
-if [ "$COOP_TEST_HELPER_MODE" = whitespace-stderr ]; then
-  printf 'token\t%s\tend' "$COOP_TEST_HELPER_TOKENLIKE"
-  printf '\n' >&2
-  exit 0
-fi
-printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
-exit 7
-'@ | Set-Content -LiteralPath (Join-Path $bin 'python3') -Encoding ASCII
-    & chmod +x (Join-Path $bin 'python3')
-    if ($LASTEXITCODE -ne 0) { throw 'could not make Python failure fixture executable' }
+    $helperFixture
   }
+  if ($env:OS -eq 'Windows_NT') {
+    $nativePython = @('python3', 'python') | ForEach-Object {
+      Get-Command $_ -CommandType Application -ErrorAction SilentlyContinue
+    } | Where-Object { $_.Source -and $_.Source -notmatch '\\WindowsApps\\' } | Select-Object -First 1
+    if (-not $nativePython -or [System.IO.Path]::GetExtension($nativePython.Source) -ne '.exe') {
+      throw 'Windows helper fixture requires a native Python executable'
+    }
+  }
+
+  function Assert-HelperModeExecuted {
+    param([string]$Mode)
+    $modeMarker = Join-Path $marker "helper-$Mode.reached"
+    if (-not (Test-Path -LiteralPath $modeMarker)) {
+      throw "helper mode $Mode did not execute; cannot-launch is not executed-and-rejected"
+    }
+    if ((Get-Content -Raw -LiteralPath $modeMarker).Trim() -ne 'executed') {
+      throw "helper mode $Mode execution marker is invalid"
+    }
+  }
+
   $env:COOP_TEST_HELPER_DIAGNOSTIC = $helperDiagnostic
+  $env:COOP_TEST_HELPER_MODE = 'failure'
+  Remove-Item -LiteralPath (Join-Path $marker 'helper-failure.reached') -Force -ErrorAction SilentlyContinue
   $env:COOP_TEST_EXPECT_TOKEN = 'absent'
   $env:COOP_FABRIC_MCP_TOKEN = 'stale-inherited-token'
   $ErrorActionPreference = 'Continue'
   $helperFailedOutput = & $psHost -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'bin\coop.ps1') pi --fixture *>&1 | Out-String
   $helperFailedRc = $LASTEXITCODE
   $ErrorActionPreference = $priorEap
+  Assert-HelperModeExecuted 'failure'
   if ($helperFailedRc -ne 0) { throw "helper-process fail-soft launch failed rc=$helperFailedRc output=$helperFailedOutput" }
   if (-not $helperFailedOutput.Contains('Fabric Warehouse MCP unavailable: token helper failed')) { throw 'sanitized helper warning missing' }
   if ($helperFailedOutput.Contains($helperDiagnostic)) { throw 'untrusted helper diagnostic leaked to output' }
@@ -158,12 +175,14 @@ exit 7
 
   Remove-Item -LiteralPath (Join-Path $marker 'pi-state') -Force
   $env:COOP_TEST_HELPER_MODE = 'success-stderr'
+  Remove-Item -LiteralPath (Join-Path $marker 'helper-success-stderr.reached') -Force -ErrorAction SilentlyContinue
   $env:COOP_TEST_HELPER_TOKENLIKE = $helperTokenlike
   $env:COOP_FABRIC_MCP_TOKEN = 'stale-inherited-token'
   $ErrorActionPreference = 'Continue'
   $helperStderrOutput = & $psHost -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'bin\coop.ps1') pi --fixture *>&1 | Out-String
   $helperStderrRc = $LASTEXITCODE
   $ErrorActionPreference = $priorEap
+  Assert-HelperModeExecuted 'success-stderr'
   if ($helperStderrRc -ne 0) { throw "helper-stderr fail-soft launch failed rc=$helperStderrRc output=$helperStderrOutput" }
   if (-not $helperStderrOutput.Contains('Fabric Warehouse MCP unavailable: token helper failed')) { throw 'helper-failure warning missing' }
   if ($helperStderrOutput.Contains($helperDiagnostic)) { throw 'successful helper stderr leaked to output' }
@@ -173,11 +192,13 @@ exit 7
   foreach ($mode in @('control-token', 'whitespace-stderr')) {
     Remove-Item -LiteralPath (Join-Path $marker 'pi-state') -Force
     $env:COOP_TEST_HELPER_MODE = $mode
+    Remove-Item -LiteralPath (Join-Path $marker "helper-$mode.reached") -Force -ErrorAction SilentlyContinue
     $env:COOP_FABRIC_MCP_TOKEN = 'stale-inherited-token'
     $ErrorActionPreference = 'Continue'
     $contaminatedOutput = & $psHost -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'bin\coop.ps1') pi --fixture *>&1 | Out-String
     $contaminatedRc = $LASTEXITCODE
     $ErrorActionPreference = $priorEap
+    Assert-HelperModeExecuted $mode
     if ($contaminatedRc -ne 0) { throw "$mode fail-soft launch failed rc=$contaminatedRc output=$contaminatedOutput" }
     if (-not $contaminatedOutput.Contains('Fabric Warehouse MCP unavailable:')) { throw "$mode warning missing" }
     if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw "Pi did not launch after $mode" }
@@ -190,5 +211,13 @@ exit 7
   Write-Host '  OK  PowerShell Fabric MCP token is child-only and fail-soft'
 } finally {
   Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+  Remove-Item Env:COOP_TEST_HELPER_MODE -ErrorAction SilentlyContinue
+  Remove-Item Env:COOP_TEST_HELPER_TOKENLIKE -ErrorAction SilentlyContinue
+  Remove-Item Env:COOP_TEST_HELPER_DIAGNOSTIC -ErrorAction SilentlyContinue
+  if ($null -eq $oldPythonPath) {
+    Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+  } else {
+    $env:PYTHONPATH = $oldPythonPath
+  }
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }
