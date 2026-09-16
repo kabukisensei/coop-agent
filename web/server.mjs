@@ -122,11 +122,12 @@ function acquireFabricMcpToken() {
     ["token_command_failed", "Azure CLI token acquisition failed"],
     ["token_output_invalid", "Azure CLI returned no usable Fabric token"],
   ]);
-  if (stdout.startsWith("token\t")) {
-    const token = stdout.slice(6);
-    if (token && !/\s/.test(token)) return token;
-  } else if (stdout.startsWith("warning\t")) {
-    const message = warnings.get(stdout.slice(8));
+  const tokenMatch = stdout.match(/^token\t(\S+)\tend$/);
+  const warningMatch = stdout.match(/^warning\t([^\s]+)\tend$/);
+  if (tokenMatch) {
+    return tokenMatch[1];
+  } else if (warningMatch) {
+    const message = warnings.get(warningMatch[1]);
     if (message) {
       console.error(`warning: Fabric Warehouse MCP unavailable: ${message}`);
       return "";

@@ -209,24 +209,26 @@ coop_fabric_mcp_token() {
   local py config output token state message
   py="$(coop_python)" || return 0
   config="${PI_CODING_AGENT_DIR:-$(coop_pi_agent_dir)}/mcp.json"
-  # The helper's stdout protocol is discriminated (token<TAB>value or
-  # warning<TAB>state). Merge streams only into memory: any unexpected stderr
-  # makes the complete record invalid and is never logged or injected.
+  # The helper's stdout protocol is framed (token<TAB>value<TAB>end or
+  # warning<TAB>state<TAB>end). The terminal sentinel survives command
+  # substitution, so any merged stderr invalidates the complete record.
   if ! output="$("$py" "$COOP_ROOT/lib/warehouse_mcp.py" launch-token "$config" 2>&1)"; then
     coop_warn "Fabric Warehouse MCP unavailable: token helper failed"
     return 0
   fi
   case "$output" in
-    token$'\t'*)
+    token$'\t'*$'\t'end)
       token="${output#*$'\t'}"
+      token="${token%$'\t'end}"
       case "$token" in
         ''|*[[:space:]]*) coop_warn "Fabric Warehouse MCP unavailable: token helper returned invalid output" ;;
         *) printf '%s' "$token" ;;
       esac
       return 0
       ;;
-    warning$'\t'*)
+    warning$'\t'*$'\t'end)
       state="${output#*$'\t'}"
+      state="${state%$'\t'end}"
       case "$state" in
         config_invalid) message='managed configuration is invalid; run coop sync' ;;
         azure_cli_unavailable) message='Azure CLI is not installed or not on PATH' ;;

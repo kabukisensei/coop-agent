@@ -662,13 +662,13 @@ def main(argv: list[str] | None = None) -> int:
         if "fabric-sqlendpoint" not in managed or entry is None:
             return 0
         if sqlendpoint_config_status(entry) != "registered":
-            print("warning\tconfig_invalid")
+            print("warning\tconfig_invalid\tend")
             return 0
         token, state = az_access_token()
         if state == "ok":
-            sys.stdout.write("token\t" + token)
+            sys.stdout.write("token\t" + token + "\tend")
             return 0
-        print("warning\t" + state)
+        print("warning\t" + state + "\tend")
         return 0
     return 2
 

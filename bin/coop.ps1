@@ -368,8 +368,8 @@ function Get-CoopFabricMcpToken {
     return ''
   }
   $protocol = (($stdout -join "`n").Trim())
-  if ($protocol -match "^token`t(\S+)$") { return $Matches[1] }
-  if ($protocol -match "^warning`t([^\s]+)$") {
+  if ($protocol -match "^token`t(\S+)`tend$") { return $Matches[1] }
+  if ($protocol -match "^warning`t([^\s]+)`tend$") {
     $warnings = @{
       config_invalid = 'managed configuration is invalid; run coop sync'
       azure_cli_unavailable = 'Azure CLI is not installed or not on PATH'

@@ -7,6 +7,7 @@ $agent = Join-Path $temp 'agent'
 $marker = Join-Path $temp 'marker'
 $token = 'fabric-launch-canary-7e5a3c'
 $helperDiagnostic = 'untrusted-helper-diagnostic-93b75a'
+$helperTokenlike = 'tokenlike-helper-value-2309'
 New-Item -ItemType Directory -Force -Path $bin,$agent,$marker | Out-Null
 try {
   @'
@@ -105,16 +106,24 @@ if "%1"=="--version" (
   echo Python 3.12.0
   exit /b 0
 )
+if "%COOP_TEST_HELPER_MODE%"=="success-stderr" (
+  echo token	%COOP_TEST_HELPER_TOKENLIKE%	end
+  >&2 echo %COOP_TEST_HELPER_DIAGNOSTIC%
+  exit /b 0
+)
 >&2 echo %COOP_TEST_HELPER_DIAGNOSTIC%
-if "%COOP_TEST_HELPER_MODE%"=="success-stderr" exit /b 0
 exit /b 7
 '@ | Set-Content -LiteralPath (Join-Path $bin 'python3.cmd') -Encoding ASCII
   } else {
     @'
 #!/bin/sh
 if [ "$1" = "--version" ]; then printf '%s\n' 'Python 3.12.0'; exit 0; fi
+if [ "$COOP_TEST_HELPER_MODE" = success-stderr ]; then
+  printf 'token\t%s\tend' "$COOP_TEST_HELPER_TOKENLIKE"
+  printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
+  exit 0
+fi
 printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
-if [ "$COOP_TEST_HELPER_MODE" = success-stderr ]; then exit 0; fi
 exit 7
 '@ | Set-Content -LiteralPath (Join-Path $bin 'python3') -Encoding ASCII
     & chmod +x (Join-Path $bin 'python3')
@@ -134,6 +143,7 @@ exit 7
 
   Remove-Item -LiteralPath (Join-Path $marker 'pi-state') -Force
   $env:COOP_TEST_HELPER_MODE = 'success-stderr'
+  $env:COOP_TEST_HELPER_TOKENLIKE = $helperTokenlike
   $env:COOP_FABRIC_MCP_TOKEN = 'stale-inherited-token'
   $ErrorActionPreference = 'Continue'
   $helperStderrOutput = & $psHost -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'bin\coop.ps1') pi --fixture *>&1 | Out-String
@@ -142,6 +152,7 @@ exit 7
   if ($helperStderrRc -ne 0) { throw "helper-stderr fail-soft launch failed rc=$helperStderrRc output=$helperStderrOutput" }
   if (-not $helperStderrOutput.Contains('Fabric Warehouse MCP unavailable: token helper returned invalid output')) { throw 'invalid helper-output warning missing' }
   if ($helperStderrOutput.Contains($helperDiagnostic)) { throw 'successful helper stderr leaked to output' }
+  if ($helperStderrOutput.Contains($helperTokenlike)) { throw 'successful helper token-like stdout leaked to output' }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi did not launch after successful helper stderr' }
 
   Write-Output 'FABRIC_MCP_FIXTURE_INJECTION_REACHED'

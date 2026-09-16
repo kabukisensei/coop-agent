@@ -15,6 +15,7 @@ MARKER="$TMP/marker"
 mkdir -p "$AGENT_DIR" "$BIN" "$MARKER"
 TOKEN='fabric-launch-canary-7e5a3c'
 HELPER_DIAGNOSTIC='untrusted-helper-diagnostic-93b75a'
+HELPER_TOKENLIKE='tokenlike-helper-value-2309'
 
 cat > "$AGENT_DIR/mcp.json" <<'JSON'
 {
@@ -95,8 +96,12 @@ if [ "${1:-}" = - ]; then
   printf '{"bin":"pi","args":[],"env":{"PI_CODING_AGENT_DIR":"%s"}}\n' "$PI_CODING_AGENT_DIR"
   exit 0
 fi
+if [ "${COOP_TEST_HELPER_MODE:-failure}" = success-stderr ]; then
+  printf 'token\t%s\tend' "$COOP_TEST_HELPER_TOKENLIKE"
+  printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
+  exit 0
+fi
 printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
-if [ "${COOP_TEST_HELPER_MODE:-failure}" = success-stderr ]; then exit 0; fi
 exit 7
 SH
 chmod +x "$BIN/python3"
@@ -141,33 +146,38 @@ kill "$WEB_PID" >/dev/null 2>&1 || true
 wait "$WEB_PID" 2>/dev/null || true
 WEB_PID=""
 
-# A zero-exit helper that emits only unexpected stderr must also be rejected,
-# never mistaken for a bearer token or copied to process output.
+# A zero-exit helper that emits a valid-looking token frame plus unexpected
+# stderr must be rejected; the terminal frame makes merged output invalid.
 rm -f "$MARKER/pi-state"
 COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
-  COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_MODE=success-stderr \
+  COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_TOKENLIKE="$HELPER_TOKENLIKE" \
+  COOP_TEST_HELPER_MODE=success-stderr \
   run_coop >"$TMP/helper-stderr.out" 2>"$TMP/helper-stderr.err"
 [ -f "$MARKER/pi-state" ]
 grep -F 'Fabric Warehouse MCP unavailable: token helper returned invalid output' "$TMP/helper-stderr.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/helper-stderr.out" "$TMP/helper-stderr.err" "$MARKER/pi-argv" >/dev/null
+! grep -F "$HELPER_TOKENLIKE" "$TMP/helper-stderr.out" "$TMP/helper-stderr.err" "$MARKER/pi-argv" >/dev/null
 
 rm -f "$MARKER/pi-state"
 HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
   COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
-  COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_MODE=success-stderr \
+  COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_TOKENLIKE="$HELPER_TOKENLIKE" \
+  COOP_TEST_HELPER_MODE=success-stderr \
   COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
   bash "$ROOT/bin/coop" --fixture >"$TMP/normal-stderr.out" 2>"$TMP/normal-stderr.err"
 [ -f "$MARKER/pi-state" ]
 grep -F 'Fabric Warehouse MCP unavailable: token helper returned invalid output' "$TMP/normal-stderr.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/normal-stderr.out" "$TMP/normal-stderr.err" "$MARKER/pi-argv" >/dev/null
+! grep -F "$HELPER_TOKENLIKE" "$TMP/normal-stderr.out" "$TMP/normal-stderr.err" "$MARKER/pi-argv" >/dev/null
 
 rm -f "$MARKER/pi-state"
 PORT=$((20500 + ($$ % 19500)))
 HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
   COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
-  COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_MODE=success-stderr \
+  COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_TOKENLIKE="$HELPER_TOKENLIKE" \
+  COOP_TEST_HELPER_MODE=success-stderr \
   COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
   COOP_WEB_NO_OPEN=1 bash "$ROOT/bin/coop" web --port "$PORT" \
   >"$TMP/web-stderr.out" 2>"$TMP/web-stderr.err" &
@@ -180,6 +190,7 @@ done
 [ -f "$MARKER/pi-state" ]
 grep -F 'Fabric Warehouse MCP unavailable: token helper returned invalid output' "$TMP/web-stderr.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/web-stderr.out" "$TMP/web-stderr.err" "$MARKER/pi-argv" >/dev/null
+! grep -F "$HELPER_TOKENLIKE" "$TMP/web-stderr.out" "$TMP/web-stderr.err" "$MARKER/pi-argv" >/dev/null
 kill "$WEB_PID" >/dev/null 2>&1 || true
 wait "$WEB_PID" 2>/dev/null || true
 WEB_PID=""
