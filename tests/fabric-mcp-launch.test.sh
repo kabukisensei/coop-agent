@@ -96,11 +96,22 @@ if [ "${1:-}" = - ]; then
   printf '{"bin":"pi","args":[],"env":{"PI_CODING_AGENT_DIR":"%s"}}\n' "$PI_CODING_AGENT_DIR"
   exit 0
 fi
-if [ "${COOP_TEST_HELPER_MODE:-failure}" = success-stderr ]; then
-  printf 'token\t%s\tend' "$COOP_TEST_HELPER_TOKENLIKE"
-  printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
-  exit 0
-fi
+case "${COOP_TEST_HELPER_MODE:-failure}" in
+  success-stderr)
+    printf 'token\t%s\tend' "$COOP_TEST_HELPER_TOKENLIKE"
+    printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
+    exit 0
+    ;;
+  control-token)
+    printf 'token\tbad\007token\tend'
+    exit 0
+    ;;
+  whitespace-stderr)
+    printf 'token\t%s\tend' "$COOP_TEST_HELPER_TOKENLIKE"
+    printf '\n' >&2
+    exit 0
+    ;;
+esac
 printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
 exit 7
 SH
@@ -154,7 +165,7 @@ COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
   COOP_TEST_HELPER_MODE=success-stderr \
   run_coop >"$TMP/helper-stderr.out" 2>"$TMP/helper-stderr.err"
 [ -f "$MARKER/pi-state" ]
-grep -F 'Fabric Warehouse MCP unavailable: token helper returned invalid output' "$TMP/helper-stderr.err" >/dev/null
+grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/helper-stderr.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/helper-stderr.out" "$TMP/helper-stderr.err" "$MARKER/pi-argv" >/dev/null
 ! grep -F "$HELPER_TOKENLIKE" "$TMP/helper-stderr.out" "$TMP/helper-stderr.err" "$MARKER/pi-argv" >/dev/null
 
@@ -167,7 +178,7 @@ HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
   bash "$ROOT/bin/coop" --fixture >"$TMP/normal-stderr.out" 2>"$TMP/normal-stderr.err"
 [ -f "$MARKER/pi-state" ]
-grep -F 'Fabric Warehouse MCP unavailable: token helper returned invalid output' "$TMP/normal-stderr.err" >/dev/null
+grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/normal-stderr.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/normal-stderr.out" "$TMP/normal-stderr.err" "$MARKER/pi-argv" >/dev/null
 ! grep -F "$HELPER_TOKENLIKE" "$TMP/normal-stderr.out" "$TMP/normal-stderr.err" "$MARKER/pi-argv" >/dev/null
 
@@ -194,6 +205,48 @@ grep -F 'Fabric Warehouse MCP unavailable: token helper returned invalid output'
 kill "$WEB_PID" >/dev/null 2>&1 || true
 wait "$WEB_PID" 2>/dev/null || true
 WEB_PID=""
+
+# Control bytes and even whitespace-only stderr are contamination. Exercise all
+# three public POSIX launch paths; each must continue without any bearer.
+for HELPER_MODE in control-token whitespace-stderr; do
+  rm -f "$MARKER/pi-state"
+  COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
+    COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_TOKENLIKE="$HELPER_TOKENLIKE" \
+    COOP_TEST_HELPER_MODE="$HELPER_MODE" run_coop \
+    >"$TMP/$HELPER_MODE-raw.out" 2>"$TMP/$HELPER_MODE-raw.err"
+  [ -f "$MARKER/pi-state" ]
+  grep -F 'Fabric Warehouse MCP unavailable:' "$TMP/$HELPER_MODE-raw.err" >/dev/null
+
+  rm -f "$MARKER/pi-state"
+  HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
+    PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
+    COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
+    COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_TOKENLIKE="$HELPER_TOKENLIKE" \
+    COOP_TEST_HELPER_MODE="$HELPER_MODE" COOP_TEST_EXPECT_TOKEN=absent \
+    COOP_FABRIC_MCP_TOKEN='stale-inherited-token' bash "$ROOT/bin/coop" --fixture \
+    >"$TMP/$HELPER_MODE-normal.out" 2>"$TMP/$HELPER_MODE-normal.err"
+  [ -f "$MARKER/pi-state" ]
+  grep -F 'Fabric Warehouse MCP unavailable:' "$TMP/$HELPER_MODE-normal.err" >/dev/null
+
+  rm -f "$MARKER/pi-state"
+  PORT=$((21500 + ($$ + ${#HELPER_MODE}) % 18000))
+  HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
+    PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
+    COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
+    COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_TOKENLIKE="$HELPER_TOKENLIKE" \
+    COOP_TEST_HELPER_MODE="$HELPER_MODE" COOP_TEST_EXPECT_TOKEN=absent \
+    COOP_FABRIC_MCP_TOKEN='stale-inherited-token' COOP_WEB_NO_OPEN=1 \
+    bash "$ROOT/bin/coop" web --port "$PORT" \
+    >"$TMP/$HELPER_MODE-web.out" 2>"$TMP/$HELPER_MODE-web.err" &
+  WEB_PID=$!
+  i=0
+  while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 160 ]; do sleep 0.05; i=$((i + 1)); done
+  [ -f "$MARKER/pi-state" ]
+  grep -F 'Fabric Warehouse MCP unavailable:' "$TMP/$HELPER_MODE-web.err" >/dev/null
+  kill "$WEB_PID" >/dev/null 2>&1 || true
+  wait "$WEB_PID" 2>/dev/null || true
+  WEB_PID=""
+done
 
 # Exercise the public web dispatcher with Python genuinely absent from PATH.
 # Only the commands needed by this bounded path are exposed in the fixture bin.

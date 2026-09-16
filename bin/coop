@@ -206,13 +206,14 @@ EOF
 
 # --- Launch the branded Pi agent ---------------------------------------------
 coop_fabric_mcp_token() {
-  local py config output token state message
+  local py config output token state message LC_ALL=C
   py="$(coop_python)" || return 0
   config="${PI_CODING_AGENT_DIR:-$(coop_pi_agent_dir)}/mcp.json"
-  # The helper's stdout protocol is framed (token<TAB>value<TAB>end or
-  # warning<TAB>state<TAB>end). The terminal sentinel survives command
-  # substitution, so any merged stderr invalidates the complete record.
-  if ! output="$("$py" "$COOP_ROOT/lib/warehouse_mcp.py" launch-token "$config" 2>&1)"; then
+  # A Node supervisor keeps child stdout/stderr separate in memory, rejects any
+  # stderr byte, and forwards only one exact framed stdout record. No token or
+  # diagnostic is written to disk or placed in argv.
+  if ! have node || ! output="$(node "$COOP_ROOT/lib/fabric_token_runner.mjs" \
+    "$py" "$COOP_ROOT/lib/warehouse_mcp.py" "$config")"; then
     coop_warn "Fabric Warehouse MCP unavailable: token helper failed"
     return 0
   fi
@@ -221,7 +222,7 @@ coop_fabric_mcp_token() {
       token="${output#*$'\t'}"
       token="${token%$'\t'end}"
       case "$token" in
-        ''|*[[:space:]]*) coop_warn "Fabric Warehouse MCP unavailable: token helper returned invalid output" ;;
+        ''|*[![:graph:]]*) coop_warn "Fabric Warehouse MCP unavailable: token helper returned invalid output" ;;
         *) printf '%s' "$token" ;;
       esac
       return 0

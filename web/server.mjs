@@ -108,11 +108,11 @@ function acquireFabricMcpToken() {
     console.error("warning: Fabric Warehouse MCP unavailable: token helper failed");
     return "";
   }
-  if (String(result.stderr || "").trim()) {
+  if (String(result.stderr || "").length !== 0) {
     console.error("warning: Fabric Warehouse MCP unavailable: token helper returned invalid output");
     return "";
   }
-  const stdout = String(result.stdout || "").trim();
+  const stdout = String(result.stdout || "");
   const warnings = new Map([
     ["config_invalid", "managed configuration is invalid; run coop sync"],
     ["azure_cli_unavailable", "Azure CLI is not installed or not on PATH"],
@@ -122,7 +122,7 @@ function acquireFabricMcpToken() {
     ["token_command_failed", "Azure CLI token acquisition failed"],
     ["token_output_invalid", "Azure CLI returned no usable Fabric token"],
   ]);
-  const tokenMatch = stdout.match(/^token\t(\S+)\tend$/);
+  const tokenMatch = stdout.match(/^token\t([!-~]{1,16384})\tend$/);
   const warningMatch = stdout.match(/^warning\t([^\s]+)\tend$/);
   if (tokenMatch) {
     return tokenMatch[1];

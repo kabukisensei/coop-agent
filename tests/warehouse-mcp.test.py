@@ -213,7 +213,18 @@ for stderr, expected in (
     ):
         assert wmcp.az_access_token() == ("", expected)
 
-for stdout in ("", "not-json", "{}", '{"accessToken": ""}'):
+for stdout in (
+    "",
+    "not-json",
+    "{}",
+    '{"accessToken": ""}',
+    *(
+        json.dumps({"accessToken": f"bad{char}token"})
+        for char in ("\x00", "\x07", "\x7f", "\x85", "\u200b")
+    ),
+    json.dumps({"accessToken": " leading-space"}),
+    json.dumps({"accessToken": "trailing-space "}),
+):
     malformed = subprocess.CompletedProcess(
         args=[], returncode=0, stdout=stdout, stderr=""
     )

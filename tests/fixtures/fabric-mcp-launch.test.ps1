@@ -111,6 +111,15 @@ if "%COOP_TEST_HELPER_MODE%"=="success-stderr" (
   >&2 echo %COOP_TEST_HELPER_DIAGNOSTIC%
   exit /b 0
 )
+if "%COOP_TEST_HELPER_MODE%"=="control-token" (
+  powershell -NoProfile -Command "[Console]::Out.Write('token' + [char]9 + 'bad' + [char]7 + 'token' + [char]9 + 'end')"
+  exit /b 0
+)
+if "%COOP_TEST_HELPER_MODE%"=="whitespace-stderr" (
+  <nul set /p "=token	%COOP_TEST_HELPER_TOKENLIKE%	end"
+  >&2 echo.
+  exit /b 0
+)
 >&2 echo %COOP_TEST_HELPER_DIAGNOSTIC%
 exit /b 7
 '@ | Set-Content -LiteralPath (Join-Path $bin 'python3.cmd') -Encoding ASCII
@@ -121,6 +130,12 @@ if [ "$1" = "--version" ]; then printf '%s\n' 'Python 3.12.0'; exit 0; fi
 if [ "$COOP_TEST_HELPER_MODE" = success-stderr ]; then
   printf 'token\t%s\tend' "$COOP_TEST_HELPER_TOKENLIKE"
   printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
+  exit 0
+fi
+if [ "$COOP_TEST_HELPER_MODE" = control-token ]; then printf 'token\tbad\007token\tend'; exit 0; fi
+if [ "$COOP_TEST_HELPER_MODE" = whitespace-stderr ]; then
+  printf 'token\t%s\tend' "$COOP_TEST_HELPER_TOKENLIKE"
+  printf '\n' >&2
   exit 0
 fi
 printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
@@ -150,10 +165,23 @@ exit 7
   $helperStderrRc = $LASTEXITCODE
   $ErrorActionPreference = $priorEap
   if ($helperStderrRc -ne 0) { throw "helper-stderr fail-soft launch failed rc=$helperStderrRc output=$helperStderrOutput" }
-  if (-not $helperStderrOutput.Contains('Fabric Warehouse MCP unavailable: token helper returned invalid output')) { throw 'invalid helper-output warning missing' }
+  if (-not $helperStderrOutput.Contains('Fabric Warehouse MCP unavailable: token helper failed')) { throw 'helper-failure warning missing' }
   if ($helperStderrOutput.Contains($helperDiagnostic)) { throw 'successful helper stderr leaked to output' }
   if ($helperStderrOutput.Contains($helperTokenlike)) { throw 'successful helper token-like stdout leaked to output' }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi did not launch after successful helper stderr' }
+
+  foreach ($mode in @('control-token', 'whitespace-stderr')) {
+    Remove-Item -LiteralPath (Join-Path $marker 'pi-state') -Force
+    $env:COOP_TEST_HELPER_MODE = $mode
+    $env:COOP_FABRIC_MCP_TOKEN = 'stale-inherited-token'
+    $ErrorActionPreference = 'Continue'
+    $contaminatedOutput = & $psHost -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'bin\coop.ps1') pi --fixture *>&1 | Out-String
+    $contaminatedRc = $LASTEXITCODE
+    $ErrorActionPreference = $priorEap
+    if ($contaminatedRc -ne 0) { throw "$mode fail-soft launch failed rc=$contaminatedRc output=$contaminatedOutput" }
+    if (-not $contaminatedOutput.Contains('Fabric Warehouse MCP unavailable:')) { throw "$mode warning missing" }
+    if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw "Pi did not launch after $mode" }
+  }
 
   Write-Output 'FABRIC_MCP_FIXTURE_INJECTION_REACHED'
   if ($env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE -eq '1') {

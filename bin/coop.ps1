@@ -336,14 +336,20 @@ function Get-CoopFabricMcpToken {
   if (-not $py) { return '' }
   $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Get-CoopPiAgentDir }
   $config = Join-Path $agentDir 'mcp.json'
+  if (-not (Test-Have 'node')) {
+    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper supervisor is unavailable'
+    return ''
+  }
   $previousEap = $ErrorActionPreference
   $records = @()
   $rc = 1
   try {
-    # Keep native stderr in memory as ErrorRecord objects. Never persist or
-    # replay arbitrary helper diagnostics; they may contain sensitive bytes.
+    # The Node supervisor captures both native streams byte-for-byte in memory,
+    # rejects any stderr, and forwards only one exact framed stdout record.
     $ErrorActionPreference = 'Continue'
-    $records = @(& $py (Join-Path $script:CoopRoot 'lib\warehouse_mcp.py') launch-token $config 2>&1)
+    $runner = Join-Path $script:CoopRoot 'lib\fabric_token_runner.mjs'
+    $helper = Join-Path $script:CoopRoot 'lib\warehouse_mcp.py'
+    $records = @(& node $runner $py $helper $config 2>&1)
     $rc = $LASTEXITCODE
   } catch {
     $rc = 1
@@ -367,8 +373,8 @@ function Get-CoopFabricMcpToken {
     Coop-Warn 'Fabric Warehouse MCP unavailable: token helper returned invalid output'
     return ''
   }
-  $protocol = (($stdout -join "`n").Trim())
-  if ($protocol -match "^token`t(\S+)`tend$") { return $Matches[1] }
+  $protocol = ($stdout -join "`n")
+  if ($protocol -match "^token`t([!-~]{1,16384})`tend$") { return $Matches[1] }
   if ($protocol -match "^warning`t([^\s]+)`tend$") {
     $warnings = @{
       config_invalid = 'managed configuration is invalid; run coop sync'

@@ -362,7 +362,8 @@ def az_access_token(timeout: int = 8) -> tuple[str, str]:
     valid = (
         isinstance(token, str)
         and 0 < len(token) <= 16384
-        and not any(char.isspace() for char in token)
+        and token.isascii()
+        and all(0x21 <= ord(char) <= 0x7E for char in token)
     )
     if valid and isinstance(token, str):
         return token, "ok"
@@ -662,13 +663,13 @@ def main(argv: list[str] | None = None) -> int:
         if "fabric-sqlendpoint" not in managed or entry is None:
             return 0
         if sqlendpoint_config_status(entry) != "registered":
-            print("warning\tconfig_invalid\tend")
+            sys.stdout.write("warning\tconfig_invalid\tend")
             return 0
         token, state = az_access_token()
         if state == "ok":
             sys.stdout.write("token\t" + token + "\tend")
             return 0
-        print("warning\t" + state + "\tend")
+        sys.stdout.write("warning\t" + state + "\tend")
         return 0
     return 2
 
