@@ -354,25 +354,39 @@ function Get-CoopFabricMcpToken {
     Coop-Warn 'Fabric Warehouse MCP unavailable: token helper failed'
     return ''
   }
-  $safeWarnings = @(
-    'warning: Fabric Warehouse MCP unavailable: managed configuration is invalid; run coop sync',
-    'warning: Fabric Warehouse MCP unavailable: Azure CLI is not installed or not on PATH',
-    'warning: Fabric Warehouse MCP unavailable: Azure CLI could not be launched',
-    'warning: Fabric Warehouse MCP unavailable: Azure CLI token acquisition timed out',
-    'warning: Fabric Warehouse MCP unavailable: Azure authentication is required; run az login',
-    'warning: Fabric Warehouse MCP unavailable: Azure CLI token acquisition failed',
-    'warning: Fabric Warehouse MCP unavailable: Azure CLI returned no usable Fabric token'
-  )
   $stdout = @()
+  $stderrFound = $false
   foreach ($record in $records) {
     if ($record -is [System.Management.Automation.ErrorRecord]) {
-      $warning = $record.ToString().Trim()
-      if ($safeWarnings -contains $warning) { Coop-Warn ($warning -replace '^warning:\s*', '') }
+      $stderrFound = $true
     } else {
       $stdout += $record.ToString()
     }
   }
-  return (($stdout -join "`n").Trim())
+  if ($stderrFound) {
+    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper returned invalid output'
+    return ''
+  }
+  $protocol = (($stdout -join "`n").Trim())
+  if ($protocol -match "^token`t(\S+)$") { return $Matches[1] }
+  if ($protocol -match "^warning`t([^\s]+)$") {
+    $warnings = @{
+      config_invalid = 'managed configuration is invalid; run coop sync'
+      azure_cli_unavailable = 'Azure CLI is not installed or not on PATH'
+      token_launch_failed = 'Azure CLI could not be launched'
+      token_timeout = 'Azure CLI token acquisition timed out'
+      auth_required = 'Azure authentication is required; run az login'
+      token_command_failed = 'Azure CLI token acquisition failed'
+      token_output_invalid = 'Azure CLI returned no usable Fabric token'
+    }
+    $message = $warnings[$Matches[1]]
+    if (-not $message) { $message = 'token helper returned invalid output' }
+    Coop-Warn "Fabric Warehouse MCP unavailable: $message"
+    return ''
+  }
+  if (-not $protocol) { return '' }
+  Coop-Warn 'Fabric Warehouse MCP unavailable: token helper returned invalid output'
+  return ''
 }
 
 function Invoke-CoopPiProcess {

@@ -108,18 +108,34 @@ function acquireFabricMcpToken() {
     console.error("warning: Fabric Warehouse MCP unavailable: token helper failed");
     return "";
   }
-  const safeWarnings = new Set([
-    "warning: Fabric Warehouse MCP unavailable: managed configuration is invalid; run coop sync",
-    "warning: Fabric Warehouse MCP unavailable: Azure CLI is not installed or not on PATH",
-    "warning: Fabric Warehouse MCP unavailable: Azure CLI could not be launched",
-    "warning: Fabric Warehouse MCP unavailable: Azure CLI token acquisition timed out",
-    "warning: Fabric Warehouse MCP unavailable: Azure authentication is required; run az login",
-    "warning: Fabric Warehouse MCP unavailable: Azure CLI token acquisition failed",
-    "warning: Fabric Warehouse MCP unavailable: Azure CLI returned no usable Fabric token",
+  if (String(result.stderr || "").trim()) {
+    console.error("warning: Fabric Warehouse MCP unavailable: token helper returned invalid output");
+    return "";
+  }
+  const stdout = String(result.stdout || "").trim();
+  const warnings = new Map([
+    ["config_invalid", "managed configuration is invalid; run coop sync"],
+    ["azure_cli_unavailable", "Azure CLI is not installed or not on PATH"],
+    ["token_launch_failed", "Azure CLI could not be launched"],
+    ["token_timeout", "Azure CLI token acquisition timed out"],
+    ["auth_required", "Azure authentication is required; run az login"],
+    ["token_command_failed", "Azure CLI token acquisition failed"],
+    ["token_output_invalid", "Azure CLI returned no usable Fabric token"],
   ]);
-  const warning = String(result.stderr || "").trim();
-  if (safeWarnings.has(warning)) console.error(warning);
-  return String(result.stdout || "").trim();
+  if (stdout.startsWith("token\t")) {
+    const token = stdout.slice(6);
+    if (token && !/\s/.test(token)) return token;
+  } else if (stdout.startsWith("warning\t")) {
+    const message = warnings.get(stdout.slice(8));
+    if (message) {
+      console.error(`warning: Fabric Warehouse MCP unavailable: ${message}`);
+      return "";
+    }
+  } else if (!stdout) {
+    return "";
+  }
+  console.error("warning: Fabric Warehouse MCP unavailable: token helper returned invalid output");
+  return "";
 }
 const FABRIC_MCP_TOKEN = acquireFabricMcpToken();
 

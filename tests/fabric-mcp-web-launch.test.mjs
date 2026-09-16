@@ -25,7 +25,7 @@ async function runCase({ withPython }) {
   // Node executes this extension-independent fixture so the test is native on Windows too.
   writeFileSync(
     join(fakeRoot, "lib", "warehouse_mcp.py"),
-    `process.stdout.write(${JSON.stringify(canary)});\n`,
+    `process.stdout.write(${JSON.stringify(`token\t${canary}`)});\n`,
   );
   writeFileSync(
     join(agentDir, "mcp.json"),

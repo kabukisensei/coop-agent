@@ -206,28 +206,46 @@ EOF
 
 # --- Launch the branded Pi agent ---------------------------------------------
 coop_fabric_mcp_token() {
-  local py config output
+  local py config output token state message
   py="$(coop_python)" || return 0
   config="${PI_CODING_AGENT_DIR:-$(coop_pi_agent_dir)}/mcp.json"
-  # Capture both streams in memory. On abnormal helper failure, discard all
-  # untrusted diagnostics and emit only Coop's fixed warning.
+  # The helper's stdout protocol is discriminated (token<TAB>value or
+  # warning<TAB>state). Merge streams only into memory: any unexpected stderr
+  # makes the complete record invalid and is never logged or injected.
   if ! output="$("$py" "$COOP_ROOT/lib/warehouse_mcp.py" launch-token "$config" 2>&1)"; then
     coop_warn "Fabric Warehouse MCP unavailable: token helper failed"
     return 0
   fi
   case "$output" in
-    'warning: Fabric Warehouse MCP unavailable: managed configuration is invalid; run coop sync'|\
-    'warning: Fabric Warehouse MCP unavailable: Azure CLI is not installed or not on PATH'|\
-    'warning: Fabric Warehouse MCP unavailable: Azure CLI could not be launched'|\
-    'warning: Fabric Warehouse MCP unavailable: Azure CLI token acquisition timed out'|\
-    'warning: Fabric Warehouse MCP unavailable: Azure authentication is required; run az login'|\
-    'warning: Fabric Warehouse MCP unavailable: Azure CLI token acquisition failed'|\
-    'warning: Fabric Warehouse MCP unavailable: Azure CLI returned no usable Fabric token')
-      printf '%s\n' "$output" >&2
+    token$'\t'*)
+      token="${output#*$'\t'}"
+      case "$token" in
+        ''|*[[:space:]]*) coop_warn "Fabric Warehouse MCP unavailable: token helper returned invalid output" ;;
+        *) printf '%s' "$token" ;;
+      esac
+      return 0
+      ;;
+    warning$'\t'*)
+      state="${output#*$'\t'}"
+      case "$state" in
+        config_invalid) message='managed configuration is invalid; run coop sync' ;;
+        azure_cli_unavailable) message='Azure CLI is not installed or not on PATH' ;;
+        token_launch_failed) message='Azure CLI could not be launched' ;;
+        token_timeout) message='Azure CLI token acquisition timed out' ;;
+        auth_required) message='Azure authentication is required; run az login' ;;
+        token_command_failed) message='Azure CLI token acquisition failed' ;;
+        token_output_invalid) message='Azure CLI returned no usable Fabric token' ;;
+        *) message='token helper returned invalid output' ;;
+      esac
+      coop_warn "Fabric Warehouse MCP unavailable: $message"
+      return 0
+      ;;
+    '') return 0 ;;
+    *)
+      coop_warn "Fabric Warehouse MCP unavailable: token helper returned invalid output"
       return 0
       ;;
   esac
-  printf '%s' "$output"
 }
 
 launch_pi() {

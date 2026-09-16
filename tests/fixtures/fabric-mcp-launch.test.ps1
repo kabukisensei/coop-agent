@@ -106,6 +106,7 @@ if "%1"=="--version" (
   exit /b 0
 )
 >&2 echo %COOP_TEST_HELPER_DIAGNOSTIC%
+if "%COOP_TEST_HELPER_MODE%"=="success-stderr" exit /b 0
 exit /b 7
 '@ | Set-Content -LiteralPath (Join-Path $bin 'python3.cmd') -Encoding ASCII
   } else {
@@ -113,6 +114,7 @@ exit /b 7
 #!/bin/sh
 if [ "$1" = "--version" ]; then printf '%s\n' 'Python 3.12.0'; exit 0; fi
 printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
+if [ "$COOP_TEST_HELPER_MODE" = success-stderr ]; then exit 0; fi
 exit 7
 '@ | Set-Content -LiteralPath (Join-Path $bin 'python3') -Encoding ASCII
     & chmod +x (Join-Path $bin 'python3')
@@ -129,6 +131,18 @@ exit 7
   if (-not $helperFailedOutput.Contains('Fabric Warehouse MCP unavailable: token helper failed')) { throw 'sanitized helper warning missing' }
   if ($helperFailedOutput.Contains($helperDiagnostic)) { throw 'untrusted helper diagnostic leaked to output' }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi did not launch after helper-process failure' }
+
+  Remove-Item -LiteralPath (Join-Path $marker 'pi-state') -Force
+  $env:COOP_TEST_HELPER_MODE = 'success-stderr'
+  $env:COOP_FABRIC_MCP_TOKEN = 'stale-inherited-token'
+  $ErrorActionPreference = 'Continue'
+  $helperStderrOutput = & $psHost -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'bin\coop.ps1') pi --fixture *>&1 | Out-String
+  $helperStderrRc = $LASTEXITCODE
+  $ErrorActionPreference = $priorEap
+  if ($helperStderrRc -ne 0) { throw "helper-stderr fail-soft launch failed rc=$helperStderrRc output=$helperStderrOutput" }
+  if (-not $helperStderrOutput.Contains('Fabric Warehouse MCP unavailable: token helper returned invalid output')) { throw 'invalid helper-output warning missing' }
+  if ($helperStderrOutput.Contains($helperDiagnostic)) { throw 'successful helper stderr leaked to output' }
+  if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi did not launch after successful helper stderr' }
 
   Write-Output 'FABRIC_MCP_FIXTURE_INJECTION_REACHED'
   if ($env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE -eq '1') {

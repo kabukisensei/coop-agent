@@ -662,28 +662,13 @@ def main(argv: list[str] | None = None) -> int:
         if "fabric-sqlendpoint" not in managed or entry is None:
             return 0
         if sqlendpoint_config_status(entry) != "registered":
-            print(
-                "warning: Fabric Warehouse MCP unavailable: managed configuration is invalid; run coop sync",
-                file=sys.stderr,
-            )
+            print("warning\tconfig_invalid")
             return 0
         token, state = az_access_token()
         if state == "ok":
-            sys.stdout.write(token)
+            sys.stdout.write("token\t" + token)
             return 0
-        warnings = {
-            "azure_cli_unavailable": "Azure CLI is not installed or not on PATH",
-            "token_launch_failed": "Azure CLI could not be launched",
-            "token_timeout": "Azure CLI token acquisition timed out",
-            "auth_required": "Azure authentication is required; run az login",
-            "token_command_failed": "Azure CLI token acquisition failed",
-            "token_output_invalid": "Azure CLI returned no usable Fabric token",
-        }
-        print(
-            "warning: Fabric Warehouse MCP unavailable: "
-            + warnings.get(state, "Fabric token acquisition failed"),
-            file=sys.stderr,
-        )
+        print("warning\t" + state)
         return 0
     return 2
 
