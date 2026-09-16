@@ -330,6 +330,25 @@ class ProjectHealthTests(unittest.TestCase):
         with mock.patch.object(health.os, "fstat", side_effect=windows_style_fstat):
             self.assertEqual(health._read_capped(sample, 100), b"stable")
 
+    def test_capped_reads_request_binary_mode_on_windows(self) -> None:
+        sample = self.root / "windows-newlines.txt"
+        sample.write_bytes(b"first\r\nsecond\r\n")
+        real_open = health.os.open
+        binary_flag = 1 << 29
+        observed: list[int] = []
+
+        def windows_style_open(path, flags):
+            observed.append(flags)
+            return real_open(path, flags & ~binary_flag)
+
+        with (
+            mock.patch.object(health.os, "O_BINARY", binary_flag, create=True),
+            mock.patch.object(health.os, "open", side_effect=windows_style_open),
+        ):
+            self.assertEqual(health._read_capped(sample, 100), b"first\r\nsecond\r\n")
+        self.assertTrue(observed)
+        self.assertTrue(all(flags & binary_flag for flags in observed))
+
     def test_selecting_nested_skill_reference_archives_complete_skill(self) -> None:
         self.contract.write_text("profile:\n  organization: Test\n", encoding="utf-8")
         skill = self.root / ".pi" / "skills" / "old-generated"

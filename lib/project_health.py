@@ -125,10 +125,14 @@ def _stat_identity(metadata: os.stat_result) -> tuple[int, int, int]:
     return metadata.st_dev, metadata.st_ino, mode
 
 
+def _binary_read_flags() -> int:
+    return os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+
 def _file_handle_identity(path: Path) -> tuple[int, int, int]:
     if _is_link_or_reparse(path):
         raise OSError(f"unsafe file identity path: {path}")
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    descriptor = os.open(path, _binary_read_flags())
     try:
         identity = _stat_identity(os.fstat(descriptor))
     finally:
@@ -158,7 +162,7 @@ def _read_capped(path: Path, limit: int) -> bytes:
     is_reparse_point = bool(getattr(metadata, "st_file_attributes", 0) & 0x400)
     if path.is_symlink() or is_reparse_point or not path.is_file():
         raise ValueError(f"cannot read unsafe file: {path}")
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    descriptor = os.open(path, _binary_read_flags())
     chunks: list[bytes] = []
     size = 0
     try:
@@ -595,8 +599,7 @@ def _copy_fsynced(
 def _bounded_hash(path: Path, budget: dict[str, int]) -> tuple[str, int]:
     if _is_link_or_reparse(path) or not path.is_file():
         raise OSError(f"cannot hash unsafe file: {path}")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
+    descriptor = os.open(path, _binary_read_flags())
     digest = hashlib.sha256()
     size = 0
     try:
