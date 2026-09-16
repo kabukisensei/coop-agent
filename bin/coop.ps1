@@ -456,8 +456,8 @@ function Invoke-CoopWeb {
   Invoke-CoopAzPreflight   # same Fabric/Power BI token check the terminal launch does
   $env:COOP_LAUNCH_SPEC = (Invoke-CoopLaunchSpec @('--json'))
   $py = Get-CoopPython
-  if (-not $py) { Coop-Die 'python3 is required for Fabric Warehouse MCP authentication' }
-  $env:COOP_PYTHON_BIN = $py
+  Remove-Item Env:COOP_PYTHON_BIN -ErrorAction SilentlyContinue
+  if ($py) { $env:COOP_PYTHON_BIN = $py }
   Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
   $server = Join-Path $script:CoopRoot 'web\server.mjs'
   & node $server @WebArgs

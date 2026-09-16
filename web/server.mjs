@@ -68,7 +68,31 @@ function acquireFabricMcpToken() {
   const py = process.env.COOP_PYTHON_BIN;
   const root = process.env.COOP_ROOT;
   const agentDir = spec.env?.PI_CODING_AGENT_DIR || process.env.PI_CODING_AGENT_DIR;
-  if (!py || !root || !agentDir) return "";
+  let fabricManaged = false;
+  if (agentDir) {
+    try {
+      const config = JSON.parse(readFileSync(join(agentDir, "mcp.json"), "utf8").replace(/^\uFEFF/, ""));
+      const managed = config?._coop?.managed_servers;
+      const entry = config?.mcpServers?.["fabric-sqlendpoint"];
+      let endpointOwned = false;
+      if (typeof entry?.url === "string") {
+        const endpoint = new URL(entry.url);
+        endpointOwned = endpoint.protocol === "https:" &&
+          endpoint.hostname === "api.fabric.microsoft.com" &&
+          endpoint.pathname.startsWith("/v1/mcp/dataPlane/");
+      }
+      fabricManaged = Array.isArray(managed) && managed.includes("fabric-sqlendpoint") &&
+        endpointOwned && entry?.auth === "bearer" &&
+        entry?.bearerTokenEnv === "COOP_FABRIC_MCP_TOKEN" &&
+        entry?.lifecycle === "lazy" && entry?.command === undefined;
+    } catch {}
+  }
+  if (!py || !root || !agentDir) {
+    if (fabricManaged) {
+      console.error("warning: Fabric Warehouse MCP unavailable: token helper Python is unavailable");
+    }
+    return "";
+  }
   const helperEnv = { ...process.env };
   delete helperEnv.COOP_FABRIC_MCP_TOKEN;
   const result = spawnSync(

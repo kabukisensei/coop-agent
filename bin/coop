@@ -318,9 +318,13 @@ coop_web() {
   coop_az_preflight   # same Fabric/Power BI token check the terminal launch does
   local spec py
   spec="$(coop_launch_spec --json)" || coop_die "couldn't build the launch spec for coop web"
-  py="$(coop_python)" || coop_die "python3 is required for Fabric Warehouse MCP authentication"
+  py="$(coop_python 2>/dev/null || true)"
   unset COOP_FABRIC_MCP_TOKEN
-  COOP_PYTHON_BIN="$py" COOP_LAUNCH_SPEC="$spec" exec node "$COOP_ROOT/web/server.mjs" "$@"
+  unset COOP_PYTHON_BIN
+  if [ -n "$py" ]; then
+    COOP_PYTHON_BIN="$py" COOP_LAUNCH_SPEC="$spec" exec node "$COOP_ROOT/web/server.mjs" "$@"
+  fi
+  COOP_LAUNCH_SPEC="$spec" exec node "$COOP_ROOT/web/server.mjs" "$@"
 }
 
 # --- Tool passthrough --------------------------------------------------------
