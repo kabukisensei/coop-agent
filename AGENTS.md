@@ -17,9 +17,10 @@ Cooptimize guardrails and the Cooptimize workflow:
   (apply only Markdown-annotated feedback), `/handoff` (resume-cold summary), and
   the `git-helper` skill / `/pr-description` (draft commit message + PR from the
   diff — drafts only, never commits).
-- **Contract:** `.coop/project.yml` is the single source of truth (repo paths,
-  Fabric/Power BI workspaces, standards, backup/log rules, approval policy). Read
-  the nearest one before doing file work.
+- **Contract:** `.coop/project.yml` is the source of truth for repo paths,
+  Fabric/Power BI workspaces, backup/log rules, and approval policy. It may declare
+  deliberate project standards overrides; otherwise COOP's resolved canonical task
+  authority is authoritative. Read the nearest contract before doing file work.
 
 Native tools available: `sql_review`, `dax_review`, `data_doc` (advisory, read-only),
 plus the Microsoft Fabric CLI (`fab` = ms-fabric-cli) and `fabric_cicd` (a validate-only

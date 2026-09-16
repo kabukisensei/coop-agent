@@ -218,7 +218,7 @@ documentation:
 workflow:
   skill: "coop-workflow"      # the workflow grounding skill
   steps:
-    - "Read .coop/project.yml + the relevant standards"
+    - "Read .coop/project.yml + COOP's resolved standards task authority"
     - "Identify repo/object + upstream/downstream impact; git status && git pull"
     - "Read target file(s) + related docs/lineage (coop-data-doc)"
     - "Write a short PLAN and get explicit review/approval before any edit"

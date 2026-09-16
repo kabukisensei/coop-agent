@@ -417,7 +417,7 @@ said yes/no" — useful for client trust and for debugging a guardrail false pos
 **The Cooptimize workflow** (the `coop-workflow` skill — see
 [`skills/coop-workflow/SKILL.md`](skills/coop-workflow/SKILL.md)):
 
-1. Read `.coop/project.yml` and the relevant standards.
+1. Read `.coop/project.yml` and use COOP's resolved standards task authority, including any deliberate project override.
 2. Locate the repo/object and assess upstream/downstream impact; `git status` && `git pull`.
 3. Read the target file(s) + look up the object's upstream/downstream via the `data_doc` tool (`command="lineage"`) before touching it; use the Microsoft Learn MCP for current docs.
 4. Write a short **PLAN** and get explicit approval **before** any edit.
@@ -437,10 +437,11 @@ four prompts to drive them: **`/spec-first`** (an approved spec before editing),
 summary), and the **`git-helper`** skill / **`/pr-description`** (draft a commit
 message + PR description from the diff — drafts only, never commits).
 
-The single source of truth for repo paths, workspaces, standards, backup/log rules,
-and approval policy is `.coop/project.yml`. Run **`/setup-project`** inside Coop or
-`coop init` in the project directory. Use `coop init --template` only when you
-intentionally want the full legacy template.
+The source of truth for repo paths, workspaces, backup/log rules, and approval policy
+is `.coop/project.yml`. It may provide deliberate project standards overrides;
+otherwise COOP's resolved canonical task authority is authoritative. Run
+**`/setup-project`** inside Coop or `coop init` in the project directory. Use
+`coop init --template` only when you intentionally want the full legacy template.
 
 Fabric projects may use two workspaces per environment. Record Warehouse/Lakehouse
 DEV/TEST/PROD workspaces in `fabric.environment_names` and semantic-model

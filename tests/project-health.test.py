@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest import mock
 
@@ -241,6 +244,62 @@ class ProjectHealthTests(unittest.TestCase):
         self.assertEqual(
             health.migrate_project(self.root, True, True, [".pi/SYSTEM.md"]), 2
         )
+
+    def test_dry_run_lists_each_generated_pi_candidate_and_exact_archive_action(
+        self,
+    ) -> None:
+        self.contract.write_text("profile:\n  organization: Test\n", encoding="utf-8")
+        agents = self.root / ".pi" / "AGENTS.md"
+        agents.parent.mkdir()
+        agents.write_text("Read docs/standards/sql-standards.md\n", encoding="utf-8")
+        reference = self.root / ".pi" / "skills" / "old" / "references" / "legacy.md"
+        reference.parent.mkdir(parents=True)
+        (reference.parents[1] / "SKILL.md").write_text(
+            "---\nname: old\n---\n", encoding="utf-8"
+        )
+        reference.write_text("Read docs/standards/dax-standards.md\n", encoding="utf-8")
+        metacharacter = self.root / ".pi" / "skills" / "old$HOME" / "SKILL.md"
+        metacharacter.parent.mkdir(parents=True)
+        metacharacter.write_text(
+            "Read docs/standards/fabric-standards.md\n", encoding="utf-8"
+        )
+
+        output = StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(health.migrate_project(self.root, False, False, []), 0)
+
+        plan = output.getvalue()
+        self.assertIn(
+            "preserve .pi/AGENTS.md: positively identified generated legacy .pi content; "
+            "available action: --archive .pi/AGENTS.md",
+            plan,
+        )
+        self.assertIn(
+            "preserve .pi/skills/old/references/legacy.md: positively identified "
+            "generated legacy .pi content; available action: --archive "
+            ".pi/skills/old/references/legacy.md",
+            plan,
+        )
+        metacharacter_line = next(
+            line
+            for line in plan.splitlines()
+            if "preserve .pi/skills/old$HOME/SKILL.md:" in line
+        )
+        action = metacharacter_line.split("available action: ", 1)[1]
+        self.assertEqual(
+            shlex.split(action), ["--archive", ".pi/skills/old$HOME/SKILL.md"]
+        )
+        self.assertTrue(agents.exists())
+        self.assertTrue(reference.exists())
+        self.assertTrue(metacharacter.exists())
+        self.assertFalse((self.root / ".coop" / "legacy-project-archive").exists())
+
+    def test_archive_action_quoting_is_literal_on_powershell(self) -> None:
+        with mock.patch.object(health.os, "name", "nt"):
+            self.assertEqual(
+                health._quote_cli_argument(".pi/skills/old$`'name\\SKILL.md"),
+                "'.pi/skills/old$`''name\\SKILL.md'",
+            )
 
     def test_selecting_nested_skill_reference_archives_complete_skill(self) -> None:
         self.contract.write_text("profile:\n  organization: Test\n", encoding="utf-8")

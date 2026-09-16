@@ -6,7 +6,7 @@ Task: Review this Power BI semantic model: {{model_name}}
 Focus: {{focus}}
 
 Required steps:
-1. Read `.coop/project.yml` and the DAX and documentation standards.
+1. Read `.coop/project.yml` for project context and use COOP's resolved DAX and documentation task authority, including any deliberate project override.
 2. Locate the model's TMDL/source for `{{model_name}}` in the `fabric` repo; run `git status` and `git pull`.
 3. Read the model definition and related docs/lineage — call the `data_doc` tool (`coop-data-doc`) for relationships instead of guessing.
 4. Run the `dax_review` tool (`coop-dax-review check <paths> --format json`) over the measures and address advisory findings.

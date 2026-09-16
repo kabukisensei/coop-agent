@@ -52,7 +52,7 @@ The `/spec-first`, `/annotate`, `/slice-next`, `/explain`, and `/handoff` prompt
 
 ### Default sequence
 
-1. Read `.coop/project.yml` and the relevant standards.
+1. Read `.coop/project.yml` and use COOP's resolved standards task authority, including any deliberate project override.
 2. Identify the repo/object and upstream/downstream impact; run `git status` and `git pull`.
 3. Read the target file(s) and related docs/lineage — use the `coop-data-doc` tool.
 4. Write a short **PLAN** and get explicit review/approval before any edit.

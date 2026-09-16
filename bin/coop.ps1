@@ -886,7 +886,7 @@ Task: TODO describe the task for {{subject}}.
 Goal: {{goal}}
 
 Steps:
-1. Read .coop/project.yml and the relevant standards.
+1. Read .coop/project.yml and use COOP's resolved standards task authority.
 2. TODO …
 3. Keep read-only first; present a PLAN and get approval before any edit.
 4. Never commit source — show the diff and let a human commit.

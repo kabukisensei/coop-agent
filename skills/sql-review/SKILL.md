@@ -18,7 +18,8 @@ workflow calls at step 7 for SQL; this skill covers running it and reading resul
 ## Review checklist
 
 - **Scope the paths.** Identify the SQL files to check (use `sql_root` from
-  `.coop/project.yml`). Read `standards.sql` so findings map to the team's rules.
+  `.coop/project.yml`). Use COOP's resolved SQL task authority so findings map to
+  canonical standards or a deliberate project override.
 - **Run the check.** Invoke `coop-sql-review check <paths...> --format json`. Use
   `--min-severity error|warning|info` to filter and `--strict` when a strict pass
   is wanted. The tool is advisory and never modifies files.

@@ -1474,7 +1474,7 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "workflow:",
     "  skill: 'coop-workflow'",
     "  steps:",
-    "    - 'Read .coop/project.yml and the relevant standards'",
+    "    - 'Read .coop/project.yml and use COOP resolved standards task authority'",
     "    - 'Identify upstream and downstream impact before edits'",
     "    - 'Write a short plan and get approval before editing'",
     "    - 'Create backups before changing source files'",

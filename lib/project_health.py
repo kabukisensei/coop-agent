@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import sys
 from dataclasses import asdict, dataclass
@@ -416,15 +417,29 @@ def _remove_exact_standards(text: str) -> str:
     return "".join(lines)
 
 
+def _quote_cli_argument(value: str) -> str:
+    if os.name == "nt":
+        # PowerShell single-quoted strings are literal; embedded quotes double.
+        return "'" + value.replace("'", "''") + "'"
+    return shlex.quote(value)
+
+
+def _archive_candidates(findings: list[Finding]) -> list[str]:
+    return sorted(
+        {
+            finding.path
+            for finding in findings
+            if finding.generated
+            and finding.code
+            in {"legacy_pi_instruction", "legacy_project_skill_reference"}
+        }
+    )
+
+
 def _selected_archives(
     root: Path, findings: list[Finding], selections: list[str]
 ) -> list[Path]:
-    allowed = {
-        finding.path
-        for finding in findings
-        if finding.generated
-        and finding.code in {"legacy_pi_instruction", "legacy_project_skill_reference"}
-    }
+    allowed = set(_archive_candidates(findings))
     selected: list[Path] = []
     for raw in selections:
         normalized = raw.replace("\\", "/")
@@ -650,6 +665,12 @@ def migrate_project(
             f"  archive {_relative(root, path)} "
             "(remove original only after verified archive)"
         )
+    if not apply:
+        for candidate in _archive_candidates(findings):
+            print(
+                f"  preserve {candidate}: positively identified generated legacy .pi content; "
+                f"available action: --archive {_quote_cli_argument(candidate)}"
+            )
     ambiguous = [
         f for f in findings if not f.generated or f.code == "project_skill_collision"
     ]

@@ -402,7 +402,9 @@ def build_project_yml(answers: dict) -> str:
     lines.append("workflow:")
     lines.append('  skill: "coop-workflow"')
     lines.append("  steps:")
-    lines.append('    - "Read .coop/project.yml + the relevant standards"')
+    lines.append(
+        '    - "Read .coop/project.yml + COOP resolved standards task authority"'
+    )
     lines.append(
         '    - "Identify repo/object + upstream/downstream impact; git status && git pull"'
     )
