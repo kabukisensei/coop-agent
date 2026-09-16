@@ -182,7 +182,10 @@ function Get-CheckoutSnapshot([string]$Path) {
 
 function Assert-CheckoutSnapshot([object]$Expected, [string]$Path, [string]$Label) {
   $actual = Get-CheckoutSnapshot $Path
-  if ($actual.content -cne $Expected.content -or $actual.git_control -cne $Expected.git_control) { throw "behavioral suite mutated checkout content or git metadata: $Label" }
+  $changed = @()
+  if ($actual.content -cne $Expected.content) { $changed += 'content' }
+  if ($actual.git_control -cne $Expected.git_control) { $changed += 'git metadata' }
+  if ($changed.Count -gt 0) { throw "behavioral suite mutated checkout $($changed -join ' and '): $Label" }
 }
 
 function Find-Canary([string]$Path, [string]$Needle) {
@@ -983,11 +986,14 @@ if ($Mode -eq 'RunBehavioralSuite') {
       $commandFileHashes[$name] = if ($path) { Get-FileSha $path } else { '' }
       [Environment]::SetEnvironmentVariable($name, $null, 'Process')
     }
+    $gitOptionalLocks = [Environment]::GetEnvironmentVariable('GIT_OPTIONAL_LOCKS', 'Process')
+    [Environment]::SetEnvironmentVariable('GIT_OPTIONAL_LOCKS', '0', 'Process')
 
     $logBase = Join-Path (Split-Path -Parent $ReceiptPath) 'exact-behavioral-suite'
     try {
       $suite = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'tests\run.ps1')) $logBase 1800
     } finally {
+      [Environment]::SetEnvironmentVariable('GIT_OPTIONAL_LOCKS', $gitOptionalLocks, 'Process')
       foreach ($name in $commandFileNames) { [Environment]::SetEnvironmentVariable($name, $commandFileValues[$name], 'Process') }
     }
     Assert-ExitZero $suite 'exact-candidate behavioral suite'
