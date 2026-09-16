@@ -117,6 +117,14 @@ def _is_safe_directory(path: Path) -> bool:
     return not _is_link_or_reparse(path) and path.is_dir()
 
 
+def _stat_identity(metadata: os.stat_result) -> tuple[int, int, int]:
+    # Windows path-stat and handle-stat can report different synthetic mode bits
+    # for the same file. File identity there is the volume/device + file index;
+    # POSIX also pins mode so replacement/permission changes fail closed.
+    mode = 0 if os.name == "nt" else metadata.st_mode
+    return metadata.st_dev, metadata.st_ino, mode
+
+
 def _bounded_children(directory: Path, limit: int) -> tuple[list[Path], bool]:
     children: list[Path] = []
     if not _is_safe_directory(directory):
@@ -137,13 +145,13 @@ def _read_capped(path: Path, limit: int) -> bytes:
     is_reparse_point = bool(getattr(metadata, "st_file_attributes", 0) & 0x400)
     if path.is_symlink() or is_reparse_point or not path.is_file():
         raise ValueError(f"cannot read unsafe file: {path}")
-    expected_identity = (metadata.st_dev, metadata.st_ino, metadata.st_mode)
+    expected_identity = _stat_identity(metadata)
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     chunks: list[bytes] = []
     size = 0
     try:
         before = os.fstat(descriptor)
-        if (before.st_dev, before.st_ino, before.st_mode) != expected_identity:
+        if _stat_identity(before) != expected_identity:
             raise OSError(f"file identity changed before reading: {path}")
         while True:
             remaining = limit - size
@@ -155,16 +163,12 @@ def _read_capped(path: Path, limit: int) -> bytes:
             chunks.append(chunk)
             size += len(chunk)
         after = os.fstat(descriptor)
-        if (
-            after.st_dev,
-            after.st_ino,
-            after.st_mode,
-        ) != expected_identity or after.st_size != size:
+        if _stat_identity(after) != expected_identity or after.st_size != size:
             raise OSError(f"file changed while reading: {path}")
     finally:
         os.close(descriptor)
     current = path.stat(follow_symlinks=False)
-    if (current.st_dev, current.st_ino, current.st_mode) != expected_identity:
+    if _stat_identity(current) != expected_identity:
         raise OSError(f"file identity changed after reading: {path}")
     return b"".join(chunks)
 
@@ -531,7 +535,7 @@ def _path_identity(path: Path) -> tuple[int, int, int]:
     is_reparse_point = bool(getattr(metadata, "st_file_attributes", 0) & 0x400)
     if path.is_symlink() or is_reparse_point:
         raise ValueError(f"cannot migrate symlink or reparse point: {path}")
-    return metadata.st_dev, metadata.st_ino, metadata.st_mode
+    return _stat_identity(metadata)
 
 
 def _require_identity(path: Path, expected: tuple[int, int, int]) -> None:
@@ -586,7 +590,7 @@ def _bounded_hash(path: Path, budget: dict[str, int]) -> tuple[str, int]:
     size = 0
     try:
         before = os.fstat(descriptor)
-        before_identity = (before.st_dev, before.st_ino, before.st_mode)
+        before_identity = _stat_identity(before)
         if before_identity != expected_identity:
             raise OSError(f"file identity changed before hashing: {path}")
         while True:
@@ -602,7 +606,7 @@ def _bounded_hash(path: Path, budget: dict[str, int]) -> tuple[str, int]:
             size += len(chunk)
             budget["bytes"] += len(chunk)
         after = os.fstat(descriptor)
-        after_identity = (after.st_dev, after.st_ino, after.st_mode)
+        after_identity = _stat_identity(after)
         if after_identity != before_identity or after.st_size != size:
             raise OSError(f"archived file changed while hashing: {path}")
     finally:

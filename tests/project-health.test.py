@@ -301,6 +301,18 @@ class ProjectHealthTests(unittest.TestCase):
                 "'.pi/skills/old$`''name\\SKILL.md'",
             )
 
+    def test_windows_file_identity_ignores_synthetic_mode_differences(self) -> None:
+        first = mock.Mock(st_dev=7, st_ino=11, st_mode=0o100600)
+        second = mock.Mock(st_dev=7, st_ino=11, st_mode=0o100666)
+        with mock.patch.object(health.os, "name", "nt"):
+            self.assertEqual(
+                health._stat_identity(first), health._stat_identity(second)
+            )
+        with mock.patch.object(health.os, "name", "posix"):
+            self.assertNotEqual(
+                health._stat_identity(first), health._stat_identity(second)
+            )
+
     def test_selecting_nested_skill_reference_archives_complete_skill(self) -> None:
         self.contract.write_text("profile:\n  organization: Test\n", encoding="utf-8")
         skill = self.root / ".pi" / "skills" / "old-generated"
@@ -790,8 +802,16 @@ class ProjectHealthTests(unittest.TestCase):
             "  fabric: docs/standards/fabric-standards.md\n"
         )
         self.contract.write_text(original, encoding="utf-8")
+        bash = shutil.which("bash")
+        self.assertIsNotNone(bash)
         run = subprocess.run(
-            [str(ROOT / "bin" / "coop"), "init", "--migrate-legacy", str(self.root)],
+            [
+                str(bash),
+                str(ROOT / "bin" / "coop"),
+                "init",
+                "--migrate-legacy",
+                str(self.root),
+            ],
             text=True,
             capture_output=True,
             env={**os.environ, "NO_COLOR": "1"},
