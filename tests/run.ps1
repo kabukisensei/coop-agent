@@ -67,6 +67,16 @@ try {
   $priorCoopAgentDir = $env:COOP_AGENT_DIR
   $priorPiAgentDir = $env:PI_CODING_AGENT_DIR
   $priorNoOnboard = $env:COOP_NO_ONBOARD
+
+  # Run receipt/reparse validation before fixture PATH and interpreter seams.
+  # Native extension imports (jsonschema/rpds) must be consumed from the exact
+  # CI-pinned interpreter before later fixtures replace executable discovery.
+  Head 'terminal acceptance reparse boundary tests'
+  $reparseOut = & node --test --test-name-pattern 'directory links|junctioned ancestor|authorization revocation|failure cleanup|checkout ancestry|owned-root probe|fully safe authorization|decisive receipt mutations' (Join-Path $root 'tests\terminal-workstation-acceptance.test.mjs') 2>&1
+  $reparseRc = $LASTEXITCODE
+  if ($reparseRc -eq 0) { $reparseOut | ForEach-Object { Write-Host $_ }; Ok 'terminal acceptance rejects reparse evidence' }
+  else { Ko "terminal acceptance reparse boundary tests failed: $($reparseOut | Out-String)" }
+
   $env:PATH = $stubPath
   $env:COOP_DIR = Join-Path $stub 'coop-dir'
   $env:COOP_AGENT_DIR = Join-Path $stub 'agent'
@@ -548,11 +558,5 @@ finally {
   Remove-Item -LiteralPath $stub -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Head 'terminal acceptance reparse boundary tests'
-$reparseOut = & node --test --test-name-pattern 'directory links|junctioned ancestor|authorization revocation|failure cleanup|checkout ancestry|owned-root probe|fully safe authorization|decisive receipt mutations' (Join-Path $root 'tests\terminal-workstation-acceptance.test.mjs') 2>&1
-$reparseRc = $LASTEXITCODE
-if ($reparseRc -eq 0) { $reparseOut | ForEach-Object { Write-Host $_ }; Ok 'terminal acceptance rejects reparse evidence' }
-else { Ko "terminal acceptance reparse boundary tests failed: $($reparseOut | Out-String)" }
-
-if ($fail -ne 0) { Write-Host "$G_CROSS PowerShell behavioral tests FAILED"; exit 1 }
+if ($fail -ne 0) { Write-Host "`n$G_CROSS PowerShell behavioral tests FAILED"; exit 1 }
 Write-Host "$G_CHECK PowerShell behavioral tests passed"
