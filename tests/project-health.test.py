@@ -21,6 +21,26 @@ sys.path.insert(0, str(ROOT / "lib"))
 import project_health as health  # noqa: E402
 
 
+def same_filesystem_path(
+    left: os.PathLike[str] | str, right: os.PathLike[str] | str
+) -> bool:
+    """Compare paths across Windows long-name and DOS 8.3 aliases."""
+    left_path = Path(left)
+    right_path = Path(right)
+    try:
+        return left_path.samefile(right_path)
+    except (FileNotFoundError, OSError):
+        try:
+            same_parent = left_path.parent.samefile(right_path.parent)
+        except (FileNotFoundError, OSError):
+            same_parent = os.path.normcase(
+                os.path.abspath(left_path.parent)
+            ) == os.path.normcase(os.path.abspath(right_path.parent))
+        return same_parent and os.path.normcase(left_path.name) == os.path.normcase(
+            right_path.name
+        )
+
+
 class ProjectHealthTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -120,7 +140,7 @@ class ProjectHealthTests(unittest.TestCase):
         real_check = health._is_link_or_reparse
 
         def mark_pi_as_reparse(path: Path) -> bool:
-            return path == pi or real_check(path)
+            return same_filesystem_path(path, pi) or real_check(path)
 
         with mock.patch.object(
             health, "_is_link_or_reparse", side_effect=mark_pi_as_reparse
@@ -269,15 +289,19 @@ class ProjectHealthTests(unittest.TestCase):
             self.assertEqual(health.migrate_project(self.root, False, False, []), 0)
 
         plan = output.getvalue()
+        agents_argument = health._quote_cli_argument(".pi/AGENTS.md")
         self.assertIn(
             "preserve .pi/AGENTS.md: positively identified generated legacy .pi content; "
-            "available action: --archive .pi/AGENTS.md",
+            f"available action: --archive {agents_argument}",
             plan,
+        )
+        reference_argument = health._quote_cli_argument(
+            ".pi/skills/old/references/legacy.md"
         )
         self.assertIn(
             "preserve .pi/skills/old/references/legacy.md: positively identified "
             "generated legacy .pi content; available action: --archive "
-            ".pi/skills/old/references/legacy.md",
+            f"{reference_argument}",
             plan,
         )
         metacharacter_line = next(
@@ -334,20 +358,23 @@ class ProjectHealthTests(unittest.TestCase):
         sample = self.root / "windows-newlines.txt"
         sample.write_bytes(b"first\r\nsecond\r\n")
         real_open = health.os.open
-        binary_flag = 1 << 29
+        real_binary_flag = getattr(health.os, "O_BINARY", 0)
+        test_flag = 1 << 29
         observed: list[int] = []
 
         def windows_style_open(path, flags):
             observed.append(flags)
-            return real_open(path, flags & ~binary_flag)
+            return real_open(path, flags & ~test_flag)
 
         with (
-            mock.patch.object(health.os, "O_BINARY", binary_flag, create=True),
+            mock.patch.object(
+                health.os, "O_BINARY", real_binary_flag | test_flag, create=True
+            ),
             mock.patch.object(health.os, "open", side_effect=windows_style_open),
         ):
             self.assertEqual(health._read_capped(sample, 100), b"first\r\nsecond\r\n")
         self.assertTrue(observed)
-        self.assertTrue(all(flags & binary_flag for flags in observed))
+        self.assertTrue(all(flags & test_flag for flags in observed))
 
     def test_selecting_nested_skill_reference_archives_complete_skill(self) -> None:
         self.contract.write_text("profile:\n  organization: Test\n", encoding="utf-8")
@@ -498,7 +525,7 @@ class ProjectHealthTests(unittest.TestCase):
 
         def swap_root_then_mkdir(path: Path, *args, **kwargs):
             nonlocal swapped
-            if not swapped and path.parent == archive_root:
+            if not swapped and same_filesystem_path(path.parent, archive_root):
                 swapped = True
                 archive_root.rename(displaced)
                 archive_root.symlink_to(external, target_is_directory=True)
@@ -589,7 +616,7 @@ class ProjectHealthTests(unittest.TestCase):
             destination_path = Path(destination)
             if (
                 not failed_once
-                and destination_path == self.contract
+                and same_filesystem_path(destination_path, self.contract)
                 and ".claimed-project" in source_path.name
             ):
                 failed_once = True
@@ -620,7 +647,7 @@ class ProjectHealthTests(unittest.TestCase):
 
         def create_at_install(source, destination):
             if (
-                Path(destination) == self.contract
+                same_filesystem_path(destination, self.contract)
                 and ".claimed-project" in Path(source).name
             ):
                 self.contract.write_text("concurrent: must-survive\n", encoding="utf-8")
@@ -755,7 +782,7 @@ class ProjectHealthTests(unittest.TestCase):
         real_replace = health.os.replace
 
         def mutate_at_claim(source, destination):
-            if Path(source) == self.contract:
+            if same_filesystem_path(source, self.contract):
                 self.contract.write_text(
                     original + "concurrent: must-survive\n", encoding="utf-8"
                 )
@@ -780,7 +807,7 @@ class ProjectHealthTests(unittest.TestCase):
 
         def edit_then_replace(source, destination):
             source_path = Path(source)
-            if source_path == agents:
+            if same_filesystem_path(source_path, agents):
                 with source_path.open("a", encoding="utf-8") as stream:
                     stream.write("custom concurrent content\n")
             return real_replace(source, destination)
@@ -812,7 +839,7 @@ class ProjectHealthTests(unittest.TestCase):
 
         def swap_ancestor_then_replace(source, destination):
             nonlocal swapped
-            if not swapped and Path(source) == agents:
+            if not swapped and same_filesystem_path(source, agents):
                 swapped = True
                 real_replace(pi, original_pi)
                 pi.symlink_to(external, target_is_directory=True)
