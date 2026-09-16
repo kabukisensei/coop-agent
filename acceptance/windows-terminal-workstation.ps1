@@ -986,14 +986,14 @@ if ($Mode -eq 'RunBehavioralSuite') {
       $commandFileHashes[$name] = if ($path) { Get-FileSha $path } else { '' }
       [Environment]::SetEnvironmentVariable($name, $null, 'Process')
     }
-    $gitOptionalLocks = [Environment]::GetEnvironmentVariable('GIT_OPTIONAL_LOCKS', 'Process')
-    [Environment]::SetEnvironmentVariable('GIT_OPTIONAL_LOCKS', '0', 'Process')
+    $pythonDontWriteBytecode = [Environment]::GetEnvironmentVariable('PYTHONDONTWRITEBYTECODE', 'Process')
+    [Environment]::SetEnvironmentVariable('PYTHONDONTWRITEBYTECODE', '1', 'Process')
 
     $logBase = Join-Path (Split-Path -Parent $ReceiptPath) 'exact-behavioral-suite'
     try {
       $suite = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'tests\run.ps1')) $logBase 1800
     } finally {
-      [Environment]::SetEnvironmentVariable('GIT_OPTIONAL_LOCKS', $gitOptionalLocks, 'Process')
+      [Environment]::SetEnvironmentVariable('PYTHONDONTWRITEBYTECODE', $pythonDontWriteBytecode, 'Process')
       foreach ($name in $commandFileNames) { [Environment]::SetEnvironmentVariable($name, $commandFileValues[$name], 'Process') }
     }
     Assert-ExitZero $suite 'exact-candidate behavioral suite'
