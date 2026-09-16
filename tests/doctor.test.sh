@@ -29,6 +29,41 @@ doctor_out() {
   ( cd "$1" && COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null )
 }
 
+# Warehouse token-acquisition states must produce specific guidance. Stub only
+# warehouse_mcp.py; all other Python calls delegate to the real interpreter.
+state_stub="$TMP/warehouse-state-bin"
+mkdir -p "$state_stub"
+COOP_TEST_REAL_PY="$(command -v python3)"; export COOP_TEST_REAL_PY
+cat > "$state_stub/python3" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  *warehouse_mcp.py)
+    printf '{"state":"%s","target":{"scope":"global"}}\n' "$COOP_WAREHOUSE_TEST_STATE"
+    exit 0
+    ;;
+esac
+exec "$COOP_TEST_REAL_PY" "$@"
+EOF
+chmod +x "$state_stub/python3"
+d="$TMP/warehouse-states"
+mkdir -p "$d"
+cat > "$d/.mcp.json" <<'EOF'
+{"mcpServers":{"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"]}}}
+EOF
+while IFS='|' read -r state hint; do
+  out="$(COOP_WAREHOUSE_TEST_STATE="$state" PATH="$state_stub:$PATH" doctor_out "$d")"
+  case "$out" in
+    *"fabric-sqlendpoint $state (global target)"*"$hint"*) ok "doctor maps Warehouse $state to accurate guidance" ;;
+    *) ko "doctor misreported Warehouse $state"; printf '%s\n' "$out" ;;
+  esac
+done <<'EOF'
+azure_cli_unavailable|install/repair Azure CLI and ensure az is on PATH; this is not an authentication diagnosis
+token_timeout|Azure CLI token command exceeded the bounded timeout; retry after checking Azure CLI responsiveness
+token_command_failed|Azure CLI launched but token acquisition failed; run: az account get-access-token --resource https://api.fabric.microsoft.com --output json
+token_output_invalid|Azure CLI returned no usable accessToken JSON; verify the Fabric token command output
+auth_required|sign in with Azure CLI/tenant access; doctor never triggers login
+EOF
+
 # Read-only + --start → reported as GOOD (started, read-only).
 d="$TMP/good"
 mkdir -p "$d"

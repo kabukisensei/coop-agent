@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
 import urllib.error
 import urllib.request
@@ -256,9 +258,12 @@ def same_target(
     )
 
 
-def az_access_token(timeout: int = 8) -> tuple[str, str]:
-    cmd = [
-        "az",
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _az_token_command() -> list[str]:
+    args = [
         "account",
         "get-access-token",
         "--resource",
@@ -266,20 +271,76 @@ def az_access_token(timeout: int = 8) -> tuple[str, str]:
         "--output",
         "json",
     ]
+    if _is_windows():
+        return [os.environ.get("COMSPEC") or "cmd.exe", "/d", "/c", "az", *args]
+    return ["az", *args]
+
+
+def _token_failure_requires_auth(stdout: str, stderr: str) -> bool:
+    message = f"{stdout}\n{stderr}".lower()
+    return any(
+        marker in message
+        for marker in (
+            "az login",
+            "not logged in",
+            "login required",
+            "authentication required",
+            "interaction_required",
+            "interactionrequired",
+            "invalid_grant",
+            "aadsts50058",
+            "aadsts50076",
+            "aadsts50078",
+            "aadsts50079",
+            "aadsts50158",
+        )
+    )
+
+
+def _token_failure_state(stdout: str, stderr: str) -> str:
+    message = f"{stdout}\n{stderr}".lower()
+    if "is not recognized as an internal or external command" in message:
+        return "azure_cli_unavailable"
+    return (
+        "auth_required"
+        if _token_failure_requires_auth(stdout, stderr)
+        else "token_command_failed"
+    )
+
+
+def az_access_token(timeout: int = 8) -> tuple[str, str]:
+    # On Windows Azure CLI is commonly an az.CMD shim. CreateProcess cannot
+    # execute it directly, so use cmd.exe explicitly without enabling shell=True.
+    if shutil.which("az") is None:
+        return "", "azure_cli_unavailable"
+    cmd = _az_token_command()
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            shell=False,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return "", "auth_required"
+    except subprocess.TimeoutExpired:
+        return "", "token_timeout"
+    except OSError:
+        return "", "azure_cli_unavailable"
     if proc.returncode != 0:
-        return "", "auth_required"
+        return "", _token_failure_state(proc.stdout, proc.stderr)
     try:
         data = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return "", "auth_required"
+    except (json.JSONDecodeError, TypeError):
+        return "", "token_output_invalid"
+    if not isinstance(data, dict):
+        return "", "token_output_invalid"
     token = data.get("accessToken")
-    return (token, "ok") if isinstance(token, str) and token else ("", "auth_required")
+    return (
+        (token, "ok")
+        if isinstance(token, str) and token
+        else ("", "token_output_invalid")
+    )
 
 
 def fabric_get_json(

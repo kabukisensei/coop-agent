@@ -443,6 +443,10 @@ PYEOF
     case "$_sql_state" in
       registered) ok "  • fabric-sqlendpoint registered (${_sql_scope} target; managed remote HTTP, native OAuth)" ;;
       auth_required) warn "  • fabric-sqlendpoint auth_required (${_sql_scope} target)" "sign in with Azure CLI/tenant access; doctor never triggers login" ;;
+      azure_cli_unavailable) warn "  • fabric-sqlendpoint azure_cli_unavailable (${_sql_scope} target)" "install/repair Azure CLI and ensure az is on PATH; this is not an authentication diagnosis" ;;
+      token_timeout) warn "  • fabric-sqlendpoint token_timeout (${_sql_scope} target)" "Azure CLI token command exceeded the bounded timeout; retry after checking Azure CLI responsiveness" ;;
+      token_command_failed) warn "  • fabric-sqlendpoint token_command_failed (${_sql_scope} target)" "Azure CLI launched but token acquisition failed; run: az account get-access-token --resource https://api.fabric.microsoft.com --output json" ;;
+      token_output_invalid) warn "  • fabric-sqlendpoint token_output_invalid (${_sql_scope} target)" "Azure CLI returned no usable accessToken JSON; verify the Fabric token command output" ;;
       tool_missing) warn "  • fabric-sqlendpoint tool_missing (${_sql_scope} target)" "managed MCP did not advertise executeSQL/execute_query" ;;
       target_invalid) warn "  • fabric-sqlendpoint target_invalid" "run: coop sync after fixing fabric.default_sql_endpoint / registered URL" ;;
       unavailable) warn "  • fabric-sqlendpoint unavailable" "run: coop sync; if already configured, retry when network/auth is available" ;;

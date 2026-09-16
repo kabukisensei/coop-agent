@@ -3,8 +3,10 @@
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location(
@@ -93,6 +95,121 @@ assert (
     is True
 )
 
+# Azure CLI token acquisition supports Windows az.CMD without shell=True and
+# reports launch/timeout/command/output failures truthfully without leaking tokens.
+secret_token = "secret-regression-token"
+valid_token_result = subprocess.CompletedProcess(
+    args=[], returncode=0, stdout=json.dumps({"accessToken": secret_token}), stderr=""
+)
+az_cmd_path = r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.CMD"
+cmd_exe = r"C:\Windows\System32\cmd.exe"
+with (
+    mock.patch.object(wmcp, "_is_windows", return_value=True),
+    mock.patch.object(wmcp.shutil, "which", return_value=az_cmd_path),
+    mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
+    mock.patch.object(wmcp.subprocess, "run", return_value=valid_token_result) as run,
+):
+    token, state = wmcp.az_access_token()
+    assert (token, state) == (secret_token, "ok")
+    windows_cmd = run.call_args.args[0]
+    assert windows_cmd == [
+        cmd_exe,
+        "/d",
+        "/c",
+        "az",
+        "account",
+        "get-access-token",
+        "--resource",
+        wmcp.FABRIC_RESOURCE,
+        "--output",
+        "json",
+    ]
+    assert windows_cmd[0] != "az"
+    assert run.call_args.kwargs["timeout"] == 8
+    assert run.call_args.kwargs["shell"] is False
+
+with (
+    mock.patch.object(wmcp, "_is_windows", return_value=False),
+    mock.patch.object(wmcp.shutil, "which", return_value="/usr/bin/az"),
+    mock.patch.object(wmcp.subprocess, "run", return_value=valid_token_result) as run,
+):
+    assert wmcp.az_access_token() == (secret_token, "ok")
+    assert run.call_args.args[0] == [
+        "az",
+        "account",
+        "get-access-token",
+        "--resource",
+        wmcp.FABRIC_RESOURCE,
+        "--output",
+        "json",
+    ]
+    assert run.call_args.kwargs["timeout"] == 8
+    assert run.call_args.kwargs["shell"] is False
+
+with (
+    mock.patch.object(wmcp, "_is_windows", return_value=True),
+    mock.patch.object(wmcp.shutil, "which", return_value=None),
+    mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
+    mock.patch.object(wmcp.subprocess, "run") as run,
+):
+    assert wmcp.az_access_token() == ("", "azure_cli_unavailable")
+    run.assert_not_called()
+
+for launch_error in (FileNotFoundError(), OSError("cannot launch")):
+    with (
+        mock.patch.object(wmcp, "_is_windows", return_value=True),
+        mock.patch.object(wmcp.shutil, "which", return_value=az_cmd_path),
+        mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
+        mock.patch.object(wmcp.subprocess, "run", side_effect=launch_error),
+    ):
+        assert wmcp.az_access_token() == ("", "azure_cli_unavailable")
+
+with (
+    mock.patch.object(wmcp, "_is_windows", return_value=True),
+    mock.patch.object(wmcp.shutil, "which", return_value=az_cmd_path),
+    mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
+    mock.patch.object(
+        wmcp.subprocess,
+        "run",
+        side_effect=subprocess.TimeoutExpired(["az"], 8, output=secret_token),
+    ),
+):
+    assert wmcp.az_access_token() == ("", "token_timeout")
+
+for stderr, expected in (
+    ("ERROR: Please run 'az login' to setup account.", "auth_required"),
+    ("ERROR: transport helper failed", "token_command_failed"),
+    (
+        "'az' is not recognized as an internal or external command",
+        "azure_cli_unavailable",
+    ),
+):
+    failed = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="", stderr=stderr
+    )
+    with (
+        mock.patch.object(wmcp, "_is_windows", return_value=True),
+        mock.patch.object(wmcp.shutil, "which", return_value=az_cmd_path),
+        mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
+        mock.patch.object(wmcp.subprocess, "run", return_value=failed),
+    ):
+        assert wmcp.az_access_token() == ("", expected)
+
+for stdout in ("", "not-json", "{}", '{"accessToken": ""}'):
+    malformed = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=stdout, stderr=""
+    )
+    with (
+        mock.patch.object(wmcp, "_is_windows", return_value=True),
+        mock.patch.object(wmcp.shutil, "which", return_value=az_cmd_path),
+        mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
+        mock.patch.object(wmcp.subprocess, "run", return_value=malformed),
+    ):
+        token, state = wmcp.az_access_token()
+        assert (token, state) == ("", "token_output_invalid")
+        assert secret_token not in state
+
+
 # Exact item scope requires complete UUIDs and canonicalizes them; mismatch fails.
 workspace = "11111111-1111-1111-1111-111111111111"
 item = "22222222-2222-2222-2222-222222222222"
@@ -161,8 +278,28 @@ assert (
     == "target_invalid"
 )
 
-# Probe uses an already-present az token, validates item metadata, then tools/list.
-# These seams stand in for az and protected HTTP; no subprocess/network/login occurs.
+# Probe consumes the Windows-wrapper token and continues to tools/list without
+# exposing it. The remaining seams cover item metadata and downstream states.
+probe_calls = []
+
+
+def fake_global_list(url, token, timeout=8):
+    probe_calls.append((url, token, timeout))
+    return ([{"name": "executeSQL"}], "ok")
+
+
+with (
+    mock.patch.object(wmcp, "_is_windows", return_value=True),
+    mock.patch.object(wmcp.shutil, "which", return_value=az_cmd_path),
+    mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
+    mock.patch.object(wmcp.subprocess, "run", return_value=valid_token_result),
+    mock.patch.object(wmcp, "mcp_tools_list", side_effect=fake_global_list),
+):
+    windows_probed = wmcp.doctor_status(cfg, project={}, probe=True)
+assert windows_probed["state"] == "registered"
+assert probe_calls == [(wmcp.GLOBAL_SQL_ENDPOINT_URL, secret_token, 8)]
+assert secret_token not in json.dumps(windows_probed)
+
 original_az, original_get, original_list = (
     wmcp.az_access_token,
     wmcp.fabric_get_json,
@@ -290,11 +427,26 @@ try:
             ),
         ]
     )
-    wmcp.urllib.request.urlopen = lambda *_a, **_k: next(responses)
+    requests = []
+    authorization_headers = []
+
+    def fake_urlopen(request, *_args, **_kwargs):
+        requests.append(json.loads(request.data))
+        authorization_headers.append(request.get_header("Authorization"))
+        return next(responses)
+
+    wmcp.urllib.request.urlopen = fake_urlopen
     tools, state = wmcp.mcp_tools_list(
-        wmcp.GLOBAL_SQL_ENDPOINT_URL, "secret-fixture-token", timeout=1
+        wmcp.GLOBAL_SQL_ENDPOINT_URL, secret_token, timeout=1
     )
     assert state == "ok" and wmcp.classify_tools(tools) == "registered"
+    assert [request["method"] for request in requests] == [
+        "initialize",
+        "notifications/initialized",
+        "tools/list",
+    ]
+    assert secret_token not in json.dumps(requests)
+    assert authorization_headers == [f"Bearer {secret_token}"] * 3
 
     for body, status in ((b"", 200), (b"", 204), (b"not-json", 200)):
         wmcp.urllib.request.urlopen = lambda *_a, **_k: FakeResponse(
@@ -320,6 +472,29 @@ try:
         assert notification_state == "ok"
 finally:
     wmcp.urllib.request.urlopen = original_urlopen
+
+# Both Doctor front ends map token-acquisition states to the same specific,
+# non-secret guidance, and only a proven auth failure tells the user to sign in.
+doctor_hints = {
+    "azure_cli_unavailable": "install/repair Azure CLI and ensure az is on PATH; this is not an authentication diagnosis",
+    "token_timeout": "Azure CLI token command exceeded the bounded timeout; retry after checking Azure CLI responsiveness",
+    "token_command_failed": "Azure CLI launched but token acquisition failed; run: az account get-access-token --resource https://api.fabric.microsoft.com --output json",
+    "token_output_invalid": "Azure CLI returned no usable accessToken JSON; verify the Fabric token command output",
+    "auth_required": "sign in with Azure CLI/tenant access; doctor never triggers login",
+}
+for doctor_script in (ROOT / "scripts" / "doctor.sh", ROOT / "scripts" / "doctor.ps1"):
+    doctor_text = doctor_script.read_text(encoding="utf-8-sig")
+    for diagnostic_state, expected_hint in doctor_hints.items():
+        matching_lines = [
+            line
+            for line in doctor_text.splitlines()
+            if diagnostic_state in line and "fabric-sqlendpoint" in line
+        ]
+        assert len(matching_lines) == 1
+        assert expected_hint in matching_lines[0]
+        if diagnostic_state != "auth_required":
+            assert "sign in" not in matching_lines[0].lower()
+    assert secret_token not in doctor_text
 
 print(
     "  OK  Warehouse MCP doctor is token-safe, bounded-by-contract, tool-aware, and target-aware"
