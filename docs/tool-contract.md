@@ -339,9 +339,43 @@ Per `.coop/project.yml` and `docs/guardrails.md`:
 | Server | Allowed by default | Requires explicit approval |
 |--------|--------------------|----------------------------|
 | `fabric` | `list`, `read`, `inspect` (read-only **by policy**) | `create`, `update`, `delete`, `deploy` |
+| `fabric-sqlendpoint` | separate managed remote HTTP SQL endpoint | every `executeSQL` / `execute_query` call; DDL/DML/destructive SQL is classified before row-read handling |
 | `powerbi` (`--readonly`) | `list`, `read`, `inspect` | `create`, `update`, `delete`, `publish` |
 | `microsoft-learn` | docs lookups (always-current) | — |
 | `context-mode` | intent search + **sandboxed exec** over docs/graph | — |
 
 `coop` **never** calls create/update/delete/deploy/publish MCP actions without
 explicit approval — regardless of what the server is capable of.
+
+### Managed Warehouse SQL endpoint MCP
+
+`coop sync` generates `fabric-sqlendpoint` as a distinct managed server; it does
+not add a second SQL executor to the general `fabric` MCP. The global URL is
+`https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint`. If the nearest
+project contract has complete canonical UUIDs for `fabric.default_workspace_id`
+and `fabric.default_sql_endpoint`, Coop uses the item URL
+`https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/{workspaceId}/items/{itemId}/sqlEndpoint`.
+For Lakehouse targets, `itemId` is the `sqlEndpointProperties.id`, not the
+Lakehouse item ID.
+
+The launch command is manifest-pinned and uses native OAuth only:
+`npx -y mcp-remote@0.1.38 URL --transport http-only --silent`. Coop does not
+write bearer tokens, static token helper commands, token config, or token argv.
+Doctor treats config registration as only one state; live tools-list discovery
+can still report `auth_required`, `unavailable`, `tool_missing`, or
+`target_invalid`. Live dev/test verification remains pending on the signed-in
+user, tenant, target, and Fabric permissions.
+
+### Microsoft skills catalog
+
+Official Microsoft skills resolve from `config/microsoft-skills.json` into
+immutable generations under the effective Coop/Pi agent dir
+(`catalogs/microsoft`). Launch reads `current.json` only and never networks.
+Refresh is exact-commit, noninteractive, bounded, staged, validated, and
+fail-soft: a last-known-good generation keeps launch working when offline.
+Each approved skill has a committed tree SHA-256. Every launch recomputes the
+actual exported tree receipt and full generation content address, and rejects
+pointer, repository, revision, path, receipt, or generation rewrites that do not
+match that committed authority.
+Baseline loads Microsoft KQL, Microsoft Docs, and Fabric SQL DW authoring and
+consumption skills only; `sqldw-operations-cli` is recorded as deferred.

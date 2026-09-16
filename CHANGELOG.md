@@ -5,7 +5,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.23.2] — 2026-09-16
+
 ### Added
+- P0 Warehouse MCP and Microsoft skills catalog fixtures: bounded MCP tool
+  discovery, target mismatch classification, project-policy launch filtering, and
+  a deterministic vertical-slice acceptance receipt with a single SQL executor.
 - Team knowledge integration:
   - Optional `knowledge` configuration block in `~/.coop/config` prompted during onboarding, supporting multiple subscribed team repositories.
   - Fail-soft sync script (`scripts/sync-knowledge.sh` / `scripts/sync-knowledge.ps1`) wired into `coop sync` and `coop update`.
@@ -29,6 +34,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `/coop-vibe tips`; it also joins the default `/coop-vibe all` rotation.
 
 ### Changed
+- Official Microsoft skills now document `coop sync` + pinned immutable catalog as
+  the operational path. Legacy `source`/`load_dir` fields and
+  `scripts/fetch-microsoft-skills.sh` are compatibility-only, and launch never
+  networks for Microsoft skills.
 - The `/share-learning` friction nudge now fires only on repeated tool failures
   (>= 2 distinct failed tool results, deduplicated by tool call). Automatic
   user-steer/correction/retry detection is deferred — manual `/share-learning`

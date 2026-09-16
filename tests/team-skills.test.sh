@@ -281,5 +281,39 @@ case "$(cat "$TMP/spec.json")" in
   *"dup-repo-b"*) ko "second repository's duplicate NOT skipped" ;; *) ok "second repository's duplicate skipped (first wins)" ;;
 esac
 
+# Microsoft catalog launch resolution must use the effective ~/.pi/agent tree when
+# isolation is disabled, and must build launch-dirs before consuming its output.
+MS_HOME="$TMP/ms-home"
+MS_BIN="$TMP/ms-bin"
+MS_SKILL="$MS_HOME/.pi/agent/catalogs/microsoft/generations/fixture/skills/kql"
+mkdir -p "$MS_BIN" "$MS_SKILL"
+REAL_PYTHON="$(command -v python3)" || {
+  ko "python3 unavailable for Microsoft catalog fixture"
+  exit $fail
+}
+export REAL_PYTHON
+cat > "$MS_BIN/python3" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == */lib/microsoft_skills.py ]]; then
+  printf '%s\n' "$HOME/.pi/agent/catalogs/microsoft/generations/fixture/skills/kql"
+else
+  exec "$REAL_PYTHON" "$@"
+fi
+EOF
+chmod +x "$MS_BIN/python3"
+printf -- '---\nname: kql\n---\n# fixture\n' > "$MS_SKILL/SKILL.md"
+if PATH="$MS_BIN:$PATH" HOME="$MS_HOME" COOP_NO_ISOLATE=1 COOP_SKIP_UPDATE_CHECK=1 COOP_SKIP_AZ=1 "$ROOT/bin/coop" launch-spec --json > "$TMP/ms-spec.json" 2> "$TMP/ms-spec.err"; then
+  if python3 - "$TMP/ms-spec.json" <<'PY'
+import json, sys
+args = json.load(open(sys.argv[1]))["args"]
+assert any(args[i] == "--skill" and args[i + 1].endswith("/.pi/agent/catalogs/microsoft/generations/fixture/skills/kql") for i in range(len(args) - 1))
+PY
+  then ok "non-isolated launch loads the Microsoft catalog from ~/.pi/agent"
+  else ko "non-isolated launch omitted the Microsoft catalog skill"
+  fi
+else
+  ko "non-isolated Microsoft catalog launch failed: $(cat "$TMP/ms-spec.err")"
+fi
+
 exit $fail
 

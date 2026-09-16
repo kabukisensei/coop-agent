@@ -72,6 +72,14 @@ fabric:
   default_workspace_id: "TODO: dev Warehouse / Lakehouse workspace id"
   lakehouse_names: ["TODO: lakehouse"]
   warehouse_names: ["TODO: warehouse"]
+  # Optional Warehouse/Lakehouse SQL endpoint MCP target. Leave IDs blank unless
+  # copied from Fabric. Lakehouse targets use sqlEndpointProperties.id.
+  default_sql_endpoint:
+    item_type: ""
+    item_name: ""
+    item_id: ""
+    sqlEndpointProperties:
+      id: ""
   # Warehouse / Lakehouse workspace for each deployment environment.
   environment_names:
     dev:  "TODO: dev Warehouse / Lakehouse workspace"
@@ -149,6 +157,9 @@ mcp:
     purpose: "Always-current Microsoft documentation lookups"
   context_mode:
     enabled: true
+  fabric_sqlendpoint:
+    enabled: true
+    requires_approval_actions: ["executeSQL", "execute_query"]
 
 # --- Persistent memory (pi-hermes-memory) ------------------------------------
 memory:
@@ -157,15 +168,14 @@ memory:
   secret_scanning: true       # block secrets from being written to memory/output
 
 # --- Official Microsoft agent skills (subordinate, opt-in) -------------------
-# Official Microsoft agent skills (https://github.com/microsoft/skills, MIT) are
-# SUBORDINATE to Cooptimize skills: a Microsoft skill is surfaced only if it is
-# allow-listed below AND it does not conflict (by folder name or frontmatter name)
-# with one of our own skills. On any conflict, the Cooptimize skill wins.
-# Fetch allow-listed skills into skills/_microsoft/ with:
-#   scripts/fetch-microsoft-skills.sh
+# Official Microsoft agent skills are SUBORDINATE to Cooptimize skills: a
+# Microsoft skill is surfaced only if the pinned catalog + current project policy
+# allow it AND it does not conflict (by folder name or frontmatter name) with one
+# of our own skills. `coop sync` refreshes the immutable catalog; launch uses the
+# local last-known-good catalog only and never networks. Legacy source/load_dir
+# fields are ignored if present.
 microsoft_skills:
-  source: "https://github.com/microsoft/skills"
-  load_dir: "skills/_microsoft"
+  policy: restricted
   allow:
     - "kql"             # KQL / Fabric Real-Time Intelligence (EventHouse/ADX)
     - "microsoft-docs"  # Microsoft Learn documentation queries
@@ -175,19 +185,10 @@ microsoft_skills:
 # to Cooptimize skills and subject to the same guardrails: plan-and-approve
 # before edits, show diff, and NEVER commit source.
 fabric_skills:
-  source: "https://github.com/microsoft/skills-for-fabric"
-  load_dir: "skills/_microsoft_fabric"
-  allow: []
-  # Recommended starter set (uncomment to enable):
-  #   - "check-updates"
-  #   - "powerbi-report-design"
-  #   - "powerbi-report-planning"
-  #   - "powerbi-report-authoring"
-  #   - "powerbi-report-management"
-  #   - "semantic-model-authoring"
-  #   - "eventhouse-cli"
-  #   - "sqldw-authoring-cli"
-  #   - "sqldw-consumption-cli"
+  policy: baseline
+  # Exact source/revision/path pins live in config/microsoft-skills.json.
+  # Baseline enables only sqldw-authoring-cli and sqldw-consumption-cli from
+  # microsoft/skills-for-fabric v0.3.10; sqldw-operations-cli is deferred.
   #   - "dataflows-cli"
   #   - "e2e-medallion-architecture"
   #   - "spark-authoring-cli"

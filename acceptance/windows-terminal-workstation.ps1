@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
-  [ValidateSet('Run','ValidateReceipt','ValidateUploadAuthorization','Probe')][string]$Mode = 'Run',
+  [ValidateSet('Run','RunBehavioralSuite','ValidateReceipt','ValidateUploadAuthorization','Probe')][string]$Mode = 'Run',
   [ValidateSet('Receipt','Evidence')][string]$AuthorizationKind = 'Receipt',
   [string]$RunNonce = '',
   [string]$HarnessRoot = '',
@@ -13,7 +13,7 @@ param(
   [string]$ExpectedCandidateSha = '',
   [string]$ExpectedCandidateBuild = '',
   [switch]$VmOperatorMode,
-  [ValidateSet('ValidateSha','AssertEmptyRoot','HashTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','ValidateLifecycleEvent','AuthorizeArtifacts','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
+  [ValidateSet('ValidateSha','ValidateCheckout','AssertEmptyRoot','HashTree','HashDirectTree','ScanCanary','EvaluateReadiness','VerifySupportBuild','VerifyManifestPins','CollectExtensionInventory','ReconcileNpmState','ValidateLifecycleEvent','AuthorizeArtifacts','ResolvePython','BoundedCommandSuccess','BoundedUnicodeFidelity','BoundedProcessTree','SuccessfulParentDescendant','OwnershipLifecycleFailure','FinalizeArtifacts')][string]$Probe = 'ValidateSha',
   [string]$Value = '',
   [string]$Root = '',
   [string]$Canary = ''
@@ -45,6 +45,7 @@ $script:RequiredOperatorIds = @(
   'reopen-resume',
   'teamai-failure-isolation',
   'rollback-instructions',
+  'warehouse-mcp-live-acceptance',
   'snapshot-recovery'
 )
 
@@ -52,25 +53,90 @@ function Test-StrictSha([string]$Sha) {
   return [bool]($Sha -cmatch '^[0-9a-f]{40}$')
 }
 
+function Assert-CheckoutIdentity([string]$Path, [string]$Label, [string]$ExpectedSha) {
+  Assert-NoReparseAncestry $Path $true
+  if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "checkout missing: $Label" }
+  Assert-NoReparsePoints $Path "$Label checkout"
+  $observed = (& git -C $Path rev-parse HEAD | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or $observed -cne $ExpectedSha) { throw "checkout identity mismatch: $Label" }
+}
+
 function Assert-EmptyOwnedRoot([string]$Path) {
   if ([string]::IsNullOrWhiteSpace($Path)) { throw 'owned root is required' }
+  Assert-NoReparseAncestry $Path $true $true
   if (Test-Path -LiteralPath $Path) {
     throw "refusing occupied owned root: $Path"
   }
   New-Item -ItemType Directory -Path $Path | Out-Null
+  Assert-NoReparseAncestry $Path $true
 }
 
 function Get-FileSha([string]$Path) {
+  Assert-NoReparseAncestry $Path $true $true
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Assert-NoReparsePoints([string]$Path, [string]$Label) {
+  [void]@(Get-SafeTreeItems $Path $Label)
+}
+
+function Get-SafeTreeItems([string]$Path, [string]$Label) {
+  Assert-NoReparseAncestry $Path $true
+  if (-not (Test-Path -LiteralPath $Path)) { throw "$Label does not exist: $Path" }
+  $root = Get-Item -LiteralPath $Path -Force
+  if (-not $root.PSIsContainer) { return @($root) }
+  $items = New-Object System.Collections.Generic.List[object]
+  $pending = New-Object System.Collections.Generic.Stack[string]
+  $pending.Push($root.FullName)
+  while ($pending.Count -gt 0) {
+    $directory = $pending.Pop()
+    foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force)) {
+      if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "$Label contains a reparse point: $($item.FullName)" }
+      $items.Add($item)
+      if ($item.PSIsContainer) { $pending.Push($item.FullName) }
+    }
+  }
+  return $items.ToArray()
+}
+
+function Remove-SafeTree([string]$Path) {
+  if (-not $Path) { return $true }
+  try {
+    Assert-NoReparseAncestry $Path $true $true
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    Assert-NoReparsePoints $Path 'removal target'
+  } catch {
+    return $false
+  }
+  Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+  return $true
+}
+
+function Test-SafeLeaf([string]$Path) {
+  Assert-NoReparseAncestry $Path $true $true
+  return [bool](Test-Path -LiteralPath $Path -PathType Leaf)
+}
+
+function Remove-SafeFile([string]$Path) {
+  try {
+    Assert-NoReparseAncestry $Path $true $true
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    return $true
+  } catch {
+    return $false
+  }
+}
+
 function Get-TreeHash([string]$Path) {
-  if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "tree does not exist: $Path" }
-  $resolved = (Resolve-Path -LiteralPath $Path).Path
   $rows = New-Object System.Collections.Generic.List[string]
-  Get-ChildItem -LiteralPath $resolved -Recurse -File -Force |
-    Where-Object { $_.FullName -notmatch '[\\/]\.git([\\/]|$)' } |
+  $safeItems = @(Get-SafeTreeItems $Path 'tree')
+  if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "tree does not exist: $Path" }
+  $resolved = [System.IO.Path]::GetFullPath($Path).TrimEnd('\','/')
+  $safeItems |
+    Where-Object { -not $_.PSIsContainer -and $_.FullName -notmatch '[\\/]\.git([\\/]|$)' } |
     Sort-Object FullName |
     ForEach-Object {
       $rel = $_.FullName.Substring($resolved.Length).TrimStart('\','/').Replace('\','/')
@@ -85,13 +151,49 @@ function Get-TreeHash([string]$Path) {
   }
 }
 
+function Get-DirectTreeHash([string]$Path, [bool]$ExcludeGit = $false) {
+  $rows = New-Object System.Collections.Generic.List[string]
+  $safeItems = @(Get-SafeTreeItems $Path 'direct tree')
+  if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "tree does not exist: $Path" }
+  $resolved = [System.IO.Path]::GetFullPath($Path).TrimEnd('\','/')
+  $safeItems |
+    Where-Object { -not $ExcludeGit -or $_.FullName -notmatch '[\\/]\.git([\\/]|$)' } |
+    Sort-Object FullName |
+    ForEach-Object {
+      $rel = $_.FullName.Substring($resolved.Length).TrimStart('\','/').Replace('\','/')
+      $digest = if (-not $_.PSIsContainer) { Get-FileSha $_.FullName } else { '' }
+      $rows.Add("$rel`t$([int]$_.Attributes)`t$digest")
+    }
+  $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes(($rows -join "`n"))
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant() }
+  finally { $sha.Dispose() }
+}
+
+function Get-CheckoutSnapshot([string]$Path) {
+  $git = Join-Path $Path '.git'
+  Assert-NoReparseAncestry $git $true
+  if (-not (Test-Path -LiteralPath $git -PathType Container)) { throw "checkout git metadata is not an ordinary directory: $Path" }
+  return [pscustomobject]@{
+    content = Get-DirectTreeHash $Path $true
+    git_control = Get-DirectTreeHash $git $false
+  }
+}
+
+function Assert-CheckoutSnapshot([object]$Expected, [string]$Path, [string]$Label) {
+  $actual = Get-CheckoutSnapshot $Path
+  $changed = @()
+  if ($actual.content -cne $Expected.content) { $changed += 'content' }
+  if ($actual.git_control -cne $Expected.git_control) { $changed += 'git metadata' }
+  if ($changed.Count -gt 0) { throw "behavioral suite mutated checkout $($changed -join ' and '): $Label" }
+}
+
 function Find-Canary([string]$Path, [string]$Needle) {
   if (-not $Needle) { throw 'canary is required' }
+  Assert-NoReparseAncestry $Path $true $true
   if (-not (Test-Path -LiteralPath $Path)) { return @() }
   $hits = @()
-  $files = if (Test-Path -LiteralPath $Path -PathType Leaf) { @(Get-Item -LiteralPath $Path) } else {
-    @(Get-ChildItem -LiteralPath $Path -Recurse -File -Force)
-  }
+  $files = @(Get-SafeTreeItems $Path 'canary scan target' | Where-Object { -not $_.PSIsContainer })
   foreach ($file in $files) {
     try {
       $text = [System.IO.File]::ReadAllText($file.FullName)
@@ -128,6 +230,23 @@ function Test-JsonString([object]$Value) {
 
 function Test-JsonArray([object]$Value) {
   return ($null -ne $Value -and $Value -is [System.Array])
+}
+
+function Assert-WarehouseLiveObject([object]$live, [string]$Label = 'Warehouse MCP live proof') {
+  Assert-ExactProperties $live @('auth_state','target_validation','target_scope','discovered_tool','provenance','mock') $Label
+  foreach ($name in @('auth_state','target_validation','target_scope','discovered_tool','provenance')) {
+    if (-not (Test-JsonString $live.$name)) { throw "$Label property $name must be a string" }
+  }
+  if ($live.auth_state -cne 'authenticated') { throw 'Warehouse MCP live auth was not authenticated' }
+  if ($live.target_validation -cne 'validated' -or $live.target_scope -cne 'item') { throw 'Warehouse MCP live item target was not validated' }
+  if ($live.discovered_tool -cnotin @('executeSQL','execute_query','fabric-sqlendpoint-execute_query','fabric_sqlendpoint_execute_query')) { throw 'Warehouse MCP live proof lacks an exact compatible discovered tool' }
+  if ($live.provenance -cne 'live' -or $live.mock -isnot [bool] -or [bool]$live.mock) { throw 'Warehouse MCP evidence is mock, generic, or not explicitly live' }
+}
+
+function Assert-WarehouseLiveEvidence([object]$Claim) {
+  $proofs = @($Claim.evidence | Where-Object { $_.kind -ceq 'OPERATOR_OBSERVATION' -and $null -ne $_.warehouse_live })
+  if ($proofs.Count -ne 1) { throw 'Warehouse MCP readiness requires exactly one structured live proof' }
+  Assert-WarehouseLiveObject $proofs[0].warehouse_live
 }
 
 function Assert-ObservedIdentity([object]$Identity, [string]$Label, [string]$ExpectedSha, [bool]$Ready) {
@@ -175,12 +294,71 @@ function Assert-ManifestPinProof([object]$Proof, [object]$Manifest, [string]$Lab
   }
 }
 
-function Get-ManifestPinProof([object]$Doctor, [object]$Manifest, [string]$ObservedCoopVersion, [object]$NpmInventory, [object]$McpConfig, [string]$Label) {
+function Get-InstalledExtensionInventory([object]$Manifest, [string]$AgentRoot, [string]$Label) {
+  $inventory = [ordered]@{}
+  $settingsPath = Join-Path $AgentRoot 'settings.json'
+  if (-not (Test-Path -LiteralPath $settingsPath -PathType Leaf)) { throw "$Label Pi settings missing" }
+  $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+  if (-not (Test-JsonArray $settings.packages)) { throw "$Label Pi package list must be an array" }
+  $packageRoot = Join-Path $AgentRoot 'npm\node_modules'
+  $core = '(?:0|[1-9][0-9]*)'
+  $identifier = '(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+  $prerelease = "-$identifier(?:\.$identifier)*"
+  $build = '\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*'
+  $semver = "$core\.$core\.$core(?:$prerelease)?(?:$build)?"
+  $specPattern = "^npm:(?<name>@[^/@]+/[^/@]+|[^/@]+)@(?<version>$semver)\z"
+  foreach ($spec in @($settings.packages)) {
+    if (-not (Test-JsonString $spec)) { throw "$Label Pi package spec must be a string" }
+    $match = [regex]::Match([string]$spec, $specPattern)
+    if (-not $match.Success) { throw "$Label Pi package spec is not canonical: $spec" }
+    $name = $match.Groups['name'].Value
+    $configuredVersion = $match.Groups['version'].Value
+    if ($inventory.Contains($name)) { throw "$Label duplicate installed extension spec: $name" }
+    $packageJson = $packageRoot
+    foreach ($part in ($name -split '/')) { $packageJson = Join-Path $packageJson $part }
+    $packageJson = Join-Path $packageJson 'package.json'
+    if (-not (Test-Path -LiteralPath $packageJson -PathType Leaf)) { throw "$Label installed extension metadata missing: $name" }
+    $metadata = Get-Content -LiteralPath $packageJson -Raw | ConvertFrom-Json
+    if (-not (Test-JsonString $metadata.name) -or [string]$metadata.name -cne $name) { throw "$Label installed extension name mismatch: $name" }
+    if (-not (Test-JsonString $metadata.version) -or [string]::IsNullOrWhiteSpace($metadata.version)) { throw "$Label installed extension version missing: $name" }
+    if ([string]$metadata.version -cne $configuredVersion) { throw "$Label configured and installed extension versions differ: $name" }
+    $inventory[$name] = [string]$metadata.version
+  }
+  return [pscustomobject]$inventory
+}
+
+function Invoke-NpmRollbackReconciliation([object]$BaselineState, [string]$LogRoot, [scriptblock]$Runner = $null) {
+  $commands = New-Object System.Collections.Generic.List[string]
+  foreach ($name in @($BaselineState.PSObject.Properties.Name)) {
+    $expected = [string]$BaselineState.PSObject.Properties[$name].Value
+    $npmArgs = if ($expected -ceq 'NOT_INSTALLED') { @('uninstall','-g',$name) } else { @('install','-g',"$name@$expected") }
+    $logPath = Join-Path $LogRoot ("baseline-rollback-npm-" + ($name -replace '[^A-Za-z0-9._-]','_'))
+    $result = if ($null -ne $Runner) { & $Runner -NpmArgs $npmArgs -LogPath $logPath } else { Invoke-Bounded 'npm.cmd' $npmArgs $logPath 600 }
+    Assert-ExitZero $result "rollback npm reconciliation for $name"
+    [void]$commands.Add(($npmArgs -join ' '))
+  }
+  return @($commands)
+}
+
+function Get-ManifestPinProof([object]$Doctor, [object]$Manifest, [string]$ObservedCoopVersion, [object]$NpmInventory, [object]$ExtensionInventory, [object]$McpConfig, [string]$Label) {
   if ($null -eq $Doctor -or $Doctor.fail -ne 0 -or -not (Test-JsonArray $Doctor.checks)) { throw "$Label Doctor JSON is incomplete or failing" }
   $requireDoctorCheck = {
     param([string]$ExpectedName, [string]$AlternateName = '')
     $matches = @($Doctor.checks | Where-Object { $_.status -ceq 'ok' -and ($_.name -ceq $ExpectedName -or ($AlternateName -and $_.name -ceq $AlternateName)) })
-    if ($matches.Count -ne 1) { throw "$Label Doctor did not uniquely prove: $ExpectedName" }
+    if ($matches.Count -ne 1) {
+      # Name every look-alike so a non-unique proof is diagnosable from the run
+      # log alone (the evidence bundle cannot be built after a fail-closed run).
+      $subject = ($ExpectedName -split ' ', 2)[0]
+      $alternateSubject = if ($AlternateName) { ($AlternateName -split ' ', 2)[0] } else { '' }
+      $lookalikes = @($Doctor.checks | Where-Object {
+        $_.name -ceq $ExpectedName -or
+        ($AlternateName -and $_.name -ceq $AlternateName) -or
+        $_.name.StartsWith("$subject ", [System.StringComparison]::Ordinal) -or
+        ($alternateSubject -and $_.name.StartsWith("$alternateSubject ", [System.StringComparison]::Ordinal))
+      })
+      $detail = if ($lookalikes.Count -gt 0) { '; saw ' + (@($lookalikes | ForEach-Object { "$($_.status):$($_.name)" }) -join ' | ') } else { '' }
+      throw "$Label Doctor did not uniquely prove: $ExpectedName ($($matches.Count) ok match(es)$detail)"
+    }
   }
   $piPackage = $Manifest.pi.package
   $piVersion = $Manifest.pi.version
@@ -189,10 +367,12 @@ function Get-ManifestPinProof([object]$Doctor, [object]$Manifest, [string]$Obser
   & $requireDoctorCheck "pi $piVersion matches manifest ($piVersion)"
 
   $extensionProof = [ordered]@{}
+  Assert-ExactProperties $ExtensionInventory @($Manifest.extensions.PSObject.Properties.Name) "$Label installed extension inventory"
   foreach ($name in @($Manifest.extensions.PSObject.Properties.Name)) {
     $version = $Manifest.extensions.PSObject.Properties[$name].Value
-    & $requireDoctorCheck "$name $version matches manifest ($version)"
-    $extensionProof[$name] = $version
+    $installed = $ExtensionInventory.PSObject.Properties[$name].Value
+    if ($installed -cne $version) { throw "$Label installed extension does not match manifest: $name" }
+    $extensionProof[$name] = $installed
   }
   $pythonProof = [ordered]@{}
   foreach ($name in @($Manifest.python_tools.PSObject.Properties.Name)) {
@@ -252,10 +432,12 @@ function Get-ManifestPinProof([object]$Doctor, [object]$Manifest, [string]$Obser
 }
 
 function Assert-Receipt([object]$Receipt) {
-  Assert-ExactProperties $Receipt @('schema_version','candidate','baseline','harness','execution','claims','operator_evidence','terminal_workstation_ready') 'receipt'
+  Assert-ExactProperties $Receipt @('schema_version','candidate','baseline','harness','trust_model','execution','claims','operator_evidence','terminal_workstation_ready') 'receipt'
   if ($null -eq $Receipt -or ($Receipt.schema_version -isnot [int] -and $Receipt.schema_version -isnot [long]) -or $Receipt.schema_version -ne 1) { throw 'receipt schema_version must be integer 1' }
   if ($null -eq $Receipt.terminal_workstation_ready -or $Receipt.terminal_workstation_ready -isnot [bool]) { throw 'terminal_workstation_ready must be boolean' }
   $ready = [bool]$Receipt.terminal_workstation_ready
+  Assert-ExactProperties $Receipt.trust_model @('name','candidate_admin_code_trusted','adversarial_admin_containment','deferred_hardening','limitation') 'trust model'
+  if ($Receipt.trust_model.name -cne 'reviewed-candidate-non-malicious' -or $Receipt.trust_model.candidate_admin_code_trusted -isnot [bool] -or -not $Receipt.trust_model.candidate_admin_code_trusted -or $Receipt.trust_model.adversarial_admin_containment -isnot [bool] -or $Receipt.trust_model.adversarial_admin_containment -or $Receipt.trust_model.deferred_hardening -cne 'post-release' -or $Receipt.trust_model.limitation -cne 'Certification does not contain intentionally malicious administrator-level candidate code.') { throw 'receipt trust model is missing or altered' }
   Assert-ObservedIdentity $Receipt.candidate 'candidate' $script:CandidateSha $ready
   Assert-ObservedIdentity $Receipt.baseline 'baseline' $script:BaselineSha $ready
   Assert-ExactProperties $Receipt.harness @('observed_sha','observed_version') 'harness identity'
@@ -285,12 +467,16 @@ function Assert-Receipt([object]$Receipt) {
     foreach ($name in @('required','automated','human_required')) { if ($claim.$name -isnot [bool]) { throw "claim $($claim.id) property $name must be boolean" } }
     if (-not (Test-JsonArray $claim.evidence)) { throw "claim $($claim.id) evidence must be an array" }
     foreach ($e in $claim.evidence) {
-      Assert-ExactProperties $e @('kind','observed','command','exit_code','identity','path','sha256') "claim $($claim.id) evidence"
+      Assert-ExactProperties $e @('kind','observed','command','exit_code','identity','path','sha256','warehouse_live') "claim $($claim.id) evidence"
       if (-not (Test-JsonString $e.observed) -or [string]::IsNullOrWhiteSpace($e.observed)) { throw "claim $($claim.id) has incomplete observed evidence" }
       if (-not (Test-JsonString $e.kind) -or $e.kind -notin @('COMMAND','HASH','FILE','OPERATOR_OBSERVATION')) { throw "claim $($claim.id) has invalid evidence kind" }
       if ($null -ne $e.exit_code -and $e.exit_code -isnot [int] -and $e.exit_code -isnot [long]) { throw "claim $($claim.id) evidence exit_code must be integer or null" }
       if ($e.kind -eq 'COMMAND' -and $null -eq $e.exit_code) { throw "claim $($claim.id) COMMAND evidence exit_code must be an integer" }
       foreach ($name in @('command','identity','path','sha256')) { if (-not (Test-JsonString $e.$name)) { throw "claim $($claim.id) evidence $name must be a string" } }
+      if ($null -ne $e.warehouse_live) {
+        if ($e.warehouse_live -isnot [pscustomobject]) { throw "claim $($claim.id) warehouse_live evidence must be an object or null" }
+        Assert-WarehouseLiveObject $e.warehouse_live "claim $($claim.id) Warehouse MCP live proof"
+      }
       if ($e.identity -cnotmatch '^(harness|candidate|baseline|operator)(:[0-9a-f]{40})?$') { throw "claim $($claim.id) has invalid evidence identity" }
       if ($e.sha256 -and $e.sha256 -cnotmatch '^[0-9a-f]{64}$') { throw "claim $($claim.id) has invalid evidence SHA-256" }
     }
@@ -317,11 +503,17 @@ function Assert-Receipt([object]$Receipt) {
       $observations = @($matches[0].evidence | Where-Object { $_.kind -eq 'OPERATOR_OBSERVATION' -and -not [string]::IsNullOrWhiteSpace([string]$_.observed) })
       if ($observations.Count -lt 1) { throw "redacted operator observation missing: $id" }
     }
+    $warehouse = @($Receipt.operator_evidence | Where-Object { $_.id -eq 'warehouse-mcp-live-acceptance' })
+    if ($warehouse.Count -ne 1 -or $warehouse[0].status -ne 'PASS') {
+      throw 'Warehouse MCP live acceptance is a certification blocker until auth, target validation, and tools/list succeed'
+    }
+    Assert-WarehouseLiveEvidence $warehouse[0]
   }
   return $true
 }
 
 function Read-Receipt([string]$Path) {
+  Assert-NoReparseAncestry $Path $true $true
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "receipt not found: $Path" }
   $raw = Get-Content -LiteralPath $Path -Raw
   foreach ($name in @('started_utc','finished_utc')) {
@@ -338,11 +530,13 @@ function Stop-TrackedProcessTrees {
   # kernel-owned inherited membership is the safety boundary.
 }
 
-function Assert-FrozenArtifactsSafe([string]$EvidencePath, [string]$Needle, [string]$CandidatePath = '', [string]$BaselinePath = '') {
+function Assert-FrozenArtifactsSafe([string]$EvidencePath, [string]$Needle, [string]$CandidatePath = '', [string]$BaselinePath = '', [string]$HarnessPath = '') {
   Stop-TrackedProcessTrees
   if ($script:ProcessCleanupUncertain) { throw 'owned process cleanup uncertainty suppresses upload' }
-  foreach ($item in @(@{ Path = $CandidatePath; Label = 'candidate' }, @{ Path = $BaselinePath; Label = 'baseline' })) {
+  foreach ($item in @(@{ Path = $CandidatePath; Label = 'candidate' }, @{ Path = $BaselinePath; Label = 'baseline' }, @{ Path = $HarnessPath; Label = 'harness' })) {
+    if ($item.Path) { Assert-NoReparseAncestry $item.Path $true $true }
     if ($item.Path -and (Test-Path -LiteralPath $item.Path -PathType Container)) {
+      Assert-NoReparsePoints $item.Path "$($item.Label) checkout"
       $sourceStatus = (& git -C $item.Path status --porcelain --untracked-files=all | Out-String).Trim()
       if ($LASTEXITCODE -ne 0 -or $sourceStatus) { throw "immutable $($item.Label) checkout is dirty or unreadable" }
     }
@@ -357,18 +551,29 @@ function Get-AuthorizationPath([string]$Path, [string]$Kind) {
   throw "unknown upload authorization kind: $Kind"
 }
 
-function Assert-NoReparseAncestry([string]$Path) {
-  $parent = Split-Path -Parent ([System.IO.Path]::GetFullPath($Path))
-  if (-not $parent -or -not (Test-Path -LiteralPath $parent -PathType Container)) { throw "authorization parent is missing: $parent" }
-  $current = Get-Item -LiteralPath $parent -Force
-  while ($null -ne $current) {
-    if (($current.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse ancestry rejected: $($current.FullName)" }
-    $current = $current.Parent
+function Assert-NoReparseAncestry([string]$Path, [bool]$IncludeLeaf = $false, [bool]$AllowMissing = $false) {
+  $full = [System.IO.Path]::GetFullPath($Path)
+  $target = if ($IncludeLeaf) { $full } else { Split-Path -Parent $full }
+  if (-not $target) { throw "reparse ancestry target is missing: $Path" }
+  $root = [System.IO.Path]::GetPathRoot($target)
+  if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) { throw "reparse ancestry root is missing: $root" }
+  $current = $root
+  $rootItem = Get-Item -LiteralPath $current -Force
+  if (($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse ancestry rejected: $($rootItem.FullName)" }
+  $relative = $target.Substring($root.Length)
+  foreach ($part in @($relative -split '[\\/]' | Where-Object { $_ })) {
+    $current = Join-Path $current $part
+    if (-not (Test-Path -LiteralPath $current)) {
+      if ($AllowMissing) { return }
+      throw "reparse ancestry component is missing: $current"
+    }
+    $item = Get-Item -LiteralPath $current -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse ancestry rejected: $($item.FullName)" }
   }
 }
 
 function Write-ExclusiveText([string]$Path, [string]$Text) {
-  Assert-NoReparseAncestry $Path
+  Assert-NoReparseAncestry $Path $true $true
   if (Test-Path -LiteralPath $Path) { throw "exclusive publication collision: $Path" }
   $parent = Split-Path -Parent ([System.IO.Path]::GetFullPath($Path))
   $temporary = Join-Path $parent ('.authorization-' + [guid]::NewGuid().ToString('N') + '.tmp')
@@ -387,7 +592,7 @@ function Write-ExclusiveText([string]$Path, [string]$Text) {
 }
 
 function Write-ControlledReceipt([string]$Path, [string]$Text) {
-  Assert-NoReparseAncestry $Path
+  Assert-NoReparseAncestry $Path $true $true
   $parent = Split-Path -Parent ([System.IO.Path]::GetFullPath($Path))
   $temporary = Join-Path $parent ('.receipt-' + [guid]::NewGuid().ToString('N') + '.tmp')
   $stream = $null
@@ -414,6 +619,7 @@ function Remove-UploadAuthorizations([string]$Path) {
   if ($env:COOP_TERMINAL_ACCEPTANCE_AUTHORIZATION_FAULT -eq 'revoke-fail') { throw 'test upload authorization revocation failure' }
   foreach ($kind in @('Receipt','Evidence')) {
     $authorization = Get-AuthorizationPath $Path $kind
+    Assert-NoReparseAncestry $authorization $true $true
     if (Test-Path -LiteralPath $authorization) { Remove-Item -LiteralPath $authorization -Force -ErrorAction Stop }
     if (Test-Path -LiteralPath $authorization) { throw "could not revoke stale $kind upload authorization" }
   }
@@ -435,8 +641,8 @@ function New-UploadAuthorization([string]$Kind, [string]$Path, [string]$Nonce, [
 function Assert-UploadAuthorization([string]$Kind, [string]$Path, [string]$Nonce, [string]$HarnessSha, [string]$EvidencePath = '') {
   if ($Nonce -cnotmatch '^[0-9a-f]{32}$' -or -not (Test-StrictSha $HarnessSha)) { throw 'current upload identity is invalid' }
   $authorizationPath = Get-AuthorizationPath $Path $Kind
+  Assert-NoReparseAncestry $authorizationPath $true $true
   if (-not (Test-Path -LiteralPath $authorizationPath -PathType Leaf)) { throw "$Kind upload authorization is absent" }
-  Assert-NoReparseAncestry $authorizationPath
   $record = Get-Content -LiteralPath $authorizationPath -Raw | ConvertFrom-Json
   $properties = @('schema_version','kind','run_nonce','harness_sha','candidate_sha','candidate_build','receipt_sha256')
   if ($Kind -eq 'Evidence') { $properties += @('evidence_root','evidence_sha256') }
@@ -474,6 +680,30 @@ function Assert-LifecycleFaultEvent([string]$Path, [string]$Nonce, [string]$Requ
   return $event
 }
 
+function Resolve-AcceptancePythonExecutable([string]$Path) {
+  if (-not [System.IO.Path]::IsPathRooted($Path)) { throw 'acceptance Python must be an absolute path' }
+  $expected = [System.IO.Path]::GetFullPath($Path)
+  $comparison = if ($env:OS -eq 'Windows_NT') { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+  if (-not [string]::Equals($Path, $expected, $comparison)) { throw 'acceptance Python must be a fully qualified normalized path' }
+  if (-not (Test-Path -LiteralPath $expected -PathType Leaf)) { throw 'acceptance Python does not identify a file' }
+  $reported = @(& $expected -c 'import os,sys; print(os.path.abspath(sys.executable))' 2>$null)
+  if ($LASTEXITCODE -ne 0 -or $reported.Count -ne 1) { throw 'acceptance Python executable probe failed' }
+  $actual = [System.IO.Path]::GetFullPath(([string]$reported[0]).Trim())
+  if (-not [string]::Equals($actual, $expected, $comparison)) { throw 'acceptance Python executable identity mismatch' }
+  return $expected
+}
+
+function Get-AcceptancePython {
+  if ($env:CERT_PYTHON) {
+    return Resolve-AcceptancePythonExecutable $env:CERT_PYTHON
+  }
+  $pythonCommands = @(Get-Command python3,python -CommandType Application -All -ErrorAction SilentlyContinue)
+  foreach ($python in $pythonCommands) {
+    try { return Resolve-AcceptancePythonExecutable $python.Source } catch { continue }
+  }
+  throw 'acceptance Python is unavailable'
+}
+
 function Invoke-Bounded {
   param(
     [string]$FilePath,
@@ -488,8 +718,8 @@ function Invoke-Bounded {
   if ($logParent -and -not (Test-Path -LiteralPath $logParent)) { New-Item -ItemType Directory -Force -Path $logParent | Out-Null }
 
   $helper = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\scripts\knowledge-git.py'))
-  $python = @(Get-Command python3,python -ErrorAction SilentlyContinue | Select-Object -First 1)
-  if ($python.Count -ne 1 -or -not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+  try { $pythonPath = Get-AcceptancePython } catch { $pythonPath = '' }
+  if (-not $pythonPath -or -not (Test-Path -LiteralPath $helper -PathType Leaf)) {
     $script:ProcessCleanupUncertain = $true
     [System.IO.File]::WriteAllText($stdout, '', (New-Object System.Text.UTF8Encoding($false)))
     [System.IO.File]::WriteAllText($stderr, "ownership helper unavailable; payload was not started`n", (New-Object System.Text.UTF8Encoding($false)))
@@ -507,7 +737,7 @@ function Invoke-Bounded {
   $quoted = @()
   foreach ($arg in $helperArguments) { $quoted += ('"' + ([string]$arg).Replace('"','\"') + '"') }
   $params = @{
-    FilePath = $python[0].Source
+    FilePath = $pythonPath
     ArgumentList = ($quoted -join ' ')
     PassThru = $true
     NoNewWindow = $true
@@ -542,6 +772,7 @@ function New-Evidence([string]$Kind, [string]$Observed, [string]$Command, [objec
     identity = $Identity
     path = $Path
     sha256 = if ($Path -and (Test-Path -LiteralPath $Path -PathType Leaf)) { Get-FileSha $Path } else { '' }
+    warehouse_live = $null
   }
 }
 
@@ -571,7 +802,11 @@ function Invoke-OwnershipLifecycleFault([string]$Fixture, [string]$LogBase, [str
       $result = Invoke-Bounded 'node' @($Fixture,'parent-with-descendant',$PayloadMarker) $LogBase 5
       if ($result.ExitCode -ne 126) { throw "$fault preserved payload execution instead of uncertainty: $($result.ExitCode)" }
     } elseif ($fault -in @('job-terminate','job-close')) {
-      $result = Invoke-Bounded 'node' @($Fixture,'parent-with-descendant',$PayloadMarker) $LogBase 1
+      # The fixture fails its own setup after three seconds, keeps the owned
+      # parent alive once its descendant is ready, and delays the canary until
+      # six seconds. The five-second helper deadline therefore exercises the
+      # requested cleanup fault without racing normal parent completion.
+      $result = Invoke-Bounded 'node' @($Fixture,'owned-timeout',$PayloadMarker) $LogBase 5
       if ($result.ExitCode -ne 124) { throw "$fault did not preserve timeout 124: $($result.ExitCode)" }
     } else {
       throw "unsupported ownership lifecycle fault: $fault"
@@ -606,8 +841,10 @@ function Invoke-OwnershipLifecycleFault([string]$Fixture, [string]$LogBase, [str
 if ($Mode -eq 'Probe') {
   switch ($Probe) {
     'ValidateSha' { if (-not (Test-StrictSha $Value)) { throw 'invalid strict SHA' }; Write-Output 'PASS' }
+    'ValidateCheckout' { Assert-CheckoutIdentity $Root 'probe' $Value; [void](Get-CheckoutSnapshot $Root); Write-Output 'PASS' }
     'AssertEmptyRoot' { Assert-EmptyOwnedRoot $Root; Write-Output 'PASS' }
     'HashTree' { Write-Output (Get-TreeHash $Root) }
+    'HashDirectTree' { Write-Output (Get-DirectTreeHash $Root $false) }
     'ScanCanary' { $hits = @(Find-Canary $Root $Canary); if ($hits.Count -gt 0) { throw "credential canary found in evidence" }; Write-Output 'PASS' }
     'EvaluateReadiness' { $receipt = Read-Receipt $ReceiptPath; Assert-Receipt $receipt | Out-Null; Write-Output ([bool]$receipt.terminal_workstation_ready).ToString().ToLowerInvariant() }
     'VerifySupportBuild' {
@@ -623,9 +860,23 @@ if ($Mode -eq 'Probe') {
     'VerifyManifestPins' {
       $observed = Get-Content -LiteralPath $Root -Raw | ConvertFrom-Json
       $manifest = Get-Content -LiteralPath $Value -Raw | ConvertFrom-Json
-      $proof = Get-ManifestPinProof $observed.doctor $manifest $observed.coop_version $observed.npm_inventory $observed.mcp_config 'probe'
+      $proof = Get-ManifestPinProof $observed.doctor $manifest $observed.coop_version $observed.npm_inventory $observed.extension_inventory $observed.mcp_config 'probe'
       Assert-ManifestPinProof $proof $manifest 'probe'
       Write-Output 'PASS'
+    }
+    'CollectExtensionInventory' {
+      $manifest = Get-Content -LiteralPath $Value -Raw | ConvertFrom-Json
+      $inventory = Get-InstalledExtensionInventory $manifest $Root 'probe'
+      Assert-ExactProperties $inventory @($manifest.extensions.PSObject.Properties.Name) 'probe installed extension inventory'
+      Write-Output ($inventory | ConvertTo-Json -Compress)
+    }
+    'ReconcileNpmState' {
+      $state = Get-Content -LiteralPath $Root -Raw | ConvertFrom-Json
+      $probeExitCode = 0
+      if (-not [int]::TryParse($Value, [ref]$probeExitCode)) { throw 'probe exit code must be an integer' }
+      $runner = { param([string[]]$NpmArgs, [string]$LogPath); [pscustomobject]@{ ExitCode = $probeExitCode; Stderr = $LogPath } }.GetNewClosure()
+      $commands = @(Invoke-NpmRollbackReconciliation $state ([System.IO.Path]::GetTempPath()) $runner)
+      Write-Output ($commands | ConvertTo-Json -Compress)
     }
     'ValidateLifecycleEvent' { Assert-LifecycleFaultEvent $Value $Canary $Root | Out-Null; Write-Output 'PASS' }
     'AuthorizeArtifacts' {
@@ -638,6 +889,7 @@ if ($Mode -eq 'Probe') {
       Assert-UploadAuthorization 'Evidence' $ReceiptPath $Value $Canary $Root | Out-Null
       Write-Output 'PASS'
     }
+    'ResolvePython' { Write-Output (Get-AcceptancePython) }
     'BoundedCommandSuccess' {
       $result = Invoke-Bounded 'node' @($Value,'success') $Root 10
       if ($result.ExitCode -ne 23) { throw "bounded command status was not preserved: $($result.ExitCode)" }
@@ -661,28 +913,28 @@ if ($Mode -eq 'Probe') {
       $result = Invoke-Bounded 'node' @($Value,'cleanup-race',$Canary) $Root 1
       if ($result.ExitCode -ne 124) { throw "process-tree probe did not return timeout 124: $($result.ExitCode)" }
       $marker = "$ReceiptPath.evidence-authorization.json"
-      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
+      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; Write-ExclusiveText $marker 'unsafe' } catch { [void](Remove-SafeFile $marker) }
       Start-Sleep -Milliseconds 2500
-      if (Test-Path -LiteralPath $Canary) { throw 'descendant wrote after process-tree finalization' }
-      if (Test-Path -LiteralPath $marker) { throw 'timeout incorrectly allowed an upload marker' }
+      if (Test-SafeLeaf $Canary) { throw 'descendant wrote after process-tree finalization' }
+      if (Test-SafeLeaf $marker) { throw 'timeout incorrectly allowed an upload marker' }
       Write-Output 'PASS'
     }
     'SuccessfulParentDescendant' {
       $result = Invoke-Bounded 'node' @($Value,'parent-success',$Canary) $Root 1
       if ($result.ExitCode -ne 124) { throw "surviving descendant was incorrectly treated as complete: $($result.ExitCode)" }
       $marker = "$ReceiptPath.evidence-authorization.json"
-      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
+      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; Write-ExclusiveText $marker 'unsafe' } catch { [void](Remove-SafeFile $marker) }
       Start-Sleep -Milliseconds 2500
-      if (Test-Path -LiteralPath $Canary) { throw 'successful-parent descendant wrote after ownership timeout' }
-      if (Test-Path -LiteralPath $marker) { throw 'surviving descendant incorrectly allowed an upload marker' }
+      if (Test-SafeLeaf $Canary) { throw 'successful-parent descendant wrote after ownership timeout' }
+      if (Test-SafeLeaf $marker) { throw 'surviving descendant incorrectly allowed an upload marker' }
       Write-Output 'PASS'
     }
     'OwnershipLifecycleFailure' {
       $faultResult = Invoke-OwnershipLifecycleFault $Value $Root $Canary
       $fault = $faultResult.Fault
       $marker = "$ReceiptPath.evidence-authorization.json"
-      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; [System.IO.File]::WriteAllText($marker, 'unsafe') } catch { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
-      if (Test-Path -LiteralPath $marker) { throw "$fault incorrectly allowed an upload marker" }
+      try { Assert-FrozenArtifactsSafe (Split-Path -Parent $Root) 'NO-SUCH-CANARY'; Write-ExclusiveText $marker 'unsafe' } catch { [void](Remove-SafeFile $marker) }
+      if (Test-SafeLeaf $marker) { throw "$fault incorrectly allowed an upload marker" }
       Write-Output 'PASS'
     }
     'FinalizeArtifacts' {
@@ -691,16 +943,84 @@ if ($Mode -eq 'Probe') {
         Assert-FrozenArtifactsSafe $Root $Canary
         $receiptHits = @(Find-Canary $Value $Canary)
         if ($receiptHits.Count -gt 0) { throw 'canary found in receipt' }
-        [System.IO.File]::WriteAllText($marker, "scanned`n", (New-Object System.Text.UTF8Encoding($false)))
+        Write-ExclusiveText $marker "scanned`n"
       } catch {
-        Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
-        if ($Root -and (Test-Path -LiteralPath $Root)) { Remove-Item -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue }
+        [void](Remove-SafeFile $marker)
+        [void](Remove-SafeTree $Root)
         throw
       }
       Write-Output 'PASS'
     }
   }
   exit 0
+}
+
+if ($Mode -eq 'RunBehavioralSuite') {
+  try {
+    if ($env:OS -ne 'Windows_NT' -or $env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'behavioral suite finalization requires a GitHub-hosted Windows runner' }
+    if ($RunNonce -cnotmatch '^[0-9a-f]{32}$' -or -not (Test-StrictSha $ExpectedHarnessSha) -or -not (Test-StrictSha $ExpectedCandidateSha)) { throw 'behavioral suite identity is invalid' }
+    if ($ExpectedHarnessSha -cne $ExpectedCandidateSha -or $ExpectedCandidateBuild -cnotmatch '^build-[0-9a-f]{8}$') { throw 'behavioral suite candidate binding is invalid' }
+    $suiteCheckouts = @(
+      @{ Path = $HarnessRoot; Sha = $ExpectedHarnessSha; Label = 'harness' },
+      @{ Path = $CandidateRoot; Sha = $ExpectedCandidateSha; Label = 'candidate' },
+      @{ Path = $BaselineRoot; Sha = $script:BaselineSha; Label = 'baseline' }
+    )
+    foreach ($item in $suiteCheckouts) { Assert-CheckoutIdentity $item.Path $item.Label $item.Sha }
+    Assert-NoReparseAncestry $EvidenceRoot $true
+    Assert-NoReparseAncestry $ReceiptPath $true
+    if (-not (Test-Path -LiteralPath $EvidenceRoot -PathType Container) -or -not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) { throw 'behavioral suite artifacts are missing' }
+    Assert-Receipt (Read-Receipt $ReceiptPath) | Out-Null
+    Assert-UploadAuthorization 'Receipt' $ReceiptPath $RunNonce $ExpectedHarnessSha | Out-Null
+    Assert-UploadAuthorization 'Evidence' $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot | Out-Null
+    Assert-FrozenArtifactsSafe $EvidenceRoot $Canary $CandidateRoot $BaselineRoot $HarnessRoot
+    $receiptBefore = Get-FileSha $ReceiptPath
+    $evidenceBefore = Get-TreeHash $EvidenceRoot
+    $checkoutSnapshots = [ordered]@{}
+    foreach ($item in $suiteCheckouts) { $checkoutSnapshots[$item.Label] = Get-CheckoutSnapshot $item.Path }
+    $commandFileNames = @('GITHUB_ENV','GITHUB_PATH','GITHUB_OUTPUT','GITHUB_STATE','GITHUB_STEP_SUMMARY')
+    $commandFileValues = [ordered]@{}
+    $commandFileHashes = [ordered]@{}
+    foreach ($name in $commandFileNames) {
+      $path = [Environment]::GetEnvironmentVariable($name, 'Process')
+      $commandFileValues[$name] = $path
+      $commandFileHashes[$name] = if ($path) { Get-FileSha $path } else { '' }
+      [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+    }
+    $pythonDontWriteBytecode = [Environment]::GetEnvironmentVariable('PYTHONDONTWRITEBYTECODE', 'Process')
+    [Environment]::SetEnvironmentVariable('PYTHONDONTWRITEBYTECODE', '1', 'Process')
+
+    $logBase = Join-Path (Split-Path -Parent $ReceiptPath) 'exact-behavioral-suite'
+    try {
+      $suite = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'tests\run.ps1')) $logBase 1800
+    } finally {
+      [Environment]::SetEnvironmentVariable('PYTHONDONTWRITEBYTECODE', $pythonDontWriteBytecode, 'Process')
+      foreach ($name in $commandFileNames) { [Environment]::SetEnvironmentVariable($name, $commandFileValues[$name], 'Process') }
+    }
+    Assert-ExitZero $suite 'exact-candidate behavioral suite'
+    Stop-TrackedProcessTrees
+    if ((Get-FileSha $ReceiptPath) -cne $receiptBefore -or (Get-TreeHash $EvidenceRoot) -cne $evidenceBefore) { throw 'behavioral suite mutated frozen artifacts' }
+    foreach ($name in $commandFileNames) {
+      $path = $commandFileValues[$name]
+      $actual = if ($path) { Get-FileSha $path } else { '' }
+      if ($actual -cne $commandFileHashes[$name]) { throw "behavioral suite mutated GitHub command file: $name" }
+    }
+    foreach ($item in $suiteCheckouts) { Assert-CheckoutSnapshot $checkoutSnapshots[$item.Label] $item.Path $item.Label }
+    $evidenceHits = @(Find-Canary $EvidenceRoot $Canary)
+    if ($evidenceHits.Count -gt 0) { throw 'credential canary found in evidence after behavioral suite' }
+    $receiptHits = @(Find-Canary $ReceiptPath $Canary)
+    if ($receiptHits.Count -gt 0) { throw 'credential canary found in receipt after behavioral suite' }
+
+    Remove-UploadAuthorizations $ReceiptPath
+    New-UploadAuthorization 'Receipt' $ReceiptPath $RunNonce $ExpectedHarnessSha
+    New-UploadAuthorization 'Evidence' $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot
+    Assert-UploadAuthorization 'Receipt' $ReceiptPath $RunNonce $ExpectedHarnessSha | Out-Null
+    Assert-UploadAuthorization 'Evidence' $ReceiptPath $RunNonce $ExpectedHarnessSha $EvidenceRoot | Out-Null
+    Write-Output 'behavioral suite and post-suite finalization passed'
+    exit 0
+  } catch {
+    try { Remove-UploadAuthorizations $ReceiptPath } catch {}
+    throw
+  }
 }
 
 if ($Mode -eq 'ValidateReceipt') {
@@ -729,7 +1049,10 @@ $candidateObservedBuild = $null
 $baselineObservedSha = $null
 $baselineObservedVersion = $null
 $ownedRoot = if ($EvidenceRoot) { Split-Path -Parent $EvidenceRoot } else { $null }
-$canary = ('COOP' + '-ACCEPTANCE-CANARY-' + [guid]::NewGuid().ToString('N'))
+$canary = if ($Canary) {
+  if ($Canary -cnotmatch '^COOP-ACCEPTANCE-CANARY-[0-9a-f]{32}$') { throw 'Canary must be exact current-run acceptance canary' }
+  $Canary
+} else { 'COOP-ACCEPTANCE-CANARY-' + [guid]::NewGuid().ToString('N') }
 $runFailure = $null
 $evidenceEligible = $false
 $authorizationRevoked = $false
@@ -753,9 +1076,9 @@ try {
   if (-not (Test-StrictSha $ExpectedHarnessSha)) { throw 'ExpectedHarnessSha must be exact 40-hex' }
   if (-not (Test-StrictSha $ExpectedCandidateSha)) { throw 'ExpectedCandidateSha must be exact lowercase 40-hex' }
   if ($ExpectedCandidateBuild -cnotmatch '^build-[0-9a-f]{8}$') { throw 'ExpectedCandidateBuild must be an exact build fingerprint' }
-  foreach ($path in @($HarnessRoot,$CandidateRoot,$BaselineRoot)) {
-    if (-not (Test-Path -LiteralPath $path -PathType Container)) { throw "checkout missing: $path" }
-  }
+  Assert-CheckoutIdentity $HarnessRoot 'harness' $ExpectedHarnessSha
+  Assert-CheckoutIdentity $CandidateRoot 'candidate' $script:CandidateSha
+  Assert-CheckoutIdentity $BaselineRoot 'baseline' $script:BaselineSha
   $harnessObservedSha = (& git -C $HarnessRoot rev-parse HEAD).Trim()
   $candidateObservedSha = (& git -C $CandidateRoot rev-parse HEAD).Trim()
   $baselineObservedSha = (& git -C $BaselineRoot rev-parse HEAD).Trim()
@@ -780,7 +1103,7 @@ try {
   $receiptFull = [System.IO.Path]::GetFullPath($ReceiptPath)
   if ($receiptFull.StartsWith($evidenceFull, [StringComparison]::OrdinalIgnoreCase)) { throw 'ReceiptPath must be outside EvidenceRoot so a safe failure receipt can be retained' }
   Assert-EmptyOwnedRoot $ownedRoot
-  New-Item -ItemType Directory -Path $EvidenceRoot | Out-Null
+  Assert-EmptyOwnedRoot $EvidenceRoot
   $logs = Join-Path $EvidenceRoot 'logs'; New-Item -ItemType Directory -Path $logs | Out-Null
   $profileRoot = Join-Path $ownedRoot 'profile'
   $npmRoot = Join-Path $ownedRoot 'npm-global'
@@ -827,11 +1150,25 @@ try {
   $doctorBase = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'scripts\doctor.ps1'),'--json') (Join-Path $logs 'baseline-doctor') 600
   Assert-ExitZero $doctorBase 'baseline doctor'
   $doctorBaseJson = Get-Content -LiteralPath $doctorBase.Stdout -Raw | ConvertFrom-Json
+  $baselineManifest = Get-Content -LiteralPath (Join-Path $BaselineRoot 'config\release-manifest.json') -Raw | ConvertFrom-Json
+  $candidateManifest = Get-Content -LiteralPath (Join-Path $CandidateRoot 'config\release-manifest.json') -Raw | ConvertFrom-Json
+  $baselineNpm = Invoke-Bounded 'npm.cmd' @('ls','-g','--depth=0','--json') (Join-Path $logs 'baseline-npm-inventory') 300
+  Assert-ExitZero $baselineNpm 'baseline npm inventory'
+  $baselineNpmJson = Get-Content -LiteralPath $baselineNpm.Stdout -Raw | ConvertFrom-Json
+  $baselineNpmToolState = [ordered]@{}
+  foreach ($name in @($candidateManifest.npm_tools.PSObject.Properties.Name)) {
+    $property = $baselineNpmJson.dependencies.PSObject.Properties[$name]
+    $baselineNpmToolState[$name] = if ($null -eq $property) { 'NOT_INSTALLED' } else { [string]$property.Value.version }
+  }
   if ($doctorBaseJson.fail -ne 0) { throw 'baseline Doctor JSON contains required failures' }
 
   $answers = Join-Path $ownedRoot 'onboard-input.txt'
   [System.IO.File]::WriteAllText($answers, "Acceptance Operator`n2`nn`nn`n", (New-Object System.Text.UTF8Encoding($false)))
-  $onboard = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'bin\coop.ps1'),'onboard','--json') (Join-Path $logs 'baseline-onboard') 300 $answers
+  # v0.23.1's launcher omitted scripts/onboard.py's required `onboard`
+  # subcommand. Seed realistic pre-upgrade state through that version's actual
+  # onboarding implementation; the candidate launcher is exercised below.
+  $onboardPython = Get-AcceptancePython
+  $onboard = Invoke-Bounded $onboardPython @((Join-Path $BaselineRoot 'scripts\onboard.py'),'onboard','--json') (Join-Path $logs 'baseline-onboard') 300 $answers
   Assert-ExitZero $onboard 'baseline supported onboarding'
   Remove-Item -LiteralPath $answers -Force
 
@@ -859,18 +1196,19 @@ try {
   Assert-ExitZero $supportBase 'baseline Support'
   if (@(Find-Canary $baselineSupportPath $canary).Count -gt 0) { throw 'Support exported planted credential canary' }
 
-  $profileStateFiles = @(
+  $managedMcpPath = Join-Path $agentRoot 'mcp.json'
+  $preservedStateFiles = @(
     (Join-Path $profileRoot '.coop\user.json'),
     (Join-Path $profileRoot '.coop\config'),
-    (Join-Path $agentRoot 'mcp.json'),
     (Join-Path $fixtureRepo '.coop\project.yml')
   )
   if ([System.IO.Path]::GetFullPath($env:COOP_AGENT_DIR) -ne [System.IO.Path]::GetFullPath((Join-Path $env:COOP_DIR '.coop\agent'))) { throw 'COOP_AGENT_DIR does not match the supported onboarding agent path' }
   $stateBefore = @{}
-  foreach ($file in $profileStateFiles) {
+  foreach ($file in @($preservedStateFiles) + @($managedMcpPath)) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "realistic state missing after baseline exercise: $file" }
     $stateBefore[$file] = Get-FileSha $file
   }
+  $baselineMcpSha = $stateBefore[$managedMcpPath]
   $repoBefore = Get-TreeHash $fixtureRepo
   [void]$claims.Add((New-Claim 'baseline-source-install' 'BASELINE' 'PASS' $true $true $false 'Actual v0.23.1 source install, Doctor, Support, onboarding, and project initialization completed.' @(
     (New-Evidence 'COMMAND' 'baseline install exited 0' '.\scripts\install.ps1 --yes --no-prereqs' $r.ExitCode "baseline:$baselineObservedSha" $r.Stdout),
@@ -880,7 +1218,7 @@ try {
 
   $candidateInstall = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'scripts\install.ps1'),'--yes','--no-prereqs') (Join-Path $logs 'candidate-upgrade-install') 2700
   Assert-ExitZero $candidateInstall 'candidate source upgrade install'
-  foreach ($file in $profileStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "preserved state changed during candidate upgrade: $file" } }
+  foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "preserved state changed during candidate upgrade: $file" } }
   if ((Get-TreeHash $fixtureRepo) -ne $repoBefore) { throw 'representative repository mutated merely due to candidate upgrade' }
 
   $candidateDoctor = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'scripts\doctor.ps1'),'--json') (Join-Path $logs 'candidate-doctor') 600
@@ -897,13 +1235,15 @@ try {
   if ([string]$supportJson.versions.coopBuild -cne $script:CandidateSupportBuild) { throw "candidate Support build identity mismatch: $($supportJson.versions.coopBuild)" }
   $candidateObservedBuild = [string]$supportJson.versions.coopBuild
 
-  $manifest = Get-Content -LiteralPath (Join-Path $CandidateRoot 'config\release-manifest.json') -Raw | ConvertFrom-Json
+  $manifest = $candidateManifest
   $candidateNpm = Invoke-Bounded 'npm.cmd' @('ls','-g','--depth=0','--json') (Join-Path $logs 'candidate-npm-inventory') 300
   Assert-ExitZero $candidateNpm 'candidate npm inventory'
   $candidateNpmJson = Get-Content -LiteralPath $candidateNpm.Stdout -Raw | ConvertFrom-Json
+  $candidateExtensionInventory = Get-InstalledExtensionInventory $manifest $agentRoot 'candidate'
   $candidateMcpJson = Get-Content -LiteralPath (Join-Path $agentRoot 'mcp.json') -Raw | ConvertFrom-Json
-  $candidatePinProof = Get-ManifestPinProof $candidateDoctorJson $manifest $candidateObservedVersion $candidateNpmJson $candidateMcpJson 'candidate'
+  $candidatePinProof = Get-ManifestPinProof $candidateDoctorJson $manifest $candidateObservedVersion $candidateNpmJson $candidateExtensionInventory $candidateMcpJson 'candidate'
   Assert-ManifestPinProof $candidatePinProof $manifest 'candidate'
+  $candidateMcpSha = Get-FileSha $managedMcpPath
   $candidatePinProofPath = Join-Path $EvidenceRoot 'candidate-manifest-pin-proof.json'
   [System.IO.File]::WriteAllText($candidatePinProofPath, ($candidatePinProof | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
   $launchSpec = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'bin\coop.ps1'),'launch-spec','--json') (Join-Path $logs 'candidate-launch-spec') 300
@@ -918,13 +1258,14 @@ try {
   )))
   [void]$claims.Add((New-Claim 'candidate-health-and-tools' 'UPGRADE' 'PASS' $true $true $false 'Doctor, Support identity, governed launch spec, data-doc command, and complete observable manifest pin set were proven.' @(
     (New-Evidence 'COMMAND' "Doctor fail count 0; Support $($supportJson.versions.coopBuild)" '.\scripts\doctor.ps1 --json; coop support --json' 0 "candidate:$candidateObservedSha" $candidateSupportPath),
-    (New-Evidence 'FILE' 'COOP, Pi, extension, Python, npm, and managed MCP pins match the candidate manifest; unmanaged MCP pins are explicitly non-applicable' 'Doctor JSON plus npm global inventory and managed mcp.json specs' 0 "candidate:$candidateObservedSha" $candidatePinProofPath),
+    (New-Evidence 'FILE' 'COOP, Pi, extension, Python, npm, and managed MCP pins match the candidate manifest; unmanaged MCP pins are explicitly non-applicable' 'Doctor JSON plus installed extension metadata, npm global inventory, and managed mcp.json specs' 0 "candidate:$candidateObservedSha" $candidatePinProofPath),
     (New-Evidence 'COMMAND' 'data-doc command help exited 0' 'coop data-doc --help' $dataDocHelp.ExitCode "candidate:$candidateObservedSha" $dataDocHelp.Stdout)
   )))
 
   $reinstall = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'scripts\install.ps1'),'--yes','--no-prereqs') (Join-Path $logs 'candidate-reinstall') 2700
   Assert-ExitZero $reinstall 'same-candidate reinstall'
-  foreach ($file in $profileStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during same-candidate reinstall: $file" } }
+  foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during same-candidate reinstall: $file" } }
+  if ((Get-FileSha $managedMcpPath) -ne $candidateMcpSha) { throw 'managed MCP state changed during same-candidate reinstall' }
   if ((Get-TreeHash $fixtureRepo) -ne $repoBefore) { throw 'repository changed during same-candidate reinstall' }
   [void]$claims.Add((New-Claim 'same-candidate-reinstall' 'REINSTALL' 'PASS' $true $true $false 'Same-candidate reinstall was idempotent for exercised state and the fixture repository.' @(
     (New-Evidence 'COMMAND' 'same-candidate reinstall exited 0' '.\scripts\install.ps1 --yes --no-prereqs' $reinstall.ExitCode "candidate:$candidateObservedSha" $reinstall.Stdout)
@@ -932,24 +1273,37 @@ try {
 
   $rollback = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'scripts\install.ps1'),'--yes','--no-prereqs') (Join-Path $logs 'baseline-rollback') 2700
   Assert-ExitZero $rollback 'v0.23.1 source rollback'
-  foreach ($file in $profileStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during rollback: $file" } }
+  [void](Invoke-NpmRollbackReconciliation ([pscustomobject]$baselineNpmToolState) $logs)
+  foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during rollback: $file" } }
+  if ((Get-FileSha $managedMcpPath) -ne $baselineMcpSha) { throw 'managed MCP state did not converge to the baseline during rollback' }
   if ((Get-TreeHash $fixtureRepo) -ne $repoBefore) { throw 'repository changed during rollback' }
   if ((Get-FileSha $sentinel) -ne $sentinelBefore) { throw 'unrelated tool sentinel changed during install/reinstall/rollback' }
   $rollbackDoctor = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'scripts\doctor.ps1'),'--json') (Join-Path $logs 'rollback-doctor') 600
   Assert-ExitZero $rollbackDoctor 'rollback Doctor'
   $rollbackDoctorJson = Get-Content -LiteralPath $rollbackDoctor.Stdout -Raw | ConvertFrom-Json
-  $baselineManifest = Get-Content -LiteralPath (Join-Path $BaselineRoot 'config\release-manifest.json') -Raw | ConvertFrom-Json
   $rollbackNpm = Invoke-Bounded 'npm.cmd' @('ls','-g','--depth=0','--json') (Join-Path $logs 'rollback-npm-inventory') 300
   Assert-ExitZero $rollbackNpm 'rollback npm inventory'
   $rollbackNpmJson = Get-Content -LiteralPath $rollbackNpm.Stdout -Raw | ConvertFrom-Json
+  foreach ($name in @($baselineNpmToolState.Keys)) {
+    $property = $rollbackNpmJson.dependencies.PSObject.Properties[$name]
+    $actual = if ($null -eq $property) { 'NOT_INSTALLED' } else { [string]$property.Value.version }
+    if ($actual -cne $baselineNpmToolState[$name]) { throw "rollback npm state did not return to observed baseline: $name" }
+  }
+  $rollbackExtensionInventory = Get-InstalledExtensionInventory $baselineManifest $agentRoot 'rollback'
   $rollbackMcpJson = Get-Content -LiteralPath (Join-Path $agentRoot 'mcp.json') -Raw | ConvertFrom-Json
-  $rollbackPinProof = Get-ManifestPinProof $rollbackDoctorJson $baselineManifest $baselineObservedVersion $rollbackNpmJson $rollbackMcpJson 'rollback'
-  Assert-ManifestPinProof $rollbackPinProof $baselineManifest 'rollback'
+  $rollbackExpected = ($baselineManifest | ConvertTo-Json -Depth 20 | ConvertFrom-Json)
+  foreach ($name in @($rollbackExpected.npm_tools.PSObject.Properties.Name)) {
+    $expected = $baselineNpmToolState[$name]
+    if ($expected -ceq 'NOT_INSTALLED') { $rollbackExpected.npm_tools.PSObject.Properties.Remove($name) }
+    else { $rollbackExpected.npm_tools.PSObject.Properties[$name].Value = $expected }
+  }
+  $rollbackPinProof = Get-ManifestPinProof $rollbackDoctorJson $rollbackExpected $baselineObservedVersion $rollbackNpmJson $rollbackExtensionInventory $rollbackMcpJson 'rollback'
+  Assert-ManifestPinProof $rollbackPinProof $rollbackExpected 'rollback'
   $rollbackPinProofPath = Join-Path $EvidenceRoot 'rollback-manifest-pin-proof.json'
   [System.IO.File]::WriteAllText($rollbackPinProofPath, ($rollbackPinProof | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
-  [void]$claims.Add((New-Claim 'baseline-rollback-preservation' 'ROLLBACK' 'PASS' $true $true $false 'Actual baseline source install restored the complete observable baseline manifest pin set without wiping state, project data, or unrelated sentinel.' @(
+  [void]$claims.Add((New-Claim 'baseline-rollback-preservation' 'ROLLBACK' 'PASS' $true $true $false 'Actual baseline source install plus bounded npm reconciliation restored the observed pre-upgrade baseline state without wiping state, project data, or unrelated sentinel.' @(
     (New-Evidence 'COMMAND' 'rollback install and Doctor exited 0' '.\scripts\install.ps1 --yes --no-prereqs; .\scripts\doctor.ps1 --json' 0 "baseline:$baselineObservedSha" $rollbackDoctor.Stdout),
-    (New-Evidence 'FILE' 'COOP, Pi, extension, Python, npm, and managed MCP pins match the baseline manifest; unmanaged MCP pins are explicitly non-applicable' 'Doctor JSON plus npm global inventory and managed mcp.json specs' 0 "baseline:$baselineObservedSha" $rollbackPinProofPath),
+    (New-Evidence 'FILE' 'COOP, Pi, extension, Python, and managed MCP pins match the baseline manifest; npm tools match the directly observed pre-upgrade baseline, including absence of its unpublished desktop-bridge pin; unmanaged MCP pins are explicitly non-applicable' 'Doctor JSON plus installed extension metadata, pre-upgrade/rollback npm inventories, and managed mcp.json specs' 0 "baseline:$baselineObservedSha" $rollbackPinProofPath),
     (New-Evidence 'HASH' "unrelated sentinel remained $sentinelBefore" 'SHA-256 before/after' 0 "baseline:$baselineObservedSha" $sentinel)
   )))
 
@@ -961,7 +1315,7 @@ try {
     $artifactFailure = 'artifact finalization failed closed because the current run did not fully succeed'
   } else {
     try {
-      Assert-FrozenArtifactsSafe $EvidenceRoot $canary $CandidateRoot $BaselineRoot
+      Assert-FrozenArtifactsSafe $EvidenceRoot $canary $CandidateRoot $BaselineRoot $HarnessRoot
       $evidenceEligible = $true
     } catch {
       $artifactFailure = 'artifact finalization failed closed; process-tree termination, checkout cleanliness, or evidence sanitization was not proven'
@@ -969,7 +1323,7 @@ try {
   }
   if ($artifactFailure) {
     if (-not $runFailure) { $runFailure = $artifactFailure }
-    if ($EvidenceRoot -and (Test-Path -LiteralPath $EvidenceRoot)) { Remove-Item -LiteralPath $EvidenceRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    [void](Remove-SafeTree $EvidenceRoot)
     [void]$claims.Add((New-Claim 'sanitized-read-only-evidence' 'SECURITY' 'FAIL' $true $true $false $artifactFailure @(
       (New-Evidence 'COMMAND' 'evidence was removed from upload eligibility' 'current-run success plus final artifact canary and checkout scan' 1 $(if ($harnessObservedSha) { "harness:$harnessObservedSha" } else { 'harness' }))
     )))
@@ -992,6 +1346,13 @@ try {
     candidate = [ordered]@{ expected_sha = $script:CandidateSha; observed_sha = $candidateObservedSha; expected_version = '0.23.1'; observed_version = $candidateObservedVersion; expected_build = $script:CandidateSupportBuild; observed_build = $candidateObservedBuild }
     baseline = [ordered]@{ expected_sha = $script:BaselineSha; observed_sha = $baselineObservedSha; expected_version = '0.23.1'; observed_version = $baselineObservedVersion }
     harness = [ordered]@{ observed_sha = $harnessObservedSha; observed_version = $harnessObservedVersion }
+    trust_model = [ordered]@{
+      name = 'reviewed-candidate-non-malicious'
+      candidate_admin_code_trusted = $true
+      adversarial_admin_containment = $false
+      deferred_hardening = 'post-release'
+      limitation = 'Certification does not contain intentionally malicious administrator-level candidate code.'
+    }
     execution = [ordered]@{
       layer = 'AUTOMATED_WINDOWS'
       runner = if ($env:RUNNER_NAME) { $env:RUNNER_NAME } else { [Environment]::MachineName }
@@ -1012,7 +1373,7 @@ try {
     if ($sanitizationFailed -or $receiptText.Contains($canary)) {
       $evidenceEligible = $false
       $runFailure = 'artifact finalization failed closed; only a controlled minimal receipt was retained'
-      if ($EvidenceRoot -and (Test-Path -LiteralPath $EvidenceRoot)) { Remove-Item -LiteralPath $EvidenceRoot -Recurse -Force -ErrorAction SilentlyContinue }
+      [void](Remove-SafeTree $EvidenceRoot)
       $claims = @(
         (New-Claim 'sanitized-read-only-evidence' 'SECURITY' 'FAIL' $true $true $false 'Receipt scan could not prove sanitization; evidence was removed from upload eligibility.' @((New-Evidence 'COMMAND' 'final receipt scan failed closed' 'final exact canary scan' 1 'harness'))),
         (New-Claim 'automated-harness-completion' 'SECURITY' 'FAIL' $true $true $false 'Automated harness failed closed during artifact finalization.' @((New-Evidence 'COMMAND' 'harness did not complete with uploadable evidence' 'acceptance/windows-terminal-workstation.ps1 -Mode Run' 1 'harness')))
@@ -1036,7 +1397,7 @@ try {
       $evidenceEligible = $false
       if ($runFailure) { $runFailure = "$runFailure; upload authorization failed: $($_.Exception.Message)" } else { $runFailure = "upload authorization failed: $($_.Exception.Message)" }
       try { Remove-UploadAuthorizations $ReceiptPath } catch { $runFailure = "$runFailure; authorization revocation failed: $($_.Exception.Message)" }
-      if ($EvidenceRoot -and (Test-Path -LiteralPath $EvidenceRoot)) { Remove-Item -LiteralPath $EvidenceRoot -Recurse -Force -ErrorAction SilentlyContinue }
+      [void](Remove-SafeTree $EvidenceRoot)
     }
   }
 }

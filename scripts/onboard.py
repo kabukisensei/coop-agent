@@ -4,6 +4,7 @@ coop onboard / coop profile edit
 First-run and profile-management wizard for COOP.
 Writes only to ~/.coop/user.json and ~/.coop/config; never touches project files.
 """
+
 import argparse
 import json
 import os
@@ -17,7 +18,12 @@ LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from azure_auth import azure_cli_available, discover_azure_tenants, login_azure, tenant_label
+from azure_auth import (  # noqa: E402
+    azure_cli_available,
+    discover_azure_tenants,
+    login_azure,
+    tenant_label,
+)
 
 COOP_DIR = Path(os.environ.get("COOP_DIR", Path.home())) / ".coop"
 USER_JSON = COOP_DIR / "user.json"
@@ -56,7 +62,11 @@ def parse_consultant_name(project_yml: Path) -> str | None:
         text = project_yml.read_text(encoding="utf-8")
     except Exception:
         return None
-    m = re.search(r"^\s*consultant_name\s*:\s*['\"]?(.*?)(?:['\"]?\s*$)", text, re.MULTILINE | re.IGNORECASE)
+    m = re.search(
+        r"^\s*consultant_name\s*:\s*['\"]?(.*?)(?:['\"]?\s*$)",
+        text,
+        re.MULTILINE | re.IGNORECASE,
+    )
     if not m:
         return None
     name = m.group(1).strip().strip('"').strip("'")
@@ -164,9 +174,13 @@ def load_config() -> dict:
     try:
         value = json.loads(CONFIG_JSON.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"Invalid existing {CONFIG_JSON}: {exc}. Fix or move it; COOP will not overwrite it.") from exc
+        raise ValueError(
+            f"Invalid existing {CONFIG_JSON}: {exc}. Fix or move it; COOP will not overwrite it."
+        ) from exc
     if not isinstance(value, dict) or value.get("schema_version") != 1:
-        raise ValueError(f"Unsupported existing {CONFIG_JSON} schema; expected schema_version 1. COOP will not overwrite it.")
+        raise ValueError(
+            f"Unsupported existing {CONFIG_JSON} schema; expected schema_version 1. COOP will not overwrite it."
+        )
     return value
 
 
@@ -175,18 +189,24 @@ def save_config(data: dict) -> None:
 
 
 def read_confirm(prompt: str, default: bool) -> bool:
-    answer = read_input(f"{prompt} [{'Y/n' if default else 'y/N'}]: ", "y" if default else "n")
+    answer = read_input(
+        f"{prompt} [{'Y/n' if default else 'y/N'}]: ", "y" if default else "n"
+    )
     return answer.lower() in ("y", "yes", "true", "1")
 
 
-def choose_tenant(tenants: list[dict[str, str]], *, login_result: bool = False) -> dict[str, str]:
+def choose_tenant(
+    tenants: list[dict[str, str]], *, login_result: bool = False
+) -> dict[str, str]:
     """Choose one tenant, avoiding another confirmation when login found one."""
     if not tenants:
         return {}
     if len(tenants) == 1:
         tenant = tenants[0]
         if login_result:
-            sys.stderr.write(f"✓ Signed in. Detected client tenant {tenant_label(tenant)}.\n")
+            sys.stderr.write(
+                f"✓ Signed in. Detected client tenant {tenant_label(tenant)}.\n"
+            )
             return tenant
         if read_confirm(
             f"Detected Azure tenant {tenant_label(tenant)}.\n"
@@ -197,7 +217,11 @@ def choose_tenant(tenants: list[dict[str, str]], *, login_result: bool = False) 
         return {}
 
     labels = [tenant_label(tenant) for tenant in tenants]
-    sys.stderr.write("✓ Azure sign-in succeeded.\n" if login_result else "Multiple signed-in Azure tenants detected.\n")
+    sys.stderr.write(
+        "✓ Azure sign-in succeeded.\n"
+        if login_result
+        else "Multiple signed-in Azure tenants detected.\n"
+    )
     selected = read_choice(
         "Which tenant owns the client's Fabric and Power BI environment?",
         labels,
@@ -220,7 +244,9 @@ def sign_in_and_detect_tenant() -> dict[str, str]:
     else:
         sys.stderr.write("Azure sign-in did not complete.\n")
     if read_confirm("Try again with a device code?", True):
-        sys.stderr.write("Starting device-code sign-in. Follow the Azure instructions below…\n")
+        sys.stderr.write(
+            "Starting device-code sign-in. Follow the Azure instructions below…\n"
+        )
         ok, tenants = login_azure(use_device_code=True)
         if ok and tenants:
             return choose_tenant(tenants, login_result=True)
@@ -239,7 +265,11 @@ def validate_ado_organization(value: str) -> str | None:
     v = value.strip()
     if not v:
         return "Azure DevOps organization cannot be empty."
-    if re.match(r"^https://(?:dev\.azure\.com/[A-Za-z0-9._-]+|[A-Za-z0-9._-]+\.visualstudio\.com)/?$", v, re.IGNORECASE):
+    if re.match(
+        r"^https://(?:dev\.azure\.com/[A-Za-z0-9._-]+|[A-Za-z0-9._-]+\.visualstudio\.com)/?$",
+        v,
+        re.IGNORECASE,
+    ):
         return None
     if v.lower().startswith(("http://", "https://")) or re.search(r"\s", v):
         return "Enter a short organization name (e.g. 'contoso') or a https://dev.azure.com/<org> URL."
@@ -248,10 +278,18 @@ def validate_ado_organization(value: str) -> str | None:
     return None
 
 
-def run_config_questions(existing: dict | None = None, *, quick_start: bool = False) -> dict:
+def run_config_questions(
+    existing: dict | None = None, *, quick_start: bool = False
+) -> dict:
     existing = existing or load_config()
-    old_azure = existing.get("azure", {}) if isinstance(existing.get("azure", {}), dict) else {}
-    old_i = existing.get("integrations", {}) if isinstance(existing.get("integrations", {}), dict) else {}
+    old_azure = (
+        existing.get("azure", {}) if isinstance(existing.get("azure", {}), dict) else {}
+    )
+    old_i = (
+        existing.get("integrations", {})
+        if isinstance(existing.get("integrations", {}), dict)
+        else {}
+    )
     discovered = discover_azure_tenants()
     tenant = str(old_azure.get("tenant_id", ""))
     tenant_name = str(old_azure.get("tenant_name", ""))
@@ -268,14 +306,18 @@ def run_config_questions(existing: dict | None = None, *, quick_start: bool = Fa
 
     configure_cloud = True
     if quick_start and not tenant:
-        configure_cloud = read_confirm("Connect Coop to client Microsoft Fabric and Power BI now?", True)
+        configure_cloud = read_confirm(
+            "Connect Coop to client Microsoft Fabric and Power BI now?", True
+        )
 
     selected: dict[str, str] = {}
     if configure_cloud and discovered:
         selected = choose_tenant(discovered)
     elif configure_cloud and not tenant and azure_cli_available():
         sys.stderr.write("Azure CLI is ready, but it is not signed in.\n")
-        if read_confirm("Sign in now so Coop can detect the client tenant automatically?", True):
+        if read_confirm(
+            "Sign in now so Coop can detect the client tenant automatically?", True
+        ):
             selected = sign_in_and_detect_tenant()
 
     if selected:
@@ -285,12 +327,18 @@ def run_config_questions(existing: dict | None = None, *, quick_start: bool = Fa
         # Keep configuration editing explicit and preserve the established prompt
         # cadence for users who only want to review other integration choices.
         if read_confirm("Change the saved client Azure tenant ID?", False):
-            sys.stderr.write("Find it in Azure Portal > Microsoft Entra ID > Overview > Tenant ID.\n")
+            sys.stderr.write(
+                "Find it in Azure Portal > Microsoft Entra ID > Overview > Tenant ID.\n"
+            )
             tenant = read_input("Azure tenant ID (GUID): ", tenant)
             tenant_name = ""
-    elif configure_cloud and not tenant and read_confirm(
-        "Configure the Azure tenant whose Fabric and Power BI resources Coop should access now?",
-        False if quick_start else bool(tenant),
+    elif (
+        configure_cloud
+        and not tenant
+        and read_confirm(
+            "Configure the Azure tenant whose Fabric and Power BI resources Coop should access now?",
+            False if quick_start else bool(tenant),
+        )
     ):
         sys.stderr.write(
             "Find it in Azure Portal > Microsoft Entra ID > Overview > Tenant ID.\n"
@@ -302,19 +350,27 @@ def run_config_questions(existing: dict | None = None, *, quick_start: bool = Fa
     integrations = {}
     omitted = {}  # key -> reason shown in the summary
 
-    old_ado = existing.get("azure_devops", {}) if isinstance(existing.get("azure_devops", {}), dict) else {}
+    old_ado = (
+        existing.get("azure_devops", {})
+        if isinstance(existing.get("azure_devops", {}), dict)
+        else {}
+    )
     organization = str(old_ado.get("organization", ""))
 
     if quick_start:
-        integrations.update({
-            "fabric": bool(tenant),
-            "power_bi": bool(tenant),
-            "power_bi_modeling": True,
-            "azure_devops": False,
-            "microsoft_learn": True,
-        })
+        integrations.update(
+            {
+                "fabric": bool(tenant),
+                "fabric_sql_endpoint": bool(tenant),
+                "power_bi": bool(tenant),
+                "power_bi_modeling": True,
+                "azure_devops": False,
+                "microsoft_learn": True,
+            }
+        )
         if not tenant:
             omitted["fabric"] = "connect Azure later"
+            omitted["fabric_sql_endpoint"] = "connect Azure later"
             omitted["power_bi"] = "requires an Azure tenant"
         omitted["azure_devops"] = "set up later if needed"
         sys.stderr.write(
@@ -323,23 +379,40 @@ def run_config_questions(existing: dict | None = None, *, quick_start: bool = Fa
     else:
         # Fabric MCP follows the active Azure CLI login; it works without an
         # explicitly stored tenant (the login itself carries the tenant).
-        integrations["fabric"] = read_confirm("Enable Microsoft Fabric MCP? (follows your active Azure CLI login)", bool(old_i.get("fabric", True)))
+        integrations["fabric"] = read_confirm(
+            "Enable Microsoft Fabric MCP? (follows your active Azure CLI login)",
+            bool(old_i.get("fabric", True)),
+        )
+        integrations["fabric_sql_endpoint"] = read_confirm(
+            "Enable Fabric Warehouse SQL endpoint MCP? (approval-gated SQL)",
+            bool(old_i.get("fabric_sql_endpoint", old_i.get("fabric", True))),
+        )
 
         # Power BI MCP needs an explicit tenant ID. Never offer an enable toggle we
         # cannot honor: without a tenant it stays disabled, visibly.
         if tenant:
-            integrations["power_bi"] = read_confirm("Enable Power BI MCP?", bool(old_i.get("power_bi", True)))
+            integrations["power_bi"] = read_confirm(
+                "Enable Power BI MCP?", bool(old_i.get("power_bi", True))
+            )
         else:
             integrations["power_bi"] = False
             omitted["power_bi"] = "requires an Azure tenant"
-            sys.stderr.write("Power BI MCP requires an Azure tenant and will remain disabled.\n")
+            sys.stderr.write(
+                "Power BI MCP requires an Azure tenant and will remain disabled.\n"
+            )
 
-        integrations["power_bi_modeling"] = read_confirm("Enable Power BI Modeling MCP?", bool(old_i.get("power_bi_modeling", True)))
-        integrations["azure_devops"] = read_confirm("Enable Azure DevOps MCP?", bool(old_i.get("azure_devops", True)))
+        integrations["power_bi_modeling"] = read_confirm(
+            "Enable Power BI Modeling MCP?", bool(old_i.get("power_bi_modeling", True))
+        )
+        integrations["azure_devops"] = read_confirm(
+            "Enable Azure DevOps MCP?", bool(old_i.get("azure_devops", True))
+        )
 
     if integrations["azure_devops"]:
         while True:
-            organization, eof = read_line_bounded("Azure DevOps organization (short name or full URL): ", organization)
+            organization, eof = read_line_bounded(
+                "Azure DevOps organization (short name or full URL): ", organization
+            )
             err = validate_ado_organization(organization)
             if err is None:
                 break
@@ -352,7 +425,10 @@ def run_config_questions(existing: dict | None = None, *, quick_start: bool = Fa
                 omitted["azure_devops"] = "no organization provided"
                 sys.stderr.write("Input ended; Azure DevOps MCP saved disabled.\n")
                 break
-            if not read_confirm("Try another organization? (answering 'n' disables Azure DevOps MCP)", True):
+            if not read_confirm(
+                "Try another organization? (answering 'n' disables Azure DevOps MCP)",
+                True,
+            ):
                 integrations["azure_devops"] = False
                 omitted["azure_devops"] = "no valid organization"
                 break
@@ -360,13 +436,19 @@ def run_config_questions(existing: dict | None = None, *, quick_start: bool = Fa
         omitted["azure_devops"] = "not enabled"
 
     if not quick_start:
-        integrations["microsoft_learn"] = read_confirm("Enable Microsoft Learn MCP?", bool(old_i.get("microsoft_learn", True)))
+        integrations["microsoft_learn"] = read_confirm(
+            "Enable Microsoft Learn MCP?", bool(old_i.get("microsoft_learn", True))
+        )
 
     # Cooptimize Shared Knowledge (teamai-cli-style team knowledge repos, first:
     # github.com/cooptimize/incremental-bi). Optional; declining/absent/disabled is
     # a clean no-op everywhere. repos is a LIST from day one (multi-KB future), and
     # an existing list is preserved verbatim across re-runs — onboarding never edits it.
-    old_k = existing.get("knowledge", {}) if isinstance(existing.get("knowledge", {}), dict) else {}
+    old_k = (
+        existing.get("knowledge", {})
+        if isinstance(existing.get("knowledge", {}), dict)
+        else {}
+    )
     knowledge_enabled = read_confirm(
         "Enable Cooptimize Shared Knowledge sync? (clones team knowledge repos; `coop sync` keeps them fresh)",
         bool(old_k.get("enabled", False)),
@@ -375,7 +457,8 @@ def run_config_questions(existing: dict | None = None, *, quick_start: bool = Fa
     if knowledge_enabled:
         knowledge = {
             "enabled": True,
-            "repos": old_repos or [
+            "repos": old_repos
+            or [
                 {
                     "url": "https://github.com/cooptimize/incremental-bi.git",
                     "local_path": "~/.coop/knowledge/incremental-bi",
@@ -387,22 +470,35 @@ def run_config_questions(existing: dict | None = None, *, quick_start: bool = Fa
 
     # Honest summary BEFORE anything is saved.
     labels = {
-        "fabric": "Microsoft Fabric MCP", "power_bi": "Power BI MCP",
-        "power_bi_modeling": "Power BI Modeling MCP", "azure_devops": "Azure DevOps MCP",
+        "fabric": "Microsoft Fabric MCP",
+        "power_bi": "Power BI MCP",
+        "fabric_sql_endpoint": "Fabric Warehouse SQL endpoint MCP",
+        "power_bi_modeling": "Power BI Modeling MCP",
+        "azure_devops": "Azure DevOps MCP",
         "microsoft_learn": "Microsoft Learn MCP",
     }
     enabled_labels = [labels[k] for k in labels if integrations.get(k)]
-    omitted_lines = [f"{labels[k]} ({reason})" for k, reason in omitted.items() if not integrations.get(k)]
+    omitted_lines = [
+        f"{labels[k]} ({reason})"
+        for k, reason in omitted.items()
+        if not integrations.get(k)
+    ]
     sys.stderr.write("\nReview:\n")
     if tenant:
-        sys.stderr.write(f"- Client Azure tenant: {tenant_name or '(display name unknown)'} ({tenant})\n")
+        sys.stderr.write(
+            f"- Client Azure tenant: {tenant_name or '(display name unknown)'} ({tenant})\n"
+        )
     else:
         sys.stderr.write("- Client Azure tenant: not configured\n")
     if knowledge["enabled"]:
-        sys.stderr.write(f"- Cooptimize Shared Knowledge: enabled ({len(knowledge['repos'])} repo(s))\n")
+        sys.stderr.write(
+            f"- Cooptimize Shared Knowledge: enabled ({len(knowledge['repos'])} repo(s))\n"
+        )
     else:
         sys.stderr.write("- Cooptimize Shared Knowledge: disabled\n")
-    sys.stderr.write(f"- Enabled: {', '.join(enabled_labels) if enabled_labels else 'none'}\n")
+    sys.stderr.write(
+        f"- Enabled: {', '.join(enabled_labels) if enabled_labels else 'none'}\n"
+    )
     for line in omitted_lines:
         sys.stderr.write(f"- Omitted: {line}\n")
     sys.stderr.write(f"- Destination: {CONFIG_JSON}\n")
@@ -419,18 +515,33 @@ def run_config_questions(existing: dict | None = None, *, quick_start: bool = Fa
         "azure_devops": {"organization": organization},
         "mcp": {"safe_mode": "read_only_first"},
         "knowledge": knowledge,
-        "fleet": {"publish_dir": str(existing.get("fleet", {}).get("publish_dir", "")) if isinstance(existing.get("fleet", {}), dict) else ""},
+        "fleet": {
+            "publish_dir": str(existing.get("fleet", {}).get("publish_dir", ""))
+            if isinstance(existing.get("fleet", {}), dict)
+            else ""
+        },
     }
 
 
 def refresh_mcp() -> None:
     helper = Path(__file__).resolve().parent.parent / "lib" / "mcp_config.py"
-    result = subprocess.run([sys.executable, str(helper), "--config", str(CONFIG_JSON), "--output", str(MCP_OUTPUT)])
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(helper),
+            "--config",
+            str(CONFIG_JSON),
+            "--output",
+            str(MCP_OUTPUT),
+        ]
+    )
     if result.returncode != 0:
         raise RuntimeError("MCP config generation failed")
 
 
-def run_profile_questions(existing: dict | None = None, migration_name: str = "") -> dict:
+def run_profile_questions(
+    existing: dict | None = None, migration_name: str = ""
+) -> dict:
     """Ask only the user-profile questions."""
     existing = existing or load_user()
     schema_version = existing.get("schema_version", 1)
@@ -445,7 +556,9 @@ def run_profile_questions(existing: dict | None = None, migration_name: str = ""
         try:
             validate_name(name_default)
         except ValueError as e:
-            sys.stderr.write(f"  Saved profile name is invalid ({e}); entering a new one.\n")
+            sys.stderr.write(
+                f"  Saved profile name is invalid ({e}); entering a new one.\n"
+            )
             name_default = ""
     name = ""
     while True:
@@ -456,7 +569,9 @@ def run_profile_questions(existing: dict | None = None, migration_name: str = ""
             prompt += ": "
             value, eof = read_line_bounded(prompt, name_default)
             if eof and not value:
-                sys.stderr.write("\nNo name entered; aborting onboarding. Run `coop onboard` to try again.\n")
+                sys.stderr.write(
+                    "\nNo name entered; aborting onboarding. Run `coop onboard` to try again.\n"
+                )
                 raise SystemExit(1)
 
             # Assign only AFTER validation: storing the raw value first would let
@@ -468,7 +583,9 @@ def run_profile_questions(existing: dict | None = None, migration_name: str = ""
             if eof:
                 # The saved default was invalid AND input has ended: re-prompting
                 # can never succeed, so stop instead of spinning forever.
-                sys.stderr.write("Input ended with an invalid saved name; aborting onboarding. Run `coop onboard`.\n")
+                sys.stderr.write(
+                    "Input ended with an invalid saved name; aborting onboarding. Run `coop onboard`.\n"
+                )
                 raise SystemExit(1)
 
     preset = read_choice(
@@ -479,7 +596,10 @@ def run_profile_questions(existing: dict | None = None, migration_name: str = ""
 
     custom = ""
     if preset == "custom":
-        custom = read_input(f"Brief custom instruction{' [' + old_custom + ']' if old_custom else ''}: ", default=old_custom)
+        custom = read_input(
+            f"Brief custom instruction{' [' + old_custom + ']' if old_custom else ''}: ",
+            default=old_custom,
+        )
         if len(custom) > 1000:
             sys.stderr.write("  Trimming custom instruction to 1000 characters.\n")
             custom = custom[:1000]
@@ -505,9 +625,13 @@ def maybe_migrate_consultant_name() -> str:
     old_name = parse_consultant_name(project_yml)
     if not old_name:
         return ""
-    sys.stderr.write(f'\nFound consultant_name "{old_name}" in this project\'s old config.\n')
+    sys.stderr.write(
+        f'\nFound consultant_name "{old_name}" in this project\'s old config.\n'
+    )
     try:
-        ans = read_input("Use that as your local COOP profile name? [Y/n]: ", default="Y")
+        ans = read_input(
+            "Use that as your local COOP profile name? [Y/n]: ", default="Y"
+        )
     except (EOFError, KeyboardInterrupt):
         return ""
     if ans.lower() in ("y", "yes", ""):
@@ -557,7 +681,9 @@ def cmd_onboard(args: argparse.Namespace) -> int:
     else:
         profile = run_full_onboarding()
 
-    config = run_config_questions(existing_config, quick_start=not existing_config and not args.config_only)
+    config = run_config_questions(
+        existing_config, quick_start=not existing_config and not args.config_only
+    )
     save_config(config)
     try:
         refresh_mcp()
@@ -573,7 +699,9 @@ def cmd_onboard(args: argparse.Namespace) -> int:
     if not config["azure"].get("tenant_id") and (config["integrations"]["power_bi"]):
         # Only reachable via hand-edited legacy configs; the wizard itself can no
         # longer save Power BI as enabled without a tenant.
-        sys.stderr.write("Power BI MCP is omitted until an Azure tenant is configured; run `coop onboard --edit`.\n")
+        sys.stderr.write(
+            "Power BI MCP is omitted until an Azure tenant is configured; run `coop onboard --edit`.\n"
+        )
     if os.environ.get("COOP_ONBOARD_FROM_LAUNCH") == "1":
         sys.stderr.write("Setup complete. Starting Coop…\n")
     else:
@@ -614,14 +742,22 @@ def cmd_profile(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="coop-onboard", description="COOP onboarding and profile management.")
+    parser = argparse.ArgumentParser(
+        prog="coop-onboard", description="COOP onboarding and profile management."
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     onboard = sub.add_parser("onboard", help="Run first-run onboarding.")
-    onboard.add_argument("--edit", action="store_true", help="Re-run only profile questions.")
+    onboard.add_argument(
+        "--edit", action="store_true", help="Re-run only profile questions."
+    )
     onboard.add_argument("--reset", action="store_true", help="Remove local profile.")
     onboard.add_argument("--json", action="store_true", help="Emit profile as JSON.")
-    onboard.add_argument("--config-only", action="store_true", help="Edit integrations without changing the user profile.")
+    onboard.add_argument(
+        "--config-only",
+        action="store_true",
+        help="Edit integrations without changing the user profile.",
+    )
 
     profile = sub.add_parser("profile", help="Show or edit COOP profile.")
     profile.add_argument("--edit", action="store_true", help="Edit profile.")

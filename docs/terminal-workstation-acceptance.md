@@ -12,6 +12,20 @@ is mandatory before any readiness decision. At this harness revision, native
 Windows Job Object execution and every interactive disposable-VM journey remain
 pending; the cross-platform tests below are not substitutes for either gate.
 
+## Certification trust boundary
+
+This certification uses the **practical reviewed-candidate trust model**. The exact
+independently reviewed candidate SHA is assumed to be non-malicious, including when
+its installation and lifecycle code runs with administrator privileges. The gate
+proves installation, upgrade, same-candidate reinstall, rollback, lifecycle safety,
+fail-closed behavior, evidence integrity, and normal operational reliability. It
+does **not** claim to contain intentionally malicious administrator-level candidate
+code using Task Scheduler, WMI, or equivalent operating-system mechanisms.
+Adversarial administrator-level containment is deferred to post-release security
+hardening. Every receipt records this limitation in its required `trust_model`
+object. This boundary does not relax accidental-fault, evidence, process-lifecycle,
+or rollback safety checks.
+
 ## Automated native-Windows evidence
 
 Before merge, the workflow runs automatically only for a same-repository pull
@@ -144,6 +158,7 @@ exit code alone is not evidence for an interactive behavior.
 | `reopen-resume` | Close and reopen Coop, list the prior session, resume it, and continue successfully. |
 | `teamai-failure-isolation` | With TeamAI missing, offline, or pending approval, the integration reports that state truthfully while core terminal use remains available. Do not install or fake an adapter. |
 | `rollback-instructions` | Verify the documented v0.23.1 source rollback commands and expected manifest pins without claiming that file deletion is recovery. |
+| `warehouse-mcp-live-acceptance` | With an authorized test identity and approved Warehouse/Lakehouse target, `coop doctor` validates the item target and discovers `executeSQL`, `execute_query`, or a documented server-prefixed spelling through `tools/list`. The observation must carry the schema-validated `warehouse_live` object: `auth_state=authenticated`, `target_validation=validated`, `target_scope=item`, the exact discovered compatible tool, `provenance=live`, and `mock=false`. Generic prose, mock/fixture evidence, global scope, or config-only `registered`, `auth_required`, `unavailable`, `tool_missing`, and `target_invalid` are not passes. Do not run SQL or retain tokens, target names, SQL, arguments, or rows in evidence. |
 | `snapshot-recovery` | Copy redacted evidence off-VM, power off, revert `pre-coop-terminal-candidate`, and verify the candidate footprint is gone. |
 
 For rollback verification, use the same profile without wiping it:
@@ -183,7 +198,10 @@ Snapshot revert—not uninstall or recursive deletion—is the recovery procedur
 5. Leave `terminal_workstation_ready` false for any `FAIL`, `BLOCKED`,
    `INCONCLUSIVE`, `NOT_REACHED`, `NOT_AVAILABLE`, `CAPABILITY_SKIP`, or
    `BETA_LIMITATION`. Set it true only when every required automated claim and
-   all ten human claims are `PASS`.
+   all eleven human claims are `PASS`. The Warehouse MCP claim is a certification
+   blocker until live authentication, target validation, and tool discovery pass;
+   deterministic mocked tests are not a substitute for tenant/user permissions or
+   live Fabric service behavior.
 6. Validate from the harness checkout:
 
 ```powershell

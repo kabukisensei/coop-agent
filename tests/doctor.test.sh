@@ -115,7 +115,7 @@ cat > "$stub_ok/pi" <<EOF
   cat "$ROOT/config/release-manifest.json" | python3 -c '
 import json,sys
 m=json.load(sys.stdin)
-for k,v in m["extensions"].items(): print(f"{k} {v}")'
+for k,v in m["extensions"].items(): print(f"  npm:{k}@{v}")'
   exit 0
 }
 echo "pi 0.84.3"
@@ -142,8 +142,9 @@ cat > "$stub_drift/pi" <<EOF
 import json,sys
 m=json.load(sys.stdin)
 first=sorted(m["extensions"])[0]
+drift = "9.9.9"
 for k,v in m["extensions"].items():
-    print(f"{k} 9.9.9" if k==first else f"{k} {v}")'
+    print(f"  npm:{k}@{drift if k==first else v}")'
   exit 0
 }
 echo "pi 0.84.3"
@@ -155,6 +156,88 @@ case "$out" in
   *) ko "doctor missed extension drift"; echo "$out" ;;
 esac
 rm -rf "$stub_drift"
+
+# Real `pi list` output (spec line + indented install path) and a duplicate spec
+# for the same extension. Only real package specs may count: the install path
+# also contains the extension name, which used to read as a second version and
+# turned an installed pin into a false "differs from manifest".
+stub_real="$(mktemp -d)"
+cat > "$stub_real/pi" <<EOF
+#!/bin/sh
+[ "\$1" = "list" ] && {
+  cat "$ROOT/config/release-manifest.json" | python3 -c '
+import json,sys
+m=json.load(sys.stdin)
+for k,v in m["extensions"].items():
+    shown = "9.9.9" if k == "pi-mcp-adapter" else v
+    print(f"  npm:{k}@{shown}")
+    print(f"    HOME/.coop/agent/npm/node_modules/{k}")'
+  exit 0
+}
+echo "pi 0.84.3"
+EOF
+chmod +x "$stub_real/pi"
+out="$(PATH="$stub_real:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
+real_section="$(printf '%s\n' "$out" | sed -n '/Pi extensions/,/MCP servers/p')"
+case "$real_section" in
+  *"pi-mcp-adapter 9.9.9 is newer than manifest"*|*"pi-mcp-adapter 9.9.9: differs from manifest"*) ok "doctor reads the spec line, not the install path, for the installed version" ;;
+  *"installed but version unknown"*) ko "doctor ignored the spec line and lost the installed version"; printf '%s\n' "$real_section" ;;
+  *) ko "doctor misread the installed extension version"; printf '%s\n' "$real_section" ;;
+esac
+# A same-version duplicate (pi listing a package under two sources) must stay a
+# single proof, never an ambiguity warning.
+stub_dup="$(mktemp -d)"
+cat > "$stub_dup/pi" <<EOF
+#!/bin/sh
+[ "\$1" = "list" ] && {
+  cat "$ROOT/config/release-manifest.json" | python3 -c '
+import json,sys
+m=json.load(sys.stdin)
+for k,v in m["extensions"].items():
+    print(f"  npm:{k}@{v}")
+    print(f"  npm:{k}@{v}")
+    print(f"    HOME/.coop/agent/npm/node_modules/{k}")'
+  exit 0
+}
+echo "pi 0.84.3"
+EOF
+chmod +x "$stub_dup/pi"
+out="$(PATH="$stub_dup:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
+dup_section="$(printf '%s\n' "$out" | sed -n '/Pi extensions/,/MCP servers/p')"
+pin_mcp="$(python3 -c 'import json,sys;print(json.load(sys.stdin)["extensions"]["pi-mcp-adapter"])' < "$ROOT/config/release-manifest.json")"
+case "$dup_section" in
+  *"several versions"*) ko "a same-version duplicate was reported as ambiguous" ;;
+  *"pi-mcp-adapter $pin_mcp matches manifest"*) ok "a same-version duplicate still proves the pin" ;;
+  *) ko "duplicate spec line broke the pin proof"; printf '%s\n' "$dup_section" ;;
+esac
+rm -rf "$stub_real" "$stub_dup"
+
+parser_fixture='  npm:pi-mcp-adapter@2.10.0
+    HOME/.coop/agent/npm/node_modules/pi-mcp-adapter
+  npm:pi-mcp-adapter@2.10.0-beta.1
+  npm:pi-mcp-adapter-tools@9.9.9'
+parser_versions="$(COOP_ROOT="$ROOT" bash -c '. "$1/lib/common.sh"; coop_pi_extension_versions "$2" pi-mcp-adapter' _ "$ROOT" "$parser_fixture")"
+case "$parser_versions" in
+  $'2.10.0\n2.10.0-beta.1'|$'2.10.0-beta.1\n2.10.0') ok "bash parser preserves pre-release conflicts and ignores paths/name prefixes" ;;
+  *) ko "bash parser returned unexpected versions: [$parser_versions]" ;;
+esac
+for package in pi-mcp-adapter @scope/extension; do
+  case_versions="$(COOP_ROOT="$ROOT" bash -c '. "$1/lib/common.sh"; coop_pi_extension_versions "$2" "$3"' _ "$ROOT" "npm:${package}@2.10.0-beta.A
+npm:${package}@2.10.0-beta.a" "$package")"
+  [ "$(printf '%s\n' "$case_versions" | wc -l | tr -d ' ')" = 2 ] && ok "bash preserves case-distinct prereleases: $package" || ko "bash collapsed case-distinct prereleases: $package"
+  build_versions="$(COOP_ROOT="$ROOT" bash -c '. "$1/lib/common.sh"; coop_pi_extension_versions "$2" "$3"' _ "$ROOT" "npm:${package}@2.10.0+BUILD
+npm:${package}@2.10.0+build" "$package")"
+  [ "$(printf '%s\n' "$build_versions" | wc -l | tr -d ' ')" = 2 ] && ok "bash preserves case-distinct builds: $package" || ko "bash collapsed case-distinct builds: $package"
+  for suffix in '2.10.0/path' '2.10.0@9.9.9' '2.10.0-..' '2.10.0+..' '02.10.0'; do
+    malformed="npm:${package}@${suffix}"
+    parsed="$(COOP_ROOT="$ROOT" bash -c '. "$1/lib/common.sh"; coop_pi_extension_versions "$2" "$3"' _ "$ROOT" "$malformed" "$package")"
+    if [ -z "$parsed" ]; then ok "bash parser rejects malformed package spec: $malformed"; else ko "bash parser accepted malformed package spec: $malformed"; fi
+  done
+  terminated_versions="$(COOP_ROOT="$ROOT" bash -c '. "$1/lib/common.sh"; coop_pi_extension_versions "$2" "$3"' _ "$ROOT" "npm:${package}@2.10.0  " "$package")"
+  [ "$terminated_versions" = '2.10.0' ] && ok "bash normalizes trailing whitespace: $package" || ko "bash rejected a whitespace-terminated spec: $package"
+  terminated_versions="$(COOP_ROOT="$ROOT" bash -c '. "$1/lib/common.sh"; coop_pi_extension_versions "$2" "$3"' _ "$ROOT" "$(printf 'npm:%s@2.10.0\r\n' "$package")" "$package")"
+  [ "$terminated_versions" = '2.10.0' ] && ok "bash normalizes CRLF: $package" || ko "bash rejected a CRLF-terminated spec: $package"
+done
 
 if [ "$fail" -ne 0 ]; then echo "  ✗ doctor-mcp-mode tests FAILED"; exit 1; fi
 echo "  doctor-mcp-mode tests passed"

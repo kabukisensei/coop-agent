@@ -405,9 +405,12 @@ if (Test-Have 'pi') {
       continue
     }
     if (-not $exp) { D-Ok "$name installed (no manifest pin)"; continue }
-    $line = ($pilist -split "`n" | Where-Object { $_ -match [regex]::Escape($name) } | Select-Object -First 1)
-    $cur = ''
-    if ($line) { $m2 = [regex]::Match([string]$line, '\d+\.\d+\.\d+'); if ($m2.Success) { $cur = $m2.Value } }
+    # Count only real package specs: the install path beneath each spec also
+    # contains the extension name (and often a version), so matching any line
+    # made one installed version read as several.
+    $installed = @(Get-CoopPiExtensionVersions $pilist $name)
+    if ($installed.Count -gt 1) { D-Warn "$name installed at several versions ($($installed -join ', '); manifest: $exp)" 'coop sync   (pins the extension fleet)'; continue }
+    $cur = $installed[0]
     $st = Coop-ManifestStatus -Installed $cur -Expected $exp
     switch ($st) {
       'ok'                { D-Ok "$name $cur matches manifest ($exp)" }
@@ -493,8 +496,52 @@ if ($mcpFound) {
   $mcpLines = (Get-Content -LiteralPath $mcpFound -ErrorAction SilentlyContinue)
   if ($mcpLines) { $mcpTodo = ($mcpLines | Select-String -Pattern 'TODO-' -SimpleMatch).Count }
   if ($mcpTodo -gt 0) { D-Warn "$mcpTodo TODO placeholder(s) remain in mcp.json" 'set your tenant/org before live Power BI / Azure DevOps work' }
+  $sqlPy = Get-CoopPython
+  if ($sqlPy) {
+    $sqlArgs = @((Join-Path $script:CoopRoot 'lib\warehouse_mcp.py'), 'doctor-json', $mcpFound)
+    $sqlProject = Find-CoopProjectYml
+    if ($sqlProject) { $sqlArgs += @('--project', $sqlProject) }
+    $sqlArgs += '--probe'
+    $sqlJson = (& $sqlPy @sqlArgs 2>$null | Out-String)
+    $sqlState = 'unavailable'
+    $sqlScope = 'unknown'
+    if ($sqlJson) {
+      try {
+        $sqlDoc = $sqlJson | ConvertFrom-Json
+        if ($sqlDoc.state) { $sqlState = [string]$sqlDoc.state }
+        if ($sqlDoc.target -and $sqlDoc.target.scope) { $sqlScope = [string]$sqlDoc.target.scope }
+      } catch { $sqlState = 'unavailable' }
+    }
+    switch ($sqlState) {
+      'registered'    { D-Ok "  • fabric-sqlendpoint registered ($sqlScope target; managed remote HTTP, native OAuth)" }
+      'auth_required' { D-Warn "  • fabric-sqlendpoint auth_required ($sqlScope target)" 'sign in with Azure CLI/tenant access; doctor never triggers login' }
+      'tool_missing'  { D-Warn "  • fabric-sqlendpoint tool_missing ($sqlScope target)" 'managed MCP did not advertise executeSQL/execute_query' }
+      'target_invalid'{ D-Warn '  • fabric-sqlendpoint target_invalid' 'run: coop sync after fixing fabric.default_sql_endpoint / registered URL' }
+      'unavailable'   { D-Warn '  • fabric-sqlendpoint unavailable' 'run: coop sync; if already configured, retry when network/auth is available' }
+      default         { D-Warn "  • fabric-sqlendpoint $sqlState" 'run: coop sync' }
+    }
+  } else {
+    D-Warn '  fabric-sqlendpoint status unavailable' 'Python is required'
+  }
 } else {
   D-Warn 'no MCP config found' 'coop sync   (writes a read-only fabric/powerbi/learn config)'
+}
+
+D-Head 'Microsoft skills catalog'
+$catPy = Get-CoopPython
+if ($catPy) {
+  foreach ($line in (& $catPy (Join-Path $script:CoopRoot 'lib\microsoft_skills.py') doctor-lines 2>$null)) {
+    $parts = $line -split "`t", 7
+    if ($parts.Count -lt 3) { continue }
+    $name = $parts[1]; $state = $parts[2]; $revision = if ($parts.Count -gt 3) { $parts[3] } else { '' }; $count = if ($parts.Count -gt 4) { $parts[4] } else { '0' }
+    $target = if ($parts.Count -gt 5 -and $parts[5]) { $parts[5] } else { 'unknown' }
+    $detail = if ($parts.Count -gt 6 -and $parts[6]) { " details $($parts[6])" } else { '' }
+    if ($state -eq 'current') { D-Ok "$name`: current$(if ($revision) { " @ $revision" } else { '' }) ($count skill(s); target $target)$detail" }
+    elseif ($state -eq 'stale_LKG') { D-Warn "$name`: stale_LKG$(if ($revision) { " @ $revision" } else { '' }) (target $target)$detail" 'offline or fetch failed; launch continues from LKG' }
+    else { D-Warn "$name`: $state$detail" 'run: coop sync' }
+  }
+} else {
+  D-Warn 'Microsoft skills catalog status unavailable' 'Python is required'
 }
 
 D-Head 'Standards'
@@ -540,25 +587,7 @@ if ($proj) {
     if ([string]::IsNullOrWhiteSpace($tePath) -or $tePath.StartsWith('TODO')) { D-Warn 'Tabular Editor enabled but executable_path not set' 'set tools.tabular_editor_cli.executable_path in .coop/project.yml' }
   }
 
-  # Subordinate skill sources: warn when configured but not yet fetched.
-  foreach ($key in @('microsoft_skills', 'fabric_skills')) {
-    $src = Get-CoopYamlValue $proj "$key.source" ''
-    if ([string]::IsNullOrWhiteSpace($src) -or $src.StartsWith('TODO')) { continue }
-    $loadDir = Get-CoopYamlValue $proj "$key.load_dir" "skills/$key"
-    $allowed = Get-CoopYamlList $proj "$key.allow"
-    if (-not $allowed -or $allowed.Count -eq 0) { continue }
-    $missing = 0
-    foreach ($skill in $allowed) {
-      if ([string]::IsNullOrWhiteSpace($skill) -or $skill.StartsWith('TODO')) { continue }
-      $p = Join-Path $script:CoopRoot "$loadDir/$skill/SKILL.md"
-      if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { $missing++ }
-    }
-    if ($missing -gt 0) {
-      D-Warn "$key`: $missing allow-listed skill(s) not fetched" 'run: scripts/fetch-microsoft-skills.sh'
-    } else {
-      D-Ok "$key`: all allow-listed skills fetched"
-    }
-  }
+  D-Ok 'Microsoft skills project policy is covered by the pinned catalog doctor section'
 } else {
   D-Warn 'no .coop/project.yml found' "copy $($script:CoopRoot)/.coop/project.example.yml to your repo's .coop/project.yml"
 }

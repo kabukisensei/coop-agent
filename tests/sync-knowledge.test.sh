@@ -437,39 +437,103 @@ fi
 # --- F. no watchdog survives; normal + nonzero exits remain meaningful ------------
 # Inspect argv boundaries, not regex-rendered parent command text.
 PROCESS_INSPECTOR="$ROOT/tests/knowledge-git-process-inspector.py"
-"$PY" "$PROCESS_INSPECTOR" "$ROOT/scripts/knowledge-git.py" >/dev/null 2>&1
+INSPECTOR_ERR="$TMP/process-inspector.err"
+INSPECTOR_ROOT_PID="$$"
+run_process_inspector() { # <inspector> <root-pid> <target>
+  "$PY" - "${COOP_PROCESS_INSPECTOR_TIMEOUT_SECONDS:-30}" "$INSPECTOR_ERR" \
+    "$PY" "$1" --root-pid "$2" "$3" <<'PY'
+import subprocess
+import sys
+
+timeout_seconds = float(sys.argv[1])
+error_path = sys.argv[2]
+command = sys.argv[3:]
+with open(error_path, "w", encoding="utf-8") as error_stream:
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=error_stream,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        error_stream.write(
+            "process inspection uncertain: exceeded the %.1fs outer deadline\n"
+            % timeout_seconds
+        )
+        sys.exit(2)
+sys.exit(result.returncode)
+PY
+}
+if [ "$WIN" = "1" ]; then
+  # MSYS exposes a virtual PID in $$ and its stable native bash.exe PID in
+  # the WINPID column. Resolve that mapping directly; a spawned Python child's
+  # native parent may be a transient MSYS wrapper that exits before inspection.
+  if ! ps -p "$$" > "$TMP/msys-root.ps" 2>"$TMP/msys-root.err"; then
+    ko "F: native Windows root PID discovery command failed: $(cat "$TMP/msys-root.err")"
+    exit 1
+  fi
+  if ! "$PY" "$PROCESS_INSPECTOR" --msys-winpid "$$" \
+    "$TMP/msys-root.ps" > "$TMP/native-root.pid"; then
+    ko "F: native Windows root PID mapping was malformed"
+    exit 1
+  fi
+  if ! IFS= read -r INSPECTOR_ROOT_PID < "$TMP/native-root.pid"; then
+    ko "F: native Windows root PID discovery produced no result"
+    exit 1
+  fi
+  case "$INSPECTOR_ROOT_PID" in
+    ''|0|*[!0-9]*) ko "F: native Windows root PID discovery failed"; exit 1 ;;
+  esac
+fi
+run_process_inspector "$PROCESS_INSPECTOR" "$INSPECTOR_ROOT_PID" "$ROOT/scripts/knowledge-git.py"
 inspector_rc=$?
 if [ "$inspector_rc" -eq 0 ]; then
   ok "F: no watchdog/leftover runner after sync"
 elif [ "$inspector_rc" -eq 1 ]; then
-  ko "F: knowledge-git.py still running after sync"
+  ko "F: knowledge-git.py still running after sync: $(cat "$INSPECTOR_ERR")"
 else
-  ko "F: process state inspection uncertain"
+  ko "F: process state inspection uncertain: $(cat "$INSPECTOR_ERR")"
+fi
+# A descendant script path may block in a filesystem call (for example, an
+# unavailable absolute UNC path). The harness must still fail closed promptly.
+HANGING_INSPECTOR="$TMP/hanging-process-inspector.py"
+printf 'import time\ntime.sleep(30)\n' > "$HANGING_INSPECTOR"
+SECONDS=0
+COOP_PROCESS_INSPECTOR_TIMEOUT_SECONDS=1 \
+  run_process_inspector "$HANGING_INSPECTOR" "$INSPECTOR_ROOT_PID" "$ROOT/scripts/knowledge-git.py"
+hanging_inspector_rc=$?
+if [ "$hanging_inspector_rc" -eq 2 ] && [ "$SECONDS" -lt 10 ] \
+  && grep -q "process inspection uncertain: exceeded" "$INSPECTOR_ERR"; then
+  ok "F: whole process inspector is bounded and timeout stays uncertain"
+else
+  ko "F: process inspector outer timeout failed closed: rc=$hanging_inspector_rc elapsed=$SECONDS stderr=$(cat "$INSPECTOR_ERR" 2>/dev/null)"
 fi
 if [ "$WIN" != "1" ]; then
   GIT_SSH_COMMAND='ssh -o BatchMode=yes' "$PY" "$ROOT/scripts/knowledge-git.py" --timeout-seconds 3 -- "$PY" -c 'import time; time.sleep(10)' >/dev/null 2>&1 &
   real_helper_pid=$!
   sleep 1
-  "$PY" "$PROCESS_INSPECTOR" "$ROOT/scripts/knowledge-git.py" >/dev/null 2>&1
+  run_process_inspector "$PROCESS_INSPECTOR" "$INSPECTOR_ROOT_PID" "$ROOT/scripts/knowledge-git.py"
   inspector_rc=$?
   if [ "$inspector_rc" -eq 1 ]; then
     ok "F: real helper detected from direct argv"
   elif [ "$inspector_rc" -eq 2 ]; then
-    ko "F: real helper inspection was uncertain"
+    ko "F: real helper inspection was uncertain: $(cat "$INSPECTOR_ERR")"
   else
-    ko "F: real helper was not detected"
+    ko "F: real helper was not detected: $(cat "$INSPECTOR_ERR")"
   fi
   wait "$real_helper_pid" 2>/dev/null || true
 
   bash -c 'sleep 3; : /usr/bin/python3 /tmp/knowledge-git.py' & decoy_pid=$!
-  "$PY" "$PROCESS_INSPECTOR" /tmp/knowledge-git.py >/dev/null 2>&1
+  run_process_inspector "$PROCESS_INSPECTOR" "$INSPECTOR_ROOT_PID" /tmp/knowledge-git.py
   inspector_rc=$?
   if [ "$inspector_rc" -eq 0 ]; then
     ok "F: unrelated shell text is not a helper"
   elif [ "$inspector_rc" -eq 2 ]; then
-    ko "F: unrelated shell inspection was uncertain"
+    ko "F: unrelated shell inspection was uncertain: $(cat "$INSPECTOR_ERR")"
   else
-    ko "F: unrelated shell text produced a false helper match"
+    ko "F: unrelated shell text produced a false helper match: $(cat "$INSPECTOR_ERR")"
   fi
   kill "$decoy_pid" 2>/dev/null || true
   wait "$decoy_pid" 2>/dev/null || true
@@ -480,14 +544,14 @@ if [ "$WIN" != "1" ]; then
   GIT_SSH_COMMAND='ssh -o BatchMode=yes' "$PY" "$spaced_root/scripts/knowledge-git.py" --timeout-seconds 3 -- "$PY" -c 'import time; time.sleep(10)' >/dev/null 2>&1 &
   spaced_helper_pid=$!
   sleep 1
-  "$PY" "$PROCESS_INSPECTOR" "$spaced_root/scripts/knowledge-git.py" >/dev/null 2>&1
+  run_process_inspector "$PROCESS_INSPECTOR" "$INSPECTOR_ROOT_PID" "$spaced_root/scripts/knowledge-git.py"
   inspector_rc=$?
   if [ "$inspector_rc" -eq 1 ]; then
     ok "F: real helper path containing spaces detected"
   elif [ "$inspector_rc" -eq 2 ]; then
-    ko "F: spaced helper inspection was uncertain"
+    ko "F: spaced helper inspection was uncertain: $(cat "$INSPECTOR_ERR")"
   else
-    ko "F: real helper under a spaced path was not detected"
+    ko "F: real helper under a spaced path was not detected: $(cat "$INSPECTOR_ERR")"
   fi
   wait "$spaced_helper_pid" 2>/dev/null || true
 fi

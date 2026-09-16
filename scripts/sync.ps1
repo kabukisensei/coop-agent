@@ -190,6 +190,15 @@ if (Test-Have 'node') {
   } catch { Coop-Warn 'canonical standards refresh unavailable; LKG preserved' }
 }
 
+# --- 5d. Official Microsoft skills catalog (fail-soft; launch uses LKG only) --
+if ($mcpPy) {
+  & $mcpPy (Join-Path $script:CoopRoot 'lib\microsoft_skills.py') refresh *> $null
+  if ($LASTEXITCODE -eq 0) { Coop-Ok 'Microsoft skills catalog refreshed' }
+  else { Coop-Warn 'Microsoft skills catalog refresh unavailable; launch will use last-known-good if present' }
+} else {
+  Coop-Warn 'python missing — cannot refresh Microsoft skills catalog'
+}
+
 # --- 6. Brand assets ---------------------------------------------------------
 Coop-Head 'Brand assets'
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi') -PathType Leaf) { Coop-Ok 'splash present' } else { Coop-Warn 'splash.ansi missing (regenerate from the logo)' }

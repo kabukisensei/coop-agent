@@ -54,6 +54,32 @@ function Coop-ManifestPythonSpec([string]$Package) { $v = Coop-ManifestObjectGet
 function Coop-ManifestNpmToolSpec([string]$Package) { $v = Coop-ManifestObjectGet 'npm_tools' $Package; if ($v) { return "${Package}@${v}" }; return '' }
 function Coop-ManifestMcpSpec([string]$Package) { $v = Coop-ManifestObjectGet 'mcp_servers' $Package; if ($v) { return "${Package}@${v}" }; return '' }
 
+# Every installed version `pi list` reports for one managed extension. Only real
+# package specs count: an extension's install path also contains its name (and
+# often a version), and counting those lines made one installed version read as
+# ambiguous — which failed the fleet-pin proof closed for a correct machine.
+# The name is exact-matched, so `pi-mcp-adapter-tools` is never mistaken for
+# `pi-mcp-adapter`. `pi list` lines look like:
+#   npm:pi-mcp-adapter@2.10.0
+#     C:\...\npm\node_modules\pi-mcp-adapter
+function Get-CoopPiExtensionVersions([string]$PiList, [string]$Package) {
+  if (-not $Package -or -not $PiList) { return @() }
+  $text = ($PiList -split "`r?`n") -join "`n"
+  $core = '(?:0|[1-9][0-9]*)'
+  $identifier = '(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+  $prerelease = "-$identifier(?:\.$identifier)*"
+  $build = '\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*'
+  $semver = "$core\.$core\.$core(?:$prerelease)?(?:$build)?"
+  $pattern = "^\s*(?:npm:)?$([regex]::Escape($Package))@(?<ver>$semver)\s*$"
+  $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+  $versions = @()
+  foreach ($match in [regex]::Matches($text, $pattern, 'Multiline')) {
+    $version = $match.Groups['ver'].Value
+    if ($seen.Add($version)) { $versions += $version }
+  }
+  return @($versions)
+}
+
 function Coop-ManifestKeys([string]$Key) {
   try {
     $m = Get-Content -LiteralPath $script:CoopReleaseManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
@@ -61,6 +87,7 @@ function Coop-ManifestKeys([string]$Key) {
     $v = $m
     foreach ($p in $parts) { if ($v -is [System.Collections.IDictionary]) { $v = $v[$p] } elseif ($v -and $v.PSObject.Properties[$p]) { $v = $v.$p } else { return @() } }
     if ($v -is [System.Collections.IDictionary]) { return $v.Keys }
+    if ($v -and $v.PSObject.Properties) { return @($v.PSObject.Properties.Name) }
     return @()
   } catch { return @() }
 }

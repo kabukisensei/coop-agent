@@ -33,6 +33,7 @@ for a in "\$@"; do
   prev="\$a"
 done
 hash=""; [ -n "\$standard" ] && hash="\$("$PY" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "\$standard")"
+standard_json=null; [ -n "\$standard" ] && standard_json="\$("$PY" -c 'import json,sys; print(json.dumps(sys.argv[1]))' "\$standard")"
 if [ -n "\$out" ]; then
   mode="\${COOP_TEST_PROVENANCE_MODE:-valid}"
   [ "$t" = coop-sql-review ] && mode="\${COOP_TEST_SQL_MODE:-\$mode}"
@@ -42,9 +43,9 @@ if [ -n "\$out" ]; then
     malformed) printf 'not-json' > "\$out" ;;
     missing) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" > "\$out" ;;
     bad_path) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":"/wrong/path","sha256":"%s"},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$hash" > "\$out" ;;
-    bad_hash) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":"%s","sha256":"%064d"},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$standard" 0 > "\$out" ;;
-    bad_revision) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":"%s","sha256":"%s","revision":7},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$standard" "\$hash" > "\$out" ;;
-    *) count_key=files_checked; model_field=''; [ "$t" = coop-dax-review ] && { count_key=models_checked; model_field='"model":"fixture-model",'; }; printf '{"tool":"%s","schema_version":$schema,"version":"test","%s":1,"standards":{"path":"%s","sha256":"%s"},"findings":[{"file":"fixture","line":1,"rule_id":"TEST","message":"test finding","severity":"warning",%s"object":"fixture","standard_ref":"§1","fingerprint":"%064d"}],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":1,"info":0},"verdict":{"clean":false,"highest_severity":"warning"}}' "$t" "\$count_key" "\$standard" "\$hash" "\$model_field" 0 > "\$out" ;;
+    bad_hash) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":%s,"sha256":"%064d"},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$standard_json" 0 > "\$out" ;;
+    bad_revision) printf '{"tool":"%s","schema_version":$schema,"version":"test","files_checked":0,"models_checked":0,"standards":{"path":%s,"sha256":"%s","revision":7},"findings":[],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":0,"info":0},"verdict":{"clean":true,"highest_severity":null}}' "$t" "\$standard_json" "\$hash" > "\$out" ;;
+    *) count_key=files_checked; model_field=''; [ "$t" = coop-dax-review ] && { count_key=models_checked; model_field='"model":"fixture-model",'; }; printf '{"tool":"%s","schema_version":$schema,"version":"test","%s":1,"standards":{"path":%s,"sha256":"%s"},"findings":[{"file":"fixture","line":1,"rule_id":"TEST","message":"test finding","severity":"warning",%s"object":"fixture","standard_ref":"§1","fingerprint":"%064d"}],"diagnostics":[],"agent_review":[],"summary":{"error":0,"warning":1,"info":0},"verdict":{"clean":false,"highest_severity":"warning"}}' "$t" "\$count_key" "\$standard_json" "\$hash" "\$model_field" 0 > "\$out" ;;
   esac
 fi
 exit "\$rc"
@@ -106,13 +107,22 @@ for t in coop-sql-review coop-dax-review; do
 done
 sql_snapshot="$("$PY" -c 'import sys; a=open(sys.argv[1]).read().split(); print(a[a.index("--standards")+1])' "$TMP/coop-sql-review.args.log")"
 dax_snapshot="$("$PY" -c 'import sys; a=open(sys.argv[1]).read().split(); print(a[a.index("--standards")+1])' "$TMP/coop-dax-review.args.log")"
-case "$sql_snapshot" in "$TMP"/snapshots/*-sql.md) ;; *) fail "SQL aggregate review did not get an immutable snapshot" ;; esac
-case "$dax_snapshot" in "$TMP"/snapshots/*-dax.md) ;; *) fail "DAX aggregate review did not get an immutable snapshot" ;; esac
-cmp -s "$sql_snapshot" "$TMP/proj/standards/sql.md" || fail "SQL snapshot is not byte-identical to the project standard"
-cmp -s "$dax_snapshot" "$TMP/proj/standards/dax.md" || fail "DAX snapshot is not byte-identical to the project standard"
+"$PY" -c 'from pathlib import Path; import sys; p=Path(sys.argv[1]).resolve(); root=Path(sys.argv[2]).resolve(); raise SystemExit(0 if p.parent==root and p.name.endswith("-sql.md") else 1)' \
+  "$sql_snapshot" "$TMP/snapshots" \
+  || fail "SQL aggregate review did not get an immutable snapshot"
+"$PY" -c 'from pathlib import Path; import sys; p=Path(sys.argv[1]).resolve(); root=Path(sys.argv[2]).resolve(); raise SystemExit(0 if p.parent==root and p.name.endswith("-dax.md") else 1)' \
+  "$dax_snapshot" "$TMP/snapshots" \
+  || fail "DAX aggregate review did not get an immutable snapshot"
+"$PY" -c 'from pathlib import Path; import sys; raise SystemExit(0 if Path(sys.argv[1]).read_bytes()==Path(sys.argv[2]).read_bytes() else 1)' \
+  "$sql_snapshot" "$TMP/proj/standards/sql.md" \
+  || fail "SQL snapshot is not byte-identical to the project standard"
+"$PY" -c 'from pathlib import Path; import sys; raise SystemExit(0 if Path(sys.argv[1]).read_bytes()==Path(sys.argv[2]).read_bytes() else 1)' \
+  "$dax_snapshot" "$TMP/proj/standards/dax.md" \
+  || fail "DAX snapshot is not byte-identical to the project standard"
 grep -q -- "build --non-interactive" "$TMP/coop-data-doc.args.log" || fail "data-doc build --non-interactive not invoked"
-grep -q -- "--reviews $sql_json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the pinned sql report"
-grep -q -- "--reviews $dax_json" "$TMP/coop-data-doc.args.log" || fail "data-doc did not receive the pinned dax report"
+"$PY" -c 'from pathlib import Path; import sys; a=Path(sys.argv[1]).read_text().split(); got=[Path(a[i+1]).resolve() for i,v in enumerate(a[:-1]) if v=="--reviews"]; expected=[Path(v).resolve() for v in sys.argv[2:]]; raise SystemExit(0 if got==expected else 1)' \
+  "$TMP/coop-data-doc.args.log" "$sql_json" "$dax_json" \
+  || fail "data-doc did not receive the exact pinned SQL and DAX reports"
 pass "contract scope + same-source standards: JSONs saved, missing skipped, exact standards and reviews passed"
 
 # 1b. Configured canonical review paths must never expose a rejected current

@@ -667,6 +667,49 @@ const MCP_WRITE_VERB =
 const DATA_SERVER = /(^|[_\-.:/])(fabric|powerbi|pbi|sql|database|db|warehouse|lakehouse|onelake|kusto|adx|eventhouse)([_\-.:/]|$)/i;
 const ROW_READ_VERB = /(^|[_\-.:/])(query|execute|evaluate|run_sql|runsql|sql_query|dax_query|preview|sample|row|rows|record|records|data|export|download)([_\-.:/]|$)/i;
 const PRODUCTION_WORD = /(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)/i;
+const SQL_ENDPOINT_TOOL = /(^|[_\-.:/])(executeSQL|execute_query|fabric-sqlendpoint-execute_query|fabric_sqlendpoint_execute_query)([_\-.:/]|$)/i;
+const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DELETE|DENY|DROP|EXEC|EXECUTE|GRANT|INSERT|MERGE|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE|UPSERT)\b/i;
+const SQL_MUTATING_INTO = /\b(?:SELECT|COPY)\b[\s\S]*?\bINTO\b/i;
+
+function sqlWithoutComments(sql: string): string {
+  // Lex rather than regex-replace: comment delimiters inside SQL strings and
+  // quoted identifiers are data, not comments. Literal/identifier contents are
+  // blanked too, so words such as 'DELETE' do not create false mutations.
+  let out = "";
+  let i = 0;
+  let state: "normal" | "single" | "double" | "bracket" | "line" | "block" = "normal";
+  let blockDepth = 0;
+  while (i < sql.length) {
+    const ch = sql[i];
+    const next = sql[i + 1] || "";
+    if (state === "normal") {
+      if (ch === "-" && next === "-") { state = "line"; out += "  "; i += 2; continue; }
+      if (ch === "/" && next === "*") { state = "block"; blockDepth = 1; out += "  "; i += 2; continue; }
+      if (ch === "'") { state = "single"; out += " "; i += 1; continue; }
+      if (ch === '"') { state = "double"; out += " "; i += 1; continue; }
+      if (ch === "[") { state = "bracket"; out += " "; i += 1; continue; }
+      out += ch; i += 1; continue;
+    }
+    if (state === "line") {
+      if (ch === "\r" || ch === "\n") { state = "normal"; out += ch; } else out += " ";
+      i += 1; continue;
+    }
+    if (state === "block") {
+      if (ch === "/" && next === "*") { blockDepth += 1; out += "  "; i += 2; continue; }
+      if (ch === "*" && next === "/") {
+        blockDepth -= 1; out += "  "; i += 2;
+        if (blockDepth === 0) state = "normal";
+        continue;
+      }
+      out += ch === "\r" || ch === "\n" ? ch : " "; i += 1; continue;
+    }
+    const closing = state === "single" ? "'" : state === "double" ? '"' : "]";
+    if (ch === closing && next === closing) { out += "  "; i += 2; continue; }
+    if (ch === closing) { state = "normal"; out += " "; i += 1; continue; }
+    out += ch === "\r" || ch === "\n" ? ch : " "; i += 1;
+  }
+  return out;
+}
 
 /** The effective target of a proxied MCP call. The `pi-mcp-adapter` normally
  *  registers a single `mcp` tool and carries the real server/tool in
@@ -734,6 +777,37 @@ export function mcpLiveReadRisk(event: any): LiveReadRisk | null {
     label: mutationName(target),
     kind: rows ? "row-data" : "production-metadata",
     environment: production ? "production" : "dev/test/unspecified",
+  };
+}
+
+export type SqlMcpRisk = {
+  label: string;
+  kind: "ddl-dml-destructive" | "row-data";
+};
+
+function extractSqlText(input: any): string {
+  if (!input || typeof input !== "object") return "";
+  const direct = input.sql ?? input.query ?? input.statement ?? input.command;
+  if (typeof direct === "string") return direct;
+  const args = input.arguments ?? input.args ?? input.params?.arguments ?? input.params;
+  if (typeof args === "string") {
+    try { return extractSqlText(JSON.parse(args)); } catch { return ""; }
+  }
+  if (args && typeof args === "object") return extractSqlText(args);
+  return "";
+}
+
+/** Warehouse SQL endpoint MCP calls are approval-gated even for SELECT. Mutating
+ * SQL is classified before generic row-read handling and raw SQL is never logged. */
+export function sqlMcpRisk(event: any): SqlMcpRisk | null {
+  const target = effectiveMutationTarget(event);
+  const name = target.innerTool || target.outerTool;
+  const server = target.server || "";
+  if (!SQL_ENDPOINT_TOOL.test(name) && !/fabric-sqlendpoint/i.test(server)) return null;
+  const sql = sqlWithoutComments(extractSqlText(event?.input));
+  return {
+    label: mutationName(target),
+    kind: SQL_MUTATION_VERB.test(sql) || SQL_MUTATING_INTO.test(sql) ? "ddl-dml-destructive" : "row-data",
   };
 }
 
@@ -945,6 +1019,23 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: String(tool), decision: ok ? "allowed" : "declined", label: mcp, detail: mcp });
           if (!ok) {
             return { block: true, reason: `coop guardrails: blocked the MCP action ${mcp} (you declined). MCP is read-only by default — list / read / inspect only; make changes with explicit approval or in the Fabric / Power BI UX.` };
+          }
+        }
+        const sqlRisk = sqlMcpRisk(event);
+        if (sqlRisk) {
+          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: String(tool), decision: "blocked-headless", label: sqlRisk.label, detail: sqlRisk.kind });
+            return { block: true, reason: `coop guardrails: blocked Warehouse SQL MCP call through ${sqlRisk.label}; explicit approval is unavailable in headless mode.` };
+          }
+          const ok = await ctx.ui.confirm(
+            "coop Warehouse SQL guardrail",
+            sqlRisk.kind === "ddl-dml-destructive"
+              ? `Warehouse SQL mutation/DDL call:\n  ${sqlRisk.label}\nDDL, DML, and destructive SQL require explicit approval. Run it?`
+              : `Warehouse SQL row read:\n  ${sqlRisk.label}\nConfirm the target, columns, filters, and a small row limit in the tool request. Run it?`,
+          );
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: String(tool), decision: ok ? "allowed" : "declined", label: sqlRisk.label, detail: sqlRisk.kind });
+          if (!ok) {
+            return { block: true, reason: `coop guardrails: blocked Warehouse SQL MCP call through ${sqlRisk.label} (you declined).` };
           }
         }
         const readRisk = mcpLiveReadRisk(event);

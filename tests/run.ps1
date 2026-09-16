@@ -67,6 +67,16 @@ try {
   $priorCoopAgentDir = $env:COOP_AGENT_DIR
   $priorPiAgentDir = $env:PI_CODING_AGENT_DIR
   $priorNoOnboard = $env:COOP_NO_ONBOARD
+
+  # Run receipt/reparse validation before fixture PATH and interpreter seams.
+  # Native extension imports (jsonschema/rpds) must be consumed from the exact
+  # CI-pinned interpreter before later fixtures replace executable discovery.
+  Head 'terminal acceptance reparse boundary tests'
+  $reparseOut = & node --test --test-name-pattern 'directory links|junctioned ancestor|authorization revocation|failure cleanup|checkout ancestry|owned-root probe|fully safe authorization|decisive receipt mutations' (Join-Path $root 'tests\terminal-workstation-acceptance.test.mjs') 2>&1
+  $reparseRc = $LASTEXITCODE
+  if ($reparseRc -eq 0) { $reparseOut | ForEach-Object { Write-Host $_ }; Ok 'terminal acceptance rejects reparse evidence' }
+  else { Ko "terminal acceptance reparse boundary tests failed: $($reparseOut | Out-String)" }
+
   $env:PATH = $stubPath
   $env:COOP_DIR = Join-Path $stub 'coop-dir'
   $env:COOP_AGENT_DIR = Join-Path $stub 'agent'
@@ -88,6 +98,110 @@ try {
       elseif (-not $hasBom) { Ko "missing UTF-8 BOM: $($_.FullName)"; $bomFail = $true }
     }
   if (-not $bomFail) { Ok 'every .ps1 carries exactly one UTF-8 BOM' }
+
+  # --- 0b. public onboarding dispatcher supplies the Python subcommand -------
+  Head 'onboarding dispatcher contract test'
+  $onboardRoot = Join-Path $stub 'onboard-dispatch'
+  New-Item -ItemType Directory -Path $onboardRoot -Force | Out-Null
+  $onboardInput = Join-Path $stub 'onboard-input.txt'
+  $onboardStdout = Join-Path $stub 'onboard-stdout.txt'
+  $onboardStderr = Join-Path $stub 'onboard-stderr.txt'
+  $invalidStdout = Join-Path $stub 'onboard-invalid-stdout.txt'
+  $invalidStderr = Join-Path $stub 'onboard-invalid-stderr.txt'
+  [System.IO.File]::WriteAllText($onboardInput, "PowerShell Operator`n1`n", (New-Object System.Text.UTF8Encoding($false)))
+  $savedCoopDir = $env:COOP_DIR
+  $savedAzureBin = $env:COOP_AZ_BIN
+  try {
+    $env:COOP_DIR = $onboardRoot
+    $env:COOP_AZ_BIN = Join-Path $stub 'missing-az'
+    $onboardProcess = Start-Process -FilePath $psExe -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $coop + '"'),'onboard','--json') -PassThru -NoNewWindow -RedirectStandardInput $onboardInput -RedirectStandardOutput $onboardStdout -RedirectStandardError $onboardStderr
+    $null = $onboardProcess.Handle
+    $onboardProcess.WaitForExit()
+    $onboardExit = $onboardProcess.ExitCode
+    $invalidProcess = Start-Process -FilePath $psExe -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $coop + '"'),'onboard','--invalid-acceptance-flag') -PassThru -NoNewWindow -RedirectStandardOutput $invalidStdout -RedirectStandardError $invalidStderr
+    $null = $invalidProcess.Handle
+    $invalidProcess.WaitForExit()
+    $invalidExit = $invalidProcess.ExitCode
+  } finally {
+    $env:COOP_DIR = $savedCoopDir
+    $env:COOP_AZ_BIN = $savedAzureBin
+  }
+  $onboardProfile = if ($onboardExit -eq 0) { Get-Content -LiteralPath $onboardStdout -Raw | ConvertFrom-Json } else { $null }
+  if ($onboardExit -eq 0 -and $onboardProfile.name -ceq 'PowerShell Operator' -and (Test-Path -LiteralPath (Join-Path $onboardRoot '.coop\user.json') -PathType Leaf)) {
+    Ok 'coop.ps1 onboard supplies the required subcommand'
+  } else {
+    Ko "coop.ps1 onboard dispatcher failed with exit $onboardExit"
+  }
+  if ($invalidExit -eq 2) { Ok 'coop.ps1 onboard propagates Python argument failures' } else { Ko "coop.ps1 onboard changed Python exit 2 to $invalidExit" }
+
+  # --- 0c. ConvertFrom-Json manifest objects expose all managed keys ----------
+  Head 'PowerShell release-manifest key enumeration'
+  $commonPath = Join-Path $root 'lib\common.ps1'
+  . $commonPath
+  $manifestKeys = @(& $psExe -NoLogo -NoProfile -Command ". '$commonPath'; Coop-ManifestKeys 'extensions'")
+  $expectedManifestKeys = @((Get-Content -LiteralPath (Join-Path $root 'config\release-manifest.json') -Raw | ConvertFrom-Json).extensions.PSObject.Properties.Name)
+  if ($manifestKeys.Count -eq $expectedManifestKeys.Count -and @($expectedManifestKeys | Where-Object { $manifestKeys -cnotcontains $_ }).Count -eq 0) {
+    Ok 'Coop-ManifestKeys enumerates every PSCustomObject manifest property'
+  } else {
+    Ko "Coop-ManifestKeys returned $($manifestKeys.Count) of $($expectedManifestKeys.Count) extension keys"
+  }
+
+  # --- 0d. Installed extension versions come from specs, never install paths --
+  # `pi list` prints a spec line and, beneath it, the install path — which also
+  # contains the extension name. Counting path lines made one installed version
+  # read as several and failed the fleet-pin proof closed on a correct machine.
+  Head 'Installed Pi extension version parsing'
+  $piListFixture = @(
+    '  npm:pi-mcp-adapter@2.10.0',
+    '    C:\Users\a\.coop\agent\npm\node_modules\pi-mcp-adapter',
+    '  npm:@juicesharp/rpiv-ask-user-question@1.20.0',
+    '    C:\Users\a\.coop\agent\npm\node_modules\@juicesharp\rpiv-ask-user-question',
+    '  npm:pi-mcp-adapter-tools@9.9.9',
+    '    C:\Users\a\.coop\agent\npm\node_modules\pi-mcp-adapter-tools',
+    '  npm:pi-mcp-adapter@2.10.0'
+  ) -join "`n"
+  $parsedAdapter = @(Get-CoopPiExtensionVersions $piListFixture 'pi-mcp-adapter')
+  if ($parsedAdapter.Count -eq 1 -and $parsedAdapter[0] -ceq '2.10.0') {
+    Ok 'install paths, name prefixes, and duplicate specs do not inflate the installed version'
+  } else {
+    Ko "pi-mcp-adapter parsed as [$($parsedAdapter -join ', ')] instead of exactly 2.10.0"
+  }
+  $parsedScoped = @(Get-CoopPiExtensionVersions $piListFixture '@juicesharp/rpiv-ask-user-question')
+  if ($parsedScoped.Count -eq 1 -and $parsedScoped[0] -ceq '1.20.0') {
+    Ok 'scoped extension names resolve to their own spec'
+  } else {
+    Ko "scoped extension parsed as [$($parsedScoped -join ', ')] instead of exactly 1.20.0"
+  }
+  $parsedConflict = @(Get-CoopPiExtensionVersions ($piListFixture + "`n  npm:pi-mcp-adapter@2.11.0") 'pi-mcp-adapter')
+  if ($parsedConflict.Count -eq 2) {
+    Ok 'two genuinely different installed versions stay visible for the caller to reject'
+  } else {
+    Ko "conflicting installed versions parsed as [$($parsedConflict -join ', ')] instead of two entries"
+  }
+  $parsedSuffixConflict = @(Get-CoopPiExtensionVersions ($piListFixture + "`n  npm:pi-mcp-adapter@2.10.0-beta.1") 'pi-mcp-adapter')
+  if ($parsedSuffixConflict.Count -eq 2 -and $parsedSuffixConflict -ccontains '2.10.0-beta.1') {
+    Ok 'pre-release suffix conflicts remain visible'
+  } else {
+    Ko "pre-release conflict parsed as [$($parsedSuffixConflict -join ', ')] instead of two entries"
+  }
+  foreach ($package in @('pi-mcp-adapter', '@scope/extension')) {
+    $caseConflict = @(Get-CoopPiExtensionVersions "npm:${package}@2.10.0-beta.A`nnpm:${package}@2.10.0-beta.a" $package)
+    if ($caseConflict.Count -eq 2) { Ok "case-distinct prereleases remain conflicting: $package" } else { Ko "case-distinct prereleases collapsed for $package" }
+    $buildConflict = @(Get-CoopPiExtensionVersions "npm:${package}@2.10.0+BUILD`nnpm:${package}@2.10.0+build" $package)
+    if ($buildConflict.Count -eq 2) { Ok "case-distinct builds remain conflicting: $package" } else { Ko "case-distinct builds collapsed for $package" }
+    foreach ($suffix in @('2.10.0/path', '2.10.0@9.9.9', '2.10.0-..', '2.10.0+..', '02.10.0')) {
+      $malformed = "npm:${package}@$suffix"
+      if (@(Get-CoopPiExtensionVersions $malformed $package).Count -eq 0) {
+        Ok "malformed package spec is rejected: $malformed"
+      } else {
+        Ko "malformed package spec was accepted: $malformed"
+      }
+    }
+    foreach ($terminated in @("npm:${package}@2.10.0  ", "npm:${package}@2.10.0`r`n")) {
+      $parsedTerminated = @(Get-CoopPiExtensionVersions $terminated $package)
+      if ($parsedTerminated.Count -eq 1 -and $parsedTerminated[0] -ceq '2.10.0') { Ok "trailing whitespace/CRLF is normalized: $package" } else { Ko "valid whitespace/CRLF-terminated spec was rejected: $package" }
+    }
+  }
 
   # --- 1. launch-spec resolves the governed pi invocation --------------------
   Head 'launch-spec (shared launch builder) test'
@@ -354,6 +468,45 @@ print("resume verdict contract OK")
     Ko "fabric python finder fixture failed: $($finderOut | Out-String)"
   }
 
+  # --- 7c. Microsoft skills catalog deterministic fixture -------------------
+  Head 'Microsoft skills catalog fixture'
+  $pyExe = (Get-Command python3 -ErrorAction SilentlyContinue)
+  if (-not $pyExe) { $pyExe = (Get-Command python -ErrorAction SilentlyContinue) }
+  if ($pyExe) {
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $msOut = & $pyExe.Source (Join-Path $root 'tests\microsoft-skills.test.py') 2>&1
+    $msRc = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorAction
+    if ($msRc -eq 0) {
+      $msOut | ForEach-Object { Write-Host $_ }
+    } else {
+      Ko "Microsoft skills catalog fixture failed: $($msOut | Out-String)"
+    }
+  } else {
+    Ko 'python not available; Microsoft skills catalog fixture cannot run'
+  }
+
+  # --- 7d. Warehouse MCP doctor + P0 acceptance fixtures --------------------
+  Head 'Warehouse MCP and P0 vertical slice fixtures'
+  if ($pyExe) {
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $whOut = & $pyExe.Source (Join-Path $root 'tests\warehouse-mcp.test.py') 2>&1
+    $whRc = $LASTEXITCODE
+    $p0Out = & $pyExe.Source (Join-Path $root 'tests\p0-vertical-slice.test.py') 2>&1
+    $p0Rc = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorAction
+    if ($whRc -eq 0 -and $p0Rc -eq 0) {
+      $whOut | ForEach-Object { Write-Host $_ }
+      $p0Out | ForEach-Object { Write-Host $_ }
+    } else {
+      Ko "Warehouse/P0 fixtures failed: $($whOut | Out-String) $($p0Out | Out-String)"
+    }
+  } else {
+    Ko 'python not available; Warehouse/P0 fixtures cannot run'
+  }
+
   # --- 8. release transaction ------------------------------------------------
   Head 'release transaction consistency'
   # Coop status output intentionally uses stderr. Windows PowerShell 5.1 turns
@@ -405,5 +558,5 @@ finally {
   Remove-Item -LiteralPath $stub -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($fail -ne 0) { Write-Host "$G_CROSS PowerShell behavioral tests FAILED"; exit 1 }
+if ($fail -ne 0) { Write-Host "`n$G_CROSS PowerShell behavioral tests FAILED"; exit 1 }
 Write-Host "$G_CHECK PowerShell behavioral tests passed"

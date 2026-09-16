@@ -53,6 +53,14 @@ fabric:
   tenant_id: "TODO: tenant id"
   default_workspace_name: "TODO: dev Warehouse / Lakehouse workspace name"
   default_workspace_id: "TODO: dev Warehouse / Lakehouse workspace id"
+  # Optional Warehouse/Lakehouse SQL endpoint MCP target. Leave IDs blank unless
+  # copied from Fabric. Lakehouse targets use sqlEndpointProperties.id.
+  default_sql_endpoint:
+    item_type: ""
+    item_name: ""
+    item_id: ""
+    sqlEndpointProperties:
+      id: ""
   # Warehouse / Lakehouse workspace for each deployment environment.
   environment_names:
     dev:  "TODO: dev Warehouse / Lakehouse workspace"
@@ -84,6 +92,9 @@ mcp:
   powerbi:         { enabled: true, readonly_flag: true, allowed_default_actions: ["list","read","inspect"], requires_approval_actions: ["create","update","delete","publish"] }
   microsoft_learn: { enabled: true, purpose: "Always-current Microsoft documentation lookups" }
   context_mode:    { enabled: true }
+  fabric_sqlendpoint:
+    enabled: true
+    requires_approval_actions: ["executeSQL","execute_query"]
 
 memory:
   extension: "pi-hermes-memory"
@@ -92,11 +103,10 @@ memory:
 
 microsoft_skills:
   # Official Microsoft agent skills (MIT). SUBORDINATE to Cooptimize skills: a
-  # Microsoft skill loads only if allow-listed below AND it does not conflict (by
-  # folder or frontmatter name) with one of ours. Fetch with:
-  #   scripts/fetch-microsoft-skills.sh
-  source: "https://github.com/microsoft/skills"
-  load_dir: "skills/_microsoft"
+  # Microsoft skill loads only when the pinned catalog + current project policy
+  # allow it AND it does not conflict (by folder or frontmatter name) with one of
+  # ours. `coop sync` refreshes the immutable catalog; launch never networks.
+  # Legacy source/load_dir fields are ignored if present.
   allow:
     - "kql"             # KQL / Fabric Real-Time Intelligence (EventHouse/ADX)
     - "microsoft-docs"  # Microsoft Learn documentation queries
@@ -107,27 +117,8 @@ microsoft_skills:
 # subordinate to Cooptimize skills and remain subject to the guardrails:
 # plan-and-approve before edits, show diff, and NEVER commit source.
 fabric_skills:
-  source: "https://github.com/microsoft/skills-for-fabric"
-  load_dir: "skills/_microsoft_fabric"
-  allow:
-    # Core Power BI authoring pipeline (design → plan → author → manage + model)
-    - "check-updates"              # mandatory pre-flight for Fabric skills
-    - "powerbi-report-design"      # read-only design briefs / archetypes / themes
-    - "powerbi-report-planning"    # requirements → locked spec → approval → build
-    - "powerbi-report-authoring"   # PBIR/PBIP pages, visuals, filters, themes
-    - "powerbi-report-management"  # upload/publish/download report definitions
-    - "semantic-model-authoring"   # DAX/TMDL/semantic model create-edit-deploy
-    # Fabric data engineering
-    - "eventhouse-cli"             # KQL database authoring + read-only queries
-    - "sqldw-authoring-cli"        # T-SQL DDL/DML against Warehouse/SQL endpoint
-    - "sqldw-consumption-cli"      # read-only T-SQL against Warehouse/SQL endpoint
-    - "dataflows-cli"              # Dataflow Gen2 authoring/inspection/upgrade
-    - "e2e-medallion-architecture" # Bronze/Silver/Gold lakehouse + notebooks
-    - "spark-authoring-cli"        # Fabric Spark notebooks / MLV authoring
-    - "fabriciq"                   # natural-language Q&A over existing report data
-    # Deferred (narrow / add when needed):
-    # - "sqldw-operations-cli"     # Warehouse performance diagnostics
-    # - "deployment-pipelines-authoring-cli"  # Fabric ALM deployment pipelines
+  policy: baseline
+  # Exact source/revision/path pins live in config/microsoft-skills.json.
 
 standards:
   sql: "docs/standards/sql-standards.md"

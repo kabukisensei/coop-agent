@@ -49,8 +49,8 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      coop-data-doc wizard driven via `ask-user-question` + coop-data-doc's
      non-interactive commands), and `git-helper` (drafts Conventional-Commits
      messages + PR descriptions from the diff — drafts only, never commits) —
-     plus a subordinate, allow-listed set of official Microsoft skills under
-     `skills/_microsoft/`.
+     plus a subordinate, pinned official Microsoft skills catalog refreshed by
+     `coop sync` and resolved locally at launch.
    - **Prompt templates** — `prompts/` (per task skill: `discovery`,
      `impact-analysis`, `semantic-model-review`, `fabric-architecture-review`,
      `setup-docs`, `daily-log`, `weekly-log`; plus workflow prompts `spec-first`,

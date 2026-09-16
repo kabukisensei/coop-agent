@@ -82,7 +82,8 @@ tabular_editor_cli:
 # destructively into coop's isolated agent dir (~/.coop/agent/mcp.json) by `coop sync`
 # — never touches your personal `pi`'s MCP. NOTE: fabric/powerbi/microsoft-learn are
 # read-only over CLIENT data (fabric is read-only *by policy* — its MCP has no server-
-# side switch; see docs/guardrails.md). context-mode is NOT a pure read: it runs
+# side switch; see docs/guardrails.md). The Warehouse SQL endpoint MCP is a separate
+# managed remote HTTP server and every SQL call is approval-gated. context-mode is NOT a pure read: it runs
 # SANDBOXED code over the docs/graph (not client data) to save context — pinned, and
 # still subject to Pi's tool approval.
 mcp:
@@ -91,6 +92,8 @@ mcp:
   servers:
     - name: fabric          # @microsoft/fabric-mcp (AzureCliCredential)
       mode: read-only       # by policy — Fabric MCP has no server-side read-only switch
+    - name: fabric-sqlendpoint # https://api.fabric.microsoft.com/v1/mcp/dataPlane/... via mcp-remote
+      mode: approval-gated-sql
     - name: powerbi         # powerbi-mcp-server --readonly
       mode: read-only
     - name: microsoft-learn # learn.microsoft.com/api/mcp via mcp-remote (always-current docs)

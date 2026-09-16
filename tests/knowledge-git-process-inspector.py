@@ -2,6 +2,7 @@
 """Inspect exact argv/cwd; exit 0 absent, 1 present, 2 uncertain."""
 
 import ctypes
+import json
 import os
 import re
 import stat
@@ -240,42 +241,94 @@ def _resolve_existing_regular_script(path, target=None):
     return resolved, None
 
 
-def _same_process_group(pid, scope_pgid):
-    """Return membership in the inspector-owned group or bounded uncertainty."""
-    if scope_pgid is None:
-        return True, None
-    try:
-        return os.getpgid(pid) == scope_pgid, None
-    except ProcessLookupError:
-        return False, None
-    except OSError as exc:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False, None
-        except PermissionError:
-            pass
-        return False, "process-group identity unavailable for pid %d: %s" % (pid, exc)
+def _linux_process_identity(pid):
+    """Return the kernel start identity for one live Linux process."""
+    raw, error = _linux_read(pid, "stat", binary=True)
+    if error:
+        return None, error
+    # comm is parenthesized and may contain spaces or closing parentheses. Split
+    # at the final ')' before the fixed-position fields; starttime is field 22.
+    closing = raw.rfind(b")")
+    fields = raw[closing + 1 :].split() if closing >= 0 else []
+    if len(fields) < 20 or not fields[19].isdigit():
+        return None, "stat metadata malformed for pid %d" % pid
+    if fields[0] == b"Z":
+        return None, "exited"
+    return (pid, int(fields[19])), None
 
 
-def linux_inspect(target, scope_pgid=None):
+def _linux_descendants(root_pid):
+    """Enumerate one validated root subtree without inspecting ambient PIDs."""
+    root_identity, error = _linux_process_identity(root_pid)
+    if error:
+        return [], ["root pid %d unavailable: %s" % (root_pid, error)]
+    pending = [root_identity]
+    identities = {root_pid: root_identity}
+    descendants = []
+    uncertainties = []
+    while pending:
+        identity = pending.pop()
+        pid = identity[0]
+        if pid != root_pid:
+            descendants.append(pid)
+        raw, error = _linux_read(pid, "task/%d/children" % pid)
+        if error:
+            current, current_error = _linux_process_identity(pid)
+            if pid != root_pid and current_error == "exited":
+                continue
+            if current == identity:
+                uncertainties.append(
+                    "descendant traversal failed for pid %d: %s" % (pid, error)
+                )
+            else:
+                uncertainties.append(
+                    "process identity changed during traversal for pid %d" % pid
+                )
+            continue
+        fields = raw.split()
+        if any(not value.isdigit() for value in fields):
+            uncertainties.append("children metadata malformed for pid %d" % pid)
+            continue
+        current, current_error = _linux_process_identity(pid)
+        if current_error:
+            if pid == root_pid or current_error != "exited":
+                uncertainties.append(
+                    "process identity changed during traversal for pid %d" % pid
+                )
+                continue
+        elif current != identity:
+            uncertainties.append(
+                "process identity changed during traversal for pid %d" % pid
+            )
+            continue
+        for value in fields:
+            child_pid = int(value)
+            if child_pid in identities:
+                continue
+            child_identity, child_error = _linux_process_identity(child_pid)
+            if child_error == "exited":
+                continue
+            if child_error:
+                uncertainties.append(
+                    "descendant identity unavailable for pid %d: %s"
+                    % (child_pid, child_error)
+                )
+                continue
+            identities[child_pid] = child_identity
+            pending.append(child_identity)
+    final_root, final_error = _linux_process_identity(root_pid)
+    if final_error or final_root != root_identity:
+        uncertainties.append("root pid %d changed during traversal" % root_pid)
+    return descendants, uncertainties
+
+
+def linux_inspect(target, root_pid):
     own_pid = os.getpid()
     matches = []
-    uncertainties = []
     uid = os.geteuid()
-    try:
-        names = os.listdir("/proc")
-    except OSError as exc:
-        return [], ["cannot enumerate /proc: %s" % exc]
-    for name in names:
-        if not name.isdigit() or int(name) == own_pid:
-            continue
-        pid = int(name)
-        in_scope, group_error = _same_process_group(pid, scope_pgid)
-        if group_error:
-            uncertainties.append(group_error)
-            continue
-        if not in_scope:
+    pids, uncertainties = _linux_descendants(root_pid)
+    for pid in pids:
+        if pid == own_pid:
             continue
         candidate, error = _linux_same_user_python(pid, uid)
         if error:
@@ -316,12 +369,202 @@ def linux_inspect(target, scope_pgid=None):
     return matches, uncertainties
 
 
-def linux_matches(target):
+def linux_matches(target, root_pid):
     """Compatibility wrapper; uncertainty is an error, never absence."""
-    matches, uncertainties = linux_inspect(target)
+    matches, uncertainties = linux_inspect(target, root_pid)
     if uncertainties:
         raise RuntimeError("; ".join(uncertainties))
     return matches
+
+
+def _windows_process_rows():
+    """Read one Windows-native process snapshot through CIM."""
+    script = (
+        "$ErrorActionPreference='Stop';"
+        "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);"
+        "$rows=@(Get-CimInstance Win32_Process|ForEach-Object{"
+        "[pscustomobject]@{pid=[int]$_.ProcessId;ppid=[int]$_.ParentProcessId;"
+        "creation_date=$(if($null -eq $_.CreationDate){$null}else{"
+        "[Int64]$_.CreationDate.ToUniversalTime().Ticks});"
+        "executable=$_.ExecutablePath;command_line=$_.CommandLine}});"
+        "ConvertTo-Json -InputObject $rows -Compress"
+    )
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+        timeout=20,
+        check=False,
+    )
+    if result.returncode != 0:
+        return [], ["Windows CIM process inspection failed: %s" % result.stderr.strip()]
+    try:
+        decoded = json.loads(result.stdout)
+    except (TypeError, ValueError) as error:
+        return [], ["Windows CIM process metadata malformed: %s" % error]
+    rows = decoded if isinstance(decoded, list) else [decoded]
+    required = {"pid", "ppid", "creation_date", "executable", "command_line"}
+    if any(not isinstance(row, dict) or set(row) != required for row in rows):
+        return [], ["Windows CIM process metadata has an unexpected schema"]
+    return rows, []
+
+
+def _windows_descendants(root_pid, rows):
+    """Return the creation-time-validated root closure from one CIM snapshot."""
+    records = {}
+    invalid_rows = []
+    uncertainties = []
+    for row in rows:
+        pid = row["pid"]
+        ppid = row["ppid"]
+        creation_date = row["creation_date"]
+        if (
+            type(pid) is not int
+            or pid <= 0
+            or type(ppid) is not int
+            or ppid < 0
+            or type(creation_date) is not int
+            or creation_date <= 0
+        ):
+            invalid_rows.append(row)
+            continue
+        if pid in records:
+            invalid_rows.append(row)
+            continue
+        records[pid] = row
+    if root_pid not in records:
+        if any(row["pid"] == root_pid for row in invalid_rows):
+            uncertainties.append(
+                "Windows CIM process metadata has an invalid in-scope process identity"
+            )
+        uncertainties.append("root pid %d unavailable in process snapshot" % root_pid)
+        return [], uncertainties
+    descendants = []
+    pending = [root_pid]
+    seen = {root_pid}
+    while pending:
+        parent = pending.pop()
+        parent_created = records[parent]["creation_date"]
+        for pid, row in records.items():
+            if (
+                row["ppid"] != parent
+                or pid in seen
+                or row["creation_date"] < parent_created
+            ):
+                continue
+            seen.add(pid)
+            descendants.append(row)
+            pending.append(pid)
+    if any(
+        row["pid"] == root_pid
+        or row["pid"] in seen
+        or any(row["ppid"] == pid for pid in seen)
+        for row in invalid_rows
+    ):
+        uncertainties.append(
+            "Windows CIM process metadata has an invalid in-scope process identity"
+        )
+    return descendants, uncertainties
+
+
+def _windows_command_line_argv(command_line):
+    """Split a kernel command line with Windows' native quoting rules."""
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    shell32.CommandLineToArgvW.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    shell32.CommandLineToArgvW.restype = ctypes.POINTER(ctypes.c_wchar_p)
+    argc = ctypes.c_int()
+    pointer = shell32.CommandLineToArgvW(command_line, ctypes.byref(argc))
+    if not pointer or argc.value <= 0:
+        return (
+            None,
+            "CommandLineToArgvW failed: Windows error %d" % ctypes.get_last_error(),
+        )
+    try:
+        return [pointer[index] for index in range(argc.value)], None
+    finally:
+        kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+        kernel32.LocalFree(pointer)
+
+
+def windows_inspect(target, root_pid):
+    """Inspect only one Windows process subtree; uncertainty is never absence."""
+    rows, uncertainties = _windows_process_rows()
+    if uncertainties:
+        return [], uncertainties
+    descendants, closure_uncertainties = _windows_descendants(root_pid, rows)
+    uncertainties.extend(closure_uncertainties)
+    matches = []
+    for row in descendants:
+        pid = row["pid"]
+        if pid == os.getpid():
+            continue
+        executable = row["executable"]
+        if not isinstance(executable, str) or not executable:
+            uncertainties.append("executable path unavailable for pid %d" % pid)
+            continue
+        if not PYTHON_NAME.match(os.path.basename(executable)):
+            continue
+        command_line = row["command_line"]
+        if not isinstance(command_line, str) or not command_line:
+            uncertainties.append("command line unavailable for python pid %d" % pid)
+            continue
+        argv, error = _windows_command_line_argv(command_line)
+        if error:
+            uncertainties.append("pid %d: %s" % (pid, error))
+            continue
+        classification, script = parse_direct_python_script(
+            argv, executable_proven=True
+        )
+        if classification == "uncertain":
+            uncertainties.append("python argv ambiguous for pid %d" % pid)
+            continue
+        if classification != "script":
+            continue
+        if not os.path.isabs(script):
+            uncertainties.append(
+                "relative python script path cannot be resolved for pid %d" % pid
+            )
+            continue
+        resolved, error = _resolve_existing_regular_script(script, target)
+        if error:
+            uncertainties.append("script path unresolved for pid %d: %s" % (pid, error))
+            continue
+        if os.path.normcase(resolved) == os.path.normcase(target):
+            matches.append(pid)
+    return matches, uncertainties
+
+
+def parse_msys_ps_winpid(text, expected_pid):
+    """Strictly map one MSYS ps row to its native Windows PID."""
+    rows = [line.split() for line in text.splitlines() if line.strip()]
+    if len(rows) != 2:
+        raise ValueError("expected exactly one MSYS ps process row")
+    header, values = rows
+    if header.count("PID") != 1 or header.count("WINPID") != 1:
+        raise ValueError("MSYS ps must contain unique PID and WINPID columns")
+    if len(values) == len(header) + 1 and values[0] in {"S", "I", "O"}:
+        values = values[1:]
+    if len(values) != len(header):
+        raise ValueError("MSYS ps header and process row widths differ")
+    pid = values[header.index("PID")]
+    winpid = values[header.index("WINPID")]
+    if pid != str(expected_pid):
+        raise ValueError("MSYS ps row does not match the requested PID")
+    if not pid.isdigit() or int(pid) <= 0 or not winpid.isdigit() or int(winpid) <= 0:
+        raise ValueError("MSYS ps PID values must be positive decimal integers")
+    return int(winpid)
 
 
 def macos_process_argv(pid):
@@ -479,10 +722,41 @@ def _macos_pid_exists(pid):
         return False
 
 
-def macos_inspect(target, scope_pgid=None):
+def _macos_descendants(root_pid, rows):
+    """Return the root closure from one pid/ppid/uid process snapshot."""
+    records = {}
+    uncertainties = []
+    for line in rows:
+        fields = line.strip().split()
+        if len(fields) != 3 or not all(value.isdigit() for value in fields):
+            uncertainties.append("ps process metadata malformed: %s" % line.strip())
+            continue
+        pid, ppid, uid = (int(value) for value in fields)
+        if pid in records:
+            uncertainties.append("ps process metadata duplicates pid %d" % pid)
+            continue
+        records[pid] = (ppid, uid)
+    if root_pid not in records:
+        uncertainties.append("root pid %d unavailable in process snapshot" % root_pid)
+        return [], records, uncertainties
+    closure = []
+    pending = [root_pid]
+    seen = set()
+    while pending:
+        pid = pending.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        closure.append(pid)
+        children = [child for child, (parent, _uid) in records.items() if parent == pid]
+        pending.extend(reversed(children))
+    return [pid for pid in closure if pid != root_pid], records, uncertainties
+
+
+def macos_inspect(target, root_pid):
     """Use ps only for same-UID candidates, then native APIs for identity/data."""
     result = subprocess.run(
-        ["ps", "-ww", "-axo", "pid=,uid="],
+        ["ps", "-ww", "-axo", "pid=,ppid=,uid="],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -492,21 +766,17 @@ def macos_inspect(target, scope_pgid=None):
     if result.returncode != 0:
         return [], ["ps process inspection failed: %s" % result.stderr.strip()]
     matches = []
-    uncertainties = []
+    pids, records, uncertainties = _macos_descendants(
+        root_pid, result.stdout.splitlines()
+    )
+    if root_pid not in records:
+        return [], uncertainties
     own_pid = os.getpid()
     uid = os.geteuid()
-    for line in result.stdout.splitlines():
-        fields = line.strip().split(None, 1)
-        if len(fields) != 2 or not fields[0].isdigit() or int(fields[0]) == own_pid:
+    for pid in pids:
+        if pid == own_pid:
             continue
-        if not fields[1].isdigit() or int(fields[1]) != uid:
-            continue
-        pid = int(fields[0])
-        in_scope, group_error = _same_process_group(pid, scope_pgid)
-        if group_error:
-            uncertainties.append(group_error)
-            continue
-        if not in_scope:
+        if records[pid][1] != uid:
             continue
         executable, error = macos_process_executable(pid)
         if error:
@@ -551,25 +821,48 @@ def macos_inspect(target, scope_pgid=None):
     return matches, uncertainties
 
 
-def macos_matches(target):
-    matches, uncertainties = macos_inspect(target)
+def macos_matches(target, root_pid):
+    matches, uncertainties = macos_inspect(target, root_pid)
     if uncertainties:
         raise RuntimeError("; ".join(uncertainties))
     return matches
 
 
 def main():
-    if len(sys.argv) != 2:
-        print("usage: knowledge-git-process-inspector.py PATH", file=sys.stderr)
-        return 2
-    target = os.path.realpath(sys.argv[1])
-    try:
-        scope_pgid = os.getpgrp()
-        matches, uncertainties = (
-            linux_inspect(target, scope_pgid)
-            if os.path.isdir("/proc")
-            else macos_inspect(target, scope_pgid)
+    if len(sys.argv) == 4 and sys.argv[1] == "--msys-winpid":
+        if not sys.argv[2].isdigit() or int(sys.argv[2]) <= 0:
+            print("MSYS PID must be a positive decimal integer", file=sys.stderr)
+            return 2
+        try:
+            with open(sys.argv[3], encoding="utf-8-sig") as stream:
+                winpid = parse_msys_ps_winpid(stream.read(), int(sys.argv[2]))
+        except (OSError, UnicodeError, ValueError) as error:
+            print("MSYS WINPID mapping uncertain: %s" % error, file=sys.stderr)
+            return 2
+        sys.stdout.buffer.write((str(winpid) + "\n").encode("ascii"))
+        return 0
+    if (
+        len(sys.argv) != 4
+        or sys.argv[1] != "--root-pid"
+        or not sys.argv[2].isdigit()
+        or int(sys.argv[2]) <= 0
+    ):
+        print(
+            "usage: knowledge-git-process-inspector.py --root-pid PID PATH",
+            file=sys.stderr,
         )
+        return 2
+    root_pid = int(sys.argv[2])
+    target = os.path.realpath(sys.argv[3])
+    try:
+        if os.name == "nt":
+            matches, uncertainties = windows_inspect(target, root_pid)
+        elif sys.platform == "darwin":
+            matches, uncertainties = macos_inspect(target, root_pid)
+        elif os.path.isdir("/proc"):
+            matches, uncertainties = linux_inspect(target, root_pid)
+        else:
+            matches, uncertainties = [], ["unsupported process inspection platform"]
     except (OSError, subprocess.SubprocessError, RuntimeError) as error:
         print("process inspection uncertain: %s" % error, file=sys.stderr)
         return 2

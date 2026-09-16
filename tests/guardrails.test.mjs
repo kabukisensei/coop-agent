@@ -19,7 +19,7 @@ const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
 const dist = process.env.COOP_TEST_DIST;
 const cg = await import(pathToFileURL(`${dist}/coop-guardrails.mjs`).href);
 const coopGuardrails = cg.default;
-const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, mcpLiveReadRisk, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoCommitPolicy, commitPolicy, buildSessionGovernance, resetSessionGovernance, stripManagedUpdateNotices } = cg;
+const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, mcpLiveReadRisk, sqlMcpRisk, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoCommitPolicy, commitPolicy, buildSessionGovernance, resetSessionGovernance, stripManagedUpdateNotices } = cg;
 
 // Capture the handler the extension registers.
 let staged = "";     // `git diff --cached --name-only`
@@ -569,6 +569,69 @@ await t("row reads and production metadata require approval and fail closed head
   assert.equal(blocked(await handle({ toolName: "fabric_execute_query", input: { workspace: "dev" } }, { cwd: ctx.cwd, hasUI: false })), true);
   assert.equal(blocked(await handle({ toolName: "fabric_list_tables", input: { workspace: "test" } }, ctx)), false);
   assert.equal(blocked(await handle({ toolName: "fabric_execute_query", input: { workspace: "dev" } }, { ...ctx, ui: { confirm: async () => true, notify: () => {} } })), false);
+});
+
+await t("Warehouse SQL MCP calls are approval-gated before generic row-read logic", async () => {
+  assert.deepEqual(sqlMcpRisk({ toolName: "executeSQL", input: { sql: "select top 10 * from dbo.Customer" } }), {
+    label: "executeSQL",
+    kind: "row-data",
+  });
+  assert.deepEqual(sqlMcpRisk({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query: "CREATE TABLE x (id int)" }) } }), {
+    label: "fabric-sqlendpoint/execute_query",
+    kind: "ddl-dml-destructive",
+  });
+  const declined = { ...ctx, ui: { confirm: async () => false, notify: () => {} } };
+  assert.equal(blocked(await handle({ toolName: "executeSQL", input: { sql: "select 1" } }, declined)), true);
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query: "DELETE FROM dbo.T" }) } }, declined)), true);
+  assert.equal(blocked(await handle({ toolName: "executeSQL", input: { sql: "select 1" } }, { ...ctx, ui: { confirm: async () => true, notify: () => {} } })), false);
+});
+
+await t("Warehouse SQL mutation classifier covers INTO and permission variants", () => {
+  const mutations = [
+    "SELECT customer_id\nINTO dbo.CustomerCopy FROM dbo.Customer",
+    "  /* bounded export */ COPY\nINTO 'https://storage.example.invalid/path' FROM dbo.Source",
+    "-- permission change follows\nDENY SELECT ON dbo.Secret TO analyst",
+    "\n\tALTER TABLE dbo.T ADD c int",
+    "/* leading comment */ MERGE dbo.T USING dbo.S ON 1=0 WHEN NOT MATCHED THEN INSERT DEFAULT VALUES;",
+  ];
+  for (const sql of mutations) {
+    assert.equal(sqlMcpRisk({ toolName: "executeSQL", input: { sql } })?.kind, "ddl-dml-destructive", sql);
+  }
+  assert.equal(
+    sqlMcpRisk({ toolName: "executeSQL", input: { sql: "/* DELETE FROM dbo.T */\n-- DROP TABLE dbo.T\nSELECT 1" } })?.kind,
+    "row-data",
+  );
+  const quotedCommentMutations = [
+    "SELECT '--' AS marker; DELETE FROM dbo.Secret",
+    "SELECT '/*' AS opener; UPDATE dbo.T SET x=1; SELECT '*/' AS closer",
+    'SELECT "--" AS marker; DENY SELECT ON dbo.Secret TO analyst',
+    "SELECT [/*] AS marker; COPY INTO dbo.T FROM 'https://example.invalid/source'",
+  ];
+  for (const sql of quotedCommentMutations) {
+    assert.equal(sqlMcpRisk({ toolName: "executeSQL", input: { sql } })?.kind, "ddl-dml-destructive", sql);
+  }
+  for (const sql of ["SELECT '-- DELETE' AS marker", "SELECT '/* UPDATE */' AS marker", "SELECT [DROP] FROM dbo.T"]) {
+    assert.equal(sqlMcpRisk({ toolName: "executeSQL", input: { sql } })?.kind, "row-data", sql);
+  }
+});
+
+await t("Warehouse SQL MCP audit never logs raw SQL or args", async () => {
+  clearAudit();
+  await handle(
+    { toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query: "select * from SecretTable" }) } },
+    { ...ctx, ui: { confirm: async () => false, notify: () => {} } },
+  );
+  const e = readAudit().filter((x) => x.kind === "mcp-confirm");
+  assert.ok(e.length > 0);
+  assert.equal(JSON.stringify(e).includes("SecretTable"), false);
+  clearAudit();
+  await handle(
+    { toolName: "executeSQL", input: { sql: "SELECT secret_value INTO dbo.LeakedName FROM dbo.Source", arguments: { password: "never-log-me" } } },
+    { ...ctx, ui: { confirm: async () => false, notify: () => {} } },
+  );
+  const mutationAudit = JSON.stringify(readAudit());
+  assert.equal(mutationAudit.includes("LeakedName"), false);
+  assert.equal(mutationAudit.includes("never-log-me"), false);
 });
 
 // --- proxied MCP mutation gating (pi-mcp-adapter shape: toolName="mcp", input.tool=<remote>) --

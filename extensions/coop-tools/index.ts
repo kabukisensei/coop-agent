@@ -914,6 +914,10 @@ export interface ProjectWizardSettings {
   tenantId: string;
   fabricWorkspaceName: string;
   fabricWorkspaceId: string;
+  sqlEndpointItemType?: string;
+  sqlEndpointItemName?: string;
+  sqlEndpointItemId?: string;
+  sqlEndpointPropertiesId?: string;
   powerBiWorkspaceName: string;
   powerBiWorkspaceId: string;
   tabularEditorEnabled: boolean;
@@ -992,6 +996,17 @@ function yamlQuoted(value: string): string {
 
 function yamlKey(value: string): string {
   return /^[A-Za-z0-9_.-]+$/.test(value) ? value : yamlQuoted(value);
+}
+
+function canonicalProjectUuid(value: string | undefined): string {
+  const candidate = String(value || "").trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(candidate)
+    ? candidate
+    : "";
+}
+
+function projectSqlEndpointType(value: string | undefined): string {
+  return value === "Warehouse" || value === "Lakehouse" ? value : "";
 }
 
 /** Update or insert one scalar mapping path while preserving every unrelated line. */
@@ -1206,6 +1221,10 @@ export function parseProjectWizardSettings(text: string, projectRoot: string): P
     tenantId: projectYamlScalar(text, ["fabric", "tenant_id"]),
     fabricWorkspaceName: projectYamlScalar(text, ["fabric", "default_workspace_name"]),
     fabricWorkspaceId: projectYamlScalar(text, ["fabric", "default_workspace_id"]),
+    sqlEndpointItemType: projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_type"]),
+    sqlEndpointItemName: projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_name"]),
+    sqlEndpointItemId: projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_id"]),
+    sqlEndpointPropertiesId: projectYamlScalar(text, ["fabric", "default_sql_endpoint", "sqlEndpointProperties", "id"]),
     powerBiWorkspaceName: projectYamlScalar(text, ["power_bi", "default_workspace_name"]),
     powerBiWorkspaceId: projectYamlScalar(text, ["power_bi", "default_workspace_id"]),
     tabularEditorEnabled: boolValue(teFlag, false),
@@ -1284,11 +1303,16 @@ export function applyProjectWizardSettings(text: string, settings: ProjectWizard
   set(["tools", "fabric_cli", "enabled"], settings.fabricEnabled);
   set(["tools", "fabric_cicd", "enabled"], settings.fabricEnabled);
   set(["mcp", "fabric", "enabled"], settings.fabricEnabled);
+  set(["mcp", "fabric_sqlendpoint", "enabled"], settings.fabricEnabled);
   set(["mcp", "powerbi", "enabled"], settings.fabricEnabled);
   if (settings.fabricEnabled) {
     set(["fabric", "tenant_id"], settings.tenantId);
     set(["fabric", "default_workspace_name"], settings.fabricWorkspaceName);
-    set(["fabric", "default_workspace_id"], settings.fabricWorkspaceId);
+    set(["fabric", "default_workspace_id"], canonicalProjectUuid(settings.fabricWorkspaceId));
+    set(["fabric", "default_sql_endpoint", "item_type"], projectSqlEndpointType(settings.sqlEndpointItemType));
+    set(["fabric", "default_sql_endpoint", "item_name"], settings.sqlEndpointItemName || "");
+    set(["fabric", "default_sql_endpoint", "item_id"], canonicalProjectUuid(settings.sqlEndpointItemId));
+    set(["fabric", "default_sql_endpoint", "sqlEndpointProperties", "id"], canonicalProjectUuid(settings.sqlEndpointPropertiesId));
     set(["power_bi", "default_workspace_name"], settings.powerBiWorkspaceName);
     set(["power_bi", "default_workspace_id"], settings.powerBiWorkspaceId);
   }
@@ -1332,7 +1356,14 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "fabric:",
     `  tenant_id: ${yamlQuoted(settings.tenantId)}`,
     `  default_workspace_name: ${yamlQuoted(settings.fabricWorkspaceName)}`,
-    `  default_workspace_id: ${yamlQuoted(settings.fabricWorkspaceId)}`,
+    `  default_workspace_id: ${yamlQuoted(canonicalProjectUuid(settings.fabricWorkspaceId))}`,
+    "  # Optional unambiguous Warehouse/Lakehouse target; IDs must come from Fabric.",
+    "  default_sql_endpoint:",
+    `    item_type: ${yamlQuoted(projectSqlEndpointType(settings.sqlEndpointItemType))}`,
+    `    item_name: ${yamlQuoted(settings.sqlEndpointItemName || "")}`,
+    `    item_id: ${yamlQuoted(canonicalProjectUuid(settings.sqlEndpointItemId))}`,
+    "    sqlEndpointProperties:",
+    `      id: ${yamlQuoted(canonicalProjectUuid(settings.sqlEndpointPropertiesId))}`,
     "  lakehouse_names: []",
     "  warehouse_names: []",
     "  # Warehouse / Lakehouse workspace for each deployment environment.",
@@ -1393,6 +1424,9 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     `    enabled: ${settings.fabricEnabled}`,
     "    allowed_default_actions: ['list', 'read', 'inspect']",
     "    requires_approval_actions: ['create', 'update', 'delete', 'deploy']",
+    "  fabric_sqlendpoint:",
+    `    enabled: ${settings.fabricEnabled}`,
+    "    requires_approval_actions: ['executeSQL', 'execute_query']",
     "  powerbi:",
     `    enabled: ${settings.fabricEnabled}`,
     "    readonly_flag: true",
@@ -1409,16 +1443,13 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "  secret_scanning: true",
     "",
     "microsoft_skills:",
-    "  source: 'https://github.com/microsoft/skills'",
-    "  load_dir: 'skills/_microsoft'",
+    "  policy: restricted",
     "  allow:",
     "    - 'kql'",
     "    - 'microsoft-docs'",
     "",
     "fabric_skills:",
-    "  source: 'https://github.com/microsoft/skills-for-fabric'",
-    "  load_dir: 'skills/_microsoft_fabric'",
-    "  allow: []",
+    `  policy: ${settings.fabricEnabled ? "baseline" : "disabled"}`,
     "",
     "standards:",
     "  sql: 'docs/standards/sql-standards.md'",
@@ -1624,11 +1655,42 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     if (fwName === null) return false;
     const fwId = await askText(ctx, "Default Fabric workspace ID (optional)", settings.fabricWorkspaceId);
     if (fwId === null) return false;
+    const endpointType = await askText(ctx, "Default SQL endpoint item type: Warehouse or Lakehouse (optional)", settings.sqlEndpointItemType || "");
+    if (endpointType === null) return false;
+    if (endpointType && endpointType !== "Warehouse" && endpointType !== "Lakehouse") {
+      notify(ctx, "SQL endpoint item type must be exactly Warehouse, Lakehouse, or blank.", "error");
+      return false;
+    }
+    const endpointName = await askText(ctx, "Default SQL endpoint item name (optional)", settings.sqlEndpointItemName || "");
+    if (endpointName === null) return false;
+    const endpointId = await askText(ctx, "Default SQL endpoint item ID (canonical UUID; optional)", settings.sqlEndpointItemId || "");
+    if (endpointId === null) return false;
+    const endpointPropertiesId = await askText(ctx, "Lakehouse sqlEndpointProperties.id (canonical UUID; required for Lakehouse)", settings.sqlEndpointPropertiesId || "");
+    if (endpointPropertiesId === null) return false;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    if ((fwId && !uuid.test(fwId)) || (endpointId && !uuid.test(endpointId)) || (endpointPropertiesId && !uuid.test(endpointPropertiesId))) {
+      notify(ctx, "Fabric workspace and SQL endpoint IDs must be lowercase canonical UUIDs or blank.", "error");
+      return false;
+    }
+    if (endpointType === "Lakehouse" && !endpointPropertiesId) {
+      notify(ctx, "Lakehouse SQL endpoint selection requires sqlEndpointProperties.id.", "error");
+      return false;
+    }
     const pbiName = await askText(ctx, "Default Power BI workspace name (optional)", settings.powerBiWorkspaceName || fwName);
     if (pbiName === null) return false;
     const pbiId = await askText(ctx, "Default Power BI workspace ID (optional)", settings.powerBiWorkspaceId);
     if (pbiId === null) return false;
-    Object.assign(settings, { tenantId: tenant, fabricWorkspaceName: fwName, fabricWorkspaceId: fwId, powerBiWorkspaceName: pbiName, powerBiWorkspaceId: pbiId });
+    Object.assign(settings, {
+      tenantId: tenant,
+      fabricWorkspaceName: fwName,
+      fabricWorkspaceId: fwId,
+      sqlEndpointItemType: endpointType,
+      sqlEndpointItemName: endpointName,
+      sqlEndpointItemId: endpointId,
+      sqlEndpointPropertiesId: endpointPropertiesId,
+      powerBiWorkspaceName: pbiName,
+      powerBiWorkspaceId: pbiId,
+    });
   }
 
   settings.tabularEditorEnabled = await askConfirm(ctx, "Tabular Editor", "Use the Tabular Editor CLI for semantic-model BPA reviews?");

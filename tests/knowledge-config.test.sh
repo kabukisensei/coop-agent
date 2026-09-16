@@ -18,7 +18,7 @@ export COOP_AZ_BIN=/nonexistent/az
 
 # --- onboarding writes the knowledge block (and preserves it on re-run) -------
 D1="$TMP/onboard"; mkdir -p "$D1"
-printf 'n\nn\nn\nn\nn\ny\n' | HOME="$D1" COOP_DIR="$D1" \
+printf 'n\nn\nn\nn\nn\nn\ny\n' | HOME="$D1" COOP_DIR="$D1" \
   "$PY" "$ROOT/scripts/onboard.py" onboard --config-only >/dev/null 2>&1
 if [ -f "$D1/.coop/config" ] && "$PY" - "$D1/.coop/config" <<'PYEOF'
 import json, sys
@@ -36,7 +36,7 @@ else ko "onboarding did not write the expected knowledge block"; fi
 
 # Declining keeps knowledge disabled, with no repos invented.
 D2="$TMP/declined"; mkdir -p "$D2"
-printf 'n\nn\nn\nn\nn\nn\n' | HOME="$D2" COOP_DIR="$D2" \
+printf 'n\nn\nn\nn\nn\nn\nn\n' | HOME="$D2" COOP_DIR="$D2" \
   "$PY" "$ROOT/scripts/onboard.py" onboard --config-only >/dev/null 2>&1
 "$PY" - "$D2/.coop/config" <<'PYEOF'
 import json, sys
@@ -46,7 +46,7 @@ PYEOF
 [ "$?" -eq 0 ] && ok "declining writes knowledge disabled" || ko "declined knowledge block wrong"
 
 # Re-running with blank answers preserves the existing knowledge block verbatim.
-printf 'n\nn\nn\nn\nn\n\n' | HOME="$D1" COOP_DIR="$D1" \
+printf 'n\nn\nn\nn\nn\nn\n\n' | HOME="$D1" COOP_DIR="$D1" \
   "$PY" "$ROOT/scripts/onboard.py" onboard --config-only >/dev/null 2>&1
 "$PY" - "$D1/.coop/config" <<'PYEOF'
 import json, sys

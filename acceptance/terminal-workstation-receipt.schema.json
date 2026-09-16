@@ -9,6 +9,7 @@
     "candidate",
     "baseline",
     "harness",
+    "trust_model",
     "execution",
     "claims",
     "operator_evidence",
@@ -26,6 +27,34 @@
     },
     "harness": {
       "$ref": "#/$defs/harnessIdentity"
+    },
+    "trust_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "candidate_admin_code_trusted",
+        "adversarial_admin_containment",
+        "deferred_hardening",
+        "limitation"
+      ],
+      "properties": {
+        "name": {
+          "const": "reviewed-candidate-non-malicious"
+        },
+        "candidate_admin_code_trusted": {
+          "const": true
+        },
+        "adversarial_admin_containment": {
+          "const": false
+        },
+        "deferred_hardening": {
+          "const": "post-release"
+        },
+        "limitation": {
+          "const": "Certification does not contain intentionally malicious administrator-level candidate code."
+        }
+      }
     },
     "execution": {
       "type": "object",
@@ -365,6 +394,22 @@
             ],
             "properties": {
               "id": {
+                "const": "warehouse-mcp-live-acceptance"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1,
+          "type": "array"
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
                 "const": "snapshot-recovery"
               }
             }
@@ -454,8 +499,8 @@
             "type": "array"
           },
           "operator_evidence": {
-            "minItems": 10,
-            "maxItems": 10,
+            "minItems": 11,
+            "maxItems": 11,
             "type": "array"
           }
         },
@@ -1243,6 +1288,75 @@
                       ],
                       "properties": {
                         "id": {
+                          "const": "warehouse-mcp-live-acceptance"
+                        },
+                        "status": {
+                          "const": "PASS"
+                        },
+                        "required": {
+                          "const": true
+                        },
+                        "evidence": {
+                          "type": "array",
+                          "minContains": 1,
+                          "maxContains": 1,
+                          "contains": {
+                            "allOf": [
+                              {
+                                "$ref": "#/$defs/evidence"
+                              },
+                              {
+                                "type": "object",
+                                "required": [
+                                  "kind",
+                                  "observed",
+                                  "warehouse_live"
+                                ],
+                                "properties": {
+                                  "kind": {
+                                    "const": "OPERATOR_OBSERVATION"
+                                  },
+                                  "observed": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "warehouse_live": {
+                                    "$ref": "#/$defs/warehouseLiveEvidence"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                "minContains": 1,
+                "maxContains": 1,
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operator_evidence": {
+                "contains": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/operatorClaim"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "required",
+                        "evidence"
+                      ],
+                      "properties": {
+                        "id": {
                           "const": "snapshot-recovery"
                         },
                         "status": {
@@ -1442,7 +1556,8 @@
         "exit_code",
         "identity",
         "path",
-        "sha256"
+        "sha256",
+        "warehouse_live"
       ],
       "properties": {
         "kind": {
@@ -1476,6 +1591,16 @@
         "sha256": {
           "type": "string",
           "pattern": "^$|^[0-9a-f]{64}$"
+        },
+        "warehouse_live": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/warehouseLiveEvidence"
+            }
+          ]
         }
       },
       "allOf": [
@@ -1617,6 +1742,7 @@
                 "reopen-resume",
                 "teamai-failure-isolation",
                 "rollback-instructions",
+                "warehouse-mcp-live-acceptance",
                 "snapshot-recovery"
               ]
             }
@@ -1624,6 +1750,43 @@
           "type": "object"
         }
       ]
+    },
+    "warehouseLiveEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "auth_state",
+        "target_validation",
+        "target_scope",
+        "discovered_tool",
+        "provenance",
+        "mock"
+      ],
+      "properties": {
+        "auth_state": {
+          "const": "authenticated"
+        },
+        "target_validation": {
+          "const": "validated"
+        },
+        "target_scope": {
+          "const": "item"
+        },
+        "discovered_tool": {
+          "enum": [
+            "executeSQL",
+            "execute_query",
+            "fabric-sqlendpoint-execute_query",
+            "fabric_sqlendpoint_execute_query"
+          ]
+        },
+        "provenance": {
+          "const": "live"
+        },
+        "mock": {
+          "const": false
+        }
+      }
     }
   }
 }

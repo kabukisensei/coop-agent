@@ -122,6 +122,24 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22.19.0'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Pin Python and install receipt-schema dependency
+        shell: pwsh
+        run: |
+          $venv = Join-Path $env:RUNNER_TEMP 'coop-ci-python'
+          & python -m venv $venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $python = Join-Path $venv 'Scripts\python.exe'
+          & $python -m pip install --disable-pip-version-check --no-input "jsonschema==4.25.1"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -c "import jsonschema,os,sys; print(os.path.abspath(sys.executable))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sitePackages = (& $python -c "import jsonschema,os; print(os.path.dirname(os.path.dirname(jsonschema.__file__)))").Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $sitePackages) { exit 1 }
+          "CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PYTHONPATH=$sitePackages" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: run test suite under Git Bash
         shell: bash
         run: bash tests/run.sh
@@ -149,6 +167,24 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Pin Python and install receipt-schema dependency
+        shell: pwsh
+        run: |
+          $venv = Join-Path $env:RUNNER_TEMP 'coop-ci-python'
+          & python -m venv $venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $python = Join-Path $venv 'Scripts\python.exe'
+          & $python -m pip install --disable-pip-version-check --no-input "jsonschema==4.25.1"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -c "import jsonschema,os,sys; print(os.path.abspath(sys.executable))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sitePackages = (& $python -c "import jsonschema,os; print(os.path.dirname(os.path.dirname(jsonschema.__file__)))").Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $sitePackages) { exit 1 }
+          "CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PYTHONPATH=$sitePackages" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: parse every .ps1 with the PowerShell language parser
         shell: pwsh
         run: |

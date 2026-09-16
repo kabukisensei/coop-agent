@@ -235,7 +235,10 @@ It never touches the repo clone, your work repos, or your personal `pi` setup.
 
 - **Read-only first** — it plans and asks before changing anything.
 - **Never commits source** (SQL / DAX / models / reports) — docs/logs only, with approval.
-- **MCP** (Fabric / Power BI / Microsoft Learn) is **read-only**; it never exposes secrets.
+- **MCP** (Fabric / Power BI / Microsoft Learn) is read-only by policy and never
+  exposes secrets. Warehouse SQL uses a separate `fabric-sqlendpoint` managed
+  remote HTTP MCP server. It uses native OAuth with `mcp-remote@0.1.38`, never
+  static bearer tokens, and every SQL call is approval-gated.
 
 ## Where to get help
 

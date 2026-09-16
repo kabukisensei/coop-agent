@@ -31,6 +31,8 @@ assert m['coop_version']==(r/'VERSION').read_text().strip()
 for p in ['@microsoft/fabric-mcp','powerbi-mcp-server','@azure-devops/mcp','mcp-remote']:
     assert p in m['mcp_servers']
 assert '@microsoft/powerbi-modeling-mcp' in m['npm_tools']
+# 0.0.1 was never published; Windows installs must use the first supported line.
+assert m['npm_tools']['@microsoft/powerbi-desktop-bridge-cli'] == '0.1.2'
 for p in ['pi-mcp-adapter','pi-hermes-memory','pi-better-openai','pi-web-access','@juicesharp/rpiv-ask-user-question','context-mode']:
     assert p in m['extensions']
 # Manifest is authoritative: every manifest fleet member must be referenced by its

@@ -175,12 +175,12 @@ Always confirm with `catalog describe <type>`.
 ## Deep mechanics
 
 When the subordinate Microsoft `powerbi-report-authoring` skill is loaded
-(allow-listed under `fabric_skills` and fetched into `skills/_microsoft_fabric/`),
+(approved in the pinned catalog and enabled by current project policy),
 defer to its `references/` for complete JSON templates and per-visual guidance:
 `authoring.md`, `formatting.md`, `theming.md`, `re-theming.md`, `slicers.md`,
 `filters.md`, `card.md`, `cartesian.md`, `table.md`, `powerbi-desktop.md`,
-`screenshot-review.md`, and the rest. If it is missing, run
-`scripts/fetch-microsoft-skills.sh`.
+`screenshot-review.md`, and the rest. If it is missing, run `coop sync` and check
+the Microsoft skills catalog section in `coop doctor`.
 
 ## Workflow
 
