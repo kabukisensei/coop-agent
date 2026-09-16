@@ -40,7 +40,7 @@ review, diff summary, and human commit.
 Read the project contract `.coop/project.yml` (coop loads the nearest one). It is
 the source of truth for repo paths, Fabric/Power BI workspaces, backup/log rules,
 allowed/blocked commit paths, and the approval policy. It may provide deliberate
-project standards overrides; otherwise COOP's resolved canonical task authority is
+project standards overrides; otherwise COOP's resolved standards task authority is
 authoritative.
 If it is missing, offer `/setup-project`; the in-Coop wizard can create a discovery,
 partial, or connected project without requiring the user to edit YAML.

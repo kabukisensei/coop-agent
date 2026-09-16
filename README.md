@@ -439,7 +439,7 @@ message + PR description from the diff — drafts only, never commits).
 
 The source of truth for repo paths, workspaces, backup/log rules, and approval policy
 is `.coop/project.yml`. It may provide deliberate project standards overrides;
-otherwise COOP's resolved canonical task authority is authoritative. Run
+otherwise COOP's resolved standards task authority is authoritative. Run
 **`/setup-project`** inside Coop or `coop init` in the project directory. Use
 `coop init --template` only when you intentionally want the full legacy template.
 

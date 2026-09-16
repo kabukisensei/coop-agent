@@ -31,7 +31,7 @@ assert.ok(skill.includes("explain what happened"), "skill requires post-slice ex
 assert.ok(skill.includes("Live-data tests between slices"), "skill documents live-data test hook");
 assert.ok(skill.includes("tests.live_data.enabled"), "skill references the config key");
 assert.ok(skill.includes("/slice-next"), "skill references the /slice-next prompt");
-assert.ok(skill.includes("resolved canonical task authority"), "workflow uses resolved canonical standards authority");
+assert.ok(skill.includes("resolved standards task authority"), "workflow uses the resolved standards authority abstraction");
 assert.ok(!/standards\.(sql|dax|fabric|documentation|semantic_model)/.test(skill), "workflow does not instruct agents to read contract standards paths");
 
 const prompt = readFileSync(join(ROOT, "prompts/slice-next.md"), "utf8");
@@ -80,7 +80,7 @@ const agentDocs = [
 for (const [path, content] of agentDocs) {
   assert.ok(!/standards\.(sql|dax|fabric|documentation|semantic_model)/.test(content), `${path} does not instruct agents to read contract standards paths`);
 }
-assert.ok(agentDocs[0][1].replace(/\s+/g, " ").includes("resolved canonical task authority"), "root AGENTS establishes canonical task authority with explicit override precedence");
+assert.ok(agentDocs[0][1].replace(/\s+/g, " ").includes("resolved standards task authority"), "root AGENTS establishes the resolved standards authority abstraction with explicit override precedence");
 
 const authoritySurfaces = [
   "prompts/spec-first.md",

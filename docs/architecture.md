@@ -239,4 +239,4 @@ The project contract `.coop/project.yml` (copied from
 `.coop/project.example.yml`) is the source of truth for repo paths, Fabric/Power BI
 workspaces, backup/log rules, allowed/blocked commit paths, and the approval policy.
 It may provide deliberate project standards overrides; otherwise COOP's resolved
-canonical task authority is authoritative.
+standards task authority is authoritative.

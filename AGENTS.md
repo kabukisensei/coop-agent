@@ -19,7 +19,7 @@ Cooptimize guardrails and the Cooptimize workflow:
   diff — drafts only, never commits).
 - **Contract:** `.coop/project.yml` is the source of truth for repo paths,
   Fabric/Power BI workspaces, backup/log rules, and approval policy. It may declare
-  deliberate project standards overrides; otherwise COOP's resolved canonical task
+  deliberate project standards overrides; otherwise COOP's resolved standards task
   authority is authoritative. Read the nearest contract before doing file work.
 
 Native tools available: `sql_review`, `dax_review`, `data_doc` (advisory, read-only),
