@@ -157,6 +157,8 @@ $(Coop-Bold)Usage$(Coop-Rst)
 $(Coop-Bold)Authoring$(Coop-Rst)
   coop init [dir]           Scaffold .coop/project.yml into a work repo (default: .)
                             (--seed-docs: generate coop-data-doc.yml from repositories:)
+  coop init --migrate-legacy [dir]
+                            Inspect legacy project configuration (dry run; add --apply to confirm changes)
   coop new-skill <name>     Scaffold skills/<name>/SKILL.md
   coop new-prompt <name>    Scaffold prompts/<name>.md
   coop release [level]      Cut a release: bump version + roll CHANGELOG + commit + tag + push
@@ -736,15 +738,24 @@ function Invoke-CoopInit {
   param([string[]]$RestArgs = @())
   # coop init [dir]              run the guided project wizard
   # coop init --template [dir]   copy the full documented example (legacy raw template)
+  # coop init --migrate-legacy [dir] [--apply] [--archive .pi/path]
+  #                              inspect first; apply only exact safe cleanup
   # coop init --seed-docs [dir]  generate/patch coop-data-doc.yml from an EXISTING
   #                              contract's repositories: (paths typed once, not twice)
   # coop init --ci github|ado    generate CI pipeline
   $seed = $false; $dir = ''; $ciType = ''; $template = $false
+  $migrate = $false; $apply = $false; $archiveArgs = @()
   for ($i = 0; $i -lt $RestArgs.Count; $i++) {
     $a = $RestArgs[$i]
     switch -Regex ($a) {
       '^--seed-docs$' { $seed = $true }
       '^--template$'  { $template = $true }
+      '^--migrate-legacy$' { $migrate = $true }
+      '^--apply$' { $apply = $true }
+      '^--archive$' {
+        if ($i + 1 -lt $RestArgs.Count) { $archiveArgs += @('--archive', $RestArgs[++$i]) }
+        else { Coop-Die '--archive requires a project-relative .pi file' }
+      }
       '^--ci$' {
         if ($i + 1 -lt $RestArgs.Count) { $ciType = $RestArgs[++$i] }
         else { Coop-Die "--ci requires an argument (github or ado)" }
@@ -752,12 +763,22 @@ function Invoke-CoopInit {
       '^--yes$'       { $env:COOP_ASSUME_YES = '1' }
       '^-y$'          { $env:COOP_ASSUME_YES = '1' }
       default {
-        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]" }
+        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop init [dir] [--seed-docs] [--template] [--migrate-legacy] [--apply] [--archive .pi/path] [--ci github|ado] [--yes]" }
         $dir = $a
       }
     }
   }
   if (-not $dir) { $dir = (Get-Location).Path }
+  if ($migrate) {
+    $py = Get-CoopPython
+    if (-not $py) { Coop-Die 'python is required for: coop init --migrate-legacy' }
+    $migrateArgs = @((Join-Path $script:CoopRoot 'lib/project_health.py'), 'migrate', $dir)
+    if ($apply) { $migrateArgs += '--apply' }
+    if ($env:COOP_ASSUME_YES -eq '1') { $migrateArgs += '--yes' }
+    $migrateArgs += $archiveArgs
+    & $py @migrateArgs
+    exit $LASTEXITCODE
+  }
   if ($seed) { Invoke-CoopInitSeedDocs $dir; return }
   if ($ciType) { Invoke-CoopInitCi $dir $ciType; return }
   $dst = Join-Path $dir '.coop\project.yml'

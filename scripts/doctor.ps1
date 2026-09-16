@@ -588,6 +588,18 @@ if ($proj) {
   }
 
   D-Ok 'Microsoft skills project policy is covered by the pinned catalog doctor section'
+
+  # Read-only bounded legacy-project diagnostics, shared with Bash and migration.
+  if ($pyBin) {
+    $projectRoot = Split-Path -Parent (Split-Path -Parent $proj)
+    $healthLines = @(& $pyBin (Join-Path $script:CoopRoot 'lib/project_health.py') doctor-lines $projectRoot --skills-dir (Join-Path $script:CoopRoot 'skills'))
+    foreach ($line in $healthLines) {
+      $parts = @(([string]$line) -split "`t", 3)
+      if ($parts.Count -ge 2 -and $parts[0]) {
+        D-Warn ("$($parts[0]): $($parts[1])") $(if ($parts.Count -ge 3) { $parts[2] } else { '' })
+      }
+    }
+  }
 } else {
   D-Warn 'no .coop/project.yml found' "copy $($script:CoopRoot)/.coop/project.example.yml to your repo's .coop/project.yml"
 }

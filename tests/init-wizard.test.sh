@@ -32,6 +32,7 @@ case "$text" in *"organization: 'Cooptimize'"*) ok "organization written" ;; *) 
 case "$text" in *"client: 'Test Client'"*) ok "client written" ;; *) ko "client missing" ;; esac
 case "$text" in *"enabled: false"*) ok "Fabric disabled when declined" ;; *) ko "Fabric should be disabled" ;; esac
 case "$text" in *"coop_data_doc:"*) ok "data_doc tool written" ;; *) ko "data_doc missing" ;; esac
+case "$text" in *"standards:"*) ko "guided wizard wrote default standards overrides" ;; *) ok "guided wizard omits default standards overrides" ;; esac
 
 # --- Fabric setup signs in inline and detects the tenant ----------------------
 az_login_stub="$TMP/az-login-stub"
@@ -80,6 +81,7 @@ HOME="$TMP" bash "$ROOT/bin/coop" init --template "$TMP/legacy" >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "--template exits 0" || ko "--template exit: $rc"
 [ -s "$TMP/legacy/.coop/project.yml" ] && ok "--template produced output" || ko "--template output empty"
+case "$(cat "$TMP/legacy/.coop/project.yml")" in *"standards:"*) ko "template wrote default standards overrides" ;; *) ok "template omits default standards overrides" ;; esac
 
 # --- lineage-docs offer: accepting runs coop-data-doc setup -------------------
 mkdir -p "$TMP/stubbin"

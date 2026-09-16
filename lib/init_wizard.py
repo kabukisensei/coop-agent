@@ -377,13 +377,6 @@ def build_project_yml(answers: dict) -> str:
     )
     lines.append("")
 
-    lines.append("standards:")
-    lines.append('  sql: "docs/standards/sql-standards.md"')
-    lines.append('  dax: "docs/standards/dax-standards.md"')
-    lines.append('  documentation: "docs/standards/documentation-standards.md"')
-    lines.append('  fabric: "docs/standards/fabric-standards.md"')
-    lines.append("")
-
     lines.append("backup:")
     lines.append('  root: ".backups"')
     lines.append('  timestamp_format: "%Y%m%d_%H%M%S"')

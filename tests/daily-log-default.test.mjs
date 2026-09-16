@@ -42,6 +42,9 @@ await t("nearest contract resolves its timezone-aware daily path", () => {
   assert.equal(requirement.displayPath, "work/logs/2026-01-01.md");
   assert.match(dailyLogSystemInstruction(requirement), /NON-SKIPPABLE/);
   assert.match(dailyLogSystemInstruction(requirement), /daily-logger skill/);
+  assert.match(dailyLogSystemInstruction(requirement), /If absent, create it from the daily-logger template/);
+  assert.match(dailyLogSystemInstruction(requirement), /if present, append without overwriting/);
+  assert.match(dailyLogSystemInstruction(requirement), /Do not check for or create the log at startup/);
 });
 
 await t("tool classifier ignores reads and recognizes work plus the log write", () => {
