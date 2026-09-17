@@ -441,8 +441,13 @@ PYEOF
     _sql_state="$(printf '%s' "$_sql_doctor" | "$_sql_py" -c 'import json,sys; print((json.load(sys.stdin) if not sys.stdin.isatty() else {}).get("state","unavailable"))' 2>/dev/null || printf unavailable)"
     _sql_scope="$(printf '%s' "$_sql_doctor" | "$_sql_py" -c 'import json,sys; d=json.load(sys.stdin); print((d.get("target") or {}).get("scope","unknown"))' 2>/dev/null || printf unknown)"
     case "$_sql_state" in
-      registered) ok "  • fabric-sqlendpoint registered (${_sql_scope} target; managed remote HTTP, native OAuth)" ;;
+      registered) ok "  • fabric-sqlendpoint registered (${_sql_scope} target; direct HTTP, Azure CLI bearer token)" ;;
       auth_required) warn "  • fabric-sqlendpoint auth_required (${_sql_scope} target)" "sign in with Azure CLI/tenant access; doctor never triggers login" ;;
+      azure_cli_unavailable) warn "  • fabric-sqlendpoint azure_cli_unavailable (${_sql_scope} target)" "install/repair Azure CLI and ensure az is on PATH; this is not an authentication diagnosis" ;;
+      token_launch_failed) warn "  • fabric-sqlendpoint token_launch_failed (${_sql_scope} target)" "Azure CLI was found but could not be launched; this is not an authentication diagnosis" ;;
+      token_timeout) warn "  • fabric-sqlendpoint token_timeout (${_sql_scope} target)" "Azure CLI token command exceeded the bounded timeout; retry after checking Azure CLI responsiveness" ;;
+      token_command_failed) warn "  • fabric-sqlendpoint token_command_failed (${_sql_scope} target)" "Azure CLI launched but token acquisition failed; run: az account get-access-token --resource https://api.fabric.microsoft.com --output json" ;;
+      token_output_invalid) warn "  • fabric-sqlendpoint token_output_invalid (${_sql_scope} target)" "Azure CLI returned no usable accessToken JSON; verify the Fabric token command output" ;;
       tool_missing) warn "  • fabric-sqlendpoint tool_missing (${_sql_scope} target)" "managed MCP did not advertise executeSQL/execute_query" ;;
       target_invalid) warn "  • fabric-sqlendpoint target_invalid" "run: coop sync after fixing fabric.default_sql_endpoint / registered URL" ;;
       unavailable) warn "  • fabric-sqlendpoint unavailable" "run: coop sync; if already configured, retry when network/auth is available" ;;
@@ -521,6 +526,19 @@ if [ -n "$proj" ]; then
   fi
 
   ok "Microsoft skills project policy is covered by the pinned catalog doctor section"
+
+  # Read-only bounded legacy-project diagnostics. The shared Python helper is
+  # also used by the PowerShell doctor and explicit migration command.
+  _health_py="$(coop_python 2>/dev/null || true)"
+  if [ -n "$_health_py" ]; then
+    _health_lines="$("$_health_py" "$COOP_ROOT/lib/project_health.py" doctor-lines "$(dirname "$(dirname "$proj")")" --skills-dir "$COOP_ROOT/skills")"
+    while IFS="$(printf '\t')" read -r _health_code _health_name _health_hint; do
+      [ -n "$_health_code" ] || continue
+      warn "$_health_code: $_health_name" "$_health_hint"
+    done <<EOF
+$_health_lines
+EOF
+  fi
 else
   warn "no .coop/project.yml found" "copy $COOP_ROOT/.coop/project.example.yml to your repo's .coop/project.yml"
 fi

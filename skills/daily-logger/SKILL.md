@@ -29,8 +29,12 @@ Append an entry whenever you:
 - updated documentation, glossary, lineage, or the portal,
 - hit an open question or a decision the user should weigh in on.
 
-Multiple tasks in one day go in the **same** day's file — append, don't overwrite.
-Do not create an entry for ordinary read-only Q&A or a simple status check.
+Do not check for or create the file at session startup. At the first point meaningful
+work must be logged, resolve today's configured path and check whether it exists. If
+it is absent, create it from the template below and include the first entry in that
+same write. If it is present, append a new task entry without overwriting prior
+entries. Multiple tasks in one day go in the **same** day's file. Do not create an
+entry or an empty file for ordinary read-only Q&A or a simple status check.
 
 ## Where it goes
 
@@ -43,7 +47,8 @@ docs/agent/logs/daily/YYYY-MM-DD.md
 
 (Weekly roll-ups go to `logging.weekly_log_path`, default
 `docs/agent/logs/weekly/YYYY-Www.md` — see the `/weekly-log` prompt.) Create the
-folder/file if missing; otherwise append a new dated task block.
+folder/file from the template at first required use if missing; otherwise append a
+new dated task block. Never create an empty log as a startup side effect.
 
 ## Entry structure
 

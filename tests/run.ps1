@@ -30,6 +30,29 @@ $update = Join-Path (Join-Path $root 'scripts') 'update.ps1'
 $psExe = try { (Get-Process -Id $PID).Path } catch { $null }
 if (-not $psExe) { $psExe = 'pwsh' }
 
+# Bounded child-exit propagation probe. The normal suite invokes this mode with
+# a deliberately failing Fabric fixture and proves a later success cannot erase
+# the stored child failure. Keep this before all unrelated aggregate work.
+if ($env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE -eq '1') {
+  $probeEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $probeOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\fabric-mcp-launch.test.ps1') *>&1
+  $childRc = $LASTEXITCODE
+  & $psExe -NoProfile -Command 'exit 0'
+  $laterRc = $LASTEXITCODE
+  $ErrorActionPreference = $probeEap
+  $probeOut | ForEach-Object { Write-Output $_ }
+  Write-Output "FABRIC_MCP_RUNNER_PROBE child-rc=$childRc later-rc=$laterRc"
+  if (
+    $childRc -ne 0 -and
+    $laterRc -eq 0 -and
+    (($probeOut | Out-String).Contains('FABRIC_MCP_FIXTURE_INJECTION_REACHED'))
+  ) {
+    exit $childRc
+  }
+  exit 1
+}
+
 # Status glyphs via [char] codepoints (Windows PowerShell 5.1 compat, matching
 # lib/common.ps1) — a BOM-less or mis-encoded literal glyph mojibakes on 5.1.
 $G_CHECK = [char]0x2713   # ✓
@@ -483,6 +506,18 @@ print("resume verdict contract OK")
     } else {
       Ko "Microsoft skills catalog fixture failed: $($msOut | Out-String)"
     }
+
+    Head 'bounded legacy project diagnostics and migration'
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $legacyOut = & $pyExe.Source (Join-Path $root 'tests\project-health.test.py') 2>&1
+    $legacyRc = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorAction
+    if ($legacyRc -eq 0) {
+      $legacyOut | ForEach-Object { Write-Host $_ }
+    } else {
+      Ko "legacy project health fixture failed: $($legacyOut | Out-String)"
+    }
   } else {
     Ko 'python not available; Microsoft skills catalog fixture cannot run'
   }
@@ -505,6 +540,45 @@ print("resume verdict contract OK")
     }
   } else {
     Ko 'python not available; Warehouse/P0 fixtures cannot run'
+  }
+
+  Head 'Fabric MCP launch-time bearer isolation'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $fabricLaunchOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\fabric-mcp-launch.test.ps1') 2>&1
+  $fabricLaunchRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  $fabricLaunchText = $fabricLaunchOut | Out-String
+  if ($fabricLaunchRc -eq 0 -and $fabricLaunchText.Contains('FABRIC_MCP_FIXTURE_INJECTION_REACHED')) {
+    $fabricLaunchOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "Fabric MCP launch fixture failed: $($fabricLaunchOut | Out-String)"
+  }
+
+  # Regression for the prior false green: run this aggregate's exact fixture
+  # path in forced-failure mode. The nested aggregate must stay nonzero even
+  # though its probe runs a successful command after the child failure.
+  $priorProbe = $env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE
+  $priorForcedFailure = $env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE
+  $env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE = '1'
+  $env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE = '1'
+  $ErrorActionPreference = 'Continue'
+  $fabricProbeOut = & $psExe -NoProfile -File $PSCommandPath *>&1
+  $fabricProbeRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($null -eq $priorProbe) { Remove-Item Env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE -ErrorAction SilentlyContinue }
+  else { $env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE = $priorProbe }
+  if ($null -eq $priorForcedFailure) { Remove-Item Env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE -ErrorAction SilentlyContinue }
+  else { $env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE = $priorForcedFailure }
+  $fabricProbeText = $fabricProbeOut | Out-String
+  if (
+    $fabricProbeRc -ne 0 -and
+    $fabricProbeText.Contains('FABRIC_MCP_FIXTURE_INJECTION_REACHED') -and
+    $fabricProbeText.Contains('FABRIC_MCP_RUNNER_PROBE child-rc=1 later-rc=0')
+  ) {
+    Ok 'Fabric MCP child failure survives a later successful command and fails the aggregate'
+  } else {
+    Ko "Fabric MCP runner propagation regression failed: rc=$fabricProbeRc output=$fabricProbeText"
   }
 
   # --- 8. release transaction ------------------------------------------------

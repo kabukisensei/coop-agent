@@ -120,6 +120,7 @@ await t("new-project renderer produces a parseable, governed contract", () => {
   assert.doesNotMatch(text, /fabric_skills:\n(?:.*\n){0,4}\s+allow:\s*\[\]/);
   assert.doesNotMatch(text, /(?:microsoft_skills|fabric_skills):\n(?:.*\n){0,4}\s+(?:source|load_dir):/);
   assert.equal(projectYamlScalar(text, ["logging", "require_task_log"]), "true");
+  assert.doesNotMatch(text, /^standards:/m, "new projects must use canonical standards by default");
   assert.equal(projectYamlScalar(text, ["estate", "mode"]), "partial");
   assert.equal(projectYamlScalar(text, ["estate", "live_discovery", "production_rows"]), "explicit_scope_and_approval");
   assert.equal((text.match(/^  environment_names:$/gm) || []).length, 2);
@@ -223,6 +224,7 @@ await t("native wizard is reachable inside Coop and creates the contract", async
   assert.ok(existsSync(contract));
   const text = readFileSync(contract, "utf8");
   assert.equal(projectYamlScalar(text, ["profile", "client"]), "Contoso");
+  assert.doesNotMatch(text, /^standards:/m, "in-app wizard must omit default standards overrides");
   assert.equal(projectYamlScalar(text, ["repositories", root.split(/[\\/]/).pop(), "local_path"]), ".");
   assert.ok(!confirmTitles.includes("Lineage documentation"), "project setup must not launch data-doc setup");
 });

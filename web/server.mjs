@@ -17,7 +17,7 @@
 // NOT for remote or multi-user use.
 
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, readdirSync, openSync, readSync, closeSync, fstatSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -60,6 +60,86 @@ try {
   process.exit(1);
 }
 
+// Mint the Fabric bearer once for this web launch. It is captured through an
+// anonymous pipe, retained only in memory, and injected only into Pi children.
+// Never serialize it into COOP_LAUNCH_SPEC or leave it in the bridge environment.
+delete process.env.COOP_FABRIC_MCP_TOKEN;
+function acquireFabricMcpToken() {
+  const py = process.env.COOP_PYTHON_BIN;
+  const root = process.env.COOP_ROOT;
+  const agentDir = spec.env?.PI_CODING_AGENT_DIR || process.env.PI_CODING_AGENT_DIR;
+  let fabricManaged = false;
+  if (agentDir) {
+    try {
+      const config = JSON.parse(readFileSync(join(agentDir, "mcp.json"), "utf8").replace(/^\uFEFF/, ""));
+      const managed = config?._coop?.managed_servers;
+      const entry = config?.mcpServers?.["fabric-sqlendpoint"];
+      let endpointOwned = false;
+      if (typeof entry?.url === "string") {
+        const endpoint = new URL(entry.url);
+        endpointOwned = endpoint.protocol === "https:" &&
+          endpoint.hostname === "api.fabric.microsoft.com" &&
+          endpoint.pathname.startsWith("/v1/mcp/dataPlane/");
+      }
+      fabricManaged = Array.isArray(managed) && managed.includes("fabric-sqlendpoint") &&
+        endpointOwned && entry?.auth === "bearer" &&
+        entry?.bearerTokenEnv === "COOP_FABRIC_MCP_TOKEN" &&
+        entry?.lifecycle === "lazy" && entry?.command === undefined;
+    } catch {}
+  }
+  if (!py || !root || !agentDir) {
+    if (fabricManaged) {
+      console.error("warning: Fabric Warehouse MCP unavailable: token helper Python is unavailable");
+    }
+    return "";
+  }
+  const helperEnv = { ...process.env };
+  delete helperEnv.COOP_FABRIC_MCP_TOKEN;
+  const result = spawnSync(
+    py,
+    [join(root, "lib", "warehouse_mcp.py"), "launch-token", join(agentDir, "mcp.json")],
+    { env: helperEnv, encoding: "utf8", timeout: 10000, windowsHide: true },
+  );
+  if (result.error) {
+    console.error("warning: Fabric Warehouse MCP unavailable: token helper could not be launched");
+    return "";
+  }
+  if (result.status !== 0) {
+    console.error("warning: Fabric Warehouse MCP unavailable: token helper failed");
+    return "";
+  }
+  if (String(result.stderr || "").length !== 0) {
+    console.error("warning: Fabric Warehouse MCP unavailable: token helper returned invalid output");
+    return "";
+  }
+  const stdout = String(result.stdout || "");
+  const warnings = new Map([
+    ["config_invalid", "managed configuration is invalid; run coop sync"],
+    ["azure_cli_unavailable", "Azure CLI is not installed or not on PATH"],
+    ["token_launch_failed", "Azure CLI could not be launched"],
+    ["token_timeout", "Azure CLI token acquisition timed out"],
+    ["auth_required", "Azure authentication is required; run az login"],
+    ["token_command_failed", "Azure CLI token acquisition failed"],
+    ["token_output_invalid", "Azure CLI returned no usable Fabric token"],
+  ]);
+  const tokenMatch = stdout.match(/^token\t([!-~]{1,16384})\tend$/);
+  const warningMatch = stdout.match(/^warning\t([^\s]+)\tend$/);
+  if (tokenMatch) {
+    return tokenMatch[1];
+  } else if (warningMatch) {
+    const message = warnings.get(warningMatch[1]);
+    if (message) {
+      console.error(`warning: Fabric Warehouse MCP unavailable: ${message}`);
+      return "";
+    }
+  } else if (!stdout) {
+    return "";
+  }
+  console.error("warning: Fabric Warehouse MCP unavailable: token helper returned invalid output");
+  return "";
+}
+const FABRIC_MCP_TOKEN = acquireFabricMcpToken();
+
 import { statSync } from "node:fs";
 try {
   if (!statSync(DEFAULT_CWD).isDirectory()) throw new Error("not a directory");
@@ -75,6 +155,8 @@ function spawnPi(cwd, extraArgs = []) {
   const bin = spec.bin || "pi";
   const args = [...spec.args, "--mode", "rpc", "-a", ...extraArgs];
   const env = { ...process.env, ...(spec.env || {}) };
+  delete env.COOP_FABRIC_MCP_TOKEN;
+  if (FABRIC_MCP_TOKEN) env.COOP_FABRIC_MCP_TOKEN = FABRIC_MCP_TOKEN;
   if (process.platform === "win32") {
     // npm-global `pi` is a .cmd shim, which Node can only launch through cmd.exe.
     // cmd has no safe escape for embedded `"` or `%` inside a quoted argument, so

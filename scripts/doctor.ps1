@@ -513,9 +513,14 @@ if ($mcpFound) {
       } catch { $sqlState = 'unavailable' }
     }
     switch ($sqlState) {
-      'registered'    { D-Ok "  • fabric-sqlendpoint registered ($sqlScope target; managed remote HTTP, native OAuth)" }
-      'auth_required' { D-Warn "  • fabric-sqlendpoint auth_required ($sqlScope target)" 'sign in with Azure CLI/tenant access; doctor never triggers login' }
-      'tool_missing'  { D-Warn "  • fabric-sqlendpoint tool_missing ($sqlScope target)" 'managed MCP did not advertise executeSQL/execute_query' }
+      'registered'            { D-Ok "  • fabric-sqlendpoint registered ($sqlScope target; direct HTTP, Azure CLI bearer token)" }
+      'auth_required'         { D-Warn "  • fabric-sqlendpoint auth_required ($sqlScope target)" 'sign in with Azure CLI/tenant access; doctor never triggers login' }
+      'azure_cli_unavailable' { D-Warn "  • fabric-sqlendpoint azure_cli_unavailable ($sqlScope target)" 'install/repair Azure CLI and ensure az is on PATH; this is not an authentication diagnosis' }
+      'token_launch_failed'   { D-Warn "  • fabric-sqlendpoint token_launch_failed ($sqlScope target)" 'Azure CLI was found but could not be launched; this is not an authentication diagnosis' }
+      'token_timeout'         { D-Warn "  • fabric-sqlendpoint token_timeout ($sqlScope target)" 'Azure CLI token command exceeded the bounded timeout; retry after checking Azure CLI responsiveness' }
+      'token_command_failed'  { D-Warn "  • fabric-sqlendpoint token_command_failed ($sqlScope target)" 'Azure CLI launched but token acquisition failed; run: az account get-access-token --resource https://api.fabric.microsoft.com --output json' }
+      'token_output_invalid'  { D-Warn "  • fabric-sqlendpoint token_output_invalid ($sqlScope target)" 'Azure CLI returned no usable accessToken JSON; verify the Fabric token command output' }
+      'tool_missing'          { D-Warn "  • fabric-sqlendpoint tool_missing ($sqlScope target)" 'managed MCP did not advertise executeSQL/execute_query' }
       'target_invalid'{ D-Warn '  • fabric-sqlendpoint target_invalid' 'run: coop sync after fixing fabric.default_sql_endpoint / registered URL' }
       'unavailable'   { D-Warn '  • fabric-sqlendpoint unavailable' 'run: coop sync; if already configured, retry when network/auth is available' }
       default         { D-Warn "  • fabric-sqlendpoint $sqlState" 'run: coop sync' }
@@ -588,6 +593,18 @@ if ($proj) {
   }
 
   D-Ok 'Microsoft skills project policy is covered by the pinned catalog doctor section'
+
+  # Read-only bounded legacy-project diagnostics, shared with Bash and migration.
+  if ($pyBin) {
+    $projectRoot = Split-Path -Parent (Split-Path -Parent $proj)
+    $healthLines = @(& $pyBin (Join-Path $script:CoopRoot 'lib/project_health.py') doctor-lines $projectRoot --skills-dir (Join-Path $script:CoopRoot 'skills'))
+    foreach ($line in $healthLines) {
+      $parts = @(([string]$line) -split "`t", 3)
+      if ($parts.Count -ge 2 -and $parts[0]) {
+        D-Warn ("$($parts[0]): $($parts[1])") $(if ($parts.Count -ge 3) { $parts[2] } else { '' })
+      }
+    }
+  }
 } else {
   D-Warn 'no .coop/project.yml found' "copy $($script:CoopRoot)/.coop/project.example.yml to your repo's .coop/project.yml"
 }

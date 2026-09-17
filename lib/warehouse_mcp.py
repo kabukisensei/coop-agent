@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Deterministic helpers for Fabric Warehouse SQL endpoint MCP configuration.
 
-The runtime MCP server is Microsoft's managed remote HTTP endpoint. This module
+The runtime MCP server is Microsoft's managed direct HTTP endpoint. This module
 does not execute SQL. Live probes are metadata-only and bounded; auth failures are
-reported as states instead of triggering login.
+reported as states instead of triggering login or OAuth registration.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -24,6 +27,7 @@ except Exception:  # pragma: no cover - import fallback for direct embedding
     load_yaml = None
 
 FABRIC_RESOURCE = "https://api.fabric.microsoft.com"
+FABRIC_TOKEN_ENV = "COOP_FABRIC_MCP_TOKEN"
 GLOBAL_SQL_ENDPOINT_URL = f"{FABRIC_RESOURCE}/v1/mcp/dataPlane/sqlEndpoint"
 UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -35,8 +39,21 @@ COMPATIBLE_SQL_TOOLS = {
     "fabric-sqlendpoint-execute_query",
     "fabric_sqlendpoint_execute_query",
 }
-MCP_REMOTE_PIN = "mcp-remote@0.1.38"
 MCP_PROTOCOL_VERSION = "2024-11-05"
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    """Never forward a Fabric bearer to a redirected origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
+_HTTP_OPENER = urllib.request.build_opener(_RejectRedirects())
+
+
+def _http_open(request: urllib.request.Request, timeout: int):
+    return _HTTP_OPENER.open(request, timeout=timeout)
 
 
 @dataclass(frozen=True)
@@ -197,20 +214,26 @@ def classify_tools(tools: list[Any]) -> str:
 def sqlendpoint_config_status(entry: Any) -> str:
     if not isinstance(entry, dict):
         return "unavailable"
-    args = entry.get("args")
-    if entry.get("command") != "npx" or not isinstance(args, list):
-        return "unavailable"
-    if any(re.search(r"(?i)(bearer|accessToken|token)", str(a)) for a in args):
-        return "unavailable"
-    expected = ["-y", MCP_REMOTE_PIN]
-    if (
-        args[:2] != expected
-        or "--transport" not in args
-        or "http-only" not in args
-        or "--silent" not in args
+    if any(
+        field in entry
+        for field in (
+            "command",
+            "args",
+            "env",
+            "bearerToken",
+            "headers",
+            "oauth",
+        )
     ):
         return "unavailable"
-    url = args[2] if len(args) > 2 and isinstance(args[2], str) else ""
+    if (
+        entry.get("auth") != "bearer"
+        or entry.get("bearerTokenEnv") != FABRIC_TOKEN_ENV
+        or entry.get("lifecycle") != "lazy"
+    ):
+        return "unavailable"
+    raw_url = entry.get("url")
+    url = raw_url if isinstance(raw_url, str) else ""
     if url == GLOBAL_SQL_ENDPOINT_URL:
         return "registered"
     m = re.match(
@@ -223,8 +246,8 @@ def sqlendpoint_config_status(entry: Any) -> str:
 def registered_target(entry: Any) -> SqlEndpointTarget | None:
     if sqlendpoint_config_status(entry) != "registered":
         return None
-    args = entry.get("args", [])
-    url = args[2] if len(args) > 2 and isinstance(args[2], str) else ""
+    raw_url = entry.get("url")
+    url = raw_url if isinstance(raw_url, str) else ""
     if url == GLOBAL_SQL_ENDPOINT_URL:
         return SqlEndpointTarget(url=url, scope="global", reason="registered")
     m = re.match(
@@ -256,9 +279,12 @@ def same_target(
     )
 
 
-def az_access_token(timeout: int = 8) -> tuple[str, str]:
-    cmd = [
-        "az",
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _az_token_command() -> list[str]:
+    args = [
         "account",
         "get-access-token",
         "--resource",
@@ -266,20 +292,82 @@ def az_access_token(timeout: int = 8) -> tuple[str, str]:
         "--output",
         "json",
     ]
+    if _is_windows():
+        return [os.environ.get("COMSPEC") or "cmd.exe", "/d", "/c", "az", *args]
+    return ["az", *args]
+
+
+def _token_failure_requires_auth(stdout: str, stderr: str) -> bool:
+    message = f"{stdout}\n{stderr}".lower()
+    return any(
+        marker in message
+        for marker in (
+            "az login",
+            "not logged in",
+            "login required",
+            "authentication required",
+            "interaction_required",
+            "interactionrequired",
+            "invalid_grant",
+            "aadsts50058",
+            "aadsts50076",
+            "aadsts50078",
+            "aadsts50079",
+            "aadsts50158",
+        )
+    )
+
+
+def _token_failure_state(stdout: str, stderr: str) -> str:
+    message = f"{stdout}\n{stderr}".lower()
+    if "is not recognized as an internal or external command" in message:
+        return "azure_cli_unavailable"
+    return (
+        "auth_required"
+        if _token_failure_requires_auth(stdout, stderr)
+        else "token_command_failed"
+    )
+
+
+def az_access_token(timeout: int = 8) -> tuple[str, str]:
+    # On Windows Azure CLI is commonly an az.CMD shim. CreateProcess cannot
+    # execute it directly, so use cmd.exe explicitly without enabling shell=True.
+    if shutil.which("az") is None:
+        return "", "azure_cli_unavailable"
+    cmd = _az_token_command()
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            shell=False,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return "", "auth_required"
+    except subprocess.TimeoutExpired:
+        return "", "token_timeout"
+    except UnicodeDecodeError:
+        return "", "token_output_invalid"
+    except OSError:
+        return "", "token_launch_failed"
     if proc.returncode != 0:
-        return "", "auth_required"
+        return "", _token_failure_state(proc.stdout, proc.stderr)
     try:
         data = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return "", "auth_required"
+    except (json.JSONDecodeError, TypeError):
+        return "", "token_output_invalid"
+    if not isinstance(data, dict):
+        return "", "token_output_invalid"
     token = data.get("accessToken")
-    return (token, "ok") if isinstance(token, str) and token else ("", "auth_required")
+    valid = (
+        isinstance(token, str)
+        and 0 < len(token) <= 16384
+        and token.isascii()
+        and all(0x21 <= ord(char) <= 0x7E for char in token)
+    )
+    if valid and isinstance(token, str):
+        return token, "ok"
+    return "", "token_output_invalid"
 
 
 def fabric_get_json(
@@ -289,7 +377,7 @@ def fabric_get_json(
         url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _http_open(req, timeout) as resp:
             raw = resp.read(1024 * 1024)
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
@@ -355,7 +443,7 @@ def _mcp_post(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _http_open(req, timeout) as resp:
             raw = resp.read(1024 * 1024).decode("utf-8", errors="strict")
             returned_session = resp.headers.get("Mcp-Session-Id", session_id)
             status_code = getattr(resp, "status", None) or resp.getcode()
@@ -385,6 +473,13 @@ def _mcp_post(
         except json.JSONDecodeError:
             continue
         if isinstance(value, dict):
+            expected_id = message.get("id")
+            if expected_id is not None and (
+                value.get("jsonrpc") != "2.0"
+                or value.get("id") != expected_id
+                or "error" in value
+            ):
+                continue
             return value, "ok", returned_session
     return {}, "unavailable", returned_session
 
@@ -451,7 +546,11 @@ def doctor_status(
         else {}
     )
     entry = servers.get("fabric-sqlendpoint")
-    registered = isinstance(entry, dict)
+    raw_meta = mcp_config.get("_coop")
+    meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
+    raw_managed = meta.get("managed_servers")
+    managed: list[Any] = raw_managed if isinstance(raw_managed, list) else []
+    registered = isinstance(entry, dict) and "fabric-sqlendpoint" in managed
     state = sqlendpoint_config_status(entry) if registered else "unavailable"
     target = select_target(project or {})
     actual_target = registered_target(entry) if registered else None
@@ -514,6 +613,8 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--tools-json", default="")
     d.add_argument("--project", default="")
     d.add_argument("--probe", action="store_true")
+    launch = sub.add_parser("launch-token")
+    launch.add_argument("mcp_config")
     args = parser.parse_args(argv)
     if args.cmd == "target":
         project_path = (
@@ -546,6 +647,29 @@ def main(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             )
         )
+        return 0
+    if args.cmd == "launch-token":
+        try:
+            cfg = json.loads(Path(args.mcp_config).read_text(encoding="utf-8-sig"))
+        except Exception:
+            cfg = {}
+        raw_servers = cfg.get("mcpServers") if isinstance(cfg, dict) else None
+        servers = raw_servers if isinstance(raw_servers, dict) else {}
+        raw_meta = cfg.get("_coop") if isinstance(cfg, dict) else None
+        meta = raw_meta if isinstance(raw_meta, dict) else {}
+        raw_managed = meta.get("managed_servers")
+        managed = raw_managed if isinstance(raw_managed, list) else []
+        entry = servers.get("fabric-sqlendpoint")
+        if "fabric-sqlendpoint" not in managed or entry is None:
+            return 0
+        if sqlendpoint_config_status(entry) != "registered":
+            sys.stdout.write("warning\tconfig_invalid\tend")
+            return 0
+        token, state = az_access_token()
+        if state == "ok":
+            sys.stdout.write("token\t" + token + "\tend")
+            return 0
+        sys.stdout.write("warning\t" + state + "\tend")
         return 0
     return 2
 

@@ -220,7 +220,8 @@ flowchart TD
 
 Every task that touches SQL, DAX, Fabric objects, semantic models, reports, docs,
 or lineage runs through the **`coop-workflow` skill** (principles-first), enforced by the
-`guardrails.md` system prompt: read context (`.coop/project.yml` + standards) →
+`guardrails.md` system prompt: read project context plus COOP's resolved standards
+task authority (including any deliberate project override) →
 scope and impact → read target + lineage (`data_doc`) → **PLAN + explicit
 approval** → timestamped backup → smallest safe edit → review
 (`sql_review` / `dax_review`, plus Tabular Editor BPA / `fabric-cicd` validate
@@ -235,6 +236,7 @@ for meaningful work. A quiet `tool_call`/`tool_result` tracker and
 without touching today's configured log; ordinary read-only Q&A is ignored.
 
 The project contract `.coop/project.yml` (copied from
-`.coop/project.example.yml`) is the single source of truth for repo paths,
-Fabric/Power BI workspaces, standards locations, backup/log rules,
-allowed/blocked commit paths, and the approval policy.
+`.coop/project.example.yml`) is the source of truth for repo paths, Fabric/Power BI
+workspaces, backup/log rules, allowed/blocked commit paths, and the approval policy.
+It may provide deliberate project standards overrides; otherwise COOP's resolved
+standards task authority is authoritative.

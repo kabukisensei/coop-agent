@@ -310,7 +310,7 @@ as a native Pi extension and is deliberately excluded from generated MCP configu
 | Server | Provides | Enablement and policy |
 | --- | --- | --- |
 | `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login; metadata reads by default, mutations approval-gated |
-| `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint through pinned `mcp-remote` | every call approval-gated; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
+| `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | every call approval-gated; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
 | `powerbi` | `powerbi-mcp-server --readonly` | requires a configured tenant; server-enforced read-only |
 | `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readonly` | no tenant/workspace required; server-enforced read-only |
 | `azure-devops` | Manifest-pinned Azure DevOps MCP for one organization | requires enabled toggle + valid organization; mutations approval-gated |
@@ -335,8 +335,9 @@ setting. A project may disable it with `mcp.fabric_sqlendpoint.enabled: false`. 
 Warehouse IDs create an item-scoped URL; Lakehouse projects must use
 `sqlEndpointProperties.id`, not the Lakehouse item ID. With no explicit target Coop uses
 the global endpoint. A malformed explicit target fails closed and emits no entry. Runtime
-uses `mcp-remote` OAuth; Doctor never initiates login and only uses an existing Azure CLI
-token for a bounded metadata-only initialization and `tools/list` probe.
+uses a bearer token acquired from the existing Azure CLI login only for the Pi child
+environment; no token is written to `mcp.json`, argv, or disk. Doctor never initiates
+login and performs only a bounded metadata initialization and `tools/list` probe.
 
 Warehouse Doctor states are exact: `registered` (target/auth/tool proof passed),
 `auth_required` (no usable existing token), `tool_missing` (no compatible SQL tool),
@@ -417,7 +418,7 @@ said yes/no" — useful for client trust and for debugging a guardrail false pos
 **The Cooptimize workflow** (the `coop-workflow` skill — see
 [`skills/coop-workflow/SKILL.md`](skills/coop-workflow/SKILL.md)):
 
-1. Read `.coop/project.yml` and the relevant standards.
+1. Read `.coop/project.yml` and use COOP's resolved standards task authority, including any deliberate project override.
 2. Locate the repo/object and assess upstream/downstream impact; `git status` && `git pull`.
 3. Read the target file(s) + look up the object's upstream/downstream via the `data_doc` tool (`command="lineage"`) before touching it; use the Microsoft Learn MCP for current docs.
 4. Write a short **PLAN** and get explicit approval **before** any edit.
@@ -437,10 +438,11 @@ four prompts to drive them: **`/spec-first`** (an approved spec before editing),
 summary), and the **`git-helper`** skill / **`/pr-description`** (draft a commit
 message + PR description from the diff — drafts only, never commits).
 
-The single source of truth for repo paths, workspaces, standards, backup/log rules,
-and approval policy is `.coop/project.yml`. Run **`/setup-project`** inside Coop or
-`coop init` in the project directory. Use `coop init --template` only when you
-intentionally want the full legacy template.
+The source of truth for repo paths, workspaces, backup/log rules, and approval policy
+is `.coop/project.yml`. It may provide deliberate project standards overrides;
+otherwise COOP's resolved standards task authority is authoritative. Run
+**`/setup-project`** inside Coop or `coop init` in the project directory. Use
+`coop init --template` only when you intentionally want the full legacy template.
 
 Fabric projects may use two workspaces per environment. Record Warehouse/Lakehouse
 DEV/TEST/PROD workspaces in `fabric.environment_names` and semantic-model

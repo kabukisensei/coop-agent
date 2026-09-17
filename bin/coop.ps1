@@ -157,6 +157,8 @@ $(Coop-Bold)Usage$(Coop-Rst)
 $(Coop-Bold)Authoring$(Coop-Rst)
   coop init [dir]           Scaffold .coop/project.yml into a work repo (default: .)
                             (--seed-docs: generate coop-data-doc.yml from repositories:)
+  coop init --migrate-legacy [dir]
+                            Inspect legacy project configuration (dry run; add --apply to confirm changes)
   coop new-skill <name>     Scaffold skills/<name>/SKILL.md
   coop new-prompt <name>    Scaffold prompts/<name>.md
   coop release [level]      Cut a release: bump version + roll CHANGELOG + commit + tag + push
@@ -331,6 +333,83 @@ function Build-CoopPiArgs {
 }
 
 # --- Launch the branded Pi agent ---------------------------------------------
+function Get-CoopFabricMcpToken {
+  $py = Get-CoopPython
+  if (-not $py) { return '' }
+  $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Get-CoopPiAgentDir }
+  $config = Join-Path $agentDir 'mcp.json'
+  if (-not (Test-Have 'node')) {
+    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper supervisor is unavailable'
+    return ''
+  }
+  $previousEap = $ErrorActionPreference
+  $records = @()
+  $rc = 1
+  try {
+    # The Node supervisor captures both native streams byte-for-byte in memory,
+    # rejects any stderr, and forwards only one exact framed stdout record.
+    $ErrorActionPreference = 'Continue'
+    $runner = Join-Path $script:CoopRoot 'lib\fabric_token_runner.mjs'
+    $helper = Join-Path $script:CoopRoot 'lib\warehouse_mcp.py'
+    $records = @(& node $runner $py $helper $config 2>&1)
+    $rc = $LASTEXITCODE
+  } catch {
+    $rc = 1
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+  if ($rc -ne 0) {
+    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper failed'
+    return ''
+  }
+  $stdout = @()
+  $stderrFound = $false
+  foreach ($record in $records) {
+    if ($record -is [System.Management.Automation.ErrorRecord]) {
+      $stderrFound = $true
+    } else {
+      $stdout += $record.ToString()
+    }
+  }
+  if ($stderrFound) {
+    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper returned invalid output'
+    return ''
+  }
+  $protocol = ($stdout -join "`n")
+  if ($protocol -match "^token`t([!-~]{1,16384})`tend$") { return $Matches[1] }
+  if ($protocol -match "^warning`t([^\s]+)`tend$") {
+    $warnings = @{
+      config_invalid = 'managed configuration is invalid; run coop sync'
+      azure_cli_unavailable = 'Azure CLI is not installed or not on PATH'
+      token_launch_failed = 'Azure CLI could not be launched'
+      token_timeout = 'Azure CLI token acquisition timed out'
+      auth_required = 'Azure authentication is required; run az login'
+      token_command_failed = 'Azure CLI token acquisition failed'
+      token_output_invalid = 'Azure CLI returned no usable Fabric token'
+    }
+    $message = $warnings[$Matches[1]]
+    if (-not $message) { $message = 'token helper returned invalid output' }
+    Coop-Warn "Fabric Warehouse MCP unavailable: $message"
+    return ''
+  }
+  if (-not $protocol) { return '' }
+  Coop-Warn 'Fabric Warehouse MCP unavailable: token helper returned invalid output'
+  return ''
+}
+
+function Invoke-CoopPiProcess {
+  param([string[]] $PiArgs = @())
+  Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+  $token = Get-CoopFabricMcpToken
+  if ($token) { $env:COOP_FABRIC_MCP_TOKEN = $token }
+  try {
+    & pi @PiArgs
+    $script:CoopPiRc = $LASTEXITCODE
+  } finally {
+    Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+  }
+}
+
 function Invoke-LaunchPi {
   param([string[]] $PassArgs = @())
 
@@ -380,8 +459,8 @@ function Invoke-LaunchPi {
 
   $piArgs = Build-CoopPiArgs
   $allArgs = @($piArgs + $PassArgs)
-  & pi @allArgs
-  exit $LASTEXITCODE
+  Invoke-CoopPiProcess -PiArgs $allArgs
+  exit $script:CoopPiRc
 }
 
 # --- Emit the launch spec (for a UI / coop web bridge) -----------------------
@@ -418,6 +497,10 @@ function Invoke-CoopWeb {
   Invoke-CoopLaunchPreflight
   Invoke-CoopAzPreflight   # same Fabric/Power BI token check the terminal launch does
   $env:COOP_LAUNCH_SPEC = (Invoke-CoopLaunchSpec @('--json'))
+  $py = Get-CoopPython
+  Remove-Item Env:COOP_PYTHON_BIN -ErrorAction SilentlyContinue
+  if ($py) { $env:COOP_PYTHON_BIN = $py }
+  Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
   $server = Join-Path $script:CoopRoot 'web\server.mjs'
   & node $server @WebArgs
   exit $LASTEXITCODE
@@ -736,15 +819,24 @@ function Invoke-CoopInit {
   param([string[]]$RestArgs = @())
   # coop init [dir]              run the guided project wizard
   # coop init --template [dir]   copy the full documented example (legacy raw template)
+  # coop init --migrate-legacy [dir] [--apply] [--archive .pi/path]
+  #                              inspect first; apply only exact safe cleanup
   # coop init --seed-docs [dir]  generate/patch coop-data-doc.yml from an EXISTING
   #                              contract's repositories: (paths typed once, not twice)
   # coop init --ci github|ado    generate CI pipeline
   $seed = $false; $dir = ''; $ciType = ''; $template = $false
+  $migrate = $false; $apply = $false; $archiveArgs = @()
   for ($i = 0; $i -lt $RestArgs.Count; $i++) {
     $a = $RestArgs[$i]
     switch -Regex ($a) {
       '^--seed-docs$' { $seed = $true }
       '^--template$'  { $template = $true }
+      '^--migrate-legacy$' { $migrate = $true }
+      '^--apply$' { $apply = $true }
+      '^--archive$' {
+        if ($i + 1 -lt $RestArgs.Count) { $archiveArgs += @('--archive', $RestArgs[++$i]) }
+        else { Coop-Die '--archive requires a project-relative .pi file' }
+      }
       '^--ci$' {
         if ($i + 1 -lt $RestArgs.Count) { $ciType = $RestArgs[++$i] }
         else { Coop-Die "--ci requires an argument (github or ado)" }
@@ -752,12 +844,22 @@ function Invoke-CoopInit {
       '^--yes$'       { $env:COOP_ASSUME_YES = '1' }
       '^-y$'          { $env:COOP_ASSUME_YES = '1' }
       default {
-        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]" }
+        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop init [dir] [--seed-docs] [--template] [--migrate-legacy] [--apply] [--archive .pi/path] [--ci github|ado] [--yes]" }
         $dir = $a
       }
     }
   }
   if (-not $dir) { $dir = (Get-Location).Path }
+  if ($migrate) {
+    $py = Get-CoopPython
+    if (-not $py) { Coop-Die 'python is required for: coop init --migrate-legacy' }
+    $migrateArgs = @((Join-Path $script:CoopRoot 'lib/project_health.py'), 'migrate', $dir)
+    if ($apply) { $migrateArgs += '--apply' }
+    if ($env:COOP_ASSUME_YES -eq '1') { $migrateArgs += '--yes' }
+    $migrateArgs += $archiveArgs
+    & $py @migrateArgs
+    exit $LASTEXITCODE
+  }
   if ($seed) { Invoke-CoopInitSeedDocs $dir; return }
   if ($ciType) { Invoke-CoopInitCi $dir $ciType; return }
   $dst = Join-Path $dir '.coop\project.yml'
@@ -865,7 +967,7 @@ Task: TODO describe the task for {{subject}}.
 Goal: {{goal}}
 
 Steps:
-1. Read .coop/project.yml and the relevant standards.
+1. Read .coop/project.yml and use COOP's resolved standards task authority.
 2. TODO …
 3. Keep read-only first; present a PLAN and get approval before any edit.
 4. Never commit source — show the diff and let a human commit.
@@ -1206,8 +1308,8 @@ switch -CaseSensitive ($cmd) {
   }
   'pi' {
     if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed.' }
-    & pi @rest
-    exit $LASTEXITCODE
+    Invoke-CoopPiProcess -PiArgs $rest
+    exit $script:CoopPiRc
   }
   { $_ -ceq 'version' -or $_ -ceq '--version' -or $_ -ceq '-V' } {
     Write-Host ("coop {0}" -f $script:CoopVersion)

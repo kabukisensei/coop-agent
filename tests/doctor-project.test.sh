@@ -43,6 +43,52 @@ PY
 rc=$?
 [ "$rc" -eq 0 ] && ok "Project contract section present and clean" || ko "Project contract validation failed"
 
+# --- legacy project health is visible and Doctor remains read-only ------------
+mkdir -p "$TMP/legacy/.coop" "$TMP/legacy/.pi/skills/daily-logger"
+cat > "$TMP/legacy/.coop/project.yml" <<'YAML'
+profile:
+  organization: Cooptimize
+  default_branch: main
+estate:
+  mode: discovery
+repositories: {}
+standards:
+  sql: docs/standards/sql-standards.md
+tools:
+  fabric_cli:
+    enabled: false
+  fabric_cicd:
+    enabled: false
+  tabular_editor_cli:
+    enabled: false
+YAML
+printf '%s\n' 'Read docs/standards/sql-standards.md' > "$TMP/legacy/.pi/AGENTS.md"
+printf '%s\n' '---' 'name: daily-logger' '---' > "$TMP/legacy/.pi/skills/daily-logger/SKILL.md"
+before="$(python3 - "$TMP/legacy" <<'PY'
+import hashlib, pathlib, sys
+root=pathlib.Path(sys.argv[1])
+for p in sorted(x for x in root.rglob('*') if x.is_file()):
+ print(p.relative_to(root), hashlib.sha256(p.read_bytes()).hexdigest())
+PY
+)"
+out="$(cd "$TMP/legacy" && "$ROOT/scripts/doctor.sh" --json 2>/dev/null)"
+python3 - "$out" <<'PY' >/dev/null
+import json, sys
+checks=json.loads(sys.argv[1])["checks"]
+names=[c["name"] for c in checks if c["section"] == "Project contract"]
+for code in ("legacy_project_standard_override", "missing_project_standard", "legacy_pi_instruction", "project_skill_collision"):
+    assert any(name.startswith(code + ":") for name in names), (code, names)
+PY
+[ "$?" -eq 0 ] && ok "Doctor reports every legacy project finding class" || ko "Doctor omitted a legacy project finding"
+after="$(python3 - "$TMP/legacy" <<'PY'
+import hashlib, pathlib, sys
+root=pathlib.Path(sys.argv[1])
+for p in sorted(x for x in root.rglob('*') if x.is_file()):
+ print(p.relative_to(root), hashlib.sha256(p.read_bytes()).hexdigest())
+PY
+)"
+[ "$before" = "$after" ] && ok "Doctor legacy diagnostics are read-only" || ko "Doctor mutated legacy project files"
+
 # --- missing organization / branch / repo -------------------------------------
 mkdir -p "$TMP/bad/.coop"
 cat > "$TMP/bad/.coop/project.yml" <<'YAML'

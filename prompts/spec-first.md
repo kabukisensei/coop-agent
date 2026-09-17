@@ -6,7 +6,8 @@ Before writing or changing anything for this task, produce a short **written
 spec** and get my approval on it. Cover:
 
 - **Goal** — the outcome in one or two sentences.
-- **Constraints** — standards from `.coop/project.yml`, guardrails, and any
+- **Constraints** — COOP's resolved standards task authority (including any
+  deliberate project override), guardrails, and any
   non-negotiables (backups, never-commit-source, production-safety).
 - **Data model / objects** — the SQL objects, DAX measures, semantic-model
   tables, or reports in scope, and their lineage (look up upstream/downstream

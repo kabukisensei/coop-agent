@@ -11,8 +11,8 @@ Inspect a Microsoft Fabric workspace and report on its architecture, hygiene, an
 deployment posture. Output is an advisory review — findings and recommendations
 only. This skill never creates, updates, deploys, or deletes Fabric artifacts.
 
-Run this inside the `coop-workflow` skill: read `.coop/project.yml` and
-`standards.fabric` first, scope the workspace and its blast radius, inspect
+Run this inside the `coop-workflow` skill: read `.coop/project.yml` and use COOP's
+resolved Fabric task authority first, scope the workspace and its blast radius, inspect
 read-only, write a PLAN before any change is even proposed, and log the review.
 
 ## Review checklist
@@ -21,7 +21,7 @@ read-only, write a PLAN before any change is even proposed, and log the review.
   medallion split — bronze (raw/ingested), silver (conformed/cleansed), gold
   (business/serving). Flag layer-skipping, cross-layer writes, and gold logic
   living in silver.
-- **Naming.** Check workspace, item, and schema names against `standards.fabric`
+- **Naming.** Check workspace, item, and schema names against the resolved Fabric authority
   (environment suffixes, layer prefixes, casing). Flag inconsistencies and
   ambiguous abbreviations.
 - **Capacity.** Note the assigned capacity/SKU and look for obvious pressure
