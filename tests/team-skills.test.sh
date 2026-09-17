@@ -302,7 +302,13 @@ fi
 EOF
 chmod +x "$MS_BIN/python3"
 printf -- '---\nname: kql\n---\n# fixture\n' > "$MS_SKILL/SKILL.md"
-if PATH="$MS_BIN:$PATH" HOME="$MS_HOME" COOP_NO_ISOLATE=1 COOP_SKIP_UPDATE_CHECK=1 COOP_SKIP_AZ=1 "$ROOT/bin/coop" launch-spec --json > "$TMP/ms-spec.json" 2> "$TMP/ms-spec.err"; then
+# `coop release` invokes this suite from an already-isolated dispatcher process.
+# Clear that inherited setting so this fixture actually exercises COOP_NO_ISOLATE.
+if (
+  unset PI_CODING_AGENT_DIR
+  PATH="$MS_BIN:$PATH" HOME="$MS_HOME" COOP_NO_ISOLATE=1 COOP_SKIP_UPDATE_CHECK=1 COOP_SKIP_AZ=1 \
+    "$ROOT/bin/coop" launch-spec --json > "$TMP/ms-spec.json" 2> "$TMP/ms-spec.err"
+); then
   if python3 - "$TMP/ms-spec.json" <<'PY'
 import json, sys
 args = json.load(open(sys.argv[1]))["args"]
