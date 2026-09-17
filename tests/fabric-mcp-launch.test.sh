@@ -397,8 +397,14 @@ while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 160 ]; do
   sleep 0.05
   i=$((i + 1))
 done
-PHASE='web-no-python-marker'
-[ -f "$MARKER/pi-state" ]
+if [ ! -f "$MARKER/pi-state" ]; then
+  if [ -f "$MARKER/pi-argv" ]; then
+    PHASE='web-no-python-pi-rejected'
+  else
+    PHASE='web-no-python-pi-not-invoked'
+  fi
+  false
+fi
 PHASE='web-no-python-warning'
 grep -F 'Fabric Warehouse MCP unavailable: token helper Python is unavailable' "$TMP/web-no-python.err" >/dev/null
 kill "$WEB_PID" >/dev/null 2>&1 || true
