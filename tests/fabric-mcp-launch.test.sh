@@ -373,9 +373,17 @@ for cmd in dirname find sort readlink uname mkdir date tr sed git; do
   if [ -n "$cmd_path" ]; then ln -s "$cmd_path" "$NO_PY_BIN/$cmd"; fi
 done
 if [ "${OS:-}" = Windows_NT ]; then
-  # Cross this boundary with a real PE executable so MSYS converts PATH for
-  # native Node/cmd.exe; keep both Pi forms for Bash and cmd resolution.
+  # Keep Bash's restricted POSIX PATH for the dispatcher, but hand native Node
+  # the equivalent Windows PATH before it crosses into cmd.exe/PATHEXT lookup.
   cp "$(command -v node)" "$NO_PY_BIN/node.exe"
+  COOP_TEST_NODE_NATIVE="$NO_PY_BIN/node.exe"
+  COOP_TEST_NATIVE_PATH="$(cygpath -w "$NO_PY_BIN")"
+  export COOP_TEST_NODE_NATIVE COOP_TEST_NATIVE_PATH
+  cat > "$NO_PY_BIN/node" <<'SH'
+#!/bin/sh
+PATH="$COOP_TEST_NATIVE_PATH" exec "$COOP_TEST_NODE_NATIVE" "$@"
+SH
+  chmod +x "$NO_PY_BIN/node"
   cp "$BIN/pi" "$NO_PY_BIN/pi"
   cp "$BIN/pi.cmd" "$NO_PY_BIN/pi.cmd"
 else
