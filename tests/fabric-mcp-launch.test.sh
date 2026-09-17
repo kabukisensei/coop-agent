@@ -118,7 +118,7 @@ if (
     and sys.argv[1] == "launch-token"
 ):
     mode = os.environ.get("COOP_TEST_HELPER_MODE", "failure")
-    marker = Path(os.environ["COOP_TEST_MARKER"]) / f"bash-helper-{mode}.reached"
+    marker = Path(os.environ["COOP_TEST_HELPER_MARKER"]) / f"bash-helper-{mode}.reached"
     marker.write_bytes(b"executed\n")
     if mode == "success-stderr":
         tokenlike = os.environ["COOP_TEST_HELPER_TOKENLIKE"].encode("ascii")
@@ -138,7 +138,13 @@ if (
     os.write(2, diagnostic + b"\n")
     os._exit(7)
 PY
-  export PYTHONPATH="$HELPER_FIXTURE${PYTHONPATH:+:$PYTHONPATH}"
+  # Native Windows Python does not interpret Git-Bash /tmp paths. Convert both
+  # import and marker roots explicitly; otherwise the controlled helper never
+  # executes and a generic rejection can falsely satisfy the fixture.
+  HELPER_FIXTURE_NATIVE="$(cygpath -w "$HELPER_FIXTURE")"
+  HELPER_MARKER_NATIVE="$(cygpath -w "$MARKER")"
+  export COOP_TEST_HELPER_MARKER="$HELPER_MARKER_NATIVE"
+  export PYTHONPATH="$HELPER_FIXTURE_NATIVE${PYTHONPATH:+;$PYTHONPATH}"
 else
   cat > "$BIN/python3" <<'SH'
 #!/bin/sh
