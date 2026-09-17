@@ -6,9 +6,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- Added native Windows Azure CLI shim handling for Fabric Warehouse token discovery,
+  invoking `az.CMD` through `cmd.exe /d /c` with bounded, token-safe failure handling.
+- Kept injected standards-message details structured-clone-safe without dropping the
+  resolved domains, records, or patterns consumed by the terminal agent.
+- Stopped scaffolding legacy project-local standards mappings by default and added
+  bounded, archive-before-edit migration and diagnostics for deliberate cleanup.
 - Replaced the Fabric Warehouse SQL endpoint's incompatible `mcp-remote` dynamic
   OAuth flow with direct Streamable HTTP bearer authentication from a launch-time,
   non-persisted Azure CLI token; failures leave Coop and other MCP integrations usable.
+- Marked only the synthetic Windows Git-Bash web/no-Python minimal-PATH fixture as
+  unsupported; all terminal, token-persistence, PowerShell, and remaining web checks
+  continue to run. Web retirement is deferred to separate cleanup.
 
 ## [0.23.2] — 2026-09-16
 
