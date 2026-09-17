@@ -376,9 +376,18 @@ and credentials come from the canonical project/managed MCP snapshot and selecte
 Fabric Python (`coop_fabric_python` / `Get-CoopFabricPython`). It never cascades from
 MCP automatically. It accepts one plain literal-`TOP` `SELECT`, rejects mutations,
 batches, cross-database names, and unbounded reads before authentication, and returns
-capped structured JSON. Azure CLI supplies separate in-memory Fabric REST and
+capped structured JSON. Endpoint discovery uses Fabric's documented item APIs:
+Warehouse `GET /v1/workspaces/{workspaceId}/warehouses/{warehouseId}` reads
+`properties.connectionString`; Lakehouse
+`GET /v1/workspaces/{workspaceId}/lakehouses/{lakehouseId}` uses the source Lakehouse
+ID and reads `properties.sqlEndpointProperties.connectionString`. Returned item and
+endpoint IDs/types are checked against the canonical target when present. Azure CLI
+supplies separate in-memory Fabric REST and
 `database.windows.net` tokens; pyodbc uses only ODBC Driver 18 or newer, encrypted
-connections, access-token attribute `1256`, and bounded execution. SQL and tokens are
+connections, access-token attribute `1256`, bounded execution, and bounded per-value
+and aggregate JSON materialization. The launcher resolves the selected interpreter in
+a short subprocess and then starts that Python executable directly, so cancellation
+targets the query process. SQL and tokens are
 never placed in argv, config, disk, logs, or diagnostics. The exact fallback tool may
 reuse the same in-memory session grant as MCP only when its canonical
 client/tenant/principal/environment/target/read/row/60-second scope matches.

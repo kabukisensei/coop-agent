@@ -30,7 +30,7 @@ import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendi
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -82,49 +82,131 @@ const DATADOC_PARAMS = Type.Object({
 
 const FABRIC_SQL_QUERY_PARAMS = Type.Object({
   query: Type.String({ description: "One plain SELECT with a literal TOP bound. Sent to the helper over stdin, never argv." }),
-  maximum_rows: Type.Optional(Type.Number({ minimum: 1, maximum: 1000, description: "Optional result cap at or below the query's TOP bound." })),
+  maximum_rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000, description: "Optional result cap at or below the query's TOP bound." })),
 });
 
-export function fabricSqlHelperInvocation(root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")): { bin: string; args: string[] } {
-  const helper = join(root, "lib", "fabric_sql_query.py");
-  if (process.platform === "win32") return {
+interface FabricSqlInvocation { bin: string; args: string[]; env?: Record<string, string> }
+
+export function fabricSqlPythonResolverInvocation(
+  root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
+  platform = process.platform,
+): FabricSqlInvocation {
+  if (platform === "win32") return {
     bin: "powershell.exe",
-    args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ". $args[0]; $py=Get-CoopFabricPython; if (-not $py) { exit 65 }; & $py $args[1]; exit $LASTEXITCODE", join(root, "lib", "common.ps1"), helper],
+    args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ". (Join-Path $env:COOP_ROOT 'lib\\common.ps1'); $py = Get-CoopFabricPython; if (-not $py) { exit 65 }; [Console]::Out.WriteLine($py)"],
+    env: { COOP_ROOT: root },
   };
   return {
     bin: "bash",
-    args: ["-c", '. "$1"; py="$(coop_fabric_python)" || exit 65; exec "$py" "$2"', "coop-fabric-sql", join(root, "lib", "common.sh"), helper],
+    args: ["-c", '. "$COOP_ROOT/lib/common.sh"; coop_fabric_python || exit 65'],
+    env: { COOP_ROOT: root },
   };
 }
 
+export function fabricSqlHelperInvocation(
+  python: string,
+  root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
+): FabricSqlInvocation {
+  return { bin: python, args: [join(root, "lib", "fabric_sql_query.py")] };
+}
+
+async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<{ python?: string; state?: string }> {
+  if (signal?.aborted) return { state: "aborted" };
+  const invocation = fabricSqlPythonResolverInvocation();
+  return await new Promise((done) => {
+    const child = spawn(invocation.bin, invocation.args, {
+      stdio: ["ignore", "pipe", "ignore"], shell: false,
+      env: { ...process.env, ...invocation.env },
+    });
+    let stdout = "", finished = false, stopState = "";
+    let forceTimer: ReturnType<typeof setTimeout> | undefined;
+    let reapTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (value: { python?: string; state?: string }) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeoutTimer); clearTimeout(forceTimer); clearTimeout(reapTimer);
+      signal?.removeEventListener("abort", onAbort);
+      done(value);
+    };
+    const stop = (state: string) => {
+      if (stopState) return;
+      stopState = state;
+      try { child.kill("SIGTERM"); } catch { /* already exited */ }
+      forceTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already exited */ } }, 250);
+      reapTimer = setTimeout(() => finish({ state }), 1_000);
+    };
+    const onAbort = () => stop("aborted");
+    const timeoutTimer = setTimeout(() => stop("python_resolver_timeout"), 5_000);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    child.stdout?.on("data", (data: any) => {
+      if (stopState) return;
+      if (data.length > 4_096 - stdout.length) return stop("selected_python_unavailable");
+      stdout += data.toString();
+    });
+    child.on("error", () => finish({ state: stopState || "selected_python_unavailable" }));
+    child.on("close", (code: number | null) => {
+      if (stopState) return finish({ state: stopState });
+      if (code !== 0) return finish({ state: "selected_python_unavailable" });
+      const python = stdout.replace(/\r?\n$/, "");
+      if (!python || python !== python.trim() || /[\r\n]/.test(python) || !isAbsolute(python)) {
+        return finish({ state: "selected_python_unavailable" });
+      }
+      try {
+        if (!statSync(python).isFile()) throw new Error("not a file");
+        if (process.platform !== "win32") accessSync(python, constants.X_OK);
+      } catch {
+        return finish({ state: "selected_python_unavailable" });
+      }
+      finish({ python });
+    });
+  });
+}
+
 async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, cwd: string): Promise<any> {
-  const invocation = fabricSqlHelperInvocation();
+  if (signal?.aborted) return { ok: false, state: "aborted" };
+  const selected = await resolveFabricSqlPython(signal);
+  if (!selected.python) return { ok: false, state: selected.state || "selected_python_unavailable" };
+  if (signal?.aborted) return { ok: false, state: "aborted" };
+  const invocation = fabricSqlHelperInvocation(selected.python);
   return await new Promise((done) => {
     const child = spawn(invocation.bin, invocation.args, { cwd, stdio: ["pipe", "pipe", "ignore"], shell: false });
-    let stdout = "", finished = false, aborted = false, timedOut = false;
+    let stdout = "", finished = false, stopState = "";
+    let forceTimer: ReturnType<typeof setTimeout> | undefined;
+    let reapTimer: ReturnType<typeof setTimeout> | undefined;
     const finish = (value: any) => {
       if (!finished) {
         finished = true;
         clearTimeout(timer);
+        clearTimeout(forceTimer);
+        clearTimeout(reapTimer);
         signal?.removeEventListener("abort", onAbort);
         done(value);
       }
     };
-    const stop = () => { try { child.kill(); } catch { /* already exited */ } };
-    const onAbort = () => { aborted = true; stop(); };
-    const timer = setTimeout(() => { timedOut = true; stop(); }, 60_000);
+    const stop = (state: string) => {
+      if (stopState) return;
+      stopState = state;
+      try { child.kill("SIGTERM"); } catch { /* already exited */ }
+      forceTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already exited */ } }, 250);
+      reapTimer = setTimeout(() => finish({ ok: false, state }), 1_000);
+    };
+    const onAbort = () => stop("aborted");
+    const timer = setTimeout(() => stop("timeout"), 60_000);
     signal?.addEventListener("abort", onAbort, { once: true });
-    child.stdout?.on("data", (data: any) => { stdout = (stdout + data.toString()).slice(0, 2_000_000); });
-    child.on("error", () => finish({ ok: false, state: "helper_launch_failed" }));
+    child.stdout?.on("data", (data: any) => {
+      if (stopState) return;
+      if (data.length > 2_000_000 - stdout.length) return stop("helper_output_invalid");
+      stdout += data.toString();
+    });
+    child.on("error", () => finish({ ok: false, state: stopState || "helper_launch_failed" }));
     child.on("close", (code: number | null) => {
-      if (aborted) return finish({ ok: false, state: "aborted" });
-      if (timedOut) return finish({ ok: false, state: "timeout" });
-      if (code === 65) return finish({ ok: false, state: "selected_python_unavailable" });
+      if (stopState) return finish({ ok: false, state: stopState });
       try {
         const parsed = JSON.parse(stdout);
         finish(parsed && typeof parsed === "object" ? parsed : { ok: false, state: "helper_output_invalid" });
       } catch { finish({ ok: false, state: "helper_output_invalid" }); }
     });
+    child.stdin?.on("error", () => { /* child exited before consuming input */ });
     child.stdin?.end(JSON.stringify(params));
   });
 }

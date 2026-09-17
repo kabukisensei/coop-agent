@@ -21,6 +21,9 @@ SQL_COPT_SS_ACCESS_TOKEN = 1256
 MAX_ROWS = 1000
 CONNECT_TIMEOUT = 15
 QUERY_TIMEOUT = 45
+MAX_COLUMN_CHARS = 512
+MAX_CELL_CHARS = 65_536
+MAX_RESULT_BYTES = 1_000_000
 DRIVER_RE = re.compile(r"^ODBC Driver (\d+) for SQL Server$")
 SAFE_DATABASE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._@&'()+-]{0,159}$")
 SAFE_SERVER = re.compile(
@@ -134,16 +137,73 @@ def _canonical_target(
     return target, database, "ok"
 
 
+class ResultTooLarge(Exception):
+    pass
+
+
+def _bounded_text(value: str, limit: int) -> str:
+    if len(value) > limit or len(value.encode("utf-8")) > limit:
+        raise ResultTooLarge
+    return value
+
+
 def _json_value(value: Any) -> Any:
-    if value is None or isinstance(value, (bool, int, float, str)):
+    if value is None or isinstance(value, (bool, int, float)):
         return value
+    if isinstance(value, str):
+        return _bounded_text(value, MAX_CELL_CHARS)
     if isinstance(value, Decimal):
-        return str(value)
+        return _bounded_text(str(value), MAX_CELL_CHARS)
     if isinstance(value, (date, datetime, time)):
         return value.isoformat()
     if isinstance(value, bytes):
+        if len(value) > MAX_CELL_CHARS // 2:
+            raise ResultTooLarge
         return value.hex()
-    return str(value)
+    return _bounded_text(str(value), MAX_CELL_CHARS)
+
+
+def _discover_server(target: wmcp.SqlEndpointTarget, token: str) -> tuple[str, str]:
+    collection = "warehouses" if target.item_type == "Warehouse" else "lakehouses"
+    source_id = target.validation_item_id
+    url = (
+        f"{wmcp.FABRIC_RESOURCE}/v1/workspaces/{target.workspace_id}/"
+        f"{collection}/{source_id}"
+    )
+    item, state = wmcp.fabric_get_json(url, token)
+    if state != "ok":
+        return "", state
+    if not isinstance(item, dict):
+        return "", "endpoint_invalid"
+    response_id = item.get("id")
+    response_type = item.get("type")
+    if (
+        response_id is not None
+        and (
+            not wmcp.is_uuid(response_id)
+            or wmcp.canonical_uuid(response_id) != source_id
+        )
+    ) or (response_type is not None and response_type != target.item_type):
+        return "", "endpoint_invalid"
+    properties = item.get("properties")
+    if not isinstance(properties, dict):
+        return "", "endpoint_invalid"
+    if target.item_type == "Warehouse":
+        server = properties.get("connectionString", "")
+    else:
+        sql_properties = properties.get("sqlEndpointProperties")
+        if not isinstance(sql_properties, dict):
+            return "", "endpoint_invalid"
+        endpoint_id = sql_properties.get("id")
+        if endpoint_id is not None and (
+            not wmcp.is_uuid(endpoint_id)
+            or wmcp.canonical_uuid(endpoint_id) != target.item_id
+        ):
+            return "", "endpoint_invalid"
+        server = sql_properties.get("connectionString", "")
+    if not isinstance(server, str) or not SAFE_SERVER.fullmatch(server):
+        return "", "endpoint_invalid"
+    return server, "ok"
 
 
 def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
@@ -170,26 +230,16 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     try:
         import pyodbc  # type: ignore[import-not-found]
     except (ImportError, OSError):
-        return result(
-            "pyodbc_unavailable",
-            python={"executable": sys.executable, "version": sys.version.split()[0]},
-        )
+        return result("pyodbc_unavailable", stage="driver_import")
     driver = select_driver(list(pyodbc.drivers()))
     if not driver:
         return result("odbc_driver_unavailable", minimum_version=18)
     fabric_token, state = wmcp.az_access_token(resource=wmcp.FABRIC_RESOURCE)
     if state != "ok":
         return result(state, stage="fabric_rest_token")
-    endpoint_url = (
-        f"{wmcp.FABRIC_RESOURCE}/v1/workspaces/{target.workspace_id}/"
-        f"sqlEndpoints/{target.item_id}/connectionString"
-    )
-    endpoint, state = wmcp.fabric_get_json(endpoint_url, fabric_token)
-    server = endpoint.get("connectionString", "") if state == "ok" else ""
+    server, state = _discover_server(target, fabric_token)
     if state != "ok":
         return result(state, stage="endpoint_discovery")
-    if not isinstance(server, str) or not SAFE_SERVER.fullmatch(server):
-        return result("endpoint_invalid")
     sql_token, state = wmcp.az_access_token(resource=SQL_RESOURCE)
     if state != "ok":
         return result(state, stage="database_token")
@@ -217,10 +267,22 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
         cursor = connection.cursor()
         cursor.timeout = QUERY_TIMEOUT
         cursor.execute(query)
-        columns = [str(item[0]) for item in (cursor.description or [])]
+        columns = [
+            _bounded_text(str(item[0]), MAX_COLUMN_CHARS)
+            for item in (cursor.description or [])
+        ]
         rows = cursor.fetchmany(row_limit + 1)
         truncated = len(rows) > row_limit
-        values = [[_json_value(value) for value in row] for row in rows[:row_limit]]
+        values = []
+        serialized_bytes = len(json.dumps(columns, ensure_ascii=False).encode("utf-8"))
+        for row in rows[:row_limit]:
+            materialized = [_json_value(value) for value in row]
+            serialized_bytes += len(
+                json.dumps(materialized, ensure_ascii=False).encode("utf-8")
+            )
+            if serialized_bytes > MAX_RESULT_BYTES:
+                raise ResultTooLarge
+            values.append(materialized)
         return result(
             "ok",
             columns=columns,
@@ -229,6 +291,8 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
             truncated=truncated,
             driver=driver,
         )
+    except ResultTooLarge:
+        return result("result_too_large")
     except Exception:
         return result("query_failed")
     finally:

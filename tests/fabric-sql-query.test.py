@@ -24,6 +24,7 @@ spec.loader.exec_module(fsq)
 
 WORKSPACE = "22222222-2222-4222-8222-222222222222"
 ITEM = "33333333-3333-4333-8333-333333333333"
+LAKEHOUSE = "44444444-4444-4444-8444-444444444444"
 TENANT = "11111111-1111-4111-8111-111111111111"
 PRINCIPAL = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 SERVER = "fixture.datawarehouse.fabric.microsoft.com"
@@ -41,18 +42,27 @@ FABRIC_TOKEN = jwt("fabric")
 SQL_TOKEN = jwt("sql")
 
 
-def fixture() -> tuple[tempfile.TemporaryDirectory, Path, Path]:
+def fixture(
+    item_type: str = "Warehouse",
+) -> tuple[tempfile.TemporaryDirectory, Path, Path]:
     temp = tempfile.TemporaryDirectory()
     root = Path(temp.name)
     project = root / "project"
     (project / ".coop").mkdir(parents=True)
+    item_id = ITEM if item_type == "Warehouse" else LAKEHOUSE
+    endpoint_properties = (
+        ""
+        if item_type == "Warehouse"
+        else f'    sqlEndpointProperties:\n      id: "{ITEM}"\n'
+    )
     (project / ".coop" / "project.yml").write_text(
         f"""fabric:
   default_workspace_id: "{WORKSPACE}"
   default_sql_endpoint:
-    item_type: "Warehouse"
+    item_type: "{item_type}"
     item_name: "CustomerWarehouse"
-    item_id: "{ITEM}"
+    item_id: "{item_id}"
+{endpoint_properties}
 """,
         encoding="utf-8",
     )
@@ -81,21 +91,21 @@ def fixture() -> tuple[tempfile.TemporaryDirectory, Path, Path]:
 class FakeCursor:
     description = [("customer_id",), ("seen_at",)]
 
-    def __init__(self):
+    def __init__(self, rows=None):
         self.timeout = None
         self.query = None
+        self.rows = rows or [(1, b"a"), (2, b"b"), (3, b"c")]
 
     def execute(self, query):
         self.query = query
 
     def fetchmany(self, count):
-        assert count == 2
-        return [(1, b"a"), (2, b"b"), (3, b"c")]
+        return self.rows[:count]
 
 
 class FakeConnection:
-    def __init__(self):
-        self.cursor_value = FakeCursor()
+    def __init__(self, rows=None):
+        self.cursor_value = FakeCursor(rows)
         self.closed = False
 
     def cursor(self):
@@ -106,14 +116,14 @@ class FakeConnection:
 
 
 class FakePyodbc:
-    def __init__(self, drivers=None, connect_error=None):
+    def __init__(self, drivers=None, connect_error=None, rows=None):
         self.driver_values = drivers or [
             "ODBC Driver 17 for SQL Server",
             "ODBC Driver 18 for SQL Server",
             "ODBC Driver 19 for SQL Server",
         ]
         self.connect_error = connect_error
-        self.connection = FakeConnection()
+        self.connection = FakeConnection(rows)
         self.call = None
 
     def drivers(self):
@@ -161,7 +171,11 @@ def fake_token(*, timeout=8, resource=fsq.wmcp.FABRIC_RESOURCE):
 
 def fake_rest(url, token, timeout=8):
     rest_calls.append((url, token, timeout))
-    return {"connectionString": SERVER}, "ok"
+    return {
+        "id": ITEM,
+        "type": "Warehouse",
+        "properties": {"connectionString": SERVER},
+    }, "ok"
 
 
 with (
@@ -191,7 +205,7 @@ assert output == {
 assert resources == [fsq.wmcp.FABRIC_RESOURCE, fsq.SQL_RESOURCE]
 assert rest_calls == [
     (
-        f"{fsq.wmcp.FABRIC_RESOURCE}/v1/workspaces/{WORKSPACE}/sqlEndpoints/{ITEM}/connectionString",
+        f"{fsq.wmcp.FABRIC_RESOURCE}/v1/workspaces/{WORKSPACE}/warehouses/{ITEM}",
         FABRIC_TOKEN,
         8,
     )
@@ -212,6 +226,79 @@ assert pyodbc.connection.cursor_value.timeout == fsq.QUERY_TIMEOUT
 assert pyodbc.connection.cursor_value.query == QUERY
 assert pyodbc.connection.closed is True
 
+# Lakehouse discovery uses the source Lakehouse ID and the documented nested
+# sqlEndpointProperties response while preserving the configured endpoint ID.
+lake_temp, lake_project, lake_agent = fixture("Lakehouse")
+lake_calls = []
+
+
+def fake_lake_rest(url, token, timeout=8):
+    lake_calls.append((url, token, timeout))
+    return {
+        "id": LAKEHOUSE,
+        "type": "Lakehouse",
+        "properties": {
+            "sqlEndpointProperties": {"id": ITEM, "connectionString": SERVER}
+        },
+    }, "ok"
+
+
+with (
+    mock.patch.dict(
+        os.environ,
+        {
+            "PI_CODING_AGENT_DIR": str(lake_agent),
+            fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN,
+        },
+        clear=False,
+    ),
+    mock.patch.dict(sys.modules, {"pyodbc": FakePyodbc()}),
+    mock.patch.object(fsq.wmcp, "az_access_token", side_effect=fake_token),
+    mock.patch.object(fsq.wmcp, "fabric_get_json", side_effect=fake_lake_rest),
+):
+    assert fsq.execute({"query": QUERY}, cwd=lake_project)["state"] == "ok"
+assert lake_calls[0][0] == (
+    f"{fsq.wmcp.FABRIC_RESOURCE}/v1/workspaces/{WORKSPACE}/lakehouses/{LAKEHOUSE}"
+)
+
+# Mismatched documented identity fields fail closed before SQL authentication.
+with mock.patch.object(
+    fsq.wmcp,
+    "fabric_get_json",
+    return_value=(
+        {"id": ITEM, "type": "Lakehouse", "properties": {}},
+        "ok",
+    ),
+):
+    lake_target = fsq.wmcp.project_target(
+        fsq.wmcp.load_project(lake_project / ".coop" / "project.yml")
+    )
+    assert fsq._discover_server(lake_target, FABRIC_TOKEN)[1] == "endpoint_invalid"
+
+# One oversized cell and aggregate overflow return one stable, non-sensitive state.
+for rows in (
+    [("x" * (fsq.MAX_CELL_CHARS + 1), "small")],
+    [("x" * fsq.MAX_CELL_CHARS, "small") for _ in range(16)],
+):
+    sized_pyodbc = FakePyodbc(rows=rows)
+    with (
+        mock.patch.dict(
+            os.environ,
+            {
+                "PI_CODING_AGENT_DIR": str(agent),
+                fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN,
+            },
+            clear=False,
+        ),
+        mock.patch.dict(sys.modules, {"pyodbc": sized_pyodbc}),
+        mock.patch.object(fsq.wmcp, "az_access_token", side_effect=fake_token),
+        mock.patch.object(fsq.wmcp, "fabric_get_json", side_effect=fake_rest),
+    ):
+        sized = fsq.execute(
+            {"query": "SELECT TOP (20) customer_id FROM dbo.Customer"}, cwd=project
+        )
+    assert sized == {"ok": False, "state": "result_too_large"}
+
 # Missing prerequisites and canonical-target drift return stable diagnostics.
 with (
     mock.patch.dict(
@@ -226,7 +313,7 @@ with (
 ):
     missing = fsq.execute({"query": QUERY}, cwd=project)
 assert missing["state"] == "pyodbc_unavailable"
-assert missing["python"]["executable"] == sys.executable
+assert missing == {"ok": False, "state": "pyodbc_unavailable", "stage": "driver_import"}
 
 old = json.loads((agent / "mcp.json").read_text(encoding="utf-8"))
 old["mcpServers"]["fabric-sqlendpoint"]["_coop_target"]["item_name"] = "OtherWarehouse"
@@ -281,4 +368,5 @@ with (
     }
 
 temp.cleanup()
+lake_temp.cleanup()
 print("fabric-sql-query tests passed")
