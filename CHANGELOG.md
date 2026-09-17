@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.23.3] — 2026-09-17
+
 ### Fixed
 - Added native Windows Azure CLI shim handling for Fabric Warehouse token discovery,
   invoking `az.CMD` through `cmd.exe /d /c` with bounded, token-safe failure handling.
