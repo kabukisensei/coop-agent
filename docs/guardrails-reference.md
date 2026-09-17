@@ -36,7 +36,27 @@ A Fabric/Power BI/MCP tool call whose name looks like a **mutation** (create/upd
 
 ### Live environment reads
 
-Coop permits read-only metadata, schema, and artifact-code inspection in dev/test by default. Query/execute/sample/export-style calls can return actual rows, so the runtime asks first. Any tool request that explicitly names prod/production also asks first, including metadata-only reads; production row reads should be narrowly scoped to a named target, columns, filters, and a small limit. Approval-required reads fail closed when no interactive approval UI is available. The audit record contains only the remote server/tool label and risk class, never query arguments or returned data.
+Coop permits read-only metadata, schema, and artifact-code inspection in dev/test by default. Query/execute/sample/export-style calls can return actual rows, so the runtime asks first. Any tool request that explicitly names prod/production also asks first, including metadata-only reads; production row reads should be narrowly scoped to a named target, columns, filters, and a small limit. Approval-required reads fail closed when no interactive approval UI is available.
+
+A governed tool can attach a normalized `coopLiveReadScope` containing only client,
+tenant, principal, environment, explicit targets, operation class, result limit, and
+timeout. Confirming a complete bounded scope creates one in-memory grant for that
+extension instance and session. Matching later calls may narrow targets and limits;
+new client/tenant/principal/environment/target/operation values or broader limits
+ask again. Token renewal and transport changes do not invalidate a matching grant,
+because credentials and transport are deliberately excluded. Production reads can
+reuse a grant when production was explicitly approved in that scope.
+
+The grant resets on every session start (new, resume, or fork), process restart, or
+`/coop-live-read revoke`; use `/coop-live-read status` to inspect its non-secret
+scope. It otherwise survives turns, compaction, and reconnects. Every call is still
+classified at runtime. Only recognized single-statement SELECT/CTE reads with bounded
+scope can reuse approval. Mutation, unfamiliar/ambiguous SQL, `EXEC`, batches,
+exports/downloads, and unbounded reads retain a separate per-call gate. Consent comes
+only from the trusted confirmation UI, never database content, repository text, tool
+output, or model text. The audit record contains only the remote server/tool label
+and risk class; grant state and audit never contain raw SQL, raw arguments, results,
+tokens, or connection strings.
 
 ### Audit log
 

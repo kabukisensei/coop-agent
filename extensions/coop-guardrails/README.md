@@ -16,7 +16,7 @@ never intercepted**.
 | **Never commit source** | Blocks a `git commit` whenever staged files include anything outside the allow-listed docs/logs/site paths. Policy comes from a per-session snapshot of the `repositories:` entries in `.coop/project.yml` (`agent_allowed_to_commit` / `agent_never_commit`), resolved from the session directory so sibling repositories inherit their configured rules (plus conservative defaults: `docs/`, `site/`, `data-docs/`, `data-docs-site/`, any `*.md`). Editing the contract mid-session never weakens the active policy; `.coop/project.yml` itself is not agent-committable. The agent may still commit docs/logs/site; a human commits source. |
 | **Destructive commands** | Confirms (via a dialog) before `rm -rf`, `git push --force`, `git reset --hard`, `git clean -f`, and `DROP`/`TRUNCATE` SQL. Declining blocks the command. |
 | **Secret files** | Confirms before the agent reads/edits/writes a secret-looking file — `.env` (not `.env.example`), `*.pem`/`*.key`/`*.p12`, `id_rsa`/`id_ed25519`, `credentials`, `.npmrc`, `secrets.*`. Declining blocks. |
-| **Live environment reads** | Allows read-only dev/test metadata, schema, and artifact-code inspection. Confirms row-level reads and every production read. Production rows must be requested with a bounded target, columns, filters, and limit. |
+| **Live environment reads** | Allows read-only dev/test metadata, schema, and artifact-code inspection. Confirms row-level reads and every production read. A confirmed, explicitly bounded read scope may be reused for matching calls in the same session; production is allowed when it is part of that exact grant. |
 | **Mutating MCP actions** | Confirms create/update/delete/deploy/publish-looking Fabric, Power BI, and proxied MCP calls. |
 | **Managed updates** | Blocks `context-mode`'s `ctx_upgrade` shortcut and removes its independent registry warning. Pi's own banner is disabled by the Coop launcher; the Coop checkout staleness nudge remains the single safe prompt to run `coop update`. |
 
@@ -38,6 +38,29 @@ do instead (e.g. "unstage source and let a human commit").
 - Disable governance confirms/blocks: `COOP_NO_GUARDRAILS=1` (the separate managed-update policy stays on).
 - Show upstream Pi/extension notices and allow `ctx_upgrade` for maintainer diagnostics: `COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1`.
 - `/coop-guardrails` — show what's enforced and whether it's on.
+- `/coop-live-read status` — show the non-secret identity, targets, operation class,
+  row limit, and timeout of the current session grant. `/coop-live-read revoke`
+  clears it immediately.
+
+## Session live-read grants
+
+Governed live-read tools may supply `coopLiveReadScope` in their input (including
+inside a proxied MCP `args` object): `client`, `tenant`, `principal`, `environment`,
+explicit `targets`, `operationClass` (`sql-read`, `row-read`, or `metadata-read`),
+`resultLimit`, and `timeoutMs`. Approval creates one closure-owned grant for that
+extension instance. Matching calls can narrow targets or limits; changing client,
+tenant, principal, environment, target, operation class, or broadening a bound asks
+again. Credential renewal and transport changes do not affect it because token and
+transport values are never grant identity.
+
+The grant is memory-only and resets on every session start (`/new`, `/resume`, or
+`/fork`), process restart, or explicit revoke. It survives ordinary turns,
+compaction, and reconnects within that session. SQL is classified quote-aware on
+every call. Only a single SELECT/CTE read with complete bounded scope can reuse a
+grant; mutations, unfamiliar/ambiguous SQL, `EXEC`, batches, exports/downloads, and
+unbounded reads remain separately confirmed. Raw SQL, tool arguments, results, and
+credentials are never written to grant state or the audit log. Tool/repository/model
+text can describe a scope but cannot approve one; only the confirmation UI can.
 
 ## Implementation
 

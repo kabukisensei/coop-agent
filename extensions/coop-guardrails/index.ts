@@ -782,7 +782,7 @@ export function mcpLiveReadRisk(event: any): LiveReadRisk | null {
 
 export type SqlMcpRisk = {
   label: string;
-  kind: "ddl-dml-destructive" | "row-data";
+  kind: "ddl-dml-destructive" | "ambiguous-sql" | "row-data";
 };
 
 function extractSqlText(input: any): string {
@@ -797,6 +797,48 @@ function extractSqlText(input: any): string {
   return "";
 }
 
+export type SqlOperation = "read" | "mutation" | "ambiguous";
+
+/** Classify one SQL statement without treating quoted/comment text as executable SQL.
+ * Only SELECT/CTE reads are recognized. EXEC, write verbs, SELECT/COPY INTO, and
+ * multi-statement batches stay on the separate per-call gate; malformed or unfamiliar
+ * syntax is ambiguous. Raw SQL is returned nowhere and is never grant state. */
+export function classifySqlOperation(sql: string): SqlOperation {
+  if (!sql || typeof sql !== "string") return "ambiguous";
+  const masked = sqlWithoutComments(sql);
+  // An unclosed quote/comment is not a recognizable read. The masker preserves the
+  // opening delimiter as a blank, so validate closure independently and cheaply.
+  let state: "normal" | "single" | "double" | "bracket" | "line" | "block" = "normal";
+  let depth = 0;
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i], next = sql[i + 1] || "";
+    if (state === "normal") {
+      if (ch === "-" && next === "-") { state = "line"; i++; }
+      else if (ch === "/" && next === "*") { state = "block"; depth = 1; i++; }
+      else if (ch === "'") state = "single";
+      else if (ch === '"') state = "double";
+      else if (ch === "[") state = "bracket";
+    } else if (state === "line") {
+      if (ch === "\n" || ch === "\r") state = "normal";
+    } else if (state === "block") {
+      if (ch === "/" && next === "*") { depth++; i++; }
+      else if (ch === "*" && next === "/") { depth--; i++; if (!depth) state = "normal"; }
+    } else {
+      const close = state === "single" ? "'" : state === "double" ? '"' : "]";
+      if (ch === close && next === close) i++;
+      else if (ch === close) state = "normal";
+    }
+  }
+  if (state === "line") state = "normal";
+  if (state !== "normal") return "ambiguous";
+  if (SQL_MUTATION_VERB.test(masked) || SQL_MUTATING_INTO.test(masked)) return "mutation";
+  if (/^\s*GO\s*$/im.test(masked)) return "ambiguous";
+  const withoutTrailingTerminator = masked.trim().replace(/;\s*$/, "");
+  if (withoutTrailingTerminator.includes(";")) return "mutation";
+  if (!/^\s*(?:SELECT|WITH)\b/i.test(withoutTrailingTerminator)) return "ambiguous";
+  return "read";
+}
+
 /** Warehouse SQL endpoint MCP calls are approval-gated even for SELECT. Mutating
  * SQL is classified before generic row-read handling and raw SQL is never logged. */
 export function sqlMcpRisk(event: any): SqlMcpRisk | null {
@@ -804,11 +846,111 @@ export function sqlMcpRisk(event: any): SqlMcpRisk | null {
   const name = target.innerTool || target.outerTool;
   const server = target.server || "";
   if (!SQL_ENDPOINT_TOOL.test(name) && !/fabric-sqlendpoint/i.test(server)) return null;
-  const sql = sqlWithoutComments(extractSqlText(event?.input));
+  const operation = classifySqlOperation(extractSqlText(event?.input));
   return {
     label: mutationName(target),
-    kind: SQL_MUTATION_VERB.test(sql) || SQL_MUTATING_INTO.test(sql) ? "ddl-dml-destructive" : "row-data",
+    kind: operation === "mutation" ? "ddl-dml-destructive" : operation === "ambiguous" ? "ambiguous-sql" : "row-data",
   };
+}
+
+export type LiveReadScope = {
+  client: string;
+  tenant: string;
+  principal: string;
+  environment: string;
+  targets: string[];
+  operationClass: string;
+  resultLimit: number;
+  timeoutMs: number;
+};
+
+export type LiveReadGrant = { scope: LiveReadScope; grantedAt: number };
+
+function scopeCandidate(input: any, seen = new Set<object>(), depth = 0): any {
+  if (!input || typeof input !== "object" || depth > 4 || seen.has(input)) return null;
+  seen.add(input);
+  const direct = input.coopLiveReadScope ?? input.liveReadScope ?? input.guardrails?.liveReadScope ?? input.config?.coopLiveReadScope;
+  if (direct && typeof direct === "object") return direct;
+  for (const nested of [input.arguments, input.args, input.params]) {
+    if (typeof nested === "string") {
+      try { const found = scopeCandidate(JSON.parse(nested), seen, depth + 1); if (found) return found; } catch { /* not structured adapter input */ }
+    } else {
+      const found = scopeCandidate(nested, seen, depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function boundedPositiveInteger(value: any): number | null {
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/** Copy only the explicit, non-secret approval fields supplied by a governed tool.
+ * Tokens, connection strings, SQL, transport details, arguments, and results cannot
+ * enter grant state because they are not read into this closed shape. */
+export function normalizeLiveReadScope(input: any): LiveReadScope | null {
+  const raw = scopeCandidate(input);
+  if (!raw) return null;
+  const text = (v: any) => typeof v === "string" ? v.trim() : "";
+  const client = text(raw.client), tenant = text(raw.tenant), principal = text(raw.principal);
+  const environment = text(raw.environment).toLowerCase();
+  const operationClass = text(raw.operationClass).toLowerCase();
+  const targets: string[] = Array.isArray(raw.targets)
+    ? [...new Set<string>(raw.targets.map((v: any) => text(v)).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+    : [];
+  const resultLimit = boundedPositiveInteger(raw.resultLimit);
+  const timeoutMs = boundedPositiveInteger(raw.timeoutMs);
+  if (!client || !tenant || !principal || !environment || !operationClass || !targets.length || !resultLimit || !timeoutMs) return null;
+  return { client, tenant, principal, environment, targets, operationClass, resultLimit, timeoutMs };
+}
+
+export function createLiveReadGrant(scope: LiveReadScope, now = Date.now()): LiveReadGrant {
+  return { scope: { ...scope, targets: [...scope.targets] }, grantedAt: now };
+}
+
+function sameIdentity(a: string, b: string): boolean { return a.toLocaleLowerCase() === b.toLocaleLowerCase(); }
+
+/** A request may narrow targets/result/time bounds, but changing identity,
+ * environment, operation class, or broadening any bound requires fresh consent. */
+export function liveReadGrantMatches(grant: LiveReadGrant | null, requested: LiveReadScope): boolean {
+  if (!grant) return false;
+  const approved = grant.scope;
+  if (!["client", "tenant", "principal", "environment", "operationClass"].every(
+    (key) => sameIdentity((approved as any)[key], (requested as any)[key]),
+  )) return false;
+  const approvedTargets = new Set(approved.targets.map((t) => t.toLocaleLowerCase()));
+  return requested.targets.every((t) => approvedTargets.has(t.toLocaleLowerCase()))
+    && requested.resultLimit <= approved.resultLimit
+    && requested.timeoutMs <= approved.timeoutMs;
+}
+
+export type LiveReadDecision = {
+  action: "none" | "allow-grant" | "prompt-once" | "prompt-and-grant" | "separate-gate";
+  label?: string;
+  kind?: SqlMcpRisk["kind"] | LiveReadRisk["kind"];
+  environment?: LiveReadRisk["environment"];
+  scope?: LiveReadScope;
+};
+
+/** One exported decision path for direct tools, the `mcp` proxy, prefixed adapters,
+ * and future governed surfaces. Callers must still ask through trusted UI; tool,
+ * repository, database, and model text can describe scope but can never grant it. */
+export function decideLiveRead(event: any, grant: LiveReadGrant | null): LiveReadDecision {
+  const sql = sqlMcpRisk(event);
+  const read = mcpLiveReadRisk(event);
+  if (!sql && !read) return { action: "none" };
+  const label = sql?.label || read!.label;
+  const kind = sql?.kind || read!.kind;
+  const environment = read?.environment;
+  const targetName = (effectiveMutationTarget(event).innerTool || effectiveMutationTarget(event).outerTool).toLowerCase();
+  if (sql && sql.kind !== "row-data") return { action: "separate-gate", label, kind, environment };
+  if (/export|download/.test(targetName)) return { action: "separate-gate", label, kind, environment };
+  const scope = normalizeLiveReadScope(event?.input);
+  const expectedClass = sql ? "sql-read" : read?.kind === "production-metadata" ? "metadata-read" : "row-read";
+  if (!scope || scope.operationClass !== expectedClass) return { action: "prompt-once", label, kind, environment };
+  if (liveReadGrantMatches(grant, scope)) return { action: "allow-grant", label, kind, environment, scope };
+  return { action: "prompt-and-grant", label, kind, environment, scope };
 }
 
 /** Hard-block reasons for commit forms whose contents cannot be policy-checked:
@@ -946,12 +1088,18 @@ function contextModeToolName(event: any): string | null {
 export default function coopGuardrails(pi: ExtensionAPI) {
   const enabled = () => process.env.COOP_NO_GUARDRAILS !== "1";
   const showUpstreamUpdates = () => process.env.COOP_SHOW_UPSTREAM_UPDATE_NOTICES === "1";
+  // Closure-owned: one extension instance can hold one grant for its current Pi
+  // session. Nothing is serialized into messages, disk, config, or audit output.
+  let liveReadGrant: LiveReadGrant | null = null;
   rotateAuditIfLarge();
   // One Pi process can serve multiple sessions (/new, /resume, /fork fire
   // session_shutdown + session_start without reloading this module). Drop the
   // stale governance snapshot so THIS session's project contract is re-read on
   // its next governed call — never carry policy across session switches.
-  pi.on("session_start", async () => { resetSessionGovernance(); });
+  pi.on("session_start", async () => {
+    resetSessionGovernance();
+    liveReadGrant = null;
+  });
 
   // context-mode performs its own npm registry check outside Pi's update system.
   // Filter only its exact warning lines. Maintainers can restore upstream notices
@@ -1021,38 +1169,30 @@ export default function coopGuardrails(pi: ExtensionAPI) {
             return { block: true, reason: `coop guardrails: blocked the MCP action ${mcp} (you declined). MCP is read-only by default — list / read / inspect only; make changes with explicit approval or in the Fabric / Power BI UX.` };
           }
         }
-        const sqlRisk = sqlMcpRisk(event);
-        if (sqlRisk) {
+        const decision = decideLiveRead(event, liveReadGrant);
+        if (decision.action !== "none" && decision.action !== "allow-grant") {
           if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: String(tool), decision: "blocked-headless", label: sqlRisk.label, detail: sqlRisk.kind });
-            return { block: true, reason: `coop guardrails: blocked Warehouse SQL MCP call through ${sqlRisk.label}; explicit approval is unavailable in headless mode.` };
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: String(tool), decision: "blocked-headless", label: decision.label || "live read", detail: decision.kind || "live-read" });
+            return { block: true, reason: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"}; explicit approval is unavailable in headless mode.` };
           }
+          const production = decision.environment === "production" || decision.scope?.environment === "production";
+          const sessionGrant = decision.action === "prompt-and-grant";
+          const prompt = decision.kind === "ddl-dml-destructive"
+            ? `Warehouse SQL mutation/DDL call:\n  ${decision.label}\nDDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
+            : decision.kind === "ambiguous-sql"
+              ? `Ambiguous Warehouse SQL call:\n  ${decision.label}\nOnly bounded SELECT/CTE reads can use a session grant. Run this call once?`
+              : decision.kind === "production-metadata"
+                ? `Production metadata/code read:\n  ${decision.label}\nDev/test metadata is read-only by default; production always asks.${sessionGrant ? " Approve this exact bounded scope for this session?" : " Read it once?"}`
+                : `${production ? "PRODUCTION " : ""}row-level data read:\n  ${decision.label}\nConfirm the explicit target, operation class, result limit, and timeout.${sessionGrant ? " Approve this bounded scope for this session?" : " Read these rows once?"}`;
           const ok = await ctx.ui.confirm(
-            "coop Warehouse SQL guardrail",
-            sqlRisk.kind === "ddl-dml-destructive"
-              ? `Warehouse SQL mutation/DDL call:\n  ${sqlRisk.label}\nDDL, DML, and destructive SQL require explicit approval. Run it?`
-              : `Warehouse SQL row read:\n  ${sqlRisk.label}\nConfirm the target, columns, filters, and a small row limit in the tool request. Run it?`,
+            "coop live-data guardrail",
+            prompt,
           );
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: String(tool), decision: ok ? "allowed" : "declined", label: sqlRisk.label, detail: sqlRisk.kind });
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: String(tool), decision: ok ? "allowed" : "declined", label: decision.label || "live read", detail: decision.kind || "live-read" });
           if (!ok) {
-            return { block: true, reason: `coop guardrails: blocked Warehouse SQL MCP call through ${sqlRisk.label} (you declined).` };
+            return { block: true, reason: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"} (you declined).` };
           }
-        }
-        const readRisk = mcpLiveReadRisk(event);
-        if (readRisk) {
-          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: String(tool), decision: "blocked-headless", label: readRisk.label, detail: `${readRisk.kind}/${readRisk.environment}` });
-            return { block: true, reason: `coop guardrails: blocked ${readRisk.kind} access through ${readRisk.label}; explicit approval is unavailable in headless mode.` };
-          }
-          const production = readRisk.environment === "production";
-          const prompt = readRisk.kind === "row-data"
-            ? `${production ? "PRODUCTION " : ""}row-level data read:\n  ${readRisk.label}\nConfirm the target, columns, filters, and a small row limit in the tool request. Read these rows?`
-            : `Production metadata/code read:\n  ${readRisk.label}\nDev/test metadata is read-only by default; production always asks. Read it?`;
-          const ok = await ctx.ui.confirm("coop live-data guardrail", prompt);
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: String(tool), decision: ok ? "allowed" : "declined", label: readRisk.label, detail: `${readRisk.kind}/${readRisk.environment}` });
-          if (!ok) {
-            return { block: true, reason: `coop guardrails: blocked ${readRisk.kind} access through ${readRisk.label} (you declined). Use dev/test metadata, or request a specific target and bounded read.` };
-          }
+          if (sessionGrant && decision.scope) liveReadGrant = createLiveReadGrant(decision.scope);
         }
         return;
       }
@@ -1140,6 +1280,34 @@ export default function coopGuardrails(pi: ExtensionAPI) {
     }
   });
 
+  pi.registerCommand("coop-live-read", {
+    description: "Show or revoke this session's bounded live-read grant",
+    handler: async (args: any, ctx: ExtensionContext) => {
+      const action = (Array.isArray(args) ? args.join(" ") : String(args || "")).trim().toLowerCase() || "status";
+      let message: string;
+      if (action === "revoke") {
+        liveReadGrant = null;
+        message = "coop live-read grant: revoked for this session.";
+      } else if (action !== "status") {
+        message = "Usage: /coop-live-read status|revoke";
+      } else if (!liveReadGrant) {
+        message = "coop live-read grant: none active for this session.";
+      } else {
+        const s = liveReadGrant.scope;
+        // Closed, non-secret scope only: never show SQL, arguments, credentials,
+        // transport, or results. Targets are explicit consent identifiers.
+        message = [
+          "coop live-read grant: active for this session",
+          `  client/tenant/principal: ${s.client} / ${s.tenant} / ${s.principal}`,
+          `  environment/operation: ${s.environment} / ${s.operationClass}`,
+          `  targets: ${s.targets.join(", ")}`,
+          `  bounds: ${s.resultLimit} result rows; ${s.timeoutMs} ms`,
+        ].join("\n");
+      }
+      try { if (typeof ctx.ui?.notify === "function") ctx.ui.notify(message, "info"); } catch { /* ignore */ }
+    },
+  });
+
   pi.registerCommand("coop-guardrails", {
     description: "Show what coop's runtime guardrails enforce (and whether they're on)",
     handler: async (_args, ctx) => {
@@ -1150,7 +1318,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, `git commit <path>`, and `cd <dir> && git commit`) of anything outside docs/logs/site",
         "  • destructive commands — confirms rm -rf / git push --force (incl. +refspec) / reset --hard / git clean -f / DROP·TRUNCATE",
         "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
-        "  • live data — allows read-only dev/test metadata; confirms row-level reads and all production access",
+        `  • live data — allows dev/test metadata; bounded matching reads may reuse one session grant (${liveReadGrant ? "active" : "none"}; /coop-live-read status|revoke)`,
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
         "  • managed updates — blocks ctx_upgrade so the manifest-pinned fleet moves together",
         "Advisory rules live in docs/guardrails.md. Disable with COOP_NO_GUARDRAILS=1.",
