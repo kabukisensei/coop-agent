@@ -368,6 +368,21 @@ can still report `auth_required`, `unavailable`, `tool_missing`, or
 `target_invalid`. Live dev/test verification remains pending on the signed-in
 user, tenant, target, and Fabric permissions.
 
+The preferred live SQL route is that managed MCP server. Coop also registers exactly
+one explicit fallback, `fabric_sql_query`, implemented by the new consolidated
+`lib/fabric_sql_query.py` helper (no historical standalone runner was recovered).
+The tool accepts only `query` plus optional `maximum_rows`; target, server, identity,
+and credentials come from the canonical project/managed MCP snapshot and selected
+Fabric Python (`coop_fabric_python` / `Get-CoopFabricPython`). It never cascades from
+MCP automatically. It accepts one plain literal-`TOP` `SELECT`, rejects mutations,
+batches, cross-database names, and unbounded reads before authentication, and returns
+capped structured JSON. Azure CLI supplies separate in-memory Fabric REST and
+`database.windows.net` tokens; pyodbc uses only ODBC Driver 18 or newer, encrypted
+connections, access-token attribute `1256`, and bounded execution. SQL and tokens are
+never placed in argv, config, disk, logs, or diagnostics. The exact fallback tool may
+reuse the same in-memory session grant as MCP only when its canonical
+client/tenant/principal/environment/target/read/row/60-second scope matches.
+
 ### Microsoft skills catalog
 
 Official Microsoft skills resolve from `config/microsoft-skills.json` into

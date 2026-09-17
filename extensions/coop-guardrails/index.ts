@@ -671,6 +671,7 @@ const ROW_READ_VERB = /(^|[_\-.:/])(query|execute|evaluate|run_sql|runsql|sql_qu
 const PRODUCTION_WORD = /(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)/i;
 const SQL_ENDPOINT_TOOL = /(^|[_\-.:/])(executeSQL|execute_query|fabric-sqlendpoint-execute_query|fabric_sqlendpoint_execute_query)([_\-.:/]|$)/i;
 const MANAGED_SQL_SERVER = "fabric-sqlendpoint";
+const FABRIC_SQL_FALLBACK_TOOL = "fabric_sql_query";
 const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DELETE|DENY|DROP|EXEC|EXECUTE|GRANT|INSERT|MERGE|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE|UPSERT)\b/i;
 const SQL_MUTATING_INTO = /\b(?:SELECT|COPY)\b[\s\S]*?\bINTO\b/i;
 
@@ -857,7 +858,7 @@ export function sqlMcpRisk(event: any): SqlMcpRisk | null {
   const target = effectiveMutationTarget(event);
   const name = target.innerTool || target.outerTool;
   const server = target.server || "";
-  if (!SQL_ENDPOINT_TOOL.test(name) && server !== MANAGED_SQL_SERVER) return null;
+  if (name !== FABRIC_SQL_FALLBACK_TOOL && !SQL_ENDPOINT_TOOL.test(name) && server !== MANAGED_SQL_SERVER) return null;
   const operation = classifySqlOperation(extractSqlText(event?.input));
   return {
     label: "COOP managed Warehouse SQL",
@@ -893,9 +894,15 @@ function strictResolvedText(value: any, max = 160): string | null {
 /** Only the adapter's real proxy shape can reuse approval. */
 function reusableSqlSurface(event: any): boolean {
   const target = effectiveMutationTarget(event);
-  return target.outerTool === "mcp"
+  const mcp = target.outerTool === "mcp"
     && target.server === MANAGED_SQL_SERVER
     && ["executeSQL", "execute_query", "fabric-sqlendpoint-execute_query", "fabric_sqlendpoint_execute_query"].includes(target.innerTool || "");
+  if (mcp) return true;
+  if (target.outerTool !== FABRIC_SQL_FALLBACK_TOOL || target.innerTool) return false;
+  const input = event?.input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  return Object.keys(input).every((key) => key === "query" || key === "maximum_rows")
+    && (input.maximum_rows === undefined || (Number.isInteger(input.maximum_rows) && input.maximum_rows >= 1 && input.maximum_rows <= 1000));
 }
 
 /** Conservatively admit one plain SELECT with a literal TOP bound. */
@@ -931,6 +938,10 @@ function launchIdentity(token: string | undefined): { tenant: string; principal:
 /** Resolve grant identity only from COOP-owned config and the launch bearer. */
 export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): LiveReadScope | null {
   if (!reusableSqlSurface(event)) return null;
+  if (event?.toolName === FABRIC_SQL_FALLBACK_TOOL) {
+    const root = process.env.COOP_ROOT;
+    if (!root || !existsSync(join(root, "lib", "fabric_sql_query.py"))) return null;
+  }
   let mcp: any;
   try { mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp.json"))); } catch { return null; }
   const managed = Array.isArray(mcp?._coop?.managed_servers) && mcp._coop.managed_servers.includes(MANAGED_SQL_SERVER);
@@ -948,8 +959,11 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
       || !UUID.test(workspaceId) || !UUID.test(itemId) || !identity || identity.tenant !== tenant) return null;
   const expectedUrl = `https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/${workspaceId}/items/${itemId}/sqlEndpoint`;
   if (entry.url !== expectedUrl || entry.auth !== "bearer" || entry.bearerTokenEnv !== "COOP_FABRIC_MCP_TOKEN" || entry.lifecycle !== "lazy") return null;
-  const resultLimit = boundedSelectLimit(extractSqlText(event?.input));
+  let resultLimit = boundedSelectLimit(extractSqlText(event?.input));
   if (!resultLimit) return null;
+  if (event?.toolName === FABRIC_SQL_FALLBACK_TOOL && Number.isInteger(event?.input?.maximum_rows)) {
+    resultLimit = Math.min(resultLimit, event.input.maximum_rows);
+  }
   return {
     client,
     tenant,

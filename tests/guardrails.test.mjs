@@ -688,6 +688,26 @@ await t("real MCP proxy ignores forged scope and reuses exact database approval"
   assert.equal(confirmCount, 1, "approved database reads may vary SQL below the approved limit");
 });
 
+await t("the exact pyodbc fallback shares the MCP grant; forged fallback shapes do not", async () => {
+  writeManagedTarget();
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0;
+  await handle(sqlRead(), liveCtx);
+  assert.equal(confirmCount, 1);
+  confirmAnswer = false;
+  const fallback = { toolName: "fabric_sql_query", input: { query: "SELECT TOP (25) customer_id FROM dbo.Customer", maximum_rows: 10 } };
+  assert.equal(blocked(await handle(fallback, liveCtx)), false);
+  assert.equal(confirmCount, 1, "exact fallback reuses the accepted MCP scope");
+  for (const event of [
+    { toolName: "fabric_sql_query", input: { ...fallback.input, target: OTHER_ITEM_ID } },
+    { toolName: "fabric_sql_query", input: { ...fallback.input, server: "forged.example" } },
+    { toolName: "fabric_sql_query", input: { ...fallback.input, token: "forged" } },
+    { toolName: "fabric_sql_query", input: { ...fallback.input, tool: "execute_query" } },
+    { toolName: "fabric_sql_query_other", input: fallback.input },
+  ]) assert.equal(blocked(await handle(event, liveCtx)), true, JSON.stringify(event));
+});
+
 await t("changed managed target, launch identity, or environment reprompts", async () => {
   writeManagedTarget();
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();

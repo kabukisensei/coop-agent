@@ -283,12 +283,12 @@ def _is_windows() -> bool:
     return os.name == "nt"
 
 
-def _az_token_command() -> list[str]:
+def _az_token_command(resource: str = FABRIC_RESOURCE) -> list[str]:
     args = [
         "account",
         "get-access-token",
         "--resource",
-        FABRIC_RESOURCE,
+        resource,
         "--output",
         "json",
     ]
@@ -329,12 +329,14 @@ def _token_failure_state(stdout: str, stderr: str) -> str:
     )
 
 
-def az_access_token(timeout: int = 8) -> tuple[str, str]:
+def az_access_token(
+    timeout: int = 8, resource: str = FABRIC_RESOURCE
+) -> tuple[str, str]:
     # On Windows Azure CLI is commonly an az.CMD shim. CreateProcess cannot
     # execute it directly, so use cmd.exe explicitly without enabling shell=True.
     if shutil.which("az") is None:
         return "", "azure_cli_unavailable"
-    cmd = _az_token_command()
+    cmd = _az_token_command(resource)
     try:
         proc = subprocess.run(
             cmd,
