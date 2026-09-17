@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 PHASE='setup'
-trap 'rc=$?; printf "%s\n" "Fabric MCP fixture failed at phase=$PHASE rc=$rc" >&2' ERR
+report_fixture_failure() {
+  local rc="$1"
+  printf 'Fabric MCP fixture failed at phase=%s rc=%d\n' "$PHASE" "$rc" >&2
+  return "$rc"
+}
+trap 'report_fixture_failure "$?"' ERR
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 TMP="$(mktemp -d)"
 WEB_PID=""
