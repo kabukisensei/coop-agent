@@ -6,7 +6,7 @@ Task: Review the architecture of this Fabric workspace: {{workspace}}
 Concern: {{concern}}
 
 Required steps:
-1. Read `.coop/project.yml` and the Fabric and documentation standards.
+1. Read `.coop/project.yml` for project context and use COOP's resolved Fabric and documentation task authority, including any deliberate project override.
 2. Resolve `{{workspace}}` to a workspace name/id from the contract's `fabric` section; confirm which environment (dev/test/prod) it is.
 3. Use the Fabric MCP (read-only: list / read / inspect) to enumerate workspace items — lakehouses, warehouses, pipelines, notebooks, semantic models, reports. Never call create/update/delete/deploy.
 4. Run the `data_doc` tool (`coop-data-doc scan`) and read existing docs/lineage to map how items connect across the medallion layers.

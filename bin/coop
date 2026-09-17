@@ -87,6 +87,8 @@ ${COOP_BOLD}Usage${COOP_RST}
 ${COOP_BOLD}Authoring${COOP_RST}
   coop init [dir]           Scaffold .coop/project.yml into a work repo (default: .)
                             (--seed-docs: generate coop-data-doc.yml from repositories:)
+  coop init --migrate-legacy [dir]
+                            Inspect legacy project configuration (dry run; add --apply to confirm changes)
   coop new-skill <name>     Scaffold skills/<name>/SKILL.md
   coop new-prompt <name>    Scaffold prompts/<name>.md
   coop release [level]      Cut a release: bump version + roll CHANGELOG + commit + tag + push
@@ -627,25 +629,43 @@ coop_valid_name() { case "$1" in ""|.|..|-*|*[!a-zA-Z0-9._-]*) return 1 ;; *) re
 coop_init() {
   # coop init [dir]              run the guided project wizard
   # coop init --template [dir]   copy the full documented example (legacy raw template)
+  # coop init --migrate-legacy [dir] [--apply] [--archive .pi/path]
+  #                              inspect first; apply only exact safe cleanup
   # coop init --seed-docs [dir]  generate/patch coop-data-doc.yml from an EXISTING
   #                              contract's repositories: (paths typed once, not twice)
   # coop init --ci github|ado    generate CI pipeline
-  local seed=0 dir="" a ci_type="" template=0
+  local seed=0 dir="" a ci_type="" template=0 migrate=0 apply=0
+  local archive_args=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --seed-docs) seed=1 ;;
       --template) template=1 ;;
+      --migrate-legacy) migrate=1 ;;
+      --apply) apply=1 ;;
+      --archive)
+        if [ "$#" -lt 2 ]; then coop_die "coop init --archive needs a project-relative .pi file"; fi
+        shift; archive_args+=(--archive "$1")
+        ;;
       --ci)
         if [ "$#" -lt 2 ]; then coop_die "coop init --ci needs a value: github|ado"; fi
         shift; ci_type="$1"
         ;;
       --yes|-y) export COOP_ASSUME_YES=1 ;;
-      -*) coop_die "unknown flag '$1' — usage: coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]" ;;
+      -*) coop_die "unknown flag '$1' — usage: coop init [dir] [--seed-docs] [--template] [--migrate-legacy] [--apply] [--archive .pi/path] [--ci github|ado] [--yes]" ;;
       *) dir="$1" ;;
     esac
     shift
   done
   [ -n "$dir" ] || dir="$PWD"
+  if [ "$migrate" = 1 ]; then
+    local py
+    local migrate_args=()
+    py="$(coop_python)" || coop_die "python3 is required for: coop init --migrate-legacy"
+    [ "$apply" = 1 ] && migrate_args+=(--apply)
+    [ "${COOP_ASSUME_YES:-0}" = 1 ] && migrate_args+=(--yes)
+    "$py" "$COOP_ROOT/lib/project_health.py" migrate "$dir" "${migrate_args[@]}" "${archive_args[@]}"
+    return $?
+  fi
   if [ -n "$ci_type" ]; then
     case "$ci_type" in github|ado) ;; *) coop_die "unknown CI type '$ci_type' — usage: coop init --ci github|ado" ;; esac
   fi
@@ -749,7 +769,7 @@ Task: TODO describe the task for {{subject}}.
 Goal: {{goal}}
 
 Steps:
-1. Read .coop/project.yml and the relevant standards.
+1. Read .coop/project.yml and use COOP's resolved standards task authority.
 2. TODO …
 3. Keep read-only first; present a PLAN and get approval before any edit.
 4. Never commit source — show the diff and let a human commit.

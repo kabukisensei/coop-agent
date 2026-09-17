@@ -120,12 +120,6 @@ fabric_skills:
   policy: baseline
   # Exact source/revision/path pins live in config/microsoft-skills.json.
 
-standards:
-  sql: "docs/standards/sql-standards.md"
-  dax: "docs/standards/dax-standards.md"
-  documentation: "docs/standards/documentation-standards.md"
-  fabric: "docs/standards/fabric-standards.md"
-
 backup:
   root: ".backups"
   timestamp_format: "%Y%m%d_%H%M%S"
@@ -146,7 +140,7 @@ documentation:
 workflow:
   skill: "coop-workflow"
   steps:
-    - "Read .coop/project.yml + the relevant standards"
+    - "Read .coop/project.yml + COOP's resolved standards task authority"
     - "Identify repo/object + upstream/downstream impact; git status && git pull"
     - "Read target file(s) + related docs/lineage (coop-data-doc)"
     - "Write a short PLAN and get explicit review/approval before any edit"

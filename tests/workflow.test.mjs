@@ -31,6 +31,8 @@ assert.ok(skill.includes("explain what happened"), "skill requires post-slice ex
 assert.ok(skill.includes("Live-data tests between slices"), "skill documents live-data test hook");
 assert.ok(skill.includes("tests.live_data.enabled"), "skill references the config key");
 assert.ok(skill.includes("/slice-next"), "skill references the /slice-next prompt");
+assert.ok(skill.includes("resolved standards task authority"), "workflow uses the resolved standards authority abstraction");
+assert.ok(!/standards\.(sql|dax|fabric|documentation|semantic_model)/.test(skill), "workflow does not instruct agents to read contract standards paths");
 
 const prompt = readFileSync(join(ROOT, "prompts/slice-next.md"), "utf8");
 assert.ok(prompt.includes("# /slice-next"), "prompt exposes /slice-next command");
@@ -59,11 +61,45 @@ assert.ok(example.includes("live_data:"), "example project has live_data section
 assert.ok(example.includes("between_slices:"), "example project has between_slices key");
 assert.ok(example.includes("require_approval:"), "example project has require_approval key");
 assert.equal((example.match(/^  environment_names:$/gm) || []).length, 2, "example project separates Warehouse and semantic-model environments");
+assert.ok(example.includes("resolved standards task authority"), "example workflow points to resolved standards authority");
 
 const fallback = readFileSync(join(ROOT, ".coop/project.yml"), "utf8");
 assert.ok(fallback.includes("tests:"), "fallback project has tests section");
 assert.ok(fallback.includes("live_data:"), "fallback project has live_data section");
 assert.equal((fallback.match(/^  environment_names:$/gm) || []).length, 2, "fallback project separates Warehouse and semantic-model environments");
+assert.ok(!/^standards:\s*$/m.test(fallback), "bundled fallback omits generated standards overrides");
+assert.ok(fallback.includes("resolved standards task authority"), "bundled workflow points to resolved standards authority");
+
+const agentDocs = [
+  "AGENTS.md",
+  "docs/architecture.md",
+  "skills/sql-review/SKILL.md",
+  "skills/dax-review/SKILL.md",
+  "skills/fabric-workspace-review/SKILL.md",
+].map((path) => [path, readFileSync(join(ROOT, path), "utf8")]);
+for (const [path, content] of agentDocs) {
+  assert.ok(!/standards\.(sql|dax|fabric|documentation|semantic_model)/.test(content), `${path} does not instruct agents to read contract standards paths`);
+}
+assert.ok(agentDocs[0][1].replace(/\s+/g, " ").includes("resolved standards task authority"), "root AGENTS establishes the resolved standards authority abstraction with explicit override precedence");
+
+const authoritySurfaces = [
+  "prompts/spec-first.md",
+  "prompts/semantic-model-review.md",
+  "prompts/impact-analysis.md",
+  "prompts/fabric-architecture-review.md",
+  "prompts/discovery.md",
+  "docs/guardrails-reference.md",
+  "README.md",
+  "lib/init_wizard.py",
+  "extensions/coop-tools/index.ts",
+  "bin/coop",
+  "bin/coop.ps1",
+].map((path) => [path, readFileSync(join(ROOT, path), "utf8")]);
+for (const [path, content] of authoritySurfaces) {
+  assert.ok(/resolved[\s\S]{0,100}task authority/i.test(content), `${path} points agents to resolved standards task authority`);
+  assert.ok(!/standards from `?\.coop\/project\.yml`?|\.coop\/project\.yml(?:`)?\s*(?:\+|and)\s*the relevant standards/i.test(content), `${path} does not present the contract as the default standards source`);
+  assert.ok(!/single source of truth[\s\S]{0,120}standards[\s\S]{0,120}\.coop\/project\.yml/i.test(content), `${path} does not call the project contract the single standards authority`);
+}
 
 const guardrails = readFileSync(join(ROOT, "docs/guardrails.md"), "utf8");
 assert.ok(guardrails.includes("vertical slices"), "guardrails reference vertical slices");

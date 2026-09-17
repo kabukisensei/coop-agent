@@ -6,7 +6,7 @@ Task: Kick off discovery of this repo or estate: {{repo_or_area}}
 Goal: {{goal}}
 
 Required steps:
-1. Read `.coop/project.yml` and the relevant standards.
+1. Read `.coop/project.yml` for project context and use COOP's resolved standards task authority, including any deliberate project override.
 2. Identify which repository (`fabric` / `fabric_dw`) or Fabric/Power BI area `{{repo_or_area}}` maps to; run `git status` and `git pull` for it.
 3. Run the `data_doc` tool (`coop-data-doc scan`) to build `graph.json`, then `coop-data-doc build` if no manifest exists.
 4. Read the generated lineage and existing docs under `docs/agent` to map the architecture (medallion bronze/silver/gold layers, warehouse/lakehouse, semantic models, reports).

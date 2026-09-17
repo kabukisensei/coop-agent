@@ -38,15 +38,18 @@ review, diff summary, and human commit.
 ## Before you start
 
 Read the project contract `.coop/project.yml` (coop loads the nearest one). It is
-the single source of truth for repo paths, Fabric/Power BI workspaces, standards
-locations, backup/log rules, allowed/blocked commit paths, and the approval policy.
+the source of truth for repo paths, Fabric/Power BI workspaces, backup/log rules,
+allowed/blocked commit paths, and the approval policy. It may provide deliberate
+project standards overrides; otherwise COOP's resolved standards task authority is
+authoritative.
 If it is missing, offer `/setup-project`; the in-Coop wizard can create a discovery,
 partial, or connected project without requiring the user to edit YAML.
 
 ## The default sequence
 
-1. **Read context.** Read `.coop/project.yml` and the relevant standards
-   (`standards.sql` / `standards.dax` / `standards.fabric` / `standards.documentation`).
+1. **Read context.** Read `.coop/project.yml` and use the relevant standards from
+   COOP's resolved task authority. A deliberate project override may take precedence;
+   do not infer a local standards path when no override is configured.
 2. **Locate + scope.** Identify the repo and object, and the upstream/downstream
    impact. Run `git status` and `git pull` for the relevant repo.
 3. **Read the target + lineage.** Read the available file(s) and related documentation
@@ -162,7 +165,8 @@ These sharpen the principles above; reach for them on non-trivial or multi-step 
 
 - **Codify mistakes.** When the model repeats an error or the user corrects the
   same thing twice, write the correction down where future sessions inherit it —
-  the relevant skill, `.coop/project.yml` standards, or memory (pi-hermes-memory).
+  the relevant skill, a deliberate `.coop/project.yml` standards override, or memory
+  (pi-hermes-memory).
   A fix that lives only in this chat is a fix you'll redo next week.
 - **Markdown annotations.** Accept review feedback as annotations keyed to
   sections/files/lines (e.g. `fact_sales.sql:42: use the shared date dimension`)

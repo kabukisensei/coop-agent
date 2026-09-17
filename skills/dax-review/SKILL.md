@@ -19,8 +19,9 @@ results.
 
 ## Review checklist
 
-- **Scope the paths.** Identify the DAX / TMDL / model files to check. Read
-  `standards.dax` so findings map to the team's rules. The standards follow the hybrid
+- **Scope the paths.** Identify the DAX / TMDL / model files to check. Use COOP's
+  resolved DAX task authority so findings map to canonical standards or a deliberate
+  project override. The standards follow the hybrid
   methodology: variable-first is the default (§2, §27–§29: underscore-prefixed VARs,
   table variables + explicit iterators for routine local filters, no gratuitous
   CALCULATE), CALCULATE is allowed only for the three §30 exceptions (filter-state

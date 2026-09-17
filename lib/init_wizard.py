@@ -377,13 +377,6 @@ def build_project_yml(answers: dict) -> str:
     )
     lines.append("")
 
-    lines.append("standards:")
-    lines.append('  sql: "docs/standards/sql-standards.md"')
-    lines.append('  dax: "docs/standards/dax-standards.md"')
-    lines.append('  documentation: "docs/standards/documentation-standards.md"')
-    lines.append('  fabric: "docs/standards/fabric-standards.md"')
-    lines.append("")
-
     lines.append("backup:")
     lines.append('  root: ".backups"')
     lines.append('  timestamp_format: "%Y%m%d_%H%M%S"')
@@ -409,7 +402,9 @@ def build_project_yml(answers: dict) -> str:
     lines.append("workflow:")
     lines.append('  skill: "coop-workflow"')
     lines.append("  steps:")
-    lines.append('    - "Read .coop/project.yml + the relevant standards"')
+    lines.append(
+        '    - "Read .coop/project.yml + COOP resolved standards task authority"'
+    )
     lines.append(
         '    - "Identify repo/object + upstream/downstream impact; git status && git pull"'
     )

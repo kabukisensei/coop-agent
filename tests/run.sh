@@ -175,6 +175,8 @@ bash "$ROOT/tests/azcache.test.sh"
 echo "→ coop init wizard tests"
 bash "$ROOT/tests/init-wizard.test.sh"
 "$(command -v python3 2>/dev/null || command -v python)" "$ROOT/tests/init-wizard-windows-paths.test.py"
+echo "→ bounded legacy project diagnostics and migration tests"
+"$(command -v python3 2>/dev/null || command -v python)" "$ROOT/tests/project-health.test.py"
 
 echo "→ coop init --seed-docs (contract → coop-data-doc.yml) tests"
 bash "$ROOT/tests/seeddocs.test.sh"

@@ -525,6 +525,19 @@ if [ -n "$proj" ]; then
   fi
 
   ok "Microsoft skills project policy is covered by the pinned catalog doctor section"
+
+  # Read-only bounded legacy-project diagnostics. The shared Python helper is
+  # also used by the PowerShell doctor and explicit migration command.
+  _health_py="$(coop_python 2>/dev/null || true)"
+  if [ -n "$_health_py" ]; then
+    _health_lines="$("$_health_py" "$COOP_ROOT/lib/project_health.py" doctor-lines "$(dirname "$(dirname "$proj")")" --skills-dir "$COOP_ROOT/skills")"
+    while IFS="$(printf '\t')" read -r _health_code _health_name _health_hint; do
+      [ -n "$_health_code" ] || continue
+      warn "$_health_code: $_health_name" "$_health_hint"
+    done <<EOF
+$_health_lines
+EOF
+  fi
 else
   warn "no .coop/project.yml found" "copy $COOP_ROOT/.coop/project.example.yml to your repo's .coop/project.yml"
 fi

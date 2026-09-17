@@ -483,6 +483,18 @@ print("resume verdict contract OK")
     } else {
       Ko "Microsoft skills catalog fixture failed: $($msOut | Out-String)"
     }
+
+    Head 'bounded legacy project diagnostics and migration'
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $legacyOut = & $pyExe.Source (Join-Path $root 'tests\project-health.test.py') 2>&1
+    $legacyRc = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorAction
+    if ($legacyRc -eq 0) {
+      $legacyOut | ForEach-Object { Write-Host $_ }
+    } else {
+      Ko "legacy project health fixture failed: $($legacyOut | Out-String)"
+    }
   } else {
     Ko 'python not available; Microsoft skills catalog fixture cannot run'
   }

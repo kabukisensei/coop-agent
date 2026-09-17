@@ -6,7 +6,7 @@ Task: Run an impact analysis for a proposed change to: {{object_or_file}}
 Proposed change: {{proposed_change}}
 
 Required steps:
-1. Read `.coop/project.yml` and the relevant standards (SQL / DAX / documentation).
+1. Read `.coop/project.yml` for project context and use COOP's resolved SQL, DAX, and documentation task authority, including any deliberate project override.
 2. Locate `{{object_or_file}}` and its repository; run `git status` and `git pull`.
 3. Run the `data_doc` tool (`coop-data-doc scan`) to refresh lineage, then trace upstream and downstream dependencies of `{{object_or_file}}` from `graph.json`.
 4. Map the blast radius of `{{proposed_change}}`: affected warehouse/lakehouse objects, semantic model measures and relationships, Power BI reports, and any pipelines or notebooks.
