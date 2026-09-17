@@ -4,12 +4,14 @@ import { strict as assert } from "node:assert";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Point the audit log at a throwaway dir BEFORE the handler runs, so no test writes to
 // the real ~/.coop/agent/guardrails-audit.jsonl fallback.
 const AUDIT_DIR = mkdtempSync(join(tmpdir(), "coop-audit-"));
 process.env.PI_CODING_AGENT_DIR = AUDIT_DIR;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+process.env.COOP_ROOT = ROOT;
 const AUDIT_FILE = join(AUDIT_DIR, "guardrails-audit.jsonl");
 const readAudit = () => (existsSync(AUDIT_FILE) ? readFileSync(AUDIT_FILE, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
 const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
@@ -659,7 +661,9 @@ const targetConfig = (overrides = {}) => {
   return {
     mcpServers: { "fabric-sqlendpoint": {
       url: `https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/${target.workspace_id}/items/${target.item_id}/sqlEndpoint`,
-      auth: "bearer", bearerTokenEnv: "COOP_FABRIC_MCP_TOKEN", lifecycle: "lazy", _coop_target: target,
+      auth: false,
+      requestHeadersCommand: { command: "node", args: [join(ROOT, "lib", "fabric_request_headers.mjs"), `https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/${target.workspace_id}/items/${target.item_id}/sqlEndpoint`], timeoutMs: 10000 },
+      requestTimeoutMs: 60000, lifecycle: "lazy", _coop_target: target,
     } },
     _coop: { schema_version: 1, managed_servers: ["fabric-sqlendpoint"] },
   };
@@ -733,6 +737,28 @@ await t("changed managed target, launch identity, or environment reprompts", asy
   assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "changed environment");
   writeManagedTarget({ client: "TODO client" });
   assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "unresolved managed metadata");
+  writeManagedTarget();
+});
+
+await t("forged header command, URL, timeout, and auth cannot reuse a grant", async () => {
+  const mutations = [
+    (entry) => { entry.auth = "bearer"; },
+    (entry) => { entry.requestTimeoutMs = 59999; },
+    (entry) => { entry.requestHeadersCommand.command = "nodejs"; },
+    (entry) => { entry.requestHeadersCommand.args[0] = join(ROOT, "lib", "other.mjs"); },
+    (entry) => { entry.requestHeadersCommand.args[1] += "?forged=1"; },
+    (entry) => { entry.requestHeadersCommand.timeoutMs = 9999; },
+    (entry) => { entry.headers = { Authorization: "Bearer forged" }; },
+  ];
+  for (const mutate of mutations) {
+    const config = targetConfig();
+    mutate(config.mcpServers["fabric-sqlendpoint"]);
+    writeFileSync(join(AUDIT_DIR, "mcp.json"), JSON.stringify(config));
+    process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    confirmAnswer = false;
+    assert.equal(blocked(await handle(sqlRead(), liveCtx)), true);
+  }
   writeManagedTarget();
 });
 

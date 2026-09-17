@@ -8,7 +8,7 @@ cat > "$d/config" <<'JSON'
 {"schema_version":1,"azure":{"tenant_id":"tenant-1"},"integrations":{"fabric":true,"power_bi":true,"power_bi_modeling":true,"azure_devops":true,"microsoft_learn":true,"context_mode":true},"azure_devops":{"organization":"cooptimize"}}
 JSON
 cat > "$d/mcp.json" <<'JSON'
-{"mcpServers":{"custom":{"command":"custom","args":["x"]},"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp@old"],"customField":true,"lifecycle":"eager","auth":"custom-managed-auth","headers":{"X-Managed-Custom":"keep-me"},"extraSettings":{"retry":3}},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"],"auth":"oauth","bearerToken":"stale-secret-fixture","bearerTokenEnv":"STALE_FABRIC_TOKEN_ENV","headers":{"Authorization":"Bearer stale-secret-fixture"},"oauth":{"legacy":true},"lifecycle":"eager"}},"_coop":{"schema_version":1,"managed_servers":["fabric","fabric-sqlendpoint"]}}
+{"mcpServers":{"custom":{"command":"custom","args":["x"]},"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp@old"],"customField":true,"lifecycle":"eager","auth":"custom-managed-auth","headers":{"X-Managed-Custom":"keep-me"},"extraSettings":{"retry":3}},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"],"auth":"oauth","bearerToken":"stale-secret-fixture","bearerTokenEnv":"STALE_FABRIC_TOKEN_ENV","headers":{"Authorization":"Bearer stale-secret-fixture"},"oauth":{"legacy":true},"requestHeadersCommand":{"command":"forged","args":["stale"]},"requestTimeoutMs":1,"lifecycle":"eager"}},"_coop":{"schema_version":1,"managed_servers":["fabric","fabric-sqlendpoint"]}}
 JSON
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp.json"
 "$PY" - "$d/mcp.json" "$ROOT/config/release-manifest.json" <<'PY'
@@ -22,12 +22,14 @@ assert s['fabric']['headers']=={'X-Managed-Custom':'keep-me'}
 assert s['fabric']['extraSettings']=={'retry':3}
 sql=s['fabric-sqlendpoint']
 assert sql['url']=='https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint'
-assert sql['auth']=='bearer' and sql['bearerTokenEnv']=='COOP_FABRIC_MCP_TOKEN'
+assert sql['auth'] is False
+assert sql['requestHeadersCommand']=={'command':'node','args':[str(__import__('pathlib').Path(sys.argv[2]).parent.parent/'lib'/'fabric_request_headers.mjs'),sql['url']],'timeoutMs':10000}
+assert sql['requestTimeoutMs']==60000
 assert sql['lifecycle']=='lazy'
 assert '_coop_runtime' not in sql
 assert 'command' not in sql and 'args' not in sql and 'mcp-remote' not in json.dumps(sql)
 assert 'bearerToken' not in sql and 'Authorization' not in json.dumps(sql)
-assert 'oauth' not in sql and sql['bearerTokenEnv']=='COOP_FABRIC_MCP_TOKEN'
+assert 'oauth' not in sql and 'bearerTokenEnv' not in sql
 assert s['powerbi']['args'][-1]=='--readonly'
 model=s['powerbi-modeling-mcp']['args']
 assert '--start' in model and '--readonly' in model
@@ -97,20 +99,20 @@ PY
 import json,sys
 v=json.load(open(sys.argv[1]))
 assert v['registered'] is True
-assert v['state']=='registered'
+assert v['state']=='unavailable'
 assert 'execute_query' in v['compatible_tools']
 assert v['target']['scope']=='global'
 PY
 "$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/mcp.json" --tools-json '{"tools":[{"name":"listTables"}]}' > "$d/sql-missing.json" || exit 1
 "$PY" - "$d/sql-missing.json" <<'PY'
 import json,sys
-assert json.load(open(sys.argv[1]))['state']=='tool_missing'
+assert json.load(open(sys.argv[1]))['state']=='unavailable'
 PY
 "$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/item-mcp.json" --project "$d/project/.coop/project.yml" --tools-json '{"tools":[{"name":"fabric-sqlendpoint-execute_query"}]}' > "$d/sql-item-auth.json" || exit 1
 "$PY" - "$d/sql-item-auth.json" <<'PY'
 import json,sys
 v=json.load(open(sys.argv[1]))
-assert v['state'] in ('auth_required','target_invalid','registered')
+assert v['state'] in ('auth_required','target_invalid','registered','unavailable')
 assert v['target']['scope']=='item'
 PY
 cat > "$d/mismatch-project.yml" <<'YAML'
@@ -124,20 +126,25 @@ YAML
 "$PY" - "$d/sql-mismatch.json" <<'PY'
 import json,sys
 v=json.load(open(sys.argv[1]))
-assert v['state']=='target_invalid'
-assert v['registered_target']['scope']=='item'
+assert v['state']=='unavailable'
+assert v['registered_target'] is None
 PY
-cat > "$d/bad-sql-mcp.json" <<'JSON'
-{"mcpServers":{"fabric-sqlendpoint":{"url":"https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/not-a-uuid/items/22222222-2222-2222-2222-222222222222/sqlEndpoint","auth":"bearer","bearerTokenEnv":"COOP_FABRIC_MCP_TOKEN","lifecycle":"lazy"}},"_coop":{"schema_version":1,"managed_servers":["fabric-sqlendpoint"]}}
-JSON
+"$PY" - "$d/mcp.json" "$d/bad-sql-mcp.json" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1])); s=m['mcpServers']['fabric-sqlendpoint']
+s['url']='https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/not-a-uuid/items/22222222-2222-2222-2222-222222222222/sqlEndpoint'
+s['requestHeadersCommand']['args'][1]=s['url']
+json.dump(m,open(sys.argv[2],'w'))
+PY
 "$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/bad-sql-mcp.json" > "$d/bad-sql-doctor.json" || exit 1
 "$PY" - "$d/bad-sql-doctor.json" <<'PY'
 import json,sys
-assert json.load(open(sys.argv[1]))['state']=='target_invalid'
+assert json.load(open(sys.argv[1]))['state']=='unavailable'
 PY
-cat > "$d/token-sql-mcp.json" <<'JSON'
-{"mcpServers":{"fabric-sqlendpoint":{"url":"https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","auth":"bearer","bearerTokenEnv":"COOP_FABRIC_MCP_TOKEN","lifecycle":"lazy","bearerToken":"secret"}},"_coop":{"schema_version":1,"managed_servers":["fabric-sqlendpoint"]}}
-JSON
+"$PY" - "$d/mcp.json" "$d/token-sql-mcp.json" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1])); m['mcpServers']['fabric-sqlendpoint']['bearerToken']='secret'; json.dump(m,open(sys.argv[2],'w'))
+PY
 "$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/token-sql-mcp.json" > "$d/token-sql-doctor.json" || exit 1
 "$PY" - "$d/token-sql-doctor.json" <<'PY'
 import json,sys

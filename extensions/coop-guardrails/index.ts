@@ -958,7 +958,18 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
       || !["dev", "test", "production"].includes(environment || "") || !itemName
       || !UUID.test(workspaceId) || !UUID.test(itemId) || !identity || identity.tenant !== tenant) return null;
   const expectedUrl = `https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/${workspaceId}/items/${itemId}/sqlEndpoint`;
-  if (entry.url !== expectedUrl || entry.auth !== "bearer" || entry.bearerTokenEnv !== "COOP_FABRIC_MCP_TOKEN" || entry.lifecycle !== "lazy") return null;
+  const root = (globalThis as any).process?.env?.COOP_ROOT;
+  const headerCommand = entry.requestHeadersCommand;
+  const exactHeaderCommand = root && headerCommand && typeof headerCommand === "object" && !Array.isArray(headerCommand)
+    && Object.keys(headerCommand).sort().join(",") === "args,command,timeoutMs"
+    && headerCommand.command === "node"
+    && Array.isArray(headerCommand.args) && headerCommand.args.length === 2
+    && headerCommand.args[0] === join(root, "lib", "fabric_request_headers.mjs")
+    && headerCommand.args[1] === expectedUrl
+    && headerCommand.timeoutMs === 10000;
+  if (entry.url !== expectedUrl || entry.auth !== false || entry.lifecycle !== "lazy"
+      || entry.requestTimeoutMs !== PINNED_MCP_REQUEST_TIMEOUT_MS || !exactHeaderCommand
+      || ["bearerToken", "bearerTokenEnv", "headers", "oauth"].some((field) => field in entry)) return null;
   let resultLimit = boundedSelectLimit(extractSqlText(event?.input));
   if (!resultLimit) return null;
   if (event?.toolName === FABRIC_SQL_FALLBACK_TOOL && Number.isInteger(event?.input?.maximum_rows)) {
@@ -972,7 +983,6 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
     targets: [`${workspaceId}/${itemId}/${itemName}`],
     operationClass: "sql-read",
     resultLimit,
-    // pi-mcp-adapter 2.10.0 currently relies on the pinned MCP SDK's enforced 60s timeout.
     timeoutMs: PINNED_MCP_REQUEST_TIMEOUT_MS,
   };
 }

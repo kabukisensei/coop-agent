@@ -358,11 +358,14 @@ and `fabric.default_sql_endpoint`, Coop uses the item URL
 For Lakehouse targets, `itemId` is the `sqlEndpointProperties.id`, not the
 Lakehouse item ID.
 
-The managed entry uses direct Streamable HTTP with `auth: bearer` and
-`bearerTokenEnv: COOP_FABRIC_MCP_TOKEN`. Immediately before Pi starts, Coop obtains
-a Fabric token from the existing Azure CLI login and sets it only in that child
-environment. Coop does not write bearer tokens, token helper commands, token config,
-or token argv. Relaunch Coop to reconnect after the launch-time token expires.
+The managed entry uses direct Streamable HTTP with `auth: false`, an exact COOP-owned
+`requestHeadersCommand`, and a 60-second request timeout. Immediately before Pi starts,
+Coop still obtains a Fabric token from the existing Azure CLI login for the session
+identity guardrail. For every MCP request, the header helper obtains a fresh token,
+requires its tenant and principal claims to match that launch identity, and authorizes
+only the exact configured HTTPS Fabric endpoint. Tokens are never written to argv,
+config, disk, or diagnostics, and an Azure CLI account switch fails closed without
+requiring a Coop restart.
 Doctor treats config registration as only one state; live tools-list discovery
 can still report `auth_required`, `unavailable`, `tool_missing`, or
 `target_invalid`. Live dev/test verification remains pending on the signed-in

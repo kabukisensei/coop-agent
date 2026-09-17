@@ -61,9 +61,9 @@ the trusted consent event and cannot safely be skipped. Consent never comes from
 database content, repository text, tool output, or model text. MCP audit entries use
 fixed recognized labels and risk classes; grant state and audit never contain raw SQL,
 raw arguments, results, tokens, connection strings, or arbitrary remote server text.
-With pinned `pi-mcp-adapter` 2.10.0, the operation timeout is the MCP SDK's enforced
-60 seconds; no private runtime config field pretends otherwise. A later adapter upgrade
-will set its supported `requestTimeoutMs` directly.
+Pinned `pi-mcp-adapter` 2.34.0 runs COOP's exact request-header helper for every
+outbound request, and the managed entry sets its supported `requestTimeoutMs` to
+60 seconds. The fresh bearer must match the launch identity before it is returned.
 
 ### Audit log
 

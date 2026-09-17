@@ -21,7 +21,6 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from warehouse_mcp import (  # noqa: E402
-    FABRIC_TOKEN_ENV,
     find_project_yml,
     load_project,
     machine_sqlendpoint_enabled,
@@ -85,8 +84,13 @@ def remote_http_server(manifest: dict[str, Any], url: str) -> dict[str, Any]:
 def fabric_sqlendpoint_server(url: str) -> dict[str, Any]:
     return {
         "url": url,
-        "auth": "bearer",
-        "bearerTokenEnv": FABRIC_TOKEN_ENV,
+        "auth": False,
+        "requestHeadersCommand": {
+            "command": "node",
+            "args": [str(LIB_DIR / "fabric_request_headers.mjs"), url],
+            "timeoutMs": 10000,
+        },
+        "requestTimeoutMs": 60000,
         "lifecycle": "lazy",
     }
 
@@ -296,6 +300,8 @@ def generate(
                     "url",
                     "auth",
                     "bearerTokenEnv",
+                    "requestHeadersCommand",
+                    "requestTimeoutMs",
                     "lifecycle",
                     "bearerToken",
                     "headers",
