@@ -38,23 +38,32 @@ A Fabric/Power BI/MCP tool call whose name looks like a **mutation** (create/upd
 
 Coop permits read-only metadata, schema, and artifact-code inspection in dev/test by default. Query/execute/sample/export-style calls can return actual rows, so the runtime asks first. Any tool request that explicitly names prod/production also asks first, including metadata-only reads; production row reads should be narrowly scoped to a named target, columns, filters, and a small limit. Approval-required reads fail closed when no interactive approval UI is available.
 
-Reusable Warehouse SQL scope is derived at runtime from the nearest project contract,
-the generated COOP-managed item-scoped MCP entry, `az account show` identity, and the
-actual bounded SQL request. Model/tool-provided scope fields are ignored. The exact
-resolved object targets and TOP/FETCH row bound must match the in-memory grant; global,
-unresolved, cross-database, unbounded, or unsupported forms remain per-call approval.
+Reusable Warehouse SQL scope exists only for the real `pi-mcp-adapter` `mcp` proxy to
+the generated COOP-managed, item-scoped `fabric-sqlendpoint` server. `coop sync` adds
+the parsed project client, tenant, uniquely inferred dev/test/production environment,
+and item/database name to that managed entry. The guardrail binds the principal to the
+non-secret `tid` and `oid`/`sub` claims of the launch bearer already supplied in
+`COOP_FABRIC_MCP_TOKEN`; it never stores or logs the token. Missing, malformed,
+ambiguous, blank, or TODO identity fields leave the call on per-call approval.
+Model/tool-provided scope fields are ignored.
 
 The grant resets on every session start or shutdown (new, resume, or fork), process restart, or
 `/coop-live-read revoke`; use `/coop-live-read status` to inspect its non-secret
 scope. It otherwise survives turns, compaction, and reconnects. Every call is still
-classified at runtime. Only recognized single-statement SELECT/CTE reads with bounded
-scope can reuse approval. Mutation, unfamiliar/ambiguous SQL, `EXEC`, batches,
+classified at runtime. The approved scope is the exact item/database, operation class,
+maximum row count, and operation timeout—not tables, columns, or predicates—so later
+SQL may vary within that database while staying at or below the approved bounds. Only
+one plain SELECT with a literal TOP bound can reuse approval; CTE, UNION, APPLY, quoted
+identifiers, cross-database references, mutations, unfamiliar SQL, `EXEC`, batches,
 exports/downloads, and unbounded reads retain a separate per-call gate. Pi exposes no
 separate authenticated-user event for tool calls, so the runtime confirmation UI is
 the trusted consent event and cannot safely be skipped. Consent never comes from
 database content, repository text, tool output, or model text. MCP audit entries use
 fixed recognized labels and risk classes; grant state and audit never contain raw SQL,
 raw arguments, results, tokens, connection strings, or arbitrary remote server text.
+With pinned `pi-mcp-adapter` 2.10.0, the operation timeout is the MCP SDK's enforced
+60 seconds; no private runtime config field pretends otherwise. A later adapter upgrade
+will set its supported `requestTimeoutMs` directly.
 
 ### Audit log
 

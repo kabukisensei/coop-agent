@@ -44,19 +44,24 @@ do instead (e.g. "unstage source and let a human commit").
 
 ## Session live-read grants
 
-Only the exact COOP-managed Warehouse MCP path (and the reserved future
-`coop_fabric_pyodbc_query` surface) can receive a reusable SQL grant. The guardrail
-derives client, tenant, environment, item target, current Azure principal, referenced
-SQL objects, static TOP/FETCH row bound, and the managed adapter timeout at runtime.
-Tool arguments such as `coopLiveReadScope` are ignored. Global, unresolved,
-cross-database, unbounded, or unsupported SQL remains per-call approval.
+Only the real `pi-mcp-adapter` `mcp` proxy to the exact COOP-managed
+`fabric-sqlendpoint` server and its compatible SQL tool names can receive a reusable
+grant. The managed config supplies parsed project client, tenant, uniquely inferred
+environment, and item/database target. The guardrail decodes only the non-secret
+`tid` and `oid`/`sub` claims of the launch `COOP_FABRIC_MCP_TOKEN` in memory and checks
+that the tenant matches. Tool arguments such as `coopLiveReadScope` are ignored.
+Missing, malformed, ambiguous, global, cross-database, unbounded, or unsupported scope
+remains per-call approval.
 
 The grant is memory-only and resets on every session start or shutdown (`/new`,
 `/resume`, or `/fork`), process restart, or explicit revoke. It survives ordinary turns,
-compaction, and reconnects within that session. SQL is classified quote-aware on
-every call. Only a single SELECT/CTE read with complete bounded scope can reuse a
-grant; mutations, unfamiliar/ambiguous SQL, `EXEC`, batches, exports/downloads, and
-unbounded reads remain separately confirmed. Raw SQL, tool arguments, results, and
+compaction, and reconnects within that session. SQL is classified quote-aware on every
+call. The grant covers the exact managed item/database, SQL-read operation class,
+maximum rows, and timeout—not tables, columns, or filters. Only one plain SELECT with
+a literal TOP bound can reuse it; CTE, UNION, APPLY, quoted identifiers, mutations,
+unfamiliar/ambiguous SQL, `EXEC`, batches, exports/downloads, and unbounded reads remain
+separately confirmed. Pinned adapter 2.10.0 uses the MCP SDK's enforced 60-second
+timeout; there is no private runtime config field. Raw SQL, tool arguments, results, and
 credentials are never written to grant state or the audit log. Tool/repository/model
 text can describe a scope but cannot approve one; only the confirmation UI can.
 

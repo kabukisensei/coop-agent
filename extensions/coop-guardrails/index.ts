@@ -36,6 +36,8 @@ import { appendFileSync, existsSync, readFileSync, renameSync, statSync } from "
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
+declare const Buffer: { from(value: string, encoding: "base64url"): { toString(encoding: "utf8"): string } };
+
 // Paths the agent MAY commit; everything else counts as source. The .coop/project.yml
 // `approval_policy.agent_allowed_to_commit` globs are merged in on top of these.
 const DEFAULT_ALLOWED_GLOBS = [
@@ -668,9 +670,7 @@ const DATA_SERVER = /(^|[_\-.:/])(fabric|powerbi|pbi|sql|database|db|warehouse|l
 const ROW_READ_VERB = /(^|[_\-.:/])(query|execute|evaluate|run_sql|runsql|sql_query|dax_query|preview|sample|row|rows|record|records|data|export|download)([_\-.:/]|$)/i;
 const PRODUCTION_WORD = /(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)/i;
 const SQL_ENDPOINT_TOOL = /(^|[_\-.:/])(executeSQL|execute_query|fabric-sqlendpoint-execute_query|fabric_sqlendpoint_execute_query)([_\-.:/]|$)/i;
-const COOP_PYODBC_QUERY_TOOL = "coop_fabric_pyodbc_query";
 const MANAGED_SQL_SERVER = "fabric-sqlendpoint";
-export const MANAGED_MCP_REQUEST_TIMEOUT_MS = 60_000;
 const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DELETE|DENY|DROP|EXEC|EXECUTE|GRANT|INSERT|MERGE|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE|UPSERT)\b/i;
 const SQL_MUTATING_INTO = /\b(?:SELECT|COPY)\b[\s\S]*?\bINTO\b/i;
 
@@ -857,11 +857,10 @@ export function sqlMcpRisk(event: any): SqlMcpRisk | null {
   const target = effectiveMutationTarget(event);
   const name = target.innerTool || target.outerTool;
   const server = target.server || "";
-  const exactPyodbc = target.outerTool === COOP_PYODBC_QUERY_TOOL && !target.innerTool;
-  if (!exactPyodbc && !SQL_ENDPOINT_TOOL.test(name) && server !== MANAGED_SQL_SERVER) return null;
+  if (!SQL_ENDPOINT_TOOL.test(name) && server !== MANAGED_SQL_SERVER) return null;
   const operation = classifySqlOperation(extractSqlText(event?.input));
   return {
-    label: exactPyodbc ? "COOP governed pyodbc SQL" : "COOP managed Warehouse SQL",
+    label: "COOP managed Warehouse SQL",
     kind: operation === "mutation" ? "ddl-dml-destructive" : operation === "ambiguous" ? "ambiguous-sql" : "row-data",
   };
 }
@@ -879,10 +878,10 @@ export type LiveReadScope = {
 
 export type LiveReadGrant = { scope: LiveReadScope; grantedAt: number };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const FORBIDDEN_RESOLVED_TEXT = /(?:\bTODO\b|\bBearer\s+|(?:password|pwd|accountkey|access[_-]?token)\s*=|(?:jdbc|odbc):|Server\s*=.*;)/i;
 const SAFE_DISPLAY_TEXT = /^[A-Za-z0-9][A-Za-z0-9 ._@&'()+-]{0,159}$/;
-const SAFE_SQL_IDENT = /^[A-Za-z_][A-Za-z0-9_$#]{0,127}$/;
+const PINNED_MCP_REQUEST_TIMEOUT_MS = 60_000;
 
 function strictResolvedText(value: any, max = 160): string | null {
   if (typeof value !== "string") return null;
@@ -891,235 +890,76 @@ function strictResolvedText(value: any, max = 160): string | null {
   return v;
 }
 
-/** Read one block-style YAML scalar without accepting aliases, objects, or TODOs. */
-function projectScalar(text: string, path: string[]): string | null {
-  const lines = text.split(/\r?\n/);
-  let parentIndent = -1;
-  for (let depth = 0; depth < path.length; depth++) {
-    let found = false;
-    for (let i = 0; i < lines.length; i++) {
-      const raw = lines[i];
-      const trimmed = raw.trimStart();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const indent = raw.length - trimmed.length;
-      if (indent <= parentIndent) continue;
-      const m = /^([A-Za-z0-9_-]+)\s*:\s*(.*)$/.exec(trimmed);
-      if (!m || m[1] !== path[depth]) continue;
-      if (depth > 0) {
-        let owner = -1;
-        for (let j = i - 1; j >= 0; j--) {
-          const prior = lines[j];
-          if (!prior.trim() || prior.trimStart().startsWith("#")) continue;
-          const priorIndent = prior.length - prior.trimStart().length;
-          if (priorIndent < indent) { owner = priorIndent; break; }
-        }
-        if (owner !== parentIndent) continue;
-      }
-      if (depth < path.length - 1) {
-        if (m[2].trim() && !m[2].trim().startsWith("#")) return null;
-        parentIndent = indent;
-        found = true;
-        break;
-      }
-      let value = m[2].replace(/\s+#.*$/, "").trim();
-      if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) value = value.slice(1, -1);
-      return value;
-    }
-    if (!found) return null;
-  }
-  return null;
+/** Only the adapter's real proxy shape can reuse approval. */
+function reusableSqlSurface(event: any): boolean {
+  const target = effectiveMutationTarget(event);
+  return target.outerTool === "mcp"
+    && target.server === MANAGED_SQL_SERVER
+    && ["executeSQL", "execute_query", "fabric-sqlendpoint-execute_query", "fabric_sqlendpoint_execute_query"].includes(target.innerTool || "");
 }
 
-function projectEnvironment(projectText: string, workspaceName: string): string | undefined {
-  const matches = ["dev", "test", "prod"].filter((name) =>
-    projectScalar(projectText, ["fabric", "environment_names", name])?.toLowerCase() === workspaceName.toLowerCase(),
-  );
-  return matches.length === 1 ? (matches[0] === "prod" ? "production" : matches[0]) : undefined;
-}
-
-type SqlToken = { value: string; upper: string; depth: number; kind: "ident" | "number" | "punct" };
-
-/** Tokenize only syntax needed for a conservative reusable-read proof. */
-function sqlTokens(sql: string): SqlToken[] | null {
-  const out: SqlToken[] = [];
-  let i = 0, depth = 0;
-  while (i < sql.length) {
-    const ch = sql[i], next = sql[i + 1] || "";
-    if (/\s/.test(ch)) { i++; continue; }
-    if (ch === "-" && next === "-") { i += 2; while (i < sql.length && !/[\r\n]/.test(sql[i])) i++; continue; }
-    if (ch === "/" && next === "*") {
-      let nesting = 1; i += 2;
-      while (i < sql.length && nesting) {
-        if (sql[i] === "/" && sql[i + 1] === "*") { nesting++; i += 2; }
-        else if (sql[i] === "*" && sql[i + 1] === "/") { nesting--; i += 2; }
-        else i++;
-      }
-      if (nesting) return null;
-      continue;
-    }
-    if (ch === "'") {
-      i++;
-      let closed = false;
-      while (i < sql.length) {
-        if (sql[i] === "'" && sql[i + 1] === "'") i += 2;
-        else if (sql[i] === "'") { i++; closed = true; break; }
-        else i++;
-      }
-      if (!closed) return null;
-      continue;
-    }
-    if (ch === "[" || ch === '"') {
-      const close = ch === "[" ? "]" : '"';
-      let value = ""; i++;
-      let closed = false;
-      while (i < sql.length) {
-        if (sql[i] === close && sql[i + 1] === close) { value += close; i += 2; }
-        else if (sql[i] === close) { i++; closed = true; break; }
-        else { value += sql[i]; i++; }
-      }
-      if (!closed || !SAFE_SQL_IDENT.test(value)) return null;
-      out.push({ value, upper: value.toUpperCase(), depth, kind: "ident" });
-      continue;
-    }
-    if (ch === "(") { out.push({ value: ch, upper: ch, depth, kind: "punct" }); depth++; i++; continue; }
-    if (ch === ")") { depth--; if (depth < 0) return null; out.push({ value: ch, upper: ch, depth, kind: "punct" }); i++; continue; }
-    if (/[A-Za-z_#@]/.test(ch)) {
-      let value = ch; i++;
-      while (i < sql.length && /[A-Za-z0-9_$#@]/.test(sql[i])) value += sql[i++];
-      out.push({ value, upper: value.toUpperCase(), depth, kind: "ident" });
-      continue;
-    }
-    if (/[0-9]/.test(ch)) {
-      let value = ch; i++;
-      while (i < sql.length && /[0-9]/.test(sql[i])) value += sql[i++];
-      out.push({ value, upper: value, depth, kind: "number" });
-      continue;
-    }
-    if (".,;*=+-/%<>".includes(ch)) { out.push({ value: ch, upper: ch, depth, kind: "punct" }); i++; continue; }
-    return null;
-  }
-  return depth === 0 ? out : null;
-}
-
-export type BoundedSqlRead = { resultLimit: number; references: string[] };
-
-/** Prove a single SELECT/CTE has a static output bound and explicit base objects. */
-export function analyzeBoundedSqlRead(sql: string, approvedDatabase: string): BoundedSqlRead | null {
-  if (classifySqlOperation(sql) !== "read") return null;
-  const tokens = sqlTokens(sql);
-  if (!tokens || !tokens.length) return null;
-  const forbidden = new Set(["UNION", "INTERSECT", "EXCEPT", "OPENROWSET", "OPENQUERY", "OPENDATASOURCE", "FOR", "OPTION"]);
-  if (tokens.some((t) => t.kind === "ident" && forbidden.has(t.upper))) return null;
-  const semis = tokens.filter((t) => t.value === ";");
-  if (semis.length > 1 || (semis.length === 1 && tokens[tokens.length - 1] !== semis[0])) return null;
-  const outerSelects = tokens.map((t, i) => ({ t, i })).filter(({ t }) => t.depth === 0 && t.upper === "SELECT");
-  if (outerSelects.length !== 1) return null; // catches adjacent semicolonless statements
-  const selectIndex = outerSelects[0].i;
-  let p = selectIndex + 1;
-  while (tokens[p] && tokens[p].depth === 0 && ["DISTINCT", "ALL"].includes(tokens[p].upper)) p++;
-  let topLimit: number | null = null;
-  if (tokens[p]?.depth === 0 && tokens[p].upper === "TOP") {
-    p++;
-    if (tokens[p]?.value === "(") p++;
-    const n = tokens[p];
-    if (!n || n.kind !== "number") return null;
-    topLimit = Number(n.value);
-    p++;
-    if (tokens[p]?.value === ")") p++;
-    if (tokens[p]?.upper === "PERCENT" || tokens[p]?.upper === "WITH") return null;
-  }
-  let fetchLimit: number | null = null;
-  for (let i = selectIndex + 1; i < tokens.length - 4; i++) {
-    if (tokens[i].depth !== 0 || tokens[i].upper !== "FETCH" || !["FIRST", "NEXT"].includes(tokens[i + 1]?.upper)) continue;
-    const n = tokens[i + 2];
-    if (n?.kind !== "number" || !["ROW", "ROWS"].includes(tokens[i + 3]?.upper) || tokens[i + 4]?.upper !== "ONLY") return null;
-    fetchLimit = Number(n.value);
-  }
-  const resultLimit = topLimit ?? fetchLimit;
-  if (!Number.isSafeInteger(resultLimit) || resultLimit! <= 0) return null;
-
-  const ctes = new Set<string>();
-  if (tokens[0]?.upper === "WITH") {
-    for (let i = 1; i < selectIndex; i++) {
-      if (tokens[i].depth === 0 && tokens[i].kind === "ident" && tokens[i + 1]?.upper === "AS") ctes.add(tokens[i].upper);
-    }
-  }
-  const references: string[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    if (!(["FROM", "JOIN"].includes(tokens[i].upper))) continue;
-    let j = i + 1;
-    if (!tokens[j] || tokens[j].value === "(") continue;
-    if (tokens[j].kind !== "ident" || tokens[j].value.startsWith("#") || tokens[j].value.startsWith("@")) return null;
-    const parts = [tokens[j].value];
-    while (tokens[j + 1]?.value === "." && tokens[j + 2]?.kind === "ident") { parts.push(tokens[j + 2].value); j += 2; }
-    if (tokens[j + 1]?.value === "(") return null;
-    if (parts.length === 1 && ctes.has(parts[0].toUpperCase())) continue;
-    if (parts.length > 3) return null;
-    if (parts.length === 3 && parts[0].toLocaleLowerCase() !== approvedDatabase.toLocaleLowerCase()) return null;
-    const schema = parts.length >= 2 ? parts[parts.length - 2] : "dbo";
-    const table = parts[parts.length - 1];
-    if (![schema, table].every((part) => SAFE_SQL_IDENT.test(part))) return null;
-    references.push(`${schema}.${table}`);
-  }
-  const unique = [...new Set(references.map((r) => r.toLocaleLowerCase()))].sort();
-  return unique.length ? { resultLimit: resultLimit!, references: unique } : null;
+/** Conservatively admit one plain SELECT with a literal TOP bound. */
+export function boundedSelectLimit(sql: string): number | null {
+  if (classifySqlOperation(sql) !== "read" || /[\[\]"]/.test(sql)) return null;
+  const masked = sqlWithoutComments(sql).trim().replace(/;\s*$/, "");
+  if (masked.includes(";") || (masked.match(/\bSELECT\b/gi) || []).length !== 1) return null;
+  if (/\b(WITH|UNION|INTERSECT|EXCEPT|APPLY|EXEC(?:UTE)?|OPENROWSET|OPENQUERY|OPENDATASOURCE|BACKUP|RESTORE|DBCC|WAITFOR|USE|SET|DECLARE|PRINT|RAISERROR|THROW|KILL|SHUTDOWN|BULK|OPTION|FOR|PERCENT)\b/i.test(masked)) return null;
+  if (/\b[A-Za-z_][\w$#]*\s*\.\s*(?:[A-Za-z_][\w$#]*\s*)?\.\s*[A-Za-z_][\w$#]*\b/i.test(masked)) return null;
+  const match = /^SELECT\s+(?:(?:ALL|DISTINCT)\s+)?TOP\s*(?:\(\s*([1-9]\d*)\s*\)|([1-9]\d*))\s+/i.exec(masked);
+  const limit = match ? Number(match[1] || match[2]) : NaN;
+  return Number.isSafeInteger(limit) ? limit : null;
 }
 
 export type LiveReadResolverDeps = {
   readText: (path: string) => string;
-  exists: (path: string) => boolean;
   agentDir: string;
-  azureAccount: () => Promise<any>;
+  token: () => string | undefined;
 };
 
-function reusableSqlSurface(event: any): boolean {
-  const target = effectiveMutationTarget(event);
-  if (target.outerTool === COOP_PYODBC_QUERY_TOOL && !target.innerTool) return true;
-  if (target.outerTool === "mcp") return target.server === MANAGED_SQL_SERVER && ["executeSQL", "execute_query", "fabric-sqlendpoint-execute_query", "fabric_sqlendpoint_execute_query"].includes(target.innerTool || "");
-  return ["mcp__fabric_sqlendpoint__executeSQL", "mcp__fabric_sqlendpoint__execute_query", "fabric-sqlendpoint-execute_query", "fabric_sqlendpoint_execute_query"].includes(target.outerTool);
+function launchIdentity(token: string | undefined): { tenant: string; principal: string } | null {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3 || parts.some((part) => !part)) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    const tenant = strictResolvedText(claims?.tid)?.toLowerCase();
+    const principal = strictResolvedText(claims?.oid) || strictResolvedText(claims?.sub);
+    return tenant && UUID.test(tenant) && principal ? { tenant, principal } : null;
+  } catch { return null; }
 }
 
-/** Resolve grant identity only from COOP-owned runtime state plus parsed SQL. */
-export async function resolveLiveReadScope(event: any, cwd: string, deps: LiveReadResolverDeps): Promise<LiveReadScope | null> {
+/** Resolve grant identity only from COOP-owned config and the launch bearer. */
+export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): LiveReadScope | null {
   if (!reusableSqlSurface(event)) return null;
-  const projectPath = findProjectYml(cwd, deps.exists);
-  if (!projectPath) return null;
-  let projectText = "", mcp: any, account: any;
-  try {
-    projectText = deps.readText(projectPath);
-    mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp.json")));
-    account = await deps.azureAccount();
-  } catch { return null; }
-  const client = strictResolvedText(projectScalar(projectText, ["profile", "client"]));
-  const tenant = strictResolvedText(projectScalar(projectText, ["fabric", "tenant_id"]));
-  const workspaceName = strictResolvedText(projectScalar(projectText, ["fabric", "default_workspace_name"]));
-  const environment = workspaceName ? projectEnvironment(projectText, workspaceName) : undefined;
-  const workspaceId = projectScalar(projectText, ["fabric", "default_workspace_id"])?.toLowerCase() || "";
-  const itemType = projectScalar(projectText, ["fabric", "default_sql_endpoint", "item_type"]);
-  const itemName = strictResolvedText(projectScalar(projectText, ["fabric", "default_sql_endpoint", "item_name"]));
-  const sourceItemId = projectScalar(projectText, ["fabric", "default_sql_endpoint", "item_id"])?.toLowerCase() || "";
-  const endpointItemId = (itemType === "Lakehouse" ? projectScalar(projectText, ["fabric", "default_sql_endpoint", "sqlEndpointProperties", "id"]) : sourceItemId)?.toLowerCase() || "";
-  if (!client || !tenant || !UUID.test(tenant) || !environment || !UUID.test(workspaceId) || !UUID.test(sourceItemId) || !UUID.test(endpointItemId) || !["Warehouse", "Lakehouse"].includes(itemType || "") || !itemName) return null;
-  const accountTenant = strictResolvedText(account?.tenantId)?.toLowerCase();
-  const principal = strictResolvedText(account?.user?.name);
-  if (!accountTenant || accountTenant !== tenant.toLowerCase() || !principal) return null;
+  let mcp: any;
+  try { mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp.json"))); } catch { return null; }
   const managed = Array.isArray(mcp?._coop?.managed_servers) && mcp._coop.managed_servers.includes(MANAGED_SQL_SERVER);
   const entry = mcp?.mcpServers?.[MANAGED_SQL_SERVER];
-  const expectedUrl = `https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/${workspaceId}/items/${endpointItemId}/sqlEndpoint`;
-  if (!managed || !entry || entry.url !== expectedUrl || entry.auth !== "bearer" || entry.bearerTokenEnv !== "COOP_FABRIC_MCP_TOKEN" || entry.lifecycle !== "lazy") return null;
-  if (entry?._coop_target?.scope !== "item" || entry._coop_target.workspace_id !== workspaceId || entry._coop_target.item_id !== endpointItemId || entry._coop_target.item_type !== itemType) return null;
-  if (entry?._coop_runtime?.request_timeout_ms !== MANAGED_MCP_REQUEST_TIMEOUT_MS) return null;
-  const bounded = analyzeBoundedSqlRead(extractSqlText(event?.input), itemName);
-  if (!bounded) return null;
+  const target = entry?._coop_target;
+  const client = strictResolvedText(target?.client);
+  const tenant = strictResolvedText(target?.tenant_id)?.toLowerCase();
+  const environment = strictResolvedText(target?.environment)?.toLowerCase();
+  const itemName = strictResolvedText(target?.item_name);
+  const workspaceId = typeof target?.workspace_id === "string" ? target.workspace_id.toLowerCase() : "";
+  const itemId = typeof target?.item_id === "string" ? target.item_id.toLowerCase() : "";
+  const identity = launchIdentity(deps.token());
+  if (!managed || !entry || target?.scope !== "item" || !client || !tenant || !UUID.test(tenant)
+      || !["dev", "test", "production"].includes(environment || "") || !itemName
+      || !UUID.test(workspaceId) || !UUID.test(itemId) || !identity || identity.tenant !== tenant) return null;
+  const expectedUrl = `https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/${workspaceId}/items/${itemId}/sqlEndpoint`;
+  if (entry.url !== expectedUrl || entry.auth !== "bearer" || entry.bearerTokenEnv !== "COOP_FABRIC_MCP_TOKEN" || entry.lifecycle !== "lazy") return null;
+  const resultLimit = boundedSelectLimit(extractSqlText(event?.input));
+  if (!resultLimit) return null;
   return {
     client,
-    tenant: tenant.toLowerCase(),
-    principal,
+    tenant,
+    principal: identity.principal,
     environment: environment!,
-    targets: bounded.references.map((ref) => `${workspaceId}/${endpointItemId}/${ref}`),
+    targets: [`${workspaceId}/${itemId}/${itemName}`],
     operationClass: "sql-read",
-    resultLimit: bounded.resultLimit,
-    timeoutMs: MANAGED_MCP_REQUEST_TIMEOUT_MS,
+    resultLimit,
+    // pi-mcp-adapter 2.10.0 currently relies on the pinned MCP SDK's enforced 60s timeout.
+    timeoutMs: PINNED_MCP_REQUEST_TIMEOUT_MS,
   };
 }
 
@@ -1305,16 +1145,8 @@ export default function coopGuardrails(pi: ExtensionAPI) {
   let liveReadGrant: LiveReadGrant | null = null;
   const liveReadDeps: LiveReadResolverDeps = {
     readText: (path) => readFileSync(path, "utf8"),
-    exists: (path) => existsSync(path),
     agentDir: auditDir(),
-    azureAccount: async () => {
-      try {
-        const result = await pi.exec("az", ["account", "show", "--output", "json", "--only-show-errors"]);
-        if (!result || result.code !== 0 || typeof result.stdout !== "string") return null;
-        const parsed = JSON.parse(result.stdout);
-        return parsed && typeof parsed === "object" ? parsed : null;
-      } catch { return null; }
-    },
+    token: () => (globalThis as any).process?.env?.COOP_FABRIC_MCP_TOKEN,
   };
   rotateAuditIfLarge();
   // One Pi process can serve multiple sessions (/new, /resume, /fork fire
@@ -1397,7 +1229,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
             return { block: true, reason: `coop guardrails: blocked the MCP action ${mcp} (you declined). MCP is read-only by default — list / read / inspect only; make changes with explicit approval or in the Fabric / Power BI UX.` };
           }
         }
-        const resolvedScope = await resolveLiveReadScope(event, ctx.cwd, liveReadDeps);
+        const resolvedScope = resolveLiveReadScope(event, liveReadDeps);
         const decision = decideLiveRead(event, liveReadGrant, resolvedScope);
         if (decision.action !== "none" && decision.action !== "allow-grant") {
           if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
@@ -1420,7 +1252,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           const prompt = decision.kind === "ddl-dml-destructive"
             ? `Warehouse SQL mutation/DDL call:\n  ${decision.label}\nDDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
             : decision.kind === "ambiguous-sql"
-              ? `Ambiguous Warehouse SQL call:\n  ${decision.label}\nOnly bounded SELECT/CTE reads can use a session grant. Run this call once?`
+              ? `Ambiguous Warehouse SQL call:\n  ${decision.label}\nOnly one plain SELECT with a literal TOP bound can use a session grant. Run this call once?`
               : decision.kind === "production-metadata"
                 ? `Production metadata/code read:\n  ${decision.label}\nDev/test metadata is read-only by default; production always asks.${sessionGrant ? " Approve this exact bounded scope for this session?" : " Read it once?"}`
                 : `${production ? "PRODUCTION " : ""}row-level data read:\n  ${decision.label}\n${scopeSummary ? `${scopeSummary}\n` : ""}${sessionGrant ? "Approve this exact bounded scope for this session?" : "Read these rows once?"}`;

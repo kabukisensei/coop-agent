@@ -29,8 +29,6 @@ from warehouse_mcp import (  # noqa: E402
     select_target,
 )
 
-MANAGED_MCP_REQUEST_TIMEOUT_MS = 60_000
-
 SERVER_PACKAGES = {
     "fabric": "@microsoft/fabric-mcp",
     "fabric-sqlendpoint": "mcp-remote",
@@ -90,9 +88,39 @@ def fabric_sqlendpoint_server(url: str) -> dict[str, Any]:
         "auth": "bearer",
         "bearerTokenEnv": FABRIC_TOKEN_ENV,
         "lifecycle": "lazy",
-        # pi-mcp-adapter 2.10.0 uses the MCP SDK's enforced 60-second request
-        # timeout. This COOP-owned provenance is consumed by the guardrail only.
-        "_coop_runtime": {"request_timeout_ms": MANAGED_MCP_REQUEST_TIMEOUT_MS},
+    }
+
+
+def grant_target_metadata(project: dict[str, Any]) -> dict[str, str]:
+    """Return non-secret identity fields owned by the parsed project contract."""
+    raw_profile = project.get("profile")
+    raw_fabric = project.get("fabric")
+    profile: dict[str, Any] = raw_profile if isinstance(raw_profile, dict) else {}
+    fabric: dict[str, Any] = raw_fabric if isinstance(raw_fabric, dict) else {}
+    raw_endpoint = fabric.get("default_sql_endpoint")
+    endpoint: dict[str, Any] = raw_endpoint if isinstance(raw_endpoint, dict) else {}
+    workspace_name = fabric.get("default_workspace_name")
+    environment_names = (
+        fabric.get("environment_names")
+        if isinstance(fabric.get("environment_names"), dict)
+        else {}
+    )
+    matches = [
+        name
+        for name in ("dev", "test", "prod")
+        if isinstance(workspace_name, str)
+        and workspace_name.strip()
+        and isinstance(environment_names.get(name), str)
+        and environment_names[name].strip().casefold() == workspace_name.strip().casefold()
+    ]
+    environment = matches[0] if len(matches) == 1 else ""
+    if environment == "prod":
+        environment = "production"
+    return {
+        "client": profile.get("client", "") if isinstance(profile.get("client"), str) else "",
+        "tenant_id": fabric.get("tenant_id", "") if isinstance(fabric.get("tenant_id"), str) else "",
+        "environment": environment,
+        "item_name": endpoint.get("item_name", "") if isinstance(endpoint.get("item_name"), str) else "",
     }
 
 
@@ -163,6 +191,7 @@ def desired_servers(
                 "item_id": target.item_id,
                 "item_type": target.item_type,
                 "reason": target.reason,
+                **grant_target_metadata(project or {}),
             }
             out["fabric-sqlendpoint"] = sql_entry
     # Current Azure-backed MCP servers are exclusively client-facing. The future
@@ -261,7 +290,7 @@ def generate(
             # Preserve the long-standing narrow ownership contract for every
             # managed command server. Only the Warehouse entry changed transport
             # and authentication models, so only it owns and removes those fields.
-            owned_fields = ("command", "args", "env", "_coop_target", "_coop_runtime")
+            owned_fields = ("command", "args", "env", "_coop_target")
             if name == "fabric-sqlendpoint":
                 owned_fields += (
                     "url",

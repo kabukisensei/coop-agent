@@ -24,7 +24,7 @@ sql=s['fabric-sqlendpoint']
 assert sql['url']=='https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint'
 assert sql['auth']=='bearer' and sql['bearerTokenEnv']=='COOP_FABRIC_MCP_TOKEN'
 assert sql['lifecycle']=='lazy'
-assert sql['_coop_runtime']=={'request_timeout_ms':60000}
+assert '_coop_runtime' not in sql
 assert 'command' not in sql and 'args' not in sql and 'mcp-remote' not in json.dumps(sql)
 assert 'bearerToken' not in sql and 'Authorization' not in json.dumps(sql)
 assert 'oauth' not in sql and sql['bearerTokenEnv']=='COOP_FABRIC_MCP_TOKEN'
@@ -46,8 +46,16 @@ cmp "$d/mcp-first.json" "$d/mcp.json"
 # Project IDs select item-scoped Warehouse URL only when complete and canonical.
 mkdir -p "$d/project/.coop"
 cat > "$d/project/.coop/project.yml" <<'YAML'
+profile:
+  client: "Contoso"
 fabric:
+  tenant_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+  default_workspace_name: "Contoso Production"
   default_workspace_id: "11111111-1111-1111-1111-111111111111"
+  environment_names:
+    dev: "Contoso Development"
+    test: "Contoso Test"
+    prod: "Contoso Production"
   default_sql_endpoint:
     item_type: "Warehouse"
     item_name: "DW"
@@ -59,7 +67,11 @@ import json,sys
 s=json.load(open(sys.argv[1]))['mcpServers']['fabric-sqlendpoint']
 assert s['url']=='https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/11111111-1111-1111-1111-111111111111/items/22222222-2222-2222-2222-222222222222/sqlEndpoint'
 assert s['_coop_target']['scope']=='item'
-assert s['_coop_runtime']['request_timeout_ms']==60000
+assert s['_coop_target']['client']=='Contoso'
+assert s['_coop_target']['tenant_id']=='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+assert s['_coop_target']['environment']=='production'
+assert s['_coop_target']['item_name']=='DW'
+assert '_coop_runtime' not in s
 PY
 # Lakehouse targets use sqlEndpointProperties.id, not the Lakehouse item id.
 cat > "$d/project/.coop/project.yml" <<'YAML'
