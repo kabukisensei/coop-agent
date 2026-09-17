@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+PHASE='setup'
+trap 'rc=$?; printf "%s\n" "Fabric MCP fixture failed at phase=$PHASE rc=$rc" >&2' ERR
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 TMP="$(mktemp -d)"
 WEB_PID=""
@@ -13,6 +15,10 @@ AGENT_DIR="$HOME_DIR/.coop/agent"
 BIN="$TMP/bin"
 MARKER="$TMP/marker"
 mkdir -p "$AGENT_DIR" "$BIN" "$MARKER"
+if [ "${OS:-}" = Windows_NT ]; then
+  COOP_TEST_MARKER_NATIVE="$(cygpath -w "$MARKER")"
+  export COOP_TEST_MARKER_NATIVE
+fi
 TOKEN='fabric-launch-canary-7e5a3c'
 HELPER_DIAGNOSTIC='untrusted-helper-diagnostic-93b75a'
 HELPER_TOKENLIKE='tokenlike-helper-value-2309'
@@ -43,7 +49,7 @@ SH
 if [ "${OS:-}" = Windows_NT ]; then
   cat > "$BIN/az.cmd" <<'CMD'
 @echo off
->"%COOP_TEST_MARKER%\az-argv" echo %*
+>"%COOP_TEST_MARKER_NATIVE%\az-argv" echo %*
 if "%COOP_TEST_AZ_MODE%"=="auth" (
   >&2 echo ERROR: Please run 'az login' to setup account.
   exit /b 1
@@ -64,6 +70,16 @@ case "${COOP_TEST_EXPECT_TOKEN:-present}" in
 esac
 printf '%s\n' 'pi-launched' > "$COOP_TEST_MARKER/pi-state"
 SH
+if [ "${OS:-}" = Windows_NT ]; then
+  cat > "$BIN/pi.cmd" <<'CMD'
+@echo off
+>"%COOP_TEST_MARKER_NATIVE%\pi-argv" echo %*
+if "%COOP_TEST_EXPECT_TOKEN%"=="present" if not "%COOP_FABRIC_MCP_TOKEN%"=="%COOP_TEST_TOKEN%" exit /b 41
+if "%COOP_TEST_EXPECT_TOKEN%"=="absent" if not "%COOP_FABRIC_MCP_TOKEN%"=="" exit /b 42
+>"%COOP_TEST_MARKER_NATIVE%\pi-state" echo pi-launched
+exit /b 0
+CMD
+fi
 chmod +x "$BIN/az" "$BIN/pi"
 
 run_coop() {
@@ -75,6 +91,7 @@ run_coop() {
     bash "$ROOT/bin/coop" pi --fixture
 }
 
+PHASE='initial-token'
 out="$(run_coop 2>"$TMP/success.err")"
 [ -f "$MARKER/pi-state" ]
 [ "$out" = "" ]
@@ -84,6 +101,7 @@ case "$(cat "$MARKER/az-argv")" in
   *) echo 'unexpected Azure CLI argv' >&2; exit 1 ;;
 esac
 
+PHASE='auth-failure'
 rm -f "$MARKER/pi-state"
 COOP_TEST_AZ_MODE=auth COOP_TEST_EXPECT_TOKEN=absent \
 COOP_FABRIC_MCP_TOKEN='stale-inherited-token' run_coop >"$TMP/fail.out" 2>"$TMP/fail.err"
@@ -91,6 +109,7 @@ COOP_FABRIC_MCP_TOKEN='stale-inherited-token' run_coop >"$TMP/fail.out" 2>"$TMP/
 grep -F 'Azure authentication is required' "$TMP/fail.err" >/dev/null
 ! grep -F "$TOKEN" "$TMP/fail.out" "$TMP/fail.err" "$MARKER/pi-argv" >/dev/null
 
+PHASE='launch-spec-stale-token'
 COOP_FABRIC_MCP_TOKEN='stale-inherited-token' HOME="$HOME_DIR" PATH="$BIN:$PATH" \
   COOP_AGENT_DIR="$AGENT_DIR" PI_CODING_AGENT_DIR="$AGENT_DIR" \
   bash "$ROOT/bin/coop" launch-spec --json > "$TMP/launch-spec.json"
@@ -189,6 +208,7 @@ assert_windows_helper_executed() {
     }
   fi
 }
+PHASE='helper-failure-raw'
 rm -f "$MARKER/pi-state" "$MARKER/bash-helper-failure.reached"
 COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
   COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" \
@@ -198,6 +218,7 @@ assert_windows_helper_executed failure
 grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/helper-fail.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/helper-fail.out" "$TMP/helper-fail.err" >/dev/null
 
+PHASE='helper-failure-normal'
 rm -f "$MARKER/pi-state" "$MARKER/bash-helper-failure.reached"
 HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
@@ -210,6 +231,7 @@ assert_windows_helper_executed failure
 grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/normal-helper-fail.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/normal-helper-fail.out" "$TMP/normal-helper-fail.err" >/dev/null
 
+PHASE='helper-failure-web'
 rm -f "$MARKER/pi-state" "$MARKER/bash-helper-failure.reached"
 PORT=$((20000 + ($$ % 20000)))
 HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
@@ -235,6 +257,7 @@ WEB_PID=""
 
 # A zero-exit helper that emits a valid-looking token frame plus unexpected
 # stderr must be rejected; the terminal frame makes merged output invalid.
+PHASE='helper-stderr-raw'
 rm -f "$MARKER/pi-state" "$MARKER/bash-helper-success-stderr.reached"
 COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
   COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_TOKENLIKE="$HELPER_TOKENLIKE" \
@@ -246,6 +269,7 @@ grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/helper-std
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/helper-stderr.out" "$TMP/helper-stderr.err" "$MARKER/pi-argv" >/dev/null
 ! grep -F "$HELPER_TOKENLIKE" "$TMP/helper-stderr.out" "$TMP/helper-stderr.err" "$MARKER/pi-argv" >/dev/null
 
+PHASE='helper-stderr-normal'
 rm -f "$MARKER/pi-state" "$MARKER/bash-helper-success-stderr.reached"
 HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
@@ -260,6 +284,7 @@ grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/normal-std
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/normal-stderr.out" "$TMP/normal-stderr.err" "$MARKER/pi-argv" >/dev/null
 ! grep -F "$HELPER_TOKENLIKE" "$TMP/normal-stderr.out" "$TMP/normal-stderr.err" "$MARKER/pi-argv" >/dev/null
 
+PHASE='helper-stderr-web'
 rm -f "$MARKER/pi-state" "$MARKER/bash-helper-success-stderr.reached"
 PORT=$((20500 + ($$ % 19500)))
 HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
@@ -288,6 +313,7 @@ WEB_PID=""
 # Control bytes and even whitespace-only stderr are contamination. Exercise all
 # three public POSIX launch paths; each must continue without any bearer.
 for HELPER_MODE in control-token whitespace-stderr; do
+  PHASE="$HELPER_MODE-raw"
   rm -f "$MARKER/pi-state" "$MARKER/bash-helper-$HELPER_MODE.reached"
   COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
     COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_TOKENLIKE="$HELPER_TOKENLIKE" \
@@ -297,6 +323,7 @@ for HELPER_MODE in control-token whitespace-stderr; do
   [ -f "$MARKER/pi-state" ]
   grep -F 'Fabric Warehouse MCP unavailable:' "$TMP/$HELPER_MODE-raw.err" >/dev/null
 
+  PHASE="$HELPER_MODE-normal"
   rm -f "$MARKER/pi-state" "$MARKER/bash-helper-$HELPER_MODE.reached"
   HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
     PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
@@ -309,6 +336,7 @@ for HELPER_MODE in control-token whitespace-stderr; do
   [ -f "$MARKER/pi-state" ]
   grep -F 'Fabric Warehouse MCP unavailable:' "$TMP/$HELPER_MODE-normal.err" >/dev/null
 
+  PHASE="$HELPER_MODE-web"
   rm -f "$MARKER/pi-state" "$MARKER/bash-helper-$HELPER_MODE.reached"
   PORT=$((21500 + ($$ + ${#HELPER_MODE}) % 18000))
   HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
@@ -332,6 +360,7 @@ done
 
 # Exercise the public web dispatcher with Python genuinely absent from PATH.
 # Only the commands needed by this bounded path are exposed in the fixture bin.
+PHASE='web-no-python'
 NO_PY_BIN="$TMP/no-python-bin"
 mkdir -p "$NO_PY_BIN"
 for cmd in dirname find sort readlink uname mkdir date tr sed git; do
@@ -340,6 +369,7 @@ for cmd in dirname find sort readlink uname mkdir date tr sed git; do
 done
 ln -s "$(command -v node)" "$NO_PY_BIN/node"
 ln -s "$BIN/pi" "$NO_PY_BIN/pi"
+if [ "${OS:-}" = Windows_NT ]; then cp "$BIN/pi.cmd" "$NO_PY_BIN/pi.cmd"; fi
 rm -f "$MARKER/pi-state"
 PORT=$((21000 + ($$ % 19000)))
 HOME="$HOME_DIR" PATH="$NO_PY_BIN" COOP_AGENT_DIR="$AGENT_DIR" \
