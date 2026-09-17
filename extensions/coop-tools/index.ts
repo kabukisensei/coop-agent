@@ -2291,7 +2291,18 @@ export default function coopTools(pi: ExtensionAPI) {
           }),
         ].join("\n\n");
         if (message) message.content = `${message.content}\n\n${content}`;
-        else message = { customType: "coop-standards", display: false, content, details: standardsContext };
+        else message = {
+          customType: "coop-standards",
+          display: false,
+          content,
+          // Pi message details cross a structured-clone boundary. Keep the
+          // executable resolver in operationStandardsResolve and expose data only.
+          details: {
+            domains: standardsContext.domains,
+            records: standardsContext.records,
+            patterns: standardsContext.patterns,
+          },
+        };
       }
 
       if (!message && !requirement) return;
