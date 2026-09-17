@@ -382,7 +382,7 @@ else
   ln -s "$(command -v node)" "$NO_PY_BIN/node"
   ln -s "$BIN/pi" "$NO_PY_BIN/pi"
 fi
-rm -f "$MARKER/pi-state"
+rm -f "$MARKER/pi-state" "$MARKER/pi-argv"
 PORT=$((21000 + ($$ % 19000)))
 PHASE='web-no-python-launch'
 HOME="$HOME_DIR" PATH="$NO_PY_BIN" COOP_AGENT_DIR="$AGENT_DIR" \
