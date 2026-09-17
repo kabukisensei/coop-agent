@@ -40,6 +40,21 @@ case "${COOP_TEST_AZ_MODE:-ok}" in
   fail) printf '%s\n' 'ERROR: token command failed' >&2; exit 2 ;;
 esac
 SH
+if [ "${OS:-}" = Windows_NT ]; then
+  cat > "$BIN/az.cmd" <<'CMD'
+@echo off
+>"%COOP_TEST_MARKER%\az-argv" echo %*
+if "%COOP_TEST_AZ_MODE%"=="auth" (
+  >&2 echo ERROR: Please run 'az login' to setup account.
+  exit /b 1
+)
+if "%COOP_TEST_AZ_MODE%"=="fail" (
+  >&2 echo ERROR: token command failed
+  exit /b 2
+)
+echo {"accessToken":"%COOP_TEST_TOKEN%"}
+CMD
+fi
 cat > "$BIN/pi" <<'SH'
 #!/bin/sh
 printf '%s\n' "$*" > "$COOP_TEST_MARKER/pi-argv"
@@ -86,10 +101,46 @@ assert "COOP_FABRIC_MCP_TOKEN" not in spec.get("env", {})
 assert "stale-inherited-token" not in json.dumps(spec)
 PY
 
-# A damaged/unexecutable helper must not block raw Pi or coop web. The public
-# web entrypoint must fall back to Node for launch-spec JSON, then launch Pi
-# without inheriting a stale bearer even though its Python helper exits nonzero.
-cat > "$BIN/python3" <<'SH'
+# A failing helper must not block raw Pi or coop web. On Windows, real Python
+# injects controlled output and writes an execution marker so cannot-launch is
+# distinct from executed-and-rejected. The stale bearer must never survive.
+if [ "${OS:-}" = Windows_NT ]; then
+  HELPER_FIXTURE="$TMP/python-fixture"
+  mkdir -p "$HELPER_FIXTURE"
+  cat > "$HELPER_FIXTURE/sitecustomize.py" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+if (
+    len(sys.argv) >= 2
+    and Path(sys.argv[0]).name.lower() == "warehouse_mcp.py"
+    and sys.argv[1] == "launch-token"
+):
+    mode = os.environ.get("COOP_TEST_HELPER_MODE", "failure")
+    marker = Path(os.environ["COOP_TEST_MARKER"]) / f"bash-helper-{mode}.reached"
+    marker.write_bytes(b"executed\n")
+    if mode == "success-stderr":
+        tokenlike = os.environ["COOP_TEST_HELPER_TOKENLIKE"].encode("ascii")
+        diagnostic = os.environ["COOP_TEST_HELPER_DIAGNOSTIC"].encode("ascii")
+        os.write(1, b"token\t" + tokenlike + b"\tend")
+        os.write(2, diagnostic + b"\n")
+        os._exit(0)
+    if mode == "control-token":
+        os.write(1, b"token\tbad\x07token\tend")
+        os._exit(0)
+    if mode == "whitespace-stderr":
+        tokenlike = os.environ["COOP_TEST_HELPER_TOKENLIKE"].encode("ascii")
+        os.write(1, b"token\t" + tokenlike + b"\tend")
+        os.write(2, b"\n")
+        os._exit(0)
+    diagnostic = os.environ["COOP_TEST_HELPER_DIAGNOSTIC"].encode("ascii")
+    os.write(2, diagnostic + b"\n")
+    os._exit(7)
+PY
+  export PYTHONPATH="$HELPER_FIXTURE${PYTHONPATH:+:$PYTHONPATH}"
+else
+  cat > "$BIN/python3" <<'SH'
 #!/bin/sh
 if [ "${1:-}" = - ]; then
   cat >/dev/null
@@ -115,27 +166,45 @@ esac
 printf '%s\n' "$COOP_TEST_HELPER_DIAGNOSTIC" >&2
 exit 7
 SH
-chmod +x "$BIN/python3"
-rm -f "$MARKER/pi-state"
+  chmod +x "$BIN/python3"
+fi
+
+assert_windows_helper_executed() {
+  mode="$1"
+  if [ "${OS:-}" = Windows_NT ]; then
+    marker_path="$MARKER/bash-helper-$mode.reached"
+    [ -f "$marker_path" ] || {
+      echo "Windows Bash helper mode $mode did not execute; cannot-launch is not executed-and-rejected" >&2
+      exit 1
+    }
+    [ "$(cat "$marker_path")" = executed ] || {
+      echo "Windows Bash helper mode $mode execution marker is invalid" >&2
+      exit 1
+    }
+  fi
+}
+rm -f "$MARKER/pi-state" "$MARKER/bash-helper-failure.reached"
 COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
   COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" \
   run_coop >"$TMP/helper-fail.out" 2>"$TMP/helper-fail.err"
+assert_windows_helper_executed failure
 [ -f "$MARKER/pi-state" ]
 grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/helper-fail.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/helper-fail.out" "$TMP/helper-fail.err" >/dev/null
 
-rm -f "$MARKER/pi-state"
+rm -f "$MARKER/pi-state" "$MARKER/bash-helper-failure.reached"
 HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
   COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
   COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" \
   COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
   bash "$ROOT/bin/coop" --fixture >"$TMP/normal-helper-fail.out" 2>"$TMP/normal-helper-fail.err"
+assert_windows_helper_executed failure
 [ -f "$MARKER/pi-state" ]
 grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/normal-helper-fail.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/normal-helper-fail.out" "$TMP/normal-helper-fail.err" >/dev/null
 
-rm -f "$MARKER/pi-state"
+rm -f "$MARKER/pi-state" "$MARKER/bash-helper-failure.reached"
 PORT=$((20000 + ($$ % 20000)))
 HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
@@ -151,6 +220,7 @@ while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 160 ]; do
   i=$((i + 1))
 done
 [ -f "$MARKER/pi-state" ]
+assert_windows_helper_executed failure
 grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/web-helper-fail.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/web-helper-fail.out" "$TMP/web-helper-fail.err" >/dev/null
 kill "$WEB_PID" >/dev/null 2>&1 || true
@@ -159,17 +229,18 @@ WEB_PID=""
 
 # A zero-exit helper that emits a valid-looking token frame plus unexpected
 # stderr must be rejected; the terminal frame makes merged output invalid.
-rm -f "$MARKER/pi-state"
+rm -f "$MARKER/pi-state" "$MARKER/bash-helper-success-stderr.reached"
 COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
   COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_TOKENLIKE="$HELPER_TOKENLIKE" \
   COOP_TEST_HELPER_MODE=success-stderr \
   run_coop >"$TMP/helper-stderr.out" 2>"$TMP/helper-stderr.err"
+assert_windows_helper_executed success-stderr
 [ -f "$MARKER/pi-state" ]
 grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/helper-stderr.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/helper-stderr.out" "$TMP/helper-stderr.err" "$MARKER/pi-argv" >/dev/null
 ! grep -F "$HELPER_TOKENLIKE" "$TMP/helper-stderr.out" "$TMP/helper-stderr.err" "$MARKER/pi-argv" >/dev/null
 
-rm -f "$MARKER/pi-state"
+rm -f "$MARKER/pi-state" "$MARKER/bash-helper-success-stderr.reached"
 HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
   COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
@@ -177,12 +248,13 @@ HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   COOP_TEST_HELPER_MODE=success-stderr \
   COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
   bash "$ROOT/bin/coop" --fixture >"$TMP/normal-stderr.out" 2>"$TMP/normal-stderr.err"
+assert_windows_helper_executed success-stderr
 [ -f "$MARKER/pi-state" ]
 grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/normal-stderr.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/normal-stderr.out" "$TMP/normal-stderr.err" "$MARKER/pi-argv" >/dev/null
 ! grep -F "$HELPER_TOKENLIKE" "$TMP/normal-stderr.out" "$TMP/normal-stderr.err" "$MARKER/pi-argv" >/dev/null
 
-rm -f "$MARKER/pi-state"
+rm -f "$MARKER/pi-state" "$MARKER/bash-helper-success-stderr.reached"
 PORT=$((20500 + ($$ % 19500)))
 HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
@@ -199,6 +271,7 @@ while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 160 ]; do
   i=$((i + 1))
 done
 [ -f "$MARKER/pi-state" ]
+assert_windows_helper_executed success-stderr
 grep -F 'Fabric Warehouse MCP unavailable: token helper returned invalid output' "$TMP/web-stderr.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/web-stderr.out" "$TMP/web-stderr.err" "$MARKER/pi-argv" >/dev/null
 ! grep -F "$HELPER_TOKENLIKE" "$TMP/web-stderr.out" "$TMP/web-stderr.err" "$MARKER/pi-argv" >/dev/null
@@ -209,15 +282,16 @@ WEB_PID=""
 # Control bytes and even whitespace-only stderr are contamination. Exercise all
 # three public POSIX launch paths; each must continue without any bearer.
 for HELPER_MODE in control-token whitespace-stderr; do
-  rm -f "$MARKER/pi-state"
+  rm -f "$MARKER/pi-state" "$MARKER/bash-helper-$HELPER_MODE.reached"
   COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
     COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_TOKENLIKE="$HELPER_TOKENLIKE" \
     COOP_TEST_HELPER_MODE="$HELPER_MODE" run_coop \
     >"$TMP/$HELPER_MODE-raw.out" 2>"$TMP/$HELPER_MODE-raw.err"
+  assert_windows_helper_executed "$HELPER_MODE"
   [ -f "$MARKER/pi-state" ]
   grep -F 'Fabric Warehouse MCP unavailable:' "$TMP/$HELPER_MODE-raw.err" >/dev/null
 
-  rm -f "$MARKER/pi-state"
+  rm -f "$MARKER/pi-state" "$MARKER/bash-helper-$HELPER_MODE.reached"
   HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
     PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
     COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
@@ -225,10 +299,11 @@ for HELPER_MODE in control-token whitespace-stderr; do
     COOP_TEST_HELPER_MODE="$HELPER_MODE" COOP_TEST_EXPECT_TOKEN=absent \
     COOP_FABRIC_MCP_TOKEN='stale-inherited-token' bash "$ROOT/bin/coop" --fixture \
     >"$TMP/$HELPER_MODE-normal.out" 2>"$TMP/$HELPER_MODE-normal.err"
+  assert_windows_helper_executed "$HELPER_MODE"
   [ -f "$MARKER/pi-state" ]
   grep -F 'Fabric Warehouse MCP unavailable:' "$TMP/$HELPER_MODE-normal.err" >/dev/null
 
-  rm -f "$MARKER/pi-state"
+  rm -f "$MARKER/pi-state" "$MARKER/bash-helper-$HELPER_MODE.reached"
   PORT=$((21500 + ($$ + ${#HELPER_MODE}) % 18000))
   HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
     PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
@@ -242,6 +317,7 @@ for HELPER_MODE in control-token whitespace-stderr; do
   i=0
   while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 160 ]; do sleep 0.05; i=$((i + 1)); done
   [ -f "$MARKER/pi-state" ]
+  assert_windows_helper_executed "$HELPER_MODE"
   grep -F 'Fabric Warehouse MCP unavailable:' "$TMP/$HELPER_MODE-web.err" >/dev/null
   kill "$WEB_PID" >/dev/null 2>&1 || true
   wait "$WEB_PID" 2>/dev/null || true
