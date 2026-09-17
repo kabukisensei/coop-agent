@@ -139,7 +139,7 @@ _pipx_installed_version() {
 _unit_fabric() {
   have pipx || { printf 'skipping Fabric CLI (pipx missing)'; return 1; }
   local target="$FABRIC_PKG" fabric_py="" fabric_fetch=""
-  fabric_py="$(coop_fabric_python)" || fabric_py=""
+  fabric_py="$(coop_fabric_bootstrap_python)" || fabric_py=""
   if [ -z "$fabric_py" ]; then
     if pipx install --help 2>&1 | grep -F -- '--fetch-python' >/dev/null; then
       fabric_py="3.12"; fabric_fetch="--fetch-python=missing"
@@ -178,15 +178,11 @@ _unit_fabric() {
   else
     pipx install --force ${fabric_fetch:+"$fabric_fetch"} --python "$fabric_py" "$target" >/dev/null 2>&1 || { printf 'failed to reinstall %s (%s)' "$FABRIC_PKG" "$target"; return 1; }
   fi
-  # fabric-cicd is a Python LIBRARY (no CLI), used for deploy validation — inject it
-  # into the Fabric CLI's env so it's importable alongside `fab`. (doctor verifies it.)
-  local fcc="fabric-cicd"
-  if [ "$EDGE" != 1 ]; then
-    local fcc_ver
-    fcc_ver="$(coop_manifest_object_get python_tools fabric-cicd)"
-    [ -n "$fcc_ver" ] && fcc="fabric-cicd==${fcc_ver}"
+  # Runtime libraries live in the Fabric CLI environment; exact pins and import
+  # are verified with the same interpreter the fallback will execute.
+  if ! coop_converge_fabric_python_packages; then
+    printf 'failed to converge Fabric Python runtime (fabric-cicd + pyodbc)'; return 1
   fi
-  pipx inject "$FABRIC_PKG" "$fcc" >/dev/null 2>&1 || true
   hash -r 2>/dev/null || true
   # A failed convergence must not read as success just because an OLD fab binary
   # is still on PATH — verify the installed version actually matches the pin.
@@ -300,7 +296,7 @@ have git && coop_ok "git present ($(git --version 2>/dev/null | head -1))" || co
 _need_python=0
 _need_fabric_python=0
 coop_python >/dev/null || _need_python=1
-if [ "$NO_FABRIC" != 1 ] && ! coop_fabric_python >/dev/null; then _need_fabric_python=1; fi
+if [ "$NO_FABRIC" != 1 ] && ! coop_fabric_bootstrap_python >/dev/null; then _need_fabric_python=1; fi
 if [ "$NO_PREREQS" != 1 ] && { [ "$_need_python" = 1 ] || [ "$_need_fabric_python" = 1 ]; }; then
   if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
     coop_info "installing Fabric-compatible Python via brew…"
@@ -328,7 +324,7 @@ if [ "$NO_PREREQS" != 1 ] && { [ "$_need_python" = 1 ] || [ "$_need_fabric_pytho
     # Git Bash on Windows: the Python launcher/install manager first, winget second.
     coop_info "installing a compatible Python via the Python manager…"
     if command -v py >/dev/null 2>&1; then py install 3.12 >/dev/null 2>&1 || true; fi
-    if ! coop_fabric_python >/dev/null 2>&1 && command -v winget >/dev/null 2>&1; then
+    if ! coop_fabric_bootstrap_python >/dev/null 2>&1 && command -v winget >/dev/null 2>&1; then
       winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity >/dev/null 2>&1 || true
     fi
   fi
@@ -343,7 +339,7 @@ else
   coop_warn "python not found — install Python 3.10+ (mac: 'brew install python'; linux: 'apt install python3')."
 fi
 if [ "$NO_FABRIC" != 1 ]; then
-  if _fabric_py="$(coop_fabric_python)"; then
+  if _fabric_py="$(coop_fabric_bootstrap_python)"; then
     coop_ok "Fabric-compatible Python present ($("$_fabric_py" --version 2>&1))"
   elif have pipx && pipx install --help 2>&1 | grep -F -- '--fetch-python' >/dev/null; then
     coop_info "Fabric-compatible Python will be fetched into pipx's standalone cache"
@@ -431,6 +427,10 @@ if [ "$NO_FABRIC" = 1 ]; then
   coop_warn "skipped (--no-fabric)"
 else
   coop_unit "Microsoft Fabric CLI" _unit_fabric || INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
+  if ! coop_ensure_fabric_odbc_driver "$((1 - NO_PREREQS))"; then
+    coop_warn "Fabric SQL fallback is not ready" "install ODBC Driver 18+, then run: coop doctor"
+    INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
+  fi
   hash -r 2>/dev/null || true
 fi
 
@@ -481,7 +481,8 @@ fi
 
 # --- 9. Sync, model sign-in, and doctor ---------------------------------------
 coop_head "9/9  Sync assets, sign in, and run doctor"
-if ! "$COOP_ROOT/scripts/sync.sh"; then
+# Fabric was converged (or explicitly skipped) above; avoid a second injection/prompt.
+if ! COOP_SKIP_FABRIC_SYNC=1 "$COOP_ROOT/scripts/sync.sh"; then
   coop_warn "sync reported issues"
   INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
 fi

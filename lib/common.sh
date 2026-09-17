@@ -160,9 +160,10 @@ coop_venv_python_version() { # <venv-name>
   "$py" -c 'import platform;print(platform.python_version())' 2>/dev/null
 }
 
-# Resolve a Python interpreter supported by ms-fabric-cli (<3.14, >=3.10).
-# Prefer 3.13, then 3.12; accept a compatible generic python as a fallback.
-# COOP_FABRIC_PYTHON is an explicit test/admin override.
+# Resolve a bootstrap interpreter supported by ms-fabric-cli (<3.14, >=3.10).
+# This is only for creating/rebuilding the pipx environment. Live Fabric Python
+# always comes from that environment unless COOP_FABRIC_PYTHON explicitly selects
+# an operator-managed runtime.
 # Last ERROR line of captured pip output, trimmed — for actionable warnings.
 coop_pip_error_tail() { # <captured output>
   local reason="" line
@@ -176,13 +177,8 @@ PIPERR
   printf '%s' "$reason"
 }
 
-coop_fabric_python() {
+coop_fabric_bootstrap_python() {
   local c v pycmd
-  if [ -n "${COOP_FABRIC_PYTHON:-}" ]; then
-    [ -x "$COOP_FABRIC_PYTHON" ] || return 1
-    printf '%s' "$COOP_FABRIC_PYTHON"
-    return 0
-  fi
   for c in python3.13 python3.12; do
     command -v "$c" >/dev/null 2>&1 || continue
     v="$("$c" -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>/dev/null)"
@@ -214,6 +210,84 @@ coop_fabric_python() {
     case "$v" in 3.10|3.11|3.12|3.13) command -v "$c"; return 0 ;; esac
   done
   return 1
+}
+
+# Exact Python runtime for live Fabric SQL. The managed ms-fabric-cli pipx
+# environment is the default; an explicit override is operator-managed and is
+# validated here but never changed by Coop.
+coop_fabric_python() {
+  local py
+  if [ -n "${COOP_FABRIC_PYTHON:-}" ]; then
+    py="$COOP_FABRIC_PYTHON"
+    case "$py" in /*|[A-Za-z]:[\\/]*) ;; *) return 1 ;; esac
+  else
+    py="$(coop_venv_python_path ms-fabric-cli)" || return 1
+  fi
+  [ -f "$py" ] && [ -x "$py" ] || return 1
+  "$py" -c 'import sys; raise SystemExit(0 if sys.executable else 1)' >/dev/null 2>&1 || return 1
+  printf '%s' "$py"
+}
+
+# Verify the selected runtime's exact pyodbc metadata/import and Driver 18+.
+# Stable tab-separated state is consumed by install/update/sync and Doctor.
+coop_fabric_sql_runtime_status() {
+  local py pin
+  py="$(coop_fabric_python)" || { printf 'runtime_missing'; return 1; }
+  pin="$(coop_manifest_get python_tools.pyodbc)"
+  "$py" -c 'import importlib.metadata as m,re,sys
+pin=sys.argv[1]
+try:
+ v=m.version("pyodbc")
+except Exception:
+ print("pyodbc_missing"); raise SystemExit(2)
+if v != pin:
+ print("pyodbc_wrong\t"+v); raise SystemExit(3)
+try:
+ import pyodbc
+except Exception:
+ print("pyodbc_unloadable"); raise SystemExit(4)
+majors=[int(x.group(1)) for d in pyodbc.drivers() for x in [re.fullmatch(r"ODBC Driver ([0-9]+) for SQL Server",d)] if x]
+if not majors or max(majors) < 18:
+ print("driver_missing\t"+v); raise SystemExit(5)
+print("ready\t"+v+"\t"+str(max(majors)))' "$pin" 2>/dev/null
+}
+
+# Converge libraries into the managed runtime, or only verify an explicit
+# operator-managed override. Failed injection and failed postchecks are real failures.
+coop_converge_fabric_python_packages() {
+  local pipx pin pkg out py
+  if [ -z "${COOP_FABRIC_PYTHON:-}" ]; then
+    pipx="$(coop_pipx_cmd)"
+    for pkg in fabric-cicd pyodbc; do
+      pin="$(coop_manifest_get "python_tools.$pkg")"
+      [ -n "$pin" ] || return 1
+      out="$("$pipx" inject ms-fabric-cli "$pkg==$pin" --force 2>&1)" || {
+        coop_warn "failed to pin $pkg to $pin in the ms-fabric-cli environment" "$(coop_pip_error_tail "$out")"
+        return 1
+      }
+    done
+  fi
+  py="$(coop_fabric_python)" || return 1
+  pin="$(coop_manifest_get python_tools.pyodbc)"
+  "$py" -c 'import importlib.metadata as m,sys; import pyodbc; raise SystemExit(0 if m.version("pyodbc")==sys.argv[1] else 1)' "$pin" >/dev/null 2>&1
+}
+
+coop_ensure_fabric_odbc_driver() { # <allow-prereqs:0|1>
+  local status root_ps allow_ps='$false'
+  [ "$1" = 1 ] && allow_ps='$true'
+  status="$(coop_fabric_sql_runtime_status 2>/dev/null)" && return 0
+  case "$status" in driver_missing*) ;; *) return 1 ;; esac
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*)
+      root_ps="$COOP_ROOT"
+      if command -v cygpath >/dev/null 2>&1; then root_ps="$(cygpath -w "$COOP_ROOT")"; fi
+      COOP_ROOT="$root_ps" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ". (Join-Path \$env:COOP_ROOT 'lib\\common.ps1'); if (Ensure-CoopFabricOdbcDriver $allow_ps) { exit 0 } else { exit 1 }"
+      ;;
+    *)
+      coop_warn "ODBC Driver 18+ for SQL Server is missing" "install Microsoft ODBC Driver 18 for SQL Server, then run: coop doctor"
+      return 1
+      ;;
+  esac
 }
 
 # The installed distribution's own Requires-Python metadata, read from inside

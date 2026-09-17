@@ -24,7 +24,7 @@ function Write-Shim {
 }
 
 $saved = @{}
-foreach ($name in @('PATH','HOME','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODING_AGENT_DIR','COOP_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','COOP_FABRIC_PYTHON','COOP_TEST_CALLS','COOP_TEST_PY_TEMPLATE','LOCALAPPDATA','ProgramFiles')) {
+foreach ($name in @('PATH','HOME','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODING_AGENT_DIR','COOP_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','COOP_FABRIC_PYTHON','COOP_TEST_CALLS','COOP_TEST_PY_TEMPLATE','COOP_TEST_DRIVER_MISSING','COOP_TEST_DRIVER_READY','COOP_ASSUME_YES','LOCALAPPDATA','ProgramFiles')) {
   $saved[$name] = [Environment]::GetEnvironmentVariable($name)
 }
 
@@ -33,7 +33,9 @@ try {
   $fabricPython = Join-Path $t $(if ($isWindowsHost) { 'python312.cmd' } else { 'python312' })
   $pythonTemplate = Join-Path $t $(if ($isWindowsHost) { 'python-template.cmd' } else { 'python-template' })
   if ($isWindowsHost) {
-    [System.IO.File]::WriteAllText($pythonTemplate, "@echo off`r`nif `"%1`"==`"--version`" echo Python 3.12.9`r`nif `"%1`"==`"-c`" echo 3.12`r`nexit /b 0`r`n")
+    $templateBody = "@echo off`r`necho %*| findstr /C:`"pyodbc.drivers()`" >nul`r`nif not errorlevel 1 (`r`n  if `"%COOP_TEST_DRIVER_MISSING%`"==`"1`" if not exist `"%COOP_TEST_DRIVER_READY%`" (`r`n    echo driver_missing`t5.3.0`r`n    exit /b 5`r`n  )`r`n  echo ready`t5.3.0`t18`r`n  exit /b 0`r`n)`r`necho %*| findstr /C:`"import pyodbc`" >nul && exit /b 0`r`nif `"%1`"==`"--version`" echo Python 3.12.9`r`nif `"%1`"==`"-c`" echo 3.12`r`nexit /b 0`r`n"
+    [System.IO.File]::WriteAllText($pythonTemplate, $templateBody)
+    Copy-Item -LiteralPath $pythonTemplate -Destination $fabricPython
   } else {
     [System.IO.File]::WriteAllText($pythonTemplate, "#!/bin/sh`n[ `"`$1`" = `"--version`" ] && echo 'Python 3.12.9'`n[ `"`$1`" = `"-c`" ] && echo '3.12'`nexit 0`n")
     & chmod +x $pythonTemplate
@@ -295,8 +297,28 @@ exit /b 0
   if ($rc -ne 0) { Write-Error "update fixture exited $rc`nevidence file: $evidencePath`n$output`n--- stream-tagged ---`n$evidence`nCALLS:`n$(Get-Content $calls -Raw)" }
   $transcript = Get-Content $calls -Raw
   if ($transcript -notlike '*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0*') { Write-Error "Updater did not rebuild Fabric CLI with standalone Python 3.12`n$transcript" }
-  if ($transcript -notlike '*PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force*') { Write-Error "Updater did not reinject fabric-cicd after rebuilding Fabric CLI`n$transcript" }
-  Write-Host '  OK  Windows updater repairs an existing Python 3.14 Fabric environment'
+  if ($transcript -like '*PIPX inject ms-fabric-cli*') { Write-Error "Updater mutated an operator-managed COOP_FABRIC_PYTHON override`n$transcript" }
+  Write-Host '  OK  Windows updater repairs Fabric CLI while verifying the operator-managed runtime without mutation'
+
+  # Driver 18 provisioning is license-consent gated and uses the exact winget ID/vector.
+  . (Join-Path $root 'lib\common.ps1')
+  $driverReady = Join-Path $t 'driver-ready'
+  $env:COOP_TEST_DRIVER_MISSING = '1'
+  $env:COOP_TEST_DRIVER_READY = $driverReady
+  if (Ensure-CoopFabricOdbcDriver $false) { Write-Error 'Driver provisioning ignored --no-prereqs semantics' }
+  Write-Shim 'winget' "#!/bin/sh`nexit 1`n" @'
+@echo off
+echo WINGET %*>>"%COOP_TEST_CALLS%"
+type nul >"%COOP_TEST_DRIVER_READY%"
+exit /b 0
+'@
+  [System.IO.File]::WriteAllText($calls, '')
+  $env:COOP_ASSUME_YES = '1'
+  if (-not (Ensure-CoopFabricOdbcDriver $true)) { Write-Error 'Consent-gated Driver 18 provisioning did not become ready' }
+  $transcript = Get-Content $calls -Raw
+  $expectedWinget = 'WINGET install --id Microsoft.msodbcsql.18 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity'
+  if ($transcript -notlike "*$expectedWinget*") { Write-Error "Driver installer used the wrong winget vector`n$transcript" }
+  Write-Host '  OK  Driver 18 provisioning requires consent and uses the pinned winget package ID'
 }
 finally {
   foreach ($name in $saved.Keys) {

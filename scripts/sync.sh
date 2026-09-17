@@ -50,7 +50,19 @@ else
   SYNC_FAILURES=$((SYNC_FAILURES + 1))
 fi
 
-# --- 4. Core Pi extensions — installed INTO the isolated dir (idempotent) -----
+# --- 4. Managed Fabric Python runtime ----------------------------------------
+# Sync repairs an existing Fabric environment, but never installs Fabric itself.
+# --no-fabric callers set COOP_SKIP_FABRIC_SYNC so an existing environment stays untouched.
+if [ "${COOP_SKIP_FABRIC_SYNC:-0}" != 1 ] && { [ -n "${COOP_FABRIC_PYTHON:-}" ] || coop_venv_python_path ms-fabric-cli >/dev/null 2>&1; }; then
+  if coop_converge_fabric_python_packages && coop_ensure_fabric_odbc_driver 1; then
+    coop_ok "Fabric SQL Python runtime ready (pyodbc + ODBC Driver 18+)"
+  else
+    coop_warn "Fabric SQL Python runtime is not ready" "run: coop doctor"
+    SYNC_FAILURES=$((SYNC_FAILURES + 1))
+  fi
+fi
+
+# --- 4b. Core Pi extensions — installed INTO the isolated dir (idempotent) ----
 # `pi install` exiting 0 proves nothing on its own: a successful-looking install
 # can still leave the wrong version or nothing at all in the tree. After the
 # install loop, dependency specs are converged to EXACT manifest versions

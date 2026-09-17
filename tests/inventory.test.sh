@@ -33,7 +33,8 @@ cat > "$TMP/manifest.json" <<EOF
     "coop-sql-review": "0.15.2",
     "coop-dax-review": "0.22.0",
     "ms-fabric-cli": "$PIN_FAB",
-    "fabric-cicd": "1.3.0"
+    "fabric-cicd": "1.3.0",
+    "pyodbc": "5.3.0"
   }
 }
 EOF
@@ -65,6 +66,7 @@ cat > "$FAKEBIN/pipx" <<'EOF'
 #!/bin/sh
 FIX="$COOP_TEST_PIPX_FIXTURE"
 [ -n "$FIX" ] || exit 1
+if [ "$1" = "inject" ]; then exit 0; fi
 if [ "$1" = "runpip" ] && [ "$3" = "show" ]; then
   f="$FIX/$2--$4.meta"
   [ -f "$f" ] && { cat "$f"; exit 0; }
@@ -81,11 +83,12 @@ put_meta() { # <venv> <dist> <version-or-empty>
 mkdir -p "$TMP/fixtures"
 
 # --- fake venv python (fixture): bakes version + Requires-Python answers ------
-venv_python() { # <venv> <version> [requires-python]
-  local rp="${3:-}"
+venv_python() { # <venv> <version> [requires-python] [sql-state]
+  local rp="${3:-}" sql_state="${4:-ready}"
   {
     echo "FAKEPY_VERSION='$2'"
     echo "FAKEPY_RP='$rp'"
+    printf "FAKEPY_SQL_STATE='%s'\n" "$sql_state"
     cat "$ROOT/tests/fixtures/venv-python.sh"
   } > "$PIPXHOME/venvs/$1/bin/python"
   chmod +x "$PIPXHOME/venvs/$1/bin/python"
@@ -145,6 +148,17 @@ case "$out" in
   *"ms-fabric-cli not installed"*) ko "false 'ms-fabric-cli not installed' warning persists" ;;
   *) ok "no false 'not installed' warning when only fab exists" ;;
 esac
+case "$out" in
+  *"Fabric SQL fallback ready (pyodbc 5.3.0, ODBC Driver 18)"*) ok "doctor verifies pyodbc pin and Driver 18 with the selected runtime" ;;
+  *) ko "doctor did not report the selected Fabric SQL runtime ready" ;;
+esac
+venv_python ms-fabric-cli 3.13.1 "<3.14,>=3.10" driver_missing
+out="$(doctor_out "$d")"
+case "$out" in
+  *"Fabric SQL fallback: ODBC Driver 18+ for SQL Server is missing"*) ok "doctor hard-fails a selected runtime with no Driver 18+" ;;
+  *) ko "doctor did not report missing ODBC Driver 18+" ;;
+esac
+venv_python ms-fabric-cli 3.13.1 "<3.14,>=3.10"
 
 # F2: missing package — no venv metadata and no fab anywhere.
 remove_fab; put_meta ms-fabric-cli ms-fabric-cli ""

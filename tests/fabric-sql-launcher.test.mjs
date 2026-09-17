@@ -64,6 +64,11 @@ const pi = {
 mod.default(pi);
 const tool = tools.get("fabric_sql_query");
 assert.ok(tool, "fabric_sql_query must be publicly registered");
+assert.match(tool.description, /First attempt the managed fabric-sqlendpoint MCP tool/);
+assert.match(tool.description, /only after that actual attempt fails/);
+assert.match(tool.description, /Never use it for SQL\/business\/query rejection/);
+assert.match(tool.promptGuidelines.join(" "), /never fallback before MCP/);
+assert.match(tool.promptGuidelines.join(" "), /never cascade automatically/);
 const oldRoot = process.env.COOP_ROOT;
 const oldPython = process.env.COOP_FABRIC_PYTHON;
 const oldMarker = process.env.COOP_SQL_TEST_MARKER;

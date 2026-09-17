@@ -2131,10 +2131,10 @@ export default function coopTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "fabric_sql_query",
     label: "Fabric SQL Query (pyodbc fallback)",
-    description: "Explicit governed fallback for one bounded read against the canonical Fabric SQL target. Prefer the fabric-sqlendpoint MCP route; use this only when that route is unavailable. Accepts no target, server, credential, or token fields.",
-    promptSnippet: "Explicit pyodbc fallback for one approval-gated bounded Fabric SELECT TOP read",
+    description: "Separate governed pyodbc fallback for one bounded read against the canonical Fabric SQL target. First attempt the managed fabric-sqlendpoint MCP tool. Call fabric_sql_query only after that actual attempt fails because the MCP server/tool is unavailable or missing, or because of authentication, timeout, connection, or transport failure. Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
+    promptSnippet: "Post-MCP-failure pyodbc fallback for one approval-gated bounded Fabric SELECT TOP read",
     promptGuidelines: [
-      "Prefer the fabric-sqlendpoint MCP route. Never cascade automatically to fabric_sql_query.",
+      "First attempt managed fabric-sqlendpoint MCP. Only after an actual unavailable/authentication/timeout/connection/transport/tool-missing failure may you issue a separate fabric_sql_query call; never fallback before MCP or for SQL/business/query rejection, and never cascade automatically.",
       "Use only one plain SELECT with a literal TOP bound; mutations, batches, cross-database names, and unbounded reads are rejected before authentication or connection.",
     ],
     parameters: FABRIC_SQL_QUERY_PARAMS,

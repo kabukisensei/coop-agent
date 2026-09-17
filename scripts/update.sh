@@ -101,7 +101,7 @@ _unit_pytool_upgrade() {  # $1 = package
   local installed=0
   pipx list 2>/dev/null | grep "package $pkg " >/dev/null && installed=1
   if [ "$pkg" = "ms-fabric-cli" ]; then
-    fabric_py="$(coop_fabric_python)" || fabric_py=""
+    fabric_py="$(coop_fabric_bootstrap_python)" || fabric_py=""
     if [ -z "$fabric_py" ]; then
       if pipx install --help 2>&1 | grep -F -- '--fetch-python' >/dev/null; then
         fabric_py="3.12"; fabric_fetch="--fetch-python=missing"
@@ -225,7 +225,7 @@ trap 'coop_progress_end; _coop_unit_cleanup; exit 130' INT TERM
 # `coop update` is also the repair path for an incomplete workstation. If the
 # Fabric CLI cannot run under the default Python (notably Python 3.14), add a
 # supported side-by-side interpreter before converging the pipx fleet.
-if ! coop_fabric_python >/dev/null 2>&1; then
+if ! coop_fabric_bootstrap_python >/dev/null 2>&1; then
   if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
     coop_info "Microsoft Fabric CLI needs Python 3.10–3.13; installing Python 3.12…"
     brew install python@3.12 >/dev/null 2>&1 || true
@@ -244,7 +244,7 @@ if ! coop_fabric_python >/dev/null 2>&1; then
     # Git Bash on Windows: the Python launcher/install manager first, winget second.
     coop_info "Microsoft Fabric CLI needs Python 3.10–3.13; installing Python 3.12…"
     if command -v py >/dev/null 2>&1; then py install 3.12 >/dev/null 2>&1 || true; fi
-    if ! coop_fabric_python >/dev/null 2>&1 && command -v winget >/dev/null 2>&1; then
+    if ! coop_fabric_bootstrap_python >/dev/null 2>&1 && command -v winget >/dev/null 2>&1; then
       winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity >/dev/null 2>&1 || true
     fi
   fi
@@ -275,32 +275,18 @@ hash -r 2>/dev/null || true
 # Done with the update items — finalize the bar (leaves a permanent 100% line).
 coop_progress_end
 
-# fabric-cicd is a library injected into the Fabric CLI env. Normal mode always
-# uses the manifest pin; edge mode alone may take latest.
-FCC_PIN=''
-if [ "$EDGE" != 1 ]; then FCC_PIN="$(coop_manifest_object_get python_tools fabric-cicd)"; fi
-if have pipx && pipx list 2>/dev/null | grep "package ms-fabric-cli " >/dev/null; then
-  # Keep the tail of pip's output: a pin that cannot resolve (e.g. Requires-Python
-  # <3.14 vs a 3.14 venv) must say WHY instead of failing silently.
-  _inject_out=''
-  if [ -n "$FCC_PIN" ]; then
-    _inject_out="$(pipx inject ms-fabric-cli "fabric-cicd==$FCC_PIN" --force 2>&1)" && _inject_rc=0 || _inject_rc=$?
-    if [ "$_inject_rc" -eq 0 ]; then
-      coop_ok "fabric-cicd (library) pinned to tested $FCC_PIN"
-    else
-      coop_warn "failed to pin fabric-cicd to $FCC_PIN in the ms-fabric-cli environment" "$(coop_pip_error_tail "$_inject_out")"
-      UPDATE_FAILURES=$((UPDATE_FAILURES + 1))
-    fi
+# Exact runtime libraries are part of Fabric convergence, not standalone tools.
+if [ "$NO_FABRIC" != 1 ] && have pipx && pipx list 2>/dev/null | grep "package ms-fabric-cli " >/dev/null; then
+  if coop_converge_fabric_python_packages; then
+    coop_ok "Fabric Python runtime pinned (fabric-cicd + pyodbc)"
   else
-    _inject_out="$(pipx inject ms-fabric-cli fabric-cicd --force 2>&1)" && _inject_rc=0 || _inject_rc=$?
-    if [ "$_inject_rc" -eq 0 ]; then
-      coop_ok "fabric-cicd (library) refreshed"
-    else
-      coop_warn "failed to refresh fabric-cicd in the ms-fabric-cli environment" "$(coop_pip_error_tail "$_inject_out")"
-      UPDATE_FAILURES=$((UPDATE_FAILURES + 1))
-    fi
+    coop_warn "failed to converge the Fabric Python runtime"
+    UPDATE_FAILURES=$((UPDATE_FAILURES + 1))
   fi
-  unset _inject_out _inject_rc
+  if ! coop_ensure_fabric_odbc_driver 1; then
+    coop_warn "Fabric SQL fallback is not ready" "install ODBC Driver 18+, then run: coop doctor"
+    UPDATE_FAILURES=$((UPDATE_FAILURES + 1))
+  fi
 fi
 [ "${COOP_FLEET_TEST_MODE:-0}" = 1 ] && { [ "$UPDATE_FAILURES" -eq 0 ]; exit $?; }
 
@@ -308,7 +294,8 @@ fi
 # sync also re-pins the extension tree's pi-ai/pi-tui to the (possibly just-updated)
 # agent version, so the skew can't survive an update. Runs AFTER step 2 by design.
 coop_head "5/6  Sync brand assets"
-if ! "$COOP_ROOT/scripts/sync.sh"; then
+# Fabric was converged (or explicitly skipped) above; avoid a second injection/prompt.
+if ! COOP_SKIP_FABRIC_SYNC=1 "$COOP_ROOT/scripts/sync.sh"; then
   coop_warn "sync reported issues"
   UPDATE_FAILURES=$((UPDATE_FAILURES + 1))
 fi

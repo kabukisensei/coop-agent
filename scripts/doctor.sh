@@ -302,6 +302,18 @@ else
   warn "fabric-cicd: install the Microsoft Fabric CLI first" "coop install"
 fi
 
+# The pyodbc fallback is a required installed capability: use the exact runtime
+# selected for execution and require both the exact pin and Driver 18+ visibility.
+sql_runtime="$(coop_fabric_sql_runtime_status 2>/dev/null)" || true
+case "$sql_runtime" in
+  ready*) ok "Fabric SQL fallback ready (pyodbc $(printf '%s' "$sql_runtime" | cut -f2), ODBC Driver $(printf '%s' "$sql_runtime" | cut -f3))" ;;
+  pyodbc_missing) bad "Fabric SQL fallback: pyodbc missing from selected runtime" "coop sync" ;;
+  pyodbc_wrong*) bad "Fabric SQL fallback: pyodbc $(printf '%s' "$sql_runtime" | cut -f2) differs from manifest ($(coop_manifest_get python_tools.pyodbc))" "coop sync" ;;
+  pyodbc_unloadable) bad "Fabric SQL fallback: pyodbc is installed but unloadable" "coop sync; repair the ms-fabric-cli environment if it persists" ;;
+  driver_missing*) bad "Fabric SQL fallback: ODBC Driver 18+ for SQL Server is missing" "Windows: coop install --yes; otherwise install Microsoft ODBC Driver 18, then run: coop doctor" ;;
+  *) bad "Fabric SQL fallback: selected Fabric Python runtime is unavailable" "coop install" ;;
+esac
+
 # Tabular Editor CLI (te — cross-platform; BPA reviews run through `te bpa run`)
 proj_yml="$(coop_find_project_yml)"
 if ! coop_tool_enabled "$proj_yml" "tabular_editor_cli"; then

@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env pwsh
 $ErrorActionPreference = 'Stop'
 
-# Get-CoopFabricPython must discover side-by-side interpreters that are NOT on
+# Get-CoopFabricBootstrapPython must discover side-by-side interpreters that are NOT on
 # PATH (Python install manager + winget layouts) and must reject incompatible
 # versions (notably a 3.14-only machine). The bash twin of this fixture runs in
 # the Windows Git Bash CI leg; here we skip native Windows to avoid executing
@@ -53,13 +53,13 @@ try {
   $env:COOP_FAKE_PY_VERSION = '3.13'
   $py313 = Join-Path (Join-Path (Join-Path $fakeLocal 'Python') 'bin') 'python3.13.exe'
   New-FakePython $py313
-  $found = Get-CoopFabricPython
+  $found = Get-CoopFabricBootstrapPython
   if ($found -ne $py313) { throw "pymanager-layout interpreter not discovered (got '$found')" }
   Write-Output '  ✓ %LOCALAPPDATA%\Python\bin side-by-side interpreter discovered'
 
   # 2. An interpreter that reports 3.14 is NOT Fabric-compatible.
   $env:COOP_FAKE_PY_VERSION = '3.14'
-  $found = Get-CoopFabricPython
+  $found = Get-CoopFabricBootstrapPython
   if ($null -ne $found) { throw "Python 3.14 wrongly accepted as Fabric-compatible: '$found'" }
   Write-Output '  ✓ 3.14-only machine still reports no compatible interpreter'
 
@@ -68,7 +68,7 @@ try {
   $env:COOP_FAKE_PY_VERSION = '3.12'
   $py312 = Join-Path (Join-Path (Join-Path (Join-Path $fakeLocal 'Programs') 'Python') 'Python312') 'python.exe'
   New-FakePython $py312
-  $found = Get-CoopFabricPython
+  $found = Get-CoopFabricBootstrapPython
   if ($found -ne $py312) { throw "winget user-scope interpreter not discovered (got '$found')" }
   Write-Output '  ✓ %LOCALAPPDATA%\Programs\Python\Python31x layout discovered'
 }

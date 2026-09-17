@@ -180,9 +180,8 @@ function Get-CoopVenvPythonVersion([string]$Venv) {
   & $py -c 'import platform;print(platform.python_version())' 2>$null
 }
 
-# Resolve a Python interpreter supported by ms-fabric-cli (<3.14, >=3.10).
-# Prefer 3.13, then 3.12; accept a compatible generic python as a fallback.
-# COOP_FABRIC_PYTHON is an explicit test/admin override.
+# Resolve a bootstrap interpreter supported by ms-fabric-cli (<3.14, >=3.10).
+# Live Fabric Python is resolved separately from the managed pipx environment.
 # Last ERROR line of captured pip output, trimmed — for actionable warnings.
 function Coop-PipErrorTail([string]$Out) {
   $reason = ''
@@ -194,11 +193,7 @@ function Coop-PipErrorTail([string]$Out) {
   return $reason
 }
 
-function Get-CoopFabricPython {
-  if ($env:COOP_FABRIC_PYTHON) {
-    if (Test-Path -LiteralPath $env:COOP_FABRIC_PYTHON -PathType Leaf) { return $env:COOP_FABRIC_PYTHON }
-    return $null
-  }
+function Get-CoopFabricBootstrapPython {
   foreach ($name in @('python3.13', 'python3.12')) {
     $cmd = Get-Command $name -ErrorAction SilentlyContinue
     if (-not $cmd -or -not $cmd.Source -or $cmd.Source -match '\\WindowsApps\\') { continue }
@@ -245,6 +240,79 @@ function Get-CoopVenvPythonPath([string]$Venv) {
     if (Test-Path -LiteralPath $py) { return $py }
   }
   return $null
+}
+
+# Exact runtime for live Fabric SQL. The managed ms-fabric-cli environment is
+# the default; COOP_FABRIC_PYTHON is operator-managed and never mutated.
+function Get-CoopFabricPython {
+  $py = if ($env:COOP_FABRIC_PYTHON) { $env:COOP_FABRIC_PYTHON } else { Get-CoopVenvPythonPath 'ms-fabric-cli' }
+  if (-not $py -or -not [System.IO.Path]::IsPathRooted($py) -or -not (Test-Path -LiteralPath $py -PathType Leaf)) { return $null }
+  & $py -c 'import sys; raise SystemExit(0 if sys.executable else 1)' *> $null
+  if ($LASTEXITCODE -ne 0) { return $null }
+  return $py
+}
+
+function Get-CoopFabricSqlRuntimeStatus {
+  $py = Get-CoopFabricPython
+  if (-not $py) { return [pscustomobject]@{ state = 'runtime_missing'; version = ''; driver = 0 } }
+  $pin = Coop-ManifestGet -Key 'python_tools.pyodbc'
+  $probe = @'
+import importlib.metadata as m,re,sys
+pin=sys.argv[1]
+try:
+ v=m.version("pyodbc")
+except Exception:
+ print("pyodbc_missing"); raise SystemExit(2)
+if v != pin:
+ print("pyodbc_wrong\t"+v); raise SystemExit(3)
+try:
+ import pyodbc
+except Exception:
+ print("pyodbc_unloadable"); raise SystemExit(4)
+majors=[int(x.group(1)) for d in pyodbc.drivers() for x in [re.fullmatch(r"ODBC Driver ([0-9]+) for SQL Server",d)] if x]
+if not majors or max(majors) < 18:
+ print("driver_missing\t"+v); raise SystemExit(5)
+print("ready\t"+v+"\t"+str(max(majors)))
+'@
+  $line = [string]((& $py -c $probe $pin 2>$null | Select-Object -First 1))
+  $parts = @($line -split "`t")
+  return [pscustomobject]@{ state = $(if ($parts.Count) { $parts[0] } else { 'pyodbc_unloadable' }); version = $(if ($parts.Count -gt 1) { $parts[1] } else { '' }); driver = $(if ($parts.Count -gt 2) { [int]$parts[2] } else { 0 }) }
+}
+
+function Sync-CoopFabricPythonPackages {
+  if (-not $env:COOP_FABRIC_PYTHON) {
+    $pipx = Get-CoopPipxCmd
+    foreach ($pkg in @('fabric-cicd', 'pyodbc')) {
+      $pin = Coop-ManifestGet -Key "python_tools.$pkg"
+      if (-not $pin) { return $false }
+      & $pipx inject ms-fabric-cli "$pkg==$pin" --force *> $null
+      if ($LASTEXITCODE -ne 0) { Coop-Warn "failed to pin $pkg to $pin in the ms-fabric-cli environment"; return $false }
+    }
+  }
+  $status = Get-CoopFabricSqlRuntimeStatus
+  return ($status.state -eq 'ready' -or $status.state -eq 'driver_missing')
+}
+
+function Ensure-CoopFabricOdbcDriver([bool]$AllowPrereqs = $true) {
+  $status = Get-CoopFabricSqlRuntimeStatus
+  if ($status.state -eq 'ready') { return $true }
+  if ($status.state -ne 'driver_missing') { return $false }
+  if ($env:OS -ne 'Windows_NT') {
+    Coop-Warn 'ODBC Driver 18+ for SQL Server is missing' 'install Microsoft ODBC Driver 18 for SQL Server, then run: coop doctor'
+    return $false
+  }
+  if (-not $AllowPrereqs) { Coop-Warn 'ODBC Driver 18+ is missing (--no-prereqs)' 'install Microsoft.msodbcsql.18, then run: coop doctor'; return $false }
+  if (-not (Coop-Confirm 'Install Microsoft ODBC Driver 18 for SQL Server and accept its license?')) {
+    Coop-Warn 'ODBC Driver 18+ is required; license was not accepted' 're-run with --yes or install Microsoft.msodbcsql.18 manually'
+    return $false
+  }
+  $winget = Get-Command winget -ErrorAction SilentlyContinue
+  if (-not $winget) { Coop-Warn 'winget is required to install ODBC Driver 18 automatically' 'install Microsoft.msodbcsql.18 manually, then run: coop doctor'; return $false }
+  & $winget.Source install --id Microsoft.msodbcsql.18 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
+  if ($LASTEXITCODE -ne 0) { Coop-Warn 'ODBC Driver 18 installation failed' 'run an elevated terminal or install Microsoft.msodbcsql.18 manually, then run: coop doctor'; return $false }
+  $after = Get-CoopFabricSqlRuntimeStatus
+  if ($after.state -ne 'ready') { Coop-Warn 'ODBC Driver 18 installation completed but the selected Fabric runtime cannot see it' 'open a new terminal, then run: coop doctor'; return $false }
+  return $true
 }
 
 # The installed distribution's own Requires-Python metadata, read from inside

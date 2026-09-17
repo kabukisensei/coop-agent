@@ -356,6 +356,16 @@ if (Test-Have 'fab') {
   D-Warn 'fabric-cicd: install the Microsoft Fabric CLI first' 'coop install'
 }
 
+$sqlRuntime = Get-CoopFabricSqlRuntimeStatus
+switch ($sqlRuntime.state) {
+  'ready'            { D-Ok "Fabric SQL fallback ready (pyodbc $($sqlRuntime.version), ODBC Driver $($sqlRuntime.driver))" }
+  'pyodbc_missing'   { D-Bad 'Fabric SQL fallback: pyodbc missing from selected runtime' 'coop sync' }
+  'pyodbc_wrong'     { D-Bad "Fabric SQL fallback: pyodbc $($sqlRuntime.version) differs from manifest ($(Coop-ManifestGet 'python_tools.pyodbc'))" 'coop sync' }
+  'pyodbc_unloadable'{ D-Bad 'Fabric SQL fallback: pyodbc is installed but unloadable' 'coop sync; repair the ms-fabric-cli environment if it persists' }
+  'driver_missing'   { D-Bad 'Fabric SQL fallback: ODBC Driver 18+ for SQL Server is missing' 'coop install --yes, or install Microsoft.msodbcsql.18 manually' }
+  default            { D-Bad 'Fabric SQL fallback: selected Fabric Python runtime is unavailable' 'coop install' }
+}
+
 # Tabular Editor CLI is path-configured and mostly Windows; check the project's path if set.
 $projYml = Find-CoopProjectYml
 if (-not (Test-CoopToolEnabled $projYml 'tabular_editor_cli')) {

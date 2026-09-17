@@ -29,11 +29,17 @@ REAL_NODE="$(command -v node)"; REAL_PY="$(command -v python3 2>/dev/null || com
 stub_python() { # <destination> — wrappers preserve native Windows DLL lookup
   cat > "$1" <<SH
 #!/bin/sh
+case "\$*" in
+  *'pyodbc.drivers()'*) printf 'ready\\t5.3.0\\t18\\n'; exit 0 ;;
+  *'import pyodbc'*) exit 0 ;;
+esac
 exec "$REAL_PY" "\$@"
 SH
   chmod +x "$1"
+  mkdir -p "$PIPX_HOME/venvs/ms-fabric-cli/bin"
+  ln -sf "$1" "$PIPX_HOME/venvs/ms-fabric-cli/bin/python"
 }
-COOP_FABRIC_PYTHON="$REAL_PY"; export COOP_FABRIC_PYTHON
+unset COOP_FABRIC_PYTHON
 cat > "$STUB/pi" <<'SH'
 #!/bin/sh
 [ "$1" = "--version" ] && { echo 'pi 0.84.3'; exit 0; }
@@ -71,15 +77,23 @@ chmod +x "$STUB/pi" "$STUB/npm" "$STUB/pipx" "$STUB/fab"
 PATH="$STUB:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB"; export PATH COOP_TEST_STUB_PATH
 : > "$MARKER"
 COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" --force >/dev/null 2>&1
-grep -F "PIPX install --force --python $REAL_PY ms-fabric-cli==1.7.0" "$MARKER" >/dev/null \
-  || { echo 'Fabric CLI install did not select the supported Python explicitly'; cat "$MARKER"; exit 1; }
+grep -E 'PIPX install --force --python .+ ms-fabric-cli==1\.7\.0' "$MARKER" >/dev/null \
+  || { echo 'Fabric CLI install did not select a supported bootstrap Python explicitly'; cat "$MARKER"; exit 1; }
 for spec in \
   'npm:pi-mcp-adapter@2.34.0' 'npm:pi-hermes-memory@0.7.17' \
   'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' \
   'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing install spec $spec"; cat "$MARKER"; exit 1; }
 done
-grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0' "$MARKER" >/dev/null
+grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force' "$MARKER" >/dev/null
+grep -F 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force' "$MARKER" >/dev/null
+
+# An injected-library failure is a convergence failure, not a warning-only success.
+failed_inject_rc=0
+PIPX_FAIL_MATCH='pyodbc==5.3.0' COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 \
+  bash "$ROOT/scripts/install.sh" --force >/dev/null 2>&1 || failed_inject_rc=$?
+[ "$failed_inject_rc" -ne 0 ] || { echo 'failed pyodbc injection was converted into install success'; exit 1; }
+echo '  ✓ exact pyodbc pin is injected and injection failure is nonzero'
 
 # Install, like update, must preserve a visible convergence failure in its exit
 # status even though it continues through the remaining units for diagnostics.
@@ -94,8 +108,8 @@ update_out="$ISOL_D/update.out"; update_rc=0
 COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.84.3 COOP_PYPI_LATEST_OVERRIDE=0.1.0 \
   bash "$ROOT/scripts/update.sh" >"$update_out" 2>&1 || update_rc=$?
 [ "$update_rc" -eq 0 ] || { echo "normal pinned update failed unexpectedly (rc=$update_rc)"; tail -30 "$update_out"; exit 1; }
-grep -F "PIPX install --force --python $REAL_PY ms-fabric-cli==1.7.0" "$MARKER" >/dev/null \
-  || { echo 'Fabric CLI update did not select the supported Python explicitly'; cat "$MARKER"; exit 1; }
+grep -E 'PIPX install --force --python .+ ms-fabric-cli==1\.7\.0' "$MARKER" >/dev/null \
+  || { echo 'Fabric CLI update did not select a supported bootstrap Python explicitly'; cat "$MARKER"; exit 1; }
 for spec in 'npm:pi-mcp-adapter@2.34.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing update spec $spec"; exit 1; }
 done
@@ -296,8 +310,9 @@ exit 0
 SH
 ln -s "$REAL_NODE" "$STUB6/node"; stub_python "$STUB6/python3"
 chmod +x "$STUB6/pi" "$STUB6/npm" "$STUB6/pipx"
-PATH="$STUB6:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB6"; COOP_FABRIC_PYTHON="$REAL_PY"
-export PATH COOP_TEST_STUB_PATH COOP_FABRIC_PYTHON
+PATH="$STUB6:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB6"
+export PATH COOP_TEST_STUB_PATH
+unset COOP_FABRIC_PYTHON
 : > "$MARKER6"
 COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.84.3 COOP_PYPI_LATEST_OVERRIDE=0.1.0 \
   bash "$ROOT/scripts/update.sh" >/dev/null 2>&1
