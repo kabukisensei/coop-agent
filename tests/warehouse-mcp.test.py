@@ -4,8 +4,10 @@
 import importlib.util
 import base64
 import json
+import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -59,7 +61,9 @@ def managed_config(url=wmcp.GLOBAL_SQL_ENDPOINT_URL):
 cfg = managed_config()
 assert wmcp.doctor_status(cfg)["state"] == "registered"
 with mock.patch.object(
-    wmcp, "az_access_token", side_effect=AssertionError("offline status requested credentials")
+    wmcp,
+    "az_access_token",
+    side_effect=AssertionError("offline status requested credentials"),
 ) as offline_auth:
     assert wmcp.doctor_status(cfg, [{"name": "executeSQL"}])["state"] == "registered"
     offline_auth.assert_not_called()
@@ -172,7 +176,7 @@ for resource in (wmcp.FABRIC_RESOURCE, wmcp.SQL_RESOURCE):
         assert wmcp.az_access_token(resource=resource) == (helper_token, "ok")
         assert run.call_args.args == (
             [trusted_node, wmcp.REQUEST_HEADERS_HELPER, "--token", resource],
-            8,
+            10,
         )
 
 with (
@@ -233,10 +237,30 @@ with mock.patch.dict(wmcp.os.environ, {"ARBITRARY_SECRET_CANARY": "must-not-pass
     helper_env = wmcp._token_helper_environment()
 assert "ARBITRARY_SECRET_CANARY" not in helper_env
 assert set(helper_env) <= {
-    "PATH", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "LOCALAPPDATA",
-    "APPDATA", "SystemRoot", "WINDIR", "SystemDrive", "TEMP", "TMP", "TMPDIR",
-    "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "HTTP_PROXY", "HTTPS_PROXY",
-    "NO_PROXY", "http_proxy", "https_proxy", "no_proxy", "AZURE_CONFIG_DIR",
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "SystemRoot",
+    "WINDIR",
+    "SystemDrive",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "LANG",
+    "LANGUAGE",
+    "LC_ALL",
+    "LC_CTYPE",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "AZURE_CONFIG_DIR",
 }
 
 code, stdout, stderr, timed_out = wmcp._run_token_helper(
@@ -245,6 +269,72 @@ code, stdout, stderr, timed_out = wmcp._run_token_helper(
 )
 assert code == 24 and len(stdout) > wmcp.MAX_TOKEN_HELPER_OUTPUT
 assert stderr == b"" and timed_out is False
+
+if not wmcp._is_windows():
+    with tempfile.TemporaryDirectory() as tree_dir:
+        tree = Path(tree_dir)
+        fake_az = tree / "az"
+        descendant_pid = tree / "descendant.pid"
+        delayed_marker = tree / "descendant-survived"
+        fake_az.write_text(
+            f"""#!{sys.executable}
+import subprocess
+import sys
+import time
+subprocess.Popen([
+    sys.executable,
+    "-c",
+    "import os, pathlib, sys, time; pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(2); pathlib.Path(sys.argv[2]).write_text('survived'); time.sleep(20)",
+    {str(descendant_pid)!r},
+    {str(delayed_marker)!r},
+])
+while True:
+    time.sleep(1)
+""",
+            encoding="utf-8",
+        )
+        fake_az.chmod(0o755)
+        with mock.patch.dict(
+            wmcp.os.environ,
+            {"PATH": f"{tree}{os.pathsep}{os.environ.get('PATH', '')}"},
+        ):
+            assert wmcp.az_access_token(timeout=1) == ("", "token_timeout")
+        deadline = time.monotonic() + 2
+        while not descendant_pid.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert descendant_pid.exists(), "fake az descendant never started"
+        pid = int(descendant_pid.read_text(encoding="utf-8"))
+
+        def process_exists(candidate: int) -> bool:
+            try:
+                os.kill(candidate, 0)
+                return True
+            except ProcessLookupError:
+                return False
+
+        deadline = time.monotonic() + 2
+        while process_exists(pid) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert not process_exists(pid), "Azure CLI descendant survived timeout"
+        time.sleep(2.2)
+        assert not delayed_marker.exists(), "killed descendant wrote delayed marker"
+
+fake_proc = mock.Mock(pid=4242)
+with (
+    mock.patch.object(wmcp, "_is_windows", return_value=True),
+    mock.patch.object(
+        wmcp,
+        "_windows_taskkill_command",
+        return_value=[r"C:\Windows\System32\taskkill.exe", "/PID", "4242", "/T", "/F"],
+    ),
+    mock.patch.object(wmcp.subprocess, "run") as taskkill_run,
+):
+    wmcp._terminate_token_helper_tree(fake_proc)
+taskkill_run.assert_called_once()
+assert taskkill_run.call_args.args[0][0] == r"C:\Windows\System32\taskkill.exe"
+assert taskkill_run.call_args.kwargs["env"] == {"SystemRoot": r"C:\Windows"}
+assert taskkill_run.call_args.kwargs["shell"] is False
+fake_proc.kill.assert_called_once()
 
 with tempfile.TemporaryDirectory(dir=ROOT) as local_dir:
     local_node = Path(local_dir) / ("node.exe" if wmcp._is_windows() else "node")

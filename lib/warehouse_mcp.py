@@ -11,12 +11,15 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import ntpath
 import os
 import re
+import signal
 import shutil
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -33,7 +36,9 @@ SQL_RESOURCE = "https://database.windows.net/"
 TOKEN_RESOURCES = {FABRIC_RESOURCE, SQL_RESOURCE}
 FABRIC_TOKEN_ENV = "COOP_FABRIC_MCP_TOKEN"
 GLOBAL_SQL_ENDPOINT_URL = f"{FABRIC_RESOURCE}/v1/mcp/dataPlane/sqlEndpoint"
-REQUEST_HEADERS_HELPER = str(Path(__file__).resolve().parent / "fabric_request_headers.mjs")
+REQUEST_HEADERS_HELPER = str(
+    Path(__file__).resolve().parent / "fabric_request_headers.mjs"
+)
 TOKEN_FRAME_RE = re.compile(rb"^coop-azure-token-v1\t([A-Za-z0-9_-]+)\tend$")
 MAX_TOKEN_HELPER_OUTPUT = 32 * 1024
 UUID_RE = re.compile(
@@ -375,9 +380,69 @@ def _token_helper_environment() -> dict[str, str]:
     }
 
 
+def _windows_taskkill_command(pid: int) -> list[str] | None:
+    raw_root = os.environ.get("SystemRoot", "")
+    if not raw_root or "\0" in raw_root or not ntpath.isabs(raw_root):
+        return None
+    try:
+        system_root = Path(raw_root).resolve(strict=True)
+        system32 = (system_root / "System32").resolve(strict=True)
+        taskkill = (system32 / "taskkill.exe").resolve(strict=True)
+        if not taskkill.is_file() or taskkill.parent != system32:
+            return None
+    except (OSError, RuntimeError):
+        return None
+    return [str(taskkill), "/PID", str(pid), "/T", "/F"]
+
+
+def _terminate_token_helper_tree(proc: subprocess.Popen[bytes]) -> None:
+    if _is_windows():
+        taskkill = _windows_taskkill_command(proc.pid)
+        if taskkill:
+            try:
+                subprocess.run(
+                    taskkill,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env={"SystemRoot": ntpath.dirname(ntpath.dirname(taskkill[0]))},
+                    shell=False,
+                    timeout=2,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=1)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    try:
+        proc.wait(timeout=1)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def _run_token_helper(
     command: list[str], timeout: int
 ) -> tuple[int, bytes, bytes, bool]:
+    windows = _is_windows()
     proc = subprocess.Popen(
         command,
         stdin=subprocess.DEVNULL,
@@ -385,6 +450,10 @@ def _run_token_helper(
         stderr=subprocess.PIPE,
         env=_token_helper_environment(),
         shell=False,
+        start_new_session=not windows,
+        creationflags=(
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if windows else 0
+        ),
     )
     streams: list[bytes] = [b"", b""]
     overflow = threading.Event()
@@ -396,23 +465,29 @@ def _run_token_helper(
         streams[index] = data
         if len(data) > MAX_TOKEN_HELPER_OUTPUT:
             overflow.set()
-            try:
-                proc.kill()
-            except OSError:
-                pass
 
     readers = [threading.Thread(target=read_stream, args=(index,)) for index in (0, 1)]
     for reader in readers:
         reader.start()
     timed_out = False
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        proc.kill()
-        proc.wait()
+    deadline = time.monotonic() + timeout
+    while proc.poll() is None:
+        if overflow.is_set():
+            _terminate_token_helper_tree(proc)
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
+            _terminate_token_helper_tree(proc)
+            break
+        try:
+            proc.wait(timeout=min(0.05, remaining))
+        except subprocess.TimeoutExpired:
+            pass
     for reader in readers:
-        reader.join()
+        reader.join(timeout=1)
+    if overflow.is_set() and proc.poll() is None:
+        _terminate_token_helper_tree(proc)
     return (
         24 if overflow.is_set() else proc.returncode,
         streams[0],
@@ -443,7 +518,7 @@ def _parse_token_frame(stdout: bytes) -> str | None:
 
 
 def az_access_token(
-    timeout: int = 8, resource: str = FABRIC_RESOURCE
+    timeout: int = 10, resource: str = FABRIC_RESOURCE
 ) -> tuple[str, str]:
     if resource not in TOKEN_RESOURCES:
         return "", "token_command_failed"

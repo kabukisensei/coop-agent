@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { windowsAzureCliCandidates, windowsAzureCliCommand } from "../lib/fabric_request_headers.mjs";
+import { windowsAzureCliCandidates, windowsAzureCliCommand, windowsTaskkillCommand } from "../lib/fabric_request_headers.mjs";
 
 const ROOT = fileURLToPath(new globalThis.URL("..", import.meta.url));
 const HELPER = join(ROOT, "lib", "fabric_request_headers.mjs");
@@ -20,21 +20,24 @@ const fakeProgram = join(dir, "fake-az.cjs");
 const counter = join(dir, "counter");
 const envDump = join(dir, "child-env.json");
 const marker = join(dir, "executed");
+const delayedMarker = join(dir, "descendant-survived");
 const baseEnvelope = { version: 1, method: "POST", url: ENDPOINT, bodyBase64: Buffer.from("{}").toString("base64") };
 const quoted = (value) => JSON.stringify(value);
 
 function installFake(mode) {
   const source = `#!${process.execPath}
 const fs=require('node:fs');
+const {spawn}=require('node:child_process');
 fs.writeFileSync(${quoted(marker)},'yes');
 fs.writeFileSync(${quoted(envDump)},JSON.stringify(process.env));
 const mode=${quoted(mode)};
 const seg=(v)=>Buffer.from(typeof v==='string'?v:JSON.stringify(v)).toString('base64url');
 const jwt=(claims,sig)=>seg('{"alg":"none"}')+'.'+seg(claims)+'.'+seg(sig);
-if(mode==='stderr'){process.stderr.write('child-diagnostic-canary');process.exit(0)}
+if(mode==='tree-stderr'||mode==='tree-oversize') spawn(process.execPath,['-e',${quoted(`setTimeout(()=>require('node:fs').writeFileSync(${quoted(delayedMarker)},'survived'),2000);setTimeout(()=>{},20000)`)}],{stdio:'ignore'});
+if(mode==='stderr'||mode==='tree-stderr'){process.stderr.write('child-diagnostic-canary');process.exit(0)}
 if(mode==='nonzero') process.exit(7);
 if(mode==='timeout') setTimeout(()=>{},20000);
-else if(mode==='oversize') process.stdout.write('x'.repeat(70000));
+else if(mode==='oversize'||mode==='tree-oversize') process.stdout.write('x'.repeat(70000));
 else if(mode==='invalid') process.stdout.write('{');
 else if(mode==='invalid-token') process.stdout.write(JSON.stringify({accessToken:'not-a-jwt'}));
 else if(mode==='invalid-utf8-token') process.stdout.write(JSON.stringify({accessToken:seg('{"alg":"none"}')+'.'+Buffer.from([0xc3,0x28]).toString('base64url')+'.'+seg('sig')}));
@@ -56,6 +59,7 @@ else {
     chmodSync(fakeAz, 0o755);
   }
   rmSync(marker, { force: true });
+  rmSync(delayedMarker, { force: true });
 }
 
 const run = (envelope = baseEnvelope, mode = "success", endpoint = ENDPOINT, token = launch, options = {}) => {
@@ -122,6 +126,12 @@ try {
     const result = runToken("https://api.fabric.microsoft.com", mode);
     assert.notEqual(result.status, 0, `token mode ${mode}`);
     assert.equal(result.stdout.length, 0, mode); assert.equal(result.stderr.length, 0, mode);
+  }
+  for (const mode of ["tree-stderr", "tree-oversize"]) {
+    const result = runToken("https://api.fabric.microsoft.com", mode);
+    assert.notEqual(result.status, 0, mode);
+    await new Promise((resolveWait) => setTimeout(resolveWait, 2200));
+    assert.equal(existsSync(delayedMarker), false, `${mode} Azure CLI descendant was not terminated`);
   }
 
   for (const [envelope, endpoint] of [
@@ -198,6 +208,11 @@ try {
       args: ["/d", "/s", "/c", '""C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd" account get-access-token --resource https://api.fabric.microsoft.com --output json"'],
     },
   );
+  assert.deepEqual(windowsTaskkillCommand("C:\\Windows", 4242), {
+    command: "C:\\Windows\\System32\\taskkill.exe",
+    args: ["/PID", "4242", "/T", "/F"],
+  });
+  assert.equal(windowsTaskkillCommand("Windows", 4242), null);
   console.log("  ✓ Fabric request headers resolve Azure CLI safely and fail closed");
 } finally {
   rmSync(dir, { recursive: true, force: true });
