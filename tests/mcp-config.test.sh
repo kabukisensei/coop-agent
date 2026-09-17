@@ -24,6 +24,7 @@ sql=s['fabric-sqlendpoint']
 assert sql['url']=='https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint'
 assert sql['auth']=='bearer' and sql['bearerTokenEnv']=='COOP_FABRIC_MCP_TOKEN'
 assert sql['lifecycle']=='lazy'
+assert sql['_coop_runtime']=={'request_timeout_ms':60000}
 assert 'command' not in sql and 'args' not in sql and 'mcp-remote' not in json.dumps(sql)
 assert 'bearerToken' not in sql and 'Authorization' not in json.dumps(sql)
 assert 'oauth' not in sql and sql['bearerTokenEnv']=='COOP_FABRIC_MCP_TOKEN'
@@ -58,6 +59,7 @@ import json,sys
 s=json.load(open(sys.argv[1]))['mcpServers']['fabric-sqlendpoint']
 assert s['url']=='https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/11111111-1111-1111-1111-111111111111/items/22222222-2222-2222-2222-222222222222/sqlEndpoint'
 assert s['_coop_target']['scope']=='item'
+assert s['_coop_runtime']['request_timeout_ms']==60000
 PY
 # Lakehouse targets use sqlEndpointProperties.id, not the Lakehouse item id.
 cat > "$d/project/.coop/project.yml" <<'YAML'

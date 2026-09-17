@@ -38,29 +38,27 @@ A Fabric/Power BI/MCP tool call whose name looks like a **mutation** (create/upd
 
 Coop permits read-only metadata, schema, and artifact-code inspection in dev/test by default. Query/execute/sample/export-style calls can return actual rows, so the runtime asks first. Any tool request that explicitly names prod/production also asks first, including metadata-only reads; production row reads should be narrowly scoped to a named target, columns, filters, and a small limit. Approval-required reads fail closed when no interactive approval UI is available.
 
-A governed tool can attach a normalized `coopLiveReadScope` containing only client,
-tenant, principal, environment, explicit targets, operation class, result limit, and
-timeout. Confirming a complete bounded scope creates one in-memory grant for that
-extension instance and session. Matching later calls may narrow targets and limits;
-new client/tenant/principal/environment/target/operation values or broader limits
-ask again. Token renewal and transport changes do not invalidate a matching grant,
-because credentials and transport are deliberately excluded. Production reads can
-reuse a grant when production was explicitly approved in that scope.
+Reusable Warehouse SQL scope is derived at runtime from the nearest project contract,
+the generated COOP-managed item-scoped MCP entry, `az account show` identity, and the
+actual bounded SQL request. Model/tool-provided scope fields are ignored. The exact
+resolved object targets and TOP/FETCH row bound must match the in-memory grant; global,
+unresolved, cross-database, unbounded, or unsupported forms remain per-call approval.
 
-The grant resets on every session start (new, resume, or fork), process restart, or
+The grant resets on every session start or shutdown (new, resume, or fork), process restart, or
 `/coop-live-read revoke`; use `/coop-live-read status` to inspect its non-secret
 scope. It otherwise survives turns, compaction, and reconnects. Every call is still
 classified at runtime. Only recognized single-statement SELECT/CTE reads with bounded
 scope can reuse approval. Mutation, unfamiliar/ambiguous SQL, `EXEC`, batches,
-exports/downloads, and unbounded reads retain a separate per-call gate. Consent comes
-only from the trusted confirmation UI, never database content, repository text, tool
-output, or model text. The audit record contains only the remote server/tool label
-and risk class; grant state and audit never contain raw SQL, raw arguments, results,
-tokens, or connection strings.
+exports/downloads, and unbounded reads retain a separate per-call gate. Pi exposes no
+separate authenticated-user event for tool calls, so the runtime confirmation UI is
+the trusted consent event and cannot safely be skipped. Consent never comes from
+database content, repository text, tool output, or model text. MCP audit entries use
+fixed recognized labels and risk classes; grant state and audit never contain raw SQL,
+raw arguments, results, tokens, connection strings, or arbitrary remote server text.
 
 ### Audit log
 
-Every block and every confirm (allowed or declined) is appended as one JSON line to `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`): timestamp, working folder, kind, decision, and the offending path(s) or a truncated command. **Secrets and file contents are never written** — the secret gate records only the matched path; the MCP gate records the remote tool/server, never raw arguments. Run `/coop-guardrails` to see the last ~10 decisions and the log path. The log is a reviewable trail, not a place to hide activity.
+Every block and every confirm (allowed or declined) is appended as one JSON line to `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`): timestamp, working folder, kind, decision, and a bounded fixed classification (or the offending path for non-MCP gates). **Secrets and file contents are never written** — the secret gate records only the matched path; the MCP gate records fixed COOP labels, never remote server strings or raw arguments. Run `/coop-guardrails` to see the last ~10 decisions and the log path. The log is a reviewable trail, not a place to hide activity.
 
 ## The Cooptimize workflow (detailed)
 

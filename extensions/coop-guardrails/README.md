@@ -44,17 +44,15 @@ do instead (e.g. "unstage source and let a human commit").
 
 ## Session live-read grants
 
-Governed live-read tools may supply `coopLiveReadScope` in their input (including
-inside a proxied MCP `args` object): `client`, `tenant`, `principal`, `environment`,
-explicit `targets`, `operationClass` (`sql-read`, `row-read`, or `metadata-read`),
-`resultLimit`, and `timeoutMs`. Approval creates one closure-owned grant for that
-extension instance. Matching calls can narrow targets or limits; changing client,
-tenant, principal, environment, target, operation class, or broadening a bound asks
-again. Credential renewal and transport changes do not affect it because token and
-transport values are never grant identity.
+Only the exact COOP-managed Warehouse MCP path (and the reserved future
+`coop_fabric_pyodbc_query` surface) can receive a reusable SQL grant. The guardrail
+derives client, tenant, environment, item target, current Azure principal, referenced
+SQL objects, static TOP/FETCH row bound, and the managed adapter timeout at runtime.
+Tool arguments such as `coopLiveReadScope` are ignored. Global, unresolved,
+cross-database, unbounded, or unsupported SQL remains per-call approval.
 
-The grant is memory-only and resets on every session start (`/new`, `/resume`, or
-`/fork`), process restart, or explicit revoke. It survives ordinary turns,
+The grant is memory-only and resets on every session start or shutdown (`/new`,
+`/resume`, or `/fork`), process restart, or explicit revoke. It survives ordinary turns,
 compaction, and reconnects within that session. SQL is classified quote-aware on
 every call. Only a single SELECT/CTE read with complete bounded scope can reuse a
 grant; mutations, unfamiliar/ambiguous SQL, `EXEC`, batches, exports/downloads, and

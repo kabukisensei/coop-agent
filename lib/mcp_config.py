@@ -29,6 +29,8 @@ from warehouse_mcp import (  # noqa: E402
     select_target,
 )
 
+MANAGED_MCP_REQUEST_TIMEOUT_MS = 60_000
+
 SERVER_PACKAGES = {
     "fabric": "@microsoft/fabric-mcp",
     "fabric-sqlendpoint": "mcp-remote",
@@ -88,6 +90,9 @@ def fabric_sqlendpoint_server(url: str) -> dict[str, Any]:
         "auth": "bearer",
         "bearerTokenEnv": FABRIC_TOKEN_ENV,
         "lifecycle": "lazy",
+        # pi-mcp-adapter 2.10.0 uses the MCP SDK's enforced 60-second request
+        # timeout. This COOP-owned provenance is consumed by the guardrail only.
+        "_coop_runtime": {"request_timeout_ms": MANAGED_MCP_REQUEST_TIMEOUT_MS},
     }
 
 
@@ -256,7 +261,7 @@ def generate(
             # Preserve the long-standing narrow ownership contract for every
             # managed command server. Only the Warehouse entry changed transport
             # and authentication models, so only it owns and removes those fields.
-            owned_fields = ("command", "args", "env", "_coop_target")
+            owned_fields = ("command", "args", "env", "_coop_target", "_coop_runtime")
             if name == "fabric-sqlendpoint":
                 owned_fields += (
                     "url",
