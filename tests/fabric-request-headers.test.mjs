@@ -38,13 +38,13 @@ fs.writeFileSync(${quoted(envDump)},JSON.stringify(process.env));
 const mode=${quoted(mode)};
 const seg=(v)=>Buffer.from(typeof v==='string'?v:JSON.stringify(v)).toString('base64url');
 const jwt=(claims,sig)=>seg('{"alg":"none"}')+'.'+seg(claims)+'.'+seg(sig);
-if(mode==='tree-stderr'||mode==='tree-oversize'||mode==='tree-nonzero') spawn(process.execPath,['-e',${quoted(`setTimeout(()=>require('node:fs').writeFileSync(${quoted(delayedMarker)},'survived'),2000);setTimeout(()=>{},20000)`)}],{stdio:'ignore'});
+if(mode==='tree-stderr'||mode==='tree-oversize'||mode==='tree-nonzero'||mode==='tree-invalid') spawn(process.execPath,['-e',${quoted(`setTimeout(()=>require('node:fs').writeFileSync(${quoted(delayedMarker)},'survived'),2000);setTimeout(()=>{},20000)`)}],{stdio:'ignore'}).unref();
 if(mode==='split-auth'){process.stderr.write('generic-prefix');setTimeout(()=>{process.stderr.write(' aadsts50076');process.exit(7)},25)}
 else if(mode==='stderr'||mode==='tree-stderr'){process.stderr.write('child-diagnostic-canary');process.exit(0)}
 else if(mode==='nonzero'||mode==='tree-nonzero') process.exit(7);
 else if(mode==='timeout') setTimeout(()=>{},20000);
 else if(mode==='oversize'||mode==='tree-oversize') process.stdout.write('x'.repeat(70000));
-else if(mode==='invalid') process.stdout.write('{');
+else if(mode==='invalid'||mode==='tree-invalid') process.stdout.write('{');
 else if(mode==='invalid-token') process.stdout.write(JSON.stringify({accessToken:'not-a-jwt'}));
 else if(mode==='invalid-utf8-token') process.stdout.write(JSON.stringify({accessToken:seg('{"alg":"none"}')+'.'+Buffer.from([0xc3,0x28]).toString('base64url')+'.'+seg('sig')}));
 else {
@@ -136,7 +136,7 @@ try {
   const splitAuth = runToken("https://api.fabric.microsoft.com", "split-auth");
   assert.equal(splitAuth.status, 25, "auth classification waits for complete stderr");
   assert.equal(splitAuth.stdout.length, 0); assert.equal(splitAuth.stderr.length, 0);
-  for (const mode of ["tree-stderr", "tree-oversize", "tree-nonzero"]) {
+  for (const mode of ["tree-stderr", "tree-oversize", "tree-nonzero", "tree-invalid"]) {
     const result = runToken("https://api.fabric.microsoft.com", mode);
     assert.notEqual(result.status, 0, mode);
     await new Promise((resolveWait) => setTimeout(resolveWait, 2200));
