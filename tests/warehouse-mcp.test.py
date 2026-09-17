@@ -5,8 +5,11 @@ import importlib.util
 import base64
 import json
 import os
+import signal
+import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from unittest import mock
@@ -271,6 +274,43 @@ assert code == 24 and len(stdout) > wmcp.MAX_TOKEN_HELPER_OUTPUT
 assert stderr == b"" and timed_out is False
 
 if not wmcp._is_windows():
+    original_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def prior_sigterm(_signum, _frame):
+        return None
+
+    signal.signal(signal.SIGTERM, prior_sigterm)
+    try:
+        for command in (
+            [sys.executable, "-c", "print('ok')"],
+            [sys.executable, "-c", "raise SystemExit(7)"],
+        ):
+            wmcp._run_token_helper(command, 2)
+            assert signal.getsignal(signal.SIGTERM) is prior_sigterm
+        try:
+            wmcp._run_token_helper(["/definitely/missing/token-helper"], 2)
+        except OSError:
+            pass
+        else:
+            raise AssertionError("missing token helper unexpectedly launched")
+        assert signal.getsignal(signal.SIGTERM) is prior_sigterm
+
+        worker_errors = []
+
+        def run_from_worker():
+            try:
+                wmcp._run_token_helper([sys.executable, "-c", "print('unsafe')"], 2)
+            except OSError:
+                worker_errors.append("rejected")
+
+        worker = threading.Thread(target=run_from_worker)
+        worker.start()
+        worker.join(timeout=3)
+        assert worker_errors == ["rejected"]
+        assert signal.getsignal(signal.SIGTERM) is prior_sigterm
+    finally:
+        signal.signal(signal.SIGTERM, original_sigterm)
+
     with tempfile.TemporaryDirectory() as tree_dir:
         tree = Path(tree_dir)
         fake_az = tree / "az"
@@ -318,6 +358,81 @@ while True:
         assert not process_exists(pid), "Azure CLI descendant survived timeout"
         time.sleep(2.2)
         assert not delayed_marker.exists(), "killed descendant wrote delayed marker"
+
+    with tempfile.TemporaryDirectory() as signal_dir:
+        tree = Path(signal_dir)
+        fake_az = tree / "az"
+        runner = tree / "runner.py"
+        node_pid = tree / "node.pid"
+        az_pid = tree / "az.pid"
+        descendant_pid = tree / "descendant.pid"
+        delayed_marker = tree / "descendant-survived"
+        fake_az.write_text(
+            f"""#!{sys.executable}
+import os
+import pathlib
+import subprocess
+import sys
+import time
+pathlib.Path({str(node_pid)!r}).write_text(str(os.getppid()))
+pathlib.Path({str(az_pid)!r}).write_text(str(os.getpid()))
+subprocess.Popen([
+    sys.executable,
+    "-c",
+    "import os, pathlib, sys, time; pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(2); pathlib.Path(sys.argv[2]).write_text('survived'); time.sleep(20)",
+    {str(descendant_pid)!r},
+    {str(delayed_marker)!r},
+])
+while True:
+    time.sleep(1)
+""",
+            encoding="utf-8",
+        )
+        fake_az.chmod(0o755)
+        runner.write_text(
+            f"""import importlib.util
+import sys
+spec = importlib.util.spec_from_file_location('warehouse_mcp', {str(ROOT / "lib" / "warehouse_mcp.py")!r})
+module = importlib.util.module_from_spec(spec)
+sys.modules['warehouse_mcp'] = module
+spec.loader.exec_module(module)
+module.az_access_token(timeout=30)
+""",
+            encoding="utf-8",
+        )
+        signal_env = dict(os.environ)
+        signal_env["PATH"] = f"{tree}{os.pathsep}{signal_env.get('PATH', '')}"
+        outer = subprocess.Popen(
+            [sys.executable, str(runner)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=signal_env,
+        )
+        deadline = time.monotonic() + 4
+        while (
+            not all(path.exists() for path in (node_pid, az_pid, descendant_pid))
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.02)
+        assert all(path.exists() for path in (node_pid, az_pid, descendant_pid))
+        process_ids = [
+            int(path.read_text(encoding="utf-8"))
+            for path in (node_pid, az_pid, descendant_pid)
+        ]
+        outer.send_signal(signal.SIGTERM)
+        assert outer.wait(timeout=5) == -signal.SIGTERM
+        deadline = time.monotonic() + 3
+        while (
+            any(process_exists(pid) for pid in process_ids)
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.02)
+        assert not any(process_exists(pid) for pid in process_ids), (
+            "Node/Azure process tree survived outer Python SIGTERM"
+        )
+        time.sleep(2.2)
+        assert not delayed_marker.exists(), "SIGTERM-surviving descendant wrote marker"
 
 fake_proc = mock.Mock(pid=4242)
 with (

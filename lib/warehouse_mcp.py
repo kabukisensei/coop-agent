@@ -41,6 +41,7 @@ REQUEST_HEADERS_HELPER = str(
 )
 TOKEN_FRAME_RE = re.compile(rb"^coop-azure-token-v1\t([A-Za-z0-9_-]+)\tend$")
 MAX_TOKEN_HELPER_OUTPUT = 32 * 1024
+_TOKEN_HELPER_SIGNAL_LOCK = threading.Lock()
 UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -443,51 +444,103 @@ def _run_token_helper(
     command: list[str], timeout: int
 ) -> tuple[int, bytes, bytes, bool]:
     windows = _is_windows()
-    proc = subprocess.Popen(
-        command,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=_token_helper_environment(),
-        shell=False,
-        start_new_session=not windows,
-        creationflags=(
-            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if windows else 0
-        ),
-    )
+    owns_signal = False
+    previous_sigterm: Any = None
+    caught_signal: tuple[int, Any] | None = None
+    proc: subprocess.Popen[bytes] | None = None
     streams: list[bytes] = [b"", b""]
     overflow = threading.Event()
-
-    def read_stream(index: int) -> None:
-        pipe = proc.stdout if index == 0 else proc.stderr
-        assert pipe is not None
-        data = pipe.read(MAX_TOKEN_HELPER_OUTPUT + 1)
-        streams[index] = data
-        if len(data) > MAX_TOKEN_HELPER_OUTPUT:
-            overflow.set()
-
-    readers = [threading.Thread(target=read_stream, args=(index,)) for index in (0, 1)]
-    for reader in readers:
-        reader.start()
     timed_out = False
-    deadline = time.monotonic() + timeout
-    while proc.poll() is None:
-        if overflow.is_set():
-            _terminate_token_helper_tree(proc)
-            break
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            timed_out = True
-            _terminate_token_helper_tree(proc)
-            break
+
+    class _TokenHelperInterrupted(BaseException):
+        pass
+
+    def on_sigterm(signum: int, frame: Any) -> None:
+        nonlocal caught_signal
+        if caught_signal is None:
+            caught_signal = (signum, frame)
+            if proc is not None:
+                _terminate_token_helper_tree(proc)
+        raise _TokenHelperInterrupted
+
+    if not windows:
+        if (
+            threading.current_thread() is not threading.main_thread()
+            or not _TOKEN_HELPER_SIGNAL_LOCK.acquire(blocking=False)
+        ):
+            raise OSError("token helper signal ownership unavailable")
+        owns_signal = True
         try:
-            proc.wait(timeout=min(0.05, remaining))
-        except subprocess.TimeoutExpired:
-            pass
-    for reader in readers:
-        reader.join(timeout=1)
-    if overflow.is_set() and proc.poll() is None:
-        _terminate_token_helper_tree(proc)
+            previous_sigterm = signal.getsignal(signal.SIGTERM)
+            signal.signal(signal.SIGTERM, on_sigterm)
+        except BaseException:
+            _TOKEN_HELPER_SIGNAL_LOCK.release()
+            owns_signal = False
+            raise
+
+    try:
+        proc = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=_token_helper_environment(),
+            shell=False,
+            start_new_session=not windows,
+            creationflags=(
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if windows else 0
+            ),
+        )
+
+        def read_stream(index: int) -> None:
+            pipe = proc.stdout if index == 0 else proc.stderr
+            assert pipe is not None
+            data = pipe.read(MAX_TOKEN_HELPER_OUTPUT + 1)
+            streams[index] = data
+            if len(data) > MAX_TOKEN_HELPER_OUTPUT:
+                overflow.set()
+
+        readers = [
+            threading.Thread(target=read_stream, args=(index,), daemon=True)
+            for index in (0, 1)
+        ]
+        for reader in readers:
+            reader.start()
+        deadline = time.monotonic() + timeout
+        while proc.poll() is None:
+            if overflow.is_set():
+                _terminate_token_helper_tree(proc)
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                _terminate_token_helper_tree(proc)
+                break
+            try:
+                proc.wait(timeout=min(0.05, remaining))
+            except subprocess.TimeoutExpired:
+                pass
+        for reader in readers:
+            reader.join(timeout=1)
+        if overflow.is_set() and proc.poll() is None:
+            _terminate_token_helper_tree(proc)
+    except _TokenHelperInterrupted:
+        if proc is not None and proc.poll() is None:
+            _terminate_token_helper_tree(proc)
+    finally:
+        if owns_signal:
+            signal.signal(signal.SIGTERM, previous_sigterm)
+            _TOKEN_HELPER_SIGNAL_LOCK.release()
+
+    if caught_signal is not None:
+        signum, frame = caught_signal
+        if previous_sigterm == signal.SIG_DFL:
+            os.kill(os.getpid(), signum)
+            raise SystemExit(128 + signum)
+        if callable(previous_sigterm):
+            previous_sigterm(signum, frame)
+    if proc is None:
+        raise OSError("token helper launch interrupted")
     return (
         24 if overflow.is_set() else proc.returncode,
         streams[0],

@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { windowsAzureCliCandidates, windowsAzureCliCommand, windowsTaskkillCommand } from "../lib/fabric_request_headers.mjs";
+import {
+  parseWindowsAzureCompletion,
+  windowsAzureCliCandidates,
+  windowsAzureCliCommand,
+  windowsTaskkillCommand,
+} from "../lib/fabric_request_headers.mjs";
 
 const ROOT = fileURLToPath(new globalThis.URL("..", import.meta.url));
 const HELPER = join(ROOT, "lib", "fabric_request_headers.mjs");
@@ -33,10 +38,11 @@ fs.writeFileSync(${quoted(envDump)},JSON.stringify(process.env));
 const mode=${quoted(mode)};
 const seg=(v)=>Buffer.from(typeof v==='string'?v:JSON.stringify(v)).toString('base64url');
 const jwt=(claims,sig)=>seg('{"alg":"none"}')+'.'+seg(claims)+'.'+seg(sig);
-if(mode==='tree-stderr'||mode==='tree-oversize') spawn(process.execPath,['-e',${quoted(`setTimeout(()=>require('node:fs').writeFileSync(${quoted(delayedMarker)},'survived'),2000);setTimeout(()=>{},20000)`)}],{stdio:'ignore'});
-if(mode==='stderr'||mode==='tree-stderr'){process.stderr.write('child-diagnostic-canary');process.exit(0)}
-if(mode==='nonzero') process.exit(7);
-if(mode==='timeout') setTimeout(()=>{},20000);
+if(mode==='tree-stderr'||mode==='tree-oversize'||mode==='tree-nonzero') spawn(process.execPath,['-e',${quoted(`setTimeout(()=>require('node:fs').writeFileSync(${quoted(delayedMarker)},'survived'),2000);setTimeout(()=>{},20000)`)}],{stdio:'ignore'});
+if(mode==='split-auth'){process.stderr.write('generic-prefix');setTimeout(()=>{process.stderr.write(' aadsts50076');process.exit(7)},25)}
+else if(mode==='stderr'||mode==='tree-stderr'){process.stderr.write('child-diagnostic-canary');process.exit(0)}
+else if(mode==='nonzero'||mode==='tree-nonzero') process.exit(7);
+else if(mode==='timeout') setTimeout(()=>{},20000);
 else if(mode==='oversize'||mode==='tree-oversize') process.stdout.write('x'.repeat(70000));
 else if(mode==='invalid') process.stdout.write('{');
 else if(mode==='invalid-token') process.stdout.write(JSON.stringify({accessToken:'not-a-jwt'}));
@@ -127,7 +133,10 @@ try {
     assert.notEqual(result.status, 0, `token mode ${mode}`);
     assert.equal(result.stdout.length, 0, mode); assert.equal(result.stderr.length, 0, mode);
   }
-  for (const mode of ["tree-stderr", "tree-oversize"]) {
+  const splitAuth = runToken("https://api.fabric.microsoft.com", "split-auth");
+  assert.equal(splitAuth.status, 25, "auth classification waits for complete stderr");
+  assert.equal(splitAuth.stdout.length, 0); assert.equal(splitAuth.stderr.length, 0);
+  for (const mode of ["tree-stderr", "tree-oversize", "tree-nonzero"]) {
     const result = runToken("https://api.fabric.microsoft.com", mode);
     assert.notEqual(result.status, 0, mode);
     await new Promise((resolveWait) => setTimeout(resolveWait, 2200));
@@ -192,22 +201,50 @@ try {
   );
   assert.deepEqual(windows, {
     command: "C:\\Windows\\System32\\cmd.exe",
-    args: ["/d", "/s", "/c", '""C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd" account get-access-token --resource https://api.fabric.microsoft.com --output json"'],
+    args: ["/d", "/v:on", "/s", "/c", '"call "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd" account get-access-token --resource https://api.fabric.microsoft.com --output json & set "COOP_AZURE_RC=!ERRORLEVEL!" & echo COOP_AZURE_COMPLETE_V1:!COOP_AZURE_RC! & echo COOP_AZURE_STDERR_COMPLETE_V1 1>&2 & set /p "COOP_AZURE_RELEASE=" & exit /b !COOP_AZURE_RC!"'],
+    windowsSupervisor: true,
   });
   const candidates = windowsAzureCliCandidates(["C:\\Earlier", "C:\\Later"]);
   assert.equal(candidates.find((candidate) => new Set(["C:\\Earlier\\az.exe", "C:\\Later\\az.cmd"]).has(candidate)), "C:\\Earlier\\az.exe");
   assert.equal(windowsAzureCliCommand("C:\\Windows\\System32\\cmd.exe", "C:\\unsafe&path\\az.cmd"), null);
+  assert.equal(
+    windowsAzureCliCommand("C:\\Windows\\System32\\cmd.exe", "C:\\Azure\\az.bat").windowsSupervisor,
+    true,
+  );
   assert.deepEqual(
     windowsAzureCliCommand("C:\\Windows\\System32\\cmd.exe", "C:\\Program Files\\Azure CLI\\az.exe"),
-    { command: "C:\\Program Files\\Azure CLI\\az.exe", args: ["account", "get-access-token", "--resource", "https://api.fabric.microsoft.com", "--output", "json"] },
+    {
+      command: "C:\\Windows\\System32\\cmd.exe",
+      args: ["/d", "/v:on", "/s", "/c", '""C:\\Program Files\\Azure CLI\\az.exe" account get-access-token --resource https://api.fabric.microsoft.com --output json & set "COOP_AZURE_RC=!ERRORLEVEL!" & echo COOP_AZURE_COMPLETE_V1:!COOP_AZURE_RC! & echo COOP_AZURE_STDERR_COMPLETE_V1 1>&2 & set /p "COOP_AZURE_RELEASE=" & exit /b !COOP_AZURE_RC!"'],
+      windowsSupervisor: true,
+    },
   );
   assert.deepEqual(
     windowsAzureCliCommand("C:\\Windows\\System32\\cmd.exe", "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd"),
     {
       command: "C:\\Windows\\System32\\cmd.exe",
-      args: ["/d", "/s", "/c", '""C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd" account get-access-token --resource https://api.fabric.microsoft.com --output json"'],
+      args: ["/d", "/v:on", "/s", "/c", '"call "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd" account get-access-token --resource https://api.fabric.microsoft.com --output json & set "COOP_AZURE_RC=!ERRORLEVEL!" & echo COOP_AZURE_COMPLETE_V1:!COOP_AZURE_RC! & echo COOP_AZURE_STDERR_COMPLETE_V1 1>&2 & set /p "COOP_AZURE_RELEASE=" & exit /b !COOP_AZURE_RC!"'],
+      windowsSupervisor: true,
     },
   );
+  const parsedCompletion = parseWindowsAzureCompletion(
+    Buffer.from('{"accessToken":"fixture"}COOP_AZURE_COMPLETE_V1:7\r\n'),
+    Buffer.from('diagnosticCOOP_AZURE_STDERR_COMPLETE_V1\r\n'),
+    true,
+  );
+  assert.deepEqual(parsedCompletion, {
+    state: "complete",
+    code: 7,
+    stdout: Buffer.from('{"accessToken":"fixture"}'),
+    stderr: Buffer.from("diagnostic"),
+  });
+  for (const [stdout, stderr] of [
+    [Buffer.from("json"), Buffer.from("diagnostic")],
+    [Buffer.from("jsonCOOP_AZURE_COMPLETE_V1:nope\r\n"), Buffer.from("COOP_AZURE_STDERR_COMPLETE_V1\r\n")],
+    [Buffer.from("COOP_AZURE_COMPLETE_V1:0\r\nCOOP_AZURE_COMPLETE_V1:0\r\n"), Buffer.from("COOP_AZURE_STDERR_COMPLETE_V1\r\n")],
+    [Buffer.from("COOP_AZURE_COMPLETE_V1:0\r\ntrailing"), Buffer.from("COOP_AZURE_STDERR_COMPLETE_V1\r\n")],
+    [Buffer.from("COOP_AZURE_COMPLETE_V1:0\r\n"), Buffer.from("COOP_AZURE_STDERR_COMPLETE_V1\r\nCOOP_AZURE_STDERR_COMPLETE_V1\r\n")],
+  ]) assert.equal(parseWindowsAzureCompletion(stdout, stderr, true).state, "invalid");
   assert.deepEqual(windowsTaskkillCommand("C:\\Windows", 4242), {
     command: "C:\\Windows\\System32\\taskkill.exe",
     args: ["/PID", "4242", "/T", "/F"],
