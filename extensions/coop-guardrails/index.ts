@@ -903,7 +903,7 @@ export function boundedSelectLimit(sql: string): number | null {
   if (classifySqlOperation(sql) !== "read" || /[\[\]"]/.test(sql)) return null;
   const masked = sqlWithoutComments(sql).trim().replace(/;\s*$/, "");
   if (masked.includes(";") || (masked.match(/\bSELECT\b/gi) || []).length !== 1) return null;
-  if (/\b(WITH|UNION|INTERSECT|EXCEPT|APPLY|EXEC(?:UTE)?|OPENROWSET|OPENQUERY|OPENDATASOURCE|BACKUP|RESTORE|DBCC|WAITFOR|USE|SET|DECLARE|PRINT|RAISERROR|THROW|KILL|SHUTDOWN|BULK|OPTION|FOR|PERCENT)\b/i.test(masked)) return null;
+  if (/\b(WITH|UNION|INTERSECT|EXCEPT|APPLY|EXEC(?:UTE)?|OPENROWSET|OPENQUERY|OPENDATASOURCE|BACKUP|RESTORE|DBCC|WAITFOR|USE|SET|DECLARE|BEGIN|COMMIT|ROLLBACK|SAVE|TRANSACTION|PRINT|RAISERROR|THROW|KILL|SHUTDOWN|BULK|OPTION|FOR|PERCENT)\b/i.test(masked)) return null;
   if (/\b[A-Za-z_][\w$#]*\s*\.\s*(?:[A-Za-z_][\w$#]*\s*)?\.\s*[A-Za-z_][\w$#]*\b/i.test(masked)) return null;
   const match = /^SELECT\s+(?:(?:ALL|DISTINCT)\s+)?TOP\s*(?:\(\s*([1-9]\d*)\s*\)|([1-9]\d*))\s+/i.exec(masked);
   const limit = match ? Number(match[1] || match[2]) : NaN;

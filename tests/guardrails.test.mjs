@@ -725,6 +725,9 @@ await t("mutation, semicolonless, unbounded, cross-db, and unsupported SQL stay 
   for (const sql of [
     "DELETE FROM dbo.Customer",
     "SELECT TOP (5) * FROM dbo.Customer SELECT TOP (5) * FROM dbo.Secret",
+    "SELECT TOP (5) * FROM dbo.Customer BEGIN TRANSACTION",
+    "SELECT TOP (5) * FROM dbo.Customer COMMIT TRANSACTION",
+    "SELECT TOP (5) * FROM dbo.Customer ROLLBACK TRANSACTION",
     "SELECT * FROM dbo.Customer",
     "SELECT TOP (50) * FROM dbo.Customer",
     "SELECT TOP (5) PERCENT * FROM dbo.Customer",
