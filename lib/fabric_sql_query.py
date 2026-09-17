@@ -177,13 +177,16 @@ def _discover_server(target: wmcp.SqlEndpointTarget, token: str) -> tuple[str, s
         return "", "endpoint_invalid"
     response_id = item.get("id")
     response_type = item.get("type")
+    response_workspace = item.get("workspaceId")
     if (
-        response_id is not None
-        and (
-            not wmcp.is_uuid(response_id)
-            or wmcp.canonical_uuid(response_id) != source_id
-        )
-    ) or (response_type is not None and response_type != target.item_type):
+        not isinstance(response_id, str)
+        or not wmcp.is_uuid(response_id)
+        or wmcp.canonical_uuid(response_id) != source_id
+        or response_type != target.item_type
+        or not isinstance(response_workspace, str)
+        or not wmcp.is_uuid(response_workspace)
+        or wmcp.canonical_uuid(response_workspace) != target.workspace_id
+    ):
         return "", "endpoint_invalid"
     properties = item.get("properties")
     if not isinstance(properties, dict):
@@ -195,8 +198,9 @@ def _discover_server(target: wmcp.SqlEndpointTarget, token: str) -> tuple[str, s
         if not isinstance(sql_properties, dict):
             return "", "endpoint_invalid"
         endpoint_id = sql_properties.get("id")
-        if endpoint_id is not None and (
-            not wmcp.is_uuid(endpoint_id)
+        if (
+            not isinstance(endpoint_id, str)
+            or not wmcp.is_uuid(endpoint_id)
             or wmcp.canonical_uuid(endpoint_id) != target.item_id
         ):
             return "", "endpoint_invalid"
@@ -271,19 +275,28 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
             _bounded_text(str(item[0]), MAX_COLUMN_CHARS)
             for item in (cursor.description or [])
         ]
-        rows = cursor.fetchmany(row_limit + 1)
-        truncated = len(rows) > row_limit
         values = []
-        serialized_bytes = len(json.dumps(columns, ensure_ascii=False).encode("utf-8"))
-        for row in rows[:row_limit]:
+        serialized_bytes = (
+            len(json.dumps(columns, ensure_ascii=False).encode("utf-8")) + 1_024
+        )
+        if serialized_bytes > MAX_RESULT_BYTES:
+            raise ResultTooLarge
+        truncated = False
+        for index in range(row_limit + 1):
+            row = cursor.fetchone()
+            if row is None:
+                break
+            if index == row_limit:
+                truncated = True
+                break
             materialized = [_json_value(value) for value in row]
-            serialized_bytes += len(
-                json.dumps(materialized, ensure_ascii=False).encode("utf-8")
+            serialized_bytes += (
+                len(json.dumps(materialized, ensure_ascii=False).encode("utf-8")) + 1
             )
             if serialized_bytes > MAX_RESULT_BYTES:
                 raise ResultTooLarge
             values.append(materialized)
-        return result(
+        response = result(
             "ok",
             columns=columns,
             rows=values,
@@ -291,6 +304,12 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
             truncated=truncated,
             driver=driver,
         )
+        if (
+            len(json.dumps(response, ensure_ascii=False).encode("utf-8"))
+            > MAX_RESULT_BYTES
+        ):
+            raise ResultTooLarge
+        return response
     except ResultTooLarge:
         return result("result_too_large")
     except Exception:

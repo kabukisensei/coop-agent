@@ -89,23 +89,27 @@ def fixture(
 
 
 class FakeCursor:
-    description = [("customer_id",), ("seen_at",)]
-
-    def __init__(self, rows=None):
+    def __init__(self, rows=None, description=None):
         self.timeout = None
         self.query = None
-        self.rows = rows or [(1, b"a"), (2, b"b"), (3, b"c")]
+        self.rows = [(1, b"a"), (2, b"b"), (3, b"c")] if rows is None else rows
+        self.description = description or [("customer_id",), ("seen_at",)]
+        self.fetch_index = 0
 
     def execute(self, query):
         self.query = query
 
-    def fetchmany(self, count):
-        return self.rows[:count]
+    def fetchone(self):
+        if self.fetch_index >= len(self.rows):
+            return None
+        row = self.rows[self.fetch_index]
+        self.fetch_index += 1
+        return row
 
 
 class FakeConnection:
-    def __init__(self, rows=None):
-        self.cursor_value = FakeCursor(rows)
+    def __init__(self, rows=None, description=None):
+        self.cursor_value = FakeCursor(rows, description)
         self.closed = False
 
     def cursor(self):
@@ -116,14 +120,14 @@ class FakeConnection:
 
 
 class FakePyodbc:
-    def __init__(self, drivers=None, connect_error=None, rows=None):
+    def __init__(self, drivers=None, connect_error=None, rows=None, description=None):
         self.driver_values = drivers or [
             "ODBC Driver 17 for SQL Server",
             "ODBC Driver 18 for SQL Server",
             "ODBC Driver 19 for SQL Server",
         ]
         self.connect_error = connect_error
-        self.connection = FakeConnection(rows)
+        self.connection = FakeConnection(rows, description)
         self.call = None
 
     def drivers(self):
@@ -174,6 +178,7 @@ def fake_rest(url, token, timeout=8):
     return {
         "id": ITEM,
         "type": "Warehouse",
+        "workspaceId": WORKSPACE,
         "properties": {"connectionString": SERVER},
     }, "ok"
 
@@ -237,6 +242,7 @@ def fake_lake_rest(url, token, timeout=8):
     return {
         "id": LAKEHOUSE,
         "type": "Lakehouse",
+        "workspaceId": WORKSPACE,
         "properties": {
             "sqlEndpointProperties": {"id": ITEM, "connectionString": SERVER}
         },
@@ -261,19 +267,31 @@ assert lake_calls[0][0] == (
     f"{fsq.wmcp.FABRIC_RESOURCE}/v1/workspaces/{WORKSPACE}/lakehouses/{LAKEHOUSE}"
 )
 
-# Mismatched documented identity fields fail closed before SQL authentication.
-with mock.patch.object(
-    fsq.wmcp,
-    "fabric_get_json",
-    return_value=(
-        {"id": ITEM, "type": "Lakehouse", "properties": {}},
-        "ok",
-    ),
+# Missing or mismatched documented identity fields fail closed.
+lake_target = fsq.wmcp.project_target(
+    fsq.wmcp.load_project(lake_project / ".coop" / "project.yml")
+)
+for invalid_item in (
+    {"properties": {"sqlEndpointProperties": {"id": ITEM, "connectionString": SERVER}}},
+    {
+        "id": LAKEHOUSE,
+        "type": "Lakehouse",
+        "workspaceId": "33333333-3333-4333-8333-333333333333",
+        "properties": {
+            "sqlEndpointProperties": {"id": ITEM, "connectionString": SERVER}
+        },
+    },
+    {
+        "id": LAKEHOUSE,
+        "type": "Lakehouse",
+        "workspaceId": WORKSPACE,
+        "properties": {"sqlEndpointProperties": {"connectionString": SERVER}},
+    },
 ):
-    lake_target = fsq.wmcp.project_target(
-        fsq.wmcp.load_project(lake_project / ".coop" / "project.yml")
-    )
-    assert fsq._discover_server(lake_target, FABRIC_TOKEN)[1] == "endpoint_invalid"
+    with mock.patch.object(
+        fsq.wmcp, "fabric_get_json", return_value=(invalid_item, "ok")
+    ):
+        assert fsq._discover_server(lake_target, FABRIC_TOKEN)[1] == "endpoint_invalid"
 
 # One oversized cell and aggregate overflow return one stable, non-sensitive state.
 for rows in (
@@ -298,6 +316,26 @@ for rows in (
             {"query": "SELECT TOP (20) customer_id FROM dbo.Customer"}, cwd=project
         )
     assert sized == {"ok": False, "state": "result_too_large"}
+
+# Fetch incrementally and reject oversized columns even when no rows are returned.
+wide_columns = [("x" * fsq.MAX_COLUMN_CHARS,) for _ in range(2_000)]
+sized_pyodbc = FakePyodbc(rows=[], description=wide_columns)
+with (
+    mock.patch.dict(
+        os.environ,
+        {
+            "PI_CODING_AGENT_DIR": str(agent),
+            fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN,
+        },
+        clear=False,
+    ),
+    mock.patch.dict(sys.modules, {"pyodbc": sized_pyodbc}),
+    mock.patch.object(fsq.wmcp, "az_access_token", side_effect=fake_token),
+    mock.patch.object(fsq.wmcp, "fabric_get_json", side_effect=fake_rest),
+):
+    sized = fsq.execute({"query": QUERY}, cwd=project)
+assert sized == {"ok": False, "state": "result_too_large"}
+assert sized_pyodbc.connection.cursor_value.fetch_index == 0
 
 # Missing prerequisites and canonical-target drift return stable diagnostics.
 with (
