@@ -372,11 +372,19 @@ for cmd in dirname find sort readlink uname mkdir date tr sed git; do
   cmd_path="$(command -v "$cmd" 2>/dev/null || true)"
   if [ -n "$cmd_path" ]; then ln -s "$cmd_path" "$NO_PY_BIN/$cmd"; fi
 done
-ln -s "$(command -v node)" "$NO_PY_BIN/node"
-ln -s "$BIN/pi" "$NO_PY_BIN/pi"
-if [ "${OS:-}" = Windows_NT ]; then cp "$BIN/pi.cmd" "$NO_PY_BIN/pi.cmd"; fi
+if [ "${OS:-}" = Windows_NT ]; then
+  # Cross this boundary with a real PE executable so MSYS converts PATH for
+  # native Node/cmd.exe; keep both Pi forms for Bash and cmd resolution.
+  cp "$(command -v node)" "$NO_PY_BIN/node.exe"
+  cp "$BIN/pi" "$NO_PY_BIN/pi"
+  cp "$BIN/pi.cmd" "$NO_PY_BIN/pi.cmd"
+else
+  ln -s "$(command -v node)" "$NO_PY_BIN/node"
+  ln -s "$BIN/pi" "$NO_PY_BIN/pi"
+fi
 rm -f "$MARKER/pi-state"
 PORT=$((21000 + ($$ % 19000)))
+PHASE='web-no-python-launch'
 HOME="$HOME_DIR" PATH="$NO_PY_BIN" COOP_AGENT_DIR="$AGENT_DIR" \
   PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
   COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
@@ -389,7 +397,9 @@ while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 160 ]; do
   sleep 0.05
   i=$((i + 1))
 done
+PHASE='web-no-python-marker'
 [ -f "$MARKER/pi-state" ]
+PHASE='web-no-python-warning'
 grep -F 'Fabric Warehouse MCP unavailable: token helper Python is unavailable' "$TMP/web-no-python.err" >/dev/null
 kill "$WEB_PID" >/dev/null 2>&1 || true
 wait "$WEB_PID" 2>/dev/null || true
