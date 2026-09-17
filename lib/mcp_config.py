@@ -290,29 +290,18 @@ def generate(
     for name, definition in desired.items():
         current = servers.get(name)
         if current is None or name in managed or legacy_seeded(name, current):
-            merged = dict(current) if isinstance(current, dict) else {}
-            # Preserve the long-standing narrow ownership contract for every
-            # managed command server. Only the Warehouse entry changed transport
-            # and authentication models, so only it owns and removes those fields.
-            owned_fields = ("command", "args", "env", "_coop_target")
             if name == "fabric-sqlendpoint":
-                owned_fields += (
-                    "url",
-                    "auth",
-                    "bearerTokenEnv",
-                    "requestHeadersCommand",
-                    "requestTimeoutMs",
-                    "lifecycle",
-                    "bearerToken",
-                    "headers",
-                    "oauth",
-                )
-            for field in owned_fields:
-                if field in definition:
-                    merged[field] = definition[field]
-                else:
-                    merged.pop(field, None)
-            servers[name] = merged
+                # This security-sensitive entry is wholly COOP-owned. Replacing it
+                # prevents stale transport/auth fields from surviving regeneration.
+                servers[name] = definition
+            else:
+                merged = dict(current) if isinstance(current, dict) else {}
+                for field in ("command", "args", "env", "_coop_target"):
+                    if field in definition:
+                        merged[field] = definition[field]
+                    else:
+                        merged.pop(field, None)
+                servers[name] = merged
             managed.add(name)
     result["mcpServers"] = {k: servers[k] for k in sorted(servers)}
     result["_coop"] = {

@@ -18,11 +18,32 @@ spec.loader.exec_module(wmcp)
 
 
 def entry(url=wmcp.GLOBAL_SQL_ENDPOINT_URL):
+    match = wmcp.re.match(
+        rf"^{wmcp.re.escape(wmcp.FABRIC_RESOURCE)}/v1/mcp/dataPlane/workspaces/({wmcp.UUID_RE.pattern[1:-1]})/items/({wmcp.UUID_RE.pattern[1:-1]})/sqlEndpoint$",
+        url,
+    )
+    target = {
+        "scope": "item" if match else "global",
+        "workspace_id": match.group(1) if match else "",
+        "item_id": match.group(2) if match else "",
+        "item_type": "Warehouse" if match else "",
+        "reason": "fixture",
+        "client": "",
+        "tenant_id": "",
+        "environment": "",
+        "item_name": "",
+    }
     return {
         "url": url,
-        "auth": "bearer",
-        "bearerTokenEnv": wmcp.FABRIC_TOKEN_ENV,
+        "auth": False,
+        "requestHeadersCommand": {
+            "command": "node",
+            "args": [wmcp.REQUEST_HEADERS_HELPER, url],
+            "timeoutMs": 10000,
+        },
+        "requestTimeoutMs": 60000,
         "lifecycle": "lazy",
+        "_coop_target": target,
     }
 
 
@@ -36,6 +57,11 @@ def managed_config(url=wmcp.GLOBAL_SQL_ENDPOINT_URL):
 # Configuration alone is registered, not healthy; all documented spellings work.
 cfg = managed_config()
 assert wmcp.doctor_status(cfg)["state"] == "registered"
+with mock.patch.object(
+    wmcp, "az_access_token", side_effect=AssertionError("offline status requested credentials")
+) as offline_auth:
+    assert wmcp.doctor_status(cfg, [{"name": "executeSQL"}])["state"] == "registered"
+    offline_auth.assert_not_called()
 assert (
     wmcp.doctor_status({"mcpServers": {"fabric-sqlendpoint": entry()}})["state"]
     == "unavailable"
@@ -47,6 +73,11 @@ for forbidden in (
     {"headers": {"Authorization": "Bearer secret-fixture-token"}},
     {"oauth": {"enabled": True}},
     {"bearerTokenEnv": "ANOTHER_SECRET"},
+    {"bearerTokenStore": "forged"},
+    {"caFile": "forged.pem"},
+    {"httpTransport": {"forged": True}},
+    {"protocolVersion": "forged"},
+    {"unknownExtra": True},
 ):
     candidate = entry()
     candidate.update(forbidden)

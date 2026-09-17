@@ -36,7 +36,7 @@ import { appendFileSync, existsSync, readFileSync, renameSync, statSync } from "
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-declare const Buffer: { from(value: string, encoding: "base64url"): { toString(encoding: "utf8"): string } };
+declare const Buffer: { from(value: string, encoding: "base64url"): { length: number; toString(encoding: "utf8" | "base64url"): string } };
 
 // Paths the agent MAY commit; everything else counts as source. The .coop/project.yml
 // `approval_policy.agent_allowed_to_commit` globs are merged in on top of these.
@@ -926,9 +926,11 @@ export type LiveReadResolverDeps = {
 function launchIdentity(token: string | undefined): { tenant: string; principal: string } | null {
   if (!token) return null;
   const parts = token.split(".");
-  if (parts.length !== 3 || parts.some((part) => !part)) return null;
+  if (parts.length !== 3 || parts.some((part) => !/^[A-Za-z0-9_-]+$/.test(part))) return null;
   try {
-    const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    const decoded = parts.map((part) => Buffer.from(part, "base64url"));
+    if (decoded.some((part, index) => part.length === 0 || part.toString("base64url") !== parts[index])) return null;
+    const claims = JSON.parse(decoded[1].toString("utf8"));
     const tenant = strictResolvedText(claims?.tid)?.toLowerCase();
     const principal = strictResolvedText(claims?.oid) || strictResolvedText(claims?.sub);
     return tenant && UUID.test(tenant) && principal ? { tenant, principal } : null;
@@ -960,6 +962,8 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   const expectedUrl = `https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/${workspaceId}/items/${itemId}/sqlEndpoint`;
   const root = (globalThis as any).process?.env?.COOP_ROOT;
   const headerCommand = entry.requestHeadersCommand;
+  const exactEntry = entry && typeof entry === "object" && !Array.isArray(entry)
+    && Object.keys(entry).sort().join(",") === "_coop_target,auth,lifecycle,requestHeadersCommand,requestTimeoutMs,url";
   const exactHeaderCommand = root && headerCommand && typeof headerCommand === "object" && !Array.isArray(headerCommand)
     && Object.keys(headerCommand).sort().join(",") === "args,command,timeoutMs"
     && headerCommand.command === "node"
@@ -967,9 +971,9 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
     && headerCommand.args[0] === join(root, "lib", "fabric_request_headers.mjs")
     && headerCommand.args[1] === expectedUrl
     && headerCommand.timeoutMs === 10000;
-  if (entry.url !== expectedUrl || entry.auth !== false || entry.lifecycle !== "lazy"
+  if (!exactEntry || entry.url !== expectedUrl || entry.auth !== false || entry.lifecycle !== "lazy"
       || entry.requestTimeoutMs !== PINNED_MCP_REQUEST_TIMEOUT_MS || !exactHeaderCommand
-      || ["bearerToken", "bearerTokenEnv", "headers", "oauth"].some((field) => field in entry)) return null;
+  ) return null;
   let resultLimit = boundedSelectLimit(extractSqlText(event?.input));
   if (!resultLimit) return null;
   if (event?.toolName === FABRIC_SQL_FALLBACK_TOOL && Number.isInteger(event?.input?.maximum_rows)) {

@@ -8,7 +8,7 @@ cat > "$d/config" <<'JSON'
 {"schema_version":1,"azure":{"tenant_id":"tenant-1"},"integrations":{"fabric":true,"power_bi":true,"power_bi_modeling":true,"azure_devops":true,"microsoft_learn":true,"context_mode":true},"azure_devops":{"organization":"cooptimize"}}
 JSON
 cat > "$d/mcp.json" <<'JSON'
-{"mcpServers":{"custom":{"command":"custom","args":["x"]},"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp@old"],"customField":true,"lifecycle":"eager","auth":"custom-managed-auth","headers":{"X-Managed-Custom":"keep-me"},"extraSettings":{"retry":3}},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"],"auth":"oauth","bearerToken":"stale-secret-fixture","bearerTokenEnv":"STALE_FABRIC_TOKEN_ENV","headers":{"Authorization":"Bearer stale-secret-fixture"},"oauth":{"legacy":true},"requestHeadersCommand":{"command":"forged","args":["stale"]},"requestTimeoutMs":1,"lifecycle":"eager"}},"_coop":{"schema_version":1,"managed_servers":["fabric","fabric-sqlendpoint"]}}
+{"mcpServers":{"custom":{"command":"custom","args":["x"]},"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp@old"],"customField":true,"lifecycle":"eager","auth":"custom-managed-auth","headers":{"X-Managed-Custom":"keep-me"},"extraSettings":{"retry":3}},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"],"auth":"oauth","bearerToken":"stale-secret-fixture","bearerTokenEnv":"STALE_FABRIC_TOKEN_ENV","bearerTokenStore":"stale-store","caFile":"stale-ca.pem","headers":{"Authorization":"Bearer stale-secret-fixture"},"httpTransport":{"forged":true},"oauth":{"legacy":true},"protocolVersion":"forged","requestHeadersCommand":{"command":"forged","args":["stale"]},"requestTimeoutMs":1,"lifecycle":"eager","unknownExtra":true}},"_coop":{"schema_version":1,"managed_servers":["fabric","fabric-sqlendpoint"]}}
 JSON
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp.json"
 "$PY" - "$d/mcp.json" "$ROOT/config/release-manifest.json" <<'PY'
@@ -26,6 +26,7 @@ assert sql['auth'] is False
 assert sql['requestHeadersCommand']=={'command':'node','args':[str(__import__('pathlib').Path(sys.argv[2]).parent.parent/'lib'/'fabric_request_headers.mjs'),sql['url']],'timeoutMs':10000}
 assert sql['requestTimeoutMs']==60000
 assert sql['lifecycle']=='lazy'
+assert set(sql)=={'url','auth','requestHeadersCommand','requestTimeoutMs','lifecycle','_coop_target'}
 assert '_coop_runtime' not in sql
 assert 'command' not in sql and 'args' not in sql and 'mcp-remote' not in json.dumps(sql)
 assert 'bearerToken' not in sql and 'Authorization' not in json.dumps(sql)
@@ -64,6 +65,7 @@ fabric:
     item_id: "22222222-2222-2222-2222-222222222222"
 YAML
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/project" --output "$d/item-mcp.json" || exit 1
+cp "$d/project/.coop/project.yml" "$d/item-project.yml"
 "$PY" - "$d/item-mcp.json" <<'PY'
 import json,sys
 s=json.load(open(sys.argv[1]))['mcpServers']['fabric-sqlendpoint']
@@ -92,27 +94,26 @@ import json,sys
 s=json.load(open(sys.argv[1]))['mcpServers']['fabric-sqlendpoint']
 assert '/items/44444444-4444-4444-4444-444444444444/sqlEndpoint' in s['url']
 PY
-# Warehouse doctor never reports healthy from config alone; mocked tools/list
-# controls compatible spelling status, and item targets require auth/REST validation.
+# Offline status validates config and mocked tools/list without invoking credentials.
 "$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/mcp.json" --tools-json '{"tools":[{"name":"executeSQL"}]}' > "$d/sql-doctor.json" || exit 1
 "$PY" - "$d/sql-doctor.json" <<'PY'
 import json,sys
 v=json.load(open(sys.argv[1]))
 assert v['registered'] is True
-assert v['state']=='unavailable'
+assert v['state']=='registered'
 assert 'execute_query' in v['compatible_tools']
 assert v['target']['scope']=='global'
 PY
 "$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/mcp.json" --tools-json '{"tools":[{"name":"listTables"}]}' > "$d/sql-missing.json" || exit 1
 "$PY" - "$d/sql-missing.json" <<'PY'
 import json,sys
-assert json.load(open(sys.argv[1]))['state']=='unavailable'
+assert json.load(open(sys.argv[1]))['state']=='tool_missing'
 PY
-"$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/item-mcp.json" --project "$d/project/.coop/project.yml" --tools-json '{"tools":[{"name":"fabric-sqlendpoint-execute_query"}]}' > "$d/sql-item-auth.json" || exit 1
+"$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/item-mcp.json" --project "$d/item-project.yml" --tools-json '{"tools":[{"name":"fabric-sqlendpoint-execute_query"}]}' > "$d/sql-item-auth.json" || exit 1
 "$PY" - "$d/sql-item-auth.json" <<'PY'
 import json,sys
 v=json.load(open(sys.argv[1]))
-assert v['state'] in ('auth_required','target_invalid','registered','unavailable')
+assert v['state']=='registered'
 assert v['target']['scope']=='item'
 PY
 cat > "$d/mismatch-project.yml" <<'YAML'
@@ -126,8 +127,8 @@ YAML
 "$PY" - "$d/sql-mismatch.json" <<'PY'
 import json,sys
 v=json.load(open(sys.argv[1]))
-assert v['state']=='unavailable'
-assert v['registered_target'] is None
+assert v['state']=='target_invalid'
+assert v['registered_target']['scope']=='item'
 PY
 "$PY" - "$d/mcp.json" "$d/bad-sql-mcp.json" <<'PY'
 import json,sys
@@ -139,7 +140,7 @@ PY
 "$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/bad-sql-mcp.json" > "$d/bad-sql-doctor.json" || exit 1
 "$PY" - "$d/bad-sql-doctor.json" <<'PY'
 import json,sys
-assert json.load(open(sys.argv[1]))['state']=='unavailable'
+assert json.load(open(sys.argv[1]))['state']=='target_invalid'
 PY
 "$PY" - "$d/mcp.json" "$d/token-sql-mcp.json" <<'PY'
 import json,sys

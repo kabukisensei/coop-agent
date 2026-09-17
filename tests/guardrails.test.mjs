@@ -650,7 +650,7 @@ const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const ITEM_ID = "33333333-3333-4333-8333-333333333333";
 const OTHER_ITEM_ID = "44444444-4444-4444-8444-444444444444";
 const TENANT_ID = "11111111-1111-4111-8111-111111111111";
-const jwt = (claims, signature = "sig") => `${Buffer.from('{"alg":"none"}').toString("base64url")}.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.${signature}`;
+const jwt = (claims, signature = "sig") => `${Buffer.from('{"alg":"none"}').toString("base64url")}.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.${Buffer.from(signature).toString("base64url")}`;
 const launchToken = (principal = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") => jwt({ tid: TENANT_ID, oid: principal }, "launch-token-secret");
 const targetConfig = (overrides = {}) => {
   const target = {
@@ -726,7 +726,8 @@ await t("changed managed target, launch identity, or environment reprompts", asy
 
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
   assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "changed launch principal");
-  for (const token of [undefined, "opaque", "x.not-json.y"]) {
+  const canonical = launchToken();
+  for (const token of [undefined, "opaque", "x.not-json.y", canonical.replace(/^./, "*"), canonical.replace(".", ".="), `${canonical}=`]) {
     if (token === undefined) delete process.env.COOP_FABRIC_MCP_TOKEN;
     else process.env.COOP_FABRIC_MCP_TOKEN = token;
     assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, `unusable launch bearer: ${String(token)}`);
@@ -749,6 +750,11 @@ await t("forged header command, URL, timeout, and auth cannot reuse a grant", as
     (entry) => { entry.requestHeadersCommand.args[1] += "?forged=1"; },
     (entry) => { entry.requestHeadersCommand.timeoutMs = 9999; },
     (entry) => { entry.headers = { Authorization: "Bearer forged" }; },
+    (entry) => { entry.caFile = "forged.pem"; },
+    (entry) => { entry.bearerTokenStore = "forged"; },
+    (entry) => { entry.httpTransport = { forged: true }; },
+    (entry) => { entry.protocolVersion = "forged"; },
+    (entry) => { entry.unknownExtra = true; },
   ];
   for (const mutate of mutations) {
     const config = targetConfig();

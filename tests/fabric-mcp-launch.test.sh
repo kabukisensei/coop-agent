@@ -28,19 +28,30 @@ TOKEN='fabric-launch-canary-7e5a3c'
 HELPER_DIAGNOSTIC='untrusted-helper-diagnostic-93b75a'
 HELPER_TOKENLIKE='tokenlike-helper-value-2309'
 
-cat > "$AGENT_DIR/mcp.json" <<'JSON'
-{
-  "mcpServers": {
-    "fabric-sqlendpoint": {
-      "url": "https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint",
-      "auth": "bearer",
-      "bearerTokenEnv": "COOP_FABRIC_MCP_TOKEN",
-      "lifecycle": "lazy"
-    }
-  },
-  "_coop": {"schema_version": 1, "managed_servers": ["fabric-sqlendpoint"]}
+PY="$(command -v python3 2>/dev/null || command -v python)"
+"$PY" - "$AGENT_DIR/mcp.json" "$ROOT" <<'PY'
+import json, sys
+from pathlib import Path
+url = "https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint"
+target = {key: "" for key in ("workspace_id", "item_id", "item_type", "client", "tenant_id", "environment", "item_name")}
+target.update(scope="global", reason="fixture")
+config = {
+    "mcpServers": {"fabric-sqlendpoint": {
+        "url": url,
+        "auth": False,
+        "requestHeadersCommand": {
+            "command": "node",
+            "args": [str(Path(sys.argv[2]).resolve() / "lib" / "fabric_request_headers.mjs"), url],
+            "timeoutMs": 10000,
+        },
+        "requestTimeoutMs": 60000,
+        "lifecycle": "lazy",
+        "_coop_target": target,
+    }},
+    "_coop": {"schema_version": 1, "managed_servers": ["fabric-sqlendpoint"]},
 }
-JSON
+Path(sys.argv[1]).write_text(json.dumps(config), encoding="utf-8")
+PY
 
 cat > "$BIN/az" <<'SH'
 #!/bin/sh

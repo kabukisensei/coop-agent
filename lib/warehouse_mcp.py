@@ -29,6 +29,7 @@ except Exception:  # pragma: no cover - import fallback for direct embedding
 FABRIC_RESOURCE = "https://api.fabric.microsoft.com"
 FABRIC_TOKEN_ENV = "COOP_FABRIC_MCP_TOKEN"
 GLOBAL_SQL_ENDPOINT_URL = f"{FABRIC_RESOURCE}/v1/mcp/dataPlane/sqlEndpoint"
+REQUEST_HEADERS_HELPER = str(Path(__file__).resolve().parent / "fabric_request_headers.mjs")
 UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -214,33 +215,65 @@ def classify_tools(tools: list[Any]) -> str:
 def sqlendpoint_config_status(entry: Any) -> str:
     if not isinstance(entry, dict):
         return "unavailable"
-    if any(
-        field in entry
-        for field in (
-            "command",
-            "args",
-            "env",
-            "bearerToken",
-            "headers",
-            "oauth",
-        )
-    ):
-        return "unavailable"
-    if (
-        entry.get("auth") != "bearer"
-        or entry.get("bearerTokenEnv") != FABRIC_TOKEN_ENV
-        or entry.get("lifecycle") != "lazy"
-    ):
+    if set(entry) != {
+        "url",
+        "auth",
+        "requestHeadersCommand",
+        "requestTimeoutMs",
+        "lifecycle",
+        "_coop_target",
+    }:
         return "unavailable"
     raw_url = entry.get("url")
     url = raw_url if isinstance(raw_url, str) else ""
+    header = entry.get("requestHeadersCommand")
+    target = entry.get("_coop_target")
+    target_keys = {
+        "scope",
+        "workspace_id",
+        "item_id",
+        "item_type",
+        "reason",
+        "client",
+        "tenant_id",
+        "environment",
+        "item_name",
+    }
+    if (
+        entry.get("auth") is not False
+        or entry.get("requestTimeoutMs") != 60000
+        or entry.get("lifecycle") != "lazy"
+        or not isinstance(header, dict)
+        or set(header) != {"command", "args", "timeoutMs"}
+        or header.get("command") != "node"
+        or header.get("args") != [REQUEST_HEADERS_HELPER, url]
+        or header.get("timeoutMs") != 10000
+        or not isinstance(target, dict)
+        or set(target) != target_keys
+        or any(not isinstance(target.get(key), str) for key in target_keys)
+    ):
+        return "unavailable"
     if url == GLOBAL_SQL_ENDPOINT_URL:
-        return "registered"
+        return (
+            "registered"
+            if target["scope"] == "global"
+            and target["workspace_id"] == ""
+            and target["item_id"] == ""
+            else "unavailable"
+        )
     m = re.match(
         rf"^{re.escape(FABRIC_RESOURCE)}/v1/mcp/dataPlane/workspaces/({UUID_RE.pattern[1:-1]})/items/({UUID_RE.pattern[1:-1]})/sqlEndpoint$",
         url,
     )
-    return "registered" if m else "target_invalid"
+    if not m:
+        return "target_invalid"
+    return (
+        "registered"
+        if target["scope"] == "item"
+        and canonical_uuid(target["workspace_id"]) == canonical_uuid(m.group(1))
+        and canonical_uuid(target["item_id"]) == canonical_uuid(m.group(2))
+        else "unavailable"
+    )
 
 
 def registered_target(entry: Any) -> SqlEndpointTarget | None:

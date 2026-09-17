@@ -11,19 +11,28 @@ $helperTokenlike = 'tokenlike-helper-value-2309'
 New-Item -ItemType Directory -Force -Path $bin,$agent,$marker | Out-Null
 $oldPythonPath = $env:PYTHONPATH
 try {
-  @'
-{
-  "mcpServers": {
-    "fabric-sqlendpoint": {
-      "url": "https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint",
-      "auth": "bearer",
-      "bearerTokenEnv": "COOP_FABRIC_MCP_TOKEN",
-      "lifecycle": "lazy"
+  $url = 'https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint'
+  $config = [ordered]@{
+    mcpServers = [ordered]@{
+      'fabric-sqlendpoint' = [ordered]@{
+        url = $url
+        auth = $false
+        requestHeadersCommand = [ordered]@{
+          command = 'node'
+          args = @((Join-Path $root 'lib\fabric_request_headers.mjs'), $url)
+          timeoutMs = 10000
+        }
+        requestTimeoutMs = 60000
+        lifecycle = 'lazy'
+        _coop_target = [ordered]@{
+          scope = 'global'; workspace_id = ''; item_id = ''; item_type = ''
+          reason = 'fixture'; client = ''; tenant_id = ''; environment = ''; item_name = ''
+        }
+      }
     }
-  },
-  "_coop": {"schema_version": 1, "managed_servers": ["fabric-sqlendpoint"]}
-}
-'@ | Set-Content -LiteralPath (Join-Path $agent 'mcp.json') -Encoding UTF8
+    _coop = [ordered]@{ schema_version = 1; managed_servers = @('fabric-sqlendpoint') }
+  }
+  $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $agent 'mcp.json') -Encoding UTF8
 
   if ($env:OS -eq 'Windows_NT') {
     @'

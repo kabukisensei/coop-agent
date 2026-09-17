@@ -74,10 +74,28 @@ def fixture(
                 "mcpServers": {
                     "fabric-sqlendpoint": {
                         "url": f"{fsq.wmcp.FABRIC_RESOURCE}/v1/mcp/dataPlane/workspaces/{WORKSPACE}/items/{ITEM}/sqlEndpoint",
-                        "auth": "bearer",
-                        "bearerTokenEnv": fsq.wmcp.FABRIC_TOKEN_ENV,
+                        "auth": False,
+                        "requestHeadersCommand": {
+                            "command": "node",
+                            "args": [
+                                fsq.wmcp.REQUEST_HEADERS_HELPER,
+                                f"{fsq.wmcp.FABRIC_RESOURCE}/v1/mcp/dataPlane/workspaces/{WORKSPACE}/items/{ITEM}/sqlEndpoint",
+                            ],
+                            "timeoutMs": 10000,
+                        },
+                        "requestTimeoutMs": 60000,
                         "lifecycle": "lazy",
-                        "_coop_target": {"item_name": "CustomerWarehouse"},
+                        "_coop_target": {
+                            "scope": "item",
+                            "workspace_id": WORKSPACE,
+                            "item_id": ITEM,
+                            "item_type": item_type,
+                            "reason": "fixture",
+                            "client": "",
+                            "tenant_id": "",
+                            "environment": "",
+                            "item_name": "CustomerWarehouse",
+                        },
                     }
                 },
                 "_coop": {"managed_servers": ["fabric-sqlendpoint"]},

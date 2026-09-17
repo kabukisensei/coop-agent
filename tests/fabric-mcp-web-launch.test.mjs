@@ -34,9 +34,21 @@ async function runCase({ withPython }) {
       mcpServers: {
         "fabric-sqlendpoint": {
           url: "https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint",
-          auth: "bearer",
-          bearerTokenEnv: "COOP_FABRIC_MCP_TOKEN",
+          auth: false,
+          requestHeadersCommand: {
+            command: "node",
+            args: [
+              join(fakeRoot, "lib", "fabric_request_headers.mjs"),
+              "https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint",
+            ],
+            timeoutMs: 10000,
+          },
+          requestTimeoutMs: 60000,
           lifecycle: "lazy",
+          _coop_target: {
+            scope: "global", workspace_id: "", item_id: "", item_type: "", reason: "fixture",
+            client: "", tenant_id: "", environment: "", item_name: "",
+          },
         },
       },
     }),
