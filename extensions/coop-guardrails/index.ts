@@ -930,7 +930,7 @@ function launchIdentity(token: string | undefined): { tenant: string; principal:
   try {
     const decoded = parts.map((part) => Buffer.from(part, "base64url"));
     if (decoded.some((part, index) => part.length === 0 || part.toString("base64url") !== parts[index])) return null;
-    const claims = JSON.parse(decoded[1].toString("utf8"));
+    const claims = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(decoded[1] as any)));
     const tenant = strictResolvedText(claims?.tid)?.toLowerCase();
     const principal = strictResolvedText(claims?.oid) || strictResolvedText(claims?.sub);
     return tenant && UUID.test(tenant) && principal ? { tenant, principal } : null;

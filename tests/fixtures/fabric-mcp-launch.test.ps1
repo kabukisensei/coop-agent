@@ -5,7 +5,13 @@ $temp = Join-Path ([System.IO.Path]::GetTempPath()) ("coop-fabric-token-" + [gui
 $bin = Join-Path $temp 'bin'
 $agent = Join-Path $temp 'agent'
 $marker = Join-Path $temp 'marker'
-$token = 'fabric-launch-canary-7e5a3c'
+function ConvertTo-Base64Url([byte[]]$Bytes) {
+  return [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
+}
+$utf8 = [Text.Encoding]::UTF8
+$token = (ConvertTo-Base64Url $utf8.GetBytes('{"alg":"none"}')) + '.' +
+  (ConvertTo-Base64Url $utf8.GetBytes('{"tid":"11111111-1111-4111-8111-111111111111","oid":"22222222-2222-4222-8222-222222222222"}')) + '.' +
+  (ConvertTo-Base64Url $utf8.GetBytes('launch-signature'))
 $helperDiagnostic = 'untrusted-helper-diagnostic-93b75a'
 $helperTokenlike = 'tokenlike-helper-value-2309'
 New-Item -ItemType Directory -Force -Path $bin,$agent,$marker | Out-Null
@@ -35,15 +41,17 @@ try {
   $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $agent 'mcp.json') -Encoding UTF8
 
   if ($env:OS -eq 'Windows_NT') {
-    @'
+    $azCmd = @'
 @echo off
->"%COOP_TEST_MARKER%\az-argv" echo %*
+>"__MARKER__\az-argv" echo %*
+set /p COOP_TEST_AZ_MODE=<"__MARKER__\az-mode"
 if "%COOP_TEST_AZ_MODE%"=="auth" (
   >&2 echo ERROR: Please run 'az login' to setup account.
   exit /b 1
 )
-echo {"accessToken":"%COOP_TEST_TOKEN%"}
-'@ | Set-Content -LiteralPath (Join-Path $bin 'az.cmd') -Encoding ASCII
+echo {"accessToken":"__TOKEN__"}
+'@
+    $azCmd.Replace('__MARKER__', $marker).Replace('__TOKEN__', $token) | Set-Content -LiteralPath (Join-Path $bin 'az.cmd') -Encoding ASCII
     @'
 @echo off
 >"%COOP_TEST_MARKER%\pi-argv" echo %*
@@ -53,15 +61,16 @@ if "%COOP_TEST_EXPECT_TOKEN%"=="absent" if not "%COOP_FABRIC_MCP_TOKEN%"=="" exi
 exit /b 0
 '@ | Set-Content -LiteralPath (Join-Path $bin 'pi.cmd') -Encoding ASCII
   } else {
-    @'
+    $azUnix = @'
 #!/bin/sh
-printf '%s\n' "$*" > "$COOP_TEST_MARKER/az-argv"
-if [ "$COOP_TEST_AZ_MODE" = auth ]; then
+printf '%s\n' "$*" > '__MARKER__/az-argv'
+if [ "$(cat '__MARKER__/az-mode')" = auth ]; then
   printf '%s\n' "ERROR: Please run 'az login' to setup account." >&2
   exit 1
 fi
-printf '{"accessToken":"%s"}\n' "$COOP_TEST_TOKEN"
-'@ | Set-Content -LiteralPath (Join-Path $bin 'az') -Encoding ASCII
+printf '%s\n' '{"accessToken":"__TOKEN__"}'
+'@
+    $azUnix.Replace('__MARKER__', $marker).Replace('__TOKEN__', $token) | Set-Content -LiteralPath (Join-Path $bin 'az') -Encoding ASCII
     @'
 #!/bin/sh
 printf '%s\n' "$*" > "$COOP_TEST_MARKER/pi-argv"
@@ -84,6 +93,7 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
   $env:COOP_TEST_TOKEN = $token
   $env:COOP_TEST_AZ_MODE = 'ok'
   $env:COOP_TEST_EXPECT_TOKEN = 'present'
+  Set-Content -LiteralPath (Join-Path $marker 'az-mode') -Value 'ok' -NoNewline
 
   $priorEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
@@ -97,6 +107,7 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
 
   Remove-Item -LiteralPath (Join-Path $marker 'pi-state') -Force
   $env:COOP_TEST_AZ_MODE = 'auth'
+  Set-Content -LiteralPath (Join-Path $marker 'az-mode') -Value 'auth' -NoNewline
   $env:COOP_TEST_EXPECT_TOKEN = 'absent'
   $env:COOP_FABRIC_MCP_TOKEN = 'stale-inherited-token'
   $ErrorActionPreference = 'Continue'

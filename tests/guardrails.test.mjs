@@ -727,7 +727,8 @@ await t("changed managed target, launch identity, or environment reprompts", asy
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
   assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "changed launch principal");
   const canonical = launchToken();
-  for (const token of [undefined, "opaque", "x.not-json.y", canonical.replace(/^./, "*"), canonical.replace(".", ".="), `${canonical}=`]) {
+  const invalidUtf8 = `${Buffer.from('{"alg":"none"}').toString("base64url")}.${Buffer.from([0xc3, 0x28]).toString("base64url")}.${Buffer.from("sig").toString("base64url")}`;
+  for (const token of [undefined, "opaque", "x.not-json.y", invalidUtf8, canonical.replace(/^./, "*"), canonical.replace(".", ".="), `${canonical}=`]) {
     if (token === undefined) delete process.env.COOP_FABRIC_MCP_TOKEN;
     else process.env.COOP_FABRIC_MCP_TOKEN = token;
     assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, `unusable launch bearer: ${String(token)}`);

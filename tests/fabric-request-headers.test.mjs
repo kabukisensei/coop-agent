@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { windowsAzureCliCommand } from "../lib/fabric_request_headers.mjs";
+import { windowsAzureCliCandidates, windowsAzureCliCommand } from "../lib/fabric_request_headers.mjs";
 
 const ROOT = fileURLToPath(new globalThis.URL("..", import.meta.url));
 const HELPER = join(ROOT, "lib", "fabric_request_headers.mjs");
@@ -37,6 +37,7 @@ if(mode==='timeout') setTimeout(()=>{},20000);
 else if(mode==='oversize') process.stdout.write('x'.repeat(70000));
 else if(mode==='invalid') process.stdout.write('{');
 else if(mode==='invalid-token') process.stdout.write(JSON.stringify({accessToken:'not-a-jwt'}));
+else if(mode==='invalid-utf8-token') process.stdout.write(JSON.stringify({accessToken:seg('{"alg":"none"}')+'.'+Buffer.from([0xc3,0x28]).toString('base64url')+'.'+seg('sig')}));
 else {
  let n=0; try{n=Number(fs.readFileSync(${quoted(counter)},'utf8'))||0}catch{}; fs.writeFileSync(${quoted(counter)},String(n+1));
  const claims=mode==='mismatch'?{tid:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',oid:${quoted(PRINCIPAL)}}:{tid:${quoted(TENANT)},oid:${quoted(PRINCIPAL)}};
@@ -73,6 +74,19 @@ const run = (envelope = baseEnvelope, mode = "success", endpoint = ENDPOINT, tok
   });
 };
 
+const runToken = (resource = "https://api.fabric.microsoft.com", mode = "success", options = {}) => {
+  installFake(mode);
+  return spawnSync(process.execPath, [HELPER, "--token", resource, ...(options.extraArgs || [])], {
+    encoding: "buffer", timeout: 12000, cwd: options.cwd || ROOT,
+    env: {
+      PATH: options.path || `${dir}${delimiter}${process.env.PATH || ""}`,
+      HOME: process.env.HOME || tmpdir(),
+      ARBITRARY_SECRET_CANARY: "must-not-reach-child",
+      ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {}),
+    },
+  });
+};
+
 try {
   const first = run();
   const second = run();
@@ -87,6 +101,28 @@ try {
   assert.equal(actualChildEnv.ARBITRARY_SECRET_CANARY, undefined);
   assert.deepEqual(Object.keys(actualChildEnv).filter((key) => key.includes("FAKE_AZ")), []);
   assert.ok(actualChildEnv.PATH.split(delimiter).every(isAbsolute), "child PATH is absolute");
+
+  for (const resource of ["https://api.fabric.microsoft.com", "https://database.windows.net/"]) {
+    const result = runToken(resource);
+    assert.equal(result.status, 0); assert.equal(result.stderr.length, 0);
+    const match = /^coop-azure-token-v1\t([A-Za-z0-9_-]+)\tend$/.exec(result.stdout.toString("ascii"));
+    assert.ok(match, resource);
+    assert.match(Buffer.from(match[1], "base64url").toString("ascii"), /^[!-~]+\.[!-~]+\.[!-~]+$/);
+    const tokenChildEnv = JSON.parse(readFileSync(envDump, "utf8"));
+    assert.equal(tokenChildEnv.ARBITRARY_SECRET_CANARY, undefined);
+  }
+  for (const [resource, extraArgs] of [
+    ["https://evil.example", []],
+    ["https://api.fabric.microsoft.com", ["extra"]],
+  ]) {
+    const result = runToken(resource, "success", { extraArgs });
+    assert.notEqual(result.status, 0); assert.equal(result.stdout.length, 0); assert.equal(result.stderr.length, 0);
+  }
+  for (const mode of ["invalid", "invalid-token", "invalid-utf8-token", "stderr", "nonzero", "timeout", "oversize"]) {
+    const result = runToken("https://api.fabric.microsoft.com", mode);
+    assert.notEqual(result.status, 0, `token mode ${mode}`);
+    assert.equal(result.stdout.length, 0, mode); assert.equal(result.stderr.length, 0, mode);
+  }
 
   for (const [envelope, endpoint] of [
     ["not-json", ENDPOINT],
@@ -111,6 +147,7 @@ try {
     assert.equal(`${result.stdout}${result.stderr}`.includes("child-diagnostic-canary"), false);
   }
   for (const malformed of [
+    `${segment('{"alg":"none"}')}.${Buffer.from([0xc3, 0x28]).toString("base64url")}.${segment("sig")}`,
     launch.replace(/^./, "*"),
     launch.replace(".", ".="),
     `${launch}=`,
@@ -133,6 +170,10 @@ try {
     assert.notEqual(result.status, 0);
     assert.equal(result.stdout, "");
     assert.equal(existsSync(marker), false, "repo-local Azure CLI candidates never execute");
+    const tokenResult = runToken("https://api.fabric.microsoft.com", "success", { cwd: hijack, path: hijack });
+    assert.notEqual(tokenResult.status, 0);
+    assert.equal(tokenResult.stdout.length, 0);
+    assert.equal(existsSync(marker), false, "token mode also rejects repo-local Azure CLI candidates");
   } finally { rmSync(hijack, { recursive: true, force: true }); }
 
   const windows = windowsAzureCliCommand(
@@ -143,10 +184,19 @@ try {
     command: "C:\\Windows\\System32\\cmd.exe",
     args: ["/d", "/s", "/c", '""C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd" account get-access-token --resource https://api.fabric.microsoft.com --output json"'],
   });
+  const candidates = windowsAzureCliCandidates(["C:\\Earlier", "C:\\Later"]);
+  assert.equal(candidates.find((candidate) => new Set(["C:\\Earlier\\az.exe", "C:\\Later\\az.cmd"]).has(candidate)), "C:\\Earlier\\az.exe");
   assert.equal(windowsAzureCliCommand("C:\\Windows\\System32\\cmd.exe", "C:\\unsafe&path\\az.cmd"), null);
   assert.deepEqual(
     windowsAzureCliCommand("C:\\Windows\\System32\\cmd.exe", "C:\\Program Files\\Azure CLI\\az.exe"),
     { command: "C:\\Program Files\\Azure CLI\\az.exe", args: ["account", "get-access-token", "--resource", "https://api.fabric.microsoft.com", "--output", "json"] },
+  );
+  assert.deepEqual(
+    windowsAzureCliCommand("C:\\Windows\\System32\\cmd.exe", "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd"),
+    {
+      command: "C:\\Windows\\System32\\cmd.exe",
+      args: ["/d", "/s", "/c", '""C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd" account get-access-token --resource https://api.fabric.microsoft.com --output json"'],
+    },
   );
   console.log("  ✓ Fabric request headers resolve Azure CLI safely and fail closed");
 } finally {

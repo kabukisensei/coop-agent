@@ -2,9 +2,10 @@
 """Offline Warehouse MCP target and doctor contract tests."""
 
 import importlib.util
+import base64
 import json
-import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -144,130 +145,113 @@ assert (
     is True
 )
 
-# Azure CLI token acquisition supports Windows az.CMD without shell=True and
-# reports launch/timeout/command/output failures truthfully without leaking tokens.
+# Every Python token caller delegates to the one hardened Node token mode. The
+# Python boundary admits one exact, capped frame and never launches az/cmd itself.
 secret_token = "secret-regression-token"
-valid_token_result = subprocess.CompletedProcess(
-    args=[], returncode=0, stdout=json.dumps({"accessToken": secret_token}), stderr=""
+helper_token = ".".join(
+    base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+    for value in (
+        b'{"alg":"none"}',
+        b'{"tid":"11111111-1111-4111-8111-111111111111","oid":"22222222-2222-4222-8222-222222222222"}',
+        b"signature",
+    )
 )
-az_cmd_path = r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.CMD"
-cmd_exe = r"C:\Windows\System32\cmd.exe"
-with (
-    mock.patch.object(wmcp, "_is_windows", return_value=True),
-    mock.patch.object(wmcp.shutil, "which", return_value=az_cmd_path),
-    mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
-    mock.patch.object(wmcp.subprocess, "run", return_value=valid_token_result) as run,
-):
-    token, state = wmcp.az_access_token()
-    assert (token, state) == (secret_token, "ok")
-    windows_cmd = run.call_args.args[0]
-    assert windows_cmd == [
-        cmd_exe,
-        "/d",
-        "/c",
-        "az",
-        "account",
-        "get-access-token",
-        "--resource",
-        wmcp.FABRIC_RESOURCE,
-        "--output",
-        "json",
-    ]
-    assert windows_cmd[0] != "az"
-    assert run.call_args.kwargs["timeout"] == 8
-    assert run.call_args.kwargs["shell"] is False
+helper_frame = (
+    b"coop-azure-token-v1\t"
+    + base64.urlsafe_b64encode(helper_token.encode("ascii")).rstrip(b"=")
+    + b"\tend"
+)
+trusted_node = str(Path(sys.executable).resolve())
+for resource in (wmcp.FABRIC_RESOURCE, wmcp.SQL_RESOURCE):
+    with (
+        mock.patch.object(wmcp, "_native_node", return_value=trusted_node),
+        mock.patch.object(
+            wmcp, "_run_token_helper", return_value=(0, helper_frame, b"", False)
+        ) as run,
+    ):
+        assert wmcp.az_access_token(resource=resource) == (helper_token, "ok")
+        assert run.call_args.args == (
+            [trusted_node, wmcp.REQUEST_HEADERS_HELPER, "--token", resource],
+            8,
+        )
 
 with (
-    mock.patch.object(wmcp, "_is_windows", return_value=False),
-    mock.patch.object(wmcp.shutil, "which", return_value="/usr/bin/az"),
-    mock.patch.object(wmcp.subprocess, "run", return_value=valid_token_result) as run,
-):
-    assert wmcp.az_access_token() == (secret_token, "ok")
-    assert run.call_args.args[0] == [
-        "az",
-        "account",
-        "get-access-token",
-        "--resource",
-        wmcp.FABRIC_RESOURCE,
-        "--output",
-        "json",
-    ]
-    assert run.call_args.kwargs["timeout"] == 8
-    assert run.call_args.kwargs["shell"] is False
-
-with (
-    mock.patch.object(wmcp, "_is_windows", return_value=True),
-    mock.patch.object(wmcp.shutil, "which", return_value=None),
-    mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
-    mock.patch.object(wmcp.subprocess, "run") as run,
+    mock.patch.object(wmcp, "_native_node", return_value=None),
+    mock.patch.object(wmcp, "_run_token_helper") as run,
 ):
     assert wmcp.az_access_token() == ("", "azure_cli_unavailable")
     run.assert_not_called()
 
-for launch_error in (FileNotFoundError(), OSError("cannot launch")):
-    with (
-        mock.patch.object(wmcp, "_is_windows", return_value=True),
-        mock.patch.object(wmcp.shutil, "which", return_value=az_cmd_path),
-        mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
-        mock.patch.object(wmcp.subprocess, "run", side_effect=launch_error),
-    ):
-        assert wmcp.az_access_token() == ("", "token_launch_failed")
-
 with (
-    mock.patch.object(wmcp, "_is_windows", return_value=True),
-    mock.patch.object(wmcp.shutil, "which", return_value=az_cmd_path),
-    mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
-    mock.patch.object(
-        wmcp.subprocess,
-        "run",
-        side_effect=subprocess.TimeoutExpired(["az"], 8, output=secret_token),
-    ),
+    mock.patch.object(wmcp, "_native_node", return_value=trusted_node),
+    mock.patch.object(wmcp, "_run_token_helper", side_effect=OSError("no launch")),
 ):
-    assert wmcp.az_access_token() == ("", "token_timeout")
+    assert wmcp.az_access_token() == ("", "token_launch_failed")
 
-for stderr, expected in (
-    ("ERROR: Please run 'az login' to setup account.", "auth_required"),
-    ("ERROR: transport helper failed", "token_command_failed"),
-    (
-        "'az' is not recognized as an internal or external command",
-        "azure_cli_unavailable",
-    ),
+for result, expected in (
+    ((22, b"", b"", True), "token_timeout"),
+    ((20, b"", b"", False), "azure_cli_unavailable"),
+    ((21, b"", b"", False), "token_launch_failed"),
+    ((23, b"", b"", False), "token_command_failed"),
+    ((24, b"", b"", False), "token_output_invalid"),
+    ((25, b"", b"", False), "auth_required"),
+    ((0, helper_frame, b"diagnostic-canary", False), "token_output_invalid"),
 ):
-    failed = subprocess.CompletedProcess(
-        args=[], returncode=1, stdout="", stderr=stderr
-    )
     with (
-        mock.patch.object(wmcp, "_is_windows", return_value=True),
-        mock.patch.object(wmcp.shutil, "which", return_value=az_cmd_path),
-        mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
-        mock.patch.object(wmcp.subprocess, "run", return_value=failed),
-    ):
-        assert wmcp.az_access_token() == ("", expected)
-
-for stdout in (
-    "",
-    "not-json",
-    "{}",
-    '{"accessToken": ""}',
-    *(
-        json.dumps({"accessToken": f"bad{char}token"})
-        for char in ("\x00", "\x07", "\x7f", "\x85", "\u200b")
-    ),
-    json.dumps({"accessToken": " leading-space"}),
-    json.dumps({"accessToken": "trailing-space "}),
-):
-    malformed = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout=stdout, stderr=""
-    )
-    with (
-        mock.patch.object(wmcp, "_is_windows", return_value=True),
-        mock.patch.object(wmcp.shutil, "which", return_value=az_cmd_path),
-        mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
-        mock.patch.object(wmcp.subprocess, "run", return_value=malformed),
+        mock.patch.object(wmcp, "_native_node", return_value=trusted_node),
+        mock.patch.object(wmcp, "_run_token_helper", return_value=result),
     ):
         token, state = wmcp.az_access_token()
-        assert (token, state) == ("", "token_output_invalid")
-        assert secret_token not in state
+        assert (token, state) == ("", expected)
+        assert helper_token not in state
+
+for malformed in (
+    b"",
+    b"not-a-frame",
+    helper_frame + b"\n",
+    helper_frame + helper_frame,
+    helper_frame.replace(b"\tend", b"\tend\ttrailing"),
+    b"coop-azure-token-v1\t*\tend",
+    b"coop-azure-token-v1\t_w\tend",
+):
+    with (
+        mock.patch.object(wmcp, "_native_node", return_value=trusted_node),
+        mock.patch.object(
+            wmcp, "_run_token_helper", return_value=(0, malformed, b"", False)
+        ),
+    ):
+        assert wmcp.az_access_token() == ("", "token_output_invalid")
+
+with mock.patch.object(wmcp, "_run_token_helper") as run:
+    assert wmcp.az_access_token(resource="https://evil.example") == (
+        "",
+        "token_command_failed",
+    )
+    run.assert_not_called()
+
+with mock.patch.dict(wmcp.os.environ, {"ARBITRARY_SECRET_CANARY": "must-not-pass"}):
+    helper_env = wmcp._token_helper_environment()
+assert "ARBITRARY_SECRET_CANARY" not in helper_env
+assert set(helper_env) <= {
+    "PATH", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "LOCALAPPDATA",
+    "APPDATA", "SystemRoot", "WINDIR", "SystemDrive", "TEMP", "TMP", "TMPDIR",
+    "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "HTTP_PROXY", "HTTPS_PROXY",
+    "NO_PROXY", "http_proxy", "https_proxy", "no_proxy", "AZURE_CONFIG_DIR",
+}
+
+code, stdout, stderr, timed_out = wmcp._run_token_helper(
+    [sys.executable, "-c", f"print('x' * {wmcp.MAX_TOKEN_HELPER_OUTPUT + 1})"],
+    2,
+)
+assert code == 24 and len(stdout) > wmcp.MAX_TOKEN_HELPER_OUTPUT
+assert stderr == b"" and timed_out is False
+
+with tempfile.TemporaryDirectory(dir=ROOT) as local_dir:
+    local_node = Path(local_dir) / ("node.exe" if wmcp._is_windows() else "node")
+    local_node.write_bytes(b"local-node-hijack")
+    local_node.chmod(0o755)
+    with mock.patch.object(wmcp.shutil, "which", return_value=str(local_node)):
+        assert wmcp._native_node() is None
 
 
 # Exact item scope requires complete UUIDs and canonicalizes them; mismatch fails.
@@ -345,16 +329,16 @@ def fake_global_list(url, token, timeout=8):
 
 
 with (
-    mock.patch.object(wmcp, "_is_windows", return_value=True),
-    mock.patch.object(wmcp.shutil, "which", return_value=az_cmd_path),
-    mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
-    mock.patch.object(wmcp.subprocess, "run", return_value=valid_token_result),
+    mock.patch.object(wmcp, "_native_node", return_value=trusted_node),
+    mock.patch.object(
+        wmcp, "_run_token_helper", return_value=(0, helper_frame, b"", False)
+    ),
     mock.patch.object(wmcp, "mcp_tools_list", side_effect=fake_global_list),
 ):
     windows_probed = wmcp.doctor_status(cfg, project={}, probe=True)
 assert windows_probed["state"] == "registered"
-assert probe_calls == [(wmcp.GLOBAL_SQL_ENDPOINT_URL, secret_token, 8)]
-assert secret_token not in json.dumps(windows_probed)
+assert probe_calls == [(wmcp.GLOBAL_SQL_ENDPOINT_URL, helper_token, 8)]
+assert helper_token not in json.dumps(windows_probed)
 
 original_az, original_get, original_list = (
     wmcp.az_access_token,
