@@ -19,21 +19,38 @@ spec.loader.exec_module(wmcp)
 
 def entry(url=wmcp.GLOBAL_SQL_ENDPOINT_URL):
     return {
-        "command": "npx",
-        "args": [
-            "-y",
-            "mcp-remote@0.1.38",
-            url,
-            "--transport",
-            "http-only",
-            "--silent",
-        ],
+        "url": url,
+        "auth": "bearer",
+        "bearerTokenEnv": wmcp.FABRIC_TOKEN_ENV,
+        "lifecycle": "lazy",
+    }
+
+
+def managed_config(url=wmcp.GLOBAL_SQL_ENDPOINT_URL):
+    return {
+        "mcpServers": {"fabric-sqlendpoint": entry(url)},
+        "_coop": {"schema_version": 1, "managed_servers": ["fabric-sqlendpoint"]},
     }
 
 
 # Configuration alone is registered, not healthy; all documented spellings work.
-cfg = {"mcpServers": {"fabric-sqlendpoint": entry()}}
+cfg = managed_config()
 assert wmcp.doctor_status(cfg)["state"] == "registered"
+assert (
+    wmcp.doctor_status({"mcpServers": {"fabric-sqlendpoint": entry()}})["state"]
+    == "unavailable"
+)
+for forbidden in (
+    {"command": "npx"},
+    {"args": ["mcp-remote"]},
+    {"bearerToken": "secret-fixture-token"},
+    {"headers": {"Authorization": "Bearer secret-fixture-token"}},
+    {"oauth": {"enabled": True}},
+    {"bearerTokenEnv": "ANOTHER_SECRET"},
+):
+    candidate = entry()
+    candidate.update(forbidden)
+    assert wmcp.sqlendpoint_config_status(candidate) == "unavailable"
 for spelling in (
     "executeSQL",
     "execute_query",
@@ -54,7 +71,8 @@ assert (
     wmcp.sqlendpoint_config_status(entry("https://evil.example/sqlEndpoint"))
     == "target_invalid"
 )
-assert "token" not in json.dumps(entry()).lower()
+assert "secret-regression-token" not in json.dumps(entry())
+assert "mcp-remote" not in json.dumps(entry())
 assert wmcp.machine_sqlendpoint_enabled({"integrations": {"fabric": False}}) is False
 assert (
     wmcp.machine_sqlendpoint_enabled(
@@ -162,7 +180,7 @@ for launch_error in (FileNotFoundError(), OSError("cannot launch")):
         mock.patch.dict(wmcp.os.environ, {"COMSPEC": cmd_exe}),
         mock.patch.object(wmcp.subprocess, "run", side_effect=launch_error),
     ):
-        assert wmcp.az_access_token() == ("", "azure_cli_unavailable")
+        assert wmcp.az_access_token() == ("", "token_launch_failed")
 
 with (
     mock.patch.object(wmcp, "_is_windows", return_value=True),
@@ -195,7 +213,18 @@ for stderr, expected in (
     ):
         assert wmcp.az_access_token() == ("", expected)
 
-for stdout in ("", "not-json", "{}", '{"accessToken": ""}'):
+for stdout in (
+    "",
+    "not-json",
+    "{}",
+    '{"accessToken": ""}',
+    *(
+        json.dumps({"accessToken": f"bad{char}token"})
+        for char in ("\x00", "\x07", "\x7f", "\x85", "\u200b")
+    ),
+    json.dumps({"accessToken": " leading-space"}),
+    json.dumps({"accessToken": "trailing-space "}),
+):
     malformed = subprocess.CompletedProcess(
         args=[], returncode=0, stdout=stdout, stderr=""
     )
@@ -266,13 +295,9 @@ for malformed in (
     assert (
         wmcp.doctor_status({}, project=malformed_project)["state"] == "target_invalid"
     )
-wrong_cfg = {
-    "mcpServers": {
-        "fabric-sqlendpoint": entry(
-            item_url.replace(item, "33333333-3333-3333-3333-333333333333")
-        )
-    }
-}
+wrong_cfg = managed_config(
+    item_url.replace(item, "33333333-3333-3333-3333-333333333333")
+)
 assert (
     wmcp.doctor_status(wrong_cfg, [{"name": "executeSQL"}], project=project)["state"]
     == "target_invalid"
@@ -320,7 +345,7 @@ try:
     wmcp.fabric_get_json = fake_get
     wmcp.mcp_tools_list = fake_list
     probed = wmcp.doctor_status(
-        {"mcpServers": {"fabric-sqlendpoint": entry(item_url)}},
+        managed_config(item_url),
         project=project,
         probe=True,
     )
@@ -346,7 +371,7 @@ try:
 
     setattr(wmcp, "fabric_get_json", fake_lakehouse_get)
     lakehouse_probed = wmcp.doctor_status(
-        {"mcpServers": {"fabric-sqlendpoint": entry(lakehouse_target.url)}},
+        managed_config(lakehouse_target.url),
         project=lakehouse_project,
         probe=True,
     )
@@ -360,7 +385,7 @@ try:
     wmcp.fabric_get_json = lambda url, token, timeout=8: ({}, "target_invalid")
     assert (
         wmcp.doctor_status(
-            {"mcpServers": {"fabric-sqlendpoint": entry(item_url)}},
+            managed_config(item_url),
             project=project,
             probe=True,
         )["state"]
@@ -374,7 +399,7 @@ try:
     )
     assert (
         wmcp.doctor_status(
-            {"mcpServers": {"fabric-sqlendpoint": entry(item_url)}},
+            managed_config(item_url),
             project=project,
             probe=True,
         )["state"]
@@ -412,30 +437,40 @@ class FakeResponse:
         return self.status
 
 
-original_urlopen = wmcp.urllib.request.urlopen
+original_http_open = wmcp._http_open
 try:
     responses = iter(
         [
             FakeResponse(
                 json.dumps(
-                    {"result": {"protocolVersion": wmcp.MCP_PROTOCOL_VERSION}}
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {"protocolVersion": wmcp.MCP_PROTOCOL_VERSION},
+                    }
                 ).encode()
             ),
             FakeResponse(b"", status=202),
             FakeResponse(
-                json.dumps({"result": {"tools": [{"name": "execute_query"}]}}).encode()
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "result": {"tools": [{"name": "execute_query"}]},
+                    }
+                ).encode()
             ),
         ]
     )
     requests = []
     authorization_headers = []
 
-    def fake_urlopen(request, *_args, **_kwargs):
+    def fake_http_open(request, *_args, **_kwargs):
         requests.append(json.loads(request.data))
         authorization_headers.append(request.get_header("Authorization"))
         return next(responses)
 
-    wmcp.urllib.request.urlopen = fake_urlopen
+    wmcp._http_open = fake_http_open
     tools, state = wmcp.mcp_tools_list(
         wmcp.GLOBAL_SQL_ENDPOINT_URL, secret_token, timeout=1
     )
@@ -449,9 +484,7 @@ try:
     assert authorization_headers == [f"Bearer {secret_token}"] * 3
 
     for body, status in ((b"", 200), (b"", 204), (b"not-json", 200)):
-        wmcp.urllib.request.urlopen = lambda *_a, **_k: FakeResponse(
-            body, status=status
-        )
+        wmcp._http_open = lambda *_a, **_k: FakeResponse(body, status=status)
         _, request_state, _ = wmcp._mcp_post(
             wmcp.GLOBAL_SQL_ENDPOINT_URL,
             "secret-fixture-token",
@@ -460,8 +493,19 @@ try:
         )
         assert request_state == "unavailable"
 
+    wmcp._http_open = lambda *_a, **_k: FakeResponse(
+        b'{"jsonrpc":"2.0","id":10,"result":{"tools":[]}}'
+    )
+    _, mismatched_state, _ = wmcp._mcp_post(
+        wmcp.GLOBAL_SQL_ENDPOINT_URL,
+        "secret-fixture-token",
+        {"jsonrpc": "2.0", "id": 9, "method": "tools/list"},
+        timeout=1,
+    )
+    assert mismatched_state == "unavailable"
+
     for status in (202, 204):
-        wmcp.urllib.request.urlopen = lambda *_a, **_k: FakeResponse(b"", status=status)
+        wmcp._http_open = lambda *_a, **_k: FakeResponse(b"", status=status)
         _, notification_state, _ = wmcp._mcp_post(
             wmcp.GLOBAL_SQL_ENDPOINT_URL,
             "secret-fixture-token",
@@ -471,12 +515,20 @@ try:
         )
         assert notification_state == "ok"
 finally:
-    wmcp.urllib.request.urlopen = original_urlopen
+    wmcp._http_open = original_http_open
+
+assert (
+    wmcp._RejectRedirects().redirect_request(
+        None, None, 302, "Found", {}, "https://evil.example"
+    )
+    is None
+)
 
 # Both Doctor front ends map token-acquisition states to the same specific,
 # non-secret guidance, and only a proven auth failure tells the user to sign in.
 doctor_hints = {
     "azure_cli_unavailable": "install/repair Azure CLI and ensure az is on PATH; this is not an authentication diagnosis",
+    "token_launch_failed": "Azure CLI was found but could not be launched; this is not an authentication diagnosis",
     "token_timeout": "Azure CLI token command exceeded the bounded timeout; retry after checking Azure CLI responsiveness",
     "token_command_failed": "Azure CLI launched but token acquisition failed; run: az account get-access-token --resource https://api.fabric.microsoft.com --output json",
     "token_output_invalid": "Azure CLI returned no usable accessToken JSON; verify the Fabric token command output",

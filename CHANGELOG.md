@@ -5,6 +5,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- Replaced the Fabric Warehouse SQL endpoint's incompatible `mcp-remote` dynamic
+  OAuth flow with direct Streamable HTTP bearer authentication from a launch-time,
+  non-persisted Azure CLI token; failures leave Coop and other MCP integrations usable.
+
 ## [0.23.2] — 2026-09-16
 
 ### Added

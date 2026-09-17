@@ -207,6 +207,52 @@ EOF
 }
 
 # --- Launch the branded Pi agent ---------------------------------------------
+coop_fabric_mcp_token() {
+  local py config output token state message LC_ALL=C
+  py="$(coop_python)" || return 0
+  config="${PI_CODING_AGENT_DIR:-$(coop_pi_agent_dir)}/mcp.json"
+  # A Node supervisor keeps child stdout/stderr separate in memory, rejects any
+  # stderr byte, and forwards only one exact framed stdout record. No token or
+  # diagnostic is written to disk or placed in argv.
+  if ! have node || ! output="$(node "$COOP_ROOT/lib/fabric_token_runner.mjs" \
+    "$py" "$COOP_ROOT/lib/warehouse_mcp.py" "$config")"; then
+    coop_warn "Fabric Warehouse MCP unavailable: token helper failed"
+    return 0
+  fi
+  case "$output" in
+    token$'\t'*$'\t'end)
+      token="${output#*$'\t'}"
+      token="${token%$'\t'end}"
+      case "$token" in
+        ''|*[![:graph:]]*) coop_warn "Fabric Warehouse MCP unavailable: token helper returned invalid output" ;;
+        *) printf '%s' "$token" ;;
+      esac
+      return 0
+      ;;
+    warning$'\t'*$'\t'end)
+      state="${output#*$'\t'}"
+      state="${state%$'\t'end}"
+      case "$state" in
+        config_invalid) message='managed configuration is invalid; run coop sync' ;;
+        azure_cli_unavailable) message='Azure CLI is not installed or not on PATH' ;;
+        token_launch_failed) message='Azure CLI could not be launched' ;;
+        token_timeout) message='Azure CLI token acquisition timed out' ;;
+        auth_required) message='Azure authentication is required; run az login' ;;
+        token_command_failed) message='Azure CLI token acquisition failed' ;;
+        token_output_invalid) message='Azure CLI returned no usable Fabric token' ;;
+        *) message='token helper returned invalid output' ;;
+      esac
+      coop_warn "Fabric Warehouse MCP unavailable: $message"
+      return 0
+      ;;
+    '') return 0 ;;
+    *)
+      coop_warn "Fabric Warehouse MCP unavailable: token helper returned invalid output"
+      return 0
+      ;;
+  esac
+}
+
 launch_pi() {
   have pi || coop_die "pi is not installed. Run: coop install   (or: npm install -g @earendil-works/pi-coding-agent)"
 
@@ -244,7 +290,26 @@ launch_pi() {
   fi
 
   coop_build_pi_args
+  # Discard any inherited/stale token, then mint one only for this Pi process.
+  # Command substitution keeps successful token bytes out of terminal output.
+  unset COOP_FABRIC_MCP_TOKEN
+  local fabric_mcp_token=""
+  fabric_mcp_token="$(coop_fabric_mcp_token)"
+  if [ -n "$fabric_mcp_token" ]; then
+    COOP_FABRIC_MCP_TOKEN="$fabric_mcp_token" exec pi ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} "$@"
+  fi
   exec pi ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} "$@"
+}
+
+launch_raw_pi() {
+  have pi || coop_die "pi not installed."
+  unset COOP_FABRIC_MCP_TOKEN
+  local fabric_mcp_token=""
+  fabric_mcp_token="$(coop_fabric_mcp_token)"
+  if [ -n "$fabric_mcp_token" ]; then
+    COOP_FABRIC_MCP_TOKEN="$fabric_mcp_token" exec pi "$@"
+  fi
+  exec pi "$@"
 }
 
 # --- Emit the launch spec (for a UI / coop web bridge) -----------------------
@@ -257,12 +322,14 @@ coop_launch_spec() {
   for a in "$@"; do [ "$a" = "--json" ] && want_json=1; done
   coop_build_pi_args
   if [ "$want_json" = "1" ]; then
-    local py; py="$(coop_python)" || coop_die "python3 is required for: coop launch-spec --json"
-    COOP_LS_AGENT_DIR="${PI_CODING_AGENT_DIR:-}" \
-    COOP_LS_SKIP_VERSION="${PI_SKIP_VERSION_CHECK:-}" \
-    COOP_LS_VIBES="${COOP_VIBES_DIR:-}" \
-    COOP_LS_SPLASH="${COOP_SPLASH_FILE:-}" \
-    "$py" - ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} <<'PY'
+    local py rendered; py="$(coop_python 2>/dev/null || true)"
+    if [ -n "$py" ]; then
+      if rendered="$(
+        COOP_LS_AGENT_DIR="${PI_CODING_AGENT_DIR:-}" \
+        COOP_LS_SKIP_VERSION="${PI_SKIP_VERSION_CHECK:-}" \
+        COOP_LS_VIBES="${COOP_VIBES_DIR:-}" \
+        COOP_LS_SPLASH="${COOP_SPLASH_FILE:-}" \
+        "$py" - ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} <<'PY'
 import json, os, sys
 env = {}
 for out_key, src_key in (("PI_CODING_AGENT_DIR", "COOP_LS_AGENT_DIR"),
@@ -274,6 +341,31 @@ for out_key, src_key in (("PI_CODING_AGENT_DIR", "COOP_LS_AGENT_DIR"),
         env[out_key] = val
 print(json.dumps({"bin": "pi", "args": sys.argv[1:], "env": env}, indent=2))
 PY
+      )"; then
+        printf '%s\n' "$rendered"
+        return 0
+      fi
+    fi
+    if have node; then
+      COOP_LS_AGENT_DIR="${PI_CODING_AGENT_DIR:-}" \
+      COOP_LS_SKIP_VERSION="${PI_SKIP_VERSION_CHECK:-}" \
+      COOP_LS_VIBES="${COOP_VIBES_DIR:-}" \
+      COOP_LS_SPLASH="${COOP_SPLASH_FILE:-}" \
+      node - ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} <<'JS'
+const env = {};
+for (const [outKey, srcKey] of [
+  ["PI_CODING_AGENT_DIR", "COOP_LS_AGENT_DIR"],
+  ["PI_SKIP_VERSION_CHECK", "COOP_LS_SKIP_VERSION"],
+  ["COOP_VIBES_DIR", "COOP_LS_VIBES"],
+  ["COOP_SPLASH_FILE", "COOP_LS_SPLASH"],
+]) {
+  if (process.env[srcKey]) env[outKey] = process.env[srcKey];
+}
+console.log(JSON.stringify({ bin: "pi", args: process.argv.slice(2), env }, null, 2));
+JS
+    else
+      coop_die "python3 or Node.js is required for: coop launch-spec --json"
+    fi
   else
     printf 'pi'
     local x
@@ -292,8 +384,14 @@ coop_web() {
   have node || coop_die "Node.js is required for coop web. Run: coop install"
   coop_launch_preflight
   coop_az_preflight   # same Fabric/Power BI token check the terminal launch does
-  local spec
+  local spec py
   spec="$(coop_launch_spec --json)" || coop_die "couldn't build the launch spec for coop web"
+  py="$(coop_python 2>/dev/null || true)"
+  unset COOP_FABRIC_MCP_TOKEN
+  unset COOP_PYTHON_BIN
+  if [ -n "$py" ]; then
+    COOP_PYTHON_BIN="$py" COOP_LAUNCH_SPEC="$spec" exec node "$COOP_ROOT/web/server.mjs" "$@"
+  fi
   COOP_LAUNCH_SPEC="$spec" exec node "$COOP_ROOT/web/server.mjs" "$@"
 }
 
@@ -1116,7 +1214,7 @@ case "$cmd" in
     ;;
   list)          shift; have pi || coop_die "pi not installed."; exec pi list "$@" ;;
   config)        shift; have pi || coop_die "pi not installed."; exec pi config "$@" ;;
-  pi)            shift; have pi || coop_die "pi not installed."; exec pi "$@" ;;
+  pi)            shift; launch_raw_pi "$@" ;;
   version|--version|-V)
     printf 'coop %s\n' "$COOP_VERSION"
     if have pi; then printf 'pi   %s\n' "$(pi --version 2>/dev/null || echo '?')"; else printf 'pi   (not installed)\n'; fi

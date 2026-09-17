@@ -333,6 +333,83 @@ function Build-CoopPiArgs {
 }
 
 # --- Launch the branded Pi agent ---------------------------------------------
+function Get-CoopFabricMcpToken {
+  $py = Get-CoopPython
+  if (-not $py) { return '' }
+  $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Get-CoopPiAgentDir }
+  $config = Join-Path $agentDir 'mcp.json'
+  if (-not (Test-Have 'node')) {
+    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper supervisor is unavailable'
+    return ''
+  }
+  $previousEap = $ErrorActionPreference
+  $records = @()
+  $rc = 1
+  try {
+    # The Node supervisor captures both native streams byte-for-byte in memory,
+    # rejects any stderr, and forwards only one exact framed stdout record.
+    $ErrorActionPreference = 'Continue'
+    $runner = Join-Path $script:CoopRoot 'lib\fabric_token_runner.mjs'
+    $helper = Join-Path $script:CoopRoot 'lib\warehouse_mcp.py'
+    $records = @(& node $runner $py $helper $config 2>&1)
+    $rc = $LASTEXITCODE
+  } catch {
+    $rc = 1
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+  if ($rc -ne 0) {
+    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper failed'
+    return ''
+  }
+  $stdout = @()
+  $stderrFound = $false
+  foreach ($record in $records) {
+    if ($record -is [System.Management.Automation.ErrorRecord]) {
+      $stderrFound = $true
+    } else {
+      $stdout += $record.ToString()
+    }
+  }
+  if ($stderrFound) {
+    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper returned invalid output'
+    return ''
+  }
+  $protocol = ($stdout -join "`n")
+  if ($protocol -match "^token`t([!-~]{1,16384})`tend$") { return $Matches[1] }
+  if ($protocol -match "^warning`t([^\s]+)`tend$") {
+    $warnings = @{
+      config_invalid = 'managed configuration is invalid; run coop sync'
+      azure_cli_unavailable = 'Azure CLI is not installed or not on PATH'
+      token_launch_failed = 'Azure CLI could not be launched'
+      token_timeout = 'Azure CLI token acquisition timed out'
+      auth_required = 'Azure authentication is required; run az login'
+      token_command_failed = 'Azure CLI token acquisition failed'
+      token_output_invalid = 'Azure CLI returned no usable Fabric token'
+    }
+    $message = $warnings[$Matches[1]]
+    if (-not $message) { $message = 'token helper returned invalid output' }
+    Coop-Warn "Fabric Warehouse MCP unavailable: $message"
+    return ''
+  }
+  if (-not $protocol) { return '' }
+  Coop-Warn 'Fabric Warehouse MCP unavailable: token helper returned invalid output'
+  return ''
+}
+
+function Invoke-CoopPiProcess {
+  param([string[]] $PiArgs = @())
+  Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+  $token = Get-CoopFabricMcpToken
+  if ($token) { $env:COOP_FABRIC_MCP_TOKEN = $token }
+  try {
+    & pi @PiArgs
+    $script:CoopPiRc = $LASTEXITCODE
+  } finally {
+    Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+  }
+}
+
 function Invoke-LaunchPi {
   param([string[]] $PassArgs = @())
 
@@ -382,8 +459,8 @@ function Invoke-LaunchPi {
 
   $piArgs = Build-CoopPiArgs
   $allArgs = @($piArgs + $PassArgs)
-  & pi @allArgs
-  exit $LASTEXITCODE
+  Invoke-CoopPiProcess -PiArgs $allArgs
+  exit $script:CoopPiRc
 }
 
 # --- Emit the launch spec (for a UI / coop web bridge) -----------------------
@@ -420,6 +497,10 @@ function Invoke-CoopWeb {
   Invoke-CoopLaunchPreflight
   Invoke-CoopAzPreflight   # same Fabric/Power BI token check the terminal launch does
   $env:COOP_LAUNCH_SPEC = (Invoke-CoopLaunchSpec @('--json'))
+  $py = Get-CoopPython
+  Remove-Item Env:COOP_PYTHON_BIN -ErrorAction SilentlyContinue
+  if ($py) { $env:COOP_PYTHON_BIN = $py }
+  Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
   $server = Join-Path $script:CoopRoot 'web\server.mjs'
   & node $server @WebArgs
   exit $LASTEXITCODE
@@ -1227,8 +1308,8 @@ switch -CaseSensitive ($cmd) {
   }
   'pi' {
     if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed.' }
-    & pi @rest
-    exit $LASTEXITCODE
+    Invoke-CoopPiProcess -PiArgs $rest
+    exit $script:CoopPiRc
   }
   { $_ -ceq 'version' -or $_ -ceq '--version' -or $_ -ceq '-V' } {
     Write-Host ("coop {0}" -f $script:CoopVersion)

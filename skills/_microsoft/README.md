@@ -51,13 +51,11 @@ Cooptimize skill.
 
 ## Warehouse MCP
 
-Fabric Warehouse SQL uses the managed remote HTTP MCP server registered as
+Fabric Warehouse SQL uses the managed direct HTTP MCP server registered as
 `fabric-sqlendpoint`, distinct from the general Fabric MCP server. `coop sync`
-generates an `mcp-remote@0.1.38` entry with native OAuth:
-
-```text
-npx -y mcp-remote@0.1.38 <url> --transport http-only --silent
-```
+generates a Streamable HTTP bearer entry that references
+`COOP_FABRIC_MCP_TOKEN`; Coop obtains that token from the existing Azure CLI login
+at launch and injects it only into the Pi child environment.
 
 Global URL:
 
