@@ -98,6 +98,24 @@ const runToken = (resource = "https://api.fabric.microsoft.com", mode = "success
 };
 
 try {
+  if (process.platform === "win32") {
+    installFake("success");
+    const command = windowsAzureCliCommand(join(process.env.SystemRoot, "System32", "cmd.exe"), fakeAz);
+    const probe = spawnSync(command.command, command.args, {
+      cwd: ROOT,
+      env: { PATH: `${dir}${delimiter}${process.env.PATH || ""}`, SystemRoot: process.env.SystemRoot },
+      input: "\n",
+      encoding: "buffer",
+      windowsHide: true,
+      windowsVerbatimArguments: true,
+    });
+    const completion = parseWindowsAzureCompletion(probe.stdout, probe.stderr, true);
+    const phase = `status=${probe.status} state=${completion.state} code=${completion.code ?? -1} stdout=${probe.stdout.length} stderr=${probe.stderr.length}`;
+    assert.equal(completion.state, "complete", phase);
+    assert.equal(completion.code, 0, phase);
+    assert.ok(completion.stdout.length > 0, phase);
+    assert.equal(completion.stderr.length, 0, phase);
+  }
   const first = run();
   const second = run();
   const firstPhase = `executed=${Number(existsSync(marker))} counter=${Number(existsSync(counter))} stdout=${first.stdout.length} stderr=${first.stderr.length}`;
