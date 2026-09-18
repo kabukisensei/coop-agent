@@ -246,6 +246,10 @@ print(f"{resolution} runner-code={runner_result.returncode} runner-stdout-bytes=
     elseif ($output.Contains('Azure CLI token acquisition failed')) { $tokenState = 'token-command-failed' }
     elseif ($output.Contains('Azure CLI returned no usable Fabric token')) { $tokenState = 'token-output-invalid' }
     elseif ($output.Contains('Azure authentication is required')) { $tokenState = 'auth-required' }
+    elseif ($output.Contains('System.Object[]') -or $output.Contains('Cannot convert value')) { $tokenState = 'token-assignment-failed' }
+    elseif ($output.Contains('CommandNotFoundException') -or $output.Contains("The term 'pi' is not recognized")) { $tokenState = 'pi-resolution-failed' }
+    elseif ($output.Contains('NativeCommandError') -or $output.Contains("Program 'pi")) { $tokenState = 'pi-launch-failed' }
+    elseif ($output.Contains('environment variable') -and $output.Contains('too long')) { $tokenState = 'environment-limit' }
     foreach ($boundaryField in @($boundaryState -split ' ')) { Write-Host "FABRIC_BOUNDARY $boundaryField" }
     $piChildRc = -1
     $piChildRcPath = Join-Path $marker 'pi-child-rc'
