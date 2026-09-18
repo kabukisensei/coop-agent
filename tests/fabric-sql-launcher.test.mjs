@@ -28,12 +28,17 @@ assert.deepEqual(direct, {
 
 const root = mkdtempSync(join(tmpdir(), "coop sql launcher spaces "));
 const fakePython = join(root, "Python Runtime", "python3");
+const helperPath = join(root, "lib", "fabric_sql_query.py");
 const marker = join(root, "helper-invoked");
 mkdirSync(join(root, "lib"), { recursive: true });
 mkdirSync(join(root, "Python Runtime"), { recursive: true });
 cpSync(join(sourceRoot, "lib", "common.sh"), join(root, "lib", "common.sh"));
 cpSync(join(sourceRoot, "lib", "common.ps1"), join(root, "lib", "common.ps1"));
-writeFileSync(join(root, "lib", "fabric_sql_query.py"), "# fixture helper path\n");
+writeFileSync(helperPath, `import os, sys
+sys.stdin.read()
+open(os.environ["COOP_SQL_TEST_MARKER"], "a").close()
+print('{"ok":true,"state":"ok","row_count":0,"rows":[],"columns":[],"truncated":false}')
+`);
 writeFileSync(fakePython, `#!/bin/sh
 touch "$COOP_SQL_TEST_MARKER"
 cat >/dev/null
@@ -80,7 +85,7 @@ const oldPython = process.env.COOP_FABRIC_PYTHON;
 const oldMarker = process.env.COOP_SQL_TEST_MARKER;
 try {
   process.env.COOP_ROOT = root;
-  process.env.COOP_FABRIC_PYTHON = fakePython;
+  process.env.COOP_FABRIC_PYTHON = process.platform === "win32" ? psFakePython : fakePython;
   process.env.COOP_SQL_TEST_MARKER = marker;
   const result = await tool.execute("1", { query: "SELECT TOP (1) x FROM dbo.t" }, undefined, undefined, { cwd: root });
   assert.equal(result.details.state, "ok");
@@ -94,7 +99,8 @@ try {
   assert.deepEqual(abortedBeforeSpawn.details, { ok: false, state: "aborted" });
   assert.equal(existsSync(marker), false, "pre-aborted calls must not start the resolver or helper");
 
-  writeFileSync(fakePython, `#!/bin/sh
+  if (process.platform === "win32") writeFileSync(helperPath, "import time\ntime.sleep(60)\n");
+  else writeFileSync(fakePython, `#!/bin/sh
 trap '' TERM
 cat >/dev/null
 while :; do :; done

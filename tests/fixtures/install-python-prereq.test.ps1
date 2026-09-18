@@ -102,7 +102,7 @@ if "%1"=="install" if not "%2"=="--help" (
 )
 exit /b 0
 :materialize
-"__NATIVE_PYTHON__" -m venv "%PIPX_HOME%\venvs\ms-fabric-cli"
+"__NATIVE_PYTHON__" -m venv --without-pip "%PIPX_HOME%\venvs\ms-fabric-cli"
 if errorlevel 1 exit /b 3
 if not exist "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts\python.exe" exit /b 3
 exit /b 0
