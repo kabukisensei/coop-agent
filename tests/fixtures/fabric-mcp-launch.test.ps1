@@ -67,24 +67,23 @@ try {
     $azProgram = Join-Path $bin 'fake-az.cjs'
     $azProgramSource = @'
 const fs = require('node:fs');
-fs.writeFileSync(__ARGV__, process.argv.slice(2).join(' '));
-const mode = fs.readFileSync(__MODE__, 'utf8');
+const path = require('node:path');
+const [marker, response, ...args] = process.argv.slice(2);
+fs.writeFileSync(path.join(marker, 'az-argv'), args.join(' '));
+const mode = fs.readFileSync(path.join(marker, 'az-mode'), 'utf8');
 if (mode === 'auth') {
   process.stderr.write("ERROR: Please run 'az login' to setup account.\n");
   process.exit(1);
 }
-process.stdout.write(fs.readFileSync(__RESPONSE__));
+process.stdout.write(fs.readFileSync(response));
 '@
-    $azProgramSource = $azProgramSource.Replace('__ARGV__', ((Join-Path $marker 'az-argv') | ConvertTo-Json -Compress))
-    $azProgramSource = $azProgramSource.Replace('__MODE__', ((Join-Path $marker 'az-mode') | ConvertTo-Json -Compress))
-    $azProgramSource = $azProgramSource.Replace('__RESPONSE__', ($azResponse | ConvertTo-Json -Compress))
     [System.IO.File]::WriteAllText($azProgram, $azProgramSource, [Text.Encoding]::ASCII)
     $azCmd = @'
 @echo off
-"__NODE__" "__PROGRAM__" %*
+"__NODE__" "__PROGRAM__" "__MARKER__" "__RESPONSE__" %*
 exit /b %ERRORLEVEL%
 '@
-    $azCmd.Replace('__NODE__', $nodePath).Replace('__PROGRAM__', $azProgram) | Set-Content -LiteralPath (Join-Path $bin 'az.cmd') -Encoding ASCII
+    $azCmd.Replace('__NODE__', $nodePath).Replace('__PROGRAM__', $azProgram).Replace('__MARKER__', $marker).Replace('__RESPONSE__', $azResponse) | Set-Content -LiteralPath (Join-Path $bin 'az.cmd') -Encoding ASCII
     @'
 @echo off
 >"%COOP_TEST_MARKER%\pi-argv" echo %*
