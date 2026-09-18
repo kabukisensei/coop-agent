@@ -404,7 +404,23 @@ function Invoke-CoopPiProcess {
   if ($token) { $env:COOP_FABRIC_MCP_TOKEN = $token }
   try {
     & pi @PiArgs
-    $script:CoopPiRc = $LASTEXITCODE
+    if ($?) {
+      $script:CoopPiRc = $LASTEXITCODE
+    } else {
+      # Process failed to start (Windows PowerShell 5.1 with -ErrorActionPreference
+      # Continue records the error instead of throwing, and leaves $LASTEXITCODE
+      # stale). Reading it would silently succeed with an unrelated exit code.
+      $launchCode = -1
+      $startError = $error[0]
+      if ($startError -and $startError.Exception) {
+        $ex = $startError.Exception
+        if ($ex.PSObject.Properties['NativeErrorCode']) { $launchCode = $ex.NativeErrorCode }
+        elseif ($ex.InnerException -and $ex.InnerException.PSObject.Properties['NativeErrorCode']) { $launchCode = $ex.InnerException.NativeErrorCode }
+        elseif ($ex.PSObject.Properties['HResult']) { $launchCode = $ex.HResult }
+      }
+      Coop-Warn "Pi launch failed (code=$launchCode)"
+      $script:CoopPiRc = 1
+    }
   } catch {
     $launchCode = $_.Exception.HResult
     $inner = $_.Exception.InnerException
