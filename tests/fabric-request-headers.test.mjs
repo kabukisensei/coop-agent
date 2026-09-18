@@ -59,7 +59,7 @@ else {
 `;
   writeFileSync(fakeProgram, source);
   if (process.platform === "win32") {
-    writeFileSync(fakeAz, `@echo off\r\n"${process.execPath}" "${fakeProgram}" %*\r\nexit /b !ERRORLEVEL!\r\n`);
+    writeFileSync(fakeAz, `@echo off\r\n"${process.execPath}" "${fakeProgram}" %*\r\nexit /b %ERRORLEVEL%\r\n`);
   } else {
     writeFileSync(fakeAz, source);
     chmodSync(fakeAz, 0o755);
