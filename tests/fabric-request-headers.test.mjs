@@ -104,8 +104,7 @@ try {
     const probe = spawnSync(command.command, command.args, {
       cwd: ROOT,
       env: { PATH: `${dir}${delimiter}${process.env.PATH || ""}`, SystemRoot: process.env.SystemRoot },
-      input: "\n",
-      encoding: "buffer",
+      input: Buffer.from("\n"),
       windowsHide: true,
       windowsVerbatimArguments: true,
     });
