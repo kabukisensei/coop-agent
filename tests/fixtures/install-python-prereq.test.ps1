@@ -34,12 +34,7 @@ try {
   New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $t 'pipx-home'), (Join-Path $t 'pipx-bin'), (Join-Path $t 'agent'), (Join-Path $t 'program-files'), (Join-Path $t 'local-app-data') | Out-Null
   $runtimeFixture = Join-Path $t 'runtime-fixture'
   $pyodbcMetadata = Join-Path $runtimeFixture 'pyodbc-5.3.0.dist-info'
-  $runtimeTemplate = Join-Path $t 'pipx-runtime-template'
   New-Item -ItemType Directory -Force -Path $runtimeFixture, $pyodbcMetadata | Out-Null
-  & $nativePython.Source -m venv $runtimeTemplate
-  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $runtimeTemplate 'Scripts\python.exe') -PathType Leaf)) {
-    throw 'could not create the managed-runtime fixture venv'
-  }
   [System.IO.File]::WriteAllText((Join-Path $runtimeFixture 'pyodbc.py'), "import os`ndef drivers():`n    missing = os.environ.get('COOP_TEST_DRIVER_MISSING') == '1'`n    ready = os.path.exists(os.environ.get('COOP_TEST_DRIVER_READY', ''))`n    return [] if missing and not ready else ['ODBC Driver 18 for SQL Server']`n")
   # Exercise the real runtime probe against the fixture module and metadata.
   [System.IO.File]::WriteAllText((Join-Path $pyodbcMetadata 'METADATA'), "Metadata-Version: 2.1`nName: pyodbc`nVersion: 5.3.0`n")
@@ -107,12 +102,13 @@ if "%1"=="install" if not "%2"=="--help" (
 )
 exit /b 0
 :materialize
-xcopy /E /I /Y "__RUNTIME_TEMPLATE__" "%PIPX_HOME%\venvs\ms-fabric-cli" >nul
+"__NATIVE_PYTHON__" -m venv "%PIPX_HOME%\venvs\ms-fabric-cli"
+if errorlevel 1 exit /b 3
 if not exist "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts\python.exe" exit /b 3
 exit /b 0
 '@
   $pipxCmdPath = Join-Path $bin 'pipx.cmd'
-  [System.IO.File]::WriteAllText($pipxCmdPath, ([System.IO.File]::ReadAllText($pipxCmdPath).Replace('__RUNTIME_TEMPLATE__', $runtimeTemplate)))
+  [System.IO.File]::WriteAllText($pipxCmdPath, ([System.IO.File]::ReadAllText($pipxCmdPath).Replace('__NATIVE_PYTHON__', $nativePython.Source)))
   Write-Shim 'fab' "#!/bin/sh`necho 'fab version 1.7.0'`n" "@echo off`r`necho fab version 1.7.0`r`n"
   Write-Shim 'az' "#!/bin/sh`necho 'azure-cli 2.80.0'`n" "@echo off`r`necho azure-cli 2.80.0`r`n"
 
@@ -159,7 +155,7 @@ exit /b 0
   $env:COOP_FLEET_TEST_MODE = '1'
   Remove-Item Env:COOP_FABRIC_PYTHON -ErrorAction SilentlyContinue
   $env:COOP_TEST_CALLS = $calls
-  $env:PYTHONHOME = Split-Path -Parent $nativePython.Source
+  Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
   $env:PYTHONPATH = if ($saved['PYTHONPATH']) {
     "$runtimeFixture$([System.IO.Path]::PathSeparator)$($saved['PYTHONPATH'])"
   } else {

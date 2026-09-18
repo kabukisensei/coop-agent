@@ -729,8 +729,8 @@ function Get-CoopPython {
     $c = Get-Command $name -ErrorAction SilentlyContinue
     if (-not $c) { continue }
     if ($c.Source -and $c.Source -match '\\WindowsApps\\') { continue }
-    $v = (& $name --version 2>&1 | ForEach-Object { $_.ToString() }) -join ' '
-    if ($v -match '\d+\.\d+') { return $name }
+    $v = (& $c.Source --version 2>&1 | ForEach-Object { $_.ToString() }) -join ' '
+    if ($v -match '\d+\.\d+') { return $c.Source }
   }
   return $null
 }
