@@ -138,6 +138,46 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
   $env:COOP_TEST_EXPECT_TOKEN = 'present'
   Set-Content -LiteralPath (Join-Path $marker 'az-mode') -Value 'ok' -NoNewline
 
+  $boundaryState = 'not-windows'
+  if ($env:OS -eq 'Windows_NT') {
+  $boundaryProbe = Join-Path $temp 'boundary-probe.mjs'
+  $boundaryProbeSource = @'
+import { pathToFileURL } from 'node:url';
+const [helper, expected] = process.argv.slice(2);
+const { azureCliCommand } = await import(pathToFileURL(helper).href);
+const spec = azureCliCommand();
+const commandLine = spec?.args?.[4] || '';
+process.stdout.write(`spec=${Number(Boolean(spec))} fixture=${Number(commandLine.toLowerCase().includes(expected.toLowerCase()))} path=${Number(typeof process.env.PATH === 'string')} root=${Number(typeof process.env.SystemRoot === 'string')}`);
+'@
+  [System.IO.File]::WriteAllText($boundaryProbe, $boundaryProbeSource, [Text.Encoding]::ASCII)
+  $boundaryLauncher = Join-Path $temp 'boundary-launcher.py'
+  $boundaryLauncherSource = @'
+import importlib.util
+import subprocess
+import sys
+
+module_path, node, probe, expected = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("warehouse_mcp", module_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules["warehouse_mcp"] = module
+spec.loader.exec_module(module)
+result = subprocess.run(
+    [node, probe, module.REQUEST_HEADERS_HELPER, expected],
+    env=module._token_helper_environment(),
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    timeout=5,
+)
+text = result.stdout.decode("ascii", "strict") if result.returncode == 0 and not result.stderr else ""
+allowed = {"spec=0 fixture=0 path=1 root=1", "spec=1 fixture=0 path=1 root=1", "spec=1 fixture=1 path=1 root=1"}
+print(text if text in allowed else f"probe-rc={result.returncode} stdout-bytes={len(result.stdout)} stderr-bytes={len(result.stderr)}")
+'@
+  [System.IO.File]::WriteAllText($boundaryLauncher, $boundaryLauncherSource, [Text.Encoding]::ASCII)
+  $probePython = (Get-Command python -CommandType Application -ErrorAction Stop).Source
+  $boundaryState = [string](& $probePython $boundaryLauncher (Join-Path $root 'lib\warehouse_mcp.py') $nodePath $boundaryProbe (Join-Path $bin 'az.cmd'))
+  if ($LASTEXITCODE -ne 0 -or -not $boundaryState) { $boundaryState = 'probe-unavailable' }
+  }
+
   $priorEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   $output = & $psHost -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'bin\coop.ps1') pi --fixture *>&1 | Out-String
@@ -164,7 +204,7 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
     elseif ($output.Contains('Azure CLI token acquisition failed')) { $tokenState = 'token-command-failed' }
     elseif ($output.Contains('Azure CLI returned no usable Fabric token')) { $tokenState = 'token-output-invalid' }
     elseif ($output.Contains('Azure authentication is required')) { $tokenState = 'auth-required' }
-    throw "token launch failed rc=$rc wrapper-reached=$wrapperReached helper-reached=$helperReached az-reached=$azReached child-rc=$azChildRc state=$tokenState"
+    throw "token launch failed rc=$rc wrapper-reached=$wrapperReached helper-reached=$helperReached az-reached=$azReached child-rc=$azChildRc state=$tokenState boundary=$boundaryState"
   }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi was not launched' }
   if ($output.Contains($token)) { throw 'token leaked to process output' }

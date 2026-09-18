@@ -296,7 +296,9 @@ exit /b 0
   [System.IO.File]::WriteAllText($evidencePath, "exit=$rc`n$evidence")
   $output = $outItems | Out-String
   $ErrorActionPreference = $oldPreference
-  if ($rc -ne 0) { Write-Error "install fixture exited $rc`nevidence file: $evidencePath`n$output`n--- stream-tagged ---`n$evidence`nCALLS:`n$(Get-Content $calls -Raw)" }
+  . (Join-Path $root 'lib\common.ps1')
+  $installedRuntime = Get-CoopFabricSqlRuntimeStatus
+  if ($rc -ne 0) { Write-Error "install fixture exited $rc runtime-state=$($installedRuntime.state) runtime-version=$($installedRuntime.version) runtime-driver=$($installedRuntime.driver)`nevidence file: $evidencePath`n$output`n--- stream-tagged ---`n$evidence`nCALLS:`n$(Get-Content $calls -Raw)" }
   $transcript = Get-Content $calls -Raw
   if ($transcript -like '*WINGET*') { Write-Error "Python 3.14-only install unexpectedly required winget`n$transcript" }
   if ($transcript -notlike '*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0*') { Write-Error "Fabric CLI did not fetch and use a standalone Python 3.12`n$transcript" }
@@ -308,8 +310,6 @@ exit /b 0
       Write-Error "Fabric runtime did not make exactly one expected inject call: $expectedCall`n$transcript"
     }
   }
-  . (Join-Path $root 'lib\common.ps1')
-  $installedRuntime = Get-CoopFabricSqlRuntimeStatus
   if ($installedRuntime.state -ne 'ready' -or $installedRuntime.version -ne '5.3.0' -or $installedRuntime.driver -ne 18) {
     Write-Error "Fabric runtime status was not ready with pyodbc 5.3.0 and Driver 18: $($installedRuntime | ConvertTo-Json -Compress)"
   }
