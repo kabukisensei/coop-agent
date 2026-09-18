@@ -259,6 +259,11 @@ print(f"{resolution} runner-code={runner_result.returncode} runner-stdout-bytes=
         $piChildRc = $parsedPiChildRc
       }
     }
+    Write-Host "FABRIC_BOUNDARY pi-reached=$piReached"
+    Write-Host "FABRIC_BOUNDARY pi-token-present=$piTokenPresent"
+    Write-Host "FABRIC_BOUNDARY pi-token-match=$piTokenMatch"
+    Write-Host "FABRIC_BOUNDARY pi-child-rc=$piChildRc"
+    Write-Host "FABRIC_BOUNDARY handoff-state=$tokenState"
     throw "token launch failed rc=$rc wrapper-reached=$wrapperReached helper-reached=$helperReached az-reached=$azReached child-rc=$azChildRc pi-reached=$piReached pi-token-present=$piTokenPresent pi-token-match=$piTokenMatch pi-child-rc=$piChildRc state=$tokenState boundary=$boundaryState"
   }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi was not launched' }
