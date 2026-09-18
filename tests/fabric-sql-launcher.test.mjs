@@ -44,8 +44,12 @@ chmodSync(fakePython, 0o755);
 // PowerShell 7 is only a local syntax/binding check; native Windows CI remains
 // the evidence for Windows PowerShell 5.1. The command uses no pwsh-only flags.
 const psBinding = mod.fabricSqlPythonResolverInvocation(root, "win32");
-const psFakePython = process.platform === "win32" ? join(root, "Python Runtime", "python.cmd") : fakePython;
-if (process.platform === "win32") writeFileSync(psFakePython, "@echo off\r\nexit /b 0\r\n");
+let psFakePython = fakePython;
+if (process.platform === "win32") {
+  const lookup = spawnSync("where.exe", ["python"], { encoding: "utf8" });
+  psFakePython = lookup.stdout?.split(/\r?\n/).find((candidate) => candidate.toLowerCase().endsWith(".exe"));
+  assert.ok(psFakePython, "native Windows Python is required by this fixture");
+}
 const pwsh = spawnSync("pwsh", psBinding.args, {
   encoding: "utf8",
   env: { ...process.env, ...psBinding.env, COOP_FABRIC_PYTHON: psFakePython },

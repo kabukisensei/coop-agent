@@ -729,7 +729,6 @@ function Get-CoopPython {
     $c = Get-Command $name -ErrorAction SilentlyContinue
     if (-not $c) { continue }
     if ($c.Source -and $c.Source -match '\\WindowsApps\\') { continue }
-    if ($env:OS -eq 'Windows_NT' -and [System.IO.Path]::GetExtension($c.Source) -ne '.exe') { continue }
     $v = (& $c.Source --version 2>&1 | ForEach-Object { $_.ToString() }) -join ' '
     if ($v -match '\d+\.\d+') { return $c.Source }
   }

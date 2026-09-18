@@ -153,10 +153,12 @@ process.stdout.write(`spec=${Number(Boolean(spec))} fixture=${Number(commandLine
   $boundaryLauncher = Join-Path $temp 'boundary-launcher.py'
   $boundaryLauncherSource = @'
 import importlib.util
+import os
 import subprocess
 import sys
+from pathlib import Path
 
-module_path, node, probe, expected = sys.argv[1:]
+module_path, node, probe, expected, runner, selected_python, config, marker = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("warehouse_mcp", module_path)
 module = importlib.util.module_from_spec(spec)
 sys.modules["warehouse_mcp"] = module
@@ -171,14 +173,30 @@ result = subprocess.run(
 text = result.stdout.decode("ascii", "strict") if result.returncode == 0 and not result.stderr else ""
 allowed = {"spec=0 fixture=0 path=1 root=1", "spec=1 fixture=0 path=1 root=1", "spec=1 fixture=1 path=1 root=1"}
 resolution = text if text in allowed else f"probe-rc={result.returncode} probe-stdout-bytes={len(result.stdout)} probe-stderr-bytes={len(result.stderr)}"
+runner_result = subprocess.run(
+    [node, runner, selected_python, module_path, config],
+    env=os.environ.copy(),
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    timeout=20,
+)
+marker_root = Path(marker)
+runner_markers = [int((marker_root / name).exists()) for name in ("az-wrapper-entry", "az-helper-entry", "az-argv")]
+for name in ("az-wrapper-entry", "az-helper-entry", "az-argv", "az-child-rc"):
+    try:
+        (marker_root / name).unlink()
+    except FileNotFoundError:
+        pass
 code, stdout, stderr, timed_out = module._run_token_helper(
     [node, module.REQUEST_HEADERS_HELPER, "--token", module.FABRIC_RESOURCE], 10
 )
-print(f"{resolution} direct-code={code} direct-stdout-bytes={len(stdout)} direct-stderr-bytes={len(stderr)} direct-timeout={int(timed_out)}")
+print(f"{resolution} runner-code={runner_result.returncode} runner-stdout-bytes={len(runner_result.stdout)} runner-stderr-bytes={len(runner_result.stderr)} runner-wrapper={runner_markers[0]} runner-helper={runner_markers[1]} runner-az={runner_markers[2]} direct-code={code} direct-stdout-bytes={len(stdout)} direct-stderr-bytes={len(stderr)} direct-timeout={int(timed_out)}")
 '@
   [System.IO.File]::WriteAllText($boundaryLauncher, $boundaryLauncherSource, [Text.Encoding]::ASCII)
   $probePython = (Get-Command python -CommandType Application -ErrorAction Stop).Source
-  $boundaryState = [string](& $probePython $boundaryLauncher (Join-Path $root 'lib\warehouse_mcp.py') $nodePath $boundaryProbe (Join-Path $bin 'az.cmd'))
+  . (Join-Path $root 'lib\common.ps1')
+  $selectedPython = Get-CoopPython
+  $boundaryState = [string](& $probePython $boundaryLauncher (Join-Path $root 'lib\warehouse_mcp.py') $nodePath $boundaryProbe (Join-Path $bin 'az.cmd') (Join-Path $root 'lib\fabric_token_runner.mjs') $selectedPython (Join-Path $agent 'mcp.json') $marker)
   if ($LASTEXITCODE -ne 0 -or -not $boundaryState) { $boundaryState = 'probe-unavailable' }
   $directWrapperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-wrapper-entry'))
   $directHelperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-helper-entry'))
