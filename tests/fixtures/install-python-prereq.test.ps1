@@ -103,7 +103,7 @@ if "%1"=="install" if not "%2"=="--help" (
 exit /b 0
 :materialize
 if exist "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts" rmdir /s /q "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts"
-mklink /J "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts" "__NATIVE_HOME__" >nul
+xcopy "__NATIVE_HOME__\*" "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts\" /e /i /q /y >nul
 if errorlevel 1 exit /b 3
 if not exist "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts\python.exe" exit /b 3
 exit /b 0
