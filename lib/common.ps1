@@ -279,14 +279,15 @@ print("ready\t"+v+"\t"+str(max(majors)))
   return [pscustomobject]@{ state = $(if ($parts.Count) { $parts[0] } else { 'pyodbc_unloadable' }); version = $(if ($parts.Count -gt 1) { $parts[1] } else { '' }); driver = $(if ($parts.Count -gt 2) { [int]$parts[2] } else { 0 }) }
 }
 
-function Sync-CoopFabricPythonPackages {
+function Sync-CoopFabricPythonPackages([bool]$Edge = $false) {
   if (-not $env:COOP_FABRIC_PYTHON) {
     $pipx = Get-CoopPipxCmd
     foreach ($pkg in @('fabric-cicd', 'pyodbc')) {
       $pin = Coop-ManifestGet -Key "python_tools.$pkg"
       if (-not $pin) { return $false }
-      & $pipx inject ms-fabric-cli "$pkg==$pin" --force *> $null
-      if ($LASTEXITCODE -ne 0) { Coop-Warn "failed to pin $pkg to $pin in the ms-fabric-cli environment"; return $false }
+      $spec = if ($Edge -and $pkg -eq 'fabric-cicd') { $pkg } else { "$pkg==$pin" }
+      & $pipx inject ms-fabric-cli $spec --force *> $null
+      if ($LASTEXITCODE -ne 0) { Coop-Warn "failed to install $spec in the ms-fabric-cli environment"; return $false }
     }
   }
   $status = Get-CoopFabricSqlRuntimeStatus
@@ -299,7 +300,7 @@ function Ensure-CoopFabricOdbcDriver([bool]$AllowPrereqs = $true) {
   if ($status.state -ne 'driver_missing') { return $false }
   if ($env:OS -ne 'Windows_NT') {
     Coop-Warn 'ODBC Driver 18+ for SQL Server is missing' 'install Microsoft ODBC Driver 18 for SQL Server, then run: coop doctor'
-    return $false
+    return $true
   }
   if (-not $AllowPrereqs) { Coop-Warn 'ODBC Driver 18+ is missing (--no-prereqs)' 'install Microsoft.msodbcsql.18, then run: coop doctor'; return $false }
   if (-not (Coop-Confirm 'Install Microsoft ODBC Driver 18 for SQL Server and accept its license?')) {

@@ -55,7 +55,11 @@ fi
 # --no-fabric callers set COOP_SKIP_FABRIC_SYNC so an existing environment stays untouched.
 if [ "${COOP_SKIP_FABRIC_SYNC:-0}" != 1 ] && { [ -n "${COOP_FABRIC_PYTHON:-}" ] || coop_venv_python_path ms-fabric-cli >/dev/null 2>&1; }; then
   if coop_converge_fabric_python_packages && coop_ensure_fabric_odbc_driver 1; then
-    coop_ok "Fabric SQL Python runtime ready (pyodbc + ODBC Driver 18+)"
+    _sql_status="$(coop_fabric_sql_runtime_status 2>/dev/null)" || true
+    case "$_sql_status" in
+      ready*) coop_ok "Fabric SQL Python runtime ready (pyodbc + ODBC Driver 18+)" ;;
+      driver_missing*) coop_ok "Fabric SQL Python packages converged (ODBC Driver 18+ remains operator-managed)" ;;
+    esac
   else
     coop_warn "Fabric SQL Python runtime is not ready" "run: coop doctor"
     SYNC_FAILURES=$((SYNC_FAILURES + 1))

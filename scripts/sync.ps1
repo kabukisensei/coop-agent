@@ -64,7 +64,9 @@ if ($settingsPy) {
 # Repair an existing Fabric environment, but never install Fabric itself.
 if ($env:COOP_SKIP_FABRIC_SYNC -ne '1' -and ($env:COOP_FABRIC_PYTHON -or (Get-CoopVenvPythonPath 'ms-fabric-cli'))) {
   if ((Sync-CoopFabricPythonPackages) -and (Ensure-CoopFabricOdbcDriver $true)) {
-    Coop-Ok 'Fabric SQL Python runtime ready (pyodbc + ODBC Driver 18+)'
+    $sqlStatus = Get-CoopFabricSqlRuntimeStatus
+    if ($sqlStatus.state -eq 'ready') { Coop-Ok 'Fabric SQL Python runtime ready (pyodbc + ODBC Driver 18+)' }
+    elseif ($sqlStatus.state -eq 'driver_missing') { Coop-Ok 'Fabric SQL Python packages converged (ODBC Driver 18+ remains operator-managed)' }
   } else {
     Coop-Warn 'Fabric SQL Python runtime is not ready' 'run: coop doctor'
     $script:SyncFailures++

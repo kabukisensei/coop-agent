@@ -356,7 +356,7 @@ finally {
 
 # Exact runtime libraries are part of Fabric convergence, not standalone tools.
 if (-not $NO_FABRIC -and (Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package ms-fabric-cli ')) {
-  if (Sync-CoopFabricPythonPackages) { Coop-Ok 'Fabric Python runtime pinned (fabric-cicd + pyodbc)' }
+  if (Sync-CoopFabricPythonPackages $EDGE) { Coop-Ok 'Fabric Python runtime converged (fabric-cicd + pinned pyodbc)' }
   else { Coop-Warn 'failed to converge the Fabric Python runtime'; $script:UpdateFailures++ }
   if (-not (Ensure-CoopFabricOdbcDriver $true)) { Coop-Warn 'Fabric SQL fallback is not ready'; $script:UpdateFailures++ }
 }

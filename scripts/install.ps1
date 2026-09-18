@@ -598,7 +598,7 @@ try {
   if ($NO_FABRIC) { Coop-Info 'skipping Microsoft Fabric CLI (--no-fabric)' }
   else {
     Install-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $EDGE, $FABRIC_PKG, $fabricTarget, $fabricPython, $fabricFetchPython)
-    if (-not (Sync-CoopFabricPythonPackages)) { Coop-Warn 'failed to converge the Fabric Python runtime'; $script:InstallFailures++ }
+    if (-not (Sync-CoopFabricPythonPackages $EDGE)) { Coop-Warn 'failed to converge the Fabric Python runtime'; $script:InstallFailures++ }
     elseif (-not (Ensure-CoopFabricOdbcDriver (-not $NO_PREREQS))) { Coop-Warn 'Fabric SQL fallback is not ready'; $script:InstallFailures++ }
   }
 

@@ -578,17 +578,22 @@ section "Powerline / splash assets"
 
 if [ "$FIX" = 1 ] && { [ "$FAIL" -gt 0 ] || [ "$WARN" -gt 0 ]; }; then
   section "Applying fixes (--fix)"
+  repair_failed=0
   if [ -f "$COOP_ROOT/scripts/sync.sh" ]; then
     "$COOP_ROOT/scripts/sync.sh" >/dev/null 2>&1 && coop_ok "synced extensions / MCP / assets" || coop_warn "sync had issues (run: coop sync)"
   fi
   if have pipx; then
     if ! have fab; then
-      coop_info "pipx install ms-fabric-cli"
-      if pipx install ms-fabric-cli >/dev/null 2>&1; then
-        pipx inject ms-fabric-cli fabric-cicd >/dev/null 2>&1 || true
-        coop_ok "ms-fabric-cli installed"
+      fabric_spec="$(coop_manifest_python_spec ms-fabric-cli)"
+      [ -n "$fabric_spec" ] || fabric_spec=ms-fabric-cli
+      coop_info "pipx install $fabric_spec"
+      if pipx install "$fabric_spec" >/dev/null 2>&1 \
+          && coop_converge_fabric_python_packages \
+          && coop_ensure_fabric_odbc_driver 1; then
+        coop_ok "managed Fabric runtime installed"
       else
-        coop_warn "could not install ms-fabric-cli (run: pipx install ms-fabric-cli)"
+        coop_warn "could not install the managed Fabric runtime" "run: coop install"
+        repair_failed=1
       fi
     fi
     for t in coop-data-doc coop-sql-review coop-dax-review; do
@@ -598,6 +603,7 @@ if [ "$FIX" = 1 ] && { [ "$FAIL" -gt 0 ] || [ "$WARN" -gt 0 ]; }; then
       fi
     done
   fi
+  [ "$repair_failed" -eq 0 ] || exit 1
   coop_info "Re-checking… (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)"
   echo >&2
   # Propagate --json/--publish so the re-check emits the machine-readable document.

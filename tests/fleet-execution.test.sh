@@ -30,7 +30,9 @@ stub_python() { # <destination> — wrappers preserve native Windows DLL lookup
   cat > "$1" <<SH
 #!/bin/sh
 case "\$*" in
-  *'pyodbc.drivers()'*) printf 'ready\\t5.3.0\\t18\\n'; exit 0 ;;
+  *'pyodbc.drivers()'*)
+    if [ "\${COOP_TEST_DRIVER_MISSING:-0}" = 1 ]; then printf 'driver_missing\\t5.3.0\\n'; exit 5; fi
+    printf 'ready\\t5.3.0\\t18\\n'; exit 0 ;;
   *'import pyodbc'*) exit 0 ;;
 esac
 exec "$REAL_PY" "\$@"
@@ -88,6 +90,24 @@ done
 grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force' "$MARKER" >/dev/null
 grep -F 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force' "$MARKER" >/dev/null
 
+# Driver auto-provisioning is Windows-only. A supported non-Windows install
+# still converges pyodbc and succeeds with one actionable warning.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) ;;
+  *)
+    : > "$MARKER"
+    missing_driver_out="$ISOL_D/missing-driver.out"; missing_driver_rc=0
+    COOP_TEST_DRIVER_MISSING=1 COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 \
+      bash "$ROOT/scripts/install.sh" --force >"$missing_driver_out" 2>&1 || missing_driver_rc=$?
+    [ "$missing_driver_rc" -eq 0 ] || { echo 'non-Windows install failed solely because Driver 18 is absent'; cat "$missing_driver_out"; exit 1; }
+    [ "$(grep -cF 'ODBC Driver 18+ for SQL Server is missing' "$missing_driver_out")" -eq 1 ] \
+      || { echo 'non-Windows install did not emit exactly one Driver 18 warning'; cat "$missing_driver_out"; exit 1; }
+    grep -F 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force' "$MARKER" >/dev/null \
+      || { echo 'non-Windows missing-driver install did not converge pyodbc'; cat "$MARKER"; exit 1; }
+    echo '  ✓ non-Windows install succeeds with one warning when Driver 18 is absent'
+    ;;
+esac
+
 # An injected-library failure is a convergence failure, not a warning-only success.
 failed_inject_rc=0
 PIPX_FAIL_MATCH='pyodbc==5.3.0' COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 \
@@ -138,6 +158,7 @@ for spec in 'npm:pi-mcp-adapter@2.34.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-be
 done
 if command -v pwsh >/dev/null 2>&1; then
   pwsh -NoProfile -Command ". '$ROOT/lib/common.ps1'; if ((Coop-ManifestExtensionSpec '@juicesharp/rpiv-ask-user-question') -ne 'npm:@juicesharp/rpiv-ask-user-question@1.20.0') { exit 1 }; if ((Coop-ManifestPythonSpec 'fabric-cicd') -ne 'fabric-cicd==1.3.0') { exit 1 }"
+  pwsh -NoProfile -File "$ROOT/tests/fixtures/fabric-runtime-convergence.test.ps1"
 fi
 
 # --- NORMAL-mode drift convergence (no --force): round-2 review item #1 ---------
@@ -209,6 +230,12 @@ grep -F 'NPM install -g @earendil-works/pi-coding-agent' "$MARKER4" >/dev/null \
   || { echo 'edge install did not attempt a Pi upstream update'; exit 1; }
 grep -F 'PIPX upgrade coop-data-doc' "$MARKER4" >/dev/null \
   || { echo 'edge install did not attempt a pipx upgrade for an existing tool'; exit 1; }
+grep -F 'PIPX inject ms-fabric-cli fabric-cicd --force' "$MARKER4" >/dev/null \
+  || { echo 'edge install did not refresh unpinned fabric-cicd'; cat "$MARKER4"; exit 1; }
+! grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force' "$MARKER4" >/dev/null \
+  || { echo 'edge install incorrectly pinned fabric-cicd'; cat "$MARKER4"; exit 1; }
+grep -F 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force' "$MARKER4" >/dev/null \
+  || { echo 'edge install did not preserve the exact pyodbc runtime contract'; cat "$MARKER4"; exit 1; }
 echo '  ✓ install --edge attempts upstream latest for existing installs'
 
 # --- Fabric failed convergence must NOT read as success --------------------------

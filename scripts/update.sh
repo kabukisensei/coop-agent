@@ -277,8 +277,8 @@ coop_progress_end
 
 # Exact runtime libraries are part of Fabric convergence, not standalone tools.
 if [ "$NO_FABRIC" != 1 ] && have pipx && pipx list 2>/dev/null | grep "package ms-fabric-cli " >/dev/null; then
-  if coop_converge_fabric_python_packages; then
-    coop_ok "Fabric Python runtime pinned (fabric-cicd + pyodbc)"
+  if coop_converge_fabric_python_packages "$EDGE"; then
+    coop_ok "Fabric Python runtime converged (fabric-cicd + pinned pyodbc)"
   else
     coop_warn "failed to converge the Fabric Python runtime"
     UPDATE_FAILURES=$((UPDATE_FAILURES + 1))

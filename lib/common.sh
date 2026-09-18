@@ -254,15 +254,17 @@ print("ready\t"+v+"\t"+str(max(majors)))' "$pin" 2>/dev/null
 
 # Converge libraries into the managed runtime, or only verify an explicit
 # operator-managed override. Failed injection and failed postchecks are real failures.
-coop_converge_fabric_python_packages() {
-  local pipx pin pkg out py
+coop_converge_fabric_python_packages() { # [edge:0|1]
+  local edge="${1:-0}" pipx pin pkg spec out py
   if [ -z "${COOP_FABRIC_PYTHON:-}" ]; then
     pipx="$(coop_pipx_cmd)"
     for pkg in fabric-cicd pyodbc; do
       pin="$(coop_manifest_get "python_tools.$pkg")"
       [ -n "$pin" ] || return 1
-      out="$("$pipx" inject ms-fabric-cli "$pkg==$pin" --force 2>&1)" || {
-        coop_warn "failed to pin $pkg to $pin in the ms-fabric-cli environment" "$(coop_pip_error_tail "$out")"
+      spec="$pkg==$pin"
+      if [ "$edge" = 1 ] && [ "$pkg" = fabric-cicd ]; then spec="$pkg"; fi
+      out="$("$pipx" inject ms-fabric-cli "$spec" --force 2>&1)" || {
+        coop_warn "failed to install $spec in the ms-fabric-cli environment" "$(coop_pip_error_tail "$out")"
         return 1
       }
     done
@@ -285,7 +287,7 @@ coop_ensure_fabric_odbc_driver() { # <allow-prereqs:0|1>
       ;;
     *)
       coop_warn "ODBC Driver 18+ for SQL Server is missing" "install Microsoft ODBC Driver 18 for SQL Server, then run: coop doctor"
-      return 1
+      return 0
       ;;
   esac
 }

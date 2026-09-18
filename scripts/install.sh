@@ -180,7 +180,7 @@ _unit_fabric() {
   fi
   # Runtime libraries live in the Fabric CLI environment; exact pins and import
   # are verified with the same interpreter the fallback will execute.
-  if ! coop_converge_fabric_python_packages; then
+  if ! coop_converge_fabric_python_packages "$EDGE"; then
     printf 'failed to converge Fabric Python runtime (fabric-cicd + pyodbc)'; return 1
   fi
   hash -r 2>/dev/null || true
