@@ -8,13 +8,35 @@ $marker = Join-Path $temp 'marker'
 function ConvertTo-Base64Url([byte[]]$Bytes) {
   return [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
 }
+function ConvertFrom-Base64Url([string]$Value) {
+  $padded = $Value.Replace('-','+').Replace('_','/')
+  switch ($padded.Length % 4) {
+    2 { $padded += '==' }
+    3 { $padded += '=' }
+  }
+  return [Convert]::FromBase64String($padded)
+}
 $utf8 = [Text.Encoding]::UTF8
 $token = (ConvertTo-Base64Url $utf8.GetBytes('{"alg":"none"}')) + '.' +
   (ConvertTo-Base64Url $utf8.GetBytes('{"tid":"11111111-1111-4111-8111-111111111111","oid":"22222222-2222-4222-8222-222222222222"}')) + '.' +
   (ConvertTo-Base64Url $utf8.GetBytes('launch-signature'))
+$tokenParts = @($token -split '\.')
+if ($tokenParts.Count -ne 3 -or $tokenParts[0] -match '=' -or $tokenParts[1] -match '=') {
+  throw 'fixture token is not a canonical three-segment base64url JWT'
+}
+$tokenHeader = $utf8.GetString((ConvertFrom-Base64Url $tokenParts[0])) | ConvertFrom-Json
+$tokenPayload = $utf8.GetString((ConvertFrom-Base64Url $tokenParts[1])) | ConvertFrom-Json
+if ($tokenHeader.alg -ne 'none' -or
+    $tokenPayload.tid -ne '11111111-1111-4111-8111-111111111111' -or
+    $tokenPayload.oid -ne '22222222-2222-4222-8222-222222222222') {
+  throw 'fixture token decoded claims do not match the expected JSON'
+}
 $helperDiagnostic = 'untrusted-helper-diagnostic-93b75a'
 $helperTokenlike = 'tokenlike-helper-value-2309'
 New-Item -ItemType Directory -Force -Path $bin,$agent,$marker | Out-Null
+$azResponse = Join-Path $marker 'az-response.json'
+$azResponseJson = '{"accessToken":"' + $token + '"}' + "`r`n"
+[System.IO.File]::WriteAllText($azResponse, $azResponseJson, [Text.Encoding]::ASCII)
 $oldPythonPath = $env:PYTHONPATH
 try {
   $url = 'https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint'
@@ -49,9 +71,9 @@ if "%COOP_TEST_AZ_MODE%"=="auth" (
   >&2 echo ERROR: Please run 'az login' to setup account.
   exit /b 1
 )
-echo {"accessToken":"__TOKEN__"}
+type "__AZ_RESPONSE__"
 '@
-    $azCmd.Replace('__MARKER__', $marker).Replace('__TOKEN__', $token) | Set-Content -LiteralPath (Join-Path $bin 'az.cmd') -Encoding ASCII
+    $azCmd.Replace('__MARKER__', $marker).Replace('__AZ_RESPONSE__', $azResponse) | Set-Content -LiteralPath (Join-Path $bin 'az.cmd') -Encoding ASCII
     @'
 @echo off
 >"%COOP_TEST_MARKER%\pi-argv" echo %*
