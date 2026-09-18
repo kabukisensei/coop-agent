@@ -202,7 +202,7 @@ try {
   );
   assert.deepEqual(windows, {
     command: "C:\\Windows\\System32\\cmd.exe",
-    args: ["/d", "/v:on", "/s", "/c", '"call "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd" account get-access-token --resource https://api.fabric.microsoft.com --output json & set "COOP_AZURE_RC=!ERRORLEVEL!" & echo COOP_AZURE_COMPLETE_V1:!COOP_AZURE_RC! & echo COOP_AZURE_STDERR_COMPLETE_V1 1>&2 & set /p "COOP_AZURE_RELEASE=" & exit /b !COOP_AZURE_RC!"'],
+    args: ["/d", "/v:on", "/s", "/c", 'call "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd" account get-access-token --resource https://api.fabric.microsoft.com --output json & set "COOP_AZURE_RC=!ERRORLEVEL!" & echo COOP_AZURE_COMPLETE_V1:!COOP_AZURE_RC! & echo COOP_AZURE_STDERR_COMPLETE_V1 1>&2 & set /p "COOP_AZURE_RELEASE=" & exit /b !COOP_AZURE_RC!'],
     windowsSupervisor: true,
   });
   const candidates = windowsAzureCliCandidates(["C:\\Earlier", "C:\\Later"]);
@@ -216,7 +216,7 @@ try {
     windowsAzureCliCommand("C:\\Windows\\System32\\cmd.exe", "C:\\Program Files\\Azure CLI\\az.exe"),
     {
       command: "C:\\Windows\\System32\\cmd.exe",
-      args: ["/d", "/v:on", "/s", "/c", '""C:\\Program Files\\Azure CLI\\az.exe" account get-access-token --resource https://api.fabric.microsoft.com --output json & set "COOP_AZURE_RC=!ERRORLEVEL!" & echo COOP_AZURE_COMPLETE_V1:!COOP_AZURE_RC! & echo COOP_AZURE_STDERR_COMPLETE_V1 1>&2 & set /p "COOP_AZURE_RELEASE=" & exit /b !COOP_AZURE_RC!"'],
+      args: ["/d", "/v:on", "/s", "/c", '"C:\\Program Files\\Azure CLI\\az.exe" account get-access-token --resource https://api.fabric.microsoft.com --output json & set "COOP_AZURE_RC=!ERRORLEVEL!" & echo COOP_AZURE_COMPLETE_V1:!COOP_AZURE_RC! & echo COOP_AZURE_STDERR_COMPLETE_V1 1>&2 & set /p "COOP_AZURE_RELEASE=" & exit /b !COOP_AZURE_RC!'],
       windowsSupervisor: true,
     },
   );
@@ -224,7 +224,7 @@ try {
     windowsAzureCliCommand("C:\\Windows\\System32\\cmd.exe", "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd"),
     {
       command: "C:\\Windows\\System32\\cmd.exe",
-      args: ["/d", "/v:on", "/s", "/c", '"call "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd" account get-access-token --resource https://api.fabric.microsoft.com --output json & set "COOP_AZURE_RC=!ERRORLEVEL!" & echo COOP_AZURE_COMPLETE_V1:!COOP_AZURE_RC! & echo COOP_AZURE_STDERR_COMPLETE_V1 1>&2 & set /p "COOP_AZURE_RELEASE=" & exit /b !COOP_AZURE_RC!"'],
+      args: ["/d", "/v:on", "/s", "/c", 'call "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd" account get-access-token --resource https://api.fabric.microsoft.com --output json & set "COOP_AZURE_RC=!ERRORLEVEL!" & echo COOP_AZURE_COMPLETE_V1:!COOP_AZURE_RC! & echo COOP_AZURE_STDERR_COMPLETE_V1 1>&2 & set /p "COOP_AZURE_RELEASE=" & exit /b !COOP_AZURE_RC!'],
       windowsSupervisor: true,
     },
   );
