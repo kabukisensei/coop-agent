@@ -63,18 +63,28 @@ try {
   $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $agent 'mcp.json') -Encoding UTF8
 
   if ($env:OS -eq 'Windows_NT') {
+    $nodePath = (Get-Command node -ErrorAction Stop).Source
+    $azProgram = Join-Path $bin 'fake-az.cjs'
+    $azProgramSource = @'
+const fs = require('node:fs');
+fs.writeFileSync(__ARGV__, process.argv.slice(2).join(' '));
+const mode = fs.readFileSync(__MODE__, 'utf8');
+if (mode === 'auth') {
+  process.stderr.write("ERROR: Please run 'az login' to setup account.\n");
+  process.exit(1);
+}
+process.stdout.write(fs.readFileSync(__RESPONSE__));
+'@
+    $azProgramSource = $azProgramSource.Replace('__ARGV__', ((Join-Path $marker 'az-argv') | ConvertTo-Json -Compress))
+    $azProgramSource = $azProgramSource.Replace('__MODE__', ((Join-Path $marker 'az-mode') | ConvertTo-Json -Compress))
+    $azProgramSource = $azProgramSource.Replace('__RESPONSE__', ($azResponse | ConvertTo-Json -Compress))
+    [System.IO.File]::WriteAllText($azProgram, $azProgramSource, [Text.Encoding]::ASCII)
     $azCmd = @'
 @echo off
->"__MARKER__\az-argv" echo %*
-set /p COOP_TEST_AZ_MODE=<"__MARKER__\az-mode"
-if "%COOP_TEST_AZ_MODE%"=="auth" (
-  >&2 echo ERROR: Please run 'az login' to setup account.
-  exit /b 1
-)
-type "__AZ_RESPONSE__"
-exit /b 0
+"__NODE__" "__PROGRAM__" %*
+exit /b !ERRORLEVEL!
 '@
-    $azCmd.Replace('__MARKER__', $marker).Replace('__AZ_RESPONSE__', $azResponse) | Set-Content -LiteralPath (Join-Path $bin 'az.cmd') -Encoding ASCII
+    $azCmd.Replace('__NODE__', $nodePath).Replace('__PROGRAM__', $azProgram) | Set-Content -LiteralPath (Join-Path $bin 'az.cmd') -Encoding ASCII
     @'
 @echo off
 >"%COOP_TEST_MARKER%\pi-argv" echo %*
