@@ -87,7 +87,7 @@ const run = (envelope = baseEnvelope, mode = "success", endpoint = ENDPOINT, tok
 const runToken = (resource = "https://api.fabric.microsoft.com", mode = "success", options = {}) => {
   installFake(mode);
   return spawnSync(process.execPath, [HELPER, "--token", resource, ...(options.extraArgs || [])], {
-    encoding: "buffer", timeout: 12000, cwd: options.cwd || ROOT,
+    timeout: 12000, cwd: options.cwd || ROOT,
     env: {
       PATH: options.path || `${dir}${delimiter}${process.env.PATH || ""}`,
       HOME: process.env.HOME || tmpdir(),
@@ -114,6 +114,7 @@ try {
     assert.equal(completion.code, 0, phase);
     assert.ok(completion.stdout.length > 0, phase);
     assert.equal(completion.stderr.length, 0, phase);
+    rmSync(counter, { force: true });
   }
   const first = run();
   const second = run();
