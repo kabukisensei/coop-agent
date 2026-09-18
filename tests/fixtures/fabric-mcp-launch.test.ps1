@@ -170,12 +170,23 @@ result = subprocess.run(
 )
 text = result.stdout.decode("ascii", "strict") if result.returncode == 0 and not result.stderr else ""
 allowed = {"spec=0 fixture=0 path=1 root=1", "spec=1 fixture=0 path=1 root=1", "spec=1 fixture=1 path=1 root=1"}
-print(text if text in allowed else f"probe-rc={result.returncode} stdout-bytes={len(result.stdout)} stderr-bytes={len(result.stderr)}")
+resolution = text if text in allowed else f"probe-rc={result.returncode} probe-stdout-bytes={len(result.stdout)} probe-stderr-bytes={len(result.stderr)}"
+code, stdout, stderr, timed_out = module._run_token_helper(
+    [node, module.REQUEST_HEADERS_HELPER, "--token", module.FABRIC_RESOURCE], 10
+)
+print(f"{resolution} direct-code={code} direct-stdout-bytes={len(stdout)} direct-stderr-bytes={len(stderr)} direct-timeout={int(timed_out)}")
 '@
   [System.IO.File]::WriteAllText($boundaryLauncher, $boundaryLauncherSource, [Text.Encoding]::ASCII)
   $probePython = (Get-Command python -CommandType Application -ErrorAction Stop).Source
   $boundaryState = [string](& $probePython $boundaryLauncher (Join-Path $root 'lib\warehouse_mcp.py') $nodePath $boundaryProbe (Join-Path $bin 'az.cmd'))
   if ($LASTEXITCODE -ne 0 -or -not $boundaryState) { $boundaryState = 'probe-unavailable' }
+  $directWrapperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-wrapper-entry'))
+  $directHelperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-helper-entry'))
+  $directAzReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-argv'))
+  $boundaryState = "$boundaryState direct-wrapper=$directWrapperReached direct-helper=$directHelperReached direct-az=$directAzReached"
+  foreach ($diagnosticMarker in @('az-wrapper-entry','az-helper-entry','az-argv','az-child-rc')) {
+    Remove-Item -LiteralPath (Join-Path $marker $diagnosticMarker) -Force -ErrorAction SilentlyContinue
+  }
   }
 
   $priorEap = $ErrorActionPreference
@@ -204,6 +215,7 @@ print(text if text in allowed else f"probe-rc={result.returncode} stdout-bytes={
     elseif ($output.Contains('Azure CLI token acquisition failed')) { $tokenState = 'token-command-failed' }
     elseif ($output.Contains('Azure CLI returned no usable Fabric token')) { $tokenState = 'token-output-invalid' }
     elseif ($output.Contains('Azure authentication is required')) { $tokenState = 'auth-required' }
+    foreach ($boundaryField in @($boundaryState -split ' ')) { Write-Host "FABRIC_BOUNDARY $boundaryField" }
     throw "token launch failed rc=$rc wrapper-reached=$wrapperReached helper-reached=$helperReached az-reached=$azReached child-rc=$azChildRc state=$tokenState boundary=$boundaryState"
   }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi was not launched' }

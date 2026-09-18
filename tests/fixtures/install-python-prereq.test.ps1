@@ -297,7 +297,11 @@ exit /b 0
   $output = $outItems | Out-String
   $ErrorActionPreference = $oldPreference
   . (Join-Path $root 'lib\common.ps1')
+  $runtimePreference = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
   $installedRuntime = Get-CoopFabricSqlRuntimeStatus
+  $ErrorActionPreference = $runtimePreference
+  Write-Host "FABRIC_RUNTIME state=$($installedRuntime.state) version=$($installedRuntime.version) driver=$($installedRuntime.driver)"
   if ($rc -ne 0) { Write-Error "install fixture exited $rc runtime-state=$($installedRuntime.state) runtime-version=$($installedRuntime.version) runtime-driver=$($installedRuntime.driver)`nevidence file: $evidencePath`n$output`n--- stream-tagged ---`n$evidence`nCALLS:`n$(Get-Content $calls -Raw)" }
   $transcript = Get-Content $calls -Raw
   if ($transcript -like '*WINGET*') { Write-Error "Python 3.14-only install unexpectedly required winget`n$transcript" }
