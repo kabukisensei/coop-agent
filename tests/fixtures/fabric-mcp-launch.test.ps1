@@ -75,6 +75,7 @@ try {
 const fs = require('node:fs');
 const path = require('node:path');
 const [marker, response, ...args] = process.argv.slice(2);
+fs.writeFileSync(path.join(marker, 'az-helper-entry'), '1');
 fs.writeFileSync(path.join(marker, 'az-argv'), args.join(' '));
 const mode = fs.readFileSync(path.join(marker, 'az-mode'), 'utf8');
 if (mode === 'auth') {
@@ -86,8 +87,11 @@ process.stdout.write(fs.readFileSync(response));
     [System.IO.File]::WriteAllText($azProgram, $azProgramSource, [Text.Encoding]::ASCII)
     $azCmd = @'
 @echo off
+>"__MARKER__\az-wrapper-entry" echo 1
 "__NODE__" "__PROGRAM__" "__MARKER__" "__RESPONSE__" %*
-exit /b %ERRORLEVEL%
+set "COOP_TEST_AZ_RC=%ERRORLEVEL%"
+>"__MARKER__\az-child-rc" echo %COOP_TEST_AZ_RC%
+exit /b %COOP_TEST_AZ_RC%
 '@
     $azCmd.Replace('__NODE__', $nodePath).Replace('__PROGRAM__', $azProgram).Replace('__MARKER__', $marker).Replace('__RESPONSE__', $azResponse) | Set-Content -LiteralPath (Join-Path $bin 'az.cmd') -Encoding ASCII
     @'
@@ -140,7 +144,17 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
   $rc = $LASTEXITCODE
   $ErrorActionPreference = $priorEap
   if ($rc -ne 0) {
+    $wrapperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-wrapper-entry'))
+    $helperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-helper-entry'))
     $azReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-argv'))
+    $azChildRc = -1
+    $azChildRcPath = Join-Path $marker 'az-child-rc'
+    if (Test-Path -LiteralPath $azChildRcPath) {
+      $parsedAzChildRc = 0
+      if ([int]::TryParse((Get-Content -Raw -LiteralPath $azChildRcPath).Trim(), [ref]$parsedAzChildRc)) {
+        $azChildRc = $parsedAzChildRc
+      }
+    }
     $tokenState = 'unknown'
     if ($output.Contains('token helper failed')) { $tokenState = 'runner-failed' }
     elseif ($output.Contains('token helper supervisor is unavailable')) { $tokenState = 'supervisor-unavailable' }
@@ -150,7 +164,7 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
     elseif ($output.Contains('Azure CLI token acquisition failed')) { $tokenState = 'token-command-failed' }
     elseif ($output.Contains('Azure CLI returned no usable Fabric token')) { $tokenState = 'token-output-invalid' }
     elseif ($output.Contains('Azure authentication is required')) { $tokenState = 'auth-required' }
-    throw "token launch failed rc=$rc az-reached=$azReached state=$tokenState"
+    throw "token launch failed rc=$rc wrapper-reached=$wrapperReached helper-reached=$helperReached az-reached=$azReached child-rc=$azChildRc state=$tokenState"
   }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi was not launched' }
   if ($output.Contains($token)) { throw 'token leaked to process output' }
