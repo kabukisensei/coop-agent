@@ -102,13 +102,17 @@ if "%1"=="install" if not "%2"=="--help" (
 )
 exit /b 0
 :materialize
-"__NATIVE_PYTHON__" -m venv --without-pip "%PIPX_HOME%\venvs\ms-fabric-cli"
+if not exist "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts" mkdir "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts"
+copy /y "__NATIVE_PYTHON__" "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts\python.exe" >nul
 if errorlevel 1 exit /b 3
+>"%PIPX_HOME%\venvs\ms-fabric-cli\pyvenv.cfg" echo home = __NATIVE_HOME__
+>>"%PIPX_HOME%\venvs\ms-fabric-cli\pyvenv.cfg" echo include-system-site-packages = false
 if not exist "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts\python.exe" exit /b 3
 exit /b 0
 '@
   $pipxCmdPath = Join-Path $bin 'pipx.cmd'
-  [System.IO.File]::WriteAllText($pipxCmdPath, ([System.IO.File]::ReadAllText($pipxCmdPath).Replace('__NATIVE_PYTHON__', $nativePython.Source)))
+  $pipxCmd = [System.IO.File]::ReadAllText($pipxCmdPath).Replace('__NATIVE_PYTHON__', $nativePython.Source).Replace('__NATIVE_HOME__', (Split-Path -Parent $nativePython.Source))
+  [System.IO.File]::WriteAllText($pipxCmdPath, $pipxCmd)
   Write-Shim 'fab' "#!/bin/sh`necho 'fab version 1.7.0'`n" "@echo off`r`necho fab version 1.7.0`r`n"
   Write-Shim 'az' "#!/bin/sh`necho 'azure-cli 2.80.0'`n" "@echo off`r`necho azure-cli 2.80.0`r`n"
 

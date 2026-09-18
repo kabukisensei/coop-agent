@@ -136,7 +136,7 @@ async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<
       reapTimer = setTimeout(() => finish({ state }), 1_000);
     };
     const onAbort = () => stop("aborted");
-    const timeoutTimer = setTimeout(() => stop("python_resolver_timeout"), 10_000);
+    const timeoutTimer = setTimeout(() => stop("python_resolver_timeout"), 30_000);
     signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout?.on("data", (data: any) => {
       if (stopState) return;
