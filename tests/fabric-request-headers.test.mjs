@@ -100,7 +100,8 @@ const runToken = (resource = "https://api.fabric.microsoft.com", mode = "success
 try {
   const first = run();
   const second = run();
-  assert.equal(first.status, 0); assert.equal(first.stderr, "");
+  const firstPhase = `executed=${Number(existsSync(marker))} counter=${Number(existsSync(counter))} stdout=${first.stdout.length} stderr=${first.stderr.length}`;
+  assert.equal(first.status, 0, firstPhase); assert.equal(first.stderr, "");
   assert.equal(second.status, 0); assert.equal(second.stderr, "");
   const firstHeader = JSON.parse(first.stdout).Authorization;
   const secondHeader = JSON.parse(second.stdout).Authorization;

@@ -133,7 +133,10 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
   $output = & $psHost -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'bin\coop.ps1') pi --fixture *>&1 | Out-String
   $rc = $LASTEXITCODE
   $ErrorActionPreference = $priorEap
-  if ($rc -ne 0) { throw "token launch failed rc=$rc output=$output" }
+  if ($rc -ne 0) {
+    $azReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-argv'))
+    throw "token launch failed rc=$rc az-reached=$azReached"
+  }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi was not launched' }
   if ($output.Contains($token)) { throw 'token leaked to process output' }
   if ((Get-Content -Raw (Join-Path $marker 'pi-argv')).Contains($token)) { throw 'token leaked to argv' }
