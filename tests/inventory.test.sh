@@ -102,7 +102,7 @@ venv_python() { # <venv> <version> [requires-python] [sql-state]
     echo "FAKEPY_VERSION='$2'"
     echo "FAKEPY_RP='$rp'"
     printf "FAKEPY_SQL_STATE='%s'\n" "$sql_state"
-    cat "$ROOT/tests/fixtures/venv-python.sh"
+    tr -d '\r' < "$ROOT/tests/fixtures/venv-python.sh"
   } > "$PIPXHOME/venvs/$1/bin/python"
   chmod +x "$PIPXHOME/venvs/$1/bin/python"
 }
