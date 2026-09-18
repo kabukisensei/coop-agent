@@ -41,7 +41,7 @@ try {
     throw 'could not create the managed-runtime fixture venv'
   }
   [System.IO.File]::WriteAllText((Join-Path $runtimeFixture 'pyodbc.py'), "import os`ndef drivers():`n    missing = os.environ.get('COOP_TEST_DRIVER_MISSING') == '1'`n    ready = os.path.exists(os.environ.get('COOP_TEST_DRIVER_READY', ''))`n    return [] if missing and not ready else ['ODBC Driver 18 for SQL Server']`n")
-  [System.IO.File]::WriteAllText((Join-Path $runtimeFixture 'sitecustomize.py'), "import os, sys`nif len(sys.argv) > 1 and sys.argv[1] == '5.3.0':`n    missing = os.environ.get('COOP_TEST_DRIVER_MISSING') == '1'`n    ready = os.path.exists(os.environ.get('COOP_TEST_DRIVER_READY', ''))`n    print('driver_missing\t5.3.0' if missing and not ready else 'ready\t5.3.0\t18', flush=True)`n    os._exit(5 if missing and not ready else 0)`n")
+  # Exercise the real runtime probe against the fixture module and metadata.
   [System.IO.File]::WriteAllText((Join-Path $pyodbcMetadata 'METADATA'), "Metadata-Version: 2.1`nName: pyodbc`nVersion: 5.3.0`n")
 
   Write-Shim 'python3' @'

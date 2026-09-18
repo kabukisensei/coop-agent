@@ -374,6 +374,9 @@ def _token_helper_environment() -> dict[str, str]:
         "no_proxy",
         "AZURE_CONFIG_DIR",
     }
+    # Python normalizes Windows os.environ keys to uppercase.
+    if _is_windows():
+        allowed = {key.upper() for key in allowed}
     return {
         key: value
         for key, value in os.environ.items()

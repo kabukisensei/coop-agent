@@ -248,8 +248,10 @@ assert set(helper_env) <= {
     "LOCALAPPDATA",
     "APPDATA",
     "SystemRoot",
+    "SYSTEMROOT",
     "WINDIR",
     "SystemDrive",
+    "SYSTEMDRIVE",
     "TEMP",
     "TMP",
     "TMPDIR",
@@ -264,6 +266,28 @@ assert set(helper_env) <= {
     "https_proxy",
     "no_proxy",
     "AZURE_CONFIG_DIR",
+}
+
+with (
+    mock.patch.object(wmcp, "_is_windows", return_value=True),
+    mock.patch.dict(
+        wmcp.os.environ,
+        {
+            "PATH": r"C:\\fixture",
+            "SYSTEMROOT": r"C:\\Windows",
+            "SYSTEMDRIVE": "C:",
+            "COOP_FABRIC_MCP_TOKEN": "must-not-pass",
+            "NODE_OPTIONS": "--require=untrusted.cjs",
+            "PYTHONPATH": "untrusted-python-injection",
+        },
+        clear=True,
+    ),
+):
+    windows_helper_env = wmcp._token_helper_environment()
+assert windows_helper_env == {
+    "PATH": r"C:\\fixture",
+    "SYSTEMROOT": r"C:\\Windows",
+    "SYSTEMDRIVE": "C:",
 }
 
 code, stdout, stderr, timed_out = wmcp._run_token_helper(

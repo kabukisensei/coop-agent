@@ -274,8 +274,19 @@ if not majors or max(majors) < 18:
  print("driver_missing\t"+v); raise SystemExit(5)
 print("ready\t"+v+"\t"+str(max(majors)))
 '@
-  $line = [string]((& $py -c $probe $pin 2>$null | Select-Object -First 1))
+  # Pass Python source on stdin, not through PowerShell 5.1 native quoting.
+  try {
+    $probeLines = @($probe | & $py - $pin 2>$null)
+    $probeRc = $LASTEXITCODE
+  } catch {
+    return [pscustomobject]@{ state = 'pyodbc_unloadable'; version = ''; driver = 0 }
+  }
+  $line = [string]($probeLines | Select-Object -First 1)
   $parts = @($line -split "`t")
+  $expectedExit = @{ ready = 0; pyodbc_missing = 2; pyodbc_wrong = 3; pyodbc_unloadable = 4; driver_missing = 5 }
+  if ($probeLines.Count -ne 1 -or -not $expectedExit.ContainsKey($parts[0]) -or $probeRc -ne $expectedExit[$parts[0]]) {
+    return [pscustomobject]@{ state = 'pyodbc_unloadable'; version = ''; driver = 0 }
+  }
   return [pscustomobject]@{ state = $(if ($parts.Count) { $parts[0] } else { 'pyodbc_unloadable' }); version = $(if ($parts.Count -gt 1) { $parts[1] } else { '' }); driver = $(if ($parts.Count -gt 2) { [int]$parts[2] } else { 0 }) }
 }
 
