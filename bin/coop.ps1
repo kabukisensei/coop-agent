@@ -405,6 +405,14 @@ function Invoke-CoopPiProcess {
   try {
     & pi @PiArgs
     $script:CoopPiRc = $LASTEXITCODE
+  } catch {
+    $launchCode = $_.Exception.HResult
+    $inner = $_.Exception.InnerException
+    if ($inner -and $inner.PSObject.Properties['NativeErrorCode']) {
+      $launchCode = $inner.NativeErrorCode
+    }
+    Coop-Warn "Pi launch failed (code=$launchCode)"
+    $script:CoopPiRc = 1
   } finally {
     Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
   }

@@ -248,8 +248,10 @@ print(f"{resolution} runner-code={runner_result.returncode} runner-stdout-bytes=
     elseif ($output.Contains('Azure authentication is required')) { $tokenState = 'auth-required' }
     elseif ($output.Contains('System.Object[]') -or $output.Contains('Cannot convert value')) { $tokenState = 'token-assignment-failed' }
     elseif ($output.Contains('CommandNotFoundException') -or $output.Contains("The term 'pi' is not recognized")) { $tokenState = 'pi-resolution-failed' }
-    elseif ($output.Contains('NativeCommandError') -or $output.Contains("Program 'pi")) { $tokenState = 'pi-launch-failed' }
+    elseif ($output.Contains('NativeCommandError') -or $output.Contains("Program 'pi") -or $output.Contains('Pi launch failed (code=')) { $tokenState = 'pi-launch-failed' }
     elseif ($output.Contains('environment variable') -and $output.Contains('too long')) { $tokenState = 'environment-limit' }
+    $piLaunchCode = -1
+    if ($output -match 'Pi launch failed \(code=(-?[0-9]+)\)') { $piLaunchCode = [int64]$Matches[1] }
     foreach ($boundaryField in @($boundaryState -split ' ')) { Write-Host "FABRIC_BOUNDARY $boundaryField" }
     $piChildRc = -1
     $piChildRcPath = Join-Path $marker 'pi-child-rc'
@@ -263,6 +265,7 @@ print(f"{resolution} runner-code={runner_result.returncode} runner-stdout-bytes=
     Write-Host "FABRIC_BOUNDARY pi-token-present=$piTokenPresent"
     Write-Host "FABRIC_BOUNDARY pi-token-match=$piTokenMatch"
     Write-Host "FABRIC_BOUNDARY pi-child-rc=$piChildRc"
+    Write-Host "FABRIC_BOUNDARY pi-launch-code=$piLaunchCode"
     Write-Host "FABRIC_BOUNDARY handoff-state=$tokenState"
     throw "token launch failed rc=$rc wrapper-reached=$wrapperReached helper-reached=$helperReached az-reached=$azReached child-rc=$azChildRc pi-reached=$piReached pi-token-present=$piTokenPresent pi-token-match=$piTokenMatch pi-child-rc=$piChildRc state=$tokenState boundary=$boundaryState"
   }
