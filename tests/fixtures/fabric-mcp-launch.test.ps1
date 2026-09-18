@@ -64,6 +64,12 @@ try {
 
   if ($env:OS -eq 'Windows_NT') {
     $nodePath = (Get-Command node -ErrorAction Stop).Source
+    $windowsPathDirs = @($bin, (Split-Path -Parent $nodePath), (Join-Path $env:SystemRoot 'System32'))
+    foreach ($commandName in @('python3', 'python', 'git')) {
+      $commandPath = (Get-Command $commandName -ErrorAction SilentlyContinue).Source
+      if ($commandPath) { $windowsPathDirs += (Split-Path -Parent $commandPath) }
+    }
+    $windowsFixturePath = (@($windowsPathDirs | Select-Object -Unique) -join [System.IO.Path]::PathSeparator)
     $azProgram = Join-Path $bin 'fake-az.cjs'
     $azProgramSource = @'
 const fs = require('node:fs');
@@ -115,7 +121,8 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
   }
 
   $oldPath = $env:PATH
-  $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$oldPath"
+  if ($env:OS -eq 'Windows_NT') { $env:PATH = $windowsFixturePath }
+  else { $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$oldPath" }
   $env:PI_CODING_AGENT_DIR = $agent
   $env:COOP_AGENT_DIR = $agent
   $env:COOP_NO_ONBOARD = '1'
