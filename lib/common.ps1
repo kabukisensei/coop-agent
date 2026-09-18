@@ -562,7 +562,7 @@ foreach ($d in (@(
   $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\Microsoft\Azure CLI\wbin' })
 ) | Where-Object { $_ })) {
   if ((Test-Path -LiteralPath $d) -and (($env:PATH -split $script:PathSep) -notcontains $d)) {
-    $env:PATH = "$d$script:PathSep$env:PATH"
+    $env:PATH = "$env:PATH$script:PathSep$d"
   }
 }
 

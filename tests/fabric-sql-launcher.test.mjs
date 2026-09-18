@@ -47,7 +47,7 @@ const psBinding = mod.fabricSqlPythonResolverInvocation(root, "win32");
 let psFakePython = fakePython;
 if (process.platform === "win32") {
   const lookup = spawnSync("where.exe", ["python"], { encoding: "utf8" });
-  psFakePython = lookup.stdout?.split(/\r?\n/).find((candidate) => candidate.toLowerCase().endsWith(".exe"));
+  psFakePython = lookup.stdout?.split(/\r?\n/).find((candidate) => candidate.toLowerCase().endsWith(".exe") && !candidate.toLowerCase().includes("\\windowsapps\\"));
   assert.ok(psFakePython, "native Windows Python is required by this fixture");
 }
 const pwsh = spawnSync("pwsh", psBinding.args, {
