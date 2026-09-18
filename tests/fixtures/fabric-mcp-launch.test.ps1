@@ -97,9 +97,19 @@ exit /b %COOP_TEST_AZ_RC%
     @'
 @echo off
 >"%COOP_TEST_MARKER%\pi-argv" echo %*
-if "%COOP_TEST_EXPECT_TOKEN%"=="present" if not "%COOP_FABRIC_MCP_TOKEN%"=="%COOP_TEST_TOKEN%" exit /b 41
-if "%COOP_TEST_EXPECT_TOKEN%"=="absent" if not "%COOP_FABRIC_MCP_TOKEN%"=="" exit /b 42
+>"%COOP_TEST_MARKER%\pi-entry" echo 1
+if not "%COOP_FABRIC_MCP_TOKEN%"=="" >"%COOP_TEST_MARKER%\pi-token-present" echo 1
+if "%COOP_FABRIC_MCP_TOKEN%"=="%COOP_TEST_TOKEN%" >"%COOP_TEST_MARKER%\pi-token-match" echo 1
+if "%COOP_TEST_EXPECT_TOKEN%"=="present" if not "%COOP_FABRIC_MCP_TOKEN%"=="%COOP_TEST_TOKEN%" (
+  >"%COOP_TEST_MARKER%\pi-child-rc" echo 41
+  exit /b 41
+)
+if "%COOP_TEST_EXPECT_TOKEN%"=="absent" if not "%COOP_FABRIC_MCP_TOKEN%"=="" (
+  >"%COOP_TEST_MARKER%\pi-child-rc" echo 42
+  exit /b 42
+)
 >"%COOP_TEST_MARKER%\pi-state" echo launched
+>"%COOP_TEST_MARKER%\pi-child-rc" echo 0
 exit /b 0
 '@ | Set-Content -LiteralPath (Join-Path $bin 'pi.cmd') -Encoding ASCII
   } else {
@@ -216,6 +226,9 @@ print(f"{resolution} runner-code={runner_result.returncode} runner-stdout-bytes=
     $wrapperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-wrapper-entry'))
     $helperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-helper-entry'))
     $azReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-argv'))
+    $piReached = [int](Test-Path -LiteralPath (Join-Path $marker 'pi-entry'))
+    $piTokenPresent = [int](Test-Path -LiteralPath (Join-Path $marker 'pi-token-present'))
+    $piTokenMatch = [int](Test-Path -LiteralPath (Join-Path $marker 'pi-token-match'))
     $azChildRc = -1
     $azChildRcPath = Join-Path $marker 'az-child-rc'
     if (Test-Path -LiteralPath $azChildRcPath) {
@@ -234,7 +247,15 @@ print(f"{resolution} runner-code={runner_result.returncode} runner-stdout-bytes=
     elseif ($output.Contains('Azure CLI returned no usable Fabric token')) { $tokenState = 'token-output-invalid' }
     elseif ($output.Contains('Azure authentication is required')) { $tokenState = 'auth-required' }
     foreach ($boundaryField in @($boundaryState -split ' ')) { Write-Host "FABRIC_BOUNDARY $boundaryField" }
-    throw "token launch failed rc=$rc wrapper-reached=$wrapperReached helper-reached=$helperReached az-reached=$azReached child-rc=$azChildRc state=$tokenState boundary=$boundaryState"
+    $piChildRc = -1
+    $piChildRcPath = Join-Path $marker 'pi-child-rc'
+    if (Test-Path -LiteralPath $piChildRcPath) {
+      $parsedPiChildRc = 0
+      if ([int]::TryParse((Get-Content -Raw -LiteralPath $piChildRcPath).Trim(), [ref]$parsedPiChildRc)) {
+        $piChildRc = $parsedPiChildRc
+      }
+    }
+    throw "token launch failed rc=$rc wrapper-reached=$wrapperReached helper-reached=$helperReached az-reached=$azReached child-rc=$azChildRc pi-reached=$piReached pi-token-present=$piTokenPresent pi-token-match=$piTokenMatch pi-child-rc=$piChildRc state=$tokenState boundary=$boundaryState"
   }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi was not launched' }
   if ($output.Contains($token)) { throw 'token leaked to process output' }
