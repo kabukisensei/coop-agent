@@ -96,8 +96,8 @@ exit /b %COOP_TEST_AZ_RC%
     $azCmd.Replace('__NODE__', $nodePath).Replace('__PROGRAM__', $azProgram).Replace('__MARKER__', $marker).Replace('__RESPONSE__', $azResponse) | Set-Content -LiteralPath (Join-Path $bin 'az.cmd') -Encoding ASCII
     @'
 @echo off
->"%COOP_TEST_MARKER%\pi-argv" echo %*
 >"%COOP_TEST_MARKER%\pi-entry" echo 1
+>"%COOP_TEST_MARKER%\pi-argv" echo %*
 if not "%COOP_FABRIC_MCP_TOKEN%"=="" >"%COOP_TEST_MARKER%\pi-token-present" echo 1
 if "%COOP_FABRIC_MCP_TOKEN%"=="%COOP_TEST_TOKEN%" >"%COOP_TEST_MARKER%\pi-token-match" echo 1
 if "%COOP_TEST_EXPECT_TOKEN%"=="present" if not "%COOP_FABRIC_MCP_TOKEN%"=="%COOP_TEST_TOKEN%" (
