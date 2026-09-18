@@ -44,13 +44,15 @@ chmodSync(fakePython, 0o755);
 // PowerShell 7 is only a local syntax/binding check; native Windows CI remains
 // the evidence for Windows PowerShell 5.1. The command uses no pwsh-only flags.
 const psBinding = mod.fabricSqlPythonResolverInvocation(root, "win32");
+const psFakePython = process.platform === "win32" ? join(root, "Python Runtime", "python.cmd") : fakePython;
+if (process.platform === "win32") writeFileSync(psFakePython, "@echo off\r\nexit /b 0\r\n");
 const pwsh = spawnSync("pwsh", psBinding.args, {
   encoding: "utf8",
-  env: { ...process.env, ...psBinding.env, COOP_FABRIC_PYTHON: fakePython },
+  env: { ...process.env, ...psBinding.env, COOP_FABRIC_PYTHON: psFakePython },
 });
 if (!pwsh.error || pwsh.error.code !== "ENOENT") {
   assert.equal(pwsh.status, 0, pwsh.stderr);
-  assert.equal(pwsh.stdout.trim(), fakePython);
+  assert.equal(pwsh.stdout.trim(), psFakePython);
 }
 
 const tools = new Map();
