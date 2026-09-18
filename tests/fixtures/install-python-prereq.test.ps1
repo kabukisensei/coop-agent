@@ -35,9 +35,11 @@ try {
   $runtimeFixture = Join-Path $t 'runtime-fixture'
   $pyodbcMetadata = Join-Path $runtimeFixture 'pyodbc-5.3.0.dist-info'
   $runtimeTemplate = Join-Path $t 'pipx-runtime-template'
-  $runtimeTemplateScripts = Join-Path $runtimeTemplate 'Scripts'
-  New-Item -ItemType Directory -Force -Path $runtimeFixture, $pyodbcMetadata, $runtimeTemplateScripts | Out-Null
-  Copy-Item -LiteralPath $nativePython.Source -Destination (Join-Path $runtimeTemplateScripts 'python.exe')
+  New-Item -ItemType Directory -Force -Path $runtimeFixture, $pyodbcMetadata | Out-Null
+  & $nativePython.Source -m venv $runtimeTemplate
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $runtimeTemplate 'Scripts\python.exe') -PathType Leaf)) {
+    throw 'could not create the managed-runtime fixture venv'
+  }
   [System.IO.File]::WriteAllText((Join-Path $runtimeFixture 'pyodbc.py'), "import os`ndef drivers():`n    missing = os.environ.get('COOP_TEST_DRIVER_MISSING') == '1'`n    ready = os.path.exists(os.environ.get('COOP_TEST_DRIVER_READY', ''))`n    return [] if missing and not ready else ['ODBC Driver 18 for SQL Server']`n")
   [System.IO.File]::WriteAllText((Join-Path $runtimeFixture 'sitecustomize.py'), "import os, sys`nif len(sys.argv) > 1 and sys.argv[1] == '5.3.0':`n    missing = os.environ.get('COOP_TEST_DRIVER_MISSING') == '1'`n    ready = os.path.exists(os.environ.get('COOP_TEST_DRIVER_READY', ''))`n    print('driver_missing\t5.3.0' if missing and not ready else 'ready\t5.3.0\t18', flush=True)`n    os._exit(5 if missing and not ready else 0)`n")
   [System.IO.File]::WriteAllText((Join-Path $pyodbcMetadata 'METADATA'), "Metadata-Version: 2.1`nName: pyodbc`nVersion: 5.3.0`n")
