@@ -125,7 +125,16 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
   $ErrorActionPreference = $priorEap
   if ($rc -ne 0) {
     $azReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-argv'))
-    throw "token launch failed rc=$rc az-reached=$azReached"
+    $tokenState = 'unknown'
+    if ($output.Contains('token helper failed')) { $tokenState = 'runner-failed' }
+    elseif ($output.Contains('token helper supervisor is unavailable')) { $tokenState = 'supervisor-unavailable' }
+    elseif ($output.Contains('token helper returned invalid output')) { $tokenState = 'runner-output-invalid' }
+    elseif ($output.Contains('Azure CLI is not installed or not on PATH')) { $tokenState = 'azure-cli-unavailable' }
+    elseif ($output.Contains('Azure CLI could not be launched')) { $tokenState = 'token-launch-failed' }
+    elseif ($output.Contains('Azure CLI token acquisition failed')) { $tokenState = 'token-command-failed' }
+    elseif ($output.Contains('Azure CLI returned no usable Fabric token')) { $tokenState = 'token-output-invalid' }
+    elseif ($output.Contains('Azure authentication is required')) { $tokenState = 'auth-required' }
+    throw "token launch failed rc=$rc az-reached=$azReached state=$tokenState"
   }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi was not launched' }
   if ($output.Contains($token)) { throw 'token leaked to process output' }
