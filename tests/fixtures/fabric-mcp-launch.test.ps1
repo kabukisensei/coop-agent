@@ -72,6 +72,7 @@ if "%COOP_TEST_AZ_MODE%"=="auth" (
   exit /b 1
 )
 type "__AZ_RESPONSE__"
+exit /b 0
 '@
     $azCmd.Replace('__MARKER__', $marker).Replace('__AZ_RESPONSE__', $azResponse) | Set-Content -LiteralPath (Join-Path $bin 'az.cmd') -Encoding ASCII
     @'
