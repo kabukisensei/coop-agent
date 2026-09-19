@@ -54,6 +54,9 @@ exit /b 0
     Copy-Item -LiteralPath (Join-Path $bin 'python3.cmd') -Destination (Join-Path $bin ($pythonName + '.cmd'))
   }
   Write-Shim 'py' "#!/bin/sh`nexit 1`n" "@echo off`r`nexit /b 1`r`n"
+  # A hosted runner can have real Winget on PATH. Shadow it before invoking
+  # the installer so this fixture cannot install or replace the host Python.
+  Write-Shim 'winget' "#!/bin/sh`nexit 1`n" "@echo off`r`nexit /b 1`r`n"
   Write-Shim 'pi' @'
 #!/bin/sh
 [ "$1" = "--version" ] && echo 'pi 0.84.3'
