@@ -148,6 +148,34 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
   $env:COOP_TEST_EXPECT_TOKEN = 'present'
   Set-Content -LiteralPath (Join-Path $marker 'az-mode') -Value 'ok' -NoNewline
 
+  if ($env:OS -eq 'Windows_NT') {
+    $piResolved = Get-Command pi -ErrorAction SilentlyContinue
+    $piSourceFixture = 0
+    $piSourceExt = 'none'
+    if ($piResolved) {
+      $piSourceFixture = [int]($piResolved.Source -eq (Join-Path $bin 'pi.cmd'))
+      switch ([System.IO.Path]::GetExtension($piResolved.Source).ToLowerInvariant()) {
+        '.cmd' { $piSourceExt = 'cmd' }
+        '.exe' { $piSourceExt = 'exe' }
+        '.com' { $piSourceExt = 'com' }
+        '.bat' { $piSourceExt = 'bat' }
+        '' { $piSourceExt = 'none' }
+        default { $piSourceExt = 'other' }
+      }
+    }
+    Write-Host "FABRIC_BOUNDARY pi-source-fixture=$piSourceFixture"
+    Write-Host "FABRIC_BOUNDARY pi-source-ext=$piSourceExt"
+    $pipxBinDir = Join-Path $HOME '.local\bin'
+    $pipxBinPresent = [int](Test-Path -LiteralPath $pipxBinDir)
+    Write-Host "FABRIC_BOUNDARY pipx-bin-present=$pipxBinPresent"
+    if ($pipxBinPresent) {
+      Write-Host "FABRIC_BOUNDARY pipx-pi-com=$([int](Test-Path -LiteralPath (Join-Path $pipxBinDir 'pi.com')))"
+      Write-Host "FABRIC_BOUNDARY pipx-pi-exe=$([int](Test-Path -LiteralPath (Join-Path $pipxBinDir 'pi.exe')))"
+      Write-Host "FABRIC_BOUNDARY pipx-pi-bat=$([int](Test-Path -LiteralPath (Join-Path $pipxBinDir 'pi.bat')))"
+      Write-Host "FABRIC_BOUNDARY pipx-pi-cmd=$([int](Test-Path -LiteralPath (Join-Path $pipxBinDir 'pi.cmd')))"
+    }
+  }
+
   $boundaryState = 'not-windows'
   if ($env:OS -eq 'Windows_NT') {
   $boundaryProbe = Join-Path $temp 'boundary-probe.mjs'
