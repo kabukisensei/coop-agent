@@ -2247,7 +2247,10 @@ export default function coopTools(pi: ExtensionAPI) {
         try {
           res = await pi.exec(cfg.exe, args, { cwd: ctx.cwd, signal });
         } catch (e: any) {
-          return { isError: true, content: [{ type: "text" as const, text: `Failed to run Tabular Editor: ${errMsg(e)}` }] };
+          return {
+            content: [{ type: "text" as const, text: `Failed to run Tabular Editor: ${errMsg(e)}` }],
+            details: { tool: "bpa_review", analysisFailed: true, invocations },
+          };
         }
         allStdout += res.stdout + "\n";
         allStderr += (res.stderr || "") + "\n";
@@ -2257,9 +2260,8 @@ export default function coopTools(pi: ExtensionAPI) {
           parsed = parseBpaOutput(res.stdout, legacy);
         } catch (e: any) {
           return {
-            isError: true,
             content: [{ type: "text" as const, text: `BPA results could not be read (exit ${res.code}): ${errMsg(e)}` }],
-            details: { tool: "bpa_review", invocations, exitCode: res.code, reportRejected: true, stdout: allStdout, stderr: allStderr },
+            details: { tool: "bpa_review", analysisFailed: true, invocations, exitCode: res.code, reportRejected: true, stdout: allStdout, stderr: allStderr },
           };
         }
         const { findings, summary } = parsed;
@@ -2270,9 +2272,8 @@ export default function coopTools(pi: ExtensionAPI) {
         allSummary.info += summary.info;
         if (res.code !== 0 && !(res.code === 1 && findings.length > 0 && !parsed.ruleErrors)) {
           return {
-            isError: true,
             content: [{ type: "text" as const, text: `Tabular Editor BPA did not complete successfully (exit ${res.code}). See details for diagnostics and any partial findings.` }],
-            details: { tool: "bpa_review", invocations, exitCode: res.code, report: { findings: allFindings, summary: allSummary, ruleErrors }, stdout: allStdout, stderr: allStderr },
+            details: { tool: "bpa_review", analysisFailed: true, invocations, exitCode: res.code, report: { findings: allFindings, summary: allSummary, ruleErrors }, stdout: allStdout, stderr: allStderr },
           };
         }
       }
@@ -2280,11 +2281,15 @@ export default function coopTools(pi: ExtensionAPI) {
       const report = { findings: allFindings, summary: allSummary, ruleErrors };
       const scopeLine = `Scope: ${models.join(", ")}`;
       return {
-        ...(ruleErrors ? { isError: true } : {}),
         content: [{ type: "text" as const, text: `${summarizeReview("bpa_review", report, allStdout, finalCode)}\n${scopeLine}${ruleErrors ? `\nBPA could not evaluate ${ruleErrors} rule(s); results are incomplete.` : ""}` }],
-        details: { tool: "bpa_review", invocations, report, exitCode: finalCode, stdout: allStdout, stderr: allStderr },
+        details: { tool: "bpa_review", analysisFailed: ruleErrors > 0, invocations, report, exitCode: finalCode, stdout: allStdout, stderr: allStderr },
       };
     },
+  });
+
+  // Pi reads error overrides from tool_result hooks, not from execute's result.
+  pi.on("tool_result", async (event: any) => {
+    if (event.toolName === "bpa_review" && event.details?.analysisFailed === true) return { isError: true };
   });
 
   pi.registerTool({
