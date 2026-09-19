@@ -30,6 +30,7 @@ node "$ROOT/tests/standards-live-sync.test.mjs"
 node "$ROOT/tests/standards-review-generations.test.mjs"
 node "$ROOT/tests/standards-lock-simple.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/standards-runtime.test.mjs"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/bpa-review.test.mjs"
 
 echo "→ data-doc config tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/datadoc.test.mjs"

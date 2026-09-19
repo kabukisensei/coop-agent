@@ -228,10 +228,23 @@ Result:
 |-------|------|-------|
 | `paths` | `string[]` (optional) | Semantic models to check. When omitted, uses `power_bi.semantic_models[].path` from the project contract. |
 | `min_severity` | `"error" \| "warning" \| "info"` (optional) | Ignored by TE CLI but preserved for API compatibility. |
-| `strict` | `boolean` (optional, default false) | If true, non-zero TE exit codes trigger CI failures. |
+| `strict` | `boolean` (optional, default false) | Reserved for API compatibility; native BPA findings remain advisory. |
 
-Invocation (built in `index.ts` and `coop review`):
-`te bpa run <model> -r <bpa_rules_path> --non-interactive` (the cross-platform Tabular Editor CLI; `te auth login` once during the preview). Output is parsed into JSON findings. Advisory only. Degrades gracefully: if TE is not configured, it's a hint, never a failure.
+Native tool invocation in `extensions/coop-tools/index.ts`:
+`te bpa run --model <model> --output-format json --non-interactive`.
+Enable `tools.tabular_editor_cli` and set its `executable_path` to the installed
+cross-platform `te` CLI. An omitted, empty, or YAML-null `bpa_rules_path` uses TE's
+built-in rules (and any model-embedded rules, following TE's defaults). A configured
+path adds `--rules <absolute path>`. No fix or save flags are passed.
+
+JSON violations become structured findings with rule IDs, object names, model paths,
+and severity counts. Exit 1 with findings is advisory; invalid output, execution
+failures, or rule evaluation errors are reported as incomplete/failed analysis.
+Raw stdout/stderr and the invoked arguments remain in `details`. Missing TE
+configuration returns a setup hint. Legacy `TabularEditor.exe` keeps its
+`<model> -A <rules> -V` invocation and requires an explicit rule file.
+The `coop review` command also accepts an unset rule path for TE's built-in rules
+and preserves the current JSON severity labels and object names.
 
 ### `data_doc`
 

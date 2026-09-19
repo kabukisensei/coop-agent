@@ -598,12 +598,32 @@ export function contractTeConfig(text: string): TeConfig {
       if (v && !/^TODO/i.test(v)) models.push(v);
     }
   }
+  if (/^(null|~)$/i.test(rules)) rules = "";
   return { enabled, exe, rules, models };
 }
 
-function parseBpaOutput(stdout: string): any {
+function parseBpaOutput(stdout: string, legacy: boolean): any {
   const findings = [];
   const summary = { error: 0, warning: 0, info: 0 };
+
+  if (!legacy) {
+    const report = JSON.parse(stdout);
+    if (!report || !Array.isArray(report.results) ||
+        !Number.isInteger(report.violations) || report.violations !== report.results.length ||
+        !Number.isInteger(report.ruleErrors) || report.ruleErrors < 0) {
+      throw new Error("TE returned an invalid BPA JSON report.");
+    }
+    for (const result of report.results) {
+      const severity = String(result?.severityLabel).toLowerCase();
+      if (!result || typeof result.ruleId !== "string" || typeof result.ruleName !== "string" ||
+          typeof result.objectName !== "string" || !["error", "warning", "info"].includes(severity)) {
+        throw new Error("TE returned an invalid BPA finding.");
+      }
+      findings.push({ rule: result.ruleId, severity, file: "", object: result.objectName, message: result.ruleName });
+      (summary as any)[severity]++;
+    }
+    return { findings, summary, ruleErrors: report.ruleErrors };
+  }
   
   const lines = stdout.split("\n");
   for (const line of lines) {
@@ -2186,8 +2206,8 @@ export default function coopTools(pi: ExtensionAPI) {
     name: "bpa_review",
     label: "Tabular Editor BPA",
     description:
-      "Run Tabular Editor BPA against semantic-model files and return findings as JSON. Advisory only — reports deviations from Cooptimize BPA standards and never edits or blocks.",
-    promptSnippet: "Lint Semantic Models against Cooptimize BPA standards (advisory, JSON output)",
+      "Run Tabular Editor BPA against semantic-model files using built-in or configured rules and return findings as JSON. Advisory only — never edits model files.",
+    promptSnippet: "Check semantic models with Tabular Editor BPA (advisory, JSON output)",
     promptGuidelines: [
       "Use bpa_review to check semantic models before proposing or reviewing changes.",
       "Treat results as advisory; summarize findings by severity.",
@@ -2199,7 +2219,9 @@ export default function coopTools(pi: ExtensionAPI) {
       if (!contract) return { content: [{ type: "text" as const, text: "No .coop/project.yml found." }] };
       const cfg = contractTeConfig(safeRead(contract));
       if (!cfg.enabled) return { content: [{ type: "text" as const, text: "Tabular Editor CLI is not enabled in .coop/project.yml." }] };
-      if (!cfg.exe || !cfg.rules) return { content: [{ type: "text" as const, text: "Tabular Editor executable_path or bpa_rules_path is missing in .coop/project.yml." }] };
+      if (!cfg.exe) return { content: [{ type: "text" as const, text: "Tabular Editor executable_path is missing in .coop/project.yml." }] };
+      const legacy = /^TabularEditor(?:\.exe)?$/i.test(cfg.exe.replace(/\\/g, "/").split("/").pop() || "");
+      if (legacy && !cfg.rules) return { content: [{ type: "text" as const, text: "Legacy TabularEditor.exe requires bpa_rules_path. Configure the cross-platform te CLI to use built-in rules." }] };
 
       let models = cfg.models;
       const p = params as ReviewParams;
@@ -2210,31 +2232,57 @@ export default function coopTools(pi: ExtensionAPI) {
       const allSummary = { error: 0, warning: 0, info: 0 };
       let finalCode = 0;
       let allStdout = "";
+      let allStderr = "";
+      let ruleErrors = 0;
+      const invocations: string[][] = [];
 
       for (const model of models) {
-        let absModel = isAbsolute(model) ? model : resolve(resolve(contract, "..", ".."), model);
-        let absRules = isAbsolute(cfg.rules) ? cfg.rules : resolve(resolve(contract, "..", ".."), cfg.rules);
-        const args = [absModel, "-A", absRules, "-V"];
+        const projectRoot = resolve(contract, "..", "..");
+        const absModel = isAbsolute(model) ? model : resolve(projectRoot, model);
+        const absRules = cfg.rules ? resolve(projectRoot, cfg.rules) : "";
+        const args = legacy ? [absModel, "-A", absRules, "-V"] :
+          ["bpa", "run", "--model", absModel, "--output-format", "json", "--non-interactive", ...(absRules ? ["--rules", absRules] : [])];
+        invocations.push(args);
         let res;
         try {
           res = await pi.exec(cfg.exe, args, { cwd: ctx.cwd, signal });
         } catch (e: any) {
-          return { content: [{ type: "text" as const, text: `Failed to run Tabular Editor: ${errMsg(e)}` }] };
+          return { isError: true, content: [{ type: "text" as const, text: `Failed to run Tabular Editor: ${errMsg(e)}` }] };
         }
         allStdout += res.stdout + "\n";
+        allStderr += (res.stderr || "") + "\n";
         if (res.code !== 0) finalCode = res.code;
-        const { findings, summary } = parseBpaOutput(res.stdout);
-        allFindings.push(...findings);
+        let parsed;
+        try {
+          parsed = parseBpaOutput(res.stdout, legacy);
+        } catch (e: any) {
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: `BPA results could not be read (exit ${res.code}): ${errMsg(e)}` }],
+            details: { tool: "bpa_review", invocations, exitCode: res.code, reportRejected: true, stdout: allStdout, stderr: allStderr },
+          };
+        }
+        const { findings, summary } = parsed;
+        ruleErrors += parsed.ruleErrors || 0;
+        allFindings.push(...findings.map((finding: any) => ({ ...finding, file: absModel })));
         allSummary.error += summary.error;
         allSummary.warning += summary.warning;
         allSummary.info += summary.info;
+        if (res.code !== 0 && !(res.code === 1 && findings.length > 0 && !parsed.ruleErrors)) {
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: `Tabular Editor BPA did not complete successfully (exit ${res.code}). See details for diagnostics and any partial findings.` }],
+            details: { tool: "bpa_review", invocations, exitCode: res.code, report: { findings: allFindings, summary: allSummary, ruleErrors }, stdout: allStdout, stderr: allStderr },
+          };
+        }
       }
 
-      const report = { findings: allFindings, summary: allSummary };
+      const report = { findings: allFindings, summary: allSummary, ruleErrors };
       const scopeLine = `Scope: ${models.join(", ")}`;
       return {
-        content: [{ type: "text" as const, text: `${summarizeReview("bpa_review", report, allStdout, finalCode)}\n${scopeLine}` }],
-        details: { tool: "bpa_review", args: ["..."], report, exitCode: finalCode, stdout: allStdout },
+        ...(ruleErrors ? { isError: true } : {}),
+        content: [{ type: "text" as const, text: `${summarizeReview("bpa_review", report, allStdout, finalCode)}\n${scopeLine}${ruleErrors ? `\nBPA could not evaluate ${ruleErrors} rule(s); results are incomplete.` : ""}` }],
+        details: { tool: "bpa_review", invocations, report, exitCode: finalCode, stdout: allStdout, stderr: allStderr },
       };
     },
   });

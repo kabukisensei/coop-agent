@@ -132,6 +132,36 @@ rc=$?
 [ -f "$out_nested" ] || { echo "FAIL: nested output report not written"; cat "$TMP/err2"; exit 1; }
 echo "PASS: BPA runner creates nested output directory and writes report"
 
+# Built-in rules need no rule path; current TE JSON preserves labels and objects.
+"$_py" - "$_root_native" "$_tmp_native" <<'PYEOF'
+import json, os, sys
+from types import SimpleNamespace
+from unittest.mock import patch
+sys.path.insert(0, os.path.join(sys.argv[1], "lib"))
+import _bpa_runner as runner
+tmp = sys.argv[2]
+current = {"violations": 1, "ruleErrors": 0, "results": [{"ruleId": "TE_BUILT_IN", "severity": 3, "severityLabel": "Error", "objectName": "Revenue", "ruleName": "Set format string"}]}
+for rule_setting in ("", "    bpa_rules_path: null\n", "    bpa_rules_path: ''\n"):
+    proj = os.path.join(tmp, "built-in.yml")
+    out = os.path.join(tmp, "built-in.json")
+    with open(proj, "w", encoding="utf-8") as f:
+        f.write("tools:\n  tabular_editor_cli:\n    enabled: true\n    executable_path: te\n" + rule_setting)
+    with patch.object(sys, "argv", ["runner", proj, out, os.path.join(tmp, "model.bim")]), patch.object(runner.subprocess, "run", return_value=SimpleNamespace(stdout=json.dumps(current), stderr="", returncode=1)) as run:
+        try:
+            runner.main()
+        except SystemExit as e:
+            assert e.code == 1, e.code
+        assert run.call_count == 1
+        args = run.call_args.args[0]
+        assert "-r" not in args and "--non-interactive" in args and "json" in args, args
+    with open(out, encoding="utf-8") as f:
+        result = json.load(f)
+    assert result["summary"] == {"error": 1, "warning": 0, "info": 0}, result
+    assert result["findings"][0]["object"] == "Revenue", result
+    assert result["findings"][0]["message"] == "Set format string", result
+print("PASS: BPA runner uses built-in rules and preserves current TE JSON findings")
+PYEOF
+
 # 3. A failing te run (non-zero exit, no findings) propagates as non-zero.
 cat > "$TMP/bin/te-fail" <<'EOF'
 #!/usr/bin/env bash
