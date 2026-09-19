@@ -168,12 +168,64 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
     $pipxBinDir = Join-Path $HOME '.local\bin'
     $pipxBinPresent = [int](Test-Path -LiteralPath $pipxBinDir)
     Write-Host "FABRIC_BOUNDARY pipx-bin-present=$pipxBinPresent"
+    $pipxShadow = 'none'
     if ($pipxBinPresent) {
-      Write-Host "FABRIC_BOUNDARY pipx-pi-com=$([int](Test-Path -LiteralPath (Join-Path $pipxBinDir 'pi.com')))"
-      Write-Host "FABRIC_BOUNDARY pipx-pi-exe=$([int](Test-Path -LiteralPath (Join-Path $pipxBinDir 'pi.exe')))"
-      Write-Host "FABRIC_BOUNDARY pipx-pi-bat=$([int](Test-Path -LiteralPath (Join-Path $pipxBinDir 'pi.bat')))"
-      Write-Host "FABRIC_BOUNDARY pipx-pi-cmd=$([int](Test-Path -LiteralPath (Join-Path $pipxBinDir 'pi.cmd')))"
+      foreach ($ext in @($env:PATHEXT -split ';' | Where-Object { $_ })) {
+        if (Test-Path -LiteralPath (Join-Path $pipxBinDir ("pi" + $ext))) {
+          $pipxShadow = $ext.ToLowerInvariant().TrimStart('.')
+          break
+        }
+      }
+      if ($pipxShadow -eq 'none' -and (Test-Path -LiteralPath (Join-Path $pipxBinDir 'pi'))) { $pipxShadow = 'extensionless' }
+      Write-Host "FABRIC_BOUNDARY pipx-pi-shadow=$pipxShadow"
+      Write-Host "FABRIC_BOUNDARY pathext-ps1=$([int](($env:PATHEXT -split ';') -contains '.PS1'))"
+      Write-Host "FABRIC_BOUNDARY pathext-js=$([int](($env:PATHEXT -split ';') -contains '.JS'))"
+      foreach ($entry in @(Get-ChildItem -LiteralPath $pipxBinDir -Filter 'pi*' -ErrorAction SilentlyContinue | Select-Object -First 5)) {
+        $entryLabel = if ($entry.PSIsContainer) { 'dir' } elseif ([string]::IsNullOrEmpty($entry.Extension)) { 'none' } else { $entry.Extension.ToLowerInvariant().TrimStart('.') }
+        Write-Host "FABRIC_BOUNDARY pipx-pi-entry-ext=$entryLabel"
+      }
     }
+    $comspecMz = 0
+    if ($env:ComSpec -and (Test-Path -LiteralPath $env:ComSpec -PathType Leaf)) {
+      $comspecBytes = [System.IO.File]::ReadAllBytes($env:ComSpec)
+      if ($comspecBytes.Length -ge 2) { $comspecMz = [int]($comspecBytes[0] -eq 0x4D -and $comspecBytes[1] -eq 0x5A) }
+    }
+    Write-Host "FABRIC_BOUNDARY comspec-mz=$comspecMz"
+    $probeMarker = Join-Path $temp 'child-probe-marker'
+    New-Item -ItemType Directory -Force -Path $probeMarker | Out-Null
+    $childProbe = Join-Path $temp 'child-probe.ps1'
+    @'
+$ErrorActionPreference = 'Continue'
+$rc = -1
+try { & pi; $rc = $LASTEXITCODE } catch {
+  $ex = $_.Exception
+  if ($ex.PSObject.Properties['NativeErrorCode']) { $rc = $ex.NativeErrorCode }
+  elseif ($ex.InnerException -and $ex.InnerException.PSObject.Properties['NativeErrorCode']) { $rc = $ex.InnerException.NativeErrorCode }
+  elseif ($ex.PSObject.Properties['HResult']) { $rc = $ex.HResult }
+}
+Write-Output "rc=$rc"
+'@ | Set-Content -LiteralPath $childProbe -Encoding ASCII
+    $savedMarker = $env:COOP_TEST_MARKER
+    $savedPath = $env:PATH
+    $savedProbeEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $plainRc = -1
+    $prefixedRc = -1
+    try {
+      $env:COOP_TEST_MARKER = $probeMarker
+      $plainOut = [string](& $psHost -NoProfile -ExecutionPolicy Bypass -File $childProbe *>&1)
+      if ($plainOut -match 'rc=(-?[0-9]+)') { $plainRc = [int64]$Matches[1] }
+      $env:PATH = "$pipxBinDir$([System.IO.Path]::PathSeparator)$savedPath"
+      $prefixedOut = [string](& $psHost -NoProfile -ExecutionPolicy Bypass -File $childProbe *>&1)
+      if ($prefixedOut -match 'rc=(-?[0-9]+)') { $prefixedRc = [int64]$Matches[1] }
+    } finally {
+      $ErrorActionPreference = $savedProbeEap
+      $env:PATH = $savedPath
+      $env:COOP_TEST_MARKER = $savedMarker
+      Remove-Item -LiteralPath $probeMarker -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Write-Host "FABRIC_BOUNDARY child-probe-plain-rc=$plainRc"
+    Write-Host "FABRIC_BOUNDARY child-probe-pipxfirst-rc=$prefixedRc"
   }
 
   $boundaryState = 'not-windows'
