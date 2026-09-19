@@ -50,6 +50,11 @@ return the parsed report in the tool result's `details`. Report shape:
 The native tool counts the `severity` field (`error` / `warning` / `info`) for its
 one-line summary and passes the full report through in `details`.
 
+Pinned SQL schema 4 and DAX schema 3 reports use 12 lowercase hexadecimal
+characters for finding and agent-review fingerprints. These are stable finding
+identities; `standards.sha256` remains a separate 64-character SHA-256 digest.
+Native validation checks both formats and preserves the standards binding.
+
 ---
 
 ## `coop data-doc`

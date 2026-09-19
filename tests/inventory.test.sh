@@ -99,6 +99,7 @@ mkdir -p "$TMP/fixtures"
 venv_python() { # <venv> <version> [requires-python] [sql-state]
   local rp="${3:-}" sql_state="${4:-ready}"
   {
+    echo '#!/bin/sh'
     echo "FAKEPY_VERSION='$2'"
     echo "FAKEPY_RP='$rp'"
     printf "FAKEPY_SQL_STATE='%s'\n" "$sql_state"

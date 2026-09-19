@@ -102,14 +102,15 @@ if "%1"=="install" if not "%2"=="--help" (
 )
 exit /b 0
 :materialize
-if exist "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts" rmdir /s /q "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts"
-xcopy "__NATIVE_HOME__\*" "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts\" /e /i /q /y >nul
+"__NATIVE_PYTHON__" -m venv --without-pip "%PIPX_HOME%\venvs\ms-fabric-cli" >nul
 if errorlevel 1 exit /b 3
 if not exist "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts\python.exe" exit /b 3
 exit /b 0
 '@
   $pipxCmdPath = Join-Path $bin 'pipx.cmd'
-  $pipxCmd = [System.IO.File]::ReadAllText($pipxCmdPath).Replace('__NATIVE_PYTHON__', $nativePython.Source).Replace('__NATIVE_HOME__', (Split-Path -Parent $nativePython.Source))
+  # CI may supply a venv interpreter. Create a complete venv instead of copying
+  # Scripts alone, which loses pyvenv.cfg and cannot locate the base runtime.
+  $pipxCmd = [System.IO.File]::ReadAllText($pipxCmdPath).Replace('__NATIVE_PYTHON__', $nativePython.Source)
   [System.IO.File]::WriteAllText($pipxCmdPath, $pipxCmd)
   Write-Shim 'fab' "#!/bin/sh`necho 'fab version 1.7.0'`n" "@echo off`r`necho fab version 1.7.0`r`n"
   Write-Shim 'az' "#!/bin/sh`necho 'azure-cli 2.80.0'`n" "@echo off`r`necho azure-cli 2.80.0`r`n"

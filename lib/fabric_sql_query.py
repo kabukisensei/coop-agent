@@ -268,8 +268,9 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     except Exception:
         return result("connection_failed")
     try:
+        # pyodbc applies the connection's query timeout to new cursors.
+        connection.timeout = QUERY_TIMEOUT
         cursor = connection.cursor()
-        cursor.timeout = QUERY_TIMEOUT
         cursor.execute(query)
         columns = [
             _bounded_text(str(item[0]), MAX_COLUMN_CHARS)

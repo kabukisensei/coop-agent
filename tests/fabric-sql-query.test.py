@@ -107,8 +107,9 @@ def fixture(
 
 
 class FakeCursor:
+    # Real pyodbc cursors reject arbitrary attributes, including timeout.
+    __slots__ = ("query", "rows", "description", "fetch_index")
     def __init__(self, rows=None, description=None):
-        self.timeout = None
         self.query = None
         self.rows = [(1, b"a"), (2, b"b"), (3, b"c")] if rows is None else rows
         self.description = description or [("customer_id",), ("seen_at",)]
@@ -127,10 +128,12 @@ class FakeCursor:
 
 class FakeConnection:
     def __init__(self, rows=None, description=None):
+        self.timeout = None
         self.cursor_value = FakeCursor(rows, description)
         self.closed = False
 
     def cursor(self):
+        assert self.timeout == fsq.QUERY_TIMEOUT
         return self.cursor_value
 
     def close(self):
@@ -245,7 +248,7 @@ assert kwargs["attrs_before"] == {
     fsq.SQL_COPT_SS_ACCESS_TOKEN: fsq.pack_access_token(SQL_TOKEN)
 }
 assert kwargs["timeout"] == fsq.CONNECT_TIMEOUT and kwargs["autocommit"] is True
-assert pyodbc.connection.cursor_value.timeout == fsq.QUERY_TIMEOUT
+assert pyodbc.connection.timeout == fsq.QUERY_TIMEOUT
 assert pyodbc.connection.cursor_value.query == QUERY
 assert pyodbc.connection.closed is True
 

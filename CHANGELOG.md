@@ -5,6 +5,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- Accept the pinned SQL/DAX reviewers' 12-character finding fingerprints in native
+  review tools while retaining full SHA-256 validation for standards provenance.
+- Set the Fabric SQL fallback query timeout on the pyodbc connection before
+  creating a cursor, allowing bounded reads to execute with the real driver.
+- Repair Windows test fixtures for virtual-environment Python runtimes and
+  executable detection under Git Bash.
+
 ## [0.23.3] — 2026-09-17
 
 ### Fixed

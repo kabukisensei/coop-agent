@@ -15,7 +15,7 @@ const validReport = (domain, resolution, tag = "clean") => ({
   tool: `coop-${domain}-review`, schema_version: domain === "sql" ? 4 : 3, version: "pinned-test",
   [domain === "sql" ? "files_checked" : "models_checked"]: 1,
   standards: { path: resolution.path, sha256: resolution.sha256 },
-  findings: tag === "clean" ? [] : [{ rule_id: `${domain.toUpperCase()}-TEST`, severity: "warning", ...(domain === "dax" ? { model: "Sales" } : {}), file: `${tag}.${domain}`, line: 1, object: "object", message: tag, standard_ref: "§1", fingerprint: h(`${domain}-${tag}`) }],
+  findings: tag === "clean" ? [] : [{ rule_id: `${domain.toUpperCase()}-TEST`, severity: "warning", ...(domain === "dax" ? { model: "Sales" } : {}), file: `${tag}.${domain}`, line: 1, object: "object", message: tag, standard_ref: "§1", fingerprint: h(`${domain}-${tag}`).slice(0, 12) }],
   diagnostics: [], agent_review: [], summary: { error: 0, warning: tag === "clean" ? 0 : 1, info: 0 },
   verdict: { clean: tag === "clean", highest_severity: tag === "clean" ? null : "warning" },
 });
@@ -46,11 +46,31 @@ try {
         (x) => { x.diagnostics = [null]; }, (x) => { x.diagnostics = [42]; }, (x) => { x.agent_review = [null]; }, (x) => { x.agent_review = [42]; },
         (x) => { x.diagnostics[0].unknown = true; }, (x) => { x.verdict.clean = true; }, (x) => { x.summary.warning = 1; },
         (x) => { x.findings = [{ rule_id: "X", severity: "warning", file: "x", line: 1, message: "x" }]; x.summary.warning = 1; },
-        (x) => { x.agent_review = [{ rule_id: "X", ...(domain === "dax" ? { model: "M" } : {}), file: "x", object: "o", line: 1, note: "judge", standard_ref: "§1", fingerprint: h("judge"), extra: true }]; },
+        (x) => { x.agent_review = [{ rule_id: "X", ...(domain === "dax" ? { model: "M" } : {}), file: "x", object: "o", line: 1, note: "judge", standard_ref: "§1", fingerprint: h("judge").slice(0, 12), extra: true }]; },
       ];
       for (const mutate of mutations) { const copy = structuredClone(report); mutate(copy); assert.equal(validateReviewerReport(domain, copy).ok, false, JSON.stringify(copy)); }
       for (const sha256 of [[report.standards.sha256], 7, {}, null]) { const copy = structuredClone(report); copy.standards.sha256 = sha256; assert.equal(validateReviewerReport(domain, copy).ok, false); }
       if (domain === "dax") { const copy = validReport(domain, resolution, "finding"); delete copy.findings[0].model; assert.equal(validateReviewerReport(domain, copy).ok, false); }
+    }
+  });
+
+  test("pinned SQL/DAX finding identities remain distinct from authority SHA-256", () => {
+    for (const domain of ["sql", "dax"]) {
+      const resolution = resolveStandard(domain, { cwd: project, canonicalRoot: join(tmp, "none", "canonical"), snapshotRoot: snapshots, refresh: false });
+      const report = validReport(domain, resolution, "finding");
+      report.agent_review = [{ rule_id: "X", ...(domain === "dax" ? { model: "M" } : {}), file: "x", object: "o", line: 1, note: "judge", standard_ref: "§1", fingerprint: "c116f594fa31" }];
+      assert.deepEqual(validateReviewerReport(domain, report), { ok: true });
+      assert.equal(bindReviewerProvenance(resolution, report).ok, true);
+      for (const field of ["findings", "agent_review"]) {
+        for (const fingerprint of ["", "a".repeat(11), "a".repeat(13), "a".repeat(64), "G".repeat(12), ["a".repeat(12)]]) {
+          const copy = structuredClone(report); copy[field][0].fingerprint = fingerprint;
+          assert.equal(validateReviewerReport(domain, copy).ok, false);
+        }
+      }
+      const shortenedAuthority = structuredClone(report);
+      shortenedAuthority.standards.sha256 = "a".repeat(12);
+      assert.equal(validateReviewerReport(domain, shortenedAuthority).ok, false);
+      assert.equal(bindReviewerProvenance(resolution, shortenedAuthority).ok, false);
     }
   });
 
