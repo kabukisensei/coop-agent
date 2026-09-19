@@ -24,48 +24,69 @@ if [ "${OS:-}" = Windows_NT ]; then
   COOP_TEST_MARKER_NATIVE="$(cygpath -w "$MARKER")"
   export COOP_TEST_MARKER_NATIVE
 fi
-TOKEN='fabric-launch-canary-7e5a3c'
+PY="$(command -v python3 2>/dev/null || command -v python)"
+TOKEN="$("$PY" - <<'PY'
+import base64, json
+part = lambda value: base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+print(".".join((part(b'{"alg":"none"}'), part(json.dumps({"tid":"11111111-1111-4111-8111-111111111111","oid":"22222222-2222-4222-8222-222222222222"}, separators=(",", ":")).encode()), part(b"launch-signature"))))
+PY
+)"
 HELPER_DIAGNOSTIC='untrusted-helper-diagnostic-93b75a'
 HELPER_TOKENLIKE='tokenlike-helper-value-2309'
 
-cat > "$AGENT_DIR/mcp.json" <<'JSON'
-{
-  "mcpServers": {
-    "fabric-sqlendpoint": {
-      "url": "https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint",
-      "auth": "bearer",
-      "bearerTokenEnv": "COOP_FABRIC_MCP_TOKEN",
-      "lifecycle": "lazy"
-    }
-  },
-  "_coop": {"schema_version": 1, "managed_servers": ["fabric-sqlendpoint"]}
+"$PY" - "$AGENT_DIR/mcp.json" "$ROOT" <<'PY'
+import json, sys
+from pathlib import Path
+url = "https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint"
+target = {key: "" for key in ("workspace_id", "item_id", "item_type", "client", "tenant_id", "environment", "item_name")}
+target.update(scope="global", reason="fixture")
+config = {
+    "mcpServers": {"fabric-sqlendpoint": {
+        "url": url,
+        "auth": False,
+        "requestHeadersCommand": {
+            "command": "node",
+            "args": [str(Path(sys.argv[2]).resolve() / "lib" / "fabric_request_headers.mjs"), url],
+            "timeoutMs": 10000,
+        },
+        "requestTimeoutMs": 60000,
+        "lifecycle": "lazy",
+        "_coop_target": target,
+    }},
+    "_coop": {"schema_version": 1, "managed_servers": ["fabric-sqlendpoint"]},
 }
-JSON
+Path(sys.argv[1]).write_text(json.dumps(config), encoding="utf-8")
+PY
 
-cat > "$BIN/az" <<'SH'
-#!/bin/sh
-printf '%s\n' "$*" > "$COOP_TEST_MARKER/az-argv"
-case "${COOP_TEST_AZ_MODE:-ok}" in
-  ok) printf '{"accessToken":"%s"}\n' "$COOP_TEST_TOKEN" ;;
-  auth) printf '%s\n' "ERROR: Please run 'az login' to setup account." >&2; exit 1 ;;
-  fail) printf '%s\n' 'ERROR: token command failed' >&2; exit 2 ;;
+"$PY" - "$BIN" "$MARKER" "$TOKEN" "${COOP_TEST_MARKER_NATIVE:-}" <<'PY'
+import shlex, sys
+from pathlib import Path
+bin_dir, marker, token, native_marker = sys.argv[1:]
+marker = Path(marker)
+(Path(bin_dir) / "az").write_text(f'''#!/bin/sh
+printf '%s\\n' "$*" > {shlex.quote(str(marker / "az-argv"))}
+case "$(cat {shlex.quote(str(marker / "az-mode"))} 2>/dev/null || printf ok)" in
+  ok) printf '%s\\n' {shlex.quote('{"accessToken":"' + token + '"}')} ;;
+  auth) printf '%s\\n' "ERROR: Please run 'az login' to setup account." >&2; exit 1 ;;
+  fail) printf '%s\\n' 'ERROR: token command failed' >&2; exit 2 ;;
 esac
-SH
-if [ "${OS:-}" = Windows_NT ]; then
-  cat > "$BIN/az.cmd" <<'CMD'
-@echo off
->"%COOP_TEST_MARKER_NATIVE%\az-argv" echo %*
-if "%COOP_TEST_AZ_MODE%"=="auth" (
-  >&2 echo ERROR: Please run 'az login' to setup account.
-  exit /b 1
-)
-if "%COOP_TEST_AZ_MODE%"=="fail" (
-  >&2 echo ERROR: token command failed
-  exit /b 2
-)
-echo {"accessToken":"%COOP_TEST_TOKEN%"}
-CMD
-fi
+''', encoding="ascii")
+if native_marker:
+    escaped = native_marker.replace("%", "%%")
+    (Path(bin_dir) / "az.cmd").write_text(f'''@echo off\r
+>"{escaped}\\az-argv" echo %*\r
+set /p COOP_TEST_AZ_MODE=<"{escaped}\\az-mode"\r
+if "%COOP_TEST_AZ_MODE%"=="auth" (\r
+  >&2 echo ERROR: Please run 'az login' to setup account.\r
+  exit /b 1\r
+)\r
+if "%COOP_TEST_AZ_MODE%"=="fail" (\r
+  >&2 echo ERROR: token command failed\r
+  exit /b 2\r
+)\r
+echo {{"accessToken":"{token}"}}\r
+''', encoding="ascii")
+PY
 cat > "$BIN/pi" <<'SH'
 #!/bin/sh
 printf '%s\n' "$*" > "$COOP_TEST_MARKER/pi-argv"
@@ -88,6 +109,7 @@ fi
 chmod +x "$BIN/az" "$BIN/pi"
 
 run_coop() {
+  printf '%s' "${COOP_TEST_AZ_MODE:-ok}" > "$MARKER/az-mode"
   HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
     PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
     COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \

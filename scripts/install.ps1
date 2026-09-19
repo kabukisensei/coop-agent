@@ -178,7 +178,7 @@ $UnitExt = {
 }
 
 $UnitFabric = {
-  param([bool]$Force, [bool]$Edge, [string]$Pkg, [string]$Target, [string]$Fcc, [string]$Python, [string]$FetchPython)
+  param([bool]$Force, [bool]$Edge, [string]$Pkg, [string]$Target, [string]$Python, [string]$FetchPython)
   $pipxBin = Join-Path $HOME '.local\bin'
   if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split ';') -notcontains $pipxBin)) {
     $env:PATH = "$pipxBin;$env:PATH"
@@ -266,10 +266,8 @@ $UnitFabric = {
     $rc = & $runPipx $pipxInstallArgs
     if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to reinstall $Pkg ($target)" } }
   }
-  # fabric-cicd is a Python LIBRARY (no CLI) — inject it into the Fabric CLI env.
-  $fcc = if ($Fcc) { $Fcc } else { 'fabric-cicd' }
-  $injectRc = & $runPipx @('inject', '--force', $Pkg, $fcc)
-  if ($injectRc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to inject $fcc into $Pkg" } }
+  # Runtime-library convergence is performed in the parent runspace after this
+  # background unit, using the exact selected interpreter.
   # A failed convergence must not read as success just because an OLD fab binary
   # is still on PATH — verify the installed version actually matches the pin.
   if (-not $Edge -and $expectedVer) {
@@ -444,7 +442,7 @@ try {
   # with only Python 3.14 still needs a compatible interpreter installed
   # alongside it when Fabric support is enabled.
   $needPython = -not (Get-CoopPython)
-  $needFabricPython = (-not $NO_FABRIC) -and (-not (Get-CoopFabricPython))
+  $needFabricPython = (-not $NO_FABRIC) -and (-not (Get-CoopFabricBootstrapPython))
   if (($needPython -or $needFabricPython) -and (-not $NO_PREREQS)) {
     # Ladder: the Python launcher/install manager first (`py install` covers both
     # the classic py.exe and the newer Python install manager), then winget.
@@ -480,7 +478,7 @@ try {
     Coop-Warn "python not found — install Python 3.10+ from https://python.org (or 'winget install Python.Python.3.12'). (A Windows Store 'python' stub does not count.)"
   }
   if (-not $NO_FABRIC) {
-    $fabricPrereqPython = Get-CoopFabricPython
+    $fabricPrereqPython = Get-CoopFabricBootstrapPython
     if ($fabricPrereqPython) {
       $fabricPyVersion = (& $fabricPrereqPython --version 2>&1)
       Coop-Ok "Fabric-compatible Python present ($fabricPyVersion)"
@@ -565,8 +563,7 @@ try {
     $extSpecs += $spec
   }
   $fabricTarget = if (-not $EDGE) { $tv = Coop-ManifestGet -Key "python_tools.$FABRIC_PKG"; if ($tv) { "${FABRIC_PKG}==${tv}" } else { $FABRIC_PKG } } else { $FABRIC_PKG }
-  $fabricCicd = if (-not $EDGE) { $tv = Coop-ManifestObjectGet 'python_tools' 'fabric-cicd'; if ($tv) { "fabric-cicd==${tv}" } else { 'fabric-cicd' } } else { 'fabric-cicd' }
-  $fabricPython = Get-CoopFabricPython
+  $fabricPython = Get-CoopFabricBootstrapPython
   $fabricFetchPython = ''
   if (-not $fabricPython -and (Get-Command pipx -ErrorAction SilentlyContinue)) {
     $pipxInstallHelp = (& pipx install --help 2>&1 | Out-String)
@@ -599,7 +596,11 @@ try {
   # --- 4. Microsoft Fabric CLI ----------------------------------------------
   Coop-Head '4/9  Microsoft Fabric CLI'
   if ($NO_FABRIC) { Coop-Info 'skipping Microsoft Fabric CLI (--no-fabric)' }
-  else { Install-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $EDGE, $FABRIC_PKG, $fabricTarget, $fabricCicd, $fabricPython, $fabricFetchPython) }
+  else {
+    Install-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $EDGE, $FABRIC_PKG, $fabricTarget, $fabricPython, $fabricFetchPython)
+    if (-not (Sync-CoopFabricPythonPackages $EDGE)) { Coop-Warn 'failed to converge the Fabric Python runtime'; $script:InstallFailures++ }
+    elseif (-not (Ensure-CoopFabricOdbcDriver (-not $NO_PREREQS))) { Coop-Warn 'Fabric SQL fallback is not ready'; $script:InstallFailures++ }
+  }
 
   # --- 5. Python tools (pipx) -----------------------------------------------
   Coop-Head '5/9  Coop tools (pipx)'
@@ -734,7 +735,10 @@ if (-not [Console]::IsInputRedirected -and $env:COOP_NO_ONBOARD -ne '1') {
 
 # --- 9. Sync, model sign-in, and doctor ---------------------------------------
 Coop-Head '9/9  Sync assets, sign in, and run doctor'
+$priorSkipFabricSync = $env:COOP_SKIP_FABRIC_SYNC
+$env:COOP_SKIP_FABRIC_SYNC = '1' # Fabric was converged (or explicitly skipped) above.
 $syncRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
+if ($null -eq $priorSkipFabricSync) { Remove-Item Env:COOP_SKIP_FABRIC_SYNC -ErrorAction SilentlyContinue } else { $env:COOP_SKIP_FABRIC_SYNC = $priorSkipFabricSync }
 if ($syncRc -ne 0) { Coop-Warn 'sync reported issues'; $script:InstallFailures++ }
 
 # Finish a fresh interactive setup inside the real Pi /login UI. coop-tools

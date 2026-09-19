@@ -15,6 +15,8 @@ if (-not $isWindowsHost) {
   Write-Host '  --  Windows fresh-install prerequisite fixture runs in Windows CI'
   exit 0
 }
+$nativePython = Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1
+
 
 function Write-Shim {
   param([string]$Name, [string]$Sh, [string]$Cmd)
@@ -24,20 +26,18 @@ function Write-Shim {
 }
 
 $saved = @{}
-foreach ($name in @('PATH','HOME','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODING_AGENT_DIR','COOP_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','COOP_FABRIC_PYTHON','COOP_TEST_CALLS','COOP_TEST_PY_TEMPLATE','LOCALAPPDATA','ProgramFiles')) {
+foreach ($name in @('PATH','HOME','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODING_AGENT_DIR','COOP_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','COOP_FABRIC_PYTHON','COOP_TEST_CALLS','COOP_TEST_DRIVER_MISSING','COOP_TEST_DRIVER_READY','COOP_ASSUME_YES','LOCALAPPDATA','ProgramFiles','PYTHONHOME','PYTHONPATH')) {
   $saved[$name] = [Environment]::GetEnvironmentVariable($name)
 }
 
 try {
   New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $t 'pipx-home'), (Join-Path $t 'pipx-bin'), (Join-Path $t 'agent'), (Join-Path $t 'program-files'), (Join-Path $t 'local-app-data') | Out-Null
-  $fabricPython = Join-Path $t $(if ($isWindowsHost) { 'python312.cmd' } else { 'python312' })
-  $pythonTemplate = Join-Path $t $(if ($isWindowsHost) { 'python-template.cmd' } else { 'python-template' })
-  if ($isWindowsHost) {
-    [System.IO.File]::WriteAllText($pythonTemplate, "@echo off`r`nif `"%1`"==`"--version`" echo Python 3.12.9`r`nif `"%1`"==`"-c`" echo 3.12`r`nexit /b 0`r`n")
-  } else {
-    [System.IO.File]::WriteAllText($pythonTemplate, "#!/bin/sh`n[ `"`$1`" = `"--version`" ] && echo 'Python 3.12.9'`n[ `"`$1`" = `"-c`" ] && echo '3.12'`nexit 0`n")
-    & chmod +x $pythonTemplate
-  }
+  $runtimeFixture = Join-Path $t 'runtime-fixture'
+  $pyodbcMetadata = Join-Path $runtimeFixture 'pyodbc-5.3.0.dist-info'
+  New-Item -ItemType Directory -Force -Path $runtimeFixture, $pyodbcMetadata | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $runtimeFixture 'pyodbc.py'), "import os`ndef drivers():`n    missing = os.environ.get('COOP_TEST_DRIVER_MISSING') == '1'`n    ready = os.path.exists(os.environ.get('COOP_TEST_DRIVER_READY', ''))`n    return [] if missing and not ready else ['ODBC Driver 18 for SQL Server']`n")
+  # Exercise the real runtime probe against the fixture module and metadata.
+  [System.IO.File]::WriteAllText((Join-Path $pyodbcMetadata 'METADATA'), "Metadata-Version: 2.1`nName: pyodbc`nVersion: 5.3.0`n")
 
   Write-Shim 'python3' @'
 #!/bin/sh
@@ -50,6 +50,10 @@ if "%1"=="--version" echo Python 3.14.6
 if "%1"=="-c" echo 3.14
 exit /b 0
 '@
+  foreach ($pythonName in @('python3.13', 'python3.12', 'python')) {
+    Copy-Item -LiteralPath (Join-Path $bin 'python3.cmd') -Destination (Join-Path $bin ($pythonName + '.cmd'))
+  }
+  Write-Shim 'py' "#!/bin/sh`nexit 1`n" "@echo off`r`nexit /b 1`r`n"
   Write-Shim 'pi' @'
 #!/bin/sh
 [ "$1" = "--version" ] && echo 'pi 0.84.3'
@@ -92,8 +96,21 @@ if "%1"=="list" (
   echo package coop-dax-review 0.22.0
   echo package ms-fabric-cli 1.7.0
 )
+if "%1"=="install" if not "%2"=="--help" (
+  echo %*| findstr /C:"ms-fabric-cli" >nul
+  if not errorlevel 1 goto materialize
+)
+exit /b 0
+:materialize
+if exist "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts" rmdir /s /q "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts"
+xcopy "__NATIVE_HOME__\*" "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts\" /e /i /q /y >nul
+if errorlevel 1 exit /b 3
+if not exist "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts\python.exe" exit /b 3
 exit /b 0
 '@
+  $pipxCmdPath = Join-Path $bin 'pipx.cmd'
+  $pipxCmd = [System.IO.File]::ReadAllText($pipxCmdPath).Replace('__NATIVE_PYTHON__', $nativePython.Source).Replace('__NATIVE_HOME__', (Split-Path -Parent $nativePython.Source))
+  [System.IO.File]::WriteAllText($pipxCmdPath, $pipxCmd)
   Write-Shim 'fab' "#!/bin/sh`necho 'fab version 1.7.0'`n" "@echo off`r`necho fab version 1.7.0`r`n"
   Write-Shim 'az' "#!/bin/sh`necho 'azure-cli 2.80.0'`n" "@echo off`r`necho azure-cli 2.80.0`r`n"
 
@@ -138,9 +155,14 @@ exit /b 0
   $env:COOP_AGENT_DIR = $env:PI_CODING_AGENT_DIR
   $env:COOP_NO_ONBOARD = '1'
   $env:COOP_FLEET_TEST_MODE = '1'
-  $env:COOP_FABRIC_PYTHON = $fabricPython
+  Remove-Item Env:COOP_FABRIC_PYTHON -ErrorAction SilentlyContinue
   $env:COOP_TEST_CALLS = $calls
-  $env:COOP_TEST_PY_TEMPLATE = $pythonTemplate
+  Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
+  $env:PYTHONPATH = if ($saved['PYTHONPATH']) {
+    "$runtimeFixture$([System.IO.Path]::PathSeparator)$($saved['PYTHONPATH'])"
+  } else {
+    $runtimeFixture
+  }
   $env:LOCALAPPDATA = Join-Path $t 'local-app-data'
   $env:ProgramFiles = Join-Path $t 'program-files'
   [System.IO.File]::WriteAllText($calls, '')
@@ -272,10 +294,27 @@ exit /b 0
   [System.IO.File]::WriteAllText($evidencePath, "exit=$rc`n$evidence")
   $output = $outItems | Out-String
   $ErrorActionPreference = $oldPreference
-  if ($rc -ne 0) { Write-Error "install fixture exited $rc`nevidence file: $evidencePath`n$output`n--- stream-tagged ---`n$evidence`nCALLS:`n$(Get-Content $calls -Raw)" }
+  . (Join-Path $root 'lib\common.ps1')
+  $runtimePreference = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $installedRuntime = Get-CoopFabricSqlRuntimeStatus
+  $ErrorActionPreference = $runtimePreference
+  Write-Host "FABRIC_RUNTIME state=$($installedRuntime.state) version=$($installedRuntime.version) driver=$($installedRuntime.driver)"
+  if ($rc -ne 0) { Write-Error "install fixture exited $rc runtime-state=$($installedRuntime.state) runtime-version=$($installedRuntime.version) runtime-driver=$($installedRuntime.driver)`nevidence file: $evidencePath`n$output`n--- stream-tagged ---`n$evidence`nCALLS:`n$(Get-Content $calls -Raw)" }
   $transcript = Get-Content $calls -Raw
   if ($transcript -like '*WINGET*') { Write-Error "Python 3.14-only install unexpectedly required winget`n$transcript" }
   if ($transcript -notlike '*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0*') { Write-Error "Fabric CLI did not fetch and use a standalone Python 3.12`n$transcript" }
+  foreach ($expectedCall in @(
+    'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force',
+    'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force'
+  )) {
+    if (@($transcript -split "`r?`n" | Where-Object { $_ -eq $expectedCall }).Count -ne 1) {
+      Write-Error "Fabric runtime did not make exactly one expected inject call: $expectedCall`n$transcript"
+    }
+  }
+  if ($installedRuntime.state -ne 'ready' -or $installedRuntime.version -ne '5.3.0' -or $installedRuntime.driver -ne 18) {
+    Write-Error "Fabric runtime status was not ready with pyodbc 5.3.0 and Driver 18: $($installedRuntime | ConvertTo-Json -Compress)"
+  }
   Write-Host '  OK  Windows installer fetches a standalone Fabric Python without winget/py/pymanager'
 
   [System.IO.File]::WriteAllText($calls, '')
@@ -295,8 +334,38 @@ exit /b 0
   if ($rc -ne 0) { Write-Error "update fixture exited $rc`nevidence file: $evidencePath`n$output`n--- stream-tagged ---`n$evidence`nCALLS:`n$(Get-Content $calls -Raw)" }
   $transcript = Get-Content $calls -Raw
   if ($transcript -notlike '*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0*') { Write-Error "Updater did not rebuild Fabric CLI with standalone Python 3.12`n$transcript" }
-  if ($transcript -notlike '*PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force*') { Write-Error "Updater did not reinject fabric-cicd after rebuilding Fabric CLI`n$transcript" }
-  Write-Host '  OK  Windows updater repairs an existing Python 3.14 Fabric environment'
+  foreach ($expectedCall in @(
+    'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force',
+    'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force'
+  )) {
+    if (@($transcript -split "`r?`n" | Where-Object { $_ -eq $expectedCall }).Count -ne 1) {
+      Write-Error "Updater did not make exactly one expected inject call: $expectedCall`n$transcript"
+    }
+  }
+  $updatedRuntime = Get-CoopFabricSqlRuntimeStatus
+  if ($updatedRuntime.state -ne 'ready' -or $updatedRuntime.version -ne '5.3.0' -or $updatedRuntime.driver -ne 18) {
+    Write-Error "Updated Fabric runtime status was not ready with pyodbc 5.3.0 and Driver 18: $($updatedRuntime | ConvertTo-Json -Compress)"
+  }
+  Write-Host '  OK  Windows updater repairs and reconverges the managed Fabric runtime'
+
+  # Driver 18 provisioning is license-consent gated and uses the exact winget ID/vector.
+  $driverReady = Join-Path $t 'driver-ready'
+  $env:COOP_TEST_DRIVER_MISSING = '1'
+  $env:COOP_TEST_DRIVER_READY = $driverReady
+  if (Ensure-CoopFabricOdbcDriver $false) { Write-Error 'Driver provisioning ignored --no-prereqs semantics' }
+  Write-Shim 'winget' "#!/bin/sh`nexit 1`n" @'
+@echo off
+echo WINGET %*>>"%COOP_TEST_CALLS%"
+type nul >"%COOP_TEST_DRIVER_READY%"
+exit /b 0
+'@
+  [System.IO.File]::WriteAllText($calls, '')
+  $env:COOP_ASSUME_YES = '1'
+  if (-not (Ensure-CoopFabricOdbcDriver $true)) { Write-Error 'Consent-gated Driver 18 provisioning did not become ready' }
+  $transcript = Get-Content $calls -Raw
+  $expectedWinget = 'WINGET install --id Microsoft.msodbcsql.18 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity'
+  if ($transcript -notlike "*$expectedWinget*") { Write-Error "Driver installer used the wrong winget vector`n$transcript" }
+  Write-Host '  OK  Driver 18 provisioning requires consent and uses the pinned winget package ID'
 }
 finally {
   foreach ($name in $saved.Keys) {

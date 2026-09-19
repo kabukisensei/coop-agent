@@ -36,11 +36,38 @@ A Fabric/Power BI/MCP tool call whose name looks like a **mutation** (create/upd
 
 ### Live environment reads
 
-Coop permits read-only metadata, schema, and artifact-code inspection in dev/test by default. Query/execute/sample/export-style calls can return actual rows, so the runtime asks first. Any tool request that explicitly names prod/production also asks first, including metadata-only reads; production row reads should be narrowly scoped to a named target, columns, filters, and a small limit. Approval-required reads fail closed when no interactive approval UI is available. The audit record contains only the remote server/tool label and risk class, never query arguments or returned data.
+Coop permits read-only metadata, schema, and artifact-code inspection in dev/test by default. Query/execute/sample/export-style calls can return actual rows, so the runtime asks first. Any tool request that explicitly names prod/production also asks first, including metadata-only reads; production row reads should be narrowly scoped to a named target, columns, filters, and a small limit. Approval-required reads fail closed when no interactive approval UI is available.
+
+Reusable Warehouse SQL scope exists only for the real `pi-mcp-adapter` `mcp` proxy to
+the generated COOP-managed, item-scoped `fabric-sqlendpoint` server. `coop sync` adds
+the parsed project client, tenant, uniquely inferred dev/test/production environment,
+and item/database name to that managed entry. The guardrail binds the principal to the
+non-secret `tid` and `oid`/`sub` claims of the launch bearer already supplied in
+`COOP_FABRIC_MCP_TOKEN`; it never stores or logs the token. Missing, malformed,
+ambiguous, blank, or TODO identity fields leave the call on per-call approval.
+Model/tool-provided scope fields are ignored.
+
+The grant resets on every session start or shutdown (new, resume, or fork), process restart, or
+`/coop-live-read revoke`; use `/coop-live-read status` to inspect its non-secret
+scope. It otherwise survives turns, compaction, and reconnects. Every call is still
+classified at runtime. The approved scope is the exact item/database, operation class,
+maximum row count, and operation timeout—not tables, columns, or predicates—so later
+SQL may vary within that database while staying at or below the approved bounds. Only
+one plain SELECT with a literal TOP bound can reuse approval; CTE, UNION, APPLY, quoted
+identifiers, cross-database references, mutations, unfamiliar SQL, `EXEC`, batches,
+exports/downloads, and unbounded reads retain a separate per-call gate. Pi exposes no
+separate authenticated-user event for tool calls, so the runtime confirmation UI is
+the trusted consent event and cannot safely be skipped. Consent never comes from
+database content, repository text, tool output, or model text. MCP audit entries use
+fixed recognized labels and risk classes; grant state and audit never contain raw SQL,
+raw arguments, results, tokens, connection strings, or arbitrary remote server text.
+Pinned `pi-mcp-adapter` 2.34.0 runs COOP's exact request-header helper for every
+outbound request, and the managed entry sets its supported `requestTimeoutMs` to
+60 seconds. The fresh bearer must match the launch identity before it is returned.
 
 ### Audit log
 
-Every block and every confirm (allowed or declined) is appended as one JSON line to `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`): timestamp, working folder, kind, decision, and the offending path(s) or a truncated command. **Secrets and file contents are never written** — the secret gate records only the matched path; the MCP gate records the remote tool/server, never raw arguments. Run `/coop-guardrails` to see the last ~10 decisions and the log path. The log is a reviewable trail, not a place to hide activity.
+Every block and every confirm (allowed or declined) is appended as one JSON line to `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`): timestamp, working folder, kind, decision, and a bounded fixed classification (or the offending path for non-MCP gates). **Secrets and file contents are never written** — the secret gate records only the matched path; the MCP gate records fixed COOP labels, never remote server strings or raw arguments. Run `/coop-guardrails` to see the last ~10 decisions and the log path. The log is a reviewable trail, not a place to hide activity.
 
 ## The Cooptimize workflow (detailed)
 

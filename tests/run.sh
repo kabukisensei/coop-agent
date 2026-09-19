@@ -7,6 +7,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+export COOP_ROOT="$ROOT"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -115,9 +116,12 @@ bash "$ROOT/tests/install-python-prereq.test.sh"
 echo "→ fabric-compatible Python discovery (side-by-side, off-PATH)"
 bash "$ROOT/tests/fixtures/fabric-python-finder.test.sh"
 bash "$ROOT/tests/mcp-config.test.sh"
+node "$ROOT/tests/fabric-request-headers.test.mjs"
 bash "$ROOT/tests/fabric-mcp-launch.test.sh"
 node "$ROOT/tests/fabric-mcp-web-launch.test.mjs"
 python3 "$ROOT/tests/warehouse-mcp.test.py"
+python3 "$ROOT/tests/fabric-sql-query.test.py"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-sql-launcher.test.mjs"
 python3 "$ROOT/tests/microsoft-skills.test.py"
 python3 "$ROOT/tests/p0-vertical-slice.test.py"
 bash "$ROOT/tests/onboard.test.sh"

@@ -132,8 +132,10 @@ function observedManifestState(manifest) {
   const checks = [{ name: `pi ${manifest.pi.version} matches manifest (${manifest.pi.version})`, status: "ok" }];
   for (const [name, version] of Object.entries(manifest.extensions)) checks.push({ name: `${name} ${version} matches manifest (${version})`, status: "ok" });
   for (const [name, version] of Object.entries(manifest.python_tools)) {
-    checks.push({ name: name === "fabric-cicd" ? `${name} ${version} (library, in the Fabric CLI env)` : `${name} ${version} matches manifest (${version})`, status: "ok" });
+    if (name === "fabric-cicd") checks.push({ name: `${name} ${version} (library, in the Fabric CLI env)`, status: "ok" });
+    else if (name !== "pyodbc") checks.push({ name: `${name} ${version} matches manifest (${version})`, status: "ok" });
   }
+  checks.push({ name: `Fabric SQL fallback ready (pyodbc ${manifest.python_tools.pyodbc}, ODBC Driver 18)`, status: "ok" });
   const dependencies = { [manifest.pi.package]: { version: manifest.pi.version } };
   for (const [name, version] of Object.entries(manifest.npm_tools)) dependencies[name] = { version };
   const mcpServers = {}; const managed_servers = [];
@@ -338,6 +340,13 @@ test("complete candidate and rollback manifest proofs reject drift in every pin 
   const nonManaged = structuredClone(good); nonManaged.mcp_config._coop.managed_servers = []; nonManaged.mcp_config.mcpServers = {};
   const nonManagedPath = join(dir, "mcp-not-managed.json"); writeFileSync(nonManagedPath, JSON.stringify(nonManaged));
   assert.equal(runPs(["-Mode", "Probe", "-Probe", "VerifyManifestPins", "-Root", nonManagedPath, "-Value", manifestPath]).status, 0);
+
+  const fakeStandalone = structuredClone(good);
+  const sqlCheck = fakeStandalone.doctor.checks.find((item) => item.name.startsWith("Fabric SQL fallback ready"));
+  sqlCheck.name = `pyodbc ${manifest.python_tools.pyodbc} matches manifest (${manifest.python_tools.pyodbc})`;
+  const fakeStandalonePath = join(dir, "pyodbc-standalone.json"); writeFileSync(fakeStandalonePath, JSON.stringify(fakeStandalone));
+  const rejected = runPs(["-Mode", "Probe", "-Probe", "VerifyManifestPins", "-Root", fakeStandalonePath, "-Value", manifestPath]);
+  assert.notEqual(rejected.status, 0, "standalone pyodbc evidence was accepted in place of composite runtime readiness");
 });
 
 test("installed extension collector enumerates configured packages independently of the manifest", { skip: !havePwsh }, () => {

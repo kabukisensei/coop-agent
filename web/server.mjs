@@ -74,17 +74,21 @@ function acquireFabricMcpToken() {
       const config = JSON.parse(readFileSync(join(agentDir, "mcp.json"), "utf8").replace(/^\uFEFF/, ""));
       const managed = config?._coop?.managed_servers;
       const entry = config?.mcpServers?.["fabric-sqlendpoint"];
-      let endpointOwned = false;
-      if (typeof entry?.url === "string") {
-        const endpoint = new URL(entry.url);
-        endpointOwned = endpoint.protocol === "https:" &&
-          endpoint.hostname === "api.fabric.microsoft.com" &&
-          endpoint.pathname.startsWith("/v1/mcp/dataPlane/");
-      }
-      fabricManaged = Array.isArray(managed) && managed.includes("fabric-sqlendpoint") &&
-        endpointOwned && entry?.auth === "bearer" &&
-        entry?.bearerTokenEnv === "COOP_FABRIC_MCP_TOKEN" &&
-        entry?.lifecycle === "lazy" && entry?.command === undefined;
+      const endpoint = typeof entry?.url === "string" ? entry.url : "";
+      const endpointOwned = /^https:\/\/api\.fabric\.microsoft\.com\/v1\/mcp\/dataPlane\/(?:sqlEndpoint|workspaces\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/items\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/sqlEndpoint)$/.test(endpoint);
+      const header = entry?.requestHeadersCommand;
+      const exactHeader = root && header && typeof header === "object" && !Array.isArray(header)
+        && Object.keys(header).sort().join(",") === "args,command,timeoutMs"
+        && header.command === "node"
+        && Array.isArray(header.args) && header.args.length === 2
+        && header.args[0] === join(root, "lib", "fabric_request_headers.mjs")
+        && header.args[1] === endpoint
+        && header.timeoutMs === 10000;
+      fabricManaged = Array.isArray(managed) && managed.includes("fabric-sqlendpoint")
+        && entry && typeof entry === "object" && !Array.isArray(entry)
+        && Object.keys(entry).sort().join(",") === "_coop_target,auth,lifecycle,requestHeadersCommand,requestTimeoutMs,url"
+        && endpointOwned && entry.auth === false && exactHeader
+        && entry.requestTimeoutMs === 60000 && entry.lifecycle === "lazy";
     } catch {}
   }
   if (!py || !root || !agentDir) {

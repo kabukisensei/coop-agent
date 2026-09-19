@@ -356,6 +356,16 @@ if (Test-Have 'fab') {
   D-Warn 'fabric-cicd: install the Microsoft Fabric CLI first' 'coop install'
 }
 
+$sqlRuntime = Get-CoopFabricSqlRuntimeStatus
+switch ($sqlRuntime.state) {
+  'ready'            { D-Ok "Fabric SQL fallback ready (pyodbc $($sqlRuntime.version), ODBC Driver $($sqlRuntime.driver))" }
+  'pyodbc_missing'   { D-Bad 'Fabric SQL fallback: pyodbc missing from selected runtime' 'coop sync' }
+  'pyodbc_wrong'     { D-Bad "Fabric SQL fallback: pyodbc $($sqlRuntime.version) differs from manifest ($(Coop-ManifestGet 'python_tools.pyodbc'))" 'coop sync' }
+  'pyodbc_unloadable'{ D-Bad 'Fabric SQL fallback: pyodbc is installed but unloadable' 'coop sync; repair the ms-fabric-cli environment if it persists' }
+  'driver_missing'   { D-Bad 'Fabric SQL fallback: ODBC Driver 18+ for SQL Server is missing' 'coop install --yes, or install Microsoft.msodbcsql.18 manually' }
+  default            { D-Bad 'Fabric SQL fallback: selected Fabric Python runtime is unavailable' 'coop install' }
+}
+
 # Tabular Editor CLI is path-configured and mostly Windows; check the project's path if set.
 $projYml = Find-CoopProjectYml
 if (-not (Test-CoopToolEnabled $projYml 'tabular_editor_cli')) {
@@ -629,6 +639,7 @@ if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'themes\cooptimize.json')
 
 if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
   D-Head 'Applying fixes (--fix)'
+  $repairFailed = $false
   $syncScript = Join-Path $script:CoopRoot 'scripts\sync.ps1'
   if (Test-Path -LiteralPath $syncScript) {
     # Run in a CHILD process (like install/update) so its real exit code is read from
@@ -640,13 +651,15 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
   }
   if (Test-Have 'pipx') {
     if (-not (Test-Have 'fab')) {
-      Coop-Info 'pipx install ms-fabric-cli'
-      & pipx install ms-fabric-cli *> $null
-      if ($LASTEXITCODE -eq 0) {
-        & pipx inject ms-fabric-cli fabric-cicd *> $null
-        Coop-Ok 'ms-fabric-cli installed'
+      $fabricSpec = Coop-ManifestPythonSpec 'ms-fabric-cli'
+      if (-not $fabricSpec) { $fabricSpec = 'ms-fabric-cli' }
+      Coop-Info "pipx install $fabricSpec"
+      & pipx install $fabricSpec *> $null
+      if ($LASTEXITCODE -eq 0 -and (Sync-CoopFabricPythonPackages) -and (Ensure-CoopFabricOdbcDriver $true)) {
+        Coop-Ok 'managed Fabric runtime installed'
       } else {
-        Coop-Warn 'could not install ms-fabric-cli (run: pipx install ms-fabric-cli)'
+        Coop-Warn 'could not install the managed Fabric runtime' 'run: coop install'
+        $repairFailed = $true
       }
     }
     foreach ($t in @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')) {
@@ -659,6 +672,7 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
   } else {
     Coop-Warn 'pipx missing — cannot auto-install tools (install pipx first: see the hint above)'
   }
+  if ($repairFailed) { exit 1 }
   Coop-Info 'Re-checking... (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)'
   [Console]::Error.WriteLine('')
   # Propagate --json/--publish so the re-check emits the (final) machine-readable document.
