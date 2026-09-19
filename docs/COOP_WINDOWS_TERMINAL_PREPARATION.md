@@ -23,8 +23,9 @@ The Markdown plan is the working source of truth. `Coop_Windows_Terminal_Plan_v2
 | Beta installer, command, profile and packages | Not implemented or installed; branch presence proves none of these |
 | Runtime, dependency pins, skills, CI/release configuration | No changes in this preparation |
 | Previous Desktop work | Retained as historical reference; no merge, deletion or port |
+| Next-work issue | [#70: paused B0 baseline reconciliation](https://github.com/kabukisensei/coop-agent/issues/70), unassigned and without `agent:ready` at preparation |
 
-The documentation commit may advance main and the experimental branch without changing their runtime code. It does not turn the provisional source seed into the accepted workstation baseline. Reconcile that seed during B0; do not reset or force-push the branch, discard newer fixes, or overwrite another person's work to make it match a guess.
+The documentation commits may advance main and the experimental branch without changing their runtime code. An earlier experimental-branch preparation note is retained as a pointer at `docs/COOP_PLAN_PREPARATION_STATUS.md`; its source history is preserved. This does not turn the provisional source seed into the accepted workstation baseline. Reconcile that seed during B0; do not reset or force-push the branch, discard newer fixes, or overwrite another person's work to make it match a guess.
 
 ## Execution gate
 
@@ -61,4 +62,4 @@ No package or skill refresh, Jev/TeamAI activation, source refactor, live Fabric
 
 ## Documentation verification
 
-For this preparation, verify the new documentation links and compare the final commit against the provisional source seed. The intended change list is only `AGENTS.md`, this handoff, and the canonical Markdown plan. Do not describe a documentation check as a Windows test or beta acceptance. No runtime test execution is required to claim that these documentation files were staged, but native acceptance remains mandatory for the future implementation packages.
+For this preparation, verify the documentation links and compare the final commit against the provisional source seed. The intended change list is only `AGENTS.md`, this handoff, the canonical Markdown plan, and the earlier preparation-status entry point. The canonical plan's content is unchanged from the supplied revision 2.0 Markdown. Do not describe a documentation check as a Windows test or beta acceptance. No runtime test execution is required to claim that these documentation files were staged, but native acceptance remains mandatory for the future implementation packages.
