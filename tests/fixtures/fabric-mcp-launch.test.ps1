@@ -70,6 +70,16 @@ try {
       if ($commandPath) { $windowsPathDirs += (Split-Path -Parent $commandPath) }
     }
     $windowsFixturePath = (@($windowsPathDirs | Select-Object -Unique) -join [System.IO.Path]::PathSeparator)
+    # coop.ps1 discovers npm's global prefix at startup. Keep that discovery
+    # inside the fixture so an installed Pi cannot shadow our pi.cmd.
+    $npmCmd = @'
+@echo off
+if not "%~1 %~2"=="prefix -g" exit /b 1
+>"__MARKER__\npm-prefix-entry" echo 1
+echo __BIN__
+exit /b 0
+'@
+    $npmCmd.Replace('__MARKER__', $marker).Replace('__BIN__', $bin) | Set-Content -LiteralPath (Join-Path $bin 'npm.cmd') -Encoding ASCII
     $azProgram = Join-Path $bin 'fake-az.cjs'
     $azProgramSource = @'
 const fs = require('node:fs');
@@ -372,6 +382,14 @@ print(f"{resolution} runner-code={runner_result.returncode} runner-stdout-bytes=
     throw "token launch failed rc=$rc wrapper-reached=$wrapperReached helper-reached=$helperReached az-reached=$azReached child-rc=$azChildRc pi-reached=$piReached pi-token-present=$piTokenPresent pi-token-match=$piTokenMatch pi-child-rc=$piChildRc state=$tokenState boundary=$boundaryState"
   }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi was not launched' }
+  if ($env:OS -eq 'Windows_NT') {
+    if (-not (Test-Path -LiteralPath (Join-Path $marker 'npm-prefix-entry'))) { throw 'fixture npm prefix discovery did not execute' }
+    Write-Host 'FABRIC_BOUNDARY npm-prefix-fixture=1'
+    Write-Host 'FABRIC_BOUNDARY pi-reached=1'
+    Write-Host 'FABRIC_BOUNDARY pi-token-present=1'
+    Write-Host 'FABRIC_BOUNDARY pi-token-match=1'
+    Write-Host 'FABRIC_BOUNDARY pi-child-rc=0'
+  }
   if ($output.Contains($token)) { throw 'token leaked to process output' }
   if ((Get-Content -Raw (Join-Path $marker 'pi-argv')).Contains($token)) { throw 'token leaked to argv' }
 
