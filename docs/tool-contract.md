@@ -50,6 +50,11 @@ return the parsed report in the tool result's `details`. Report shape:
 The native tool counts the `severity` field (`error` / `warning` / `info`) for its
 one-line summary and passes the full report through in `details`.
 
+Pinned SQL schema 4 and DAX schema 3 reports use 12 lowercase hexadecimal
+characters for finding and agent-review fingerprints. These are stable finding
+identities; `standards.sha256` remains a separate 64-character SHA-256 digest.
+Native validation checks both formats and preserves the standards binding.
+
 ---
 
 ## `coop data-doc`
@@ -223,10 +228,23 @@ Result:
 |-------|------|-------|
 | `paths` | `string[]` (optional) | Semantic models to check. When omitted, uses `power_bi.semantic_models[].path` from the project contract. |
 | `min_severity` | `"error" \| "warning" \| "info"` (optional) | Ignored by TE CLI but preserved for API compatibility. |
-| `strict` | `boolean` (optional, default false) | If true, non-zero TE exit codes trigger CI failures. |
+| `strict` | `boolean` (optional, default false) | Reserved for API compatibility; native BPA findings remain advisory. |
 
-Invocation (built in `index.ts` and `coop review`):
-`te bpa run <model> -r <bpa_rules_path> --non-interactive` (the cross-platform Tabular Editor CLI; `te auth login` once during the preview). Output is parsed into JSON findings. Advisory only. Degrades gracefully: if TE is not configured, it's a hint, never a failure.
+Native tool invocation in `extensions/coop-tools/index.ts`:
+`te bpa run --model <model> --output-format json --non-interactive`.
+Enable `tools.tabular_editor_cli` and set its `executable_path` to the installed
+cross-platform `te` CLI. An omitted, empty, or YAML-null `bpa_rules_path` uses TE's
+built-in rules (and any model-embedded rules, following TE's defaults). A configured
+path adds `--rules <absolute path>`. No fix or save flags are passed.
+
+JSON violations become structured findings with rule IDs, object names, model paths,
+and severity counts. Exit 1 with findings is advisory; invalid output, execution
+failures, or rule evaluation errors are reported as incomplete/failed analysis.
+Raw stdout/stderr and the invoked arguments remain in `details`. Missing TE
+configuration returns a setup hint. Legacy `TabularEditor.exe` keeps its
+`<model> -A <rules> -V` invocation and requires an explicit rule file.
+The `coop review` command also accepts an unset rule path for TE's built-in rules
+and preserves the current JSON severity labels and object names.
 
 ### `data_doc`
 
@@ -358,15 +376,42 @@ and `fabric.default_sql_endpoint`, Coop uses the item URL
 For Lakehouse targets, `itemId` is the `sqlEndpointProperties.id`, not the
 Lakehouse item ID.
 
-The managed entry uses direct Streamable HTTP with `auth: bearer` and
-`bearerTokenEnv: COOP_FABRIC_MCP_TOKEN`. Immediately before Pi starts, Coop obtains
-a Fabric token from the existing Azure CLI login and sets it only in that child
-environment. Coop does not write bearer tokens, token helper commands, token config,
-or token argv. Relaunch Coop to reconnect after the launch-time token expires.
+The managed entry uses direct Streamable HTTP with `auth: false`, an exact COOP-owned
+`requestHeadersCommand`, and a 60-second request timeout. Immediately before Pi starts,
+Coop still obtains a Fabric token from the existing Azure CLI login for the session
+identity guardrail. For every MCP request, the header helper obtains a fresh token,
+requires its tenant and principal claims to match that launch identity, and authorizes
+only the exact configured HTTPS Fabric endpoint. Tokens are never written to argv,
+config, disk, or diagnostics, and an Azure CLI account switch fails closed without
+requiring a Coop restart.
 Doctor treats config registration as only one state; live tools-list discovery
 can still report `auth_required`, `unavailable`, `tool_missing`, or
 `target_invalid`. Live dev/test verification remains pending on the signed-in
 user, tenant, target, and Fabric permissions.
+
+The preferred live SQL route is that managed MCP server. Coop also registers exactly
+one explicit fallback, `fabric_sql_query`, implemented by the new consolidated
+`lib/fabric_sql_query.py` helper (no historical standalone runner was recovered).
+The tool accepts only `query` plus optional `maximum_rows`; target, server, identity,
+and credentials come from the canonical project/managed MCP snapshot and selected
+Fabric Python (`coop_fabric_python` / `Get-CoopFabricPython`). It never cascades from
+MCP automatically. It accepts one plain literal-`TOP` `SELECT`, rejects mutations,
+batches, cross-database names, and unbounded reads before authentication, and returns
+capped structured JSON. Endpoint discovery uses Fabric's documented item APIs:
+Warehouse `GET /v1/workspaces/{workspaceId}/warehouses/{warehouseId}` reads
+`properties.connectionString`; Lakehouse
+`GET /v1/workspaces/{workspaceId}/lakehouses/{lakehouseId}` uses the source Lakehouse
+ID and reads `properties.sqlEndpointProperties.connectionString`. Returned item and
+endpoint IDs/types are checked against the canonical target when present. Azure CLI
+supplies separate in-memory Fabric REST and
+`database.windows.net` tokens; pyodbc uses only ODBC Driver 18 or newer, encrypted
+connections, access-token attribute `1256`, bounded execution, and bounded per-value
+and aggregate JSON materialization. The launcher resolves the selected interpreter in
+a short subprocess and then starts that Python executable directly, so cancellation
+targets the query process. SQL and tokens are
+never placed in argv, config, disk, logs, or diagnostics. The exact fallback tool may
+reuse the same in-memory session grant as MCP only when its canonical
+client/tenant/principal/environment/target/read/row/60-second scope matches.
 
 ### Microsoft skills catalog
 

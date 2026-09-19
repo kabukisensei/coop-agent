@@ -280,7 +280,7 @@ try {
   foreach ($pkg in $PY_TOOLS) {
     $pytoolTargets += if ($EDGE) { $pkg } else { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "$pkg==$tv" } else { $pkg } }
   }
-  $fabricPython = Get-CoopFabricPython
+  $fabricPython = Get-CoopFabricBootstrapPython
   $fabricFetchPython = ''
   if (-not $fabricPython) {
     # Ladder: the Python launcher/install manager first (`py install` covers both
@@ -291,7 +291,7 @@ try {
     if ($pyLauncher) {
       Coop-Info 'Microsoft Fabric CLI needs Python 3.10–3.13; installing Python 3.12…'
       & $pyLauncher.Source install 3.12 *> $null
-      $fabricPython = Get-CoopFabricPython
+      $fabricPython = Get-CoopFabricBootstrapPython
     }
     if (-not $fabricPython -and (Get-Command winget -ErrorAction SilentlyContinue)) {
       Coop-Info 'Microsoft Fabric CLI needs Python 3.10–3.13; installing Python 3.12 via winget…'
@@ -304,7 +304,7 @@ try {
     )) {
       if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) { $env:PATH = "$d;$env:PATH" }
     }
-      $fabricPython = Get-CoopFabricPython
+      $fabricPython = Get-CoopFabricBootstrapPython
     }
   }
   if (-not $fabricPython -and (Get-Command pipx -ErrorAction SilentlyContinue)) {
@@ -354,30 +354,20 @@ finally {
   Coop-ProgEnd
 }
 
-# fabric-cicd is manifest-pinned in normal mode; edge alone may take latest.
-# fabric-cicd is a library injected into the Fabric CLI env. Normal mode always
-# uses the manifest pin; edge mode alone may take latest.
-$script:FCC_PIN = ''
-if (-not $EDGE) { $script:FCC_PIN = Coop-ManifestObjectGet 'python_tools' 'fabric-cicd' }
-if ((Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package ms-fabric-cli ')) {
-  # Keep the tail of pip's output: a pin that cannot resolve (e.g. Requires-Python
-  # <3.14 vs a 3.14 venv) must say WHY instead of failing silently.
-  $injectOut = ''
-  if ($script:FCC_PIN) {
-    $injectOut = (& pipx inject ms-fabric-cli "fabric-cicd==$($script:FCC_PIN)" --force 2>&1 | Out-String)
-    if ($LASTEXITCODE -eq 0) { Coop-Ok "fabric-cicd (library) pinned to tested $($script:FCC_PIN)" }
-    else { Coop-Warn "failed to pin fabric-cicd to $($script:FCC_PIN) in the ms-fabric-cli environment$(Coop-PipErrorTail $injectOut)"; $script:UpdateFailures++ }
-  } else {
-    $injectOut = (& pipx inject ms-fabric-cli fabric-cicd --force 2>&1 | Out-String)
-    if ($LASTEXITCODE -eq 0) { Coop-Ok 'fabric-cicd (library) refreshed' }
-    else { Coop-Warn "failed to refresh fabric-cicd in the ms-fabric-cli environment$(Coop-PipErrorTail $injectOut)"; $script:UpdateFailures++ }
-  }
+# Exact runtime libraries are part of Fabric convergence, not standalone tools.
+if (-not $NO_FABRIC -and (Test-Have 'pipx') -and ((& pipx list 2>$null | Out-String) -match 'package ms-fabric-cli ')) {
+  if (Sync-CoopFabricPythonPackages $EDGE) { Coop-Ok 'Fabric Python runtime converged (fabric-cicd + pinned pyodbc)' }
+  else { Coop-Warn 'failed to converge the Fabric Python runtime'; $script:UpdateFailures++ }
+  if (-not (Ensure-CoopFabricOdbcDriver $true)) { Coop-Warn 'Fabric SQL fallback is not ready'; $script:UpdateFailures++ }
 }
 if ($env:COOP_FLEET_TEST_MODE -eq '1') { if ($script:UpdateFailures -gt 0) { exit 1 } else { exit 0 } }
 
 # --- 5. Sync vibes / skills / prompts / extension ----------------------------
 Coop-Head '5/6  Sync brand assets'
+$priorSkipFabricSync = $env:COOP_SKIP_FABRIC_SYNC
+$env:COOP_SKIP_FABRIC_SYNC = '1' # Fabric was converged (or explicitly skipped) above.
 $syncRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
+if ($null -eq $priorSkipFabricSync) { Remove-Item Env:COOP_SKIP_FABRIC_SYNC -ErrorAction SilentlyContinue } else { $env:COOP_SKIP_FABRIC_SYNC = $priorSkipFabricSync }
 if ($syncRc -ne 0) { Coop-Warn 'sync reported issues'; $script:UpdateFailures++ }
 
 # --- 6. Doctor ---------------------------------------------------------------

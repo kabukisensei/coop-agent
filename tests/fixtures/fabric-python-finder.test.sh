@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# coop_fabric_python must discover side-by-side interpreters that are NOT on
+# coop_fabric_bootstrap_python must discover side-by-side interpreters that are NOT on
 # PATH (Python install manager / winget layouts) and reject incompatible ones.
 set -euo pipefail
 
@@ -38,13 +38,13 @@ unset COOP_FABRIC_PYTHON
 export COOP_FAKE_PY_VERSION=3.13
 py313="$fake_local/Python/bin/python3.13.exe"
 make_fake_py "$py313"
-found="$(coop_fabric_python)"
+found="$(coop_fabric_bootstrap_python)"
 [ "$found" = "$py313" ] || { echo "  ✗ pymanager layout not discovered (got '$found')"; exit 1; }
 echo "  ✓ %LOCALAPPDATA%/Python/bin side-by-side interpreter discovered"
 
 # 2. An interpreter that reports 3.14 is NOT Fabric-compatible.
 export COOP_FAKE_PY_VERSION=3.14
-found="$(coop_fabric_python || true)"
+found="$(coop_fabric_bootstrap_python || true)"
 [ -z "$found" ] || { echo "  ✗ 3.14 accepted as Fabric-compatible: '$found'"; exit 1; }
 echo "  ✓ 3.14-only machine still reports no compatible interpreter"
 
@@ -53,6 +53,6 @@ rm -f "$py313"
 export COOP_FAKE_PY_VERSION=3.12
 py312="$fake_local/Programs/Python/Python312/python.exe"
 make_fake_py "$py312"
-found="$(coop_fabric_python)"
+found="$(coop_fabric_bootstrap_python)"
 [ "$found" = "$py312" ] || { echo "  ✗ winget user-scope layout not discovered (got '$found')"; exit 1; }
 echo "  ✓ %LOCALAPPDATA%/Programs/Python/Python31x layout discovered"

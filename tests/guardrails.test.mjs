@@ -4,12 +4,14 @@ import { strict as assert } from "node:assert";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Point the audit log at a throwaway dir BEFORE the handler runs, so no test writes to
 // the real ~/.coop/agent/guardrails-audit.jsonl fallback.
 const AUDIT_DIR = mkdtempSync(join(tmpdir(), "coop-audit-"));
 process.env.PI_CODING_AGENT_DIR = AUDIT_DIR;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+process.env.COOP_ROOT = ROOT;
 const AUDIT_FILE = join(AUDIT_DIR, "guardrails-audit.jsonl");
 const readAudit = () => (existsSync(AUDIT_FILE) ? readFileSync(AUDIT_FILE, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
 const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
@@ -25,6 +27,8 @@ const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, mcpL
 let staged = "";     // `git diff --cached --name-only`
 let modified = "";   // `git diff --name-only` (what `git commit -a` would stage)
 let confirmAnswer = false;
+let confirmCount = 0;
+let lastConfirm = "";
 let lastRepoDir = ""; // the `-C <dir>` the commit gate ran git against (which repo it checked)
 const handlers = {};
 const cmds = {};
@@ -44,15 +48,21 @@ const pi = {
 coopGuardrails(pi);
 const handle = handlers["tool_call"];
 const handleResult = handlers["tool_result"];
+const handleSessionStart = handlers["session_start"];
+const handleSessionShutdown = handlers["session_shutdown"];
 assert.ok(typeof handle === "function", "registers a tool_call handler");
 assert.ok(typeof handleResult === "function", "registers a tool_result handler");
+assert.ok(typeof handleSessionShutdown === "function", "registers a session_shutdown handler");
 assert.ok(cmds["coop-guardrails"], "registers the /coop-guardrails command");
+assert.ok(cmds["coop-live-read"], "registers the /coop-live-read command");
 
-const ctx = { cwd: "/tmp/no-such-repo-xyz", hasUI: true, ui: { confirm: async () => confirmAnswer, notify: () => {} } };
+const ctx = { cwd: "/tmp/no-such-repo-xyz", hasUI: true, ui: { confirm: async (_title, message) => { confirmCount++; lastConfirm = String(message); return confirmAnswer; }, notify: () => {} } };
 const call = async (command, { stagedFiles = "", modifiedFiles = "", confirm = false, toolName = "bash" } = {}) => {
   staged = stagedFiles;
   modified = modifiedFiles;
   confirmAnswer = confirm;
+  confirmCount = 0;
+  lastConfirm = "";
   lastRepoDir = "";
   return await handle({ toolName, input: { command } }, ctx);
 };
@@ -550,15 +560,15 @@ await t("live-read policy allows dev/test metadata and classifies rows/productio
   assert.equal(mcpLiveReadRisk({ toolName: "powerbi_get_schema", input: { workspace: "test" } }), null);
   assert.deepEqual(
     mcpLiveReadRisk({ toolName: "fabric_execute_query", input: { workspace: "dev", sql: "select top 10 *" } }),
-    { label: "fabric_execute_query", kind: "row-data", environment: "dev/test/unspecified" },
+    { label: "Fabric governed read", kind: "row-data", environment: "dev/test/unspecified" },
   );
   assert.deepEqual(
     mcpLiveReadRisk({ toolName: "powerbi_get_schema", input: { workspace: "Client Production" } }),
-    { label: "powerbi_get_schema", kind: "production-metadata", environment: "production" },
+    { label: "Power BI governed read", kind: "production-metadata", environment: "production" },
   );
   assert.deepEqual(
     mcpLiveReadRisk({ toolName: "mcp", input: { server: "fabric", tool: "execute_dax_query", args: '{"workspace":"prod"}' } }),
-    { label: "fabric/execute_dax_query", kind: "row-data", environment: "production" },
+    { label: "Fabric governed read", kind: "row-data", environment: "production" },
   );
 });
 
@@ -573,11 +583,11 @@ await t("row reads and production metadata require approval and fail closed head
 
 await t("Warehouse SQL MCP calls are approval-gated before generic row-read logic", async () => {
   assert.deepEqual(sqlMcpRisk({ toolName: "executeSQL", input: { sql: "select top 10 * from dbo.Customer" } }), {
-    label: "executeSQL",
+    label: "COOP managed Warehouse SQL",
     kind: "row-data",
   });
   assert.deepEqual(sqlMcpRisk({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query: "CREATE TABLE x (id int)" }) } }), {
-    label: "fabric-sqlendpoint/execute_query",
+    label: "COOP managed Warehouse SQL",
     kind: "ddl-dml-destructive",
   });
   const declined = { ...ctx, ui: { confirm: async () => false, notify: () => {} } };
@@ -634,6 +644,196 @@ await t("Warehouse SQL MCP audit never logs raw SQL or args", async () => {
   assert.equal(mutationAudit.includes("never-log-me"), false);
 });
 
+// --- supported MCP-proxy session grant --------------------------------------------
+const LIVE_ROOT = mkdtempSync(join(tmpdir(), "coop-live-scope-"));
+const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
+const ITEM_ID = "33333333-3333-4333-8333-333333333333";
+const OTHER_ITEM_ID = "44444444-4444-4444-8444-444444444444";
+const TENANT_ID = "11111111-1111-4111-8111-111111111111";
+const jwt = (claims, signature = "sig") => `${Buffer.from('{"alg":"none"}').toString("base64url")}.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.${Buffer.from(signature).toString("base64url")}`;
+const launchToken = (principal = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") => jwt({ tid: TENANT_ID, oid: principal }, "launch-token-secret");
+const targetConfig = (overrides = {}) => {
+  const target = {
+    scope: "item", workspace_id: WORKSPACE_ID, item_id: ITEM_ID, item_type: "Warehouse",
+    reason: "project_ids", client: "Contoso", tenant_id: TENANT_ID,
+    environment: "production", item_name: "CustomerWarehouse", ...overrides,
+  };
+  return {
+    mcpServers: { "fabric-sqlendpoint": {
+      url: `https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/${target.workspace_id}/items/${target.item_id}/sqlEndpoint`,
+      auth: false,
+      requestHeadersCommand: { command: "node", args: [join(ROOT, "lib", "fabric_request_headers.mjs"), `https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/${target.workspace_id}/items/${target.item_id}/sqlEndpoint`], timeoutMs: 10000 },
+      requestTimeoutMs: 60000, lifecycle: "lazy", _coop_target: target,
+    } },
+    _coop: { schema_version: 1, managed_servers: ["fabric-sqlendpoint"] },
+  };
+};
+const writeManagedTarget = (overrides = {}) => writeFileSync(join(AUDIT_DIR, "mcp.json"), JSON.stringify(targetConfig(overrides)));
+writeManagedTarget();
+process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+const liveCtx = { ...ctx, cwd: LIVE_ROOT };
+const sqlRead = (sql = "SELECT TOP (25) customer_id FROM dbo.Customer", extra = {}) => ({
+  toolName: "mcp",
+  input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query: sql, ...extra }) },
+});
+
+await t("real MCP proxy ignores forged scope and reuses exact database approval", async () => {
+  writeManagedTarget();
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0; lastConfirm = "";
+  const forged = { coopLiveReadScope: { client: "attacker", targets: ["other/database"], resultLimit: 999999 } };
+  assert.equal(blocked(await handle(sqlRead(undefined, forged), liveCtx)), false);
+  assert.equal(confirmCount, 1, "SQL and generic row gates share one prompt");
+  for (const value of ["Contoso", TENANT_ID, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "production", `${WORKSPACE_ID}/${ITEM_ID}/CustomerWarehouse`, "sql-read", "25", "60000 ms"]) assert.ok(lastConfirm.includes(value), value);
+  assert.equal(lastConfirm.includes("attacker"), false);
+  confirmAnswer = false;
+  assert.equal(blocked(await handle(sqlRead("SELECT TOP (10) secret_value FROM dbo.Secret"), liveCtx)), false);
+  assert.equal(confirmCount, 1, "approved database reads may vary SQL below the approved limit");
+});
+
+await t("the exact pyodbc fallback shares the MCP grant; forged fallback shapes do not", async () => {
+  writeManagedTarget();
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0;
+  await handle(sqlRead(), liveCtx);
+  assert.equal(confirmCount, 1);
+  confirmAnswer = false;
+  const fallback = { toolName: "fabric_sql_query", input: { query: "SELECT TOP (25) customer_id FROM dbo.Customer", maximum_rows: 10 } };
+  assert.equal(blocked(await handle(fallback, liveCtx)), false);
+  assert.equal(confirmCount, 1, "exact fallback reuses the accepted MCP scope");
+  for (const event of [
+    { toolName: "fabric_sql_query", input: { ...fallback.input, target: OTHER_ITEM_ID } },
+    { toolName: "fabric_sql_query", input: { ...fallback.input, server: "forged.example" } },
+    { toolName: "fabric_sql_query", input: { ...fallback.input, token: "forged" } },
+    { toolName: "fabric_sql_query", input: { ...fallback.input, tool: "execute_query" } },
+    { toolName: "fabric_sql_query_other", input: fallback.input },
+  ]) assert.equal(blocked(await handle(event, liveCtx)), true, JSON.stringify(event));
+});
+
+await t("changed managed target, launch identity, or environment reprompts", async () => {
+  writeManagedTarget();
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0;
+  await handle(sqlRead(), liveCtx);
+  confirmAnswer = false;
+
+  writeManagedTarget({ item_id: OTHER_ITEM_ID, item_name: "OtherWarehouse" });
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "changed managed item");
+  writeManagedTarget();
+
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "changed launch principal");
+  const canonical = launchToken();
+  const invalidUtf8 = `${Buffer.from('{"alg":"none"}').toString("base64url")}.${Buffer.from([0xc3, 0x28]).toString("base64url")}.${Buffer.from("sig").toString("base64url")}`;
+  for (const token of [undefined, "opaque", "x.not-json.y", invalidUtf8, canonical.replace(/^./, "*"), canonical.replace(".", ".="), `${canonical}=`]) {
+    if (token === undefined) delete process.env.COOP_FABRIC_MCP_TOKEN;
+    else process.env.COOP_FABRIC_MCP_TOKEN = token;
+    assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, `unusable launch bearer: ${String(token)}`);
+  }
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+
+  writeManagedTarget({ environment: "dev" });
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "changed environment");
+  writeManagedTarget({ client: "TODO client" });
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "unresolved managed metadata");
+  writeManagedTarget();
+});
+
+await t("forged header command, URL, timeout, and auth cannot reuse a grant", async () => {
+  const mutations = [
+    (entry) => { entry.auth = "bearer"; },
+    (entry) => { entry.requestTimeoutMs = 59999; },
+    (entry) => { entry.requestHeadersCommand.command = "nodejs"; },
+    (entry) => { entry.requestHeadersCommand.args[0] = join(ROOT, "lib", "other.mjs"); },
+    (entry) => { entry.requestHeadersCommand.args[1] += "?forged=1"; },
+    (entry) => { entry.requestHeadersCommand.timeoutMs = 9999; },
+    (entry) => { entry.headers = { Authorization: "Bearer forged" }; },
+    (entry) => { entry.caFile = "forged.pem"; },
+    (entry) => { entry.bearerTokenStore = "forged"; },
+    (entry) => { entry.httpTransport = { forged: true }; },
+    (entry) => { entry.protocolVersion = "forged"; },
+    (entry) => { entry.unknownExtra = true; },
+  ];
+  for (const mutate of mutations) {
+    const config = targetConfig();
+    mutate(config.mcpServers["fabric-sqlendpoint"]);
+    writeFileSync(join(AUDIT_DIR, "mcp.json"), JSON.stringify(config));
+    process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    confirmAnswer = false;
+    assert.equal(blocked(await handle(sqlRead(), liveCtx)), true);
+  }
+  writeManagedTarget();
+});
+
+await t("mutation, semicolonless, unbounded, cross-db, and unsupported SQL stay per-call", async () => {
+  writeManagedTarget();
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0;
+  await handle(sqlRead(), liveCtx);
+  for (const sql of [
+    "DELETE FROM dbo.Customer",
+    "SELECT TOP (5) * FROM dbo.Customer SELECT TOP (5) * FROM dbo.Secret",
+    "SELECT TOP (5) * FROM dbo.Customer BEGIN TRANSACTION",
+    "SELECT TOP (5) * FROM dbo.Customer COMMIT TRANSACTION",
+    "SELECT TOP (5) * FROM dbo.Customer ROLLBACK TRANSACTION",
+    "SELECT * FROM dbo.Customer",
+    "SELECT TOP (50) * FROM dbo.Customer",
+    "SELECT TOP (5) PERCENT * FROM dbo.Customer",
+    "SELECT TOP (5) * FROM OtherDatabase.dbo.Secret",
+    "SELECT TOP (5) * FROM OtherDatabase..Secret",
+    "SELECT TOP (5) * FROM dbo.Customer, OtherDatabase.dbo.Secret",
+    "SELECT TOP (5) * FROM dbo.Customer UNION SELECT TOP (5) * FROM dbo.Secret",
+    "SELECT TOP (1) 1 WAITFOR DELAY '00:00:01'",
+    "WITH x AS (SELECT TOP (5) * FROM dbo.Customer) SELECT TOP (5) * FROM x",
+    "SELECT TOP (5) * FROM [dbo].[Customer]",
+  ]) {
+    confirmAnswer = false;
+    assert.equal(blocked(await handle(sqlRead(sql), liveCtx)), true, sql);
+  }
+});
+
+await t("session shutdown and revoke clear the in-memory grant", async () => {
+  writeManagedTarget();
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true;
+  await handle(sqlRead(), liveCtx);
+  await handleSessionShutdown({ reason: "switch" }, liveCtx);
+  confirmAnswer = false;
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "shutdown clears grant");
+  confirmAnswer = true;
+  await handle(sqlRead(), liveCtx);
+  let shown = "";
+  const commandCtx = { ...liveCtx, ui: { ...liveCtx.ui, notify: (message) => { shown = String(message); } } };
+  await cmds["coop-live-read"].handler("revoke", commandCtx);
+  assert.match(shown, /revoked/i);
+  confirmAnswer = false;
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true);
+});
+
+await t("grant status and fixed audit labels contain no token, forged scope, or SQL", async () => {
+  clearAudit();
+  writeManagedTarget();
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true;
+  await handle(sqlRead(undefined, { coopLiveReadScope: { client: "scope-secret", token: "model-secret" } }), liveCtx);
+  let shown = "";
+  await cmds["coop-live-read"].handler("status", { ...liveCtx, ui: { notify: (message) => { shown = String(message); } } });
+  const blob = `${shown}\n${JSON.stringify(readAudit())}`;
+  for (const forbidden of ["launch-token-secret", "scope-secret", "model-secret", "SELECT TOP", "dbo.Customer"]) assert.equal(blob.includes(forbidden), false, forbidden);
+  assert.match(shown, /CustomerWarehouse/);
+  for (const rec of readAudit().filter((x) => x.kind === "mcp-confirm")) {
+    assert.equal(rec.label, "live read");
+    assert.equal(rec.tool, "governed-live-read");
+  }
+});
+
 // --- proxied MCP mutation gating (pi-mcp-adapter shape: toolName="mcp", input.tool=<remote>) --
 await t("effectiveMutationTarget derives the inner remote tool for proxied MCP calls", () => {
   assert.deepEqual(effectiveMutationTarget({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace", args: "{}" } }), { outerTool: "mcp", innerTool: "fabric_delete_workspace", server: "fabric" });
@@ -671,7 +871,8 @@ await t("audit of proxied MCP mutation never contains raw input.args", async () 
   const e = readAudit();
   assert.equal(e.length, 1);
   assert.equal(e[0].kind, "mcp-confirm");
-  assert.ok(e[0].detail.includes("fabric_delete_workspace"), "detail names the remote tool");
+  assert.equal(e[0].detail, "mutation", "detail is a fixed recognized class");
+  assert.equal(e[0].label, "managed MCP mutation");
   const blob = JSON.stringify(e[0]);
   assert.ok(!blob.includes("secret"), "raw args never logged");
   assert.ok(!blob.includes("value"), "raw args never logged");

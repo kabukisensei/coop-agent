@@ -5,54 +5,134 @@ $temp = Join-Path ([System.IO.Path]::GetTempPath()) ("coop-fabric-token-" + [gui
 $bin = Join-Path $temp 'bin'
 $agent = Join-Path $temp 'agent'
 $marker = Join-Path $temp 'marker'
-$token = 'fabric-launch-canary-7e5a3c'
+function ConvertTo-Base64Url([byte[]]$Bytes) {
+  return [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
+}
+function ConvertFrom-Base64Url([string]$Value) {
+  $padded = $Value.Replace('-','+').Replace('_','/')
+  switch ($padded.Length % 4) {
+    2 { $padded += '==' }
+    3 { $padded += '=' }
+  }
+  return [Convert]::FromBase64String($padded)
+}
+$utf8 = [Text.Encoding]::UTF8
+$token = (ConvertTo-Base64Url $utf8.GetBytes('{"alg":"none"}')) + '.' +
+  (ConvertTo-Base64Url $utf8.GetBytes('{"tid":"11111111-1111-4111-8111-111111111111","oid":"22222222-2222-4222-8222-222222222222"}')) + '.' +
+  (ConvertTo-Base64Url $utf8.GetBytes('launch-signature'))
+$tokenParts = @($token -split '\.')
+if ($tokenParts.Count -ne 3 -or $tokenParts[0] -match '=' -or $tokenParts[1] -match '=') {
+  throw 'fixture token is not a canonical three-segment base64url JWT'
+}
+$tokenHeader = $utf8.GetString((ConvertFrom-Base64Url $tokenParts[0])) | ConvertFrom-Json
+$tokenPayload = $utf8.GetString((ConvertFrom-Base64Url $tokenParts[1])) | ConvertFrom-Json
+if ($tokenHeader.alg -ne 'none' -or
+    $tokenPayload.tid -ne '11111111-1111-4111-8111-111111111111' -or
+    $tokenPayload.oid -ne '22222222-2222-4222-8222-222222222222') {
+  throw 'fixture token decoded claims do not match the expected JSON'
+}
 $helperDiagnostic = 'untrusted-helper-diagnostic-93b75a'
 $helperTokenlike = 'tokenlike-helper-value-2309'
 New-Item -ItemType Directory -Force -Path $bin,$agent,$marker | Out-Null
+$azResponse = Join-Path $marker 'az-response.json'
+$azResponseJson = '{"accessToken":"' + $token + '"}' + "`r`n"
+[System.IO.File]::WriteAllText($azResponse, $azResponseJson, [Text.Encoding]::ASCII)
 $oldPythonPath = $env:PYTHONPATH
 try {
-  @'
-{
-  "mcpServers": {
-    "fabric-sqlendpoint": {
-      "url": "https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint",
-      "auth": "bearer",
-      "bearerTokenEnv": "COOP_FABRIC_MCP_TOKEN",
-      "lifecycle": "lazy"
+  $url = 'https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint'
+  $config = [ordered]@{
+    mcpServers = [ordered]@{
+      'fabric-sqlendpoint' = [ordered]@{
+        url = $url
+        auth = $false
+        requestHeadersCommand = [ordered]@{
+          command = 'node'
+          args = @((Join-Path $root 'lib\fabric_request_headers.mjs'), $url)
+          timeoutMs = 10000
+        }
+        requestTimeoutMs = 60000
+        lifecycle = 'lazy'
+        _coop_target = [ordered]@{
+          scope = 'global'; workspace_id = ''; item_id = ''; item_type = ''
+          reason = 'fixture'; client = ''; tenant_id = ''; environment = ''; item_name = ''
+        }
+      }
     }
-  },
-  "_coop": {"schema_version": 1, "managed_servers": ["fabric-sqlendpoint"]}
-}
-'@ | Set-Content -LiteralPath (Join-Path $agent 'mcp.json') -Encoding UTF8
+    _coop = [ordered]@{ schema_version = 1; managed_servers = @('fabric-sqlendpoint') }
+  }
+  $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $agent 'mcp.json') -Encoding UTF8
 
   if ($env:OS -eq 'Windows_NT') {
+    $nodePath = (Get-Command node -ErrorAction Stop).Source
+    $windowsPathDirs = @($bin, (Split-Path -Parent $nodePath), (Join-Path $env:SystemRoot 'System32'))
+    foreach ($commandName in @('python3', 'python', 'git')) {
+      $commandPath = (Get-Command $commandName -ErrorAction SilentlyContinue).Source
+      if ($commandPath) { $windowsPathDirs += (Split-Path -Parent $commandPath) }
+    }
+    $windowsFixturePath = (@($windowsPathDirs | Select-Object -Unique) -join [System.IO.Path]::PathSeparator)
+    # coop.ps1 discovers npm's global prefix at startup. Keep that discovery
+    # inside the fixture so an installed Pi cannot shadow our pi.cmd.
+    $npmCmd = @'
+@echo off
+if not "%~1 %~2"=="prefix -g" exit /b 1
+>"__MARKER__\npm-prefix-entry" echo 1
+echo __BIN__
+exit /b 0
+'@
+    $npmCmd.Replace('__MARKER__', $marker).Replace('__BIN__', $bin) | Set-Content -LiteralPath (Join-Path $bin 'npm.cmd') -Encoding ASCII
+    $azProgram = Join-Path $bin 'fake-az.cjs'
+    $azProgramSource = @'
+const fs = require('node:fs');
+const path = require('node:path');
+const [marker, response, ...args] = process.argv.slice(2);
+fs.writeFileSync(path.join(marker, 'az-helper-entry'), '1');
+fs.writeFileSync(path.join(marker, 'az-argv'), args.join(' '));
+const mode = fs.readFileSync(path.join(marker, 'az-mode'), 'utf8');
+if (mode === 'auth') {
+  process.stderr.write("ERROR: Please run 'az login' to setup account.\n");
+  process.exit(1);
+}
+process.stdout.write(fs.readFileSync(response));
+'@
+    [System.IO.File]::WriteAllText($azProgram, $azProgramSource, [Text.Encoding]::ASCII)
+    $azCmd = @'
+@echo off
+>"__MARKER__\az-wrapper-entry" echo 1
+"__NODE__" "__PROGRAM__" "__MARKER__" "__RESPONSE__" %*
+set "COOP_TEST_AZ_RC=%ERRORLEVEL%"
+>"__MARKER__\az-child-rc" echo %COOP_TEST_AZ_RC%
+exit /b %COOP_TEST_AZ_RC%
+'@
+    $azCmd.Replace('__NODE__', $nodePath).Replace('__PROGRAM__', $azProgram).Replace('__MARKER__', $marker).Replace('__RESPONSE__', $azResponse) | Set-Content -LiteralPath (Join-Path $bin 'az.cmd') -Encoding ASCII
     @'
 @echo off
->"%COOP_TEST_MARKER%\az-argv" echo %*
-if "%COOP_TEST_AZ_MODE%"=="auth" (
-  >&2 echo ERROR: Please run 'az login' to setup account.
-  exit /b 1
-)
-echo {"accessToken":"%COOP_TEST_TOKEN%"}
-'@ | Set-Content -LiteralPath (Join-Path $bin 'az.cmd') -Encoding ASCII
-    @'
-@echo off
+>"%COOP_TEST_MARKER%\pi-entry" echo 1
 >"%COOP_TEST_MARKER%\pi-argv" echo %*
-if "%COOP_TEST_EXPECT_TOKEN%"=="present" if not "%COOP_FABRIC_MCP_TOKEN%"=="%COOP_TEST_TOKEN%" exit /b 41
-if "%COOP_TEST_EXPECT_TOKEN%"=="absent" if not "%COOP_FABRIC_MCP_TOKEN%"=="" exit /b 42
+if not "%COOP_FABRIC_MCP_TOKEN%"=="" >"%COOP_TEST_MARKER%\pi-token-present" echo 1
+if "%COOP_FABRIC_MCP_TOKEN%"=="%COOP_TEST_TOKEN%" >"%COOP_TEST_MARKER%\pi-token-match" echo 1
+if "%COOP_TEST_EXPECT_TOKEN%"=="present" if not "%COOP_FABRIC_MCP_TOKEN%"=="%COOP_TEST_TOKEN%" (
+  >"%COOP_TEST_MARKER%\pi-child-rc" echo 41
+  exit /b 41
+)
+if "%COOP_TEST_EXPECT_TOKEN%"=="absent" if not "%COOP_FABRIC_MCP_TOKEN%"=="" (
+  >"%COOP_TEST_MARKER%\pi-child-rc" echo 42
+  exit /b 42
+)
 >"%COOP_TEST_MARKER%\pi-state" echo launched
+>"%COOP_TEST_MARKER%\pi-child-rc" echo 0
 exit /b 0
 '@ | Set-Content -LiteralPath (Join-Path $bin 'pi.cmd') -Encoding ASCII
   } else {
-    @'
+    $azUnix = @'
 #!/bin/sh
-printf '%s\n' "$*" > "$COOP_TEST_MARKER/az-argv"
-if [ "$COOP_TEST_AZ_MODE" = auth ]; then
+printf '%s\n' "$*" > '__MARKER__/az-argv'
+if [ "$(cat '__MARKER__/az-mode')" = auth ]; then
   printf '%s\n' "ERROR: Please run 'az login' to setup account." >&2
   exit 1
 fi
-printf '{"accessToken":"%s"}\n' "$COOP_TEST_TOKEN"
-'@ | Set-Content -LiteralPath (Join-Path $bin 'az') -Encoding ASCII
+printf '%s\n' '{"accessToken":"__TOKEN__"}'
+'@
+    $azUnix.Replace('__MARKER__', $marker).Replace('__TOKEN__', $token) | Set-Content -LiteralPath (Join-Path $bin 'az') -Encoding ASCII
     @'
 #!/bin/sh
 printf '%s\n' "$*" > "$COOP_TEST_MARKER/pi-argv"
@@ -65,7 +145,8 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
   }
 
   $oldPath = $env:PATH
-  $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$oldPath"
+  if ($env:OS -eq 'Windows_NT') { $env:PATH = $windowsFixturePath }
+  else { $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$oldPath" }
   $env:PI_CODING_AGENT_DIR = $agent
   $env:COOP_AGENT_DIR = $agent
   $env:COOP_NO_ONBOARD = '1'
@@ -75,19 +156,246 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
   $env:COOP_TEST_TOKEN = $token
   $env:COOP_TEST_AZ_MODE = 'ok'
   $env:COOP_TEST_EXPECT_TOKEN = 'present'
+  Set-Content -LiteralPath (Join-Path $marker 'az-mode') -Value 'ok' -NoNewline
+
+  if ($env:OS -eq 'Windows_NT') {
+    $piResolved = Get-Command pi -ErrorAction SilentlyContinue
+    $piSourceFixture = 0
+    $piSourceExt = 'none'
+    if ($piResolved) {
+      $piSourceFixture = [int]($piResolved.Source -eq (Join-Path $bin 'pi.cmd'))
+      switch ([System.IO.Path]::GetExtension($piResolved.Source).ToLowerInvariant()) {
+        '.cmd' { $piSourceExt = 'cmd' }
+        '.exe' { $piSourceExt = 'exe' }
+        '.com' { $piSourceExt = 'com' }
+        '.bat' { $piSourceExt = 'bat' }
+        '' { $piSourceExt = 'none' }
+        default { $piSourceExt = 'other' }
+      }
+    }
+    Write-Host "FABRIC_BOUNDARY pi-source-fixture=$piSourceFixture"
+    Write-Host "FABRIC_BOUNDARY pi-source-ext=$piSourceExt"
+    $pipxBinDir = Join-Path $HOME '.local\bin'
+    $pipxBinPresent = [int](Test-Path -LiteralPath $pipxBinDir)
+    Write-Host "FABRIC_BOUNDARY pipx-bin-present=$pipxBinPresent"
+    $pipxShadow = 'none'
+    if ($pipxBinPresent) {
+      foreach ($ext in @($env:PATHEXT -split ';' | Where-Object { $_ })) {
+        if (Test-Path -LiteralPath (Join-Path $pipxBinDir ("pi" + $ext))) {
+          $pipxShadow = $ext.ToLowerInvariant().TrimStart('.')
+          break
+        }
+      }
+      if ($pipxShadow -eq 'none' -and (Test-Path -LiteralPath (Join-Path $pipxBinDir 'pi'))) { $pipxShadow = 'extensionless' }
+      Write-Host "FABRIC_BOUNDARY pipx-pi-shadow=$pipxShadow"
+      Write-Host "FABRIC_BOUNDARY pathext-ps1=$([int](($env:PATHEXT -split ';') -contains '.PS1'))"
+      Write-Host "FABRIC_BOUNDARY pathext-js=$([int](($env:PATHEXT -split ';') -contains '.JS'))"
+      foreach ($entry in @(Get-ChildItem -LiteralPath $pipxBinDir -Filter 'pi*' -ErrorAction SilentlyContinue | Select-Object -First 5)) {
+        $entryLabel = if ($entry.PSIsContainer) { 'dir' } elseif ([string]::IsNullOrEmpty($entry.Extension)) { 'none' } else { $entry.Extension.ToLowerInvariant().TrimStart('.') }
+        Write-Host "FABRIC_BOUNDARY pipx-pi-entry-ext=$entryLabel"
+      }
+    }
+    $comspecMz = 0
+    if ($env:ComSpec -and (Test-Path -LiteralPath $env:ComSpec -PathType Leaf)) {
+      $comspecBytes = [System.IO.File]::ReadAllBytes($env:ComSpec)
+      if ($comspecBytes.Length -ge 2) { $comspecMz = [int]($comspecBytes[0] -eq 0x4D -and $comspecBytes[1] -eq 0x5A) }
+    }
+    Write-Host "FABRIC_BOUNDARY comspec-mz=$comspecMz"
+    $probeMarker = Join-Path $temp 'child-probe-marker'
+    New-Item -ItemType Directory -Force -Path $probeMarker | Out-Null
+    $childProbe = Join-Path $temp 'child-probe.ps1'
+    @'
+param([string]$Mode, [string]$Lib, [string]$TokenValue, [string]$Root, [string]$Config)
+$ErrorActionPreference = 'Continue'
+if ($Mode -eq 'libsrc' -or $Mode -eq 'full') { . $Lib }
+if ($Mode -eq 'full') {
+  $py = Get-CoopPython
+  if ($py) {
+    $runner = Join-Path $Root 'lib\fabric_token_runner.mjs'
+    $helper = Join-Path $Root 'lib\warehouse_mcp.py'
+    $null = @(& node $runner $py $helper $Config 2>&1)
+  }
+}
+if ($Mode -ne 'plain') { $env:COOP_FABRIC_MCP_TOKEN = $TokenValue }
+$rc = -1
+try { & pi; $rc = $LASTEXITCODE } catch {
+  $ex = $_.Exception
+  if ($ex.PSObject.Properties['NativeErrorCode']) { $rc = $ex.NativeErrorCode }
+  elseif ($ex.InnerException -and $ex.InnerException.PSObject.Properties['NativeErrorCode']) { $rc = $ex.InnerException.NativeErrorCode }
+  elseif ($ex.PSObject.Properties['HResult']) { $rc = $ex.HResult }
+}
+Write-Output "rc=$rc"
+'@ | Set-Content -LiteralPath $childProbe -Encoding ASCII
+    $savedMarker = $env:COOP_TEST_MARKER
+    $savedPath = $env:PATH
+    $savedProbeEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $plainRc = -1
+    $prefixedRc = -1
+    $libsrcRc = -1
+    $fullRc = -1
+    $libCommon = Join-Path $root 'lib\common.ps1'
+    $probeConfig = Join-Path $agent 'mcp.json'
+    try {
+      $env:COOP_TEST_MARKER = $probeMarker
+      $plainOut = [string](& $psHost -NoProfile -ExecutionPolicy Bypass -File $childProbe plain '' '' '' '' *>&1)
+      if ($plainOut -match 'rc=(-?[0-9]+)') { $plainRc = [int64]$Matches[1] }
+      $env:PATH = "$pipxBinDir$([System.IO.Path]::PathSeparator)$savedPath"
+      $prefixedOut = [string](& $psHost -NoProfile -ExecutionPolicy Bypass -File $childProbe plain '' '' '' '' *>&1)
+      if ($prefixedOut -match 'rc=(-?[0-9]+)') { $prefixedRc = [int64]$Matches[1] }
+      $env:PATH = $savedPath
+      $libsrcOut = [string](& $psHost -NoProfile -ExecutionPolicy Bypass -File $childProbe libsrc $libCommon $token $root $probeConfig *>&1)
+      if ($libsrcOut -match 'rc=(-?[0-9]+)') { $libsrcRc = [int64]$Matches[1] }
+      $fullOut = [string](& $psHost -NoProfile -ExecutionPolicy Bypass -File $childProbe full $libCommon $token $root $probeConfig *>&1)
+      if ($fullOut -match 'rc=(-?[0-9]+)') { $fullRc = [int64]$Matches[1] }
+    } finally {
+      $ErrorActionPreference = $savedProbeEap
+      $env:PATH = $savedPath
+      $env:COOP_TEST_MARKER = $savedMarker
+      Remove-Item -LiteralPath $probeMarker -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Write-Host "FABRIC_BOUNDARY child-probe-plain-rc=$plainRc"
+    Write-Host "FABRIC_BOUNDARY child-probe-pipxfirst-rc=$prefixedRc"
+    Write-Host "FABRIC_BOUNDARY child-probe-libsrc-rc=$libsrcRc"
+    Write-Host "FABRIC_BOUNDARY child-probe-full-rc=$fullRc"
+  }
+
+  $boundaryState = 'not-windows'
+  if ($env:OS -eq 'Windows_NT') {
+  $boundaryProbe = Join-Path $temp 'boundary-probe.mjs'
+  $boundaryProbeSource = @'
+import { pathToFileURL } from 'node:url';
+const [helper, expected] = process.argv.slice(2);
+const { azureCliCommand } = await import(pathToFileURL(helper).href);
+const spec = azureCliCommand();
+const commandLine = spec?.args?.[4] || '';
+process.stdout.write(`spec=${Number(Boolean(spec))} fixture=${Number(commandLine.toLowerCase().includes(expected.toLowerCase()))} path=${Number(typeof process.env.PATH === 'string')} root=${Number(typeof process.env.SystemRoot === 'string')}`);
+'@
+  [System.IO.File]::WriteAllText($boundaryProbe, $boundaryProbeSource, [Text.Encoding]::ASCII)
+  $boundaryLauncher = Join-Path $temp 'boundary-launcher.py'
+  $boundaryLauncherSource = @'
+import importlib.util
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+module_path, node, probe, expected, runner, selected_python, config, marker = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("warehouse_mcp", module_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules["warehouse_mcp"] = module
+spec.loader.exec_module(module)
+result = subprocess.run(
+    [node, probe, module.REQUEST_HEADERS_HELPER, expected],
+    env=module._token_helper_environment(),
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    timeout=5,
+)
+text = result.stdout.decode("ascii", "strict") if result.returncode == 0 and not result.stderr else ""
+allowed = {"spec=0 fixture=0 path=1 root=1", "spec=1 fixture=0 path=1 root=1", "spec=1 fixture=1 path=1 root=1"}
+resolution = text if text in allowed else f"probe-rc={result.returncode} probe-stdout-bytes={len(result.stdout)} probe-stderr-bytes={len(result.stderr)}"
+runner_result = subprocess.run(
+    [node, runner, selected_python, module_path, config],
+    env=os.environ.copy(),
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    timeout=20,
+)
+marker_root = Path(marker)
+runner_markers = [int((marker_root / name).exists()) for name in ("az-wrapper-entry", "az-helper-entry", "az-argv")]
+for name in ("az-wrapper-entry", "az-helper-entry", "az-argv", "az-child-rc"):
+    try:
+        (marker_root / name).unlink()
+    except FileNotFoundError:
+        pass
+code, stdout, stderr, timed_out = module._run_token_helper(
+    [node, module.REQUEST_HEADERS_HELPER, "--token", module.FABRIC_RESOURCE], 10
+)
+print(f"{resolution} runner-code={runner_result.returncode} runner-stdout-bytes={len(runner_result.stdout)} runner-stderr-bytes={len(runner_result.stderr)} runner-wrapper={runner_markers[0]} runner-helper={runner_markers[1]} runner-az={runner_markers[2]} direct-code={code} direct-stdout-bytes={len(stdout)} direct-stderr-bytes={len(stderr)} direct-timeout={int(timed_out)}")
+'@
+  [System.IO.File]::WriteAllText($boundaryLauncher, $boundaryLauncherSource, [Text.Encoding]::ASCII)
+  $probePython = (Get-Command python -CommandType Application -ErrorAction Stop).Source
+  . (Join-Path $root 'lib\common.ps1')
+  $selectedPython = Get-CoopPython
+  $boundaryState = [string](& $probePython $boundaryLauncher (Join-Path $root 'lib\warehouse_mcp.py') $nodePath $boundaryProbe (Join-Path $bin 'az.cmd') (Join-Path $root 'lib\fabric_token_runner.mjs') $selectedPython (Join-Path $agent 'mcp.json') $marker)
+  if ($LASTEXITCODE -ne 0 -or -not $boundaryState) { $boundaryState = 'probe-unavailable' }
+  $directWrapperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-wrapper-entry'))
+  $directHelperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-helper-entry'))
+  $directAzReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-argv'))
+  $boundaryState = "$boundaryState direct-wrapper=$directWrapperReached direct-helper=$directHelperReached direct-az=$directAzReached"
+  foreach ($diagnosticMarker in @('az-wrapper-entry','az-helper-entry','az-argv','az-child-rc')) {
+    Remove-Item -LiteralPath (Join-Path $marker $diagnosticMarker) -Force -ErrorAction SilentlyContinue
+  }
+  }
 
   $priorEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   $output = & $psHost -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'bin\coop.ps1') pi --fixture *>&1 | Out-String
   $rc = $LASTEXITCODE
   $ErrorActionPreference = $priorEap
-  if ($rc -ne 0) { throw "token launch failed rc=$rc output=$output" }
+  if ($rc -ne 0) {
+    $wrapperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-wrapper-entry'))
+    $helperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-helper-entry'))
+    $azReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-argv'))
+    $piReached = [int](Test-Path -LiteralPath (Join-Path $marker 'pi-entry'))
+    $piTokenPresent = [int](Test-Path -LiteralPath (Join-Path $marker 'pi-token-present'))
+    $piTokenMatch = [int](Test-Path -LiteralPath (Join-Path $marker 'pi-token-match'))
+    $azChildRc = -1
+    $azChildRcPath = Join-Path $marker 'az-child-rc'
+    if (Test-Path -LiteralPath $azChildRcPath) {
+      $parsedAzChildRc = 0
+      if ([int]::TryParse((Get-Content -Raw -LiteralPath $azChildRcPath).Trim(), [ref]$parsedAzChildRc)) {
+        $azChildRc = $parsedAzChildRc
+      }
+    }
+    $tokenState = 'unknown'
+    if ($output.Contains('token helper failed')) { $tokenState = 'runner-failed' }
+    elseif ($output.Contains('token helper supervisor is unavailable')) { $tokenState = 'supervisor-unavailable' }
+    elseif ($output.Contains('token helper returned invalid output')) { $tokenState = 'runner-output-invalid' }
+    elseif ($output.Contains('Azure CLI is not installed or not on PATH')) { $tokenState = 'azure-cli-unavailable' }
+    elseif ($output.Contains('Azure CLI could not be launched')) { $tokenState = 'token-launch-failed' }
+    elseif ($output.Contains('Azure CLI token acquisition failed')) { $tokenState = 'token-command-failed' }
+    elseif ($output.Contains('Azure CLI returned no usable Fabric token')) { $tokenState = 'token-output-invalid' }
+    elseif ($output.Contains('Azure authentication is required')) { $tokenState = 'auth-required' }
+    elseif ($output.Contains('System.Object[]') -or $output.Contains('Cannot convert value')) { $tokenState = 'token-assignment-failed' }
+    elseif ($output.Contains('CommandNotFoundException') -or $output.Contains("The term 'pi' is not recognized")) { $tokenState = 'pi-resolution-failed' }
+    elseif ($output.Contains('NativeCommandError') -or $output.Contains("Program 'pi") -or $output.Contains('Pi launch failed (code=')) { $tokenState = 'pi-launch-failed' }
+    elseif ($output.Contains('environment variable') -and $output.Contains('too long')) { $tokenState = 'environment-limit' }
+    $piLaunchCode = -1
+    if ($output -match 'Pi launch failed \(code=(-?[0-9]+)\)') { $piLaunchCode = [int64]$Matches[1] }
+    foreach ($boundaryField in @($boundaryState -split ' ')) { Write-Host "FABRIC_BOUNDARY $boundaryField" }
+    $piChildRc = -1
+    $piChildRcPath = Join-Path $marker 'pi-child-rc'
+    if (Test-Path -LiteralPath $piChildRcPath) {
+      $parsedPiChildRc = 0
+      if ([int]::TryParse((Get-Content -Raw -LiteralPath $piChildRcPath).Trim(), [ref]$parsedPiChildRc)) {
+        $piChildRc = $parsedPiChildRc
+      }
+    }
+    Write-Host "FABRIC_BOUNDARY pi-reached=$piReached"
+    Write-Host "FABRIC_BOUNDARY pi-token-present=$piTokenPresent"
+    Write-Host "FABRIC_BOUNDARY pi-token-match=$piTokenMatch"
+    Write-Host "FABRIC_BOUNDARY pi-child-rc=$piChildRc"
+    Write-Host "FABRIC_BOUNDARY pi-launch-code=$piLaunchCode"
+    Write-Host "FABRIC_BOUNDARY handoff-state=$tokenState"
+    throw "token launch failed rc=$rc wrapper-reached=$wrapperReached helper-reached=$helperReached az-reached=$azReached child-rc=$azChildRc pi-reached=$piReached pi-token-present=$piTokenPresent pi-token-match=$piTokenMatch pi-child-rc=$piChildRc state=$tokenState boundary=$boundaryState"
+  }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi was not launched' }
+  if ($env:OS -eq 'Windows_NT') {
+    if (-not (Test-Path -LiteralPath (Join-Path $marker 'npm-prefix-entry'))) { throw 'fixture npm prefix discovery did not execute' }
+    Write-Host 'FABRIC_BOUNDARY npm-prefix-fixture=1'
+    Write-Host 'FABRIC_BOUNDARY pi-reached=1'
+    Write-Host 'FABRIC_BOUNDARY pi-token-present=1'
+    Write-Host 'FABRIC_BOUNDARY pi-token-match=1'
+    Write-Host 'FABRIC_BOUNDARY pi-child-rc=0'
+  }
   if ($output.Contains($token)) { throw 'token leaked to process output' }
   if ((Get-Content -Raw (Join-Path $marker 'pi-argv')).Contains($token)) { throw 'token leaked to argv' }
 
   Remove-Item -LiteralPath (Join-Path $marker 'pi-state') -Force
   $env:COOP_TEST_AZ_MODE = 'auth'
+  Set-Content -LiteralPath (Join-Path $marker 'az-mode') -Value 'auth' -NoNewline
   $env:COOP_TEST_EXPECT_TOKEN = 'absent'
   $env:COOP_FABRIC_MCP_TOKEN = 'stale-inherited-token'
   $ErrorActionPreference = 'Continue'

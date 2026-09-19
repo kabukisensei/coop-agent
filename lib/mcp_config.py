@@ -21,7 +21,6 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from warehouse_mcp import (  # noqa: E402
-    FABRIC_TOKEN_ENV,
     find_project_yml,
     load_project,
     machine_sqlendpoint_enabled,
@@ -85,9 +84,47 @@ def remote_http_server(manifest: dict[str, Any], url: str) -> dict[str, Any]:
 def fabric_sqlendpoint_server(url: str) -> dict[str, Any]:
     return {
         "url": url,
-        "auth": "bearer",
-        "bearerTokenEnv": FABRIC_TOKEN_ENV,
+        "auth": False,
+        "requestHeadersCommand": {
+            "command": "node",
+            "args": [str(LIB_DIR / "fabric_request_headers.mjs"), url],
+            "timeoutMs": 10000,
+        },
+        "requestTimeoutMs": 60000,
         "lifecycle": "lazy",
+    }
+
+
+def grant_target_metadata(project: dict[str, Any]) -> dict[str, str]:
+    """Return non-secret identity fields owned by the parsed project contract."""
+    raw_profile = project.get("profile")
+    raw_fabric = project.get("fabric")
+    profile: dict[str, Any] = raw_profile if isinstance(raw_profile, dict) else {}
+    fabric: dict[str, Any] = raw_fabric if isinstance(raw_fabric, dict) else {}
+    raw_endpoint = fabric.get("default_sql_endpoint")
+    endpoint: dict[str, Any] = raw_endpoint if isinstance(raw_endpoint, dict) else {}
+    workspace_name = fabric.get("default_workspace_name")
+    environment_names = (
+        fabric.get("environment_names")
+        if isinstance(fabric.get("environment_names"), dict)
+        else {}
+    )
+    matches = [
+        name
+        for name in ("dev", "test", "prod")
+        if isinstance(workspace_name, str)
+        and workspace_name.strip()
+        and isinstance(environment_names.get(name), str)
+        and environment_names[name].strip().casefold() == workspace_name.strip().casefold()
+    ]
+    environment = matches[0] if len(matches) == 1 else ""
+    if environment == "prod":
+        environment = "production"
+    return {
+        "client": profile.get("client", "") if isinstance(profile.get("client"), str) else "",
+        "tenant_id": fabric.get("tenant_id", "") if isinstance(fabric.get("tenant_id"), str) else "",
+        "environment": environment,
+        "item_name": endpoint.get("item_name", "") if isinstance(endpoint.get("item_name"), str) else "",
     }
 
 
@@ -158,6 +195,7 @@ def desired_servers(
                 "item_id": target.item_id,
                 "item_type": target.item_type,
                 "reason": target.reason,
+                **grant_target_metadata(project or {}),
             }
             out["fabric-sqlendpoint"] = sql_entry
     # Current Azure-backed MCP servers are exclusively client-facing. The future
@@ -252,27 +290,18 @@ def generate(
     for name, definition in desired.items():
         current = servers.get(name)
         if current is None or name in managed or legacy_seeded(name, current):
-            merged = dict(current) if isinstance(current, dict) else {}
-            # Preserve the long-standing narrow ownership contract for every
-            # managed command server. Only the Warehouse entry changed transport
-            # and authentication models, so only it owns and removes those fields.
-            owned_fields = ("command", "args", "env", "_coop_target")
             if name == "fabric-sqlendpoint":
-                owned_fields += (
-                    "url",
-                    "auth",
-                    "bearerTokenEnv",
-                    "lifecycle",
-                    "bearerToken",
-                    "headers",
-                    "oauth",
-                )
-            for field in owned_fields:
-                if field in definition:
-                    merged[field] = definition[field]
-                else:
-                    merged.pop(field, None)
-            servers[name] = merged
+                # This security-sensitive entry is wholly COOP-owned. Replacing it
+                # prevents stale transport/auth fields from surviving regeneration.
+                servers[name] = definition
+            else:
+                merged = dict(current) if isinstance(current, dict) else {}
+                for field in ("command", "args", "env", "_coop_target"):
+                    if field in definition:
+                        merged[field] = definition[field]
+                    else:
+                        merged.pop(field, None)
+                servers[name] = merged
             managed.add(name)
     result["mcpServers"] = {k: servers[k] for k in sorted(servers)}
     result["_coop"] = {

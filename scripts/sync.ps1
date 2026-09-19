@@ -60,7 +60,20 @@ if ($settingsPy) {
   $script:SyncFailures++
 }
 
-# --- 4. Core Pi extensions — installed INTO the isolated dir (idempotent) -----
+# --- 4. Managed Fabric Python runtime ----------------------------------------
+# Repair an existing Fabric environment, but never install Fabric itself.
+if ($env:COOP_SKIP_FABRIC_SYNC -ne '1' -and ($env:COOP_FABRIC_PYTHON -or (Get-CoopVenvPythonPath 'ms-fabric-cli'))) {
+  if ((Sync-CoopFabricPythonPackages) -and (Ensure-CoopFabricOdbcDriver $true)) {
+    $sqlStatus = Get-CoopFabricSqlRuntimeStatus
+    if ($sqlStatus.state -eq 'ready') { Coop-Ok 'Fabric SQL Python runtime ready (pyodbc + ODBC Driver 18+)' }
+    elseif ($sqlStatus.state -eq 'driver_missing') { Coop-Ok 'Fabric SQL Python packages converged (ODBC Driver 18+ remains operator-managed)' }
+  } else {
+    Coop-Warn 'Fabric SQL Python runtime is not ready' 'run: coop doctor'
+    $script:SyncFailures++
+  }
+}
+
+# --- 4b. Core Pi extensions — installed INTO the isolated dir (idempotent) ----
 # `pi install` exiting 0 proves nothing on its own: every extension is verified
 # against the manifest pin AFTER production exact-pin convergence; any failure
 # makes sync exit non-zero.

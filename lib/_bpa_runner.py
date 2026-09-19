@@ -9,11 +9,11 @@ def _parse_finding(item):
     """Map one `te bpa run` JSON violation item onto the coop finding shape.
     Tolerant of preview-schema drift: accepts several common key spellings."""
     rule = item.get("ruleId") or item.get("rule") or item.get("id") or item.get("name") or ""
-    sev = str(item.get("severity") or item.get("level") or "").lower()
+    sev = str(item.get("severityLabel") or item.get("severity") or item.get("level") or "").lower()
     if sev not in ("error", "warning", "info"):
         sev = "info"
-    obj = item.get("object") or item.get("path") or item.get("target") or item.get("table") or ""
-    msg = item.get("message") or item.get("description") or item.get("text") or ""
+    obj = item.get("objectName") or item.get("object") or item.get("path") or item.get("target") or item.get("table") or ""
+    msg = item.get("ruleName") or item.get("message") or item.get("description") or item.get("text") or ""
     return {"rule": rule, "severity": sev, "file": "", "object": obj, "message": msg}
 
 
@@ -64,12 +64,15 @@ def _extract_findings(out):
 
 
 def _run_bpa(te_exe, model, rules):
-    """Run `te bpa run <model> -r <rules>` non-interactively. JSON output first;
+    """Run `te bpa run <model>` with optional extra rules. JSON output first;
     if that yields nothing (e.g. a preview build rejects --output-format for
     bpa run), retry once with default text output and parse that."""
     last_rc = 0
     for extra in (["--output-format", "json"], []):
-        cmd = [te_exe, "bpa", "run", model, "-r", rules, "--non-interactive"] + extra
+        cmd = [te_exe, "bpa", "run", model, "--non-interactive"]
+        if rules:
+            cmd += ["-r", rules]
+        cmd += extra
         try:
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         except subprocess.TimeoutExpired:
@@ -119,7 +122,7 @@ def main():
         te_exe = shutil.which("te") or ""
     te_rules = te.get("bpa_rules_path", "")
 
-    if not te_enabled or not te_exe or not te_rules:
+    if not te_enabled or not te_exe:
         sys.exit(0)
 
     if scope_paths:
@@ -142,7 +145,7 @@ def main():
 
     for model in models:
         abs_model = model if os.path.isabs(model) else os.path.join(base_dir, model)
-        abs_rules = te_rules if os.path.isabs(te_rules) else os.path.join(base_dir, te_rules)
+        abs_rules = (te_rules if os.path.isabs(te_rules) else os.path.join(base_dir, te_rules)) if te_rules else ""
 
         if not os.path.exists(abs_model):
             continue

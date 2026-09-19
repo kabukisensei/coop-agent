@@ -30,7 +30,7 @@ case "$1" in
 esac
 exit 0
 SH
-# Shadow every PATH-based Python name coop_fabric_python probes. The runner
+# Shadow every PATH-based Python name coop_fabric_bootstrap_python probes. The runner
 # directory below intentionally contains a compatible Python so this fixture
 # fails deterministically if any candidate leaks past the stubs.
 for _py_name in python3.10 python3.11 python3.12 python3.13 python; do
@@ -54,6 +54,10 @@ exit 0
 SH
 cat > "$KEG/libexec/bin/python3" <<'SH'
 #!/bin/sh
+case "$*" in
+  *'pyodbc.drivers()'*) printf 'ready\t5.3.0\t18\n'; exit 0 ;;
+  *'import pyodbc'*) exit 0 ;;
+esac
 case "$1" in
   --version) echo 'Python 3.12.9' ;;
   -c) echo '3.12' ;;
@@ -119,6 +123,8 @@ cat > "$BIN/az" <<'SH'
 echo 'azure-cli 2.80.0'
 SH
 chmod +x "$BIN"/* "$RUNNER_BIN/python" "$KEG/libexec/bin/python3"
+mkdir -p "$T/pipx-home/venvs/ms-fabric-cli/bin"
+ln -s "$KEG/libexec/bin/python3" "$T/pipx-home/venvs/ms-fabric-cli/bin/python"
 
 export HOME="$T/home" COOP_DIR="$T/coop-dir" PIPX_HOME="$T/pipx-home" PIPX_BIN_DIR="$T/pipx-bin"
 export PI_CODING_AGENT_DIR="$T/agent" COOP_AGENT_DIR="$T/agent" COOP_NO_ONBOARD=1
@@ -132,15 +138,14 @@ PATH="$BIN:$RUNNER_BIN:/usr/bin:/bin"; export PATH
 # installer must bootstrap 3.12 and pass that interpreter explicitly to pipx.
 : > "$CALLS"
 OUT="$T/install.out"
-FABRIC_PY="$KEG/bin/python3"
-if ! COOP_TEST_GENERIC_PY_VERSION=3.14.6 COOP_FABRIC_PYTHON="$FABRIC_PY" COOP_FLEET_TEST_MODE=1 \
+if ! COOP_TEST_GENERIC_PY_VERSION=3.14.6 COOP_FLEET_TEST_MODE=1 \
   bash "$ROOT/scripts/install.sh" --force >"$OUT" 2>&1; then
   echo 'Python 3.14-only install fixture failed unexpectedly'; tail -40 "$OUT"; cat "$CALLS"; exit 1
 fi
 grep -F 'BREW install python@3.12' "$CALLS" >/dev/null \
   || { echo 'Python 3.14-only install did not bootstrap python@3.12'; cat "$CALLS"; exit 1; }
-grep -F "PIPX install --force --python $FABRIC_PY ms-fabric-cli==1.7.0" "$CALLS" >/dev/null \
-  || { echo 'Fabric CLI did not use the bootstrapped compatible Python'; cat "$CALLS"; exit 1; }
+grep -F "PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0" "$CALLS" >/dev/null \
+  || { echo 'Fabric CLI did not use pipx standalone Python 3.12 for bootstrap'; cat "$CALLS"; exit 1; }
 echo '  ✓ Python 3.14-only install bootstraps and uses a compatible Fabric interpreter'
 
 # A compatible generic interpreter must remain untouched; no redundant Python

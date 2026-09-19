@@ -9,12 +9,17 @@ reported as states instead of triggering login or OAuth registration.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
+import ntpath
 import os
 import re
+import signal
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -27,8 +32,16 @@ except Exception:  # pragma: no cover - import fallback for direct embedding
     load_yaml = None
 
 FABRIC_RESOURCE = "https://api.fabric.microsoft.com"
+SQL_RESOURCE = "https://database.windows.net/"
+TOKEN_RESOURCES = {FABRIC_RESOURCE, SQL_RESOURCE}
 FABRIC_TOKEN_ENV = "COOP_FABRIC_MCP_TOKEN"
 GLOBAL_SQL_ENDPOINT_URL = f"{FABRIC_RESOURCE}/v1/mcp/dataPlane/sqlEndpoint"
+REQUEST_HEADERS_HELPER = str(
+    Path(__file__).resolve().parent / "fabric_request_headers.mjs"
+)
+TOKEN_FRAME_RE = re.compile(rb"^coop-azure-token-v1\t([A-Za-z0-9_-]+)\tend$")
+MAX_TOKEN_HELPER_OUTPUT = 32 * 1024
+_TOKEN_HELPER_SIGNAL_LOCK = threading.Lock()
 UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -214,33 +227,65 @@ def classify_tools(tools: list[Any]) -> str:
 def sqlendpoint_config_status(entry: Any) -> str:
     if not isinstance(entry, dict):
         return "unavailable"
-    if any(
-        field in entry
-        for field in (
-            "command",
-            "args",
-            "env",
-            "bearerToken",
-            "headers",
-            "oauth",
-        )
-    ):
-        return "unavailable"
-    if (
-        entry.get("auth") != "bearer"
-        or entry.get("bearerTokenEnv") != FABRIC_TOKEN_ENV
-        or entry.get("lifecycle") != "lazy"
-    ):
+    if set(entry) != {
+        "url",
+        "auth",
+        "requestHeadersCommand",
+        "requestTimeoutMs",
+        "lifecycle",
+        "_coop_target",
+    }:
         return "unavailable"
     raw_url = entry.get("url")
     url = raw_url if isinstance(raw_url, str) else ""
+    header = entry.get("requestHeadersCommand")
+    target = entry.get("_coop_target")
+    target_keys = {
+        "scope",
+        "workspace_id",
+        "item_id",
+        "item_type",
+        "reason",
+        "client",
+        "tenant_id",
+        "environment",
+        "item_name",
+    }
+    if (
+        entry.get("auth") is not False
+        or entry.get("requestTimeoutMs") != 60000
+        or entry.get("lifecycle") != "lazy"
+        or not isinstance(header, dict)
+        or set(header) != {"command", "args", "timeoutMs"}
+        or header.get("command") != "node"
+        or header.get("args") != [REQUEST_HEADERS_HELPER, url]
+        or header.get("timeoutMs") != 10000
+        or not isinstance(target, dict)
+        or set(target) != target_keys
+        or any(not isinstance(target.get(key), str) for key in target_keys)
+    ):
+        return "unavailable"
     if url == GLOBAL_SQL_ENDPOINT_URL:
-        return "registered"
+        return (
+            "registered"
+            if target["scope"] == "global"
+            and target["workspace_id"] == ""
+            and target["item_id"] == ""
+            else "unavailable"
+        )
     m = re.match(
         rf"^{re.escape(FABRIC_RESOURCE)}/v1/mcp/dataPlane/workspaces/({UUID_RE.pattern[1:-1]})/items/({UUID_RE.pattern[1:-1]})/sqlEndpoint$",
         url,
     )
-    return "registered" if m else "target_invalid"
+    if not m:
+        return "target_invalid"
+    return (
+        "registered"
+        if target["scope"] == "item"
+        and canonical_uuid(target["workspace_id"]) == canonical_uuid(m.group(1))
+        and canonical_uuid(target["item_id"]) == canonical_uuid(m.group(2))
+        else "unavailable"
+    )
 
 
 def registered_target(entry: Any) -> SqlEndpointTarget | None:
@@ -283,91 +328,279 @@ def _is_windows() -> bool:
     return os.name == "nt"
 
 
-def _az_token_command() -> list[str]:
-    args = [
-        "account",
-        "get-access-token",
-        "--resource",
-        FABRIC_RESOURCE,
-        "--output",
-        "json",
-    ]
-    if _is_windows():
-        return [os.environ.get("COMSPEC") or "cmd.exe", "/d", "/c", "az", *args]
-    return ["az", *args]
-
-
-def _token_failure_requires_auth(stdout: str, stderr: str) -> bool:
-    message = f"{stdout}\n{stderr}".lower()
-    return any(
-        marker in message
-        for marker in (
-            "az login",
-            "not logged in",
-            "login required",
-            "authentication required",
-            "interaction_required",
-            "interactionrequired",
-            "invalid_grant",
-            "aadsts50058",
-            "aadsts50076",
-            "aadsts50078",
-            "aadsts50079",
-            "aadsts50158",
-        )
-    )
-
-
-def _token_failure_state(stdout: str, stderr: str) -> str:
-    message = f"{stdout}\n{stderr}".lower()
-    if "is not recognized as an internal or external command" in message:
-        return "azure_cli_unavailable"
-    return (
-        "auth_required"
-        if _token_failure_requires_auth(stdout, stderr)
-        else "token_command_failed"
-    )
-
-
-def az_access_token(timeout: int = 8) -> tuple[str, str]:
-    # On Windows Azure CLI is commonly an az.CMD shim. CreateProcess cannot
-    # execute it directly, so use cmd.exe explicitly without enabling shell=True.
-    if shutil.which("az") is None:
-        return "", "azure_cli_unavailable"
-    cmd = _az_token_command()
+def _native_node() -> str | None:
+    candidate = shutil.which("node")
+    if not candidate:
+        return None
     try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
+        node = Path(candidate).resolve(strict=True)
+        cwd = Path.cwd().resolve(strict=True)
+        if not node.is_absolute() or not node.is_file() or node.is_relative_to(cwd):
+            return None
+        if _is_windows():
+            if node.suffix.lower() != ".exe":
+                return None
+        elif not os.access(node, os.X_OK):
+            return None
+        return str(node)
+    except (OSError, RuntimeError):
+        return None
+
+
+def _token_helper_environment() -> dict[str, str]:
+    allowed = {
+        "PATH",
+        "HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LOCALAPPDATA",
+        "APPDATA",
+        "SystemRoot",
+        "WINDIR",
+        "SystemDrive",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_CTYPE",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "AZURE_CONFIG_DIR",
+    }
+    # Python normalizes Windows os.environ keys to uppercase.
+    if _is_windows():
+        allowed = {key.upper() for key in allowed}
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key in allowed and value and "\0" not in value
+    }
+
+
+def _windows_taskkill_command(pid: int) -> list[str] | None:
+    raw_root = os.environ.get("SystemRoot", "")
+    if not raw_root or "\0" in raw_root or not ntpath.isabs(raw_root):
+        return None
+    try:
+        system_root = Path(raw_root).resolve(strict=True)
+        system32 = (system_root / "System32").resolve(strict=True)
+        taskkill = (system32 / "taskkill.exe").resolve(strict=True)
+        if not taskkill.is_file() or taskkill.parent != system32:
+            return None
+    except (OSError, RuntimeError):
+        return None
+    return [str(taskkill), "/PID", str(pid), "/T", "/F"]
+
+
+def _terminate_token_helper_tree(proc: subprocess.Popen[bytes]) -> None:
+    if _is_windows():
+        taskkill = _windows_taskkill_command(proc.pid)
+        if taskkill:
+            try:
+                subprocess.run(
+                    taskkill,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env={"SystemRoot": ntpath.dirname(ntpath.dirname(taskkill[0]))},
+                    shell=False,
+                    timeout=2,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=1)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    try:
+        proc.wait(timeout=1)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def _run_token_helper(
+    command: list[str], timeout: int
+) -> tuple[int, bytes, bytes, bool]:
+    windows = _is_windows()
+    owns_signal = False
+    previous_sigterm: Any = None
+    caught_signal: tuple[int, Any] | None = None
+    proc: subprocess.Popen[bytes] | None = None
+    streams: list[bytes] = [b"", b""]
+    overflow = threading.Event()
+    timed_out = False
+
+    class _TokenHelperInterrupted(BaseException):
+        pass
+
+    def on_sigterm(signum: int, frame: Any) -> None:
+        nonlocal caught_signal
+        if caught_signal is None:
+            caught_signal = (signum, frame)
+            if proc is not None:
+                _terminate_token_helper_tree(proc)
+        raise _TokenHelperInterrupted
+
+    if not windows:
+        if (
+            threading.current_thread() is not threading.main_thread()
+            or not _TOKEN_HELPER_SIGNAL_LOCK.acquire(blocking=False)
+        ):
+            raise OSError("token helper signal ownership unavailable")
+        owns_signal = True
+        try:
+            previous_sigterm = signal.getsignal(signal.SIGTERM)
+            signal.signal(signal.SIGTERM, on_sigterm)
+        except BaseException:
+            _TOKEN_HELPER_SIGNAL_LOCK.release()
+            owns_signal = False
+            raise
+
+    try:
+        proc = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=_token_helper_environment(),
             shell=False,
+            start_new_session=not windows,
+            creationflags=(
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if windows else 0
+            ),
         )
-    except subprocess.TimeoutExpired:
-        return "", "token_timeout"
-    except UnicodeDecodeError:
-        return "", "token_output_invalid"
+
+        def read_stream(index: int) -> None:
+            pipe = proc.stdout if index == 0 else proc.stderr
+            assert pipe is not None
+            data = pipe.read(MAX_TOKEN_HELPER_OUTPUT + 1)
+            streams[index] = data
+            if len(data) > MAX_TOKEN_HELPER_OUTPUT:
+                overflow.set()
+
+        readers = [
+            threading.Thread(target=read_stream, args=(index,), daemon=True)
+            for index in (0, 1)
+        ]
+        for reader in readers:
+            reader.start()
+        deadline = time.monotonic() + timeout
+        while proc.poll() is None:
+            if overflow.is_set():
+                _terminate_token_helper_tree(proc)
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                _terminate_token_helper_tree(proc)
+                break
+            try:
+                proc.wait(timeout=min(0.05, remaining))
+            except subprocess.TimeoutExpired:
+                pass
+        for reader in readers:
+            reader.join(timeout=1)
+        if overflow.is_set() and proc.poll() is None:
+            _terminate_token_helper_tree(proc)
+    except _TokenHelperInterrupted:
+        if proc is not None and proc.poll() is None:
+            _terminate_token_helper_tree(proc)
+    finally:
+        if owns_signal:
+            signal.signal(signal.SIGTERM, previous_sigterm)
+            _TOKEN_HELPER_SIGNAL_LOCK.release()
+
+    if caught_signal is not None:
+        signum, frame = caught_signal
+        if previous_sigterm == signal.SIG_DFL:
+            os.kill(os.getpid(), signum)
+            raise SystemExit(128 + signum)
+        if callable(previous_sigterm):
+            previous_sigterm(signum, frame)
+    if proc is None:
+        raise OSError("token helper launch interrupted")
+    return (
+        24 if overflow.is_set() else proc.returncode,
+        streams[0],
+        streams[1],
+        timed_out,
+    )
+
+
+def _parse_token_frame(stdout: bytes) -> str | None:
+    match = TOKEN_FRAME_RE.fullmatch(stdout)
+    if not match:
+        return None
+    encoded = match.group(1)
+    try:
+        token_bytes = base64.b64decode(
+            encoded + b"=" * (-len(encoded) % 4), altchars=b"-_", validate=True
+        )
+        if base64.urlsafe_b64encode(token_bytes).rstrip(b"=") != encoded:
+            return None
+        token = token_bytes.decode("ascii")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not (0 < len(token) <= 16384) or any(
+        not 0x21 <= ord(char) <= 0x7E for char in token
+    ):
+        return None
+    return token
+
+
+def az_access_token(
+    timeout: int = 10, resource: str = FABRIC_RESOURCE
+) -> tuple[str, str]:
+    if resource not in TOKEN_RESOURCES:
+        return "", "token_command_failed"
+    node = _native_node()
+    if not node:
+        return "", "azure_cli_unavailable"
+    try:
+        code, stdout, stderr, timed_out = _run_token_helper(
+            [node, REQUEST_HEADERS_HELPER, "--token", resource], timeout
+        )
     except OSError:
         return "", "token_launch_failed"
-    if proc.returncode != 0:
-        return "", _token_failure_state(proc.stdout, proc.stderr)
-    try:
-        data = json.loads(proc.stdout)
-    except (json.JSONDecodeError, TypeError):
+    if timed_out:
+        return "", "token_timeout"
+    if stderr:
         return "", "token_output_invalid"
-    if not isinstance(data, dict):
-        return "", "token_output_invalid"
-    token = data.get("accessToken")
-    valid = (
-        isinstance(token, str)
-        and 0 < len(token) <= 16384
-        and token.isascii()
-        and all(0x21 <= ord(char) <= 0x7E for char in token)
-    )
-    if valid and isinstance(token, str):
-        return token, "ok"
-    return "", "token_output_invalid"
+    if code != 0:
+        return "", {
+            20: "azure_cli_unavailable",
+            21: "token_launch_failed",
+            22: "token_timeout",
+            24: "token_output_invalid",
+            25: "auth_required",
+        }.get(code, "token_command_failed")
+    token = _parse_token_frame(stdout)
+    return (token, "ok") if token is not None else ("", "token_output_invalid")
 
 
 def fabric_get_json(

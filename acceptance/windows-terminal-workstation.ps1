@@ -379,6 +379,12 @@ function Get-ManifestPinProof([object]$Doctor, [object]$Manifest, [string]$Obser
     $version = $Manifest.python_tools.PSObject.Properties[$name].Value
     if ($name -eq 'fabric-cicd') {
       & $requireDoctorCheck "fabric-cicd $version (library, in the Fabric CLI env)"
+    } elseif ($name -eq 'pyodbc') {
+      $pattern = '^Fabric SQL fallback ready \(pyodbc ' + [regex]::Escape([string]$version) + ', ODBC Driver ([0-9]+)\)$'
+      $matches = @($Doctor.checks | Where-Object { $_.status -ceq 'ok' -and $_.name -cmatch $pattern })
+      if ($matches.Count -ne 1 -or [int]([regex]::Match($matches[0].name, $pattern).Groups[1].Value) -lt 18) {
+        throw "$Label Doctor did not uniquely prove the pyodbc $version / ODBC Driver 18+ runtime contract"
+      }
     } else {
       $normal = "$name $version matches manifest ($version)"
       & $requireDoctorCheck $normal "$normal (CLI-reported; pipx metadata unreadable)"

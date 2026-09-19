@@ -302,6 +302,18 @@ else
   warn "fabric-cicd: install the Microsoft Fabric CLI first" "coop install"
 fi
 
+# The pyodbc fallback is a required installed capability: use the exact runtime
+# selected for execution and require both the exact pin and Driver 18+ visibility.
+sql_runtime="$(coop_fabric_sql_runtime_status 2>/dev/null)" || true
+case "$sql_runtime" in
+  ready*) ok "Fabric SQL fallback ready (pyodbc $(printf '%s' "$sql_runtime" | cut -f2), ODBC Driver $(printf '%s' "$sql_runtime" | cut -f3))" ;;
+  pyodbc_missing) bad "Fabric SQL fallback: pyodbc missing from selected runtime" "coop sync" ;;
+  pyodbc_wrong*) bad "Fabric SQL fallback: pyodbc $(printf '%s' "$sql_runtime" | cut -f2) differs from manifest ($(coop_manifest_get python_tools.pyodbc))" "coop sync" ;;
+  pyodbc_unloadable) bad "Fabric SQL fallback: pyodbc is installed but unloadable" "coop sync; repair the ms-fabric-cli environment if it persists" ;;
+  driver_missing*) bad "Fabric SQL fallback: ODBC Driver 18+ for SQL Server is missing" "Windows: coop install --yes; otherwise install Microsoft ODBC Driver 18, then run: coop doctor" ;;
+  *) bad "Fabric SQL fallback: selected Fabric Python runtime is unavailable" "coop install" ;;
+esac
+
 # Tabular Editor CLI (te — cross-platform; BPA reviews run through `te bpa run`)
 proj_yml="$(coop_find_project_yml)"
 if ! coop_tool_enabled "$proj_yml" "tabular_editor_cli"; then
@@ -566,17 +578,22 @@ section "Powerline / splash assets"
 
 if [ "$FIX" = 1 ] && { [ "$FAIL" -gt 0 ] || [ "$WARN" -gt 0 ]; }; then
   section "Applying fixes (--fix)"
+  repair_failed=0
   if [ -f "$COOP_ROOT/scripts/sync.sh" ]; then
     "$COOP_ROOT/scripts/sync.sh" >/dev/null 2>&1 && coop_ok "synced extensions / MCP / assets" || coop_warn "sync had issues (run: coop sync)"
   fi
   if have pipx; then
     if ! have fab; then
-      coop_info "pipx install ms-fabric-cli"
-      if pipx install ms-fabric-cli >/dev/null 2>&1; then
-        pipx inject ms-fabric-cli fabric-cicd >/dev/null 2>&1 || true
-        coop_ok "ms-fabric-cli installed"
+      fabric_spec="$(coop_manifest_python_spec ms-fabric-cli)"
+      [ -n "$fabric_spec" ] || fabric_spec=ms-fabric-cli
+      coop_info "pipx install $fabric_spec"
+      if pipx install "$fabric_spec" >/dev/null 2>&1 \
+          && coop_converge_fabric_python_packages \
+          && coop_ensure_fabric_odbc_driver 1; then
+        coop_ok "managed Fabric runtime installed"
       else
-        coop_warn "could not install ms-fabric-cli (run: pipx install ms-fabric-cli)"
+        coop_warn "could not install the managed Fabric runtime" "run: coop install"
+        repair_failed=1
       fi
     fi
     for t in coop-data-doc coop-sql-review coop-dax-review; do
@@ -586,6 +603,7 @@ if [ "$FIX" = 1 ] && { [ "$FAIL" -gt 0 ] || [ "$WARN" -gt 0 ]; }; then
       fi
     done
   fi
+  [ "$repair_failed" -eq 0 ] || exit 1
   coop_info "Re-checking… (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)"
   echo >&2
   # Propagate --json/--publish so the re-check emits the machine-readable document.

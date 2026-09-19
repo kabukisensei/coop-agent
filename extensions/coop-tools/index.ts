@@ -30,9 +30,10 @@ import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendi
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   buildStandardsContext,
   provenanceText,
@@ -78,6 +79,137 @@ const DATADOC_PARAMS = Type.Object({
     Type.Number({ description: "For command='lineage': hops up/downstream to include (default 1)." }),
   ),
 });
+
+const FABRIC_SQL_QUERY_PARAMS = Type.Object({
+  query: Type.String({ description: "One plain SELECT with a literal TOP bound. Sent to the helper over stdin, never argv." }),
+  maximum_rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000, description: "Optional result cap at or below the query's TOP bound." })),
+});
+
+interface FabricSqlInvocation { bin: string; args: string[]; env?: Record<string, string> }
+
+export function fabricSqlPythonResolverInvocation(
+  root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
+  platform = process.platform,
+): FabricSqlInvocation {
+  if (platform === "win32") return {
+    bin: "powershell.exe",
+    args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ". (Join-Path $env:COOP_ROOT 'lib\\common.ps1'); $py = Get-CoopFabricPython; if (-not $py) { exit 65 }; [Console]::Out.WriteLine($py)"],
+    env: { COOP_ROOT: root },
+  };
+  return {
+    bin: "bash",
+    args: ["-c", '. "$COOP_ROOT/lib/common.sh"; coop_fabric_python || exit 65'],
+    env: { COOP_ROOT: root },
+  };
+}
+
+export function fabricSqlHelperInvocation(
+  python: string,
+  root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
+): FabricSqlInvocation {
+  return { bin: python, args: [join(root, "lib", "fabric_sql_query.py")] };
+}
+
+async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<{ python?: string; state?: string }> {
+  if (signal?.aborted) return { state: "aborted" };
+  const invocation = fabricSqlPythonResolverInvocation();
+  return await new Promise((done) => {
+    const child = spawn(invocation.bin, invocation.args, {
+      stdio: ["ignore", "pipe", "ignore"], shell: false,
+      env: { ...process.env, ...invocation.env },
+    });
+    let stdout = "", finished = false, stopState = "";
+    let forceTimer: ReturnType<typeof setTimeout> | undefined;
+    let reapTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (value: { python?: string; state?: string }) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeoutTimer); clearTimeout(forceTimer); clearTimeout(reapTimer);
+      signal?.removeEventListener("abort", onAbort);
+      done(value);
+    };
+    const stop = (state: string) => {
+      if (stopState) return;
+      stopState = state;
+      try { child.kill("SIGTERM"); } catch { /* already exited */ }
+      forceTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already exited */ } }, 250);
+      reapTimer = setTimeout(() => finish({ state }), 1_000);
+    };
+    const onAbort = () => stop("aborted");
+    const timeoutTimer = setTimeout(() => stop("python_resolver_timeout"), 30_000);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    child.stdout?.on("data", (data: any) => {
+      if (stopState) return;
+      if (data.length > 4_096 - stdout.length) return stop("selected_python_unavailable");
+      stdout += data.toString();
+    });
+    child.on("error", () => finish({ state: stopState || "selected_python_unavailable" }));
+    child.on("close", (code: number | null) => {
+      if (stopState) return finish({ state: stopState });
+      if (code !== 0) return finish({ state: "selected_python_unavailable" });
+      const python = stdout.replace(/\r?\n$/, "");
+      if (!python || python !== python.trim() || /[\r\n]/.test(python) || !isAbsolute(python)) {
+        return finish({ state: "selected_python_unavailable" });
+      }
+      try {
+        if (!statSync(python).isFile()) throw new Error("not a file");
+        if (process.platform !== "win32") accessSync(python, constants.X_OK);
+      } catch {
+        return finish({ state: "selected_python_unavailable" });
+      }
+      finish({ python });
+    });
+  });
+}
+
+async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, cwd: string): Promise<any> {
+  if (signal?.aborted) return { ok: false, state: "aborted" };
+  const selected = await resolveFabricSqlPython(signal);
+  if (!selected.python) return { ok: false, state: selected.state || "selected_python_unavailable" };
+  if (signal?.aborted) return { ok: false, state: "aborted" };
+  const invocation = fabricSqlHelperInvocation(selected.python);
+  return await new Promise((done) => {
+    const child = spawn(invocation.bin, invocation.args, { cwd, stdio: ["pipe", "pipe", "ignore"], shell: false });
+    let stdout = "", finished = false, stopState = "";
+    let forceTimer: ReturnType<typeof setTimeout> | undefined;
+    let reapTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (value: any) => {
+      if (!finished) {
+        finished = true;
+        clearTimeout(timer);
+        clearTimeout(forceTimer);
+        clearTimeout(reapTimer);
+        signal?.removeEventListener("abort", onAbort);
+        done(value);
+      }
+    };
+    const stop = (state: string) => {
+      if (stopState) return;
+      stopState = state;
+      try { child.kill("SIGTERM"); } catch { /* already exited */ }
+      forceTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already exited */ } }, 250);
+      reapTimer = setTimeout(() => finish({ ok: false, state }), 1_000);
+    };
+    const onAbort = () => stop("aborted");
+    const timer = setTimeout(() => stop("timeout"), 60_000);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    child.stdout?.on("data", (data: any) => {
+      if (stopState) return;
+      if (data.length > 2_000_000 - stdout.length) return stop("helper_output_invalid");
+      stdout += data.toString();
+    });
+    child.on("error", () => finish({ ok: false, state: stopState || "helper_launch_failed" }));
+    child.on("close", (code: number | null) => {
+      if (stopState) return finish({ ok: false, state: stopState });
+      try {
+        const parsed = JSON.parse(stdout);
+        finish(parsed && typeof parsed === "object" ? parsed : { ok: false, state: "helper_output_invalid" });
+      } catch { finish({ ok: false, state: "helper_output_invalid" }); }
+    });
+    child.stdin?.on("error", () => { /* child exited before consuming input */ });
+    child.stdin?.end(JSON.stringify(params));
+  });
+}
 
 interface ReviewParams {
   paths?: string[];
@@ -466,12 +598,32 @@ export function contractTeConfig(text: string): TeConfig {
       if (v && !/^TODO/i.test(v)) models.push(v);
     }
   }
+  if (/^(null|~)$/i.test(rules)) rules = "";
   return { enabled, exe, rules, models };
 }
 
-function parseBpaOutput(stdout: string): any {
+function parseBpaOutput(stdout: string, legacy: boolean): any {
   const findings = [];
   const summary = { error: 0, warning: 0, info: 0 };
+
+  if (!legacy) {
+    const report = JSON.parse(stdout);
+    if (!report || !Array.isArray(report.results) ||
+        !Number.isInteger(report.violations) || report.violations !== report.results.length ||
+        !Number.isInteger(report.ruleErrors) || report.ruleErrors < 0) {
+      throw new Error("TE returned an invalid BPA JSON report.");
+    }
+    for (const result of report.results) {
+      const severity = String(result?.severityLabel).toLowerCase();
+      if (!result || typeof result.ruleId !== "string" || typeof result.ruleName !== "string" ||
+          typeof result.objectName !== "string" || !["error", "warning", "info"].includes(severity)) {
+        throw new Error("TE returned an invalid BPA finding.");
+      }
+      findings.push({ rule: result.ruleId, severity, file: "", object: result.objectName, message: result.ruleName });
+      (summary as any)[severity]++;
+    }
+    return { findings, summary, ruleErrors: report.ruleErrors };
+  }
   
   const lines = stdout.split("\n");
   for (const line of lines) {
@@ -1997,6 +2149,26 @@ export default function coopTools(pi: ExtensionAPI) {
   };
 
   pi.registerTool({
+    name: "fabric_sql_query",
+    label: "Fabric SQL Query (pyodbc fallback)",
+    description: "Separate governed pyodbc fallback for one bounded read against the canonical Fabric SQL target. First attempt the managed fabric-sqlendpoint MCP tool. Call fabric_sql_query only after that actual attempt fails because the MCP server/tool is unavailable or missing, or because of authentication, timeout, connection, or transport failure. Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
+    promptSnippet: "Post-MCP-failure pyodbc fallback for one approval-gated bounded Fabric SELECT TOP read",
+    promptGuidelines: [
+      "First attempt managed fabric-sqlendpoint MCP. Only after an actual unavailable/authentication/timeout/connection/transport/tool-missing failure may you issue a separate fabric_sql_query call; never fallback before MCP or for SQL/business/query rejection, and never cascade automatically.",
+      "Use only one plain SELECT with a literal TOP bound; mutations, batches, cross-database names, and unbounded reads are rejected before authentication or connection.",
+    ],
+    parameters: FABRIC_SQL_QUERY_PARAMS,
+    executionMode: "sequential",
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const details = await runFabricSqlHelper(params, signal, ctx.cwd);
+      const text = details?.ok
+        ? `fabric_sql_query: ${details.row_count} row(s) returned${details.truncated ? " (capped)" : ""}. Structured rows are in details.`
+        : `fabric_sql_query unavailable: ${String(details?.state || "internal_error")}.`;
+      return { content: [{ type: "text" as const, text }], details };
+    },
+  });
+
+  pi.registerTool({
     name: "sql_review",
     label: "SQL Review",
     description:
@@ -2034,8 +2206,8 @@ export default function coopTools(pi: ExtensionAPI) {
     name: "bpa_review",
     label: "Tabular Editor BPA",
     description:
-      "Run Tabular Editor BPA against semantic-model files and return findings as JSON. Advisory only — reports deviations from Cooptimize BPA standards and never edits or blocks.",
-    promptSnippet: "Lint Semantic Models against Cooptimize BPA standards (advisory, JSON output)",
+      "Run Tabular Editor BPA against semantic-model files using built-in or configured rules and return findings as JSON. Advisory only — never edits model files.",
+    promptSnippet: "Check semantic models with Tabular Editor BPA (advisory, JSON output)",
     promptGuidelines: [
       "Use bpa_review to check semantic models before proposing or reviewing changes.",
       "Treat results as advisory; summarize findings by severity.",
@@ -2047,7 +2219,9 @@ export default function coopTools(pi: ExtensionAPI) {
       if (!contract) return { content: [{ type: "text" as const, text: "No .coop/project.yml found." }] };
       const cfg = contractTeConfig(safeRead(contract));
       if (!cfg.enabled) return { content: [{ type: "text" as const, text: "Tabular Editor CLI is not enabled in .coop/project.yml." }] };
-      if (!cfg.exe || !cfg.rules) return { content: [{ type: "text" as const, text: "Tabular Editor executable_path or bpa_rules_path is missing in .coop/project.yml." }] };
+      if (!cfg.exe) return { content: [{ type: "text" as const, text: "Tabular Editor executable_path is missing in .coop/project.yml." }] };
+      const legacy = /^TabularEditor(?:\.exe)?$/i.test(cfg.exe.replace(/\\/g, "/").split("/").pop() || "");
+      if (legacy && !cfg.rules) return { content: [{ type: "text" as const, text: "Legacy TabularEditor.exe requires bpa_rules_path. Configure the cross-platform te CLI to use built-in rules." }] };
 
       let models = cfg.models;
       const p = params as ReviewParams;
@@ -2058,33 +2232,64 @@ export default function coopTools(pi: ExtensionAPI) {
       const allSummary = { error: 0, warning: 0, info: 0 };
       let finalCode = 0;
       let allStdout = "";
+      let allStderr = "";
+      let ruleErrors = 0;
+      const invocations: string[][] = [];
 
       for (const model of models) {
-        let absModel = isAbsolute(model) ? model : resolve(resolve(contract, "..", ".."), model);
-        let absRules = isAbsolute(cfg.rules) ? cfg.rules : resolve(resolve(contract, "..", ".."), cfg.rules);
-        const args = [absModel, "-A", absRules, "-V"];
+        const projectRoot = resolve(contract, "..", "..");
+        const absModel = isAbsolute(model) ? model : resolve(projectRoot, model);
+        const absRules = cfg.rules ? resolve(projectRoot, cfg.rules) : "";
+        const args = legacy ? [absModel, "-A", absRules, "-V"] :
+          ["bpa", "run", "--model", absModel, "--output-format", "json", "--non-interactive", ...(absRules ? ["--rules", absRules] : [])];
+        invocations.push(args);
         let res;
         try {
           res = await pi.exec(cfg.exe, args, { cwd: ctx.cwd, signal });
         } catch (e: any) {
-          return { content: [{ type: "text" as const, text: `Failed to run Tabular Editor: ${errMsg(e)}` }] };
+          return {
+            content: [{ type: "text" as const, text: `Failed to run Tabular Editor: ${errMsg(e)}` }],
+            details: { tool: "bpa_review", analysisFailed: true, invocations },
+          };
         }
         allStdout += res.stdout + "\n";
+        allStderr += (res.stderr || "") + "\n";
         if (res.code !== 0) finalCode = res.code;
-        const { findings, summary } = parseBpaOutput(res.stdout);
-        allFindings.push(...findings);
+        let parsed;
+        try {
+          parsed = parseBpaOutput(res.stdout, legacy);
+        } catch (e: any) {
+          return {
+            content: [{ type: "text" as const, text: `BPA results could not be read (exit ${res.code}): ${errMsg(e)}` }],
+            details: { tool: "bpa_review", analysisFailed: true, invocations, exitCode: res.code, reportRejected: true, stdout: allStdout, stderr: allStderr },
+          };
+        }
+        const { findings, summary } = parsed;
+        ruleErrors += parsed.ruleErrors || 0;
+        allFindings.push(...findings.map((finding: any) => ({ ...finding, file: absModel })));
         allSummary.error += summary.error;
         allSummary.warning += summary.warning;
         allSummary.info += summary.info;
+        if (res.code !== 0 && !(res.code === 1 && findings.length > 0 && !parsed.ruleErrors)) {
+          return {
+            content: [{ type: "text" as const, text: `Tabular Editor BPA did not complete successfully (exit ${res.code}). See details for diagnostics and any partial findings.` }],
+            details: { tool: "bpa_review", analysisFailed: true, invocations, exitCode: res.code, report: { findings: allFindings, summary: allSummary, ruleErrors }, stdout: allStdout, stderr: allStderr },
+          };
+        }
       }
 
-      const report = { findings: allFindings, summary: allSummary };
+      const report = { findings: allFindings, summary: allSummary, ruleErrors };
       const scopeLine = `Scope: ${models.join(", ")}`;
       return {
-        content: [{ type: "text" as const, text: `${summarizeReview("bpa_review", report, allStdout, finalCode)}\n${scopeLine}` }],
-        details: { tool: "bpa_review", args: ["..."], report, exitCode: finalCode, stdout: allStdout },
+        content: [{ type: "text" as const, text: `${summarizeReview("bpa_review", report, allStdout, finalCode)}\n${scopeLine}${ruleErrors ? `\nBPA could not evaluate ${ruleErrors} rule(s); results are incomplete.` : ""}` }],
+        details: { tool: "bpa_review", analysisFailed: ruleErrors > 0, invocations, report, exitCode: finalCode, stdout: allStdout, stderr: allStderr },
       };
     },
+  });
+
+  // Pi reads error overrides from tool_result hooks, not from execute's result.
+  pi.on("tool_result", async (event: any) => {
+    if (event.toolName === "bpa_review" && event.details?.analysisFailed === true) return { isError: true };
   });
 
   pi.registerTool({

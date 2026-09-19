@@ -33,7 +33,8 @@ cat > "$TMP/manifest.json" <<EOF
     "coop-sql-review": "0.15.2",
     "coop-dax-review": "0.22.0",
     "ms-fabric-cli": "$PIN_FAB",
-    "fabric-cicd": "1.3.0"
+    "fabric-cicd": "1.3.0",
+    "pyodbc": "5.3.0"
   }
 }
 EOF
@@ -65,6 +66,20 @@ cat > "$FAKEBIN/pipx" <<'EOF'
 #!/bin/sh
 FIX="$COOP_TEST_PIPX_FIXTURE"
 [ -n "$FIX" ] || exit 1
+if [ -n "${COOP_TEST_CALLS:-}" ]; then printf 'PIPX %s\n' "$*" >> "$COOP_TEST_CALLS"; fi
+case "$*" in *"${COOP_TEST_PIPX_FAIL:-__never__}"*) exit 1 ;; esac
+if [ "$1" = "inject" ]; then exit 0; fi
+if [ "$1" = "install" ] && [ "${COOP_TEST_FIX_INSTALL:-0}" = 1 ]; then
+  case "$2" in
+    ms-fabric-cli==*)
+      mkdir -p "$COOP_PIPX_HOME/venvs/ms-fabric-cli/bin"
+      printf '#!/bin/sh\necho "fab version 1.7.0"\n' > "$COOP_PIPX_HOME/venvs/ms-fabric-cli/bin/fab"
+      chmod +x "$COOP_PIPX_HOME/venvs/ms-fabric-cli/bin/fab"
+      printf 'Name: ms-fabric-cli\nVersion: 1.7.0\n' > "$FIX/ms-fabric-cli--ms-fabric-cli.meta"
+      ;;
+  esac
+  exit 0
+fi
 if [ "$1" = "runpip" ] && [ "$3" = "show" ]; then
   f="$FIX/$2--$4.meta"
   [ -f "$f" ] && { cat "$f"; exit 0; }
@@ -81,12 +96,14 @@ put_meta() { # <venv> <dist> <version-or-empty>
 mkdir -p "$TMP/fixtures"
 
 # --- fake venv python (fixture): bakes version + Requires-Python answers ------
-venv_python() { # <venv> <version> [requires-python]
-  local rp="${3:-}"
+venv_python() { # <venv> <version> [requires-python] [sql-state]
+  local rp="${3:-}" sql_state="${4:-ready}"
   {
+    echo '#!/bin/sh'
     echo "FAKEPY_VERSION='$2'"
     echo "FAKEPY_RP='$rp'"
-    cat "$ROOT/tests/fixtures/venv-python.sh"
+    printf "FAKEPY_SQL_STATE='%s'\n" "$sql_state"
+    tr -d '\r' < "$ROOT/tests/fixtures/venv-python.sh"
   } > "$PIPXHOME/venvs/$1/bin/python"
   chmod +x "$PIPXHOME/venvs/$1/bin/python"
 }
@@ -116,7 +133,7 @@ make_real_cdd() { # <version>
 }
 
 
-doctor_out() { # <scratch-cwd> [path-prefix]
+doctor_out() { # <scratch-cwd> [path-prefix] [doctor-arg]
   local pfx="${2:-}"
   local fixture_bins="$PIPXHOME/venvs/ms-fabric-cli/bin:$PIPXHOME/venvs/coop-data-doc/bin:$FAKEBIN"
   ( cd "$1" && COOP_ROOT="$ROOT" \
@@ -125,7 +142,7 @@ doctor_out() { # <scratch-cwd> [path-prefix]
       COOP_TEST_PIPX_FIXTURE="$TMP/fixtures" \
       COOP_PIPX_HOME="$PIPXHOME" COOP_PIPX_BIN="$FAKEBIN/pipx" \
       PI_CODING_AGENT_DIR="$TMP/noagent" COOP_TEST_STUB_PATH="$pfx$fixture_bins" \
-      bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null )
+      bash "$ROOT/scripts/doctor.sh" ${3:+"$3"} 2>&1 </dev/null )
 }
 
 d="$TMP/run"; mkdir -p "$d"
@@ -145,6 +162,17 @@ case "$out" in
   *"ms-fabric-cli not installed"*) ko "false 'ms-fabric-cli not installed' warning persists" ;;
   *) ok "no false 'not installed' warning when only fab exists" ;;
 esac
+case "$out" in
+  *"Fabric SQL fallback ready (pyodbc 5.3.0, ODBC Driver 18)"*) ok "doctor verifies pyodbc pin and Driver 18 with the selected runtime" ;;
+  *) ko "doctor did not report the selected Fabric SQL runtime ready" ;;
+esac
+venv_python ms-fabric-cli 3.13.1 "<3.14,>=3.10" driver_missing
+out="$(doctor_out "$d")"
+case "$out" in
+  *"Fabric SQL fallback: ODBC Driver 18+ for SQL Server is missing"*) ok "doctor hard-fails a selected runtime with no Driver 18+" ;;
+  *) ko "doctor did not report missing ODBC Driver 18+" ;;
+esac
+venv_python ms-fabric-cli 3.13.1 "<3.14,>=3.10"
 
 # F2: missing package — no venv metadata and no fab anywhere.
 remove_fab; put_meta ms-fabric-cli ms-fabric-cli ""
@@ -153,6 +181,25 @@ case "$out" in
   *"ms-fabric-cli not installed"*) ok "missing distribution reported" ;;
   *) ko "missing ms-fabric-cli not reported" ;;
 esac
+
+# F2b: Doctor repair installs the exact CLI spec, then delegates both injected
+# libraries and Driver readiness to the managed convergence helpers.
+CALLS="$TMP/doctor-fix.calls"; : > "$CALLS"
+out="$(COOP_TEST_FIX_INSTALL=1 COOP_TEST_CALLS="$CALLS" doctor_out "$d" "" --fix)"
+grep -F 'PIPX install ms-fabric-cli==1.7.0' "$CALLS" >/dev/null \
+  && grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force' "$CALLS" >/dev/null \
+  && grep -F 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force' "$CALLS" >/dev/null \
+  && ok "doctor --fix converges the exact managed Fabric runtime" \
+  || ko "doctor --fix did not use exact managed Fabric specs: $(cat "$CALLS")"
+case "$out" in
+  *"Fabric SQL fallback ready (pyodbc 5.3.0, ODBC Driver 18)"*) ok "doctor --fix re-check sees Fabric SQL readiness" ;;
+  *) ko "doctor --fix re-check did not see Fabric SQL readiness" ;;
+esac
+remove_fab; put_meta ms-fabric-cli ms-fabric-cli ""
+fix_fail_rc=0
+COOP_TEST_FIX_INSTALL=1 COOP_TEST_PIPX_FAIL='pyodbc==5.3.0' doctor_out "$d" "" --fix >/dev/null || fix_fail_rc=$?
+[ "$fix_fail_rc" -ne 0 ] && ok "doctor --fix preserves managed runtime repair failures" \
+  || ko "doctor --fix converted a failed pyodbc convergence into success"
 
 # F3: wrong version — metadata and CLI agree with each other, differ from pin.
 put_meta ms-fabric-cli ms-fabric-cli "1.6.1"
