@@ -195,7 +195,18 @@ printf '%s\n' launched > "$COOP_TEST_MARKER/pi-state"
     New-Item -ItemType Directory -Force -Path $probeMarker | Out-Null
     $childProbe = Join-Path $temp 'child-probe.ps1'
     @'
+param([string]$Mode, [string]$Lib, [string]$TokenValue, [string]$Root, [string]$Config)
 $ErrorActionPreference = 'Continue'
+if ($Mode -eq 'libsrc' -or $Mode -eq 'full') { . $Lib }
+if ($Mode -eq 'full') {
+  $py = Get-CoopPython
+  if ($py) {
+    $runner = Join-Path $Root 'lib\fabric_token_runner.mjs'
+    $helper = Join-Path $Root 'lib\warehouse_mcp.py'
+    $null = @(& node $runner $py $helper $Config 2>&1)
+  }
+}
+if ($Mode -ne 'plain') { $env:COOP_FABRIC_MCP_TOKEN = $TokenValue }
 $rc = -1
 try { & pi; $rc = $LASTEXITCODE } catch {
   $ex = $_.Exception
@@ -211,13 +222,22 @@ Write-Output "rc=$rc"
     $ErrorActionPreference = 'Continue'
     $plainRc = -1
     $prefixedRc = -1
+    $libsrcRc = -1
+    $fullRc = -1
+    $libCommon = Join-Path $root 'lib\common.ps1'
+    $probeConfig = Join-Path $agent 'mcp.json'
     try {
       $env:COOP_TEST_MARKER = $probeMarker
-      $plainOut = [string](& $psHost -NoProfile -ExecutionPolicy Bypass -File $childProbe *>&1)
+      $plainOut = [string](& $psHost -NoProfile -ExecutionPolicy Bypass -File $childProbe plain '' '' '' '' *>&1)
       if ($plainOut -match 'rc=(-?[0-9]+)') { $plainRc = [int64]$Matches[1] }
       $env:PATH = "$pipxBinDir$([System.IO.Path]::PathSeparator)$savedPath"
-      $prefixedOut = [string](& $psHost -NoProfile -ExecutionPolicy Bypass -File $childProbe *>&1)
+      $prefixedOut = [string](& $psHost -NoProfile -ExecutionPolicy Bypass -File $childProbe plain '' '' '' '' *>&1)
       if ($prefixedOut -match 'rc=(-?[0-9]+)') { $prefixedRc = [int64]$Matches[1] }
+      $env:PATH = $savedPath
+      $libsrcOut = [string](& $psHost -NoProfile -ExecutionPolicy Bypass -File $childProbe libsrc $libCommon $token $root $probeConfig *>&1)
+      if ($libsrcOut -match 'rc=(-?[0-9]+)') { $libsrcRc = [int64]$Matches[1] }
+      $fullOut = [string](& $psHost -NoProfile -ExecutionPolicy Bypass -File $childProbe full $libCommon $token $root $probeConfig *>&1)
+      if ($fullOut -match 'rc=(-?[0-9]+)') { $fullRc = [int64]$Matches[1] }
     } finally {
       $ErrorActionPreference = $savedProbeEap
       $env:PATH = $savedPath
@@ -226,6 +246,8 @@ Write-Output "rc=$rc"
     }
     Write-Host "FABRIC_BOUNDARY child-probe-plain-rc=$plainRc"
     Write-Host "FABRIC_BOUNDARY child-probe-pipxfirst-rc=$prefixedRc"
+    Write-Host "FABRIC_BOUNDARY child-probe-libsrc-rc=$libsrcRc"
+    Write-Host "FABRIC_BOUNDARY child-probe-full-rc=$fullRc"
   }
 
   $boundaryState = 'not-windows'
