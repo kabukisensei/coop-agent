@@ -8,7 +8,7 @@ Aaron authorized putting the plan into the repository and setting up what could 
 
 Read [AGENTS.md](../AGENTS.md), then the [canonical Windows-terminal plan](COOP_WINDOWS_TERMINAL_PLAN.md). The plan's document revision 2.0 is the adopted roadmap, not a Coop product release. This preparation record qualifies its original planning-time statements: a source branch has now been reserved, but no implementation or workstation baseline acceptance has occurred.
 
-The Markdown plan is the working source of truth. `Coop_Windows_Terminal_Plan_v2.docx` remains a reading snapshot supplied in the originating conversation; it has not been committed because the available repository file-write interface supports UTF-8 text, not binary uploads. That reading-copy transfer is not a prerequisite for beginning B0 later. Do not claim the Word copy is in the repository or create a broken link to it.
+The Markdown plan is the working source of truth. `Coop_Windows_Terminal_Plan_v2.docx` remains a reading snapshot supplied in the originating conversation; it has not been committed in this preparation. That reading-copy transfer is not a prerequisite for beginning B0 later. Do not claim the Word copy is in the repository or create a broken repository link to it.
 
 ## Prepared repository state
 
