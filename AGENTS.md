@@ -1,5 +1,33 @@
 # coop-agent — agent context
 
+## Current Windows terminal plan — prepared, not started
+
+The current forward plan is [docs/COOP_WINDOWS_TERMINAL_PLAN.md](docs/COOP_WINDOWS_TERMINAL_PLAN.md)
+(document revision 2.0). Read [the preparation status](docs/COOP_PLAN_PREPARATION_STATUS.md)
+before acting on any work package. **Aaron authorized repository preparation only;
+execution remains PAUSED, including B0.** Neither this file, an open issue, a PR,
+nor the plan's historical "ready" labels authorizes implementation.
+
+The source branch is `experimental/windows-terminal`, provisionally seeded from
+`9e8248a8b34a0bd7581b1909bf4fd18f253b3350`. This is not a certified installed baseline
+and not an installable isolated beta. Do not run its current installer or advertise
+`coop-beta` as available. Keep the next-work issue out of `agent:ready` and leave it
+unassigned until Aaron explicitly starts the work.
+
+When explicitly authorized, start with **B0 only**: reconcile the accepted Windows
+installation and newer repository changes, revalidate the earlier safety findings,
+and return one bounded B1 isolation proposal; then stop for review. Do not implement
+beta isolation, update dependencies/skills, activate TeamAI or Jev, publish knowledge,
+call live/paid services, release, or begin Desktop work under this preparation.
+
+The product direction is Windows terminal now; native Windows Coop 2.0 is deferred
+and last. Earlier Desktop/web/simplification execution plans are historical where
+they conflict with the current plan. Preserve their evidence and existing branches.
+The Power BI Desktop Bridge CLI and `pi-web-access` remain existing capabilities,
+not the retired Coop Desktop/web application. Existing operational safety, paired-
+script and validation rules below remain in force until separately changed by an
+approved work package. Do not remove runtime code merely to match the new roadmap.
+
 This repository is **coop**, the Cooptimize terminal agent: a branded layer on top
 of Pi (`@earendil-works/pi-coding-agent`). It is **not** a fork of Pi. coop runs Pi in
 its own isolated agent dir (`~/.coop/agent`, via `PI_CODING_AGENT_DIR`) so only
