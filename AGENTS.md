@@ -65,6 +65,27 @@ Everything below is for an agent editing coop-agent itself — scripts, docs, te
 skills, extensions. This file is canonical; `CONTRIBUTING.md` and `RELEASE.md`
 carry the detail and align with it.
 
+### Current roadmap — prepared, not started
+
+The official forward plan is [Coop Windows Terminal](docs/COOP_WINDOWS_TERMINAL_PLAN.md).
+Read the [preparation handoff](docs/COOP_WINDOWS_TERMINAL_PREPARATION.md) before
+working on it. Aaron authorized documentation and branch preparation only;
+**B0 and all implementation work remain unstarted until he explicitly begins them**.
+Do not add roadmap tasks to `agent:ready` or treat branch presence as an execution trigger.
+
+The current roadmap is Windows terminal, isolated stable/beta channels, bounded
+simplification, qualified component/skill updates, TeamAI, and optional Jev trials.
+Native Windows Coop 2.0 is deferred and last. Prior Desktop/web strategy and
+implementation plans are historical for roadmap sequencing; do not merge or
+port the old Desktop branch. Preserve current runtime behavior and existing
+parity/BOM/test obligations until their approved retirement package changes them.
+
+`experimental/windows-terminal` is a provisional source branch, **not an installed
+or proven-isolated beta**. Do not run the existing installer/updater from that
+branch as a beta setup. The next authorized task is B0 baseline reconciliation
+and a bounded B1 proposal, not B1 implementation or a wholesale roadmap execution.
+This pause applies to the roadmap, not unrelated explicitly requested maintenance.
+
 ### Platform notes
 
 - **Developing this repo** — editing scripts/docs/tests and running the checks
@@ -120,7 +141,6 @@ force anything to "fix" it.
 
 ```bash
 for f in bin/coop lib/common.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
-                                # expect: no output, exit 0
 bash scripts/check-parity.sh    # expect: "✓ parity check passed", exit 0
 bash tests/run.sh               # expect: "✓ all tests passed", exit 0 (needs node + npx)
 ```
@@ -145,10 +165,14 @@ delete or re-push a tag, never commit secrets (`.env*`, keys, tokens — see
   `README.md`, `docs/architecture.md`, `docs/ci.md`, `docs/extending.md`,
   `docs/guardrails.md`, `docs/onboarding.md`, `docs/tool-contract.md`,
   `docs/troubleshooting.md`.
+- **Current roadmap (prepared only; explicit start required):**
+  `docs/COOP_WINDOWS_TERMINAL_PLAN.md` and
+  `docs/COOP_WINDOWS_TERMINAL_PREPARATION.md`.
 - **Plans / history (context only — never execute their steps without an
   explicit request):** `docs/ui-strategy.md`, `docs/coop-web-plan.md`,
   `docs/coop-web-pivis-plan.md`, `docs/plan-azure-devops-integration.md`,
-  `docs/plan-coop-agent-improvements.md`.
+  `docs/plan-coop-agent-improvements.md`. Prior Desktop/web directions do not
+  override the current Windows-terminal roadmap or its execution pause.
 - `CHANGELOG.md` — history; edit only under `## [Unreleased]`.
 
 ## Working the backlog (agents)
