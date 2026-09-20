@@ -362,6 +362,7 @@ Searches targeted X/Twitter as requested, including Jev/TypeSafe and Pi implemen
 | Mark, indexed September 18: `buchmarkk/status/2100793061370728620`; `buchmark/claude-jev` | Judgment for review findings and debugging/design choices | Consider advisory ranking of existing Coop findings; not a Claude plugin transplant or linter replacement. [S29] |
 | Indexed Pi context post: `RelevantElement/status/2100979507830145486`; `kevinpita/pi-jev-context` | Reversible filtering while retaining original session history | Candidate for a later public/synthetic-history beta trial after Pi compatibility. Not approved for client transcripts. [S30] |
 | `joelhooks/pi-fast-jev-compaction` | A stock-Pi pruning extension with explicit prompt-cache tradeoffs | Compare rather than adopt automatically; targets Pi 0.85.1 and Node 24.18, so it is not a zero-change fit for Coop’s current runtime. [S32] |
+| y0usaf, direct GitHub reference September 20 (not from the X index): `y0usaf/pi-jev` | Pi extension judging pending `bash`/`write`/`edit` calls with four measured questions (destructive, exfiltration, beyond_scope, impact) in one request; an output judge flags leaked secrets and classifies failures; shadow default, fail-open, documented payload truncation and 120 s dedupe | Candidate for the J0 Pi-extension experiment once B1 isolation and Pi compatibility are confirmed. Its off-machine payload (working directory, tool arguments, first 1200 chars of the last user message) requires the J0 data approval. Advisory only per 9.5; never a guardrail replacement or approval bypass. [S33] |
 
 Repository evidence is design evidence, not proof of Coop compatibility or savings. Community extensions are not official Pi/TypeSafe components merely because they use the APIs. Do not install multiple routers/compactors and then build custom coordination around them.
 
@@ -372,6 +373,8 @@ J0 can begin immediately after B1 isolation and the B0 safety checks; it does **
 Start with a small beta-only integration that evaluates **skill/knowledge relevance on public, synthetic or explicitly approved sanitized task summaries**. Run in shadow mode: record what Jev would choose, but let existing deterministic/Coop behavior continue. This tests whether Jev adds value without changing tools, approvals, loaded policy, source files, or session history.
 
 Use one SDK/invocation adapter, one reviewed prompt/criteria file and a small replay dataset. Prefer an adequate upstream public extension when its defaults and configuration fit; otherwise the thin SDK boundary is justified custom capability code. Do not import a second harness, router framework, memory service or state-machine library solely for this experiment.
+
+A concrete first Pi-extension candidate is `y0usaf/pi-jev` (v0.2.0, September 16, 2026): its measured gate/output-judge thresholds, shadow-first defaults and precisely documented off-machine payload fit this protocol, so evaluate it against section 9.5 before writing custom capability code. It is a community Pi extension, so it follows the Pi qualification and B1 beta isolation first, and only ever runs on public/synthetic or explicitly approved sanitized material.
 
 ## 9.4 Follow-on experiments and priorities
 
@@ -572,5 +575,6 @@ Latest registry publication could not be established for every package because s
 - **S30 — Reversible Pi context:** [kevinpita/pi-jev-context](https://github.com/kevinpita/pi-jev-context); [indexed X lead](https://x.com/RelevantElement/status/2100979507830145486), body not directly retrieved. The X poster is not assumed to be the repository author.
 - **S31 — Reported external source-loss risk:** [Microsoft skills-for-fabric issue 81](https://github.com/microsoft/skills-for-fabric/issues/81). Reporter’s reproduction, not reproduced in this review; current applicability must be checked against installed versions.
 - **S32 — Stock Pi pruning and cache tradeoffs:** [joelhooks/pi-fast-jev-compaction](https://github.com/joelhooks/pi-fast-jev-compaction). Community implementation evidence, not Coop acceptance.
+- **S33 — Pi tool-call gate and output judge:** [y0usaf/pi-jev](https://github.com/y0usaf/pi-jev) (v0.2.0; README, configuration and calibration tables inspected September 20, 2026). Community implementation evidence, not Coop acceptance; its own README states the threshold runs are smoke calibration, not a labelled evaluation set.
 
 **Operating principle:** keep stable boring; make beta genuinely separate; delete duplication; qualify useful upstream changes; let TeamAI and Jev earn their integration; and leave native Desktop until the terminal product and its boundaries are proven.
