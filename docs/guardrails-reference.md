@@ -9,6 +9,10 @@ The always-on guardrails prompt was historically ~13 KB and mixed policy with tu
 ## Runtime enforcement details
 
 The `coop-guardrails` extension enforces these rules. It does not rely on this prompt alone.
+An exception escaping a tool-call enforcement check, including a synchronous throw or
+rejected approval promise, blocks that call with a fixed reason. Exception text is not
+returned or logged. Optional display and audit-write failures remain best-effort and
+cannot turn a refusal into permission.
 
 ### Git source-commit blocking
 
@@ -32,13 +36,14 @@ A read/edit/write of a secret-looking file (`.env`, private keys, credential fil
 
 ### Mutating MCP calls
 
-A Fabric/Power BI/MCP tool call whose name looks like a **mutation** (create/update/delete/deploy/publish) requires confirmation, including proxied MCP calls where the real remote tool name is carried inside the `mcp` tool input (`event.input.tool`). That check is best-effort — MCP tool names vary, so it **complements** (does not replace) Pi's own tool-approval prompts and the advisory prompt. Enable the optional `pi-permissions` extension for hard per-tool gating. If a tool call is blocked, read the reason and adjust — don't try to route around it.
+A Fabric/Power BI/MCP tool call whose name looks like a **mutation** (create/update/delete/deploy/publish) requires confirmation, including proxied MCP calls where the real remote tool name is carried inside central `mcp` or dynamic `mcp__<server>` input (`event.input.tool`). That check is best-effort — MCP tool names vary, so it **complements** (does not replace) Pi's own tool-approval prompts and the advisory prompt. Enable the optional `pi-permissions` extension for hard per-tool gating. If a tool call is blocked, read the reason and adjust — don't try to route around it.
 
 ### Live environment reads
 
 Coop permits read-only metadata, schema, and artifact-code inspection in dev/test by default. Query/execute/sample/export-style calls can return actual rows, so the runtime asks first. Any tool request that explicitly names prod/production also asks first, including metadata-only reads; production row reads should be narrowly scoped to a named target, columns, filters, and a small limit. Approval-required reads fail closed when no interactive approval UI is available.
 
-Reusable Warehouse SQL scope exists only for the real `pi-mcp-adapter` `mcp` proxy to
+Reusable Warehouse SQL scope exists for the real `pi-mcp-adapter` central `mcp` proxy or dynamic
+`mcp__fabric_sqlendpoint` wrapper to
 the generated COOP-managed, item-scoped `fabric-sqlendpoint` server. `coop sync` adds
 the parsed project client, tenant, uniquely inferred dev/test/production environment,
 and item/database name to that managed entry. The guardrail binds the principal to the
@@ -46,6 +51,16 @@ non-secret `tid` and `oid`/`sub` claims of the launch bearer already supplied in
 `COOP_FABRIC_MCP_TOKEN`; it never stores or logs the token. Missing, malformed,
 ambiguous, blank, or TODO identity fields leave the call on per-call approval.
 Model/tool-provided scope fields are ignored.
+
+Both proxy shapes classify the dispatched `input.args`; outer query fields cannot
+hide an inner mutation. Dynamic wrappers take their server identity from the
+registered wrapper name, ignoring `input.server`. The managed tool prefix also
+supports central calls without an explicit server. Supplied workspace/item IDs must
+match trusted configuration. Ambiguous server namespaces, unsupported argument
+controls, multiple SQL fields, and unresolved targets cannot reuse a grant.
+One accepted bounded scope covers subsequent matching calls; an expanded scope
+requires approval, and rejecting it preserves the prior grant. Mutations retain
+their separate approval gate and never spend a read grant.
 
 The grant resets on every session start or shutdown (new, resume, or fork), process restart, or
 `/coop-live-read revoke`; use `/coop-live-read status` to inspect its non-secret
@@ -67,7 +82,13 @@ outbound request, and the managed entry sets its supported `requestTimeoutMs` to
 
 ### Audit log
 
-Every block and every confirm (allowed or declined) is appended as one JSON line to `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`): timestamp, working folder, kind, decision, and a bounded fixed classification (or the offending path for non-MCP gates). **Secrets and file contents are never written** — the secret gate records only the matched path; the MCP gate records fixed COOP labels, never remote server strings or raw arguments. Run `/coop-guardrails` to see the last ~10 decisions and the log path. The log is a reviewable trail, not a place to hide activity.
+Recorded blocks and confirmations (allowed or declined) are appended best-effort as one JSON line to `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`): timestamp, working folder, kind, decision, and a fixed classification (or offending paths for source/secret-file gates). Command text and arguments are not persisted. The secret gate records only the matched path, never file contents; the MCP gate records fixed COOP labels, never remote server strings or raw arguments. Run `/coop-guardrails` to see the last ~10 decisions and the log path. An enforcement exception returns a fixed blocking result without logging its error payload.
+
+The audit display also suppresses command details in legacy destructive-command,
+hard-blocked-commit and unverifiable-commit entries. This does not scrub the on-disk
+history or rotated files. Existing audit files may contain historical command text;
+do not treat a raw audit-file copy as a sanitized export. No automatic deletion or
+migration of audit history is performed.
 
 ## The Cooptimize workflow (detailed)
 

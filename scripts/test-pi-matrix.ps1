@@ -76,6 +76,11 @@ try {
   '{"schema_version":1,"azure":{"enabled":false,"tenant_id":"","tenant_name":""},"integrations":{"microsoft_learn":true},"azure_devops":{"organization":""},"mcp":{"safe_mode":"read_only_first"},"fleet":{"publish_dir":""}}' |
     Set-Content (Join-Path $env:COOP_DIR '.coop\config')
 
+  # Exercise actual AgentSession/ExtensionRunner enforcement using this runtime.
+  & node (Join-Path $RepoRoot 'tests\guardrails-pi-runner.test.mjs') $PiPackageDir
+  if ($LASTEXITCODE -eq 0) { Ok 'real Pi guardrail hooks enforce bounded grants and mutation gates' }
+  else { Ko 'real Pi guardrail hook regression' }
+
   # --- 2. Exact manifest extension fleet ---------------------------------------
   # Do not preinstall extensions in the harness. Production sync below owns the
   # entire install + exact-pin + shared-library convergence path; this keeps the

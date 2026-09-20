@@ -935,4 +935,188 @@ await t("/coop-guardrails output mentions the audit log path", async () => {
   assert.ok(shown.includes("Pi/context-mode self-update prompts suppressed"), "shows the managed update policy");
 });
 
+await t("audit: command canaries never enter new records or the audit display", async () => {
+  const canary = "SYNTHETIC_COMMAND_SECRET_7f1b";
+  const cases = [
+    [`rm -rf /tmp/fixture --marker=${canary}`, true, true],
+    [`rm -rf /tmp/fixture --marker=${canary}`, false, true],
+    [`rm -rf /tmp/fixture --marker=${canary}`, false, false],
+    [`git commit --amend -m ${canary}`, true, true],
+    [`git commit --pathspec-from-file=${canary}`, true, true],
+    [`cd /tmp/fixture && git commit -m ${canary}`, true, true],
+    [`cd /tmp/fixture && git commit -m ${canary}`, false, true],
+  ];
+  staged = ""; modified = "";
+  for (const [command, answer, hasUI] of cases) {
+    clearAudit();
+    const probeCtx = { ...ctx, hasUI, ui: { confirm: async () => answer, notify: () => {} } };
+    await handle({ toolName: "bash", input: { command } }, probeCtx);
+    const entries = readAudit();
+    assert.equal(entries.length, 1, "one decision recorded");
+    assert.ok(!readFileSync(AUDIT_FILE, "utf8").includes(canary), "command arguments must not persist");
+    let shown = "";
+    await cmds["coop-guardrails"].handler([], { ...probeCtx, ui: { notify: (value) => { shown = value; } } });
+    assert.ok(!shown.includes(canary), "audit display must not expose arguments");
+    assert.ok(shown.includes(entries[0].kind), "decision classification remains visible");
+  }
+});
+
+await t("audit: old command-bearing records are safe to display without rewriting history", async () => {
+  const canary = "SYNTHETIC_LEGACY_SECRET_7f1b";
+  const legacy = [
+    ["danger-confirm", "rm -rf"],
+    ["commit-block", "git commit --amend"],
+    ["commit-block", "git commit --pathspec-from-file"],
+    ["commit-block", "unverifiable git commit"],
+  ].map(([kind, label]) => ({ ts: "2026-09-19T00:00:00Z", cwd: ctx.cwd, tool: "bash", kind, label, decision: "declined", detail: `command ${canary}` }));
+  const original = legacy.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+  writeFileSync(AUDIT_FILE, original);
+  let shown = "";
+  await cmds["coop-guardrails"].handler([], { ...ctx, ui: { notify: (value) => { shown = value; } } });
+  assert.ok(!shown.includes(canary), "legacy command details must not be redisplayed");
+  for (const entry of legacy) assert.ok(shown.includes(entry.label));
+  assert.equal(readFileSync(AUDIT_FILE, "utf8"), original, "stored history is untouched");
+});
+
+await t("approval exceptions block every confirmation path without exposing exception data", async () => {
+  const canary = "SYNTHETIC_APPROVAL_EXCEPTION_7f1b";
+  const events = [
+    { toolName: "read", input: { path: "config/.env" } },
+    { toolName: "edit", input: { path: "config/.env" } },
+    { toolName: "write", input: { path: "config/.env" } },
+    { toolName: "bash", input: { command: "cat .env" } },
+    { toolName: "bash", input: { command: "rm -rf /tmp/fixture" } },
+    { toolName: "bash", input: { command: "cd /tmp/fixture && git commit -m docs" } },
+    { toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace", args: "{}" } },
+    { toolName: "executeSQL", input: { sql: "SELECT 1" } },
+    sqlRead(),
+  ];
+  staged = ""; modified = "";
+  for (const event of events) {
+    for (const asynchronous of [false, true]) {
+      await handleSessionStart({}, liveCtx);
+      clearAudit();
+      let confirmations = 0;
+      let executorCalls = 0;
+      const confirm = () => {
+        confirmations++;
+        if (asynchronous) return Promise.reject(new Error(canary));
+        throw new Error(canary);
+      };
+      const result = await handle(event, { ...liveCtx, ui: { confirm } });
+      // Model Pi's dispatch boundary with an inert executor, never the real tool.
+      if (!blocked(result)) executorCalls++;
+      assert.equal(confirmations, 1, "case reached the approval boundary");
+      assert.equal(executorCalls, 0, "approval failure must not reach an executor");
+      assert.ok(result.reason.includes("guardrails"));
+      assert.ok(!JSON.stringify(result).includes(canary), "exception text must not become tool output");
+      assert.ok(!JSON.stringify(readAudit()).includes(canary), "exception text must not enter audit");
+    }
+  }
+  confirmAnswer = false; confirmCount = 0;
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true);
+  assert.equal(confirmCount, 1, "failed grant confirmation did not create a grant");
+});
+
+await t("unexpected enforcement faults block, while harmless calls and optional UI faults remain usable", async () => {
+  const badEvent = { toolName: "bash", get input() { throw new Error("SYNTHETIC_CLASSIFICATION_SECRET"); } };
+  const result = await handle(badEvent, ctx);
+  assert.equal(blocked(result), true);
+  assert.ok(!JSON.stringify(result).includes("SYNTHETIC_CLASSIFICATION_SECRET"));
+  assert.equal(blocked(await call("echo hello")), false);
+  assert.equal(blocked(await callFile("read", "README.md")), false);
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_list_workspaces" } }, ctx)), false);
+  await cmds["coop-guardrails"].handler([], { ...ctx, ui: { notify: () => { throw new Error("optional display failed"); } } });
+});
+
+
+const dynamicRead = (sql = "SELECT TOP (25) customer_id FROM dbo.Customer", extra = {}) => ({
+  toolName: "mcp__fabric_sqlendpoint",
+  input: { tool: "fabric-sqlendpoint_execute_query", args: { workspaceId: WORKSPACE_ID, itemId: ITEM_ID, query: sql, ...extra } },
+});
+
+await t("dynamic MCP wrappers normalize the bound server and effective arguments", () => {
+  const event = dynamicRead();
+  event.input.server = "attacker";
+  assert.deepEqual(effectiveMutationTarget(event), { outerTool: event.toolName, innerTool: event.input.tool, server: "fabric-sqlendpoint" });
+  assert.equal(mcpLiveReadRisk(event)?.kind, "row-data");
+  assert.equal(sqlMcpRisk(event)?.kind, "row-data");
+  assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp__fabric", input: { tool: "fabric_create_item", args: {} } })));
+  assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp__azure_devops", input: { tool: "create_work_item", args: {} } })));
+  // Neither dispatch shape executes the benign outer query; only args is sent.
+  for (const toolName of ["mcp", "mcp__fabric_sqlendpoint"]) {
+    for (const args of [{ query: "DELETE FROM dbo.Customer" }, JSON.stringify({ query: "DELETE FROM dbo.Customer" })]) {
+      const event = { toolName, input: { server: "fabric-sqlendpoint", tool: "execute_query", query: "SELECT TOP (1) 1", args } };
+      assert.equal(sqlMcpRisk(event)?.kind, "ddl-dml-destructive");
+    }
+    assert.equal(sqlMcpRisk({ toolName, input: { server: "fabric-sqlendpoint", tool: "execute_query", args: { sql: "SELECT TOP (1) 1", query: "DELETE FROM dbo.Customer" } } })?.kind, "ddl-dml-destructive");
+  }
+  for (const toolName of ["mcp", "mcp__custom"]) {
+    assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName, input: { server: "custom", tool: "write", args: {} } })));
+  }
+  assert.deepEqual(effectiveMutationTarget({ toolName: "custom_local", input: { tool: "fabric_create_item", args: {} } }), { outerTool: "custom_local" });
+});
+
+await t("dynamic reads establish one bounded grant shared across adapter dispatch shapes", async () => {
+  writeManagedTarget(); process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0;
+  assert.equal(blocked(await handle(dynamicRead(), liveCtx)), false);
+  assert.equal(confirmCount, 1);
+  confirmAnswer = false;
+  for (const event of [dynamicRead("SELECT TOP (10) * FROM dbo.Other"), sqlRead(),
+    { toolName: "mcp", input: { tool: "fabric-sqlendpoint_execute_query", args: dynamicRead().input.args } },
+    { toolName: "fabric_sql_query", input: { query: "SELECT TOP (10) * FROM dbo.Other", maximum_rows: 10 } }]) {
+    assert.equal(blocked(await handle(event, liveCtx)), false);
+    assert.equal(confirmCount, 1, "matching scope must not prompt again");
+  }
+});
+
+await t("dynamic scope expansions and mutations cannot spend an existing read grant", async () => {
+  writeManagedTarget(); process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; await handle(dynamicRead(), liveCtx);
+  confirmAnswer = false; confirmCount = 0;
+  const cases = [dynamicRead("SELECT TOP (50) * FROM dbo.Customer"),
+    dynamicRead(undefined, { itemId: OTHER_ITEM_ID }), dynamicRead(undefined, { workspaceId: OTHER_ITEM_ID }),
+    dynamicRead(undefined, { timeoutMs: 120000 }), dynamicRead(undefined, { database: "Other" }),
+    dynamicRead("DELETE FROM dbo.Customer"), dynamicRead("SELECT TOP (1) * INTO dbo.Copy FROM dbo.Customer"),
+    { toolName: "mcp__fabric", input: { server: "fabric-sqlendpoint", tool: "fabric_create_item", args: {} } },
+    { toolName: "mcp__azure_devops", input: { tool: "create_work_item", args: {} } },
+    { toolName: "mcp__other", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: dynamicRead().input.args } },
+  ];
+  for (const [i, event] of cases.entries()) {
+    assert.equal(blocked(await handle(event, liveCtx)), true);
+    assert.equal(confirmCount, i + 1);
+  }
+  assert.equal(blocked(await handle(dynamicRead(), liveCtx)), false, "rejected expansion preserves the prior grant");
+  assert.equal(confirmCount, cases.length);
+  const ambiguousConfig = targetConfig();
+  ambiguousConfig.mcpServers.fabric_sqlendpoint = { url: "https://invalid.example" };
+  writeFileSync(join(AUDIT_DIR, "mcp.json"), JSON.stringify(ambiguousConfig));
+  assert.equal(blocked(await handle(dynamicRead(), liveCtx)), true);
+  writeManagedTarget();
+});
+
+await t("dynamic grant rejection, approval expansion, revocation and new sessions", async () => {
+  writeManagedTarget(); process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = false; confirmCount = 0;
+  for (let i = 0; i < 2; i++) assert.equal(blocked(await handle(dynamicRead(), liveCtx)), true);
+  assert.equal(confirmCount, 2, "rejection does not create a grant");
+  confirmAnswer = true;
+  await handle(dynamicRead(), liveCtx);
+  await handle(dynamicRead("SELECT TOP (50) * FROM dbo.Customer"), liveCtx);
+  assert.equal(confirmCount, 4);
+  confirmAnswer = false;
+  assert.equal(blocked(await handle(dynamicRead("SELECT TOP (40) * FROM dbo.Other"), liveCtx)), false);
+  assert.equal(confirmCount, 4);
+  await cmds["coop-live-read"].handler("revoke", liveCtx);
+  assert.equal(blocked(await handle(dynamicRead(), liveCtx)), true);
+  confirmAnswer = true; await handle(dynamicRead(), liveCtx);
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = false;
+  assert.equal(blocked(await handle(dynamicRead(), liveCtx)), true);
+});
+
 console.log(`  ${n} guardrails tests passed`);

@@ -328,6 +328,9 @@ approval; approval-required calls fail closed when no UI is available. Warehouse
 classified as `row-data` or `ddl-dml-destructive`: bounded `SELECT`-style reads still ask,
 while DDL/DML, permissions, `SELECT … INTO`, and `COPY INTO` receive mutation-specific
 confirmation. Audit entries record the tool/risk decision, never raw SQL or arguments.
+Central `mcp` and dynamic `mcp__fabric_sqlendpoint` calls share the same verified
+bounded SQL grant: approve once, then approve again only for an expanded scope.
+Mutations and calls outside the verified grant remain separately gated.
 
 **Warehouse targeting and auth.** Set machine enablement with
 `integrations.fabric_sql_endpoint`; an absent canonical flag inherits the legacy Fabric
@@ -409,11 +412,17 @@ launch.
 a blocked source commit, or a confirmed/declined destructive command, secret-file access,
 live row/production read, or mutating MCP call — is appended as one JSON line to
 `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`). Each line records
-the timestamp, working folder, kind, decision, and the offending path(s) or a truncated
-command — **never secrets or file contents** (the secret gate logs only the matched path).
+the timestamp, working folder, kind, decision, and the offending path(s) or a fixed
+command classification. Command text and arguments are not persisted; the secret gate
+logs only the matched path, never file contents. Enforcement exceptions, including a
+throwing approval dialog, block the affected tool call with a fixed reason that excludes
+exception details. Optional audit/display failures do not change an enforcement decision.
 Run `/coop-guardrails` in a session to see the last ~10 decisions and the log path; the log
 rolls to `.jsonl.1` past ~1 MB. It's the reviewable record of "the agent tried X; a human
 said yes/no" — useful for client trust and for debugging a guardrail false positive.
+Older command-bearing records are displayed without their command details. Their stored
+bytes are not rewritten or deleted; existing audit files may still contain historical
+command text and should not be shared as sanitized exports.
 
 **The Cooptimize workflow** (the `coop-workflow` skill — see
 [`skills/coop-workflow/SKILL.md`](skills/coop-workflow/SKILL.md)):

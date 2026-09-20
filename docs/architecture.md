@@ -91,7 +91,11 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      governance at runtime via a `tool_call` hook (blocks the agent committing
      source; confirms destructive commands). Complements the advisory
      `docs/guardrails.md` system prompt. Approval-required actions fail closed
-     headlessly; unexpected extension faults stay isolated. `COOP_NO_GUARDRAILS=1` disables.
+     headlessly; enforcement exceptions block the affected call with a fixed reason.
+     Optional audit/display failures remain best-effort. Command audit records use
+     fixed classifications, not raw command arguments. Central and dynamic MCP
+     wrappers use the same target/argument normalization for mutation, SQL and
+     bounded session-grant checks. `COOP_NO_GUARDRAILS=1` disables.
 
 4. **Pi extensions installed from npm** into coop's isolated agent dir
    (`config/defaults.yml`):
