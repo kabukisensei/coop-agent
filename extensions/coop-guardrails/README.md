@@ -25,13 +25,20 @@ do instead (e.g. "unstage source and let a human commit").
 
 ## Design
 
-- **Fail closed for approval-required actions.** Headless mutations/destructive
-  commands and ambiguous Git wrappers block. Unexpected extension faults stay isolated. The
-  system prompt still guides in that case.
-- **Feature-detected + try/catch** so it can never crash pi.
+- **Fail closed for enforcement exceptions.** Headless mutations/destructive
+  commands and ambiguous Git wrappers block. An exception escaping enforcement,
+  including a throwing/rejected approval dialog, blocks the affected call with a
+  fixed reason that excludes exception text. It cannot create a new live-read grant.
+- **Optional display/logging remains best-effort.** A failed audit write or status
+  notification does not change the enforcement decision or crash Pi.
 - **Interactive confirms only.** Approval-required actions fail closed when no
   confirmation UI is available. The never-commit-source block needs no UI and
   always applies.
+
+Audit command gates persist fixed classifications instead of command text or
+arguments. The status command also suppresses legacy command details when displaying
+history, without rewriting or deleting existing records. Historical raw audit files
+may still contain command text and are not sanitized exports.
 
 ## Toggle & inspect
 
@@ -44,7 +51,8 @@ do instead (e.g. "unstage source and let a human commit").
 
 ## Session live-read grants
 
-Only the real `pi-mcp-adapter` `mcp` proxy to the exact COOP-managed
+The real `pi-mcp-adapter` central `mcp` proxy and dynamic
+`mcp__fabric_sqlendpoint` wrapper to the exact COOP-managed
 `fabric-sqlendpoint` server and its compatible SQL tool names can receive a reusable
 grant. The managed config supplies parsed project client, tenant, uniquely inferred
 environment, and item/database target. The guardrail decodes only the non-secret
@@ -53,15 +61,27 @@ that the tenant matches. Tool arguments such as `coopLiveReadScope` are ignored.
 Missing, malformed, ambiguous, global, cross-database, unbounded, or unsupported scope
 remains per-call approval.
 
+Both proxy shapes classify the dispatched `input.args`; outer query fields cannot
+hide an inner mutation. Dynamic wrappers take their server identity from the
+registered wrapper name, ignoring `input.server`. The managed tool prefix also
+supports central calls without an explicit server. Supplied workspace/item IDs must
+match trusted configuration. Ambiguous server namespaces, unsupported argument
+controls, multiple SQL fields, and unresolved targets cannot reuse a grant.
+One accepted bounded scope covers subsequent matching calls; an expanded scope
+requires approval, and rejecting it preserves the prior grant. Mutations retain
+their separate approval gate and never spend a read grant.
+
 The grant is memory-only and resets on every session start or shutdown (`/new`,
 `/resume`, or `/fork`), process restart, or explicit revoke. It survives ordinary turns,
 compaction, and reconnects within that session. SQL is classified quote-aware on every
 call. The grant covers the exact managed item/database, SQL-read operation class,
 maximum rows, and timeout—not tables, columns, or filters. Only one plain SELECT with
-a literal TOP bound can reuse it; CTE, UNION, APPLY, quoted identifiers, mutations,
+a literal TOP bound can reuse it, including bracketed identifiers and escaped `]]`.
+Identifier boundaries remain visible to cross-database detection. CTE, UNION, APPLY,
+double-quoted identifiers, mutations,
 unfamiliar/ambiguous SQL, `EXEC`, batches, exports/downloads, and unbounded reads remain
-separately confirmed. Pinned adapter 2.10.0 uses the MCP SDK's enforced 60-second
-timeout; there is no private runtime config field. Raw SQL, tool arguments, results, and
+separately confirmed. The managed MCP config fixes the request timeout at 60 seconds;
+scope resolution requires that exact value. Raw SQL, tool arguments, results, and
 credentials are never written to grant state or the audit log. Tool/repository/model
 text can describe a scope but cannot approve one; only the confirmation UI can.
 

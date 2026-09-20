@@ -69,6 +69,13 @@ export COOP_AGENT_DIR="$T/agent"
 export COOP_TEST_STUB_PATH="$NPM_PREFIX/bin"   # keep our runtime FIRST after common.sh normalization
 mkdir -p "$PI_CODING_AGENT_DIR"
 
+# Exercise actual AgentSession/ExtensionRunner enforcement using this runtime.
+if node "$ROOT/tests/guardrails-pi-runner.test.mjs" "$NPM_PREFIX/lib/node_modules/@earendil-works/pi-coding-agent"; then
+  ok "real Pi guardrail hooks enforce bounded grants and mutation gates"
+else
+  ko "real Pi guardrail hook regression"
+fi
+
 # --- 2. Exact manifest extension fleet ----------------------------------------
 FLEET=()
 while IFS= read -r _spec; do [ -n "$_spec" ] && FLEET+=("$_spec"); done < <(node -e '

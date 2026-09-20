@@ -5,7 +5,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- Bounded Warehouse session approvals now support bracketed SQL identifiers,
+  including escaped closing brackets, while keeping cross-database targets,
+  mutations, batches and unsupported quoting separately gated.
+
+- Guardrail MCP dispatch normalization now covers dynamic `mcp__<server>` wrappers,
+  preventing inner mutations from bypassing classification. Verified bounded SQL
+  grants are shared with central-proxy calls without repeated prompts; changed
+  targets/limits and unverified controls require fresh approval. Offline regressions
+  exercise Pi's real AgentSession and ExtensionRunner hooks in both matrix scripts.
+
 ### Fixed
+- Block tool calls when a guardrail enforcement check or approval dialog throws,
+  without exposing exception details. Record fixed audit classifications instead
+  of command text, and suppress command details when displaying legacy audit entries.
 - Run BPA reviews with the current Tabular Editor CLI, including built-in
   rules when no rule file is configured, and preserve JSON findings and diagnostics.
 - Accept the pinned SQL/DAX reviewers' 12-character finding fingerprints in native

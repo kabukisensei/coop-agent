@@ -27,7 +27,8 @@
  * It is the coop-native replacement for the third-party @aliou/pi-guardrails (which
  * was pinned to the old @mariozechner Pi). It enforces the AGENT's tool calls — your
  * own shell is never intercepted. Approval-required actions fail closed when no UI is
- * available; unexpected extension faults remain isolated so Pi cannot crash. Disable
+ * available; enforcement exceptions block the affected call without exposing error
+ * details or crashing Pi. Optional display/logging failures remain best-effort. Disable
  * entirely with COOP_NO_GUARDRAILS=1.
  */
 
@@ -675,7 +676,7 @@ const FABRIC_SQL_FALLBACK_TOOL = "fabric_sql_query";
 const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DELETE|DENY|DROP|EXEC|EXECUTE|GRANT|INSERT|MERGE|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE|UPSERT)\b/i;
 const SQL_MUTATING_INTO = /\b(?:SELECT|COPY)\b[\s\S]*?\bINTO\b/i;
 
-function sqlWithoutComments(sql: string): string {
+function sqlWithoutComments(sql: string, preserveBracketIdentifiers = false): string {
   // Lex rather than regex-replace: comment delimiters inside SQL strings and
   // quoted identifiers are data, not comments. Literal/identifier contents are
   // blanked too, so words such as 'DELETE' do not create false mutations.
@@ -691,7 +692,13 @@ function sqlWithoutComments(sql: string): string {
       if (ch === "/" && next === "*") { state = "block"; blockDepth = 1; out += "  "; i += 2; continue; }
       if (ch === "'") { state = "single"; out += " "; i += 1; continue; }
       if (ch === '"') { state = "double"; out += " "; i += 1; continue; }
-      if (ch === "[") { state = "bracket"; out += " "; i += 1; continue; }
+      if (ch === "[") {
+        state = "bracket";
+        // Scope checks need an opaque identifier token so [db].[schema].[table]
+        // cannot disappear before cross-database detection. Never retain its text.
+        out += preserveBracketIdentifiers ? "__coop_bracket_identifier__" : " ";
+        i += 1; continue;
+      }
       out += ch; i += 1; continue;
     }
     if (state === "line") {
@@ -715,21 +722,47 @@ function sqlWithoutComments(sql: string): string {
   return out;
 }
 
-/** The effective target of a proxied MCP call. The `pi-mcp-adapter` normally
- *  registers a single `mcp` tool and carries the real server/tool in
- *  `event.input.tool` (and optional `event.input.server`). Direct calls have no
- *  inner tool. */
-export function effectiveMutationTarget(event: any): { outerTool: string; innerTool?: string; server?: string } {
+type MutationTarget = { outerTool: string; innerTool?: string; server?: string };
+
+/** Match the adapter's two dispatch shapes. Namespace wrappers bind their server
+ * in the registered tool name; input.server cannot override that binding. Keep
+ * unknown namespaces verbatim rather than guessing which underscores were hyphens. */
+function normalizeMcpCall(event: any): { target: MutationTarget; args: any; proxy: boolean } {
   const outerTool = String(event?.toolName ?? "");
   const input = event?.input;
-  if (outerTool === "mcp" && input && typeof input === "object" && typeof input.tool === "string") {
-    return {
-      outerTool,
-      innerTool: input.tool,
-      server: typeof input.server === "string" ? input.server : undefined,
-    };
+  const namespace = /^mcp__([A-Za-z0-9_]+)$/.exec(outerTool)?.[1];
+  // Direct MCP tools may also start with mcp__; only an actual {tool, args}
+  // envelope carries a dispatched inner operation. Otherwise retain direct args.
+  const proxy = (outerTool === "mcp" || !!namespace) && typeof input?.tool === "string";
+  if (!proxy) return { target: { outerTool }, args: input, proxy: false };
+  const server = namespace
+    ? (namespace === "fabric_sqlendpoint" ? MANAGED_SQL_SERVER : namespace)
+    : typeof input?.server === "string" ? input.server : undefined;
+  const innerTool = typeof input?.tool === "string" ? input.tool : undefined;
+  // Both dispatch paths ultimately use the adapter's object/JSON normalization.
+  // Outer query/sql/arguments fields are not dispatched and must never shadow args.
+  let args = input?.args;
+  if (typeof args === "string") {
+    try { args = JSON.parse(args); } catch { args = undefined; }
   }
-  return { outerTool };
+  if (!args || typeof args !== "object" || Array.isArray(args)) args = undefined;
+  return { target: innerTool ? { outerTool, innerTool, server } : { outerTool }, args, proxy: true };
+}
+
+/** The same target/argument normalization feeds mutation, SQL and grant checks. */
+export function effectiveMutationTarget(event: any): MutationTarget {
+  return normalizeMcpCall(event).target;
+}
+
+function callSqlText(event: any): string {
+  const call = normalizeMcpCall(event);
+  if (call.proxy && call.args) {
+    const texts = ["sql", "query", "statement", "command"]
+      .map((key) => call.args[key]).filter((value) => typeof value === "string");
+    // Multiple SQL aliases cannot hide a mutation behind a benign first field.
+    if (texts.length > 1) return texts.join(";\n");
+  }
+  return extractSqlText(call.args);
 }
 
 function mutationName(target: { outerTool: string; innerTool?: string; server?: string }): string {
@@ -754,11 +787,11 @@ function fixedLiveReadLabel(event: any): string {
 export function mcpMutationLabel(toolName: string | { outerTool: string; innerTool?: string; server?: string }): string | null {
   const target = typeof toolName === "string" ? { outerTool: toolName } : toolName;
   const name = target.innerTool || target.outerTool;
-  if (!name || name === "bash" || name === "read" || name === "edit" || name === "write" || name === "mcp") return null;
+  if (!name || (!target.innerTool && ["bash", "read", "edit", "write", "mcp"].includes(name))) return null;
   if (!MCP_WRITE_VERB.test(name)) return null;
   // A proxied call's server identity proves this is MCP; remote tool names need not
   // repeat a Fabric/Power BI noun (e.g. azure-devops/create_work_item).
-  if (target.outerTool === "mcp" && target.innerTool && target.server) return mutationName(target);
+  if ((target.outerTool === "mcp" || target.outerTool.startsWith("mcp__")) && target.innerTool && target.server) return mutationName(target);
   if (!MCP_TOOLISH.test(name)) return null;
   return mutationName(target);
 }
@@ -782,7 +815,7 @@ export function mcpLiveReadRisk(event: any): LiveReadRisk | null {
   const isDataRemote = DATA_SERVER.test(target.server || "") || MCP_TOOLISH.test(name);
   if (!isDataRemote) return null;
   let inputText = "";
-  try { inputText = JSON.stringify(event?.input || {}); } catch { inputText = ""; }
+  try { inputText = JSON.stringify(normalizeMcpCall(event).args || {}); } catch { inputText = ""; }
   const production = PRODUCTION_WORD.test(`${name} ${target.server || ""} ${inputText}`);
   const rows = ROW_READ_VERB.test(name);
   if (!production && !rows) return null;
@@ -859,7 +892,7 @@ export function sqlMcpRisk(event: any): SqlMcpRisk | null {
   const name = target.innerTool || target.outerTool;
   const server = target.server || "";
   if (name !== FABRIC_SQL_FALLBACK_TOOL && !SQL_ENDPOINT_TOOL.test(name) && server !== MANAGED_SQL_SERVER) return null;
-  const operation = classifySqlOperation(extractSqlText(event?.input));
+  const operation = classifySqlOperation(callSqlText(event));
   return {
     label: "COOP managed Warehouse SQL",
     kind: operation === "mutation" ? "ddl-dml-destructive" : operation === "ambiguous" ? "ambiguous-sql" : "row-data",
@@ -894,10 +927,19 @@ function strictResolvedText(value: any, max = 160): string | null {
 /** Only the adapter's real proxy shape can reuse approval. */
 function reusableSqlSurface(event: any): boolean {
   const target = effectiveMutationTarget(event);
-  const mcp = target.outerTool === "mcp"
-    && target.server === MANAGED_SQL_SERVER
-    && ["executeSQL", "execute_query", "fabric-sqlendpoint-execute_query", "fabric_sqlendpoint_execute_query"].includes(target.innerTool || "");
-  if (mcp) return true;
+  const call = normalizeMcpCall(event);
+  const operation = (target.innerTool || "").replace(/-/g, "_");
+  const prefixed = ["fabric_sqlendpoint_execute_query", "fabric_sqlendpoint_executeSQL"].includes(operation);
+  const managedProxy = call.proxy && (target.server === MANAGED_SQL_SERVER
+    || (target.outerTool === "mcp" && !target.server && prefixed));
+  if (managedProxy && (prefixed || ["executeSQL", "execute_query"].includes(operation))) {
+    const args = call.args;
+    // Unknown execution controls cannot silently inherit a grant. The adapter's
+    // target IDs are checked against trusted config below; model scope is ignored.
+    return !!args && Object.keys(args).every((key) => ["sql", "query", "statement", "command",
+      "workspaceId", "itemId", "coopLiveReadScope"].includes(key))
+      && ["sql", "query", "statement", "command"].filter((key) => typeof args[key] === "string").length === 1;
+  }
   if (target.outerTool !== FABRIC_SQL_FALLBACK_TOOL || target.innerTool) return false;
   const input = event?.input;
   if (!input || typeof input !== "object" || Array.isArray(input)) return false;
@@ -905,10 +947,12 @@ function reusableSqlSurface(event: any): boolean {
     && (input.maximum_rows === undefined || (Number.isInteger(input.maximum_rows) && input.maximum_rows >= 1 && input.maximum_rows <= 1000));
 }
 
-/** Conservatively admit one plain SELECT with a literal TOP bound. */
+/** Admit one plain, literal-TOP SELECT, including bracket-delimited identifiers. */
 export function boundedSelectLimit(sql: string): number | null {
-  if (classifySqlOperation(sql) !== "read" || /[\[\]"]/.test(sql)) return null;
-  const masked = sqlWithoutComments(sql).trim().replace(/;\s*$/, "");
+  // Double-quote semantics depend on session settings; keep that syntax per-call.
+  if (classifySqlOperation(sql) !== "read" || /"/.test(sql)) return null;
+  const masked = sqlWithoutComments(sql, true).trim().replace(/;\s*$/, "");
+  if (masked.includes("]")) return null; // unmatched closing identifier delimiter
   if (masked.includes(";") || (masked.match(/\bSELECT\b/gi) || []).length !== 1) return null;
   if (/\b(WITH|UNION|INTERSECT|EXCEPT|APPLY|EXEC(?:UTE)?|OPENROWSET|OPENQUERY|OPENDATASOURCE|BACKUP|RESTORE|DBCC|WAITFOR|USE|SET|DECLARE|BEGIN|COMMIT|ROLLBACK|SAVE|TRANSACTION|PRINT|RAISERROR|THROW|KILL|SHUTDOWN|BULK|OPTION|FOR|PERCENT)\b/i.test(masked)) return null;
   if (/\b[A-Za-z_][\w$#]*\s*\.\s*(?:[A-Za-z_][\w$#]*\s*)?\.\s*[A-Za-z_][\w$#]*\b/i.test(masked)) return null;
@@ -946,6 +990,10 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   }
   let mcp: any;
   try { mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp.json"))); } catch { return null; }
+  // The adapter normalizes hyphens in server namespaces. An ambiguous namespace
+  // must not acquire a grant using the managed server's otherwise valid metadata.
+  const aliases = Object.keys(mcp?.mcpServers || {}).filter((name) => name.replace(/-/g, "_") === "fabric_sqlendpoint");
+  if (aliases.length !== 1 || aliases[0] !== MANAGED_SQL_SERVER) return null;
   const managed = Array.isArray(mcp?._coop?.managed_servers) && mcp._coop.managed_servers.includes(MANAGED_SQL_SERVER);
   const entry = mcp?.mcpServers?.[MANAGED_SQL_SERVER];
   const target = entry?._coop_target;
@@ -959,6 +1007,9 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   if (!managed || !entry || target?.scope !== "item" || !client || !tenant || !UUID.test(tenant)
       || !["dev", "test", "production"].includes(environment || "") || !itemName
       || !UUID.test(workspaceId) || !UUID.test(itemId) || !identity || identity.tenant !== tenant) return null;
+  const args = normalizeMcpCall(event).args;
+  if ((args?.workspaceId !== undefined && (typeof args.workspaceId !== "string" || args.workspaceId.toLowerCase() !== workspaceId))
+      || (args?.itemId !== undefined && (typeof args.itemId !== "string" || args.itemId.toLowerCase() !== itemId))) return null;
   const expectedUrl = `https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/${workspaceId}/items/${itemId}/sqlEndpoint`;
   const root = (globalThis as any).process?.env?.COOP_ROOT;
   const headerCommand = entry.requestHeadersCommand;
@@ -974,7 +1025,7 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   if (!exactEntry || entry.url !== expectedUrl || entry.auth !== false || entry.lifecycle !== "lazy"
       || entry.requestTimeoutMs !== PINNED_MCP_REQUEST_TIMEOUT_MS || !exactHeaderCommand
   ) return null;
-  let resultLimit = boundedSelectLimit(extractSqlText(event?.input));
+  let resultLimit = boundedSelectLimit(callSqlText(event));
   if (!resultLimit) return null;
   if (event?.toolName === FABRIC_SQL_FALLBACK_TOOL && Number.isInteger(event?.input?.maximum_rows)) {
     resultLimit = Math.min(resultLimit, event.input.maximum_rows);
@@ -1104,10 +1155,9 @@ export function bashSecretCmdPath(cmd: string): string | null {
 // An append-only JSONL record of what the guardrails blocked/confirmed, WHEN, and in
 // WHICH repo. For a governed, review-first practice this is direct client-trust value
 // and the fastest way to debug a false positive (e.g. the git -C / pathspec / cd family
-// that has needed several rounds of fixes). SECRETS ARE NEVER WRITTEN — the secret gate
-// logs only the matched path, never file contents; commands are truncated. Every write is
-// wrapped so a logging failure can never block work or crash pi (the extension's prime
-// directive is fail-open).
+// that has needed several rounds of fixes). The secret gate logs only the matched path,
+// never file contents; command gates record fixed classifications, never command text.
+// Logging is best-effort and cannot change the enforcement decision.
 const AUDIT_MAX_BYTES = 1_000_000;
 function auditDir(): string {
   return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".coop", "agent");
@@ -1122,11 +1172,18 @@ type AuditEntry = {
   tool: string;
   decision: "blocked" | "blocked-headless" | "allowed" | "declined";
   label: string;   // the short subject (offending path, danger label, tool name)
-  detail: string;  // paths (commit, first 8) or the command truncated to 200 chars — NEVER secrets
+  detail: string;  // offending paths (commit, first 8) or a fixed classification; never command text
 };
+// Older versions persisted command text in these records. Minimize both new writes
+// and displayed history without rewriting or deleting the existing audit file.
+function withoutCommandDetail(entry: AuditEntry): AuditEntry {
+  const commandDetail = entry.kind === "danger-confirm" || (entry.kind === "commit-block" &&
+    ["git commit --amend", "git commit --pathspec-from-file", "unverifiable git commit"].includes(entry.label));
+  return commandDetail ? { ...entry, detail: entry.label } : entry;
+}
 function audit(entry: AuditEntry): void {
   try {
-    appendFileSync(auditPath(), JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n");
+    appendFileSync(auditPath(), JSON.stringify({ ts: new Date().toISOString(), ...withoutCommandDetail(entry) }) + "\n");
   } catch {
     /* fail-open — a logging failure must never block legitimate work */
   }
@@ -1144,7 +1201,7 @@ function rotateAuditIfLarge(): void {
 function readAuditTail(n: number): AuditEntry[] {
   try {
     const lines = readFileSync(auditPath(), "utf8").split("\n").filter((l) => l.trim());
-    return lines.slice(-n).map((l) => JSON.parse(l));
+    return lines.slice(-n).map((l) => withoutCommandDetail(JSON.parse(l)));
   } catch {
     return [];
   }
@@ -1339,7 +1396,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           const why = hard.includes("--amend")
             ? "amend rewrites an existing commit"
             : "the guardrail does not read pathspec files";
-          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: hard, detail: git.segment.slice(0, 200) });
+          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: hard, detail: hard });
           return { block: true, reason: `coop guardrails: ${hard} is never permitted — ${why}. Let a human run it.` };
         }
         const offending = await offendingCommitPaths(pi, ctx.cwd, cmd, git, governance);
@@ -1354,7 +1411,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
             return { block: true, reason: "coop guardrails: blocked an unverifiable commit because approval is unavailable in headless mode." };
           }
           const ok = await ctx.ui.confirm("coop guardrails", `Can't verify what this commit would include:\n  ${git.segment.slice(0, 200)}\nProceed?`);
-          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: ok ? "allowed" : "declined", label: "unverifiable git commit", detail: git.segment.slice(0, 200) });
+          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: ok ? "allowed" : "declined", label: "unverifiable git commit", detail: "unverifiable git commit" });
           if (!ok) return { block: true, reason: "coop guardrails: blocked an unverifiable commit (you declined)." };
         }
       }
@@ -1363,20 +1420,22 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       const danger = dangerLabel(cmd);
       if (danger) {
         if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked-headless", label: danger, detail: cmd.slice(0, 200) });
+          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked-headless", label: danger, detail: danger });
           return { block: true, reason: `coop guardrails: blocked ${danger}; approval is unavailable in headless mode.` };
         }
         const ok = await ctx.ui.confirm(
           "coop guardrails",
           `Destructive command (${danger}):\n  ${cmd.slice(0, 200)}\nRun it?`,
         );
-        audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: danger, detail: cmd.slice(0, 200) });
+        audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: danger, detail: danger });
         if (!ok) {
           return { block: true, reason: `coop guardrails: blocked the ${danger} command (you declined). Propose a safer approach.` };
         }
       }
     } catch {
-      /* fail-open — never block legitimate work on a guardrails bug */
+      // An approval/policy failure is not permission. Never forward exception text:
+      // it can contain command arguments, credentials, or private tool payloads.
+      return { block: true, reason: "coop guardrails: unable to verify this tool call because an enforcement check failed; the action was blocked. Retry after resolving the guardrail or approval UI failure." };
     }
   });
 
