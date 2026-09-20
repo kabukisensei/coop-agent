@@ -1,9 +1,9 @@
 # Coop Windows Terminal: execution plan and experimental roadmap
 
-**Document revision 2.0 · September 19, 2026**  
+**Document revision 2.1 · September 19, 2026**
 **Product scope: Coop 1.x Windows terminal now; native Windows Coop 2.0 last.**
 
-**Canonical repository location:** `docs/COOP_WINDOWS_TERMINAL_PLAN.md`. This document supersedes the execution sequence and Desktop recommendations in *Coop_Windows_Simplification_and_Desktop_Handoff_v1*. The Markdown is the editable source of truth; the Word edition is a reading copy. Document revision 2.0 is not a Coop product release.
+**Canonical repository location:** `docs/COOP_WINDOWS_TERMINAL_PLAN.md`. This document supersedes the execution sequence and Desktop recommendations in *Coop_Windows_Simplification_and_Desktop_Handoff_v1*. The Markdown is the editable source of truth; the Word edition is a reading copy. Document revision 2.1 is not a Coop product release.
 
 **Authority and status:** The product direction below reflects Aaron’s revised instructions. This is the forward execution plan, not a receipt that its work is complete. No branch, installation, package, team repository, credential, or production resource was changed while preparing it. Adoption of this plan does not authorize a wholesale implementation, a release, a push, or sending client data to a new service. Work one bounded package at a time.
 
@@ -29,6 +29,8 @@ The work now has four distinct purposes: simplification; qualified component/ski
 | Jev | Introduce an optional, pinned experiment into beta early, after isolation and data-handling gates. Stable remains unchanged until evidence supports promotion. |
 | Future Desktop | Native Windows Coop 2.0, last; full capability parity and justified quality-of-life improvements. No current Electron/Tauri/PiChamber/Supernova implementation. |
 | Ownership | Pi owns the engine; vendors own their tools; TeamAI owns its knowledge functions; Coop owns the necessary integration, policy, provenance, and brand. |
+| Models and access | Work uses GPT models through existing OpenAI subscriptions. Candidates must preserve that access path; no separate API-key requirement, automatic provider fallback, or unapproved priority/fast-mode billing changes. |
+| Optional package features | Evaluate session naming, apply_patch only, beta diagnostics and scoped simplification through PK1. Prefer the smallest maintainable integration; do not assume adopting a package is better than a small first-party feature. |
 
 # 1. Baseline reconciliation: do this before creating the beta build
 
@@ -268,6 +270,23 @@ All otherwise uncited Coop pins in this table come from the exact current-main m
 
 Read-only metadata checks include `npm view <exact-package> dist-tags --json`, `npm view <exact-package>@<version> version engines repository dist.integrity --json`, vendor release pages and PyPI metadata. Such checks do not authorize `npm install -g`, `pipx upgrade-all`, `pi update --all`, or enabling new MCP permissions. Capture results and time of check in the PR.
 
+## PK1 — Optional capability fit, adopt versus build
+
+Aaron requested these four evaluations on September 19. The [package fit review](COOP_PACKAGE_FIT_REVIEW.md) records immutable source revisions, source-manifest versions, dependencies, compatibility gaps and proposed acceptance. Research is complete at source-review depth; no candidate was installed, loaded, built or runtime-qualified.
+
+| Candidate | Intended gain | Preliminary disposition |
+| --- | --- | --- |
+| `pi-lovely-rename` | Useful session names with less manual organization | Prefer a small first-party naming feature using minimal task context and the current GPT subscription session; compare against upstream before choosing. |
+| `pi-lovely-codex` | Codex-style `apply_patch` only | Evaluate a narrow integration around a qualified patch engine. Exclude fast-mode, read replacement and unrelated tool changes. Every touched path must pass Coop policy. |
+| `pi-lovely-dev-tools` | Understand beta failures and support other workstations | Prefer redacted read-only diagnostics in existing support/doctor surfaces. Upstream manual `/tool` dispatch bypasses normal tool-call hooks, so the full package is not a fleet default. |
+| `pi-simplify` | Focused clarity and maintenance review of a change | Promising as a small review-first command/prompt using the current GPT session. Compare with existing workflow before adding a package. |
+
+PK1 decisions must measure capability gained, maintained code and dependencies added or removed, configuration surfaces, Windows reliability, policy coverage, context/subscription usage and ease of future extension. Reuse a stable upstream engine when implementing it ourselves would create more maintenance. Preserve license/provenance for reused code. One owner per capability; avoid parallel settings, lifecycle managers or review workflows.
+
+Before a trial: B1 must prove isolation and the specific feature scope must be authorized. Verify the actual artifact against the reviewed source, exact Pi/Node/Windows compatibility and OpenAI subscription authentication. Demonstrate initial bounded approval, reuse within scope, fresh approval for expansion, rejection/revocation/new-session behavior and real Pi hook enforcement wherever the feature executes tools. Do not substitute a prompt on every call for a bounded grant. Use synthetic data and E: state, test removal/rollback, and make an explicit adopt/build/defer decision. No package adoption or feature implementation is part of the pre-Monday guardrail repair.
+
+The GPT/subscription constraint also applies to all other roadmap experiments, including TeamAI and Jev. A candidate that requires another model provider or separate API billing remains deferred unless Aaron explicitly changes this requirement. Their existing isolation and data-approval gates remain in force.
+
 # 7. Official Microsoft refresh and complete skill-efficiency sweep
 
 ## 7.1 The concrete Fabric catalog migration
@@ -437,6 +456,7 @@ A test is removable only if its supported behavior is removed, the same boundary
 | B1 | Implement isolated beta context, launch/install/update/remove and identity | B0 | Stable remains unchanged through full beta lifecycle; same component versions initially |
 | S1–S2 | Small deletion/lifecycle simplification slices | B1 | Native Windows parity, real reduction counts, no hidden version changes |
 | U1 | Qualify useful Pi/adapter/vendor updates one family at a time | B1 | Exact old/new versions, benefit, native tests and rollback |
+| PK1 | Evaluate naming, apply_patch only, beta diagnostics and simplify; choose adopt/build/defer | B0 for source review; B1 + feature authorization for trials | GPT subscription compatibility, policy/Windows acceptance, measured maintenance benefit, exact artifact and rollback |
 | SK1 | Complete skill inventory, freshness sweep and Microsoft catalog mapping | B0 for audit; B1 for trial | Effective resource manifest, task/near-miss checks, before/after context and explicit permission map |
 | J0 | Optional Jev SDK/skill and shadow experiment | B1 + data approval + required compatibility | Public/synthetic replay succeeds; no policy/state change; budget and kill switch |
 | K1 | TeamAI isolated install and scoped recall | B1 | Real CLI destinations, sandbox remote, no unintended injection, offline/bounds checks |
@@ -500,8 +520,9 @@ A maintainer edits this plan’s status table as work closes. Each closed row li
 
 | ID | Status at this revision | Next action | Owner |
 | --- | --- | --- | --- |
-| B0 | Ready for implementation planning | Establish actual stable SHA; reconcile 60-commit delta and safety findings | Product owner + Windows reviewer to assign |
-| B1 | Blocked by B0 | Design and prove one isolated beta installation context | Unassigned |
+| B0 | Review complete September 19; [receipt](COOP_WINDOWS_TERMINAL_B0.md) | Preserve installed `9e8248a`; review confirmed guardrail defects and MCP resolution drift | Review: Codex; follow-up owners proposed in receipt |
+| B1 | Proposed only; implementation not started | Review [bounded proposal](COOP_WINDOWS_TERMINAL_B1_PROPOSAL.md); resolve safety/package gates and obtain explicit authorization | Unassigned |
+| PK1 | Source review complete; runtime qualification and implementation not started | See [fit review](COOP_PACKAGE_FIT_REVIEW.md); qualify only after B1 and feature authorization | Research: Codex; implementation owner unassigned |
 | S1–S7 | Review findings; not implemented | Select smallest independent deletion after required evidence | Unassigned |
 | U1 | Candidate research completed in part | Resolve remaining registry metadata and qualify useful families | Unassigned |
 | SK1 | Ready for inventory | Full effective-skill map; Fabric v0.3.17 migration and efficiency evidence | Unassigned |
