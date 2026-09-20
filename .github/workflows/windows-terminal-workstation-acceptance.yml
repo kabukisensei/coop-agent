@@ -185,16 +185,39 @@ jobs:
         run: |
           # Diagnostic branch only: print closed categories, never raw evidence.
           # The tested harness and candidate still come from candidate_sha.
-          if (-not $env:EVIDENCE_PATH) { throw 'Doctor evidence path unavailable' }
-          $path = Join-Path $env:EVIDENCE_PATH 'logs\candidate-doctor.stdout.txt'
-          $full = [System.IO.Path]::GetFullPath($path)
+          # Failed runs intentionally delete evidence. Re-probe the retained owned
+          # installation without changing the harness or retaining raw output.
+          if (-not $env:OWNED_PATH) { throw 'Owned installation path unavailable' }
+          $full = [System.IO.Path]::GetFullPath($env:OWNED_PATH)
           $current = [System.IO.Path]::GetPathRoot($full)
           foreach ($part in @($full.Substring($current.Length) -split '[\\/]' | Where-Object { $_ })) {
             $current = Join-Path $current $part
             $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
             if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Linked Doctor evidence refused' }
           }
-          $doctor = Get-Content -LiteralPath $full -Raw | ConvertFrom-Json
+          $profile = Join-Path $full 'profile'
+          $npm = Join-Path $full 'npm-global'
+          $pipxBin = Join-Path $full 'pipx-bin'
+          $localApp = Join-Path $full 'local-app-data'
+          $env:HOME = $profile
+          $env:USERPROFILE = $profile
+          $env:HOMEDRIVE = (Split-Path -Qualifier $profile)
+          $env:HOMEPATH = $profile.Substring($env:HOMEDRIVE.Length)
+          $env:LOCALAPPDATA = $localApp
+          $env:APPDATA = Join-Path $full 'roaming-app-data'
+          $env:COOP_DIR = $profile
+          $env:COOP_AGENT_DIR = Join-Path $profile '.coop\agent'
+          $env:PIPX_HOME = Join-Path $full 'pipx-home'
+          $env:PIPX_BIN_DIR = $pipxBin
+          $env:npm_config_prefix = $npm
+          $env:COOP_NO_ONBOARD = '1'
+          $env:COOP_NO_MODEL_LOGIN = '1'
+          $env:PATH = "$npm;$pipxBin;$(Join-Path $localApp 'coop\bin');$($env:PATH)"
+          [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+          $doctorOutput = @(powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\candidate\scripts\doctor.ps1 --json 2>$null)
+          $doctorLine = @($doctorOutput | Where-Object { ([string]$_).StartsWith('{"checks"') })
+          if ($doctorLine.Count -ne 1) { throw 'Doctor did not return one recognizable document' }
+          $doctor = $doctorLine[0] | ConvertFrom-Json
           $codes = @()
           foreach ($check in @($doctor.checks | Where-Object { $_.status -eq 'fail' })) {
             $name = [string]$check.name
