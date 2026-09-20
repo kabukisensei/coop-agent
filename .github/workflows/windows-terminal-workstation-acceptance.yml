@@ -179,6 +179,44 @@ jobs:
           $harnessRc = $LASTEXITCODE
           if ($harnessRc -ne 0) { exit $harnessRc }
 
+      - name: Report closed Doctor failure categories
+        if: failure()
+        shell: powershell
+        run: |
+          # Diagnostic branch only: print closed categories, never raw evidence.
+          # The tested harness and candidate still come from candidate_sha.
+          if (-not $env:EVIDENCE_PATH) { throw 'Doctor evidence path unavailable' }
+          $path = Join-Path $env:EVIDENCE_PATH 'logs\candidate-doctor.stdout.txt'
+          $full = [System.IO.Path]::GetFullPath($path)
+          $current = [System.IO.Path]::GetPathRoot($full)
+          foreach ($part in @($full.Substring($current.Length) -split '[\\/]' | Where-Object { $_ })) {
+            $current = Join-Path $current $part
+            $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Linked Doctor evidence refused' }
+          }
+          $doctor = Get-Content -LiteralPath $full -Raw | ConvertFrom-Json
+          $codes = @()
+          foreach ($check in @($doctor.checks | Where-Object { $_.status -eq 'fail' })) {
+            $name = [string]$check.name
+            $code = switch -Regex ($name) {
+              '^Fabric SQL fallback: pyodbc missing' { 'sql-pyodbc-missing'; break }
+              '^Fabric SQL fallback: pyodbc .* differs from manifest' { 'sql-pyodbc-version'; break }
+              '^Fabric SQL fallback: pyodbc is installed but unloadable' { 'sql-pyodbc-unloadable'; break }
+              '^Fabric SQL fallback: ODBC Driver' { 'sql-odbc-driver-missing'; break }
+              '^Fabric SQL fallback: selected Fabric Python runtime' { 'sql-python-runtime-missing'; break }
+              '^python missing' { 'python-missing'; break }
+              '^pipx missing' { 'pipx-missing'; break }
+              '^pi missing' { 'pi-missing'; break }
+              '^git missing' { 'git-missing'; break }
+              '^fab missing' { 'fabric-cli-missing'; break }
+              '^fab is the WRONG tool' { 'fabric-cli-collision'; break }
+              'pipx environment is stale/corrupt' { 'pipx-runtime-mismatch'; break }
+              default { 'unclassified-required-check' }
+            }
+            $codes += $code
+          }
+          [ordered]@{ diagnostic = 'candidate-doctor'; fail = [int]$doctor.fail; categories = $codes } | ConvertTo-Json -Compress
+
       - name: Run exact-candidate behavioral tests under Windows PowerShell 5.1
         id: exact_behavioral_suite
         shell: powershell
