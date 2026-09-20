@@ -68,8 +68,10 @@ scope. It otherwise survives turns, compaction, and reconnects. Every call is st
 classified at runtime. The approved scope is the exact item/database, operation class,
 maximum row count, and operation timeout—not tables, columns, or predicates—so later
 SQL may vary within that database while staying at or below the approved bounds. Only
-one plain SELECT with a literal TOP bound can reuse approval; CTE, UNION, APPLY, quoted
-identifiers, cross-database references, mutations, unfamiliar SQL, `EXEC`, batches,
+one plain SELECT with a literal TOP bound can reuse approval, including bracketed
+identifiers and escaped `]]`. Identifier boundaries remain visible to cross-database
+detection. CTE, UNION, APPLY, double-quoted identifiers, cross-database references,
+mutations, unfamiliar SQL, `EXEC`, batches,
 exports/downloads, and unbounded reads retain a separate per-call gate. Pi exposes no
 separate authenticated-user event for tool calls, so the runtime confirmation UI is
 the trusted consent event and cannot safely be skipped. Consent never comes from

@@ -76,10 +76,12 @@ The grant is memory-only and resets on every session start or shutdown (`/new`,
 compaction, and reconnects within that session. SQL is classified quote-aware on every
 call. The grant covers the exact managed item/database, SQL-read operation class,
 maximum rows, and timeout—not tables, columns, or filters. Only one plain SELECT with
-a literal TOP bound can reuse it; CTE, UNION, APPLY, quoted identifiers, mutations,
+a literal TOP bound can reuse it, including bracketed identifiers and escaped `]]`.
+Identifier boundaries remain visible to cross-database detection. CTE, UNION, APPLY,
+double-quoted identifiers, mutations,
 unfamiliar/ambiguous SQL, `EXEC`, batches, exports/downloads, and unbounded reads remain
-separately confirmed. Pinned adapter 2.10.0 uses the MCP SDK's enforced 60-second
-timeout; there is no private runtime config field. Raw SQL, tool arguments, results, and
+separately confirmed. The managed MCP config fixes the request timeout at 60 seconds;
+scope resolution requires that exact value. Raw SQL, tool arguments, results, and
 credentials are never written to grant state or the audit log. Tool/repository/model
 text can describe a scope but cannot approve one; only the confirmation UI can.
 

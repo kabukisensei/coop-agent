@@ -1,5 +1,10 @@
 # Guardrail repair receipt — G01, G02 and G03
 
+This records the initial repair and its historical validation limits. The final
+section records subsequent live acceptance and the authorized bracket-parser
+follow-up. See [PR #71](https://github.com/kabukisensei/coop-agent/pull/71) for current
+commit/check status; older evidence is not validation of a later commit.
+
 September 19, 2026. The user authorized the G01/G02 repair and subsequently added
 G03 dynamic-wrapper normalization, preserving the existing changes. All three are
 implemented in the isolated E: checkout. **Prepared for draft PR review; full local
@@ -121,3 +126,37 @@ changed launchers, or activated any integrations.
 Next: satisfy hosted full-suite/CI acceptance and review before merge. Keep Monday's
 operational installation unchanged; deployment remains a separate decision after an
 isolated real-session rehearsal and rollback check.
+
+## Live acceptance and bracketed-identifier follow-up
+
+The user authorized completing live rehearsal and conditionally merging/updating
+source only after acceptance. Reusing the earlier E: Azure profile with its normal
+Windows authentication context succeeded without a new login or policy change.
+The rejected isolated device-code flow no longer blocks that rehearsal.
+
+Actual Pi/adapter checks passed initial approval, dynamic and central reuse,
+declined expansion, retained prior grant and revocation. Bounded SQL and independent
+Power BI MCP DAX returned 12 matching monthly aggregate rows; the current E: report
+rendered correctly. No remote mutation or deployment was performed. These are
+distinct checks: DAX and report rendering were not Pi guardrail-hook traversals.
+
+The realistic query exposed an existing conservative restriction on bracketed
+identifiers. The user authorized a focused extension before merge. Code commit
+`cbda69e` now retains opaque identifier tokens for scope checks, including escaped
+closing brackets, while rejecting cross-database names and preserving mutation and
+batch gates. Double-quoted syntax remains per-call. The live bracketed query now
+establishes one bounded grant and repeats without another prompt.
+
+The updated 96-group guardrail suite and real Pi 0.84.3 hook integration pass,
+including bracketed expansion, rejection, revocation, new-session and mutation
+cases. Normal E: Coop launcher smoke, source rollback/reapply, static parsing and
+parity/BOM checks pass. The elevated local full suite still stops at the existing
+missing-C-compiler fixture prerequisite; hosted full-suite/Pi checks must pass
+before merge. No workstation packages or permanent privilege settings changed.
+The earlier native installation acceptance passed at `23fcb01`, before the parser
+change, and must not be labeled as testing the later commit.
+
+Protected C: source/profile/client hashes remain unchanged at this checkpoint.
+Merge stays held until current checks and review pass; then the authorized
+source-only rollout requires a fresh normal installed-launch check. No release,
+package update, B1, TeamAI/Jev or Coop Desktop work is included.
