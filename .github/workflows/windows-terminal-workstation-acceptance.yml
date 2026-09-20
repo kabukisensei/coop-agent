@@ -137,6 +137,29 @@ jobs:
           & $env:CERT_PYTHON -c "import jsonschema"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Provision matching ODBC prerequisite on disposable runner
+        shell: powershell
+        run: |
+          # Test infrastructure only. Match the existing workstation driver;
+          # never run this provisioning step on the operational workstation.
+          $driverKey = 'HKLM:\SOFTWARE\ODBC\ODBCINST.INI\ODBC Driver 18 for SQL Server'
+          if (-not (Test-Path -LiteralPath $driverKey)) {
+            $driverMsi = Join-Path $env:RUNNER_TEMP 'coop-pr71-msodbcsql-18.6.1.1-x64.msi'
+            $driverUrl = 'https://download.microsoft.com/download/8d6e3acc-bf5b-41fe-ad51-a9ad406a780f/amd64/1033/msodbcsql.msi'
+            Invoke-WebRequest -UseBasicParsing -Uri $driverUrl -OutFile $driverMsi
+            $expectedHash = '1671AD311BCD8745A2BC5A4A7E8D0863E80D7668B9B4B5143AC0D03B323B3421'
+            if ((Get-FileHash -LiteralPath $driverMsi -Algorithm SHA256).Hash -cne $expectedHash) { throw 'ODBC prerequisite hash mismatch' }
+            $signature = Get-AuthenticodeSignature -LiteralPath $driverMsi
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { throw 'ODBC prerequisite publisher could not be verified' }
+            $driverArgs = "/i `"$driverMsi`" /quiet /norestart IACCEPTMSODBCSQLLICENSETERMS=YES"
+            $driverInstall = Start-Process -FilePath msiexec.exe -ArgumentList $driverArgs -WindowStyle Hidden -Wait -PassThru
+            if ($driverInstall.ExitCode -ne 0) { throw "ODBC prerequisite installation exited $($driverInstall.ExitCode)" }
+          }
+          $driver = Get-ItemProperty -LiteralPath $driverKey
+          $driverVersion = (Get-Item -LiteralPath $driver.Driver).VersionInfo.ProductVersion
+          if ($driverVersion -ne '18.6.1.1') { throw 'ODBC prerequisite version differs from the workstation baseline' }
+          Write-Output 'Disposable-runner prerequisite verified: Microsoft ODBC Driver 18.6.1.1 x64'
+
       - name: Exercise ownership faults and Unicode transport
         shell: powershell
         run: |
