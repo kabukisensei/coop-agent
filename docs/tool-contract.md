@@ -389,6 +389,14 @@ can still report `auth_required`, `unavailable`, `tool_missing`, or
 `target_invalid`. Live dev/test verification remains pending on the signed-in
 user, tenant, target, and Fabric permissions.
 
+For a verified managed target, one approved session scope covers matching single
+`SELECT` calls with a literal `TOP` bound, including bracketed names such as
+`[Calendar Month Date]` and escaped `]]` inside identifiers. Dynamic namespace and
+central-proxy calls share that grant. Identifier text cannot hide a three-part or
+four-part cross-database name. Double-quoted identifiers, unfamiliar SQL, batches,
+and mutations do not inherit this grant; scope expansion asks again. Rejecting an
+expansion retains the earlier grant; revocation and a new session clear it.
+
 The preferred live SQL route is that managed MCP server. Coop also registers exactly
 one explicit fallback, `fabric_sql_query`, implemented by the new consolidated
 `lib/fabric_sql_query.py` helper (no historical standalone runner was recovered).

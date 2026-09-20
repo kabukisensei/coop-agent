@@ -5,6 +5,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- Bounded Warehouse session approvals now support bracketed SQL identifiers,
+  including escaped closing brackets, while keeping cross-database targets,
+  mutations, batches and unsupported quoting separately gated.
+
 - Guardrail MCP dispatch normalization now covers dynamic `mcp__<server>` wrappers,
   preventing inner mutations from bypassing classification. Verified bounded SQL
   grants are shared with central-proxy calls without repeated prompts; changed

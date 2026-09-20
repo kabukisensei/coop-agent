@@ -790,11 +790,48 @@ await t("mutation, semicolonless, unbounded, cross-db, and unsupported SQL stay 
     "SELECT TOP (5) * FROM dbo.Customer UNION SELECT TOP (5) * FROM dbo.Secret",
     "SELECT TOP (1) 1 WAITFOR DELAY '00:00:01'",
     "WITH x AS (SELECT TOP (5) * FROM dbo.Customer) SELECT TOP (5) * FROM x",
-    "SELECT TOP (5) * FROM [dbo].[Customer]",
+    "SELECT TOP (5) * FROM [OtherDatabase].[dbo].[Secret]",
+    'SELECT TOP (5) * FROM "dbo"."Customer"',
   ]) {
     confirmAnswer = false;
     assert.equal(blocked(await handle(sqlRead(sql), liveCtx)), true, sql);
   }
+});
+
+await t("bounded bracket identifiers preserve local scope without exposing their contents", () => {
+  for (const sql of [
+    "SELECT TOP (12) [Calendar Month Date], SUM([Accounting Amount]) AS [Revenue] FROM [finance].[Ledger Transactions] GROUP BY [Calendar Month Date]",
+    "SELECT TOP (12) [SELECT; DELETE -- /* ]] name] FROM [dbo].[Customer]",
+    "SELECT TOP (12) [x.y.z] FROM [dbo].[table]]name]",
+    "/* [unterminated comment data */ SELECT TOP (12) '[literal]' AS [Value] FROM [dbo].[Customer]",
+    "SELECT TOP (12) c.[Name] FROM dbo.[Customer] c JOIN [dbo].Account a ON a.Id = c.[Account Id]",
+  ]) assert.equal(cg.boundedSelectLimit(sql), 12, sql);
+});
+
+await t("brackets cannot conceal cross-database targets, mutations, batches or unbounded syntax", () => {
+  for (const sql of [
+    "SELECT TOP (5) * FROM [OtherDatabase].[dbo].[Secret]",
+    "SELECT TOP (5) * FROM [OtherDatabase]..[Secret]",
+    "SELECT TOP (5) * FROM OtherDatabase.[dbo].Secret",
+    "SELECT TOP (5) * FROM [OtherDatabase].dbo.[Secret]",
+    "SELECT TOP (5) * FROM [server].[database].[dbo].[Secret]",
+    "SELECT TOP (5) * FROM [OtherDatabase] /* comment */ . [dbo] . [Secret]",
+    "SELECT TOP (5) * FROM [dbo].[Customer] JOIN [OtherDatabase].[dbo].[Secret] s ON 1=1",
+    "SELECT TOP (5) [x] INTO [dbo].[NewTable] FROM [dbo].[Customer]",
+    "SELECT TOP (5) [x]; DELETE FROM [dbo].[Customer]",
+    "SELECT TOP (5) [x] FROM [dbo].[Customer] UPDATE [dbo].[Customer] SET [x]=1",
+    "SELECT TOP (5) [x] FROM [dbo].[Customer] SELECT TOP (5) [secret] FROM [dbo].[Secret]",
+    "SELECT TOP (5) [x] FROM [dbo].[Customer] UNION SELECT TOP (5) [x] FROM [dbo].[Secret]",
+    "SELECT TOP (5) PERCENT [x] FROM [dbo].[Customer]",
+    "SELECT TOP ([5]) [x] FROM [dbo].[Customer]",
+    "SELECT [TOP (5)] FROM [dbo].[Customer]",
+    "SELECT TOP (5) [unterminated",
+    "SELECT TOP (5) [escaped]]",
+    "SELECT TOP (5) [x] ] FROM [dbo].[Customer]",
+    'SELECT TOP (5) "x" FROM [dbo].[Customer]',
+  ]) assert.equal(cg.boundedSelectLimit(sql), null, sql);
+  for (const sql of ["DELETE FROM [dbo].[Customer]", "SELECT TOP (5) [x] INTO [dbo].[NewTable] FROM [dbo].[Customer]"])
+    assert.equal(cg.classifySqlOperation(sql), "mutation", sql);
 });
 
 await t("session shutdown and revoke clear the in-memory grant", async () => {

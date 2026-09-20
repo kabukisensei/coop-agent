@@ -676,7 +676,7 @@ const FABRIC_SQL_FALLBACK_TOOL = "fabric_sql_query";
 const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DELETE|DENY|DROP|EXEC|EXECUTE|GRANT|INSERT|MERGE|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE|UPSERT)\b/i;
 const SQL_MUTATING_INTO = /\b(?:SELECT|COPY)\b[\s\S]*?\bINTO\b/i;
 
-function sqlWithoutComments(sql: string): string {
+function sqlWithoutComments(sql: string, preserveBracketIdentifiers = false): string {
   // Lex rather than regex-replace: comment delimiters inside SQL strings and
   // quoted identifiers are data, not comments. Literal/identifier contents are
   // blanked too, so words such as 'DELETE' do not create false mutations.
@@ -692,7 +692,13 @@ function sqlWithoutComments(sql: string): string {
       if (ch === "/" && next === "*") { state = "block"; blockDepth = 1; out += "  "; i += 2; continue; }
       if (ch === "'") { state = "single"; out += " "; i += 1; continue; }
       if (ch === '"') { state = "double"; out += " "; i += 1; continue; }
-      if (ch === "[") { state = "bracket"; out += " "; i += 1; continue; }
+      if (ch === "[") {
+        state = "bracket";
+        // Scope checks need an opaque identifier token so [db].[schema].[table]
+        // cannot disappear before cross-database detection. Never retain its text.
+        out += preserveBracketIdentifiers ? "__coop_bracket_identifier__" : " ";
+        i += 1; continue;
+      }
       out += ch; i += 1; continue;
     }
     if (state === "line") {
@@ -941,10 +947,12 @@ function reusableSqlSurface(event: any): boolean {
     && (input.maximum_rows === undefined || (Number.isInteger(input.maximum_rows) && input.maximum_rows >= 1 && input.maximum_rows <= 1000));
 }
 
-/** Conservatively admit one plain SELECT with a literal TOP bound. */
+/** Admit one plain, literal-TOP SELECT, including bracket-delimited identifiers. */
 export function boundedSelectLimit(sql: string): number | null {
-  if (classifySqlOperation(sql) !== "read" || /[\[\]"]/.test(sql)) return null;
-  const masked = sqlWithoutComments(sql).trim().replace(/;\s*$/, "");
+  // Double-quote semantics depend on session settings; keep that syntax per-call.
+  if (classifySqlOperation(sql) !== "read" || /"/.test(sql)) return null;
+  const masked = sqlWithoutComments(sql, true).trim().replace(/;\s*$/, "");
+  if (masked.includes("]")) return null; // unmatched closing identifier delimiter
   if (masked.includes(";") || (masked.match(/\bSELECT\b/gi) || []).length !== 1) return null;
   if (/\b(WITH|UNION|INTERSECT|EXCEPT|APPLY|EXEC(?:UTE)?|OPENROWSET|OPENQUERY|OPENDATASOURCE|BACKUP|RESTORE|DBCC|WAITFOR|USE|SET|DECLARE|BEGIN|COMMIT|ROLLBACK|SAVE|TRANSACTION|PRINT|RAISERROR|THROW|KILL|SHUTDOWN|BULK|OPTION|FOR|PERCENT)\b/i.test(masked)) return null;
   if (/\b[A-Za-z_][\w$#]*\s*\.\s*(?:[A-Za-z_][\w$#]*\s*)?\.\s*[A-Za-z_][\w$#]*\b/i.test(masked)) return null;

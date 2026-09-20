@@ -88,6 +88,32 @@ await dispatch({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "
 await dispatch({ toolName: "mcp", input: { tool: "fabric-sqlendpoint_execute_query", args: read().input.args } }, false);
 await dispatch({ toolName: "fabric_sql_query", input: { query: read(10).input.args.query, maximum_rows: 10 } }, false);
 assert.equal(prompts, 1, "matching calls across dispatch surfaces do not prompt again");
+// Real Pi hooks must share the same bounded grant for bracketed SQL on both paths.
+const bracketed = "SELECT TOP (12) [Calendar Month Date], SUM([Accounting Amount]) AS [Revenue] FROM [finance].[Ledger Transactions] GROUP BY [Calendar Month Date]";
+await fresh(); answer = true;
+await dispatch(read(12, { query: bracketed }), false);
+assert.equal(prompts, 1);
+assert.ok(messages.at(-1).includes("Approve this exact bounded scope for this session?"));
+answer = false;
+await dispatch(read(12, { query: bracketed }), false);
+await dispatch({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: read(12, { query: bracketed }).input.args } }, false);
+assert.equal(prompts, 1, "bracketed dynamic and central reads reuse initial approval");
+await dispatch(read(13, { query: bracketed.replace("(12)", "(13)") }), true);
+await dispatch(read(12, { query: bracketed }), false);
+assert.equal(prompts, 2, "rejected bracketed expansion retains the prior grant");
+for (const query of [
+  "SELECT TOP (5) * FROM [OtherDatabase].[dbo].[Secret]",
+  "SELECT TOP (5) * FROM [OtherDatabase]..[Secret]",
+  "SELECT TOP (5) [Name] INTO [dbo].[NewTable] FROM [dbo].[Customer]",
+  "SELECT TOP (5) [Name]; DELETE FROM [dbo].[Customer]",
+  "SELECT TOP (5) [unterminated",
+]) await dispatch(read(5, { query }), true);
+await commands.get("coop-live-read").handler("revoke", runner.createContext());
+await dispatch(read(12, { query: bracketed }), true);
+answer = true; await dispatch(read(12, { query: bracketed }), false);
+await fresh(); answer = false; await dispatch(read(12, { query: bracketed }), true);
+// Restore the original grant fixture for the remaining lifecycle cases.
+await fresh(); answer = true; await dispatch(read(), false); answer = false;
 await dispatch(read(50), true);
 await dispatch(read(), false);
 assert.equal(prompts, 2, "rejected expansion preserves the original grant");
