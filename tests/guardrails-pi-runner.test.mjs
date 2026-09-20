@@ -107,6 +107,8 @@ const mutations = [read(1, { query: "DELETE FROM dbo.Customer" }),
 const beforeMutations = executions;
 for (const event of mutations) await dispatch(event, true);
 assert.equal(executions, beforeMutations, "no mutation reaches even the inert executor");
+await dispatch({ toolName: "mcp__fabric__get_schema", input: { environment: "production" } }, true);
+await dispatch({ toolName: "mcp__fabric__executeSQL", input: { sql: "DELETE FROM dbo.Customer" } }, true);
 await commands.get("coop-live-read").handler("revoke", runner.createContext());
 await dispatch(read(), true);
 await dispatch(read(), true); // rejected initial requests never make a grant

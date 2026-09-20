@@ -725,7 +725,9 @@ function normalizeMcpCall(event: any): { target: MutationTarget; args: any; prox
   const outerTool = String(event?.toolName ?? "");
   const input = event?.input;
   const namespace = /^mcp__([A-Za-z0-9_]+)$/.exec(outerTool)?.[1];
-  const proxy = outerTool === "mcp" || !!namespace;
+  // Direct MCP tools may also start with mcp__; only an actual {tool, args}
+  // envelope carries a dispatched inner operation. Otherwise retain direct args.
+  const proxy = (outerTool === "mcp" || !!namespace) && typeof input?.tool === "string";
   if (!proxy) return { target: { outerTool }, args: input, proxy: false };
   const server = namespace
     ? (namespace === "fabric_sqlendpoint" ? MANAGED_SQL_SERVER : namespace)

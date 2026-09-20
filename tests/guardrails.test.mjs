@@ -1055,6 +1055,11 @@ await t("dynamic MCP wrappers normalize the bound server and effective arguments
     assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName, input: { server: "custom", tool: "write", args: {} } })));
   }
   assert.deepEqual(effectiveMutationTarget({ toolName: "custom_local", input: { tool: "fabric_create_item", args: {} } }), { outerTool: "custom_local" });
+  // Direct MCP names can share the namespace prefix without a proxy envelope.
+  for (const [sql, kind] of [["SELECT TOP (1) 1", "row-data"], ["DELETE FROM dbo.Customer", "ddl-dml-destructive"]]) {
+    assert.equal(sqlMcpRisk({ toolName: "mcp__fabric__executeSQL", input: { sql } })?.kind, kind);
+  }
+  assert.equal(mcpLiveReadRisk({ toolName: "mcp__fabric__get_schema", input: { environment: "production" } })?.kind, "production-metadata");
 });
 
 await t("dynamic reads establish one bounded grant shared across adapter dispatch shapes", async () => {

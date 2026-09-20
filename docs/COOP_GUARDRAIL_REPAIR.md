@@ -23,6 +23,8 @@ Publication is authorized; merge, release and operational deployment are held.
   are recognized. Outer query fields cannot mask dispatched SQL, and multiple SQL
   aliases cannot acquire a grant. Remote mutation verbs remain gated, including
   remote `write` operations that are distinct from the local file tool.
+  Direct MCP names beginning `mcp__` retain their own arguments when no inner-tool
+  envelope exists; SQL classification and production-metadata gates remain intact.
 
 One accepted, verified bounded SQL scope is reused across matching dynamic,
 central-proxy and existing native fallback calls. The managed prefix supports
@@ -45,6 +47,7 @@ execution surface. No live adapter transport or provider session was exercised.
 | --- | --- |
 | G01/G02 red tests | Original source persisted a synthetic command canary; after audit repair, the approval-exception test still reached the inert executor until enforcement was fixed |
 | G03 red test | Prior G01/G02 bundle lost the dynamic inner tool/server, reproducing the supplied evidence |
+| Direct-call review regression | Initial wrapper patch misread prefixed direct SQL as ambiguous; a red test exposed it. Requiring the inner-tool envelope restores direct SQL and production-metadata classification; handler and real-runner checks pass |
 | Registered-handler suite | **94 test groups passed**, including all original 86 groups and the preserved G01/G02 regressions |
 | Real Pi runtime integration | **Passed with installed Pi 0.84.3**, importing its real AgentSession hook installer and ExtensionRunner; only UI, registration and inert execution fixtures are supplied |
 | Real hook assertions | Initial approval and prompt count, repeat reads across dispatch shapes, rejected/accepted expansion, changed identities and IDs, revoke/new/shutdown, mutations, headless mode, synchronous/rejected approval errors, downstream hook stopping and audit canaries |
