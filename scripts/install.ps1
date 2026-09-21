@@ -34,17 +34,17 @@ function Install-Unit {
 function Add-CoopUserPaths {
   # pipx creates ~\.local\bin only when it installs the FIRST tool (steps 4/5), so
   # it may not exist yet here — prepend it unconditionally (a not-yet-existing PATH
-  # entry is harmless and goes live once the dir appears). The python user-base dirs
-  # hold the pipx launcher itself (from `pip install --user pipx`).
+  # entry is harmless and goes live once the dir appears). The pipx launcher itself
+  # (from `pip install --user pipx`) lands in the VERSIONED per-user Scripts dir —
+  # %APPDATA%\Python\Python312\Scripts — so `site --user-base`\Scripts points at a
+  # dir that does not exist; ask sysconfig for the real nt_user scripts path.
   $pipxBin = (Join-Path $HOME '.local\bin')       # pipx default PIPX_BIN_DIR on Windows
   if (($env:PATH -split ';') -notcontains $pipxBin) { $env:PATH = "$pipxBin;$env:PATH" }
   $py = Get-CoopPython
   if ($py) {
-    $base = (& $py -m site --user-base 2>$null)
-    if ($base) {
-      foreach ($d in @((Join-Path $base 'Scripts'), (Join-Path $base 'bin'))) {
-        if (($env:PATH -split ';') -notcontains $d) { $env:PATH = "$d;$env:PATH" }
-      }
+    $scripts = (& $py -c "import sysconfig; print(sysconfig.get_path('scripts', 'nt_user'))" 2>$null)
+    if ($scripts -and (($env:PATH -split ';') -notcontains $scripts)) {
+      $env:PATH = "$scripts;$env:PATH"
     }
   }
 }
