@@ -935,7 +935,17 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDo
       throw new Error("coop-data-doc closed before it accepted the wizard answer");
     }
     await new Promise<void>((resolveWrite, rejectWrite) => {
-      child.stdin.write(JSON.stringify(payload) + "\n", (error) => error ? rejectWrite(error) : resolveWrite());
+      child.stdin.write(JSON.stringify(payload) + "\n", (error) => {
+        if (!error) { resolveWrite(); return; }
+        // EPIPE race: the wizard exited before consuming the answer. Report it
+        // exactly like the pre-write closed check so the user-facing message is
+        // stable regardless of which event (stream 'error' vs write callback)
+        // lands first — a bare "write EPIPE" both reads worse and flakes the
+        // early-close integration assertion under load.
+        rejectWrite((error as any)?.code === "EPIPE"
+          ? new Error("coop-data-doc closed before it accepted the wizard answer")
+          : error);
+      });
     });
   };
   const accept = async (line: string): Promise<void> => {
@@ -992,7 +1002,15 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDo
   if (code === 130 && terminal === "cancelled") return false;
   if (code !== 0 && code !== 130 && terminal === "error") return false;
   const tail = stderrTail.trim() ? ` — ${stderrTail.trim().split("\n").slice(-2).join("  ")}` : "";
-  notify(ctx, `setup protocol contradiction (exit ${code ?? "?"}, event ${terminal ?? "none"})${tail}`, "error");
+  if (!terminal) {
+    // The wizard exited without a terminal event (e.g. it died right after a
+    // prompt). That is a silent close, not a protocol contradiction — say so,
+    // and keep the wording stable: the early-close path must be recognizable
+    // regardless of which stdin/exit race won.
+    notify(ctx, `coop-data-doc closed without a terminal event (exit ${code ?? "?"})${tail}`, "error");
+    return false;
+  }
+  notify(ctx, `setup protocol contradiction (exit ${code ?? "?"}, event ${terminal})${tail}`, "error");
   return false;
 }
 

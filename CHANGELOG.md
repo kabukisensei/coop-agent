@@ -5,6 +5,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Setup wizard (`/setup-docs` JSONL bridge): when `coop-data-doc` exits without
+  a terminal event (e.g. it dies right after emitting a prompt), the bridge now
+  reports `coop-data-doc closed without a terminal event` instead of a
+  `setup protocol contradiction (exit 0, event none)` — a silent close is not
+  a protocol contradiction. A stdin `EPIPE` on the wizard answer is likewise
+  reported with the same "closed before it accepted the wizard answer" wording
+  as the pre-write check, instead of a bare `write EPIPE`. Both make the
+  early-close message stable regardless of which OS event ordering wins the
+  race (previously load-dependent — the integration test flaked ~40% on a
+  loaded box).
+
+### Changed
+
 - CI: the Fabric MCP launch fixture's `pi-state` marker waits now allow 30s
   (was 8s) so a cold Node spawn on a loaded runner no longer flakes `main`
   (real incident: post-merge run `35662073009` failed on the identical tree
