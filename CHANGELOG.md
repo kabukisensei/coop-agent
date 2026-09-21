@@ -5,6 +5,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- CI: the Fabric MCP launch fixture's `pi-state` marker waits now allow 30s
+  (was 8s) so a cold Node spawn on a loaded runner no longer flakes `main`
+  (real incident: post-merge run `35662073009` failed on the identical tree
+  that passed its PR run).
+
 - `coop` now fails fast with a clear, actionable message when the dot-sourced
   helper library (`lib/common.ps1` / `lib/common.sh`) is missing — the
   signature of antivirus/Defender quarantining it on a fresh Windows clone —

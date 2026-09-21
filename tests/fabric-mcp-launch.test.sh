@@ -270,7 +270,7 @@ HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   >"$TMP/web-helper-fail.out" 2>"$TMP/web-helper-fail.err" &
 WEB_PID=$!
 i=0
-while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 160 ]; do
+while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 600 ]; do
   sleep 0.05
   i=$((i + 1))
 done
@@ -324,7 +324,7 @@ HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
   >"$TMP/web-stderr.out" 2>"$TMP/web-stderr.err" &
 WEB_PID=$!
 i=0
-while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 160 ]; do
+while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 600 ]; do
   sleep 0.05
   i=$((i + 1))
 done
@@ -376,7 +376,7 @@ for HELPER_MODE in control-token whitespace-stderr; do
     >"$TMP/$HELPER_MODE-web.out" 2>"$TMP/$HELPER_MODE-web.err" &
   WEB_PID=$!
   i=0
-  while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 160 ]; do sleep 0.05; i=$((i + 1)); done
+  while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 600 ]; do sleep 0.05; i=$((i + 1)); done
   [ -f "$MARKER/pi-state" ]
   assert_windows_helper_executed "$HELPER_MODE"
   grep -F 'Fabric Warehouse MCP unavailable:' "$TMP/$HELPER_MODE-web.err" >/dev/null
@@ -412,7 +412,7 @@ else
     >"$TMP/web-no-python.out" 2>"$TMP/web-no-python.err" &
   WEB_PID=$!
   i=0
-  while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 160 ]; do
+  while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 600 ]; do
     sleep 0.05
     i=$((i + 1))
   done
