@@ -45,7 +45,20 @@ $ErrorActionPreference = 'Continue'
 # --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
 # Resolves COOP_ROOT/COOP_VERSION and defines the loggers, Test-Have,
 # Get-CoopPython, YAML readers, Find-CoopProjectYml, Coop-Confirm, etc.
-. (Join-Path $PSScriptRoot '../lib/common.ps1')
+$CoopCommonPs1 = (Join-Path $PSScriptRoot '../lib/common.ps1')
+if (-not (Test-Path -LiteralPath $CoopCommonPs1)) {
+  # A fresh clone/install whose lib\common.ps1 vanishes before first launch was
+  # almost always quarantined by antivirus/Defender (Mark-of-the-Web + AMSI
+  # heuristics). Fail with the fix instead of cascading CommandNotFoundException.
+  Write-Host ''
+  Write-Host "coop: missing $CoopCommonPs1" -ForegroundColor Red
+  Write-Host 'The helper library ships with the repo. If it disappeared right after a clone or install,' -ForegroundColor Yellow
+  Write-Host 'endpoint security likely quarantined it: check Defender Protection history (or your AV),' -ForegroundColor Yellow
+  Write-Host 'restore the file with:  git restore lib/common.ps1' -ForegroundColor Yellow
+  Write-Host 'and add an exclusion for the repo directory, then re-run.' -ForegroundColor Yellow
+  exit 1
+}
+. $CoopCommonPs1
 
 # Isolate coop's Pi config (extensions, settings, themes, MCP) from the user's personal
 # `pi` — for launching AND the coop add/remove/list/config/pi management aliases.
