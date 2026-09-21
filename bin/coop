@@ -43,6 +43,17 @@ while [ -h "$_src" ]; do
 done
 COOP_ROOT="$(cd -P "$(dirname "$_src")/.." >/dev/null 2>&1 && pwd)"
 export COOP_ROOT
+# A fresh clone/install whose lib/common.sh vanished before first launch was
+# almost always quarantined by antivirus/endpoint security. Fail with the fix
+# instead of cascading "command not found" from every helper call.
+if [ ! -f "$COOP_ROOT/lib/common.sh" ]; then
+  echo "coop: missing $COOP_ROOT/lib/common.sh" >&2
+  echo "The helper library ships with the repo. If it disappeared right after a" >&2
+  echo "clone or install, endpoint security likely quarantined it: check your AV" >&2
+  echo "logs, restore with:  git restore lib/common.sh" >&2
+  echo "and add an exclusion for the repo directory, then re-run." >&2
+  exit 1
+fi
 # shellcheck source=lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
 

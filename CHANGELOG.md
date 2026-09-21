@@ -5,6 +5,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- `coop` now fails fast with a clear, actionable message when the dot-sourced
+  helper library (`lib/common.ps1` / `lib/common.sh`) is missing — the
+  signature of antivirus/Defender quarantining it on a fresh Windows clone —
+  instead of cascading "not recognized" errors from every helper call.
+
 ## [0.23.4] — 2026-09-21
 
 - Windows install: `Add-CoopUserPaths` now resolves the pipx launcher directory
