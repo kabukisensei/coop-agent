@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.23.4] — 2026-09-21
+
 - Windows install: `Add-CoopUserPaths` now resolves the pipx launcher directory
   via `sysconfig.get_path('scripts', 'nt_user')` (e.g. `%APPDATA%\Python\Python312\Scripts`)
   instead of the nonexistent `%APPDATA%\Python\Scripts`, so a fresh-user install
