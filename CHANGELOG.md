@@ -5,6 +5,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- Windows install: `Add-CoopUserPaths` now resolves the pipx launcher directory
+  via `sysconfig.get_path('scripts', 'nt_user')` (e.g. `%APPDATA%\Python\Python312\Scripts`)
+  instead of the nonexistent `%APPDATA%\Python\Scripts`, so a fresh-user install
+  can actually see the pipx it just installed — step 4/9 (Microsoft Fabric CLI)
+  no longer fails with `pipx not recognized`, and the `--fetch-python` fallback
+  for machines without Python 3.12/3.13 engages as designed.
+
 - Bounded Warehouse session approvals now support bracketed SQL identifiers,
   including escaped closing brackets, while keeping cross-database targets,
   mutations, batches and unsupported quoting separately gated.
