@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.23.5] — 2026-09-22
+
 ### Fixed
 
 - Test suite no longer leaks orphaned fixture processes: the Fabric SQL
