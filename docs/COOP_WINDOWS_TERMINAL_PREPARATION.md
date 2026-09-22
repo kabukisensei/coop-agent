@@ -2,6 +2,13 @@
 
 **Prepared September 19, 2026. Status: PREPARED — EXECUTION NOT STARTED.**
 
+**Subsequent B0 checkpoint, September 19:** Aaron explicitly started B0 after
+this preparation. The [B0 receipt](COOP_WINDOWS_TERMINAL_B0.md) establishes the
+actual installed source and unresolved safety/package gaps; the
+[B1 proposal](COOP_WINDOWS_TERMINAL_B1_PROPOSAL.md) remains unapproved and unstarted.
+The preparation status and tables below are the historical record, not the current
+B0 status. All implementation and service-activation gates remain in force.
+
 Aaron authorized putting the plan into the repository and setting up what could be prepared, explicitly without starting the plan. This file records that boundary. It is not an acceptance receipt for B0, B1, a beta build, or any other roadmap package.
 
 ## Read first

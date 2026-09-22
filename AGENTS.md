@@ -65,12 +65,16 @@ Everything below is for an agent editing coop-agent itself — scripts, docs, te
 skills, extensions. This file is canonical; `CONTRIBUTING.md` and `RELEASE.md`
 carry the detail and align with it.
 
-### Current roadmap — prepared, not started
+### Current roadmap — B0 reviewed; implementation not started
 
 The official forward plan is [Coop Windows Terminal](docs/COOP_WINDOWS_TERMINAL_PLAN.md).
-Read the [preparation handoff](docs/COOP_WINDOWS_TERMINAL_PREPARATION.md) before
-working on it. Aaron authorized documentation and branch preparation only;
-**B0 and all implementation work remain unstarted until he explicitly begins them**.
+Read the [preparation handoff](docs/COOP_WINDOWS_TERMINAL_PREPARATION.md), then the
+[B0 receipt](docs/COOP_WINDOWS_TERMINAL_B0.md) and
+[B1 proposal](docs/COOP_WINDOWS_TERMINAL_B1_PROPOSAL.md). Aaron explicitly started
+B0 on September 19; its read-only reconciliation is complete with open safety
+and package-resolution findings. **B1 and roadmap implementation remain unstarted
+and require separate authorization.** The C: installation is live client work;
+preserve it and keep owned work on E: where possible.
 Do not add roadmap tasks to `agent:ready` or treat branch presence as an execution trigger.
 
 The current roadmap is Windows terminal, isolated stable/beta channels, bounded
@@ -82,9 +86,18 @@ parity/BOM/test obligations until their approved retirement package changes them
 
 `experimental/windows-terminal` is a provisional source branch, **not an installed
 or proven-isolated beta**. Do not run the existing installer/updater from that
-branch as a beta setup. The next authorized task is B0 baseline reconciliation
-and a bounded B1 proposal, not B1 implementation or a wholesale roadmap execution.
+branch as a beta setup. B0 selected installed source `9e8248a8b34a0bd7581b1909bf4fd18f253b3350`
+for preservation; this is not defect-free safety acceptance. Review the separate
+guardrail repair gates and MCP version drift before authorizing B1. Do not begin
+B1 implementation or wholesale roadmap execution from these documents alone.
 This pause applies to the roadmap, not unrelated explicitly requested maintenance.
+
+Aaron separately authorized G01/G02/G03 guardrail repairs and PR preparation; see
+[repair PR #71](https://github.com/kabukisensei/coop-agent/pull/71). That authorization
+does not start B1 or deploy changes to the live installation. Optional package
+research is recorded in [PK1](docs/COOP_PACKAGE_FIT_REVIEW.md); trials and feature
+implementation remain unstarted. Work uses GPT models through existing OpenAI
+subscriptions, without automatic provider fallback or separate API-key requirements.
 
 ### Platform notes
 
@@ -165,9 +178,11 @@ delete or re-push a tag, never commit secrets (`.env*`, keys, tokens — see
   `README.md`, `docs/architecture.md`, `docs/ci.md`, `docs/extending.md`,
   `docs/guardrails.md`, `docs/onboarding.md`, `docs/tool-contract.md`,
   `docs/troubleshooting.md`.
-- **Current roadmap (prepared only; explicit start required):**
+- **Current roadmap (B0 reviewed; implementation requires explicit start):**
   `docs/COOP_WINDOWS_TERMINAL_PLAN.md` and
-  `docs/COOP_WINDOWS_TERMINAL_PREPARATION.md`.
+  `docs/COOP_WINDOWS_TERMINAL_PREPARATION.md`, with the completed review in
+  `docs/COOP_WINDOWS_TERMINAL_B0.md` and the unstarted proposal in
+  `docs/COOP_WINDOWS_TERMINAL_B1_PROPOSAL.md`.
 - **Plans / history (context only — never execute their steps without an
   explicit request):** `docs/ui-strategy.md`, `docs/coop-web-plan.md`,
   `docs/coop-web-pivis-plan.md`, `docs/plan-azure-devops-integration.md`,
