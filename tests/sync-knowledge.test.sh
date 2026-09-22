@@ -316,7 +316,10 @@ chmod +x "$FAKEBIN/git"
 fi
 
 run_sync_bounded() { # <cfg> — 60s independent outer deadline so a regression cannot hang CI
-  HOME="$TMP/home" COOP_DIR="$1" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=1 PATH="$FAKEBIN:$PATH" \
+  # The 3s per-command timeout (was 1s) leaves scheduling headroom for the
+  # fake git to start and reach its hang branch on a loaded box while still
+  # firing long before the fixture's 30s sleep.
+  HOME="$TMP/home" COOP_DIR="$1" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=3 PATH="$FAKEBIN:$PATH" \
     bash "$ROOT/scripts/sync-knowledge.sh" > "$TMP/bounded.out" 2>&1 &
   local pid=$!
   local deadline=$((SECONDS+60))
@@ -401,10 +404,14 @@ write_raw_config "$CFG8" '{"schema_version":1,"knowledge":{"enabled":true,"repos
   {"url":"https://example.invalid/hanghere-dest.git","local_path":"'"$DEST8"'"}]}}'
 rm -f "$FAKELOG" "$SLEEPERFILE"
 # Pre-create the destination DURING the hanging clone (sync runs in background).
-HOME="$TMP/home" COOP_DIR="$CFG8" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=1 PATH="$FAKEBIN:$PATH" \
+HOME="$TMP/home" COOP_DIR="$CFG8" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=5 PATH="$FAKEBIN:$PATH" \
   bash "$ROOT/scripts/sync-knowledge.sh" > "$TMP/bounded.out" 2>&1 &
 pid8=$!
-sleep 1   # let the clone start hanging first (1s deadline vs 30s fake sleep)
+# Wait until the clone is ACTUALLY hanging (sleeper recorded) instead of
+# assuming a fixed 1s head start — under load the background fake git may not
+# be scheduled within a tight window, and sync's own timeout could fire first
+# (real flake on a loaded box: "never spawned its sleeper descendant").
+for _ in $(seq 1 100); do [ -f "$SLEEPERFILE" ] && break; sleep 0.1; done
 mkdir -p "$DEST8" && echo "user data" > "$DEST8/keep.txt"
 deadline8=$((SECONDS+60))
 while kill -0 "$pid8" 2>/dev/null && [ "$SECONDS" -lt "$deadline8" ]; do sleep 1; done
@@ -623,7 +630,7 @@ if [ "$WIN" != "1" ]; then
   # Direct runner, through the SAME $(...) capture pattern sync uses.
   rm -f "$FAKELOG" "$SLEEPERFILE"
   start=$SECONDS
-  orphan_out="$(PATH="$FAKEBIN:$PATH" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=1 \
+  orphan_out="$(PATH="$FAKEBIN:$PATH" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=3 \
     "$PY" "$ROOT/scripts/knowledge-git.py" -- git -C "$TMP/kbh6/hanghere-orphan" \
     status --porcelain 2>"$TMP/orphan.err")"; orphan_rc=$?
   orphan_elapsed=$((SECONDS-start))
@@ -666,7 +673,7 @@ fi
 git init -q "$TMP/kbh7/probehang"
 rm -f "$FAKELOG" "$SLEEPERFILE"
 start=$SECONDS
-PATH="$FAKEBIN:$PATH" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=1 \
+PATH="$FAKEBIN:$PATH" COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS=3 \
   "$PY" "$ROOT/scripts/knowledge-git.py" -- git -C "$TMP/kbh7/probehang" \
   status --porcelain > "$TMP/probe-orphan.out" 2> "$TMP/probe-orphan.err"; prc=$?
 pelapsed=$((SECONDS-start))

@@ -15,6 +15,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   load-flaked three unrelated timing tests). The test now reaps anything
   under its unique fixture root in `finally`.
 
+- sync-knowledge hang fixtures: per-command timeouts 1s → 3s (5s for the
+  interrupted-clone case), and case D now polls for the fixture's sleeper
+  record instead of assuming a fixed 1s scheduling head start. Under load the
+  background fake git could miss the 1s window entirely — sync's own timeout
+  fired first and the sleeper never got recorded (real flake: "fake git never
+  spawned its sleeper descendant" in full-suite runs, while the same test
+  passed standalone).
+
 - Setup wizard (`/setup-docs` JSONL bridge): when `coop-data-doc` exits without
   a terminal event (e.g. it dies right after emitting a prompt), the bridge now
   reports `coop-data-doc closed without a terminal event` instead of a
