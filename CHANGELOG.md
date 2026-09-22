@@ -7,6 +7,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Test suite no longer leaks orphaned fixture processes: the Fabric SQL
+  launcher's cancel test intentionally leaves a TERM-ignoring busy-loop stub,
+  and the resolver's probe grandchild (`sh "<tmp>/Python Runtime/python3"
+  -c ...`) was orphaned mid-loop on every run, spinning at 100% CPU forever
+  (real incident: 7 accumulated orphans held this VPS at load ~13, which
+  load-flaked three unrelated timing tests). The test now reaps anything
+  under its unique fixture root in `finally`.
+
 - Setup wizard (`/setup-docs` JSONL bridge): when `coop-data-doc` exits without
   a terminal event (e.g. it dies right after emitting a prompt), the bridge now
   reports `coop-data-doc closed without a terminal event` instead of a
