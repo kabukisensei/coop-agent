@@ -114,6 +114,16 @@ while :; do :; done
   assert.equal(cancelled.details.state, "aborted");
   assert.ok(Date.now() - started < 2_000, "cancel must force-kill and reap within a bounded deadline");
 } finally {
+  // The abort case above intentionally leaves a TERM-ignoring busy-loop stub.
+  // The tool force-kills its direct child within the bounded deadline, but the
+  // resolver's probe grandchild (`sh "<root>/Python Runtime/python3" -c ...`)
+  // can be orphaned mid-loop and spin at 100% CPU forever (real incident:
+  // orphaned fixtures kept this VPS at load ~13 and load-flaked unrelated
+  // timing tests). Reap anything under the unique fixture root before
+  // removing it.
+  if (process.platform !== "win32") {
+    spawnSync("pkill", ["-9", "-f", root], { stdio: "ignore" });
+  }
   if (oldRoot === undefined) delete process.env.COOP_ROOT; else process.env.COOP_ROOT = oldRoot;
   if (oldPython === undefined) delete process.env.COOP_FABRIC_PYTHON; else process.env.COOP_FABRIC_PYTHON = oldPython;
   if (oldMarker === undefined) delete process.env.COOP_SQL_TEST_MARKER; else process.env.COOP_SQL_TEST_MARKER = oldMarker;
