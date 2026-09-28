@@ -203,7 +203,8 @@ await t("coop init contract round-trips through /setup-project with a nested sta
   const answers = ["Cooptimize", "Test Client", "", "", "", "", "", "n", "no", "no", "n"].join("\n") + "\n";
   const init = spawnSync(py, [join(REPO_ROOT, "lib", "init_wizard.py"), join(root, "repo")], { input: answers, encoding: "utf8", env: { ...process.env, HOME: root, USERPROFILE: root } });
   assert.equal(init.status, 0, init.stderr);
-  const generated = readFileSync(join(root, "repo", ".coop", "project.yml"), "utf8");
+  // Python writes CRLF on Windows; the round-trip, not the line ending, is under test.
+  const generated = readFileSync(join(root, "repo", ".coop", "project.yml"), "utf8").replace(/\r\n/g, "\n");
   assert.match(generated, /^# standards:\n#   sql:\n#     path: /m, "coop init documents the nested override shape");
   // A deliberate project override, written the way the generated comment shows.
   const override = "standards:\n  sql:\n    path: \"docs/standards/client-sql.md\"\n    section_refs: numeric\n";
