@@ -184,7 +184,14 @@ Pinned reviewer source references used to verify this contract are
 
 The canonical remote is the private `https://github.com/cooptimize/coop-standards.git`
 repository. Only its configured authoritative/default `main` branch is consumed. Coop
-performs a bounded, noninteractive, fail-soft refresh at launch and before applicable
+reads it as the Obsidian wiki it is: each Markdown article with front matter and
+`status: active` is a standard, mapped to a Coop domain by its `domain`/`artifact` fields
+(`sql`; `powerbi` → `dax` for `dax_expression`/`measure`, else `semantic_model`; any other
+domain keeps its name). `standards.yml`, `standards/*.md`, `scripts/`, and `deprecation/`
+are never read. Tasks receive the relevant articles whole, each with path, SHA-256 and
+revision; the SQL/DAX reviewers' single `--standards` file is a reviewer-input copy of the
+domain's articles (path order, front matter stripped) built in Coop's snapshot storage.
+Coop performs a bounded, noninteractive, fail-soft refresh at launch and before applicable
 work when the last successful check is at least 15 minutes old; `coop sync` forces a
 check. A verified change stages and durably validates one complete immutable generation,
 then atomically switches the single active pointer and rebuilds its retrieval index.

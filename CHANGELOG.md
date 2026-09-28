@@ -7,15 +7,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
-- Standards (H3): the domain list and paths now come from `cooptimize/coop-standards`'s
-  own `standards.yml`, validated for safety (relative, contained, regular Markdown files)
-  instead of equality with a list frozen in coop-agent, so a new or renamed domain
-  resolves without a coop release. `config/standards-registry.json` is the only copy of
-  the registry (the duplicate in `lib/standards.mjs` and the anchor-commit/archive-hash
-  pins are gone; revision, file hash, and snapshot provenance are kept). Project
-  overrides accept the nested `standards.<domain>.path` shape alongside the scalar one,
-  and `coop init`, `/setup-project`, and the bundled contracts document it in a comment
-  (no active override by default).
+- Standards (H3): Coop reads the `cooptimize/coop-standards` Obsidian wiki directly.
+  Every Markdown article with front matter and `status: active` is a standard. Articles
+  map to Coop's SQL, DAX, and semantic-model domains by their `domain`/`artifact` front
+  matter, and a new wiki domain resolves without a Coop release. Tasks receive whole
+  articles, chosen by layer, artifact, technology, and title against the prompt, each
+  with path, SHA-256, and repo revision. Coop no longer reads `standards.yml`,
+  `standards/*.md`, or `scripts/assemble.py` (they stay in that repo for older clients),
+  so the Silver Indexing, Schema Derivation, and Schema Manager articles, which the
+  assembly skipped, now reach Coop. The SQL/DAX reviewers get a reviewer-input copy of
+  the domain's articles built in Coop's own storage. Cached standards from earlier
+  versions are re-fetched on the next sync. `config/standards-registry.json` is the only
+  copy of the registry (the duplicate in `lib/standards.mjs`, the frozen domain list, and
+  the anchor-commit/archive-hash pins are gone). Project overrides accept the nested
+  `standards.<domain>.path` shape alongside the scalar one, and `coop init`,
+  `/setup-project`, and the bundled contracts document it in a comment (no active
+  override by default).
 
 - Docs: adopted the ordered [Coop master plan, revision 3.0](docs/COOP_MASTER_PLAN.md).
   It keeps the Windows-terminal plan's intention and reorders execution: rollout
@@ -32,7 +39,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
-- Incremental BI patterns are chosen by the repository's `layer:` front matter. The old
+- Incremental BI patterns are chosen by the repository's `layer:` front matter (the same
+  front-matter reader as the standards wiki). The old
   path keyword filter matched the clone's own folder name (`incremental-bi`), so every
   file qualified and a semantic-model task received the wiki's editing guide and Bronze
   articles instead of the Power BI refresh article.

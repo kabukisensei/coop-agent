@@ -4,7 +4,6 @@
     "id": "cooptimize-formal-standards",
     "repository": "https://github.com/cooptimize/coop-standards.git",
     "authoritative_branch": "main",
-    "manifest": "standards.yml",
     "freshness_seconds": 900,
     "timeout_seconds": 12
   }
