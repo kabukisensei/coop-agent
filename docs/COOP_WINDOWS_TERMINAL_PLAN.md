@@ -1,6 +1,7 @@
 # Coop Windows Terminal: execution plan and experimental roadmap
 
-**Document revision 2.0 · September 19, 2026**  
+**Document revision 2.0 · September 19, 2026 · Execution status updated September 28, 2026**
+
 **Product scope: Coop 1.x Windows terminal now; native Windows Coop 2.0 last.**
 
 **Canonical repository location:** `docs/COOP_WINDOWS_TERMINAL_PLAN.md`. This document supersedes the execution sequence and Desktop recommendations in *Coop_Windows_Simplification_and_Desktop_Handoff_v1*. The Markdown is the editable source of truth; the Word edition is a reading copy. Document revision 2.0 is not a Coop product release.
@@ -13,8 +14,49 @@ B0 was reviewed and the separate PR #71 safety repairs were accepted at installe
 stable source `cee2d7418c0357f8e4bbd23e438cf026e2e15764`. Aaron subsequently
 requested B1 implementation and approved the reconciled MCP pins for new E: beta
 roots. [B1's implementation record](COOP_WINDOWS_TERMINAL_B1_IMPLEMENTATION.md)
-tracks that bounded work. B1 acceptance, stable promotion and all later roadmap
-packages remain pending; planning-time status statements below are historical.
+tracks that bounded work. On September 23, B1 was reconciled onto v0.23.5
+`main` in a separate E: worktree. A new E:-owned beta passed first
+install, Doctor, offline Pi startup and synthetic in-agent SQL/DAX/data-doc
+dispatch. It is usable for offline development rehearsal, not client work.
+The full suite still stops at a Windows file-symlink `EPERM`; current-source
+package update/rollback/removal and full C: preservation attribution remain
+open. **B1 is not accepted or promoted.** The [S1/S2 assessment](COOP_WINDOWS_TERMINAL_S1_S2_ASSESSMENT.md)
+selected a small next candidate. On September 24 Aaron authorized continuing
+that bounded S2 development/testing on this E: machine before formal B1
+acceptance. This is a development branch, not permission for client use or
+stable promotion. The recorded gaps and other roadmap gates remain open;
+planning-time status statements below are historical.
+
+### September 28 review checkpoint
+
+Aaron authorized committing and pushing the existing work for another agent's
+master-plan review. The review branch is
+[`codex/b1-isolated-windows-beta-v0235`](https://github.com/kabukisensei/coop-agent/tree/codex/b1-isolated-windows-beta-v0235),
+based on `3c2b5a2b770e8523374139a4937e1830e278fe29` (v0.23.5).
+The September 28 fetch still found `origin/main` at that base. B1 is recorded
+in [commit `2f8d1ba`](https://github.com/kabukisensei/coop-agent/commit/2f8d1badace71c8f20e346b21ec67193a5d9635d);
+the following S2 commit keeps the mechanical cleanup independently reviewable.
+This is a development checkpoint for review, with no merge, release or deployment.
+
+| Area | Current result | Remaining work |
+| --- | --- | --- |
+| B1 implementation | Isolated roots, exact package pins, launcher/tool routing, lifecycle and recovery code plus tests are in the review branch. | Formal acceptance remains open; review the [B1 receipt](COOP_WINDOWS_TERMINAL_B1_IMPLEMENTATION.md). |
+| Installed E: beta | First install, Doctor, offline Pi startup and synthetic tool dispatch passed on local fixture `1bb87ff70d8ce0bddf3fb1dd8936cbd3fde0c2e6`. | It has not been updated to these product commits or the S2 change. Publication alone does not qualify that installation for client work. |
+| First S2 slice | Removed duplicate npm presence probes and identical install branches in the paired update scripts: 12 net lines removed, no new helper or changed pins. | Native Windows updater rehearsal and formal acceptance remain outstanding; see the [S1/S2 assessment](COOP_WINDOWS_TERMINAL_S1_S2_ASSESSMENT.md). |
+| Verification | September 28 Bash syntax, PowerShell parse/BOM, parity, update-guard and fleet-manifest checks passed using E: test state. September 24 full-suite attempts passed B1 groups and ten source-recovery phases. | Full suite is **not green**: offline bundler setup and inherited reviewer PATH affected earlier attempts; the restricted-PATH standards rerun reached file-symlink `EPERM`. Later compiler-dependent cases remain unqualified. |
+| Preservation/lifecycle | Earlier checks retained 2,046 selected C: file hashes and source/client Git statuses. | Actual-package update/rollback/removal on the final source and attribution of vendor metadata drift remain open. Do not infer complete C: preservation from selected hashes. |
+
+**Reviewer handoff:** assess the B1 implementation and S2 diff separately against
+their receipts, identify blockers and the smallest next authorized development
+slice, and retain the distinction between local development permission and
+client/stable acceptance. Aaron's September 24 decision allows E:-only development
+with the listed gates open; it does not declare them passed. Historical
+"uncommitted" and pause statements in dated receipts describe their original dates.
+The active worktree is `E:/Codex/coop-b1-20260919/reconcile/repo`; the original B1
+worktree and private evidence remain on E:. S1 retirement, remaining simplification
+slices, package trials/upgrades, TeamAI, Jev and Desktop implementation remain
+unstarted. Work uses GPT through existing OpenAI subscriptions. Keep the operational
+C: installation and client work untouched.
 
 ## Executive decision
 
@@ -513,8 +555,8 @@ A maintainer edits this plan’s status table as work closes. Each closed row li
 | ID | Status at this revision | Next action | Owner |
 | --- | --- | --- | --- |
 | B0 | Read-only review complete | Preserve its accepted baseline and open safety findings in [the B1 implementation receipt](COOP_WINDOWS_TERMINAL_B1_IMPLEMENTATION.md) | Product owner |
-| B1 | Authorized; implementation and acceptance in progress | Prove one isolated beta installation context and close the remaining gates in [the B1 receipt](COOP_WINDOWS_TERMINAL_B1_IMPLEMENTATION.md) | Product owner + implementation agent |
-| S1–S7 | Review findings; not implemented | Select smallest independent deletion after required evidence | Unassigned |
+| B1 | September 28 development checkpoint for branch review; acceptance pending | Review commit `2f8d1ba` and resolve or disposition the remaining gates in [the B1 receipt](COOP_WINDOWS_TERMINAL_B1_IMPLEMENTATION.md) before promotion | Product owner + implementation agent |
+| S1–S7 | First bounded S2 cleanup implemented as a separate review commit; S1 and remaining slices unstarted | Review the [S1/S2 assessment](COOP_WINDOWS_TERMINAL_S1_S2_ASSESSMENT.md) and paired updater diff; native rehearsal/acceptance remain open | Implementation agent |
 | U1 | Candidate research completed in part | Resolve remaining registry metadata and qualify useful families | Unassigned |
 | SK1 | Ready for inventory | Full effective-skill map; Fabric v0.3.17 migration and efficiency evidence | Unassigned |
 | K1–K3 | Approved roadmap direction; not installed | TeamAI v0.24.0 artifact/destination verification and sandbox recall first | Unassigned |

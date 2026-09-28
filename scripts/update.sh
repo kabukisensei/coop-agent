@@ -145,12 +145,7 @@ _unit_pbih_tools_upgrade() {
       ver="$(coop_manifest_get "npm_tools.$pkg")"
       [ -n "$ver" ] && spec="${pkg}@${ver}"
     fi
-    if npm ls -g --depth=0 "$pkg" >/dev/null 2>&1; then
-      npm install -g "$spec" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
-    else
-      # Never installed (machine predates these tools) — install rather than fail.
-      npm install -g "$spec" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
-    fi
+    npm install -g "$spec" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
   done
   if [ "$fail" -eq 0 ]; then printf '%d Power BI/Fabric authoring tool(s) updated' "$ok"; return 0; fi
   printf '%d updated, %d failed' "$ok" "$fail"; return 1

@@ -80,6 +80,17 @@ as B1's baseline, or reuse historical preservation checks as current evidence.
 Preserve the operational C: installation and client work; keep development,
 downloads, package state and tests in new owned E: roots.
 
+On September 23, a separate uncommitted E: B1 candidate was reconciled onto
+v0.23.5 `main` without altering the original B1 worktree. A newly installed
+E: beta passed first install, Doctor, offline Pi startup and synthetic
+in-agent tool dispatch. It is only for offline development rehearsal; the
+full suite, current-source lifecycle and complete C: preservation gates remain
+open. B1 is not accepted. On September 24 Aaron authorized continuing the
+first bounded S2 cleanup in this E: development/test branch without first
+closing the B1 gates. The [S1/S2 assessment](docs/COOP_WINDOWS_TERMINAL_S1_S2_ASSESSMENT.md)
+records that slice. Open gaps remain visible; this decision does not authorize
+client beta use or stable promotion.
+
 B1 is bounded to an isolated Windows beta lifecycle. The separately approved beta
 MCP pins are Fabric MCP 1.2.0, Azure DevOps MCP 2.10.0 and mcp-remote 0.14.2, with
 other baseline package versions unchanged. No stable rollout, dependency upgrades,
@@ -90,9 +101,17 @@ copied or linked from stable. Service sign-in and live calls remain unapproved.
 
 `experimental/windows-terminal` remains a provisional source branch, not evidence
 of an installed or isolated beta. Do not use its old installer as beta setup or
-add the roadmap to `agent:ready`. B1 work is not authorization to execute later
+add the roadmap to `agent:ready`. The September 24 E:-only S2 development slice
+is the sole exception to B1-first sequencing, not authorization for other
 roadmap packages. Preserve paired scripts, BOMs, tests and current stable behavior.
-Commits, publication and releases still need their corresponding authorization.
+On September 28 Aaron explicitly authorized committing and pushing the existing
+B1/S2 work and updating the master plan for another agent's review. The review
+branch is `codex/b1-isolated-windows-beta-v0235`, based on v0.23.5
+`3c2b5a2b770e8523374139a4937e1830e278fe29`; B1 and the small S2 cleanup are
+separate commits. See the master plan's September 28 checkpoint for current status.
+This publication does not accept B1, update the installed E: beta, merge to main,
+release, or deploy to stable. Further commits, publication and releases need their
+corresponding authorization.
 
 ### Platform notes
 

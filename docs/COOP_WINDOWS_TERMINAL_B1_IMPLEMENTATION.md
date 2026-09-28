@@ -1,11 +1,18 @@
 # B1 — isolated Windows beta implementation
 
-Status: authorized and in progress. No beta acceptance or stable promotion yet.
+Status: September 28 development checkpoint for branch review. No beta acceptance
+or stable promotion yet.
 
-The E: development candidate has also been reconciled onto the current v0.23.5
-`main` revision in branch `codex/b1-isolated-windows-beta-v0235`. This is an
-uncommitted code candidate. Its clean synthetic source now backs a separate
-actual-package E: rehearsal installation, described below.
+The E: development candidate has been reconciled onto v0.23.5
+`3c2b5a2b770e8523374139a4937e1830e278fe29` in branch
+`codex/b1-isolated-windows-beta-v0235`. Aaron authorized its commit and push on
+September 28 for master-plan review. B1 is recorded in
+[commit `2f8d1ba`](https://github.com/kabukisensei/coop-agent/commit/2f8d1badace71c8f20e346b21ec67193a5d9635d),
+with the first S2 cleanup in a separate following commit. The
+[master plan checkpoint](COOP_WINDOWS_TERMINAL_PLAN.md#september-28-review-checkpoint)
+is the current review handoff; dated statements below retain their historical
+meaning. The separate actual-package E: rehearsal installation still uses its
+synthetic source, described below; publication has not updated that installation.
 
 The user explicitly requested `implement b1` after accepting PR #71. The source
 baseline remains `cee2d7418c0357f8e4bbd23e438cf026e2e15764`. Live stable has since
