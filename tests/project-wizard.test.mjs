@@ -1,11 +1,13 @@
 // Tests for the in-Coop /setup-project wizard's contract rendering and safe merge.
 import { strict as assert } from "node:assert";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const {
   default: coopTools,
   applyProjectWizardSettings,
@@ -121,6 +123,7 @@ await t("new-project renderer produces a parseable, governed contract", () => {
   assert.doesNotMatch(text, /(?:microsoft_skills|fabric_skills):\n(?:.*\n){0,4}\s+(?:source|load_dir):/);
   assert.equal(projectYamlScalar(text, ["logging", "require_task_log"]), "true");
   assert.doesNotMatch(text, /^standards:/m, "new projects must use canonical standards by default");
+  assert.match(text, /^# standards:\n#   sql:\n#     path: /m, "the in-app wizard documents the nested override shape");
   assert.equal(projectYamlScalar(text, ["estate", "mode"]), "partial");
   assert.equal(projectYamlScalar(text, ["estate", "live_discovery", "production_rows"]), "explicit_scope_and_approval");
   assert.equal((text.match(/^  environment_names:$/gm) || []).length, 2);
@@ -192,6 +195,26 @@ tools:
   assert.equal(projectYamlScalar(merged, ["profile", "client"]), "Contoso");
   assert.equal(projectYamlScalar(merged, ["repositories", "analytics", "default_branch"]), "main");
   assert.equal(projectYamlScalar(merged, ["repositories", "warehouse", "local_path"]), "../warehouse");
+});
+
+await t("coop init contract round-trips through /setup-project with a nested standards override intact", () => {
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-init-roundtrip-")));
+  const py = ["python3", "python"].find((bin) => spawnSync(bin, ["--version"]).status === 0);
+  const answers = ["Cooptimize", "Test Client", "", "", "", "", "", "n", "no", "no", "n"].join("\n") + "\n";
+  const init = spawnSync(py, [join(REPO_ROOT, "lib", "init_wizard.py"), join(root, "repo")], { input: answers, encoding: "utf8", env: { ...process.env, HOME: root, USERPROFILE: root } });
+  assert.equal(init.status, 0, init.stderr);
+  // Python writes CRLF on Windows; the round-trip, not the line ending, is under test.
+  const generated = readFileSync(join(root, "repo", ".coop", "project.yml"), "utf8").replace(/\r\n/g, "\n");
+  assert.match(generated, /^# standards:\n#   sql:\n#     path: /m, "coop init documents the nested override shape");
+  // A deliberate project override, written the way the generated comment shows.
+  const override = "standards:\n  sql:\n    path: \"docs/standards/client-sql.md\"\n    section_refs: numeric\n";
+  const original = generated.replace(/^backup:$/m, `${override}\nbackup:`);
+  const parsed = parseProjectWizardSettings(original, join(root, "repo"));
+  parsed.client = "Contoso";
+  const merged = applyProjectWizardSettings(original, parsed);
+  assert.equal(projectYamlScalar(merged, ["profile", "client"]), "Contoso");
+  assert.ok(merged.includes(override), "setup-project must preserve the unowned standards block");
+  assert.equal(projectYamlScalar(merged, ["standards", "sql", "path"]), "docs/standards/client-sql.md");
 });
 
 await t("native wizard is reachable inside Coop and creates the contract", async () => {

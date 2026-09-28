@@ -488,8 +488,27 @@ Launch performs a bounded, fail-soft refresh. Each task receives an immutable st
 snapshot, and native reviewers bind to the same authority so prompt guidance and tool
 results cannot drift mid-task. Provenance or integrity failures reject a candidate rather
 than partially applying it. Run **`/standards-status`** to inspect effective authority,
-generation, freshness, and fallback state. Canonical sources and integrity metadata live
-in `config/standards-registry.json`.
+generation, freshness, and fallback state. `config/standards-registry.json` names the
+canonical repository and branch.
+
+The canonical standards are the `cooptimize/coop-standards` wiki, read the way the team
+reads it: every Markdown article whose front matter has `status: active` (under `SQL/`,
+`Power BI/`, `Technology/`, and any new folder). Coop does not read the repo's assembled
+files for older clients (`standards.yml`, `standards/*.md`) or anything under
+`deprecation/`. Articles map to Coop's domains by front matter: `domain: sql` is SQL;
+`domain: powerbi` is DAX when `artifact` is `dax_expression` or `measure`, and semantic
+model otherwise; any other domain keeps its own name, so a new one resolves without a Coop
+release. When you write or change SQL, DAX, or a model, Coop injects the domain's general
+articles (layer and technology `agnostic`, such as SQL Conventions) plus the articles whose
+layer, artifact, technology, or title match the task, each with its path, SHA-256, and the
+repo revision. When nothing matches, it injects the domain's core-layer articles (for
+example `layer: semantic_model`), or only a list of the domain's articles if it has no
+such layer. Two articles with the same `id` are both kept, and `coop doctor` warns with
+both paths. `coop-sql-review` and `coop-dax-review` take one standards file, so Coop
+builds a reviewer-input copy of the domain's articles in its own storage for that call.
+
+A project override is one Markdown file per domain in `.coop/project.yml`
+(`standards.<domain>.path`; the older `standards.<domain>: <file>` form still works).
 
 ---
 

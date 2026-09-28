@@ -7,6 +7,33 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Standards (H3): Coop reads the `cooptimize/coop-standards` Obsidian wiki directly.
+  Every Markdown article with front matter and `status: active` is a standard. Articles
+  map to Coop's SQL, DAX, and semantic-model domains by their `domain`/`artifact` front
+  matter, and a new wiki domain resolves without a Coop release. Tasks receive whole
+  articles, chosen by layer, artifact, technology, and title against the prompt, each
+  with path, SHA-256, and repo revision. A task no article matches gets the domain's
+  core-layer articles (for example `layer: semantic_model`), or a list of the domain's
+  articles when it has none, never whichever files sort first. A byte-order mark before
+  the front matter no longer hides an article. Two articles with the same `id` (an
+  Obsidian "Make a copy") are both kept and reported by `coop doctor`, `coop sync`, and
+  `/standards-status` with both paths. Coop no longer reads `standards.yml`,
+  `standards/*.md`, or `scripts/assemble.py` (they stay in that repo for older clients),
+  so the Silver Indexing, Schema Derivation, and Schema Manager articles, which the
+  assembly skipped, now reach Coop. The SQL/DAX reviewers get a reviewer-input copy of
+  the domain's articles built in Coop's own storage. Cached standards from earlier
+  versions are re-fetched on the next sync. `config/standards-registry.json` is the only
+  copy of the registry (the duplicate in `lib/standards.mjs`, the frozen domain list, and
+  the anchor-commit/archive-hash pins are gone). Project overrides accept the nested
+  `standards.<domain>.path` shape alongside the scalar one, at any consistent indent,
+  and `coop init`, `/setup-project`, and the bundled contracts document it in a comment
+  (no active override by default). Upgrade note: a review run accepted against the
+  canonical standards before this update is bound to the `standards.yml`-era cache
+  (schema-1 index), which no longer verifies, so the first `coop review --compare`
+  afterwards reports no previous review and becomes the new baseline. This is not
+  fixed in code because the SQL/DAX reviewers are being retired from Coop (master plan
+  section 7, ST1).
+
 - Docs: adopted the ordered [Coop master plan, revision 3.0](docs/COOP_MASTER_PLAN.md).
   It keeps the Windows-terminal plan's intention and reorders execution: rollout
   hotfixes first (installer prerequisite gate, automatic Azure sign-in, project
@@ -22,6 +49,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Incremental BI patterns are chosen by the repository's `layer:` front matter (the same
+  front-matter reader as the standards wiki). The old
+  path keyword filter matched the clone's own folder name (`incremental-bi`), so every
+  file qualified and a semantic-model task received the wiki's editing guide and Bronze
+  articles instead of the Power BI refresh article.
 - `coop install` checks every prerequisite before installing anything (master plan
   H1, #76). It prints one ordered table (Git, Node.js, Python 3.10–3.13, pipx,
   Azure CLI, ODBC Driver 18, Tabular Editor CLI) with ✓/✗ and the exact install

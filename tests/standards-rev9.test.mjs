@@ -121,13 +121,17 @@ try {
   });
 
   test("STD-04", "semantic model, DAX, documentation and selective Incremental BI stay separate", () => {
-    const pattern = join(tmp, "incremental-bi"); mkdirSync(pattern);
-    writeFileSync(join(pattern, "incremental-refresh.md"), "# Incremental BI\n## Refresh partitions\nUse bounded refresh windows.\n## Unrelated appendix\nDo not inject globally.\n");
+    // Mirrors cooptimize/incremental-bi: layer folders, `layer:` front matter, an unlayered editing guide.
+    const pattern = join(tmp, "incremental-bi"); mkdirSync(join(pattern, "Semantic Model"), { recursive: true }); mkdirSync(join(pattern, "Gold"));
+    writeFileSync(join(pattern, "AGENTS.md"), "---\npublish: false\n---\n# Writing and editing this wiki\n## Refresh the wiki\nEditing guide only.\n");
+    writeFileSync(join(pattern, "Gold", "Incremental Fact Considerations.md"), "---\ntitle: Incremental fact considerations\nlayer: gold\n---\n## Refresh gold facts\nGold only.\n");
+    writeFileSync(join(pattern, "Semantic Model", "Power BI Incremental Refresh.md"), "---\ntitle: Power BI incremental refresh\nlayer: semantic-model\n---\n## Refresh partitions\nUse bounded refresh windows.\n## Unrelated appendix\nDo not inject globally.\n");
     const operation = buildStandardsContext("Review semantic model relationships, DAX measures, documentation, and incremental refresh", opts({ cwd: tmp, canonicalRoot: canonical, staleRoot: join(tmp, "none"), incrementalBiRoot: pattern }));
     assert.deepEqual(operation.domains, ["semantic_model", "dax", "documentation"]);
     assert.equal(operation.patterns[0].authority_class, "approved_pattern"); assert.equal(operation.patterns[0].selective, true);
     assert.match(operation.patterns[0].sections.map((x) => x.heading).join(" "), /Refresh partitions/);
     assert.doesNotMatch(operation.patterns[0].sections.map((x) => x.heading).join(" "), /Unrelated appendix/);
+    assert.deepEqual([...new Set(operation.patterns[0].sections.map((x) => x.path.split(/[\\/]/).slice(-2).join("/")))], ["Semantic Model/Power BI Incremental Refresh.md"]);
   });
 
   test("STD-05", "contained project override wins canonical and preserves source provenance", () => {
@@ -223,6 +227,27 @@ try {
     assert.deepEqual(projectStandardPaths(yml), { sql: "docs/standards/sql-standards.md" });
     const r = resolveStandard("sql", opts({ cwd: project, canonicalRoot: canonical }));
     assert.equal(r.state, "project_override"); assert.equal(readFileSync(contract, "utf8"), yml);
+  });
+
+  test("STD-08b", "nested standards.<domain>.path overrides resolve like the scalar shape", () => {
+    const project = join(tmp, "nested"); mkdirSync(join(project, ".coop"), { recursive: true }); mkdirSync(join(project, "docs"), { recursive: true });
+    writeFileSync(join(project, "docs", "client-sql.md"), "# client SQL");
+    const yml = "standards:\n  sql:\n    path: \"docs/client-sql.md\"\n    section_refs: numeric\n  dax: # canonical\n# sql:\n#   path: ignored.md\n";
+    writeFileSync(join(project, ".coop", "project.yml"), yml);
+    assert.deepEqual(projectStandardPaths(yml), { sql: "docs/client-sql.md" });
+    const r = resolveStandard("sql", opts({ cwd: project, canonicalRoot: canonical }));
+    assert.equal(r.state, "project_override"); assert.equal(r.project_relative_path, "docs/client-sql.md");
+  });
+
+  test("STD-08c", "overrides indented by four spaces resolve like two (the first key sets the indent)", () => {
+    const project = join(tmp, "four-space"); mkdirSync(join(project, ".coop"), { recursive: true }); mkdirSync(join(project, "docs"), { recursive: true });
+    writeFileSync(join(project, "docs", "client-sql.md"), "# client SQL");
+    const yml = "standards:\n    sql: docs/client-sql.md\n";
+    writeFileSync(join(project, ".coop", "project.yml"), yml);
+    assert.deepEqual(projectStandardPaths(yml), { sql: "docs/client-sql.md" });
+    const r = resolveStandard("sql", opts({ cwd: project, canonicalRoot: canonical }));
+    assert.equal(r.state, "project_override"); assert.equal(r.project_relative_path, "docs/client-sql.md");
+    assert.deepEqual(projectStandardPaths("standards:\n    sql:\n        path: docs/client-sql.md\n    dax: docs/dax.md\n"), { sql: "docs/client-sql.md", dax: "docs/dax.md" });
   });
 
   test("STD-09", "authority classes remain closed and separate", () => {
