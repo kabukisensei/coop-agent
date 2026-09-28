@@ -17,6 +17,11 @@ $ErrorActionPreference = 'Continue'
 # Resolves COOP_ROOT/COOP_VERSION and defines the loggers, the progress engine
 # (Coop-Prog*/Coop-Emit), Test-Have, Get-CoopPython, Coop-Unit, Invoke-CoopScript, etc.
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
+if ($args -contains '--beta-plan') {
+  if ($args.Count -eq 2 -and $args[0] -eq '--beta-plan') { Invoke-CoopBetaInstallPlan -PlanPath $args[1]; exit $LASTEXITCODE }
+  throw 'Usage: coop install --beta-plan REQUEST.json'
+}
+if ($script:CoopInstallationContext) { Invoke-CoopBetaLifecycle -Operation 'sync' -OperationArgs @($args); exit $LASTEXITCODE }
 
 # Keep going so Doctor can present the complete state, but preserve every failed
 # convergence unit for the final process result. A warning-only Doctor must not

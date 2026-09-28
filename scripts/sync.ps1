@@ -17,6 +17,7 @@ $ErrorActionPreference = 'Continue'
 # the launch preflight both call the SAME targeted helper; see lib/common.sh's
 # coop_align_ext_deps twin and AGENTS.md rule 1).
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
+if ($script:CoopInstallationContext) { Invoke-CoopBetaLifecycle -Operation 'sync' -OperationArgs @($args); exit $LASTEXITCODE }
 
 # coop renders its own footer/splash — no third-party powerline footer.
 $CORE_EXTENSIONS = @('pi-mcp-adapter', 'pi-hermes-memory', 'pi-better-openai', 'pi-web-access', '@juicesharp/rpiv-ask-user-question', 'context-mode')

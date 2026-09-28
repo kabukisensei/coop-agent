@@ -7,6 +7,15 @@
 
 **Authority and status:** The product direction below reflects Aaron’s revised instructions. This is the forward execution plan, not a receipt that its work is complete. No branch, installation, package, team repository, credential, or production resource was changed while preparing it. Adoption of this plan does not authorize a wholesale implementation, a release, a push, or sending client data to a new service. Work one bounded package at a time.
 
+## Current execution receipt
+
+B0 was reviewed and the separate PR #71 safety repairs were accepted at installed
+stable source `cee2d7418c0357f8e4bbd23e438cf026e2e15764`. Aaron subsequently
+requested B1 implementation and approved the reconciled MCP pins for new E: beta
+roots. [B1's implementation record](COOP_WINDOWS_TERMINAL_B1_IMPLEMENTATION.md)
+tracks that bounded work. B1 acceptance, stable promotion and all later roadmap
+packages remain pending; planning-time status statements below are historical.
+
 ## Executive decision
 
 Continue from the accepted Windows terminal implementation. Do not rewrite Coop, merge the old Desktop branch, or build a new platform framework. Preserve official Pi, the existing capability layer, the custom theme, and the safety boundaries. Remove redundant implementations and obsolete responsibilities, then integrate worthwhile improvements through an isolated beta channel.
@@ -503,8 +512,8 @@ A maintainer edits this plan’s status table as work closes. Each closed row li
 
 | ID | Status at this revision | Next action | Owner |
 | --- | --- | --- | --- |
-| B0 | Ready for implementation planning | Establish actual stable SHA; reconcile 60-commit delta and safety findings | Product owner + Windows reviewer to assign |
-| B1 | Blocked by B0 | Design and prove one isolated beta installation context | Unassigned |
+| B0 | Read-only review complete | Preserve its accepted baseline and open safety findings in [the B1 implementation receipt](COOP_WINDOWS_TERMINAL_B1_IMPLEMENTATION.md) | Product owner |
+| B1 | Authorized; implementation and acceptance in progress | Prove one isolated beta installation context and close the remaining gates in [the B1 receipt](COOP_WINDOWS_TERMINAL_B1_IMPLEMENTATION.md) | Product owner + implementation agent |
 | S1–S7 | Review findings; not implemented | Select smallest independent deletion after required evidence | Unassigned |
 | U1 | Candidate research completed in part | Resolve remaining registry metadata and qualify useful families | Unassigned |
 | SK1 | Ready for inventory | Full effective-skill map; Fabric v0.3.17 migration and efficiency evidence | Unassigned |

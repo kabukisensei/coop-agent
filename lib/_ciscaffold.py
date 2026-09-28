@@ -275,7 +275,7 @@ def main():
         proj_data = _yaml.load(proj_path)
         defaults_data = _yaml.load(defaults_path)
     except Exception as e:
-        sys.stderr.write(f"error reading yamls: {e}\n")
+        sys.stderr.write("error reading beta project/defaults YAML\n" if os.environ.get('COOP_CHANNEL') == 'beta' else f"error reading yamls: {e}\n")
         sys.exit(1)
 
     if not isinstance(proj_data, dict) or not isinstance(defaults_data, dict):
@@ -300,11 +300,11 @@ def main():
     pbi_paths = get_pbi_paths(proj_data)
 
     if sql_path is not None and not _valid_path(sql_path):
-        sys.stderr.write(f"error: sql_path {sql_path!r} contains unsafe characters\n")
+        sys.stderr.write("error: beta sql_path contains unsafe characters\n" if os.environ.get('COOP_CHANNEL') == 'beta' else f"error: sql_path {sql_path!r} contains unsafe characters\n")
         sys.exit(1)
     for p in pbi_paths:
         if not _valid_path(p):
-            sys.stderr.write(f"error: pbi path {p!r} contains unsafe characters\n")
+            sys.stderr.write("error: beta pbi path contains unsafe characters\n" if os.environ.get('COOP_CHANNEL') == 'beta' else f"error: pbi path {p!r} contains unsafe characters\n")
             sys.exit(1)
 
     jobs = ""
@@ -328,7 +328,7 @@ def main():
         out_file = os.path.join(out_dir, "azure-pipelines", "coop-gates.yml")
 
     os.makedirs(os.path.dirname(out_file), exist_ok=True)
-    with open(out_file, 'w', encoding='utf-8', newline='\n') as f:
+    with open(out_file, 'x' if os.environ.get('COOP_CHANNEL') == 'beta' else 'w', encoding='utf-8', newline='\n') as f:
         f.write(res)
     print(out_file)
     sys.exit(0)

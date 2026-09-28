@@ -15,6 +15,7 @@ $ErrorActionPreference = 'Continue'
 # (Coop-Prog*/Coop-Emit), Test-Have, Get-CoopPython, Get-CoopYamlValue,
 # Test-CoopMinorNewer, Coop-Unit, Invoke-CoopScript, etc.
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
+if ($script:CoopInstallationContext) { Invoke-CoopBetaLifecycle -Operation 'update' -OperationArgs @($args); exit $LASTEXITCODE }
 
 # Windows in-place `pi update --all` replaces the global agent via an atomic rename.
 # If a coop/pi session has those files open, the rename fails and leaves a half-written

@@ -329,17 +329,20 @@ def atomic_write(path: Path, value: dict[str, Any]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     root = Path(__file__).resolve().parent.parent
+    profile = Path(os.environ.get("COOP_PROFILE_ROOT", Path.home() / ".coop"))
     parser.add_argument(
-        "--manifest", type=Path, default=root / "config" / "release-manifest.json"
+        "--manifest", type=Path, default=Path(os.environ.get("COOP_RELEASE_MANIFEST", root / "config" / "release-manifest.json"))
     )
-    parser.add_argument("--config", type=Path, default=Path.home() / ".coop" / "config")
+    parser.add_argument("--config", type=Path, default=profile / "config")
     parser.add_argument(
-        "--output", type=Path, default=Path.home() / ".coop" / "agent" / "mcp.json"
+        "--output", type=Path, default=profile / "agent" / "mcp.json"
     )
     parser.add_argument("--project", type=Path, default=None)
     parser.add_argument("--project-cwd", type=Path, default=Path.cwd())
     args = parser.parse_args()
     try:
+        if os.environ.get("COOP_CHANNEL") == "beta":
+            raise ValueError("beta MCP integrations require separate qualification; use beta sync for the isolated offline configuration")
         manifest = load_json(args.manifest, required=True)
         config = load_json(args.config)
         existing = load_json(args.output)

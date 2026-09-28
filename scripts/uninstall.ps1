@@ -24,6 +24,7 @@ $ErrorActionPreference = 'Continue'
 
 # --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
+if ($script:CoopInstallationContext) { Invoke-CoopBetaLifecycle -Operation 'uninstall' -OperationArgs @($args); exit $LASTEXITCODE }
 
 $KEEP_TOOLS = $false
 foreach ($a in $args) {

@@ -1,8 +1,12 @@
+# Windows beta process ownership and recovery share lib/owned-process.ps1.
+# Beta preview exports the validated environment via the native PowerShell path.
+# Beta install forwards to native claim, then leased source preparation/retry.
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # shared color/var library: many vars are used by sourcing scripts, not here
 # coop-agent shared shell library.
 # Sourced by bin/coop and scripts/*.sh. Defines helpers only; never calls `set -e`
-# (that is the caller's job) and never `exit`s except via coop_die().
+# (that is the caller's job). Invalid channel context is fatal before helpers
+# load; ordinary stable helpers exit only via coop_die().
 
 # --- Resolve COOP_ROOT (the directory that contains bin/, lib/, scripts/) -----
 # Callers may set COOP_ROOT before sourcing. If unset, derive it from this file's
@@ -19,6 +23,18 @@ if [ -z "${COOP_ROOT:-}" ]; then
   unset _coop_src _coop_dir _coop_lib_dir
 fi
 export COOP_ROOT
+
+# Native beta lifecycle runs through the Windows dispatcher. Never let an
+# unforwarded shell script treat beta overrides as a stable installation.
+coop_initialize_installation_context() {
+  if [ -z "${COOP_CHANNEL:-}" ] && [ -z "${COOP_BETA_ROOT:-}" ]; then return 0; fi
+  if [ "${COOP_CHANNEL:-}" = stable ] && [ -z "${COOP_BETA_ROOT:-}" ]; then return 0; fi
+  printf '%s\n' 'Beta context requires the native Windows entrypoint; refusing stable fallback.' >&2
+  return 1
+}
+# Some lifecycle scripts intentionally do not use set -e. A return here would
+# let them continue into stable/global operations after a failed beta check.
+coop_initialize_installation_context || exit 1
 
 COOP_VERSION="$(cat "$COOP_ROOT/VERSION" 2>/dev/null || echo "0.0.0")"
 export COOP_VERSION
@@ -663,7 +679,8 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 # coop runs Pi against an ISOLATED agent dir so coop's extensions/settings/theme
 # never mix with the user's personal `pi` (~/.pi/agent). Override with COOP_AGENT_DIR.
-coop_pi_agent_dir() { printf '%s' "${COOP_AGENT_DIR:-$HOME/.coop/agent}"; }
+coop_profile_root() { printf '%s' "${COOP_PROFILE_ROOT:-$HOME/.coop}"; }
+coop_pi_agent_dir() { printf '%s' "${COOP_AGENT_DIR:-$(coop_profile_root)/agent}"; }
 
 # The user's *global* Pi agent dir (used to share credentials into coop's isolated dir).
 coop_global_pi_agent_dir() { printf '%s' "$HOME/.pi/agent"; }
@@ -695,9 +712,12 @@ coop_python() {
 }
 
 # The Pi agent's own semver, e.g. "0.80.2" (from `pi --version`). Echoes "" if unknown.
+# Beta's native counterpart binds the selected executable; shell beta calls are
+# forwarded before loading this library, so stable keeps its existing resolution.
+coop_run_pi() { command pi "$@"; }
 coop_pi_version() {
   have pi || return 0
-  pi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+  coop_run_pi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
 # True (0) if version $1's MAJOR.MINOR is strictly newer than $2's (patch ignored). Used
@@ -989,7 +1009,7 @@ coop_yaml_list() {
 # an OPTIONAL "knowledge" block: { "enabled": bool, "repos": [{url, local_path}] }.
 # Absent/disabled/unreadable is a clean no-op everywhere. COOP_DIR overrides the
 # parent of .coop (same convention as onboard.py and the test suite).
-coop_config_file() { printf '%s' "${COOP_DIR:-$HOME}/.coop/config"; }
+coop_config_file() { if [ -n "${COOP_PROFILE_ROOT:-}" ]; then printf '%s/config' "$COOP_PROFILE_ROOT"; else printf '%s' "${COOP_DIR:-$HOME}/.coop/config"; fi; }
 
 # True (0) when knowledge.enabled is truthy in the fleet config.
 coop_knowledge_enabled() {
@@ -1085,11 +1105,11 @@ coop_find_project_yml() {
 # Confirm a potentially-destructive action unless --yes / COOP_ASSUME_YES is set.
 # Check whether the local COOP user profile is missing.
 coop_user_profile_missing() {
-  [ ! -f "${HOME:-}/.coop/user.json" ]
+  [ ! -f "$(coop_profile_root)/user.json" ]
 }
 
 coop_onboarding_missing() {
-  [ ! -f "${HOME:-}/.coop/user.json" ] || [ ! -f "${HOME:-}/.coop/config" ]
+  [ ! -f "$(coop_profile_root)/user.json" ] || [ ! -f "$(coop_profile_root)/config" ]
 }
 
 # First-run onboarding: run when either the profile or integration config is missing.

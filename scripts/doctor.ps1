@@ -11,6 +11,7 @@ $ErrorActionPreference = 'Continue'
 # Resolves COOP_ROOT/COOP_VERSION and defines the loggers, Test-Have,
 # Get-CoopPython, Get-CoopPiVersion, Get-CoopYamlValue, Find-CoopProjectYml, etc.
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
+if ($script:CoopInstallationContext) { Invoke-CoopBetaLifecycle -Operation 'doctor' -OperationArgs @($args); exit $LASTEXITCODE }
 
 # --- doctor body -------------------------------------------------------------
 # Check coop's ISOLATED Pi agent dir, not the user's personal ~/.pi/agent.

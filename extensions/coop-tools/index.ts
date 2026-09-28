@@ -43,6 +43,22 @@ import {
 } from "../../lib/standards.mjs";
 
 const SEVERITY = Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info")]);
+
+/** The beta entry selects the exact Node and source. The lifecycle validates its
+ * ownership record, source revision, workspace and companion before execution. */
+export function companionInvocation(
+  bin: "coop-data-doc" | "coop-sql-review" | "coop-dax-review",
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): { bin: string; args: string[] } {
+  if (env.COOP_CHANNEL !== "beta") return { bin, args };
+  const operation = ({ "coop-data-doc": "data-doc", "coop-sql-review": "sql-review", "coop-dax-review": "dax-review" } as const)[bin];
+  const root = env.COOP_BETA_ROOT, source = env.COOP_ROOT, node = env.COOP_NODE;
+  if (!root || !source || !node || ![root, source, node].every(isAbsolute)) {
+    throw new Error("Selected beta companion context is incomplete");
+  }
+  return { bin: node, args: [join(source, "lib", "beta-lifecycle.mjs"), operation, root, ...args] };
+}
 type StandardsBindingResult =
   | { ok: true; binding: { owner: "coop"; path: string; sha256: string; revision: string } }
   | { ok: false; error: string };
@@ -685,7 +701,8 @@ async function runBuild(pi: ExtensionAPI, ctx: any, outputDir?: string): Promise
   notify(ctx, "Building data docs… (this can take a moment on a large estate)", "info");
   let res: { stdout: string; stderr: string; code: number };
   try {
-    res = await pi.exec("coop-data-doc", ["build"], { cwd: ctx.cwd, signal: ctx.signal });
+    const invocation = companionInvocation("coop-data-doc", ["build"]);
+    res = await pi.exec(invocation.bin, invocation.args, { cwd: ctx.cwd, signal: ctx.signal });
   } catch (e: any) {
     notify(ctx, `Couldn't run coop-data-doc: ${errMsg(e)}. Is it installed? (coop install)`, "error");
     return false;
@@ -839,7 +856,8 @@ let jsonlSupported: boolean | null = null;
 async function supportsJsonlTransport(pi: ExtensionAPI, ctx: any): Promise<boolean> {
   if (jsonlSupported !== null) return jsonlSupported;
   try {
-    const res = await pi.exec("coop-data-doc", ["setup", "--help"], { cwd: ctx.cwd, signal: ctx.signal });
+    const invocation = companionInvocation("coop-data-doc", ["setup", "--help"]);
+    const res = await pi.exec(invocation.bin, invocation.args, { cwd: ctx.cwd, signal: ctx.signal });
     jsonlSupported = /--transport/.test(`${res.stdout}\n${res.stderr}`);
   } catch {
     jsonlSupported = false;
@@ -920,10 +938,14 @@ export function resolveDataDocExecutable(platform = process.platform, env: NodeJ
 
 /** Drive the authoritative JSONL wizard. Terminal event and exit code must agree. */
 export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPrefill = {}): Promise<boolean> {
-  let executable: string;
-  try { executable = resolveDataDocExecutable(); }
+  let invocation: { bin: string; args: string[] };
+  try {
+    invocation = process.env.COOP_CHANNEL === "beta"
+      ? companionInvocation("coop-data-doc", ["setup", "--transport", "jsonl"])
+      : { bin: resolveDataDocExecutable(), args: ["setup", "--transport", "jsonl"] };
+  }
   catch (e: any) { notify(ctx, errMsg(e), "error"); return false; }
-  const child = spawn(executable, ["setup", "--transport", "jsonl"], { cwd: ctx.cwd, stdio: ["pipe", "pipe", "pipe"], shell: false });
+  const child = spawn(invocation.bin, invocation.args, { cwd: ctx.cwd, stdio: ["pipe", "pipe", "pipe"], shell: false });
   let stderrTail = "", terminal: "complete" | "cancelled" | "error" | null = null, protocolError = "";
   let helloSeen = false;
   child.stderr?.on("data", (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
@@ -1978,7 +2000,7 @@ async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
 export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | null {
   const base = coopDir || process.env.COOP_DIR || homedir();
   const home = homeDir || process.env.HOME || homedir();
-  const cfgPath = join(base, ".coop", "config");
+  const cfgPath = join(!coopDir && process.env.COOP_PROFILE_ROOT ? process.env.COOP_PROFILE_ROOT : join(base, ".coop"), "config");
   if (!existsSync(cfgPath)) return null;
   try {
     const raw = readFileSync(cfgPath, "utf8");
@@ -2095,7 +2117,7 @@ export default function coopTools(pi: ExtensionAPI) {
   let operationStandards = new Map<string, any>();
   let operationStandardsResolve: ((domain: string) => any) | null = null;
   const runReview = async (
-    bin: string,
+    bin: "coop-sql-review" | "coop-dax-review",
     params: ReviewParams,
     signal: AbortSignal | undefined,
     ctx: ExtensionContext,
@@ -2138,7 +2160,8 @@ export default function coopTools(pi: ExtensionAPI) {
     try {
       // Pi ExecOptions supports only cwd, signal, and timeout. Provenance comes
       // from the reviewer's supported --standards report contract.
-      res = await pi.exec(bin, args, { cwd: ctx.cwd, signal });
+      const invocation = companionInvocation(bin, args);
+      res = await pi.exec(invocation.bin, invocation.args, { cwd: ctx.cwd, signal });
     } catch (e: any) {
       return {
         content: [{ type: "text" as const, text: `${bin} could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -2178,6 +2201,10 @@ export default function coopTools(pi: ExtensionAPI) {
     parameters: FABRIC_SQL_QUERY_PARAMS,
     executionMode: "sequential",
     async execute(_id, params, signal, _onUpdate, ctx) {
+      if (process.env.COOP_CHANNEL === "beta") {
+        return { content: [{ type: "text" as const, text: "Fabric SQL fallback awaits beta credential and connection qualification." }],
+          details: { tool: "fabric_sql_query", ok: false, state: "beta_unqualified" } };
+      }
       const details = await runFabricSqlHelper(params, signal, ctx.cwd);
       const text = details?.ok
         ? `fabric_sql_query: ${details.row_count} row(s) returned${details.truncated ? " (capped)" : ""}. Structured rows are in details.`
@@ -2233,6 +2260,10 @@ export default function coopTools(pi: ExtensionAPI) {
     parameters: REVIEW_PARAMS,
     executionMode: "parallel",
     async execute(_id, params, signal, _onUpdate, ctx) {
+      if (process.env.COOP_CHANNEL === "beta") {
+        return { content: [{ type: "text" as const, text: "Tabular Editor BPA awaits beta executable and resource qualification." }],
+          details: { tool: "bpa_review", analysisFailed: true, state: "beta_unqualified" } };
+      }
       const contract = findProjectYml(ctx.cwd);
       if (!contract) return { content: [{ type: "text" as const, text: "No .coop/project.yml found." }] };
       const cfg = contractTeConfig(safeRead(contract));
@@ -2343,7 +2374,8 @@ export default function coopTools(pi: ExtensionAPI) {
         args.push("--", p.object.trim());
         let res;
         try {
-          res = await pi.exec("coop-data-doc", args, { cwd: ctx.cwd, signal });
+          const invocation = companionInvocation("coop-data-doc", args);
+          res = await pi.exec(invocation.bin, invocation.args, { cwd: ctx.cwd, signal });
         } catch (e: any) {
           return {
             content: [{ type: "text" as const, text: `coop-data-doc could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -2374,7 +2406,8 @@ export default function coopTools(pi: ExtensionAPI) {
       // --- scan / build / check ---
       let res;
       try {
-        res = await pi.exec("coop-data-doc", [command], { cwd: ctx.cwd, signal });
+        const invocation = companionInvocation("coop-data-doc", [command]);
+        res = await pi.exec(invocation.bin, invocation.args, { cwd: ctx.cwd, signal });
       } catch (e: any) {
         return {
           content: [{ type: "text" as const, text: `coop-data-doc could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -2446,7 +2479,16 @@ export default function coopTools(pi: ExtensionAPI) {
     operationStandardsResolve = null;
     try {
       const cwd: string = ctx.cwd;
-      const standardsContext = buildStandardsContext(event.prompt || "", { cwd });
+      const standardsContext = buildStandardsContext(event.prompt || "",
+        process.env.COOP_CHANNEL === "beta"
+          ? { cwd, refresh: false, projectGit: false, bundledProbeSnapshot: true,
+              gitExecutable: process.env.COOP_GIT,
+              probeRoot: join(process.env.COOP_BETA_ROOT || "", "workspaces"),
+              reviewerBins: Object.fromEntries((["sql", "dax"] as const).map(domain => {
+                const invocation = companionInvocation(`coop-${domain}-review`, []);
+                return [domain, { command: invocation.bin, args: invocation.args }];
+              })) }
+          : { cwd });
       operationStandards = new Map(standardsContext.records.map((record: any) => [record.resolution.domain, record.resolution]));
       operationStandardsResolve = standardsContext.resolve;
       pendingDailyEffects.clear();

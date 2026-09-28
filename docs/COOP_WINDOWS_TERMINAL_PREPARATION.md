@@ -1,6 +1,11 @@
 # Windows-terminal roadmap: preparation handoff
 
-**Prepared September 19, 2026. Status: PREPARED — EXECUTION NOT STARTED.**
+**Historical preparation record, September 19, 2026.**
+
+Later authorization supersedes this document's original execution pause: B0 was
+reviewed, PR #71 was accepted, and Aaron requested B1 implementation. Follow the
+[B1 implementation record](COOP_WINDOWS_TERMINAL_B1_IMPLEMENTATION.md) for current
+scope and acceptance status. The preparation facts below remain historical.
 
 Aaron authorized putting the plan into the repository and setting up what could be prepared, explicitly without starting the plan. This file records that boundary. It is not an acceptance receipt for B0, B1, a beta build, or any other roadmap package.
 

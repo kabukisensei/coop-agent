@@ -44,7 +44,7 @@ def agent_dir() -> Path:
         return Path(configured).expanduser()
     if os.environ.get("COOP_NO_ISOLATE", "").lower() in {"1", "true", "yes", "on"}:
         return Path.home() / ".pi" / "agent"
-    return Path.home() / ".coop" / "agent"
+    return (Path(os.environ["COOP_PROFILE_ROOT"]) if os.environ.get("COOP_PROFILE_ROOT") else Path.home() / ".coop") / "agent"
 
 
 def catalog_root() -> Path:

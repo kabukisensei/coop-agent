@@ -31,7 +31,7 @@ const PRESET_TEXT: Record<CommunicationPreset, string> = {
   custom: "", // filled from custom_instructions
 };
 
-const USER_JSON = join(homedir(), ".coop", "user.json");
+const USER_JSON = join(process.env.COOP_PROFILE_ROOT || join(homedir(), ".coop"), "user.json");
 
 function isValidPreset(p: string): p is CommunicationPreset {
   return ["concise", "balanced", "teaching", "custom"].includes(p);

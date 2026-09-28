@@ -114,7 +114,7 @@ def find_project_instructions(start_dir: Path) -> tuple[Path | None, int, int]:
 def profile_path() -> Path:
     """Locate the local user profile."""
     home = Path.home()
-    coop_dir = os.environ.get("COOP_DIR", str(home / ".coop"))
+    coop_dir = os.environ.get("COOP_PROFILE_ROOT") or os.environ.get("COOP_DIR", str(home / ".coop"))
     return Path(coop_dir) / "user.json"
 
 
@@ -130,7 +130,7 @@ def load_profile(profile_file: Path) -> dict | None:
     if not profile_file.is_file():
         return None
     try:
-        raw = json.loads(profile_file.read_text(encoding="utf-8"))
+        raw = json.loads(profile_file.read_text(encoding="utf-8-sig" if os.environ.get("COOP_CHANNEL") == "beta" else "utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(raw, dict) or raw.get("schema_version") != 1:
@@ -432,6 +432,13 @@ def main() -> int:
     prompts_dir = repo_root / prompts_rel
     skills_dir = repo_root / skills_rel
     extensions_dir = repo_root / "extensions"
+
+    if os.environ.get("COOP_CHANNEL") == "beta":
+        try:
+            for selected in (guardrails_path, prompts_dir, skills_dir, extensions_dir):
+                selected.resolve().relative_to(repo_root.resolve())
+        except ValueError:
+            die("Beta context resources must remain inside the selected source")
 
     cwd = Path.cwd()
     guardrails = measure_guardrails(guardrails_path, repo_root)

@@ -15,7 +15,16 @@ set -uo pipefail
 COOP_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 export COOP_ROOT
 # shellcheck source=../lib/common.sh
+# Beta lifecycle uses the validated native Windows dispatcher in bin/coop.
+# Direct Bash lifecycle entry is refused by common.sh before any mutation.
 . "$COOP_ROOT/lib/common.sh"
+# The beta plan is Windows-only and never enters stable bootstrap.
+for _beta_arg in "$@"; do
+  case "$_beta_arg" in
+    --beta-plan) exec bash "$COOP_ROOT/bin/coop" install "$@" ;;
+  esac
+done
+
 
 FORCE=0; NO_FABRIC=0; NO_PREREQS=0; EDGE=0
 INSTALL_FAILURES=0

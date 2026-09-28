@@ -22,6 +22,8 @@ set -uo pipefail
 COOP_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 export COOP_ROOT
 # shellcheck source=../lib/common.sh
+# Beta lifecycle uses the validated native Windows dispatcher in bin/coop.
+# Direct Bash lifecycle entry is refused by common.sh before any mutation.
 . "$COOP_ROOT/lib/common.sh"
 
 KEEP_TOOLS=0

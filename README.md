@@ -22,6 +22,12 @@ DAX, semantic models (TMDL), and data documentation.
 
 ---
 
+## Windows beta development
+
+The B1 isolation work is in development and has not passed acceptance. Stable
+installation commands below remain unchanged. See the [B1 implementation record](docs/COOP_WINDOWS_TERMINAL_B1_IMPLEMENTATION.md)
+for candidate commands, qualification gaps and the prohibition on stable rollout.
+
 ## Quick start
 
 From a fresh clone, run the installer with its full path (it links `coop` onto your

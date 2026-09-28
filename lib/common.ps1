@@ -17,6 +17,41 @@
 $script:CoopRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $env:COOP_ROOT = $script:CoopRoot
 
+# Beta must resolve ownership before any lifecycle helper can write. Its launcher
+# supplies a selected runtime, never a PATH lookup or a stable fallback.
+function Set-CoopInstallationEnvironment {
+  param($resolved)
+  $systemModules = @((Join-Path $PSHOME 'Modules'), (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules')) -join [IO.Path]::PathSeparator
+  foreach ($key in @([Environment]::GetEnvironmentVariables('Process').Keys)) { [Environment]::SetEnvironmentVariable([string]$key, $null, 'Process') }
+  foreach ($property in $resolved.environment.PSObject.Properties) { [Environment]::SetEnvironmentVariable($property.Name, [string]$property.Value, 'Process') }
+  $env:PSModulePath = $systemModules
+  $script:CoopInstallationContext = $resolved.context
+  $script:CoopInstallationEnvironment = $resolved.environment
+}
+
+function Initialize-CoopInstallationContext {
+  $script:CoopInstallationContext = $null
+  if (-not $env:COOP_CHANNEL -and -not $env:COOP_BETA_ROOT) { return }
+  if ($env:COOP_CHANNEL -eq 'stable' -and -not $env:COOP_BETA_ROOT) { return }
+  if ($env:COOP_CHANNEL -ne 'beta' -or -not $env:COOP_BETA_ROOT) { throw 'Incomplete or unknown Coop installation channel' }
+  $ErrorActionPreference = 'Stop'
+  $script:CoopEntryParent = $null
+  if ($env:COOP_BETA_PARENT_PID) { $script:CoopEntryParent = [Diagnostics.Process]::GetProcessById([int]$env:COOP_BETA_PARENT_PID) }
+  $recordPath = Join-Path $env:COOP_BETA_ROOT '.coop-beta.json'
+  $record = Get-Content -LiteralPath $recordPath -Encoding UTF8 -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+  $selectedNode = [string]$record.tools.node.path
+  if (-not [IO.Path]::IsPathRooted($selectedNode) -or -not (Test-Path -LiteralPath $selectedNode -PathType Leaf)) { throw 'Selected beta Node runtime is missing' }
+  $hasher = [Security.Cryptography.SHA256]::Create()
+  try { $nodeHash = [BitConverter]::ToString($hasher.ComputeHash([IO.File]::ReadAllBytes($selectedNode))).Replace('-', '').ToLowerInvariant() } finally { $hasher.Dispose() }
+  if ($nodeHash -ne $record.tools.node.sha256) { throw 'Selected beta Node runtime changed' }
+  $contextOperation = if ($env:COOP_BETA_RECOVERY -eq '1') { 'recovery-environment' } else { 'environment' }
+  $resolved = & $selectedNode (Join-Path $script:CoopRoot 'lib\installation-context.mjs') $contextOperation $env:COOP_BETA_ROOT $script:CoopRoot
+  if ($LASTEXITCODE -ne 0) { throw 'Beta installation context validation failed' }
+  $resolved = $resolved | ConvertFrom-Json -ErrorAction Stop
+  Set-CoopInstallationEnvironment $resolved
+}
+Initialize-CoopInstallationContext
+
 $script:CoopVersion = '0.0.0'
 $coopVerFile = Join-Path $script:CoopRoot 'VERSION'
 if (Test-Path -LiteralPath $coopVerFile -PathType Leaf) {
@@ -552,6 +587,7 @@ function Get-CoopExtInstalledVersion([string]$AgentDir, [string]$Name) {
 
 # Ensure user tool bins (pipx, Azure CLI) are on PATH in-process
 $script:PathSep = [System.IO.Path]::PathSeparator
+if (-not $script:CoopInstallationContext) {
 $pipxBin = Join-Path $HOME '.local\bin'
 if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split $script:PathSep) -notcontains $pipxBin)) {
   $env:PATH = "$pipxBin$script:PathSep$env:PATH"
@@ -564,6 +600,7 @@ foreach ($d in (@(
   if ((Test-Path -LiteralPath $d) -and (($env:PATH -split $script:PathSep) -notcontains $d)) {
     $env:PATH = "$env:PATH$script:PathSep$d"
   }
+}
 }
 
 # --- Colors (respect NO_COLOR and non-TTY) -----------------------------------
@@ -716,7 +753,67 @@ function Coop-Head { param([string]$m) Coop-Emit "`n$($script:C_BOLD)$($script:C
 
 # --- Small utilities ----------------------------------------------------------
 # Is a command available on PATH? (mirror of have())
-function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
+function Get-CoopBetaPiEntry {
+  if (-not $script:CoopInstallationContext) { return $null }
+  $name = Coop-ManifestGet -Key 'pi.package'
+  try {
+    $entry = & $script:CoopInstallationContext.tools.node.path (Join-Path $script:CoopRoot 'lib\installation-context.mjs') package $env:COOP_BETA_ROOT $script:CoopRoot pi $name pi 2>$null
+    if ($LASTEXITCODE -eq 0 -and $entry) { return [string]($entry | ConvertFrom-Json) }
+  } catch { }
+  return $null
+}
+
+function Invoke-CoopPi {
+  if ($script:CoopInstallationContext) {
+    $entry = Get-CoopBetaPiEntry
+    if (-not $entry) { throw 'Exact beta Pi package is unavailable; run beta sync/install. Stable Pi will not be used.' }
+    Invoke-CoopOwnedProcess -FilePath $script:CoopInstallationContext.tools.node.path -ArgumentVector (@($entry) + @($args))
+  } else { & pi @args }
+}
+
+# Shared with the retained beta recovery entry; stable calls never load it.
+function Invoke-CoopOwnedProcess {
+  param([string]$FilePath, [string[]]$ArgumentVector, [int]$TimeoutMilliseconds = 0, [switch]$ReadOnly)
+  . (Join-Path $PSScriptRoot 'owned-process.ps1')
+  Invoke-CoopWindowsOwnedProcess @PSBoundParameters
+}
+
+function Invoke-CoopBetaInstallPlan {
+  param([string]$PlanPath)
+  $ErrorActionPreference = 'Stop'
+  $PlanPath = (Resolve-Path -LiteralPath $PlanPath).Path
+  $request = Get-Content -LiteralPath $PlanPath -Encoding UTF8 -Raw | ConvertFrom-Json
+  $node = [string]$request.tools.node
+  if (-not [IO.Path]::IsPathRooted($node) -or -not (Test-Path -LiteralPath $node -PathType Leaf)) { throw 'Beta plan must select an existing absolute Node executable' }
+  $lifecycle = Join-Path $script:CoopRoot 'lib/beta-lifecycle.mjs'
+  $planned = & $node $lifecycle plan-json $PlanPath
+  if ($LASTEXITCODE -ne 0) { throw 'Beta installation plan validation failed; nothing provisioned' }
+  Set-CoopInstallationEnvironment ($planned | ConvertFrom-Json)
+  # Claim exclusively without creating a lock inside an as-yet unowned root.
+  # All source preparation/retry work below then runs under the normal lease.
+  Invoke-CoopOwnedProcess -FilePath $node -ArgumentVector @($lifecycle, 'claim-plan', $PlanPath) -TimeoutMilliseconds 120000 -ReadOnly
+  if ($LASTEXITCODE -ne 0) { return }
+  Invoke-CoopOwnedProcess -FilePath $node -ArgumentVector @($lifecycle, 'install-plan', $PlanPath) -TimeoutMilliseconds 120000
+  if ($LASTEXITCODE -ne 0) { return }
+  Invoke-CoopOwnedProcess -FilePath $node -ArgumentVector @((Join-Path $script:CoopInstallationContext.paths.source 'lib/beta-lifecycle.mjs'), 'sync', $env:COOP_BETA_ROOT) -TimeoutMilliseconds 1800000
+}
+
+function Invoke-CoopBetaLifecycle {
+  param([string]$Operation, [string[]]$OperationArgs = @())
+  if (-not $script:CoopInstallationContext) { throw 'Beta lifecycle requires validated context' }
+  if ($Operation -eq 'update' -and $OperationArgs.Count -eq 1 -and $OperationArgs[0] -eq '--rollback') {
+    $Operation = 'rollback'; $OperationArgs = @()
+  }
+  Invoke-CoopOwnedProcess -FilePath $script:CoopInstallationContext.tools.node.path -ArgumentVector (@(
+    (Join-Path $script:CoopRoot 'lib/beta-lifecycle.mjs'), $Operation, $env:COOP_BETA_ROOT
+  ) + $OperationArgs) -TimeoutMilliseconds 1800000 -ReadOnly:($Operation -in @('doctor','launch-check'))
+}
+
+function Test-Have {
+  param([string]$Name)
+  if ($script:CoopInstallationContext -and $Name -eq 'pi') { return [bool](Get-CoopBetaPiEntry) }
+  return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
 
 # Pick a usable python interpreter that ACTUALLY runs — not the Windows Store
 # App-Execution-Alias stub. python.org's installer never creates python3.exe, so
@@ -725,6 +822,11 @@ function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction 
 # Prefer python3, fall back to python; $null when neither is real.
 # (mirror of coop_python — THE one python resolver; don't re-add per-script copies)
 function Get-CoopPython {
+  if ($script:CoopInstallationContext) {
+    $selected = $script:CoopInstallationContext.tools.python.path
+    if (-not (Test-Path -LiteralPath $selected -PathType Leaf)) { throw 'Selected beta Python runtime is missing' }
+    return $selected
+  }
   foreach ($name in @('python3', 'python')) {
     $c = Get-Command $name -ErrorAction SilentlyContinue
     if (-not $c) { continue }
@@ -738,7 +840,8 @@ function Get-CoopPython {
 # coop runs Pi against an ISOLATED agent dir so coop's extensions/settings/theme
 # never mix with the user's personal `pi`. Override with COOP_AGENT_DIR.
 # (mirror of coop_pi_agent_dir)
-function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' } }
+function Get-CoopProfileRoot { if ($env:COOP_PROFILE_ROOT) { $env:COOP_PROFILE_ROOT } else { Join-Path $HOME '.coop' } }
+function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path (Get-CoopProfileRoot) 'agent' } }
 
 # The agent dir Pi will ACTUALLY load: PI_CODING_AGENT_DIR when set; with
 # COOP_NO_ISOLATE=1 Pi falls back to the personal ~/.pi/agent.
@@ -968,6 +1071,7 @@ function Get-CoopRepoBehindCount {
 # Never blocks or fails the launch; silent offline / non-git / up-to-date.
 # (mirror of coop_update_nudge)
 function Invoke-CoopUpdateNudge {
+  if ($script:CoopInstallationContext) { return }
   if (-not (Invoke-CoopRepoFetchThrottled)) { return }
   $behind = Get-CoopRepoBehindCount
   if ($behind -gt 0) { Coop-Warn "coop-agent is $behind commit(s) behind — run: coop update" }
@@ -977,7 +1081,8 @@ function Invoke-CoopUpdateNudge {
 # (mirror of coop_pi_version)
 function Get-CoopPiVersion {
   if (-not (Test-Have 'pi')) { return '' }
-  $raw = (& pi --version 2>$null | Select-Object -First 1)
+  if ($script:CoopInstallationContext) { return (Coop-ManifestGet -Key 'pi.version') }
+  $raw = (Invoke-CoopPi --version 2>$null | Select-Object -First 1)
   $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
   if ($m.Success) { return $m.Value } else { return '' }
 }
@@ -1030,6 +1135,7 @@ function Get-CoopYamlList {
 # parent of .coop (same convention as onboard.py and the test suite).
 # (mirrors of coop_config_file / coop_knowledge_enabled / coop_knowledge_repos)
 function Get-CoopConfigFile {
+  if ($env:COOP_PROFILE_ROOT) { return (Join-Path $env:COOP_PROFILE_ROOT 'config') }
   $base = if ($env:COOP_DIR) { $env:COOP_DIR } else { $HOME }
   return (Join-Path $base '.coop\config')
 }
@@ -1136,11 +1242,11 @@ function Coop-Confirm {
 
 # Test whether the local COOP user profile exists.
 function Test-CoopUserProfileMissing {
-  return -not (Test-Path -LiteralPath (Join-Path $HOME '.coop\user.json') -PathType Leaf)
+  return -not (Test-Path -LiteralPath (Join-Path (Get-CoopProfileRoot) 'user.json') -PathType Leaf)
 }
 
 function Test-CoopOnboardingMissing {
-  return (Test-CoopUserProfileMissing) -or -not (Test-Path -LiteralPath (Join-Path $HOME '.coop\config') -PathType Leaf)
+  return (Test-CoopUserProfileMissing) -or -not (Test-Path -LiteralPath (Join-Path (Get-CoopProfileRoot) 'config') -PathType Leaf)
 }
 
 # First-run onboarding: run when either the profile or integration config is missing.

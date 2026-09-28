@@ -47,6 +47,8 @@ STATUS_INVALID_CONFIG = "invalid_config"
 
 
 def config_path():
+    if os.environ.get("COOP_PROFILE_ROOT"):
+        return os.path.join(os.environ["COOP_PROFILE_ROOT"], "config")
     coop_dir = os.environ.get("COOP_DIR")
     if coop_dir:
         return os.path.join(coop_dir, ".coop", "config")

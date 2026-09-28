@@ -12,7 +12,9 @@ With --template: print the full documented example to stdout (legacy raw copy).
 """
 
 import argparse
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +24,8 @@ from pathlib import Path
 LIB_DIR = Path(__file__).resolve().parent
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
+
+from beta_paths import beta_workspace_path  # noqa: E402
 
 from azure_auth import (  # noqa: E402
     azure_cli_available,
@@ -35,6 +39,10 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
 
 
+def beta_mode() -> bool:
+    return os.environ.get("COOP_CHANNEL") == "beta"
+
+
 def discover_git(cwd: Path) -> dict:
     info = {
         "root": "",
@@ -43,23 +51,30 @@ def discover_git(cwd: Path) -> dict:
         "user_name": "",
         "user_email": "",
     }
+    git = os.environ.get("COOP_GIT") if beta_mode() else "git"
+    if not git:
+        raise ValueError("Beta project setup requires the selected Git executable")
+    if beta_mode() and not cwd.exists():
+        return info
     try:
-        p = run(["git", "rev-parse", "--show-toplevel"], cwd=cwd)
+        p = run([git, "rev-parse", "--show-toplevel"], cwd=cwd)
         if p.returncode == 0:
             info["root"] = p.stdout.strip()
-        p = run(["git", "remote", "get-url", "origin"], cwd=cwd)
+        p = run([git, "remote", "get-url", "origin"], cwd=cwd)
         if p.returncode == 0:
             info["origin"] = p.stdout.strip()
         for branch in ["main", "master"]:
-            p = run(["git", "rev-parse", "--verify", branch], cwd=cwd)
+            p = run([git, "rev-parse", "--verify", branch], cwd=cwd)
             if p.returncode == 0:
                 info["branch"] = branch
                 break
         for key in ["user.name", "user.email"]:
-            p = run(["git", "config", "--get", key], cwd=cwd)
+            p = run([git, "config", "--get", key], cwd=cwd)
             if p.returncode == 0:
                 info[key.replace(".", "_")] = p.stdout.strip()
     except FileNotFoundError:
+        if beta_mode() and cwd.exists():
+            raise ValueError("Selected beta Git is unavailable") from None
         pass
     return info
 
@@ -126,6 +141,8 @@ def read_input(prompt: str, default: str = "") -> str:
     sys.stderr.flush()
     line = sys.stdin.readline()
     if not line:
+        if beta_mode():
+            raise ValueError("Project setup cancelled: no input")
         return default
     return line.strip() or default
 
@@ -139,6 +156,8 @@ def read_choice(prompt: str, choices: list[str], default: str = "") -> str:
     sys.stderr.flush()
     answer = sys.stdin.readline()
     if not answer:
+        if beta_mode():
+            raise ValueError("Project setup cancelled: no input")
         return default
     answer = answer.strip()
     if not answer:
@@ -158,7 +177,10 @@ def read_confirm(prompt: str, default: bool = False) -> bool:
     suffix = "Y/n" if default else "y/N"
     sys.stderr.write(f"{prompt} [{suffix}]: ")
     sys.stderr.flush()
-    ans = sys.stdin.readline().strip().lower()
+    line = sys.stdin.readline()
+    if not line and beta_mode():
+        raise ValueError("Project setup cancelled: no input")
+    ans = line.strip().lower()
     if not ans:
         return default
     return ans in ("y", "yes")
@@ -468,7 +490,7 @@ def build_project_yml(answers: dict) -> str:
     return "\n".join(lines)
 
 
-def run_wizard(target_dir: Path) -> dict:
+def run_wizard(target_dir: Path, *, lineage_available: bool | None = None) -> dict:
     sys.stderr.write("Let's set up your Cooptimize project contract.\n\n")
     cwd = target_dir.resolve()
     git = discover_git(cwd)
@@ -485,6 +507,8 @@ def run_wizard(target_dir: Path) -> dict:
         "Repository description", "Project source and docs"
     )
     repo_local_path = ask_prefilled("Repository local path", repo_root)
+    if beta_mode():
+        repo_local_path = str(beta_workspace_path(repo_local_path, cwd))
     default_branch = ask_prefilled("Default branch", default_branch)
     repo_role = read_choice(
         "Repository role for lineage setup",
@@ -503,6 +527,8 @@ def run_wizard(target_dir: Path) -> dict:
     ]
     while read_confirm("Add another repository?", default=False):
         extra_path = ask_prefilled("Additional repository local path", "")
+        if beta_mode():
+            extra_path = str(beta_workspace_path(extra_path, cwd))
         extra_name = ask_prefilled(
             "Additional repository short name",
             Path(extra_path).name or f"repo{len(repositories) + 1}",
@@ -532,9 +558,9 @@ def run_wizard(target_dir: Path) -> dict:
     )
     tenant_id = ""
     if use_fabric:
-        tenants = discover_azure_tenants()
+        tenants = [] if beta_mode() else discover_azure_tenants()
         tenant_id = choose_tenant(tenants) if tenants else ""
-        if not tenant_id and azure_cli_available():
+        if not beta_mode() and not tenant_id and azure_cli_available():
             sys.stderr.write(
                 "Azure CLI is installed, but no active Azure sign-in was detected.\n"
             )
@@ -545,7 +571,7 @@ def run_wizard(target_dir: Path) -> dict:
                 tenant_id = sign_in_and_detect_tenant()
         tenant_id = ask_prefilled("Azure tenant ID (optional)", tenant_id)
 
-    use_tabular_editor = read_confirm("Use Tabular Editor CLI for BPA?", default=False)
+    use_tabular_editor = False if beta_mode() else read_confirm("Use Tabular Editor CLI for BPA?", default=False)
     te_path = ""
     bpa_rules_path = ""
     if use_tabular_editor:
@@ -554,7 +580,9 @@ def run_wizard(target_dir: Path) -> dict:
         )
         bpa_rules_path = ask_prefilled("BPA rules file path (optional)", "")
 
-    setup_lineage = read_confirm(
+    if lineage_available is None:
+        lineage_available = not beta_mode()
+    setup_lineage = lineage_available and read_confirm(
         "Configure lineage docs for the local sources available now? (runs `coop-data-doc setup`)",
         default=False,
     )
@@ -578,59 +606,72 @@ def run_wizard(target_dir: Path) -> dict:
     }
 
 
-def run_lineage_setup(target: Path) -> None:
+def run_lineage_setup(target: Path, command: list[str] | None = None) -> int:
     """Seed project repository paths, then launch the authoritative wizard."""
     sys.stderr.write(
         "\nSeeding repository paths, then launching coop-data-doc setup (Ctrl-C to skip)…\n"
     )
     try:
+        if beta_mode() and not command:
+            raise ValueError("Selected beta data-doc command is missing")
         cmd = os.environ.get("COOP_DATA_DOC_BIN", "coop-data-doc")
 
         # On Windows, .bat/.cmd files can't be executed via CreateProcess directly;
         # route them through cmd.exe so PATH/PATHEXT resolution isn't needed.
         def _argv(sub: str):
+            if beta_mode():
+                return [*command, sub]
             if sys.platform == "win32" and cmd.lower().endswith((".bat", ".cmd")):
                 return ["cmd.exe", "/c", cmd, sub]
             return [cmd, sub]
 
         helper = Path(__file__).resolve().parent / "_seeddocs.py"
         patch = subprocess.run(
-            [sys.executable, str(helper), str(target / ".coop" / "project.yml")],
+            [sys.executable, *(["-I", "-B", "-X", "utf8"] if beta_mode() else []),
+             str(helper), str(target / ".coop" / "project.yml")],
             capture_output=True,
             text=True,
+            encoding="utf-8" if beta_mode() else None,
+            cwd=target if beta_mode() else None,
         )
         if patch.returncode != 0 or not patch.stdout.strip():
             sys.stderr.write(
                 "Lineage setup was not launched because repository roles/paths could not be seeded. Re-run `coop init --seed-docs` after fixing them.\n"
             )
-            return
+            return 1
         seeded = subprocess.run(
             _argv("config-set")
             + ["--config", str(target / "coop-data-doc.yml"), "--from-json", "-"],
             cwd=target,
             input=patch.stdout,
             text=True,
+            encoding="utf-8" if beta_mode() else None,
         )
         if seeded.returncode != 0:
             sys.stderr.write(
                 "Lineage setup was not launched because config-set could not seed repository paths.\n"
             )
-            return
-        subprocess.run(_argv("setup"), cwd=target)
+            return seeded.returncode
+        return subprocess.run(_argv("setup"), cwd=target).returncode
     except KeyboardInterrupt:
         # Ctrl-C during the interactive questionnaire is the normal way to skip;
         # never surface a traceback for it.
         sys.stderr.write(
             "\nLineage setup skipped — run `coop data-doc setup` anytime.\n"
         )
+        return 130
     except FileNotFoundError:
         sys.stderr.write(
-            "coop-data-doc isn't installed — run `coop install`, then `coop data-doc setup`.\n"
+            "The selected beta data-doc is unavailable; project contract retained.\n" if beta_mode()
+            else "coop-data-doc isn't installed — run `coop install`, then `coop data-doc setup`.\n"
         )
+        return 1
     except Exception as exc:
         sys.stderr.write(
-            f"coop-data-doc setup failed ({exc}). Run `coop data-doc setup` anytime.\n"
+            "Beta lineage setup failed; project contract retained. Run `coop data-doc setup` after checking the selected tools and paths.\n" if beta_mode()
+            else f"coop-data-doc setup failed ({exc}). Run `coop data-doc setup` anytime.\n"
         )
+        return 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -654,23 +695,49 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
 
-    target = Path(args.target_dir).resolve()
-    target.mkdir(parents=True, exist_ok=True)
+    target = beta_workspace_path(args.target_dir, Path.cwd()) if beta_mode() else Path(args.target_dir).resolve()
+    if not beta_mode():
+        target.mkdir(parents=True, exist_ok=True)
     coop_dir = target / ".coop"
-    coop_dir.mkdir(exist_ok=True)
+    if not beta_mode():
+        coop_dir.mkdir(exist_ok=True)
     dst = coop_dir / "project.yml"
 
     if dst.exists():
         sys.stderr.write(f"{dst} already exists — not overwriting.\n")
         return 1
 
-    answers = run_wizard(target)
+    try:
+        command = None
+        if beta_mode():
+            raw = os.environ.get("COOP_BETA_DATA_DOC_COMMAND")
+            if raw:
+                try:
+                    command = json.loads(raw)
+                    if not isinstance(command, list) or not command or any(not isinstance(v, str) or not v for v in command):
+                        raise ValueError()
+                except (ValueError, TypeError):
+                    raise ValueError("Invalid selected beta data-doc command") from None
+            else:
+                sys.stderr.write("Lineage setup is unavailable in this beta installation; project setup can continue.\n")
+        answers = run_wizard(target, lineage_available=not beta_mode() or bool(command))
+    except ValueError as exc:
+        sys.stderr.write(str(exc) + "\n")
+        return 1
     yml = build_project_yml(answers)
-    dst.write_text(yml, encoding="utf-8")
+    if beta_mode():
+        beta_workspace_path(dst, target)
+        coop_dir.mkdir(parents=True, exist_ok=True)
+        with dst.open("x", encoding="utf-8") as stream:
+            stream.write(yml)
+    else:
+        dst.write_text(yml, encoding="utf-8")
     sys.stderr.write(f"\nWrote {dst}\n")
     sys.stderr.write("Review it, then run: coop doctor\n")
     if answers.get("setup_lineage"):
-        run_lineage_setup(target)
+        status = run_lineage_setup(target, command)
+        if beta_mode():
+            return status
     return 0
 
 

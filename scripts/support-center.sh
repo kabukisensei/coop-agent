@@ -8,4 +8,7 @@ set -euo pipefail
 COOP_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 export COOP_ROOT
 
+if [ -n "${COOP_BETA_ROOT:-}" ] || { [ -n "${COOP_CHANNEL:-}" ] && [ "$COOP_CHANNEL" != stable ]; }; then
+  exec bash "$COOP_ROOT/bin/coop" support "$@"
+fi
 exec node "$COOP_ROOT/lib/support-center-cli.mjs" "$@"

@@ -11,6 +11,21 @@ export COOP_ROOT="$ROOT"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+echo "→ beta ownership and explicit profile-root tests"
+node "$ROOT/tests/installation-context.test.mjs"
+node "$ROOT/tests/beta-launch-inputs.test.mjs"
+node "$ROOT/tests/beta-support.test.mjs"
+node "$ROOT/tests/beta-profile.test.mjs"
+node "$ROOT/tests/beta-initial-install.test.mjs"
+node "$ROOT/tests/beta-init.test.mjs"
+python3 "$ROOT/tests/beta-data-doc.test.py"
+python3 "$ROOT/tests/beta-review.test.py"
+node "$ROOT/tests/beta-review-suite.test.mjs"
+node "$ROOT/tests/profile-root.test.mjs"
+node "$ROOT/tests/installation-context-native.test.mjs"
+node "$ROOT/tests/beta-lifecycle.test.mjs"
+node "$ROOT/tests/beta-source-recovery.test.mjs"
+
 bundle() {
   local ext="$1"; shift
   npx -y esbuild "$ROOT/extensions/$ext/index.ts" \
@@ -30,6 +45,7 @@ node "$ROOT/tests/standards-live-sync.test.mjs"
 node "$ROOT/tests/standards-review-generations.test.mjs"
 node "$ROOT/tests/standards-lock-simple.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/standards-runtime.test.mjs"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/beta-agent-tools.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/bpa-review.test.mjs"
 
 echo "→ data-doc config tests"

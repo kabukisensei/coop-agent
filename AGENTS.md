@@ -65,26 +65,34 @@ Everything below is for an agent editing coop-agent itself — scripts, docs, te
 skills, extensions. This file is canonical; `CONTRIBUTING.md` and `RELEASE.md`
 carry the detail and align with it.
 
-### Current roadmap — prepared, not started
+### Current roadmap — B1 authorized, acceptance pending
 
 The official forward plan is [Coop Windows Terminal](docs/COOP_WINDOWS_TERMINAL_PLAN.md).
-Read the [preparation handoff](docs/COOP_WINDOWS_TERMINAL_PREPARATION.md) before
-working on it. Aaron authorized documentation and branch preparation only;
-**B0 and all implementation work remain unstarted until he explicitly begins them**.
-Do not add roadmap tasks to `agent:ready` or treat branch presence as an execution trigger.
+The [preparation handoff](docs/COOP_WINDOWS_TERMINAL_PREPARATION.md) is historical;
+read the current [B1 implementation receipt](docs/COOP_WINDOWS_TERMINAL_B1_IMPLEMENTATION.md)
+for authorization, progress and outstanding acceptance. Aaron explicitly requested
+B1 implementation after B0 review and the separate PR #71 guardrail repairs.
+The original approved B1 baseline is `cee2d7418c0357f8e4bbd23e438cf026e2e15764`.
+On September 22, read-only reconciliation found live stable at v0.23.5 /
+`3c2b5a2b770e8523374139a4937e1830e278fe29`. Its update provenance is not fully
+established; see the implementation receipt. Do not restore it, silently adopt it
+as B1's baseline, or reuse historical preservation checks as current evidence.
+Preserve the operational C: installation and client work; keep development,
+downloads, package state and tests in new owned E: roots.
 
-The current roadmap is Windows terminal, isolated stable/beta channels, bounded
-simplification, qualified component/skill updates, TeamAI, and optional Jev trials.
-Native Windows Coop 2.0 is deferred and last. Prior Desktop/web strategy and
-implementation plans are historical for roadmap sequencing; do not merge or
-port the old Desktop branch. Preserve current runtime behavior and existing
-parity/BOM/test obligations until their approved retirement package changes them.
+B1 is bounded to an isolated Windows beta lifecycle. The separately approved beta
+MCP pins are Fabric MCP 1.2.0, Azure DevOps MCP 2.10.0 and mcp-remote 0.14.2, with
+other baseline package versions unchanged. No stable rollout, dependency upgrades,
+optional package adoption, TeamAI/Jev activation or Desktop implementation is
+included. GPT models use the existing OpenAI subscription provider; no automatic
+provider fallback or separate API-key requirement. Beta credentials are never
+copied or linked from stable. Service sign-in and live calls remain unapproved.
 
-`experimental/windows-terminal` is a provisional source branch, **not an installed
-or proven-isolated beta**. Do not run the existing installer/updater from that
-branch as a beta setup. The next authorized task is B0 baseline reconciliation
-and a bounded B1 proposal, not B1 implementation or a wholesale roadmap execution.
-This pause applies to the roadmap, not unrelated explicitly requested maintenance.
+`experimental/windows-terminal` remains a provisional source branch, not evidence
+of an installed or isolated beta. Do not use its old installer as beta setup or
+add the roadmap to `agent:ready`. B1 work is not authorization to execute later
+roadmap packages. Preserve paired scripts, BOMs, tests and current stable behavior.
+Commits, publication and releases still need their corresponding authorization.
 
 ### Platform notes
 
@@ -165,7 +173,7 @@ delete or re-push a tag, never commit secrets (`.env*`, keys, tokens — see
   `README.md`, `docs/architecture.md`, `docs/ci.md`, `docs/extending.md`,
   `docs/guardrails.md`, `docs/onboarding.md`, `docs/tool-contract.md`,
   `docs/troubleshooting.md`.
-- **Current roadmap (prepared only; explicit start required):**
+- **Current roadmap (B1 authorized; acceptance pending):**
   `docs/COOP_WINDOWS_TERMINAL_PLAN.md` and
   `docs/COOP_WINDOWS_TERMINAL_PREPARATION.md`.
 - **Plans / history (context only — never execute their steps without an

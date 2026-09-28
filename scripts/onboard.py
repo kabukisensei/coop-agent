@@ -25,7 +25,7 @@ from azure_auth import (  # noqa: E402
     tenant_label,
 )
 
-COOP_DIR = Path(os.environ.get("COOP_DIR", Path.home())) / ".coop"
+COOP_DIR = Path(os.environ["COOP_PROFILE_ROOT"]) if os.environ.get("COOP_PROFILE_ROOT") else Path(os.environ.get("COOP_DIR", Path.home())) / ".coop"
 USER_JSON = COOP_DIR / "user.json"
 CONFIG_JSON = COOP_DIR / "config"
 MCP_OUTPUT = COOP_DIR / "agent" / "mcp.json"
@@ -141,7 +141,7 @@ def validate_name(name: str) -> str:
 def load_user() -> dict:
     if USER_JSON.exists():
         try:
-            data = json.loads(USER_JSON.read_text(encoding="utf-8"))
+            data = json.loads(USER_JSON.read_text(encoding="utf-8-sig" if os.environ.get("COOP_CHANNEL") == "beta" else "utf-8"))
             if isinstance(data, dict):
                 return data
         except json.JSONDecodeError:
@@ -720,6 +720,17 @@ def cmd_profile(args: argparse.Namespace) -> int:
         return 0
     if args.edit:
         updated = run_profile_questions(profile)
+        if os.environ.get("COOP_CHANNEL") == "beta":
+            # Only fields owned by the profile wizard change. Future fields and
+            # extension preferences survive editing in an isolated beta.
+            updated = {
+                **profile,
+                **updated,
+                "communication": {
+                    **profile.get("communication", {}),
+                    **updated["communication"],
+                },
+            }
         save_user(updated)
         profile = updated
         sys.stderr.write(f"Updated profile for {profile['name']}.\n")

@@ -30,6 +30,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
 # Our lib dir must precede everything else: PyYAML ships a C module also named
 # `_yaml`, which would otherwise win the import.
@@ -62,10 +63,17 @@ def main(argv):
     if len(argv) != 2:
         sys.stderr.write('usage: _seeddocs.py <path-to-project.yml>\n')
         return 2
+    beta = os.environ.get('COOP_CHANNEL') == 'beta'
+    project = argv[1]
     try:
-        data = _yaml.load(argv[1])
+        if beta:
+            from beta_paths import beta_workspace_path
+            project = beta_workspace_path(project, Path.cwd())
+            if project.name.lower() != 'project.yml' or project.parent.name.lower() != '.coop':
+                raise ValueError('Expected an owned project contract')
+        data = _yaml.load(project)
     except Exception as e:
-        sys.stderr.write('could not read {}: {}\n'.format(argv[1], e))
+        sys.stderr.write('Invalid beta project contract\n' if beta else 'could not read {}: {}\n'.format(argv[1], e))
         return 2
     repos = data.get('repositories') if isinstance(data, dict) else None
     if not isinstance(repos, dict) or not repos:
@@ -119,6 +127,14 @@ def main(argv):
     if not slots:
         sys.stderr.write('nothing to seed — fill repositories.*.local_path in the contract first.\n')
         return 3
+
+    if beta:
+        try:
+            slots = {slot: (name, str(beta_workspace_path(value, project.parent.parent)))
+                     for slot, (name, value) in slots.items()}
+        except (ValueError, OSError, TypeError):
+            sys.stderr.write('Beta lineage source paths must stay inside owned workspaces\n')
+            return 2
 
     for slot in ('sql', 'powerbi'):
         if slot in slots:

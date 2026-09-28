@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Windows beta combined review uses the shared lib/review-suite.ps1 implementation
+# through its owned lifecycle entry. Stable run_review below retains Bash parity.
 #
 # coop — the Cooptimize terminal agent.
 #
@@ -30,7 +32,10 @@
 #   coop add <source>         Install a Pi extension          (-> pi install <source>)
 #   coop install <source>     Same as `coop add` (bare `coop install` bootstraps)
 #   coop remove <source>      Remove a Pi extension           (-> pi remove <source>)
-#   coop pi <args...>         Raw escape hatch to pi          (-> pi <args...>)
+# Beta launch-spec is resolved by the native entry, with exact executable and scoped environment.
+# Beta profile/context-budget also use scoped Python through that native entry.
+# Beta project init uses the same native scope and owned-process checks.
+#   coop pi <args...>         Raw stable Pi; beta forwards to its governed native launcher
 #
 set -euo pipefail
 
@@ -43,6 +48,39 @@ while [ -h "$_src" ]; do
 done
 COOP_ROOT="$(cd -P "$(dirname "$_src")/.." >/dev/null 2>&1 && pwd)"
 export COOP_ROOT
+# Beta is a Windows terminal channel. Forward before stable profile creation.
+_beta_plan_seen=0
+for _beta_arg in "$@"; do [ "$_beta_arg" != --beta-plan ] || _beta_plan_seen=1; done
+if [ "$_beta_plan_seen" = 1 ]; then
+  case "${OSTYPE:-}" in
+    msys*|cygwin*)
+      _beta_windows="$(cygpath -u "${SYSTEMROOT:-${SystemRoot:-${WINDIR:-C:\\Windows}}}")"
+      exec "$_beta_windows/System32/WindowsPowerShell/v1.0/powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$COOP_ROOT/bin/coop.ps1")" "$@"
+      ;;
+    *) printf '%s\n' 'The beta channel requires native Windows.' >&2; exit 1 ;;
+  esac
+fi
+if [ "${COOP_CHANNEL:-}" = beta ] || [ -n "${COOP_BETA_ROOT:-}" ]; then
+  # Includes data-doc and SQL/DAX review: native dispatch preflights pinned
+  # companion inputs, configuration discovery and report destinations.
+  case "${OSTYPE:-}" in
+    msys*|cygwin*)
+      _beta_windows="$(cygpath -u "${SYSTEMROOT:-${SystemRoot:-${WINDIR:-C:\\Windows}}}")"
+      _beta_node="$("$_beta_windows/System32/WindowsPowerShell/v1.0/powershell.exe" -NoProfile -Command '
+        $ErrorActionPreference = "Stop"
+        [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
+        $r = Get-Content -LiteralPath (Join-Path $env:COOP_BETA_ROOT ".coop-beta.json") -Encoding UTF8 -Raw | ConvertFrom-Json
+        $h = [Security.Cryptography.SHA256]::Create()
+        try { $v = [BitConverter]::ToString($h.ComputeHash([IO.File]::ReadAllBytes($r.tools.node.path))).Replace("-", "").ToLowerInvariant() } finally { $h.Dispose() }
+        if ($v -ne $r.tools.node.sha256) { throw "Selected beta Node changed" }
+        [Console]::Write($r.tools.node.path)
+      ')"
+      export MSYS2_ARG_CONV_EXCL='*'
+      exec "$(cygpath -u "$_beta_node")" "$(cygpath -w "$COOP_BETA_ROOT/bin/beta-entry.mjs")" "$@"
+      ;;
+    *) printf '%s\n' 'The beta channel requires native Windows.' >&2; exit 1 ;;
+  esac
+fi
 # A fresh clone/install whose lib/common.sh vanished before first launch was
 # almost always quarantined by antivirus/endpoint security. Fail with the fix
 # instead of cascading "command not found" from every helper call.
