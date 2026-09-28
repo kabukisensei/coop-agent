@@ -13,7 +13,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   contract aligned with the Cooptimize standards repos), then test right-sizing,
   Windows-first simplification, dependency reconciliation, standards alignment,
   Azure SQL breadth, common-workflows first run, the minimal beta channel, and last
-  an installable Electron desktop. Revision 2.0 stays as the per-package reference.
+  an installable Electron desktop. Revision 3.1 adds release-tag updates for
+  `coop update`, a one-page Windows install doc, the fresh development VM as the
+  qualification machine (the beta channel becomes conditional for a seven-person
+  team), `pi-lovely-codex` evaluated whole against `pi-better-openai`, and the
+  agent working model. Revision 2.0 stays as the per-package reference.
   Documentation only; no runtime change.
 
 ## [0.23.5] — 2026-09-22

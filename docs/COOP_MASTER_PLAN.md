@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.0 · September 28, 2026**
+**Document revision 3.1 · September 28, 2026**
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -29,7 +29,10 @@ execution trigger, and `agent:ready` is still added by hand. Releases follow
 | Editing SQL objects | Local files plus `coop-data-doc` lineage | SQL is not source-controlled today, so coop **defaults to the dev environment**, traces impact from **live metadata**, and verifies an edit with **actual data** before and after. |
 | First run | Onboarding wizard, then `/start` menu on demand | **Common workflows menu on first run**; the wizard becomes one entry in it. |
 | Desktop | Removed; native Windows Coop 2.0 last, no Electron | **Electron desktop returns, last**, gated on a packaged installer that other users can run. The native rewrite is dropped from the roadmap. |
-| TeamAI / Jev / PK1 | Early beta experiments after B1 | Unchanged intention, but they wait for the beta channel and run after the client-facing phases. |
+| TeamAI / Jev / PK1 | Early beta experiments after B1 | Unchanged intention, but they wait for the beta channel and run after the client-facing phases. PK1 now evaluates `pi-lovely-codex` as a whole (usage stats plus tool-call handling), not `apply_patch` alone. |
+| Update channel | `coop update` fast-forwards `main` | `coop update` moves to the **latest release tag**; `--edge` keeps head-of-main for maintainers. |
+| Qualification machine | Isolated beta channel (B1) before any upgrade | The team is **seven people**. A **fresh Windows development VM** plus a second clone with `COOP_AGENT_DIR` qualifies upgrades, and a tagged release reaches all seven the same day. B1 is built only if the fleet outgrows that. |
+| Agent working model | Implicit | Section 14 sets how agents pick up work so several sessions stay coherent. |
 
 ## 2. Ordering principle and the "not over-engineered" rule
 
@@ -201,6 +204,37 @@ undo them: pipx launcher directory resolution via `sysconfig` on Windows, the cl
 message when `lib/common` is missing, and the setup-bridge early-close wording.
 No new work.
 
+### H5 — `coop update` follows release tags, not the head of `main`
+
+**Observed:** `coop update` fast-forwards the clone to the tip of `main`, so every
+team machine receives every merged commit, including the ones that only exist to
+fix the previous one. Releases are tagged (`v0.23.5`) but nothing consumes the tag.
+
+**Fix:** `coop update` fetches tags and checks out the newest `v*` tag by default;
+`coop update --edge` keeps today's head-of-`main` behavior for maintainers. Doctor's
+staleness nudge compares against the newest tag, not the branch. The version
+report already carries the SHA, so support can still tell which tag a machine runs.
+
+**Acceptance:** a machine on `v0.23.5` with newer unreleased commits on `main` stays
+on `v0.23.5` after `coop update`; after Aaron tags `v0.23.6` it moves there; `--edge`
+moves to head. A dirty checkout still refuses, as today.
+
+### H6 — One-page "Install coop on Windows" for teammates
+
+**Observed:** `README.md` is the only install guide. It is long, mixes macOS and
+Linux in, and contradicts itself on whether Azure CLI is auto-installed. New
+teammates read it once and then ask.
+
+**Fix:** `docs/install-windows.md`, one page, whose numbered steps are the H1
+prerequisite table in the same order and wording the installer prints, followed by
+"double-click `Install coop.cmd`", "open a new terminal", "run `coop`", and what
+the first-run sign-in looks like. The README's Windows section links to it instead
+of repeating it. Nothing in it that the installer does not also say.
+
+**Acceptance:** a teammate on the fresh development VM installs coop from the page
+alone, without asking a question. Every command on the page is copy-pasted from
+the installer's own output.
+
 ## 4. Phase 1 — Right-size tests and CI
 
 **Goal:** every PR runs a gate that finishes in a few minutes and fails only for a
@@ -299,7 +333,7 @@ Revision 2.0's S1–S7 packages, in this order and with these decisions:
 | --- | --- | --- |
 | `mcp-remote` | only bridges Microsoft Learn; Learn offers direct Streamable HTTP and `pi-mcp-adapter` 3.x speaks it | direct HTTP works through the adapter on Windows |
 | `powerbi-mcp-server` (unscoped npm, 0.1.0) | superseded by `@microsoft/powerbi-modeling-mcp` 1.0.0 | no skill or prompt depends on its tool names |
-| `pi-better-openai` | B0 found its configuration inactive on the live install | footer usage segment still renders without it |
+| `pi-better-openai` | Aaron wants the plan-usage stats it feeds the footer, but B0 found its configuration inactive on the live install, and `pi-lovely-codex` may supply the same stats plus tool-call handling | **keep** until PK1 compares it with `pi-lovely-codex` on the development VM; drop only if the replacement shows the same 5h/7d usage windows in the Coop footer |
 | `context-mode` | sandboxed code execution over docs; overlaps Pi's own compaction | measure context saved on two real sessions |
 | Homebrew/apt/dnf prerequisite branches, `/opt/homebrew` troubleshooting | Mac-only | goes with S1 |
 
@@ -330,10 +364,24 @@ The manifest is `config/release-manifest.json` at v0.23.5.
 
 Order inside the phase: Pi → adapter → ask-user-question → Microsoft npm tools →
 Fabric skills catalog → the "maybe" rows. One PR per row, each with the exact
-old/new versions, what changed, the tests run, and the rollback. Upgrades land on
-stable only through the beta channel once Phase 7 exists; until then they are
-qualified on a disposable Windows profile and released as a normal version bump
-when Aaron asks.
+old/new versions, what changed, the tests run, and the rollback.
+
+**Where upgrades are qualified.** Not on a teammate's stable machine. Two existing
+mechanisms cover it without new code:
+
+- The **fresh Windows development VM** (set up the week of September 28) is the
+  qualification machine: install the candidate version there with the normal
+  installer, run the acceptance for the package, and keep the VM's `coop doctor`
+  output with the PR. Snapshot the VM after a clean install so every qualification
+  starts from the same state.
+- For extension, MCP, skill, and prompt changes on a machine that also runs
+  stable, a **second clone plus `COOP_AGENT_DIR`** already isolates the Pi agent
+  directory (extensions, settings, MCP, sessions). Pi itself is global, so a
+  different Pi version needs the VM.
+
+Upgrades reach teammates only through a tagged release (H5), so a qualified change
+sitting on `main` cannot surprise anyone. The full isolated beta channel (B1) is
+built only if this proves insufficient.
 
 ## 7. Phase 4 — Standards alignment and the reviewer decision
 
@@ -438,9 +486,13 @@ existing `/start` code in `extensions/coop-tools`, not a new UI.
 
 ## 10. Phase 7 — Beta channel and optional experiments
 
-**B1, minimal.** Revision 2.0's isolated beta channel is still the right way to
-qualify upgrades without touching users' stable installs, but it comes **after**
-simplification so it isolates one platform, not two. Scope stays what the
+**B1, minimal and conditional.** Revision 2.0's isolated beta channel is the
+right design for a fleet too large to reach by hand. Coop's fleet is seven
+people: with release-tag updates (H5), the development VM as the qualification
+machine (Phase 3), and a rollback that is "check out the previous tag", B1 may
+never be needed. Build it only when a concrete case appears
+(for example a teammate who must run a beta feature daily while keeping stable),
+and then after simplification so it isolates one platform, not two. Scope stays what the
 B1 proposal in [PR 72](https://github.com/kabukisensei/coop-agent/pull/72) bounds: a separate clone,
 `COOP_PROFILE_ROOT` meaning the profile directory itself, a private npm prefix and
 pipx home, a `coop-beta` shim, and the same lifecycle code fed an installation
@@ -449,8 +501,19 @@ channel, version, SHA, and safe paths.
 
 **Then, each only when Aaron asks, each independently revertible:**
 
-- **PK1** package-fit trials (session naming, `apply_patch`, redacted diagnostics,
-  scoped simplify) per the package-fit review in [PR 72](https://github.com/kabukisensei/coop-agent/pull/72), GPT subscription only.
+- **PK1** package-fit trials (session naming, redacted diagnostics, scoped
+  simplify, and `pi-lovely-codex`) per the package-fit review in
+  [PR 72](https://github.com/kabukisensei/coop-agent/pull/72), GPT subscription
+  only. **Scope change:** evaluate `pi-lovely-codex` as a whole, not `apply_patch`
+  alone, because Aaron wants the usage stats `pi-better-openai` provides and the
+  Codex extension may supply them together with how tool calls are made. The
+  comparison is `pi-better-openai` + stock Pi tools versus `pi-lovely-codex`, on
+  the development VM, measuring: the 5h/7d usage windows reach the Coop footer;
+  every tool call it makes still passes through the guardrail hooks (the fit
+  review found its patch path needs every touched path authorized); cancellation
+  reaches the child process; patch text is not exposed in process arguments; it
+  works on the team's Codex subscription without a separate key. Whichever wins
+  becomes the one owner of usage stats; the other is removed.
 - **K1–K3 TeamAI** shared knowledge, starting with isolated CLI and read-only recall.
 - **J0–J3 Jev** shadow experiments on synthetic material, advisory only.
 
@@ -485,9 +548,10 @@ Not requested, offered for Aaron's decision. None is scheduled.
 
 - **Policy fields in the contract are write-only.** `estate.live_discovery`,
   `mcp.*.requires_approval_actions`, and `tests.live_data` are written by the wizards
-  but no enforcement code reads them; the guardrails are hard-coded. Either wire
-  them (Phase 5 step 3 is the natural place) or drop them from the template so the
-  contract does not promise what it cannot enforce.
+  but no enforcement code reads them; the guardrails are hard-coded. Decision
+  taken: wire them in Phase 5 step 3 (the guardrail scope reads the contract) and
+  drop any field that is still unread when Phase 5 closes, so the contract never
+  promises what it cannot enforce.
 - **`docs/tool-contract.md` drifted** from the code: the reviewer invocation omits
   `--standards`, the sample report uses `rule` where the validator requires
   `rule_id`, and the `details` shape is missing four fields. Fix in Phase 4.
@@ -508,26 +572,79 @@ Not requested, offered for Aaron's decision. None is scheduled.
 
 ## 13. Ordered work register
 
-| Order | ID | Package | Starts after | Done when |
-| --- | --- | --- | --- | --- |
-| 1 | H1 | Installer prerequisite gate with ordered commands; doctor reuses it | now | fresh VM acceptance in section 3 |
-| 2 | H2 | Automatic Azure sign-in, tenant fallback chain, Fabric token check | now | signed-out machine acceptance |
-| 3 | H3 | Standards reader follows the repo; default contract regenerated | repo access | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` |
-| 4 | T1 | CI gate/extended split; fixture rules | H1–H3 merged | gate under five minutes, both OS, no weakened assertion |
-| 5 | S1, S5 | Retire POSIX product path and legacy web | T1 | one Windows implementation, forwarder kept, tests removed with their surface |
-| 6 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM |
-| 7 | U1 | Dependency reconciliation per section 6, one row per PR | S-lane | exact versions, tests, rollback per PR; keep/drop list closed |
-| 8 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewer keep/retire decided and executed |
-| 9 | SQ1–SQ6 | Azure SQL targets, dev default, live impact, data verification | ST1 | section 8 acceptance |
-| 10 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks |
-| 11 | B1 | Minimal beta channel | S-lane | B1 proposal acceptance table, one platform |
-| 12 | PK1, K1–K3, J0–J3 | Optional experiments | B1 + explicit start | revision 2.0 gates |
-| 13 | D1 | Electron desktop with packaged installer | 5–10 accepted | another user installs from the package alone |
+Status values: `not started`, `issue open`, `in progress (branch)`, `in review
+(PR)`, `done (tag)`. The agent that changes a row's status edits this table in the
+same PR.
 
-Phases 1–3 can each be released as a patch. Phases 4–10 are minor versions. Nothing
-in this table is `agent:ready` until Aaron marks it.
+| Order | ID | Package | Starts after | Done when | Status |
+| --- | --- | --- | --- | --- | --- |
+| 1 | H1 | Installer prerequisite gate with ordered commands; doctor reuses it | now | fresh VM acceptance in section 3 | not started |
+| 2 | H2 | Automatic Azure sign-in, tenant fallback chain, `az.cmd`, Fabric token check | now | signed-out machine acceptance | not started |
+| 3 | H5 | `coop update` follows release tags; `--edge` for head | now | tag/edge acceptance in section 3 | not started |
+| 4 | H6 | One-page Windows install doc matching the H1 checklist | H1 | a teammate installs from the page alone | not started |
+| 5 | H3 | Standards reader follows the repo; default contract regenerated | repo access | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` | blocked: repo access |
+| 6 | T1 | CI gate/extended split; fixture rules | H1–H3 merged | gate under five minutes, both OS, no weakened assertion | not started |
+| 7 | S1, S5 | Retire POSIX product path and legacy web | T1 | one Windows implementation, forwarder kept, tests removed with their surface | not started |
+| 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | not started |
+| 9 | U1 | Dependency reconciliation per section 6, one row per PR, qualified on the VM | S-lane | exact versions, tests, rollback per PR; keep/drop list closed | not started |
+| 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewer keep/retire decided and executed | not started |
+| 11 | SQ1–SQ6 | Azure SQL targets, dev default, live impact, data verification | ST1 | section 8 acceptance | not started |
+| 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | not started |
+| 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, naming, diagnostics, simplify | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
+| 14 | B1 | Minimal beta channel, only if a concrete need appears | S-lane + explicit need | B1 proposal acceptance table, one platform | not started (conditional) |
+| 15 | K1–K3, J0–J3 | Optional experiments | B1 or VM isolation + explicit start | revision 2.0 gates | not started |
+| 16 | D1 | Electron desktop with packaged installer | 7–12 accepted | another user installs from the package alone | not started |
 
-## 14. What this review could not verify
+Phase 0 rows can each be released as a patch. Later phases are minor versions.
+Nothing in this table is `agent:ready` until Aaron marks it; H1, H2, H5, and H6 are
+ready to become issues now (section 14).
+
+## 14. Working this plan: agents, issues, and the development VM
+
+Several agent sessions will work this plan in the same week. These rules keep them
+on the same page; they add to `AGENTS.md`, they do not replace it.
+
+**One row, one issue, one branch, one PR.**
+
+- Every row in section 13 that is being worked has a GitHub issue titled with its
+  ID (`H1: installer prerequisite gate`), whose body is the row's section of this
+  plan (Observed, Fix, Acceptance) copied in, so the issue is self-contained. Aaron
+  adds `agent:ready`; nobody else does.
+- An agent takes the lowest-numbered `agent:ready` row whose "Starts after" is
+  satisfied, comments on the issue that it is starting, and works on a branch named
+  `<id>/<short-name>` (for example `h1/prereq-gate`).
+- The PR title starts with the ID. The PR body states the phase, what changed,
+  what was deliberately not changed, the tests run, and the acceptance evidence
+  (for Phase 0 that is the development VM run). It updates the row's Status.
+- One purpose per PR. If an agent finds a second bug, it opens an issue and moves
+  on. If it finds that the plan is wrong, it says so in the PR and stops rather
+  than widening the change.
+- No agent starts the next phase because the current one is finished. Phase starts
+  are Aaron's. Releases and tags are Aaron's.
+
+**Before starting any row, read in this order:** `AGENTS.md`, this plan's section
+2 (the rules) and the row's own section, then revision 2.0 only for the package
+detail it points to. Do not read the historical Desktop/web plans for direction.
+
+**The development VM (week of September 28).** A fresh Windows VM is the shared
+acceptance and qualification machine:
+
+- It has nothing installed but Windows and a browser at the start. Snapshot it
+  there ("blank"), then again after a clean `coop install` ("stable"), so any agent
+  can reset to either.
+- H1 and H6 are accepted only on the "blank" snapshot; H2 only on "stable" with
+  `az` signed out; Phase 3 candidates only on a fresh install of the candidate
+  version.
+- Evidence from the VM (the installer's printed checklist, `coop doctor` output,
+  the version report) goes into the PR. No credential values, no client data.
+- The VM is not a teammate's machine and not Aaron's C: installation; nothing on
+  it is precious, so acceptance may include uninstall and reinstall.
+
+**Definition of done for the week:** Phase 0 rows H1, H2, H5, and H6 merged and
+tagged as a patch release by Aaron, installed on the VM from the tag, and H3 either
+merged or blocked only on the standards repositories.
+
+## 15. What this review could not verify
 
 - The private repositories `cooptimize/coop-standards` and `cooptimize/incremental-bi`
   were not readable from this session; H3 and Phase 4 are specified from coop-agent's

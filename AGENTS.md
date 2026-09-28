@@ -90,8 +90,13 @@ the same PR that retires the surface.
 `experimental/windows-terminal` is a provisional source branch, **not an installed
 or proven-isolated beta**. Do not run the existing installer/updater from that
 branch as a beta setup. The next authorized work is the master plan's Phase 0
-hotfixes, one PR each; B1 implementation comes later in the order. This pause
-applies to the roadmap, not unrelated explicitly requested maintenance.
+hotfixes, one PR each; the beta channel (B1) is conditional and comes later. This
+pause applies to the roadmap, not unrelated explicitly requested maintenance.
+
+**Working a plan row:** follow the master plan's section 14 (one row, one issue,
+one branch named `<id>/<short-name>`, one PR titled with the ID; update the row's
+Status in the same PR; accept Phase 0 work on the fresh development VM; never
+start the next phase on your own).
 
 ### Platform notes
 
