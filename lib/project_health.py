@@ -53,6 +53,8 @@ class Finding:
 
 def _strip_yaml_value(raw: str) -> str:
     value = raw.strip()
+    if value.startswith("#"):
+        return ""
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
     return re.split(r"\s+#", value, maxsplit=1)[0].strip()
@@ -73,12 +75,20 @@ def _standards_block(text: str) -> tuple[int, int, dict[str, str], bool] | None:
     end = len(lines)
     entries: dict[str, str] = {}
     valid_shape = top_level_count == 1
+    nested_key = None
     for index in range(start + 1, len(lines)):
         line = lines[index]
         if line.strip() and not line.startswith((" ", "\t", "#")):
             end = index
             break
         if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        # Nested override shape: standards.<domain>.path (other nested keys ignored).
+        nested = re.match(r"^    ([A-Za-z0-9_-]+):\s*(.*?)\s*(?:\r?\n)?$", line)
+        if nested and nested_key is not None:
+            valid_shape = False
+            if nested.group(1) == "path":
+                entries[nested_key] = _strip_yaml_value(nested.group(2))
             continue
         match = re.match(r"^  ([A-Za-z0-9_-]+):\s*(.*?)\s*(?:\r?\n)?$", line)
         if not match or line.startswith("\t"):
@@ -88,6 +98,7 @@ def _standards_block(text: str) -> tuple[int, int, dict[str, str], bool] | None:
         if key in entries:
             valid_shape = False
         entries[key] = _strip_yaml_value(match.group(2))
+        nested_key = key if not entries[key] else None
     return start, end, entries, valid_shape
 
 

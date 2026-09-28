@@ -89,6 +89,20 @@ class ProjectHealthTests(unittest.TestCase):
         self.assertEqual(codes.count("legacy_project_skill_reference"), 1)
         self.assertEqual(codes.count("project_skill_collision"), 1)
 
+    def test_nested_standards_path_override_is_read(self) -> None:
+        (self.root / "docs").mkdir()
+        (self.root / "docs" / "client-sql.md").write_text("# SQL\n", encoding="utf-8")
+        self.contract.write_text(
+            "standards:\n"
+            "  sql:\n    path: \"docs/client-sql.md\"\n    section_refs: numeric\n"
+            "  dax:  # canonical\n    path: docs/missing.md\n",
+            encoding="utf-8",
+        )
+        _root, findings = self.inspect()
+        missing = [f.detail for f in findings if f.code == "missing_project_standard"]
+        self.assertEqual(len(missing), 1)
+        self.assertTrue(missing[0].startswith("standards.dax -> docs/missing.md"))
+
     def test_case_insensitive_collision_and_nested_legacy_reference(self) -> None:
         self.contract.write_text("profile:\n  organization: Test\n", encoding="utf-8")
         skill = self.root / ".pi" / "skills" / "DAILY-LOGGER"

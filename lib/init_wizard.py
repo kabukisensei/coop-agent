@@ -178,6 +178,17 @@ def ask_prefilled(prompt: str, default: str) -> str:
     return v
 
 
+STANDARDS_OVERRIDE_COMMENT = (
+    '# Standards: the canonical Cooptimize standards come from cooptimize/coop-standards',
+    '# (`coop sync`, `/standards-status`). Add an override only when this project has',
+    "# deliberately approved different standards for a domain. Use the standards repo's",
+    '# own shape (a domain name from its standards.yml, then `path:`):',
+    '# standards:',
+    '#   sql:',
+    '#     path: "docs/standards/client-sql.md"',
+)
+
+
 def build_project_yml(answers: dict) -> str:
     lines: list[str] = [
         "# Cooptimize agent — project contract (.coop/project.yml)",
@@ -375,6 +386,9 @@ def build_project_yml(answers: dict) -> str:
     lines.append(
         "  # Exact source/revision/path pins live in config/microsoft-skills.json."
     )
+    lines.append("")
+
+    lines.extend(STANDARDS_OVERRIDE_COMMENT)
     lines.append("")
 
     lines.append("backup:")

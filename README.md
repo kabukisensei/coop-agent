@@ -479,8 +479,11 @@ Launch performs a bounded, fail-soft refresh. Each task receives an immutable st
 snapshot, and native reviewers bind to the same authority so prompt guidance and tool
 results cannot drift mid-task. Provenance or integrity failures reject a candidate rather
 than partially applying it. Run **`/standards-status`** to inspect effective authority,
-generation, freshness, and fallback state. Canonical sources and integrity metadata live
-in `config/standards-registry.json`.
+generation, freshness, and fallback state. `config/standards-registry.json` names the
+canonical repository and branch; the domain list and file paths come from that
+repository's own `standards.yml`, so a domain added there resolves without a coop
+release. A project override uses the same shape in `.coop/project.yml`
+(`standards.<domain>.path`; the older `standards.<domain>: <file>` form still works).
 
 ---
 

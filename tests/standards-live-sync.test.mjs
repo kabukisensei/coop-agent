@@ -29,7 +29,7 @@ try {
   execFileSync("git", ["init", "-q", "-b", "main", remote]);
   git(["config", "user.email", "standards@test.invalid"]); git(["config", "user.name", "Standards Test"]);
   writeCanonical("r1"); const r1 = commit("r1");
-  writeFileSync(registryPath, JSON.stringify({ schema_version: 1, canonical: { id: "cooptimize-formal-standards", repository: remote, authoritative_branch: "main", manifest: "standards.yml", initial_verified_commit: r1, initial_archive_sha256: "0".repeat(64), freshness_seconds: 900, timeout_seconds: 2, domains: { sql: "standards/sql.md", dax: "standards/dax.md", semantic_model: "standards/semantic-model.md" } } }));
+  writeFileSync(registryPath, JSON.stringify({ schema_version: 1, canonical: { id: "cooptimize-formal-standards", repository: remote, authoritative_branch: "main", manifest: "standards.yml", freshness_seconds: 900, timeout_seconds: 2 } }));
 
   test("directory durability suppresses only explicit Windows unsupported errors", () => {
     const error = (code) => { const value = new Error(code); value.code = code; return value; };
@@ -48,9 +48,10 @@ try {
     assert.deepEqual(calls, ["r+", "fsync", "close"]);
     assert.throws(() => fsyncFile("ignored", { platform: "win32", open: () => 123, fsync: () => { const error = new Error("EPERM"); error.code = "EPERM"; throw error; }, close: () => {} }), /EPERM/);
   });
-  test("production registry pins private main and verified anchor", () => {
+  test("production registry pins private main but not the repo's layout or history", () => {
     const r = standardsRegistry();
-    assert.equal(r.canonical.repository, "https://github.com/cooptimize/coop-standards.git"); assert.equal(r.canonical.authoritative_branch, "main"); assert.equal(r.canonical.initial_verified_commit, "fa109f11129742358ff1e078cd4c4433e356afb4");
+    assert.equal(r.canonical.repository, "https://github.com/cooptimize/coop-standards.git"); assert.equal(r.canonical.authoritative_branch, "main");
+    assert.equal(Object.hasOwn(r.canonical, "domains"), false); assert.equal(Object.hasOwn(r.canonical, "initial_verified_commit"), false);
   });
   test("production registry ignores inherited redirection and source/status/refresh retain committed authority", () => {
     const old = process.env.COOP_STANDARDS_REGISTRY;
@@ -58,13 +59,13 @@ try {
     try {
       const r = standardsRegistry();
       assert.equal(r.canonical.repository, "https://github.com/cooptimize/coop-standards.git");
-      assert.equal(Object.isFrozen(r) && Object.isFrozen(r.canonical) && Object.isFrozen(r.canonical.domains), true);
+      assert.equal(Object.isFrozen(r) && Object.isFrozen(r.canonical), true);
       assert.throws(() => { r.canonical.repository = remote; }, TypeError);
       assert.throws(() => standardsRegistry({ registryPath }), /explicit fixture/);
       assert.throws(() => standardsRegistry({ remote }), /explicit fixture/);
       const registryUrl = new URL("../config/standards-registry.json", import.meta.url).href;
       const standardsUrl = new URL("../lib/standards.mjs", import.meta.url).href;
-      const mutationProbe = `const r=(await import(${JSON.stringify(registryUrl)},{with:{type:"json"}})).default;r.canonical.repository="https://attacker.invalid/standards.git";try{await import(${JSON.stringify(standardsUrl)}+"?mutated-authority");process.exit(9)}catch(e){if(!String(e).includes("differs from immutable managed authority")){console.error(e);process.exit(8)}}`;
+      const mutationProbe = `const m=await import(${JSON.stringify(standardsUrl)}+"?mutated-authority");const r=(await import(${JSON.stringify(registryUrl)},{with:{type:"json"}})).default;r.canonical.repository="https://attacker.invalid/standards.git";if(m.standardsRegistry().canonical.repository!=="https://github.com/cooptimize/coop-standards.git")process.exit(9)`;
       const mutationResult = spawnSync(process.execPath, ["--input-type=module", "-e", mutationProbe], { encoding: "utf8" });
       assert.equal(mutationResult.status, 0, mutationResult.stderr || mutationResult.stdout);
       const productionRoot = join(tmp, "production-cache", "canonical");
@@ -257,6 +258,29 @@ try {
   test("legacy self-authored manifests require explicit fixture injection", () => {
     const fixture = join(tmp, "legacy"); mkdirSync(fixture); writeFileSync(join(fixture, "sql.md"), "# fixture"); writeFileSync(join(fixture, "manifest.json"), JSON.stringify({ schema_version: 1, revision: "fixture", domains: { sql: { path: "sql.md", sha256: hash("# fixture") } } }));
     assert.notEqual(resolveStandard("sql", options({ canonicalRoot: fixture })).state, "canonical"); assert.equal(resolveStandard("sql", options({ fixtureRoot: fixture })).revision, "fixture");
+  });
+  const manifestText = () => readFileSync(join(remote, "standards.yml"), "utf8");
+  test("a domain the standards repo adds resolves and shows in status without a coop-agent change", () => {
+    resetStorage(); now += 1;
+    writeFileSync(join(remote, "standards", "fabric-platform.md"), "# Fabric Workspaces\n## Workspace naming\nName workspaces by layer.\n");
+    writeFileSync(join(remote, "standards.yml"), `${manifestText()}  fabric_platform:\n    path: standards/fabric-platform.md\n    section_refs: numeric\n`);
+    const added = commit("add fabric_platform domain");
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const r = resolveStandard("fabric_platform", options({ refresh: false }));
+    assert.equal(r.state, "canonical"); assert.equal(r.revision, added); assert.equal(r.file, "standards/fabric-platform.md");
+    assert.equal(sourceStatus(options()).domains.fabric_platform.sha256, r.sha256);
+    assert.equal(pinStandardsTask(["fabric_platform"], options({ refresh: false })).resolutions[0].sha256, r.sha256);
+  });
+  test("unsafe manifest domains fail closed and keep the last known good", () => {
+    const good = git(["rev-parse", "HEAD"]), goodManifest = manifestText();
+    writeFileSync(join(remote, "outside.md"), "# outside\n");
+    for (const entry of ["  bad:\n    path: ../outside.md\n", "  bad:\n    path: /etc/hosts.md\n", "  bad:\n    path: standards/sql.txt\n", "  bad:\n    path: standards/missing.md\n",
+      "  bad:\n", "  Bad-Name:\n    path: standards/sql.md\n", "  sql:\n    path: standards/sql.md\n"]) {
+      writeFileSync(join(remote, "standards.yml"), goodManifest + entry); commit(`unsafe ${JSON.stringify(entry)}`); now += 1;
+      const failed = refreshCanonical(options({ force: true }));
+      assert.equal(failed.ok, false, entry); assert.equal(activeCanonicalGeneration(options()).revision, good, entry);
+    }
+    git(["reset", "--hard", good]);
   });
   assert.match(readFileSync(join(ROOT, "bin", "coop"), "utf8"), /resolve-many sql,dax/);
   console.log(`standards live sync: ${count} tests passed`);

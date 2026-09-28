@@ -7,6 +7,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Standards (H3): the domain list and paths now come from `cooptimize/coop-standards`'s
+  own `standards.yml`, validated for safety (relative, contained, regular Markdown files)
+  instead of equality with a list frozen in coop-agent, so a new or renamed domain
+  resolves without a coop release. `config/standards-registry.json` is the only copy of
+  the registry (the duplicate in `lib/standards.mjs` and the anchor-commit/archive-hash
+  pins are gone; revision, file hash, and snapshot provenance are kept). Project
+  overrides accept the nested `standards.<domain>.path` shape alongside the scalar one,
+  and `coop init`, `/setup-project`, and the bundled contracts document it in a comment
+  (no active override by default).
+
 - Docs: adopted the ordered [Coop master plan, revision 3.0](docs/COOP_MASTER_PLAN.md).
   It keeps the Windows-terminal plan's intention and reorders execution: rollout
   hotfixes first (installer prerequisite gate, automatic Azure sign-in, project
@@ -19,6 +29,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   team), `pi-lovely-codex` evaluated whole against `pi-better-openai`, and the
   agent working model. Revision 2.0 stays as the per-package reference.
   Documentation only; no runtime change.
+
+### Fixed
+
+- Incremental BI patterns are chosen by the repository's `layer:` front matter. The old
+  path keyword filter matched the clone's own folder name (`incremental-bi`), so every
+  file qualified and a semantic-model task received the wiki's editing guide and Bronze
+  articles instead of the Power BI refresh article.
 
 ## [0.23.5] — 2026-09-22
 
