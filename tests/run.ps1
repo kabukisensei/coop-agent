@@ -622,6 +622,19 @@ print("resume verdict contract OK")
   } else {
     Ko "fresh-install Python prerequisite fixture failed: $($pyPrereqOut | Out-String)"
   }
+
+  # --- 9d. Install stops at the ordered prerequisite checklist (H1) ------------
+  Head 'install prerequisite gate'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $gateOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\install-prereq-gate.test.ps1') 2>&1
+  $gateRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($gateRc -eq 0) {
+    $gateOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "install prerequisite gate fixture failed: $($gateOut | Out-String)"
+  }
 }
 finally {
   $env:PATH = $priorPath

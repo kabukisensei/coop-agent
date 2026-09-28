@@ -8,7 +8,9 @@
 #   Flags:
 #     --force        Reinstall pi tools / pipx packages even if already present
 #     --no-fabric    Skip installing the Microsoft Fabric CLI (ms-fabric-cli)
-#     --no-prereqs   Skip auto-installing missing system prerequisites
+#     --no-prereqs   Report missing prerequisites but continue anyway
+#     --prereqs auto Install missing prerequisites visibly (winget), then stop
+#                    and ask for a new terminal
 #     --yes, -y      Assume yes for prompts
 #
 $ErrorActionPreference = 'Continue'
@@ -61,12 +63,15 @@ function Add-CoopNpmPath {
 }
 
 # --- Parse flags -------------------------------------------------------------
-$FORCE = $false; $NO_FABRIC = $false; $NO_PREREQS = $false; $EDGE = $false
-foreach ($a in $args) {
+$FORCE = $false; $NO_FABRIC = $false; $NO_PREREQS = $false; $EDGE = $false; $PREREQS_AUTO = $false
+for ($ai = 0; $ai -lt $args.Count; $ai++) {
+  $a = $args[$ai]
   switch -CaseSensitive ($a) {
     '--force'      { $FORCE = $true }
     '--no-fabric'  { $NO_FABRIC = $true }
     '--no-prereqs' { $NO_PREREQS = $true }
+    '--prereqs=auto' { $PREREQS_AUTO = $true }
+    '--prereqs'    { $ai++; if ($ai -lt $args.Count -and $args[$ai] -eq 'auto') { $PREREQS_AUTO = $true } else { Coop-Warn "install: --prereqs takes one value: auto" } }
     '--edge'       { $EDGE = $true }
     '--yes'        { $env:COOP_ASSUME_YES = '1' }
     '-y'          { $env:COOP_ASSUME_YES = '1' }
@@ -403,150 +408,88 @@ $UnitPbihTools = {
   return [pscustomobject]@{ ok = $false; msg = "$ok installed, $fail failed" }
 }
 
+# --- Prerequisite gate (plan H1) ----------------------------------------------
+# Print the prerequisite table; returns how many REQUIRED rows are missing.
+function Show-CoopPrereqs([object[]]$Rows) {
+  $missing = 0
+  foreach ($r in $Rows) {
+    $line = "$($r.Order). $($r.Name)" + $(if ($r.Detail) { "  ($($r.Detail))" } else { '' })
+    if ($r.Ok) { Coop-Ok $line; continue }
+    if ($r.Required) { Coop-Err $line; $missing++ } else { Coop-Warn $line }
+    foreach ($step in ($r.Fix -split ' then ')) { Coop-Say "      $step" }
+  }
+  return $missing
+}
+
+# --prereqs auto: run each missing REQUIRED row's printed command, in table order,
+# with its output and exit code visible. Optional rows are never auto-installed.
+function Invoke-CoopPrereqInstall([object[]]$Rows) {
+  foreach ($r in $Rows) {
+    if ($r.Ok -or -not $r.Required -or $r.Fix -like 'see *') { continue }
+    foreach ($step in ($r.Fix -split ' then ')) {
+      Coop-Info "running: $step"
+      if ($env:OS -eq 'Windows_NT') {
+        $parts = @($step -split ' ')
+        if (-not (Test-Have $parts[0])) { Coop-Warn "$($parts[0]) is not available" "run it yourself: $step"; break }
+        & $parts[0] @($parts | Select-Object -Skip 1)
+      } else {
+        & sh -c $step
+      }
+      if ($LASTEXITCODE -ne 0) { Coop-Warn "exited with code $LASTEXITCODE" "run it yourself: $step"; break }
+    }
+  }
+  # Re-read PATH from the registry so the re-check can see what was just
+  # installed, plus the Python install manager's bin dir (not always on PATH).
+  if ($env:OS -eq 'Windows_NT') {
+    foreach ($scope in @('Machine', 'User')) {
+      foreach ($d in ([string][Environment]::GetEnvironmentVariable('Path', $scope) -split ';')) {
+        if ($d -and (($env:PATH -split ';') -notcontains $d)) { $env:PATH = "$env:PATH;$d" }
+      }
+    }
+    $pyManager = Join-Path $env:LOCALAPPDATA 'Python\bin'
+    if ((Test-Path -LiteralPath $pyManager) -and (($env:PATH -split ';') -notcontains $pyManager)) { $env:PATH = "$pyManager;$env:PATH" }
+  }
+}
+
 Coop-Head "Cooptimize agent bootstrap (v$($script:CoopVersion))  [$OS]"
+
+# Check every prerequisite before installing anything. A missing required row
+# stops here with the exact command, instead of failing several steps later.
+Coop-Head '1/9  Prerequisites'
+$prereqRows = Get-CoopPrereqs $NO_FABRIC
+$prereqMissing = Show-CoopPrereqs $prereqRows
+if ($prereqMissing -gt 0 -and $PREREQS_AUTO -and -not $NO_PREREQS) {
+  Invoke-CoopPrereqInstall $prereqRows
+  Coop-Head 'Prerequisites (re-checked)'
+  $prereqMissing = Show-CoopPrereqs (Get-CoopPrereqs $NO_FABRIC)
+  if ($prereqMissing -gt 0) { Coop-Err "$prereqMissing required prerequisite(s) still missing — install the $($script:G_CROSS) rows above in that order." }
+  Coop-Warn 'Open a NEW terminal so the new tools are on PATH, then run: coop install'
+  exit 1
+}
+if ($prereqMissing -gt 0) {
+  if ($NO_PREREQS) {
+    Coop-Warn "$prereqMissing required prerequisite(s) missing (--no-prereqs: continuing anyway)"
+  } else {
+    Coop-Err "$prereqMissing required prerequisite(s) missing. Install the $($script:G_CROSS) rows above in that order, open a NEW terminal, then run: coop install"
+    Coop-Say '      (or let coop run those commands for you: coop install --prereqs auto)'
+    exit 1
+  }
+} else {
+  Coop-Ok 'all prerequisites present, continuing'
+}
+# A Python found off PATH (install manager, winget user scope) must be visible to
+# the pipx and Fabric steps in this same run.
+$gatePython = if (-not $NO_FABRIC) { Get-CoopFabricBootstrapPython } else { $null }
+if ($gatePython -and [System.IO.Path]::IsPathRooted($gatePython)) {
+  $gatePyDir = Split-Path -Parent $gatePython
+  if (($env:PATH -split [System.IO.Path]::PathSeparator) -notcontains $gatePyDir) { $env:PATH = "$gatePyDir$([System.IO.Path]::PathSeparator)$env:PATH" }
+}
 
 # Pin the overall bar to the bottom for the install phase; restore the cursor even
 # on Ctrl-C / errors via finally. Begin is INSIDE the try so an interrupt between
 # hiding the cursor and the first loop still reaches the finally.
 try {
   Coop-ProgBegin $TOTAL
-  # --- 1. Prerequisites (auto-install missing tools if winget is available) --
-  Coop-Head '1/9  Prerequisites'
-
-  # Git
-  if ((-not (Test-Have 'git')) -and (-not $NO_PREREQS)) {
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-      Coop-Info 'installing git via winget…'
-      & winget install --id Git.Git -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
-      foreach ($d in (@(
-        (Join-Path $env:ProgramFiles 'Git\cmd'),
-        (Join-Path $env:ProgramFiles 'Git\bin'),
-        $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'Git\cmd' }),
-        (Join-Path $env:LOCALAPPDATA 'Programs\Git\cmd')
-      ) | Where-Object { $_ })) {
-        if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
-          $env:PATH = "$d;$env:PATH"
-        }
-      }
-    }
-  }
-  if (Test-Have 'git') {
-    $gv = (& git --version 2>$null | Select-Object -First 1)
-    Coop-Ok "git present ($gv)"
-  } else {
-    Coop-Warn "git not found — install Git from https://git-scm.com (or 'winget install Git.Git')."
-  }
-
-  # General Coop tooling can use any current Python 3, but ms-fabric-cli
-  # currently requires <3.14. Treat those as separate prerequisites: a machine
-  # with only Python 3.14 still needs a compatible interpreter installed
-  # alongside it when Fabric support is enabled.
-  $needPython = -not (Get-CoopPython)
-  $needFabricPython = (-not $NO_FABRIC) -and (-not (Get-CoopFabricBootstrapPython))
-  if (($needPython -or $needFabricPython) -and (-not $NO_PREREQS)) {
-    # Ladder: the Python launcher/install manager first (`py install` covers both
-    # the classic py.exe and the newer Python install manager), then winget.
-    $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
-    if ($pyLauncher) {
-      Coop-Info 'installing Python 3.12 via the Python manager…'
-      & $pyLauncher.Source install 3.12 *> $null
-    }
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-      Coop-Info 'installing Fabric-compatible Python 3.12 via winget…'
-      & winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
-      foreach ($d in @(
-        (Join-Path $env:ProgramFiles 'Python312'),
-        (Join-Path $env:ProgramFiles 'Python312\Scripts'),
-        (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312'),
-        (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\Scripts'),
-        (Join-Path $env:ProgramFiles 'Python311'),
-        (Join-Path $env:ProgramFiles 'Python311\Scripts'),
-        (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python311'),
-        (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python311\Scripts')
-      )) {
-        if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
-          $env:PATH = "$d;$env:PATH"
-        }
-      }
-    }
-  }
-  $py = Get-CoopPython
-  if ($py) {
-    $pyv = (& $py --version 2>&1)
-    Coop-Ok "python present ($pyv)"
-  } else {
-    Coop-Warn "python not found — install Python 3.10+ from https://python.org (or 'winget install Python.Python.3.12'). (A Windows Store 'python' stub does not count.)"
-  }
-  if (-not $NO_FABRIC) {
-    $fabricPrereqPython = Get-CoopFabricBootstrapPython
-    if ($fabricPrereqPython) {
-      $fabricPyVersion = (& $fabricPrereqPython --version 2>&1)
-      Coop-Ok "Fabric-compatible Python present ($fabricPyVersion)"
-    } elseif ((Get-Command pipx -ErrorAction SilentlyContinue) -and ((& pipx install --help 2>&1 | Out-String) -match '--fetch-python')) {
-      Coop-Info "Fabric-compatible Python will be fetched into pipx's standalone cache"
-    } else {
-      Coop-Warn "Microsoft Fabric CLI needs Python 3.10–3.13 — upgrade pipx or install Python 3.12, then re-run: coop install"
-    }
-  }
-
-  # Node.js
-  if ((-not (Test-Have 'node')) -and (-not $NO_PREREQS)) {
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-      Coop-Info 'installing Node.js LTS via winget…'
-      & winget install --id OpenJS.NodeJS.LTS -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
-      foreach ($d in (@(
-        (Join-Path $env:ProgramFiles 'nodejs'),
-        $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'nodejs' }),
-        (Join-Path $env:LOCALAPPDATA 'Programs\nodejs')
-      ) | Where-Object { $_ })) {
-        if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
-          $env:PATH = "$d;$env:PATH"
-        }
-      }
-    }
-  }
-  if (Test-Have 'node') {
-    $nv = (& node --version 2>$null | Select-Object -First 1)
-    Coop-Ok "node present ($nv)"
-    if ($nv -match '(\d+)\.(\d+)\.(\d+)') {
-      $nver = [version]("{0}.{1}.{2}" -f $matches[1], $matches[2], $matches[3])
-      if ($nver -lt [version]'22.19.0') { Coop-Warn "Node $nver is older than Pi's requirement (>= 22.19)" "upgrade Node, or pin Pi's legacy build: npm i -g @earendil-works/pi-coding-agent@legacy-node20" }
-    }
-  } else {
-    Coop-Warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)."
-  }
-
-  # Azure CLI (az)
-  if ((-not (Test-Have 'az')) -and (-not $NO_PREREQS)) {
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-      Coop-Info 'installing Azure CLI via winget…'
-      & winget install --id Microsoft.AzureCLI -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity *> $null
-      foreach ($d in (@(
-        (Join-Path $env:ProgramFiles 'Microsoft SDKs\Azure\CLI2\wbin'),
-        $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'Microsoft SDKs\Azure\CLI2\wbin' }),
-        (Join-Path $env:LOCALAPPDATA 'Programs\Microsoft\Azure CLI\wbin')
-      ) | Where-Object { $_ })) {
-        if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
-          $env:PATH = "$d;$env:PATH"
-        }
-      }
-    }
-  }
-  if (Test-Have 'az') {
-    $azv = (& az --version 2>$null | Select-Object -First 1)
-    Coop-Ok "az present ($azv)"
-  } else {
-    Coop-Warn "az not found — install Azure CLI from https://learn.microsoft.com/cli/azure (or 'winget install Microsoft.AzureCLI')."
-  }
-
-  # Tabular Editor CLI (te — cross-platform; BPA reviews run through `te bpa run`)
-  if (Test-Have 'te') {
-    $tev = (& te --version 2>$null | Select-Object -First 1)
-    Coop-Ok "te present ($tev)"
-  } else {
-    Coop-Warn "Tabular Editor CLI (te) not found (optional; BPA reviews need it — download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli, place in ~/.local/bin or on PATH, then run: te auth login)."
-  }
-
   Install-Unit 'pipx' $UnitPipx
   Add-CoopUserPaths    # make a just-installed pipx + its tool-bin visible this run
 

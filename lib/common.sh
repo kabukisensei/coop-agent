@@ -733,6 +733,98 @@ coop_version_lt() {
   return 1
 }
 
+# Is Microsoft ODBC Driver 18+ for SQL Server registered? (mirror of Test-CoopOdbcDriver18)
+coop_odbc_driver18() {
+  local names n
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) names="$(reg query 'HKLM\SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers' 2>/dev/null)" ;;
+    *) have odbcinst || return 1; names="$(odbcinst -q -d 2>/dev/null)" ;;
+  esac
+  for n in $(printf '%s\n' "$names" | sed -n 's/.*ODBC Driver \([0-9][0-9]*\) for SQL Server.*/\1/p'); do
+    [ "$n" -ge 18 ] && return 0
+  done
+  return 1
+}
+
+# --- Prerequisite gate: ONE ordered table shared by install and doctor ----------
+# Prints one row per line in dependency order, fields separated by 0x1f:
+#   order  name  required(1/0)  ok(1/0)  detail  fix
+# fix is the exact command to print; ' then ' separates two steps. Install stops
+# when a required row is not ok; doctor reports the same rows with the same text.
+# Usage: coop_prereq_rows [no-fabric:0|1]   (mirror of Get-CoopPrereqs)
+_coop_ver() { "$1" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1; }
+coop_prereq_rows() {
+  local no_fabric="${1:-0}" us fgit fnode fpy fpipx faz fodbc
+  local ok det v min fab_py gen_py gen_v gen_ok p
+  us="$(printf '\037')"
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*)
+      fgit='winget install --id Git.Git -e'; fnode='winget install --id OpenJS.NodeJS.LTS -e'
+      fpy='winget install --id Python.Python.3.12 -e'
+      fpipx='py -3.12 -m pip install --user pipx then py -3.12 -m pipx ensurepath'
+      faz='winget install --id Microsoft.AzureCLI -e'; fodbc='winget install --id Microsoft.msodbcsql.18 -e' ;;
+    Darwin)
+      fgit='xcode-select --install'; fnode='brew install node'; fpy='brew install python@3.12'
+      fpipx='brew install pipx then pipx ensurepath'; faz='brew install azure-cli'
+      fodbc='brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release then brew install msodbcsql18' ;;
+    *)
+      fgit='sudo apt-get install -y git'; fnode='see https://nodejs.org/en/download'
+      fpy='sudo apt-get install -y python3.12 python3.12-venv'
+      fpipx='sudo apt-get install -y pipx then pipx ensurepath'
+      faz='curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash'
+      fodbc='see https://learn.microsoft.com/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server' ;;
+  esac
+  _row() { printf '%s%s%s%s%s%s%s%s%s%s%s\n' "$1" "$us" "$2" "$us" "$3" "$us" "$4" "$us" "$5" "$us" "$6"; }
+
+  if have git; then _row 1 Git 1 1 "$(_coop_ver git)" "$fgit"; else _row 1 Git 1 0 'not found' "$fgit"; fi
+
+  min=''; have node && min="$(coop_manifest_get node.min)"; min="${min:-22.19.0}"
+  ok=0; det='not found'
+  if have node; then
+    v="$(_coop_ver node)"
+    if [ -n "$v" ] && ! coop_version_lt "$v" "$min"; then ok=1; det="$v"; else det="${v:-unknown version} is older than $min"; fi
+  fi
+  _row 2 "Node.js $min or newer" 1 "$ok" "$det" "$fnode"
+
+  # The Fabric CLI cannot run on 3.14, so it needs 3.10-3.13. A newer pipx can
+  # fetch its own 3.12 for the Fabric CLI, so 3.14 plus that pipx also passes.
+  ok=0; det='not found'; fab_py=''; gen_v=''; gen_ok=0
+  [ "$no_fabric" = 1 ] || fab_py="$(coop_fabric_bootstrap_python 2>/dev/null)" || fab_py=''
+  gen_py="$(coop_python 2>/dev/null)" || gen_py=''
+  [ -n "$gen_py" ] && gen_v="$(_coop_ver "$gen_py")"
+  [ -n "$gen_v" ] && ! coop_version_lt "$gen_v" 3.10 && gen_ok=1
+  if [ -n "$fab_py" ]; then ok=1; det="$(_coop_ver "$fab_py")"
+  elif [ "$gen_ok" = 1 ] && [ "$no_fabric" = 1 ]; then ok=1; det="$gen_v"
+  elif [ "$gen_ok" = 1 ] && have pipx && pipx install --help 2>&1 | grep -F -- '--fetch-python' >/dev/null; then
+    ok=1; det="$gen_v; pipx fetches 3.12 for the Fabric CLI"
+  elif [ "$gen_ok" = 1 ]; then det="$gen_v only; the Fabric CLI needs 3.10-3.13"
+  elif [ -n "$gen_v" ]; then det="$gen_v is older than 3.10"
+  fi
+  _row 3 'Python 3.10-3.13 (3.12 recommended)' 1 "$ok" "$det" "$fpy"
+
+  ok=0; det='not found'
+  if have pipx; then ok=1; det="$(_coop_ver pipx)"
+  else
+    for p in "$fab_py" "$gen_py"; do
+      [ -n "$p" ] || continue
+      if "$p" -m pipx --version >/dev/null 2>&1; then ok=1; det="via $p -m pipx"; break; fi
+    done
+  fi
+  _row 4 pipx 1 "$ok" "$det" "$fpipx"
+
+  if have az; then _row 5 'Azure CLI' 1 1 '' "$faz"; else _row 5 'Azure CLI' 1 0 'not found' "$faz"; fi
+
+  # Not blocking here: install offers ODBC with its license prompt after the
+  # Fabric CLI, and doctor checks that the Fabric runtime can load it.
+  if coop_odbc_driver18; then _row 6 'ODBC Driver 18 for SQL Server' 0 1 '' "$fodbc"
+  else _row 6 'ODBC Driver 18 for SQL Server' 0 0 'not found; needed for live SQL' "$fodbc"; fi
+
+  if have te; then ok=1; det=''; else ok=0; det='not found'; fi
+  _row 7 'Tabular Editor CLI (optional, BPA reviews)' 0 "$ok" "$det" \
+    'download te from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli, put it on PATH, then: te auth login'
+  unset -f _row
+}
+
 # --- Optional Azure preflight (non-fatal) --------------------------------------
 # Mirrors the team's pi-ready habit: if the project pins a Fabric tenant and the
 # Azure CLI is present, make sure a Power BI token exists before launching.
