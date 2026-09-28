@@ -805,8 +805,11 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
   $genPy = Get-CoopPython
   $genVer = if ($genPy) { & $ver $genPy } else { '' }
   $genOk = $genVer -and ([version]$genVer -ge [version]'3.10')
+  # A general Python that is itself 3.10-3.13 is Fabric-compatible even when the
+  # Fabric resolver's probe misses it (#81: Windows PowerShell 5.1 quoting).
+  $genFabOk = $genOk -and ([version]$genVer -lt [version]'3.14')
   if ($fabPy) { $pyOk = $true; $pyDet = & $ver $fabPy }
-  elseif ($genOk -and $NoFabric) { $pyOk = $true; $pyDet = $genVer }
+  elseif ($genOk -and ($NoFabric -or $genFabOk)) { $pyOk = $true; $pyDet = $genVer }
   elseif ($genOk -and (Test-Have 'pipx') -and ((& pipx install --help 2>&1 | Out-String) -match '--fetch-python')) {
     $pyOk = $true; $pyDet = "$genVer; pipx fetches 3.12 for the Fabric CLI"
   } elseif ($genOk) { $pyDet = "$genVer only; the Fabric CLI needs 3.10-3.13" }

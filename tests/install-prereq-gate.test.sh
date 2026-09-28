@@ -111,3 +111,10 @@ PATH="$BIN:/usr/bin:/bin" bash "$ROOT/scripts/doctor.sh" >"$OUT" 2>&1 || RC=$?
 has '✗ 2. Node.js 22.19.0 or newer  (not found) — brew install node'
 has '✗ 3. Python 3.10-3.13 (3.12 recommended)  (not found) — brew install python@3.12'
 echo '  ✓ doctor reports the same prerequisite rows as install'
+
+# 7. #81: a Python 3.12 whose `-c` version probe returns nothing (how Windows
+#    PowerShell 5.1 mangles the Fabric resolver's probe) still passes row 3.
+for n in python3 python; do stub "$n" '[ "$1" = --version ] && echo "Python 3.12.9"; exit 0'; done
+COOP_TEST_UNAME=MINGW64_NT run_install "$NODEBIN:$BIN:/usr/bin:/bin"
+has '✓ 3. Python 3.10-3.13 (3.12 recommended)  (3.12.9)'
+echo '  ✓ a 3.12 general Python passes the Python row even when the Fabric probe misses it'

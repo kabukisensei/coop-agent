@@ -793,8 +793,10 @@ coop_prereq_rows() {
   gen_py="$(coop_python 2>/dev/null)" || gen_py=''
   [ -n "$gen_py" ] && gen_v="$(_coop_ver "$gen_py")"
   [ -n "$gen_v" ] && ! coop_version_lt "$gen_v" 3.10 && gen_ok=1
+  # A general Python that is itself 3.10-3.13 is Fabric-compatible even when the
+  # Fabric resolver's probe misses it (#81).
   if [ -n "$fab_py" ]; then ok=1; det="$(_coop_ver "$fab_py")"
-  elif [ "$gen_ok" = 1 ] && [ "$no_fabric" = 1 ]; then ok=1; det="$gen_v"
+  elif [ "$gen_ok" = 1 ] && { [ "$no_fabric" = 1 ] || coop_version_lt "$gen_v" 3.14; }; then ok=1; det="$gen_v"
   elif [ "$gen_ok" = 1 ] && have pipx && pipx install --help 2>&1 | grep -F -- '--fetch-python' >/dev/null; then
     ok=1; det="$gen_v; pipx fetches 3.12 for the Fabric CLI"
   elif [ "$gen_ok" = 1 ]; then det="$gen_v only; the Fabric CLI needs 3.10-3.13"
