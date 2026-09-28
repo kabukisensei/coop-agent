@@ -648,6 +648,12 @@ acceptance and qualification machine:
   the version report) goes into the PR. No credential values, no client data.
 - The VM is not a teammate's machine and not Aaron's C: installation; nothing on
   it is precious, so acceptance may include uninstall and reinstall.
+- **The VM gates acceptance, not the start of work.** Code, stubbed tests, and the
+  PR for any Phase 0 row begin as soon as the row is `agent:ready`; CI's Windows
+  runners prove the stubbed behavior. A PR may merge on green CI with its
+  acceptance line marked "VM pending". Aaron runs the VM step before tagging the
+  patch release, and the row's Status moves to `done (tag)` only then. H3 never
+  needs the VM.
 
 **Definition of done for the week:** Phase 0 rows H1, H2, H5, and H6 merged and
 tagged as a patch release by Aaron, installed on the VM from the tag, and H3 either
