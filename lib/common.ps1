@@ -709,7 +709,8 @@ function Coop-Emit {
 function Coop-Say  { param([string]$m) Coop-Emit $m }
 function Coop-Info { param([string]$m) Coop-Emit "$($script:C_LIME)$($script:G_BULLET)$($script:C_RST) $m" }
 function Coop-Ok   { param([string]$m) Coop-Emit "$($script:C_FOREST)$($script:G_CHECK)$($script:C_RST) $m" }
-function Coop-Warn { param([string]$m) Coop-Emit "$($script:C_OLIVE)!$($script:C_RST) $m" }
+# Optional second argument is the "how to fix" hint (mirror of coop_warn "$1" "$2").
+function Coop-Warn { param([string]$m, [string]$Hint = '') Coop-Emit ("$($script:C_OLIVE)!$($script:C_RST) $m" + $(if ($Hint) { " — $Hint" } else { '' })) }
 function Coop-Err  { param([string]$m) Coop-Emit "$($script:C_RED)$($script:G_CROSS)$($script:C_RST) $m" }
 function Coop-Die  { param([string]$m) Coop-Err $m; exit 1 }
 function Coop-Head { param([string]$m) Coop-Emit "`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)" }
@@ -733,6 +734,110 @@ function Get-CoopPython {
     if ($v -match '\d+\.\d+') { return $c.Source }
   }
   return $null
+}
+
+# Is Microsoft ODBC Driver 18+ for SQL Server registered? Windows reads the ODBC
+# driver list in the registry; elsewhere `odbcinst -q -d` (unixODBC).
+function Test-CoopOdbcDriver18 {
+  $names = @()
+  if ($env:OS -eq 'Windows_NT') {
+    $key = Get-Item -LiteralPath 'HKLM:\SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers' -ErrorAction SilentlyContinue
+    if ($key) { $names = @($key.GetValueNames()) }
+  } elseif (Test-Have 'odbcinst') {
+    $names = @(& odbcinst -q -d 2>$null | ForEach-Object { ([string]$_).Trim('[', ']', ' ') })
+  }
+  foreach ($n in $names) {
+    if ($n -match '^ODBC Driver (\d+) for SQL Server$' -and [int]$Matches[1] -ge 18) { return $true }
+  }
+  return $false
+}
+
+# --- Prerequisite gate: ONE ordered table shared by install and doctor ----------
+# Rows are in dependency order. Each row: Order, Name, Required, Ok, Detail, Fix.
+# Fix is the exact command to print; ' then ' separates two steps. Install stops
+# when a Required row is not Ok; doctor reports the same rows with the same text.
+# (mirror of coop_prereq_rows)
+function Get-CoopPrereqs([bool]$NoFabric = $false) {
+  $win = ($env:OS -eq 'Windows_NT')
+  $mac = (-not $win) -and ([string](& uname -s 2>$null) -eq 'Darwin')
+  if ($win) {
+    $fix = @{
+      git = 'winget install --id Git.Git -e'; node = 'winget install --id OpenJS.NodeJS.LTS -e'
+      python = 'winget install --id Python.Python.3.12 -e'
+      pipx = 'py -3.12 -m pip install --user pipx then py -3.12 -m pipx ensurepath'
+      az = 'winget install --id Microsoft.AzureCLI -e'; odbc = 'winget install --id Microsoft.msodbcsql.18 -e'
+    }
+  } elseif ($mac) {
+    $fix = @{
+      git = 'xcode-select --install'; node = 'brew install node'; python = 'brew install python@3.12'
+      pipx = 'brew install pipx then pipx ensurepath'; az = 'brew install azure-cli'
+      odbc = 'brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release then brew install msodbcsql18'
+    }
+  } else {
+    $fix = @{
+      git = 'sudo apt-get install -y git'; node = 'see https://nodejs.org/en/download'
+      python = 'sudo apt-get install -y python3.12 python3.12-venv'
+      pipx = 'sudo apt-get install -y pipx then pipx ensurepath'
+      az = 'curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash'
+      odbc = 'see https://learn.microsoft.com/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server'
+    }
+  }
+  $ver = { param([string]$Exe) $o = (& $Exe --version 2>&1 | Out-String); $m = [regex]::Match($o, '\d+\.\d+(\.\d+)?'); if ($m.Success) { $m.Value } else { '' } }
+  $rows = @()
+  $row = { param($o, $n, $req, $ok, $det, $f) [pscustomobject]@{ Order = $o; Name = $n; Required = $req; Ok = [bool]$ok; Detail = $det; Fix = $f } }
+
+  $gitOk = Test-Have 'git'
+  $rows += & $row 1 'Git' $true $gitOk $(if ($gitOk) { & $ver 'git' } else { 'not found' }) $fix.git
+
+  $nodeMin = Coop-ManifestGet -Key 'node.min' -Default '22.19.0'
+  $nodeOk = $false; $nodeDet = 'not found'
+  if (Test-Have 'node') {
+    $nv = & $ver 'node'
+    if ($nv -and ([version]$nv -ge [version]$nodeMin)) { $nodeOk = $true; $nodeDet = $nv }
+    else { $nodeDet = "$(if ($nv) { $nv } else { 'unknown version' }) is older than $nodeMin" }
+  }
+  $rows += & $row 2 "Node.js $nodeMin or newer" $true $nodeOk $nodeDet $fix.node
+
+  # The Fabric CLI cannot run on 3.14, so it needs 3.10-3.13. A newer pipx can
+  # fetch its own 3.12 for the Fabric CLI, so 3.14 plus that pipx also passes.
+  $pyOk = $false; $pyDet = 'not found'
+  $fabPy = if (-not $NoFabric) { Get-CoopFabricBootstrapPython } else { $null }
+  $genPy = Get-CoopPython
+  $genVer = if ($genPy) { & $ver $genPy } else { '' }
+  $genOk = $genVer -and ([version]$genVer -ge [version]'3.10')
+  # A general Python that is itself 3.10-3.13 is Fabric-compatible even when the
+  # Fabric resolver's probe misses it (#81: Windows PowerShell 5.1 quoting).
+  $genFabOk = $genOk -and ([version]$genVer -lt [version]'3.14')
+  if ($fabPy) { $pyOk = $true; $pyDet = & $ver $fabPy }
+  elseif ($genOk -and ($NoFabric -or $genFabOk)) { $pyOk = $true; $pyDet = $genVer }
+  elseif ($genOk -and (Test-Have 'pipx') -and ((& pipx install --help 2>&1 | Out-String) -match '--fetch-python')) {
+    $pyOk = $true; $pyDet = "$genVer; pipx fetches 3.12 for the Fabric CLI"
+  } elseif ($genOk) { $pyDet = "$genVer only; the Fabric CLI needs 3.10-3.13" }
+  elseif ($genVer) { $pyDet = "$genVer is older than 3.10" }
+  $rows += & $row 3 'Python 3.10-3.13 (3.12 recommended)' $true $pyOk $pyDet $fix.python
+
+  $pipxOk = $false; $pipxDet = 'not found'
+  if (Test-Have 'pipx') { $pipxOk = $true; $pipxDet = & $ver 'pipx' }
+  else {
+    foreach ($p in @($fabPy, $genPy)) {
+      if (-not $p) { continue }
+      & $p -m pipx --version *> $null
+      if ($LASTEXITCODE -eq 0) { $pipxOk = $true; $pipxDet = "via $p -m pipx"; break }
+    }
+  }
+  $rows += & $row 4 'pipx' $true $pipxOk $pipxDet $fix.pipx
+
+  $azOk = Test-Have 'az'
+  $rows += & $row 5 'Azure CLI' $true $azOk $(if ($azOk) { '' } else { 'not found' }) $fix.az
+
+  # Not blocking here: install offers ODBC with its license prompt after the
+  # Fabric CLI, and doctor checks that the Fabric runtime can load it.
+  $odbcOk = Test-CoopOdbcDriver18
+  $rows += & $row 6 'ODBC Driver 18 for SQL Server' $false $odbcOk $(if ($odbcOk) { '' } else { 'not found; needed for live SQL' }) $fix.odbc
+
+  $teOk = Test-Have 'te'
+  $rows += & $row 7 'Tabular Editor CLI (optional, BPA reviews)' $false $teOk $(if ($teOk) { '' } else { 'not found' }) 'download te from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli, put it on PATH, then: te auth login'
+  return $rows
 }
 
 # coop runs Pi against an ISOLATED agent dir so coop's extensions/settings/theme

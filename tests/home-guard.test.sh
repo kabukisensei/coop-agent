@@ -58,7 +58,12 @@ echo 'fab version 1.6.1'
 SH
 chmod +x "$FAKEBIN"/*
 ln -s "$(command -v node)" "$FAKEBIN/node" 2>/dev/null
-ln -s "$(command -v python3 || command -v python)" "$FAKEBIN/python3" 2>/dev/null
+# A Fabric-compatible (3.10-3.13) Python and an Azure CLI stub let install pass
+# its H1 prerequisite gate, so the install path below really runs.
+ln -s "$(command -v python3.13 || command -v python3.12 || command -v python3 || command -v python)" "$FAKEBIN/python3" 2>/dev/null
+printf '#!/bin/sh\necho azure-cli 2.80.0\n' > "$FAKEBIN/az"; chmod +x "$FAKEBIN/az"
+# Real git behind a wrapper (Git Bash keeps git in /mingw64/bin, off this PATH).
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$(command -v git)" > "$FAKEBIN/git"; chmod +x "$FAKEBIN/git"
 
 before_local_bin="$(snapshot "$REAL_HOME/.local/bin")"
 before_coop="$(snapshot "$REAL_HOME/.coop")"

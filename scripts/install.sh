@@ -7,7 +7,9 @@
 #   Flags:
 #     --force        Reinstall pi tools / pipx packages even if already present
 #     --no-fabric    Skip installing the Microsoft Fabric CLI (ms-fabric-cli)
-#     --no-prereqs   Skip auto-installing missing system prerequisites
+#     --no-prereqs   Report missing prerequisites but continue anyway
+#     --prereqs auto Install missing prerequisites visibly, then stop and ask
+#                    for a new terminal
 #     --yes, -y      Assume yes for prompts
 #
 set -uo pipefail
@@ -17,19 +19,29 @@ export COOP_ROOT
 # shellcheck source=../lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
 
-FORCE=0; NO_FABRIC=0; NO_PREREQS=0; EDGE=0
+FORCE=0; NO_FABRIC=0; NO_PREREQS=0; EDGE=0; PREREQS_AUTO=0
 INSTALL_FAILURES=0
+_prereqs_arg=0
 for a in "$@"; do
+  if [ "$_prereqs_arg" = 1 ]; then
+    _prereqs_arg=0
+    if [ "$a" = auto ]; then PREREQS_AUTO=1; else coop_warn "install: --prereqs takes one value: auto"; fi
+    continue
+  fi
   case "$a" in
     '') ;;                                            # ignore blank args (launchers can pass one)
     --force) FORCE=1 ;;
     --no-fabric) NO_FABRIC=1 ;;
     --no-prereqs) NO_PREREQS=1 ;;
+    --prereqs=auto) PREREQS_AUTO=1 ;;
+    --prereqs) _prereqs_arg=1 ;;
     --edge) EDGE=1 ;;
     --yes|-y) export COOP_ASSUME_YES=1 ;;
     *) coop_warn "install: ignoring unknown flag '$a'" ;;
   esac
 done
+[ "$_prereqs_arg" = 1 ] && coop_warn "install: --prereqs takes one value: auto"
+unset _prereqs_arg
 
 # --- What we install (release manifest is the single source of truth) ----------
 PI_NPM_PACKAGE="$(coop_manifest_get pi.package || echo "@earendil-works/pi-coding-agent")"
@@ -260,7 +272,85 @@ _unit_pbih_tools() {
   printf '%d installed, %d failed' "$ok" "$fail"; return 1
 }
 
+# --- Prerequisite gate (plan H1) ----------------------------------------------
+# Print the prerequisite table; sets PREREQ_MISSING to the missing REQUIRED rows.
+_show_prereqs() {
+  local us o n req ok det fix step line
+  us="$(printf '\037')"
+  PREREQ_MISSING=0
+  while IFS="$us" read -r o n req ok det fix; do
+    line="$o. $n${det:+  ($det)}"
+    if [ "$ok" = 1 ]; then coop_ok "$line"; continue; fi
+    if [ "$req" = 1 ]; then coop_err "$line"; PREREQ_MISSING=$((PREREQ_MISSING + 1)); else coop_warn "$line"; fi
+    printf '%s\n' "$fix" | sed 's/ then /\
+/g' | while IFS= read -r step; do coop_say "      $step"; done
+  done <<EOF_PREREQS
+$(coop_prereq_rows "$NO_FABRIC")
+EOF_PREREQS
+}
+
+# --prereqs auto: run each missing REQUIRED row's printed command, in table order,
+# with its output and exit code visible. Optional rows are never auto-installed.
+_install_prereqs() {
+  local us o n req ok det fix step rc
+  us="$(printf '\037')"
+  # Rows and steps are read on fds 3/4 so each command keeps the terminal as
+  # stdin (sudo, brew, and winget may prompt).
+  while IFS="$us" read -r o n req ok det fix <&3; do
+    [ "$ok" = 1 ] || [ "$req" != 1 ] && continue
+    case "$fix" in see\ *) continue ;; esac
+    while IFS= read -r step <&4; do
+      coop_info "running: $step"
+      rc=0; sh -c "$step" || rc=$?
+      if [ "$rc" -ne 0 ]; then coop_warn "exited with code $rc" "run it yourself: $step"; break; fi
+    done 4<<EOF_STEPS
+$(printf '%s\n' "$fix" | sed 's/ then /\
+/g')
+EOF_STEPS
+  done 3<<EOF_PREREQS
+$(coop_prereq_rows "$NO_FABRIC")
+EOF_PREREQS
+  if [ -z "${COOP_TEST_STUB_PATH:-}" ] && [ -d "/opt/homebrew/bin" ]; then
+    case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
+  fi
+  hash -r 2>/dev/null || true
+}
+
 coop_head "Cooptimize agent bootstrap (v${COOP_VERSION})  [$OS]"
+
+# Check every prerequisite before installing anything. A missing required row
+# stops here with the exact command, instead of failing several steps later.
+coop_head "1/9  Prerequisites"
+_show_prereqs
+if [ "$PREREQ_MISSING" -gt 0 ] && [ "$PREREQS_AUTO" = 1 ] && [ "$NO_PREREQS" != 1 ]; then
+  _install_prereqs
+  coop_head "Prerequisites (re-checked)"
+  _show_prereqs
+  [ "$PREREQ_MISSING" -gt 0 ] && coop_err "$PREREQ_MISSING required prerequisite(s) still missing — install the ✗ rows above in that order."
+  coop_warn "Open a NEW terminal so the new tools are on PATH, then run: coop install"
+  exit 1
+fi
+if [ "$PREREQ_MISSING" -gt 0 ]; then
+  if [ "$NO_PREREQS" = 1 ]; then
+    coop_warn "$PREREQ_MISSING required prerequisite(s) missing (--no-prereqs: continuing anyway)"
+  else
+    coop_err "$PREREQ_MISSING required prerequisite(s) missing. Install the ✗ rows above in that order, open a NEW terminal, then run: coop install"
+    coop_say "      (or let coop run those commands for you: coop install --prereqs auto)"
+    exit 1
+  fi
+else
+  coop_ok "all prerequisites present, continuing"
+fi
+# A Python found off PATH (Git Bash: install manager, winget user scope) must be
+# visible to the pipx and Fabric steps in this same run.
+if [ "$NO_FABRIC" != 1 ] && _gate_py="$(coop_fabric_bootstrap_python 2>/dev/null)"; then
+  case "$_gate_py" in
+    */*) _gate_dir="$(dirname "$_gate_py")"
+         case ":$PATH:" in *":$_gate_dir:"*) : ;; *) PATH="$_gate_dir:$PATH" ;; esac ;;
+  esac
+  unset _gate_dir
+fi
+unset _gate_py
 
 # Pin the overall bar to the bottom for the install phase; restore the cursor even
 # on Ctrl-C. (coop_progress_end is idempotent, so the EXIT trap is a safe no-op
@@ -270,135 +360,6 @@ coop_progress_begin "$PROG_TOTAL"
 # clean up but then let the script resume and keep mutating the machine on Ctrl-C).
 trap 'coop_progress_end; _coop_unit_cleanup' EXIT
 trap 'coop_progress_end; _coop_unit_cleanup; exit 130' INT TERM
-
-# --- 1. Prerequisites (auto-install missing tools if package manager is available)
-coop_head "1/9  Prerequisites"
-
-# Git
-if [ "$NO_PREREQS" != 1 ] && ! have git; then
-  if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
-    coop_info "installing git via brew…"
-    brew install git >/dev/null 2>&1 || true
-  elif have apt-get; then
-    coop_info "installing git via apt…"
-    (sudo apt-get update -y && sudo apt-get install -y git) >/dev/null 2>&1 || apt-get install -y git >/dev/null 2>&1 || true
-  elif have dnf; then
-    coop_info "installing git via dnf…"
-    (sudo dnf install -y git) >/dev/null 2>&1 || dnf install -y git >/dev/null 2>&1 || true
-  fi
-fi
-have git && coop_ok "git present ($(git --version 2>/dev/null | head -1))" || coop_warn "git not found — install Git (mac: 'xcode-select --install' or 'brew install git'; linux: your package manager)."
-
-# Python. General Coop tooling can use any current Python 3, but ms-fabric-cli
-# currently requires <3.14. Treat those as separate prerequisites: a machine
-# with only Python 3.14 still needs a compatible interpreter installed alongside
-# it when Fabric support is enabled.
-_need_python=0
-_need_fabric_python=0
-coop_python >/dev/null || _need_python=1
-if [ "$NO_FABRIC" != 1 ] && ! coop_fabric_bootstrap_python >/dev/null; then _need_fabric_python=1; fi
-if [ "$NO_PREREQS" != 1 ] && { [ "$_need_python" = 1 ] || [ "$_need_fabric_python" = 1 ]; }; then
-  if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
-    coop_info "installing Fabric-compatible Python via brew…"
-    # python@3.12/@3.13 are keg-only — brew does NOT link `python3`, and the
-    # unversioned symlinks live in <keg>/libexec/bin, so add that dir to PATH.
-    # (Not the unversioned `python` formula: it is 3.14+, which ms-fabric-cli rejects.)
-    for _pyc in python@3.12 python@3.13; do
-      brew install "$_pyc" >/dev/null 2>&1 || true
-      _pylib="$(brew --prefix "$_pyc" 2>/dev/null)/libexec/bin"
-      if [ -d "$_pylib" ]; then
-        case ":$PATH:" in *":$_pylib:"*) : ;; *) PATH="$_pylib:$PATH" ;; esac
-        break
-      fi
-    done
-    unset _pyc _pylib
-  elif have apt-get; then
-    coop_info "installing a compatible Python via apt…"
-    (sudo apt-get update -y && (sudo apt-get install -y python3.13 python3.13-venv || sudo apt-get install -y python3.12 python3.12-venv || sudo apt-get install -y python3 python3-pip python3-venv)) >/dev/null 2>&1 \
-      || (apt-get install -y python3.13 python3.13-venv || apt-get install -y python3.12 python3.12-venv || apt-get install -y python3 python3-pip python3-venv) >/dev/null 2>&1 || true
-  elif have dnf; then
-    coop_info "installing a compatible Python via dnf…"
-    (sudo dnf install -y python3.13 || sudo dnf install -y python3.12 || sudo dnf install -y python3 python3-pip) >/dev/null 2>&1 \
-      || (dnf install -y python3.13 || dnf install -y python3.12 || dnf install -y python3 python3-pip) >/dev/null 2>&1 || true
-  elif case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) true ;; *) false ;; esac; then
-    # Git Bash on Windows: the Python launcher/install manager first, winget second.
-    coop_info "installing a compatible Python via the Python manager…"
-    if command -v py >/dev/null 2>&1; then py install 3.12 >/dev/null 2>&1 || true; fi
-    if ! coop_fabric_bootstrap_python >/dev/null 2>&1 && command -v winget >/dev/null 2>&1; then
-      winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity >/dev/null 2>&1 || true
-    fi
-  fi
-  if [ -z "${COOP_TEST_STUB_PATH:-}" ] && [ -d "/opt/homebrew/bin" ]; then
-    case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
-  fi
-  hash -r 2>/dev/null || true
-fi
-if _py="$(coop_python)"; then
-  coop_ok "python present ($("$_py" --version 2>&1))"
-else
-  coop_warn "python not found — install Python 3.10+ (mac: 'brew install python'; linux: 'apt install python3')."
-fi
-if [ "$NO_FABRIC" != 1 ]; then
-  if _fabric_py="$(coop_fabric_bootstrap_python)"; then
-    coop_ok "Fabric-compatible Python present ($("$_fabric_py" --version 2>&1))"
-  elif have pipx && pipx install --help 2>&1 | grep -F -- '--fetch-python' >/dev/null; then
-    coop_info "Fabric-compatible Python will be fetched into pipx's standalone cache"
-  else
-    coop_warn "Microsoft Fabric CLI needs Python 3.10–3.13 — upgrade pipx or install Python 3.12, then re-run: coop install"
-  fi
-  unset _fabric_py
-fi
-unset _need_python _need_fabric_python
-
-# Node.js
-if [ "$NO_PREREQS" != 1 ] && ! have node; then
-  if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
-    coop_info "installing node via brew…"
-    brew install node >/dev/null 2>&1 || true
-  elif have apt-get; then
-    coop_info "installing nodejs via apt…"
-    (sudo apt-get update -y && sudo apt-get install -y nodejs npm) >/dev/null 2>&1 || apt-get install -y nodejs npm >/dev/null 2>&1 || true
-  elif have dnf; then
-    coop_info "installing nodejs via dnf…"
-    (sudo dnf install -y nodejs npm) >/dev/null 2>&1 || dnf install -y nodejs npm >/dev/null 2>&1 || true
-  fi
-  [ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
-  hash -r 2>/dev/null || true
-fi
-if have node; then
-  coop_ok "node present ($(node --version 2>/dev/null || echo '?'))"
-  _nodev="$(node --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-  if [ -n "$_nodev" ] && coop_version_lt "$_nodev" "22.19.0"; then
-    coop_warn "Node $_nodev is older than Pi's requirement (>= 22.19)" "upgrade Node, or pin Pi's legacy build: npm i -g @earendil-works/pi-coding-agent@legacy-node20"
-  fi
-  unset _nodev
-else
-  coop_warn "node not found — install Node.js 22.19+ from https://nodejs.org (needed to install/update pi)."
-fi
-
-# Azure CLI (az)
-if [ "$NO_PREREQS" != 1 ] && ! have az; then
-  if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && have brew; then
-    coop_info "installing azure-cli via brew…"
-    brew install azure-cli >/dev/null 2>&1 || true
-  elif have apt-get; then
-    coop_info "installing azure-cli via apt…"
-    (curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash) >/dev/null 2>&1 || (sudo apt-get update -y && sudo apt-get install -y azure-cli) >/dev/null 2>&1 || true
-  elif have dnf; then
-    coop_info "installing azure-cli via dnf…"
-    (sudo dnf install -y azure-cli) >/dev/null 2>&1 || dnf install -y azure-cli >/dev/null 2>&1 || true
-  fi
-  [ -d "/opt/homebrew/bin" ] && case ":$PATH:" in *":/opt/homebrew/bin:"*) : ;; *) PATH="/opt/homebrew/bin:$PATH" ;; esac
-  hash -r 2>/dev/null || true
-fi
-have az && coop_ok "az present ($(az --version 2>/dev/null | head -1))" || coop_warn "az not found — install Azure CLI from https://learn.microsoft.com/cli/azure (needed for Fabric/Power BI live auth)."
-
-# Tabular Editor CLI (te — cross-platform; BPA reviews run through `te bpa run`)
-if have te; then
-  coop_ok "te present ($(te --version 2>/dev/null | head -1))"
-else
-  coop_warn "Tabular Editor CLI (te) not found (optional; BPA reviews need it — download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli, place in ~/.local/bin or on PATH, then run: te auth login)."
-fi
 
 coop_unit "pipx" _unit_pipx || INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
 # Make a just-installed pipx (and the bins pipx will drop tools into) visible to

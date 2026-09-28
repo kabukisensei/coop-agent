@@ -76,21 +76,29 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 
 ## Prerequisites
 
-`coop install` automatically attempts to install missing prerequisites via `winget` (Windows) or `brew`/`apt`/`dnf` (macOS/Linux) when available (opt out with `--no-prereqs`):
+`coop install` checks every prerequisite **before it installs anything**, in the
+order below, and prints ✓ or ✗ for each. When a required one is missing it stops,
+prints the exact command to install it, and asks you to open a new terminal and run
+`coop install` again. `coop doctor` shows the same list with the same commands.
 
-- **Node.js 22.19+** (to install/update Pi via `npm`) — https://nodejs.org (auto-installed via `winget` / `brew` / `apt` if missing)
-- **Python 3.10–3.13 for Microsoft Fabric CLI** — https://python.org (`coop install`
-  uses a compatible system interpreter when available; otherwise pipx fetches an
-  isolated standalone Python 3.12, including on Windows VMs that only have Python
-  3.14 and lack `winget` / `py`)
-- **pipx** (auto-installed by `coop install` via Python `pip`)
-- **git** — https://git-scm.com (auto-installed via `winget` / `brew` / `apt` if missing)
-- **Azure CLI** (`az`) — *optional* — https://learn.microsoft.com/cli/azure (auto-installed via `winget` / `brew` / `apt` if missing; used for Fabric, Power BI, Azure DevOps, and the Warehouse Doctor probe — local SQL/DAX review works without it)
-- **Tabular Editor CLI (`te`)** — *optional* — https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (cross-platform CLI that runs Best Practice Analyzer rules on semantic models; requires a Tabular Editor account during the preview — place `te` in `~/.local/bin` or your `PATH`, then run `te auth login` once)
+| Order | Prerequisite | Needed | Command printed on Windows |
+| --- | --- | --- | --- |
+| 1 | Git | required | `winget install --id Git.Git -e` |
+| 2 | Node.js 22.19 or newer (minimum read from `config/release-manifest.json`) | required | `winget install --id OpenJS.NodeJS.LTS -e` |
+| 3 | Python 3.10–3.13, 3.12 recommended (the Fabric CLI cannot run on 3.14) | required | `winget install --id Python.Python.3.12 -e` |
+| 4 | pipx | required | `py -3.12 -m pip install --user pipx`, then `py -3.12 -m pipx ensurepath` |
+| 5 | Azure CLI (`az`) | required | `winget install --id Microsoft.AzureCLI -e` |
+| 6 | ODBC Driver 18 for SQL Server | live SQL | `winget install --id Microsoft.msodbcsql.18 -e` (install also offers it after the Fabric CLI) |
+| 7 | Tabular Editor CLI (`te`) | optional, BPA reviews | download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli, put `te` on `PATH`, then `te auth login` |
 
-Automatic prerequisite setup handles **missing** tools; it does not upgrade every incompatible
-installation already present. If Doctor reports Node below 22.19 or Python below 3.10, upgrade
-it and rerun install. The Windows Store Python alias is not treated as an interpreter.
+macOS and Linux print the `brew` / `apt` equivalents. A machine that only has
+Python 3.14 passes row 3 when its pipx supports `--fetch-python`; pipx then fetches
+a standalone Python 3.12 for the Fabric CLI. The Windows Store Python alias does not
+count as an interpreter.
+
+- `coop install --prereqs auto` runs the printed commands for you, with their output
+  visible, re-checks, and still asks you to open a new terminal.
+- `coop install --no-prereqs` prints the list and continues anyway.
 
 ---
 
@@ -117,7 +125,8 @@ Useful flags:
 
 - `--force` — reinstall pi tools / pipx packages even if already present
 - `--no-fabric` — skip installing the Microsoft Fabric CLI (partial/diagnostic setup; a fresh machine will not pass full Doctor readiness until `fab` is installed)
-- `--no-prereqs` — skip auto-installing missing system prerequisites (still reports them)
+- `--prereqs auto` — install missing prerequisites with the printed commands, visibly, then stop and ask for a new terminal
+- `--no-prereqs` — report missing prerequisites but continue anyway
 - `--yes`, `-y` — assume yes for prompts
 
 ### Windows
@@ -202,8 +211,8 @@ shows anything still missing.
   package). Install it yourself, run `te auth login` once, and set
   `tools.tabular_editor_cli.executable_path` in `.coop/project.yml` if you want
   semantic-model BPA. coop works without it.
-- **Azure CLI** (`az`) — optional, for Fabric, Power BI, Azure DevOps, and Warehouse
-  Doctor authentication. Install from Microsoft if your team uses live integrations.
+- **Azure CLI** (`az`) is a prerequisite, not something `coop install` installs:
+  install it with the command in [Prerequisites](#prerequisites).
 
 ---
 
@@ -222,7 +231,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop profile [--edit|--reset|--json]` | Inspect or update the private user profile |
 | `coop context-budget [--json]` | Inspect the active model/context budget |
 | `coop uninstall [--keep-tools] [--yes]` | Remove the launcher/shortcuts/user-PATH entry and isolated agent dir; by default also uninstall Pi, pipx tools/Fabric CLI, Power BI Report Authoring CLI, Power BI Modeling MCP, and the Windows Desktop Bridge. `--keep-tools` preserves all managed npm/pipx tools. Never touches repo clones, work repos, the rest of `~/.coop`, or personal `~/.pi/agent` |
-| `coop install [--edge] [--force] [--yes] [--no-prereqs] [--no-fabric]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest. With a source arg, alias of `coop add` |
+| `coop install [--edge] [--force] [--yes] [--prereqs auto] [--no-prereqs] [--no-fabric]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest. With a source arg, alias of `coop add` |
 | `coop web` | Open a friendly browser UI over the same governed agent (experimental; loopback-only + one-time token — see `web/README.md`) |
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
 | `coop sync` | Ensure core Pi extensions are installed, place the governed MCP config non-destructively, refresh managed catalogs/team knowledge, and verify brand assets |

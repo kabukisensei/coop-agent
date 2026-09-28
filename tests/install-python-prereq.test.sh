@@ -142,11 +142,16 @@ if ! COOP_TEST_GENERIC_PY_VERSION=3.14.6 COOP_FLEET_TEST_MODE=1 \
   bash "$ROOT/scripts/install.sh" --force >"$OUT" 2>&1; then
   echo 'Python 3.14-only install fixture failed unexpectedly'; tail -40 "$OUT"; cat "$CALLS"; exit 1
 fi
-grep -F 'BREW install python@3.12' "$CALLS" >/dev/null \
-  || { echo 'Python 3.14-only install did not bootstrap python@3.12'; cat "$CALLS"; exit 1; }
+# H1: prerequisites are never installed silently; pipx's standalone 3.12 covers
+# the Fabric CLI, so no brew install happens without --prereqs auto.
+if grep -F 'BREW install' "$CALLS" >/dev/null; then
+  echo 'Python 3.14-only install ran brew without --prereqs auto'; cat "$CALLS"; exit 1
+fi
+grep -F 'all prerequisites present, continuing' "$OUT" >/dev/null \
+  || { echo 'Python 3.14 plus fetch-capable pipx did not pass the prerequisite gate'; tail -40 "$OUT"; exit 1; }
 grep -F "PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0" "$CALLS" >/dev/null \
   || { echo 'Fabric CLI did not use pipx standalone Python 3.12 for bootstrap'; cat "$CALLS"; exit 1; }
-echo '  ✓ Python 3.14-only install bootstraps and uses a compatible Fabric interpreter'
+echo '  ✓ Python 3.14-only install uses pipx standalone 3.12 for the Fabric CLI without a silent brew install'
 
 # A compatible generic interpreter must remain untouched; no redundant Python
 # package-manager operation should occur.
