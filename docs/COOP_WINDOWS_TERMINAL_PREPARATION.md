@@ -6,6 +6,11 @@ Aaron authorized putting the plan into the repository and setting up what could 
 
 ## Read first
 
+> **Update, September 28, 2026:** the execution order and scope are now set by the
+> [Coop master plan, revision 3.0](COOP_MASTER_PLAN.md). The gate below still holds:
+> Aaron starts each phase explicitly. The first authorized work under the new order
+> is the master plan's Phase 0 hotfixes, not B0/B1.
+
 Read [AGENTS.md](../AGENTS.md), then the [canonical Windows-terminal plan](COOP_WINDOWS_TERMINAL_PLAN.md). The plan's document revision 2.0 is the adopted roadmap, not a Coop product release. This preparation record qualifies its original planning-time statements: a source branch has now been reserved, but no implementation or workstation baseline acceptance has occurred.
 
 The Markdown plan is the working source of truth. `Coop_Windows_Terminal_Plan_v2.docx` remains a reading snapshot supplied in the originating conversation; it has not been committed in this preparation. That reading-copy transfer is not a prerequisite for beginning B0 later. Do not claim the Word copy is in the repository or create a broken repository link to it.

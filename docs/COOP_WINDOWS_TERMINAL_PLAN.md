@@ -3,6 +3,8 @@
 **Document revision 2.0 · September 19, 2026**  
 **Product scope: Coop 1.x Windows terminal now; native Windows Coop 2.0 last.**
 
+> **Superseded for ordering and scope by [COOP_MASTER_PLAN.md](COOP_MASTER_PLAN.md), document revision 3.0 (September 28, 2026).** This revision 2.0 text is retained as the detailed reference for each work package (B0/B1, S1–S7, U1, SK1, PK1, K1–K3, J0–J3, D2). Where the two disagree on execution order, scope, the test policy, or the Desktop direction, the master plan wins. Sections 11 and 14 below (delivery sequence and starting work register) are historical.
+
 **Canonical repository location:** `docs/COOP_WINDOWS_TERMINAL_PLAN.md`. This document supersedes the execution sequence and Desktop recommendations in *Coop_Windows_Simplification_and_Desktop_Handoff_v1*. The Markdown is the editable source of truth; the Word edition is a reading copy. Document revision 2.0 is not a Coop product release.
 
 **Authority and status:** The product direction below reflects Aaron’s revised instructions. This is the forward execution plan, not a receipt that its work is complete. No branch, installation, package, team repository, credential, or production resource was changed while preparing it. Adoption of this plan does not authorize a wholesale implementation, a release, a push, or sending client data to a new service. Work one bounded package at a time.

@@ -65,26 +65,33 @@ Everything below is for an agent editing coop-agent itself — scripts, docs, te
 skills, extensions. This file is canonical; `CONTRIBUTING.md` and `RELEASE.md`
 carry the detail and align with it.
 
-### Current roadmap — prepared, not started
+### Current roadmap — ordered plan adopted, execution not started
 
-The official forward plan is [Coop Windows Terminal](docs/COOP_WINDOWS_TERMINAL_PLAN.md).
-Read the [preparation handoff](docs/COOP_WINDOWS_TERMINAL_PREPARATION.md) before
-working on it. Aaron authorized documentation and branch preparation only;
-**B0 and all implementation work remain unstarted until he explicitly begins them**.
-Do not add roadmap tasks to `agent:ready` or treat branch presence as an execution trigger.
+The official forward plan is the [Coop master plan, revision 3.0](docs/COOP_MASTER_PLAN.md):
+rollout hotfixes on stable first (installer prerequisites, automatic Azure sign-in,
+project contract aligned with the Cooptimize standards repos), then test right-sizing,
+Windows-first simplification, dependency reconciliation, standards alignment and the
+reviewer decision, Azure SQL breadth with dev-by-default and live impact tracing,
+common-workflows first run, then the minimal beta channel with the optional TeamAI /
+Jev / package trials, and last an installable Electron desktop. The
+[Windows terminal plan, revision 2.0](docs/COOP_WINDOWS_TERMINAL_PLAN.md) remains
+the detailed reference for each package; the master plan wins where they differ.
+Read the [preparation handoff](docs/COOP_WINDOWS_TERMINAL_PREPARATION.md) for the
+execution gate: Aaron starts each phase explicitly. **No phase is started by the
+plan being merged.** Do not add roadmap tasks to `agent:ready` or treat branch
+presence as an execution trigger.
 
-The current roadmap is Windows terminal, isolated stable/beta channels, bounded
-simplification, qualified component/skill updates, TeamAI, and optional Jev trials.
-Native Windows Coop 2.0 is deferred and last. Prior Desktop/web strategy and
-implementation plans are historical for roadmap sequencing; do not merge or
-port the old Desktop branch. Preserve current runtime behavior and existing
-parity/BOM/test obligations until their approved retirement package changes them.
+Native Windows Coop 2.0 is off the roadmap; the desktop path is the packaged
+Electron app in the master plan's last phase. Do not merge or port the old Desktop
+branches; they are reference material. Preserve current runtime behavior and
+existing parity/BOM/test obligations until the simplification phase retires them in
+the same PR that retires the surface.
 
 `experimental/windows-terminal` is a provisional source branch, **not an installed
 or proven-isolated beta**. Do not run the existing installer/updater from that
-branch as a beta setup. The next authorized task is B0 baseline reconciliation
-and a bounded B1 proposal, not B1 implementation or a wholesale roadmap execution.
-This pause applies to the roadmap, not unrelated explicitly requested maintenance.
+branch as a beta setup. The next authorized work is the master plan's Phase 0
+hotfixes, one PR each; B1 implementation comes later in the order. This pause
+applies to the roadmap, not unrelated explicitly requested maintenance.
 
 ### Platform notes
 
@@ -165,9 +172,10 @@ delete or re-push a tag, never commit secrets (`.env*`, keys, tokens — see
   `README.md`, `docs/architecture.md`, `docs/ci.md`, `docs/extending.md`,
   `docs/guardrails.md`, `docs/onboarding.md`, `docs/tool-contract.md`,
   `docs/troubleshooting.md`.
-- **Current roadmap (prepared only; explicit start required):**
-  `docs/COOP_WINDOWS_TERMINAL_PLAN.md` and
-  `docs/COOP_WINDOWS_TERMINAL_PREPARATION.md`.
+- **Current roadmap (adopted; each phase needs an explicit start):**
+  `docs/COOP_MASTER_PLAN.md` (order and scope), with
+  `docs/COOP_WINDOWS_TERMINAL_PLAN.md` (package detail) and
+  `docs/COOP_WINDOWS_TERMINAL_PREPARATION.md` (execution gate).
 - **Plans / history (context only — never execute their steps without an
   explicit request):** `docs/ui-strategy.md`, `docs/coop-web-plan.md`,
   `docs/coop-web-pivis-plan.md`, `docs/plan-azure-devops-integration.md`,

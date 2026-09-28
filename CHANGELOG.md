@@ -5,6 +5,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- Docs: adopted the ordered [Coop master plan, revision 3.0](docs/COOP_MASTER_PLAN.md).
+  It keeps the Windows-terminal plan's intention and reorders execution: rollout
+  hotfixes first (installer prerequisite gate, automatic Azure sign-in, project
+  contract aligned with the Cooptimize standards repos), then test right-sizing,
+  Windows-first simplification, dependency reconciliation, standards alignment,
+  Azure SQL breadth, common-workflows first run, the minimal beta channel, and last
+  an installable Electron desktop. Revision 2.0 stays as the per-package reference.
+  Documentation only; no runtime change.
+
 ## [0.23.5] — 2026-09-22
 
 ### Fixed

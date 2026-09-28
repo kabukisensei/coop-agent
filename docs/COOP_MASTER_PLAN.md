@@ -1,0 +1,540 @@
+# Coop master plan — ordered execution roadmap
+
+**Document revision 3.0 · September 28, 2026**
+**Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
+
+**Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
+intention of the [Windows terminal plan, revision 2.0](COOP_WINDOWS_TERMINAL_PLAN.md)
+(Windows-first, stable and beta kept separate, bounded simplification, qualified
+upgrades, TeamAI and Jev as optional experiments) and **replaces its execution
+order**. Revision 2.0 stays in the tree as the detailed reference for each package
+(S1–S7, U1, SK1, K1–K3, J0–J3, PK1); where the two documents disagree on order,
+scope, or the Desktop direction, this document wins.
+
+**Authority and status:** a plan, not a receipt. Nothing here is implemented by
+adopting the document. Aaron starts each phase explicitly; a merged plan is not an
+execution trigger, and `agent:ready` is still added by hand. Releases follow
+`RELEASE.md` and happen only when Aaron names a version.
+
+## 1. What changed since revision 2.0
+
+| Topic | Revision 2.0 | Revision 3.0 |
+| --- | --- | --- |
+| First work | B0 baseline, then B1 isolated beta channel, then everything else | **Rollout hotfixes on stable first** (installer prerequisites, Azure sign-in, project contract), then test right-sizing and simplification. B1 moves after simplification. |
+| Tests | Retain and consolidate; "test reduction follows implementation reduction" | Same rule, plus an explicit cut: CI keeps a fast gate that must pass on every PR; slow process/timing fixtures move out of the PR gate or go with the surface they test. No test runs just to run. |
+| Dependencies | Qualify one family at a time after B1 | Same discipline, done **right after simplification** against the drift measured on September 28 (section 6), with an explicit keep/drop list for dependencies that Windows-first no longer needs. |
+| Standards | Canonical `cooptimize/coop-standards` sealed to one manifest shape | Coop **reads the format the standards repo ships** (and `cooptimize/incremental-bi`), instead of locking a copy of it. Default project contract is regenerated from that format. |
+| SQL and DAX reviewers | Keep `coop-sql-review` / `coop-dax-review` as deterministic gates | Decide keep-or-retire after standards alignment (section 7). Default recommendation: retire the in-agent wrappers; keep the CLIs only where a client CI pipeline actually uses them. |
+| SQL platforms | Fabric Warehouse / Lakehouse SQL endpoint only | Fabric stays. Add **Azure SQL Database and Azure SQL serverless** as first-class targets with the same guardrails. |
+| Editing SQL objects | Local files plus `coop-data-doc` lineage | SQL is not source-controlled today, so coop **defaults to the dev environment**, traces impact from **live metadata**, and verifies an edit with **actual data** before and after. |
+| First run | Onboarding wizard, then `/start` menu on demand | **Common workflows menu on first run**; the wizard becomes one entry in it. |
+| Desktop | Removed; native Windows Coop 2.0 last, no Electron | **Electron desktop returns, last**, gated on a packaged installer that other users can run. The native rewrite is dropped from the roadmap. |
+| TeamAI / Jev / PK1 | Early beta experiments after B1 | Unchanged intention, but they wait for the beta channel and run after the client-facing phases. |
+
+## 2. Ordering principle and the "not over-engineered" rule
+
+Order is by who is hurt when it is missing:
+
+1. Users on the rollout are hurt today → hotfixes on stable, no refactor attached.
+2. Every later change is slower while CI is heavy → right-size tests.
+3. Every later change is bigger while two platforms and legacy web exist → simplify.
+4. Then change what is inside: dependencies, standards, SQL breadth, first run.
+5. Then experiments (beta channel, PK1, TeamAI, Jev) and the desktop.
+
+Rules for every package, in addition to the hard gates in revision 2.0 (no source
+loss, no credential leakage, no approval bypass, no accidental Fabric or database
+mutation, no update overwriting user configuration):
+
+- One PR, one purpose. No "cleanup plus upgrade plus feature".
+- No new framework, registry, schema, environment variable, test mode, or
+  abstraction unless it deletes more than it adds or closes a bug a user hit.
+- A test is written for a boundary or a bug, not for coverage. A test that needs a
+  sleep, a PTY, a marker file, or a load-dependent wait is an integration test and
+  does not belong in the PR gate.
+- Paired scripts, bash 3.2, and the `.ps1` BOM rules in `AGENTS.md` still apply until
+  the simplification phase retires them in the same PR that retires the surface.
+
+## 3. Phase 0 — Rollout hotfixes on stable
+
+These are the bugs users hit in the week of September 21. Two were already fixed and
+released (pipx not visible to a fresh Windows user in v0.23.4; antivirus quarantining
+`lib/common` giving cascading "not recognized" errors in v0.23.5). The rest are
+open. Each is a small PR against `main`, released as a patch when Aaron asks.
+
+### H1 — Installer: check every prerequisite first, in order, and print the exact command
+
+**Observed:** `coop install` tries a silent `winget install` for missing Git, Python
+3.12, Node LTS, and Azure CLI, discards winget's output and exit code, warns, and
+**continues** (`$ErrorActionPreference = 'Continue'`). On a machine without Node the
+install then fails several steps later ("cannot install pi (npm missing)", every
+extension "skipped", authoring tools "skipping", doctor "pi missing"). Without
+Python it fails at pipx and the Fabric CLI. Four concrete defects make it worse:
+
+- `Coop-Warn` in `lib/common.ps1` takes one parameter, so every call that passes a
+  second "how to fix" argument (the Node-too-old hint, all ODBC hints) silently
+  drops the hint. The bash twin prints it. Users on Windows see the problem and
+  not the command.
+- The Node minimum is hard-coded to 22.19.0 in both installers instead of read from
+  `config/release-manifest.json`; only doctor reads the manifest.
+- After a winget install the script adds a few known directories to `PATH` but not
+  the Python install-manager location, so a just-installed Python is not found in
+  the same window; pipx then reports "python missing".
+- `README.md` says Azure CLI is auto-installed in one section and "not
+  auto-installed" in another.
+
+No test covers "Node missing" or "Python missing". The background-job units in
+`install.ps1` (`$UnitPi`, `$UnitPytool`) reference variables and a helper that are
+not passed into the job runspace; verify on a workstation whether those units work
+at all when reached (read-only finding, not reproduced).
+
+**Fix:** a single prerequisite stage at the top of `install.ps1` (and the bash twin
+while it exists) that checks everything before installing anything, in dependency
+order, and stops with a numbered checklist when a required item is missing:
+
+| Order | Prerequisite | Why this order | Command printed when missing (Windows) |
+| --- | --- | --- | --- |
+| 1 | Git | clone/update of coop-agent and knowledge repos | `winget install --id Git.Git -e` |
+| 2 | Node.js ≥ 22.19 (LTS) | Pi and every npm tool need it | `winget install --id OpenJS.NodeJS.LTS -e` |
+| 3 | Python 3.10–3.13 (3.12 recommended) | Fabric CLI cannot run on 3.14; pipx needs a Python | `winget install --id Python.Python.3.12 -e` |
+| 4 | pipx | installs coop tools and Fabric CLI; needs Python | `py -3.12 -m pip install --user pipx` then `py -3.12 -m pipx ensurepath` |
+| 5 | Azure CLI | Fabric, Power BI, SQL tokens | `winget install --id Microsoft.AzureCLI -e` |
+| 6 | ODBC Driver 18 for SQL Server | `pyodbc` live SQL fallback and Azure SQL | `winget install --id Microsoft.msodbcsql.18 -e` (id to confirm on a workstation) |
+| 7 | Tabular Editor CLI (optional) | BPA reviews only | link plus `te auth login` |
+
+Behavior: print the table with a ✓/✗ per row, then either "all prerequisites
+present, continuing" or "install the ✗ rows above in that order, open a **new**
+terminal, run `coop install` again". With `--prereqs auto` (default off until proven)
+run the winget commands **visibly**, re-check, and still require the new terminal.
+`coop doctor` reuses the same check list and messages, so install and doctor never
+disagree. Keep `--no-prereqs`. No new framework: one function, one table.
+
+**Acceptance:** fresh Windows VM without Node and without Python stops at the
+checklist with the two commands; after running them and reopening the terminal,
+`coop install` completes and `coop doctor` exits 0. Regression: a machine with every
+prerequisite behaves as today.
+
+### H2 — Azure sign-in happens automatically
+
+**Observed:** three places can sign in, and none of them works by default on the
+rollout machines.
+
+- The launch preflight (`coop_az_preflight` in `lib/common.sh`,
+  `Invoke-CoopAzPreflight` in `lib/common.ps1`) returns before doing anything when
+  there is no `.coop/project.yml` under the working directory **or** when
+  `fabric.tenant_id` is empty or starts with `TODO`. The bundled fallback contract
+  ships `TODO`, so from the desktop shortcut (home folder) or any repo without a
+  contract, sign-in is never attempted. It ignores the tenant that onboarding
+  already saved to `~/.coop/config` (`azure.tenant_id`).
+- When the preflight does run, it checks only a Power BI token. The Fabric MCP and
+  the SQL fallback mint a Fabric token (`https://api.fabric.microsoft.com`, no
+  `--tenant`), so a user can pass the preflight and still see `auth_required`
+  inside the session.
+- The preflight asks "Run az login now?" with default **No**, and refuses outright
+  on a non-interactive stdin. From a shortcut there is nobody to answer.
+- Onboarding's sign-in (`lib/azure_auth.py`) runs `subprocess.run(["az", ...])`
+  with no shell. On Windows the Azure CLI is `az.cmd`; `shutil.which` finds it,
+  but the process call cannot start a `.cmd` without `cmd.exe`, so tenant discovery
+  returns nothing and the user is told "Azure sign-in did not complete" before a
+  browser ever opens. Only `fabric_request_headers.mjs` handles `az.cmd`
+  correctly; the tests avoid the bug by pointing `COOP_AZ_BIN` at a `.bat`.
+- `coop doctor` treats `az` as optional presence only; it never reports sign-in
+  state except through the Warehouse probe.
+
+**Fix:**
+- Tenant comes from one place with a fallback chain: `.coop/project.yml`
+  `fabric.tenant_id` → `~/.coop/user.json` tenant (set once by onboarding) →
+  Cooptimize default in `config/defaults.yml`. A `TODO` value counts as unset.
+- Preflight checks the Fabric resource token first (`https://api.fabric.microsoft.com`),
+  then Power BI; either missing triggers sign-in.
+- One `az` invocation helper shared by Python, PowerShell, and Node that resolves
+  `az.cmd` on Windows (the `fabric_request_headers.mjs` logic, reused, not copied).
+- Sign-in runs `az login --tenant <id> --allow-no-subscriptions` directly (browser
+  flow) and falls back to `--use-device-code` when no browser can open. No confirm
+  prompt; the user asked for coop, not for a question about Azure. Token minting
+  for Fabric passes the same `--tenant`.
+- On failure, launch continues with one line that names the exact command, and
+  `coop doctor` gains one row: signed in to tenant X / not signed in, run this.
+- Cache stays as today (`.az-ok`, 30 minutes, tenant-stamped).
+
+**Acceptance:** fresh machine, signed-out `az`: first `coop` opens the browser sign-in
+once, then the Fabric MCP tools list without `auth_required`. Signed-in machine: no
+prompt, no delay beyond the cached check.
+
+### H3 — Default project contract matches the Cooptimize standards repos
+
+**Observed:** the shipped `.coop/project.yml` and `.coop/project.example.yml`, the
+`coop init` generator (`lib/init_wizard.py`), and the in-app `/setup-project` wizard
+have no `standards:` section any more (removed in v0.23.3). Canonical standards are
+resolved from `config/standards-registry.json`, which is **also hard-coded inside
+`lib/standards.mjs`** and pins the `cooptimize/coop-standards` repository to: a root
+`standards.yml` with ten exact scalar values, exactly three domains (`sql`, `dax`,
+`semantic_model`) at exactly `standards/sql.md`, `standards/dax.md`,
+`standards/semantic-model.md`, branch `main`, and anchor commit `fa109f1`. Anything
+else in the standards repo fails with "domain set differs from managed registry" or
+"canonical path differs from managed registry". `cooptimize/incremental-bi` is only a
+knowledge clone whose Markdown is excerpted by keyword.
+
+**Blocked on access:** this review could not read either private repository (the
+session's GitHub credential has no access to `cooptimize/coop-standards` or
+`cooptimize/incremental-bi`). The exact fix is written once the current layout is
+visible: either grant read access and rerun, or paste the two repos' `tree` output and
+the standards manifest.
+
+**Fix, independent of the exact layout:**
+- Delete the duplicated registry constant in `lib/standards.mjs`; the JSON file is the
+  only copy.
+- Read the domain list and paths **from the standards repo's own manifest** and
+  validate them for safety (relative, contained, regular files), not for equality
+  with a list frozen in coop-agent. New or renamed domains then work without a
+  coop-agent release.
+- Regenerate the default `.coop/project.yml`, the example, `coop init`, and
+  `/setup-project` from that format, and accept the nested `standards.<domain>.path`
+  shape in project-local overrides (today only the scalar `standards.sql: file`
+  shape is read).
+- Treat `incremental-bi` the way its repository is actually organized (patterns per
+  folder, learnings, skills), with the same reader instead of a keyword grep.
+
+### H4 — Regression evidence for the fixes that already shipped
+
+Keep the v0.23.4/v0.23.5 fixes in the plan so that the simplification phase does not
+undo them: pipx launcher directory resolution via `sysconfig` on Windows, the clear
+message when `lib/common` is missing, and the setup-bridge early-close wording.
+No new work.
+
+## 4. Phase 1 — Right-size tests and CI
+
+**Goal:** every PR runs a gate that finishes in a few minutes and fails only for a
+real regression. Everything slower runs on demand or nightly. No test is skipped,
+disabled, or quarantined to get green; a test leaves the repo only with the surface
+it covers or with a named replacement.
+
+**Observed (September 28, measured on a Linux container; CI on `main` is green at
+v0.23.5):**
+
+- `tests/` holds 95 files and 23,765 lines against 29,613 lines of product source
+  (`bin`, `lib`, `scripts`, `extensions`), a 0.8 ratio before counting the 3,207-line
+  Windows acceptance harness.
+- A full `bash tests/run.sh` takes roughly 6.5 to 7 minutes when it passes. Over
+  five minutes of that is spent in a dozen process fixtures: `sync-knowledge`
+  (62 s, 56 sleeps), `inventory` (57 s), the standards generation crash test
+  (40 s, eight spawned children), `fleet-execution` + `install-python-prereq`
+  (47 s), `fabric-request-headers` (27 s), `webbridge` (27 s), `knowledge-git`
+  (22 s), `doctor` (21 s), `review` (19 s), `home-guard` (14 s). The guardrail
+  suite, the largest logic suite, runs in under one second.
+- CI runs that suite three times per PR (ubuntu, Windows Git Bash, and the pwsh
+  twin), plus a macOS bash 3.2 parse job, a Windows PowerShell 5.1/7 parse job with
+  PSScriptAnalyzer, a Pi matrix job that installs Pi from npm, and a focused Windows
+  knowledge-search job whose own comment says the full suite "legitimately remains
+  red on unrelated open defects".
+- Three of the last four commits on `main` are timing repairs (30-second marker
+  waits, hang-fixture headroom, orphan reaping). Of the last 40 commits touching
+  `tests/`, 35 are Windows fixture debugging iterations from September 18 and 19.
+- On this container the suite fails deterministically at
+  `fabric-mcp-launch.test.sh` phase `web-no-python-warning`, a fixture for the
+  retired `coop web` path that builds a synthetic minimal `PATH`. It passes in CI.
+  A test that depends on which directory `python3` lives in is not a product test.
+- Ten test files are not run by anything (`ado`, `fleet-digest`,
+  `install-pipx-path`, `missing-common-guard`, `knowledge-read`,
+  `knowledge-retrieve`, `knowledge-sources`, `support-center`, `tool-result`,
+  `repro-tmp-contamination`). The BOM is checked three separate times.
+
+That is the "too aggressive" signal: the cost is in process fixtures and
+duplicated gates, not in the logic tests users depend on.
+
+**Split:**
+
+| Lane | Runs when | Contents |
+| --- | --- | --- |
+| `gate` (required on every PR) | push and PR | syntax (`bash -n`, pwsh parse), shellcheck, parity/BOM (until retired), JSON/YAML/resource validation, esbuild transpile, and the **deterministic logic suites**: standards, guardrails, coop-tools contract, project wizard, launch-spec, `_yaml.py`, `_extdeps.py`, mcp-config, warehouse-mcp, fabric-sql-query, init wizard, doctor project. Target under five minutes on ubuntu. |
+| `extended` (manual `workflow_dispatch` + nightly) | schedule | process and timing fixtures: fabric-mcp-launch, sync-knowledge hang cases, first-run PTY, fleet execution, knowledge-git process inspector, update-guard, staleness, azcache, home-guard, inventory, and the Windows-native probes. |
+| `workstation acceptance` | on demand before a release | the existing `windows-terminal-workstation-acceptance.yml` and `acceptance/` receipt. |
+
+**Delete with their surface (Phase 2):** `webbridge.test.mjs`, `protocol.test.mjs`,
+`diffmodel.test.mjs`, `fabric-mcp-web-launch.test.mjs`, `stub-pi.mjs`, and the two
+web phases inside `fabric-mcp-launch.test.sh` (legacy web); the macOS-specific
+cases in `knowledge-git`, `inventory`, `install-python-prereq`, `coop-profile` and
+the macOS bash 3.2 job once the bash product path is retired; the
+`COOP_UPDATE_GATE_DRYRUN` / `COOP_FLEET_TEST_MODE` test modes per revision 2.0 S7.
+`fleet-*` and `ado-*` fixtures stay unless Aaron retires those features.
+
+**Wire or delete now (Phase 1):** the ten orphaned test files above either join the
+gate lane (`tool-result`, `knowledge-*`, `support-center`, `missing-common-guard`,
+`install-pipx-path` look like real unit tests) or are deleted; one BOM check, not
+three.
+
+**Rules for new tests going forward:** a fixture may not sleep or poll for a
+subprocess in the gate lane; a Windows-only behavior gets one Windows test, not a
+synthetic matrix; a bug fix adds the one test that reproduced it.
+
+**Acceptance:** gate lane green on ubuntu and windows-latest in under five minutes;
+extended lane documented in `docs/ci.md`; no assertion weakened; the list of tests
+moved or removed recorded in the PR with the reason per file.
+
+## 5. Phase 2 — Simplify for Windows first
+
+Revision 2.0's S1–S7 packages, in this order and with these decisions:
+
+1. **S1 Retire the POSIX product path.** Keep `bin/coop` only as a small Git Bash
+   forwarder to `coop.ps1` (Git Bash on Windows is still a supported entry). Delete
+   the bash lifecycle scripts (`install.sh`, `update.sh`, `sync.sh`, `doctor.sh`,
+   `uninstall.sh`, and the digest/onboard twins) and the parity gate with them.
+   Development of coop-agent itself still works on a headless Linux box for the gate
+   lane; operating coop needs Windows.
+2. **S5 Remove legacy web** (`web/`, `coop web`, its token wrapper, its tests). The
+   Electron desktop in Phase 8 does not reuse this code; the shared launch spec
+   (`coop launch-spec --json`) is what it needs and that stays.
+3. **S3 One profile root.** `COOP_DIR` means two different things today; keep the
+   stable defaults, add nothing new until the beta channel needs it, but make every
+   reader agree.
+4. **S2 / S4 / S6** as described in revision 2.0: one install/update/sync
+   convergence path, shared token and MCP predicates with doctor observational, dead
+   data-doc writer helpers removed after call-site proof.
+5. **S7 Docs and instructions** updated in the same PRs (`AGENTS.md`,
+   `CONTRIBUTING.md`, `docs/ci.md`) so agents do not reinstate parity or BOM duties
+   for files that no longer exist.
+
+**Dependencies to drop when Windows-first (confirm each before deleting):**
+
+| Candidate | Reason | Confirm |
+| --- | --- | --- |
+| `mcp-remote` | only bridges Microsoft Learn; Learn offers direct Streamable HTTP and `pi-mcp-adapter` 3.x speaks it | direct HTTP works through the adapter on Windows |
+| `powerbi-mcp-server` (unscoped npm, 0.1.0) | superseded by `@microsoft/powerbi-modeling-mcp` 1.0.0 | no skill or prompt depends on its tool names |
+| `pi-better-openai` | B0 found its configuration inactive on the live install | footer usage segment still renders without it |
+| `context-mode` | sandboxed code execution over docs; overlaps Pi's own compaction | measure context saved on two real sessions |
+| Homebrew/apt/dnf prerequisite branches, `/opt/homebrew` troubleshooting | Mac-only | goes with S1 |
+
+## 6. Phase 3 — Dependency reconciliation against the freeze
+
+Drift measured on September 28, 2026 with read-only `npm view` and PyPI metadata.
+The manifest is `config/release-manifest.json` at v0.23.5.
+
+| Component | Pinned | Latest | Needed? | Notes |
+| --- | --- | --- | --- | --- |
+| `@earendil-works/pi-coding-agent` | 0.84.3 | 0.87.1 (Sep 22) | **Yes, qualify** | 0.86.0 and 0.87.0 carry breaking extension-API changes (`user_bash` fails closed, `ToolCall.arguments` JSON-only, `turn_end` boundaries, `SessionManager` canonical). The four Coop extensions and the guardrail runner test must be re-verified. Still Node ≥ 22.19. |
+| `pi-mcp-adapter` | 2.34.0 | 3.1.0 (Sep 27) | **Yes, after Pi** | 3.x peer range accepts pi-ai 0.84–0.87; a 3.0 major means read its changelog for config-shape changes before touching `mcp.json` generation. |
+| `pi-hermes-memory` | 0.7.17 | 0.9.9 | Maybe | private memory; check cache roots and secret scanning still behave. |
+| `pi-web-access` | 0.10.7 | 0.33.0 | Maybe | research only; qualify Windows and security changes. |
+| `@juicesharp/rpiv-ask-user-question` | 1.20.0 | 2.11.0 | **Yes, qualify** | major bump; the setup wizards depend on its dialogs and cancellation. |
+| `pi-better-openai` | 0.1.22 | 0.1.22 | No | candidate to drop (section 5). |
+| `context-mode` | 1.0.169 | 1.0.169 | No | candidate to drop (section 5). |
+| `@microsoft/powerbi-modeling-mcp` | 0.5.0-beta.12 | **1.0.0** (Sep 25) | **Yes** | first GA; read-only invocation and connection scope must be re-checked. |
+| `@microsoft/powerbi-report-authoring-cli` | 0.1.4 | 0.4.0 | **Yes** | the report skills call it; validate output contracts. |
+| `@microsoft/powerbi-desktop-bridge-cli` | 0.1.2 | 1.0.0 | Yes | re-test the reload/save source-loss report (S31 in revision 2.0) on disposable PBIP files. |
+| `@microsoft/fabric-mcp` | 1.3.0 | 1.4.0 | Yes | B0 found 1.0.0 installed and 1.2.0 cached; pin exactly, never `@latest`. |
+| `@azure-devops/mcp` | 2.9.0 | 2.10.0 | Low | B0 found 2.10.0 already at the executable path. |
+| `mcp-remote` | 0.1.38 | 0.14.3 | Drop or pin | see section 5. |
+| `coop-data-doc` / `coop-sql-review` / `coop-dax-review` | 1.2.0 / 0.15.2 / 0.22.0 | same | No | unchanged since the freeze; the reviewer decision is in section 7. |
+| `ms-fabric-cli` / `fabric-cicd` / `pyodbc` | 1.7.0 / 1.3.0 / 5.3.0 | same | No | unchanged. |
+| `microsoft/skills-for-fabric` catalog | v0.3.10 | v0.3.18 (Sep 25) | **Yes** | v0.3.12 merged the two pinned `sqldw-*` skills into `sqldw-cli`; v0.3.17 unified `powerbi-report-cli`; new `sqldb-cli` targets Fabric SQL database. The allowlist in `config/microsoft-skills.json` must be remapped. |
+| `microsoft/skills` (`kql`, `microsoft-docs`) | commit 903dc62 | not checked | Low | refresh with the catalog step. |
+
+Order inside the phase: Pi → adapter → ask-user-question → Microsoft npm tools →
+Fabric skills catalog → the "maybe" rows. One PR per row, each with the exact
+old/new versions, what changed, the tests run, and the rollback. Upgrades land on
+stable only through the beta channel once Phase 7 exists; until then they are
+qualified on a disposable Windows profile and released as a normal version bump
+when Aaron asks.
+
+## 7. Phase 4 — Standards alignment and the reviewer decision
+
+Depends on H3 having access to the two repositories.
+
+1. **Resolver follows the repo.** Finish H3's data-driven reader; keep provenance
+   (revision, file hash, snapshot) because it is what makes a review reproducible,
+   drop the anchor-commit and archive-hash equality checks that only prove the repo
+   has not changed shape.
+2. **Standards are what coop writes to.** Every skill and prompt that authors SQL,
+   DAX, or a semantic model reads the effective standard for that domain at task
+   start (this already happens through `buildStandardsContext`) and the
+   `coop-workflow` slice checklist names the standard section it applied.
+3. **Reviewer decision.** `coop-sql-review` and `coop-dax-review` are deterministic
+   linters with their own rule sets, keyed to the standards through `--standards`.
+   Once coop applies the standards while writing, the in-agent `sql_review` and
+   `dax_review` tools mostly re-find what the model already knows. Recommendation:
+   - retire the in-agent wrappers and the bundled-fallback resolution path (a large
+     part of `lib/standards.mjs` exists only to bind reviewer provenance);
+   - keep the two CLIs as **optional CI gates** (`coop init --ci`, `docs/ci.md`) only
+     for clients whose pipelines run them, and re-key their rules to the new
+     standards format in their own repos;
+   - if no client pipeline uses them within one quarter, archive the CLIs.
+   Aaron decides; the plan carries both paths.
+4. **Tabular Editor BPA** stays as the deterministic model check; it is vendor-owned
+   and not tied to the standards format.
+
+## 8. Phase 5 — SQL platform breadth: Fabric plus Azure SQL, dev by default, live impact
+
+**Observed:** live SQL works only against Fabric. The pyodbc fallback accepts only
+`*.datawarehouse.fabric.microsoft.com` servers discovered through the Fabric REST
+API; the managed MCP route is the Fabric SQL-endpoint data-plane URL; the target
+model is Fabric workspace and item GUIDs; the environment is inferred by matching
+workspace names. No code queries `sys.*` metadata; impact analysis comes only from
+the `coop-data-doc` graph built from local files, which does not exist when SQL is
+not source-controlled.
+
+**Work, in order:**
+
+1. **Connection targets in the contract.** Add a `sql_targets:` section to
+   `.coop/project.yml` with one entry per environment and a `default_environment:
+   dev`. Each entry names a `kind` (`fabric_warehouse`, `fabric_lakehouse`,
+   `azure_sql`, `azure_sql_serverless`), `server`, `database`, and for Fabric the
+   existing workspace/item IDs. Production entries are present but never default.
+2. **Azure SQL in the fallback executor.** Extend `lib/fabric_sql_query.py` (rename
+   to `sql_query.py` in the same PR) to accept `*.database.windows.net` and
+   serverless `*-ondemand.sql.azuresynapse.net` hosts from the contract, same
+   token audience (`https://database.windows.net/`), same ODBC Driver 18, same
+   row/byte/timeout caps, `ApplicationIntent=ReadOnly` where the target supports
+   it. No SQL authentication, no stored passwords.
+3. **Guardrails unchanged in spirit, wider in vocabulary.** The bounded session grant
+   (`LiveReadScope`) gains the target kind and environment from the contract instead
+   of the hard-coded Fabric URL; production keeps the explicit-scope-and-approval
+   rule; DDL/DML on dev still asks once per session.
+4. **Live impact tracing.** A read-only `sql_impact` capability that, for one object
+   on the default (dev) target, queries `sys.sql_expression_dependencies`,
+   `sys.dm_sql_referencing_entities`, `sys.sql_modules`, and `INFORMATION_SCHEMA`
+   to return upstream and downstream objects, then hands the same object to
+   `data_doc lineage` when built docs exist. The `impact-analysis` prompt and the
+   `coop-workflow` skill call it before any edit. The current query filter rejects
+   quotes and `WITH`, so this needs its own allow-listed parameterized queries, not
+   the free-text path.
+5. **Verify with data.** The slice workflow already requires a failing check before
+   and a passing check after. Make it concrete for SQL: capture row counts and a
+   bounded sample for the affected objects on dev before the edit, apply the edit on
+   dev (after approval), re-run the same queries, and show the difference. Writes go
+   only to the default dev target; test and production remain ask-first and
+   explicit-approval respectively.
+6. **Microsoft skill mapping.** Enable `sqldw-cli` for Fabric and evaluate `sqldb-cli`
+   (Fabric SQL database, OLTP) from the v0.3.18 catalog; neither covers Azure SQL
+   outside Fabric, so Coop's own `sql-review`/workflow guidance stays the authority
+   for Azure SQL.
+
+**Acceptance:** on a dev Azure SQL database and on a Fabric Warehouse, the same
+session traces a view's dependents, edits it with approval, and shows before/after
+counts. A production target configured in the same contract is never selected
+without the explicit approval path. No credential or connection string ever
+appears in a tool result or audit record.
+
+## 9. Phase 6 — First run shows common workflows, not a wizard
+
+**Observed:** the first plain `coop` launch runs `scripts/onboard.py` (name,
+communication preference, integrations) before Pi starts and stops the launch when
+it fails; `/start` is an on-demand menu whose first item creates or edits the
+project contract; `/setup-docs` and `/setup-project` are separate wizards.
+
+**Change:** on first run (and via `/start` any time) open one menu of the workflows
+consultants actually do, each mapped to the existing prompt or skill:
+
+1. Review a SQL object or a DAX measure against the standards (`sql-review`,
+   `dax-review`)
+2. Trace impact of a change (`impact-analysis`, Phase 5 live tracing)
+3. Fix or edit an object on dev with approval (`spec-first` → `slice-next`)
+4. Document a warehouse or semantic model (`setup-docs`, `data_doc build`)
+5. Start a client project (`/setup-project`)
+6. Write today's log or a handoff (`daily-log`, `handoff`)
+7. Sign in or check health (`az login`, `coop doctor`)
+
+Onboarding questions that are still needed (name, tenant) move into item 5 or into
+the first workflow that needs them; nothing blocks the launch. The menu is the
+existing `/start` code in `extensions/coop-tools`, not a new UI.
+
+## 10. Phase 7 — Beta channel and optional experiments
+
+**B1, minimal.** Revision 2.0's isolated beta channel is still the right way to
+qualify upgrades without touching users' stable installs, but it comes **after**
+simplification so it isolates one platform, not two. Scope stays what the
+B1 proposal in [PR 72](https://github.com/kabukisensei/coop-agent/pull/72) bounds: a separate clone,
+`COOP_PROFILE_ROOT` meaning the profile directory itself, a private npm prefix and
+pipx home, a `coop-beta` shim, and the same lifecycle code fed an installation
+context. No copied installer, no second manifest schema. Version reporting shows
+channel, version, SHA, and safe paths.
+
+**Then, each only when Aaron asks, each independently revertible:**
+
+- **PK1** package-fit trials (session naming, `apply_patch`, redacted diagnostics,
+  scoped simplify) per the package-fit review in [PR 72](https://github.com/kabukisensei/coop-agent/pull/72), GPT subscription only.
+- **K1–K3 TeamAI** shared knowledge, starting with isolated CLI and read-only recall.
+- **J0–J3 Jev** shadow experiments on synthetic material, advisory only.
+
+The controls in revision 2.0 sections 8 and 9 (data approval, secrets, authority,
+cost caps, stop conditions) are unchanged.
+
+## 11. Phase 8 — Electron desktop, installable on other users' machines
+
+Revision 2.0 removed Desktop and reserved a native Windows rewrite for last. Aaron
+wants the Electron desktop back, later, with one hard requirement: **another user
+installs it without a terminal, Node, or Python knowledge**. That changes the
+gate, not the order; it stays last.
+
+- **Entry gate:** the terminal product is simplified (Phase 2), dependencies are
+  reconciled (Phase 3), and the first-run workflows exist (Phase 6). The desktop
+  reuses the shared launch spec and the same guardrails, skills, prompts, and
+  profile; it must never carry a second policy implementation.
+- **Reference, not merge:** the ten `feature/coop-desktop-*` and
+  `desktop/candidate-2026-09-20` branches and `docs/ui-strategy.md` are design
+  evidence. Salvage after review; do not merge wholesale.
+- **Packaging is the project:** a signed Windows installer (MSIX or a Squirrel/NSIS
+  package via electron-builder) that bundles Node, installs or reuses Pi in the
+  coop profile, checks the same prerequisite table as H1 for Python, Azure CLI, and
+  ODBC, and updates through the same channel logic as the terminal. No custom
+  updater beyond what the packager provides.
+- **Decision to record before starting:** a native rewrite (WinUI/WPF) is off the
+  roadmap; "Coop 2.0" means this packaged Electron app.
+
+## 12. Other improvements found in this review
+
+Not requested, offered for Aaron's decision. None is scheduled.
+
+- **Policy fields in the contract are write-only.** `estate.live_discovery`,
+  `mcp.*.requires_approval_actions`, and `tests.live_data` are written by the wizards
+  but no enforcement code reads them; the guardrails are hard-coded. Either wire
+  them (Phase 5 step 3 is the natural place) or drop them from the template so the
+  contract does not promise what it cannot enforce.
+- **`docs/tool-contract.md` drifted** from the code: the reviewer invocation omits
+  `--standards`, the sample report uses `rule` where the validator requires
+  `rule_id`, and the `details` shape is missing four fields. Fix in Phase 4.
+- **`config/standards-registry.schema.json` validates the legacy fixture manifest**,
+  not the registry it is named after. Rename or delete in H3.
+- **The `PENDING_OWNER_PROVISIONING` doctor state** is defined and never emitted.
+  Delete in S6.
+- **Open [PR 72](https://github.com/kabukisensei/coop-agent/pull/72)** (B0 receipt,
+  B1 proposal, PK1 fit review) should merge as documentation once its plan-diff is
+  rebased on this revision, so the B0 evidence is not lost. It removed the `y0usaf/pi-jev` rows that `main` still carries; keep
+  `main`'s rows.
+- **Stale branches.** Thirty-nine remote heads, many `tmp/`, `test/`, `wip/`, and
+  "DO NOT MERGE" verification branches. Delete the ones whose PR is closed after
+  Aaron confirms; they confuse "which branch is the beta".
+- **Daily logs reference `E:` and `C:` workstation paths.** Fine as evidence, but the
+  plan should not depend on a specific machine's drive letters; B1's E: proposal is
+  Aaron's workstation preference, not a product path.
+
+## 13. Ordered work register
+
+| Order | ID | Package | Starts after | Done when |
+| --- | --- | --- | --- | --- |
+| 1 | H1 | Installer prerequisite gate with ordered commands; doctor reuses it | now | fresh VM acceptance in section 3 |
+| 2 | H2 | Automatic Azure sign-in, tenant fallback chain, Fabric token check | now | signed-out machine acceptance |
+| 3 | H3 | Standards reader follows the repo; default contract regenerated | repo access | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` |
+| 4 | T1 | CI gate/extended split; fixture rules | H1–H3 merged | gate under five minutes, both OS, no weakened assertion |
+| 5 | S1, S5 | Retire POSIX product path and legacy web | T1 | one Windows implementation, forwarder kept, tests removed with their surface |
+| 6 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM |
+| 7 | U1 | Dependency reconciliation per section 6, one row per PR | S-lane | exact versions, tests, rollback per PR; keep/drop list closed |
+| 8 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewer keep/retire decided and executed |
+| 9 | SQ1–SQ6 | Azure SQL targets, dev default, live impact, data verification | ST1 | section 8 acceptance |
+| 10 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks |
+| 11 | B1 | Minimal beta channel | S-lane | B1 proposal acceptance table, one platform |
+| 12 | PK1, K1–K3, J0–J3 | Optional experiments | B1 + explicit start | revision 2.0 gates |
+| 13 | D1 | Electron desktop with packaged installer | 5–10 accepted | another user installs from the package alone |
+
+Phases 1–3 can each be released as a patch. Phases 4–10 are minor versions. Nothing
+in this table is `agent:ready` until Aaron marks it.
+
+## 14. What this review could not verify
+
+- The private repositories `cooptimize/coop-standards` and `cooptimize/incremental-bi`
+  were not readable from this session; H3 and Phase 4 are specified from coop-agent's
+  side only.
+- No Windows workstation was available; installer and sign-in behavior is inferred
+  from the scripts, the README, the v0.23.4/v0.23.5 changelog, and the B0 receipt.
+- Dependency "latest" values are registry metadata on September 28, 2026; none was
+  installed or run.
+- Whether any client CI pipeline runs `coop-sql-review` or `coop-dax-review` today
+  is unknown and decides section 7.
