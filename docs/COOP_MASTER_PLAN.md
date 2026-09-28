@@ -578,11 +578,11 @@ same PR.
 
 | Order | ID | Package | Starts after | Done when | Status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | H1 | Installer prerequisite gate with ordered commands; doctor reuses it | now | fresh VM acceptance in section 3 | not started |
-| 2 | H2 | Automatic Azure sign-in, tenant fallback chain, `az.cmd`, Fabric token check | now | signed-out machine acceptance | not started |
-| 3 | H5 | `coop update` follows release tags; `--edge` for head | now | tag/edge acceptance in section 3 | not started |
-| 4 | H6 | One-page Windows install doc matching the H1 checklist | H1 | a teammate installs from the page alone | not started |
-| 5 | H3 | Standards reader follows the repo; default contract regenerated | repo access | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` | blocked: repo access |
+| 1 | H1 | Installer prerequisite gate with ordered commands; doctor reuses it | now | fresh VM acceptance in section 3 | issue open: [#76](https://github.com/kabukisensei/coop-agent/issues/76) |
+| 2 | H2 | Automatic Azure sign-in, tenant fallback chain, `az.cmd`, Fabric token check | now | signed-out machine acceptance | issue open: [#77](https://github.com/kabukisensei/coop-agent/issues/77) |
+| 3 | H5 | `coop update` follows release tags; `--edge` for head | now | tag/edge acceptance in section 3 | issue open: [#78](https://github.com/kabukisensei/coop-agent/issues/78) |
+| 4 | H6 | One-page Windows install doc matching the H1 checklist | H1 | a teammate installs from the page alone | issue open: [#79](https://github.com/kabukisensei/coop-agent/issues/79) |
+| 5 | H3 | Standards reader follows the repo; default contract regenerated | local clones of both repos | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` | issue open: [#80](https://github.com/kabukisensei/coop-agent/issues/80) |
 | 6 | T1 | CI gate/extended split; fixture rules | H1–H3 merged | gate under five minutes, both OS, no weakened assertion | not started |
 | 7 | S1, S5 | Retire POSIX product path and legacy web | T1 | one Windows implementation, forwarder kept, tests removed with their surface | not started |
 | 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | not started |
@@ -596,8 +596,8 @@ same PR.
 | 16 | D1 | Electron desktop with packaged installer | 7–12 accepted | another user installs from the package alone | not started |
 
 Phase 0 rows can each be released as a patch. Later phases are minor versions.
-Nothing in this table is `agent:ready` until Aaron marks it; H1, H2, H5, and H6 are
-ready to become issues now (section 14).
+Nothing in this table is `agent:ready` until Aaron marks it. The Phase 0 issues
+exist (#76 H1, #77 H2, #78 H5, #79 H6, #80 H3) and carry the plan text as their body.
 
 ## 14. Working this plan: agents, issues, and the development VM
 
