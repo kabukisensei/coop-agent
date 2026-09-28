@@ -130,10 +130,14 @@ esac
 
 PHASE='auth-failure'
 rm -f "$MARKER/pi-state"
+# A cached Azure preflight success (.az-ok) is stale once the mint reports
+# auth_required: the launch drops it so the next launch checks again (H2).
+printf '%s' 'cached-tenant.example' > "$AGENT_DIR/.az-ok"
 COOP_TEST_AZ_MODE=auth COOP_TEST_EXPECT_TOKEN=absent \
 COOP_FABRIC_MCP_TOKEN='stale-inherited-token' run_coop >"$TMP/fail.out" 2>"$TMP/fail.err"
 [ -f "$MARKER/pi-state" ]
 grep -F 'Azure authentication is required' "$TMP/fail.err" >/dev/null
+[ ! -e "$AGENT_DIR/.az-ok" ]
 ! grep -F "$TOKEN" "$TMP/fail.out" "$TMP/fail.err" "$MARKER/pi-argv" >/dev/null
 
 PHASE='launch-spec-stale-token'

@@ -795,3 +795,78 @@ for doctor_script in (ROOT / "scripts" / "doctor.sh", ROOT / "scripts" / "doctor
 print(
     "  OK  Warehouse MCP doctor is token-safe, bounded-by-contract, tool-aware, and target-aware"
 )
+
+# --- Client Azure tenant chain (H2): one resolver for launch, doctor and minting.
+GUID_A = "11111111-1111-4111-8111-111111111111"
+GUID_B = "22222222-2222-4222-8222-222222222222"
+config_tenant = {"azure": {"purpose": "client_resources", "tenant_id": GUID_B}}
+for project, config, expected in (
+    ({"fabric": {"tenant_id": GUID_A}}, config_tenant, ("ok", GUID_A)),
+    ({"fabric": {"tenant_id": f"  {GUID_A.upper()} "}}, {}, ("ok", GUID_A.upper())),
+    ({"fabric": {"tenant_id": "TODO: tenant id"}}, config_tenant, ("ok", GUID_B)),
+    ({"fabric": {"tenant_id": "todo"}}, config_tenant, ("ok", GUID_B)),
+    ({"fabric": {"tenant_id": ""}}, config_tenant, ("ok", GUID_B)),
+    ({"fabric": {"tenant_id": None}}, config_tenant, ("ok", GUID_B)),
+    ({}, config_tenant, ("ok", GUID_B)),
+    ({}, {"azure": {"tenant_id": GUID_B}}, ("ok", GUID_B)),
+    ({}, {"azure": {"purpose": "internal", "tenant_id": GUID_B}}, ("unset", "")),
+    ({}, {"azure": {"purpose": "client_resources", "tenant_id": "TODO"}}, ("unset", "")),
+    ({}, {}, ("unset", "")),
+    ({}, [], ("unset", "")),
+    ({"fabric": {"tenant_id": "contoso.onmicrosoft.com"}}, {}, ("ok", "contoso.onmicrosoft.com")),
+    ({}, {"azure": {"tenant_id": "tenant-aaa.example"}}, ("ok", "tenant-aaa.example")),
+    # Invalid project values stop the chain; the config tenant is never used.
+    ({"fabric": {"tenant_id": "x&calc"}}, config_tenant, ("invalid", "")),
+    ({"fabric": {"tenant_id": "a b"}}, config_tenant, ("invalid", "")),
+    ({"fabric": {"tenant_id": 'x"y'}}, config_tenant, ("invalid", "")),
+    ({"fabric": {"tenant_id": "TBD"}}, config_tenant, ("invalid", "")),
+    ({"fabric": {"tenant_id": "none"}}, config_tenant, ("invalid", "")),
+    ({"fabric": {"tenant_id": "tenant-aaa"}}, config_tenant, ("invalid", "")),
+    ({"fabric": {"tenant_id": ".example"}}, config_tenant, ("invalid", "")),
+    ({"fabric": {"tenant_id": "a..example"}}, config_tenant, ("invalid", "")),
+    ({"fabric": {"tenant_id": "-a.example"}}, config_tenant, ("invalid", "")),
+    ({"fabric": {"tenant_id": GUID_A + "\n"}}, {}, ("ok", GUID_A)),
+    ({}, {"azure": {"tenant_id": "changeme"}}, ("invalid", "")),
+):
+    got = wmcp.tenant_from_sources(project, config)
+    assert got == expected, (project, config, got, expected)
+
+# The `tenant` subcommand: real files, the real project walker, COOP_DIR, a BOM,
+# malformed JSON, exit codes 0/1/2, nothing on stderr, a rejected value never echoed.
+with tempfile.TemporaryDirectory() as tmp:
+    tmp_path = Path(tmp)
+    coop_dir = tmp_path / "coop"
+    (coop_dir / ".coop").mkdir(parents=True)
+    work = tmp_path / "work" / "nested"
+    work.mkdir(parents=True)
+    (tmp_path / "work" / ".coop").mkdir()
+    contract = tmp_path / "work" / ".coop" / "project.yml"
+    config_file = coop_dir / ".coop" / "config"
+    env = {**os.environ, "COOP_DIR": str(coop_dir)}
+
+    def tenant_cli():
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "lib" / "warehouse_mcp.py"), "tenant"],
+            cwd=work, env=env, capture_output=True, text=True, timeout=30,
+        )
+        assert result.stderr == "", result.stderr
+        return result.returncode, result.stdout.strip()
+
+    assert tenant_cli() == (1, "")
+    config_file.write_bytes(b"\xef\xbb\xbf" + json.dumps({"azure": {"tenant_id": GUID_B}}).encode())
+    assert tenant_cli() == (0, GUID_B)
+    contract.write_text('fabric:\n  tenant_id: "TODO: tenant id"\n', encoding="utf-8")
+    assert tenant_cli() == (0, GUID_B)
+    contract.write_text(f"fabric:\n  tenant_id: {GUID_A}\n", encoding="utf-8")
+    assert tenant_cli() == (0, GUID_A)
+    contract.write_text("fabric:\n  tenant_id: 'x&calc'\n", encoding="utf-8")
+    assert tenant_cli() == (2, "")
+    contract.unlink()
+    config_file.write_text("{not json", encoding="utf-8")
+    assert tenant_cli() == (1, "")
+    config_file.write_text(json.dumps({"azure": {"purpose": "internal", "tenant_id": GUID_B}}), encoding="utf-8")
+    assert tenant_cli() == (1, "")
+
+print(
+    "  OK  tenant chain: contract, then ~/.coop/config (client resources only), GUID or dotted domain; invalid stops the chain"
+)

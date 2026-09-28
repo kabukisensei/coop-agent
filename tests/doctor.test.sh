@@ -7,6 +7,8 @@ set -uo pipefail
 
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 COOP_ROOT="$ROOT"; export COOP_ROOT
+# Doctor's Azure sign-in row probes az; only the H2 cases below opt back in, with a fake.
+COOP_SKIP_AZ=1; export COOP_SKIP_AZ
 fail=0
 ok()  { printf '  ✓ %s\n' "$1"; }
 ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
@@ -63,6 +65,40 @@ token_command_failed|Azure CLI launched but token acquisition failed; run: az ac
 token_output_invalid|Azure CLI returned no usable accessToken JSON; verify the Fabric token command output
 auth_required|sign in with Azure CLI/tenant access; doctor never triggers login
 EOF
+
+# Azure sign-in row (H2): probe only, never a sign-in, same tenant chain as the
+# launch. Sandboxed HOME/COOP_DIR, the shared fake az, no python3 stub.
+az_bin="$TMP/az-bin"; az_state="$TMP/az-state"; az_home="$TMP/az-home"; az_cwd="$TMP/az-cwd"
+mkdir -p "$az_bin" "$az_state" "$az_home/.coop" "$az_cwd"
+printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$(command -v node)" "$ROOT/tests/fixtures/fake-az.mjs" > "$az_bin/az"
+chmod +x "$az_bin/az"
+az_doctor() {
+  ( cd "$az_cwd" && HOME="$az_home" COOP_DIR="$az_home" USERPROFILE="$az_home" COOP_SKIP_AZ=0 \
+      COOP_TEST_STUB_PATH="$az_bin" COOP_TEST_AZ_STATE="$az_state" PATH="$az_bin:$PATH" \
+      bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null )
+}
+out="$(az_doctor)"
+case "$out" in
+  *"Azure sign-in: no client tenant configured"*"run: coop onboard --config-only"*) ok "doctor warns when no client tenant is configured" ;;
+  *) ko "doctor did not report the missing client tenant"; printf '%s\n' "$out" | grep -i azure ;;
+esac
+printf '%s' '{"schema_version":1,"azure":{"purpose":"client_resources","tenant_id":"tenant-9.example"}}' > "$az_home/.coop/config"
+: > "$az_state/argv.log"
+out="$(az_doctor)"
+case "$out" in
+  *"Azure sign-in: not signed in to tenant tenant-9.example"*"az login --tenant tenant-9.example --allow-no-subscriptions"*) ok "doctor reports a signed-out client tenant with the exact sign-in command" ;;
+  *) ko "doctor did not report the signed-out tenant"; printf '%s\n' "$out" | grep -i azure ;;
+esac
+if grep -q '^login' "$az_state/argv.log"; then ko "doctor must never sign in"
+elif ! grep -q '^account get-access-token --tenant tenant-9.example ' "$az_state/argv.log"; then ko "doctor did not probe the client tenant"
+else ok "doctor only probes (no az login)"; fi
+printf '%s\n' 'tenant-9.example *' > "$az_state/tokens"
+out="$(az_doctor)"
+case "$out" in
+  *"Azure sign-in: signed in to tenant tenant-9.example"*) ok "doctor reports a signed-in client tenant" ;;
+  *) ko "doctor did not report the signed-in tenant"; printf '%s\n' "$out" | grep -i azure ;;
+esac
+[ ! -e "$az_home/.coop/agent/.az-ok" ] && ok "doctor never writes the launch cache (.az-ok)" || ko "doctor wrote the launch cache"
 
 # Read-only + --start → reported as GOOD (started, read-only).
 d="$TMP/good"

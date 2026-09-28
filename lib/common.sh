@@ -827,49 +827,162 @@ coop_prereq_rows() {
   unset -f _row
 }
 
-# --- Optional Azure preflight (non-fatal) --------------------------------------
-# Mirrors the team's pi-ready habit: if the project pins a Fabric tenant and the
-# Azure CLI is present, make sure a Power BI token exists before launching.
-# Skipped entirely when COOP_SKIP_AZ=1 or no tenant is configured.
+# --- Azure sign-in preflight (non-fatal) ---------------------------------------
+# Before a launch, make sure the Azure CLI can mint the Fabric token, then the
+# Power BI token, for the client tenant. The tenant comes from one chain
+# (coop_tenant): the project contract's fabric.tenant_id, else ~/.coop/config
+# azure.tenant_id (client resources only), else nothing, and then the launch is
+# silent and `coop doctor` says what to set. Skipped entirely when
+# COOP_SKIP_AZ=1.
 #
-# Cached: a successful probe stamps the tenant id into <agent-dir>/.az-ok. Power BI
-# tokens live ~60 minutes and `az` cold-starts in ~1-3s, so within 30 minutes of a
-# success for the SAME tenant the probe is skipped entirely. A failed probe (or a
-# stale/missing/mismatched marker) behaves exactly as before; marker I/O is
-# best-effort and never fails the launch.
+# When az reports an authentication failure and the launch runs in an
+# interactive console (stdin and stderr are terminals, or COOP_ASSUME_YES=1),
+# coop runs `az login --tenant <id>` itself: no question, bounded to 5 minutes,
+# and Ctrl-C cancels it. A timeout or a non-authentication error never opens a
+# sign-in. Any failure prints ONE line naming the command to run, and the
+# launch continues.
+#
+# Cached: a verified check stamps the tenant id into <agent-dir>/.az-ok. Tokens
+# live ~60 minutes and `az` cold-starts in ~1-3s, so within 30 minutes of a
+# success for the SAME tenant no az call is made. A failed check (or a stale,
+# missing or mismatched marker) re-checks; marker I/O is best-effort and never
+# fails the launch.
+
+# Resolve the client Azure tenant (mirror of Get-CoopTenant). The chain and its
+# rules live in one place, `lib/warehouse_mcp.py tenant`. Prints the tenant and
+# returns 0; returns 1 when none is set and 2 when the value is not a GUID or a
+# domain name (a rejected value is never printed).
+coop_tenant() {
+  local py t rc=0
+  py="$(coop_python)" || return 1
+  t="$("$py" "$COOP_ROOT/lib/warehouse_mcp.py" tenant 2>/dev/null)" || rc=$?
+  # tr -d '\r': Python's print() emits CRLF on Windows.
+  t="$(printf '%s' "$t" | tr -d '\r')"
+  case "$rc" in 0|1|2) ;; *) rc=1 ;; esac
+  if [ "$rc" -ne 0 ]; then t=''; fi
+  # Defence in depth: the value goes into az argv and the cache marker.
+  case "$t" in *[!A-Za-z0-9.-]*) t=''; rc=2 ;; esac
+  if [ "$rc" -eq 0 ] && [ -z "$t" ]; then rc=1; fi
+  printf '%s' "$t"
+  return "$rc"
+}
+
+# Run `az <args>` with a hard time limit of <secs> (mirror of Invoke-CoopAz).
+# Returns az's exit code, or 124 when az was stopped (the timeout, or any code
+# above 128). az runs in the FOREGROUND so Ctrl-C still reaches it, and it sees
+# AZURE_CORE_LOGIN_EXPERIENCE_V2=off so `az login` never waits on its
+# subscription picker. The watchdog is fully redirected, so it can never hold a
+# caller's $(...) pipe open; it kills az and the Python child of the az wrapper
+# script. Callers set az's stdout/stderr. bash 3.2-safe; no timeout(1).
+# Usage: coop_az_run <secs> <az args...>
+coop_az_run() {
+  local secs="$1" dir wpid rc=0
+  shift
+  dir="$(mktemp -d 2>/dev/null)" || return 1
+  (
+    s=''
+    trap 'kill "$s" 2>/dev/null; exit 0' TERM
+    sleep "$secs" &
+    s=$!
+    wait "$s" || true
+    p="$(cat "$dir/pid" 2>/dev/null)" || p=''
+    if [ -n "$p" ]; then
+      pkill -P "$p" 2>/dev/null || true
+      kill "$p" 2>/dev/null || true
+    fi
+  ) >/dev/null 2>&1 &
+  wpid=$!
+  AZURE_CORE_LOGIN_EXPERIENCE_V2=off sh -c 'printf "%s" "$$" > "$0" && exec az "$@"' \
+    "$dir/pid" "$@" </dev/null || rc=$?
+  kill "$wpid" 2>/dev/null || true
+  wait "$wpid" 2>/dev/null || true
+  rm -rf "$dir"
+  if [ "$rc" -gt 128 ]; then rc=124; fi
+  return "$rc"
+}
+
+# True when az's stderr reports an authentication failure (a sign-in is needed).
+# The same markers as lib/fabric_request_headers.mjs, so the launch, doctor and
+# the Fabric token helper agree on what "not signed in" means.
+coop_az_auth_error() {
+  local lc
+  lc="$(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  case "$lc" in
+    *"az login"*|*"not logged in"*|*"login required"*|*"authentication required"*) return 0 ;;
+    *interaction_required*|*interactionrequired*|*invalid_grant*) return 0 ;;
+    *aadsts50058*|*aadsts50076*|*aadsts50078*|*aadsts50079*|*aadsts50158*) return 0 ;;
+  esac
+  return 1
+}
+
+# Check that az can mint the Fabric token, then the Power BI token, for tenant
+# $1 (mirror of Get-CoopAzTokenRc). 15 seconds each; --output none keeps tokens
+# out of coop's pipes, and az's stderr is only classified, never shown or kept.
+# Stops at the first failure. Returns 0 when both mint, 1 when az reports an
+# authentication failure, 2 for any other failure, 124 on timeout.
+coop_az_tokens_ok() {
+  local r rc err
+  for r in https://api.fabric.microsoft.com https://analysis.windows.net/powerbi/api; do
+    rc=0
+    err="$(coop_az_run 15 account get-access-token --tenant "$1" --resource "$r" --output none 2>&1 >/dev/null)" || rc=$?
+    if [ "$rc" -eq 0 ]; then continue; fi
+    if [ "$rc" -eq 124 ]; then return 124; fi
+    if coop_az_auth_error "$err"; then return 1; fi
+    return 2
+  done
+  return 0
+}
+
 coop_az_preflight() {
-  [ "${COOP_SKIP_AZ:-0}" = "1" ] && return 0
+  if [ "${COOP_SKIP_AZ:-0}" = "1" ]; then return 0; fi
   have az || return 0
-  local proj tenant marker
-  proj="$(coop_find_project_yml)"
-  [ -n "$proj" ] || return 0
-  tenant="$(coop_yaml_get "$proj" "fabric.tenant_id" "")"
-  case "$tenant" in ""|TODO*) return 0 ;; esac
+  local tenant trc=0 marker rc=0 tried=0 int_trap
+  tenant="$(coop_tenant)" || trc=$?
+  if [ "$trc" -eq 2 ]; then
+    coop_warn "Azure tenant id is not a GUID or domain name; skipping Azure sign-in." \
+      "fix fabric.tenant_id in .coop/project.yml or run: coop onboard --config-only"
+    return 0
+  fi
+  [ -n "$tenant" ] || return 0
   marker="$(coop_effective_agent_dir)/.az-ok"
   # find -mmin -30: marker modified <30 min ago (BSD + GNU; no stat(1) flag games).
   if [ -n "$(find "$marker" -mmin -30 2>/dev/null)" ] \
      && [ "$(cat "$marker" 2>/dev/null)" = "$tenant" ]; then
     return 0
   fi
-  if az account get-access-token --tenant "$tenant" --resource https://analysis.windows.net/powerbi/api >/dev/null 2>&1; then
+  coop_az_tokens_ok "$tenant" || rc=$?
+  if [ "$rc" -eq 1 ] && { { [ -t 0 ] && [ -t 2 ]; } || [ "${COOP_ASSUME_YES:-0}" = "1" ]; }; then
+    tried=1
+    coop_info "Opening Azure sign-in for tenant $tenant..."
+    # Ctrl-C reaches az and cancels the sign-in; this trap keeps it from also
+    # ending the launch, so a cancel reads as a failed sign-in below.
+    int_trap="$(trap -p INT)"
+    trap ':' INT
+    rc=0
+    coop_az_run 300 login --tenant "$tenant" --allow-no-subscriptions --output none >/dev/null || rc=$?
+    if [ -n "$int_trap" ]; then eval "$int_trap"; else trap - INT; fi
+    # A zero login exit is not enough: tenant-only and conditional-access flows
+    # can finish without the tokens coop needs, so check both again.
+    if [ "$rc" -eq 0 ]; then coop_az_tokens_ok "$tenant" || rc=$?; fi
+  fi
+  if [ "$rc" -eq 0 ]; then
     { mkdir -p "$(coop_effective_agent_dir)" && printf '%s' "$tenant" > "$marker"; } 2>/dev/null || true
+    if [ "$tried" -eq 1 ]; then coop_ok "Signed in to Azure for tenant $tenant."; fi
     return 0
   fi
   rm -f "$marker" 2>/dev/null || true
-  coop_warn "Azure / Power BI token missing or expired."
-  if coop_confirm "Run 'az login' for tenant ${tenant} now?"; then
-    if az login --tenant "$tenant" --allow-no-subscriptions; then
-      # Login returning zero is not enough: tenant-only and conditional-access
-      # flows can finish without yielding the Power BI token Coop needs.
-      if az account get-access-token --tenant "$tenant" --resource https://analysis.windows.net/powerbi/api >/dev/null 2>&1; then
-        { mkdir -p "$(coop_effective_agent_dir)" && printf '%s' "$tenant" > "$marker"; } 2>/dev/null || true
-        coop_ok "Azure sign-in verified for the project tenant."
-      else
-        coop_warn "Azure sign-in finished, but Power BI access was not verified for tenant ${tenant}; run: az login --tenant ${tenant} --allow-no-subscriptions"
-      fi
-    else
-      coop_warn "az login failed; continuing anyway."
-    fi
+  if [ "$tried" -eq 1 ]; then
+    coop_warn "Azure sign-in for tenant $tenant is not verified; continuing." \
+      "run: az login --tenant $tenant --allow-no-subscriptions"
+  elif [ "$rc" -eq 124 ]; then
+    coop_warn "Azure token check timed out for tenant $tenant (network or VPN?); continuing." \
+      "run: az account get-access-token --tenant $tenant --resource https://api.fabric.microsoft.com"
+  elif [ "$rc" -eq 1 ]; then
+    coop_warn "Azure: not signed in to tenant $tenant; continuing." \
+      "run: az login --tenant $tenant --allow-no-subscriptions"
+  else
+    coop_warn "Azure token check failed for tenant $tenant (not an auth error); continuing." \
+      "run: az account get-access-token --tenant $tenant --resource https://api.fabric.microsoft.com"
   fi
   return 0
 }

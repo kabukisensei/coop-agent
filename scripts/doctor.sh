@@ -223,6 +223,29 @@ if have pi; then
   fi
 fi
 
+# Azure sign-in for the client tenant (H2). Probe only: doctor never signs in and
+# never touches the launch cache (.az-ok). Same tenant chain and token check as
+# the launch (coop_tenant / coop_az_tokens_ok). A missing az is prerequisite row 5.
+if [ "${COOP_SKIP_AZ:-0}" != "1" ] && have az; then
+  _az_trc=0
+  _az_t="$(coop_tenant)" || _az_trc=$?
+  if [ "$_az_trc" -eq 2 ]; then
+    warn "Azure sign-in: tenant id is not a GUID or domain name" "fix fabric.tenant_id in .coop/project.yml or run: coop onboard --config-only"
+  elif [ -z "$_az_t" ]; then
+    warn "Azure sign-in: no client tenant configured" "run: coop onboard --config-only"
+  else
+    _az_rc=0
+    coop_az_tokens_ok "$_az_t" || _az_rc=$?
+    case "$_az_rc" in
+      0) ok "Azure sign-in: signed in to tenant $_az_t" ;;
+      124) warn "Azure sign-in: check timed out for tenant $_az_t" "run: az account get-access-token --tenant $_az_t --resource https://api.fabric.microsoft.com" ;;
+      1) warn "Azure sign-in: not signed in to tenant $_az_t" "run: az login --tenant $_az_t --allow-no-subscriptions" ;;
+      *) warn "Azure sign-in: token check failed for tenant $_az_t (not an auth error)" "run: az account get-access-token --tenant $_az_t --resource https://api.fabric.microsoft.com" ;;
+    esac
+  fi
+  unset _az_trc _az_t _az_rc
+fi
+
 section "Microsoft Fabric CLI"
 if have fab; then
   fabver="$(fab --version 2>&1 | head -3 | tr '\n' ' ')"

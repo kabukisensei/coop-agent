@@ -8,26 +8,88 @@ fall back through the other tenant/account inventories exposed by Azure CLI.
 from __future__ import annotations
 
 import json
+import ntpath
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 
+# cmd.exe metacharacters (plus CR/LF). A path containing any of them is never
+# spliced into a cmd.exe command line (same rule as fabric_request_headers.mjs).
+_UNSAFE = re.compile(r'["&|<>^%!\r\n]')
+_WINDOWS_AZ_NAMES = ("az.cmd", "az.exe", "az.bat")
+
+
+def windows_az_path(path_value: str, isfile=None) -> str | None:
+    """First az.cmd / az.exe / az.bat in an absolute PATH folder, or None.
+
+    Folders are searched in PATH order and names in the order the Fabric token
+    helper uses. Relative and empty entries are ignored, so the current folder
+    can never supply az, and a folder with cmd.exe metacharacters is skipped.
+    """
+    isfile = isfile or os.path.isfile
+    for raw in path_value.split(";"):
+        entry = raw.strip().strip('"')
+        if not entry or not ntpath.isabs(entry) or _UNSAFE.search(entry):
+            continue
+        for name in _WINDOWS_AZ_NAMES:
+            candidate = ntpath.join(entry, name)
+            if isfile(candidate):
+                return candidate
+    return None
+
+
+def _resolve_az() -> str | None:
+    """The Azure CLI to run: COOP_AZ_BIN (test seam) or az found on PATH."""
+    override = os.environ.get("COOP_AZ_BIN", "")
+    if override and override != "az":
+        if Path(override).is_file():
+            return override
+        return shutil.which(override)
+    if sys.platform == "win32":
+        return windows_az_path(os.environ.get("PATH", ""))
+    return shutil.which("az")
+
+
 def azure_cli_available() -> bool:
-    az_cmd = os.environ.get("COOP_AZ_BIN", "az")
-    if az_cmd == "az":
-        return bool(shutil.which("az"))
-    return Path(az_cmd).is_file() or bool(shutil.which(az_cmd))
+    return _resolve_az() is not None
 
 
-def azure_argv(*args: str) -> list[str]:
-    """Build a cross-platform Azure CLI command, including Windows stubs."""
-    az_cmd = os.environ.get("COOP_AZ_BIN", "az")
-    if sys.platform == "win32" and az_cmd.lower().endswith((".bat", ".cmd")):
-        return ["cmd.exe", "/c", az_cmd, *args]
-    return [az_cmd, *args]
+def windows_az_command(system_root: str, cli: str, args) -> str:
+    """cmd.exe command line that runs a .cmd/.bat Azure CLI with literal flags.
+
+    `/s` plus the outer quotes keeps a path such as "C:\\Program Files (x86)\\..."
+    in one piece; `cmd /c "<path>" args` without /s strips the outer quotes and
+    splits it at the space. `call` returns the batch file's exit code.
+    """
+    cmd = ntpath.join(system_root, "System32", "cmd.exe")
+    return f'"{cmd}" /d /s /c "call "{cli}" {" ".join(args)}"'
+
+
+def azure_argv(*args: str) -> list[str] | str:
+    """Build a cross-platform Azure CLI command, including Windows az.cmd.
+
+    args must be literal flags (no spaces, quotes or cmd.exe metacharacters).
+    CreateProcess only appends .exe to a bare name, so on Windows a .cmd/.bat
+    Azure CLI runs through an explicit cmd.exe command line (a str, which
+    subprocess passes to CreateProcess unchanged); anything else is a list.
+    """
+    override = os.environ.get("COOP_AZ_BIN", "")
+    # An unresolvable COOP_AZ_BIN stays as given (and fails to start); it never
+    # falls back to the az on PATH.
+    az = _resolve_az() or (override if override and override != "az" else "az")
+    if (
+        sys.platform == "win32"
+        and az.lower().endswith((".cmd", ".bat"))
+        and not _UNSAFE.search(az)
+    ):
+        return windows_az_command(
+            os.environ.get("SystemRoot") or r"C:\Windows", az, args
+        )
+    return [az, *args]
 
 
 def _parse_json(text: str) -> object:
@@ -114,11 +176,14 @@ def login_azure(use_device_code: bool = False) -> tuple[bool, list[dict[str, str
         args.append("--use-device-code")
     args.extend(("--output", "json"))
     try:
+        # stdout is captured, so Azure CLI 2.61+'s subscription picker would
+        # wait invisibly on stdin; AZURE_CORE_LOGIN_EXPERIENCE_V2=off skips it.
         result = subprocess.run(
             azure_argv(*args),
             stdout=subprocess.PIPE,
             stderr=None,
             text=True,
+            env={**os.environ, "AZURE_CORE_LOGIN_EXPERIENCE_V2": "off"},
         )
     except KeyboardInterrupt:
         return False, []
