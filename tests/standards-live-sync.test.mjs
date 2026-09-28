@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { activeCanonicalGeneration, buildStandardsContext, fsyncDirectory, fsyncFile, pinStandardsTask, promoteReviewRun, provenanceText, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
+import { activeCanonicalGeneration, buildStandardsContext, fsyncDirectory, fsyncFile, pinStandardsTask, promoteReviewRun, provenanceText, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, retrieveRelevantSections, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "coop-standards-live-"));
@@ -331,6 +331,56 @@ try {
     const sql = resolveStandard("sql", options({ refresh: false }));
     assert.deepEqual(sql.articles.map((a) => a.file), ["SQL/Gold/Stored Procedures.md", "SQL/SQL Conventions.md"]);
     for (const decoy of ["OUTSIDE", "BADNAME", "PARTIAL"]) assert.equal(readFileSync(sql.path, "utf8").includes(decoy), false, decoy);
+    git(["reset", "--hard", good]);
+  });
+  test("a model task no article matches gets semantic-model-layer articles, never path order", () => {
+    // Mirrors the real wiki's Power BI folder: File Types (layer agnostic) and the
+    // Reports articles sort before the semantic-model layer by path.
+    const good = git(["rev-parse", "HEAD"]);
+    for (const [file, layer, artifact, title] of [
+      ["File Types", "agnostic", "file_type", "Power BI File Types"], ["Reports/App Deployment", "report", "app_deployment", "Power BI App Deployment"],
+      ["Reports/Page Formatting", "report", "page_formatting", "Power BI Report Page Formatting"], ["Reports/Visuals", "report", "visual", "Power BI Report Visuals"],
+      ["Semantic Model/Composite Models", "semantic_model", "composite_model", "Power BI Composite Models"], ["Semantic Model/Fact Tables", "semantic_model", "fact_table", "Power BI Fact Tables"],
+      ["Semantic Model/M Query", "semantic_model", "m_query", "Power BI M Query"], ["Semantic Model/Organizing Tables", "semantic_model", "table", "Organizing Power BI Tables"],
+    ]) put(`Power BI/${file}.md`, article({ id: `powerbi_${artifact}`, title, domain: "powerbi", layer, artifact, technology: "power_bi" }, `# ${title}\nBody.\n`));
+    commit("power bi wiki"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    for (const prompt of ["Add a measure to the Power BI model for total sales", "Review the Power BI semantic model"]) {
+      const record = buildStandardsContext(prompt, options({ refresh: false })).records.find((r) => r.resolution.domain === "semantic_model");
+      const files = record.sections.map((s) => s.file);
+      assert.ok(files.length > 0, prompt);
+      for (const file of files) assert.equal(record.resolution.articles.find((a) => a.file === file)?.layer, "semantic_model", `${prompt}: ${file}`);
+      for (const decoy of ["Power BI/File Types.md", "Power BI/Reports/App Deployment.md"]) assert.equal(files.includes(decoy), false, `${prompt}: ${decoy}`);
+    }
+    // A domain without a core layer gets a list of its articles, not bodies.
+    const sections = retrieveRelevantSections(resolveStandard("fabric_platform", options({ refresh: false })), "Review the lakehouse");
+    assert.equal(sections.length, 1); assert.equal(sections[0].file, undefined);
+    assert.match(sections[0].content, /Fabric Workspaces: Fabric\/Workspaces\.md/); assert.equal(sections[0].content.includes("Name workspaces by layer"), false);
+    git(["reset", "--hard", good]);
+  });
+  test("an article saved with a byte-order mark is still read", () => {
+    const good = git(["rev-parse", "HEAD"]);
+    put("SQL/Gold/Views.md", `\uFEFF${article({ id: "sql_gold_views", title: "Gold Views", domain: "sql", layer: "gold", artifact: "view" }, "# Gold Views\nBOMVIEWS\n")}`);
+    commit("bom article"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const sql = resolveStandard("sql", options({ refresh: false }));
+    assert.deepEqual(sql.articles.map((a) => a.file), ["SQL/Gold/Stored Procedures.md", "SQL/Gold/Views.md", "SQL/SQL Conventions.md"]);
+    assert.match(readFileSync(sql.path, "utf8"), /BOMVIEWS/);
+    git(["reset", "--hard", good]);
+  });
+  test("a duplicate article id keeps both files and is reported with both paths", () => {
+    // Obsidian "Make a copy": same front matter, and the copy sorts first by path.
+    const good = git(["rev-parse", "HEAD"]);
+    const views = article({ id: "sql_gold_views", title: "Gold Views", domain: "sql", layer: "gold", artifact: "view" }, "# Gold Views\nORIGINAL views\n");
+    put("SQL/Gold/Views.md", views); put("SQL/Gold/Views 1.md", views.replace("ORIGINAL", "COPY"));
+    commit("make a copy"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const sql = resolveStandard("sql", options({ refresh: false }));
+    assert.equal(sql.state, "canonical");
+    assert.deepEqual(sql.articles.map((a) => a.file), ["SQL/Gold/Stored Procedures.md", "SQL/Gold/Views 1.md", "SQL/Gold/Views.md", "SQL/SQL Conventions.md"]);
+    const [record] = buildStandardsContext("Create a SQL gold view for customer sales", options({ refresh: false })).records;
+    assert.ok(record.sections.some((s) => s.file === "SQL/Gold/Views.md" && s.content.includes("ORIGINAL")), "the original is not dropped for the copy");
+    assert.deepEqual(sourceStatus(options()).sources[0].warnings, ["duplicate article id sql_gold_views: SQL/Gold/Views 1.md and SQL/Gold/Views.md"]);
     git(["reset", "--hard", good]);
   });
   test("a wiki with no active articles fails closed and keeps the last known good", () => {

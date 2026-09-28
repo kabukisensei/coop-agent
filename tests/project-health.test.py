@@ -103,6 +103,26 @@ class ProjectHealthTests(unittest.TestCase):
         self.assertEqual(len(missing), 1)
         self.assertTrue(missing[0].startswith("standards.dax -> docs/missing.md"))
 
+    def test_four_space_standards_block_is_read_but_never_exact_generated(
+        self,
+    ) -> None:
+        # The resolver honours any consistent indent; health must see the same keys,
+        # but only the two-space generated shape may be removed as generated.
+        text = "standards:\n" + "".join(
+            f"    {key}: {value}\n"
+            for key, value in health.GENERATED_STANDARDS.items()
+            if key != "semantic_model"
+        )
+        self.contract.write_text(text, encoding="utf-8")
+        _root, findings = self.inspect()
+        codes = [finding.code for finding in findings]
+        self.assertEqual(codes.count("missing_project_standard"), 4)
+        self.assertEqual(codes.count("legacy_project_standard_override"), 4)
+        self.assertFalse(any(finding.generated for finding in findings))
+        self.assertEqual(health._remove_exact_standards(text), text)
+        two_space = text.replace("    ", "  ")
+        self.assertNotEqual(health._remove_exact_standards(two_space), two_space)
+
     def test_case_insensitive_collision_and_nested_legacy_reference(self) -> None:
         self.contract.write_text("profile:\n  organization: Test\n", encoding="utf-8")
         skill = self.root / ".pi" / "skills" / "DAILY-LOGGER"

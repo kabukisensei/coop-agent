@@ -76,6 +76,7 @@ def _standards_block(text: str) -> tuple[int, int, dict[str, str], bool] | None:
     entries: dict[str, str] = {}
     valid_shape = top_level_count == 1
     nested_key = None
+    level = 0
     for index in range(start + 1, len(lines)):
         line = lines[index]
         if line.strip() and not line.startswith((" ", "\t", "#")):
@@ -83,21 +84,30 @@ def _standards_block(text: str) -> tuple[int, int, dict[str, str], bool] | None:
             break
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        # Nested override shape: standards.<domain>.path (other nested keys ignored).
-        nested = re.match(r"^    ([A-Za-z0-9_-]+):\s*(.*?)\s*(?:\r?\n)?$", line)
-        if nested and nested_key is not None:
+        # Same shapes as projectStandardPaths in lib/standards.mjs: the first key
+        # sets the domain indent (any consistent indent of 2 or more); deeper lines
+        # under a domain without a value are its nested keys (standards.<domain>.path,
+        # other nested keys ignored). Only the two-space scalar shape is ever an
+        # exact generated block.
+        match = re.match(r"^( +)([A-Za-z0-9_-]+):\s*(.*?)\s*(?:\r?\n)?$", line)
+        indent = len(match.group(1)) if match else 0
+        if indent < 2:
             valid_shape = False
-            if nested.group(1) == "path":
-                entries[nested_key] = _strip_yaml_value(nested.group(2))
             continue
-        match = re.match(r"^  ([A-Za-z0-9_-]+):\s*(.*?)\s*(?:\r?\n)?$", line)
-        if not match or line.startswith("\t"):
+        level = level or indent
+        if indent > level and nested_key is not None:
             valid_shape = False
+            if match.group(2) == "path":
+                entries[nested_key] = _strip_yaml_value(match.group(3))
             continue
-        key = match.group(1)
+        if indent != level or level != 2:
+            valid_shape = False
+        if indent != level:
+            continue
+        key = match.group(2)
         if key in entries:
             valid_shape = False
-        entries[key] = _strip_yaml_value(match.group(2))
+        entries[key] = _strip_yaml_value(match.group(3))
         nested_key = key if not entries[key] else None
     return start, end, entries, valid_shape
 

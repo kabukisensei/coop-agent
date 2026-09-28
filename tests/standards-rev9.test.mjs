@@ -239,6 +239,17 @@ try {
     assert.equal(r.state, "project_override"); assert.equal(r.project_relative_path, "docs/client-sql.md");
   });
 
+  test("STD-08c", "overrides indented by four spaces resolve like two (the first key sets the indent)", () => {
+    const project = join(tmp, "four-space"); mkdirSync(join(project, ".coop"), { recursive: true }); mkdirSync(join(project, "docs"), { recursive: true });
+    writeFileSync(join(project, "docs", "client-sql.md"), "# client SQL");
+    const yml = "standards:\n    sql: docs/client-sql.md\n";
+    writeFileSync(join(project, ".coop", "project.yml"), yml);
+    assert.deepEqual(projectStandardPaths(yml), { sql: "docs/client-sql.md" });
+    const r = resolveStandard("sql", opts({ cwd: project, canonicalRoot: canonical }));
+    assert.equal(r.state, "project_override"); assert.equal(r.project_relative_path, "docs/client-sql.md");
+    assert.deepEqual(projectStandardPaths("standards:\n    sql:\n        path: docs/client-sql.md\n    dax: docs/dax.md\n"), { sql: "docs/client-sql.md", dax: "docs/dax.md" });
+  });
+
   test("STD-09", "authority classes remain closed and separate", () => {
     assert.deepEqual([...AUTHORITY_CLASSES], ["formal_standard", "approved_pattern", "team_knowledge", "project_local"]);
   });

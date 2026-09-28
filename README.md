@@ -501,7 +501,10 @@ model otherwise; any other domain keeps its own name, so a new one resolves with
 release. When you write or change SQL, DAX, or a model, Coop injects the domain's general
 articles (layer and technology `agnostic`, such as SQL Conventions) plus the articles whose
 layer, artifact, technology, or title match the task, each with its path, SHA-256, and the
-repo revision. `coop-sql-review` and `coop-dax-review` take one standards file, so Coop
+repo revision. When nothing matches, it injects the domain's core-layer articles (for
+example `layer: semantic_model`), or only a list of the domain's articles if it has no
+such layer. Two articles with the same `id` are both kept, and `coop doctor` warns with
+both paths. `coop-sql-review` and `coop-dax-review` take one standards file, so Coop
 builds a reviewer-input copy of the domain's articles in its own storage for that call.
 
 A project override is one Markdown file per domain in `.coop/project.yml`
