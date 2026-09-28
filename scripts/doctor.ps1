@@ -75,38 +75,20 @@ function Check {
 
 D-Head "coop doctor — Cooptimize agent v$($script:CoopVersion)"
 
+# Prerequisites: the SAME ordered table and text `coop install` prints and stops
+# on (Get-CoopPrereqs in lib/common.ps1), so install and doctor never disagree.
+D-Head 'Prerequisites'
+foreach ($r in (Get-CoopPrereqs)) {
+  $line = "$($r.Order). $($r.Name)" + $(if ($r.Detail) { "  ($($r.Detail))" } else { '' })
+  if ($r.Ok) { D-Ok $line } elseif ($r.Required) { D-Bad $line $r.Fix } else { D-Warn $line $r.Fix }
+}
+
 D-Head 'Core'
 Check 'pi'      'required' 'npm install -g @earendil-works/pi-coding-agent   (or: coop bootstrap)' @('pi','--version')
-Check 'git'     'required' 'install Git from https://git-scm.com' @('git','--version')
-Check 'node'    'optional' 'needed to install/update pi: https://nodejs.org' @('node','--version')
 Check 'npm'     'optional' 'ships with Node.js' @('npm','--version')
-# Python: Windows ships `python`/`py`, not `python3` — accept either. And no bash-
-# style `&&` in hints (Windows PowerShell 5.1 can't parse it). Get-CoopPython skips
-# a Windows Store App-Execution-Alias stub (under \WindowsApps\, no real python):
-# it makes Test-Have succeed while `--version` prints nothing — must not read as ✓.
+# Get-CoopPython skips a Windows Store App-Execution-Alias stub; later checks
+# (project health, --fix) run through this interpreter.
 $pyBin = Get-CoopPython
-$pyName = if ($pyBin) { $pyBin } else { 'python' }
-if ($pyBin) {
-  $pv = (& $pyBin --version 2>$null | Select-Object -First 1)
-  $pm = [regex]::Match([string]$pv, '\d+\.\d+(\.\d+)?')
-  D-Ok ('python' + $(if ($pm.Success) { "  ($($pm.Value))" } else { '' }))
-  # The coop tools (coop-data-doc/sql-review/dax-review, ms-fabric-cli) require
-  # >= 3.10 — flag an old python now instead of failing later at pipx install.
-  if ($pm.Success) {
-    $parts = $pm.Value -split '\.'
-    $pyVer = [version]("{0}.{1}.{2}" -f $parts[0], $parts[1], $(if ($parts.Count -ge 3) { $parts[2] } else { '0' }))
-    if ($pyVer -lt [version]'3.10.0') { D-Warn "Python $($pm.Value) is older than the coop tools require (>= 3.10)" 'upgrade Python: https://python.org' }
-  }
-} else {
-  D-Bad 'python missing' 'winget install Python.Python.3.12  (or https://python.org), then: coop install. (A Windows Store python stub does not count.)'
-}
-if (Test-Have 'pipx') {
-  $xv = (& pipx --version 2>$null | Select-Object -First 1)
-  $xm = [regex]::Match([string]$xv, '\d+\.\d+(\.\d+)?')
-  D-Ok ('pipx' + $(if ($xm.Success) { "  ($($xm.Value))" } else { '' }))
-} else {
-  D-Bad 'pipx missing' "$pyName -m pip install --user pipx; $pyName -m pipx ensurepath  (or just: coop install)"
-}
 
 # Minimum Pi version — the extension API used by coop-powerline / coop-tools.
 if (Test-Have 'pi') {
@@ -229,26 +211,7 @@ Check-PipxDist 'coop-sql-review' 'coop-sql-review'
 Check-PipxDist 'coop-dax-review' 'coop-dax-review'
 Check-PipxDist 'ms-fabric-cli' 'fab'
 
-# Minimum node version from the manifest.
-$nodeExpected = Coop-ManifestGet 'node.min'
-if ($nodeExpected -and (Test-Have 'node')) {
-  $nraw = (& node --version 2>$null | Select-Object -First 1)
-  $nodev = ''
-  if ($nraw -match '(\d+)\.(\d+)\.(\d+)') { $nodev = "$($matches[1]).$($matches[2]).$($matches[3])" }
-  if ($nodev -and (Coop-VersionLessThan $nodev $nodeExpected)) {
-    D-Warn "Node $nodev is older than the manifest minimum ($nodeExpected)" 'upgrade Node: https://nodejs.org'
-  }
-}
-
-# Pi (latest, @earendil-works) requires Node >= 22.19 — check the version so a teammate
-# on Node 18/20 gets a clear message instead of a cryptic pi failure.
-if (Test-Have 'node') {
-  $nraw = (& node --version 2>$null)
-  if ($nraw -match '(\d+)\.(\d+)\.(\d+)') {
-    $nv = [version]("{0}.{1}.{2}" -f $matches[1], $matches[2], $matches[3])
-    if ($nv -lt [version]'22.19.0') { D-Warn "Node $nv is older than Pi's requirement (>= 22.19)" "upgrade Node, or pin Pi's legacy build: npm i -g @earendil-works/pi-coding-agent@legacy-node20" }
-  }
-}
+# The Node minimum (manifest node.min) is prerequisite row 2 above.
 
 # Lingering deprecated Pi package — coop migrated to @earendil-works (Out-String so
 # npm ls's exit code on an invalid tree doesn't matter).
@@ -574,7 +537,6 @@ if (Test-Have 'node') {
 }
 
 D-Head 'Optional'
-Check 'az' 'optional' 'Azure CLI for Fabric/Power BI auth: https://learn.microsoft.com/cli/azure'
 Check 'jq' 'optional' 'nice-to-have for JSON in your own scripts (coop uses python3)'
 
 D-Head 'Project contract'

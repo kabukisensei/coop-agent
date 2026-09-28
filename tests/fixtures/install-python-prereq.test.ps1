@@ -79,6 +79,9 @@ if "%1"=="--version" (
 exit /b 1
 '@
   Write-Shim 'npm' "#!/bin/sh`nexit 0`n" "@echo off`r`nexit /b 0`r`n"
+  # The H1 prerequisite gate reads node's version; pin it instead of trusting
+  # whatever Node the hosted runner ships.
+  Write-Shim 'node' "#!/bin/sh`necho v22.19.0`n" "@echo off`r`necho v22.19.0`r`n"
   Write-Shim 'pipx' @'
 #!/bin/sh
 echo "PIPX $*" >> "$COOP_TEST_CALLS"

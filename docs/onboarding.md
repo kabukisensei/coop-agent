@@ -10,17 +10,19 @@ work **with you** before anything ships.
 
 ## 1. Prerequisites
 
-`coop install` automatically attempts to install missing prerequisites via `winget` (Windows) or `brew`/`apt`/`dnf` (macOS/Linux) if they are not already on your system (opt out with `coop install --no-prereqs`):
+`coop install` checks these first, in this order, and stops with the exact install
+command for anything missing (full table: [README → Prerequisites](../README.md#prerequisites)):
 
-- **Node.js 22.19+** — https://nodejs.org (auto-installed via `winget` / `brew` / `apt` if missing)
-- **Python 3.10–3.13 for Microsoft Fabric CLI** — https://python.org (`coop install`
-  uses a compatible system interpreter when available; otherwise pipx fetches an
-  isolated standalone Python 3.12, including on Windows VMs that only have Python
-  3.14 and lack `winget` / `py`)
-- **git** — https://git-scm.com (auto-installed via `winget` / `brew` / `apt` if missing)
-- **Azure CLI** (`az`) — *optional* — https://learn.microsoft.com/cli/azure (auto-installed via `winget` / `brew` / `apt` if missing; needed only for Fabric / Power BI live access — local SQL/DAX review works without it)
-- **Tabular Editor CLI (`te`)** — *optional* — https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (cross-platform CLI that runs Best Practice Analyzer rules on semantic models; requires a Tabular Editor account during the preview — place `te` in `~/.local/bin` or your `PATH`, then run `te auth login` once)
-- **pipx** — auto-installed via Python `pip` during bootstrap
+1. Git
+2. Node.js 22.19 or newer
+3. Python 3.10–3.13 (3.12 recommended)
+4. pipx
+5. Azure CLI (`az`)
+6. ODBC Driver 18 for SQL Server (live SQL; install offers it after the Fabric CLI)
+7. Tabular Editor CLI (`te`), optional, for BPA reviews
+
+Install the ✗ rows in order, open a new terminal, and run `coop install` again. Or run
+`coop install --prereqs auto` to have coop run those commands for you.
 
 ## 2. Install
 

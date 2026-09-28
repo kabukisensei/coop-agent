@@ -65,28 +65,21 @@ check() {
 
 section "coop doctor — Cooptimize agent v${COOP_VERSION}"
 
+# Prerequisites: the SAME ordered table and text `coop install` prints and stops
+# on (coop_prereq_rows in lib/common.sh), so install and doctor never disagree.
+section "Prerequisites"
+_us="$(printf '\037')"
+while IFS="$_us" read -r _o _n _req _ok _det _fix; do
+  _line="$_o. $_n${_det:+  ($_det)}"
+  if [ "$_ok" = 1 ]; then ok "$_line"; elif [ "$_req" = 1 ]; then bad "$_line" "$_fix"; else warn "$_line" "$_fix"; fi
+done <<EOF_PREREQS
+$(coop_prereq_rows)
+EOF_PREREQS
+unset _us _o _n _req _ok _det _fix _line
+
 section "Core"
 check pi      required "npm install -g @earendil-works/pi-coding-agent   (or: coop bootstrap)" "pi --version"
-check git     required "install Git from https://git-scm.com" "git --version"
-check node    optional "needed to install/update pi: https://nodejs.org" "node --version"
 check npm     optional "ships with Node.js" "npm --version"
-# Python: accept `python3` OR `python` (mirror coop_python / doctor.ps1) — a host with
-# only `python` on PATH satisfies every coop feature that shells out to Python.
-if have python3; then _pybin=python3; elif have python; then _pybin=python; else _pybin=""; fi
-if [ -n "$_pybin" ]; then
-  _pyver="$("$_pybin" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
-  ok "python${_pyver:+  ($_pyver)}"
-  # The coop tools (coop-data-doc/sql-review/dax-review, ms-fabric-cli) require
-  # >= 3.10 — macOS CLT ships a 3.9 python3 that passes the presence check above
-  # but fails every pipx install later. Flag it now, like the Node gate below.
-  if [ -n "$_pyver" ] && coop_version_lt "$_pyver" "3.10.0"; then
-    warn "Python $_pyver is older than the coop tools require (>= 3.10)" "upgrade Python: https://python.org"
-  fi
-else
-  bad "python missing" "install Python 3.10+ from https://python.org"
-fi
-unset _pybin _pyver
-check pipx    required "python3 -m pip install --user pipx && python3 -m pipx ensurepath" "pipx --version"
 
 # Minimum Pi version — the extension API used by coop-powerline / coop-tools.
 if have pi; then
@@ -211,14 +204,7 @@ for pair in "coop-data-doc coop-data-doc" "coop-sql-review coop-sql-review" \
   check_pipx_dist $pair
 done
 
-# Minimum node version from the manifest.
-node_expected="$(coop_manifest_get node.min)"
-if [ -n "$node_expected" ] && have node; then
-  nodev="$(node --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-  if [ -n "$nodev" ] && coop_version_lt "$nodev" "$node_expected"; then
-    warn "Node $nodev is older than the manifest minimum ($node_expected)" "upgrade Node: https://nodejs.org"
-  fi
-fi
+# The Node minimum (manifest node.min) is prerequisite row 2 above.
 
 # Lingering deprecated Pi package — coop migrated to @earendil-works. Detect the
 # DIRECT top-level global install (pipe through grep so npm ls's exit code, which is
@@ -507,7 +493,6 @@ else
 fi
 
 section "Optional"
-check az optional "Azure CLI for Fabric/Power BI auth: https://learn.microsoft.com/cli/azure"
 check jq optional "nice-to-have for JSON in your own scripts (coop uses python3)"
 
 section "Project contract"

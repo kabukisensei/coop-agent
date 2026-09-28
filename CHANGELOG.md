@@ -20,6 +20,24 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   agent working model. Revision 2.0 stays as the per-package reference.
   Documentation only; no runtime change.
 
+### Fixed
+
+- `coop install` checks every prerequisite before installing anything (master plan
+  H1, #76). It prints one ordered table (Git, Node.js, Python 3.10–3.13, pipx,
+  Azure CLI, ODBC Driver 18, Tabular Editor CLI) with ✓/✗ and the exact install
+  command for each missing row, then stops and asks for a new terminal instead of
+  failing several steps later. It no longer runs silent `winget`/`brew`/`apt`
+  installs whose output and exit code were discarded. `--prereqs auto` runs the
+  printed commands visibly, re-checks, and still asks for a new terminal;
+  `--no-prereqs` reports the table and continues. `coop doctor` shows the same rows
+  with the same text, so Node.js and Azure CLI are now required there too.
+- Windows: `Coop-Warn` prints its "how to fix" hint (the Node and ODBC hints were
+  silently dropped). The Node minimum comes from `config/release-manifest.json`
+  instead of a constant in both installers. A Python found off `PATH` (Python
+  install manager, winget user scope) is added to `PATH` for the rest of the
+  install, so pipx no longer reports "python missing" in the same window.
+- README no longer says Azure CLI is both auto-installed and not auto-installed.
+
 ## [0.23.5] — 2026-09-22
 
 ### Fixed
