@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { activeCanonicalGeneration, buildStandardsContext, fsyncDirectory, fsyncFile, pinStandardsTask, promoteReviewRun, provenanceText, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, retrieveRelevantSections, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
 
@@ -352,10 +352,29 @@ try {
       for (const file of files) assert.equal(record.resolution.articles.find((a) => a.file === file)?.layer, "semantic_model", `${prompt}: ${file}`);
       for (const decoy of ["Power BI/File Types.md", "Power BI/Reports/App Deployment.md"]) assert.equal(files.includes(decoy), false, `${prompt}: ${decoy}`);
     }
-    // A domain without a core layer gets a list of its articles, not bodies.
-    const sections = retrieveRelevantSections(resolveStandard("fabric_platform", options({ refresh: false })), "Review the lakehouse");
-    assert.equal(sections.length, 1); assert.equal(sections[0].file, undefined);
-    assert.match(sections[0].content, /Fabric Workspaces: Fabric\/Workspaces\.md/); assert.equal(sections[0].content.includes("Name workspaces by layer"), false);
+    // dax is carved out of the semantic_model layer, so it has no layer of its own:
+    // a DAX task that matches no title word still gets the whole (small) domain.
+    for (const [file, artifact, title] of [["Semantic Model/DAX", "dax_expression", "Power BI DAX"], ["Semantic Model/Measures", "measure", "Power BI Measures"]]) {
+      put(`Power BI/${file}.md`, article({ id: `powerbi_${artifact}`, title, domain: "powerbi", layer: "semantic_model", artifact, technology: "power_bi" }, `# ${title}\n${artifact.toUpperCase()} BODY\n`));
+    }
+    commit("dax articles"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const daxContext = buildStandardsContext("Add a calculated column for margin", options({ refresh: false }));
+    assert.deepEqual(daxContext.domains, ["dax"]);
+    assert.deepEqual(daxContext.records[0].sections.map((s) => s.file).sort(), ["Power BI/Semantic Model/DAX.md", "Power BI/Semantic Model/Measures.md"]);
+    // A one-article domain with no core layer gets that article's body.
+    const single = retrieveRelevantSections(resolveStandard("fabric_platform", options({ refresh: false })), "Review the lakehouse");
+    assert.deepEqual(single.map((s) => s.file), ["Fabric/Workspaces.md"]);
+    // Too many articles and no core layer: a listing with paths the agent can open, no bodies.
+    for (let i = 1; i <= 7; i += 1) put(`Fabric/Topic ${i}.md`, article({ id: `fabric_topic_${i}`, title: `Fabric Topic ${i}`, domain: "fabric_platform", artifact: `topic_${i}`, technology: "fabric" }, `# Fabric Topic ${i}\nTOPIC BODY\n`));
+    commit("large fabric_platform domain"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const listing = retrieveRelevantSections(resolveStandard("fabric_platform", options({ refresh: false })), "Review the lakehouse");
+    assert.equal(listing.length, 1); assert.equal(listing[0].file, undefined);
+    assert.equal(listing[0].content.includes("TOPIC BODY") || listing[0].content.includes("Name workspaces by layer"), false);
+    const listed = listing[0].content.split("\n").map((line) => line.replace(/^- [^:]+: /, ""));
+    assert.equal(listed.length, 8);
+    for (const path of listed) assert.ok(isAbsolute(path) && existsSync(path), `listed path is openable: ${path}`);
     git(["reset", "--hard", good]);
   });
   test("an article saved with a byte-order mark is still read", () => {
