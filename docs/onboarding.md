@@ -46,11 +46,15 @@ git clone <coop-agent-repo>; cd coop-agent
 This installs Pi, its extensions, the Coop tools, and the Microsoft Fabric CLI, and
 links `coop` onto your `PATH`. During a fresh interactive install, the short setup
 asks for your name, communication preference, and whether Coop should connect to a
-client Fabric/Power BI environment. Choose **yes** and finish the Azure browser
-sign-in; Coop waits for it, detects the tenant (including tenants without Azure
-subscriptions), and confirms the exact tenant before continuing. If browser sign-in
-cannot complete, Coop offers a device-code retry. Recommended integrations are then
-enabled automatically; run `coop onboard --config-only` later for detailed choices.
+client Fabric/Power BI environment. Choose **yes** and finish the Azure sign-in: a
+browser page on macOS and Linux, and on Windows usually a Microsoft sign-in window
+(Azure CLI falls back to a device code by itself when it cannot open either). This
+works with the standard Windows `az.cmd` install, including one under
+`C:\Program Files (x86)`. Coop waits for it and detects the tenant (including
+tenants without Azure subscriptions); when several tenants are signed in, you pick
+the client one. If sign-in cannot complete, Coop offers a device-code retry.
+Recommended integrations are then enabled automatically; run
+`coop onboard --config-only` later for detailed choices.
 As the final interactive step, Coop opens its model sign-in screen with
 `/login openai-codex` already prepared. Press Enter, finish browser authentication
 with your Cooptimize business account, and Coop returns to its final readiness
@@ -96,6 +100,27 @@ agent dir (`~/.coop/agent`) — and if you already use a personal `pi`, its exis
 shared in from `~/.pi/agent` automatically (see
 [README → Isolation](../README.md#isolation)), so you may not be prompted at all.
 `coop doctor` shows **"Pi login present"** once it's done.
+
+### Azure sign-in at launch
+
+The first launch after onboarding may also open the Azure sign-in for the client
+tenant, once and without a question: a browser page, or on Windows a sign-in
+window. From the `coop` desktop shortcut it opens in its own window. After that, a
+launch checks the Fabric and Power BI tokens (a success is remembered for 30
+minutes) and says nothing.
+
+- The tenant comes from the project's `.coop/project.yml` `fabric.tenant_id`, else
+  from `~/.coop/config` `azure.tenant_id` (saved by onboarding). With neither,
+  launch skips Azure and `coop doctor` warns **"Azure sign-in: no client tenant
+  configured"**. If you onboarded on Windows before this fix, no tenant was saved:
+  run `coop onboard --config-only` once.
+- If sign-in fails or is cancelled, Coop prints one line with the exact command
+  (`az login --tenant <id> --allow-no-subscriptions`) and starts anyway. Piped,
+  scheduled, and other non-interactive launches never open a sign-in; they print
+  the same line. A timeout or a network error never opens a sign-in either.
+- `coop doctor` shows **"Azure sign-in: signed in to tenant <id>"**. Doctor only
+  checks; it never signs in.
+- `COOP_SKIP_AZ=1` skips both the launch sign-in and the doctor row.
 
 ## 4. Point it at a work repo
 

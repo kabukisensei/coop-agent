@@ -37,6 +37,35 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   install manager, winget user scope) is added to `PATH` for the rest of the
   install, so pipx no longer reports "python missing" in the same window.
 - README no longer says Azure CLI is both auto-installed and not auto-installed.
+- Azure sign-in happens automatically (master plan H2, #77). The launch preflight
+  (`coop`, `coop web`) takes the client tenant from one chain: the project's
+  `fabric.tenant_id`, else `~/.coop/config` `azure.tenant_id` saved by onboarding,
+  else nothing, in which case the launch stays silent. No default tenant ships. A
+  tenant must be a GUID or a domain name; `TODO` counts as unset, and any other
+  placeholder (such as `TBD`) is rejected with one line. The preflight checks the
+  Fabric token and then the Power BI token. When az reports that the user is not
+  signed in and the launch runs in an interactive console, coop runs
+  `az login --tenant <id> --allow-no-subscriptions` itself, with no question and a
+  5-minute limit. A timeout or a non-authentication error never opens a sign-in,
+  and piped or scheduled launches never open a browser. Any failure prints one line
+  with the exact command and the launch continues. On Windows, `coop web` (the
+  minimized `coop` shortcut) opens the sign-in in its own window, which keeps the
+  failure line on screen until Enter. The `.az-ok` cache is unchanged (30 minutes,
+  tenant-stamped) but now covers both tokens, and a launch whose Fabric token
+  reports `auth_required` drops it.
+- `coop doctor` has an **Azure sign-in** row: signed in to tenant X, not signed in
+  (with the command), check timed out or failed, or no client tenant configured
+  (run `coop onboard --config-only`). It only probes: it never signs in and never
+  touches `.az-ok`. `COOP_SKIP_AZ=1` skips the row and the launch sign-in.
+- Windows: onboarding and `coop init` now find and run `az.cmd`, including under
+  `C:\Program Files (x86)`. The Python helpers looked for a bare `az` and split
+  "(x86)" paths, so tenant discovery failed and users saw "Azure sign-in did not
+  complete" before a browser opened. Their sign-in also turns off Azure CLI's
+  subscription picker, which waited invisibly on captured output.
+- Release note: Windows users who onboarded before this fix have no saved tenant
+  and should run `coop onboard --config-only` once. H2 and its follow-up H2b
+  (coop's own Fabric and SQL token minting pinned to the same tenant) must ship in
+  the same tagged patch release.
 
 ## [0.23.5] — 2026-09-22
 

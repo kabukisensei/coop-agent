@@ -24,8 +24,13 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
    extension-skew preflight** (checks the Pi agent against every installed
    extension's `@earendil-works/pi-ai` requirement — aborts with clear guidance if
    the agent is too old for an installed extension, and auto-realigns a merely-stale
-   extension tree; bypass with `COOP_SKIP_EXT_CHECK=1`), optionally runs an
-   Azure / Power BI token preflight, then `exec pi …` with the branded resources
+   extension tree; bypass with `COOP_SKIP_EXT_CHECK=1`), runs the **Azure sign-in
+   preflight** (client tenant from the project's `fabric.tenant_id`, else
+   `~/.coop/config` `azure.tenant_id`; checks the Fabric token, then the Power BI
+   token; in an interactive console an authentication failure opens a bounded
+   `az login --tenant <id>` with no question; any failure prints one line and the
+   launch continues; a success is cached for 30 minutes in `<agent-dir>/.az-ok`;
+   `COOP_SKIP_AZ=1` skips it), then `exec pi …` with the branded resources
    attached. It also dispatches the
    subcommands (`doctor`, `update`, `install`/`bootstrap`, `sync`, `data-doc`,
    `sql-review`, `dax-review`, `fabric`, `version`, `help`) and aliases Pi

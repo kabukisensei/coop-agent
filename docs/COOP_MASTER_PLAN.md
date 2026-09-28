@@ -145,16 +145,28 @@ rollout machines.
 
 **Fix:**
 - Tenant comes from one place with a fallback chain: `.coop/project.yml`
-  `fabric.tenant_id` → `~/.coop/user.json` tenant (set once by onboarding) →
-  Cooptimize default in `config/defaults.yml`. A `TODO` value counts as unset.
+  `fabric.tenant_id` → `~/.coop/config` `azure.tenant_id` (set once by onboarding;
+  client resources only) → nothing. A `TODO` value counts as unset. *Corrected in
+  H2: onboarding saves the tenant in `~/.coop/config`, not `~/.coop/user.json`.
+  Aaron decided on 2026-09-28 that there is no Cooptimize default tenant: this repo
+  is public and `azure.tenant_id` is reserved for client resources. With no tenant
+  the launch is silent and `coop doctor` says to run `coop onboard --config-only`.*
 - Preflight checks the Fabric resource token first (`https://api.fabric.microsoft.com`),
   then Power BI; either missing triggers sign-in.
 - One `az` invocation helper shared by Python, PowerShell, and Node that resolves
   `az.cmd` on Windows (the `fabric_request_headers.mjs` logic, reused, not copied).
+  *As built in H2: the Node helper is a hardened, token-only supervisor that cannot
+  run an interactive sign-in, so each language keeps one bounded way to call `az`
+  and shared tests keep them in step. The Python helper now resolves `az.cmd` the
+  way the Node one does; PowerShell's `& az` already resolved it.*
 - Sign-in runs `az login --tenant <id> --allow-no-subscriptions` directly (browser
   flow) and falls back to `--use-device-code` when no browser can open. No confirm
   prompt; the user asked for coop, not for a question about Azure. Token minting
-  for Fabric passes the same `--tenant`.
+  for Fabric passes the same `--tenant`. *As built in H2: `az login` falls back to
+  a device code by itself, so coop adds no retry; the automatic sign-in runs only
+  in an interactive console (piped and scheduled launches print the one line).
+  Token minting with `--tenant` is split out as H2b (decided 2026-09-28), a
+  separate PR that ships in the same tagged patch as H2.*
 - On failure, launch continues with one line that names the exact command, and
   `coop doctor` gains one row: signed in to tenant X / not signed in, run this.
 - Cache stays as today (`.az-ok`, 30 minutes, tenant-stamped).
@@ -591,7 +603,7 @@ same PR.
 | Order | ID | Package | Starts after | Done when | Status |
 | --- | --- | --- | --- | --- | --- |
 | 1 | H1 | Installer prerequisite gate with ordered commands; doctor reuses it | now | fresh VM acceptance in section 3 | in review ([#82](https://github.com/kabukisensei/coop-agent/pull/82)), VM pending: [#76](https://github.com/kabukisensei/coop-agent/issues/76) |
-| 2 | H2 | Automatic Azure sign-in, tenant fallback chain, `az.cmd`, Fabric token check | now | signed-out machine acceptance | agent:ready: [#77](https://github.com/kabukisensei/coop-agent/issues/77) |
+| 2 | H2 | Automatic Azure sign-in, tenant fallback chain, `az.cmd`, Fabric token check | now | signed-out machine acceptance | in review (PR); H2b follows; ship together; VM pending: [#77](https://github.com/kabukisensei/coop-agent/issues/77) |
 | 3 | H5 | `coop update` follows release tags; `--edge` for head | now | tag/edge acceptance in section 3 | agent:ready: [#78](https://github.com/kabukisensei/coop-agent/issues/78) |
 | 4 | H6 | One-page Windows install doc matching the H1 checklist | H1 | a teammate installs from the page alone | agent:ready: [#79](https://github.com/kabukisensei/coop-agent/issues/79) |
 | 5 | H3 | Standards reader follows the repo; default contract regenerated | local clones of both repos | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` | agent:ready: [#80](https://github.com/kabukisensei/coop-agent/issues/80) |
