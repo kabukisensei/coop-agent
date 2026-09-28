@@ -35,4 +35,4 @@ bash scripts/check-parity.sh   # bash <-> PowerShell pairing + .ps1 UTF-8 BOM ga
 - `CONTRIBUTING.md` — parity rules, bash 3.2, PowerShell BOM, local-testing pitfalls
 - `RELEASE.md` — cross-repo release runbook for the whole coop-* suite
 - `docs/troubleshooting.md` — split Node toolchains, `fab` collision, stale `coop` symlink
-- `docs/ui-strategy.md` — why `coop web` exists and the RPC lessons behind it
+- `docs/history/ui-strategy.md` — why `coop web` existed and the RPC lessons behind it (history; the roadmap is `docs/COOP_MASTER_PLAN.md`)

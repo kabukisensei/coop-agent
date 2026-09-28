@@ -1,6 +1,6 @@
 # `coop web` — a friendly windowed UI (phase 2 plan)
 
-> Status: **BUILT + HARDENED** — `coop web` runs (see [`../web/`](../web/)). It spawns
+> Status: **BUILT + HARDENED** — `coop web` runs (see [`../web/`](../../web/)). It spawns
 > the governed `pi --mode rpc -a` via the shared launch spec, serves a localhost SPA
 > over SSE, renders the Start Here menu + guardrail dialogs as clickable cards, and
 > now ships the production-hardening pass: strict CSP (no inline script/style),

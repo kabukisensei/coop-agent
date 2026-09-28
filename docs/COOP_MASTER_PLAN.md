@@ -4,7 +4,7 @@
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
-intention of the [Windows terminal plan, revision 2.0](COOP_WINDOWS_TERMINAL_PLAN.md)
+intention of the [Windows terminal plan, revision 2.0](history/COOP_WINDOWS_TERMINAL_PLAN.md)
 (Windows-first, stable and beta kept separate, bounded simplification, qualified
 upgrades, TeamAI and Jev as optional experiments) and **replaces its execution
 order**. Revision 2.0 stays in the tree as the detailed reference for each package
@@ -532,7 +532,7 @@ gate, not the order; it stays last.
   reuses the shared launch spec and the same guardrails, skills, prompts, and
   profile; it must never carry a second policy implementation.
 - **Reference, not merge:** the ten `feature/coop-desktop-*` and
-  `desktop/candidate-2026-09-20` branches and `docs/ui-strategy.md` are design
+  `desktop/candidate-2026-09-20` branches and `docs/history/ui-strategy.md` are design
   evidence. Salvage after review; do not merge wholesale.
 - **Packaging is the project:** a signed Windows installer (MSIX or a Squirrel/NSIS
   package via electron-builder) that bundles Node, installs or reuses Pi in the
@@ -623,8 +623,14 @@ on the same page; they add to `AGENTS.md`, they do not replace it.
   are Aaron's. Releases and tags are Aaron's.
 
 **Before starting any row, read in this order:** `AGENTS.md`, this plan's section
-2 (the rules) and the row's own section, then revision 2.0 only for the package
-detail it points to. Do not read the historical Desktop/web plans for direction.
+2 (the rules) and the row's own section, then revision 2.0 (in `docs/history/`)
+only for the package detail it points to. Everything else under `docs/history/`
+is read-only context, never direction.
+
+**There is one plan.** This file is it. New planning is a new revision of this
+file, never a new plan document. A Spec Kit `plan.md` under `specs/<issue>/` is an
+implementation note for one issue and must point back to its row here; it is not
+a roadmap.
 
 **The development VM (week of September 28).** A fresh Windows VM is the shared
 acceptance and qualification machine:

@@ -389,7 +389,7 @@ JS
 # Spawns the SAME governed coop the terminal runs, but drives it from a local
 # browser window (SSE bridge). Uses the shared launch spec so it can never drift
 # from the terminal. Localhost + one-time token; see web/server.mjs and
-# docs/coop-web-plan.md.
+# docs/history/coop-web-plan.md.
 coop_web() {
   have pi   || coop_die "pi is not installed. Run: coop install"
   have node || coop_die "Node.js is required for coop web. Run: coop install"

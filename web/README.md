@@ -8,7 +8,7 @@ coop web            # opens a chromeless "app" window (Ctrl+C to stop)
 coop web --port 7500
 ```
 
-See [`../docs/coop-web-plan.md`](../docs/coop-web-plan.md) for the full plan and
+See [`../docs/history/coop-web-plan.md`](../docs/history/coop-web-plan.md) for the full plan and
 decision history.
 
 ## The app window

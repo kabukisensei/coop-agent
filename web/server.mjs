@@ -1,5 +1,5 @@
 // coop web — a tiny localhost bridge that puts a friendly browser window in front
-// of the SAME governed coop the terminal runs. See docs/coop-web-plan.md.
+// of the SAME governed coop the terminal runs. See docs/history/coop-web-plan.md.
 //
 // It spawns `pi --mode rpc -a` using the shared launch spec (COOP_LAUNCH_SPEC, from
 // `coop launch-spec --json`), relays Pi's JSONL events to the browser over SSE, and

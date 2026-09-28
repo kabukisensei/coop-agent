@@ -4,7 +4,7 @@ The friendly-UI work shipped through phase 2 (`coop web` landed in v0.5.0 and
 grew through v0.8.x). This page records the strategy and the hard-won
 implementation lessons so future UI work doesn't re-learn them. Companion
 docs: [coop-web-plan.md](coop-web-plan.md) (the phase-2 design and
-non-negotiables) and [../web/README.md](../web/README.md) (what shipped, the
+non-negotiables) and [../web/README.md](../../web/README.md) (what shipped, the
 security model, known limitations).
 
 ## The framing: entry friction vs experience friction
@@ -77,4 +77,4 @@ over a locally installed CLI, there is no signing/notarization cost at all.
   per-run token exchanged for an **HttpOnly** `SameSite=Strict` cookie
   (timing-safe compare), **strict CSP** with no inline script/style, POSTs
   require the custom **`X-Coop-CSRF`** header, CORS never enabled. Details in
-  [../web/README.md](../web/README.md).
+  [../web/README.md](../../web/README.md).

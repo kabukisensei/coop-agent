@@ -73,11 +73,11 @@ project contract aligned with the Cooptimize standards repos), then test right-s
 Windows-first simplification, dependency reconciliation, standards alignment and the
 reviewer decision, Azure SQL breadth with dev-by-default and live impact tracing,
 common-workflows first run, then the minimal beta channel with the optional TeamAI /
-Jev / package trials, and last an installable Electron desktop. The
-[Windows terminal plan, revision 2.0](docs/COOP_WINDOWS_TERMINAL_PLAN.md) remains
-the detailed reference for each package; the master plan wins where they differ.
-Read the [preparation handoff](docs/COOP_WINDOWS_TERMINAL_PREPARATION.md) for the
-execution gate: Aaron starts each phase explicitly. **No phase is started by the
+Jev / package trials, and last an installable Electron desktop. **It is the only
+plan.** The earlier Windows terminal plan (revision 2.0) and every prior plan,
+handoff, and receipt live under `docs/history/` as read-only reference; the master
+plan wins where they differ, and new planning is a new revision of the master plan,
+never a new file. Aaron starts each phase explicitly. **No phase is started by the
 plan being merged.** Do not add roadmap tasks to `agent:ready` or treat branch
 presence as an execution trigger.
 
@@ -177,15 +177,12 @@ delete or re-push a tag, never commit secrets (`.env*`, keys, tokens — see
   `README.md`, `docs/architecture.md`, `docs/ci.md`, `docs/extending.md`,
   `docs/guardrails.md`, `docs/onboarding.md`, `docs/tool-contract.md`,
   `docs/troubleshooting.md`.
-- **Current roadmap (adopted; each phase needs an explicit start):**
-  `docs/COOP_MASTER_PLAN.md` (order and scope), with
-  `docs/COOP_WINDOWS_TERMINAL_PLAN.md` (package detail) and
-  `docs/COOP_WINDOWS_TERMINAL_PREPARATION.md` (execution gate).
-- **Plans / history (context only — never execute their steps without an
-  explicit request):** `docs/ui-strategy.md`, `docs/coop-web-plan.md`,
-  `docs/coop-web-pivis-plan.md`, `docs/plan-azure-devops-integration.md`,
-  `docs/plan-coop-agent-improvements.md`. Prior Desktop/web directions do not
-  override the current Windows-terminal roadmap or its execution pause.
+- **The one plan (each phase needs an explicit start):** `docs/COOP_MASTER_PLAN.md`.
+- **History (read-only context; never execute their steps):** everything under
+  `docs/history/` — the revision 2.0 Windows terminal plan and its preparation
+  handoff, the guardrail repair receipt, the web/UI plans, the Azure DevOps and
+  improvements plans, the phase 6 report, the context-budget baseline, and the
+  round-2 review fix plan. Prior Desktop/web directions never override the master plan.
 - `CHANGELOG.md` — history; edit only under `## [Unreleased]`.
 
 ## Working the backlog (agents)
