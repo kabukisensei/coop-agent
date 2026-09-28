@@ -387,10 +387,14 @@ built only if this proves insufficient.
 
 Depends on H3 having access to the two repositories.
 
-1. **Resolver follows the repo.** Finish H3's data-driven reader; keep provenance
-   (revision, file hash, snapshot) because it is what makes a review reproducible,
-   drop the anchor-commit and archive-hash equality checks that only prove the repo
-   has not changed shape.
+1. **Resolver follows the repo.** Finish H3's data-driven reader. coop reads the
+   coop-standards Obsidian wiki articles directly by their front matter (`domain`,
+   `layer`, `artifact`, `technology`, `status`). It does not use the repo's
+   `scripts/assemble.py`, `standards/*.md`, or `standards.yml`, which stay in the
+   repo unchanged for the team and older clients. Keep provenance (revision, article
+   path, file hash) because it is what makes a review reproducible; drop the
+   anchor-commit and archive-hash equality checks that only prove the repo has not
+   changed shape.
 2. **Standards are what coop writes to.** Every skill and prompt that authors SQL,
    DAX, or a semantic model reads the effective standard for that domain at task
    start (this already happens through `buildStandardsContext`) and the
@@ -405,7 +409,15 @@ Depends on H3 having access to the two repositories.
      for clients whose pipelines run them, and re-key their rules to the new
      standards format in their own repos;
    - if no client pipeline uses them within one quarter, archive the CLIs.
-   Aaron decides; the plan carries both paths.
+
+   **Decided 2026-09-28 (Aaron):** the review tools leave coop. Standards are
+   enforced while writing, from the wiki articles. The replacement is a short
+   self-check: before presenting SQL, DAX, or model changes, coop checks its own
+   diff against the same articles it used to write them and names any rule it could
+   not meet. No separate rule engine. The CLIs survive only as optional CI gates for
+   a client whose pipeline runs them today (section 15's open question). Answer
+   that question before ST1 starts. Until ST1 retires them, the reviewers are fed
+   from the wiki so they never contradict what coop just wrote.
 4. **Tabular Editor BPA** stays as the deterministic model check; it is vendor-owned
    and not tied to the standards format.
 
@@ -587,7 +599,7 @@ same PR.
 | 7 | S1, S5 | Retire POSIX product path and legacy web | T1 | one Windows implementation, forwarder kept, tests removed with their surface | not started |
 | 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | not started |
 | 9 | U1 | Dependency reconciliation per section 6, one row per PR, qualified on the VM | S-lane | exact versions, tests, rollback per PR; keep/drop list closed | not started |
-| 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewer keep/retire decided and executed | not started |
+| 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewers retired from coop (decided 2026-09-28), self-check in place | not started |
 | 11 | SQ1–SQ6 | Azure SQL targets, dev default, live impact, data verification | ST1 | section 8 acceptance | not started |
 | 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | not started |
 | 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, naming, diagnostics, simplify | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
