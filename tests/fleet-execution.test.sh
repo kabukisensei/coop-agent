@@ -29,9 +29,15 @@ isolate_block
 # prefer a versioned one so a host whose python3 is 3.14 still qualifies.
 REAL_NODE="$(command -v node)"
 REAL_PY="$(command -v python3.13 2>/dev/null || command -v python3.12 2>/dev/null || command -v python3 2>/dev/null || command -v python)"
-# Azure CLI is an install prerequisite (H1 gate); these fixtures model a machine
-# that has it.
-stub_az() { printf '#!/bin/sh\necho azure-cli 2.80.0\n' > "$1"; chmod +x "$1"; }
+# Git and Azure CLI are install prerequisites (H1 gate); these fixtures model a
+# machine that has them. Git is the real one behind a wrapper: under Git Bash it
+# lives in /mingw64/bin (not on the fixture PATH), and a copied git.exe loses its
+# DLLs. Usage: stub_az <stub-dir>/az  (also drops <stub-dir>/git)
+REAL_GIT="$(command -v git)"
+stub_az() {
+  printf '#!/bin/sh\necho azure-cli 2.80.0\n' > "$1"; chmod +x "$1"
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$REAL_GIT" > "$(dirname "$1")/git"; chmod +x "$(dirname "$1")/git"
+}
 stub_python() { # <destination> — wrappers preserve native Windows DLL lookup
   cat > "$1" <<SH
 #!/bin/sh
