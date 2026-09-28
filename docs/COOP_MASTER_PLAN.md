@@ -578,7 +578,7 @@ same PR.
 
 | Order | ID | Package | Starts after | Done when | Status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | H1 | Installer prerequisite gate with ordered commands; doctor reuses it | now | fresh VM acceptance in section 3 | in review (PR), VM pending: [#76](https://github.com/kabukisensei/coop-agent/issues/76) |
+| 1 | H1 | Installer prerequisite gate with ordered commands; doctor reuses it | now | fresh VM acceptance in section 3 | in review ([#82](https://github.com/kabukisensei/coop-agent/pull/82)), VM pending: [#76](https://github.com/kabukisensei/coop-agent/issues/76) |
 | 2 | H2 | Automatic Azure sign-in, tenant fallback chain, `az.cmd`, Fabric token check | now | signed-out machine acceptance | agent:ready: [#77](https://github.com/kabukisensei/coop-agent/issues/77) |
 | 3 | H5 | `coop update` follows release tags; `--edge` for head | now | tag/edge acceptance in section 3 | agent:ready: [#78](https://github.com/kabukisensei/coop-agent/issues/78) |
 | 4 | H6 | One-page Windows install doc matching the H1 checklist | H1 | a teammate installs from the page alone | agent:ready: [#79](https://github.com/kabukisensei/coop-agent/issues/79) |
