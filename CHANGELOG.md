@@ -101,6 +101,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- `coop release` can no longer push a tag that is not on `main` (#105). It fetches
+  `origin` and refuses, before changing anything, unless `HEAD` is the branch `main`
+  at exactly `origin/main`; a detached HEAD, another branch, or unpushed or missing
+  commits each stop it with the fix. It then pushes `main` and the tag in one atomic
+  push (`git push --atomic origin main vX.Y.Z`), so when origin rejects the branch (for
+  example, someone merged during the gate) the tag does not land either, and the
+  release exits non-zero with the retry command. Before, a failed branch push still
+  pushed the tag, and `coop update`, which follows only tags on `main` since H5,
+  ignored it without a warning. `--no-push` now prints the same atomic push command.
 - Incremental BI patterns are chosen by the repository's `layer:` front matter (the same
   front-matter reader as the standards wiki). The old
   path keyword filter matched the clone's own folder name (`incremental-bi`), so every

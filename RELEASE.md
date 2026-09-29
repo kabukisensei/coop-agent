@@ -46,8 +46,9 @@ Every Python repo's `publish.yml` **verifies the pushed tag equals
   `coop release` owns them.
 - **Never** release from a dirty tree. Check first: `git status --porcelain`
   must print nothing.
-- **Never** release coop-agent from a detached HEAD or from a `main` that differs
-  from `origin/main`: its tag must land on `main` (see step (d)).
+- **Never** push a coop-agent tag on its own: it must land on `main`, so
+  `coop release` refuses a detached HEAD or a `main` that differs from
+  `origin/main` and pushes `main` and the tag atomically (see step (d)).
 - **Never** treat a clean tree as permission to release — a release happens only
   on Aaron's explicit request naming the version (see "When to release" above).
 
@@ -154,25 +155,30 @@ pipelines and the "Pinning tool versions" prose) to the same versions — the
 pre-tag gate does **not** check `docs/ci.md`, so those pins drift silently if
 you skip this.
 
-From a clean tree on an attached `main` that equals `origin/main` (nothing
-unpushed; `git fetch origin && git status -sb` shows `## main...origin/main`),
-with user-visible changes recorded under `## [Unreleased]` in `CHANGELOG.md`:
+From a clean tree on an attached `main` that equals `origin/main` (`coop release`
+fetches `origin` and refuses anything else), with user-visible changes recorded
+under `## [Unreleased]` in `CHANGELOG.md`:
 
 ```bash
 ./bin/coop release patch        # or: minor | major   (default: patch); add --yes to skip the confirm
 ```
 
 What `coop release` does (`coop_release` in `bin/coop`): requires a clean tree;
-runs the pre-tag gate — esbuild-checks every `extensions/*/index.ts`, then
-`bash tests/run.sh` and `bash scripts/check-parity.sh`, then verifies the three
-coop-tool `tested_with` pins in `config/defaults.yml` match the sibling
+fetches `origin` and refuses unless `HEAD` is the branch `main` at exactly
+`origin/main` (a detached HEAD, another branch, or unpushed or missing commits
+stop it before anything changes); runs the pre-tag gate — esbuild-checks every
+`extensions/*/index.ts`, then `bash tests/run.sh` and
+`bash scripts/check-parity.sh`, then verifies the three coop-tool `tested_with`
+pins in `config/defaults.yml` match the sibling
 `../coop-website/versions.json` (`coop_release_check_pins`; a mismatch aborts
 with the fix named, a **missing sibling checkout warns and asks** so an
 offline/partial clone can still release deliberately — all of the gate is
 skippable with `--no-check`); bumps the `VERSION` file **and** every
 `extensions/*/package.json` in lockstep; rolls
 `## [Unreleased]` into a dated `## [X.Y.Z]`; commits `Release vX.Y.Z`; tags
-`vX.Y.Z`; pushes commit + tag (`--no-push` stops at the local tag). The tag
+`vX.Y.Z`; pushes `main` and the tag in one atomic push
+(`git push --atomic origin main vX.Y.Z`: both land or neither does, so the tag
+can never reach origin off `main`). `--no-push` stops at the local tag. The tag
 push triggers `release.yml`, which cuts a GitHub Release whose body is that
 version's CHANGELOG section.
 
@@ -180,15 +186,12 @@ Verify:
 
 ```bash
 git describe --tags             # expect: vX.Y.Z
-git fetch origin && git merge-base --is-ancestor vX.Y.Z origin/main && echo on-main   # expect: on-main
 gh release view vX.Y.Z          # expect: release exists, body = the CHANGELOG section
 ```
 
-The `on-main` check matters because `coop release` still pushes the tag when
-the branch push fails, and the fleet ignores a tag that is not on `main`
-(safely, but without a warning; #105 tracks an atomic push). If it prints
-nothing, push `main` (`git push origin main`) and re-check; never move or
-re-push the tag.
+If the push is rejected (for example, `main` moved on origin during the gate),
+nothing reached origin and `coop release` exits non-zero with the retry command.
+Never push the tag on its own.
 
 **Deployment, rollback, and holds (coop-agent).**
 
