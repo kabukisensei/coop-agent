@@ -88,9 +88,7 @@ that row's command under it, for example:
 ```
 
 Close the install window, run that command in a new PowerShell window, then
-double-click **Install coop.cmd** again. The installer's message says
-`run: coop install`, but the `coop` command only exists once the installer gets past
-this checklist, so use Install coop.cmd until then.
+double-click **Install coop.cmd** again.
 
 Partway through, it asks:
 

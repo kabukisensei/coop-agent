@@ -129,6 +129,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   instead of a constant in both installers. A Python found off `PATH` (Python
   install manager, winget user scope) is added to `PATH` for the rest of the
   install, so pipx no longer reports "python missing" in the same window.
+- On a first install, the prerequisite stop no longer says `run: coop install` before
+  the `coop` launcher exists (#112). While `coop` is not on `PATH`, the stop line, its
+  `--prereqs auto` hint, and the `--prereqs auto` re-check stop name a command that
+  works from the clone, with the clone's absolute path: on Windows, double-click
+  `Install coop.cmd` again (or run `& "<clone>\bin\coop.cmd" install`); in bash,
+  `<clone>/bin/coop install`. Once `coop` is on `PATH` the wording is unchanged.
+  README, `docs/onboarding.md`, and `docs/install-windows.md` now describe the same
+  stop instead of telling first-time users to run `coop install`.
 - README no longer says Azure CLI is both auto-installed and not auto-installed.
 - Azure sign-in happens automatically (master plan H2, #77). The launch preflight
   (`coop`, `coop web`) takes the client tenant from one chain: the project's
