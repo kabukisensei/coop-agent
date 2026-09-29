@@ -17,8 +17,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   you added yourself is left in place, and `coop doctor` (both platforms) warns about
   any `powerbi-mcp-server` entry and names the reason. The bundled contracts and both
   project wizards no longer write the `mcp.powerbi` block (`readonly_flag: true`); an
-  existing contract keeps it untouched. The `integrations.power_bi` onboarding toggle
-  no longer has an effect.
+  existing contract keeps it untouched. `coop onboard` no longer asks "Enable Power BI
+  MCP?", no longer lists it as enabled or omitted in the review summary, and no longer
+  tells you to set a tenant for it; a saved `integrations.power_bi` value is dropped
+  the next time onboarding saves the config.
 
 - `coop update` follows release tags instead of the head of `main` (H5, #78). Step 1
   fast-forwards the coop-agent checkout to the newest `vX.Y.Z` tag on `main` that is
