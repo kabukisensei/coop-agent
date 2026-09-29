@@ -34,6 +34,9 @@ const writeCanonical = (suffix) => {
 };
 const commit = (message) => { git(["add", "."]); git(["commit", "-q", "-m", message]); return git(["rev-parse", "HEAD"]); };
 const options = (more = {}) => ({ canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, fixtureRegistry: true, remote, now: () => now, reviewerBins: { sql: join(tmp, "none-sql"), dax: join(tmp, "none-dax") }, ...more });
+// A forced refresh that fails must say why (issue #100: a bare `false !== true`
+// hid the cause of a Windows-only failure).
+const assertRefreshed = (opts) => { const r = refreshCanonical(opts); assert.equal(r.ok, true, JSON.stringify(r)); return r; };
 const test = (name, fn) => { fn(); count++; console.log(`  ✓ ${name}`); };
 const resetStorage = () => { rmSync(join(tmp, "cache"), { recursive: true, force: true }); rmSync(snapshots, { recursive: true, force: true }); };
 
@@ -41,7 +44,7 @@ try {
   execFileSync("git", ["init", "-q", "-b", "main", remote]);
   git(["config", "user.email", "standards@test.invalid"]); git(["config", "user.name", "Standards Test"]);
   writeCanonical("r1"); const r1 = commit("r1");
-  writeFileSync(registryPath, JSON.stringify({ schema_version: 1, canonical: { id: "cooptimize-formal-standards", repository: remote, authoritative_branch: "main", freshness_seconds: 900, timeout_seconds: 2 } }));
+  writeFileSync(registryPath, JSON.stringify({ schema_version: 1, canonical: { id: "cooptimize-formal-standards", repository: remote, authoritative_branch: "main", freshness_seconds: 900, timeout_seconds: 30 } }));
 
   test("directory durability suppresses only explicit Windows unsupported errors", () => {
     const error = (code) => { const value = new Error(code); value.code = code; return value; };
@@ -117,7 +120,7 @@ try {
   writeCanonical("r2"); const r2 = commit("r2");
   const beforePointer = ["canonical:clone", "canonical:verified", "canonical:index", "canonical:metadata", "canonical:generation", "canonical:before-pointer"];
   for (const step of [...beforePointer, "canonical:after-pointer", "canonical:before-state", "canonical:after-state"]) test(`fault ${step} never exposes an incomplete generation or destroys LKG`, () => {
-    git(["reset", "--hard", r1]); resetStorage(); now += 1; assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    git(["reset", "--hard", r1]); resetStorage(); now += 1; assertRefreshed(options({ force: true }));
     const old = activeCanonicalGeneration(options()); git(["reset", "--hard", r2]);
     const failed = refreshCanonical(options({ force: true, fault: step })); assert.equal(failed.ok, false);
     const active = activeCanonicalGeneration(options()); assert.equal(active.ok, true, JSON.stringify(active));
@@ -130,7 +133,7 @@ try {
     ["metadata", "generation.json"],
     ["authority", join("checkout", "SQL", "SQL Conventions.md")],
   ]) test(`final-location ${artifact} corruption cannot activate a canonical generation`, () => {
-    git(["reset", "--hard", r1]); resetStorage(); now += 1; assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    git(["reset", "--hard", r1]); resetStorage(); now += 1; assertRefreshed(options({ force: true }));
     const old = activeCanonicalGeneration(options()); git(["reset", "--hard", r2]);
     const failed = refreshCanonical(options({ force: true, fault(step) {
       if (step !== "canonical:generation") return;
@@ -146,7 +149,7 @@ try {
 
   test("process death at every build/pointer/state step preserves one complete generation", () => {
     for (const step of [...beforePointer, "canonical:after-pointer", "canonical:before-state", "canonical:after-state"]) {
-      git(["reset", "--hard", r1]); resetStorage(); now += 1; assert.equal(refreshCanonical(options({ force: true })).ok, true);
+      git(["reset", "--hard", r1]); resetStorage(); now += 1; assertRefreshed(options({ force: true }));
       git(["reset", "--hard", r2]);
       const childOptions = { canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, fixtureRegistry: true, remote, force: true };
       const script = `import {refreshCanonical} from ${JSON.stringify(new URL("../lib/standards.mjs", import.meta.url).href)}; refreshCanonical({...${JSON.stringify(childOptions)},fault:(s)=>{if(s===${JSON.stringify(step)})process.exit(77)}});`;
@@ -204,7 +207,7 @@ try {
   });
   test("canonical generations are never pruned by the Monday refresh path", () => {
     writeCanonical("retained-old"); commit("retained-old"); now += 1;
-    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    assertRefreshed(options({ force: true }));
     const old = activeCanonicalGeneration(options()); assert.equal(old.ok, true);
     for (const tag of ["retained-new-1", "retained-new-2", "retained-new-3"]) {
       writeCanonical(tag); commit(tag); now += 1;
@@ -243,7 +246,7 @@ try {
     }
     assert.equal(promoteReviewRun(outdir, entries, options()).ok, true);
     writeCanonical("after-canonical-review"); commit("after-canonical-review"); now += 1;
-    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    assertRefreshed(options({ force: true }));
     const accepted = resolveAcceptedReviewRun(outdir, options()); assert.equal(accepted.ok, true, JSON.stringify(accepted));
     assert.equal(JSON.parse(readFileSync(accepted.reports.sql)).version, "canonical-test");
     const acceptedMetadata = JSON.parse(readFileSync(join(accepted.generation, "generation.json")));
@@ -270,7 +273,7 @@ try {
   });
   test("coop reads only active wiki articles: not the v1 shim, retired, draft, or unfielded notes", () => {
     resetStorage(); now += 1; git(["reset", "--hard", "HEAD"]);
-    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    assertRefreshed(options({ force: true }));
     const sql = resolveStandard("sql", options({ refresh: false }));
     assert.deepEqual(sql.articles.map((a) => a.file), ["SQL/Gold/Stored Procedures.md", "SQL/SQL Conventions.md"]);
     assert.equal(sql.file, "wiki:sql");
@@ -309,7 +312,7 @@ try {
     resetStorage(); now += 1;
     put("Fabric/Workspaces.md", article({ id: "fabric_workspaces", title: "Fabric Workspaces", domain: "fabric_platform", artifact: "workspace", technology: "fabric" }, "# Fabric Workspaces\n## Workspace naming\nName workspaces by layer.\n"));
     const added = commit("add fabric_platform domain");
-    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    assertRefreshed(options({ force: true }));
     const r = resolveStandard("fabric_platform", options({ refresh: false }));
     assert.equal(r.state, "canonical"); assert.equal(r.revision, added); assert.equal(r.file, "wiki:fabric_platform");
     assert.deepEqual(r.articles.map((a) => a.file), ["Fabric/Workspaces.md"]);
@@ -323,7 +326,7 @@ try {
     put("SQL/Bad Domain.md", article({ id: "bad", title: "BADNAME", domain: "Bad-Name" }, "# BADNAME\n"));
     put("SQL/Missing Field.md", "---\nid: partial\ntitle: PARTIAL\ndomain: sql\nstatus: active\n---\n# PARTIAL\n");
     commit("unsafe articles"); now += 1;
-    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    assertRefreshed(options({ force: true }));
     const sql = resolveStandard("sql", options({ refresh: false }));
     assert.deepEqual(sql.articles.map((a) => a.file), ["SQL/Gold/Stored Procedures.md", "SQL/SQL Conventions.md"]);
     for (const decoy of ["OUTSIDE", "BADNAME", "PARTIAL"]) assert.equal(readFileSync(sql.path, "utf8").includes(decoy), false, decoy);
@@ -340,7 +343,7 @@ try {
       ["Semantic Model/M Query", "semantic_model", "m_query", "Power BI M Query"], ["Semantic Model/Organizing Tables", "semantic_model", "table", "Organizing Power BI Tables"],
     ]) put(`Power BI/${file}.md`, article({ id: `powerbi_${artifact}`, title, domain: "powerbi", layer, artifact, technology: "power_bi" }, `# ${title}\nBody.\n`));
     commit("power bi wiki"); now += 1;
-    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    assertRefreshed(options({ force: true }));
     for (const prompt of ["Add a measure to the Power BI model for total sales", "Review the Power BI semantic model"]) {
       const record = buildStandardsContext(prompt, options({ refresh: false })).records.find((r) => r.resolution.domain === "semantic_model");
       const files = record.sections.map((s) => s.file);
@@ -354,7 +357,7 @@ try {
       put(`Power BI/${file}.md`, article({ id: `powerbi_${artifact}`, title, domain: "powerbi", layer: "semantic_model", artifact, technology: "power_bi" }, `# ${title}\n${artifact.toUpperCase()} BODY\n`));
     }
     commit("dax articles"); now += 1;
-    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    assertRefreshed(options({ force: true }));
     const daxContext = buildStandardsContext("Add a calculated column for margin", options({ refresh: false }));
     assert.deepEqual(daxContext.domains, ["dax"]);
     assert.deepEqual(daxContext.records[0].sections.map((s) => s.file).sort(), ["Power BI/Semantic Model/DAX.md", "Power BI/Semantic Model/Measures.md"]);
@@ -364,7 +367,7 @@ try {
     // Too many articles and no core layer: a listing with paths the agent can open, no bodies.
     for (let i = 1; i <= 7; i += 1) put(`Fabric/Topic ${i}.md`, article({ id: `fabric_topic_${i}`, title: `Fabric Topic ${i}`, domain: "fabric_platform", artifact: `topic_${i}`, technology: "fabric" }, `# Fabric Topic ${i}\nTOPIC BODY\n`));
     commit("large fabric_platform domain"); now += 1;
-    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    assertRefreshed(options({ force: true }));
     const listing = retrieveRelevantSections(resolveStandard("fabric_platform", options({ refresh: false })), "Review the lakehouse");
     assert.equal(listing.length, 1); assert.equal(listing[0].file, undefined);
     assert.equal(listing[0].content.includes("TOPIC BODY") || listing[0].content.includes("Name workspaces by layer"), false);
@@ -380,7 +383,7 @@ try {
     put("SQL/Silver/Schema Manager.md", article({ id: "sql_silver_schema_manager", title: "Silver Schema Manager", domain: "sql", layer: "silver", artifact: "agnostic" }, "# Silver Schema Manager\nSCHEMA MANAGER BODY\n"));
     put("Technology/Fabric/Fabric Warehouse.md", article({ id: "tech_fabric_warehouse", title: "Fabric Warehouse Target", domain: "sql", artifact: "agnostic", technology: "fabric_warehouse" }, "# Fabric Warehouse\nWAREHOUSE BODY\n"));
     commit("layers and technology"); now += 1;
-    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    assertRefreshed(options({ force: true }));
     // The regex classifier alone sees only `fabric`, which has no wiki articles.
     assert.deepEqual(identifyTaskDomains("fix the silver indexing on the fabric warehouse table"), ["fabric"]);
     const fabric = buildStandardsContext("fix the silver indexing on the fabric warehouse table", options({ refresh: false }));
@@ -402,7 +405,7 @@ try {
     const good = git(["rev-parse", "HEAD"]);
     put("SQL/Gold/Views.md", `\uFEFF${article({ id: "sql_gold_views", title: "Gold Views", domain: "sql", layer: "gold", artifact: "view" }, "# Gold Views\nBOMVIEWS\n")}`);
     commit("bom article"); now += 1;
-    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    assertRefreshed(options({ force: true }));
     const sql = resolveStandard("sql", options({ refresh: false }));
     assert.deepEqual(sql.articles.map((a) => a.file), ["SQL/Gold/Stored Procedures.md", "SQL/Gold/Views.md", "SQL/SQL Conventions.md"]);
     assert.match(readFileSync(sql.path, "utf8"), /BOMVIEWS/);
@@ -414,7 +417,7 @@ try {
     const views = article({ id: "sql_gold_views", title: "Gold Views", domain: "sql", layer: "gold", artifact: "view" }, "# Gold Views\nORIGINAL views\n");
     put("SQL/Gold/Views.md", views); put("SQL/Gold/Views 1.md", views.replace("ORIGINAL", "COPY"));
     commit("make a copy"); now += 1;
-    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    assertRefreshed(options({ force: true }));
     const sql = resolveStandard("sql", options({ refresh: false }));
     assert.equal(sql.state, "canonical");
     assert.deepEqual(sql.articles.map((a) => a.file), ["SQL/Gold/Stored Procedures.md", "SQL/Gold/Views 1.md", "SQL/Gold/Views.md", "SQL/SQL Conventions.md"]);
@@ -425,7 +428,7 @@ try {
   });
   test("a wiki with no active articles fails closed and keeps the last known good", () => {
     const good = git(["rev-parse", "HEAD"]); now += 1;
-    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    assertRefreshed(options({ force: true }));
     git(["rm", "-q", "-r", "SQL", "Power BI", "Fabric"]); git(["commit", "-q", "-m", "empty wiki"]); now += 1;
     const failed = refreshCanonical(options({ force: true }));
     assert.equal(failed.ok, false); assert.match(failed.detail, /no active articles/);
