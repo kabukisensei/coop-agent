@@ -136,6 +136,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- `coop init --migrate-legacy` runs on stock macOS bash 3.2 (#84). Without `--apply`,
+  `--yes` or `--archive` (the default dry run) it failed with `migrate_args[@]: unbound
+  variable`, because bash 3.2 treats an empty array as unset under `set -u`. The
+  arguments now use the same guarded expansion as the Pi launch arguments.
 - `scripts/ado-onboard.py` starts without PyYAML (#120). It imported `_yaml` before
   `lib/` was on the path, so on a fresh machine (no PyYAML) it failed at startup, and
   with PyYAML it loaded PyYAML's own `_yaml` module and fell back to a regex read of
