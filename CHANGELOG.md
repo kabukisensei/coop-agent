@@ -136,6 +136,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Guardrails ask before an MCP refresh (#119). A tool call such as `refresh_dataset`
+  (still exposed by a user-owned `powerbi-mcp-server` entry) triggers a refresh on the
+  client tenant, but the MCP mutation check had no refresh verb, so it ran as a read.
+  `refresh`, `refresh_*` and `*_refresh` tool names now ask first like other writes.
+  A read that names a refresh, such as `get_refresh_history`, also asks: the check is
+  name-based and errs toward asking.
 - `scripts/ado-onboard.py` starts without PyYAML (#120). It imported `_yaml` before
   `lib/` was on the path, so on a fresh machine (no PyYAML) it failed at startup, and
   with PyYAML it loaded PyYAML's own `_yaml` module and fell back to a regex read of
