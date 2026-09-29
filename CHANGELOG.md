@@ -7,13 +7,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
-- Standards: the wiki's own front matter now widens the prompt classifier (#88). A
-  task that names a layer the domain's articles carry (silver, gold, report) or every
-  word of an article's technology (fabric warehouse) selects that domain too, so
-  "fix the silver indexing on the fabric warehouse table" reaches Silver Indexing and
-  Fabric Warehouse Target instead of only the empty `fabric` domain. Decided by the
-  cached wiki metadata; no new regex vocabulary. Model, lakehouse-only, and non-task
-  prompts classify as before.
 - Standards: the legacy self-authored `manifest.json` fixture seam is gone (#83).
   `lib/standards.mjs` no longer carries the `manifest.json` branch, `validateManifest`,
   `syncCanonicalLocal`, or the `fixtureRoot`/`staleRoot` test-only options, and
@@ -96,6 +89,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   names near "relationship" must look like the wiki's FKDueDate or PKCustomer (not pkg or
   PKCE). A "reporting model" is not the report layer. Rewrite, convert, (re)format,
   replace, rename, set up, turn on/off and fails/failed/failing now count as requests.
+  The classifier alone decides the domains again (#101): the wiki-layer widening that
+  briefly shipped on `main` is gone, because it gave a bare "report", "silver" or "gold"
+  the Power BI report or SQL articles ("Write a status report for the client", "Add a
+  silver badge to the website header") and gained no prompt the classifier misses.
 - Incremental BI patterns are chosen by the repository's `layer:` front matter (the same
   front-matter reader as the standards wiki). The old
   path keyword filter matched the clone's own folder name (`incremental-bi`), so every
