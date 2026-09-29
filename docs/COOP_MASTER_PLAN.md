@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.1 · September 28, 2026**
+**Document revision 3.2 · September 29, 2026**
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -56,6 +56,11 @@ mutation, no update overwriting user configuration):
   does not belong in the PR gate.
 - Paired scripts, bash 3.2, and the `.ps1` BOM rules in `AGENTS.md` still apply until
   the simplification phase retires them in the same PR that retires the surface.
+- No new behavior on a surface this plan retires (`coop web`, the macOS/Linux
+  product path, `mcp-remote`). A hotfix touches such a surface only to keep it
+  from breaking; it does not improve it.
+- Timing fixtures (sleeps, hang timers, marker polls) belong in the extended lane
+  from now on, even before T1 lands. A PR that must add one says why in its body.
 
 ## 3. Phase 0 — Rollout hotfixes on stable
 
@@ -163,39 +168,45 @@ rollout machines.
 once, then the Fabric MCP tools list without `auth_required`. Signed-in machine: no
 prompt, no delay beyond the cached check.
 
-### H3 — Default project contract matches the Cooptimize standards repos
+### H3 — Coop reads the coop-standards wiki directly (merged in PR 85)
 
-**Observed:** the shipped `.coop/project.yml` and `.coop/project.example.yml`, the
-`coop init` generator (`lib/init_wizard.py`), and the in-app `/setup-project` wizard
-have no `standards:` section any more (removed in v0.23.3). Canonical standards are
-resolved from `config/standards-registry.json`, which is **also hard-coded inside
-`lib/standards.mjs`** and pins the `cooptimize/coop-standards` repository to: a root
-`standards.yml` with ten exact scalar values, exactly three domains (`sql`, `dax`,
-`semantic_model`) at exactly `standards/sql.md`, `standards/dax.md`,
-`standards/semantic-model.md`, branch `main`, and anchor commit `fa109f1`. Anything
-else in the standards repo fails with "domain set differs from managed registry" or
-"canonical path differs from managed registry". `cooptimize/incremental-bi` is only a
-knowledge clone whose Markdown is excerpted by keyword.
+**Observed (revision 3.0):** the shipped `.coop/project.yml`, the example, `coop init`,
+and `/setup-project` had no `standards:` section, and `lib/standards.mjs` locked
+`cooptimize/coop-standards` to one manifest shape, exactly three domains, exact file
+paths, branch `main`, and an anchor commit, with the registry duplicated in code.
 
-**Blocked on access:** this review could not read either private repository (the
-session's GitHub credential has no access to `cooptimize/coop-standards` or
-`cooptimize/incremental-bi`). The exact fix is written once the current layout is
-visible: either grant read access and rerun, or paste the two repos' `tree` output and
-the standards manifest.
+**What the repo actually is (found 2026-09-28 with local clones):**
+`coop-standards` is an Obsidian wiki the team reads directly. Every article carries
+YAML front matter (`id, title, domain, layer, artifact, technology, status`). The
+`standards.yml`, `standards/*.md`, and `scripts/assemble.py` files that coop was
+locked to are a compatibility shim that existed only because coop could not read
+the wiki. Aaron's direction: do not change the repo's structure; change how coop
+reads it, and stop depending on the assembly script.
 
-**Fix, independent of the exact layout:**
-- Delete the duplicated registry constant in `lib/standards.mjs`; the JSON file is the
-  only copy.
-- Read the domain list and paths **from the standards repo's own manifest** and
-  validate them for safety (relative, contained, regular files), not for equality
-  with a list frozen in coop-agent. New or renamed domains then work without a
-  coop-agent release.
-- Regenerate the default `.coop/project.yml`, the example, `coop init`, and
-  `/setup-project` from that format, and accept the nested `standards.<domain>.path`
-  shape in project-local overrides (today only the scalar `standards.sql: file`
-  shape is read).
-- Treat `incremental-bi` the way its repository is actually organized (patterns per
-  folder, learnings, skills), with the same reader instead of a keyword grep.
+**Done in [PR 85](https://github.com/kabukisensei/coop-agent/pull/85):**
+- Coop discovers every active article by front matter (any folder, any future
+  domain); it never reads the shim. Drafts, deprecations, notes without front
+  matter, dot-folders, and symlinks are skipped; an empty wiki fails closed and
+  keeps the last known good.
+- Domains map by front matter: `domain: sql` → `sql`; `domain: powerbi` → `dax` when
+  the artifact is a DAX expression or measure, else `semantic_model`; any other safe
+  domain keeps its name.
+- Tasks receive whole articles (general ones plus up to six ranked by layer,
+  artifact, technology, and title), each with path, hash, and repo revision.
+- The registry JSON is the only copy; the frozen domain list, anchor commit, and
+  archive hash are gone. Project overrides accept the nested
+  `standards.<domain>.path` shape. `incremental-bi` uses the same reader.
+- The SQL/DAX reviewers, until ST1 retires them, are fed a content-addressed
+  reviewer-input file built from the same articles, so they never contradict what
+  coop just wrote.
+
+**Verified against the real repo** at `a00c8cc`: `coop sync` refreshes, prompts
+receive the expected articles, `/setup-project` round-trips. No VM needed.
+
+**Follow-ups filed, not `agent:ready`:** #83 retire the legacy `manifest.json`
+fixture seam and its schema file; #87 the standards runtime test writes the
+developer's real `~/.coop/standards`; #88 the prompt classifier misses wiki SQL
+topics such as "silver indexing on the fabric warehouse".
 
 ### H4 — Regression evidence for the fixes that already shipped
 
@@ -585,16 +596,19 @@ Not requested, offered for Aaron's decision. None is scheduled.
 ## 13. Ordered work register
 
 Status values: `not started`, `issue open`, `in progress (branch)`, `in review
-(PR)`, `done (tag)`. The agent that changes a row's status edits this table in the
-same PR.
+(PR)`, `merged`, `done (tag)`. The agent that opens a PR sets `in review` in that
+PR. Merging is Aaron's act, so the **next** PR any agent opens also moves every row
+whose PR has merged since to `merged`; Aaron moves rows to `done (tag)` when he
+tags. A stale row is never a reason to re-do work: check the PR list first.
 
 | Order | ID | Package | Starts after | Done when | Status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | H1 | Installer prerequisite gate with ordered commands; doctor reuses it | now | fresh VM acceptance in section 3 | in review ([#82](https://github.com/kabukisensei/coop-agent/pull/82)), VM pending: [#76](https://github.com/kabukisensei/coop-agent/issues/76) |
-| 2 | H2 | Automatic Azure sign-in, tenant fallback chain, `az.cmd`, Fabric token check | now | signed-out machine acceptance | agent:ready: [#77](https://github.com/kabukisensei/coop-agent/issues/77) |
-| 3 | H5 | `coop update` follows release tags; `--edge` for head | now | tag/edge acceptance in section 3 | agent:ready: [#78](https://github.com/kabukisensei/coop-agent/issues/78) |
+| 1 | H1 | Installer prerequisite gate with ordered commands; doctor reuses it | now | fresh VM acceptance in section 3 | merged ([#82](https://github.com/kabukisensei/coop-agent/pull/82), 2026-09-28), VM pending: [#76](https://github.com/kabukisensei/coop-agent/issues/76) |
+| 2 | H2 | Automatic Azure sign-in, tenant fallback chain, `az.cmd`, Fabric token check | now | signed-out machine acceptance | in review ([#89](https://github.com/kabukisensei/coop-agent/pull/89)), VM pending: [#77](https://github.com/kabukisensei/coop-agent/issues/77) |
+| 2b | H2b | Coop's own Fabric/SQL token mints pass the project tenant; ships in the same tag as H2 | H2 | guest-tenant acceptance in [#91](https://github.com/kabukisensei/coop-agent/issues/91) | issue open: [#91](https://github.com/kabukisensei/coop-agent/issues/91) (Aaron labels) |
+| 3 | H5 | `coop update` follows release tags; `--edge` for head | now | tag/edge acceptance in section 3 | in progress (`h5/update-follows-tags`, started 2026-09-29): [#78](https://github.com/kabukisensei/coop-agent/issues/78) |
 | 4 | H6 | One-page Windows install doc matching the H1 checklist | H1 | a teammate installs from the page alone | agent:ready: [#79](https://github.com/kabukisensei/coop-agent/issues/79) |
-| 5 | H3 | Standards reader follows the repo; default contract regenerated | local clones of both repos | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` | in review (PR): [#85](https://github.com/kabukisensei/coop-agent/pull/85) for [#80](https://github.com/kabukisensei/coop-agent/issues/80) |
+| 5 | H3 | Coop reads the coop-standards wiki directly; contract override shape | local clones of both repos | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` | merged ([#85](https://github.com/kabukisensei/coop-agent/pull/85), 2026-09-28); no VM step; close [#80](https://github.com/kabukisensei/coop-agent/issues/80) at the tag |
 | 6 | T1 | CI gate/extended split; fixture rules | H1–H3 merged | gate under five minutes, both OS, no weakened assertion | not started |
 | 7 | S1, S5 | Retire POSIX product path and legacy web | T1 | one Windows implementation, forwarder kept, tests removed with their surface | not started |
 | 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | not started |
@@ -673,12 +687,13 @@ merged or blocked only on the standards repositories.
 
 ## 15. What this review could not verify
 
-- The private repositories `cooptimize/coop-standards` and `cooptimize/incremental-bi`
-  were not readable from this session; H3 and Phase 4 are specified from coop-agent's
-  side only.
+- (Resolved 2026-09-28.) The two standards repositories were not readable from the
+  cloud session; local clones were used for H3, which found the wiki layout
+  described in section 3.
 - No Windows workstation was available; installer and sign-in behavior is inferred
   from the scripts, the README, the v0.23.4/v0.23.5 changelog, and the B0 receipt.
 - Dependency "latest" values are registry metadata on September 28, 2026; none was
   installed or run.
 - Whether any client CI pipeline runs `coop-sql-review` or `coop-dax-review` today
-  is unknown and decides section 7.
+  is still unknown. Section 7's decision to retire them from coop is taken; this
+  question only decides whether the CLIs stay alive as optional gates.

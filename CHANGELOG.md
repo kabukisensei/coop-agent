@@ -7,6 +7,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Docs: master plan revision 3.2. H3 rewritten to what PR #85 shipped (coop reads
+  the coop-standards Obsidian wiki directly); register rows moved to `merged`/`in
+  review`/`in progress`; new H2b row (#91) for tenant-pinned token minting; rules
+  added against improving retired surfaces and against timing fixtures in the PR
+  gate; who moves register rows after a merge.
+
 - Standards (H3): Coop reads the `cooptimize/coop-standards` Obsidian wiki directly.
   Every Markdown article with front matter and `status: active` is a standard. Articles
   map to Coop's SQL, DAX, and semantic-model domains by their `domain`/`artifact` front
