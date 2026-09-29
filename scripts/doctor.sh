@@ -663,9 +663,12 @@ if [ "$JSON" = 1 ]; then
     _host="$(hostname 2>/dev/null || echo "unknown")"
     _user="${USER:-${USERNAME:-unknown}}"
     _coop_v="$COOP_VERSION"
+    # VERSION reads the same at a tag and at every commit past it, so the snapshot
+    # also carries the checkout's git describe ('' for a non-git copy).
+    _coop_d="$(coop_repo_describe)"
     _pi_v="$(coop_pi_version || echo "none")"
     _ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-    _out="$_out,\"hostname\":\"$(_json_esc "$_host")\",\"user\":\"$(_json_esc "$_user")\",\"coop_version\":\"$(_json_esc "$_coop_v")\",\"pi_version\":\"$(_json_esc "$_pi_v")\",\"timestamp\":\"$_ts\"}"
+    _out="$_out,\"hostname\":\"$(_json_esc "$_host")\",\"user\":\"$(_json_esc "$_user")\",\"coop_version\":\"$(_json_esc "$_coop_v")\",\"coop_describe\":\"$(_json_esc "$_coop_d")\",\"pi_version\":\"$(_json_esc "$_pi_v")\",\"timestamp\":\"$_ts\"}"
     
     # Resolve publish_dir from config or defaults
     _pub_dir=""

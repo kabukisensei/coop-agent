@@ -1279,7 +1279,11 @@ case "$cmd" in
   config)        shift; have pi || coop_die "pi not installed."; exec pi config "$@" ;;
   pi)            shift; launch_raw_pi "$@" ;;
   version|--version|-V)
-    printf 'coop %s\n' "$COOP_VERSION"
+    # A git checkout also prints its `git describe` (v0.23.5-21-gdf91630), since
+    # VERSION reads the same at a tag and at every commit past it; a non-git copy
+    # prints VERSION only.
+    _describe="$(coop_repo_describe)"
+    printf 'coop %s%s\n' "$COOP_VERSION" "${_describe:+ ($_describe)}"
     if have pi; then printf 'pi   %s\n' "$(pi --version 2>/dev/null || echo '?')"; else printf 'pi   (not installed)\n'; fi
     ;;
   help|--help|-h) usage ;;

@@ -40,6 +40,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   release still runs the old updater and pulls the head of `main` once; later updates
   follow tags.
 
+- `coop version` and `coop doctor --publish` name the commit a machine runs (#108).
+  `VERSION` reads the same at a release tag and at every commit past it, so machines on
+  different commits past `v0.23.5` looked identical. In a git checkout, `coop version`
+  (both launchers) now prints the same `git describe` as the doctor repo row, for example
+  `coop 0.23.5 (v0.23.5-21-gdf91630)`; a copy that is not a git checkout still prints
+  `VERSION` alone, with no error. The `doctor --publish` snapshot adds `coop_describe`
+  next to `coop_version` (empty for a non-git copy), and the fleet digest shows it in the
+  Versions column (Markdown and HTML); snapshots published by older versions render as
+  before. This corrects the master plan's H5 note that the version report already
+  carried the SHA.
+
 - Docs: new one-page [Install coop on Windows](docs/install-windows.md) for teammates
   (master plan H6, #79). Its steps are the installer's prerequisite checklist in the
   order and wording the installer prints, then a full clone moved to the newest
