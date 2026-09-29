@@ -70,6 +70,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   release still runs the old updater and pulls the head of `main` once; later updates
   follow tags.
 
+- `coop version` and `coop doctor --publish` name the commit a machine runs (#108).
+  `VERSION` reads the same at a release tag and at every commit past it, so machines on
+  different commits past `v0.23.5` looked identical. In a git checkout, `coop version`
+  (both launchers) now prints the same `git describe` as the doctor repo row, for example
+  `coop 0.23.5 (v0.23.5-21-gdf91630)`; a copy that is not a git checkout still prints
+  `VERSION` alone, with no error. The `doctor --publish` snapshot adds `coop_describe`
+  next to `coop_version` (empty for a non-git copy), and the fleet digest shows it in the
+  Versions column (Markdown and HTML); snapshots published by older versions render as
+  before. This corrects the master plan's H5 note that the version report already
+  carried the SHA.
+
 - Docs: new one-page [Install coop on Windows](docs/install-windows.md) for teammates
   (master plan H6, #79). Its steps are the installer's prerequisite checklist in the
   order and wording the installer prints, then a full clone moved to the newest
@@ -155,6 +166,29 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Guardrails ask before an MCP refresh (#119). A tool call such as `refresh_dataset`
+  (still exposed by a user-owned `powerbi-mcp-server` entry) triggers a refresh on the
+  client tenant, but the MCP mutation check had no refresh verb, so it ran as a read.
+  `refresh`, `refresh_*` and `*_refresh` tool names now ask first like other writes.
+  A read that names a refresh, such as `get_refresh_history`, also asks: the check is
+  name-based and errs toward asking.
+- Windows PowerShell 5.1 finds a Fabric-compatible Python without the `py` launcher
+  (#81). The version probe passed `print("%d.%d" % ...)` on the command line, and
+  5.1 does not escape embedded double quotes for native programs, so Python got a
+  SyntaxError and every candidate except the `py` launcher was skipped. Since H1
+  that failed the install prerequisite gate on such a machine. The probe now
+  carries no quotes, and the resolver fixture checks it against a real interpreter
+  with 5.1-style argument passing.
+- `coop init --migrate-legacy` runs on stock macOS bash 3.2 (#84). Without `--apply`,
+  `--yes` or `--archive` (the default dry run) it failed with `migrate_args[@]: unbound
+  variable`, because bash 3.2 treats an empty array as unset under `set -u`. The
+  arguments now use the same guarded expansion as the Pi launch arguments.
+- `scripts/ado-onboard.py` starts without PyYAML (#120). It imported `_yaml` before
+  `lib/` was on the path, so on a fresh machine (no PyYAML) it failed at startup, and
+  with PyYAML it loaded PyYAML's own `_yaml` module and fell back to a regex read of
+  `clients.yml`. It now loads coop's dependency-free `lib/_yaml.py` through
+  `ado_lib`, like `ado-digest.py`. `tests/ado.test.sh` now runs in `tests/run.sh`
+  (it ran nowhere before) and passes native paths to Windows Python.
 - Standards (#88): more prompts reach the wiki articles they need. "fix the silver
   indexing on the fabric warehouse table" now gets Silver Indexing and Fabric Warehouse
   Target instead of nothing. A Fabric warehouse, Schema Manager, `dim.`/`fact.` names,

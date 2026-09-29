@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # fleet-digest tests: regression for _render_html NameError, HTML escaping,
-# and markdown formatting.
+# markdown formatting, and the coop version cell with and without the
+# coop_describe field (#108).
 #
 set -euo pipefail
 
@@ -37,6 +38,17 @@ cat > "$PUBDIR/host1.json" <<JSON
     {"name": "coop-data-doc (0.32.0)", "status": "warn"}
   ]
 }
+JSON
+
+# #108: a git checkout publishes coop_describe; a non-git copy publishes it
+# empty; host1 above is an older payload without the field.
+cat > "$PUBDIR/host2.json" <<JSON
+{"hostname": "host2", "user": "bob", "timestamp": "$NOW", "fail": 0, "warn": 0,
+ "coop_version": "0.23.5", "coop_describe": "v0.23.5-21-gdf91630", "pi_version": "0.80.2", "checks": []}
+JSON
+cat > "$PUBDIR/host3.json" <<JSON
+{"hostname": "host3", "user": "carol", "timestamp": "$NOW", "fail": 0, "warn": 0,
+ "coop_version": "0.23.6", "coop_describe": "", "pi_version": "0.80.2", "checks": []}
 JSON
 
 # Minimal config pointing at the sandbox publish dir.
@@ -80,6 +92,16 @@ case "$md_out" in
   *) fail "expected escaped pipe in user cell";;
 esac
 pass "Markdown escapes pipe characters in cell values"
+
+# 4b. coop_describe (#108) shows next to coop_version when present; a payload
+#     without it, or with it empty, shows coop_version alone.
+for want in "coop 0.23.5 (v0.23.5-21-gdf91630), pi" "coop 0.5.0, pi" "coop 0.23.6, pi"; do
+  case "$md_out" in *"$want"*) ;; *) fail "markdown versions cell must read '$want'" ;; esac
+done
+for want in "coop 0.23.5 (v0.23.5-21-gdf91630)<br>pi" "coop 0.5.0<br>pi" "coop 0.23.6<br>pi"; do
+  case "$html_out" in *"$want"*) ;; *) fail "HTML versions cell must read '$want'" ;; esac
+done
+pass "coop_describe renders when present; older and non-git payloads show coop_version alone"
 
 # 5. Empty machine list must produce valid HTML without crash.
 mkdir -p "$TMP/empty"

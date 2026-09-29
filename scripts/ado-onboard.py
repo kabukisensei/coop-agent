@@ -37,7 +37,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ado_lib as A  # noqa: E402
-import _yaml  # noqa: E402
+
+# coop's dependency-free reader (lib/_yaml.py). A bare `import _yaml` here, before
+# lib/ is on sys.path, fails without PyYAML and picks up PyYAML's own `_yaml`
+# module with it (#120).
+_yaml = A._import_yaml_reader()
 
 
 # --- Prompt helpers ----------------------------------------------------------

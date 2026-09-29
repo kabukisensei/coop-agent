@@ -162,8 +162,8 @@ echo "→ fleet health digest rendering (HTML/Markdown escaping)"
 bash "$ROOT/tests/fleet-digest.test.sh"
 echo "→ coop update follows release tags, never backwards (H5; gate lane: offline, no sleep or marker)"
 bash "$ROOT/tests/update-follow.test.sh"
-# Slot: tests/version-describe.test.sh (coop version / doctor --publish carry git
-# describe, PR #125) is wired here in the gate lane once that PR lands.
+echo "→ coop version, doctor --publish and the fleet digest carry git describe (#108; offline, no sleep)"
+bash "$ROOT/tests/version-describe.test.sh"
 echo "→ release transaction tests"
 bash "$ROOT/tests/release.test.sh"
 echo "→ install prerequisite gate (H1: ordered checklist, stop before installing)"
@@ -238,9 +238,8 @@ bash "$ROOT/tests/doctor-project.test.sh"
 echo "→ BPA runner resolution tests (te bpa run; TE2 must never be invoked)"
 bash "$ROOT/tests/bpa-runner.test.sh"
 
-# Slot: tests/ado.test.sh (Azure DevOps tooling, offline; az must never run) is
-# wired here in the gate lane by PR #126, after #120 lets ado-onboard.py start
-# without PyYAML.
+echo "→ Azure DevOps tooling tests (offline; az must never run)"
+bash "$ROOT/tests/ado.test.sh"
 
 echo "→ protocol contract + JSONL splitter tests"
 node "$ROOT/tests/protocol.test.mjs"

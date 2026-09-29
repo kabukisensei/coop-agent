@@ -781,7 +781,7 @@ coop_init() {
     py="$(coop_python)" || coop_die "python3 is required for: coop init --migrate-legacy"
     [ "$apply" = 1 ] && migrate_args+=(--apply)
     [ "${COOP_ASSUME_YES:-0}" = 1 ] && migrate_args+=(--yes)
-    "$py" "$COOP_ROOT/lib/project_health.py" migrate "$dir" "${migrate_args[@]}" "${archive_args[@]}"
+    "$py" "$COOP_ROOT/lib/project_health.py" migrate "$dir" ${migrate_args[@]+"${migrate_args[@]}"} ${archive_args[@]+"${archive_args[@]}"}
     return $?
   fi
   if [ -n "$ci_type" ]; then
@@ -1282,7 +1282,11 @@ case "$cmd" in
   config)        shift; have pi || coop_die "pi not installed."; exec pi config "$@" ;;
   pi)            shift; launch_raw_pi "$@" ;;
   version|--version|-V)
-    printf 'coop %s\n' "$COOP_VERSION"
+    # A git checkout also prints its `git describe` (v0.23.5-21-gdf91630), since
+    # VERSION reads the same at a tag and at every commit past it; a non-git copy
+    # prints VERSION only.
+    _describe="$(coop_repo_describe)"
+    printf 'coop %s%s\n' "$COOP_VERSION" "${_describe:+ ($_describe)}"
     if have pi; then printf 'pi   %s\n' "$(pi --version 2>/dev/null || echo '?')"; else printf 'pi   (not installed)\n'; fi
     ;;
   help|--help|-h) usage ;;

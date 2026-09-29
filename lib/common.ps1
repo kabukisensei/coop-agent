@@ -193,11 +193,20 @@ function Coop-PipErrorTail([string]$Out) {
   return $reason
 }
 
+# "3.12"-style major.minor of an interpreter, or '' when it can't say. The probe
+# carries no quotes or spaces: Windows PowerShell 5.1 (coop.cmd's runtime) does not
+# escape embedded double quotes when it builds a native command line, so the old
+# print("%d.%d" % ...) probe reached Python as a SyntaxError and every candidate
+# but the py launcher was skipped (#81).
+function Get-CoopPythonMinorVersion([string]$Exe) {
+  return [string]((& $Exe -c 'import sys;print(*sys.version_info[:2],sep=chr(46))' 2>$null | Out-String)).Trim()
+}
+
 function Get-CoopFabricBootstrapPython {
   foreach ($name in @('python3.13', 'python3.12')) {
     $cmd = Get-Command $name -ErrorAction SilentlyContinue
     if (-not $cmd -or -not $cmd.Source -or $cmd.Source -match '\\WindowsApps\\') { continue }
-    $version = [string]((& $cmd.Source -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>$null | Out-String)).Trim()
+    $version = Get-CoopPythonMinorVersion $cmd.Source
     if ($version -match '^3\.(10|11|12|13)$') { return $cmd.Source }
   }
   # Side-by-side interpreters that are NOT on PATH:
@@ -215,7 +224,7 @@ function Get-CoopFabricBootstrapPython {
   }
   foreach ($candidate in $direct) {
     if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
-    $version = [string]((& $candidate -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>$null | Out-String)).Trim()
+    $version = Get-CoopPythonMinorVersion $candidate
     if ($version -match '^3\.(10|11|12|13)$') { return $candidate }
   }
   $launcher = Get-Command py -ErrorAction SilentlyContinue
@@ -228,7 +237,7 @@ function Get-CoopFabricBootstrapPython {
   foreach ($name in @('python3', 'python')) {
     $cmd = Get-Command $name -ErrorAction SilentlyContinue
     if (-not $cmd -or ($cmd.Source -and $cmd.Source -match '\\WindowsApps\\')) { continue }
-    $version = [string]((& $cmd.Source -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>$null | Out-String)).Trim()
+    $version = Get-CoopPythonMinorVersion $cmd.Source
     if ($version -match '^3\.(10|11|12|13)$') { return $cmd.Source }
   }
   return $null
