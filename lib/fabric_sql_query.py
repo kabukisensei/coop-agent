@@ -238,19 +238,25 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     driver = select_driver(list(pyodbc.drivers()))
     if not driver:
         return result("odbc_driver_unavailable", minimum_version=18)
-    fabric_token, state = wmcp.az_access_token(resource=wmcp.FABRIC_RESOURCE)
+    # Both mints are pinned to the launch token's tenant (its tid), not to
+    # whichever account az treats as the default; no launch identity, no mint.
+    launch_identity = _jwt_identity(os.environ.get(wmcp.FABRIC_TOKEN_ENV, ""))
+    if not launch_identity:
+        return result("identity_mismatch")
+    tenant = launch_identity[0]
+    fabric_token, state = wmcp.az_access_token(
+        resource=wmcp.FABRIC_RESOURCE, tenant=tenant
+    )
     if state != "ok":
         return result(state, stage="fabric_rest_token")
     server, state = _discover_server(target, fabric_token)
     if state != "ok":
         return result(state, stage="endpoint_discovery")
-    sql_token, state = wmcp.az_access_token(resource=SQL_RESOURCE)
+    sql_token, state = wmcp.az_access_token(resource=SQL_RESOURCE, tenant=tenant)
     if state != "ok":
         return result(state, stage="database_token")
-    launch_identity = _jwt_identity(os.environ.get(wmcp.FABRIC_TOKEN_ENV, ""))
     if (
-        not launch_identity
-        or _jwt_identity(fabric_token) != launch_identity
+        _jwt_identity(fabric_token) != launch_identity
         or _jwt_identity(sql_token) != launch_identity
     ):
         return result("identity_mismatch")

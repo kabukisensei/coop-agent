@@ -123,6 +123,11 @@ minutes) and says nothing.
   opens a sign-in either.
 - `coop doctor` shows **"Azure sign-in: signed in to tenant <id>"**. Doctor only
   checks; it never signs in.
+- Coop's own Fabric and SQL tokens (the Warehouse MCP and `fabric_sql_query`) are
+  minted for the same tenant, so it does not matter that you are a guest there and
+  your home tenant is az's default account. The general Fabric MCP
+  (`@microsoft/fabric-mcp`) cannot be given a tenant by Coop: it uses az's default
+  account, and `coop doctor` notes this on its `fabric` row.
 - `COOP_SKIP_AZ=1` skips both the launch sign-in and the doctor row.
 
 ## 4. Point it at a work repo
@@ -269,8 +274,9 @@ It never touches the repo clone, your work repos, or your personal `pi` setup.
 - **MCP** (Fabric / Power BI / Microsoft Learn) is read-only by policy and never
   exposes secrets. Warehouse SQL uses a separate `fabric-sqlendpoint` managed
   direct HTTP MCP server. Coop obtains a short-lived bearer from the existing Azure
-  CLI login at launch, injects it only into the Pi child environment, never persists
-  it, and keeps every SQL call approval-gated.
+  CLI login at launch (for the client tenant when one is configured), injects it
+  only into the Pi child environment, never persists it, and keeps every SQL call
+  approval-gated.
 
 ## Where to get help
 

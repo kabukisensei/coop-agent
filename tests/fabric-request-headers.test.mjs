@@ -1,11 +1,12 @@
 import { strict as assert } from "node:assert";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   parseWindowsAzureCompletion,
+  validTenant,
   windowsAzureCliCandidates,
   windowsAzureCliCommand,
   windowsTaskkillCommand,
@@ -272,4 +273,106 @@ try {
   console.log("  ✓ Fabric request headers resolve Azure CLI safely and fail closed");
 } finally {
   rmSync(dir, { recursive: true, force: true });
+}
+
+// H2b: every mint is pinned to the client tenant. The shared fake az mints for
+// --tenant, or without it for its default account (a guest's home tenant), and
+// the JWT's tid says which tenant answered.
+const HOME_TENANT = "abababab-abab-4bab-8bab-abababababab";
+const CLIENT_TENANT = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd";
+const FAKE_PRINCIPAL = "0a0a0a0a-0a0a-40a0-80a0-0a0a0a0a0a0a";
+const FABRIC = "https://api.fabric.microsoft.com";
+const pinDir = mkdtempSync(join(tmpdir(), "coop h2b pin "));
+try {
+  const pinBin = join(pinDir, "bin");
+  const pinState = join(pinDir, "state");
+  mkdirSync(pinBin);
+  mkdirSync(pinState);
+  writeFileSync(join(pinState, "tokens"), `${HOME_TENANT} *\n${CLIENT_TENANT} *\n`);
+  writeFileSync(join(pinState, "default-tenant"), HOME_TENANT);
+  const fakeAzProgram = join(ROOT, "tests", "fixtures", "fake-az.mjs");
+  // The helper hands az an allowlisted environment, so the wrapper names the state.
+  if (process.platform === "win32") {
+    writeFileSync(join(pinBin, "az.cmd"), `@echo off\r\nset "COOP_TEST_AZ_STATE=${pinState}"\r\n"${process.execPath}" "${fakeAzProgram}" %*\r\nexit /b %ERRORLEVEL%\r\n`);
+  } else {
+    const sq = (value) => `'${value.replace(/'/g, "'\\''")}'`;
+    writeFileSync(join(pinBin, "az"), `#!/bin/sh\nCOOP_TEST_AZ_STATE=${sq(pinState)} exec ${sq(process.execPath)} ${sq(fakeAzProgram)} "$@"\n`);
+    chmodSync(join(pinBin, "az"), 0o755);
+  }
+  const pinEnv = (extra = {}) => ({
+    PATH: `${pinBin}${delimiter}${process.env.PATH || ""}`,
+    HOME: process.env.HOME || tmpdir(),
+    ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {}),
+    ...extra,
+  });
+  const azCalls = () => {
+    try { return readFileSync(join(pinState, "argv.log"), "utf8").split(/\r?\n/).filter(Boolean); } catch { return []; }
+  };
+  const tidOf = (token) => JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8")).tid;
+  const mint = (...extra) => spawnSync(process.execPath, [HELPER, "--token", FABRIC, ...extra], {
+    cwd: ROOT, timeout: 12000, env: pinEnv(),
+  });
+  const minted = (result) => {
+    assert.equal(result.status, 0, `status=${result.status}`);
+    assert.equal(result.stderr.length, 0);
+    const match = /^coop-azure-token-v1\t([A-Za-z0-9_-]+)\tend$/.exec(result.stdout.toString("ascii"));
+    assert.ok(match, "one token frame");
+    return Buffer.from(match[1], "base64url").toString("ascii");
+  };
+  const base = `account get-access-token --resource ${FABRIC} --output json`;
+
+  // No tenant: the argv is exactly the pre-H2b one, so az's default account answers.
+  let token = minted(mint());
+  assert.deepEqual(azCalls(), [base], "no tenant keeps the az argv byte-identical");
+  assert.equal(tidOf(token), HOME_TENANT);
+  // --tenant pins the mint: the client tenant answers, not the default account.
+  token = minted(mint("--tenant", CLIENT_TENANT));
+  assert.equal(azCalls().at(-1), `${base} --tenant ${CLIENT_TENANT}`);
+  assert.equal(tidOf(token), CLIENT_TENANT);
+  // Anything but exactly `--tenant <GUID or dotted domain>` is rejected before az starts.
+  for (const extra of [
+    ["--tenant"], ["--tenant", "x&calc"], ["--tenant", "a b"], ["--tenant", "!x"], ["--tenant", "%P%"],
+    ["--tenant", "tenant-aaa"], ["--tenant", "TBD"], ["--tenant", ""], ["--tenant", `${CLIENT_TENANT}\n`],
+    ["--tenant", CLIENT_TENANT, "extra"], ["--tenancy", CLIENT_TENANT],
+  ]) {
+    const before = azCalls().length;
+    const result = mint(...extra);
+    assert.notEqual(result.status, 0, JSON.stringify(extra));
+    assert.equal(result.stdout.length, 0, JSON.stringify(extra));
+    assert.equal(result.stderr.length, 0, JSON.stringify(extra));
+    assert.equal(azCalls().length, before, `${JSON.stringify(extra)} must not start az`);
+  }
+  for (const good of [CLIENT_TENANT, CLIENT_TENANT.toUpperCase(), "contoso.onmicrosoft.com"]) assert.equal(validTenant(good), true, good);
+  for (const bad of ["tenant-aaa", "TBD", "x&calc", "a..example", "-a.example", ".example", "", null]) assert.equal(validTenant(bad), false, String(bad));
+
+  // Per-request headers pin to the launch token's tenant, so a guest whose az
+  // default is the home tenant still gets a client-tenant bearer.
+  const headers = (launchTenant) => spawnSync(process.execPath, [HELPER, ENDPOINT], {
+    cwd: ROOT, timeout: 12000, encoding: "utf8", input: JSON.stringify(baseEnvelope),
+    env: pinEnv({ COOP_FABRIC_MCP_TOKEN: jwt({ tid: launchTenant, oid: FAKE_PRINCIPAL }, "launch") }),
+  });
+  for (const launchTenant of [CLIENT_TENANT, HOME_TENANT]) {
+    const result = headers(launchTenant);
+    assert.equal(result.status, 0, `per-request mint for launch tenant ${launchTenant}`);
+    assert.equal(result.stderr, "");
+    const bearer = JSON.parse(result.stdout).Authorization.replace(/^Bearer /, "");
+    assert.equal(tidOf(bearer), launchTenant);
+    assert.equal(azCalls().at(-1), `${base} --tenant ${launchTenant}`);
+  }
+
+  // Windows: the tenant is appended after the pinned argv; unsafe tenants yield no command line.
+  assert.deepEqual(
+    windowsAzureCliCommand("C:\\Windows\\System32\\cmd.exe", "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd", FABRIC, CLIENT_TENANT),
+    {
+      command: "C:\\Windows\\System32\\cmd.exe",
+      args: ["/d", "/v:on", "/s", "/c", 'call "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd" account get-access-token --resource https://api.fabric.microsoft.com --output json --tenant cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd & set "COOP_AZURE_RC=!ERRORLEVEL!" & echo COOP_AZURE_COMPLETE_V1:!COOP_AZURE_RC!& >&2 echo COOP_AZURE_STDERR_COMPLETE_V1& set /p "COOP_AZURE_RELEASE=" & exit /b !COOP_AZURE_RC!'],
+      windowsSupervisor: true,
+    },
+  );
+  for (const bad of ["x&calc", "a b", "%P%", "!x", "tenant-aaa"]) {
+    assert.equal(windowsAzureCliCommand("C:\\Windows\\System32\\cmd.exe", "C:\\Azure\\az.cmd", FABRIC, bad), null, bad);
+  }
+  console.log("  ✓ Fabric token mints pin the client tenant; no tenant keeps the az argv unchanged");
+} finally {
+  rmSync(pinDir, { recursive: true, force: true });
 }

@@ -108,8 +108,8 @@ def load_project(path: Path | None) -> dict[str, Any]:
 
 
 # --- Client Azure tenant chain (H2) -------------------------------------------
-# One place decides which tenant the launch sign-in, the doctor row and (in H2b)
-# token minting use: the project contract's fabric.tenant_id, else the
+# One place decides which tenant the launch sign-in, the doctor rows and coop's
+# own token mints (H2b) use: the project contract's fabric.tenant_id, else the
 # onboarding config's azure.tenant_id (client resources only), else nothing.
 # A tenant is a canonical GUID or a domain name with at least one dot, so a
 # value can never carry shell or cmd.exe metacharacters into an az command line.
@@ -172,6 +172,38 @@ def resolve_tenant(project_path: Path | None, config_path: Path) -> tuple[str, s
     except Exception:
         config = {}
     return tenant_from_sources(project, config)
+
+
+def launcher_project_yml() -> Path | None:
+    """The contract the launcher finds (coop_find_project_yml / Find-CoopProjectYml).
+
+    The nearest .coop/project.yml from the current folder up to the root, else the
+    bundled contract, so the launch token mints for the tenant the launch preflight
+    signed in to, even from deeper than find_project_yml's eight levels.
+    """
+    try:
+        d = Path.cwd()
+        while True:
+            candidate = d / ".coop" / "project.yml"
+            if candidate.is_file():
+                return candidate
+            if d.parent == d:
+                break
+            d = d.parent
+        bundled = Path(__file__).resolve().parent.parent / ".coop" / "project.yml"
+        return bundled if bundled.is_file() else None
+    except OSError:
+        return None
+
+
+def pinned_tenant(project_path: Path | None) -> str:
+    """The tenant coop's own token mints pass to az (H2b), or '' for none.
+
+    Only a resolved tenant pins a mint. Unset or invalid keeps today's unpinned
+    az call: the launch preflight and doctor already report an invalid value.
+    """
+    state, tenant = resolve_tenant(project_path, coop_config_path())
+    return tenant if state == "ok" else ""
 
 
 def project_sqlendpoint_enabled(project: dict[str, Any]) -> bool:
@@ -641,17 +673,26 @@ def _parse_token_frame(stdout: bytes) -> str | None:
 
 
 def az_access_token(
-    timeout: int = 10, resource: str = FABRIC_RESOURCE
+    timeout: int = 10, resource: str = FABRIC_RESOURCE, tenant: str = ""
 ) -> tuple[str, str]:
+    """Mint one token through the hardened Node helper.
+
+    A tenant pins the mint (`--tenant <id>`); with none, the helper argv is the
+    same as before tenants existed. A tenant that is not exactly a GUID or a
+    dotted domain fails closed instead of falling back to az's default account.
+    """
     if resource not in TOKEN_RESOURCES:
+        return "", "token_command_failed"
+    if tenant and tenant_value(tenant) != ("ok", tenant):
         return "", "token_command_failed"
     node = _native_node()
     if not node:
         return "", "azure_cli_unavailable"
+    command = [node, REQUEST_HEADERS_HELPER, "--token", resource]
+    if tenant:
+        command += ["--tenant", tenant]
     try:
-        code, stdout, stderr, timed_out = _run_token_helper(
-            [node, REQUEST_HEADERS_HELPER, "--token", resource], timeout
-        )
+        code, stdout, stderr, timed_out = _run_token_helper(command, timeout)
     except OSError:
         return "", "token_launch_failed"
     if timed_out:
@@ -839,6 +880,7 @@ def doctor_status(
     *,
     project: dict[str, Any] | None = None,
     probe: bool = False,
+    tenant: str = "",
 ) -> dict[str, Any]:
     servers = (
         mcp_config.get("mcpServers")
@@ -859,7 +901,9 @@ def doctor_status(
     elif state == "registered" and not same_target(actual_target, target):
         state = "target_invalid"
     if state == "registered" and probe:
-        token, auth = az_access_token()
+        # The probe mints for the client tenant, like the launch; no tenant keeps
+        # the unpinned call exactly as it was.
+        token, auth = az_access_token(tenant=tenant) if tenant else az_access_token()
         if auth != "ok":
             state = auth
     else:
@@ -900,6 +944,8 @@ def doctor_status(
         "compatible_tools": sorted(COMPATIBLE_SQL_TOOLS),
         "target": target.__dict__,
         "registered_target": actual_target.__dict__ if actual_target else None,
+        # The tenant the probe mints for ('' = az's default account).
+        "tenant": tenant,
     }
 
 
@@ -960,10 +1006,18 @@ def main(argv: list[str] | None = None) -> int:
                 tools = value.get("tools", value) if isinstance(value, dict) else value
             except json.JSONDecodeError:
                 tools = []
-        project = load_project(Path(args.project)) if args.project else {}
+        project_path = Path(args.project) if args.project else None
+        project = load_project(project_path) if project_path else {}
         print(
             json.dumps(
-                doctor_status(cfg, tools, project=project, probe=args.probe),
+                doctor_status(
+                    cfg,
+                    tools,
+                    project=project,
+                    probe=args.probe,
+                    # The same contract as the doctor's Azure sign-in row.
+                    tenant=pinned_tenant(project_path),
+                ),
                 sort_keys=True,
             )
         )
@@ -985,7 +1039,10 @@ def main(argv: list[str] | None = None) -> int:
         if sqlendpoint_config_status(entry) != "registered":
             sys.stdout.write("warning\tconfig_invalid\tend")
             return 0
-        token, state = az_access_token()
+        # Pin the session identity to the client tenant (H2b). The per-request
+        # header helper and fabric_sql_query then pin to this token's tid.
+        tenant = pinned_tenant(launcher_project_yml())
+        token, state = az_access_token(tenant=tenant) if tenant else az_access_token()
         if state == "ok":
             sys.stdout.write("token\t" + token + "\tend")
             return 0
