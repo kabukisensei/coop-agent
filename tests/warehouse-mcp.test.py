@@ -792,6 +792,16 @@ for doctor_script in (ROOT / "scripts" / "doctor.sh", ROOT / "scripts" / "doctor
         assert expected_hint in matching_lines[0]
         if diagnostic_state != "auth_required":
             assert "sign in" not in matching_lines[0].lower()
+        if diagnostic_state == "token_command_failed":
+            # H2b: the token command hint appends the probe tenant (--tenant).
+            flag = matching_lines[0].split(expected_hint, 1)[1].split('"', 1)[0]
+            assert "tenant" in flag.lower(), (doctor_script, matching_lines[0])
+    # H2b: the fabric row states that coop cannot pin the fabric MCP's tenant.
+    assert any(
+        "server configured (uses az's default account; coop cannot pin its tenant)"
+        in line
+        for line in doctor_text.splitlines()
+    ), doctor_script
     assert secret_token not in doctor_text
 
 print(

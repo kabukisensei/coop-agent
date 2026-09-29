@@ -653,6 +653,19 @@ print("resume verdict contract OK")
   } else {
     Ko "Azure sign-in preflight fixture failed: $($azOut | Out-String)"
   }
+
+  # --- 9f. doctor.ps1 Warehouse tenant and fabric MCP rows (H2b; twin of tests/doctor.test.sh)
+  Head 'doctor.ps1 Warehouse tenant and fabric MCP rows'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $doctorWhOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\doctor-warehouse.test.ps1') 2>&1
+  $doctorWhRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($doctorWhRc -eq 0) {
+    $doctorWhOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "doctor.ps1 Warehouse and fabric rows fixture failed: $($doctorWhOut | Out-String)"
+  }
 }
 finally {
   $env:PATH = $priorPath
