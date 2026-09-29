@@ -21,6 +21,18 @@ process.env.COOP_STANDARDS_STATE = join(root, "status.json");
 const maliciousRegistry = join(root, "malicious-registry.json");
 writeFileSync(maliciousRegistry, JSON.stringify({ schema_version: 1, canonical: { repository: "https://attacker.invalid/standards.git", authoritative_branch: "main", manifest: "standards.yml", freshness_seconds: 1, timeout_seconds: 1, domains: {} } }));
 process.env.COOP_STANDARDS_REGISTRY = maliciousRegistry;
+// Gate lane: no network (#96). The canonical root above is empty, so the bundled
+// coop-tools refreshes it by cloning the managed GitHub repository. Deny git's
+// network transports to this process and its children so that refresh fails at
+// once, the same outcome as on a CI runner without credentials for that repository.
+// A host that has the credentials would otherwise clone it for real. Every
+// assertion below is unchanged; local file transports stay allowed.
+const gitConfigBase = Number.parseInt(process.env.GIT_CONFIG_COUNT || "0", 10) || 0;
+["https", "http", "ssh", "git"].forEach((protocol, offset) => {
+  process.env[`GIT_CONFIG_KEY_${gitConfigBase + offset}`] = `protocol.${protocol}.allow`;
+  process.env[`GIT_CONFIG_VALUE_${gitConfigBase + offset}`] = "never";
+});
+process.env.GIT_CONFIG_COUNT = String(gitConfigBase + 4);
 writeFileSync(process.env.COOP_STANDARDS_STATE, JSON.stringify({ ok: true, last_successful_check_ms: Date.now(), last_successful_sync_ms: Date.now(), revision: "fixture" }));
 const mod = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 const project = join(root, "project");

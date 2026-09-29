@@ -17,6 +17,10 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
+# The token-timeout and SIGTERM process-tree kill cases (POSIX) start real
+# children, poll for them and wait fixed seconds, so they run only in the
+# extended lane (COOP_TEST_EXTENDED=1, #96).
+EXTENDED_LANE = os.environ.get("COOP_TEST_EXTENDED") == "1"
 spec = importlib.util.spec_from_file_location(
     "warehouse_mcp", ROOT / "lib" / "warehouse_mcp.py"
 )
@@ -337,6 +341,12 @@ if not wmcp._is_windows():
     finally:
         signal.signal(signal.SIGTERM, original_sigterm)
 
+if not wmcp._is_windows() and not EXTENDED_LANE:
+    print(
+        "  - skipped in the gate lane: token timeout and SIGTERM kill the whole"
+        " az process tree (COOP_TEST_EXTENDED=1 runs it)"
+    )
+if not wmcp._is_windows() and EXTENDED_LANE:
     with tempfile.TemporaryDirectory() as tree_dir:
         tree = Path(tree_dir)
         fake_az = tree / "az"

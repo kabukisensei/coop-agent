@@ -1,8 +1,22 @@
 #!/usr/bin/env bash
 #
 # coop test suite — bundle the TypeScript extensions (exactly as Pi loads them) to a
-# temp dir, then run the Node logic tests against them. Run locally with `bash
-# tests/run.sh`; CI runs the same. No network beyond the one-time esbuild fetch.
+# temp dir, then run the Node logic tests against them. No network beyond the
+# one-time esbuild fetch.
+#
+# Two lanes (#96; rules in docs/ci.md, "coop-agent's own CI (maintainers)"):
+#   gate lane      `bash tests/run.sh` (the default; every PR runs it). Deterministic
+#                  logic only: no sleep, poll, PTY, marker file, hang/timeout fixture
+#                  or network, and no fixture touches this checkout. Every gate test
+#                  runs with a temp home (see "Gate-lane home" below).
+#   extended lane  `COOP_TEST_EXTENDED=1 bash tests/run.sh` runs the gate lane AND the
+#                  extended block at the end of this file (timing, process, PTY and
+#                  host-dependent fixtures). Nightly CI, Actions -> extended -> Run
+#                  workflow, and `coop release` run it.
+# A few gate files also carry extended-only cases guarded by COOP_TEST_EXTENDED
+# inside the file (azcache, knowledge-git, warehouse-mcp, onboard,
+# standards-live-sync, and tests/fixtures/azcache.test.ps1, which tests/run.ps1
+# runs). They are invoked once, in the gate section.
 #
 set -euo pipefail
 
@@ -14,11 +28,27 @@ export COOP_SKIP_AZ=1
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# Lane selection. Only COOP_TEST_EXTENDED=1 selects the extended lane; normalize the
+# variable so every child test sees the same lane this runner does.
+if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
+  export COOP_TEST_EXTENDED=1
+  LANE="gate + extended lanes"
+  echo "→ lanes: gate + extended (COOP_TEST_EXTENDED=1). Gate lane only: bash tests/run.sh"
+else
+  unset COOP_TEST_EXTENDED
+  LANE="gate lane"
+  echo "→ lane: gate (default). Add the extended lane with: COOP_TEST_EXTENDED=1 bash tests/run.sh"
+fi
+
 bundle() {
   local ext="$1"; shift
   npx -y esbuild "$ROOT/extensions/$ext/index.ts" \
     --bundle --format=esm --platform=node --packages=external "$@" --outfile="$TMP/$ext.mjs" >/dev/null 2>&1
 }
+
+# ============================================================================
+# GATE LANE (always runs)
+# ============================================================================
 
 echo "→ bundling extensions for test…"
 # coop-tools imports `typebox` (Pi provides it at runtime) — stub it for the test build.
@@ -27,11 +57,30 @@ bundle coop-guardrails
 bundle coop-profile
 bundle coop-powerline
 
+# Gate-lane home (#96 fixture rules). Every gate test below gets a fresh temp home:
+# HOME and USERPROFILE point at it (native Windows node and python find the home
+# through USERPROFILE, so it gets the Windows spelling under Git Bash), and the
+# Coop, Pi and standards location overrides are unset so they resolve inside it,
+# as they do on a CI runner. It starts after the bundling above so npx keeps its
+# real cache. The extended block at the end restores the caller's values.
+CALLER_HOME_ENV="$TMP/caller-home-env.sh"
+: > "$CALLER_HOME_ENV"
+for var in HOME USERPROFILE COOP_DIR COOP_AGENT_DIR PI_CODING_AGENT_DIR \
+           COOP_STANDARDS_ROOT COOP_STANDARDS_STATE COOP_STANDARDS_SNAPSHOT_ROOT; do
+  declare -p "$var" >> "$CALLER_HOME_ENV" 2>/dev/null || echo "unset $var" >> "$CALLER_HOME_ENV"
+done
+GATE_HOME="$TMP/home"
+mkdir -p "$GATE_HOME"
+HOME="$GATE_HOME"; USERPROFILE="$GATE_HOME"
+case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) USERPROFILE="$(cygpath -w "$GATE_HOME")" ;; esac
+export HOME USERPROFILE
+unset COOP_DIR COOP_AGENT_DIR PI_CODING_AGENT_DIR \
+      COOP_STANDARDS_ROOT COOP_STANDARDS_STATE COOP_STANDARDS_SNAPSHOT_ROOT
+
 echo "→ Revision 9 standards registry/resolver and automatic application tests"
 node "$ROOT/tests/standards-rev9.test.mjs"
 node "$ROOT/tests/standards-live-sync.test.mjs"
 node "$ROOT/tests/standards-review-generations.test.mjs"
-node "$ROOT/tests/standards-lock-simple.test.mjs"
 node "$ROOT/tests/standards-golden.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/standards-runtime.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/bpa-review.test.mjs"
@@ -42,16 +91,14 @@ echo "→ coop-guardrails enforcement tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/guardrails.test.mjs"
 echo "→ start-here menu tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/startmenu.test.mjs"
-echo "→ final model-login handoff tests"
-COOP_TEST_DIST="$TMP" node "$ROOT/tests/model-login.test.mjs"
 echo "→ in-Coop project contract wizard tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/project-wizard.test.mjs"
 echo "→ contract-driven daily log default tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/daily-log-default.test.mjs"
 echo "→ team knowledge recall note tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/team-knowledge-recall.test.mjs"
-echo "→ .ps1 UTF-8 BOM byte-level tests"
-bash "$ROOT/tests/bom.test.sh"
+# The .ps1 UTF-8 BOM check (exactly one BOM; launch-critical first line) lives in
+# scripts/check-parity.sh only.
 echo "→ share-learning prompt and friction nudge tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/share-learning.test.mjs"
 echo "→ learning-nudge runtime (registered handler) tests"
@@ -60,8 +107,6 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/learning-nudge-runtime.test.mjs"
 echo "→ setup-docs JSONL bridge (renderPrompt / askCheckbox) tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge-integration.test.mjs"
-echo "→ live JSONL happy-path vs the installed coop-data-doc"
-COOP_TEST_DATADOC_REQUIRED="${COOP_TEST_DATADOC_REQUIRED:-0}" COOP_TEST_DIST="$TMP" node "$ROOT/tests/jsonl-live.test.mjs"
 
 echo "→ workflow slice tests"
 node "$ROOT/tests/workflow.test.mjs"
@@ -111,26 +156,27 @@ esac
 JSON_SPEC="$JSON_SPEC" node -e 'const s=JSON.parse(process.env.JSON_SPEC); if(s.env.PI_SKIP_VERSION_CHECK!=="1") process.exit(1)'
 echo "  ✓ --no-launch prints the spec and exits 0 (no pi launched)"
 
-echo "→ coop update tested-Pi-version guard (--check, gate decision)"
-bash "$ROOT/tests/update-guard.test.sh"
+echo "→ fleet manifest tests"
 bash "$ROOT/tests/fleet-manifest.test.sh"
+echo "→ fleet health digest rendering (HTML/Markdown escaping)"
+bash "$ROOT/tests/fleet-digest.test.sh"
 echo "→ coop update follows release tags, never backwards (H5; gate lane: offline, no sleep or marker)"
 bash "$ROOT/tests/update-follow.test.sh"
+# Slot: tests/version-describe.test.sh (coop version / doctor --publish carry git
+# describe, PR #125) is wired here in the gate lane once that PR lands.
 echo "→ release transaction tests"
 bash "$ROOT/tests/release.test.sh"
-bash "$ROOT/tests/fleet-execution.test.sh"
-bash "$ROOT/tests/install-python-prereq.test.sh"
 echo "→ install prerequisite gate (H1: ordered checklist, stop before installing)"
 bash "$ROOT/tests/install-prereq-gate.test.sh"
+echo "→ pipx launcher PATH resolution (install.sh / install.ps1 twins)"
+bash "$ROOT/tests/install-pipx-path.test.sh"
+echo "→ entrypoints guard a missing lib/common helper library"
+bash "$ROOT/tests/missing-common-guard.test.sh"
 echo "→ fabric-compatible Python discovery (side-by-side, off-PATH)"
 bash "$ROOT/tests/fixtures/fabric-python-finder.test.sh"
 bash "$ROOT/tests/mcp-config.test.sh"
-node "$ROOT/tests/fabric-request-headers.test.mjs"
-bash "$ROOT/tests/fabric-mcp-launch.test.sh"
-node "$ROOT/tests/fabric-mcp-web-launch.test.mjs"
 python3 "$ROOT/tests/warehouse-mcp.test.py"
 python3 "$ROOT/tests/fabric-sql-query.test.py"
-COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-sql-launcher.test.mjs"
 python3 "$ROOT/tests/microsoft-skills.test.py"
 python3 "$ROOT/tests/p0-vertical-slice.test.py"
 bash "$ROOT/tests/onboard.test.sh"
@@ -138,17 +184,14 @@ echo "→ Azure CLI resolution and sign-in helpers (onboarding, coop init)"
 "$(command -v python3 2>/dev/null || command -v python)" "$ROOT/tests/azure-auth.test.py"
 echo "→ team knowledge config block + readers tests"
 bash "$ROOT/tests/knowledge-config.test.sh"
-echo "→ team knowledge sync script tests"
-bash "$ROOT/tests/sync-knowledge.test.sh"
+echo "→ team knowledge source, read and retrieve contract tests"
+node "$ROOT/tests/knowledge-sources.test.mjs"
+node "$ROOT/tests/knowledge-read.test.mjs"
+node "$ROOT/tests/knowledge-retrieve.test.mjs"
 echo "→ knowledge-git ownership lifecycle unit tests"
 python3 "$ROOT/tests/knowledge-git.test.py"
 echo "→ team knowledge local recall helper tests"
 bash "$ROOT/tests/search-knowledge.test.sh"
-echo "→ windows owned-kill native evidence probe (Defect A diagnostics)"
-case "$(uname -s 2>/dev/null)" in
-  MINGW*|MSYS*|CYGWIN*) pwsh -NoProfile -File "$ROOT/tests/fixtures/win-ownership-probe.ps1" ;;
-  *) echo "  – Windows-only probe; skipped on POSIX (covered by the Windows CI legs)" ;;
-esac
 echo "→ ResumeThread previous-suspend-count contract (Defect A)"
 COOP_KG_PATH="$ROOT/scripts/knowledge-git.py" python3 - <<'PY'
 import importlib.util
@@ -171,20 +214,8 @@ print("  OK  resume verdict: failure sentinel / expected prev=1 / already-runnin
 PY
 echo "→ team knowledge skills launch slot tests"
 bash "$ROOT/tests/team-skills.test.sh"
-echo "→ truthful inventory (doctor pipx probes / sync postconditions)"
-bash "$ROOT/tests/inventory.test.sh"
-echo "→ first-run continuation through plain coop (pty-driven)"
-case "$(uname -s 2>/dev/null)" in
-  MINGW*|MSYS*|CYGWIN*) echo "  – Python pty/termios is unavailable on native Windows; covered by macOS PTY + Windows launcher tests" ;;
-  *) bash "$ROOT/tests/first-run.test.sh" ;;
-esac
-echo "→ home-guard (fleet paths must not mutate the real home)"
-bash "$ROOT/tests/home-guard.test.sh"
 bash "$ROOT/tests/context-budget.test.sh"
 bash "$ROOT/scripts/check-context-budget.sh"
-
-echo "→ repo staleness nudge (throttled fetch + behind-count) tests"
-bash "$ROOT/tests/staleness.test.sh"
 
 echo "→ Azure sign-in preflight (tenant chain, token check, automatic sign-in, .az-ok cache) tests"
 bash "$ROOT/tests/azcache.test.sh"
@@ -201,29 +232,96 @@ bash "$ROOT/tests/seeddocs.test.sh"
 echo "→ coop init --ci (CI pipeline scaffolding) tests"
 bash "$ROOT/tests/ciscaffold.test.sh"
 
-echo "→ coop review (composite linters + docs compose) tests"
-bash "$ROOT/tests/review.test.sh"
-
 echo "→ doctor project contract validation tests"
 bash "$ROOT/tests/doctor-project.test.sh"
 
-echo "→ doctor MCP mode reporting tests"
-bash "$ROOT/tests/doctor.test.sh"
-
-echo "→ terminal acceptance reparse boundary tests"
-node --test --test-name-pattern "directory links|junctioned ancestor|authorization revocation|failure cleanup|checkout ancestry|owned-root probe|fully safe authorization|decisive receipt mutations" "$ROOT/tests/terminal-workstation-acceptance.test.mjs"
-
-echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
-node "$ROOT/tests/webbridge.test.mjs"
-
 echo "→ BPA runner resolution tests (te bpa run; TE2 must never be invoked)"
 bash "$ROOT/tests/bpa-runner.test.sh"
+
+# Slot: tests/ado.test.sh (Azure DevOps tooling, offline; az must never run) is
+# wired here in the gate lane by PR #126, after #120 lets ado-onboard.py start
+# without PyYAML.
 
 echo "→ protocol contract + JSONL splitter tests"
 node "$ROOT/tests/protocol.test.mjs"
 
 echo "→ diff model (unified + side-by-side parsing) tests"
 node "$ROOT/tests/diffmodel.test.mjs"
+echo "→ tool result state machine tests"
+node "$ROOT/tests/tool-result.test.mjs"
+echo "→ support command and Support Center contract tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/support-command.test.mjs"
+node "$ROOT/tests/support-center.test.mjs"
 
-echo "✓ all tests passed"
+# ============================================================================
+# EXTENDED LANE (only with COOP_TEST_EXTENDED=1)
+# Timing, process, PTY, network-adjacent and host-dependent fixtures: fixed sleeps,
+# polls and watchdogs, hang children, marker files, real processes and the Windows
+# native probe. Nightly CI, `Actions -> extended -> Run workflow` and `coop release`
+# run this block. A new timing fixture goes here, and its PR says why.
+# ============================================================================
+if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
+  echo "→ extended lane"
+  # The extended fixtures run with the caller's home, as the full suite did before
+  # the lanes split: some predate the fixture rules (docs/ci.md names them) and
+  # home-guard checks the real home on purpose.
+  # shellcheck source=/dev/null
+  . "$CALLER_HOME_ENV"
+
+  echo "→ standards lock (simple lock; waitFor polls and a fixed sleep)"
+  node "$ROOT/tests/standards-lock-simple.test.mjs"
+
+  echo "→ final model-login handoff tests"
+  COOP_TEST_DIST="$TMP" node "$ROOT/tests/model-login.test.mjs"
+
+  echo "→ live JSONL happy-path vs the installed coop-data-doc"
+  COOP_TEST_DATADOC_REQUIRED="${COOP_TEST_DATADOC_REQUIRED:-0}" COOP_TEST_DIST="$TMP" node "$ROOT/tests/jsonl-live.test.mjs"
+
+  echo "→ coop update tested-Pi-version guard (--check, gate decision)"
+  bash "$ROOT/tests/update-guard.test.sh"
+  echo "→ fleet execution and fresh-install Python prerequisite"
+  bash "$ROOT/tests/fleet-execution.test.sh"
+  bash "$ROOT/tests/install-python-prereq.test.sh"
+
+  echo "→ Fabric request headers, MCP launch (all phases, incl. web) and SQL launcher"
+  node "$ROOT/tests/fabric-request-headers.test.mjs"
+  bash "$ROOT/tests/fabric-mcp-launch.test.sh"
+  node "$ROOT/tests/fabric-mcp-web-launch.test.mjs"
+  COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-sql-launcher.test.mjs"
+
+  echo "→ team knowledge sync script tests"
+  bash "$ROOT/tests/sync-knowledge.test.sh"
+
+  echo "→ windows owned-kill native evidence probe (Defect A diagnostics)"
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) pwsh -NoProfile -File "$ROOT/tests/fixtures/win-ownership-probe.ps1" ;;
+    *) echo "  – Windows-only probe; skipped on POSIX (covered by the Windows CI legs)" ;;
+  esac
+
+  echo "→ truthful inventory (doctor pipx probes / sync postconditions)"
+  bash "$ROOT/tests/inventory.test.sh"
+  echo "→ first-run continuation through plain coop (pty-driven)"
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) echo "  – Python pty/termios is unavailable on native Windows; covered by macOS PTY + Windows launcher tests" ;;
+    *) bash "$ROOT/tests/first-run.test.sh" ;;
+  esac
+  echo "→ home-guard (fleet paths must not mutate the real home)"
+  bash "$ROOT/tests/home-guard.test.sh"
+
+  echo "→ repo staleness nudge (throttled fetch + behind-count) tests"
+  bash "$ROOT/tests/staleness.test.sh"
+
+  echo "→ coop review (composite linters + docs compose) tests"
+  bash "$ROOT/tests/review.test.sh"
+
+  echo "→ doctor MCP mode reporting tests"
+  bash "$ROOT/tests/doctor.test.sh"
+
+  echo "→ terminal acceptance reparse boundary tests"
+  node --test --test-name-pattern "directory links|junctioned ancestor|authorization revocation|failure cleanup|checkout ancestry|owned-root probe|fully safe authorization|decisive receipt mutations" "$ROOT/tests/terminal-workstation-acceptance.test.mjs"
+
+  echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
+  node "$ROOT/tests/webbridge.test.mjs"
+fi
+
+echo "✓ all tests passed ($LANE)"

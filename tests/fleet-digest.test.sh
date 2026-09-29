@@ -8,6 +8,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# The publish_dir lines below are read by native Windows Python under Git Bash,
+# which cannot resolve a POSIX /tmp path inside a file (MSYS converts argv, not
+# file contents), so the configs get the mixed C:/... spelling there.
+TMP_NATIVE="$(cygpath -m "$TMP" 2>/dev/null || printf '%s' "$TMP")"
 
 fail() { printf '  ✗ %s\n' "$1"; exit 1; }
 pass() { printf '  ✓ %s\n' "$1"; }
@@ -38,7 +42,7 @@ JSON
 # Minimal config pointing at the sandbox publish dir.
 cat > "$TMP/coopconfig" <<YAML
 fleet:
-  publish_dir: $PUBDIR
+  publish_dir: $TMP_NATIVE/published
 YAML
 
 PY="$ROOT/scripts/fleet-digest.py"
@@ -81,7 +85,7 @@ pass "Markdown escapes pipe characters in cell values"
 mkdir -p "$TMP/empty"
 cat > "$TMP/coopconfig-empty" <<YAML
 fleet:
-  publish_dir: $TMP/empty
+  publish_dir: $TMP_NATIVE/empty
 YAML
 html_empty="$(python3 "$PY" --config "$TMP/coopconfig-empty" --format html 2>/dev/null)" || fail "HTML render crashed on empty list"
 case "$html_empty" in

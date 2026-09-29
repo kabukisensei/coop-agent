@@ -112,7 +112,9 @@ try {
       const entries = writeInputs("new");
       const script = `import {promoteReviewRun} from ${JSON.stringify(new URL("../lib/standards.mjs", import.meta.url).href)}; const entries=${JSON.stringify(entries)}; promoteReviewRun(${JSON.stringify(outdir)},entries,{fault:(s)=>{if(s===${JSON.stringify(stage)})process.exit(77)}});`;
       const child = spawnSync(process.execPath, ["--input-type=module", "-e", script]); assert.equal(child.status, 77, stage);
-      const active = resolveAcceptedReviewRun(outdir); assert.equal(active.ok, true, stage);
+      // The dead child left its storage lock behind: wait 25 ms for it, not the
+      // default 5 s, before the lock-free read (as standards-live-sync does).
+      const active = resolveAcceptedReviewRun(outdir, { lockTimeoutMs: 25 }); assert.equal(active.ok, true, stage);
       const expected = stage === "review:after-pointer" ? "new" : "old";
       assert.equal(JSON.parse(readFileSync(active.reports.sql)).findings[0].message, expected, stage);
       assert.equal(JSON.parse(readFileSync(active.reports.dax)).findings[0].message, expected, stage);

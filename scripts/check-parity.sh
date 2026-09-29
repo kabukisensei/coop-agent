@@ -8,8 +8,12 @@
 #      except intentional singletons listed in ALLOWLIST below;
 #   2. bin/coop and bin/coop.ps1 must both exist, and so must the shared helper
 #      libraries lib/common.sh and lib/common.ps1 (its dot-sourced twin);
-#   3. every .ps1 in the repo must start with the UTF-8 BOM (EF BB BF) —
-#      Windows PowerShell 5.1 reads a BOM-less .ps1 as ANSI (mojibake);
+#   3. every .ps1 in the repo must start with exactly ONE UTF-8 BOM (EF BB BF) —
+#      Windows PowerShell 5.1 reads a BOM-less .ps1 as ANSI (mojibake), and a
+#      duplicate BOM makes it parse the shebang line as a command; the
+#      launch-critical .ps1 files must also have a `#!` comment right after the
+#      BOM. This is the repo's one BOM check (CI's shell + config lint job runs it);
+#      tests/bom.test.sh and run.ps1's section-0 check were folded in here (#96);
 #   4. STRUCTURAL parity (grep-based, best-effort — catches the drift the file-level
 #      checks can't): bin/coop and bin/coop.ps1 must dispatch the SAME subcommand
 #      tokens, and install/update/doctor's bash and PowerShell arg parsers must
@@ -103,6 +107,23 @@ while IFS= read -r f; do
     ko "$f is missing the UTF-8 BOM — fix: printf '\\357\\273\\277' | cat - '$f' > '$f.bom' && mv '$f.bom' '$f'"
   fi
 done < <(find . -name '*.ps1' -not -path './.git/*' -not -path '*/node_modules/*' -not -path './.cache/*' | sed 's|^\./||' | sort)
+
+echo "→ launch-critical .ps1 first line is a comment after the BOM"
+# The launcher and the knowledge sync script must have a '#!' comment line right
+# after the BOM: a duplicate BOM leaves U+FEFF before '#!' and PowerShell chokes
+# on it (review finding 1; formerly tests/bom.test.sh).
+for f in bin/coop.ps1 scripts/sync-knowledge.ps1; do
+  if [ ! -f "$f" ]; then
+    ko "$f is missing — cannot check its first line"
+    continue
+  fi
+  first_line="$(head -c 256 "$f" | tr -d '\r' | sed -n 1p)"
+  first_line="${first_line#"$BOM"}"
+  case "$first_line" in
+    '#!'*) ok "$f first line is a shebang comment after the BOM" ;;
+    *)     ko "$f first line is not a comment (leading garbage/BOM?): ${first_line}" ;;
+  esac
+done
 
 # --- Structural parity (grep-based) ------------------------------------------
 # These extractors are deliberately simple and anchored on the real markers in the

@@ -38,6 +38,12 @@ const options = (more = {}) => ({ canonicalRoot: cache, statePath: state, snapsh
 // hid the cause of a Windows-only failure).
 const assertRefreshed = (opts) => { const r = refreshCanonical(opts); assert.equal(r.ok, true, JSON.stringify(r)); return r; };
 const test = (name, fn) => { fn(); count++; console.log(`  ✓ ${name}`); };
+// An extended-lane case (COOP_TEST_EXTENDED=1, #96) runs only there. The gate lane
+// prints a skip note and runs `gate`, which leaves the state the case would leave.
+const extendedTest = (name, fn, gate) => {
+  if (process.env.COOP_TEST_EXTENDED === "1") return test(name, fn);
+  gate(); console.log(`  - skipped in the gate lane: ${name} (COOP_TEST_EXTENDED=1 runs it)`);
+};
 const resetStorage = () => { rmSync(join(tmp, "cache"), { recursive: true, force: true }); rmSync(snapshots, { recursive: true, force: true }); };
 
 try {
@@ -147,7 +153,10 @@ try {
     assert.equal(resolveStandard("sql", options({ refresh: false })).revision, old.revision);
   });
 
-  test("process death at every build/pointer/state step preserves one complete generation", () => {
+  // Each step kills a node child mid-refresh, so this case is extended-only. The gate
+  // lane leaves the store as its last step does (r2 active over an r1 generation), so
+  // the cases after it start from the same state in both lanes.
+  extendedTest("process death at every build/pointer/state step preserves one complete generation", () => {
     for (const step of [...beforePointer, "canonical:after-pointer", "canonical:before-state", "canonical:after-state"]) {
       git(["reset", "--hard", r1]); resetStorage(); now += 1; assertRefreshed(options({ force: true }));
       git(["reset", "--hard", r2]);
@@ -162,6 +171,9 @@ try {
       assert.equal(active.revision, ["canonical:after-pointer", "canonical:before-state", "canonical:after-state"].includes(step) ? r2 : r1, step);
       assert.equal(JSON.parse(readFileSync(active.index)).revision, active.revision, step);
     }
+  }, () => {
+    git(["reset", "--hard", r1]); resetStorage(); now += 1; assertRefreshed(options({ force: true }));
+    git(["reset", "--hard", r2]); assertRefreshed(options({ force: true }));
   });
 
   test("restart reconciles lagging state from the verified pointer", () => {

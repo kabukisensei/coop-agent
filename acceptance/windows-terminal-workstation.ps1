@@ -994,12 +994,17 @@ if ($Mode -eq 'RunBehavioralSuite') {
     }
     $pythonDontWriteBytecode = [Environment]::GetEnvironmentVariable('PYTHONDONTWRITEBYTECODE', 'Process')
     [Environment]::SetEnvironmentVariable('PYTHONDONTWRITEBYTECODE', '1', 'Process')
+    # Certify the full suite: tests\run.ps1 runs only its gate lane unless
+    # COOP_TEST_EXTENDED=1 (#96), and this receipt has always covered every section.
+    $testExtended = [Environment]::GetEnvironmentVariable('COOP_TEST_EXTENDED', 'Process')
+    [Environment]::SetEnvironmentVariable('COOP_TEST_EXTENDED', '1', 'Process')
 
     $logBase = Join-Path (Split-Path -Parent $ReceiptPath) 'exact-behavioral-suite'
     try {
       $suite = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'tests\run.ps1')) $logBase 1800
     } finally {
       [Environment]::SetEnvironmentVariable('PYTHONDONTWRITEBYTECODE', $pythonDontWriteBytecode, 'Process')
+      [Environment]::SetEnvironmentVariable('COOP_TEST_EXTENDED', $testExtended, 'Process')
       foreach ($name in $commandFileNames) { [Environment]::SetEnvironmentVariable($name, $commandFileValues[$name], 'Process') }
     }
     Assert-ExitZero $suite 'exact-candidate behavioral suite'

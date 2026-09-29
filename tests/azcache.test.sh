@@ -5,7 +5,9 @@
 # Power BI token check, the ~30-min tenant-stamped .az-ok cache, the automatic
 # bounded sign-in, and the one-line failures. The PowerShell twin runs the same
 # cases in tests/fixtures/azcache.test.ps1. Offline: no sleeps, no PTY, and the
-# real Azure CLI, HOME and ~/.coop are never touched.
+# real Azure CLI, HOME and ~/.coop are never touched. Cases 10, 13c and 13d end a
+# real process (the fake az ends itself, the watchdog kills a hanging az), so
+# they run only in the extended lane (COOP_TEST_EXTENDED=1, #96).
 #
 set -euo pipefail
 
@@ -15,6 +17,8 @@ trap 'rm -rf "$TMP"' EXIT
 
 fail() { printf '  ✗ %s\n' "$1"; exit 1; }
 pass() { printf '  ✓ %s\n' "$1"; }
+extended() { [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; }
+skipped() { printf '  - skipped in the gate lane: %s (COOP_TEST_EXTENDED=1 runs it)\n' "$1"; }
 
 NODE="$(command -v node)" || fail "node is required for the fake az"
 mkdir -p "$TMP/bin" "$TMP/home" "$TMP/coop/.coop" "$TMP/proj/.coop" "$TMP/nocontract"
@@ -143,16 +147,21 @@ esac
 pass "failed sign-in: one attempt, one line naming az login, launch continues"
 
 # 10. Timeout (the watchdog's kill, rc>128 -> 124): never a sign-in.
-az_reset; printf 'term' > "$TMP/az/mode"
-out="$(COOP_ASSUME_YES=1 coop_az_preflight 2>&1 </dev/null)"
-[ "$(probes)" = "1" ] && [ "$(logins)" = "0" ] || fail "timeout: 1 probe, 0 logins (got $(probes)/$(logins))"
-[ ! -f "$MARKER" ] || fail "a timed-out check must not leave a marker"
-[ "$(warn_lines "$out")" = "1" ] || fail "expected exactly one timeout line (got: $out)"
-case "$out" in
-  *"timed out for tenant $T2 (network or VPN?)"*"az account get-access-token --tenant $T2 --resource $FABRIC"*) ;;
-  *) fail "timeout line mismatch (got: $out)" ;;
-esac
-pass "timed-out check: no sign-in, one line naming the token command"
+#     Extended lane: the fake az ends itself (SIGTERM; exit 143 on Windows).
+if extended; then
+  az_reset; printf 'term' > "$TMP/az/mode"
+  out="$(COOP_ASSUME_YES=1 coop_az_preflight 2>&1 </dev/null)"
+  [ "$(probes)" = "1" ] && [ "$(logins)" = "0" ] || fail "timeout: 1 probe, 0 logins (got $(probes)/$(logins))"
+  [ ! -f "$MARKER" ] || fail "a timed-out check must not leave a marker"
+  [ "$(warn_lines "$out")" = "1" ] || fail "expected exactly one timeout line (got: $out)"
+  case "$out" in
+    *"timed out for tenant $T2 (network or VPN?)"*"az account get-access-token --tenant $T2 --resource $FABRIC"*) ;;
+    *) fail "timeout line mismatch (got: $out)" ;;
+  esac
+  pass "timed-out check: no sign-in, one line naming the token command"
+else
+  skipped "10 timed-out check (the fake az ends itself: SIGTERM or exit 143)"
+fi
 
 # 11. A non-authentication failure never opens a sign-in or says "not signed in".
 az_reset; printf 'error' > "$TMP/az/mode"
@@ -211,44 +220,54 @@ pass "deep cwd (8 folders below the project): the contract tenant, as doctor sho
 #      exactly one line: no bash "Terminated" job notice, and az is ended. Output
 #      goes through a file, not $(...): bash never prints job notices inside a
 #      command substitution, but the real launch runs in the main shell.
-real_az_run="$(declare -f coop_az_run)"
-eval "_real_coop_az_run${real_az_run#coop_az_run}"
-coop_az_run() { if [ "$1" = 300 ]; then shift; _real_coop_az_run 2 "$@"; else _real_coop_az_run "$@"; fi; }
-project "$T2"; rm -f "$MARKER"; az_reset; printf 'hang' > "$TMP/az/login-rc"
-rc=0; COOP_ASSUME_YES=1 coop_az_preflight > "$TMP/stopped.out" 2>&1 </dev/null || rc=$?
-out="$(cat "$TMP/stopped.out")"
-eval "$real_az_run"
-[ "$rc" = "0" ] || fail "a stopped sign-in must not fail the launch (rc=$rc)"
-[ "$(logins)" = "1" ] && [ "$(probes)" = "1" ] || fail "stopped sign-in: 1 login, no re-probe (got $(logins)/$(probes))"
-[ ! -f "$MARKER" ] || fail "a stopped sign-in must not leave a marker"
-case "$out" in *Terminated*|*Killed*|*"sh -c"*) fail "a stopped sign-in must not print a shell job notice (got: $out)" ;; esac
-[ "$(warn_lines "$out")" = "1" ] && [ "$(printf '%s\n' "$out" | grep -vc '^• Opening Azure sign-in')" = "1" ] \
-  || fail "a stopped sign-in prints exactly one line after the Opening line (got: $out)"
-case "$out" in *"not verified"*"az login --tenant $T2 --allow-no-subscriptions"*) ;; *) fail "stopped sign-in line mismatch (got: $out)" ;; esac
-hang_alive && fail "the stopped sign-in is still running"
-[ ! -f "$TMP/az/hang.expired" ] || fail "the sign-in ran out by itself: the watchdog did not end it"
-pass "sign-in stopped by the watchdog: exactly one line, no 'Terminated' notice, az ended"
+#      Extended lane: a hanging sign-in ended by the watchdog.
+if extended; then
+  real_az_run="$(declare -f coop_az_run)"
+  eval "_real_coop_az_run${real_az_run#coop_az_run}"
+  coop_az_run() { if [ "$1" = 300 ]; then shift; _real_coop_az_run 2 "$@"; else _real_coop_az_run "$@"; fi; }
+  project "$T2"; rm -f "$MARKER"; az_reset; printf 'hang' > "$TMP/az/login-rc"
+  rc=0; COOP_ASSUME_YES=1 coop_az_preflight > "$TMP/stopped.out" 2>&1 </dev/null || rc=$?
+  out="$(cat "$TMP/stopped.out")"
+  eval "$real_az_run"
+  [ "$rc" = "0" ] || fail "a stopped sign-in must not fail the launch (rc=$rc)"
+  [ "$(logins)" = "1" ] && [ "$(probes)" = "1" ] || fail "stopped sign-in: 1 login, no re-probe (got $(logins)/$(probes))"
+  [ ! -f "$MARKER" ] || fail "a stopped sign-in must not leave a marker"
+  case "$out" in *Terminated*|*Killed*|*"sh -c"*) fail "a stopped sign-in must not print a shell job notice (got: $out)" ;; esac
+  [ "$(warn_lines "$out")" = "1" ] && [ "$(printf '%s\n' "$out" | grep -vc '^• Opening Azure sign-in')" = "1" ] \
+    || fail "a stopped sign-in prints exactly one line after the Opening line (got: $out)"
+  case "$out" in *"not verified"*"az login --tenant $T2 --allow-no-subscriptions"*) ;; *) fail "stopped sign-in line mismatch (got: $out)" ;; esac
+  hang_alive && fail "the stopped sign-in is still running"
+  [ ! -f "$TMP/az/hang.expired" ] || fail "the sign-in ran out by itself: the watchdog did not end it"
+  pass "sign-in stopped by the watchdog: exactly one line, no 'Terminated' notice, az ended"
+else
+  skipped "13c sign-in stopped by the watchdog (a hanging az, 2s limit)"
+fi
 
 # 13d. The watchdog also ends az's child process when pgrep and pkill are missing
 #      (Git for Windows ships neither, and its wbin/az wrapper runs python.exe as
 #      a child; minimal Linux images may lack procps), so a probe never holds the
 #      caller's $(...) past its limit. The wrapper exits 1 once stopped, as az
 #      does after taskkill /F: the stop still reads as 124.
-mkdir -p "$TMP/wrapbin" "$TMP/nopkill"
-printf '#!/bin/sh\ntrap "exit 1" TERM\n"%s" "%s" "$@"\nexit 1\n' "$NODE" "$ROOT/tests/fixtures/fake-az.mjs" > "$TMP/wrapbin/az"
-printf '#!/bin/sh\nexit 127\n' > "$TMP/nopkill/pkill"
-cp "$TMP/nopkill/pkill" "$TMP/nopkill/pgrep"
-chmod +x "$TMP/wrapbin/az" "$TMP/nopkill/pkill" "$TMP/nopkill/pgrep"
-az_reset; printf 'hang' > "$TMP/az/mode"
-started=$SECONDS
-rc=0
-err="$(PATH="$TMP/nopkill:$TMP/wrapbin:$PATH"; coop_az_run 2 account get-access-token --tenant "$T2" --resource "$FABRIC" --output none 2>&1 >/dev/null)" || rc=$?
-elapsed=$((SECONDS - started))
-[ "$rc" = "124" ] || fail "a stopped wrapper az must return 124 (got $rc: $err)"
-[ "$elapsed" -lt 10 ] || fail "the wrapper's child held the caller for ${elapsed}s (limit 2s)"
-hang_alive && fail "the wrapper's child is still running"
-[ ! -f "$TMP/az/hang.expired" ] || fail "the wrapper's child ran out by itself: the watchdog did not end it"
-pass "no pgrep/pkill: the watchdog ends the az wrapper's child; the 2s limit holds (${elapsed}s), rc 124"
+#      Extended lane: a hanging probe ended by the watchdog.
+if extended; then
+  mkdir -p "$TMP/wrapbin" "$TMP/nopkill"
+  printf '#!/bin/sh\ntrap "exit 1" TERM\n"%s" "%s" "$@"\nexit 1\n' "$NODE" "$ROOT/tests/fixtures/fake-az.mjs" > "$TMP/wrapbin/az"
+  printf '#!/bin/sh\nexit 127\n' > "$TMP/nopkill/pkill"
+  cp "$TMP/nopkill/pkill" "$TMP/nopkill/pgrep"
+  chmod +x "$TMP/wrapbin/az" "$TMP/nopkill/pkill" "$TMP/nopkill/pgrep"
+  az_reset; printf 'hang' > "$TMP/az/mode"
+  started=$SECONDS
+  rc=0
+  err="$(PATH="$TMP/nopkill:$TMP/wrapbin:$PATH"; coop_az_run 2 account get-access-token --tenant "$T2" --resource "$FABRIC" --output none 2>&1 >/dev/null)" || rc=$?
+  elapsed=$((SECONDS - started))
+  [ "$rc" = "124" ] || fail "a stopped wrapper az must return 124 (got $rc: $err)"
+  [ "$elapsed" -lt 10 ] || fail "the wrapper's child held the caller for ${elapsed}s (limit 2s)"
+  hang_alive && fail "the wrapper's child is still running"
+  [ ! -f "$TMP/az/hang.expired" ] || fail "the wrapper's child ran out by itself: the watchdog did not end it"
+  pass "no pgrep/pkill: the watchdog ends the az wrapper's child; the 2s limit holds (${elapsed}s), rc 124"
+else
+  skipped "13d watchdog without pgrep/pkill (a hanging az wrapper, 2s limit)"
+fi
 
 # 14. The auth markers match the Fabric token helper's list.
 markers="$(grep -o '\["az login", [^]]*\]' "$ROOT/lib/fabric_request_headers.mjs" | tr -d '[]"' | tr ',' '\n' | sed 's/^ *//')"

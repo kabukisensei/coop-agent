@@ -217,7 +217,9 @@ a mismatch). When you bump Pi:
    aspirational entries. (pi-vis's `src/shared/pi-protocol/` Zod schemas are a
    useful second reference — *read* them, never copy.)
 3. Update the contract; mirror any command/event changes in `tests/stub-pi.mjs`;
-   run `bash tests/run.sh`.
+   run `COOP_TEST_EXTENDED=1 bash tests/run.sh` (the tests that load the stub,
+   `tests/webbridge.test.mjs` and `tests/fabric-mcp-web-launch.test.mjs`, are in
+   the extended lane).
 4. Launch `coop web` against the new Pi, exercise chat / **tool calls** / model
    picker / resume / chdir, and watch the console for `protocol drift` lines —
    each one is either a contract update or a renderer fix. (Tool calls matter:
