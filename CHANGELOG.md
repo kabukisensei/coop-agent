@@ -7,6 +7,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Docs: master plan revision 3.4 sharpens Phase 5 (Azure SQL breadth): the four
+  non-Fabric-warehouse target kinds and their host patterns, Azure SQL serverless
+  compute tier versus Synapse serverless SQL pool, the connect-timeout and
+  `ApplicationIntent` rules, and the three fixed parameterized catalog queries the
+  live impact tracing uses.
 - Docs: master plan revision 3.3 adds the Phase 3 pre-qualification (sections 6.1
   and 6.2): Pi 0.87.1 needs no extension source change and lists the exact pin and
   fixture edits; `pi-mcp-adapter` 3.x stops reading `mcp.json`, so coop's generated

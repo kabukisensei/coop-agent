@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.3 · September 29, 2026**
+**Document revision 3.4 · September 29, 2026**
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -518,27 +518,51 @@ not source-controlled.
 
 1. **Connection targets in the contract.** Add a `sql_targets:` section to
    `.coop/project.yml` with one entry per environment and a `default_environment:
-   dev`. Each entry names a `kind` (`fabric_warehouse`, `fabric_lakehouse`,
-   `azure_sql`, `azure_sql_serverless`), `server`, `database`, and for Fabric the
+   dev`. Each entry names a `kind`, `server`, `database`, and for Fabric the
    existing workspace/item IDs. Production entries are present but never default.
+   "Serverless" means two different products, and the contract names them apart:
+
+   | `kind` | Host pattern | Notes |
+   | --- | --- | --- |
+   | `fabric_warehouse`, `fabric_lakehouse` | `*.datawarehouse.fabric.microsoft.com` | today's path, unchanged |
+   | `fabric_sql_database` | `*.database.fabric.microsoft.com` | Fabric's OLTP SQL database item; the v0.3.18 `sqldb-cli` skill covers it |
+   | `azure_sql` | `*.database.windows.net` | Azure SQL Database, including the **serverless compute tier** (same host; auto-pause means the first connection after idle can take up to a minute, so the connect timeout for this kind is 60 s, not 15) |
+   | `synapse_serverless` | `*-ondemand.sql.azuresynapse.net` | Synapse serverless SQL pool: query-only over lake files and views, no DML, no persisted tables; impact tracing covers views and external objects only |
+
 2. **Azure SQL in the fallback executor.** Extend `lib/fabric_sql_query.py` (rename
-   to `sql_query.py` in the same PR) to accept `*.database.windows.net` and
-   serverless `*-ondemand.sql.azuresynapse.net` hosts from the contract, same
-   token audience (`https://database.windows.net/`), same ODBC Driver 18, same
-   row/byte/timeout caps, `ApplicationIntent=ReadOnly` where the target supports
-   it. No SQL authentication, no stored passwords.
+   to `sql_query.py` in the same PR) to accept the hosts above **from the contract**
+   (today the server is never user-supplied; it is discovered through the Fabric
+   REST API, which stays the rule for Fabric kinds). Same token audience
+   (`https://database.windows.net/`), same ODBC Driver 18, same row/byte caps.
+   `ApplicationIntent=ReadOnly` only for `azure_sql` targets that have read-scale
+   replicas (Premium and Business Critical); elsewhere the driver ignores it, so
+   the read-only guarantee stays the query filter plus `autocommit` with no
+   transaction. Entra ID token authentication only: no SQL logins, no stored
+   passwords, no connection strings in tool results or audit records.
 3. **Guardrails unchanged in spirit, wider in vocabulary.** The bounded session grant
    (`LiveReadScope`) gains the target kind and environment from the contract instead
    of the hard-coded Fabric URL; production keeps the explicit-scope-and-approval
    rule; DDL/DML on dev still asks once per session.
 4. **Live impact tracing.** A read-only `sql_impact` capability that, for one object
-   on the default (dev) target, queries `sys.sql_expression_dependencies`,
-   `sys.dm_sql_referencing_entities`, `sys.sql_modules`, and `INFORMATION_SCHEMA`
-   to return upstream and downstream objects, then hands the same object to
-   `data_doc lineage` when built docs exist. The `impact-analysis` prompt and the
-   `coop-workflow` skill call it before any edit. The current query filter rejects
-   quotes and `WITH`, so this needs its own allow-listed parameterized queries, not
-   the free-text path.
+   on the default (dev) target, returns upstream and downstream objects, then hands
+   the same object to `data_doc lineage` when built docs exist. The
+   `impact-analysis` prompt and the `coop-workflow` skill call it before any edit.
+   Three fixed, parameterized catalog queries, never free text (the current filter
+   rejects quotes and `WITH` on purpose, and `OBJECT_ID(?)` takes the name as a
+   bound parameter):
+   - **Downstream (who references this object):** `sys.dm_sql_referencing_entities`
+     joined to `sys.objects`, which resolves references at call time and works on
+     every kind above.
+   - **Upstream (what this object references):** `sys.sql_expression_dependencies`
+     for the object's own referenced entities, with `sys.sql_modules` as the
+     fallback text search when a dependency is unresolved (a dropped or cross-database
+     reference shows as `is_ambiguous`/null there).
+   - **Shape:** `INFORMATION_SCHEMA.COLUMNS` for the object's columns, so the
+     before/after comparison in step 5 knows what to count.
+   Fabric Warehouse and Fabric SQL database expose these catalog views; Synapse
+   serverless exposes them for views and external tables only. Where a kind lacks
+   a view, the capability says so in its result instead of returning an empty list,
+   so "no dependents" is never confused with "could not look".
 5. **Verify with data.** The slice workflow already requires a failing check before
    and a passing check after. Make it concrete for SQL: capture row counts and a
    bounded sample for the affected objects on dev before the edit, apply the edit on
