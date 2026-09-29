@@ -173,6 +173,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `C:\Program Files (x86)`. They ran a bare `az`, which Windows cannot start. A
   client `tenant_id` that is not a GUID or a domain name is now rejected before az
   runs.
+- The Azure DevOps digest reports a client with no `project` before it signs in
+  (#103). It minted a token with az first, so `tests/ado.test.sh` ran the
+  developer's real Azure CLI and credentials, and failed on a machine without az.
+  The test's missing-project case now runs with a failing `az` first on `PATH` and
+  as `COOP_AZ_BIN`, and fails if az is called.
 
 ## [0.23.5] — 2026-09-22
 

@@ -36,7 +36,19 @@ PYEOF
 pass "iter_clients coalesces null stale_days to default"
 
 # --- 2. build_client_model raises AdoError when project is missing ---
-"$PY" - <<PYEOF
+# A config error is reported before any sign-in (#103): a poison az first on PATH
+# (and as COOP_AZ_BIN) records the call and fails, so this case never mints a real
+# Azure DevOps token with the developer's az.
+AZ_CALLS="$TMP/az.calls"
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/az" <<EOF
+#!/bin/sh
+printf '%s\n' "az \$*" >> "$AZ_CALLS"
+echo "ado.test.sh: az must not run here" >&2
+exit 97
+EOF
+chmod +x "$TMP/bin/az"
+PATH="$TMP/bin:$PATH" COOP_AZ_BIN="$TMP/bin/az" "$PY" - <<PYEOF
 import sys, os, importlib.util
 sys.path.insert(0, os.path.join("$ROOT", "scripts"))
 import ado_lib as A
@@ -54,6 +66,7 @@ else:
     raise AssertionError("expected AdoError for missing project")
 PYEOF
 [ $? -eq 0 ] || fail "build_client_model missing-project check failed"
+[ ! -e "$AZ_CALLS" ] || fail "build_client_model ran az: $(cat "$AZ_CALLS")"
 pass "build_client_model raises AdoError on missing project"
 
 # --- 3. append_block writes atomically and detects existing clients key via YAML ---
