@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.2 · September 29, 2026**
+**Document revision 3.3 · September 29, 2026**
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -344,8 +344,8 @@ Revision 2.0's S1–S7 packages, in this order and with these decisions:
 
 | Candidate | Reason | Confirm |
 | --- | --- | --- |
-| `mcp-remote` | only bridges Microsoft Learn; Learn offers direct Streamable HTTP and `pi-mcp-adapter` 3.x speaks it | direct HTTP works through the adapter on Windows |
-| `powerbi-mcp-server` (unscoped npm, 0.1.0) | superseded by `@microsoft/powerbi-modeling-mcp` 1.0.0 | no skill or prompt depends on its tool names |
+| `mcp-remote` | only bridges Microsoft Learn; Learn is unauthenticated Streamable HTTP and the adapter speaks it directly | exact entry and proof test in section 6.2; live tools-list on the VM |
+| `powerbi-mcp-server` (unscoped npm, 0.1.0) | `--readonly` silently ignored, `refresh_dataset` exposed ([#93](https://github.com/kabukisensei/coop-agent/issues/93)); superseded by `@microsoft/powerbi-modeling-mcp` 1.0.0 | drop now, ahead of Phase 2 |
 | `pi-better-openai` | Aaron wants the plan-usage stats it feeds the footer, but B0 found its configuration inactive on the live install, and `pi-lovely-codex` may supply the same stats plus tool-call handling | **keep** until PK1 compares it with `pi-lovely-codex` on the development VM; drop only if the replacement shows the same 5h/7d usage windows in the Coop footer |
 | `context-mode` | sandboxed code execution over docs; overlaps Pi's own compaction | measure context saved on two real sessions |
 | Homebrew/apt/dnf prerequisite branches, `/opt/homebrew` troubleshooting | Mac-only | goes with S1 |
@@ -357,19 +357,20 @@ The manifest is `config/release-manifest.json` at v0.23.5.
 
 | Component | Pinned | Latest | Needed? | Notes |
 | --- | --- | --- | --- | --- |
-| `@earendil-works/pi-coding-agent` | 0.84.3 | 0.87.1 (Sep 22) | **Yes, qualify** | 0.86.0 and 0.87.0 carry breaking extension-API changes (`user_bash` fails closed, `ToolCall.arguments` JSON-only, `turn_end` boundaries, `SessionManager` canonical). The four Coop extensions and the guardrail runner test must be re-verified. Still Node ≥ 22.19. |
-| `pi-mcp-adapter` | 2.34.0 | 3.1.0 (Sep 27) | **Yes, after Pi** | 3.x peer range accepts pi-ai 0.84–0.87; a 3.0 major means read its changelog for config-shape changes before touching `mcp.json` generation. |
+| `@earendil-works/pi-coding-agent` | 0.84.3 | 0.87.1 (Sep 22) | **Yes, qualify** | Pre-qualified read-only on Sep 29 (section 6.1): none of the four extensions or the runner test uses a removed or changed API; the pin move is one manifest line plus fixture versions. Still Node ≥ 22.19. |
+| `pi-mcp-adapter` | 2.34.0 | 3.2.0 (Sep 28) | **Yes, same PR as Pi** | 2.34.0's peer range excludes pi-ai 0.87, so it must move with Pi. 3.0 **stopped reading `mcp.json`** (that file now belongs to Pi's built-in MCP); coop's generated file must become `mcp-adapter.json` (section 6.2). |
 | `pi-hermes-memory` | 0.7.17 | 0.9.9 | Maybe | private memory; check cache roots and secret scanning still behave. |
 | `pi-web-access` | 0.10.7 | 0.33.0 | Maybe | research only; qualify Windows and security changes. |
 | `@juicesharp/rpiv-ask-user-question` | 1.20.0 | 2.11.0 | **Yes, qualify** | major bump; the setup wizards depend on its dialogs and cancellation. |
-| `pi-better-openai` | 0.1.22 | 0.1.22 | No | candidate to drop (section 5). |
+| `pi-better-openai` | 0.1.22 | 0.1.22 | Test on the VM | a custom provider; Pi 0.86 changed how providers read the system prompt and tools, and no newer release exists. If it fails on 0.87.1, the PK1 comparison with `pi-lovely-codex` (section 10) decides the replacement for the usage stats. |
 | `context-mode` | 1.0.169 | 1.0.169 | No | candidate to drop (section 5). |
 | `@microsoft/powerbi-modeling-mcp` | 0.5.0-beta.12 | **1.0.0** (Sep 25) | **Yes** | first GA; read-only invocation and connection scope must be re-checked. |
 | `@microsoft/powerbi-report-authoring-cli` | 0.1.4 | 0.4.0 | **Yes** | the report skills call it; validate output contracts. |
 | `@microsoft/powerbi-desktop-bridge-cli` | 0.1.2 | 1.0.0 | Yes | re-test the reload/save source-loss report (S31 in revision 2.0) on disposable PBIP files. |
 | `@microsoft/fabric-mcp` | 1.3.0 | 1.4.0 | Yes | B0 found 1.0.0 installed and 1.2.0 cached; pin exactly, never `@latest`. |
 | `@azure-devops/mcp` | 2.9.0 | 2.10.0 | Low | B0 found 2.10.0 already at the executable path. |
-| `mcp-remote` | 0.1.38 | 0.14.3 | Drop or pin | see section 5. |
+| `mcp-remote` | 0.1.38 | 0.14.3 | **Drop** | only the Microsoft Learn entry uses it; the exact replacement entry and proof test are in section 6.2. |
+| `powerbi-mcp-server` | 0.1.0 | 0.1.0 | **Drop now** | `--readonly` is silently ignored and `refresh_dataset` (a write) is exposed while coop documents it as read-only: [#93](https://github.com/kabukisensei/coop-agent/issues/93). Official `@microsoft/powerbi-modeling-mcp` 1.0.0 replaces it. |
 | `coop-data-doc` / `coop-sql-review` / `coop-dax-review` | 1.2.0 / 0.15.2 / 0.22.0 | same | No | unchanged since the freeze; the reviewer decision is in section 7. |
 | `ms-fabric-cli` / `fabric-cicd` / `pyodbc` | 1.7.0 / 1.3.0 / 5.3.0 | same | No | unchanged. |
 | `microsoft/skills-for-fabric` catalog | v0.3.10 | v0.3.18 (Sep 25) | **Yes** | v0.3.12 merged the two pinned `sqldw-*` skills into `sqldw-cli`; v0.3.17 unified `powerbi-report-cli`; new `sqldb-cli` targets Fabric SQL database. The allowlist in `config/microsoft-skills.json` must be remapped. |
@@ -395,6 +396,75 @@ mechanisms cover it without new code:
 Upgrades reach teammates only through a tagged release (H5), so a qualified change
 sitting on `main` cannot surprise anyone. The full isolated beta channel (B1) is
 built only if this proves insufficient.
+
+### 6.1 U1 Pi row: pre-qualified on September 29 (read-only)
+
+Method: every symbol named in Pi's 0.85.0 to 0.87.1 release notes was grepped in
+the four extensions, `tests/guardrails-pi-runner.test.mjs`, and the matrix scripts,
+and cross-checked against Pi's 0.84.3 and 0.87.1 sources. Result:
+
+- **No source change in `coop-guardrails`, `coop-tools`, `coop-profile`, or
+  `coop-powerline`.** None uses `shouldStopAfterTurn`, `finishTurn`, assigns
+  `state.messages`, switches exhaustively over session entries, emits `turn_end`,
+  or hooks `user_bash`. Every `details` payload the tools return is JSON-safe
+  (strings, numbers, parsed JSON, frozen plain objects). Extensions load through
+  `jiti` without a type check, so the type-level changes cannot fail at runtime.
+- **The runner test and matrix scripts are structurally unaffected**: the
+  `ExtensionRunner` constructor, `setUIContext`, `createContext`, `emit` for
+  `session_start`/`session_shutdown`, and the loader's `createExtensionRuntime` /
+  `loadExtensions` have the same signatures at 0.87.1. The RPC probe's commands and
+  events still exist.
+- **Two things to observe on the VM, not fix in advance:** (1) `coop-tools` and
+  `coop-profile` return `systemPrompt` from `before_agent_start`; on 0.86+ that is
+  treated as a forced prompt projected on every turn, so the dated daily-log text
+  must not spam transcript entries or defeat prompt caching; (2) the footer's
+  working indicator, since 0.86 moved Pi's own spinners into the editor border.
+- **What the pin PR changes:** `pi.version` in `config/release-manifest.json`;
+  `pi-mcp-adapter` in the same PR (2.34.0's peer range stops at pi-ai 0.85; the
+  isolated tree's plain `npm install` would fail to resolve); every fake
+  `pi --version` fixture that says 0.84.3 (`tests/doctor.test.sh`,
+  `tests/fixtures/sync-fake-pi.sh`, `tests/fixtures/install-python-prereq.test.ps1`,
+  `tests/install-python-prereq.test.sh`, `tests/run.ps1`, the fleet, home-guard, and
+  update-guard tests, the `test-pi-matrix.ps1` usage comment); CHANGELOG. `lib/_extdeps.py`
+  needs no change (it aligns pi-ai/pi-tui to whatever `pi --version` reports).
+- **VM run:** `bash scripts/test-pi-matrix.sh 0.87.1` and the `.ps1` twin (they
+  exercise the runner test, the real loader over the four `.ts` extensions, and the
+  RPC probe), then a real session on Windows for the two observations above.
+- **Optional hardening, not required for the pin:** `_range_floor` in
+  `lib/_extdeps.py` reads only the first triple of an OR-range, so a peer range that
+  excludes the agent version passes silently; teach it the upper bound.
+
+### 6.2 U1 adapter row and the `mcp-remote` removal: pre-qualified on September 29
+
+- **`pi-mcp-adapter` 3.0 no longer reads `<agent dir>/mcp.json`**; that file belongs
+  to Pi's built-in MCP support. Coop's generated file must be **`mcp-adapter.json`**
+  in the same directory (same format; a rename). Every literal consumer changes in
+  one PR: `lib/mcp_config.py` (output path), `bin/coop` and `bin/coop.ps1` (launch
+  token), `scripts/sync.*`, `scripts/doctor.*` (search list), `scripts/test-pi-matrix.*`,
+  `extensions/coop-guardrails/index.ts` (the managed-config read), `lib/fabric_sql_query.py`,
+  `tests/fabric-mcp-launch.test.sh`, and the README, architecture, and tool-contract
+  docs. `coop sync` migrates once: read the old `mcp.json` as the existing config so
+  `_coop.managed_servers` ownership survives, write `mcp-adapter.json`, remove the
+  old file so the adapter's startup warning stops. The adapter's `/mcp` command is
+  now `/mcp-adapter`. Nothing else in the entry format changed: `url`, `auth: false`,
+  `requestHeadersCommand`, `lifecycle`, `requestTimeoutMs`, and coop's private
+  `_coop`/`_coop_target` keys all pass through 3.x unchanged.
+- **Also in that PR:** `config/defaults.yml` `tested_with.pi_mcp_adapter` says
+  `2.10.0` while the manifest says `2.34.0`; fix it and the doctor fixtures that
+  assume it. Consider `settings.allowInstall: false` (the agent may not install
+  remote servers) and the new project-trust rule for a work repo's `.mcp.json`.
+- **`mcp-remote` removal, exact change:** the Microsoft Learn entry becomes
+  `{"url": "https://learn.microsoft.com/api/mcp", "auth": false, "lifecycle": "lazy",
+  "requestTimeoutMs": 60000}` (the endpoint is unauthenticated Streamable HTTP; the
+  adapter defaults to that transport with SSE fallback and `auth: false` skips OAuth
+  probing). Drop `mcp-remote` from `SERVER_PACKAGES`, the manifest, `config/microsoft-skills.json`,
+  and the `defaults.yml` comments; treat a managed `microsoft-learn` entry that still
+  has `command`/`args` the way `fabric-sqlendpoint` is treated (replace wholesale on
+  regeneration). **Proof test, offline:** `tests/mcp-config.test.sh` asserts the exact
+  Learn entry and that an old `command`/`args` entry migrates to the `url` form; the
+  live tools-list against learn.microsoft.com is a VM step (the container cannot
+  reach that host). Fixtures to update: `tests/microsoft-skills.test.py`,
+  `tests/fleet-manifest.test.sh`, `tests/doctor.test.sh`, `tests/warehouse-mcp.test.py`.
 
 ## 7. Phase 4 — Standards alignment and the reviewer decision
 
