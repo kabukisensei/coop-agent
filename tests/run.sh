@@ -72,7 +72,13 @@ done
 GATE_HOME="$TMP/home"
 mkdir -p "$GATE_HOME"
 HOME="$GATE_HOME"; USERPROFILE="$GATE_HOME"
-case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) USERPROFILE="$(cygpath -w "$GATE_HOME")" ;; esac
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*)
+    USERPROFILE="$(cygpath -w "$GATE_HOME")"
+    # Windows PowerShell expands its known folders from USERPROFILE; Receive-Job
+    # fails when AppData\Local is missing.
+    mkdir -p "$GATE_HOME/AppData/Local/Microsoft/Windows/PowerShell" "$GATE_HOME/AppData/Roaming" ;;
+esac
 export HOME USERPROFILE
 unset COOP_DIR COOP_AGENT_DIR PI_CODING_AGENT_DIR \
       COOP_STANDARDS_ROOT COOP_STANDARDS_STATE COOP_STANDARDS_SNAPSHOT_ROOT

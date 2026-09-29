@@ -146,6 +146,12 @@ try {
   $env:COOP_NO_ONBOARD = '1'
   $sandboxHome = Join-Path $stub 'home'
   New-Item -ItemType Directory -Path $sandboxHome -Force | Out-Null
+  # A profile shape Windows PowerShell 5.1 needs: its known folders expand from
+  # USERPROFILE, and Receive-Job fails ("The Persistence Path does not exist")
+  # when AppData\Local is missing.
+  foreach ($sub in @('AppData\Local\Microsoft\Windows\PowerShell', 'AppData\Roaming')) {
+    New-Item -ItemType Directory -Path (Join-Path $sandboxHome $sub) -Force | Out-Null
+  }
   $env:HOME = $sandboxHome
   $env:USERPROFILE = $sandboxHome
   foreach ($name in @('COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT')) {
