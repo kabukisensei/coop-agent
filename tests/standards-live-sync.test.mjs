@@ -408,35 +408,11 @@ try {
     git(["reset", "--hard", good]);
   });
   test("prompts in the wiki's own vocabulary get the articles they need (#88)", () => {
-    // Front matter of every active coop-standards article (a00c8cc) at its real path,
-    // with stub bodies: selection reads only front matter.
+    // Front matter of every active coop-standards article at its real path, from the
+    // golden set's wiki mirror, with stub bodies: selection reads only front matter.
     const good = git(["rev-parse", "HEAD"]);
-    for (const [file, id, title, layer, artifact, technology] of [
-      ["SQL/SQL Conventions", "sql_conventions", "SQL Conventions", "agnostic", "conventions", "agnostic"],
-      ["SQL/SQL Layout", "sql_formatting", "SQL Layout", "agnostic", "formatting", "agnostic"],
-      ["SQL/Gold/Dimension Tables", "sql_gold_dimension_tables", "Gold Dimension Tables", "gold", "dimension_table", "agnostic"],
-      ["SQL/Gold/Fact Tables", "sql_gold_fact_tables", "Gold Fact Tables", "gold", "fact_table", "agnostic"],
-      ["SQL/Gold/Stored Procedures", "sql_gold_stored_procedures", "Gold Stored Procedures", "gold", "stored_procedure", "agnostic"],
-      ["SQL/Gold/Views", "sql_gold_views", "Gold Views", "gold", "view", "agnostic"],
-      ["SQL/Silver/Indexing", "sql_silver_indexing", "Silver Indexing", "silver", "table", "agnostic"],
-      ["SQL/Silver/Overview", "sql_silver_overview", "Silver Layer", "silver", "agnostic", "agnostic"],
-      ["SQL/Silver/Schema Derivation", "sql_silver_schema_derivation", "Silver Schema Derivation", "silver", "table", "agnostic"],
-      ["SQL/Silver/Schema Manager", "sql_silver_schema_manager", "Silver Schema Manager", "silver", "agnostic", "agnostic"],
-      ["Technology/Fabric/Fabric Warehouse", "tech_fabric_warehouse", "Fabric Warehouse Target", "agnostic", "agnostic", "fabric_warehouse"],
-    ]) put(`${file}.md`, article({ id, title, domain: "sql", layer, artifact, technology }, `# ${title}\nBody.\n`));
-    for (const [file, id, title, layer, artifact] of [
-      ["File Types", "powerbi_file_types", "Power BI File Types", "agnostic", "file_type"],
-      ["Reports/App Deployment", "powerbi_reports_app_deployment", "Power BI App Deployment", "report", "app_deployment"],
-      ["Reports/Page Formatting", "powerbi_reports_page_formatting", "Power BI Report Page Formatting", "report", "page_formatting"],
-      ["Reports/Visuals", "powerbi_reports_visuals", "Power BI Report Visuals", "report", "visual"],
-      ["Semantic Model/Composite Models", "powerbi_semantic_model_composite_models", "Power BI Composite Models", "semantic_model", "composite_model"],
-      ["Semantic Model/DAX", "powerbi_semantic_model_dax", "Power BI DAX", "semantic_model", "dax_expression"],
-      ["Semantic Model/Fact Tables", "powerbi_semantic_model_fact_tables", "Power BI Fact Tables", "semantic_model", "fact_table"],
-      ["Semantic Model/M Query", "powerbi_semantic_model_m_query", "Power BI M Query", "semantic_model", "m_query"],
-      ["Semantic Model/Measures", "powerbi_semantic_model_measures", "Power BI Measures", "semantic_model", "measure"],
-      ["Semantic Model/Organizing Tables", "powerbi_semantic_model_tables", "Organizing Power BI Tables", "semantic_model", "table"],
-      ["Semantic Model/Relationships", "powerbi_semantic_model_relationships", "Power BI Relationships", "semantic_model", "relationship"],
-    ]) put(`Power BI/${file}.md`, article({ id, title, domain: "powerbi", layer, artifact, technology: "power_bi" }, `# ${title}\nBody.\n`));
+    const mirror = JSON.parse(readFileSync(join(ROOT, "tests", "fixtures", "standards-golden-corpus.json"), "utf8")).wiki.articles;
+    for (const { path, id, title, domain, layer, artifact, technology } of mirror) put(path, article({ id, title, domain, layer, artifact, technology }, `# ${title}\nBody.\n`));
     commit("mirror the coop-standards wiki front matter"); now += 1;
     assert.equal(refreshCanonical(options({ force: true })).ok, true);
     const rows = [

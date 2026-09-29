@@ -93,6 +93,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   briefly shipped on `main` is gone, because it gave a bare "report", "silver" or "gold"
   the Power BI report or SQL articles ("Write a status report for the client", "Add a
   silver badge to the website header") and gained no prompt the classifier misses.
+  A golden set of 52 realistic prompts (`tests/fixtures/standards-golden-corpus.json`,
+  scored against the front matter of every active wiki article at a00c8cc) is now a
+  regression test: 45 pass, and the 7 known failures are listed with how they fail, so a
+  fix or a regression both fail the suite until the list is updated. Everyday prompts
+  that say "report", "silver" or "gold" must get no standards.
 - Incremental BI patterns are chosen by the repository's `layer:` front matter (the same
   front-matter reader as the standards wiki). The old
   path keyword filter matched the clone's own folder name (`incremental-bi`), so every
