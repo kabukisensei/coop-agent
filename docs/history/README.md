@@ -10,6 +10,7 @@ scope. Do not add new plans to this folder or anywhere else: revise the master p
 | `COOP_WINDOWS_TERMINAL_PLAN.md` | Windows terminal plan, revision 2.0 (September 19, 2026); package detail for S1–S7, U1, SK1, K1–K3, J0–J3 |
 | `COOP_WINDOWS_TERMINAL_PREPARATION.md`, `COOP_PLAN_PREPARATION_STATUS.md` | the paused-execution handoff for that plan |
 | `COOP_GUARDRAIL_REPAIR.md` | G01/G02/G03 guardrail repair receipt (PR 71) |
+| `COOP_WINDOWS_TERMINAL_B0.md`, `COOP_WINDOWS_TERMINAL_B1_PROPOSAL.md`, `COOP_PACKAGE_FIT_REVIEW.md` | B0 baseline receipt, B1 isolated-beta proposal, and PK1 package fit review from PR 72 (September 19, 2026) |
 | `coop-web-plan.md`, `coop-web-pivis-plan.md`, `ui-strategy.md` | the retired `coop web` browser UI plans and lessons |
 | `plan-azure-devops-integration.md` | shipped Azure DevOps integration plan |
 | `plan-coop-agent-improvements.md` | earlier improvements backlog |
