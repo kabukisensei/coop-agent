@@ -150,8 +150,10 @@ rollout machines.
 
 **Fix:**
 - Tenant comes from one place with a fallback chain: `.coop/project.yml`
-  `fabric.tenant_id` → `~/.coop/user.json` tenant (set once by onboarding) →
-  Cooptimize default in `config/defaults.yml`. A `TODO` value counts as unset.
+  `fabric.tenant_id` → `~/.coop/config` `azure.tenant_id` (saved by onboarding) →
+  nothing. A `TODO` value counts as unset. (Corrected by PR 89: onboarding writes
+  `~/.coop/config`, not `user.json`, and Aaron decided there is no default tenant
+  and no tenant id in this public repo.)
 - Preflight checks the Fabric resource token first (`https://api.fabric.microsoft.com`),
   then Power BI; either missing triggers sign-in.
 - One `az` invocation helper shared by Python, PowerShell, and Node that resolves
