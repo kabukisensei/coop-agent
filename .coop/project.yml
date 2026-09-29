@@ -120,6 +120,14 @@ fabric_skills:
   policy: baseline
   # Exact source/revision/path pins live in config/microsoft-skills.json.
 
+# Standards: the canonical Cooptimize standards come from cooptimize/coop-standards
+# (`coop sync`, `/standards-status`). Add an override only when this project has
+# deliberately approved different standards for a domain. Use a single Markdown file per
+# coop domain (sql, dax, or semantic_model), set as `path:`.
+# standards:
+#   sql:
+#     path: "docs/standards/client-sql.md"
+
 backup:
   root: ".backups"
   timestamp_format: "%Y%m%d_%H%M%S"

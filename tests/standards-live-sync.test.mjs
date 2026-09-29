@@ -3,9 +3,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { activeCanonicalGeneration, fsyncDirectory, fsyncFile, pinStandardsTask, promoteReviewRun, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
+import { activeCanonicalGeneration, buildStandardsContext, fsyncDirectory, fsyncFile, pinStandardsTask, promoteReviewRun, provenanceText, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, retrieveRelevantSections, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "coop-standards-live-"));
@@ -15,10 +15,22 @@ let now = 1_000_000, count = 0;
 let r3;
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 const git = (args, cwd = remote) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
+// coop-standards is an Obsidian wiki: articles with front matter. The fixture also
+// carries the repo's v1 shim for older clients (standards.yml + standards/*.md),
+// a retired article, a draft, and a note without front matter; coop reads none of them.
+const article = (fields, body) => `---\n${Object.entries({ layer: "agnostic", technology: "agnostic", status: "active", ...fields }).map(([k, v]) => `${k}: ${v}`).join("\n")}\n---\n${body}`;
+const put = (rel, text) => { mkdirSync(dirname(join(remote, rel)), { recursive: true }); writeFileSync(join(remote, rel), text); };
 const writeCanonical = (suffix) => {
-  mkdirSync(join(remote, "standards"), { recursive: true });
-  for (const [name, title] of [["sql", "SQL"], ["dax", "DAX"], ["semantic-model", "Model"]]) writeFileSync(join(remote, "standards", `${name}.md`), `# ${title} ${suffix}\n## Security\n${title} ${suffix}\n`);
-  writeFileSync(join(remote, "standards.yml"), "schema_version: 1\nauthority: formal_standard\nauthoritative_ref: default_branch\ncontent_mode: markdown_only\nprecedence:\n  - project_override\n  - canonical_standard\n  - last_known_good\n  - bundled_fallback\nrefresh:\n  startup: true\n  task_freshness_minutes: 15\n  force_command: coop sync\n  failure_mode: last_known_good\n  pin_revision_per_task: true\n  invalidate_index_on_revision_change: true\nstandards:\n  sql:\n    path: standards/sql.md\n  dax:\n    path: standards/dax.md\n  semantic_model:\n    path: standards/semantic-model.md\n");
+  put("SQL/SQL Conventions.md", article({ id: "sql_conventions", title: "SQL Conventions", domain: "sql", artifact: "conventions" }, `# SQL Conventions ${suffix}\n## Security\nSQL ${suffix}\n`));
+  put("SQL/Gold/Stored Procedures.md", article({ id: "sql_gold_stored_procedures", title: "Gold Stored Procedures", domain: "sql", layer: "gold", artifact: "stored_procedure" }, `# Gold Stored Procedures ${suffix}\n## Procedure standards\nProcedures ${suffix}\n`));
+  put("Power BI/Semantic Model/DAX.md", article({ id: "powerbi_dax", title: "Power BI DAX", domain: "powerbi", layer: "semantic_model", artifact: "dax_expression", technology: "power_bi" }, `# DAX ${suffix}\n## Security\nDAX ${suffix}\n`));
+  put("Power BI/Semantic Model/Relationships.md", article({ id: "powerbi_relationships", title: "Power BI Relationships", domain: "powerbi", layer: "semantic_model", artifact: "relationship", technology: "power_bi" }, `# Relationships ${suffix}\n## Security\nModel ${suffix}\n`));
+  put("standards.yml", "schema_version: 1\nauthority: formal_standard\nstandards:\n  sql:\n    path: standards/sql.md\n");
+  put("standards/sql.md", `# SHIM ASSEMBLED ${suffix}\n`);
+  put("deprecation/tech/old.md", article({ id: "retired", title: "RETIRED Rules", domain: "sql" }, "# RETIRED\n"));
+  put("SQL/Draft.md", article({ id: "draft", title: "DRAFT Rules", domain: "sql", status: "draft" }, "# DRAFT\n"));
+  put("SQL/Notes.md", "# NOFRONT notes\n");
+  put(".obsidian/app.json", "{}\n");
 };
 const commit = (message) => { git(["add", "."]); git(["commit", "-q", "-m", message]); return git(["rev-parse", "HEAD"]); };
 const options = (more = {}) => ({ canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, fixtureRegistry: true, remote, now: () => now, staleRoot: join(tmp, "none"), reviewerBins: { sql: join(tmp, "none-sql"), dax: join(tmp, "none-dax") }, ...more });
@@ -29,7 +41,7 @@ try {
   execFileSync("git", ["init", "-q", "-b", "main", remote]);
   git(["config", "user.email", "standards@test.invalid"]); git(["config", "user.name", "Standards Test"]);
   writeCanonical("r1"); const r1 = commit("r1");
-  writeFileSync(registryPath, JSON.stringify({ schema_version: 1, canonical: { id: "cooptimize-formal-standards", repository: remote, authoritative_branch: "main", manifest: "standards.yml", initial_verified_commit: r1, initial_archive_sha256: "0".repeat(64), freshness_seconds: 900, timeout_seconds: 2, domains: { sql: "standards/sql.md", dax: "standards/dax.md", semantic_model: "standards/semantic-model.md" } } }));
+  writeFileSync(registryPath, JSON.stringify({ schema_version: 1, canonical: { id: "cooptimize-formal-standards", repository: remote, authoritative_branch: "main", freshness_seconds: 900, timeout_seconds: 2 } }));
 
   test("directory durability suppresses only explicit Windows unsupported errors", () => {
     const error = (code) => { const value = new Error(code); value.code = code; return value; };
@@ -48,9 +60,11 @@ try {
     assert.deepEqual(calls, ["r+", "fsync", "close"]);
     assert.throws(() => fsyncFile("ignored", { platform: "win32", open: () => 123, fsync: () => { const error = new Error("EPERM"); error.code = "EPERM"; throw error; }, close: () => {} }), /EPERM/);
   });
-  test("production registry pins private main and verified anchor", () => {
+  test("production registry pins private main but not the repo's layout or history", () => {
     const r = standardsRegistry();
-    assert.equal(r.canonical.repository, "https://github.com/cooptimize/coop-standards.git"); assert.equal(r.canonical.authoritative_branch, "main"); assert.equal(r.canonical.initial_verified_commit, "fa109f11129742358ff1e078cd4c4433e356afb4");
+    assert.equal(r.canonical.repository, "https://github.com/cooptimize/coop-standards.git"); assert.equal(r.canonical.authoritative_branch, "main");
+    assert.equal(Object.hasOwn(r.canonical, "domains"), false); assert.equal(Object.hasOwn(r.canonical, "initial_verified_commit"), false);
+    assert.equal(Object.hasOwn(r.canonical, "manifest"), false);
   });
   test("production registry ignores inherited redirection and source/status/refresh retain committed authority", () => {
     const old = process.env.COOP_STANDARDS_REGISTRY;
@@ -58,13 +72,13 @@ try {
     try {
       const r = standardsRegistry();
       assert.equal(r.canonical.repository, "https://github.com/cooptimize/coop-standards.git");
-      assert.equal(Object.isFrozen(r) && Object.isFrozen(r.canonical) && Object.isFrozen(r.canonical.domains), true);
+      assert.equal(Object.isFrozen(r) && Object.isFrozen(r.canonical), true);
       assert.throws(() => { r.canonical.repository = remote; }, TypeError);
       assert.throws(() => standardsRegistry({ registryPath }), /explicit fixture/);
       assert.throws(() => standardsRegistry({ remote }), /explicit fixture/);
       const registryUrl = new URL("../config/standards-registry.json", import.meta.url).href;
       const standardsUrl = new URL("../lib/standards.mjs", import.meta.url).href;
-      const mutationProbe = `const r=(await import(${JSON.stringify(registryUrl)},{with:{type:"json"}})).default;r.canonical.repository="https://attacker.invalid/standards.git";try{await import(${JSON.stringify(standardsUrl)}+"?mutated-authority");process.exit(9)}catch(e){if(!String(e).includes("differs from immutable managed authority")){console.error(e);process.exit(8)}}`;
+      const mutationProbe = `const m=await import(${JSON.stringify(standardsUrl)}+"?mutated-authority");const r=(await import(${JSON.stringify(registryUrl)},{with:{type:"json"}})).default;r.canonical.repository="https://attacker.invalid/standards.git";if(m.standardsRegistry().canonical.repository!=="https://github.com/cooptimize/coop-standards.git")process.exit(9)`;
       const mutationResult = spawnSync(process.execPath, ["--input-type=module", "-e", mutationProbe], { encoding: "utf8" });
       assert.equal(mutationResult.status, 0, mutationResult.stderr || mutationResult.stdout);
       const productionRoot = join(tmp, "production-cache", "canonical");
@@ -114,7 +128,7 @@ try {
   for (const [artifact, relativePath] of [
     ["index", "retrieval-index.json"],
     ["metadata", "generation.json"],
-    ["authority", join("checkout", "standards", "sql.md")],
+    ["authority", join("checkout", "SQL", "SQL Conventions.md")],
   ]) test(`final-location ${artifact} corruption cannot activate a canonical generation`, () => {
     git(["reset", "--hard", r1]); resetStorage(); now += 1; assert.equal(refreshCanonical(options({ force: true })).ok, true);
     const old = activeCanonicalGeneration(options()); git(["reset", "--hard", r2]);
@@ -240,7 +254,7 @@ try {
   test("remote-main binding rejects a clean local descendant and missing authoritative ref", () => {
     const active = activeCanonicalGeneration(options()); assert.equal(active.ok, true);
     git(["config", "user.email", "standards@test.invalid"], active.checkout); git(["config", "user.name", "Standards Test"], active.checkout);
-    writeFileSync(join(active.checkout, "standards", "sql.md"), "# locally invented\n"); git(["add", "."], active.checkout); git(["commit", "-q", "-m", "invented"], active.checkout);
+    writeFileSync(join(active.checkout, "SQL", "SQL Conventions.md"), "# locally invented\n"); git(["add", "."], active.checkout); git(["commit", "-q", "-m", "invented"], active.checkout);
     assert.equal(activeCanonicalGeneration(options()).ok, false);
     git(["reset", "--hard", active.revision], active.checkout);
     git(["update-ref", "-d", "refs/remotes/origin/main"], active.checkout); assert.equal(activeCanonicalGeneration(options()).ok, false);
@@ -257,6 +271,145 @@ try {
   test("legacy self-authored manifests require explicit fixture injection", () => {
     const fixture = join(tmp, "legacy"); mkdirSync(fixture); writeFileSync(join(fixture, "sql.md"), "# fixture"); writeFileSync(join(fixture, "manifest.json"), JSON.stringify({ schema_version: 1, revision: "fixture", domains: { sql: { path: "sql.md", sha256: hash("# fixture") } } }));
     assert.notEqual(resolveStandard("sql", options({ canonicalRoot: fixture })).state, "canonical"); assert.equal(resolveStandard("sql", options({ fixtureRoot: fixture })).revision, "fixture");
+  });
+  test("coop reads only active wiki articles: not the v1 shim, retired, draft, or unfielded notes", () => {
+    resetStorage(); now += 1; git(["reset", "--hard", "HEAD"]);
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const sql = resolveStandard("sql", options({ refresh: false }));
+    assert.deepEqual(sql.articles.map((a) => a.file), ["SQL/Gold/Stored Procedures.md", "SQL/SQL Conventions.md"]);
+    assert.equal(sql.file, "wiki:sql");
+    const input = readFileSync(sql.path, "utf8");
+    for (const decoy of ["SHIM", "RETIRED", "DRAFT", "NOFRONT"]) assert.equal(input.includes(decoy), false, decoy);
+    assert.match(input, /coop reviewer-input cache for sql/); assert.equal(/^---/m.test(input), false);
+  });
+  test("powerbi articles split into coop's dax and semantic_model domains by artifact", () => {
+    assert.deepEqual(resolveStandard("dax", options({ refresh: false })).articles.map((a) => a.file), ["Power BI/Semantic Model/DAX.md"]);
+    assert.deepEqual(resolveStandard("semantic_model", options({ refresh: false })).articles.map((a) => a.file), ["Power BI/Semantic Model/Relationships.md"]);
+  });
+  test("a task gets whole wiki articles with per-article provenance", () => {
+    const context = buildStandardsContext("create a gold stored procedure for customers", options({ refresh: false }));
+    const [record] = context.records;
+    assert.equal(record.resolution.domain, "sql");
+    assert.deepEqual(record.sections.map((s) => s.file), ["SQL/SQL Conventions.md", "SQL/Gold/Stored Procedures.md"]);
+    const stored = record.resolution.articles.find((a) => a.file === "SQL/Gold/Stored Procedures.md");
+    const text = provenanceText(record);
+    assert.match(text, new RegExp(`coop-standards wiki article: SQL/Gold/Stored Procedures.md sha256=${stored.sha256} revision=${record.resolution.revision}`));
+    assert.equal(text.includes("stored_procedure"), false); // front matter is not injected
+  });
+  test("a generation cached before the wiki reader (schema-1 index) is re-fetched cleanly", () => {
+    const active = activeCanonicalGeneration(options()); assert.equal(active.ok, true);
+    const indexPath = active.index, metadataPath = join(active.generation, "generation.json");
+    const legacy = { schema_version: 1, revision: active.revision, domains: { sql: { file: "standards/sql.md", sha256: hash("x"), headings: ["SQL"] } } };
+    writeFileSync(indexPath, JSON.stringify(legacy, null, 2) + "\n");
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8")); metadata.domains = legacy.domains; metadata.index_sha256 = hash(readFileSync(indexPath));
+    writeFileSync(metadataPath, JSON.stringify(metadata, null, 2) + "\n");
+    const pointerPath = join(tmp, "cache", "active-generation.json"), pointer = JSON.parse(readFileSync(pointerPath, "utf8"));
+    pointer.metadata_sha256 = hash(readFileSync(metadataPath)); writeFileSync(pointerPath, JSON.stringify(pointer));
+    assert.equal(activeCanonicalGeneration(options()).ok, false);
+    now += 1; const repaired = refreshCanonical(options());
+    assert.equal(repaired.ok, true, JSON.stringify(repaired)); assert.equal(resolveStandard("sql", options({ refresh: false })).state, "canonical");
+  });
+  test("a domain the wiki adds resolves and shows in status without a coop-agent change", () => {
+    resetStorage(); now += 1;
+    put("Fabric/Workspaces.md", article({ id: "fabric_workspaces", title: "Fabric Workspaces", domain: "fabric_platform", artifact: "workspace", technology: "fabric" }, "# Fabric Workspaces\n## Workspace naming\nName workspaces by layer.\n"));
+    const added = commit("add fabric_platform domain");
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const r = resolveStandard("fabric_platform", options({ refresh: false }));
+    assert.equal(r.state, "canonical"); assert.equal(r.revision, added); assert.equal(r.file, "wiki:fabric_platform");
+    assert.deepEqual(r.articles.map((a) => a.file), ["Fabric/Workspaces.md"]);
+    assert.equal(sourceStatus(options()).domains.fabric_platform.sha256, r.sha256);
+    assert.equal(pinStandardsTask(["fabric_platform"], options({ refresh: false })).resolutions[0].sha256, r.sha256);
+  });
+  test("unsafe or invalid articles are skipped and never followed", () => {
+    const good = git(["rev-parse", "HEAD"]);
+    writeFileSync(join(tmp, "outside.md"), article({ id: "outside", title: "Outside", domain: "sql" }, "# OUTSIDE\n"));
+    symlinkSync(join(tmp, "outside.md"), join(remote, "SQL", "Linked.md"));
+    put("SQL/Bad Domain.md", article({ id: "bad", title: "BADNAME", domain: "Bad-Name" }, "# BADNAME\n"));
+    put("SQL/Missing Field.md", "---\nid: partial\ntitle: PARTIAL\ndomain: sql\nstatus: active\n---\n# PARTIAL\n");
+    commit("unsafe articles"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const sql = resolveStandard("sql", options({ refresh: false }));
+    assert.deepEqual(sql.articles.map((a) => a.file), ["SQL/Gold/Stored Procedures.md", "SQL/SQL Conventions.md"]);
+    for (const decoy of ["OUTSIDE", "BADNAME", "PARTIAL"]) assert.equal(readFileSync(sql.path, "utf8").includes(decoy), false, decoy);
+    git(["reset", "--hard", good]);
+  });
+  test("a model task no article matches gets semantic-model-layer articles, never path order", () => {
+    // Mirrors the real wiki's Power BI folder: File Types (layer agnostic) and the
+    // Reports articles sort before the semantic-model layer by path.
+    const good = git(["rev-parse", "HEAD"]);
+    for (const [file, layer, artifact, title] of [
+      ["File Types", "agnostic", "file_type", "Power BI File Types"], ["Reports/App Deployment", "report", "app_deployment", "Power BI App Deployment"],
+      ["Reports/Page Formatting", "report", "page_formatting", "Power BI Report Page Formatting"], ["Reports/Visuals", "report", "visual", "Power BI Report Visuals"],
+      ["Semantic Model/Composite Models", "semantic_model", "composite_model", "Power BI Composite Models"], ["Semantic Model/Fact Tables", "semantic_model", "fact_table", "Power BI Fact Tables"],
+      ["Semantic Model/M Query", "semantic_model", "m_query", "Power BI M Query"], ["Semantic Model/Organizing Tables", "semantic_model", "table", "Organizing Power BI Tables"],
+    ]) put(`Power BI/${file}.md`, article({ id: `powerbi_${artifact}`, title, domain: "powerbi", layer, artifact, technology: "power_bi" }, `# ${title}\nBody.\n`));
+    commit("power bi wiki"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    for (const prompt of ["Add a measure to the Power BI model for total sales", "Review the Power BI semantic model"]) {
+      const record = buildStandardsContext(prompt, options({ refresh: false })).records.find((r) => r.resolution.domain === "semantic_model");
+      const files = record.sections.map((s) => s.file);
+      assert.ok(files.length > 0, prompt);
+      for (const file of files) assert.equal(record.resolution.articles.find((a) => a.file === file)?.layer, "semantic_model", `${prompt}: ${file}`);
+      for (const decoy of ["Power BI/File Types.md", "Power BI/Reports/App Deployment.md"]) assert.equal(files.includes(decoy), false, `${prompt}: ${decoy}`);
+    }
+    // dax is carved out of the semantic_model layer, so it has no layer of its own:
+    // a DAX task that matches no title word still gets the whole (small) domain.
+    for (const [file, artifact, title] of [["Semantic Model/DAX", "dax_expression", "Power BI DAX"], ["Semantic Model/Measures", "measure", "Power BI Measures"]]) {
+      put(`Power BI/${file}.md`, article({ id: `powerbi_${artifact}`, title, domain: "powerbi", layer: "semantic_model", artifact, technology: "power_bi" }, `# ${title}\n${artifact.toUpperCase()} BODY\n`));
+    }
+    commit("dax articles"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const daxContext = buildStandardsContext("Add a calculated column for margin", options({ refresh: false }));
+    assert.deepEqual(daxContext.domains, ["dax"]);
+    assert.deepEqual(daxContext.records[0].sections.map((s) => s.file).sort(), ["Power BI/Semantic Model/DAX.md", "Power BI/Semantic Model/Measures.md"]);
+    // A one-article domain with no core layer gets that article's body.
+    const single = retrieveRelevantSections(resolveStandard("fabric_platform", options({ refresh: false })), "Review the lakehouse");
+    assert.deepEqual(single.map((s) => s.file), ["Fabric/Workspaces.md"]);
+    // Too many articles and no core layer: a listing with paths the agent can open, no bodies.
+    for (let i = 1; i <= 7; i += 1) put(`Fabric/Topic ${i}.md`, article({ id: `fabric_topic_${i}`, title: `Fabric Topic ${i}`, domain: "fabric_platform", artifact: `topic_${i}`, technology: "fabric" }, `# Fabric Topic ${i}\nTOPIC BODY\n`));
+    commit("large fabric_platform domain"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const listing = retrieveRelevantSections(resolveStandard("fabric_platform", options({ refresh: false })), "Review the lakehouse");
+    assert.equal(listing.length, 1); assert.equal(listing[0].file, undefined);
+    assert.equal(listing[0].content.includes("TOPIC BODY") || listing[0].content.includes("Name workspaces by layer"), false);
+    const listed = listing[0].content.split("\n").map((line) => line.replace(/^- [^:]+: /, ""));
+    assert.equal(listed.length, 8);
+    for (const path of listed) assert.ok(isAbsolute(path) && existsSync(path), `listed path is openable: ${path}`);
+    git(["reset", "--hard", good]);
+  });
+  test("an article saved with a byte-order mark is still read", () => {
+    const good = git(["rev-parse", "HEAD"]);
+    put("SQL/Gold/Views.md", `\uFEFF${article({ id: "sql_gold_views", title: "Gold Views", domain: "sql", layer: "gold", artifact: "view" }, "# Gold Views\nBOMVIEWS\n")}`);
+    commit("bom article"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const sql = resolveStandard("sql", options({ refresh: false }));
+    assert.deepEqual(sql.articles.map((a) => a.file), ["SQL/Gold/Stored Procedures.md", "SQL/Gold/Views.md", "SQL/SQL Conventions.md"]);
+    assert.match(readFileSync(sql.path, "utf8"), /BOMVIEWS/);
+    git(["reset", "--hard", good]);
+  });
+  test("a duplicate article id keeps both files and is reported with both paths", () => {
+    // Obsidian "Make a copy": same front matter, and the copy sorts first by path.
+    const good = git(["rev-parse", "HEAD"]);
+    const views = article({ id: "sql_gold_views", title: "Gold Views", domain: "sql", layer: "gold", artifact: "view" }, "# Gold Views\nORIGINAL views\n");
+    put("SQL/Gold/Views.md", views); put("SQL/Gold/Views 1.md", views.replace("ORIGINAL", "COPY"));
+    commit("make a copy"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const sql = resolveStandard("sql", options({ refresh: false }));
+    assert.equal(sql.state, "canonical");
+    assert.deepEqual(sql.articles.map((a) => a.file), ["SQL/Gold/Stored Procedures.md", "SQL/Gold/Views 1.md", "SQL/Gold/Views.md", "SQL/SQL Conventions.md"]);
+    const [record] = buildStandardsContext("Create a SQL gold view for customer sales", options({ refresh: false })).records;
+    assert.ok(record.sections.some((s) => s.file === "SQL/Gold/Views.md" && s.content.includes("ORIGINAL")), "the original is not dropped for the copy");
+    assert.deepEqual(sourceStatus(options()).sources[0].warnings, ["duplicate article id sql_gold_views: SQL/Gold/Views 1.md and SQL/Gold/Views.md"]);
+    git(["reset", "--hard", good]);
+  });
+  test("a wiki with no active articles fails closed and keeps the last known good", () => {
+    const good = git(["rev-parse", "HEAD"]); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    git(["rm", "-q", "-r", "SQL", "Power BI", "Fabric"]); git(["commit", "-q", "-m", "empty wiki"]); now += 1;
+    const failed = refreshCanonical(options({ force: true }));
+    assert.equal(failed.ok, false); assert.match(failed.detail, /no active articles/);
+    assert.equal(activeCanonicalGeneration(options()).revision, good);
+    git(["reset", "--hard", good]);
   });
   assert.match(readFileSync(join(ROOT, "bin", "coop"), "utf8"), /resolve-many sql,dax/);
   console.log(`standards live sync: ${count} tests passed`);
