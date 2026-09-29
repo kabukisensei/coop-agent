@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { activeCanonicalGeneration, buildStandardsContext, fsyncDirectory, fsyncFile, pinStandardsTask, promoteReviewRun, provenanceText, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, retrieveRelevantSections, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
+import { activeCanonicalGeneration, buildStandardsContext, fsyncDirectory, fsyncFile, identifyTaskDomains, pinStandardsTask, promoteReviewRun, provenanceText, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, retrieveRelevantSections, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "coop-standards-live-"));
@@ -376,6 +376,43 @@ try {
     for (const path of listed) assert.ok(isAbsolute(path) && existsSync(path), `listed path is openable: ${path}`);
     git(["reset", "--hard", good]);
   });
+  test("the wiki's layers and multi-word technologies are a recall floor under the classifier (#88, #101)", () => {
+    const good = git(["rev-parse", "HEAD"]);
+    put("SQL/SQL Layout.md", article({ id: "sql_layout", title: "SQL Layout", domain: "sql", artifact: "formatting" }, "# SQL Layout\nLAYOUT BODY\n"));
+    put("SQL/Silver/Indexing.md", article({ id: "sql_silver_indexing", title: "Silver Indexing", domain: "sql", layer: "silver", artifact: "table" }, "# Silver Indexing\nINDEXING BODY\n"));
+    put("SQL/Silver/Schema Manager.md", article({ id: "sql_silver_schema_manager", title: "Silver Schema Manager", domain: "sql", layer: "silver", artifact: "agnostic" }, "# Silver Schema Manager\nSCHEMA MANAGER BODY\n"));
+    put("Technology/Fabric/Fabric Warehouse.md", article({ id: "tech_fabric_warehouse", title: "Fabric Warehouse Target", domain: "sql", artifact: "agnostic", technology: "fabric_warehouse" }, "# Fabric Warehouse\nWAREHOUSE BODY\n"));
+    commit("layers and technology"); now += 1;
+    assertRefreshed(options({ force: true }));
+    const context = (prompt) => buildStandardsContext(prompt, options({ refresh: false }));
+    const files = (c, domain) => c.records.find((r) => r.resolution.domain === domain).sections.map((s) => s.file);
+    // The classifier misses these; a layer word the wiki's articles carry, or both words
+    // of the fabric_warehouse technology, still reach the SQL articles.
+    assert.deepEqual(identifyTaskDomains("Write the bronze -> silver dedupe for the custtable extract"), []);
+    const silver = context("Write the bronze -> silver dedupe for the custtable extract");
+    assert.deepEqual(silver.domains, ["sql"]);
+    for (const expected of ["SQL/Silver/Indexing.md", "SQL/Silver/Schema Manager.md"]) assert.ok(files(silver, "sql").includes(expected), `${expected} in ${files(silver, "sql")}`);
+    assert.deepEqual(identifyTaskDomains("Review this SP for gold - it's using a cursor to loop over invoices"), []);
+    assert.deepEqual(context("Review this SP for gold - it's using a cursor to loop over invoices").domains, ["sql"]);
+    assert.deepEqual(identifyTaskDomains("lakehouse to warehouse: build the load for the customer dimension in Fabric"), ["fabric"]);
+    const warehouse = context("lakehouse to warehouse: build the load for the customer dimension in Fabric");
+    assert.deepEqual(warehouse.domains, ["fabric", "sql"]);
+    assert.ok(files(warehouse, "sql").includes("Technology/Fabric/Fabric Warehouse.md"));
+    // Only the wiki decides: "bronze" is no article's layer, so it widens nothing.
+    assert.deepEqual(context("Write the bronze dedupe for the custtable extract").domains, []);
+    // The floor gives way only in a known non-coding context with no data signal...
+    assert.deepEqual(context("Add a silver badge to the website header").domains, []);
+    assert.deepEqual(context("Update the README with the gold customer tiers").domains, ["documentation"]);
+    // ...and a data word or a classified domain keeps it there.
+    assert.deepEqual(context("Update the README with the silver dedupe steps").domains, ["documentation", "sql"]);
+    assert.deepEqual(context("Add the gold customer tiers to the gold customer view").domains, ["sql"]);
+    // No regression: model work does not become SQL work, a lakehouse prompt without the
+    // technology's every word stays `fabric`, and a non-task prompt gets nothing.
+    assert.deepEqual(context("Add a table to the semantic model").domains, ["semantic_model", "dax"]);
+    assert.deepEqual(context("Design a lakehouse architecture").domains, ["fabric"]);
+    assert.deepEqual(context("what is silver in the medallion architecture?").domains, []);
+    git(["reset", "--hard", good]);
+  });
   test("an article saved with a byte-order mark is still read", () => {
     const good = git(["rev-parse", "HEAD"]);
     put("SQL/Gold/Views.md", `\uFEFF${article({ id: "sql_gold_views", title: "Gold Views", domain: "sql", layer: "gold", artifact: "view" }, "# Gold Views\nBOMVIEWS\n")}`);
@@ -417,7 +454,7 @@ try {
     const mirror = JSON.parse(readFileSync(join(ROOT, "tests", "fixtures", "standards-golden-corpus.json"), "utf8")).wiki.articles;
     for (const { path, id, title, domain, layer, artifact, technology } of mirror) put(path, article({ id, title, domain, layer, artifact, technology }, `# ${title}\nBody.\n`));
     commit("mirror the coop-standards wiki front matter"); now += 1;
-    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    assertRefreshed(options({ force: true }));
     const rows = [
       ["fix the silver indexing on the fabric warehouse table", ["Silver Indexing", "Fabric Warehouse Target"], ["Organizing Power BI Tables", "Power BI Fact Tables", "Power BI Relationships"]],
       ["Fix the T-SQL merge statement in the gold fact table load", ["Gold Stored Procedures", "Gold Fact Tables"], ["Power BI Fact Tables", "Organizing Power BI Tables", "Power BI DAX"]],

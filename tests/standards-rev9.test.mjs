@@ -387,6 +387,11 @@ try {
       ["Turn on query folding for the silver loads", ["sql"]],
       ["The silver salesline load fails on itemname", ["sql"]],
       ["The gold customer load failed last night", ["sql"]],
+      ["Debug the DAX measure for margin", ["dax"]],
+      ["Tune the gold customer view", ["sql"]],
+      ["Troubleshoot the silver custtable load", ["sql"]],
+      ["Speed up the gold sales proc", ["sql"]],
+      ["Dedupe silver.custtable on accountnum", ["sql"]],
       // SQL: gold, silver.<name>, schema derivation, fact., x.y views, Fabric warehouse forms.
       ["Create the gold customer dimension table", ["sql"]],
       ["Add an index to silver.custtable", ["sql"]],
@@ -449,14 +454,17 @@ try {
       ["Review the relationship between fkey constraints in Postgres", []],
       ["Explain the relationship between OAuth and PKCE", []],
       // "fact/dimension/date table" is model work without SQL, and with SQL when the prompt
-      // has Power BI context: a Power BI or DAX word, model, visual, sort by, "this measure".
+      // has Power BI context: a Power BI or DAX word, a semantic model or dataset, a visual,
+      // sort by, "this measure".
       ["Create a dimension table for customers", ["semantic_model", "dax"]],
       ["Create a Power BI dimension table from the gold customer view", ["semantic_model", "dax", "sql"]],
       ["Create a Power BI fact table from gold.FactSales", ["semantic_model", "dax", "sql"]],
       ["Fix the sort by on the dim.Date date table so Month Name sorts by Month Number", ["semantic_model", "dax", "sql"]],
       ["Write a DAX measure for sales from the gold fact table", ["semantic_model", "dax", "sql"]],
-      ["Add the gold date table to the Finance model", ["semantic_model", "dax", "sql"]],
+      ["Add the gold date table to the Finance dataset", ["semantic_model", "dax", "sql"]],
       ["Fix the visual that reads the gold fact table", ["semantic_model", "dax", "sql"]],
+      // A bare "model" is not Power BI context (#101): the gold date table here is SQL work.
+      ["Add the gold date table to the Finance model", ["sql"]],
       ["Explain this measure over the gold fact table", ["semantic_model", "dax", "sql"]],
       // Report: PBIX, PBIP, PBIR, drillthrough.
       ["Fix the PBIX file", ["semantic_model"]],
@@ -483,10 +491,11 @@ try {
       ["Fix the visual bug in the report viewer component", []],
       ["Review the visual design of the annual report PDF", []],
       // DAX: "a/an/the/these/those [word] measure(s)" counts only with Power BI context.
-      ["Add a YTD measure to the Finance model", ["dax"]],
-      ["Add an average measure to the Finance model", ["dax"]],
+      ["Add a YTD measure to the Finance dataset", ["dax"]],
+      ["Add an average measure to the Finance semantic model", ["semantic_model", "dax"]],
+      ["Add an average measure to the tabular model", ["semantic_model", "dax"]],
       ["Rewrite the measures with SUMX instead of SUM", ["dax"]],
-      ["Document these measures in the Finance model", ["dax", "documentation"]],
+      ["Document these measures in the Finance dataset", ["dax", "documentation"]],
       ["Fix those measures on the Sales visual", ["dax"]],
       ["Fix the YTD measure in the Sales PBIX", ["semantic_model", "dax"]],
       ["Fix the measures behind the region slicer", ["dax"]],
@@ -509,6 +518,21 @@ try {
       ["Explain this measure of success", []],
       ["Document the related measures in the policy", ["documentation"]],
       ["Fix the format strings in the Python logging calls", []],
+      // A bare "model" is not Power BI context (#101). A named model with no Power BI,
+      // DAX, semantic, tabular or dataset word gets no DAX standards, as on main before
+      // #101: the price of not reading an ML or business model as Power BI.
+      ["Write up how the churn model did against the success measures we agreed with marketing", []],
+      ["Update the business model canvas with the key measures for year one", []],
+      ["Add a YTD measure to the Finance model", []],
+      // A sproc or stored proc is SQL work without a layer word; a bare proc or SP is not.
+      ["Add a sproc that refreshes the AR aging snapshot nightly", ["sql"]],
+      ["Fix the stored proc for vendors", ["sql"]],
+      ["Fix the proc macro in the Rust parser", []],
+      // A report theme and a card are report work; a report card is not.
+      ["Update the report theme with the client's brand colors", ["semantic_model"]],
+      ["Add a new page to the Inventory report with a card for on-hand qty", ["semantic_model"]],
+      ["Add a KPI card to the Sales report", ["semantic_model"]],
+      ["Update the report card template for the school portal", []],
     ];
     const wrong = rows.map(([prompt, expected]) => ({ prompt, expected, actual: identifyTaskDomains(prompt) }))
       .filter((row) => JSON.stringify(row.actual) !== JSON.stringify(row.expected));

@@ -4,19 +4,25 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildStandardsContext, identifyTaskDomains, pinStandardsTask, refreshCanonical, retrieveRelevantSections } from "../lib/standards.mjs";
+import { buildStandardsContext, pinStandardsTask, refreshCanonical } from "../lib/standards.mjs";
 
 // Golden prompt set for the standards classifier (#101): 52 realistic prompts, each
 // with the coop-standards article titles it must and must not get, holdout rows scored
 // the same way that must all pass, plus negatives that must get no standards.
 // tests/fixtures/standards-golden-corpus.json mirrors the front matter of every active
 // wiki article at the recorded revision; the bodies here are stubs, because selection
-// reads only front matter.
+// reads only front matter. Every prompt runs through buildStandardsContext, the entry
+// point the agent uses: the classifier plus the wiki-layer recall floor.
+//
+// Never below main: every prompt and holdout row records, as main_domains, the domains
+// origin/main at 82e7561 (before #101) selected, and must keep all of them except the
+// ones its below_main entry names with the reason. Negatives are exempt; floor_chatter
+// rows get exactly main's domains.
 //
 // The wiki is a local git repo refreshed once into temp storage, the way every
 // standards suite resolves (the fixtureRoot seam went with #83). No network, no sleep
 // or poll, and a git timeout that only trips on a hang (see #100). Scoring then runs
-// on the pinned resolutions without further git calls.
+// with refresh off, without further git calls.
 
 // Prompts that fail today, by corpus number, with exactly how they fail. A prompt that
 // starts passing fails this suite until its line is deleted (a one-line change); a prompt
@@ -58,29 +64,21 @@ try {
   const refreshed = refreshCanonical(options({ force: true }));
   assert.equal(refreshed.ok, true, JSON.stringify(refreshed));
 
-  // The same pinned resolutions buildStandardsContext injects from; every active article is read.
+  // Every active article resolves into the domains buildStandardsContext injects from.
   const pin = pinStandardsTask(WIKI_DOMAINS, options({ refresh: false }));
-  const resolutions = Object.fromEntries(WIKI_DOMAINS.map((domain) => [domain, pin.resolve(domain)]));
-  assert.deepEqual(Object.values(resolutions).flatMap((r) => r.articles.map((a) => a.title)).sort(), golden.wiki.articles.map((a) => a.title).sort());
+  assert.deepEqual(WIKI_DOMAINS.flatMap((domain) => pin.resolve(domain).articles.map((a) => a.title)).sort(), golden.wiki.articles.map((a) => a.title).sort());
   const standardsFor = (prompt) => {
-    const domains = identifyTaskDomains(prompt);
-    return { domains, injected: domains.filter((d) => resolutions[d]).flatMap((d) => titles(retrieveRelevantSections(resolutions[d], prompt))) };
+    const context = buildStandardsContext(prompt, options({ refresh: false }));
+    return { domains: [...context.domains], injected: context.records.flatMap((r) => titles(r.sections)), headings: context.records.flatMap((r) => r.sections.map((s) => s.heading)) };
   };
 
-  // buildStandardsContext is identifyTaskDomains plus these resolutions: spot-check a SQL,
-  // a DAX + model, and a four-domain prompt end to end.
-  for (const n of [1, 26, 43]) {
-    const { prompt } = golden.prompts[n - 1];
-    const context = buildStandardsContext(prompt, options({ refresh: false }));
-    assert.deepEqual({ domains: [...context.domains], injected: context.records.flatMap((r) => titles(r.sections)) }, standardsFor(prompt), `#${n}`);
-  }
-
   const reasonsFor = (c) => {
-    const { domains, injected } = standardsFor(c.prompt);
+    const { domains, injected, headings } = standardsFor(c.prompt);
     return [
       ...c.domains_expected.filter((d) => !domains.includes(d)).map((d) => `missing domain ${d}`),
       ...c.must_include.filter((t) => !injected.includes(t)).map((t) => `missing ${t}`),
       ...c.must_not_include.filter((t) => injected.includes(t)).map((t) => `forbidden ${t}`),
+      ...(c.no_standards ? headings.map((h) => `injected ${h}`) : []),
     ];
   };
   const wrong = [];
@@ -96,22 +94,46 @@ try {
   });
   assert.deepEqual(wrong, []);
 
-  // Holdout rows: ordinary wording from outside the 52 that only #95's wiki-layer
-  // widening reached (a Power BI report with a slicer, visual, bookmark, tooltip or
-  // theme; a gold proc, sproc or merge; "silver custtable"; "... to silver"; the
-  // warehouse in a Fabric workspace). Removing the widening must not lose them, so
-  // every one passes; there is no known-failures list here.
-  assert.ok(golden.holdout.length >= 16);
+  // Holdout rows: ordinary wording from outside the 52 (a Power BI report with a slicer,
+  // visual, bookmark, tooltip, theme or card; a gold proc, sproc, SP or merge; "silver
+  // custtable"; "... to silver"; the warehouse in a Fabric workspace; bronze -> silver),
+  // plus a churn model and a business model canvas "measures" that must get nothing.
+  // Every one passes; there is no known-failures list here.
+  assert.ok(golden.holdout.length >= 26);
   const holdoutWrong = golden.holdout.map((c) => ({ prompt: c.prompt, reasons: reasonsFor(c) })).filter((row) => row.reasons.length);
   assert.deepEqual(holdoutWrong, []);
 
-  // Everyday prompts that say "report", "silver", "gold", "format strings" or "relate",
-  // a file name before "view(s)", "Visual Studio", "... to gold" about a color, or
-  // "fabric" as cloth get no standards through the real entry point, with the wiki
-  // generation active.
-  const leaked = golden.negatives.map((prompt) => ({ prompt, injected: buildStandardsContext(prompt, options({ refresh: false })).records.flatMap((r) => r.sections.map((s) => s.heading)) }))
-    .filter((row) => row.injected.length);
+  // Never below main (#101): the classifier and the recall floor together keep every
+  // domain origin/main selected, except the ones a row's below_main names. A below_main
+  // domain must be one main selected and this code does not, so a stale entry fails too.
+  const belowMain = [...golden.prompts, ...golden.holdout].flatMap((c) => {
+    assert.ok(Array.isArray(c.main_domains), `main_domains recorded for: ${c.prompt}`);
+    const { domains } = standardsFor(c.prompt);
+    const allowed = c.below_main?.domains || [];
+    if (allowed.length) assert.ok(c.below_main.why, `below_main says why: ${c.prompt}`);
+    return [
+      ...c.main_domains.filter((d) => !domains.includes(d) && !allowed.includes(d)).map((d) => `${c.prompt}: lost main's ${d}`),
+      ...allowed.filter((d) => !c.main_domains.includes(d) || domains.includes(d)).map((d) => `${c.prompt}: stale below_main ${d}`),
+    ];
+  });
+  assert.deepEqual(belowMain, []);
+
+  // Negatives get no standards through the real entry point, with the wiki generation
+  // active: the floor never reaches some ("format strings in the Python logging calls",
+  // "accounts.py views"), and gives way in the known non-coding contexts for the rest
+  // (a status report, a report generator or button, gold/silver badges, sponsors, tiers
+  // and colors, README and website wording).
+  const leaked = golden.negatives.map((prompt) => ({ prompt, injected: standardsFor(prompt).headings })).filter((row) => row.injected.length);
   assert.deepEqual(leaked, []);
 
-  console.log(`  ✓ golden prompts: ${passing}/${golden.prompts.length} pass, ${KNOWN_FAILURES.size} known failures; ${golden.holdout.length}/${golden.holdout.length} holdout prompts pass; ${golden.negatives.length} negatives get no standards (wiki ${golden.wiki.revision.slice(0, 7)})`);
+  // Floor chatter: everyday prompts the floor reaches outside those contexts (a
+  // quarterly report, "report the failing tests", fabric samples, a merge conflict in
+  // the gold branch). They get exactly main's domains: extra context on chatter is the
+  // accepted price of never missing a standard on real coding work.
+  const chatter = golden.floor_chatter.map((c) => ({ prompt: c.prompt, expected: [...c.main_domains].sort(), actual: standardsFor(c.prompt).domains.sort() }))
+    .filter((row) => JSON.stringify(row.expected) !== JSON.stringify(row.actual));
+  assert.deepEqual(chatter, []);
+
+  const narrower = [...golden.prompts, ...golden.holdout].filter((c) => c.below_main).length;
+  console.log(`  ✓ golden prompts: ${passing}/${golden.prompts.length} pass, ${KNOWN_FAILURES.size} known failures; ${golden.holdout.length}/${golden.holdout.length} holdout prompts pass; every row keeps main's domains (${narrower} narrower by design); ${golden.negatives.length} negatives get no standards; ${golden.floor_chatter.length} floor-chatter prompts get main's domains (wiki ${golden.wiki.revision.slice(0, 7)})`);
 } finally { rmSync(tmp, { recursive: true, force: true }); }
