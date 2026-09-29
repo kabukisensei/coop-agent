@@ -28,6 +28,11 @@ writeFileSync(
   })
 );
 process.env.COOP_DIR = coopDir;
+// The extension's before_agent_start may refresh standards; keep that storage in the
+// fixture, never the developer's real ~/.coop/standards (#87).
+process.env.COOP_STANDARDS_ROOT = join(tmp, "standards", "canonical");
+process.env.COOP_STANDARDS_STATE = join(tmp, "standards", "status.json");
+process.env.COOP_STANDARDS_SNAPSHOT_ROOT = join(tmp, "standards", "snapshots");
 
 const mod = await import(pathToFileURL(join(dist, "coop-tools.mjs")).href);
 

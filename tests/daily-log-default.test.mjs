@@ -6,6 +6,12 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
+// The extension's before_agent_start may refresh standards; keep that storage in a
+// fixture, never the developer's real ~/.coop/standards (#87).
+const standardsFixture = mkdtempSync(join(tmpdir(), "coop-daily-standards-"));
+process.env.COOP_STANDARDS_ROOT = join(standardsFixture, "canonical");
+process.env.COOP_STANDARDS_STATE = join(standardsFixture, "status.json");
+process.env.COOP_STANDARDS_SNAPSHOT_ROOT = join(standardsFixture, "snapshots");
 const {
   default: coopTools,
   dailyLogOptOut,
