@@ -695,6 +695,19 @@ print("resume verdict contract OK")
   } else {
     Ko "doctor.ps1 Warehouse and fabric rows fixture failed: $($doctorWhOut | Out-String)"
   }
+
+  # --- 9g. coop init --seed-docs shows config-set's status (#102; twin of tests/seeddocs.test.sh)
+  Head 'coop init --seed-docs shows the config-set status (not runnable = warning)'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $seedOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\seeddocs.test.ps1') 2>&1
+  $seedRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($seedRc -eq 0) {
+    $seedOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "seed-docs config-set status fixture failed: $($seedOut | Out-String)"
+  }
 }
 finally {
   $env:PATH = $priorPath
