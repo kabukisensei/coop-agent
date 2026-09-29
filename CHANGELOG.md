@@ -49,6 +49,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Standards (#88): more prompts reach the wiki articles they need. "fix the silver
+  indexing on the fabric warehouse table" now gets Silver Indexing and Fabric Warehouse
+  Target instead of nothing. A Fabric warehouse, Schema Manager, `dim.`/`fact.` names,
+  silver and gold tables or loads, and `SELECT *` count as SQL work, and SQL context wins
+  over "fact table" or "dimension table", so gold SQL work no longer pulls in the Power
+  BI table articles. Report pages, themes, PBIX/PBIP and Power BI apps get the report
+  articles without DAX. Rewrite, convert, (re)format, replace, rename, set up, turn
+  on/off and failing now count as requests.
 - Incremental BI patterns are chosen by the repository's `layer:` front matter (the same
   front-matter reader as the standards wiki). The old
   path keyword filter matched the clone's own folder name (`incremental-bi`), so every

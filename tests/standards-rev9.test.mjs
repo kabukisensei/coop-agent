@@ -373,6 +373,49 @@ try {
     assert.deepEqual(identifyTaskDomains("Review customer relationships in the CRM"), []);
   });
 
+  test("CLASSIFIER", "wiki-vocabulary prompts reach the right domains (#88)", () => {
+    const rows = [
+      ["fix the silver indexing on the fabric warehouse table", ["sql", "fabric"]],
+      ["Fix the T-SQL merge statement in the gold fact table load", ["sql"]],
+      ["Write the silver to gold load for the fact table", ["sql"]],
+      ["Create a Fabric warehouse table for the gold customer dimension", ["sql", "fabric"]],
+      ["Format the report page visuals", ["semantic_model"]],
+      ["Add a custom index on silver.custtable in the Azure SQL database - the gold customer load keeps scanning on dataareaid and accountnum", ["sql"]],
+      ["Add inventtransorigin to the Schema Manager metadata so the silver table gets generated on the next run", ["sql"]],
+      ["This measure nests CALCULATE inside CALCULATE and uses AVERAGEX - rewrite it with variables", ["dax"]],
+      ["Create a measure for invoice amount by due date using the inactive FKDueDate relationship", ["semantic_model", "dax"]],
+      ["Write the Power Query for the Customer dimension using the SQLServer and SQLDB parameters", ["semantic_model", "dax"]],
+      ["Rename the tables in the Direct Lake model to PascalCase", ["semantic_model", "dax"]],
+      ["Create dim.Item in the Fabric warehouse, its sales.Item view, and add Item to the semantic model with a relationship to Sales", ["semantic_model", "dax", "sql", "fabric"]],
+      ["Explain what a lakehouse is in Microsoft Fabric", ["fabric"]],
+      ["Rebase my branch onto main and fix the merge conflicts in CHANGELOG.md", []],
+      ["Write a PowerShell script that renames the exported CSV files in Downloads by date", []],
+      ["Create a fact table for sales", ["semantic_model", "dax"]],
+      ["Implement the security measures from the pen test report", []],
+      // Each remaining vocabulary addition in a prompt nothing else classifies, and the "measure of" guard.
+      ["Replace EARLIER in the Running Total calculated column with a variable", ["dax"]],
+      ["Convert the silver.custtable datetime columns to datetime2", ["sql"]],
+      ["Set up the Power BI app for the Operations workspace and make the app logo", ["semantic_model"]],
+      ["Turn off auto date/time, mark the Date table, and sort Month Name by Month Number", ["semantic_model", "dax"]],
+      ["The silver salesline load is failing with 'String or binary data would be truncated' on itemname - widen the column", ["sql"]],
+      ["Update the Schema Manager metadata for inventtransorigin", ["sql"]],
+      ["Add a composite index on dataareaid and customerid to dim.Customer and remove the -1 Unknown row", ["sql"]],
+      ["Add the [Customer and Name] and [Name and (Customer)] display fields to the sales.Customer view", ["sql"]],
+      ["Update the deploy script's sqlcmd call so it connects to the Fabric warehouse", ["sql", "fabric"]],
+      ["Create the sales tables in the warehouse in Fabric", ["sql", "fabric"]],
+      ["Refactor this query - get rid of the SELECT * and the RIGHT JOIN, and give the tables real aliases instead of t1/t2", ["sql"]],
+      ["Explain the measure of success for this rollout", []],
+      ["Build the Finance + Project Accounting composite model with Finance as the primary model", ["semantic_model", "dax"]],
+      ["Add the Ledger Transaction Attributes table and its Ledger Transactions measure table to the Finance model", ["semantic_model", "dax"]],
+      ["Convert the Sales report PBIX to a PBIP project so we can check it into Git", ["semantic_model"]],
+      ["Create a theme file for the AP aging report from the client's logo colors and set the pages to 1920x1080", ["semantic_model"]],
+      ["Change the chart interactions on the Sales Overview page from highlight to filter and add a drill-through to Customer Detail", ["semantic_model"]],
+    ];
+    const wrong = rows.map(([prompt, expected]) => ({ prompt, expected, actual: identifyTaskDomains(prompt) }))
+      .filter((row) => JSON.stringify(row.actual) !== JSON.stringify(row.expected));
+    assert.deepEqual(wrong, []);
+  });
+
   test("CONTEXT", "retrieval is bounded and full authority remains opt-in", () => {
     const bounded = buildStandardsContext("Explain this SQL stored procedure", opts({ canonicalRoot: canonical }));
     assert.ok(bounded.records[0].sections.length < 4);
