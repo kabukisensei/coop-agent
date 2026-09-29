@@ -398,12 +398,17 @@ print(f"{resolution} runner-code={runner_result.returncode} runner-stdout-bytes=
   Set-Content -LiteralPath (Join-Path $marker 'az-mode') -Value 'auth' -NoNewline
   $env:COOP_TEST_EXPECT_TOKEN = 'absent'
   $env:COOP_FABRIC_MCP_TOKEN = 'stale-inherited-token'
+  # A cached Azure preflight success (.az-ok) is stale once the mint reports
+  # auth_required: the launch drops it so the next launch checks again (H2).
+  $azOk = Join-Path $agent '.az-ok'
+  [System.IO.File]::WriteAllText($azOk, 'cached-tenant.example')
   $ErrorActionPreference = 'Continue'
   $failedOutput = & $psHost -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'bin\coop.ps1') pi --fixture *>&1 | Out-String
   $failedRc = $LASTEXITCODE
   $ErrorActionPreference = $priorEap
   if ($failedRc -ne 0) { throw "fail-soft launch failed rc=$failedRc output=$failedOutput" }
   if (-not $failedOutput.Contains('Azure authentication is required')) { throw 'truthful auth warning missing' }
+  if (Test-Path -LiteralPath $azOk) { throw 'auth_required must drop the cached Azure preflight marker (.az-ok)' }
   if ($failedOutput.Contains($token)) { throw 'token leaked from failed launch' }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi did not launch after token failure' }
 

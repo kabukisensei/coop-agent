@@ -39,8 +39,10 @@ chmod +x "$FAKEBIN/pi"
 run_coop_pty() { # <homedir> <answers> <transcript-out>
   local home="$1" answers="$2" outfile="$3"
   local ansfile; ansfile="$WORK/answers.$$"; printf '%s' "$answers" > "$ansfile"
+  # COOP_SKIP_AZ=1: the PTY is a real terminal, so a resolved tenant would start
+  # the automatic Azure sign-in (H2) against a runner's real az.
   HOME="$home" COOP_DIR="${COOP_DIR_OVERRIDE:-$home}" PATH="$FAKEBIN:$PATH" COOP_SKIP_EXT_CHECK=1 \
-    COOP_AZ_BIN=/nonexistent/az PTY_ANSWERS="$ansfile" PTY_OUT="$outfile" \
+    COOP_SKIP_AZ=1 COOP_AZ_BIN=/nonexistent/az PTY_ANSWERS="$ansfile" PTY_OUT="$outfile" \
     "$PY" "$ROOT/tests/pty_drive.py" bash "$ROOT/bin/coop"
   local rc=$?
   cat "$outfile"

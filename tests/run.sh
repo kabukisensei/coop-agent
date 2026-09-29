@@ -8,6 +8,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 export COOP_ROOT="$ROOT"
+# Launches sign in to Azure automatically (H2). No test may reach a runner's or a
+# developer's real Azure CLI; the sign-in fixtures opt back in with a fake az.
+export COOP_SKIP_AZ=1
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -128,6 +131,8 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-sql-launcher.test.mjs"
 python3 "$ROOT/tests/microsoft-skills.test.py"
 python3 "$ROOT/tests/p0-vertical-slice.test.py"
 bash "$ROOT/tests/onboard.test.sh"
+echo "→ Azure CLI resolution and sign-in helpers (onboarding, coop init)"
+"$(command -v python3 2>/dev/null || command -v python)" "$ROOT/tests/azure-auth.test.py"
 echo "→ team knowledge config block + readers tests"
 bash "$ROOT/tests/knowledge-config.test.sh"
 echo "→ team knowledge sync script tests"
@@ -178,7 +183,7 @@ bash "$ROOT/scripts/check-context-budget.sh"
 echo "→ repo staleness nudge (throttled fetch + behind-count) tests"
 bash "$ROOT/tests/staleness.test.sh"
 
-echo "→ az-preflight cache (.az-ok TTL + tenant stamp) tests"
+echo "→ Azure sign-in preflight (tenant chain, token check, automatic sign-in, .az-ok cache) tests"
 bash "$ROOT/tests/azcache.test.sh"
 
 echo "→ coop init wizard tests"

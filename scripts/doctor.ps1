@@ -233,6 +233,26 @@ if (Test-Have 'pi') {
   }
 }
 
+# Azure sign-in for the client tenant (H2). Probe only: doctor never signs in and
+# never touches the launch cache (.az-ok). Same tenant chain and token check as
+# the launch (Get-CoopTenant / Get-CoopAzTokenRc). A missing az is prerequisite
+# row 5. (mirror of doctor.sh)
+if ($env:COOP_SKIP_AZ -ne '1' -and (Test-Have 'az')) {
+  $azTenant = Get-CoopTenant
+  if ($azTenant.Rc -eq 2) {
+    D-Warn 'Azure sign-in: tenant id is not a GUID or domain name' 'fix fabric.tenant_id in .coop/project.yml or run: coop onboard --config-only'
+  } elseif (-not $azTenant.Tenant) {
+    D-Warn 'Azure sign-in: no client tenant configured' 'run: coop onboard --config-only'
+  } else {
+    $azT = $azTenant.Tenant
+    $azRc = Get-CoopAzTokenRc -Tenant $azT
+    if ($azRc -eq 0) { D-Ok "Azure sign-in: signed in to tenant $azT" }
+    elseif ($azRc -eq 124) { D-Warn "Azure sign-in: check timed out for tenant $azT" "run: az account get-access-token --tenant $azT --resource https://api.fabric.microsoft.com" }
+    elseif ($azRc -eq 1) { D-Warn "Azure sign-in: not signed in to tenant $azT" "run: az login --tenant $azT --allow-no-subscriptions" }
+    else { D-Warn "Azure sign-in: token check failed for tenant $azT (not an auth error)" "run: az account get-access-token --tenant $azT --resource https://api.fabric.microsoft.com" }
+  }
+}
+
 D-Head 'Microsoft Fabric CLI'
 if (Test-Have 'fab') {
   $fabver = ((& fab --version 2>&1 | Select-Object -First 3) -join ' ')

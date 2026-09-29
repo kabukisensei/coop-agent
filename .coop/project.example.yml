@@ -67,7 +67,7 @@ repositories:
 
 # --- Microsoft Fabric ---------------------------------------------------------
 fabric:
-  tenant_id: "TODO: tenant id (used for az login + Power BI MCP)"
+  tenant_id: "TODO: tenant id (Azure sign-in at launch; overrides ~/.coop/config azure.tenant_id)"
   default_workspace_name: "TODO: dev Warehouse / Lakehouse workspace name"
   default_workspace_id: "TODO: dev Warehouse / Lakehouse workspace id"
   lakehouse_names: ["TODO: lakehouse"]

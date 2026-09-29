@@ -4,6 +4,9 @@
 set -uo pipefail
 
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+# Doctor runs with the real HOME here; keep its Azure sign-in probe (H2) away
+# from any real az so the Project-contract assertions stay hermetic and fast.
+COOP_SKIP_AZ=1; export COOP_SKIP_AZ
 
 fail=0
 ok()  { printf '  ✓ %s\n' "$1"; }

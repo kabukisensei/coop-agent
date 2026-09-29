@@ -107,6 +107,73 @@ def load_project(path: Path | None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+# --- Client Azure tenant chain (H2) -------------------------------------------
+# One place decides which tenant the launch sign-in, the doctor row and (in H2b)
+# token minting use: the project contract's fabric.tenant_id, else the
+# onboarding config's azure.tenant_id (client resources only), else nothing.
+# A tenant is a canonical GUID or a domain name with at least one dot, so a
+# value can never carry shell or cmd.exe metacharacters into an az command line.
+TENANT_DOMAIN_RE = re.compile(
+    r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+)
+TENANT_EXIT_CODES = {"ok": 0, "unset": 1, "invalid": 2}
+
+
+def tenant_value(value: Any) -> tuple[str, str]:
+    """Classify one tenant setting as ('ok', tenant), ('unset', '') or ('invalid', '').
+
+    Non-strings, blanks and TODO placeholders (any letter case) are unset. Any
+    other value must be a GUID or a dotted domain; placeholders such as 'TBD' or
+    'none' are invalid, and a rejected value is never returned.
+    """
+    if not isinstance(value, str):
+        return "unset", ""
+    text = value.strip()
+    if not text or text.lower().startswith("todo"):
+        return "unset", ""
+    if UUID_RE.fullmatch(text) or TENANT_DOMAIN_RE.fullmatch(text):
+        return "ok", text
+    return "invalid", ""
+
+
+def coop_config_path() -> Path:
+    """~/.coop/config, honouring COOP_DIR exactly as scripts/onboard.py does."""
+    return Path(os.environ.get("COOP_DIR") or Path.home()) / ".coop" / "config"
+
+
+def tenant_from_sources(project: Any, config: Any) -> tuple[str, str]:
+    """Resolve the tenant chain from an already-loaded contract and config.
+
+    The project value wins. An invalid project value stops the chain: signing in
+    to a different tenant than the contract names would be worse than not
+    signing in. The config value counts only when azure.purpose is absent or
+    'client_resources' (the rule lib/mcp_config.py enforces).
+    """
+    raw_fabric = project.get("fabric") if isinstance(project, dict) else None
+    fabric = raw_fabric if isinstance(raw_fabric, dict) else {}
+    state, tenant = tenant_value(fabric.get("tenant_id"))
+    if state != "unset":
+        return state, tenant
+    raw_azure = config.get("azure") if isinstance(config, dict) else None
+    azure = raw_azure if isinstance(raw_azure, dict) else {}
+    if azure.get("purpose") not in (None, "", "client_resources"):
+        return "unset", ""
+    return tenant_value(azure.get("tenant_id"))
+
+
+def resolve_tenant(project_path: Path | None, config_path: Path) -> tuple[str, str]:
+    try:
+        project = load_project(project_path)
+    except Exception:
+        project = {}
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        config = {}
+    return tenant_from_sources(project, config)
+
+
 def project_sqlendpoint_enabled(project: dict[str, Any]) -> bool:
     mcp = project.get("mcp")
     if not isinstance(mcp, dict):
@@ -848,7 +915,27 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--probe", action="store_true")
     launch = sub.add_parser("launch-token")
     launch.add_argument("mcp_config")
+    tenant_cmd = sub.add_parser("tenant")
+    # The contract the launcher already found (coop_find_project_yml /
+    # Find-CoopProjectYml: walk to the root, then the bundled contract), so the
+    # tenant comes from the same contract doctor shows. Empty: none was found.
+    tenant_cmd.add_argument("--project", default=None)
     args = parser.parse_args(argv)
+    if args.cmd == "tenant":
+        # Prints the resolved client tenant (nothing otherwise) and exits
+        # 0 resolved / 1 unset / 2 invalid. Never writes stderr and never
+        # echoes a rejected value; lib/common.sh and lib/common.ps1 call this.
+        if args.project is not None:
+            project_path = Path(args.project) if args.project else None
+        else:
+            try:
+                project_path = find_project_yml(Path.cwd())
+            except OSError:
+                project_path = None
+        state, tenant = resolve_tenant(project_path, coop_config_path())
+        if state == "ok":
+            print(tenant)
+        return TENANT_EXIT_CODES[state]
     if args.cmd == "target":
         project_path = (
             Path(args.project) if args.project else find_project_yml(Path.cwd())
