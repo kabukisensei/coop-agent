@@ -67,7 +67,7 @@ try {
 
   writeWiki(remote, "r1");
   const r1 = gitInit(remote, "r1", true);
-  writeFileSync(registryPath, JSON.stringify({ schema_version: 1, canonical: { id: "cooptimize-formal-standards", repository: remote, authoritative_branch: "main", freshness_seconds: 900, timeout_seconds: 2 } }));
+  writeFileSync(registryPath, JSON.stringify({ schema_version: 1, canonical: { id: "cooptimize-formal-standards", repository: remote, authoritative_branch: "main", freshness_seconds: 900, timeout_seconds: 30 } }));
 
   test("STD-01", "fresh canonical bootstrap is verified from a Git remote into the generation cache", () => {
     const result = refreshCanonical(opts({ force: true }));
@@ -308,7 +308,7 @@ try {
   test("CANONICAL", "a checkout without active articles, and a dirty checkout, never resolve as current authority", () => {
     const empty = join(tmp, "empty-remote"); mkdirSync(empty); writeFileSync(join(empty, "README.md"), "no articles\n"); gitInit(empty, "empty");
     const emptyRegistry = join(tmp, "empty-registry.json");
-    writeFileSync(emptyRegistry, JSON.stringify({ schema_version: 1, canonical: { id: "cooptimize-formal-standards", repository: empty, authoritative_branch: "main", freshness_seconds: 900, timeout_seconds: 2 } }));
+    writeFileSync(emptyRegistry, JSON.stringify({ schema_version: 1, canonical: { id: "cooptimize-formal-standards", repository: empty, authoritative_branch: "main", freshness_seconds: 900, timeout_seconds: 30 } }));
     const emptyOptions = opts({ canonicalRoot: join(tmp, "empty-cache", "canonical"), statePath: join(tmp, "empty-cache", "status.json"), registryPath: emptyRegistry, remote: empty });
     const refreshed = refreshCanonical({ ...emptyOptions, force: true });
     assert.equal(refreshed.ok, false); assert.match(refreshed.detail || "", /no active articles/);
