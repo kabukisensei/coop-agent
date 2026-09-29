@@ -30,6 +30,11 @@ $update = Join-Path (Join-Path $root 'scripts') 'update.ps1'
 $psExe = try { (Get-Process -Id $PID).Path } catch { $null }
 if (-not $psExe) { $psExe = 'pwsh' }
 
+# Launches sign in to Azure automatically (H2). No test may reach a runner's or a
+# developer's real Azure CLI; the sign-in fixture opts back in with a fake az.
+$priorSkipAz = $env:COOP_SKIP_AZ
+$env:COOP_SKIP_AZ = '1'
+
 # Bounded child-exit propagation probe. The normal suite invokes this mode with
 # a deliberately failing Fabric fixture and proves a later success cannot erase
 # the stored child failure. Keep this before all unrelated aggregate work.
@@ -635,9 +640,23 @@ print("resume verdict contract OK")
   } else {
     Ko "install prerequisite gate fixture failed: $($gateOut | Out-String)"
   }
+
+  # --- 9e. Azure sign-in preflight twin (H2; fake az, clears COOP_SKIP_AZ itself)
+  Head 'Azure sign-in preflight (tenant chain, token check, automatic sign-in, .az-ok cache)'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $azOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\azcache.test.ps1') 2>&1
+  $azRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($azRc -eq 0) {
+    $azOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "Azure sign-in preflight fixture failed: $($azOut | Out-String)"
+  }
 }
 finally {
   $env:PATH = $priorPath
+  if ($null -eq $priorSkipAz) { Remove-Item Env:\COOP_SKIP_AZ -ErrorAction SilentlyContinue } else { $env:COOP_SKIP_AZ = $priorSkipAz }
   if ($null -eq $priorCoopDir) { Remove-Item Env:\COOP_DIR -ErrorAction SilentlyContinue } else { $env:COOP_DIR = $priorCoopDir }
   if ($null -eq $priorCoopAgentDir) { Remove-Item Env:\COOP_AGENT_DIR -ErrorAction SilentlyContinue } else { $env:COOP_AGENT_DIR = $priorCoopAgentDir }
   if ($null -eq $priorPiAgentDir) { Remove-Item Env:\PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue } else { $env:PI_CODING_AGENT_DIR = $priorPiAgentDir }

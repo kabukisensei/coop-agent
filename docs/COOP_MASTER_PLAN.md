@@ -150,18 +150,28 @@ rollout machines.
 
 **Fix:**
 - Tenant comes from one place with a fallback chain: `.coop/project.yml`
-  `fabric.tenant_id` → `~/.coop/config` `azure.tenant_id` (saved by onboarding) →
-  nothing. A `TODO` value counts as unset. (Corrected by PR 89: onboarding writes
-  `~/.coop/config`, not `user.json`, and Aaron decided there is no default tenant
-  and no tenant id in this public repo.)
+  `fabric.tenant_id` → `~/.coop/config` `azure.tenant_id` (set once by onboarding;
+  client resources only) → nothing. A `TODO` value counts as unset. *Corrected in
+  H2: onboarding saves the tenant in `~/.coop/config`, not `~/.coop/user.json`.
+  Aaron decided on 2026-09-28 that there is no Cooptimize default tenant: this repo
+  is public and `azure.tenant_id` is reserved for client resources. With no tenant
+  the launch is silent and `coop doctor` says to run `coop onboard --config-only`.*
 - Preflight checks the Fabric resource token first (`https://api.fabric.microsoft.com`),
   then Power BI; either missing triggers sign-in.
 - One `az` invocation helper shared by Python, PowerShell, and Node that resolves
   `az.cmd` on Windows (the `fabric_request_headers.mjs` logic, reused, not copied).
+  *As built in H2: the Node helper is a hardened, token-only supervisor that cannot
+  run an interactive sign-in, so each language keeps one bounded way to call `az`
+  and shared tests keep them in step. The Python helper now resolves `az.cmd` the
+  way the Node one does; PowerShell's `& az` already resolved it.*
 - Sign-in runs `az login --tenant <id> --allow-no-subscriptions` directly (browser
   flow) and falls back to `--use-device-code` when no browser can open. No confirm
   prompt; the user asked for coop, not for a question about Azure. Token minting
-  for Fabric passes the same `--tenant`.
+  for Fabric passes the same `--tenant`. *As built in H2: `az login` falls back to
+  a device code by itself, so coop adds no retry; the automatic sign-in runs only
+  in an interactive console (piped and scheduled launches print the one line).
+  Token minting with `--tenant` is split out as H2b (decided 2026-09-28), a
+  separate PR that ships in the same tagged patch as H2.*
 - On failure, launch continues with one line that names the exact command, and
   `coop doctor` gains one row: signed in to tenant X / not signed in, run this.
 - Cache stays as today (`.az-ok`, 30 minutes, tenant-stamped).

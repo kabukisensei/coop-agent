@@ -357,6 +357,16 @@ Warehouse Doctor states are exact: `registered` (target/auth/tool proof passed),
 network/protocol failure, or unusable response). Other MCP checks are primarily
 presence/config checks; Power BI Modeling also verifies `--start --readonly`.
 
+**Azure sign-in.** Each launch (`coop`, `coop web`) checks that the Azure CLI can mint
+the Fabric and Power BI tokens for the client tenant: the project's
+`fabric.tenant_id`, else `~/.coop/config` `azure.tenant_id`. In an interactive console
+an authentication failure opens `az login --tenant <id> --allow-no-subscriptions`
+once, with no question and a 5-minute limit. Any failure prints one line with the
+exact command, and the launch continues. A success is cached for 30 minutes. `coop
+doctor` has a matching **Azure sign-in** row (signed in to tenant X / not signed in,
+with the command / no client tenant configured). The row only probes: doctor never
+signs in. `COOP_SKIP_AZ=1` skips both. Details: [docs/onboarding.md](docs/onboarding.md#azure-sign-in-at-launch).
+
 For live estate discovery, Coop labels repo versus live evidence and reports drift. Actual
 row reads ask first; production row reads require a bounded target, columns, filters, and
 row limit.

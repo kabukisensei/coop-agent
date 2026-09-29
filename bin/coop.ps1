@@ -189,9 +189,10 @@ e.g. ``coop -c`` resumes the last session, ``coop @notes.md "review this"``.
 "@
 }
 
-# The optional Azure preflight (Power BI token check, cached ~30 min) lives in
-# lib/common.ps1 (Invoke-CoopAzPreflight) — called below by Invoke-LaunchPi and
-# Invoke-CoopWeb.
+# The Azure sign-in preflight (Fabric + Power BI token check for the client
+# tenant, automatic bounded sign-in in an interactive console, cached ~30 min)
+# lives in lib/common.ps1 (Invoke-CoopAzPreflight) — called below by
+# Invoke-LaunchPi and Invoke-CoopWeb.
 
 # --- Launch the branded Pi agent ---------------------------------------------
 # Launch-time skew guard (mirror of common.sh coop_launch_preflight): refuse to exec
@@ -391,6 +392,7 @@ function Get-CoopFabricMcpToken {
   $protocol = ($stdout -join "`n")
   if ($protocol -match "^token`t([!-~]{1,16384})`tend$") { return $Matches[1] }
   if ($protocol -match "^warning`t([^\s]+)`tend$") {
+    $state = $Matches[1]
     $warnings = @{
       config_invalid = 'managed configuration is invalid; run coop sync'
       azure_cli_unavailable = 'Azure CLI is not installed or not on PATH'
@@ -400,8 +402,13 @@ function Get-CoopFabricMcpToken {
       token_command_failed = 'Azure CLI token acquisition failed'
       token_output_invalid = 'Azure CLI returned no usable Fabric token'
     }
-    $message = $warnings[$Matches[1]]
+    $message = $warnings[$state]
     if (-not $message) { $message = 'token helper returned invalid output' }
+    if ($state -eq 'auth_required') {
+      # The preflight's cached success is stale: drop it so the next launch
+      # checks again (and signs in) instead of trusting the marker.
+      Remove-Item -LiteralPath (Join-Path (Get-CoopEffectiveAgentDir) '.az-ok') -Force -ErrorAction SilentlyContinue
+    }
     Coop-Warn "Fabric Warehouse MCP unavailable: $message"
     return ''
   }
@@ -532,7 +539,11 @@ function Invoke-CoopWeb {
   if (-not (Test-Have 'pi'))   { Coop-Die 'pi is not installed. Run: coop install' }
   if (-not (Test-Have 'node')) { Coop-Die 'Node.js is required for coop web. Run: coop install' }
   Invoke-CoopLaunchPreflight
-  Invoke-CoopAzPreflight   # same Fabric/Power BI token check the terminal launch does
+  # Same Fabric/Power BI token check (and automatic sign-in) the terminal launch
+  # does. The 'coop' shortcut runs `coop web` in a minimized console (see
+  # scripts/install.ps1), where a sign-in dialog could stay hidden, so on Windows
+  # the sign-in opens in its own visible window.
+  Invoke-CoopAzPreflight -NewWindow
   $env:COOP_LAUNCH_SPEC = (Invoke-CoopLaunchSpec @('--json'))
   $py = Get-CoopPython
   Remove-Item Env:COOP_PYTHON_BIN -ErrorAction SilentlyContinue

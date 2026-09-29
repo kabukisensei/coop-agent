@@ -18,6 +18,10 @@ jobs:
         run: |
           /bin/bash --version | head -1
           for f in bin/coop lib/common.sh scripts/*.sh tests/*.sh; do echo "checking $f"; /bin/bash -n "$f"; done
+      - name: Azure sign-in preflight under stock /bin/bash (3.2)
+        # The only runtime check of the preflight's watchdog, wait and exit-code
+        # mapping under bash 3.2 (the step above checks syntax only). Fake az, offline.
+        run: /bin/bash tests/azcache.test.sh
 
   shell:
     name: shell + config lint

@@ -956,23 +956,238 @@ function Sync-CoopExtDeps {
   else { Coop-Warn "could not fully align extension pi-ai/pi-tui to $ver — close any running coop session, then: coop doctor --fix" }
 }
 
-# --- Optional Azure preflight (non-fatal) --------------------------------------
-# Mirrors the team's pi-ready habit: if the project pins a Fabric tenant and the
-# Azure CLI is present, make sure a Power BI token exists before launching.
-# Skipped entirely when COOP_SKIP_AZ=1 or no tenant is configured.
+# --- Azure sign-in preflight (non-fatal) ---------------------------------------
+# Before a launch, make sure the Azure CLI can mint the Fabric token, then the
+# Power BI token, for the client tenant. The tenant comes from one chain
+# (Get-CoopTenant): the project contract's fabric.tenant_id, else ~/.coop/config
+# azure.tenant_id (client resources only), else nothing, and then the launch is
+# silent and `coop doctor` says what to set. Skipped entirely when
+# COOP_SKIP_AZ=1.
 #
-# Cached: a successful probe stamps the tenant id into <agent-dir>/.az-ok. Power BI
-# tokens live ~60 minutes and `az` cold-starts in ~1-3s, so within 30 minutes of a
-# success for the SAME tenant the probe is skipped entirely. A failed probe (or a
-# stale/missing/mismatched marker) behaves exactly as before; marker I/O is
-# best-effort and never fails the launch. (mirror of coop_az_preflight)
+# When az reports an authentication failure and the launch runs in an
+# interactive console (stdin and stderr not redirected, or COOP_ASSUME_YES=1),
+# coop runs `az login --tenant <id>` itself: no question, bounded to 5 minutes,
+# and Ctrl-C cancels it (read as a key, so it does not stop the launch). With
+# -NewWindow (Windows `coop web`, which the 'coop' shortcut runs in a minimized
+# console) the sign-in opens in its own visible window, and a failed, cancelled
+# or timed-out sign-in also shows its line in a window until Enter. A timeout or
+# a non-authentication error never opens a sign-in. Any failure prints ONE line
+# naming the command to run, and the launch continues.
+#
+# Cached: a verified check stamps the tenant id into <agent-dir>/.az-ok. Tokens
+# live ~60 minutes and `az` cold-starts in ~1-3s, so within 30 minutes of a
+# success for the SAME tenant no az call is made. A failed check (or a stale,
+# missing or mismatched marker) re-checks; marker I/O is best-effort and never
+# fails the launch. (mirror of coop_az_preflight)
+
+# Resolve the client Azure tenant (mirror of coop_tenant). The chain and its
+# rules live in one place, `lib/warehouse_mcp.py tenant`. Returns
+# [pscustomobject]@{ Rc; Tenant }: Rc 0 resolved, 1 none set, 2 not a GUID or a
+# domain name (a rejected value is never returned). The contract is the one
+# Find-CoopProjectYml finds, the same one `coop doctor` shows.
+function Get-CoopTenant {
+  $py = Get-CoopPython
+  if (-not $py) { return [pscustomobject]@{ Rc = 1; Tenant = '' } }
+  $previousEap = $ErrorActionPreference
+  $out = ''
+  $rc = 1
+  try {
+    $ErrorActionPreference = 'Continue'
+    # One "--project=<path>" token: Windows PowerShell 5.1 drops an empty
+    # native argument, and an empty value means "no contract found".
+    $proj = Find-CoopProjectYml
+    $out = (& $py (Join-Path $script:CoopRoot 'lib\warehouse_mcp.py') tenant "--project=$proj" 2>$null | Out-String).Trim()
+    $rc = $LASTEXITCODE
+  } catch {
+    $out = ''
+    $rc = 1
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+  if ($rc -ne 0 -and $rc -ne 1 -and $rc -ne 2) { $rc = 1 }
+  if ($rc -ne 0) { $out = '' }
+  # Defence in depth: the value goes into az argv and the cache marker.
+  if ($out -and $out -notmatch '^[A-Za-z0-9.-]+$') { $out = ''; $rc = 2 }
+  if ($rc -eq 0 -and -not $out) { $rc = 1 }
+  return [pscustomobject]@{ Rc = $rc; Tenant = $out }
+}
+
+# End a bounded az call and everything it started. Windows: taskkill /T /F,
+# because Kill() would leave az.cmd's python.exe running. Elsewhere pwsh 7 can
+# kill the whole tree (the az wrapper script runs Python as a child).
+function Stop-CoopAzTree {
+  param($Process)
+  try { if ($Process.HasExited) { return } } catch { return }
+  if ($env:OS -eq 'Windows_NT') {
+    $taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+    & $taskkill /PID $Process.Id /T /F *> $null
+  } else {
+    try { $Process.Kill($true) } catch { try { $Process.Kill() } catch { } }
+  }
+}
+
+# A PowerShell single-quoted literal for -Text.
+function ConvertTo-CoopPsLiteral {
+  param([string]$Text)
+  "'" + $Text.Replace("'", "''") + "'"
+}
+
+# Run -Script in a new visible PowerShell console window and return the process
+# (not waited for). -EncodedCommand: no native-argument quoting.
+function Start-CoopPsWindow {
+  param([string]$Script)
+  $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($Script))
+  $psExe = (Get-Process -Id $PID).Path
+  Start-Process -FilePath $psExe -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -PassThru -ErrorAction Stop
+}
+
+# Run az with a hard time limit (mirror of coop_az_run). Returns
+# [pscustomobject]@{ Rc; Err }: az's exit code, 124 when az was stopped (the
+# timeout, or any code above 128 as in bash), 127 when az is missing or its path
+# has cmd.exe metacharacters. The child sees AZURE_CORE_LOGIN_EXPERIENCE_V2=off,
+# so `az login` never waits on its subscription picker. -AzArgs are literal
+# flags plus a validated tenant; Start-Process joins them unquoted, which is
+# safe because no argument has spaces or quotes.
+#   -Quiet      probes: stdin empty, stdout discarded, stderr read into Err
+#               (only classified, never shown; --output none keeps tokens out)
+#   (default)   sign-in in this console: stderr stays visible for the browser,
+#               WAM and device-code text. Ctrl-C is read as a key while az
+#               runs, so it cancels the sign-in (az is ended, Rc 124) instead
+#               of stopping coop, as the bash twin's INT trap does.
+#   -NewWindow  Windows sign-in in its own visible console window, which
+#               closes when az exits (the caller reports any failure)
+function Invoke-CoopAz {
+  param([int]$Seconds, [string[]]$AzArgs, [switch]$Quiet, [switch]$NewWindow)
+  $result = [pscustomobject]@{ Rc = 127; Err = '' }
+  # Application only: PowerShell never runs az from the current folder.
+  $cmd = Get-Command az -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $cmd -or -not $cmd.Source -or $cmd.Source -match "[`"&|<>^%!`r`n]") { return $result }
+  $az = $cmd.Source
+  $previousEap = $ErrorActionPreference
+  $previousLxv2 = $env:AZURE_CORE_LOGIN_EXPERIENCE_V2
+  $previousCtrlC = $null
+  $temps = @()
+  $errFile = ''
+  $p = $null
+  try {
+    $ErrorActionPreference = 'Continue'
+    # Start-Process on Windows PowerShell 5.1 cannot set a child-only variable.
+    $env:AZURE_CORE_LOGIN_EXPERIENCE_V2 = 'off'
+    if ($NewWindow) {
+      # A new PowerShell window runs az. The script is passed with
+      # -EncodedCommand: no native-argument quoting.
+      $azLine = '& ' + (ConvertTo-CoopPsLiteral $az) + ' ' + (@($AzArgs | ForEach-Object { ConvertTo-CoopPsLiteral $_ }) -join ' ')
+      $windowScript = @(
+        "`$env:AZURE_CORE_LOGIN_EXPERIENCE_V2 = 'off'",
+        $azLine,
+        "exit `$LASTEXITCODE"
+      ) -join "`n"
+      $p = Start-CoopPsWindow $windowScript
+    } else {
+      $inFile = [System.IO.Path]::GetTempFileName()
+      $outFile = [System.IO.Path]::GetTempFileName()
+      $temps += $inFile, $outFile
+      $start = @{
+        FilePath = $az; ArgumentList = $AzArgs; NoNewWindow = $true; PassThru = $true
+        RedirectStandardInput = $inFile; RedirectStandardOutput = $outFile; ErrorAction = 'Stop'
+      }
+      if ($Quiet) {
+        $errFile = [System.IO.Path]::GetTempFileName()
+        $temps += $errFile
+        $start['RedirectStandardError'] = $errFile
+      } else {
+        # Throws when there is no console input (redirected, CI): Ctrl-C then
+        # keeps its default and stops coop, and the finally block ends az.
+        try {
+          $previousCtrlC = [Console]::TreatControlCAsInput
+          [Console]::TreatControlCAsInput = $true
+        } catch { $previousCtrlC = $null }
+      }
+      $p = Start-Process @start
+    }
+    $null = $p.Handle   # Windows PowerShell 5.1: keeps ExitCode readable after exit
+    # Short waits, so a Ctrl-C is noticed promptly: as a key during an
+    # in-console sign-in, else it stops this script and the finally block
+    # below ends az.
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    $cancelled = $false
+    while (-not $p.WaitForExit(200)) {
+      if ($null -ne $previousCtrlC) {
+        try {
+          while ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.KeyChar -eq [char]3 -or ($key.Key -eq [ConsoleKey]::C -and ($key.Modifiers -band [ConsoleModifiers]::Control))) { $cancelled = $true }
+          }
+        } catch { }
+        if ($cancelled) { break }
+      }
+      if ((Get-Date) -ge $deadline) { break }
+    }
+    if ($p.HasExited) {
+      $rc = [int]$p.ExitCode
+      if ($rc -gt 128) { $rc = 124 }
+      $result.Rc = $rc
+    } else {
+      Stop-CoopAzTree $p
+      $result.Rc = 124
+    }
+    if ($errFile) {
+      try { $result.Err = [System.IO.File]::ReadAllText($errFile) } catch { }
+    }
+  } catch {
+    $result.Rc = 127
+  } finally {
+    if ($p) { Stop-CoopAzTree $p }
+    if ($null -ne $previousCtrlC) { try { [Console]::TreatControlCAsInput = $previousCtrlC } catch { } }
+    if ($null -eq $previousLxv2) { Remove-Item Env:\AZURE_CORE_LOGIN_EXPERIENCE_V2 -ErrorAction SilentlyContinue }
+    else { $env:AZURE_CORE_LOGIN_EXPERIENCE_V2 = $previousLxv2 }
+    foreach ($t in $temps) { Remove-Item -LiteralPath $t -Force -ErrorAction SilentlyContinue }
+    $ErrorActionPreference = $previousEap
+  }
+  return $result
+}
+
+# True when az's stderr reports an authentication failure (a sign-in is needed).
+# The same markers as lib/fabric_request_headers.mjs (mirror of coop_az_auth_error).
+function Test-CoopAzAuthError {
+  param([string]$Text)
+  if (-not $Text) { return $false }
+  $lower = $Text.ToLowerInvariant()
+  foreach ($marker in @('az login', 'not logged in', 'login required', 'authentication required',
+                        'interaction_required', 'interactionrequired', 'invalid_grant',
+                        'aadsts50058', 'aadsts50076', 'aadsts50078', 'aadsts50079', 'aadsts50158')) {
+    if ($lower.Contains($marker)) { return $true }
+  }
+  return $false
+}
+
+# Check that az can mint the Fabric token, then the Power BI token, for -Tenant
+# (mirror of coop_az_tokens_ok). 15 seconds each; stops at the first failure.
+# Returns 0 when both mint, 1 when az reports an authentication failure, 2 for
+# any other failure, 124 on timeout.
+function Get-CoopAzTokenRc {
+  param([string]$Tenant)
+  foreach ($resource in @('https://api.fabric.microsoft.com', 'https://analysis.windows.net/powerbi/api')) {
+    $r = Invoke-CoopAz -Seconds 15 -Quiet -AzArgs @('account', 'get-access-token', '--tenant', $Tenant, '--resource', $resource, '--output', 'none')
+    if ($r.Rc -eq 0) { continue }
+    if ($r.Rc -eq 124) { return 124 }
+    if (Test-CoopAzAuthError $r.Err) { return 1 }
+    return 2
+  }
+  return 0
+}
+
 function Invoke-CoopAzPreflight {
+  param([switch]$NewWindow)
   if ($env:COOP_SKIP_AZ -eq '1') { return }
   if (-not (Test-Have 'az')) { return }
-  $proj = Find-CoopProjectYml
-  if (-not $proj) { return }
-  $tenant = Get-CoopYamlValue $proj 'fabric.tenant_id' ''
-  if (-not $tenant -or $tenant -like 'TODO*' -or $tenant -like 'TODO:*') { return }
+  $resolved = Get-CoopTenant
+  if ($resolved.Rc -eq 2) {
+    Coop-Warn 'Azure tenant id is not a GUID or domain name; skipping Azure sign-in.' 'fix fabric.tenant_id in .coop/project.yml or run: coop onboard --config-only'
+    return
+  }
+  $tenant = $resolved.Tenant
+  if (-not $tenant) { return }
   $agentDir = Get-CoopEffectiveAgentDir
   $marker = Join-Path $agentDir '.az-ok'
   # -Force: pwsh on macOS/Linux treats the dot-prefixed marker as hidden.
@@ -980,35 +1195,51 @@ function Invoke-CoopAzPreflight {
   if ($mi -and (((Get-Date) - $mi.LastWriteTime).TotalMinutes -lt 30)) {
     $cached = ''
     try { $cached = ([System.IO.File]::ReadAllText($marker)).Trim() } catch { }
-    if ($cached -eq $tenant) { return }
+    if ($cached -ceq $tenant) { return }
   }
-  & az account get-access-token --tenant $tenant --resource https://analysis.windows.net/powerbi/api > $null 2>&1
-  if ($LASTEXITCODE -eq 0) {
+  $rc = Get-CoopAzTokenRc -Tenant $tenant
+  $tried = $false
+  $interactive = $false
+  try { $interactive = (-not [Console]::IsInputRedirected) -and (-not [Console]::IsErrorRedirected) } catch { }
+  $inWindow = $NewWindow -and $env:OS -eq 'Windows_NT'
+  if ($rc -eq 1 -and ($interactive -or $env:COOP_ASSUME_YES -eq '1')) {
+    $tried = $true
+    Coop-Info "Opening Azure sign-in for tenant $tenant..."
+    $loginArgs = @('login', '--tenant', $tenant, '--allow-no-subscriptions', '--output', 'none')
+    if ($inWindow) {
+      $login = Invoke-CoopAz -Seconds 300 -AzArgs $loginArgs -NewWindow
+    } else {
+      $login = Invoke-CoopAz -Seconds 300 -AzArgs $loginArgs
+    }
+    $rc = $login.Rc
+    # A zero login exit is not enough: tenant-only and conditional-access flows
+    # can finish without the tokens coop needs, so check both again.
+    if ($rc -eq 0) { $rc = Get-CoopAzTokenRc -Tenant $tenant }
+  }
+  if ($rc -eq 0) {
     try {
       New-Item -ItemType Directory -Force -Path $agentDir -ErrorAction SilentlyContinue | Out-Null
       [System.IO.File]::WriteAllText($marker, $tenant)
     } catch { }
+    if ($tried) { Coop-Ok "Signed in to Azure for tenant $tenant." }
     return
   }
   Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
-  Coop-Warn 'Azure / Power BI token missing or expired.'
-  if (Coop-Confirm "Run 'az login' for tenant $tenant now?") {
-    & az login --tenant $tenant --allow-no-subscriptions
-    if ($LASTEXITCODE -ne 0) { Coop-Warn 'az login failed; continuing anyway.' }
-    else {
-      # A zero login exit does not prove that conditional access produced the
-      # Power BI token this project needs. Verify the exact tenant before caching.
-      & az account get-access-token --tenant $tenant --resource https://analysis.windows.net/powerbi/api > $null 2>&1
-      if ($LASTEXITCODE -eq 0) {
-        try {
-          New-Item -ItemType Directory -Force -Path $agentDir -ErrorAction SilentlyContinue | Out-Null
-          [System.IO.File]::WriteAllText($marker, $tenant)
-        } catch { }
-        Coop-Ok 'Azure sign-in verified for the project tenant.'
-      } else {
-        Coop-Warn "Azure sign-in finished, but Power BI access was not verified for tenant $tenant; run: az login --tenant $tenant --allow-no-subscriptions"
-      }
+  if ($tried) {
+    Coop-Warn "Azure sign-in for tenant $tenant is not verified; continuing." "run: az login --tenant $tenant --allow-no-subscriptions"
+    if ($inWindow) {
+      # The launching console is minimized (the 'coop' shortcut), so a failed,
+      # cancelled or timed-out sign-in also shows this line in its own window
+      # until Enter. The launch does not wait for it.
+      $notice = "Write-Host " + (ConvertTo-CoopPsLiteral "Azure sign-in for tenant $tenant is not verified. Run: az login --tenant $tenant --allow-no-subscriptions") + "`n[void](Read-Host 'Press Enter to close')"
+      try { $null = Start-CoopPsWindow $notice } catch { }
     }
+  } elseif ($rc -eq 124) {
+    Coop-Warn "Azure token check timed out for tenant $tenant (network or VPN?); continuing." "run: az account get-access-token --tenant $tenant --resource https://api.fabric.microsoft.com"
+  } elseif ($rc -eq 1) {
+    Coop-Warn "Azure: not signed in to tenant $tenant; continuing." "run: az login --tenant $tenant --allow-no-subscriptions"
+  } else {
+    Coop-Warn "Azure token check failed for tenant $tenant (not an auth error); continuing." "run: az account get-access-token --tenant $tenant --resource https://api.fabric.microsoft.com"
   }
 }
 

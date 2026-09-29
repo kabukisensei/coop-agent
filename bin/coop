@@ -117,8 +117,10 @@ e.g. \`coop -c\` resumes the last session, \`coop @notes.md "review this"\`.
 EOF
 }
 
-# The optional Azure preflight (Power BI token check, cached ~30 min) lives in
-# lib/common.sh (coop_az_preflight) — called below by launch_pi and coop_web.
+# The Azure sign-in preflight (Fabric + Power BI token check for the client
+# tenant, automatic bounded sign-in in an interactive console, cached ~30 min)
+# lives in lib/common.sh (coop_az_preflight) — called below by launch_pi and
+# coop_web.
 
 # Load team knowledge skills from configured knowledge repos (~/.coop/config "knowledge" block).
 # Subordinate semantics: first-party Cooptimize skills always win on conflict.
@@ -248,7 +250,11 @@ coop_fabric_mcp_token() {
         azure_cli_unavailable) message='Azure CLI is not installed or not on PATH' ;;
         token_launch_failed) message='Azure CLI could not be launched' ;;
         token_timeout) message='Azure CLI token acquisition timed out' ;;
-        auth_required) message='Azure authentication is required; run az login' ;;
+        auth_required)
+          message='Azure authentication is required; run az login'
+          # The preflight's cached success is stale: drop it so the next launch
+          # checks again (and signs in) instead of trusting the marker.
+          rm -f "$(coop_effective_agent_dir)/.az-ok" 2>/dev/null || true ;;
         token_command_failed) message='Azure CLI token acquisition failed' ;;
         token_output_invalid) message='Azure CLI returned no usable Fabric token' ;;
         *) message='token helper returned invalid output' ;;
@@ -394,7 +400,10 @@ coop_web() {
   have pi   || coop_die "pi is not installed. Run: coop install"
   have node || coop_die "Node.js is required for coop web. Run: coop install"
   coop_launch_preflight
-  coop_az_preflight   # same Fabric/Power BI token check the terminal launch does
+  # Same Fabric/Power BI token check (and automatic sign-in) the terminal launch
+  # does. The PowerShell twin opens the sign-in in its own window here, because
+  # the Windows 'coop' shortcut runs `coop web` in a minimized console.
+  coop_az_preflight
   local spec py
   spec="$(coop_launch_spec --json)" || coop_die "couldn't build the launch spec for coop web"
   py="$(coop_python 2>/dev/null || true)"
