@@ -46,6 +46,8 @@ Every Python repo's `publish.yml` **verifies the pushed tag equals
   `coop release` owns them.
 - **Never** release from a dirty tree. Check first: `git status --porcelain`
   must print nothing.
+- **Never** release coop-agent from a detached HEAD or from a `main` that differs
+  from `origin/main`: its tag must land on `main` (see step (d)).
 - **Never** treat a clean tree as permission to release — a release happens only
   on Aaron's explicit request naming the version (see "When to release" above).
 
@@ -136,9 +138,11 @@ Same procedure as (a), per repo — the version source is
 
 ## (d) coop-agent (this repo)
 
-coop-agent does **not** publish to a registry; teammates get it via
-`coop update` (git pull). The whole release is one command — see also
-[CONTRIBUTING.md](CONTRIBUTING.md#cutting-a-release).
+coop-agent does **not** publish to a registry. Teammates get it when
+`coop update` fast-forwards their checkout to the newest `vX.Y.Z` tag on
+`main`, so **pushing the tag is the fleet deployment**. A merge to `main`
+alone reaches only maintainers on `coop update --edge`. The whole release is
+one command; see also [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a-release).
 
 If this suite release also bumped any of the three coop tools (steps (a)–(c)),
 **refresh `config/defaults.yml` → `tested_with` first** — the pre-tag gate below
@@ -150,8 +154,9 @@ pipelines and the "Pinning tool versions" prose) to the same versions — the
 pre-tag gate does **not** check `docs/ci.md`, so those pins drift silently if
 you skip this.
 
-From a clean tree on `main`, with user-visible changes recorded under
-`## [Unreleased]` in `CHANGELOG.md`:
+From a clean tree on an attached `main` that equals `origin/main` (nothing
+unpushed; `git fetch origin && git status -sb` shows `## main...origin/main`),
+with user-visible changes recorded under `## [Unreleased]` in `CHANGELOG.md`:
 
 ```bash
 ./bin/coop release patch        # or: minor | major   (default: patch); add --yes to skip the confirm
@@ -175,8 +180,40 @@ Verify:
 
 ```bash
 git describe --tags             # expect: vX.Y.Z
+git fetch origin && git merge-base --is-ancestor vX.Y.Z origin/main && echo on-main   # expect: on-main
 gh release view vX.Y.Z          # expect: release exists, body = the CHANGELOG section
 ```
+
+The `on-main` check matters because `coop release` still pushes the tag when
+the branch push fails, and the fleet ignores a tag that is not on `main`
+(safely, but without a warning). If it prints nothing, push `main`
+(`git push origin main`) and re-check; never move or re-push the tag.
+
+**Deployment, rollback, and holds (coop-agent).**
+
+- **Rollback is a new tag.** `coop update` never moves a checkout backwards, so
+  a manual `git checkout <older tag>` is undone by the next update. Roll the
+  fleet back by reverting on `main` and cutting a new patch release. Never
+  delete, move, or re-push a tag; machines keep their local copy.
+- **A hold is a branch that does not track `origin/main`.** Default
+  `coop update` leaves it alone, so it pins one machine:
+  `git -C <coop-agent> switch -c hold vX.Y.Z`, then `coop update` (the tools
+  pin to that tag's manifest). Leave it with `git -C <coop-agent> switch main`,
+  then `coop update`. A hold stays attached, so one at any tag is safe. Never
+  leave a teammate **detached** at a tag from before the release that shipped
+  this updater (v0.23.5 or older): that updater cannot move a detached
+  checkout. Recovery: `git -C <coop-agent> checkout main`, then `coop update`.
+- **A release that changes `scripts/update.*` takes effect on the second
+  update after it lands**: the first run still executes the updater that was
+  already loaded. If a release breaks `coop update` itself, teammates recover
+  with `git -C <coop-agent> fetch origin`, then
+  `git -C <coop-agent> merge --ff-only vX.Y.(Z+1)`, then `coop update`.
+- **Never start tracking a path that `.gitignore` ignores** in a release. The
+  fast-forward refuses to overwrite an untracked file, but git overwrites an
+  ignored one without asking.
+- **Fresh installs** clone the full repository (never `--depth` or
+  `--single-branch`, which leave no `origin/main` to follow). A plain clone
+  starts on the head of `main` and joins the release channel at the next tag.
 
 ## (e) coop-website — LAST
 

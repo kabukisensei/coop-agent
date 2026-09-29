@@ -212,7 +212,8 @@ Because skills/prompts/vibes/theme are just files in this repo, the workflow is:
 1. Create the file (skill folder, prompt, etc.).
 2. Test it locally with `coop`.
 3. Commit and push (these are docs/config, safe to commit).
-4. Teammates run `coop update` (which `git pull`s coop-agent) and pick it up.
+4. Teammates pick it up at the next release tag via `coop update` (maintainers:
+   `coop update --edge`).
 
 `coop update` keeps Pi, its extensions, and the standalone tools current at the same
 time, so the whole team stays in sync with one command.
