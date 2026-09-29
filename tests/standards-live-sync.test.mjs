@@ -459,6 +459,18 @@ try {
       ["Explain what a lakehouse is in Microsoft Fabric", [], null],
       ["Rebase my branch onto main and fix the merge conflicts in CHANGELOG.md", [], null],
       ["Write a PowerShell script that renames the exported CSV files in Downloads by date", [], null],
+      // Gold SQL work gets the gold articles, not the Power BI table articles.
+      ["Create the gold customer dimension table", ["Gold Dimension Tables"], ["Power BI Fact Tables", "Organizing Power BI Tables"]],
+      // "reporting" is not the report layer: the model's core articles, not the report ones.
+      ["Review the reporting semantic model", ["Power BI Relationships", "Organizing Power BI Tables"], ["Power BI Report Visuals", "Power BI Report Page Formatting", "Power BI App Deployment"]],
+      // Power BI work on a gold dim./fact. source keeps the Power BI table articles.
+      ["Create a Power BI dimension table from the gold customer view", ["Organizing Power BI Tables", "Gold Dimension Tables"], ["Silver Indexing"]],
+      ["Fix the sort by on the dim.Date date table so Month Name sorts by Month Number", ["Organizing Power BI Tables", "Gold Dimension Tables"], ["Power BI Report Visuals"]],
+      ["Write a DAX measure for sales from the gold fact table", ["Power BI Fact Tables", "Power BI DAX", "Gold Fact Tables"], ["Silver Indexing"]],
+      // Everyday "measures" and pkg/PKCE get no standards.
+      ["Document the preventive measures we took after the outage", [], null],
+      ["Write a test that measures API latency", [], null],
+      ["Explain the relationship between pkg and npm", [], null],
     ];
     const wrong = [];
     for (const [prompt, must, mustNot] of rows) {

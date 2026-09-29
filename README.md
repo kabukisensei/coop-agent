@@ -504,7 +504,8 @@ whose layer, artifact, technology, or title match the task, each with its path, 
 the repo revision. A domain with fewer than three articles (today DAX) gets all of them.
 SQL wording (a Fabric warehouse, silver or gold objects, `dim.`/`fact.` names) outranks
 "fact table" or "dimension table", so gold SQL work does not get the Power BI table
-articles. When nothing matches, it injects the domain's core-layer articles (for
+articles, unless the prompt also names Power BI, DAX, a model, a visual or a sort by.
+When nothing matches, it injects the domain's core-layer articles (for
 example `layer: semantic_model`), or only a list of the domain's articles if it has no
 such layer. Two articles with the same `id` are both kept, and `coop doctor` warns with
 both paths. `coop-sql-review` and `coop-dax-review` take one standards file, so Coop
