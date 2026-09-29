@@ -108,8 +108,8 @@ if (Test-Have 'pi') {
 }
 
 # Release manifest: the single source of truth for the exact versions that ship
-# together with this coop build. Doctor reports drift so a teammate can `coop update`
-# or `coop update --edge` intentionally.
+# together with this coop build. Doctor reports drift so a teammate can pin back
+# with `coop update`; maintainers take head of main + latest with `coop update --edge`.
 D-Head 'Release manifest'
 $piExpected = Coop-ManifestGet 'pi.version'
 if ($piExpected) {
@@ -124,7 +124,7 @@ if ($piExpected) {
       'ok'                { D-Ok "pi $piv matches manifest ($piExpected)" }
       'missing'           { D-Warn 'pi version unknown' 'coop update' }
       'older'             { D-Warn "pi $piv is older than manifest ($piExpected)" 'coop update' }
-      'newer-than-tested' { D-Warn "pi $piv is newer than manifest ($piExpected)" "coop update --edge, or pin back: npm i -g @earendil-works/pi-coding-agent@$piExpected" }
+      'newer-than-tested' { D-Warn "pi $piv is newer than manifest ($piExpected)" 'pin back: coop update   (maintainers: coop update --edge)' }
       'wrong-version'     { D-Warn "pi $piv differs from manifest ($piExpected)" 'coop update' }
     }
   } else {
@@ -410,7 +410,7 @@ if (Test-Have 'pi') {
       'missing'           { D-Warn "$name installed but version unknown (manifest: $exp)" 'coop sync   (pins the extension fleet)' }
       'older'             { D-Warn "$name ${cur}: differs from manifest ($exp)" 'coop sync   (pins the extension fleet)' }
       'wrong-version'     { D-Warn "$name ${cur}: differs from manifest ($exp)" 'coop sync   (pins the extension fleet)' }
-      'newer-than-tested' { D-Warn "$name $cur is newer than manifest ($exp)" 'coop sync   (pins back), or coop update --edge intentionally' }
+      'newer-than-tested' { D-Warn "$name $cur is newer than manifest ($exp)" 'coop sync   (pins back); maintainers: coop update --edge' }
     }
   }
   # pi-ai / pi-tui must match the agent — coop's extensions load INTO it and share one
@@ -613,11 +613,12 @@ if ($proj) {
 D-Head 'coop-agent repository'
 if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have 'git')) {
   # Staleness nudge: refresh origin at most once/day (bounded wait; silent offline),
-  # then count against the last-fetched origin/main — local + instant.
+  # then compare against the release `coop update` would move to — local + instant.
+  # A checkout the update cannot move (hold, diverged, no origin/main) is named.
+  # The row itself is decided by Get-CoopRepoDoctorRow (tests/fixtures/update-follow.test.ps1).
   $null = Invoke-CoopRepoFetchThrottled
-  $behind = Get-CoopRepoBehindCount
-  if ($behind -gt 0) { D-Warn "coop-agent is $behind commit(s) behind" 'run: coop update' }
-  else { D-Ok 'coop-agent is a git checkout (updates via: coop update)' }
+  $repoRow = Get-CoopRepoDoctorRow
+  if ($repoRow.Level -ceq 'ok') { D-Ok $repoRow.Message } else { D-Warn $repoRow.Message $repoRow.Hint }
 } else {
   # A zip/shared-drive copy: everything above still updates, but the repo layer
   # (skills/prompts/guardrails/themes/scripts) is frozen at whatever the zip held.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # coop update — keep the whole Cooptimize stack current:
-#   1. Pull the latest coop-agent (skills / prompts / vibes / theme)
+#   1. Move coop-agent to the newest release tag (--edge: head of main)
 #   2. Update Pi itself and every installed Pi extension
 #   3. Upgrade the Coop tools and the Microsoft Fabric CLI (pipx)
 #   4. Re-sync vibes and the powerline extension
@@ -16,7 +16,7 @@ export COOP_ROOT
 
 NO_FABRIC=0
 CHECK=0        # --check: dry-run — report current/latest/tested, change nothing
-EDGE=0         # --edge: take latest upstream instead of the release manifest
+EDGE=0         # --edge: head of main + latest upstream instead of the release tag and manifest
 for a in "$@"; do
   case "$a" in
     '') ;;
@@ -44,15 +44,16 @@ esac
 PI_CODING_AGENT_DIR="$(coop_pi_agent_dir)"; export PI_CODING_AGENT_DIR
 
 # --- Fleet mode -----------------------------------------------------------------
-# Exactly two modes: NORMAL pins Pi + every extension/tool to the release manifest
-# (no registry queries, no prompts); --edge takes latest upstream across the fleet.
+# Exactly two modes: NORMAL moves coop-agent to the newest release tag (never
+# backwards) and pins Pi + every extension/tool to that release's manifest (no
+# registry queries, no prompts); --edge takes head of main and latest upstream.
 # The old tested-version gates (--pi-latest / "Jump to the untested …?" prompts) are
 # gone: they queried latest versions merely to ask about them, and normal update
 # resolved back to manifest pins anyway.
 PI_PKG="@earendil-works/pi-coding-agent"
 
 # Overall-bar denominator: the update ITEMS we will attempt (pi update + each
-# pipx tool + Power BI/Fabric authoring npm tools). Steps 1/4/5 (git pull /
+# pipx tool + Power BI/Fabric authoring npm tools). Steps 1/4/5 (repo move /
 # sync / doctor) sit outside the bar, exactly as the install bar covers only
 # its install items.
 PROG_TOTAL=$(( 1 + ${#PY_TOOLS[@]} + 1 ))
@@ -193,18 +194,15 @@ fi
 coop_head "1/6  coop-agent repository"
 if [ -d "$COOP_ROOT/.git" ] && have git; then
   if git -C "$COOP_ROOT" remote get-url origin >/dev/null 2>&1; then
-    # Only uncommitted changes to TRACKED files can block a fast-forward pull; untracked
-    # files (stray skills, downloaded drop-ins) are harmless and must NOT freeze updates
-    # — `--untracked-files=no` excludes them. (git pull --ff-only still fails loudly on
-    # its own if an incoming tracked file would actually overwrite an untracked one.)
-    if [ -n "$(git -C "$COOP_ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
-      coop_warn "uncommitted changes to tracked files in coop-agent — skipping 'git pull' (commit/stash first)."
-    else
-      coop_info "git pull --ff-only"
-      git -C "$COOP_ROOT" pull --ff-only >/dev/null 2>&1 && coop_ok "coop-agent updated" || coop_warn "git pull failed (continuing)"
-    fi
+    # Fast-forward to the newest release tag, never backwards (--edge: head of
+    # main). Only uncommitted changes to TRACKED files skip the move; untracked
+    # files (stray skills, downloaded drop-ins) never block it, and git refuses on
+    # its own a fast-forward that would overwrite one (ignored files excepted, see
+    # RELEASE.md). A branch that does not track origin/main is a hold, left alone.
+    coop_repo_follow_release "$EDGE"
   else
-    coop_info "no 'origin' remote configured — skipping repo update"
+    # Renamed or removed origin: warn with the fix (coop_repo_stranded names it).
+    _coop_repo_warn_stranded || coop_warn "no 'origin' remote configured — skipping repo update"
   fi
 else
   # A zip/shared-drive copy: Pi + pipx tools above still update, but the repo layer

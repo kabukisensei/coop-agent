@@ -13,9 +13,10 @@ coop new-skill <name>     # -> skills/<name>/SKILL.md
 coop new-prompt <name>    # -> prompts/<name>.md
 ```
 
-Edit, test locally with `coop`, then commit and push. Teammates pick it up on their
-next `coop update`. See **[docs/extending.md](docs/extending.md)** for skills,
-prompts, themes, and writing a Pi extension.
+Edit, test locally with `coop`, then commit and push. Teammates pick it up at the next
+release tag via `coop update` (maintainers: `coop update --edge`). See
+**[docs/extending.md](docs/extending.md)** for skills, prompts, themes, and writing a Pi
+extension.
 
 Guidelines:
 
@@ -144,8 +145,8 @@ YAML/JSON, transpiles the TypeScript extensions with esbuild, and parses every
 > finished task is never a release trigger — see
 > [RELEASE.md](RELEASE.md#when-to-release--explicit-instruction-only).
 
-From a clean working tree (all changes committed, `CHANGELOG.md` updated under
-`## [Unreleased]`):
+From a clean working tree on an attached `main` that equals `origin/main` (all changes
+committed and pushed, `CHANGELOG.md` updated under `## [Unreleased]`):
 
 ```bash
 coop release minor        # or: patch | major  (default: patch)
@@ -155,6 +156,12 @@ coop release minor        # or: patch | major  (default: patch)
 dated `## [X.Y.Z]` section (leaving a fresh `[Unreleased]`), commits, tags `vX.Y.Z`,
 and pushes the commit + tag. Use `--no-push` to stop at the local tag, `--yes` to skip
 the confirm. SemVer in 0.x: **minor** for features/notable changes, **patch** for fixes.
+
+Pushing the tag is the fleet deployment: `coop update` moves teammates to the newest
+`vX.Y.Z` tag on `main`. After the push, confirm the tag is on `main`
+(`git fetch origin && git merge-base --is-ancestor vX.Y.Z origin/main && echo on-main`);
+the fleet ignores a tag that is not. Rollback is a new release, never a moved or deleted
+tag. See [RELEASE.md](RELEASE.md#d-coop-agent-this-repo).
 
 coop-agent is one of six coop-\* repos. When a change spans the suite
 (core → review tools → agent → website), release in the order documented in

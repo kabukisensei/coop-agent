@@ -286,8 +286,8 @@ launch_pi() {
   # a merely-stale tree. Fast + read-only. Bypass with COOP_SKIP_EXT_CHECK=1.
   coop_launch_preflight
 
-  # Once-a-day fleet-staleness nudge: warn when this checkout is behind
-  # origin/main (throttled fetch, 5s watchdog — never blocks or fails the launch).
+  # Once-a-day fleet-staleness nudge: warn when this checkout is behind the next
+  # release tag (throttled fetch, 5s watchdog — never blocks or fails the launch).
   coop_update_nudge
 
   # Bounded, noninteractive and fail-soft: applicable work will reuse the fresh

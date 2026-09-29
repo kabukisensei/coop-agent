@@ -1004,9 +1004,10 @@ coop_az_preflight() {
 }
 
 # --- Repo staleness (fleet drift) ---------------------------------------------
-# coop-agent updates arrive via `git pull` inside `coop update`; a zip/shared-drive
-# copy (no .git) silently never updates, and even a git checkout has no signal
-# between updates. These helpers power the doctor / launch staleness nudge.
+# coop-agent updates arrive when `coop update` fast-forwards the checkout to the
+# newest release tag (H5; --edge: head of main); a zip/shared-drive copy (no .git)
+# silently never updates, and even a git checkout has no signal between updates.
+# These helpers power step 1 of `coop update` and the doctor / launch nudge.
 
 # Quietly refresh origin — at most once per day (marker mtime in the effective
 # agent dir) and under a 5s watchdog, so an offline or VPN-black-holed fetch can
@@ -1036,26 +1037,296 @@ coop_repo_fetch_throttled() {
   return 0
 }
 
-# Print how many commits HEAD is behind origin/main — purely local and instant
-# (counts against the last-fetched origin/main; no network). Prints 0 when this
-# is not a git checkout, git is missing, or the count is unknowable.
+# Print how many commits HEAD is behind the release `coop update` would move it to
+# (coop_repo_next_release) — purely local and instant (last-fetched refs; no
+# network). Prints 0 when there is no newer release, this is not a git checkout,
+# git is missing, or the count is unknowable, so a checkout that is ahead,
+# diverged or held is never told to run an update that would not move it.
 coop_repo_behind_count() {
-  local n=""
-  if have git && [ -d "$COOP_ROOT/.git" ]; then
-    n="$(git -C "$COOP_ROOT" rev-list --count HEAD..origin/main 2>/dev/null || true)"
+  local n="" tag
+  tag="$(coop_repo_next_release)"
+  if [ -n "$tag" ]; then
+    n="$(git -C "$COOP_ROOT" rev-list --count "HEAD..refs/tags/$tag" 2>/dev/null || true)"
   fi
   case "$n" in ''|*[!0-9]*) n=0 ;; esac
   printf '%s' "$n"
 }
 
 # Launch-time staleness nudge: at most once per day (it fires only when this call
-# performed the daily fetch), warn when the checkout is behind origin/main.
-# Never blocks or fails the launch; silent offline / non-git / up-to-date.
+# performed the daily fetch), warn when a newer release is waiting for this
+# checkout. Never blocks or fails the launch; silent offline / non-git / current.
+# Stranded checkouts stay quiet here; step 1 and doctor name them.
 coop_update_nudge() {
-  local behind
+  local behind tag
   coop_repo_fetch_throttled || return 0
+  tag="$(coop_repo_next_release)"
+  [ -n "$tag" ] || return 0
   behind="$(coop_repo_behind_count)"
-  [ "$behind" -gt 0 ] && coop_warn "coop-agent is $behind commit(s) behind — run: coop update"
+  [ "$behind" -gt 0 ] && coop_warn "coop-agent is $behind commit(s) behind release $tag — run: coop update"
+  return 0
+}
+
+# The checked-out branch name; '' when HEAD is detached. Strips refs/heads/ from
+# the full ref, not --short: a tag named like the branch (a stray 'main' tag,
+# which every fetch auto-follows) turns --short into 'heads/main'.
+_coop_repo_branch() {
+  local ref
+  ref="$(git -C "$COOP_ROOT" symbolic-ref -q HEAD 2>/dev/null || true)"
+  case "$ref" in refs/heads/?*) printf '%s' "${ref#refs/heads/}" ;; esac
+  return 0
+}
+
+# True when HEAD follows release tags: a detached HEAD, or a branch whose upstream
+# is origin/main (main, or a renamed branch that tracks it). Any other branch,
+# including one with no upstream, is a "hold" that default `coop update` leaves alone.
+_coop_repo_follows_releases() {
+  local branch
+  branch="$(_coop_repo_branch)"
+  [ -n "$branch" ] || return 0
+  [ "$(git -C "$COOP_ROOT" config --get "branch.$branch.remote" 2>/dev/null || true)" = origin ] || return 1
+  [ "$(git -C "$COOP_ROOT" config --get "branch.$branch.merge" 2>/dev/null || true)" = refs/heads/main ]
+}
+
+# Print the newest strict vX.Y.Z tag merged into the last-fetched origin/main,
+# with any extra for-each-ref filters passed as arguments (e.g. --contains HEAD).
+# rc tags, tags off main and junk output are skipped. lstrip=2, not :short, so a
+# branch named like a tag cannot turn 'v1.2.3' into 'tags/v1.2.3' and hide it.
+_coop_repo_newest_release() {
+  local out t n
+  out="$(git -C "$COOP_ROOT" for-each-ref "$@" --merged refs/remotes/origin/main \
+    --sort=-v:refname --format='%(refname:lstrip=2)' 'refs/tags/v[0-9]*' 2>/dev/null || true)"
+  while IFS= read -r t; do
+    n="${t#v}"
+    [ "$n" != "$t" ] || continue
+    case "$n" in
+      ''|*[!0-9.]*|.*|*.|*..*|*.*.*.*) ;;
+      *.*.*) printf '%s' "$t"; return 0 ;;
+    esac
+  done <<EOF
+$out
+EOF
+  return 0
+}
+
+# The release `coop update` would move this checkout to: the newest strict vX.Y.Z
+# tag that is merged into the last-fetched origin/main AND contains HEAD, unless
+# HEAD is already on it. Read-only and local (no network). Prints '' for a non-git
+# copy, missing git, a hold branch, or when no newer release exists, so a checkout
+# that is ahead of the newest release, diverged or shallow is never moved backwards.
+coop_repo_next_release() {
+  local tag
+  have git && [ -d "$COOP_ROOT/.git" ] || return 0
+  _coop_repo_follows_releases || return 0
+  tag="$(_coop_repo_newest_release --contains HEAD)"
+  [ -n "$tag" ] || return 0
+  [ "$(git -C "$COOP_ROOT" rev-list -n 1 "refs/tags/$tag" 2>/dev/null || true)" \
+    = "$(git -C "$COOP_ROOT" rev-parse HEAD 2>/dev/null || true)" ] && return 0
+  printf '%s' "$tag"
+}
+
+# `git describe` of the checkout against release tags (v0.23.5-21-gdf91630; rc
+# tags and tags not shaped vX.Y.Z, such as v1 or v0.10.0.1, are skipped; a bare
+# short SHA when no release is reachable) for the doctor row and step 1. No
+# --dirty, so the index is never touched. Prints '' for a non-git copy or
+# unexpected output.
+coop_repo_describe() {
+  local d=""
+  if have git && [ -d "$COOP_ROOT/.git" ]; then
+    d="$(git -C "$COOP_ROOT" describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' \
+      --exclude '*-*' --exclude 'v*.*.*.*' --always 2>/dev/null || true)"
+  fi
+  case "$d" in
+    v[0-9]*|[0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+    *) d="" ;;
+  esac
+  case "$d" in *[!0-9A-Za-z.-]*) d="" ;; esac
+  printf '%s' "$d"
+}
+
+# The remote a missing origin was renamed to, or '' when that is not certain:
+# the checked-out branch's remote, unless a different remote points at the
+# canonical repo; else the one remote that points at the canonical repo. Never
+# the first name `git remote` lists: it is sorted, so a fork added next to a
+# renamed origin would come first.
+_coop_repo_origin_candidate() {
+  local root="$COOP_ROOT" branch br="" br_canon=0 canon="" n=0 r url remotes
+  branch="$(_coop_repo_branch)"
+  if [ -n "$branch" ]; then
+    br="$(git -C "$root" config --get "branch.$branch.remote" 2>/dev/null || true)"
+    # '.' (a local upstream) or a remote that no longer exists is no candidate.
+    if [ -n "$br" ] && ! git -C "$root" remote get-url "$br" >/dev/null 2>&1; then br=""; fi
+  fi
+  remotes="$(git -C "$root" remote 2>/dev/null || true)"
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    url="$(git -C "$root" remote get-url "$r" 2>/dev/null || true)"
+    case "$url" in
+      *[/:]kabukisensei/coop-agent|*[/:]kabukisensei/coop-agent/|*[/:]kabukisensei/coop-agent.git|*[/:]kabukisensei/coop-agent.git/)
+        n=$((n+1)); canon="$r"
+        if [ "$r" = "$br" ]; then br_canon=1; fi
+        ;;
+    esac
+  done <<EOF
+$remotes
+EOF
+  if [ -n "$br" ]; then
+    if [ "$n" = 0 ] || [ "$br_canon" = 1 ]; then printf '%s' "$br"; fi
+  elif [ "$n" = 1 ]; then
+    printf '%s' "$canon"
+  fi
+  return 0
+}
+
+# Name a state in which `coop update` cannot move this checkout, as two lines:
+# what is wrong, then the command that fixes it. Prints nothing when the checkout
+# follows releases normally. Local only (no network). Step 1 and doctor use it so
+# a stranded machine is never silent; the launch nudge stays quiet.
+coop_repo_stranded() {
+  local root="$COOP_ROOT" branch tag remote sha
+  have git && [ -d "$root/.git" ] || return 0
+  if ! git -C "$root" remote get-url origin >/dev/null 2>&1; then
+    # Renamed (origin -> upstream) or removed: name it before it reads as a hold.
+    # Suggest a rename only for a certain candidate; otherwise add the canonical one.
+    remote="$(_coop_repo_origin_candidate)"
+    printf 'coop-agent has no origin remote, so coop update cannot move it\n'
+    if [ -n "$remote" ]; then
+      printf 'fix: git -C "%s" remote rename %s origin\n' "$root" "$remote"
+    else
+      printf 'fix: git -C "%s" remote add origin https://github.com/kabukisensei/coop-agent.git && git -C "%s" fetch origin\n' "$root" "$root"
+    fi
+    return 0
+  fi
+  if ! _coop_repo_follows_releases; then
+    branch="$(_coop_repo_branch)"
+    printf "coop-agent is held on branch '%s' (it does not track origin/main); coop update leaves it alone\n" "$branch"
+    if [ "$branch" = main ]; then
+      printf 'to follow releases again: git -C "%s" branch --set-upstream-to=origin/main main\n' "$root"
+    else
+      printf 'to follow releases again: git -C "%s" switch main\n' "$root"
+    fi
+    return 0
+  fi
+  if ! git -C "$root" rev-parse -q --verify refs/remotes/origin/main >/dev/null 2>&1; then
+    printf 'coop-agent has no origin/main to follow (for example a single-branch clone of a tag)\n'
+    printf "fix: git -C \"%s\" remote set-branches origin '*' && git -C \"%s\" fetch origin\n" "$root" "$root"
+    return 0
+  fi
+  tag="$(_coop_repo_newest_release)"
+  if [ -n "$tag" ] && [ -z "$(coop_repo_next_release)" ] \
+     && ! git -C "$root" merge-base --is-ancestor "refs/tags/$tag" HEAD >/dev/null 2>&1; then
+    # Name the aside branch after HEAD so a leftover from an earlier rejoin never
+    # collides; && stops before the reset if the branch cannot be made.
+    sha="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || true)"
+    case "$sha" in ''|*[!0-9a-f]*) sha="" ;; esac
+    printf 'coop-agent has commits that release %s does not contain, so coop update cannot move it (push them, or set them aside)\n' "$tag"
+    printf 'set them aside and rejoin: git -C "%s" branch my-work%s && git -C "%s" reset --keep %s\n' "$root" "${sha:+-$sha}" "$root" "$tag"
+  fi
+  return 0
+}
+
+# coop_warn the coop_repo_stranded state. Returns 1 when there is none.
+_coop_repo_warn_stranded() {
+  local s msg="" hint=""
+  s="$(coop_repo_stranded)"
+  [ -n "$s" ] || return 1
+  { IFS= read -r msg || true; IFS= read -r hint || true; } <<EOF
+$s
+EOF
+  coop_warn "$msg" "$hint"
+  return 0
+}
+
+# The doctor's "coop-agent repository" row for a git checkout, as three lines:
+# the level (ok or warn), the message, then the hint ('' for ok). Local only (no
+# network; doctor refreshes origin first). A newer release to move to comes
+# first; else a stranded state is named with its fix; else the checkout is ok.
+coop_repo_doctor_row() {
+  local next behind stranded at
+  next="$(coop_repo_next_release)"
+  behind="$(coop_repo_behind_count)"
+  if [ -n "$next" ] && [ "${behind:-0}" -gt 0 ]; then
+    printf 'warn\ncoop-agent is %s commit(s) behind release %s\nrun: coop update\n' "$behind" "$next"
+    return 0
+  fi
+  stranded="$(coop_repo_stranded)"
+  if [ -n "$stranded" ]; then
+    printf 'warn\n%s\n' "$stranded"
+    return 0
+  fi
+  at="$(coop_repo_describe)"
+  printf 'ok\ncoop-agent %s (follows release tags via: coop update)\n\n' "${at:-git checkout}"
+}
+
+# Step 1 of `coop update`: move the coop-agent checkout. Arg 1 is EDGE (0/1).
+# Default: fast-forward to coop_repo_next_release, never backwards, never a tag
+# checkout or reset. --edge: head of main, via today's `git pull --ff-only` on a
+# branch, or a guarded re-attach of a detached HEAD to main. Tracked-file changes
+# skip the move; a hold branch is not fetched or moved. Warn-and-continue: never
+# touches the update's failure count and always returns 0.
+coop_repo_follow_release() {
+  local edge="${1:-0}" root="$COOP_ROOT" branch before tag err line=""
+  if [ -n "$(git -C "$root" status --porcelain --untracked-files=no 2>/dev/null || true)" ]; then
+    coop_warn "uncommitted changes to tracked files in coop-agent — skipping the coop-agent move (commit/stash first)."
+    return 0
+  fi
+  before="$(coop_repo_describe)"; [ -n "$before" ] || before="checkout"
+  branch="$(_coop_repo_branch)"
+  if [ "$edge" = 1 ] && [ -n "$branch" ]; then
+    # A branch with no upstream (e.g. a hold made from a tag) has nothing to pull.
+    if [ -z "$(git -C "$root" config --get "branch.$branch.merge" 2>/dev/null || true)" ]; then
+      _coop_repo_warn_stranded || true
+      return 0
+    fi
+    coop_info "git pull --ff-only (--edge: head of $branch)"
+    if GIT_TERMINAL_PROMPT=0 git -C "$root" pull --ff-only >/dev/null 2>&1; then
+      coop_ok "coop-agent moved from $before to head of $branch ($(coop_repo_describe))"
+    else
+      coop_warn "git pull failed (continuing)" "see: git -C \"$root\" status"
+    fi
+    return 0
+  fi
+  if ! _coop_repo_follows_releases; then
+    _coop_repo_warn_stranded || true
+    return 0
+  fi
+  if ! err="$(GIT_TERMINAL_PROMPT=0 git -C "$root" fetch --quiet origin 2>&1 >/dev/null)"; then
+    IFS= read -r line <<<"$err" || true
+    coop_warn "could not fetch from origin — using the releases already on this machine" "git: ${line:-fetch failed}"
+  fi
+  if [ "$edge" = 1 ]; then
+    # Detached HEAD: re-attach to main only when that is forward-only and loses
+    # nothing — HEAD and any existing local main must both be ancestors of
+    # origin/main. Never a plain `git checkout main` (a stale local main would
+    # move HEAD backwards and strand the machine if the pull then failed).
+    if ! git -C "$root" rev-parse -q --verify refs/remotes/origin/main >/dev/null 2>&1; then
+      _coop_repo_warn_stranded || true
+    elif ! git -C "$root" merge-base --is-ancestor HEAD refs/remotes/origin/main >/dev/null 2>&1; then
+      coop_warn "--edge: this detached coop-agent has commits that are not on origin/main — staying at $before" \
+        "see: git -C \"$root\" log --oneline origin/main..HEAD"
+    elif git -C "$root" rev-parse -q --verify refs/heads/main >/dev/null 2>&1 \
+         && ! git -C "$root" merge-base --is-ancestor refs/heads/main refs/remotes/origin/main >/dev/null 2>&1; then
+      coop_warn "--edge: local branch main has commits that are not on origin/main — staying at $before" \
+        "see: git -C \"$root\" log --oneline refs/remotes/origin/main..refs/heads/main"
+    elif git -C "$root" checkout -q -B main --track refs/remotes/origin/main >/dev/null 2>&1; then
+      coop_ok "coop-agent moved from $before to head of main ($(coop_repo_describe))"
+    else
+      coop_warn "could not switch coop-agent to main (continuing)" "see: git -C \"$root\" status"
+    fi
+    return 0
+  fi
+  tag="$(coop_repo_next_release)"
+  if [ -n "$tag" ]; then
+    # merge --ff-only, never checkout: git itself refuses anything that is not a
+    # fast-forward, or that would overwrite an untracked file.
+    if git -C "$root" merge --ff-only --quiet "refs/tags/$tag" >/dev/null 2>&1; then
+      coop_ok "coop-agent moved from $before to release $tag"
+    else
+      coop_warn "could not fast-forward coop-agent to $tag (continuing)" "see: git -C \"$root\" status"
+    fi
+    return 0
+  fi
+  _coop_repo_warn_stranded \
+    || coop_ok "coop-agent $before: no newer release to move to (--edge follows main)"
   return 0
 }
 
