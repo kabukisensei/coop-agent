@@ -79,7 +79,9 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 `coop install` checks every prerequisite **before it installs anything**, in the
 order below, and prints ✓ or ✗ for each. When a required one is missing it stops,
 prints the exact command to install it, and asks you to open a new terminal and run
-`coop install` again. `coop doctor` shows the same list with the same commands.
+the install again. Until the install links `coop` onto `PATH`, that stop names the
+clone's own launcher instead of `coop install` (on Windows: double-click
+**Install coop.cmd** again). `coop doctor` shows the same list with the same commands.
 
 | Order | Prerequisite | Needed | Command printed on Windows |
 | --- | --- | --- | --- |
