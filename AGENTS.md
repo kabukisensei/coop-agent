@@ -175,8 +175,8 @@ delete or re-push a tag, never commit secrets (`.env*`, keys, tokens — see
 
 - **Operational (follow these):** `AGENTS.md`, `CONTRIBUTING.md`, `RELEASE.md`,
   `README.md`, `docs/architecture.md`, `docs/ci.md`, `docs/extending.md`,
-  `docs/guardrails.md`, `docs/onboarding.md`, `docs/tool-contract.md`,
-  `docs/troubleshooting.md`.
+  `docs/guardrails.md`, `docs/install-windows.md`, `docs/onboarding.md`,
+  `docs/tool-contract.md`, `docs/troubleshooting.md`.
 - **The one plan (each phase needs an explicit start):** `docs/COOP_MASTER_PLAN.md`.
 - **History (read-only context; never execute their steps):** everything under
   `docs/history/` — the revision 2.0 Windows terminal plan and its preparation
