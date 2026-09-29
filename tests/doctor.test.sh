@@ -40,7 +40,7 @@ cat > "$state_stub/python3" <<'EOF'
 #!/bin/sh
 case "${1:-}" in
   *warehouse_mcp.py)
-    printf '{"state":"%s","target":{"scope":"global"}}\n' "$COOP_WAREHOUSE_TEST_STATE"
+    printf '{"state":"%s","target":{"scope":"global"},"tenant":"%s"}\n' "$COOP_WAREHOUSE_TEST_STATE" "${COOP_WAREHOUSE_TEST_TENANT:-}"
     exit 0
     ;;
 esac
@@ -65,6 +65,27 @@ token_command_failed|Azure CLI launched but token acquisition failed; run: az ac
 token_output_invalid|Azure CLI returned no usable accessToken JSON; verify the Fabric token command output
 auth_required|sign in with Azure CLI/tenant access; doctor never triggers login
 EOF
+# H2b: the Warehouse row names the tenant its probe minted for, and its token
+# command hint pins that tenant. The fabric row states that coop cannot pin the
+# tenant of @microsoft/fabric-mcp (it uses az's default account).
+cat > "$d/.mcp.json" <<'EOF'
+{"mcpServers":{"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp"]},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"]}}}
+EOF
+h2b_tenant='cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd'
+out="$(COOP_WAREHOUSE_TEST_STATE=registered COOP_WAREHOUSE_TEST_TENANT="$h2b_tenant" PATH="$state_stub:$PATH" doctor_out "$d")"
+case "$out" in
+  *"fabric-sqlendpoint registered (global target, tenant $h2b_tenant; direct HTTP"*) ok "doctor names the tenant the Warehouse probe minted for" ;;
+  *) ko "doctor did not name the Warehouse probe tenant"; printf '%s\n' "$out" | grep -i fabric ;;
+esac
+case "$out" in
+  *"fabric server configured (uses az's default account; coop cannot pin its tenant)"*) ok "doctor states that the fabric MCP tenant cannot be pinned" ;;
+  *) ko "doctor did not state the fabric MCP tenant limit"; printf '%s\n' "$out" | grep -i fabric ;;
+esac
+out="$(COOP_WAREHOUSE_TEST_STATE=token_command_failed COOP_WAREHOUSE_TEST_TENANT="$h2b_tenant" PATH="$state_stub:$PATH" doctor_out "$d")"
+case "$out" in
+  *"token_command_failed (global target, tenant $h2b_tenant)"*"--output json --tenant $h2b_tenant"*) ok "doctor's Warehouse token hint names the client tenant" ;;
+  *) ko "doctor's Warehouse token hint lost the tenant"; printf '%s\n' "$out" | grep -i fabric ;;
+esac
 
 # Azure sign-in row (H2): probe only, never a sign-in, same tenant chain as the
 # launch. Sandboxed HOME/COOP_DIR, the shared fake az, no python3 stub.

@@ -34,6 +34,15 @@ if ($tokenHeader.alg -ne 'none' -or
 $helperDiagnostic = 'untrusted-helper-diagnostic-93b75a'
 $helperTokenlike = 'tokenlike-helper-value-2309'
 New-Item -ItemType Directory -Force -Path $bin,$agent,$marker | Out-Null
+# The launch mint follows the tenant chain (H2b): the contract above the working
+# folder, then <COOP_DIR or home>/.coop/config. Keep both in the sandbox so a
+# developer's own contract or ~/.coop/config tenant never reaches the az argv.
+$coopHome = Join-Path $temp 'coop-home'
+$coopConfigDir = Join-Path $coopHome '.coop'
+New-Item -ItemType Directory -Force -Path $coopConfigDir | Out-Null
+$oldCoopDir = $env:COOP_DIR
+$env:COOP_DIR = $coopHome
+Push-Location -LiteralPath $coopHome
 $azResponse = Join-Path $marker 'az-response.json'
 $azResponseJson = '{"accessToken":"' + $token + '"}' + "`r`n"
 [System.IO.File]::WriteAllText($azResponse, $azResponseJson, [Text.Encoding]::ASCII)
@@ -392,6 +401,24 @@ print(f"{resolution} runner-code={runner_result.returncode} runner-stdout-bytes=
   }
   if ($output.Contains($token)) { throw 'token leaked to process output' }
   if ((Get-Content -Raw (Join-Path $marker 'pi-argv')).Contains($token)) { throw 'token leaked to argv' }
+  $fabricArgv = 'account get-access-token --resource https://api.fabric.microsoft.com --output json'
+  if ((Get-Content -Raw (Join-Path $marker 'az-argv')).Trim() -ne $fabricArgv) { throw 'unexpected Azure CLI argv with no tenant configured' }
+
+  # H2b: with a client tenant saved by onboarding, the launch token is minted for
+  # it; the az argv gains exactly `--tenant <id>` at the end.
+  Remove-Item -LiteralPath (Join-Path $marker 'pi-state') -Force
+  $pinnedConfig = Join-Path $coopConfigDir 'config'
+  [System.IO.File]::WriteAllText($pinnedConfig, '{"azure":{"purpose":"client_resources","tenant_id":"cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"}}')
+  $ErrorActionPreference = 'Continue'
+  $pinnedOutput = & $psHost -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'bin\coop.ps1') pi --fixture *>&1 | Out-String
+  $pinnedRc = $LASTEXITCODE
+  $ErrorActionPreference = $priorEap
+  Remove-Item -LiteralPath $pinnedConfig -Force
+  if ($pinnedRc -ne 0) { throw "tenant-pinned launch failed rc=$pinnedRc output=$pinnedOutput" }
+  if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi was not launched with a client tenant configured' }
+  if ((Get-Content -Raw (Join-Path $marker 'az-argv')).Trim() -ne "$fabricArgv --tenant cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd") {
+    throw 'launch token was not minted for the client tenant'
+  }
 
   Remove-Item -LiteralPath (Join-Path $marker 'pi-state') -Force
   $env:COOP_TEST_AZ_MODE = 'auth'
@@ -523,6 +550,8 @@ if (
   }
   Write-Host '  OK  PowerShell Fabric MCP token is child-only and fail-soft'
 } finally {
+  Pop-Location
+  if ($null -eq $oldCoopDir) { Remove-Item Env:COOP_DIR -ErrorAction SilentlyContinue } else { $env:COOP_DIR = $oldCoopDir }
   Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
   Remove-Item Env:COOP_TEST_HELPER_MODE -ErrorAction SilentlyContinue
   Remove-Item Env:COOP_TEST_HELPER_TOKENLIKE -ErrorAction SilentlyContinue

@@ -476,6 +476,10 @@ if ($mcpFound) {
         } elseif (-not $hasRo) {
           D-Warn '  • Power BI Modeling MCP missing --readonly — it would run READ-WRITE' 'change args to --readonly before any client work'
         }
+      } elseif ($s -eq 'fabric') {
+        # @microsoft/fabric-mcp signs in through az's default account; coop can
+        # pin only its own token mints to the client tenant (H2b).
+        D-Ok "  • $s server configured (uses az's default account; coop cannot pin its tenant)"
       } else {
         D-Ok "  • $s server configured"
       }
@@ -498,22 +502,27 @@ if ($mcpFound) {
     $sqlJson = (& $sqlPy @sqlArgs 2>$null | Out-String)
     $sqlState = 'unavailable'
     $sqlScope = 'unknown'
+    $sqlTenant = ''
     if ($sqlJson) {
       try {
         $sqlDoc = $sqlJson | ConvertFrom-Json
         if ($sqlDoc.state) { $sqlState = [string]$sqlDoc.state }
         if ($sqlDoc.target -and $sqlDoc.target.scope) { $sqlScope = [string]$sqlDoc.target.scope }
+        # The tenant the probe minted for (H2b); empty means az's default account.
+        if ($sqlDoc.tenant -is [string] -and $sqlDoc.tenant -match '^[A-Za-z0-9.-]+$') { $sqlTenant = $sqlDoc.tenant }
       } catch { $sqlState = 'unavailable' }
     }
+    $sqlFor = if ($sqlTenant) { "$sqlScope target, tenant $sqlTenant" } else { "$sqlScope target" }
+    $sqlTenantFlag = if ($sqlTenant) { " --tenant $sqlTenant" } else { '' }
     switch ($sqlState) {
-      'registered'            { D-Ok "  • fabric-sqlendpoint registered ($sqlScope target; direct HTTP, Azure CLI bearer token)" }
-      'auth_required'         { D-Warn "  • fabric-sqlendpoint auth_required ($sqlScope target)" 'sign in with Azure CLI/tenant access; doctor never triggers login' }
-      'azure_cli_unavailable' { D-Warn "  • fabric-sqlendpoint azure_cli_unavailable ($sqlScope target)" 'install/repair Azure CLI and ensure az is on PATH; this is not an authentication diagnosis' }
-      'token_launch_failed'   { D-Warn "  • fabric-sqlendpoint token_launch_failed ($sqlScope target)" 'Azure CLI was found but could not be launched; this is not an authentication diagnosis' }
-      'token_timeout'         { D-Warn "  • fabric-sqlendpoint token_timeout ($sqlScope target)" 'Azure CLI token command exceeded the bounded timeout; retry after checking Azure CLI responsiveness' }
-      'token_command_failed'  { D-Warn "  • fabric-sqlendpoint token_command_failed ($sqlScope target)" 'Azure CLI launched but token acquisition failed; run: az account get-access-token --resource https://api.fabric.microsoft.com --output json' }
-      'token_output_invalid'  { D-Warn "  • fabric-sqlendpoint token_output_invalid ($sqlScope target)" 'Azure CLI returned no usable accessToken JSON; verify the Fabric token command output' }
-      'tool_missing'          { D-Warn "  • fabric-sqlendpoint tool_missing ($sqlScope target)" 'managed MCP did not advertise executeSQL/execute_query' }
+      'registered'            { D-Ok "  • fabric-sqlendpoint registered ($sqlFor; direct HTTP, Azure CLI bearer token)" }
+      'auth_required'         { D-Warn "  • fabric-sqlendpoint auth_required ($sqlFor)" 'sign in with Azure CLI/tenant access; doctor never triggers login' }
+      'azure_cli_unavailable' { D-Warn "  • fabric-sqlendpoint azure_cli_unavailable ($sqlFor)" 'install/repair Azure CLI and ensure az is on PATH; this is not an authentication diagnosis' }
+      'token_launch_failed'   { D-Warn "  • fabric-sqlendpoint token_launch_failed ($sqlFor)" 'Azure CLI was found but could not be launched; this is not an authentication diagnosis' }
+      'token_timeout'         { D-Warn "  • fabric-sqlendpoint token_timeout ($sqlFor)" 'Azure CLI token command exceeded the bounded timeout; retry after checking Azure CLI responsiveness' }
+      'token_command_failed'  { D-Warn "  • fabric-sqlendpoint token_command_failed ($sqlFor)" "Azure CLI launched but token acquisition failed; run: az account get-access-token --resource https://api.fabric.microsoft.com --output json$sqlTenantFlag" }
+      'token_output_invalid'  { D-Warn "  • fabric-sqlendpoint token_output_invalid ($sqlFor)" 'Azure CLI returned no usable accessToken JSON; verify the Fabric token command output' }
+      'tool_missing'          { D-Warn "  • fabric-sqlendpoint tool_missing ($sqlFor)" 'managed MCP did not advertise executeSQL/execute_query' }
       'target_invalid'{ D-Warn '  • fabric-sqlendpoint target_invalid' 'run: coop sync after fixing fabric.default_sql_endpoint / registered URL' }
       'unavailable'   { D-Warn '  • fabric-sqlendpoint unavailable' 'run: coop sync; if already configured, retry when network/auth is available' }
       default         { D-Warn "  • fabric-sqlendpoint $sqlState" 'run: coop sync' }

@@ -7,6 +7,8 @@ import base64
 import importlib.util
 import json
 import os
+import shlex
+import shutil
 import struct
 import sys
 import tempfile
@@ -189,8 +191,8 @@ rest_calls = []
 pyodbc = FakePyodbc()
 
 
-def fake_token(*, timeout=8, resource=fsq.wmcp.FABRIC_RESOURCE):
-    resources.append(resource)
+def fake_token(*, timeout=8, resource=fsq.wmcp.FABRIC_RESOURCE, tenant=""):
+    resources.append((resource, tenant))
     return (FABRIC_TOKEN if resource == fsq.wmcp.FABRIC_RESOURCE else SQL_TOKEN, "ok")
 
 
@@ -228,7 +230,8 @@ assert output == {
     "truncated": True,
     "driver": "ODBC Driver 19 for SQL Server",
 }
-assert resources == [fsq.wmcp.FABRIC_RESOURCE, fsq.SQL_RESOURCE]
+# Both mints are pinned to the launch token's tenant.
+assert resources == [(fsq.wmcp.FABRIC_RESOURCE, TENANT), (fsq.SQL_RESOURCE, TENANT)]
 assert rest_calls == [
     (
         f"{fsq.wmcp.FABRIC_RESOURCE}/v1/workspaces/{WORKSPACE}/warehouses/{ITEM}",
@@ -425,6 +428,81 @@ with (
         "state": "auth_required",
         "stage": "fabric_rest_token",
     }
+
+# No launch identity: nothing is minted at all.
+with (
+    mock.patch.dict(os.environ, {"PI_CODING_AGENT_DIR": str(agent2)}, clear=False),
+    mock.patch.dict(sys.modules, {"pyodbc": FakePyodbc()}),
+    mock.patch.object(
+        fsq.wmcp, "az_access_token", side_effect=AssertionError("minted without a launch identity")
+    ),
+):
+    os.environ.pop(fsq.wmcp.FABRIC_TOKEN_ENV, None)
+    assert fsq.execute({"query": QUERY}, cwd=project2) == {"ok": False, "state": "identity_mismatch"}
+
+# H2b end to end: a guest whose az default account is the home tenant. The shared
+# fake az (tests/fixtures/fake-az.mjs) mints for --tenant, else for that default
+# account, and the real token helper runs. Unpinned mints would come back for the
+# home tenant and fail the launch-identity check.
+HOME_TENANT = "abababab-abab-4bab-8bab-abababababab"
+CLIENT_TENANT = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"
+FAKE_PRINCIPAL = "0a0a0a0a-0a0a-40a0-80a0-0a0a0a0a0a0a"
+
+
+def claims_jwt(claims: dict) -> str:
+    def enc(value):
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip("=")
+
+    return f"{enc({'alg': 'none'})}.{enc(claims)}.{enc('launch')}"
+
+
+with tempfile.TemporaryDirectory() as az_tmp:
+    az_root = Path(az_tmp)
+    az_state = az_root / "az-state"
+    az_bin = az_root / "az-bin"
+    az_state.mkdir()
+    az_bin.mkdir()
+    (az_state / "tokens").write_text(f"{HOME_TENANT} *\n{CLIENT_TENANT} *\n", encoding="ascii")
+    (az_state / "default-tenant").write_text(HOME_TENANT, encoding="ascii")
+    node = str(Path(shutil.which("node")).resolve())
+    fake = str(ROOT / "tests" / "fixtures" / "fake-az.mjs")
+    # The token helper hands az an allowlisted environment: the wrapper names the state.
+    if os.name == "nt":
+        (az_bin / "az.cmd").write_bytes(
+            f'@echo off\r\nset "COOP_TEST_AZ_STATE={az_state}"\r\n"{node}" "{fake}" %*\r\nexit /b %ERRORLEVEL%\r\n'.encode("ascii")
+        )
+    else:
+        (az_bin / "az").write_text(
+            f"#!/bin/sh\nCOOP_TEST_AZ_STATE={shlex.quote(str(az_state))} exec {shlex.quote(node)} {shlex.quote(fake)} \"$@\"\n",
+            encoding="ascii",
+        )
+        (az_bin / "az").chmod(0o755)
+    guest_pyodbc = FakePyodbc()
+    previous_cwd = os.getcwd()
+    os.chdir(ROOT)  # the helper refuses an az inside its working folder
+    try:
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "PI_CODING_AGENT_DIR": str(agent2),
+                    fsq.wmcp.FABRIC_TOKEN_ENV: claims_jwt({"tid": CLIENT_TENANT, "oid": FAKE_PRINCIPAL}),
+                    "PATH": f"{az_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                },
+                clear=False,
+            ),
+            mock.patch.dict(sys.modules, {"pyodbc": guest_pyodbc}),
+            mock.patch.object(fsq.wmcp, "fabric_get_json", side_effect=fake_rest),
+        ):
+            guest = fsq.execute({"query": QUERY}, cwd=project2)
+    finally:
+        os.chdir(previous_cwd)
+    assert guest["state"] == "ok", guest
+    assert (az_state / "argv.log").read_text(encoding="utf-8").splitlines() == [
+        f"account get-access-token --resource {fsq.wmcp.FABRIC_RESOURCE} --output json --tenant {CLIENT_TENANT}",
+        f"account get-access-token --resource {fsq.SQL_RESOURCE} --output json --tenant {CLIENT_TENANT}",
+    ]
+    assert guest_pyodbc.connection.closed is True
 
 temp.cleanup()
 lake_temp.cleanup()

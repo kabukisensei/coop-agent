@@ -86,6 +86,15 @@ def _import_yaml_reader():
     return _yaml
 
 
+def _import_azure_helpers():
+    """lib/azure_auth.py (finds and runs az, including az.cmd on Windows) and the
+    tenant rule from lib/warehouse_mcp.py, the same ones onboarding and coop use."""
+    _import_yaml_reader()  # puts lib/ on sys.path
+    import azure_auth  # noqa: E402  (path set above)
+    from warehouse_mcp import tenant_value  # noqa: E402
+    return azure_auth, tenant_value
+
+
 def config_path(override=None):
     """Resolve the config path: explicit arg > $COOP_DEVOPS_CONFIG > default."""
     return override or os.environ.get("COOP_DEVOPS_CONFIG") or DEFAULT_CONFIG
@@ -186,13 +195,22 @@ def _env_pat_name(key):
 
 def mint_azcli_token(tenant_id=None):
     """Mint a 1-hour Entra bearer token for Azure DevOps via the az CLI. Requires an
-    active `az login` (interactive user or service principal) in the target tenant."""
-    if not _which("az"):
+    active `az login` (interactive user or service principal) in the target tenant.
+
+    az runs through lib/azure_auth.py: on Windows the Azure CLI is az.cmd, which a
+    bare "az" argv cannot start. The tenant must be a GUID or a domain name (the
+    rule the launch uses), so it can never carry a cmd.exe metacharacter."""
+    azure_auth, tenant_value = _import_azure_helpers()
+    if not azure_auth.azure_cli_available():
         raise AdoError("az CLI not found on PATH — needed for azcli/sp auth")
-    cmd = ["az", "account", "get-access-token", "--resource", ADO_RESOURCE,
-           "--query", "accessToken", "-o", "tsv"]
+    args = ["account", "get-access-token", "--resource", ADO_RESOURCE,
+            "--query", "accessToken", "-o", "tsv"]
     if tenant_id:
-        cmd += ["--tenant", str(tenant_id)]
+        state, tenant = tenant_value(str(tenant_id))
+        if state != "ok":
+            raise AdoError("tenant_id is not a GUID or domain name")
+        args += ["--tenant", tenant]
+    cmd = azure_auth.azure_argv(*args)
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -599,8 +617,3 @@ def _chunks(seq, n):
 def _seg(s):
     """URL-encode one path segment (keeps things like spaces in a project name safe)."""
     return urllib.parse.quote(str(s), safe="")
-
-
-def _which(name):
-    from shutil import which
-    return which(name)
