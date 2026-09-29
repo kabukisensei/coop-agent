@@ -658,9 +658,9 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
   return files.filter((f) => !isAllowedCommitPath(f, allowed, denied));
 }
 
-// MCP tools carry no server-enforced read-only flag for Fabric (unlike powerbi's
-// --readonly), and this hook can't see whether a given MCP call mutates. As a
-// best-effort layer we CONFIRM tool calls whose names look like a mutating
+// MCP tools carry no server-enforced read-only flag for Fabric (unlike
+// powerbi-modeling-mcp's --readonly), and this hook can't see whether a given
+// MCP call mutates. As a best-effort layer we CONFIRM tool calls whose names look like a mutating
 // Fabric/Power BI/MCP action. Approval-required mutations fail closed headlessly;
 // this complements Pi approval and server-side read-only flags.
 const MCP_TOOLISH =

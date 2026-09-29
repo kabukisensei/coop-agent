@@ -200,7 +200,7 @@ shows anything still missing.
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
 | **Power BI authoring tools** — Report Authoring CLI, Power BI Modeling MCP, and Windows-only Desktop Bridge | installed globally from manifest-pinned npm packages; Doctor requires Report Authoring and validates Modeling MCP arguments |
-| **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
+| **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
 
 > `pi-powerline-footer` is **not** used. coop renders its own footer and splash via
 > `extensions/coop-powerline` (see [Footer & splash](#footer--splash)).
@@ -312,7 +312,7 @@ fab --version                # re-verify: should be the Microsoft Fabric CLI
 
 ## Managed MCP integrations (optional)
 
-Coop can generate six managed entries through `pi-mcp-adapter`. They are **read-only
+Coop can generate five managed entries through `pi-mcp-adapter`. They are **read-only
 first**, not read-only-only, and all are optional. `context-mode` is installed separately
 as a native Pi extension and is deliberately excluded from generated MCP configuration.
 
@@ -320,10 +320,14 @@ as a native Pi extension and is deliberately excluded from generated MCP configu
 | --- | --- | --- |
 | `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login (az's default account; coop cannot set its tenant); metadata reads by default, mutations approval-gated |
 | `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | every call approval-gated; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
-| `powerbi` | `powerbi-mcp-server --readonly` | requires a configured tenant; server-enforced read-only |
 | `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readonly` | no tenant/workspace required; server-enforced read-only |
 | `azure-devops` | Manifest-pinned Azure DevOps MCP for one organization | requires enabled toggle + valid organization; mutations approval-gated |
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` | requires only its enabled toggle; always-current Microsoft docs |
+
+`powerbi-mcp-server` (the former `powerbi` entry) is retired: it silently ignores
+`--readonly` and exposes `refresh_dataset`, a write
+([#93](https://github.com/kabukisensei/coop-agent/issues/93)). `coop sync` removes the
+entry it generated; an entry you added yourself stays, and `coop doctor` warns about it.
 
 `coop onboard` writes versioned `~/.coop/config`; `coop sync` deterministically generates
 COOP-managed entries in `~/.coop/agent/mcp.json` while preserving unmarked user-owned

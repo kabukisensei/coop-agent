@@ -1475,7 +1475,6 @@ export function applyProjectWizardSettings(text: string, settings: ProjectWizard
   set(["tools", "fabric_cicd", "enabled"], settings.fabricEnabled);
   set(["mcp", "fabric", "enabled"], settings.fabricEnabled);
   set(["mcp", "fabric_sqlendpoint", "enabled"], settings.fabricEnabled);
-  set(["mcp", "powerbi", "enabled"], settings.fabricEnabled);
   if (settings.fabricEnabled) {
     set(["fabric", "tenant_id"], settings.tenantId);
     set(["fabric", "default_workspace_name"], settings.fabricWorkspaceName);
@@ -1598,11 +1597,6 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "  fabric_sqlendpoint:",
     `    enabled: ${settings.fabricEnabled}`,
     "    requires_approval_actions: ['executeSQL', 'execute_query']",
-    "  powerbi:",
-    `    enabled: ${settings.fabricEnabled}`,
-    "    readonly_flag: true",
-    "    allowed_default_actions: ['list', 'read', 'inspect']",
-    "    requires_approval_actions: ['create', 'update', 'delete', 'publish']",
     "  microsoft_learn:",
     "    enabled: true",
     "  context_mode:",

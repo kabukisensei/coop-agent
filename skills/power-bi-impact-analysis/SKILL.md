@@ -38,8 +38,8 @@ not stand in for the PLAN/approval gate at step 4.
 
 - **`data_doc`** (`coop-data-doc`) — `scan` to refresh `graph.json`, then read
   lineage to walk upstream/downstream edges for the target object.
-- **Power BI MCP** (`powerbi-mcp-server --readonly`) — `list` / `read` /
-  `inspect` the semantic model, measures, relationships, and report usage.
+- **Power BI Modeling MCP** (`powerbi-modeling-mcp --readonly`) — `list` /
+  `read` / `inspect` the semantic model, measures, and relationships.
   Read-only; never create/update/publish.
 - **Fabric MCP** — read-only, to reach upstream warehouse/lakehouse objects.
 - **Microsoft Learn MCP** — current Power BI / semantic-model guidance.

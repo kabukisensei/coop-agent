@@ -28,8 +28,10 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 import json, pathlib, sys
 r=pathlib.Path(sys.argv[1]); m=json.load(open(r/'config/release-manifest.json'))
 assert m['coop_version']==(r/'VERSION').read_text().strip()
-for p in ['@microsoft/fabric-mcp','powerbi-mcp-server','@azure-devops/mcp','mcp-remote']:
+for p in ['@microsoft/fabric-mcp','@azure-devops/mcp','mcp-remote']:
     assert p in m['mcp_servers']
+# powerbi-mcp-server ignores --readonly and exposes refresh_dataset (#93): retired.
+assert 'powerbi-mcp-server' not in json.dumps(m)
 assert '@microsoft/powerbi-modeling-mcp' in m['npm_tools']
 # 0.0.1 was never published; Windows installs must use the first supported line.
 assert m['npm_tools']['@microsoft/powerbi-desktop-bridge-cli'] == '0.1.2'
