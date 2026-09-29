@@ -131,15 +131,14 @@ Useful flags:
 
 ### Windows
 
-On Windows, `coop` runs through the PowerShell wrapper `bin/coop.ps1` and the
-`bin/coop.cmd` shim (mirrors of `bin/coop`). From a clone of this repo in
-PowerShell:
+**Teammates: follow [Install coop on Windows](docs/install-windows.md).** It is one
+page: the prerequisite checklist in the order and wording the installer prints, getting
+the code at the newest release, `Install coop.cmd`, and the first sign-in.
 
-```powershell
-git clone <coop-agent repo url> coop-agent
-cd coop-agent
-.\bin\coop.cmd install
-```
+The rest of this section is reference. On Windows, `coop` runs through the PowerShell
+wrapper `bin/coop.ps1` and the `bin/coop.cmd` shim (mirrors of `bin/coop`);
+`Install coop.cmd` runs `bin/coop.ps1 install`, and from a terminal in the clone
+`.\bin\coop.cmd install` does the same.
 
 > **Why `.cmd`, not `.ps1`?** Stock Windows ships with the `Restricted` execution
 > policy, under which `.\bin\coop.ps1 install` dies with *"running scripts is
@@ -172,9 +171,8 @@ with no local source, partial and one-sided estates, mixed repositories, and ful
 connected estates. Edits make a backup and preserve comments, custom policies,
 and fields the wizard does not own.
 
-**No-terminal first-time setup (for non-technical members).** Prefer a Git clone, then
-have them double-click **`Install coop.cmd`**. A zip/shared-drive copy is suitable only
-for a one-time or offline install: `coop update` can update its tools but **cannot update
+A zip/shared-drive copy instead of a Git clone is suitable only for a one-time or
+offline install: `coop update` can update its tools but **cannot update
 the Coop repo layer** (skills, prompts, scripts, themes, or guardrails). Replace such a
 copy with a Git clone and rerun `.\bin\coop.cmd install`; `~/.coop` settings are preserved.
 
@@ -763,6 +761,7 @@ upstream release can temporarily restore upstream notices and `ctx_upgrade` with
 
 > New teammate? Hand them **[docs/onboarding.md](docs/onboarding.md)** — a one-page
 > clone → install → verify → use guide.
+> On Windows, start them on **[docs/install-windows.md](docs/install-windows.md)**.
 
 coop is distributed as **this Git repo**. Put it on a host your coworkers can reach
 (GitHub/Azure DevOps/internal), then each teammate runs the bootstrap once:
