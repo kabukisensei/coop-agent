@@ -1555,7 +1555,7 @@ function Invoke-CoopRepoFollowRelease {
       if ($LASTEXITCODE -eq 0) {
         & git -C $root merge-base --is-ancestor refs/heads/main refs/remotes/origin/main *> $null
         if ($LASTEXITCODE -ne 0) {
-          Coop-Warn "--edge: local branch main has commits that are not on origin/main — staying at $before" "see: git -C `"$root`" log --oneline origin/main..refs/heads/main"
+          Coop-Warn "--edge: local branch main has commits that are not on origin/main — staying at $before" "see: git -C `"$root`" log --oneline refs/remotes/origin/main..refs/heads/main"
           return
         }
       }

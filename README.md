@@ -722,7 +722,7 @@ upstream Pi, extensions, and tools; from a detached checkout it re-attaches to `
 that loses nothing. `--edge` is sticky: the release channel never moves backwards, so an
 `--edge` checkout stays on unreleased `main` until a release is tagged past it, then
 follows tags again on its own. To rejoin sooner while staying on `main`, first check that
-`git -C <coop-agent> log origin/main..refs/heads/main` prints nothing, then run
+`git -C <coop-agent> log refs/remotes/origin/main..refs/heads/main` prints nothing, then run
 `git -C <coop-agent> reset --keep vX.Y.Z` and `coop update`. For the head of `main` with
 manifest pins, run `git -C <coop-agent> pull --ff-only`, then `coop update`.
 

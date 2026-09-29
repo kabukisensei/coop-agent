@@ -419,6 +419,8 @@ git -C "$COOP_ROOT" reset -q --hard v0.9.0
 git -C "$COOP_ROOT" remote add fork "$ORIGIN"
 git -C "$COOP_ROOT" fetch -q fork
 git -C "$COOP_ROOT" branch -q --set-upstream-to=fork/main >/dev/null
+# A real-looking fork URL (never fetched): only the kabukisensei owner is canonical.
+git -C "$COOP_ROOT" remote set-url fork https://github.com/someone/coop-agent.git
 git -C "$COOP_ROOT" remote rename origin upstream
 git -C "$COOP_ROOT" remote set-url upstream "$U"
 S="$(coop_repo_stranded)"

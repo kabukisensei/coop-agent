@@ -1306,7 +1306,7 @@ coop_repo_follow_release() {
     elif git -C "$root" rev-parse -q --verify refs/heads/main >/dev/null 2>&1 \
          && ! git -C "$root" merge-base --is-ancestor refs/heads/main refs/remotes/origin/main >/dev/null 2>&1; then
       coop_warn "--edge: local branch main has commits that are not on origin/main — staying at $before" \
-        "see: git -C \"$root\" log --oneline origin/main..refs/heads/main"
+        "see: git -C \"$root\" log --oneline refs/remotes/origin/main..refs/heads/main"
     elif git -C "$root" checkout -q -B main --track refs/remotes/origin/main >/dev/null 2>&1; then
       coop_ok "coop-agent moved from $before to head of main ($(coop_repo_describe))"
     else

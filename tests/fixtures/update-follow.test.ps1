@@ -412,6 +412,8 @@ try {
   Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'add', 'fork', $script:Origin)
   Invoke-FixtureGit @('-C', $script:CoopRoot, 'fetch', '-q', 'fork')
   Invoke-FixtureGit @('-C', $script:CoopRoot, 'branch', '-q', '--set-upstream-to=fork/main')
+  # A real-looking fork URL (never fetched): only the kabukisensei owner is canonical.
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'set-url', 'fork', 'https://github.com/someone/coop-agent.git')
   Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'rename', 'origin', 'upstream')
   Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'set-url', 'upstream', $canonical)
   $sFork = Get-CoopRepoStranded
