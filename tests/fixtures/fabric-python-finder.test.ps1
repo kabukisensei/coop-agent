@@ -7,13 +7,32 @@ $ErrorActionPreference = 'Stop'
 # the Windows Git Bash CI leg; here we skip native Windows to avoid executing
 # deliberately-invalid stub .exe files under ErrorActionPreference=Stop.
 
-if ($env:OS -eq 'Windows_NT') {
-  Write-Output '  – skipped on native Windows (covered by the Git Bash suite)'
-  exit 0
-}
-
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 . (Join-Path $root 'lib/common.ps1')
+
+# #81: the version probe must reach a REAL interpreter intact. Windows PowerShell 5.1
+# (the CI job that runs this file on Windows, and coop.cmd's runtime) mangles embedded
+# double quotes in native arguments, which the stub interpreters below cannot show.
+# PowerShell 7.3+ reproduces 5.1's quoting with 'Legacy' argument passing, so the
+# Linux pwsh run catches a regression too; 5.1 has no such setting and ignores it.
+$realPy = @('python3', 'python') | ForEach-Object { Get-Command $_ -ErrorAction SilentlyContinue } |
+  Where-Object { $_.Source -and $_.Source -notmatch '\\WindowsApps\\' } | Select-Object -First 1
+if ($realPy) {
+  $PSNativeCommandArgumentPassing = 'Legacy'
+  $realVersion = Get-CoopPythonMinorVersion $realPy.Source
+  Remove-Variable PSNativeCommandArgumentPassing -ErrorAction SilentlyContinue
+  if ($realVersion -notmatch '^3\.\d+$') {
+    throw "version probe got '$realVersion' from a real $($realPy.Source) under PowerShell $($PSVersionTable.PSVersion)"
+  }
+  Write-Output "  ✓ version probe reads $realVersion from a real interpreter (PowerShell $($PSVersionTable.PSVersion.Major).$($PSVersionTable.PSVersion.Minor))"
+} else {
+  Write-Output '  – no real Python on PATH; version probe check skipped'
+}
+
+if ($env:OS -eq 'Windows_NT') {
+  Write-Output '  – stub-interpreter discovery skipped on native Windows (covered by the Git Bash suite)'
+  exit 0
+}
 
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("coop-fabric-py-" + [guid]::NewGuid().ToString('N'))
 $fakeLocal = Join-Path $tmp 'AppData'

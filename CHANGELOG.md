@@ -140,6 +140,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   (#121), before it publishes anything. `coop release` already tags only from an
   up-to-date `main` (#105); this catches a tag pushed by hand, which teammates
   would otherwise receive through `coop update` (H5).
+- Windows PowerShell 5.1 finds a Fabric-compatible Python without the `py` launcher
+  (#81). The version probe passed `print("%d.%d" % ...)` on the command line, and
+  5.1 does not escape embedded double quotes for native programs, so Python got a
+  SyntaxError and every candidate except the `py` launcher was skipped. Since H1
+  that failed the install prerequisite gate on such a machine. The probe now
+  carries no quotes, and the resolver fixture checks it against a real interpreter
+  with 5.1-style argument passing.
 - `coop init --migrate-legacy` runs on stock macOS bash 3.2 (#84). Without `--apply`,
   `--yes` or `--archive` (the default dry run) it failed with `migrate_args[@]: unbound
   variable`, because bash 3.2 treats an empty array as unset under `set -u`. The
