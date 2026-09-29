@@ -146,7 +146,8 @@ YAML/JSON, transpiles the TypeScript extensions with esbuild, and parses every
 > [RELEASE.md](RELEASE.md#when-to-release--explicit-instruction-only).
 
 From a clean working tree on an attached `main` that equals `origin/main` (all changes
-committed and pushed, `CHANGELOG.md` updated under `## [Unreleased]`):
+committed and pushed, `CHANGELOG.md` updated under `## [Unreleased]`; `coop release`
+fetches `origin` and refuses anything else):
 
 ```bash
 coop release minor        # or: patch | major  (default: patch)
@@ -154,14 +155,14 @@ coop release minor        # or: patch | major  (default: patch)
 
 `coop release` bumps `VERSION` + the extension manifests, rolls `[Unreleased]` into a
 dated `## [X.Y.Z]` section (leaving a fresh `[Unreleased]`), commits, tags `vX.Y.Z`,
-and pushes the commit + tag. Use `--no-push` to stop at the local tag, `--yes` to skip
-the confirm. SemVer in 0.x: **minor** for features/notable changes, **patch** for fixes.
+and pushes `main` and the tag in one atomic push (both land or neither does). Use
+`--no-push` to stop at the local tag, `--yes` to skip the confirm. SemVer in 0.x:
+**minor** for features/notable changes, **patch** for fixes.
 
 Pushing the tag is the fleet deployment: `coop update` moves teammates to the newest
-`vX.Y.Z` tag on `main`. After the push, confirm the tag is on `main`
-(`git fetch origin && git merge-base --is-ancestor vX.Y.Z origin/main && echo on-main`);
-the fleet ignores a tag that is not. Rollback is a new release, never a moved or deleted
-tag. See [RELEASE.md](RELEASE.md#d-coop-agent-this-repo).
+`vX.Y.Z` tag on `main` and ignores a tag that is not on `main`, which is why the tag
+only travels with `main`. Rollback is a new release, never a moved or deleted tag. See
+[RELEASE.md](RELEASE.md#d-coop-agent-this-repo).
 
 coop-agent is one of six coop-\* repos. When a change spans the suite
 (core → review tools → agent → website), release in the order documented in

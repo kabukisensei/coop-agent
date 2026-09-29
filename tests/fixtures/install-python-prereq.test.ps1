@@ -5,9 +5,13 @@
 # winget, py, or pymanager to repair a Python 3.14-only workstation.
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$install = Join-Path $root 'scripts\install.ps1'
-$update = Join-Path $root 'scripts\update.ps1'
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-install-python-' + [guid]::NewGuid().ToString('N'))
+# Run the installer and updater from a plain copy of this tree with no .git
+# (#104): step 1 of `coop update` fetches from origin and fast-forwards the
+# checkout it runs from, and a test must never touch the checkout running it.
+$src = Join-Path $t 'coop-agent'
+$install = Join-Path $src 'scripts\install.ps1'
+$update = Join-Path $src 'scripts\update.ps1'
 $bin = Join-Path $t 'bin'
 $calls = Join-Path $t 'calls'
 $isWindowsHost = ($env:OS -eq 'Windows_NT')
@@ -31,7 +35,11 @@ foreach ($name in @('PATH','HOME','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODI
 }
 
 try {
-  New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $t 'pipx-home'), (Join-Path $t 'pipx-bin'), (Join-Path $t 'agent'), (Join-Path $t 'program-files'), (Join-Path $t 'local-app-data') | Out-Null
+  New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $t 'pipx-home'), (Join-Path $t 'pipx-bin'), (Join-Path $t 'agent'), (Join-Path $t 'program-files'), (Join-Path $t 'local-app-data'), $src | Out-Null
+  # Dot entries other than the bundled .coop contract are git, CI and cache files.
+  Get-ChildItem -LiteralPath $root -Force |
+    Where-Object { $_.Name -eq '.coop' -or -not $_.Name.StartsWith('.') } |
+    ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $src -Recurse -Force }
   $runtimeFixture = Join-Path $t 'runtime-fixture'
   $pyodbcMetadata = Join-Path $runtimeFixture 'pyodbc-5.3.0.dist-info'
   New-Item -ItemType Directory -Force -Path $runtimeFixture, $pyodbcMetadata | Out-Null
@@ -68,10 +76,12 @@ exit /b 0
 '@
   Write-Shim 'git' @'
 #!/bin/sh
+echo "GIT $*" >> "$COOP_TEST_CALLS"
 [ "$1" = "--version" ] && { echo 'git version 2.50.0'; exit 0; }
 exit 1
 '@ @'
 @echo off
+echo GIT %*>>"%COOP_TEST_CALLS%"
 if "%1"=="--version" (
   echo git version 2.50.0
   exit /b 0
@@ -302,7 +312,7 @@ exit /b 0
   [System.IO.File]::WriteAllText($evidencePath, "exit=$rc`n$evidence")
   $output = $outItems | Out-String
   $ErrorActionPreference = $oldPreference
-  . (Join-Path $root 'lib\common.ps1')
+  . (Join-Path $src 'lib\common.ps1')
   $runtimePreference = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   $installedRuntime = Get-CoopFabricSqlRuntimeStatus
@@ -341,6 +351,9 @@ exit /b 0
   $ErrorActionPreference = $oldPreference
   if ($rc -ne 0) { Write-Error "update fixture exited $rc`nevidence file: $evidencePath`n$output`n--- stream-tagged ---`n$evidence`nCALLS:`n$(Get-Content $calls -Raw)" }
   $transcript = Get-Content $calls -Raw
+  # Coop-Emit writes through [Console]::Error, which *>&1 does not capture, so
+  # the git shim's log is the witness: step 1 must never point git at a checkout.
+  if ($transcript -match '(?m)^GIT -C ') { Write-Error "update step 1 ran git against a checkout; the fixture must run a copy, never the checkout running the tests (#104)`n$transcript" }
   if ($transcript -notlike '*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0*') { Write-Error "Updater did not rebuild Fabric CLI with standalone Python 3.12`n$transcript" }
   foreach ($expectedCall in @(
     'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force',

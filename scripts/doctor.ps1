@@ -457,7 +457,7 @@ foreach ($f in @(
 if ($mcpFound) {
   D-Ok "MCP config: $mcpFound"
   $mcpText = (Get-Content -LiteralPath $mcpFound -Raw -ErrorAction SilentlyContinue)
-  foreach ($s in @('fabric', 'powerbi', 'powerbi-modeling-mcp', 'azure-devops', 'microsoft-learn')) {
+  foreach ($s in @('fabric', 'powerbi-modeling-mcp', 'azure-devops', 'microsoft-learn')) {
     if ($mcpText -match ('(?i)"' + [regex]::Escape($s) + '"')) {
       if ($s -eq 'powerbi-modeling-mcp') {
         # Health requires BOTH flags: --start (the server must actually launch)
@@ -484,6 +484,12 @@ if ($mcpFound) {
         D-Ok "  • $s server configured"
       }
     }
+  }
+  # powerbi-mcp-server ignores --readonly and exposes refresh_dataset, a write
+  # (#93). coop no longer generates it and never removes a user-owned entry, so
+  # doctor names the risk instead of reporting the server as configured.
+  if ($mcpText -match '(?i)powerbi-mcp-server') {
+    D-Warn '  • powerbi-mcp-server is not read-only: it ignores --readonly and exposes refresh_dataset, a write (coop-agent#93)' "remove that entry from $mcpFound; coop's read-only Power BI MCP is powerbi-modeling-mcp"
   }
   if ($mcpText -notmatch '(?i)learn\.microsoft\.com|microsoft-learn') {
     D-Warn '  Microsoft Learn MCP not configured' 'coop sync   (adds it read-only)'

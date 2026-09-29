@@ -198,6 +198,36 @@ case "$out" in
   *) ko "doctor did not warn on unusable modeling config"; echo "$out" ;;
 esac
 
+# #93: powerbi-mcp-server ignores --readonly and exposes refresh_dataset. coop no
+# longer generates it and leaves a user-owned entry alone, so doctor warns with
+# the reason and never reports the entry as a configured server.
+d="$TMP/powerbi-mcp-server"
+mkdir -p "$d"
+cat > "$d/.mcp.json" <<'EOF'
+{
+  "mcpServers": {
+    "powerbi": {
+      "command": "npx",
+      "args": ["-y", "powerbi-mcp-server@0.1.0", "--authentication", "azcli", "--tenant", "user-tenant", "--readonly"]
+    }
+  }
+}
+EOF
+json_out="$( cd "$d" && COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" --json 2>/dev/null </dev/null )"
+if printf '%s' "$json_out" | python3 -c '
+import json, sys
+rows = json.load(sys.stdin)["checks"]
+reason = "powerbi-mcp-server is not read-only: it ignores --readonly and exposes refresh_dataset, a write (coop-agent#93)"
+hits = [r for r in rows if reason in r["name"]]
+assert len(hits) == 1 and hits[0]["status"] == "warn", hits
+assert hits[0]["hint"].startswith("remove that entry from "), hits
+assert not any("powerbi server configured" in r["name"] for r in rows), rows
+'; then
+  ok "doctor warns on a user-owned powerbi-mcp-server entry and names the reason"
+else
+  ko "doctor did not warn on a user-owned powerbi-mcp-server entry"; printf '%s\n' "$json_out" | grep -i powerbi
+fi
+
 # --- exact extension-fleet verification -----------------------------------------
 # Stub `pi` reporting an up-to-date fleet: every manifest extension at its pin.
 stub_ok="$(mktemp -d)"

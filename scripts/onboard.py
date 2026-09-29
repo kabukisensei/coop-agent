@@ -362,7 +362,6 @@ def run_config_questions(
             {
                 "fabric": bool(tenant),
                 "fabric_sql_endpoint": bool(tenant),
-                "power_bi": bool(tenant),
                 "power_bi_modeling": True,
                 "azure_devops": False,
                 "microsoft_learn": True,
@@ -371,7 +370,6 @@ def run_config_questions(
         if not tenant:
             omitted["fabric"] = "connect Azure later"
             omitted["fabric_sql_endpoint"] = "connect Azure later"
-            omitted["power_bi"] = "requires an Azure tenant"
         omitted["azure_devops"] = "set up later if needed"
         sys.stderr.write(
             "Using the recommended integrations. Customize them anytime with `coop onboard --config-only`.\n"
@@ -388,19 +386,8 @@ def run_config_questions(
             bool(old_i.get("fabric_sql_endpoint", old_i.get("fabric", True))),
         )
 
-        # Power BI MCP needs an explicit tenant ID. Never offer an enable toggle we
-        # cannot honor: without a tenant it stays disabled, visibly.
-        if tenant:
-            integrations["power_bi"] = read_confirm(
-                "Enable Power BI MCP?", bool(old_i.get("power_bi", True))
-            )
-        else:
-            integrations["power_bi"] = False
-            omitted["power_bi"] = "requires an Azure tenant"
-            sys.stderr.write(
-                "Power BI MCP requires an Azure tenant and will remain disabled.\n"
-            )
-
+        # No "Power BI MCP" toggle: powerbi-mcp-server is retired (#93) and never
+        # generated, and we never offer a toggle we cannot honor.
         integrations["power_bi_modeling"] = read_confirm(
             "Enable Power BI Modeling MCP?", bool(old_i.get("power_bi_modeling", True))
         )
@@ -471,7 +458,6 @@ def run_config_questions(
     # Honest summary BEFORE anything is saved.
     labels = {
         "fabric": "Microsoft Fabric MCP",
-        "power_bi": "Power BI MCP",
         "fabric_sql_endpoint": "Fabric Warehouse SQL endpoint MCP",
         "power_bi_modeling": "Power BI Modeling MCP",
         "azure_devops": "Azure DevOps MCP",
@@ -696,12 +682,6 @@ def cmd_onboard(args: argparse.Namespace) -> int:
         )
         return 1
     sys.stderr.write(f"Saved integration config to {CONFIG_JSON}.\n")
-    if not config["azure"].get("tenant_id") and (config["integrations"]["power_bi"]):
-        # Only reachable via hand-edited legacy configs; the wizard itself can no
-        # longer save Power BI as enabled without a tenant.
-        sys.stderr.write(
-            "Power BI MCP is omitted until an Azure tenant is configured; run `coop onboard --edit`.\n"
-        )
     if os.environ.get("COOP_ONBOARD_FROM_LAUNCH") == "1":
         sys.stderr.write("Setup complete. Starting Coop…\n")
     else:

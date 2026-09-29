@@ -7,6 +7,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- MCP: `powerbi-mcp-server` is retired (#93). It silently ignores `--readonly` and
+  exposes `refresh_dataset` (a write that triggers a dataset refresh on the client
+  tenant), which coop's guardrails do not classify as a mutation, while coop
+  documented it as read-only. Coop no longer generates the `powerbi` MCP entry, and the
+  `powerbi-mcp-server` pin is gone from the release manifest. `@microsoft/powerbi-modeling-mcp`
+  (`--start --readonly`) is the only Power BI MCP. `coop sync` removes the `powerbi`
+  entry coop generated (or its old `TODO-`/`@latest` placeholder); a `powerbi` entry
+  you added yourself is left in place, and `coop doctor` (both platforms) warns about
+  any `powerbi-mcp-server` entry and names the reason. The bundled contracts and both
+  project wizards no longer write the `mcp.powerbi` block (`readonly_flag: true`); an
+  existing contract keeps it untouched. `coop onboard` no longer asks "Enable Power BI
+  MCP?", no longer lists it as enabled or omitted in the review summary, and no longer
+  tells you to set a tenant for it; a saved `integrations.power_bi` value is dropped
+  the next time onboarding saves the config.
+
 - `coop update` follows release tags instead of the head of `main` (H5, #78). Step 1
   fast-forwards the coop-agent checkout to the newest `vX.Y.Z` tag on `main` that is
   ahead of it and never moves a checkout backwards, so merges to `main` reach teammates
@@ -110,6 +125,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- `coop release` can no longer push a tag that is not on `main` (#105). It fetches
+  `origin` and refuses, before changing anything, unless `HEAD` is the branch `main`
+  at exactly `origin/main`; a detached HEAD, another branch, or unpushed or missing
+  commits each stop it with the fix. It then pushes `main` and the tag in one atomic
+  push (`git push --atomic origin main vX.Y.Z`), so when origin rejects the branch (for
+  example, someone merged during the gate) the tag does not land either, and the
+  release exits non-zero with the retry command. Before, a failed branch push still
+  pushed the tag, and `coop update`, which follows only tags on `main` since H5,
+  ignored it without a warning. `--no-push` now prints the same atomic push command.
 - Incremental BI patterns are chosen by the repository's `layer:` front matter (the same
   front-matter reader as the standards wiki). The old
   path keyword filter matched the clone's own folder name (`incremental-bi`), so every
@@ -129,6 +153,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   instead of a constant in both installers. A Python found off `PATH` (Python
   install manager, winget user scope) is added to `PATH` for the rest of the
   install, so pipx no longer reports "python missing" in the same window.
+- On a first install, the prerequisite stop no longer says `run: coop install` before
+  the `coop` launcher exists (#112). While `coop` is not on `PATH`, the stop line, its
+  `--prereqs auto` hint, and the `--prereqs auto` re-check stop name a command that
+  works from the clone, with the clone's absolute path: on Windows, double-click
+  `Install coop.cmd` again (or run `& "<clone>\bin\coop.cmd" install`); in bash,
+  `<clone>/bin/coop install`. Once `coop` is on `PATH` the wording is unchanged.
+  README, `docs/onboarding.md`, and `docs/install-windows.md` now describe the same
+  stop instead of telling first-time users to run `coop install`.
 - README no longer says Azure CLI is both auto-installed and not auto-installed.
 - Azure sign-in happens automatically (master plan H2, #77). The launch preflight
   (`coop`, `coop web`) takes the client tenant from one chain: the project's
@@ -182,6 +214,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `C:\Program Files (x86)`. They ran a bare `az`, which Windows cannot start. A
   client `tenant_id` that is not a GUID or a domain name is now rejected before az
   runs.
+- The fleet fixtures no longer fetch or move the checkout that runs them (#104).
+  `tests/fleet-execution.test.sh`, `tests/home-guard.test.sh`,
+  `tests/install-python-prereq.test.sh` and its Windows twin ran the real
+  `scripts/update.*` (and home-guard `scripts/doctor.sh`) from the repository root,
+  so step 1 of `coop update` fetched from the checkout's `origin` and could
+  fast-forward it to a newer release, and doctor made its daily fetch there. They
+  now run from a plain copy of the tree with no `.git`, and each fails if the update
+  it runs sees a git checkout.
 - The Azure DevOps digest reports a client with no `project` before it signs in
   (#103). It minted a token with az first, so `tests/ado.test.sh` ran the
   developer's real Azure CLI and credentials, and failed on a machine without az.

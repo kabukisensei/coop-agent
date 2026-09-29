@@ -31,11 +31,16 @@ from warehouse_mcp import (  # noqa: E402
 SERVER_PACKAGES = {
     "fabric": "@microsoft/fabric-mcp",
     "fabric-sqlendpoint": "mcp-remote",
-    "powerbi": "powerbi-mcp-server",
     "powerbi-modeling-mcp": "@microsoft/powerbi-modeling-mcp",
     "azure-devops": "@azure-devops/mcp",
     "microsoft-learn": "mcp-remote",
 }
+# Servers COOP generated in earlier releases and no longer generates. Their names
+# are still COOP's, so a marked entry or a legacy TODO-/@latest placeholder is
+# removed on the next sync; an unmarked user-owned entry is left alone (doctor
+# warns). `powerbi` ran powerbi-mcp-server, which ignores --readonly and exposes
+# refresh_dataset, a write (#93); powerbi-modeling-mcp is the Power BI MCP.
+RETIRED_SERVERS = {"powerbi"}
 # NOTE: context-mode is deliberately NOT here. It is a native Pi extension
 # (release manifest `extensions` list, installed via `pi install`) — generating it
 # too as an MCP server would register the same capability twice.
@@ -155,6 +160,9 @@ def desired_servers(
         if isinstance(azure.get("tenant_id", ""), str)
         else ""
     )
+    # Current Azure-backed MCP servers are exclusively client-facing. The future
+    # Shared Knowledge server must read a separate `knowledge` config and use its
+    # own authentication/token cache, never this Azure CLI credential domain.
     tenant_purpose = azure.get("purpose", "client_resources")
     if tenant and tenant_purpose != "client_resources":
         raise ValueError(
@@ -198,23 +206,6 @@ def desired_servers(
                 **grant_target_metadata(project or {}),
             }
             out["fabric-sqlendpoint"] = sql_entry
-    # Current Azure-backed MCP servers are exclusively client-facing. The future
-    # Shared Knowledge server must read a separate `knowledge` config and use its
-    # own authentication/token cache, never this Azure CLI credential domain.
-    if enabled("power_bi") and tenant:
-        out["powerbi"] = {
-            "command": "npx",
-            "args": [
-                "-y",
-                spec(manifest, SERVER_PACKAGES["powerbi"]),
-                "--authentication",
-                "azcli",
-                "--tenant",
-                tenant,
-                "--readonly",
-            ],
-            "env": env,
-        }
     if enabled("power_bi_modeling"):
         out["powerbi-modeling-mcp"] = {
             "command": "npx",
@@ -254,7 +245,9 @@ def legacy_seeded(name: str, entry: Any) -> bool:
     A same-package npx entry with real tenant/org/auth values is user-owned and must
     never be seized. TODO-/@latest were shipped by COOP and are safe to migrate.
     """
-    if name not in SERVER_PACKAGES or not isinstance(entry, dict):
+    if (
+        name not in SERVER_PACKAGES and name not in RETIRED_SERVERS
+    ) or not isinstance(entry, dict):
         return False
     args = entry.get("args", [])
     return (

@@ -21,8 +21,9 @@ command for anything missing (full table: [README → Prerequisites](../README.m
 6. ODBC Driver 18 for SQL Server (live SQL; install offers it after the Fabric CLI)
 7. Tabular Editor CLI (`te`), optional, for BPA reviews
 
-Install the ✗ rows in order, open a new terminal, and run `coop install` again. Or run
-`coop install --prereqs auto` to have coop run those commands for you.
+Install the ✗ rows in order, open a new terminal, and run the command the installer
+prints (on Windows, double-click **Install coop.cmd** again). Or run the
+`--prereqs auto` command it prints to have coop run those commands for you.
 
 ## 2. Install
 

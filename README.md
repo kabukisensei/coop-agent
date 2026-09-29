@@ -79,7 +79,9 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 `coop install` checks every prerequisite **before it installs anything**, in the
 order below, and prints ✓ or ✗ for each. When a required one is missing it stops,
 prints the exact command to install it, and asks you to open a new terminal and run
-`coop install` again. `coop doctor` shows the same list with the same commands.
+the install again. Until the install links `coop` onto `PATH`, that stop names the
+clone's own launcher instead of `coop install` (on Windows: double-click
+**Install coop.cmd** again). `coop doctor` shows the same list with the same commands.
 
 | Order | Prerequisite | Needed | Command printed on Windows |
 | --- | --- | --- | --- |
@@ -170,7 +172,7 @@ shows anything still missing.
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
 | **Power BI authoring tools** — Report Authoring CLI, Power BI Modeling MCP, and Windows-only Desktop Bridge | installed globally from manifest-pinned npm packages; Doctor requires Report Authoring and validates Modeling MCP arguments |
-| **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
+| **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
 | **Windows double-click launchers**: **coop** opens the chat window (`coop web`; its server console starts minimized, and closing that window stops coop), **coop (terminal)** opens the classic terminal agent | created on the Start Menu and Desktop, both starting in your home folder. Purely additive: `coop` in any terminal is unchanged |
 
 > `pi-powerline-footer` is **not** used. coop renders its own footer and splash via
@@ -217,7 +219,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
 | `coop new-skill <name>` | Scaffold `skills/<name>/SKILL.md` |
 | `coop new-prompt <name>` | Scaffold `prompts/<name>.md` |
-| `coop release [patch\|minor\|major] [--yes] [--no-push] [--no-check]` | Cut a release — bump version, roll CHANGELOG, commit + tag + push (default `patch`). Build-checks the extensions first (skip with `--no-check`); `--no-push` tags locally only; `--yes` skips the confirm |
+| `coop release [patch\|minor\|major] [--yes] [--no-push] [--no-check]` | Cut a release — bump version, roll CHANGELOG, commit + tag, then push `main` and the tag atomically (default `patch`). Runs only on `main` at `origin/main`. Build-checks the extensions first (skip with `--no-check`); `--no-push` tags locally only; `--yes` skips the confirm |
 | **Pi management (aliased under coop)** | |
 | `coop list` | List installed Pi extensions (`pi list`) |
 | `coop config` | Open Pi's resource TUI (`pi config`) |
@@ -287,7 +289,7 @@ fab --version                # re-verify: should be the Microsoft Fabric CLI
 
 ## Managed MCP integrations (optional)
 
-Coop can generate six managed entries through `pi-mcp-adapter`. They are **read-only
+Coop can generate five managed entries through `pi-mcp-adapter`. They are **read-only
 first**, not read-only-only, and all are optional. `context-mode` is installed separately
 as a native Pi extension and is deliberately excluded from generated MCP configuration.
 
@@ -295,10 +297,14 @@ as a native Pi extension and is deliberately excluded from generated MCP configu
 | --- | --- | --- |
 | `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login (az's default account; coop cannot set its tenant); metadata reads by default, mutations approval-gated |
 | `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | every call approval-gated; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
-| `powerbi` | `powerbi-mcp-server --readonly` | requires a configured tenant; server-enforced read-only |
 | `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readonly` | no tenant/workspace required; server-enforced read-only |
 | `azure-devops` | Manifest-pinned Azure DevOps MCP for one organization | requires enabled toggle + valid organization; mutations approval-gated |
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` | requires only its enabled toggle; always-current Microsoft docs |
+
+`powerbi-mcp-server` (the former `powerbi` entry) is retired: it silently ignores
+`--readonly` and exposes `refresh_dataset`, a write
+([#93](https://github.com/kabukisensei/coop-agent/issues/93)). `coop sync` removes the
+entry it generated; an entry you added yourself stays, and `coop doctor` warns about it.
 
 `coop onboard` writes versioned `~/.coop/config`; `coop sync` deterministically generates
 COOP-managed entries in `~/.coop/agent/mcp.json` while preserving unmarked user-owned
