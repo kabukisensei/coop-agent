@@ -236,7 +236,7 @@ fix the previous one. Releases are tagged (`v0.23.5`) but nothing consumes the t
 **Fix:** `coop update` fetches tags and checks out the newest `v*` tag by default;
 `coop update --edge` keeps today's head-of-`main` behavior for maintainers. Doctor's
 staleness nudge compares against the newest tag, not the branch. The version
-report already carries the SHA, so support can still tell which tag a machine runs.
+report carries `git describe` since #108, so support can tell which commit a machine runs.
 
 **Acceptance:** a machine on `v0.23.5` with newer unreleased commits on `main` stays
 on `v0.23.5` after `coop update`; after Aaron tags `v0.23.6` it moves there; `--edge`

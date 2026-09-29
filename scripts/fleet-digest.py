@@ -31,6 +31,14 @@ def _esc_md(s):
     if s is None: return ""
     return str(s).replace("|", "\\|")
 
+def _coop_label(m):
+    """'0.23.5 (v0.23.5-21-gdf91630)' when the snapshot carries coop_describe
+    (a git checkout, #108); the bare coop_version for a non-git copy or an older
+    payload without the field."""
+    cv = m.get("coop_version", "unknown")
+    cd = m.get("coop_describe")
+    return f"{cv} ({cd})" if cd else cv
+
 def _days_since(iso, now):
     if not iso: return None
     try:
@@ -129,7 +137,6 @@ def _render_md(machines, now, tested_with):
     lines.append("|---------|------|--------------:|----------|----------|----------|")
 
     for m in machines:
-        cv = m.get("coop_version", "unknown")
         pv = m.get("pi_version", "unknown")
 
         days = _days_since(m.get("timestamp"), now)
@@ -169,7 +176,7 @@ def _render_md(machines, now, tested_with):
         if tool_mismatches:
             pv_str += "; " + "; ".join(tool_mismatches)
 
-        lines.append(f"| {_esc_md(m.get('hostname', 'unknown'))} | {_esc_md(m.get('user', 'unknown'))} | {_esc_md(days_str)} | {f_str} | {w_str} | coop {_esc_md(cv)}, pi {pv_str} |")
+        lines.append(f"| {_esc_md(m.get('hostname', 'unknown'))} | {_esc_md(m.get('user', 'unknown'))} | {_esc_md(days_str)} | {f_str} | {w_str} | coop {_esc_md(_coop_label(m))}, pi {pv_str} |")
 
     return "\n".join(lines)
 
@@ -185,7 +192,6 @@ def _render_html(machines, now, tested_with):
     html.append(f'<tr><th {css_th}>Machine</th><th {css_th}>User</th><th {css_th}>Last Check-in</th><th {css_th}>Failures</th><th {css_th}>Warnings</th><th {css_th}>Versions</th></tr>')
 
     for m in machines:
-        cv = m.get("coop_version", "unknown")
         pv = m.get("pi_version", "unknown")
 
         days = _days_since(m.get("timestamp"), now)
@@ -224,7 +230,7 @@ def _render_html(machines, now, tested_with):
         if tool_mismatches:
             pv_str += "<br>" + "<br>".join(tool_mismatches)
 
-        html.append(f'<tr><td {css_td}>{_esc_html(m.get("hostname", "unknown"))}</td><td {css_td}>{_esc_html(m.get("user", "unknown"))}</td><td {css_td}>{_esc_html(days_str)}</td><td {css_td}>{f_str}</td><td {css_td}>{w_str}</td><td {css_td}>coop {_esc_html(cv)}<br>pi {pv_str}</td></tr>')
+        html.append(f'<tr><td {css_td}>{_esc_html(m.get("hostname", "unknown"))}</td><td {css_td}>{_esc_html(m.get("user", "unknown"))}</td><td {css_td}>{_esc_html(days_str)}</td><td {css_td}>{f_str}</td><td {css_td}>{w_str}</td><td {css_td}>coop {_esc_html(_coop_label(m))}<br>pi {pv_str}</td></tr>')
 
     html.append('</table></div>')
     return "".join(html)
