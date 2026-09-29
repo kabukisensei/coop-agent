@@ -134,6 +134,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   "Fix the bug in the report generator script", "Add a silver badge to the website header"
   and "Change the button color from silver to gold" get nothing, while "Update the status
   report in Power BI" and "Update the README with the silver dedupe steps" keep the floor.
+  So do subtotals, a page added to a Power BI report and naming conventions or standards
+  ("Fix the matrix subtotals on the project status report", "Add a Marketing page to the
+  Sales report", "Update the README with the silver and gold naming conventions"), and a
+  title-case name before "Status report" is a report, not a status document ("Add a Risks
+  page to the Project Status report"; "the Weekly Status Report" is still a document).
   Everyday prompts outside that list get what the floor gave them before: "Review the
   quarterly report with the client", "Fix the Visual Studio build and report the failing
   tests", "Add the weekly report to my browser bookmarks", "Update the warehouse stock
@@ -147,7 +152,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   not. A bare "model" no longer counts as Power BI context, so "how the churn model did
   against the success measures" and "the business model canvas with the key measures" get
   no DAX; Power BI, DAX, PBIX/PBIP/PBIR, a semantic or tabular model, or a dataset still
-  do. Debug, tune, troubleshoot, speed up and dedupe count as requests. Three more wiki
+  do. A fact, dimension or date table next to a model or a measure keeps the Power BI model
+  and DAX even with SQL words ("Create the gold fact table for budgets and add a Budget
+  Amount measure", "relate it to the GL fact in the model"); only SQL-only table work drops
+  them. Neither a template placeholder ("a project charter for [Project Name] with the
+  success measures"), a visual for slides or a visual merchandising role, a measure table
+  with no model or other measures ("a measure table for converting recipes"), nor a web
+  domain before "views" ("example.com views") reads as DAX, model or SQL work.
+  Debug, tune, troubleshoot, speed up and dedupe count as requests. Three more wiki
   rules now arrive: "fix the format strings on the currency measures" gets the DAX articles
   (Power BI Measures holds the format-string rules); "relate it to the Budget Version
   dimension" gets Power BI Relationships; and "change silver.custtable.creditmax ... to
@@ -158,10 +170,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `buildStandardsContext` against the front matter of every active wiki article at
   a00c8cc) is a regression test: 48 of 52 prompts pass (main scored 23), and the 4 known
   failures are listed with how they fail, so a fix or a regression both fail the suite
-  until the list is updated. 26 holdout rows (report, gold/silver and Fabric warehouse
+  until the list is updated. 34 holdout rows (report, gold/silver and Fabric warehouse
   wording, the fresh prompts above, and two "model ... measures" prompts that must get
-  nothing) all pass; 20 negatives get no standards (main leaked 12 of them); 6 floor-chatter
-  rows get exactly main's domains. Every prompt and holdout row records the domains `main`
+  nothing) all pass; 26 negatives get no standards (main leaked 13 of them); 6 floor-chatter
+  rows get exactly main's domains. A title-case report name costs some chatter: "Write the
+  Project Status Report for the steering committee" gets the report articles, as on main.
+  Every prompt and holdout row records the domains `main`
   selected before #101 and fails if it loses one, except golden prompts 2-4, SQL fact and
   dimension table work that deliberately drops the Power BI model main's bare "fact table"
   and "dimension table" rule added. Still missed: PBIX/PBIP and `.gitignore` prompts never

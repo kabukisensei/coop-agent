@@ -96,7 +96,9 @@ try {
 
   // Holdout rows: ordinary wording from outside the 52 (a Power BI report with a slicer,
   // visual, bookmark, tooltip, theme or card; a gold proc, sproc, SP or merge; "silver
-  // custtable"; "... to silver"; the warehouse in a Fabric workspace; bronze -> silver),
+  // custtable"; "... to silver"; the warehouse in a Fabric workspace; bronze -> silver;
+  // a gold fact or dimension table next to a measure or "the model"; a page or matrix
+  // subtotals on a report called Marketing or Project Status; README naming conventions),
   // plus a churn model and a business model canvas "measures" that must get nothing.
   // Every one passes; there is no known-failures list here.
   assert.ok(golden.holdout.length >= 26);
@@ -120,9 +122,11 @@ try {
 
   // Negatives get no standards through the real entry point, with the wiki generation
   // active: the floor never reaches some ("format strings in the Python logging calls",
-  // "accounts.py views"), and gives way in the known non-coding contexts for the rest
-  // (a status report, a report generator or button, gold/silver badges, sponsors, tiers
-  // and colors, README and website wording).
+  // "accounts.py views", "example.com views", a [Project Name] placeholder, a visual for
+  // slides or a visual merchandising role next to "measures", a measure table for
+  // recipes), and gives way in the known non-coding contexts for the rest (a status
+  // report, a report generator or button, gold/silver badges, sponsors, tiers and colors,
+  // README and website wording).
   const leaked = golden.negatives.map((prompt) => ({ prompt, injected: standardsFor(prompt).headings })).filter((row) => row.injected.length);
   assert.deepEqual(leaked, []);
 

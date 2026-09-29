@@ -463,8 +463,11 @@ try {
       ["Write a DAX measure for sales from the gold fact table", ["semantic_model", "dax", "sql"]],
       ["Add the gold date table to the Finance dataset", ["semantic_model", "dax", "sql"]],
       ["Fix the visual that reads the gold fact table", ["semantic_model", "dax", "sql"]],
-      // A bare "model" is not Power BI context (#101): the gold date table here is SQL work.
-      ["Add the gold date table to the Finance model", ["sql"]],
+      // A bare "model" is not Power BI context (#101), but a fact, dimension or date table
+      // next to a model or a measure is model work even with SQL words (#101).
+      ["Add the gold date table to the Finance model", ["semantic_model", "dax", "sql"]],
+      ["Create the gold fact table for budgets and add a Budget Amount measure on top of it", ["semantic_model", "dax", "sql"]],
+      ["Build the fiscal calendar dimension table in gold and relate it to the GL fact in the model", ["semantic_model", "dax", "sql"]],
       ["Explain this measure over the gold fact table", ["semantic_model", "dax", "sql"]],
       // Report: PBIX, PBIP, PBIR, drillthrough.
       ["Fix the PBIX file", ["semantic_model"]],
@@ -482,6 +485,8 @@ try {
       ["Fix the tooltip on the Sales report", ["semantic_model"]],
       ["Update the AP Aging report so the slicer defaults to the current month", ["semantic_model"]],
       ["Fix the Sales report so the visuals load faster", ["semantic_model"]],
+      // Next to a Power BI report any visual is Power BI context, even "visual design" (#101).
+      ["Review the visual design of the Sales report and the measures behind it", ["semantic_model", "dax"]],
       ["Add a visual timeline to the status report for the client", []],
       ["Update the dark theme on the bug report form", []],
       ["Fix the Visual Studio build and report the failing tests", []],
@@ -501,6 +506,17 @@ try {
       ["Fix the measures behind the region slicer", ["dax"]],
       ["Fix the sort by on the Month measure", ["dax"]],
       ["Fix the measure that sums [Amount]", ["dax"]],
+      // A template placeholder is not a reference unless table-qualified; a measure table
+      // needs a model, other measures or Power BI context (#101).
+      ["Fix the measure that filters on Sales[Project Name]", ["dax"]],
+      ["Write a project charter for [Project Name] with the success measures and a rough timeline", []],
+      ["Add a measure table for the Sales measures", ["semantic_model", "dax"]],
+      ["Create a measure table for converting my grandmother's recipes from cups to grams", []],
+      // A visual as an everyday adjective or in a presentation is not Power BI context,
+      // and a web domain before "views" is not a SQL view (#101).
+      ["Design a visual for the town hall slides showing the austerity measures the council passed", []],
+      ["Write a cover letter for a visual merchandising role and mention the inventory measures I introduced", []],
+      ["Explain the drop in example.com views after we redesigned the homepage", []],
       ["Fix the format strings on the currency measures so the parenthesized negatives line up", ["dax"]],
       // ...and not in everyday English: verbs, security/safety measures, "measure of", a
       // lowercase word that spells a DAX function, or no Power BI context at all.

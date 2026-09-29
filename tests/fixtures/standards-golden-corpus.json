@@ -108,7 +108,15 @@
     {"prompt": "Add a new page to the Inventory report with a card for on-hand qty", "domains_expected": ["semantic_model"], "must_include": ["Power BI Report Page Formatting", "Power BI Report Visuals", "Power BI App Deployment"], "must_not_include": ["SQL Conventions", "Power BI DAX"], "main_domains": ["semantic_model"]},
     {"prompt": "Write up how the churn model did against the success measures we agreed with marketing", "domains_expected": [], "must_include": [], "must_not_include": [], "main_domains": [], "no_standards": true},
     {"prompt": "Update the business model canvas with the key measures for year one", "domains_expected": [], "must_include": [], "must_not_include": [], "main_domains": [], "no_standards": true},
-    {"prompt": "Tune the SP that loads the gold AR aging", "domains_expected": ["sql"], "must_include": ["SQL Conventions", "Gold Stored Procedures"], "must_not_include": ["Silver Layer", "Power BI DAX"], "main_domains": []}
+    {"prompt": "Tune the SP that loads the gold AR aging", "domains_expected": ["sql"], "must_include": ["SQL Conventions", "Gold Stored Procedures"], "must_not_include": ["Silver Layer", "Power BI DAX"], "main_domains": []},
+    {"prompt": "Create the gold fact table for budgets and add a Budget Amount measure on top of it", "domains_expected": ["sql", "semantic_model", "dax"], "must_include": ["Gold Fact Tables", "Power BI Fact Tables", "Power BI Measures"], "must_not_include": ["Silver Layer", "Power BI Report Visuals"], "main_domains": ["semantic_model", "dax", "sql"]},
+    {"prompt": "Build the fiscal calendar dimension table in gold and relate it to the GL fact in the model", "domains_expected": ["sql", "semantic_model", "dax"], "must_include": ["Gold Dimension Tables", "Organizing Power BI Tables", "Power BI Relationships"], "must_not_include": ["Silver Layer", "Power BI Report Visuals"], "main_domains": ["semantic_model", "dax", "sql"]},
+    {"prompt": "Add a Marketing page to the Sales report for the campaign KPIs", "domains_expected": ["semantic_model"], "must_include": ["Power BI Report Page Formatting", "Power BI Report Visuals"], "must_not_include": ["Power BI DAX", "SQL Conventions"], "main_domains": ["semantic_model"]},
+    {"prompt": "Fix the matrix subtotals on the Project Status report", "domains_expected": ["semantic_model"], "must_include": ["Power BI Report Visuals"], "must_not_include": ["Power BI DAX", "SQL Conventions"], "main_domains": ["semantic_model"]},
+    {"prompt": "Update the README with the silver and gold naming conventions", "domains_expected": ["documentation", "sql"], "must_include": ["SQL Conventions", "Gold Fact Tables", "Gold Dimension Tables", "Gold Views"], "must_not_include": ["Power BI DAX", "Power BI Report Visuals"], "main_domains": ["documentation", "sql"]},
+    {"prompt": "Add a Risks page to the Project Status report", "domains_expected": ["semantic_model"], "must_include": ["Power BI Report Page Formatting", "Power BI Report Visuals"], "must_not_include": ["Power BI DAX", "SQL Conventions"], "main_domains": ["semantic_model"]},
+    {"prompt": "Fix the matrix subtotals on the project status report", "domains_expected": ["semantic_model"], "must_include": ["Power BI Report Visuals"], "must_not_include": ["Power BI DAX", "SQL Conventions"], "main_domains": ["semantic_model"]},
+    {"prompt": "Update the README with the gold naming standards", "domains_expected": ["documentation", "sql"], "must_include": ["SQL Conventions", "Gold Fact Tables", "Gold Dimension Tables", "Gold Views"], "must_not_include": ["Power BI DAX", "Silver Layer"], "main_domains": ["documentation", "sql"]}
   ],
   "negatives": [
     "Write a status report for the client on this week's progress",
@@ -130,7 +138,13 @@
     "Add a hover effect that turns the link text to gold",
     "Add the logos to the gold sponsors section",
     "Fix the gold badge and merge the PR",
-    "Fix the tooltip on the report button"
+    "Fix the tooltip on the report button",
+    "Write a project charter for [Project Name] with the success measures and a rough timeline",
+    "Design a visual for the town hall slides showing the austerity measures the council passed",
+    "Explain the drop in example.com views after we redesigned the homepage",
+    "Create a measure table for converting my grandmother's recipes from cups to grams",
+    "Write a cover letter for a visual merchandising role and mention the inventory measures I introduced",
+    "Write the Weekly Status Report for the client"
   ],
   "floor_chatter": [
     {"prompt": "Review the quarterly report with the client and list their questions", "main_domains": ["semantic_model"]},
