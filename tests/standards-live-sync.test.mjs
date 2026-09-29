@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { activeCanonicalGeneration, buildStandardsContext, fsyncDirectory, fsyncFile, pinStandardsTask, promoteReviewRun, provenanceText, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, retrieveRelevantSections, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
+import { activeCanonicalGeneration, buildStandardsContext, fsyncDirectory, fsyncFile, identifyTaskDomains, pinStandardsTask, promoteReviewRun, provenanceText, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, retrieveRelevantSections, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "coop-standards-live-"));
@@ -375,6 +375,31 @@ try {
     const listed = listing[0].content.split("\n").map((line) => line.replace(/^- [^:]+: /, ""));
     assert.equal(listed.length, 8);
     for (const path of listed) assert.ok(isAbsolute(path) && existsSync(path), `listed path is openable: ${path}`);
+    git(["reset", "--hard", good]);
+  });
+  test("a task naming a wiki layer or a Fabric technology reaches the SQL articles (#88)", () => {
+    const good = git(["rev-parse", "HEAD"]);
+    put("SQL/SQL Layout.md", article({ id: "sql_layout", title: "SQL Layout", domain: "sql", artifact: "formatting" }, "# SQL Layout\nLAYOUT BODY\n"));
+    put("SQL/Silver/Indexing.md", article({ id: "sql_silver_indexing", title: "Silver Indexing", domain: "sql", layer: "silver", artifact: "table" }, "# Silver Indexing\nINDEXING BODY\n"));
+    put("SQL/Silver/Schema Manager.md", article({ id: "sql_silver_schema_manager", title: "Silver Schema Manager", domain: "sql", layer: "silver", artifact: "agnostic" }, "# Silver Schema Manager\nSCHEMA MANAGER BODY\n"));
+    put("Technology/Fabric/Fabric Warehouse.md", article({ id: "tech_fabric_warehouse", title: "Fabric Warehouse Target", domain: "sql", artifact: "agnostic", technology: "fabric_warehouse" }, "# Fabric Warehouse\nWAREHOUSE BODY\n"));
+    commit("layers and technology"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    // The regex classifier alone sees only `fabric`, which has no wiki articles.
+    assert.deepEqual(identifyTaskDomains("fix the silver indexing on the fabric warehouse table"), ["fabric"]);
+    const fabric = buildStandardsContext("fix the silver indexing on the fabric warehouse table", options({ refresh: false }));
+    assert.deepEqual(fabric.domains, ["fabric", "sql"]);
+    const files = fabric.records.find((r) => r.resolution.domain === "sql").sections.map((s) => s.file);
+    for (const expected of ["SQL/Silver/Indexing.md", "Technology/Fabric/Fabric Warehouse.md"]) assert.ok(files.includes(expected), `${expected} in ${files}`);
+    // A layer word alone is enough, without any regex domain.
+    const silver = buildStandardsContext("update the silver schema manager for the customer table", options({ refresh: false }));
+    assert.deepEqual(silver.domains, ["sql"]);
+    assert.ok(silver.records[0].sections.map((s) => s.file).includes("SQL/Silver/Schema Manager.md"));
+    // No regression: model work does not become SQL work, a lakehouse prompt without the
+    // technology's every word stays `fabric`, and a non-task prompt gets nothing.
+    assert.deepEqual(buildStandardsContext("Add a table to the semantic model", options({ refresh: false })).domains, ["semantic_model", "dax"]);
+    assert.deepEqual(buildStandardsContext("Design a lakehouse architecture", options({ refresh: false })).domains, ["fabric"]);
+    assert.deepEqual(buildStandardsContext("what is silver in the medallion architecture?", options({ refresh: false })).domains, []);
     git(["reset", "--hard", good]);
   });
   test("an article saved with a byte-order mark is still read", () => {

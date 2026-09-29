@@ -7,6 +7,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Standards: the wiki's own front matter now widens the prompt classifier (#88). A
+  task that names a layer the domain's articles carry (silver, gold, report) or every
+  word of an article's technology (fabric warehouse) selects that domain too, so
+  "fix the silver indexing on the fabric warehouse table" reaches Silver Indexing and
+  Fabric Warehouse Target instead of only the empty `fabric` domain. Decided by the
+  cached wiki metadata; no new regex vocabulary. Model, lakehouse-only, and non-task
+  prompts classify as before.
 - Docs: master plan revision 3.2. H3 rewritten to what PR #85 shipped (coop reads
   the coop-standards Obsidian wiki directly); register rows moved to `merged`/`in
   review`/`in progress`; new H2b row (#91) for tenant-pinned token minting; rules
