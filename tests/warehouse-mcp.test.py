@@ -5,6 +5,8 @@ import importlib.util
 import base64
 import json
 import os
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -877,4 +879,160 @@ with tempfile.TemporaryDirectory() as tmp:
 
 print(
     "  OK  tenant chain: contract, then ~/.coop/config (client resources only), GUID or dotted domain; invalid stops the chain"
+)
+
+# --- H2b: coop's own mints are pinned to the client tenant --------------------
+# The shared fake az (tests/fixtures/fake-az.mjs) mints for --tenant, or without
+# it for its default account: here a guest's home tenant, which is the wrong one.
+HOME_TENANT = "abababab-abab-4bab-8bab-abababababab"
+CLIENT_TENANT = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"
+FABRIC_ARGV = "account get-access-token --resource https://api.fabric.microsoft.com --output json"
+
+# The argv seam: a tenant appends --tenant; none keeps the argv; a bad one fails closed.
+for pinned in (CLIENT_TENANT, "contoso.onmicrosoft.com"):
+    with (
+        mock.patch.object(wmcp, "_native_node", return_value=trusted_node),
+        mock.patch.object(
+            wmcp, "_run_token_helper", return_value=(0, helper_frame, b"", False)
+        ) as run,
+    ):
+        assert wmcp.az_access_token(tenant=pinned) == (helper_token, "ok")
+        assert run.call_args.args == (
+            [trusted_node, wmcp.REQUEST_HEADERS_HELPER, "--token", wmcp.FABRIC_RESOURCE, "--tenant", pinned],
+            10,
+        )
+with (
+    mock.patch.object(wmcp, "_native_node", return_value=trusted_node),
+    mock.patch.object(
+        wmcp, "_run_token_helper", side_effect=AssertionError("a bad tenant reached the token helper")
+    ),
+):
+    for bad in ("x&calc", "tenant-aaa", "TODO", " " + CLIENT_TENANT, CLIENT_TENANT + "\n"):
+        assert wmcp.az_access_token(tenant=bad) == ("", "token_command_failed"), bad
+
+
+def tid_of(token: str) -> str:
+    payload = token.split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["tid"]
+
+
+def fake_az_bin(tmp: Path) -> tuple[Path, Path]:
+    """A PATH folder whose az is the shared fake; returns (bin, state)."""
+    state = tmp / "az-state"
+    bin_dir = tmp / "az-bin"
+    state.mkdir()
+    bin_dir.mkdir()
+    (state / "tokens").write_text(f"{HOME_TENANT} *\n{CLIENT_TENANT} *\n", encoding="ascii")
+    (state / "default-tenant").write_text(HOME_TENANT, encoding="ascii")
+    node = str(Path(shutil.which("node")).resolve())
+    fake = str(ROOT / "tests" / "fixtures" / "fake-az.mjs")
+    # The token helper hands az an allowlisted environment: the wrapper names the state.
+    if os.name == "nt":
+        (bin_dir / "az.cmd").write_bytes(
+            f'@echo off\r\nset "COOP_TEST_AZ_STATE={state}"\r\n"{node}" "{fake}" %*\r\nexit /b %ERRORLEVEL%\r\n'.encode("ascii")
+        )
+    else:
+        wrapper = bin_dir / "az"
+        wrapper.write_text(
+            f"#!/bin/sh\nCOOP_TEST_AZ_STATE={shlex.quote(str(state))} exec {shlex.quote(node)} {shlex.quote(fake)} \"$@\"\n",
+            encoding="ascii",
+        )
+        wrapper.chmod(0o755)
+    return bin_dir, state
+
+
+def az_calls(state: Path) -> list[str]:
+    log = state / "argv.log"
+    return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp_path = Path(tmp)
+    bin_dir, az_state = fake_az_bin(tmp_path)
+    coop_dir = tmp_path / "coop"
+    (coop_dir / ".coop").mkdir(parents=True)
+    config_file = coop_dir / ".coop" / "config"
+    repo = tmp_path / "repo"
+    deep = repo / "a" / "b" / "c" / "d" / "e" / "f" / "g" / "h" / "i"
+    deep.mkdir(parents=True)
+    mcp_path = tmp_path / "mcp.json"
+    mcp_path.write_text(json.dumps(managed_config()), encoding="utf-8")
+    env = {
+        **os.environ,
+        "COOP_DIR": str(coop_dir),
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+    }
+
+    def launch_token(cwd=repo):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "lib" / "warehouse_mcp.py"), "launch-token", str(mcp_path)],
+            cwd=cwd, env=env, capture_output=True, timeout=60,
+        )
+        assert result.returncode == 0 and result.stderr == b"", result
+        frame = result.stdout.decode("ascii")
+        assert frame.startswith("token\t") and frame.endswith("\tend"), frame
+        return tid_of(frame[len("token\t") : -len("\tend")])
+
+    # No tenant configured: the az argv is exactly today's, and az's default account answers.
+    assert launch_token() == HOME_TENANT
+    assert az_calls(az_state) == [FABRIC_ARGV]
+    # The onboarding config's tenant pins the launch mint.
+    config_file.write_text(json.dumps({"azure": {"purpose": "client_resources", "tenant_id": CLIENT_TENANT}}), encoding="utf-8")
+    assert launch_token() == CLIENT_TENANT
+    assert az_calls(az_state)[-1] == f"{FABRIC_ARGV} --tenant {CLIENT_TENANT}"
+    # The contract beats the config, found the way the launcher finds it: even
+    # from nine folders down, where find_project_yml stops looking.
+    config_file.write_text(json.dumps({"azure": {"tenant_id": HOME_TENANT}}), encoding="utf-8")
+    (repo / ".coop").mkdir()
+    (repo / ".coop" / "project.yml").write_text(f"fabric:\n  tenant_id: {CLIENT_TENANT}\n", encoding="utf-8")
+    assert wmcp.find_project_yml(deep) is None
+    assert launch_token(cwd=deep) == CLIENT_TENANT
+    assert az_calls(az_state)[-1] == f"{FABRIC_ARGV} --tenant {CLIENT_TENANT}"
+    # An invalid contract tenant is reported by the preflight and doctor; the mint stays unpinned.
+    (repo / ".coop" / "project.yml").write_text("fabric:\n  tenant_id: tenant-aaa\n", encoding="utf-8")
+    assert launch_token() == HOME_TENANT
+    assert az_calls(az_state)[-1] == FABRIC_ARGV
+
+    # doctor-json reports the tenant it mints for, from the same contract and chain.
+    def doctor_json(*extra):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "lib" / "warehouse_mcp.py"), "doctor-json", str(mcp_path), *extra],
+            cwd=repo, env=env, capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode == 0 and result.stderr == "", result
+        return json.loads(result.stdout)["tenant"]
+
+    (repo / ".coop" / "project.yml").write_text(f"fabric:\n  tenant_id: {CLIENT_TENANT}\n", encoding="utf-8")
+    assert doctor_json("--project", str(repo / ".coop" / "project.yml")) == CLIENT_TENANT
+    assert doctor_json() == HOME_TENANT  # no contract passed: the config tenant
+    config_file.unlink()
+    assert doctor_json() == ""
+
+    # The doctor probe mints for the tenant it is given, through the real helper.
+    probe_tokens = []
+
+    def capture_list(url, token, timeout=8):
+        probe_tokens.append(token)
+        return ([{"name": "executeSQL"}], "ok")
+
+    previous_cwd = os.getcwd()
+    os.chdir(ROOT)  # the helper refuses an az inside its working folder
+    try:
+        with (
+            mock.patch.dict(os.environ, {"PATH": env["PATH"]}),
+            mock.patch.object(wmcp, "mcp_tools_list", side_effect=capture_list),
+        ):
+            pinned_probe = wmcp.doctor_status(cfg, project={}, probe=True, tenant=CLIENT_TENANT)
+            unpinned_probe = wmcp.doctor_status(cfg, project={}, probe=True)
+    finally:
+        os.chdir(previous_cwd)
+    assert pinned_probe["state"] == unpinned_probe["state"] == "registered"
+    assert (pinned_probe["tenant"], unpinned_probe["tenant"]) == (CLIENT_TENANT, "")
+    assert [tid_of(token) for token in probe_tokens] == [CLIENT_TENANT, HOME_TENANT]
+    assert az_calls(az_state)[-2:] == [f"{FABRIC_ARGV} --tenant {CLIENT_TENANT}", FABRIC_ARGV]
+    for token in probe_tokens:
+        assert token not in json.dumps(pinned_probe) + json.dumps(unpinned_probe)
+
+print(
+    "  OK  launch token and doctor probe mint for the client tenant; no tenant keeps the az argv unchanged"
 )
