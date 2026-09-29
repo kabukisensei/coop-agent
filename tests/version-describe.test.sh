@@ -126,7 +126,10 @@ publish "$A" alice
 publish "$B" bob
 [ "$(field "$PUBLISHED" coop_describe)" = "$DESC_B" ] \
   || { OUT="$(cat "$PUBLISHED")"; fail "machine B's snapshot must carry coop_describe $DESC_B"; }
-pass "doctor --publish adds coop_describe next to coop_version"
+publish "$OUTER/coop-agent" dana
+[ "$(field "$PUBLISHED" coop_describe)" = "" ] \
+  || { OUT="$(cat "$PUBLISHED")"; fail "a non-git copy's snapshot must carry an empty coop_describe"; }
+pass "doctor --publish adds coop_describe next to coop_version ('' for a non-git copy)"
 
 # A snapshot from a coop that predates coop_describe renders VERSION alone.
 printf '{"hostname":"older","user":"carol","coop_version":"0.23.4","pi_version":"0.84.3","fail":0,"warn":0,"checks":[]}\n' \

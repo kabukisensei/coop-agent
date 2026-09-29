@@ -159,26 +159,34 @@ exit 0
     Ko 'a non-git copy must print no error' $script:VersionErr
   } else { Ok "a non-git copy prints VERSION only, with no error (and never the enclosing repo's tag)" }
 
-  # 3. doctor.ps1 --publish carries coop_describe next to coop_version.
-  $env:USERNAME = 'bob'; $env:USER = 'bob'
-  $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-  Push-Location -LiteralPath $cwd
-  try {
-    $raw = (& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $b 'scripts\doctor.ps1') --publish 2>&1 | Out-String)
-  } finally {
-    Pop-Location
-    $ErrorActionPreference = $eap
-  }
-  $snap = @(Get-ChildItem -LiteralPath $pub -Filter '*_bob.json')
-  if ($snap.Count -ne 1) {
-    Ko 'doctor.ps1 --publish wrote no snapshot' $raw
-  } else {
+  # 3. doctor.ps1 --publish carries coop_describe next to coop_version; a non-git
+  #    copy publishes it empty.
+  $publishOk = $true
+  foreach ($case in @(@{ Root = $b; User = 'bob'; Want = $descB }, @{ Root = $plain; User = 'dana'; Want = '' })) {
+    $env:USERNAME = $case.User; $env:USER = $case.User
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    Push-Location -LiteralPath $cwd
+    try {
+      $raw = (& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $case.Root 'scripts\doctor.ps1') --publish 2>&1 | Out-String)
+    } finally {
+      Pop-Location
+      $ErrorActionPreference = $eap
+    }
+    $snap = @(Get-ChildItem -LiteralPath $pub -Filter "*_$($case.User).json")
+    if ($snap.Count -ne 1) {
+      Ko "doctor.ps1 --publish wrote no snapshot for $($case.User)" $raw
+      $publishOk = $false
+      continue
+    }
     $text = [System.IO.File]::ReadAllText($snap[0].FullName)
     $doc = $text | ConvertFrom-Json
-    if ($doc.coop_describe -cne $descB -or $doc.coop_version -cne '0.23.5') {
-      Ko "doctor.ps1 --publish must carry coop_describe $descB next to coop_version 0.23.5" $text
-    } else { Ok 'doctor.ps1 --publish adds coop_describe next to coop_version' }
+    if (@($doc.PSObject.Properties.Name) -notcontains 'coop_describe' -or
+        $doc.coop_describe -cne $case.Want -or $doc.coop_version -cne '0.23.5') {
+      Ko "doctor.ps1 --publish from $($case.User)'s copy must carry coop_describe '$($case.Want)' next to coop_version 0.23.5" $text
+      $publishOk = $false
+    }
   }
+  if ($publishOk) { Ok "doctor.ps1 --publish adds coop_describe next to coop_version ('' for a non-git copy)" }
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {
