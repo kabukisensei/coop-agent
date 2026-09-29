@@ -125,6 +125,28 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- `/setup-docs` no longer saves coop-data-doc's placeholder repo paths and then fails
+  the build (#102). A teammate who pressed Enter through setup in a session started
+  from the desktop shortcut (which opens coop in the home folder) saved `../pbi-repo`
+  into `C:\Users\<user>\coop-data-doc.yml`, which resolves to `C:\Users\pbi-repo`, and
+  every later build failed. Now:
+  - `/setup-docs` and `/start` > *Document the data sources I have* stop in the home
+    folder without writing anything, and explain how to open coop in the project
+    folder (terminal: `cd` into it, then `coop`; chat window: change the chat's
+    folder).
+  - At a repo-path prompt whose suggested folder doesn't exist, Enter opens *Type or
+    paste the folder path*; no folder is preselected and the placeholder is no longer
+    offered. Browsing starts beside the suggestion only when a real repo is there,
+    otherwise in the session folder. An existing suggestion stays the Enter choice.
+  - "Use it anyway?" defaults to No, in the terminal and in the chat window: the
+    wizard's yes/no default is shown first (Pi's own confirm always put Yes first).
+  - A setup that saves a config that can't build yet ("Saved, but not runnable yet")
+    is shown as a warning naming the repo path, and coop no longer asks "Build now?".
+  - A build that fails because a repo path doesn't exist offers to re-run setup or to
+    open `coop-data-doc.yml` in the editor and save the fix.
+  - `coop init --seed-docs` shows `coop-data-doc config-set`'s status on both
+    platforms instead of discarding it, as a warning when the config is saved but not
+    runnable yet.
 - `coop release` can no longer push a tag that is not on `main` (#105). It fetches
   `origin` and refuses, before changing anything, unless `HEAD` is the branch `main`
   at exactly `origin/main`; a detached HEAD, another branch, or unpushed or missing

@@ -954,10 +954,18 @@ function Invoke-CoopInitSeedDocs {
     exit 1
   }
   $cfg = Join-Path $Dir 'coop-data-doc.yml'
-  $patch | & coop-data-doc config-set --config $cfg --from-json - > $null
+  # config-set prints one status line: "Wrote <path> (validated)." or, when a slot
+  # can't validate yet (a placeholder repo path), "... (saved, not runnable yet (...))."
+  # Show it; the second is a warning, never silence (#102). (mirror of bin/coop)
+  $status = ($patch | & coop-data-doc config-set --config $cfg --from-json - | Out-String).Trim()
   if ($LASTEXITCODE -eq 0) {
     Coop-Ok "seeded $cfg from project.yml (repos)"
-    Coop-Info 'review it, then build the lineage docs: coop data-doc   (or /setup-docs inside the agent)'
+    if ($status -like '*not runnable yet*') {
+      Coop-Warn $status 'fix the repo path it names (or run: coop data-doc setup), then build: coop data-doc'
+    } else {
+      if ($status) { Coop-Info $status }
+      Coop-Info 'review it, then build the lineage docs: coop data-doc   (or /setup-docs inside the agent)'
+    }
   } else {
     Coop-Die "coop-data-doc config-set failed — apply the patch by hand: $py $(Join-Path $script:CoopRoot 'lib/_seeddocs.py') $proj | coop-data-doc config-set --from-json -"
   }
