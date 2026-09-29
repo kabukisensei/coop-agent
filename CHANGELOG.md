@@ -136,6 +136,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- `scripts/ado-onboard.py` starts without PyYAML (#120). It imported `_yaml` before
+  `lib/` was on the path, so on a fresh machine (no PyYAML) it failed at startup, and
+  with PyYAML it loaded PyYAML's own `_yaml` module and fell back to a regex read of
+  `clients.yml`. It now loads coop's dependency-free `lib/_yaml.py` through
+  `ado_lib`, like `ado-digest.py`. `tests/ado.test.sh` now runs in `tests/run.sh`
+  (it ran nowhere before) and passes native paths to Windows Python.
 - Standards (#88): more prompts reach the wiki articles they need. "fix the silver
   indexing on the fabric warehouse table" now gets Silver Indexing and Fabric Warehouse
   Target instead of nothing. A Fabric warehouse, Schema Manager, `dim.`/`fact.` names,
