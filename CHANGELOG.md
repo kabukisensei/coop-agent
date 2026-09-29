@@ -25,6 +25,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   release still runs the old updater and pulls the head of `main` once; later updates
   follow tags.
 
+- Docs: new one-page [Install coop on Windows](docs/install-windows.md) for teammates
+  (master plan H6, #79). Its steps are the installer's prerequisite checklist in the
+  order and wording the installer prints, then a full clone moved to the newest
+  release (v0.23.6 or later; before that tag it stays on `main`), `Install coop.cmd`,
+  a new terminal and `coop`, and what the Azure and model sign-ins look like. The
+  README's Windows section is now that link plus the execution-policy and new-terminal
+  notes; its launcher, project-setup and zip-copy notes moved to the install table,
+  Commands and Updating sections.
+
 - Standards: the wiki's own front matter now widens the prompt classifier (#88). A
   task that names a layer the domain's articles carry (silver, gold, report) or every
   word of an article's technology (fabric warehouse) selects that domain too, so
