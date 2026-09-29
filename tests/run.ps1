@@ -458,6 +458,21 @@ print("resume verdict contract OK")
     Ok 'coop wrapper does not split --check or enter the update gate'
   } else { Ko 'coop wrapper split --check or entered the mutating update path' }
 
+  # --- 5b. coop update follows release tags, never backwards (H5) -------------
+  # Gate lane: offline git fixtures in a temp dir, no sleep or marker. The fixture
+  # runs with EAP=Stop to prove the helpers' function-local Continue on 5.1.
+  Head 'coop update follows release tags (never backwards)'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $followOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\update-follow.test.ps1') 2>&1
+  $followRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($followRc -eq 0) {
+    $followOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "update-follow fixture failed: $($followOut | Out-String)"
+  }
+
   # --- 6. review --help exits 0; an unknown review flag dies -----------------
   Head 'coop review arg parsing (--help ok; unknown flag dies)'
   & $coop review --help *> $null
