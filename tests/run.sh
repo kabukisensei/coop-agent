@@ -32,6 +32,7 @@ node "$ROOT/tests/standards-rev9.test.mjs"
 node "$ROOT/tests/standards-live-sync.test.mjs"
 node "$ROOT/tests/standards-review-generations.test.mjs"
 node "$ROOT/tests/standards-lock-simple.test.mjs"
+node "$ROOT/tests/standards-golden.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/standards-runtime.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/bpa-review.test.mjs"
 

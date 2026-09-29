@@ -493,12 +493,56 @@ files for older clients (`standards.yml`, `standards/*.md`) or anything under
 `deprecation/`. Articles map to Coop's domains by front matter: `domain: sql` is SQL;
 `domain: powerbi` is DAX when `artifact` is `dax_expression` or `measure`, and semantic
 model otherwise; any other domain keeps its own name, so a new one resolves without a Coop
-release. When you write or change SQL, DAX, or a model, Coop injects the domain's general
-articles (layer and technology `agnostic`, such as SQL Conventions) plus the articles whose
-layer, artifact, technology, or title match the task, each with its path, SHA-256, and the
-repo revision. When nothing matches, it injects the domain's core-layer articles (for
-example `layer: semantic_model`), or only a list of the domain's articles if it has no
-such layer. Two articles with the same `id` are both kept, and `coop doctor` warns with
+release. When you write or change SQL, DAX, a model, or a report, Coop injects the domain's
+general articles (layer and technology `agnostic`, such as SQL Conventions) plus the articles
+whose layer, artifact, technology, or title match the task, each with its path, SHA-256, and
+the repo revision. A domain with fewer than three articles (today DAX) gets all of them.
+
+Two layers pick the domains. A keyword classifier reads the prompt. SQL wording (a Fabric
+warehouse, silver or gold objects, `dim.`/`fact.` names, a sproc) outranks "fact table" or
+"dimension table", so gold SQL work does not get the Power BI table articles unless the
+prompt also names Power BI, DAX, a semantic or tabular model, a dataset, a visual, a sort
+by, a model or a measure ("Create the gold fact table for budgets and add a Budget Amount
+measure"). A bare "model" is not Power BI context for measures ("the churn model", "the
+business model canvas"), and neither is a template placeholder (`[Project Name]`), a visual
+for slides or a visual merchandising role; a measure table needs a model, other measures
+or Power BI context, and a web domain before "views" (`example.com views`) is not SQL.
+"Format strings" count as Power BI context, so "fix the format strings on the
+currency measures" gets the DAX articles; "relate", "related" and "relating" match the
+relationship articles; "proc" and "sproc" match Gold Stored Procedures; and a prompt that
+names an object in a layer's schema (`silver.custtable`) ranks that layer's overview
+articles (artifact `agnostic`, such as Silver Layer) ahead of the layer's other articles.
+Report work is a Power BI report, report pages, a report theme, PBIX/PBIP/PBIR,
+drill-through, a Power BI app, or a theme, visual, card, slicer, bookmark or tooltip near
+"report".
+
+Under the classifier sits a recall floor read from the wiki's own front matter: a request
+that names a layer the articles carry (`silver`, `gold`, `report`) or both words of a
+multi-word technology (`fabric` and `warehouse`) gets that domain even when the classifier
+misses it ("Review this SP for gold", "Add a new page to the Inventory report with a
+card"). A missed standard on real coding work costs more than extra context on chatter, so
+the floor gives way only in a short list of known non-coding contexts, and only when the
+prompt has no SQL, DAX, Power BI or Fabric signal: a status, progress, incident, expense or
+annual report; a report generator, button, viewer or form in app code; gold or silver
+badges, medals, sponsors, tiers or colors; README, website, newsletter and marketing-site
+wording. Subtotals, a page added to a Power BI report and naming conventions count as a
+signal ("Add a Marketing page to the Sales report", "Update the README with the silver and
+gold naming conventions"), and a title-case report name ("the Project Status report") is a
+report, not a status document. Everyday prompts outside that list that say "report",
+"silver", "gold" or "fabric ... warehouse" ("Review the quarterly report with the client",
+"Fix the silver merge conflict in the gold branch") still get those articles. Still
+missed: PBIX, PBIP and
+`.gitignore` prompts do not reach Power BI File Types, "chart" does not reach Power BI
+Report Visuals, a named model with no Power BI word ("Add a YTD measure to the Finance
+model") gets no DAX articles, and a bare "proc" with no layer word ("Fix the proc that
+loads customers") gets nothing. `tests/standards-golden.test.mjs` scores a 52-prompt golden
+set, holdout rows, everyday negatives and floor-chatter rows, and fails if a row loses a
+domain that `main` selected before #101, except three SQL fact and dimension table rows
+that deliberately drop the Power BI model.
+
+When no article in a selected domain matches the task, Coop injects the domain's
+core-layer articles (for example `layer: semantic_model`), or only a list of the domain's
+articles if it has no such layer. Two articles with the same `id` are both kept, and `coop doctor` warns with
 both paths. `coop-sql-review` and `coop-dax-review` take one standards file, so Coop
 builds a reviewer-input copy of the domain's articles in its own storage for that call.
 

@@ -376,7 +376,7 @@ try {
     for (const path of listed) assert.ok(isAbsolute(path) && existsSync(path), `listed path is openable: ${path}`);
     git(["reset", "--hard", good]);
   });
-  test("a task naming a wiki layer or a Fabric technology reaches the SQL articles (#88)", () => {
+  test("the wiki's layers and multi-word technologies are a recall floor under the classifier (#88, #101)", () => {
     const good = git(["rev-parse", "HEAD"]);
     put("SQL/SQL Layout.md", article({ id: "sql_layout", title: "SQL Layout", domain: "sql", artifact: "formatting" }, "# SQL Layout\nLAYOUT BODY\n"));
     put("SQL/Silver/Indexing.md", article({ id: "sql_silver_indexing", title: "Silver Indexing", domain: "sql", layer: "silver", artifact: "table" }, "# Silver Indexing\nINDEXING BODY\n"));
@@ -384,21 +384,33 @@ try {
     put("Technology/Fabric/Fabric Warehouse.md", article({ id: "tech_fabric_warehouse", title: "Fabric Warehouse Target", domain: "sql", artifact: "agnostic", technology: "fabric_warehouse" }, "# Fabric Warehouse\nWAREHOUSE BODY\n"));
     commit("layers and technology"); now += 1;
     assertRefreshed(options({ force: true }));
-    // The regex classifier alone sees only `fabric`, which has no wiki articles.
-    assert.deepEqual(identifyTaskDomains("fix the silver indexing on the fabric warehouse table"), ["fabric"]);
-    const fabric = buildStandardsContext("fix the silver indexing on the fabric warehouse table", options({ refresh: false }));
-    assert.deepEqual(fabric.domains, ["fabric", "sql"]);
-    const files = fabric.records.find((r) => r.resolution.domain === "sql").sections.map((s) => s.file);
-    for (const expected of ["SQL/Silver/Indexing.md", "Technology/Fabric/Fabric Warehouse.md"]) assert.ok(files.includes(expected), `${expected} in ${files}`);
-    // A layer word alone is enough, without any regex domain.
-    const silver = buildStandardsContext("update the silver schema manager for the customer table", options({ refresh: false }));
+    const context = (prompt) => buildStandardsContext(prompt, options({ refresh: false }));
+    const files = (c, domain) => c.records.find((r) => r.resolution.domain === domain).sections.map((s) => s.file);
+    // The classifier misses these; a layer word the wiki's articles carry, or both words
+    // of the fabric_warehouse technology, still reach the SQL articles.
+    assert.deepEqual(identifyTaskDomains("Write the bronze -> silver dedupe for the custtable extract"), []);
+    const silver = context("Write the bronze -> silver dedupe for the custtable extract");
     assert.deepEqual(silver.domains, ["sql"]);
-    assert.ok(silver.records[0].sections.map((s) => s.file).includes("SQL/Silver/Schema Manager.md"));
+    for (const expected of ["SQL/Silver/Indexing.md", "SQL/Silver/Schema Manager.md"]) assert.ok(files(silver, "sql").includes(expected), `${expected} in ${files(silver, "sql")}`);
+    assert.deepEqual(identifyTaskDomains("Review this SP for gold - it's using a cursor to loop over invoices"), []);
+    assert.deepEqual(context("Review this SP for gold - it's using a cursor to loop over invoices").domains, ["sql"]);
+    assert.deepEqual(identifyTaskDomains("lakehouse to warehouse: build the load for the customer dimension in Fabric"), ["fabric"]);
+    const warehouse = context("lakehouse to warehouse: build the load for the customer dimension in Fabric");
+    assert.deepEqual(warehouse.domains, ["fabric", "sql"]);
+    assert.ok(files(warehouse, "sql").includes("Technology/Fabric/Fabric Warehouse.md"));
+    // Only the wiki decides: "bronze" is no article's layer, so it widens nothing.
+    assert.deepEqual(context("Write the bronze dedupe for the custtable extract").domains, []);
+    // The floor gives way only in a known non-coding context with no data signal...
+    assert.deepEqual(context("Add a silver badge to the website header").domains, []);
+    assert.deepEqual(context("Update the README with the gold customer tiers").domains, ["documentation"]);
+    // ...and a data word or a classified domain keeps it there.
+    assert.deepEqual(context("Update the README with the silver dedupe steps").domains, ["documentation", "sql"]);
+    assert.deepEqual(context("Add the gold customer tiers to the gold customer view").domains, ["sql"]);
     // No regression: model work does not become SQL work, a lakehouse prompt without the
     // technology's every word stays `fabric`, and a non-task prompt gets nothing.
-    assert.deepEqual(buildStandardsContext("Add a table to the semantic model", options({ refresh: false })).domains, ["semantic_model", "dax"]);
-    assert.deepEqual(buildStandardsContext("Design a lakehouse architecture", options({ refresh: false })).domains, ["fabric"]);
-    assert.deepEqual(buildStandardsContext("what is silver in the medallion architecture?", options({ refresh: false })).domains, []);
+    assert.deepEqual(context("Add a table to the semantic model").domains, ["semantic_model", "dax"]);
+    assert.deepEqual(context("Design a lakehouse architecture").domains, ["fabric"]);
+    assert.deepEqual(context("what is silver in the medallion architecture?").domains, []);
     git(["reset", "--hard", good]);
   });
   test("an article saved with a byte-order mark is still read", () => {
@@ -433,6 +445,65 @@ try {
     const failed = refreshCanonical(options({ force: true }));
     assert.equal(failed.ok, false); assert.match(failed.detail, /no active articles/);
     assert.equal(activeCanonicalGeneration(options()).revision, good);
+    git(["reset", "--hard", good]);
+  });
+  test("prompts in the wiki's own vocabulary get the articles they need (#88)", () => {
+    // Front matter of every active coop-standards article at its real path, from the
+    // golden set's wiki mirror, with stub bodies: selection reads only front matter.
+    const good = git(["rev-parse", "HEAD"]);
+    const mirror = JSON.parse(readFileSync(join(ROOT, "tests", "fixtures", "standards-golden-corpus.json"), "utf8")).wiki.articles;
+    for (const { path, id, title, domain, layer, artifact, technology } of mirror) put(path, article({ id, title, domain, layer, artifact, technology }, `# ${title}\nBody.\n`));
+    commit("mirror the coop-standards wiki front matter"); now += 1;
+    assertRefreshed(options({ force: true }));
+    const rows = [
+      ["fix the silver indexing on the fabric warehouse table", ["Silver Indexing", "Fabric Warehouse Target"], ["Organizing Power BI Tables", "Power BI Fact Tables", "Power BI Relationships"]],
+      ["Fix the T-SQL merge statement in the gold fact table load", ["Gold Stored Procedures", "Gold Fact Tables"], ["Power BI Fact Tables", "Organizing Power BI Tables", "Power BI DAX"]],
+      ["Write the silver to gold load for the fact table", ["Gold Stored Procedures", "Gold Fact Tables"], ["Power BI Fact Tables", "Organizing Power BI Tables", "Power BI DAX"]],
+      ["Create a Fabric warehouse table for the gold customer dimension", ["Gold Dimension Tables", "Fabric Warehouse Target"], ["Organizing Power BI Tables", "Power BI Relationships"]],
+      ["Format the report page visuals", ["Power BI Report Page Formatting", "Power BI Report Visuals"], ["SQL Layout", "Power BI DAX", "Power BI M Query"]],
+      ["Add a custom index on silver.custtable in the Azure SQL database - the gold customer load keeps scanning on dataareaid and accountnum", ["Silver Indexing"], ["Fabric Warehouse Target", "Organizing Power BI Tables"]],
+      ["Add inventtransorigin to the Schema Manager metadata so the silver table gets generated on the next run", ["Silver Schema Manager"], ["Power BI M Query", "Power BI Report Visuals"]],
+      ["This measure nests CALCULATE inside CALCULATE and uses AVERAGEX - rewrite it with variables", ["Power BI DAX"], ["SQL Conventions", "Gold Stored Procedures"]],
+      ["Create a measure for invoice amount by due date using the inactive FKDueDate relationship", ["Power BI DAX", "Power BI Measures", "Power BI Relationships"], ["SQL Conventions", "Gold Fact Tables"]],
+      ["Write the Power Query for the Customer dimension using the SQLServer and SQLDB parameters", ["Power BI M Query"], ["SQL Conventions", "SQL Layout", "Gold Dimension Tables"]],
+      ["Rename the tables in the Direct Lake model to PascalCase", ["Organizing Power BI Tables"], ["SQL Layout", "Silver Schema Manager"]],
+      ["Create dim.Item in the Fabric warehouse, its sales.Item view, and add Item to the semantic model with a relationship to Sales", ["Gold Dimension Tables", "Gold Views", "Fabric Warehouse Target", "Power BI Relationships"], ["Silver Schema Derivation", "Power BI App Deployment"]],
+      ["Explain what a lakehouse is in Microsoft Fabric", [], null],
+      ["Rebase my branch onto main and fix the merge conflicts in CHANGELOG.md", [], null],
+      ["Write a PowerShell script that renames the exported CSV files in Downloads by date", [], null],
+      // Gold SQL work gets the gold articles, not the Power BI table articles.
+      ["Create the gold customer dimension table", ["Gold Dimension Tables"], ["Power BI Fact Tables", "Organizing Power BI Tables"]],
+      // "reporting" is not the report layer: the model's core articles, not the report ones.
+      ["Review the reporting semantic model", ["Power BI Relationships", "Organizing Power BI Tables"], ["Power BI Report Visuals", "Power BI Report Page Formatting", "Power BI App Deployment"]],
+      // Power BI work on a gold dim./fact. source keeps the Power BI table articles.
+      ["Create a Power BI dimension table from the gold customer view", ["Organizing Power BI Tables", "Gold Dimension Tables"], ["Silver Indexing"]],
+      ["Fix the sort by on the dim.Date date table so Month Name sorts by Month Number", ["Organizing Power BI Tables", "Gold Dimension Tables"], ["Power BI Report Visuals"]],
+      ["Write a DAX measure for sales from the gold fact table", ["Power BI Fact Tables", "Power BI DAX", "Gold Fact Tables"], ["Silver Indexing"]],
+      // Everyday "measures" and pkg/PKCE get no standards.
+      ["Document the preventive measures we took after the outage", [], null],
+      ["Write a test that measures API latency", [], null],
+      ["Explain the relationship between pkg and npm", [], null],
+      // #95 widened the classifier from wiki layer words; the classifier covers what it
+      // was for (#101): Schema Manager work is SQL, and model, lakehouse and non-task
+      // prompts stay as they were.
+      ["update the silver schema manager for the customer table", ["Silver Schema Manager"], ["Power BI M Query", "Organizing Power BI Tables"]],
+      ["Add a table to the semantic model", ["Organizing Power BI Tables"], ["SQL Conventions", "Silver Indexing", "Gold Dimension Tables"]],
+      ["Design a lakehouse architecture", [], null],
+      ["what is silver in the medallion architecture?", [], null],
+      // ...and a bare "report", "silver" or "gold" outside BI work gets nothing (#101).
+      ["Write a status report for the client on this week's progress", [], null],
+      ["Fix the bug in the report generator script", [], null],
+      ["Add a silver badge to the website header", [], null],
+      ["Update the README with the gold customer tiers", [], null],
+    ];
+    const wrong = [];
+    for (const [prompt, must, mustNot] of rows) {
+      const titles = buildStandardsContext(prompt, options({ refresh: false })).records.flatMap((r) => r.sections.filter((s) => s.file).map((s) => s.heading));
+      const bad = mustNot === null ? titles.map((t) => `injected ${t}`)
+        : [...must.filter((t) => !titles.includes(t)).map((t) => `missing ${t}`), ...mustNot.filter((t) => titles.includes(t)).map((t) => `forbidden ${t}`)];
+      if (bad.length) wrong.push({ prompt, bad });
+    }
+    assert.deepEqual(wrong, []);
     git(["reset", "--hard", good]);
   });
   assert.match(readFileSync(join(ROOT, "bin", "coop"), "utf8"), /resolve-many sql,dax/);
