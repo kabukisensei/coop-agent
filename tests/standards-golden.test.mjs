@@ -21,18 +21,12 @@ import { buildStandardsContext, identifyTaskDomains, pinStandardsTask, refreshCa
 // starts passing fails this suite until its line is deleted (a one-line change); a prompt
 // not listed here that fails, or a listed one that fails differently, is a regression.
 const KNOWN_FAILURES = new Map([
-  // Silver Layer ties the four gold articles at the six-article cap and loses on path order.
-  [12, ["missing Silver Layer"]],
   // "index" now matches the stemmed "indexing", so a gold index task also gets Silver Indexing.
   [22, ["forbidden Silver Indexing"]],
-  // "the currency measures" has no Power BI context word.
-  [25, ["missing domain dax", "missing Power BI Measures"]],
   // PBIX, PBIP, .gitignore and "chart" are not words of the articles' titles or front matter.
   [37, ["missing Power BI File Types"]],
   [38, ["missing Power BI File Types"]],
   [41, ["missing Power BI Report Visuals"]],
-  // "relate" does not match "relationship".
-  [42, ["missing Power BI Relationships"]],
 ]);
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");

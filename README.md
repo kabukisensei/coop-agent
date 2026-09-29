@@ -515,6 +515,16 @@ the repo revision. A domain with fewer than three articles (today DAX) gets all 
 SQL wording (a Fabric warehouse, silver or gold objects, `dim.`/`fact.` names) outranks
 "fact table" or "dimension table", so gold SQL work does not get the Power BI table
 articles, unless the prompt also names Power BI, DAX, a model, a visual or a sort by.
+"Format strings" count as Power BI context, so "fix the format strings on the currency
+measures" gets the DAX articles; "relate", "related" and "relating" match the
+relationship articles; and a prompt that names an object in a layer's schema
+(`silver.custtable`) ranks that layer's overview articles (artifact `agnostic`, such as
+Silver Layer) ahead of the layer's other articles. Only the prompt decides the domains: a
+bare "report", "silver" or "gold" outside BI work ("a status report for the client", "a
+silver badge on the website") gets no standards. The classifier is keyword-based, so it
+misses some wording: PBIX, PBIP and `.gitignore` prompts do not reach Power BI File Types,
+and "chart" does not reach Power BI Report Visuals. A 52-prompt golden set
+(`tests/standards-golden.test.mjs`) records what passes and what is still missed.
 When nothing matches, it injects the domain's core-layer articles (for
 example `layer: semantic_model`), or only a list of the domain's articles if it has no
 such layer. Two articles with the same `id` are both kept, and `coop doctor` warns with

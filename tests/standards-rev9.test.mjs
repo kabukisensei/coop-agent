@@ -446,6 +446,7 @@ try {
       ["Fix the measures behind the region slicer", ["dax"]],
       ["Fix the sort by on the Month measure", ["dax"]],
       ["Fix the measure that sums [Amount]", ["dax"]],
+      ["Fix the format strings on the currency measures so the parenthesized negatives line up", ["dax"]],
       // ...and not in everyday English: verbs, security/safety measures, "measure of", a
       // lowercase word that spells a DAX function, or no Power BI context at all.
       ["Document the preventive measures we took after the outage", ["documentation"]],
@@ -461,6 +462,7 @@ try {
       ["Explain the measure of fit for the regression model", []],
       ["Explain this measure of success", []],
       ["Document the related measures in the policy", ["documentation"]],
+      ["Fix the format strings in the Python logging calls", []],
     ];
     const wrong = rows.map(([prompt, expected]) => ({ prompt, expected, actual: identifyTaskDomains(prompt) }))
       .filter((row) => JSON.stringify(row.actual) !== JSON.stringify(row.expected));

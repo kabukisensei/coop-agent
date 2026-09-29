@@ -89,15 +89,25 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   names near "relationship" must look like the wiki's FKDueDate or PKCustomer (not pkg or
   PKCE). A "reporting model" is not the report layer. Rewrite, convert, (re)format,
   replace, rename, set up, turn on/off and fails/failed/failing now count as requests.
-  The classifier alone decides the domains again (#101): the wiki-layer widening that
-  briefly shipped on `main` is gone, because it gave a bare "report", "silver" or "gold"
-  the Power BI report or SQL articles ("Write a status report for the client", "Add a
-  silver badge to the website header") and gained no prompt the classifier misses.
-  A golden set of 52 realistic prompts (`tests/fixtures/standards-golden-corpus.json`,
-  scored against the front matter of every active wiki article at a00c8cc) is now a
-  regression test: 45 pass, and the 7 known failures are listed with how they fail, so a
-  fix or a regression both fail the suite until the list is updated. Everyday prompts
-  that say "report", "silver" or "gold" must get no standards.
+- Standards (#101): the classifier alone decides the domains again. The wiki-layer
+  widening that briefly shipped on `main` is gone: it gave a bare "report", "silver" or
+  "gold" the Power BI report or SQL articles ("Write a status report for the client",
+  "Add a silver badge to the website header") and gained no prompt the classifier
+  misses. Three more wiki rules now arrive: "fix the format strings on the currency
+  measures" gets the DAX articles (Power BI Measures holds the format-string rules);
+  "relate it to the Budget Version dimension" gets Power BI Relationships; and "change
+  silver.custtable.creditmax ... to match the gold customer dimension" gets Silver Layer
+  (do not change a Silver type for downstream convenience), because an object in a
+  layer's schema ranks that layer's overview articles first. A golden set of 52
+  realistic prompts (`tests/fixtures/standards-golden-corpus.json`, scored against the
+  front matter of every active wiki article at a00c8cc) is now a regression test: 48
+  pass (main scored 23), and the 4 known failures are listed with how they fail, so a
+  fix or a regression both fail the suite until the list is updated. Still missed:
+  PBIX/PBIP and `.gitignore` prompts never reach Power BI File Types, "chart" does not
+  reach Power BI Report Visuals, and a gold `dim.` index task also gets Silver Indexing.
+  Everyday prompts that say "report", "silver" or "gold" must get no standards; "Fix the
+  gold members table in the React component" still gets the SQL articles, and "Review
+  the measures in the ML model" the DAX ones.
 - Incremental BI patterns are chosen by the repository's `layer:` front matter (the same
   front-matter reader as the standards wiki). The old
   path keyword filter matched the clone's own folder name (`incremental-bi`), so every
