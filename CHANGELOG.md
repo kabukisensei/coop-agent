@@ -136,6 +136,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Guardrails ask before an MCP refresh (#119). A tool call such as `refresh_dataset`
+  (still exposed by a user-owned `powerbi-mcp-server` entry) triggers a refresh on the
+  client tenant, but the MCP mutation check had no refresh verb, so it ran as a read.
+  `refresh`, `refresh_*` and `*_refresh` tool names now ask first like other writes.
+  A read that names a refresh, such as `get_refresh_history`, also asks: the check is
+  name-based and errs toward asking.
 - Windows PowerShell 5.1 finds a Fabric-compatible Python without the `py` launcher
   (#81). The version probe passed `print("%d.%d" % ...)` on the command line, and
   5.1 does not escape embedded double quotes for native programs, so Python got a
