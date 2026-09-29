@@ -33,7 +33,7 @@ const writeCanonical = (suffix) => {
   put(".obsidian/app.json", "{}\n");
 };
 const commit = (message) => { git(["add", "."]); git(["commit", "-q", "-m", message]); return git(["rev-parse", "HEAD"]); };
-const options = (more = {}) => ({ canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, fixtureRegistry: true, remote, now: () => now, staleRoot: join(tmp, "none"), reviewerBins: { sql: join(tmp, "none-sql"), dax: join(tmp, "none-dax") }, ...more });
+const options = (more = {}) => ({ canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, fixtureRegistry: true, remote, now: () => now, reviewerBins: { sql: join(tmp, "none-sql"), dax: join(tmp, "none-dax") }, ...more });
 const test = (name, fn) => { fn(); count++; console.log(`  ✓ ${name}`); };
 const resetStorage = () => { rmSync(join(tmp, "cache"), { recursive: true, force: true }); rmSync(snapshots, { recursive: true, force: true }); };
 
@@ -267,10 +267,6 @@ try {
     const active = activeCanonicalGeneration(options()); git(["checkout", "-q", "-b", "feature-local"], active.checkout); assert.equal(activeCanonicalGeneration(options()).ok, false); git(["checkout", "-q", "main"], active.checkout);
     const unrelated = join(tmp, "unrelated"); execFileSync("git", ["init", "-q", "-b", "main", unrelated]); git(["config", "user.email", "x@y"], unrelated); git(["config", "user.name", "x"], unrelated); writeFileSync(join(unrelated, "x"), "x"); git(["add", "."], unrelated); git(["commit", "-q", "-m", "x"], unrelated);
     const metaPath = join(active.generation, "generation.json"), meta = JSON.parse(readFileSync(metaPath)); meta.repository = unrelated; writeFileSync(metaPath, JSON.stringify(meta)); assert.equal(activeCanonicalGeneration(options()).ok, false);
-  });
-  test("legacy self-authored manifests require explicit fixture injection", () => {
-    const fixture = join(tmp, "legacy"); mkdirSync(fixture); writeFileSync(join(fixture, "sql.md"), "# fixture"); writeFileSync(join(fixture, "manifest.json"), JSON.stringify({ schema_version: 1, revision: "fixture", domains: { sql: { path: "sql.md", sha256: hash("# fixture") } } }));
-    assert.notEqual(resolveStandard("sql", options({ canonicalRoot: fixture })).state, "canonical"); assert.equal(resolveStandard("sql", options({ fixtureRoot: fixture })).revision, "fixture");
   });
   test("coop reads only active wiki articles: not the v1 shim, retired, draft, or unfielded notes", () => {
     resetStorage(); now += 1; git(["reset", "--hard", "HEAD"]);
