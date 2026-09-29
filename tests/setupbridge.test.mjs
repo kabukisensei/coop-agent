@@ -132,6 +132,42 @@ await t("renderPrompt path → an existing suggestion stays the Enter choice", a
   assert.equal(answer, join("..", "sql"));
 });
 
+await t("renderPrompt path → a session folder that is itself a repo is not a nearby repo (#102)", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-path-self-repo-"));
+  const cwd = join(root, "project");
+  // The session folder is a Git checkout; its only sibling is not one.
+  mkdirSync(join(cwd, ".git"), { recursive: true }); mkdirSync(join(root, "notes"));
+  let shown = [];
+  const ctx = { cwd, ui: { select: async (_message, choices) => { shown = choices; return undefined; } } };
+  const answer = await renderPrompt(ctx, {
+    type: "prompt", id: "pbi_path", kind: "path", message: "Power BI repo path", default: "../pbi-repo",
+  });
+  assert.equal(answer, null);
+  assert.equal(shown[0], MANUAL);
+  assert.ok(shown.includes("✓ Use this folder: ."), `browsing starts in the session folder, got ${JSON.stringify(shown)}`);
+  assert.ok(!shown.includes("📁 notes"), "browsing does not start beside the missing suggestion");
+});
+
+await t("renderPrompt path → a blank typed path keeps an existing suggestion", async () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-path-existing-typed-"));
+  const cwd = join(root, "project");
+  mkdirSync(cwd); mkdirSync(join(root, "sql"));
+  let selects = 0;
+  const inputs = [];
+  const ctx = { cwd, ui: {
+    // Pick "Type or paste" once; a second folder list means the blank line was not kept.
+    select: async (_message, choices) => (++selects > 1 ? undefined : choices.find((c) => c === MANUAL)),
+    input: async (label, placeholder) => { inputs.push([label, placeholder]); return ""; },
+  } };
+  const answer = await renderPrompt(ctx, {
+    type: "prompt", id: "sql_path", kind: "path", message: "SQL repo path", default: "../sql",
+  });
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0][1], "../sql", "the existing suggestion is the typed default");
+  assert.equal(answer, "../sql", "Enter on a blank line keeps the suggestion");
+  assert.equal(selects, 1, "no return to the folder list");
+});
+
 await t("renderPrompt confirm → ui.confirm returns boolean", async () => {
   const ctx = { ui: { confirm: async () => true } };
   const answer = await renderPrompt(ctx, { type: "prompt", id: "q2", kind: "confirm", message: "Map it?" });

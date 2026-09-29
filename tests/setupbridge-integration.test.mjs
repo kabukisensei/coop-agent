@@ -199,8 +199,11 @@ const line=o=>process.stdout.write(JSON.stringify(o)+'\\n');
     await commands["setup-docs"]("", deliberate(notes, "../pbi-repo"));
     assert.ok(!notes.some((n) => n.message === "confirm: Build now?"), `no Build now? after a not-runnable setup: ${JSON.stringify(notes)}`);
     assert.ok(!execs.includes("build"), "no build is started");
-    const last = notes.filter((n) => n.type === "warning").pop();
-    assert.ok(last && last.message.includes(join(workspace, "pbi-repo")), `the warning names the missing path: ${JSON.stringify(notes)}`);
+    // runQuickSetup's own warning, not the wizard's "Saved, but not runnable yet:"
+    // notice (which also names the path and would pass a looser check).
+    const notBuilding = notes.find((n) => n.type === "warning" && n.message.startsWith("Not building yet:"));
+    assert.ok(notBuilding && notBuilding.message.includes(join(workspace, "pbi-repo")),
+      `runQuickSetup warns again, naming the missing path: ${JSON.stringify(notes)}`);
   }
   // Control: a runnable setup still offers "Build now?".
   mkdirSync(join(workspace, "PowerBI"));
