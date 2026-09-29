@@ -894,12 +894,13 @@ coop_az_run() {
       : > "$dir/stopped"
       w="$(cat "/proc/$p/winpid" 2>/dev/null)" || w=''
       if [ -z "$w" ] || ! taskkill //PID "$w" //T //F; then
-        # List az's children, then end az before them: a wrapper script that
-        # outlived its child would print its own "Terminated" notice.
+        # List az's children, then signal az and them in ONE kill: az first, so a
+        # wrapper can't print its own "Terminated" notice, and no TERM trap can
+        # run between the two and leave the child (python) running.
         kids="$(pgrep -P "$p")" \
           || kids="$(ps -A -o pid= -o ppid= | awk -v p="$p" '$2 == p { print $1 }')"
-        kill "$p" || true
-        for c in $kids; do kill "$c" || true; done
+        # shellcheck disable=SC2086  # deliberate word splitting of the pid list
+        kill "$p" $kids || true
       fi
       kill "$p" || true
     fi

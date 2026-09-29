@@ -13,7 +13,8 @@
 //             "error" fails with a non-authentication error; "hang" never
 //             answers (see hang below)
 //   hang.pid  written by a hanging call: its pid, so a test can check that the
-//             watchdog ended it. A hanging call exits by itself after 20 s.
+//             watchdog ended it. A hanging call exits by itself after 20 s and
+//             then writes hang.expired, so a test can tell "stopped" from "ran out".
 //   argv.log  one line per call; login lines end with " LXV2=<value>" (the
 //             AZURE_CORE_LOGIN_EXPERIENCE_V2 the call saw)
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
@@ -40,6 +41,8 @@ const json = option("--output") === "json";
 const hang = () => {
   writeFileSync(join(dir, "hang.pid"), String(process.pid));
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20000);
+  // Reaching here means nothing stopped this call: tests assert this is absent.
+  writeFileSync(join(dir, "hang.expired"), "");
   process.exit(98);
 };
 

@@ -242,6 +242,8 @@ try {
 
   # Wait up to 2 s for the process a hanging fake az recorded to be gone (no
   # record: az was stopped before it started).
+  # A hanging fake az that ran out by itself (nothing stopped it) leaves hang.expired.
+  function Test-HangExpired { Test-Path -LiteralPath (Join-Path $state 'hang.expired') }
   function Test-HangGone {
     $hangFile = Join-Path $state 'hang.pid'
     if (-not (Test-Path -LiteralPath $hangFile)) { return $true }
@@ -273,6 +275,7 @@ try {
   elseif (Test-Path -LiteralPath $marker) { Ko 'a stopped sign-in must not leave a marker' }
   elseif ((Get-WarnCount $out) -ne 1 -or $outLines.Count -ne 2 -or -not $out.Contains('not verified') -or -not $out.Contains("az login --tenant $T2 --allow-no-subscriptions")) { Ko 'stopped sign-in: the Opening line and exactly one warning line expected' $out }
   elseif (-not (Test-HangGone)) { Ko 'the stopped sign-in is still running' }
+  elseif (Test-HangExpired) { Ko 'the sign-in ran out by itself: the limit did not end it' }
   else { Ok 'sign-in stopped at its limit: exactly one line, az ended' }
 
   # 13d. A stopped probe also ends az's child process: az.cmd (Windows) and the
@@ -297,6 +300,7 @@ try {
   if ($r.Rc -ne 124) { Ko "a stopped probe must return 124 (got $($r.Rc))" }
   elseif ($sw.Elapsed.TotalSeconds -ge 15) { Ko "the stopped probe took $([int]$sw.Elapsed.TotalSeconds)s (limit 3s)" }
   elseif (-not (Test-HangGone)) { Ko "the az wrapper's child is still running" }
+  elseif (Test-HangExpired) { Ko "the probe ran out by itself: the limit did not end it" }
   else { Ok "a stopped probe ends the az wrapper's child too (rc 124)" }
 
   # 13e. `coop web` (-NewWindow): on Windows the sign-in runs in its own window;
@@ -351,6 +355,7 @@ sys.stdout.write(buf.decode("utf-8", "replace"))
     elseif (-not $ptyOut.Contains("Azure sign-in for tenant $T2 is not verified") -or -not $ptyOut.Contains('AFTER-PREFLIGHT')) { Ko 'Ctrl-C must cancel the sign-in, print one line and let the launch continue' $ptyOut }
     elseif (Test-Path -LiteralPath $marker) { Ko 'a cancelled sign-in must not leave a marker' }
     elseif (-not (Test-HangGone)) { Ko 'the cancelled sign-in is still running' }
+    elseif (Test-HangExpired) { Ko 'Ctrl-C did not cancel the sign-in: it ran out by itself' }
     else { Ok 'Ctrl-C during the sign-in: cancelled, one line, the launch continues' }
   }
 

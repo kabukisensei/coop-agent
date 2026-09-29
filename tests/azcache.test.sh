@@ -226,6 +226,7 @@ case "$out" in *Terminated*|*Killed*|*"sh -c"*) fail "a stopped sign-in must not
   || fail "a stopped sign-in prints exactly one line after the Opening line (got: $out)"
 case "$out" in *"not verified"*"az login --tenant $T2 --allow-no-subscriptions"*) ;; *) fail "stopped sign-in line mismatch (got: $out)" ;; esac
 hang_alive && fail "the stopped sign-in is still running"
+[ ! -f "$TMP/az/hang.expired" ] || fail "the sign-in ran out by itself: the watchdog did not end it"
 pass "sign-in stopped by the watchdog: exactly one line, no 'Terminated' notice, az ended"
 
 # 13d. The watchdog also ends az's child process when pgrep and pkill are missing
@@ -246,6 +247,7 @@ elapsed=$((SECONDS - started))
 [ "$rc" = "124" ] || fail "a stopped wrapper az must return 124 (got $rc: $err)"
 [ "$elapsed" -lt 10 ] || fail "the wrapper's child held the caller for ${elapsed}s (limit 2s)"
 hang_alive && fail "the wrapper's child is still running"
+[ ! -f "$TMP/az/hang.expired" ] || fail "the wrapper's child ran out by itself: the watchdog did not end it"
 pass "no pgrep/pkill: the watchdog ends the az wrapper's child; the 2s limit holds (${elapsed}s), rc 124"
 
 # 14. The auth markers match the Fabric token helper's list.
