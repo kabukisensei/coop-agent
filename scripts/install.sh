@@ -322,20 +322,25 @@ coop_head "Cooptimize agent bootstrap (v${COOP_VERSION})  [$OS]"
 # stops here with the exact command, instead of failing several steps later.
 coop_head "1/9  Prerequisites"
 _show_prereqs
+# The command that re-runs this install. A first install stops here, before step 7
+# links `coop` onto PATH, so until then name the clone's own launcher (#112).
+# Checked before --prereqs auto can widen PATH.
+INSTALL_CMD='coop install'
+have coop || INSTALL_CMD="$(printf '%q' "$COOP_ROOT/bin/coop") install"
 if [ "$PREREQ_MISSING" -gt 0 ] && [ "$PREREQS_AUTO" = 1 ] && [ "$NO_PREREQS" != 1 ]; then
   _install_prereqs
   coop_head "Prerequisites (re-checked)"
   _show_prereqs
   [ "$PREREQ_MISSING" -gt 0 ] && coop_err "$PREREQ_MISSING required prerequisite(s) still missing — install the ✗ rows above in that order."
-  coop_warn "Open a NEW terminal so the new tools are on PATH, then run: coop install"
+  coop_warn "Open a NEW terminal so the new tools are on PATH, then run: $INSTALL_CMD"
   exit 1
 fi
 if [ "$PREREQ_MISSING" -gt 0 ]; then
   if [ "$NO_PREREQS" = 1 ]; then
     coop_warn "$PREREQ_MISSING required prerequisite(s) missing (--no-prereqs: continuing anyway)"
   else
-    coop_err "$PREREQ_MISSING required prerequisite(s) missing. Install the ✗ rows above in that order, open a NEW terminal, then run: coop install"
-    coop_say "      (or let coop run those commands for you: coop install --prereqs auto)"
+    coop_err "$PREREQ_MISSING required prerequisite(s) missing. Install the ✗ rows above in that order, open a NEW terminal, then run: $INSTALL_CMD"
+    coop_say "      (or let coop run those commands for you: $INSTALL_CMD --prereqs auto)"
     exit 1
   fi
 else

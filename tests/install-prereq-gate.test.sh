@@ -35,6 +35,14 @@ if PATH="$BIN:/usr/bin:/bin" command -v node >/dev/null 2>&1; then
   echo '  --  a system node on /usr/bin or /bin; "Node missing" gate fixture skipped'
   exit 0
 fi
+# #112: the cases below run with no `coop` on PATH (a first install), so the stub
+# PATH must not reach a real one.
+if PATH="$BIN:/usr/bin:/bin" command -v coop >/dev/null 2>&1; then
+  echo '  --  a coop on /usr/bin or /bin; "coop not linked yet" gate fixture skipped'
+  exit 0
+fi
+# Until step 7 links `coop`, the stop lines name the clone's own launcher.
+LAUNCH="$(printf '%q' "$ROOT/bin/coop") install"
 
 export HOME="$T/home" COOP_DIR="$T/coop-dir" COOP_AGENT_DIR="$T/agent" PI_CODING_AGENT_DIR="$T/agent"
 export COOP_NO_ONBOARD=1 COOP_FLEET_TEST_MODE=1 COOP_TEST_CALLS="$CALLS" COOP_TEST_REAL_NODE="$REAL_NODE"
@@ -63,12 +71,14 @@ has 'winget install --id OpenJS.NodeJS.LTS -e'
 has '✗ 3. Python 3.10-3.13 (3.12 recommended)  (not found)'
 has 'winget install --id Python.Python.3.12 -e'
 has '✓ 5. Azure CLI'
-has '2 required prerequisite(s) missing. Install the ✗ rows above in that order, open a NEW terminal, then run: coop install'
+has "2 required prerequisite(s) missing. Install the ✗ rows above in that order, open a NEW terminal, then run: $LAUNCH"
+has "(or let coop run those commands for you: $LAUNCH --prereqs auto)"
 nothing_installed 'Windows'
 # Dependency order: Git, Node, Python, pipx, Azure CLI, ODBC, Tabular Editor.
 order="$(grep -oE '[✓✗!] [1-7]\. ' "$OUT" | grep -oE '[1-7]' | tr -d '\n')"
 [ "$order" = 1234567 ] || fail "rows out of order: $order"
 echo '  ✓ Windows without Node/Python stops at the ordered checklist with both winget commands'
+echo '  ✓ with coop not linked yet, the stop lines name the clone launcher (#112)'
 
 # 2. macOS, same machine: brew commands, still nothing installed.
 run_install "$BIN:/usr/bin:/bin"
@@ -94,7 +104,7 @@ grep -F 'BREW install node' "$CALLS" >/dev/null || fail '--prereqs auto did not 
 grep -F 'BREW install python@3.12' "$CALLS" >/dev/null || fail '--prereqs auto did not run brew install python@3.12'
 has 'running: brew install node'
 has 'Prerequisites (re-checked)'
-has 'Open a NEW terminal so the new tools are on PATH, then run: coop install'
+has "Open a NEW terminal so the new tools are on PATH, then run: $LAUNCH"
 grep -F '2/9' "$OUT" >/dev/null && fail '--prereqs auto continued in the same terminal'
 echo '  ✓ --prereqs auto installs visibly, re-checks, and requires a new terminal'
 
@@ -118,3 +128,14 @@ for n in python3 python; do stub "$n" '[ "$1" = --version ] && echo "Python 3.12
 COOP_TEST_UNAME=MINGW64_NT run_install "$NODEBIN:$BIN:/usr/bin:/bin"
 has '✓ 3. Python 3.10-3.13 (3.12 recommended)  (3.12.9)'
 echo '  ✓ a 3.12 general Python passes the Python row even when the Fabric probe misses it'
+
+# 8. #112: with `coop` already on PATH, both stop lines keep saying: coop install.
+#    (Case 7's Python stub leaves Node as the only missing row, so no counts here.)
+mkdir -p "$T/linked"
+printf '#!/bin/sh\nexit 0\n' > "$T/linked/coop"; chmod +x "$T/linked/coop"
+run_install "$T/linked:$BIN:/usr/bin:/bin"
+has 'required prerequisite(s) missing. Install the ✗ rows above in that order, open a NEW terminal, then run: coop install'
+has '(or let coop run those commands for you: coop install --prereqs auto)'
+run_install "$T/linked:$BIN:/usr/bin:/bin" --prereqs auto
+has 'Open a NEW terminal so the new tools are on PATH, then run: coop install'
+echo '  ✓ with coop on PATH, the stop lines still say: coop install'
