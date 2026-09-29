@@ -711,8 +711,7 @@ can update tools but never the repo layer; replace it with a Git clone and rerun
 release tag (`vX.Y.Z` on `main`) and pins Pi, extensions, and tools to that release's
 manifest. It never moves a checkout backwards: a checkout at or past the newest release
 stays where it is. Merges to `main` reach teammates only when a release is tagged. Fresh
-clones start on the head of `main` and join the release channel at the next tag. Clone the
-full repository; a `--depth` or `--single-branch` clone has no `origin/main` to follow.
+clones start on the head of `main` and join the release channel at the next tag.
 
 **Maintainer channel.** `coop update --edge` takes the head of `main` plus the latest
 upstream Pi, extensions, and tools; from a detached checkout it re-attaches to `main` when
@@ -732,9 +731,11 @@ state and the command that fixes it:
   held branch's own upstream and does nothing on a hold without one.
 - Local commits that the next release does not contain block the move. Push them, or set
   them aside on a branch as Doctor shows.
-- A clone with no `origin/main` (single-branch, tag-only, or shallow) cannot follow
-  releases: `git -C <coop-agent> remote set-branches origin '*'`, then
+- A clone with no `origin/main` (for example a single-branch clone of a tag) cannot
+  follow releases: `git -C <coop-agent> remote set-branches origin '*'`, then
   `git -C <coop-agent> fetch origin`.
+- A checkout with no `origin` remote (renamed or removed) cannot move: Doctor shows the
+  `git remote rename` or `git remote add origin` command that restores it.
 - A detached checkout (for example `git clone --branch vX.Y.Z`) follows release tags
   forward while detached. One detached at v0.23.5 or older runs an updater that cannot
   move it: run `git -C <coop-agent> checkout main`, then `coop update`.

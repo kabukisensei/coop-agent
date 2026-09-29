@@ -80,7 +80,10 @@ follow 0
 [ "$(git -C "$COOP_ROOT" rev-parse refs/heads/main)" = "$C4" ] || fail "refs/heads/main moved"
 case "$OUT" in *moved*) fail "no move may be announced for a checkout ahead of the newest release" ;; esac
 case "$OUT" in *"no newer release to move to"*) ;; *) fail "step 1 should say there is no newer release" ;; esac
-pass "ahead of the newest release: stays put, never moves back (behind 0, no nudge)"
+# The doctor row and step 1 describe against releases only: never by the rc tag.
+case "$(coop_repo_describe)" in v0.10.0-2-g*) ;; *) fail "describe must skip the rc tag (got '$(coop_repo_describe)')" ;; esac
+case "$OUT" in *rc1*) fail "step 1 must not describe the checkout by an rc tag" ;; esac
+pass "ahead of the newest release: stays put, never moves back (behind 0, no nudge, no rc in describe)"
 
 # 2. Forward move to exactly the next release, never to head. A local branch
 #    named like the tag must not hide it (lstrip=2, not :short).
@@ -103,6 +106,19 @@ follow 0
 [ "$(at)" = "$C2" ] || fail "a second run must not move (rc tags are not releases)"
 case "$OUT" in *moved*) fail "a second run must not announce a move" ;; esac
 pass "behind: fast-forwards to exactly v0.10.0 on main (tracking kept); second run is a no-op"
+
+# 2b. A tag named like the branch (a stray 'main' tag, which every fetch
+#     auto-follows) must not turn main into a hold in either mode.
+fresh tag-main
+git -C "$COOP_ROOT" reset -q --hard v0.9.0
+git -C "$COOP_ROOT" tag main "$C1"
+[ -z "$(coop_repo_stranded)" ] || fail "a tag named main must not make main a hold (got: $(coop_repo_stranded))"
+[ "$(coop_repo_next_release)" = v0.10.0 ] || fail "a tag named main must not hide the next release"
+follow 0
+[ "$(at)" = "$C2" ] && [ "$(branch_ref)" = refs/heads/main ] || fail "a tag named main must not stop the release move"
+follow 1
+[ "$(at)" = "$C4" ] && [ "$(branch_ref)" = refs/heads/main ] || fail "a tag named main must not stop --edge"
+pass "a tag named main: main still follows releases, and --edge still pulls"
 
 # 3. A renamed branch that tracks origin/main follows releases too.
 fresh renamed
@@ -188,6 +204,7 @@ pass "--edge guards: a detached local commit or a local main with unpushed commi
 #    name it (the nudge stays quiet: behind 0).
 fresh diverged
 git -C "$COOP_ROOT" reset -q --hard v0.9.0
+git -C "$COOP_ROOT" branch my-work   # a leftover from an earlier rejoin
 commit "$COOP_ROOT" local-work local
 L="$(at)"
 [ -z "$(coop_repo_next_release)" ] || fail "a diverged checkout has no next release"
@@ -196,7 +213,26 @@ follow 0
 [ "$(at)" = "$L" ] || fail "a diverged checkout must not move"
 case "$OUT" in *"release v0.10.0 does not contain"*) ;; *) fail "step 1 should name the diverged state" ;; esac
 case "$(coop_repo_stranded)" in *"reset --keep v0.10.0"*) ;; *) fail "the stranded state should name the fix" ;; esac
-pass "diverged main: no move, behind 0, step 1 and doctor name the blocked release and the fix"
+# The printed fix, run as a user pastes it, rejoins the release and keeps the
+# local commit on a branch, even with a leftover my-work branch.
+S="$(coop_repo_stranded)"
+CMD="${S#*set them aside and rejoin: }"
+eval "$CMD" >/dev/null 2>&1 || true
+[ "$(at)" = "$C2" ] && [ "$(branch_ref)" = refs/heads/main ] || { OUT="$S"; fail "the printed fix should rejoin release v0.10.0 on main"; }
+[ -n "$(git -C "$COOP_ROOT" branch --contains "$L")" ] || fail "the printed fix must keep the local commit on a branch"
+# If the aside branch cannot be made, the fix must not reset (no orphaned commit).
+fresh diverged-collide
+git -C "$COOP_ROOT" reset -q --hard v0.9.0
+commit "$COOP_ROOT" local-work local
+L="$(at)"
+S="$(coop_repo_stranded)"
+CMD="${S#*set them aside and rejoin: }"
+A="${CMD#* branch }"; A="${A%% *}"
+git -C "$COOP_ROOT" branch "$A" "$C1"
+eval "$CMD" >/dev/null 2>&1 || true
+[ "$(at)" = "$L" ] && [ "$(git -C "$COOP_ROOT" rev-parse refs/heads/main)" = "$L" ] \
+  || { OUT="$S"; fail "the printed fix reset although its aside branch could not be made"; }
+pass "diverged main: no move, behind 0, named; the printed fix rejoins, and never resets without its aside branch"
 
 # 9. Hold: a branch that does not track origin/main is not fetched or moved. Its
 #    origin gains a commit after the clone (its own copy, so later cases keep c4).
@@ -222,6 +258,34 @@ follow 0
 [ "$(at)" = "$C1" ] || fail "a main that does not track origin/main is a hold"
 case "$OUT" in *"branch --set-upstream-to=origin/main main"*) ;; *) fail "a non-tracking main should name the fix" ;; esac
 pass "hold branch (no upstream, or not origin/main): not fetched, not moved, named with the fix"
+
+# 9b. Keyed on the upstream being origin/main, not on having one: the usual hold
+#     (`git switch pinned`, which tracks origin/pinned) and a main that tracks
+#     another remote's main are holds. Default mode neither fetches nor moves
+#     them; --edge pulls the hold's own upstream.
+git -C "$TMP/hold-writer" push -q origin "$C1:refs/heads/pinned"
+COOP_ROOT="$TMP/pinned"
+git clone -q "$TMP/origin-hold.git" "$COOP_ROOT"
+git -C "$COOP_ROOT" checkout -q -b pinned --track origin/pinned
+git -C "$TMP/hold-writer" checkout -q -b pinned "$C1"
+commit "$TMP/hold-writer" p2 fp
+git -C "$TMP/hold-writer" push -q origin pinned
+P2="$(git -C "$TMP/hold-writer" rev-parse HEAD)"
+follow 0
+[ "$(at)" = "$C1" ] || fail "a branch tracking origin/pinned is a hold: default mode must not move it"
+[ "$(git -C "$COOP_ROOT" rev-parse refs/remotes/origin/pinned)" = "$C1" ] || fail "a hold with an upstream must not be fetched"
+case "$OUT" in *"held on branch 'pinned'"*) ;; *) fail "step 1 should name the pinned hold" ;; esac
+follow 1
+[ "$(at)" = "$P2" ] && [ "$(branch_ref)" = refs/heads/pinned ] || fail "--edge should pull a hold's own upstream"
+fresh fork-main
+git -C "$COOP_ROOT" reset -q --hard v0.9.0
+git -C "$COOP_ROOT" remote add fork "$ORIGIN"
+git -C "$COOP_ROOT" fetch -q fork
+git -C "$COOP_ROOT" branch -q --set-upstream-to=fork/main >/dev/null
+follow 0
+[ "$(at)" = "$C1" ] || fail "a main that tracks fork/main is a hold"
+case "$OUT" in *"held on branch 'main'"*"set-upstream-to=origin/main main"*) ;; *) fail "a main tracking fork/main should be named with the fix" ;; esac
+pass "hold tracking origin/pinned or fork/main: not fetched, not moved; --edge pulls its own upstream"
 
 # 10. Offline: a failed fetch warns, returns 0, and still moves on known tags.
 fresh offline
@@ -286,6 +350,32 @@ follow 0
 case "$OUT" in *"to release v0.12.0"*) ;; *) fail "step 1 should name v0.12.0" ;; esac
 pass "a release tagged after the clone: plain fetch brings it, update moves to it"
 
+# 14b. No origin remote (renamed or removed) is named as such, not as a hold,
+#      with a fix that works when run as printed.
+fresh renamed-remote
+git -C "$COOP_ROOT" reset -q --hard v0.9.0
+git -C "$COOP_ROOT" remote rename origin upstream
+S="$(coop_repo_stranded)"
+case "$S" in "coop-agent has no origin remote"*"remote rename upstream origin") ;; *) OUT="$S"; fail "a renamed origin should be named with the rename fix" ;; esac
+eval "${S#*fix: }" || { OUT="$S"; fail "the printed rename fix should run"; }
+[ -z "$(coop_repo_stranded)" ] || fail "after the printed rename fix the checkout is not stranded"
+follow 0
+[ "$(at)" = "$C2" ] || fail "after the printed rename fix the checkout should follow releases"
+fresh removed-remote
+git -C "$COOP_ROOT" reset -q --hard v0.9.0
+git -C "$COOP_ROOT" remote remove origin
+S="$(coop_repo_stranded)"
+U=https://github.com/kabukisensei/coop-agent.git
+case "$S" in "coop-agent has no origin remote"*"remote add origin $U"*) ;; *) OUT="$S"; fail "a removed origin should be named with the add fix" ;; esac
+# Offline stand-in for the canonical URL: the add fix, then the fix it leads to.
+CMD="${S#*fix: }"
+eval "${CMD/$U/$ORIGIN}" >/dev/null 2>&1 || { OUT="$S"; fail "the printed add fix should run"; }
+S="$(coop_repo_stranded)"
+eval "${S#*again: }" >/dev/null 2>&1 || { OUT="$S"; fail "the follow-up fix should run"; }
+follow 0
+[ "$(at)" = "$C2" ] || fail "after the printed fixes the checkout should follow releases"
+pass "no origin remote (renamed or removed): named, and the printed fix restores release following"
+
 # 15. Wiring: step 1 and the doctor row call these helpers in both twins.
 OUT=""
 grep -qF 'coop_repo_follow_release "$EDGE"' "$ROOT/scripts/update.sh" || fail "update.sh step 1 must call coop_repo_follow_release"
@@ -293,6 +383,8 @@ grep -qF 'Invoke-CoopRepoFollowRelease $EDGE' "$ROOT/scripts/update.ps1" || fail
 if grep -n 'pull --ff-only' "$ROOT/scripts/update.sh" "$ROOT/scripts/update.ps1"; then
   fail "update.* must not pull the repo directly (the pull lives in lib/common.*)"
 fi
+grep -qF '_coop_repo_warn_stranded || coop_warn' "$ROOT/scripts/update.sh" || fail "update.sh step 1 must name a missing origin with its fix"
+grep -qF 'if (-not (Write-CoopRepoStranded)) { Coop-Warn' "$ROOT/scripts/update.ps1" || fail "update.ps1 step 1 must name a missing origin with its fix"
 grep -qF 'coop_repo_stranded' "$ROOT/scripts/doctor.sh" || fail "doctor.sh must name stranded states"
 grep -qF 'Get-CoopRepoStranded' "$ROOT/scripts/doctor.ps1" || fail "doctor.ps1 must name stranded states"
 pass "update.* step 1 and doctor.* call the shared helpers"

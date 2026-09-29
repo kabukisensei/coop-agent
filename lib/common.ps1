@@ -1328,12 +1328,23 @@ function Get-CoopRepoGitLine {
   return ''
 }
 
+# The checked-out branch name; '' when HEAD is detached. Strips refs/heads/ from
+# the full ref, not --short: a tag named like the branch (a stray 'main' tag,
+# which every fetch auto-follows) turns --short into 'heads/main'.
+# (mirror of _coop_repo_branch)
+function Get-CoopRepoBranch {
+  $ErrorActionPreference = 'Continue'
+  $ref = Get-CoopRepoGitLine @('symbolic-ref', '-q', 'HEAD')
+  if ($ref -cmatch '^refs/heads/(.+)$') { return $Matches[1] }
+  return ''
+}
+
 # True when HEAD follows release tags: a detached HEAD, or a branch whose upstream
 # is origin/main (main, or a renamed branch that tracks it). Any other branch,
 # including one with no upstream, is a hold. (mirror of _coop_repo_follows_releases)
 function Test-CoopRepoFollowsReleases {
   $ErrorActionPreference = 'Continue'
-  $branch = Get-CoopRepoGitLine @('symbolic-ref', '-q', '--short', 'HEAD')
+  $branch = Get-CoopRepoBranch
   if (-not $branch) { return $true }
   if ((Get-CoopRepoGitLine @('config', '--get', "branch.$branch.remote")) -cne 'origin') { return $false }
   return ((Get-CoopRepoGitLine @('config', '--get', "branch.$branch.merge")) -ceq 'refs/heads/main')
@@ -1395,20 +1406,33 @@ function Get-CoopRepoStranded {
   if (-not (Test-Have 'git')) { return $null }
   $root = $script:CoopRoot
   if (-not (Test-Path -LiteralPath (Join-Path $root '.git'))) { return $null }
+  & git -C $root remote get-url origin *> $null
+  if ($LASTEXITCODE -ne 0) {
+    # Renamed (origin -> upstream) or removed: name it before it reads as a hold.
+    $remote = Get-CoopRepoGitLine @('remote')
+    $fix = if ($remote) { "git -C `"$root`" remote rename $remote origin" } else { "git -C `"$root`" remote add origin https://github.com/kabukisensei/coop-agent.git; git -C `"$root`" fetch origin" }
+    return [pscustomobject]@{ Message = 'coop-agent has no origin remote, so coop update cannot move it'; Hint = "fix: $fix" }
+  }
   if (-not (Test-CoopRepoFollowsReleases)) {
-    $branch = Get-CoopRepoGitLine @('symbolic-ref', '-q', '--short', 'HEAD')
+    $branch = Get-CoopRepoBranch
     $fix = if ($branch -ceq 'main') { "git -C `"$root`" branch --set-upstream-to=origin/main main" } else { "git -C `"$root`" switch main" }
     return [pscustomobject]@{ Message = "coop-agent is held on branch '$branch' (it does not track origin/main); coop update leaves it alone"; Hint = "to follow releases again: $fix" }
   }
   & git -C $root rev-parse -q --verify refs/remotes/origin/main *> $null
   if ($LASTEXITCODE -ne 0) {
-    return [pscustomobject]@{ Message = 'coop-agent has no origin/main to follow (a single-branch, tag-only or shallow clone)'; Hint = "fix: git -C `"$root`" remote set-branches origin '*'; git -C `"$root`" fetch origin" }
+    return [pscustomobject]@{ Message = 'coop-agent has no origin/main to follow (for example a single-branch clone of a tag)'; Hint = "fix: git -C `"$root`" remote set-branches origin '*'; git -C `"$root`" fetch origin" }
   }
   $tag = Get-CoopRepoNewestRelease
   if ($tag -and -not (Get-CoopRepoNextRelease)) {
     & git -C $root merge-base --is-ancestor "refs/tags/$tag" HEAD *> $null
     if ($LASTEXITCODE -ne 0) {
-      return [pscustomobject]@{ Message = "coop-agent has commits that release $tag does not contain, so coop update cannot move it (push them, or set them aside)"; Hint = "set them aside and rejoin: git -C `"$root`" branch my-work; git -C `"$root`" reset --keep $tag" }
+      # Name the aside branch after HEAD so a leftover from an earlier rejoin never
+      # collides, and run the reset only if the branch was made: Windows
+      # PowerShell 5.1 has no &&, and ';' would reset anyway and orphan the commits.
+      $aside = 'my-work'
+      $sha = Get-CoopRepoGitLine @('rev-parse', '--short', 'HEAD')
+      if ($sha -cmatch '^[0-9a-f]+$') { $aside = "my-work-$sha" }
+      return [pscustomobject]@{ Message = "coop-agent has commits that release $tag does not contain, so coop update cannot move it (push them, or set them aside)"; Hint = "set them aside and rejoin: git -C `"$root`" branch $aside; if (`$LASTEXITCODE -eq 0) { git -C `"$root`" reset --keep $tag }" }
     }
   }
   return $null
@@ -1440,7 +1464,7 @@ function Invoke-CoopRepoFollowRelease {
   }
   $before = Get-CoopRepoDescribe
   if (-not $before) { $before = 'checkout' }
-  $branch = Get-CoopRepoGitLine @('symbolic-ref', '-q', '--short', 'HEAD')
+  $branch = Get-CoopRepoBranch
   $oldPrompt = $env:GIT_TERMINAL_PROMPT
   $env:GIT_TERMINAL_PROMPT = '0'
   try {

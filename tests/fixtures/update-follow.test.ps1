@@ -7,6 +7,7 @@
 # temp dir; no sleep, no marker, no network, never this checkout. The caller runs
 # with EAP=Stop, which proves the helpers' function-local Continue on 5.1.
 # Assertions read git state; message text is checked only where no state differs.
+# Printed fixes are run the way a user pastes them into PowerShell (Invoke-Hint).
 $ErrorActionPreference = 'Stop'
 # pwsh 7.3+: a failed native command honors EAP=Stop too, as redirected stderr does
 # on Windows PowerShell 5.1, so every host proves the helpers' local Continue.
@@ -36,11 +37,19 @@ function Add-FixtureCommit([string]$Repo, [string]$Message, [string]$File) {
   Invoke-FixtureGit @('-C', $Repo, 'add', $File)
   Invoke-FixtureGit @('-C', $Repo, 'commit', '-q', '-m', $Message)
 }
-function New-FixtureClone([string]$Name, [string[]]$CloneArgs = @()) {
+function New-FixtureClone([string]$Name, [string[]]$CloneArgs = @(), [string]$From = '') {
+  if (-not $From) { $From = $script:Origin }
   $d = Join-Path $t $Name
-  Invoke-FixtureGit (@('clone', '-q') + $CloneArgs + @($script:Origin, $d))
+  Invoke-FixtureGit (@('clone', '-q') + $CloneArgs + @($From, $d))
   $script:CoopRoot = $d
   return $d
+}
+# Run the command part of a printed hint ('<label>: <command>') as a user pastes it
+# into PowerShell. Local Continue: a git failure inside the hint is the point.
+function Invoke-Hint([string]$Hint) {
+  $ErrorActionPreference = 'Continue'
+  $PSNativeCommandUseErrorActionPreference = $false
+  $null = Invoke-Expression $Hint.Substring($Hint.IndexOf(': ') + 2) *>&1
 }
 function Get-At { Get-FixtureGit @('-C', $script:CoopRoot, 'rev-parse', 'HEAD') }
 function Get-BranchRef { Get-FixtureGit @('-C', $script:CoopRoot, 'symbolic-ref', '-q', 'HEAD') }
@@ -98,7 +107,8 @@ try {
   elseif ((Get-CoopRepoNextRelease) -or (Get-CoopRepoBehindCount) -ne 0) { Ko 'ahead of every release: next release empty and 0 behind expected' }
   elseif ((Invoke-Captured { Invoke-CoopUpdateNudge }).Trim()) { Ko 'ahead of every release: the launch nudge must stay silent' }
   elseif ($null -ne (Get-CoopRepoStranded)) { Ko 'ahead of every release is not a stranded state' }
-  else { Ok 'ahead of the newest release: stays put, 0 behind, nudge silent' }
+  elseif ((Get-CoopRepoDescribe) -notlike 'v0.10.0-2-g*' -or $out.Contains('rc1')) { Ko "describe must skip the rc tag (got '$(Get-CoopRepoDescribe)')" $out }
+  else { Ok 'ahead of the newest release: stays put, 0 behind, nudge silent, no rc in describe' }
 
   # 2. Behind: moves to exactly the next release (version sort; rc, off-main and
   #    same-named-branch cases) and stays attached with its upstream.
@@ -122,6 +132,24 @@ try {
   if ((Get-At) -ne $C2 -or $out.Contains('moved')) { Ko 'a second run must be a quiet no-op' $out }
   else { Ok 'a second run is a no-op' }
 
+  # 2b. A tag named like the branch (a stray 'main' tag, which every fetch
+  #     auto-follows) must not turn main into a hold in either mode.
+  $null = New-FixtureClone 'tag-main'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'tag', 'main', $C1)
+  $s = Get-CoopRepoStranded
+  if ($null -ne $s) { Ko "a tag named main must not make main a hold (got: $($s.Message))" }
+  elseif ((Get-CoopRepoNextRelease) -ne 'v0.10.0') { Ko 'a tag named main must not hide the next release' }
+  else {
+    $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
+    if ((Get-At) -ne $C2 -or (Get-BranchRef) -ne 'refs/heads/main') { Ko 'a tag named main must not stop the release move' $out }
+    else {
+      $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $true }
+      if ((Get-At) -ne $C4 -or (Get-BranchRef) -ne 'refs/heads/main') { Ko 'a tag named main must not stop --edge' $out }
+      else { Ok 'a tag named main: main still follows releases, and --edge still pulls' }
+    }
+  }
+
   # 3. Dirty tracked file: the move is skipped.
   $null = New-FixtureClone 'dirty'
   Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
@@ -129,6 +157,17 @@ try {
   $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
   if ((Get-At) -ne $C1 -or -not $out.Contains('uncommitted')) { Ko 'a dirty checkout must warn and not move' $out }
   else { Ok 'dirty tracked files skip the move' }
+
+  # 3b. No source loss: an untracked file where the release adds one blocks the move.
+  $null = New-FixtureClone 'untracked'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  $f2 = Join-Path $script:CoopRoot 'f2'
+  [System.IO.File]::WriteAllText($f2, "mine`n")
+  $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
+  if ((Get-At) -ne $C1) { Ko 'the move must refuse to overwrite an untracked file' $out }
+  elseif ([System.IO.File]::ReadAllText($f2) -ne "mine`n") { Ko "the untracked file's content changed" $out }
+  elseif (-not $out.Contains('could not fast-forward coop-agent to v0.10.0')) { Ko 'a refused move should warn' $out }
+  else { Ok 'an untracked file in the way: move refused, file intact' }
 
   # 4. Detached `clone --branch v0.9.0`: moves forward, stays detached.
   $null = New-FixtureClone 'detached' @('--branch', 'v0.9.0')
@@ -142,6 +181,22 @@ try {
   if ((Get-At) -ne $C4 -or (Get-BranchRef) -ne 'refs/heads/main' -or (Get-Upstream) -ne 'refs/remotes/origin/main') { Ko '--edge should land on main at origin/main, tracking it' $out }
   else { Ok '--edge: detached checkout re-attaches to main at origin/main' }
 
+  # 5b. -Edge on an attached main pulls the head of main.
+  $null = New-FixtureClone 'edge-attached'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $true }
+  if ((Get-At) -ne $C4 -or (Get-BranchRef) -ne 'refs/heads/main') { Ko '--edge on main should pull head of main and stay attached' $out }
+  else { Ok '--edge: pulls head of main on an attached main' }
+
+  # 5c. -Edge guard: a detached commit that is not on origin/main stays put.
+  $null = New-FixtureClone 'edge-local-commit' @('--branch', 'v0.9.0')
+  Add-FixtureCommit $script:CoopRoot 'local-work' 'local'
+  $l = Get-At
+  $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $true }
+  if ((Get-At) -ne $l -or (Get-BranchRef)) { Ko '--edge must not leave a detached local commit' $out }
+  elseif (-not $out.Contains('not on origin/main')) { Ko '--edge should warn about the local commit' $out }
+  else { Ok '--edge guard: a detached local commit stays put' }
+
   # 6. -Edge guard: a local main with an unpushed commit is never reset.
   $null = New-FixtureClone 'edge-local-main'
   Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
@@ -153,14 +208,26 @@ try {
   elseif ((Get-At) -ne $C1 -or (Get-BranchRef)) { Ko '--edge must stay put when local main has unpushed commits' $out }
   else { Ok '--edge guard: a local main with unpushed commits stays put' }
 
-  # 7. Hold: a branch with no upstream is not moved, and the state is named.
-  $null = New-FixtureClone 'hold'
+  # 7. Hold: a branch with no upstream is not fetched or moved, and the state is
+  #    named. Its origin gains a commit after the clone (its own copy, so later
+  #    cases keep c4).
+  $holdOrigin = Join-Path $t 'origin-hold.git'
+  Invoke-FixtureGit @('clone', '-q', '--bare', $script:Origin, $holdOrigin)
+  $null = New-FixtureClone 'hold' @() $holdOrigin
   Invoke-FixtureGit @('-C', $script:CoopRoot, 'checkout', '-q', '-b', 'hold', 'v0.9.0')
+  $writer = Join-Path $t 'hold-writer'
+  Invoke-FixtureGit @('clone', '-q', $holdOrigin, $writer)
+  Add-FixtureCommit $writer 'c5' 'f5'
+  Invoke-FixtureGit @('-C', $writer, 'push', '-q', 'origin', 'main')
   $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
   $s = Get-CoopRepoStranded
-  if ((Get-At) -ne $C1 -or (Get-CoopRepoBehindCount) -ne 0) { Ko 'a hold must not move and reads 0 behind' $out }
+  if ((Get-FixtureGit @('-C', $script:CoopRoot, 'rev-parse', 'refs/remotes/origin/main')) -ne $C4) { Ko 'a hold must not be fetched' $out }
+  elseif ((Get-At) -ne $C1 -or (Get-CoopRepoBehindCount) -ne 0) { Ko 'a hold must not move and reads 0 behind' $out }
   elseif ($null -eq $s -or -not $s.Message.Contains("held on branch 'hold'") -or -not $s.Hint.Contains('switch main')) { Ko 'the hold should be named with the fix' }
-  else { Ok 'hold branch: not moved, named with the fix' }
+  else { Ok 'hold branch: not fetched, not moved, named with the fix' }
+  $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $true }
+  if ((Get-At) -ne $C1 -or -not $out.Contains("held on branch 'hold'")) { Ko '--edge has nothing to pull on a hold with no upstream and should name it' $out }
+  else { Ok '--edge on a hold with no upstream: not moved, named' }
 
   # 7b. Keyed on the upstream, not the name: a renamed branch tracking origin/main
   #     follows releases; a main that tracks nothing is a hold.
@@ -179,9 +246,40 @@ try {
   elseif ($null -eq $s -or -not $s.Hint.Contains('branch --set-upstream-to=origin/main main')) { Ko 'a non-tracking main should name the fix' }
   else { Ok 'non-tracking main: a hold, named with the fix' }
 
+  # 7c. Keyed on the upstream being origin/main, not on having one: the usual hold
+  #     (`git switch pinned`, which tracks origin/pinned) and a main that tracks
+  #     another remote's main are holds. Default mode neither fetches nor moves
+  #     them; -Edge pulls the hold's own upstream.
+  Invoke-FixtureGit @('-C', $writer, 'push', '-q', 'origin', ($C1 + ':refs/heads/pinned'))
+  $null = New-FixtureClone 'pinned' @() $holdOrigin
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'checkout', '-q', '-b', 'pinned', '--track', 'origin/pinned')
+  Invoke-FixtureGit @('-C', $writer, 'checkout', '-q', '-b', 'pinned', $C1)
+  Add-FixtureCommit $writer 'p2' 'fp'
+  Invoke-FixtureGit @('-C', $writer, 'push', '-q', 'origin', 'pinned')
+  $p2 = Get-FixtureGit @('-C', $writer, 'rev-parse', 'HEAD')
+  $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
+  if ((Get-At) -ne $C1) { Ko 'a branch tracking origin/pinned is a hold: default mode must not move it' $out }
+  elseif ((Get-FixtureGit @('-C', $script:CoopRoot, 'rev-parse', 'refs/remotes/origin/pinned')) -ne $C1) { Ko 'a hold with an upstream must not be fetched' $out }
+  elseif (-not $out.Contains("held on branch 'pinned'")) { Ko 'step 1 should name the pinned hold' $out }
+  else { Ok 'hold tracking origin/pinned: not fetched, not moved, named' }
+  $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $true }
+  if ((Get-At) -ne $p2 -or (Get-BranchRef) -ne 'refs/heads/pinned') { Ko "--edge should pull a hold's own upstream" $out }
+  else { Ok "--edge pulls a hold's own upstream" }
+  $null = New-FixtureClone 'fork-main'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'add', 'fork', $script:Origin)
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'fetch', '-q', 'fork')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'branch', '-q', '--set-upstream-to=fork/main')
+  $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
+  $s = Get-CoopRepoStranded
+  if ((Get-At) -ne $C1) { Ko 'a main that tracks fork/main is a hold' $out }
+  elseif ($null -eq $s -or -not $s.Hint.Contains('branch --set-upstream-to=origin/main main')) { Ko 'a main tracking fork/main should be named with the fix' }
+  else { Ok 'main tracking fork/main: a hold, named with the fix' }
+
   # 8. Diverged: a local commit blocks the next release; named, 0 behind.
   $null = New-FixtureClone 'diverged'
   Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'branch', 'my-work')   # a leftover from an earlier rejoin
   Add-FixtureCommit $script:CoopRoot 'local-work' 'local'
   $l = Get-At
   $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
@@ -189,6 +287,91 @@ try {
   if ((Get-At) -ne $l -or (Get-CoopRepoBehindCount) -ne 0) { Ko 'a diverged checkout must not move and reads 0 behind' $out }
   elseif ($null -eq $s -or -not $s.Message.Contains('release v0.10.0 does not contain') -or -not $s.Hint.Contains('reset --keep v0.10.0')) { Ko 'the diverged state should be named with the fix' }
   else { Ok 'diverged: not moved, 0 behind, named with the fix' }
+  # The printed fix, pasted into PowerShell, rejoins the release and keeps the
+  # local commit on a branch, even with a leftover my-work branch.
+  if ($null -ne $s) { Invoke-Hint $s.Hint }
+  if ((Get-At) -ne $C2 -or (Get-BranchRef) -ne 'refs/heads/main') { Ko 'the printed fix should rejoin release v0.10.0 on main' $s.Hint }
+  elseif (-not (Get-FixtureGit @('-C', $script:CoopRoot, 'branch', '--contains', $l))) { Ko 'the printed fix must keep the local commit on a branch' $s.Hint }
+  else { Ok 'diverged: the printed fix rejoins and keeps the local commit on a branch' }
+  # If the aside branch cannot be made, the fix must not reset (no orphaned commit).
+  $null = New-FixtureClone 'diverged-collide'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  Add-FixtureCommit $script:CoopRoot 'local-work' 'local'
+  $l = Get-At
+  $s = Get-CoopRepoStranded
+  $aside = ''
+  if ($null -ne $s -and $s.Hint -cmatch ' branch (\S+);') { $aside = $Matches[1] }
+  if (-not $aside) { Ko 'the diverged hint should name its aside branch' }
+  else {
+    Invoke-FixtureGit @('-C', $script:CoopRoot, 'branch', $aside, $C1)
+    Invoke-Hint $s.Hint
+    if ((Get-At) -ne $l -or (Get-FixtureGit @('-C', $script:CoopRoot, 'rev-parse', 'refs/heads/main')) -ne $l) { Ko 'the printed fix reset although its aside branch could not be made' $s.Hint }
+    else { Ok 'diverged: the printed fix never resets without its aside branch' }
+  }
+
+  # 9. Offline: a failed fetch warns and still moves on known tags.
+  $null = New-FixtureClone 'offline'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'set-url', 'origin', (Join-Path $t 'missing.git'))
+  $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
+  if (-not $out.Contains('could not fetch from origin')) { Ko 'a failed fetch should warn' $out }
+  elseif ((Get-At) -ne $C2) { Ko 'offline, the move should use the releases already fetched' $out }
+  else { Ok 'offline: warns and moves to a release it already knows' }
+
+  # 10. A tag-only shallow clone has no origin/main: named, and the printed fix works.
+  $u = $script:Origin -replace '\\', '/'
+  $url = if ($u.StartsWith('/')) { 'file://' + $u } else { 'file:///' + $u }
+  $null = New-FixtureClone 'shallow' @('--depth', '1', '--branch', 'v0.9.0') $url
+  $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
+  $s = Get-CoopRepoStranded
+  if ((Get-At) -ne $C1) { Ko 'a tag-only clone cannot move' $out }
+  elseif (-not $out.Contains('no origin/main to follow') -or $null -eq $s -or -not $s.Hint.Contains("remote set-branches origin '*'")) { Ko 'step 1 should name the missing origin/main and the fix' $out }
+  else {
+    Invoke-Hint $s.Hint
+    $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
+    if ((Get-At) -ne $C2) { Ko 'after the printed fix the clone should follow releases' $out }
+    else { Ok 'tag-only shallow clone: no origin/main is named; the printed fix makes it follow releases' }
+  }
+
+  # 11. No origin remote (renamed or removed) is named as such, not as a hold,
+  #     with a fix that works when run as printed.
+  $null = New-FixtureClone 'renamed-remote'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'rename', 'origin', 'upstream')
+  $s = Get-CoopRepoStranded
+  if ($null -eq $s -or -not $s.Message.StartsWith('coop-agent has no origin remote') -or -not $s.Hint.EndsWith('remote rename upstream origin')) { Ko 'a renamed origin should be named with the rename fix' "$($s.Message) / $($s.Hint)" }
+  else {
+    Invoke-Hint $s.Hint
+    $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
+    if ($null -ne (Get-CoopRepoStranded) -or (Get-At) -ne $C2) { Ko 'after the printed rename fix the checkout should follow releases' $out }
+    else { Ok 'renamed origin: named, and the printed fix restores release following' }
+  }
+  $null = New-FixtureClone 'removed-remote'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'remove', 'origin')
+  $s = Get-CoopRepoStranded
+  $canonical = 'https://github.com/kabukisensei/coop-agent.git'
+  if ($null -eq $s -or -not $s.Message.StartsWith('coop-agent has no origin remote') -or -not $s.Hint.Contains("remote add origin $canonical")) { Ko 'a removed origin should be named with the add fix' "$($s.Message) / $($s.Hint)" }
+  else {
+    # Offline stand-in for the canonical URL: the add fix, then the fix it leads to.
+    Invoke-Hint $s.Hint.Replace($canonical, ('"' + $script:Origin + '"'))
+    $s = Get-CoopRepoStranded
+    if ($null -ne $s) { Invoke-Hint $s.Hint }
+    $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
+    if ((Get-At) -ne $C2) { Ko 'after the printed fixes the checkout should follow releases' $out }
+    else { Ok 'removed origin: named, and the printed fixes restore release following' }
+  }
+
+  # 12. A release tagged after the clone is fetched by step 1 and followed.
+  $newOrigin = Join-Path $t 'origin-new.git'
+  Invoke-FixtureGit @('clone', '-q', '--bare', $script:Origin, $newOrigin)
+  $null = New-FixtureClone 'new-release' @() $newOrigin
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.10.0')
+  Invoke-FixtureGit @('-C', $seed, 'tag', '-a', 'v0.12.0', '-m', 'v0.12.0', $C4)
+  Invoke-FixtureGit @('-C', $seed, 'push', '-q', $newOrigin, 'v0.12.0')
+  $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
+  if ((Get-At) -ne $C4 -or -not $out.Contains('to release v0.12.0')) { Ko 'a release tagged after the clone should be fetched and followed' $out }
+  else { Ok 'a release tagged after the clone: fetched and followed' }
 }
 catch {
   Ko "fixture error: $($_.Exception.Message)"

@@ -201,7 +201,8 @@ if [ -d "$COOP_ROOT/.git" ] && have git; then
     # RELEASE.md). A branch that does not track origin/main is a hold, left alone.
     coop_repo_follow_release "$EDGE"
   else
-    coop_info "no 'origin' remote configured — skipping repo update"
+    # Renamed or removed origin: warn with the fix (coop_repo_stranded names it).
+    _coop_repo_warn_stranded || coop_warn "no 'origin' remote configured — skipping repo update"
   fi
 else
   # A zip/shared-drive copy: Pi + pipx tools above still update, but the repo layer

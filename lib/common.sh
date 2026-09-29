@@ -1066,12 +1066,22 @@ coop_update_nudge() {
   return 0
 }
 
+# The checked-out branch name; '' when HEAD is detached. Strips refs/heads/ from
+# the full ref, not --short: a tag named like the branch (a stray 'main' tag,
+# which every fetch auto-follows) turns --short into 'heads/main'.
+_coop_repo_branch() {
+  local ref
+  ref="$(git -C "$COOP_ROOT" symbolic-ref -q HEAD 2>/dev/null || true)"
+  case "$ref" in refs/heads/?*) printf '%s' "${ref#refs/heads/}" ;; esac
+  return 0
+}
+
 # True when HEAD follows release tags: a detached HEAD, or a branch whose upstream
 # is origin/main (main, or a renamed branch that tracks it). Any other branch,
 # including one with no upstream, is a "hold" that default `coop update` leaves alone.
 _coop_repo_follows_releases() {
   local branch
-  branch="$(git -C "$COOP_ROOT" symbolic-ref -q --short HEAD 2>/dev/null || true)"
+  branch="$(_coop_repo_branch)"
   [ -n "$branch" ] || return 0
   [ "$(git -C "$COOP_ROOT" config --get "branch.$branch.remote" 2>/dev/null || true)" = origin ] || return 1
   [ "$(git -C "$COOP_ROOT" config --get "branch.$branch.merge" 2>/dev/null || true)" = refs/heads/main ]
@@ -1136,10 +1146,22 @@ coop_repo_describe() {
 # follows releases normally. Local only (no network). Step 1 and doctor use it so
 # a stranded machine is never silent; the launch nudge stays quiet.
 coop_repo_stranded() {
-  local root="$COOP_ROOT" branch tag
+  local root="$COOP_ROOT" branch tag remote sha
   have git && [ -d "$root/.git" ] || return 0
+  if ! git -C "$root" remote get-url origin >/dev/null 2>&1; then
+    # Renamed (origin -> upstream) or removed: name it before it reads as a hold.
+    remote="$(git -C "$root" remote 2>/dev/null || true)"
+    remote="${remote%%$'\n'*}"
+    printf 'coop-agent has no origin remote, so coop update cannot move it\n'
+    if [ -n "$remote" ]; then
+      printf 'fix: git -C "%s" remote rename %s origin\n' "$root" "$remote"
+    else
+      printf 'fix: git -C "%s" remote add origin https://github.com/kabukisensei/coop-agent.git && git -C "%s" fetch origin\n' "$root" "$root"
+    fi
+    return 0
+  fi
   if ! _coop_repo_follows_releases; then
-    branch="$(git -C "$root" symbolic-ref -q --short HEAD 2>/dev/null || true)"
+    branch="$(_coop_repo_branch)"
     printf "coop-agent is held on branch '%s' (it does not track origin/main); coop update leaves it alone\n" "$branch"
     if [ "$branch" = main ]; then
       printf 'to follow releases again: git -C "%s" branch --set-upstream-to=origin/main main\n' "$root"
@@ -1149,15 +1171,19 @@ coop_repo_stranded() {
     return 0
   fi
   if ! git -C "$root" rev-parse -q --verify refs/remotes/origin/main >/dev/null 2>&1; then
-    printf 'coop-agent has no origin/main to follow (a single-branch, tag-only or shallow clone)\n'
+    printf 'coop-agent has no origin/main to follow (for example a single-branch clone of a tag)\n'
     printf "fix: git -C \"%s\" remote set-branches origin '*' && git -C \"%s\" fetch origin\n" "$root" "$root"
     return 0
   fi
   tag="$(_coop_repo_newest_release)"
   if [ -n "$tag" ] && [ -z "$(coop_repo_next_release)" ] \
      && ! git -C "$root" merge-base --is-ancestor "refs/tags/$tag" HEAD >/dev/null 2>&1; then
+    # Name the aside branch after HEAD so a leftover from an earlier rejoin never
+    # collides; && stops before the reset if the branch cannot be made.
+    sha="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || true)"
+    case "$sha" in ''|*[!0-9a-f]*) sha="" ;; esac
     printf 'coop-agent has commits that release %s does not contain, so coop update cannot move it (push them, or set them aside)\n' "$tag"
-    printf 'set them aside and rejoin: git -C "%s" branch my-work && git -C "%s" reset --keep %s\n' "$root" "$root" "$tag"
+    printf 'set them aside and rejoin: git -C "%s" branch my-work%s && git -C "%s" reset --keep %s\n' "$root" "${sha:+-$sha}" "$root" "$tag"
   fi
   return 0
 }
@@ -1187,7 +1213,7 @@ coop_repo_follow_release() {
     return 0
   fi
   before="$(coop_repo_describe)"; [ -n "$before" ] || before="checkout"
-  branch="$(git -C "$root" symbolic-ref -q --short HEAD 2>/dev/null || true)"
+  branch="$(_coop_repo_branch)"
   if [ "$edge" = 1 ] && [ -n "$branch" ]; then
     # A branch with no upstream (e.g. a hold made from a tag) has nothing to pull.
     if [ -z "$(git -C "$root" config --get "branch.$branch.merge" 2>/dev/null || true)" ]; then

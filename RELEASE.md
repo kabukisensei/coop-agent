@@ -212,9 +212,8 @@ re-push the tag.
 - **Never start tracking a path that `.gitignore` ignores** in a release. The
   fast-forward refuses to overwrite an untracked file, but git overwrites an
   ignored one without asking.
-- **Fresh installs** clone the full repository (never `--depth` or
-  `--single-branch`, which leave no `origin/main` to follow). A plain clone
-  starts on the head of `main` and joins the release channel at the next tag.
+- **Fresh installs**: a plain clone starts on the head of `main` and joins the
+  release channel at the next tag.
 
 ## (e) coop-website — LAST
 

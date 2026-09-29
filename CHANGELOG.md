@@ -19,8 +19,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   repo row and the daily launch notice count against the release the update would move
   to ("N commit(s) behind release vX.Y.Z"), so a checkout ahead of the newest release
   is no longer nudged. The doctor row shows `git describe`, and step 1 and doctor name
-  the states the update cannot move (hold, local commits, no `origin/main`) with the
-  command that fixes each. Doctor's newer-than-manifest hints now say to pin back with
+  the states the update cannot move (hold, local commits, no `origin/main`, no `origin`
+  remote) with the command that fixes each. Doctor's newer-than-manifest hints now say to pin back with
   `coop update` (maintainers: `coop update --edge`). The update that installs this
   release still runs the old updater and pulls the head of `main` once; later updates
   follow tags.

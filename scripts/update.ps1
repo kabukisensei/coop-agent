@@ -233,7 +233,8 @@ if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have
     # RELEASE.md). A branch that does not track origin/main is a hold, left alone.
     Invoke-CoopRepoFollowRelease $EDGE
   } else {
-    Coop-Info "no 'origin' remote configured — skipping repo update"
+    # Renamed or removed origin: warn with the fix (Get-CoopRepoStranded names it).
+    if (-not (Write-CoopRepoStranded)) { Coop-Warn "no 'origin' remote configured — skipping repo update" }
   }
 } else {
   # A zip/shared-drive copy: Pi + pipx tools above still update, but the repo layer
