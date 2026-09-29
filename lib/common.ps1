@@ -1384,16 +1384,51 @@ function Get-CoopRepoNextRelease {
   return $tag
 }
 
-# `git describe` of the checkout against release tags (rc tags skipped; a bare
-# short SHA when no release is reachable) for the doctor row and step 1. No
-# --dirty, so the index is never touched. '' for a non-git copy or unexpected
-# output. (mirror of coop_repo_describe)
+# `git describe` of the checkout against release tags (rc tags and tags not
+# shaped vX.Y.Z, such as v1 or v0.10.0.1, skipped; a bare short SHA when no
+# release is reachable) for the doctor row and step 1. No --dirty, so the index
+# is never touched. '' for a non-git copy or unexpected output.
+# (mirror of coop_repo_describe)
 function Get-CoopRepoDescribe {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return '' }
   if (-not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) { return '' }
-  $d = Get-CoopRepoGitLine @('describe', '--tags', '--match', 'v[0-9]*', '--exclude', '*-*', '--always')
+  $d = Get-CoopRepoGitLine @('describe', '--tags', '--match', 'v[0-9]*.[0-9]*.[0-9]*', '--exclude', '*-*', '--exclude', 'v*.*.*.*', '--always')
   if ($d -cmatch '^(v[0-9]|[0-9a-f]{4})[0-9A-Za-z.-]*$') { return $d }
+  return ''
+}
+
+# The remote a missing origin was renamed to, or '' when that is not certain:
+# the checked-out branch's remote, unless a different remote points at the
+# canonical repo; else the one remote that points at the canonical repo. Never
+# the first name `git remote` lists: it is sorted, so a fork added next to a
+# renamed origin would come first. (mirror of _coop_repo_origin_candidate)
+function Get-CoopRepoOriginCandidate {
+  $ErrorActionPreference = 'Continue'
+  $root = $script:CoopRoot
+  $br = ''
+  $branch = Get-CoopRepoBranch
+  if ($branch) {
+    $br = Get-CoopRepoGitLine @('config', '--get', "branch.$branch.remote")
+    # '.' (a local upstream) or a remote that no longer exists is no candidate.
+    if ($br) {
+      & git -C $root remote get-url $br *> $null
+      if ($LASTEXITCODE -ne 0) { $br = '' }
+    }
+  }
+  $canon = @()
+  foreach ($r in @(& git -C $root remote 2>$null)) {
+    if ($null -eq $r) { continue }
+    $name = ([string]$r).Trim()
+    if (-not $name) { continue }
+    $url = Get-CoopRepoGitLine @('remote', 'get-url', $name)
+    if ($url -cmatch '[/:]kabukisensei/coop-agent(\.git)?/?$') { $canon += $name }
+  }
+  if ($br) {
+    if ($canon.Count -eq 0 -or $canon -ccontains $br) { return $br }
+    return ''
+  }
+  if ($canon.Count -eq 1) { return $canon[0] }
   return ''
 }
 
@@ -1409,7 +1444,8 @@ function Get-CoopRepoStranded {
   & git -C $root remote get-url origin *> $null
   if ($LASTEXITCODE -ne 0) {
     # Renamed (origin -> upstream) or removed: name it before it reads as a hold.
-    $remote = Get-CoopRepoGitLine @('remote')
+    # Suggest a rename only for a certain candidate; otherwise add the canonical one.
+    $remote = Get-CoopRepoOriginCandidate
     $fix = if ($remote) { "git -C `"$root`" remote rename $remote origin" } else { "git -C `"$root`" remote add origin https://github.com/kabukisensei/coop-agent.git; git -C `"$root`" fetch origin" }
     return [pscustomobject]@{ Message = 'coop-agent has no origin remote, so coop update cannot move it'; Hint = "fix: $fix" }
   }
@@ -1445,6 +1481,25 @@ function Write-CoopRepoStranded {
   if ($null -eq $s) { return $false }
   Coop-Warn $s.Message $s.Hint
   return $true
+}
+
+# The doctor's "coop-agent repository" row for a git checkout, as
+# @{ Level; Message; Hint } (Level 'ok' or 'warn'; Hint '' for ok). Local only
+# (no network; doctor refreshes origin first). A newer release to move to comes
+# first; else a stranded state is named with its fix; else the checkout is ok.
+# (mirror of coop_repo_doctor_row)
+function Get-CoopRepoDoctorRow {
+  $ErrorActionPreference = 'Continue'
+  $next = Get-CoopRepoNextRelease
+  $behind = Get-CoopRepoBehindCount
+  if ($next -and $behind -gt 0) {
+    return [pscustomobject]@{ Level = 'warn'; Message = "coop-agent is $behind commit(s) behind release $next"; Hint = 'run: coop update' }
+  }
+  $s = Get-CoopRepoStranded
+  if ($null -ne $s) { return [pscustomobject]@{ Level = 'warn'; Message = $s.Message; Hint = $s.Hint } }
+  $at = Get-CoopRepoDescribe
+  if (-not $at) { $at = 'git checkout' }
+  return [pscustomobject]@{ Level = 'ok'; Message = "coop-agent $at (follows release tags via: coop update)"; Hint = '' }
 }
 
 # Step 1 of `coop update`: move the coop-agent checkout. Default: fast-forward to
@@ -1500,7 +1555,7 @@ function Invoke-CoopRepoFollowRelease {
       if ($LASTEXITCODE -eq 0) {
         & git -C $root merge-base --is-ancestor refs/heads/main refs/remotes/origin/main *> $null
         if ($LASTEXITCODE -ne 0) {
-          Coop-Warn "--edge: local branch main has commits that are not on origin/main — staying at $before" "see: git -C `"$root`" log --oneline origin/main..main"
+          Coop-Warn "--edge: local branch main has commits that are not on origin/main — staying at $before" "see: git -C `"$root`" log --oneline origin/main..refs/heads/main"
           return
         }
       }

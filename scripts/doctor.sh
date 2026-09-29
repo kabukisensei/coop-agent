@@ -576,22 +576,14 @@ if [ -d "$COOP_ROOT/.git" ] && have git; then
   # Staleness nudge: refresh origin at most once/day (5s watchdog; silent offline),
   # then compare against the release `coop update` would move to — local + instant.
   # A checkout the update cannot move (hold, diverged, no origin/main) is named.
+  # The row itself is decided by coop_repo_doctor_row (tests/update-follow.test.sh).
   coop_repo_fetch_throttled || true
-  next="$(coop_repo_next_release)"
-  behind="$(coop_repo_behind_count)"
-  stranded="$(coop_repo_stranded)"
-  if [ -n "$next" ] && [ "${behind:-0}" -gt 0 ]; then
-    warn "coop-agent is $behind commit(s) behind release $next" "run: coop update"
-  elif [ -n "$stranded" ]; then
-    stranded_msg=""; stranded_hint=""
-    { IFS= read -r stranded_msg || true; IFS= read -r stranded_hint || true; } <<EOF
-$stranded
+  repo_row="$(coop_repo_doctor_row)"
+  repo_level=""; repo_msg=""; repo_hint=""
+  { IFS= read -r repo_level || true; IFS= read -r repo_msg || true; IFS= read -r repo_hint || true; } <<EOF
+$repo_row
 EOF
-    warn "$stranded_msg" "$stranded_hint"
-  else
-    at="$(coop_repo_describe)"
-    ok "coop-agent ${at:-git checkout} (follows release tags via: coop update)"
-  fi
+  if [ "$repo_level" = ok ]; then ok "$repo_msg"; else warn "$repo_msg" "$repo_hint"; fi
 else
   # A zip/shared-drive copy: everything above still updates, but the repo layer
   # (skills/prompts/guardrails/themes/scripts) is frozen at whatever the zip held.

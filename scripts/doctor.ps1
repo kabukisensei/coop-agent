@@ -615,17 +615,10 @@ if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have
   # Staleness nudge: refresh origin at most once/day (bounded wait; silent offline),
   # then compare against the release `coop update` would move to — local + instant.
   # A checkout the update cannot move (hold, diverged, no origin/main) is named.
+  # The row itself is decided by Get-CoopRepoDoctorRow (tests/fixtures/update-follow.test.ps1).
   $null = Invoke-CoopRepoFetchThrottled
-  $next = Get-CoopRepoNextRelease
-  $behind = Get-CoopRepoBehindCount
-  $stranded = Get-CoopRepoStranded
-  if ($next -and $behind -gt 0) { D-Warn "coop-agent is $behind commit(s) behind release $next" 'run: coop update' }
-  elseif ($null -ne $stranded) { D-Warn $stranded.Message $stranded.Hint }
-  else {
-    $at = Get-CoopRepoDescribe
-    if (-not $at) { $at = 'git checkout' }
-    D-Ok "coop-agent $at (follows release tags via: coop update)"
-  }
+  $repoRow = Get-CoopRepoDoctorRow
+  if ($repoRow.Level -ceq 'ok') { D-Ok $repoRow.Message } else { D-Warn $repoRow.Message $repoRow.Hint }
 } else {
   # A zip/shared-drive copy: everything above still updates, but the repo layer
   # (skills/prompts/guardrails/themes/scripts) is frozen at whatever the zip held.

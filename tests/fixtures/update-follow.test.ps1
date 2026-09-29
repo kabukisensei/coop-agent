@@ -2,8 +2,8 @@
 # H5: PowerShell twin of tests/update-follow.test.sh. Step 1 of `coop update`
 # (Invoke-CoopRepoFollowRelease) follows release tags and never moves a checkout
 # backwards; the doctor/launch helpers (Get-CoopRepoNextRelease,
-# Get-CoopRepoBehindCount, Invoke-CoopUpdateNudge, Get-CoopRepoStranded) count
-# against the same release. Offline: every "origin" is a local bare repo in a
+# Get-CoopRepoBehindCount, Invoke-CoopUpdateNudge, Get-CoopRepoStranded,
+# Get-CoopRepoDoctorRow) count against the same release. Offline: every "origin" is a local bare repo in a
 # temp dir; no sleep, no marker, no network, never this checkout. The caller runs
 # with EAP=Stop, which proves the helpers' function-local Continue on 5.1.
 # Assertions read git state; message text is checked only where no state differs.
@@ -51,6 +51,12 @@ function Invoke-Hint([string]$Hint) {
   $PSNativeCommandUseErrorActionPreference = $false
   $null = Invoke-Expression $Hint.Substring($Hint.IndexOf(': ') + 2) *>&1
 }
+# The output of a printed command, run as a user pastes it into PowerShell.
+function Get-PastedOutput([string]$Command) {
+  $ErrorActionPreference = 'Continue'
+  $PSNativeCommandUseErrorActionPreference = $false
+  return ((Invoke-Expression $Command 2>$null) | Out-String)
+}
 function Get-At { Get-FixtureGit @('-C', $script:CoopRoot, 'rev-parse', 'HEAD') }
 function Get-BranchRef { Get-FixtureGit @('-C', $script:CoopRoot, 'symbolic-ref', '-q', 'HEAD') }
 function Get-Upstream { Get-FixtureGit @('-C', $script:CoopRoot, 'rev-parse', '-q', '--symbolic-full-name', '@{u}') }
@@ -76,7 +82,9 @@ try {
   $env:NO_COLOR = '1'
 
   # Same origin as the bash test: c1 v0.9.0 (annotated), c2 v0.10.0 (lightweight),
-  # c3 v0.11.0-rc1 (annotated), c4 unreleased; side branch from c2 tagged v9.9.9.
+  # c3 v0.11.0-rc1 (annotated) plus v0.99, v0.10.0.1 and v1 (not shaped vX.Y.Z,
+  # and each sorts above v0.10.0, so the strict filter is what skips them), c4
+  # unreleased; side branch from c2 tagged v9.9.9.
   $script:Origin = Join-Path $t 'origin.git'
   $seed = Join-Path $t 'seed'
   Invoke-FixtureGit @('init', '-q', '--bare', $script:Origin)
@@ -86,6 +94,7 @@ try {
   Add-FixtureCommit $seed 'c1' 'README'; Invoke-FixtureGit @('-C', $seed, 'tag', '-a', 'v0.9.0', '-m', 'v0.9.0')
   Add-FixtureCommit $seed 'c2' 'f2';     Invoke-FixtureGit @('-C', $seed, 'tag', 'v0.10.0')
   Add-FixtureCommit $seed 'c3' 'f3';     Invoke-FixtureGit @('-C', $seed, 'tag', '-a', 'v0.11.0-rc1', '-m', 'rc1')
+  foreach ($junk in @('v0.99', 'v0.10.0.1', 'v1')) { Invoke-FixtureGit @('-C', $seed, 'tag', $junk) }
   Add-FixtureCommit $seed 'c4' 'f4'
   Invoke-FixtureGit @('-C', $seed, 'checkout', '-q', '-b', 'side', 'v0.10.0')
   Add-FixtureCommit $seed 's1' 'side';   Invoke-FixtureGit @('-C', $seed, 'tag', '-a', 'v9.9.9', '-m', 'side')
@@ -107,7 +116,7 @@ try {
   elseif ((Get-CoopRepoNextRelease) -or (Get-CoopRepoBehindCount) -ne 0) { Ko 'ahead of every release: next release empty and 0 behind expected' }
   elseif ((Invoke-Captured { Invoke-CoopUpdateNudge }).Trim()) { Ko 'ahead of every release: the launch nudge must stay silent' }
   elseif ($null -ne (Get-CoopRepoStranded)) { Ko 'ahead of every release is not a stranded state' }
-  elseif ((Get-CoopRepoDescribe) -notlike 'v0.10.0-2-g*' -or $out.Contains('rc1')) { Ko "describe must skip the rc tag (got '$(Get-CoopRepoDescribe)')" $out }
+  elseif ((Get-CoopRepoDescribe) -notlike 'v0.10.0-2-g*' -or $out.Contains('rc1')) { Ko "describe must skip the rc and non-vX.Y.Z tags (got '$(Get-CoopRepoDescribe)')" $out }
   else { Ok 'ahead of the newest release: stays put, 0 behind, nudge silent, no rc in describe' }
 
   # 2. Behind: moves to exactly the next release (version sort; rc, off-main and
@@ -117,14 +126,14 @@ try {
   Invoke-FixtureGit @('-C', $script:CoopRoot, 'branch', 'v0.10.0', $C2)
   $next = Get-CoopRepoNextRelease
   $nudge = Invoke-Captured { Invoke-CoopUpdateNudge }
-  if ($next -ne 'v0.10.0') { Ko "at v0.9.0 the next release is v0.10.0 (got '$next')" }
+  if ($next -ne 'v0.10.0') { Ko "at v0.9.0 the next release is v0.10.0, not rc, v1, v0.99 or v0.10.0.1 (got '$next')" }
   elseif ((Get-CoopRepoBehindCount) -ne 1) { Ko 'at v0.9.0 behind should be 1' }
   elseif (-not $nudge.Contains('1 commit(s) behind release v0.10.0')) { Ko 'the launch nudge should name the release' $nudge }
   else { Ok 'behind: next release v0.10.0, 1 behind, nudge names the release' }
   $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
   if ((Get-At) -ne $C2) { Ko 'should land exactly on v0.10.0, not head of main' $out }
   elseif ((Get-BranchRef) -ne 'refs/heads/main' -or (Get-Upstream) -ne 'refs/remotes/origin/main') { Ko 'main must stay attached and keep its upstream' }
-  elseif (Get-CoopRepoNextRelease) { Ko 'on the newest release the next release must be empty (rc tags are not releases)' }
+  elseif (Get-CoopRepoNextRelease) { Ko 'on the newest release the next release must be empty (rc, v0.99, v0.10.0.1 and v1 are not releases)' }
   elseif ((Get-CoopRepoBehindCount) -ne 0) { Ko 'on the newest release, unreleased commits on main must read 0 behind' }
   elseif ((Invoke-Captured { Invoke-CoopUpdateNudge }).Trim()) { Ko 'on the newest release, unreleased commits on main must not nudge' }
   else { Ok 'behind: fast-forwards to exactly v0.10.0 on main; then 0 behind and no nudge despite unreleased main' }
@@ -149,6 +158,19 @@ try {
       else { Ok 'a tag named main: main still follows releases, and --edge still pulls' }
     }
   }
+  # The -Edge local-main guard's hint, pasted into PowerShell, lists the unpushed
+  # commit: it names refs/heads/main, since a bare 'main' would read the tag.
+  $null = New-FixtureClone 'tag-main-edge'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'tag', 'main', $C1)
+  Add-FixtureCommit $script:CoopRoot 'unpushed-work' 'unpushed'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'checkout', '-q', '--detach', 'v0.9.0')
+  $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $true }
+  $cmd = ''
+  if ($out -cmatch 'see: (git [^\r\n]+)') { $cmd = $Matches[1] }
+  if (-not $out.Contains('local branch main has commits') -or -not $cmd) { Ko '--edge should warn about local main with a hint' $out }
+  elseif (-not (Get-PastedOutput $cmd).Contains('unpushed-work')) { Ko 'the --edge local-main hint must list the unpushed commit when a tag is named main' $cmd }
+  else { Ok 'a tag named main: the --edge local-main hint lists the unpushed commit' }
 
   # 3. Dirty tracked file: the move is skipped.
   $null = New-FixtureClone 'dirty'
@@ -361,6 +383,42 @@ try {
     if ((Get-At) -ne $C2) { Ko 'after the printed fixes the checkout should follow releases' $out }
     else { Ok 'removed origin: named, and the printed fixes restore release following' }
   }
+  # Two remotes: origin renamed to upstream, then a fork added (it sorts first).
+  # The rename names the branch's remote, never the first one `git remote` lists.
+  $null = New-FixtureClone 'renamed-remote-fork'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'rename', 'origin', 'upstream')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'add', 'fork', (Join-Path $t 'fork.git'))
+  $s = Get-CoopRepoStranded
+  if ($null -eq $s -or -not $s.Hint.EndsWith('remote rename upstream origin')) { Ko "with a fork added, the rename fix must name the branch's remote (upstream)" "$($s.Message) / $($s.Hint)" }
+  else {
+    Invoke-Hint $s.Hint
+    $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
+    if ((Get-At) -ne $C2) { Ko 'after the printed rename fix (fork present) the checkout should follow releases' $out }
+    else { Ok "renamed origin beside a fork: the rename names the branch's remote, and works" }
+  }
+  # No branch remote to go by (detached): two remotes with no canonical URL are
+  # ambiguous, so the fix adds origin; one canonical URL is renamed. A branch whose
+  # remote is not the canonical one while another remote is, is ambiguous too.
+  # (Text only: running these would reach GitHub.)
+  $null = New-FixtureClone 'renamed-remote-detached' @('--branch', 'v0.9.0')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'rename', 'origin', 'upstream')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'add', 'fork', (Join-Path $t 'fork.git'))
+  $sAdd = Get-CoopRepoStranded
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'set-url', 'upstream', $canonical)
+  $sRename = Get-CoopRepoStranded
+  $null = New-FixtureClone 'fork-tracking-no-origin'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'add', 'fork', $script:Origin)
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'fetch', '-q', 'fork')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'branch', '-q', '--set-upstream-to=fork/main')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'rename', 'origin', 'upstream')
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'set-url', 'upstream', $canonical)
+  $sFork = Get-CoopRepoStranded
+  if ($null -eq $sAdd -or -not $sAdd.Hint.Contains("remote add origin $canonical")) { Ko 'two remotes and no branch remote: the fix must add origin, not rename one' "$($sAdd.Message) / $($sAdd.Hint)" }
+  elseif ($null -eq $sRename -or -not $sRename.Hint.EndsWith('remote rename upstream origin')) { Ko 'the one remote at the canonical URL should be named for the rename' "$($sRename.Message) / $($sRename.Hint)" }
+  elseif ($null -eq $sFork -or -not $sFork.Hint.Contains("remote add origin $canonical")) { Ko 'a branch tracking a fork beside a canonical remote must not rename the fork' "$($sFork.Message) / $($sFork.Hint)" }
+  else { Ok 'no origin remote with two remotes: the rename names the one canonical URL, else adds origin' }
 
   # 12. A release tagged after the clone is fetched by step 1 and followed.
   $newOrigin = Join-Path $t 'origin-new.git'
@@ -372,6 +430,29 @@ try {
   $out = Invoke-Captured { Invoke-CoopRepoFollowRelease $false }
   if ((Get-At) -ne $C4 -or -not $out.Contains('to release v0.12.0')) { Ko 'a release tagged after the clone should be fetched and followed' $out }
   else { Ok 'a release tagged after the clone: fetched and followed' }
+
+  # 13. The doctor row (Get-CoopRepoDoctorRow): behind is a warn to update; a
+  #     stranded state (diverged, hold) is a warn with its fix; else ok. doctor.ps1
+  #     only dispatches it.
+  $null = New-FixtureClone 'row-ahead'
+  $rAhead = Get-CoopRepoDoctorRow
+  $null = New-FixtureClone 'row-behind'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  $rBehind = Get-CoopRepoDoctorRow
+  $null = New-FixtureClone 'row-diverged'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  Add-FixtureCommit $script:CoopRoot 'local-work' 'local'
+  $rDiverged = Get-CoopRepoDoctorRow
+  $script:CoopRoot = Join-Path $t 'hold'
+  $rHold = Get-CoopRepoDoctorRow
+  if ($rAhead.Level -cne 'ok' -or $rAhead.Message -notlike 'coop-agent v0.10.0-2-g*(follows release tags via: coop update)') { Ko 'doctor row: ahead of every release is ok and names the describe' "$($rAhead.Level) $($rAhead.Message)" }
+  elseif ($rBehind.Level -cne 'warn' -or $rBehind.Message -cne 'coop-agent is 1 commit(s) behind release v0.10.0' -or $rBehind.Hint -cne 'run: coop update') { Ko 'doctor row: behind names the release and coop update' "$($rBehind.Level) $($rBehind.Message) / $($rBehind.Hint)" }
+  elseif ($rDiverged.Level -cne 'warn' -or -not $rDiverged.Message.Contains('release v0.10.0 does not contain') -or -not $rDiverged.Hint.StartsWith('set them aside and rejoin: ') -or -not $rDiverged.Hint.Contains('reset --keep v0.10.0')) { Ko 'doctor row: a diverged checkout is a warn with the fix as the hint' "$($rDiverged.Level) $($rDiverged.Message) / $($rDiverged.Hint)" }
+  elseif ($rHold.Level -cne 'warn' -or -not $rHold.Message.Contains("held on branch 'hold'") -or -not $rHold.Hint.EndsWith('switch main')) { Ko 'doctor row: a hold is a warn with the fix as the hint' "$($rHold.Level) $($rHold.Message) / $($rHold.Hint)" }
+  else { Ok 'doctor row: ok when current; warns behind, diverged and hold with the fix as the hint' }
+  $doctorPs = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'scripts') 'doctor.ps1'))
+  if (-not $doctorPs.Contains('$repoRow = Get-CoopRepoDoctorRow') -or -not $doctorPs.Contains('if ($repoRow.Level -ceq ''ok'') { D-Ok $repoRow.Message } else { D-Warn $repoRow.Message $repoRow.Hint }')) { Ko 'doctor.ps1 must dispatch Get-CoopRepoDoctorRow: ok, else warn with the hint' }
+  else { Ok 'doctor.ps1 dispatches the shared repo row' }
 }
 catch {
   Ko "fixture error: $($_.Exception.Message)"

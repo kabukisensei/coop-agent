@@ -1125,13 +1125,15 @@ coop_repo_next_release() {
 }
 
 # `git describe` of the checkout against release tags (v0.23.5-21-gdf91630; rc
-# tags are skipped; a bare short SHA when no release is reachable) for the doctor
-# row and step 1. No --dirty, so the index is never touched. Prints '' for a
-# non-git copy or unexpected output.
+# tags and tags not shaped vX.Y.Z, such as v1 or v0.10.0.1, are skipped; a bare
+# short SHA when no release is reachable) for the doctor row and step 1. No
+# --dirty, so the index is never touched. Prints '' for a non-git copy or
+# unexpected output.
 coop_repo_describe() {
   local d=""
   if have git && [ -d "$COOP_ROOT/.git" ]; then
-    d="$(git -C "$COOP_ROOT" describe --tags --match 'v[0-9]*' --exclude '*-*' --always 2>/dev/null || true)"
+    d="$(git -C "$COOP_ROOT" describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' \
+      --exclude '*-*' --exclude 'v*.*.*.*' --always 2>/dev/null || true)"
   fi
   case "$d" in
     v[0-9]*|[0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
@@ -1139,6 +1141,40 @@ coop_repo_describe() {
   esac
   case "$d" in *[!0-9A-Za-z.-]*) d="" ;; esac
   printf '%s' "$d"
+}
+
+# The remote a missing origin was renamed to, or '' when that is not certain:
+# the checked-out branch's remote, unless a different remote points at the
+# canonical repo; else the one remote that points at the canonical repo. Never
+# the first name `git remote` lists: it is sorted, so a fork added next to a
+# renamed origin would come first.
+_coop_repo_origin_candidate() {
+  local root="$COOP_ROOT" branch br="" br_canon=0 canon="" n=0 r url remotes
+  branch="$(_coop_repo_branch)"
+  if [ -n "$branch" ]; then
+    br="$(git -C "$root" config --get "branch.$branch.remote" 2>/dev/null || true)"
+    # '.' (a local upstream) or a remote that no longer exists is no candidate.
+    if [ -n "$br" ] && ! git -C "$root" remote get-url "$br" >/dev/null 2>&1; then br=""; fi
+  fi
+  remotes="$(git -C "$root" remote 2>/dev/null || true)"
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    url="$(git -C "$root" remote get-url "$r" 2>/dev/null || true)"
+    case "$url" in
+      *[/:]kabukisensei/coop-agent|*[/:]kabukisensei/coop-agent/|*[/:]kabukisensei/coop-agent.git|*[/:]kabukisensei/coop-agent.git/)
+        n=$((n+1)); canon="$r"
+        if [ "$r" = "$br" ]; then br_canon=1; fi
+        ;;
+    esac
+  done <<EOF
+$remotes
+EOF
+  if [ -n "$br" ]; then
+    if [ "$n" = 0 ] || [ "$br_canon" = 1 ]; then printf '%s' "$br"; fi
+  elif [ "$n" = 1 ]; then
+    printf '%s' "$canon"
+  fi
+  return 0
 }
 
 # Name a state in which `coop update` cannot move this checkout, as two lines:
@@ -1150,8 +1186,8 @@ coop_repo_stranded() {
   have git && [ -d "$root/.git" ] || return 0
   if ! git -C "$root" remote get-url origin >/dev/null 2>&1; then
     # Renamed (origin -> upstream) or removed: name it before it reads as a hold.
-    remote="$(git -C "$root" remote 2>/dev/null || true)"
-    remote="${remote%%$'\n'*}"
+    # Suggest a rename only for a certain candidate; otherwise add the canonical one.
+    remote="$(_coop_repo_origin_candidate)"
     printf 'coop-agent has no origin remote, so coop update cannot move it\n'
     if [ -n "$remote" ]; then
       printf 'fix: git -C "%s" remote rename %s origin\n' "$root" "$remote"
@@ -1198,6 +1234,27 @@ $s
 EOF
   coop_warn "$msg" "$hint"
   return 0
+}
+
+# The doctor's "coop-agent repository" row for a git checkout, as three lines:
+# the level (ok or warn), the message, then the hint ('' for ok). Local only (no
+# network; doctor refreshes origin first). A newer release to move to comes
+# first; else a stranded state is named with its fix; else the checkout is ok.
+coop_repo_doctor_row() {
+  local next behind stranded at
+  next="$(coop_repo_next_release)"
+  behind="$(coop_repo_behind_count)"
+  if [ -n "$next" ] && [ "${behind:-0}" -gt 0 ]; then
+    printf 'warn\ncoop-agent is %s commit(s) behind release %s\nrun: coop update\n' "$behind" "$next"
+    return 0
+  fi
+  stranded="$(coop_repo_stranded)"
+  if [ -n "$stranded" ]; then
+    printf 'warn\n%s\n' "$stranded"
+    return 0
+  fi
+  at="$(coop_repo_describe)"
+  printf 'ok\ncoop-agent %s (follows release tags via: coop update)\n\n' "${at:-git checkout}"
 }
 
 # Step 1 of `coop update`: move the coop-agent checkout. Arg 1 is EDGE (0/1).
@@ -1249,7 +1306,7 @@ coop_repo_follow_release() {
     elif git -C "$root" rev-parse -q --verify refs/heads/main >/dev/null 2>&1 \
          && ! git -C "$root" merge-base --is-ancestor refs/heads/main refs/remotes/origin/main >/dev/null 2>&1; then
       coop_warn "--edge: local branch main has commits that are not on origin/main — staying at $before" \
-        "see: git -C \"$root\" log --oneline origin/main..main"
+        "see: git -C \"$root\" log --oneline origin/main..refs/heads/main"
     elif git -C "$root" checkout -q -B main --track refs/remotes/origin/main >/dev/null 2>&1; then
       coop_ok "coop-agent moved from $before to head of main ($(coop_repo_describe))"
     else

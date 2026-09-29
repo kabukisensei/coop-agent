@@ -2,10 +2,11 @@
 #
 # H5: step 1 of `coop update` follows release tags and never moves a checkout
 # backwards (coop_repo_follow_release / coop_repo_next_release /
-# coop_repo_behind_count / coop_repo_stranded / coop_update_nudge in
-# lib/common.sh). Gate lane: fully offline (every "origin" is a local bare repo),
-# no sleep, no marker, no network. Calls the helpers directly against throwaway
-# clones; never runs scripts/update.sh or touches this checkout.
+# coop_repo_behind_count / coop_repo_stranded / coop_update_nudge /
+# coop_repo_doctor_row in lib/common.sh). Gate lane: fully offline (every
+# "origin" is a local bare repo), no sleep, no marker, no network. Calls the
+# helpers directly against throwaway clones; never runs scripts/update.sh or
+# scripts/doctor.sh, and never touches this checkout.
 #
 set -euo pipefail
 
@@ -30,8 +31,10 @@ commit() { # <repo> <message> <file>
 }
 
 # The origin: c1 v0.9.0 (annotated) - c2 v0.10.0 (lightweight) - c3 v0.11.0-rc1
-# (annotated, never deployed) - c4 (unreleased head of main). A side branch forks
-# at c2 with v9.9.9, a tag that contains c1 but is not on main (never deployed).
+# (annotated, never deployed) plus v0.99, v0.10.0.1 and v1 (not shaped vX.Y.Z,
+# and each sorts above v0.10.0, so the strict filter is what skips them) - c4
+# (unreleased head of main). A side branch forks at c2 with v9.9.9, a tag that
+# contains c1 but is not on main (never deployed).
 ORIGIN="$TMP/origin.git"
 SEED="$TMP/seed"
 git init -q --bare "$ORIGIN"
@@ -41,6 +44,7 @@ git -C "$SEED" symbolic-ref HEAD refs/heads/main
 commit "$SEED" c1 README;  git -C "$SEED" tag -a v0.9.0 -m v0.9.0
 commit "$SEED" c2 f2;      git -C "$SEED" tag v0.10.0
 commit "$SEED" c3 f3;      git -C "$SEED" tag -a v0.11.0-rc1 -m rc1
+git -C "$SEED" tag v0.99; git -C "$SEED" tag v0.10.0.1; git -C "$SEED" tag v1
 commit "$SEED" c4 f4
 git -C "$SEED" checkout -q -b side v0.10.0
 commit "$SEED" s1 side;    git -C "$SEED" tag -a v9.9.9 -m side
@@ -80,8 +84,9 @@ follow 0
 [ "$(git -C "$COOP_ROOT" rev-parse refs/heads/main)" = "$C4" ] || fail "refs/heads/main moved"
 case "$OUT" in *moved*) fail "no move may be announced for a checkout ahead of the newest release" ;; esac
 case "$OUT" in *"no newer release to move to"*) ;; *) fail "step 1 should say there is no newer release" ;; esac
-# The doctor row and step 1 describe against releases only: never by the rc tag.
-case "$(coop_repo_describe)" in v0.10.0-2-g*) ;; *) fail "describe must skip the rc tag (got '$(coop_repo_describe)')" ;; esac
+# The doctor row and step 1 describe against releases only: never by the rc tag
+# or by v0.99 / v0.10.0.1 / v1 on c3.
+case "$(coop_repo_describe)" in v0.10.0-2-g*) ;; *) fail "describe must skip the rc and non-vX.Y.Z tags (got '$(coop_repo_describe)')" ;; esac
 case "$OUT" in *rc1*) fail "step 1 must not describe the checkout by an rc tag" ;; esac
 pass "ahead of the newest release: stays put, never moves back (behind 0, no nudge, no rc in describe)"
 
@@ -91,7 +96,7 @@ fresh behind
 git -C "$COOP_ROOT" reset -q --hard v0.9.0
 git -C "$COOP_ROOT" branch v0.10.0 "$C2"
 [ "$(coop_repo_next_release)" = v0.10.0 ] \
-  || fail "at v0.9.0 the next release is v0.10.0: version sort, not rc, not off-main v9.9.9 (got '$(coop_repo_next_release)')"
+  || fail "at v0.9.0 the next release is v0.10.0: version sort, not rc, not v1/v0.99/v0.10.0.1, not off-main v9.9.9 (got '$(coop_repo_next_release)')"
 [ "$(coop_repo_behind_count)" = 1 ] || fail "at v0.9.0 behind should be 1 (got $(coop_repo_behind_count))"
 follow 0
 [ "$(at)" = "$C2" ] || fail "should land exactly on v0.10.0, not head of main"
@@ -99,7 +104,7 @@ follow 0
 [ "$(upstream)" = refs/remotes/origin/main ] || fail "main must keep its origin/main upstream"
 case "$OUT" in *"moved from v0.9.0 to release v0.10.0"*) ;; *) fail "step 1 should name the move" ;; esac
 # A second run is a no-op and says so: HEAD already on the newest release, and
-# the rc tag that contains it is not a release.
+# the rc, v0.99, v0.10.0.1 and v1 tags that contain it are not releases.
 [ -z "$(coop_repo_next_release)" ] || fail "on the newest release: next release must be empty (got '$(coop_repo_next_release)')"
 [ "$(coop_repo_behind_count)" = 0 ] || fail "on the newest release, unreleased commits on main must read 0 behind"
 follow 0
@@ -118,7 +123,19 @@ follow 0
 [ "$(at)" = "$C2" ] && [ "$(branch_ref)" = refs/heads/main ] || fail "a tag named main must not stop the release move"
 follow 1
 [ "$(at)" = "$C4" ] && [ "$(branch_ref)" = refs/heads/main ] || fail "a tag named main must not stop --edge"
-pass "a tag named main: main still follows releases, and --edge still pulls"
+# The --edge local-main guard's hint, run as printed, lists the unpushed commit:
+# it names refs/heads/main, since a bare 'main' would read the tag and show nothing.
+fresh tag-main-edge
+git -C "$COOP_ROOT" reset -q --hard v0.9.0
+git -C "$COOP_ROOT" tag main "$C1"
+commit "$COOP_ROOT" unpushed-work unpushed
+git -C "$COOP_ROOT" checkout -q --detach v0.9.0
+follow 1
+case "$OUT" in *"local branch main has commits"*"see: "*) ;; *) fail "--edge should warn about local main with a hint" ;; esac
+CMD="${OUT##*see: }"; CMD="${CMD%%$'\n'*}"
+LOG="$(eval "$CMD" 2>/dev/null)" || { OUT="$CMD"; fail "the --edge local-main hint should run"; }
+case "$LOG" in *unpushed-work*) ;; *) OUT="$CMD"; fail "the --edge local-main hint must list the unpushed commit when a tag is named main" ;; esac
+pass "a tag named main: main still follows releases, --edge still pulls, and the --edge local-main hint lists the unpushed commit"
 
 # 3. A renamed branch that tracks origin/main follows releases too.
 fresh renamed
@@ -374,9 +391,76 @@ S="$(coop_repo_stranded)"
 eval "${S#*again: }" >/dev/null 2>&1 || { OUT="$S"; fail "the follow-up fix should run"; }
 follow 0
 [ "$(at)" = "$C2" ] || fail "after the printed fixes the checkout should follow releases"
+# Two remotes: origin renamed to upstream, then a fork added (it sorts first).
+# The rename names the branch's remote, never the first one `git remote` lists.
+fresh renamed-remote-fork
+git -C "$COOP_ROOT" reset -q --hard v0.9.0
+git -C "$COOP_ROOT" remote rename origin upstream
+git -C "$COOP_ROOT" remote add fork "$TMP/fork.git"
+S="$(coop_repo_stranded)"
+case "$S" in "coop-agent has no origin remote"*"remote rename upstream origin") ;; *) OUT="$S"; fail "with a fork added, the rename fix must name the branch's remote (upstream)" ;; esac
+eval "${S#*fix: }" || { OUT="$S"; fail "the printed rename fix should run"; }
+follow 0
+[ "$(at)" = "$C2" ] || fail "after the printed rename fix (fork present) the checkout should follow releases"
+# No branch remote to go by (detached): two remotes with no canonical URL are
+# ambiguous, so the fix adds origin; one canonical URL is renamed. A branch whose
+# remote is not the canonical one while another remote is, is ambiguous too.
+# (Text only: running these would reach GitHub.)
+fresh renamed-remote-detached --branch v0.9.0
+git -C "$COOP_ROOT" remote rename origin upstream
+git -C "$COOP_ROOT" remote add fork "$TMP/fork.git"
+S="$(coop_repo_stranded)"
+case "$S" in *"remote add origin $U"*) ;; *) OUT="$S"; fail "two remotes and no branch remote: the fix must add origin, not rename one" ;; esac
+git -C "$COOP_ROOT" remote set-url upstream "$U"
+S="$(coop_repo_stranded)"
+case "$S" in *"remote rename upstream origin") ;; *) OUT="$S"; fail "the one remote at the canonical URL should be named for the rename" ;; esac
+fresh fork-tracking-no-origin
+git -C "$COOP_ROOT" reset -q --hard v0.9.0
+git -C "$COOP_ROOT" remote add fork "$ORIGIN"
+git -C "$COOP_ROOT" fetch -q fork
+git -C "$COOP_ROOT" branch -q --set-upstream-to=fork/main >/dev/null
+git -C "$COOP_ROOT" remote rename origin upstream
+git -C "$COOP_ROOT" remote set-url upstream "$U"
+S="$(coop_repo_stranded)"
+case "$S" in *"remote add origin $U"*) ;; *) OUT="$S"; fail "a branch tracking a fork beside a canonical remote must not rename the fork" ;; esac
 pass "no origin remote (renamed or removed): named, and the printed fix restores release following"
+pass "no origin remote with two remotes: the rename names the branch's remote or the one canonical URL, else adds origin"
 
-# 15. Wiring: step 1 and the doctor row call these helpers in both twins.
+# 15. The doctor row (coop_repo_doctor_row): behind is a warn to update; a
+#     stranded state (diverged, hold) is a warn with its fix; else ok.
+row() { # sets ROW_LEVEL, ROW_MSG, ROW_HINT for COOP_ROOT
+  local r
+  r="$(coop_repo_doctor_row)"
+  ROW_LEVEL=""; ROW_MSG=""; ROW_HINT=""
+  { IFS= read -r ROW_LEVEL || true; IFS= read -r ROW_MSG || true; IFS= read -r ROW_HINT || true; } <<EOF
+$r
+EOF
+  OUT="$r"
+}
+fresh row-ahead
+row
+[ "$ROW_LEVEL" = ok ] || fail "doctor row: ahead of every release is ok"
+case "$ROW_MSG" in "coop-agent v0.10.0-2-g"*"(follows release tags via: coop update)") ;; *) fail "doctor row: ok names the describe" ;; esac
+fresh row-behind
+git -C "$COOP_ROOT" reset -q --hard v0.9.0
+row
+[ "$ROW_LEVEL" = warn ] && [ "$ROW_MSG" = "coop-agent is 1 commit(s) behind release v0.10.0" ] \
+  && [ "$ROW_HINT" = "run: coop update" ] || fail "doctor row: behind names the release and coop update"
+fresh row-diverged
+git -C "$COOP_ROOT" reset -q --hard v0.9.0
+commit "$COOP_ROOT" local-work local
+row
+[ "$ROW_LEVEL" = warn ] || fail "doctor row: a diverged checkout is a warn"
+case "$ROW_MSG" in *"release v0.10.0 does not contain"*) ;; *) fail "doctor row: the diverged state is named" ;; esac
+case "$ROW_HINT" in "set them aside and rejoin: "*"reset --keep v0.10.0") ;; *) fail "doctor row: the diverged fix is the hint" ;; esac
+COOP_ROOT="$TMP/hold"
+row
+[ "$ROW_LEVEL" = warn ] || fail "doctor row: a hold is a warn"
+case "$ROW_MSG" in *"held on branch 'hold'"*) ;; *) fail "doctor row: the hold is named" ;; esac
+case "$ROW_HINT" in "to follow releases again: "*"switch main") ;; *) fail "doctor row: the hold fix is the hint" ;; esac
+pass "doctor row: ok when current; warns behind, diverged and hold with the fix as the hint"
+
+# 16. Wiring: step 1 and the doctor row call these helpers in both twins.
 OUT=""
 grep -qF 'coop_repo_follow_release "$EDGE"' "$ROOT/scripts/update.sh" || fail "update.sh step 1 must call coop_repo_follow_release"
 grep -qF 'Invoke-CoopRepoFollowRelease $EDGE' "$ROOT/scripts/update.ps1" || fail "update.ps1 step 1 must call Invoke-CoopRepoFollowRelease"
@@ -385,8 +469,13 @@ if grep -n 'pull --ff-only' "$ROOT/scripts/update.sh" "$ROOT/scripts/update.ps1"
 fi
 grep -qF '_coop_repo_warn_stranded || coop_warn' "$ROOT/scripts/update.sh" || fail "update.sh step 1 must name a missing origin with its fix"
 grep -qF 'if (-not (Write-CoopRepoStranded)) { Coop-Warn' "$ROOT/scripts/update.ps1" || fail "update.ps1 step 1 must name a missing origin with its fix"
-grep -qF 'coop_repo_stranded' "$ROOT/scripts/doctor.sh" || fail "doctor.sh must name stranded states"
-grep -qF 'Get-CoopRepoStranded' "$ROOT/scripts/doctor.ps1" || fail "doctor.ps1 must name stranded states"
+# The doctors only dispatch the shared row (case 15): ok, else warn with the hint.
+grep -qF 'repo_row="$(coop_repo_doctor_row)"' "$ROOT/scripts/doctor.sh" || fail "doctor.sh must use coop_repo_doctor_row"
+grep -qF 'if [ "$repo_level" = ok ]; then ok "$repo_msg"; else warn "$repo_msg" "$repo_hint"; fi' "$ROOT/scripts/doctor.sh" \
+  || fail "doctor.sh must warn a non-ok repo row with its hint"
+grep -qF '$repoRow = Get-CoopRepoDoctorRow' "$ROOT/scripts/doctor.ps1" || fail "doctor.ps1 must use Get-CoopRepoDoctorRow"
+grep -qF "if (\$repoRow.Level -ceq 'ok') { D-Ok \$repoRow.Message } else { D-Warn \$repoRow.Message \$repoRow.Hint }" "$ROOT/scripts/doctor.ps1" \
+  || fail "doctor.ps1 must warn a non-ok repo row with its hint"
 pass "update.* step 1 and doctor.* call the shared helpers"
 
 printf '  %s\n' "update-follow tests passed"
