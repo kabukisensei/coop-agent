@@ -5,14 +5,18 @@
 //   Windows: az.cmd  = @"<node>" "<this file>" %*
 // State lives in the directory named by COOP_TEST_AZ_STATE:
 //   tokens    lines "TENANT RESOURCE" or "TENANT *": tokens az can mint
-//   login-rc  exit code for `az login` (default 0); success adds "TENANT *"
+//   login-rc  exit code for `az login` (default 0); success adds "TENANT *";
+//             "hang" never finishes the sign-in (see hang below)
 //   mode      optional probe behavior: "term" ends the probe the way the
 //             launch watchdog does (killed by SIGTERM, or exit 143 on
 //             Windows, where a signal cannot be sent to itself);
-//             "error" fails with a non-authentication error
+//             "error" fails with a non-authentication error; "hang" never
+//             answers (see hang below)
+//   hang.pid  written by a hanging call: its pid, so a test can check that the
+//             watchdog ended it. A hanging call exits by itself after 20 s.
 //   argv.log  one line per call; login lines end with " LXV2=<value>" (the
 //             AZURE_CORE_LOGIN_EXPERIENCE_V2 the call saw)
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const dir = process.env.COOP_TEST_AZ_STATE;
@@ -33,6 +37,11 @@ appendFileSync(join(dir, "argv.log"), args.join(" ") + (args[0] === "login" ? ` 
 
 const tenant = option("--tenant");
 const json = option("--output") === "json";
+const hang = () => {
+  writeFileSync(join(dir, "hang.pid"), String(process.pid));
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20000);
+  process.exit(98);
+};
 
 if (args[0] === "account" && args[1] === "get-access-token") {
   const mode = read("mode");
@@ -43,6 +52,7 @@ if (args[0] === "account" && args[1] === "get-access-token") {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5000);
     process.exit(97);
   }
+  if (mode === "hang") hang();
   if (mode === "error") {
     process.stderr.write("ERROR: HTTPSConnectionPool: connection reset by proxy\n");
     process.exit(1);
@@ -58,6 +68,7 @@ if (args[0] === "account" && args[1] === "get-access-token") {
 }
 
 if (args[0] === "login") {
+  if (read("login-rc") === "hang") hang();
   const rc = Number(read("login-rc") || "0");
   if (rc !== 0) {
     process.stderr.write("ERROR: fake sign-in was cancelled\n");

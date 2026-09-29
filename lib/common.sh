@@ -851,11 +851,13 @@ coop_prereq_rows() {
 # Resolve the client Azure tenant (mirror of Get-CoopTenant). The chain and its
 # rules live in one place, `lib/warehouse_mcp.py tenant`. Prints the tenant and
 # returns 0; returns 1 when none is set and 2 when the value is not a GUID or a
-# domain name (a rejected value is never printed).
+# domain name (a rejected value is never printed). The contract is the one
+# coop_find_project_yml finds, the same one `coop doctor` shows.
 coop_tenant() {
-  local py t rc=0
+  local py t rc=0 proj
   py="$(coop_python)" || return 1
-  t="$("$py" "$COOP_ROOT/lib/warehouse_mcp.py" tenant 2>/dev/null)" || rc=$?
+  proj="$(coop_find_project_yml)"
+  t="$("$py" "$COOP_ROOT/lib/warehouse_mcp.py" tenant --project="$proj" 2>/dev/null)" || rc=$?
   # tr -d '\r': Python's print() emits CRLF on Windows.
   t="$(printf '%s' "$t" | tr -d '\r')"
   case "$rc" in 0|1|2) ;; *) rc=1 ;; esac
@@ -868,12 +870,13 @@ coop_tenant() {
 }
 
 # Run `az <args>` with a hard time limit of <secs> (mirror of Invoke-CoopAz).
-# Returns az's exit code, or 124 when az was stopped (the timeout, or any code
-# above 128). az runs in the FOREGROUND so Ctrl-C still reaches it, and it sees
-# AZURE_CORE_LOGIN_EXPERIENCE_V2=off so `az login` never waits on its
+# Returns az's exit code, or 124 when az was stopped (the watchdog fired, or any
+# code above 128). az runs in the FOREGROUND so Ctrl-C still reaches it, and it
+# sees AZURE_CORE_LOGIN_EXPERIENCE_V2=off so `az login` never waits on its
 # subscription picker. The watchdog is fully redirected, so it can never hold a
 # caller's $(...) pipe open; it kills az and the Python child of the az wrapper
-# script. Callers set az's stdout/stderr. bash 3.2-safe; no timeout(1).
+# script: taskkill /T under Git Bash (no pkill/pgrep there), else the children
+# pgrep or ps lists. Callers set az's stdout/stderr. bash 3.2-safe; no timeout(1).
 # Usage: coop_az_run <secs> <az args...>
 coop_az_run() {
   local secs="$1" dir wpid rc=0
@@ -887,17 +890,29 @@ coop_az_run() {
     wait "$s" || true
     p="$(cat "$dir/pid" 2>/dev/null)" || p=''
     if [ -n "$p" ]; then
-      pkill -P "$p" 2>/dev/null || true
-      kill "$p" 2>/dev/null || true
+      # taskkill /F leaves exit code 1, not a signal code: record the stop.
+      : > "$dir/stopped"
+      w="$(cat "/proc/$p/winpid" 2>/dev/null)" || w=''
+      if [ -z "$w" ] || ! taskkill //PID "$w" //T //F; then
+        # List az's children, then end az before them: a wrapper script that
+        # outlived its child would print its own "Terminated" notice.
+        kids="$(pgrep -P "$p")" \
+          || kids="$(ps -A -o pid= -o ppid= | awk -v p="$p" '$2 == p { print $1 }')"
+        kill "$p" || true
+        for c in $kids; do kill "$c" || true; done
+      fi
+      kill "$p" || true
     fi
   ) >/dev/null 2>&1 &
   wpid=$!
-  AZURE_CORE_LOGIN_EXPERIENCE_V2=off sh -c 'printf "%s" "$$" > "$0" && exec az "$@"' \
-    "$dir/pid" "$@" </dev/null || rc=$?
+  # The group's own stderr is /dev/null, so a watchdog kill adds no bash
+  # "Terminated" job notice; az's stderr still reaches the caller through fd 3.
+  { AZURE_CORE_LOGIN_EXPERIENCE_V2=off sh -c 'printf "%s" "$$" > "$0" && exec az "$@"' \
+      "$dir/pid" "$@" </dev/null 2>&3 3>&-; } 3>&2 2>/dev/null || rc=$?
   kill "$wpid" 2>/dev/null || true
   wait "$wpid" 2>/dev/null || true
+  if [ -f "$dir/stopped" ] || [ "$rc" -gt 128 ]; then rc=124; fi
   rm -rf "$dir"
-  if [ "$rc" -gt 128 ]; then rc=124; fi
   return "$rc"
 }
 

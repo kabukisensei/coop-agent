@@ -53,6 +53,9 @@ logins() { count '^login '; }
 project() { printf 'fabric:\n  tenant_id: %s\n' "$1" > "$TMP/proj/.coop/project.yml"; }
 config()  { printf '\357\273\277%s' "$1" > "$TMP/coop/.coop/config"; }   # with a BOM, like Windows editors
 warn_lines() { printf '%s\n' "$1" | grep -c '^! ' || true; }
+# The process a hanging fake az recorded is still running (no record: az was
+# stopped before it started).
+hang_alive() { [ -f "$TMP/az/hang.pid" ] && kill -0 "$(cat "$TMP/az/hang.pid")" 2>/dev/null; }
 probe_line() { printf 'account get-access-token --tenant %s --resource %s --output none' "$1" "$2"; }
 
 cd "$TMP/proj"
@@ -191,6 +194,59 @@ for bad in 'x&calc' 'TBD'; do
   case "$out" in *tenant-ccc*|*"$bad"*) fail "neither the config tenant nor the rejected value may appear (got: $out)" ;; esac
 done
 pass "invalid contract tenant (x&calc, TBD): no az call, config tenant not used, one line"
+
+# 13b. The contract is found the way the launchers and doctor find it (walk to the
+#      root, then the bundled one), not with a bounded walk: from 8 folders below
+#      the project the contract tenant still wins over the config tenant.
+project "$T1"; rm -f "$MARKER"; az_reset "$T1 *"
+mkdir -p "$TMP/proj/a/b/c/d/e/f/g/h"
+cd "$TMP/proj/a/b/c/d/e/f/g/h"
+coop_az_preflight </dev/null
+cd "$TMP/proj"
+[ "$(sed -n 1p "$TMP/az/argv.log")" = "$(probe_line "$T1" "$FABRIC")" ] \
+  || fail "a deep cwd must still use the contract tenant (got: $(sed -n 1p "$TMP/az/argv.log"))"
+pass "deep cwd (8 folders below the project): the contract tenant, as doctor shows it"
+
+# 13c. A sign-in the watchdog stops (the 5-minute limit, shortened here) prints
+#      exactly one line: no bash "Terminated" job notice, and az is ended. Output
+#      goes through a file, not $(...): bash never prints job notices inside a
+#      command substitution, but the real launch runs in the main shell.
+real_az_run="$(declare -f coop_az_run)"
+eval "_real_coop_az_run${real_az_run#coop_az_run}"
+coop_az_run() { if [ "$1" = 300 ]; then shift; _real_coop_az_run 2 "$@"; else _real_coop_az_run "$@"; fi; }
+project "$T2"; rm -f "$MARKER"; az_reset; printf 'hang' > "$TMP/az/login-rc"
+rc=0; COOP_ASSUME_YES=1 coop_az_preflight > "$TMP/stopped.out" 2>&1 </dev/null || rc=$?
+out="$(cat "$TMP/stopped.out")"
+eval "$real_az_run"
+[ "$rc" = "0" ] || fail "a stopped sign-in must not fail the launch (rc=$rc)"
+[ "$(logins)" = "1" ] && [ "$(probes)" = "1" ] || fail "stopped sign-in: 1 login, no re-probe (got $(logins)/$(probes))"
+[ ! -f "$MARKER" ] || fail "a stopped sign-in must not leave a marker"
+case "$out" in *Terminated*|*Killed*|*"sh -c"*) fail "a stopped sign-in must not print a shell job notice (got: $out)" ;; esac
+[ "$(warn_lines "$out")" = "1" ] && [ "$(printf '%s\n' "$out" | grep -vc '^• Opening Azure sign-in')" = "1" ] \
+  || fail "a stopped sign-in prints exactly one line after the Opening line (got: $out)"
+case "$out" in *"not verified"*"az login --tenant $T2 --allow-no-subscriptions"*) ;; *) fail "stopped sign-in line mismatch (got: $out)" ;; esac
+hang_alive && fail "the stopped sign-in is still running"
+pass "sign-in stopped by the watchdog: exactly one line, no 'Terminated' notice, az ended"
+
+# 13d. The watchdog also ends az's child process when pgrep and pkill are missing
+#      (Git for Windows ships neither, and its wbin/az wrapper runs python.exe as
+#      a child; minimal Linux images may lack procps), so a probe never holds the
+#      caller's $(...) past its limit. The wrapper exits 1 once stopped, as az
+#      does after taskkill /F: the stop still reads as 124.
+mkdir -p "$TMP/wrapbin" "$TMP/nopkill"
+printf '#!/bin/sh\ntrap "exit 1" TERM\n"%s" "%s" "$@"\nexit 1\n' "$NODE" "$ROOT/tests/fixtures/fake-az.mjs" > "$TMP/wrapbin/az"
+printf '#!/bin/sh\nexit 127\n' > "$TMP/nopkill/pkill"
+cp "$TMP/nopkill/pkill" "$TMP/nopkill/pgrep"
+chmod +x "$TMP/wrapbin/az" "$TMP/nopkill/pkill" "$TMP/nopkill/pgrep"
+az_reset; printf 'hang' > "$TMP/az/mode"
+started=$SECONDS
+rc=0
+err="$(PATH="$TMP/nopkill:$TMP/wrapbin:$PATH"; coop_az_run 2 account get-access-token --tenant "$T2" --resource "$FABRIC" --output none 2>&1 >/dev/null)" || rc=$?
+elapsed=$((SECONDS - started))
+[ "$rc" = "124" ] || fail "a stopped wrapper az must return 124 (got $rc: $err)"
+[ "$elapsed" -lt 10 ] || fail "the wrapper's child held the caller for ${elapsed}s (limit 2s)"
+hang_alive && fail "the wrapper's child is still running"
+pass "no pgrep/pkill: the watchdog ends the az wrapper's child; the 2s limit holds (${elapsed}s), rc 124"
 
 # 14. The auth markers match the Fabric token helper's list.
 markers="$(grep -o '\["az login", [^]]*\]' "$ROOT/lib/fabric_request_headers.mjs" | tr -d '[]"' | tr ',' '\n' | sed 's/^ *//')"

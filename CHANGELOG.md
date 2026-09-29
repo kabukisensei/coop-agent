@@ -46,13 +46,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   Fabric token and then the Power BI token. When az reports that the user is not
   signed in and the launch runs in an interactive console, coop runs
   `az login --tenant <id> --allow-no-subscriptions` itself, with no question and a
-  5-minute limit. A timeout or a non-authentication error never opens a sign-in,
-  and piped or scheduled launches never open a browser. Any failure prints one line
-  with the exact command and the launch continues. On Windows, `coop web` (the
-  minimized `coop` shortcut) opens the sign-in in its own window, which keeps the
-  failure line on screen until Enter. The `.az-ok` cache is unchanged (30 minutes,
-  tenant-stamped) but now covers both tokens, and a launch whose Fabric token
-  reports `auth_required` drops it.
+  5-minute limit; Ctrl-C cancels it. A token check that times out or fails with a
+  non-authentication error never opens a sign-in, and piped or scheduled launches
+  never open a browser. Any failure, including a cancelled or timed-out sign-in,
+  prints one line with the exact command and the launch continues. On Windows,
+  `coop web` (the minimized `coop` shortcut) opens the sign-in in its own window;
+  if that sign-in fails, is cancelled or times out, a small window shows the same
+  line until Enter. The project contract is found the way `coop doctor` finds it,
+  so both always name the same tenant. The `.az-ok` cache is unchanged (30
+  minutes, tenant-stamped) but now covers both tokens, and a launch whose Fabric
+  token reports `auth_required` drops it.
 - `coop doctor` has an **Azure sign-in** row: signed in to tenant X, not signed in
   (with the command), check timed out or failed, or no client tenant configured
   (run `coop onboard --config-only`). It only probes: it never signs in and never

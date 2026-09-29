@@ -114,10 +114,13 @@ minutes) and says nothing.
   launch skips Azure and `coop doctor` warns **"Azure sign-in: no client tenant
   configured"**. If you onboarded on Windows before this fix, no tenant was saved:
   run `coop onboard --config-only` once.
-- If sign-in fails or is cancelled, Coop prints one line with the exact command
-  (`az login --tenant <id> --allow-no-subscriptions`) and starts anyway. Piped,
-  scheduled, and other non-interactive launches never open a sign-in; they print
-  the same line. A timeout or a network error never opens a sign-in either.
+- Ctrl-C cancels the sign-in. If sign-in fails, is cancelled or takes longer than
+  5 minutes, Coop prints one line with the exact command
+  (`az login --tenant <id> --allow-no-subscriptions`) and starts anyway. From the
+  desktop shortcut, that line also stays in a small window until you press Enter.
+  Piped, scheduled, and other non-interactive launches never open a sign-in; they
+  print the same line. A token check that times out or hits a network error never
+  opens a sign-in either.
 - `coop doctor` shows **"Azure sign-in: signed in to tenant <id>"**. Doctor only
   checks; it never signs in.
 - `COOP_SKIP_AZ=1` skips both the launch sign-in and the doctor row.

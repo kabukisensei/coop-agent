@@ -915,16 +915,23 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--probe", action="store_true")
     launch = sub.add_parser("launch-token")
     launch.add_argument("mcp_config")
-    sub.add_parser("tenant")
+    tenant_cmd = sub.add_parser("tenant")
+    # The contract the launcher already found (coop_find_project_yml /
+    # Find-CoopProjectYml: walk to the root, then the bundled contract), so the
+    # tenant comes from the same contract doctor shows. Empty: none was found.
+    tenant_cmd.add_argument("--project", default=None)
     args = parser.parse_args(argv)
     if args.cmd == "tenant":
         # Prints the resolved client tenant (nothing otherwise) and exits
         # 0 resolved / 1 unset / 2 invalid. Never writes stderr and never
         # echoes a rejected value; lib/common.sh and lib/common.ps1 call this.
-        try:
-            project_path = find_project_yml(Path.cwd())
-        except OSError:
-            project_path = None
+        if args.project is not None:
+            project_path = Path(args.project) if args.project else None
+        else:
+            try:
+                project_path = find_project_yml(Path.cwd())
+            except OSError:
+                project_path = None
         state, tenant = resolve_tenant(project_path, coop_config_path())
         if state == "ok":
             print(tenant)

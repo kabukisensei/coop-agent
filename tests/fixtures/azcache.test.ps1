@@ -2,9 +2,11 @@
 # H2: the PowerShell twin of tests/azcache.test.sh. Invoke-CoopAzPreflight and
 # Get-CoopAzTokenRc (lib/common.ps1) against the shared fake az
 # (tests/fixtures/fake-az.mjs): tenant chain, Fabric then Power BI check, the
-# ~30-min .az-ok cache, automatic bounded sign-in, one-line failures. On Windows
-# the fake az.cmd sits under "Program Files (x86)", the default 32-bit Azure CLI
-# location. Stub-driven: no sleeps, no PTY, never the real az or ~/.coop.
+# ~30-min .az-ok cache, automatic bounded sign-in, one-line failures, and the
+# doctor.ps1 Azure row. On Windows the fake az.cmd sits under
+# "Program Files (x86)", the default 32-bit Azure CLI location. Stub-driven, never
+# the real az or ~/.coop; the only waits are the shortened 3 s limits, and the
+# Ctrl-C case uses a Python pty on POSIX legs only.
 # Assertions stay ASCII: Windows PowerShell 5.1 re-encodes child stderr.
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -78,13 +80,13 @@ try {
   }
   function Get-WarnCount([string]$Out) { @($Out -split "`r?`n" | Where-Object { $_.StartsWith('! ') }).Count }
   function Probe-Line([string]$Tenant, [string]$Resource) { "account get-access-token --tenant $Tenant --resource $Resource --output none" }
-  function Invoke-Preflight([switch]$AssumeYes) {
+  function Invoke-Preflight([switch]$AssumeYes, [switch]$NewWindow) {
     $writer = New-Object System.IO.StringWriter
     $previous = [Console]::Error
     if ($AssumeYes) { $env:COOP_ASSUME_YES = '1' }
     try {
       [Console]::SetError($writer)
-      Invoke-CoopAzPreflight
+      Invoke-CoopAzPreflight -NewWindow:$NewWindow
     } finally {
       [Console]::SetError($previous)
       Remove-Item Env:\COOP_ASSUME_YES -ErrorAction SilentlyContinue
@@ -224,6 +226,166 @@ try {
   }
   if (Test-Path -LiteralPath (Join-Path $proj 'coop-injected')) { $injectOk = $false; Ko 'an injected command created a file' }
   if ($injectOk) { Ok 'invalid contract tenant (x&calc, x"y, TBD): no az call, config tenant not used, one line' }
+
+  # 13b. The contract is found the way the launchers and doctor find it (walk to
+  #      the root, then the bundled one): from 8 folders below the project the
+  #      contract tenant still wins over the config tenant.
+  Set-Project $T1; Reset-Az @("$T1 *")
+  Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+  $deep = Join-Path $proj 'a\b\c\d\e\f\g\h'
+  New-Item -ItemType Directory -Force -Path $deep | Out-Null
+  Set-Location -LiteralPath $deep
+  $null = Invoke-Preflight
+  Set-Location -LiteralPath $proj
+  if (@(Get-AzLines)[0] -ne (Probe-Line $T1 $Fabric)) { Ko 'a deep cwd must still use the contract tenant' ((Get-AzLines) -join "`n") }
+  else { Ok 'deep cwd (8 folders below the project): the contract tenant, as doctor shows it' }
+
+  # Wait up to 2 s for the process a hanging fake az recorded to be gone (no
+  # record: az was stopped before it started).
+  function Test-HangGone {
+    $hangFile = Join-Path $state 'hang.pid'
+    if (-not (Test-Path -LiteralPath $hangFile)) { return $true }
+    $hangPid = [int]([System.IO.File]::ReadAllText($hangFile).Trim())
+    for ($i = 0; $i -lt 20; $i++) {
+      if (-not (Get-Process -Id $hangPid -ErrorAction SilentlyContinue)) { return $true }
+      Start-Sleep -Milliseconds 100
+    }
+    return $false
+  }
+
+  # 13c. A sign-in stopped at its limit (5 minutes, shortened here) prints exactly
+  #      one line, and az is ended.
+  $realInvokeCoopAz = ${function:Invoke-CoopAz}
+  function Invoke-CoopAz {
+    param([int]$Seconds, [string[]]$AzArgs, [switch]$Quiet, [switch]$NewWindow)
+    if ($Seconds -eq 300) { $Seconds = 3 }
+    & $realInvokeCoopAz -Seconds $Seconds -AzArgs $AzArgs -Quiet:$Quiet -NewWindow:$NewWindow
+  }
+  try {
+    Set-Project $T2; Reset-Az; Set-AzState 'login-rc' 'hang'
+    Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+    $out = Invoke-Preflight -AssumeYes
+  } finally {
+    ${function:Invoke-CoopAz} = $realInvokeCoopAz
+  }
+  $outLines = @($out -split "`r?`n" | Where-Object { $_.Trim() })
+  if ((Get-Logins) -ne 1 -or (Get-Probes) -ne 1) { Ko 'stopped sign-in: 1 login, no re-probe' ((Get-AzLines) -join "`n") }
+  elseif (Test-Path -LiteralPath $marker) { Ko 'a stopped sign-in must not leave a marker' }
+  elseif ((Get-WarnCount $out) -ne 1 -or $outLines.Count -ne 2 -or -not $out.Contains('not verified') -or -not $out.Contains("az login --tenant $T2 --allow-no-subscriptions")) { Ko 'stopped sign-in: the Opening line and exactly one warning line expected' $out }
+  elseif (-not (Test-HangGone)) { Ko 'the stopped sign-in is still running' }
+  else { Ok 'sign-in stopped at its limit: exactly one line, az ended' }
+
+  # 13d. A stopped probe also ends az's child process: az.cmd (Windows) and the
+  #      wbin/az wrapper script run Python as a child. POSIX gets a wrapper script.
+  $pathBefore = $env:PATH
+  if (-not $isWindowsHost) {
+    $wrapBin = Join-Path $t 'wrapbin'
+    New-Item -ItemType Directory -Force -Path $wrapBin | Out-Null
+    $wrap = Join-Path $wrapBin 'az'
+    [System.IO.File]::WriteAllText($wrap, "#!/bin/sh`n`"$node`" `"$fake`" `"`$@`"`n", $utf8)
+    & chmod +x $wrap
+    $env:PATH = "$wrapBin$([System.IO.Path]::PathSeparator)$($env:PATH)"
+  }
+  Reset-Az; Set-AzState 'mode' 'hang'
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  try {
+    $r = Invoke-CoopAz -Seconds 3 -Quiet -AzArgs @('account', 'get-access-token', '--tenant', $T2, '--resource', $Fabric, '--output', 'none')
+  } finally {
+    $env:PATH = $pathBefore
+  }
+  $sw.Stop()
+  if ($r.Rc -ne 124) { Ko "a stopped probe must return 124 (got $($r.Rc))" }
+  elseif ($sw.Elapsed.TotalSeconds -ge 15) { Ko "the stopped probe took $([int]$sw.Elapsed.TotalSeconds)s (limit 3s)" }
+  elseif (-not (Test-HangGone)) { Ko "the az wrapper's child is still running" }
+  else { Ok "a stopped probe ends the az wrapper's child too (rc 124)" }
+
+  # 13e. `coop web` (-NewWindow): on Windows the sign-in runs in its own window;
+  #      a success is re-checked and stamped like the in-console sign-in.
+  Set-Project $T2; Reset-Az @("$T2 $Pbi")
+  Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+  $out = Invoke-Preflight -AssumeYes -NewWindow
+  $login = @(Get-AzLines | Where-Object { $_.StartsWith('login ') })
+  if ($login.Count -ne 1 -or $login[0] -ne "login --tenant $T2 --allow-no-subscriptions --output none LXV2=off") { Ko '-NewWindow: one sign-in with LXV2=off expected' ((Get-AzLines) -join "`n") }
+  elseif ((Get-Probes) -ne 3) { Ko '-NewWindow: the sign-in must re-check both tokens' ((Get-AzLines) -join "`n") }
+  elseif (-not (Test-Path -LiteralPath $marker) -or ([System.IO.File]::ReadAllText($marker)) -ne $T2) { Ko '-NewWindow: a verified sign-in stamps the marker' }
+  elseif (-not $out.Contains("Signed in to Azure for tenant $T2") -or (Get-WarnCount $out) -ne 0) { Ko '-NewWindow: success should be reported with no warning' $out }
+  else { Ok '-NewWindow sign-in (coop web): one sign-in (LXV2=off), both tokens re-checked, marker stamped' }
+
+  # 13f. Ctrl-C during an in-console sign-in cancels it: one line, and the launch
+  #      goes on. Needs a terminal, so POSIX legs drive pwsh through a Python pty.
+  $py3 = if ($isWindowsHost) { $null } else { Get-Command python3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1 }
+  if ($py3) {
+    Set-Project $T2; Reset-Az; Set-AzState 'login-rc' 'hang'
+    Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+    $child = Join-Path $t 'ctrlc.ps1'
+    [System.IO.File]::WriteAllText($child, ". '$((Join-Path $root 'lib\common.ps1').Replace("'", "''"))'`nInvoke-CoopAzPreflight`nWrite-Host 'AFTER-PREFLIGHT'`nexit 0`n", $utf8)
+    $harness = Join-Path $t 'ctrlc.py'
+    [System.IO.File]::WriteAllText($harness, @'
+import os, pty, select, sys, time
+hang = os.path.join(os.environ["COOP_TEST_AZ_STATE"], "hang.pid")
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], [sys.argv[1], "-NoLogo", "-NoProfile", "-File", sys.argv[2]])
+buf, sent, start = b"", False, time.time()
+while time.time() - start < 30:
+    if select.select([fd], [], [], 0.2)[0]:
+        try:
+            data = os.read(fd, 4096)
+        except OSError:
+            break
+        if not data:
+            break
+        buf += data
+    # Ctrl-C once the fake az login is running (coop is then polling for it).
+    if not sent and b"Opening Azure sign-in" in buf and os.path.exists(hang):
+        time.sleep(0.5)
+        os.write(fd, b"\x03")
+        sent = True
+os.waitpid(pid, 0)
+sys.stdout.write(buf.decode("utf-8", "replace"))
+'@, $utf8)
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $ptyOut = (& $py3.Source $harness $psExe $child 2>&1 | Out-String)
+    $ErrorActionPreference = $eap
+    if (-not $ptyOut.Contains('Opening Azure sign-in')) { Ko 'Ctrl-C case: the sign-in did not start' $ptyOut }
+    elseif (-not $ptyOut.Contains("Azure sign-in for tenant $T2 is not verified") -or -not $ptyOut.Contains('AFTER-PREFLIGHT')) { Ko 'Ctrl-C must cancel the sign-in, print one line and let the launch continue' $ptyOut }
+    elseif (Test-Path -LiteralPath $marker) { Ko 'a cancelled sign-in must not leave a marker' }
+    elseif (-not (Test-HangGone)) { Ko 'the cancelled sign-in is still running' }
+    else { Ok 'Ctrl-C during the sign-in: cancelled, one line, the launch continues' }
+  }
+
+  # 14. doctor.ps1's Azure sign-in row: probe only, never a sign-in, never the
+  #     launch cache, same tenant chain (mirror of tests/doctor.test.sh).
+  $doctor = Join-Path $root 'scripts\doctor.ps1'
+  function Invoke-Doctor {
+    $env:COOP_ASSUME_YES = '1'
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+      return (& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $doctor 2>&1 | Out-String)
+    } finally {
+      $ErrorActionPreference = $eap
+      Remove-Item Env:\COOP_ASSUME_YES -ErrorAction SilentlyContinue
+    }
+  }
+  Set-Location -LiteralPath $noContract
+  Remove-Item -LiteralPath (Join-Path $coopDir '.coop\config') -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+  $doctorOk = $true
+  Reset-Az
+  $dout = Invoke-Doctor
+  if (-not $dout.Contains('Azure sign-in: no client tenant configured') -or -not $dout.Contains('run: coop onboard --config-only')) { $doctorOk = $false; Ko 'doctor.ps1 must warn when no client tenant is configured' $dout }
+  Set-Config '{"schema_version":1,"azure":{"purpose":"client_resources","tenant_id":"tenant-9.example"}}'
+  Reset-Az
+  $dout = Invoke-Doctor
+  if (-not $dout.Contains('Azure sign-in: not signed in to tenant tenant-9.example') -or -not $dout.Contains('az login --tenant tenant-9.example --allow-no-subscriptions')) { $doctorOk = $false; Ko 'doctor.ps1 must report the signed-out tenant with the sign-in command' $dout }
+  elseif ((Get-Logins) -ne 0 -or (Get-Probes) -lt 1) { $doctorOk = $false; Ko 'doctor.ps1 must only probe, never sign in' ((Get-AzLines) -join "`n") }
+  Reset-Az @('tenant-9.example *')
+  $dout = Invoke-Doctor
+  if (-not $dout.Contains('Azure sign-in: signed in to tenant tenant-9.example')) { $doctorOk = $false; Ko 'doctor.ps1 must report the signed-in tenant' $dout }
+  elseif ((Get-Logins) -ne 0) { $doctorOk = $false; Ko 'doctor.ps1 must never sign in' }
+  if (Test-Path -LiteralPath $marker) { $doctorOk = $false; Ko 'doctor.ps1 must never write the launch cache (.az-ok)' }
+  Set-Location -LiteralPath $proj
+  if ($doctorOk) { Ok 'doctor.ps1 Azure sign-in row: no tenant hint, signed out (no login), signed in, .az-ok untouched' }
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {

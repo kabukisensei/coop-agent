@@ -844,10 +844,10 @@ with tempfile.TemporaryDirectory() as tmp:
     config_file = coop_dir / ".coop" / "config"
     env = {**os.environ, "COOP_DIR": str(coop_dir)}
 
-    def tenant_cli():
+    def tenant_cli(*extra, cwd=work):
         result = subprocess.run(
-            [sys.executable, str(ROOT / "lib" / "warehouse_mcp.py"), "tenant"],
-            cwd=work, env=env, capture_output=True, text=True, timeout=30,
+            [sys.executable, str(ROOT / "lib" / "warehouse_mcp.py"), "tenant", *extra],
+            cwd=cwd, env=env, capture_output=True, text=True, timeout=30,
         )
         assert result.stderr == "", result.stderr
         return result.returncode, result.stdout.strip()
@@ -861,6 +861,14 @@ with tempfile.TemporaryDirectory() as tmp:
     assert tenant_cli() == (0, GUID_A)
     contract.write_text("fabric:\n  tenant_id: 'x&calc'\n", encoding="utf-8")
     assert tenant_cli() == (2, "")
+    # --project: the contract the launcher found (its walk reaches the root and
+    # falls back to the bundled contract); empty means it found none.
+    contract.write_text(f"fabric:\n  tenant_id: {GUID_A}\n", encoding="utf-8")
+    assert tenant_cli(f"--project={contract}", cwd=tmp_path) == (0, GUID_A)
+    assert tenant_cli("--project=") == (0, GUID_B)
+    deep = work / "a" / "b" / "c" / "d" / "e" / "f" / "g"
+    deep.mkdir(parents=True)
+    assert tenant_cli(f"--project={contract}", cwd=deep) == (0, GUID_A)
     contract.unlink()
     config_file.write_text("{not json", encoding="utf-8")
     assert tenant_cli() == (1, "")
