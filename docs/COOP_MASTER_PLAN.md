@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.4 · September 29, 2026**
+**Document revision 3.5 · September 29, 2026**
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -29,7 +29,7 @@ execution trigger, and `agent:ready` is still added by hand. Releases follow
 | Editing SQL objects | Local files plus `coop-data-doc` lineage | SQL is not source-controlled today, so coop **defaults to the dev environment**, traces impact from **live metadata**, and verifies an edit with **actual data** before and after. |
 | First run | Onboarding wizard, then `/start` menu on demand | **Common workflows menu on first run**; the wizard becomes one entry in it. |
 | Desktop | Removed; native Windows Coop 2.0 last, no Electron | **Electron desktop returns, last**, gated on a packaged installer that other users can run. The native rewrite is dropped from the roadmap. |
-| TeamAI / Jev / PK1 | Early beta experiments after B1 | Unchanged intention, but they wait for the beta channel and run after the client-facing phases. PK1 now evaluates `pi-lovely-codex` as a whole (usage stats plus tool-call handling), not `apply_patch` alone. |
+| TeamAI / Jev / PK1 | Early beta experiments after B1 | Unchanged intention, but they wait for the beta channel and run after the client-facing phases. PK1 now evaluates `@xl0/pi-lovely-codex` for tool-call handling and a usage-stats owner for the footer (revision 3.5: the Codex extension shows no usage stats; section 10). |
 | Update channel | `coop update` fast-forwards `main` | `coop update` moves to the **latest release tag**; `--edge` keeps head-of-main for maintainers. |
 | Qualification machine | Isolated beta channel (B1) before any upgrade | The team is **seven people**. A **fresh Windows development VM** plus a second clone with `COOP_AGENT_DIR` qualifies upgrades, and a tagged release reaches all seven the same day. B1 is built only if the fleet outgrows that. |
 | Agent working model | Implicit | Section 14 sets how agents pick up work so several sessions stay coherent. |
@@ -356,23 +356,24 @@ Revision 2.0's S1–S7 packages, in this order and with these decisions:
 | --- | --- | --- |
 | `mcp-remote` | only bridges Microsoft Learn; Learn is unauthenticated Streamable HTTP and the adapter speaks it directly | exact entry and proof test in section 6.2; live tools-list on the VM |
 | `powerbi-mcp-server` (unscoped npm, 0.1.0) | `--readonly` silently ignored, `refresh_dataset` exposed ([#93](https://github.com/kabukisensei/coop-agent/issues/93)); superseded by `@microsoft/powerbi-modeling-mcp` 1.0.0 | drop now, ahead of Phase 2 |
-| `pi-better-openai` | Aaron wants the plan-usage stats it feeds the footer, but B0 found its configuration inactive on the live install, and `pi-lovely-codex` may supply the same stats plus tool-call handling | **keep** until PK1 compares it with `pi-lovely-codex` on the development VM; drop only if the replacement shows the same 5h/7d usage windows in the Coop footer |
+| `pi-better-openai` | Aaron wants the plan-usage stats it feeds the footer, but B0 found its configuration inactive on the live install, and it has had no release since July 11. `@xl0/pi-lovely-codex` handles tool calls but shows no usage stats; `@narumitw/pi-usage` shows the Codex usage windows (section 10) | **keep** until PK1 picks the usage-stats owner on the development VM; drop only if the replacement shows the same 5h/7d usage windows in the Coop footer |
 | `context-mode` | sandboxed code execution over docs; overlaps Pi's own compaction | measure context saved on two real sessions |
 | Homebrew/apt/dnf prerequisite branches, `/opt/homebrew` troubleshooting | Mac-only | goes with S1 |
 
 ## 6. Phase 3 — Dependency reconciliation against the freeze
 
-Drift measured on September 28, 2026 with read-only `npm view` and PyPI metadata.
-The manifest is `config/release-manifest.json` at v0.23.5.
+Drift measured on September 28, 2026 with read-only `npm view` and PyPI metadata,
+refreshed on the evening of September 29 (revision 3.5, section 6.3). The manifest
+is `config/release-manifest.json` at v0.23.5.
 
 | Component | Pinned | Latest | Needed? | Notes |
 | --- | --- | --- | --- | --- |
-| `@earendil-works/pi-coding-agent` | 0.84.3 | 0.87.1 (Sep 22) | **Yes, qualify** | Pre-qualified read-only on Sep 29 (section 6.1): none of the four extensions or the runner test uses a removed or changed API; the pin move is one manifest line plus fixture versions. Still Node ≥ 22.19. |
-| `pi-mcp-adapter` | 2.34.0 | 3.2.0 (Sep 28) | **Yes, same PR as Pi** | 2.34.0's peer range excludes pi-ai 0.87, so it must move with Pi. 3.0 **stopped reading `mcp.json`** (that file now belongs to Pi's built-in MCP); coop's generated file must become `mcp-adapter.json` (section 6.2). |
+| `@earendil-works/pi-coding-agent` | 0.84.3 | 0.99.1 (Sep 29); **target stays 0.87.1** | **Yes, qualify 0.87.1** | Pre-qualified read-only on Sep 29 (section 6.1): none of the four extensions or the runner test uses a removed or changed API; the pin move is one manifest line plus fixture versions. Still Node ≥ 22.19. 0.99 is out of reach until the adapter supports it (section 6.3). |
+| `pi-mcp-adapter` | 2.34.0 | 3.3.0 (Sep 29) | **Yes, same PR as Pi** | 2.34.0's peer range excludes pi-ai 0.87, so it must move with Pi. 3.0 **stopped reading `mcp.json`** (that file now belongs to Pi's built-in MCP); coop's generated file must become `mcp-adapter.json` (section 6.2). |
 | `pi-hermes-memory` | 0.7.17 | 0.9.9 | Maybe | private memory; check cache roots and secret scanning still behave. |
 | `pi-web-access` | 0.10.7 | 0.33.0 | Maybe | research only; qualify Windows and security changes. |
 | `@juicesharp/rpiv-ask-user-question` | 1.20.0 | 2.11.0 | **Yes, qualify** | major bump; the setup wizards depend on its dialogs and cancellation. |
-| `pi-better-openai` | 0.1.22 | 0.1.22 | Test on the VM | a custom provider; Pi 0.86 changed how providers read the system prompt and tools, and no newer release exists. If it fails on 0.87.1, the PK1 comparison with `pi-lovely-codex` (section 10) decides the replacement for the usage stats. |
+| `pi-better-openai` | 0.1.22 | 0.1.22 | Test on the VM | a custom provider; Pi 0.86 changed how providers read the system prompt and tools, and no release since July 11. If it fails on 0.87.1, PK1 (section 10) picks the replacement for the usage stats. |
 | `context-mode` | 1.0.169 | 1.0.169 | No | candidate to drop (section 5). |
 | `@microsoft/powerbi-modeling-mcp` | 0.5.0-beta.12 | **1.0.0** (Sep 25) | **Yes** | first GA; read-only invocation and connection scope must be re-checked. |
 | `@microsoft/powerbi-report-authoring-cli` | 0.1.4 | 0.4.0 | **Yes** | the report skills call it; validate output contracts. |
@@ -380,7 +381,7 @@ The manifest is `config/release-manifest.json` at v0.23.5.
 | `@microsoft/fabric-mcp` | 1.3.0 | 1.4.0 | Yes | B0 found 1.0.0 installed and 1.2.0 cached; pin exactly, never `@latest`. |
 | `@azure-devops/mcp` | 2.9.0 | 2.10.0 | Low | B0 found 2.10.0 already at the executable path. |
 | `mcp-remote` | 0.1.38 | 0.14.3 | **Drop** | only the Microsoft Learn entry uses it; the exact replacement entry and proof test are in section 6.2. |
-| `powerbi-mcp-server` | 0.1.0 | 0.1.0 | **Drop now** | `--readonly` is silently ignored and `refresh_dataset` (a write) is exposed while coop documents it as read-only: [#93](https://github.com/kabukisensei/coop-agent/issues/93). Official `@microsoft/powerbi-modeling-mcp` 1.0.0 replaces it. |
+| `powerbi-mcp-server` | 0.1.0 | 0.1.0 | **Dropped** ([#116](https://github.com/kabukisensei/coop-agent/pull/116)) | `--readonly` is silently ignored and `refresh_dataset` (a write) is exposed while coop documents it as read-only: [#93](https://github.com/kabukisensei/coop-agent/issues/93). Official `@microsoft/powerbi-modeling-mcp` 1.0.0 replaces it. |
 | `coop-data-doc` / `coop-sql-review` / `coop-dax-review` | 1.2.0 / 0.15.2 / 0.22.0 | same | No | unchanged since the freeze; the reviewer decision is in section 7. |
 | `ms-fabric-cli` / `fabric-cicd` / `pyodbc` | 1.7.0 / 1.3.0 / 5.3.0 | same | No | unchanged. |
 | `microsoft/skills-for-fabric` catalog | v0.3.10 | v0.3.18 (Sep 25) | **Yes** | v0.3.12 merged the two pinned `sqldw-*` skills into `sqldw-cli`; v0.3.17 unified `powerbi-report-cli`; new `sqldb-cli` targets Fabric SQL database. The allowlist in `config/microsoft-skills.json` must be remapped. |
@@ -475,6 +476,31 @@ and cross-checked against Pi's 0.84.3 and 0.87.1 sources. Result:
   live tools-list against learn.microsoft.com is a VM step (the container cannot
   reach that host). Fixtures to update: `tests/microsoft-skills.test.py`,
   `tests/fleet-manifest.test.sh`, `tests/doctor.test.sh`, `tests/warehouse-mcp.test.py`.
+
+### 6.3 Refresh on September 29, evening (revision 3.5, read-only)
+
+Method: npm and PyPI metadata, plus a diff of the extension type declarations
+(`dist/core/extensions/types.d.ts` and the event types) in the published
+0.84.3, 0.87.1, and 0.99.1 tarballs, restricted to what coop's four extensions
+call: 5 `pi.*` methods, 9 `ctx` and 12 `ctx.ui` members, the 9 events it handles,
+and their payload and result types.
+
+- **Pi 0.99.0 and 0.99.1 shipped on September 29**, straight after 0.87.1. They add
+  `@earendil-works/pi-mcp` (Pi's built-in MCP) and `pi-codemode` as dependencies.
+  Node stays ≥ 22.19.
+- **Coop's surface is unchanged from 0.84.3 to 0.99.1**, except three additive
+  changes: `pi.on` returns an unsubscribe function (since 0.87);
+  `BeforeAgentStartEvent.systemPrompt` is readonly, and coop only reads it and
+  returns a new prompt, which the runner still chains across extensions; and a
+  `tool_result` handler may return `structuredContent`.
+- **`pi-mcp-adapter` 3.3.0 (the newest) still declares `@earendil-works/pi-ai`
+  `^0.84.1 || ^0.85.0 || ^0.86.0 || ^0.87.0`.** So U1's target stays 0.87.1 with
+  adapter 3.3.0, and 0.99 waits until the adapter's peer range includes it. Re-read
+  that range when the U1 PR is opened.
+- **[#122](https://github.com/kabukisensei/coop-agent/issues/122) matters more now.**
+  The newest `pi-coding-agent` that npm would auto-install as a peer is 0.99.1,
+  and its own `pi-ai` 0.99.1 dependency is outside the adapter's `pi-ai` range.
+- The other rows are unchanged since September 28.
 
 ## 7. Phase 4 — Standards alignment and the reviewer decision
 
@@ -635,9 +661,18 @@ channel, version, SHA, and safe paths.
   [PR 72](https://github.com/kabukisensei/coop-agent/pull/72), GPT subscription
   only. **Scope change:** evaluate `pi-lovely-codex` as a whole, not `apply_patch`
   alone, because Aaron wants the usage stats `pi-better-openai` provides and the
-  Codex extension may supply them together with how tool calls are made. The
-  comparison is `pi-better-openai` + stock Pi tools versus `pi-lovely-codex`, on
-  the development VM, measuring: the 5h/7d usage windows reach the Coop footer;
+  Codex extension may supply them together with how tool calls are made.
+  **Revision 3.5 finding (npm metadata and README, not yet run):** the package is
+  `@xl0/pi-lovely-codex` (0.2.3, Sep 16; the unscoped name does not exist). Its
+  README covers GPT fast mode and the Codex-style `apply_patch` tool only, with no
+  usage-stat display, so it cannot be the sole owner of the 5h/7d windows.
+  `@narumitw/pi-usage` (0.61.1, Sep 24, MIT, 40 releases) shows provider usage
+  with Codex reset countdowns in the status line and has its own fast-mode toggle,
+  so it is the candidate for the stats half. The trial therefore compares
+  `pi-better-openai` + stock Pi tools against `@xl0/pi-lovely-codex` (tool calls)
+  plus the stats owner that wins (`pi-better-openai` or `@narumitw/pi-usage`). All
+  three toggle GPT fast mode, so the trial also names its one owner. On the
+  development VM, measure: the 5h/7d usage windows reach the Coop footer;
   every tool call it makes still passes through the guardrail hooks (the fit
   review found its patch path needs every touched path authorized); cancellation
   reaches the child process; patch text is not exposed in process arguments; it
