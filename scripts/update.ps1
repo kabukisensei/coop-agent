@@ -2,7 +2,7 @@
 #
 # coop update (Windows / PowerShell mirror of scripts/update.sh) —
 # keep the whole Cooptimize stack current:
-#   1. Pull the latest coop-agent (skills / prompts / vibes / theme)
+#   1. Move coop-agent to the newest release tag (--edge: head of main)
 #   2. Update Pi itself and every installed Pi extension
 #   3. Upgrade the Coop tools and the Microsoft Fabric CLI (pipx)
 #   4. Re-sync vibes and the powerline extension
@@ -55,7 +55,7 @@ function Test-CoopPiRunning {
 # --- Parse flags (mirror of update.sh) ---------------------------------------
 $NO_FABRIC = $false
 $CHECK = $false       # --check: dry-run — report current/expected, change nothing
-$EDGE = $false        # --edge: take latest upstream instead of the release manifest
+$EDGE = $false        # --edge: head of main + latest upstream instead of the release tag and manifest
 foreach ($a in $args) {
   switch -CaseSensitive ($a) {
     '--no-fabric' { $NO_FABRIC = $true }
@@ -81,8 +81,9 @@ if ($env:OS -eq 'Windows_NT') { $PBIH_NPM_TOOLS += '@microsoft/powerbi-desktop-b
 $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 
 # --- Fleet mode (mirror of update.sh) ----------------------------------------
-# Exactly two modes: NORMAL pins Pi + every extension/tool to the release manifest
-# (no registry queries, no prompts); --edge takes latest upstream across the fleet.
+# Exactly two modes: NORMAL moves coop-agent to the newest release tag (never
+# backwards) and pins Pi + every extension/tool to that release's manifest (no
+# registry queries, no prompts); --edge takes head of main and latest upstream.
 # The old tested-version gates (--pi-latest / "Jump to the untested ...?" prompts)
 # are gone: they queried latest versions merely to ask about them, and normal
 # update resolved back to manifest pins anyway.
@@ -221,22 +222,16 @@ if ($env:COOP_UPDATE_GATE_DRYRUN -eq '1') {
 }
 
 # --- 1. Update coop-agent itself ---------------------------------------------
-Coop-Head '1/5  coop-agent repository'
+Coop-Head '1/6  coop-agent repository'
 if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have 'git')) {
   & git -C $script:CoopRoot remote get-url origin > $null 2>&1
   if ($LASTEXITCODE -eq 0) {
-    # Only uncommitted changes to TRACKED files can block a fast-forward pull; untracked
-    # files (stray skills, downloaded drop-ins) are harmless and must NOT freeze updates
-    # — `--untracked-files=no` excludes them. (git pull --ff-only still fails loudly on
-    # its own if an incoming tracked file would actually overwrite an untracked one.)
-    $status = (& git -C $script:CoopRoot status --porcelain --untracked-files=no 2>$null | Out-String)
-    if ($status.Trim()) {
-      Coop-Warn "uncommitted changes to tracked files in coop-agent — skipping 'git pull' (commit/stash first)."
-    } else {
-      Coop-Info 'git pull --ff-only'
-      & git -C $script:CoopRoot pull --ff-only > $null 2>&1
-      if ($LASTEXITCODE -eq 0) { Coop-Ok 'coop-agent updated' } else { Coop-Warn 'git pull failed (continuing)' }
-    }
+    # Fast-forward to the newest release tag, never backwards (--edge: head of
+    # main). Only uncommitted changes to TRACKED files skip the move; untracked
+    # files (stray skills, downloaded drop-ins) never block it, and git refuses on
+    # its own a fast-forward that would overwrite one (ignored files excepted, see
+    # RELEASE.md). A branch that does not track origin/main is a hold, left alone.
+    Invoke-CoopRepoFollowRelease $EDGE
   } else {
     Coop-Info "no 'origin' remote configured — skipping repo update"
   }
@@ -263,7 +258,7 @@ if (Test-Have 'pi') {
 }
 
 # Overall-bar denominator: the update ITEMS we attempt (pi update unless skipped +
-# each pipx tool + Power BI/Fabric authoring npm tools). Steps 1/4/5/6 (git pull /
+# each pipx tool + Power BI/Fabric authoring npm tools). Steps 1/4/5/6 (repo move /
 # sync / doctor) sit outside the bar, exactly as the install bar covers only its
 # install items.
 $TOTAL = $PY_TOOLS.Count + 1

@@ -1244,9 +1244,10 @@ function Invoke-CoopAzPreflight {
 }
 
 # --- Repo staleness (fleet drift) ---------------------------------------------
-# coop-agent updates arrive via `git pull` inside `coop update`; a zip/shared-drive
-# copy (no .git) silently never updates, and even a git checkout has no signal
-# between updates. These helpers power the doctor / launch staleness nudge.
+# coop-agent updates arrive when `coop update` fast-forwards the checkout to the
+# newest release tag (H5; --edge: head of main); a zip/shared-drive copy (no .git)
+# silently never updates, and even a git checkout has no signal between updates.
+# These helpers power step 1 of `coop update` and the doctor / launch nudge.
 
 # Quietly refresh origin — at most once per day (marker in the effective agent
 # dir) and bounded by a 5s wait, so an offline or VPN-black-holed fetch can never
@@ -1287,26 +1288,217 @@ function Invoke-CoopRepoFetchThrottled {
   return $true
 }
 
-# How many commits HEAD is behind origin/main — purely local and instant (counts
-# against the last-fetched origin/main; no network). 0 when this is not a git
-# checkout, git is missing, or the count is unknowable.
+# How many commits HEAD is behind the release `coop update` would move it to
+# (Get-CoopRepoNextRelease) — purely local and instant (last-fetched refs; no
+# network). 0 when there is no newer release, this is not a git checkout, git is
+# missing, or the count is unknowable, so a checkout that is ahead, diverged or
+# held is never told to run an update that would not move it.
 # (mirror of coop_repo_behind_count)
 function Get-CoopRepoBehindCount {
-  if (-not (Test-Have 'git')) { return 0 }
-  if (-not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) { return 0 }
-  $out = (& git -C $script:CoopRoot rev-list --count 'HEAD..origin/main' 2>$null | Out-String).Trim()
+  $ErrorActionPreference = 'Continue'
+  $tag = Get-CoopRepoNextRelease
+  if (-not $tag) { return 0 }
+  $out = Get-CoopRepoGitLine @('rev-list', '--count', "HEAD..refs/tags/$tag")
   if ($out -match '^\d+$') { return [int]$out }
   return 0
 }
 
 # Launch-time staleness nudge: at most once per day (it fires only when this call
-# performed the daily fetch), warn when the checkout is behind origin/main.
-# Never blocks or fails the launch; silent offline / non-git / up-to-date.
+# performed the daily fetch), warn when a newer release is waiting for this
+# checkout. Never blocks or fails the launch; silent offline / non-git / current.
+# Stranded checkouts stay quiet here; step 1 and doctor name them.
 # (mirror of coop_update_nudge)
 function Invoke-CoopUpdateNudge {
   if (-not (Invoke-CoopRepoFetchThrottled)) { return }
+  $tag = Get-CoopRepoNextRelease
+  if (-not $tag) { return }
   $behind = Get-CoopRepoBehindCount
-  if ($behind -gt 0) { Coop-Warn "coop-agent is $behind commit(s) behind — run: coop update" }
+  if ($behind -gt 0) { Coop-Warn "coop-agent is $behind commit(s) behind release $tag — run: coop update" }
+}
+
+# First output line of a read-only git query against the coop-agent checkout; ''
+# when git fails. Function-local Continue: redirected git stderr can never become
+# a terminating error for a caller running with EAP=Stop on Windows PowerShell 5.1.
+function Get-CoopRepoGitLine {
+  param([string[]]$GitArgs)
+  $ErrorActionPreference = 'Continue'
+  $out = @(& git -C $script:CoopRoot @GitArgs 2>$null)
+  if ($LASTEXITCODE -ne 0) { return '' }
+  foreach ($o in $out) { if ($null -ne $o) { return ([string]$o).Trim() } }
+  return ''
+}
+
+# True when HEAD follows release tags: a detached HEAD, or a branch whose upstream
+# is origin/main (main, or a renamed branch that tracks it). Any other branch,
+# including one with no upstream, is a hold. (mirror of _coop_repo_follows_releases)
+function Test-CoopRepoFollowsReleases {
+  $ErrorActionPreference = 'Continue'
+  $branch = Get-CoopRepoGitLine @('symbolic-ref', '-q', '--short', 'HEAD')
+  if (-not $branch) { return $true }
+  if ((Get-CoopRepoGitLine @('config', '--get', "branch.$branch.remote")) -cne 'origin') { return $false }
+  return ((Get-CoopRepoGitLine @('config', '--get', "branch.$branch.merge")) -ceq 'refs/heads/main')
+}
+
+# The newest strict vX.Y.Z tag merged into the last-fetched origin/main, with any
+# extra for-each-ref filters (e.g. --contains HEAD). rc tags, tags off main and
+# junk output are skipped; lstrip=2 so a same-named branch cannot hide a tag.
+# (mirror of _coop_repo_newest_release)
+function Get-CoopRepoNewestRelease {
+  param([string[]]$Filter = @())
+  $ErrorActionPreference = 'Continue'
+  $gitArgs = @('-C', $script:CoopRoot, 'for-each-ref') + $Filter + @('--merged', 'refs/remotes/origin/main', '--sort=-v:refname', '--format=%(refname:lstrip=2)', 'refs/tags/v[0-9]*')
+  $out = @(& git @gitArgs 2>$null)
+  if ($LASTEXITCODE -ne 0) { return '' }
+  foreach ($t in $out) {
+    if ($null -eq $t) { continue }
+    $s = ([string]$t).Trim()
+    if ($s -cmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { return $s }
+  }
+  return ''
+}
+
+# The release `coop update` would move this checkout to: the newest strict vX.Y.Z
+# tag merged into the last-fetched origin/main that contains HEAD, unless HEAD is
+# already on it. Read-only and local. '' for a non-git copy, missing git, a hold,
+# or no newer release, so nothing is ever moved backwards.
+# (mirror of coop_repo_next_release)
+function Get-CoopRepoNextRelease {
+  $ErrorActionPreference = 'Continue'
+  if (-not (Test-Have 'git')) { return '' }
+  if (-not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) { return '' }
+  if (-not (Test-CoopRepoFollowsReleases)) { return '' }
+  $tag = Get-CoopRepoNewestRelease -Filter @('--contains', 'HEAD')
+  if (-not $tag) { return '' }
+  if ((Get-CoopRepoGitLine @('rev-list', '-n', '1', "refs/tags/$tag")) -ceq (Get-CoopRepoGitLine @('rev-parse', 'HEAD'))) { return '' }
+  return $tag
+}
+
+# `git describe` of the checkout against release tags (rc tags skipped; a bare
+# short SHA when no release is reachable) for the doctor row and step 1. No
+# --dirty, so the index is never touched. '' for a non-git copy or unexpected
+# output. (mirror of coop_repo_describe)
+function Get-CoopRepoDescribe {
+  $ErrorActionPreference = 'Continue'
+  if (-not (Test-Have 'git')) { return '' }
+  if (-not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) { return '' }
+  $d = Get-CoopRepoGitLine @('describe', '--tags', '--match', 'v[0-9]*', '--exclude', '*-*', '--always')
+  if ($d -cmatch '^(v[0-9]|[0-9a-f]{4})[0-9A-Za-z.-]*$') { return $d }
+  return ''
+}
+
+# A state in which `coop update` cannot move this checkout, as
+# @{ Message; Hint } (what is wrong, then the command that fixes it); $null when
+# the checkout follows releases normally. Local only. Step 1 and doctor use it so
+# a stranded machine is never silent. (mirror of coop_repo_stranded)
+function Get-CoopRepoStranded {
+  $ErrorActionPreference = 'Continue'
+  if (-not (Test-Have 'git')) { return $null }
+  $root = $script:CoopRoot
+  if (-not (Test-Path -LiteralPath (Join-Path $root '.git'))) { return $null }
+  if (-not (Test-CoopRepoFollowsReleases)) {
+    $branch = Get-CoopRepoGitLine @('symbolic-ref', '-q', '--short', 'HEAD')
+    $fix = if ($branch -ceq 'main') { "git -C `"$root`" branch --set-upstream-to=origin/main main" } else { "git -C `"$root`" switch main" }
+    return [pscustomobject]@{ Message = "coop-agent is held on branch '$branch' (it does not track origin/main); coop update leaves it alone"; Hint = "to follow releases again: $fix" }
+  }
+  & git -C $root rev-parse -q --verify refs/remotes/origin/main *> $null
+  if ($LASTEXITCODE -ne 0) {
+    return [pscustomobject]@{ Message = 'coop-agent has no origin/main to follow (a single-branch, tag-only or shallow clone)'; Hint = "fix: git -C `"$root`" remote set-branches origin '*'; git -C `"$root`" fetch origin" }
+  }
+  $tag = Get-CoopRepoNewestRelease
+  if ($tag -and -not (Get-CoopRepoNextRelease)) {
+    & git -C $root merge-base --is-ancestor "refs/tags/$tag" HEAD *> $null
+    if ($LASTEXITCODE -ne 0) {
+      return [pscustomobject]@{ Message = "coop-agent has commits that release $tag does not contain, so coop update cannot move it (push them, or set them aside)"; Hint = "set them aside and rejoin: git -C `"$root`" branch my-work; git -C `"$root`" reset --keep $tag" }
+    }
+  }
+  return $null
+}
+
+# Coop-Warn the Get-CoopRepoStranded state; $false when there is none.
+# (mirror of _coop_repo_warn_stranded)
+function Write-CoopRepoStranded {
+  $s = Get-CoopRepoStranded
+  if ($null -eq $s) { return $false }
+  Coop-Warn $s.Message $s.Hint
+  return $true
+}
+
+# Step 1 of `coop update`: move the coop-agent checkout. Default: fast-forward to
+# Get-CoopRepoNextRelease, never backwards, never a tag checkout or reset. -Edge:
+# head of main, via today's `git pull --ff-only` on a branch, or a guarded
+# re-attach of a detached HEAD to main. Tracked-file changes skip the move; a hold
+# is not fetched or moved. Warn-and-continue: never touches the update's failure
+# count. (mirror of coop_repo_follow_release)
+function Invoke-CoopRepoFollowRelease {
+  param([bool]$Edge = $false)
+  $ErrorActionPreference = 'Continue'
+  $root = $script:CoopRoot
+  $status = (& git -C $root status --porcelain --untracked-files=no 2>$null | Out-String)
+  if ($status.Trim()) {
+    Coop-Warn 'uncommitted changes to tracked files in coop-agent — skipping the coop-agent move (commit/stash first).'
+    return
+  }
+  $before = Get-CoopRepoDescribe
+  if (-not $before) { $before = 'checkout' }
+  $branch = Get-CoopRepoGitLine @('symbolic-ref', '-q', '--short', 'HEAD')
+  $oldPrompt = $env:GIT_TERMINAL_PROMPT
+  $env:GIT_TERMINAL_PROMPT = '0'
+  try {
+    if ($Edge -and $branch) {
+      # A branch with no upstream (e.g. a hold made from a tag) has nothing to pull.
+      if (-not (Get-CoopRepoGitLine @('config', '--get', "branch.$branch.merge"))) { $null = Write-CoopRepoStranded; return }
+      Coop-Info "git pull --ff-only (--edge: head of $branch)"
+      & git -C $root pull --ff-only *> $null
+      if ($LASTEXITCODE -eq 0) { Coop-Ok "coop-agent moved from $before to head of $branch ($(Get-CoopRepoDescribe))" }
+      else { Coop-Warn 'git pull failed (continuing)' "see: git -C `"$root`" status" }
+      return
+    }
+    if (-not (Test-CoopRepoFollowsReleases)) { $null = Write-CoopRepoStranded; return }
+    $fetchOut = @(& git -C $root fetch --quiet origin 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+      $line = 'fetch failed'
+      foreach ($o in $fetchOut) { $s = ([string]$o).Trim(); if ($s) { $line = $s; break } }
+      Coop-Warn 'could not fetch from origin — using the releases already on this machine' "git: $line"
+    }
+    if ($Edge) {
+      # Detached HEAD: re-attach to main only when that is forward-only and loses
+      # nothing — HEAD and any existing local main must both be ancestors of
+      # origin/main. Never a plain `git checkout main` (a stale local main would
+      # move HEAD backwards and strand the machine if the pull then failed).
+      & git -C $root rev-parse -q --verify refs/remotes/origin/main *> $null
+      if ($LASTEXITCODE -ne 0) { $null = Write-CoopRepoStranded; return }
+      & git -C $root merge-base --is-ancestor HEAD refs/remotes/origin/main *> $null
+      if ($LASTEXITCODE -ne 0) {
+        Coop-Warn "--edge: this detached coop-agent has commits that are not on origin/main — staying at $before" "see: git -C `"$root`" log --oneline origin/main..HEAD"
+        return
+      }
+      & git -C $root rev-parse -q --verify refs/heads/main *> $null
+      if ($LASTEXITCODE -eq 0) {
+        & git -C $root merge-base --is-ancestor refs/heads/main refs/remotes/origin/main *> $null
+        if ($LASTEXITCODE -ne 0) {
+          Coop-Warn "--edge: local branch main has commits that are not on origin/main — staying at $before" "see: git -C `"$root`" log --oneline origin/main..main"
+          return
+        }
+      }
+      & git -C $root checkout -q -B main --track refs/remotes/origin/main *> $null
+      if ($LASTEXITCODE -eq 0) { Coop-Ok "coop-agent moved from $before to head of main ($(Get-CoopRepoDescribe))" }
+      else { Coop-Warn 'could not switch coop-agent to main (continuing)' "see: git -C `"$root`" status" }
+      return
+    }
+    $tag = Get-CoopRepoNextRelease
+    if ($tag) {
+      # merge --ff-only, never checkout: git itself refuses anything that is not a
+      # fast-forward, or that would overwrite an untracked file.
+      & git -C $root merge --ff-only --quiet "refs/tags/$tag" *> $null
+      if ($LASTEXITCODE -eq 0) { Coop-Ok "coop-agent moved from $before to release $tag" }
+      else { Coop-Warn "could not fast-forward coop-agent to $tag (continuing)" "see: git -C `"$root`" status" }
+      return
+    }
+    if (-not (Write-CoopRepoStranded)) { Coop-Ok "coop-agent ${before}: no newer release to move to (--edge follows main)" }
+  } finally {
+    if ($null -eq $oldPrompt) { Remove-Item Env:\GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue }
+    else { $env:GIT_TERMINAL_PROMPT = $oldPrompt }
+  }
 }
 
 # The Pi agent's own semver, e.g. '0.80.2' (from `pi --version`). '' if unknown.

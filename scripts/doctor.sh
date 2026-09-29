@@ -98,8 +98,8 @@ if have pi; then
 fi
 
 # Release manifest: the single source of truth for the exact versions that ship
-# together with this coop build. Doctor reports drift so a teammate can `coop update`
-# or `coop update --edge` intentionally.
+# together with this coop build. Doctor reports drift so a teammate can pin back
+# with `coop update`; maintainers take head of main + latest with `coop update --edge`.
 section "Release manifest"
 pi_expected="$(coop_manifest_get pi.version)"
 if [ -n "$pi_expected" ]; then
@@ -110,7 +110,7 @@ if [ -n "$pi_expected" ]; then
       ok) ok "pi $piv matches manifest ($pi_expected)" ;;
       missing) warn "pi version unknown" "coop update" ;;
       older) warn "pi $piv is older than manifest ($pi_expected)" "coop update" ;;
-      newer-than-tested) warn "pi $piv is newer than manifest ($pi_expected)" "coop update --edge, or pin back: npm i -g @earendil-works/pi-coding-agent@$pi_expected" ;;
+      newer-than-tested) warn "pi $piv is newer than manifest ($pi_expected)" "pin back: coop update   (maintainers: coop update --edge)" ;;
       wrong-version) warn "pi $piv differs from manifest ($pi_expected)" "coop update" ;;
     esac
   else
@@ -376,7 +376,7 @@ EOF
       ok) ok "$name $cur matches manifest ($exp)" ;;
       missing) warn "$name installed but version unknown (manifest: $exp)" "coop sync   (pins the extension fleet)" ;;
       older|wrong-version) warn "$name ${cur:-?} differs from manifest ($exp)" "coop sync   (pins the extension fleet)" ;;
-      newer-than-tested) warn "$name $cur is newer than manifest ($exp)" "coop sync   (pins back), or coop update --edge intentionally" ;;
+      newer-than-tested) warn "$name $cur is newer than manifest ($exp)" "coop sync   (pins back); maintainers: coop update --edge" ;;
     esac
   done <<EOF
 $(coop_manifest_keys extensions)
@@ -566,13 +566,23 @@ fi
 section "coop-agent repository"
 if [ -d "$COOP_ROOT/.git" ] && have git; then
   # Staleness nudge: refresh origin at most once/day (5s watchdog; silent offline),
-  # then count against the last-fetched origin/main — local + instant.
+  # then compare against the release `coop update` would move to — local + instant.
+  # A checkout the update cannot move (hold, diverged, no origin/main) is named.
   coop_repo_fetch_throttled || true
+  next="$(coop_repo_next_release)"
   behind="$(coop_repo_behind_count)"
-  if [ "${behind:-0}" -gt 0 ]; then
-    warn "coop-agent is $behind commit(s) behind" "run: coop update"
+  stranded="$(coop_repo_stranded)"
+  if [ -n "$next" ] && [ "${behind:-0}" -gt 0 ]; then
+    warn "coop-agent is $behind commit(s) behind release $next" "run: coop update"
+  elif [ -n "$stranded" ]; then
+    stranded_msg=""; stranded_hint=""
+    { IFS= read -r stranded_msg || true; IFS= read -r stranded_hint || true; } <<EOF
+$stranded
+EOF
+    warn "$stranded_msg" "$stranded_hint"
   else
-    ok "coop-agent is a git checkout (updates via: coop update)"
+    at="$(coop_repo_describe)"
+    ok "coop-agent ${at:-git checkout} (follows release tags via: coop update)"
   fi
 else
   # A zip/shared-drive copy: everything above still updates, but the repo layer
