@@ -680,6 +680,9 @@ sql_dialect: "tsql"
 `;
 }
 
+/** `coop-data-doc build`'s error for a configured repo folder that doesn't exist. */
+const MISSING_REPO_PATH = /Repo '([^']+)' path does not exist: (.+?)(?: \(configured in (.+)\))?\s*$/m;
+
 /** Run `coop-data-doc build` and report the outcome. Returns true on exit 0. */
 async function runBuild(pi: ExtensionAPI, ctx: any, outputDir?: string): Promise<boolean> {
   notify(ctx, "Building data docs… (this can take a moment on a large estate)", "info");
@@ -695,8 +698,70 @@ async function runBuild(pi: ExtensionAPI, ctx: any, outputDir?: string): Promise
     return true;
   }
   const tail = (res.stderr || res.stdout || "").split("\n").filter(Boolean).slice(-3).join("  ");
+  const missing = MISSING_REPO_PATH.exec(`${res.stderr || ""}\n${res.stdout || ""}`);
+  if (missing && typeof ctx?.ui?.select === "function") {
+    notify(ctx, `Build failed (exit ${res.code}): ${tail}`, "error");
+    await offerMissingRepoFix(pi, ctx, missing[1], missing[2], missing[3] || join(ctx.cwd, DATADOC_CONFIG));
+    return false;
+  }
   notify(ctx, `Build failed (exit ${res.code}): ${tail}  — fix it, or re-run setup: coop data-doc setup`, "error");
   return false;
+}
+
+/** A build stopped on a missing repo folder: offer the two direct fixes (#102). */
+async function offerMissingRepoFix(pi: ExtensionAPI, ctx: any, repo: string, path: string, configPath: string): Promise<void> {
+  const RERUN = "Re-run setup (/setup-docs) and choose the right folder";
+  const OPEN = `Open ${basename(configPath)} and fix the path`;
+  const LATER = "Not now";
+  const picked = await ctx.ui.select(`The ${repo} repo folder doesn't exist: ${path}. How do you want to fix it?`, [RERUN, OPEN, LATER]);
+  if (picked === RERUN) await runSetupDocs(pi, ctx);
+  else if (picked === OPEN) await editDataDocConfig(ctx, configPath);
+  else notify(ctx, `When you're ready, run /setup-docs or fix the path in ${configPath}, then build with \`coop data-doc build\`.`, "info");
+}
+
+/** Open coop-data-doc.yml in Pi's editor (a text box in coop web) and save the edit. */
+async function editDataDocConfig(ctx: any, configPath: string): Promise<void> {
+  const before = safeRead(configPath);
+  if (!before || typeof ctx?.ui?.editor !== "function") {
+    notify(ctx, `Open ${configPath} in your editor, fix the repo path, then build with \`coop data-doc build\`.`, "info");
+    return;
+  }
+  const edited = await ctx.ui.editor(`${configPath}: fix the repo path, then save`, before);
+  if (edited === undefined || edited === null || String(edited) === before) {
+    notify(ctx, `No changes saved to ${configPath}.`, "info");
+    return;
+  }
+  try {
+    const temp = `${configPath}.tmp-${process.pid}`;
+    writeFileSync(temp, String(edited), "utf8");
+    renameSync(temp, configPath);
+  } catch (e: any) {
+    notify(ctx, `Couldn't save ${configPath}: ${errMsg(e)}`, "error");
+    return;
+  }
+  notify(ctx, `Saved ${configPath}. Build the docs with /start > Document the data sources I have, or \`coop data-doc build\`.`, "info");
+}
+
+/** True when `cwd` is the user's home folder. */
+function isHomeFolder(cwd: string): boolean {
+  let home = "";
+  try { home = homedir(); } catch { return false; }
+  return Boolean(cwd && home) && samePath(cwd, home);
+}
+
+/** /setup-docs and /start > Document never write coop-data-doc.yml into the home
+ *  folder (the desktop shortcuts start coop there). Stop and say how to open coop
+ *  in the project folder instead (#102). Returns true when it stopped. */
+function stopInHomeFolder(ctx: any): boolean {
+  const cwd = typeof ctx?.cwd === "string" ? ctx.cwd : "";
+  if (!isHomeFolder(cwd)) return false;
+  notify(ctx, [
+    `coop didn't set up lineage docs: this session is open in your home folder (${resolve(cwd)}), and coop-data-doc.yml belongs in a project folder, so nothing was written.`,
+    "Open coop in the project folder, then run /setup-docs (or /start > Document the data sources I have) again:",
+    "- Terminal: cd \"<project folder>\", then run coop",
+    "- coop chat window: click the folder name at the top of the window and choose the project folder",
+  ].join("\n"), "warning");
+  return true;
 }
 
 // --- JSONL wizard bridge ---------------------------------------------------
@@ -785,9 +850,22 @@ function displayPath(path: string, cwd: string): string {
   return rel || ".";
 }
 
+/** A sibling Git checkout under `folder` (the session folder itself excluded). */
+function hasNearbyRepo(folder: string, cwd: string): boolean {
+  return childDirectories(folder).some((name) => {
+    const path = join(folder, name);
+    return !samePath(path, cwd) && existsSync(join(path, ".git"));
+  });
+}
+
 /** Browse real folders with Pi's fuzzy selector. Typing filters the discovered
  *  children, Enter opens one, and the returned path is relative to the config
- *  folder where possible. Manual paste remains available as an escape hatch. */
+ *  folder where possible. Manual paste remains available as an escape hatch.
+ *  A suggested folder that doesn't exist (coop-data-doc's `../pbi-repo`
+ *  placeholder) is never an answer and never preselects a folder (#102): Enter
+ *  opens "Type or paste the folder path" until the user opens a folder. Browsing
+ *  starts beside the suggestion only when a real repo sits there, otherwise in
+ *  the session folder, never the home folder's parent. */
 export async function renderPathPrompt(ctx: any, p: JsonlPrompt): Promise<string | null> {
   const def = typeof p.default === "string" ? p.default : "";
   if (typeof ctx.ui?.select !== "function") {
@@ -800,12 +878,15 @@ export async function renderPathPrompt(ctx: any, p: JsonlPrompt): Promise<string
   const cwd = typeof ctx.cwd === "string" && ctx.cwd ? resolve(ctx.cwd) : process.cwd();
   const defaultAbs = resolve(cwd, expandHomePath(def || "."));
   const defaultExists = isDirectory(defaultAbs);
-  let current = nearestExistingDirectory(cwd, def);
-  const MANUAL = "⌨ Type or paste a path…";
+  const nearest = nearestExistingDirectory(cwd, def);
+  let current = defaultExists || hasNearbyRepo(nearest, cwd) ? nearest : cwd;
+  // Enter uses a folder only when it is the (existing) suggestion or one the user opened.
+  let opened = defaultExists;
+  const MANUAL = "⌨ Type or paste the folder path";
 
   for (;;) {
-    const options: Array<{ label: string; path?: string; answer?: string }> = [];
-    if (def && !defaultExists) options.push({ label: `↩ Keep suggested path (not found): ${def}`, answer: def });
+    const options: Array<{ label: string; path?: string }> = [];
+    if (!opened) options.push({ label: MANUAL });
     options.push({ label: `✓ Use this folder: ${displayPath(current, cwd)}`, path: current });
     const parent = dirname(current);
     if (parent !== current) options.push({ label: `↑ Parent: ${displayPath(parent, cwd)}`, path: parent });
@@ -813,24 +894,26 @@ export async function renderPathPrompt(ctx: any, p: JsonlPrompt): Promise<string
       const path = join(current, name);
       options.push({ label: `📁 ${name}`, path });
     }
-    options.push({ label: MANUAL });
+    if (opened) options.push({ label: MANUAL });
 
     const picked = await ctx.ui.select(`${p.message}  ·  Type to filter folders; Enter opens`, options.map((o) => o.label));
     if (picked === null || picked === undefined) return null;
     const selected = options.find((o) => o.label === picked);
     if (!selected) continue;
-    if (selected.answer !== undefined) return selected.answer;
     if (selected.label === MANUAL) {
       if (typeof ctx.ui?.input !== "function") continue;
-      const raw = await ctx.ui.input(p.message, def);
+      const raw = await ctx.ui.input(p.message, defaultExists ? def : undefined);
       if (raw === null || raw === undefined) return null;
-      return String(raw).trim() || def;
+      const typed = String(raw).trim();
+      if (typed) return typed;
+      if (defaultExists) return def;
+      continue; // nothing typed and no real suggestion: back to the folders
     }
     if (selected.label.startsWith("✓ ") && selected.path) {
       if (isAbsolute(def)) return selected.path;
       return relative(cwd, selected.path) || ".";
     }
-    if (selected.path) current = selected.path;
+    if (selected.path) { current = selected.path; opened = true; }
   }
 }
 
@@ -851,6 +934,14 @@ async function supportsJsonlTransport(pi: ExtensionAPI, ctx: any): Promise<boole
  *  value) or null when the user cancelled (Esc). Exported for tests. */
 export async function renderPrompt(ctx: any, p: JsonlPrompt): Promise<unknown> {
   if (p.kind === "confirm") {
+    // Pi's confirm has no default: its TUI lists Yes first (Enter = Yes) and coop
+    // web shows Yes as the first button. Render the wizard's default first
+    // instead, so "Use it anyway?" (default No) answers No on Enter (#102).
+    // Esc answers No, as Pi's confirm does.
+    if (typeof p.default === "boolean" && typeof ctx.ui?.select === "function") {
+      const picked = await ctx.ui.select(p.message, p.default ? ["Yes", "No"] : ["No", "Yes"]);
+      return picked === "Yes";
+    }
     if (typeof ctx.ui?.confirm !== "function") return null;
     return await ctx.ui.confirm("coop-data-doc setup", p.message);
   }
@@ -918,8 +1009,18 @@ export function resolveDataDocExecutable(platform = process.platform, env: NodeJ
   throw new Error("coop-data-doc.exe was not found on PATH. Run `coop install`.");
 }
 
+/** coop-data-doc's notice when setup saved a config that fails validation (for
+ *  example a repo path that doesn't exist). Setup still completes with exit 0. */
+const NOT_RUNNABLE_NOTICE = "Saved, but not runnable yet:";
+
+/** What a completed setup reported beyond success; filled in by runJsonlSetup. */
+export interface JsonlSetupOutcome {
+  /** The wizard's reason the saved config can't build yet, when it said so. */
+  notRunnable?: string;
+}
+
 /** Drive the authoritative JSONL wizard. Terminal event and exit code must agree. */
-export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPrefill = {}): Promise<boolean> {
+export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPrefill = {}, outcome: JsonlSetupOutcome = {}): Promise<boolean> {
   let executable: string;
   try { executable = resolveDataDocExecutable(); }
   catch (e: any) { notify(ctx, errMsg(e), "error"); return false; }
@@ -977,7 +1078,10 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDo
       }
       await send({ id: evt.id, answer });
     } else if (evt.type === "notice" || evt.type === "progress") {
-      if (evt.message) notify(ctx, evt.message, "info");
+      if (!evt.message) return;
+      const notRunnable = evt.type === "notice" && evt.message.trimStart().startsWith(NOT_RUNNABLE_NOTICE);
+      if (notRunnable) outcome.notRunnable = evt.message.trimStart().slice(NOT_RUNNABLE_NOTICE.length).trim();
+      notify(ctx, evt.message, notRunnable ? "warning" : "info");
     } else if (evt.type === "complete" || evt.type === "cancelled" || evt.type === "error") {
       if (!helloSeen) throw new Error(`missing hello handshake before ${evt.type} event (requires coop-data-doc 1.1.1+)`);
       if (terminal) throw new Error(`duplicate terminal event (${terminal}, ${evt.type})`);
@@ -1050,12 +1154,27 @@ async function runQuickSetup(pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPr
     notify(ctx, "Your coop-data-doc does not support the native JSONL setup wizard. Run `coop update` (requires coop-data-doc 1.1.1+), then retry /setup-docs.", "error");
     return false;
   }
-  const ok = await runJsonlSetup(pi, ctx, { ...dataDocPrefillFromProject(ctx.cwd), ...prefill });
+  const outcome: JsonlSetupOutcome = {};
+  const ok = await runJsonlSetup(pi, ctx, { ...dataDocPrefillFromProject(ctx.cwd), ...prefill }, outcome);
+  if (ok && outcome.notRunnable !== undefined) {
+    // A saved config that can't build is a warning, never an automatic build (#102).
+    const reason = outcome.notRunnable || "the saved config doesn't validate";
+    notify(ctx, `Not building yet: ${reason}. Run /setup-docs again and choose a folder that exists (or fix the path in ${DATADOC_CONFIG}), then build with \`coop data-doc build\`.`, "warning");
+    return ok;
+  }
   if (ok) {
     if (await askConfirm(ctx, "Build now?", "Build the lineage docs now? (you can also run `coop data-doc build` later)")) await runBuild(pi, ctx);
     else notify(ctx, "Build them whenever you're ready with `coop data-doc build`.", "info");
   }
   return ok;
+}
+
+/** /setup-docs: run (or re-run) the wizard for this folder, prefilled from its config. */
+async function runSetupDocs(pi: ExtensionAPI, ctx: any): Promise<boolean> {
+  if (stopInHomeFolder(ctx)) return false;
+  const ymlPath = join(ctx.cwd, DATADOC_CONFIG);
+  const prefill = existsSync(ymlPath) ? parseExisting(safeRead(ymlPath)) : {};
+  return await runQuickSetup(pi, ctx, prefill);
 }
 
 // --- Project contract wizard (.coop/project.yml) ----------------------------
@@ -1956,6 +2075,7 @@ interface MenuItem {
 
 /** "Document my data" choice: set up (no config), build (not built yet), else explore. */
 async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
+  if (stopInHomeFolder(ctx)) return;
   const cwd: string = ctx.cwd;
   const ymlPath = join(cwd, DATADOC_CONFIG);
   if (!existsSync(ymlPath)) {
@@ -2635,9 +2755,7 @@ export default function coopTools(pi: ExtensionAPI) {
           notify(ctx, "setup-docs needs an interactive terminal. In a shell, run: coop data-doc setup", "warning");
           return;
         }
-        const ymlPath = join(ctx.cwd, DATADOC_CONFIG);
-        const prefill = existsSync(ymlPath) ? parseExisting(safeRead(ymlPath)) : {};
-        await runQuickSetup(pi, ctx, prefill);
+        await runSetupDocs(pi, ctx);
       } catch (e: any) {
         notify(ctx, `setup-docs failed: ${errMsg(e)}. You can run the same wizard in a shell: coop data-doc setup`, "error");
       }

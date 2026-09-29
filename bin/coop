@@ -833,9 +833,19 @@ coop_init_seed_docs() {
     coop_info "seed cancelled — nothing changed."
     return 1
   fi
-  if printf '%s' "$patch" | coop-data-doc config-set --config "$dir/coop-data-doc.yml" --from-json - >/dev/null; then
+  # config-set prints one status line: "Wrote <path> (validated)." or, when a slot
+  # can't validate yet (a placeholder repo path), "... (saved, not runnable yet (...))."
+  # Show it; the second is a warning, never silence (#102).
+  local status
+  if status="$(printf '%s' "$patch" | coop-data-doc config-set --config "$dir/coop-data-doc.yml" --from-json -)"; then
     coop_ok "seeded $dir/coop-data-doc.yml from project.yml (repos)"
-    coop_info "review it, then build the lineage docs: coop data-doc   (or /setup-docs inside the agent)"
+    case "$status" in
+      *"not runnable yet"*)
+        coop_warn "$status" "fix the repo path it names (or run: coop data-doc setup), then build: coop data-doc" ;;
+      *)
+        [ -z "$status" ] || coop_info "$status"
+        coop_info "review it, then build the lineage docs: coop data-doc   (or /setup-docs inside the agent)" ;;
+    esac
   else
     coop_die "coop-data-doc config-set failed — apply the patch by hand: $py $COOP_ROOT/lib/_seeddocs.py $proj | coop-data-doc config-set --from-json -"
   fi
