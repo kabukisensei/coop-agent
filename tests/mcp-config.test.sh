@@ -31,7 +31,11 @@ assert '_coop_runtime' not in sql
 assert 'command' not in sql and 'args' not in sql and 'mcp-remote' not in json.dumps(sql)
 assert 'bearerToken' not in sql and 'Authorization' not in json.dumps(sql)
 assert 'oauth' not in sql and 'bearerTokenEnv' not in sql
-assert s['powerbi']['args'][-1]=='--readonly'
+# powerbi-mcp-server ignores --readonly and exposes refresh_dataset (#93): never
+# generated, even with a tenant and the old power_bi toggle on. The modeling MCP
+# is the Power BI MCP.
+assert 'powerbi' not in s and 'powerbi' not in m['_coop']['managed_servers']
+assert 'powerbi-mcp-server' not in json.dumps(m)
 model=s['powerbi-modeling-mcp']['args']
 assert '--start' in model and '--readonly' in model
 assert model[1].endswith('@'+manifest['npm_tools']['@microsoft/powerbi-modeling-mcp'])
@@ -159,7 +163,7 @@ import json,sys
 s=json.load(open(sys.argv[1]))['mcpServers']
 assert 'fabric' in s and 'fabric-sqlendpoint' not in s
 PY
-# Missing tenant omits tenant-dependent Power BI server without placeholders.
+# Missing tenant writes no placeholders and no Power BI server entry.
 printf '%s\n' '{"schema_version":1,"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false,"context_mode":false}}' > "$d/config"
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp2.json"
 "$PY" - "$d/mcp2.json" <<'PY'
@@ -187,7 +191,8 @@ YAML
 import json,sys
 m=json.load(open(sys.argv[1])); d=json.load(open(sys.argv[2])); assert 'fabric-sqlendpoint' not in m['mcpServers']; assert d['state']=='target_invalid'; assert d['target']['scope']=='invalid'
 PY
-# Unmarked same-package entries are user-owned and never seized.
+# Unmarked same-name entries are user-owned and never seized or deleted, even for
+# a server COOP has retired (doctor warns about powerbi-mcp-server instead).
 cat > "$d/user-owned.json" <<'JSON'
 {"mcpServers":{"powerbi":{"command":"npx","args":["-y","powerbi-mcp-server@9.9.9","--tenant","user-tenant","--custom-auth"]}}}
 JSON
@@ -195,7 +200,22 @@ printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"client-tenant"},"integr
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --output "$d/user-owned.json" || exit 1
 "$PY" - "$d/user-owned.json" <<'PY'
 import json,sys
-m=json.load(open(sys.argv[1])); assert m['mcpServers']['powerbi']['args'][-1]=='--custom-auth'; assert 'powerbi' not in m['_coop']['managed_servers']
+m=json.load(open(sys.argv[1])); assert m['mcpServers']['powerbi']['args']==['-y','powerbi-mcp-server@9.9.9','--tenant','user-tenant','--custom-auth']; assert 'powerbi' not in m['_coop']['managed_servers']
+PY
+# A COOP-managed powerbi-mcp-server entry from an earlier release is removed on
+# the next sync, with the old power_bi toggle on and a tenant set (#93).
+cat > "$d/retired.json" <<'JSON'
+{"mcpServers":{"powerbi":{"command":"npx","args":["-y","powerbi-mcp-server@0.1.0","--authentication","azcli","--tenant","client-tenant","--readonly"],"env":{"AZURE_TOKEN_CREDENTIALS":"AzureCliCredential"}},"custom":{"command":"x"}},"_coop":{"schema_version":1,"managed_servers":["powerbi"]}}
+JSON
+printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"client-tenant"},"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":true,"azure_devops":false,"microsoft_learn":false,"context_mode":false}}' > "$d/config"
+"$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --output "$d/retired.json" || exit 1
+"$PY" - "$d/retired.json" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1])); s=m['mcpServers']
+assert 'powerbi' not in s and 'powerbi-mcp-server' not in json.dumps(m)
+assert m['_coop']['managed_servers']==['powerbi-modeling-mcp']
+assert s['custom']=={'command':'x'}
+assert '--readonly' in s['powerbi-modeling-mcp']['args']
 PY
 # A tenant explicitly marked for another identity domain must never be routed
 # into client-facing Fabric/Power BI servers.
@@ -205,11 +225,12 @@ if "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --output "$d/wrong-domai
   exit 1
 fi
 grep -q 'reserved for client resources' "$d/wrong-domain.err" || exit 1
-# Unmistakable pre-marker TODO/@latest COOP seeds migrate and are removed when disabled.
+# Unmistakable pre-marker TODO/@latest COOP seeds migrate and are removed when not
+# generated, including those of a retired server (powerbi, #93).
 cat > "$d/legacy.json" <<'JSON'
 {"mcpServers":{"powerbi":{"command":"npx","args":["-y","powerbi-mcp-server@latest","--tenant","TODO-tenant-id"]},"custom":{"command":"x"}}}
 JSON
-printf '%s\n' '{"schema_version":1,"integrations":{"power_bi":false,"fabric":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false,"context_mode":false}}' > "$d/config"
+printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"client-tenant"},"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false,"context_mode":false}}' > "$d/config"
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --output "$d/legacy.json" || exit 1
 "$PY" - "$d/legacy.json" "$ROOT/config/mcp.example.json" <<'PY'
 import json,sys

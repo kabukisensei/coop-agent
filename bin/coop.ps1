@@ -954,10 +954,18 @@ function Invoke-CoopInitSeedDocs {
     exit 1
   }
   $cfg = Join-Path $Dir 'coop-data-doc.yml'
-  $patch | & coop-data-doc config-set --config $cfg --from-json - > $null
+  # config-set prints one status line: "Wrote <path> (validated)." or, when a slot
+  # can't validate yet (a placeholder repo path), "... (saved, not runnable yet (...))."
+  # Show it; the second is a warning, never silence (#102). (mirror of bin/coop)
+  $status = ($patch | & coop-data-doc config-set --config $cfg --from-json - | Out-String).Trim()
   if ($LASTEXITCODE -eq 0) {
     Coop-Ok "seeded $cfg from project.yml (repos)"
-    Coop-Info 'review it, then build the lineage docs: coop data-doc   (or /setup-docs inside the agent)'
+    if ($status -like '*not runnable yet*') {
+      Coop-Warn $status 'fix the repo path it names (or run: coop data-doc setup), then build: coop data-doc'
+    } else {
+      if ($status) { Coop-Info $status }
+      Coop-Info 'review it, then build the lineage docs: coop data-doc   (or /setup-docs inside the agent)'
+    }
   } else {
     Coop-Die "coop-data-doc config-set failed — apply the patch by hand: $py $(Join-Path $script:CoopRoot 'lib/_seeddocs.py') $proj | coop-data-doc config-set --from-json -"
   }
@@ -1073,10 +1081,41 @@ function Test-CoopReleasePins {
   return $true
 }
 
+# --- Release gate: an attached main that equals origin/main (#105) ------------
+# Mirror of coop_release_require_main in bin/coop. `coop update` follows only tags
+# merged into origin/main (H5), so a tag cut from a detached HEAD, another branch,
+# or a main with unpushed or missing commits never deploys: the fleet ignores it
+# silently. Fetches origin, then dies with the fix unless HEAD is the branch main
+# and points at origin/main. Runs before any file changes; the atomic push in
+# Invoke-CoopRelease covers origin moving afterwards.
+function Assert-CoopReleaseOnMain {
+  $root = $script:CoopRoot
+  $branch = Get-CoopRepoBranch
+  if (-not $branch) { Coop-Die 'HEAD is detached — release from main: git switch main; git pull --ff-only' }
+  if ($branch -cne 'main') { Coop-Die "on branch '$branch' — release from main: git switch main; git pull --ff-only" }
+  $fetchOut = @(& git -C $root fetch --quiet origin 2>&1)
+  if ($LASTEXITCODE -ne 0) {
+    $line = 'fetch failed'
+    foreach ($o in $fetchOut) { $s = ([string]$o).Trim(); if ($s) { $line = $s; break } }
+    Coop-Die "could not fetch origin (git: $line) — a release must start from the current origin/main; fix the remote or network and re-run."
+  }
+  $there = Get-CoopRepoGitLine @('rev-parse', '-q', '--verify', 'refs/remotes/origin/main')
+  if (-not $there) { Coop-Die 'no origin/main after fetching origin — a release tags origin/main; check the origin remote.' }
+  $here = Get-CoopRepoGitLine @('rev-parse', '-q', '--verify', 'HEAD')
+  if ($here -ne $there) {
+    $counts = (Get-CoopRepoGitLine @('rev-list', '--left-right', '--count', 'HEAD...refs/remotes/origin/main')) -split '\s+'
+    $ahead = if ($counts.Count -ge 2 -and $counts[0]) { $counts[0] } else { '?' }
+    $behind = if ($counts.Count -ge 2 -and $counts[1]) { $counts[1] } else { '?' }
+    Coop-Die "main differs from origin/main ($ahead ahead, $behind behind) — a release tags exactly origin/main: land or drop local commits, git pull --ff-only, then re-run."
+  }
+  Coop-Ok 'on main at origin/main'
+}
+
 # --- Release: bump version, roll CHANGELOG, commit + tag (+ push) -------------
 # Mirror of coop_release in bin/coop. Bumps VERSION, release-manifest.json, and
-# the extension manifests. Writes files with LF via [IO.File] to avoid Windows
-# CRLF/BOM drift. Requires a clean working tree.
+# the extension manifests, commits, tags, and pushes main + the tag in one atomic
+# push. Writes files with LF via [IO.File] to avoid Windows CRLF/BOM drift.
+# Requires a clean tree on an attached main that equals origin/main.
 function Invoke-CoopRelease {
   param([string[]]$RestArgs = @())
   $level = ''; $assumeYes = $false; $doPush = $true; $doCheck = $true
@@ -1090,11 +1129,12 @@ function Invoke-CoopRelease {
       '^(-h|--help)$' {
         Coop-Say 'Usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]'
         Coop-Say '  Bump VERSION + release/extension manifests, roll CHANGELOG [Unreleased] into'
-        Coop-Say '  a dated release, commit, tag vX.Y.Z, and push (commit + tag). Default: patch.'
+        Coop-Say '  a dated release, commit, tag vX.Y.Z, and push main + the tag atomically (both'
+        Coop-Say '  or neither). Default: patch.'
         Coop-Say '  Verifies extensions transpile + tests + bash/PowerShell parity pass, and that'
         Coop-Say '  the tested_with coop-tool pins match the sibling coop-website''s versions.json'
         Coop-Say '  (--no-check to skip).'
-        Coop-Say '  Requires a clean working tree (commit your changes first).'
+        Coop-Say '  Requires a clean working tree on main, equal to origin/main (it fetches origin).'
         return
       }
       default { Coop-Die "unknown arg '$a' — usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]" }
@@ -1107,6 +1147,7 @@ function Invoke-CoopRelease {
   & git -C $root rev-parse --is-inside-work-tree *> $null
   if ($LASTEXITCODE -ne 0) { Coop-Die "$root is not a git checkout." }
   if (& git -C $root status --porcelain) { Coop-Die 'working tree not clean — commit or stash your changes before releasing.' }
+  Assert-CoopReleaseOnMain
 
   $verFile = Join-Path $root 'VERSION'
   if (-not (Test-Path -LiteralPath $verFile -PathType Leaf)) { Coop-Die "VERSION file missing at $verFile — fix it before releasing." }
@@ -1255,15 +1296,19 @@ function Invoke-CoopRelease {
   if ($LASTEXITCODE -ne 0) { Coop-Die 'git tag failed.' }
   Coop-Ok "released v$new (was v$cur)"
 
-  # 5. push
+  # 5. push main and the tag in ONE atomic push (#105): if origin rejects either
+  # ref (main moved during the gate, a protected branch, an existing tag), neither
+  # lands, so the tag can never reach origin off main. Fully qualified refs, so a
+  # stray tag named 'main' cannot be pushed in place of the branch.
   if ($doPush) {
-    $branch = (& git -C $root rev-parse --abbrev-ref HEAD)
-    & git -C $root push origin $branch *> $null
-    if ($LASTEXITCODE -eq 0) { Coop-Ok "pushed $branch" } else { Coop-Warn "git push $branch failed — push manually: git push origin $branch" }
-    & git -C $root push origin "v$new" *> $null
-    if ($LASTEXITCODE -eq 0) { Coop-Ok "pushed tag v$new" } else { Coop-Warn 'git push tag failed — push manually.' }
+    $pushOut = @(& git -C $root push --atomic --quiet origin refs/heads/main "refs/tags/v$new" 2>&1)
+    if ($LASTEXITCODE -eq 0) { Coop-Ok "pushed main + tag v$new" }
+    else {
+      foreach ($o in $pushOut) { $pushLine = ([string]$o).TrimEnd(); if ($pushLine) { Coop-Emit $pushLine } }
+      Coop-Die "push failed — nothing was pushed (atomic), so v$new exists only on this machine. Retry: git push --atomic origin main v$new — or, if origin/main moved, undo the local release (git tag -d v$new; git reset --keep HEAD~1), git pull --ff-only, and re-run coop release."
+    }
   } else {
-    Coop-Info "not pushed (--no-push). When ready: git push origin HEAD; git push origin v$new"
+    Coop-Info "not pushed (--no-push). When ready: git push --atomic origin main v$new"
   }
 }
 

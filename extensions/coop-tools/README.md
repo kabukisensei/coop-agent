@@ -126,7 +126,16 @@ through Pi dialogs, and returns answers over stdin. No local/reduced wizard exis
   config values prefill prompts. Completion/cancellation/error events and
   process exit status must agree before the bridge reports success. Repository-path
   prompts browse real folders with a type-to-filter selector, so users can open a
-  nearby repo and store its relative path without typing an absolute path.
+  nearby repo and store its relative path without typing an absolute path. When the
+  suggested folder doesn't exist, Enter opens *Type or paste the folder path*: no
+  folder is preselected, and browsing starts beside the suggestion only when a real
+  repo is there (otherwise in the session folder). Yes/no questions show the
+  wizard's default first, so "Use it anyway?" answers No on Enter.
+- **Safe defaults (#102).** `/setup-docs` and *Document my data* stop in the home
+  folder without writing `coop-data-doc.yml` and explain how to open coop in the
+  project folder. A config saved as "not runnable yet" is a warning, and no build is
+  offered. A build that fails on a missing repo path offers to re-run setup or to
+  open `coop-data-doc.yml` in the editor.
 - **Transport safety.** Stdout is strict LF-framed JSONL with a 1 MiB line limit;
   stderr is diagnostics only. Windows resolves `coop-data-doc.exe` directly and
   rejects `.cmd`/`.bat` shell shims. Older tool versions stop with upgrade guidance.

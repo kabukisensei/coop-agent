@@ -81,11 +81,12 @@ def build_client_model(client_cfg, prev_state, stale_days, verbose=False):
     """Query one client and return a render-ready model dict. Raises AdoError on
     any auth/query failure (caller isolates the client)."""
     now = datetime.now(timezone.utc)
-    ado = A.client_for(client_cfg, verbose=verbose)
     project = client_cfg.get("project")
     org = client_cfg.get("org")
+    # Config errors before sign-in: client_for checks org, then mints a token (#103).
     if not project:
         raise A.AdoError("client %r has no project" % client_cfg.get("key"))
+    ado = A.client_for(client_cfg, verbose=verbose)
     areas = A.resolve_area_paths(client_cfg, ado)
     idx = A.IdentityIndex(client_cfg.get("people"))
     osx = client_cfg.get("open_states_exclude") or []

@@ -348,13 +348,6 @@ def build_project_yml(answers: dict) -> str:
     lines.append(
         '    requires_approval_actions: ["create", "update", "delete", "deploy"]'
     )
-    lines.append("  powerbi:")
-    lines.append(f"    enabled: {str(answers.get('use_fabric', False)).lower()}")
-    lines.append("    readonly_flag: true")
-    lines.append('    allowed_default_actions: ["list", "read", "inspect"]')
-    lines.append(
-        '    requires_approval_actions: ["create", "update", "delete", "publish"]'
-    )
     lines.append("  microsoft_learn:")
     lines.append("    enabled: true")
     lines.append('    purpose: "Always-current Microsoft documentation lookups"')

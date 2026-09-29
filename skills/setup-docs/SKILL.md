@@ -74,6 +74,8 @@ Other events the process may emit (display, do not reply):
    user.
 5. **Complete.** When the process emits `complete` or exits 0, the config is
    written. Show the saved path and a summary (project name, repo paths).
+   If a notice said `Saved, but not runnable yet:`, the config points at a repo
+   folder that does not exist: tell the user which path to fix and **do not build**.
 6. **Build (with approval).** Confirm, then `coop-data-doc build --non-interactive`.
    Show the portal path and any unresolved cross-repo links. Offer to resolve
    ambiguous links with the existing `resolve` / `resolve-apply` flow if needed.

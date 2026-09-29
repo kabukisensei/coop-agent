@@ -79,7 +79,9 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 `coop install` checks every prerequisite **before it installs anything**, in the
 order below, and prints ✓ or ✗ for each. When a required one is missing it stops,
 prints the exact command to install it, and asks you to open a new terminal and run
-`coop install` again. `coop doctor` shows the same list with the same commands.
+the install again. Until the install links `coop` onto `PATH`, that stop names the
+clone's own launcher instead of `coop install` (on Windows: double-click
+**Install coop.cmd** again). `coop doctor` shows the same list with the same commands.
 
 | Order | Prerequisite | Needed | Command printed on Windows |
 | --- | --- | --- | --- |
@@ -131,52 +133,22 @@ Useful flags:
 
 ### Windows
 
-On Windows, `coop` runs through the PowerShell wrapper `bin/coop.ps1` and the
-`bin/coop.cmd` shim (mirrors of `bin/coop`). From a clone of this repo in
-PowerShell:
+**Teammates: follow [Install coop on Windows](docs/install-windows.md).** It is one
+page: the prerequisite checklist in the order and wording the installer prints, getting
+the code at the newest release, `Install coop.cmd`, and the first sign-in.
 
-```powershell
-git clone <coop-agent repo url> coop-agent
-cd coop-agent
-.\bin\coop.cmd install
-```
-
-> **Why `.cmd`, not `.ps1`?** Stock Windows ships with the `Restricted` execution
+> **Why `.cmd`, not `.ps1`?** From a terminal in the clone, run
+> `.\bin\coop.cmd install`. Stock Windows ships with the `Restricted` execution
 > policy, under which `.\bin\coop.ps1 install` dies with *"running scripts is
-> disabled on this system"*. The `.cmd` shim bypasses the policy for this one
-> invocation (nothing machine-wide changes). If you specifically want the bare
-> PowerShell entry point, invoke it with an explicit bypass:
+> disabled on this system"*. The `.cmd` shim (and `Install coop.cmd`) bypasses the
+> policy for this one invocation (nothing machine-wide changes). If you specifically
+> want the bare PowerShell entry point, invoke it with an explicit bypass:
 > `powershell -ExecutionPolicy Bypass -File .\bin\coop.ps1 install`
 
 `coop install` drops a launcher at `%LOCALAPPDATA%\coop\bin\coop.cmd` and adds
 `%LOCALAPPDATA%\coop\bin` to your **user `PATH` automatically**. If `coop` isn't
 found yet, **open a new terminal** — the persistent PATH change only applies to
 shells started after the install.
-
-It also creates **two double-click launchers** on the **Start Menu and Desktop**
-(Windows), so members who aren't comfortable in a terminal can open coop by
-clicking an icon:
-
-- **coop** — opens the friendly **chat window** (`coop web`: ChatGPT-style chat in
-  a chromeless app window; the server console starts minimized — closing that
-  minimized window stops coop).
-- **coop (terminal)** — the classic terminal agent.
-
-Both are purely additive: running `coop` in any terminal is unchanged. Coop starts
-directly at the prompt without opening setup dialogs. Run **`/start`** anytime for
-a menu of common tasks.
-
-Project setup is available on demand through **`/setup-project`**, the first item
-in `/start`, or `coop init` from a shell. The wizard supports discovery projects
-with no local source, partial and one-sided estates, mixed repositories, and fully
-connected estates. Edits make a backup and preserve comments, custom policies,
-and fields the wizard does not own.
-
-**No-terminal first-time setup (for non-technical members).** Prefer a Git clone, then
-have them double-click **`Install coop.cmd`**. A zip/shared-drive copy is suitable only
-for a one-time or offline install: `coop update` can update its tools but **cannot update
-the Coop repo layer** (skills, prompts, scripts, themes, or guardrails). Replace such a
-copy with a Git clone and rerun `.\bin\coop.cmd install`; `~/.coop` settings are preserved.
 
 ### Manual assembly
 
@@ -200,7 +172,8 @@ shows anything still missing.
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
 | **Power BI authoring tools** — Report Authoring CLI, Power BI Modeling MCP, and Windows-only Desktop Bridge | installed globally from manifest-pinned npm packages; Doctor requires Report Authoring and validates Modeling MCP arguments |
-| **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
+| **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
+| **Windows double-click launchers**: **coop** opens the chat window (`coop web`; its server console starts minimized, and closing that window stops coop), **coop (terminal)** opens the classic terminal agent | created on the Start Menu and Desktop, both starting in your home folder. Purely additive: `coop` in any terminal is unchanged |
 
 > `pi-powerline-footer` is **not** used. coop renders its own footer and splash via
 > `extensions/coop-powerline` (see [Footer & splash](#footer--splash)).
@@ -246,7 +219,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
 | `coop new-skill <name>` | Scaffold `skills/<name>/SKILL.md` |
 | `coop new-prompt <name>` | Scaffold `prompts/<name>.md` |
-| `coop release [patch\|minor\|major] [--yes] [--no-push] [--no-check]` | Cut a release — bump version, roll CHANGELOG, commit + tag + push (default `patch`). Build-checks the extensions first (skip with `--no-check`); `--no-push` tags locally only; `--yes` skips the confirm |
+| `coop release [patch\|minor\|major] [--yes] [--no-push] [--no-check]` | Cut a release — bump version, roll CHANGELOG, commit + tag, then push `main` and the tag atomically (default `patch`). Runs only on `main` at `origin/main`. Build-checks the extensions first (skip with `--no-check`); `--no-push` tags locally only; `--yes` skips the confirm |
 | **Pi management (aliased under coop)** | |
 | `coop list` | List installed Pi extensions (`pi list`) |
 | `coop config` | Open Pi's resource TUI (`pi config`) |
@@ -264,6 +237,9 @@ The AI agent gets machine-readable JSON through the four native `sql_review` / `
 commands — including `data_doc`'s `lineage` command (see
 [Lineage-grounded edits](#lineage-grounded-edits)).
 
+Coop starts directly at the prompt without opening setup dialogs. Run **`/start`**
+anytime for a menu of common tasks.
+
 For **`coop-data-doc` setup**, coop offers an **on-demand in-agent** path so you
 don't have to drop to a shell: run **`/setup-docs`** or choose *Document my data*
 from `/start` when you are ready. Coop does not launch this wizard automatically
@@ -278,8 +254,9 @@ missing `.coop/project.yml` or safely edits the nearest existing one, covering
 client details, whatever repositories are available, Fabric/Power BI workspaces,
 and Tabular Editor. A repository is not required: the wizard can start an engagement
 in discovery mode, record SQL-only or Power-BI-only coverage, and add sources later.
-After an edit, run `/new` (or restart Coop) so the guardrails take a fresh trusted
-snapshot of the contract.
+Edits make a backup and preserve comments, custom policies, and fields the wizard
+does not own. After an edit, run `/new` (or restart Coop) so the guardrails take a fresh trusted
+snapshot of the contract. From a shell, `coop init` creates a new contract.
 
 ---
 
@@ -312,7 +289,7 @@ fab --version                # re-verify: should be the Microsoft Fabric CLI
 
 ## Managed MCP integrations (optional)
 
-Coop can generate six managed entries through `pi-mcp-adapter`. They are **read-only
+Coop can generate five managed entries through `pi-mcp-adapter`. They are **read-only
 first**, not read-only-only, and all are optional. `context-mode` is installed separately
 as a native Pi extension and is deliberately excluded from generated MCP configuration.
 
@@ -320,10 +297,14 @@ as a native Pi extension and is deliberately excluded from generated MCP configu
 | --- | --- | --- |
 | `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login (az's default account; coop cannot set its tenant); metadata reads by default, mutations approval-gated |
 | `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | every call approval-gated; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
-| `powerbi` | `powerbi-mcp-server --readonly` | requires a configured tenant; server-enforced read-only |
 | `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readonly` | no tenant/workspace required; server-enforced read-only |
 | `azure-devops` | Manifest-pinned Azure DevOps MCP for one organization | requires enabled toggle + valid organization; mutations approval-gated |
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` | requires only its enabled toggle; always-current Microsoft docs |
+
+`powerbi-mcp-server` (the former `powerbi` entry) is retired: it silently ignores
+`--readonly` and exposes `refresh_dataset`, a write
+([#93](https://github.com/kabukisensei/coop-agent/issues/93)). `coop sync` removes the
+entry it generated; an entry you added yourself stays, and `coop doctor` warns about it.
 
 `coop onboard` writes versioned `~/.coop/config`; `coop sync` deterministically generates
 COOP-managed entries in `~/.coop/agent/mcp.json` while preserving unmarked user-owned
@@ -752,8 +733,9 @@ coop support --incident  # export a sanitized escalation bundle
 `coop update` keeps Pi, its extensions, standalone tools, and a Git-backed Coop repo
 current, then runs Doctor. On Windows, a running Coop/Pi process causes the Pi update to be
 skipped and returns nonzero—close every Coop/Pi window and rerun. A zip/shared-drive copy
-can update tools but never the repo layer; replace it with a Git clone and rerun
-`.\bin\coop.cmd install`. Private `~/.coop` settings are preserved.
+instead of a Git clone suits only a one-time or offline install: it can update tools but
+never the repo layer (skills, prompts, scripts, themes, or guardrails). Replace it with a
+Git clone and rerun `.\bin\coop.cmd install`. Private `~/.coop` settings are preserved.
 
 **Release channel.** `coop update` fast-forwards the coop-agent checkout to the newest
 release tag (`vX.Y.Z` on `main`) and pins Pi, extensions, and tools to that release's
@@ -807,6 +789,7 @@ upstream release can temporarily restore upstream notices and `ctx_upgrade` with
 
 > New teammate? Hand them **[docs/onboarding.md](docs/onboarding.md)** — a one-page
 > clone → install → verify → use guide.
+> On Windows, start them on **[docs/install-windows.md](docs/install-windows.md)**.
 
 coop is distributed as **this Git repo**. Put it on a host your coworkers can reach
 (GitHub/Azure DevOps/internal), then each teammate runs the bootstrap once:

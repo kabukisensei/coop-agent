@@ -458,20 +458,29 @@ Coop-Head "Cooptimize agent bootstrap (v$($script:CoopVersion))  [$OS]"
 Coop-Head '1/9  Prerequisites'
 $prereqRows = Get-CoopPrereqs $NO_FABRIC
 $prereqMissing = Show-CoopPrereqs $prereqRows
+# The command that re-runs this install. A first install stops here, before step 7
+# links `coop` onto PATH, so until then name Install coop.cmd and the clone's own
+# launcher (#112). Checked before --prereqs auto can widen PATH.
+$installCmd = 'coop install'
+$rerunHint = 'run: coop install'
+if (-not (Test-Have 'coop')) {
+  $installCmd = "& `"$(Join-Path $script:CoopRoot 'bin\coop.cmd')`" install"
+  $rerunHint = "double-click Install coop.cmd again (or run: $installCmd)"
+}
 if ($prereqMissing -gt 0 -and $PREREQS_AUTO -and -not $NO_PREREQS) {
   Invoke-CoopPrereqInstall $prereqRows
   Coop-Head 'Prerequisites (re-checked)'
   $prereqMissing = Show-CoopPrereqs (Get-CoopPrereqs $NO_FABRIC)
   if ($prereqMissing -gt 0) { Coop-Err "$prereqMissing required prerequisite(s) still missing — install the $($script:G_CROSS) rows above in that order." }
-  Coop-Warn 'Open a NEW terminal so the new tools are on PATH, then run: coop install'
+  Coop-Warn "Open a NEW terminal so the new tools are on PATH, then $rerunHint"
   exit 1
 }
 if ($prereqMissing -gt 0) {
   if ($NO_PREREQS) {
     Coop-Warn "$prereqMissing required prerequisite(s) missing (--no-prereqs: continuing anyway)"
   } else {
-    Coop-Err "$prereqMissing required prerequisite(s) missing. Install the $($script:G_CROSS) rows above in that order, open a NEW terminal, then run: coop install"
-    Coop-Say '      (or let coop run those commands for you: coop install --prereqs auto)'
+    Coop-Err "$prereqMissing required prerequisite(s) missing. Install the $($script:G_CROSS) rows above in that order, open a NEW terminal, then $rerunHint"
+    Coop-Say "      (or let coop run those commands for you: $installCmd --prereqs auto)"
     exit 1
   }
 } else {

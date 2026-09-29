@@ -68,7 +68,7 @@ else
   COOP_AZ_BIN="$COOP_DIR/azbin/az"
 fi
 export COOP_AZ_BIN
-printf 'y\n\n\n\nn\n\n\n' | PATH="$COOP_DIR/azbin:$PATH" COOP_AZ_BIN="$COOP_AZ_BIN" "$PY" "$ROOT/scripts/onboard.py" onboard --config-only >/dev/null 2>&1
+printf 'y\n\n\nn\n\n\n' | PATH="$COOP_DIR/azbin:$PATH" COOP_AZ_BIN="$COOP_AZ_BIN" "$PY" "$ROOT/scripts/onboard.py" onboard --config-only >/dev/null 2>&1
 "$PY" - "$COOP_DIR/.coop/config" <<'PY'
 import json,sys
 c=json.load(open(sys.argv[1])); assert c['azure']['tenant_id']=='tenant-detected'; assert c['integrations']['azure_devops'] is False
@@ -144,7 +144,7 @@ run_config() {
 # (1) Manual client tenant: wording makes ownership unambiguous.
 d1="$(mktemp -d "$COOP_DIR/c1.XXXXXX")"
 GUID="11111111-2222-3333-4444-555555555555"
-run_config "$d1" "y" "$GUID" "" "" "" "n" ""
+run_config "$d1" "y" "$GUID" "" "" "n" ""
 grep -qi "client" "$d1/stderr.txt" && grep -qi "Cooptimize" "$d1/stderr.txt" \
   && ok "tenant prompt names client vs Cooptimize ownership" || ko "tenant prompt lacks ownership guidance"
 grep -q "Fabric and Power BI resources Coop should access" "$d1/stderr.txt" \
@@ -156,8 +156,17 @@ tenant_purpose="$(cfg_json "$d1/.coop/config" | "$PY" -c 'import json,sys; print
 grep -q "Do not enter the Cooptimize tenant here" "$d1/stderr.txt" \
   && grep -q "separate sign-in" "$d1/stderr.txt" \
   && ok "onboarding preserves the client/Cooptimize identity boundary" || ko "dual-identity boundary is not explicit"
-power_bi="$(cfg_json "$d1/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["integrations"]["power_bi"])')"
-[ "$power_bi" = "True" ] && ok "Power BI MCP can be enabled WITH a tenant" || ko "power_bi should be True with tenant: $power_bi"
+# powerbi-mcp-server is retired (#93): no toggle, no saved key, and the review
+# summary never claims a server that is not generated. Modeling MCP stays.
+case "$(cat "$d1/stderr.txt")" in
+  *"Enable Power BI MCP?"*) ko "retired Power BI MCP toggle still offered with a tenant" ;;
+  *) ok "no retired Power BI MCP toggle with a tenant" ;;
+esac
+cfg_json "$d1/.coop/config" | "$PY" -c 'import json,sys; sys.exit("power_bi" in json.load(sys.stdin)["integrations"])' \
+  && ok "no retired power_bi integration saved with a tenant" || ko "retired power_bi integration saved with a tenant"
+grep -q '^- Enabled:.*Power BI MCP' "$d1/stderr.txt" \
+  && ko "review summary lists retired Power BI MCP as enabled: $(grep '^- Enabled:' "$d1/stderr.txt")" \
+  || ok "review summary does not list Power BI MCP as enabled"
 grep -q "Review" "$d1/stderr.txt" && grep -q "Destination:" "$d1/stderr.txt" \
   && ok "summary shows review block and destination path" || ko "summary missing before save"
 grep -q "$GUID" "$d1/stderr.txt" \
@@ -167,7 +176,7 @@ grep -q "Microsoft Entra ID > Overview > Tenant ID" "$d1/stderr.txt" \
 
 # (2) Detected tenant prompt uses the access-oriented question.
 d2="$(mktemp -d "$COOP_DIR/c2.XXXXXX")"
-out2="$(printf 'y\n\n\nn\n\n' | env PATH="$COOP_DIR/azbin:$PATH" HOME="$d2" COOP_DIR="$d2" COOP_AZ_BIN="$COOP_AZ_BIN" \
+out2="$(printf 'y\n\n\n\n\n' | env PATH="$COOP_DIR/azbin:$PATH" HOME="$d2" COOP_DIR="$d2" COOP_AZ_BIN="$COOP_AZ_BIN" \
   "$PY" "$ROOT/scripts/onboard.py" onboard --config-only 2>&1 >/dev/null)"
 case "$out2" in
   *"Use this as the client resource tenant for Fabric and Power BI?"*)
@@ -201,7 +210,7 @@ if command -v cygpath >/dev/null 2>&1; then
   az_login_stub="$(cygpath -w "$az_login_stub_bat")"
   az_login_state="$(cygpath -w "$az_login_state")"
 fi
-out2b="$(printf 'y\ny\n\n\n\nn\n\n' | HOME="$d2b" COOP_DIR="$d2b" COOP_AZ_BIN="$az_login_stub" COOP_TEST_AZ_STATE="$az_login_state" \
+out2b="$(printf 'y\ny\n\n\nn\n\n' | HOME="$d2b" COOP_DIR="$d2b" COOP_AZ_BIN="$az_login_stub" COOP_TEST_AZ_STATE="$az_login_state" \
   "$PY" "$ROOT/scripts/onboard.py" onboard --config-only 2>&1 >/dev/null)"
 tenant2b="$(cfg_json "$d2b/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure"]["tenant_id"])')"
 case "$out2b" in
@@ -232,7 +241,7 @@ if command -v cygpath >/dev/null 2>&1; then
     'exit /b 1' > "$az_multi_stub_bat"
   az_multi_stub="$(cygpath -w "$az_multi_stub_bat")"
 fi
-out2c="$(printf 'y\n2\n\n\n\nn\n\n' | HOME="$d2c" COOP_DIR="$d2c" COOP_AZ_BIN="$az_multi_stub" \
+out2c="$(printf 'y\n2\n\n\nn\n\n' | HOME="$d2c" COOP_DIR="$d2c" COOP_AZ_BIN="$az_multi_stub" \
   "$PY" "$ROOT/scripts/onboard.py" onboard --config-only 2>&1 >/dev/null)"
 tenant2c="$(cfg_json "$d2c/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure"]["tenant_id"])')"
 [ "$tenant2c" = "tenant-two" ] && [[ "$out2c" == *"Which tenant owns the client's Fabric and Power BI environment?"* ]] \
@@ -261,28 +270,29 @@ if command -v cygpath >/dev/null 2>&1; then
     'exit /b 1' > "$az_device_stub_bat"
   az_device_stub="$(cygpath -w "$az_device_stub_bat")"
 fi
-out2d="$(printf 'y\ny\n\n\n\nn\n\n' | HOME="$d2d" COOP_DIR="$d2d" COOP_AZ_BIN="$az_device_stub" \
+out2d="$(printf 'y\ny\n\n\nn\n\n' | HOME="$d2d" COOP_DIR="$d2d" COOP_AZ_BIN="$az_device_stub" \
   "$PY" "$ROOT/scripts/onboard.py" onboard --config-only 2>&1 >/dev/null)"
 tenant2d="$(cfg_json "$d2d/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure"]["tenant_id"])')"
 [ "$tenant2d" = "tenant-device" ] && [[ "$out2d" == *"Try again with a device code?"* ]] \
   && ok "device-code retry recovers a failed browser sign-in" \
   || ko "device-code recovery failed: tenant=$tenant2d output=$out2d"
 
-# (3) Tenant declined -> Power BI MCP cannot be enabled and says why.
+# (3) Tenant declined -> nothing about the retired Power BI MCP: no prompt, no
+# "omitted" line, and no advice to set a tenant for a server Coop never writes.
 d3="$(mktemp -d "$COOP_DIR/c3.XXXXXX")"
 run_config "$d3" "n" "" "" "n" ""
-grep -q "Power BI MCP requires an Azure tenant and will remain disabled." "$d3/stderr.txt" \
-  && ok "Power BI MCP unavailable-without-tenant message shown" || ko "missing Power BI disabled message"
 case "$(cat "$d3/stderr.txt")" in
   *"Enable Power BI MCP"*) ko "Power BI enable prompt shown without a tenant" ;;
-  *) ok "no Power BI enable prompt without a tenant" ;;
+  *"Power BI MCP requires an Azure tenant"*|*"Omitted: Power BI MCP"*|*"Power BI MCP is omitted"*)
+    ko "retired Power BI MCP still reported as needing a tenant" ;;
+  *) ok "no retired Power BI MCP prompt or tenant advice without a tenant" ;;
 esac
-power_bi="$(cfg_json "$d3/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["integrations"]["power_bi"])')"
-[ "$power_bi" = "False" ] && ok "Power BI MCP stored explicitly disabled without tenant" || ko "power_bi should be False: $power_bi"
+cfg_json "$d3/.coop/config" | "$PY" -c 'import json,sys; sys.exit("power_bi" in json.load(sys.stdin)["integrations"])' \
+  && ok "no retired power_bi integration saved without a tenant" || ko "retired power_bi integration saved without a tenant"
 
 # (4) Blank Azure DevOps organization is rejected, then a URL is accepted.
 d4="$(mktemp -d "$COOP_DIR/c4.XXXXXX")"
-run_config "$d4" "y" "$GUID" "" "" "" "" "y" "" "y" "https://dev.azure.com/myorg" ""
+run_config "$d4" "y" "$GUID" "" "" "" "y" "" "y" "https://dev.azure.com/myorg" ""
 case "$(cat "$d4/stderr.txt")" in
   *"cannot be empty"*) ok "blank Azure DevOps organization rejected" ;;
   *) ko "blank ADO organization accepted: $(tail -3 "$d4/stderr.txt")" ;;
@@ -292,13 +302,13 @@ org="$(cfg_json "$d4/.coop/config" | "$PY" -c 'import json,sys; print(json.load(
 
 # (5) Giving up on the organization disables the integration instead of saving it broken.
 d5="$(mktemp -d "$COOP_DIR/c5.XXXXXX")"
-run_config "$d5" "y" "$GUID" "" "" "" "" "y" "" "n" ""
+run_config "$d5" "y" "$GUID" "" "" "" "y" "" "n" ""
 ado_enabled="$(cfg_json "$d5/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["integrations"]["azure_devops"])')"
 [ "$ado_enabled" = "False" ] && ok "backing out of ADO org prompt disables the integration" || ko "ADO saved enabled without org: $ado_enabled"
 
 # (6) Short organization name is also accepted.
 d6="$(mktemp -d "$COOP_DIR/c6.XXXXXX")"
-run_config "$d6" "y" "$GUID" "" "" "" "" "y" "myorg" ""
+run_config "$d6" "y" "$GUID" "" "" "" "y" "myorg" ""
 org="$(cfg_json "$d6/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure_devops"]["organization"])')"
 [ "$org" = "myorg" ] && ok "short ADO organization name accepted" || ko "short org: $org"
 
@@ -315,12 +325,31 @@ PYEOF
 
 # (8) Editing an existing configuration updates it in place.
 d8="$(mktemp -d "$COOP_DIR/c8.XXXXXX")"
-run_config "$d8" "y" "$GUID" "n" "n" "n" "n" "n" "n"
-run_config "$d8" "n" "n" "n" "y" "n" "n" "y"
+run_config "$d8" "y" "$GUID" "n" "n" "n" "n" "n"
+run_config "$d8" "n" "n" "n" "n" "n" "y"
 learn="$(cfg_json "$d8/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["integrations"]["microsoft_learn"])')"
 fabric="$(cfg_json "$d8/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["integrations"]["fabric"])')"
 [ "$learn" = "True" ] && [ "$fabric" = "False" ] && ok "editing an existing configuration updates integrations" || ko "edit: learn=$learn fabric=$fabric"
 [ ! -f "$d8/.coop/user.json" ] && ok "config-only edit still never creates a profile" || ko "config-only created a profile"
+
+# (8b) A config saved before #93 (power_bi on, tenant set) is re-edited: the
+# retired toggle is not offered or summarized, and its stale key is dropped.
+d8b="$(mktemp -d "$COOP_DIR/c8b.XXXXXX")"; mkdir -p "$d8b/.coop"
+printf '{"schema_version":1,"azure":{"enabled":true,"purpose":"client_resources","tenant_id":"%s","tenant_name":""},"integrations":{"fabric":true,"fabric_sql_endpoint":true,"power_bi":true,"power_bi_modeling":true,"azure_devops":false,"microsoft_learn":true},"azure_devops":{"organization":""},"mcp":{"safe_mode":"read_only_first"},"fleet":{"publish_dir":""}}\n' "$GUID" > "$d8b/.coop/config"
+run_config "$d8b" "n" "" "" "" "" "" ""
+case "$(cat "$d8b/stderr.txt")" in
+  *"Enable Power BI MCP?"*) ko "legacy config re-edit offers the retired Power BI MCP toggle" ;;
+  *) ok "legacy config re-edit does not offer the retired Power BI MCP toggle" ;;
+esac
+grep -q '^- Enabled:.*Power BI MCP' "$d8b/stderr.txt" \
+  && ko "legacy config review lists retired Power BI MCP: $(grep '^- Enabled:' "$d8b/stderr.txt")" \
+  || ok "legacy config review does not list Power BI MCP as enabled"
+"$PY" - "$d8b/.coop/config" <<'PYEOF'
+import json,sys
+i=json.load(open(sys.argv[1]))["integrations"]
+assert "power_bi" not in i and i["power_bi_modeling"] is True, i
+PYEOF
+[ "$?" -eq 0 ] && ok "legacy power_bi key dropped, Power BI Modeling MCP kept" || ko "legacy power_bi key kept or modeling lost"
 
 # (9) Completion messages differ by invocation context.
 d9a="$(mktemp -d "$COOP_DIR/c9a.XXXXXX")"
@@ -335,6 +364,10 @@ case "$out9" in
   *) ko "fresh setup did not use the streamlined path: $out9" ;;
 esac
 case "$out9" in
+  *"Power BI MCP ("*|*"Power BI MCP is omitted"*) ko "quick start without a tenant still reports the retired Power BI MCP" ;;
+  *) ok "quick start without a tenant does not report the retired Power BI MCP" ;;
+esac
+case "$out9" in
   *"Setup complete. Run 'coop' to start."*) ok "explicit onboard ends with start instructions" ;;
   *) ko "explicit onboard completion message missing: $(tail -2 <<<"$out9")" ;;
 esac
@@ -344,6 +377,20 @@ out10="$(printf '\n1\ny\n%s\n\n\nn\n\n' "$GUID" | HOME="$d9b" COOP_DIR="$d9b" CO
 case "$out10" in
   *"Setup complete. Starting Coop"*) ok "launch-triggered onboarding announces startup" ;;
   *) ko "launch completion message missing: $(tail -2 <<<"$out10")" ;;
+esac
+# Quick start WITH a client tenant: the review lists Power BI Modeling MCP, never
+# the retired Power BI MCP that sync no longer writes (#93).
+d9c="$(mktemp -d "$COOP_DIR/c9c.XXXXXX")"
+out11="$(printf 'Quick User\n1\ny\ny\n%s\nn\n' "$GUID" | HOME="$d9c" COOP_DIR="$d9c" COOP_AZ_BIN=/nonexistent/az \
+  "$PY" "$ROOT/scripts/onboard.py" onboard 2>&1 >/dev/null)"
+enabled11="$(grep '^- Enabled:' <<<"$out11")"
+tenant9c="$(cfg_json "$d9c/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["azure"]["tenant_id"])')"
+case "$enabled11" in
+  *"Power BI MCP"*) ko "quick start with a tenant lists the retired Power BI MCP as enabled: $enabled11" ;;
+  *"Power BI Modeling MCP"*) [ "$tenant9c" = "$GUID" ] \
+    && ok "quick start with a tenant lists Power BI Modeling MCP, not the retired server" \
+    || ko "quick start did not save the tenant: $tenant9c" ;;
+  *) ko "quick start review line missing: $enabled11" ;;
 esac
 
 exit $fail

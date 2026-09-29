@@ -833,9 +833,19 @@ coop_init_seed_docs() {
     coop_info "seed cancelled — nothing changed."
     return 1
   fi
-  if printf '%s' "$patch" | coop-data-doc config-set --config "$dir/coop-data-doc.yml" --from-json - >/dev/null; then
+  # config-set prints one status line: "Wrote <path> (validated)." or, when a slot
+  # can't validate yet (a placeholder repo path), "... (saved, not runnable yet (...))."
+  # Show it; the second is a warning, never silence (#102).
+  local status
+  if status="$(printf '%s' "$patch" | coop-data-doc config-set --config "$dir/coop-data-doc.yml" --from-json -)"; then
     coop_ok "seeded $dir/coop-data-doc.yml from project.yml (repos)"
-    coop_info "review it, then build the lineage docs: coop data-doc   (or /setup-docs inside the agent)"
+    case "$status" in
+      *"not runnable yet"*)
+        coop_warn "$status" "fix the repo path it names (or run: coop data-doc setup), then build: coop data-doc" ;;
+      *)
+        [ -z "$status" ] || coop_info "$status"
+        coop_info "review it, then build the lineage docs: coop data-doc   (or /setup-docs inside the agent)" ;;
+    esac
   else
     coop_die "coop-data-doc config-set failed — apply the patch by hand: $py $COOP_ROOT/lib/_seeddocs.py $proj | coop-data-doc config-set --from-json -"
   fi
@@ -945,11 +955,37 @@ coop_release_check_pins() {
   coop_ok "tested_with pins match coop-website/versions.json"
 }
 
+# --- Release gate: an attached main that equals origin/main (#105) ------------
+# `coop update` follows only tags merged into origin/main (H5), so a tag cut from
+# a detached HEAD, another branch, or a main with unpushed or missing commits
+# never deploys: the fleet ignores it silently. Fetches origin, then dies with the
+# fix unless HEAD is the branch main and points at origin/main. Runs before any
+# file changes; the atomic push in coop_release covers origin moving afterwards.
+coop_release_require_main() {
+  local branch err line here there counts ahead behind
+  branch="$(_coop_repo_branch)"
+  [ -n "$branch" ] || coop_die "HEAD is detached — release from main: git switch main && git pull --ff-only"
+  [ "$branch" = "main" ] || coop_die "on branch '$branch' — release from main: git switch main && git pull --ff-only"
+  if ! err="$(git -C "$COOP_ROOT" fetch --quiet origin 2>&1 >/dev/null)"; then
+    IFS= read -r line <<<"$err" || true
+    coop_die "could not fetch origin (git: ${line:-fetch failed}) — a release must start from the current origin/main; fix the remote or network and re-run."
+  fi
+  there="$(git -C "$COOP_ROOT" rev-parse -q --verify 'refs/remotes/origin/main' 2>/dev/null || true)"
+  [ -n "$there" ] || coop_die "no origin/main after fetching origin — a release tags origin/main; check the origin remote."
+  here="$(git -C "$COOP_ROOT" rev-parse -q --verify HEAD 2>/dev/null || true)"
+  if [ "$here" != "$there" ]; then
+    counts="$(git -C "$COOP_ROOT" rev-list --left-right --count "HEAD...refs/remotes/origin/main" 2>/dev/null || true)"
+    read -r ahead behind <<<"$counts" || true
+    coop_die "main differs from origin/main (${ahead:-?} ahead, ${behind:-?} behind) — a release tags exactly origin/main: land or drop local commits, git pull --ff-only, then re-run."
+  fi
+  coop_ok "on main at origin/main"
+}
+
 # --- Release: bump version, roll CHANGELOG, commit + tag (+ push) -------------
 # Cut a release with one command. Bumps VERSION, release-manifest.json, and every
 # extensions/*/package.json; rolls the CHANGELOG's [Unreleased] section into a
-# dated [X.Y.Z] heading; commits, tags vX.Y.Z, and pushes the commit + tag.
-# Requires a clean working tree.
+# dated [X.Y.Z] heading; commits, tags vX.Y.Z, and pushes main + the tag in one
+# atomic push. Requires a clean tree on an attached main that equals origin/main.
 coop_release() {
   local level="" assume_yes=0 do_push=1 do_check=1
   while [ "$#" -gt 0 ]; do
@@ -963,11 +999,12 @@ coop_release() {
         cat >&2 <<'EOF'
 Usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]
   Bump VERSION + release/extension manifests, roll CHANGELOG [Unreleased] into
-  a dated release, commit, tag vX.Y.Z, and push (commit + tag). Default: patch.
+  a dated release, commit, tag vX.Y.Z, and push main + the tag atomically (both
+  or neither). Default: patch.
   Verifies extensions transpile + tests + bash/PowerShell parity pass, and that
   the tested_with coop-tool pins match the sibling coop-website's versions.json
   (--no-check to skip).
-  Requires a clean working tree (commit your changes first).
+  Requires a clean working tree on main, equal to origin/main (it fetches origin).
 EOF
         return 0 ;;
       *) coop_die "unknown arg '$1' — usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]" ;;
@@ -981,6 +1018,7 @@ EOF
     || coop_die "$COOP_ROOT is not a git checkout."
   [ -z "$(git -C "$COOP_ROOT" status --porcelain)" ] \
     || coop_die "working tree not clean — commit or stash your changes before releasing."
+  coop_release_require_main
 
   local cur new ma mi pa
   # Guard the read first: a missing/unreadable VERSION makes the `<` redirect fail
@@ -1117,15 +1155,20 @@ EOF
   git -C "$COOP_ROOT" tag -a "v$new" -m "coop-agent v$new" || coop_die "git tag failed."
   coop_ok "released v$new (was v$cur)"
 
-  # 5. push
+  # 5. push main and the tag in ONE atomic push (#105): if origin rejects either
+  # ref (main moved during the gate, a protected branch, an existing tag), neither
+  # lands, so the tag can never reach origin off main. Fully qualified refs, so a
+  # stray tag named 'main' cannot be pushed in place of the branch.
   if [ "$do_push" = "1" ]; then
-    local branch; branch="$(git -C "$COOP_ROOT" rev-parse --abbrev-ref HEAD)"
-    git -C "$COOP_ROOT" push origin "$branch" >/dev/null 2>&1 && coop_ok "pushed $branch" \
-      || coop_warn "git push $branch failed — push manually: git push origin $branch"
-    git -C "$COOP_ROOT" push origin "v$new" >/dev/null 2>&1 && coop_ok "pushed tag v$new" \
-      || coop_warn "git push tag failed — push manually: git push origin v$new"
+    local push_err
+    if push_err="$(git -C "$COOP_ROOT" push --atomic --quiet origin refs/heads/main "refs/tags/v$new" 2>&1)"; then
+      coop_ok "pushed main + tag v$new"
+    else
+      [ -z "$push_err" ] || printf '%s\n' "$push_err" >&2
+      coop_die "push failed — nothing was pushed (atomic), so v$new exists only on this machine. Retry: git push --atomic origin main v$new — or, if origin/main moved, undo the local release (git tag -d v$new && git reset --keep HEAD~1), git pull --ff-only, and re-run coop release."
+    fi
   else
-    coop_info "not pushed (--no-push). When ready: git push origin HEAD && git push origin v$new"
+    coop_info "not pushed (--no-push). When ready: git push --atomic origin main v$new"
   fi
 }
 

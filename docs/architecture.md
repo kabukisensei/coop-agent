@@ -151,9 +151,11 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
    manifest-pinned, COOP-managed entries in coop's isolated agent dir
    (`~/.coop/agent/mcp.json`) by `coop onboard` / `coop sync`:
    - `fabric` — `@microsoft/fabric-mcp` (AzureCliCredential).
-   - `powerbi` — `powerbi-mcp-server --readonly` (tenant-gated: omitted until an
-     Azure tenant is configured).
-   - `powerbi-modeling-mcp` — `@microsoft/powerbi-modeling-mcp --start --readonly`.
+   - `powerbi-modeling-mcp` — `@microsoft/powerbi-modeling-mcp --start --readonly`,
+     the only Power BI MCP. (`powerbi-mcp-server`, the former `powerbi` entry, is
+     retired: it ignores `--readonly` and exposes `refresh_dataset`, a write, #93.
+     `coop sync` removes the entry it generated; `coop doctor` warns about a
+     user-owned one.)
    - `azure-devops` — `@azure-devops/mcp <org>` (organization-gated).
    - `microsoft-learn` — `learn.microsoft.com/api/mcp` via `mcp-remote`
      (always-current Microsoft docs).
@@ -215,7 +217,7 @@ flowchart TD
 
     subgraph MCP["Read-only MCP (optional)"]
       fmcp["fabric"]
-      pmcp["powerbi --readonly"]
+      pmcp["powerbi-modeling-mcp --readonly"]
       lmcp["microsoft-learn"]
       cmcp["context-mode"]
     end

@@ -350,9 +350,10 @@ deploying to test/prod is in `never_without_explicit_instruction`).
 
 ## MCP read-only action policy
 
-The MCP servers are optional; `coop` runs without them. `fabric`, `powerbi --readonly`,
-and `microsoft-learn` are read-only over **client data** — `fabric` is read-only *by
-policy* (its MCP has **no** server-side read-only switch, unlike `powerbi`'s `--readonly`),
+The MCP servers are optional; `coop` runs without them. `fabric`,
+`powerbi-modeling-mcp --readonly`, and `microsoft-learn` are read-only over **client
+data** — `fabric` is read-only *by policy* (its MCP has **no** server-side read-only
+switch, unlike the Power BI Modeling MCP's `--readonly`),
 so the guardrail heuristic + Pi's tool approval are what hold it. `context-mode` is **not**
 a pure read: it runs **sandboxed code over the docs/graph** (not client data) to save
 context. Manifest-pinned managed config is generated into coop's isolated agent dir
@@ -365,7 +366,7 @@ Per `.coop/project.yml` and `docs/guardrails.md`:
 |--------|--------------------|----------------------------|
 | `fabric` | `list`, `read`, `inspect` (read-only **by policy**) | `create`, `update`, `delete`, `deploy` |
 | `fabric-sqlendpoint` | separate managed direct HTTP SQL endpoint | every `executeSQL` / `execute_query` call; DDL/DML/destructive SQL is classified before row-read handling |
-| `powerbi` (`--readonly`) | `list`, `read`, `inspect` | `create`, `update`, `delete`, `publish` |
+| `powerbi-modeling-mcp` (`--readonly`) | `list`, `read`, `inspect` | `create`, `update`, `delete`, `publish` |
 | `microsoft-learn` | docs lookups (always-current) | — |
 | `context-mode` | intent search + **sandboxed exec** over docs/graph | — |
 

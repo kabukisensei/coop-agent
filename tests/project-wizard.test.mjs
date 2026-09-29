@@ -132,6 +132,8 @@ await t("new-project renderer produces a parseable, governed contract", () => {
   assert.match(text, /- 'update markdown docs, html site, logs'/);
   assert.match(text, /agent_never_commit:/);
   assert.match(text, /never_without_explicit_instruction:/);
+  // #93: powerbi-mcp-server is retired; contracts declare no `powerbi` MCP policy.
+  assert.doesNotMatch(text, /^  powerbi:|readonly_flag/m);
   const parsed = parseProjectWizardSettings(text, "/work/analytics");
   assert.equal(parsed.repositories[0].role, "sql");
   assert.equal(parsed.tenantId, "tenant-123");
@@ -214,6 +216,9 @@ await t("coop init contract round-trips through /setup-project with a nested sta
   const merged = applyProjectWizardSettings(original, parsed);
   assert.equal(projectYamlScalar(merged, ["profile", "client"]), "Contoso");
   assert.ok(merged.includes(override), "setup-project must preserve the unowned standards block");
+  // #93: neither wizard writes the retired `powerbi` MCP policy block.
+  assert.doesNotMatch(generated, /^  powerbi:|readonly_flag/m, "coop init must not write mcp.powerbi");
+  assert.doesNotMatch(merged, /^  powerbi:|readonly_flag/m, "setup-project must not add mcp.powerbi");
   assert.equal(projectYamlScalar(merged, ["standards", "sql", "path"]), "docs/standards/client-sql.md");
 });
 

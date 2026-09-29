@@ -1,11 +1,13 @@
 ﻿#!/usr/bin/env pwsh
 # H2b: the PowerShell twin of the Warehouse and fabric rows in tests/doctor.test.sh.
-# Runs scripts/doctor.ps1 --json from a folder whose .mcp.json has fabric and
-# fabric-sqlendpoint, with a python3 stub whose warehouse_mcp.py doctor-json
-# prints a fixed state and tenant. The Warehouse row names the tenant the probe
-# minted for, the token_command_failed hint pins it with --tenant, a tenant that
-# is not a GUID or domain name is dropped, and the fabric row says coop cannot
-# pin the fabric MCP's tenant. Sandboxed HOME/COOP_DIR/agent dir, never ~/.coop;
+# Runs scripts/doctor.ps1 --json from a folder whose .mcp.json has fabric,
+# fabric-sqlendpoint, and a user-owned powerbi-mcp-server entry, with a python3
+# stub whose warehouse_mcp.py doctor-json prints a fixed state and tenant. The
+# Warehouse row names the tenant the probe minted for, the token_command_failed
+# hint pins it with --tenant, a tenant that is not a GUID or domain name is
+# dropped, the fabric row says coop cannot pin the fabric MCP's tenant, and the
+# powerbi-mcp-server entry is a warning that names why (#93), never a configured
+# server. Sandboxed HOME/COOP_DIR/agent dir, never ~/.coop;
 # COOP_SKIP_AZ=1 keeps az out, and a fresh fetch stamp keeps doctor from
 # fetching the coop-agent repo. No waits.
 # Assertions stay ASCII: Windows PowerShell 5.1 re-encodes child output.
@@ -62,7 +64,7 @@ try {
     & chmod +x $py
   }
   [System.IO.File]::WriteAllText((Join-Path $cwd '.mcp.json'),
-    '{"mcpServers":{"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp"]},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"]}}}',
+    '{"mcpServers":{"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp"]},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"]},"powerbi":{"command":"npx","args":["-y","powerbi-mcp-server@0.1.0","--authentication","azcli","--tenant","user-tenant","--readonly"]}}}',
     $utf8)
   # Doctor refreshes the coop-agent checkout at most once a day; a fresh stamp
   # in the sandbox agent dir keeps this fixture offline.
@@ -123,6 +125,16 @@ try {
   if ($null -eq $fab -or $fab.status -ne 'ok' -or -not ([string]$fab.name).Contains("fabric server configured (uses az's default account; coop cannot pin its tenant)")) {
     Ko 'doctor.ps1 must state that the fabric MCP tenant cannot be pinned' (Show-Rows $rows)
   } else { Ok 'doctor.ps1 states that the fabric MCP tenant cannot be pinned' }
+  # #93: powerbi-mcp-server ignores --readonly and exposes refresh_dataset; a
+  # user-owned entry is left in place, so doctor warns and names the reason.
+  $pbiReason = 'powerbi-mcp-server is not read-only: it ignores --readonly and exposes refresh_dataset, a write (coop-agent#93)'
+  $pbi = @($rows | Where-Object { ([string]$_.name).Contains($pbiReason) })
+  if ($pbi.Count -ne 1 -or $pbi[0].status -ne 'warn' -or -not ([string]$pbi[0].hint).StartsWith('remove that entry from ')) {
+    Ko 'doctor.ps1 must warn on a user-owned powerbi-mcp-server entry and name the reason' (@($rows | Where-Object { ([string]$_.name).Contains('powerbi') } | ForEach-Object { "$($_.status) | $($_.name) | $($_.hint)" }) -join "`n")
+  } else { Ok 'doctor.ps1 warns on a user-owned powerbi-mcp-server entry and names the reason' }
+  if ($null -ne (Find-Row $rows 'powerbi server configured')) {
+    Ko 'doctor.ps1 must not report powerbi-mcp-server as a configured server'
+  } else { Ok 'doctor.ps1 does not report powerbi-mcp-server as a configured server' }
 
   # 2. A tenant that is not a GUID or domain name is dropped: the row and hint
   #    stay unpinned, as with no tenant (az's default account).
@@ -142,6 +154,6 @@ try {
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($fail -ne 0) { Write-Host '  x doctor.ps1 Warehouse and fabric rows (PowerShell) tests FAILED'; exit 1 }
-Write-Host '  doctor.ps1 Warehouse and fabric rows (PowerShell) tests passed'
+if ($fail -ne 0) { Write-Host '  x doctor.ps1 Warehouse, fabric, and powerbi rows (PowerShell) tests FAILED'; exit 1 }
+Write-Host '  doctor.ps1 Warehouse, fabric, and powerbi rows (PowerShell) tests passed'
 exit 0
