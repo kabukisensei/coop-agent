@@ -2,7 +2,9 @@
 #
 # Repo-staleness helpers (lib/common.sh): coop_repo_fetch_throttled +
 # coop_repo_behind_count + coop_update_nudge. Fully offline — the "origin" is a
-# local repo in the sandbox, so `git fetch` never touches the network.
+# local repo in the sandbox, so `git fetch` never touches the network. The count
+# is against the next release tag (H5); tests/update-follow.test.sh covers the
+# release boundaries.
 #
 set -euo pipefail
 
@@ -33,16 +35,21 @@ export NO_COLOR
 [ "$(coop_repo_behind_count)" = "0" ] || fail "fresh clone should be 0 behind"
 pass "fresh clone reports 0 behind"
 
-# 2. origin gains a commit; the clone's LOCAL origin/main is stale -> still 0.
+# 2. origin gains a commit released as v0.2.0 and an unreleased one after it; the
+#    clone's LOCAL refs are stale (tag not yet fetched) -> still 0.
 git -C "$TMP/origin" -c user.email=t@t -c user.name=t commit --allow-empty -qm three
+git -C "$TMP/origin" -c user.email=t@t -c user.name=t tag -a v0.2.0 -m v0.2.0
+git -C "$TMP/origin" -c user.email=t@t -c user.name=t commit --allow-empty -qm four
 [ "$(coop_repo_behind_count)" = "0" ] || fail "behind-count must be local (no implicit fetch)"
-pass "behind-count is purely local (stale origin/main -> 0)"
+pass "behind-count is purely local (release not fetched yet -> 0)"
 
-# 3. The throttled fetch runs (marker absent), refreshes origin/main -> behind=1.
+# 3. The throttled fetch runs (marker absent); its plain fetch auto-follows the
+#    release tag on main -> behind=1: counted against release v0.2.0, not the
+#    unreleased head of main (which would be 2).
 coop_repo_fetch_throttled || fail "first fetch should run (marker absent)"
 [ -f "$TMP/agent/.coop-fetch-stamp" ] || fail "fetch should stamp the marker"
-[ "$(coop_repo_behind_count)" = "1" ] || fail "after fetch, clone should be 1 behind"
-pass "throttled fetch refreshes origin/main (1 behind, marker stamped)"
+[ "$(coop_repo_behind_count)" = "1" ] || fail "after fetch, clone should be 1 behind release v0.2.0"
+pass "throttled fetch brings the release tag (1 behind, marker stamped)"
 
 # 4. A second call within the day is throttled (returns 1) — the once/day gate.
 if coop_repo_fetch_throttled; then fail "second fetch within a day must be throttled"; fi
@@ -55,8 +62,8 @@ out="$(coop_update_nudge 2>&1)" || fail "coop_update_nudge must never fail"
 touch -t 202001010000 "$TMP/agent/.coop-fetch-stamp"
 out="$(coop_update_nudge 2>&1)" || fail "coop_update_nudge must never fail"
 case "$out" in
-  *"1 commit(s) behind"*) pass "nudge warns '1 commit(s) behind' after the throttle window" ;;
-  *) fail "nudge should warn about being 1 behind (got: $out)" ;;
+  *"1 commit(s) behind release v0.2.0"*) pass "nudge warns '1 commit(s) behind release v0.2.0' after the throttle window" ;;
+  *) fail "nudge should warn about being 1 behind release v0.2.0 (got: $out)" ;;
 esac
 
 # 6. Non-git copy: helpers are silent no-ops (0 behind, fetch not applicable).

@@ -477,8 +477,8 @@ function Invoke-LaunchPi {
   # Guard against launching into a known-broken extension load (agent/extension skew).
   Invoke-CoopLaunchPreflight
 
-  # Once-a-day fleet-staleness nudge: warn when this checkout is behind
-  # origin/main (throttled fetch, bounded wait — never blocks or fails the launch).
+  # Once-a-day fleet-staleness nudge: warn when this checkout is behind the next
+  # release tag (throttled fetch, bounded wait — never blocks or fails the launch).
   Invoke-CoopUpdateNudge
 
   # Bounded, noninteractive and fail-soft. Native stderr is suppressed so

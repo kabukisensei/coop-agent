@@ -234,7 +234,8 @@ coop new-skill <name>     # add a team skill   -> skills/<name>/SKILL.md
 coop new-prompt <name>    # add a /prompt       -> prompts/<name>.md
 ```
 
-Commit + push; teammates get it on their next `coop update`. See
+Commit + push; teammates get it at the next release tag via `coop update`
+(maintainers: `coop update --edge`). See
 [extending.md](extending.md).
 
 Using **Azure DevOps Boards**? coop has an optional integration — the
@@ -246,7 +247,7 @@ in the [README](../README.md#azure-devops-boards-optional).
 ## 7. Stay current
 
 ```bash
-coop update               # converges Pi, extensions, tools, and MCP packages to the release manifest
+coop update               # moves coop-agent to the newest release tag and converges Pi, extensions, tools, and MCP packages to its manifest
 ```
 
 ## 8. Fleet health digest

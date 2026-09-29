@@ -225,13 +225,13 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | --- | --- |
 | `coop` | Launch the branded Pi agent (skills, prompts, theme, guardrails, splash) |
 | `coop doctor [--fix] [--json] [--publish]` | Check dependencies/configuration; optionally apply safe fixes, emit JSON, or publish a fleet snapshot to `fleet.publish_dir` |
-| `coop update [--check] [--edge] [--yes] [--no-fabric]` | Converge the fleet to the release manifest and run Doctor. `--check` changes nothing; `--edge` deliberately takes upstream latest; `--pi-latest` is deprecated |
+| `coop update [--check] [--edge] [--yes] [--no-fabric]` | Move coop-agent to the newest release tag (never backwards), converge tools to that release's manifest, and run Doctor. `--edge` is the maintainer channel: head of `main` plus latest upstream; `--check` changes nothing; `--pi-latest` is a deprecated alias of `--edge` |
 | `coop support [--json] [--incident] [--export PATH]` | Offline Support Center: sanitized diagnostics, incident timeline, preview/export, and standards status; works without Pi/model availability |
 | `coop onboard [--edit|--config-only|--reset|--json]` | Configure profile and managed integrations without launching the agent |
 | `coop profile [--edit|--reset|--json]` | Inspect or update the private user profile |
 | `coop context-budget [--json]` | Inspect the active model/context budget |
 | `coop uninstall [--keep-tools] [--yes]` | Remove the launcher/shortcuts/user-PATH entry and isolated agent dir; by default also uninstall Pi, pipx tools/Fabric CLI, Power BI Report Authoring CLI, Power BI Modeling MCP, and the Windows Desktop Bridge. `--keep-tools` preserves all managed npm/pipx tools. Never touches repo clones, work repos, the rest of `~/.coop`, or personal `~/.pi/agent` |
-| `coop install [--edge] [--force] [--yes] [--prereqs auto] [--no-prereqs] [--no-fabric]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest. With a source arg, alias of `coop add` |
+| `coop install [--edge] [--force] [--yes] [--prereqs auto] [--no-prereqs] [--no-fabric]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest and is tools-only here (install never moves the repo). With a source arg, alias of `coop add` |
 | `coop web` | Open a friendly browser UI over the same governed agent (experimental; loopback-only + one-time token — see `web/README.md`) |
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
 | `coop sync` | Ensure core Pi extensions are installed, place the governed MCP config non-destructively, refresh managed catalogs/team knowledge, and verify brand assets |
@@ -697,20 +697,52 @@ its configured profile icon.
 ## Updating & maintenance
 
 ```bash
-coop update          # converge to the tested release manifest, then run Doctor
+coop update          # move to the newest release tag, converge to its manifest, run Doctor
 coop update --check  # dry-run core tool status; changes nothing
-coop update --edge   # deliberately take latest upstream, then report manifest drift
+coop update --edge   # maintainers: head of main + latest upstream, then report manifest drift
 coop sync            # refresh governed MCP/catalog/team-knowledge/assets non-destructively
 coop doctor          # re-check dependencies and configuration
 coop support --incident  # export a sanitized escalation bundle
 ```
 
 `coop update` keeps Pi, its extensions, standalone tools, and a Git-backed Coop repo
-current, then runs Doctor. Tracked local repo changes cause the repo pull to be skipped;
-untracked files do not. On Windows, a running Coop/Pi process causes the Pi update to be
+current, then runs Doctor. On Windows, a running Coop/Pi process causes the Pi update to be
 skipped and returns nonzero—close every Coop/Pi window and rerun. A zip/shared-drive copy
 can update tools but never the repo layer; replace it with a Git clone and rerun
 `.\bin\coop.cmd install`. Private `~/.coop` settings are preserved.
+
+**Release channel.** `coop update` fast-forwards the coop-agent checkout to the newest
+release tag (`vX.Y.Z` on `main`) and pins Pi, extensions, and tools to that release's
+manifest. It never moves a checkout backwards: a checkout at or past the newest release
+stays where it is. Merges to `main` reach teammates only when a release is tagged. Fresh
+clones start on the head of `main` and join the release channel at the next tag.
+
+**Maintainer channel.** `coop update --edge` takes the head of `main` plus the latest
+upstream Pi, extensions, and tools; from a detached checkout it re-attaches to `main` when
+that loses nothing. `--edge` is sticky: the release channel never moves backwards, so an
+`--edge` checkout stays on unreleased `main` until a release is tagged past it, then
+follows tags again on its own. To rejoin sooner while staying on `main`, first check that
+`git -C <coop-agent> log refs/remotes/origin/main..refs/heads/main` prints nothing, then run
+`git -C <coop-agent> reset --keep vX.Y.Z` and `coop update`. For the head of `main` with
+manifest pins, run `git -C <coop-agent> pull --ff-only`, then `coop update`.
+
+**When the repo does not move.** Step 1 of `coop update` and the Doctor repo row name the
+state and the command that fixes it:
+
+- Tracked local changes skip the move; untracked files do not.
+- A branch that does not track `origin/main` is a *hold* and is left alone (a per-machine
+  pin). Rejoin with `git -C <coop-agent> switch main`, then `coop update`. `--edge` pulls a
+  held branch's own upstream and does nothing on a hold without one.
+- Local commits that the next release does not contain block the move. Push them, or set
+  them aside on a branch as Doctor shows.
+- A clone with no `origin/main` (for example a single-branch clone of a tag) cannot
+  follow releases: `git -C <coop-agent> remote set-branches origin '*'`, then
+  `git -C <coop-agent> fetch origin`.
+- A checkout with no `origin` remote (renamed or removed) cannot move: Doctor shows the
+  `git remote rename` or `git remote add origin` command that restores it.
+- A detached checkout (for example `git clone --branch vX.Y.Z`) follows release tags
+  forward while detached. One detached at v0.23.5 or older runs an updater that cannot
+  move it: run `git -C <coop-agent> checkout main`, then `coop update`.
 
 **Fleet pinning.** `coop update` has exactly two fleet modes. **Normal** mode pins Pi,
 every extension, and all tools to the exact versions in the release manifest — no registry
@@ -719,8 +751,9 @@ but does not enumerate managed Pi extensions or the injected `fabric-cicd` libra
 
 **One update voice.** Coop suppresses Pi and managed-extension self-update notices and
 blocks `context-mode`'s `ctx_upgrade` shortcut so a component cannot drift away from the
-tested fleet. The daily **coop-agent is behind** notice remains: it is the safe prompt to
-run `coop update`, which advances the whole manifest together. Maintainers debugging an
+tested fleet. The daily **coop-agent is N commit(s) behind release vX.Y.Z** notice
+remains: it is the safe prompt to run `coop update`, which advances the whole manifest
+together. It appears only when a newer release is waiting. Maintainers debugging an
 upstream release can temporarily restore upstream notices and `ctx_upgrade` with
 `COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1`.
 
@@ -755,8 +788,8 @@ see [Prerequisites](#prerequisites)); the installer pulls everything else from n
 and PyPI. After install, `coop doctor` tells each person exactly what (if anything)
 is still missing.
 
-To keep the team in sync, push changes to the repo and have everyone run
-`coop update` (it `git pull`s coop-agent **and** updates Pi/extensions/tools).
+Teammates get pushed changes with the next release tag: `coop update` moves coop-agent to
+the newest release **and** updates Pi/extensions/tools (maintainers: `coop update --edge`).
 
 ### CI gates for your repos
 
@@ -770,4 +803,5 @@ publishing, version pinning — are in **[docs/ci.md](docs/ci.md)**.
 Coworkers can add their own skills, prompts, themes, and tools — see
 **[docs/extending.md](docs/extending.md)**. In short: a new skill is just a
 `skills/<name>/SKILL.md` file; a new prompt is a `prompts/<name>.md`; both load
-automatically on the next `coop`. Commit, push, `coop update` — everyone has it.
+automatically on the next `coop`. Commit and push; teammates get it with the next release
+tag (maintainers: `coop update --edge`).

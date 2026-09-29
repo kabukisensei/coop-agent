@@ -7,6 +7,24 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- `coop update` follows release tags instead of the head of `main` (H5, #78). Step 1
+  fast-forwards the coop-agent checkout to the newest `vX.Y.Z` tag on `main` that is
+  ahead of it and never moves a checkout backwards, so merges to `main` reach teammates
+  only through a tagged release, and the tools pin to that release's manifest. rc tags
+  and tags off `main` are ignored. A branch that does not track `origin/main` is a hold
+  that default update leaves alone (a per-machine pin); a renamed branch that tracks
+  `origin/main` still follows releases. `--edge` is unchanged as the maintainer channel
+  (head of `main` plus latest upstream) and now re-attaches a detached checkout to
+  `main` when that loses nothing; `coop install --edge` stays tools-only. The doctor
+  repo row and the daily launch notice count against the release the update would move
+  to ("N commit(s) behind release vX.Y.Z"), so a checkout ahead of the newest release
+  is no longer nudged. The doctor row shows `git describe`, and step 1 and doctor name
+  the states the update cannot move (hold, local commits, no `origin/main`, no `origin`
+  remote) with the command that fixes each. Doctor's newer-than-manifest hints now say to pin back with
+  `coop update` (maintainers: `coop update --edge`). The update that installs this
+  release still runs the old updater and pulls the head of `main` once; later updates
+  follow tags.
+
 - Standards: the wiki's own front matter now widens the prompt classifier (#88). A
   task that names a layer the domain's articles carry (silver, gold, report) or every
   word of an article's technology (fabric warehouse) selects that domain too, so
