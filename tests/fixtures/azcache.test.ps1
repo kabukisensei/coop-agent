@@ -357,11 +357,20 @@ sys.stdout.write(buf.decode("utf-8", "replace"))
   # 14. doctor.ps1's Azure sign-in row: probe only, never a sign-in, never the
   #     launch cache, same tenant chain (mirror of tests/doctor.test.sh).
   $doctor = Join-Path $root 'scripts\doctor.ps1'
+  # Read the Azure row from `doctor.ps1 --json` (stdout, one document). Captured
+  # human output is stderr, which Windows PowerShell 5.1 wraps at the console
+  # width, so a long hint can split across lines.
   function Invoke-Doctor {
     $env:COOP_ASSUME_YES = '1'
     $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     try {
-      return (& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $doctor 2>&1 | Out-String)
+      $raw = (& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $doctor --json 2>$null | Out-String)
+      # Parse only the document line (stray hint lines can precede it; see the issue linked in the PR).
+      $doc = @($raw -split "`r?`n" | Where-Object { $_.StartsWith('{"checks"') }) | Select-Object -Last 1
+      if (-not $doc) { return "(no JSON document) $raw" }
+      $row = @(($doc | ConvertFrom-Json).checks | Where-Object { ([string]$_.name).StartsWith('Azure sign-in:') }) | Select-Object -First 1
+      if ($null -eq $row) { return "(no Azure sign-in row) $raw" }
+      return "$($row.status) | $($row.name) | $($row.hint)"
     } finally {
       $ErrorActionPreference = $eap
       Remove-Item Env:\COOP_ASSUME_YES -ErrorAction SilentlyContinue
@@ -373,15 +382,15 @@ sys.stdout.write(buf.decode("utf-8", "replace"))
   $doctorOk = $true
   Reset-Az
   $dout = Invoke-Doctor
-  if (-not $dout.Contains('Azure sign-in: no client tenant configured') -or -not $dout.Contains('run: coop onboard --config-only')) { $doctorOk = $false; Ko 'doctor.ps1 must warn when no client tenant is configured' $dout }
+  if ($dout -ne 'warn | Azure sign-in: no client tenant configured | run: coop onboard --config-only') { $doctorOk = $false; Ko 'doctor.ps1 must warn when no client tenant is configured' $dout }
   Set-Config '{"schema_version":1,"azure":{"purpose":"client_resources","tenant_id":"tenant-9.example"}}'
   Reset-Az
   $dout = Invoke-Doctor
-  if (-not $dout.Contains('Azure sign-in: not signed in to tenant tenant-9.example') -or -not $dout.Contains('az login --tenant tenant-9.example --allow-no-subscriptions')) { $doctorOk = $false; Ko 'doctor.ps1 must report the signed-out tenant with the sign-in command' $dout }
+  if ($dout -ne 'warn | Azure sign-in: not signed in to tenant tenant-9.example | run: az login --tenant tenant-9.example --allow-no-subscriptions') { $doctorOk = $false; Ko 'doctor.ps1 must report the signed-out tenant with the sign-in command' $dout }
   elseif ((Get-Logins) -ne 0 -or (Get-Probes) -lt 1) { $doctorOk = $false; Ko 'doctor.ps1 must only probe, never sign in' ((Get-AzLines) -join "`n") }
   Reset-Az @('tenant-9.example *')
   $dout = Invoke-Doctor
-  if (-not $dout.Contains('Azure sign-in: signed in to tenant tenant-9.example')) { $doctorOk = $false; Ko 'doctor.ps1 must report the signed-in tenant' $dout }
+  if (-not $dout.StartsWith('ok | Azure sign-in: signed in to tenant tenant-9.example')) { $doctorOk = $false; Ko 'doctor.ps1 must report the signed-in tenant' $dout }
   elseif ((Get-Logins) -ne 0) { $doctorOk = $false; Ko 'doctor.ps1 must never sign in' }
   if (Test-Path -LiteralPath $marker) { $doctorOk = $false; Ko 'doctor.ps1 must never write the launch cache (.az-ok)' }
   Set-Location -LiteralPath $proj
