@@ -147,11 +147,6 @@ mcp:
     enabled: true
     allowed_default_actions: ["list", "read", "inspect"]
     requires_approval_actions: ["create", "update", "delete", "deploy"]
-  powerbi:
-    enabled: true
-    readonly_flag: true
-    allowed_default_actions: ["list", "read", "inspect"]
-    requires_approval_actions: ["create", "update", "delete", "publish"]
   microsoft_learn:
     enabled: true
     purpose: "Always-current Microsoft documentation lookups"

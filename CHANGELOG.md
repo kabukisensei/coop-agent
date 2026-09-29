@@ -7,6 +7,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- MCP: `powerbi-mcp-server` is retired (#93). It silently ignores `--readonly` and
+  exposes `refresh_dataset` (a write that triggers a dataset refresh on the client
+  tenant), which coop's guardrails do not classify as a mutation, while coop
+  documented it as read-only. Coop no longer generates the `powerbi` MCP entry, and the
+  `powerbi-mcp-server` pin is gone from the release manifest. `@microsoft/powerbi-modeling-mcp`
+  (`--start --readonly`) is the only Power BI MCP. `coop sync` removes the `powerbi`
+  entry coop generated (or its old `TODO-`/`@latest` placeholder); a `powerbi` entry
+  you added yourself is left in place, and `coop doctor` (both platforms) warns about
+  any `powerbi-mcp-server` entry and names the reason. The bundled contracts and both
+  project wizards no longer write the `mcp.powerbi` block (`readonly_flag: true`); an
+  existing contract keeps it untouched. `coop onboard` no longer asks "Enable Power BI
+  MCP?", no longer lists it as enabled or omitted in the review summary, and no longer
+  tells you to set a tenant for it; a saved `integrations.power_bi` value is dropped
+  the next time onboarding saves the config.
+
 - `coop update` follows release tags instead of the head of `main` (H5, #78). Step 1
   fast-forwards the coop-agent checkout to the newest `vX.Y.Z` tag on `main` that is
   ahead of it and never moves a checkout backwards, so merges to `main` reach teammates

@@ -69,6 +69,10 @@ assert.ok(fallback.includes("live_data:"), "fallback project has live_data secti
 assert.equal((fallback.match(/^  environment_names:$/gm) || []).length, 2, "fallback project separates Warehouse and semantic-model environments");
 assert.ok(!/^standards:\s*$/m.test(fallback), "bundled fallback omits generated standards overrides");
 assert.ok(fallback.includes("resolved standards task authority"), "bundled workflow points to resolved standards authority");
+// #93: powerbi-mcp-server is retired; neither bundled contract declares a `powerbi` MCP.
+for (const [name, text] of [["example", example], ["fallback", fallback]]) {
+  assert.doesNotMatch(text, /^  powerbi:|readonly_flag/m, `${name} project must not declare the retired powerbi MCP`);
+}
 
 const agentDocs = [
   "AGENTS.md",

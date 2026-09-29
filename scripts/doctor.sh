@@ -408,7 +408,7 @@ for f in "$PWD/.mcp.json" "$PWD/.pi/mcp.json" "$PI_CODING_AGENT_DIR/mcp.json" "$
 done
 if [ -n "$mcp_found" ]; then
   ok "MCP config: $mcp_found"
-  for s in fabric powerbi powerbi-modeling-mcp azure-devops microsoft-learn; do
+  for s in fabric powerbi-modeling-mcp azure-devops microsoft-learn; do
     if grep -qi "\"$s\"" "$mcp_found" 2>/dev/null; then
       if [ "$s" = "powerbi-modeling-mcp" ]; then
         # Health requires BOTH flags: --start (the server must actually launch)
@@ -452,6 +452,12 @@ PYEOF
       fi
     fi
   done
+  # powerbi-mcp-server ignores --readonly and exposes refresh_dataset, a write
+  # (#93). coop no longer generates it and never removes a user-owned entry, so
+  # doctor names the risk instead of reporting the server as configured.
+  if grep -qi 'powerbi-mcp-server' "$mcp_found" 2>/dev/null; then
+    warn "  • powerbi-mcp-server is not read-only: it ignores --readonly and exposes refresh_dataset, a write (coop-agent#93)" "remove that entry from $mcp_found; coop's read-only Power BI MCP is powerbi-modeling-mcp"
+  fi
   grep -qiE 'learn\.microsoft\.com|microsoft-learn' "$mcp_found" 2>/dev/null || warn "  Microsoft Learn MCP not configured" "coop sync   (adds it read-only)"
   # Legacy/unmanaged placeholder configs remain actionable; generated COOP entries never contain TODOs.
   mcp_todo="$(grep -c 'TODO-' "$mcp_found" 2>/dev/null)" || mcp_todo=0
