@@ -580,8 +580,8 @@ Not requested, offered for Aaron's decision. None is scheduled.
 - **`docs/tool-contract.md` drifted** from the code: the reviewer invocation omits
   `--standards`, the sample report uses `rule` where the validator requires
   `rule_id`, and the `details` shape is missing four fields. Fix in Phase 4.
-- **`config/standards-registry.schema.json` validates the legacy fixture manifest**,
-  not the registry it is named after. Rename or delete in H3.
+- **`config/standards-registry.schema.json` validated the legacy fixture manifest**,
+  not the registry it was named after. Deleted with the fixture seam in #83.
 - **The `PENDING_OWNER_PROVISIONING` doctor state** is defined and never emitted.
   Delete in S6.
 - **Open [PR 72](https://github.com/kabukisensei/coop-agent/pull/72)** (B0 receipt,
