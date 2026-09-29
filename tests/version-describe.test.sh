@@ -4,8 +4,8 @@
 # `git describe` (coop_repo_describe), so two machines on different commits past
 # the same release tag are told apart, in the version report and in the fleet
 # digest. A copy that is not a git checkout prints VERSION only, with no error.
-# Offline and hermetic: every checkout is a throwaway clone of a copy of this
-# tree (never the checkout running the tests, #104) with its origin removed, so
+# Offline and hermetic: every checkout is a copy of a seed repo built from a copy
+# of this tree (never the checkout running the tests, #104) with no origin, so
 # doctor has nothing to fetch; HOME, COOP_DIR, the agent dir and the publish dir
 # are temp dirs, and pi/npm/pipx/az/fab/brew/winget are stubs. No sleep.
 # PowerShell twin: tests/fixtures/version-describe.test.ps1.
@@ -58,12 +58,15 @@ for c in c2 c3; do
   git -C "$SEED" commit -qm "$c"
 done
 
-# Machine A runs c2 (one past the tag), machine B runs c3 (two past it).
+# Machine A runs c2 (one past the tag), machine B runs c3 (two past it). Each is
+# a copy of the seed repo, not a clone: a local clone runs git-upload-pack from
+# PATH, and Git Bash keeps it in /mingw64, off this fixture's PATH. A copy has no
+# origin, so doctor has nothing to fetch.
 machine() { # <name> <commit-ish>
   local d="$TMP/$1/coop-agent"
-  git clone -q "$SEED" "$d"
+  mkdir -p "$TMP/$1"
+  cp -R "$SEED" "$d"
   git -C "$d" reset -q --hard "$2"
-  git -C "$d" remote remove origin
 }
 machine a HEAD~1
 machine b HEAD
