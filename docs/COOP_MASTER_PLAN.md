@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.1 · September 28, 2026**
+**Document revision 3.4 · September 29, 2026**
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -56,6 +56,11 @@ mutation, no update overwriting user configuration):
   does not belong in the PR gate.
 - Paired scripts, bash 3.2, and the `.ps1` BOM rules in `AGENTS.md` still apply until
   the simplification phase retires them in the same PR that retires the surface.
+- No new behavior on a surface this plan retires (`coop web`, the macOS/Linux
+  product path, `mcp-remote`). A hotfix touches such a surface only to keep it
+  from breaking; it does not improve it.
+- Timing fixtures (sleeps, hang timers, marker polls) belong in the extended lane
+  from now on, even before T1 lands. A PR that must add one says why in its body.
 
 ## 3. Phase 0 — Rollout hotfixes on stable
 
@@ -175,39 +180,45 @@ rollout machines.
 once, then the Fabric MCP tools list without `auth_required`. Signed-in machine: no
 prompt, no delay beyond the cached check.
 
-### H3 — Default project contract matches the Cooptimize standards repos
+### H3 — Coop reads the coop-standards wiki directly (merged in PR 85)
 
-**Observed:** the shipped `.coop/project.yml` and `.coop/project.example.yml`, the
-`coop init` generator (`lib/init_wizard.py`), and the in-app `/setup-project` wizard
-have no `standards:` section any more (removed in v0.23.3). Canonical standards are
-resolved from `config/standards-registry.json`, which is **also hard-coded inside
-`lib/standards.mjs`** and pins the `cooptimize/coop-standards` repository to: a root
-`standards.yml` with ten exact scalar values, exactly three domains (`sql`, `dax`,
-`semantic_model`) at exactly `standards/sql.md`, `standards/dax.md`,
-`standards/semantic-model.md`, branch `main`, and anchor commit `fa109f1`. Anything
-else in the standards repo fails with "domain set differs from managed registry" or
-"canonical path differs from managed registry". `cooptimize/incremental-bi` is only a
-knowledge clone whose Markdown is excerpted by keyword.
+**Observed (revision 3.0):** the shipped `.coop/project.yml`, the example, `coop init`,
+and `/setup-project` had no `standards:` section, and `lib/standards.mjs` locked
+`cooptimize/coop-standards` to one manifest shape, exactly three domains, exact file
+paths, branch `main`, and an anchor commit, with the registry duplicated in code.
 
-**Blocked on access:** this review could not read either private repository (the
-session's GitHub credential has no access to `cooptimize/coop-standards` or
-`cooptimize/incremental-bi`). The exact fix is written once the current layout is
-visible: either grant read access and rerun, or paste the two repos' `tree` output and
-the standards manifest.
+**What the repo actually is (found 2026-09-28 with local clones):**
+`coop-standards` is an Obsidian wiki the team reads directly. Every article carries
+YAML front matter (`id, title, domain, layer, artifact, technology, status`). The
+`standards.yml`, `standards/*.md`, and `scripts/assemble.py` files that coop was
+locked to are a compatibility shim that existed only because coop could not read
+the wiki. Aaron's direction: do not change the repo's structure; change how coop
+reads it, and stop depending on the assembly script.
 
-**Fix, independent of the exact layout:**
-- Delete the duplicated registry constant in `lib/standards.mjs`; the JSON file is the
-  only copy.
-- Read the domain list and paths **from the standards repo's own manifest** and
-  validate them for safety (relative, contained, regular files), not for equality
-  with a list frozen in coop-agent. New or renamed domains then work without a
-  coop-agent release.
-- Regenerate the default `.coop/project.yml`, the example, `coop init`, and
-  `/setup-project` from that format, and accept the nested `standards.<domain>.path`
-  shape in project-local overrides (today only the scalar `standards.sql: file`
-  shape is read).
-- Treat `incremental-bi` the way its repository is actually organized (patterns per
-  folder, learnings, skills), with the same reader instead of a keyword grep.
+**Done in [PR 85](https://github.com/kabukisensei/coop-agent/pull/85):**
+- Coop discovers every active article by front matter (any folder, any future
+  domain); it never reads the shim. Drafts, deprecations, notes without front
+  matter, dot-folders, and symlinks are skipped; an empty wiki fails closed and
+  keeps the last known good.
+- Domains map by front matter: `domain: sql` → `sql`; `domain: powerbi` → `dax` when
+  the artifact is a DAX expression or measure, else `semantic_model`; any other safe
+  domain keeps its name.
+- Tasks receive whole articles (general ones plus up to six ranked by layer,
+  artifact, technology, and title), each with path, hash, and repo revision.
+- The registry JSON is the only copy; the frozen domain list, anchor commit, and
+  archive hash are gone. Project overrides accept the nested
+  `standards.<domain>.path` shape. `incremental-bi` uses the same reader.
+- The SQL/DAX reviewers, until ST1 retires them, are fed a content-addressed
+  reviewer-input file built from the same articles, so they never contradict what
+  coop just wrote.
+
+**Verified against the real repo** at `a00c8cc`: `coop sync` refreshes, prompts
+receive the expected articles, `/setup-project` round-trips. No VM needed.
+
+**Follow-ups filed, not `agent:ready`:** #83 retire the legacy `manifest.json`
+fixture seam and its schema file; #87 the standards runtime test writes the
+developer's real `~/.coop/standards`; #88 the prompt classifier misses wiki SQL
+topics such as "silver indexing on the fabric warehouse".
 
 ### H4 — Regression evidence for the fixes that already shipped
 
@@ -343,8 +354,8 @@ Revision 2.0's S1–S7 packages, in this order and with these decisions:
 
 | Candidate | Reason | Confirm |
 | --- | --- | --- |
-| `mcp-remote` | only bridges Microsoft Learn; Learn offers direct Streamable HTTP and `pi-mcp-adapter` 3.x speaks it | direct HTTP works through the adapter on Windows |
-| `powerbi-mcp-server` (unscoped npm, 0.1.0) | superseded by `@microsoft/powerbi-modeling-mcp` 1.0.0 | no skill or prompt depends on its tool names |
+| `mcp-remote` | only bridges Microsoft Learn; Learn is unauthenticated Streamable HTTP and the adapter speaks it directly | exact entry and proof test in section 6.2; live tools-list on the VM |
+| `powerbi-mcp-server` (unscoped npm, 0.1.0) | `--readonly` silently ignored, `refresh_dataset` exposed ([#93](https://github.com/kabukisensei/coop-agent/issues/93)); superseded by `@microsoft/powerbi-modeling-mcp` 1.0.0 | drop now, ahead of Phase 2 |
 | `pi-better-openai` | Aaron wants the plan-usage stats it feeds the footer, but B0 found its configuration inactive on the live install, and `pi-lovely-codex` may supply the same stats plus tool-call handling | **keep** until PK1 compares it with `pi-lovely-codex` on the development VM; drop only if the replacement shows the same 5h/7d usage windows in the Coop footer |
 | `context-mode` | sandboxed code execution over docs; overlaps Pi's own compaction | measure context saved on two real sessions |
 | Homebrew/apt/dnf prerequisite branches, `/opt/homebrew` troubleshooting | Mac-only | goes with S1 |
@@ -356,19 +367,20 @@ The manifest is `config/release-manifest.json` at v0.23.5.
 
 | Component | Pinned | Latest | Needed? | Notes |
 | --- | --- | --- | --- | --- |
-| `@earendil-works/pi-coding-agent` | 0.84.3 | 0.87.1 (Sep 22) | **Yes, qualify** | 0.86.0 and 0.87.0 carry breaking extension-API changes (`user_bash` fails closed, `ToolCall.arguments` JSON-only, `turn_end` boundaries, `SessionManager` canonical). The four Coop extensions and the guardrail runner test must be re-verified. Still Node ≥ 22.19. |
-| `pi-mcp-adapter` | 2.34.0 | 3.1.0 (Sep 27) | **Yes, after Pi** | 3.x peer range accepts pi-ai 0.84–0.87; a 3.0 major means read its changelog for config-shape changes before touching `mcp.json` generation. |
+| `@earendil-works/pi-coding-agent` | 0.84.3 | 0.87.1 (Sep 22) | **Yes, qualify** | Pre-qualified read-only on Sep 29 (section 6.1): none of the four extensions or the runner test uses a removed or changed API; the pin move is one manifest line plus fixture versions. Still Node ≥ 22.19. |
+| `pi-mcp-adapter` | 2.34.0 | 3.2.0 (Sep 28) | **Yes, same PR as Pi** | 2.34.0's peer range excludes pi-ai 0.87, so it must move with Pi. 3.0 **stopped reading `mcp.json`** (that file now belongs to Pi's built-in MCP); coop's generated file must become `mcp-adapter.json` (section 6.2). |
 | `pi-hermes-memory` | 0.7.17 | 0.9.9 | Maybe | private memory; check cache roots and secret scanning still behave. |
 | `pi-web-access` | 0.10.7 | 0.33.0 | Maybe | research only; qualify Windows and security changes. |
 | `@juicesharp/rpiv-ask-user-question` | 1.20.0 | 2.11.0 | **Yes, qualify** | major bump; the setup wizards depend on its dialogs and cancellation. |
-| `pi-better-openai` | 0.1.22 | 0.1.22 | No | candidate to drop (section 5). |
+| `pi-better-openai` | 0.1.22 | 0.1.22 | Test on the VM | a custom provider; Pi 0.86 changed how providers read the system prompt and tools, and no newer release exists. If it fails on 0.87.1, the PK1 comparison with `pi-lovely-codex` (section 10) decides the replacement for the usage stats. |
 | `context-mode` | 1.0.169 | 1.0.169 | No | candidate to drop (section 5). |
 | `@microsoft/powerbi-modeling-mcp` | 0.5.0-beta.12 | **1.0.0** (Sep 25) | **Yes** | first GA; read-only invocation and connection scope must be re-checked. |
 | `@microsoft/powerbi-report-authoring-cli` | 0.1.4 | 0.4.0 | **Yes** | the report skills call it; validate output contracts. |
 | `@microsoft/powerbi-desktop-bridge-cli` | 0.1.2 | 1.0.0 | Yes | re-test the reload/save source-loss report (S31 in revision 2.0) on disposable PBIP files. |
 | `@microsoft/fabric-mcp` | 1.3.0 | 1.4.0 | Yes | B0 found 1.0.0 installed and 1.2.0 cached; pin exactly, never `@latest`. |
 | `@azure-devops/mcp` | 2.9.0 | 2.10.0 | Low | B0 found 2.10.0 already at the executable path. |
-| `mcp-remote` | 0.1.38 | 0.14.3 | Drop or pin | see section 5. |
+| `mcp-remote` | 0.1.38 | 0.14.3 | **Drop** | only the Microsoft Learn entry uses it; the exact replacement entry and proof test are in section 6.2. |
+| `powerbi-mcp-server` | 0.1.0 | 0.1.0 | **Drop now** | `--readonly` is silently ignored and `refresh_dataset` (a write) is exposed while coop documents it as read-only: [#93](https://github.com/kabukisensei/coop-agent/issues/93). Official `@microsoft/powerbi-modeling-mcp` 1.0.0 replaces it. |
 | `coop-data-doc` / `coop-sql-review` / `coop-dax-review` | 1.2.0 / 0.15.2 / 0.22.0 | same | No | unchanged since the freeze; the reviewer decision is in section 7. |
 | `ms-fabric-cli` / `fabric-cicd` / `pyodbc` | 1.7.0 / 1.3.0 / 5.3.0 | same | No | unchanged. |
 | `microsoft/skills-for-fabric` catalog | v0.3.10 | v0.3.18 (Sep 25) | **Yes** | v0.3.12 merged the two pinned `sqldw-*` skills into `sqldw-cli`; v0.3.17 unified `powerbi-report-cli`; new `sqldb-cli` targets Fabric SQL database. The allowlist in `config/microsoft-skills.json` must be remapped. |
@@ -394,6 +406,75 @@ mechanisms cover it without new code:
 Upgrades reach teammates only through a tagged release (H5), so a qualified change
 sitting on `main` cannot surprise anyone. The full isolated beta channel (B1) is
 built only if this proves insufficient.
+
+### 6.1 U1 Pi row: pre-qualified on September 29 (read-only)
+
+Method: every symbol named in Pi's 0.85.0 to 0.87.1 release notes was grepped in
+the four extensions, `tests/guardrails-pi-runner.test.mjs`, and the matrix scripts,
+and cross-checked against Pi's 0.84.3 and 0.87.1 sources. Result:
+
+- **No source change in `coop-guardrails`, `coop-tools`, `coop-profile`, or
+  `coop-powerline`.** None uses `shouldStopAfterTurn`, `finishTurn`, assigns
+  `state.messages`, switches exhaustively over session entries, emits `turn_end`,
+  or hooks `user_bash`. Every `details` payload the tools return is JSON-safe
+  (strings, numbers, parsed JSON, frozen plain objects). Extensions load through
+  `jiti` without a type check, so the type-level changes cannot fail at runtime.
+- **The runner test and matrix scripts are structurally unaffected**: the
+  `ExtensionRunner` constructor, `setUIContext`, `createContext`, `emit` for
+  `session_start`/`session_shutdown`, and the loader's `createExtensionRuntime` /
+  `loadExtensions` have the same signatures at 0.87.1. The RPC probe's commands and
+  events still exist.
+- **Two things to observe on the VM, not fix in advance:** (1) `coop-tools` and
+  `coop-profile` return `systemPrompt` from `before_agent_start`; on 0.86+ that is
+  treated as a forced prompt projected on every turn, so the dated daily-log text
+  must not spam transcript entries or defeat prompt caching; (2) the footer's
+  working indicator, since 0.86 moved Pi's own spinners into the editor border.
+- **What the pin PR changes:** `pi.version` in `config/release-manifest.json`;
+  `pi-mcp-adapter` in the same PR (2.34.0's peer range stops at pi-ai 0.85; the
+  isolated tree's plain `npm install` would fail to resolve); every fake
+  `pi --version` fixture that says 0.84.3 (`tests/doctor.test.sh`,
+  `tests/fixtures/sync-fake-pi.sh`, `tests/fixtures/install-python-prereq.test.ps1`,
+  `tests/install-python-prereq.test.sh`, `tests/run.ps1`, the fleet, home-guard, and
+  update-guard tests, the `test-pi-matrix.ps1` usage comment); CHANGELOG. `lib/_extdeps.py`
+  needs no change (it aligns pi-ai/pi-tui to whatever `pi --version` reports).
+- **VM run:** `bash scripts/test-pi-matrix.sh 0.87.1` and the `.ps1` twin (they
+  exercise the runner test, the real loader over the four `.ts` extensions, and the
+  RPC probe), then a real session on Windows for the two observations above.
+- **Optional hardening, not required for the pin:** `_range_floor` in
+  `lib/_extdeps.py` reads only the first triple of an OR-range, so a peer range that
+  excludes the agent version passes silently; teach it the upper bound.
+
+### 6.2 U1 adapter row and the `mcp-remote` removal: pre-qualified on September 29
+
+- **`pi-mcp-adapter` 3.0 no longer reads `<agent dir>/mcp.json`**; that file belongs
+  to Pi's built-in MCP support. Coop's generated file must be **`mcp-adapter.json`**
+  in the same directory (same format; a rename). Every literal consumer changes in
+  one PR: `lib/mcp_config.py` (output path), `bin/coop` and `bin/coop.ps1` (launch
+  token), `scripts/sync.*`, `scripts/doctor.*` (search list), `scripts/test-pi-matrix.*`,
+  `extensions/coop-guardrails/index.ts` (the managed-config read), `lib/fabric_sql_query.py`,
+  `tests/fabric-mcp-launch.test.sh`, and the README, architecture, and tool-contract
+  docs. `coop sync` migrates once: read the old `mcp.json` as the existing config so
+  `_coop.managed_servers` ownership survives, write `mcp-adapter.json`, remove the
+  old file so the adapter's startup warning stops. The adapter's `/mcp` command is
+  now `/mcp-adapter`. Nothing else in the entry format changed: `url`, `auth: false`,
+  `requestHeadersCommand`, `lifecycle`, `requestTimeoutMs`, and coop's private
+  `_coop`/`_coop_target` keys all pass through 3.x unchanged.
+- **Also in that PR:** `config/defaults.yml` `tested_with.pi_mcp_adapter` says
+  `2.10.0` while the manifest says `2.34.0`; fix it and the doctor fixtures that
+  assume it. Consider `settings.allowInstall: false` (the agent may not install
+  remote servers) and the new project-trust rule for a work repo's `.mcp.json`.
+- **`mcp-remote` removal, exact change:** the Microsoft Learn entry becomes
+  `{"url": "https://learn.microsoft.com/api/mcp", "auth": false, "lifecycle": "lazy",
+  "requestTimeoutMs": 60000}` (the endpoint is unauthenticated Streamable HTTP; the
+  adapter defaults to that transport with SSE fallback and `auth: false` skips OAuth
+  probing). Drop `mcp-remote` from `SERVER_PACKAGES`, the manifest, `config/microsoft-skills.json`,
+  and the `defaults.yml` comments; treat a managed `microsoft-learn` entry that still
+  has `command`/`args` the way `fabric-sqlendpoint` is treated (replace wholesale on
+  regeneration). **Proof test, offline:** `tests/mcp-config.test.sh` asserts the exact
+  Learn entry and that an old `command`/`args` entry migrates to the `url` form; the
+  live tools-list against learn.microsoft.com is a VM step (the container cannot
+  reach that host). Fixtures to update: `tests/microsoft-skills.test.py`,
+  `tests/fleet-manifest.test.sh`, `tests/doctor.test.sh`, `tests/warehouse-mcp.test.py`.
 
 ## 7. Phase 4 — Standards alignment and the reviewer decision
 
@@ -447,27 +528,51 @@ not source-controlled.
 
 1. **Connection targets in the contract.** Add a `sql_targets:` section to
    `.coop/project.yml` with one entry per environment and a `default_environment:
-   dev`. Each entry names a `kind` (`fabric_warehouse`, `fabric_lakehouse`,
-   `azure_sql`, `azure_sql_serverless`), `server`, `database`, and for Fabric the
+   dev`. Each entry names a `kind`, `server`, `database`, and for Fabric the
    existing workspace/item IDs. Production entries are present but never default.
+   "Serverless" means two different products, and the contract names them apart:
+
+   | `kind` | Host pattern | Notes |
+   | --- | --- | --- |
+   | `fabric_warehouse`, `fabric_lakehouse` | `*.datawarehouse.fabric.microsoft.com` | today's path, unchanged |
+   | `fabric_sql_database` | `*.database.fabric.microsoft.com` | Fabric's OLTP SQL database item; the v0.3.18 `sqldb-cli` skill covers it |
+   | `azure_sql` | `*.database.windows.net` | Azure SQL Database, including the **serverless compute tier** (same host; auto-pause means the first connection after idle can take up to a minute, so the connect timeout for this kind is 60 s, not 15) |
+   | `synapse_serverless` | `*-ondemand.sql.azuresynapse.net` | Synapse serverless SQL pool: query-only over lake files and views, no DML, no persisted tables; impact tracing covers views and external objects only |
+
 2. **Azure SQL in the fallback executor.** Extend `lib/fabric_sql_query.py` (rename
-   to `sql_query.py` in the same PR) to accept `*.database.windows.net` and
-   serverless `*-ondemand.sql.azuresynapse.net` hosts from the contract, same
-   token audience (`https://database.windows.net/`), same ODBC Driver 18, same
-   row/byte/timeout caps, `ApplicationIntent=ReadOnly` where the target supports
-   it. No SQL authentication, no stored passwords.
+   to `sql_query.py` in the same PR) to accept the hosts above **from the contract**
+   (today the server is never user-supplied; it is discovered through the Fabric
+   REST API, which stays the rule for Fabric kinds). Same token audience
+   (`https://database.windows.net/`), same ODBC Driver 18, same row/byte caps.
+   `ApplicationIntent=ReadOnly` only for `azure_sql` targets that have read-scale
+   replicas (Premium and Business Critical); elsewhere the driver ignores it, so
+   the read-only guarantee stays the query filter plus `autocommit` with no
+   transaction. Entra ID token authentication only: no SQL logins, no stored
+   passwords, no connection strings in tool results or audit records.
 3. **Guardrails unchanged in spirit, wider in vocabulary.** The bounded session grant
    (`LiveReadScope`) gains the target kind and environment from the contract instead
    of the hard-coded Fabric URL; production keeps the explicit-scope-and-approval
    rule; DDL/DML on dev still asks once per session.
 4. **Live impact tracing.** A read-only `sql_impact` capability that, for one object
-   on the default (dev) target, queries `sys.sql_expression_dependencies`,
-   `sys.dm_sql_referencing_entities`, `sys.sql_modules`, and `INFORMATION_SCHEMA`
-   to return upstream and downstream objects, then hands the same object to
-   `data_doc lineage` when built docs exist. The `impact-analysis` prompt and the
-   `coop-workflow` skill call it before any edit. The current query filter rejects
-   quotes and `WITH`, so this needs its own allow-listed parameterized queries, not
-   the free-text path.
+   on the default (dev) target, returns upstream and downstream objects, then hands
+   the same object to `data_doc lineage` when built docs exist. The
+   `impact-analysis` prompt and the `coop-workflow` skill call it before any edit.
+   Three fixed, parameterized catalog queries, never free text (the current filter
+   rejects quotes and `WITH` on purpose, and `OBJECT_ID(?)` takes the name as a
+   bound parameter):
+   - **Downstream (who references this object):** `sys.dm_sql_referencing_entities`
+     joined to `sys.objects`, which resolves references at call time and works on
+     every kind above.
+   - **Upstream (what this object references):** `sys.sql_expression_dependencies`
+     for the object's own referenced entities, with `sys.sql_modules` as the
+     fallback text search when a dependency is unresolved (a dropped or cross-database
+     reference shows as `is_ambiguous`/null there).
+   - **Shape:** `INFORMATION_SCHEMA.COLUMNS` for the object's columns, so the
+     before/after comparison in step 5 knows what to count.
+   Fabric Warehouse and Fabric SQL database expose these catalog views; Synapse
+   serverless exposes them for views and external tables only. Where a kind lacks
+   a view, the capability says so in its result instead of returning an empty list,
+   so "no dependents" is never confused with "could not look".
 5. **Verify with data.** The slice workflow already requires a failing check before
    and a passing check after. Make it concrete for SQL: capture row counts and a
    bounded sample for the affected objects on dev before the edit, apply the edit on
@@ -597,16 +702,19 @@ Not requested, offered for Aaron's decision. None is scheduled.
 ## 13. Ordered work register
 
 Status values: `not started`, `issue open`, `in progress (branch)`, `in review
-(PR)`, `done (tag)`. The agent that changes a row's status edits this table in the
-same PR.
+(PR)`, `merged`, `done (tag)`. The agent that opens a PR sets `in review` in that
+PR. Merging is Aaron's act, so the **next** PR any agent opens also moves every row
+whose PR has merged since to `merged`; Aaron moves rows to `done (tag)` when he
+tags. A stale row is never a reason to re-do work: check the PR list first.
 
 | Order | ID | Package | Starts after | Done when | Status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | H1 | Installer prerequisite gate with ordered commands; doctor reuses it | now | fresh VM acceptance in section 3 | in review ([#82](https://github.com/kabukisensei/coop-agent/pull/82)), VM pending: [#76](https://github.com/kabukisensei/coop-agent/issues/76) |
-| 2 | H2 | Automatic Azure sign-in, tenant fallback chain, `az.cmd`, Fabric token check | now | signed-out machine acceptance | in review (PR); H2b follows; ship together; VM pending: [#77](https://github.com/kabukisensei/coop-agent/issues/77) |
-| 3 | H5 | `coop update` follows release tags; `--edge` for head | now | tag/edge acceptance in section 3 | agent:ready: [#78](https://github.com/kabukisensei/coop-agent/issues/78) |
+| 1 | H1 | Installer prerequisite gate with ordered commands; doctor reuses it | now | fresh VM acceptance in section 3 | merged ([#82](https://github.com/kabukisensei/coop-agent/pull/82), 2026-09-28), VM pending: [#76](https://github.com/kabukisensei/coop-agent/issues/76) |
+| 2 | H2 | Automatic Azure sign-in, tenant fallback chain, `az.cmd`, Fabric token check | now | signed-out machine acceptance | in review ([#89](https://github.com/kabukisensei/coop-agent/pull/89)), VM pending: [#77](https://github.com/kabukisensei/coop-agent/issues/77) |
+| 2b | H2b | Coop's own Fabric/SQL token mints pass the project tenant; ships in the same tag as H2 | H2 | guest-tenant acceptance in [#91](https://github.com/kabukisensei/coop-agent/issues/91) | issue open: [#91](https://github.com/kabukisensei/coop-agent/issues/91) (Aaron labels) |
+| 3 | H5 | `coop update` follows release tags; `--edge` for head | now | tag/edge acceptance in section 3 | in progress (`h5/update-follows-tags`, started 2026-09-29): [#78](https://github.com/kabukisensei/coop-agent/issues/78) |
 | 4 | H6 | One-page Windows install doc matching the H1 checklist | H1 | a teammate installs from the page alone | agent:ready: [#79](https://github.com/kabukisensei/coop-agent/issues/79) |
-| 5 | H3 | Standards reader follows the repo; default contract regenerated | local clones of both repos | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` | in review (PR): [#85](https://github.com/kabukisensei/coop-agent/pull/85) for [#80](https://github.com/kabukisensei/coop-agent/issues/80) |
+| 5 | H3 | Coop reads the coop-standards wiki directly; contract override shape | local clones of both repos | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` | merged ([#85](https://github.com/kabukisensei/coop-agent/pull/85), 2026-09-28); no VM step; close [#80](https://github.com/kabukisensei/coop-agent/issues/80) at the tag |
 | 6 | T1 | CI gate/extended split; fixture rules | H1–H3 merged | gate under five minutes, both OS, no weakened assertion | not started |
 | 7 | S1, S5 | Retire POSIX product path and legacy web | T1 | one Windows implementation, forwarder kept, tests removed with their surface | not started |
 | 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | not started |
@@ -685,12 +793,13 @@ merged or blocked only on the standards repositories.
 
 ## 15. What this review could not verify
 
-- The private repositories `cooptimize/coop-standards` and `cooptimize/incremental-bi`
-  were not readable from this session; H3 and Phase 4 are specified from coop-agent's
-  side only.
+- (Resolved 2026-09-28.) The two standards repositories were not readable from the
+  cloud session; local clones were used for H3, which found the wiki layout
+  described in section 3.
 - No Windows workstation was available; installer and sign-in behavior is inferred
   from the scripts, the README, the v0.23.4/v0.23.5 changelog, and the B0 receipt.
 - Dependency "latest" values are registry metadata on September 28, 2026; none was
   installed or run.
 - Whether any client CI pipeline runs `coop-sql-review` or `coop-dax-review` today
-  is unknown and decides section 7.
+  is still unknown. Section 7's decision to retire them from coop is taken; this
+  question only decides whether the CLIs stay alive as optional gates.

@@ -1,12 +1,21 @@
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
 const root = mkdtempSync(join(tmpdir(), "coop-std-runtime-"));
+// The bundled extension resolves standards through the DEFAULT storage unless told
+// otherwise, and pinStandardsTask refreshes it. Point every root at this fixture so
+// the suite never touches the developer's real ~/.coop/standards (#87), and prove
+// it below: the real active-generation pointer must be byte-identical afterwards.
+const realStandards = join(homedir(), ".coop", "standards");
+const realFiles = ["active-generation.json", "status.json"].map((name) => join(realStandards, name));
+const realBytes = () => realFiles.map((path) => (existsSync(path) ? readFileSync(path).toString("base64") : null));
+const realBefore = realBytes();
+process.env.COOP_STANDARDS_ROOT = join(root, "canonical");
 process.env.COOP_STANDARDS_SNAPSHOT_ROOT = join(root, "snapshots");
 process.env.COOP_STANDARDS_STATE = join(root, "status.json");
 const maliciousRegistry = join(root, "malicious-registry.json");
@@ -146,6 +155,8 @@ try {
     process.env.COOP_STANDARDS_SNAPSHOT_ROOT = savedSnapshotRoot;
   }
   console.log("  ✓ automatic SQL/DAX/semantic-model context uses immutable reviewer-verified snapshots and rejects mismatches");
+  assert.deepEqual(realBytes(), realBefore, `the suite must not touch the real ${realStandards}`);
+  console.log("  ✓ the developer's real ~/.coop/standards pointer and status are untouched by the runtime fixture");
 } finally {
   rmSync(root, { recursive: true, force: true });
 }
