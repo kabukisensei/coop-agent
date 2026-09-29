@@ -32,7 +32,9 @@ git clone <coop-agent-repo> && cd coop-agent
 ./bin/coop install
 ```
 
-**Windows (PowerShell)**
+**Windows (PowerShell)**: teammates follow [Install coop on Windows](install-windows.md),
+which gets the code at the newest release. The short form below starts on the head of
+`main` until the next release:
 ```powershell
 git clone <coop-agent-repo>; cd coop-agent
 .\bin\coop.cmd install
