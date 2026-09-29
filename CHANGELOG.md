@@ -173,6 +173,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `C:\Program Files (x86)`. They ran a bare `az`, which Windows cannot start. A
   client `tenant_id` that is not a GUID or a domain name is now rejected before az
   runs.
+- The fleet fixtures no longer fetch or move the checkout that runs them (#104).
+  `tests/fleet-execution.test.sh`, `tests/home-guard.test.sh`,
+  `tests/install-python-prereq.test.sh` and its Windows twin ran the real
+  `scripts/update.*` (and home-guard `scripts/doctor.sh`) from the repository root,
+  so step 1 of `coop update` fetched from the checkout's `origin` and could
+  fast-forward it to a newer release, and doctor made its daily fetch there. They
+  now run from a plain copy of the tree with no `.git`, and each fails if the update
+  it runs sees a git checkout.
 
 ## [0.23.5] — 2026-09-22
 

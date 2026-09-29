@@ -2,9 +2,15 @@
 # Fresh install must add a Fabric-compatible Python even when Python 3.14 exists.
 set -euo pipefail
 
-ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+CHECKOUT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
+# Run install and update from a plain copy of this tree with no .git (#104): step 1
+# of `coop update` fetches from origin and fast-forwards the checkout it runs from,
+# and a test must never touch the checkout running it. Dot entries other than the
+# bundled .coop contract are git, CI and cache files, not runtime.
+ROOT="$T/coop-agent"; mkdir "$ROOT"
+cp -R "$CHECKOUT"/* "$CHECKOUT/.coop" "$ROOT/"
 
 BIN="$T/bin"
 RUNNER_BIN="$T/runner-bin"
@@ -183,6 +189,8 @@ if ! COOP_TEST_UNAME=MINGW64_NT COOP_TEST_GENERIC_PY_VERSION=3.14.6 COOP_FLEET_T
   bash "$ROOT/scripts/update.sh" >"$OUT" 2>&1; then
   echo 'Windows Python 3.14-only update fixture failed unexpectedly'; tail -40 "$OUT"; cat "$CALLS"; exit 1
 fi
+grep -F 'not a git checkout' "$OUT" >/dev/null \
+  || { echo 'update step 1 ran against a git checkout; the fixture must run a copy, never the checkout running the tests (#104)'; tail -40 "$OUT"; exit 1; }
 grep -F 'PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0' "$CALLS" >/dev/null \
   || { echo 'Updater did not rebuild Fabric CLI with standalone Python 3.12'; cat "$CALLS"; exit 1; }
 grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force' "$CALLS" >/dev/null \

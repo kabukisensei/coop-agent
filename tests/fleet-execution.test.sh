@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # Execute normal install/update/sync fleet paths with offline stubs and assert exact specs.
 set -euo pipefail
-ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+CHECKOUT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+# Run the fleet scripts from a plain copy of this tree with no .git (#104): step 1
+# of `coop update` fetches from origin and fast-forwards the checkout it runs from,
+# and a test must never touch the checkout running it. Dot entries other than the
+# bundled .coop contract are git, CI and cache files, not runtime.
+ROOT_COPY="$(mktemp -d)"; trap 'rm -rf "$ROOT_COPY"' EXIT
+ROOT="$ROOT_COPY/coop-agent"; mkdir "$ROOT"
+cp -R "$CHECKOUT"/* "$CHECKOUT/.coop" "$ROOT/"
 # Fully isolate EVERY location the fleet scripts can touch. Tests must never
 # write to the real home directory — see tests/home-guard.test.sh. This runs in
 # the CURRENT shell (no command substitution: subshell exports would die).
@@ -140,6 +147,9 @@ update_out="$ISOL_D/update.out"; update_rc=0
 COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.84.3 COOP_PYPI_LATEST_OVERRIDE=0.1.0 \
   bash "$ROOT/scripts/update.sh" >"$update_out" 2>&1 || update_rc=$?
 [ "$update_rc" -eq 0 ] || { echo "normal pinned update failed unexpectedly (rc=$update_rc)"; tail -30 "$update_out"; exit 1; }
+grep -F 'not a git checkout' "$update_out" >/dev/null \
+  || { echo 'update step 1 ran against a git checkout; the fixture must run a copy, never the checkout running the tests (#104)'; tail -30 "$update_out"; exit 1; }
+echo '  ✓ update runs from a copy of the tree, so step 1 never fetches or moves the checkout running the tests'
 grep -E 'PIPX install --force --python .+ ms-fabric-cli==1\.7\.0' "$MARKER" >/dev/null \
   || { echo 'Fabric CLI update did not select a supported bootstrap Python explicitly'; cat "$MARKER"; exit 1; }
 for spec in 'npm:pi-mcp-adapter@2.34.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
