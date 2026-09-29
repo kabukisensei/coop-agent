@@ -523,11 +523,18 @@ articles, unless the prompt also names Power BI, DAX, a model, a visual or a sor
 measures" gets the DAX articles; "relate", "related" and "relating" match the
 relationship articles; and a prompt that names an object in a layer's schema
 (`silver.custtable`) ranks that layer's overview articles (artifact `agnostic`, such as
-Silver Layer) ahead of the layer's other articles. Only the prompt decides the domains: a
-bare "report", "silver" or "gold" outside BI work ("a status report for the client", "a
-silver badge on the website") gets no standards. The classifier is keyword-based, so it
-misses some wording: PBIX, PBIP and `.gitignore` prompts do not reach Power BI File Types,
-and "chart" does not reach Power BI Report Visuals. A 52-prompt golden set
+Silver Layer) ahead of the layer's other articles. Report work is a Power BI report, report
+pages, PBIX/PBIP/PBIR, drill-through, a Power BI app, a theme, visual, slicer, bookmark or
+tooltip shortly before "report", or a visual or slicer shortly after it. Gold and silver
+SQL work includes a proc, sproc, merge or upsert, a D365 table name after the layer word
+(`silver custtable`), and "add inventdim to silver"; a warehouse in a Fabric workspace is
+the Fabric warehouse. Only the prompt decides the domains: a bare "report", "silver" or
+"gold" outside BI work ("a status report for the client", "a silver badge on the
+website"), Visual Studio, and a file name before "view" (`accounts.py views`) get no
+standards. The classifier is keyword-based, so it misses some wording: PBIX, PBIP and
+`.gitignore` prompts do not reach Power BI File Types, "chart" does not reach Power BI
+Report Visuals, and "Update the Sales report to use the new theme" (theme after "report")
+gets no report articles. A 52-prompt golden set plus holdout rows and everyday negatives
 (`tests/standards-golden.test.mjs`) records what passes and what is still missed.
 When nothing matches, it injects the domain's core-layer articles (for
 example `layer: semantic_model`), or only a list of the domain's articles if it has no

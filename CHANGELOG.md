@@ -82,31 +82,47 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   silver and gold tables or loads, and `SELECT *` count as SQL work, and SQL context wins
   over "fact table" or "dimension table", so gold SQL work no longer pulls in the Power
   BI table articles. A prompt that also names Power BI, DAX, a model, a visual or a sort
-  by keeps them. Report pages, themes, drill-through and Power BI apps get the report
-  articles without DAX; PBIX/PBIP/PBIR prompts now reach the Power BI (semantic model)
-  standards. "A/the ... measure(s)" counts as DAX only next to a Power BI word, so
-  "preventive measures" and "a test that measures latency" get no DAX standards, and key
-  names near "relationship" must look like the wiki's FKDueDate or PKCustomer (not pkg or
-  PKCE). A "reporting model" is not the report layer. Rewrite, convert, (re)format,
-  replace, rename, set up, turn on/off and fails/failed/failing now count as requests.
+  by keeps them. Report pages, a theme for a report ("a theme file for the AP aging
+  report"), drill-through and Power BI apps get the report articles without DAX;
+  PBIX/PBIP/PBIR prompts now reach the Power BI (semantic model) standards. "A/the ...
+  measure(s)" counts as DAX only next to a Power BI word, so "preventive measures" and "a
+  test that measures latency" get no DAX standards, and key names near "relationship"
+  must look like the wiki's FKDueDate or PKCustomer (not pkg or PKCE). A "reporting
+  model" is not the report layer. Rewrite, convert, (re)format, replace, rename, set up,
+  turn on/off and fails/failed/failing now count as requests.
 - Standards (#101): the classifier alone decides the domains again. The wiki-layer
   widening that briefly shipped on `main` is gone: it gave a bare "report", "silver" or
   "gold" the Power BI report or SQL articles ("Write a status report for the client",
-  "Add a silver badge to the website header") and gained no prompt the classifier
-  misses. Three more wiki rules now arrive: "fix the format strings on the currency
+  "Add a silver badge to the website header") and gained no golden-set prompt the
+  classifier misses. Outside the golden set it was the only route for ordinary report,
+  gold/silver and Fabric warehouse wording, so the classifier now covers that wording
+  itself: a Power BI report, a visual, slicer, bookmark or tooltip shortly before
+  "report", or a visual or slicer shortly after it ("Update the AP Aging report so the
+  slicer defaults to the current month") gets the report articles; a gold or silver proc,
+  sproc, merge or upsert, a D365 table name after the layer word ("Fix the duplicate rows
+  in silver custtable") and "Add inventdim and inventlocation to silver" get the SQL and
+  layer articles; and "the warehouse in our Fabric workspace" gets Fabric Warehouse
+  Target. A status, progress, incident, bug, test or annual report, a web app's report
+  button or viewer, Visual Studio, a merge conflict, "change the button color to gold",
+  and a file name before "view" ("accounts.py views", "index.html view") are not report
+  or SQL work. Three more wiki rules now arrive: "fix the format strings on the currency
   measures" gets the DAX articles (Power BI Measures holds the format-string rules);
   "relate it to the Budget Version dimension" gets Power BI Relationships; and "change
   silver.custtable.creditmax ... to match the gold customer dimension" gets Silver Layer
   (do not change a Silver type for downstream convenience), because an object in a
-  layer's schema ranks that layer's overview articles first. A golden set of 52
-  realistic prompts (`tests/fixtures/standards-golden-corpus.json`, scored against the
-  front matter of every active wiki article at a00c8cc) is now a regression test: 48
-  pass (main scored 23), and the 4 known failures are listed with how they fail, so a
-  fix or a regression both fail the suite until the list is updated. Still missed:
-  PBIX/PBIP and `.gitignore` prompts never reach Power BI File Types, "chart" does not
-  reach Power BI Report Visuals, and a gold `dim.` index task also gets Silver Indexing.
-  Everyday prompts that say "report", "silver" or "gold" must get no standards; "Fix the
-  gold members table in the React component" still gets the SQL articles, and "Review
+  layer's schema ranks that layer's overview articles first. A golden set of 52 realistic
+  prompts (`tests/fixtures/standards-golden-corpus.json`, scored against the front matter
+  of every active wiki article at a00c8cc) is now a regression test: 48 pass (main scored
+  23), and the 4 known failures are listed with how they fail, so a fix or a regression
+  both fail the suite until the list is updated. 16 holdout rows of the report,
+  gold/silver and Fabric warehouse wording above, which only the widening reached, must
+  all pass (main passed all 16), and 26 everyday negatives must get no standards (main
+  leaked 18). Still missed: PBIX/PBIP and `.gitignore` prompts never reach Power BI File
+  Types, "chart" does not reach Power BI Report Visuals, a theme after the word "report"
+  ("Update the Sales report to use the new theme") gets no report articles, and a gold
+  `dim.` index task also gets Silver Indexing. Everyday prompts that say "report",
+  "silver" or "gold" must get no standards; "Fix the gold members table in the React
+  component" and "Add the new sponsor to gold" still get the SQL articles, and "Review
   the measures in the ML model" the DAX ones.
 - Incremental BI patterns are chosen by the repository's `layer:` front matter (the same
   front-matter reader as the standards wiki). The old

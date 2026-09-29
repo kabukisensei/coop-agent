@@ -1,5 +1,5 @@
 {
-  "about": "Golden prompt set for the standards classifier (#101). Each prompt lists the coop-standards wiki article titles it must and must not get; negatives must get no standards. The wiki mirror is the front matter of every active article at the recorded revision (no bodies). Scored by tests/standards-golden.test.mjs.",
+  "about": "Golden prompt set for the standards classifier (#101). Each prompt lists the coop-standards wiki article titles it must and must not get; negatives must get no standards. holdout rows are ordinary report, gold/silver and Fabric warehouse wording from outside the 52 that only the removed wiki-layer widening reached; they must all pass. The wiki mirror is the front matter of every active article at the recorded revision (no bodies). Scored by tests/standards-golden.test.mjs.",
   "wiki": {
     "repository": "https://github.com/cooptimize/coop-standards.git",
     "revision": "a00c8cc34b89a23ae2bee6302979955bafee5282",
@@ -82,6 +82,24 @@
     {"prompt": "Review customer relationships in the CRM", "domains_expected": [], "must_include": [], "must_not_include": ["SQL Conventions", "SQL Layout", "Silver Layer", "Silver Indexing", "Silver Schema Derivation", "Silver Schema Manager", "Gold Dimension Tables", "Gold Fact Tables", "Gold Stored Procedures", "Gold Views", "Fabric Warehouse Target", "Power BI DAX", "Power BI Measures", "Power BI File Types", "Power BI App Deployment", "Power BI Report Page Formatting", "Power BI Report Visuals", "Power BI Composite Models", "Power BI Fact Tables", "Power BI M Query", "Organizing Power BI Tables", "Power BI Relationships"]},
     {"prompt": "Review the deployment pipeline for the mobile app", "domains_expected": [], "must_include": [], "must_not_include": ["SQL Conventions", "SQL Layout", "Silver Layer", "Silver Indexing", "Silver Schema Derivation", "Silver Schema Manager", "Gold Dimension Tables", "Gold Fact Tables", "Gold Stored Procedures", "Gold Views", "Fabric Warehouse Target", "Power BI DAX", "Power BI Measures", "Power BI File Types", "Power BI App Deployment", "Power BI Report Page Formatting", "Power BI Report Visuals", "Power BI Composite Models", "Power BI Fact Tables", "Power BI M Query", "Organizing Power BI Tables", "Power BI Relationships"]}
   ],
+  "holdout": [
+    {"prompt": "Fix the Power BI report so the slicers sync across all pages", "domains_expected": ["semantic_model"], "must_include": ["Power BI Report Visuals", "Power BI Report Page Formatting"], "must_not_include": ["Power BI DAX", "SQL Conventions"]},
+    {"prompt": "Review the Power BI report for accessibility and alt text", "domains_expected": ["semantic_model"], "must_include": ["Power BI Report Visuals"], "must_not_include": ["Power BI DAX", "SQL Conventions"]},
+    {"prompt": "Add a bookmark to the Power BI report for the year-end view", "domains_expected": ["semantic_model"], "must_include": ["Power BI Report Visuals"], "must_not_include": ["Gold Views", "SQL Conventions"]},
+    {"prompt": "Update the Power BI report to use the new theme", "domains_expected": ["semantic_model"], "must_include": ["Power BI Report Page Formatting"], "must_not_include": ["SQL Layout", "Power BI DAX"]},
+    {"prompt": "Add conditional formatting to the matrix visual in the Sales report", "domains_expected": ["semantic_model"], "must_include": ["Power BI Report Visuals"], "must_not_include": ["SQL Layout", "Power BI DAX"]},
+    {"prompt": "Add a tooltip page to the Inventory report", "domains_expected": ["semantic_model"], "must_include": ["Power BI Report Page Formatting"], "must_not_include": ["SQL Conventions", "Power BI DAX"]},
+    {"prompt": "Update the AP Aging report so the slicer defaults to the current month", "domains_expected": ["semantic_model"], "must_include": ["Power BI Report Visuals"], "must_not_include": ["Power BI DAX", "SQL Conventions"]},
+    {"prompt": "Add a CustomerGroup column to the gold customer view and use it as a slicer on the Sales report", "domains_expected": ["sql", "semantic_model"], "must_include": ["Gold Views", "Power BI Report Visuals"], "must_not_include": ["Power BI DAX", "Silver Indexing"]},
+    {"prompt": "Update the gold sales proc so it excludes intercompany invoices", "domains_expected": ["sql"], "must_include": ["Gold Stored Procedures", "SQL Conventions"], "must_not_include": ["Silver Layer", "Power BI DAX"]},
+    {"prompt": "Refactor the gold sproc for vendors to use a single MERGE", "domains_expected": ["sql"], "must_include": ["Gold Stored Procedures", "SQL Conventions"], "must_not_include": ["Silver Layer", "Power BI DAX"]},
+    {"prompt": "Fix the gold customer merge so deleted accounts get flagged", "domains_expected": ["sql"], "must_include": ["Gold Stored Procedures"], "must_not_include": ["Silver Layer", "Power BI Relationships"]},
+    {"prompt": "Add inventdim and inventlocation to silver", "domains_expected": ["sql"], "must_include": ["Silver Layer", "Silver Schema Manager"], "must_not_include": ["Gold Views", "Power BI M Query"]},
+    {"prompt": "Fix the duplicate rows in silver custtable", "domains_expected": ["sql"], "must_include": ["Silver Layer"], "must_not_include": ["Gold Views", "Power BI Fact Tables"]},
+    {"prompt": "Check the silver salestable row counts against D365", "domains_expected": ["sql"], "must_include": ["Silver Layer"], "must_not_include": ["Gold Views", "Power BI Fact Tables"]},
+    {"prompt": "Create the staging tables in the warehouse in our Fabric workspace", "domains_expected": ["sql"], "must_include": ["Fabric Warehouse Target", "SQL Conventions"], "must_not_include": ["Power BI Fact Tables", "Organizing Power BI Tables"]},
+    {"prompt": "Fix the data types for the warehouse in the Fabric workspace", "domains_expected": ["sql"], "must_include": ["Fabric Warehouse Target"], "must_not_include": ["Power BI Fact Tables", "Organizing Power BI Tables"]}
+  ],
   "negatives": [
     "Write a status report for the client on this week's progress",
     "Fix the bug in the report generator script",
@@ -94,6 +112,20 @@
     "Fix the format strings in the Python logging calls",
     "Explain how these two bugs relate to each other",
     "Rename the variables in this Python script",
-    "Set up the dev environment on the new laptop"
+    "Set up the dev environment on the new laptop",
+    "Fix the accounts.py views so login redirects to the dashboard",
+    "Add pagination to the index.html view on the marketing site",
+    "Add a visual timeline to the status report for the client",
+    "Fix the Visual Studio build and report the failing tests",
+    "Update the dark theme on the bug report form",
+    "Write a report on the main theme from the customer interviews",
+    "Change the button color from silver to gold",
+    "Add a hover effect that turns the link text to gold",
+    "Add the logos to the gold sponsors section",
+    "Fix the gold badge and merge the PR",
+    "Update the warehouse stock levels for the fabric samples",
+    "Add the weekly report to my browser bookmarks",
+    "Fix the tooltip on the report button",
+    "Fix the silver merge conflict in the gold branch"
   ]
 }

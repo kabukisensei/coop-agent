@@ -408,6 +408,33 @@ try {
       ["Add a silver index for salesline", ["sql"]],
       ["Explain the silver indexing rules", ["sql"]],
       ["Fix the silver itemname column", ["sql"]],
+      // ...a proc or sproc, a D365 table name ending in table or trans, a merge or upsert
+      // right after the layer word, and a load into a layer at the end of a clause (#101).
+      ["Update the gold sales proc so it excludes intercompany invoices", ["sql"]],
+      ["Fix the gold vendor sproc", ["sql"]],
+      ["Fix the duplicate rows in silver custtable", ["sql"]],
+      ["Fix the duplicate rows in silver inventtrans", ["sql"]],
+      ["Fix the gold customer merge so deleted accounts get flagged", ["sql"]],
+      ["Write the gold vendor upsert", ["sql"]],
+      ["Add inventdim and inventlocation to silver", ["sql"]],
+      ["Add vendtrans to silver and gold, then rebuild the docs", ["sql"]],
+      ["Fix the gold badge and merge the PR", []],
+      ["Fix the silver merge conflict in the gold branch", []],
+      ["Fix the gold stable release notes", []],
+      ["Change the button color from silver to gold", []],
+      ["Add a hover effect that turns the link text to gold", []],
+      ["Add the logos to the gold sponsors section", []],
+      // A schema.object view is SQL; a file name before "view(s)" is not.
+      ["Fix the accounts.py views so login redirects to the dashboard", []],
+      ["Add pagination to the index.html view on the marketing site", []],
+      // A warehouse in a Fabric workspace, capacity or tenant, in either order; not a
+      // workspace for the warehouse team, or "fabric" as cloth.
+      ["Create the staging tables in the warehouse in our Fabric workspace", ["sql", "fabric"]],
+      ["In the Fabric workspace, create a warehouse for staging", ["sql", "fabric"]],
+      ["Check the warehouse on the Fabric capacity", ["sql"]],
+      ["Update the warehouse stock levels for the fabric samples", []],
+      ["Update the stock counts for the warehouse in the fabric district", []],
+      ["Create a Fabric workspace for the warehouse team", ["fabric"]],
       // Model: Power Query for a dimension, fact or parameters; FK/PK keys either side of
       // "relationship", case-sensitive in the wiki's FKDueDate/PKCustomer form.
       ["Write the Power Query for the Customer dimension", ["semantic_model", "dax"]],
@@ -436,6 +463,25 @@ try {
       ["Check the PBIP folder into Git", ["semantic_model"]],
       ["Fix the PBIR visual json", ["semantic_model"]],
       ["Add a drillthrough page for Customer Detail", ["semantic_model"]],
+      // Report (#101): a Power BI report; a visual, slicer, bookmark or tooltip before a
+      // report; a visual or slicer after one. Not a status/bug/test report, Visual Studio,
+      // a report on a theme, a browser bookmark, an annual report, or a web app's report
+      // button, viewer or PDF.
+      ["Review the Power BI report for accessibility and alt text", ["semantic_model"]],
+      ["Add a card visual to the Sales report", ["semantic_model"]],
+      ["Add a slicer for Region to the Sales report", ["semantic_model"]],
+      ["Fix the broken bookmark on the Sales report", ["semantic_model"]],
+      ["Fix the tooltip on the Sales report", ["semantic_model"]],
+      ["Update the AP Aging report so the slicer defaults to the current month", ["semantic_model"]],
+      ["Fix the Sales report so the visuals load faster", ["semantic_model"]],
+      ["Add a visual timeline to the status report for the client", []],
+      ["Update the dark theme on the bug report form", []],
+      ["Fix the Visual Studio build and report the failing tests", []],
+      ["Write a report on the main theme from the customer interviews", []],
+      ["Add the weekly report to my browser bookmarks", []],
+      ["Fix the tooltip on the report button", []],
+      ["Fix the visual bug in the report viewer component", []],
+      ["Review the visual design of the annual report PDF", []],
       // DAX: "a/an/the/these/those [word] measure(s)" counts only with Power BI context.
       ["Add a YTD measure to the Finance model", ["dax"]],
       ["Add an average measure to the Finance model", ["dax"]],

@@ -7,10 +7,11 @@ import { fileURLToPath } from "node:url";
 import { buildStandardsContext, identifyTaskDomains, pinStandardsTask, refreshCanonical, retrieveRelevantSections } from "../lib/standards.mjs";
 
 // Golden prompt set for the standards classifier (#101): 52 realistic prompts, each
-// with the coop-standards article titles it must and must not get, plus negatives that
-// must get no standards. tests/fixtures/standards-golden-corpus.json mirrors the front
-// matter of every active wiki article at the recorded revision; the bodies here are
-// stubs, because selection reads only front matter.
+// with the coop-standards article titles it must and must not get, holdout rows scored
+// the same way that must all pass, plus negatives that must get no standards.
+// tests/fixtures/standards-golden-corpus.json mirrors the front matter of every active
+// wiki article at the recorded revision; the bodies here are stubs, because selection
+// reads only front matter.
 //
 // The wiki is a local git repo refreshed once into temp storage, the way every
 // standards suite resolves (the fixtureRoot seam went with #83). No network, no sleep
@@ -74,16 +75,19 @@ try {
     assert.deepEqual({ domains: [...context.domains], injected: context.records.flatMap((r) => titles(r.sections)) }, standardsFor(prompt), `#${n}`);
   }
 
-  const wrong = [];
-  let passing = 0;
-  golden.prompts.forEach((c, i) => {
-    const n = i + 1;
+  const reasonsFor = (c) => {
     const { domains, injected } = standardsFor(c.prompt);
-    const reasons = [
+    return [
       ...c.domains_expected.filter((d) => !domains.includes(d)).map((d) => `missing domain ${d}`),
       ...c.must_include.filter((t) => !injected.includes(t)).map((t) => `missing ${t}`),
       ...c.must_not_include.filter((t) => injected.includes(t)).map((t) => `forbidden ${t}`),
     ];
+  };
+  const wrong = [];
+  let passing = 0;
+  golden.prompts.forEach((c, i) => {
+    const n = i + 1;
+    const reasons = reasonsFor(c);
     if (!reasons.length) passing++;
     const known = KNOWN_FAILURES.get(n) || [];
     if (JSON.stringify(reasons) === JSON.stringify(known)) return;
@@ -92,11 +96,22 @@ try {
   });
   assert.deepEqual(wrong, []);
 
-  // Everyday prompts that say "report", "silver", "gold", "format strings" or "relate"
-  // get no standards through the real entry point, with the wiki generation active.
+  // Holdout rows: ordinary wording from outside the 52 that only #95's wiki-layer
+  // widening reached (a Power BI report with a slicer, visual, bookmark, tooltip or
+  // theme; a gold proc, sproc or merge; "silver custtable"; "... to silver"; the
+  // warehouse in a Fabric workspace). Removing the widening must not lose them, so
+  // every one passes; there is no known-failures list here.
+  assert.ok(golden.holdout.length >= 16);
+  const holdoutWrong = golden.holdout.map((c) => ({ prompt: c.prompt, reasons: reasonsFor(c) })).filter((row) => row.reasons.length);
+  assert.deepEqual(holdoutWrong, []);
+
+  // Everyday prompts that say "report", "silver", "gold", "format strings" or "relate",
+  // a file name before "view(s)", "Visual Studio", "... to gold" about a color, or
+  // "fabric" as cloth get no standards through the real entry point, with the wiki
+  // generation active.
   const leaked = golden.negatives.map((prompt) => ({ prompt, injected: buildStandardsContext(prompt, options({ refresh: false })).records.flatMap((r) => r.sections.map((s) => s.heading)) }))
     .filter((row) => row.injected.length);
   assert.deepEqual(leaked, []);
 
-  console.log(`  ✓ golden prompts: ${passing}/${golden.prompts.length} pass, ${KNOWN_FAILURES.size} known failures; ${golden.negatives.length} negatives get no standards (wiki ${golden.wiki.revision.slice(0, 7)})`);
+  console.log(`  ✓ golden prompts: ${passing}/${golden.prompts.length} pass, ${KNOWN_FAILURES.size} known failures; ${golden.holdout.length}/${golden.holdout.length} holdout prompts pass; ${golden.negatives.length} negatives get no standards (wiki ${golden.wiki.revision.slice(0, 7)})`);
 } finally { rmSync(tmp, { recursive: true, force: true }); }
