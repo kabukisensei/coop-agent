@@ -125,6 +125,10 @@ def main(argv):
             sys.stderr.write(f"Send failed: {exc}\n")
             return 1
     else:
+        # Redirected output on Windows (a file, a pipe, Task Scheduler) defaults to
+        # the ANSI code page, which has no ⚠, so write UTF-8 everywhere.
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
         sys.stdout.write(out + "\n")
 
     return 0

@@ -9,6 +9,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# The publish_dir lines below are read by native Windows Python under Git Bash,
+# which cannot resolve a POSIX /tmp path inside a file (MSYS converts argv, not
+# file contents), so the configs get the mixed C:/... spelling there.
+TMP_NATIVE="$(cygpath -m "$TMP" 2>/dev/null || printf '%s' "$TMP")"
 
 fail() { printf '  ✗ %s\n' "$1"; exit 1; }
 pass() { printf '  ✓ %s\n' "$1"; }
@@ -50,7 +54,7 @@ JSON
 # Minimal config pointing at the sandbox publish dir.
 cat > "$TMP/coopconfig" <<YAML
 fleet:
-  publish_dir: $PUBDIR
+  publish_dir: $TMP_NATIVE/published
 YAML
 
 PY="$ROOT/scripts/fleet-digest.py"
@@ -103,7 +107,7 @@ pass "coop_describe renders when present; older and non-git payloads show coop_v
 mkdir -p "$TMP/empty"
 cat > "$TMP/coopconfig-empty" <<YAML
 fleet:
-  publish_dir: $TMP/empty
+  publish_dir: $TMP_NATIVE/empty
 YAML
 html_empty="$(python3 "$PY" --config "$TMP/coopconfig-empty" --format html 2>/dev/null)" || fail "HTML render crashed on empty list"
 case "$html_empty" in
@@ -111,5 +115,14 @@ case "$html_empty" in
   *) fail "expected digest heading in empty HTML output" ;;
 esac
 pass "HTML render handles empty machine list"
+
+# 6. Redirected output on Windows (a file, a pipe, Task Scheduler) gets the ANSI
+#    code page, which has no ⚠. The digest must still write, as UTF-8.
+for fmt in md html; do
+  out="$(PYTHONIOENCODING=cp1252 python3 "$PY" --config "$TMP/coopconfig" --format "$fmt")" \
+    || fail "the $fmt digest crashed on a cp1252 stdout (Windows redirected output)"
+  case "$out" in *"⚠"*) ;; *) fail "the $fmt digest must keep its ⚠ marks, written as UTF-8" ;; esac
+done
+pass "md and html digests write UTF-8 when stdout's code page has no ⚠"
 
 printf '  %s\n' "fleet-digest tests passed"
