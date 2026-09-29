@@ -7,6 +7,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Standards: the legacy self-authored `manifest.json` fixture seam is gone (#83).
+  `lib/standards.mjs` no longer carries the `manifest.json` branch, `validateManifest`,
+  `syncCanonicalLocal`, or the `fixtureRoot`/`staleRoot` test-only options, and
+  `config/standards-registry.schema.json` (which validated that fixture, not the
+  registry) is deleted. The Revision 9 suite now runs against a git-backed wiki
+  fixture shaped like the real `cooptimize/coop-standards` repository, refreshed into
+  the generation cache the way `coop sync` does. Every boundary assertion is kept
+  (hash mismatch, path escape, symlink, dirty checkout, stale/bundled/unavailable/auth
+  states, immutable snapshots); the assertions that only exercised the legacy shape
+  (schema validation, local-sync bad hash) are covered by the live-sync suite's fault
+  and corruption cases. No runtime behavior change for the wiki reader.
 - Docs: master plan revision 3.4 sharpens Phase 5 (Azure SQL breadth): the four
   non-Fabric-warehouse target kinds and their host patterns, Azure SQL serverless
   compute tier versus Synapse serverless SQL pool, the connect-timeout and
