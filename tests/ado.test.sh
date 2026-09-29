@@ -5,6 +5,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+# The Python heredocs get a native path: Git Bash converts command-line
+# arguments for Windows Python, never text inside a heredoc.
+ROOT_PY="$(cygpath -m "$ROOT" 2>/dev/null || echo "$ROOT")"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -16,7 +19,7 @@ PY="$(command -v python3 || command -v python)" || fail "python required for thi
 # --- 1. iter_clients coalesces stale_days: null to the default ---
 "$PY" - <<PYEOF
 import sys, os
-sys.path.insert(0, os.path.join("$ROOT", "scripts"))
+sys.path.insert(0, os.path.join("$ROOT_PY", "scripts"))
 import ado_lib as A
 
 cfg = {
@@ -50,10 +53,10 @@ EOF
 chmod +x "$TMP/bin/az"
 PATH="$TMP/bin:$PATH" COOP_AZ_BIN="$TMP/bin/az" "$PY" - <<PYEOF
 import sys, os, importlib.util
-sys.path.insert(0, os.path.join("$ROOT", "scripts"))
+sys.path.insert(0, os.path.join("$ROOT_PY", "scripts"))
 import ado_lib as A
 
-spec = importlib.util.spec_from_file_location("ado_digest", os.path.join("$ROOT", "scripts", "ado-digest.py"))
+spec = importlib.util.spec_from_file_location("ado_digest", os.path.join("$ROOT_PY", "scripts", "ado-digest.py"))
 ado_digest = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ado_digest)
 
@@ -72,9 +75,9 @@ pass "build_client_model raises AdoError on missing project"
 # --- 3. append_block writes atomically and detects existing clients key via YAML ---
 "$PY" - <<PYEOF
 import sys, os, tempfile, importlib.util
-sys.path.insert(0, os.path.join("$ROOT", "scripts"))
+sys.path.insert(0, os.path.join("$ROOT_PY", "scripts"))
 
-spec = importlib.util.spec_from_file_location("ado_onboard", os.path.join("$ROOT", "scripts", "ado-onboard.py"))
+spec = importlib.util.spec_from_file_location("ado_onboard", os.path.join("$ROOT_PY", "scripts", "ado-onboard.py"))
 ado_onboard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ado_onboard)
 
@@ -109,5 +112,20 @@ assert "# clients:" in data, data
 PYEOF
 [ $? -eq 0 ] || fail "append_block tests failed"
 pass "append_block detects existing clients key and writes atomically"
+
+# --- 4. ado-onboard uses coop's own YAML reader, with or without PyYAML (#120) ---
+"$PY" - <<PYEOF
+import os, importlib.util
+spec = importlib.util.spec_from_file_location("ado_onboard", os.path.join("$ROOT_PY", "scripts", "ado-onboard.py"))
+ado_onboard = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ado_onboard)
+want = os.path.join("$ROOT_PY", "lib", "_yaml.py")
+assert os.path.samefile(ado_onboard._yaml.__file__, want), (ado_onboard._yaml.__file__, want)
+PYEOF
+[ $? -eq 0 ] || fail "ado-onboard.py must load lib/_yaml.py, not PyYAML's _yaml (#120)"
+# -S: no site-packages, so no PyYAML, as on a fresh machine.
+OUT="$("$PY" -S "$ROOT/scripts/ado-onboard.py" --help 2>&1)" \
+  || fail "ado-onboard.py --help must start without PyYAML (#120): $OUT"
+pass "ado-onboard loads lib/_yaml.py and starts without PyYAML"
 
 printf '  %s\n' "ado tests passed"

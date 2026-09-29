@@ -219,6 +219,9 @@ node "$ROOT/tests/webbridge.test.mjs"
 echo "→ BPA runner resolution tests (te bpa run; TE2 must never be invoked)"
 bash "$ROOT/tests/bpa-runner.test.sh"
 
+echo "→ Azure DevOps tooling tests (offline; az must never run)"
+bash "$ROOT/tests/ado.test.sh"
+
 echo "→ protocol contract + JSONL splitter tests"
 node "$ROOT/tests/protocol.test.mjs"
 
