@@ -1405,7 +1405,11 @@ switch -CaseSensitive ($cmd) {
     exit $script:CoopPiRc
   }
   { $_ -ceq 'version' -or $_ -ceq '--version' -or $_ -ceq '-V' } {
-    Write-Host ("coop {0}" -f $script:CoopVersion)
+    # A git checkout also prints its `git describe` (v0.23.5-21-gdf91630), since
+    # VERSION reads the same at a tag and at every commit past it; a non-git copy
+    # prints VERSION only. (mirror of bin/coop)
+    $describe = Get-CoopRepoDescribe
+    Write-Host ("coop {0}{1}" -f $script:CoopVersion, $(if ($describe) { " ($describe)" } else { '' }))
     if (Test-Have 'pi') {
       $pv = (& pi --version 2>$null)
       if (-not $pv) { $pv = '?' }

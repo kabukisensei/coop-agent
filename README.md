@@ -213,7 +213,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop dax-review [args]` | Pass through to `coop-dax-review` (e.g. `check <paths>`, `rules`) |
 | `coop review [paths...] [--strict] [--skip-docs] [--compare] [--diff [ref]] [--html]` | Run **both** linters over one scope (explicit paths win; else the nearest `.coop/project.yml`'s `repositories.*.local_path` entries — never a blind cwd scan), save both JSON reports under `.coop/reviews/` next to the contract, then rebuild the lineage docs with the findings composed in (`coop-data-doc build --reviews …`). Docs not set up is a hint, not a failure; `--skip-docs` runs the linters only; `--strict` passes `--strict` to both linters and exits 2 if either exits non-zero. `--compare` diffs against the previous run's report. `--diff [ref]` runs the review only on files changed since `ref` (default: `HEAD`) in git-tracked roots. `--html` emits a unified HTML suite report. |
 | `coop fabric [args]` | Pass through to the Microsoft Fabric CLI (`fab`) |
-| `coop version` | Print `coop` + `pi` versions |
+| `coop version` | Print `coop` + `pi` versions; a git checkout adds its `git describe` (for example `coop 0.23.5 (v0.23.5-21-gdf91630)`) |
 | `coop help` | Show usage |
 | **Authoring** | |
 | `coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
@@ -680,8 +680,9 @@ scripts/fleet-digest.sh --format md          # add --send or --dry-run
 powershell -ExecutionPolicy Bypass -File .\scripts\fleet-digest.ps1 --format md
 ```
 
-The digest flags failures, warnings, and stale check-ins and can render Markdown/HTML or
-send through Microsoft Graph when configured.
+The digest flags failures, warnings, and stale check-ins, shows each machine's coop version
+with its `git describe` when the snapshot carries one (`coop_describe`, from a git checkout),
+and can render Markdown/HTML or send through Microsoft Graph when configured.
 
 ---
 

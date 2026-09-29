@@ -691,6 +691,9 @@ if ($script:JSON) {
     $doc['hostname'] = $hostName
     $doc['user'] = $userName
     $doc['coop_version'] = $script:CoopVersion
+    # VERSION reads the same at a tag and at every commit past it, so the snapshot
+    # also carries the checkout's git describe ('' for a non-git copy).
+    $doc['coop_describe'] = [string](Get-CoopRepoDescribe)
     $piVer = Get-CoopPiVersion
     $doc['pi_version'] = if ($piVer) { $piVer } else { 'none' }
     $doc['timestamp'] = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")

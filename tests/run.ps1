@@ -473,6 +473,20 @@ print("resume verdict contract OK")
     Ko "update-follow fixture failed: $($followOut | Out-String)"
   }
 
+  # --- 5c. coop version and doctor --publish carry git describe (#108) -------
+  # Offline throwaway clones of a copy of this tree; sandboxed homes and publish dir.
+  Head 'coop version and doctor --publish carry git describe'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $describeOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\version-describe.test.ps1') 2>&1
+  $describeRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($describeRc -eq 0) {
+    $describeOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "version-describe fixture failed: $($describeOut | Out-String)"
+  }
+
   # --- 6. review --help exits 0; an unknown review flag dies -----------------
   Head 'coop review arg parsing (--help ok; unknown flag dies)'
   & $coop review --help *> $null
