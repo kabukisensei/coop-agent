@@ -508,10 +508,14 @@ files for older clients (`standards.yml`, `standards/*.md`) or anything under
 `deprecation/`. Articles map to Coop's domains by front matter: `domain: sql` is SQL;
 `domain: powerbi` is DAX when `artifact` is `dax_expression` or `measure`, and semantic
 model otherwise; any other domain keeps its own name, so a new one resolves without a Coop
-release. When you write or change SQL, DAX, or a model, Coop injects the domain's general
-articles (layer and technology `agnostic`, such as SQL Conventions) plus the articles whose
-layer, artifact, technology, or title match the task, each with its path, SHA-256, and the
-repo revision. When nothing matches, it injects the domain's core-layer articles (for
+release. When you write or change SQL, DAX, a model, or a report, Coop injects the domain's
+general articles (layer and technology `agnostic`, such as SQL Conventions) plus the articles
+whose layer, artifact, technology, or title match the task, each with its path, SHA-256, and
+the repo revision. A domain with fewer than three articles (today DAX) gets all of them.
+SQL wording (a Fabric warehouse, silver or gold objects, `dim.`/`fact.` names) outranks
+"fact table" or "dimension table", so gold SQL work does not get the Power BI table
+articles, unless the prompt also names Power BI, DAX, a model, a visual or a sort by.
+When nothing matches, it injects the domain's core-layer articles (for
 example `layer: semantic_model`), or only a list of the domain's articles if it has no
 such layer. Two articles with the same `id` are both kept, and `coop doctor` warns with
 both paths. `coop-sql-review` and `coop-dax-review` take one standards file, so Coop

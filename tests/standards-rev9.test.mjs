@@ -342,6 +342,131 @@ try {
     assert.deepEqual(identifyTaskDomains("Fix this regular expression in the JavaScript parser"), []);
   });
 
+  test("CLASSIFIER", "wiki-vocabulary prompts reach the right domains (#88)", () => {
+    const rows = [
+      ["fix the silver indexing on the fabric warehouse table", ["sql", "fabric"]],
+      ["Fix the T-SQL merge statement in the gold fact table load", ["sql"]],
+      ["Write the silver to gold load for the fact table", ["sql"]],
+      ["Create a Fabric warehouse table for the gold customer dimension", ["sql", "fabric"]],
+      ["Format the report page visuals", ["semantic_model"]],
+      ["Add a custom index on silver.custtable in the Azure SQL database - the gold customer load keeps scanning on dataareaid and accountnum", ["sql"]],
+      ["Add inventtransorigin to the Schema Manager metadata so the silver table gets generated on the next run", ["sql"]],
+      ["This measure nests CALCULATE inside CALCULATE and uses AVERAGEX - rewrite it with variables", ["dax"]],
+      ["Create a measure for invoice amount by due date using the inactive FKDueDate relationship", ["semantic_model", "dax"]],
+      ["Write the Power Query for the Customer dimension using the SQLServer and SQLDB parameters", ["semantic_model", "dax"]],
+      ["Rename the tables in the Direct Lake model to PascalCase", ["semantic_model", "dax"]],
+      ["Create dim.Item in the Fabric warehouse, its sales.Item view, and add Item to the semantic model with a relationship to Sales", ["semantic_model", "dax", "sql", "fabric"]],
+      ["Explain what a lakehouse is in Microsoft Fabric", ["fabric"]],
+      ["Rebase my branch onto main and fix the merge conflicts in CHANGELOG.md", []],
+      ["Write a PowerShell script that renames the exported CSV files in Downloads by date", []],
+      ["Create a fact table for sales", ["semantic_model", "dax"]],
+      ["Implement the security measures from the pen test report", []],
+      // One row per #88 alternative (request words, SQL_RE, MODEL_RE, KEY_RELATIONSHIP_RE,
+      // MODEL_TABLE_RE, REPORT_RE, the DAX measure rules and their Power BI context) in a
+      // prompt where it is the only trigger, so dropping or narrowing it fails a row.
+      // Optional plural "s" suffixes and the individual DAX function names are not each pinned.
+      ["Replace EARLIER in the Running Total calculated column with a variable", ["dax"]],
+      ["Convert the silver.custtable datetime columns to datetime2", ["sql"]],
+      ["Set up the Power BI app for the Operations workspace and make the app logo", ["semantic_model"]],
+      ["Turn off auto date/time, mark the Date table, and sort Month Name by Month Number", ["semantic_model", "dax"]],
+      ["The silver salesline load is failing with 'String or binary data would be truncated' on itemname - widen the column", ["sql"]],
+      ["Update the Schema Manager metadata for inventtransorigin", ["sql"]],
+      ["Add a composite index on dataareaid and customerid to dim.Customer and remove the -1 Unknown row", ["sql"]],
+      ["Add the [Customer and Name] and [Name and (Customer)] display fields to the sales.Customer view", ["sql"]],
+      ["Update the deploy script's sqlcmd call so it connects to the Fabric warehouse", ["sql", "fabric"]],
+      ["Create the sales tables in the warehouse in Fabric", ["sql", "fabric"]],
+      ["Refactor this query - get rid of the SELECT * and the RIGHT JOIN, and give the tables real aliases instead of t1/t2", ["sql"]],
+      ["Explain the measure of success for this rollout", []],
+      ["Build the Finance + Project Accounting composite model with Finance as the primary model", ["semantic_model", "dax"]],
+      ["Add the Ledger Transaction Attributes table and its Ledger Transactions measure table to the Finance model", ["semantic_model", "dax"]],
+      ["Convert the Sales report PBIX to a PBIP project so we can check it into Git", ["semantic_model"]],
+      ["Create a theme file for the AP aging report from the client's logo colors and set the pages to 1920x1080", ["semantic_model"]],
+      ["Change the chart interactions on the Sales Overview page from highlight to filter and add a drill-through to Customer Detail", ["semantic_model"]],
+      // Requests.
+      ["Reformat the gold views", ["sql"]],
+      ["Turn on query folding for the silver loads", ["sql"]],
+      ["The silver salesline load fails on itemname", ["sql"]],
+      ["The gold customer load failed last night", ["sql"]],
+      // SQL: gold, silver.<name>, schema derivation, fact., x.y views, Fabric warehouse forms.
+      ["Create the gold customer dimension table", ["sql"]],
+      ["Add an index to silver.custtable", ["sql"]],
+      ["Fix the schema derivation for inventtrans", ["sql"]],
+      ["Create fact.Sales in the warehouse", ["sql"]],
+      ["Add the region column to the sales.Customer and sales.Item views", ["sql"]],
+      ["Update the deploy script so it connects to the Fabric data warehouse", ["sql"]],
+      ["Create the sales tables in the warehouse on Fabric", ["sql", "fabric"]],
+      ["Plan the warehouse for Fabric and its sales tables", ["sql", "fabric"]],
+      // Each word after silver/gold.
+      ["Fix the silver vendor table", ["sql"]],
+      ["Fix the gold customer view", ["sql"]],
+      ["Fix the gold sales procedure", ["sql"]],
+      ["Create the gold customer dimension", ["sql"]],
+      ["Create the gold sales fact", ["sql"]],
+      ["Explain the silver layer", ["sql"]],
+      ["Check the silver database collation", ["sql"]],
+      ["Check the gold schema permissions", ["sql"]],
+      ["Add a silver index for salesline", ["sql"]],
+      ["Explain the silver indexing rules", ["sql"]],
+      ["Fix the silver itemname column", ["sql"]],
+      // Model: Power Query for a dimension, fact or parameters; FK/PK keys either side of
+      // "relationship", case-sensitive in the wiki's FKDueDate/PKCustomer form.
+      ["Write the Power Query for the Customer dimension", ["semantic_model", "dax"]],
+      ["Write the Power Query for the Sales fact", ["semantic_model", "dax"]],
+      ["Add the Power Query parameters for the server name", ["semantic_model", "dax"]],
+      ["Explain why PKDate has no active relationship", ["semantic_model", "dax"]],
+      ["Explain the relationship that uses FKShipDate", ["semantic_model", "dax"]],
+      ["Explain the Relationship between FKCustomer and PKCustomer", ["semantic_model", "dax"]],
+      ["Explain the relationship between pkg and npm", []],
+      ["Explain the PKCE relationship with OAuth", []],
+      ["Fix the foreign key relationship pkId in Prisma", []],
+      ["Review the relationship between fkey constraints in Postgres", []],
+      ["Explain the relationship between OAuth and PKCE", []],
+      // "fact/dimension/date table" is model work without SQL, and with SQL when the prompt
+      // has Power BI context: a Power BI or DAX word, model, visual, sort by, "this measure".
+      ["Create a dimension table for customers", ["semantic_model", "dax"]],
+      ["Create a Power BI dimension table from the gold customer view", ["semantic_model", "dax", "sql"]],
+      ["Create a Power BI fact table from gold.FactSales", ["semantic_model", "dax", "sql"]],
+      ["Fix the sort by on the dim.Date date table so Month Name sorts by Month Number", ["semantic_model", "dax", "sql"]],
+      ["Write a DAX measure for sales from the gold fact table", ["semantic_model", "dax", "sql"]],
+      ["Add the gold date table to the Finance model", ["semantic_model", "dax", "sql"]],
+      ["Fix the visual that reads the gold fact table", ["semantic_model", "dax", "sql"]],
+      ["Explain this measure over the gold fact table", ["semantic_model", "dax", "sql"]],
+      // Report: PBIX, PBIP, PBIR, drillthrough.
+      ["Fix the PBIX file", ["semantic_model"]],
+      ["Check the PBIP folder into Git", ["semantic_model"]],
+      ["Fix the PBIR visual json", ["semantic_model"]],
+      ["Add a drillthrough page for Customer Detail", ["semantic_model"]],
+      // DAX: "a/an/the/these/those [word] measure(s)" counts only with Power BI context.
+      ["Add a YTD measure to the Finance model", ["dax"]],
+      ["Add an average measure to the Finance model", ["dax"]],
+      ["Rewrite the measures with SUMX instead of SUM", ["dax"]],
+      ["Document these measures in the Finance model", ["dax", "documentation"]],
+      ["Fix those measures on the Sales visual", ["dax"]],
+      ["Fix the YTD measure in the Sales PBIX", ["semantic_model", "dax"]],
+      ["Fix the measures behind the region slicer", ["dax"]],
+      ["Fix the sort by on the Month measure", ["dax"]],
+      ["Fix the measure that sums [Amount]", ["dax"]],
+      // ...and not in everyday English: verbs, security/safety measures, "measure of", a
+      // lowercase word that spells a DAX function, or no Power BI context at all.
+      ["Document the preventive measures we took after the outage", ["documentation"]],
+      ["Document the preventive measures in the incident report", ["documentation"]],
+      ["Document the preventive measures in [the runbook](docs/runbook.md)", ["documentation"]],
+      ["Write a test that measures API latency", []],
+      ["Write two tests that measure render time in the model", []],
+      ["Explain what this measures", []],
+      ["Explain what this measures in the model", []],
+      ["Add the necessary measures to prevent XSS", []],
+      ["Review the security measures in the ML model", []],
+      ["Review the safety measures in the ML model", []],
+      ["Explain the measure of fit for the regression model", []],
+      ["Explain this measure of success", []],
+      ["Document the related measures in the policy", ["documentation"]],
+    ];
+    const wrong = rows.map(([prompt, expected]) => ({ prompt, expected, actual: identifyTaskDomains(prompt) }))
+      .filter((row) => JSON.stringify(row.actual) !== JSON.stringify(row.expected));
+    assert.deepEqual(wrong, []);
+  });
+
   console.log(`  standards Revision 9: ${count} tests passed`);
 } finally {
   rmSync(tmp, { recursive: true, force: true });

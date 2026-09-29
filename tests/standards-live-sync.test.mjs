@@ -381,10 +381,10 @@ try {
     put("Technology/Fabric/Fabric Warehouse.md", article({ id: "tech_fabric_warehouse", title: "Fabric Warehouse Target", domain: "sql", artifact: "agnostic", technology: "fabric_warehouse" }, "# Fabric Warehouse\nWAREHOUSE BODY\n"));
     commit("layers and technology"); now += 1;
     assert.equal(refreshCanonical(options({ force: true })).ok, true);
-    // The regex classifier alone sees only `fabric`, which has no wiki articles.
-    assert.deepEqual(identifyTaskDomains("fix the silver indexing on the fabric warehouse table"), ["fabric"]);
+    // The classifier now sees the SQL work itself (#88 variant), not only `fabric`.
+    assert.deepEqual(identifyTaskDomains("fix the silver indexing on the fabric warehouse table"), ["sql", "fabric"]);
     const fabric = buildStandardsContext("fix the silver indexing on the fabric warehouse table", options({ refresh: false }));
-    assert.deepEqual(fabric.domains, ["fabric", "sql"]);
+    assert.deepEqual(fabric.domains, ["sql", "fabric"]);
     const files = fabric.records.find((r) => r.resolution.domain === "sql").sections.map((s) => s.file);
     for (const expected of ["SQL/Silver/Indexing.md", "Technology/Fabric/Fabric Warehouse.md"]) assert.ok(files.includes(expected), `${expected} in ${files}`);
     // A layer word alone is enough, without any regex domain.
@@ -430,6 +430,77 @@ try {
     const failed = refreshCanonical(options({ force: true }));
     assert.equal(failed.ok, false); assert.match(failed.detail, /no active articles/);
     assert.equal(activeCanonicalGeneration(options()).revision, good);
+    git(["reset", "--hard", good]);
+  });
+  test("prompts in the wiki's own vocabulary get the articles they need (#88)", () => {
+    // Front matter of every active coop-standards article (a00c8cc) at its real path,
+    // with stub bodies: selection reads only front matter.
+    const good = git(["rev-parse", "HEAD"]);
+    for (const [file, id, title, layer, artifact, technology] of [
+      ["SQL/SQL Conventions", "sql_conventions", "SQL Conventions", "agnostic", "conventions", "agnostic"],
+      ["SQL/SQL Layout", "sql_formatting", "SQL Layout", "agnostic", "formatting", "agnostic"],
+      ["SQL/Gold/Dimension Tables", "sql_gold_dimension_tables", "Gold Dimension Tables", "gold", "dimension_table", "agnostic"],
+      ["SQL/Gold/Fact Tables", "sql_gold_fact_tables", "Gold Fact Tables", "gold", "fact_table", "agnostic"],
+      ["SQL/Gold/Stored Procedures", "sql_gold_stored_procedures", "Gold Stored Procedures", "gold", "stored_procedure", "agnostic"],
+      ["SQL/Gold/Views", "sql_gold_views", "Gold Views", "gold", "view", "agnostic"],
+      ["SQL/Silver/Indexing", "sql_silver_indexing", "Silver Indexing", "silver", "table", "agnostic"],
+      ["SQL/Silver/Overview", "sql_silver_overview", "Silver Layer", "silver", "agnostic", "agnostic"],
+      ["SQL/Silver/Schema Derivation", "sql_silver_schema_derivation", "Silver Schema Derivation", "silver", "table", "agnostic"],
+      ["SQL/Silver/Schema Manager", "sql_silver_schema_manager", "Silver Schema Manager", "silver", "agnostic", "agnostic"],
+      ["Technology/Fabric/Fabric Warehouse", "tech_fabric_warehouse", "Fabric Warehouse Target", "agnostic", "agnostic", "fabric_warehouse"],
+    ]) put(`${file}.md`, article({ id, title, domain: "sql", layer, artifact, technology }, `# ${title}\nBody.\n`));
+    for (const [file, id, title, layer, artifact] of [
+      ["File Types", "powerbi_file_types", "Power BI File Types", "agnostic", "file_type"],
+      ["Reports/App Deployment", "powerbi_reports_app_deployment", "Power BI App Deployment", "report", "app_deployment"],
+      ["Reports/Page Formatting", "powerbi_reports_page_formatting", "Power BI Report Page Formatting", "report", "page_formatting"],
+      ["Reports/Visuals", "powerbi_reports_visuals", "Power BI Report Visuals", "report", "visual"],
+      ["Semantic Model/Composite Models", "powerbi_semantic_model_composite_models", "Power BI Composite Models", "semantic_model", "composite_model"],
+      ["Semantic Model/DAX", "powerbi_semantic_model_dax", "Power BI DAX", "semantic_model", "dax_expression"],
+      ["Semantic Model/Fact Tables", "powerbi_semantic_model_fact_tables", "Power BI Fact Tables", "semantic_model", "fact_table"],
+      ["Semantic Model/M Query", "powerbi_semantic_model_m_query", "Power BI M Query", "semantic_model", "m_query"],
+      ["Semantic Model/Measures", "powerbi_semantic_model_measures", "Power BI Measures", "semantic_model", "measure"],
+      ["Semantic Model/Organizing Tables", "powerbi_semantic_model_tables", "Organizing Power BI Tables", "semantic_model", "table"],
+      ["Semantic Model/Relationships", "powerbi_semantic_model_relationships", "Power BI Relationships", "semantic_model", "relationship"],
+    ]) put(`Power BI/${file}.md`, article({ id, title, domain: "powerbi", layer, artifact, technology: "power_bi" }, `# ${title}\nBody.\n`));
+    commit("mirror the coop-standards wiki front matter"); now += 1;
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
+    const rows = [
+      ["fix the silver indexing on the fabric warehouse table", ["Silver Indexing", "Fabric Warehouse Target"], ["Organizing Power BI Tables", "Power BI Fact Tables", "Power BI Relationships"]],
+      ["Fix the T-SQL merge statement in the gold fact table load", ["Gold Stored Procedures", "Gold Fact Tables"], ["Power BI Fact Tables", "Organizing Power BI Tables", "Power BI DAX"]],
+      ["Write the silver to gold load for the fact table", ["Gold Stored Procedures", "Gold Fact Tables"], ["Power BI Fact Tables", "Organizing Power BI Tables", "Power BI DAX"]],
+      ["Create a Fabric warehouse table for the gold customer dimension", ["Gold Dimension Tables", "Fabric Warehouse Target"], ["Organizing Power BI Tables", "Power BI Relationships"]],
+      ["Format the report page visuals", ["Power BI Report Page Formatting", "Power BI Report Visuals"], ["SQL Layout", "Power BI DAX", "Power BI M Query"]],
+      ["Add a custom index on silver.custtable in the Azure SQL database - the gold customer load keeps scanning on dataareaid and accountnum", ["Silver Indexing"], ["Fabric Warehouse Target", "Organizing Power BI Tables"]],
+      ["Add inventtransorigin to the Schema Manager metadata so the silver table gets generated on the next run", ["Silver Schema Manager"], ["Power BI M Query", "Power BI Report Visuals"]],
+      ["This measure nests CALCULATE inside CALCULATE and uses AVERAGEX - rewrite it with variables", ["Power BI DAX"], ["SQL Conventions", "Gold Stored Procedures"]],
+      ["Create a measure for invoice amount by due date using the inactive FKDueDate relationship", ["Power BI DAX", "Power BI Measures", "Power BI Relationships"], ["SQL Conventions", "Gold Fact Tables"]],
+      ["Write the Power Query for the Customer dimension using the SQLServer and SQLDB parameters", ["Power BI M Query"], ["SQL Conventions", "SQL Layout", "Gold Dimension Tables"]],
+      ["Rename the tables in the Direct Lake model to PascalCase", ["Organizing Power BI Tables"], ["SQL Layout", "Silver Schema Manager"]],
+      ["Create dim.Item in the Fabric warehouse, its sales.Item view, and add Item to the semantic model with a relationship to Sales", ["Gold Dimension Tables", "Gold Views", "Fabric Warehouse Target", "Power BI Relationships"], ["Silver Schema Derivation", "Power BI App Deployment"]],
+      ["Explain what a lakehouse is in Microsoft Fabric", [], null],
+      ["Rebase my branch onto main and fix the merge conflicts in CHANGELOG.md", [], null],
+      ["Write a PowerShell script that renames the exported CSV files in Downloads by date", [], null],
+      // Gold SQL work gets the gold articles, not the Power BI table articles.
+      ["Create the gold customer dimension table", ["Gold Dimension Tables"], ["Power BI Fact Tables", "Organizing Power BI Tables"]],
+      // "reporting" is not the report layer: the model's core articles, not the report ones.
+      ["Review the reporting semantic model", ["Power BI Relationships", "Organizing Power BI Tables"], ["Power BI Report Visuals", "Power BI Report Page Formatting", "Power BI App Deployment"]],
+      // Power BI work on a gold dim./fact. source keeps the Power BI table articles.
+      ["Create a Power BI dimension table from the gold customer view", ["Organizing Power BI Tables", "Gold Dimension Tables"], ["Silver Indexing"]],
+      ["Fix the sort by on the dim.Date date table so Month Name sorts by Month Number", ["Organizing Power BI Tables", "Gold Dimension Tables"], ["Power BI Report Visuals"]],
+      ["Write a DAX measure for sales from the gold fact table", ["Power BI Fact Tables", "Power BI DAX", "Gold Fact Tables"], ["Silver Indexing"]],
+      // Everyday "measures" and pkg/PKCE get no standards.
+      ["Document the preventive measures we took after the outage", [], null],
+      ["Write a test that measures API latency", [], null],
+      ["Explain the relationship between pkg and npm", [], null],
+    ];
+    const wrong = [];
+    for (const [prompt, must, mustNot] of rows) {
+      const titles = buildStandardsContext(prompt, options({ refresh: false })).records.flatMap((r) => r.sections.filter((s) => s.file).map((s) => s.heading));
+      const bad = mustNot === null ? titles.map((t) => `injected ${t}`)
+        : [...must.filter((t) => !titles.includes(t)).map((t) => `missing ${t}`), ...mustNot.filter((t) => titles.includes(t)).map((t) => `forbidden ${t}`)];
+      if (bad.length) wrong.push({ prompt, bad });
+    }
+    assert.deepEqual(wrong, []);
     git(["reset", "--hard", good]);
   });
   assert.match(readFileSync(join(ROOT, "bin", "coop"), "utf8"), /resolve-many sql,dax/);
