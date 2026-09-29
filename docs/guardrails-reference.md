@@ -36,7 +36,7 @@ A read/edit/write of a secret-looking file (`.env`, private keys, credential fil
 
 ### Mutating MCP calls
 
-A Fabric/Power BI/MCP tool call whose name looks like a **mutation** (create/update/delete/deploy/publish) requires confirmation, including proxied MCP calls where the real remote tool name is carried inside central `mcp` or dynamic `mcp__<server>` input (`event.input.tool`). That check is best-effort — MCP tool names vary, so it **complements** (does not replace) Pi's own tool-approval prompts and the advisory prompt. Enable the optional `pi-permissions` extension for hard per-tool gating. If a tool call is blocked, read the reason and adjust — don't try to route around it.
+A Fabric/Power BI/MCP tool call whose name looks like a **mutation** (create/update/delete/deploy/publish, or a refresh such as `refresh_dataset`, which reprocesses a dataset on the client tenant) requires confirmation, including proxied MCP calls where the real remote tool name is carried inside central `mcp` or dynamic `mcp__<server>` input (`event.input.tool`). That check is best-effort — MCP tool names vary, so it **complements** (does not replace) Pi's own tool-approval prompts and the advisory prompt. Enable the optional `pi-permissions` extension for hard per-tool gating. If a tool call is blocked, read the reason and adjust — don't try to route around it.
 
 ### Live environment reads
 

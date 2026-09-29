@@ -661,12 +661,13 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
 // MCP tools carry no server-enforced read-only flag for Fabric (unlike
 // powerbi-modeling-mcp's --readonly), and this hook can't see whether a given
 // MCP call mutates. As a best-effort layer we CONFIRM tool calls whose names look like a mutating
-// Fabric/Power BI/MCP action. Approval-required mutations fail closed headlessly;
+// Fabric/Power BI/MCP action (a refresh counts: it reprocesses a dataset or model on
+// the client tenant). Approval-required mutations fail closed headlessly;
 // this complements Pi approval and server-side read-only flags.
 const MCP_TOOLISH =
   /(^|[_\-.:/])(mcp|fabric|powerbi|pbi|pbip|adx|kusto|eventhouse|onelake|lakehouse|warehouse|workspace|dataset|semanticmodel|report|pipeline|notebook|dataflow|capacity)([_\-.:/]|$)/i;
 const MCP_WRITE_VERB =
-  /(^|[_\-.:/])(create|update|delete|remove|deploy|publish|drop|write|patch|overwrite|rename|truncate|grant|revoke|provision)([_\-.:/A-Z]|$)/i;
+  /(^|[_\-.:/])(create|update|delete|remove|deploy|publish|drop|write|patch|overwrite|rename|truncate|grant|revoke|provision|refresh)([_\-.:/A-Z]|$)/i;
 const DATA_SERVER = /(^|[_\-.:/])(fabric|powerbi|pbi|sql|database|db|warehouse|lakehouse|onelake|kusto|adx|eventhouse)([_\-.:/]|$)/i;
 const ROW_READ_VERB = /(^|[_\-.:/])(query|execute|evaluate|run_sql|runsql|sql_query|dax_query|preview|sample|row|rows|record|records|data|export|download)([_\-.:/]|$)/i;
 const PRODUCTION_WORD = /(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)/i;

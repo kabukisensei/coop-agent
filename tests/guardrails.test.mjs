@@ -533,7 +533,7 @@ await t("repository-specific globs retain semantics and deny overrides markdown 
 
 // --- MCP-mutation enforcement -----------------------------------------------------
 await t("mcpMutationLabel flags mutating MCP/Fabric actions, not reads or safe tools", () => {
-  for (const name of ["fabric_create_workspace", "powerbi_delete_dataset", "mcp__fabric__deploy_pipeline", "fabric_publishReport"]) {
+  for (const name of ["fabric_create_workspace", "powerbi_delete_dataset", "mcp__fabric__deploy_pipeline", "fabric_publishReport", "powerbi_refresh_dataset", "fabric_semanticmodel_refresh"]) {
     assert.ok(mcpMutationLabel(name), `${name} should be flagged`);
   }
   for (const name of ["fabric_list_workspaces", "powerbi_get_dataset", "read", "bash", "sql_review", "data_doc"]) {
@@ -542,6 +542,14 @@ await t("mcpMutationLabel flags mutating MCP/Fabric actions, not reads or safe t
 });
 await t("blocks a declined mutating MCP tool call", async () => {
   assert.equal(blocked(await handle({ toolName: "fabric_delete_workspace", input: {} }, { ...ctx, ui: { confirm: async () => false, notify: () => {} } })), true);
+});
+await t("a proxied refresh_dataset call asks first and is blocked when declined (#119)", async () => {
+  const event = () => ({ toolName: "mcp", input: { server: "powerbi", tool: "refresh_dataset", args: { datasetId: "x" } } });
+  assert.equal(blocked(await handle(event(), { ...ctx, ui: { confirm: async () => false, notify: () => {} } })), true);
+  let asked = 0;
+  const approved = await handle(event(), { ...ctx, ui: { confirm: async () => { asked++; return true; }, notify: () => {} } });
+  assert.equal(asked, 1);
+  assert.equal(blocked(approved), false);
 });
 await t("headless approval-required mutations fail closed while reads pass", async () => {
   const headless = { cwd: ctx.cwd, hasUI: false };
@@ -883,6 +891,9 @@ await t("mcpMutationLabel classifies proxied inner tools, not the outer 'mcp' wr
   assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: { server: "powerbi", tool: "powerbi_update_dataset" } })));
   assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: { server: "azure-devops", tool: "create_work_item" } })));
   assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: { server: "custom-db", tool: "delete_record" } })));
+  // #119: a user-owned powerbi-mcp-server exposes refresh_dataset, which refreshes the
+  // dataset on the client tenant; its bare name carries no Fabric/Power BI noun.
+  assert.ok(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: { server: "powerbi", tool: "refresh_dataset" } })));
   assert.equal(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: { server: "fabric", tool: "fabric_list_workspaces" } })), null);
   assert.equal(mcpMutationLabel(effectiveMutationTarget({ toolName: "mcp", input: {} })), null);
 });
