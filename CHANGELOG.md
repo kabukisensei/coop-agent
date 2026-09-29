@@ -136,6 +136,88 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Standards (#88): more prompts reach the wiki articles they need. "fix the silver
+  indexing on the fabric warehouse table" now gets Silver Indexing and Fabric Warehouse
+  Target instead of nothing. A Fabric warehouse, Schema Manager, `dim.`/`fact.` names,
+  silver and gold tables or loads, and `SELECT *` count as SQL work, and SQL context wins
+  over "fact table" or "dimension table", so gold SQL work no longer pulls in the Power
+  BI table articles. A prompt that also names Power BI, DAX, a semantic or tabular model,
+  a dataset, a visual or a sort by keeps them. Report pages, a theme for a report ("a
+  theme file for the AP aging report"), drill-through and Power BI apps get the report
+  articles without DAX;
+  PBIX/PBIP/PBIR prompts now reach the Power BI (semantic model) standards. "A/the ...
+  measure(s)" counts as DAX only next to a Power BI word, so "preventive measures" and "a
+  test that measures latency" get no DAX standards, and key names near "relationship"
+  must look like the wiki's FKDueDate or PKCustomer (not pkg or PKCE). A "reporting
+  model" is not the report layer. Rewrite, convert, (re)format, replace, rename, set up,
+  turn on/off and fails/failed/failing now count as requests.
+- Standards (#101): the wiki-layer widening from #88 stays, as a recall floor under a
+  sharper classifier, and a golden set holds both to account. The floor: a request that
+  names a layer the wiki's articles carry (silver, gold, report) or both words of a
+  multi-word technology (fabric warehouse) gets that domain even when the classifier
+  misses it, so "Review this SP for gold - it's using a cursor", "Write the bronze ->
+  silver dedupe for the custtable extract", "lakehouse to warehouse: build the load for the
+  customer dimension in Fabric", "Update the report theme with the client's brand colors"
+  and "Add a new page to the Inventory report with a card for on-hand qty" get their SQL or
+  report articles. A missed standard on real coding work costs more than extra context on
+  chatter, so the floor gives way only in an explicit list of known non-coding contexts,
+  and only when the prompt has no SQL, DAX, Power BI or Fabric signal (a classified domain,
+  or a word such as table, view, load, dedupe, dim, measure, Power BI or Fabric): a status,
+  progress, incident, expense or annual report; a report generator, button, viewer, form or
+  other app-code widget; gold or silver badges, medals, sponsors, tiers or colors; README,
+  website, newsletter and marketing-site wording. "Write a status report for the client",
+  "Fix the bug in the report generator script", "Add a silver badge to the website header"
+  and "Change the button color from silver to gold" get nothing, while "Update the status
+  report in Power BI" and "Update the README with the silver dedupe steps" keep the floor.
+  So do subtotals, a page added to a Power BI report and naming conventions or standards
+  ("Fix the matrix subtotals on the project status report", "Add a Marketing page to the
+  Sales report", "Update the README with the silver and gold naming conventions"), and a
+  title-case name before "Status report" is a report, not a status document ("Add a Risks
+  page to the Project Status report"; "the Weekly Status Report" is still a document).
+  Everyday prompts outside that list get what the floor gave them before: "Review the
+  quarterly report with the client", "Fix the Visual Studio build and report the failing
+  tests", "Add the weekly report to my browser bookmarks", "Update the warehouse stock
+  levels for the fabric samples" and "Fix the silver merge conflict in the gold branch"
+  still get the report or SQL articles. The classifier: a Power BI report, a visual, card,
+  slicer, bookmark or tooltip near "report", a report theme, a gold or silver proc, sproc,
+  merge or upsert, a D365 table name after the layer word ("Fix the duplicate rows in
+  silver custtable"), "Add inventdim and inventlocation to silver", a sproc or stored proc
+  anywhere, and the warehouse in a Fabric workspace are recognized directly; a report card,
+  Visual Studio, a merge conflict and a file name before "view" ("accounts.py views") are
+  not. A bare "model" no longer counts as Power BI context, so "how the churn model did
+  against the success measures" and "the business model canvas with the key measures" get
+  no DAX; Power BI, DAX, PBIX/PBIP/PBIR, a semantic or tabular model, or a dataset still
+  do. A fact, dimension or date table next to a model or a measure keeps the Power BI model
+  and DAX even with SQL words ("Create the gold fact table for budgets and add a Budget
+  Amount measure", "relate it to the GL fact in the model"); only SQL-only table work drops
+  them. Neither a template placeholder ("a project charter for [Project Name] with the
+  success measures"), a visual for slides or a visual merchandising role, a measure table
+  with no model or other measures ("a measure table for converting recipes"), nor a web
+  domain before "views" ("example.com views") reads as DAX, model or SQL work.
+  Debug, tune, troubleshoot, speed up and dedupe count as requests. Three more wiki
+  rules now arrive: "fix the format strings on the currency measures" gets the DAX articles
+  (Power BI Measures holds the format-string rules); "relate it to the Budget Version
+  dimension" gets Power BI Relationships; and "change silver.custtable.creditmax ... to
+  match the gold customer dimension" gets Silver Layer (do not change a Silver type for
+  downstream convenience), because an object in a layer's schema ranks that layer's
+  overview articles first. "proc" and "sproc" rank Gold Stored Procedures first. The golden
+  set (`tests/fixtures/standards-golden-corpus.json`, scored through
+  `buildStandardsContext` against the front matter of every active wiki article at
+  a00c8cc) is a regression test: 48 of 52 prompts pass (main scored 23), and the 4 known
+  failures are listed with how they fail, so a fix or a regression both fail the suite
+  until the list is updated. 34 holdout rows (report, gold/silver and Fabric warehouse
+  wording, the fresh prompts above, and two "model ... measures" prompts that must get
+  nothing) all pass; 26 negatives get no standards (main leaked 13 of them); 6 floor-chatter
+  rows get exactly main's domains. A title-case report name costs some chatter: "Write the
+  Project Status Report for the steering committee" gets the report articles, as on main.
+  Every prompt and holdout row records the domains `main`
+  selected before #101 and fails if it loses one, except golden prompts 2-4, SQL fact and
+  dimension table work that deliberately drops the Power BI model main's bare "fact table"
+  and "dimension table" rule added. Still missed: PBIX/PBIP and `.gitignore` prompts never
+  reach Power BI File Types, "chart" does not reach Power BI Report Visuals, a gold `dim.`
+  index task also gets Silver Indexing, a named model with no Power BI word ("Add a YTD
+  measure to the Finance model") gets no DAX articles (as on main), and a bare "proc" with
+  no layer word ("Fix the proc that loads customers") gets nothing (as on main).
 - `/setup-docs` no longer saves coop-data-doc's placeholder repo paths and then fails
   the build (#102). A teammate who pressed Enter through setup in a session started
   from the desktop shortcut (which opens coop in the home folder) saved `../pbi-repo`
