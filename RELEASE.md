@@ -186,8 +186,9 @@ gh release view vX.Y.Z          # expect: release exists, body = the CHANGELOG s
 
 The `on-main` check matters because `coop release` still pushes the tag when
 the branch push fails, and the fleet ignores a tag that is not on `main`
-(safely, but without a warning). If it prints nothing, push `main`
-(`git push origin main`) and re-check; never move or re-push the tag.
+(safely, but without a warning; #105 tracks an atomic push). If it prints
+nothing, push `main` (`git push origin main`) and re-check; never move or
+re-push the tag.
 
 **Deployment, rollback, and holds (coop-agent).**
 
