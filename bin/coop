@@ -781,7 +781,7 @@ coop_init() {
     py="$(coop_python)" || coop_die "python3 is required for: coop init --migrate-legacy"
     [ "$apply" = 1 ] && migrate_args+=(--apply)
     [ "${COOP_ASSUME_YES:-0}" = 1 ] && migrate_args+=(--yes)
-    "$py" "$COOP_ROOT/lib/project_health.py" migrate "$dir" "${migrate_args[@]}" "${archive_args[@]}"
+    "$py" "$COOP_ROOT/lib/project_health.py" migrate "$dir" ${migrate_args[@]+"${migrate_args[@]}"} ${archive_args[@]+"${archive_args[@]}"}
     return $?
   fi
   if [ -n "$ci_type" ]; then
