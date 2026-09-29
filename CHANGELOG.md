@@ -136,6 +136,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Windows PowerShell 5.1 finds a Fabric-compatible Python without the `py` launcher
+  (#81). The version probe passed `print("%d.%d" % ...)` on the command line, and
+  5.1 does not escape embedded double quotes for native programs, so Python got a
+  SyntaxError and every candidate except the `py` launcher was skipped. Since H1
+  that failed the install prerequisite gate on such a machine. The probe now
+  carries no quotes, and the resolver fixture checks it against a real interpreter
+  with 5.1-style argument passing.
 - `scripts/ado-onboard.py` starts without PyYAML (#120). It imported `_yaml` before
   `lib/` was on the path, so on a fresh machine (no PyYAML) it failed at startup, and
   with PyYAML it loaded PyYAML's own `_yaml` module and fell back to a regex read of
