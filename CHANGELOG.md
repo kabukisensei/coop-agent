@@ -222,6 +222,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   fast-forward it to a newer release, and doctor made its daily fetch there. They
   now run from a plain copy of the tree with no `.git`, and each fails if the update
   it runs sees a git checkout.
+- The Azure DevOps digest reports a client with no `project` before it signs in
+  (#103). It minted a token with az first, so `tests/ado.test.sh` ran the
+  developer's real Azure CLI and credentials, and failed on a machine without az.
+  The test's missing-project case now runs with a failing `az` first on `PATH` and
+  as `COOP_AZ_BIN`, and fails if az is called.
 
 ## [0.23.5] — 2026-09-22
 
