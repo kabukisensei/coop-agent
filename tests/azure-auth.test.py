@@ -12,6 +12,7 @@ Windows leg. Only the fake az (tests/fixtures/fake-az.mjs) is ever started.
 import importlib.util
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -113,6 +114,42 @@ with tempfile.TemporaryDirectory() as tmp:
         os.environ.pop("AZURE_CORE_LOGIN_EXPERIENCE_V2", None)
         check_login(state, "COOP_AZ_BIN")
 print("  OK  login_azure() runs az with AZURE_CORE_LOGIN_EXPERIENCE_V2=off and returns the tenant")
+
+# 5b. scripts/ado_lib.py mints its Azure DevOps token through the same resolver
+#     (H2b, #91). It ran a bare "az", which Windows cannot start when the Azure CLI
+#     is az.cmd; its tenant_id comes from a private config file, so a value that is
+#     not a GUID or domain name must never reach the cmd.exe line.
+sys.path.insert(0, str(ROOT / "scripts"))
+import ado_lib  # noqa: E402
+
+ado_lib._import_azure_helpers()  # import before sys.platform is faked below
+ADO_TENANT = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"
+ado_calls = []
+
+
+def fake_ado_run(cmd, **_kwargs):
+    ado_calls.append(cmd)
+    return subprocess.CompletedProcess(cmd, 0, stdout="ado-token\n", stderr="")
+
+
+with mock.patch.object(azure_auth.sys, "platform", "win32"), mock.patch.dict(
+    os.environ, {"PATH": r"C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin", "SystemRoot": r"C:\Windows"}
+), mock.patch("os.path.isfile", isfile_of(X86_AZ)), mock.patch.object(ado_lib.subprocess, "run", fake_ado_run):
+    os.environ.pop("COOP_AZ_BIN", None)
+    assert ado_lib.mint_azcli_token(ADO_TENANT) == "ado-token"
+    for bad in ("x&calc", "a b", "tenant-aaa", "TODO"):
+        try:
+            ado_lib.mint_azcli_token(bad)
+        except ado_lib.AdoError as exc:
+            assert bad not in str(exc), exc
+        else:
+            raise AssertionError(f"ado_lib accepted tenant_id {bad!r}")
+assert ado_calls == [
+    '"C:\\Windows\\System32\\cmd.exe" /d /s /c '
+    '"call "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd" account get-access-token '
+    f'--resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv --tenant {ADO_TENANT}"'
+], ado_calls
+print('  OK  ado_lib mints through the shared resolver (az.cmd under "(x86)") and rejects unsafe tenant ids')
 
 # 6. Windows only: the default path. COOP_AZ_BIN unset, az.cmd under
 #    "Program Files (x86)" on PATH, exactly where the Azure CLI installs.

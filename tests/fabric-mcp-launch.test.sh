@@ -12,6 +12,7 @@ TMP="$(mktemp -d)"
 WEB_PID=""
 cleanup() {
   if [ -n "$WEB_PID" ]; then kill "$WEB_PID" >/dev/null 2>&1 || true; fi
+  cd / || true
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -20,6 +21,14 @@ AGENT_DIR="$HOME_DIR/.coop/agent"
 BIN="$TMP/bin"
 MARKER="$TMP/marker"
 mkdir -p "$AGENT_DIR" "$BIN" "$MARKER"
+# The launch mint follows the tenant chain (H2b): the contract above the working
+# folder, then <COOP_DIR or home>/.coop/config. Keep both in the sandbox so a
+# developer's own contract or ~/.coop/config tenant never reaches the az argv
+# pins. COOP_TEST_STUB_PATH stops lib/common.sh from putting Homebrew's bin
+# (a real az, python3 and pi) ahead of the fixture commands on a Mac.
+export COOP_DIR="$HOME_DIR"
+export COOP_TEST_STUB_PATH="$BIN"
+cd "$HOME_DIR"
 if [ "${OS:-}" = Windows_NT ]; then
   COOP_TEST_MARKER_NATIVE="$(cygpath -w "$MARKER")"
   export COOP_TEST_MARKER_NATIVE
@@ -126,6 +135,20 @@ out="$(run_coop 2>"$TMP/success.err")"
 case "$(cat "$MARKER/az-argv")" in
   'account get-access-token --resource https://api.fabric.microsoft.com --output json') ;;
   *) echo 'unexpected Azure CLI argv' >&2; exit 1 ;;
+esac
+
+PHASE='tenant-pinned'
+# H2b: with a client tenant saved by onboarding, the launch token is minted for
+# it; the az argv gains exactly `--tenant <id>` at the end.
+rm -f "$MARKER/pi-state"
+printf '%s' '{"azure":{"purpose":"client_resources","tenant_id":"cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"}}' > "$HOME_DIR/.coop/config"
+out="$(run_coop 2>"$TMP/pinned.err")"
+rm -f "$HOME_DIR/.coop/config"
+[ -f "$MARKER/pi-state" ]
+[ "$out" = "" ]
+case "$(cat "$MARKER/az-argv")" in
+  'account get-access-token --resource https://api.fabric.microsoft.com --output json --tenant cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd') ;;
+  *) echo 'launch token was not minted for the client tenant' >&2; exit 1 ;;
 esac
 
 PHASE='auth-failure'
@@ -408,7 +431,7 @@ else
   rm -f "$MARKER/pi-state" "$MARKER/pi-argv"
   PORT=$((21000 + ($$ % 19000)))
   PHASE='web-no-python-launch'
-  HOME="$HOME_DIR" PATH="$NO_PY_BIN" COOP_AGENT_DIR="$AGENT_DIR" \
+  HOME="$HOME_DIR" PATH="$NO_PY_BIN" COOP_TEST_STUB_PATH="$NO_PY_BIN" COOP_AGENT_DIR="$AGENT_DIR" \
     PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
     COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
     COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \

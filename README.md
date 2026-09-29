@@ -318,7 +318,7 @@ as a native Pi extension and is deliberately excluded from generated MCP configu
 
 | Server | Provides | Enablement and policy |
 | --- | --- | --- |
-| `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login; metadata reads by default, mutations approval-gated |
+| `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login (az's default account; coop cannot set its tenant); metadata reads by default, mutations approval-gated |
 | `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | every call approval-gated; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
 | `powerbi` | `powerbi-mcp-server --readonly` | requires a configured tenant; server-enforced read-only |
 | `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readonly` | no tenant/workspace required; server-enforced read-only |
@@ -348,8 +348,12 @@ Warehouse IDs create an item-scoped URL; Lakehouse projects must use
 `sqlEndpointProperties.id`, not the Lakehouse item ID. With no explicit target Coop uses
 the global endpoint. A malformed explicit target fails closed and emits no entry. Runtime
 uses a bearer token acquired from the existing Azure CLI login only for the Pi child
-environment; no token is written to `mcp.json`, argv, or disk. Doctor never initiates
-login and performs only a bounded metadata initialization and `tools/list` probe.
+environment; no token is written to `mcp.json`, argv, or disk. The token is minted for
+the client tenant when one is configured (the same tenant as the Azure sign-in below),
+and every request and `fabric_sql_query` token is pinned to that token's tenant, so a
+guest whose az default account is their home tenant still works. Doctor never initiates
+login and performs only a bounded metadata initialization and `tools/list` probe; its
+row names the tenant the probe minted for.
 
 Warehouse Doctor states are exact: `registered` (target/auth/tool proof passed),
 `auth_required` (no usable existing token), `tool_missing` (no compatible SQL tool),

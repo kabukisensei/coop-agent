@@ -386,11 +386,21 @@ Lakehouse item ID.
 The managed entry uses direct Streamable HTTP with `auth: false`, an exact COOP-owned
 `requestHeadersCommand`, and a 60-second request timeout. Immediately before Pi starts,
 Coop still obtains a Fabric token from the existing Azure CLI login for the session
-identity guardrail. For every MCP request, the header helper obtains a fresh token,
-requires its tenant and principal claims to match that launch identity, and authorizes
-only the exact configured HTTPS Fabric endpoint. Tokens are never written to argv,
-config, disk, or diagnostics, and an Azure CLI account switch fails closed without
-requiring a Coop restart.
+identity guardrail. That launch token is minted for the client tenant when one is
+configured: the tenant chain the launch sign-in uses (the project's
+`fabric.tenant_id`, else `~/.coop/config` `azure.tenant_id`), read from the same
+contract. With no tenant configured, the mint is the same unpinned az call as before.
+For every MCP request, the header helper obtains a fresh token for the launch token's
+tenant (its `tid`), requires its tenant and principal claims to match that launch
+identity, and authorizes only the exact configured HTTPS Fabric endpoint. A different
+principal or tenant fails closed; per-request tokens are pinned to the launch tenant,
+so a guest whose az default account is their home tenant still gets client-tenant
+tokens. Tokens are never written to argv, config, disk, or diagnostics. The helper
+contract is `lib/fabric_request_headers.mjs --token <resource> [--tenant <id>]` for
+coop's own mints, where `<id>` must be a GUID or a domain name with a dot, and
+`lib/fabric_request_headers.mjs <endpoint URL>` for per-request headers.
+The general `fabric` MCP (`@microsoft/fabric-mcp`) signs in with az's default account;
+coop cannot give it a tenant, and `coop doctor` says so on its row.
 Doctor treats config registration as only one state; live tools-list discovery
 can still report `auth_required`, `unavailable`, `tool_missing`, or
 `target_invalid`. Live dev/test verification remains pending on the signed-in
@@ -419,7 +429,8 @@ Warehouse `GET /v1/workspaces/{workspaceId}/warehouses/{warehouseId}` reads
 ID and reads `properties.sqlEndpointProperties.connectionString`. Returned item and
 endpoint IDs/types are checked against the canonical target when present. Azure CLI
 supplies separate in-memory Fabric REST and
-`database.windows.net` tokens; pyodbc uses only ODBC Driver 18 or newer, encrypted
+`database.windows.net` tokens, both minted for the launch token's tenant (with no
+launch token, nothing is minted); pyodbc uses only ODBC Driver 18 or newer, encrypted
 connections, access-token attribute `1256`, bounded execution, and bounded per-value
 and aggregate JSON materialization. The launcher resolves the selected interpreter in
 a short subprocess and then starts that Python executable directly, so cancellation

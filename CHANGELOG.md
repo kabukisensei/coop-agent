@@ -135,6 +135,26 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   and should run `coop onboard --config-only` once. H2 and its follow-up H2b
   (coop's own Fabric and SQL token minting pinned to the same tenant) must ship in
   the same tagged patch release.
+- Coop's own Fabric and SQL tokens are minted for the client tenant (master plan
+  H2b, #91; ships in the same tag as H2). A consultant who is a guest in the client
+  tenant, with their home tenant as az's default account, passed the launch sign-in
+  but got `auth_required` or `identity_mismatch` from every Fabric call, because the
+  mints asked az for the default account's tenant. The launch token and the doctor
+  Warehouse probe now pass `--tenant <id>` from the H2 tenant chain (the project's
+  `fabric.tenant_id`, else `~/.coop/config` `azure.tenant_id`; the launch token uses
+  the same contract as the launch sign-in). Each Warehouse MCP request and both
+  `fabric_sql_query` tokens are pinned to the launch token's tenant; a token for a
+  different principal or tenant still fails closed. With no tenant configured the
+  launch and doctor mints run exactly the az command they ran before. `coop doctor`
+  names the tenant its Warehouse probe minted for, and the `fabric` row says that
+  `@microsoft/fabric-mcp` uses az's default account because coop cannot give it a
+  tenant.
+- Windows: the Azure DevOps digest and ADO onboarding (`scripts/ado_lib.py`) mint
+  their token through the Azure CLI resolver that `coop onboard` uses
+  (`lib/azure_auth.py`), so `az.cmd` starts, including under
+  `C:\Program Files (x86)`. They ran a bare `az`, which Windows cannot start. A
+  client `tenant_id` that is not a GUID or a domain name is now rejected before az
+  runs.
 
 ## [0.23.5] — 2026-09-22
 

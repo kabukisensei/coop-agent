@@ -1,10 +1,18 @@
 // Shared fake Azure CLI for the H2 sign-in fixtures: tests/azcache.test.sh,
 // tests/fixtures/azcache.test.ps1, tests/doctor.test.sh and
-// tests/azure-auth.test.py. It never contacts Azure. Tests wrap it per OS:
+// tests/azure-auth.test.py, and for the H2b tenant-pinned mints:
+// tests/fabric-request-headers.test.mjs, tests/warehouse-mcp.test.py and
+// tests/fabric-sql-query.test.py. It never contacts Azure. Tests wrap it per OS:
 //   POSIX:   az      = #!/bin/sh + exec "<node>" "<this file>" "$@"
 //   Windows: az.cmd  = @"<node>" "<this file>" %*
+// The token helper passes az only an allowlisted environment, so the H2b
+// wrappers set COOP_TEST_AZ_STATE themselves.
 // State lives in the directory named by COOP_TEST_AZ_STATE:
 //   tokens    lines "TENANT RESOURCE" or "TENANT *": tokens az can mint
+//   default-tenant  the tenant of az's default account: a get-access-token
+//             without --tenant mints for it (a guest's home tenant)
+//   With --output json, get-access-token prints {"accessToken": <JWT>} whose tid
+//   is the tenant it minted for and whose oid is PRINCIPAL below.
 //   login-rc  exit code for `az login` (default 0); success adds "TENANT *";
 //             "hang" never finishes the sign-in (see hang below)
 //   mode      optional probe behavior: "term" ends the probe the way the
@@ -38,6 +46,9 @@ appendFileSync(join(dir, "argv.log"), args.join(" ") + (args[0] === "login" ? ` 
 
 const tenant = option("--tenant");
 const json = option("--output") === "json";
+const PRINCIPAL = "0a0a0a0a-0a0a-40a0-80a0-0a0a0a0a0a0a";
+const segment = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+const jwt = (tid) => `${segment({ alg: "none" })}.${segment({ tid, oid: PRINCIPAL })}.${segment("fake-az")}`;
 const hang = () => {
   writeFileSync(join(dir, "hang.pid"), String(process.pid));
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20000);
@@ -61,9 +72,10 @@ if (args[0] === "account" && args[1] === "get-access-token") {
     process.exit(1);
   }
   const resource = option("--resource");
+  const minted = tenant || read("default-tenant");
   const tokens = read("tokens").split(/\r?\n/).map((line) => line.trim());
-  if (tokens.includes(`${tenant} ${resource}`) || tokens.includes(`${tenant} *`)) {
-    if (json) process.stdout.write(JSON.stringify({ accessToken: "fake", tenant }) + "\n");
+  if (tokens.includes(`${minted} ${resource}`) || tokens.includes(`${minted} *`)) {
+    if (json) process.stdout.write(JSON.stringify({ accessToken: jwt(minted) }) + "\n");
     process.exit(0);
   }
   process.stderr.write("ERROR: Please run 'az login' to setup account.\n");
