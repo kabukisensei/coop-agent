@@ -243,6 +243,43 @@ function Get-CoopFabricBootstrapPython {
   return $null
 }
 
+# The `pipx install` flag that makes pipx download a standalone Python when the
+# requested version is not installed: pipx 1.12+ spells it --fetch-python=missing,
+# pipx 1.5-1.11 --fetch-missing-python (still accepted by newer pipx as a deprecated
+# alias, so the current spelling is tried first). '' when this pipx cannot fetch a
+# Python (pipx < 1.5, or no pipx). $PipxCommand is the pipx invocation to probe
+# (e.g. @('python', '-m', 'pipx') for a pipx installed but not on PATH yet);
+# default: Get-CoopPipxCmd. Twin of coop_pipx_fetch_python_flag.
+function Get-CoopPipxFetchPythonFlag([string[]]$PipxCommand = @()) {
+  if (-not $PipxCommand -or $PipxCommand.Count -eq 0) { $PipxCommand = @((Get-CoopPipxCmd)) }
+  $exe = $PipxCommand[0]
+  if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { return '' }
+  $rest = @($PipxCommand | Select-Object -Skip 1) + @('install', '--help')
+  $help = (& $exe @rest 2>&1 | Out-String)
+  if ($help -match '--fetch-python') { return '--fetch-python=missing' }
+  if ($help -match '--fetch-missing-python') { return '--fetch-missing-python' }
+  return ''
+}
+
+# How the Fabric CLI's pipx environment gets a supported interpreter: an object
+# { Python; FetchFlag } — a local 3.10-3.13 interpreter (FetchFlag ''), or '3.12'
+# plus the flag from Get-CoopPipxFetchPythonFlag when only pipx's standalone
+# download can supply one. $null when neither is possible — then prerequisite
+# row 3 (Get-CoopPrereqs) says what to install. Shared by install, update and
+# `coop doctor --fix`, so every path builds the environment the same way:
+#   pipx install [--force] [<FetchFlag>] --python <Python> ms-fabric-cli==<pin>
+# Twin of coop_fabric_pipx_plan.
+function Get-CoopFabricPipxPlan {
+  $py = Get-CoopFabricBootstrapPython
+  $flag = ''
+  if (-not $py) {
+    $flag = Get-CoopPipxFetchPythonFlag
+    if (-not $flag) { return $null }
+    $py = '3.12'
+  }
+  return [pscustomobject]@{ Python = [string]$py; FetchFlag = [string]$flag }
+}
+
 function Get-CoopVenvPythonPath([string]$Venv) {
   $base = Join-Path (Get-CoopPipxVenvsDir) $Venv
   foreach ($py in @((Join-Path $base 'Scripts\python.exe'), (Join-Path $base 'bin\python'), (Join-Path $base 'bin/python'))) {
@@ -786,12 +823,14 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
       python = 'winget install --id Python.Python.3.12 -e'
       pipx = 'py -3.12 -m pip install --user pipx then py -3.12 -m pipx ensurepath'
       az = 'winget install --id Microsoft.AzureCLI -e'; odbc = 'winget install --id Microsoft.msodbcsql.18 -e'
+      pipxUpgrade = $true
     }
   } elseif ($mac) {
     $fix = @{
       git = 'xcode-select --install'; node = 'brew install node'; python = 'brew install python@3.12'
       pipx = 'brew install pipx then pipx ensurepath'; az = 'brew install azure-cli'
       odbc = 'brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release then brew install msodbcsql18'
+      pipxUpgrade = $false
     }
   } else {
     $fix = @{
@@ -800,6 +839,7 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
       pipx = 'sudo apt-get install -y pipx then pipx ensurepath'
       az = 'curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash'
       odbc = 'see https://learn.microsoft.com/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server'
+      pipxUpgrade = $false
     }
   }
   $ver = { param([string]$Exe) $o = (& $Exe --version 2>&1 | Out-String); $m = [regex]::Match($o, '\d+\.\d+(\.\d+)?'); if ($m.Success) { $m.Value } else { '' } }
@@ -818,34 +858,45 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
   }
   $rows += & $row 2 "Node.js $nodeMin or newer" $true $nodeOk $nodeDet $fix.node
 
-  # The Fabric CLI cannot run on 3.14, so it needs 3.10-3.13. A newer pipx can
-  # fetch its own 3.12 for the Fabric CLI, so 3.14 plus that pipx also passes.
-  $pyOk = $false; $pyDet = 'not found'
+  # The Fabric CLI cannot run on 3.14, so it needs 3.10-3.13. A pipx that can
+  # fetch a standalone Python (1.5+, Get-CoopPipxFetchPythonFlag) supplies its own
+  # 3.12 for the Fabric CLI, so 3.14 plus that pipx also passes. pipx counts here
+  # exactly as row 4 counts it: on PATH, or reachable as `<python> -m pipx`.
+  $pyOk = $false; $pyDet = 'not found'; $pyFix = $fix.python
   $fabPy = if (-not $NoFabric) { Get-CoopFabricBootstrapPython } else { $null }
   $genPy = Get-CoopPython
   $genVer = if ($genPy) { & $ver $genPy } else { '' }
   $genOk = $genVer -and ([version]$genVer -ge [version]'3.10')
-  # A general Python that is itself 3.10-3.13 is Fabric-compatible even when the
-  # Fabric resolver's probe misses it (#81: Windows PowerShell 5.1 quoting).
-  $genFabOk = $genOk -and ([version]$genVer -lt [version]'3.14')
-  if ($fabPy) { $pyOk = $true; $pyDet = & $ver $fabPy }
-  elseif ($genOk -and ($NoFabric -or $genFabOk)) { $pyOk = $true; $pyDet = $genVer }
-  elseif ($genOk -and (Test-Have 'pipx') -and ((& pipx install --help 2>&1 | Out-String) -match '--fetch-python')) {
-    $pyOk = $true; $pyDet = "$genVer; pipx fetches 3.12 for the Fabric CLI"
-  } elseif ($genOk) { $pyDet = "$genVer only; the Fabric CLI needs 3.10-3.13" }
-  elseif ($genVer) { $pyDet = "$genVer is older than 3.10" }
-  $rows += & $row 3 'Python 3.10-3.13 (3.12 recommended)' $true $pyOk $pyDet $fix.python
-
-  $pipxOk = $false; $pipxDet = 'not found'
-  if (Test-Have 'pipx') { $pipxOk = $true; $pipxDet = & $ver 'pipx' }
+  $pipxDet = 'not found'; $pipxVia = @()
+  if (Test-Have 'pipx') { $pipxDet = & $ver 'pipx'; $pipxVia = @('pipx') }
   else {
     foreach ($p in @($fabPy, $genPy)) {
       if (-not $p) { continue }
       & $p -m pipx --version *> $null
-      if ($LASTEXITCODE -eq 0) { $pipxOk = $true; $pipxDet = "via $p -m pipx"; break }
+      if ($LASTEXITCODE -eq 0) { $pipxDet = "via $p -m pipx"; $pipxVia = @($p, '-m', 'pipx'); break }
     }
   }
-  $rows += & $row 4 'pipx' $true $pipxOk $pipxDet $fix.pipx
+  # A general Python that is itself 3.10-3.13 is Fabric-compatible even when the
+  # Fabric resolver's probe misses it (#81: Windows PowerShell 5.1 quoting). pipx
+  # is probed only when it is the deciding factor (a 3.14+ Python and nothing
+  # older), so the row stays cheap.
+  $genFabOk = $genOk -and ([version]$genVer -lt [version]'3.14')
+  if ($fabPy) { $pyOk = $true; $pyDet = & $ver $fabPy }
+  elseif ($genOk -and ($NoFabric -or $genFabOk)) { $pyOk = $true; $pyDet = $genVer }
+  elseif ($genOk -and $pipxVia.Count -gt 0 -and (Get-CoopPipxFetchPythonFlag $pipxVia)) {
+    $pyOk = $true; $pyDet = "$genVer; pipx fetches 3.12 for the Fabric CLI"
+  } elseif ($genOk) {
+    $pyDet = "$genVer only; the Fabric CLI needs 3.10-3.13"
+    # Windows: a pipx that is present but too old to fetch a Python is repaired
+    # without winget or an administrator — upgrading pipx (1.12+) lets it download
+    # a standalone 3.12 for the Fabric CLI. Elsewhere the package manager's Python
+    # stays the fix (pip --user is refused on Debian-family Pythons, PEP 668).
+    if ($pipxVia.Count -gt 0 -and $fix.pipxUpgrade) { $pyFix = "$genPy -m pip install --user --upgrade pipx then $genPy -m pipx ensurepath" }
+  }
+  elseif ($genVer) { $pyDet = "$genVer is older than 3.10" }
+  $rows += & $row 3 'Python 3.10-3.13 (3.12 recommended)' $true $pyOk $pyDet $pyFix
+
+  $rows += & $row 4 'pipx' $true ($pipxVia.Count -gt 0) $pipxDet $fix.pipx
 
   $azOk = Test-Have 'az'
   $rows += & $row 5 'Azure CLI' $true $azOk $(if ($azOk) { '' } else { 'not found' }) $fix.az
@@ -1897,14 +1948,110 @@ function Invoke-CoopScript {
   return $LASTEXITCODE
 }
 
+# --- Profile redirection (isolated installs) ----------------------------------
+# A second coop can run isolated from the real install by redirecting HOME /
+# USERPROFILE / LOCALAPPDATA / APPDATA at a sandbox folder (the acceptance
+# harness and the VM runbooks do this). Everything keyed off those variables
+# already lands in the sandbox, but two install steps used to ignore them: the
+# Start Menu / Desktop shortcuts came from the Windows shell folders and the
+# launcher dir went onto the persistent user PATH in the registry — so a sandbox
+# install rewrote the real user's shortcuts (pointing them at the sandbox) and
+# grew the real user PATH. Test-CoopProfileRedirected tells the two apart by
+# comparing the profile in use (USERPROFILE, else $HOME) with the profile Windows
+# registered for this account (.NET's UserProfile special folder, which does not
+# follow the environment). Off Windows the same comparison runs against .NET's
+# notion of the home directory, so the helpers behave identically in tests.
+function Get-CoopProfileInUse {
+  if ($env:USERPROFILE) { return [string]$env:USERPROFILE }
+  return [string]$HOME
+}
+function Get-CoopRegisteredProfile {
+  try { return [string][Environment]::GetFolderPath('UserProfile') } catch { return '' }
+}
+# Normalized form for comparing two paths: absolute, no trailing separator,
+# case-folded (Windows paths are case-insensitive; a sandbox is never a
+# case-variant of the real profile).
+function ConvertTo-CoopComparablePath {
+  param([string]$Path)
+  if (-not $Path) { return '' }
+  $full = try { [System.IO.Path]::GetFullPath($Path) } catch { $Path }
+  return $full.TrimEnd('\', '/').ToLowerInvariant()
+}
+function Test-CoopPathInside {
+  param([string]$Path, [string]$Root)
+  $p = ConvertTo-CoopComparablePath $Path
+  $r = ConvertTo-CoopComparablePath $Root
+  if (-not $p -or -not $r) { return $false }
+  return ($p -eq $r) -or $p.StartsWith($r + '\') -or $p.StartsWith($r + '/')
+}
+function Test-CoopProfileRedirected {
+  $registered = ConvertTo-CoopComparablePath (Get-CoopRegisteredProfile)
+  $inUse = ConvertTo-CoopComparablePath (Get-CoopProfileInUse)
+  if (-not $registered -or -not $inUse) { return $false }
+  return ($registered -ne $inUse)
+}
+# The account's registered roaming AppData folder (where the real Start Menu
+# lives). NOT [Environment]::GetFolderPath('ApplicationData'): the shell expands
+# the registered "%USERPROFILE%\AppData\Roaming" against the CURRENT environment,
+# so under a redirected USERPROFILE it points into the sandbox, and when that
+# folder does not exist yet .NET falls back to the APPDATA variable itself — both
+# make a redirected APPDATA look registered. Read the raw "User Shell Folders"
+# value instead and expand %USERPROFILE% against the registered profile. Off
+# Windows (or without the value) it is <registered profile>\AppData\Roaming.
+function Get-CoopRegisteredRoaming {
+  $registered = Get-CoopRegisteredProfile
+  $fallback = if ($registered) { Join-Path $registered 'AppData\Roaming' } else { '' }
+  if ($env:OS -ne 'Windows_NT') { return $fallback }
+  try {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders')
+    if (-not $key) { return $fallback }
+    $raw = [string]$key.GetValue('AppData', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    $key.Close()
+    if (-not $raw) { return $fallback }
+    $token = '%USERPROFILE%'
+    $idx = $raw.IndexOf($token, [StringComparison]::OrdinalIgnoreCase)
+    if ($idx -ge 0 -and $registered) { $raw = $raw.Substring(0, $idx) + $registered + $raw.Substring($idx + $token.Length) }
+    $expanded = [Environment]::ExpandEnvironmentVariables($raw)
+    if ($expanded -and [System.IO.Path]::IsPathRooted($expanded)) { return $expanded }
+    return $fallback
+  } catch { return $fallback }
+}
+# Where the "coop" shortcuts live, Start Menu first, then Desktop. A normal
+# install uses the Windows shell folders (they follow a OneDrive-redirected
+# Desktop); an isolated one uses the redirected profile's own Desktop and the
+# Start Menu under its roaming AppData (APPDATA when it was redirected too,
+# else <profile>\AppData\Roaming), so nothing lands on the real profile. A
+# sandbox may itself sit under the real profile (C:\Users\me\sandbox), so the
+# APPDATA test is "is it still the account's registered roaming folder", not
+# "is it under the real profile".
+function Get-CoopShortcutDirs {
+  if (Test-CoopProfileRedirected) {
+    $profileDir = Get-CoopProfileInUse
+    $appData = ConvertTo-CoopComparablePath ([string]$env:APPDATA)
+    $roaming = if ($appData -and ($appData -ne (ConvertTo-CoopComparablePath (Get-CoopRegisteredRoaming)))) {
+      [string]$env:APPDATA
+    } else {
+      Join-Path $profileDir 'AppData\Roaming'
+    }
+    return @((Join-Path $roaming 'Microsoft\Windows\Start Menu\Programs'), (Join-Path $profileDir 'Desktop'))
+  }
+  $dirs = @()
+  foreach ($folder in @('Programs', 'Desktop')) {
+    $d = try { [string][Environment]::GetFolderPath($folder) } catch { '' }
+    if ($d) { $dirs += $d }
+  }
+  return $dirs
+}
+
 # --- Double-click launcher (Start Menu + Desktop) ------------------------------
 # One "coop" shortcut on the Start Menu and Desktop opens the terminal agent through
-# bin\coop-desktop.ps1, which finds or installs coop, runs it, and keeps the window
-# open on error. The browser chat is retired (master plan S5): the old "coop"
+# bin\coop-desktop.ps1 (its own console, home folder, coop.ico). Before S5 the "coop"
 # shortcut ran `coop web` in a minimized console, and "coop (terminal)" was the
 # terminal. install writes the shortcut; update rewrites it only where a coop
 # shortcut already exists (-OnlyIfPresent), so old shortcuts are repaired and a
-# removed one stays removed. Best-effort: returns $true when a shortcut was written.
+# removed one stays removed. The target folders come from Get-CoopShortcutDirs, so
+# an isolated install (redirected profile) writes into its sandbox, never onto the
+# real Desktop. Best-effort: returns $true when a shortcut was written.
 function Set-CoopDesktopShortcuts {
   param([switch]$OnlyIfPresent)
   if ($env:OS -ne 'Windows_NT') { return $false }
@@ -1914,12 +2061,14 @@ function Set-CoopDesktopShortcuts {
   $icon  = Join-Path $script:CoopRoot 'themes\coop.ico'
   $ws = New-Object -ComObject WScript.Shell
   $wrote = $false
-  foreach ($dir in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
+  foreach ($dir in (Get-CoopShortcutDirs)) {
     if (-not $dir) { continue }
     $main = Join-Path $dir 'coop.lnk'
     $legacyTerminal = Join-Path $dir 'coop (terminal).lnk'
     $present = (Test-Path -LiteralPath $main) -or (Test-Path -LiteralPath $legacyTerminal)
     if ($OnlyIfPresent -and -not $present) { continue }
+    # A fresh sandbox profile has no Desktop / Start Menu folder yet.
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     $sc = $ws.CreateShortcut($main)
     $sc.TargetPath       = $psExe
     $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`""

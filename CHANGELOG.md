@@ -18,6 +18,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Standards: a prompt that says PBIX, PBIP or PBIR now reaches the Power BI File
+  Types article ("Convert the Sales report PBIX to a PBIP project"), the one
+  coop-standards article no realistic prompt reached before. The classifier treats
+  those words as "file", the way it already reads "dim" as dimension and "proc" as
+  procedure; two golden rows stop being known failures.
+- Simple Fabric reads go straight to the contract target. At session start coop
+  now hands the agent the Warehouse/Lakehouse ids the nearest `.coop/project.yml`
+  pins (`fabric.default_workspace_id`, `fabric.default_sql_endpoint`) in a hidden
+  note, and the guardrails prompt plus the `team-knowledge` skill say a one-row
+  query, listing, or connection check uses those ids directly — no team-knowledge
+  search, memory search, skill load, or Fabric catalog discovery first. Seen on
+  0.24.0: a `TOP 1` read ran two knowledge searches, a memory search, and MCP
+  discovery before the query although the contract held the ids. The approval
+  prompt before Warehouse SQL is unchanged.
 - Microsoft skills catalog (master plan U1, the Fabric catalog row):
   `microsoft/skills-for-fabric` moves from v0.3.10 to **v0.3.18**
   (`6c11ad58c25992e5d1435ce7cd80d217d5598a31`) and the baseline now enables the
@@ -71,6 +85,61 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   installed `coop-sql-review` / `coop-dax-review`, so a machine with the reviewers
   installed no longer reports `bundled_fallback` where CI expects `unavailable`.
   Tests only; no runtime change.
+
+### Fixed
+
+- `coop doctor` no longer reports the cached standards as degraded just because the
+  15-minute freshness window expired since the last launch. Doctor never refreshes,
+  so on an install last launched hours ago the sync row now reads `stale @ last
+  checked N min ago; standards refresh at every coop launch, or now with: coop sync`
+  and the domain rows stay green as "last known good @ <revision>". A refresh that
+  actually failed reads `failed` with the reason, and every last-known-good row is
+  then a warning as before. `/standards-status` JSON gains `last_attempt_ms`,
+  `last_attempt_ok` and `detail`.
+
+- Machines whose only Python is 3.14 no longer get a Fabric CLI they cannot fix.
+  The Python prerequisite row (install and `coop doctor`) now passes with any pipx
+  that can fetch a standalone Python (1.5+, both flag spellings; it accepted only
+  the 1.12+ spelling before) and counts a pipx that is installed but not on PATH
+  yet, as the pipx row already did. `coop doctor --fix` builds the Fabric CLI with
+  the same interpreter plan as install and update — a local Python 3.10–3.13, or
+  pipx's standalone 3.12 — instead of a bare `pipx install` that inherited 3.14
+  and failed, and it rebuilds an existing Fabric environment that runs 3.14
+  (re-injecting `fabric-cicd`). On Windows, when pipx is too old to fetch a
+  Python, the row prints the admin-free repair (`python -m pip install --user
+  --upgrade pipx`) instead of a winget Python install, and
+  `coop install --prereqs auto` runs it. Bash and PowerShell in parity.
+- `coop_version_lt` read a two-part version `X.Y` as `X.Y.Y`, so Python 3.14.2
+  counted as older than 3.14 and passed the Fabric check it should have failed
+  (and 3.10.5 counted as older than 3.10). Missing parts now read as 0.
+- `coop install --prereqs auto` ran a two-step fix (`a then b`) as the single
+  command `ab`: the newline that split the steps was lost inside a heredoc.
+- `coop doctor` no longer reports a pipx environment as "stale/corrupt" when the
+  executable it resolved on PATH is not the pipx one. A `pip install` copy, another
+  tool manager's shim, or a leftover launcher earlier on PATH (a teammate's
+  `coop-data-doc` reported 1.1.1 while the pipx venv held 1.2.0) is now a PATH
+  shadow: the row names the resolved path and both versions, and the hint says to
+  remove that copy or put pipx's bin dir first on PATH. The old hint,
+  `pipx install --force`, rebuilt a venv that was never wrong and could not clear
+  the row. When pipx has no copy at all, the row says so and leads with the pinned
+  `pipx install`. The "Standalone Coop tools" section no longer gives such a copy a
+  green tick. When pipx has the venv but nothing answers on PATH, the row says
+  "not on PATH" with an `ensurepath` / `reinstall` hint, and a launcher that runs
+  but prints nothing is named with its path, instead of the old catch-all
+  "produced no version" with a `--force` hint. Genuine metadata/CLI disagreement
+  inside the pipx venv is unchanged.
+- A coop installed into a redirected profile (HOME / USERPROFILE / LOCALAPPDATA /
+  APPDATA pointed at a sandbox folder, as the acceptance harness and the VM
+  runbooks do) no longer spills onto the real account. `coop install` wrote the
+  "coop" Desktop and Start Menu shortcuts through the Windows shell folders, so a
+  sandbox install rewrote the real shortcuts to point at the sandbox, and it
+  appended the sandbox launcher folder to the real user PATH in the registry.
+  Shortcuts now land in the redirected profile's own Desktop and Start Menu, the
+  persistent user PATH is left alone (the launcher is on PATH for that run only,
+  and the install says so), and `coop update` / `coop uninstall` look in the same
+  folders. A normal install still uses the shell folders, so a OneDrive-redirected
+  Desktop keeps working. Windows only; the bash installer never had the problem.
+
 
 ## [0.24.0] — 2026-09-30
 
