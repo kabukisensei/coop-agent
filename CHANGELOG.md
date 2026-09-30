@@ -170,6 +170,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- bash and PowerShell agree that a git worktree is a checkout (#106). bash tested for a
+  `.git` directory and PowerShell for any `.git`, so in a linked worktree (where `.git`
+  is a file) bash skipped the repo update step, doctor warned that skills would never
+  update, and `coop version` showed no git describe, while PowerShell moved the
+  checkout. Both twins now use one rule, a `.git` directory or a `.git` file naming
+  its `gitdir:`, for the repo helpers, `coop update`, doctor and the knowledge sync.
 - MCP: the adapter's `mcpScript` tool can no longer bypass the guardrails. It
   runs JavaScript that calls MCP tools inside `pi-mcp-adapter`, and those calls
   never reach Pi's `tool_call` hook. So a script could run a mutating Fabric,
