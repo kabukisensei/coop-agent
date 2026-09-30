@@ -1073,14 +1073,17 @@ EOF
     # suite and the bash/PowerShell parity check — the transpile above only proves
     # the extensions compile, not that the tests or the .ps1 pairing pass. These
     # run on the already-clean tree, so they test precisely what will ship.
+    # COOP_TEST_EXTENDED=1 runs BOTH test lanes (gate + extended), so a release
+    # keeps the full coverage that CI splits between ci.yml (gate, every PR) and
+    # extended.yml (nightly). See docs/ci.md. Mirrors bin/coop.ps1.
     if [ -f "$COOP_ROOT/tests/run.sh" ]; then
       if have node; then
         local test_log; test_log="$(mktemp)" || coop_die "mktemp failed."
-        if bash "$COOP_ROOT/tests/run.sh" >"$test_log" 2>&1; then
-          coop_ok "tests pass"; rm -f "$test_log"
+        if COOP_TEST_EXTENDED=1 bash "$COOP_ROOT/tests/run.sh" >"$test_log" 2>&1; then
+          coop_ok "tests pass (gate + extended lanes)"; rm -f "$test_log"
         else
           cat "$test_log" >&2; rm -f "$test_log"
-          coop_die "tests failed (bash tests/run.sh) — fix them, or re-run with --no-check."
+          coop_die "tests failed (COOP_TEST_EXTENDED=1 bash tests/run.sh, gate + extended lanes) — fix them, or re-run with --no-check."
         fi
       else
         coop_warn "node not found — skipping the test suite."; gate_skipped=1

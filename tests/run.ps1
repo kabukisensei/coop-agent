@@ -17,6 +17,13 @@
 # (coop.cmd's runtime) and pwsh 7 (macOS/Linux CI). CI wires it into the windows +
 # tests jobs; run locally with `pwsh -File tests/run.ps1`.
 #
+# Lanes (#96), as in tests/run.sh: the default run is the gate lane (deterministic
+# logic only). COOP_TEST_EXTENDED=1 also runs the sections marked "EXTENDED LANE"
+# (terminal-acceptance reparse subset, knowledge git timeout, Windows ownership
+# probe, Fabric MCP launch-time bearer isolation, fresh-install Fabric Python
+# prerequisite). They stay at their positions because some depend on ordering.
+# The .ps1 UTF-8 BOM check lives in scripts/check-parity.sh only.
+#
 $ErrorActionPreference = 'Stop'
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -69,6 +76,19 @@ function Ok   { param([string]$m) Write-Host "  $G_CHECK $m" }
 function Ko   { param([string]$m) Write-Host "  $G_CROSS $m"; $script:fail = 1 }
 function Head { param([string]$m) Write-Host "$G_ARROW $m" }
 
+# --- Lane selection (#96) ----------------------------------------------------
+# Only COOP_TEST_EXTENDED=1 selects the extended lane. The try block below
+# normalizes the variable for child fixtures and the finally block restores it.
+$priorTestExtended = $env:COOP_TEST_EXTENDED
+$extendedLane = ($priorTestExtended -eq '1')
+if ($extendedLane) {
+  $laneName = 'gate + extended lanes'
+  Head 'lanes: gate + extended (COOP_TEST_EXTENDED=1). Gate lane only: pwsh -File tests/run.ps1'
+} else {
+  $laneName = 'gate lane'
+  Head 'lane: gate (default). Add the extended lane with COOP_TEST_EXTENDED=1'
+}
+
 # --- pi/npm stubs on a scratch PATH -----------------------------------------
 # The gate + --check need a `pi` (reporting 0.84.3) and an `npm` that Get-Command
 # resolves. Windows PowerShell 5.1 finds a stub only via a PATHEXT extension
@@ -90,42 +110,53 @@ try {
   # The launch preflight can repair an extension tree. Point every writable
   # Coop/Pi location at this fixture and make the fake Pi authoritative so this
   # behavioral suite never inspects or changes the developer's real ~/.coop.
+  # HOME and USERPROFILE point at a fixture home too, so every child process
+  # (PowerShell derives $HOME from USERPROFILE on Windows; node and python read
+  # them) resolves its home there, and the standards roots are unset so they
+  # resolve inside it (#96 fixture rules). Sections called in this process with
+  # `& $coop` keep this host's $HOME automatic variable; their writable
+  # locations are the COOP_DIR/COOP_AGENT_DIR overrides below.
   $priorPath = $env:PATH
   $priorCoopDir = $env:COOP_DIR
   $priorCoopAgentDir = $env:COOP_AGENT_DIR
   $priorPiAgentDir = $env:PI_CODING_AGENT_DIR
   $priorNoOnboard = $env:COOP_NO_ONBOARD
+  $priorHomeVars = @{}
+  $homeVarNames = @('HOME', 'USERPROFILE', 'COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT')
+  foreach ($name in $homeVarNames) { $priorHomeVars[$name] = [Environment]::GetEnvironmentVariable($name) }
+  if ($extendedLane) { $env:COOP_TEST_EXTENDED = '1' }
+  else { Remove-Item Env:\COOP_TEST_EXTENDED -ErrorAction SilentlyContinue }
 
+  # --- EXTENDED LANE: terminal acceptance reparse subset --------------------
   # Run receipt/reparse validation before fixture PATH and interpreter seams.
   # Native extension imports (jsonschema/rpds) must be consumed from the exact
   # CI-pinned interpreter before later fixtures replace executable discovery.
-  Head 'terminal acceptance reparse boundary tests'
-  $reparseOut = & node --test --test-name-pattern 'directory links|junctioned ancestor|authorization revocation|failure cleanup|checkout ancestry|owned-root probe|fully safe authorization|decisive receipt mutations' (Join-Path $root 'tests\terminal-workstation-acceptance.test.mjs') 2>&1
-  $reparseRc = $LASTEXITCODE
-  if ($reparseRc -eq 0) { $reparseOut | ForEach-Object { Write-Host $_ }; Ok 'terminal acceptance rejects reparse evidence' }
-  else { Ko "terminal acceptance reparse boundary tests failed: $($reparseOut | Out-String)" }
+  if ($extendedLane) {
+    Head 'terminal acceptance reparse boundary tests'
+    $reparseOut = & node --test --test-name-pattern 'directory links|junctioned ancestor|authorization revocation|failure cleanup|checkout ancestry|owned-root probe|fully safe authorization|decisive receipt mutations' (Join-Path $root 'tests\terminal-workstation-acceptance.test.mjs') 2>&1
+    $reparseRc = $LASTEXITCODE
+    if ($reparseRc -eq 0) { $reparseOut | ForEach-Object { Write-Host $_ }; Ok 'terminal acceptance rejects reparse evidence' }
+    else { Ko "terminal acceptance reparse boundary tests failed: $($reparseOut | Out-String)" }
+  }
 
   $env:PATH = $stubPath
   $env:COOP_DIR = Join-Path $stub 'coop-dir'
   $env:COOP_AGENT_DIR = Join-Path $stub 'agent'
   $env:PI_CODING_AGENT_DIR = $env:COOP_AGENT_DIR
   $env:COOP_NO_ONBOARD = '1'
-
-  # --- 0. byte-level BOM gate: exactly ONE UTF-8 BOM on every .ps1 ------------
-  # A duplicate BOM is invisible to parsers but makes PowerShell read the
-  # shebang line as a command — the launcher dies at startup (review finding 1).
-  Head 'byte-level BOM check (exactly one UTF-8 BOM per .ps1)'
-  $bomFail = $false
-  Get-ChildItem -Path $root -Recurse -Filter '*.ps1' |
-    Where-Object { $_.FullName -notmatch '\\(node_modules|\.git|\.cache)[\\/]' } |
-    ForEach-Object {
-      $bytes = [System.IO.File]::ReadAllBytes($_.FullName)[0..5]
-      $hasBom = ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
-      $dupBom = $hasBom -and ($bytes.Count -ge 6 -and $bytes[3] -eq 0xEF -and $bytes[4] -eq 0xBB -and $bytes[5] -eq 0xBF)
-      if ($dupBom) { Ko "duplicate UTF-8 BOM: $($_.FullName)"; $bomFail = $true }
-      elseif (-not $hasBom) { Ko "missing UTF-8 BOM: $($_.FullName)"; $bomFail = $true }
-    }
-  if (-not $bomFail) { Ok 'every .ps1 carries exactly one UTF-8 BOM' }
+  $sandboxHome = Join-Path $stub 'home'
+  New-Item -ItemType Directory -Path $sandboxHome -Force | Out-Null
+  # A profile shape Windows PowerShell 5.1 needs: its known folders expand from
+  # USERPROFILE, and Receive-Job fails ("The Persistence Path does not exist")
+  # when AppData\Local is missing.
+  foreach ($sub in @('AppData\Local\Microsoft\Windows\PowerShell', 'AppData\Roaming')) {
+    New-Item -ItemType Directory -Path (Join-Path $sandboxHome $sub) -Force | Out-Null
+  }
+  $env:HOME = $sandboxHome
+  $env:USERPROFILE = $sandboxHome
+  foreach ($name in @('COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT')) {
+    [Environment]::SetEnvironmentVariable($name, $null)
+  }
 
   # --- 0b. public onboarding dispatcher supplies the Python subcommand -------
   Head 'onboarding dispatcher contract test'
@@ -303,32 +334,37 @@ try {
   if ($dupSpec -like '*kb-dup-a*shared-skill*') { Ok 'first repository copy loaded (PS)' } else { Ko 'first copy missing (PS)' }
   if ($dupSpec -like '*kb-dup-b*') { Ko 'second repository duplicate NOT skipped (PS)' } else { Ok 'second repository duplicate skipped (PS)' }
 
-  # --- 1e. bounded knowledge git (process-tree deadline; PS in-process return) --
-  Head 'knowledge git timeout (PowerShell)'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $kgOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\sync-knowledge-timeout.test.ps1') 2>&1
-  $kgRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($kgRc -eq 0) {
-    $kgOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "knowledge git timeout fixture failed: $($kgOut | Out-String)"
+  # --- 1e. EXTENDED LANE: bounded knowledge git (process-tree deadline) ------
+  # Hang children and a deadline; PS in-process return.
+  if ($extendedLane) {
+    Head 'knowledge git timeout (PowerShell)'
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $kgOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\sync-knowledge-timeout.test.ps1') 2>&1
+    $kgRc = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorAction
+    if ($kgRc -eq 0) {
+      $kgOut | ForEach-Object { Write-Host $_ }
+    } else {
+      Ko "knowledge git timeout fixture failed: $($kgOut | Out-String)"
+    }
   }
 
-  # --- 1f. Windows owned-kill native evidence probe (Defect A diagnostics) ---
+  # --- 1f. EXTENDED LANE: Windows owned-kill native evidence probe (Defect A)
   # Evidence-only synthetic probe; asserts nothing about product correctness.
-  Head 'windows ownership native probe (evidence only)'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $probeOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\win-ownership-probe.ps1') 2>&1
-  $probeRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($probeRc -eq 0) {
-    $probeOut | ForEach-Object { Write-Host $_ }
-    Ok 'ownership probe completed; PROBE| evidence above'
-  } else {
-    Ko "ownership probe failed: $($probeOut | Out-String)"
+  if ($extendedLane) {
+    Head 'windows ownership native probe (evidence only)'
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $probeOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\win-ownership-probe.ps1') 2>&1
+    $probeRc = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorAction
+    if ($probeRc -eq 0) {
+      $probeOut | ForEach-Object { Write-Host $_ }
+      Ok 'ownership probe completed; PROBE| evidence above'
+    } else {
+      Ko "ownership probe failed: $($probeOut | Out-String)"
+    }
   }
 
 
@@ -576,43 +612,49 @@ print("resume verdict contract OK")
     Ko 'python not available; Warehouse/P0 fixtures cannot run'
   }
 
-  Head 'Fabric MCP launch-time bearer isolation'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $fabricLaunchOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\fabric-mcp-launch.test.ps1') 2>&1
-  $fabricLaunchRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  $fabricLaunchText = $fabricLaunchOut | Out-String
-  if ($fabricLaunchRc -eq 0 -and $fabricLaunchText.Contains('FABRIC_MCP_FIXTURE_INJECTION_REACHED')) {
-    $fabricLaunchOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "Fabric MCP launch fixture failed: $($fabricLaunchOut | Out-String)"
-  }
+  # --- EXTENDED LANE: Fabric MCP launch-time bearer isolation ---------------
+  # Marker files and bounded child processes; the self-recursion probe below
+  # re-runs this file with COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE=1, which exits
+  # at the probe block at the top before any lane logic.
+  if ($extendedLane) {
+    Head 'Fabric MCP launch-time bearer isolation'
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $fabricLaunchOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\fabric-mcp-launch.test.ps1') 2>&1
+    $fabricLaunchRc = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorAction
+    $fabricLaunchText = $fabricLaunchOut | Out-String
+    if ($fabricLaunchRc -eq 0 -and $fabricLaunchText.Contains('FABRIC_MCP_FIXTURE_INJECTION_REACHED')) {
+      $fabricLaunchOut | ForEach-Object { Write-Host $_ }
+    } else {
+      Ko "Fabric MCP launch fixture failed: $($fabricLaunchOut | Out-String)"
+    }
 
-  # Regression for the prior false green: run this aggregate's exact fixture
-  # path in forced-failure mode. The nested aggregate must stay nonzero even
-  # though its probe runs a successful command after the child failure.
-  $priorProbe = $env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE
-  $priorForcedFailure = $env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE
-  $env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE = '1'
-  $env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE = '1'
-  $ErrorActionPreference = 'Continue'
-  $fabricProbeOut = & $psExe -NoProfile -File $PSCommandPath *>&1
-  $fabricProbeRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($null -eq $priorProbe) { Remove-Item Env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE -ErrorAction SilentlyContinue }
-  else { $env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE = $priorProbe }
-  if ($null -eq $priorForcedFailure) { Remove-Item Env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE -ErrorAction SilentlyContinue }
-  else { $env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE = $priorForcedFailure }
-  $fabricProbeText = $fabricProbeOut | Out-String
-  if (
-    $fabricProbeRc -ne 0 -and
-    $fabricProbeText.Contains('FABRIC_MCP_FIXTURE_INJECTION_REACHED') -and
-    $fabricProbeText.Contains('FABRIC_MCP_RUNNER_PROBE child-rc=1 later-rc=0')
-  ) {
-    Ok 'Fabric MCP child failure survives a later successful command and fails the aggregate'
-  } else {
-    Ko "Fabric MCP runner propagation regression failed: rc=$fabricProbeRc output=$fabricProbeText"
+    # Regression for the prior false green: run this aggregate's exact fixture
+    # path in forced-failure mode. The nested aggregate must stay nonzero even
+    # though its probe runs a successful command after the child failure.
+    $priorProbe = $env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE
+    $priorForcedFailure = $env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE
+    $env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE = '1'
+    $env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE = '1'
+    $ErrorActionPreference = 'Continue'
+    $fabricProbeOut = & $psExe -NoProfile -File $PSCommandPath *>&1
+    $fabricProbeRc = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorAction
+    if ($null -eq $priorProbe) { Remove-Item Env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE -ErrorAction SilentlyContinue }
+    else { $env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE = $priorProbe }
+    if ($null -eq $priorForcedFailure) { Remove-Item Env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE -ErrorAction SilentlyContinue }
+    else { $env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE = $priorForcedFailure }
+    $fabricProbeText = $fabricProbeOut | Out-String
+    if (
+      $fabricProbeRc -ne 0 -and
+      $fabricProbeText.Contains('FABRIC_MCP_FIXTURE_INJECTION_REACHED') -and
+      $fabricProbeText.Contains('FABRIC_MCP_RUNNER_PROBE child-rc=1 later-rc=0')
+    ) {
+      Ok 'Fabric MCP child failure survives a later successful command and fails the aggregate'
+    } else {
+      Ko "Fabric MCP runner propagation regression failed: rc=$fabricProbeRc output=$fabricProbeText"
+    }
   }
 
   # --- 8. release transaction ------------------------------------------------
@@ -644,17 +686,19 @@ print("resume verdict contract OK")
     Ko "team knowledge recall fixture failed: $($searchKbOut | Out-String)"
   }
 
-  # --- 9c. Fresh install repairs a Python 3.14-only Fabric prerequisite -------
-  Head 'fresh-install Fabric Python prerequisite'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $pyPrereqOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\install-python-prereq.test.ps1') 2>&1
-  $pyPrereqRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($pyPrereqRc -eq 0) {
-    $pyPrereqOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "fresh-install Python prerequisite fixture failed: $($pyPrereqOut | Out-String)"
+  # --- 9c. EXTENDED LANE: fresh install repairs a Python 3.14-only Fabric prerequisite
+  if ($extendedLane) {
+    Head 'fresh-install Fabric Python prerequisite'
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $pyPrereqOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\install-python-prereq.test.ps1') 2>&1
+    $pyPrereqRc = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorAction
+    if ($pyPrereqRc -eq 0) {
+      $pyPrereqOut | ForEach-Object { Write-Host $_ }
+    } else {
+      Ko "fresh-install Python prerequisite fixture failed: $($pyPrereqOut | Out-String)"
+    }
   }
 
   # --- 9d. Install stops at the ordered prerequisite checklist (H1) ------------
@@ -709,15 +753,22 @@ print("resume verdict contract OK")
     Ko "seed-docs config-set status fixture failed: $($seedOut | Out-String)"
   }
 }
+catch {
+  # An error that escapes a section would otherwise skip every later section and
+  # still end in "passed" with exit 0. Record it so this run fails.
+  Ko "run.ps1 stopped early at line $($_.InvocationInfo.ScriptLineNumber): $($_.Exception.Message)"
+}
 finally {
   $env:PATH = $priorPath
+  if ($priorHomeVars) { foreach ($name in $priorHomeVars.Keys) { [Environment]::SetEnvironmentVariable($name, $priorHomeVars[$name]) } }
   if ($null -eq $priorSkipAz) { Remove-Item Env:\COOP_SKIP_AZ -ErrorAction SilentlyContinue } else { $env:COOP_SKIP_AZ = $priorSkipAz }
   if ($null -eq $priorCoopDir) { Remove-Item Env:\COOP_DIR -ErrorAction SilentlyContinue } else { $env:COOP_DIR = $priorCoopDir }
   if ($null -eq $priorCoopAgentDir) { Remove-Item Env:\COOP_AGENT_DIR -ErrorAction SilentlyContinue } else { $env:COOP_AGENT_DIR = $priorCoopAgentDir }
   if ($null -eq $priorPiAgentDir) { Remove-Item Env:\PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue } else { $env:PI_CODING_AGENT_DIR = $priorPiAgentDir }
   if ($null -eq $priorNoOnboard) { Remove-Item Env:\COOP_NO_ONBOARD -ErrorAction SilentlyContinue } else { $env:COOP_NO_ONBOARD = $priorNoOnboard }
+  if ($null -eq $priorTestExtended) { Remove-Item Env:\COOP_TEST_EXTENDED -ErrorAction SilentlyContinue } else { $env:COOP_TEST_EXTENDED = $priorTestExtended }
   Remove-Item -LiteralPath $stub -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($fail -ne 0) { Write-Host "`n$G_CROSS PowerShell behavioral tests FAILED"; exit 1 }
-Write-Host "$G_CHECK PowerShell behavioral tests passed"
+if ($fail -ne 0) { Write-Host "`n$G_CROSS PowerShell behavioral tests FAILED ($laneName)"; exit 1 }
+Write-Host "$G_CHECK PowerShell behavioral tests passed ($laneName)"

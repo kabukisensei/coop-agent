@@ -1200,14 +1200,25 @@ function Invoke-CoopRelease {
     # silently tagging an unverified release. bin/coop's coop_release tracks the same
     # gate_skipped condition — bash is guaranteed on macOS/Linux, but node/npx are
     # not, so a node-less host fails closed there too.
+    # COOP_TEST_EXTENDED=1 runs BOTH test lanes (gate + extended), so a release
+    # keeps the full coverage that CI splits between ci.yml (gate, every PR) and
+    # extended.yml (nightly). See docs/ci.md. Set only for the test run and then
+    # restored, the same scope as bin/coop's one-command prefix.
     $testsSh = Join-Path (Join-Path $root 'tests') 'run.sh'
     if (Test-Path -LiteralPath $testsSh) {
       if ((Test-Have 'bash') -and (Test-Have 'node')) {
         # Capture combined output and echo it on failure, so a Windows test failure
         # is diagnosable (the bash path cats its log to stderr for the same reason).
-        $testOut = & bash $testsSh 2>&1
-        if ($LASTEXITCODE -eq 0) { Coop-Ok 'tests pass' }
-        else { $testOut | Out-String | Write-Host; Coop-Die 'tests failed (bash tests/run.sh) — fix them, or re-run with --no-check.' }
+        $prevTestExtended = $env:COOP_TEST_EXTENDED
+        $env:COOP_TEST_EXTENDED = '1'
+        try {
+          $testOut = & bash $testsSh 2>&1
+          $testCode = $LASTEXITCODE
+        } finally {
+          $env:COOP_TEST_EXTENDED = $prevTestExtended
+        }
+        if ($testCode -eq 0) { Coop-Ok 'tests pass (gate + extended lanes)' }
+        else { $testOut | Out-String | Write-Host; Coop-Die 'tests failed (COOP_TEST_EXTENDED=1 bash tests/run.sh, gate + extended lanes) — fix them, or re-run with --no-check.' }
       } else {
         Coop-Warn 'bash or node not found — skipping the test suite.'; $gateSkipped = $true
       }

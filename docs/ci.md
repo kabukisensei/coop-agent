@@ -4,6 +4,9 @@ The coop suite ships three CI-ready gates. This page is the copy-paste recipe fo
 running them in **GitHub Actions** and **Azure DevOps** — same gates, same flags,
 same exit codes on both.
 
+Maintainers: coop-agent's own test lanes and CI checks are at the end of this page, in
+[coop-agent's own CI (maintainers): gate and extended lanes](#coop-agents-own-ci-maintainers-gate-and-extended-lanes).
+
 | Gate | Tool | Runs against | Fails the build when (`--strict`) |
 | --- | --- | --- | --- |
 | 1 — SQL standards | `coop-sql-review` | the SQL repo (`.sql` files) | findings at/above the severity floor, a **real syntax error**, or zero `.sql` files checked |
@@ -325,6 +328,119 @@ pipeline would go red on a change nobody made. Bump the pins deliberately (a
 small PR that updates the `==` versions), the same way you'd bump any other CI
 dependency. `pipx install 'pkg==X.Y.Z'` is the whole mechanism; `pipx` also
 accepts `--pip-args` for anything fancier (extra indexes, constraints files).
+
+## coop-agent's own CI (maintainers): gate and extended lanes
+
+Everything above is the pipeline you give a client repo. This section covers
+testing coop-agent itself, whose test suite is split into two **lanes**. Here,
+"gate" names the default lane and the one `gate` check in `ci.yml`; the
+client-repo gates above are a different thing.
+
+### The lanes
+
+| Lane | Run it locally | Where CI runs it | What it holds |
+| --- | --- | --- | --- |
+| gate (default) | `bash tests/run.sh` | `.github/workflows/ci.yml` on every PR and every push to `main` | Deterministic logic tests. The same workflow also runs `bash -n` (including stock bash 3.2 on macOS), shellcheck, `bash scripts/check-parity.sh`, JSON, YAML and skill validation, the esbuild transpile, and the `.ps1` parse under pwsh 7 and Windows PowerShell 5.1 with PSScriptAnalyzer. |
+| extended | `COOP_TEST_EXTENDED=1 bash tests/run.sh` | `.github/workflows/extended.yml`: nightly, on demand, and on a PR that changes that file | The gate lane plus the timing and process fixtures. The two lanes together are the full suite. |
+| Pi matrix | `bash scripts/test-pi-matrix.sh <pi-version>` or `pwsh -NoProfile -File scripts/test-pi-matrix.ps1 -PiVersion <pi-version>` (needs the network; installs that Pi from npm into a temp prefix) | `.github/workflows/pi-matrix.yml`: nightly, on demand, and on a PR that touches Pi alignment | `scripts/test-pi-matrix.ps1` against the pinned Pi release on Windows. |
+
+`COOP_TEST_EXTENDED` is the only switch. Unset or `0` runs the gate lane; `1`
+runs both lanes. `tests/run.ps1` reads the same variable. Each run names its lane
+when it starts and again in its last line; for `tests/run.sh` that line is
+`✓ all tests passed (gate lane)` or `✓ all tests passed (gate + extended lanes)`.
+
+Both `ci.yml` and `extended.yml` run the suite on three hosts: ubuntu
+(`bash tests/run.sh`, then `tests/run.ps1` under pwsh 7), Windows Git Bash
+(`bash tests/run.sh`) and Windows PowerShell 5.1
+(`powershell -NoProfile -File tests\run.ps1`, the runtime `bin/coop.cmd` uses).
+`extended.yml` also runs every case of `tests/azcache.test.sh` under macOS stock
+bash 3.2.
+
+### Which suites are in which lane
+
+The run scripts are the list; this page does not repeat it.
+
+- `tests/run.sh` runs the gate suites first. The extended suites are in one block
+  headed `EXTENDED LANE` at the end of the file, which runs only when
+  `COOP_TEST_EXTENDED=1`.
+- `tests/run.ps1` marks each extended section `EXTENDED LANE` where it stands,
+  because some sections depend on their position.
+- Some gate files keep a few extended-only cases (hang, watchdog or
+  live-process cases) behind the same variable inside the file. The header of
+  `tests/run.sh` names them.
+- `tests/repro-tmp-contamination.sh` is a manual reproducer, not a test, and no
+  lane runs it. Run it by hand with `bash tests/repro-tmp-contamination.sh`.
+
+### Fixture rules
+
+- A gate fixture is deterministic logic. It may not sleep, poll or wait for a
+  subprocess, drive a PTY, wait on a marker file, use a hang or timeout fixture,
+  depend on machine load, or reach the network.
+- No fixture touches the checkout that runs the tests. A fixture that runs
+  `git fetch`, `git pull`, or doctor (which fetches `origin` on a throttle) works
+  on a copy of the tree without `.git` (the #104 pattern). A fixture that only
+  runs doctor may instead pre-write a fresh `.coop-fetch-stamp` in its temp agent
+  dir so the throttled fetch never runs (`tests/standards-rev9.test.mjs`).
+- No fixture touches the real home. Point `HOME`, `USERPROFILE`, `COOP_DIR`,
+  `COOP_AGENT_DIR`, `PI_CODING_AGENT_DIR` and the standards roots
+  (`COOP_STANDARDS_ROOT`, `COOP_STANDARDS_STATE`, `COOP_STANDARDS_SNAPSHOT_ROOT`)
+  at temp directories, so the fixture is also safe to run on its own. As a
+  backstop, `tests/run.sh` gives every gate test a temp home: it points `HOME`
+  and `USERPROFILE` at a temp directory and unsets the other variables so they
+  resolve inside it. `tests/run.ps1` does the same for the processes it starts,
+  with `COOP_DIR` and the agent dirs pointed at temp directories of their own.
+- A Windows-only behavior gets one Windows test, not a synthetic matrix.
+- A bug fix adds the one test that reproduced the bug.
+- A new timing or process fixture goes in the extended lane, and its PR says why.
+- Moving a test between lanes never weakens it. No assertion is skipped,
+  disabled or loosened to turn a lane green.
+- The repo-wide `.ps1` UTF-8 BOM check lives in one place,
+  `scripts/check-parity.sh`. Do not add another.
+
+### Running the extended lane
+
+- Locally: `COOP_TEST_EXTENDED=1 bash tests/run.sh`.
+- In CI: Actions -> extended -> Run workflow, on any branch.
+- `coop release` runs both lanes. Its pre-tag gate (in `bin/coop` and
+  `bin/coop.ps1`) runs `COOP_TEST_EXTENDED=1 bash tests/run.sh`, so every release
+  keeps the full suite's coverage. See `RELEASE.md`.
+
+The Windows terminal-workstation acceptance workflow runs `tests\run.ps1` with
+`COOP_TEST_EXTENDED=1`, so its behavioral-suite receipt covers both lanes.
+
+The extended block of `tests/run.sh` runs with the caller's home, because some
+extended fixtures predate the rules above. `tests/review.test.sh` can write the
+real `~/.coop/standards`, `tests/doctor.test.sh` runs doctor against the real home
+and lets it fetch this checkout's `origin`, and `tests/update-guard.test.sh` runs
+`scripts/update.sh` with the real `HOME`, `COOP_DIR` and agent dir.
+`tests/home-guard.test.sh` reads the real `~/.local/bin` and `~/.coop` on purpose,
+to prove the fleet paths leave them alone. Until the first three are fixed, run
+the extended lane locally only where those writes are acceptable.
+
+### Pi matrix triggers
+
+`pi-matrix.yml` runs nightly, from Actions -> pi-matrix -> Run workflow, and on a
+pull request that changes any of these paths:
+
+- `scripts/sync.sh`, `scripts/sync.ps1`
+- `lib/_extdeps.py`
+- `config/release-manifest.json`
+- `extensions/**`
+- `scripts/test-pi-matrix.*`
+- `tests/guardrails-pi-runner.test.mjs`
+- `.github/workflows/pi-matrix.yml`
+
+A PR that changes how coop installs, aligns or loads Pi without touching these
+paths should run the workflow by hand before it merges.
+
+### The `gate` check
+
+`ci.yml` ends with a job named `gate`. It needs every other `ci.yml` job, runs
+even when one of them fails (`if: always()`), and passes only when every one of
+them finished with `success`, so a failed, cancelled or skipped job fails it.
+If `main` requires a status check, require `gate`; the job names above it can
+then change without touching the rule. A new `ci.yml` job must be added to the
+`gate` job's `needs:` list. `extended.yml` and `pi-matrix.yml` do not feed `gate`.
 
 ## See also
 
