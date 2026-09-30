@@ -988,7 +988,7 @@ function Sync-CoopExtDeps {
 # interactive console (stdin and stderr not redirected, or COOP_ASSUME_YES=1),
 # coop runs `az login --tenant <id>` itself: no question, bounded to 5 minutes,
 # and Ctrl-C cancels it (read as a key, so it does not stop the launch). With
-# -NewWindow (Windows `coop web`, which the 'coop' shortcut runs in a minimized
+# -NewWindow (the retired `coop web`, which the old 'coop' shortcut ran in a minimized
 # console) the sign-in opens in its own visible window, and a failed, cancelled
 # or timed-out sign-in also shows its line in a window until Enter. A timeout or
 # a non-authentication error never opens a sign-in. Any failure prints ONE line
@@ -1878,4 +1878,42 @@ function Invoke-CoopScript {
   $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
   & $psExe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @ScriptArgs
   return $LASTEXITCODE
+}
+
+# --- Double-click launcher (Start Menu + Desktop) ------------------------------
+# One "coop" shortcut on the Start Menu and Desktop opens the terminal agent through
+# bin\coop-desktop.ps1, which finds or installs coop, runs it, and keeps the window
+# open on error. The browser chat is retired (master plan S5): the old "coop"
+# shortcut ran `coop web` in a minimized console, and "coop (terminal)" was the
+# terminal. install writes the shortcut; update rewrites it only where a coop
+# shortcut already exists (-OnlyIfPresent), so old shortcuts are repaired and a
+# removed one stays removed. Best-effort: returns $true when a shortcut was written.
+function Set-CoopDesktopShortcuts {
+  param([switch]$OnlyIfPresent)
+  if ($env:OS -ne 'Windows_NT') { return $false }
+  $desktopLauncher = Join-Path $script:CoopRoot 'bin\coop-desktop.ps1'
+  if (-not (Test-Path -LiteralPath $desktopLauncher)) { return $false }
+  $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $icon  = Join-Path $script:CoopRoot 'themes\coop.ico'
+  $ws = New-Object -ComObject WScript.Shell
+  $wrote = $false
+  foreach ($dir in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
+    if (-not $dir) { continue }
+    $main = Join-Path $dir 'coop.lnk'
+    $legacyTerminal = Join-Path $dir 'coop (terminal).lnk'
+    $present = (Test-Path -LiteralPath $main) -or (Test-Path -LiteralPath $legacyTerminal)
+    if ($OnlyIfPresent -and -not $present) { continue }
+    $sc = $ws.CreateShortcut($main)
+    $sc.TargetPath       = $psExe
+    $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`""
+    $sc.WorkingDirectory = $HOME
+    $sc.Description      = 'coop - the Cooptimize analytics agent'
+    $sc.WindowStyle      = 1
+    # ',0' = explicit icon index; some shells show a generic icon without it.
+    if (Test-Path -LiteralPath $icon) { $sc.IconLocation = "$icon,0" }
+    $sc.Save()
+    $wrote = $true
+    if (Test-Path -LiteralPath $legacyTerminal) { Remove-Item -LiteralPath $legacyTerminal -Force -ErrorAction SilentlyContinue }
+  }
+  return $wrote
 }

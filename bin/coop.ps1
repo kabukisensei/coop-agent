@@ -150,7 +150,6 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop install              Fresh-install / bootstrap everything (idempotent)
   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
-  coop web                  Open a friendly browser UI over the agent (experimental)
   coop onboard              First-run global onboarding (creates ~/.coop/user.json)
   coop profile              Show your COOP user profile
   coop profile edit         Edit your COOP user profile
@@ -248,7 +247,7 @@ function Invoke-CoopLaunchPreflight {
 # --- Assemble the exact Pi launch spec (args + brand env) --------------------
 # SINGLE SOURCE OF TRUTH for how coop launches Pi (mirror of bin/coop's
 # coop_build_pi_args). Both Invoke-LaunchPi (the terminal agent) and
-# Invoke-CoopLaunchSpec (`coop launch-spec`, JSON for a future coop web bridge)
+# Invoke-CoopLaunchSpec (`coop launch-spec`, JSON for the future desktop app)
 # consume this, so the terminal and any other surface can NEVER drift. Returns the
 # pi args array and exports the brand env. Read-only; never launches pi.
 function Build-CoopPiArgs {
@@ -507,10 +506,10 @@ function Invoke-LaunchPi {
   exit $script:CoopPiRc
 }
 
-# --- Emit the launch spec (for a UI / coop web bridge) -----------------------
+# --- Emit the launch spec (for the future desktop app) -----------------------
 # Internal/advanced. `coop launch-spec` prints the resolved pi invocation;
-# `--json` emits {"bin","args","env"} for a programmatic consumer — e.g. a future
-# coop web bridge that spawns `pi --mode rpc` with the SAME governed spec the
+# `--json` emits {"bin","args","env"} for a programmatic consumer — e.g. the
+# future desktop app, which spawns `pi --mode rpc` with the SAME governed spec the
 # terminal uses. Read-only: builds the spec, never launches pi.
 function Invoke-CoopLaunchSpec {
   param([string[]] $SpecArgs = @())
@@ -521,7 +520,7 @@ function Invoke-CoopLaunchSpec {
     if ($env:PI_SKIP_VERSION_CHECK) { $envMap['PI_SKIP_VERSION_CHECK'] = $env:PI_SKIP_VERSION_CHECK }
     if ($env:COOP_VIBES_DIR)      { $envMap['COOP_VIBES_DIR']      = $env:COOP_VIBES_DIR }
     if ($env:COOP_SPLASH_FILE)    { $envMap['COOP_SPLASH_FILE']    = $env:COOP_SPLASH_FILE }
-    # The JSON SHAPE ({bin,args,env}) is the contract with web/server.mjs — the
+    # The JSON SHAPE ({bin,args,env}) is the contract with programmatic consumers — the
     # formatting (bash pretty-prints, this compresses) intentionally is not.
     [pscustomobject]@{ bin = 'pi'; args = @($piArgs); env = $envMap } | ConvertTo-Json -Depth 5 -Compress
   } else {
@@ -530,28 +529,21 @@ function Invoke-CoopLaunchSpec {
   }
 }
 
-# --- coop web (experimental): friendly browser UI over `pi --mode rpc` --------
-# Spawns the SAME governed coop the terminal runs, but drives it from a local
-# browser window (SSE bridge). Uses the shared launch spec so it can never drift
-# from the terminal. Localhost + one-time token; see web\server.mjs.
-function Invoke-CoopWeb {
-  param([string[]] $WebArgs = @())
-  if (-not (Test-Have 'pi'))   { Coop-Die 'pi is not installed. Run: coop install' }
-  if (-not (Test-Have 'node')) { Coop-Die 'Node.js is required for coop web. Run: coop install' }
-  Invoke-CoopLaunchPreflight
-  # Same Fabric/Power BI token check (and automatic sign-in) the terminal launch
-  # does. The 'coop' shortcut runs `coop web` in a minimized console (see
-  # scripts/install.ps1), where a sign-in dialog could stay hidden, so on Windows
-  # the sign-in opens in its own visible window.
-  Invoke-CoopAzPreflight -NewWindow
-  $env:COOP_LAUNCH_SPEC = (Invoke-CoopLaunchSpec @('--json'))
-  $py = Get-CoopPython
-  Remove-Item Env:COOP_PYTHON_BIN -ErrorAction SilentlyContinue
-  if ($py) { $env:COOP_PYTHON_BIN = $py }
-  Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
-  $server = Join-Path $script:CoopRoot 'web\server.mjs'
-  & node $server @WebArgs
-  exit $LASTEXITCODE
+# --- coop web (retired) --------------------------------------------------------
+# The browser UI was removed (master plan S5); the installable desktop app comes
+# later. Older 'coop' shortcuts still run `coop web` in a minimized console, so
+# restore that window and start the terminal agent instead of failing. `coop update`
+# rewrites those shortcuts.
+function Invoke-CoopWebRetired {
+  if ($env:OS -eq 'Windows_NT') {
+    try {
+      Add-Type -Namespace CoopWin -Name Console -MemberDefinition '[DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow(); [DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr h, int n);' -ErrorAction Stop
+      $h = [CoopWin.Console]::GetConsoleWindow()
+      if ($h -ne [System.IntPtr]::Zero) { [void][CoopWin.Console]::ShowWindow($h, 9) }  # SW_RESTORE
+    } catch { }
+  }
+  Coop-Warn 'coop web was removed; starting coop in this terminal' 'run: coop update (it refreshes the coop shortcut)'
+  Invoke-LaunchPi
 }
 
 # --- Tool wrappers -----------------------------------------------------------
@@ -1357,7 +1349,7 @@ switch -CaseSensitive ($cmd) {
     exit $LASTEXITCODE
   }
   'sync' { & (Join-Path $script:CoopRoot 'scripts\sync.ps1') @rest; exit $LASTEXITCODE }
-  'web' { Invoke-CoopWeb $rest; break }
+  'web' { Invoke-CoopWebRetired; break }
   'launch-spec' { Invoke-CoopLaunchSpec $rest; break }
   'onboard' { Invoke-CoopOnboard $rest; break }
   'profile' { Invoke-CoopProfile $rest; break }
