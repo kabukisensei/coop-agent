@@ -540,6 +540,43 @@ await t("mcpMutationLabel flags mutating MCP/Fabric actions, not reads or safe t
     assert.equal(mcpMutationLabel(name), null, `${name} should NOT be flagged`);
   }
 });
+await t("every mutating Fabric MCP 1.3.0 / 1.4.0 tool asks; every read passes (#154)", () => {
+  // The pinned server's full tool inventory. 1.4.0 renamed tools to kebab-case;
+  // both spellings must classify the same. Update these lists with each bump.
+  const writes = [
+    "core_create-item", "datafactory_create-dataflow", "datafactory_create-pipeline", "datafactory_run-pipeline",
+    "onelake_create-directory", "onelake_create-or-update-data-access-role", "onelake_create-shortcut-adls-gen2",
+    "onelake_create-shortcut-amazon-s3", "onelake_create-shortcut-azure-blob", "onelake_create-shortcut-dataverse",
+    "onelake_create-shortcut-gcs", "onelake_create-shortcut-onedrive-sharepoint", "onelake_create-shortcut-onelake",
+    "onelake_create-shortcut-s3-compatible", "onelake_delete-data-access-role", "onelake_delete-directory",
+    "onelake_delete-file", "onelake_delete-shortcut", "onelake_modify-diagnostics", "onelake_modify-immutability-policy",
+    "onelake_reset-shortcut-cache", "onelake_upload-file",
+  ];
+  const reads = [
+    "core_search-catalog", "datafactory_execute-query", "datafactory_get-pipeline", "datafactory_list-dataflows",
+    "datafactory_list-pipelines", "docs_api-examples", "docs_best-practices", "docs_item-api-spec", "docs_item-definitions",
+    "docs_list-item-types", "docs_platform-api-spec", "docs_workloads", "onelake_download-file", "onelake_get-data-access-role",
+    "onelake_get-settings", "onelake_get-shortcut", "onelake_get-table", "onelake_get-table-config", "onelake_get-table-namespace",
+    "onelake_list-data-access-roles", "onelake_list-files", "onelake_list-items", "onelake_list-items-dfs",
+    "onelake_list-shortcuts", "onelake_list-table-namespaces", "onelake_list-tables", "onelake_list-workspaces",
+  ];
+  const snake = (name) => name.replace(/-/g, "_");
+  for (const name of writes) {
+    for (const spelled of [name, snake(name)]) {
+      assert.ok(mcpMutationLabel({ outerTool: "mcp", innerTool: spelled, server: "fabric" }), `${spelled} should ask`);
+      assert.ok(mcpMutationLabel(`mcp__fabric__${spelled}`), `direct ${spelled} should ask`);
+    }
+  }
+  for (const name of reads) {
+    for (const spelled of [name, snake(name)]) {
+      assert.equal(mcpMutationLabel({ outerTool: "mcp", innerTool: spelled, server: "fabric" }), null, `${spelled} should NOT ask`);
+    }
+  }
+  // SQL row reads stay with the live-read rules, not the mutation prompt.
+  for (const name of ["run_sql", "execute_query", "fabric-sqlendpoint-execute_query", "runsql", "sql_query", "execute_dax_query"]) {
+    assert.equal(mcpMutationLabel({ outerTool: "mcp", innerTool: name, server: "fabric-sqlendpoint" }), null, `${name} should NOT ask as a mutation`);
+  }
+});
 await t("blocks a declined mutating MCP tool call", async () => {
   assert.equal(blocked(await handle({ toolName: "fabric_delete_workspace", input: {} }, { ...ctx, ui: { confirm: async () => false, notify: () => {} } })), true);
 });
@@ -558,6 +595,199 @@ await t("mcpScript is blocked: its MCP calls bypass the tool_call hook", async (
   assert.equal(blocked(await handle(script, { ...ctx, ui })), true);
   assert.equal(asked, 0, "no approval can cover calls the hook never sees");
   assert.equal(blocked(await handle(script, { cwd: ctx.cwd, hasUI: false })), true);
+});
+await t("an edit approval can last for the session; deletes, production and other servers still ask (#156)", async () => {
+  await handleSessionStart({}, ctx);
+  let asked = 0; let pick = "session";
+  // Edits a session approval could cover get a three-way select; the rest (deletes,
+  // production) get a yes/no confirm with no session option.
+  let offered = [];
+  const ui = { notify: () => {}, confirm: async () => { asked++; offered = []; return pick !== "decline"; },
+    select: async (_title, options) => { asked++; offered = options; return pick === "session" ? options[1] : pick === "once" ? options[0] : options[2]; } };
+  const c = { ...ctx, ui };
+  const write = (tool, server = "fabric", args = { workspace: "dev" }) => ({ toolName: "mcp", input: { server, tool, args } });
+  // First edit asks once; choosing "for this session" covers later edits to that server.
+  assert.equal(blocked(await handle(write("onelake_create-directory"), c)), false);
+  assert.equal(asked, 1);
+  assert.equal(blocked(await handle(write("core_create-item"), c)), false);
+  assert.equal(blocked(await handle(write("dataset_update_settings"), c)), false);
+  assert.equal(blocked(await handle({ toolName: "mcp__fabric", input: { tool: "datafactory_create-pipeline", args: {} } }, c)), false);
+  assert.equal(asked, 1, "approved server edits run without asking again");
+  // Deletes and production still ask every time, even with the approval.
+  pick = "decline";
+  assert.equal(blocked(await handle(write("onelake_delete-file"), c)), true);
+  assert.equal(asked, 2);
+  assert.deepEqual(offered, [], "a delete never offers a session approval");
+  assert.equal(blocked(await handle(write("core_create-item", "fabric", { workspace: "sales-prod" }), c)), true);
+  assert.equal(asked, 3);
+  // Another server needs its own approval.
+  assert.equal(blocked(await handle(write("wit_work_item_write", "azure-devops", { title: "x" }), c)), true);
+  assert.equal(asked, 4);
+  // "Allow once" does not grant.
+  pick = "once";
+  assert.equal(blocked(await handle(write("wit_work_item_write", "azure-devops", { title: "x" }), c)), false);
+  assert.equal(asked, 5);
+  assert.equal(blocked(await handle(write("wit_work_item_write", "azure-devops", { title: "y" }), c)), false);
+  assert.equal(asked, 6);
+  // A new session starts with no approvals.
+  await handleSessionStart({}, ctx);
+  pick = "decline";
+  assert.equal(blocked(await handle(write("core_create-item"), c)), true);
+  assert.equal(asked, 7);
+  // Headless never gains an approval it did not have.
+  assert.equal(blocked(await handle(write("core_create-item"), { cwd: ctx.cwd, hasUI: false })), true);
+});
+await t("/coop-approvals shows and revokes session edit approvals (#156)", async () => {
+  await handleSessionStart({}, ctx);
+  const notes = [];
+  const ui = { notify: (m) => notes.push(m), confirm: async () => true, select: async (_t, options) => options[1] };
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: {} } }, { ...ctx, ui })), false);
+  await cmds["coop-approvals"].handler("status", { ...ctx, ui });
+  assert.match(notes.at(-1), /active for this session[\s\S]*fabric/);
+  await cmds["coop-approvals"].handler("revoke", { ...ctx, ui });
+  let asked = 0;
+  const ask = { notify: () => {}, confirm: async () => true, select: async (_t, options) => { asked++; return options[2]; } };
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: {} } }, { ...ctx, ui: ask })), true);
+  assert.equal(asked, 1, "revoke makes the next edit ask again");
+});
+await t("a Warehouse SQL write approval lasts for the session; DELETE still asks (#156)", async () => {
+  await handleSessionStart({}, ctx);
+  let asked = 0; let pick = "session";
+  const ui = { notify: () => {}, confirm: async () => { asked++; return pick !== "decline"; },
+    select: async (_t, options) => { asked++; return pick === "session" ? options[1] : options[2]; } };
+  const c = { ...ctx, ui };
+  const sql = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
+  assert.equal(blocked(await handle(sql("INSERT INTO dbo.T (a) VALUES (1)"), c)), false);
+  assert.equal(blocked(await handle(sql("UPDATE dbo.T SET a = 2 WHERE id = 1"), c)), false);
+  assert.equal(asked, 1, "the second write rides the session approval");
+  pick = "decline";
+  assert.equal(blocked(await handle(sql("DELETE FROM dbo.T WHERE id = 1"), c)), true);
+  assert.equal(asked, 2, "a DELETE still asks");
+  await handleSessionStart({}, ctx);
+});
+await t("session approval keys: SQL writes vs destructive SQL, deletes and production (#156)", () => {
+  const sql = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
+  for (const q of ["INSERT INTO dbo.T (a) VALUES (1)", "UPDATE dbo.T SET a = 2 WHERE id = 1", "CREATE OR ALTER VIEW dbo.V AS SELECT 1 AS a", "ALTER TABLE dbo.T ADD b int", "UPDATE dbo.T SET note = 'DELETE me' WHERE id = 1"]) {
+    assert.equal(cg.sessionApprovalKey(sql(q)), "sql:fabric-sqlendpoint", q);
+  }
+  for (const q of ["DELETE FROM dbo.T", "DROP TABLE dbo.T", "TRUNCATE TABLE dbo.T", "MERGE dbo.T AS t USING s ON 1=1 WHEN MATCHED THEN DELETE;", "EXEC dbo.p", "INSERT INTO dbo.T VALUES (1); DELETE FROM dbo.T", "SELECT * INTO dbo.T2 FROM dbo.T", "GRANT SELECT ON dbo.T TO u", "SELECT TOP 5 * FROM dbo.T"]) {
+    assert.equal(cg.sessionApprovalKey(sql(q)), null, q);
+  }
+  assert.equal(cg.sessionApprovalKey(sql("INSERT INTO dbo.T VALUES (1)"), "production"), null, "a production target always asks");
+  assert.equal(cg.sessionApprovalKey({ toolName: "mcp", input: { server: "fabric", tool: "onelake_delete-file", args: {} } }), null);
+  assert.equal(cg.sessionApprovalKey({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: { workspace: "prod" } } }), null);
+  assert.equal(cg.sessionApprovalKey({ toolName: "mcp", input: { server: "fabric", tool: "onelake_list-files", args: {} } }), null, "reads are not edits");
+  assert.equal(cg.sessionApprovalKey({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: {} } }), "mcp:fabric");
+});
+// --- Power BI Modeling MCP operations (#159) -------------------------------------
+// The operation lists below are the 1.0.0 server's own (each tool's `operation`
+// description, read from the --readwrite tool list on 2026-09-30).
+const MODELING_OPS = {
+  measure_operations: "Help, Create, Update, Delete, Get, List, Rename, Move, ExportTMDL",
+  partition_operations: "Help, List, Get, Create, Update, Delete, RefreshWithXMLA, RefreshWithAPI, CheckStatusOfRefreshWithAPI, CancelRefreshWithAPI, Rename, ExportTMDL, ExportTMSL",
+  perspective_operations: "Help, List, Get, Create, Update, Delete, Rename, ListTables, GetTables, AddTables, UpdateTables, RemoveTables, ListColumns, GetColumns, AddColumns, RemoveColumns, ListMeasures, GetMeasures, AddMeasures, RemoveMeasures, ListHierarchies, GetHierarchies, AddHierarchies, RemoveHierarchies, ExportTMDL",
+  transaction_operations: "Help, Begin, Commit, Rollback, GetStatus, ListActive",
+  relationship_operations: "Help, List, Get, Create, Update, Delete, Rename, Activate, Deactivate, Find, ExportTMDL",
+  trace_operations: "Help, Start, Stop, Pause, Resume, Clear, Get, List, Report, ExportJSON",
+  connection_operations: "Help, Connect, ConnectFabric, ConnectFolder, ConnectBimFile, Disconnect, GetConnection, ListConnections, ListLocalInstances",
+  object_translation_operations: "Help, Create, Update, Delete, Get, List",
+  table_operations: "Help, Create, CreateFieldParameter, Update, Delete, Get, List, RefreshWithXMLA, RefreshWithAPI, CheckStatusOfRefreshWithAPI, CancelRefreshWithAPI, Rename, MarkAsDateTable, GetSchema, ExportTMDL, ExportTMSL",
+  database_operations: "Help, List, Update, ImportFromTmdlFolder, ExportToTmdlFolder, ImportFromBimFile, ExportToBimFile, DeployToFabric, Create, ExportTMDL, ExportTMSL",
+  security_role_operations: "Help, Create, Update, Delete, Get, List, Rename, CreatePermissions, UpdatePermissions, DeletePermissions, GetPermissions, ListPermissions, GetEffectivePermissions, ExportTMDL, ExportTMSL",
+  column_operations: "Help, Create, Update, Delete, Get, List, Rename, ExportTMDL",
+  calendar_operations: "Help, Create, Update, Delete, Get, List, Rename, ExportTMDL, CreateColumnGroups, UpdateColumnGroups, DeleteColumnGroups, GetColumnGroups, ListColumnGroups",
+  model_operations: "Help, Get, Create, Update, RefreshWithXMLA, RefreshWithAPI, CheckStatusOfRefreshWithAPI, CancelRefreshWithAPI, GetStats, Rename, ExportTMDL",
+  calculation_group_operations: "Help, CreateGroup, UpdateGroup, DeleteGroup, GetGroup, ListGroups, RenameGroup, CreateItems, UpdateItems, DeleteItems, GetItems, ListItems, RenameItems, ReorderItems, ExportTMDL",
+  dax_query_operations: "Help, Execute, Validate, ClearCache",
+  named_expression_operations: "Help, Create, Update, Delete, Get, List, Rename, CreateParameter, UpdateParameter, ExportTMDL",
+  query_group_operations: "Help, Create, Update, Delete, Get, List, ExportTMDL",
+  function_operations: "Help, Create, Update, Delete, Get, List, Rename, ExportTMDL",
+  user_hierarchy_operations: "Help, List, Get, Create, Update, Delete, Rename, GetColumns, AddLevels, RemoveLevels, UpdateLevels, RenameLevels, ReorderLevels, ExportTMDL",
+  culture_operations: "Help, Create, Update, Delete, Get, List, Rename, GetValidNames, GetValidDetails, GetDetailsByName, GetDetailsByLCID, ExportTMDL",
+};
+const expectedModelingClass = (op) => {
+  if (/^(Delete|DeployToFabric|ImportFrom)/.test(op)) return "always-ask";
+  if (/^(Help|Get|List|Find|Export(TMDL|TMSL)$|Validate|Report|Begin|Rollback|Connect|Disconnect|Start|Stop|Pause|Resume|Clear$|CheckStatus|Execute)/.test(op)) return "read";
+  return "edit";
+};
+const modeling = (tool, operation, extra = {}) =>
+  ({ toolName: "mcp", input: { server: "powerbi-modeling-mcp", tool, args: { request: { operation, ...extra } } } });
+
+await t("every Power BI Modeling operation is classified: reads pass, edits ask, deletes always ask (#159)", () => {
+  let count = 0;
+  for (const [tool, list] of Object.entries(MODELING_OPS)) {
+    for (const op of list.split(", ")) {
+      count++;
+      const want = expectedModelingClass(op);
+      assert.equal(cg.classifyModelingOperation(tool, op), want, `${tool} ${op}`);
+      const label = cg.mcpEditLabel(modeling(tool, op));
+      if (want === "read") assert.equal(label, null, `${tool} ${op} is a read`);
+      else assert.match(label, new RegExp(`powerbi-modeling-mcp/${tool} ${op}`), `${tool} ${op} is an edit`);
+      const key = cg.sessionApprovalKey(modeling(tool, op));
+      assert.equal(key, want === "edit" ? "mcp:powerbi-modeling-mcp" : null, `${tool} ${op} session key`);
+    }
+  }
+  assert.ok(count > 200, `covers the full 1.0.0 operation list (${count})`);
+  // Unknown, missing and differently-cased operations.
+  assert.equal(cg.classifyModelingOperation("measure_operations", "Obliterate"), "always-ask");
+  assert.equal(cg.classifyModelingOperation("measure_operations", undefined), "always-ask");
+  assert.equal(cg.classifyModelingOperation("measure_operations", "create"), "edit");
+  assert.equal(cg.classifyModelingOperation("measure_operations", " DELETE "), "always-ask");
+  // Production targets never get a session key.
+  assert.equal(cg.sessionApprovalKey(modeling("measure_operations", "Update", { connectionName: "Sales-Prod" })), null);
+  // A bare or prefixed tool name through the proxy is still classified; another
+  // server's *_operations tool is not this one.
+  assert.match(cg.mcpEditLabel({ toolName: "mcp", input: { tool: "measure_operations", args: { request: { operation: "Create" } } } }), /measure_operations Create/);
+  assert.match(cg.mcpEditLabel({ toolName: "mcp", input: { tool: "powerbi_modeling_mcp_table_operations", args: JSON.stringify({ request: { operation: "Delete" } }) } }), /Delete/);
+  assert.match(cg.mcpEditLabel({ toolName: "mcp", input: { tool: "table_operations", args: { request: JSON.stringify({ operation: "Update" }) } } }), /Update/);
+  assert.equal(cg.mcpEditLabel({ toolName: "mcp", input: { server: "azure-devops", tool: "table_operations", args: { request: { operation: "Create" } } } }), null);
+});
+await t("Power BI Modeling edits: one approval covers the task; deletes and production ask every time (#159)", async () => {
+  await handleSessionStart({}, ctx);
+  let asked = 0; let pick = "session"; let offered = [];
+  const ui = { notify: () => {}, confirm: async () => { asked++; offered = []; return pick !== "decline"; },
+    select: async (_t, options) => { asked++; offered = options; return pick === "session" ? options[1] : pick === "once" ? options[0] : options[2]; } };
+  const c = { ...ctx, ui };
+  // Reads never ask.
+  for (const [tool, op] of [["connection_operations", "ListLocalInstances"], ["connection_operations", "Connect"], ["measure_operations", "List"], ["table_operations", "GetSchema"], ["model_operations", "ExportTMDL"]]) {
+    assert.equal(blocked(await handle(modeling(tool, op), c)), false, `${tool} ${op}`);
+  }
+  assert.equal(asked, 0, "reads never ask");
+  // The first edit asks; "for this session" covers the rest of the task's edits.
+  assert.equal(blocked(await handle(modeling("measure_operations", "Create", { definitions: [{ name: "Total Sales" }] }), c)), false);
+  assert.equal(asked, 1);
+  assert.match(offered[1], /powerbi-modeling-mcp edits for this session/);
+  for (const [tool, op] of [["measure_operations", "Update"], ["measure_operations", "Rename"], ["relationship_operations", "Create"], ["column_operations", "Update"], ["table_operations", "RefreshWithXMLA"], ["transaction_operations", "Commit"], ["calculation_group_operations", "CreateItems"]]) {
+    assert.equal(blocked(await handle(modeling(tool, op), c)), false, `${tool} ${op}`);
+  }
+  assert.equal(asked, 1, "later edits ride the session approval");
+  // Deletes, whole-model imports, deploys, unknown operations and production ask
+  // every time and never offer the session option.
+  pick = "decline";
+  for (const [tool, op, extra] of [["measure_operations", "Delete"], ["calculation_group_operations", "DeleteItems"], ["database_operations", "ImportFromTmdlFolder"], ["database_operations", "DeployToFabric"], ["measure_operations", "Obliterate"], ["measure_operations", "Update", { connectionName: "finance-production" }]]) {
+    const before = asked;
+    assert.equal(blocked(await handle(modeling(tool, op, extra), c)), true, `${tool} ${op} is blocked when declined`);
+    assert.equal(asked, before + 1, `${tool} ${op} asks`);
+    assert.deepEqual(offered, [], `${tool} ${op} never offers a session approval`);
+  }
+  // Edits name only a connection, so once the session connects to anything naming
+  // production, every model edit asks, even with the session approval.
+  pick = "session";
+  assert.equal(blocked(await handle(modeling("measure_operations", "Update", { connectionName: "c1" }), c)), false);
+  const approved = asked;
+  assert.equal(blocked(await handle(modeling("connection_operations", "ConnectFabric", { workspaceName: "Finance Production", semanticModelName: "Sales" }), c)), false);
+  assert.equal(asked, approved + 1, "connecting to production is a production read, which asks");
+  pick = "decline";
+  assert.equal(blocked(await handle(modeling("measure_operations", "Update", { connectionName: "c1" }), c)), true);
+  assert.equal(asked, approved + 2, "an edit after a production connection asks");
+  assert.deepEqual(offered, [], "and never offers the session option");
+  // A new session starts with no approval, and headless never gains one.
+  await handleSessionStart({}, ctx);
+  assert.equal(blocked(await handle(modeling("measure_operations", "Update"), { cwd: ctx.cwd, hasUI: false })), true);
+  const before = asked;
+  assert.equal(blocked(await handle(modeling("measure_operations", "Update"), c)), true);
+  assert.equal(asked, before + 1, "a new session asks again");
+  await handleSessionStart({}, ctx);
 });
 await t("headless approval-required mutations fail closed while reads pass", async () => {
   const headless = { cwd: ctx.cwd, hasUI: false };

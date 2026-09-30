@@ -53,7 +53,7 @@ foreach ($repo in (Get-CoopKnowledgeRepos)) {
   $url = $repo.Url
   $path = $repo.LocalPath
   if (-not $url -or -not $path) { continue }
-  if (Test-Path -LiteralPath (Join-Path $path '.git')) {
+  if (Test-CoopGitCheckout $path) {
     # State probe: failed/timed-out status means UNKNOWN — never pull.
     $statusOut = Invoke-KGit -C $path status --porcelain 2>$null
     $statusRc = $LASTEXITCODE

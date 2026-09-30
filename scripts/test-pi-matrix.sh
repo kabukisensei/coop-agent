@@ -251,6 +251,12 @@ nested="$(find "$agent_nm" -mindepth 3 -type d -path '*@earendil-works*' \( -nam
 if [ -z "$nested" ]; then ok "no nested/hoisted pi-ai or pi-tui copies"
 else ko "nested shared-lib copies found: $nested"; fi
 
+# The agent peer, when npm installed it, is the runtime's own version, never
+# npm's newest (#122).
+got_agent="$(ver_of "$agent_nm/@earendil-works/pi-coding-agent")"
+if [ -z "$got_agent" ] || [ "$got_agent" = "$PI_VERSION" ]; then ok "agent peer in the extension tree: ${got_agent:-absent} (runtime $PI_VERSION)"
+else ko "extension tree has pi-coding-agent $got_agent, not the runtime's $PI_VERSION"; fi
+
 # context-mode present AND loadable.
 cm_ver="$(ver_of "$agent_nm/context-mode")"
 if [ -n "$cm_ver" ]; then

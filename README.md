@@ -173,7 +173,7 @@ shows anything still missing.
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
 | **Power BI authoring tools** — Report Authoring CLI, Power BI Modeling MCP, and Windows-only Desktop Bridge | installed globally from manifest-pinned npm packages; Doctor requires Report Authoring and validates Modeling MCP arguments |
 | **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
-| **Windows double-click launchers**: **coop** opens the chat window (`coop web`; its server console starts minimized, and closing that window stops coop), **coop (terminal)** opens the classic terminal agent | created on the Start Menu and Desktop, both starting in your home folder. Purely additive: `coop` in any terminal is unchanged |
+| **Windows double-click launcher**: **coop** opens the terminal agent | created on the Start Menu and Desktop, starting in your home folder; `coop update` repairs older shortcuts. Purely additive: `coop` in any terminal is unchanged |
 
 > `pi-powerline-footer` is **not** used. coop renders its own footer and splash via
 > `extensions/coop-powerline` (see [Footer & splash](#footer--splash)).
@@ -205,7 +205,6 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop context-budget [--json]` | Inspect the active model/context budget |
 | `coop uninstall [--keep-tools] [--yes]` | Remove the launcher/shortcuts/user-PATH entry and isolated agent dir; by default also uninstall Pi, pipx tools/Fabric CLI, Power BI Report Authoring CLI, Power BI Modeling MCP, and the Windows Desktop Bridge. `--keep-tools` preserves all managed npm/pipx tools. Never touches repo clones, work repos, the rest of `~/.coop`, or personal `~/.pi/agent` |
 | `coop install [--edge] [--force] [--yes] [--prereqs auto] [--no-prereqs] [--no-fabric]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest and is tools-only here (install never moves the repo). With a source arg, alias of `coop add` |
-| `coop web` | Open a friendly browser UI over the same governed agent (experimental; loopback-only + one-time token — see `web/README.md`) |
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
 | `coop sync` | Ensure core Pi extensions are installed, place the governed MCP config non-destructively, refresh managed catalogs/team knowledge, and verify brand assets |
 | `coop data-doc [args]` | Run `coop-data-doc` (default: `build`) and summarize outputs |
@@ -297,7 +296,7 @@ as a native Pi extension and is deliberately excluded from generated MCP configu
 | --- | --- | --- |
 | `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login (az's default account; coop cannot set its tenant); metadata reads by default, mutations approval-gated |
 | `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | every call approval-gated; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
-| `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readonly` | no tenant/workspace required; server-enforced read-only |
+| `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readwrite --accept-eula` | no tenant/workspace required; reads run, edits ask (an approval can cover the session), deletes, imports, deploys and production always ask |
 | `azure-devops` | Manifest-pinned Azure DevOps MCP for one organization | requires enabled toggle + valid organization; mutations approval-gated |
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` | requires only its enabled toggle; always-current Microsoft docs |
 
@@ -340,9 +339,9 @@ Warehouse Doctor states are exact: `registered` (target/auth/tool proof passed),
 `auth_required` (no usable existing token), `tool_missing` (no compatible SQL tool),
 `target_invalid` (malformed or mismatched target), and `unavailable` (missing config,
 network/protocol failure, or unusable response). Other MCP checks are primarily
-presence/config checks; Power BI Modeling also verifies `--start --readonly`.
+presence/config checks; Power BI Modeling also verifies `--start` and reports read-write or read-only mode.
 
-**Azure sign-in.** Each launch (`coop`, `coop web`) checks that the Azure CLI can mint
+**Azure sign-in.** Each launch (`coop`) checks that the Azure CLI can mint
 the Fabric and Power BI tokens for the client tenant: the project's
 `fabric.tenant_id`, else `~/.coop/config` `azure.tenant_id`. In an interactive console
 an authentication failure opens `az login --tenant <id> --allow-no-subscriptions`

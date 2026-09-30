@@ -327,7 +327,7 @@ $ coop fabric workspace list      # -> whichever `fab` is first on PATH
 $ coop doctor
 Microsoft Fabric CLI
 ✗ fab is the WRONG tool — this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI
-      Fix: pipx install ms-fabric-cli   and ensure ~/.local/bin precedes Homebrew on PATH
+      Fix: pipx install ms-fabric-cli==1.7.0   and ensure ~/.local/bin precedes Homebrew on PATH
            (or: brew uninstall fabric). Verify with: fab --version
 ```
 
@@ -350,11 +350,14 @@ deploying to test/prod is in `never_without_explicit_instruction`).
 
 ## MCP read-only action policy
 
-The MCP servers are optional; `coop` runs without them. `fabric`,
-`powerbi-modeling-mcp --readonly`, and `microsoft-learn` are read-only over **client
-data** — `fabric` is read-only *by policy* (its MCP has **no** server-side read-only
-switch, unlike the Power BI Modeling MCP's `--readonly`),
-so the guardrail heuristic + Pi's tool approval are what hold it. `context-mode` is **not**
+The MCP servers are optional; `coop` runs without them. `fabric` and
+`microsoft-learn` are read-only over **client data** — `fabric` *by policy* (its MCP
+has **no** server-side read-only switch), so the guardrail heuristic + Pi's tool
+approval are what hold it. `powerbi-modeling-mcp` runs `--readwrite` so an approved
+semantic model edit can land (#159): the guardrail reads each call's
+`request.operation`, lets reads run, asks before edits (an approval can cover the
+session), and asks every time for deletes, whole-model imports, deploys, unknown
+operations and production. `context-mode` is **not**
 a pure read: it runs **sandboxed code over the docs/graph** (not client data) to save
 context. Manifest-pinned managed config is generated into coop's isolated agent dir
 (`~/.coop/agent/mcp-adapter.json`) from `~/.coop/config` by `coop onboard` / `coop sync`,
@@ -366,7 +369,7 @@ Per `.coop/project.yml` and `docs/guardrails.md`:
 |--------|--------------------|----------------------------|
 | `fabric` | `list`, `read`, `inspect` (read-only **by policy**) | `create`, `update`, `delete`, `deploy` |
 | `fabric-sqlendpoint` | separate managed direct HTTP SQL endpoint | every `executeSQL` / `execute_query` call; DDL/DML/destructive SQL is classified before row-read handling |
-| `powerbi-modeling-mcp` (`--readonly`) | `list`, `read`, `inspect` | `create`, `update`, `delete`, `publish` |
+| `powerbi-modeling-mcp` (`--readwrite`) | `Get`, `List`, `Export`, connect, trace | `Create`, `Update`, `Rename`, refresh (session approval allowed); `Delete`, imports, `DeployToFabric`, unknown operations and production (every time) |
 | `microsoft-learn` | docs lookups (always-current) | — |
 | `context-mode` | intent search + **sandboxed exec** over docs/graph | — |
 

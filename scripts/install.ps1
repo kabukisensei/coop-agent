@@ -391,18 +391,13 @@ $UnitPbihTools = {
   param([bool]$Force, [array]$Specs)
   if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { return [pscustomobject]@{ ok = $false; msg = 'skipping Power BI/Fabric authoring tools (npm missing)' } }
   $ok = 0; $fail = 0
+  # Only the release's pinned version is installed (an empty spec is a tool with
+  # no pin, which fails rather than falling back to npm's latest), and there is no
+  # `npm update -g` fallback: it ignores the version and moves the tool to latest.
   foreach ($spec in $Specs) {
-    if ($Force) {
-      & npm install -g $spec *> $null
-      if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
-    } else {
-      & npm install -g $spec *> $null
-      if ($LASTEXITCODE -eq 0) { $ok++ }
-      else {
-        & npm update -g $spec *> $null
-        if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
-      }
-    }
+    if (-not $spec) { $fail++; continue }
+    & npm install -g $spec *> $null
+    if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
   }
   if ($fail -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$ok Power BI/Fabric authoring tool(s) ready" } }
   return [pscustomobject]@{ ok = $false; msg = "$ok installed, $fail failed" }
@@ -533,7 +528,7 @@ try {
   }
   $pbihSpecs = @()
   foreach ($pkg in $PBIH_NPM_TOOLS) {
-    $pbihSpecs += if (-not $EDGE) { $tv = Coop-ManifestGet -Key "npm_tools.$pkg"; if ($tv) { "${pkg}@${tv}" } else { $pkg } } else { $pkg }
+    $pbihSpecs += if (-not $EDGE) { $tv = Coop-ManifestGet -Key "npm_tools.$pkg"; if ($tv) { "${pkg}@${tv}" } else { '' } } else { $pkg }
   }
 
   # --- 2. Pi itself ----------------------------------------------------------
@@ -640,41 +635,13 @@ if (($env:PATH -split ';') -notcontains $LOCALBIN) {
 # --- Double-click launcher (Start Menu + Desktop shortcut) -------------------
 # A friendly front door so members who aren't comfortable in a terminal can open
 # coop by double-clicking an icon. PURELY ADDITIVE: `coop` in any terminal is
-# unchanged. The shortcut points at bin\coop-desktop.ps1, which finds/installs
-# coop, runs it, and keeps the window open on error. Best-effort — a failure here
-# never fails the install (you can always run coop from a terminal).
-$desktopLauncher = Join-Path $script:CoopRoot 'bin\coop-desktop.ps1'
-if (Test-Path -LiteralPath $desktopLauncher) {
-  try {
-    $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $icon  = Join-Path $script:CoopRoot 'themes\coop.ico'
-    $ws = New-Object -ComObject WScript.Shell
-    # Two shortcuts, each on the Start Menu + Desktop:
-    #   coop            -> the friendly chat window (`coop web`, ChatGPT-style; the
-    #                      server console starts minimized so the chat is the star —
-    #                      closing that minimized window stops coop)
-    #   coop (terminal) -> the classic terminal agent, for people who prefer it
-    $shortcuts = @(
-      @{ Name = 'coop.lnk';            ExtraArgs = ' web'; Window = 7; Desc = 'coop - chat with the Cooptimize analytics agent' },
-      @{ Name = 'coop (terminal).lnk'; ExtraArgs = '';     Window = 1; Desc = 'coop - the Cooptimize analytics agent (terminal)' }
-    )
-    foreach ($def in $shortcuts) {
-      foreach ($dir in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
-        $sc = $ws.CreateShortcut((Join-Path $dir $def.Name))
-        $sc.TargetPath       = $psExe
-        $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`"$($def.ExtraArgs)"
-        $sc.WorkingDirectory = $HOME
-        $sc.Description       = $def.Desc
-        $sc.WindowStyle       = $def.Window
-        # ',0' = explicit icon index; some shells show a generic icon without it.
-        if (Test-Path -LiteralPath $icon) { $sc.IconLocation = "$icon,0" }
-        $sc.Save()
-      }
-    }
-    Coop-Ok 'created double-click launchers (Start Menu + Desktop): "coop" (chat window) and "coop (terminal)"'
-  } catch {
-    Coop-Warn "couldn't create the double-click launcher (you can still run coop in a terminal): $($_.Exception.Message)"
-  }
+# unchanged. Best-effort — a failure here never fails the install (you can always
+# run coop from a terminal). The helper lives in lib/common.ps1 so update repairs
+# shortcuts too.
+try {
+  if (Set-CoopDesktopShortcuts) { Coop-Ok 'created the "coop" double-click launcher (Start Menu + Desktop)' }
+} catch {
+  Coop-Warn "couldn't create the double-click launcher (you can still run coop in a terminal): $($_.Exception.Message)"
 }
 
 # --- 8. First-run onboarding -----------------------------------------------------

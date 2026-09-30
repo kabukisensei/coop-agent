@@ -18,6 +18,15 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 # --- stub PATH (records every install/upgrade to a marker) ----------------------
 STUB="$(mktemp -d)"; MARKER="$STUB/INSTALLS"; export MARKER
 trap 'rm -rf "$STUB"' EXIT
+# Sandbox every home location update reads (#135): never the real ~/.coop,
+# agent dir or `pi` state. --check and the gate dry run stop before step 1,
+# so update never fetches or moves the checkout running the tests.
+HOME="$STUB/home"; USERPROFILE="$HOME"; COOP_DIR="$HOME"
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) USERPROFILE="$(cygpath -w "$HOME")" ;; esac
+COOP_AGENT_DIR="$HOME/.coop/agent"; PI_CODING_AGENT_DIR="$COOP_AGENT_DIR"
+mkdir -p "$COOP_AGENT_DIR"
+export HOME USERPROFILE COOP_DIR COOP_AGENT_DIR PI_CODING_AGENT_DIR
+unset COOP_STANDARDS_ROOT COOP_STANDARDS_STATE COOP_STANDARDS_SNAPSHOT_ROOT
 cat > "$STUB/pi" <<'EOF'
 #!/bin/sh
 [ "$1" = "--version" ] && { echo "pi 0.87.1"; exit 0; }

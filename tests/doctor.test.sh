@@ -5,13 +5,27 @@
 # reports read-only / warns on read-write / warns on unclear mode.
 set -uo pipefail
 
-ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
-COOP_ROOT="$ROOT"; export COOP_ROOT
+CHECKOUT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 # Doctor's Azure sign-in row probes az; only the H2 cases below opt back in, with a fake.
 COOP_SKIP_AZ=1; export COOP_SKIP_AZ
 fail=0
 ok()  { printf '  ✓ %s\n' "$1"; }
 ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
+
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# Run doctor from a plain copy of this tree with no .git (#104): its once-a-day
+# refresh fetches origin into the checkout it runs from, and a test must never
+# touch the checkout running it. Sandbox every home location doctor reads
+# (#135): never the real ~/.coop, agent dir, `pi` state or mcp.json.
+ROOT="$TMP/coop-agent"; mkdir "$ROOT"
+cp -R "$CHECKOUT"/* "$CHECKOUT/.coop" "$ROOT/"
+COOP_ROOT="$ROOT"; export COOP_ROOT
+HOME="$TMP/home"; USERPROFILE="$HOME"; COOP_DIR="$HOME"
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) USERPROFILE="$(cygpath -w "$HOME")" ;; esac
+COOP_AGENT_DIR="$HOME/.coop/agent"; PI_CODING_AGENT_DIR="$COOP_AGENT_DIR"
+mkdir -p "$COOP_AGENT_DIR"
+export HOME USERPROFILE COOP_DIR COOP_AGENT_DIR PI_CODING_AGENT_DIR
+unset COOP_STANDARDS_ROOT COOP_STANDARDS_STATE COOP_STANDARDS_SNAPSHOT_ROOT
 
 EXAMPLE="$ROOT/config/mcp.example.json"
 
@@ -25,8 +39,6 @@ fi
 # --- doctor reports the configured mode ---------------------------------------
 # Doctor discovers mcp.json from the cwd first (as $PWD/.mcp.json), so run each
 # case from its own scratch directory.
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-
 doctor_out() {
   ( cd "$1" && COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null )
 }
@@ -85,6 +97,10 @@ out="$(COOP_WAREHOUSE_TEST_STATE=token_command_failed COOP_WAREHOUSE_TEST_TENANT
 case "$out" in
   *"token_command_failed (global target, tenant $h2b_tenant)"*"--output json --tenant $h2b_tenant"*) ok "doctor's Warehouse token hint names the client tenant" ;;
   *) ko "doctor's Warehouse token hint lost the tenant"; printf '%s\n' "$out" | grep -i fabric ;;
+esac
+case "$out" in
+  *"is not a git checkout"*) ok "doctor runs from a copy of the tree, so it never fetches the checkout running the tests" ;;
+  *) ko "doctor ran against a git checkout: the fixture must run a copy (#104)" ;;
 esac
 
 # Azure sign-in row (H2): probe only, never a sign-in, same tenant chain as the
@@ -159,8 +175,8 @@ case "$out" in
   *) ko "doctor did not warn on missing --start"; echo "$out" ;;
 esac
 
-# Read-only mode without start (legacy shape) still reports read-only presence via the
-# missing-start warning; read-write (--start only) → warned strongly.
+# Read-write (--start with --readwrite, or --start alone, the server's default) is
+# coop's governed mode (#159): healthy, and says coop asks before each edit.
 d="$TMP/readwrite"
 mkdir -p "$d"
 cat > "$d/.mcp.json" <<'EOF'
@@ -168,15 +184,19 @@ cat > "$d/.mcp.json" <<'EOF'
   "mcpServers": {
     "powerbi-modeling-mcp": {
       "command": "npx",
-      "args": ["-y", "@microsoft/powerbi-modeling-mcp@latest", "--start"]
+      "args": ["-y", "@microsoft/powerbi-modeling-mcp@latest", "--start", "--readwrite", "--accept-eula"]
     }
   }
 }
 EOF
 out="$(doctor_out "$d")"
 case "$out" in
-  *"missing --readonly"*) ok "doctor warns strongly on powerbi-modeling-mcp missing --readonly" ;;
-  *) ko "doctor did not warn on missing --readonly"; echo "$out" ;;
+  *"started, read-write; coop asks before each edit"*) ok "doctor reports the governed read-write powerbi-modeling-mcp as healthy" ;;
+  *) ko "doctor did not report the governed read-write mode"; echo "$out" ;;
+esac
+case "$out" in
+  *"READ-WRITE"*) ko "doctor still warns that read-write is unsafe"; echo "$out" ;;
+  *) ok "doctor no longer warns that read-write is accidental" ;;
 esac
 
 # Unclear/no-flags → still not healthy: missing --start fires first.
@@ -373,7 +393,7 @@ printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"tenant-1"},"integration
 COOP_ROOT="$ROOT" bash -c "cd '$d' && python3 '$ROOT/lib/mcp_config.py' --config '$d/config' --output '$d/.mcp.json'" || ko "generator failed on scratch config"
 out="$(doctor_out "$d")"
 case "$out" in
-  *"powerbi-modeling-mcp configured (started, read-only)"*) ok "doctor reads generated pretty-printed MCP JSON correctly" ;;
+  *"powerbi-modeling-mcp configured (started, read-write; coop asks before each edit)"*) ok "doctor reads generated pretty-printed MCP JSON correctly" ;;
   *) ko "doctor misreads generated MCP JSON"; echo "$out" | grep -i modeling ;;
 esac
 grep -q '"args": \[' "$d/.mcp.json" && ok "fixture really is pretty-printed (multi-line args)" || ok "generator emitted compact JSON"

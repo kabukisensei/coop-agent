@@ -183,7 +183,7 @@ await t("renderPrompt confirm → the wizard's default No is the Enter choice (#
   } };
   const message = "'C:\\Users\\pbi-repo' doesn't exist (yet). Use it anyway?";
   const answer = await renderPrompt(ctx, { type: "prompt", id: "pbi_missing", kind: "confirm", message, default: false });
-  assert.deepEqual(shown, ["No", "Yes"], "No is listed first (coop web shows it as the first button)");
+  assert.deepEqual(shown, ["No", "Yes"], "No is listed first (an RPC host shows it as the first button)");
   assert.equal(answer, false, "Enter keeps the default No");
   const yes = await renderPrompt({ ui: { ...ctx.ui, select: async () => "Yes" } }, { type: "prompt", id: "q", kind: "confirm", message, default: false });
   assert.equal(yes, true, "choosing Yes still answers true");

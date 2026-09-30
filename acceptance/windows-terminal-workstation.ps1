@@ -691,6 +691,9 @@ function Resolve-AcceptancePythonExecutable([string]$Path) {
   $expected = [System.IO.Path]::GetFullPath($Path)
   $comparison = if ($env:OS -eq 'Windows_NT') { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
   if (-not [string]::Equals($Path, $expected, $comparison)) { throw 'acceptance Python must be a fully qualified normalized path' }
+  # Only an executable may be probed: on Windows, invoking any other file opens it
+  # with its associated application instead of failing (and can wait forever).
+  if ($env:OS -eq 'Windows_NT' -and -not [string]::Equals([System.IO.Path]::GetExtension($expected), '.exe', [System.StringComparison]::OrdinalIgnoreCase)) { throw 'acceptance Python must be an .exe on Windows' }
   if (-not (Test-Path -LiteralPath $expected -PathType Leaf)) { throw 'acceptance Python does not identify a file' }
   $reported = @(& $expected -c 'import os,sys; print(os.path.abspath(sys.executable))' 2>$null)
   if ($LASTEXITCODE -ne 0 -or $reported.Count -ne 1) { throw 'acceptance Python executable probe failed' }

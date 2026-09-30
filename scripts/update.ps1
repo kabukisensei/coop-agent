@@ -227,7 +227,7 @@ if ($env:COOP_UPDATE_GATE_DRYRUN -eq '1') {
 
 # --- 1. Update coop-agent itself ---------------------------------------------
 Coop-Head '1/6  coop-agent repository'
-if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have 'git')) {
+if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {
   & git -C $script:CoopRoot remote get-url origin > $null 2>&1
   if ($LASTEXITCODE -eq 0) {
     # Fast-forward to the newest release tag, never backwards (--edge: head of
@@ -369,6 +369,9 @@ $env:COOP_SKIP_FABRIC_SYNC = '1' # Fabric was converged (or explicitly skipped) 
 $syncRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
 if ($null -eq $priorSkipFabricSync) { Remove-Item Env:COOP_SKIP_FABRIC_SYNC -ErrorAction SilentlyContinue } else { $env:COOP_SKIP_FABRIC_SYNC = $priorSkipFabricSync }
 if ($syncRc -ne 0) { Coop-Warn 'sync reported issues'; $script:UpdateFailures++ }
+# Repair the double-click launcher where one exists: older installs have a "coop"
+# shortcut for the retired browser chat (S5) and a separate "coop (terminal)".
+try { if (Set-CoopDesktopShortcuts -OnlyIfPresent) { Coop-Ok 'refreshed the "coop" double-click launcher' } } catch { }
 
 # --- 6. Doctor ---------------------------------------------------------------
 # Propagate doctor's verdict as the update's exit code (mirror of update.sh).

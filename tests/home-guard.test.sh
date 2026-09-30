@@ -72,12 +72,18 @@ printf '#!/bin/sh\necho azure-cli 2.80.0\n' > "$FAKEBIN/az"; chmod +x "$FAKEBIN/
 # Real git behind a wrapper (Git Bash keeps git in /mingw64/bin, off this PATH).
 printf '#!/bin/sh\nexec "%s" "$@"\n' "$(command -v git)" > "$FAKEBIN/git"; chmod +x "$FAKEBIN/git"
 
+# Native Windows node and python find the home through USERPROFILE, not HOME, so
+# the fleet scripts get a sandboxed USERPROFILE too; without it a standards refresh
+# in sync reached the real %USERPROFILE%\.coop (#135).
+HG_PROFILE="$TMP/home"
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) HG_PROFILE="$(cygpath -w "$TMP/home")" ;; esac
+
 before_local_bin="$(snapshot "$REAL_HOME/.local/bin")"
 before_coop="$(snapshot "$REAL_HOME/.coop")"
 
 run_fleet() {
   local ad="$TMP/agent"
-  env HOME="$TMP/home" COOP_DIR="$TMP/coop-dir" \
+  env HOME="$TMP/home" USERPROFILE="$HG_PROFILE" COOP_DIR="$TMP/coop-dir" \
       PIPX_HOME="$TMP/pipx-home" PIPX_BIN_DIR="$TMP/pipx-bin" \
       PI_CODING_AGENT_DIR="$ad" COOP_AGENT_DIR="$ad" \
       COOP_RELEASE_MANIFEST="$ROOT/config/release-manifest.json" \
@@ -85,7 +91,7 @@ run_fleet() {
       PATH="$FAKEBIN:/usr/bin:/bin" COOP_TEST_STUB_PATH="$FAKEBIN" \
       bash "$ROOT/scripts/install.sh" --force >/dev/null 2>&1 || true
   : > "$TMP/calls"
-  env HOME="$TMP/home" COOP_DIR="$TMP/coop-dir" \
+  env HOME="$TMP/home" USERPROFILE="$HG_PROFILE" COOP_DIR="$TMP/coop-dir" \
       PIPX_HOME="$TMP/pipx-home" PIPX_BIN_DIR="$TMP/pipx-bin" \
       PI_CODING_AGENT_DIR="$ad" COOP_AGENT_DIR="$ad" \
       COOP_RELEASE_MANIFEST="$ROOT/config/release-manifest.json" \
@@ -93,7 +99,7 @@ run_fleet() {
       PATH="$FAKEBIN:/usr/bin:/bin" COOP_TEST_STUB_PATH="$FAKEBIN" \
       bash "$ROOT/scripts/update.sh" >"$TMP/update.out" 2>&1 || true
   : > "$TMP/calls"
-  env HOME="$TMP/home" COOP_DIR="$TMP/coop-dir" \
+  env HOME="$TMP/home" USERPROFILE="$HG_PROFILE" COOP_DIR="$TMP/coop-dir" \
       PIPX_HOME="$TMP/pipx-home" PIPX_BIN_DIR="$TMP/pipx-bin" \
       PI_CODING_AGENT_DIR="$ad" COOP_AGENT_DIR="$ad" \
       COOP_RELEASE_MANIFEST="$ROOT/config/release-manifest.json" \
@@ -101,7 +107,7 @@ run_fleet() {
       PATH="$FAKEBIN:/usr/bin:/bin" COOP_TEST_STUB_PATH="$FAKEBIN" \
       bash "$ROOT/scripts/sync.sh" >/dev/null 2>&1 || true
   : > "$TMP/calls"
-  ( cd "$TMP" && env HOME="$TMP/home" COOP_DIR="$TMP/coop-dir" \
+  ( cd "$TMP" && env HOME="$TMP/home" USERPROFILE="$HG_PROFILE" COOP_DIR="$TMP/coop-dir" \
       PIPX_HOME="$TMP/pipx-home" PIPX_BIN_DIR="$TMP/pipx-bin" \
       PI_CODING_AGENT_DIR="$ad" COOP_AGENT_DIR="$ad" \
       COOP_RELEASE_MANIFEST="$ROOT/config/release-manifest.json" \
@@ -109,7 +115,7 @@ run_fleet() {
       PATH="$FAKEBIN:/usr/bin:/bin" COOP_TEST_STUB_PATH="$FAKEBIN" \
       bash "$ROOT/scripts/doctor.sh" >"$TMP/doctor.out" 2>&1 ) || true
   # Onboarding wizard itself (scripted answers, isolated dirs).
-  printf 'Guard User\n2\nn\n\n\nn\n\n' | env HOME="$TMP/home" COOP_DIR="$TMP/coop-dir" \
+  printf 'Guard User\n2\nn\n\n\nn\n\n' | env HOME="$TMP/home" USERPROFILE="$HG_PROFILE" COOP_DIR="$TMP/coop-dir" \
       COOP_AZ_BIN=/nonexistent/az \
       python3 "$ROOT/scripts/onboard.py" onboard >/dev/null 2>&1 || true
 }

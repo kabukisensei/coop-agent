@@ -658,16 +658,19 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
   return files.filter((f) => !isAllowedCommitPath(f, allowed, denied));
 }
 
-// MCP tools carry no server-enforced read-only flag for Fabric (unlike
-// powerbi-modeling-mcp's --readonly), and this hook can't see whether a given
-// MCP call mutates. As a best-effort layer we CONFIRM tool calls whose names look like a mutating
+// Fabric's MCP has no server-enforced read-only flag, and this hook can't see
+// whether a given MCP call mutates (Power BI Modeling calls are classified by
+// their operation instead; see below). As a best-effort layer we CONFIRM tool calls whose names look like a mutating
 // Fabric/Power BI/MCP action (a refresh counts: it reprocesses a dataset or model on
 // the client tenant). Approval-required mutations fail closed headlessly;
 // this complements Pi approval and server-side read-only flags.
 const MCP_TOOLISH =
   /(^|[_\-.:/])(mcp|fabric|powerbi|pbi|pbip|adx|kusto|eventhouse|onelake|lakehouse|warehouse|workspace|dataset|semanticmodel|report|pipeline|notebook|dataflow|capacity)([_\-.:/]|$)/i;
+// A bare run/execute stays out: SQL run/execute tools are row reads that the
+// live-read rules below govern. Running a pipeline, job, notebook, dataflow or
+// Spark job changes the client tenant, so that pair counts as a write (#154).
 const MCP_WRITE_VERB =
-  /(^|[_\-.:/])(create|update|delete|remove|deploy|publish|drop|write|patch|overwrite|rename|truncate|grant|revoke|provision|refresh)([_\-.:/A-Z]|$)/i;
+  /(^|[_\-.:/])(create|update|delete|remove|deploy|publish|drop|write|patch|overwrite|rename|truncate|grant|revoke|provision|refresh|upload|modify|reset|upsert|insert|merge|move|import|restore|cancel|assign|(?:run|trigger|start|execute)[_\-.:/]?(?:pipeline|job|notebook|dataflow|spark))([_\-.:/A-Z]|$)/i;
 const DATA_SERVER = /(^|[_\-.:/])(fabric|powerbi|pbi|sql|database|db|warehouse|lakehouse|onelake|kusto|adx|eventhouse)([_\-.:/]|$)/i;
 const ROW_READ_VERB = /(^|[_\-.:/])(query|execute|evaluate|run_sql|runsql|sql_query|dax_query|preview|sample|row|rows|record|records|data|export|download)([_\-.:/]|$)/i;
 const PRODUCTION_WORD = /(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)/i;
@@ -797,6 +800,99 @@ export function mcpMutationLabel(toolName: string | { outerTool: string; innerTo
   return mutationName(target);
 }
 
+// --- Power BI Modeling MCP operations (#159) ------------------------------------
+// The Power BI Modeling (Authoring) MCP names its tools by object
+// (`measure_operations`, `table_operations`, …) and carries the write in the
+// argument `request.operation`, so the verb-in-the-name check never sees it.
+// Classify the operation instead: reads pass, edits ask (a session approval can
+// cover them), and deletes, imports over the model, deploys and unknown operations
+// ask on every call. Checked against the 1.0.0 tool list.
+const PBI_MODELING_TOOL =
+  /(?:^|[_\-.:/])(measure|partition|perspective|transaction|relationship|trace|connection|object_translation|table|database|security_role|column|calendar|model|calculation_group|dax_query|named_expression|query_group|function|user_hierarchy|culture)_operations$/i;
+const PBI_MODELING_SERVER = /powerbi[_\-]?modeling|powerbi[_\-]?authoring/i;
+// Operations that change nothing in the model or on disk. Trace capture and
+// connection handling are the server's own read-only tools.
+const PBI_MODELING_READ = new Set([
+  "help", "find", "exporttmdl", "exporttmsl", "validate", "report",
+  "begin", "rollback",
+  "connect", "connectfabric", "connectfolder", "connectbimfile", "disconnect",
+  "start", "stop", "pause", "resume", "clear",
+  "checkstatusofrefreshwithapi",
+]);
+// Operations that remove model objects, replace the whole model, or publish it.
+const PBI_MODELING_ALWAYS_ASK = /^(delete|deploytofabric|importfromtmdlfolder|importfrombimfile)/;
+// Operations that edit the model, a local file, or the server's cache.
+const PBI_MODELING_EDIT =
+  /^(create|update|rename|move|activate|deactivate|add|remove|reorder|refresh|cancelrefresh|markasdatetable|commit|clearcache|export(?:to|json))/;
+
+export type ModelingOperationClass = "read" | "edit" | "always-ask";
+
+/** The Power BI Modeling MCP tool this call targets, or null for any other call. */
+function pbiModelingTool(target: MutationTarget): string | null {
+  const name = target.innerTool || target.outerTool;
+  if (!name || !PBI_MODELING_TOOL.test(name)) return null;
+  // Another named server's `*_operations` tool is not this one; a call with no
+  // server (bare or prefixed name) is classified, which can only add prompts.
+  const server = target.server || /^mcp__([A-Za-z0-9_]+)$/.exec(target.outerTool)?.[1] || "";
+  if (server && !PBI_MODELING_SERVER.test(server)) return null;
+  return name;
+}
+
+/** Classify one Power BI Modeling operation. Unknown or missing operations ask
+ * every time; `dax_query_operations` Execute is a row read (the live-read rules). */
+export function classifyModelingOperation(tool: string, operation: unknown): ModelingOperationClass {
+  const op = typeof operation === "string" ? operation.trim().toLowerCase().replace(/[^a-z]/g, "") : "";
+  if (!op) return "always-ask";
+  if (/(^|_)dax_query_operations$/i.test(tool) && op === "execute") return "read";
+  if (PBI_MODELING_ALWAYS_ASK.test(op)) return "always-ask";
+  if (PBI_MODELING_READ.has(op) || /^(get|list)/.test(op)) return "read";
+  if (PBI_MODELING_EDIT.test(op)) return "edit";
+  return "always-ask";
+}
+
+/** A Power BI Modeling call's tool, operation and class, or null for other calls. */
+function modelingCall(event: any): { tool: string; operation: string; kind: ModelingOperationClass } | null {
+  const call = normalizeMcpCall(event);
+  const tool = pbiModelingTool(call.target);
+  if (!tool) return null;
+  let request = call.args?.request;
+  if (typeof request === "string") {
+    try { request = JSON.parse(request); } catch { request = undefined; }
+  }
+  const raw = request && typeof request === "object" ? request.operation : call.args?.operation;
+  const operation = typeof raw === "string" ? raw.replace(/[^A-Za-z]/g, "").slice(0, 40) : "";
+  return { tool, operation, kind: classifyModelingOperation(tool, raw) };
+}
+
+/** Label a call that edits through an MCP server, or null for reads. Name-based
+ * mutations come first; Power BI Modeling calls are classified by operation. */
+export function mcpEditLabel(event: any): string | null {
+  const target = effectiveMutationTarget(event);
+  const byName = mcpMutationLabel(target);
+  if (byName) return byName;
+  const modeling = modelingCall(event);
+  if (!modeling || modeling.kind === "read") return null;
+  return `${mutationName(target)} ${modeling.operation || "(no operation)"}`;
+}
+
+/** True for a Power BI Modeling call that edits (asks), false for reads and other calls. */
+export function isModelingEdit(event: any): boolean {
+  const modeling = modelingCall(event);
+  return !!modeling && modeling.kind !== "read";
+}
+
+/** True when a Power BI Modeling connection call names prod/production in any
+ * argument (workspace, model, connection string). Later edits name only a
+ * connection, so the session treats every model edit after it as production. */
+export function modelingConnectsProduction(event: any): boolean {
+  const call = normalizeMcpCall(event);
+  const tool = pbiModelingTool(call.target);
+  if (!tool || !/(^|_)connection_operations$/i.test(tool)) return false;
+  let inputText = "";
+  try { inputText = JSON.stringify(call.args || {}); } catch { return true; }
+  return PRODUCTION_WORD.test(inputText);
+}
+
 export type LiveReadRisk = {
   label: string;
   kind: "row-data" | "production-metadata";
@@ -810,7 +906,7 @@ export type LiveReadRisk = {
  * even when it appears metadata-only. Mutations are handled by mcpMutationLabel. */
 export function mcpLiveReadRisk(event: any): LiveReadRisk | null {
   const target = effectiveMutationTarget(event);
-  if (mcpMutationLabel(target)) return null;
+  if (mcpEditLabel(event)) return null;
   const name = target.innerTool || target.outerTool;
   if (!name || ["bash", "read", "edit", "write", "mcp"].includes(name)) return null;
   const isDataRemote = DATA_SERVER.test(target.server || "") || MCP_TOOLISH.test(name);
@@ -1085,6 +1181,70 @@ export function decideLiveRead(event: any, grant: LiveReadGrant | null, resolved
   return { action: "prompt-and-grant", label, kind, environment, scope: resolvedScope };
 }
 
+// --- Session edit approvals (#156) ---------------------------------------------
+// Approving an edit can cover the rest of the session for that MCP server, so a
+// multi-step change asks once. Deletes and drops, anything that names production,
+// and destructive or multi-statement Warehouse SQL still ask on every call.
+const DESTRUCTIVE_VERB = /(^|[_\-.:/])(delete|remove|drop|truncate|purge|destroy|revoke)([_\-.:/A-Z]|$)/i;
+const SQL_DESTRUCTIVE = /\b(DELETE|DROP|TRUNCATE|MERGE|EXEC|EXECUTE|GRANT|REVOKE|DENY|RENAME)\b/i;
+
+/** A single dev/test SQL write a session approval may cover: one INSERT, UPDATE,
+ * CREATE or ALTER statement, with no delete, drop, truncate, merge, execute or
+ * permission change anywhere in it. Quoted text and comments are not SQL. */
+export function sqlWriteIsSessionApprovable(sql: string): boolean {
+  if (classifySqlOperation(sql) !== "mutation") return false;
+  const masked = sqlWithoutComments(sql).trim().replace(/;\s*$/, "");
+  if (!masked || masked.includes(";") || /^\s*GO\s*$/im.test(masked)) return false;
+  if (SQL_DESTRUCTIVE.test(masked) || SQL_MUTATING_INTO.test(masked)) return false;
+  return /^\s*(?:INSERT|UPDATE|CREATE|ALTER)\b/i.test(masked);
+}
+
+/** The server a session approval covers for this edit, or null when the call must
+ * ask every time: a delete or drop, anything naming prod/production, or Warehouse
+ * SQL that a session approval never covers. Reads return null (they are not edits). */
+export function sessionApprovalKey(event: any, environment?: string): string | null {
+  const call = normalizeMcpCall(event);
+  const target = call.target;
+  const name = target.innerTool || target.outerTool;
+  if (!name) return null;
+  let inputText = "";
+  try { inputText = JSON.stringify(call.proxy ? call.args || {} : event?.input || {}); } catch { inputText = ""; }
+  if (environment === "production" || PRODUCTION_WORD.test(`${name} ${target.server || ""} ${inputText}`)) return null;
+  const sql = sqlMcpRisk(event);
+  if (sql) {
+    if (sql.kind !== "ddl-dml-destructive" || !sqlWriteIsSessionApprovable(callSqlText(event))) return null;
+    return `sql:${MANAGED_SQL_SERVER}`;
+  }
+  const modeling = modelingCall(event);
+  if (modeling) {
+    if (modeling.kind !== "edit") return null;
+  } else if (!mcpMutationLabel(target) || DESTRUCTIVE_VERB.test(name)) return null;
+  const namespace = /^mcp__([A-Za-z0-9_]+)$/.exec(target.outerTool)?.[1];
+  return `mcp:${target.server || namespace || target.outerTool}`;
+}
+
+/** Human label for an approval key: the server name without its kind prefix. */
+export function sessionApprovalLabel(key: string): string {
+  return key.replace(/^(?:mcp|sql):/, "");
+}
+
+export type EditApprovalChoice = "once" | "session" | "declined";
+export const APPROVE_ONCE = "Allow once";
+export const APPROVE_DECLINE = "Decline";
+export const approveSessionOption = (key: string) => `Allow ${sessionApprovalLabel(key)} edits for this session (deletes and production still ask)`;
+
+/** Ask for an edit. With an approvable key and a select dialog, offer once / this
+ * session / decline; otherwise a plain yes/no that approves once. */
+export async function askEditApproval(ctx: any, title: string, message: string, key: string | null): Promise<EditApprovalChoice> {
+  if (key && typeof ctx?.ui?.select === "function") {
+    const picked = await ctx.ui.select(`${title}\n${message}`, [APPROVE_ONCE, approveSessionOption(key), APPROVE_DECLINE]);
+    if (picked === APPROVE_ONCE) return "once";
+    if (picked === approveSessionOption(key)) return "session";
+    return "declined";
+  }
+  return (await ctx.ui.confirm(title, message)) ? "once" : "declined";
+}
+
 /** Hard-block reasons for commit forms whose contents cannot be policy-checked:
  *  --amend rewrites an existing commit; pathspec-file forms commit paths the
  *  guardrail deliberately does not read. */
@@ -1229,6 +1389,11 @@ export default function coopGuardrails(pi: ExtensionAPI) {
   // Closure-owned: one extension instance can hold one grant for its current Pi
   // session. Nothing is serialized into messages, disk, config, or audit output.
   let liveReadGrant: LiveReadGrant | null = null;
+  // Session edit approvals (#156): server keys only, never arguments or SQL.
+  const editApprovals = new Set<string>();
+  // Set once the session connects the Power BI Modeling MCP to anything naming
+  // production; from then on every model edit asks (#159).
+  let modelingProduction = false;
   const liveReadDeps: LiveReadResolverDeps = {
     readText: (path) => readFileSync(path, "utf8"),
     agentDir: auditDir(),
@@ -1242,9 +1407,13 @@ export default function coopGuardrails(pi: ExtensionAPI) {
   pi.on("session_start", async () => {
     resetSessionGovernance();
     liveReadGrant = null;
+    editApprovals.clear();
+    modelingProduction = false;
   });
   pi.on("session_shutdown", async () => {
     liveReadGrant = null;
+    editApprovals.clear();
+    modelingProduction = false;
   });
 
   // context-mode performs its own npm registry check outside Pi's update system.
@@ -1309,17 +1478,25 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       // calls use the adapter's server/tool identity; approval fails closed headlessly.
       if (tool !== "bash") {
         const target = effectiveMutationTarget(event);
-        const mcp = mcpMutationLabel(target);
-        if (mcp) {
+        if (modelingConnectsProduction(event)) modelingProduction = true;
+        const mcp = mcpEditLabel(event);
+        const editKey = mcp ? sessionApprovalKey(event, modelingProduction && isModelingEdit(event) ? "production" : undefined) : null;
+        if (mcp && editKey && editApprovals.has(editKey)) {
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-mcp", decision: "allowed", label: "managed MCP mutation", detail: "session-approval" });
+        } else if (mcp) {
           if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
             audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-mcp", decision: "blocked-headless", label: "managed MCP mutation", detail: "mutation" });
             return { block: true, reason: `coop guardrails: blocked mutating MCP action ${mcp}; approval is unavailable in headless mode.` };
           }
-          const ok = await ctx.ui.confirm(
+          const choice = await askEditApproval(
+            ctx,
             "coop guardrails",
             `This looks like a MUTATING MCP action (create/update/delete/deploy/publish):\n  ${mcp}\ncoop treats MCP as read-only (list / read / inspect). Run it?`,
+            editKey,
           );
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-mcp", decision: ok ? "allowed" : "declined", label: "managed MCP mutation", detail: "mutation" });
+          const ok = choice !== "declined";
+          if (choice === "session" && editKey) editApprovals.add(editKey);
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-mcp", decision: ok ? "allowed" : "declined", label: "managed MCP mutation", detail: choice === "session" ? "session-approval-granted" : "mutation" });
           if (!ok) {
             return { block: true, reason: `coop guardrails: blocked the MCP action ${mcp} (you declined). MCP is read-only by default — list / read / inspect only; make changes with explicit approval or in the Fabric / Power BI UX.` };
           }
@@ -1327,6 +1504,15 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         const resolvedScope = resolveLiveReadScope(event, liveReadDeps);
         const decision = decideLiveRead(event, liveReadGrant, resolvedScope);
         if (decision.action !== "none" && decision.action !== "allow-grant") {
+          // A single dev/test Warehouse INSERT/UPDATE/CREATE/ALTER can ride a session
+          // approval (#156); destructive SQL, batches and production always ask.
+          const sqlEditKey = decision.kind === "ddl-dml-destructive"
+            ? sessionApprovalKey(event, decision.environment || decision.scope?.environment)
+            : null;
+          if (sqlEditKey && editApprovals.has(sqlEditKey)) {
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: "live read", detail: "session-approval" });
+            return;
+          }
           if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
             audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "blocked-headless", label: "live read", detail: decision.kind || "live-read" });
             return { block: true, reason: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"}; explicit approval is unavailable in headless mode.` };
@@ -1345,17 +1531,18 @@ export default function coopGuardrails(pi: ExtensionAPI) {
             `  time limit: ${decision.scope.timeoutMs} ms`,
           ].join("\n") : "";
           const prompt = decision.kind === "ddl-dml-destructive"
-            ? `Warehouse SQL mutation/DDL call:\n  ${decision.label}\nDDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
+            ? sqlEditKey
+              ? `Warehouse SQL write (one INSERT, UPDATE, CREATE or ALTER):\n  ${decision.label}\nDeletes, drops, merges, EXEC, batches and production always ask. Run it?`
+              : `Warehouse SQL mutation/DDL call:\n  ${decision.label}\nDDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
             : decision.kind === "ambiguous-sql"
               ? `Ambiguous Warehouse SQL call:\n  ${decision.label}\nOnly one plain SELECT with a literal TOP bound can use a session grant. Run this call once?`
               : decision.kind === "production-metadata"
                 ? `Production metadata/code read:\n  ${decision.label}\nDev/test metadata is read-only by default; production always asks.${sessionGrant ? " Approve this exact bounded scope for this session?" : " Read it once?"}`
                 : `${production ? "PRODUCTION " : ""}row-level data read:\n  ${decision.label}\n${scopeSummary ? `${scopeSummary}\n` : ""}${sessionGrant ? "Approve this exact bounded scope for this session?" : "Read these rows once?"}`;
-          const ok = await ctx.ui.confirm(
-            "coop live-data guardrail",
-            prompt,
-          );
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: ok ? "allowed" : "declined", label: "live read", detail: decision.kind || "live-read" });
+          const choice = await askEditApproval(ctx, "coop live-data guardrail", prompt, sqlEditKey);
+          const ok = choice !== "declined";
+          if (choice === "session" && sqlEditKey) editApprovals.add(sqlEditKey);
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: ok ? "allowed" : "declined", label: "live read", detail: choice === "session" ? "session-approval-granted" : decision.kind || "live-read" });
           if (!ok) {
             return { block: true, reason: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"} (you declined).` };
           }
@@ -1477,6 +1664,29 @@ export default function coopGuardrails(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("coop-approvals", {
+    description: "Show or revoke this session's edit approvals (/coop-approvals status|revoke)",
+    handler: async (args: any, ctx: ExtensionContext) => {
+      const action = (Array.isArray(args) ? args.join(" ") : String(args || "")).trim().toLowerCase() || "status";
+      let message: string;
+      if (action === "revoke") {
+        editApprovals.clear();
+        message = "coop edit approvals: revoked for this session. The next edit asks again.";
+      } else if (action !== "status") {
+        message = "Usage: /coop-approvals status|revoke";
+      } else if (!editApprovals.size) {
+        message = "coop edit approvals: none active. Each edit asks; pick \"for this session\" to approve a server once.";
+      } else {
+        message = [
+          "coop edit approvals: active for this session",
+          ...[...editApprovals].sort().map((key) => `  • ${sessionApprovalLabel(key)}${key.startsWith("sql:") ? " (single INSERT/UPDATE/CREATE/ALTER statements)" : ""}`),
+          "Deletes, drops and production still ask every time. Ends at /new or exit; /coop-approvals revoke ends it now.",
+        ].join("\n");
+      }
+      try { if (typeof ctx.ui?.notify === "function") ctx.ui.notify(message, "info"); } catch { /* ignore */ }
+    },
+  });
+
   pi.registerCommand("coop-guardrails", {
     description: "Show what coop's runtime guardrails enforce (and whether they're on)",
     handler: async (_args, ctx) => {
@@ -1489,6 +1699,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
         `  • live data — allows dev/test metadata; bounded matching reads may reuse one session grant (${liveReadGrant ? "active" : "none"}; /coop-live-read status|revoke)`,
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
+        `  • edit approvals — approving an edit can cover that server for the session; deletes, drops and production still ask (${editApprovals.size ? `${editApprovals.size} active` : "none"}; /coop-approvals status|revoke)`,
         "  • managed updates — blocks ctx_upgrade so the manifest-pinned fleet moves together",
         "Advisory rules live in docs/guardrails.md. Disable with COOP_NO_GUARDRAILS=1.",
         "",

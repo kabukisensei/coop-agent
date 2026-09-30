@@ -451,6 +451,14 @@ coop_converge_extension_pins() { # <agent-dir> <name@ver>...
     printf '{\n  "name": "pi-extensions",\n  "private": true\n}\n' > "$pj"
   fi
   node "$COOP_ROOT/lib/pins.js" "$agent_dir" "$@" || return 1
+  # This npm install auto-installs peers. Pin the agent peer (and pi-ai/pi-tui) to
+  # the running Pi first (#122); unpinned, npm fetched the newest agent into the
+  # tree seconds after upstream published it. Best-effort, like the alignment.
+  local pi_ver py
+  pi_ver="$(coop_pi_version 2>/dev/null || true)"
+  if [ -n "$pi_ver" ] && py="$(coop_python)"; then
+    "$py" "$COOP_ROOT/lib/_extdeps.py" align "$agent_dir" "$pi_ver" >/dev/null 2>&1 || true
+  fi
 ( cd "$agent_dir/npm" && "$npm_bin" install --silent --no-audit --no-fund >/dev/null 2>&1 ) || return 1
 }
 
@@ -1009,6 +1017,19 @@ coop_az_preflight() {
 # silently never updates, and even a git checkout has no signal between updates.
 # These helpers power step 1 of `coop update` and the doctor / launch nudge.
 
+# Is <dir> a git checkout: a clone (.git directory) or a linked worktree or
+# submodule (.git file naming its gitdir). Both twins use this one rule (#106), so
+# bash and PowerShell agree on a worktree; a plain copy is not a checkout. No git
+# process is started.
+coop_is_git_checkout() {
+  local g="$1/.git" first=""
+  [ -d "$g" ] && return 0
+  [ -f "$g" ] || return 1
+  IFS= read -r first < "$g" 2>/dev/null || true
+  case "$first" in "gitdir: "?*) return 0 ;; esac
+  return 1
+}
+
 # Quietly refresh origin — at most once per day (marker mtime in the effective
 # agent dir) and under a 5s watchdog, so an offline or VPN-black-holed fetch can
 # never stall doctor or a launch. Stamps BEFORE fetching, so an offline machine
@@ -1017,7 +1038,7 @@ coop_az_preflight() {
 # origin remote). Best-effort: a failed fetch is silent by design.
 coop_repo_fetch_throttled() {
   have git || return 1
-  [ -d "$COOP_ROOT/.git" ] || return 1
+  coop_is_git_checkout "$COOP_ROOT" || return 1
   git -C "$COOP_ROOT" remote get-url origin >/dev/null 2>&1 || return 1
   local agent_dir marker fpid wpid
   agent_dir="$(coop_effective_agent_dir)"
@@ -1115,7 +1136,7 @@ EOF
 # that is ahead of the newest release, diverged or shallow is never moved backwards.
 coop_repo_next_release() {
   local tag
-  have git && [ -d "$COOP_ROOT/.git" ] || return 0
+  have git && coop_is_git_checkout "$COOP_ROOT" || return 0
   _coop_repo_follows_releases || return 0
   tag="$(_coop_repo_newest_release --contains HEAD)"
   [ -n "$tag" ] || return 0
@@ -1131,7 +1152,7 @@ coop_repo_next_release() {
 # unexpected output.
 coop_repo_describe() {
   local d=""
-  if have git && [ -d "$COOP_ROOT/.git" ]; then
+  if have git && coop_is_git_checkout "$COOP_ROOT"; then
     d="$(git -C "$COOP_ROOT" describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' \
       --exclude '*-*' --exclude 'v*.*.*.*' --always 2>/dev/null || true)"
   fi
@@ -1183,7 +1204,7 @@ EOF
 # a stranded machine is never silent; the launch nudge stays quiet.
 coop_repo_stranded() {
   local root="$COOP_ROOT" branch tag remote sha
-  have git && [ -d "$root/.git" ] || return 0
+  have git && coop_is_git_checkout "$root" || return 0
   if ! git -C "$root" remote get-url origin >/dev/null 2>&1; then
     # Renamed (origin -> upstream) or removed: name it before it reads as a hold.
     # Suggest a rename only for a certain candidate; otherwise add the canonical one.
@@ -1262,7 +1283,7 @@ coop_repo_doctor_row() {
 # from the releases already fetched and --check still changes nothing.
 coop_repo_check_line() {
   local at next stranded
-  if ! have git || [ ! -d "$COOP_ROOT/.git" ]; then
+  if ! have git || ! coop_is_git_checkout "$COOP_ROOT"; then
     printf 'not a git checkout: coop update never moves it\n\n'
     return 0
   fi

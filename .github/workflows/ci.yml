@@ -139,12 +139,8 @@ jobs:
   tests-windows:
     # Windows is coop's PRIMARY deployment target. Git Bash on windows-latest runs
     # tests/run.sh unchanged (bash + node + npx all present), gate lane only here: the
-    # Node logic tests (protocol splitter, diff model, guardrails bundle) and
-    # search-knowledge.test.sh, which replaced the old focused knowledge-search job.
-    # The win32-specific bridge paths in webbridge.test.mjs (cmd.exe spawn wrapper,
-    # taskkill tree reaping, case-insensitive samePath, drive-letter session dirs) are
-    # in the extended lane, so they run in extended.yml's Windows Git Bash job
-    # (nightly or on demand), not here.
+    # Node logic tests (guardrails bundle and the rest) and search-knowledge.test.sh,
+    # which replaced the old focused knowledge-search job.
     name: logic tests (Windows)
     runs-on: windows-latest
     timeout-minutes: 15

@@ -28,6 +28,69 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   - Qualified locally with `scripts/test-pi-matrix.sh 0.87.1` against real npm
     (24 passed, 0 failed; the live model turn needs credentials). The Windows
     VM run is pending.
+- The browser chat (`coop web`) is removed (master plan S5; Aaron dropped the web
+  on 2026-09-30). The installable desktop app in the plan's last phase replaces it
+  and uses the unchanged `coop launch-spec --json`.
+  - `coop web` now prints that it was removed and starts coop in the terminal,
+    so old habits and shortcuts keep working. On Windows it also restores the
+    console window that the old shortcut minimized.
+  - The Windows **coop** shortcut opens the terminal agent. `coop update`
+    rewrites existing shortcuts and removes the separate **coop (terminal)** one.
+  - Removed: `web/`, and the web bridge, protocol, diff-model, stub-pi and web
+    launch tests, including the web phases of `tests/fabric-mcp-launch.test.sh`.
+    The terminal launch phases are unchanged.
+- Approved edits can last for the session (#156). The approval prompt for an MCP
+  edit offers **Allow once**, **Allow <server> edits for this session** or
+  **Decline**, so a multi-step Fabric, Power BI or Azure DevOps change asks once
+  instead of on every call.
+  - A session approval covers that server's later create, update, write, upload,
+    publish and refresh edits until `/new`, exit, or `/coop-approvals revoke`.
+  - Deletes and drops, and anything that names prod or production, still ask every
+    time.
+  - For the managed Warehouse, a single dev/test `INSERT`, `UPDATE`, `CREATE` or
+    `ALTER` can use its session approval. `DELETE`, `DROP`, `TRUNCATE`, `MERGE`,
+    `EXEC`, permission changes and batches still ask.
+  - Headless runs still fail closed, `mcpScript` stays blocked, and every decision
+    is audited. `/coop-approvals status` shows what is approved.
+- coop can edit semantic models after approval (#159). The Power BI Modeling MCP
+  now starts `--readwrite`, and the guardrail reads each call's
+  `request.operation`, because the server names its tools by object
+  (`measure_operations`, `table_operations`, …) rather than by verb.
+  - Reads run without asking: `Get`, `List`, `ExportTMDL`, connecting, traces, and
+    DAX queries (which keep the live-read rules).
+  - Edits ask: `Create`, `Update`, `Rename`, `Move`, refreshes, perspective and
+    hierarchy changes, `Commit`, and exports to a folder or file. Choosing
+    **Allow powerbi-modeling-mcp edits for this session** covers the rest of the
+    task (#156).
+  - These ask every time, with no session option: every `Delete` operation,
+    `ImportFromTmdlFolder` / `ImportFromBimFile` (they replace the model),
+    `DeployToFabric`, unknown or missing operations, and anything naming prod or
+    production. Edits name only a connection, so once a session connects the
+    server to anything naming prod or production, every later model edit in that
+    session asks.
+  - `coop doctor` reports `started, read-write; coop asks before each edit` and no
+    longer warns that a missing `--readonly` is accidental; `--readonly` stays a
+    supported stricter choice.
+  - Verified against the real 1.0.0 server in read-write mode: it loaded a TMDL
+    folder, created and updated a measure through `request.operation`, and
+    `ExportToTmdlFolder` wrote it back to the file. Aaron shipped this ahead of
+    the Windows VM check (Power BI Desktop and a PBIP, and a declined edit that
+    changes nothing), which follows the release.
+- Power BI Modeling MCP moves from 0.5.0-beta.12 to **1.0.0** (U1), now named
+  the Power BI Authoring MCP by Microsoft.
+  - 1.0.0 refuses every tool until its EULA is accepted. Aaron accepted
+    Microsoft's EULA for Cooptimize on 2026-09-30, so coop's generated server
+    entry adds `--accept-eula`, which applies per process and persists nothing.
+  - Checked against the 1.0.0 binary: `--readonly` registers its tools in
+    ReadOnly mode, and `--start` alone defaults to ReadWrite. coop now runs it
+    `--readwrite` behind the operation-aware guardrail above (#159).
+  - Other upstream changes since beta.12:
+    - a local application folder renamed with automatic migration (coop does not
+      reference it)
+    - durable local audit logs under
+      `%LOCALAPPDATA%\Microsoft\powerbi-authoring-mcp\Logs`, kept seven days
+    - `dax_query_operations` returning up to 1,000 rows by default
+  - The Windows VM check follows the release (see #159 above).
 - `coop update --check` shows the repository move first (#107): `repo (coop-agent)
   v0.23.5-21-gabc1234  would move to release v0.23.6`, `... no newer release`, or the
   hold, local-commits or missing-origin state with its fix. It uses the same local
@@ -61,6 +124,30 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   both lanes, and `tests/run.ps1` now fails instead of reporting a pass when an
   error stops it before its last section. Lanes, fixture rules and the CI
   workflows are documented in `docs/ci.md`.
+- The extended lane runs every terminal-workstation acceptance test (#133). It
+  used to select 8 of the file's 39 tests by name, and no lane or workflow ran
+  the other 27. `tests/run.sh` now runs the whole file. Tests that need pwsh
+  skip themselves without it, and the native Windows lifecycle test runs only on
+  Windows. `tests/run.ps1` keeps its subset so Windows doesn't run the file twice.
+  The ubuntu extended job installs `jsonschema` 4.25.1, as the Windows jobs do,
+  because the file treats the receipt schema validator as mandatory.
+  Running it on Windows exposed a hang: the certification Python resolver
+  executed whatever file `CERT_PYTHON` named, so a document such as `README.md`
+  opened with its associated app and never returned. On Windows the resolver now
+  refuses anything but an `.exe` before running it, and each resolver probe in
+  the test is bounded to 2 minutes and names its `CERT_PYTHON` when it overruns.
+  Like its neighbours, that test now skips itself where pwsh is not installed,
+  so `COOP_TEST_EXTENDED=1 bash tests/run.sh` (and `coop release`) passes on a
+  maintainer machine without PowerShell 7.
+- The extended test lane no longer touches your real home or this checkout (#135).
+  `tests/run.sh` keeps the gate lane's temp home for the extended block, except
+  `home-guard`, which checks the real home on purpose. The fixtures that run
+  doctor, update or a launch (`doctor`, `inventory`, `first-run`) work on a copy
+  of the tree without `.git`, so doctor's daily fetch can't reach this checkout.
+  `fabric-mcp-launch` pre-writes a fresh fetch stamp, and `update-guard` and
+  `review` sandbox their own home. `review` used to write the real
+  `~/.coop/standards`. The runner now fails if a test changed the caller's
+  `~/.coop`, `~/.azure`, or this checkout's `HEAD`, refs or `FETCH_HEAD`.
 
 - MCP: `powerbi-mcp-server` is retired (#93). It silently ignores `--readonly` and
   exposes `refresh_dataset` (a write that triggers a dataset refresh on the client
@@ -191,6 +278,48 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Guardrails ask before more Fabric MCP mutations (#154). The mutation check
+  matched no verb in `onelake_upload_file`, `onelake_modify_diagnostics`,
+  `onelake_modify_immutability_policy` or `onelake_reset_shortcut_cache`, or in
+  Fabric MCP 1.4.0's `datafactory_run-pipeline`, so those ran without approval.
+  The verb list adds `upload`, `modify`, `reset`, `upsert`, `insert`, `merge`,
+  `move`, `import`, `restore`, `cancel` and `assign`. Running, triggering or
+  starting a pipeline, job, notebook, dataflow or Spark job also asks first. A
+  plain `run`/`execute` stays out, so SQL reads keep their live-read rules and
+  don't get a second prompt. `tests/guardrails.test.mjs` now pins the Fabric MCP
+  1.3.0 and 1.4.0 tool inventory as must-ask and must-not-ask.
+- Users only get the release's tested versions (#151):
+  - `coop doctor --fix` installs `coop-data-doc`, `coop-sql-review` and
+    `coop-dax-review` at their manifest pins; it used to install PyPI's latest.
+    The Fabric CLI repair no longer falls back to an unpinned `ms-fabric-cli`. A
+    tool with no pin fails with "run: coop update".
+  - The Power BI/Fabric authoring tools install drops its `npm update -g`
+    fallback, which ignored the version and moved the tool to latest. A tool with
+    no manifest pin fails instead of installing unpinned.
+  - Hints no longer recommend `pi-coding-agent@latest`, an unversioned
+    `npm install -g @earendil-works/pi-coding-agent`, `pipx install
+    ms-fabric-cli`, or `uv tool install`. They say `coop install` / `coop update`,
+    or print the pinned version.
+  - A new gate test keeps `@latest` and `npm update -g` out of product code, and
+    checks that the manifest holds only exact versions.
+- `coop sync` no longer lets npm install the newest Pi into coop's extension tree
+  (#122). Several extensions declare `@earendil-works/pi-coding-agent` as a peer,
+  and coop's own convergence and realignment installs let npm auto-install peers,
+  so the tree got whatever npm's `latest` said. On 2026-09-29 that was 0.99.1,
+  fetched 16 seconds after it was published, which failed CI with E404, far
+  past the tested pin. `lib/_extdeps.py` now pins the agent peer to the running Pi's
+  version in the same npm `overrides` block as pi-ai and pi-tui. It treats any
+  other agent version in the tree as skew, so sync's realignment replaces it. The
+  convergence helpers in both twins write that pin before their own npm install.
+  `pi install` was never affected: Pi passes `--legacy-peer-deps` for its managed
+  installs. The Pi matrix now fails if the tree holds an agent other than the
+  runtime's version, and a new gate test covers the pin.
+- bash and PowerShell agree that a git worktree is a checkout (#106). bash tested for a
+  `.git` directory and PowerShell for any `.git`, so in a linked worktree (where `.git`
+  is a file) bash skipped the repo update step, doctor warned that skills would never
+  update, and `coop version` showed no git describe, while PowerShell moved the
+  checkout. Both twins now use one rule, a `.git` directory or a `.git` file naming
+  its `gitdir:`, for the repo helpers, `coop update`, doctor and the knowledge sync.
 - MCP: the adapter's `mcpScript` tool can no longer bypass the guardrails. It
   runs JavaScript that calls MCP tools inside `pi-mcp-adapter`, and those calls
   never reach Pi's `tool_call` hook. So a script could run a mutating Fabric,

@@ -162,7 +162,7 @@ EOF2
             SYNC_FAILURES=$((SYNC_FAILURES + 1)) ;;
         11) coop_err "extension ${off_ext:-unknown} needs pi-ai $req_floor but pi $_pi_runtime provides older libraries"
             SYNC_FAILURES=$((SYNC_FAILURES + 1))
-            coop_say "      Fix: npm install -g @earendil-works/pi-coding-agent@latest, then: coop sync" ;;
+            coop_say "      Fix: coop update   (moves Pi to this release's tested version), then: coop sync" ;;
         *)  : ;;   # nothing installed yet — nothing to verify
       esac
     fi
@@ -171,7 +171,7 @@ else
   # A missing runtime means NO fleet convergence happened at all: per contract,
   # that is a failure, not a warning.
   coop_err "pi is not installed — no extensions were converged or verified" \
-    "install Pi first: coop install   (or: npm install -g @earendil-works/pi-coding-agent)"
+    "install Pi first: coop install   (installs the release's tested Pi)"
   SYNC_FAILURES=$((SYNC_FAILURES + 1))
 fi
 
