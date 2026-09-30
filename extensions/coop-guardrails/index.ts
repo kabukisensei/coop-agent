@@ -1355,6 +1355,56 @@ function dangerLabel(cmd: string): string | null {
   return null;
 }
 
+/** Fabric CLI subcommands that create, change, or delete tenant state. `ls`, `get`,
+ *  `exists`, `export` (writes local files), `open` and `auth` are reads or local. */
+const FAB_WRITE_SUBCOMMANDS = new Set([
+  "deploy", "mkdir", "rm", "cp", "mv", "set", "import", "assign", "unassign",
+  "job", "acl", "label", "start", "stop", "ln",
+]);
+const HTTP_READ_METHODS = new Set(["get", "head", "options"]);
+
+/** Value of a `--flag value` / `--flag=value` / `-X value` option, or null. */
+function optionValue(toks: string[], names: string[]): string | null {
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i].replace(/^['"]|['"]$/g, "");
+    for (const n of names) {
+      if (t === n) return i + 1 < toks.length ? toks[i + 1].replace(/^['"]|['"]$/g, "") : null;
+      if (t.startsWith(`${n}=`)) return t.slice(n.length + 1);
+    }
+  }
+  return null;
+}
+
+/** Label a Fabric / Azure REST write issued from the shell, or null. The official
+ *  Microsoft Fabric skills drive item create/update/deploy/delete with
+ *  `az rest --method post|patch|put|delete`, `fab api -X post ...` and `fab deploy`;
+ *  none of those are MCP calls, so the MCP mutation gate never sees them. Reads
+ *  (`--method get`, `fab api <path>`, `fab ls`) pass. Segment-scoped and quote-aware:
+ *  `echo "az rest --method post"` is one quoted token, not a command. */
+export function fabricWriteLabel(cmd: string): string | null {
+  for (const { segment } of splitShellSegments(cmd)) {
+    const toks = tokenizeArgs(segment.trim()).map((t) => t.replace(/^['"]|['"]$/g, ""));
+    // Skip env assignments and `sudo`/`command` prefixes to reach the program name.
+    let i = 0;
+    while (i < toks.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]) || toks[i] === "sudo" || toks[i] === "command")) i++;
+    const prog = (toks[i] || "").split("/").pop()?.toLowerCase() || "";
+    const sub = (toks[i + 1] || "").toLowerCase();
+    const rest = toks.slice(i + 2);
+    if (prog === "az" && sub === "rest") {
+      const method = (optionValue(rest, ["--method", "-m"]) || "get").toLowerCase();
+      if (!HTTP_READ_METHODS.has(method)) return `az rest ${method.toUpperCase()}`;
+    } else if (prog === "fab" || prog === "fab.exe") {
+      if (sub === "api") {
+        const method = (optionValue(rest, ["-X", "--method"]) || "get").toLowerCase();
+        if (!HTTP_READ_METHODS.has(method)) return `fab api ${method.toUpperCase()}`;
+      } else if (FAB_WRITE_SUBCOMMANDS.has(sub)) {
+        return `fab ${sub}`;
+      }
+    }
+  }
+  return null;
+}
+
 /** Does this path look like a secret (private key / credential / .env) the agent
  *  shouldn't read or write? Public keys (.pub) and *.example/.sample are excluded. */
 export function isSecretPath(p: string): boolean {
@@ -1717,6 +1767,26 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: danger, detail: danger });
         if (!ok) {
           return { block: true, reason: `coop guardrails: blocked the ${danger} command (you declined). Propose a safer approach.` };
+        }
+      }
+
+      // 2b. Fabric / Azure REST write from the shell (`az rest --method post`,
+      // `fab api -X post`, `fab deploy`, ...) → explicit approval, the same rule as
+      // a mutating MCP call. The official Microsoft skills issue item create /
+      // update / deploy / delete this way; fail closed without UI.
+      const fabricWrite = fabricWriteLabel(cmd);
+      if (fabricWrite) {
+        if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked-headless", label: fabricWrite, detail: fabricWrite });
+          return { block: true, reason: `coop guardrails: blocked ${fabricWrite}; approval is unavailable in headless mode.` };
+        }
+        const ok = await ctx.ui.confirm(
+          "coop guardrails",
+          `Fabric / Azure write from the shell (${fabricWrite}):\n  ${cmd.slice(0, 200)}\ncoop treats Fabric item create/update/deploy/delete as approval-gated, like a mutating MCP call. Run it?`,
+        );
+        audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: fabricWrite, detail: fabricWrite });
+        if (!ok) {
+          return { block: true, reason: `coop guardrails: blocked the ${fabricWrite} command (you declined). Fabric writes need explicit approval; read with \`--method get\` or make the change in the Fabric UX.` };
         }
       }
     } catch {

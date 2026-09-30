@@ -610,10 +610,13 @@ pinned in [`config/microsoft-skills.json`](config/microsoft-skills.json):
 
 - [`github.com/microsoft/skills`](https://github.com/microsoft/skills) — Azure SDK /
   AI-Foundry / KQL / Microsoft Docs skills, pinned at
-  `903dc62b1e4c833235b54db918a9a51cb6d3cc8f`.
+  `3495f50ae0d7b69dcb19c6922db9f80aab6cf79c`.
 - [`github.com/microsoft/skills-for-fabric`](https://github.com/microsoft/skills-for-fabric)
-  — Fabric Warehouse authoring/consumption skills from v0.3.10, pinned at
-  `28f29abf3838e13f63a38e8664042b7d9f7cd69c`.
+  — the full Fabric skill set from v0.3.18 (Warehouse, SQL database, Eventhouse,
+  Eventstream, Activator, Spark, Dataflows, pipelines, Power BI reports and
+  semantic models, OneLake governance, migrations), pinned at
+  `6c11ad58c25992e5d1435ce7cd80d217d5598a31`, together with its shared `common/`
+  reference tree so the skills' relative links resolve.
 
 `coop sync` refreshes an immutable catalog under the isolated Coop/Pi agent
 directory and atomically advances a last-known-good pointer. Launch resolves only
@@ -632,10 +635,15 @@ fabric_skills:
   policy: baseline
 ```
 
-Baseline enables `kql`, `microsoft-docs`, `sqldw-authoring-cli`, and
-`sqldw-consumption-cli`. `sqldw-operations-cli` is recorded as deferred metadata
-and is not fetched or launched by default. Legacy `source` and `load_dir` fields
-are ignored with migration notices in `coop doctor`.
+Baseline enables `kql`, `microsoft-docs`, and every skill in the pinned
+skills-for-fabric catalog (25 at v0.3.18, `sqldw-cli` and `eventhouse-cli` among
+them) when the project contract turns them on: `fabric_skills: policy: baseline`
+(what `/setup-project` writes), or no `fabric_skills:` block at all but a
+`fabric:` section. Outside a repo with a `.coop/project.yml` contract, Fabric
+skills stay off (`coop doctor` from your home folder reports them disabled).
+Use `policy: restricted` with an `allow:` list to load a subset. Legacy
+`source` and `load_dir` fields are ignored with migration notices in
+`coop doctor`.
 
 Fabric authoring skills may edit SQL and Fabric item definitions. They remain
 governed by the Cooptimize workflow: plan-and-approve before edits, back up,
