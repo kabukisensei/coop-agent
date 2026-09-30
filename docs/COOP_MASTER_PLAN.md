@@ -384,8 +384,8 @@ is `config/release-manifest.json` at v0.23.5.
 | `powerbi-mcp-server` | 0.1.0 | 0.1.0 | **Dropped** ([#116](https://github.com/kabukisensei/coop-agent/pull/116)) | `--readonly` is silently ignored and `refresh_dataset` (a write) is exposed while coop documents it as read-only: [#93](https://github.com/kabukisensei/coop-agent/issues/93). Official `@microsoft/powerbi-modeling-mcp` 1.0.0 replaces it. |
 | `coop-data-doc` / `coop-sql-review` / `coop-dax-review` | 1.2.0 / 0.15.2 / 0.22.0 | same | No | unchanged since the freeze; the reviewer decision is in section 7. |
 | `ms-fabric-cli` / `fabric-cicd` / `pyodbc` | 1.7.0 / 1.3.0 / 5.3.0 | same | No | unchanged. |
-| `microsoft/skills-for-fabric` catalog | v0.3.10 | v0.3.18 (Sep 25) | **Yes** | v0.3.12 merged the two pinned `sqldw-*` skills into `sqldw-cli`; v0.3.17 unified `powerbi-report-cli`; new `sqldb-cli` targets Fabric SQL database. The allowlist in `config/microsoft-skills.json` must be remapped. |
-| `microsoft/skills` (`kql`, `microsoft-docs`) | commit 903dc62 | not checked | Low | refresh with the catalog step. |
+| `microsoft/skills-for-fabric` catalog | v0.3.10 | v0.3.18 (Sep 25) | **Yes** — draft PR open (2026-09-30) | v0.3.12 merged the two pinned `sqldw-*` skills into `sqldw-cli`; v0.3.17 unified `powerbi-report-cli`; new `sqldb-cli` targets Fabric SQL database. Aaron widened the row on 2026-09-30 to the **full** skill set (Eventhouses are in use). The draft pins v0.3.18, enables all 25 skills as baseline, and ships the shared `common/` tree the skills link (the reference-closure prerequisite in section 6.4). |
+| `microsoft/skills` (`kql`, `microsoft-docs`) | commit 903dc62 | 3495f50 (Sep 29) | Low — in the same draft | `kql` and `microsoft-docs` are byte-identical between the two commits. |
 
 Order inside the phase: Pi → adapter → ask-user-question → Microsoft npm tools →
 Fabric skills catalog → the "maybe" rows. One PR per row, each with the exact
