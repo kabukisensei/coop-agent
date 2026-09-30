@@ -9,9 +9,7 @@ report_fixture_failure() {
 trap 'report_fixture_failure "$?"' ERR
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 TMP="$(mktemp -d)"
-WEB_PID=""
 cleanup() {
-  if [ -n "$WEB_PID" ]; then kill "$WEB_PID" >/dev/null 2>&1 || true; fi
   cd / || true
   rm -rf "$TMP"
 }
@@ -174,7 +172,7 @@ assert "COOP_FABRIC_MCP_TOKEN" not in spec.get("env", {})
 assert "stale-inherited-token" not in json.dumps(spec)
 PY
 
-# A failing helper must not block raw Pi or coop web. On Windows, real Python
+# A failing helper must not block raw Pi or the coop launch. On Windows, real Python
 # injects controlled output and writes an execution marker so cannot-launch is
 # distinct from executed-and-rejected. The stale bearer must never survive.
 if [ "${OS:-}" = Windows_NT ]; then
@@ -285,30 +283,6 @@ assert_windows_helper_executed failure
 grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/normal-helper-fail.err" >/dev/null
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/normal-helper-fail.out" "$TMP/normal-helper-fail.err" >/dev/null
 
-PHASE='helper-failure-web'
-rm -f "$MARKER/pi-state" "$MARKER/bash-helper-failure.reached"
-PORT=$((20000 + ($$ % 20000)))
-HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
-  PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
-  COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
-  COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" \
-  COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
-  COOP_WEB_NO_OPEN=1 bash "$ROOT/bin/coop" web --port "$PORT" \
-  >"$TMP/web-helper-fail.out" 2>"$TMP/web-helper-fail.err" &
-WEB_PID=$!
-i=0
-while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 600 ]; do
-  sleep 0.05
-  i=$((i + 1))
-done
-[ -f "$MARKER/pi-state" ]
-assert_windows_helper_executed failure
-grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/web-helper-fail.err" >/dev/null
-! grep -F "$HELPER_DIAGNOSTIC" "$TMP/web-helper-fail.out" "$TMP/web-helper-fail.err" >/dev/null
-kill "$WEB_PID" >/dev/null 2>&1 || true
-wait "$WEB_PID" 2>/dev/null || true
-WEB_PID=""
-
 # A zero-exit helper that emits a valid-looking token frame plus unexpected
 # stderr must be rejected; the terminal frame makes merged output invalid.
 PHASE='helper-stderr-raw'
@@ -338,34 +312,8 @@ grep -F 'Fabric Warehouse MCP unavailable: token helper failed' "$TMP/normal-std
 ! grep -F "$HELPER_DIAGNOSTIC" "$TMP/normal-stderr.out" "$TMP/normal-stderr.err" "$MARKER/pi-argv" >/dev/null
 ! grep -F "$HELPER_TOKENLIKE" "$TMP/normal-stderr.out" "$TMP/normal-stderr.err" "$MARKER/pi-argv" >/dev/null
 
-PHASE='helper-stderr-web'
-rm -f "$MARKER/pi-state" "$MARKER/bash-helper-success-stderr.reached"
-PORT=$((20500 + ($$ % 19500)))
-HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
-  PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
-  COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
-  COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_TOKENLIKE="$HELPER_TOKENLIKE" \
-  COOP_TEST_HELPER_MODE=success-stderr \
-  COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
-  COOP_WEB_NO_OPEN=1 bash "$ROOT/bin/coop" web --port "$PORT" \
-  >"$TMP/web-stderr.out" 2>"$TMP/web-stderr.err" &
-WEB_PID=$!
-i=0
-while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 600 ]; do
-  sleep 0.05
-  i=$((i + 1))
-done
-[ -f "$MARKER/pi-state" ]
-assert_windows_helper_executed success-stderr
-grep -F 'Fabric Warehouse MCP unavailable: token helper returned invalid output' "$TMP/web-stderr.err" >/dev/null
-! grep -F "$HELPER_DIAGNOSTIC" "$TMP/web-stderr.out" "$TMP/web-stderr.err" "$MARKER/pi-argv" >/dev/null
-! grep -F "$HELPER_TOKENLIKE" "$TMP/web-stderr.out" "$TMP/web-stderr.err" "$MARKER/pi-argv" >/dev/null
-kill "$WEB_PID" >/dev/null 2>&1 || true
-wait "$WEB_PID" 2>/dev/null || true
-WEB_PID=""
-
 # Control bytes and even whitespace-only stderr are contamination. Exercise all
-# three public POSIX launch paths; each must continue without any bearer.
+# public POSIX launch paths; each must continue without any bearer.
 for HELPER_MODE in control-token whitespace-stderr; do
   PHASE="$HELPER_MODE-raw"
   rm -f "$MARKER/pi-state" "$MARKER/bash-helper-$HELPER_MODE.reached"
@@ -390,66 +338,7 @@ for HELPER_MODE in control-token whitespace-stderr; do
   [ -f "$MARKER/pi-state" ]
   grep -F 'Fabric Warehouse MCP unavailable:' "$TMP/$HELPER_MODE-normal.err" >/dev/null
 
-  PHASE="$HELPER_MODE-web"
-  rm -f "$MARKER/pi-state" "$MARKER/bash-helper-$HELPER_MODE.reached"
-  PORT=$((21500 + ($$ + ${#HELPER_MODE}) % 18000))
-  HOME="$HOME_DIR" PATH="$BIN:$PATH" COOP_AGENT_DIR="$AGENT_DIR" \
-    PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
-    COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
-    COOP_TEST_HELPER_DIAGNOSTIC="$HELPER_DIAGNOSTIC" COOP_TEST_HELPER_TOKENLIKE="$HELPER_TOKENLIKE" \
-    COOP_TEST_HELPER_MODE="$HELPER_MODE" COOP_TEST_EXPECT_TOKEN=absent \
-    COOP_FABRIC_MCP_TOKEN='stale-inherited-token' COOP_WEB_NO_OPEN=1 \
-    bash "$ROOT/bin/coop" web --port "$PORT" \
-    >"$TMP/$HELPER_MODE-web.out" 2>"$TMP/$HELPER_MODE-web.err" &
-  WEB_PID=$!
-  i=0
-  while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 600 ]; do sleep 0.05; i=$((i + 1)); done
-  [ -f "$MARKER/pi-state" ]
-  assert_windows_helper_executed "$HELPER_MODE"
-  grep -F 'Fabric Warehouse MCP unavailable:' "$TMP/$HELPER_MODE-web.err" >/dev/null
-  kill "$WEB_PID" >/dev/null 2>&1 || true
-  wait "$WEB_PID" 2>/dev/null || true
-  WEB_PID=""
 done
-
-# Exercise the public web dispatcher with Python genuinely absent from PATH.
-# Windows Git Bash cannot model this synthetic minimal-PATH boundary reliably
-# across native Node -> cmd/PATHEXT. Web is retired from the terminal release,
-# so report this one subcase as unsupported while preserving every other mode.
-if [ "${OS:-}" = Windows_NT ]; then
-  printf '  - SKIP (unsupported): Windows Git-Bash web/no-Python minimal-PATH fixture\n'
-else
-  PHASE='web-no-python'
-  NO_PY_BIN="$TMP/no-python-bin"
-  mkdir -p "$NO_PY_BIN"
-  for cmd in dirname find sort readlink uname mkdir date tr sed git; do
-    cmd_path="$(command -v "$cmd" 2>/dev/null || true)"
-    if [ -n "$cmd_path" ]; then ln -s "$cmd_path" "$NO_PY_BIN/$cmd"; fi
-  done
-  ln -s "$(command -v node)" "$NO_PY_BIN/node"
-  ln -s "$BIN/pi" "$NO_PY_BIN/pi"
-  rm -f "$MARKER/pi-state" "$MARKER/pi-argv"
-  PORT=$((21000 + ($$ % 19000)))
-  PHASE='web-no-python-launch'
-  HOME="$HOME_DIR" PATH="$NO_PY_BIN" COOP_TEST_STUB_PATH="$NO_PY_BIN" COOP_AGENT_DIR="$AGENT_DIR" \
-    PI_CODING_AGENT_DIR="$AGENT_DIR" COOP_NO_ONBOARD=1 COOP_SKIP_EXT_CHECK=1 \
-    COOP_SKIP_AZ=1 COOP_TEST_MARKER="$MARKER" COOP_TEST_TOKEN="$TOKEN" \
-    COOP_TEST_EXPECT_TOKEN=absent COOP_FABRIC_MCP_TOKEN='stale-inherited-token' \
-    COOP_WEB_NO_OPEN=1 "$BASH" "$ROOT/bin/coop" web --port "$PORT" \
-    >"$TMP/web-no-python.out" 2>"$TMP/web-no-python.err" &
-  WEB_PID=$!
-  i=0
-  while [ ! -f "$MARKER/pi-state" ] && [ "$i" -lt 600 ]; do
-    sleep 0.05
-    i=$((i + 1))
-  done
-  [ -f "$MARKER/pi-state" ]
-  PHASE='web-no-python-warning'
-  grep -F 'Fabric Warehouse MCP unavailable: token helper Python is unavailable' "$TMP/web-no-python.err" >/dev/null
-  kill "$WEB_PID" >/dev/null 2>&1 || true
-  wait "$WEB_PID" 2>/dev/null || true
-  WEB_PID=""
-fi
 
 ! grep -R -F "$TOKEN" "$HOME_DIR" >/dev/null
 printf '  ✓ Fabric MCP token is launch-only, fail-soft, and absent from argv/config/output\n'

@@ -103,7 +103,7 @@ start the next phase on your own).
 - **Developing this repo** — editing scripts/docs/tests and running the checks
   below — works on any OS with the prerequisites, including a headless Linux box.
 - **Operating coop on a workstation** — `coop install`, launching `coop`,
-  `coop web`, `coop doctor`, anything needing Pi/pipx/Fabric — is a Mac/Windows
+  `coop doctor`, anything needing Pi/pipx/Fabric — is a Windows
   workstation activity. From a headless box, do not attempt these; report that
   they need a workstation instead.
 - `docs/troubleshooting.md` §1 (split Node toolchains, `/opt/homebrew`) and the
