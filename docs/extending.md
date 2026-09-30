@@ -167,7 +167,10 @@ The pinned Microsoft skills catalog is **subordinate to your skills**:
 - [github.com/microsoft/skills](https://github.com/microsoft/skills)
   (Azure SDK / AI-Foundry / KQL / Microsoft Docs).
 - [github.com/microsoft/skills-for-fabric](https://github.com/microsoft/skills-for-fabric)
-  (Power BI / Fabric authoring: PBIR, TMDL/DAX, SQL, KQL, notebooks, pipelines).
+  (the full Fabric skill set: Warehouse and SQL database, Eventhouse/KQL,
+  Eventstream, Activator, Spark, Dataflows, pipelines, Power BI reports and
+  semantic models, OneLake governance, migrations), shipped with its shared
+  `common/` reference tree.
 
 A Microsoft skill loads only if the pinned manifest, current project policy, and
 conflict checks all allow it. Fabric authoring skills may edit source files, but
