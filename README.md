@@ -173,7 +173,7 @@ shows anything still missing.
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
 | **Power BI authoring tools** — Report Authoring CLI, Power BI Modeling MCP, and Windows-only Desktop Bridge | installed globally from manifest-pinned npm packages; Doctor requires Report Authoring and validates Modeling MCP arguments |
 | **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
-| **Windows double-click launcher**: **coop** opens the terminal agent | created on the Start Menu and Desktop, starting in your home folder; `coop update` repairs older shortcuts. Purely additive: `coop` in any terminal is unchanged |
+| **Windows double-click launcher**: **coop** opens the terminal agent | created on the Start Menu and Desktop, starting in your home folder; `coop update` repairs older shortcuts. Purely additive: `coop` in any terminal is unchanged. An isolated install (`USERPROFILE` redirected at a sandbox folder) keeps its shortcuts inside that profile and leaves your user PATH alone |
 
 > `pi-powerline-footer` is **not** used. coop renders its own footer and splash via
 > `extensions/coop-powerline` (see [Footer & splash](#footer--splash)).

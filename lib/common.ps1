@@ -1897,14 +1897,80 @@ function Invoke-CoopScript {
   return $LASTEXITCODE
 }
 
+# --- Profile redirection (isolated installs) ----------------------------------
+# A second coop can run isolated from the real install by redirecting HOME /
+# USERPROFILE / LOCALAPPDATA / APPDATA at a sandbox folder (the acceptance
+# harness and the VM runbooks do this). Everything keyed off those variables
+# already lands in the sandbox, but two install steps used to ignore them: the
+# Start Menu / Desktop shortcuts came from the Windows shell folders and the
+# launcher dir went onto the persistent user PATH in the registry — so a sandbox
+# install rewrote the real user's shortcuts (pointing them at the sandbox) and
+# grew the real user PATH. Test-CoopProfileRedirected tells the two apart by
+# comparing the profile in use (USERPROFILE, else $HOME) with the profile Windows
+# registered for this account (.NET's UserProfile special folder, which does not
+# follow the environment). Off Windows the same comparison runs against .NET's
+# notion of the home directory, so the helpers behave identically in tests.
+function Get-CoopProfileInUse {
+  if ($env:USERPROFILE) { return [string]$env:USERPROFILE }
+  return [string]$HOME
+}
+function Get-CoopRegisteredProfile {
+  try { return [string][Environment]::GetFolderPath('UserProfile') } catch { return '' }
+}
+# Normalized form for comparing two paths: absolute, no trailing separator,
+# case-folded (Windows paths are case-insensitive; a sandbox is never a
+# case-variant of the real profile).
+function ConvertTo-CoopComparablePath {
+  param([string]$Path)
+  if (-not $Path) { return '' }
+  $full = try { [System.IO.Path]::GetFullPath($Path) } catch { $Path }
+  return $full.TrimEnd('\', '/').ToLowerInvariant()
+}
+function Test-CoopPathInside {
+  param([string]$Path, [string]$Root)
+  $p = ConvertTo-CoopComparablePath $Path
+  $r = ConvertTo-CoopComparablePath $Root
+  if (-not $p -or -not $r) { return $false }
+  return ($p -eq $r) -or $p.StartsWith($r + '\') -or $p.StartsWith($r + '/')
+}
+function Test-CoopProfileRedirected {
+  $registered = ConvertTo-CoopComparablePath (Get-CoopRegisteredProfile)
+  $inUse = ConvertTo-CoopComparablePath (Get-CoopProfileInUse)
+  if (-not $registered -or -not $inUse) { return $false }
+  return ($registered -ne $inUse)
+}
+# Where the "coop" shortcuts live, Start Menu first, then Desktop. A normal
+# install uses the Windows shell folders (they follow a OneDrive-redirected
+# Desktop); an isolated one uses the redirected profile's own Desktop and the
+# Start Menu under its roaming AppData (APPDATA when it was redirected too,
+# else <profile>\AppData\Roaming), so nothing lands on the real profile.
+function Get-CoopShortcutDirs {
+  if (Test-CoopProfileRedirected) {
+    $profileDir = Get-CoopProfileInUse
+    $roaming = if ($env:APPDATA -and -not (Test-CoopPathInside $env:APPDATA (Get-CoopRegisteredProfile))) {
+      [string]$env:APPDATA
+    } else {
+      Join-Path $profileDir 'AppData\Roaming'
+    }
+    return @((Join-Path $roaming 'Microsoft\Windows\Start Menu\Programs'), (Join-Path $profileDir 'Desktop'))
+  }
+  $dirs = @()
+  foreach ($folder in @('Programs', 'Desktop')) {
+    $d = try { [string][Environment]::GetFolderPath($folder) } catch { '' }
+    if ($d) { $dirs += $d }
+  }
+  return $dirs
+}
+
 # --- Double-click launcher (Start Menu + Desktop) ------------------------------
 # One "coop" shortcut on the Start Menu and Desktop opens the terminal agent through
-# bin\coop-desktop.ps1, which finds or installs coop, runs it, and keeps the window
-# open on error. The browser chat is retired (master plan S5): the old "coop"
+# bin\coop-desktop.ps1 (its own console, home folder, coop.ico). Before S5 the "coop"
 # shortcut ran `coop web` in a minimized console, and "coop (terminal)" was the
 # terminal. install writes the shortcut; update rewrites it only where a coop
 # shortcut already exists (-OnlyIfPresent), so old shortcuts are repaired and a
-# removed one stays removed. Best-effort: returns $true when a shortcut was written.
+# removed one stays removed. The target folders come from Get-CoopShortcutDirs, so
+# an isolated install (redirected profile) writes into its sandbox, never onto the
+# real Desktop. Best-effort: returns $true when a shortcut was written.
 function Set-CoopDesktopShortcuts {
   param([switch]$OnlyIfPresent)
   if ($env:OS -ne 'Windows_NT') { return $false }
@@ -1914,12 +1980,14 @@ function Set-CoopDesktopShortcuts {
   $icon  = Join-Path $script:CoopRoot 'themes\coop.ico'
   $ws = New-Object -ComObject WScript.Shell
   $wrote = $false
-  foreach ($dir in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
+  foreach ($dir in (Get-CoopShortcutDirs)) {
     if (-not $dir) { continue }
     $main = Join-Path $dir 'coop.lnk'
     $legacyTerminal = Join-Path $dir 'coop (terminal).lnk'
     $present = (Test-Path -LiteralPath $main) -or (Test-Path -LiteralPath $legacyTerminal)
     if ($OnlyIfPresent -and -not $present) { continue }
+    # A fresh sandbox profile has no Desktop / Start Menu folder yet.
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     $sc = $ws.CreateShortcut($main)
     $sc.TargetPath       = $psExe
     $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`""
