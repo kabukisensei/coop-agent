@@ -153,8 +153,10 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
     return
   }
   if ($meta -and $cli -and ($meta -ne $cli)) {
-    D-Bad "$Dist pipx environment is stale/corrupt: metadata says $meta but $Exe reports $(if ($cli) { $cli } else { 'nothing' })" \
-      "$repair   (metadata/CLI disagreement; recreate the environment)"
+    # One call per line: PowerShell has no backslash continuation, so a trailing \
+    # became the hint and the real hint printed to stdout on its own (#90).
+    $hint = "$repair   (metadata/CLI disagreement; recreate the environment)"
+    D-Bad "$Dist pipx environment is stale/corrupt: metadata says $meta but $Exe reports $(if ($cli) { $cli } else { 'nothing' })" $hint
     return
   }
   if (-not $cli) {
@@ -165,8 +167,8 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   # Executable ownership: an unrelated binary must never be correlated with
   # this distribution's pipx metadata.
   if ((Get-CoopExePipxVenv $Exe) -ne $Dist) {
-    D-Warn "$Dist skipped: resolved $Exe does not belong to its pipx environment" \
-      "reinstall so the pinned $Exe is first on PATH: $repair"
+    $hint = "reinstall so the pinned $Exe is first on PATH: $repair"
+    D-Warn "$Dist skipped: resolved $Exe does not belong to its pipx environment" $hint
     return
   }
   if (-not $meta) {
@@ -202,8 +204,8 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   } else {
     # Only the Fabric CLI env carries the injected fabric-cicd library.
     $cicdPin = if ($Dist -eq 'ms-fabric-cli') { Coop-ManifestGet 'python_tools.fabric-cicd' } else { '' }
-    D-Warn "$Dist environment uses Python $pyver — violates its own requires-python '$rp'" \
-      "$repair --python 3.12   (or --python 3.13)$(if ($cicdPin) { ", then: pipx inject $Dist fabric-cicd==$cicdPin" })"
+    $hint = "$repair --python 3.12   (or --python 3.13)$(if ($cicdPin) { ", then: pipx inject $Dist fabric-cicd==$cicdPin" })"
+    D-Warn "$Dist environment uses Python $pyver — violates its own requires-python '$rp'" $hint
   }
 }
 Check-PipxDist 'coop-data-doc' 'coop-data-doc'
