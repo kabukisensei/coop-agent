@@ -8,7 +8,7 @@ intention of the [Windows terminal plan, revision 2.0](history/COOP_WINDOWS_TERM
 (Windows-first, stable and beta kept separate, bounded simplification, qualified
 upgrades, TeamAI and Jev as optional experiments) and **replaces its execution
 order**. Revision 2.0 stays in the tree as the detailed reference for each package
-(S1–S7, U1, SK1, K1–K3, J0–J3, PK1); where the two documents disagree on order,
+(S1–S7, U1, N1, SK1, K1–K3, J0–J3, PK1); where the two documents disagree on order,
 scope, or the Desktop direction, this document wins.
 
 **Authority and status:** a plan, not a receipt. Nothing here is implemented by
@@ -29,7 +29,7 @@ execution trigger, and `agent:ready` is still added by hand. Releases follow
 | Editing SQL objects | Local files plus `coop-data-doc` lineage | SQL is not source-controlled today, so coop **defaults to the dev environment**, traces impact from **live metadata**, and verifies an edit with **actual data** before and after. |
 | First run | Onboarding wizard, then `/start` menu on demand | **Common workflows menu on first run**; the wizard becomes one entry in it. |
 | Desktop | Removed; native Windows Coop 2.0 last, no Electron | **Electron desktop returns, last**, gated on a packaged installer that other users can run. The native rewrite is dropped from the roadmap. |
-| TeamAI / Jev / PK1 | Early beta experiments after B1 | **Revision 3.8:** TeamAI shared knowledge (K1–K3) is a scheduled phase after the first-run work, isolated on the development VM instead of a beta channel; Jev waits for an explicit start; PK1 stays optional. PK1 evaluates `@xl0/pi-lovely-codex` for tool-call handling and a usage-stats owner for the footer (revision 3.5: the Codex extension shows no usage stats; section 10). |
+| TeamAI / Jev / PK1 | Early beta experiments after B1 | **Revision 3.8:** TeamAI shared knowledge (K1–K3) is a scheduled phase after the first-run work, isolated on the development VM instead of a beta channel; Jev waits for an explicit start; automatic session naming leaves PK1 and becomes its own small row (N1) right after U1; the rest of PK1 stays optional. PK1 evaluates `@xl0/pi-lovely-codex` for tool-call handling and a usage-stats owner for the footer (revision 3.5: the Codex extension shows no usage stats; section 10). |
 | Update channel | `coop update` fast-forwards `main` | `coop update` moves to the **latest release tag**; `--edge` keeps head-of-main for maintainers. |
 | Qualification machine | Isolated beta channel (B1) before any upgrade | The team is **seven people**. A **fresh Windows development VM** plus a second clone with `COOP_AGENT_DIR` qualifies upgrades, and a tagged release reaches all seven the same day. **Revision 3.8:** B1 is skipped; the fleet is too small to need it (Aaron, 2026-09-30). |
 | Agent working model | Implicit | Section 14 sets how agents pick up work so several sessions stay coherent. |
@@ -47,6 +47,10 @@ change scope, not the order of the client-facing phases (0 through 6):
   same day; the VM qualifies upgrades. The B1 proposal in [PR 72](https://github.com/kabukisensei/coop-agent/pull/72)
   stays as documentation only.
 - **Jev waits.** J0–J3 keep their revision 2.0 gates and start only when Aaron asks.
+- **Automatic session naming is scheduled (N1).** Aaron asked whether the
+  extension that names a session after about three turns is in the plan. It was
+  only inside the optional PK1 trial; it now has its own row right after U1
+  (section 10), because it does not depend on the Codex or usage-stats question.
 - **No client pipeline runs `coop-sql-review` or `coop-dax-review`.** They predate
   the coop-standards repository the team now maintains. This closes section 15's
   open question: ST1 retires the in-agent wrappers and the bundled-fallback path,
@@ -739,10 +743,29 @@ people: release-tag updates (H5), the development VM as the qualification machin
 proposal in [PR 72](https://github.com/kabukisensei/coop-agent/pull/72) stays as
 documentation; nothing from it is built unless the fleet outgrows this.
 
+**N1 — automatic session naming (scheduled, revision 3.8).** Coop today shows a
+session name in the footer and terminal title only when the user sets one with
+Pi's `/name`. `@xl0/pi-lovely-rename` (0.1.5 at the September 19 review) names an
+unnamed session after a configurable number of user turns (default three), keeps a
+manual `/rename`, and uses the current model and provider, so it needs no separate
+key. The [package-fit review](history/COOP_PACKAGE_FIT_REVIEW.md) flagged that its
+naming prompt sends user and assistant text plus serialized tool-call arguments
+(up to 60,000 characters), a larger surface than a title needs on client data.
+Aaron scheduled it on 2026-09-30 as its own row after U1. One PR: trial the
+upstream package first, pinned in `config/release-manifest.json` like every other
+extension, on the development VM; build the minimal coop-owned version in
+`extensions/coop-powerline` only if the upstream package misbehaves or its prompt
+scope is unacceptable (then: a short summary without raw tool arguments or
+secrets, manual names kept, quiet failure when naming is unavailable). Acceptance
+per the review: manual names win, switching or forking a session while a naming
+response is pending never renames the wrong session, cancellation, offline and
+auth failure, repeated triggers, Unicode titles, profile isolation, model changes;
+the footer and terminal title pick up the new name without a restart.
+
 **Then, each only when Aaron asks, each independently revertible:**
 
-- **PK1** package-fit trials (session naming, redacted diagnostics, scoped
-  simplify, and `pi-lovely-codex`) per the package-fit review in
+- **PK1** package-fit trials (redacted diagnostics, scoped simplify, and
+  `pi-lovely-codex`; session naming moved to N1) per the package-fit review in
   [PR 72](https://github.com/kabukisensei/coop-agent/pull/72), GPT subscription
   only. **Scope change:** evaluate `pi-lovely-codex` as a whole, not `apply_patch`
   alone, because Aaron wants the usage stats `pi-better-openai` provides and the
@@ -839,10 +862,11 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 7 | S1, S5 | Retire POSIX product path and legacy web | T1 (Aaron started it on 2026-09-30: Mac, Linux and the web are dropped) | one Windows implementation, forwarder kept, tests removed with their surface | in progress: S5 merged ([#161](https://github.com/kabukisensei/coop-agent/pull/161), 2026-09-30, shipped in v0.24.0); S1 next |
 | 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | not started |
 | 9 | U1 | Dependency reconciliation per section 6, one row per PR, qualified on the VM | S-lane (Aaron started U1 ahead of it on 2026-09-30) | exact versions, tests, rollback per PR; keep/drop list closed | in progress: Pi 0.87.1 + `pi-mcp-adapter` 3.3.0 **done (tag v0.24.0, 2026-09-30)**: merged in [#162](https://github.com/kabukisensei/coop-agent/pull/162), VM run passed (matrix 20/20, sync, doctor, `mcp-adapter.json` migration, console checks), Warehouse approval prompt verified live on the released build; Pi 0.99 stays blocked on the adapter's peer range (section 6.3; [#170](https://github.com/kabukisensei/coop-agent/pull/170) is a held draft). In review as drafts: Fabric skills catalog v0.3.18 ([#175](https://github.com/kabukisensei/coop-agent/pull/175)) and shell-issued Fabric REST write approvals ([#176](https://github.com/kabukisensei/coop-agent/pull/176)); remaining section 6 rows next |
+| 9b | N1 | Automatic session naming after a few turns (`@xl0/pi-lovely-rename` trial first, coop-owned fallback; section 10) | U1 rows merged (Aaron scheduled it 2026-09-30) | names appear in footer and title on the VM without breaking manual `/name`; acceptance list in section 10 | not started (scheduled, revision 3.8) |
 | 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewers retired from coop (decided 2026-09-28), self-check in place | not started |
 | 11 | SQ1–SQ6 | Azure SQL targets, dev default, live impact, data verification | ST1 | section 8 acceptance | not started |
 | 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | not started |
-| 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, naming, diagnostics, simplify | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
+| 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, diagnostics, simplify (naming moved to N1) | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
 | 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | not started (scheduled, revision 3.8) |
 | 15b | J0–J3 | Jev shadow experiments | explicit start | revision 2.0 gates | waiting (Aaron, 2026-09-30) |
