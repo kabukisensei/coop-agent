@@ -213,7 +213,7 @@ try {
   $piListFixture = @(
     '  npm:pi-mcp-adapter@2.10.0',
     '    C:\Users\a\.coop\agent\npm\node_modules\pi-mcp-adapter',
-    '  npm:@juicesharp/rpiv-ask-user-question@1.20.0',
+    '  npm:@juicesharp/rpiv-ask-user-question@2.12.0',
     '    C:\Users\a\.coop\agent\npm\node_modules\@juicesharp\rpiv-ask-user-question',
     '  npm:pi-mcp-adapter-tools@9.9.9',
     '    C:\Users\a\.coop\agent\npm\node_modules\pi-mcp-adapter-tools',
@@ -226,10 +226,10 @@ try {
     Ko "pi-mcp-adapter parsed as [$($parsedAdapter -join ', ')] instead of exactly 2.10.0"
   }
   $parsedScoped = @(Get-CoopPiExtensionVersions $piListFixture '@juicesharp/rpiv-ask-user-question')
-  if ($parsedScoped.Count -eq 1 -and $parsedScoped[0] -ceq '1.20.0') {
+  if ($parsedScoped.Count -eq 1 -and $parsedScoped[0] -ceq '2.12.0') {
     Ok 'scoped extension names resolve to their own spec'
   } else {
-    Ko "scoped extension parsed as [$($parsedScoped -join ', ')] instead of exactly 1.20.0"
+    Ko "scoped extension parsed as [$($parsedScoped -join ', ')] instead of exactly 2.12.0"
   }
   $parsedConflict = @(Get-CoopPiExtensionVersions ($piListFixture + "`n  npm:pi-mcp-adapter@2.11.0") 'pi-mcp-adapter')
   if ($parsedConflict.Count -eq 2) {
