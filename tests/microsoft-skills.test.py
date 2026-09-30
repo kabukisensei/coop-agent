@@ -59,7 +59,9 @@ def remove_tree(path):
     shutil.rmtree(path, onerror=make_writable_and_retry)
 
 
-def git_repo(base: Path, name: str, skills: dict[str, str]) -> tuple[str, str]:
+def git_repo(
+    base: Path, name: str, skills: dict[str, str], extra: dict[str, str] | None = None
+) -> tuple[str, str]:
     repo = base / name
     repo.mkdir()
     run(["git", "init", "-q"], repo)
@@ -74,6 +76,10 @@ def git_repo(base: Path, name: str, skills: dict[str, str]) -> tuple[str, str]:
         # Keep fixture hashes independent of Windows text-mode newline translation.
         skill_md.write_bytes(payload)
         assert skill_md.read_bytes() == payload
+    for rel, body in (extra or {}).items():
+        f = repo / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(body.encode("utf-8"))
     run(["git", "add", "."], repo)
     run(["git", "commit", "-q", "-m", "seed"], repo)
     return repo.as_uri(), run(["git", "rev-parse", "HEAD"], repo)
@@ -104,27 +110,28 @@ def fixture_manifest(ms_url: str, ms_rev: str, fab_url: str, fab_rev: str) -> di
             "fabric_skills": {
                 "url": fab_url,
                 "revision": fab_rev,
-                "version": "v0.3.10",
+                "version": "v0.3.18",
                 "approved_domains": ["github.com"],
-                "baseline": ["sqldw-authoring-cli", "sqldw-consumption-cli"],
+                "baseline": ["eventhouse-cli", "sqldw-cli"],
                 "skills": {
-                    "sqldw-authoring-cli": {
-                        "path": "skills/sqldw-authoring-cli",
-                        "frontmatter_name": "sqldw-authoring-cli",
+                    "eventhouse-cli": {
+                        "path": "skills/eventhouse-cli",
+                        "frontmatter_name": "eventhouse-cli",
                         "approved_optional": True,
                     },
-                    "sqldw-consumption-cli": {
-                        "path": "skills/sqldw-consumption-cli",
-                        "frontmatter_name": "sqldw-consumption-cli",
+                    "sqldw-cli": {
+                        "path": "skills/sqldw-cli",
+                        "frontmatter_name": "sqldw-cli",
                         "approved_optional": True,
                     },
-                    "sqldw-operations-cli": {
-                        "path": "skills/sqldw-operations-cli",
-                        "frontmatter_name": "sqldw-operations-cli",
+                    "project-osmos": {
+                        "path": "skills/project-osmos",
+                        "frontmatter_name": "project-osmos",
                         "approved_optional": False,
                         "deferred": True,
                     },
                 },
+                "shared": {"common": {"path": "common"}},
             },
         },
     }
@@ -137,25 +144,30 @@ def fixture_manifest(ms_url: str, ms_rev: str, fab_url: str, fab_rev: str) -> di
         "microsoft_skills": file_url_path(ms_url),
         "fabric_skills": file_url_path(fab_url),
     }
+    def committed_tree_hash(repo_key: str, revision: str, path: str) -> str:
+        # Hash the immutable committed bytes that production checks out,
+        # not a Windows worktree that Git may later rewrite as CRLF.
+        root = roots[repo_key]
+        listing = subprocess.check_output(
+            ["git", "-C", str(root), "ls-tree", "-r", "--name-only", revision, path],
+            text=True,
+        ).split()
+        tree = hashlib.sha256()
+        for full in sorted(listing, key=lambda x: x[len(path) + 1 :]):
+            blob = subprocess.check_output(
+                ["git", "-C", str(root), "show", f"{revision}:{full}"]
+            )
+            tree.update(full[len(path) + 1 :].encode("utf-8"))
+            tree.update(b"\0")
+            tree.update(hashlib.sha256(blob).hexdigest().encode("ascii"))
+            tree.update(b"\0")
+        return tree.hexdigest()
+
     for repo_key, repo in manifest["repositories"].items():
         for meta in repo["skills"].values():
-            # Hash the immutable committed bytes that production checks out,
-            # not a Windows worktree that Git may later rewrite as CRLF.
-            blob = subprocess.check_output(
-                [
-                    "git",
-                    "-C",
-                    str(roots[repo_key]),
-                    "show",
-                    f"{repo['revision']}:{meta['path']}/SKILL.md",
-                ]
-            )
-            digest = hashlib.sha256(blob).hexdigest()
-            tree = hashlib.sha256()
-            tree.update(b"SKILL.md\0")
-            tree.update(digest.encode("ascii"))
-            tree.update(b"\0")
-            meta["sha256"] = tree.hexdigest()
+            meta["sha256"] = committed_tree_hash(repo_key, repo["revision"], meta["path"])
+        for meta in repo.get("shared", {}).values():
+            meta["sha256"] = committed_tree_hash(repo_key, repo["revision"], meta["path"])
     return manifest
 
 
@@ -181,7 +193,9 @@ mode, names = mskills.policy_for(
     {"fabric": {}}, "fabric_skills", real_manifest["repositories"]["fabric_skills"]
 )
 assert mode == "baseline"
-assert names == ["sqldw-authoring-cli", "sqldw-consumption-cli"]
+assert "kql" not in names and "eventhouse-cli" in names and "sqldw-cli" in names
+assert names == sorted(real_manifest["repositories"]["fabric_skills"]["skills"])
+assert "common" in real_manifest["repositories"]["fabric_skills"]["shared"]
 
 mode, names = mskills.policy_for(
     {}, "fabric_skills", real_manifest["repositories"]["fabric_skills"]
@@ -190,12 +204,12 @@ assert mode == "disabled"
 assert names == []
 
 mode, names = mskills.policy_for(
-    {"fabric_skills": {"allow": ["sqldw-consumption-cli"]}},
+    {"fabric_skills": {"allow": ["sqldw-cli"]}},
     "fabric_skills",
     real_manifest["repositories"]["fabric_skills"],
 )
 assert mode == "restricted"
-assert names == ["sqldw-consumption-cli"]
+assert names == ["sqldw-cli"]
 
 for repo_key in ("microsoft_skills", "fabric_skills"):
     mode, names = mskills.policy_for(
@@ -236,14 +250,22 @@ with tempfile.TemporaryDirectory() as td:
         t,
         "fabric",
         {
-            "sqldw-authoring-cli": "---\nname: sqldw-authoring-cli\n---\nAuthor\n",
-            "sqldw-consumption-cli": "---\nname: sqldw-consumption-cli\n---\nConsume\n",
-            "sqldw-operations-cli": "---\nname: sqldw-operations-cli\n---\nDeferred\n",
+            # Upstream skills link the shared `common/` tree and sibling skills by
+            # relative path; the published layout must keep those resolvable.
+            "eventhouse-cli": "---\nname: eventhouse-cli\n---\nSee [core](../../common/COMMON-CLI.md) and [sql](../sqldw-cli/SKILL.md).\n",
+            "sqldw-cli": "---\nname: sqldw-cli\n---\nSee [setup](../../mcp-setup/README.md) and [ref](references/consumption.md#x).\n",
+            "project-osmos": "---\nname: project-osmos\n---\nDeferred\n",
+        },
+        {
+            "common/COMMON-CLI.md": "# Common CLI\n",
+            "common/notebook-authoring/params.md": "# Params\n",
+            "skills/sqldw-cli/references/consumption.md": "See [cli](../../../common/COMMON-CLI.md).\n",
+            "mcp-setup/README.md": "not shipped\n",
         },
     )
     # The trust manifest follows committed bytes even if a Windows worktree is
     # rewritten to CRLF after commit.
-    source_skill = t / "fabric/skills/sqldw-authoring-cli/SKILL.md"
+    source_skill = t / "fabric/skills/eventhouse-cli/SKILL.md"
     source_skill.write_bytes(source_skill.read_bytes().replace(b"\n", b"\r\n"))
     mf = t / "manifest.json"
     write_manifest(mf, fixture_manifest(ms_url, ms_rev, fab_url, fab_rev))
@@ -260,14 +282,37 @@ with tempfile.TemporaryDirectory() as td:
     assert refresh_rc == 0, f"refresh rc={refresh_rc}: {fetch_state}"
     current = json.loads((t / "agent/catalogs/microsoft/current.json").read_text())
     assert [s["name"] for s in current["skills"]] == [
-        "sqldw-authoring-cli",
-        "sqldw-consumption-cli",
+        "eventhouse-cli",
+        "sqldw-cli",
         "kql",
         "microsoft-docs",
     ]
     assert all(
         "files" in s and s["hash"] != s["files"][0]["sha256"] for s in current["skills"]
     )
+    # The shared tree is published beside the repo slot, where `../../common/`
+    # from a skill resolves, and only the manifest's shared trees ship.
+    assert [s["name"] for s in current["shared"]] == ["common"]
+    gen_root = Path(current["root"])
+    assert (gen_root / "common/COMMON-CLI.md").is_file()
+    assert (gen_root / "common/notebook-authoring/params.md").is_file()
+    assert not (gen_root / "mcp-setup").exists()
+    assert sorted(f["path"] for f in current["shared"][0]["files"]) == [
+        "COMMON-CLI.md",
+        "notebook-authoring/params.md",
+    ]
+    # Reference closure: shared and sibling links resolve; only the tree coop
+    # deliberately leaves out is reported, and reporting never fails the refresh.
+    assert mskills.unresolved_refs(gen_root) == [
+        "fabric_skills/sqldw-cli/SKILL.md -> ../../mcp-setup/README.md"
+    ]
+    fetch_state = json.loads(fetch_state_path.read_text(encoding="utf-8"))
+    assert fetch_state["receipt"]["unresolved_refs"] == [
+        "fabric_skills/sqldw-cli/SKILL.md -> ../../mcp-setup/README.md"
+    ]
+    assert [s["name"] for s in fetch_state["receipt"]["shared"]] == ["common"]
+    rc, lines = capture(mskills.check_refs)
+    assert rc == 0 and lines[-1] == "1 unresolved reference(s)"
     generation = current["generation"]
     assert mskills.refresh(project) == 0
     assert (
@@ -295,11 +340,17 @@ with tempfile.TemporaryDirectory() as td:
     for mutate in (
         lambda x: x["skills"][0].__setitem__("repo", "microsoft_skills"),
         lambda x: x["skills"][0].__setitem__("revision", "0" * 40),
-        lambda x: x["skills"][0].__setitem__(
-            "path", "fabric_skills/sqldw-consumption-cli"
-        ),
+        lambda x: x["skills"][0].__setitem__("path", "fabric_skills/sqldw-cli"),
         lambda x: x.__setitem__("repository", "https://evil.example/skills.git"),
         lambda x: x.__setitem__("manifest", {"trusted": True}),
+        # Shared trees carry the same authority: none may be dropped, renamed,
+        # re-homed, or re-pinned by editing the pointer.
+        lambda x: x.__setitem__("shared", []),
+        lambda x: x.pop("shared"),
+        lambda x: x["shared"][0].__setitem__("name", "mcp-setup"),
+        lambda x: x["shared"][0].__setitem__("repo", "microsoft_skills"),
+        lambda x: x["shared"][0].__setitem__("revision", "0" * 40),
+        lambda x: x["shared"].append(dict(x["shared"][0], name="extra")),
     ):
         forged = json.loads(json.dumps(current))
         mutate(forged)
@@ -312,7 +363,7 @@ with tempfile.TemporaryDirectory() as td:
     forged_skill = next(s for s in forged["skills"] if s["name"] == "kql")
     digest, files, total = mskills.sha_tree(tamper_path.parent)
     forged_skill.update(hash=digest, files=files, bytes=total)
-    forged_generation = mskills.generation_id(forged["skills"])
+    forged_generation = mskills.generation_id(forged["skills"], forged["shared"])
     forged_root = Path(current["root"]).parent / forged_generation
     Path(current["root"]).rename(forged_root)
     forged["generation"] = forged_generation
@@ -320,6 +371,14 @@ with tempfile.TemporaryDirectory() as td:
     rejected(forged)
     forged_root.rename(Path(current["root"]))
     tamper_path.write_bytes(original_bytes)
+    assert mskills.verify_current(current)
+
+    # A shared reference file is integrity-checked like a skill file.
+    shared_path = Path(current["root"]) / "common/COMMON-CLI.md"
+    shared_bytes = shared_path.read_bytes()
+    shared_path.write_bytes(shared_bytes + b"\ninjected\n")
+    rejected(json.loads(json.dumps(current)))
+    shared_path.write_bytes(shared_bytes)
     assert mskills.verify_current(current)
 
     # A copy-time mutation in the final generation is detected before current.json
@@ -343,12 +402,12 @@ with tempfile.TemporaryDirectory() as td:
 
     restricted = t / "restricted.yml"
     restricted.write_text(
-        "fabric_skills:\n  policy: restricted\n  allow:\n    - sqldw-consumption-cli\nmicrosoft_skills:\n  policy: disabled\n",
+        "fabric_skills:\n  policy: restricted\n  allow:\n    - sqldw-cli\nmicrosoft_skills:\n  policy: disabled\n",
         encoding="utf-8",
     )
     rc, dirs = capture(mskills.launch_dirs, restricted)
     assert rc == 0
-    assert [Path(d).name for d in dirs] == ["sqldw-consumption-cli"]
+    assert [Path(d).name for d in dirs] == ["sqldw-cli"]
 
     disabled = t / "disabled.yml"
     disabled.write_text(
