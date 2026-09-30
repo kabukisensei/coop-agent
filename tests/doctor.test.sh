@@ -248,6 +248,25 @@ else
   ko "doctor did not warn on a user-owned powerbi-mcp-server entry"; printf '%s\n' "$json_out" | grep -i powerbi
 fi
 
+# --- model login (#167) -----------------------------------------------------------
+# Pi writes `{}` to auth.json on startup; only a stored provider credential is a login.
+stub_login="$(mktemp -d)"
+printf '#!/bin/sh\necho "pi 0.84.3"\n' > "$stub_login/pi"; chmod +x "$stub_login/pi"
+mkdir -p "$HOME/.pi/agent"
+printf '{}' > "$COOP_AGENT_DIR/auth.json"; printf '{}' > "$HOME/.pi/agent/auth.json"
+out="$(PATH="$stub_login:$PATH" COOP_SKIP_AZ=1 COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
+case "$out" in
+  *"no Pi login found yet"*) ok "doctor does not count Pi's startup {} auth.json as a login" ;;
+  *) ko "doctor counted a {} auth.json as a login"; printf '%s\n' "$out" | grep -i login ;;
+esac
+printf '{"openai-codex":{"type":"oauth","access":"x"}}' > "$HOME/.pi/agent/auth.json"
+out="$(PATH="$stub_login:$PATH" COOP_SKIP_AZ=1 COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
+case "$out" in
+  *"Pi login present"*) ok "doctor finds a stored credential in the shared ~/.pi/agent auth.json" ;;
+  *) ko "doctor missed a stored credential"; printf '%s\n' "$out" | grep -i login ;;
+esac
+rm -f "$COOP_AGENT_DIR/auth.json" "$HOME/.pi/agent/auth.json"; rm -rf "$stub_login"
+
 # --- exact extension-fleet verification -----------------------------------------
 # Stub `pi` reporting an up-to-date fleet: every manifest extension at its pin.
 stub_ok="$(mktemp -d)"
