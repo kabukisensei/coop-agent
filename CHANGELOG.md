@@ -136,6 +136,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- `coop doctor` on Windows PowerShell 5.1 checks each tool's Requires-Python again
+  (#140). The probe passed a program containing double quotes with `-c`, which 5.1
+  mangles (the #81 bug class), so doctor always reported "no Requires-Python metadata
+  found" and never warned about a tool environment on a Python it does not support.
+  The program now goes to Python on stdin.
 - Standards lookups no longer spawn git on every prompt (#138). Each prompt verified the
   standards checkout two or three times, at five git processes each, and asked git for
   the revision about eight more times: 28 git processes per prompt in the fixture,
