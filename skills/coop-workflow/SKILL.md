@@ -30,8 +30,8 @@ sacred; the principles are. One exception is the log postcondition: when the nea
 project contract sets `logging.require_task_log: true`, step 10 is non-skippable after
 meaningful completed work. Ordinary read-only Q&A/status checks and an explicit user
 opt-out for the particular task are excluded. This workflow also governs official Microsoft
-Fabric/Power BI authoring skills (`powerbi-report-authoring`,
-`semantic-model-authoring`, `sqldw-authoring-cli`, `eventhouse-cli`, etc.):
+Fabric/Power BI authoring skills (`powerbi-report-cli`,
+`semantic-model-authoring`, `sqldw-cli`, `eventhouse-cli`, etc.):
 they may edit source files, but they still require plan approval, backups,
 review, diff summary, and human commit.
 
