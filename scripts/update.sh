@@ -92,7 +92,7 @@ _unit_pi_update() {
 }
 
 _unit_pytool_upgrade() {  # $1 = package
-  local pkg="$1" pin="" fabric_py="" fabric_fetch=""
+  local pkg="$1" pin="" fabric_py="" fabric_fetch="" fabric_plan=""
   if [ "$EDGE" != 1 ]; then
     pin="$(coop_manifest_get "python_tools.$pkg")"
   fi
@@ -102,17 +102,15 @@ _unit_pytool_upgrade() {  # $1 = package
   local installed=0
   pipx list 2>/dev/null | grep "package $pkg " >/dev/null && installed=1
   if [ "$pkg" = "ms-fabric-cli" ]; then
-    fabric_py="$(coop_fabric_bootstrap_python)" || fabric_py=""
-    if [ -z "$fabric_py" ]; then
-      if pipx install --help 2>&1 | grep -F -- '--fetch-python' >/dev/null; then
-        fabric_py="3.12"; fabric_fetch="--fetch-python=missing"
-      elif pipx install --help 2>&1 | grep -F -- '--fetch-missing-python' >/dev/null; then
-        fabric_py="3.12"; fabric_fetch="--fetch-missing-python"
-      else
-        printf 'ms-fabric-cli needs Python 3.12 or 3.13 — upgrade pipx or install one, then re-run: coop update'
-        return 1
-      fi
+    # A local 3.10-3.13, or pipx's standalone 3.12 (coop_fabric_pipx_plan, shared
+    # with install and doctor --fix).
+    if ! fabric_plan="$(coop_fabric_pipx_plan)"; then
+      printf 'ms-fabric-cli needs Python 3.12 or 3.13 — upgrade pipx or install one, then re-run: coop update'
+      return 1
     fi
+    IFS="$(printf '\t')" read -r fabric_py fabric_fetch <<EOF_PLAN
+$fabric_plan
+EOF_PLAN
   fi
   if [ -n "$pin" ]; then
     if [ -n "$fabric_py" ]; then

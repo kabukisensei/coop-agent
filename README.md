@@ -94,9 +94,13 @@ clone's own launcher instead of `coop install` (on Windows: double-click
 | 7 | Tabular Editor CLI (`te`) | optional, BPA reviews | download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli, put `te` on `PATH`, then `te auth login` |
 
 macOS and Linux print the `brew` / `apt` equivalents. A machine that only has
-Python 3.14 passes row 3 when its pipx supports `--fetch-python`; pipx then fetches
-a standalone Python 3.12 for the Fabric CLI. The Windows Store Python alias does not
-count as an interpreter.
+Python 3.14 passes row 3 when its pipx can fetch a standalone Python (pipx 1.5+;
+`--fetch-missing-python`, or `--fetch-python` from pipx 1.12); pipx then downloads
+Python 3.12 for the Fabric CLI, and `coop install`, `coop update` and
+`coop doctor --fix` all build that environment the same way. When pipx is too old
+for that, the Windows row prints the admin-free repair instead of a Python install:
+`python -m pip install --user --upgrade pipx`. The Windows Store Python alias does
+not count as an interpreter.
 
 - `coop install --prereqs auto` runs the printed commands for you, with their output
   visible, re-checks, and still asks you to open a new terminal.

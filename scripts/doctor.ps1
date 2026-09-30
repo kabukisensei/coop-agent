@@ -238,7 +238,7 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   } else {
     # Only the Fabric CLI env carries the injected fabric-cicd library.
     $cicdPin = if ($Dist -eq 'ms-fabric-cli') { Coop-ManifestGet 'python_tools.fabric-cicd' } else { '' }
-    $hint = "$repair --python 3.12   (or --python 3.13)$(if ($cicdPin) { ", then: pipx inject $Dist fabric-cicd==$cicdPin" })"
+    $hint = "$repair --python 3.12   (or --python 3.13)$(if ($cicdPin) { ", then: pipx inject $Dist fabric-cicd==$cicdPin   (or: coop doctor --fix)" })"
     D-Warn "$Dist environment uses Python $pyver — violates its own requires-python '$rp'" $hint
   }
 }
@@ -694,17 +694,38 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
     if ($LASTEXITCODE -eq 0) { Coop-Ok 'synced extensions / MCP / assets' } else { Coop-Warn 'sync had issues (run: coop sync)' }
   }
   if (Test-Have 'pipx') {
-    if (-not (Test-Have 'fab')) {
+    # The Fabric CLI is (re)built when fab is missing, or when its environment
+    # runs a Python its own Requires-Python rejects (a 3.14 venv, after the
+    # default Python moved on). The interpreter comes from the same plan install
+    # and update use: a local 3.10-3.13, or pipx's standalone 3.12.
+    $fabricRebuild = 0
+    $fabricEnvPy = ''
+    if (-not (Test-Have 'fab')) { $fabricRebuild = 1 }
+    else {
+      $fabricEnvPy = [string](Get-CoopVenvPythonVersion 'ms-fabric-cli')
+      $fabricRp = if ($fabricEnvPy) { Get-CoopVenvRequiresPython 'ms-fabric-cli' 'ms-fabric-cli' } else { '' }
+      if ($fabricEnvPy -and $fabricRp -and -not (Test-CoopPythonSpec $fabricEnvPy $fabricRp)) { $fabricRebuild = 2 }
+    }
+    if ($fabricRebuild -ne 0) {
       # Repairs install the release's pinned versions only, never PyPI's latest.
       $fabricSpec = Coop-ManifestPythonSpec 'ms-fabric-cli'
+      $fabricPlan = if ($fabricSpec) { Get-CoopFabricPipxPlan } else { $null }
       if (-not $fabricSpec) {
         Coop-Warn 'no release pin for ms-fabric-cli in the manifest' 'run: coop update'
         $repairFailed = $true
+      } elseif (-not $fabricPlan) {
+        Coop-Warn 'Microsoft Fabric CLI needs Python 3.10-3.13 and this pipx cannot fetch one' "apply the Python row's fix under Prerequisites (install Python 3.12, or upgrade pipx to 1.12+), then run: coop doctor --fix"
+        $repairFailed = $true
       } else {
-        Coop-Info "pipx install $fabricSpec"
-        & pipx install $fabricSpec *> $null
+        $fabricArgs = @('install')
+        if ($fabricRebuild -eq 2) { $fabricArgs += '--force' }
+        if ($fabricPlan.FetchFlag) { $fabricArgs += $fabricPlan.FetchFlag }
+        $fabricArgs += @('--python', $fabricPlan.Python, $fabricSpec)
+        Coop-Info "pipx $($fabricArgs -join ' ')"
+        & pipx @fabricArgs *> $null
         if ($LASTEXITCODE -eq 0 -and (Sync-CoopFabricPythonPackages) -and (Ensure-CoopFabricOdbcDriver $true)) {
-          Coop-Ok 'managed Fabric runtime installed'
+          if ($fabricRebuild -eq 2) { Coop-Ok "managed Fabric runtime rebuilt on Python $($fabricPlan.Python) (was $fabricEnvPy)" }
+          else { Coop-Ok "managed Fabric runtime installed (Python $($fabricPlan.Python))" }
         } else {
           Coop-Warn 'could not install the managed Fabric runtime' 'run: coop install'
           $repairFailed = $true
@@ -728,7 +749,7 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
     Coop-Warn 'pipx missing — cannot auto-install tools (install pipx first: see the hint above)'
   }
   if ($repairFailed) { exit 1 }
-  Coop-Info 'Re-checking... (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)'
+  Coop-Info 'Re-checking... (system deps like node/python/pipx install manually — see hints above)'
   [Console]::Error.WriteLine('')
   # Propagate --json/--publish so the re-check emits the (final) machine-readable document.
   $reArgs = @(); if ($script:PUBLISH) { $reArgs += '--publish' } elseif ($script:JSON) { $reArgs += '--json' }

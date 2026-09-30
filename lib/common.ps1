@@ -243,6 +243,43 @@ function Get-CoopFabricBootstrapPython {
   return $null
 }
 
+# The `pipx install` flag that makes pipx download a standalone Python when the
+# requested version is not installed: pipx 1.12+ spells it --fetch-python=missing,
+# pipx 1.5-1.11 --fetch-missing-python (still accepted by newer pipx as a deprecated
+# alias, so the current spelling is tried first). '' when this pipx cannot fetch a
+# Python (pipx < 1.5, or no pipx). $PipxCommand is the pipx invocation to probe
+# (e.g. @('python', '-m', 'pipx') for a pipx installed but not on PATH yet);
+# default: Get-CoopPipxCmd. Twin of coop_pipx_fetch_python_flag.
+function Get-CoopPipxFetchPythonFlag([string[]]$PipxCommand = @()) {
+  if (-not $PipxCommand -or $PipxCommand.Count -eq 0) { $PipxCommand = @((Get-CoopPipxCmd)) }
+  $exe = $PipxCommand[0]
+  if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { return '' }
+  $rest = @($PipxCommand | Select-Object -Skip 1) + @('install', '--help')
+  $help = (& $exe @rest 2>&1 | Out-String)
+  if ($help -match '--fetch-python') { return '--fetch-python=missing' }
+  if ($help -match '--fetch-missing-python') { return '--fetch-missing-python' }
+  return ''
+}
+
+# How the Fabric CLI's pipx environment gets a supported interpreter: an object
+# { Python; FetchFlag } — a local 3.10-3.13 interpreter (FetchFlag ''), or '3.12'
+# plus the flag from Get-CoopPipxFetchPythonFlag when only pipx's standalone
+# download can supply one. $null when neither is possible — then prerequisite
+# row 3 (Get-CoopPrereqs) says what to install. Shared by install, update and
+# `coop doctor --fix`, so every path builds the environment the same way:
+#   pipx install [--force] [<FetchFlag>] --python <Python> ms-fabric-cli==<pin>
+# Twin of coop_fabric_pipx_plan.
+function Get-CoopFabricPipxPlan {
+  $py = Get-CoopFabricBootstrapPython
+  $flag = ''
+  if (-not $py) {
+    $flag = Get-CoopPipxFetchPythonFlag
+    if (-not $flag) { return $null }
+    $py = '3.12'
+  }
+  return [pscustomobject]@{ Python = [string]$py; FetchFlag = [string]$flag }
+}
+
 function Get-CoopVenvPythonPath([string]$Venv) {
   $base = Join-Path (Get-CoopPipxVenvsDir) $Venv
   foreach ($py in @((Join-Path $base 'Scripts\python.exe'), (Join-Path $base 'bin\python'), (Join-Path $base 'bin/python'))) {
@@ -786,12 +823,14 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
       python = 'winget install --id Python.Python.3.12 -e'
       pipx = 'py -3.12 -m pip install --user pipx then py -3.12 -m pipx ensurepath'
       az = 'winget install --id Microsoft.AzureCLI -e'; odbc = 'winget install --id Microsoft.msodbcsql.18 -e'
+      pipxUpgrade = $true
     }
   } elseif ($mac) {
     $fix = @{
       git = 'xcode-select --install'; node = 'brew install node'; python = 'brew install python@3.12'
       pipx = 'brew install pipx then pipx ensurepath'; az = 'brew install azure-cli'
       odbc = 'brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release then brew install msodbcsql18'
+      pipxUpgrade = $false
     }
   } else {
     $fix = @{
@@ -800,6 +839,7 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
       pipx = 'sudo apt-get install -y pipx then pipx ensurepath'
       az = 'curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash'
       odbc = 'see https://learn.microsoft.com/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server'
+      pipxUpgrade = $false
     }
   }
   $ver = { param([string]$Exe) $o = (& $Exe --version 2>&1 | Out-String); $m = [regex]::Match($o, '\d+\.\d+(\.\d+)?'); if ($m.Success) { $m.Value } else { '' } }
@@ -818,34 +858,45 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
   }
   $rows += & $row 2 "Node.js $nodeMin or newer" $true $nodeOk $nodeDet $fix.node
 
-  # The Fabric CLI cannot run on 3.14, so it needs 3.10-3.13. A newer pipx can
-  # fetch its own 3.12 for the Fabric CLI, so 3.14 plus that pipx also passes.
-  $pyOk = $false; $pyDet = 'not found'
+  # The Fabric CLI cannot run on 3.14, so it needs 3.10-3.13. A pipx that can
+  # fetch a standalone Python (1.5+, Get-CoopPipxFetchPythonFlag) supplies its own
+  # 3.12 for the Fabric CLI, so 3.14 plus that pipx also passes. pipx counts here
+  # exactly as row 4 counts it: on PATH, or reachable as `<python> -m pipx`.
+  $pyOk = $false; $pyDet = 'not found'; $pyFix = $fix.python
   $fabPy = if (-not $NoFabric) { Get-CoopFabricBootstrapPython } else { $null }
   $genPy = Get-CoopPython
   $genVer = if ($genPy) { & $ver $genPy } else { '' }
   $genOk = $genVer -and ([version]$genVer -ge [version]'3.10')
-  # A general Python that is itself 3.10-3.13 is Fabric-compatible even when the
-  # Fabric resolver's probe misses it (#81: Windows PowerShell 5.1 quoting).
-  $genFabOk = $genOk -and ([version]$genVer -lt [version]'3.14')
-  if ($fabPy) { $pyOk = $true; $pyDet = & $ver $fabPy }
-  elseif ($genOk -and ($NoFabric -or $genFabOk)) { $pyOk = $true; $pyDet = $genVer }
-  elseif ($genOk -and (Test-Have 'pipx') -and ((& pipx install --help 2>&1 | Out-String) -match '--fetch-python')) {
-    $pyOk = $true; $pyDet = "$genVer; pipx fetches 3.12 for the Fabric CLI"
-  } elseif ($genOk) { $pyDet = "$genVer only; the Fabric CLI needs 3.10-3.13" }
-  elseif ($genVer) { $pyDet = "$genVer is older than 3.10" }
-  $rows += & $row 3 'Python 3.10-3.13 (3.12 recommended)' $true $pyOk $pyDet $fix.python
-
-  $pipxOk = $false; $pipxDet = 'not found'
-  if (Test-Have 'pipx') { $pipxOk = $true; $pipxDet = & $ver 'pipx' }
+  $pipxDet = 'not found'; $pipxVia = @()
+  if (Test-Have 'pipx') { $pipxDet = & $ver 'pipx'; $pipxVia = @('pipx') }
   else {
     foreach ($p in @($fabPy, $genPy)) {
       if (-not $p) { continue }
       & $p -m pipx --version *> $null
-      if ($LASTEXITCODE -eq 0) { $pipxOk = $true; $pipxDet = "via $p -m pipx"; break }
+      if ($LASTEXITCODE -eq 0) { $pipxDet = "via $p -m pipx"; $pipxVia = @($p, '-m', 'pipx'); break }
     }
   }
-  $rows += & $row 4 'pipx' $true $pipxOk $pipxDet $fix.pipx
+  # A general Python that is itself 3.10-3.13 is Fabric-compatible even when the
+  # Fabric resolver's probe misses it (#81: Windows PowerShell 5.1 quoting). pipx
+  # is probed only when it is the deciding factor (a 3.14+ Python and nothing
+  # older), so the row stays cheap.
+  $genFabOk = $genOk -and ([version]$genVer -lt [version]'3.14')
+  if ($fabPy) { $pyOk = $true; $pyDet = & $ver $fabPy }
+  elseif ($genOk -and ($NoFabric -or $genFabOk)) { $pyOk = $true; $pyDet = $genVer }
+  elseif ($genOk -and $pipxVia.Count -gt 0 -and (Get-CoopPipxFetchPythonFlag $pipxVia)) {
+    $pyOk = $true; $pyDet = "$genVer; pipx fetches 3.12 for the Fabric CLI"
+  } elseif ($genOk) {
+    $pyDet = "$genVer only; the Fabric CLI needs 3.10-3.13"
+    # Windows: a pipx that is present but too old to fetch a Python is repaired
+    # without winget or an administrator — upgrading pipx (1.12+) lets it download
+    # a standalone 3.12 for the Fabric CLI. Elsewhere the package manager's Python
+    # stays the fix (pip --user is refused on Debian-family Pythons, PEP 668).
+    if ($pipxVia.Count -gt 0 -and $fix.pipxUpgrade) { $pyFix = "$genPy -m pip install --user --upgrade pipx then $genPy -m pipx ensurepath" }
+  }
+  elseif ($genVer) { $pyDet = "$genVer is older than 3.10" }
+  $rows += & $row 3 'Python 3.10-3.13 (3.12 recommended)' $true $pyOk $pyDet $pyFix
+
+  $rows += & $row 4 'pipx' $true ($pipxVia.Count -gt 0) $pipxDet $fix.pipx
 
   $azOk = Test-Have 'az'
   $rows += & $row 5 'Azure CLI' $true $azOk $(if ($azOk) { '' } else { 'not found' }) $fix.az

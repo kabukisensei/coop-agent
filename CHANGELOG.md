@@ -72,6 +72,24 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+
+- Machines whose only Python is 3.14 no longer get a Fabric CLI they cannot fix.
+  The Python prerequisite row (install and `coop doctor`) now passes with any pipx
+  that can fetch a standalone Python (1.5+, both flag spellings; it accepted only
+  the 1.12+ spelling before) and counts a pipx that is installed but not on PATH
+  yet, as the pipx row already did. `coop doctor --fix` builds the Fabric CLI with
+  the same interpreter plan as install and update — a local Python 3.10–3.13, or
+  pipx's standalone 3.12 — instead of a bare `pipx install` that inherited 3.14
+  and failed, and it rebuilds an existing Fabric environment that runs 3.14
+  (re-injecting `fabric-cicd`). On Windows, when pipx is too old to fetch a
+  Python, the row prints the admin-free repair (`python -m pip install --user
+  --upgrade pipx`) instead of a winget Python install, and
+  `coop install --prereqs auto` runs it. Bash and PowerShell in parity.
+- `coop_version_lt` read a two-part version `X.Y` as `X.Y.Y`, so Python 3.14.2
+  counted as older than 3.14 and passed the Fabric check it should have failed
+  (and 3.10.5 counted as older than 3.10). Missing parts now read as 0.
+- `coop install --prereqs auto` ran a two-step fix (`a then b`) as the single
+  command `ab`: the newline that split the steps was lost inside a heredoc.
 - `coop doctor` no longer reports a pipx environment as "stale/corrupt" when the
   executable it resolved on PATH is not the pipx one. A `pip install` copy, another
   tool manager's shim, or a leftover launcher earlier on PATH (a teammate's
