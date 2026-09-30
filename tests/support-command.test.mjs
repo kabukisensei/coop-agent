@@ -107,8 +107,12 @@ await t("host event log is rewritten sanitized — planted credential never pers
 });
 
 await t("runs without HOME (COOP_DIR set) stay in-profile (F3)", async () => {
+  // With HOME unset, node's homedir() falls back to the account's real home, where
+  // the standards status would take its storage lock; keep that in the sandbox (#135).
+  const standards = join(coopDir, "standards-sandbox");
   const r = spawnSync("bash", ["-c", `env -u HOME node "${join(ROOT, "lib", "support-center-cli.mjs")}" --json`],
-    { env: { ...process.env, COOP_DIR: coopDir }, encoding: "utf8" });
+    { env: { ...process.env, COOP_DIR: coopDir, COOP_STANDARDS_ROOT: join(standards, "canonical"),
+      COOP_STANDARDS_STATE: join(standards, "status.json"), COOP_STANDARDS_SNAPSHOT_ROOT: join(standards, "snapshots") }, encoding: "utf8" });
   assert.equal(r.status, 0);
   assert.doesNotThrow(() => JSON.parse(r.stdout));
 });

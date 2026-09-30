@@ -408,14 +408,19 @@ The run scripts are the list; this page does not repeat it.
 The Windows terminal-workstation acceptance workflow runs `tests\run.ps1` with
 `COOP_TEST_EXTENDED=1`, so its behavioral-suite receipt covers both lanes.
 
-The extended block of `tests/run.sh` runs with the caller's home, because some
-extended fixtures predate the rules above. `tests/review.test.sh` can write the
-real `~/.coop/standards`, `tests/doctor.test.sh` runs doctor against the real home
-and lets it fetch this checkout's `origin`, and `tests/update-guard.test.sh` runs
-`scripts/update.sh` with the real `HOME`, `COOP_DIR` and agent dir.
-`tests/home-guard.test.sh` reads the real `~/.local/bin` and `~/.coop` on purpose,
-to prove the fleet paths leave them alone. Until the first three are fixed, run
-the extended lane locally only where those writes are acceptable.
+The extended block of `tests/run.sh` keeps the gate lane's temp home (#135).
+`tests/home-guard.test.sh` is the one exception: it reads the real `~/.local/bin`
+and `~/.coop` on purpose, to prove the fleet paths leave them alone. The extended
+fixtures that run doctor, update or a launch (`doctor`, `inventory`, `first-run`)
+work on a copy of the tree without `.git`, and `fabric-mcp-launch` pre-writes a
+fresh fetch stamp. `update-guard` and `review` sandbox their own home.
+
+As a backstop, `tests/run.sh` records the caller's `~/.coop` and `~/.azure`
+(path, size and modification time of every file) and this checkout's `HEAD`,
+refs and `FETCH_HEAD` before any test runs. It fails the run if a test changed
+them. Pi session transcripts and az's own logs and caches are left out, because a
+coop session or `az` command running at the same time writes them. If the check
+fails while one of those was running, close it and rerun.
 
 ### Pi matrix triggers
 
