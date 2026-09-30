@@ -2,7 +2,7 @@
 // No provider session, network tool, credential lookup or package install is used.
 // Usage: node tests/guardrails-pi-runner.test.mjs /absolute/path/to/pi-coding-agent
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -67,6 +67,10 @@ runner.setUIContext(ui);
 // Install Pi's actual AgentSession hook on an inert host; no session constructor
 // or live tools are involved. Do not replace runner.emitToolCall/createContext.
 const host = { agent: {}, _extensionRunner: runner };
+// Pi 0.99 moved the hook body into _beforeToolCall, which codemode's nested calls
+// share (with their parent call's id).
+const nestedHook = typeof AgentSession.prototype._beforeToolCall === "function";
+if (nestedHook) host._beforeToolCall = AgentSession.prototype._beforeToolCall;
 AgentSession.prototype._installAgentToolHooks.call(host);
 const dispatch = async (event, expectedBlock) => {
   const before = downstream;
@@ -130,9 +134,14 @@ const mutations = [read(1, { query: "DELETE FROM dbo.Customer" }),
   { toolName: "mcp__fabric", input: { tool: "fabric_create_item", args: {} } },
   { toolName: "mcp__azure_devops", input: { tool: "create_work_item", args: {} } },
   { toolName: "mcp__custom", input: { tool: "write", args: {} } },
-  // Fabric MCP's namespace routers carry the operation in `command` (#171).
+  // Pi 0.99's built-in MCP shape: a `tool` field is an argument, never the operation.
+  { toolName: "mcp__fabric__delete_item", input: { tool: "list_items" } },
+  { toolName: "mcp__powerbi-modeling-mcp__measure_operations", input: { request: { operation: "Create" } } },
+  // Fabric MCP's namespace routers carry the operation in `command` (#171), in the
+  // adapter's shapes and in Pi 0.99's built-in shape.
   { toolName: "mcp", input: { server: "fabric", tool: "onelake", args: { intent: "x", command: "onelake_delete_file", parameters: {} } } },
-  { toolName: "mcp__fabric", input: { tool: "core", args: { intent: "x", command: "core_create-item", parameters: {} } } }];
+  { toolName: "mcp__fabric", input: { tool: "core", args: { intent: "x", command: "core_create-item", parameters: {} } } },
+  { toolName: "mcp__fabric__onelake", input: { intent: "x", command: "onelake_delete_file", parameters: {} } }];
 const beforeMutations = executions;
 for (const event of mutations) await dispatch(event, true);
 assert.equal(executions, beforeMutations, "no mutation reaches even the inert executor");
@@ -161,6 +170,72 @@ runner.setUIContext(ui); answer = true;
 await dispatch({ toolName: "bash", input: { command: "rm -rf SYNTHETIC_COMMAND_SECRET" } }, false);
 await dispatch({ toolName: "read", input: { path: "README.md" } }, false);
 await dispatch({ toolName: "mcp__fabric", input: { tool: "fabric_list_workspaces", args: {} } }, false);
+if (nestedHook) {
+  // Calls a codemode script makes at once: one approval dialog at a time, in order.
+  await fresh();
+  let open = 0, maxOpen = 0;
+  answer = () => { open++; maxOpen = Math.max(maxOpen, open); return new Promise((done) => setTimeout(() => { open--; done(true); }, 20)); };
+  const nested = [
+    { toolName: "mcp__fabric__delete_item", input: {} },
+    { toolName: "mcp__powerbi-modeling-mcp__measure_operations", input: { request: { operation: "Delete" } } },
+    { toolName: "mcp__fabric__onelake_delete-file", input: {} },
+  ];
+  const results = await Promise.all(nested.map((event, i) =>
+    host._beforeToolCall({ toolCall: { id: `script/${i}`, name: event.toolName }, args: event.input }, "script")));
+  assert.deepEqual(results.map((r) => !!r?.block), [false, false, false]);
+  assert.equal(prompts, 3, "each delete asks");
+  assert.equal(maxOpen, 1, "never two dialogs at once");
+  answer = true;
+}
 const audit = readFileSync(join(agentDir, "guardrails-audit.jsonl"), "utf8");
 for (const secret of ["SYNTHETIC_COMMAND_SECRET", "SYNTHETIC_APPROVAL_SECRET", "SELECT TOP", "dbo.Customer"]) assert.ok(!audit.includes(secret));
-console.log(`Pi ${version}: real AgentSession beforeToolCall + ExtensionRunner integration passed (offline, synthetic fixtures).`);
+
+// Pi 0.99+: its built-in MCP registers each server tool as `mcp__<server>__<tool>`.
+// Start a real session with Pi's built-in extensions, a local stdio MCP server and
+// coop's guardrails, and check what Pi's registry reports and what coop asks.
+const builtinIndex = join(piRoot, "dist/extensions/index.js");
+let builtinMcp = false;
+if (existsSync(builtinIndex)) {
+  const { builtInExtensions } = await import(pathToFileURL(builtinIndex).href);
+  builtinMcp = Array.isArray(builtInExtensions) && builtInExtensions.some((ext) => ext?.name === "mcp");
+  if (builtinMcp) {
+    const pi = await import(pathToFileURL(join(piRoot, "dist/index.js")).href);
+    // Pi's MCP reads <PI_CODING_AGENT_DIR>/mcp.json, which is this test's agent dir.
+    const mcpAgentDir = agentDir, cwd = mkdtempSync(join(scratch, "builtin-mcp-"));
+    const server = { command: process.execPath, args: [join(root, "tests/fixtures/fake-mcp-server.mjs")] };
+    writeFileSync(join(mcpAgentDir, "mcp.json"), JSON.stringify({ mcpServers: { "powerbi-modeling-mcp": server, other_server: server } }));
+    const settingsManager = pi.SettingsManager.create(cwd, mcpAgentDir);
+    const resourceLoader = new pi.DefaultResourceLoader({ cwd, agentDir: mcpAgentDir, settingsManager,
+      additionalExtensionPaths: [join(root, "extensions/coop-guardrails/index.ts")], extensionFactories: builtInExtensions,
+      noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true });
+    await resourceLoader.reload();
+    const { session } = await pi.createAgentSession({ cwd, agentDir: mcpAgentDir, settingsManager, resourceLoader, sessionManager: pi.SessionManager.inMemory() });
+    const asked = [];
+    const uiContext = new Proxy({
+      confirm: async (_title, message) => { asked.push(String(message)); return false; },
+      select: async (title, options) => { asked.push(String(title)); return options[options.length - 1]; },
+    }, { get: (target, key) => (key in target ? target[key] : () => undefined) });
+    await session.bindExtensions({ uiContext });
+    let tools = [];
+    for (let i = 0; i < 100 && tools.length < 6; i++) {
+      await new Promise((done) => setTimeout(done, 100));
+      tools = session.getAllTools().filter((info) => info.name.startsWith("mcp__"));
+    }
+    const lookup = tools.find((info) => info.name === "mcp__powerbi-modeling-mcp__lookup");
+    assert.equal(tools.length, 6, "both servers' tools are registered");
+    assert.ok(tools.every((info) => info.sourceInfo?.path === "builtin:mcp"), "Pi reports its built-in MCP as the source");
+    assert.equal(lookup?.namespace?.name, "mcp__powerbi-modeling-mcp");
+    assert.equal(lookup?.annotations?.destructiveHint, true);
+    const blocks = async (name, args) => (await session._beforeToolCall({ toolCall: { id: name, name }, args }))?.block === true;
+    assert.equal(await blocks("mcp__powerbi-modeling-mcp__measure_operations", { request: { operation: "List" } }), false, "a model read passes");
+    assert.equal(asked.length, 0);
+    assert.equal(await blocks("mcp__powerbi-modeling-mcp__measure_operations", { request: { operation: "Create" } }), true, "a model edit asks");
+    assert.equal(await blocks("mcp__other_server__delete_item", { tool: "list_items", id: "1" }), true, "a `tool` argument cannot relabel a delete");
+    assert.match(asked.at(-1), /other_server\/delete_item/);
+    assert.equal(await blocks("mcp__powerbi-modeling-mcp__lookup", {}), true, "a tool its server marks destructive asks");
+    assert.equal(asked.length, 3);
+    await session._extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+    session.dispose();
+  }
+}
+console.log(`Pi ${version}: real AgentSession beforeToolCall + ExtensionRunner integration passed${builtinMcp ? ", with its built-in MCP" : ""} (offline, synthetic fixtures).`);

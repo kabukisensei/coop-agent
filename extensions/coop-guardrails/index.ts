@@ -728,6 +728,53 @@ function sqlWithoutComments(sql: string, preserveBracketIdentifiers = false): st
 
 type MutationTarget = { outerTool: string; innerTool?: string; server?: string };
 
+// --- Tool provenance: Pi's built-in MCP (Pi 0.99+) and pi-mcp-adapter ------------
+// Pi 0.99 registers each MCP tool directly, named `mcp__<server>__<tool>` (characters
+// outside [A-Za-z0-9_-] become `_`; a name over 64 characters is cut and gets a hash
+// suffix), in the namespace `mcp__<server>`. Its arguments go straight to the server,
+// so an `input.tool` field is an argument, never a dispatch. The tool_call handler
+// looks each tool up in Pi's registry and attaches what it finds as `coopToolOrigin`;
+// without that (older Pi, tests) the name is matched against coop's own servers.
+
+/** What Pi's registry says about a tool. `builtinMcpServer`: Pi's built-in MCP
+ * registered it for that server. `envelope`: it is named `mcp` or takes the
+ * adapter's `{tool, args}` dispatch. `destructiveHint`: its server marks it destructive. */
+export type ToolOrigin = { builtinMcpServer?: string; envelope: boolean; destructiveHint: boolean };
+
+// coop's generated MCP servers (lib/mcp_config.py), longest first so a longer name
+// wins over a shorter one it starts with.
+const COOP_MCP_SERVERS = ["powerbi-modeling-mcp", "fabric-sqlendpoint", "microsoft-learn", "azure-devops", "fabric"];
+
+const builtinMcpPrefix = (server: string) => `mcp__${server}__`.replace(/[^A-Za-z0-9_-]/g, "_");
+
+/** A registered tool's origin, from its `pi.getAllTools()` entry. Only Pi itself
+ * registers tools under the `builtin:mcp` source path. */
+export function toolOriginFromInfo(info: any): ToolOrigin | undefined {
+  if (!info || typeof info !== "object") return undefined;
+  const path = String(info.sourceInfo?.path ?? "");
+  const namespace = typeof info.namespace?.name === "string" ? info.namespace.name : "";
+  const destructiveHint = info.annotations?.destructiveHint === true;
+  if (path === "builtin:mcp" && namespace.startsWith("mcp__") && namespace.length > 5) {
+    return { builtinMcpServer: namespace.slice(5), envelope: false, destructiveHint };
+  }
+  // The envelope test reads the tool's own shape, not its install path, so a
+  // renamed or relocated adapter still dispatches (and still asks).
+  const props = info.parameters?.properties;
+  const envelope = info.name === "mcp"
+    || (!!props && typeof props === "object" && "tool" in props && "args" in props);
+  return { envelope, destructiveHint };
+}
+
+/** The built-in MCP server and tool a call targets, or null for any other tool. */
+function builtinMcpTarget(event: any): { server: string; tool: string } | null {
+  const name = String(event?.toolName ?? "");
+  const origin: ToolOrigin | undefined = event?.coopToolOrigin;
+  const server = origin ? origin.builtinMcpServer : COOP_MCP_SERVERS.find((s) => name.startsWith(builtinMcpPrefix(s)));
+  if (!server) return null;
+  const prefix = builtinMcpPrefix(server);
+  return { server, tool: name.startsWith(prefix) ? name.slice(prefix.length) : name };
+}
+
 // --- Fabric MCP namespace routers (#171) -----------------------------------------
 // coop runs @microsoft/fabric-mcp with `--mode namespace`, which exposes four router
 // tools. Each takes {intent, command, parameters, learn}, and `command` is what runs.
@@ -791,17 +838,30 @@ function fabricRouterCall(event: any): { router: string; command: string; kind: 
   return { router: routed.router, command: shown, kind: "always-ask" };
 }
 
-/** Match the adapter's two dispatch shapes. Namespace wrappers bind their server
- * in the registered tool name; input.server cannot override that binding. Keep
- * unknown namespaces verbatim rather than guessing which underscores were hyphens. */
+/** Match the adapter's two dispatch shapes and Pi's built-in MCP tools. Namespace
+ * wrappers bind their server in the registered tool name; input.server cannot
+ * override that binding. Keep unknown namespaces verbatim rather than guessing
+ * which underscores were hyphens. */
 function normalizeMcpCall(event: any): { target: MutationTarget; args: any; proxy: boolean; fabric?: FabricRouted } {
   const outerTool = String(event?.toolName ?? "");
   const input = event?.input;
+  const builtin = builtinMcpTarget(event);
+  if (builtin) return fabricRouted({ target: { outerTool, innerTool: builtin.tool, server: builtin.server }, args: input, proxy: false });
   const namespace = /^mcp__([A-Za-z0-9_]+)$/.exec(outerTool)?.[1];
   // Direct MCP tools may also start with mcp__; only an actual {tool, args}
   // envelope carries a dispatched inner operation. Otherwise retain direct args.
-  const proxy = (outerTool === "mcp" || !!namespace) && typeof input?.tool === "string";
+  // A tool the registry shows is not an envelope never dispatches: its `tool`
+  // field is the model's text, not the operation that runs.
+  const origin: ToolOrigin | undefined = event?.coopToolOrigin;
+  const envelope = !origin || origin.envelope;
+  const proxy = envelope && (outerTool === "mcp" || !!namespace) && typeof input?.tool === "string";
   if (!proxy) return { target: { outerTool }, args: input, proxy: false };
+  // With no registry entry, `mcp__<a>__<b>` is either an adapter namespace (a server
+  // named with `--`) or a built-in tool of a server coop doesn't know. When the name
+  // itself carries a write verb, the stricter reading (the name) decides.
+  if (!origin && /^mcp__[A-Za-z0-9_]+?__[A-Za-z0-9]/.test(outerTool) && MCP_WRITE_VERB.test(outerTool)) {
+    return { target: { outerTool }, args: input, proxy: false };
+  }
   const server = namespace
     ? (namespace === "fabric_sqlendpoint" ? MANAGED_SQL_SERVER : namespace)
     : typeof input?.server === "string" ? input.server : undefined;
@@ -823,7 +883,7 @@ export function effectiveMutationTarget(event: any): MutationTarget {
 
 function callSqlText(event: any): string {
   const call = normalizeMcpCall(event);
-  if (call.proxy && call.args) {
+  if ((call.proxy || call.target.server) && call.args && typeof call.args === "object") {
     const texts = ["sql", "query", "statement", "command"]
       .map((key) => call.args[key]).filter((value) => typeof value === "string");
     // Multiple SQL aliases cannot hide a mutation behind a benign first field.
@@ -928,7 +988,8 @@ function modelingCall(event: any): { tool: string; operation: string; kind: Mode
 }
 
 /** Label a call that edits through an MCP server, or null for reads. Name-based
- * mutations come first; Power BI Modeling calls are classified by operation. */
+ * mutations come first; Power BI Modeling calls are classified by operation. A
+ * tool its server marks destructive asks even when its name looks like a read. */
 export function mcpEditLabel(event: any): string | null {
   const target = effectiveMutationTarget(event);
   const byName = mcpMutationLabel(target);
@@ -936,8 +997,16 @@ export function mcpEditLabel(event: any): string | null {
   const fabric = fabricRouterCall(event);
   if (fabric) return fabric.kind === "read" ? null : `fabric/${fabric.router} ${fabric.command || "(no command)"}`;
   const modeling = modelingCall(event);
-  if (!modeling || modeling.kind === "read") return null;
-  return `${mutationName(target)} ${modeling.operation || "(no operation)"}`;
+  if (modeling) return modeling.kind === "read" ? null : `${mutationName(target)} ${modeling.operation || "(no operation)"}`;
+  if (serverMarksDestructive(event)) return `${mutationName(target)} (its server marks it destructive)`;
+  return null;
+}
+
+/** True when Pi's registry shows the tool's MCP server marks it destructive. The
+ * hint can only add a prompt; a server's read-only hint never removes one. */
+function serverMarksDestructive(event: any): boolean {
+  const origin: ToolOrigin | undefined = event?.coopToolOrigin;
+  return origin?.destructiveHint === true;
 }
 
 /** True for a Power BI Modeling call that edits (asks), false for reads and other calls. */
@@ -1444,6 +1513,16 @@ export function stripManagedUpdateNotices(text: string): string {
     .replace(/^[ \t]*Update available: v\S+ (?:->|→) v\S+[ \t]*\|[ \t]*ctx_upgrade[ \t]*(?:\r?\n|$)/gm, "");
 }
 
+/** Run `fn` for one call at a time, in arrival order. A failed call does not stop later ones. */
+export function oneAtATime<A extends any[], R>(fn: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
+  let tail: Promise<unknown> = Promise.resolve();
+  return (...args: A) => {
+    const run = tail.then(() => fn(...args));
+    tail = run.catch(() => undefined);
+    return run;
+  };
+}
+
 function contextModeToolName(event: any): string | null {
   const target = effectiveMutationTarget(event);
   const name = target.innerTool || target.outerTool;
@@ -1503,8 +1582,24 @@ export default function coopGuardrails(pi: ExtensionAPI) {
     }
   });
 
-  pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
+  // Pi 0.99's built-in MCP registers its tools directly, so the checks need the
+  // registry's word on which server a tool belongs to (older Pi: name matching).
+  // The lookup always overwrites the field: an earlier hook cannot pre-set it.
+  const withToolOrigin = (event: any) => {
+    let origin: ToolOrigin | undefined;
     try {
+      const tools = typeof (pi as any).getAllTools === "function" ? (pi as any).getAllTools() : undefined;
+      if (Array.isArray(tools)) origin = toolOriginFromInfo(tools.find((info: any) => info?.name === event?.toolName));
+    } catch { origin = undefined; }
+    return { ...event, coopToolOrigin: origin };
+  };
+
+  // Checked one call at a time: a codemode script (Pi 0.99) can issue calls at
+  // once, and two approval dialogs together leave one unanswerable. In order, a
+  // session approval given for the first call also covers the next.
+  pi.on("tool_call", oneAtATime(async (rawEvent: any, ctx: ExtensionContext) => {
+    try {
+      const event = withToolOrigin(rawEvent);
       // Never let an extension self-update around Coop's tested manifest. This is
       // intentionally a hard block with one fleet-safe remediation path.
       if (!showUpstreamUpdates() && contextModeToolName(event)?.toLowerCase() === "ctx_upgrade") {
@@ -1722,7 +1817,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       // it can contain command arguments, credentials, or private tool payloads.
       return { block: true, reason: "coop guardrails: unable to verify this tool call because an enforcement check failed; the action was blocked. Retry after resolving the guardrail or approval UI failure." };
     }
-  });
+  }));
 
   pi.registerCommand("coop-live-read", {
     description: "Show or revoke this session's bounded live-read grant",
