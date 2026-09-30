@@ -433,8 +433,13 @@ print("resume verdict contract OK")
   $webPriorSkipExt = $env:COOP_SKIP_EXT_CHECK
   $env:PATH = "$webStub$([System.IO.Path]::PathSeparator)$env:PATH"
   $env:COOP_SKIP_EXT_CHECK = '1'
+  # The child's warning is native stderr: under 'Stop', Windows PowerShell turns it
+  # into a terminating NativeCommandError, so capture it with 'Continue'.
+  $webEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
   try { $webOut = (& $psExe -NoProfile -ExecutionPolicy Bypass -File $coop web 2>&1 | Out-String) }
   finally {
+    $ErrorActionPreference = $webEap
     $env:PATH = $webPriorPath
     if ($null -eq $webPriorSkipExt) { Remove-Item Env:COOP_SKIP_EXT_CHECK -ErrorAction SilentlyContinue } else { $env:COOP_SKIP_EXT_CHECK = $webPriorSkipExt }
   }
