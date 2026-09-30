@@ -185,6 +185,18 @@ def desired_servers(
                 "start",
                 "--mode",
                 "namespace",
+                # 1.4.0 exposes no router unless its namespaces are named (1.3.0
+                # exposed all four by default). Naming them keeps the same four
+                # routers on both versions; coop's guardrails classify each
+                # router's command (#171).
+                "--namespace",
+                "docs",
+                "--namespace",
+                "onelake",
+                "--namespace",
+                "core",
+                "--namespace",
+                "datafactory",
             ],
             "env": env,
         }
