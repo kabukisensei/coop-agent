@@ -1275,7 +1275,7 @@ coop_repo_doctor_row() {
 # from the releases already fetched and --check still changes nothing.
 coop_repo_check_line() {
   local at next stranded
-  if ! have git || [ ! -d "$COOP_ROOT/.git" ]; then
+  if ! have git || ! coop_is_git_checkout "$COOP_ROOT"; then
     printf 'not a git checkout: coop update never moves it\n\n'
     return 0
   fi

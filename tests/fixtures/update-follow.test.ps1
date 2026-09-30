@@ -444,10 +444,12 @@ try {
   [System.IO.File]::WriteAllText((Join-Path $wtJunk '.git'), "not a gitdir`n")
   $script:CoopRoot = $wtLinked
   $wtDescribe = Get-CoopRepoDescribe
+  $wtCheck = (Get-CoopRepoCheckLine).Line
   if (-not (Test-Path -LiteralPath (Join-Path $wtLinked '.git') -PathType Leaf)) { Ko 'fixture: a linked worktree has a .git file' }
   elseif (-not (Test-CoopGitCheckout $wtBase) -or -not (Test-CoopGitCheckout $wtLinked)) { Ko 'a clone and a linked worktree are git checkouts' }
   elseif ((Test-CoopGitCheckout $wtPlain) -or (Test-CoopGitCheckout $wtJunk)) { Ko 'a plain copy or a .git file that names no gitdir is not a git checkout' }
   elseif ($wtDescribe -cne 'v0.10.0') { Ko 'Get-CoopRepoDescribe works from a linked worktree' $wtDescribe }
+  elseif ($wtCheck -like 'not a git checkout*') { Ko "update --check calls a linked worktree 'not a git checkout'" $wtCheck }
   else { Ok 'a linked worktree is a git checkout (helpers work from it); a plain copy or a gitdir-less .git file is not' }
 
   # 13. The doctor row (Get-CoopRepoDoctorRow): behind is a warn to update; a

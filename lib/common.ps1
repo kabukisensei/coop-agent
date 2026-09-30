@@ -1513,7 +1513,7 @@ function Write-CoopRepoStranded {
 # still changes nothing. (mirror of coop_repo_check_line)
 function Get-CoopRepoCheckLine {
   $ErrorActionPreference = 'Continue'
-  if (-not (Test-Have 'git') -or -not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) {
+  if (-not (Test-Have 'git') -or -not (Test-CoopGitCheckout $script:CoopRoot)) {
     return @{ Line = 'not a git checkout: coop update never moves it'; Hint = '' }
   }
   $at = Get-CoopRepoDescribe; if (-not $at) { $at = 'checkout' }

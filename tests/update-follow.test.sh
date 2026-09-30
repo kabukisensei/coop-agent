@@ -443,6 +443,9 @@ if coop_is_git_checkout "$TMP/wt-junk"; then fail "a .git file that names no git
 COOP_ROOT="$TMP/wt-linked"
 OUT="$(coop_repo_describe)"
 [ "$OUT" = "v0.10.0" ] || fail "coop_repo_describe works from a linked worktree"
+case "$(coop_repo_check_line)" in
+  "not a git checkout"*) fail "update --check calls a linked worktree 'not a git checkout'" ;;
+esac
 pass "a linked worktree is a git checkout (helpers work from it); a plain copy or a gitdir-less .git file is not"
 
 # 15. The doctor row (coop_repo_doctor_row): behind is a warn to update; a
