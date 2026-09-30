@@ -37,7 +37,7 @@ assert 'oauth' not in sql and 'bearerTokenEnv' not in sql
 assert 'powerbi' not in s and 'powerbi' not in m['_coop']['managed_servers']
 assert 'powerbi-mcp-server' not in json.dumps(m)
 model=s['powerbi-modeling-mcp']['args']
-assert '--start' in model and '--readonly' in model
+assert '--start' in model and '--readonly' in model and '--accept-eula' in model
 assert model[1].endswith('@'+manifest['npm_tools']['@microsoft/powerbi-modeling-mcp'])
 assert all('@latest' not in str(v) and 'TODO-' not in str(v) for v in s.values())
 assert s['azure-devops']['args'][1].endswith('@'+manifest['mcp_servers']['@azure-devops/mcp'])
