@@ -52,6 +52,14 @@ const pythonDiscovery = pythonCandidates.map(({ command, prefix }) => ({
 })).find(({ probe }) => probe.status === 0 && !probe.error && probe.stdout?.trim());
 assert.ok(pythonDiscovery, `Python is mandatory; tried: ${pythonCandidates.map(({ command, prefix }) => [command, ...prefix].join(" ")).join(", ")}`);
 const PYTHON_PATH = pythonDiscovery.probe.stdout.trim();
+// An environment whose search path is exactly `value`. Windows spells the key
+// `Path` in process.env, and spreading it then adding `PATH` hands the child two
+// entries, so the original search path could still win (#133).
+function withSearchPath(env, value) {
+  const next = Object.fromEntries(Object.entries(env).filter(([key]) => key.toUpperCase() !== "PATH"));
+  next.PATH = value;
+  return next;
+}
 const schemaProbe = spawnSync(PYTHON_PATH, ["-c", "import jsonschema"], { encoding: "utf8" });
 
 function runPs(args, options = {}) {
@@ -413,7 +421,8 @@ test("rollback npm reconciliation executes, fails closed, and precedes proof con
 });
 
 test("bounded behavioral suite re-finalizes immutable artifacts and checkouts before upload", () => {
-  const source = readFileSync(SCRIPT, "utf8");
+  // The contract matches line structure; a Windows checkout may carry CRLF (#133).
+  const source = readFileSync(SCRIPT, "utf8").replace(/\r\n/g, "\n");
   const contract = (candidate) => {
     const snapshotHelper = candidate.match(/function Get-CheckoutSnapshot[\s\S]*?\n\}/)?.[0] ?? "";
     assert.match(snapshotHelper, /Get-DirectTreeHash \$Path \$true/);
@@ -820,20 +829,19 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
     assert.equal(pinned.status, 0, pinned.stderr);
     assert.equal(normalize(pinned.stdout.trim()), normalize(pinnedPath));
 
-    const fallbackEnv = { ...process.env };
+    const fallbackEnv = withSearchPath(process.env, dirname(pinnedPath));
     delete fallbackEnv.CERT_PYTHON;
-    fallbackEnv.PATH = dirname(pinnedPath);
     const fallback = probe(candidate, fallbackEnv);
     assert.equal(fallback.status, 0, fallback.stderr);
     assert.equal(normalize(fallback.stdout.trim()), normalize(pinnedPath));
 
-    const invalidFirstEnv = { ...process.env, PATH: `${invalidFirstDir}${delimiter}${dirname(pinnedPath)}` };
+    const invalidFirstEnv = withSearchPath(process.env, `${invalidFirstDir}${delimiter}${dirname(pinnedPath)}`);
     delete invalidFirstEnv.CERT_PYTHON;
     const invalidFirst = probe(candidate, invalidFirstEnv);
     assert.equal(invalidFirst.status, 0, invalidFirst.stderr);
     assert.equal(normalize(invalidFirst.stdout.trim()), normalize(pinnedPath));
 
-    const allInvalidEnv = { ...process.env, PATH: invalidFirstDir };
+    const allInvalidEnv = withSearchPath(process.env, invalidFirstDir);
     delete allInvalidEnv.CERT_PYTHON;
     assert.notEqual(probe(candidate, allInvalidEnv).status, 0);
 
