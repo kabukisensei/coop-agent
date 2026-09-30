@@ -170,6 +170,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Guardrails ask before more Fabric MCP mutations (#154). The mutation check
+  matched no verb in `onelake_upload_file`, `onelake_modify_diagnostics`,
+  `onelake_modify_immutability_policy` or `onelake_reset_shortcut_cache`, or in
+  Fabric MCP 1.4.0's `datafactory_run-pipeline`, so those ran without approval.
+  The verb list adds `upload`, `modify`, `reset`, `upsert`, `insert`, `merge`,
+  `move`, `import`, `restore`, `cancel` and `assign`. Running, triggering or
+  starting a pipeline, job, notebook, dataflow or Spark job also asks first. A
+  plain `run`/`execute` stays out, so SQL reads keep their live-read rules and
+  don't get a second prompt. `tests/guardrails.test.mjs` now pins the Fabric MCP
+  1.3.0 and 1.4.0 tool inventory as must-ask and must-not-ask.
 - Users only get the release's tested versions (#151):
   - `coop doctor --fix` installs `coop-data-doc`, `coop-sql-review` and
     `coop-dax-review` at their manifest pins; it used to install PyPI's latest.

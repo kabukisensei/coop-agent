@@ -540,6 +540,43 @@ await t("mcpMutationLabel flags mutating MCP/Fabric actions, not reads or safe t
     assert.equal(mcpMutationLabel(name), null, `${name} should NOT be flagged`);
   }
 });
+await t("every mutating Fabric MCP 1.3.0 / 1.4.0 tool asks; every read passes (#154)", () => {
+  // The pinned server's full tool inventory. 1.4.0 renamed tools to kebab-case;
+  // both spellings must classify the same. Update these lists with each bump.
+  const writes = [
+    "core_create-item", "datafactory_create-dataflow", "datafactory_create-pipeline", "datafactory_run-pipeline",
+    "onelake_create-directory", "onelake_create-or-update-data-access-role", "onelake_create-shortcut-adls-gen2",
+    "onelake_create-shortcut-amazon-s3", "onelake_create-shortcut-azure-blob", "onelake_create-shortcut-dataverse",
+    "onelake_create-shortcut-gcs", "onelake_create-shortcut-onedrive-sharepoint", "onelake_create-shortcut-onelake",
+    "onelake_create-shortcut-s3-compatible", "onelake_delete-data-access-role", "onelake_delete-directory",
+    "onelake_delete-file", "onelake_delete-shortcut", "onelake_modify-diagnostics", "onelake_modify-immutability-policy",
+    "onelake_reset-shortcut-cache", "onelake_upload-file",
+  ];
+  const reads = [
+    "core_search-catalog", "datafactory_execute-query", "datafactory_get-pipeline", "datafactory_list-dataflows",
+    "datafactory_list-pipelines", "docs_api-examples", "docs_best-practices", "docs_item-api-spec", "docs_item-definitions",
+    "docs_list-item-types", "docs_platform-api-spec", "docs_workloads", "onelake_download-file", "onelake_get-data-access-role",
+    "onelake_get-settings", "onelake_get-shortcut", "onelake_get-table", "onelake_get-table-config", "onelake_get-table-namespace",
+    "onelake_list-data-access-roles", "onelake_list-files", "onelake_list-items", "onelake_list-items-dfs",
+    "onelake_list-shortcuts", "onelake_list-table-namespaces", "onelake_list-tables", "onelake_list-workspaces",
+  ];
+  const snake = (name) => name.replace(/-/g, "_");
+  for (const name of writes) {
+    for (const spelled of [name, snake(name)]) {
+      assert.ok(mcpMutationLabel({ outerTool: "mcp", innerTool: spelled, server: "fabric" }), `${spelled} should ask`);
+      assert.ok(mcpMutationLabel(`mcp__fabric__${spelled}`), `direct ${spelled} should ask`);
+    }
+  }
+  for (const name of reads) {
+    for (const spelled of [name, snake(name)]) {
+      assert.equal(mcpMutationLabel({ outerTool: "mcp", innerTool: spelled, server: "fabric" }), null, `${spelled} should NOT ask`);
+    }
+  }
+  // SQL row reads stay with the live-read rules, not the mutation prompt.
+  for (const name of ["run_sql", "execute_query", "fabric-sqlendpoint-execute_query", "runsql", "sql_query", "execute_dax_query"]) {
+    assert.equal(mcpMutationLabel({ outerTool: "mcp", innerTool: name, server: "fabric-sqlendpoint" }), null, `${name} should NOT ask as a mutation`);
+  }
+});
 await t("blocks a declined mutating MCP tool call", async () => {
   assert.equal(blocked(await handle({ toolName: "fabric_delete_workspace", input: {} }, { ...ctx, ui: { confirm: async () => false, notify: () => {} } })), true);
 });
