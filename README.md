@@ -637,9 +637,13 @@ fabric_skills:
 
 Baseline enables `kql`, `microsoft-docs`, and every skill in the pinned
 skills-for-fabric catalog (25 at v0.3.18, `sqldw-cli` and `eventhouse-cli` among
-them) when the project contract has a `fabric:` block. Use `policy: restricted`
-with an `allow:` list to load a subset. Legacy `source` and `load_dir` fields
-are ignored with migration notices in `coop doctor`.
+them) when the project contract turns them on: `fabric_skills: policy: baseline`
+(what `/setup-project` writes), or no `fabric_skills:` block at all but a
+`fabric:` section. Outside a repo with a `.coop/project.yml` contract, Fabric
+skills stay off (`coop doctor` from your home folder reports them disabled).
+Use `policy: restricted` with an `allow:` list to load a subset. Legacy
+`source` and `load_dir` fields are ignored with migration notices in
+`coop doctor`.
 
 Fabric authoring skills may edit SQL and Fabric item definitions. They remain
 governed by the Cooptimize workflow: plan-and-approve before edits, back up,
