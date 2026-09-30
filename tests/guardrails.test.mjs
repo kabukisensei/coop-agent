@@ -556,9 +556,10 @@ await t("every mutating Fabric MCP 1.3.0 / 1.4.0 tool asks; every read passes (#
     "core_search-catalog", "datafactory_execute-query", "datafactory_get-pipeline", "datafactory_list-dataflows",
     "datafactory_list-pipelines", "docs_api-examples", "docs_best-practices", "docs_item-api-spec", "docs_item-definitions",
     "docs_list-item-types", "docs_platform-api-spec", "docs_workloads", "onelake_download-file", "onelake_get-data-access-role",
-    "onelake_get-settings", "onelake_get-shortcut", "onelake_get-table", "onelake_get-table-config", "onelake_get-table-namespace",
-    "onelake_list-data-access-roles", "onelake_list-files", "onelake_list-items", "onelake_list-items-dfs",
-    "onelake_list-shortcuts", "onelake_list-table-namespaces", "onelake_list-tables", "onelake_list-workspaces",
+    "onelake_get-principal-access", "onelake_get-settings", "onelake_get-shortcut", "onelake_get-table", "onelake_get-table-config",
+    "onelake_get-table-namespace", "onelake_list-data-access-roles", "onelake_list-files", "onelake_list-items",
+    "onelake_list-items-dfs", "onelake_list-shortcuts", "onelake_list-table-namespaces", "onelake_list-tables",
+    "onelake_list-workspaces",
   ];
   const snake = (name) => name.replace(/-/g, "_");
   for (const name of writes) {

@@ -5,6 +5,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- `@microsoft/fabric-mcp` moves to **1.4.0** (master plan U1, section 6 row). Checked
+  offline against both binaries: in coop's `--mode namespace`, 1.4.0 lists no tools
+  at all unless each namespace is named, where 1.3.0 listed its four routers by
+  default. The generated `fabric` entry now passes `--namespace docs --namespace
+  onelake --namespace core --namespace datafactory`, so both versions expose the same
+  four routers (`docs`, `onelake`, `core`, `datafactory`) with the same commands.
+  1.4.0 spells its commands in kebab-case (`docs_workloads` is now
+  `docs_list-item-types`, `docs_workload-api-spec` is `docs_item-api-spec`, and the
+  `onelake_*` commands use hyphens); the guardrails already classify both spellings,
+  and `onelake_get-principal-access`, a read the lists had missed, now passes
+  without a prompt. `coop sync` regenerates the entry. VM qualification pending (a
+  live `docs` and `onelake` router call).
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
   symlink that the standards storage-root check rejects, and the standards

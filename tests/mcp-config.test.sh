@@ -20,6 +20,8 @@ assert s['fabric']['lifecycle']=='eager'
 assert s['fabric']['auth']=='custom-managed-auth'
 assert s['fabric']['headers']=={'X-Managed-Custom':'keep-me'}
 assert s['fabric']['extraSettings']=={'retry':3}
+# Fabric MCP 1.4.0 exposes no router in namespace mode unless each namespace is named.
+assert s['fabric']['args']==['-y','@microsoft/fabric-mcp@'+manifest['mcp_servers']['@microsoft/fabric-mcp'],'server','start','--mode','namespace','--namespace','docs','--namespace','onelake','--namespace','core','--namespace','datafactory']
 sql=s['fabric-sqlendpoint']
 assert sql['url']=='https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint'
 assert sql['auth'] is False

@@ -731,9 +731,11 @@ type MutationTarget = { outerTool: string; innerTool?: string; server?: string }
 // --- Fabric MCP namespace routers (#171) -----------------------------------------
 // coop runs @microsoft/fabric-mcp with `--mode namespace`, which exposes four router
 // tools. Each takes {intent, command, parameters, learn}, and `command` is what runs.
-// Checked against 1.3.0 on 2026-09-30: a router runs a command only on an exact
+// Checked against 1.3.0 and 1.4.0 offline on 2026-09-30 (tools/list and each
+// router's learn=true command list): a router runs a command only on an exact
 // match of one of its own commands, and never with learn=true; any other call
-// returns its command list. Kebab-case names are 1.4.0's spelling of the same tools.
+// returns its command list. Kebab-case names are 1.4.0's spelling of the same
+// tools; 1.4.0 also lists the routers only when coop names their namespaces.
 const FABRIC_ROUTERS = new Set(["docs", "onelake", "core", "datafactory"]);
 const fabricCommandKey = (command: string) => command.trim().toLowerCase().replace(/-/g, "_");
 /** Lookup key → the listed name, which becomes the inner tool the other rules see. */
@@ -745,9 +747,9 @@ const FABRIC_READ_COMMANDS = fabricCommands([
   "datafactory_list-pipelines", "docs_api-examples", "docs_best-practices", "docs_item-api-spec", "docs_item-definitions",
   "docs_list-item-types", "docs_platform-api-spec", "docs_workload-api-spec", "docs_workloads", "onelake_download-file",
   "onelake_get-data-access-role", "onelake_get-settings", "onelake_get-shortcut", "onelake_get-table",
-  "onelake_get-table-config", "onelake_get-table-namespace", "onelake_list-data-access-roles", "onelake_list-files",
-  "onelake_list-items", "onelake_list-items-dfs", "onelake_list-shortcuts", "onelake_list-table-namespaces",
-  "onelake_list-tables", "onelake_list-workspaces",
+  "onelake_get-principal-access", "onelake_get-table-config", "onelake_get-table-namespace",
+  "onelake_list-data-access-roles", "onelake_list-files", "onelake_list-items", "onelake_list-items-dfs",
+  "onelake_list-shortcuts", "onelake_list-table-namespaces", "onelake_list-tables", "onelake_list-workspaces",
 ]);
 const FABRIC_WRITE_COMMANDS = fabricCommands([
   "core_create-item", "datafactory_create-dataflow", "datafactory_create-pipeline", "datafactory_run-pipeline",
