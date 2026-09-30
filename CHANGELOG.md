@@ -5,15 +5,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
-- Simple Fabric reads go straight to the contract target. At session start coop
-  now hands the agent the Warehouse/Lakehouse ids the nearest `.coop/project.yml`
-  pins (`fabric.default_workspace_id`, `fabric.default_sql_endpoint`) in a hidden
-  note, and the guardrails prompt plus the `team-knowledge` skill say a one-row
-  query, listing, or connection check uses those ids directly — no team-knowledge
-  search, memory search, skill load, or Fabric catalog discovery first. Seen on
-  0.24.0: a `TOP 1` read ran two knowledge searches, a memory search, and MCP
-  discovery before the query although the contract held the ids. The approval
-  prompt before Warehouse SQL is unchanged.
 ### Added
 
 - Guardrails: Fabric and Azure REST writes issued from the shell now ask for
@@ -27,6 +18,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Simple Fabric reads go straight to the contract target. At session start coop
+  now hands the agent the Warehouse/Lakehouse ids the nearest `.coop/project.yml`
+  pins (`fabric.default_workspace_id`, `fabric.default_sql_endpoint`) in a hidden
+  note, and the guardrails prompt plus the `team-knowledge` skill say a one-row
+  query, listing, or connection check uses those ids directly — no team-knowledge
+  search, memory search, skill load, or Fabric catalog discovery first. Seen on
+  0.24.0: a `TOP 1` read ran two knowledge searches, a memory search, and MCP
+  discovery before the query although the contract held the ids. The approval
+  prompt before Warehouse SQL is unchanged.
 - Microsoft skills catalog (master plan U1, the Fabric catalog row):
   `microsoft/skills-for-fabric` moves from v0.3.10 to **v0.3.18**
   (`6c11ad58c25992e5d1435ce7cd80d217d5598a31`) and the baseline now enables the
