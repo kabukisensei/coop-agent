@@ -433,6 +433,25 @@ try {
   if ((Get-At) -ne $C4 -or -not $out.Contains('to release v0.12.0')) { Ko 'a release tagged after the clone should be fetched and followed' $out }
   else { Ok 'a release tagged after the clone: fetched and followed' }
 
+  # 12b. A linked worktree is a git checkout, as it is to the bash twin (#106): the
+  #      repo helpers work from it. A plain copy, or a .git file that names no gitdir,
+  #      is not a checkout.
+  $wtBase = New-FixtureClone 'wt-base'
+  $wtLinked = Join-Path $t 'wt-linked'
+  Invoke-FixtureGit @('-C', $wtBase, 'worktree', 'add', $wtLinked, 'v0.10.0')
+  $wtPlain = Join-Path $t 'wt-plain'; New-Item -ItemType Directory -Force -Path $wtPlain | Out-Null
+  $wtJunk = Join-Path $t 'wt-junk'; New-Item -ItemType Directory -Force -Path $wtJunk | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $wtJunk '.git'), "not a gitdir`n")
+  $script:CoopRoot = $wtLinked
+  $wtDescribe = Get-CoopRepoDescribe
+  $wtCheck = (Get-CoopRepoCheckLine).Line
+  if (-not (Test-Path -LiteralPath (Join-Path $wtLinked '.git') -PathType Leaf)) { Ko 'fixture: a linked worktree has a .git file' }
+  elseif (-not (Test-CoopGitCheckout $wtBase) -or -not (Test-CoopGitCheckout $wtLinked)) { Ko 'a clone and a linked worktree are git checkouts' }
+  elseif ((Test-CoopGitCheckout $wtPlain) -or (Test-CoopGitCheckout $wtJunk)) { Ko 'a plain copy or a .git file that names no gitdir is not a git checkout' }
+  elseif ($wtDescribe -cne 'v0.10.0') { Ko 'Get-CoopRepoDescribe works from a linked worktree' $wtDescribe }
+  elseif ($wtCheck -like 'not a git checkout*') { Ko "update --check calls a linked worktree 'not a git checkout'" $wtCheck }
+  else { Ok 'a linked worktree is a git checkout (helpers work from it); a plain copy or a gitdir-less .git file is not' }
+
   # 13. The doctor row (Get-CoopRepoDoctorRow): behind is a warn to update; a
   #     stranded state (diverged, hold) is a warn with its fix; else ok. doctor.ps1
   #     only dispatches it.

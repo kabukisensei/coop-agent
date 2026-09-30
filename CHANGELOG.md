@@ -182,6 +182,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `pi install` was never affected: Pi passes `--legacy-peer-deps` for its managed
   installs. The Pi matrix now fails if the tree holds an agent other than the
   runtime's version, and a new gate test covers the pin.
+- bash and PowerShell agree that a git worktree is a checkout (#106). bash tested for a
+  `.git` directory and PowerShell for any `.git`, so in a linked worktree (where `.git`
+  is a file) bash skipped the repo update step, doctor warned that skills would never
+  update, and `coop version` showed no git describe, while PowerShell moved the
+  checkout. Both twins now use one rule, a `.git` directory or a `.git` file naming
+  its `gitdir:`, for the repo helpers, `coop update`, doctor and the knowledge sync.
+- MCP: the adapter's `mcpScript` tool can no longer bypass the guardrails. It
+  runs JavaScript that calls MCP tools inside `pi-mcp-adapter`, and those calls
+  never reach Pi's `tool_call` hook. So a script could run a mutating Fabric,
+  Power BI or Azure DevOps action, or Warehouse DDL/DML, with no approval prompt.
+  Coop's generated MCP config now sets `settings.scriptMode: false`, which keeps
+  any other adapter settings a user added. The guardrail blocks `mcpScript` in
+  case a project or user config turns it back on. Single MCP calls through `mcp`
+  are gated as before.
 - `coop doctor --json` on Windows prints one JSON document again (#90). Three hints in
   the pipx tool check (stale environment, an executable that is not the pinned one,
   a Requires-Python violation) used bash's trailing-backslash line continuation,

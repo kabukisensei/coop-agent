@@ -1269,6 +1269,19 @@ function Invoke-CoopAzPreflight {
 # silently never updates, and even a git checkout has no signal between updates.
 # These helpers power step 1 of `coop update` and the doctor / launch nudge.
 
+# Is <Dir> a git checkout: a clone (.git directory) or a linked worktree or
+# submodule (.git file naming its gitdir). Both twins use this one rule (#106), so
+# bash and PowerShell agree on a worktree; a plain copy, or a .git file that names
+# no gitdir, is not a checkout. No git process is started.
+# (mirror of coop_is_git_checkout)
+function Test-CoopGitCheckout([string]$Dir) {
+  $g = Join-Path $Dir '.git'
+  if (Test-Path -LiteralPath $g -PathType Container) { return $true }
+  if (-not (Test-Path -LiteralPath $g -PathType Leaf)) { return $false }
+  try { $first = ([System.IO.File]::ReadAllText($g) -split "`r?`n", 2)[0] } catch { return $false }
+  return ($first.StartsWith('gitdir: ') -and $first.Length -gt 8)
+}
+
 # Quietly refresh origin — at most once per day (marker in the effective agent
 # dir) and bounded by a 5s wait, so an offline or VPN-black-holed fetch can never
 # stall doctor or a launch. Stamps BEFORE fetching, so an offline machine pays
@@ -1277,7 +1290,7 @@ function Invoke-CoopAzPreflight {
 # origin remote). (mirror of coop_repo_fetch_throttled)
 function Invoke-CoopRepoFetchThrottled {
   if (-not (Test-Have 'git')) { return $false }
-  if (-not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) { return $false }
+  if (-not (Test-CoopGitCheckout $script:CoopRoot)) { return $false }
   & git -C $script:CoopRoot remote get-url origin *> $null
   if ($LASTEXITCODE -ne 0) { return $false }
   $agentDir = Get-CoopEffectiveAgentDir
@@ -1396,7 +1409,7 @@ function Get-CoopRepoNewestRelease {
 function Get-CoopRepoNextRelease {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return '' }
-  if (-not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) { return '' }
+  if (-not (Test-CoopGitCheckout $script:CoopRoot)) { return '' }
   if (-not (Test-CoopRepoFollowsReleases)) { return '' }
   $tag = Get-CoopRepoNewestRelease -Filter @('--contains', 'HEAD')
   if (-not $tag) { return '' }
@@ -1412,7 +1425,7 @@ function Get-CoopRepoNextRelease {
 function Get-CoopRepoDescribe {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return '' }
-  if (-not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) { return '' }
+  if (-not (Test-CoopGitCheckout $script:CoopRoot)) { return '' }
   $d = Get-CoopRepoGitLine @('describe', '--tags', '--match', 'v[0-9]*.[0-9]*.[0-9]*', '--exclude', '*-*', '--exclude', 'v*.*.*.*', '--always')
   if ($d -cmatch '^(v[0-9]|[0-9a-f]{4})[0-9A-Za-z.-]*$') { return $d }
   return ''
@@ -1460,7 +1473,7 @@ function Get-CoopRepoStranded {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return $null }
   $root = $script:CoopRoot
-  if (-not (Test-Path -LiteralPath (Join-Path $root '.git'))) { return $null }
+  if (-not (Test-CoopGitCheckout $root)) { return $null }
   & git -C $root remote get-url origin *> $null
   if ($LASTEXITCODE -ne 0) {
     # Renamed (origin -> upstream) or removed: name it before it reads as a hold.
@@ -1508,7 +1521,7 @@ function Write-CoopRepoStranded {
 # still changes nothing. (mirror of coop_repo_check_line)
 function Get-CoopRepoCheckLine {
   $ErrorActionPreference = 'Continue'
-  if (-not (Test-Have 'git') -or -not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) {
+  if (-not (Test-Have 'git') -or -not (Test-CoopGitCheckout $script:CoopRoot)) {
     return @{ Line = 'not a git checkout: coop update never moves it'; Hint = '' }
   }
   $at = Get-CoopRepoDescribe; if (-not $at) { $at = 'checkout' }

@@ -297,6 +297,15 @@ def generate(
                 servers[name] = merged
             managed.add(name)
     result["mcpServers"] = {k: servers[k] for k in sorted(servers)}
+    # pi-mcp-adapter's `mcpScript` tool runs JavaScript that calls MCP tools inside
+    # the adapter, where no Pi tool_call hook sees them, so coop's MCP mutation and
+    # Warehouse SQL guardrails could not gate those calls. Coop always turns it off;
+    # other adapter settings a user added are kept. The guardrail also blocks the
+    # tool in case a project config turns it back on.
+    settings = existing.get("settings")
+    settings = dict(settings) if isinstance(settings, dict) else {}
+    settings["scriptMode"] = False
+    result["settings"] = settings
     result["_coop"] = {
         "schema_version": 1,
         "managed_servers": sorted(managed & set(desired)),

@@ -619,7 +619,7 @@ if ($proj) {
 }
 
 D-Head 'coop-agent repository'
-if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have 'git')) {
+if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {
   # Staleness nudge: refresh origin at most once/day (bounded wait; silent offline),
   # then compare against the release `coop update` would move to — local + instant.
   # A checkout the update cannot move (hold, diverged, no origin/main) is named.
