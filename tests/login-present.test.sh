@@ -12,8 +12,6 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 AGENT="$TMP/agent"; mkdir -p "$AGENT"
-NOPY="$TMP/nopy"; mkdir -p "$NOPY"
-for t in grep dirname cat; do ln -s "$(command -v "$t")" "$NOPY/$t" 2>/dev/null; done
 # Native Windows pwsh needs Windows paths when this runs under Git Bash.
 AGENT_NATIVE="$AGENT"; ROOT_NATIVE="$ROOT"
 if command -v cygpath >/dev/null 2>&1; then AGENT_NATIVE="$(cygpath -w "$AGENT")"; ROOT_NATIVE="$(cygpath -w "$ROOT")"; fi
@@ -22,7 +20,9 @@ bash_present() { # <with-python: 1|0>
   if [ "$1" = "1" ]; then
     env -u COOP_NO_ISOLATE COOP_AGENT_DIR="$AGENT" PI_CODING_AGENT_DIR="$AGENT" COOP_ROOT="$ROOT" bash -c '. "$COOP_ROOT/lib/common.sh"; coop_pi_login_present'
   else
-    env -u COOP_NO_ISOLATE COOP_AGENT_DIR="$AGENT" PI_CODING_AGENT_DIR="$AGENT" COOP_ROOT="$ROOT" PATH="$NOPY" "$BASH" -c '. "$COOP_ROOT/lib/common.sh"; coop_pi_login_present'
+    # No Python: coop_python finds none, so the grep fallback decides. (Stripping
+    # PATH instead breaks on Windows, where Git Bash tools need their DLL folder.)
+    env -u COOP_NO_ISOLATE COOP_AGENT_DIR="$AGENT" PI_CODING_AGENT_DIR="$AGENT" COOP_ROOT="$ROOT" bash -c '. "$COOP_ROOT/lib/common.sh"; coop_python() { return 1; }; coop_pi_login_present'
   fi
 }
 ps_present() {
