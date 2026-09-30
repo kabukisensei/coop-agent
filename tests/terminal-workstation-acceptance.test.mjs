@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { fingerprintBuild } from "../lib/support-center.mjs";
@@ -845,7 +845,11 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
     delete allInvalidEnv.CERT_PYTHON;
     assert.notEqual(probe(candidate, allInvalidEnv).status, 0);
 
-    assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: relative(dir, pinnedPath) }).status, 0);
+    // path.relative returns an absolute path across Windows drives (temp on D:,
+    // Python on C: in CI), so fall back to a bare name resolved from its own dir.
+    const relativePin = relative(dir, pinnedPath);
+    const [relPath, relCwd] = isAbsolute(relativePin) ? [basename(pinnedPath), dirname(pinnedPath)] : [relativePin, dir];
+    assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: relPath }, relCwd).status, 0);
     const separator = process.platform === "win32" ? "\\" : "/";
     const nonCanonical = `${dirname(pinnedPath)}${separator}unused-segment${separator}..${separator}${basename(pinnedPath)}`;
     assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: nonCanonical }).status, 0);
