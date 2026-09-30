@@ -658,9 +658,9 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
   return files.filter((f) => !isAllowedCommitPath(f, allowed, denied));
 }
 
-// MCP tools carry no server-enforced read-only flag for Fabric (unlike
-// powerbi-modeling-mcp's --readonly), and this hook can't see whether a given
-// MCP call mutates. As a best-effort layer we CONFIRM tool calls whose names look like a mutating
+// Fabric's MCP has no server-enforced read-only flag, and this hook can't see
+// whether a given MCP call mutates (Power BI Modeling calls are classified by
+// their operation instead; see below). As a best-effort layer we CONFIRM tool calls whose names look like a mutating
 // Fabric/Power BI/MCP action (a refresh counts: it reprocesses a dataset or model on
 // the client tenant). Approval-required mutations fail closed headlessly;
 // this complements Pi approval and server-side read-only flags.
@@ -800,6 +800,99 @@ export function mcpMutationLabel(toolName: string | { outerTool: string; innerTo
   return mutationName(target);
 }
 
+// --- Power BI Modeling MCP operations (#159) ------------------------------------
+// The Power BI Modeling (Authoring) MCP names its tools by object
+// (`measure_operations`, `table_operations`, …) and carries the write in the
+// argument `request.operation`, so the verb-in-the-name check never sees it.
+// Classify the operation instead: reads pass, edits ask (a session approval can
+// cover them), and deletes, imports over the model, deploys and unknown operations
+// ask on every call. Checked against the 1.0.0 tool list.
+const PBI_MODELING_TOOL =
+  /(?:^|[_\-.:/])(measure|partition|perspective|transaction|relationship|trace|connection|object_translation|table|database|security_role|column|calendar|model|calculation_group|dax_query|named_expression|query_group|function|user_hierarchy|culture)_operations$/i;
+const PBI_MODELING_SERVER = /powerbi[_\-]?modeling|powerbi[_\-]?authoring/i;
+// Operations that change nothing in the model or on disk. Trace capture and
+// connection handling are the server's own read-only tools.
+const PBI_MODELING_READ = new Set([
+  "help", "find", "exporttmdl", "exporttmsl", "validate", "report",
+  "begin", "rollback",
+  "connect", "connectfabric", "connectfolder", "connectbimfile", "disconnect",
+  "start", "stop", "pause", "resume", "clear",
+  "checkstatusofrefreshwithapi",
+]);
+// Operations that remove model objects, replace the whole model, or publish it.
+const PBI_MODELING_ALWAYS_ASK = /^(delete|deploytofabric|importfromtmdlfolder|importfrombimfile)/;
+// Operations that edit the model, a local file, or the server's cache.
+const PBI_MODELING_EDIT =
+  /^(create|update|rename|move|activate|deactivate|add|remove|reorder|refresh|cancelrefresh|markasdatetable|commit|clearcache|export(?:to|json))/;
+
+export type ModelingOperationClass = "read" | "edit" | "always-ask";
+
+/** The Power BI Modeling MCP tool this call targets, or null for any other call. */
+function pbiModelingTool(target: MutationTarget): string | null {
+  const name = target.innerTool || target.outerTool;
+  if (!name || !PBI_MODELING_TOOL.test(name)) return null;
+  // Another named server's `*_operations` tool is not this one; a call with no
+  // server (bare or prefixed name) is classified, which can only add prompts.
+  const server = target.server || /^mcp__([A-Za-z0-9_]+)$/.exec(target.outerTool)?.[1] || "";
+  if (server && !PBI_MODELING_SERVER.test(server)) return null;
+  return name;
+}
+
+/** Classify one Power BI Modeling operation. Unknown or missing operations ask
+ * every time; `dax_query_operations` Execute is a row read (the live-read rules). */
+export function classifyModelingOperation(tool: string, operation: unknown): ModelingOperationClass {
+  const op = typeof operation === "string" ? operation.trim().toLowerCase().replace(/[^a-z]/g, "") : "";
+  if (!op) return "always-ask";
+  if (/(^|_)dax_query_operations$/i.test(tool) && op === "execute") return "read";
+  if (PBI_MODELING_ALWAYS_ASK.test(op)) return "always-ask";
+  if (PBI_MODELING_READ.has(op) || /^(get|list)/.test(op)) return "read";
+  if (PBI_MODELING_EDIT.test(op)) return "edit";
+  return "always-ask";
+}
+
+/** A Power BI Modeling call's tool, operation and class, or null for other calls. */
+function modelingCall(event: any): { tool: string; operation: string; kind: ModelingOperationClass } | null {
+  const call = normalizeMcpCall(event);
+  const tool = pbiModelingTool(call.target);
+  if (!tool) return null;
+  let request = call.args?.request;
+  if (typeof request === "string") {
+    try { request = JSON.parse(request); } catch { request = undefined; }
+  }
+  const raw = request && typeof request === "object" ? request.operation : call.args?.operation;
+  const operation = typeof raw === "string" ? raw.replace(/[^A-Za-z]/g, "").slice(0, 40) : "";
+  return { tool, operation, kind: classifyModelingOperation(tool, raw) };
+}
+
+/** Label a call that edits through an MCP server, or null for reads. Name-based
+ * mutations come first; Power BI Modeling calls are classified by operation. */
+export function mcpEditLabel(event: any): string | null {
+  const target = effectiveMutationTarget(event);
+  const byName = mcpMutationLabel(target);
+  if (byName) return byName;
+  const modeling = modelingCall(event);
+  if (!modeling || modeling.kind === "read") return null;
+  return `${mutationName(target)} ${modeling.operation || "(no operation)"}`;
+}
+
+/** True for a Power BI Modeling call that edits (asks), false for reads and other calls. */
+export function isModelingEdit(event: any): boolean {
+  const modeling = modelingCall(event);
+  return !!modeling && modeling.kind !== "read";
+}
+
+/** True when a Power BI Modeling connection call names prod/production in any
+ * argument (workspace, model, connection string). Later edits name only a
+ * connection, so the session treats every model edit after it as production. */
+export function modelingConnectsProduction(event: any): boolean {
+  const call = normalizeMcpCall(event);
+  const tool = pbiModelingTool(call.target);
+  if (!tool || !/(^|_)connection_operations$/i.test(tool)) return false;
+  let inputText = "";
+  try { inputText = JSON.stringify(call.args || {}); } catch { return true; }
+  return PRODUCTION_WORD.test(inputText);
+}
+
 export type LiveReadRisk = {
   label: string;
   kind: "row-data" | "production-metadata";
@@ -813,7 +906,7 @@ export type LiveReadRisk = {
  * even when it appears metadata-only. Mutations are handled by mcpMutationLabel. */
 export function mcpLiveReadRisk(event: any): LiveReadRisk | null {
   const target = effectiveMutationTarget(event);
-  if (mcpMutationLabel(target)) return null;
+  if (mcpEditLabel(event)) return null;
   const name = target.innerTool || target.outerTool;
   if (!name || ["bash", "read", "edit", "write", "mcp"].includes(name)) return null;
   const isDataRemote = DATA_SERVER.test(target.server || "") || MCP_TOOLISH.test(name);
@@ -1122,7 +1215,10 @@ export function sessionApprovalKey(event: any, environment?: string): string | n
     if (sql.kind !== "ddl-dml-destructive" || !sqlWriteIsSessionApprovable(callSqlText(event))) return null;
     return `sql:${MANAGED_SQL_SERVER}`;
   }
-  if (!mcpMutationLabel(target) || DESTRUCTIVE_VERB.test(name)) return null;
+  const modeling = modelingCall(event);
+  if (modeling) {
+    if (modeling.kind !== "edit") return null;
+  } else if (!mcpMutationLabel(target) || DESTRUCTIVE_VERB.test(name)) return null;
   const namespace = /^mcp__([A-Za-z0-9_]+)$/.exec(target.outerTool)?.[1];
   return `mcp:${target.server || namespace || target.outerTool}`;
 }
@@ -1295,6 +1391,9 @@ export default function coopGuardrails(pi: ExtensionAPI) {
   let liveReadGrant: LiveReadGrant | null = null;
   // Session edit approvals (#156): server keys only, never arguments or SQL.
   const editApprovals = new Set<string>();
+  // Set once the session connects the Power BI Modeling MCP to anything naming
+  // production; from then on every model edit asks (#159).
+  let modelingProduction = false;
   const liveReadDeps: LiveReadResolverDeps = {
     readText: (path) => readFileSync(path, "utf8"),
     agentDir: auditDir(),
@@ -1309,10 +1408,12 @@ export default function coopGuardrails(pi: ExtensionAPI) {
     resetSessionGovernance();
     liveReadGrant = null;
     editApprovals.clear();
+    modelingProduction = false;
   });
   pi.on("session_shutdown", async () => {
     liveReadGrant = null;
     editApprovals.clear();
+    modelingProduction = false;
   });
 
   // context-mode performs its own npm registry check outside Pi's update system.
@@ -1377,8 +1478,9 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       // calls use the adapter's server/tool identity; approval fails closed headlessly.
       if (tool !== "bash") {
         const target = effectiveMutationTarget(event);
-        const mcp = mcpMutationLabel(target);
-        const editKey = mcp ? sessionApprovalKey(event) : null;
+        if (modelingConnectsProduction(event)) modelingProduction = true;
+        const mcp = mcpEditLabel(event);
+        const editKey = mcp ? sessionApprovalKey(event, modelingProduction && isModelingEdit(event) ? "production" : undefined) : null;
         if (mcp && editKey && editApprovals.has(editKey)) {
           audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-mcp", decision: "allowed", label: "managed MCP mutation", detail: "session-approval" });
         } else if (mcp) {

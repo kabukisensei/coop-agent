@@ -411,10 +411,10 @@ if [ -n "$mcp_found" ]; then
   for s in fabric powerbi-modeling-mcp azure-devops microsoft-learn; do
     if grep -qi "\"$s\"" "$mcp_found" 2>/dev/null; then
       if [ "$s" = "powerbi-modeling-mcp" ]; then
-        # Health requires BOTH flags: --start (the server must actually launch)
-        # and --readonly (COOP treats MCP as read-only). Anything less is not a
-        # healthy configuration. Generated mcp.json is pretty-printed, so parse
-        # the JSON structurally — line greps would only ever see '"args": ['.
+        # Health requires --start (the server must actually launch). coop runs it
+        # read-write and its guardrails ask before every edit (#159); --readonly
+        # is a supported stricter choice. Generated mcp.json is pretty-printed, so
+        # parse the JSON structurally — line greps would only ever see '"args": ['.
         _doc_py="$(coop_python 2>/dev/null || true)"
         modeling_args=""
         if [ -n "$_doc_py" ]; then
@@ -434,14 +434,14 @@ PYEOF
         has_ro=no
         case "$modeling_args" in *'"--start"'*) has_start=yes ;; esac
         case "$modeling_args" in *'"--read-only"'*|*'"--readonly"'*) has_ro=yes ;; esac
-        if [ "$has_start" = yes ] && [ "$has_ro" = yes ]; then
-          ok "  • $s configured (started, read-only)"
-        elif [ -z "$modeling_args" ] && [ -z "$_doc_py" ]; then
-          warn "  • $s present but cannot inspect args (python missing)" "install Python 3 so coop doctor can verify --start/--readonly"
+        if [ -z "$modeling_args" ] && [ -z "$_doc_py" ]; then
+          warn "  • $s present but cannot inspect args (python missing)" "install Python 3 so coop doctor can verify --start"
         elif [ "$has_start" != yes ]; then
-          warn "  • Power BI Modeling MCP missing --start" "add --start so the server launches; keep --readonly"
-        elif [ "$has_ro" != yes ]; then
-          warn "  • Power BI Modeling MCP missing --readonly — it would run READ-WRITE" "change args to --readonly before any client work"
+          warn "  • Power BI Modeling MCP missing --start" "add --start so the server launches (run coop sync to regenerate it)"
+        elif [ "$has_ro" = yes ]; then
+          ok "  • $s configured (started, read-only)"
+        else
+          ok "  • $s configured (started, read-write; coop asks before each edit)"
         fi
       elif [ "$s" = "fabric" ]; then
         # @microsoft/fabric-mcp signs in through az's default account; coop can

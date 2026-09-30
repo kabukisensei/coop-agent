@@ -31,6 +31,45 @@ All notable changes to coop-agent are recorded here. The format loosely follows
     `EXEC`, permission changes and batches still ask.
   - Headless runs still fail closed, `mcpScript` stays blocked, and every decision
     is audited. `/coop-approvals status` shows what is approved.
+- coop can edit semantic models after approval (#159). The Power BI Modeling MCP
+  now starts `--readwrite`, and the guardrail reads each call's
+  `request.operation`, because the server names its tools by object
+  (`measure_operations`, `table_operations`, …) rather than by verb.
+  - Reads run without asking: `Get`, `List`, `ExportTMDL`, connecting, traces, and
+    DAX queries (which keep the live-read rules).
+  - Edits ask: `Create`, `Update`, `Rename`, `Move`, refreshes, perspective and
+    hierarchy changes, `Commit`, and exports to a folder or file. Choosing
+    **Allow powerbi-modeling-mcp edits for this session** covers the rest of the
+    task (#156).
+  - These ask every time, with no session option: every `Delete` operation,
+    `ImportFromTmdlFolder` / `ImportFromBimFile` (they replace the model),
+    `DeployToFabric`, unknown or missing operations, and anything naming prod or
+    production. Edits name only a connection, so once a session connects the
+    server to anything naming prod or production, every later model edit in that
+    session asks.
+  - `coop doctor` reports `started, read-write; coop asks before each edit` and no
+    longer warns that a missing `--readonly` is accidental; `--readonly` stays a
+    supported stricter choice.
+  - Verified against the real 1.0.0 server in read-write mode: it loaded a TMDL
+    folder, created and updated a measure through `request.operation`, and
+    `ExportToTmdlFolder` wrote it back to the file. Aaron shipped this ahead of
+    the Windows VM check (Power BI Desktop and a PBIP, and a declined edit that
+    changes nothing), which follows the release.
+- Power BI Modeling MCP moves from 0.5.0-beta.12 to **1.0.0** (U1), now named
+  the Power BI Authoring MCP by Microsoft.
+  - 1.0.0 refuses every tool until its EULA is accepted. Aaron accepted
+    Microsoft's EULA for Cooptimize on 2026-09-30, so coop's generated server
+    entry adds `--accept-eula`, which applies per process and persists nothing.
+  - Checked against the 1.0.0 binary: `--readonly` registers its tools in
+    ReadOnly mode, and `--start` alone defaults to ReadWrite. coop now runs it
+    `--readwrite` behind the operation-aware guardrail above (#159).
+  - Other upstream changes since beta.12:
+    - a local application folder renamed with automatic migration (coop does not
+      reference it)
+    - durable local audit logs under
+      `%LOCALAPPDATA%\Microsoft\powerbi-authoring-mcp\Logs`, kept seven days
+    - `dax_query_operations` returning up to 1,000 rows by default
+  - The Windows VM check follows the release (see #159 above).
 - `coop update --check` shows the repository move first (#107): `repo (coop-agent)
   v0.23.5-21-gabc1234  would move to release v0.23.6`, `... no newer release`, or the
   hold, local-commits or missing-origin state with its fix. It uses the same local

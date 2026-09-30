@@ -50,8 +50,8 @@ results.
 - **`dax_review`** (`coop-dax-review`) — the primary tool;
   `check {paths} --format json [--min-severity ...] [--strict]`. Advisory only.
 - **Tabular Editor CLI BPA** — optional, path-configured; run only when enabled.
-- **Power BI Modeling MCP** (`--readonly`) — optional, read-only inspection of the model for
-  context behind a finding.
+- **Power BI Modeling MCP** — optional, read-only inspection of the model for context
+  behind a finding (reviews never edit; coop asks before any model edit).
 - **Microsoft Learn MCP** — current DAX / semantic-model guidance.
 
 ## Output
