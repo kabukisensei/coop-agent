@@ -1503,6 +1503,22 @@ function Write-CoopRepoStranded {
   return $true
 }
 
+# The repo line of `coop update --check` (#107), as @{ Line; Hint } (Hint '' when
+# none): what step 1 would do to this checkout. Local only, no fetch, so --check
+# still changes nothing. (mirror of coop_repo_check_line)
+function Get-CoopRepoCheckLine {
+  $ErrorActionPreference = 'Continue'
+  if (-not (Test-Have 'git') -or -not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) {
+    return @{ Line = 'not a git checkout: coop update never moves it'; Hint = '' }
+  }
+  $at = Get-CoopRepoDescribe; if (-not $at) { $at = 'checkout' }
+  $next = Get-CoopRepoNextRelease
+  if ($next) { return @{ Line = "$at  would move to release $next"; Hint = '' } }
+  $s = Get-CoopRepoStranded
+  if ($null -ne $s) { return @{ Line = $s.Message; Hint = $s.Hint } }
+  return @{ Line = "$at  no newer release"; Hint = '' }
+}
+
 # The doctor's "coop-agent repository" row for a git checkout, as
 # @{ Level; Message; Hint } (Level 'ok' or 'warn'; Hint '' for ok). Local only
 # (no network; doctor refreshes origin first). A newer release to move to comes

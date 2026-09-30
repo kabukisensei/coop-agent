@@ -1265,6 +1265,29 @@ coop_repo_doctor_row() {
   printf 'ok\ncoop-agent %s (follows release tags via: coop update)\n\n' "${at:-git checkout}"
 }
 
+# The repo line of `coop update --check` (#107), as two lines: what step 1 would do
+# to this checkout, then a hint ('' when none). Local only, no fetch, so it answers
+# from the releases already fetched and --check still changes nothing.
+coop_repo_check_line() {
+  local at next stranded
+  if ! have git || [ ! -d "$COOP_ROOT/.git" ]; then
+    printf 'not a git checkout: coop update never moves it\n\n'
+    return 0
+  fi
+  at="$(coop_repo_describe)"; [ -n "$at" ] || at="checkout"
+  next="$(coop_repo_next_release)"
+  if [ -n "$next" ]; then
+    printf '%s  would move to release %s\n\n' "$at" "$next"
+    return 0
+  fi
+  stranded="$(coop_repo_stranded)"
+  if [ -n "$stranded" ]; then
+    printf '%s\n' "$stranded"
+    return 0
+  fi
+  printf '%s  no newer release\n\n' "$at"
+}
+
 # Step 1 of `coop update`: move the coop-agent checkout. Arg 1 is EDGE (0/1).
 # Default: fast-forward to coop_repo_next_release, never backwards, never a tag
 # checkout or reset. --edge: head of main, via today's `git pull --ff-only` on a

@@ -7,6 +7,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- `coop update --check` shows the repository move first (#107): `repo (coop-agent)
+  v0.23.5-21-gabc1234  would move to release v0.23.6`, `... no newer release`, or the
+  hold, local-commits or missing-origin state with its fix. It uses the same local
+  helpers as step 1 and doctor, with no fetch, so `--check` still changes nothing.
 - Tests and CI run in two lanes (T1, #96). `bash tests/run.sh` and `tests/run.ps1`
   now run the gate lane by default: deterministic logic tests with no sleep, poll,
   PTY, marker file, hang fixture or network, and no fixture that touches the
