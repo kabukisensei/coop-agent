@@ -5,6 +5,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- Standards: a prompt that says PBIX, PBIP or PBIR now reaches the Power BI File
+  Types article ("Convert the Sales report PBIX to a PBIP project"), the one
+  coop-standards article no realistic prompt reached before. The classifier treats
+  those words as "file", the way it already reads "dim" as dimension and "proc" as
+  procedure; two golden rows stop being known failures.
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
   symlink that the standards storage-root check rejects, and the standards
