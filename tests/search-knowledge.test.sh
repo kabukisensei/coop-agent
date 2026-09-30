@@ -30,7 +30,9 @@ skip(){ printf '  – SKIP %s\n' "$1"; skips=$((skips + 1)); }
 PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
 [ -n "$PY" ] || { echo "FATAL: python3 required"; exit 1; }
 
-TMP="$(mktemp -d)"
+# Real path: macOS keeps mktemp under the /var -> /private/var symlink, and the helper
+# reports roots by their real path, so per_repo lookups keyed by $TMP must match it.
+TMP="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT
 
 CFG="$TMP/coopcfg"

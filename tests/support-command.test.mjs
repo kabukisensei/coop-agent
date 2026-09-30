@@ -4,7 +4,7 @@
 // exported bundle unredacted.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,9 @@ import { fileURLToPath } from "node:url";
 // the correct URL→path conversion on every platform.
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const SH = join(ROOT, "scripts", "support-center.sh");
-const profile = mkdtempSync(join(tmpdir(), "support-test-"));
+// Fixture roots are resolved to their real path: macOS keeps tmpdir() under the
+// /var -> /private/var symlink, which the standards storage-root check rejects.
+const profile = realpathSync(mkdtempSync(join(tmpdir(), "support-test-")));
 const coopDir = join(profile, "coop");
 
 // Environment probe (r8 precedent): constrained sandboxes may deny spawning
@@ -164,7 +166,7 @@ await t("support identity equals the expected COOP source/build identity", () =>
 });
 
 await t("invocation from an unrelated git project still identifies COOP, never the project HEAD", () => {
-  const foreign = mkdtempSync(join(tmpdir(), "foreign-project-"));
+  const foreign = realpathSync(mkdtempSync(join(tmpdir(), "foreign-project-")));
   execFileSync("git", ["-C", foreign, "init", "-q"], { encoding: "utf8" });
   execFileSync("git", ["-C", foreign, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"], { encoding: "utf8" });
   const foreignHead = execFileSync("git", ["-C", foreign, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();

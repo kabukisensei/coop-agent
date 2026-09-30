@@ -4,7 +4,7 @@
 // REGISTERED session_start / tool_result / agent_settled handlers, because the
 // dedupe-by-toolCallId contract lives in the handler, not the predicate.
 import { strict as assert } from "node:assert";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,7 +13,9 @@ const dist = process.env.COOP_TEST_DIST;
 assert.ok(dist && existsSync(join(dist, "coop-tools.mjs")), "COOP_TEST_DIST must contain the bundled coop-tools.mjs");
 
 // Knowledge must be "available" for the nudge: a configured, existing clone.
-const tmp = mkdtempSync(join(tmpdir(), "coop-nudge-"));
+// Fixture roots are resolved to their real path: macOS keeps tmpdir() under the
+// /var -> /private/var symlink, which the standards storage-root check rejects.
+const tmp = realpathSync(mkdtempSync(join(tmpdir(), "coop-nudge-")));
 const coopDir = join(tmp, "coop");
 const kbDir = join(tmp, "kb", "incremental-bi");
 const workDir = join(tmp, "work");

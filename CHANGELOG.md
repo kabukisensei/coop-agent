@@ -29,6 +29,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   - The per-skill size cap rises from 750 KB to 1.5 MB for
     `powerbi-report-cli` (88 Markdown files, ~1.04 MB); the 500 KB per-file cap
     is unchanged.
+- The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
+  their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
+  symlink that the standards storage-root check rejects, and the standards
+  `doctor-lines` / `coop doctor` / Support checks run with a PATH that carries no
+  installed `coop-sql-review` / `coop-dax-review`, so a machine with the reviewers
+  installed no longer reports `bundled_fallback` where CI expects `unavailable`.
+  Tests only; no runtime change.
 
 ## [0.24.0] — 2026-09-30
 

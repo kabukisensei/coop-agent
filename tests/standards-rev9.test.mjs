@@ -1,8 +1,8 @@
 import { strict as assert } from "node:assert";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   AUTHORITY_CLASSES, CANONICAL_REMOTE_STATE, activeCanonicalGeneration, buildStandardsContext, identifyTaskDomains,
@@ -16,7 +16,9 @@ import {
 // The legacy self-authored manifest.json fixture seam is gone (#83).
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const tmp = mkdtempSync(join(tmpdir(), "coop-std-rev9-"));
+// Fixture roots are resolved to their real path: macOS keeps tmpdir() under the
+// /var -> /private/var symlink, which the standards storage-root check rejects.
+const tmp = realpathSync(mkdtempSync(join(tmpdir(), "coop-std-rev9-")));
 const snapshots = join(tmp, "snapshots");
 const remote = join(tmp, "wiki-remote");
 const cache = join(tmp, "cache", "canonical"), state = join(tmp, "cache", "status.json");
@@ -55,6 +57,10 @@ const doctorEnv = (env, name) => {
   mkdirSync(agent, { recursive: true }); writeFileSync(join(agent, ".coop-fetch-stamp"), "");
   return { ...env, HOME: home, USERPROFILE: home, COOP_AGENT_DIR: agent, PI_CODING_AGENT_DIR: agent };
 };
+const REVIEWER_NAMES = ["sql", "dax"].flatMap((domain) => ["", ".exe", ".cmd", ".bat", ".ps1"].map((ext) => `coop-${domain}-review${ext}`));
+const reviewerFreePath = () => (process.env.PATH || "").split(delimiter)
+  .filter((dir) => dir && !REVIEWER_NAMES.some((name) => existsSync(join(dir, name))))
+  .join(delimiter);
 const reviewerReport = (reviewer, resolution) => JSON.parse(execFileSync(
   process.execPath,
   [reviewer.script, "check", tmp, "--format", "json", ...reviewStandardsArgs(resolution)],
@@ -271,7 +277,11 @@ try {
     assert.equal(status.canonical_remote, CANONICAL_REMOTE_STATE); assert.equal(status.sources[0].revision, r1); assert.equal(status.sources[0].state, "available");
     // The CLI, doctor and Support use the committed production registry, which names
     // the private GitHub remote: this fixture's cache is not its authority.
-    const env = { ...process.env, COOP_STANDARDS_ROOT: cache, COOP_STANDARDS_STATE: state, COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "support-home"), NO_COLOR: "1" };
+    // They also discover bundled reviewers through PATH, so a developer machine with
+    // coop-sql-review / coop-dax-review installed (pipx shims in ~/.local/bin) would
+    // report bundled_fallback here. The hermetic expectation, as on a CI runner, is
+    // that no reviewer is installed: drop every PATH entry that carries one.
+    const env = { ...process.env, PATH: reviewerFreePath(), COOP_STANDARDS_ROOT: cache, COOP_STANDARDS_STATE: state, COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "support-home"), NO_COLOR: "1" };
     const lines = execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
     assert.match(lines, /canonical-remote\tconfigured\thttps:\/\/github\.com\/cooptimize\/coop-standards\.git\|main/);
     for (const domain of ["sql", "dax", "semantic_model"]) assert.match(lines, new RegExp(`domain\\t${domain}\\tformal_standard/unavailable`));
