@@ -51,6 +51,10 @@ change scope, not the order of the client-facing phases (0 through 6):
   extension that names a session after about three turns is in the plan. It was
   only inside the optional PK1 trial; it now has its own row right after U1
   (section 10), because it does not depend on the Codex or usage-stats question.
+- **Install asks Fabric or Azure SQL.** When the Azure SQL breadth work lands,
+  `coop install` asks once whether the client is a Fabric or an Azure SQL client (or
+  both) and the answer seeds the contract, doctor and skill defaults (section 8,
+  item 7). Aaron asked for this on 2026-09-30; it rides the SQ rows, not a new phase.
 - **No client pipeline runs `coop-sql-review` or `coop-dax-review`.** They predate
   the coop-standards repository the team now maintains. This closes section 15's
   open question: ST1 retires the in-agent wrappers and the bundled-fallback path,
@@ -691,6 +695,16 @@ not source-controlled.
    (Fabric SQL database, OLTP) from the v0.3.18 catalog; neither covers Azure SQL
    outside Fabric, so Coop's own `sql-review`/workflow guidance stays the authority
    for Azure SQL.
+7. **Client platform choice at install time (Aaron, 2026-09-30).** `coop install`
+   (and `coop doctor --fix` on an existing machine) asks once whether this client
+   runs on **Fabric**, **Azure SQL**, or **both**, and stores the answer as a
+   machine default in the Coop profile. `/setup-project` proposes it as the
+   `sql_targets` kind for a new contract (the contract still wins per repository,
+   since one teammate can serve two clients), `coop doctor` skips the Fabric CLI
+   and Fabric token rows on an Azure-only machine instead of showing them red, and
+   the Fabric skill baseline stays off there unless a contract turns it on.
+   Nothing else branches on the answer: guardrails, approvals and the SQL executor
+   read the contract, never the install choice.
 
 **Acceptance:** on a dev Azure SQL database and on a Fabric Warehouse, the same
 session traces a view's dependents, edits it with approval, and shows before/after
@@ -864,7 +878,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 9 | U1 | Dependency reconciliation per section 6, one row per PR, qualified on the VM | S-lane (Aaron started U1 ahead of it on 2026-09-30) | exact versions, tests, rollback per PR; keep/drop list closed | in progress: Pi 0.87.1 + `pi-mcp-adapter` 3.3.0 **done (tag v0.24.0, 2026-09-30)**: merged in [#162](https://github.com/kabukisensei/coop-agent/pull/162), VM run passed (matrix 20/20, sync, doctor, `mcp-adapter.json` migration, console checks), Warehouse approval prompt verified live on the released build; Pi 0.99 stays blocked on the adapter's peer range (section 6.3; [#170](https://github.com/kabukisensei/coop-agent/pull/170) is a held draft). Merged 2026-09-30 (unreleased): `pi-hermes-memory` 0.9.9 ([#181](https://github.com/kabukisensei/coop-agent/pull/181)), Fabric skills catalog v0.3.18 ([#175](https://github.com/kabukisensei/coop-agent/pull/175)), shell-issued Fabric REST write approvals ([#176](https://github.com/kabukisensei/coop-agent/pull/176)). In review as drafts (2026-09-30): `@juicesharp/rpiv-ask-user-question` 2.12.0 ([#188](https://github.com/kabukisensei/coop-agent/pull/188)), `@microsoft/fabric-mcp` 1.4.0 ([#189](https://github.com/kabukisensei/coop-agent/pull/189)), `mcp-remote` drop ([#190](https://github.com/kabukisensei/coop-agent/pull/190)), `@azure-devops/mcp` 2.10.0 ([#191](https://github.com/kabukisensei/coop-agent/pull/191)); Report Authoring CLI and Desktop Bridge rows next |
 | 9b | N1 | Automatic session naming after a few turns (`@xl0/pi-lovely-rename` trial first, coop-owned fallback; section 10) | U1 rows merged (Aaron scheduled it 2026-09-30) | names appear in footer and title on the VM without breaking manual `/name`; acceptance list in section 10 | not started (scheduled, revision 3.8) |
 | 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewers retired from coop (decided 2026-09-28), self-check in place | not started |
-| 11 | SQ1–SQ6 | Azure SQL targets, dev default, live impact, data verification | ST1 | section 8 acceptance | not started |
+| 11 | SQ1–SQ7 | Azure SQL targets, dev default, live impact, data verification, install-time Fabric/Azure SQL client choice (section 8 item 7) | ST1 | section 8 acceptance | not started |
 | 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | not started |
 | 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, diagnostics, simplify (naming moved to N1) | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
