@@ -5,6 +5,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- `@azure-devops/mcp` moves to **2.10.0** (master plan U1, section 6 row). Read-only
+  check of both published packages: the same 37 tool names, the same domains (coop
+  still passes `core work work-items search`), and `--authentication azcli`
+  unchanged, so the generated `azure-devops` entry is the same apart from the pin.
+  2.10.0 updates `@azure/identity` and `@azure/msal-node` and adds
+  `@azure/msal-node-extensions` and `open` for its own interactive sign-in, which
+  coop does not use. `coop sync` regenerates the entry. VM qualification pending
+  (one work-item query through the MCP).
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
   symlink that the standards storage-root check rejects, and the standards
