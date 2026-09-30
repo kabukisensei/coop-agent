@@ -225,10 +225,11 @@ if (Test-Have 'npm') {
 }
 
 # First-run login: coop shares Pi auth in from ~/.pi/agent. A brand-new teammate has none.
+# Only a stored provider credential counts: Pi writes `{}` on startup (#167).
 if (Test-Have 'pi') {
   $authA = Join-Path (Get-CoopPiAgentDir) 'auth.json'
   $authB = Join-Path (Join-Path $HOME '.pi\agent') 'auth.json'
-  if ((Test-Path -LiteralPath $authA -PathType Leaf) -or (Test-Path -LiteralPath $authB -PathType Leaf)) {
+  if ((Test-CoopAuthHasCredential $authA) -or (Test-CoopAuthHasCredential $authB)) {
     D-Ok 'Pi login present'
   } else {
     D-Warn 'no Pi login found yet' "your first 'coop' run will prompt you to sign in — see docs/onboarding.md §3.5 (OpenAI/Codex provider, Cooptimize BUSINESS account)"

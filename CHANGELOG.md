@@ -280,7 +280,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   signed in, so the installer's sign-in step could close within seconds before
   the user signed in, and `coop doctor` and the launch login handoff believed a
   login existed. Now only a stored provider credential counts, in bash (with or
-  without Python), PowerShell and the sign-in watcher.
+  without Python), PowerShell, the sign-in watcher and `coop doctor`, which
+  checks both coop's and the shared `~/.pi/agent` auth.json.
 - Guardrails ask before more Fabric MCP mutations (#154). The mutation check
   matched no verb in `onelake_upload_file`, `onelake_modify_diagnostics`,
   `onelake_modify_immutability_policy` or `onelake_reset_shortcut_cache`, or in

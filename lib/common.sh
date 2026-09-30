@@ -691,9 +691,13 @@ coop_effective_agent_dir() {
 # Pi writes an empty `{}` auth.json on startup, so a non-empty file is not proof
 # of a login (#167): at least one provider entry must be an object.
 coop_pi_login_present() {
-  local agent_dir auth py
-  agent_dir="$(coop_effective_agent_dir)"
-  auth="$agent_dir/auth.json"
+  coop_auth_has_credential "$(coop_effective_agent_dir)/auth.json"
+}
+
+# True when the given auth.json holds a stored provider credential (#167). Pi
+# writes `{}` on startup, so a non-empty file alone is not a login.
+coop_auth_has_credential() {
+  local auth="$1" py
   [ -s "$auth" ] || return 1
   if py="$(coop_python 2>/dev/null)" && [ -n "$py" ]; then
     "$py" - "$auth" <<'PY' >/dev/null 2>&1
