@@ -184,6 +184,10 @@ $UnitPbihToolsUpgrade = {
 # --- coop update --check (dry-run: report versions, change NOTHING) ----------
 if ($CHECK) {
   Coop-Head 'coop update --check (dry-run — nothing is installed)'
+  # Step 1's move first (#107): local only, no fetch.
+  $repoCheck = Get-CoopRepoCheckLine
+  Write-Output ('  {0,-32} {1}' -f 'repo (coop-agent)', $repoCheck.Line)
+  if ($repoCheck.Hint) { Write-Output ('  {0,-32} {1}' -f '', $repoCheck.Hint) }
   $piCur = if (Test-Have 'pi') { $m = [regex]::Match((& pi --version 2>$null | Out-String), '\d+\.\d+\.\d+'); if ($m.Success) { $m.Value } else { '?' } } else { 'not installed' }
   $piExp = Coop-ManifestGet -Key 'pi.version'; if (-not $piExp) { $piExp = '?' }
   $piLat = Get-PiLatest; if (-not $piLat) { $piLat = '?' }

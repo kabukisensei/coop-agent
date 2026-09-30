@@ -452,6 +452,31 @@ try {
   elseif ($rDiverged.Level -cne 'warn' -or -not $rDiverged.Message.Contains('release v0.10.0 does not contain') -or -not $rDiverged.Hint.StartsWith('set them aside and rejoin: ') -or -not $rDiverged.Hint.Contains('reset --keep v0.10.0')) { Ko 'doctor row: a diverged checkout is a warn with the fix as the hint' "$($rDiverged.Level) $($rDiverged.Message) / $($rDiverged.Hint)" }
   elseif ($rHold.Level -cne 'warn' -or -not $rHold.Message.Contains("held on branch 'hold'") -or -not $rHold.Hint.EndsWith('switch main')) { Ko 'doctor row: a hold is a warn with the fix as the hint' "$($rHold.Level) $($rHold.Message) / $($rHold.Hint)" }
   else { Ok 'doctor row: ok when current; warns behind, diverged and hold with the fix as the hint' }
+  # 13b. The --check repo line (Get-CoopRepoCheckLine, #107): what step 1 would do,
+  #      with the stranded fix as the hint; nothing moves.
+  $null = New-FixtureClone 'check-ahead'
+  $cAhead = Get-CoopRepoCheckLine
+  $null = New-FixtureClone 'check-behind'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  $cBehind = Get-CoopRepoCheckLine
+  $cBehindAt = Get-At
+  $null = New-FixtureClone 'check-diverged'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.9.0')
+  Add-FixtureCommit $script:CoopRoot 'local-work' 'local'
+  $cDiverged = Get-CoopRepoCheckLine
+  $script:CoopRoot = Join-Path $t 'hold'
+  $cHold = Get-CoopRepoCheckLine
+  $script:CoopRoot = Join-Path $t 'plain-copy'
+  New-Item -ItemType Directory -Force -Path $script:CoopRoot | Out-Null
+  $cPlain = Get-CoopRepoCheckLine
+  if ($cAhead.Line -notlike 'v0.10.0-2-g*  no newer release' -or $cAhead.Hint) { Ko 'check line: ahead of every release has no newer release' "$($cAhead.Line) / $($cAhead.Hint)" }
+  elseif ($cBehind.Line -cne 'v0.9.0  would move to release v0.10.0' -or $cBehind.Hint -or $cBehindAt -ne $C1) { Ko 'check line: behind names the release, and nothing moves' "$($cBehind.Line) / $($cBehind.Hint) / $cBehindAt" }
+  elseif (-not $cDiverged.Line.Contains('release v0.10.0 does not contain') -or -not $cDiverged.Hint.StartsWith('set them aside and rejoin: ')) { Ko 'check line: the diverged state is named with its fix' "$($cDiverged.Line) / $($cDiverged.Hint)" }
+  elseif (-not $cHold.Line.Contains("held on branch 'hold'")) { Ko 'check line: a hold is named' "$($cHold.Line)" }
+  elseif ($cPlain.Line -cne 'not a git checkout: coop update never moves it') { Ko 'check line: a plain copy is named' "$($cPlain.Line)" }
+  else { Ok '--check repo line: no newer release, would move to the release, or the stranded state with its fix; nothing moves' }
+  $updatePs = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'scripts') 'update.ps1'))
+  if (-not $updatePs.Contains('$repoCheck = Get-CoopRepoCheckLine')) { Ko 'update.ps1 --check must print Get-CoopRepoCheckLine' } else { Ok 'update.ps1 --check prints the shared repo line' }
   $doctorPs = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'scripts') 'doctor.ps1'))
   if (-not $doctorPs.Contains('$repoRow = Get-CoopRepoDoctorRow') -or -not $doctorPs.Contains('if ($repoRow.Level -ceq ''ok'') { D-Ok $repoRow.Message } else { D-Warn $repoRow.Message $repoRow.Hint }')) { Ko 'doctor.ps1 must dispatch Get-CoopRepoDoctorRow: ok, else warn with the hint' }
   else { Ok 'doctor.ps1 dispatches the shared repo row' }

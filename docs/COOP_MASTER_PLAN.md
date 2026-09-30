@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.5 · September 29, 2026**
+**Document revision 3.6 · September 29, 2026**
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -502,6 +502,62 @@ and their payload and result types.
   and its own `pi-ai` 0.99.1 dependency is outside the adapter's `pi-ai` range.
 - The other rows are unchanged since September 28.
 
+### 6.4 Independent dependency research, September 29, 21:44 CDT (revision 3.6)
+
+**Scope:** read-only registry metadata and published-package inspection against
+coop-agent `94dbe767308c6334371a071b058152bd294c23c1`; no candidate installed or
+executed. All 13 npm and six PyPI pins were checked at 2026-09-30 02:43 UTC.
+Their latest versions still match the table above. This refresh does **not**
+start U1 or qualify an upgrade on Windows.
+
+**Runtime and resolution constraints confirmed:**
+Pi 0.99.1 still requires Node >=22.19.0; adapter 3.3.0 still excludes pi-ai
+0.99.x, so the proposed Pi target remains 0.87.1. `ms-fabric-cli` 1.7.0 requires
+Python >=3.10,<3.14 and `fabric-cicd` 1.3.0 requires >=3.9,<3.14; Python 3.12
+remains the common recommended interpreter. The Fabric CLI itself depends on
+`fabric-cicd>=1.3.0`: top-level version pins do not freeze its dependency tree.
+Keep the exact injected library pin and record the resolved environment at
+qualification. Sources: [Pi metadata](https://registry.npmjs.org/@earendil-works/pi-coding-agent/0.99.1),
+[adapter metadata](https://registry.npmjs.org/pi-mcp-adapter/3.3.0),
+[Fabric CLI metadata](https://pypi.org/pypi/ms-fabric-cli/1.7.0/json),
+[Fabric CI/CD metadata](https://pypi.org/pypi/fabric-cicd/1.3.0/json).
+
+**Power BI qualification has additional gates, beyond changing version numbers:**
+
+| Candidate | Verified upstream detail | Acceptance evidence required before adoption |
+| --- | --- | --- |
+| Modeling MCP 1.0.0 | The packaged changelog records mandatory EULA acceptance, a local application-folder rename/migration, durable audit logging, and increased DAX result limits between beta.12 and GA. Current upstream documentation specifies `--accepteula` / `PBI_MODELING_MCP_ACCEPT_EULA=true`; use only after explicit agreement to the EULA. | Fresh and existing-profile startup; explicit consent handling; existing connection/read-only checks; preserve bounded DAX reads rather than relying on the new 1,000-row default / 100,000-row absolute maximum. Never silently accept the EULA as part of this research or a version bump. |
+| Desktop Bridge 1.0.0 | The published README explicitly says CLI `reload` and library reload methods do not check `hasUnsavedChanges`; unsaved Desktop edits can still be discarded. It also reports a false-positive dirty flag on Desktop 2.157.627.0. **Version 1.0.0 is not a source-loss fix.** | On disposable PBIP copies, test clean, genuinely dirty, and missing/invalid-status cases against the exact Desktop build. Keep the v0.3.18 skill's fail-closed status preflight; an unreliable flag is not permission to discard. Keep S31 open until its actual reload/save acceptance passes. |
+| Report Authoring CLI 0.4.0 + Bridge 1.0.0 | The published authoring manifest depends on `@microsoft/powerbi-desktop-bridge-cli: ^1.0.0`. Its Desktop preview imports that library; the global `powerbi-desktop` executable is not proof of which nested copy preview uses. | Record both the authoring package's resolved Bridge dependency and the global Bridge version. Exercise `powerbi-report-author preview` through status, reload and screenshot separately; distinguish partial capture from success. Qualify the authoring/Bridge pair together even if pin changes are separate PRs. |
+
+Sources: published npm tarballs
+([Modeling MCP 1.0.0](https://registry.npmjs.org/@microsoft/powerbi-modeling-mcp/-/powerbi-modeling-mcp-1.0.0.tgz),
+[Bridge 1.0.0](https://registry.npmjs.org/@microsoft/powerbi-desktop-bridge-cli/-/powerbi-desktop-bridge-cli-1.0.0.tgz),
+[Report Authoring 0.4.0](https://registry.npmjs.org/@microsoft/powerbi-report-authoring-cli/-/powerbi-report-authoring-cli-0.4.0.tgz));
+[upstream EULA/setup documentation](https://github.com/microsoft/powerbi-modeling-mcp#accept-the-eula);
+[versioned preview safety and partial-result contract](https://github.com/microsoft/skills-for-fabric/blob/v0.3.18/skills/powerbi-report-cli/references/authoring/preview-part-02.md).
+The tarballs' manifests and documentation were read without executing package code;
+these are upstream contracts, not a claim that Coop has passed them.
+
+**Fabric catalog migration is more than an allowlist rename.**
+[Release v0.3.18](https://github.com/microsoft/skills-for-fabric/releases/tag/v0.3.18)
+is confirmed. Its [`skills/sqldw-cli/SKILL.md`](https://github.com/microsoft/skills-for-fabric/blob/v0.3.18/skills/sqldw-cli/SKILL.md)
+combines authoring, consumption **and operations**, while Coop currently defers
+`sqldw-operations-cli`. Mapping the two baseline names to `sqldw-cli` would also
+surface operations guidance: retain the current policy boundary or obtain an
+explicit decision before broadening it. `sqldb-cli` concerns **Fabric SQL
+database**; its presence alone does not complete SQ1's Azure SQL support.
+
+The same dispatcher links to `../../common/COMMON-CLI.md` and
+`../../common/COMMON-CORE.md`. Coop's current `lib/microsoft_skills.py` copies only
+each selected skill directory into the published generation. **Static finding:**
+a name/hash-only catalog update would not supply those shared files at their
+relative destinations. Before adopting the catalog, check reference closure in
+the generated layout, supply the approved shared references with equivalent
+integrity checks, and preserve Cooptimize approval and data-access rules over
+upstream execution instructions. This is an implementation prerequisite for the
+future catalog PR, not authorization to enable additional skills now.
+
 ## 7. Phase 4 — Standards alignment and the reviewer decision
 
 Depends on H3 having access to the two repositories.
@@ -750,7 +806,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 3 | H5 | `coop update` follows release tags; `--edge` for head | now | tag/edge acceptance in section 3 | merged ([#110](https://github.com/kabukisensei/coop-agent/pull/110), 2026-09-29), VM pending: [#78](https://github.com/kabukisensei/coop-agent/issues/78) |
 | 4 | H6 | One-page Windows install doc matching the H1 checklist | H1 | a teammate installs from the page alone | merged ([#113](https://github.com/kabukisensei/coop-agent/pull/113), 2026-09-29), VM pending: [#79](https://github.com/kabukisensei/coop-agent/issues/79) |
 | 5 | H3 | Coop reads the coop-standards wiki directly; contract override shape | local clones of both repos | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` | merged ([#85](https://github.com/kabukisensei/coop-agent/pull/85), 2026-09-28); no VM step; close [#80](https://github.com/kabukisensei/coop-agent/issues/80) at the tag |
-| 6 | T1 | CI gate/extended split; fixture rules | H1–H3 merged | gate under five minutes, both OS, no weakened assertion | in review (PR) |
+| 6 | T1 | CI gate/extended split; fixture rules | H1–H3 merged | gate under five minutes, both OS, no weakened assertion | merged ([#132](https://github.com/kabukisensei/coop-agent/pull/132), 2026-09-29) |
 | 7 | S1, S5 | Retire POSIX product path and legacy web | T1 | one Windows implementation, forwarder kept, tests removed with their surface | not started |
 | 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | not started |
 | 9 | U1 | Dependency reconciliation per section 6, one row per PR, qualified on the VM | S-lane | exact versions, tests, rollback per PR; keep/drop list closed | not started |
@@ -833,8 +889,8 @@ merged or blocked only on the standards repositories.
   described in section 3.
 - No Windows workstation was available; installer and sign-in behavior is inferred
   from the scripts, the README, the v0.23.4/v0.23.5 changelog, and the B0 receipt.
-- Dependency "latest" values are registry metadata on September 28, 2026; none was
-  installed or run.
+- Dependency "latest" values were rechecked against npm/PyPI on September 29,
+  2026 (section 6.4); no candidate was installed or run.
 - Whether any client CI pipeline runs `coop-sql-review` or `coop-dax-review` today
   is still unknown. Section 7's decision to retire them from coop is taken; this
   question only decides whether the CLIs stay alive as optional gates.

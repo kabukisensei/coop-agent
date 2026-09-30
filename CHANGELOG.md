@@ -7,6 +7,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- `coop update --check` shows the repository move first (#107): `repo (coop-agent)
+  v0.23.5-21-gabc1234  would move to release v0.23.6`, `... no newer release`, or the
+  hold, local-commits or missing-origin state with its fix. It uses the same local
+  helpers as step 1 and doctor, with no fetch, so `--check` still changes nothing.
 - Tests and CI run in two lanes (T1, #96). `bash tests/run.sh` and `tests/run.ps1`
   now run the gate lane by default: deterministic logic tests with no sleep, poll,
   PTY, marker file, hang fixture or network, and no fixture that touches the
@@ -173,6 +177,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- MCP: the adapter's `mcpScript` tool can no longer bypass the guardrails. It
+  runs JavaScript that calls MCP tools inside `pi-mcp-adapter`, and those calls
+  never reach Pi's `tool_call` hook. So a script could run a mutating Fabric,
+  Power BI or Azure DevOps action, or Warehouse DDL/DML, with no approval prompt.
+  Coop's generated MCP config now sets `settings.scriptMode: false`, which keeps
+  any other adapter settings a user added. The guardrail blocks `mcpScript` in
+  case a project or user config turns it back on. Single MCP calls through `mcp`
+  are gated as before.
 - `coop doctor --json` on Windows prints one JSON document again (#90). Three hints in
   the pipx tool check (stale environment, an executable that is not the pinned one,
   a Requires-Python violation) used bash's trailing-backslash line continuation,
