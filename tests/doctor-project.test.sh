@@ -3,9 +3,9 @@
 # Tests for doctor's feature-aware project contract validation.
 set -uo pipefail
 
-ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
-# Doctor runs with the real HOME here; keep its Azure sign-in probe (H2) away
-# from any real az so the Project-contract assertions stay hermetic and fast.
+CHECKOUT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+# Keep doctor's Azure sign-in probe (H2) away from any real az so the
+# Project-contract assertions stay hermetic and fast.
 COOP_SKIP_AZ=1; export COOP_SKIP_AZ
 
 fail=0
@@ -14,6 +14,21 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+
+# Run doctor from a plain copy of this tree with no .git (#104): its once-a-day
+# refresh fetches origin into the checkout it runs from, and a test must never
+# touch the checkout running it. Dot entries other than the bundled .coop
+# contract are git, CI and cache files, not runtime.
+ROOT="$TMP/coop-agent"; mkdir "$ROOT"
+cp -R "$CHECKOUT"/* "$CHECKOUT/.coop" "$ROOT/"
+# Sandbox every home location doctor reads (#96): never the real ~/.coop,
+# agent dir, `pi` state or mcp.json. Native Windows node and python find the
+# home through USERPROFILE, so it gets the Windows spelling under Git Bash.
+HOME="$TMP/home"; USERPROFILE="$HOME"; COOP_DIR="$HOME"
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) USERPROFILE="$(cygpath -w "$HOME")" ;; esac
+COOP_AGENT_DIR="$HOME/.coop/agent"; PI_CODING_AGENT_DIR="$COOP_AGENT_DIR"
+mkdir -p "$COOP_AGENT_DIR"
+export HOME USERPROFILE COOP_DIR COOP_AGENT_DIR PI_CODING_AGENT_DIR
 
 # --- valid minimal contract (Fabric disabled) passes validation ---------------
 mkdir -p "$TMP/good/.coop"
@@ -45,6 +60,10 @@ assert not any(c["status"] == "warn" for c in proj), f"unexpected project warnin
 PY
 rc=$?
 [ "$rc" -eq 0 ] && ok "Project contract section present and clean" || ko "Project contract validation failed"
+case "$out" in
+  *"is not a git checkout"*) ok "doctor runs from a copy of the tree, so it never fetches the checkout running the tests" ;;
+  *) ko "doctor ran against a git checkout: the fixture must run a copy (#104)" ;;
+esac
 
 # --- legacy project health is visible and Doctor remains read-only ------------
 mkdir -p "$TMP/legacy/.coop" "$TMP/legacy/.pi/skills/daily-logger"

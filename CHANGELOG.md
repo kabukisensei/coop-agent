@@ -7,6 +7,36 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Tests and CI run in two lanes (T1, #96). `bash tests/run.sh` and `tests/run.ps1`
+  now run the gate lane by default: deterministic logic tests with no sleep, poll,
+  PTY, marker file, hang fixture or network, and no fixture that touches the
+  checkout. Both runners give every gate test a temp home (`HOME`, `USERPROFILE`
+  and the Coop, Pi and standards locations).
+  `COOP_TEST_EXTENDED=1 bash tests/run.sh` adds the extended lane (the timing and
+  process fixtures); the two lanes together are the previous full suite, and no
+  assertion was removed or loosened. `ci.yml` runs the gate lane on every PR and
+  push to `main` (ubuntu, Windows Git Bash, Windows PowerShell 5.1) with a
+  read-only token, per-job timeouts, and a newer PR push cancelling the older run,
+  and ends in one `gate` job that fails unless every other job succeeded. The new
+  `extended.yml` runs the extended lane nightly and on demand (Actions -> extended
+  -> Run workflow, any branch). The Pi compatibility matrix moved to
+  `pi-matrix.yml` and runs nightly, on demand, and on a PR that touches Pi
+  alignment (`scripts/sync.*`, `lib/_extdeps.py`, `config/release-manifest.json`,
+  `extensions/**`, `scripts/test-pi-matrix.*`,
+  `tests/guardrails-pi-runner.test.mjs`). `coop release` (bash and PowerShell)
+  runs both lanes before it tags. Duplicate checks are gone: the focused Windows
+  knowledge-search job (that test runs in the Windows Git Bash gate),
+  `tests/bom.test.sh`, and the BOM section of `tests/run.ps1`;
+  `scripts/check-parity.sh` is the one BOM check and now also checks that
+  `bin/coop.ps1` and `scripts/sync-knowledge.ps1` start with a comment line after
+  the BOM. Eight test files that nothing ran are wired into the gate lane:
+  `fleet-digest`, `install-pipx-path`, `missing-common-guard`, `knowledge-read`,
+  `knowledge-retrieve`, `knowledge-sources`, `support-center` and `tool-result`.
+  The Windows terminal-workstation acceptance run still runs `tests/run.ps1` in
+  both lanes, and `tests/run.ps1` now fails instead of reporting a pass when an
+  error stops it before its last section. Lanes, fixture rules and the CI
+  workflows are documented in `docs/ci.md`.
+
 - MCP: `powerbi-mcp-server` is retired (#93). It silently ignores `--readonly` and
   exposes `refresh_dataset` (a write that triggers a dataset refresh on the client
   tenant), which coop's guardrails do not classify as a mutation, while coop

@@ -6,7 +6,10 @@
 # doctor.ps1 Azure row. On Windows the fake az.cmd sits under
 # "Program Files (x86)", the default 32-bit Azure CLI location. Stub-driven, never
 # the real az or ~/.coop; the only waits are the shortened 3 s limits, and the
-# Ctrl-C case uses a Python pty on POSIX legs only.
+# Ctrl-C case uses a Python pty on POSIX legs only. Cases 10, 13c, 13d and 13f end
+# a real process (the fake az's own exit 143/SIGTERM, a hanging az stopped at its
+# limit, Ctrl-C through a pty), so they run only in the extended lane
+# (COOP_TEST_EXTENDED=1, #96), like cases 10, 13c and 13d of the bash twin.
 # Assertions stay ASCII: Windows PowerShell 5.1 re-encodes child stderr.
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -16,6 +19,8 @@ $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-azcache-' + [guid]::NewG
 $fail = 0
 function Ok([string]$m) { Write-Host "  ok $m" }
 function Ko([string]$m, [string]$out = '') { Write-Host "  x $m"; if ($out) { Write-Host $out }; $script:fail = 1 }
+$extendedLane = ($env:COOP_TEST_EXTENDED -eq '1')
+function Skipped([string]$m) { Write-Host "  - skipped in the gate lane: $m (COOP_TEST_EXTENDED=1 runs it)" }
 
 $T1 = '11111111-1111-4111-8111-111111111111'
 $T2 = '22222222-2222-4222-8222-222222222222'
@@ -175,12 +180,17 @@ try {
   else { Ok 'failed sign-in: one attempt, one line naming az login, launch continues' }
 
   # 10. Timeout (exit code above 128 maps to 124): never a sign-in.
-  Reset-Az; Set-AzState 'mode' 'term'
-  $out = Invoke-Preflight -AssumeYes
-  if ((Get-Probes) -ne 1 -or (Get-Logins) -ne 0) { Ko 'timeout: 1 probe and 0 logins expected' ((Get-AzLines) -join "`n") }
-  elseif (Test-Path -LiteralPath $marker) { Ko 'a timed-out check must not leave a marker' }
-  elseif ((Get-WarnCount $out) -ne 1 -or -not $out.Contains("timed out for tenant $T2 (network or VPN?)") -or -not $out.Contains("az account get-access-token --tenant $T2 --resource $Fabric")) { Ko 'timeout line mismatch' $out }
-  else { Ok 'timed-out check: no sign-in, one line naming the token command' }
+  #      Extended lane: the fake az ends itself (exit 143 or SIGTERM).
+  if ($extendedLane) {
+    Reset-Az; Set-AzState 'mode' 'term'
+    $out = Invoke-Preflight -AssumeYes
+    if ((Get-Probes) -ne 1 -or (Get-Logins) -ne 0) { Ko 'timeout: 1 probe and 0 logins expected' ((Get-AzLines) -join "`n") }
+    elseif (Test-Path -LiteralPath $marker) { Ko 'a timed-out check must not leave a marker' }
+    elseif ((Get-WarnCount $out) -ne 1 -or -not $out.Contains("timed out for tenant $T2 (network or VPN?)") -or -not $out.Contains("az account get-access-token --tenant $T2 --resource $Fabric")) { Ko 'timeout line mismatch' $out }
+    else { Ok 'timed-out check: no sign-in, one line naming the token command' }
+  } else {
+    Skipped '10 timed-out check (the fake az ends itself: exit 143 or SIGTERM)'
+  }
 
   # 11. A non-authentication failure never signs in or says "not signed in".
   Reset-Az; Set-AzState 'mode' 'error'
@@ -257,51 +267,61 @@ try {
 
   # 13c. A sign-in stopped at its limit (5 minutes, shortened here) prints exactly
   #      one line, and az is ended.
-  $realInvokeCoopAz = ${function:Invoke-CoopAz}
-  function Invoke-CoopAz {
-    param([int]$Seconds, [string[]]$AzArgs, [switch]$Quiet, [switch]$NewWindow)
-    if ($Seconds -eq 300) { $Seconds = 3 }
-    & $realInvokeCoopAz -Seconds $Seconds -AzArgs $AzArgs -Quiet:$Quiet -NewWindow:$NewWindow
+  #      Extended lane: a hanging sign-in stopped at its limit.
+  if ($extendedLane) {
+    $realInvokeCoopAz = ${function:Invoke-CoopAz}
+    function Invoke-CoopAz {
+      param([int]$Seconds, [string[]]$AzArgs, [switch]$Quiet, [switch]$NewWindow)
+      if ($Seconds -eq 300) { $Seconds = 3 }
+      & $realInvokeCoopAz -Seconds $Seconds -AzArgs $AzArgs -Quiet:$Quiet -NewWindow:$NewWindow
+    }
+    try {
+      Set-Project $T2; Reset-Az; Set-AzState 'login-rc' 'hang'
+      Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+      $out = Invoke-Preflight -AssumeYes
+    } finally {
+      ${function:Invoke-CoopAz} = $realInvokeCoopAz
+    }
+    $outLines = @($out -split "`r?`n" | Where-Object { $_.Trim() })
+    if ((Get-Logins) -ne 1 -or (Get-Probes) -ne 1) { Ko 'stopped sign-in: 1 login, no re-probe' ((Get-AzLines) -join "`n") }
+    elseif (Test-Path -LiteralPath $marker) { Ko 'a stopped sign-in must not leave a marker' }
+    elseif ((Get-WarnCount $out) -ne 1 -or $outLines.Count -ne 2 -or -not $out.Contains('not verified') -or -not $out.Contains("az login --tenant $T2 --allow-no-subscriptions")) { Ko 'stopped sign-in: the Opening line and exactly one warning line expected' $out }
+    elseif (-not (Test-HangGone)) { Ko 'the stopped sign-in is still running' }
+    elseif (Test-HangExpired) { Ko 'the sign-in ran out by itself: the limit did not end it' }
+    else { Ok 'sign-in stopped at its limit: exactly one line, az ended' }
+  } else {
+    Skipped '13c sign-in stopped at its limit (a hanging az, 3 s limit)'
   }
-  try {
-    Set-Project $T2; Reset-Az; Set-AzState 'login-rc' 'hang'
-    Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
-    $out = Invoke-Preflight -AssumeYes
-  } finally {
-    ${function:Invoke-CoopAz} = $realInvokeCoopAz
-  }
-  $outLines = @($out -split "`r?`n" | Where-Object { $_.Trim() })
-  if ((Get-Logins) -ne 1 -or (Get-Probes) -ne 1) { Ko 'stopped sign-in: 1 login, no re-probe' ((Get-AzLines) -join "`n") }
-  elseif (Test-Path -LiteralPath $marker) { Ko 'a stopped sign-in must not leave a marker' }
-  elseif ((Get-WarnCount $out) -ne 1 -or $outLines.Count -ne 2 -or -not $out.Contains('not verified') -or -not $out.Contains("az login --tenant $T2 --allow-no-subscriptions")) { Ko 'stopped sign-in: the Opening line and exactly one warning line expected' $out }
-  elseif (-not (Test-HangGone)) { Ko 'the stopped sign-in is still running' }
-  elseif (Test-HangExpired) { Ko 'the sign-in ran out by itself: the limit did not end it' }
-  else { Ok 'sign-in stopped at its limit: exactly one line, az ended' }
 
   # 13d. A stopped probe also ends az's child process: az.cmd (Windows) and the
   #      wbin/az wrapper script run Python as a child. POSIX gets a wrapper script.
-  $pathBefore = $env:PATH
-  if (-not $isWindowsHost) {
-    $wrapBin = Join-Path $t 'wrapbin'
-    New-Item -ItemType Directory -Force -Path $wrapBin | Out-Null
-    $wrap = Join-Path $wrapBin 'az'
-    [System.IO.File]::WriteAllText($wrap, "#!/bin/sh`n`"$node`" `"$fake`" `"`$@`"`n", $utf8)
-    & chmod +x $wrap
-    $env:PATH = "$wrapBin$([System.IO.Path]::PathSeparator)$($env:PATH)"
+  #      Extended lane: a hanging probe stopped at its limit.
+  if ($extendedLane) {
+    $pathBefore = $env:PATH
+    if (-not $isWindowsHost) {
+      $wrapBin = Join-Path $t 'wrapbin'
+      New-Item -ItemType Directory -Force -Path $wrapBin | Out-Null
+      $wrap = Join-Path $wrapBin 'az'
+      [System.IO.File]::WriteAllText($wrap, "#!/bin/sh`n`"$node`" `"$fake`" `"`$@`"`n", $utf8)
+      & chmod +x $wrap
+      $env:PATH = "$wrapBin$([System.IO.Path]::PathSeparator)$($env:PATH)"
+    }
+    Reset-Az; Set-AzState 'mode' 'hang'
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+      $r = Invoke-CoopAz -Seconds 3 -Quiet -AzArgs @('account', 'get-access-token', '--tenant', $T2, '--resource', $Fabric, '--output', 'none')
+    } finally {
+      $env:PATH = $pathBefore
+    }
+    $sw.Stop()
+    if ($r.Rc -ne 124) { Ko "a stopped probe must return 124 (got $($r.Rc))" }
+    elseif ($sw.Elapsed.TotalSeconds -ge 15) { Ko "the stopped probe took $([int]$sw.Elapsed.TotalSeconds)s (limit 3s)" }
+    elseif (-not (Test-HangGone)) { Ko "the az wrapper's child is still running" }
+    elseif (Test-HangExpired) { Ko "the probe ran out by itself: the limit did not end it" }
+    else { Ok "a stopped probe ends the az wrapper's child too (rc 124)" }
+  } else {
+    Skipped '13d a stopped probe also ends the az wrapper child (a hanging az, 3 s limit)'
   }
-  Reset-Az; Set-AzState 'mode' 'hang'
-  $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  try {
-    $r = Invoke-CoopAz -Seconds 3 -Quiet -AzArgs @('account', 'get-access-token', '--tenant', $T2, '--resource', $Fabric, '--output', 'none')
-  } finally {
-    $env:PATH = $pathBefore
-  }
-  $sw.Stop()
-  if ($r.Rc -ne 124) { Ko "a stopped probe must return 124 (got $($r.Rc))" }
-  elseif ($sw.Elapsed.TotalSeconds -ge 15) { Ko "the stopped probe took $([int]$sw.Elapsed.TotalSeconds)s (limit 3s)" }
-  elseif (-not (Test-HangGone)) { Ko "the az wrapper's child is still running" }
-  elseif (Test-HangExpired) { Ko "the probe ran out by itself: the limit did not end it" }
-  else { Ok "a stopped probe ends the az wrapper's child too (rc 124)" }
 
   # 13e. `coop web` (-NewWindow): on Windows the sign-in runs in its own window;
   #      a success is re-checked and stamped like the in-console sign-in.
@@ -317,8 +337,10 @@ try {
 
   # 13f. Ctrl-C during an in-console sign-in cancels it: one line, and the launch
   #      goes on. Needs a terminal, so POSIX legs drive pwsh through a Python pty.
+  #      Extended lane: a hanging sign-in, a pty and a fixed wait.
   $py3 = if ($isWindowsHost) { $null } else { Get-Command python3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1 }
-  if ($py3) {
+  if ($py3 -and -not $extendedLane) { Skipped '13f Ctrl-C during the sign-in (a hanging az driven through a pty)' }
+  elseif ($py3) {
     Set-Project $T2; Reset-Az; Set-AzState 'login-rc' 'hang'
     Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
     $child = Join-Path $t 'ctrlc.ps1'
@@ -384,6 +406,11 @@ sys.stdout.write(buf.decode("utf-8", "replace"))
   Set-Location -LiteralPath $noContract
   Remove-Item -LiteralPath (Join-Path $coopDir '.coop\config') -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+  # Doctor refreshes the coop-agent checkout at most once a day; a fresh stamp in
+  # the sandbox agent dir keeps doctor.ps1 from fetching this checkout's origin
+  # (as tests/fixtures/doctor-warehouse.test.ps1 does).
+  New-Item -ItemType Directory -Force -Path $agent | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $agent '.coop-fetch-stamp'), '')
   $doctorOk = $true
   Reset-Az
   $dout = Invoke-Doctor

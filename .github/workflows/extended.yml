@@ -1,0 +1,133 @@
+name: extended
+
+# The extended test lane (#96): the full suite, gate lane plus the timing and
+# process fixtures (sleeps, polls, PTY, marker files, hang and watchdog cases,
+# network). COOP_TEST_EXTENDED=1 is the whole switch; with it unset, tests/run.sh
+# and tests/run.ps1 run only the gate lane that ci.yml runs on every PR.
+# Runs nightly, on demand (Actions -> extended -> Run workflow, any branch), and
+# on a PR only when this file changes. See docs/ci.md, "coop-agent's own CI
+# (maintainers): gate and extended lanes".
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/extended.yml
+
+permissions:
+  contents: read
+
+# Never shared with ci.yml's groups. A newer push to the same PR cancels the
+# older run; nightly and manual runs queue instead of cancelling.
+concurrency:
+  group: extended-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  bash32:
+    # Keeps the Azure sign-in preflight's watchdog and hang cases running under
+    # stock bash 3.2; ci.yml's bash32 job runs only the gate cases.
+    name: bash 3.2 Azure preflight, extended (macOS stock)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      COOP_TEST_EXTENDED: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - name: Azure sign-in preflight under stock /bin/bash (3.2), all cases
+        run: |
+          if [ "${COOP_TEST_EXTENDED:-}" != "1" ]; then echo "::error::COOP_TEST_EXTENDED did not reach bash"; exit 1; fi
+          /bin/bash --version | head -1
+          /bin/bash tests/azcache.test.sh
+
+  tests:
+    name: logic tests, extended (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      COOP_TEST_EXTENDED: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.19.0'
+      - name: run test suite, gate + extended lanes (bash tests/run.sh)
+        run: |
+          if [ "${COOP_TEST_EXTENDED:-}" != "1" ]; then echo "::error::COOP_TEST_EXTENDED did not reach bash"; exit 1; fi
+          bash tests/run.sh
+      - name: PowerShell behavioral tests, gate + extended lanes (pwsh)
+        shell: pwsh
+        run: |
+          if ($env:COOP_TEST_EXTENDED -ne '1') { Write-Host '::error::COOP_TEST_EXTENDED did not reach pwsh'; exit 1 }
+          pwsh -File tests/run.ps1
+
+  tests-windows:
+    name: logic tests, extended (Windows Git Bash)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      COOP_TEST_EXTENDED: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.19.0'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Pin Python and install receipt-schema dependency
+        shell: pwsh
+        run: |
+          $venv = Join-Path $env:RUNNER_TEMP 'coop-ci-python'
+          & python -m venv $venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $python = Join-Path $venv 'Scripts\python.exe'
+          & $python -m pip install --disable-pip-version-check --no-input "jsonschema==4.25.1"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -c "import jsonschema,os,sys; print(os.path.abspath(sys.executable))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sitePackages = (& $python -c "import jsonschema,os; print(os.path.dirname(os.path.dirname(jsonschema.__file__)))").Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $sitePackages) { exit 1 }
+          "CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PYTHONPATH=$sitePackages" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: run test suite under Git Bash, gate + extended lanes
+        shell: bash
+        run: |
+          if [ "${COOP_TEST_EXTENDED:-}" != "1" ]; then echo "::error::COOP_TEST_EXTENDED did not reach Git Bash"; exit 1; fi
+          bash tests/run.sh
+
+  windows:
+    name: PowerShell 5.1 tests, extended (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      COOP_TEST_EXTENDED: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Pin Python and install receipt-schema dependency
+        shell: pwsh
+        run: |
+          $venv = Join-Path $env:RUNNER_TEMP 'coop-ci-python'
+          & python -m venv $venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $python = Join-Path $venv 'Scripts\python.exe'
+          & $python -m pip install --disable-pip-version-check --no-input "jsonschema==4.25.1"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -c "import jsonschema,os,sys; print(os.path.abspath(sys.executable))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sitePackages = (& $python -c "import jsonschema,os; print(os.path.dirname(os.path.dirname(jsonschema.__file__)))").Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $sitePackages) { exit 1 }
+          "CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PYTHONPATH=$sitePackages" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      # Same runtime bin/coop.cmd launches: Windows PowerShell 5.1, not pwsh 7.
+      # The child powershell.exe inherits COOP_TEST_EXTENDED from this step.
+      - name: PowerShell behavioral tests, gate + extended lanes (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          if ($env:COOP_TEST_EXTENDED -ne '1') { Write-Host '::error::COOP_TEST_EXTENDED did not reach Windows PowerShell 5.1'; exit 1 }
+          powershell -NoProfile -File tests\run.ps1

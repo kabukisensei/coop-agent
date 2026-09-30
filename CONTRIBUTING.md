@@ -82,10 +82,12 @@ Keep parity and the contract:
   vice versa) — never re-add a per-script inline copy. (Exception: `Coop-Unit`
   scriptblocks run in fresh background runspaces and see none of the library, so
   logic inside a unit stays self-contained by design.)
-- `scripts/check-parity.sh` (run by CI) fails on any BOM-less `.ps1`, on any
-  `scripts/*.sh` without a `scripts/*.ps1` twin (and vice versa) that isn't
-  allow-listed as an intentional singleton, and when either shared helper
-  library (`lib/common.sh` / `lib/common.ps1`) is missing.
+- `scripts/check-parity.sh` (run by CI) is the one BOM check. It fails on any
+  BOM-less `.ps1` or one with a doubled BOM, when `bin/coop.ps1` or
+  `scripts/sync-knowledge.ps1` does not start with a comment line right after
+  the BOM, on any `scripts/*.sh` without a `scripts/*.ps1` twin (and vice versa)
+  that isn't allow-listed as an intentional singleton, and when either shared
+  helper library (`lib/common.sh` / `lib/common.ps1`) is missing.
 
 ### Testing local changes on macOS
 
@@ -114,7 +116,7 @@ Run the same checks CI runs:
 for f in bin/coop lib/common.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
                                                                       # shell syntax — expect: no output, exit 0
 python3 lib/_yaml.py get .coop/project.yml profile.organization MISS  # yaml reader — expect: Cooptimize
-bash tests/run.sh                                                     # logic tests — expect: "✓ all tests passed"
+bash tests/run.sh                                                     # gate lane, expect: "✓ all tests passed (gate lane)"
 bash scripts/check-parity.sh                                          # pairing + BOM — expect: "✓ parity check passed"
 coop doctor                                                           # deps + config (workstation only — see note)
 ```
@@ -123,9 +125,31 @@ If you are on a headless dev box without the coop stack installed (no `pi`,
 pipx tools, or `fab`), **skip `coop doctor`** and say so in the PR — the four
 checks above plus CI fully cover script/doc changes.
 
-CI (`.github/workflows/ci.yml`) additionally runs `shellcheck`, validates all
-YAML/JSON, transpiles the TypeScript extensions with esbuild, and parses every
-`.ps1` on a Windows runner.
+`bash tests/run.sh` runs the gate lane, the deterministic tests every PR runs.
+The extended lane adds the timing and process fixtures. It is optional for a PR
+unless you added or changed one of those fixtures, and `coop release` runs it
+before every tag:
+
+```bash
+COOP_TEST_EXTENDED=1 bash tests/run.sh   # gate + extended lanes, expect: "✓ all tests passed (gate + extended lanes)"
+```
+
+A new timing or process fixture goes in the extended lane, and the PR says why.
+The lanes, the fixture rules, and the CI workflows are described in
+[docs/ci.md](docs/ci.md#coop-agents-own-ci-maintainers-gate-and-extended-lanes).
+
+CI (`.github/workflows/ci.yml`) runs on every PR and every push to `main`. Its
+jobs run `bash -n` (also under macOS stock bash 3.2), `shellcheck`,
+`scripts/check-parity.sh`, JSON/YAML/skill validation, and the esbuild
+transpile of the TypeScript extensions; they parse every `.ps1` under pwsh 7 and
+Windows PowerShell 5.1 with PSScriptAnalyzer; and they run the gate lane on
+ubuntu (`tests/run.sh`, then `tests/run.ps1` under pwsh 7), under Windows Git
+Bash (`tests/run.sh`), and under Windows PowerShell 5.1 (`tests/run.ps1`). The
+`gate` job passes only when every other job succeeded. The extended lane runs in
+`.github/workflows/extended.yml` (nightly, or Actions -> extended -> Run workflow
+on any branch), and the live Pi compatibility matrix in
+`.github/workflows/pi-matrix.yml` (nightly, on demand, and on PRs that touch Pi
+alignment).
 
 ## Commits & PRs
 
