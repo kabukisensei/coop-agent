@@ -166,6 +166,30 @@ try {
   if ($stale.Count -ne 1 -or $stale[0].status -ne 'fail' -or -not ([string]$stale[0].hint).StartsWith("pipx install --force coop-data-doc==$Pin")) {
     Ko 'doctor.ps1 must still fail a genuine in-venv metadata/CLI disagreement with the --force hint' (Show-Rows $rows)
   } else { Ok 'doctor.ps1 still fails a genuine in-venv metadata/CLI disagreement with the --force hint' }
+  # 3. Venv present (metadata 1.2.0) but nothing answers on PATH.
+  Remove-Item -LiteralPath (Join-Path $venvBin (Split-Path -Leaf $shadow)) -Force -ErrorAction SilentlyContinue
+  Get-ChildItem -LiteralPath $venvBin -Filter 'coop-data-doc*' | Remove-Item -Force
+  $env:PATH = "$fakeBin$sep$($saved['PATH'])"
+  if (Get-Command coop-data-doc -ErrorAction SilentlyContinue) { throw 'fixture must not resolve any coop-data-doc in case 3' }
+  $rows = Get-DoctorRows
+  $np = @($rows | Where-Object { ([string]$_.name) -eq "coop-data-doc is not on PATH (pipx has $Pin installed)" })
+  if ($np.Count -ne 1 -or $np[0].status -ne 'warn' -or -not ([string]$np[0].hint).Contains('pipx ensurepath') -or -not ([string]$np[0].hint).Contains('pipx reinstall coop-data-doc')) {
+    Ko 'doctor.ps1 must report a venv with no PATH launcher as not on PATH' (Show-Rows $rows)
+  } else { Ok 'doctor.ps1 reports a venv with no PATH launcher as not on PATH' }
+
+  # 4. A launcher resolves but prints no version (broken leftover).
+  $silent = New-Stub $venvBin 'coop-data-doc' ''
+  if ($isWindowsHost) {
+    [System.IO.File]::WriteAllText($silent, "@echo off`r`nexit /b 1`r`n", [System.Text.Encoding]::ASCII)
+  } else {
+    [System.IO.File]::WriteAllText($silent, "#!/bin/sh`nexit 1`n", $utf8)
+  }
+  $env:PATH = "$venvBin$sep$fakeBin$sep$($saved['PATH'])"
+  $rows = Get-DoctorRows
+  $sl = @($rows | Where-Object { ([string]$_.name) -eq "coop-data-doc: coop-data-doc at $silent runs but prints no version (pipx metadata says $Pin)" })
+  if ($sl.Count -ne 1 -or $sl[0].status -ne 'warn' -or -not ([string]$sl[0].hint).Contains('pipx reinstall coop-data-doc')) {
+    Ko 'doctor.ps1 must report a silent launcher with its path and a reinstall hint' (Show-Rows $rows)
+  } else { Ok 'doctor.ps1 reports a silent launcher with its path and a reinstall hint' }
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {

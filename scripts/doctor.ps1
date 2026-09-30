@@ -180,7 +180,15 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   }
   if (-not $cli) {
     # Stop here: without a CLI answer there is nothing trustworthy to compare.
-    D-Warn "$Dist metadata present ($meta) but $Exe produced no version" $repair
+    # Say WHICH way it failed: nothing on PATH, or a launcher that prints nothing.
+    $rc = Get-Command $Exe -ErrorAction SilentlyContinue
+    if ($rc) {
+      $hint = "a broken leftover launcher: delete it, then pipx reinstall $Dist, and open a new terminal"
+      D-Warn "${Dist}: $Exe at $($rc.Source) runs but prints no version (pipx metadata says $meta)" $hint
+    } else {
+      $hint = "put pipx's bin dir on PATH: pipx ensurepath, then open a new terminal; if the launcher is missing there: pipx reinstall $Dist"
+      D-Warn "$Dist is not on PATH (pipx has $meta installed)" $hint
+    }
     return
   }
   if (-not $meta) {

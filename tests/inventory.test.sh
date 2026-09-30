@@ -286,6 +286,28 @@ esac
 put_meta coop-data-doc coop-data-doc "$PIN_DDD"
 rm -rf "$FAKEBIN/shadowcdd"
 
+# F4e: pipx has the venv (metadata 1.2.0) but NOTHING answers on PATH: the pipx
+#      bin dir is missing from PATH or the launcher was never generated. Name it.
+rm -f "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc"
+out="$(doctor_out "$d")"
+case "$out" in
+  *"coop-data-doc is not on PATH (pipx has $PIN_DDD installed)"*"pipx ensurepath"*"pipx reinstall coop-data-doc"*)
+    ok "venv without a PATH launcher reported as not on PATH with ensurepath/reinstall hint" ;;
+  *) ko "not-on-PATH wording wrong: $(printf '%s' "$out" | grep 'coop-data-doc' | head -2)" ;;
+esac
+
+# F4f: a launcher resolves on PATH but prints no version (broken leftover).
+mkdir -p "$PIPXHOME/venvs/coop-data-doc/bin"
+printf '#!/bin/sh\nexit 1\n' > "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc"
+chmod +x "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc"
+out="$(doctor_out "$d")"
+case "$out" in
+  *"coop-data-doc: coop-data-doc at $PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc runs but prints no version (pipx metadata says $PIN_DDD)"*"pipx reinstall coop-data-doc"*)
+    ok "silent launcher reported with its path and a reinstall hint" ;;
+  *) ko "silent-launcher wording wrong: $(printf '%s' "$out" | grep 'coop-data-doc' | head -2)" ;;
+esac
+make_real_cdd "$PIN_DDD"
+
 # F5: wrong fab — a Paramiko/Fabric SSH tool must still be rejected, and must
 #     not be counted as ms-fabric-cli even if a venv exists.
 put_meta ms-fabric-cli ms-fabric-cli "$PIN_FAB"

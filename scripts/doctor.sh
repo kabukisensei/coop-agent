@@ -165,8 +165,16 @@ check_pipx_dist() { # <dist> <exe>
   fi
   if [ -z "$cli" ]; then
     # Stop here: without a CLI answer there is nothing trustworthy to compare,
-    # and falling through would let metadata alone claim a match.
-    warn "$dist metadata present ($meta) but $exe produced no version" "$repair"
+    # and falling through would let metadata alone claim a match. Say WHICH
+    # way it failed: nothing on PATH, or a launcher that runs and prints nothing.
+    if have "$exe"; then
+      resolved="$(command -v "$exe" 2>/dev/null)"
+      warn "$dist: $exe at ${resolved:-?} runs but prints no version (pipx metadata says $meta)" \
+        "a broken leftover launcher: delete it, then pipx reinstall $dist, and open a new terminal"
+    else
+      warn "$dist is not on PATH (pipx has $meta installed)" \
+        "put pipx's bin dir on PATH: pipx ensurepath, then open a new terminal; if the launcher is missing there: pipx reinstall $dist"
+    fi
     return 0
   fi
   if [ -z "$meta" ]; then

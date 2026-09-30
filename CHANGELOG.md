@@ -14,7 +14,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `pipx install --force`, rebuilt a venv that was never wrong and could not clear
   the row. When pipx has no copy at all, the row says so and leads with the pinned
   `pipx install`. The "Standalone Coop tools" section no longer gives such a copy a
-  green tick. Genuine metadata/CLI disagreement inside the pipx venv is unchanged.
+  green tick. When pipx has the venv but nothing answers on PATH, the row says
+  "not on PATH" with an `ensurepath` / `reinstall` hint, and a launcher that runs
+  but prints nothing is named with its path, instead of the old catch-all
+  "produced no version" with a `--force` hint. Genuine metadata/CLI disagreement
+  inside the pipx venv is unchanged.
 
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
