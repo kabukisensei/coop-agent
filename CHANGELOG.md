@@ -103,6 +103,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   both lanes, and `tests/run.ps1` now fails instead of reporting a pass when an
   error stops it before its last section. Lanes, fixture rules and the CI
   workflows are documented in `docs/ci.md`.
+- The extended lane runs every terminal-workstation acceptance test (#133). It
+  used to select 8 of the file's 39 tests by name, and no lane or workflow ran
+  the other 27. `tests/run.sh` now runs the whole file. Tests that need pwsh
+  skip themselves without it, and the native Windows lifecycle test runs only on
+  Windows. `tests/run.ps1` keeps its subset so Windows doesn't run the file twice.
+  The ubuntu extended job installs `jsonschema` 4.25.1, as the Windows jobs do,
+  because the file treats the receipt schema validator as mandatory.
+  Running it on Windows exposed a hang: the certification Python resolver
+  executed whatever file `CERT_PYTHON` named, so a document such as `README.md`
+  opened with its associated app and never returned. On Windows the resolver now
+  refuses anything but an `.exe` before running it, and each resolver probe in
+  the test is bounded to 2 minutes and names its `CERT_PYTHON` when it overruns.
 - The extended test lane no longer touches your real home or this checkout (#135).
   `tests/run.sh` keeps the gate lane's temp home for the extended block, except
   `home-guard`, which checks the real home on purpose. The fixtures that run

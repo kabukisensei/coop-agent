@@ -365,8 +365,14 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   echo "→ doctor MCP mode reporting tests"
   bash "$ROOT/tests/doctor.test.sh"
 
-  echo "→ terminal acceptance reparse boundary tests"
-  node --test --test-name-pattern "directory links|junctioned ancestor|authorization revocation|failure cleanup|checkout ancestry|owned-root probe|fully safe authorization|decisive receipt mutations" "$ROOT/tests/terminal-workstation-acceptance.test.mjs"
+  # The whole file (#133): tests that need pwsh skip themselves without it.
+  # tests/run.ps1 keeps its reparse subset, so Windows does not run the file
+  # twice per lane.
+  # "native Windows lifecycle faults" needs the candidate and baseline checkouts
+  # that only the Windows terminal-workstation acceptance workflow creates; that
+  # workflow runs it (its "lifecycle" selection). Every other test runs here.
+  echo "→ terminal-workstation acceptance harness tests (all but the workflow-only lifecycle test)"
+  node --test --test-skip-pattern "native Windows lifecycle faults" "$ROOT/tests/terminal-workstation-acceptance.test.mjs"
 fi
 
 # The real home and this checkout are as they were before the run (#135).

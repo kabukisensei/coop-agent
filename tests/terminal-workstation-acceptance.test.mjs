@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { fingerprintBuild } from "../lib/support-center.mjs";
@@ -52,6 +52,14 @@ const pythonDiscovery = pythonCandidates.map(({ command, prefix }) => ({
 })).find(({ probe }) => probe.status === 0 && !probe.error && probe.stdout?.trim());
 assert.ok(pythonDiscovery, `Python is mandatory; tried: ${pythonCandidates.map(({ command, prefix }) => [command, ...prefix].join(" ")).join(", ")}`);
 const PYTHON_PATH = pythonDiscovery.probe.stdout.trim();
+// An environment whose search path is exactly `value`. Windows spells the key
+// `Path` in process.env, and spreading it then adding `PATH` hands the child two
+// entries, so the original search path could still win (#133).
+function withSearchPath(env, value) {
+  const next = Object.fromEntries(Object.entries(env).filter(([key]) => key.toUpperCase() !== "PATH"));
+  next.PATH = value;
+  return next;
+}
 const schemaProbe = spawnSync(PYTHON_PATH, ["-c", "import jsonschema"], { encoding: "utf8" });
 
 function runPs(args, options = {}) {
@@ -413,7 +421,8 @@ test("rollback npm reconciliation executes, fails closed, and precedes proof con
 });
 
 test("bounded behavioral suite re-finalizes immutable artifacts and checkouts before upload", () => {
-  const source = readFileSync(SCRIPT, "utf8");
+  // The contract matches line structure; a Windows checkout may carry CRLF (#133).
+  const source = readFileSync(SCRIPT, "utf8").replace(/\r\n/g, "\n");
   const contract = (candidate) => {
     const snapshotHelper = candidate.match(/function Get-CheckoutSnapshot[\s\S]*?\n\}/)?.[0] ?? "";
     assert.match(snapshotHelper, /Get-DirectTreeHash \$Path \$true/);
@@ -802,12 +811,18 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
   const probe = (candidate, env, cwd = dir) => {
     const script = join(dir, `probe-${probeNumber++}.ps1`);
     writeFileSync(script, candidate, "utf8");
-    return spawnSync(PWSH, ["-NoLogo", "-NoProfile", "-File", script, "-Mode", "Probe", "-Probe", "ResolvePython"], { encoding: "utf8", env, cwd });
+    // A bounded probe: a resolver that launches something that never exits must fail
+    // this test by name, not hang the whole file until the job times out.
+    const result = spawnSync(PWSH, ["-NoLogo", "-NoProfile", "-File", script, "-Mode", "Probe", "-Probe", "ResolvePython"], { encoding: "utf8", env, cwd, timeout: 120000 });
+    if (result.error) throw new Error(`ResolvePython probe with CERT_PYTHON=${JSON.stringify(env.CERT_PYTHON ?? null)} did not finish: ${result.error.message}`);
+    return result;
   };
   const assertWiring = (candidate) => {
     assert.match(candidate, /IsPathRooted\(\$Path\)/);
     assert.match(candidate, /Equals\(\$Path, \$expected, \$comparison\)/);
     assert.match(candidate, /Test-Path -LiteralPath \$expected -PathType Leaf/);
+    assert.match(candidate, /GetExtension\(\$expected\), '\.exe'/);
+    assert.match(candidate, /if \(-not \[string\]::Equals\(\$actual, \$expected, \$comparison\)\) \{ throw 'acceptance Python executable identity mismatch' \}/);
     assert.match(candidate, /& \$expected -c 'import os,sys; print\(os\.path\.abspath\(sys\.executable\)\)'/);
     assert.equal((candidate.match(/Get-AcceptancePython/g) || []).length, 4);
     assert.match(candidate, /try \{ \$pythonPath = Get-AcceptancePython \} catch \{ \$pythonPath = '' \}/);
@@ -820,24 +835,27 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
     assert.equal(pinned.status, 0, pinned.stderr);
     assert.equal(normalize(pinned.stdout.trim()), normalize(pinnedPath));
 
-    const fallbackEnv = { ...process.env };
+    const fallbackEnv = withSearchPath(process.env, dirname(pinnedPath));
     delete fallbackEnv.CERT_PYTHON;
-    fallbackEnv.PATH = dirname(pinnedPath);
     const fallback = probe(candidate, fallbackEnv);
     assert.equal(fallback.status, 0, fallback.stderr);
     assert.equal(normalize(fallback.stdout.trim()), normalize(pinnedPath));
 
-    const invalidFirstEnv = { ...process.env, PATH: `${invalidFirstDir}${delimiter}${dirname(pinnedPath)}` };
+    const invalidFirstEnv = withSearchPath(process.env, `${invalidFirstDir}${delimiter}${dirname(pinnedPath)}`);
     delete invalidFirstEnv.CERT_PYTHON;
     const invalidFirst = probe(candidate, invalidFirstEnv);
     assert.equal(invalidFirst.status, 0, invalidFirst.stderr);
     assert.equal(normalize(invalidFirst.stdout.trim()), normalize(pinnedPath));
 
-    const allInvalidEnv = { ...process.env, PATH: invalidFirstDir };
+    const allInvalidEnv = withSearchPath(process.env, invalidFirstDir);
     delete allInvalidEnv.CERT_PYTHON;
     assert.notEqual(probe(candidate, allInvalidEnv).status, 0);
 
-    assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: relative(dir, pinnedPath) }).status, 0);
+    // path.relative returns an absolute path across Windows drives (temp on D:,
+    // Python on C: in CI), so fall back to a bare name resolved from its own dir.
+    const relativePin = relative(dir, pinnedPath);
+    const [relPath, relCwd] = isAbsolute(relativePin) ? [basename(pinnedPath), dirname(pinnedPath)] : [relativePin, dir];
+    assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: relPath }, relCwd).status, 0);
     const separator = process.platform === "win32" ? "\\" : "/";
     const nonCanonical = `${dirname(pinnedPath)}${separator}unused-segment${separator}..${separator}${basename(pinnedPath)}`;
     assert.notEqual(probe(candidate, { ...process.env, CERT_PYTHON: nonCanonical }).status, 0);
@@ -856,16 +874,22 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
   };
   assertWiring(source);
   assertBehavior(source);
+  const identityMutant = source.replace("if (-not [string]::Equals($actual, $expected, $comparison))", "if ($false)");
   for (const [index, mutant] of [
     source.replace("if ($env:CERT_PYTHON) {", "if ($false) {"),
     source.replace("return Resolve-AcceptancePythonExecutable $env:CERT_PYTHON", "return 'python'"),
     source.replace("try { return Resolve-AcceptancePythonExecutable $python.Source }", `try { return '${resolve(process.execPath).replaceAll("'", "''")}' }`),
     source.replace("if (-not [string]::Equals($Path, $expected, $comparison))", "if ($false)"),
-    source.replace("if (-not [string]::Equals($actual, $expected, $comparison))", "if ($false)"),
+    // The identity check's behavioral witness is a wrapper that runs Python under
+    // another name. On Windows the .exe rule rejects the .cmd wrapper first, and no
+    // portable .exe reports a different sys.executable, so there the wiring
+    // mutant below is what proves the check is present.
+    ...(process.platform === "win32" ? [] : [identityMutant]),
   ].entries()) assert.throws(() => assertBehavior(mutant), `Python resolver behavioral mutant ${index} was accepted`);
   for (const [index, mutant] of [
     source.replace("FilePath = $pythonPath", "FilePath = 'python'"),
     source.replace("$onboardPython = Get-AcceptancePython", "$onboardPython = 'python'"),
+    identityMutant,
   ].entries()) assert.throws(() => assertWiring(mutant), `Python resolver wiring mutant ${index} was accepted`);
 });
 
