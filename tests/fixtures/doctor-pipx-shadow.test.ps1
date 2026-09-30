@@ -180,13 +180,13 @@ try {
   # 4. A launcher resolves but prints no version (broken leftover).
   $silent = New-Stub $venvBin 'coop-data-doc' ''
   if ($isWindowsHost) {
-    [System.IO.File]::WriteAllText($silent, "@echo off`r`nexit /b 1`r`n", [System.Text.Encoding]::ASCII)
+    [System.IO.File]::WriteAllText($silent, "@echo off`r`necho Fatal error in launcher: Unable to create process 1>&2`r`nexit /b 1`r`n", [System.Text.Encoding]::ASCII)
   } else {
-    [System.IO.File]::WriteAllText($silent, "#!/bin/sh`nexit 1`n", $utf8)
+    [System.IO.File]::WriteAllText($silent, "#!/bin/sh`necho 'Fatal error in launcher: Unable to create process' >&2`nexit 1`n", $utf8)
   }
   $env:PATH = "$venvBin$sep$fakeBin$sep$($saved['PATH'])"
   $rows = Get-DoctorRows
-  $sl = @($rows | Where-Object { ([string]$_.name) -eq "coop-data-doc: coop-data-doc at $silent runs but prints no version (pipx metadata says $Pin)" })
+  $sl = @($rows | Where-Object { ([string]$_.name) -eq "coop-data-doc: coop-data-doc at $silent runs but prints no version (pipx metadata says $Pin); it printed: Fatal error in launcher: Unable to create process" })
   if ($sl.Count -ne 1 -or $sl[0].status -ne 'warn' -or -not ([string]$sl[0].hint).Contains('pipx reinstall coop-data-doc')) {
     Ko 'doctor.ps1 must report a silent launcher with its path and a reinstall hint' (Show-Rows $rows)
   } else { Ok 'doctor.ps1 reports a silent launcher with its path and a reinstall hint' }

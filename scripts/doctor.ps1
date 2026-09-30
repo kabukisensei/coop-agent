@@ -183,8 +183,17 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
     # Say WHICH way it failed: nothing on PATH, or a launcher that prints nothing.
     $rc = Get-Command $Exe -ErrorAction SilentlyContinue
     if ($rc) {
+      # Quote the launcher's first output line (stderr included) so the row
+      # shows what it said instead of sending the user to run it by hand.
+      $probe = ''
+      try {
+        $pOut = (& $Exe --version 2>&1 | Out-String)
+        $pLine = @(($pOut -split "`r?`n") | Where-Object { $_.Trim() }) | Select-Object -First 1
+        if ($pLine) { $probe = ([string]$pLine).Trim(); if ($probe.Length -gt 120) { $probe = $probe.Substring(0, 120) } }
+      } catch {}
+      $said = if ($probe) { "; it printed: $probe" } else { '' }
       $hint = "a broken leftover launcher: delete it, then pipx reinstall $Dist, and open a new terminal"
-      D-Warn "${Dist}: $Exe at $($rc.Source) runs but prints no version (pipx metadata says $meta)" $hint
+      D-Warn "${Dist}: $Exe at $($rc.Source) runs but prints no version (pipx metadata says $meta)$said" $hint
     } else {
       $hint = "put pipx's bin dir on PATH: pipx ensurepath, then open a new terminal; if the launcher is missing there: pipx reinstall $Dist"
       D-Warn "$Dist is not on PATH (pipx has $meta installed)" $hint

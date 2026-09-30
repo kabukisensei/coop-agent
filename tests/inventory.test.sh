@@ -298,12 +298,12 @@ esac
 
 # F4f: a launcher resolves on PATH but prints no version (broken leftover).
 mkdir -p "$PIPXHOME/venvs/coop-data-doc/bin"
-printf '#!/bin/sh\nexit 1\n' > "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc"
+printf '#!/bin/sh\necho "Fatal error in launcher: Unable to create process" >&2\nexit 1\n' > "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc"
 chmod +x "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc"
 out="$(doctor_out "$d")"
 case "$out" in
-  *"coop-data-doc: coop-data-doc at $PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc runs but prints no version (pipx metadata says $PIN_DDD)"*"pipx reinstall coop-data-doc"*)
-    ok "silent launcher reported with its path and a reinstall hint" ;;
+  *"coop-data-doc: coop-data-doc at $PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc runs but prints no version (pipx metadata says $PIN_DDD); it printed: Fatal error in launcher: Unable to create process"*"pipx reinstall coop-data-doc"*)
+    ok "silent launcher reported with its path, its error line and a reinstall hint" ;;
   *) ko "silent-launcher wording wrong: $(printf '%s' "$out" | grep 'coop-data-doc' | head -2)" ;;
 esac
 make_real_cdd "$PIN_DDD"

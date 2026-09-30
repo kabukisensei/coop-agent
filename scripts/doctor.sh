@@ -125,7 +125,7 @@ fi
 # real executable — ms-fabric-cli installs `fab`, not an `ms-fabric-cli` binary.
 check_pipx_dist() { # <dist> <exe>
   local dist="$1" exe="$2"
-  local expected meta cli pyver status repair cicd_pin resolved
+  local expected meta cli pyver status repair cicd_pin resolved probe
   expected="$(coop_manifest_get "python_tools.$dist")"
   [ -z "$expected" ] && return 0
   repair="pipx install --force $dist==$expected"
@@ -169,7 +169,10 @@ check_pipx_dist() { # <dist> <exe>
     # way it failed: nothing on PATH, or a launcher that runs and prints nothing.
     if have "$exe"; then
       resolved="$(command -v "$exe" 2>/dev/null)"
-      warn "$dist: $exe at ${resolved:-?} runs but prints no version (pipx metadata says $meta)" \
+      # Quote the launcher's first output line (stderr included) so the row
+      # shows what it said instead of sending the user to run it by hand.
+      probe="$($exe --version 2>&1 </dev/null | head -1 | cut -c1-120)"
+      warn "$dist: $exe at ${resolved:-?} runs but prints no version (pipx metadata says $meta)${probe:+; it printed: $probe}" \
         "a broken leftover launcher: delete it, then pipx reinstall $dist, and open a new terminal"
     else
       warn "$dist is not on PATH (pipx has $meta installed)" \
