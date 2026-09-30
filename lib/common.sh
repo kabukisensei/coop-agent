@@ -451,6 +451,14 @@ coop_converge_extension_pins() { # <agent-dir> <name@ver>...
     printf '{\n  "name": "pi-extensions",\n  "private": true\n}\n' > "$pj"
   fi
   node "$COOP_ROOT/lib/pins.js" "$agent_dir" "$@" || return 1
+  # This npm install auto-installs peers. Pin the agent peer (and pi-ai/pi-tui) to
+  # the running Pi first (#122); unpinned, npm fetched the newest agent into the
+  # tree seconds after upstream published it. Best-effort, like the alignment.
+  local pi_ver py
+  pi_ver="$(coop_pi_version 2>/dev/null || true)"
+  if [ -n "$pi_ver" ] && py="$(coop_python)"; then
+    "$py" "$COOP_ROOT/lib/_extdeps.py" align "$agent_dir" "$pi_ver" >/dev/null 2>&1 || true
+  fi
 ( cd "$agent_dir/npm" && "$npm_bin" install --silent --no-audit --no-fund >/dev/null 2>&1 ) || return 1
 }
 

@@ -538,6 +538,14 @@ function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
   if (-not $npm) { return $false }
   node (Join-Path $script:CoopRoot 'lib\pins.js') $AgentDir @Specs
   if ($LASTEXITCODE -ne 0) { return $false }
+  # This npm install auto-installs peers. Pin the agent peer (and pi-ai/pi-tui) to
+  # the running Pi first (#122); unpinned, npm fetched the newest agent into the
+  # tree seconds after upstream published it. Best-effort, like the alignment.
+  $piVer = Get-CoopPiVersion
+  $py = Get-CoopPython
+  if ($piVer -and $py) {
+    & $py (Join-Path $script:CoopRoot 'lib\_extdeps.py') align $AgentDir $piVer *> $null
+  }
   Push-Location $npmDir
   $npmOut = @(& $npm install --silent --no-audit --no-fund 2>&1)
   $rc = $LASTEXITCODE
