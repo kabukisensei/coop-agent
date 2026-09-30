@@ -28,7 +28,7 @@ async function runCase({ withPython }) {
     `process.stdout.write(${JSON.stringify(`token\t${canary}\tend`)});\n`,
   );
   writeFileSync(
-    join(agentDir, "mcp.json"),
+    join(agentDir, "mcp-adapter.json"),
     JSON.stringify({
       _coop: { managed_servers: ["fabric-sqlendpoint"] },
       mcpServers: {

@@ -240,7 +240,7 @@ m=json.load(sys.stdin)
 for k,v in m["extensions"].items(): print(f"  npm:{k}@{v}")'
   exit 0
 }
-echo "pi 0.84.3"
+echo "pi 0.87.1"
 EOF
 chmod +x "$stub_ok/pi"
 out="$(PATH="$stub_ok:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
@@ -269,7 +269,7 @@ for k,v in m["extensions"].items():
     print(f"  npm:{k}@{drift if k==first else v}")'
   exit 0
 }
-echo "pi 0.84.3"
+echo "pi 0.87.1"
 EOF
 chmod +x "$stub_drift/pi"
 out="$(PATH="$stub_drift:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
@@ -296,7 +296,7 @@ for k,v in m["extensions"].items():
     print(f"    HOME/.coop/agent/npm/node_modules/{k}")'
   exit 0
 }
-echo "pi 0.84.3"
+echo "pi 0.87.1"
 EOF
 chmod +x "$stub_real/pi"
 out="$(PATH="$stub_real:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
@@ -321,7 +321,7 @@ for k,v in m["extensions"].items():
     print(f"    HOME/.coop/agent/npm/node_modules/{k}")'
   exit 0
 }
-echo "pi 0.84.3"
+echo "pi 0.87.1"
 EOF
 chmod +x "$stub_dup/pi"
 out="$(PATH="$stub_dup:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"

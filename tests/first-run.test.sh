@@ -62,8 +62,8 @@ F1_OUT="$(run_coop_pty "$F1_HOME" "$ONBOARD_ANSWERS" "$WORK/f1.out")"; F1_RC=$?
   && ok "user.json saved by first-run onboarding" || ko "user.json missing after first run"
 [ -f "$F1_HOME/.coop/config" ] \
   && ok "integration config saved by first-run onboarding" || ko "config missing after first run"
-[ -f "$F1_HOME/.coop/agent/mcp.json" ] \
-  && ok "MCP configuration generated" || ko "mcp.json missing after first run"
+[ -f "$F1_HOME/.coop/agent/mcp-adapter.json" ] \
+  && ok "MCP configuration generated" || ko "mcp-adapter.json missing after first run"
 case "$F1_OUT" in
   *"Setup complete. Starting Coop"*) ok "launch-triggered onboarding announces startup" ;;
   *) ko "'Setup complete. Starting Coop…' missing from first-run output" ;;

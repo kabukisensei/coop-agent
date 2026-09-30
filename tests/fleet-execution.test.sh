@@ -63,7 +63,7 @@ SH
 unset COOP_FABRIC_PYTHON
 cat > "$STUB/pi" <<'SH'
 #!/bin/sh
-[ "$1" = "--version" ] && { echo 'pi 0.84.3'; exit 0; }
+[ "$1" = "--version" ] && { echo 'pi 0.87.1'; exit 0; }
 echo "PI $*" >> "$MARKER"
 # Honest install: sync verifies the tree AFTER pi install returns, so this stub
 # must actually materialize the extension (scoped names included).
@@ -78,7 +78,7 @@ SH
 cat > "$STUB/npm" <<'SH'
 #!/bin/sh
 [ "$1 $2" = "prefix -g" ] && { dirname "$(dirname "$0")"; exit 0; }
-[ "$1" = "view" ] && { echo '0.84.3'; exit 0; }
+[ "$1" = "view" ] && { echo '0.87.1'; exit 0; }
 echo "NPM $*" >> "$MARKER"; exit 0
 SH
 cat > "$STUB/pipx" <<'SH'
@@ -101,7 +101,7 @@ COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" --force
 grep -E 'PIPX install --force --python .+ ms-fabric-cli==1\.7\.0' "$MARKER" >/dev/null \
   || { echo 'Fabric CLI install did not select a supported bootstrap Python explicitly'; cat "$MARKER"; exit 1; }
 for spec in \
-  'npm:pi-mcp-adapter@2.34.0' 'npm:pi-hermes-memory@0.7.17' \
+  'npm:pi-mcp-adapter@3.3.0' 'npm:pi-hermes-memory@0.7.17' \
   'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' \
   'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing install spec $spec"; cat "$MARKER"; exit 1; }
@@ -144,7 +144,7 @@ PIPX_FAIL_MATCH='coop-data-doc==1.2.0' COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 
 echo '  ✓ install exits non-zero when a convergence unit fails'
 : > "$MARKER"
 update_out="$ISOL_D/update.out"; update_rc=0
-COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.84.3 COOP_PYPI_LATEST_OVERRIDE=0.1.0 \
+COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.87.1 COOP_PYPI_LATEST_OVERRIDE=0.1.0 \
   bash "$ROOT/scripts/update.sh" >"$update_out" 2>&1 || update_rc=$?
 [ "$update_rc" -eq 0 ] || { echo "normal pinned update failed unexpectedly (rc=$update_rc)"; tail -30 "$update_out"; exit 1; }
 grep -F 'not a git checkout' "$update_out" >/dev/null \
@@ -152,7 +152,7 @@ grep -F 'not a git checkout' "$update_out" >/dev/null \
 echo '  ✓ update runs from a copy of the tree, so step 1 never fetches or moves the checkout running the tests'
 grep -E 'PIPX install --force --python .+ ms-fabric-cli==1\.7\.0' "$MARKER" >/dev/null \
   || { echo 'Fabric CLI update did not select a supported bootstrap Python explicitly'; cat "$MARKER"; exit 1; }
-for spec in 'npm:pi-mcp-adapter@2.34.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
+for spec in 'npm:pi-mcp-adapter@3.3.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing update spec $spec"; exit 1; }
 done
 ! grep -F 'PI update --extensions' "$MARKER" >/dev/null
@@ -175,7 +175,7 @@ COOP_RELEASE_MANIFEST="$ROOT/config/release-manifest.json" \
   bash "$ROOT/scripts/sync.sh" >"$sync_out" 2>&1 || sync_rc=$?
 [ "$sync_rc" -eq 0 ] \
   || { echo "production sync failed unexpectedly (rc=$sync_rc)"; cat "$sync_out"; exit 1; }
-for spec in 'npm:pi-mcp-adapter@2.34.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
+for spec in 'npm:pi-mcp-adapter@3.3.0' 'npm:pi-hermes-memory@0.7.17' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing sync spec $spec"; exit 1; }
 done
 if command -v pwsh >/dev/null 2>&1; then
@@ -184,7 +184,7 @@ if command -v pwsh >/dev/null 2>&1; then
 fi
 
 # --- NORMAL-mode drift convergence (no --force): round-2 review item #1 ---------
-# Deliberate drift: installed Pi 0.81.0 (manifest says 0.84.3) and
+# Deliberate drift: installed Pi 0.81.0 (manifest says 0.87.1) and
 # coop-data-doc 1.1.0 (manifest says 1.2.0); ms-fabric-cli matches its pin.
 isolate_block 2
 cat > "$STUB2/pi" <<'SH'
@@ -213,7 +213,7 @@ chmod +x "$STUB2/pi" "$STUB2/npm" "$STUB2/pipx" "$STUB2/fab"
 PATH="$STUB2:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB2"; export PATH COOP_TEST_STUB_PATH
 : > "$MARKER2"
 COOP_FLEET_TEST_MODE=1 COOP_NO_ONBOARD=1 bash "$ROOT/scripts/install.sh" >/dev/null 2>&1
-grep -F 'NPM install -g @earendil-works/pi-coding-agent@0.84.3' "$MARKER2" >/dev/null \
+grep -F 'NPM install -g @earendil-works/pi-coding-agent@0.87.1' "$MARKER2" >/dev/null \
   || { echo 'drifted Pi NOT converged to manifest'; grep '^NPM install' "$MARKER2"; exit 1; }
 grep -F 'PIPX install --force coop-data-doc==1.2.0' "$MARKER2" >/dev/null \
   || { echo 'drifted coop-data-doc NOT force-installed to pin'; exit 1; }
@@ -222,11 +222,11 @@ grep -F 'PIPX install --force coop-data-doc==1.2.0' "$MARKER2" >/dev/null \
 echo '  ✓ normal install converges drifted Pi and pipx tools without --force'
 
 # --- --edge on an EXISTING machine attempts upstream latest ----------------------
-# Existing Pi 0.84.3 + coop-data-doc 1.2.0: edge must attempt an upgrade, not skip.
+# Existing Pi 0.87.1 + coop-data-doc 1.2.0: edge must attempt an upgrade, not skip.
 isolate_block 4
 cat > "$STUB4/pi" <<'SH'
 #!/bin/sh
-[ "$1" = "--version" ] && { echo 'pi 0.84.3'; exit 0; }
+[ "$1" = "--version" ] && { echo 'pi 0.87.1'; exit 0; }
 echo "PI $*" >> "$MARKER4"; exit 0
 SH
 cat > "$STUB4/npm" <<'SH'
@@ -266,7 +266,7 @@ echo '  ✓ install --edge attempts upstream latest for existing installs'
 isolate_block 5
 cat > "$STUB5/pi" <<'SH'
 #!/bin/sh
-[ "$1" = "--version" ] && { echo 'pi 0.84.3'; exit 0; }
+[ "$1" = "--version" ] && { echo 'pi 0.87.1'; exit 0; }
 echo "PI $*" >> "$MARKER5"; exit 0
 SH
 cat > "$STUB5/npm" <<'SH'
@@ -308,7 +308,7 @@ echo '  ✓ failed Fabric convergence is reported as failure, not ready'
 isolate_block 3
 cat > "$STUB3/pi" <<'SH'
 #!/bin/sh
-[ "$1" = "--version" ] && { echo 'pi 0.84.3'; exit 0; }
+[ "$1" = "--version" ] && { echo 'pi 0.87.1'; exit 0; }
 echo "PI $*" >> "$MARKER3"; exit 0
 SH
 cat > "$STUB3/npm" <<'SH'
@@ -342,13 +342,13 @@ echo '  ✓ normal install skips components already at their manifest pins'
 isolate_block 6
 cat > "$STUB6/pi" <<'SH'
 #!/bin/sh
-[ "$1" = "--version" ] && { echo 'pi 0.84.3'; exit 0; }
+[ "$1" = "--version" ] && { echo 'pi 0.87.1'; exit 0; }
 exit 0
 SH
 cat > "$STUB6/npm" <<'SH'
 #!/bin/sh
 [ "$1 $2" = "prefix -g" ] && { dirname "$(dirname "$0")"; exit 0; }
-[ "$1" = "view" ] && { echo '0.84.3'; exit 0; }
+[ "$1" = "view" ] && { echo '0.87.1'; exit 0; }
 exit 0
 SH
 cat > "$STUB6/pipx" <<'SH'
@@ -363,7 +363,7 @@ PATH="$STUB6:/usr/bin:/bin"; COOP_TEST_STUB_PATH="$STUB6"
 export PATH COOP_TEST_STUB_PATH
 unset COOP_FABRIC_PYTHON
 : > "$MARKER6"
-COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.84.3 COOP_PYPI_LATEST_OVERRIDE=0.1.0 \
+COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.87.1 COOP_PYPI_LATEST_OVERRIDE=0.1.0 \
   bash "$ROOT/scripts/update.sh" >/dev/null 2>&1
 for spec in 'coop-data-doc==1.2.0' 'coop-sql-review==0.15.2' 'coop-dax-review==0.22.0' 'ms-fabric-cli==1.7.0'; do
   grep -F "$spec" "$MARKER6" >/dev/null || { echo "update did not install missing $spec"; cat "$MARKER6"; exit 1; }

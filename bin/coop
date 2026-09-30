@@ -223,7 +223,7 @@ EOF
 coop_fabric_mcp_token() {
   local py config output token state message LC_ALL=C
   py="$(coop_python)" || return 0
-  config="${PI_CODING_AGENT_DIR:-$(coop_pi_agent_dir)}/mcp.json"
+  config="${PI_CODING_AGENT_DIR:-$(coop_pi_agent_dir)}/mcp-adapter.json"
   # A Node supervisor keeps child stdout/stderr separate in memory, rejects any
   # stderr byte, and forwards only one exact framed stdout record. No token or
   # diagnostic is written to disk or placed in argv.

@@ -178,7 +178,8 @@ finally {
 }
 
 # --- 5. MCP config — manifest-pinned, ownership-aware, non-destructive --------
-$MCP_DST = Join-Path $PI_AGENT 'mcp.json'
+# pi-mcp-adapter 3.x reads mcp-adapter.json; the generator migrates an old mcp.json.
+$MCP_DST = Join-Path $PI_AGENT 'mcp-adapter.json'
 $mcpPy = Get-CoopPython
 if ($mcpPy) {
   & $mcpPy (Join-Path $script:CoopRoot 'lib\mcp_config.py') --output $MCP_DST

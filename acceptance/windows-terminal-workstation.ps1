@@ -1207,7 +1207,11 @@ try {
   Assert-ExitZero $supportBase 'baseline Support'
   if (@(Find-Canary $baselineSupportPath $canary).Count -gt 0) { throw 'Support exported planted credential canary' }
 
+  # The baseline release's adapter reads mcp.json; from U1 (pi-mcp-adapter 3.x) the
+  # candidate's is mcp-adapter.json, which its sync migrates to. Rollback returns to
+  # the baseline file.
   $managedMcpPath = Join-Path $agentRoot 'mcp.json'
+  $candidateMcpPath = Join-Path $agentRoot 'mcp-adapter.json'
   $preservedStateFiles = @(
     (Join-Path $profileRoot '.coop\user.json'),
     (Join-Path $profileRoot '.coop\config'),
@@ -1251,10 +1255,10 @@ try {
   Assert-ExitZero $candidateNpm 'candidate npm inventory'
   $candidateNpmJson = Get-Content -LiteralPath $candidateNpm.Stdout -Raw | ConvertFrom-Json
   $candidateExtensionInventory = Get-InstalledExtensionInventory $manifest $agentRoot 'candidate'
-  $candidateMcpJson = Get-Content -LiteralPath (Join-Path $agentRoot 'mcp.json') -Raw | ConvertFrom-Json
+  $candidateMcpJson = Get-Content -LiteralPath $candidateMcpPath -Raw | ConvertFrom-Json
   $candidatePinProof = Get-ManifestPinProof $candidateDoctorJson $manifest $candidateObservedVersion $candidateNpmJson $candidateExtensionInventory $candidateMcpJson 'candidate'
   Assert-ManifestPinProof $candidatePinProof $manifest 'candidate'
-  $candidateMcpSha = Get-FileSha $managedMcpPath
+  $candidateMcpSha = Get-FileSha $candidateMcpPath
   $candidatePinProofPath = Join-Path $EvidenceRoot 'candidate-manifest-pin-proof.json'
   [System.IO.File]::WriteAllText($candidatePinProofPath, ($candidatePinProof | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
   $launchSpec = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'bin\coop.ps1'),'launch-spec','--json') (Join-Path $logs 'candidate-launch-spec') 300
@@ -1276,7 +1280,7 @@ try {
   $reinstall = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'scripts\install.ps1'),'--yes','--no-prereqs') (Join-Path $logs 'candidate-reinstall') 2700
   Assert-ExitZero $reinstall 'same-candidate reinstall'
   foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during same-candidate reinstall: $file" } }
-  if ((Get-FileSha $managedMcpPath) -ne $candidateMcpSha) { throw 'managed MCP state changed during same-candidate reinstall' }
+  if ((Get-FileSha $candidateMcpPath) -ne $candidateMcpSha) { throw 'managed MCP state changed during same-candidate reinstall' }
   if ((Get-TreeHash $fixtureRepo) -ne $repoBefore) { throw 'repository changed during same-candidate reinstall' }
   [void]$claims.Add((New-Claim 'same-candidate-reinstall' 'REINSTALL' 'PASS' $true $true $false 'Same-candidate reinstall was idempotent for exercised state and the fixture repository.' @(
     (New-Evidence 'COMMAND' 'same-candidate reinstall exited 0' '.\scripts\install.ps1 --yes --no-prereqs' $reinstall.ExitCode "candidate:$candidateObservedSha" $reinstall.Stdout)

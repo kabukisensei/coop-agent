@@ -79,7 +79,7 @@ tabular_editor_cli:
   note: "BPA reviews run through the cross-platform te CLI: download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (requires a Tabular Editor account during the preview), place on PATH or set tools.tabular_editor_cli.executable_path in .coop/project.yml, and run `te auth login` once."
 
 # MCP servers coop preloads — all optional (coop runs without them). Placed non-
-# destructively into coop's isolated agent dir (~/.coop/agent/mcp.json) by `coop sync`
+# destructively into coop's isolated agent dir (~/.coop/agent/mcp-adapter.json) by `coop sync`
 # — never touches your personal `pi`'s MCP. NOTE: fabric/powerbi-modeling-mcp/microsoft-learn
 # are read-only over CLIENT data (fabric is read-only *by policy* — its MCP has no server-
 # side switch; see docs/guardrails.md). powerbi-mcp-server is retired: it ignores
@@ -90,7 +90,7 @@ tabular_editor_cli:
 # still subject to Pi's tool approval.
 mcp:
   generator: lib/mcp_config.py
-  install_target: "~/.coop/agent/mcp.json"
+  install_target: "~/.coop/agent/mcp-adapter.json"
   servers:
     - name: fabric          # @microsoft/fabric-mcp (AzureCliCredential)
       mode: read-only       # by policy — Fabric MCP has no server-side read-only switch
@@ -120,8 +120,8 @@ resources:
 # (web/README.md) once coop's extensions + protocol are re-verified against a new Pi.
 tested_with:
   pi_min: "0.79.0"
-  pi: "0.84.3"          # @earendil-works/pi-coding-agent (requires Node >= 22.19)
-  pi_mcp_adapter: "2.10.0"
+  pi: "0.87.1"          # @earendil-works/pi-coding-agent (requires Node >= 22.19)
+  pi_mcp_adapter: "3.3.0"
   pi_hermes_memory: "0.7.17"
   pi_web_access: "0.10.7"
   rpiv_ask_user_question: "1.20.0"

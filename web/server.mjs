@@ -71,7 +71,7 @@ function acquireFabricMcpToken() {
   let fabricManaged = false;
   if (agentDir) {
     try {
-      const config = JSON.parse(readFileSync(join(agentDir, "mcp.json"), "utf8").replace(/^\uFEFF/, ""));
+      const config = JSON.parse(readFileSync(join(agentDir, "mcp-adapter.json"), "utf8").replace(/^\uFEFF/, ""));
       const managed = config?._coop?.managed_servers;
       const entry = config?.mcpServers?.["fabric-sqlendpoint"];
       const endpoint = typeof entry?.url === "string" ? entry.url : "";
@@ -101,7 +101,7 @@ function acquireFabricMcpToken() {
   delete helperEnv.COOP_FABRIC_MCP_TOKEN;
   const result = spawnSync(
     py,
-    [join(root, "lib", "warehouse_mcp.py"), "launch-token", join(agentDir, "mcp.json")],
+    [join(root, "lib", "warehouse_mcp.py"), "launch-token", join(agentDir, "mcp-adapter.json")],
     { env: helperEnv, encoding: "utf8", timeout: 10000, windowsHide: true },
   );
   if (result.error) {

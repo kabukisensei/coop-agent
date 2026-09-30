@@ -47,18 +47,19 @@ assert learn['args']==['-y','mcp-remote@'+manifest['mcp_servers']['mcp-remote'],
 # context-mode is a native Pi extension — never generated as an MCP server.
 assert 'context-mode' not in s
 # The adapter's mcpScript tool calls MCP tools out of the guardrails' sight.
-assert m['settings']=={'scriptMode': False}
+assert m['settings']=={'scriptMode': False, 'allowInstall': False}
 PY
 cp "$d/mcp.json" "$d/mcp-first.json"
-# A user's own adapter settings survive regeneration, but scriptMode stays off.
+# A user's own adapter settings survive regeneration, but scriptMode and
+# allowInstall stay off.
 "$PY" - "$d/mcp.json" <<'PY'
 import json,sys
-m=json.load(open(sys.argv[1])); m['settings']={'scriptMode': True, 'idleTimeout': 5}; json.dump(m,open(sys.argv[1],'w'))
+m=json.load(open(sys.argv[1])); m['settings']={'scriptMode': True, 'allowInstall': True, 'idleTimeout': 5}; json.dump(m,open(sys.argv[1],'w'))
 PY
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp.json"
 "$PY" - "$d/mcp.json" <<'PY'
 import json,sys
-assert json.load(open(sys.argv[1]))['settings']=={'scriptMode': False, 'idleTimeout': 5}
+assert json.load(open(sys.argv[1]))['settings']=={'scriptMode': False, 'allowInstall': False, 'idleTimeout': 5}
 PY
 cp "$d/mcp-first.json" "$d/mcp.json"
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp.json"
@@ -250,4 +251,26 @@ import json,sys
 m=json.load(open(sys.argv[1])); assert 'powerbi' not in m['mcpServers']; assert 'custom' in m['mcpServers']
 example=json.load(open(sys.argv[2])); assert example['mcpServers']=={}; assert '@latest' not in json.dumps(example)
 PY
+# pi-mcp-adapter 3.x reads mcp-adapter.json (U1). An old coop mcp.json next to it
+# migrates once: its servers and _coop ownership carry over and it is removed. A
+# legacy file without coop's marker is someone else's and is left alone.
+m="$d/migrate"; mkdir -p "$m"
+printf '%s\n' '{"mcpServers":{"custom":{"command":"custom"},"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp@old"]}},"settings":{"idleTimeout":5},"_coop":{"schema_version":1,"managed_servers":["fabric"]}}' > "$m/mcp.json"
+printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"tenant-1"},"integrations":{"fabric":true,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false}}' > "$m/config"
+"$PY" "$ROOT/lib/mcp_config.py" --config "$m/config" --project-cwd "$d/no-project" --output "$m/mcp-adapter.json"
+[ ! -e "$m/mcp.json" ] || { echo "legacy coop mcp.json was not removed after migration"; exit 1; }
+"$PY" - "$m/mcp-adapter.json" "$ROOT/config/release-manifest.json" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1])); manifest=json.load(open(sys.argv[2]))
+assert m['mcpServers']['custom']=={'command':'custom'}, 'user server lost in migration'
+assert m['mcpServers']['fabric']['args'][1]=='@microsoft/fabric-mcp@'+manifest['mcp_servers']['@microsoft/fabric-mcp'], 'managed server not regenerated'
+assert m['settings']['idleTimeout']==5, 'adapter settings lost in migration'
+assert 'fabric' in m['_coop']['managed_servers']
+PY
+printf '%s\n' '{"mcpServers":{"mine":{"command":"mine"}}}' > "$m/mcp.json"
+"$PY" "$ROOT/lib/mcp_config.py" --config "$m/config" --project-cwd "$d/no-project" --output "$m/mcp-adapter.json"
+grep -q '"mine"' "$m/mcp.json" || { echo "a legacy mcp.json coop does not own was touched"; exit 1; }
+mkdir -p "$m/bad"; printf 'not json' > "$m/bad/mcp.json"
+"$PY" "$ROOT/lib/mcp_config.py" --config "$m/config" --project-cwd "$d/no-project" --output "$m/bad/mcp-adapter.json"
+[ -f "$m/bad/mcp-adapter.json" ] && [ "$(cat "$m/bad/mcp.json")" = "not json" ] || { echo "an unreadable legacy mcp.json blocked generation or was removed"; exit 1; }
 printf '  ✓ MCP config is pinned, safe, ownership-aware, and placeholder-free\n'

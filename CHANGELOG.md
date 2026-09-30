@@ -7,6 +7,27 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Pi moves to **0.87.1** and `pi-mcp-adapter` to **3.3.0** (master plan U1, the
+  first dependency row). They move together because adapter 2.34.0 does not
+  accept pi-ai 0.87. Pi 0.99 stays out of reach: adapter 3.3.0, the newest,
+  still caps pi-ai at `^0.87`.
+  - Adapter 3.0 stopped reading `<agent dir>/mcp.json`, which Pi's own MCP
+    support owns from 0.99. Coop now generates `~/.coop/agent/mcp-adapter.json`
+    (same format).
+  - `coop sync` migrates once: servers, settings and `_coop` ownership carry
+    over, and the old coop-owned `mcp.json` is removed. A legacy file coop
+    doesn't own is left alone, and an unreadable one never blocks generation.
+  - The generated config also sets `settings.allowInstall: false`, so the agent
+    can't persist new remote MCP servers.
+  - Every consumer follows: `sync`, `onboard`, the launch token helper
+    (`bin/coop`, `bin/coop.ps1`), the Warehouse grant resolver in the guardrails,
+    `lib/fabric_sql_query.py`, doctor's config discovery, and the Pi matrix.
+  - The adapter's `/mcp` command is now `/mcp-adapter`.
+  - Adapter 3.x holds a work repo's `.mcp.json` servers until the project is
+    trusted and each server approved.
+  - Qualified locally with `scripts/test-pi-matrix.sh 0.87.1` against real npm
+    (24 passed, 0 failed; the live model turn needs credentials). The Windows
+    VM run is pending.
 - `coop update --check` shows the repository move first (#107): `repo (coop-agent)
   v0.23.5-21-gabc1234  would move to release v0.23.6`, `... no newer release`, or the
   hold, local-commits or missing-origin state with its fix. It uses the same local

@@ -102,7 +102,7 @@ exit 0
 SH
 cat > "$BIN/pi" <<'SH'
 #!/bin/sh
-if [ "$1" = '--version' ]; then echo 'pi 0.84.3'; fi
+if [ "$1" = '--version' ]; then echo 'pi 0.87.1'; fi
 exit 0
 SH
 cat > "$BIN/pipx" <<'SH'

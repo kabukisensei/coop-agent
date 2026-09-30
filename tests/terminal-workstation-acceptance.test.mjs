@@ -874,7 +874,7 @@ test("upgrade preserves operator state while managed MCP converges by release", 
   const upgradePreservation = 'foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "preserved state changed during candidate upgrade: $file" } }';
   const reinstallPreservation = 'foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during same-candidate reinstall: $file" } }';
   const rollbackPreservation = 'foreach ($file in $preservedStateFiles) { if ((Get-FileSha $file) -ne $stateBefore[$file]) { throw "state changed during rollback: $file" } }';
-  const candidateIdempotence = "if ((Get-FileSha $managedMcpPath) -ne $candidateMcpSha) { throw 'managed MCP state changed during same-candidate reinstall' }";
+  const candidateIdempotence = "if ((Get-FileSha $candidateMcpPath) -ne $candidateMcpSha) { throw 'managed MCP state changed during same-candidate reinstall' }";
   const baselineConvergence = "if ((Get-FileSha $managedMcpPath) -ne $baselineMcpSha) { throw 'managed MCP state did not converge to the baseline during rollback' }";
   const contract = (candidate) => {
     const preserved = candidate.match(/\$preservedStateFiles = @\(([\s\S]*?)\n  \)/)?.[1] ?? "";
@@ -883,7 +883,10 @@ test("upgrade preserves operator state while managed MCP converges by release", 
     assert.match(preserved, /project\.yml/);
     assert.doesNotMatch(preserved, /mcp\.json/);
     assert.ok(candidate.includes("$baselineMcpSha = $stateBefore[$managedMcpPath]"));
-    assert.ok(candidate.includes("$candidateMcpSha = Get-FileSha $managedMcpPath"));
+    assert.ok(candidate.includes("$candidateMcpSha = Get-FileSha $candidateMcpPath"));
+    // pi-mcp-adapter 3.x (U1): the candidate's managed config is mcp-adapter.json.
+    assert.ok(candidate.includes("$candidateMcpPath = Join-Path $agentRoot 'mcp-adapter.json'"));
+    assert.ok(candidate.includes("$candidateMcpJson = Get-Content -LiteralPath $candidateMcpPath -Raw"));
     for (const check of [upgradePreservation, reinstallPreservation, rollbackPreservation, candidateIdempotence, baselineConvergence]) {
       assert.ok(candidate.includes(check), `missing state-transition check: ${check}`);
     }

@@ -351,7 +351,7 @@ function Get-CoopFabricMcpToken {
   $py = Get-CoopPython
   if (-not $py) { return '' }
   $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Get-CoopPiAgentDir }
-  $config = Join-Path $agentDir 'mcp.json'
+  $config = Join-Path $agentDir 'mcp-adapter.json'
   if (-not (Test-Have 'node')) {
     Coop-Warn 'Fabric Warehouse MCP unavailable: token helper supervisor is unavailable'
     return ''

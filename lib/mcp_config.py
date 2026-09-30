@@ -305,6 +305,9 @@ def generate(
     settings = existing.get("settings")
     settings = dict(settings) if isinstance(settings, dict) else {}
     settings["scriptMode"] = False
+    # Adapter 2.37+: the agent may not persist new remote MCP servers with the
+    # adapter's install action. Coop's MCP servers are the release's pinned set.
+    settings["allowInstall"] = False
     result["settings"] = settings
     result["_coop"] = {
         "schema_version": 1,
@@ -328,6 +331,17 @@ def atomic_write(path: Path, value: dict[str, Any]) -> None:
             pass
 
 
+# pi-mcp-adapter 3.0 reads `<agent dir>/mcp-adapter.json` and ignores the old
+# `mcp.json`, which belongs to Pi's built-in MCP support from Pi 0.99 on.
+ADAPTER_CONFIG_NAME = "mcp-adapter.json"
+LEGACY_CONFIG_NAME = "mcp.json"
+
+
+def legacy_config_for(output: Path) -> Path | None:
+    """The pre-3.0 `mcp.json` next to an adapter config, or None."""
+    return output.with_name(LEGACY_CONFIG_NAME) if output.name == ADAPTER_CONFIG_NAME else None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     root = Path(__file__).resolve().parent.parent
@@ -336,7 +350,9 @@ def main() -> int:
     )
     parser.add_argument("--config", type=Path, default=Path.home() / ".coop" / "config")
     parser.add_argument(
-        "--output", type=Path, default=Path.home() / ".coop" / "agent" / "mcp.json"
+        "--output",
+        type=Path,
+        default=Path.home() / ".coop" / "agent" / ADAPTER_CONFIG_NAME,
     )
     parser.add_argument("--project", type=Path, default=None)
     parser.add_argument("--project-cwd", type=Path, default=Path.cwd())
@@ -345,9 +361,25 @@ def main() -> int:
         manifest = load_json(args.manifest, required=True)
         config = load_json(args.config)
         existing = load_json(args.output)
+        # Migrate once from the pre-3.0 file: its servers, settings and `_coop`
+        # ownership carry over, then it is removed so the adapter stops warning
+        # about it. A legacy file without coop's `_coop` marker is someone else's
+        # and is left alone once the new file exists.
+        legacy = legacy_config_for(args.output)
+        legacy_value = None
+        if legacy is not None and legacy.exists():
+            try:
+                legacy_value = load_json(legacy)
+            except ValueError:
+                legacy_value = None  # unreadable: never migrated, never removed
+        migrating = legacy_value is not None and not args.output.exists()
+        if migrating:
+            existing = legacy_value
         project_path = args.project or find_project_yml(args.project_cwd)
         project = load_project(project_path)
         atomic_write(args.output, generate(manifest, config, existing, project))
+        if legacy is not None and legacy_value is not None and (migrating or "_coop" in legacy_value):
+            legacy.unlink()
     except ValueError as exc:
         print(f"mcp config: {exc}", file=os.sys.stderr)
         return 2

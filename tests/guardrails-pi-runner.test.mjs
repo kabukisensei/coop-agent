@@ -38,7 +38,7 @@ function config(overrides = {}) {
   const target = { scope: "item", client: "Contoso", tenant_id: tenant, environment: "production",
     workspace_id: workspace, item_id: item, item_name: "TestWarehouse", ...overrides };
   const url = `https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/${target.workspace_id}/items/${target.item_id}/sqlEndpoint`;
-  writeFileSync(join(agentDir, "mcp.json"), JSON.stringify({
+  writeFileSync(join(agentDir, "mcp-adapter.json"), JSON.stringify({
     _coop: { managed_servers: ["fabric-sqlendpoint"] },
     mcpServers: { "fabric-sqlendpoint": { url, auth: false, lifecycle: "lazy", requestTimeoutMs: 60000,
       requestHeadersCommand: { command: "node", args: [join(root, "lib/fabric_request_headers.mjs"), url], timeoutMs: 10000 },

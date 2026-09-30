@@ -27,7 +27,7 @@ preset="$(printf '%s' "$out" | "$PY" -c 'import sys,json; print(json.load(sys.st
 [ "$name" = "Test User" ] && ok "onboard captures name" || ko "onboard name: $name"
 [ "$preset" = "concise" ] && ok "onboard captures preset by number" || ko "onboard preset: $preset"
 [ -f "$COOP_DIR/.coop/config" ] && "$PY" -c 'import json,sys; c=json.load(open(sys.argv[1])); assert c["schema_version"]==1 and "integrations" in c' "$COOP_DIR/.coop/config" && ok "onboard writes valid versioned integration config" || ko "integration config missing/invalid"
-[ -f "$COOP_DIR/.coop/agent/mcp.json" ] && ! grep -q 'TODO-\|@latest' "$COOP_DIR/.coop/agent/mcp.json" && ok "onboard generates placeholder-free pinned MCP config" || ko "managed MCP config missing/unpinned"
+[ -f "$COOP_DIR/.coop/agent/mcp-adapter.json" ] && ! grep -q 'TODO-\|@latest' "$COOP_DIR/.coop/agent/mcp-adapter.json" && ok "onboard generates placeholder-free pinned MCP config" || ko "managed MCP config missing/unpinned"
 
 # Exercise the public dispatcher, not only onboard.py directly. The launcher
 # must supply onboard.py's required `onboard` subcommand before user flags.

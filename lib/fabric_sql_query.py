@@ -119,7 +119,7 @@ def _canonical_target(
         return None, "", "managed_config_unavailable"
     try:
         config = json.loads(
-            (Path(agent_dir) / "mcp.json").read_text(encoding="utf-8-sig")
+            (Path(agent_dir) / "mcp-adapter.json").read_text(encoding="utf-8-sig")
         )
         entry = config["mcpServers"]["fabric-sqlendpoint"]
         managed = config["_coop"]["managed_servers"]

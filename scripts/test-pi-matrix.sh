@@ -98,9 +98,9 @@ case "$SYNC_OUT" in
 esac
 
 # Inventory postconditions run AFTER exact-pin enforcement below.
-if node -e "JSON.parse(require('fs').readFileSync('$PI_CODING_AGENT_DIR/mcp.json','utf8'))" >/dev/null 2>&1; then
-  ok "generated mcp.json parses"
-else ko "mcp.json missing or invalid"; fi
+if node -e "JSON.parse(require('fs').readFileSync('$PI_CODING_AGENT_DIR/mcp-adapter.json','utf8'))" >/dev/null 2>&1; then
+  ok "generated mcp-adapter.json parses"
+else ko "mcp-adapter.json missing or invalid"; fi
 
 # --- 5. First-party extensions through the REAL Pi loader ---------------------
 LOADER="$NPM_PREFIX/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js"
@@ -268,9 +268,9 @@ else ko "context-mode MISSING from the isolated tree"; fi
 
 # Generated MCP configuration exists and parses.
 
-if node -e "JSON.parse(require('fs').readFileSync('$PI_CODING_AGENT_DIR/mcp.json','utf8'))" >/dev/null 2>&1; then
-  ok "generated mcp.json parses"
-else ko "mcp.json missing or invalid"; fi
+if node -e "JSON.parse(require('fs').readFileSync('$PI_CODING_AGENT_DIR/mcp-adapter.json','utf8'))" >/dev/null 2>&1; then
+  ok "generated mcp-adapter.json parses"
+else ko "mcp-adapter.json missing or invalid"; fi
 # --- 7. Second sync: idempotent ------------------------------------------------
 SYNC2_OUT="$("$ROOT/scripts/sync.sh" 2>&1 </dev/null)"
 case "$SYNC2_OUT" in

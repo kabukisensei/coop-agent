@@ -176,7 +176,8 @@ else
 fi
 
 # --- 5. MCP config — manifest-pinned, ownership-aware, non-destructive --------
-MCP_DST="$PI_AGENT/mcp.json"
+# pi-mcp-adapter 3.x reads mcp-adapter.json; the generator migrates an old mcp.json.
+MCP_DST="$PI_AGENT/mcp-adapter.json"
 _mcp_py="$(coop_python 2>/dev/null || true)"
 if [ -n "$_mcp_py" ] && "$_mcp_py" "$COOP_ROOT/lib/mcp_config.py" --output "$MCP_DST"; then
   coop_ok "generated manifest-pinned MCP config -> $MCP_DST"

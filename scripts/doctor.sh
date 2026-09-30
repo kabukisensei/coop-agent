@@ -403,7 +403,7 @@ fi
 
 section "MCP servers (read-only, optional)"
 mcp_found=""
-for f in "$PWD/.mcp.json" "$PWD/.pi/mcp.json" "$PI_CODING_AGENT_DIR/mcp.json" "$HOME/.config/mcp/mcp.json" "$HOME/.pi/mcp-config/mcp.json"; do
+for f in "$PWD/.mcp.json" "$PWD/.pi/mcp-adapter.json" "$PI_CODING_AGENT_DIR/mcp-adapter.json" "$HOME/.config/mcp/mcp.json" "$HOME/.pi/mcp-config/mcp.json"; do
   [ -f "$f" ] && { mcp_found="$f"; break; }
 done
 if [ -n "$mcp_found" ]; then
@@ -413,7 +413,7 @@ if [ -n "$mcp_found" ]; then
       if [ "$s" = "powerbi-modeling-mcp" ]; then
         # Health requires BOTH flags: --start (the server must actually launch)
         # and --readonly (COOP treats MCP as read-only). Anything less is not a
-        # healthy configuration. Generated mcp.json is pretty-printed, so parse
+        # healthy configuration. The generated config is pretty-printed, so parse
         # the JSON structurally — line greps would only ever see '"args": ['.
         _doc_py="$(coop_python 2>/dev/null || true)"
         modeling_args=""
@@ -461,7 +461,7 @@ PYEOF
   grep -qiE 'learn\.microsoft\.com|microsoft-learn' "$mcp_found" 2>/dev/null || warn "  Microsoft Learn MCP not configured" "coop sync   (adds it read-only)"
   # Legacy/unmanaged placeholder configs remain actionable; generated COOP entries never contain TODOs.
   mcp_todo="$(grep -c 'TODO-' "$mcp_found" 2>/dev/null)" || mcp_todo=0
-  [ "${mcp_todo:-0}" -gt 0 ] && warn "$mcp_todo TODO placeholder(s) remain in mcp.json" "set your tenant/org before live Power BI / Azure DevOps work"
+  [ "${mcp_todo:-0}" -gt 0 ] && warn "$mcp_todo TODO placeholder(s) remain in mcp-adapter.json" "set your tenant/org before live Power BI / Azure DevOps work"
   _sql_py="$(coop_python 2>/dev/null || true)"
   if [ -n "$_sql_py" ]; then
     _sql_project="$(coop_find_project_yml)"
