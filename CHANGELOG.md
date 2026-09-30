@@ -20,13 +20,35 @@ All notable changes to coop-agent are recorded here. The format loosely follows
     `EXEC`, permission changes and batches still ask.
   - Headless runs still fail closed, `mcpScript` stays blocked, and every decision
     is audited. `/coop-approvals status` shows what is approved.
+- coop can edit semantic models after approval (#159). The Power BI Modeling MCP
+  now starts `--readwrite`, and the guardrail reads each call's
+  `request.operation`, because the server names its tools by object
+  (`measure_operations`, `table_operations`, …) rather than by verb.
+  - Reads run without asking: `Get`, `List`, `ExportTMDL`, connecting, traces, and
+    DAX queries (which keep the live-read rules).
+  - Edits ask: `Create`, `Update`, `Rename`, `Move`, refreshes, perspective and
+    hierarchy changes, `Commit`, and exports to a folder or file. Choosing
+    **Allow powerbi-modeling-mcp edits for this session** covers the rest of the
+    task (#156).
+  - These ask every time, with no session option: every `Delete` operation,
+    `ImportFromTmdlFolder` / `ImportFromBimFile` (they replace the model),
+    `DeployToFabric`, unknown or missing operations, and anything naming prod or
+    production. Edits name only a connection, so once a session connects the
+    server to anything naming prod or production, every later model edit in that
+    session asks.
+  - `coop doctor` reports `started, read-write; coop asks before each edit` and no
+    longer warns that a missing `--readonly` is accidental; `--readonly` stays a
+    supported stricter choice.
+  - The Windows VM check (a real measure edit in Power BI Desktop and in a PBIP,
+    and a declined edit that changes nothing) is pending before release.
 - Power BI Modeling MCP moves from 0.5.0-beta.12 to **1.0.0** (U1), now named
   the Power BI Authoring MCP by Microsoft.
   - 1.0.0 refuses every tool until its EULA is accepted. Aaron accepted
     Microsoft's EULA for Cooptimize on 2026-09-30, so coop's generated server
     entry adds `--accept-eula`, which applies per process and persists nothing.
-  - The server stays read-only: checked against the 1.0.0 binary, `--start
-    --readonly --accept-eula` registers its tools in ReadOnly mode.
+  - Checked against the 1.0.0 binary: `--readonly` registers its tools in
+    ReadOnly mode, and `--start` alone defaults to ReadWrite. coop now runs it
+    `--readwrite` behind the operation-aware guardrail below (#159).
   - Other upstream changes since beta.12:
     - a local application folder renamed with automatic migration (coop does not
       reference it)

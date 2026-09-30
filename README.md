@@ -297,7 +297,7 @@ as a native Pi extension and is deliberately excluded from generated MCP configu
 | --- | --- | --- |
 | `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login (az's default account; coop cannot set its tenant); metadata reads by default, mutations approval-gated |
 | `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | every call approval-gated; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
-| `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readonly` | no tenant/workspace required; server-enforced read-only |
+| `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readwrite --accept-eula` | no tenant/workspace required; reads run, edits ask (an approval can cover the session), deletes, imports, deploys and production always ask |
 | `azure-devops` | Manifest-pinned Azure DevOps MCP for one organization | requires enabled toggle + valid organization; mutations approval-gated |
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` | requires only its enabled toggle; always-current Microsoft docs |
 
@@ -340,7 +340,7 @@ Warehouse Doctor states are exact: `registered` (target/auth/tool proof passed),
 `auth_required` (no usable existing token), `tool_missing` (no compatible SQL tool),
 `target_invalid` (malformed or mismatched target), and `unavailable` (missing config,
 network/protocol failure, or unusable response). Other MCP checks are primarily
-presence/config checks; Power BI Modeling also verifies `--start --readonly`.
+presence/config checks; Power BI Modeling also verifies `--start` and reports read-write or read-only mode.
 
 **Azure sign-in.** Each launch (`coop`, `coop web`) checks that the Azure CLI can mint
 the Fabric and Power BI tokens for the client tenant: the project's

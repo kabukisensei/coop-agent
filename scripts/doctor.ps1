@@ -462,21 +462,21 @@ if ($mcpFound) {
   foreach ($s in @('fabric', 'powerbi-modeling-mcp', 'azure-devops', 'microsoft-learn')) {
     if ($mcpText -match ('(?i)"' + [regex]::Escape($s) + '"')) {
       if ($s -eq 'powerbi-modeling-mcp') {
-        # Health requires BOTH flags: --start (the server must actually launch)
-        # and --readonly (COOP treats MCP as read-only). Anything less is not a
-        # healthy configuration.
+        # Health requires --start (the server must actually launch). coop runs it
+        # read-write and its guardrails ask before every edit (#159); --readonly
+        # is a supported stricter choice.
         $modelingArgs = ''
         # Extract the args array lines following the powerbi-modeling-mcp key.
         $m = [regex]::Match($mcpText, ('(?i)"' + [regex]::Escape($s) + '"\s*:\s*\{[\s\S]*?"args"\s*:\s*\[(?<args>[\s\S]*?)\]'))
         if ($m.Success) { $modelingArgs = $m.Groups['args'].Value }
         $hasStart = ($modelingArgs -match '(?i)"--start"')
         $hasRo = ($modelingArgs -match '(?i)"--readonly"|"--read-only"')
-        if ($hasStart -and $hasRo) {
+        if (-not $hasStart) {
+          D-Warn '  • Power BI Modeling MCP missing --start' 'add --start so the server launches (run coop sync to regenerate it)'
+        } elseif ($hasRo) {
           D-Ok "  • $s configured (started, read-only)"
-        } elseif (-not $hasStart) {
-          D-Warn '  • Power BI Modeling MCP missing --start' 'add --start so the server launches; keep --readonly'
-        } elseif (-not $hasRo) {
-          D-Warn '  • Power BI Modeling MCP missing --readonly — it would run READ-WRITE' 'change args to --readonly before any client work'
+        } else {
+          D-Ok "  • $s configured (started, read-write; coop asks before each edit)"
         }
       } elseif ($s -eq 'fabric') {
         # @microsoft/fabric-mcp signs in through az's default account; coop can

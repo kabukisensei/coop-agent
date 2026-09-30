@@ -147,12 +147,13 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      auto-installed; set `tools.tabular_editor_cli.executable_path` in
      `.coop/project.yml`.
 
-7. **Read-only MCP servers** (all optional; `coop` runs without them). Generated as
+7. **Approval-gated MCP servers** (all optional; `coop` runs without them). Generated as
    manifest-pinned, COOP-managed entries in coop's isolated agent dir
    (`~/.coop/agent/mcp.json`) by `coop onboard` / `coop sync`:
    - `fabric` — `@microsoft/fabric-mcp` (AzureCliCredential).
-   - `powerbi-modeling-mcp` — `@microsoft/powerbi-modeling-mcp --start --readonly`,
-     the only Power BI MCP. (`powerbi-mcp-server`, the former `powerbi` entry, is
+   - `powerbi-modeling-mcp` — `@microsoft/powerbi-modeling-mcp --start --readwrite
+     --accept-eula`, the only Power BI MCP. Reads run freely; the guardrail classifies
+     each call's `request.operation` and asks before any edit (#159). (`powerbi-mcp-server`, the former `powerbi` entry, is
      retired: it ignores `--readonly` and exposes `refresh_dataset`, a write, #93.
      `coop sync` removes the entry it generated; `coop doctor` warns about a
      user-owned one.)
@@ -215,9 +216,9 @@ flowchart TD
     ext_tools --> sqlrev
     ext_tools --> daxrev
 
-    subgraph MCP["Read-only MCP (optional)"]
+    subgraph MCP["Approval-gated MCP (optional)"]
       fmcp["fabric"]
-      pmcp["powerbi-modeling-mcp --readonly"]
+      pmcp["powerbi-modeling-mcp (edits ask)"]
       lmcp["microsoft-learn"]
       cmcp["context-mode"]
     end

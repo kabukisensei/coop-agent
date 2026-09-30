@@ -159,8 +159,8 @@ case "$out" in
   *) ko "doctor did not warn on missing --start"; echo "$out" ;;
 esac
 
-# Read-only mode without start (legacy shape) still reports read-only presence via the
-# missing-start warning; read-write (--start only) → warned strongly.
+# Read-write (--start with --readwrite, or --start alone, the server's default) is
+# coop's governed mode (#159): healthy, and says coop asks before each edit.
 d="$TMP/readwrite"
 mkdir -p "$d"
 cat > "$d/.mcp.json" <<'EOF'
@@ -168,15 +168,19 @@ cat > "$d/.mcp.json" <<'EOF'
   "mcpServers": {
     "powerbi-modeling-mcp": {
       "command": "npx",
-      "args": ["-y", "@microsoft/powerbi-modeling-mcp@latest", "--start"]
+      "args": ["-y", "@microsoft/powerbi-modeling-mcp@latest", "--start", "--readwrite", "--accept-eula"]
     }
   }
 }
 EOF
 out="$(doctor_out "$d")"
 case "$out" in
-  *"missing --readonly"*) ok "doctor warns strongly on powerbi-modeling-mcp missing --readonly" ;;
-  *) ko "doctor did not warn on missing --readonly"; echo "$out" ;;
+  *"started, read-write; coop asks before each edit"*) ok "doctor reports the governed read-write powerbi-modeling-mcp as healthy" ;;
+  *) ko "doctor did not report the governed read-write mode"; echo "$out" ;;
+esac
+case "$out" in
+  *"READ-WRITE"*) ko "doctor still warns that read-write is unsafe"; echo "$out" ;;
+  *) ok "doctor no longer warns that read-write is accidental" ;;
 esac
 
 # Unclear/no-flags → still not healthy: missing --start fires first.
@@ -373,7 +377,7 @@ printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"tenant-1"},"integration
 COOP_ROOT="$ROOT" bash -c "cd '$d' && python3 '$ROOT/lib/mcp_config.py' --config '$d/config' --output '$d/.mcp.json'" || ko "generator failed on scratch config"
 out="$(doctor_out "$d")"
 case "$out" in
-  *"powerbi-modeling-mcp configured (started, read-only)"*) ok "doctor reads generated pretty-printed MCP JSON correctly" ;;
+  *"powerbi-modeling-mcp configured (started, read-write; coop asks before each edit)"*) ok "doctor reads generated pretty-printed MCP JSON correctly" ;;
   *) ko "doctor misreads generated MCP JSON"; echo "$out" | grep -i modeling ;;
 esac
 grep -q '"args": \[' "$d/.mcp.json" && ok "fixture really is pretty-printed (multi-line args)" || ok "generator emitted compact JSON"
