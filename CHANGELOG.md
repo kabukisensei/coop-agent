@@ -5,6 +5,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- `@juicesharp/rpiv-ask-user-question` moves to **2.12.0** (master plan U1, section 6
+  row). The tool the setup wizards call is still `ask_user_question`, with the same
+  parameters and the same answer envelope, and cancelling still returns the single
+  "User declined to answer questions" line. Since 1.20.0: every question ends in a
+  `Type something.` free-text row (the "Chat about this" row and its `kind: "chat"`
+  answer are gone); `n` adds a note to any question, or a global note on the Submit
+  tab; `Ctrl+]` collapses the dialog to read the transcript (`collapseKey` in
+  `~/.config/rpiv-ask-user-question/config.json`, `"off"` disables it); non-interactive
+  runs drop the tool from the model's list instead of failing every call; RPC hosts get
+  their native dialogs; and a dialog that fails to load reports
+  `session_load_failed` / `stale_module_cache` and asks the model to fall back to chat
+  rather than counting as a decline. The plan named 2.11.0; 2.12.0 (published
+  2026-09-30) differs only in declaring `typebox` as a peer again, so the extension
+  shares Pi's own copy. Peers unchanged, no native code. VM qualification pending
+  (`/setup-project` and `/setup-docs` dialogs, `Esc` cancellation).
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
   symlink that the standards storage-root check rejects, and the standards
