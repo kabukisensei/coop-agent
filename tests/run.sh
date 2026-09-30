@@ -322,8 +322,11 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   echo "→ doctor MCP mode reporting tests"
   bash "$ROOT/tests/doctor.test.sh"
 
-  echo "→ terminal acceptance reparse boundary tests"
-  node --test --test-name-pattern "directory links|junctioned ancestor|authorization revocation|failure cleanup|checkout ancestry|owned-root probe|fully safe authorization|decisive receipt mutations" "$ROOT/tests/terminal-workstation-acceptance.test.mjs"
+  # The whole file (#133): tests that need pwsh skip themselves without it, and
+  # the native Windows lifecycle test runs only on Windows. tests/run.ps1 keeps
+  # its reparse subset, so Windows does not run the file twice per lane.
+  echo "→ terminal-workstation acceptance harness tests (all)"
+  node --test "$ROOT/tests/terminal-workstation-acceptance.test.mjs"
 
   echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
   node "$ROOT/tests/webbridge.test.mjs"

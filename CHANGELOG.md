@@ -36,6 +36,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   both lanes, and `tests/run.ps1` now fails instead of reporting a pass when an
   error stops it before its last section. Lanes, fixture rules and the CI
   workflows are documented in `docs/ci.md`.
+- The extended lane runs every terminal-workstation acceptance test (#133). It
+  used to select 8 of the file's 39 tests by name, and no lane or workflow ran
+  the other 27. `tests/run.sh` now runs the whole file. Tests that need pwsh
+  skip themselves without it, and the native Windows lifecycle test runs only on
+  Windows. `tests/run.ps1` keeps its subset so Windows doesn't run the file twice.
+  The ubuntu extended job installs `jsonschema` 4.25.1, as the Windows jobs do,
+  because the file treats the receipt schema validator as mandatory.
 
 - MCP: `powerbi-mcp-server` is retired (#93). It silently ignores `--readonly` and
   exposes `refresh_dataset` (a write that triggers a dataset refresh on the client

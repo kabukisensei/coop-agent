@@ -53,6 +53,13 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22.19.0'
+      # The terminal-workstation acceptance tests validate receipts against the
+      # committed JSON schema and treat python jsonschema as mandatory (#133).
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install receipt-schema dependency
+        run: python3 -m pip install --disable-pip-version-check --no-input "jsonschema==4.25.1"
       - name: run test suite, gate + extended lanes (bash tests/run.sh)
         run: |
           if [ "${COOP_TEST_EXTENDED:-}" != "1" ]; then echo "::error::COOP_TEST_EXTENDED did not reach bash"; exit 1; fi
