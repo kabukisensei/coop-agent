@@ -5,6 +5,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- `mcp-remote` is gone (master plan U1, section 6.2). It only bridged the Microsoft
+  Learn MCP, and `learn.microsoft.com/api/mcp` is unauthenticated Streamable HTTP
+  that `pi-mcp-adapter` speaks directly. The generated `microsoft-learn` entry is now
+  `{"url": "https://learn.microsoft.com/api/mcp", "auth": false, "lifecycle": "lazy",
+  "requestTimeoutMs": 60000}`, the same shape as `fabric-sqlendpoint`, and like that
+  entry it is replaced wholesale on every `coop sync`, so a coop-managed entry that
+  still carries the old `npx mcp-remote` command line migrates on the next sync. The
+  package leaves `config/release-manifest.json` and the Microsoft skills manifest's
+  dependency list; `coop doctor` and the guardrails already treated the Learn server
+  by name, not by package. VM qualification pending (a live tools-list through the
+  adapter).
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
   symlink that the standards storage-root check rejects, and the standards

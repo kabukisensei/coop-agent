@@ -158,7 +158,8 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      `coop sync` removes the entry it generated; `coop doctor` warns about a
      user-owned one.)
    - `azure-devops` — `@azure-devops/mcp <org>` (organization-gated).
-   - `microsoft-learn` — `learn.microsoft.com/api/mcp` via `mcp-remote`
+   - `microsoft-learn` — `learn.microsoft.com/api/mcp`, a direct Streamable HTTP
+     entry the adapter speaks itself (no bridge package)
      (always-current Microsoft docs).
 
    (`context-mode` is NOT an MCP server — it is a native Pi extension from the
