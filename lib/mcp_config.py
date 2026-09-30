@@ -214,6 +214,10 @@ def desired_servers(
                 spec(manifest, SERVER_PACKAGES["powerbi-modeling-mcp"]),
                 "--start",
                 "--readonly",
+                # 1.0.0 requires EULA acceptance before any tool runs. Aaron accepted
+                # Microsoft's Power BI Authoring MCP EULA for Cooptimize on 2026-09-30;
+                # the flag accepts per process and persists nothing.
+                "--accept-eula",
             ],
         }
     if enabled("azure_devops") and org:

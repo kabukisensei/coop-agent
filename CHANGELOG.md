@@ -20,6 +20,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
     `EXEC`, permission changes and batches still ask.
   - Headless runs still fail closed, `mcpScript` stays blocked, and every decision
     is audited. `/coop-approvals status` shows what is approved.
+- Power BI Modeling MCP moves from 0.5.0-beta.12 to **1.0.0** (U1), now named
+  the Power BI Authoring MCP by Microsoft.
+  - 1.0.0 refuses every tool until its EULA is accepted. Aaron accepted
+    Microsoft's EULA for Cooptimize on 2026-09-30, so coop's generated server
+    entry adds `--accept-eula`, which applies per process and persists nothing.
+  - The server stays read-only: checked against the 1.0.0 binary, `--start
+    --readonly --accept-eula` registers its tools in ReadOnly mode.
+  - Other upstream changes since beta.12:
+    - a local application folder renamed with automatic migration (coop does not
+      reference it)
+    - durable local audit logs under
+      `%LOCALAPPDATA%\Microsoft\powerbi-authoring-mcp\Logs`, kept seven days
+    - `dax_query_operations` returning up to 1,000 rows by default
+  - The Windows VM check is pending before release.
 - `coop update --check` shows the repository move first (#107): `repo (coop-agent)
   v0.23.5-21-gabc1234  would move to release v0.23.6`, `... no newer release`, or the
   hold, local-commits or missing-origin state with its fix. It uses the same local
