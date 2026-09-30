@@ -15,6 +15,8 @@ pi-tui.) See the coop-agent issue "pi-ai / pi-tui version skew".
 
 The fix is to write an npm ``overrides`` block into the isolated tree's
 ``package.json`` pinning pi-ai + pi-tui to the agent's OWN version, then reinstall.
+The same block pins the agent package itself (a peer of several extensions) so npm
+never auto-installs a newer, unqualified agent into the tree (#122).
 The agent, pi-ai and pi-tui publish in lockstep (identical version lists on the
 registry), so pinning to ``pi --version`` always resolves. ``pi-mcp-adapter`` keeps
 working because it only uses stable top-level exports present across 0.74 -> 0.80.
@@ -54,6 +56,13 @@ import sys
 
 PI_AI = "@earendil-works/pi-ai"
 PI_TUI = "@earendil-works/pi-tui"
+# The agent itself. Pi's own ``pi install`` passes --legacy-peer-deps, but coop's
+# convergence and realignment installs let npm auto-install peers, and several
+# extensions declare the agent as a peer (``*`` or ``>=0.74``). Unpinned, npm
+# fetched the newest agent into the tree seconds after it was published (#122).
+# The override pins that peer to the agent's own version, like pi-ai and pi-tui.
+PI_AGENT = "@earendil-works/pi-coding-agent"
+PINNED = (PI_AI, PI_TUI, PI_AGENT)
 PI_WEB_ACCESS = "pi-web-access"
 
 # pi-ai first shipped the ``./compat`` subpath export at 0.80.1; pi-web-access began
@@ -220,10 +229,10 @@ def align(agent_dir, version, check=False):
     if not isinstance(overrides, dict):
         overrides = {}
 
-    changed = overrides.get(PI_AI) != version or overrides.get(PI_TUI) != version
+    changed = any(overrides.get(name) != version for name in PINNED)
     if changed and not check:
-        overrides[PI_AI] = version
-        overrides[PI_TUI] = version
+        for name in PINNED:
+            overrides[name] = version
         data["overrides"] = overrides
         _write_json(pkg_path, data)
     elif check:
@@ -234,7 +243,10 @@ def align(agent_dir, version, check=False):
 
     tree_ai = _installed_version(node_modules, PI_AI)
     tree_tui = _installed_version(node_modules, PI_TUI)
-    aligned = tree_ai == version and tree_tui == version
+    # The agent peer is optional in the tree; when npm installed it, it must be
+    # the agent's own version, never whatever npm's ``latest`` said (#122).
+    tree_agent = _installed_version(node_modules, PI_AGENT)
+    aligned = tree_ai == version and tree_tui == version and tree_agent in (None, version)
 
     # Would aligning even help? Compute the highest pi-ai any installed extension
     # needs. If the agent (pin) is below that floor, the agent itself is too old —

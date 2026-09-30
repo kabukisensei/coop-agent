@@ -578,7 +578,7 @@ else
 fi
 
 section "coop-agent repository"
-if [ -d "$COOP_ROOT/.git" ] && have git; then
+if coop_is_git_checkout "$COOP_ROOT" && have git; then
   # Staleness nudge: refresh origin at most once/day (5s watchdog; silent offline),
   # then compare against the release `coop update` would move to — local + instant.
   # A checkout the update cannot move (hold, diverged, no origin/main) is named.

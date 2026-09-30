@@ -551,6 +551,14 @@ await t("a proxied refresh_dataset call asks first and is blocked when declined 
   assert.equal(asked, 1);
   assert.equal(blocked(approved), false);
 });
+await t("mcpScript is blocked: its MCP calls bypass the tool_call hook", async () => {
+  let asked = 0;
+  const ui = { confirm: async () => { asked++; return true; }, notify: () => {} };
+  const script = { toolName: "mcpScript", input: { code: "await tools.call('fabric-sqlendpoint_execute_query', { query: 'DELETE FROM dbo.T' })" } };
+  assert.equal(blocked(await handle(script, { ...ctx, ui })), true);
+  assert.equal(asked, 0, "no approval can cover calls the hook never sees");
+  assert.equal(blocked(await handle(script, { cwd: ctx.cwd, hasUI: false })), true);
+});
 await t("headless approval-required mutations fail closed while reads pass", async () => {
   const headless = { cwd: ctx.cwd, hasUI: false };
   assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace" } }, headless)), true);
