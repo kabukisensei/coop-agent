@@ -17,6 +17,17 @@ Search team knowledge:
 - When resolving architectural decisions or reconciling conflicting data patterns.
 - When the user asks about team conventions or shared BI patterns.
 
+## When NOT to search
+
+Do not search for a simple read or status check: one bounded `SELECT TOP (n)`,
+a table, column, or workspace listing, or a connection test. Those need no
+pattern — they need the target, and `.coop/project.yml` already pins it
+(`fabric.default_workspace_id` and `fabric.default_sql_endpoint`; coop hands
+those ids to the agent at session start). Go straight to the
+`fabric-sqlendpoint` tool with the contract ids; the guardrails' approval
+prompt before Warehouse SQL still applies. Searching knowledge, memory, or the
+Fabric catalog first only delays the read.
+
 ## How to search
 
 Team knowledge is searched ONLY through the bundled local-search helper.

@@ -594,35 +594,43 @@ if ($existing -ne $launcherBody) {
   Coop-Ok 'coop already linked'
 }
 if (($env:PATH -split ';') -notcontains $LOCALBIN) {
-  # Add the launcher dir to the persistent USER PATH (idempotent) so coop works in every
-  # shell — not just warn. Read/write the RAW user PATH via the registry as an
-  # ExpandString, so any %VAR% tokens already in it stay dynamic ([Environment]::
-  # SetEnvironmentVariable would expand and freeze them into REG_SZ). Also prepend it to
-  # THIS process so the rest of the install + doctor can call coop now; new terminals
-  # pick up the persistent change. NeedNewShell is set ONLY on success, so a failed
-  # write doesn't produce a misleading "coop was just added to your PATH" at the end.
-  try {
-    $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
-    $userPath = if ($envKey) {
-      [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-    } else { '' }
-    if (($userPath -split ';') -notcontains $LOCALBIN) {
-      $newUserPath = (@($userPath, $LOCALBIN) | Where-Object { $_ }) -join ';'
-      if ($envKey) { $envKey.SetValue('Path', $newUserPath, [Microsoft.Win32.RegistryValueKind]::ExpandString) }
-      # A raw registry SetValue does NOT notify anyone. Setting a User env var via
-      # [Environment]::SetEnvironmentVariable DOES broadcast WM_SETTINGCHANGE, so open
-      # terminals/Explorer refresh their environment and actually see the new PATH
-      # (otherwise "open a new terminal" wouldn't help until a logoff). Set + clear a
-      # throwaway var so we trigger the broadcast without leaving residue or touching PATH.
-      [Environment]::SetEnvironmentVariable('COOP_PATH_SYNC', '1', 'User')
-      [Environment]::SetEnvironmentVariable('COOP_PATH_SYNC', $null, 'User')
-      Coop-Ok "added $LOCALBIN to your user PATH (open a new terminal so coop is found there)"
-      $script:NeedNewShell = $true
-    }
-    if ($envKey) { $envKey.Close() }
+  if (Test-CoopProfileRedirected) {
+    # An isolated install (HOME / USERPROFILE redirected at a sandbox) must not
+    # touch the real account's persistent PATH in the registry: the sandbox is on
+    # PATH for this run only, and the sandbox's own shell env block keeps it there.
+    Coop-Info "isolated profile ($(Get-CoopProfileInUse)): leaving your user PATH alone; $LOCALBIN is on PATH for this run only"
     $env:PATH = "$LOCALBIN;$env:PATH"
-  } catch {
-    Coop-Warn "couldn't update PATH automatically — add $LOCALBIN to your user PATH (System Properties > Environment Variables), then open a new terminal."
+  } else {
+    # Add the launcher dir to the persistent USER PATH (idempotent) so coop works in every
+    # shell — not just warn. Read/write the RAW user PATH via the registry as an
+    # ExpandString, so any %VAR% tokens already in it stay dynamic ([Environment]::
+    # SetEnvironmentVariable would expand and freeze them into REG_SZ). Also prepend it to
+    # THIS process so the rest of the install + doctor can call coop now; new terminals
+    # pick up the persistent change. NeedNewShell is set ONLY on success, so a failed
+    # write doesn't produce a misleading "coop was just added to your PATH" at the end.
+    try {
+      $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+      $userPath = if ($envKey) {
+        [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+      } else { '' }
+      if (($userPath -split ';') -notcontains $LOCALBIN) {
+        $newUserPath = (@($userPath, $LOCALBIN) | Where-Object { $_ }) -join ';'
+        if ($envKey) { $envKey.SetValue('Path', $newUserPath, [Microsoft.Win32.RegistryValueKind]::ExpandString) }
+        # A raw registry SetValue does NOT notify anyone. Setting a User env var via
+        # [Environment]::SetEnvironmentVariable DOES broadcast WM_SETTINGCHANGE, so open
+        # terminals/Explorer refresh their environment and actually see the new PATH
+        # (otherwise "open a new terminal" wouldn't help until a logoff). Set + clear a
+        # throwaway var so we trigger the broadcast without leaving residue or touching PATH.
+        [Environment]::SetEnvironmentVariable('COOP_PATH_SYNC', '1', 'User')
+        [Environment]::SetEnvironmentVariable('COOP_PATH_SYNC', $null, 'User')
+        Coop-Ok "added $LOCALBIN to your user PATH (open a new terminal so coop is found there)"
+        $script:NeedNewShell = $true
+      }
+      if ($envKey) { $envKey.Close() }
+      $env:PATH = "$LOCALBIN;$env:PATH"
+    } catch {
+      Coop-Warn "couldn't update PATH automatically — add $LOCALBIN to your user PATH (System Properties > Environment Variables), then open a new terminal."
+    }
   }
 }
 
@@ -631,9 +639,13 @@ if (($env:PATH -split ';') -notcontains $LOCALBIN) {
 # coop by double-clicking an icon. PURELY ADDITIVE: `coop` in any terminal is
 # unchanged. Best-effort — a failure here never fails the install (you can always
 # run coop from a terminal). The helper lives in lib/common.ps1 so update repairs
-# shortcuts too.
+# shortcuts too. An isolated install (redirected profile) gets its shortcuts inside
+# the sandbox profile, never on the real Desktop / Start Menu.
 try {
-  if (Set-CoopDesktopShortcuts) { Coop-Ok 'created the "coop" double-click launcher (Start Menu + Desktop)' }
+  if (Set-CoopDesktopShortcuts) {
+    $where = if (Test-CoopProfileRedirected) { "in the isolated profile $(Get-CoopProfileInUse)" } else { 'Start Menu + Desktop' }
+    Coop-Ok "created the `"coop`" double-click launcher ($where)"
+  }
 } catch {
   Coop-Warn "couldn't create the double-click launcher (you can still run coop in a terminal): $($_.Exception.Message)"
 }

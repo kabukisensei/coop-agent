@@ -2133,9 +2133,54 @@ export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | 
       }
     }
     if (paths.length === 0) return null;
-    return `Team knowledge available at ${paths.join(", ")}; see the team-knowledge skill`;
+    return `Team knowledge available at ${paths.join(", ")}; see the team-knowledge skill for design and change work (a simple read or status check needs no knowledge search)`;
   } catch {
     return null;
+  }
+}
+
+/** Fabric target(s) the nearest project contract already pins. Returned as an
+ *  agent-visible, human-hidden note so a simple read (one bounded SELECT, a
+ *  table or workspace listing, a connection check) goes straight to the
+ *  `fabric-sqlendpoint` tool with the contract ids instead of rediscovering
+ *  them through team-knowledge searches, memory, skills, or Fabric catalog
+ *  calls. Null when the contract has no usable Warehouse/Lakehouse target.
+ *  The approval prompt before Warehouse SQL is unchanged — this only removes
+ *  the detour, never the gate. */
+export function fabricTargetNote(cwd: string): { contractPath: string; content: string } | null {
+  try {
+    const contractPath = findProjectYml(cwd);
+    if (!contractPath) return null;
+    const text = safeRead(contractPath);
+    const workspaceId = canonicalProjectUuid(projectYamlScalar(text, ["fabric", "default_workspace_id"]));
+    const itemType = projectSqlEndpointType(projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_type"]));
+    const itemId = canonicalProjectUuid(projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_id"]));
+    const endpointId = itemType === "Lakehouse"
+      ? canonicalProjectUuid(projectYamlScalar(text, ["fabric", "default_sql_endpoint", "sqlEndpointProperties", "id"]))
+      : itemId;
+    if (!workspaceId || !itemType || !itemId || !endpointId) return null;
+    const itemName = projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_name"]) || itemType;
+    const workspaceName = projectYamlScalar(text, ["fabric", "default_workspace_name"]);
+    let environment = "";
+    for (const env of ["dev", "test", "prod"]) {
+      const name = projectYamlScalar(text, ["fabric", "environment_names", env]);
+      if (name && workspaceName && name === workspaceName) { environment = env; break; }
+    }
+    const rel = relative(cwd, contractPath).replace(/\\/g, "/") || contractPath;
+    const workspaceLabel = workspaceName ? `"${workspaceName}" (${workspaceId})` : workspaceId;
+    const envLabel = environment ? `, environment ${environment}` : "";
+    const content =
+      `Fabric target from the project contract (${rel}): workspace ${workspaceLabel}${envLabel}; ` +
+      `${itemType} "${itemName}" item ${itemId}` +
+      (endpointId !== itemId ? ` (SQL endpoint ${endpointId})` : "") + `. ` +
+      `For a SIMPLE READ — one bounded SELECT TOP (n), a table or column listing, a connection check — call the ` +
+      `fabric-sqlendpoint execute_query tool DIRECTLY with workspaceId ${workspaceId} and itemId ${endpointId}. ` +
+      `Do not search team knowledge, memory, or the Fabric catalog, load skills, or discover tools first: these ids are the answer, ` +
+      `and the guardrails' approval prompt before Warehouse SQL still applies. ` +
+      `Save team knowledge, lineage, and standards for design or change work.`;
+    return { contractPath, content };
+  } catch {
+    return null; // contract guidance must never break a turn
   }
 }
 
@@ -2563,6 +2608,7 @@ export default function coopTools(pi: ExtensionAPI) {
   // also gets a system-prompt postcondition. Silent when neither applies; wrapped so
   // contract/logging guidance can never break a turn.
   const announcedCwds = new Set<string>();
+  const announcedFabricTargets = new Set<string>();
   let announcedTeamKnowledge = false;
   let sessionToolFailures = 0;
   // Distinct failed tool_result events (dedupe by toolCallId so a replayed
@@ -2622,6 +2668,23 @@ export default function coopTools(pi: ExtensionAPI) {
               details: { outputDir: relOut },
             };
           }
+        }
+      }
+
+      // Once per contract: hand the agent the Warehouse target the contract
+      // already pins so a simple read skips the discovery detour.
+      const fabricTarget = fabricTargetNote(cwd);
+      if (fabricTarget && !announcedFabricTargets.has(fabricTarget.contractPath)) {
+        announcedFabricTargets.add(fabricTarget.contractPath);
+        if (message) {
+          message.content = `${message.content}\n\n${fabricTarget.content}`;
+        } else {
+          message = {
+            customType: "coop-fabric-target",
+            display: false,
+            content: fabricTarget.content,
+            details: { contractPath: fabricTarget.contractPath },
+          };
         }
       }
 

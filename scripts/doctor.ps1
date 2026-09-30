@@ -18,6 +18,7 @@ $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 
 $script:FAIL = 0   # required missing -> non-zero exit
 $script:WARN = 0
+$script:Shadowed = @()   # exes the manifest section found shadowed by a non-pipx copy
 $script:FIX  = $false   # --fix: auto-apply safe remediations at the end
 $script:JSON = $false   # --json: one machine-readable document on stdout (fleet health digests)
 $script:PUBLISH = $false
@@ -152,6 +153,24 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
     D-Warn "$Dist not installed (manifest: $expected)" "pipx install $Dist==$expected"
     return
   }
+  # Executable ownership FIRST: a foreign $Exe earlier on PATH (a `pip install`
+  # copy, another tool manager, a leftover shim) must never be correlated with
+  # this distribution's pipx metadata — reading it as "stale/corrupt" sends the
+  # user to `pipx install --force`, which rebuilds a venv that was never wrong.
+  if ($cli -and ((Get-CoopExePipxVenv $Exe) -ne $Dist)) {
+    $resolved = ''
+    $rc = Get-Command $Exe -ErrorAction SilentlyContinue
+    if ($rc) { $resolved = " ($($rc.Source))" }
+    $script:Shadowed += $Exe
+    if ($meta) {
+      $hint = "remove that copy (pip uninstall $Dist / uv tool uninstall $Dist) or put pipx's bin dir first on PATH (pipx ensurepath), then open a new terminal; last resort: $repair"
+      D-Warn "$Dist skipped: $Exe on PATH$resolved is not the pipx one (it reports $cli; pipx metadata says $meta)" $hint
+    } else {
+      $hint = "pipx install $Dist==$expected, then remove that copy (pip uninstall $Dist / uv tool uninstall $Dist) or put pipx's bin dir first on PATH (pipx ensurepath), and open a new terminal"
+      D-Warn "$Dist skipped: $Exe on PATH$resolved is not the pipx one (it reports $cli; pipx has no $Dist installed)" $hint
+    }
+    return
+  }
   if ($meta -and $cli -and ($meta -ne $cli)) {
     # One call per line: PowerShell has no backslash continuation, so a trailing \
     # became the hint and the real hint printed to stdout on its own (#90).
@@ -161,14 +180,29 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   }
   if (-not $cli) {
     # Stop here: without a CLI answer there is nothing trustworthy to compare.
-    D-Warn "$Dist metadata present ($meta) but $Exe produced no version" $repair
-    return
-  }
-  # Executable ownership: an unrelated binary must never be correlated with
-  # this distribution's pipx metadata.
-  if ((Get-CoopExePipxVenv $Exe) -ne $Dist) {
-    $hint = "reinstall so the pinned $Exe is first on PATH: $repair"
-    D-Warn "$Dist skipped: resolved $Exe does not belong to its pipx environment" $hint
+    # Say WHICH way it failed: nothing on PATH, or a launcher that prints nothing.
+    $rc = Get-Command $Exe -ErrorAction SilentlyContinue
+    if ($rc) {
+      # Quote the launcher's first output line (stderr included) so the row
+      # shows what it said instead of sending the user to run it by hand.
+      # Windows PowerShell 5.1 turns each native stderr line into an ErrorRecord
+      # whose rendering is prefixed with the command name and position; take the
+      # record's own message so the row quotes the launcher's line verbatim.
+      $probe = ''
+      try {
+        $pLines = @(& $Exe --version 2>&1 | ForEach-Object {
+          if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { [string]$_ }
+        })
+        $pLine = @($pLines | ForEach-Object { ($_ -split "`r?`n") } | Where-Object { $_.Trim() }) | Select-Object -First 1
+        if ($pLine) { $probe = ([string]$pLine).Trim(); if ($probe.Length -gt 120) { $probe = $probe.Substring(0, 120) } }
+      } catch {}
+      $said = if ($probe) { "; it printed: $probe" } else { '' }
+      $hint = "a broken leftover launcher: delete it, then pipx reinstall $Dist, and open a new terminal"
+      D-Warn "${Dist}: $Exe at $($rc.Source) runs but prints no version (pipx metadata says $meta)$said" $hint
+    } else {
+      $hint = "put pipx's bin dir on PATH: pipx ensurepath, then open a new terminal; if the launcher is missing there: pipx reinstall $Dist"
+      D-Warn "$Dist is not on PATH (pipx has $meta installed)" $hint
+    }
     return
   }
   if (-not $meta) {
@@ -274,9 +308,18 @@ if (Test-Have 'fab') {
 }
 
 D-Head 'Standalone Coop tools (pipx)'
-Check 'coop-data-doc'   'required' 'pipx install coop-data-doc'   @('coop-data-doc','--version')
-Check 'coop-sql-review' 'required' 'pipx install coop-sql-review' @('coop-sql-review','--version')
-Check 'coop-dax-review' 'required' 'pipx install coop-dax-review' @('coop-dax-review','--version')
+# A tool the manifest section found shadowed by a non-pipx copy never gets a
+# green tick here: the copy that answered is not the one coop pinned.
+function Check-PipxTool([string]$Bin) {
+  if ($script:Shadowed -contains $Bin) {
+    D-Warn "$Bin on PATH is not the pipx copy (see Release manifest above)" "the fix is on that row: remove the stray copy or put pipx's bin dir first on PATH"
+  } else {
+    Check $Bin 'required' "pipx install $Bin" @($Bin,'--version')
+  }
+}
+Check-PipxTool 'coop-data-doc'
+Check-PipxTool 'coop-sql-review'
+Check-PipxTool 'coop-dax-review'
 
 D-Head 'Fabric / semantic-model tooling'
 
