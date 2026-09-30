@@ -798,7 +798,7 @@ test("product agent path is one effective onboarding/install/Doctor path", () =>
   contract(source); assert.throws(() => contract(source.replace("$agentRoot = Join-Path $profileRoot '.coop\\agent'", "$agentRoot = Join-Path $ownedRoot 'split-agent'")));
 });
 
-test("certification Python pin reaches bounded helpers and baseline onboarding", () => {
+test("certification Python pin reaches bounded helpers and baseline onboarding", { skip: !havePwsh }, () => {
   const source = readFileSync(SCRIPT, "utf8");
   const dir = mkdtempSync(join(tmpdir(), "coop-python-pin-"));
   let probeNumber = 0;

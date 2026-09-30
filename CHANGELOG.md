@@ -115,6 +115,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   opened with its associated app and never returned. On Windows the resolver now
   refuses anything but an `.exe` before running it, and each resolver probe in
   the test is bounded to 2 minutes and names its `CERT_PYTHON` when it overruns.
+  Like its neighbours, that test now skips itself where pwsh is not installed,
+  so `COOP_TEST_EXTENDED=1 bash tests/run.sh` (and `coop release`) passes on a
+  maintainer machine without PowerShell 7.
 - The extended test lane no longer touches your real home or this checkout (#135).
   `tests/run.sh` keeps the gate lane's temp home for the extended block, except
   `home-guard`, which checks the real home on purpose. The fixtures that run
