@@ -5,6 +5,30 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- Microsoft skills catalog (master plan U1, the Fabric catalog row):
+  `microsoft/skills-for-fabric` moves from v0.3.10 to **v0.3.18**
+  (`6c11ad58c25992e5d1435ce7cd80d217d5598a31`) and the baseline now enables the
+  **full Fabric skill set** (25 skills) instead of two Warehouse skills.
+  Upstream v0.3.12 merged `sqldw-authoring-cli`, `sqldw-consumption-cli` and the
+  deferred `sqldw-operations-cli` into one `sqldw-cli`; v0.3.17 merged the four
+  Power BI report skills into `powerbi-report-cli`. A contract that allow-lists
+  the old names loads nothing for them; use the new names. `microsoft/skills`
+  is re-pinned to `3495f50ae0d7b69dcb19c6922db9f80aab6cf79c` (`kql` and
+  `microsoft-docs` are byte-identical to the previous pin).
+  - The catalog now ships a repository's **shared reference trees** (upstream
+    `common/`) beside the skills, at the path their `../../common/...` links
+    expect. Before this, every pinned Fabric skill linked shared files that
+    the catalog never fetched. Shared trees are pinned by content hash and
+    verified like skills; a generation missing one is refused.
+  - `python3 lib/microsoft_skills.py check-refs` reports relative links the
+    current generation cannot satisfy; `coop sync` stores the same list in
+    `fetch-state.json` and `coop doctor` shows the count. Upstream's
+    `mcp-setup/` guide is deliberately left out (Coop manages MCP itself).
+  - The per-skill size cap rises from 750 KB to 1.5 MB for
+    `powerbi-report-cli` (88 Markdown files, ~1.04 MB); the 500 KB per-file cap
+    is unchanged.
 - `pi-hermes-memory` moves to **0.9.9** (master plan U1, section 6 row). On Windows,
   0.7.17 could not run its own helper process: it launched `pi` through Pi's `exec`,
   which spawns without a shell, and `pi` is only an npm `.cmd`/`.ps1` shim there. So
