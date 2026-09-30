@@ -7,6 +7,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- `coop update --check` shows the repository move first (#107): `repo (coop-agent)
+  v0.23.5-21-gabc1234  would move to release v0.23.6`, `... no newer release`, or the
+  hold, local-commits or missing-origin state with its fix. It uses the same local
+  helpers as step 1 and doctor, with no fetch, so `--check` still changes nothing.
 - Tests and CI run in two lanes (T1, #96). `bash tests/run.sh` and `tests/run.ps1`
   now run the gate lane by default: deterministic logic tests with no sleep, poll,
   PTY, marker file, hang fixture or network, and no fixture that touches the
@@ -172,6 +176,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   update, and `coop version` showed no git describe, while PowerShell moved the
   checkout. Both twins now use one rule, a `.git` directory or a `.git` file naming
   its `gitdir:`, for the repo helpers, `coop update`, doctor and the knowledge sync.
+- `coop doctor --json` on Windows prints one JSON document again (#90). Three hints in
+  the pipx tool check (stale environment, an executable that is not the pinned one,
+  a Requires-Python violation) used bash's trailing-backslash line continuation,
+  which PowerShell does not have: the warning recorded `\` as its hint and the real
+  hint printed to stdout on its own, before the JSON that `coop doctor --publish`
+  and the fleet digest parse. `scripts/check-parity.sh` now rejects a `.ps1` line
+  that ends in a backslash continuation.
 - `coop doctor` on Windows PowerShell 5.1 checks each tool's Requires-Python again
   (#140). The probe passed a program containing double quotes with `-c`, which 5.1
   mangles (the #81 bug class), so doctor always reported "no Requires-Python metadata

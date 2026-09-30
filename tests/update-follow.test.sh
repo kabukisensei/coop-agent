@@ -479,6 +479,40 @@ case "$ROW_MSG" in *"held on branch 'hold'"*) ;; *) fail "doctor row: the hold i
 case "$ROW_HINT" in "to follow releases again: "*"switch main") ;; *) fail "doctor row: the hold fix is the hint" ;; esac
 pass "doctor row: ok when current; warns behind, diverged and hold with the fix as the hint"
 
+# 15b. The --check repo line (coop_repo_check_line, #107): what step 1 would do,
+#      from the same helpers, with the stranded fix as the hint.
+check_line() { # sets CL_LINE, CL_HINT for COOP_ROOT
+  local r
+  r="$(coop_repo_check_line)"
+  CL_LINE=""; CL_HINT=""
+  { IFS= read -r CL_LINE || true; IFS= read -r CL_HINT || true; } <<EOF
+$r
+EOF
+  OUT="$r"
+}
+fresh check-ahead
+check_line
+case "$CL_LINE" in "v0.10.0-2-g"*"  no newer release") ;; *) fail "check line: ahead of every release has no newer release" ;; esac
+[ -z "$CL_HINT" ] || fail "check line: no hint when there is nothing to fix"
+fresh check-behind
+git -C "$COOP_ROOT" reset -q --hard v0.9.0
+check_line
+[ "$CL_LINE" = "v0.9.0  would move to release v0.10.0" ] && [ -z "$CL_HINT" ] || fail "check line: behind names the release it would move to"
+git -C "$COOP_ROOT" rev-parse HEAD | grep -qx "$C1" || fail "check line: --check must not move the checkout"
+fresh check-diverged
+git -C "$COOP_ROOT" reset -q --hard v0.9.0
+commit "$COOP_ROOT" local-work local
+check_line
+case "$CL_LINE" in *"release v0.10.0 does not contain"*) ;; *) fail "check line: the diverged state is named" ;; esac
+case "$CL_HINT" in "set them aside and rejoin: "*) ;; *) fail "check line: the diverged fix is the hint" ;; esac
+COOP_ROOT="$TMP/hold"
+check_line
+case "$CL_LINE" in *"held on branch 'hold'"*) ;; *) fail "check line: a hold is named" ;; esac
+mkdir -p "$TMP/plain-copy"; COOP_ROOT="$TMP/plain-copy"
+check_line
+[ "$CL_LINE" = "not a git checkout: coop update never moves it" ] || fail "check line: a plain copy is named"
+pass "--check repo line: no newer release, would move to the release, or the stranded state with its fix; nothing moves"
+
 # 16. Wiring: step 1 and the doctor row call these helpers in both twins.
 OUT=""
 grep -qF 'coop_repo_follow_release "$EDGE"' "$ROOT/scripts/update.sh" || fail "update.sh step 1 must call coop_repo_follow_release"
@@ -487,6 +521,8 @@ if grep -n 'pull --ff-only' "$ROOT/scripts/update.sh" "$ROOT/scripts/update.ps1"
   fail "update.* must not pull the repo directly (the pull lives in lib/common.*)"
 fi
 grep -qF '_coop_repo_warn_stranded || coop_warn' "$ROOT/scripts/update.sh" || fail "update.sh step 1 must name a missing origin with its fix"
+grep -qF '$(coop_repo_check_line)' "$ROOT/scripts/update.sh" || fail "update.sh --check must print coop_repo_check_line"
+grep -qF '$repoCheck = Get-CoopRepoCheckLine' "$ROOT/scripts/update.ps1" || fail "update.ps1 --check must print Get-CoopRepoCheckLine"
 grep -qF 'if (-not (Write-CoopRepoStranded)) { Coop-Warn' "$ROOT/scripts/update.ps1" || fail "update.ps1 step 1 must name a missing origin with its fix"
 # The doctors only dispatch the shared row (case 15): ok, else warn with the hint.
 grep -qF 'repo_row="$(coop_repo_doctor_row)"' "$ROOT/scripts/doctor.sh" || fail "doctor.sh must use coop_repo_doctor_row"

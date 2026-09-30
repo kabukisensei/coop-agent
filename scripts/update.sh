@@ -158,6 +158,13 @@ _unit_pbih_tools_upgrade() {
 # --- coop update --check (dry-run: report versions, change NOTHING) ----------
 if [ "$CHECK" = "1" ]; then
   coop_head "coop update --check (dry-run — nothing is installed)"
+  # Step 1's move first (#107): local only, no fetch.
+  repo_line=""; repo_hint=""
+  { IFS= read -r repo_line || true; IFS= read -r repo_hint || true; } <<EOF
+$(coop_repo_check_line)
+EOF
+  printf '  %-32s %s\n' "repo (coop-agent)" "$repo_line"
+  [ -z "$repo_hint" ] || printf '  %-32s %s\n' "" "$repo_hint"
   pi_cur="$(coop_pi_version)"; [ -n "$pi_cur" ] || pi_cur="not installed"
   pi_exp="$(coop_manifest_get pi.version)"; [ -n "$pi_exp" ] || pi_exp="?"
   printf '  %-32s current %-13s expected %-13s status %s\n' "pi ($PI_PKG)" "$pi_cur" "$pi_exp" "$(coop_manifest_status "$pi_cur" "$pi_exp")"
