@@ -1939,6 +1939,32 @@ function Test-CoopProfileRedirected {
   if (-not $registered -or -not $inUse) { return $false }
   return ($registered -ne $inUse)
 }
+# The account's registered roaming AppData folder (where the real Start Menu
+# lives). NOT [Environment]::GetFolderPath('ApplicationData'): the shell expands
+# the registered "%USERPROFILE%\AppData\Roaming" against the CURRENT environment,
+# so under a redirected USERPROFILE it points into the sandbox, and when that
+# folder does not exist yet .NET falls back to the APPDATA variable itself — both
+# make a redirected APPDATA look registered. Read the raw "User Shell Folders"
+# value instead and expand %USERPROFILE% against the registered profile. Off
+# Windows (or without the value) it is <registered profile>\AppData\Roaming.
+function Get-CoopRegisteredRoaming {
+  $registered = Get-CoopRegisteredProfile
+  $fallback = if ($registered) { Join-Path $registered 'AppData\Roaming' } else { '' }
+  if ($env:OS -ne 'Windows_NT') { return $fallback }
+  try {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders')
+    if (-not $key) { return $fallback }
+    $raw = [string]$key.GetValue('AppData', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    $key.Close()
+    if (-not $raw) { return $fallback }
+    $token = '%USERPROFILE%'
+    $idx = $raw.IndexOf($token, [StringComparison]::OrdinalIgnoreCase)
+    if ($idx -ge 0 -and $registered) { $raw = $raw.Substring(0, $idx) + $registered + $raw.Substring($idx + $token.Length) }
+    $expanded = [Environment]::ExpandEnvironmentVariables($raw)
+    if ($expanded -and [System.IO.Path]::IsPathRooted($expanded)) { return $expanded }
+    return $fallback
+  } catch { return $fallback }
+}
 # Where the "coop" shortcuts live, Start Menu first, then Desktop. A normal
 # install uses the Windows shell folders (they follow a OneDrive-redirected
 # Desktop); an isolated one uses the redirected profile's own Desktop and the
@@ -1950,9 +1976,8 @@ function Test-CoopProfileRedirected {
 function Get-CoopShortcutDirs {
   if (Test-CoopProfileRedirected) {
     $profileDir = Get-CoopProfileInUse
-    $registeredRoaming = try { [string][Environment]::GetFolderPath('ApplicationData') } catch { '' }
     $appData = ConvertTo-CoopComparablePath ([string]$env:APPDATA)
-    $roaming = if ($appData -and ($appData -ne (ConvertTo-CoopComparablePath $registeredRoaming))) {
+    $roaming = if ($appData -and ($appData -ne (ConvertTo-CoopComparablePath (Get-CoopRegisteredRoaming)))) {
       [string]$env:APPDATA
     } else {
       Join-Path $profileDir 'AppData\Roaming'

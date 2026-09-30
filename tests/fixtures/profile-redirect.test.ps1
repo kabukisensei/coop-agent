@@ -63,8 +63,15 @@ try {
   Check ($dirs[1] -eq (Join-Path $sandbox 'Desktop')) 'the Desktop target is the sandbox Desktop' "got $($dirs[1])"
   foreach ($d in $dirs) { Check (Test-CoopPathInside $d $tmp) "every target is inside the sandbox ($d)" }
 
+  # --- 2b. A redirected APPDATA whose sandbox profile has no AppData\Roaming yet
+  # (pwsh 7 on Windows then makes GetFolderPath('ApplicationData') echo APPDATA).
+  Check (-not (Test-Path -LiteralPath (Join-Path $sandbox 'AppData\Roaming'))) 'the sandbox profile has no AppData\Roaming folder'
+  $registeredRoaming = [string](Get-CoopRegisteredRoaming)
+  Check ([bool]$registeredRoaming -and (Test-CoopPathInside $registeredRoaming $registered)) 'the registered roaming folder is under the registered profile' "got $registeredRoaming"
+  Check ((ConvertTo-CoopComparablePath $registeredRoaming) -ne (ConvertTo-CoopComparablePath $roaming)) 'a redirected APPDATA is not the registered roaming folder'
+
   # --- 3. Only USERPROFILE redirected: APPDATA still the registered roaming folder
-  $env:APPDATA = [string][Environment]::GetFolderPath('ApplicationData')
+  $env:APPDATA = $registeredRoaming
   $dirs = @(Get-CoopShortcutDirs)
   Check ((Test-CoopPathInside $dirs[0] $sandbox) -and ($dirs[0] -like '*Start Menu*Programs')) 'the registered APPDATA is ignored: the Start Menu target moves under the sandbox' "got $($dirs[0])"
   Remove-Item Env:\APPDATA -ErrorAction SilentlyContinue
