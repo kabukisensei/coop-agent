@@ -563,11 +563,22 @@ if ($catPy) {
 D-Head 'Standards'
 if (Test-Have 'node') {
   $standardsCli = Join-Path $env:COOP_ROOT 'lib\standards-cli.mjs'
+  # The canonical-sync row comes first. Doctor never refreshes, so a last-known-good
+  # domain is a warning only when the last refresh attempt actually failed (or never
+  # ran); after a successful launch refresh whose freshness window has expired, the
+  # cached standards are simply the ones from the last check.
+  $syncFailed = $false
   foreach ($line in (& node $standardsCli doctor-lines '' $PWD.Path 2>$null)) {
     $parts = $line -split "`t", 4
     if ($parts.Count -lt 3) { continue }
     $kind = $parts[0]; $name = $parts[1]; $state = $parts[2]; $detail = if ($parts.Count -gt 3) { $parts[3] } else { '' }
-    if ($state -match 'unavailable|auth_required|dirty_preserved|invalid_preserved|stale_last_known_good|wiki_warning|PENDING_OWNER_PROVISIONING') { D-Warn "$kind ${name}: $state" $(if ($detail) { $detail } else { 'standards remain fail-soft' }) }
+    $hint = if ($detail) { $detail } else { 'standards remain fail-soft' }
+    if ($name -eq 'canonical-sync' -and $state -match '^(failed|never|degraded)$') { $syncFailed = $true; D-Warn "$kind ${name}: $state" $hint; continue }
+    if ($state -match 'stale_last_known_good') {
+      if ($syncFailed) { D-Warn "$kind ${name}: $state" $hint }
+      else { D-Ok "$kind ${name}: last known good @ $(($detail -split '\|')[0]) (verified at the last check; the next coop launch or coop sync refreshes it)" }
+    }
+    elseif ($state -match 'unavailable|auth_required|dirty_preserved|invalid_preserved|wiki_warning|PENDING_OWNER_PROVISIONING') { D-Warn "$kind ${name}: $state" $hint }
     else { D-Ok "$kind ${name}: $state$(if ($detail) { " @ $detail" } else { '' })" }
   }
 } else {

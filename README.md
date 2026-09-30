@@ -483,7 +483,10 @@ snapshot, and native reviewers bind to the same authority so prompt guidance and
 results cannot drift mid-task. Provenance or integrity failures reject a candidate rather
 than partially applying it. Run **`/standards-status`** to inspect effective authority,
 generation, freshness, and fallback state. `config/standards-registry.json` names the
-canonical repository and branch.
+canonical repository and branch. `coop doctor` reports without refreshing: on an install
+last launched more than 15 minutes ago its sync row reads `stale @ last checked N min
+ago` and the cached standards stay green as last known good; only a refresh that failed
+(`failed`, with the reason) turns them into warnings. `coop sync` refreshes now.
 
 The canonical standards are the `cooptimize/coop-standards` wiki, read the way the team
 reads it: every Markdown article whose front matter has `status: active` (under `SQL/`,
