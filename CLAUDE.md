@@ -26,9 +26,12 @@ first; this section adds architecture detail for working ON this repo.
 ## Test
 
 ```bash
-bash tests/run.sh              # bundles the TS extensions with esbuild, runs all Node suites
+bash tests/run.sh              # gate lane: bundles the TS extensions with esbuild, runs the deterministic suites
+COOP_TEST_EXTENDED=1 bash tests/run.sh   # gate + extended lanes (full suite; optional per change, `coop release` runs it)
 bash scripts/check-parity.sh   # bash <-> PowerShell pairing + .ps1 UTF-8 BOM gate
 ```
+
+Lanes and fixture rules: `docs/ci.md`, "coop-agent's own CI (maintainers): gate and extended lanes".
 
 ## Pointers
 

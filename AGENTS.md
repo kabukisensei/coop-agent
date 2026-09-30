@@ -154,8 +154,20 @@ force anything to "fix" it.
 ```bash
 for f in bin/coop lib/common.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
 bash scripts/check-parity.sh    # expect: "✓ parity check passed", exit 0
-bash tests/run.sh               # expect: "✓ all tests passed", exit 0 (needs node + npx)
+bash tests/run.sh               # gate lane; expect: "✓ all tests passed (gate lane)", exit 0 (needs node + npx)
 ```
+
+`bash tests/run.sh` is the gate lane that every PR runs. The extended lane (timing
+and process fixtures) is optional per change and runs before every release;
+`coop release` runs it itself:
+
+```bash
+COOP_TEST_EXTENDED=1 bash tests/run.sh   # expect: "✓ all tests passed (gate + extended lanes)", exit 0
+```
+
+Run it when you add or change a timing or process fixture. Lanes, fixture rules,
+and the extended fixtures that still touch the real home: `docs/ci.md`,
+"coop-agent's own CI (maintainers): gate and extended lanes".
 
 For docs-only changes, verify instead that every file path, script name, and
 command you wrote actually exists in the tree before finishing.
@@ -193,8 +205,9 @@ This repo's work queue is its GitHub issues labeled **`agent:ready`**:
 
 - Read this file fully first; take ONE issue at a time (oldest first unless one
   blocks another).
-- Implement to the acceptance criteria; run the full test suite + lint before
-  every commit; commit with `Fixes #N` so the issue closes on push.
+- Implement to the acceptance criteria; run the "Verify after every change"
+  checks + lint before every commit; commit with `Fixes #N` so the issue closes
+  on push.
 - Never push tags, release, or bump versions — Aaron releases (see the release
   rules above).
 - An open issue WITHOUT the `agent:ready` label is waiting on a human decision —

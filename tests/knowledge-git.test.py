@@ -17,6 +17,12 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 POSIX_TEST_UID = 1000
+# The /proc live-process cases (test_live_*) start real children, sleep while
+# they settle and wait on them, so they run only in the extended lane
+# (COOP_TEST_EXTENDED=1, #96). The rest of this file is in-process logic.
+EXTENDED_LANE = os.environ.get("COOP_TEST_EXTENDED") == "1"
+LIVE_PROC = os.path.isdir("/proc")
+GATE_LANE_SKIP = "skipped in the gate lane (COOP_TEST_EXTENDED=1 runs it)"
 SPEC = importlib.util.spec_from_file_location(
     "knowledge_git", ROOT / "scripts" / "knowledge-git.py"
 )
@@ -1359,6 +1365,7 @@ class ProcessInspectorTests(unittest.TestCase):
             inspector.sys.argv = old_argv
 
     @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
+    @unittest.skipUnless(EXTENDED_LANE, GATE_LANE_SKIP)
     def test_live_absolute_relative_spaced_and_option_invocations(self):
         helper = ROOT / "scripts" / "knowledge-git.py"
         with tempfile.TemporaryDirectory(prefix="coop helper space ") as directory:
@@ -1407,6 +1414,7 @@ class ProcessInspectorTests(unittest.TestCase):
                     proc.wait(timeout=5)
 
     @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
+    @unittest.skipUnless(EXTENDED_LANE, GATE_LANE_SKIP)
     def test_live_execve_argv0_alias_is_detected_by_inspector_cli(self):
         helper = ROOT / "scripts" / "knowledge-git.py"
         command = [
@@ -1442,6 +1450,7 @@ class ProcessInspectorTests(unittest.TestCase):
             proc.wait(timeout=5)
 
     @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
+    @unittest.skipUnless(EXTENDED_LANE, GATE_LANE_SKIP)
     def test_live_deleted_symlink_script_operand_is_uncertain(self):
         helper = ROOT / "scripts" / "knowledge-git.py"
         with tempfile.TemporaryDirectory(prefix="coop deleted alias ") as directory:
@@ -1477,6 +1486,7 @@ class ProcessInspectorTests(unittest.TestCase):
                 proc.wait(timeout=5)
 
     @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
+    @unittest.skipUnless(EXTENDED_LANE, GATE_LANE_SKIP)
     def test_live_different_regular_python_script_is_absent_not_uncertain(self):
         target = str((ROOT / "scripts" / "knowledge-git.py").resolve())
         with tempfile.TemporaryDirectory(prefix="coop different script ") as directory:
@@ -1496,6 +1506,7 @@ class ProcessInspectorTests(unittest.TestCase):
                 proc.wait(timeout=5)
 
     @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
+    @unittest.skipUnless(EXTENDED_LANE, GATE_LANE_SKIP)
     def test_live_proc_fd_retarget_never_becomes_absent_while_helper_lives(self):
         helper = ROOT / "scripts" / "knowledge-git.py"
         decoy = ROOT / "tests" / "knowledge-git.test.py"
@@ -1545,6 +1556,7 @@ class ProcessInspectorTests(unittest.TestCase):
             proc.wait(timeout=5)
 
     @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
+    @unittest.skipUnless(EXTENDED_LANE, GATE_LANE_SKIP)
     def test_live_prctl_alias_unreadable_executable_fails_closed_until_exit(self):
         code = (
             "import ctypes,time;libc=ctypes.CDLL(None);"
@@ -1615,6 +1627,7 @@ class ProcessInspectorTests(unittest.TestCase):
             self.assertEqual(observed.returncode, 0, observed.stderr)
 
     @unittest.skipUnless(os.path.isdir("/proc"), "Linux live process inspection")
+    @unittest.skipUnless(EXTENDED_LANE, GATE_LANE_SKIP)
     def test_live_dash_c_and_dash_m_decoys_are_not_matches(self):
         target = str((ROOT / "scripts" / "knowledge-git.py").resolve())
         commands = (
@@ -1648,4 +1661,9 @@ class ProcessInspectorTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    if LIVE_PROC and not EXTENDED_LANE:
+        print(
+            "  - skipped in the gate lane: the /proc live-process test_live_* cases"
+            " (COOP_TEST_EXTENDED=1 runs it)"
+        )
     unittest.main()

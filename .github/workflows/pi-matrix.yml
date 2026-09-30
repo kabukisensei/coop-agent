@@ -1,0 +1,51 @@
+name: pi-matrix
+
+# The live Pi compatibility matrix (#96), moved out of ci.yml: it installs the
+# pinned Pi from npm, so it runs nightly, on demand, and on a PR only when the PR
+# touches Pi alignment (the paths below). See docs/ci.md, "coop-agent's own CI
+# (maintainers): gate and extended lanes".
+
+on:
+  schedule:
+    - cron: '41 6 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/sync.sh
+      - scripts/sync.ps1
+      - lib/_extdeps.py
+      - config/release-manifest.json
+      - 'extensions/**'
+      - 'scripts/test-pi-matrix.*'
+      - tests/guardrails-pi-runner.test.mjs
+      - .github/workflows/pi-matrix.yml
+
+permissions:
+  contents: read
+
+# Never shared with ci.yml or extended.yml. A newer push to the same PR cancels
+# the older run; nightly and manual runs queue instead of cancelling.
+concurrency:
+  group: pi-matrix-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pi-matrix-windows:
+    # The isolated extension tree and pipx/launcher behavior are most important
+    # on the company fleet's primary platform. Exercise the exact release pin;
+    # unit tests separately prove that legacy runtimes fail with upgrade guidance.
+    name: Pi ${{ matrix.pi-version }} compatibility (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        pi-version: ['0.84.3']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.19.0'
+      - name: clean-room production convergence matrix
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/test-pi-matrix.ps1 -PiVersion '${{ matrix.pi-version }}'

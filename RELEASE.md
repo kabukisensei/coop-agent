@@ -167,7 +167,9 @@ What `coop release` does (`coop_release` in `bin/coop`): requires a clean tree;
 fetches `origin` and refuses unless `HEAD` is the branch `main` at exactly
 `origin/main` (a detached HEAD, another branch, or unpushed or missing commits
 stop it before anything changes); runs the pre-tag gate — esbuild-checks every
-`extensions/*/index.ts`, then `bash tests/run.sh` and
+`extensions/*/index.ts`, then `COOP_TEST_EXTENDED=1 bash tests/run.sh` (both
+test lanes, gate and extended, so a release keeps the full suite that CI splits
+between `ci.yml` and the nightly `extended.yml`; see `docs/ci.md`) and
 `bash scripts/check-parity.sh`, then verifies the three coop-tool `tested_with`
 pins in `config/defaults.yml` match the sibling
 `../coop-website/versions.json` (`coop_release_check_pins`; a mismatch aborts
@@ -183,6 +185,11 @@ push triggers `release.yml`, which cuts a GitHub Release whose body is that
 version's CHANGELOG section. `release.yml` first refuses a tag that is not
 `v$(cat VERSION)` or not an ancestor of `origin/main`, so a hand-pushed tag
 fails before anything is published.
+
+The pre-tag gate runs both lanes on the machine you release from only. The
+Windows legs of the extended lane run in CI, so before you release, check that
+the latest `extended` run on `main` is green, or start one (Actions -> extended
+-> Run workflow on `main`).
 
 Verify:
 

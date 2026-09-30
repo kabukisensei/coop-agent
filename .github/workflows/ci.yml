@@ -1,9 +1,24 @@
 name: ci
 
+# The PR gate lane (#96). Every job here runs the fast, deterministic checks;
+# the timing and process fixtures run in extended.yml (nightly + on demand) and
+# the live Pi install in pi-matrix.yml. The `gate` job at the bottom is the one
+# stable check that summarizes this workflow. See docs/ci.md, "coop-agent's own
+# CI (maintainers): gate and extended lanes".
+
 on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same PR cancels the older run; pushes to main never cancel
+# each other (each one is its own group).
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   bash32:
@@ -12,6 +27,7 @@ jobs:
     # only a real 3.2 shell catches them. macOS runners ship bash 3.2 at /bin/bash.
     name: bash 3.2 parse (macOS stock)
     runs-on: macos-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - name: parse under stock /bin/bash (3.2)
@@ -19,13 +35,16 @@ jobs:
           /bin/bash --version | head -1
           for f in bin/coop lib/common.sh scripts/*.sh tests/*.sh; do echo "checking $f"; /bin/bash -n "$f"; done
       - name: Azure sign-in preflight under stock /bin/bash (3.2)
-        # The only runtime check of the preflight's watchdog, wait and exit-code
-        # mapping under bash 3.2 (the step above checks syntax only). Fake az, offline.
+        # Runtime check of the preflight's cache, tenant chain and exit-code
+        # mapping under bash 3.2 (the step above checks syntax only). Fake az,
+        # offline. Gate lane: the watchdog and hang cases run under stock bash
+        # 3.2 in extended.yml's bash32 job.
         run: /bin/bash tests/azcache.test.sh
 
   shell:
     name: shell + config lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - name: bash -n (syntax)
@@ -34,7 +53,7 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y shellcheck
           shellcheck -S warning -e SC1091 bin/coop lib/common.sh scripts/*.sh tests/*.sh
-      - name: cross-platform parity + .ps1 BOM
+      - name: cross-platform parity + .ps1 BOM (the one BOM check)
         run: bash scripts/check-parity.sh
       - name: python yaml reader
         run: |
@@ -87,6 +106,7 @@ jobs:
   extensions:
     name: extensions transpile
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -100,27 +120,34 @@ jobs:
           done
 
   tests:
+    # Gate lane only (COOP_TEST_EXTENDED unset). The full suite runs in
+    # extended.yml and in the `coop release` pre-tag gate.
     name: logic tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: '22.19.0'
-      - name: run test suite (data-doc config + coop-guardrails enforcement)
+      - name: run test suite, gate lane (bash tests/run.sh)
         run: bash tests/run.sh
-      - name: PowerShell behavioral tests (pwsh — coop.ps1 + update.ps1 seams)
+      - name: PowerShell behavioral tests, gate lane (pwsh 7, coop.ps1 + update.ps1 seams)
         shell: pwsh
         run: pwsh -File tests/run.ps1
 
   tests-windows:
-    # Windows is coop's PRIMARY deployment target, yet the Node logic tests (webbridge,
-    # protocol splitter, diff model, guardrails bundle) only ran on ubuntu — so the
-    # win32-specific bridge paths (cmd.exe spawn wrapper, taskkill tree reaping,
-    # case-insensitive samePath, drive-letter session dirs) had ZERO logic coverage. Git
-    # Bash on windows-latest runs tests/run.sh unchanged (bash + node + npx all present).
+    # Windows is coop's PRIMARY deployment target. Git Bash on windows-latest runs
+    # tests/run.sh unchanged (bash + node + npx all present), gate lane only here: the
+    # Node logic tests (protocol splitter, diff model, guardrails bundle) and
+    # search-knowledge.test.sh, which replaced the old focused knowledge-search job.
+    # The win32-specific bridge paths in webbridge.test.mjs (cmd.exe spawn wrapper,
+    # taskkill tree reaping, case-insensitive samePath, drive-letter session dirs) are
+    # in the extended lane, so they run in extended.yml's Windows Git Bash job
+    # (nightly or on demand), not here.
     name: logic tests (Windows)
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -144,31 +171,14 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or -not $sitePackages) { exit 1 }
           "CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "PYTHONPATH=$sitePackages" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: run test suite under Git Bash
+      - name: run test suite under Git Bash, gate lane
         shell: bash
         run: bash tests/run.sh
-
-  knowledge-search-windows:
-    # Focused NATIVE VALIDATION ONLY: runs just the knowledge-search fixture
-    # under Git Bash on windows-latest, independent of the full timeout suite
-    # (which legitimately remains red on unrelated open defects). Adds no
-    # continue-on-error, weakens no assertion, and gates nothing by itself.
-    name: knowledge search focused (Windows)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: interpreter + candidate identity
-        shell: bash
-        run: |
-          bash --version | head -1
-          git rev-parse HEAD
-      - name: run only the knowledge-search fixture
-        shell: bash
-        run: bash tests/search-knowledge.test.sh
 
   windows:
     name: powershell parse (Windows)
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -252,26 +262,36 @@ jobs:
       # bin/coop.cmd actually launches (not pwsh 7). Exercises coop.ps1's launch-spec /
       # --no-launch / review parser and update.ps1's gate seams, the closest production
       # fidelity for coop's PRIMARY platform. (The ubuntu `tests` job runs the same file
-      # under pwsh 7 for the cross-edition check.)
-      - name: PowerShell behavioral tests (Windows PowerShell 5.1)
+      # under pwsh 7 for the cross-edition check.) Gate lane only; the full 5.1 run is
+      # in extended.yml.
+      - name: PowerShell behavioral tests, gate lane (Windows PowerShell 5.1)
         shell: powershell
         run: powershell -NoProfile -File tests\run.ps1
 
-  pi-matrix-windows:
-    # The isolated extension tree and pipx/launcher behavior are most important
-    # on the company fleet's primary platform. Exercise the exact release pin;
-    # unit tests separately prove that legacy runtimes fail with upgrade guidance.
-    name: Pi ${{ matrix.pi-version }} compatibility (Windows)
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        pi-version: ['0.84.3']
+  gate:
+    # The one stable check name for this workflow. It needs every job above and
+    # fails unless each one finished with `success`, so a failed, cancelled or
+    # skipped job fails it too. Add any new ci.yml job to `needs` here.
+    name: gate
+    if: always()
+    needs: [bash32, shell, extensions, tests, tests-windows, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22.19.0'
-      - name: clean-room production convergence matrix
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/test-pi-matrix.ps1 -PiVersion '${{ matrix.pi-version }}'
+      - name: every gate job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          printf '%s\n' "$NEEDS_JSON"
+          if [ -z "$RESULTS" ]; then
+            echo "::error::gate: no job results to check"
+            exit 1
+          fi
+          for r in $RESULTS; do
+            if [ "$r" != "success" ]; then
+              echo "::error::gate: a required job finished with '$r' (per-job results above)"
+              exit 1
+            fi
+          done
+          echo "gate: every job succeeded ($RESULTS)"
