@@ -30,6 +30,8 @@ Allowed paths come from the target repo's `.coop/project.yml` entry under `repos
 
 Destructive commands require confirmation. This includes `rm -rf`, `git push --force` (including a `+refspec` force push), `git reset --hard`, `git clean -f`, `DROP`/`TRUNCATE`, and similar.
 
+Fabric and Azure REST writes issued from the shell ask the same way: `az rest` with a non-GET `--method`, `fab api -X post|patch|put|delete`, and the Fabric CLI's mutating subcommands (`fab deploy`, `mkdir`, `rm`, `cp`, `mv`, `set`, `import`, `assign`, `unassign`, `job`, `acl`, `label`, `start`, `stop`, `ln`). The official Microsoft Fabric skills drive item create/update/deploy/delete this way, outside the MCP mutation gate. Reads (`--method get`, `fab api <path>`, `fab ls`/`get`/`exists`/`export`) pass. Headless runs fail closed.
+
 ### PowerShell commands
 
 Pi's optional `powershell` tool is off by default. When it is on, **every** PowerShell command asks first and shows the command, because the checks above parse bash, not PowerShell. There is no session approval, and headless runs are blocked. Prefer the `bash` tool (Git Bash on Windows), which those checks cover.

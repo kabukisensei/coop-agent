@@ -417,6 +417,35 @@ await t("blocks a declined destructive command (rm -rf)", async () => {
 await t("allows an approved destructive command", async () => {
   assert.equal(blocked(await call("rm -rf /tmp/x", { confirm: true })), false);
 });
+await t("Fabric / Azure REST writes from the shell ask; reads pass", async () => {
+  const { fabricWriteLabel } = cg;
+  assert.equal(fabricWriteLabel('az rest --method get --url "https://api.fabric.microsoft.com/v1/workspaces"'), null);
+  assert.equal(fabricWriteLabel('az rest --url "https://api.fabric.microsoft.com/v1/workspaces"'), null);
+  assert.equal(fabricWriteLabel('az rest --method post --url "https://api.fabric.microsoft.com/v1/workspaces/w/items" --body @item.json'), "az rest POST");
+  assert.equal(fabricWriteLabel("az rest -m DELETE --url https://api.fabric.microsoft.com/v1/workspaces/w/items/i"), "az rest DELETE");
+  assert.equal(fabricWriteLabel("az rest --method=patch --url x"), "az rest PATCH");
+  assert.equal(fabricWriteLabel('fab api "workspaces/$WS/git/status"'), null);
+  assert.equal(fabricWriteLabel('fab api -X post "workspaces/$WS/git/commitToGit" -i commit.json'), "fab api POST");
+  assert.equal(fabricWriteLabel("fab ls ws.Workspace && fab get ws.Workspace/lh.Lakehouse -q id"), null);
+  assert.equal(fabricWriteLabel("fab export ws.Workspace/r.Report -o ./out"), null);
+  assert.equal(fabricWriteLabel("fab deploy -p ./pipeline.yml"), "fab deploy");
+  assert.equal(fabricWriteLabel("fab ls ws.Workspace; fab rm ws.Workspace/lh.Lakehouse -f"), "fab rm");
+  assert.equal(fabricWriteLabel('FABRIC_TOKEN=x fab job run ws.Workspace/nb.Notebook'), "fab job");
+  // Quoted text and other programs are not commands.
+  assert.equal(fabricWriteLabel('echo "az rest --method post"'), null);
+  assert.equal(fabricWriteLabel("grep -r 'fab deploy' docs/"), null);
+  assert.equal(fabricWriteLabel("azcopy copy src dst"), null);
+  assert.equal(blocked(await call('az rest --method get --url "https://api.fabric.microsoft.com/v1/workspaces"', { confirm: false })), false);
+  assert.equal(blocked(await call('az rest --method post --url "https://api.fabric.microsoft.com/v1/workspaces/w/items"', { confirm: false })), true);
+  assert.equal(blocked(await call('az rest --method post --url "https://api.fabric.microsoft.com/v1/workspaces/w/items"', { confirm: true })), false);
+  assert.equal(confirmCount, 1);
+  assert.equal(blocked(await call('fab api -X post "workspaces/w/git/updateFromGit" -i update.json', { confirm: false })), true);
+  assert.equal(blocked(await call("fab deploy -p ./pipeline.yml", { confirm: false })), true);
+  assert.equal(blocked(await call('fab api "workspaces/w/git/status"', { confirm: false })), false);
+  const headless = { ...ctx, hasUI: false, ui: undefined };
+  assert.equal(blocked(await handle({ toolName: "bash", input: { command: "fab deploy -p ./pipeline.yml" } }, headless)), true);
+  assert.equal(blocked(await handle({ toolName: "bash", input: { command: "fab ls ws.Workspace" } }, headless)), false);
+});
 await t("blocks declined git push --force", async () => {
   assert.equal(blocked(await call("git push --force origin main", { confirm: false })), true);
 });
