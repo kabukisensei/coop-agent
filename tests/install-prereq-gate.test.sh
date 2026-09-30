@@ -139,3 +139,56 @@ has '(or let coop run those commands for you: coop install --prereqs auto)'
 run_install "$T/linked:$BIN:/usr/bin:/bin" --prereqs auto
 has 'Open a NEW terminal so the new tools are on PATH, then run: coop install'
 echo '  ✓ with coop on PATH, the stop lines still say: coop install'
+
+# 9. A machine whose only Python is 3.14 passes row 3 when its pipx can fetch a
+#    standalone 3.12 for the Fabric CLI — with either spelling of that flag
+#    (pipx 1.5-1.11: --fetch-missing-python; 1.12+: --fetch-python). Doctor says
+#    the same. (Node present, so this row is the only thing under test.)
+for n in python3 python; do stub "$n" '[ "$1" = --version ] && echo "Python 3.14.2"; exit 0'; done
+stub pipx '[ "$1 $2" = "install --help" ] && echo "  --fetch-missing-python"; [ "$1" = --version ] && echo 1.7.1; exit 0'
+COOP_TEST_UNAME=MINGW64_NT run_install "$NODEBIN:$BIN:/usr/bin:/bin"
+has '✓ 3. Python 3.10-3.13 (3.12 recommended)  (3.14.2; pipx fetches 3.12 for the Fabric CLI)'
+has '✓ 4. pipx  (1.7.1)'
+: > "$CALLS"; RC=0
+PATH="$NODEBIN:$BIN:/usr/bin:/bin" bash "$ROOT/scripts/doctor.sh" >"$OUT" 2>&1 || RC=$?
+has '✓ 3. Python 3.10-3.13 (3.12 recommended)  (3.14.2; pipx fetches 3.12 for the Fabric CLI)'
+echo '  ✓ Python 3.14 plus a pipx that can fetch a Python passes row 3 (older --fetch-missing-python spelling too)'
+
+# 10. Python 3.14 with a pipx too old to fetch a Python: Windows prints the
+#     admin-free repair — upgrade pipx (1.12+ downloads a standalone 3.12) — and
+#     --prereqs auto runs exactly that; nothing needs winget.
+stub pipx '[ "$1" = --version ] && echo 1.4.3; exit 0'
+COOP_TEST_UNAME=MINGW64_NT run_install "$NODEBIN:$BIN:/usr/bin:/bin"
+[ "$RC" -ne 0 ] || fail 'Windows: 3.14-only install with an old pipx exited 0'
+has '✗ 3. Python 3.10-3.13 (3.12 recommended)  (3.14.2 only; the Fabric CLI needs 3.10-3.13)'
+has '      python3 -m pip install --user --upgrade pipx'
+has '      python3 -m pipx ensurepath'
+grep -F 'winget install --id Python.Python.3.12' "$OUT" >/dev/null && fail 'Windows: old pipx case still sent the user to winget'
+nothing_installed 'Windows 3.14 + old pipx'
+COOP_TEST_UNAME=MINGW64_NT run_install "$NODEBIN:$BIN:/usr/bin:/bin" --prereqs auto
+has 'running: python3 -m pip install --user --upgrade pipx'
+has 'running: python3 -m pipx ensurepath'
+grep -F 'WINGET' "$CALLS" >/dev/null && fail '--prereqs auto ran winget for the old-pipx case'
+echo '  ✓ Windows 3.14 + old pipx: row 3 prints the pipx upgrade, and --prereqs auto runs it without winget'
+
+# 11. The same machine on macOS keeps the package manager's Python as the fix
+#     (pip --user is not the documented route there).
+run_install "$NODEBIN:$BIN:/usr/bin:/bin"
+has '✗ 3. Python 3.10-3.13 (3.12 recommended)  (3.14.2 only; the Fabric CLI needs 3.10-3.13)'
+has '      brew install python@3.12'
+grep -F 'upgrade pipx' "$OUT" >/dev/null && fail 'macOS printed the Windows pipx-upgrade fix'
+echo '  ✓ macOS 3.14 + old pipx keeps brew install python@3.12 as the fix'
+
+# 12. pipx installed but not on PATH yet (before `pipx ensurepath` + a new
+#     terminal): row 4 already counts `python -m pipx`; row 3 must judge THAT
+#     pipx's fetch support instead of reporting the Fabric CLI as unfixable.
+rm -f "$BIN/pipx"
+for n in python3 python; do stub "$n" 'case "$*" in
+  --version) echo "Python 3.14.2" ;;
+  "-m pipx --version") echo 1.7.1 ;;
+  "-m pipx install --help") echo "  --fetch-python {always,missing,never}" ;;
+esac; exit 0'; done
+run_install "$NODEBIN:$BIN:/usr/bin:/bin"
+has '✓ 3. Python 3.10-3.13 (3.12 recommended)  (3.14.2; pipx fetches 3.12 for the Fabric CLI)'
+has '✓ 4. pipx  (via python3 -m pipx)'
+echo '  ✓ a pipx reachable only as python -m pipx counts for row 3 as it does for row 4'

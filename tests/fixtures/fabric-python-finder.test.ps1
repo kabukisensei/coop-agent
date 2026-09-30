@@ -112,6 +112,47 @@ try {
   $found = Get-CoopFabricBootstrapPython
   if ($found -ne $py312) { throw "winget user-scope interpreter not discovered (got '$found')" }
   Write-Output '  ✓ %LOCALAPPDATA%\Programs\Python\Python31x layout discovered'
+
+  # 4. Get-CoopPipxFetchPythonFlag: the flag pipx accepts for a standalone Python,
+  #    in that pipx's own spelling; '' when it cannot fetch one.
+  function New-FakePipx([string]$HelpLine) {
+    $p = Join-Path $tmp 'pipx'
+    [System.IO.File]::WriteAllText($p, "#!/bin/sh`nif [ `"`$1 `$2`" = `"install --help`" ]; then echo '$HelpLine'; fi`nexit 0`n")
+    & $chmod +x $p
+  }
+  New-FakePipx '  --fetch-python {always,missing,never} | --fetch-missing-python'
+  $flag = Get-CoopPipxFetchPythonFlag
+  if ($flag -ne '--fetch-python=missing') { throw "pipx 1.12+ spelling not preferred (got '$flag')" }
+  New-FakePipx '  --fetch-missing-python'
+  $flag = Get-CoopPipxFetchPythonFlag
+  if ($flag -ne '--fetch-missing-python') { throw "pipx 1.5-1.11 spelling not accepted (got '$flag')" }
+  New-FakePipx '  --python PYTHON'
+  $flag = Get-CoopPipxFetchPythonFlag
+  if ($flag) { throw "a pipx without a fetch flag returned '$flag'" }
+  # A pipx reachable only as `python -m pipx` is probed the same way.
+  $py3 = Join-Path $tmp 'python3'
+  [System.IO.File]::WriteAllText($py3, "#!/bin/sh`nif [ `"`$1 `$2 `$3 `$4`" = `"-m pipx install --help`" ]; then echo '  --fetch-python {always,missing,never}'; fi`nexit 0`n")
+  & $chmod +x $py3
+  $flag = Get-CoopPipxFetchPythonFlag @('python3', '-m', 'pipx')
+  if ($flag -ne '--fetch-python=missing') { throw "python -m pipx not probed (got '$flag')" }
+  Remove-Item (Join-Path $tmp 'pipx') -Force
+  $flag = Get-CoopPipxFetchPythonFlag
+  if ($flag) { throw "a missing pipx reported a fetch flag '$flag'" }
+  Write-Output '  ✓ Get-CoopPipxFetchPythonFlag reports --fetch-python=missing / --fetch-missing-python / nothing'
+
+  # 5. Get-CoopFabricPipxPlan: a local 3.10-3.13 wins; otherwise pipx's standalone
+  #    3.12 with that pipx's flag; $null when neither exists (row 3 then decides).
+  [System.IO.File]::WriteAllText($py3, "#!/bin/sh`nexit 1`n")   # back to the fail-stub
+  $env:COOP_FAKE_PY_VERSION = '3.12'                              # py312 from case 3 is still in place
+  $plan = Get-CoopFabricPipxPlan
+  if (-not $plan -or $plan.Python -ne $py312 -or $plan.FetchFlag) { throw "plan with a local 3.12 gave '$($plan | Out-String)'" }
+  Remove-Item $py312 -Force
+  $plan = Get-CoopFabricPipxPlan
+  if ($null -ne $plan) { throw "plan succeeded with no Python and no pipx: '$($plan | Out-String)'" }
+  New-FakePipx '  --fetch-python {always,missing,never}'
+  $plan = Get-CoopFabricPipxPlan
+  if (-not $plan -or $plan.Python -ne '3.12' -or $plan.FetchFlag -ne '--fetch-python=missing') { throw "standalone plan gave '$($plan | Out-String)'" }
+  Write-Output '  ✓ Get-CoopFabricPipxPlan prefers a local 3.10-3.13, else pipx standalone 3.12, else nothing'
 }
 finally {
   foreach ($name in $envNames) {
