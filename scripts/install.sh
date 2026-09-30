@@ -150,18 +150,16 @@ _pipx_installed_version() {
 
 _unit_fabric() {
   have pipx || { printf 'skipping Fabric CLI (pipx missing)'; return 1; }
-  local target="$FABRIC_PKG" fabric_py="" fabric_fetch=""
-  fabric_py="$(coop_fabric_bootstrap_python)" || fabric_py=""
-  if [ -z "$fabric_py" ]; then
-    if pipx install --help 2>&1 | grep -F -- '--fetch-python' >/dev/null; then
-      fabric_py="3.12"; fabric_fetch="--fetch-python=missing"
-    elif pipx install --help 2>&1 | grep -F -- '--fetch-missing-python' >/dev/null; then
-      fabric_py="3.12"; fabric_fetch="--fetch-missing-python"
-    else
-      printf 'Microsoft Fabric CLI needs Python 3.12 or 3.13 — upgrade pipx or install Python 3.12, then re-run: coop install'
-      return 1
-    fi
+  local target="$FABRIC_PKG" fabric_py="" fabric_fetch="" fabric_plan=""
+  # A local 3.10-3.13, or pipx's standalone 3.12 (coop_fabric_pipx_plan, shared
+  # with update and doctor --fix).
+  if ! fabric_plan="$(coop_fabric_pipx_plan)"; then
+    printf 'Microsoft Fabric CLI needs Python 3.12 or 3.13 — upgrade pipx or install Python 3.12, then re-run: coop install'
+    return 1
   fi
+  IFS="$(printf '\t')" read -r fabric_py fabric_fetch <<EOF_PLAN
+$fabric_plan
+EOF_PLAN
   if [ "$EDGE" != 1 ]; then
     local ver
     ver="$(coop_manifest_get "python_tools.$FABRIC_PKG")"
@@ -289,20 +287,24 @@ EOF_PREREQS
 # --prereqs auto: run each missing REQUIRED row's printed command, in table order,
 # with its output and exit code visible. Optional rows are never auto-installed.
 _install_prereqs() {
-  local us o n req ok det fix step rc
+  local us o n req ok det fix step steps rc
   us="$(printf '\037')"
   # Rows and steps are read on fds 3/4 so each command keeps the terminal as
   # stdin (sudo, brew, and winget may prompt).
   while IFS="$us" read -r o n req ok det fix <&3; do
     [ "$ok" = 1 ] || [ "$req" != 1 ] && continue
     case "$fix" in see\ *) continue ;; esac
+    # Split " then " into one step per line OUTSIDE the heredoc: inside one, the
+    # backslash-newline in sed's replacement is a line continuation and vanishes,
+    # which used to run "a then b" as the single command "ab".
+    steps="$(printf '%s\n' "$fix" | sed 's/ then /\
+/g')"
     while IFS= read -r step <&4; do
       coop_info "running: $step"
       rc=0; sh -c "$step" || rc=$?
       if [ "$rc" -ne 0 ]; then coop_warn "exited with code $rc" "run it yourself: $step"; break; fi
     done 4<<EOF_STEPS
-$(printf '%s\n' "$fix" | sed 's/ then /\
-/g')
+$steps
 EOF_STEPS
   done 3<<EOF_PREREQS
 $(coop_prereq_rows "$NO_FABRIC")

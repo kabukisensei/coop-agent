@@ -16,7 +16,7 @@
   "repositories": {
     "microsoft_skills": {
       "url": "https://github.com/microsoft/skills.git",
-      "revision": "903dc62b1e4c833235b54db918a9a51cb6d3cc8f",
+      "revision": "3495f50ae0d7b69dcb19c6922db9f80aab6cf79c",
       "approved_domains": [
         "github.com"
       ],
@@ -39,34 +39,194 @@
     },
     "fabric_skills": {
       "url": "https://github.com/microsoft/skills-for-fabric.git",
-      "revision": "28f29abf3838e13f63a38e8664042b7d9f7cd69c",
-      "version": "v0.3.10",
+      "revision": "6c11ad58c25992e5d1435ce7cd80d217d5598a31",
+      "version": "v0.3.18",
       "approved_domains": [
         "github.com"
       ],
       "baseline": [
-        "sqldw-authoring-cli",
-        "sqldw-consumption-cli"
+        "activator-cli",
+        "azmon-mirroredcatalogs-operations-cli",
+        "databricks-migration",
+        "dataflows-cli",
+        "deployment-pipelines-authoring-cli",
+        "e2e-fabric-cost-estimation",
+        "e2e-medallion-architecture",
+        "eventhouse-cli",
+        "eventschemaset-cli",
+        "eventstream-cli",
+        "fabriciq",
+        "fabriciq-ontology-cli",
+        "git-integration-operations-cli",
+        "hdinsight-migration",
+        "onelake-catalog-govern-cli",
+        "pipeline-migration",
+        "powerbi-report-cli",
+        "project-osmos",
+        "search-consumption-cli",
+        "semantic-model-authoring",
+        "spark-cli",
+        "sqldb-cli",
+        "sqldw-cli",
+        "synapse-migration",
+        "variable-library-cli"
       ],
       "skills": {
-        "sqldw-authoring-cli": {
-          "path": "skills/sqldw-authoring-cli",
-          "sha256": "91dbb4f97fceb850d20c5a3cf1c0637f4648af79237674662645f6f3112ad62f",
-          "frontmatter_name": "sqldw-authoring-cli",
+        "activator-cli": {
+          "path": "skills/activator-cli",
+          "sha256": "459865b0953c4b4f8c4c24eaa142b7c8d56b68db4edf578422fe56fa024c4d60",
+          "frontmatter_name": "activator-cli",
           "approved_optional": true
         },
-        "sqldw-consumption-cli": {
-          "path": "skills/sqldw-consumption-cli",
-          "sha256": "c634888eaf3bee1e5a3f2f0ef3bef980eb746a5dc872ebe1dc252dbf6e0c3d29",
-          "frontmatter_name": "sqldw-consumption-cli",
+        "azmon-mirroredcatalogs-operations-cli": {
+          "path": "skills/azmon-mirroredcatalogs-operations-cli",
+          "sha256": "ea20e40a9fe026f6421897a4bd9375482a4686248629d3152389afde17958256",
+          "frontmatter_name": "azmon-mirroredcatalogs-operations-cli",
           "approved_optional": true
         },
-        "sqldw-operations-cli": {
-          "path": "skills/sqldw-operations-cli",
-          "sha256": "1724df78560f6138be3cd7486b3f77b6d1593d617cda20c93c4183ce420f0548",
-          "frontmatter_name": "sqldw-operations-cli",
-          "approved_optional": false,
-          "deferred": true
+        "databricks-migration": {
+          "path": "skills/databricks-migration",
+          "sha256": "f646352cfa7c499b61fa2277a302ddb56a5467e5adda98595d4c34a732a8156c",
+          "frontmatter_name": "databricks-migration",
+          "approved_optional": true
+        },
+        "dataflows-cli": {
+          "path": "skills/dataflows-cli",
+          "sha256": "0f14dd7ec635eacdf30af01ca64854505c1b6158aa3bff507be9d219c09dfe85",
+          "frontmatter_name": "dataflows-cli",
+          "approved_optional": true
+        },
+        "deployment-pipelines-authoring-cli": {
+          "path": "skills/deployment-pipelines-authoring-cli",
+          "sha256": "61f3d56e6d721351348cf3295e79a74d4f89873342b8b98de09bd91b327f5a4c",
+          "frontmatter_name": "deployment-pipelines-authoring-cli",
+          "approved_optional": true
+        },
+        "e2e-fabric-cost-estimation": {
+          "path": "skills/e2e-fabric-cost-estimation",
+          "sha256": "4cfa5962710444b2e40b0ccaa6efe5f07f4c29e70551cd6bd818cbd8fa59a90b",
+          "frontmatter_name": "e2e-fabric-cost-estimation",
+          "approved_optional": true
+        },
+        "e2e-medallion-architecture": {
+          "path": "skills/e2e-medallion-architecture",
+          "sha256": "a0916d494e3a7cefc088770ef1769e0b6ebc3c26195b6c04fc5545d6436eda8d",
+          "frontmatter_name": "e2e-medallion-architecture",
+          "approved_optional": true
+        },
+        "eventhouse-cli": {
+          "path": "skills/eventhouse-cli",
+          "sha256": "18b42659ee2a92719c5c2f66f57ee392d7c16a6f971ba786337d0b3ad8155aea",
+          "frontmatter_name": "eventhouse-cli",
+          "approved_optional": true
+        },
+        "eventschemaset-cli": {
+          "path": "skills/eventschemaset-cli",
+          "sha256": "0b0653cb4efe75ab6d9db922d98f4b597ad068a408812e3178d31b6dd0c87aba",
+          "frontmatter_name": "eventschemaset-cli",
+          "approved_optional": true
+        },
+        "eventstream-cli": {
+          "path": "skills/eventstream-cli",
+          "sha256": "020cfb4a30f718ba3e6a611223a54279052233be0fc02fb5612f989afb44cd39",
+          "frontmatter_name": "eventstream-cli",
+          "approved_optional": true
+        },
+        "fabriciq": {
+          "path": "skills/fabriciq",
+          "sha256": "59f96b73b1bd6510a93f9ef7bbf2d79c9fdc2bb41618633a5098029135168fd4",
+          "frontmatter_name": "fabriciq",
+          "approved_optional": true
+        },
+        "fabriciq-ontology-cli": {
+          "path": "skills/fabriciq-ontology-cli",
+          "sha256": "07fb4b6375649c3deb7f6dbaf2ed7202fb93bf98373ab9fb95b79809cc0e3ec7",
+          "frontmatter_name": "fabriciq-ontology-cli",
+          "approved_optional": true
+        },
+        "git-integration-operations-cli": {
+          "path": "skills/git-integration-operations-cli",
+          "sha256": "b66048552a5d3262c39105b197c72da1325a4ce7029c92a1df3c07432345f5e8",
+          "frontmatter_name": "git-integration-operations-cli",
+          "approved_optional": true
+        },
+        "hdinsight-migration": {
+          "path": "skills/hdinsight-migration",
+          "sha256": "d6e6d46f3102baa61dfdd8fd5255f6783622a594f7b8fe635d36996b0f947dba",
+          "frontmatter_name": "hdinsight-migration",
+          "approved_optional": true
+        },
+        "onelake-catalog-govern-cli": {
+          "path": "skills/onelake-catalog-govern-cli",
+          "sha256": "9737b7875a0e624a1293007f68dedbaedc4975abdfe3be81dba708301eb36fa9",
+          "frontmatter_name": "onelake-catalog-govern-cli",
+          "approved_optional": true
+        },
+        "pipeline-migration": {
+          "path": "skills/pipeline-migration",
+          "sha256": "597e633776805af55ae8e22001cacc7c4d1b3fe6a622f73142411f8462a2e8ea",
+          "frontmatter_name": "pipeline-migration",
+          "approved_optional": true
+        },
+        "powerbi-report-cli": {
+          "path": "skills/powerbi-report-cli",
+          "sha256": "3474584efcbee6958b50608da4fd323bf22cdb8405841fcd110d2997d9eb91e7",
+          "frontmatter_name": "powerbi-report-cli",
+          "approved_optional": true
+        },
+        "project-osmos": {
+          "path": "skills/project-osmos",
+          "sha256": "2a704b36ba5b6d9543cdb88e57aa2ae28b3710bbd6e62333b03f3a3e90c5ec65",
+          "frontmatter_name": "project-osmos",
+          "approved_optional": true
+        },
+        "search-consumption-cli": {
+          "path": "skills/search-consumption-cli",
+          "sha256": "a6c3df28263f6518c824f8027aa3227c5374f24c9e3397b4137f6a783b0b9fdc",
+          "frontmatter_name": "search-consumption-cli",
+          "approved_optional": true
+        },
+        "semantic-model-authoring": {
+          "path": "skills/semantic-model-authoring",
+          "sha256": "13599b14ea8f3204186f4dac517bc25a678f56a53d8236b045a73ab6b82434cd",
+          "frontmatter_name": "semantic-model-authoring",
+          "approved_optional": true
+        },
+        "spark-cli": {
+          "path": "skills/spark-cli",
+          "sha256": "ced3963be2b2bbed117b629d86da70e151cd1da7e261672d95c8c3eace0fbfbb",
+          "frontmatter_name": "spark-cli",
+          "approved_optional": true
+        },
+        "sqldb-cli": {
+          "path": "skills/sqldb-cli",
+          "sha256": "2fab0ed1db5a5b702feada4aa3a42ddc6627dc11694a3c89456a212b2b73767c",
+          "frontmatter_name": "sqldb-cli",
+          "approved_optional": true
+        },
+        "sqldw-cli": {
+          "path": "skills/sqldw-cli",
+          "sha256": "6eeb17ce889c2fd01ad89cbb62391ad2047a883378759377c2b7dbac34275873",
+          "frontmatter_name": "sqldw-cli",
+          "approved_optional": true
+        },
+        "synapse-migration": {
+          "path": "skills/synapse-migration",
+          "sha256": "cddae2e6eb5e5ba1ba3011e2024778815089a3541bee76e92423b68d0a8dfa9d",
+          "frontmatter_name": "synapse-migration",
+          "approved_optional": true
+        },
+        "variable-library-cli": {
+          "path": "skills/variable-library-cli",
+          "sha256": "f9887f14e5d65e6ade6b8d888958f14056c81352135c6feacffde5722800b9d2",
+          "frontmatter_name": "variable-library-cli",
+          "approved_optional": true
+        }
+      },
+      "shared": {
+        "common": {
+          "path": "common",
+          "sha256": "a316b3cf360fa68d3cbd61bc2a5a4da964e07372d029774d55fd99dcfc729e98"
         }
       }
     }

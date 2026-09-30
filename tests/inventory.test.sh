@@ -241,6 +241,73 @@ else
 fi
 put_meta coop-data-doc coop-data-doc "$PIN_DDD"
 
+# F4c: a FOREIGN coop-data-doc earlier on PATH (pip --user copy, another tool
+#      manager, leftover shim) reporting 1.1.1 while the pipx venv's metadata
+#      says 1.2.0 is a PATH shadow, NOT a stale/corrupt venv: the old ordering
+#      sent the user to `pipx install --force`, which can never clear it
+#      (teammate report, 2026-09-30, v0.24.0).
+make_real_cdd "$PIN_DDD"
+mkdir -p "$FAKEBIN/shadowcdd"
+{
+  echo '#!/bin/sh'
+  echo 'echo "coop-data-doc, version 1.1.1"'
+} > "$FAKEBIN/shadowcdd/coop-data-doc"
+chmod +x "$FAKEBIN/shadowcdd/coop-data-doc"
+out="$(doctor_out "$d" "$FAKEBIN/shadowcdd:")"
+case "$out" in
+  *"stale/corrupt"*"coop-data-doc"*|*"coop-data-doc"*"stale/corrupt"*)
+    ko "PATH-shadowed coop-data-doc misreported as a stale venv: $(printf '%s' "$out" | grep 'coop-data-doc' | head -2)" ;;
+  *) ok "PATH-shadowed coop-data-doc not misreported as a stale venv" ;;
+esac
+case "$out" in
+  *"coop-data-doc skipped: coop-data-doc on PATH ($FAKEBIN/shadowcdd/coop-data-doc) is not the pipx one (it reports 1.1.1; pipx metadata says $PIN_DDD)"*)
+    ok "shadow classified with the resolved path and both versions" ;;
+  *) ko "shadow line missing/inexact: $(printf '%s' "$out" | grep 'coop-data-doc' | head -2)" ;;
+esac
+case "$out" in
+  *"pip uninstall coop-data-doc"*"pipx ensurepath"*) ok "hint names removing the copy or fixing PATH order" ;;
+  *) ko "shadow hint missing: $(printf '%s' "$out" | grep -A1 'skipped: coop-data-doc' | head -2)" ;;
+esac
+case "$out" in
+  *"coop-data-doc  (1.1.1)"*) ko "tools section still ticks the shadowed coop-data-doc green" ;;
+  *"coop-data-doc on PATH is not the pipx copy (see Release manifest above)"*) ok "tools section refuses the green tick for the shadowed copy" ;;
+  *) ko "tools section row for the shadowed copy missing: $(printf '%s' "$out" | grep 'coop-data-doc' | head -4)" ;;
+esac
+
+# F4d: same shadow, but pipx has NO coop-data-doc at all (fresh machine that got a
+#      pip copy instead): say so plainly and lead with the pinned pipx install.
+rm -f "$TMP/fixtures/coop-data-doc--coop-data-doc.meta"
+out="$(doctor_out "$d" "$FAKEBIN/shadowcdd:")"
+case "$out" in
+  *"is not the pipx one (it reports 1.1.1; pipx has no coop-data-doc installed)"*"pipx install coop-data-doc==$PIN_DDD, then remove that copy"*)
+    ok "shadow with no pipx copy names the missing install and leads with the pinned install" ;;
+  *) ko "no-pipx-copy shadow wording wrong: $(printf '%s' "$out" | grep 'coop-data-doc skipped' | head -1)" ;;
+esac
+put_meta coop-data-doc coop-data-doc "$PIN_DDD"
+rm -rf "$FAKEBIN/shadowcdd"
+
+# F4e: pipx has the venv (metadata 1.2.0) but NOTHING answers on PATH: the pipx
+#      bin dir is missing from PATH or the launcher was never generated. Name it.
+rm -f "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc"
+out="$(doctor_out "$d")"
+case "$out" in
+  *"coop-data-doc is not on PATH (pipx has $PIN_DDD installed)"*"pipx ensurepath"*"pipx reinstall coop-data-doc"*)
+    ok "venv without a PATH launcher reported as not on PATH with ensurepath/reinstall hint" ;;
+  *) ko "not-on-PATH wording wrong: $(printf '%s' "$out" | grep 'coop-data-doc' | head -2)" ;;
+esac
+
+# F4f: a launcher resolves on PATH but prints no version (broken leftover).
+mkdir -p "$PIPXHOME/venvs/coop-data-doc/bin"
+printf '#!/bin/sh\necho "Fatal error in launcher: Unable to create process" >&2\nexit 1\n' > "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc"
+chmod +x "$PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc"
+out="$(doctor_out "$d")"
+case "$out" in
+  *"coop-data-doc: coop-data-doc at $PIPXHOME/venvs/coop-data-doc/bin/coop-data-doc runs but prints no version (pipx metadata says $PIN_DDD); it printed: Fatal error in launcher: Unable to create process"*"pipx reinstall coop-data-doc"*)
+    ok "silent launcher reported with its path, its error line and a reinstall hint" ;;
+  *) ko "silent-launcher wording wrong: $(printf '%s' "$out" | grep 'coop-data-doc' | head -2)" ;;
+esac
+make_real_cdd "$PIN_DDD"
+
 # F5: wrong fab — a Paramiko/Fabric SSH tool must still be rejected, and must
 #     not be counted as ms-fabric-cli even if a venv exists.
 put_meta ms-fabric-cli ms-fabric-cli "$PIN_FAB"
