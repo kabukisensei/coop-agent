@@ -183,6 +183,42 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Guardrails ask before more Fabric MCP mutations (#154). The mutation check
+  matched no verb in `onelake_upload_file`, `onelake_modify_diagnostics`,
+  `onelake_modify_immutability_policy` or `onelake_reset_shortcut_cache`, or in
+  Fabric MCP 1.4.0's `datafactory_run-pipeline`, so those ran without approval.
+  The verb list adds `upload`, `modify`, `reset`, `upsert`, `insert`, `merge`,
+  `move`, `import`, `restore`, `cancel` and `assign`. Running, triggering or
+  starting a pipeline, job, notebook, dataflow or Spark job also asks first. A
+  plain `run`/`execute` stays out, so SQL reads keep their live-read rules and
+  don't get a second prompt. `tests/guardrails.test.mjs` now pins the Fabric MCP
+  1.3.0 and 1.4.0 tool inventory as must-ask and must-not-ask.
+- Users only get the release's tested versions (#151):
+  - `coop doctor --fix` installs `coop-data-doc`, `coop-sql-review` and
+    `coop-dax-review` at their manifest pins; it used to install PyPI's latest.
+    The Fabric CLI repair no longer falls back to an unpinned `ms-fabric-cli`. A
+    tool with no pin fails with "run: coop update".
+  - The Power BI/Fabric authoring tools install drops its `npm update -g`
+    fallback, which ignored the version and moved the tool to latest. A tool with
+    no manifest pin fails instead of installing unpinned.
+  - Hints no longer recommend `pi-coding-agent@latest`, an unversioned
+    `npm install -g @earendil-works/pi-coding-agent`, `pipx install
+    ms-fabric-cli`, or `uv tool install`. They say `coop install` / `coop update`,
+    or print the pinned version.
+  - A new gate test keeps `@latest` and `npm update -g` out of product code, and
+    checks that the manifest holds only exact versions.
+- `coop sync` no longer lets npm install the newest Pi into coop's extension tree
+  (#122). Several extensions declare `@earendil-works/pi-coding-agent` as a peer,
+  and coop's own convergence and realignment installs let npm auto-install peers,
+  so the tree got whatever npm's `latest` said. On 2026-09-29 that was 0.99.1,
+  fetched 16 seconds after it was published, which failed CI with E404, far
+  past the tested pin. `lib/_extdeps.py` now pins the agent peer to the running Pi's
+  version in the same npm `overrides` block as pi-ai and pi-tui. It treats any
+  other agent version in the tree as skew, so sync's realignment replaces it. The
+  convergence helpers in both twins write that pin before their own npm install.
+  `pi install` was never affected: Pi passes `--legacy-peer-deps` for its managed
+  installs. The Pi matrix now fails if the tree holds an agent other than the
+  runtime's version, and a new gate test covers the pin.
 - bash and PowerShell agree that a git worktree is a checkout (#106). bash tested for a
   `.git` directory and PowerShell for any `.git`, so in a linked worktree (where `.git`
   is a file) bash skipped the repo update step, doctor warned that skills would never

@@ -160,7 +160,7 @@ try {
           Coop-Err "shared-library skew remains after alignment (wanted pi-ai/pi-tui for pi $piRuntime)"
           $script:SyncFailures++
         } elseif ($alignRc -eq 11) {
-          Coop-Err "an installed extension needs newer pi-ai libraries than pi $piRuntime provides" 'update Pi: npm install -g @earendil-works/pi-coding-agent@latest, then: coop sync'
+          Coop-Err "an installed extension needs newer pi-ai libraries than pi $piRuntime provides" 'run: coop update (moves Pi to this release''s tested version), then: coop sync'
           $script:SyncFailures++
         }
       }

@@ -136,6 +136,12 @@ try {
               })
   if ($nested.Count -eq 0) { Ok 'no nested/hoisted pi-ai or pi-tui copies' } else { Ko "nested shared-lib copies found" }
 
+  # The agent peer, when npm installed it, is the runtime's own version, never
+  # npm's newest (#122).
+  $gotAgent = VerOf '@earendil-works\pi-coding-agent'
+  if (-not $gotAgent -or $gotAgent -eq $PiVersion) { Ok ("agent peer in the extension tree: {0} (runtime $PiVersion)" -f $(if ($gotAgent) { $gotAgent } else { 'absent' })) }
+  else { Ko "extension tree has pi-coding-agent $gotAgent, not the runtime's $PiVersion" }
+
   $cmEntry = Join-Path $agentNm 'context-mode'
   if (Test-Path $cmEntry) { Ok ("context-mode installed ({0})" -f (VerOf 'context-mode')) } else { Ko 'context-mode MISSING' }
   try { Get-Content (Join-Path $env:PI_CODING_AGENT_DIR 'mcp.json') -Raw | ConvertFrom-Json | Out-Null; Ok 'generated mcp.json parses' }
