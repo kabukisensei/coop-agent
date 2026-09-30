@@ -822,6 +822,7 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
     assert.match(candidate, /Equals\(\$Path, \$expected, \$comparison\)/);
     assert.match(candidate, /Test-Path -LiteralPath \$expected -PathType Leaf/);
     assert.match(candidate, /GetExtension\(\$expected\), '\.exe'/);
+    assert.match(candidate, /if \(-not \[string\]::Equals\(\$actual, \$expected, \$comparison\)\) \{ throw 'acceptance Python executable identity mismatch' \}/);
     assert.match(candidate, /& \$expected -c 'import os,sys; print\(os\.path\.abspath\(sys\.executable\)\)'/);
     assert.equal((candidate.match(/Get-AcceptancePython/g) || []).length, 4);
     assert.match(candidate, /try \{ \$pythonPath = Get-AcceptancePython \} catch \{ \$pythonPath = '' \}/);
@@ -873,16 +874,22 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
   };
   assertWiring(source);
   assertBehavior(source);
+  const identityMutant = source.replace("if (-not [string]::Equals($actual, $expected, $comparison))", "if ($false)");
   for (const [index, mutant] of [
     source.replace("if ($env:CERT_PYTHON) {", "if ($false) {"),
     source.replace("return Resolve-AcceptancePythonExecutable $env:CERT_PYTHON", "return 'python'"),
     source.replace("try { return Resolve-AcceptancePythonExecutable $python.Source }", `try { return '${resolve(process.execPath).replaceAll("'", "''")}' }`),
     source.replace("if (-not [string]::Equals($Path, $expected, $comparison))", "if ($false)"),
-    source.replace("if (-not [string]::Equals($actual, $expected, $comparison))", "if ($false)"),
+    // The identity check's behavioral witness is a wrapper that runs Python under
+    // another name. On Windows the .exe rule rejects the .cmd wrapper first, and no
+    // portable .exe reports a different sys.executable, so there the wiring
+    // mutant below is what proves the check is present.
+    ...(process.platform === "win32" ? [] : [identityMutant]),
   ].entries()) assert.throws(() => assertBehavior(mutant), `Python resolver behavioral mutant ${index} was accepted`);
   for (const [index, mutant] of [
     source.replace("FilePath = $pythonPath", "FilePath = 'python'"),
     source.replace("$onboardPython = Get-AcceptancePython", "$onboardPython = 'python'"),
+    identityMutant,
   ].entries()) assert.throws(() => assertWiring(mutant), `Python resolver wiring mutant ${index} was accepted`);
 });
 
