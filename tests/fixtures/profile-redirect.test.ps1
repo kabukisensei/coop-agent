@@ -63,10 +63,10 @@ try {
   Check ($dirs[1] -eq (Join-Path $sandbox 'Desktop')) 'the Desktop target is the sandbox Desktop' "got $($dirs[1])"
   foreach ($d in $dirs) { Check (Test-CoopPathInside $d $tmp) "every target is inside the sandbox ($d)" }
 
-  # --- 3. Only USERPROFILE redirected: APPDATA still on the real profile ------
-  $env:APPDATA = Join-Path $registered 'AppData\Roaming'
+  # --- 3. Only USERPROFILE redirected: APPDATA still the registered roaming folder
+  $env:APPDATA = [string][Environment]::GetFolderPath('ApplicationData')
   $dirs = @(Get-CoopShortcutDirs)
-  Check ((Test-CoopPathInside $dirs[0] $sandbox) -and ($dirs[0] -like '*Start Menu*Programs')) 'a real-profile APPDATA is ignored: the Start Menu target moves under the sandbox' "got $($dirs[0])"
+  Check ((Test-CoopPathInside $dirs[0] $sandbox) -and ($dirs[0] -like '*Start Menu*Programs')) 'the registered APPDATA is ignored: the Start Menu target moves under the sandbox' "got $($dirs[0])"
   Remove-Item Env:\APPDATA -ErrorAction SilentlyContinue
   $dirs = @(Get-CoopShortcutDirs)
   Check (Test-CoopPathInside $dirs[0] $sandbox) 'no APPDATA at all: the Start Menu target is under the sandbox' "got $($dirs[0])"

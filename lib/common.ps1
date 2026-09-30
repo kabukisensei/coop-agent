@@ -1943,11 +1943,16 @@ function Test-CoopProfileRedirected {
 # install uses the Windows shell folders (they follow a OneDrive-redirected
 # Desktop); an isolated one uses the redirected profile's own Desktop and the
 # Start Menu under its roaming AppData (APPDATA when it was redirected too,
-# else <profile>\AppData\Roaming), so nothing lands on the real profile.
+# else <profile>\AppData\Roaming), so nothing lands on the real profile. A
+# sandbox may itself sit under the real profile (C:\Users\me\sandbox), so the
+# APPDATA test is "is it still the account's registered roaming folder", not
+# "is it under the real profile".
 function Get-CoopShortcutDirs {
   if (Test-CoopProfileRedirected) {
     $profileDir = Get-CoopProfileInUse
-    $roaming = if ($env:APPDATA -and -not (Test-CoopPathInside $env:APPDATA (Get-CoopRegisteredProfile))) {
+    $registeredRoaming = try { [string][Environment]::GetFolderPath('ApplicationData') } catch { '' }
+    $appData = ConvertTo-CoopComparablePath ([string]$env:APPDATA)
+    $roaming = if ($appData -and ($appData -ne (ConvertTo-CoopComparablePath $registeredRoaming))) {
       [string]$env:APPDATA
     } else {
       Join-Path $profileDir 'AppData\Roaming'
