@@ -8,7 +8,7 @@ intention of the [Windows terminal plan, revision 2.0](history/COOP_WINDOWS_TERM
 (Windows-first, stable and beta kept separate, bounded simplification, qualified
 upgrades, TeamAI and Jev as optional experiments) and **replaces its execution
 order**. Revision 2.0 stays in the tree as the detailed reference for each package
-(S1–S7, U1, N1, SK1, K1–K3, J0–J3, PK1); where the two documents disagree on order,
+(S1–S7, U1, SK1, K1–K3, J0–J3, PK1; N1 is new in revision 3.8, section 10); where the two documents disagree on order,
 scope, or the Desktop direction, this document wins.
 
 **Authority and status:** a plan, not a receipt. Nothing here is implemented by
