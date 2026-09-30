@@ -11,7 +11,7 @@
 # stdin is redirected), so inputs are fed through `script`.
 set -uo pipefail
 
-ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+CHECKOUT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
 [ -z "$PY" ] && { echo "python3 required"; exit 1; }
 
@@ -21,6 +21,15 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+
+# Launch coop from a plain copy of this tree with no .git (#104): the launch's
+# once-a-day refresh fetches origin into the checkout it runs from, and a test
+# must never touch the checkout running it (#135). Each case sets its own HOME;
+# the agent dir and standards roots resolve inside it.
+ROOT="$WORK/coop-agent"; mkdir "$ROOT"
+cp -R "$CHECKOUT"/* "$CHECKOUT/.coop" "$ROOT/"
+unset COOP_AGENT_DIR PI_CODING_AGENT_DIR \
+      COOP_STANDARDS_ROOT COOP_STANDARDS_STATE COOP_STANDARDS_SNAPSHOT_ROOT
 
 FAKEBIN="$WORK/bin"; mkdir -p "$FAKEBIN"
 MARKER="$WORK/marker"; mkdir -p "$MARKER"

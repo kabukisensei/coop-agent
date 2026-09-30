@@ -78,7 +78,7 @@ EOF_PREREQS
 unset _us _o _n _req _ok _det _fix _line
 
 section "Core"
-check pi      required "npm install -g @earendil-works/pi-coding-agent   (or: coop bootstrap)" "pi --version"
+check pi      required "coop install   (installs the release's tested Pi)" "pi --version"
 check npm     optional "ships with Node.js" "npm --version"
 
 # Minimum Pi version — the extension API used by coop-powerline / coop-tools.
@@ -252,14 +252,14 @@ if have fab; then
   if printf '%s' "$fabver" | grep -qiE 'paramiko|invoke'; then
     bad "fab is the WRONG tool" "this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI"
     if [ "$JSON" = 0 ]; then
-      coop_say "      Fix: pipx install ms-fabric-cli   and ensure ~/.local/bin precedes Homebrew on PATH"
+      coop_say "      Fix: pipx install $(coop_manifest_python_spec ms-fabric-cli || echo ms-fabric-cli)   and ensure ~/.local/bin precedes Homebrew on PATH"
       coop_say "           (or: brew uninstall fabric). Verify with: fab --version"
     fi
   else
     ok "fab — Microsoft Fabric CLI  ($(fab --version 2>/dev/null | head -1))"
   fi
 else
-  bad "fab missing" "pipx install ms-fabric-cli"
+  bad "fab missing" "coop install   (or: pipx install $(coop_manifest_python_spec ms-fabric-cli || echo ms-fabric-cli))"
 fi
 
 section "Standalone Coop tools (pipx)"
@@ -305,7 +305,7 @@ if have fab; then
       ok "fabric-cicd${cicd_meta:+ $cicd_meta} (library, in the Fabric CLI env)"
     fi
   else
-    warn "fabric-cicd not installed" "pipx inject ms-fabric-cli fabric-cicd${cicd_expected:+==$cicd_expected}  (or: uv tool install ms-fabric-cli --with fabric-cicd)"
+    warn "fabric-cicd not installed" "pipx inject ms-fabric-cli fabric-cicd${cicd_expected:+==$cicd_expected}"
   fi
 else
   warn "fabric-cicd: install the Microsoft Fabric CLI first" "coop install"
@@ -578,7 +578,7 @@ else
 fi
 
 section "coop-agent repository"
-if [ -d "$COOP_ROOT/.git" ] && have git; then
+if coop_is_git_checkout "$COOP_ROOT" && have git; then
   # Staleness nudge: refresh origin at most once/day (5s watchdog; silent offline),
   # then compare against the release `coop update` would move to — local + instant.
   # A checkout the update cannot move (hold, diverged, no origin/main) is named.
@@ -608,22 +608,33 @@ if [ "$FIX" = 1 ] && { [ "$FAIL" -gt 0 ] || [ "$WARN" -gt 0 ]; }; then
   fi
   if have pipx; then
     if ! have fab; then
+      # Repairs install the release's pinned versions only, never PyPI's latest.
       fabric_spec="$(coop_manifest_python_spec ms-fabric-cli)"
-      [ -n "$fabric_spec" ] || fabric_spec=ms-fabric-cli
-      coop_info "pipx install $fabric_spec"
-      if pipx install "$fabric_spec" >/dev/null 2>&1 \
-          && coop_converge_fabric_python_packages \
-          && coop_ensure_fabric_odbc_driver 1; then
-        coop_ok "managed Fabric runtime installed"
-      else
-        coop_warn "could not install the managed Fabric runtime" "run: coop install"
+      if [ -z "$fabric_spec" ]; then
+        coop_warn "no release pin for ms-fabric-cli in the manifest" "run: coop update"
         repair_failed=1
+      else
+        coop_info "pipx install $fabric_spec"
+        if pipx install "$fabric_spec" >/dev/null 2>&1 \
+            && coop_converge_fabric_python_packages \
+            && coop_ensure_fabric_odbc_driver 1; then
+          coop_ok "managed Fabric runtime installed"
+        else
+          coop_warn "could not install the managed Fabric runtime" "run: coop install"
+          repair_failed=1
+        fi
       fi
     fi
     for t in coop-data-doc coop-sql-review coop-dax-review; do
       if ! have "$t"; then
-        coop_info "pipx install $t"
-        pipx install "$t" >/dev/null 2>&1 && coop_ok "$t installed" || coop_warn "could not install $t (run: pipx install $t)"
+        t_spec="$(coop_manifest_python_spec "$t")"
+        if [ -z "$t_spec" ]; then
+          coop_warn "no release pin for $t in the manifest" "run: coop update"
+          repair_failed=1
+          continue
+        fi
+        coop_info "pipx install $t_spec"
+        pipx install "$t_spec" >/dev/null 2>&1 && coop_ok "$t installed" || coop_warn "could not install $t (run: pipx install $t_spec)"
       fi
     done
   fi

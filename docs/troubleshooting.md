@@ -37,14 +37,15 @@ If `node`/`npm` and `pi` resolve into different prefixes (e.g. `pi` in
 **Fix — update the tree coop actually runs** (Homebrew example):
 
 ```bash
-/opt/homebrew/bin/npm install -g @earendil-works/pi-coding-agent@latest
+# the release's tested Pi version: pi.version in config/release-manifest.json
+/opt/homebrew/bin/npm install -g @earendil-works/pi-coding-agent@<pi.version>
 coop sync        # re-aligns the isolated extension tree's pi-ai / pi-tui
 ```
 
 **Verify.**
 
 ```bash
-coop version     # the pi version line must now be current
+coop version     # the pi version line must now match the release's pi.version
 coop             # must launch with no preflight warning
 ```
 

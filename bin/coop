@@ -78,7 +78,6 @@ ${COOP_BOLD}Usage${COOP_RST}
   coop install              Fresh-install / bootstrap everything (idempotent)
   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
-  coop web                  Open a friendly browser UI over the agent (experimental)
   coop onboard              First-run global onboarding (creates ~/.coop/user.json)
   coop profile              Show your COOP user profile
   coop profile edit         Edit your COOP user profile
@@ -160,7 +159,7 @@ EOF
 
 # --- Assemble the exact Pi launch spec (args + brand env) --------------------
 # SINGLE SOURCE OF TRUTH for how coop launches Pi. Both `launch_pi` (the terminal
-# agent) and `coop launch-spec` (JSON for a future UI / coop web bridge) consume
+# agent) and `coop launch-spec` (JSON for the future desktop app) consume
 # this, so the terminal and any other surface can NEVER drift. Populates the global
 # COOP_PI_ARGS array and exports the brand env (vibes/splash). PI_CODING_AGENT_DIR
 # (isolation) is exported at the top of this script. Read-only; never launches pi.
@@ -271,7 +270,7 @@ coop_fabric_mcp_token() {
 }
 
 launch_pi() {
-  have pi || coop_die "pi is not installed. Run: coop install   (or: npm install -g @earendil-works/pi-coding-agent)"
+  have pi || coop_die "pi is not installed. Run: coop install   (installs the release's tested Pi)"
 
   # First-run onboarding: ask for name/communication preference before the first
   # real session, but only in an interactive terminal and only if not disabled.
@@ -329,10 +328,10 @@ launch_raw_pi() {
   exec pi "$@"
 }
 
-# --- Emit the launch spec (for a UI / coop web bridge) -----------------------
+# --- Emit the launch spec (for the future desktop app) -----------------------
 # Internal/advanced. `coop launch-spec` prints the resolved pi invocation
 # (human-readable); `--json` emits {"bin","args","env"} for a programmatic consumer
-# — e.g. a future coop web bridge that spawns `pi --mode rpc` with the SAME governed
+# — e.g. the future desktop app, which spawns `pi --mode rpc` with the SAME governed
 # spec the terminal uses. Read-only: builds the spec, never launches pi.
 coop_launch_spec() {
   local want_json=0 a
@@ -391,28 +390,12 @@ JS
   fi
 }
 
-# --- coop web (experimental): friendly browser UI over `pi --mode rpc` --------
-# Spawns the SAME governed coop the terminal runs, but drives it from a local
-# browser window (SSE bridge). Uses the shared launch spec so it can never drift
-# from the terminal. Localhost + one-time token; see web/server.mjs and
-# docs/history/coop-web-plan.md.
-coop_web() {
-  have pi   || coop_die "pi is not installed. Run: coop install"
-  have node || coop_die "Node.js is required for coop web. Run: coop install"
-  coop_launch_preflight
-  # Same Fabric/Power BI token check (and automatic sign-in) the terminal launch
-  # does. The PowerShell twin opens the sign-in in its own window here, because
-  # the Windows 'coop' shortcut runs `coop web` in a minimized console.
-  coop_az_preflight
-  local spec py
-  spec="$(coop_launch_spec --json)" || coop_die "couldn't build the launch spec for coop web"
-  py="$(coop_python 2>/dev/null || true)"
-  unset COOP_FABRIC_MCP_TOKEN
-  unset COOP_PYTHON_BIN
-  if [ -n "$py" ]; then
-    COOP_PYTHON_BIN="$py" COOP_LAUNCH_SPEC="$spec" exec node "$COOP_ROOT/web/server.mjs" "$@"
-  fi
-  COOP_LAUNCH_SPEC="$spec" exec node "$COOP_ROOT/web/server.mjs" "$@"
+# --- coop web (retired) --------------------------------------------------------
+# The browser UI was removed (master plan S5); the installable desktop app comes
+# later. Keep the word working for old shortcuts and habits: start the terminal agent.
+coop_web_retired() {
+  coop_warn "coop web was removed; starting coop in this terminal"
+  launch_pi
 }
 
 # --- Tool passthrough --------------------------------------------------------
@@ -1248,7 +1231,7 @@ case "$cmd" in
     exec pi install "$@"
     ;;
   sync)          shift; exec "$COOP_ROOT/scripts/sync.sh" "$@" ;;
-  web)           shift; coop_web "$@" ;;
+  web)           shift; coop_web_retired ;;
   launch-spec)   shift; coop_launch_spec "$@" ;;
   onboard)       shift; run_onboard onboard "$@" ;;
   profile)       shift; run_profile "$@" ;;

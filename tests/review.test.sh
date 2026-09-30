@@ -8,6 +8,14 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# Sandbox every home location coop review writes (#135): standards snapshots
+# and state resolve inside this home, never the real ~/.coop.
+HOME="$TMP/home"; USERPROFILE="$HOME"; COOP_DIR="$HOME"
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) USERPROFILE="$(cygpath -w "$HOME")" ;; esac
+COOP_AGENT_DIR="$HOME/.coop/agent"; PI_CODING_AGENT_DIR="$COOP_AGENT_DIR"
+mkdir -p "$COOP_AGENT_DIR"
+export HOME USERPROFILE COOP_DIR COOP_AGENT_DIR PI_CODING_AGENT_DIR
+unset COOP_STANDARDS_ROOT COOP_STANDARDS_STATE COOP_STANDARDS_SNAPSHOT_ROOT
 
 fail() { printf '  ✗ %s\n' "$1"; exit 1; }
 pass() { printf '  ✓ %s\n' "$1"; }

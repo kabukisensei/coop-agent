@@ -12,7 +12,7 @@
 # repaired — doctor stays read-only here.
 set -uo pipefail
 
-ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+CHECKOUT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
 [ -z "$PY" ] && { echo "python3 required"; exit 1; }
 
@@ -22,6 +22,12 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+
+# Run doctor and sync from a plain copy of this tree with no .git (#104):
+# doctor's once-a-day refresh fetches origin into the checkout it runs from,
+# and a test must never touch the checkout running it (#135).
+ROOT="$TMP/coop-agent"; mkdir "$ROOT"
+cp -R "$CHECKOUT"/* "$CHECKOUT/.coop" "$ROOT/"
 
 PIN_FAB="1.7.0"; PIN_DDD="1.2.0"
 

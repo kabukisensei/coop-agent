@@ -538,6 +538,14 @@ function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
   if (-not $npm) { return $false }
   node (Join-Path $script:CoopRoot 'lib\pins.js') $AgentDir @Specs
   if ($LASTEXITCODE -ne 0) { return $false }
+  # This npm install auto-installs peers. Pin the agent peer (and pi-ai/pi-tui) to
+  # the running Pi first (#122); unpinned, npm fetched the newest agent into the
+  # tree seconds after upstream published it. Best-effort, like the alignment.
+  $piVer = Get-CoopPiVersion
+  $py = Get-CoopPython
+  if ($piVer -and $py) {
+    & $py (Join-Path $script:CoopRoot 'lib\_extdeps.py') align $AgentDir $piVer *> $null
+  }
   Push-Location $npmDir
   $npmOut = @(& $npm install --silent --no-audit --no-fund 2>&1)
   $rc = $LASTEXITCODE
@@ -980,7 +988,7 @@ function Sync-CoopExtDeps {
 # interactive console (stdin and stderr not redirected, or COOP_ASSUME_YES=1),
 # coop runs `az login --tenant <id>` itself: no question, bounded to 5 minutes,
 # and Ctrl-C cancels it (read as a key, so it does not stop the launch). With
-# -NewWindow (Windows `coop web`, which the 'coop' shortcut runs in a minimized
+# -NewWindow (the retired `coop web`, which the old 'coop' shortcut ran in a minimized
 # console) the sign-in opens in its own visible window, and a failed, cancelled
 # or timed-out sign-in also shows its line in a window until Enter. A timeout or
 # a non-authentication error never opens a sign-in. Any failure prints ONE line
@@ -1261,6 +1269,19 @@ function Invoke-CoopAzPreflight {
 # silently never updates, and even a git checkout has no signal between updates.
 # These helpers power step 1 of `coop update` and the doctor / launch nudge.
 
+# Is <Dir> a git checkout: a clone (.git directory) or a linked worktree or
+# submodule (.git file naming its gitdir). Both twins use this one rule (#106), so
+# bash and PowerShell agree on a worktree; a plain copy, or a .git file that names
+# no gitdir, is not a checkout. No git process is started.
+# (mirror of coop_is_git_checkout)
+function Test-CoopGitCheckout([string]$Dir) {
+  $g = Join-Path $Dir '.git'
+  if (Test-Path -LiteralPath $g -PathType Container) { return $true }
+  if (-not (Test-Path -LiteralPath $g -PathType Leaf)) { return $false }
+  try { $first = ([System.IO.File]::ReadAllText($g) -split "`r?`n", 2)[0] } catch { return $false }
+  return ($first.StartsWith('gitdir: ') -and $first.Length -gt 8)
+}
+
 # Quietly refresh origin — at most once per day (marker in the effective agent
 # dir) and bounded by a 5s wait, so an offline or VPN-black-holed fetch can never
 # stall doctor or a launch. Stamps BEFORE fetching, so an offline machine pays
@@ -1269,7 +1290,7 @@ function Invoke-CoopAzPreflight {
 # origin remote). (mirror of coop_repo_fetch_throttled)
 function Invoke-CoopRepoFetchThrottled {
   if (-not (Test-Have 'git')) { return $false }
-  if (-not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) { return $false }
+  if (-not (Test-CoopGitCheckout $script:CoopRoot)) { return $false }
   & git -C $script:CoopRoot remote get-url origin *> $null
   if ($LASTEXITCODE -ne 0) { return $false }
   $agentDir = Get-CoopEffectiveAgentDir
@@ -1388,7 +1409,7 @@ function Get-CoopRepoNewestRelease {
 function Get-CoopRepoNextRelease {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return '' }
-  if (-not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) { return '' }
+  if (-not (Test-CoopGitCheckout $script:CoopRoot)) { return '' }
   if (-not (Test-CoopRepoFollowsReleases)) { return '' }
   $tag = Get-CoopRepoNewestRelease -Filter @('--contains', 'HEAD')
   if (-not $tag) { return '' }
@@ -1404,7 +1425,7 @@ function Get-CoopRepoNextRelease {
 function Get-CoopRepoDescribe {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return '' }
-  if (-not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) { return '' }
+  if (-not (Test-CoopGitCheckout $script:CoopRoot)) { return '' }
   $d = Get-CoopRepoGitLine @('describe', '--tags', '--match', 'v[0-9]*.[0-9]*.[0-9]*', '--exclude', '*-*', '--exclude', 'v*.*.*.*', '--always')
   if ($d -cmatch '^(v[0-9]|[0-9a-f]{4})[0-9A-Za-z.-]*$') { return $d }
   return ''
@@ -1452,7 +1473,7 @@ function Get-CoopRepoStranded {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return $null }
   $root = $script:CoopRoot
-  if (-not (Test-Path -LiteralPath (Join-Path $root '.git'))) { return $null }
+  if (-not (Test-CoopGitCheckout $root)) { return $null }
   & git -C $root remote get-url origin *> $null
   if ($LASTEXITCODE -ne 0) {
     # Renamed (origin -> upstream) or removed: name it before it reads as a hold.
@@ -1500,7 +1521,7 @@ function Write-CoopRepoStranded {
 # still changes nothing. (mirror of coop_repo_check_line)
 function Get-CoopRepoCheckLine {
   $ErrorActionPreference = 'Continue'
-  if (-not (Test-Have 'git') -or -not (Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git'))) {
+  if (-not (Test-Have 'git') -or -not (Test-CoopGitCheckout $script:CoopRoot)) {
     return @{ Line = 'not a git checkout: coop update never moves it'; Hint = '' }
   }
   $at = Get-CoopRepoDescribe; if (-not $at) { $at = 'checkout' }
@@ -1857,4 +1878,42 @@ function Invoke-CoopScript {
   $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
   & $psExe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @ScriptArgs
   return $LASTEXITCODE
+}
+
+# --- Double-click launcher (Start Menu + Desktop) ------------------------------
+# One "coop" shortcut on the Start Menu and Desktop opens the terminal agent through
+# bin\coop-desktop.ps1, which finds or installs coop, runs it, and keeps the window
+# open on error. The browser chat is retired (master plan S5): the old "coop"
+# shortcut ran `coop web` in a minimized console, and "coop (terminal)" was the
+# terminal. install writes the shortcut; update rewrites it only where a coop
+# shortcut already exists (-OnlyIfPresent), so old shortcuts are repaired and a
+# removed one stays removed. Best-effort: returns $true when a shortcut was written.
+function Set-CoopDesktopShortcuts {
+  param([switch]$OnlyIfPresent)
+  if ($env:OS -ne 'Windows_NT') { return $false }
+  $desktopLauncher = Join-Path $script:CoopRoot 'bin\coop-desktop.ps1'
+  if (-not (Test-Path -LiteralPath $desktopLauncher)) { return $false }
+  $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $icon  = Join-Path $script:CoopRoot 'themes\coop.ico'
+  $ws = New-Object -ComObject WScript.Shell
+  $wrote = $false
+  foreach ($dir in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
+    if (-not $dir) { continue }
+    $main = Join-Path $dir 'coop.lnk'
+    $legacyTerminal = Join-Path $dir 'coop (terminal).lnk'
+    $present = (Test-Path -LiteralPath $main) -or (Test-Path -LiteralPath $legacyTerminal)
+    if ($OnlyIfPresent -and -not $present) { continue }
+    $sc = $ws.CreateShortcut($main)
+    $sc.TargetPath       = $psExe
+    $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`""
+    $sc.WorkingDirectory = $HOME
+    $sc.Description      = 'coop - the Cooptimize analytics agent'
+    $sc.WindowStyle      = 1
+    # ',0' = explicit icon index; some shells show a generic icon without it.
+    if (Test-Path -LiteralPath $icon) { $sc.IconLocation = "$icon,0" }
+    $sc.Save()
+    $wrote = $true
+    if (Test-Path -LiteralPath $legacyTerminal) { Remove-Item -LiteralPath $legacyTerminal -Force -ErrorAction SilentlyContinue }
+  }
+  return $wrote
 }
