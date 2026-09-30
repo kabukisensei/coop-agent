@@ -136,6 +136,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- `coop doctor --json` on Windows prints one JSON document again (#90). Three hints in
+  the pipx tool check (stale environment, an executable that is not the pinned one,
+  a Requires-Python violation) used bash's trailing-backslash line continuation,
+  which PowerShell does not have: the warning recorded `\` as its hint and the real
+  hint printed to stdout on its own, before the JSON that `coop doctor --publish`
+  and the fleet digest parse. `scripts/check-parity.sh` now rejects a `.ps1` line
+  that ends in a backslash continuation.
 - `release.yml` refuses a tag that is not `v` + `VERSION` or not on `origin/main`
   (#121), before it publishes anything. `coop release` already tags only from an
   up-to-date `main` (#105); this catches a tag pushed by hand, which teammates

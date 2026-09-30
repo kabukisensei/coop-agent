@@ -164,6 +164,29 @@ for pair in install update doctor uninstall; do
   _report_diff "scripts/$pair.{sh,ps1} recognize the same flags" "$PARITY_TMP/$pair-bash" "$PARITY_TMP/$pair-ps"
 done
 
+echo "→ no bash-style backslash line continuation in any .ps1"
+# PowerShell continues a line with a backtick, never a backslash. A trailing ' \'
+# passes the parsers: the backslash becomes an argument and the next line runs as
+# its own statement, which is how doctor.ps1 --json printed hints before its JSON
+# (#90). Comments and here-string bodies (embedded sh scripts) are exempt.
+bs_bad=0
+while IFS= read -r f; do
+  # Plain string tests, no octal escapes, so BSD awk on macOS reads it the same.
+  hits="$(awk -v sq="'" '
+    { line = $0; sub(/[[:space:]]+$/, "", line); lead = line; sub(/^[[:space:]]+/, "", lead) }
+    here { if (substr(lead, 1, 2) == "\"@" || substr(lead, 1, 2) == sq "@") here = 0; next }
+    substr(lead, 1, 1) == "#" { next }
+    { tail = substr(line, length(line) - 1) }
+    tail == "@\"" || tail == "@" sq { here = 1; next }
+    tail ~ /[[:space:]]\\$/ { printf "%d ", NR }
+  ' "$f")"
+  if [ -n "$hits" ]; then
+    ko "$f ends a line with a bash-style \\ continuation (line ${hits% }) — join the call onto one line or build the argument in a variable first"
+    bs_bad=1
+  fi
+done < <(find . -name '*.ps1' -not -path './.git/*' -not -path '*/node_modules/*' -not -path './.cache/*' | sed 's|^\./||' | sort)
+[ "$bs_bad" -eq 0 ] && ok "no .ps1 ends a line with a bash-style backslash continuation"
+
 if [ "$fail" -ne 0 ]; then
   echo "✗ parity check FAILED — fix the offenders above (see CONTRIBUTING.md → PowerShell requirements)"
   exit 1
