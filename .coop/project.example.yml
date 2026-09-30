@@ -182,12 +182,13 @@ microsoft_skills:
 fabric_skills:
   policy: baseline
   # Exact source/revision/path pins live in config/microsoft-skills.json.
-  # Baseline enables only sqldw-authoring-cli and sqldw-consumption-cli from
-  # microsoft/skills-for-fabric v0.3.10; sqldw-operations-cli is deferred.
-  #   - "dataflows-cli"
-  #   - "e2e-medallion-architecture"
-  #   - "spark-authoring-cli"
-  #   - "fabriciq"
+  # Baseline enables every skill in the pinned microsoft/skills-for-fabric
+  # catalog (v0.3.18). To load a subset instead, switch to `policy: restricted`
+  # and list the skills, e.g.:
+  #   - "sqldw-cli"
+  #   - "eventhouse-cli"
+  #   - "powerbi-report-cli"
+  #   - "semantic-model-authoring"
 
 # Standards: the canonical Cooptimize standards come from cooptimize/coop-standards
 # (`coop sync`, `/standards-status`). Add an override only when this project has

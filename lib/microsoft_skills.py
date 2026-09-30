@@ -28,8 +28,12 @@ except Exception:  # pragma: no cover
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "config" / "microsoft-skills.json"
-MAX_SKILL_BYTES = 750_000
+# Per-tree byte cap. skills-for-fabric v0.3.18's powerbi-report-cli is ~1.04 MB
+# of Markdown (88 files); the cap bounds a runaway upstream, not a real skill.
+MAX_SKILL_BYTES = 1_500_000
 MAX_FILE_BYTES = 500_000
+# Relative Markdown link, e.g. `](../../common/COMMON-CLI.md#section)`.
+MD_LINK_RE = re.compile(r"\]\(([^)\s<>]+)\)")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -118,6 +122,7 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(repos, dict):
         raise ValueError("manifest missing repositories")
     seen: set[str] = set()
+    shared_seen: set[str] = set()
     for repo_key, repo in repos.items():
         if repo_key not in {"microsoft_skills", "fabric_skills"}:
             raise ValueError(f"unexpected repository key {repo_key}")
@@ -138,6 +143,24 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         baseline = repo.get("baseline")
         if not isinstance(skills, dict) or not isinstance(baseline, list):
             raise ValueError(f"repository {repo_key} missing skills/baseline")
+        shared = repo.get("shared", {})
+        if not isinstance(shared, dict):
+            raise ValueError(f"repository {repo_key} has invalid shared trees")
+        for name, meta in shared.items():
+            # A shared tree is published at `<generation>/<name>` so the skills'
+            # `../../<name>/...` links resolve; it must not shadow a repo slot.
+            if not isinstance(name, str) or not NAME_RE.match(name):
+                raise ValueError(f"invalid shared tree name {name!r}")
+            if name in repos or name in shared_seen:
+                raise ValueError(f"shared tree name collides: {name}")
+            shared_seen.add(name)
+            if not isinstance(meta, dict):
+                raise ValueError(f"invalid shared tree metadata for {name}")
+            rel = Path(str(meta.get("path", "")))
+            if rel.is_absolute() or ".." in rel.parts or rel.name == "":
+                raise ValueError(f"invalid manifest path for shared tree {name}")
+            if not SHA256_RE.match(str(meta.get("sha256", ""))):
+                raise ValueError(f"missing trusted content hash for shared {name}")
         for name in list(skills) + baseline:
             if not isinstance(name, str) or not NAME_RE.match(name):
                 raise ValueError(f"invalid skill name {name!r}")
@@ -266,11 +289,59 @@ def validate_skill(src: Path, expected_name: str, own: set[str]) -> dict[str, An
     return {"bytes": total, "hash": digest, "files": files, "real": str(real)}
 
 
-def generation_id(skills: list[dict[str, Any]]) -> str:
+def generation_id(
+    skills: list[dict[str, Any]], shared: list[dict[str, Any]] | None = None
+) -> str:
     """Content address a generation from canonical, fully verified receipts."""
+    payload: Any = skills
+    if shared:
+        payload = {"skills": skills, "shared": shared}
     return hashlib.sha256(
-        json.dumps(skills, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def validate_shared(src: Path) -> dict[str, Any]:
+    if not src.is_dir():
+        raise ValueError(f"missing shared tree {src}")
+    if src.is_symlink():
+        raise ValueError(f"symlink rejected in {src}")
+    digest, files, total = sha_tree(src)
+    return {"bytes": total, "hash": digest, "files": files}
+
+
+def unresolved_refs(root: Path, limit: int = 50) -> list[str]:
+    """Relative Markdown links under `root` whose target is missing.
+
+    Advisory: upstream skills link sibling skills and shared trees (`common/`)
+    by relative path, and a name/hash-only catalog silently drops those. This
+    reports what the published layout does not satisfy; it never blocks launch.
+    """
+    root = root.resolve()
+    out: list[str] = []
+    for md in sorted(root.rglob("*.md")):
+        if md.is_symlink():
+            continue
+        try:
+            text = md.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in MD_LINK_RE.finditer(text):
+            target = m.group(1).split("#", 1)[0]
+            if not target or "://" in target or target.startswith(("mailto:", "/")):
+                continue
+            # Template placeholders and regex fragments inside code samples.
+            if target == "..." or any(c in target for c in "{}[]\\^*$"):
+                continue
+            target = urllib.parse.unquote(target)
+            candidate = (md.parent / target).resolve()
+            if root not in candidate.parents and candidate != root:
+                continue
+            if not candidate.exists():
+                out.append(f"{md.relative_to(root).as_posix()} -> {target}")
+                if len(out) >= limit:
+                    return out
+    return out
 
 
 def git_archive_exact(url: str, revision: str, dest: Path) -> None:
@@ -365,10 +436,12 @@ def refresh(project_path: Path | None, *, force: bool = False) -> int:
     try:
         own = own_skill_names()
         enabled: list[dict[str, Any]] = []
+        shared_enabled: list[dict[str, Any]] = []
         receipt: dict[str, Any] = {
             "schema_version": 1,
             "repositories": {},
             "skills": [],
+            "shared": [],
         }
         for repo_key, repo in manifest["repositories"].items():
             mode, wanted = policy_for(project, repo_key, repo)
@@ -408,7 +481,31 @@ def refresh(project_path: Path | None, *, force: bool = False) -> int:
                         "revision": repo["revision"],
                     }
                 )
-        gen_hash = generation_id(enabled)
+            # Shared reference trees ride along whenever the repo contributes a
+            # skill, published at `<generation>/<name>` where the skills link them.
+            for name, meta in repo.get("shared", {}).items():
+                rel = Path(meta["path"])
+                if rel.is_absolute() or ".." in rel.parts:
+                    raise ValueError(f"invalid manifest path for shared {name}")
+                v = validate_shared(checkout / rel)
+                if v["hash"] != meta["sha256"]:
+                    raise ValueError(f"trusted content hash mismatch for shared {name}")
+                dest = stage / "skills" / name
+                if dest.exists():
+                    raise ValueError(f"shared tree collides: {name}")
+                shutil.copytree(checkout / rel, dest, symlinks=False)
+                shared_enabled.append(
+                    {
+                        "name": name,
+                        "repo": repo_key,
+                        "path": name,
+                        "hash": v["hash"],
+                        "bytes": v["bytes"],
+                        "files": v["files"],
+                        "revision": repo["revision"],
+                    }
+                )
+        gen_hash = generation_id(enabled, shared_enabled)
         gen = cat / "generations" / gen_hash
         if gen.exists():
             current = {
@@ -417,6 +514,8 @@ def refresh(project_path: Path | None, *, force: bool = False) -> int:
                 "root": str(gen),
                 "skills": enabled,
             }
+            if shared_enabled:
+                current["shared"] = shared_enabled
             verify_current(current)
         else:
             gen.parent.mkdir(parents=True, exist_ok=True)
@@ -432,12 +531,16 @@ def refresh(project_path: Path | None, *, force: bool = False) -> int:
             "skills": enabled,
             "fetched_at": int(time.time()),
         }
+        if shared_enabled:
+            current["shared"] = shared_enabled
         # Verify the final exported bytes and their content-addressed directory,
         # not merely the checkout/staging source, before publishing the pointer.
         verify_current(current)
         write_json_atomic(cat / "current.json", current)
         receipt["generation"] = gen_hash
         receipt["skills"] = enabled
+        receipt["shared"] = shared_enabled
+        receipt["unresolved_refs"] = unresolved_refs(gen)
         write_json_atomic(
             cat / "fetch-state.json",
             {"state": "current", "receipt": receipt, "time": int(time.time())},
@@ -461,7 +564,14 @@ def refresh(project_path: Path | None, *, force: bool = False) -> int:
 def verify_current(data: dict[str, Any]) -> dict[str, Any]:
     if data.get("schema_version") != 1:
         raise ValueError("bad current schema")
-    if set(data) - {"schema_version", "generation", "root", "skills", "fetched_at"}:
+    if set(data) - {
+        "schema_version",
+        "generation",
+        "root",
+        "skills",
+        "shared",
+        "fetched_at",
+    }:
         raise ValueError("unexpected current metadata")
     if "fetched_at" in data and not isinstance(data["fetched_at"], int):
         raise ValueError("bad current timestamp")
@@ -531,7 +641,54 @@ def verify_current(data: dict[str, Any]) -> dict[str, Any]:
         if skill != expected:
             raise ValueError(f"unexpected skill receipt metadata for {name}")
         verified.append(expected)
-    if generation_id(verified) != gen:
+    shared = data.get("shared", [])
+    if not isinstance(shared, list):
+        raise ValueError("current shared trees missing")
+    verified_shared: list[dict[str, Any]] = []
+    shared_seen: set[str] = set()
+    for tree in shared:
+        if not isinstance(tree, dict):
+            raise ValueError("bad shared receipt")
+        name = tree.get("name")
+        repo_key = tree.get("repo")
+        if not isinstance(name, str) or not NAME_RE.match(name) or name in shared_seen:
+            raise ValueError("duplicate or invalid shared receipt name")
+        shared_seen.add(name)
+        repositories = manifest["repositories"]
+        if not isinstance(repo_key, str) or repo_key not in repositories:
+            raise ValueError(f"untrusted repository for shared {name}")
+        repo = repositories[repo_key]
+        meta = repo.get("shared", {}).get(name)
+        if not isinstance(meta, dict):
+            raise ValueError(f"shared tree is not approved by manifest: {name}")
+        if tree.get("path") != name or tree.get("revision") != repo["revision"]:
+            raise ValueError(f"shared authority metadata mismatch for {name}")
+        p = (root / name).resolve()
+        if root not in p.parents or not p.is_dir():
+            raise ValueError("shared path containment failed")
+        digest, files, total = sha_tree(p)
+        if digest != meta["sha256"] or digest != tree.get("hash"):
+            raise ValueError(f"tampered shared tree {name}")
+        expected = {
+            "name": name,
+            "repo": repo_key,
+            "path": name,
+            "hash": digest,
+            "bytes": total,
+            "files": files,
+            "revision": repo["revision"],
+        }
+        if tree != expected:
+            raise ValueError(f"unexpected shared receipt metadata for {name}")
+        verified_shared.append(expected)
+    # Every repo that contributes a skill must also carry all its shared trees,
+    # otherwise the skills' relative references dangle (reference closure).
+    for repo_key in {str(s["repo"]) for s in verified}:
+        wanted = set(manifest["repositories"][repo_key].get("shared", {}))
+        have = {t["name"] for t in verified_shared if t["repo"] == repo_key}
+        if wanted - have:
+            raise ValueError(f"shared trees missing for {repo_key}")
+    if generation_id(verified, verified_shared) != gen:
         raise ValueError("generation content address mismatch")
     return data
 
@@ -596,10 +753,13 @@ def doctor_lines(project_path: Path | None) -> int:
         if "load_dir" in block:
             legacy.append(f"{key}.load_dir_ignored")
     fetch_health = str(state.get("detail", "ok" if status == "current" else status))
+    receipt = state.get("receipt") if isinstance(state.get("receipt"), dict) else {}
+    unresolved = receipt.get("unresolved_refs")
     detail = {
         "target_revisions": target,
         "active_revisions": active_revs,
         "fetch_health": fetch_health,
+        "unresolved_refs": len(unresolved) if isinstance(unresolved, list) else 0,
         "policy": ",".join(policy_bits),
         "enabled_count": enabled_total,
         "missing_deps": ",".join(missing_deps),
@@ -668,6 +828,20 @@ def launch_dirs(project_path: Path | None) -> int:
     return 0
 
 
+def check_refs() -> int:
+    """Print relative Markdown links the current generation does not satisfy."""
+    current = catalog_root() / "current.json"
+    if not current.is_file():
+        print("no catalog fetched")
+        return 0
+    data = verify_current(read_json(current))
+    missing = unresolved_refs(Path(str(data["root"])), limit=500)
+    for line in missing:
+        print(line)
+    print(f"{len(missing)} unresolved reference(s)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", type=Path, default=None)
@@ -675,10 +849,13 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("refresh")
     sub.add_parser("doctor-lines")
     sub.add_parser("launch-dirs")
+    sub.add_parser("check-refs")
     args = parser.parse_args(argv)
     project = args.project or find_project(Path.cwd())
     if args.cmd == "refresh":
         return refresh(project)
+    if args.cmd == "check-refs":
+        return check_refs()
     if args.cmd == "doctor-lines":
         return doctor_lines(project)
     if args.cmd == "launch-dirs":
