@@ -1,12 +1,14 @@
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
-const root = mkdtempSync(join(tmpdir(), "coop-std-runtime-"));
+// Fixture roots are resolved to their real path: macOS keeps tmpdir() under the
+// /var -> /private/var symlink, which the standards storage-root check rejects.
+const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-std-runtime-")));
 // The bundled extension resolves standards through the DEFAULT storage unless told
 // otherwise, and pinStandardsTask refreshes it. Point every root at this fixture so
 // the suite never touches the developer's real ~/.coop/standards (#87), and prove

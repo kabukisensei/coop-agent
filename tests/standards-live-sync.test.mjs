@@ -1,14 +1,16 @@
 import { strict as assert } from "node:assert";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { activeCanonicalGeneration, buildStandardsContext, fsyncDirectory, fsyncFile, identifyTaskDomains, pinStandardsTask, promoteReviewRun, provenanceText, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, retrieveRelevantSections, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const tmp = mkdtempSync(join(tmpdir(), "coop-standards-live-"));
+// Fixture roots are resolved to their real path: macOS keeps tmpdir() under the
+// /var -> /private/var symlink, which the standards storage-root check rejects.
+const tmp = realpathSync(mkdtempSync(join(tmpdir(), "coop-standards-live-")));
 const remote = join(tmp, "remote"), cache = join(tmp, "cache", "canonical"), state = join(tmp, "cache", "status.json"), snapshots = join(tmp, "snapshots");
 const registryPath = join(tmp, "registry.json");
 let now = 1_000_000, count = 0;

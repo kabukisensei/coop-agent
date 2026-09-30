@@ -5,6 +5,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
+  their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
+  symlink that the standards storage-root check rejects, and the standards
+  `doctor-lines` / `coop doctor` / Support checks run with a PATH that carries no
+  installed `coop-sql-review` / `coop-dax-review`, so a machine with the reviewers
+  installed no longer reports `bundled_fallback` where CI expects `unavailable`.
+  Tests only; no runtime change.
+
 ## [0.24.0] — 2026-09-30
 
 ### Changed

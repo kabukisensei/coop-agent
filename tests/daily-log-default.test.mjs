@@ -1,6 +1,6 @@
 // Tests for contract-driven default daily logging and its quiet completion check.
 import { strict as assert } from "node:assert";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8,7 +8,9 @@ import { pathToFileURL } from "node:url";
 const dist = process.env.COOP_TEST_DIST;
 // The extension's before_agent_start may refresh standards; keep that storage in a
 // fixture, never the developer's real ~/.coop/standards (#87).
-const standardsFixture = mkdtempSync(join(tmpdir(), "coop-daily-standards-"));
+// Fixture roots are resolved to their real path: macOS keeps tmpdir() under the
+// /var -> /private/var symlink, which the standards storage-root check rejects.
+const standardsFixture = realpathSync(mkdtempSync(join(tmpdir(), "coop-daily-standards-")));
 process.env.COOP_STANDARDS_ROOT = join(standardsFixture, "canonical");
 process.env.COOP_STANDARDS_STATE = join(standardsFixture, "status.json");
 process.env.COOP_STANDARDS_SNAPSHOT_ROOT = join(standardsFixture, "snapshots");
@@ -38,7 +40,7 @@ logging:
 }
 
 await t("nearest contract resolves its timezone-aware daily path", () => {
-  const root = mkdtempSync(join(tmpdir(), "coop-daily-path-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-daily-path-")));
   const child = join(root, "src", "nested");
   mkdirSync(child, { recursive: true });
   writeContract(root);
@@ -69,7 +71,7 @@ await t("tool classifier ignores reads and recognizes work plus the log write", 
 });
 
 await t("runtime prompts every enabled turn and warns only after unlogged work", async () => {
-  const root = mkdtempSync(join(tmpdir(), "coop-daily-runtime-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-daily-runtime-")));
   writeContract(root);
   const handlers = new Map();
   const notices = [];
@@ -131,7 +133,7 @@ await t("runtime prompts every enabled turn and warns only after unlogged work",
 });
 
 await t("disabled contract injects no logging instruction", async () => {
-  const root = mkdtempSync(join(tmpdir(), "coop-daily-disabled-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-daily-disabled-")));
   writeContract(root, false);
   assert.equal(requiredDailyLog(root), null);
   const handlers = new Map();
