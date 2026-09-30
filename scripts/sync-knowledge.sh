@@ -57,7 +57,7 @@ synced=0
 while IFS="$(printf '\t')" read -r url path; do
   [ -n "$url" ] && [ -n "$path" ] || continue
   errfile="$ERR_TMP/err-$$-$synced"
-  if [ -d "$path/.git" ]; then
+  if coop_is_git_checkout "$path"; then
     # State probe: a failed or timed-out status means UNKNOWN — never pull.
     status_out="$(KGIT -C "$path" status --porcelain 2>"$errfile")"; rc=$?
     if [ "$rc" -ne 0 ]; then

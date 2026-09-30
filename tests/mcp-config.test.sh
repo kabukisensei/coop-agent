@@ -46,8 +46,21 @@ assert learn['command']=='npx'
 assert learn['args']==['-y','mcp-remote@'+manifest['mcp_servers']['mcp-remote'],'https://learn.microsoft.com/api/mcp','--transport','http-only','--silent']
 # context-mode is a native Pi extension — never generated as an MCP server.
 assert 'context-mode' not in s
+# The adapter's mcpScript tool calls MCP tools out of the guardrails' sight.
+assert m['settings']=={'scriptMode': False}
 PY
 cp "$d/mcp.json" "$d/mcp-first.json"
+# A user's own adapter settings survive regeneration, but scriptMode stays off.
+"$PY" - "$d/mcp.json" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1])); m['settings']={'scriptMode': True, 'idleTimeout': 5}; json.dump(m,open(sys.argv[1],'w'))
+PY
+"$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp.json"
+"$PY" - "$d/mcp.json" <<'PY'
+import json,sys
+assert json.load(open(sys.argv[1]))['settings']=={'scriptMode': False, 'idleTimeout': 5}
+PY
+cp "$d/mcp-first.json" "$d/mcp.json"
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp.json"
 cmp "$d/mcp-first.json" "$d/mcp.json"
 # Project IDs select item-scoped Warehouse URL only when complete and canonical.
