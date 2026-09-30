@@ -40,6 +40,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   both lanes, and `tests/run.ps1` now fails instead of reporting a pass when an
   error stops it before its last section. Lanes, fixture rules and the CI
   workflows are documented in `docs/ci.md`.
+- The extended test lane no longer touches your real home or this checkout (#135).
+  `tests/run.sh` keeps the gate lane's temp home for the extended block, except
+  `home-guard`, which checks the real home on purpose. The fixtures that run
+  doctor, update or a launch (`doctor`, `inventory`, `first-run`) work on a copy
+  of the tree without `.git`, so doctor's daily fetch can't reach this checkout.
+  `fabric-mcp-launch` pre-writes a fresh fetch stamp, and `update-guard` and
+  `review` sandbox their own home. `review` used to write the real
+  `~/.coop/standards`. The runner now fails if a test changed the caller's
+  `~/.coop`, `~/.azure`, or this checkout's `HEAD`, refs or `FETCH_HEAD`.
 
 - MCP: `powerbi-mcp-server` is retired (#93). It silently ignores `--readonly` and
   exposes `refresh_dataset` (a write that triggers a dataset refresh on the client

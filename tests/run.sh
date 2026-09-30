@@ -69,6 +69,53 @@ for var in HOME USERPROFILE COOP_DIR COOP_AGENT_DIR PI_CODING_AGENT_DIR \
            COOP_STANDARDS_ROOT COOP_STANDARDS_STATE COOP_STANDARDS_SNAPSHOT_ROOT; do
   declare -p "$var" >> "$CALLER_HOME_ENV" 2>/dev/null || echo "unset $var" >> "$CALLER_HOME_ENV"
 done
+# Real-home and checkout guard (#135). Record the caller's ~/.coop and ~/.azure
+# and this checkout's HEAD, refs and FETCH_HEAD before any test runs; the end of
+# this file fails the run if a test changed them. Pi session transcripts and az's
+# own logs and caches are left out: a coop session or `az` running at the same
+# time writes them, and no test may.
+GUARD_PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
+GUARD_HOME="$HOME"
+guard_snapshot() { # <out-file>
+  local home="$GUARD_HOME" root="$ROOT"
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) home="$(cygpath -m "$home")"; root="$(cygpath -m "$root")" ;;
+  esac
+  {
+    "$GUARD_PY" - "$home" "$root" <<'PY'
+import os, sys
+home, root = sys.argv[1], sys.argv[2]
+skip = {os.path.join(".coop", "agent", "sessions"),
+        os.path.join(".azure", "commands"), os.path.join(".azure", "logs"),
+        os.path.join(".azure", "telemetry")}
+skip_names = ("az.sess", "versionCheck.json", "msal_token_cache", "msal_http_cache")
+for top in (".coop", ".azure"):
+    for d, dirs, files in os.walk(os.path.join(home, top)):
+        rel = os.path.relpath(d, home)
+        dirs[:] = sorted(x for x in dirs if os.path.join(rel, x) not in skip)
+        for name in sorted(files):
+            if name.startswith(skip_names):
+                continue
+            path = os.path.join(d, name)
+            try:
+                st = os.lstat(path)
+            except OSError:
+                continue
+            print("home", os.path.relpath(path, home).replace(os.sep, "/"), st.st_size, st.st_mtime_ns)
+        for name in dirs:
+            print("home", os.path.relpath(os.path.join(d, name), home).replace(os.sep, "/") + "/")
+fetch_head = os.path.join(root, ".git", "FETCH_HEAD")
+if os.path.isfile(fetch_head):
+    print("checkout FETCH_HEAD", os.stat(fetch_head).st_mtime_ns)
+PY
+    if [ -e "$ROOT/.git" ] && command -v git >/dev/null 2>&1; then
+      printf 'checkout HEAD %s\n' "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"
+      git -C "$ROOT" for-each-ref --format='checkout ref %(refname) %(objectname)' 2>/dev/null
+    fi
+  } > "$1"
+}
+guard_snapshot "$TMP/guard.before"
+
 GATE_HOME="$TMP/home"
 mkdir -p "$GATE_HOME"
 HOME="$GATE_HOME"; USERPROFILE="$GATE_HOME"
@@ -267,11 +314,8 @@ node "$ROOT/tests/support-center.test.mjs"
 # ============================================================================
 if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   echo "→ extended lane"
-  # The extended fixtures run with the caller's home, as the full suite did before
-  # the lanes split: some predate the fixture rules (docs/ci.md names them) and
-  # home-guard checks the real home on purpose.
-  # shellcheck source=/dev/null
-  . "$CALLER_HOME_ENV"
+  # The extended fixtures keep the gate lane's temp home (#135), except
+  # home-guard below, which checks the real home on purpose.
 
   echo "→ standards lock (simple lock; waitFor polls and a fixed sleep)"
   node "$ROOT/tests/standards-lock-simple.test.mjs"
@@ -311,7 +355,8 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
     *) bash "$ROOT/tests/first-run.test.sh" ;;
   esac
   echo "→ home-guard (fleet paths must not mutate the real home)"
-  bash "$ROOT/tests/home-guard.test.sh"
+  # shellcheck source=/dev/null
+  ( . "$CALLER_HOME_ENV"; bash "$ROOT/tests/home-guard.test.sh" )
 
   echo "→ repo staleness nudge (throttled fetch + behind-count) tests"
   bash "$ROOT/tests/staleness.test.sh"
@@ -328,5 +373,15 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
   node "$ROOT/tests/webbridge.test.mjs"
 fi
+
+# The real home and this checkout are as they were before the run (#135).
+guard_snapshot "$TMP/guard.after"
+if ! cmp -s "$TMP/guard.before" "$TMP/guard.after"; then
+  echo "✗ a test changed the real home (~/.coop, ~/.azure) or this checkout's refs:"
+  diff "$TMP/guard.before" "$TMP/guard.after" | sed -n '1,40p'
+  echo "  (a coop session or az command running at the same time can also cause this; rerun with them closed)"
+  exit 1
+fi
+echo "  ✓ the real ~/.coop, ~/.azure and this checkout's refs are unchanged"
 
 echo "✓ all tests passed ($LANE)"

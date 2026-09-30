@@ -21,6 +21,9 @@ AGENT_DIR="$HOME_DIR/.coop/agent"
 BIN="$TMP/bin"
 MARKER="$TMP/marker"
 mkdir -p "$AGENT_DIR" "$BIN" "$MARKER"
+# A fresh fetch stamp keeps every launch's once-a-day refresh from fetching
+# origin into the checkout running the tests (#135).
+: > "$AGENT_DIR/.coop-fetch-stamp"
 # The launch mint follows the tenant chain (H2b): the contract above the working
 # folder, then <COOP_DIR or home>/.coop/config. Keep both in the sandbox so a
 # developer's own contract or ~/.coop/config tenant never reaches the az argv
