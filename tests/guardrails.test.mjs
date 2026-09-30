@@ -1034,7 +1034,7 @@ const targetConfig = (overrides = {}) => {
     _coop: { schema_version: 1, managed_servers: ["fabric-sqlendpoint"] },
   };
 };
-const writeManagedTarget = (overrides = {}) => writeFileSync(join(AUDIT_DIR, "mcp.json"), JSON.stringify(targetConfig(overrides)));
+const writeManagedTarget = (overrides = {}) => writeFileSync(join(AUDIT_DIR, "mcp-adapter.json"), JSON.stringify(targetConfig(overrides)));
 writeManagedTarget();
 process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
 const liveCtx = { ...ctx, cwd: LIVE_ROOT };
@@ -1126,7 +1126,7 @@ await t("forged header command, URL, timeout, and auth cannot reuse a grant", as
   for (const mutate of mutations) {
     const config = targetConfig();
     mutate(config.mcpServers["fabric-sqlendpoint"]);
-    writeFileSync(join(AUDIT_DIR, "mcp.json"), JSON.stringify(config));
+    writeFileSync(join(AUDIT_DIR, "mcp-adapter.json"), JSON.stringify(config));
     process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
     await handleSessionStart({ reason: "new" }, liveCtx);
     confirmAnswer = false;
@@ -1504,7 +1504,7 @@ await t("dynamic scope expansions and mutations cannot spend an existing read gr
   assert.equal(confirmCount, cases.length);
   const ambiguousConfig = targetConfig();
   ambiguousConfig.mcpServers.fabric_sqlendpoint = { url: "https://invalid.example" };
-  writeFileSync(join(AUDIT_DIR, "mcp.json"), JSON.stringify(ambiguousConfig));
+  writeFileSync(join(AUDIT_DIR, "mcp-adapter.json"), JSON.stringify(ambiguousConfig));
   assert.equal(blocked(await handle(dynamicRead(), liveCtx)), true);
   writeManagedTarget();
 });

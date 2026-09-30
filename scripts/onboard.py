@@ -28,7 +28,7 @@ from azure_auth import (  # noqa: E402
 COOP_DIR = Path(os.environ.get("COOP_DIR", Path.home())) / ".coop"
 USER_JSON = COOP_DIR / "user.json"
 CONFIG_JSON = COOP_DIR / "config"
-MCP_OUTPUT = COOP_DIR / "agent" / "mcp.json"
+MCP_OUTPUT = COOP_DIR / "agent" / "mcp-adapter.json"
 
 PRESETS = {
     "concise": "Answer first. Keep explanations short. Use bullets where useful. Explain tradeoffs only when material.",

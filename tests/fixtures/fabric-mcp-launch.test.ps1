@@ -69,7 +69,7 @@ try {
     }
     _coop = [ordered]@{ schema_version = 1; managed_servers = @('fabric-sqlendpoint') }
   }
-  $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $agent 'mcp.json') -Encoding UTF8
+  $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $agent 'mcp-adapter.json') -Encoding UTF8
 
   if ($env:OS -eq 'Windows_NT') {
     $nodePath = (Get-Command node -ErrorAction Stop).Source
@@ -244,7 +244,7 @@ Write-Output "rc=$rc"
     $libsrcRc = -1
     $fullRc = -1
     $libCommon = Join-Path $root 'lib\common.ps1'
-    $probeConfig = Join-Path $agent 'mcp.json'
+    $probeConfig = Join-Path $agent 'mcp-adapter.json'
     try {
       $env:COOP_TEST_MARKER = $probeMarker
       $plainOut = [string](& $psHost -NoProfile -ExecutionPolicy Bypass -File $childProbe plain '' '' '' '' *>&1)
@@ -327,7 +327,7 @@ print(f"{resolution} runner-code={runner_result.returncode} runner-stdout-bytes=
   $probePython = (Get-Command python -CommandType Application -ErrorAction Stop).Source
   . (Join-Path $root 'lib\common.ps1')
   $selectedPython = Get-CoopPython
-  $boundaryState = [string](& $probePython $boundaryLauncher (Join-Path $root 'lib\warehouse_mcp.py') $nodePath $boundaryProbe (Join-Path $bin 'az.cmd') (Join-Path $root 'lib\fabric_token_runner.mjs') $selectedPython (Join-Path $agent 'mcp.json') $marker)
+  $boundaryState = [string](& $probePython $boundaryLauncher (Join-Path $root 'lib\warehouse_mcp.py') $nodePath $boundaryProbe (Join-Path $bin 'az.cmd') (Join-Path $root 'lib\fabric_token_runner.mjs') $selectedPython (Join-Path $agent 'mcp-adapter.json') $marker)
   if ($LASTEXITCODE -ne 0 -or -not $boundaryState) { $boundaryState = 'probe-unavailable' }
   $directWrapperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-wrapper-entry'))
   $directHelperReached = [int](Test-Path -LiteralPath (Join-Path $marker 'az-helper-entry'))

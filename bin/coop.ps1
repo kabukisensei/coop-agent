@@ -339,7 +339,7 @@ function Build-CoopPiArgs {
   if ($env:COOP_SHOW_UPSTREAM_UPDATE_NOTICES -ne '1') {
     $env:PI_SKIP_VERSION_CHECK = '1'
   }
-  # MCP servers come only from coop's managed agent-dir mcp.json (#165). Without
+  # MCP servers come only from coop's managed agent-dir mcp-adapter.json (#165). Without
   # this, pi-mcp-adapter also merges a work repo's .mcp.json / .pi/mcp.json and
   # other tools' configs, so a repo could add a server or redefine a coop one.
   $env:PI_MCP_CONFIG_MODE = 'exclusive'
@@ -354,7 +354,7 @@ function Get-CoopFabricMcpToken {
   $py = Get-CoopPython
   if (-not $py) { return '' }
   $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Get-CoopPiAgentDir }
-  $config = Join-Path $agentDir 'mcp.json'
+  $config = Join-Path $agentDir 'mcp-adapter.json'
   if (-not (Test-Have 'node')) {
     Coop-Warn 'Fabric Warehouse MCP unavailable: token helper supervisor is unavailable'
     return ''

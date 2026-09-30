@@ -6,10 +6,10 @@
   },
   "pi": {
     "package": "@earendil-works/pi-coding-agent",
-    "version": "0.84.3"
+    "version": "0.87.1"
   },
   "extensions": {
-    "pi-mcp-adapter": "2.34.0",
+    "pi-mcp-adapter": "3.3.0",
     "pi-hermes-memory": "0.7.17",
     "pi-better-openai": "0.1.22",
     "pi-web-access": "0.10.7",

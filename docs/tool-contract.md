@@ -360,7 +360,7 @@ session), and asks every time for deletes, whole-model imports, deploys, unknown
 operations and production. `context-mode` is **not**
 a pure read: it runs **sandboxed code over the docs/graph** (not client data) to save
 context. Manifest-pinned managed config is generated into coop's isolated agent dir
-(`~/.coop/agent/mcp.json`) from `~/.coop/config` by `coop onboard` / `coop sync`,
+(`~/.coop/agent/mcp-adapter.json`) from `~/.coop/config` by `coop onboard` / `coop sync`,
 and wired through `pi-mcp-adapter`.
 
 Per `.coop/project.yml` and `docs/guardrails.md`:

@@ -44,7 +44,7 @@ PY
 HELPER_DIAGNOSTIC='untrusted-helper-diagnostic-93b75a'
 HELPER_TOKENLIKE='tokenlike-helper-value-2309'
 
-"$PY" - "$AGENT_DIR/mcp.json" "$ROOT" <<'PY'
+"$PY" - "$AGENT_DIR/mcp-adapter.json" "$ROOT" <<'PY'
 import json, sys
 from pathlib import Path
 url = "https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint"

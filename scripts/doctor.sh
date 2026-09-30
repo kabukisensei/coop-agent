@@ -403,9 +403,14 @@ else
 fi
 
 section "MCP servers (read-only, optional)"
+# coop launches pi-mcp-adapter in exclusive mode (#165), so the agent dir's
+# mcp-adapter.json is the only MCP config it reads. Check that file, and name a
+# work repo's MCP file that coop does not use.
 mcp_found=""
-for f in "$PWD/.mcp.json" "$PWD/.pi/mcp.json" "$PI_CODING_AGENT_DIR/mcp.json" "$HOME/.config/mcp/mcp.json" "$HOME/.pi/mcp-config/mcp.json"; do
-  [ -f "$f" ] && { mcp_found="$f"; break; }
+mcp_managed="$PI_CODING_AGENT_DIR/mcp-adapter.json"
+[ -f "$mcp_managed" ] && mcp_found="$mcp_managed"
+for f in "$PWD/.mcp.json" "$PWD/.pi/mcp-adapter.json" "$PWD/.pi/mcp.json"; do
+  [ -f "$f" ] && [ "$f" != "$mcp_managed" ] && ok "not used: $f (coop reads MCP servers only from $mcp_managed)"
 done
 if [ -n "$mcp_found" ]; then
   ok "MCP config: $mcp_found"
@@ -414,7 +419,7 @@ if [ -n "$mcp_found" ]; then
       if [ "$s" = "powerbi-modeling-mcp" ]; then
         # Health requires --start (the server must actually launch). coop runs it
         # read-write and its guardrails ask before every edit (#159); --readonly
-        # is a supported stricter choice. Generated mcp.json is pretty-printed, so
+        # is a supported stricter choice. The generated config is pretty-printed, so
         # parse the JSON structurally — line greps would only ever see '"args": ['.
         _doc_py="$(coop_python 2>/dev/null || true)"
         modeling_args=""
@@ -462,7 +467,7 @@ PYEOF
   grep -qiE 'learn\.microsoft\.com|microsoft-learn' "$mcp_found" 2>/dev/null || warn "  Microsoft Learn MCP not configured" "coop sync   (adds it read-only)"
   # Legacy/unmanaged placeholder configs remain actionable; generated COOP entries never contain TODOs.
   mcp_todo="$(grep -c 'TODO-' "$mcp_found" 2>/dev/null)" || mcp_todo=0
-  [ "${mcp_todo:-0}" -gt 0 ] && warn "$mcp_todo TODO placeholder(s) remain in mcp.json" "set your tenant/org before live Power BI / Azure DevOps work"
+  [ "${mcp_todo:-0}" -gt 0 ] && warn "$mcp_todo TODO placeholder(s) remain in mcp-adapter.json" "set your tenant/org before live Power BI / Azure DevOps work"
   _sql_py="$(coop_python 2>/dev/null || true)"
   if [ -n "$_sql_py" ]; then
     _sql_project="$(coop_find_project_yml)"

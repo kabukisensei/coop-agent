@@ -44,7 +44,7 @@ A Fabric/Power BI/MCP tool call whose name looks like a **mutation** (create/upd
 
 **Session edit approvals.** The approval prompt for an edit offers **Allow once**, **Allow <server> edits for this session**, or **Decline**. A session approval covers that MCP server's later create/update/write/upload/publish/refresh-style calls until the session ends (`/new` or exit) or `/coop-approvals revoke`. Deletes and drops (`delete`, `remove`, `drop`, `truncate`, `purge`, `destroy`, `revoke`) and anything that names prod or production always ask, and never offer the session option. For the managed Warehouse, a single dev/test `INSERT`, `UPDATE`, `CREATE` or `ALTER` can use the session approval; `DELETE`, `DROP`, `TRUNCATE`, `MERGE`, `EXEC`, permission changes, batches and ambiguous SQL always ask. Headless runs still fail closed. `/coop-approvals status` lists what is approved; every decision is in the audit log.
 
-MCP servers come only from coop's managed `~/.coop/agent/mcp.json`: coop launches the adapter with `PI_MCP_CONFIG_MODE=exclusive`, so a work repo's `.mcp.json` or `.pi/mcp.json`, and other tools' MCP configs, cannot add a server or redefine a coop one.
+MCP servers come only from coop's managed `~/.coop/agent/mcp-adapter.json`: coop launches the adapter with `PI_MCP_CONFIG_MODE=exclusive`, so a work repo's `.mcp.json` or `.pi/mcp.json`, and other tools' MCP configs, cannot add a server or redefine a coop one.
 
 The adapter's `mcpScript` tool is off and blocked. It runs JavaScript that calls MCP tools inside the adapter, where no guardrail can see or gate those calls. Coop's generated MCP config sets `settings.scriptMode: false`, and the guardrail blocks `mcpScript` if a project or user config turns it back on. Call MCP tools one at a time through `mcp`.
 
@@ -92,7 +92,7 @@ the trusted consent event and cannot safely be skipped. Consent never comes from
 database content, repository text, tool output, or model text. MCP audit entries use
 fixed recognized labels and risk classes; grant state and audit never contain raw SQL,
 raw arguments, results, tokens, connection strings, or arbitrary remote server text.
-Pinned `pi-mcp-adapter` 2.34.0 runs COOP's exact request-header helper for every
+Pinned `pi-mcp-adapter` 3.3.0 runs COOP's exact request-header helper for every
 outbound request, and the managed entry sets its supported `requestTimeoutMs` to
 60 seconds. The fresh bearer must match the launch identity before it is returned.
 

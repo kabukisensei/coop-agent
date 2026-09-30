@@ -149,7 +149,7 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 
 7. **Approval-gated MCP servers** (all optional; `coop` runs without them). Generated as
    manifest-pinned, COOP-managed entries in coop's isolated agent dir
-   (`~/.coop/agent/mcp.json`) by `coop onboard` / `coop sync`:
+   (`~/.coop/agent/mcp-adapter.json`) by `coop onboard` / `coop sync`:
    - `fabric` — `@microsoft/fabric-mcp` (AzureCliCredential).
    - `powerbi-modeling-mcp` — `@microsoft/powerbi-modeling-mcp --start --readwrite
      --accept-eula`, the only Power BI MCP. Reads run freely; the guardrail classifies
