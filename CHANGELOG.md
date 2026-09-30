@@ -32,8 +32,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
     current folder's `.mcp.json`. It now names a work repo's `.mcp.json`,
     `.pi/mcp-adapter.json` or `.pi/mcp.json` as not used.
   - Qualified locally with `scripts/test-pi-matrix.sh 0.87.1` against real npm
-    (24 passed, 0 failed; the live model turn needs credentials). The Windows
-    VM run is pending.
+    (24 passed, 0 failed; the live model turn needs credentials) and on a
+    Windows VM on 2026-09-30 (`test-pi-matrix.ps1`: 20 passed, 0 failed; sync,
+    doctor and the `mcp-adapter.json` migration verified; a real session showed
+    the system prompt projected once per turn, a single footer working
+    indicator, `/mcp-adapter` listing only coop's servers, and a Fabric read
+    with no prompt). The approval-gated Warehouse read was not exercised there
+    (no SQL endpoint in that sandbox).
 - Docs: `docs/install-windows.md` no longer describes the **coop** icon as a chat
   window that can't show the model sign-in, or a separate **coop (terminal)** icon;
   `docs/onboarding.md`'s ground rules say MCP changes ask first instead of "read-only
