@@ -1,12 +1,14 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { bindReviewerProvenance, promoteReviewRun, resolveAcceptedReviewRun, resolveStandard, validateReviewerReport } from "../lib/standards.mjs";
 
-const tmp = mkdtempSync(join(tmpdir(), "coop-review-generation-"));
+// Fixture roots are resolved to their real path: macOS keeps tmpdir() under the
+// /var -> /private/var symlink, which the standards storage-root check rejects.
+const tmp = realpathSync(mkdtempSync(join(tmpdir(), "coop-review-generation-")));
 const snapshots = join(tmp, "snapshots"), project = join(tmp, "project"), outdir = join(tmp, "reviews");
 const h = (value) => createHash("sha256").update(value).digest("hex");
 let count = 0;

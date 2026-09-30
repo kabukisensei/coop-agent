@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,7 +38,9 @@ const KNOWN_FAILURES = new Map([
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const golden = JSON.parse(readFileSync(join(ROOT, "tests", "fixtures", "standards-golden-corpus.json"), "utf8"));
-const tmp = mkdtempSync(join(tmpdir(), "coop-std-golden-"));
+// Fixture roots are resolved to their real path: macOS keeps tmpdir() under the
+// /var -> /private/var symlink, which the standards storage-root check rejects.
+const tmp = realpathSync(mkdtempSync(join(tmpdir(), "coop-std-golden-")));
 const wiki = join(tmp, "wiki");
 const registryPath = join(tmp, "registry.json");
 const options = (more = {}) => ({
