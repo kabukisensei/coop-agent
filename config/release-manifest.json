@@ -30,7 +30,7 @@
     "@microsoft/powerbi-desktop-bridge-cli": "0.1.2"
   },
   "mcp_servers": {
-    "@microsoft/fabric-mcp": "1.3.0",
+    "@microsoft/fabric-mcp": "1.4.0",
     "@azure-devops/mcp": "2.9.0",
     "mcp-remote": "0.1.38"
   }
