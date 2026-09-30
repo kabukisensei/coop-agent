@@ -419,6 +419,28 @@ print("resume verdict contract OK")
     else { Ko 'launch spec does not suppress Pi upstream version notices' }
   } catch { Ko "--no-launch --json update-policy check failed: $_" }
 
+  # --- 2b. coop web is retired (S5): it warns and starts the terminal agent ----
+  # Old 'coop' shortcuts still run `coop web`; it must reach Pi, not fail.
+  Head 'coop web (retired) starts the terminal agent'
+  $webStub = Join-Path $stub 'web-retired'
+  New-Item -ItemType Directory -Force -Path $webStub | Out-Null
+  $webMarker = Join-Path $webStub 'pi-ran'
+  $webPin = (Get-Content -LiteralPath (Join-Path $root 'config\release-manifest.json') -Raw | ConvertFrom-Json).pi.version
+  [System.IO.File]::WriteAllText((Join-Path $webStub 'pi'), "#!/bin/sh`n[ `"`$1`" = `"--version`" ] && { echo `"pi $webPin`"; exit 0; }`n: > '$webMarker'`nexit 0`n")
+  if ($IsLinux -or $IsMacOS) { & chmod +x (Join-Path $webStub 'pi') }
+  [System.IO.File]::WriteAllText((Join-Path $webStub 'pi.cmd'), "@echo off`r`nif `"%1`"==`"--version`" (echo pi $webPin& exit /b 0)`r`ntype nul > `"$webMarker`"`r`nexit /b 0`r`n")
+  $webPriorPath = $env:PATH
+  $webPriorSkipExt = $env:COOP_SKIP_EXT_CHECK
+  $env:PATH = "$webStub$([System.IO.Path]::PathSeparator)$env:PATH"
+  $env:COOP_SKIP_EXT_CHECK = '1'
+  try { $webOut = (& $psExe -NoProfile -ExecutionPolicy Bypass -File $coop web 2>&1 | Out-String) }
+  finally {
+    $env:PATH = $webPriorPath
+    if ($null -eq $webPriorSkipExt) { Remove-Item Env:COOP_SKIP_EXT_CHECK -ErrorAction SilentlyContinue } else { $env:COOP_SKIP_EXT_CHECK = $webPriorSkipExt }
+  }
+  if ($webOut -like '*coop web was removed*') { Ok 'coop web says it was removed' } else { Ko "coop web did not explain its removal: $webOut" }
+  if (Test-Path -LiteralPath $webMarker) { Ok 'coop web started the terminal agent (pi ran)' } else { Ko "coop web did not start pi: $webOut" }
+
   # --- 3. context-budget via PowerShell dispatcher ---------------------------
   Head 'coop context-budget (PowerShell dispatch)'
   $pythonAvailable = (Get-Command python3 -ErrorAction SilentlyContinue) -or (Get-Command python -ErrorAction SilentlyContinue)

@@ -719,7 +719,7 @@ async function offerMissingRepoFix(pi: ExtensionAPI, ctx: any, repo: string, pat
   else notify(ctx, `When you're ready, run /setup-docs or fix the path in ${configPath}, then build with \`coop data-doc build\`.`, "info");
 }
 
-/** Open coop-data-doc.yml in Pi's editor (a text box in coop web) and save the edit. */
+/** Open coop-data-doc.yml in Pi's editor (a text box in an RPC host) and save the edit. */
 async function editDataDocConfig(ctx: any, configPath: string): Promise<void> {
   const before = safeRead(configPath);
   if (!before || typeof ctx?.ui?.editor !== "function") {

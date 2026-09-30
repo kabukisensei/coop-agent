@@ -249,11 +249,6 @@ bash "$ROOT/tests/bpa-runner.test.sh"
 echo "→ Azure DevOps tooling tests (offline; az must never run)"
 bash "$ROOT/tests/ado.test.sh"
 
-echo "→ protocol contract + JSONL splitter tests"
-node "$ROOT/tests/protocol.test.mjs"
-
-echo "→ diff model (unified + side-by-side parsing) tests"
-node "$ROOT/tests/diffmodel.test.mjs"
 echo "→ tool result state machine tests"
 node "$ROOT/tests/tool-result.test.mjs"
 echo "→ support command and Support Center contract tests"
@@ -290,10 +285,9 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   bash "$ROOT/tests/fleet-execution.test.sh"
   bash "$ROOT/tests/install-python-prereq.test.sh"
 
-  echo "→ Fabric request headers, MCP launch (all phases, incl. web) and SQL launcher"
+  echo "→ Fabric request headers, MCP launch (all phases) and SQL launcher"
   node "$ROOT/tests/fabric-request-headers.test.mjs"
   bash "$ROOT/tests/fabric-mcp-launch.test.sh"
-  node "$ROOT/tests/fabric-mcp-web-launch.test.mjs"
   COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-sql-launcher.test.mjs"
 
   echo "→ team knowledge sync script tests"
@@ -326,9 +320,6 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
 
   echo "→ terminal acceptance reparse boundary tests"
   node --test --test-name-pattern "directory links|junctioned ancestor|authorization revocation|failure cleanup|checkout ancestry|owned-root probe|fully safe authorization|decisive receipt mutations" "$ROOT/tests/terminal-workstation-acceptance.test.mjs"
-
-  echo "→ coop web bridge tests (stub pi — auth, CSRF, SSE replay, forwarding)"
-  node "$ROOT/tests/webbridge.test.mjs"
 fi
 
 echo "✓ all tests passed ($LANE)"

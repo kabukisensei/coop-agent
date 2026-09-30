@@ -7,6 +7,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- The browser chat (`coop web`) is removed (master plan S5; Aaron dropped the web
+  on 2026-09-30). The installable desktop app in the plan's last phase replaces it
+  and uses the unchanged `coop launch-spec --json`.
+  - `coop web` now prints that it was removed and starts coop in the terminal,
+    so old habits and shortcuts keep working. On Windows it also restores the
+    console window that the old shortcut minimized.
+  - The Windows **coop** shortcut opens the terminal agent. `coop update`
+    rewrites existing shortcuts and removes the separate **coop (terminal)** one.
+  - Removed: `web/`, and the web bridge, protocol, diff-model, stub-pi and web
+    launch tests, including the web phases of `tests/fabric-mcp-launch.test.sh`.
+    The terminal launch phases are unchanged.
 - `coop update --check` shows the repository move first (#107): `repo (coop-agent)
   v0.23.5-21-gabc1234  would move to release v0.23.6`, `... no newer release`, or the
   hold, local-commits or missing-origin state with its fix. It uses the same local
