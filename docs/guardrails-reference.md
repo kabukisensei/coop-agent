@@ -38,6 +38,8 @@ A read/edit/write of a secret-looking file (`.env`, private keys, credential fil
 
 A Fabric/Power BI/MCP tool call whose name looks like a **mutation** (create/update/delete/deploy/publish, upload/modify/reset/import/move, running a pipeline, job, notebook or dataflow, or a refresh such as `refresh_dataset`, which reprocesses a dataset on the client tenant) requires confirmation, including proxied MCP calls where the real remote tool name is carried inside central `mcp` or dynamic `mcp__<server>` input (`event.input.tool`). That check is best-effort — MCP tool names vary, so it **complements** (does not replace) Pi's own tool-approval prompts and the advisory prompt. Enable the optional `pi-permissions` extension for hard per-tool gating. If a tool call is blocked, read the reason and adjust — don't try to route around it.
 
+The adapter's `mcpScript` tool is off and blocked. It runs JavaScript that calls MCP tools inside the adapter, where no guardrail can see or gate those calls. Coop's generated MCP config sets `settings.scriptMode: false`, and the guardrail blocks `mcpScript` if a project or user config turns it back on. Call MCP tools one at a time through `mcp`.
+
 ### Live environment reads
 
 Coop permits read-only metadata, schema, and artifact-code inspection in dev/test by default. Query/execute/sample/export-style calls can return actual rows, so the runtime asks first. Any tool request that explicitly names prod/production also asks first, including metadata-only reads; production row reads should be narrowly scoped to a named target, columns, filters, and a small limit. Approval-required reads fail closed when no interactive approval UI is available.

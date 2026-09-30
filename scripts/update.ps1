@@ -227,7 +227,7 @@ if ($env:COOP_UPDATE_GATE_DRYRUN -eq '1') {
 
 # --- 1. Update coop-agent itself ---------------------------------------------
 Coop-Head '1/6  coop-agent repository'
-if ((Test-Path -LiteralPath (Join-Path $script:CoopRoot '.git')) -and (Test-Have 'git')) {
+if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {
   & git -C $script:CoopRoot remote get-url origin > $null 2>&1
   if ($LASTEXITCODE -eq 0) {
     # Fast-forward to the newest release tag, never backwards (--edge: head of

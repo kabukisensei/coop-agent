@@ -1280,6 +1280,15 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       if (!enabled()) return;
       const tool = event?.toolName;
 
+      // 0a. pi-mcp-adapter's mcpScript runs JavaScript that calls MCP tools inside
+      // the adapter, where this hook never sees them, so no MCP mutation or
+      // Warehouse SQL check could apply. Coop's generated MCP config turns it off;
+      // block it too in case a project or user config turns it back on.
+      if (tool === "mcpScript") {
+        audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "mcpScript", decision: "blocked", label: "MCP script", detail: "script-mode" });
+        return { block: true, reason: "coop guardrails: blocked mcpScript. Its MCP calls run inside the adapter where coop's read-only MCP checks cannot see them. Call MCP tools one at a time with the mcp tool instead." };
+      }
+
       // 0. Secret-file access (read / edit / write) → confirm.
       if (tool === "read" || tool === "edit" || tool === "write") {
         const path = String(event?.input?.path ?? "");
