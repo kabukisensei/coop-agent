@@ -5,6 +5,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Guardrails: Fabric and Azure REST writes issued from the shell now ask for
+  approval like a mutating MCP call. `az rest` with a non-GET `--method`,
+  `fab api -X post|patch|put|delete`, and the Fabric CLI's mutating subcommands
+  (`fab deploy`, `mkdir`, `rm`, `cp`, `mv`, `set`, `import`, `assign`,
+  `unassign`, `job`, `acl`, `label`, `start`, `stop`, `ln`) confirm before they
+  run and fail closed headlessly. The official Microsoft Fabric skills drive item
+  create/update/deploy/delete this way, outside the MCP gate. Reads
+  (`--method get`, `fab api <path>`, `fab ls`/`get`/`export`) are unchanged.
+
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
   symlink that the standards storage-root check rejects, and the standards
