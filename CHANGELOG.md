@@ -29,6 +29,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   - The per-skill size cap rises from 750 KB to 1.5 MB for
     `powerbi-report-cli` (88 Markdown files, ~1.04 MB); the 500 KB per-file cap
     is unchanged.
+- `pi-hermes-memory` moves to **0.9.9** (master plan U1, section 6 row). On Windows,
+  0.7.17 could not run its own helper process: it launched `pi` through Pi's `exec`,
+  which spawns without a shell, and `pi` is only an npm `.cmd`/`.ps1` shim there. So
+  memory consolidation, background review, correction save and session flush all
+  failed silently with `exited with code 1: unknown error`, and once a memory file
+  reached its 5,000-character limit every new save was rejected (seen on Aaron's
+  client VM on 2026-09-30, all four stores full). 0.9.9 resolves `pi.cmd` and starts
+  `node` with Pi's `cli.js` directly, runs those jobs in-process first, lets
+  policy-only saves exceed the Markdown cap instead of failing, raises the
+  consolidation timeout to 180 s, warns in the session when an automatic
+  consolidation fails, and adds `/memory-pin` for rules the agent must not rewrite.
+  Existing memory files are read as before (same storage root under
+  `~/.coop/agent`). VM qualification pending.
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
   symlink that the standards storage-root check rejects, and the standards
