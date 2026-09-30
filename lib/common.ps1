@@ -348,7 +348,10 @@ import sys
 from importlib.metadata import metadata
 print(metadata(sys.argv[1]).get("Requires-Python") or "")
 '@
-  $out = (& $py -c $probe $Distribution 2>$null | Out-String).Trim()
+  # Pass the program on stdin: Windows PowerShell 5.1 does not escape the double quotes
+  # in a native argument, so `-c $probe` reached Python as a SyntaxError and doctor
+  # silently skipped the Requires-Python check.
+  $out = (($probe | & $py - $Distribution 2>$null) | Out-String).Trim()
   if ($LASTEXITCODE -ne 0) { return '' }
   return $out
 }
