@@ -278,7 +278,7 @@ section "Standalone Coop tools (pipx)"
 # green tick here: the copy that answered is not the one coop pinned.
 check_pipx_tool() { # <bin>
   case " $DOCTOR_SHADOWED " in
-    *" $1 "*) warn "$1 on PATH is not the pipx copy (see Release manifest above)" "pipx install $1" ;;
+    *" $1 "*) warn "$1 on PATH is not the pipx copy (see Release manifest above)" "the fix is on that row: remove the stray copy or put pipx's bin dir first on PATH" ;;
     *) check "$1" required "pipx install $1" "$1 --version" ;;
   esac
 }

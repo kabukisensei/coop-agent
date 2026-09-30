@@ -290,7 +290,7 @@ D-Head 'Standalone Coop tools (pipx)'
 # green tick here: the copy that answered is not the one coop pinned.
 function Check-PipxTool([string]$Bin) {
   if ($script:Shadowed -contains $Bin) {
-    D-Warn "$Bin on PATH is not the pipx copy (see Release manifest above)" "pipx install $Bin"
+    D-Warn "$Bin on PATH is not the pipx copy (see Release manifest above)" "the fix is on that row: remove the stray copy or put pipx's bin dir first on PATH"
   } else {
     Check $Bin 'required' "pipx install $Bin" @($Bin,'--version')
   }
