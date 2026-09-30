@@ -129,7 +129,10 @@ await dispatch(read(), true); process.env.COOP_FABRIC_MCP_TOKEN = token();
 const mutations = [read(1, { query: "DELETE FROM dbo.Customer" }),
   { toolName: "mcp__fabric", input: { tool: "fabric_create_item", args: {} } },
   { toolName: "mcp__azure_devops", input: { tool: "create_work_item", args: {} } },
-  { toolName: "mcp__custom", input: { tool: "write", args: {} } }];
+  { toolName: "mcp__custom", input: { tool: "write", args: {} } },
+  // Fabric MCP's namespace routers carry the operation in `command` (#171).
+  { toolName: "mcp", input: { server: "fabric", tool: "onelake", args: { intent: "x", command: "onelake_delete_file", parameters: {} } } },
+  { toolName: "mcp__fabric", input: { tool: "core", args: { intent: "x", command: "core_create-item", parameters: {} } } }];
 const beforeMutations = executions;
 for (const event of mutations) await dispatch(event, true);
 assert.equal(executions, beforeMutations, "no mutation reaches even the inert executor");

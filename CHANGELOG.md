@@ -288,6 +288,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Fabric MCP creates, uploads, pipeline runs and deletes ask again (#171). coop
+  runs `@microsoft/fabric-mcp` in namespace mode, where four router tools
+  (`onelake`, `core`, `datafactory`, `docs`) carry the operation in a `command`
+  argument. The guardrails checked only the router's name, so a call such as
+  `onelake` with `command: "onelake_delete_file"` ran with no prompt (v0.23.5 too).
+  - The guardrails now read `command` and check it against the pinned server's
+    own command list.
+  - A known write is an edit that the per-server session approval can cover.
+    Deletes always ask, and so does any command coop doesn't know.
+  - Reads, `learn: true` and calls without a command pass; the server only lists
+    its commands for those.
+  - Row reads (`datafactory_execute-query`) and downloads still ask under the
+    live-read rules.
 - A work repo can no longer add or redefine coop's MCP servers (#165). Without
   `PI_MCP_CONFIG_MODE=exclusive`, pi-mcp-adapter 2.34.0 also merged the current
   repo's `.mcp.json` and `.pi/mcp.json`, ancestor configs and other tools'
@@ -307,7 +320,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   signed in, so the installer's sign-in step could close within seconds before
   the user signed in, and `coop doctor` and the launch login handoff believed a
   login existed. Now only a stored provider credential counts, in bash (with or
-  without Python), PowerShell and the sign-in watcher.
+  without Python), PowerShell, the sign-in watcher and `coop doctor`, which
+  checks both coop's and the shared `~/.pi/agent` auth.json.
 - Guardrails ask before more Fabric MCP mutations (#154). The mutation check
   matched no verb in `onelake_upload_file`, `onelake_modify_diagnostics`,
   `onelake_modify_immutability_policy` or `onelake_reset_shortcut_cache`, or in

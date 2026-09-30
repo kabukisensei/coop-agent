@@ -577,6 +577,105 @@ await t("every mutating Fabric MCP 1.3.0 / 1.4.0 tool asks; every read passes (#
     assert.equal(mcpMutationLabel({ outerTool: "mcp", innerTool: name, server: "fabric-sqlendpoint" }), null, `${name} should NOT ask as a mutation`);
   }
 });
+// --- Fabric MCP namespace routers (#171) ------------------------------------------
+// coop runs @microsoft/fabric-mcp with `--mode namespace`: four router tools, each
+// {intent, command, parameters, learn}. The command is what runs.
+const FABRIC_1_3_WRITES = [
+  "core_create-item", "datafactory_create-dataflow", "datafactory_create-pipeline", "datafactory_run-pipeline",
+  "onelake_create_directory", "onelake_create_or_update_data_access_role", "onelake_create_shortcut_adls_gen2",
+  "onelake_create_shortcut_amazon_s3", "onelake_create_shortcut_azure_blob", "onelake_create_shortcut_dataverse",
+  "onelake_create_shortcut_gcs", "onelake_create_shortcut_onedrive_sharepoint", "onelake_create_shortcut_onelake",
+  "onelake_create_shortcut_s3_compatible", "onelake_delete_data_access_role", "onelake_delete_directory",
+  "onelake_delete_file", "onelake_delete_shortcut", "onelake_modify_diagnostics", "onelake_modify_immutability_policy",
+  "onelake_reset_shortcut_cache", "onelake_upload_file",
+];
+// The 1.3.0 tool list (tools/list in --mode all, readOnlyHint true).
+const FABRIC_1_3_READS = [
+  "core_search-catalog", "datafactory_execute-query", "datafactory_get-pipeline", "datafactory_list-dataflows",
+  "datafactory_list-pipelines", "docs_api-examples", "docs_best-practices", "docs_item-definitions",
+  "docs_platform-api-spec", "docs_workload-api-spec", "docs_workloads", "onelake_download_file",
+  "onelake_get_data_access_role", "onelake_get_settings", "onelake_get_shortcut", "onelake_get_table",
+  "onelake_get_table_config", "onelake_get_table_namespace", "onelake_list_data_access_roles", "onelake_list_files",
+  "onelake_list_items", "onelake_list_items_dfs", "onelake_list_shortcuts", "onelake_list_table_namespaces",
+  "onelake_list_tables", "onelake_list_workspaces",
+];
+const routerOf = (command) => command.split("_")[0];
+const fabricRouter = (command, extra = {}, shape = "proxy") => {
+  const args = { intent: "do the thing", command, parameters: { workspace: "Sales Dev" }, ...extra };
+  if (shape === "namespace") return { toolName: "mcp__fabric", input: { tool: routerOf(command), args } };
+  if (shape === "no-server") return { toolName: "mcp", input: { tool: routerOf(command), args } };
+  if (shape === "string-args") return { toolName: "mcp", input: { server: "fabric", tool: routerOf(command), args: JSON.stringify(args) } };
+  return { toolName: "mcp", input: { server: "fabric", tool: routerOf(command), args } };
+};
+
+await t("every Fabric MCP 1.3.0 write asks through its namespace router; deletes never offer the session (#171)", () => {
+  assert.equal(FABRIC_1_3_WRITES.length + FABRIC_1_3_READS.length, 48, "the full 1.3.0 inventory");
+  for (const command of FABRIC_1_3_WRITES) {
+    for (const shape of ["proxy", "namespace", "no-server", "string-args"]) {
+      const event = fabricRouter(command, {}, shape);
+      assert.ok(cg.mcpEditLabel(event), `${command} (${shape}) should ask`);
+      const key = cg.sessionApprovalKey(event);
+      if (/_delete/.test(command)) assert.equal(key, null, `${command} (${shape}) always asks`);
+      else assert.equal(key, "mcp:fabric", `${command} (${shape}) can ride the session approval`);
+    }
+  }
+  for (const command of FABRIC_1_3_READS) {
+    for (const shape of ["proxy", "namespace", "no-server"]) {
+      assert.equal(cg.mcpEditLabel(fabricRouter(command, {}, shape)), null, `${command} (${shape}) is a read`);
+    }
+  }
+  // The live-read rules see the real command: row reads and downloads still ask.
+  assert.equal(mcpLiveReadRisk(fabricRouter("datafactory_execute-query"))?.kind, "row-data");
+  assert.equal(cg.decideLiveRead(fabricRouter("onelake_download_file"), null).action, "separate-gate");
+  assert.equal(mcpLiveReadRisk(fabricRouter("onelake_list_workspaces")), null);
+  assert.equal(sqlMcpRisk(fabricRouter("datafactory_execute-query")), null, "an M query is not Warehouse SQL");
+  // A production target never gets the session option.
+  assert.equal(cg.sessionApprovalKey(fabricRouter("core_create-item", { parameters: { workspace: "Sales Prod" } })), null);
+});
+
+await t("Fabric routers: help calls pass; unknown or misspelled commands always ask (#171)", () => {
+  // 1.3.0 answers these with its command list and runs nothing.
+  assert.equal(cg.mcpEditLabel(fabricRouter("onelake_delete_file", { learn: true })), null, "learn=true only lists commands");
+  assert.equal(cg.mcpEditLabel({ toolName: "mcp", input: { server: "fabric", tool: "core", args: { intent: "make a lakehouse" } } }), null);
+  assert.equal(cg.mcpEditLabel({ toolName: "mcp", input: { server: "fabric", tool: "onelake", args: { intent: "x", learn: true } } }), null);
+  // Anything coop does not know asks every time, with no session option.
+  for (const command of ["onelake_purge_everything", "ONELAKE_DELETE_FILE", "onelake_delete-file", " onelake_delete_file ", "core_update-item", "docs_rewrite"]) {
+    const event = { toolName: "mcp", input: { server: "fabric", tool: routerOf(command.trim().toLowerCase()), args: { intent: "x", command } } };
+    assert.ok(cg.mcpEditLabel(event), `${JSON.stringify(command)} should ask`);
+    if (!/delete/i.test(command)) assert.match(cg.mcpEditLabel(event), /^fabric\//);
+    assert.equal(cg.sessionApprovalKey(event), null, `${JSON.stringify(command)} never offers the session option`);
+  }
+  // `learn` must be the boolean the schema declares to count as a help call.
+  assert.ok(cg.mcpEditLabel(fabricRouter("onelake_delete_file", { learn: "true" })));
+  // Another server's tool named like a router is not Fabric's.
+  assert.equal(cg.mcpEditLabel({ toolName: "mcp", input: { server: "azure-devops", tool: "core", args: { command: "core_list_projects" } } }), null);
+});
+
+await t("Fabric routers through the real handler: a declined delete is blocked, headless too (#171)", async () => {
+  await handleSessionStart({}, ctx);
+  let asked = 0; let offered = []; let pick = "session";
+  const ui = { notify: () => {}, confirm: async () => { asked++; offered = []; return pick !== "decline"; },
+    select: async (_t, options) => { asked++; offered = options; return pick === "session" ? options[1] : options[2]; } };
+  const c = { ...ctx, ui };
+  assert.equal(blocked(await handle(fabricRouter("onelake_list_workspaces"), c)), false);
+  assert.equal(asked, 0, "reads never ask");
+  assert.equal(blocked(await handle(fabricRouter("core_create-item"), c)), false);
+  assert.equal(asked, 1);
+  assert.match(offered[1], /Allow fabric edits for this session/);
+  assert.equal(blocked(await handle(fabricRouter("datafactory_run-pipeline", {}, "namespace"), c)), false);
+  assert.equal(asked, 1, "the session approval covers the next Fabric edit");
+  pick = "decline";
+  assert.equal(blocked(await handle(fabricRouter("onelake_delete_file"), c)), true);
+  assert.equal(asked, 2, "a delete still asks");
+  assert.equal(offered.length, 0, "with no session option");
+  await handleSessionStart({}, ctx); // a new session drops the approval
+  const headless = { ...ctx, hasUI: false, ui: undefined };
+  for (const command of ["onelake_delete_file", "core_create-item", "onelake_upload_file"]) {
+    assert.equal(blocked(await handle(fabricRouter(command), headless)), true, `${command} is blocked headless`);
+  }
+  await handleSessionStart({}, ctx);
+});
+
 await t("blocks a declined mutating MCP tool call", async () => {
   assert.equal(blocked(await handle({ toolName: "fabric_delete_workspace", input: {} }, { ...ctx, ui: { confirm: async () => false, notify: () => {} } })), true);
 });

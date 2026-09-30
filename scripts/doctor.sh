@@ -214,9 +214,10 @@ if have npm && npm ls -g --depth=0 2>/dev/null | grep -q '@mariozechner/pi-codin
 fi
 
 # First-run login: coop shares Pi auth in from ~/.pi/agent. A brand-new teammate has none.
+# Only a stored provider credential counts: Pi writes `{}` on startup (#167).
 if have pi; then
   gdir="$(coop_global_pi_agent_dir 2>/dev/null || true)"
-  if [ -s "$PI_CODING_AGENT_DIR/auth.json" ] || { [ -n "$gdir" ] && [ -s "$gdir/auth.json" ]; }; then
+  if coop_auth_has_credential "$PI_CODING_AGENT_DIR/auth.json" || { [ -n "$gdir" ] && coop_auth_has_credential "$gdir/auth.json"; }; then
     ok "Pi login present"
   else
     warn "no Pi login found yet" "your first 'coop' run will prompt you to sign in — see docs/onboarding.md §3.5 (OpenAI/Codex provider, Cooptimize BUSINESS account)"
