@@ -327,7 +327,7 @@ $ coop fabric workspace list      # -> whichever `fab` is first on PATH
 $ coop doctor
 Microsoft Fabric CLI
 ✗ fab is the WRONG tool — this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI
-      Fix: pipx install ms-fabric-cli   and ensure ~/.local/bin precedes Homebrew on PATH
+      Fix: pipx install ms-fabric-cli==1.7.0   and ensure ~/.local/bin precedes Homebrew on PATH
            (or: brew uninstall fabric). Verify with: fab --version
 ```
 

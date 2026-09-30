@@ -84,7 +84,7 @@ foreach ($r in (Get-CoopPrereqs)) {
 }
 
 D-Head 'Core'
-Check 'pi'      'required' 'npm install -g @earendil-works/pi-coding-agent   (or: coop bootstrap)' @('pi','--version')
+Check 'pi'      'required' 'coop install   (installs the release''s tested Pi)' @('pi','--version')
 Check 'npm'     'optional' 'ships with Node.js' @('npm','--version')
 # Get-CoopPython skips a Windows Store App-Execution-Alias stub; later checks
 # (project health, --fix) run through this interpreter.
@@ -261,7 +261,7 @@ if (Test-Have 'fab') {
   if ($fabver -match '(?i)paramiko|invoke') {
     D-Bad 'fab is the WRONG tool' "this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI"
     if (-not $script:JSON) {
-      Coop-Say '      Fix: pipx install ms-fabric-cli   and ensure ~/.local/bin precedes Homebrew on PATH'
+      Coop-Say "      Fix: pipx install $(Coop-ManifestPythonSpec 'ms-fabric-cli')   and ensure ~/.local/bin precedes Homebrew on PATH"
       Coop-Say '           (or: brew uninstall fabric). Verify with: fab --version'
     }
   } else {
@@ -269,7 +269,7 @@ if (Test-Have 'fab') {
     D-Ok "fab — Microsoft Fabric CLI  ($fv)"
   }
 } else {
-  D-Bad 'fab missing' 'pipx install ms-fabric-cli'
+  D-Bad 'fab missing' "coop install   (or: pipx install $(Coop-ManifestPythonSpec 'ms-fabric-cli'))"
 }
 
 D-Head 'Standalone Coop tools (pipx)'
@@ -651,22 +651,33 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
   }
   if (Test-Have 'pipx') {
     if (-not (Test-Have 'fab')) {
+      # Repairs install the release's pinned versions only, never PyPI's latest.
       $fabricSpec = Coop-ManifestPythonSpec 'ms-fabric-cli'
-      if (-not $fabricSpec) { $fabricSpec = 'ms-fabric-cli' }
-      Coop-Info "pipx install $fabricSpec"
-      & pipx install $fabricSpec *> $null
-      if ($LASTEXITCODE -eq 0 -and (Sync-CoopFabricPythonPackages) -and (Ensure-CoopFabricOdbcDriver $true)) {
-        Coop-Ok 'managed Fabric runtime installed'
-      } else {
-        Coop-Warn 'could not install the managed Fabric runtime' 'run: coop install'
+      if (-not $fabricSpec) {
+        Coop-Warn 'no release pin for ms-fabric-cli in the manifest' 'run: coop update'
         $repairFailed = $true
+      } else {
+        Coop-Info "pipx install $fabricSpec"
+        & pipx install $fabricSpec *> $null
+        if ($LASTEXITCODE -eq 0 -and (Sync-CoopFabricPythonPackages) -and (Ensure-CoopFabricOdbcDriver $true)) {
+          Coop-Ok 'managed Fabric runtime installed'
+        } else {
+          Coop-Warn 'could not install the managed Fabric runtime' 'run: coop install'
+          $repairFailed = $true
+        }
       }
     }
     foreach ($t in @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')) {
       if (-not (Test-Have $t)) {
-        Coop-Info "pipx install $t"
-        & pipx install $t *> $null
-        if ($LASTEXITCODE -eq 0) { Coop-Ok "$t installed" } else { Coop-Warn "could not install $t (run: pipx install $t)" }
+        $tSpec = Coop-ManifestPythonSpec $t
+        if (-not $tSpec) {
+          Coop-Warn "no release pin for $t in the manifest" 'run: coop update'
+          $repairFailed = $true
+          continue
+        }
+        Coop-Info "pipx install $tSpec"
+        & pipx install $tSpec *> $null
+        if ($LASTEXITCODE -eq 0) { Coop-Ok "$t installed" } else { Coop-Warn "could not install $t (run: pipx install $tSpec)" }
       }
     }
   } else {
