@@ -140,6 +140,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Standards lookups no longer spawn git on every prompt (#138). Each prompt verified the
+  standards checkout two or three times, at five git processes each, and asked git for
+  the revision about eight more times: 28 git processes per prompt in the fixture,
+  roughly a second on Windows. `git rev-parse HEAD` is now remembered for as long as
+  `.git/HEAD` and its ref file are byte-identical, and a successful checkout
+  verification is reused while a content fingerprint of the checkout (git metadata,
+  refs, index, and every file's path, mode and bytes) is unchanged. Any edit, branch
+  switch, ref move or mode change verifies again from scratch. A warm prompt now
+  spawns no git process, and the golden standards test dropped from 4,396 git
+  processes to 16.
 - `release.yml` refuses a tag that is not `v` + `VERSION` or not on `origin/main`
   (#121), before it publishes anything. `coop release` already tags only from an
   up-to-date `main` (#105); this catches a tag pushed by hand, which teammates
