@@ -170,6 +170,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- `coop sync` no longer lets npm install the newest Pi into coop's extension tree
+  (#122). Several extensions declare `@earendil-works/pi-coding-agent` as a peer,
+  and coop's own convergence and realignment installs let npm auto-install peers,
+  so the tree got whatever npm's `latest` said. On 2026-09-29 that was 0.99.1,
+  fetched 16 seconds after it was published, which failed CI with E404, far
+  past the tested pin. `lib/_extdeps.py` now pins the agent peer to the running Pi's
+  version in the same npm `overrides` block as pi-ai and pi-tui. It treats any
+  other agent version in the tree as skew, so sync's realignment replaces it. The
+  convergence helpers in both twins write that pin before their own npm install.
+  `pi install` was never affected: Pi passes `--legacy-peer-deps` for its managed
+  installs. The Pi matrix now fails if the tree holds an agent other than the
+  runtime's version, and a new gate test covers the pin.
 - bash and PowerShell agree that a git worktree is a checkout (#106). bash tested for a
   `.git` directory and PowerShell for any `.git`, so in a linked worktree (where `.git`
   is a file) bash skipped the repo update step, doctor warned that skills would never
