@@ -185,10 +185,15 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
     if ($rc) {
       # Quote the launcher's first output line (stderr included) so the row
       # shows what it said instead of sending the user to run it by hand.
+      # Windows PowerShell 5.1 turns each native stderr line into an ErrorRecord
+      # whose rendering is prefixed with the command name and position; take the
+      # record's own message so the row quotes the launcher's line verbatim.
       $probe = ''
       try {
-        $pOut = (& $Exe --version 2>&1 | Out-String)
-        $pLine = @(($pOut -split "`r?`n") | Where-Object { $_.Trim() }) | Select-Object -First 1
+        $pLines = @(& $Exe --version 2>&1 | ForEach-Object {
+          if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { [string]$_ }
+        })
+        $pLine = @($pLines | ForEach-Object { ($_ -split "`r?`n") } | Where-Object { $_.Trim() }) | Select-Object -First 1
         if ($pLine) { $probe = ([string]$pLine).Trim(); if ($probe.Length -gt 120) { $probe = $probe.Substring(0, 120) } }
       } catch {}
       $said = if ($probe) { "; it printed: $probe" } else { '' }
