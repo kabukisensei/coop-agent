@@ -70,7 +70,7 @@ def fixture(
     )
     agent = root / "agent"
     agent.mkdir()
-    (agent / "mcp.json").write_text(
+    (agent / "mcp-adapter.json").write_text(
         json.dumps(
             {
                 "mcpServers": {
@@ -377,9 +377,9 @@ with (
 assert missing["state"] == "pyodbc_unavailable"
 assert missing == {"ok": False, "state": "pyodbc_unavailable", "stage": "driver_import"}
 
-old = json.loads((agent / "mcp.json").read_text(encoding="utf-8"))
+old = json.loads((agent / "mcp-adapter.json").read_text(encoding="utf-8"))
 old["mcpServers"]["fabric-sqlendpoint"]["_coop_target"]["item_name"] = "OtherWarehouse"
-(agent / "mcp.json").write_text(json.dumps(old), encoding="utf-8")
+(agent / "mcp-adapter.json").write_text(json.dumps(old), encoding="utf-8")
 with mock.patch.dict(os.environ, {"PI_CODING_AGENT_DIR": str(agent)}, clear=False):
     assert fsq.execute({"query": QUERY}, cwd=project)["state"] == "target_mismatch"
 

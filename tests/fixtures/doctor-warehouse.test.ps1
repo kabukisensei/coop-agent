@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
 # H2b: the PowerShell twin of the Warehouse and fabric rows in tests/doctor.test.sh.
-# Runs scripts/doctor.ps1 --json from a folder whose .mcp.json has fabric,
+# Runs scripts/doctor.ps1 --json with an agent-dir mcp-adapter.json that has fabric,
 # fabric-sqlendpoint, and a user-owned powerbi-mcp-server entry, with a python3
 # stub whose warehouse_mcp.py doctor-json prints a fixed state and tenant. The
 # Warehouse row names the tenant the probe minted for, the token_command_failed
@@ -63,7 +63,12 @@ try {
     ) -join "`n") + "`n", $utf8)
     & chmod +x $py
   }
+  # #165: the adapter reads only the agent dir's mcp-adapter.json. The cwd's
+  # .mcp.json is a decoy that doctor must name as unused and never check.
   [System.IO.File]::WriteAllText((Join-Path $cwd '.mcp.json'),
+    '{"mcpServers":{"powerbi-modeling-mcp":{"command":"npx","args":["-y","@microsoft/powerbi-modeling-mcp@latest"]}}}',
+    $utf8)
+  [System.IO.File]::WriteAllText((Join-Path $agent 'mcp-adapter.json'),
     '{"mcpServers":{"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp"]},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"]},"powerbi":{"command":"npx","args":["-y","powerbi-mcp-server@0.1.0","--authentication","azcli","--tenant","user-tenant","--readonly"]}}}',
     $utf8)
   # Doctor refreshes the coop-agent checkout at most once a day; a fresh stamp
@@ -135,6 +140,13 @@ try {
   if ($null -ne (Find-Row $rows 'powerbi server configured')) {
     Ko 'doctor.ps1 must not report powerbi-mcp-server as a configured server'
   } else { Ok 'doctor.ps1 does not report powerbi-mcp-server as a configured server' }
+  $unused = Find-Row $rows ('not used: ' + (Join-Path $cwd '.mcp.json'))
+  if ($null -eq $unused -or $unused.status -ne 'ok' -or -not ([string]$unused.name).EndsWith("(coop reads MCP servers only from $(Join-Path $agent 'mcp-adapter.json'))")) {
+    Ko "doctor.ps1 must name a work repo's .mcp.json as unused" (@($rows | Where-Object { ([string]$_.name).Contains('MCP') -or ([string]$_.name).Contains('not used') } | ForEach-Object { "$($_.status) | $($_.name)" }) -join "`n")
+  } else { Ok "doctor.ps1 names a work repo's .mcp.json as unused" }
+  if ($null -ne (Find-Row $rows 'missing --start')) {
+    Ko "doctor.ps1 must not check a repo .mcp.json that coop never reads"
+  } else { Ok "doctor.ps1 ignores a work repo's .mcp.json" }
 
   # 2. A tenant that is not a GUID or domain name is dropped: the row and hint
   #    stay unpinned, as with no tenant (az's default account).

@@ -306,7 +306,7 @@ as a native Pi extension and is deliberately excluded from generated MCP configu
 entry it generated; an entry you added yourself stays, and `coop doctor` warns about it.
 
 `coop onboard` writes versioned `~/.coop/config`; `coop sync` deterministically generates
-COOP-managed entries in `~/.coop/agent/mcp.json` while preserving unmarked user-owned
+COOP-managed entries in `~/.coop/agent/mcp-adapter.json` while preserving unmarked user-owned
 servers. Generated config stores no OAuth token. The Azure DevOps MCP organization lives
 in `~/.coop/config`; batch digest client/project/team/recipient records live separately in
 private `~/.coop/devops/clients.yml`.
@@ -328,7 +328,7 @@ Warehouse IDs create an item-scoped URL; Lakehouse projects must use
 `sqlEndpointProperties.id`, not the Lakehouse item ID. With no explicit target Coop uses
 the global endpoint. A malformed explicit target fails closed and emits no entry. Runtime
 uses a bearer token acquired from the existing Azure CLI login only for the Pi child
-environment; no token is written to `mcp.json`, argv, or disk. The token is minted for
+environment; no token is written to `mcp-adapter.json`, argv, or disk. The token is minted for
 the client tenant when one is configured (the same tenant as the Azure sign-in below),
 and every request and `fabric_sql_query` token is pinned to that token's tenant, so a
 guest whose az default account is their home tenant still works. Doctor never initiates

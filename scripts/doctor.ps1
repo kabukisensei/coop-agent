@@ -447,15 +447,15 @@ if (Test-Have 'pi') {
 }
 
 D-Head 'MCP servers (read-only, optional)'
+# coop launches pi-mcp-adapter in exclusive mode (#165), so the agent dir's
+# mcp-adapter.json is the only MCP config it reads. Check that file, and name a
+# work repo's MCP file that coop does not use.
 $mcpFound = ''
+$mcpManaged = Join-Path $env:PI_CODING_AGENT_DIR 'mcp-adapter.json'
+if (Test-Path -LiteralPath $mcpManaged -PathType Leaf) { $mcpFound = $mcpManaged }
 $cwd = (Get-Location).Path
-foreach ($f in @(
-    (Join-Path $cwd '.mcp.json'),
-    (Join-Path $cwd '.pi\mcp.json'),
-    (Join-Path $env:PI_CODING_AGENT_DIR 'mcp.json'),
-    (Join-Path $HOME '.config\mcp\mcp.json'),
-    (Join-Path $HOME '.pi\mcp-config\mcp.json'))) {
-  if (Test-Path -LiteralPath $f -PathType Leaf) { $mcpFound = $f; break }
+foreach ($f in @((Join-Path $cwd '.mcp.json'), (Join-Path $cwd '.pi\mcp-adapter.json'), (Join-Path $cwd '.pi\mcp.json'))) {
+  if ((Test-Path -LiteralPath $f -PathType Leaf) -and $f -ne $mcpManaged) { D-Ok "not used: $f (coop reads MCP servers only from $mcpManaged)" }
 }
 if ($mcpFound) {
   D-Ok "MCP config: $mcpFound"
@@ -501,7 +501,7 @@ if ($mcpFound) {
   $mcpTodo = 0
   $mcpLines = (Get-Content -LiteralPath $mcpFound -ErrorAction SilentlyContinue)
   if ($mcpLines) { $mcpTodo = ($mcpLines | Select-String -Pattern 'TODO-' -SimpleMatch).Count }
-  if ($mcpTodo -gt 0) { D-Warn "$mcpTodo TODO placeholder(s) remain in mcp.json" 'set your tenant/org before live Power BI / Azure DevOps work' }
+  if ($mcpTodo -gt 0) { D-Warn "$mcpTodo TODO placeholder(s) remain in mcp-adapter.json" 'set your tenant/org before live Power BI / Azure DevOps work' }
   $sqlPy = Get-CoopPython
   if ($sqlPy) {
     $sqlArgs = @((Join-Path $script:CoopRoot 'lib\warehouse_mcp.py'), 'doctor-json', $mcpFound)

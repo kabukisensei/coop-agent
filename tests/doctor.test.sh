@@ -37,10 +37,10 @@ else
 fi
 
 # --- doctor reports the configured mode ---------------------------------------
-# Doctor discovers mcp.json from the cwd first (as $PWD/.mcp.json), so run each
-# case from its own scratch directory.
+# Doctor reads only the agent dir's mcp-adapter.json (exclusive mode, #165), so
+# each case uses its own scratch directory as both the cwd and the agent dir.
 doctor_out() {
-  ( cd "$1" && COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null )
+  ( cd "$1" && COOP_AGENT_DIR="$1" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null )
 }
 
 # Warehouse token-acquisition states must produce specific guidance. Stub only
@@ -61,7 +61,7 @@ EOF
 chmod +x "$state_stub/python3"
 d="$TMP/warehouse-states"
 mkdir -p "$d"
-cat > "$d/.mcp.json" <<'EOF'
+cat > "$d/mcp-adapter.json" <<'EOF'
 {"mcpServers":{"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"]}}}
 EOF
 while IFS='|' read -r state hint; do
@@ -80,7 +80,7 @@ EOF
 # H2b: the Warehouse row names the tenant its probe minted for, and its token
 # command hint pins that tenant. The fabric row states that coop cannot pin the
 # tenant of @microsoft/fabric-mcp (it uses az's default account).
-cat > "$d/.mcp.json" <<'EOF'
+cat > "$d/mcp-adapter.json" <<'EOF'
 {"mcpServers":{"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp"]},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"]}}}
 EOF
 h2b_tenant='cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd'
@@ -140,7 +140,7 @@ esac
 # Read-only + --start → reported as GOOD (started, read-only).
 d="$TMP/good"
 mkdir -p "$d"
-cat > "$d/.mcp.json" <<'EOF'
+cat > "$d/mcp-adapter.json" <<'EOF'
 {
   "mcpServers": {
     "powerbi-modeling-mcp": {
@@ -159,7 +159,7 @@ esac
 # Missing --start → warned (server will not launch).
 d="$TMP/nostart"
 mkdir -p "$d"
-cat > "$d/.mcp.json" <<'EOF'
+cat > "$d/mcp-adapter.json" <<'EOF'
 {
   "mcpServers": {
     "powerbi-modeling-mcp": {
@@ -179,7 +179,7 @@ esac
 # coop's governed mode (#159): healthy, and says coop asks before each edit.
 d="$TMP/readwrite"
 mkdir -p "$d"
-cat > "$d/.mcp.json" <<'EOF'
+cat > "$d/mcp-adapter.json" <<'EOF'
 {
   "mcpServers": {
     "powerbi-modeling-mcp": {
@@ -202,7 +202,7 @@ esac
 # Unclear/no-flags → still not healthy: missing --start fires first.
 d="$TMP/unclear"
 mkdir -p "$d"
-cat > "$d/.mcp.json" <<'EOF'
+cat > "$d/mcp-adapter.json" <<'EOF'
 {
   "mcpServers": {
     "powerbi-modeling-mcp": {
@@ -218,12 +218,29 @@ case "$out" in
   *) ko "doctor did not warn on unusable modeling config"; echo "$out" ;;
 esac
 
+# #165: a work repo's .mcp.json is not read. Doctor names it and checks only
+# coop's mcp-adapter.json.
+d="$TMP/repo-mcp"
+mkdir -p "$d/work" "$d/agent"
+cat > "$d/work/.mcp.json" <<'EOF'
+{"mcpServers":{"powerbi-modeling-mcp":{"command":"npx","args":["-y","@microsoft/powerbi-modeling-mcp@latest"]}}}
+EOF
+out="$( cd "$d/work" && COOP_AGENT_DIR="$d/agent" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null )"
+case "$out" in
+  *"not used: $d/work/.mcp.json (coop reads MCP servers only from $d/agent/mcp-adapter.json)"*"no MCP config found"*) ok "doctor names a work repo's .mcp.json as unused" ;;
+  *) ko "doctor did not name the unused repo .mcp.json"; echo "$out" | grep -i mcp ;;
+esac
+case "$out" in
+  *"missing --start"*) ko "doctor checked a repo .mcp.json that coop never reads"; echo "$out" | grep -i modeling ;;
+  *) ok "doctor ignores a work repo's .mcp.json" ;;
+esac
+
 # #93: powerbi-mcp-server ignores --readonly and exposes refresh_dataset. coop no
 # longer generates it and leaves a user-owned entry alone, so doctor warns with
 # the reason and never reports the entry as a configured server.
 d="$TMP/powerbi-mcp-server"
 mkdir -p "$d"
-cat > "$d/.mcp.json" <<'EOF'
+cat > "$d/mcp-adapter.json" <<'EOF'
 {
   "mcpServers": {
     "powerbi": {
@@ -233,7 +250,7 @@ cat > "$d/.mcp.json" <<'EOF'
   }
 }
 EOF
-json_out="$( cd "$d" && COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" --json 2>/dev/null </dev/null )"
+json_out="$( cd "$d" && COOP_AGENT_DIR="$d" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" --json 2>/dev/null </dev/null )"
 if printf '%s' "$json_out" | python3 -c '
 import json, sys
 rows = json.load(sys.stdin)["checks"]
@@ -279,7 +296,7 @@ m=json.load(sys.stdin)
 for k,v in m["extensions"].items(): print(f"  npm:{k}@{v}")'
   exit 0
 }
-echo "pi 0.84.3"
+echo "pi 0.87.1"
 EOF
 chmod +x "$stub_ok/pi"
 out="$(PATH="$stub_ok:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
@@ -308,7 +325,7 @@ for k,v in m["extensions"].items():
     print(f"  npm:{k}@{drift if k==first else v}")'
   exit 0
 }
-echo "pi 0.84.3"
+echo "pi 0.87.1"
 EOF
 chmod +x "$stub_drift/pi"
 out="$(PATH="$stub_drift:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
@@ -335,7 +352,7 @@ for k,v in m["extensions"].items():
     print(f"    HOME/.coop/agent/npm/node_modules/{k}")'
   exit 0
 }
-echo "pi 0.84.3"
+echo "pi 0.87.1"
 EOF
 chmod +x "$stub_real/pi"
 out="$(PATH="$stub_real:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
@@ -360,7 +377,7 @@ for k,v in m["extensions"].items():
     print(f"    HOME/.coop/agent/npm/node_modules/{k}")'
   exit 0
 }
-echo "pi 0.84.3"
+echo "pi 0.87.1"
 EOF
 chmod +x "$stub_dup/pi"
 out="$(PATH="$stub_dup:$PATH" COOP_ROOT="$ROOT" bash "$ROOT/scripts/doctor.sh" 2>&1 </dev/null)"
@@ -409,10 +426,10 @@ echo "  doctor-mcp-mode tests passed"
 d="$TMP/generated"
 mkdir -p "$d"
 printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"tenant-1"},"integrations":{"fabric":false,"power_bi":true,"power_bi_modeling":true,"azure_devops":false,"microsoft_learn":false},"azure_devops":{"organization":"org"}}' > "$d/config"
-COOP_ROOT="$ROOT" bash -c "cd '$d' && python3 '$ROOT/lib/mcp_config.py' --config '$d/config' --output '$d/.mcp.json'" || ko "generator failed on scratch config"
+COOP_ROOT="$ROOT" bash -c "cd '$d' && python3 '$ROOT/lib/mcp_config.py' --config '$d/config' --output '$d/mcp-adapter.json'" || ko "generator failed on scratch config"
 out="$(doctor_out "$d")"
 case "$out" in
   *"powerbi-modeling-mcp configured (started, read-write; coop asks before each edit)"*) ok "doctor reads generated pretty-printed MCP JSON correctly" ;;
   *) ko "doctor misreads generated MCP JSON"; echo "$out" | grep -i modeling ;;
 esac
-grep -q '"args": \[' "$d/.mcp.json" && ok "fixture really is pretty-printed (multi-line args)" || ok "generator emitted compact JSON"
+grep -q '"args": \[' "$d/mcp-adapter.json" && ok "fixture really is pretty-printed (multi-line args)" || ok "generator emitted compact JSON"

@@ -1151,7 +1151,7 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
     if (!root || !existsSync(join(root, "lib", "fabric_sql_query.py"))) return null;
   }
   let mcp: any;
-  try { mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp.json"))); } catch { return null; }
+  try { mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp-adapter.json"))); } catch { return null; }
   // The adapter normalizes hyphens in server namespaces. An ambiguous namespace
   // must not acquire a grant using the managed server's otherwise valid metadata.
   const aliases = Object.keys(mcp?.mcpServers || {}).filter((name) => name.replace(/-/g, "_") === "fabric_sqlendpoint");

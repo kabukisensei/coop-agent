@@ -2,7 +2,7 @@
 #
 # Pi compatibility matrix for ONE runtime version — WINDOWS twin of
 # scripts/test-pi-matrix.sh (Slice 4). Run on a Windows host:
-#   pwsh -File scripts/test-pi-matrix.ps1 -PiVersion 0.84.3 [-RepoRoot <path>]
+#   pwsh -File scripts/test-pi-matrix.ps1 -PiVersion 0.87.1 [-RepoRoot <path>]
 #
 # Everything is written under a temp directory; the workstation's global npm
 # packages and ~/.pi / ~/.coop are never modified. The optional live agent turn
@@ -144,8 +144,8 @@ try {
 
   $cmEntry = Join-Path $agentNm 'context-mode'
   if (Test-Path $cmEntry) { Ok ("context-mode installed ({0})" -f (VerOf 'context-mode')) } else { Ko 'context-mode MISSING' }
-  try { Get-Content (Join-Path $env:PI_CODING_AGENT_DIR 'mcp.json') -Raw | ConvertFrom-Json | Out-Null; Ok 'generated mcp.json parses' }
-  catch { Ko 'mcp.json missing or invalid' }
+  try { Get-Content (Join-Path $env:PI_CODING_AGENT_DIR 'mcp-adapter.json') -Raw | ConvertFrom-Json | Out-Null; Ok 'generated mcp-adapter.json parses' }
+  catch { Ko 'mcp-adapter.json missing or invalid' }
 
   # --- 6. First-party extensions through the REAL Pi loader ---------------------
   $loader = Join-Path $PiPackageDir 'dist\core\extensions\loader.js'
