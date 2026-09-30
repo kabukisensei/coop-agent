@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -517,6 +517,54 @@ try {
     }
     assert.deepEqual(wrong, []);
     git(["reset", "--hard", good]);
+  });
+  test("a warm prompt spawns at most one git process, and a changed checkout is verified again (#138)", () => {
+    now += 1; assertRefreshed(options({ force: true }));
+    const prompt = "fix the silver indexing on the fabric warehouse table";
+    const headings = (context) => context.records.flatMap((r) => r.sections.map((section) => section.heading));
+    const first = buildStandardsContext(prompt, options({ refresh: false }));
+    const active = activeCanonicalGeneration(options());
+    assert.equal(active.ok, true, JSON.stringify(active));
+    if (process.platform === "win32") {
+      // Node runs git.exe directly on Windows, so a shell shim cannot count spawns there.
+      console.log("  - spawn count checked on POSIX only (Windows runs git.exe without a shell shim)");
+    } else {
+      const shim = join(tmp, "git-shim"), log = join(tmp, "git-shim.log"), realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+      mkdirSync(shim, { recursive: true });
+      writeFileSync(join(shim, "git"), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+      const calls = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
+      const savedPath = process.env.PATH;
+      process.env.PATH = `${shim}:${savedPath}`;
+      let warm;
+      try {
+        execFileSync("git", ["--version"], { stdio: "ignore" });
+        assert.equal(calls().length, 1, "the logging git shim must see a spawn");
+        rmSync(log, { force: true });
+        warm = buildStandardsContext(prompt, options({ refresh: false }));
+      } finally { process.env.PATH = savedPath; }
+      assert.deepEqual(headings(warm), headings(first));
+      assert.ok(calls().length <= 1, `a warm prompt spawned ${calls().length} git processes: ${calls().join(" | ")}`);
+    }
+    // The cache never hides a change: an edited article makes the checkout dirty, and the
+    // generation fails closed until the bytes are restored; a branch switch fails too.
+    const edited = join(active.checkout, "SQL", "SQL Conventions.md"), original = readFileSync(edited);
+    writeFileSync(edited, Buffer.concat([original, Buffer.from("\nedited after verification\n")]));
+    assert.equal(activeCanonicalGeneration(options()).ok, false);
+    writeFileSync(edited, original);
+    assert.equal(activeCanonicalGeneration(options()).ok, true);
+    git(["checkout", "-q", "-b", "cache-probe"], active.checkout);
+    assert.equal(activeCanonicalGeneration(options()).ok, false);
+    git(["checkout", "-q", "main"], active.checkout); git(["branch", "-q", "-D", "cache-probe"], active.checkout);
+    assert.equal(activeCanonicalGeneration(options()).ok, true);
+    if (process.platform !== "win32") {
+      // git status reports an executable-bit change, so the fingerprint carries the mode.
+      const mode = statSync(edited).mode & 0o777;
+      chmodSync(edited, mode | 0o111);
+      assert.equal(activeCanonicalGeneration(options()).ok, false);
+      chmodSync(edited, mode);
+      assert.equal(activeCanonicalGeneration(options()).ok, true);
+    }
+    assert.deepEqual(headings(buildStandardsContext(prompt, options({ refresh: false }))), headings(first));
   });
   assert.match(readFileSync(join(ROOT, "bin", "coop"), "utf8"), /resolve-many sql,dax/);
   console.log(`standards live sync: ${count} tests passed`);

@@ -164,7 +164,7 @@ echo "  ✓ --no-launch prints the spec and exits 0 (no pi launched)"
 
 echo "→ fleet manifest tests"
 bash "$ROOT/tests/fleet-manifest.test.sh"
-echo "→ fleet health digest rendering (HTML/Markdown escaping)"
+echo "→ fleet health digest rendering (HTML/Markdown escaping, UTF-8 output)"
 bash "$ROOT/tests/fleet-digest.test.sh"
 echo "→ coop update follows release tags, never backwards (H5; gate lane: offline, no sleep or marker)"
 bash "$ROOT/tests/update-follow.test.sh"

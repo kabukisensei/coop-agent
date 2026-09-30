@@ -15,6 +15,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # the guard below needs origin/main's history
+
+      # `coop release` tags only from main == origin/main and pushes branch + tag
+      # atomically, but a tag pushed by hand skips that. Teammates follow release
+      # tags (H5), so refuse to publish one that isn't VERSION or isn't on main.
+      - name: Refuse a tag that isn't VERSION or isn't on origin/main
+        run: |
+          want="v$(tr -d '[:space:]' < VERSION)"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match VERSION ($want); publish only tags cut by coop release"
+            exit 1
+          fi
+          commit="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$commit" origin/main; then
+            echo "::error::tag $GITHUB_REF_NAME ($commit) is not on origin/main; publish only tags cut by coop release"
+            exit 1
+          fi
+          echo "tag $GITHUB_REF_NAME matches VERSION and is on origin/main"
 
       - name: Extract changelog section for this tag
         run: |

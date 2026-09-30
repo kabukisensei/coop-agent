@@ -182,7 +182,9 @@ skippable with `--no-check`); bumps the `VERSION` file **and** every
 (`git push --atomic origin main vX.Y.Z`: both land or neither does, so the tag
 can never reach origin off `main`). `--no-push` stops at the local tag. The tag
 push triggers `release.yml`, which cuts a GitHub Release whose body is that
-version's CHANGELOG section.
+version's CHANGELOG section. `release.yml` first refuses a tag that is not
+`v$(cat VERSION)` or not an ancestor of `origin/main`, so a hand-pushed tag
+fails before anything is published.
 
 The pre-tag gate runs both lanes on the machine you release from only. The
 Windows legs of the extended lane run in CI, so before you release, check that

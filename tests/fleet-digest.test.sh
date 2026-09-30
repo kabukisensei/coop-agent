@@ -116,4 +116,13 @@ case "$html_empty" in
 esac
 pass "HTML render handles empty machine list"
 
+# 6. Redirected output on Windows (a file, a pipe, Task Scheduler) gets the ANSI
+#    code page, which has no ⚠. The digest must still write, as UTF-8.
+for fmt in md html; do
+  out="$(PYTHONIOENCODING=cp1252 python3 "$PY" --config "$TMP/coopconfig" --format "$fmt")" \
+    || fail "the $fmt digest crashed on a cp1252 stdout (Windows redirected output)"
+  case "$out" in *"⚠"*) ;; *) fail "the $fmt digest must keep its ⚠ marks, written as UTF-8" ;; esac
+done
+pass "md and html digests write UTF-8 when stdout's code page has no ⚠"
+
 printf '  %s\n' "fleet-digest tests passed"
