@@ -811,12 +811,17 @@ test("certification Python pin reaches bounded helpers and baseline onboarding",
   const probe = (candidate, env, cwd = dir) => {
     const script = join(dir, `probe-${probeNumber++}.ps1`);
     writeFileSync(script, candidate, "utf8");
-    return spawnSync(PWSH, ["-NoLogo", "-NoProfile", "-File", script, "-Mode", "Probe", "-Probe", "ResolvePython"], { encoding: "utf8", env, cwd });
+    // A bounded probe: a resolver that launches something that never exits must fail
+    // this test by name, not hang the whole file until the job times out.
+    const result = spawnSync(PWSH, ["-NoLogo", "-NoProfile", "-File", script, "-Mode", "Probe", "-Probe", "ResolvePython"], { encoding: "utf8", env, cwd, timeout: 120000 });
+    if (result.error) throw new Error(`ResolvePython probe with CERT_PYTHON=${JSON.stringify(env.CERT_PYTHON ?? null)} did not finish: ${result.error.message}`);
+    return result;
   };
   const assertWiring = (candidate) => {
     assert.match(candidate, /IsPathRooted\(\$Path\)/);
     assert.match(candidate, /Equals\(\$Path, \$expected, \$comparison\)/);
     assert.match(candidate, /Test-Path -LiteralPath \$expected -PathType Leaf/);
+    assert.match(candidate, /GetExtension\(\$expected\), '\.exe'/);
     assert.match(candidate, /& \$expected -c 'import os,sys; print\(os\.path\.abspath\(sys\.executable\)\)'/);
     assert.equal((candidate.match(/Get-AcceptancePython/g) || []).length, 4);
     assert.match(candidate, /try \{ \$pythonPath = Get-AcceptancePython \} catch \{ \$pythonPath = '' \}/);

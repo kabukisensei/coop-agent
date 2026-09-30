@@ -71,6 +71,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   Windows. `tests/run.ps1` keeps its subset so Windows doesn't run the file twice.
   The ubuntu extended job installs `jsonschema` 4.25.1, as the Windows jobs do,
   because the file treats the receipt schema validator as mandatory.
+  Running it on Windows exposed a hang: the certification Python resolver
+  executed whatever file `CERT_PYTHON` named, so a document such as `README.md`
+  opened with its associated app and never returned. On Windows the resolver now
+  refuses anything but an `.exe` before running it, and each resolver probe in
+  the test is bounded to 2 minutes and names its `CERT_PYTHON` when it overruns.
 - The extended test lane no longer touches your real home or this checkout (#135).
   `tests/run.sh` keeps the gate lane's temp home for the extended block, except
   `home-guard`, which checks the real home on purpose. The fixtures that run
