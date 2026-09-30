@@ -830,6 +830,7 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
       git = 'xcode-select --install'; node = 'brew install node'; python = 'brew install python@3.12'
       pipx = 'brew install pipx then pipx ensurepath'; az = 'brew install azure-cli'
       odbc = 'brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release then brew install msodbcsql18'
+      pipxUpgrade = $false
     }
   } else {
     $fix = @{
@@ -838,6 +839,7 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
       pipx = 'sudo apt-get install -y pipx then pipx ensurepath'
       az = 'curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash'
       odbc = 'see https://learn.microsoft.com/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server'
+      pipxUpgrade = $false
     }
   }
   $ver = { param([string]$Exe) $o = (& $Exe --version 2>&1 | Out-String); $m = [regex]::Match($o, '\d+\.\d+(\.\d+)?'); if ($m.Success) { $m.Value } else { '' } }
