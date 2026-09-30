@@ -170,6 +170,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Users only get the release's tested versions (#151):
+  - `coop doctor --fix` installs `coop-data-doc`, `coop-sql-review` and
+    `coop-dax-review` at their manifest pins; it used to install PyPI's latest.
+    The Fabric CLI repair no longer falls back to an unpinned `ms-fabric-cli`. A
+    tool with no pin fails with "run: coop update".
+  - The Power BI/Fabric authoring tools install drops its `npm update -g`
+    fallback, which ignored the version and moved the tool to latest. A tool with
+    no manifest pin fails instead of installing unpinned.
+  - Hints no longer recommend `pi-coding-agent@latest`, an unversioned
+    `npm install -g @earendil-works/pi-coding-agent`, `pipx install
+    ms-fabric-cli`, or `uv tool install`. They say `coop install` / `coop update`,
+    or print the pinned version.
+  - A new gate test keeps `@latest` and `npm update -g` out of product code, and
+    checks that the manifest holds only exact versions.
 - `coop sync` no longer lets npm install the newest Pi into coop's extension tree
   (#122). Several extensions declare `@earendil-works/pi-coding-agent` as a peer,
   and coop's own convergence and realignment installs let npm auto-install peers,
