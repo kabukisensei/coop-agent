@@ -274,8 +274,10 @@ It never touches the repo clone, your work repos, or your personal `pi` setup.
 
 - **Read-only first** — it plans and asks before changing anything.
 - **Never commits source** (SQL / DAX / models / reports) — docs/logs only, with approval.
-- **MCP** (Fabric / Power BI / Microsoft Learn) is read-only by policy and never
-  exposes secrets. Warehouse SQL uses a separate `fabric-sqlendpoint` managed
+- **MCP** (Fabric / Power BI / Microsoft Learn) reads freely; any change asks first
+  (one approval can cover a server for the session; deletes and production always
+  ask), and it never exposes secrets. Semantic model edits go through the Power BI
+  Modeling MCP after approval. Warehouse SQL uses a separate `fabric-sqlendpoint` managed
   direct HTTP MCP server. Coop obtains a short-lived bearer from the existing Azure
   CLI login at launch (for the client tenant when one is configured), injects it
   only into the Pi child environment, never persists it, and keeps every SQL call

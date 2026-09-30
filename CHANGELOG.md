@@ -7,6 +7,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Docs: `docs/install-windows.md` no longer describes the **coop** icon as a chat
+  window that can't show the model sign-in, or a separate **coop (terminal)** icon;
+  `docs/onboarding.md`'s ground rules say MCP changes ask first instead of "read-only
+  by policy" (#160 follow-up).
 - The browser chat (`coop web`) is removed (master plan S5; Aaron dropped the web
   on 2026-09-30). The installable desktop app in the plan's last phase replaces it
   and uses the unchanged `coop launch-spec --json`.

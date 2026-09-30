@@ -111,10 +111,9 @@ coop
 ```
 
 Or double-click the **coop** icon on your Desktop or in the Start Menu, which opens
-coop as a chat window. The chat window can't show the model sign-in (step 5), so if
-you never saw that screen, run `coop` in PowerShell once first. The icon starts coop
-in your home folder. For client work, start coop from the project folder instead, so
-project setup and `/setup-docs` use that folder:
+the same coop in a terminal window. The icon starts coop in your home folder. For
+client work, start coop from the project folder instead, so project setup and
+`/setup-docs` use that folder:
 
 ```powershell
 cd <project folder>
@@ -129,8 +128,8 @@ a Microsoft sign-in window opens. Sign in with the account that has access to th
 client. If you have more than one tenant, it asks which one owns the client's Fabric
 and Power BI. After that, `coop` checks the sign-in quietly each time it starts. When
 the sign-in has expired, it prints `Opening Azure sign-in for tenant <id>...` and
-opens the same window once (from the **coop** icon, in a window of its own). If
-sign-in fails, coop starts anyway and prints the command to run:
+opens the same window once. If sign-in fails, coop starts anyway and prints the
+command to run:
 `az login --tenant <id> --allow-no-subscriptions`.
 
 **OpenAI (the model).** At the end of the install, a coop screen opens with
@@ -143,7 +142,6 @@ Final setup: press Enter to sign in with your Cooptimize OpenAI account.
 Press Enter and finish in your browser with your **Cooptimize business account**, not
 a personal one. The installer then carries on by itself. If it could not show this
 screen (for example, the install ended with **Something went wrong**), type `coop` in
-PowerShell or double-click the **coop (terminal)** icon: that opens the same screen.
-The **coop** chat-window icon does not, so do this once before you use it.
+PowerShell or double-click the **coop** icon: either opens the same screen.
 
 Next: [onboarding](onboarding.md) has a safe first task and the day-to-day commands.
