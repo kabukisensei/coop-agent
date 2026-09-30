@@ -72,8 +72,9 @@ rollout hotfixes on stable first (installer prerequisites, automatic Azure sign-
 project contract aligned with the Cooptimize standards repos), then test right-sizing,
 Windows-first simplification, dependency reconciliation, standards alignment and the
 reviewer decision, Azure SQL breadth with dev-by-default and live impact tracing,
-common-workflows first run, then the minimal beta channel with the optional TeamAI /
-Jev / package trials, and last an installable Electron desktop. **It is the only
+common-workflows first run, then TeamAI shared knowledge (the beta channel is
+skipped and Jev waits, revision 3.8), the optional package trial, and last an
+installable Electron desktop. **It is the only
 plan.** The earlier Windows terminal plan (revision 2.0) and every prior plan,
 handoff, and receipt live under `docs/history/` as read-only reference; the master
 plan wins where they differ, and new planning is a new revision of the master plan,
@@ -90,7 +91,7 @@ the same PR that retires the surface.
 `experimental/windows-terminal` is a provisional source branch, **not an installed
 or proven-isolated beta**. Do not run the existing installer/updater from that
 branch as a beta setup. The next authorized work is the master plan's Phase 0
-hotfixes, one PR each; the beta channel (B1) is conditional and comes later. This
+hotfixes, one PR each; the beta channel (B1) is skipped (revision 3.8). This
 pause applies to the roadmap, not unrelated explicitly requested maintenance.
 
 **Working a plan row:** follow the master plan's section 14 (one row, one issue,

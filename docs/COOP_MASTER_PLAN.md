@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.7 · September 30, 2026** (status update only: U1's first row and S5 shipped in v0.24.0; no scope or order change)
+**Document revision 3.8 · September 30, 2026** (scope decisions, no reordering of the client-facing phases: TeamAI shared knowledge becomes a scheduled phase, the beta channel is skipped, Jev waits, and the review CLIs retire with ST1; section 1.1)
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -29,10 +29,28 @@ execution trigger, and `agent:ready` is still added by hand. Releases follow
 | Editing SQL objects | Local files plus `coop-data-doc` lineage | SQL is not source-controlled today, so coop **defaults to the dev environment**, traces impact from **live metadata**, and verifies an edit with **actual data** before and after. |
 | First run | Onboarding wizard, then `/start` menu on demand | **Common workflows menu on first run**; the wizard becomes one entry in it. |
 | Desktop | Removed; native Windows Coop 2.0 last, no Electron | **Electron desktop returns, last**, gated on a packaged installer that other users can run. The native rewrite is dropped from the roadmap. |
-| TeamAI / Jev / PK1 | Early beta experiments after B1 | Unchanged intention, but they wait for the beta channel and run after the client-facing phases. PK1 now evaluates `@xl0/pi-lovely-codex` for tool-call handling and a usage-stats owner for the footer (revision 3.5: the Codex extension shows no usage stats; section 10). |
+| TeamAI / Jev / PK1 | Early beta experiments after B1 | **Revision 3.8:** TeamAI shared knowledge (K1–K3) is a scheduled phase after the first-run work, isolated on the development VM instead of a beta channel; Jev waits for an explicit start; PK1 stays optional. PK1 evaluates `@xl0/pi-lovely-codex` for tool-call handling and a usage-stats owner for the footer (revision 3.5: the Codex extension shows no usage stats; section 10). |
 | Update channel | `coop update` fast-forwards `main` | `coop update` moves to the **latest release tag**; `--edge` keeps head-of-main for maintainers. |
-| Qualification machine | Isolated beta channel (B1) before any upgrade | The team is **seven people**. A **fresh Windows development VM** plus a second clone with `COOP_AGENT_DIR` qualifies upgrades, and a tagged release reaches all seven the same day. B1 is built only if the fleet outgrows that. |
+| Qualification machine | Isolated beta channel (B1) before any upgrade | The team is **seven people**. A **fresh Windows development VM** plus a second clone with `COOP_AGENT_DIR` qualifies upgrades, and a tagged release reaches all seven the same day. **Revision 3.8:** B1 is skipped; the fleet is too small to need it (Aaron, 2026-09-30). |
 | Agent working model | Implicit | Section 14 sets how agents pick up work so several sessions stay coherent. |
+
+### 1.1 Decisions on September 30, 2026 (revision 3.8)
+
+Aaron decided these in the project thread on the evening of September 30; they
+change scope, not the order of the client-facing phases (0 through 6):
+
+- **TeamAI shared knowledge is in.** K1–K3 leave "optional experiments" and become
+  Phase 7, scheduled after the first-run work (FR1) and before the desktop. The
+  package detail stays in revision 2.0 section 8; isolation uses the development VM
+  and a sandbox team repository, not a beta channel.
+- **The beta channel (B1) is skipped.** Seven people update from release tags the
+  same day; the VM qualifies upgrades. The B1 proposal in [PR 72](https://github.com/kabukisensei/coop-agent/pull/72)
+  stays as documentation only.
+- **Jev waits.** J0–J3 keep their revision 2.0 gates and start only when Aaron asks.
+- **No client pipeline runs `coop-sql-review` or `coop-dax-review`.** They predate
+  the coop-standards repository the team now maintains. This closes section 15's
+  open question: ST1 retires the in-agent wrappers and the bundled-fallback path,
+  and archives the two CLIs rather than keeping them as optional CI gates.
 
 ## 2. Ordering principle and the "not over-engineered" rule
 
@@ -42,7 +60,8 @@ Order is by who is hurt when it is missing:
 2. Every later change is slower while CI is heavy → right-size tests.
 3. Every later change is bigger while two platforms and legacy web exist → simplify.
 4. Then change what is inside: dependencies, standards, SQL breadth, first run.
-5. Then experiments (beta channel, PK1, TeamAI, Jev) and the desktop.
+5. Then shared knowledge (TeamAI), the optional PK1 trial, and the desktop. The
+   beta channel is skipped and Jev waits (section 1.1).
 
 Rules for every package, in addition to the hard gates in revision 2.0 (no source
 loss, no credential leakage, no approval bypass, no accidental Fabric or database
@@ -589,10 +608,13 @@ Depends on H3 having access to the two repositories.
    enforced while writing, from the wiki articles. The replacement is a short
    self-check: before presenting SQL, DAX, or model changes, coop checks its own
    diff against the same articles it used to write them and names any rule it could
-   not meet. No separate rule engine. The CLIs survive only as optional CI gates for
-   a client whose pipeline runs them today (section 15's open question). Answer
-   that question before ST1 starts. Until ST1 retires them, the reviewers are fed
-   from the wiki so they never contradict what coop just wrote.
+   not meet. No separate rule engine. **Answered 2026-09-30 (Aaron):** no client
+   pipeline runs the CLIs; they were built before the team's coop-standards
+   repository existed. So ST1 retires the wrappers and archives `coop-sql-review`
+   and `coop-dax-review` (their repositories and the coop-website pages that
+   document them) instead of keeping them as optional CI gates. Until ST1 lands,
+   the reviewers are fed from the wiki so they never contradict what coop just
+   wrote.
 4. **Tabular Editor BPA** stays as the deterministic model check; it is vendor-owned
    and not tied to the standards format.
 
@@ -695,20 +717,27 @@ Onboarding questions that are still needed (name, tenant) move into item 5 or in
 the first workflow that needs them; nothing blocks the launch. The menu is the
 existing `/start` code in `extensions/coop-tools`, not a new UI.
 
-## 10. Phase 7 — Beta channel and optional experiments
+## 10. Phase 7 — TeamAI shared knowledge; the beta channel is skipped
 
-**B1, minimal and conditional.** Revision 2.0's isolated beta channel is the
-right design for a fleet too large to reach by hand. Coop's fleet is seven
-people: with release-tag updates (H5), the development VM as the qualification
-machine (Phase 3), and a rollback that is "check out the previous tag", B1 may
-never be needed. Build it only when a concrete case appears
-(for example a teammate who must run a beta feature daily while keeping stable),
-and then after simplification so it isolates one platform, not two. Scope stays what the
-B1 proposal in [PR 72](https://github.com/kabukisensei/coop-agent/pull/72) bounds: a separate clone,
-`COOP_PROFILE_ROOT` meaning the profile directory itself, a private npm prefix and
-pipx home, a `coop-beta` shim, and the same lifecycle code fed an installation
-context. No copied installer, no second manifest schema. Version reporting shows
-channel, version, SHA, and safe paths.
+**K1–K3 TeamAI shared knowledge (scheduled, revision 3.8).** Starts after FR1 on
+Aaron's explicit start, in the revision 2.0 order: **K1** isolated CLI, read-only
+recall and sources; **K2** reviewed contribution and promotion; **K3** the broader
+knowledge lifecycle, each deliberately enabled. Revision 2.0 section 8 is the
+package detail and its gates hold unchanged: the exact TeamAI artifact installed
+only in an isolated package root, a sandbox team repository and disposable
+workspace, verified data-home and resource destinations, no hooks, rules, MCP
+definitions or packages injected into stable coop, private Hermes memory kept
+separate from shared knowledge, and the old local search/sync path removed only
+after TeamAI covers its supported workflows. Isolation is the development VM (or
+a separate Windows account), since there is no beta channel. Each K row is its
+own PR with its own acceptance evidence.
+
+**B1 is skipped (Aaron, 2026-09-30).** Revision 2.0's isolated beta channel is
+the right design for a fleet too large to reach by hand. Coop's fleet is seven
+people: release-tag updates (H5), the development VM as the qualification machine
+(Phase 3), and a rollback that is "check out the previous tag" cover it. The B1
+proposal in [PR 72](https://github.com/kabukisensei/coop-agent/pull/72) stays as
+documentation; nothing from it is built unless the fleet outgrows this.
 
 **Then, each only when Aaron asks, each independently revertible:**
 
@@ -734,8 +763,8 @@ channel, version, SHA, and safe paths.
   reaches the child process; patch text is not exposed in process arguments; it
   works on the team's Codex subscription without a separate key. Whichever wins
   becomes the one owner of usage stats; the other is removed.
-- **K1–K3 TeamAI** shared knowledge, starting with isolated CLI and read-only recall.
-- **J0–J3 Jev** shadow experiments on synthetic material, advisory only.
+- **J0–J3 Jev** shadow experiments on synthetic material, advisory only. Waits
+  (Aaron, 2026-09-30); its revision 2.0 gates are unchanged.
 
 The controls in revision 2.0 sections 8 and 9 (data approval, secrets, authority,
 cost caps, stop conditions) are unchanged.
@@ -814,9 +843,10 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 11 | SQ1–SQ6 | Azure SQL targets, dev default, live impact, data verification | ST1 | section 8 acceptance | not started |
 | 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | not started |
 | 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, naming, diagnostics, simplify | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
-| 14 | B1 | Minimal beta channel, only if a concrete need appears | S-lane + explicit need | B1 proposal acceptance table, one platform | not started (conditional) |
-| 15 | K1–K3, J0–J3 | Optional experiments | B1 or VM isolation + explicit start | revision 2.0 gates | not started |
-| 16 | D1 | Electron desktop with packaged installer | 7–12 accepted | another user installs from the package alone | not started |
+| 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
+| 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | not started (scheduled, revision 3.8) |
+| 15b | J0–J3 | Jev shadow experiments | explicit start | revision 2.0 gates | waiting (Aaron, 2026-09-30) |
+| 16 | D1 | Electron desktop with packaged installer | 7–12 and 15 accepted | another user installs from the package alone | not started |
 
 Phase 0 rows can each be released as a patch. Later phases are minor versions.
 Rows become `agent:ready` only when Aaron says so. On September 28 he marked the
@@ -891,6 +921,5 @@ merged or blocked only on the standards repositories.
   from the scripts, the README, the v0.23.4/v0.23.5 changelog, and the B0 receipt.
 - Dependency "latest" values were rechecked against npm/PyPI on September 29,
   2026 (section 6.4); no candidate was installed or run.
-- Whether any client CI pipeline runs `coop-sql-review` or `coop-dax-review` today
-  is still unknown. Section 7's decision to retire them from coop is taken; this
-  question only decides whether the CLIs stay alive as optional gates.
+- (Resolved 2026-09-30.) No client CI pipeline runs `coop-sql-review` or
+  `coop-dax-review`; ST1 archives the CLIs (section 7).
