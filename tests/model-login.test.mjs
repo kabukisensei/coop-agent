@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
 assert.ok(dist, "COOP_TEST_DIST is required");
-const { default: coopTools, modelLoginAuthPath, shouldPrimeModelLogin } = await import(
+const { default: coopTools, modelLoginAuthPath, shouldPrimeModelLogin, authHasCredential } = await import(
   pathToFileURL(join(dist, "coop-tools.mjs"))
 );
 
@@ -20,6 +20,14 @@ try {
   process.env.COOP_PRIME_MODEL_LOGIN = "1";
 
   assert.equal(modelLoginAuthPath(), join(agentDir, "auth.json"));
+  const probe = join(agentDir, "probe-auth.json");
+  for (const [text, want] of [["", false], ["{}", false], ["{\n}\n", false], ["not json", false], ['{"openai-codex":{}}', false],
+    ['{"openai-codex":{"type":"oauth"}}', true], ['\uFEFF{"openai":{"type":"oauth"}}', true]]) {
+    writeFileSync(probe, text);
+    assert.equal(authHasCredential(probe), want, `authHasCredential(${JSON.stringify(text)})`);
+  }
+  assert.equal(authHasCredential(join(agentDir, "missing.json")), false);
+  console.log("  ✓ only a stored provider credential counts as a model login (#167)");
   assert.equal(shouldPrimeModelLogin({ hasUI: true, mode: "tui" }), true);
   assert.equal(shouldPrimeModelLogin({ hasUI: true, mode: "rpc" }), false);
 
@@ -64,6 +72,11 @@ try {
     model: { provider: "openai-codex", id: "gpt-5.5" },
     shutdown() { shutdown = true; },
   });
+  // Pi writes an empty `{}` auth.json on startup; that is not a sign-in (#167).
+  writeFileSync(join(agentDir, "auth.json"), "{}");
+  await new Promise((resolve) => setTimeout(resolve, 750));
+  assert.equal(shutdown, false, "Pi's empty startup auth.json must not end the sign-in step");
+  console.log("  ✓ sign-in-only mode keeps waiting while auth.json is Pi's empty {}");
   writeFileSync(join(agentDir, "auth.json"), '{"openai-codex":{"type":"oauth"}}\n');
   await new Promise((resolve) => setTimeout(resolve, 750));
   assert.equal(shutdown, true, "successful sign-in should return control to the installer");

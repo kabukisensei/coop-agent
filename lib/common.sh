@@ -688,10 +688,28 @@ coop_effective_agent_dir() {
 # True when Pi has a stored provider credential in the agent tree Coop will
 # actually load. Environment-only credentials intentionally do not count: this
 # helper gates the one-time interactive /login handoff requested by onboarding.
+# Pi writes an empty `{}` auth.json on startup, so a non-empty file is not proof
+# of a login (#167): at least one provider entry must be an object.
 coop_pi_login_present() {
-  local agent_dir
+  local agent_dir auth py
   agent_dir="$(coop_effective_agent_dir)"
-  [ -s "$agent_dir/auth.json" ]
+  auth="$agent_dir/auth.json"
+  [ -s "$auth" ] || return 1
+  if py="$(coop_python 2>/dev/null)" && [ -n "$py" ]; then
+    "$py" - "$auth" <<'PY' >/dev/null 2>&1
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8-sig") as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(1)
+ok = isinstance(data, dict) and any(isinstance(v, dict) and v for v in data.values())
+sys.exit(0 if ok else 1)
+PY
+    return $?
+  fi
+  # No Python: a provider key whose value is an object ("name": {).
+  grep -Eq '"[^"]+"[[:space:]]*:[[:space:]]*\{' "$auth"
 }
 
 # Pick a usable python interpreter (for YAML/JSON parsing). Prefer python3.

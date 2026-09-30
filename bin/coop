@@ -213,6 +213,10 @@ EOF
   if [ "${COOP_SHOW_UPSTREAM_UPDATE_NOTICES:-0}" != "1" ]; then
     export PI_SKIP_VERSION_CHECK=1
   fi
+  # MCP servers come only from coop's managed agent-dir mcp.json (#165). Without
+  # this, pi-mcp-adapter also merges a work repo's .mcp.json / .pi/mcp.json and
+  # other tools' configs, so a repo could add a server or redefine a coop one.
+  export PI_MCP_CONFIG_MODE=exclusive
   # Point the extension at our vibe files and brand splash.
   export COOP_VIBES_DIR="$COOP_ROOT/vibes"
   export COOP_SPLASH_FILE="$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi"
@@ -343,6 +347,7 @@ coop_launch_spec() {
       if rendered="$(
         COOP_LS_AGENT_DIR="${PI_CODING_AGENT_DIR:-}" \
         COOP_LS_SKIP_VERSION="${PI_SKIP_VERSION_CHECK:-}" \
+        COOP_LS_MCP_MODE="${PI_MCP_CONFIG_MODE:-}" \
         COOP_LS_VIBES="${COOP_VIBES_DIR:-}" \
         COOP_LS_SPLASH="${COOP_SPLASH_FILE:-}" \
         "$py" - ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} <<'PY'
@@ -350,6 +355,7 @@ import json, os, sys
 env = {}
 for out_key, src_key in (("PI_CODING_AGENT_DIR", "COOP_LS_AGENT_DIR"),
                          ("PI_SKIP_VERSION_CHECK", "COOP_LS_SKIP_VERSION"),
+                         ("PI_MCP_CONFIG_MODE", "COOP_LS_MCP_MODE"),
                          ("COOP_VIBES_DIR", "COOP_LS_VIBES"),
                          ("COOP_SPLASH_FILE", "COOP_LS_SPLASH")):
     val = os.environ.get(src_key, "")
@@ -365,6 +371,7 @@ PY
     if have node; then
       COOP_LS_AGENT_DIR="${PI_CODING_AGENT_DIR:-}" \
       COOP_LS_SKIP_VERSION="${PI_SKIP_VERSION_CHECK:-}" \
+      COOP_LS_MCP_MODE="${PI_MCP_CONFIG_MODE:-}" \
       COOP_LS_VIBES="${COOP_VIBES_DIR:-}" \
       COOP_LS_SPLASH="${COOP_SPLASH_FILE:-}" \
       node - ${COOP_PI_ARGS[@]+"${COOP_PI_ARGS[@]}"} <<'JS'
@@ -372,6 +379,7 @@ const env = {};
 for (const [outKey, srcKey] of [
   ["PI_CODING_AGENT_DIR", "COOP_LS_AGENT_DIR"],
   ["PI_SKIP_VERSION_CHECK", "COOP_LS_SKIP_VERSION"],
+  ["PI_MCP_CONFIG_MODE", "COOP_LS_MCP_MODE"],
   ["COOP_VIBES_DIR", "COOP_LS_VIBES"],
   ["COOP_SPLASH_FILE", "COOP_LS_SPLASH"],
 ]) {

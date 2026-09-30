@@ -1455,6 +1455,27 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         return { block: true, reason: "coop guardrails: blocked mcpScript. Its MCP calls run inside the adapter where coop's read-only MCP checks cannot see them. Call MCP tools one at a time with the mcp tool instead." };
       }
 
+      // 0a'. Pi's optional `powershell` tool is off by default, but a user's settings,
+      // a trusted project's settings or --tools can turn it on. The shell checks
+      // below parse bash, so none of them (secret files, git commits, destructive
+      // commands) would see a PowerShell command. Show each one and ask; fail
+      // closed headlessly (#166). The audit records a fixed label, never the command.
+      if (tool === "powershell") {
+        const command = String(event?.input?.command ?? "");
+        if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool, decision: "blocked-headless", label: "PowerShell command", detail: "powershell" });
+          return { block: true, reason: "coop guardrails: blocked a PowerShell command. coop's shell checks cover bash only, and approval is unavailable in headless mode. Use the bash tool." };
+        }
+        const shown = command.length > 600 ? `${command.slice(0, 600)}…` : command;
+        const ok = await ctx.ui.confirm(
+          "coop guardrails",
+          `Run this PowerShell command?\n  ${shown}\ncoop's shell checks (secret files, git commits, destructive commands) cover bash only, so every PowerShell command asks.`,
+        );
+        audit({ cwd: ctx.cwd, kind: "danger-confirm", tool, decision: ok ? "allowed" : "declined", label: "PowerShell command", detail: "powershell" });
+        if (!ok) return { block: true, reason: "coop guardrails: blocked the PowerShell command (you declined). Use the bash tool, which coop's shell checks cover." };
+        return;
+      }
+
       // 0. Secret-file access (read / edit / write) → confirm.
       if (tool === "read" || tool === "edit" || tool === "write") {
         const path = String(event?.input?.path ?? "");
