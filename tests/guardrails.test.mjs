@@ -559,6 +559,89 @@ await t("mcpScript is blocked: its MCP calls bypass the tool_call hook", async (
   assert.equal(asked, 0, "no approval can cover calls the hook never sees");
   assert.equal(blocked(await handle(script, { cwd: ctx.cwd, hasUI: false })), true);
 });
+await t("an edit approval can last for the session; deletes, production and other servers still ask (#156)", async () => {
+  await handleSessionStart({}, ctx);
+  let asked = 0; let pick = "session";
+  // Edits a session approval could cover get a three-way select; the rest (deletes,
+  // production) get a yes/no confirm with no session option.
+  let offered = [];
+  const ui = { notify: () => {}, confirm: async () => { asked++; offered = []; return pick !== "decline"; },
+    select: async (_title, options) => { asked++; offered = options; return pick === "session" ? options[1] : pick === "once" ? options[0] : options[2]; } };
+  const c = { ...ctx, ui };
+  const write = (tool, server = "fabric", args = { workspace: "dev" }) => ({ toolName: "mcp", input: { server, tool, args } });
+  // First edit asks once; choosing "for this session" covers later edits to that server.
+  assert.equal(blocked(await handle(write("onelake_create-directory"), c)), false);
+  assert.equal(asked, 1);
+  assert.equal(blocked(await handle(write("core_create-item"), c)), false);
+  assert.equal(blocked(await handle(write("dataset_update_settings"), c)), false);
+  assert.equal(blocked(await handle({ toolName: "mcp__fabric", input: { tool: "datafactory_create-pipeline", args: {} } }, c)), false);
+  assert.equal(asked, 1, "approved server edits run without asking again");
+  // Deletes and production still ask every time, even with the approval.
+  pick = "decline";
+  assert.equal(blocked(await handle(write("onelake_delete-file"), c)), true);
+  assert.equal(asked, 2);
+  assert.deepEqual(offered, [], "a delete never offers a session approval");
+  assert.equal(blocked(await handle(write("core_create-item", "fabric", { workspace: "sales-prod" }), c)), true);
+  assert.equal(asked, 3);
+  // Another server needs its own approval.
+  assert.equal(blocked(await handle(write("wit_work_item_write", "azure-devops", { title: "x" }), c)), true);
+  assert.equal(asked, 4);
+  // "Allow once" does not grant.
+  pick = "once";
+  assert.equal(blocked(await handle(write("wit_work_item_write", "azure-devops", { title: "x" }), c)), false);
+  assert.equal(asked, 5);
+  assert.equal(blocked(await handle(write("wit_work_item_write", "azure-devops", { title: "y" }), c)), false);
+  assert.equal(asked, 6);
+  // A new session starts with no approvals.
+  await handleSessionStart({}, ctx);
+  pick = "decline";
+  assert.equal(blocked(await handle(write("core_create-item"), c)), true);
+  assert.equal(asked, 7);
+  // Headless never gains an approval it did not have.
+  assert.equal(blocked(await handle(write("core_create-item"), { cwd: ctx.cwd, hasUI: false })), true);
+});
+await t("/coop-approvals shows and revokes session edit approvals (#156)", async () => {
+  await handleSessionStart({}, ctx);
+  const notes = [];
+  const ui = { notify: (m) => notes.push(m), confirm: async () => true, select: async (_t, options) => options[1] };
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: {} } }, { ...ctx, ui })), false);
+  await cmds["coop-approvals"].handler("status", { ...ctx, ui });
+  assert.match(notes.at(-1), /active for this session[\s\S]*fabric/);
+  await cmds["coop-approvals"].handler("revoke", { ...ctx, ui });
+  let asked = 0;
+  const ask = { notify: () => {}, confirm: async () => true, select: async (_t, options) => { asked++; return options[2]; } };
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: {} } }, { ...ctx, ui: ask })), true);
+  assert.equal(asked, 1, "revoke makes the next edit ask again");
+});
+await t("a Warehouse SQL write approval lasts for the session; DELETE still asks (#156)", async () => {
+  await handleSessionStart({}, ctx);
+  let asked = 0; let pick = "session";
+  const ui = { notify: () => {}, confirm: async () => { asked++; return pick !== "decline"; },
+    select: async (_t, options) => { asked++; return pick === "session" ? options[1] : options[2]; } };
+  const c = { ...ctx, ui };
+  const sql = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
+  assert.equal(blocked(await handle(sql("INSERT INTO dbo.T (a) VALUES (1)"), c)), false);
+  assert.equal(blocked(await handle(sql("UPDATE dbo.T SET a = 2 WHERE id = 1"), c)), false);
+  assert.equal(asked, 1, "the second write rides the session approval");
+  pick = "decline";
+  assert.equal(blocked(await handle(sql("DELETE FROM dbo.T WHERE id = 1"), c)), true);
+  assert.equal(asked, 2, "a DELETE still asks");
+  await handleSessionStart({}, ctx);
+});
+await t("session approval keys: SQL writes vs destructive SQL, deletes and production (#156)", () => {
+  const sql = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
+  for (const q of ["INSERT INTO dbo.T (a) VALUES (1)", "UPDATE dbo.T SET a = 2 WHERE id = 1", "CREATE OR ALTER VIEW dbo.V AS SELECT 1 AS a", "ALTER TABLE dbo.T ADD b int", "UPDATE dbo.T SET note = 'DELETE me' WHERE id = 1"]) {
+    assert.equal(cg.sessionApprovalKey(sql(q)), "sql:fabric-sqlendpoint", q);
+  }
+  for (const q of ["DELETE FROM dbo.T", "DROP TABLE dbo.T", "TRUNCATE TABLE dbo.T", "MERGE dbo.T AS t USING s ON 1=1 WHEN MATCHED THEN DELETE;", "EXEC dbo.p", "INSERT INTO dbo.T VALUES (1); DELETE FROM dbo.T", "SELECT * INTO dbo.T2 FROM dbo.T", "GRANT SELECT ON dbo.T TO u", "SELECT TOP 5 * FROM dbo.T"]) {
+    assert.equal(cg.sessionApprovalKey(sql(q)), null, q);
+  }
+  assert.equal(cg.sessionApprovalKey(sql("INSERT INTO dbo.T VALUES (1)"), "production"), null, "a production target always asks");
+  assert.equal(cg.sessionApprovalKey({ toolName: "mcp", input: { server: "fabric", tool: "onelake_delete-file", args: {} } }), null);
+  assert.equal(cg.sessionApprovalKey({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: { workspace: "prod" } } }), null);
+  assert.equal(cg.sessionApprovalKey({ toolName: "mcp", input: { server: "fabric", tool: "onelake_list-files", args: {} } }), null, "reads are not edits");
+  assert.equal(cg.sessionApprovalKey({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: {} } }), "mcp:fabric");
+});
 await t("headless approval-required mutations fail closed while reads pass", async () => {
   const headless = { cwd: ctx.cwd, hasUI: false };
   assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace" } }, headless)), true);

@@ -7,6 +7,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Approved edits can last for the session (#156). The approval prompt for an MCP
+  edit offers **Allow once**, **Allow <server> edits for this session** or
+  **Decline**, so a multi-step Fabric, Power BI or Azure DevOps change asks once
+  instead of on every call.
+  - A session approval covers that server's later create, update, write, upload,
+    publish and refresh edits until `/new`, exit, or `/coop-approvals revoke`.
+  - Deletes and drops, and anything that names prod or production, still ask every
+    time.
+  - For the managed Warehouse, a single dev/test `INSERT`, `UPDATE`, `CREATE` or
+    `ALTER` can use its session approval. `DELETE`, `DROP`, `TRUNCATE`, `MERGE`,
+    `EXEC`, permission changes and batches still ask.
+  - Headless runs still fail closed, `mcpScript` stays blocked, and every decision
+    is audited. `/coop-approvals status` shows what is approved.
 - `coop update --check` shows the repository move first (#107): `repo (coop-agent)
   v0.23.5-21-gabc1234  would move to release v0.23.6`, `... no newer release`, or the
   hold, local-commits or missing-origin state with its fix. It uses the same local
