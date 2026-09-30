@@ -40,3 +40,7 @@ Type /coop-live-read status before a live query to see what this session is alre
 Type /coop-approvals revoke when you want the next MCP edit to ask again.
 Run /share-learning when a correction should reach the whole team, not just this session.
 Type /export before /new to keep an HTML copy of a session worth referring back to.
+Type /memory-insights after a long session to check what Coop learned and fix anything wrong.
+Type /memory-pin for a rule Coop must never rewrite; memory review cannot touch pinned lines.
+Run /memory-consolidate when memory feels crowded; it merges duplicates and frees space.
+Type /memory-switch-project to see which project memories exist and how full each one is.

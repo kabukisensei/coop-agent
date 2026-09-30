@@ -28,6 +28,9 @@ Run /share-learning to turn a correction or reusable pattern into a reviewed tea
 Type /mcp-adapter to see which managed MCP servers this session is connected to.
 Type /export to save the session as HTML, or /resume to reopen an earlier one.
 Type /session for the current session's file, message count, tokens, and cost.
+Type /memory-insights to see everything Coop remembers about you and this project.
+Type /memory-pin <rule> to pin an instruction Coop must keep in every session.
+Type /memory-preview-context to see exactly what memory adds to the prompt.
 Try asking Coop to trace a visual through its measure, table, view, and load procedure.
 Ask Coop to prove a refactor with exact before-and-after outputs, not compilation alone.
 Try a small slice: backup, smallest change, review, real validation, then diff.

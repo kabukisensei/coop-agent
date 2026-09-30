@@ -58,7 +58,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `coop-powerline` fills from the COOP profile name, else the OS login, else `Dave`.
   Tips now cover the commands added since the last pass (`/setup-project`,
   `/standards-status`, `/coop-live-read`, `/coop-approvals`, `/share-learning`,
-  `/mcp-adapter`, `/export`, `/resume`, `/session`) and per-repo skill enablement
+  `/mcp-adapter`, `/export`, `/resume`, `/session`, and the pi-hermes-memory 0.9.9
+  commands `/memory-insights`, `/memory-pin`, `/memory-preview-context`,
+  `/memory-consolidate`, `/memory-switch-project`) and per-repo skill enablement
   via `.coop/project.yml`; the vague skill-load-conflicts tip is gone. The vibes
   test now also checks `tips.txt`, the new commands, and keeps `{user}` and
   profanity out of the client-safe tips.

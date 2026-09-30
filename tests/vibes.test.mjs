@@ -283,6 +283,8 @@ const WEBSITE_SLASH_COMMANDS = [
   "/handoff",
   "/pr-description",
   "/skill:<name>",
+  "/memory-insights",
+  "/memory-pin",
   "/model",
   "/new",
   "/compact",
