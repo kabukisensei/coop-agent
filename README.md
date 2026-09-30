@@ -533,9 +533,9 @@ signal ("Add a Marketing page to the Sales report", "Update the README with the 
 gold naming conventions"), and a title-case report name ("the Project Status report") is a
 report, not a status document. Everyday prompts outside that list that say "report",
 "silver", "gold" or "fabric ... warehouse" ("Review the quarterly report with the client",
-"Fix the silver merge conflict in the gold branch") still get those articles. Still
-missed: PBIX, PBIP and
-`.gitignore` prompts do not reach Power BI File Types, "chart" does not reach Power BI
+"Fix the silver merge conflict in the gold branch") still get those articles. A PBIX,
+PBIP or PBIR in the prompt is a Power BI file, so those prompts reach Power BI File Types.
+Still missed: "chart" does not reach Power BI
 Report Visuals, a named model with no Power BI word ("Add a YTD measure to the Finance
 model") gets no DAX articles, and a bare "proc" with no layer word ("Fix the proc that
 loads customers") gets nothing. `tests/standards-golden.test.mjs` scores a 52-prompt golden

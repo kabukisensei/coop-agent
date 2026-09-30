@@ -18,6 +18,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Standards: a prompt that says PBIX, PBIP or PBIR now reaches the Power BI File
+  Types article ("Convert the Sales report PBIX to a PBIP project"), the one
+  coop-standards article no realistic prompt reached before. The classifier treats
+  those words as "file", the way it already reads "dim" as dimension and "proc" as
+  procedure; two golden rows stop being known failures.
 - Simple Fabric reads go straight to the contract target. At session start coop
   now hands the agent the Warehouse/Lakehouse ids the nearest `.coop/project.yml`
   pins (`fabric.default_workspace_id`, `fabric.default_sql_endpoint`) in a hidden
