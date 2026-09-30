@@ -551,10 +551,21 @@ fi
 
 section "Standards"
 if have node; then
+  # The canonical-sync row comes first. Doctor never refreshes, so a last-known-good
+  # domain is a warning only when the last refresh attempt actually failed (or never
+  # ran); after a successful launch refresh whose freshness window has expired, the
+  # cached standards are simply the ones from the last check.
+  _sync_failed=0
   while IFS="$(printf '\t')" read -r _kind _name _state _detail; do
     [ -n "$_name" ] || continue
+    case "$_name/$_state" in
+      canonical-sync/failed|canonical-sync/never|canonical-sync/degraded) _sync_failed=1; warn "$_kind $_name: $_state" "${_detail:-standards remain fail-soft}"; continue ;;
+    esac
     case "$_state" in
-      *unavailable*|*auth_required*|*dirty_preserved*|*invalid_preserved*|*stale_last_known_good*|wiki_warning|PENDING_OWNER_PROVISIONING) warn "$_kind $_name: $_state" "${_detail:-standards remain fail-soft}" ;;
+      *stale_last_known_good*)
+        if [ "$_sync_failed" = 1 ]; then warn "$_kind $_name: $_state" "${_detail:-standards remain fail-soft}"
+        else ok "$_kind $_name: last known good @ ${_detail%%|*} (verified at the last check; the next coop launch or coop sync refreshes it)"; fi ;;
+      *unavailable*|*auth_required*|*dirty_preserved*|*invalid_preserved*|wiki_warning|PENDING_OWNER_PROVISIONING) warn "$_kind $_name: $_state" "${_detail:-standards remain fail-soft}" ;;
       *) ok "$_kind $_name: $_state${_detail:+ @ $_detail}" ;;
     esac
   done <<EOF

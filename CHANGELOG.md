@@ -77,6 +77,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- `coop doctor` no longer reports the cached standards as degraded just because the
+  15-minute freshness window expired since the last launch. Doctor never refreshes,
+  so on an install last launched hours ago the sync row now reads `stale @ last
+  checked N min ago; standards refresh at every coop launch, or now with: coop sync`
+  and the domain rows stay green as "last known good @ <revision>". A refresh that
+  actually failed reads `failed` with the reason, and every last-known-good row is
+  then a warning as before. `/standards-status` JSON gains `last_attempt_ms`,
+  `last_attempt_ok` and `detail`.
 
 - Machines whose only Python is 3.14 no longer get a Fabric CLI they cannot fix.
   The Python prerequisite row (install and `coop doctor`) now passes with any pipx
