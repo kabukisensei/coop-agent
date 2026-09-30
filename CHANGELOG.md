@@ -5,6 +5,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- Vibes: seven new working lines (four crew lines in `coop-internal`, three
+  client-safe classics in `professional`), and a `{user}` placeholder that
+  `coop-powerline` fills from the COOP profile name, else the OS login, else `Dave`.
+  Tips now cover the commands added since the last pass (`/setup-project`,
+  `/standards-status`, `/coop-live-read`, `/coop-approvals`, `/share-learning`,
+  `/mcp-adapter`, `/export`, `/resume`, `/session`) and per-repo skill enablement
+  via `.coop/project.yml`; the vague skill-load-conflicts tip is gone. The vibes
+  test now also checks `tips.txt`, the new commands, and keeps `{user}` and
+  profanity out of the client-safe tips.
+
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
   symlink that the standards storage-root check rejects, and the standards
