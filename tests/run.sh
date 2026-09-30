@@ -150,6 +150,8 @@ echo "→ contract-driven daily log default tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/daily-log-default.test.mjs"
 echo "→ team knowledge recall note tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/team-knowledge-recall.test.mjs"
+echo "→ contract-driven Fabric target note tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-target-note.test.mjs"
 # The .ps1 UTF-8 BOM check (exactly one BOM; launch-critical first line) lives in
 # scripts/check-parity.sh only.
 echo "→ share-learning prompt and friction nudge tests"

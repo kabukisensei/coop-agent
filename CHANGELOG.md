@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- Simple Fabric reads go straight to the contract target. At session start coop
+  now hands the agent the Warehouse/Lakehouse ids the nearest `.coop/project.yml`
+  pins (`fabric.default_workspace_id`, `fabric.default_sql_endpoint`) in a hidden
+  note, and the guardrails prompt plus the `team-knowledge` skill say a one-row
+  query, listing, or connection check uses those ids directly — no team-knowledge
+  search, memory search, skill load, or Fabric catalog discovery first. Seen on
+  0.24.0: a `TOP 1` read ran two knowledge searches, a memory search, and MCP
+  discovery before the query although the contract held the ids. The approval
+  prompt before Warehouse SQL is unchanged.
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
   symlink that the standards storage-root check rejects, and the standards
