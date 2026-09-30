@@ -261,6 +261,26 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- A work repo can no longer add or redefine coop's MCP servers (#165). Without
+  `PI_MCP_CONFIG_MODE=exclusive`, pi-mcp-adapter 2.34.0 also merged the current
+  repo's `.mcp.json` and `.pi/mcp.json`, ancestor configs and other tools'
+  imported configs, so a project entry could add a server or replace a managed
+  one such as `fabric`, and its command ran the first time the model used it.
+  Both launchers now set `PI_MCP_CONFIG_MODE=exclusive`, so MCP servers come only
+  from `~/.coop/agent/mcp.json`, which keeps the servers you added yourself. The
+  `coop launch-spec --json` env carries it too.
+- Pi's optional `powershell` tool asks before every command (#166). It is off by
+  default, but user or trusted-project settings or `--tools` can turn it on, and
+  the guardrails' shell checks (secret files, source commits, destructive
+  commands) parse bash only, so a PowerShell command ran with none of them. Each
+  one now shows the command and asks, with no session approval; headless runs
+  are blocked; the audit records a fixed label, never the command.
+- A fresh install no longer counts Pi's empty `{}` auth.json as a model login
+  (#167). Pi writes `{}` on startup, and coop treated any non-empty auth.json as
+  signed in, so the installer's sign-in step could close within seconds before
+  the user signed in, and `coop doctor` and the launch login handoff believed a
+  login existed. Now only a stored provider credential counts, in bash (with or
+  without Python), PowerShell and the sign-in watcher.
 - Guardrails ask before more Fabric MCP mutations (#154). The mutation check
   matched no verb in `onelake_upload_file`, `onelake_modify_diagnostics`,
   `onelake_modify_immutability_policy` or `onelake_reset_shortcut_cache`, or in

@@ -789,6 +789,27 @@ await t("Power BI Modeling edits: one approval covers the task; deletes and prod
   assert.equal(asked, before + 1, "a new session asks again");
   await handleSessionStart({}, ctx);
 });
+await t("the optional powershell tool asks before every command and fails closed headlessly (#166)", async () => {
+  await handleSessionStart({}, ctx);
+  clearAudit();
+  let asked = 0; let answer = true; let shown = "";
+  const ui = { notify: () => {}, confirm: async (_t, message) => { asked++; shown = String(message); return answer; } };
+  const c = { ...ctx, ui };
+  const ps = (command) => ({ toolName: "powershell", input: { command } });
+  assert.equal(blocked(await handle(ps("Get-ChildItem"), c)), false, "an approved command runs");
+  assert.equal(asked, 1);
+  assert.match(shown, /Get-ChildItem/, "the prompt shows the command");
+  // bash checks would never see these, so each one asks; declining blocks it.
+  answer = false;
+  for (const command of ["Remove-Item -Recurse -Force C:\\data", "git commit -am wip", "Get-Content .env"]) {
+    assert.equal(blocked(await handle(ps(command), c)), true, command);
+  }
+  assert.equal(asked, 4, "every PowerShell command asks; there is no session approval");
+  assert.equal(blocked(await handle(ps("Get-Date"), { cwd: ctx.cwd, hasUI: false })), true, "headless fails closed");
+  const entries = readAudit().filter((e) => e.tool === "powershell");
+  assert.ok(entries.length >= 5, "each decision is audited");
+  assert.ok(entries.every((e) => e.label === "PowerShell command" && !/Remove-Item|git commit|\.env|Get-Date/.test(JSON.stringify(e))), "the audit records a fixed label, never command text");
+});
 await t("headless approval-required mutations fail closed while reads pass", async () => {
   const headless = { cwd: ctx.cwd, hasUI: false };
   assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace" } }, headless)), true);
