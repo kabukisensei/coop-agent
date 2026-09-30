@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-09-30
+
 ### Changed
 
 - Pi moves to **0.87.1** and `pi-mcp-adapter` to **3.3.0** (master plan U1, the
