@@ -20,6 +20,7 @@
 
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -115,6 +116,31 @@ function vibeSets(): string[] {
   }
 }
 
+// `{user}` in a vibe line becomes the person's name: the COOP profile name
+// (~/.coop/user.json, the same file coop-profile reads), else the OS login,
+// else "Dave" (HAL never did learn anyone else's name).
+function vibeUserName(): string {
+  try {
+    const raw = JSON.parse(readFileSync(join(homedir(), ".coop", "user.json"), "utf8"));
+    if (raw && typeof raw.name === "string") {
+      const name = raw.name.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100);
+      if (name) return name;
+    }
+  } catch {
+    /* no profile */
+  }
+  try {
+    const login = userInfo().username;
+    if (login) return login;
+  } catch {
+    /* no login */
+  }
+  return "Dave";
+}
+function fillVibe(vibe: string): string {
+  return vibe.includes("{user}") ? vibe.replace(/\{user\}/g, vibeUserName()) : vibe;
+}
+
 const FALLBACK_VIBES = [
   "Type /start anytime to open the Start Here menu of common tasks.",
   "Run /setup-docs to configure and build data documentation in-agent.",
@@ -203,7 +229,7 @@ export default function coopPowerline(pi: ExtensionAPI) {
     }
   };
 
-  const pickVibe = (): string => vibes[Math.floor(Math.random() * vibes.length)] || FALLBACK_VIBES[0];
+  const pickVibe = (): string => fillVibe(vibes[Math.floor(Math.random() * vibes.length)] || FALLBACK_VIBES[0]);
 
   const HEX_FRAMES = [NAVY("⬢"), FOREST("⬢"), OLIVE("⬢"), LIME("⬢"), RED("⬢")];
 

@@ -11,12 +11,14 @@ $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-prereq-gate-' + [guid]::
 $bin = Join-Path $t 'bin'
 $fail = 0
 function Ko([string]$m, [string]$out) { Write-Host "  x $m"; Write-Host $out; $script:fail = 1 }
+# Captured BEFORE PATH is restricted to the stub dir: later cases write shims too.
+$chmod = if ($isWindowsHost) { '' } else { (Get-Command chmod -ErrorAction Stop).Source }
 
 function Write-Shim {
   param([string]$Name, [string]$Sh, [string]$Cmd, [string]$Dir = $bin)
   [System.IO.File]::WriteAllText((Join-Path $Dir $Name), "#!/bin/sh`n$Sh`n")
   [System.IO.File]::WriteAllText((Join-Path $Dir ($Name + '.cmd')), "@echo off`r`n$Cmd`r`n")
-  if (-not $isWindowsHost) { & chmod +x (Join-Path $Dir $Name) }
+  if (-not $isWindowsHost) { & $chmod +x (Join-Path $Dir $Name) }
 }
 # Run install.ps1 and return its output; "$_" keeps each stderr line whole
 # (Out-String can wrap long lines). Sets $script:installRc.
@@ -116,6 +118,30 @@ try {
   $want = 'Open a NEW terminal so the new tools are on PATH, then run: coop install'
   if (-not $lout.Contains($want)) { Ko "install.ps1 --prereqs auto with coop on PATH is missing: $want" $lout }
   if ($fail -eq 0) { Write-Host '  ok with coop on PATH, the stop lines still say: coop install' }
+
+  # A machine whose only Python is 3.14 passes row 3 when its pipx can fetch a
+  # standalone 3.12 for the Fabric CLI, with either spelling of that flag
+  # (pipx 1.5-1.11: --fetch-missing-python; 1.12+: --fetch-python). Node stays
+  # missing here, so the exit code is not under test, only the row's text.
+  $env:PATH = $bin
+  foreach ($n in @('python3', 'python')) { Write-Shim $n 'if [ "$1" = --version ]; then echo "Python 3.14.2"; fi; exit 0' 'if "%1"=="--version" echo Python 3.14.2' }
+  Write-Shim 'pipx' 'if [ "$1 $2" = "install --help" ]; then echo "  --fetch-missing-python"; else echo 1.7.1; fi; exit 0' 'if "%1 %2"=="install --help" (echo   --fetch-missing-python) else (echo 1.7.1)'
+  $out = Invoke-Install
+  $want = '3. Python 3.10-3.13 (3.12 recommended)  (3.14.2; pipx fetches 3.12 for the Fabric CLI)'
+  if (-not $out.Contains($want)) { Ko "install.ps1 with Python 3.14 + a fetch-capable pipx is missing: $want" $out }
+  else { Write-Host '  ok Python 3.14 plus a pipx that can fetch a Python passes row 3 (older --fetch-missing-python spelling too)' }
+
+  # Python 3.14 with a pipx too old to fetch a Python: Windows prints the
+  # admin-free repair (upgrade pipx; 1.12+ downloads a standalone 3.12); other
+  # platforms keep the package manager's Python as the fix.
+  Write-Shim 'pipx' 'echo 1.4.3' 'echo 1.4.3'
+  $out = Invoke-Install
+  $wantRow = '3. Python 3.10-3.13 (3.12 recommended)  (3.14.2 only; the Fabric CLI needs 3.10-3.13)'
+  $wantFix = if ($isWindowsHost) { '-m pip install --user --upgrade pipx' } else { $pyFix }
+  if (-not $out.Contains($wantRow)) { Ko "install.ps1 with Python 3.14 + an old pipx is missing: $wantRow" $out }
+  elseif (-not $out.Contains($wantFix)) { Ko "install.ps1 with Python 3.14 + an old pipx is missing the fix: $wantFix" $out }
+  elseif ($isWindowsHost -and $out.Contains('winget install --id Python.Python.3.12')) { Ko 'install.ps1 with an old pipx still sent the user to winget' $out }
+  else { Write-Host '  ok Python 3.14 plus an old pipx names the repair for this platform' }
 }
 finally {
   foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }

@@ -196,3 +196,44 @@ grep -F 'PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli
 grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force' "$CALLS" >/dev/null \
   || { echo 'Updater did not reinject fabric-cicd after rebuilding Fabric CLI'; cat "$CALLS"; exit 1; }
 echo '  ✓ Windows update repairs an existing Python 3.14 Fabric environment'
+
+# `coop doctor --fix` builds the Fabric CLI the same way install/update do: with
+# a local 3.10-3.13, or pipx's standalone 3.12 when only 3.14 exists — never with
+# a bare `pipx install` that inherits the unsupported default Python.
+: > "$CALLS"
+mv "$BIN/fab" "$T/fab.bak"
+COOP_TEST_GENERIC_PY_VERSION=3.14.6 COOP_SKIP_AZ=1 \
+  bash "$ROOT/scripts/doctor.sh" --fix >"$OUT" 2>&1 || true
+mv "$T/fab.bak" "$BIN/fab"
+grep -F 'PIPX install --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0' "$CALLS" >/dev/null \
+  || { echo 'doctor --fix did not install the Fabric CLI with pipx standalone Python 3.12'; tail -40 "$OUT"; cat "$CALLS"; exit 1; }
+grep -F 'managed Fabric runtime installed (Python 3.12)' "$OUT" >/dev/null \
+  || { echo 'doctor --fix did not report the managed Fabric runtime as installed'; tail -40 "$OUT"; exit 1; }
+echo '  ✓ doctor --fix installs a missing Fabric CLI with pipx standalone Python 3.12'
+
+# An existing Fabric CLI environment that runs Python 3.14 (its own
+# Requires-Python is <3.14) is rebuilt in place by doctor --fix, then fabric-cicd
+# is re-injected — the same repair `coop update` performs.
+VENV_PY="$T/pipx-home/venvs/ms-fabric-cli/bin/python"
+rm -f "$VENV_PY"
+cat > "$VENV_PY" <<'SH'
+#!/bin/sh
+case "$*" in
+  *'pyodbc.drivers()'*) printf 'ready\t5.3.0\t18\n'; exit 0 ;;
+  *'coop-requires-python-probe'*) echo '>=3.10,<3.14'; exit 0 ;;
+  *'platform.python_version()'*) echo '3.14.0'; exit 0 ;;
+esac
+exit 0
+SH
+chmod +x "$VENV_PY"
+: > "$CALLS"
+COOP_TEST_GENERIC_PY_VERSION=3.14.6 COOP_SKIP_AZ=1 \
+  bash "$ROOT/scripts/doctor.sh" --fix >"$OUT" 2>&1 || true
+rm -f "$VENV_PY"; ln -s "$KEG/libexec/bin/python3" "$VENV_PY"
+grep -F 'PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0' "$CALLS" >/dev/null \
+  || { echo 'doctor --fix did not rebuild the Python 3.14 Fabric environment'; tail -40 "$OUT"; cat "$CALLS"; exit 1; }
+grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force' "$CALLS" >/dev/null \
+  || { echo 'doctor --fix did not reinject fabric-cicd after rebuilding'; cat "$CALLS"; exit 1; }
+grep -F 'managed Fabric runtime rebuilt on Python 3.12 (was 3.14.0)' "$OUT" >/dev/null \
+  || { echo 'doctor --fix did not report the rebuild'; tail -40 "$OUT"; exit 1; }
+echo '  ✓ doctor --fix rebuilds a Python 3.14 Fabric environment on pipx standalone 3.12'

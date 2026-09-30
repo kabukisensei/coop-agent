@@ -103,7 +103,7 @@ grep -E 'PIPX install --force --python .+ ms-fabric-cli==1\.7\.0' "$MARKER" >/de
 for spec in \
   'npm:pi-mcp-adapter@3.3.0' 'npm:pi-hermes-memory@0.9.9' \
   'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' \
-  'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
+  'npm:@juicesharp/rpiv-ask-user-question@2.12.0' 'npm:context-mode@1.0.169'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing install spec $spec"; cat "$MARKER"; exit 1; }
 done
 grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force' "$MARKER" >/dev/null
@@ -152,7 +152,7 @@ grep -F 'not a git checkout' "$update_out" >/dev/null \
 echo '  ✓ update runs from a copy of the tree, so step 1 never fetches or moves the checkout running the tests'
 grep -E 'PIPX install --force --python .+ ms-fabric-cli==1\.7\.0' "$MARKER" >/dev/null \
   || { echo 'Fabric CLI update did not select a supported bootstrap Python explicitly'; cat "$MARKER"; exit 1; }
-for spec in 'npm:pi-mcp-adapter@3.3.0' 'npm:pi-hermes-memory@0.9.9' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
+for spec in 'npm:pi-mcp-adapter@3.3.0' 'npm:pi-hermes-memory@0.9.9' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@2.12.0' 'npm:context-mode@1.0.169'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing update spec $spec"; exit 1; }
 done
 ! grep -F 'PI update --extensions' "$MARKER" >/dev/null
@@ -175,11 +175,11 @@ COOP_RELEASE_MANIFEST="$ROOT/config/release-manifest.json" \
   bash "$ROOT/scripts/sync.sh" >"$sync_out" 2>&1 || sync_rc=$?
 [ "$sync_rc" -eq 0 ] \
   || { echo "production sync failed unexpectedly (rc=$sync_rc)"; cat "$sync_out"; exit 1; }
-for spec in 'npm:pi-mcp-adapter@3.3.0' 'npm:pi-hermes-memory@0.9.9' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@1.20.0' 'npm:context-mode@1.0.169'; do
+for spec in 'npm:pi-mcp-adapter@3.3.0' 'npm:pi-hermes-memory@0.9.9' 'npm:pi-better-openai@0.1.22' 'npm:pi-web-access@0.10.7' 'npm:@juicesharp/rpiv-ask-user-question@2.12.0' 'npm:context-mode@1.0.169'; do
   grep -F "PI install $spec" "$MARKER" >/dev/null || { echo "missing sync spec $spec"; exit 1; }
 done
 if command -v pwsh >/dev/null 2>&1; then
-  pwsh -NoProfile -Command ". '$ROOT/lib/common.ps1'; if ((Coop-ManifestExtensionSpec '@juicesharp/rpiv-ask-user-question') -ne 'npm:@juicesharp/rpiv-ask-user-question@1.20.0') { exit 1 }; if ((Coop-ManifestPythonSpec 'fabric-cicd') -ne 'fabric-cicd==1.3.0') { exit 1 }"
+  pwsh -NoProfile -Command ". '$ROOT/lib/common.ps1'; if ((Coop-ManifestExtensionSpec '@juicesharp/rpiv-ask-user-question') -ne 'npm:@juicesharp/rpiv-ask-user-question@2.12.0') { exit 1 }; if ((Coop-ManifestPythonSpec 'fabric-cicd') -ne 'fabric-cicd==1.3.0') { exit 1 }"
   pwsh -NoProfile -File "$ROOT/tests/fixtures/fabric-runtime-convergence.test.ps1"
 fi
 

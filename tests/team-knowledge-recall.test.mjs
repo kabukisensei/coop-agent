@@ -122,7 +122,7 @@ try {
     );
     const note = teamKnowledgeNote(coopDir, homeDir);
     assert.ok(note);
-    assert.equal(note, `Team knowledge available at ${kbDir}, ${kb2}; see the team-knowledge skill`);
+    assert.equal(note, `Team knowledge available at ${kbDir}, ${kb2}; see the team-knowledge skill for design and change work (a simple read or status check needs no knowledge search)`);
   });
 
   await t("returns null when config file does not exist", () => {

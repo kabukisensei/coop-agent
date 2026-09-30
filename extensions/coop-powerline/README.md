@@ -61,6 +61,9 @@ A new tip is picked on `session_start` and again on every `turn_start`, so the l
 Vibes are loaded from the **vibes directory** (see `COOP_VIBES_DIR`): each
 `*.txt` file is a "set", one tip per line; blank lines and `#` comments are
 ignored. If no vibe files are found, a small built-in fallback set of client-safe tips is used.
+A line may contain `{user}`; when shown it becomes the COOP profile name
+(`~/.coop/user.json`, the file `coop-profile` reads), else the OS login name, else
+`Dave`. Keep the placeholder to easter-egg lines so tips stay literal.
 
 ### Honeycomb working indicator
 
