@@ -95,11 +95,14 @@ coop doctor      # the "Microsoft Fabric CLI" section must show ✓
 **Symptom.** `coop doctor` reports that the `ms-fabric-cli` environment uses
 Python 3.14, or `fabric-cicd` injection fails because it requires Python `<3.14`.
 
-**Fix.** Re-run `coop install --force` or `coop update`. Coop first uses a local
-Python 3.13/3.12 when one exists. With pipx 1.12 or newer, it otherwise passes
-`--fetch-python=missing --python 3.12`, so pipx downloads a standalone interpreter
-for the Fabric environment. This works without `winget`, `py`, `pymanager`, an
-administrator account, or a system-wide Python installation.
+**Fix.** Run `coop doctor --fix` (or `coop install --force` / `coop update`; all
+three build the Fabric environment the same way). Coop first uses a local
+Python 3.13/3.12 when one exists. Otherwise it asks pipx to download a standalone
+Python 3.12 for the Fabric environment (`--fetch-python=missing --python 3.12` with
+pipx 1.12 or newer, `--fetch-missing-python` with pipx 1.5–1.11). This works
+without `winget`, `py`, `pymanager`, an administrator account, or a system-wide
+Python installation. `coop doctor --fix` also rebuilds an existing Fabric
+environment that still runs Python 3.14 and re-injects `fabric-cicd`.
 
 **Verify.** Ask pipx for its environment location rather than assuming a Windows
 layout:
@@ -111,8 +114,9 @@ coop doctor
 ```
 
 The first command must report Python 3.10–3.13. If Coop says pipx cannot fetch a
-runtime, upgrade pipx with `python -m pip install --user --upgrade pipx`, then run
-`coop update` again.
+runtime (on Windows the Python prerequisite row prints this command as its fix),
+upgrade pipx with `python -m pip install --user --upgrade pipx`, then run
+`coop doctor --fix` or `coop update` again.
 
 ## 3. `coop` runs stale code (dev-clone symlink)
 

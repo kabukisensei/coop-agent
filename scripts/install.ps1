@@ -225,7 +225,7 @@ $UnitFabric = {
     }
   }
   if (-not $hasPipx) { return [pscustomobject]@{ ok = $false; msg = 'skipping Fabric CLI (pipx missing)' } }
-  if (-not $Python) { return [pscustomobject]@{ ok = $false; msg = 'Microsoft Fabric CLI needs Python 3.12 or 3.13 — install one, then re-run: coop install' } }
+  if (-not $Python) { return [pscustomobject]@{ ok = $false; msg = 'Microsoft Fabric CLI needs Python 3.12 or 3.13 — upgrade pipx or install Python 3.12, then re-run: coop install' } }
 
   $installArgs = { param([bool]$WithForce, [string]$Spec)
     $a = @('install')
@@ -510,18 +510,12 @@ try {
     $extSpecs += $spec
   }
   $fabricTarget = if (-not $EDGE) { $tv = Coop-ManifestGet -Key "python_tools.$FABRIC_PKG"; if ($tv) { "${FABRIC_PKG}==${tv}" } else { $FABRIC_PKG } } else { $FABRIC_PKG }
-  $fabricPython = Get-CoopFabricBootstrapPython
-  $fabricFetchPython = ''
-  if (-not $fabricPython -and (Get-Command pipx -ErrorAction SilentlyContinue)) {
-    $pipxInstallHelp = (& pipx install --help 2>&1 | Out-String)
-    if ($pipxInstallHelp -match '--fetch-python') {
-      $fabricPython = '3.12'
-      $fabricFetchPython = '--fetch-python=missing'
-    } elseif ($pipxInstallHelp -match '--fetch-missing-python') {
-      $fabricPython = '3.12'
-      $fabricFetchPython = '--fetch-missing-python'
-    }
-  }
+  # A local 3.10-3.13, or pipx's standalone 3.12 (Get-CoopFabricPipxPlan, shared
+  # with update and doctor --fix). $null leaves $fabricPython empty and the unit
+  # reports what to install.
+  $fabricPlan = Get-CoopFabricPipxPlan
+  $fabricPython = if ($fabricPlan) { $fabricPlan.Python } else { '' }
+  $fabricFetchPython = if ($fabricPlan) { $fabricPlan.FetchFlag } else { '' }
   $pytoolTargets = @()
   foreach ($pkg in $PY_TOOLS) {
     $pytoolTargets += if (-not $EDGE) { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "${pkg}==${tv}" } else { $pkg } } else { $pkg }
