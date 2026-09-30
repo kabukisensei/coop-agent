@@ -136,7 +136,12 @@ const mutations = [read(1, { query: "DELETE FROM dbo.Customer" }),
   { toolName: "mcp__custom", input: { tool: "write", args: {} } },
   // Pi 0.99's built-in MCP shape: a `tool` field is an argument, never the operation.
   { toolName: "mcp__fabric__delete_item", input: { tool: "list_items" } },
-  { toolName: "mcp__powerbi-modeling-mcp__measure_operations", input: { request: { operation: "Create" } } }];
+  { toolName: "mcp__powerbi-modeling-mcp__measure_operations", input: { request: { operation: "Create" } } },
+  // Fabric MCP's namespace routers carry the operation in `command` (#171), in the
+  // adapter's shapes and in Pi 0.99's built-in shape.
+  { toolName: "mcp", input: { server: "fabric", tool: "onelake", args: { intent: "x", command: "onelake_delete_file", parameters: {} } } },
+  { toolName: "mcp__fabric", input: { tool: "core", args: { intent: "x", command: "core_create-item", parameters: {} } } },
+  { toolName: "mcp__fabric__onelake", input: { intent: "x", command: "onelake_delete_file", parameters: {} } }];
 const beforeMutations = executions;
 for (const event of mutations) await dispatch(event, true);
 assert.equal(executions, beforeMutations, "no mutation reaches even the inert executor");

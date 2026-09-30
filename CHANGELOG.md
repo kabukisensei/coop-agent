@@ -274,6 +274,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Fabric MCP creates, uploads, pipeline runs and deletes ask again (#171). coop
+  runs `@microsoft/fabric-mcp` in namespace mode, where four router tools
+  (`onelake`, `core`, `datafactory`, `docs`) carry the operation in a `command`
+  argument. The guardrails checked only the router's name, so a call such as
+  `onelake` with `command: "onelake_delete_file"` ran with no prompt (v0.23.5 too).
+  - The guardrails now read `command` and check it against the pinned server's
+    own command list.
+  - A known write is an edit that the per-server session approval can cover.
+    Deletes always ask, and so does any command coop doesn't know.
+  - Reads, `learn: true` and calls without a command pass; the server only lists
+    its commands for those.
+  - Row reads (`datafactory_execute-query`) and downloads still ask under the
+    live-read rules.
 - A work repo can no longer add or redefine coop's MCP servers (#165). Without
   `PI_MCP_CONFIG_MODE=exclusive`, pi-mcp-adapter 2.34.0 also merged the current
   repo's `.mcp.json` and `.pi/mcp.json`, ancestor configs and other tools'

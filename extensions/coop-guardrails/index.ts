@@ -775,15 +775,78 @@ function builtinMcpTarget(event: any): { server: string; tool: string } | null {
   return { server, tool: name.startsWith(prefix) ? name.slice(prefix.length) : name };
 }
 
+// --- Fabric MCP namespace routers (#171) -----------------------------------------
+// coop runs @microsoft/fabric-mcp with `--mode namespace`, which exposes four router
+// tools. Each takes {intent, command, parameters, learn}, and `command` is what runs.
+// Checked against 1.3.0 on 2026-09-30: a router runs a command only on an exact
+// match of one of its own commands, and never with learn=true; any other call
+// returns its command list. Kebab-case names are 1.4.0's spelling of the same tools.
+const FABRIC_ROUTERS = new Set(["docs", "onelake", "core", "datafactory"]);
+const fabricCommandKey = (command: string) => command.trim().toLowerCase().replace(/-/g, "_");
+/** Lookup key → the listed name, which becomes the inner tool the other rules see. */
+function fabricCommands(names: string[]): Map<string, string> {
+  return new Map(names.map((name) => [fabricCommandKey(name), name]));
+}
+const FABRIC_READ_COMMANDS = fabricCommands([
+  "core_search-catalog", "datafactory_execute-query", "datafactory_get-pipeline", "datafactory_list-dataflows",
+  "datafactory_list-pipelines", "docs_api-examples", "docs_best-practices", "docs_item-api-spec", "docs_item-definitions",
+  "docs_list-item-types", "docs_platform-api-spec", "docs_workload-api-spec", "docs_workloads", "onelake_download-file",
+  "onelake_get-data-access-role", "onelake_get-settings", "onelake_get-shortcut", "onelake_get-table",
+  "onelake_get-table-config", "onelake_get-table-namespace", "onelake_list-data-access-roles", "onelake_list-files",
+  "onelake_list-items", "onelake_list-items-dfs", "onelake_list-shortcuts", "onelake_list-table-namespaces",
+  "onelake_list-tables", "onelake_list-workspaces",
+]);
+const FABRIC_WRITE_COMMANDS = fabricCommands([
+  "core_create-item", "datafactory_create-dataflow", "datafactory_create-pipeline", "datafactory_run-pipeline",
+  "onelake_create-directory", "onelake_create-or-update-data-access-role", "onelake_create-shortcut-adls-gen2",
+  "onelake_create-shortcut-amazon-s3", "onelake_create-shortcut-azure-blob", "onelake_create-shortcut-dataverse",
+  "onelake_create-shortcut-gcs", "onelake_create-shortcut-onedrive-sharepoint", "onelake_create-shortcut-onelake",
+  "onelake_create-shortcut-s3-compatible", "onelake_delete-data-access-role", "onelake_delete-directory",
+  "onelake_delete-file", "onelake_delete-shortcut", "onelake_modify-diagnostics", "onelake_modify-immutability-policy",
+  "onelake_reset-shortcut-cache", "onelake_upload-file",
+]);
+
+type FabricRouted = { router: string; command: string; learn: boolean };
+
+/** Point a Fabric router call's target at the command it runs. A known command
+ * becomes the inner tool, so the name-based and live-read rules see the real
+ * operation; an unknown one keeps the router's name and is classified below. */
+function fabricRouted(call: { target: MutationTarget; args: any; proxy: boolean }):
+  { target: MutationTarget; args: any; proxy: boolean; fabric?: FabricRouted } {
+  const { server, innerTool } = call.target;
+  if (!innerTool || !FABRIC_ROUTERS.has(innerTool) || (server !== undefined && server !== "fabric")) return call;
+  const raw = call.args?.command;
+  const command = typeof raw === "string" ? raw : "";
+  const learn = call.args?.learn === true;
+  const key = fabricCommandKey(command);
+  const known = !learn && (FABRIC_READ_COMMANDS.get(key) || FABRIC_WRITE_COMMANDS.get(key));
+  const target = known ? { ...call.target, innerTool: known } : call.target;
+  return { ...call, target, fabric: { router: innerTool, command, learn } };
+}
+
+/** A Fabric router call's command and class, or null for any other call. Reads,
+ * learn=true and calls without a command pass; a known write is an edit, except
+ * deletes, which always ask; an unknown command always asks. */
+function fabricRouterCall(event: any): { router: string; command: string; kind: ModelingOperationClass } | null {
+  const routed = normalizeMcpCall(event).fabric;
+  if (!routed) return null;
+  const shown = routed.command.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
+  if (routed.learn || !routed.command) return { router: routed.router, command: shown, kind: "read" };
+  const key = fabricCommandKey(routed.command);
+  if (FABRIC_READ_COMMANDS.has(key)) return { router: routed.router, command: shown, kind: "read" };
+  if (FABRIC_WRITE_COMMANDS.has(key) && !DESTRUCTIVE_VERB.test(key)) return { router: routed.router, command: shown, kind: "edit" };
+  return { router: routed.router, command: shown, kind: "always-ask" };
+}
+
 /** Match the adapter's two dispatch shapes and Pi's built-in MCP tools. Namespace
  * wrappers bind their server in the registered tool name; input.server cannot
  * override that binding. Keep unknown namespaces verbatim rather than guessing
  * which underscores were hyphens. */
-function normalizeMcpCall(event: any): { target: MutationTarget; args: any; proxy: boolean } {
+function normalizeMcpCall(event: any): { target: MutationTarget; args: any; proxy: boolean; fabric?: FabricRouted } {
   const outerTool = String(event?.toolName ?? "");
   const input = event?.input;
   const builtin = builtinMcpTarget(event);
-  if (builtin) return { target: { outerTool, innerTool: builtin.tool, server: builtin.server }, args: input, proxy: false };
+  if (builtin) return fabricRouted({ target: { outerTool, innerTool: builtin.tool, server: builtin.server }, args: input, proxy: false });
   const namespace = /^mcp__([A-Za-z0-9_]+)$/.exec(outerTool)?.[1];
   // Direct MCP tools may also start with mcp__; only an actual {tool, args}
   // envelope carries a dispatched inner operation. Otherwise retain direct args.
@@ -810,7 +873,7 @@ function normalizeMcpCall(event: any): { target: MutationTarget; args: any; prox
     try { args = JSON.parse(args); } catch { args = undefined; }
   }
   if (!args || typeof args !== "object" || Array.isArray(args)) args = undefined;
-  return { target: innerTool ? { outerTool, innerTool, server } : { outerTool }, args, proxy: true };
+  return fabricRouted({ target: innerTool ? { outerTool, innerTool, server } : { outerTool }, args, proxy: true });
 }
 
 /** The same target/argument normalization feeds mutation, SQL and grant checks. */
@@ -931,6 +994,8 @@ export function mcpEditLabel(event: any): string | null {
   const target = effectiveMutationTarget(event);
   const byName = mcpMutationLabel(target);
   if (byName) return byName;
+  const fabric = fabricRouterCall(event);
+  if (fabric) return fabric.kind === "read" ? null : `fabric/${fabric.router} ${fabric.command || "(no command)"}`;
   const modeling = modelingCall(event);
   if (modeling) return modeling.kind === "read" ? null : `${mutationName(target)} ${modeling.operation || "(no operation)"}`;
   if (serverMarksDestructive(event)) return `${mutationName(target)} (its server marks it destructive)`;
@@ -1284,6 +1349,8 @@ export function sessionApprovalKey(event: any, environment?: string): string | n
     if (sql.kind !== "ddl-dml-destructive" || !sqlWriteIsSessionApprovable(callSqlText(event))) return null;
     return `sql:${MANAGED_SQL_SERVER}`;
   }
+  const fabric = fabricRouterCall(event);
+  if (fabric) return fabric.kind === "edit" ? "mcp:fabric" : null;
   const modeling = modelingCall(event);
   if (modeling) {
     if (modeling.kind !== "edit") return null;
