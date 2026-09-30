@@ -208,7 +208,7 @@ case "$JSON_SPEC" in
 esac
 JSON_SPEC="$JSON_SPEC" node -e 'const s=JSON.parse(process.env.JSON_SPEC); if(s.env.PI_SKIP_VERSION_CHECK!=="1") process.exit(1)'
 echo "  ✓ --no-launch prints the spec and exits 0 (no pi launched)"
-# #165: MCP comes only from coop's agent-dir mcp.json, never a repo's .mcp.json.
+# #165: MCP comes only from coop's agent-dir mcp-adapter.json, never a repo's .mcp.json.
 if JSON_SPEC="$JSON_SPEC" node -e 'const s=JSON.parse(process.env.JSON_SPEC); process.exit(s.env.PI_MCP_CONFIG_MODE==="exclusive"?0:1)'; then
   echo "  ✓ launch spec pins MCP config to coop's agent dir (PI_MCP_CONFIG_MODE=exclusive)"
 else

@@ -402,9 +402,14 @@ else
 fi
 
 section "MCP servers (read-only, optional)"
+# coop launches pi-mcp-adapter in exclusive mode (#165), so the agent dir's
+# mcp-adapter.json is the only MCP config it reads. Check that file, and name a
+# work repo's MCP file that coop does not use.
 mcp_found=""
-for f in "$PWD/.mcp.json" "$PWD/.pi/mcp-adapter.json" "$PI_CODING_AGENT_DIR/mcp-adapter.json" "$HOME/.config/mcp/mcp.json" "$HOME/.pi/mcp-config/mcp.json"; do
-  [ -f "$f" ] && { mcp_found="$f"; break; }
+mcp_managed="$PI_CODING_AGENT_DIR/mcp-adapter.json"
+[ -f "$mcp_managed" ] && mcp_found="$mcp_managed"
+for f in "$PWD/.mcp.json" "$PWD/.pi/mcp-adapter.json" "$PWD/.pi/mcp.json"; do
+  [ -f "$f" ] && [ "$f" != "$mcp_managed" ] && ok "not used: $f (coop reads MCP servers only from $mcp_managed)"
 done
 if [ -n "$mcp_found" ]; then
   ok "MCP config: $mcp_found"

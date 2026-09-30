@@ -417,7 +417,7 @@ print("resume verdict contract OK")
     $jsonData = $jsonOut | ConvertFrom-Json
     if ($jsonData.env.PI_SKIP_VERSION_CHECK -eq '1') { Ok 'launch spec suppresses Pi upstream version notices' }
     else { Ko 'launch spec does not suppress Pi upstream version notices' }
-    # #165: MCP comes only from coop's agent-dir mcp.json, never a repo's .mcp.json.
+    # #165: MCP comes only from coop's agent-dir mcp-adapter.json, never a repo's .mcp.json.
     if ($jsonData.env.PI_MCP_CONFIG_MODE -eq 'exclusive') { Ok "launch spec pins MCP config to coop's agent dir (PI_MCP_CONFIG_MODE=exclusive)" }
     else { Ko 'launch spec does not set PI_MCP_CONFIG_MODE=exclusive' }
   } catch { Ko "--no-launch --json update-policy check failed: $_" }

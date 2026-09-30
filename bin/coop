@@ -213,7 +213,7 @@ EOF
   if [ "${COOP_SHOW_UPSTREAM_UPDATE_NOTICES:-0}" != "1" ]; then
     export PI_SKIP_VERSION_CHECK=1
   fi
-  # MCP servers come only from coop's managed agent-dir mcp.json (#165). Without
+  # MCP servers come only from coop's managed agent-dir mcp-adapter.json (#165). Without
   # this, pi-mcp-adapter also merges a work repo's .mcp.json / .pi/mcp.json and
   # other tools' configs, so a repo could add a server or redefine a coop one.
   export PI_MCP_CONFIG_MODE=exclusive

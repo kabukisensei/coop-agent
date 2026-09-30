@@ -339,7 +339,7 @@ function Build-CoopPiArgs {
   if ($env:COOP_SHOW_UPSTREAM_UPDATE_NOTICES -ne '1') {
     $env:PI_SKIP_VERSION_CHECK = '1'
   }
-  # MCP servers come only from coop's managed agent-dir mcp.json (#165). Without
+  # MCP servers come only from coop's managed agent-dir mcp-adapter.json (#165). Without
   # this, pi-mcp-adapter also merges a work repo's .mcp.json / .pi/mcp.json and
   # other tools' configs, so a repo could add a server or redefine a coop one.
   $env:PI_MCP_CONFIG_MODE = 'exclusive'

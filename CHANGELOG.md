@@ -27,6 +27,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
     in 3.x that reads only `~/.coop/agent/mcp-adapter.json`, so a work repo's
     `.mcp.json` is never read (3.x would otherwise hold it until the project is
     trusted and each server approved).
+  - `coop doctor` (both platforms) checks only that file, the one the adapter
+    reads. Before, it checked the first MCP file it found, starting with the
+    current folder's `.mcp.json`. It now names a work repo's `.mcp.json`,
+    `.pi/mcp-adapter.json` or `.pi/mcp.json` as not used.
   - Qualified locally with `scripts/test-pi-matrix.sh 0.87.1` against real npm
     (24 passed, 0 failed; the live model turn needs credentials). The Windows
     VM run is pending.
