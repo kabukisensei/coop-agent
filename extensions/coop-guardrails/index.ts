@@ -666,8 +666,11 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
 // this complements Pi approval and server-side read-only flags.
 const MCP_TOOLISH =
   /(^|[_\-.:/])(mcp|fabric|powerbi|pbi|pbip|adx|kusto|eventhouse|onelake|lakehouse|warehouse|workspace|dataset|semanticmodel|report|pipeline|notebook|dataflow|capacity)([_\-.:/]|$)/i;
+// A bare run/execute stays out: SQL run/execute tools are row reads that the
+// live-read rules below govern. Running a pipeline, job, notebook, dataflow or
+// Spark job changes the client tenant, so that pair counts as a write (#154).
 const MCP_WRITE_VERB =
-  /(^|[_\-.:/])(create|update|delete|remove|deploy|publish|drop|write|patch|overwrite|rename|truncate|grant|revoke|provision|refresh)([_\-.:/A-Z]|$)/i;
+  /(^|[_\-.:/])(create|update|delete|remove|deploy|publish|drop|write|patch|overwrite|rename|truncate|grant|revoke|provision|refresh|upload|modify|reset|upsert|insert|merge|move|import|restore|cancel|assign|(?:run|trigger|start|execute)[_\-.:/]?(?:pipeline|job|notebook|dataflow|spark))([_\-.:/A-Z]|$)/i;
 const DATA_SERVER = /(^|[_\-.:/])(fabric|powerbi|pbi|sql|database|db|warehouse|lakehouse|onelake|kusto|adx|eventhouse)([_\-.:/]|$)/i;
 const ROW_READ_VERB = /(^|[_\-.:/])(query|execute|evaluate|run_sql|runsql|sql_query|dax_query|preview|sample|row|rows|record|records|data|export|download)([_\-.:/]|$)/i;
 const PRODUCTION_WORD = /(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)/i;
