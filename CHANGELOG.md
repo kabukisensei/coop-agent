@@ -7,6 +7,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Guardrails are ready for Pi 0.99's built-in MCP, whose tools are named
+  `mcp__<server>__<tool>`. coop still ships Pi 0.84.3 with pi-mcp-adapter.
+  - coop reads Pi's tool registry for each call and takes the server from it. A
+    built-in MCP tool gets the same prompts and per-server session approvals as
+    an adapter call. A tool its server marks destructive always asks.
+  - Only the adapter's `{tool, args}` dispatch tools have their `tool` field read
+    as the operation. Before this, a Pi 0.99 tool such as `mcp__fabric__delete_item`
+    called with `tool: "list_items"` would have been checked as a list, with no prompt.
+  - Tool calls are checked one at a time. Pi 0.99's codemode scripts can issue
+    calls at once, which opened two approval dialogs together.
+  - `tests/guardrails-pi-runner.test.mjs` also runs on Pi 0.99. There it starts a
+    real session with Pi's built-in MCP and a local test MCP server
+    (`tests/fixtures/fake-mcp-server.mjs`).
 - Docs: `docs/install-windows.md` no longer describes the **coop** icon as a chat
   window that can't show the model sign-in, or a separate **coop (terminal)** icon;
   `docs/onboarding.md`'s ground rules say MCP changes ask first instead of "read-only

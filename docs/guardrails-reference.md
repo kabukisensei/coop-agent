@@ -48,6 +48,10 @@ MCP servers come only from coop's managed `~/.coop/agent/mcp.json`: coop launche
 
 The adapter's `mcpScript` tool is off and blocked. It runs JavaScript that calls MCP tools inside the adapter, where no guardrail can see or gate those calls. Coop's generated MCP config sets `settings.scriptMode: false`, and the guardrail blocks `mcpScript` if a project or user config turns it back on. Call MCP tools one at a time through `mcp`.
 
+**Which tool a call runs.** coop looks each call up in Pi's tool registry. Only a tool shaped as the adapter's `{tool, args}` dispatch (the `mcp` tool and its `mcp__<server>` namespace tools) has its `tool` field read as the operation. For any other tool, `tool` is an ordinary argument, and the tool's own name decides. Pi 0.99's built-in MCP names each tool `mcp__<server>__<tool>`, and coop takes the server from Pi's registry. These tools get the same prompts and the same per-server session approvals as adapter calls, and a tool its server marks destructive always asks. coop still ships the adapter; this prepares the move to Pi 0.99.
+
+**One approval at a time.** coop checks tool calls one at a time, so only one approval dialog is open at once, and a call that waited behind a session approval doesn't ask again. Pi 0.99's codemode scripts can issue several calls at once.
+
 ### Live environment reads
 
 Coop permits read-only metadata, schema, and artifact-code inspection in dev/test by default. Query/execute/sample/export-style calls can return actual rows, so the runtime asks first. Any tool request that explicitly names prod/production also asks first, including metadata-only reads; production row reads should be narrowly scoped to a named target, columns, filters, and a small limit. Approval-required reads fail closed when no interactive approval UI is available.
