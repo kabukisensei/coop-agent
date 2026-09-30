@@ -29,7 +29,7 @@ function Invoke-Install([string[]]$InstallArgs = @()) {
 }
 
 $saved = @{}
-$names = @('PATH','HOME','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','LOCALAPPDATA','ProgramFiles')
+$names = @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','LOCALAPPDATA','ProgramFiles')
 foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 try {
   New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $t 'agent'), (Join-Path $t 'lad'), (Join-Path $t 'pf') | Out-Null
@@ -51,6 +51,10 @@ try {
 
   $env:PATH = $bin
   $env:HOME = Join-Path $t 'home'
+  # Windows PowerShell derives $HOME from USERPROFILE: without it, install.ps1
+  # and doctor.ps1 would put the real ~\.local\bin on PATH and read the real
+  # ~\.config\mcp\mcp.json.
+  $env:USERPROFILE = $env:HOME
   $env:COOP_DIR = Join-Path $t 'coop-dir'
   $env:COOP_AGENT_DIR = Join-Path $t 'agent'
   $env:PI_CODING_AGENT_DIR = $env:COOP_AGENT_DIR

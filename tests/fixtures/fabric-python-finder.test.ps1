@@ -25,6 +25,28 @@ if ($realPy) {
     throw "version probe got '$realVersion' from a real $($realPy.Source) under PowerShell $($PSVersionTable.PSVersion)"
   }
   Write-Output "  ✓ version probe reads $realVersion from a real interpreter (PowerShell $($PSVersionTable.PSVersion.Major).$($PSVersionTable.PSVersion.Minor))"
+  # The same quoting broke Get-CoopVenvRequiresPython, whose program carries double
+  # quotes: doctor then reported "no Requires-Python metadata found" and skipped the
+  # check. A throwaway venv sees a fake distribution through PYTHONPATH.
+  $rpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("coop-rp-" + [guid]::NewGuid().ToString('N'))
+  $priorPipxHome = $env:COOP_PIPX_HOME; $priorPythonPath = $env:PYTHONPATH
+  try {
+    $distInfo = Join-Path (Join-Path $rpRoot 'site') 'coop_rp_probe-1.0.dist-info'
+    New-Item -ItemType Directory -Force -Path $distInfo | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $distInfo 'METADATA'), "Metadata-Version: 2.1`nName: coop-rp-probe`nVersion: 1.0`nRequires-Python: >=3.10`n")
+    & $realPy.Source -m venv --without-pip (Join-Path (Join-Path $rpRoot 'venvs') 'coop-rp-probe') 2>$null | Out-Null
+    $env:COOP_PIPX_HOME = $rpRoot
+    $env:PYTHONPATH = Join-Path $rpRoot 'site'
+    $PSNativeCommandArgumentPassing = 'Legacy'
+    $rp = Get-CoopVenvRequiresPython 'coop-rp-probe' 'coop-rp-probe'
+    Remove-Variable PSNativeCommandArgumentPassing -ErrorAction SilentlyContinue
+    if ($rp -ne '>=3.10') { throw "Requires-Python probe got '$rp' from a real venv under PowerShell $($PSVersionTable.PSVersion)" }
+    Write-Output "  ✓ Requires-Python probe reads $rp from a real venv (PowerShell $($PSVersionTable.PSVersion.Major).$($PSVersionTable.PSVersion.Minor))"
+  } finally {
+    Remove-Variable PSNativeCommandArgumentPassing -ErrorAction SilentlyContinue
+    $env:COOP_PIPX_HOME = $priorPipxHome; $env:PYTHONPATH = $priorPythonPath
+    Remove-Item -LiteralPath $rpRoot -Recurse -Force -ErrorAction SilentlyContinue
+  }
 } else {
   Write-Output '  – no real Python on PATH; version probe check skipped'
 }
