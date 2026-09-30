@@ -67,6 +67,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   consolidation fails, and adds `/memory-pin` for rules the agent must not rewrite.
   Existing memory files are read as before (same storage root under
   `~/.coop/agent`). VM qualification pending.
+- Vibes: seven new working lines (four crew lines in `coop-internal`, three
+  client-safe classics in `professional`), and a `{user}` placeholder that
+  `coop-powerline` fills from the COOP profile name, else the OS login, else `Dave`.
+  Tips now cover the commands added since the last pass (`/setup-project`,
+  `/standards-status`, `/coop-live-read`, `/coop-approvals`, `/share-learning`,
+  `/mcp-adapter`, `/export`, `/resume`, `/session`, and the pi-hermes-memory 0.9.9
+  commands `/memory-insights`, `/memory-pin`, `/memory-preview-context`,
+  `/memory-consolidate`, `/memory-switch-project`) and per-repo skill enablement
+  via `.coop/project.yml`; the vague skill-load-conflicts tip is gone. The vibes
+  test now also checks `tips.txt`, the new commands, and keeps `{user}` and
+  profanity out of the client-safe tips.
 - `@microsoft/fabric-mcp` moves to **1.4.0** (master plan U1, section 6 row). Checked
   offline against both binaries: in coop's `--mode namespace`, 1.4.0 lists no tools
   at all unless each namespace is named, where 1.3.0 listed its four routers by

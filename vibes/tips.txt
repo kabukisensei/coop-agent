@@ -31,4 +31,16 @@ Save diagnostic queries with the conclusions they support, not as loose scripts.
 Ask Coop to run doctor when a capability seems missing after an update.
 Run /coop-guardrails before a risky operation to see the active protections.
 Try asking Coop for a dry run of any deploy or refresh before the real one.
-Ask Coop to check for skill-load conflicts before blaming the tool layer.
+Set fabric_skills policy to baseline in .coop/project.yml to turn the Fabric skills on for a repo.
+Run /setup-project to create or edit .coop/project.yml; the wizard keeps fields it does not own.
+Type /new after editing .coop/project.yml; the guardrails read the contract only at session start.
+Type /standards-status to check which coop-standards commit is active and whether it is fresh.
+Set standards.<domain>.path in project.yml to replace the shared wiki for one domain only.
+Type /coop-live-read status before a live query to see what this session is already allowed to read.
+Type /coop-approvals revoke when you want the next MCP edit to ask again.
+Run /share-learning when a correction should reach the whole team, not just this session.
+Type /export before /new to keep an HTML copy of a session worth referring back to.
+Type /memory-insights after a long session to check what Coop learned and fix anything wrong.
+Type /memory-pin for a rule Coop must never rewrite; memory review cannot touch pinned lines.
+Run /memory-consolidate when memory feels crowded; it merges duplicates and frees space.
+Type /memory-switch-project to see which project memories exist and how full each one is.
