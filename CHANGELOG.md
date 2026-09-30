@@ -72,6 +72,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- `coop doctor` no longer reports a pipx environment as "stale/corrupt" when the
+  executable it resolved on PATH is not the pipx one. A `pip install` copy, another
+  tool manager's shim, or a leftover launcher earlier on PATH (a teammate's
+  `coop-data-doc` reported 1.1.1 while the pipx venv held 1.2.0) is now a PATH
+  shadow: the row names the resolved path and both versions, and the hint says to
+  remove that copy or put pipx's bin dir first on PATH. The old hint,
+  `pipx install --force`, rebuilt a venv that was never wrong and could not clear
+  the row. When pipx has no copy at all, the row says so and leads with the pinned
+  `pipx install`. The "Standalone Coop tools" section no longer gives such a copy a
+  green tick. When pipx has the venv but nothing answers on PATH, the row says
+  "not on PATH" with an `ensurepath` / `reinstall` hint, and a launcher that runs
+  but prints nothing is named with its path, instead of the old catch-all
+  "produced no version" with a `--force` hint. Genuine metadata/CLI disagreement
+  inside the pipx venv is unchanged.
 - A coop installed into a redirected profile (HOME / USERPROFILE / LOCALAPPDATA /
   APPDATA pointed at a sandbox folder, as the acceptance harness and the VM
   runbooks do) no longer spills onto the real account. `coop install` wrote the

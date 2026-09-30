@@ -36,6 +36,7 @@ done
 # to a temp file as status<US>section<US>name<US>hint (US = 0x1f, which can never
 # appear in a message); the summary at the bottom emits the JSON document.
 DOCTOR_SECTION=""
+DOCTOR_SHADOWED=""   # exes the manifest section found shadowed by a non-pipx copy
 DOCTOR_JSON_TMP=""
 if [ "$JSON" = 1 ]; then
   DOCTOR_JSON_TMP="$(mktemp)"
@@ -124,7 +125,7 @@ fi
 # real executable — ms-fabric-cli installs `fab`, not an `ms-fabric-cli` binary.
 check_pipx_dist() { # <dist> <exe>
   local dist="$1" exe="$2"
-  local expected meta cli pyver status repair cicd_pin
+  local expected meta cli pyver status repair cicd_pin resolved probe
   expected="$(coop_manifest_get "python_tools.$dist")"
   [ -z "$expected" ] && return 0
   repair="pipx install --force $dist==$expected"
@@ -141,6 +142,22 @@ check_pipx_dist() { # <dist> <exe>
     warn "$dist not installed (manifest: $expected)" "pipx install $dist==$expected"
     return 0
   fi
+  # Executable ownership FIRST: a foreign $exe earlier on PATH (a `pip install`
+  # copy, another tool manager, a leftover shim) must never be correlated with
+  # this distribution's pipx metadata — reading it as "stale/corrupt" sends the
+  # user to `pipx install --force`, which rebuilds a venv that was never wrong.
+  if [ -n "$cli" ] && [ "$(coop_exe_pipx_venv "$exe")" != "$dist" ]; then
+    resolved="$(command -v "$exe" 2>/dev/null)"
+    DOCTOR_SHADOWED="$DOCTOR_SHADOWED $exe"
+    if [ -n "$meta" ]; then
+      warn "$dist skipped: $exe on PATH${resolved:+ ($resolved)} is not the pipx one (it reports ${cli}; pipx metadata says ${meta})" \
+        "remove that copy (pip uninstall $dist / uv tool uninstall $dist) or put pipx's bin dir first on PATH (pipx ensurepath), then open a new terminal; last resort: $repair"
+    else
+      warn "$dist skipped: $exe on PATH${resolved:+ ($resolved)} is not the pipx one (it reports ${cli}; pipx has no $dist installed)" \
+        "pipx install $dist==$expected, then remove that copy (pip uninstall $dist / uv tool uninstall $dist) or put pipx's bin dir first on PATH (pipx ensurepath), and open a new terminal"
+    fi
+    return 0
+  fi
   if [ -n "$meta" ] && [ -n "$cli" ] && [ "$meta" != "$cli" ]; then
     bad "$dist pipx environment is stale/corrupt: metadata says $meta but $exe reports ${cli:-nothing}" \
       "$repair   (metadata/CLI disagreement; recreate the environment)"
@@ -148,15 +165,19 @@ check_pipx_dist() { # <dist> <exe>
   fi
   if [ -z "$cli" ]; then
     # Stop here: without a CLI answer there is nothing trustworthy to compare,
-    # and falling through would let metadata alone claim a match.
-    warn "$dist metadata present ($meta) but $exe produced no version" "$repair"
-    return 0
-  fi
-  # Executable ownership: an unrelated binary that happens to answer --version
-  # must never be correlated with this distribution's pipx metadata.
-  if [ "$(coop_exe_pipx_venv "$exe")" != "$dist" ]; then
-    warn "$dist skipped: resolved $exe does not belong to its pipx environment" \
-      "reinstall so the pinned $exe is first on PATH: $repair"
+    # and falling through would let metadata alone claim a match. Say WHICH
+    # way it failed: nothing on PATH, or a launcher that runs and prints nothing.
+    if have "$exe"; then
+      resolved="$(command -v "$exe" 2>/dev/null)"
+      # Quote the launcher's first output line (stderr included) so the row
+      # shows what it said instead of sending the user to run it by hand.
+      probe="$($exe --version 2>&1 </dev/null | head -1 | cut -c1-120)"
+      warn "$dist: $exe at ${resolved:-?} runs but prints no version (pipx metadata says $meta)${probe:+; it printed: $probe}" \
+        "a broken leftover launcher: delete it, then pipx reinstall $dist, and open a new terminal"
+    else
+      warn "$dist is not on PATH (pipx has $meta installed)" \
+        "put pipx's bin dir on PATH: pipx ensurepath, then open a new terminal; if the launcher is missing there: pipx reinstall $dist"
+    fi
     return 0
   fi
   if [ -z "$meta" ]; then
@@ -264,9 +285,17 @@ else
 fi
 
 section "Standalone Coop tools (pipx)"
-check coop-data-doc   required "pipx install coop-data-doc"   "coop-data-doc --version"
-check coop-sql-review required "pipx install coop-sql-review" "coop-sql-review --version"
-check coop-dax-review required "pipx install coop-dax-review" "coop-dax-review --version"
+# A tool the manifest section found shadowed by a non-pipx copy never gets a
+# green tick here: the copy that answered is not the one coop pinned.
+check_pipx_tool() { # <bin>
+  case " $DOCTOR_SHADOWED " in
+    *" $1 "*) warn "$1 on PATH is not the pipx copy (see Release manifest above)" "the fix is on that row: remove the stray copy or put pipx's bin dir first on PATH" ;;
+    *) check "$1" required "pipx install $1" "$1 --version" ;;
+  esac
+}
+check_pipx_tool coop-data-doc
+check_pipx_tool coop-sql-review
+check_pipx_tool coop-dax-review
 
 section "Fabric / semantic-model tooling"
 
