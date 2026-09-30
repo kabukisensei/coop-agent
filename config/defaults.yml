@@ -123,7 +123,7 @@ tested_with:
   pi_min: "0.79.0"
   pi: "0.87.1"          # @earendil-works/pi-coding-agent (requires Node >= 22.19)
   pi_mcp_adapter: "3.3.0"
-  pi_hermes_memory: "0.7.17"
+  pi_hermes_memory: "0.9.9"
   pi_web_access: "0.10.7"
   rpiv_ask_user_question: "2.12.0"
   context_mode: "1.0.169"
