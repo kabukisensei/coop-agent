@@ -770,6 +770,19 @@ print("resume verdict contract OK")
     Ko "doctor.ps1 Warehouse and fabric rows fixture failed: $($doctorWhOut | Out-String)"
   }
 
+  # --- 9f2. doctor.ps1 pipx PATH-shadow rows (twin of tests/inventory.test.sh F4 + F4c)
+  Head 'doctor.ps1 pipx PATH-shadow rows (foreign coop-data-doc on PATH vs. stale venv)'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $doctorShOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\doctor-pipx-shadow.test.ps1') 2>&1
+  $doctorShRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($doctorShRc -eq 0) {
+    $doctorShOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "doctor.ps1 pipx PATH-shadow rows fixture failed: $($doctorShOut | Out-String)"
+  }
+
   # --- 9g. coop init --seed-docs shows config-set's status (#102; twin of tests/seeddocs.test.sh)
   Head 'coop init --seed-docs shows the config-set status (not runnable = warning)'
   $oldErrorAction = $ErrorActionPreference
@@ -781,6 +794,19 @@ print("resume verdict contract OK")
     $seedOut | ForEach-Object { Write-Host $_ }
   } else {
     Ko "seed-docs config-set status fixture failed: $($seedOut | Out-String)"
+  }
+
+  # --- 9h. Shortcut + user-PATH targets follow a redirected profile (isolated installs)
+  Head 'install shortcuts and user PATH follow a redirected profile (isolated install)'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $redirectOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\profile-redirect.test.ps1') 2>&1
+  $redirectRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($redirectRc -eq 0) {
+    $redirectOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "profile-redirect fixture failed: $($redirectOut | Out-String)"
   }
 }
 catch {

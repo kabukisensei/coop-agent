@@ -18,6 +18,7 @@ $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 
 $script:FAIL = 0   # required missing -> non-zero exit
 $script:WARN = 0
+$script:Shadowed = @()   # exes the manifest section found shadowed by a non-pipx copy
 $script:FIX  = $false   # --fix: auto-apply safe remediations at the end
 $script:JSON = $false   # --json: one machine-readable document on stdout (fleet health digests)
 $script:PUBLISH = $false
@@ -152,6 +153,24 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
     D-Warn "$Dist not installed (manifest: $expected)" "pipx install $Dist==$expected"
     return
   }
+  # Executable ownership FIRST: a foreign $Exe earlier on PATH (a `pip install`
+  # copy, another tool manager, a leftover shim) must never be correlated with
+  # this distribution's pipx metadata — reading it as "stale/corrupt" sends the
+  # user to `pipx install --force`, which rebuilds a venv that was never wrong.
+  if ($cli -and ((Get-CoopExePipxVenv $Exe) -ne $Dist)) {
+    $resolved = ''
+    $rc = Get-Command $Exe -ErrorAction SilentlyContinue
+    if ($rc) { $resolved = " ($($rc.Source))" }
+    $script:Shadowed += $Exe
+    if ($meta) {
+      $hint = "remove that copy (pip uninstall $Dist / uv tool uninstall $Dist) or put pipx's bin dir first on PATH (pipx ensurepath), then open a new terminal; last resort: $repair"
+      D-Warn "$Dist skipped: $Exe on PATH$resolved is not the pipx one (it reports $cli; pipx metadata says $meta)" $hint
+    } else {
+      $hint = "pipx install $Dist==$expected, then remove that copy (pip uninstall $Dist / uv tool uninstall $Dist) or put pipx's bin dir first on PATH (pipx ensurepath), and open a new terminal"
+      D-Warn "$Dist skipped: $Exe on PATH$resolved is not the pipx one (it reports $cli; pipx has no $Dist installed)" $hint
+    }
+    return
+  }
   if ($meta -and $cli -and ($meta -ne $cli)) {
     # One call per line: PowerShell has no backslash continuation, so a trailing \
     # became the hint and the real hint printed to stdout on its own (#90).
@@ -161,14 +180,29 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   }
   if (-not $cli) {
     # Stop here: without a CLI answer there is nothing trustworthy to compare.
-    D-Warn "$Dist metadata present ($meta) but $Exe produced no version" $repair
-    return
-  }
-  # Executable ownership: an unrelated binary must never be correlated with
-  # this distribution's pipx metadata.
-  if ((Get-CoopExePipxVenv $Exe) -ne $Dist) {
-    $hint = "reinstall so the pinned $Exe is first on PATH: $repair"
-    D-Warn "$Dist skipped: resolved $Exe does not belong to its pipx environment" $hint
+    # Say WHICH way it failed: nothing on PATH, or a launcher that prints nothing.
+    $rc = Get-Command $Exe -ErrorAction SilentlyContinue
+    if ($rc) {
+      # Quote the launcher's first output line (stderr included) so the row
+      # shows what it said instead of sending the user to run it by hand.
+      # Windows PowerShell 5.1 turns each native stderr line into an ErrorRecord
+      # whose rendering is prefixed with the command name and position; take the
+      # record's own message so the row quotes the launcher's line verbatim.
+      $probe = ''
+      try {
+        $pLines = @(& $Exe --version 2>&1 | ForEach-Object {
+          if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { [string]$_ }
+        })
+        $pLine = @($pLines | ForEach-Object { ($_ -split "`r?`n") } | Where-Object { $_.Trim() }) | Select-Object -First 1
+        if ($pLine) { $probe = ([string]$pLine).Trim(); if ($probe.Length -gt 120) { $probe = $probe.Substring(0, 120) } }
+      } catch {}
+      $said = if ($probe) { "; it printed: $probe" } else { '' }
+      $hint = "a broken leftover launcher: delete it, then pipx reinstall $Dist, and open a new terminal"
+      D-Warn "${Dist}: $Exe at $($rc.Source) runs but prints no version (pipx metadata says $meta)$said" $hint
+    } else {
+      $hint = "put pipx's bin dir on PATH: pipx ensurepath, then open a new terminal; if the launcher is missing there: pipx reinstall $Dist"
+      D-Warn "$Dist is not on PATH (pipx has $meta installed)" $hint
+    }
     return
   }
   if (-not $meta) {
@@ -204,7 +238,7 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   } else {
     # Only the Fabric CLI env carries the injected fabric-cicd library.
     $cicdPin = if ($Dist -eq 'ms-fabric-cli') { Coop-ManifestGet 'python_tools.fabric-cicd' } else { '' }
-    $hint = "$repair --python 3.12   (or --python 3.13)$(if ($cicdPin) { ", then: pipx inject $Dist fabric-cicd==$cicdPin" })"
+    $hint = "$repair --python 3.12   (or --python 3.13)$(if ($cicdPin) { ", then: pipx inject $Dist fabric-cicd==$cicdPin   (or: coop doctor --fix)" })"
     D-Warn "$Dist environment uses Python $pyver — violates its own requires-python '$rp'" $hint
   }
 }
@@ -274,9 +308,18 @@ if (Test-Have 'fab') {
 }
 
 D-Head 'Standalone Coop tools (pipx)'
-Check 'coop-data-doc'   'required' 'pipx install coop-data-doc'   @('coop-data-doc','--version')
-Check 'coop-sql-review' 'required' 'pipx install coop-sql-review' @('coop-sql-review','--version')
-Check 'coop-dax-review' 'required' 'pipx install coop-dax-review' @('coop-dax-review','--version')
+# A tool the manifest section found shadowed by a non-pipx copy never gets a
+# green tick here: the copy that answered is not the one coop pinned.
+function Check-PipxTool([string]$Bin) {
+  if ($script:Shadowed -contains $Bin) {
+    D-Warn "$Bin on PATH is not the pipx copy (see Release manifest above)" "the fix is on that row: remove the stray copy or put pipx's bin dir first on PATH"
+  } else {
+    Check $Bin 'required' "pipx install $Bin" @($Bin,'--version')
+  }
+}
+Check-PipxTool 'coop-data-doc'
+Check-PipxTool 'coop-sql-review'
+Check-PipxTool 'coop-dax-review'
 
 D-Head 'Fabric / semantic-model tooling'
 
@@ -563,11 +606,22 @@ if ($catPy) {
 D-Head 'Standards'
 if (Test-Have 'node') {
   $standardsCli = Join-Path $env:COOP_ROOT 'lib\standards-cli.mjs'
+  # The canonical-sync row comes first. Doctor never refreshes, so a last-known-good
+  # domain is a warning only when the last refresh attempt actually failed (or never
+  # ran); after a successful launch refresh whose freshness window has expired, the
+  # cached standards are simply the ones from the last check.
+  $syncFailed = $false
   foreach ($line in (& node $standardsCli doctor-lines '' $PWD.Path 2>$null)) {
     $parts = $line -split "`t", 4
     if ($parts.Count -lt 3) { continue }
     $kind = $parts[0]; $name = $parts[1]; $state = $parts[2]; $detail = if ($parts.Count -gt 3) { $parts[3] } else { '' }
-    if ($state -match 'unavailable|auth_required|dirty_preserved|invalid_preserved|stale_last_known_good|wiki_warning|PENDING_OWNER_PROVISIONING') { D-Warn "$kind ${name}: $state" $(if ($detail) { $detail } else { 'standards remain fail-soft' }) }
+    $hint = if ($detail) { $detail } else { 'standards remain fail-soft' }
+    if ($name -eq 'canonical-sync' -and $state -match '^(failed|never|degraded)$') { $syncFailed = $true; D-Warn "$kind ${name}: $state" $hint; continue }
+    if ($state -match 'stale_last_known_good') {
+      if ($syncFailed) { D-Warn "$kind ${name}: $state" $hint }
+      else { D-Ok "$kind ${name}: last known good @ $(($detail -split '\|')[0]) (verified at the last check; the next coop launch or coop sync refreshes it)" }
+    }
+    elseif ($state -match 'unavailable|auth_required|dirty_preserved|invalid_preserved|wiki_warning|PENDING_OWNER_PROVISIONING') { D-Warn "$kind ${name}: $state" $hint }
     else { D-Ok "$kind ${name}: $state$(if ($detail) { " @ $detail" } else { '' })" }
   }
 } else {
@@ -651,17 +705,38 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
     if ($LASTEXITCODE -eq 0) { Coop-Ok 'synced extensions / MCP / assets' } else { Coop-Warn 'sync had issues (run: coop sync)' }
   }
   if (Test-Have 'pipx') {
-    if (-not (Test-Have 'fab')) {
+    # The Fabric CLI is (re)built when fab is missing, or when its environment
+    # runs a Python its own Requires-Python rejects (a 3.14 venv, after the
+    # default Python moved on). The interpreter comes from the same plan install
+    # and update use: a local 3.10-3.13, or pipx's standalone 3.12.
+    $fabricRebuild = 0
+    $fabricEnvPy = ''
+    if (-not (Test-Have 'fab')) { $fabricRebuild = 1 }
+    else {
+      $fabricEnvPy = [string](Get-CoopVenvPythonVersion 'ms-fabric-cli')
+      $fabricRp = if ($fabricEnvPy) { Get-CoopVenvRequiresPython 'ms-fabric-cli' 'ms-fabric-cli' } else { '' }
+      if ($fabricEnvPy -and $fabricRp -and -not (Test-CoopPythonSpec $fabricEnvPy $fabricRp)) { $fabricRebuild = 2 }
+    }
+    if ($fabricRebuild -ne 0) {
       # Repairs install the release's pinned versions only, never PyPI's latest.
       $fabricSpec = Coop-ManifestPythonSpec 'ms-fabric-cli'
+      $fabricPlan = if ($fabricSpec) { Get-CoopFabricPipxPlan } else { $null }
       if (-not $fabricSpec) {
         Coop-Warn 'no release pin for ms-fabric-cli in the manifest' 'run: coop update'
         $repairFailed = $true
+      } elseif (-not $fabricPlan) {
+        Coop-Warn 'Microsoft Fabric CLI needs Python 3.10-3.13 and this pipx cannot fetch one' "apply the Python row's fix under Prerequisites (install Python 3.12, or upgrade pipx to 1.12+), then run: coop doctor --fix"
+        $repairFailed = $true
       } else {
-        Coop-Info "pipx install $fabricSpec"
-        & pipx install $fabricSpec *> $null
+        $fabricArgs = @('install')
+        if ($fabricRebuild -eq 2) { $fabricArgs += '--force' }
+        if ($fabricPlan.FetchFlag) { $fabricArgs += $fabricPlan.FetchFlag }
+        $fabricArgs += @('--python', $fabricPlan.Python, $fabricSpec)
+        Coop-Info "pipx $($fabricArgs -join ' ')"
+        & pipx @fabricArgs *> $null
         if ($LASTEXITCODE -eq 0 -and (Sync-CoopFabricPythonPackages) -and (Ensure-CoopFabricOdbcDriver $true)) {
-          Coop-Ok 'managed Fabric runtime installed'
+          if ($fabricRebuild -eq 2) { Coop-Ok "managed Fabric runtime rebuilt on Python $($fabricPlan.Python) (was $fabricEnvPy)" }
+          else { Coop-Ok "managed Fabric runtime installed (Python $($fabricPlan.Python))" }
         } else {
           Coop-Warn 'could not install the managed Fabric runtime' 'run: coop install'
           $repairFailed = $true
@@ -685,7 +760,7 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
     Coop-Warn 'pipx missing — cannot auto-install tools (install pipx first: see the hint above)'
   }
   if ($repairFailed) { exit 1 }
-  Coop-Info 'Re-checking... (system deps like node/python/pipx + the Fabric CLI install manually — see hints above)'
+  Coop-Info 'Re-checking... (system deps like node/python/pipx install manually — see hints above)'
   [Console]::Error.WriteLine('')
   # Propagate --json/--publish so the re-check emits the (final) machine-readable document.
   $reArgs = @(); if ($script:PUBLISH) { $reArgs += '--publish' } elseif ($script:JSON) { $reArgs += '--json' }
