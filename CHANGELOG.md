@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+- `coop doctor` no longer reports a pipx environment as "stale/corrupt" when the
+  executable it resolved on PATH is not the pipx one. A `pip install` copy, another
+  tool manager's shim, or a leftover launcher earlier on PATH (a teammate's
+  `coop-data-doc` reported 1.1.1 while the pipx venv held 1.2.0) is now a PATH
+  shadow: the row names the resolved path and both versions, and the hint says to
+  remove that copy or put pipx's bin dir first on PATH. The old hint,
+  `pipx install --force`, rebuilt a venv that was never wrong and could not clear
+  the row. Genuine metadata/CLI disagreement inside the pipx venv is unchanged.
+
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
   symlink that the standards storage-root check rejects, and the standards

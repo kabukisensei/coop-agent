@@ -152,6 +152,19 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
     D-Warn "$Dist not installed (manifest: $expected)" "pipx install $Dist==$expected"
     return
   }
+  # Executable ownership FIRST: a foreign $Exe earlier on PATH (a `pip install`
+  # copy, another tool manager, a leftover shim) must never be correlated with
+  # this distribution's pipx metadata — reading it as "stale/corrupt" sends the
+  # user to `pipx install --force`, which rebuilds a venv that was never wrong.
+  if ($cli -and ((Get-CoopExePipxVenv $Exe) -ne $Dist)) {
+    $resolved = ''
+    $rc = Get-Command $Exe -ErrorAction SilentlyContinue
+    if ($rc) { $resolved = " ($($rc.Source))" }
+    $metaText = if ($meta) { $meta } else { 'nothing' }
+    $hint = "remove that copy (pip uninstall $Dist / uv tool uninstall $Dist) or put pipx's bin dir first on PATH (pipx ensurepath), then open a new terminal; last resort: $repair"
+    D-Warn "$Dist skipped: $Exe on PATH$resolved is not the pipx one (it reports $cli; pipx metadata says $metaText)" $hint
+    return
+  }
   if ($meta -and $cli -and ($meta -ne $cli)) {
     # One call per line: PowerShell has no backslash continuation, so a trailing \
     # became the hint and the real hint printed to stdout on its own (#90).
@@ -162,13 +175,6 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   if (-not $cli) {
     # Stop here: without a CLI answer there is nothing trustworthy to compare.
     D-Warn "$Dist metadata present ($meta) but $Exe produced no version" $repair
-    return
-  }
-  # Executable ownership: an unrelated binary must never be correlated with
-  # this distribution's pipx metadata.
-  if ((Get-CoopExePipxVenv $Exe) -ne $Dist) {
-    $hint = "reinstall so the pinned $Exe is first on PATH: $repair"
-    D-Warn "$Dist skipped: resolved $Exe does not belong to its pipx environment" $hint
     return
   }
   if (-not $meta) {

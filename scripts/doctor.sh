@@ -124,7 +124,7 @@ fi
 # real executable — ms-fabric-cli installs `fab`, not an `ms-fabric-cli` binary.
 check_pipx_dist() { # <dist> <exe>
   local dist="$1" exe="$2"
-  local expected meta cli pyver status repair cicd_pin
+  local expected meta cli pyver status repair cicd_pin resolved
   expected="$(coop_manifest_get "python_tools.$dist")"
   [ -z "$expected" ] && return 0
   repair="pipx install --force $dist==$expected"
@@ -141,6 +141,16 @@ check_pipx_dist() { # <dist> <exe>
     warn "$dist not installed (manifest: $expected)" "pipx install $dist==$expected"
     return 0
   fi
+  # Executable ownership FIRST: a foreign $exe earlier on PATH (a `pip install`
+  # copy, another tool manager, a leftover shim) must never be correlated with
+  # this distribution's pipx metadata — reading it as "stale/corrupt" sends the
+  # user to `pipx install --force`, which rebuilds a venv that was never wrong.
+  if [ -n "$cli" ] && [ "$(coop_exe_pipx_venv "$exe")" != "$dist" ]; then
+    resolved="$(command -v "$exe" 2>/dev/null)"
+    warn "$dist skipped: $exe on PATH${resolved:+ ($resolved)} is not the pipx one (it reports ${cli}; pipx metadata says ${meta:-nothing})" \
+      "remove that copy (pip uninstall $dist / uv tool uninstall $dist) or put pipx's bin dir first on PATH (pipx ensurepath), then open a new terminal; last resort: $repair"
+    return 0
+  fi
   if [ -n "$meta" ] && [ -n "$cli" ] && [ "$meta" != "$cli" ]; then
     bad "$dist pipx environment is stale/corrupt: metadata says $meta but $exe reports ${cli:-nothing}" \
       "$repair   (metadata/CLI disagreement; recreate the environment)"
@@ -150,13 +160,6 @@ check_pipx_dist() { # <dist> <exe>
     # Stop here: without a CLI answer there is nothing trustworthy to compare,
     # and falling through would let metadata alone claim a match.
     warn "$dist metadata present ($meta) but $exe produced no version" "$repair"
-    return 0
-  fi
-  # Executable ownership: an unrelated binary that happens to answer --version
-  # must never be correlated with this distribution's pipx metadata.
-  if [ "$(coop_exe_pipx_venv "$exe")" != "$dist" ]; then
-    warn "$dist skipped: resolved $exe does not belong to its pipx environment" \
-      "reinstall so the pinned $exe is first on PATH: $repair"
     return 0
   fi
   if [ -z "$meta" ]; then

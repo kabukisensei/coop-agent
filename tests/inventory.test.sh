@@ -241,6 +241,35 @@ else
 fi
 put_meta coop-data-doc coop-data-doc "$PIN_DDD"
 
+# F4c: a FOREIGN coop-data-doc earlier on PATH (pip --user copy, another tool
+#      manager, leftover shim) reporting 1.1.1 while the pipx venv's metadata
+#      says 1.2.0 is a PATH shadow, NOT a stale/corrupt venv: the old ordering
+#      sent the user to `pipx install --force`, which can never clear it
+#      (teammate report, 2026-09-30, v0.24.0).
+make_real_cdd "$PIN_DDD"
+mkdir -p "$FAKEBIN/shadowcdd"
+{
+  echo '#!/bin/sh'
+  echo 'echo "coop-data-doc, version 1.1.1"'
+} > "$FAKEBIN/shadowcdd/coop-data-doc"
+chmod +x "$FAKEBIN/shadowcdd/coop-data-doc"
+out="$(doctor_out "$d" "$FAKEBIN/shadowcdd:")"
+case "$out" in
+  *"stale/corrupt"*"coop-data-doc"*|*"coop-data-doc"*"stale/corrupt"*)
+    ko "PATH-shadowed coop-data-doc misreported as a stale venv: $(printf '%s' "$out" | grep 'coop-data-doc' | head -2)" ;;
+  *) ok "PATH-shadowed coop-data-doc not misreported as a stale venv" ;;
+esac
+case "$out" in
+  *"coop-data-doc skipped: coop-data-doc on PATH ($FAKEBIN/shadowcdd/coop-data-doc) is not the pipx one (it reports 1.1.1; pipx metadata says $PIN_DDD)"*)
+    ok "shadow classified with the resolved path and both versions" ;;
+  *) ko "shadow line missing/inexact: $(printf '%s' "$out" | grep 'coop-data-doc' | head -2)" ;;
+esac
+case "$out" in
+  *"pip uninstall coop-data-doc"*"pipx ensurepath"*) ok "hint names removing the copy or fixing PATH order" ;;
+  *) ko "shadow hint missing: $(printf '%s' "$out" | grep -A1 'skipped: coop-data-doc' | head -2)" ;;
+esac
+rm -rf "$FAKEBIN/shadowcdd"
+
 # F5: wrong fab — a Paramiko/Fabric SSH tool must still be rejected, and must
 #     not be counted as ms-fabric-cli even if a venv exists.
 put_meta ms-fabric-cli ms-fabric-cli "$PIN_FAB"
