@@ -136,6 +136,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- bash and PowerShell agree that a git worktree is a checkout (#106). bash tested for a
+  `.git` directory and PowerShell for any `.git`, so in a linked worktree (where `.git`
+  is a file) bash skipped the repo update step, doctor warned that skills would never
+  update, and `coop version` showed no git describe, while PowerShell moved the
+  checkout. Both twins now use one rule, a `.git` directory or a `.git` file naming
+  its `gitdir:`, for the repo helpers, `coop update`, doctor and the knowledge sync.
 - Standards lookups no longer spawn git on every prompt (#138). Each prompt verified the
   standards checkout two or three times, at five git processes each, and asked git for
   the revision about eight more times: 28 git processes per prompt in the fixture,

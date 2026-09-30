@@ -428,6 +428,23 @@ case "$S" in *"remote add origin $U"*) ;; *) OUT="$S"; fail "a branch tracking a
 pass "no origin remote (renamed or removed): named, and the printed fix restores release following"
 pass "no origin remote with two remotes: the rename names the branch's remote or the one canonical URL, else adds origin"
 
+# 14c. A linked worktree is a git checkout, as it is to the PowerShell twin (#106):
+#      the repo helpers work from it. A plain copy, or a .git file that names no
+#      gitdir, is not a checkout.
+fresh wt-base
+git -C "$COOP_ROOT" worktree add "$TMP/wt-linked" v0.10.0 >/dev/null 2>&1 || fail "fixture: git worktree add"
+[ -f "$TMP/wt-linked/.git" ] || fail "fixture: a linked worktree has a .git file"
+coop_is_git_checkout "$TMP/wt-base" || fail "a clone is a git checkout"
+coop_is_git_checkout "$TMP/wt-linked" || fail "a linked worktree is a git checkout"
+mkdir -p "$TMP/wt-plain" "$TMP/wt-junk"
+printf 'not a gitdir\n' > "$TMP/wt-junk/.git"
+if coop_is_git_checkout "$TMP/wt-plain"; then fail "a plain copy is not a git checkout"; fi
+if coop_is_git_checkout "$TMP/wt-junk"; then fail "a .git file that names no gitdir is not a git checkout"; fi
+COOP_ROOT="$TMP/wt-linked"
+OUT="$(coop_repo_describe)"
+[ "$OUT" = "v0.10.0" ] || fail "coop_repo_describe works from a linked worktree"
+pass "a linked worktree is a git checkout (helpers work from it); a plain copy or a gitdir-less .git file is not"
+
 # 15. The doctor row (coop_repo_doctor_row): behind is a warn to update; a
 #     stranded state (diverged, hold) is a warn with its fix; else ok.
 row() { # sets ROW_LEVEL, ROW_MSG, ROW_HINT for COOP_ROOT

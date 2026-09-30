@@ -192,7 +192,7 @@ fi
 
 # --- 1. Update coop-agent itself ---------------------------------------------
 coop_head "1/6  coop-agent repository"
-if [ -d "$COOP_ROOT/.git" ] && have git; then
+if coop_is_git_checkout "$COOP_ROOT" && have git; then
   if git -C "$COOP_ROOT" remote get-url origin >/dev/null 2>&1; then
     # Fast-forward to the newest release tag, never backwards (--edge: head of
     # main). Only uncommitted changes to TRACKED files skip the move; untracked
