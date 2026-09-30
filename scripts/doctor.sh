@@ -36,6 +36,7 @@ done
 # to a temp file as status<US>section<US>name<US>hint (US = 0x1f, which can never
 # appear in a message); the summary at the bottom emits the JSON document.
 DOCTOR_SECTION=""
+DOCTOR_SHADOWED=""   # exes the manifest section found shadowed by a non-pipx copy
 DOCTOR_JSON_TMP=""
 if [ "$JSON" = 1 ]; then
   DOCTOR_JSON_TMP="$(mktemp)"
@@ -147,8 +148,14 @@ check_pipx_dist() { # <dist> <exe>
   # user to `pipx install --force`, which rebuilds a venv that was never wrong.
   if [ -n "$cli" ] && [ "$(coop_exe_pipx_venv "$exe")" != "$dist" ]; then
     resolved="$(command -v "$exe" 2>/dev/null)"
-    warn "$dist skipped: $exe on PATH${resolved:+ ($resolved)} is not the pipx one (it reports ${cli}; pipx metadata says ${meta:-nothing})" \
-      "remove that copy (pip uninstall $dist / uv tool uninstall $dist) or put pipx's bin dir first on PATH (pipx ensurepath), then open a new terminal; last resort: $repair"
+    DOCTOR_SHADOWED="$DOCTOR_SHADOWED $exe"
+    if [ -n "$meta" ]; then
+      warn "$dist skipped: $exe on PATH${resolved:+ ($resolved)} is not the pipx one (it reports ${cli}; pipx metadata says ${meta})" \
+        "remove that copy (pip uninstall $dist / uv tool uninstall $dist) or put pipx's bin dir first on PATH (pipx ensurepath), then open a new terminal; last resort: $repair"
+    else
+      warn "$dist skipped: $exe on PATH${resolved:+ ($resolved)} is not the pipx one (it reports ${cli}; pipx has no $dist installed)" \
+        "pipx install $dist==$expected, then remove that copy (pip uninstall $dist / uv tool uninstall $dist) or put pipx's bin dir first on PATH (pipx ensurepath), and open a new terminal"
+    fi
     return 0
   fi
   if [ -n "$meta" ] && [ -n "$cli" ] && [ "$meta" != "$cli" ]; then
@@ -267,9 +274,17 @@ else
 fi
 
 section "Standalone Coop tools (pipx)"
-check coop-data-doc   required "pipx install coop-data-doc"   "coop-data-doc --version"
-check coop-sql-review required "pipx install coop-sql-review" "coop-sql-review --version"
-check coop-dax-review required "pipx install coop-dax-review" "coop-dax-review --version"
+# A tool the manifest section found shadowed by a non-pipx copy never gets a
+# green tick here: the copy that answered is not the one coop pinned.
+check_pipx_tool() { # <bin>
+  case " $DOCTOR_SHADOWED " in
+    *" $1 "*) warn "$1 on PATH is not the pipx copy (see Release manifest above)" "pipx install $1" ;;
+    *) check "$1" required "pipx install $1" "$1 --version" ;;
+  esac
+}
+check_pipx_tool coop-data-doc
+check_pipx_tool coop-sql-review
+check_pipx_tool coop-dax-review
 
 section "Fabric / semantic-model tooling"
 

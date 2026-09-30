@@ -140,6 +140,21 @@ try {
   if ($null -eq $row -or -not ([string]$row.hint).Contains('pip uninstall coop-data-doc') -or -not ([string]$row.hint).Contains('pipx ensurepath')) {
     Ko 'doctor.ps1 shadow hint must name removing the copy or fixing PATH order' (Show-Rows $rows)
   } else { Ok 'doctor.ps1 shadow hint names removing the copy or fixing PATH order' }
+  $tick = @($rows | Where-Object { ([string]$_.name) -eq 'coop-data-doc  (1.1.1)' })
+  $tools = @($rows | Where-Object { ([string]$_.name) -eq 'coop-data-doc on PATH is not the pipx copy (see Release manifest above)' })
+  if ($tick.Count -ne 0 -or $tools.Count -ne 1 -or $tools[0].status -ne 'warn') {
+    Ko 'doctor.ps1 tools section must not tick the shadowed copy green' (Show-Rows $rows)
+  } else { Ok 'doctor.ps1 tools section refuses the green tick for the shadowed copy' }
+
+  # 1b. Same shadow, but pipx has no coop-data-doc at all (fake pipx answers
+  #     nothing for it): say so plainly and lead with the pinned pipx install.
+  $env:COOP_PIPX_BIN = Join-Path $fakeBin 'nope'
+  $rows = Get-DoctorRows
+  $env:COOP_PIPX_BIN = $pipx
+  $none = @($rows | Where-Object { ([string]$_.name) -eq "coop-data-doc skipped: coop-data-doc on PATH ($shadow) is not the pipx one (it reports 1.1.1; pipx has no coop-data-doc installed)" })
+  if ($none.Count -ne 1 -or -not ([string]$none[0].hint).StartsWith("pipx install coop-data-doc==$Pin, then remove that copy")) {
+    Ko 'doctor.ps1 must name a missing pipx copy and lead with the pinned install' (Show-Rows $rows)
+  } else { Ok 'doctor.ps1 names a missing pipx copy and leads with the pinned install' }
 
   # 2. Genuine disagreement: only the venv's own script is on PATH and it
   #    reports 1.0.0 against metadata 1.2.0 (twin of F4). Still stale/corrupt.

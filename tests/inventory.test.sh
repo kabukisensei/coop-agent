@@ -268,6 +268,22 @@ case "$out" in
   *"pip uninstall coop-data-doc"*"pipx ensurepath"*) ok "hint names removing the copy or fixing PATH order" ;;
   *) ko "shadow hint missing: $(printf '%s' "$out" | grep -A1 'skipped: coop-data-doc' | head -2)" ;;
 esac
+case "$out" in
+  *"coop-data-doc  (1.1.1)"*) ko "tools section still ticks the shadowed coop-data-doc green" ;;
+  *"coop-data-doc on PATH is not the pipx copy (see Release manifest above)"*) ok "tools section refuses the green tick for the shadowed copy" ;;
+  *) ko "tools section row for the shadowed copy missing: $(printf '%s' "$out" | grep 'coop-data-doc' | head -4)" ;;
+esac
+
+# F4d: same shadow, but pipx has NO coop-data-doc at all (fresh machine that got a
+#      pip copy instead): say so plainly and lead with the pinned pipx install.
+rm -f "$TMP/fixtures/coop-data-doc--coop-data-doc.meta"
+out="$(doctor_out "$d" "$FAKEBIN/shadowcdd:")"
+case "$out" in
+  *"is not the pipx one (it reports 1.1.1; pipx has no coop-data-doc installed)"*"pipx install coop-data-doc==$PIN_DDD, then remove that copy"*)
+    ok "shadow with no pipx copy names the missing install and leads with the pinned install" ;;
+  *) ko "no-pipx-copy shadow wording wrong: $(printf '%s' "$out" | grep 'coop-data-doc skipped' | head -1)" ;;
+esac
+put_meta coop-data-doc coop-data-doc "$PIN_DDD"
 rm -rf "$FAKEBIN/shadowcdd"
 
 # F5: wrong fab — a Paramiko/Fabric SSH tool must still be rejected, and must

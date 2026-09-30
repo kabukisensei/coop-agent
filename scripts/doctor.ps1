@@ -18,6 +18,7 @@ $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 
 $script:FAIL = 0   # required missing -> non-zero exit
 $script:WARN = 0
+$script:Shadowed = @()   # exes the manifest section found shadowed by a non-pipx copy
 $script:FIX  = $false   # --fix: auto-apply safe remediations at the end
 $script:JSON = $false   # --json: one machine-readable document on stdout (fleet health digests)
 $script:PUBLISH = $false
@@ -160,9 +161,14 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
     $resolved = ''
     $rc = Get-Command $Exe -ErrorAction SilentlyContinue
     if ($rc) { $resolved = " ($($rc.Source))" }
-    $metaText = if ($meta) { $meta } else { 'nothing' }
-    $hint = "remove that copy (pip uninstall $Dist / uv tool uninstall $Dist) or put pipx's bin dir first on PATH (pipx ensurepath), then open a new terminal; last resort: $repair"
-    D-Warn "$Dist skipped: $Exe on PATH$resolved is not the pipx one (it reports $cli; pipx metadata says $metaText)" $hint
+    $script:Shadowed += $Exe
+    if ($meta) {
+      $hint = "remove that copy (pip uninstall $Dist / uv tool uninstall $Dist) or put pipx's bin dir first on PATH (pipx ensurepath), then open a new terminal; last resort: $repair"
+      D-Warn "$Dist skipped: $Exe on PATH$resolved is not the pipx one (it reports $cli; pipx metadata says $meta)" $hint
+    } else {
+      $hint = "pipx install $Dist==$expected, then remove that copy (pip uninstall $Dist / uv tool uninstall $Dist) or put pipx's bin dir first on PATH (pipx ensurepath), and open a new terminal"
+      D-Warn "$Dist skipped: $Exe on PATH$resolved is not the pipx one (it reports $cli; pipx has no $Dist installed)" $hint
+    }
     return
   }
   if ($meta -and $cli -and ($meta -ne $cli)) {
@@ -280,9 +286,18 @@ if (Test-Have 'fab') {
 }
 
 D-Head 'Standalone Coop tools (pipx)'
-Check 'coop-data-doc'   'required' 'pipx install coop-data-doc'   @('coop-data-doc','--version')
-Check 'coop-sql-review' 'required' 'pipx install coop-sql-review' @('coop-sql-review','--version')
-Check 'coop-dax-review' 'required' 'pipx install coop-dax-review' @('coop-dax-review','--version')
+# A tool the manifest section found shadowed by a non-pipx copy never gets a
+# green tick here: the copy that answered is not the one coop pinned.
+function Check-PipxTool([string]$Bin) {
+  if ($script:Shadowed -contains $Bin) {
+    D-Warn "$Bin on PATH is not the pipx copy (see Release manifest above)" "pipx install $Bin"
+  } else {
+    Check $Bin 'required' "pipx install $Bin" @($Bin,'--version')
+  }
+}
+Check-PipxTool 'coop-data-doc'
+Check-PipxTool 'coop-sql-review'
+Check-PipxTool 'coop-dax-review'
 
 D-Head 'Fabric / semantic-model tooling'
 
