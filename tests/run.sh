@@ -208,6 +208,12 @@ case "$JSON_SPEC" in
 esac
 JSON_SPEC="$JSON_SPEC" node -e 'const s=JSON.parse(process.env.JSON_SPEC); if(s.env.PI_SKIP_VERSION_CHECK!=="1") process.exit(1)'
 echo "  ✓ --no-launch prints the spec and exits 0 (no pi launched)"
+# #165: MCP comes only from coop's agent-dir mcp.json, never a repo's .mcp.json.
+if JSON_SPEC="$JSON_SPEC" node -e 'const s=JSON.parse(process.env.JSON_SPEC); process.exit(s.env.PI_MCP_CONFIG_MODE==="exclusive"?0:1)'; then
+  echo "  ✓ launch spec pins MCP config to coop's agent dir (PI_MCP_CONFIG_MODE=exclusive)"
+else
+  echo "  ✗ launch spec does not set PI_MCP_CONFIG_MODE=exclusive"; exit 1
+fi
 
 echo "→ fleet manifest tests"
 bash "$ROOT/tests/fleet-manifest.test.sh"
@@ -227,6 +233,8 @@ echo "→ entrypoints guard a missing lib/common helper library"
 bash "$ROOT/tests/missing-common-guard.test.sh"
 echo "→ user paths install and recommend only the release's pinned versions (#151)"
 bash "$ROOT/tests/pins.test.sh"
+echo "→ model login detection ignores Pi's empty startup auth.json (#167)"
+bash "$ROOT/tests/login-present.test.sh"
 echo "→ extension tree pins the agent peer to the agent's version (#122)"
 bash "$ROOT/tests/extdeps-agent-pin.test.sh"
 echo "→ fabric-compatible Python discovery (side-by-side, off-PATH)"

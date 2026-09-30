@@ -877,10 +877,20 @@ function Get-CoopEffectiveAgentDir {
 # True when Pi has a stored provider credential in the agent tree Coop will
 # actually load. Environment-only credentials intentionally do not count: this
 # helper gates the one-time interactive /login handoff requested by onboarding.
+# Pi writes an empty `{}` auth.json on startup, so a non-empty file is not proof
+# of a login (#167): at least one provider entry must be an object.
 function Test-CoopPiLoginPresent {
   $authPath = Join-Path (Get-CoopEffectiveAgentDir) 'auth.json'
   if (-not (Test-Path -LiteralPath $authPath -PathType Leaf)) { return $false }
-  try { return (Get-Item -LiteralPath $authPath).Length -gt 0 } catch { return $false }
+  try {
+    if ((Get-Item -LiteralPath $authPath).Length -eq 0) { return $false }
+    $data = Get-Content -LiteralPath $authPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if ($null -eq $data -or $data -isnot [System.Management.Automation.PSCustomObject]) { return $false }
+    foreach ($prop in $data.PSObject.Properties) {
+      if ($prop.Value -is [System.Management.Automation.PSCustomObject] -and @($prop.Value.PSObject.Properties).Count -gt 0) { return $true }
+    }
+    return $false
+  } catch { return $false }
 }
 
 # Align coop's ISOLATED extension tree's @earendil-works/pi-ai + pi-tui to the Pi

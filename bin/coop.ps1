@@ -339,6 +339,10 @@ function Build-CoopPiArgs {
   if ($env:COOP_SHOW_UPSTREAM_UPDATE_NOTICES -ne '1') {
     $env:PI_SKIP_VERSION_CHECK = '1'
   }
+  # MCP servers come only from coop's managed agent-dir mcp.json (#165). Without
+  # this, pi-mcp-adapter also merges a work repo's .mcp.json / .pi/mcp.json and
+  # other tools' configs, so a repo could add a server or redefine a coop one.
+  $env:PI_MCP_CONFIG_MODE = 'exclusive'
   # Point the extension at our vibe files and brand splash.
   $env:COOP_VIBES_DIR = Join-Path $script:CoopRoot 'vibes'
   $env:COOP_SPLASH_FILE = Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi'
@@ -518,6 +522,7 @@ function Invoke-CoopLaunchSpec {
     $envMap = [ordered]@{}
     if ($env:PI_CODING_AGENT_DIR) { $envMap['PI_CODING_AGENT_DIR'] = $env:PI_CODING_AGENT_DIR }
     if ($env:PI_SKIP_VERSION_CHECK) { $envMap['PI_SKIP_VERSION_CHECK'] = $env:PI_SKIP_VERSION_CHECK }
+    if ($env:PI_MCP_CONFIG_MODE)    { $envMap['PI_MCP_CONFIG_MODE']    = $env:PI_MCP_CONFIG_MODE }
     if ($env:COOP_VIBES_DIR)      { $envMap['COOP_VIBES_DIR']      = $env:COOP_VIBES_DIR }
     if ($env:COOP_SPLASH_FILE)    { $envMap['COOP_SPLASH_FILE']    = $env:COOP_SPLASH_FILE }
     # The JSON SHAPE ({bin,args,env}) is the contract with programmatic consumers — the

@@ -2027,6 +2027,21 @@ export function modelLoginAuthPath(): string {
   return join(coopAgent && coopAgent.trim() ? coopAgent : join(homedir(), ".coop", "agent"), "auth.json");
 }
 
+/**
+ * True when auth.json holds at least one stored provider credential. Pi writes an
+ * empty `{}` on startup, so a non-empty file is not proof of a login (#167).
+ */
+export function authHasCredential(authPath: string): boolean {
+  try {
+    if (!existsSync(authPath) || statSync(authPath).size === 0) return false;
+    const data = JSON.parse(readFileSync(authPath, "utf8").replace(/^\uFEFF/, ""));
+    if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+    return Object.values(data).some((v) => !!v && typeof v === "object" && !Array.isArray(v) && Object.keys(v as object).length > 0);
+  } catch {
+    return false;
+  }
+}
+
 /** Only an explicit launcher handoff may replace the user's empty editor. */
 export function shouldPrimeModelLogin(ctx: Pick<ExtensionContext, "hasUI" | "mode">): boolean {
   return ctx.hasUI && ctx.mode === "tui" && /^(1|true|yes|on)$/i.test(process.env.COOP_PRIME_MODEL_LOGIN || "");
@@ -2049,7 +2064,7 @@ function primeModelLogin(ctx: ExtensionContext): boolean {
     let credentialSeenAt = 0;
     const timer = setInterval(() => {
       try {
-        if (!existsSync(authPath) || statSync(authPath).size === 0) return;
+        if (!authHasCredential(authPath)) return;
         if (!credentialSeenAt) credentialSeenAt = Date.now();
         // Fresh login selects OpenAI's default model after credentials are saved.
         // Prefer that positive readiness signal; the timeout covers a preselected
