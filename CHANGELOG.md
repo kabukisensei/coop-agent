@@ -5,11 +5,68 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Guardrails: Fabric and Azure REST writes issued from the shell now ask for
+  approval like a mutating MCP call. `az rest` with a non-GET `--method`,
+  `fab api -X post|patch|put|delete`, and the Fabric CLI's mutating subcommands
+  (`fab deploy`, `mkdir`, `rm`, `cp`, `mv`, `set`, `import`, `assign`,
+  `unassign`, `job`, `acl`, `label`, `start`, `stop`, `ln`) confirm before they
+  run and fail closed headlessly. The official Microsoft Fabric skills drive item
+  create/update/deploy/delete this way, outside the MCP gate. Reads
+  (`--method get`, `fab api <path>`, `fab ls`/`get`/`export`) are unchanged.
+
+### Changed
+
 - Standards: a prompt that says PBIX, PBIP or PBIR now reaches the Power BI File
   Types article ("Convert the Sales report PBIX to a PBIP project"), the one
   coop-standards article no realistic prompt reached before. The classifier treats
   those words as "file", the way it already reads "dim" as dimension and "proc" as
   procedure; two golden rows stop being known failures.
+- Simple Fabric reads go straight to the contract target. At session start coop
+  now hands the agent the Warehouse/Lakehouse ids the nearest `.coop/project.yml`
+  pins (`fabric.default_workspace_id`, `fabric.default_sql_endpoint`) in a hidden
+  note, and the guardrails prompt plus the `team-knowledge` skill say a one-row
+  query, listing, or connection check uses those ids directly — no team-knowledge
+  search, memory search, skill load, or Fabric catalog discovery first. Seen on
+  0.24.0: a `TOP 1` read ran two knowledge searches, a memory search, and MCP
+  discovery before the query although the contract held the ids. The approval
+  prompt before Warehouse SQL is unchanged.
+- Microsoft skills catalog (master plan U1, the Fabric catalog row):
+  `microsoft/skills-for-fabric` moves from v0.3.10 to **v0.3.18**
+  (`6c11ad58c25992e5d1435ce7cd80d217d5598a31`) and the baseline now enables the
+  **full Fabric skill set** (25 skills) instead of two Warehouse skills.
+  Upstream v0.3.12 merged `sqldw-authoring-cli`, `sqldw-consumption-cli` and the
+  deferred `sqldw-operations-cli` into one `sqldw-cli`; v0.3.17 merged the four
+  Power BI report skills into `powerbi-report-cli`. A contract that allow-lists
+  the old names loads nothing for them; use the new names. `microsoft/skills`
+  is re-pinned to `3495f50ae0d7b69dcb19c6922db9f80aab6cf79c` (`kql` and
+  `microsoft-docs` are byte-identical to the previous pin).
+  - The catalog now ships a repository's **shared reference trees** (upstream
+    `common/`) beside the skills, at the path their `../../common/...` links
+    expect. Before this, every pinned Fabric skill linked shared files that
+    the catalog never fetched. Shared trees are pinned by content hash and
+    verified like skills; a generation missing one is refused.
+  - `python3 lib/microsoft_skills.py check-refs` reports relative links the
+    current generation cannot satisfy; `coop sync` stores the same list in
+    `fetch-state.json` and `coop doctor` shows the count. Upstream's
+    `mcp-setup/` guide is deliberately left out (Coop manages MCP itself).
+  - The per-skill size cap rises from 750 KB to 1.5 MB for
+    `powerbi-report-cli` (88 Markdown files, ~1.04 MB); the 500 KB per-file cap
+    is unchanged.
+- `pi-hermes-memory` moves to **0.9.9** (master plan U1, section 6 row). On Windows,
+  0.7.17 could not run its own helper process: it launched `pi` through Pi's `exec`,
+  which spawns without a shell, and `pi` is only an npm `.cmd`/`.ps1` shim there. So
+  memory consolidation, background review, correction save and session flush all
+  failed silently with `exited with code 1: unknown error`, and once a memory file
+  reached its 5,000-character limit every new save was rejected (seen on Aaron's
+  client VM on 2026-09-30, all four stores full). 0.9.9 resolves `pi.cmd` and starts
+  `node` with Pi's `cli.js` directly, runs those jobs in-process first, lets
+  policy-only saves exceed the Markdown cap instead of failing, raises the
+  consolidation timeout to 180 s, warns in the session when an automatic
+  consolidation fails, and adds `/memory-pin` for rules the agent must not rewrite.
+  Existing memory files are read as before (same storage root under
+  `~/.coop/agent`). VM qualification pending.
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
   symlink that the standards storage-root check rejects, and the standards
@@ -17,6 +74,53 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   installed `coop-sql-review` / `coop-dax-review`, so a machine with the reviewers
   installed no longer reports `bundled_fallback` where CI expects `unavailable`.
   Tests only; no runtime change.
+
+### Fixed
+
+
+- Machines whose only Python is 3.14 no longer get a Fabric CLI they cannot fix.
+  The Python prerequisite row (install and `coop doctor`) now passes with any pipx
+  that can fetch a standalone Python (1.5+, both flag spellings; it accepted only
+  the 1.12+ spelling before) and counts a pipx that is installed but not on PATH
+  yet, as the pipx row already did. `coop doctor --fix` builds the Fabric CLI with
+  the same interpreter plan as install and update — a local Python 3.10–3.13, or
+  pipx's standalone 3.12 — instead of a bare `pipx install` that inherited 3.14
+  and failed, and it rebuilds an existing Fabric environment that runs 3.14
+  (re-injecting `fabric-cicd`). On Windows, when pipx is too old to fetch a
+  Python, the row prints the admin-free repair (`python -m pip install --user
+  --upgrade pipx`) instead of a winget Python install, and
+  `coop install --prereqs auto` runs it. Bash and PowerShell in parity.
+- `coop_version_lt` read a two-part version `X.Y` as `X.Y.Y`, so Python 3.14.2
+  counted as older than 3.14 and passed the Fabric check it should have failed
+  (and 3.10.5 counted as older than 3.10). Missing parts now read as 0.
+- `coop install --prereqs auto` ran a two-step fix (`a then b`) as the single
+  command `ab`: the newline that split the steps was lost inside a heredoc.
+- `coop doctor` no longer reports a pipx environment as "stale/corrupt" when the
+  executable it resolved on PATH is not the pipx one. A `pip install` copy, another
+  tool manager's shim, or a leftover launcher earlier on PATH (a teammate's
+  `coop-data-doc` reported 1.1.1 while the pipx venv held 1.2.0) is now a PATH
+  shadow: the row names the resolved path and both versions, and the hint says to
+  remove that copy or put pipx's bin dir first on PATH. The old hint,
+  `pipx install --force`, rebuilt a venv that was never wrong and could not clear
+  the row. When pipx has no copy at all, the row says so and leads with the pinned
+  `pipx install`. The "Standalone Coop tools" section no longer gives such a copy a
+  green tick. When pipx has the venv but nothing answers on PATH, the row says
+  "not on PATH" with an `ensurepath` / `reinstall` hint, and a launcher that runs
+  but prints nothing is named with its path, instead of the old catch-all
+  "produced no version" with a `--force` hint. Genuine metadata/CLI disagreement
+  inside the pipx venv is unchanged.
+- A coop installed into a redirected profile (HOME / USERPROFILE / LOCALAPPDATA /
+  APPDATA pointed at a sandbox folder, as the acceptance harness and the VM
+  runbooks do) no longer spills onto the real account. `coop install` wrote the
+  "coop" Desktop and Start Menu shortcuts through the Windows shell folders, so a
+  sandbox install rewrote the real shortcuts to point at the sandbox, and it
+  appended the sandbox launcher folder to the real user PATH in the registry.
+  Shortcuts now land in the redirected profile's own Desktop and Start Menu, the
+  persistent user PATH is left alone (the launcher is on PATH for that run only,
+  and the install says so), and `coop update` / `coop uninstall` look in the same
+  folders. A normal install still uses the shell folders, so a OneDrive-redirected
+  Desktop keeps working. Windows only; the bash installer never had the problem.
+
 
 ## [0.24.0] — 2026-09-30
 

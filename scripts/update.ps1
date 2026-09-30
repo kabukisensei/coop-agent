@@ -145,7 +145,7 @@ $UnitPytoolUpgrade = {
   $installed = $list -match ("package " + [regex]::Escape($Pkg) + " ")
   $target = if ($Target) { $Target } else { $Pkg }
   if ($Pkg -eq 'ms-fabric-cli' -and -not $Python) {
-    return [pscustomobject]@{ ok = $false; msg = 'ms-fabric-cli needs Python 3.12 or 3.13 — install one, then re-run: coop update' }
+    return [pscustomobject]@{ ok = $false; msg = 'ms-fabric-cli needs Python 3.12 or 3.13 — upgrade pipx or install one, then re-run: coop update' }
   }
   $pipxArgs = @('install')
   if ($installed) { $pipxArgs += '--force' }
@@ -307,15 +307,13 @@ try {
       $fabricPython = Get-CoopFabricBootstrapPython
     }
   }
-  if (-not $fabricPython -and (Get-Command pipx -ErrorAction SilentlyContinue)) {
-    $pipxInstallHelp = (& pipx install --help 2>&1 | Out-String)
-    if ($pipxInstallHelp -match '--fetch-python') {
-      $fabricPython = '3.12'
-      $fabricFetchPython = '--fetch-python=missing'
-      Coop-Info "Microsoft Fabric CLI will use pipx's standalone Python 3.12"
-    } elseif ($pipxInstallHelp -match '--fetch-missing-python') {
-      $fabricPython = '3.12'
-      $fabricFetchPython = '--fetch-missing-python'
+  if (-not $fabricPython) {
+    # pipx's standalone 3.12 (Get-CoopFabricPipxPlan, shared with install and
+    # doctor --fix) when no local 3.10-3.13 could be found or installed above.
+    $fabricPlan = Get-CoopFabricPipxPlan
+    if ($fabricPlan -and $fabricPlan.FetchFlag) {
+      $fabricPython = $fabricPlan.Python
+      $fabricFetchPython = $fabricPlan.FetchFlag
       Coop-Info "Microsoft Fabric CLI will use pipx's standalone Python 3.12"
     }
   }

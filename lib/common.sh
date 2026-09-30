@@ -212,6 +212,43 @@ coop_fabric_bootstrap_python() {
   return 1
 }
 
+# The `pipx install` flag that makes pipx download a standalone Python when the
+# requested version is not installed: pipx 1.12+ spells it --fetch-python=missing,
+# pipx 1.5-1.11 --fetch-missing-python (still accepted by newer pipx as a
+# deprecated alias, so the current spelling is tried first). Prints nothing and
+# returns 1 when this pipx cannot fetch a Python (pipx < 1.5, or no pipx).
+# Optional args are the pipx invocation to probe (e.g. python3 -m pipx for a pipx
+# that is installed but not on PATH yet); default: coop_pipx_cmd.
+coop_pipx_fetch_python_flag() { # [pipx-cmd [args...]]
+  local help
+  [ $# -gt 0 ] || set -- "$(coop_pipx_cmd)"
+  command -v "$1" >/dev/null 2>&1 || return 1
+  help="$("$@" install --help 2>&1)" || true
+  case "$help" in
+    *--fetch-python*) printf '%s' '--fetch-python=missing'; return 0 ;;
+    *--fetch-missing-python*) printf '%s' '--fetch-missing-python'; return 0 ;;
+  esac
+  return 1
+}
+
+# How the Fabric CLI's pipx environment gets a supported interpreter, as one
+# tab-separated line "<python><TAB><fetch-flag>": a local 3.10-3.13 interpreter
+# (fetch-flag empty), or "3.12" plus the flag from coop_pipx_fetch_python_flag when
+# only pipx's standalone download can supply one. Prints nothing and returns 1
+# when neither is possible — then prerequisite row 3 (coop_prereq_rows) says what
+# to install. Shared by install, update and `coop doctor --fix`, so every path
+# builds the environment the same way:
+#   pipx install [--force] ${fetch:+"$fetch"} --python "$py" ms-fabric-cli==<pin>
+coop_fabric_pipx_plan() {
+  local py flag=''
+  py="$(coop_fabric_bootstrap_python 2>/dev/null)" || py=''
+  if [ -z "$py" ]; then
+    flag="$(coop_pipx_fetch_python_flag 2>/dev/null)" || return 1
+    py='3.12'
+  fi
+  printf '%s\t%s' "$py" "$flag"
+}
+
 # Exact Python runtime for live Fabric SQL. The managed ms-fabric-cli pipx
 # environment is the default; an explicit override is operator-managed and is
 # validated here but never changed by Coop.
@@ -750,8 +787,11 @@ coop_minor_newer() {
 coop_version_lt() {
   local a="$1" b="$2"
   local a1 a2 a3 b1 b2 b3
-  a1="${a%%.*}"; a="${a#*.}"; a2="${a%%.*}"; a="${a#*.}"; a3="${a%%.*}"
-  b1="${b%%.*}"; b="${b#*.}"; b2="${b%%.*}"; b="${b#*.}"; b3="${b%%.*}"
+  # `${v#*.}` leaves a dot-less remainder unchanged, so a two-part "3.14" once read
+  # as 3.14.14 (and 3.14.2 counted as older than 3.14): split on dots explicitly,
+  # with a missing part reading as 0.
+  a1="${a%%.*}"; a="${a#*.}"; [ "$a" = "$a1" ] && a=''; a2="${a%%.*}"; a="${a#*.}"; [ "$a" = "$a2" ] && a=''; a3="${a%%.*}"
+  b1="${b%%.*}"; b="${b#*.}"; [ "$b" = "$b1" ] && b=''; b2="${b%%.*}"; b="${b#*.}"; [ "$b" = "$b2" ] && b=''; b3="${b%%.*}"
   a1="${a1:-0}"; a2="${a2:-0}"; a3="${a3:-0}"
   b1="${b1:-0}"; b2="${b2:-0}"; b3="${b3:-0}"
   case "$a1.$a2.$a3.$b1.$b2.$b3" in *[!0-9.]*) return 1 ;; esac
@@ -784,14 +824,15 @@ coop_odbc_driver18() {
 # Usage: coop_prereq_rows [no-fabric:0|1]   (mirror of Get-CoopPrereqs)
 _coop_ver() { "$1" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1; }
 coop_prereq_rows() {
-  local no_fabric="${1:-0}" us fgit fnode fpy fpipx faz fodbc
-  local ok det v min fab_py gen_py gen_v gen_ok p
+  local no_fabric="${1:-0}" us fgit fnode fpy fpipx fpipxup faz fodbc
+  local ok det v min fab_py gen_py gen_v gen_ok p pipx_det pipx_via fetch
+  fpipxup=0
   us="$(printf '\037')"
   case "$(uname -s 2>/dev/null)" in
     MINGW*|MSYS*|CYGWIN*)
       fgit='winget install --id Git.Git -e'; fnode='winget install --id OpenJS.NodeJS.LTS -e'
       fpy='winget install --id Python.Python.3.12 -e'
-      fpipx='py -3.12 -m pip install --user pipx then py -3.12 -m pipx ensurepath'
+      fpipx='py -3.12 -m pip install --user pipx then py -3.12 -m pipx ensurepath'; fpipxup=1
       faz='winget install --id Microsoft.AzureCLI -e'; fodbc='winget install --id Microsoft.msodbcsql.18 -e' ;;
     Darwin)
       fgit='xcode-select --install'; fnode='brew install node'; fpy='brew install python@3.12'
@@ -816,33 +857,42 @@ coop_prereq_rows() {
   fi
   _row 2 "Node.js $min or newer" 1 "$ok" "$det" "$fnode"
 
-  # The Fabric CLI cannot run on 3.14, so it needs 3.10-3.13. A newer pipx can
-  # fetch its own 3.12 for the Fabric CLI, so 3.14 plus that pipx also passes.
-  ok=0; det='not found'; fab_py=''; gen_v=''; gen_ok=0
+  # The Fabric CLI cannot run on 3.14, so it needs 3.10-3.13. A pipx that can
+  # fetch a standalone Python (1.5+, coop_pipx_fetch_python_flag) supplies its own
+  # 3.12 for the Fabric CLI, so 3.14 plus that pipx also passes. pipx counts here
+  # exactly as row 4 counts it: on PATH, or reachable as `<python> -m pipx`.
+  ok=0; det='not found'; fab_py=''; gen_v=''; gen_ok=0; pipx_det=''; pipx_via=''; fetch=''
   [ "$no_fabric" = 1 ] || fab_py="$(coop_fabric_bootstrap_python 2>/dev/null)" || fab_py=''
   gen_py="$(coop_python 2>/dev/null)" || gen_py=''
   [ -n "$gen_py" ] && gen_v="$(_coop_ver "$gen_py")"
   [ -n "$gen_v" ] && ! coop_version_lt "$gen_v" 3.10 && gen_ok=1
+  if have pipx; then pipx_det="$(_coop_ver pipx)"; pipx_via='pipx'
+  else
+    for p in "$fab_py" "$gen_py"; do
+      [ -n "$p" ] || continue
+      if "$p" -m pipx --version >/dev/null 2>&1; then pipx_det="via $p -m pipx"; pipx_via="$p -m pipx"; break; fi
+    done
+  fi
   # A general Python that is itself 3.10-3.13 is Fabric-compatible even when the
-  # Fabric resolver's probe misses it (#81).
+  # Fabric resolver's probe misses it (#81). pipx is probed only when it is the
+  # deciding factor (a 3.14+ Python and nothing older), so the row stays cheap.
+  # shellcheck disable=SC2086  # pipx_via is a command line by design
   if [ -n "$fab_py" ]; then ok=1; det="$(_coop_ver "$fab_py")"
   elif [ "$gen_ok" = 1 ] && { [ "$no_fabric" = 1 ] || coop_version_lt "$gen_v" 3.14; }; then ok=1; det="$gen_v"
-  elif [ "$gen_ok" = 1 ] && have pipx && pipx install --help 2>&1 | grep -F -- '--fetch-python' >/dev/null; then
+  elif [ "$gen_ok" = 1 ] && [ -n "$pipx_via" ] && fetch="$(coop_pipx_fetch_python_flag $pipx_via 2>/dev/null)" && [ -n "$fetch" ]; then
     ok=1; det="$gen_v; pipx fetches 3.12 for the Fabric CLI"
-  elif [ "$gen_ok" = 1 ]; then det="$gen_v only; the Fabric CLI needs 3.10-3.13"
+  elif [ "$gen_ok" = 1 ]; then
+    det="$gen_v only; the Fabric CLI needs 3.10-3.13"
+    # Windows: a pipx that is present but too old to fetch a Python is repaired
+    # without winget or an administrator — upgrading pipx (1.12+) lets it download
+    # a standalone 3.12 for the Fabric CLI. Elsewhere the package manager's Python
+    # stays the fix (pip --user is refused on Debian-family Pythons, PEP 668).
+    if [ -n "$pipx_via" ] && [ "$fpipxup" = 1 ]; then fpy="$gen_py -m pip install --user --upgrade pipx then $gen_py -m pipx ensurepath"; fi
   elif [ -n "$gen_v" ]; then det="$gen_v is older than 3.10"
   fi
   _row 3 'Python 3.10-3.13 (3.12 recommended)' 1 "$ok" "$det" "$fpy"
 
-  ok=0; det='not found'
-  if have pipx; then ok=1; det="$(_coop_ver pipx)"
-  else
-    for p in "$fab_py" "$gen_py"; do
-      [ -n "$p" ] || continue
-      if "$p" -m pipx --version >/dev/null 2>&1; then ok=1; det="via $p -m pipx"; break; fi
-    done
-  fi
-  _row 4 pipx 1 "$ok" "$det" "$fpipx"
+  if [ -n "$pipx_via" ]; then _row 4 pipx 1 1 "$pipx_det" "$fpipx"; else _row 4 pipx 1 0 'not found' "$fpipx"; fi
 
   if have az; then _row 5 'Azure CLI' 1 1 '' "$faz"; else _row 5 'Azure CLI' 1 0 'not found' "$faz"; fi
 

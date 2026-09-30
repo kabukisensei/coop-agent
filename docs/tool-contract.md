@@ -298,6 +298,15 @@ coop consult lineage without the user asking:
   before touching it. **Silent when no built docs exist** — the docs are an aid,
   not a gate.
 
+The same hook also grounds **simple Fabric reads**: once per contract, when the
+nearest `.coop/project.yml` pins a Warehouse/Lakehouse target
+(`fabric.default_workspace_id` + `fabric.default_sql_endpoint`), it injects an
+agent-visible, `display: false` note (`customType: "coop-fabric-target"`) carrying
+the workspace and item ids and telling coop to call `fabric-sqlendpoint` with them
+directly for a one-row query, listing, or connection check — no team-knowledge,
+memory, skill, or catalog detour. The approval prompt before Warehouse SQL is
+unchanged. Silent when the contract has no usable target.
+
 There is deliberately no data-doc `session_start` hook: missing or unbuilt docs
 stay silent, and users opt into setup later with `/setup-docs`, `/start`, or
 `coop data-doc setup`.
