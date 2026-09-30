@@ -270,7 +270,7 @@ coop_fabric_mcp_token() {
 }
 
 launch_pi() {
-  have pi || coop_die "pi is not installed. Run: coop install   (or: npm install -g @earendil-works/pi-coding-agent)"
+  have pi || coop_die "pi is not installed. Run: coop install   (installs the release's tested Pi)"
 
   # First-run onboarding: ask for name/communication preference before the first
   # real session, but only in an interactive terminal and only if not disabled.

@@ -255,18 +255,15 @@ _unit_pbih_tools() {
   for pkg in "${PBIH_NPM_TOOLS[@]}"; do
     spec="$pkg"
     if [ "$EDGE" != 1 ]; then
-      local key="$pkg"
+      # Only the release's pinned version is installed. A tool with no pin fails
+      # rather than falling back to npm's latest, and there is no `npm update -g`
+      # fallback: it ignores the version and moves the tool to latest.
       local ver
-      ver="$(coop_manifest_get "npm_tools.$key")"
-      [ -n "$ver" ] && spec="${pkg}@${ver}"
+      ver="$(coop_manifest_get "npm_tools.$pkg")"
+      if [ -z "$ver" ]; then fail=$((fail+1)); continue; fi
+      spec="${pkg}@${ver}"
     fi
-    if [ "$FORCE" = 1 ]; then
-      npm install -g "$spec" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
-    else
-      if npm install -g "$spec" >/dev/null 2>&1; then ok=$((ok+1))
-      elif npm update -g "$spec" >/dev/null 2>&1; then ok=$((ok+1))
-      else fail=$((fail+1)); fi
-    fi
+    npm install -g "$spec" >/dev/null 2>&1 && ok=$((ok+1)) || fail=$((fail+1))
   done
   if [ "$fail" -eq 0 ]; then printf '%d Power BI/Fabric authoring tool(s) ready' "$ok"; return 0; fi
   printf '%d installed, %d failed' "$ok" "$fail"; return 1

@@ -391,18 +391,13 @@ $UnitPbihTools = {
   param([bool]$Force, [array]$Specs)
   if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { return [pscustomobject]@{ ok = $false; msg = 'skipping Power BI/Fabric authoring tools (npm missing)' } }
   $ok = 0; $fail = 0
+  # Only the release's pinned version is installed (an empty spec is a tool with
+  # no pin, which fails rather than falling back to npm's latest), and there is no
+  # `npm update -g` fallback: it ignores the version and moves the tool to latest.
   foreach ($spec in $Specs) {
-    if ($Force) {
-      & npm install -g $spec *> $null
-      if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
-    } else {
-      & npm install -g $spec *> $null
-      if ($LASTEXITCODE -eq 0) { $ok++ }
-      else {
-        & npm update -g $spec *> $null
-        if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
-      }
-    }
+    if (-not $spec) { $fail++; continue }
+    & npm install -g $spec *> $null
+    if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
   }
   if ($fail -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$ok Power BI/Fabric authoring tool(s) ready" } }
   return [pscustomobject]@{ ok = $false; msg = "$ok installed, $fail failed" }
@@ -533,7 +528,7 @@ try {
   }
   $pbihSpecs = @()
   foreach ($pkg in $PBIH_NPM_TOOLS) {
-    $pbihSpecs += if (-not $EDGE) { $tv = Coop-ManifestGet -Key "npm_tools.$pkg"; if ($tv) { "${pkg}@${tv}" } else { $pkg } } else { $pkg }
+    $pbihSpecs += if (-not $EDGE) { $tv = Coop-ManifestGet -Key "npm_tools.$pkg"; if ($tv) { "${pkg}@${tv}" } else { '' } } else { $pkg }
   }
 
   # --- 2. Pi itself ----------------------------------------------------------

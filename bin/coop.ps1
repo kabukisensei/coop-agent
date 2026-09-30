@@ -457,7 +457,7 @@ function Invoke-LaunchPi {
   param([string[]] $PassArgs = @())
 
   if (-not (Test-Have 'pi')) {
-    Coop-Die 'pi is not installed. Run: coop install   (or: npm install -g @earendil-works/pi-coding-agent)'
+    Coop-Die 'pi is not installed. Run: coop install   (installs the release''s tested Pi)'
   }
 
   # First-run onboarding: ask for name/communication preference before the first
