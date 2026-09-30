@@ -782,6 +782,19 @@ print("resume verdict contract OK")
   } else {
     Ko "seed-docs config-set status fixture failed: $($seedOut | Out-String)"
   }
+
+  # --- 9h. Shortcut + user-PATH targets follow a redirected profile (isolated installs)
+  Head 'install shortcuts and user PATH follow a redirected profile (isolated install)'
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $redirectOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\profile-redirect.test.ps1') 2>&1
+  $redirectRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($redirectRc -eq 0) {
+    $redirectOut | ForEach-Object { Write-Host $_ }
+  } else {
+    Ko "profile-redirect fixture failed: $($redirectOut | Out-String)"
+  }
 }
 catch {
   # An error that escapes a section would otherwise skip every later section and

@@ -70,6 +70,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   installed no longer reports `bundled_fallback` where CI expects `unavailable`.
   Tests only; no runtime change.
 
+### Fixed
+
+- A coop installed into a redirected profile (HOME / USERPROFILE / LOCALAPPDATA /
+  APPDATA pointed at a sandbox folder, as the acceptance harness and the VM
+  runbooks do) no longer spills onto the real account. `coop install` wrote the
+  "coop" Desktop and Start Menu shortcuts through the Windows shell folders, so a
+  sandbox install rewrote the real shortcuts to point at the sandbox, and it
+  appended the sandbox launcher folder to the real user PATH in the registry.
+  Shortcuts now land in the redirected profile's own Desktop and Start Menu, the
+  persistent user PATH is left alone (the launcher is on PATH for that run only,
+  and the install says so), and `coop update` / `coop uninstall` look in the same
+  folders. A normal install still uses the shell folders, so a OneDrive-redirected
+  Desktop keeps working. Windows only; the bash installer never had the problem.
+
+
 ## [0.24.0] — 2026-09-30
 
 ### Changed

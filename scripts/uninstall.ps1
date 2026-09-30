@@ -74,9 +74,15 @@ foreach ($d in @($LOCALBIN, (Split-Path -Parent $LOCALBIN))) {
 # Persistent user PATH: read/write the RAW value via the registry as ExpandString
 # (mirror of install.ps1 — [Environment]::SetEnvironmentVariable would expand and
 # freeze %VAR% tokens), then broadcast WM_SETTINGCHANGE via a throwaway var so
-# open shells/Explorer refresh their environment.
+# open shells/Explorer refresh their environment. An isolated install (redirected
+# profile) never wrote there, so it is left alone (mirror of install.ps1).
 try {
-  $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+  $envKey = if (Test-CoopProfileRedirected) {
+    Coop-Info "isolated profile ($(Get-CoopProfileInUse)): leaving your user PATH alone"
+    $null
+  } else {
+    [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+  }
   if ($envKey) {
     $userPath = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
     $newUserPath = (@($userPath -split ';' | Where-Object { $_ -and $_ -ne $LOCALBIN })) -join ';'
@@ -96,9 +102,11 @@ try {
 $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -ne $LOCALBIN }) -join ';'
 
 # --- 2. Start Menu + Desktop shortcuts (inverse of install.ps1) ----------------
+# Same folders install wrote to: the shell folders, or the sandbox profile's own
+# Desktop / Start Menu for an isolated install (Get-CoopShortcutDirs).
 $removedLnk = @()
 foreach ($name in @('coop.lnk', 'coop (terminal).lnk')) {
-  foreach ($dir in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
+  foreach ($dir in (Get-CoopShortcutDirs)) {
     if (-not $dir) { continue }   # special folder can be empty off-Windows
     $lnk = Join-Path $dir $name
     if (Test-Path -LiteralPath $lnk) {
