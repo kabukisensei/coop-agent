@@ -880,8 +880,15 @@ function Get-CoopEffectiveAgentDir {
 # Pi writes an empty `{}` auth.json on startup, so a non-empty file is not proof
 # of a login (#167): at least one provider entry must be an object.
 function Test-CoopPiLoginPresent {
-  $authPath = Join-Path (Get-CoopEffectiveAgentDir) 'auth.json'
-  if (-not (Test-Path -LiteralPath $authPath -PathType Leaf)) { return $false }
+  return (Test-CoopAuthHasCredential (Join-Path (Get-CoopEffectiveAgentDir) 'auth.json'))
+}
+
+# True when the given auth.json holds a stored provider credential (#167). Pi
+# writes `{}` on startup, so a non-empty file alone is not a login.
+# (mirror of coop_auth_has_credential)
+function Test-CoopAuthHasCredential {
+  param([string]$authPath)
+  if (-not $authPath -or -not (Test-Path -LiteralPath $authPath -PathType Leaf)) { return $false }
   try {
     if ((Get-Item -LiteralPath $authPath).Length -eq 0) { return $false }
     $data = Get-Content -LiteralPath $authPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
