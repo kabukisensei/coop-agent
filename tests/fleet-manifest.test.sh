@@ -83,7 +83,7 @@ cat > "$STUB/npm" <<EOF
 #!/bin/sh
 echo "NPM \$*" >> "\$MARKER"
 # Simulate npm ls for the two authoring tools so --check sees current versions.
-[ "\$1" = "ls" ] && { echo "+ @microsoft/powerbi-report-authoring-cli@0.1.4"; echo "+ @microsoft/powerbi-modeling-mcp@0.5.0-beta.12"; }
+[ "\$1" = "ls" ] && { echo "+ @microsoft/powerbi-report-authoring-cli@0.1.4"; echo "+ @microsoft/powerbi-modeling-mcp@1.0.0"; }
 exit 0
 EOF
 cat > "$STUB/pipx" <<'EOF'
