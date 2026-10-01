@@ -15,31 +15,16 @@
 # Offline: node and python are real (lib/pins.js, lib/_extdeps.py, lib/extlock.js
 # run locally); the lock is read, never resolved; temp trees only.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$isWindowsHost = ($env:OS -eq 'Windows_NT')
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-extlock-' + [guid]::NewGuid().ToString('N'))
-$G_CHECK = [char]0x2713; $G_CROSS = [char]0x2717
-$fail = 0
-function Ok([string]$m) { Write-Host "  $G_CHECK $m" }
-function Ko([string]$m, [string]$Out = '') { Write-Host "  $G_CROSS $m"; if ($Out) { Write-Host $Out }; $script:fail = 1 }
-$chmod = if ($isWindowsHost) { '' } else { (Get-Command chmod -ErrorAction Stop).Source }
-$sep = [System.IO.Path]::PathSeparator
 $lock = Join-Path $root 'config\extensions-lock.json'
 $manifest = Get-Content -LiteralPath (Join-Path $root 'config\release-manifest.json') -Raw | ConvertFrom-Json
 $piVer = [string]$manifest.pi.version
 $extNames = @($manifest.extensions.PSObject.Properties.Name)
 $specs = @($extNames | ForEach-Object { "$_@$($manifest.extensions.$_)" })
 $npmLog = Join-Path $t 'npm.log'
-$utf8 = New-Object System.Text.UTF8Encoding($false)
 
-function Write-Shim {
-  param([string]$Dir, [string]$Name, [string]$Sh, [string]$Cmd)
-  [System.IO.File]::WriteAllText((Join-Path $Dir $Name), "#!/bin/sh`n$Sh`n")
-  # .cmd twins only on Windows: Get-CoopWorkingNpm prefers npm.cmd through Get-Command,
-  # which on Linux/macOS would try to run the batch file.
-  if ($isWindowsHost) { [System.IO.File]::WriteAllText((Join-Path $Dir ($Name + '.cmd')), "@echo off`r`n$Cmd`r`n") }
-  else { & $chmod +x (Join-Path $Dir $Name) }
-}
 function Get-Log { if (Test-Path -LiteralPath $npmLog) { return [System.IO.File]::ReadAllText($npmLog) } else { return '' } }
 function Reset-Log { [System.IO.File]::WriteAllText($npmLog, '') }
 function Test-LogHas([string]$Prefix) { return [bool]@((Get-Log) -split "`r?`n" | Where-Object { $_.StartsWith($Prefix) }).Count }
@@ -81,9 +66,7 @@ function Invoke-Converge([string]$Dir) {
   return [bool]@($r | Where-Object { $_ -is [bool] } | Select-Object -Last 1)[0]
 }
 
-$saved = @{}
-$names = @('PATH', 'HOME', 'USERPROFILE', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'NO_COLOR', 'COOP_SKIP_AZ', 'COOP_TEST_NPM_LOG')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
+$saved = Save-Env @('PATH', 'HOME', 'USERPROFILE', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'NO_COLOR', 'COOP_SKIP_AZ', 'COOP_TEST_NPM_LOG')
 try {
   $stub = Join-Path $t 'stub'; $failStub = Join-Path $t 'failstub'
   New-Item -ItemType Directory -Force -Path $stub, $failStub, (Join-Path $t 'home'), (Join-Path $t 'agent') | Out-Null
@@ -94,13 +77,13 @@ try {
   # Stub npm: logs every call; the failing twin refuses `npm ci` (the VM, 2026-10-01).
   $npmSh = 'if [ "$1" = "--version" ]; then echo 10.9.0; exit 0; fi; echo "NPM $*" >> "$COOP_TEST_NPM_LOG"'
   $npmCmd = 'if "%1"=="--version" (echo 10.9.0& exit /b 0)' + "`r`n" + 'echo NPM %*>>"%COOP_TEST_NPM_LOG%"'
-  Write-Shim $stub 'npm' ($npmSh + '; exit 0') ($npmCmd + "`r`n" + 'exit /b 0')
-  Write-Shim $failStub 'npm' ($npmSh + '; if [ "$1" = "ci" ]; then exit 1; fi; exit 0') ($npmCmd + "`r`n" + 'if "%1"=="ci" exit /b 1' + "`r`n" + 'exit /b 0')
+  Write-Shim 'npm' ($npmSh + '; exit 0') ($npmCmd + "`r`n" + 'exit /b 0') $stub
+  Write-Shim 'npm' ($npmSh + '; if [ "$1" = "ci" ]; then exit 1; fi; exit 0') ($npmCmd + "`r`n" + 'if "%1"=="ci" exit /b 1' + "`r`n" + 'exit /b 0') $failStub
   # The explicit -Npm path must be runnable by `&`: on Windows that is the .cmd twin.
   $npmStub = Join-Path $stub 'npm'
   if ($isWindowsHost) { $npmStub = Join-Path $stub 'npm.cmd' }
   foreach ($d in @($stub, $failStub)) {
-    Write-Shim $d 'pi' "if [ `"`$1`" = `"--version`" ]; then echo `"pi $piVer`"; fi; exit 0" "if `"%1`"==`"--version`" echo pi $piVer"
+    Write-Shim 'pi' "if [ `"`$1`" = `"--version`" ]; then echo `"pi $piVer`"; fi; exit 0" "if `"%1`"==`"--version`" echo pi $piVer" $d
   }
   $basePath = $env:PATH
   $env:PATH = $stub + $sep + $basePath
@@ -175,7 +158,7 @@ try {
   if ($r -and (Test-LogHas 'NPM ci ') -and -not (Test-Path -LiteralPath $failed) -and (Test-SameFile $lock $treeLock)) { Ok 'a lock that installs clears the failed-lock record' } else { Ko 'a successful lock install left the failed-lock record' (Get-Log) }
 }
 finally {
-  foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($fail -eq 0) { Write-Host '  extensions-lock behaviour tests passed' } else { Write-Host "  $G_CROSS extensions-lock behaviour tests FAILED" }

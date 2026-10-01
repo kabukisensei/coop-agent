@@ -7,7 +7,7 @@
 #
 # Defines helpers only; never calls `exit` except via Coop-Die. Dot-sourcing runs
 # this file in the CALLER's script scope, so every $script:* variable and function
-# here lands in (and binds to) the calling script. scripts/check-bom.sh gates this
+# here lands in (and binds to) the calling script. scripts/check-bom.ps1 gates this
 # file's UTF-8 BOM (Windows PowerShell 5.1 reads a BOM-less file as ANSI).
 
 # --- Resolve COOP_ROOT (the directory that contains bin/, lib/, scripts/) -----
@@ -625,7 +625,7 @@ function Get-CoopWorkingNpm {
 }
 
 # Converge the isolated tree's recorded extension dependencies to EXACT
-# versions and reinstall (twin of coop_converge_extension_pins). PRODUCTION
+# versions and reinstall. PRODUCTION
 # convergence: the compatibility matrix relies on this same path.
 function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
   # NOTE: forward slashes throughout — backslashes leak into node/npm argv on
@@ -705,7 +705,7 @@ function Get-CoopFileSha256([string]$Path) {
 # True when the shipped lock applies to this install (lock present, installed Pi
 # is the manifest's Pi) but the tree does not carry it yet: no package-lock.json
 # beside the tree's package.json, or one that differs from
-# config\extensions-lock.json. Mirror of coop_extensions_lock_pending.
+# config\extensions-lock.json.
 function Test-CoopExtensionsLockPending([string]$AgentDir, [string]$PiVersion) {
   $lock = Join-Path $script:CoopRoot 'config\extensions-lock.json'
   if (-not (Test-Path -LiteralPath $lock)) { return $false }
@@ -918,8 +918,7 @@ function Coop-Emit {
   #   2. the replaced TextWriter via the [Console]::Error property (same
   #      contract, avoids the method that fails to JIT on those hosts)
   #   3. the PowerShell host API (redirectable; last resort)
-  # TTY redraw branch below is unchanged. POSIX twin: printf >&2 in
-  # lib/common.sh (already redirectable — parity preserved).
+  # TTY redraw branch below is unchanged.
   if ($script:ProgActive -and (Test-ProgTty)) {
     Coop-ProgLift
     [Console]::Error.WriteLine($Line)
@@ -938,14 +937,14 @@ function Coop-Emit {
 function Coop-Say  { param([string]$m) Coop-Emit $m }
 function Coop-Info { param([string]$m) Coop-Emit "$($script:C_LIME)$($script:G_BULLET)$($script:C_RST) $m" }
 function Coop-Ok   { param([string]$m) Coop-Emit "$($script:C_FOREST)$($script:G_CHECK)$($script:C_RST) $m" }
-# Optional second argument is the "how to fix" hint (mirror of coop_warn "$1" "$2").
+# Optional second argument is the "how to fix" hint.
 function Coop-Warn { param([string]$m, [string]$Hint = '') Coop-Emit ("$($script:C_OLIVE)!$($script:C_RST) $m" + $(if ($Hint) { " — $Hint" } else { '' })) }
 function Coop-Err  { param([string]$m) Coop-Emit "$($script:C_RED)$($script:G_CROSS)$($script:C_RST) $m" }
 function Coop-Die  { param([string]$m) Coop-Err $m; exit 1 }
 function Coop-Head { param([string]$m) Coop-Emit "`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)" }
 
 # --- Small utilities ----------------------------------------------------------
-# Is a command available on PATH? (mirror of have())
+# Is a command available on PATH?
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 
 # Pick a usable python interpreter that ACTUALLY runs — not the Windows Store
@@ -953,7 +952,7 @@ function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction 
 # on stock Windows `python3` resolves ONLY to the Store stub under
 # ...\WindowsApps\: Get-Command succeeds while `--version` prints nothing.
 # Prefer python3, fall back to python; $null when neither is real.
-# (mirror of coop_python — THE one python resolver; don't re-add per-script copies)
+# THE one python resolver; don't re-add per-script copies.
 function Get-CoopPython {
   foreach ($name in @('python3', 'python')) {
     $c = Get-Command $name -ErrorAction SilentlyContinue
@@ -985,7 +984,6 @@ function Test-CoopOdbcDriver18 {
 # Rows are in dependency order. Each row: Order, Name, Required, Ok, Detail, Fix.
 # Fix is the exact command to print; ' then ' separates two steps. Install stops
 # when a Required row is not Ok; doctor reports the same rows with the same text.
-# (mirror of coop_prereq_rows)
 function Get-CoopPrereqs([bool]$NoFabric = $false) {
   $win = ($env:OS -eq 'Windows_NT')
   $mac = (-not $win) -and ([string](& uname -s 2>$null) -eq 'Darwin')
@@ -1112,12 +1110,12 @@ function Get-CoopPersonalPiAgentDir { return (Join-Path (Join-Path $HOME '.pi') 
 
 # coop runs Pi against an ISOLATED agent dir so coop's extensions/settings/theme
 # never mix with the user's personal `pi`. Override with COOP_AGENT_DIR.
-# (mirror of coop_paths.coop_agent_dir / paths.mjs coopAgentDir)
+# (the same chain as lib/coop_paths.py coop_agent_dir and lib/paths.mjs coopAgentDir)
 function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path (Get-CoopProfileDir) 'agent' } }
 
 # The agent dir Pi will ACTUALLY load: PI_CODING_AGENT_DIR when set; with
 # COOP_NO_ISOLATE truthy Pi falls back to the personal ~/.pi/agent.
-# (mirror of coop_paths.agent_dir / paths.mjs agentDir)
+# (the same chain as lib/coop_paths.py agent_dir and lib/paths.mjs agentDir)
 function Get-CoopEffectiveAgentDir {
   if ($env:PI_CODING_AGENT_DIR) { return $env:PI_CODING_AGENT_DIR }
   if (Test-CoopNoIsolate) { return (Get-CoopPersonalPiAgentDir) }
@@ -1135,7 +1133,6 @@ function Test-CoopPiLoginPresent {
 
 # True when the given auth.json holds a stored provider credential (#167). Pi
 # writes `{}` on startup, so a non-empty file alone is not a login.
-# (mirror of coop_auth_has_credential)
 function Test-CoopAuthHasCredential {
   param([string]$authPath)
   if (-not $authPath -or -not (Test-Path -LiteralPath $authPath -PathType Leaf)) { return $false }
@@ -1371,9 +1368,9 @@ function Sync-CoopExtensionFleet {
 # live ~60 minutes and `az` cold-starts in ~1-3s, so within 30 minutes of a
 # success for the SAME tenant no az call is made. A failed check (or a stale,
 # missing or mismatched marker) re-checks; marker I/O is best-effort and never
-# fails the launch. (mirror of coop_az_preflight)
+# fails the launch.
 
-# Resolve the client Azure tenant (mirror of coop_tenant). The chain and its
+# Resolve the client Azure tenant. The chain and its
 # rules live in one place, `lib/warehouse_mcp.py tenant`. Returns
 # [pscustomobject]@{ Rc; Tenant }: Rc 0 resolved, 1 none set, 2 not a GUID or a
 # domain name (a rejected value is never returned). The contract is the one
@@ -1419,7 +1416,7 @@ function Stop-CoopAzTree {
   }
 }
 
-# Run az with a hard time limit (mirror of coop_az_run). Returns
+# Run az with a hard time limit. Returns
 # [pscustomobject]@{ Rc; Err }: az's exit code, 124 when az was stopped (the
 # timeout, or any code above 128 as in bash), 127 when az is missing or its path
 # has cmd.exe metacharacters. The child sees AZURE_CORE_LOGIN_EXPERIENCE_V2=off,
@@ -1539,7 +1536,7 @@ function Get-CoopAzTokenHint([string]$Tenant) {
 }
 
 # Check that az can mint the Fabric token, then the Power BI token, for -Tenant
-# (mirror of coop_az_tokens_ok). 15 seconds each; stops at the first failure.
+#. 15 seconds each; stops at the first failure.
 # Returns 0 when both mint, 1 when az reports an authentication failure, 2 for
 # any other failure, 124 on timeout.
 function Get-CoopAzTokenRc {
@@ -1616,7 +1613,6 @@ function Invoke-CoopAzPreflight {
 # submodule (.git file naming its gitdir). Both twins use this one rule (#106), so
 # bash and PowerShell agree on a worktree; a plain copy, or a .git file that names
 # no gitdir, is not a checkout. No git process is started.
-# (mirror of coop_is_git_checkout)
 function Test-CoopGitCheckout([string]$Dir) {
   $g = Join-Path $Dir '.git'
   if (Test-Path -LiteralPath $g -PathType Container) { return $true }
@@ -1630,7 +1626,7 @@ function Test-CoopGitCheckout([string]$Dir) {
 # stall doctor or a launch. Stamps BEFORE fetching, so an offline machine pays
 # the wait at most once a day. Returns $true when THIS call attempted the (daily)
 # fetch; $false when throttled or not applicable (non-git copy / no git / no
-# origin remote). (mirror of coop_repo_fetch_throttled)
+# origin remote).
 function Invoke-CoopRepoFetchThrottled {
   if (-not (Test-Have 'git')) { return $false }
   if (-not (Test-CoopGitCheckout $script:CoopRoot)) { return $false }
@@ -1669,7 +1665,6 @@ function Invoke-CoopRepoFetchThrottled {
 # network). 0 when there is no newer release, this is not a git checkout, git is
 # missing, or the count is unknowable, so a checkout that is ahead, diverged or
 # held is never told to run an update that would not move it.
-# (mirror of coop_repo_behind_count)
 function Get-CoopRepoBehindCount {
   $ErrorActionPreference = 'Continue'
   $tag = Get-CoopRepoNextRelease
@@ -1683,7 +1678,6 @@ function Get-CoopRepoBehindCount {
 # performed the daily fetch), warn when a newer release is waiting for this
 # checkout. Never blocks or fails the launch; silent offline / non-git / current.
 # Stranded checkouts stay quiet here; step 1 and doctor name them.
-# (mirror of coop_update_nudge)
 function Invoke-CoopUpdateNudge {
   if (-not (Invoke-CoopRepoFetchThrottled)) { return }
   $tag = Get-CoopRepoNextRelease
@@ -1707,7 +1701,6 @@ function Get-CoopRepoGitLine {
 # The checked-out branch name; '' when HEAD is detached. Strips refs/heads/ from
 # the full ref, not --short: a tag named like the branch (a stray 'main' tag,
 # which every fetch auto-follows) turns --short into 'heads/main'.
-# (mirror of _coop_repo_branch)
 function Get-CoopRepoBranch {
   $ErrorActionPreference = 'Continue'
   $ref = Get-CoopRepoGitLine @('symbolic-ref', '-q', 'HEAD')
@@ -1717,7 +1710,7 @@ function Get-CoopRepoBranch {
 
 # True when HEAD follows release tags: a detached HEAD, or a branch whose upstream
 # is origin/main (main, or a renamed branch that tracks it). Any other branch,
-# including one with no upstream, is a hold. (mirror of _coop_repo_follows_releases)
+# including one with no upstream, is a hold.
 function Test-CoopRepoFollowsReleases {
   $ErrorActionPreference = 'Continue'
   $branch = Get-CoopRepoBranch
@@ -1729,7 +1722,6 @@ function Test-CoopRepoFollowsReleases {
 # The newest strict vX.Y.Z tag merged into the last-fetched origin/main, with any
 # extra for-each-ref filters (e.g. --contains HEAD). rc tags, tags off main and
 # junk output are skipped; lstrip=2 so a same-named branch cannot hide a tag.
-# (mirror of _coop_repo_newest_release)
 function Get-CoopRepoNewestRelease {
   param([string[]]$Filter = @())
   $ErrorActionPreference = 'Continue'
@@ -1748,7 +1740,6 @@ function Get-CoopRepoNewestRelease {
 # tag merged into the last-fetched origin/main that contains HEAD, unless HEAD is
 # already on it. Read-only and local. '' for a non-git copy, missing git, a hold,
 # or no newer release, so nothing is ever moved backwards.
-# (mirror of coop_repo_next_release)
 function Get-CoopRepoNextRelease {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return '' }
@@ -1764,7 +1755,6 @@ function Get-CoopRepoNextRelease {
 # shaped vX.Y.Z, such as v1 or v0.10.0.1, skipped; a bare short SHA when no
 # release is reachable) for the doctor row and step 1. No --dirty, so the index
 # is never touched. '' for a non-git copy or unexpected output.
-# (mirror of coop_repo_describe)
 function Get-CoopRepoDescribe {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return '' }
@@ -1778,7 +1768,7 @@ function Get-CoopRepoDescribe {
 # the checked-out branch's remote, unless a different remote points at the
 # canonical repo; else the one remote that points at the canonical repo. Never
 # the first name `git remote` lists: it is sorted, so a fork added next to a
-# renamed origin would come first. (mirror of _coop_repo_origin_candidate)
+# renamed origin would come first.
 function Get-CoopRepoOriginCandidate {
   $ErrorActionPreference = 'Continue'
   $root = $script:CoopRoot
@@ -1811,7 +1801,7 @@ function Get-CoopRepoOriginCandidate {
 # A state in which `coop update` cannot move this checkout, as
 # @{ Message; Hint } (what is wrong, then the command that fixes it); $null when
 # the checkout follows releases normally. Local only. Step 1 and doctor use it so
-# a stranded machine is never silent. (mirror of coop_repo_stranded)
+# a stranded machine is never silent.
 function Get-CoopRepoStranded {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return $null }
@@ -1851,7 +1841,6 @@ function Get-CoopRepoStranded {
 }
 
 # Coop-Warn the Get-CoopRepoStranded state; $false when there is none.
-# (mirror of _coop_repo_warn_stranded)
 function Write-CoopRepoStranded {
   $s = Get-CoopRepoStranded
   if ($null -eq $s) { return $false }
@@ -1861,7 +1850,7 @@ function Write-CoopRepoStranded {
 
 # The repo line of `coop update --check` (#107), as @{ Line; Hint } (Hint '' when
 # none): what step 1 would do to this checkout. Local only, no fetch, so --check
-# still changes nothing. (mirror of coop_repo_check_line)
+# still changes nothing.
 function Get-CoopRepoCheckLine {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git') -or -not (Test-CoopGitCheckout $script:CoopRoot)) {
@@ -1879,7 +1868,6 @@ function Get-CoopRepoCheckLine {
 # @{ Level; Message; Hint } (Level 'ok' or 'warn'; Hint '' for ok). Local only
 # (no network; doctor refreshes origin first). A newer release to move to comes
 # first; else a stranded state is named with its fix; else the checkout is ok.
-# (mirror of coop_repo_doctor_row)
 function Get-CoopRepoDoctorRow {
   $ErrorActionPreference = 'Continue'
   $next = Get-CoopRepoNextRelease
@@ -1899,7 +1887,7 @@ function Get-CoopRepoDoctorRow {
 # head of main, via today's `git pull --ff-only` on a branch, or a guarded
 # re-attach of a detached HEAD to main. Tracked-file changes skip the move; a hold
 # is not fetched or moved. Warn-and-continue: never touches the update's failure
-# count. (mirror of coop_repo_follow_release)
+# count.
 function Invoke-CoopRepoFollowRelease {
   param([bool]$Edge = $false)
   $ErrorActionPreference = 'Continue'
@@ -1973,7 +1961,6 @@ function Invoke-CoopRepoFollowRelease {
 }
 
 # The Pi agent's own semver, e.g. '0.80.2' (from `pi --version`). '' if unknown.
-# (mirror of coop_pi_version)
 function Get-CoopPiVersion {
   if (-not (Test-Have 'pi')) { return '' }
   $raw = (& pi --version 2>$null | Select-Object -First 1)
@@ -2258,7 +2245,6 @@ function Invoke-CoopNpmToolsConverge {
 }
 
 # True if version $A's MAJOR.MINOR is strictly newer than $B's (patch ignored).
-# (mirror of coop_minor_newer)
 function Test-CoopMinorNewer {
   param([string]$A, [string]$B)
   $ma = [regex]::Match([string]$A, '^(\d+)\.(\d+)'); $mb = [regex]::Match([string]$B, '^(\d+)\.(\d+)')
@@ -2267,7 +2253,7 @@ function Test-CoopMinorNewer {
 }
 
 # Read a dotted scalar key from a YAML file via lib/_yaml.py (PyYAML when present,
-# else a dependency-free fallback parser). (mirror of coop_yaml_get)
+# else a dependency-free fallback parser).
 function Get-CoopYamlValue {
   param([string]$File, [string]$Key, [string]$Default = '')
   if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { return $Default }
@@ -2284,7 +2270,6 @@ function Get-CoopYamlValue {
 }
 
 # Read a dotted key that is a YAML list of scalars, returning a string array.
-# (mirror of coop_yaml_list)
 function Get-CoopYamlList {
   param([string]$File, [string]$Key)
   if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { return @() }
@@ -2337,7 +2322,6 @@ function Get-CoopKnowledgeRepos {
 }
 
 # Extract the YAML frontmatter `name:` from a SKILL.md (first match), or '' if none.
-# (mirror of coop_skill_name)
 function Get-CoopSkillName {
   param([string]$File)
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { return '' }
@@ -2376,7 +2360,7 @@ function Test-CoopToolEnabled {
 }
 
 # Locate the active project contract: nearest .coop/project.yml walking up from
-# $PWD, else the bundled one at COOP_ROOT/.coop/project.yml. (mirror of coop_find_project_yml)
+# $PWD, else the bundled one at COOP_ROOT/.coop/project.yml.
 function Find-CoopProjectYml {
   param([string]$StartDir = (Get-Location).Path)
   $dir = $StartDir
@@ -2393,7 +2377,6 @@ function Find-CoopProjectYml {
 }
 
 # Confirm a potentially-destructive action unless --yes / COOP_ASSUME_YES is set.
-# (mirror of coop_confirm)
 function Coop-Confirm {
   param([string]$Prompt = 'Proceed?')
   if ($env:COOP_ASSUME_YES -eq '1') { return $true }
@@ -2446,7 +2429,7 @@ function Start-CoopJob {
 #   While it runs, the active-item line animates under the overall bar; on completion
 #   the bar advances by one and a permanent ✓/! line is printed. NB: the scriptblock
 #   runs in a FRESH runspace — it sees none of these functions/variables, so units
-#   must be self-contained and take their inputs as arguments. (mirror of coop_unit)
+#   must be self-contained and take their inputs as arguments.
 function Coop-Unit {
   param([string]$Label, [scriptblock]$Work, [object[]]$WorkArgs = @())
   $sw  = [System.Diagnostics.Stopwatch]::StartNew()

@@ -26,7 +26,7 @@ power_bi:
 PROJ
 
 # 1. GitHub Actions generation
-"$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project.yml" "$ROOT/config/defaults.yml" "$TMP/proj" > /dev/null \
+"$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project.yml" "$ROOT/config/release-manifest.json" "$TMP/proj" > /dev/null \
   || fail "_ciscaffold.py should succeed for github"
 
 gh_file="$TMP/proj/.github/workflows/coop-gates.yml"
@@ -37,7 +37,7 @@ grep -q "TODO" "$gh_file" && fail "TODO path included in GitHub pipeline"
 pass "GitHub Actions CI generated correctly"
 
 # 2. ADO generation
-"$PY" "$ROOT/lib/_ciscaffold.py" ado "$TMP/proj/.coop/project.yml" "$ROOT/config/defaults.yml" "$TMP/proj" > /dev/null \
+"$PY" "$ROOT/lib/_ciscaffold.py" ado "$TMP/proj/.coop/project.yml" "$ROOT/config/release-manifest.json" "$TMP/proj" > /dev/null \
   || fail "_ciscaffold.py should succeed for ado"
 
 ado_file="$TMP/proj/azure-pipelines/coop-gates.yml"
@@ -56,7 +56,7 @@ repositories:
 power_bi:
   semantic_models: []
 PROJ
-"$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-numeric.yml" "$ROOT/config/defaults.yml" "$TMP/proj" > /dev/null \
+"$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-numeric.yml" "$ROOT/config/release-manifest.json" "$TMP/proj" > /dev/null \
   || fail "numeric sql_root should be treated as a real value"
 grep -q "sqlrepo/0" "$gh_file" || fail "numeric sql_root should produce sqlrepo/0 path"
 pass "is_todo does not treat 0 as TODO"
@@ -66,7 +66,7 @@ cat > "$TMP/proj/.coop/project-list.yml" <<PROJ
 - a
 - b
 PROJ
-if "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-list.yml" "$ROOT/config/defaults.yml" "$TMP/proj" > /dev/null 2>&1; then
+if "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-list.yml" "$ROOT/config/release-manifest.json" "$TMP/proj" > /dev/null 2>&1; then
   fail "top-level YAML list should be rejected"
 fi
 pass "top-level YAML list rejected cleanly"
@@ -80,12 +80,12 @@ repositories:
 power_bi:
   semantic_models: []
 PROJ
-if "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-inject.yml" "$ROOT/config/defaults.yml" "$TMP/proj" > /dev/null 2>&1; then
+if "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-inject.yml" "$ROOT/config/release-manifest.json" "$TMP/proj" > /dev/null 2>&1; then
   fail "path with shell metacharacters should be rejected"
 fi
 pass "path injection rejected"
 
-# 6. Version injection should be rejected.
+# 6. Version injection should be rejected (the pins come from the release manifest).
 cat > "$TMP/proj/.coop/project-ver.yml" <<PROJ
 repositories:
   dw:
@@ -94,15 +94,21 @@ repositories:
 power_bi:
   semantic_models: []
 PROJ
-cat > "$TMP/defaults-bad.yml" <<DEF
-tested_with:
-  coop_sql_review: "0.12.0; rm -rf /"
-  coop_dax_review: "0.15.0"
-  coop_data_doc: "0.33.0"
+cat > "$TMP/manifest-bad.json" <<DEF
+{"python_tools": {"coop-sql-review": "0.12.0; rm -rf /", "coop-dax-review": "0.15.0", "coop-data-doc": "0.33.0"}}
 DEF
-if "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-ver.yml" "$TMP/defaults-bad.yml" "$TMP/proj" > /dev/null 2>&1; then
+if "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-ver.yml" "$TMP/manifest-bad.json" "$TMP/proj" > /dev/null 2>&1; then
   fail "version with shell metacharacters should be rejected"
 fi
 pass "version injection rejected"
+
+# 7. The generated pipelines pin exactly the manifest's coop-tool versions.
+"$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project.yml" "$ROOT/config/release-manifest.json" "$TMP/proj" > /dev/null \
+  || fail "_ciscaffold.py should succeed against the real manifest"
+for tool in coop-sql-review coop-dax-review; do   # the data-docs job needs a coop-data-doc.yml in the cwd
+  pin="$(sed -n 's/^[[:space:]]*"'"$tool"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/config/release-manifest.json")"
+  grep -q "pipx install $tool==$pin" "$gh_file" || fail "GitHub pipeline must pin $tool==$pin (the manifest's python_tools)"
+done
+pass "pipelines pin the manifest's coop-tool versions"
 
 printf '  %s\n' "ciscaffold tests passed"

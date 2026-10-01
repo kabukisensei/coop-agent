@@ -2,7 +2,8 @@
 
 coop-agent is a shared Cooptimize tool. Most contributions are **additive and file-based**
 — a new skill, prompt, or vibe — so the bar to contribute is low. Bigger changes
-(the wrapper, scripts, extensions) should keep the cross-platform + governance contract.
+(the launcher, scripts, extensions) should keep the PowerShell + governance contract:
+one implementation in PowerShell, Windows PowerShell 5.1 floor (master plan S1).
 
 ## Quick contributions (skills / prompts)
 
@@ -31,8 +32,9 @@ Keep the one implementation and the contract:
 - **PowerShell is the product** (master plan S1): `bin/coop.ps1`, `lib/common.ps1`
   and `scripts/*.ps1`, launched by `bin/coop.cmd` on Windows. `bin/coop` is a Git
   Bash forwarder to `coop.ps1` and carries no logic; `scripts/release.sh`,
-  `scripts/check-bom.sh`, `scripts/validate-resources.sh` and `tests/*.sh` are
-  bash dev tooling. Never add a bash product path or a `.sh` twin back.
+  `scripts/validate-resources.sh` and `tests/*.sh` are bash dev tooling, and
+  `scripts/check-bom.ps1` is the BOM check. Never add a bash product path or a
+  `.sh` twin back.
 - **Governance:** preserve read-only-first, plan-and-approve, never-commit-source,
   read-only MCP, and never expose secrets.
 - **No new hard deps:** the YAML reader (`lib/_yaml.py`) is dependency-free on purpose
@@ -43,16 +45,10 @@ Keep the one implementation and the contract:
 - **Every `.ps1` in this repo must start with a UTF-8 BOM** (`EF BB BF`).
   Windows PowerShell 5.1 reads a BOM-less `.ps1` as ANSI, so em-dashes /
   ellipses / box-drawing characters turn into mojibake. Some editors and agent
-  file-write tools silently drop the BOM when rewriting a file — re-check after
-  any edit.
-
-  Check (the first three bytes must be `efbb bf`):
-
-  ```bash
-  head -c3 scripts/doctor.ps1 | xxd
-  ```
-
-  Re-add a missing BOM:
+  file-write tools silently drop the BOM when rewriting a file — after any
+  `.ps1` edit, run the one BOM check, `pwsh -NoProfile -File scripts/check-bom.ps1`
+  (`tests/run.ps1` runs it first). It prints the exact fix command for each
+  offender; the recipe it prints re-adds a missing BOM by hand:
 
   ```bash
   printf '\357\273\277' | cat - file.ps1 > file.ps1.bom && mv file.ps1.bom file.ps1
@@ -64,8 +60,8 @@ Keep the one implementation and the contract:
   shortcut, and the Start-Menu/Desktop shortcuts `scripts/install.ps1` creates.
   So the whole repo has a **5.1 floor**. PowerShell-7-only constructs — the
   ternary `cond ? a : b`, null-coalescing `??` / `??=`, null-conditional `?.` /
-  `?[]`, and `clean { }` blocks — parse fine under `pwsh` 7 (all a macOS dev has)
-  but are a **hard parse error** under 5.1, which breaks `coop` at launch for the
+  `?[]`, and `clean { }` blocks — parse fine under `pwsh` 7 (all a Linux or macOS
+  dev box has) but are a **hard parse error** under 5.1, which breaks `coop` at launch for the
   whole team. Don't use them. CI parses every `.ps1` under BOTH `pwsh` 7 and
   Windows PowerShell 5.1 (the `windows` job) so a 7-ism can't sail through green;
   when in doubt, keep to syntax that predates PowerShell 6.
@@ -79,10 +75,11 @@ Keep the one implementation and the contract:
   unit stays self-contained by design.) `extensions/coop-tools` resolves the
   Fabric Python through the same library (`Get-CoopFabricPython`, via
   `powershell.exe` on Windows and `pwsh` elsewhere).
-- `scripts/check-bom.sh` (run by CI) is the one BOM check. It fails on any
-  BOM-less `.ps1` or one with a doubled BOM, when `bin/coop.ps1` or
-  `scripts/sync-knowledge.ps1` does not start with a comment line right after
-  the BOM, and on a bash-style `\` line continuation in a `.ps1`.
+- `scripts/check-bom.ps1` is the one BOM check (the first section of
+  `tests/run.ps1`, so every CI leg runs it; `coop release` and `scripts/release.sh`
+  run it too). It fails on any BOM-less `.ps1` or one with a doubled BOM, when
+  `bin/coop.ps1` or `scripts/sync-knowledge.ps1` does not start with a comment
+  line right after the BOM, and on a bash-style `\` line continuation in a `.ps1`.
 
 ### Testing local changes
 
@@ -104,9 +101,9 @@ Run the same checks CI runs:
 ```bash
 for f in bin/coop scripts/*.sh tests/*.sh; do bash -n "$f"; done     # dev-tooling shell syntax — expect: no output, exit 0
 python3 lib/_yaml.py get .coop/project.yml profile.organization MISS  # yaml reader — expect: Cooptimize
+pwsh -NoProfile -File scripts/check-bom.ps1                           # .ps1 BOM — expect: "✓ BOM check passed"
+pwsh -NoProfile -File tests/run.ps1                                   # PowerShell suite, gate lane — expect: "✓ PowerShell behavioral tests passed (gate lane)"
 bash tests/run.sh                                                     # gate lane, expect: "✓ all tests passed (gate lane)"
-pwsh -NoProfile -File tests/run.ps1                                   # PowerShell suite, gate lane — expect: exit 0
-bash scripts/check-bom.sh                                             # .ps1 BOM — expect: "✓ BOM check passed"
 coop doctor                                                           # deps + config (workstation only — see note)
 ```
 
@@ -147,12 +144,12 @@ The lanes, the fixture rules, and the CI workflows are described in
 [docs/ci.md](docs/ci.md#coop-agents-own-ci-maintainers-gate-and-extended-lanes).
 
 CI (`.github/workflows/ci.yml`) runs on every PR and every push to `main`. Its
-jobs run `bash -n` and `shellcheck` over the bash dev tooling,
-`scripts/check-bom.sh`, JSON/YAML/skill validation, and the esbuild
-transpile of the TypeScript extensions; they parse every `.ps1` under pwsh 7 and
-Windows PowerShell 5.1 with PSScriptAnalyzer; and they run the gate lane on
-ubuntu (`tests/run.sh`, then `tests/run.ps1` under pwsh 7), under Windows Git
-Bash (`tests/run.sh`), and under Windows PowerShell 5.1 (`tests/run.ps1`). The
+jobs run `bash -n` and `shellcheck` over the bash dev tooling, JSON/YAML/skill
+validation, and the esbuild transpile of the TypeScript extensions; they parse
+every `.ps1` under pwsh 7 and Windows PowerShell 5.1 with PSScriptAnalyzer; and
+they run the gate lane on ubuntu (`tests/run.sh`, then `tests/run.ps1` under
+pwsh 7, which starts with `scripts/check-bom.ps1`), under Windows Git Bash
+(`tests/run.sh`), and under Windows PowerShell 5.1 (`tests/run.ps1`). The
 `gate` job passes only when every other job succeeded. The extended lane runs in
 `.github/workflows/extended.yml` (nightly, or Actions -> extended -> Run workflow
 on any branch), and the live Pi compatibility matrix in

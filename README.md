@@ -45,14 +45,12 @@ coop                   # launch the ready, branded Pi agent (after install + new
 > (the no-training-on-our-data terms attach to the business subscription). Details:
 > [docs/onboarding.md §3.5](docs/onboarding.md#35-first-launch--sign-in-one-time).
 
-On macOS/Linux, `coop install` links `coop` into `~/.local/bin`; that directory must
-be on `PATH`. On Windows it installs `%LOCALAPPDATA%\coop\bin\coop.cmd`, adds that
-directory to the user `PATH`, and requires a new terminal before the change appears.
-If `coop` is not found on macOS/Linux, add this to your shell rc and open a new shell:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
+`coop install` installs `%LOCALAPPDATA%\coop\bin\coop.cmd`, adds that directory
+to the user `PATH`, and asks for a new terminal before the change appears (an
+isolated install with a redirected profile keeps the launcher inside the sandbox
+and leaves the user `PATH` alone). Coop is operated on Windows workstations; on a
+Linux or macOS development box, `./bin/coop` forwards to `bin/coop.ps1` under
+`pwsh` for the tests only (see `CONTRIBUTING.md`).
 
 Verify everything with:
 
@@ -99,7 +97,7 @@ clone's own launcher instead of `coop install` (on Windows: double-click
 | 6 | ODBC Driver 18 for SQL Server | live SQL | `winget install --id Microsoft.msodbcsql.18 -e` (install also offers it after the Fabric CLI) |
 | 7 | Tabular Editor CLI (`te`) | optional, BPA reviews | download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli, put `te` on `PATH`, then `te auth login` |
 
-macOS and Linux print the `brew` / `apt` equivalents. A machine that only has
+A machine that only has
 Python 3.14 passes row 3 when its pipx can fetch a standalone Python (pipx 1.5+;
 `--fetch-missing-python`, or `--fetch-python` from pipx 1.12); pipx then downloads
 Python 3.12 for the Fabric CLI, and `coop install`, `coop update` and
@@ -275,12 +273,12 @@ snapshot of the contract. From a shell, `coop init` creates a new contract.
 
 ---
 
-## ⚠️ The `fab` collision — Microsoft Fabric CLI vs. Homebrew Python `fab`
+## ⚠️ The `fab` collision — Microsoft Fabric CLI vs. Python Fabric's `fab`
 
 `coop install` installs **`ms-fabric-cli`**, which provides the **Microsoft Fabric
-CLI** as the `fab` command. A Homebrew formula named **`fabric`** ships a
-**different** `fab` — a Python SSH / automation tool (Paramiko / Invoke). If both
-are present, `fab` may resolve to the wrong one.
+CLI** as the `fab` command. The Python package **`fabric`** (Paramiko / Invoke SSH
+automation) ships a **different** `fab`. If both are present, `fab` may resolve to
+the wrong one.
 
 **`coop doctor` detects this** by checking `fab --version` for `paramiko`/`invoke`
 and reports it as an error:
@@ -290,14 +288,13 @@ and reports it as an error:
   not the Microsoft Fabric CLI
 ```
 
-**Fix:** ensure `~/.local/bin` (where pipx installs `fab`) **precedes Homebrew** on
-your `PATH`, or remove the conflicting formula (macOS/Homebrew; on Linux,
-uninstall the Python `fabric` package however it was installed, e.g.
-`pipx uninstall fabric`):
+**Fix:** uninstall the Python `fabric` package however it was installed (for
+example `pipx uninstall fabric` or `pip uninstall fabric`), or put pipx's bin
+directory ahead of it on `PATH` (`pipx ensurepath`, then a new terminal), and
+re-verify:
 
-```bash
-brew uninstall fabric        # or reorder PATH so ~/.local/bin comes first
-fab --version                # re-verify: should be the Microsoft Fabric CLI
+```powershell
+fab --version                # should be the Microsoft Fabric CLI
 ```
 
 ---

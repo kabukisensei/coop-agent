@@ -1,10 +1,10 @@
 ﻿#!/usr/bin/env pwsh
 # Execute the normal install/update/sync fleet paths with offline stubs and assert
-# the exact specs they converge to (port of tests/fleet-execution.test.sh):
+# the exact specs they converge to:
 #   - `install --force` reinstalls the Fabric CLI with an explicit supported
 #     bootstrap Python and injects the exact fabric-cicd / pyodbc runtime pins;
-#     an injection or pipx failure is exit 1; install itself never runs
-#     `pi install` (the extensions are the sync child's, master plan S2)
+#     an injection or pipx failure is exit 1 with a failed-step summary; the
+#     extensions are installed by the sync child (master plan S2)
 #   - a non-Windows install without ODBC Driver 18 still converges with ONE warning
 #   - `update` (fleet mode) never fetches the checkout it runs from, leaves Pi and
 #     the pipx tools already at their pins alone (offline no-op), converges a
@@ -20,56 +20,30 @@
 # The scripts run from a plain COPY of this tree with no .git (#104): step 1 of
 # `coop update` fetches and fast-forwards the checkout it runs from, and a test
 # must never touch the checkout running it. Every location the fleet scripts can
-# write is isolated per block (temp HOME / USERPROFILE / COOP_DIR / PIPX_HOME /
-# agent dirs); the real ~/.coop is never read or written.
+# write is isolated per block (temp HOME / USERPROFILE / LOCALAPPDATA / APPDATA /
+# COOP_DIR / PIPX_HOME / agent dirs); the real ~/.coop is never read or written.
+# Install and update run through to their last step: the redirected profile keeps
+# the PATH link and shortcuts in the sandbox (Test-CoopProfileRedirected), the
+# redirected stdio and COOP_NO_ONBOARD / COOP_NO_MODEL_LOGIN skip onboarding and
+# the model sign-in, and the sync and doctor children run against these stubs.
+# Doctor's verdict decides the exit code, so the cases below assert on the call
+# log and the scripts' failed-step summary lines, not on the exit code alone.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $checkout = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$psExe = try { (Get-Process -Id $PID).Path } catch { 'pwsh' }
-$isWindowsHost = ($env:OS -eq 'Windows_NT')
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-fleet-exec-' + [guid]::NewGuid().ToString('N'))
-$G_CHECK = [char]0x2713; $G_CROSS = [char]0x2717
-$fail = 0
-function Ok([string]$m) { Write-Host "  $G_CHECK $m" }
-function Ko([string]$m, [string]$Out = '') { Write-Host "  $G_CROSS $m"; if ($Out) { Write-Host $Out }; $script:fail = 1 }
-$sep = [System.IO.Path]::PathSeparator
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-$chmod = if ($isWindowsHost) { '' } else { (Get-Command chmod -ErrorAction Stop).Source }
-# Real tools the stub machine forwards to (captured before PATH is restricted).
 $realNode = (Get-Command node -ErrorAction Stop).Source
 $realGit = (Get-Command git -ErrorAction Stop).Source
 # The stub machine needs a Fabric-compatible (3.10-3.13) Python for the H1 gate;
 # prefer a versioned one so a host whose python3 is 3.14 still qualifies. The
 # Windows Store App-Execution-Alias stub under WindowsApps is not an interpreter.
-$realPy = $null
-foreach ($n in @('python3.13', 'python3.12', 'python3', 'python')) {
-  $c = Get-Command $n -ErrorAction SilentlyContinue
-  if (-not $c -or -not $c.Source -or $c.Source -match '\\WindowsApps\\') { continue }
-  $realPy = $c.Source; break
-}
+$realPy = Get-FixturePython
 if (-not $realPy) { throw 'a Python 3.10-3.13 is required for the fleet fixtures' }
 $psDir = Split-Path -Parent $psExe
 
 $extSpecs = @('npm:pi-mcp-adapter@3.3.0', 'npm:pi-hermes-memory@0.9.9', 'npm:pi-better-openai@0.1.22', 'npm:pi-web-access@0.10.7',
               'npm:@juicesharp/rpiv-ask-user-question@2.12.0', 'npm:@xl0/pi-lovely-rename@0.1.5', 'npm:context-mode@1.0.169')
 
-# Every stub is ONE Python script (<name>.stub.py) behind a one-line forwarder:
-# a .cmd on Windows, a #!/bin/sh script elsewhere, so each stub behaves
-# identically on every platform (the same pattern as doctor/inventory). Stubs
-# log their argv to $MARKER as "<TOOL> <args>" (the lines the assertions parse).
-function New-PyStub([string]$Dir, [string]$Name, [string]$Source) {
-  New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-  $py = Join-Path $Dir "$Name.stub.py"
-  [System.IO.File]::WriteAllText($py, $Source, $utf8)
-  if ($isWindowsHost) {
-    $p = Join-Path $Dir "$Name.cmd"
-    [System.IO.File]::WriteAllText($p, "@`"$realPy`" `"$py`" %*`r`n@exit /b %ERRORLEVEL%`r`n", [System.Text.Encoding]::ASCII)
-  } else {
-    $p = Join-Path $Dir $Name
-    [System.IO.File]::WriteAllText($p, "#!/bin/sh`nexec `"$realPy`" `"$py`" `"`$@`"`n", $utf8)
-    & $chmod +x $p
-  }
-  return $p
-}
 # A Python string literal for a path (backslashes and quotes escaped).
 function ConvertTo-PyString([string]$S) { return "'" + $S.Replace('\', '\\').Replace("'", "\'") + "'" }
 # Shared stub preamble: argv, the call log, a package.json writer (honest
@@ -178,7 +152,7 @@ function New-Machine {
   $env:COOP_DIR = Join-Path $d 'coop-dir'
   $env:PIPX_HOME = $pipxHome; $env:PIPX_BIN_DIR = Join-Path $d 'pipx-bin'
   $env:PI_CODING_AGENT_DIR = $agent; $env:COOP_AGENT_DIR = $agent
-  $env:COOP_NO_ONBOARD = '1'
+  $env:COOP_NO_ONBOARD = '1'; $env:COOP_NO_MODEL_LOGIN = '1'
   $env:MARKER = $marker
   $env:COOP_TEST_STUB_PATH = $bin
   Remove-Item Env:\COOP_FABRIC_PYTHON, Env:\PIPX_FAIL_MATCH, Env:\COOP_TEST_DRIVER_MISSING -ErrorAction SilentlyContinue
@@ -233,12 +207,10 @@ function Invoke-Fleet([string]$Script, [string[]]$ScriptArgs = @()) {
   return ($lines -join "`n")
 }
 
-$saved = @{}
-$names = @('PATH', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'COOP_DIR', 'PIPX_HOME', 'PIPX_BIN_DIR', 'PI_CODING_AGENT_DIR', 'COOP_AGENT_DIR',
-           'COOP_NO_ONBOARD', 'MARKER', 'COOP_TEST_STUB_PATH', 'COOP_FABRIC_PYTHON', 'PIPX_FAIL_MATCH', 'COOP_TEST_DRIVER_MISSING',
-           'COOP_FLEET_TEST_MODE', 'COOP_PI_LATEST_OVERRIDE', 'COOP_PYPI_LATEST_OVERRIDE', 'COOP_RELEASE_MANIFEST', 'COOP_SKIP_AZ', 'NO_COLOR',
+$saved = Save-Env @('PATH', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'COOP_DIR', 'PIPX_HOME', 'PIPX_BIN_DIR', 'PI_CODING_AGENT_DIR', 'COOP_AGENT_DIR',
+           'COOP_NO_ONBOARD', 'COOP_NO_MODEL_LOGIN', 'MARKER', 'COOP_TEST_STUB_PATH', 'COOP_FABRIC_PYTHON', 'PIPX_FAIL_MATCH', 'COOP_TEST_DRIVER_MISSING',
+           'COOP_RELEASE_MANIFEST', 'COOP_SKIP_AZ', 'NO_COLOR',
            'PYTHONPATH', 'PYTHONHOME', 'PIPX_STATE')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 $script:priorPath = $env:PATH
 try {
   # A plain copy of the tree, no .git (dot entries other than the bundled .coop
@@ -250,7 +222,6 @@ try {
   }
   $env:COOP_SKIP_AZ = '1'; $env:NO_COLOR = '1'
   $env:COOP_RELEASE_MANIFEST = Join-Path $root 'config\release-manifest.json'
-  $env:COOP_PI_LATEST_OVERRIDE = '0.87.1'; $env:COOP_PYPI_LATEST_OVERRIDE = '0.1.0'
   # The Fabric SQL runtime probe runs inside each machine's venv: a fixture pyodbc
   # (5.3.0 metadata; drivers() honours COOP_TEST_DRIVER_MISSING) on PYTHONPATH
   # answers it the same way on every platform.
@@ -261,16 +232,19 @@ try {
   [System.IO.File]::WriteAllText((Join-Path $pyodbcMetadata 'METADATA'), "Metadata-Version: 2.1`nName: pyodbc`nVersion: 5.3.0`n", $utf8)
   Remove-Item Env:\PYTHONHOME -ErrorAction SilentlyContinue
   $env:PYTHONPATH = if ($saved['PYTHONPATH']) { $runtimeFixture + $sep + $saved['PYTHONPATH'] } else { $runtimeFixture }
+  # The doctor child reads the contract of its working directory: run from the
+  # temp dir, never from the checkout.
+  Push-Location -LiteralPath $t
 
   # --- 1. install --force on a machine with pipx tools at older versions ----------
   $m = New-Machine 'install' -PipxList @('package coop-data-doc 1.1.0', 'package coop-sql-review 0.15.2', 'package coop-dax-review 0.22.0', 'package ms-fabric-cli 1.7.0')
-  $env:COOP_FLEET_TEST_MODE = '1'
   $out = Invoke-Fleet 'install.ps1' @('--force')
-  if ($rc -eq 0) { Ok 'install --force (fleet mode) exits 0' } else { Ko "install --force exited $rc" $out }
+  if ($out.Contains('8/8') -and -not $out.Contains('install/sync step(s) failed')) { Ok 'install --force runs through step 8/8 with no failed install/sync step' } else { Ko "install --force stopped early or reported a failed step (rc=$rc)" $out }
   if (Test-Call $m 'PIPX install --force --python .+ ms-fabric-cli==1\.7\.0') { Ok 'Fabric CLI install selects a supported bootstrap Python explicitly' } else { Ko 'Fabric CLI install did not select a supported bootstrap Python explicitly' (Get-Calls $m) }
   if (Test-CallLiteral $m 'PIPX install --force coop-data-doc==1.2.0') { Ok 'install --force reinstalls a pipx tool at its exact pin' } else { Ko 'install --force did not reinstall coop-data-doc at its pin' (Get-Calls $m) }
-  # Extensions are the sync child's (one `pi install` path, S2): install runs none.
-  if (Test-Call $m '^PI install ') { Ko 'install ran its own pi install; extensions converge once, in sync' (Get-Calls $m) } else { Ok 'install leaves the extensions to the sync child (no pi install of its own)' }
+  # Extensions are the sync child's (one `pi install` path, S2; fleet-manifest
+  # asserts install.ps1 carries no `pi install` of its own): the child installed them.
+  if (Test-CallLiteral $m 'PI install npm:pi-mcp-adapter@3.3.0') { Ok 'the sync child of install installs the manifest extensions' } else { Ko 'the sync child of install did not install the extensions' (Get-Calls $m) }
   if ((Test-CallLiteral $m 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force') -and (Test-CallLiteral $m 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force')) { Ok 'install injects the exact fabric-cicd and pyodbc runtime pins' } else { Ko 'install did not inject the exact runtime pins' (Get-Calls $m) }
 
   # Driver auto-provisioning is Windows-only. A supported non-Windows install still
@@ -280,8 +254,11 @@ try {
     $env:COOP_TEST_DRIVER_MISSING = '1'
     $out = Invoke-Fleet 'install.ps1' @('--force')
     Remove-Item Env:\COOP_TEST_DRIVER_MISSING -ErrorAction SilentlyContinue
-    $warns = ([regex]::Matches($out, [regex]::Escape('ODBC Driver 18+ for SQL Server is missing'))).Count
-    if ($rc -ne 0) { Ko 'non-Windows install failed solely because Driver 18 is absent' $out }
+    # Install's own warning, once; the doctor child at the end repeats the
+    # finding in its own row, so count only up to doctor's banner.
+    $installOnly = $out; $doctorAt = $out.IndexOf('coop doctor '); if ($doctorAt -ge 0) { $installOnly = $out.Substring(0, $doctorAt) }
+    $warns = ([regex]::Matches($installOnly, [regex]::Escape('ODBC Driver 18+ for SQL Server is missing'))).Count
+    if ($out.Contains('install/sync step(s) failed')) { Ko 'non-Windows install failed solely because Driver 18 is absent' $out }
     elseif ($warns -ne 1) { Ko "non-Windows install emitted $warns Driver 18 warning(s), expected exactly one" $out }
     elseif (-not (Test-CallLiteral $m 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force')) { Ko 'non-Windows missing-driver install did not converge pyodbc' (Get-Calls $m) }
     else { Ok 'non-Windows install succeeds with one warning when Driver 18 is absent' }
@@ -290,18 +267,18 @@ try {
   # An injected-library failure is a convergence failure, not a warning-only success.
   $env:PIPX_FAIL_MATCH = 'pyodbc==5.3.0'
   $out = Invoke-Fleet 'install.ps1' @('--force')
-  if ($rc -ne 0) { Ok 'exact pyodbc pin is injected and injection failure is nonzero' } else { Ko 'failed pyodbc injection was converted into install success' $out }
+  if ($rc -ne 0 -and $out.Contains('install/sync step(s) failed')) { Ok 'exact pyodbc pin is injected and injection failure is nonzero with a failed-step summary' } else { Ko "failed pyodbc injection was converted into install success (rc=$rc)" $out }
   # Install, like update, keeps a visible convergence failure in its exit status
   # even though it continues through the remaining units for diagnostics.
   $env:PIPX_FAIL_MATCH = 'install --force coop-data-doc==1.2.0'
   $out = Invoke-Fleet 'install.ps1' @('--force')
-  if ($rc -ne 0) { Ok 'install exits non-zero when a convergence unit fails' } else { Ko 'failed pipx convergence was converted into install success' $out }
+  if ($rc -ne 0 -and $out.Contains('install/sync step(s) failed')) { Ok 'install exits non-zero with a failed-step summary when a convergence unit fails' } else { Ko "failed pipx convergence was converted into install success (rc=$rc)" $out }
   Remove-Item Env:\PIPX_FAIL_MATCH -ErrorAction SilentlyContinue
 
-  # --- 2. update (fleet mode) on the same machine ---------------------------------
+  # --- 2. update on the same machine ---------------------------------------------
   Reset-Calls $m
   $out = Invoke-Fleet 'update.ps1'
-  if ($rc -eq 0) { Ok 'normal pinned update exits 0' } else { Ko "normal pinned update failed unexpectedly (rc=$rc)" $out }
+  if ($out.Contains('6/6') -and -not $out.Contains('failed convergence step(s)')) { Ok 'normal pinned update runs through step 6/6 with no failed convergence step' } else { Ko "normal pinned update stopped early or reported a failed step (rc=$rc)" $out }
   if ($out.Contains('not a git checkout')) { Ok 'update runs from a copy of the tree, so step 1 never fetches or moves the checkout running the tests' } else { Ko 'update step 1 ran against a git checkout; the fixture must run a copy (#104)' $out }
   # Everything the --force install left is at its pin, so update is an offline
   # no-op for Pi and every pipx tool (the same probe-then-skip install uses).
@@ -309,20 +286,21 @@ try {
   if (Test-Call $m '^NPM install -g @earendil-works/pi-coding-agent') { Ko 'update reinstalled a Pi already at the manifest version' (Get-Calls $m) } else { Ok 'update leaves a Pi already at the manifest version alone (offline no-op)' }
   if ((Test-CallLiteral $m 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force') -and (Test-CallLiteral $m 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force')) { Ok 'update still converges the exact Fabric runtime pins' } else { Ko 'update did not converge the Fabric runtime pins' (Get-Calls $m) }
   if (Test-CallLiteral $m 'PI update --extensions') { Ko 'update ran the unpinned pi update --extensions' (Get-Calls $m) } else { Ok 'update never runs the unpinned pi update --extensions' }
-  if (Test-Call $m '^PI (install|update) ') { Ko 'update ran its own pi install/update; extensions converge once, in sync' (Get-Calls $m) } else { Ok 'update leaves the extensions to the sync child (no pi install of its own)' }
+  # The tree install's sync child left is at every pin, so update's sync child is
+  # an offline no-op too: no `pi install` or `pi update` at all.
+  if (Test-Call $m '^PI (install|update) ') { Ko 'update (or its sync child) ran pi install/update on a tree already at its pins' (Get-Calls $m) } else { Ok 'update leaves a tree already at its extension pins alone (no pi install)' }
   # Drift after the install: update converges the tool to its pin, and a visible
   # unit failure makes update non-zero even though execution reaches the
   # aggregate end (the old behaviour silently returned success via Doctor).
   Reset-Calls $m
   Set-PipxList $m @('package coop-data-doc 1.1.0', 'package coop-sql-review 0.15.2', 'package coop-dax-review 0.22.0', 'package ms-fabric-cli 1.7.0')
   $out = Invoke-Fleet 'update.ps1'
-  if ($rc -eq 0 -and (Test-CallLiteral $m 'PIPX install --force coop-data-doc==1.2.0')) { Ok 'update converges a drifted pipx tool to its manifest pin' } else { Ko "update did not converge drifted coop-data-doc (rc=$rc)" (Get-Calls $m) }
+  if (-not $out.Contains('failed convergence step(s)') -and (Test-CallLiteral $m 'PIPX install --force coop-data-doc==1.2.0')) { Ok 'update converges a drifted pipx tool to its manifest pin' } else { Ko "update did not converge drifted coop-data-doc (rc=$rc)" ($out + "`n" + (Get-Calls $m)) }
   Set-PipxList $m @('package coop-data-doc 1.1.0', 'package coop-sql-review 0.15.2', 'package coop-dax-review 0.22.0', 'package ms-fabric-cli 1.7.0')
   $env:PIPX_FAIL_MATCH = 'coop-data-doc==1.2.0'
   $out = Invoke-Fleet 'update.ps1'
-  if ($rc -ne 0) { Ok 'update exits non-zero when a convergence unit fails' } else { Ko 'failed pipx convergence was converted into update success' $out }
+  if ($rc -ne 0 -and $out.Contains('update finished with 1 failed convergence step(s)')) { Ok 'update exits non-zero with a failed-step summary when a convergence unit fails' } else { Ko "failed pipx convergence was converted into update success (rc=$rc)" $out }
   Remove-Item Env:\PIPX_FAIL_MATCH -ErrorAction SilentlyContinue
-  Remove-Item Env:\COOP_FLEET_TEST_MODE -ErrorAction SilentlyContinue
 
   # --- 3. sync installs every manifest extension pin into the isolated tree ------
   # Force the production sync through its install path: repeat syncs intentionally
@@ -351,7 +329,6 @@ try {
   # Deliberate drift: installed Pi 0.81.0 (manifest 0.87.1) and coop-data-doc 1.1.0
   # (manifest 1.2.0); ms-fabric-cli matches its pin.
   $m2 = New-Machine 'drift' -PiVersion '0.81.0' -HonestPi $false -PipxList @('package coop-data-doc 1.1.0', 'package coop-sql-review 0.15.2', 'package coop-dax-review 0.22.0', 'package ms-fabric-cli 1.7.0')
-  $env:COOP_FLEET_TEST_MODE = '1'
   $out = Invoke-Fleet 'install.ps1'
   if (-not (Test-CallLiteral $m2 'NPM install -g @earendil-works/pi-coding-agent@0.87.1')) { Ko 'drifted Pi NOT converged to manifest' (Get-Calls $m2) }
   else { Ok 'normal install converges a drifted Pi to the manifest without --force' }
@@ -369,8 +346,8 @@ try {
   if (-not (Test-CallLiteral $m4 'PIPX upgrade coop-data-doc')) { Ko 'edge install did not attempt a pipx upgrade for an existing tool' (Get-Calls $m4) }
   else { Ok 'install --edge attempts a pipx upgrade for an existing tool' }
   # --edge is a Pi and tools channel: the extensions stay pinned (sync has no
-  # --edge), so install issues no `pi install` of its own here either.
-  if (Test-Call $m4 '^PI install ') { Ko 'edge install ran its own pi install (extensions are the pinned sync child''s)' (Get-Calls $m4) }
+  # --edge), so every `pi install` the sync child issues is an exact npm:name@pin.
+  if (Test-Call $m4 '^PI install (?!npm:\S+@\d)') { Ko 'edge install installed an unpinned extension (extensions stay pinned, sync has no --edge)' (Get-Calls $m4) }
   elseif (-not (Test-Call $m4 'PIPX install --force --python .+ ms-fabric-cli$')) { Ko 'edge install did not reinstall the Fabric CLI unpinned' (Get-Calls $m4) }
   elseif (-not (Test-CallLiteral $m4 'PIPX inject ms-fabric-cli fabric-cicd --force')) { Ko 'edge install did not refresh unpinned fabric-cicd' ($out + "`n" + (Get-Calls $m4)) }
   elseif (Test-CallLiteral $m4 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force') { Ko 'edge install incorrectly pinned fabric-cicd' (Get-Calls $m4) }
@@ -383,7 +360,7 @@ try {
   $m5 = New-Machine 'fabric-fail' -HonestPi $false -PipxList @('package coop-data-doc 1.2.0', 'package ms-fabric-cli 1.5.0') -FabVersion '1.5.0'
   $env:PIPX_FAIL_MATCH = 'ms-fabric-cli==1.7.0'
   $out = Invoke-Fleet 'install.ps1'
-  if ($rc -eq 0) { Ko 'failed Fabric convergence returned install success' $out }
+  if ($rc -eq 0 -or -not $out.Contains('install/sync step(s) failed')) { Ko "failed Fabric convergence returned install success (rc=$rc)" $out }
   elseif ($out.Contains('Microsoft Fabric CLI ready')) { Ko 'fabric reported ready after FAILED convergence' $out }
   elseif (-not ($out.Contains('failed to converge ms-fabric-cli') -or $out.Contains('remains at'))) { Ko 'unexpected fabric outcome: no converge-failure message' $out }
   else { Ok 'failed Fabric convergence is reported as failure, not ready' }
@@ -405,7 +382,8 @@ try {
   if (Test-Call $m6 '^PIPX install --force ') { Ko 'update force-reinstalled a tool that was simply missing' (Get-Calls $m6) } else { Ok 'a missing tool is installed, not force-reinstalled' }
 }
 finally {
-  foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
+  Pop-Location
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($fail -eq 0) { Write-Host '  normal install/update/sync executed exact manifest specs' } else { Write-Host "  $G_CROSS fleet-execution tests FAILED" }

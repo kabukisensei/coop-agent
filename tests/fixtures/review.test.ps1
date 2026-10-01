@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env pwsh
-# Port of tests/review.test.sh (master plan S1): `coop review` (Invoke-CoopReview
+# `coop review` (Invoke-CoopReview
 # in bin/coop.ps1) against shimmed coop-sql-review / coop-dax-review /
 # coop-data-doc (Python-backed stubs: a .cmd on Windows, a sh launcher elsewhere).
 # The linter shims record argv, honor `-o FILE` by writing a provenance-complete
@@ -23,14 +23,10 @@
 # npm prefix first on PATH. Assertions stay ASCII (Windows PowerShell 5.1
 # re-encodes child output).
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $coop = Join-Path $root 'bin\coop.ps1'
-$psExe = try { (Get-Process -Id $PID).Path } catch { 'pwsh' }
-$isWindowsHost = ($env:OS -eq 'Windows_NT')
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-review-ps-' + [guid]::NewGuid().ToString('N'))
-$fail = 0
-function Ok([string]$m) { Write-Host "  ok $m" }
-function Ko([string]$m, [string]$out = '') { Write-Host "  x $m"; if ($out) { Write-Host $out }; $script:fail = 1 }
 
 $bin = Join-Path $t 'bin'
 $proj = Join-Path $t 'proj'
@@ -39,14 +35,10 @@ $sandboxHome = Join-Path $t 'home'
 $agent = Join-Path $t 'agent'
 $snapshots = Join-Path $t 'snapshots'
 $standardsCli = Join-Path $root 'lib\standards-cli.mjs'
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-$sep = [System.IO.Path]::PathSeparator
 
-$saved = @{}
-$names = @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE','COOP_SKIP_AZ','NO_COLOR',
+$saved = Save-Env @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE','COOP_SKIP_AZ','NO_COLOR',
            'COOP_STANDARDS_ROOT','COOP_STANDARDS_STATE','COOP_STANDARDS_SNAPSHOT_ROOT','COOP_TEST_LOG_DIR','COOP_TEST_PROVENANCE_MODE',
            'COOP_TEST_SQL_MODE','COOP_TEST_DAX_MODE','COOP_TEST_DD_RC')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 $savedLocation = Get-Location
 try {
   New-Item -ItemType Directory -Force -Path $bin, (Join-Path $proj '.coop'), (Join-Path $proj 'sqlrepo'), (Join-Path $proj 'standards'),
@@ -68,20 +60,6 @@ try {
   if (-not $realPy) { throw 'a real python is required for this fixture' }
   $node = (Get-Command node -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 
-  function New-PyStub([string]$Dir, [string]$Name, [string]$Source) {
-    New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-    $py = Join-Path $Dir "$Name.stub.py"
-    [System.IO.File]::WriteAllText($py, $Source, $utf8)
-    if ($isWindowsHost) {
-      $p = Join-Path $Dir "$Name.cmd"
-      [System.IO.File]::WriteAllText($p, "@`"$realPy`" `"$py`" %*`r`n", [System.Text.Encoding]::ASCII)
-    } else {
-      $p = Join-Path $Dir $Name
-      [System.IO.File]::WriteAllText($p, "#!/bin/sh`nexec `"$realPy`" `"$py`" `"`$@`"`n", $utf8)
-      & chmod +x $p
-    }
-    return $p
-  }
   # The linter shim, parameterized by its tool name (argv[0] of the stub script).
   $linterSource = @'
 import hashlib, json, os, sys
@@ -374,13 +352,10 @@ sys.exit(int(os.environ.get('COOP_TEST_DD_RC', '0')))
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {
   Set-Location -LiteralPath $savedLocation
-  foreach ($n in $names) {
-    if ($null -eq $saved[$n]) { Remove-Item -LiteralPath "Env:\$n" -ErrorAction SilentlyContinue }
-    else { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
-  }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($fail -ne 0) { Write-Host '  x coop review (composite linters + docs compose, PowerShell) tests FAILED'; exit 1 }
+if ($fail -ne 0) { Write-Host "  $G_CROSS coop review (composite linters + docs compose, PowerShell) tests FAILED"; exit 1 }
 Write-Host '  coop review (composite linters + docs compose, PowerShell) tests passed'
 exit 0

@@ -65,34 +65,36 @@ Everything below is for an agent editing coop-agent itself — scripts, docs, te
 skills, extensions. This file is canonical; `CONTRIBUTING.md` and `RELEASE.md`
 carry the detail and align with it.
 
-### Current roadmap — ordered plan adopted, execution not started
+### Current roadmap — the master plan, phase by phase
 
-The official forward plan is the [Coop master plan, revision 3.0](docs/COOP_MASTER_PLAN.md):
-rollout hotfixes on stable first (installer prerequisites, automatic Azure sign-in,
-project contract aligned with the Cooptimize standards repos), then test right-sizing,
-Windows-first simplification, dependency reconciliation, standards alignment and the
-reviewer decision, Azure SQL breadth with dev-by-default and live impact tracing,
-common-workflows first run, then TeamAI shared knowledge (the beta channel is
-skipped and Jev waits, revision 3.8), the optional package trial, and last an
-installable Electron desktop. **It is the only
-plan.** The earlier Windows terminal plan (revision 2.0) and every prior plan,
+The official forward plan is the [Coop master plan](docs/COOP_MASTER_PLAN.md):
+Phase 0 rollout hotfixes on stable (installer prerequisites, automatic Azure
+sign-in, project contract aligned with the Cooptimize standards repos) are done;
+Phase 2, the Windows-first simplification, has every row S1-S7 in review as PRs
+#218, #221, #223, #225, #227 and the S7 PR (one implementation in PowerShell, one
+manifest, one BOM check, simplified tests and docs). Then dependency
+reconciliation, standards alignment and the reviewer decision, Azure SQL breadth
+with dev-by-default and live impact tracing, common-workflows first run, then
+TeamAI shared knowledge (the beta channel is skipped and Jev waits, revision 3.8),
+the optional package trial, and last an installable Electron desktop. **It is the
+only plan.** The earlier Windows terminal plan (revision 2.0) and every prior plan,
 handoff, and receipt live under `docs/history/` as read-only reference; the master
 plan wins where they differ, and new planning is a new revision of the master plan,
 never a new file. Aaron starts each phase explicitly. **No phase is started by the
-plan being merged.** Do not add roadmap tasks to `agent:ready` or treat branch
-presence as an execution trigger.
+plan being merged** or by the previous phase's PRs landing. Do not add roadmap
+tasks to `agent:ready` or treat branch presence as an execution trigger.
 
 Native Windows Coop 2.0 is off the roadmap; the desktop path is the packaged
 Electron app in the master plan's last phase. Do not merge or port the old Desktop
-branches; they are reference material. Preserve current runtime behavior and
-existing parity/BOM/test obligations until the simplification phase retires them in
-the same PR that retires the surface.
+branches; they are reference material. The simplification retired the bash
+product path, the parity check and the test modes; what remains is one PowerShell
+implementation with its BOM and test obligations.
 
 `experimental/windows-terminal` is a provisional source branch, **not an installed
 or proven-isolated beta**. Do not run the existing installer/updater from that
-branch as a beta setup. The next authorized work is the master plan's Phase 0
-hotfixes, one PR each; the beta channel (B1) is skipped (revision 3.8). This
-pause applies to the roadmap, not unrelated explicitly requested maintenance.
+branch as a beta setup; the beta channel (B1) is skipped (revision 3.8). The
+roadmap pause applies to the roadmap, not unrelated explicitly requested
+maintenance.
 
 **Working a plan row:** follow the master plan's section 14 (one row, one issue,
 one branch named `<id>/<short-name>`, one PR titled with the ID; update the row's
@@ -138,13 +140,13 @@ force anything to "fix" it.
    `bin/coop.ps1`, `lib/common.ps1` (the shared helper library dot-sourced by
    `bin/coop.ps1` and every `scripts/*.ps1`; helper changes go there, never into
    per-script inline copies) and `scripts/*.ps1`. `bin/coop` is only a Git Bash
-   forwarder to `coop.ps1`, and `scripts/release.sh`, `scripts/check-bom.sh`,
+   forwarder to `coop.ps1`, and `scripts/release.sh`,
    `scripts/validate-resources.sh` and `tests/*.sh` are dev tooling. Never add a
    bash product path back, and never add a `.sh` twin for a `.ps1`.
 2. **Every `.ps1` keeps its UTF-8 BOM** (`EF BB BF` as the first three bytes).
    Editors and agent write-tools silently strip it on rewrite — after every
-   `.ps1` edit, re-run `bash scripts/check-bom.sh` (it gates the BOM and prints
-   the exact fix command for any file missing it).
+   `.ps1` edit, re-run `pwsh -NoProfile -File scripts/check-bom.ps1` (the one
+   BOM check; it prints the exact fix command for any file missing it).
 3. **Every `.ps1` parses under Windows PowerShell 5.1** (`bin/coop.cmd`'s
    runtime): no ternary, `??`, `?.` or `clean {}`. CI parses every file under
    5.1; on a Linux or macOS box, pwsh 7 accepts those and will not warn you.
@@ -153,9 +155,9 @@ force anything to "fix" it.
 
 ```bash
 for f in bin/coop scripts/*.sh tests/*.sh; do bash -n "$f"; done
-bash scripts/check-bom.sh       # expect: "✓ BOM check passed", exit 0
+pwsh -NoProfile -File scripts/check-bom.ps1   # expect: "✓ BOM check passed", exit 0
+pwsh -NoProfile -File tests/run.ps1   # the PowerShell suite, gate lane (starts with the BOM check); expect: "✓ PowerShell behavioral tests passed (gate lane)", exit 0 (CI also runs it under Windows PowerShell 5.1)
 bash tests/run.sh               # gate lane; expect: "✓ all tests passed (gate lane)", exit 0 (needs node + npx + pwsh)
-pwsh -NoProfile -File tests/run.ps1   # the PowerShell suite, gate lane; expect: exit 0 (CI also runs it under Windows PowerShell 5.1)
 ```
 
 `bash tests/run.sh` is the gate lane that every PR runs. The extended lane (timing

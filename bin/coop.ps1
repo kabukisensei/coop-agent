@@ -1,6 +1,7 @@
 ﻿#!/usr/bin/env pwsh
 #
-# coop.ps1 — the Cooptimize terminal agent (Windows / PowerShell mirror of bin/coop).
+# coop.ps1 — the Cooptimize terminal agent: the one dispatcher (bin/coop.cmd and the
+# Git Bash forwarder bin/coop both run it).
 #
 # A thin, branded layer ON TOP OF Pi (@earendil-works/pi-coding-agent). coop never
 # forks Pi: it launches `pi` with Cooptimize skills, prompts, theme, a powerline
@@ -35,14 +36,13 @@
 # NB: deliberately NO param() block. With `powershell -File coop.ps1 <args>`, the
 # absence of declared parameters routes EVERY token — including bare flags like
 # `-c` or `@notes.md` — into the automatic $args verbatim, with no binder errors.
-# That lets `coop -c` / `coop @file ...` pass straight through to pi, exactly like
-# the bash wrapper's "$@" handling.
+# That lets `coop -c` / `coop @file ...` pass straight through to pi.
 
-# Don't let a single failing native command tear down the dispatcher; we mirror
-# bash's per-command behavior and propagate exit codes explicitly.
+# Don't let a single failing native command tear down the dispatcher; every
+# subcommand propagates its exit code explicitly.
 $ErrorActionPreference = 'Continue'
 
-# --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
+# --- Shared helpers: dot-source lib/common.ps1 (coop's one helper library) ----
 # Resolves COOP_ROOT/COOP_VERSION and defines the loggers, Test-Have,
 # Get-CoopPython, YAML readers, Find-CoopProjectYml, Coop-Confirm, etc.
 $CoopCommonPs1 = (Join-Path $PSScriptRoot '../lib/common.ps1')
@@ -197,7 +197,7 @@ e.g. ``coop -c`` resumes the last session, ``coop @notes.md "review this"``.
 # Invoke-LaunchPi.
 
 # --- Launch the branded Pi agent ---------------------------------------------
-# Launch-time skew guard (mirror of common.sh coop_launch_preflight): refuse to exec
+# Launch-time skew guard (Invoke-CoopLaunchPreflight): refuse to exec
 # pi into a known-broken extension load. If the Pi agent is too old for an installed
 # extension (rc 11), aligning the tree can't help — abort with instructions instead
 # of crashing in pi's loader. If the tree is merely skewed but fixable (rc 10), run
@@ -245,8 +245,7 @@ function Invoke-CoopLaunchPreflight {
 }
 
 # --- Assemble the exact Pi launch spec (args + brand env) --------------------
-# SINGLE SOURCE OF TRUTH for how coop launches Pi (mirror of bin/coop's
-# coop_build_pi_args). Both Invoke-LaunchPi (the terminal agent) and
+# SINGLE SOURCE OF TRUTH for how coop launches Pi. Both Invoke-LaunchPi (the terminal agent) and
 # Invoke-CoopLaunchSpec (`coop launch-spec`, JSON for the future desktop app)
 # consume this, so the terminal and any other surface can NEVER drift. Returns the
 # pi args array and exports the brand env. Read-only; never launches pi.
@@ -561,7 +560,7 @@ function Invoke-CoopWebRetired {
 # --- Tool wrappers -----------------------------------------------------------
 # Flow straight through to a standalone Coop tool: every subcommand and the tool's
 # own interactive prompts work, and the exit code propagates. The AI agent gets
-# structured JSON via the native sql_review / dax_review tools. (mirror of run_tool)
+# structured JSON via the native sql_review / dax_review tools.
 function Invoke-Tool {
   param([string] $Bin, [string[]] $RestArgs = @())
   if (-not (Test-Have $Bin)) { Coop-Die "$Bin is not installed. Run: coop install" }
@@ -590,7 +589,7 @@ function Invoke-DataDoc {
 }
 
 # --- coop review: both linters + compose findings onto the lineage docs -------
-# Mirror of run_review in bin/coop. One command for the whole advisory loop: run
+# coop review. One command for the whole advisory loop: run
 # coop-sql-review AND coop-dax-review over the same scope (each tool filters by
 # file type itself), save both JSON reports under .coop/reviews/ next to the
 # contract, then rebuild the lineage docs with the findings composed in
@@ -864,7 +863,7 @@ except Exception as exc:
   }
 }
 
-# --- Authoring scaffolders (mirror of bin/coop) ------------------------------
+# --- Authoring scaffolders ---------------------------------------------------
 function Test-CoopValidName { param([string]$Name) if ($Name -in @('.', '..') -or $Name.StartsWith('-')) { return $false }; return ($Name -and $Name -notmatch '[^a-zA-Z0-9._-]') }
 
 function Invoke-CoopInit {
@@ -966,7 +965,7 @@ function Invoke-CoopInitSeedDocs {
   $cfg = Join-Path $Dir 'coop-data-doc.yml'
   # config-set prints one status line: "Wrote <path> (validated)." or, when a slot
   # can't validate yet (a placeholder repo path), "... (saved, not runnable yet (...))."
-  # Show it; the second is a warning, never silence (#102). (mirror of bin/coop)
+  # Show it; the second is a warning, never silence (#102).
   $status = ($patch | & coop-data-doc config-set --config $cfg --from-json - | Out-String).Trim()
   if ($LASTEXITCODE -eq 0) {
     Coop-Ok "seeded $cfg from project.yml (repos)"
@@ -1044,30 +1043,29 @@ Steps:
   Coop-Info 'Edit it, then it loads automatically next time you run: coop'
 }
 
-# --- Release gate: tested_with pins vs coop-website/versions.json -------------
-# Mirror of coop_release_check_pins in bin/coop. config/defaults.yml pins the
-# coop-tool versions coop was last verified against; the sibling coop-website
-# checkout's versions.json is the suite's single source of truth for released
-# version strings. Pins match -> $true; a mismatch dies (fix defaults.yml, or
-# --no-check); a missing sibling warns + confirms (--yes continues with a note).
-# Returns $false when the user declines the confirm (caller cancels the release).
+# --- Release gate: the manifest's coop-tool pins vs coop-website/versions.json -
+# config/release-manifest.json (python_tools) pins the coop-tool versions a release
+# installs; the sibling coop-website checkout's versions.json is the suite's single
+# source of truth for released version strings. Pins match -> $true; a mismatch
+# dies (fix the manifest, or --no-check); a missing sibling warns + confirms (--yes
+# continues with a note). Returns $false when the user declines the confirm
+# (caller cancels the release). scripts/release.sh's coop_release_check_pins is
+# the same gate for a bash release.
 function Test-CoopReleasePins {
   param([bool]$AssumeYes = $false)
-  $defaults = Join-Path $script:CoopRoot 'config\defaults.yml'
   $vjson = Join-Path (Split-Path -Parent $script:CoopRoot) 'coop-website\versions.json'
   if (-not (Test-Path -LiteralPath $vjson -PathType Leaf)) {
-    Coop-Warn "sibling coop-website checkout not found — can't verify config/defaults.yml tested_with against versions.json (see RELEASE.md)."
+    Coop-Warn "sibling coop-website checkout not found — can't verify config/release-manifest.json python_tools against versions.json (see RELEASE.md)."
     if ($AssumeYes) {
-      Coop-Info 'continuing (--yes) — verify the tested_with pins by hand.'
+      Coop-Info 'continuing (--yes) — verify the coop-tool pins by hand.'
       return $true
     }
-    return (Coop-Confirm 'Release without verifying the tested_with pins?')
+    return (Coop-Confirm 'Release without verifying the coop-tool pins?')
   }
   $vraw = Get-Content -LiteralPath $vjson -Raw
   $mismatch = $false
   foreach ($tool in @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')) {
-    $key = $tool -replace '-', '_'
-    $pin = Get-CoopYamlValue $defaults "tested_with.$key" ''
+    $pin = Coop-ManifestObjectGet 'python_tools' $tool
     # versions.json keeps a strict one-`"key": "value"`-per-line layout (enforced
     # by coop-website's own checker), so a regex read is safe — and python-free.
     $rel = ''
@@ -1077,22 +1075,22 @@ function Test-CoopReleasePins {
       continue
     }
     if (-not $pin) {
-      Coop-Warn "could not read tested_with.$key from config/defaults.yml (versions.json says $tool is $rel)."
+      Coop-Warn "could not read python_tools.$tool from config/release-manifest.json (versions.json says $tool is $rel)."
       $mismatch = $true
     } elseif ($pin -ne $rel) {
-      Coop-Warn "tested_with.$key is $pin but coop-website/versions.json says $tool is $rel."
+      Coop-Warn "python_tools.$tool is $pin in config/release-manifest.json but coop-website/versions.json says $rel."
       $mismatch = $true
     }
   }
   if ($mismatch) {
-    Coop-Die 'tested_with pins disagree with coop-website/versions.json — update config/defaults.yml (see RELEASE.md), or re-run with --no-check.'
+    Coop-Die 'the coop-tool pins in config/release-manifest.json disagree with coop-website/versions.json — update the manifest (see RELEASE.md), or re-run with --no-check.'
   }
-  Coop-Ok 'tested_with pins match coop-website/versions.json'
+  Coop-Ok 'coop-tool pins match coop-website/versions.json'
   return $true
 }
 
 # --- Release gate: an attached main that equals origin/main (#105) ------------
-# Mirror of coop_release_require_main in bin/coop. `coop update` follows only tags
+# Release precondition (scripts/release.sh has the same gate). `coop update` follows only tags
 # merged into origin/main (H5), so a tag cut from a detached HEAD, another branch,
 # or a main with unpushed or missing commits never deploys: the fleet ignores it
 # silently. Fetches origin, then dies with the fix unless HEAD is the branch main
@@ -1122,7 +1120,7 @@ function Assert-CoopReleaseOnMain {
 }
 
 # --- Release: bump version, roll CHANGELOG, commit + tag (+ push) -------------
-# Mirror of coop_release in bin/coop. Bumps VERSION, release-manifest.json, and
+# coop release (scripts/release.sh is the bash dev-tooling equivalent). Bumps VERSION, release-manifest.json, and
 # the extension manifests, commits, tags, and pushes main + the tag in one atomic
 # push. Writes files with LF via [IO.File] to avoid Windows CRLF/BOM drift.
 # Requires a clean tree on an attached main that equals origin/main.
@@ -1142,7 +1140,7 @@ function Invoke-CoopRelease {
         Coop-Say '  a dated release, commit, tag vX.Y.Z, and push main + the tag atomically (both'
         Coop-Say '  or neither). Default: patch.'
         Coop-Say '  Verifies extensions transpile + tests + the .ps1 BOM check pass, and that'
-        Coop-Say '  the tested_with coop-tool pins match the sibling coop-website''s versions.json'
+        Coop-Say '  the manifest''s coop-tool pins match the sibling coop-website''s versions.json'
         Coop-Say '  (--no-check to skip).'
         Coop-Say '  Requires a clean working tree on main, equal to origin/main (it fetches origin).'
         return
@@ -1240,15 +1238,13 @@ function Invoke-CoopRelease {
       if ($LASTEXITCODE -eq 0) { Coop-Ok 'PowerShell tests pass (tests/run.ps1)' }
       else { $psOut | Out-String | Write-Host; Coop-Die 'PowerShell tests failed (tests/run.ps1) — fix them, or re-run with --no-check.' }
     }
-    $bomSh = Join-Path (Join-Path $root 'scripts') 'check-bom.sh'
-    if (Test-Path -LiteralPath $bomSh) {
-      if (Test-Have 'bash') {
-        & bash $bomSh *> $null
-        if ($LASTEXITCODE -eq 0) { Coop-Ok 'BOM check passes' }
-        else { Coop-Die 'BOM check failed (bash scripts/check-bom.sh) — fix it, or re-run with --no-check.' }
-      } else {
-        Coop-Warn 'bash not found — skipping the BOM check.'; $gateSkipped = $true
-      }
+    # The .ps1 encoding gate is PowerShell too (scripts/check-bom.ps1): it runs
+    # under this same host, so no host can skip it.
+    $bomPs1 = Join-Path (Join-Path $root 'scripts') 'check-bom.ps1'
+    if (Test-Path -LiteralPath $bomPs1) {
+      $bomOut = & $bomPs1 2>&1
+      if ($LASTEXITCODE -eq 0) { Coop-Ok 'BOM check passes (scripts/check-bom.ps1)' }
+      else { $bomOut | Out-String | Write-Host; Coop-Die 'BOM check failed (pwsh -NoProfile -File scripts/check-bom.ps1) — fix it, or re-run with --no-check.' }
     }
     # Fail closed: a host that could not run the gate must not PUBLISH an unverified
     # tag. Bumping/committing locally (--no-push) is fine; a push requires the gate
@@ -1257,7 +1253,7 @@ function Invoke-CoopRelease {
       Coop-Die 'release gate could not run (npx/bash/node not found) — cut the release from macOS/Linux or a Windows host with Git Bash/WSL, use --no-push to bump locally only, or --no-check to release without gating.'
     }
 
-    # tested_with pins vs the sibling coop-website's versions.json: a mismatch
+    # The manifest's coop-tool pins vs the sibling coop-website's versions.json: a mismatch
     # dies; a missing sibling warns + confirms (--yes continues). See
     # Test-CoopReleasePins above and RELEASE.md.
     if (-not (Test-CoopReleasePins -AssumeYes:$assumeYes)) {
@@ -1355,7 +1351,7 @@ Add-CoopRuntimePaths
 
 switch -CaseSensitive ($cmd) {
   '' { Invoke-LaunchPi; break }
-  # Dry-run twin of bash's `--no-launch`: run the preflights, then PRINT the resolved pi
+  # --no-launch is a dry-run: run the preflights, then PRINT the resolved pi
   # invocation instead of launching (the flag used to launch — the opposite of its name).
   # Same stdout as `coop launch-spec`; trailing args (e.g. --json) pass through.
   '--no-launch' { Invoke-CoopLaunchPreflight; Invoke-CoopLaunchSpec $rest; break }
@@ -1435,7 +1431,7 @@ switch -CaseSensitive ($cmd) {
   { $_ -ceq 'version' -or $_ -ceq '--version' -or $_ -ceq '-V' } {
     # A git checkout also prints its `git describe` (v0.23.5-21-gdf91630), since
     # VERSION reads the same at a tag and at every commit past it; a non-git copy
-    # prints VERSION only. (mirror of bin/coop)
+    # prints VERSION only.
     $describe = Get-CoopRepoDescribe
     Write-Host ("coop {0}{1}" -f $script:CoopVersion, $(if ($describe) { " ($describe)" } else { '' }))
     if (Test-Have 'pi') {
@@ -1459,14 +1455,15 @@ function Invoke-CoopInitCi {
   param([string]$Dir, [string]$CiType)
   if ($CiType -notin @('github','ado')) { Coop-Die "unknown CI type '$CiType' — usage: coop init --ci github|ado" }
   $projYml = Join-Path $Dir '.coop\project.yml'
-  $defaultsYml = Join-Path $script:CoopRoot 'config\defaults.yml'
-  
+  # The generated pipelines pin the coop tools at the release manifest's versions.
+  $manifest = $script:CoopReleaseManifest
+
   if (-not (Test-Path -LiteralPath $projYml -PathType Leaf)) { Coop-Die "$projYml not found. Run ``coop init`` first." }
-  
+
   $pyCmd = Get-CoopPython
   if ($pyCmd) {
     $script = Join-Path $script:CoopRoot 'lib\_ciscaffold.py'
-    $outFile = (& $pyCmd $script $CiType $projYml $defaultsYml $Dir)
+    $outFile = (& $pyCmd $script $CiType $projYml $manifest $Dir)
     $rc = $LASTEXITCODE
     if ($rc -eq 0) {
       Coop-Ok "Wrote $outFile"
