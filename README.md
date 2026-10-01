@@ -5,20 +5,22 @@ cooperative. It is a thin **layer on top of [Pi](https://www.npmjs.com/package/@
 (`@earendil-works/pi-coding-agent`) — **not a fork**. `coop` runs `pi` against its
 **own isolated agent dir** (`~/.coop/agent`) with the Cooptimize skills, prompt
 templates, theme, its own splash/footer extension, and a governance system prompt,
-and it shells out to the standalone Coop tools
-(`coop-data-doc` / `coop-sql-review` / `coop-dax-review`) and the Microsoft Fabric
-CLI (`fab`). The stack targets Microsoft Fabric, Azure, Power BI, D365 (Finance &
+and it shells out to the standalone Coop tool
+(`coop-data-doc`) and the Microsoft Fabric CLI (`fab`). SQL and DAX standards are
+applied while coop writes: the active `cooptimize/coop-standards` wiki articles go
+into every SQL/DAX/semantic-model task, and coop self-checks its diff against them
+before presenting a change. The stack targets Microsoft Fabric, Azure, Power BI, D365 (Finance &
 Operations), T-SQL (Fabric Warehouse/Lakehouse, medallion bronze/silver/gold),
 DAX, semantic models (TMDL), and data documentation.
 
 > **Part of the coop suite.** coop-agent is the suite's hub: **`coop install`**
-> sets up the standalone tools —
-> [coop-data-doc](https://github.com/kabukisensei/coop-data-doc) (lineage docs),
-> [coop-sql-review](https://github.com/kabukisensei/coop-sql-review) (T-SQL linter),
-> [coop-dax-review](https://github.com/kabukisensei/coop-dax-review) (DAX/model
-> linter) — alongside the agent, and **`coop update`** keeps everything current.
-> Each tool also works standalone (`pipx install <tool>`); to run them as CI
-> gates, see [docs/ci.md](docs/ci.md).
+> sets up the standalone tool
+> [coop-data-doc](https://github.com/kabukisensei/coop-data-doc) (lineage docs)
+> alongside the agent, and **`coop update`** keeps everything current. It also
+> works standalone (`pipx install coop-data-doc`); to run it as a CI gate, see
+> [docs/ci.md](docs/ci.md). The former `coop-sql-review` / `coop-dax-review` CLIs
+> were retired in ST1; their rules live in the coop-standards wiki coop writes
+> against.
 
 ---
 
@@ -181,8 +183,8 @@ shows anything still missing.
 | --- | --- |
 | **Pi** | installed globally via `npm` |
 | **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits), `pi-web-access` (web search/fetch — read-only), `@juicesharp/rpiv-ask-user-question` (structured questions), `@xl0/pi-lovely-rename` (automatic session names) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
-| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `sql_review`/`dax_review`/`data_doc`/`bpa_review` + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
-| **Standalone tools** — `coop-data-doc`, `coop-sql-review`, `coop-dax-review` | installed via `pipx` from PyPI |
+| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `data_doc`/`bpa_review` + standards-in-context + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
+| **Standalone tool** — `coop-data-doc` | installed via `pipx` from PyPI |
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
 | **Power BI authoring tools** — Report Authoring CLI, Power BI Modeling MCP, and Windows-only Desktop Bridge | installed globally from manifest-pinned npm packages; Doctor requires Report Authoring and validates Modeling MCP arguments |
@@ -222,9 +224,6 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
 | `coop sync` | Ensure core Pi extensions are installed, place the governed MCP config non-destructively, refresh managed catalogs/team knowledge, and verify brand assets |
 | `coop data-doc [args]` | Run `coop-data-doc` (default: `build`) and summarize outputs |
-| `coop sql-review [args]` | Pass through to `coop-sql-review` (e.g. `check <paths>`, `rules`) |
-| `coop dax-review [args]` | Pass through to `coop-dax-review` (e.g. `check <paths>`, `rules`) |
-| `coop review [paths...] [--strict] [--skip-docs] [--compare] [--diff [ref]] [--html]` | Run **both** linters over one scope (explicit paths win; else the nearest `.coop/project.yml`'s `repositories.*.local_path` entries — never a blind cwd scan), save both JSON reports under `.coop/reviews/` next to the contract, then rebuild the lineage docs with the findings composed in (`coop-data-doc build --reviews …`). Docs not set up is a hint, not a failure; `--skip-docs` runs the linters only; `--strict` passes `--strict` to both linters and exits 2 if either exits non-zero. `--compare` diffs against the previous run's report. `--diff [ref]` runs the review only on files changed since `ref` (default: `HEAD`) in git-tracked roots. `--html` emits a unified HTML suite report. |
 | `coop fabric [args]` | Pass through to the Microsoft Fabric CLI (`fab`) |
 | `coop version` | Print `coop` + `pi` versions; a git checkout adds its `git describe` (for example `coop 0.23.5 (v0.23.5-21-gdf91630)`) |
 | `coop help` | Show usage |
@@ -240,15 +239,14 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop remove <source>` | Remove a Pi extension (`pi remove <source>`) |
 | `coop pi <args...>` | Raw escape hatch to `pi` |
 
-`coop data-doc` / `coop sql-review` / `coop dax-review` **flow straight through** to
-the underlying tool — every subcommand (`check`, `rules`, `upgrade`, the full
-`coop-data-doc setup` wizard, …) and the tools' own interactive prompts work, and
-the exit code propagates. Both reviews are **advisory by default** — they never edit, and findings do not change
-the default exit code; usage/tool errors and `--strict` propagate nonzero status.
-The AI agent gets machine-readable JSON through the four native `sql_review` / `dax_review`
-/ `data_doc` / `bpa_review` tools (in `extensions/coop-tools`), independent of these passthrough
-commands — including `data_doc`'s `lineage` command (see
-[Lineage-grounded edits](#lineage-grounded-edits)).
+`coop data-doc` **flows straight through** to `coop-data-doc` — every subcommand
+(`check`, `upgrade`, the full `coop-data-doc setup` wizard, …) and the tool's own
+interactive prompts work, and the exit code propagates. The AI agent gets
+machine-readable JSON through the native `data_doc` / `bpa_review` tools (in
+`extensions/coop-tools`), independent of this passthrough command — including
+`data_doc`'s `lineage` command (see [Lineage-grounded edits](#lineage-grounded-edits)).
+There is no `coop review` command: SQL/DAX standards are applied in the agent while
+it writes, and it self-checks its diff against them before presenting a change.
 
 Coop starts directly at the prompt without opening setup dialogs. Run **`/start`**
 anytime for a menu of common tasks.
@@ -448,7 +446,7 @@ command text and should not be shared as sanitized exports.
 4. Write a short **PLAN** and get explicit approval **before** any edit.
 5. Create a timestamped backup of every file to be changed.
 6. Make the smallest safe edit.
-7. Run the applicable review — `sql_review` / `dax_review` (and Tabular Editor BPA / `fabric-cicd` validate where relevant).
+7. Self-check: before presenting SQL, DAX, or model changes, check the diff against the same standards articles used to write them; fix what does not meet them, and deviate only on a user exception or a stated reason (plus Tabular Editor BPA / `fabric-cicd` validate where relevant).
 8. Show `git diff` and summarize the change.
 9. Update Markdown docs / glossary / lineage; regenerate the site if docs changed.
 10. If `logging.require_task_log` is enabled, use `daily-logger` and append to the
@@ -487,14 +485,18 @@ append, not a commit or push.
 
 Coop resolves five governed domains: SQL, DAX, semantic model, Fabric, and
 documentation. Precedence is **project/client override → verified canonical generation →
-stale last-known-good → bundled SQL/DAX fallback → unavailable**. A project override is
-the effective authority when configured; Coop does not silently claim it is canonical.
+stale last-known-good → bundled copy → unavailable**. The bundled copy is the wiki's
+active articles as shipped with this coop release (`config/standards-bundle/`, refreshed
+at every release), so a first run or an offline machine still works to the standards;
+coop says when it is using it. A project override is the effective authority when
+configured; Coop does not silently claim it is canonical.
 
 Launch performs a bounded, fail-soft refresh. Each task receives an immutable standards
-snapshot, and native reviewers bind to the same authority so prompt guidance and tool
-results cannot drift mid-task. Provenance or integrity failures reject a candidate rather
+snapshot (one content-addressed file per domain; its hash is the resolution identity),
+and the self-check reads the same snapshot so the rules coop writes to and the rules it
+checks against cannot drift mid-task. Provenance or integrity failures reject a candidate rather
 than partially applying it. Run **`/standards-status`** to inspect effective authority,
-generation, freshness, and fallback state. `config/standards-registry.json` names the
+generation, freshness, and degraded state. `config/standards-registry.json` names the
 canonical repository and branch. `coop doctor` reports without refreshing: on an install
 last launched more than 15 minutes ago its sync row reads `stale @ last checked N min
 ago` and the cached standards stay green as last known good; only a refresh that failed
@@ -557,8 +559,8 @@ that deliberately drop the Power BI model.
 When no article in a selected domain matches the task, Coop injects the domain's
 core-layer articles (for example `layer: semantic_model`), or only a list of the domain's
 articles if it has no such layer. Two articles with the same `id` are both kept, and `coop doctor` warns with
-both paths. `coop-sql-review` and `coop-dax-review` take one standards file, so Coop
-builds a reviewer-input copy of the domain's articles in its own storage for that call.
+both paths. Each domain's selected articles are also written as one content-addressed
+domain snapshot in Coop's own storage, which is what the self-check reads.
 
 A project override is one Markdown file per domain in `.coop/project.yml`
 (`standards.<domain>.path`; the older `standards.<domain>: <file>` form still works).
@@ -567,9 +569,11 @@ A project override is one Markdown file per domain in `.coop/project.yml`
 
 ## Standalone tools
 
-coop wraps three standalone pipx tools and exposes four native LLM tools:
-`sql_review`, `dax_review`, `data_doc`, and optional/config-driven `bpa_review`.
-The review tools are read-only; `data_doc build` writes generated documentation.
+coop wraps one standalone pipx tool and exposes two native LLM tools: `data_doc`
+and the optional, config-driven `bpa_review` (Tabular Editor BPA, the deterministic
+model check). `bpa_review` is read-only; `data_doc build` writes generated
+documentation. SQL and DAX standards need no tool: they are applied while coop
+writes and self-checked before it presents a change.
 
 - **`coop-data-doc`** — progressive SQL and/or Power BI documentation, lineage, and machine-readable
   output. `scan` → `graph.json`; `build` → `manifest.json` + Markdown docs + a
@@ -577,12 +581,9 @@ The review tools are read-only; `data_doc build` writes generated documentation.
   as JSON. Other verbs: `check`, `init`, `setup`, `update`, `upgrade`. coop consumes
   these natively through the `data_doc` tool (including `command="lineage"`) — see
   [Lineage-grounded edits](#lineage-grounded-edits) below.
-- **`coop-sql-review`** — advisory T-SQL standards linter.
-  `coop-sql-review check <paths...> --format json [--min-severity error|warning|info] [--strict]`
-- **`coop-dax-review`** — advisory DAX standards linter (same shape as sql-review).
 
-The review tools are **advisory by default**: they never edit files, and findings do
-not change the default exit code. Usage/tool errors and `--strict` can return nonzero.
+`coop-sql-review` and `coop-dax-review` were retired in ST1 (their repos are archived);
+`coop uninstall` still removes their old pipx venvs when it finds them.
 
 Also available: **`fabric-cicd`** — a Python **library** (no CLI). coop installs it via
 `pipx inject ms-fabric-cli fabric-cicd` so `fabric_cicd` is importable in the Fabric

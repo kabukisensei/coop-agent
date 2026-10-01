@@ -140,8 +140,8 @@ unset COOP_DIR COOP_AGENT_DIR PI_CODING_AGENT_DIR \
 echo "→ Revision 9 standards registry/resolver and automatic application tests"
 node "$ROOT/tests/standards-rev9.test.mjs"
 node "$ROOT/tests/standards-live-sync.test.mjs"
-node "$ROOT/tests/standards-review-generations.test.mjs"
 node "$ROOT/tests/standards-golden.test.mjs"
+node "$ROOT/tests/standards-bundle.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/standards-runtime.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/bpa-review.test.mjs"
 

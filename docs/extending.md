@@ -70,14 +70,13 @@ plan-and-approve, never commit source). Reference it from a prompt or just ask t
 agent to "use the lakehouse-naming-review skill."
 
 > Keep skills **advisory and read-only** to match Cooptimize governance. If a skill
-> needs to run a tool, point it at the native tools (`sql_review`, `dax_review`,
-> `data_doc`) or `fab` / `fabric-cicd` (validate-only). A skill doesn't need to
-> spell out paths for the review tools: called without explicit paths, they
-> auto-scope to the nearest `.coop/project.yml`'s `repositories.*.local_path`
-> entries (the scope used is surfaced in the tool result; explicit paths always
-> win) — see [docs/tool-contract.md](tool-contract.md). From a shell, `coop review`
-> runs both linters over that same contract scope and composes the findings onto
-> the lineage docs.
+> needs to run a tool, point it at the native tools (`data_doc`, `bpa_review`) or
+> `fab` / `fabric-cicd` (validate-only). For SQL/DAX standards there is no tool to
+> call: the active coop-standards articles are already in context, so a skill asks
+> the agent to write to them and self-check its diff against them (fixing what does
+> not meet them; a deviation needs a user exception or a stated reason). `bpa_review` called without explicit paths auto-scopes to the
+> nearest `.coop/project.yml`'s `power_bi.semantic_models` entries — see
+> [docs/tool-contract.md](tool-contract.md).
 
 ## 2. Add a prompt template (a `/slash` command)
 
@@ -93,7 +92,7 @@ Use the `coop-workflow` skill.
 Summarize this sprint's analytics-engineering work for {{repo_or_area}}.
 1. Read the daily logs under docs/agent/logs/daily.
 2. Group changes by object and layer (bronze/silver/gold/model/report).
-3. List validations run (sql_review / dax_review / fabric-cicd) and open risks.
+3. List validations run (standards self-check / BPA / fabric-cicd) and open risks.
 4. Write a short summary to docs/agent/logs/{{sprint}}.md. Do not commit without approval.
 MD
 ```
@@ -111,8 +110,8 @@ either replace the file or load yours with `coop --theme path/to/theme.json`.
 For real logic (new LLM-callable tools, footer/splash tweaks, event hooks), write a
 Pi extension in TypeScript. Use the three in `extensions/` as templates:
 
-- `extensions/coop-tools/index.ts` — registers `sql_review` / `dax_review` /
-  `data_doc` with `pi.registerTool(...)`. Copy the pattern to wrap another CLI. The
+- `extensions/coop-tools/index.ts` — registers `data_doc` / `bpa_review` /
+  `fabric_sql_query` with `pi.registerTool(...)`. Copy the pattern to wrap another CLI. The
   `data_doc` tool takes `command` = `scan` / `build` / `check` / `lineage` (the last
   returns one object's up/downstream + relationships as JSON). It also shows the event
   hook: `before_agent_start` — only when BUILT docs exist — injects an agent-visible,
@@ -162,8 +161,7 @@ coop init --seed-docs     # then, once repositories: is filled — generates a m
 plain `coop init` runs the safe guided wizard, and `coop onboard --edit` owns global
 integration/MCP settings. Verify with `coop doctor`. `coop init --seed-docs` generates/patches `coop-data-doc.yml`
 from the contract's `repositories:` (via `coop-data-doc config-set`), so repo
-paths are typed once — the same paths that auto-scope the review tools (§1's note)
-and `coop review`.
+paths are typed once.
 
 ## 6. The official-Microsoft-skills slot (subordinate)
 

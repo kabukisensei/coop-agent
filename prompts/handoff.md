@@ -6,8 +6,8 @@ Summarize this session as a **handoff** for the next person or session. Output
 these sections, drawn from what actually happened (do not invent):
 
 - **What changed** — objects/files touched and the intent behind each.
-- **Reviewed / tested** — `sql_review` / `dax_review` / BPA / `fabric-cicd`
-  validate results and any tests run, with pass/fail.
+- **Self-checked / tested** — the standards self-check (rules met, rules you could
+  not meet), BPA / `fabric-cicd` validate results and any tests run, with pass/fail.
 - **Files modified** — the concrete list (source prepared for review vs.
   docs/logs already committed).
 - **Open issues / blockers** — anything unresolved or awaiting a decision.
