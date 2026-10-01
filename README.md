@@ -129,9 +129,12 @@ cd coop-agent
 
 From Git Bash, `./bin/coop install` forwards to the same PowerShell code.
 
-`coop install` handles the complete bootstrap: prerequisites → Pi → extensions →
-Microsoft Fabric CLI → standalone Coop tools → PATH/shortcuts → a short first-run
-setup → sync and Doctor. First-run setup asks only for your profile and whether to
+`coop install` handles the complete bootstrap: prerequisites → Pi → Microsoft
+Fabric CLI → standalone Coop tools → Power BI / Fabric authoring tools →
+PATH/shortcuts → a short first-run setup → sync (the pinned Pi extensions, MCP
+config, assets) and Doctor. Install, `coop update` and `coop sync` converge
+through the same manifest-driven code, so a component already at its pin is left
+alone. First-run setup asks only for your profile and whether to
 connect to client Fabric/Power BI; Coop applies the recommended integrations. The
 detailed switches remain available later with `coop onboard --config-only`.
 It is idempotent; re-run it any time.

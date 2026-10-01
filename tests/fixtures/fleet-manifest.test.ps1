@@ -86,16 +86,27 @@ assert m['npm_tools']['@microsoft/powerbi-desktop-bridge-cli'] == '1.0.0'
 assert m['npm_tools']['@microsoft/powerbi-report-authoring-cli'] == '0.4.0'
 for p in ['pi-mcp-adapter','pi-hermes-memory','pi-better-openai','pi-web-access','@juicesharp/rpiv-ask-user-question','@xl0/pi-lovely-rename','context-mode']:
     assert p in m['extensions']
-# Manifest is authoritative: every manifest fleet member must be referenced by its
-# PowerShell runtime consumers, and every generated MCP package must resolve from it.
+# Manifest is authoritative: the lifecycle scripts read it through one plan
+# (Get-CoopFleetPlan, checked below) and carry NO hard-coded copy of the fleet
+# (master plan S2, #222); every generated MCP package must resolve from it.
+import re
 rd=lambda p:(r/p).read_text(encoding='utf-8-sig')
-install=rd('scripts/install.ps1'); update=rd('scripts/update.ps1'); sync=rd('scripts/sync.ps1'); common=rd('lib/common.ps1')
-for p in m['extensions']:
-    assert p in install and p in sync, p
-for p in m['python_tools']:
-    assert p in install or p in update or p in common, p
-for p in m['npm_tools']:
-    assert p in install and p in update, p
+scripts={n:rd('scripts/'+n) for n in ['install.ps1','update.ps1','sync.ps1','uninstall.ps1']}
+# No quoted fleet member ('name' / "name") in any lifecycle script: a settings
+# file path or a comment may name one, a list literal may not.
+quoted=lambda name: re.compile("['\"]"+re.escape(name)+"['\"]")
+for section in ('extensions','python_tools','npm_tools'):
+    for p in m[section]:
+        for n,text in scripts.items():
+            assert not quoted(p).search(text), (section,p,n)
+# The scripts converge through the shared functions, never their own `pi install`
+# / `pipx install` / `npm install -g` loops.
+for n in ('install.ps1','update.ps1'):
+    assert not re.search(r'&\s*pi\s+(install|update)\b', scripts[n]), n
+for n in ('install.ps1','update.ps1'):
+    assert 'Invoke-CoopPiConverge' in scripts[n] and 'Invoke-CoopPipxConverge' in scripts[n] and 'Invoke-CoopNpmToolsConverge' in scripts[n], n
+    assert "scripts\\sync.ps1" in scripts[n], n
+assert 'Sync-CoopExtensionFleet' in scripts['sync.ps1']
 import importlib.util
 spec=importlib.util.spec_from_file_location('mcp_config',r/'lib/mcp_config.py'); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 all_versions={**m['extensions'],**m['npm_tools'],**m['mcp_servers']}
@@ -117,6 +128,22 @@ for key,pkg in [('pi',None),('coop_data_doc','coop-data-doc'),('coop_sql_review'
   }
   $updateText = [System.IO.File]::ReadAllText((Join-Path $root 'scripts\update.ps1'))
   if ($updateText.Contains('pi update --extensions')) { Ko 'normal update still invokes pi update --extensions' } else { Ok 'normal update has no unpinned extension update path' }
+
+  # --- the fleet plan covers every manifest member (S2, #222) ---------------------
+  $manifest = Get-Content -LiteralPath (Join-Path $root 'config\release-manifest.json') -Raw | ConvertFrom-Json
+  $plan = Get-CoopFleetPlan
+  $planExt = @($plan.Extensions | ForEach-Object { $_.Name })
+  $wantExt = @($manifest.extensions.PSObject.Properties.Name)
+  if ((Compare-Object $planExt $wantExt).Count -eq 0 -and @($plan.Extensions | Where-Object { $_.Spec -ne "npm:$($_.Name)@$($_.Pin)" }).Count -eq 0) { Ok 'Get-CoopFleetPlan lists every manifest extension with its npm:name@pin spec' } else { Ko "plan extensions: $($planExt -join ', ')" }
+  $planPy = @($plan.PythonTools | ForEach-Object { $_.Name }) + @($plan.Fabric.Name) + @($plan.FabricRuntime)
+  $wantPy = @($manifest.python_tools.PSObject.Properties.Name)
+  if ((Compare-Object $planPy $wantPy).Count -eq 0 -and $plan.Fabric.Name -ceq 'ms-fabric-cli' -and $plan.Fabric.Spec -ceq "ms-fabric-cli==$($manifest.python_tools.'ms-fabric-cli')") { Ok 'Get-CoopFleetPlan maps every manifest python tool (coop tools, Fabric CLI, runtime libraries)' } else { Ko "plan python tools: $($planPy -join ', ')" }
+  $planNpm = @($plan.NpmTools | ForEach-Object { $_.Name })
+  $wantNpm = @($manifest.npm_tools.PSObject.Properties.Name | Where-Object { $isWindowsHost -or $_ -ne '@microsoft/powerbi-desktop-bridge-cli' })
+  if ((Compare-Object $planNpm $wantNpm).Count -eq 0 -and @($plan.NpmTools | Where-Object { $_.Spec -ne "$($_.Name)@$($_.Pin)" }).Count -eq 0) { Ok 'Get-CoopFleetPlan lists every manifest npm tool at its pin (Desktop Bridge on Windows only)' } else { Ko "plan npm tools: $($planNpm -join ', ')" }
+  if ($plan.PiSpec -ceq "$($manifest.pi.package)@$($manifest.pi.version)") { Ok 'Get-CoopFleetPlan pins Pi to the manifest' } else { Ko "plan pi spec: $($plan.PiSpec)" }
+  $edge = Get-CoopFleetPlan -Edge -NoFabric
+  if ($edge.PiSpec -ceq $manifest.pi.package -and $null -eq $edge.Fabric -and @($edge.PythonTools | Where-Object { $_.Spec -ne $_.Name }).Count -eq 0 -and @($edge.NpmTools | Where-Object { $_.Spec -ne $_.Name }).Count -eq 0 -and @($edge.Extensions | Where-Object { $_.Spec -ne "npm:$($_.Name)@$($_.Pin)" }).Count -eq 0) { Ok '-Edge drops the Pi and tool pins, keeps the extensions pinned; -NoFabric drops the Fabric CLI' } else { Ko "edge plan: pi=$($edge.PiSpec) fabric=$($edge.Fabric)" }
 
   # --- status classifier ---------------------------------------------------------
   $cases = @(

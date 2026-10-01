@@ -73,7 +73,7 @@ upgrade pipx with `python -m pip install --user --upgrade pipx`, then run
 command behaves as if nothing changed.
 
 **Cause.** `coop install` writes `%LOCALAPPDATA%\coop\bin\coop.cmd`, a launcher
-that calls one clone's `bin\coop.cmd` (`scripts/install.ps1`, step 7). If more
+that calls one clone's `bin\coop.cmd` (`scripts/install.ps1`, step 6). If more
 than one clone exists on the machine, the launcher may point at the other one,
 so `coop` runs that clone's code — not your edits.
 

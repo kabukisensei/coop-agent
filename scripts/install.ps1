@@ -6,7 +6,8 @@
 # whatever is still missing at the end.
 #
 #   Flags:
-#     --force        Reinstall pi tools / pipx packages even if already present
+#     --force        Reinstall Pi / pipx / npm tools even if already at their pins
+#     --edge         Upstream latest for Pi and the tools (extensions stay pinned)
 #     --no-fabric    Skip installing the Microsoft Fabric CLI (ms-fabric-cli)
 #     --no-prereqs   Report missing prerequisites but continue anyway
 #     --prereqs auto Install missing prerequisites visibly (winget), then stop
@@ -34,7 +35,7 @@ function Install-Unit {
 # dirs are usually not on PATH until a new shell — which is why a one-pass install
 # would otherwise "skip" later steps). Best-effort; never fatal.
 function Add-CoopUserPaths {
-  # pipx creates ~\.local\bin only when it installs the FIRST tool (steps 4/5), so
+  # pipx creates ~\.local\bin only when it installs the FIRST tool (steps 3/4), so
   # it may not exist yet here — prepend it unconditionally (a not-yet-existing PATH
   # entry is harmless and goes live once the dir appears). The pipx launcher itself
   # (from `pip install --user pipx`) lands in the VERSIONED per-user Scripts dir —
@@ -79,26 +80,14 @@ for ($ai = 0; $ai -lt $args.Count; $ai++) {
   }
 }
 
-# --- What we install (release manifest is the single source of truth) ----------
-# coop renders its OWN footer/splash via extensions/coop-powerline — no third-party
-# powerline footer.
-$PI_NPM_PACKAGE = Coop-ManifestGet -Key 'pi.package' -Default '@earendil-works/pi-coding-agent'
-$PI_TARGET_VERSION = Coop-ManifestGet -Key 'pi.version'
-$PI_EXTENSIONS = @(
-  'npm:pi-mcp-adapter',       # MCP servers (Fabric / Power BI / Microsoft Learn)
-  'npm:pi-hermes-memory',     # persistent memory + session search + secret scanning
-  'npm:pi-better-openai',     # plan usage limits (5h/7d) — shown in coop's footer
-  'npm:pi-web-access',        # web search / URL fetch / GitHub clone / PDF / video (read-only)
-  'npm:@juicesharp/rpiv-ask-user-question', # structured questions the model can ask (consent rounds)
-  'npm:@xl0/pi-lovely-rename', # names an unnamed session after a few turns (+ /rename); master plan N1
-  'npm:context-mode'
-)
-$PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')
-$FABRIC_PKG = 'ms-fabric-cli'
-# Microsoft Fabric/Power BI authoring CLI packages (npm). powerbi-desktop-bridge
-# requires Power BI Desktop on Windows, so it is installed only there.
-$PBIH_NPM_TOOLS = @('@microsoft/powerbi-report-authoring-cli', '@microsoft/powerbi-modeling-mcp')
-if ($env:OS -eq 'Windows_NT') { $PBIH_NPM_TOOLS += '@microsoft/powerbi-desktop-bridge-cli' }
+# --- What we install: the release manifest, through Get-CoopFleetPlan ----------
+# One manifest-driven plan (lib/common.ps1) feeds install, update, sync and
+# uninstall: Pi, the extensions (converged by the sync child in the last step),
+# the Coop tools and the Fabric CLI (pipx) and the Power BI / Fabric authoring
+# tools (npm; powerbi-desktop-bridge only on Windows). --edge drops the Pi and
+# tool pins (upstream latest); extensions stay pinned. coop renders its OWN
+# footer/splash via extensions/coop-powerline — no third-party powerline footer.
+$PLAN = Get-CoopFleetPlan -Edge:$EDGE -NoFabric:$NO_FABRIC
 
 # Install/operate against coop's ISOLATED Pi agent dir (mirror of coop_pi_agent_dir).
 $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
@@ -106,10 +95,11 @@ New-Item -ItemType Directory -Force -Path $env:PI_CODING_AGENT_DIR | Out-Null
 
 $OS = 'Windows'
 
-# Overall-bar denominator: the install ITEMS we attempt (pipx + pi + each extension
-# + each coop tool + Power BI/Fabric authoring tools, plus Fabric unless --no-fabric).
-$TOTAL = 2 + $PI_EXTENSIONS.Count + $PY_TOOLS.Count + 1
-if (-not $NO_FABRIC) { $TOTAL += 1 }
+# Overall-bar denominator: the install ITEMS we attempt (pipx + pi + each coop
+# tool + Power BI/Fabric authoring tools, plus Fabric unless --no-fabric). The
+# extensions converge in the sync child (step 8), outside the bar.
+$TOTAL = 2 + @($PLAN.PythonTools).Count + 1
+if ($PLAN.Fabric) { $TOTAL += 1 }
 
 # --- Per-item units (run in a background job; return @{ok=<bool>; msg=<string>}) --
 $UnitPipx = {
@@ -132,277 +122,11 @@ $UnitPipx = {
   return [pscustomobject]@{ ok = $false; msg = 'could not install pipx automatically — see https://pipx.pypa.io' }
 }
 
-# Units run in a Coop-Unit job: a fresh runspace that sees none of the caller's
-# variables or functions (#213), so everything they need arrives as arguments.
-$UnitPi = {
-  param([bool]$Force, [string]$Spec, [bool]$Edge, [string]$Pkg, [string]$TargetVersion)
-  $piCmd = Get-Command pi -ErrorAction SilentlyContinue
-  if ($piCmd) {
-    $raw = (& pi --version 2>$null | Out-String)
-    $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
-    $cur = if ($m.Success) { $m.Value } else { '' }
-    # Convergence: missing -> install exact; == manifest -> skip;
-    # != manifest -> force-install exact; --force -> reinstall exact.
-    if (-not $Force -and $cur) {
-      if ($Edge) {
-        # Edge means upstream/latest for EXISTING installs too.
-        if (Get-Command npm -ErrorAction SilentlyContinue) {
-          & npm install -g $Pkg *> $null
-          if ($LASTEXITCODE -eq 0) {
-            $raw2 = (& pi --version 2>$null | Out-String)
-            $m3 = [regex]::Match([string]$raw2, '\d+\.\d+\.\d+')
-            return [pscustomobject]@{ ok = $true; msg = "pi updated to latest ($($m3.Value))" }
-          }
-          return [pscustomobject]@{ ok = $false; msg = "failed to update pi to latest (npm install -g $Pkg)" }
-        }
-        return [pscustomobject]@{ ok = $false; msg = 'cannot update pi (npm missing) — install Node.js, then re-run: coop install' }
-      }
-      $expected = $null
-      if (-not [string]::IsNullOrEmpty($TargetVersion)) { $expected = $TargetVersion }
-      if (-not $expected) { return [pscustomobject]@{ ok = $true; msg = "pi present ($cur) — no manifest pin" } }
-      if ($cur -eq $expected) { return [pscustomobject]@{ ok = $true; msg = "pi $cur matches manifest" } }
-      if (Get-Command npm -ErrorAction SilentlyContinue) {
-        & npm install -g $Spec *> $null
-        if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = "pi converged $cur -> $expected" } }
-        return [pscustomobject]@{ ok = $false; msg = "failed to converge pi to $Spec — try: npm install -g $Spec" }
-      }
-      return [pscustomobject]@{ ok = $false; msg = "cannot converge pi (npm missing) — install Node.js, then re-run: coop install" }
-    }
-  }
-  if (Get-Command npm -ErrorAction SilentlyContinue) {
-    & npm install -g $Spec *> $null
-    if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = "pi installed ($Spec)" } }
-    return [pscustomobject]@{ ok = $false; msg = "npm install of pi failed — try: npm install -g $Spec" }
-  }
-  return [pscustomobject]@{ ok = $false; msg = "cannot install pi (npm missing) — install Node.js, then re-run: coop install" }
-}
-
-$UnitExt = {
-  param([string]$Spec)
-  if (-not (Get-Command pi -ErrorAction SilentlyContinue)) { return [pscustomobject]@{ ok = $false; msg = "skipped $Spec (pi not installed)" } }
-  & pi install $Spec *> $null
-  if ($LASTEXITCODE -eq 0) { return [pscustomobject]@{ ok = $true; msg = $Spec } }
-  return [pscustomobject]@{ ok = $false; msg = "could not install $Spec (continuing)" }
-}
-
-$UnitFabric = {
-  param([bool]$Force, [bool]$Edge, [string]$Pkg, [string]$Target, [string]$Python, [string]$FetchPython)
-  $pipxBin = Join-Path $HOME '.local\bin'
-  if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split ';') -notcontains $pipxBin)) {
-    $env:PATH = "$pipxBin;$env:PATH"
-  }
-  $runPipx = {
-    param([string[]]$PipxArgs)
-    if (Get-Command pipx -ErrorAction SilentlyContinue) {
-      & pipx @PipxArgs *> $null
-      return $LASTEXITCODE
-    }
-    foreach ($name in @('python3', 'python')) {
-      $c = Get-Command $name -ErrorAction SilentlyContinue
-      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
-      & $name -m pipx @PipxArgs *> $null
-      return $LASTEXITCODE
-    }
-    return 1
-  }
-  $runPipxText = {
-    param([string[]]$PipxArgs)
-    if (Get-Command pipx -ErrorAction SilentlyContinue) {
-      return ((& pipx @PipxArgs 2>$null | Out-String))
-    }
-    foreach ($name in @('python3', 'python')) {
-      $c = Get-Command $name -ErrorAction SilentlyContinue
-      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
-      return ((& $name -m pipx @PipxArgs 2>$null | Out-String))
-    }
-    return ''
-  }
-
-  $hasPipx = (Get-Command pipx -ErrorAction SilentlyContinue)
-  if (-not $hasPipx) {
-    foreach ($name in @('python3', 'python')) {
-      $c = Get-Command $name -ErrorAction SilentlyContinue
-      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
-      & $name -m pipx --version *> $null
-      if ($LASTEXITCODE -eq 0) { $hasPipx = $true; break }
-    }
-  }
-  if (-not $hasPipx) { return [pscustomobject]@{ ok = $false; msg = 'skipping Fabric CLI (pipx missing)' } }
-  if (-not $Python) { return [pscustomobject]@{ ok = $false; msg = 'Microsoft Fabric CLI needs Python 3.12 or 3.13 — upgrade pipx or install Python 3.12, then re-run: coop install' } }
-
-  $installArgs = { param([bool]$WithForce, [string]$Spec)
-    $a = @('install')
-    if ($WithForce) { $a += '--force' }
-    if ($FetchPython) { $a += $FetchPython }
-    $a += @('--python', $Python, $Spec)
-    return $a
-  }
-
-  $target = if ($Target) { $Target } else { $Pkg }
-  # Convergence: skip only when the installed version matches the pin.
-  $expectedVer = $null
-  if ($target -match '==(.+)$') { $expectedVer = $Matches[1] }
-  if (-not $Force) {
-    $installed = ''
-    $listText = (& $runPipxText @('list'))
-    if ($listText) {
-      $m2 = [regex]::Match([string]$listText, ('(?i)package ' + [regex]::Escape($Pkg) + ' (\d+\.\d+\.\d+)'))
-      if ($m2.Success) { $installed = $m2.Groups[1].Value }
-    }
-    if ($installed) {
-      if ($Edge) {
-        # Reinstall explicitly so an existing unsupported 3.14 venv is repaired.
-        $pipxInstallArgs = & $installArgs $true $target
-        $rc = & $runPipx $pipxInstallArgs
-        if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to update $Pkg with Python $Python" } }
-      } elseif ($expectedVer -and $installed -ne $expectedVer) {
-        $pipxInstallArgs = & $installArgs $true $target
-        $rc = & $runPipx $pipxInstallArgs
-        if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to converge $Pkg to $expectedVer" } }
-      } elseif ($FetchPython) {
-        # A matching package version can still live in an unsupported 3.14 venv.
-        $pipxInstallArgs = & $installArgs $true $target
-        $rc = & $runPipx $pipxInstallArgs
-        if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to rebuild $Pkg with standalone Python $Python" } }
-      }
-    } else {
-      $pipxInstallArgs = & $installArgs $false $target
-      & $runPipx $pipxInstallArgs
-    }
-  } else {
-    $pipxInstallArgs = & $installArgs $true $target
-    $rc = & $runPipx $pipxInstallArgs
-    if ($rc -ne 0) { return [pscustomobject]@{ ok = $false; msg = "failed to reinstall $Pkg ($target)" } }
-  }
-  # Runtime-library convergence is performed in the parent runspace after this
-  # background unit, using the exact selected interpreter.
-  # A failed convergence must not read as success just because an OLD fab binary
-  # is still on PATH — verify the installed version actually matches the pin.
-  if (-not $Edge -and $expectedVer) {
-    $now = ''
-    $listText2 = (& $runPipxText @('list'))
-    if ($listText2) {
-      $m4 = [regex]::Match([string]$listText2, ('(?i)package ' + [regex]::Escape($Pkg) + ' (\d+\.\d+\.\d+)'))
-      if ($m4.Success) { $now = $m4.Groups[1].Value }
-    }
-    if ($now -ne $expectedVer) {
-      $nowDisp = if ($now) { $now } else { 'none' }
-      return [pscustomobject]@{ ok = $false; msg = "Fabric CLI remains at $nowDisp; expected $expectedVer" }
-    }
-  }
-  if (Get-Command fab -ErrorAction SilentlyContinue) {
-    $fv = ((& fab --version 2>&1) -join ' ')
-    if ($fv -match '(?i)paramiko|invoke') {
-      return [pscustomobject]@{ ok = $false; msg = "'fab' is Python Fabric (SSH), not Microsoft Fabric CLI — put the pipx Scripts dir first on PATH, then: fab --version" }
-    }
-    $v = (& fab --version 2>$null | Select-Object -First 1)
-    return [pscustomobject]@{ ok = $true; msg = "Microsoft Fabric CLI ready ($v)" }
-  }
-  $localFab = Join-Path $HOME '.local\bin\fab.exe'
-  if (Test-Path -LiteralPath $localFab) {
-    $v = (& $localFab --version 2>$null | Select-Object -First 1)
-    return [pscustomobject]@{ ok = $true; msg = "Microsoft Fabric CLI ready ($v)" }
-  }
-  return [pscustomobject]@{ ok = $false; msg = "ms-fabric-cli installed but 'fab' not on PATH yet — open a new shell" }
-}
-
-$UnitPytool = {
-  param([bool]$Force, [string]$Pkg, [string]$Target, [bool]$Edge)
-  $pipxBin = Join-Path $HOME '.local\bin'
-  if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split ';') -notcontains $pipxBin)) {
-    $env:PATH = "$pipxBin;$env:PATH"
-  }
-  $runPipx = {
-    param([string[]]$PipxArgs)
-    if (Get-Command pipx -ErrorAction SilentlyContinue) {
-      & pipx @PipxArgs *> $null
-      return $LASTEXITCODE
-    }
-    foreach ($name in @('python3', 'python')) {
-      $c = Get-Command $name -ErrorAction SilentlyContinue
-      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
-      & $name -m pipx @PipxArgs *> $null
-      return $LASTEXITCODE
-    }
-    return 1
-  }
-  $runPipxText = {
-    param([string[]]$PipxArgs)
-    if (Get-Command pipx -ErrorAction SilentlyContinue) {
-      return ((& pipx @PipxArgs 2>$null | Out-String))
-    }
-    foreach ($name in @('python3', 'python')) {
-      $c = Get-Command $name -ErrorAction SilentlyContinue
-      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
-      return ((& $name -m pipx @PipxArgs 2>$null | Out-String))
-    }
-    return ''
-  }
-
-  $hasPipx = (Get-Command pipx -ErrorAction SilentlyContinue)
-  if (-not $hasPipx) {
-    foreach ($name in @('python3', 'python')) {
-      $c = Get-Command $name -ErrorAction SilentlyContinue
-      if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
-      & $name -m pipx --version *> $null
-      if ($LASTEXITCODE -eq 0) { $hasPipx = $true; break }
-    }
-  }
-  if (-not $hasPipx) { return [pscustomobject]@{ ok = $false; msg = "skipping $Pkg (pipx missing)" } }
-
-  # $Target is the caller's resolved spec: pkg==pin from the manifest, or the
-  # bare package under --edge (Coop-ManifestGet does not exist inside the job).
-  $target = if ($Target) { $Target } else { $Pkg }
-  # Convergence: skip only when the installed version matches the manifest pin.
-  if (-not $Force) {
-    $installed = ''
-    $listText = (& $runPipxText @('list'))
-    if ($listText) {
-      $m2 = [regex]::Match([string]$listText, ('(?i)package ' + [regex]::Escape($Pkg) + ' (\d+\.\d+\.\d+)'))
-      if ($m2.Success) { $installed = $m2.Groups[1].Value }
-    }
-    if ($installed) {
-      if ($Edge) {
-        # Edge means upstream/latest for EXISTING installs too.
-        $rc = & $runPipx @('upgrade', $Pkg)
-        if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg updated to latest ($(& $runPipxText @('list') | ForEach-Object { if ($_ -match "(?i)package $Pkg (\d+\.\d+\.\d+)") { $Matches[1] } }))" } }
-        return [pscustomobject]@{ ok = $false; msg = "failed to upgrade $Pkg to latest" }
-      }
-      if (-not ($target -match '==')) { return [pscustomobject]@{ ok = $true; msg = "$Pkg present ($installed) — no manifest pin" } }
-      $expectedVer = $target -replace '.*==', ''
-      if ($installed -eq $expectedVer) { return [pscustomobject]@{ ok = $true; msg = "$Pkg $installed matches manifest" } }
-      $rc = & $runPipx @('install', '--force', $target)
-      if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg converged $installed -> $expectedVer" } }
-      return [pscustomobject]@{ ok = $false; msg = "failed to converge $Pkg to $target" }
-    }
-  }
-  if ($Force) {
-    $rc = & $runPipx @('install', '--force', $target)
-    if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = $Pkg } }
-    return [pscustomobject]@{ ok = $false; msg = "failed: $Pkg" }
-  }
-  $rc = & $runPipx @('install', $target)
-  if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg (installed)" } }
-  $rc = & $runPipx @('upgrade', $target)
-  if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg (up to date)" } }
-  return [pscustomobject]@{ ok = $false; msg = "could not install $Pkg" }
-}
-
-$UnitPbihTools = {
-  param([bool]$Force, [array]$Specs)
-  if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { return [pscustomobject]@{ ok = $false; msg = 'skipping Power BI/Fabric authoring tools (npm missing)' } }
-  $ok = 0; $fail = 0
-  # Only the release's pinned version is installed (an empty spec is a tool with
-  # no pin, which fails rather than falling back to npm's latest), and there is no
-  # `npm update -g` fallback: it ignores the version and moves the tool to latest.
-  foreach ($spec in $Specs) {
-    if (-not $spec) { $fail++; continue }
-    & npm install -g $spec *> $null
-    if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail++ }
-  }
-  if ($fail -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$ok Power BI/Fabric authoring tool(s) ready" } }
-  return [pscustomobject]@{ ok = $false; msg = "$ok installed, $fail failed" }
-}
+# Every other item is a convergence function in lib/common.ps1 (Invoke-CoopPiConverge,
+# Invoke-CoopFabricCliConverge, Invoke-CoopPipxConverge, Invoke-CoopNpmToolsConverge),
+# run through $script:CoopConvergeUnit: the job's fresh runspace dot-sources the
+# library and every input arrives as an argument (#213). `coop update` runs the
+# same functions, so install and update cannot drift apart (master plan S2).
 
 # --- Prerequisite gate (plan H1) ----------------------------------------------
 # Print the prerequisite table; returns how many REQUIRED rows are missing.
@@ -451,10 +175,10 @@ Coop-Head "Cooptimize agent bootstrap (v$($script:CoopVersion))  [$OS]"
 
 # Check every prerequisite before installing anything. A missing required row
 # stops here with the exact command, instead of failing several steps later.
-Coop-Head '1/9  Prerequisites'
+Coop-Head '1/8  Prerequisites'
 $prereqRows = Get-CoopPrereqs $NO_FABRIC
 $prereqMissing = Show-CoopPrereqs $prereqRows
-# The command that re-runs this install. A first install stops here, before step 7
+# The command that re-runs this install. A first install stops here, before step 6
 # links `coop` onto PATH, so until then name Install coop.cmd and the clone's own
 # launcher (#112). Checked before --prereqs auto can widen PATH.
 $installCmd = 'coop install'
@@ -498,48 +222,29 @@ try {
   Install-Unit 'pipx' $UnitPipx
   Add-CoopUserPaths    # make a just-installed pipx + its tool-bin visible this run
 
-  # Resolve exact specs from the release manifest (unless --edge).
-  $piSpec = if (-not $EDGE -and $PI_TARGET_VERSION) { "${PI_NPM_PACKAGE}@${PI_TARGET_VERSION}" } else { $PI_NPM_PACKAGE }
-  $extSpecs = @()
-  foreach ($ext in $PI_EXTENSIONS) {
-    $spec = $ext
-    if (-not $EDGE) {
-      $pkg = if ($ext -match '^npm:(.+)$') { $matches[1] } else { $ext }
-      $pinned = Coop-ManifestExtensionSpec $pkg
-      if ($pinned) { $spec = $pinned }
-    }
-    $extSpecs += $spec
-  }
-  $fabricTarget = if (-not $EDGE) { $tv = Coop-ManifestGet -Key "python_tools.$FABRIC_PKG"; if ($tv) { "${FABRIC_PKG}==${tv}" } else { $FABRIC_PKG } } else { $FABRIC_PKG }
   # A local 3.10-3.13, or pipx's standalone 3.12 (Get-CoopFabricPipxPlan, shared
   # with update and doctor --fix). $null leaves $fabricPython empty and the unit
   # reports what to install.
-  $fabricPlan = Get-CoopFabricPipxPlan
+  $fabricPlan = if ($PLAN.Fabric) { Get-CoopFabricPipxPlan } else { $null }
   $fabricPython = if ($fabricPlan) { $fabricPlan.Python } else { '' }
   $fabricFetchPython = if ($fabricPlan) { $fabricPlan.FetchFlag } else { '' }
-  $pytoolTargets = @()
-  foreach ($pkg in $PY_TOOLS) {
-    $pytoolTargets += if (-not $EDGE) { $tv = Coop-ManifestGet -Key "python_tools.$pkg"; if ($tv) { "${pkg}==${tv}" } else { $pkg } } else { $pkg }
-  }
-  $pbihSpecs = @()
-  foreach ($pkg in $PBIH_NPM_TOOLS) {
-    $pbihSpecs += if (-not $EDGE) { $tv = Coop-ManifestGet -Key "npm_tools.$pkg"; if ($tv) { "${pkg}@${tv}" } else { '' } } else { $pkg }
-  }
 
   # --- 2. Pi itself ----------------------------------------------------------
-  Coop-Head '2/9  Pi (@earendil-works/pi-coding-agent)'
-  Install-Unit 'pi (@earendil-works/pi-coding-agent)' $UnitPi @($FORCE, $piSpec, $EDGE, $PI_NPM_PACKAGE, $PI_TARGET_VERSION)
-  Add-CoopNpmPath      # make a just-npm-installed `pi` visible to step 3 this run
+  # Same busy guard as update: never converge Pi in place under a running session.
+  Coop-Head "2/8  Pi ($($PLAN.PiPackage))"
+  if (Test-CoopPiConvergeAllowed 'coop install') {
+    Install-Unit "pi ($($PLAN.PiPackage))" $script:CoopConvergeUnit @($script:CoopCommonPath, 'Invoke-CoopPiConverge', @{ Package = $PLAN.PiPackage; Pin = $PLAN.PiPin; Edge = $EDGE; Force = $FORCE })
+  } else {
+    $script:InstallFailures++
+    $script:ProgDone++
+  }
+  Add-CoopNpmPath      # make a just-npm-installed `pi` visible to the rest of this run
 
-  # --- 3. Pi extensions ------------------------------------------------------
-  Coop-Head '3/9  Pi extensions'
-  for ($i = 0; $i -lt $PI_EXTENSIONS.Count; $i++) { Install-Unit $PI_EXTENSIONS[$i] $UnitExt @($extSpecs[$i]) }
-
-  # --- 4. Microsoft Fabric CLI ----------------------------------------------
-  Coop-Head '4/9  Microsoft Fabric CLI'
-  if ($NO_FABRIC) { Coop-Info 'skipping Microsoft Fabric CLI (--no-fabric)' }
+  # --- 3. Microsoft Fabric CLI ----------------------------------------------
+  Coop-Head '3/8  Microsoft Fabric CLI'
+  if (-not $PLAN.Fabric) { Coop-Info 'skipping Microsoft Fabric CLI (--no-fabric)' }
   else {
-    Install-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $EDGE, $FABRIC_PKG, $fabricTarget, $fabricPython, $fabricFetchPython)
+    Install-Unit 'Microsoft Fabric CLI' $script:CoopConvergeUnit @($script:CoopCommonPath, 'Invoke-CoopFabricCliConverge', @{ Package = $PLAN.Fabric.Name; Pin = $PLAN.Fabric.Pin; Edge = $EDGE; Force = $FORCE; Python = $fabricPython; FetchPython = $fabricFetchPython; Command = 'coop install' })
     # A Fabric CLI venv that did not converge is the wrong target for the library
     # injection and the driver check; the unit already counted the failure (#213).
     if (-not $script:CoopUnitLastOk) { Coop-Warn 'skipping the Fabric Python runtime (Fabric CLI did not converge)' }
@@ -547,13 +252,15 @@ try {
     elseif (-not (Ensure-CoopFabricOdbcDriver (-not $NO_PREREQS))) { Coop-Warn 'Fabric SQL fallback is not ready'; $script:InstallFailures++ }
   }
 
-  # --- 5. Python tools (pipx) -----------------------------------------------
-  Coop-Head '5/9  Coop tools (pipx)'
-  for ($i = 0; $i -lt $PY_TOOLS.Count; $i++) { Install-Unit $PY_TOOLS[$i] $UnitPytool @($FORCE, $PY_TOOLS[$i], $pytoolTargets[$i], $EDGE) }
+  # --- 4. Python tools (pipx) -----------------------------------------------
+  Coop-Head '4/8  Coop tools (pipx)'
+  foreach ($tool in $PLAN.PythonTools) {
+    Install-Unit $tool.Name $script:CoopConvergeUnit @($script:CoopCommonPath, 'Invoke-CoopPipxConverge', @{ Package = $tool.Name; Pin = $tool.Pin; Edge = $EDGE; Force = $FORCE })
+  }
 
-  # --- 6. Power BI / Fabric authoring tools (npm) ----------------------------
-  Coop-Head '6/9  Power BI / Fabric authoring tools'
-  Install-Unit 'Power BI/Fabric authoring tools' $UnitPbihTools @($FORCE, $pbihSpecs)
+  # --- 5. Power BI / Fabric authoring tools (npm) ----------------------------
+  Coop-Head '5/8  Power BI / Fabric authoring tools'
+  Install-Unit 'Power BI/Fabric authoring tools' $script:CoopConvergeUnit @($script:CoopCommonPath, 'Invoke-CoopNpmToolsConverge', @{ Names = [string[]]@($PLAN.NpmTools | ForEach-Object { $_.Name }); Pins = [string[]]@($PLAN.NpmTools | ForEach-Object { $_.Pin }); Edge = $EDGE; Force = $FORCE })
 }
 finally {
   Coop-ProgEnd
@@ -565,8 +272,8 @@ if ($env:COOP_FLEET_TEST_MODE -eq '1') {
   if ($script:InstallFailures -eq 0) { exit 0 } else { exit 1 }
 }
 
-# --- 7. Put `coop` on PATH ---------------------------------------------------
-Coop-Head "7/9  Link 'coop' onto your PATH"
+# --- 6. Put `coop` on PATH ---------------------------------------------------
+Coop-Head "6/8  Link 'coop' onto your PATH"
 $LOCALBIN = Join-Path $env:LOCALAPPDATA 'coop\bin'
 New-Item -ItemType Directory -Force -Path $LOCALBIN | Out-Null
 # Drop a launcher .cmd that forwards to the repo's coop.cmd shim, so `coop` works
@@ -654,18 +361,21 @@ try {
   Coop-Warn "couldn't create the double-click launcher (you can still run coop in a terminal): $($_.Exception.Message)"
 }
 
-# --- 8. First-run onboarding -----------------------------------------------------
+# --- 7. First-run onboarding -----------------------------------------------------
 # If this is an interactive install and there's no local profile yet, ask the user
 # for their name and communication preference before the first real session.
 if (-not [Console]::IsInputRedirected -and $env:COOP_NO_ONBOARD -ne '1') {
-  Coop-Head '8/9  Personalize Coop'
+  Coop-Head '7/8  Personalize Coop'
   Invoke-CoopMaybeOnboard
 }
 
-# --- 9. Sync, model sign-in, and doctor ---------------------------------------
-Coop-Head '9/9  Sync assets, sign in, and run doctor'
+# --- 8. Sync (extensions), model sign-in, and doctor ---------------------------------------
+Coop-Head '8/8  Sync extensions and assets, sign in, and run doctor'
 $priorSkipFabricSync = $env:COOP_SKIP_FABRIC_SYNC
 $env:COOP_SKIP_FABRIC_SYNC = '1' # Fabric was converged (or explicitly skipped) above.
+# The sync child is the ONE extension convergence path (Sync-CoopExtensionFleet):
+# the manifest's extensions at their pins, the lockfile, the pi-ai/pi-tui
+# alignment and the postconditions. Install itself never runs `pi install`.
 $syncRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
 if ($null -eq $priorSkipFabricSync) { Remove-Item Env:COOP_SKIP_FABRIC_SYNC -ErrorAction SilentlyContinue } else { $env:COOP_SKIP_FABRIC_SYNC = $priorSkipFabricSync }
 if ($syncRc -ne 0) { Coop-Warn 'sync reported issues'; $script:InstallFailures++ }
