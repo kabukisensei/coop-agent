@@ -97,6 +97,7 @@ grep -q 'coop_apply_extensions_lock "$agent_dir" "$npm_bin" "$pi_ver"' "$ROOT/li
   || ko "lib/common.sh convergence no longer tries the lockfile first"
 grep -q 'Install-CoopExtensionsLock -AgentDir $AgentDir -Npm $npm -PiVersion $piVer' "$ROOT/lib/common.ps1" \
   && grep -q '& $Npm ci --no-audit --no-fund' "$ROOT/lib/common.ps1" \
+  && ! grep -q 'Get-FileHash -' "$ROOT/lib/common.ps1" \
   && ok "Sync-CoopExtensionPins installs from the lock (npm ci) before a live resolution" \
   || ko "lib/common.ps1 convergence no longer tries the lockfile first"
 

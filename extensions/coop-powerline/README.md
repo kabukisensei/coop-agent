@@ -23,8 +23,9 @@ also exports the two env vars below.
 coop-powerline renders its own single footer in plain text + common Unicode (no
 Nerd Font glyphs):
 
-- **left** — `⬢ Cooptimize · <branch>` (the honeycomb in navy, `Cooptimize` in
-  lime, the current git branch dimmed);
+- **left** — `⬢ Cooptimize · <session> · <branch>` (the honeycomb in navy,
+  `Cooptimize` in lime, the session name when one is set by `/name` or the
+  automatic naming extension, the current git branch dimmed);
 - **right** — `<model> · ctx N% · tokens · $cost · <plan usage limits>`: the
   active model id, the context-window usage percent, token totals
   (`input>output`), and the running cost — all read from the session, so it
@@ -34,8 +35,8 @@ It also surfaces **other extensions' status text** via
 `footerData.getExtensionStatuses()` — for example pi-better-openai's plan usage
 limits / 5h+7d windows — appending them to the right side, so everything ends up
 in one clean bar instead of a duplicate one. The whole line is clipped to the
-terminal width so it never overflows, and it re-renders on branch changes and
-between turns so the numbers stay current.
+terminal width so it never overflows, and it re-renders on branch changes,
+session renames and between turns so the numbers stay current.
 
 ### Startup splash (`ctx.ui.setHeader`)
 

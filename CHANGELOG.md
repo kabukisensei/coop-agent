@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `coop sync` from a PowerShell 7 window. `coop.cmd` starts Windows PowerShell
+  5.1, which inherited pwsh's `PSModulePath` and could not load `Get-FileHash`,
+  so the lockfile comparison errored, the shipped lock was skipped and sync still
+  printed `✓ sync complete.` (seen on the development VM, 2026-10-01). The lock
+  hashes now go through .NET (`Get-CoopFileSha256`), and `coop.cmd` clears
+  `PSModulePath` so 5.1 rebuilds its own module path.
+
 ### Added
 
 - `sql_targets:` in the project contract (master plan section 8 item 1, row SQ1):
@@ -35,6 +44,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   project contract still wins per repository; guardrails, approvals and the SQL
   executor never read the install choice.
 
+- Sessions name themselves (master plan N1, row 9b). `@xl0/pi-lovely-rename`
+  **0.1.5** joins the pinned extension set: after three user turns an unnamed
+  session gets a short name from the session's own model (no extra key), `/rename`
+  regenerates it, `/rename settings` changes the trigger, and a manual `/name`
+  always wins (the extension never renames a named session). Coop's footer now
+  shows the session name next to the branch, and the footer and terminal title
+  pick up a rename without a restart. The naming request sends the last 60,000
+  characters of the conversation, including tool-call arguments, to the same
+  provider the session already uses; the trial on the development VM decides
+  whether that scope stays or a coop-owned summary-only namer replaces it.
+  Settings live in `~/.coop/agent/xl0-pi-lovely-rename.json`. Verified on the
+  development VM: generated names show in `coop -r`'s resume list.
 - The isolated extension tree is reproducible (issue #152, master plan U1).
   `config/extensions-lock.json` is npm's lockfile for the release's pinned
   extension set, resolved with pi-ai, pi-tui and the agent peer at the manifest's
@@ -53,6 +74,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   once and remembers that lock, so sync does not retry it until a release ships a
   new one. Maintainers regenerate it with `node lib/extlock.js generate` whenever
   a pin moves; the gate lane fails when the lock and the manifest disagree.
+
+### Fixed
+
+- coop's own footer renders again (issue #203). `pi-better-openai` 0.1.22
+  defaults to `footer.mode: "replace"`, which installs its own footer on
+  `session_start` and replaces coop-powerline's `⬢ Cooptimize` bar with Pi's
+  built-in one. `coop sync` (run by `coop install` and `coop update`) now keeps
+  that extension's `footer.mode` at `status` in
+  `~/.coop/agent/extensions/pi-better-openai.json`, which is what coop's footer
+  already consumes through `footerData.getExtensionStatuses()`; a deliberate
+  `off` is left alone and every other key in that file is preserved. Existing
+  installs pick it up on their next `coop update` or `coop sync`.
 
 ### Changed
 
