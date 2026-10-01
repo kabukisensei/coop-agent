@@ -143,6 +143,14 @@ Useful flags:
 
 - `--force` — reinstall pi tools / pipx packages even if already present
 - `--no-fabric` — skip installing the Microsoft Fabric CLI (partial/diagnostic setup; a fresh machine will not pass full Doctor readiness until `fab` is installed)
+- `--platform fabric|azure_sql|both` — answer the client platform question up front (the
+  onboarding step asks it otherwise). The answer is saved as `client.platform` in
+  `~/.coop/config`: an `azure_sql` machine defaults the Fabric MCP servers off, keeps the
+  Fabric skills off unless a contract sets `fabric_skills: policy: baseline`, has `coop doctor`
+  report a missing `fab` as optional rather than red, and checks the SQL token audience at
+  launch instead of the Fabric one. `coop onboard --platform <value>` changes it later, and
+  `coop doctor --fix` asks once on a machine that predates the setting. A repo's
+  `.coop/project.yml` still wins (one teammate can serve two clients).
 - `--prereqs auto` — install missing prerequisites with the printed commands, visibly, then stop and ask for a new terminal
 - `--no-prereqs` — report missing prerequisites but continue anyway
 - `--yes`, `-y` — assume yes for prompts
@@ -183,7 +191,7 @@ shows anything still missing.
 | --- | --- |
 | **Pi** | installed globally via `npm` |
 | **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits), `pi-web-access` (web search/fetch — read-only), `@juicesharp/rpiv-ask-user-question` (structured questions), `@xl0/pi-lovely-rename` (automatic session names) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
-| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `data_doc`/`bpa_review` + standards-in-context + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
+| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `data_doc`/`sql_impact`/`bpa_review` + standards-in-context + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
 | **Standalone tool** — `coop-data-doc` | installed via `pipx` from PyPI |
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
@@ -220,7 +228,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop profile [--edit|--reset|--json]` | Inspect or update the private user profile |
 | `coop context-budget [--json]` | Inspect the active model/context budget |
 | `coop uninstall [--keep-tools] [--yes]` | Remove the launcher/shortcuts/user-PATH entry and isolated agent dir; by default also uninstall Pi, pipx tools/Fabric CLI, Power BI Report Authoring CLI, Power BI Modeling MCP, and the Windows Desktop Bridge. `--keep-tools` preserves all managed npm/pipx tools. Never touches repo clones, work repos, the rest of `~/.coop`, or personal `~/.pi/agent` |
-| `coop install [--edge] [--force] [--yes] [--prereqs auto] [--no-prereqs] [--no-fabric]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest and is tools-only here (install never moves the repo). With a source arg, alias of `coop add` |
+| `coop install [--edge] [--force] [--yes] [--prereqs auto] [--no-prereqs] [--no-fabric] [--platform fabric\|azure_sql\|both]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest and is tools-only here (install never moves the repo). With a source arg, alias of `coop add` |
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
 | `coop sync` | Ensure core Pi extensions are installed, place the governed MCP config non-destructively, refresh managed catalogs/team knowledge, and verify brand assets |
 | `coop data-doc [args]` | Run `coop-data-doc` (default: `build`) and summarize outputs |
@@ -569,11 +577,12 @@ A project override is one Markdown file per domain in `.coop/project.yml`
 
 ## Standalone tools
 
-coop wraps one standalone pipx tool and exposes two native LLM tools: `data_doc`
-and the optional, config-driven `bpa_review` (Tabular Editor BPA, the deterministic
-model check). `bpa_review` is read-only; `data_doc build` writes generated
-documentation. SQL and DAX standards need no tool: they are applied while coop
-writes and self-checked before it presents a change.
+coop wraps one standalone pipx tool and exposes three native LLM tools: `data_doc`,
+`sql_impact` (live catalog impact trace of one SQL object on the contract's dev/test
+`sql_targets` entry) and the optional, config-driven `bpa_review` (Tabular Editor BPA,
+the deterministic model check). `sql_impact` and `bpa_review` are read-only;
+`data_doc build` writes generated documentation. SQL and DAX standards need no tool:
+they are applied while coop writes and self-checked before it presents a change.
 
 - **`coop-data-doc`** — progressive SQL and/or Power BI documentation, lineage, and machine-readable
   output. `scan` → `graph.json`; `build` → `manifest.json` + Markdown docs + a
@@ -657,6 +666,9 @@ them) when the project contract turns them on: `fabric_skills: policy: baseline`
 (what `/setup-project` writes), or no `fabric_skills:` block at all but a
 `fabric:` section. Outside a repo with a `.coop/project.yml` contract, Fabric
 skills stay off (`coop doctor` from your home folder reports them disabled).
+On a machine installed as an Azure SQL client (`coop install --platform azure_sql`)
+the `fabric:` section alone is not enough: only an explicit
+`fabric_skills: policy: baseline` (or an `allow:` list) turns the Fabric skills on.
 Use `policy: restricted` with an `allow:` list to load a subset. Legacy
 `source` and `load_dir` fields are ignored with migration notices in
 `coop doctor`.

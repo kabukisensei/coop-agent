@@ -133,6 +133,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Manual `/compact` and automatic compaction no longer time out over a WebSocket
+  when Pi's Transport setting is `sse` (#236). Pi 0.87.1 builds its compaction
+  request without the session's transport, so the OpenAI Codex provider fell back
+  to `auto` and opened a WebSocket for the summary even after `/settings` was set
+  to `sse`, failing with `WebSocket idle timeout after 300000ms` on a large
+  context. `extensions/coop-tools` now answers `session_before_compact` with a
+  summary it generates through Pi's own `compact()` over the configured SSE
+  transport (same model, thinking level, credentials, idle timeout and retry
+  policy; manual, threshold and overflow compaction alike). With any other
+  transport, a model whose provider ignores `transport`, or a Pi without the
+  seam, Pi's own compaction runs unchanged; a provider failure during the SSE
+  summary surfaces as one `session_compact_failed` with the history intact.
+
 - `coop sync` no longer re-injects `fabric-cicd` and `pyodbc` into the Fabric
   CLI environment on every run (#186). A library already at its manifest pin is
   left alone, so a converged sync makes no `pipx inject` call and needs no
@@ -229,6 +242,88 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   states a concrete reason, and say which in the summary.
 
 ### Added
+
+- `sql_targets:` in the project contract (master plan section 8 item 1, row SQ1):
+  one entry per environment (`dev`, `test`, `prod`) with a `kind`
+  (`fabric_warehouse`, `fabric_lakehouse`, `fabric_sql_database`, `azure_sql`,
+  `synapse_serverless`), a `server` + `database` for the kinds coop connects to
+  by host, or the Fabric ids for the kinds whose host coop discovers, and a
+  `default_environment` that is dev or test, never prod. `lib/sql_targets.py`
+  reads and validates it (host pattern per kind, production never default,
+  placeholders tolerated, credential keys rejected); `coop doctor` shows one
+  Project-contract row per entry; `/setup-project` proposes the dev entry's kind
+  from the machine's client platform and writes it; `.coop/project.example.yml`
+  carries the shape.
+
+- The guardrails' live-read scope follows `sql_targets:` (master plan section 8
+  item 1, row SQ3). With that section in the contract, a `fabric_sql_query` call
+  resolves its bounded session scope from the trusted contract snapshot: the ready
+  dev or test default entry, the contract's client and the launch identity (its
+  tenant must match `fabric.tenant_id` when set). The approval prompt now names
+  that entry (`azure_sql/<host>/<database>`, or the Warehouse ids) instead of the
+  managed Warehouse; a Warehouse named by ids shares the managed MCP grant. A prod
+  default, a placeholder, an invalid entry, a missing client or a tenant mismatch
+  resolve no scope, so every such read asks; mid-session contract edits never
+  change the scope.
+
+- `sql_impact`, read-only live impact tracing (master plan section 8 item 4, row
+  SQ4). For one SQL object on the contract's default dev or test target it runs
+  three fixed, parameterized catalog queries (dependents via
+  `sys.dm_sql_referencing_entities`, references via `sys.sql_expression_dependencies`
+  with a `sys.sql_modules` text check for unresolved ones, columns via
+  `INFORMATION_SCHEMA.COLUMNS`) and reports each section as `ok` or `unavailable`
+  with a reason, so an empty list never means "could not look". It shares
+  `fabric_sql_query`'s connection path (`lib/sql_query.py` `open_connection`), runs
+  without a prompt on a resolved dev/test target, asks on production or unresolved
+  targets, and rejects any field beyond `object`. The `impact-analysis` prompt and
+  the `coop-workflow` skill call it before any live SQL edit, then `data_doc` lineage
+  for the same object. The fixed-context budget gate moves from 7000 to 7200
+  estimated tokens for the new tool's compact metadata (`scripts/check-context-budget.*`).
+
+- Verify with data (master plan section 8 item 5, row SQ5). The `coop-workflow`
+  skill's live-data section and the `/slice-next` prompt now make a SQL slice's
+  checks concrete: `sql_impact` for the dependents, a row count and a bounded sample
+  through `fabric_sql_query` on the default dev target before the edit, the same
+  queries after it, and the difference as the passing check; writes go only to dev,
+  test asks first, production is never a verify target.
+
+- Microsoft skill mapping for SQL targets (master plan section 8 item 6, row SQ6).
+  `sqldw-cli` (Fabric Warehouse and Lakehouse SQL) and `sqldb-cli` (Fabric SQL
+  database) are already in the pinned v0.3.18 baseline; the tool contract and the
+  extending guide now say so and state that neither covers Azure SQL Database or
+  Synapse serverless, where the resolved SQL standards (in context) and the
+  `coop-workflow` guidance are the authority. The
+  stale "`sqldw-operations-cli` deferred" wording is gone (that name no longer
+  exists upstream; its guidance lives in `sqldw-cli`).
+
+- The SQL executor reads `sql_targets:` (master plan section 8 item 1, row SQ2).
+  `lib/fabric_sql_query.py` is now `lib/sql_query.py` (the in-agent tool keeps its
+  `fabric_sql_query` name and contract). With a contract `sql_targets:` section it
+  connects to the ready default entry: Azure SQL, Fabric SQL database and Synapse
+  serverless by the contract's host (Azure SQL with a 60 s connect timeout for
+  serverless auto-resume, and `ApplicationIntent=ReadOnly` when the entry sets
+  `read_scale_replicas: true`), Fabric Warehouse and Lakehouse by REST discovery
+  from the contract's ids. A production entry is never selected; an unconfigured or
+  invalid default returns `target_invalid` before any token is minted; results
+  carry a `target` summary without the host. Without `sql_targets:` the managed
+  Fabric target path is unchanged. On an install with no managed Warehouse MCP
+  server the launch token helper mints the SQL audience for the contract's tenant
+  when the default entry is a direct kind, so the executor has an identity to pin to.
+
+- Install-time client platform choice (master plan section 8 item 7, row SQ7;
+  Aaron, 2026-09-30). `coop install --platform fabric|azure_sql|both` (or the
+  first onboarding, which now asks once) saves the answer as `client.platform` in
+  `~/.coop/config`; `coop onboard --platform <value>` changes it and
+  `coop doctor --fix` asks once on a machine that predates the setting. The value
+  is a machine default only: on an `azure_sql` machine onboarding defaults the
+  Fabric and Warehouse SQL endpoint MCP servers off, the Fabric skill baseline
+  stays off unless a contract sets `fabric_skills: policy: baseline` (a `fabric:`
+  section alone no longer implies it there), `coop doctor` reports a missing `fab`
+  as optional instead of red, and the launch sign-in check mints the SQL audience
+  (`https://database.windows.net/`) instead of the Fabric and Power BI ones.
+  `/setup-project` mentions the machine's platform on its Fabric question. The
+  project contract still wins per repository; guardrails, approvals and the SQL
+  executor never read the install choice.
 
 - Sessions name themselves (master plan N1, row 9b). `@xl0/pi-lovely-rename`
   **0.1.5** joins the pinned extension set: after three user turns an unnamed

@@ -79,6 +79,10 @@ const DATADOC_PARAMS = Type.Object({
   ),
 });
 
+const SQL_IMPACT_PARAMS = Type.Object({
+  object: Type.String({ description: "One SQL object: `schema.name` or `name` (dbo assumed); brackets allowed. Bound as a parameter, never spliced into SQL." }),
+});
+
 const FABRIC_SQL_QUERY_PARAMS = Type.Object({
   query: Type.String({ description: "One plain SELECT with a literal TOP bound. Sent to the helper over stdin, never argv." }),
   maximum_rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000, description: "Optional result cap at or below the query's TOP bound." })),
@@ -100,11 +104,14 @@ export function fabricSqlPythonResolverInvocation(
   };
 }
 
+export type SqlHelper = "sql_query.py" | "sql_impact.py";
+
 export function fabricSqlHelperInvocation(
   python: string,
   root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
+  helper: SqlHelper = "sql_query.py",
 ): FabricSqlInvocation {
-  return { bin: python, args: [join(root, "lib", "fabric_sql_query.py")] };
+  return { bin: python, args: [join(root, "lib", helper)] };
 }
 
 async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<{ python?: string; state?: string }> {
@@ -159,12 +166,12 @@ async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<
   });
 }
 
-async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, cwd: string): Promise<any> {
+async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, cwd: string, helper: SqlHelper = "sql_query.py"): Promise<any> {
   if (signal?.aborted) return { ok: false, state: "aborted" };
   const selected = await resolveFabricSqlPython(signal);
   if (!selected.python) return { ok: false, state: selected.state || "selected_python_unavailable" };
   if (signal?.aborted) return { ok: false, state: "aborted" };
-  const invocation = fabricSqlHelperInvocation(selected.python);
+  const invocation = fabricSqlHelperInvocation(selected.python, undefined, helper);
   return await new Promise((done) => {
     const child = spawn(invocation.bin, invocation.args, { cwd, stdio: ["pipe", "pipe", "ignore"], shell: false });
     let stdout = "", finished = false, stopState = "";
@@ -312,6 +319,18 @@ function resolveRel(cwd: string, p: string): string {
 /** Markdown output dir holds built docs (mirrors what `coop-data-doc build` writes). */
 function isBuilt(outAbs: string): boolean {
   return existsSync(join(outAbs, "manifest.json")) || existsSync(join(outAbs, "index.md"));
+}
+
+/** Built lineage docs exist for this folder (same detection as the session-start note). */
+function hasBuiltDocs(cwd: string): boolean {
+  try {
+    const ymlPath = join(cwd, DATADOC_CONFIG);
+    if (!existsSync(ymlPath)) return false;
+    const cfg = parseExisting(safeRead(ymlPath));
+    return isBuilt(resolveRel(cwd, cfg.outputDir || DEFAULT_OUTPUT_DIR));
+  } catch {
+    return false;
+  }
 }
 
 /** Read just the scalar value off a `key: value` line, quote- and comment-aware.
@@ -1118,6 +1137,27 @@ export interface ProjectWizardSettings {
   tabularEditorEnabled: boolean;
   tabularEditorPath: string;
   bpaRulesPath: string;
+  /** sql_targets.dev (master plan SQ1): blank kind = no sql_targets block. */
+  sqlTargetKind: string;
+  sqlTargetServer: string;
+  sqlTargetDatabase: string;
+}
+
+/** The sql_targets kinds lib/sql_targets.py accepts (the Python module is the authority). */
+export const SQL_TARGET_KINDS = ["fabric_warehouse", "fabric_lakehouse", "fabric_sql_database", "azure_sql", "synapse_serverless"] as const;
+/** Kinds whose host coop discovers from Fabric ids; the others name a server. */
+export const SQL_TARGET_DISCOVERED_KINDS = new Set<string>(["fabric_warehouse", "fabric_lakehouse"]);
+
+/**
+ * The dev sql_targets kind to propose for a new contract: the machine's client
+ * platform (SQ7) seeds it, the Fabric answer refines it, and the person can
+ * still type any kind or blank it (section 8 item 7).
+ */
+export function proposedSqlTargetKind(platform: ReturnType<typeof clientPlatform>, fabricEnabled: boolean): string {
+  if (platform === "azure_sql") return "azure_sql";
+  if (platform === "both") return fabricEnabled ? "fabric_warehouse" : "azure_sql";
+  if (platform === "fabric") return fabricEnabled ? "fabric_warehouse" : "";
+  return fabricEnabled ? "fabric_warehouse" : "";
 }
 
 export type EstateMode = "discovery" | "partial" | "connected";
@@ -1426,7 +1466,49 @@ export function parseProjectWizardSettings(text: string, projectRoot: string): P
     tabularEditorEnabled: boolValue(teFlag, false),
     tabularEditorPath: projectYamlScalar(text, ["tools", "tabular_editor_cli", "executable_path"]) || "te",
     bpaRulesPath: projectYamlScalar(text, ["tools", "tabular_editor_cli", "bpa_rules_path"]),
+    sqlTargetKind: projectYamlScalar(text, ["sql_targets", "dev", "kind"]),
+    sqlTargetServer: projectYamlScalar(text, ["sql_targets", "dev", "server"]),
+    sqlTargetDatabase: projectYamlScalar(text, ["sql_targets", "dev", "database"]),
   };
+}
+
+/** The sql_targets lines for a contract (dev entry from the wizard; test/prod left to fill in). */
+export function sqlTargetsBlock(settings: ProjectWizardSettings): string[] {
+  const kind = settings.sqlTargetKind;
+  if (!kind) return [];
+  const discovered = SQL_TARGET_DISCOVERED_KINDS.has(kind);
+  const lines = [
+    "",
+    "# SQL connection targets (one per environment). coop works on default_environment",
+    "# (dev or test, never prod) unless a session is explicitly scoped and approved.",
+    "# Entra ID tokens only: never a user, password or connection string here.",
+    "sql_targets:",
+    "  default_environment: dev",
+    "  dev:",
+    `    kind: ${yamlQuoted(kind)}`,
+  ];
+  if (discovered) {
+    lines.push(
+      "    # coop discovers the host from these Fabric ids through the Fabric REST API.",
+      `    workspace_id: ${yamlQuoted(canonicalProjectUuid(settings.fabricWorkspaceId))}`,
+      `    item_id: ${yamlQuoted(canonicalProjectUuid(settings.sqlEndpointItemId))}`,
+    );
+    if (kind === "fabric_lakehouse") lines.push(`    sql_endpoint_id: ${yamlQuoted(canonicalProjectUuid(settings.sqlEndpointPropertiesId))}`);
+  } else {
+    lines.push(`    server: ${yamlQuoted(settings.sqlTargetServer)}`);
+  }
+  lines.push(
+    `    database: ${yamlQuoted(settings.sqlTargetDatabase)}`,
+    "  test:",
+    `    kind: ${yamlQuoted(kind)}`,
+    ...(discovered ? ["    workspace_id: ''", "    item_id: ''"] : ["    server: ''"]),
+    "    database: ''",
+    "  prod:",
+    `    kind: ${yamlQuoted(kind)}`,
+    ...(discovered ? ["    workspace_id: ''", "    item_id: ''"] : ["    server: ''"]),
+    "    database: ''",
+  );
+  return lines;
 }
 
 function safeRepositoryBlock(repo: ProjectRepositorySettings): string[] {
@@ -1516,6 +1598,20 @@ export function applyProjectWizardSettings(text: string, settings: ProjectWizard
     set(["tools", "tabular_editor_cli", "executable_path"], settings.tabularEditorPath);
     set(["tools", "tabular_editor_cli", "bpa_rules_path"], settings.bpaRulesPath);
   }
+  if (settings.sqlTargetKind) {
+    // Only the dev entry is wizard-owned; test/prod entries and an existing
+    // default_environment stay as the person wrote them.
+    if (!projectYamlScalar(out, ["sql_targets", "default_environment"])) set(["sql_targets", "default_environment"], "dev");
+    set(["sql_targets", "dev", "kind"], settings.sqlTargetKind);
+    if (SQL_TARGET_DISCOVERED_KINDS.has(settings.sqlTargetKind)) {
+      set(["sql_targets", "dev", "workspace_id"], canonicalProjectUuid(settings.fabricWorkspaceId));
+      set(["sql_targets", "dev", "item_id"], canonicalProjectUuid(settings.sqlEndpointItemId));
+      if (settings.sqlTargetKind === "fabric_lakehouse") set(["sql_targets", "dev", "sql_endpoint_id"], canonicalProjectUuid(settings.sqlEndpointPropertiesId));
+    } else {
+      set(["sql_targets", "dev", "server"], settings.sqlTargetServer);
+    }
+    set(["sql_targets", "dev", "database"], settings.sqlTargetDatabase);
+  }
   return out.endsWith("\n") ? out : `${out}\n`;
 }
 
@@ -1578,6 +1674,7 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "  semantic_models: []",
     "  reports: []",
   );
+  lines.push(...sqlTargetsBlock(settings));
   lines.push(
     "",
     "tools:",
@@ -1828,7 +1925,15 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   }
   settings.repositories = editedRepos;
 
-  settings.fabricEnabled = await askConfirm(ctx, "Microsoft Fabric / Power BI", "Does this project use Microsoft Fabric or Power BI?");
+  // The install-time client platform only shapes the question; the answer (and
+  // the contract it writes) decides per repository.
+  const platform = clientPlatform();
+  const platformHint = platform === "azure_sql"
+    ? " This machine is set up as an Azure SQL client, so No is the usual answer."
+    : platform === "both" || platform === "fabric"
+      ? ` This machine is set up as a ${platform === "both" ? "Fabric and Azure SQL" : "Fabric"} client.`
+      : "";
+  settings.fabricEnabled = await askConfirm(ctx, "Microsoft Fabric / Power BI", `Does this project use Microsoft Fabric or Power BI?${platformHint}`);
   if (settings.fabricEnabled) {
     const tenant = await askText(ctx, "Azure tenant ID (optional)", settings.tenantId);
     if (tenant === null) return false;
@@ -1872,6 +1977,32 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
       powerBiWorkspaceName: pbiName,
       powerBiWorkspaceId: pbiId,
     });
+  }
+
+  // SQL connection target for the dev environment (sql_targets:, SQ1). Enter keeps
+  // the proposal; blank means no sql_targets block (today's fabric:-only contract).
+  const kindDefault = settings.sqlTargetKind || proposedSqlTargetKind(platform, settings.fabricEnabled);
+  const kind = await askText(ctx, `Dev SQL target kind (${SQL_TARGET_KINDS.join(", ")}; blank = none)`, kindDefault);
+  if (kind === null) return false;
+  const kindValue = kind.trim().toLowerCase();
+  if (kindValue && !(SQL_TARGET_KINDS as readonly string[]).includes(kindValue)) {
+    notify(ctx, `SQL target kind must be one of ${SQL_TARGET_KINDS.join(", ")}, or blank.`, "error");
+    return false;
+  }
+  settings.sqlTargetKind = kindValue;
+  if (kindValue) {
+    if (!SQL_TARGET_DISCOVERED_KINDS.has(kindValue)) {
+      const server = await askText(ctx, "Dev SQL server host (for example contoso-dev.database.windows.net)", settings.sqlTargetServer);
+      if (server === null) return false;
+      if (/[\s,:;=\/\\]/.test(server)) {
+        notify(ctx, "The server is a host name only: no port, path or connection-string parts.", "error");
+        return false;
+      }
+      settings.sqlTargetServer = server.toLowerCase();
+    }
+    const database = await askText(ctx, "Dev database name", settings.sqlTargetDatabase || settings.sqlEndpointItemName || "");
+    if (database === null) return false;
+    settings.sqlTargetDatabase = database;
   }
 
   settings.tabularEditorEnabled = await askConfirm(ctx, "Tabular Editor", "Use the Tabular Editor CLI for semantic-model BPA reviews?");
@@ -2003,6 +2134,24 @@ async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
  * Return the team-knowledge note string if at least one configured knowledge repo clone exists,
  * or null otherwise.
  */
+/**
+ * The machine's client platform from ~/.coop/config (client.platform, written by
+ * `coop install --platform` / `coop onboard`; master plan section 8 item 7):
+ * "fabric", "azure_sql" or "both". "" when unset or unreadable (treated as Fabric).
+ * The project contract still wins per repository; this only seeds wizard defaults.
+ */
+export function clientPlatform(coopDir?: string): "fabric" | "azure_sql" | "both" | "" {
+  const base = coopDir || process.env.COOP_DIR || homedir();
+  const cfgPath = join(base, ".coop", "config");
+  try {
+    const raw = JSON.parse(readFileSync(cfgPath, "utf8"));
+    const value = raw?.client?.platform;
+    return value === "fabric" || value === "azure_sql" || value === "both" ? value : "";
+  } catch {
+    return "";
+  }
+}
+
 export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | null {
   // coopDir is the PARENT of .coop (the COOP_DIR meaning); the default is the
   // profile dir from lib/paths.mjs.
@@ -2154,14 +2303,176 @@ async function showStartMenu(pi: ExtensionAPI, ctx: any): Promise<void> {
   if (item) await item.run(pi, ctx);
 }
 
+// ---------------------------------------------------------------------------
+// Compaction over the chosen transport (issue #236)
+//
+// Pi 0.87.1 (and still 1.0.0) builds its compaction request without the session's
+// `transport` setting: `AgentSession._runDefaultCompaction()` calls `compact()` with
+// no transport, so the OpenAI Codex provider falls back to "auto" and opens a
+// WebSocket for the summary request even when `/settings` says `sse`. On a large
+// context that request can sit silent until `WebSocket idle timeout after 300000ms`,
+// for manual `/compact` and threshold/overflow compaction alike.
+//
+// Bounded workaround until upstream forwards the transport: when the effective Pi
+// settings say `transport: "sse"` and the model is one whose provider reads
+// `transport` (Codex), coop answers `session_before_compact` with a compaction it
+// generated through Pi's own exported `compact()`, passing a stream function that
+// forwards `transport` and the idle timeout. Every other transport, model, or
+// error on the way in returns `undefined`, so Pi's default path is untouched. A
+// provider failure DURING the SSE summary propagates: Pi reports
+// `session_compact_failed` (fromExtension) and keeps the session history intact.
+
+/** Pi `settings.json` keys this hook reads (global agent dir only; `transport` is global-only). */
+export interface PiTransportSettings {
+  transport: "auto" | "sse" | "websocket" | "websocket-cached";
+  /** HTTP/WebSocket idle timeout Pi would apply (`retry.provider.timeoutMs`, else `httpIdleTimeoutMs`, else 300000). */
+  timeoutMs: number;
+  retry: { enabled: boolean; maxRetries: number; baseDelayMs: number; maxAgentDelayMs: number };
+}
+
+const PI_DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300000;
+const PI_DEFAULT_MAX_AGENT_RETRY_DELAY_MS = 60000;
+/** Provider APIs whose stream options honour `transport` (Pi 0.87.1: only Codex). */
+export const TRANSPORT_AWARE_APIS = new Set(["openai-codex-responses"]);
+
+function timeoutSetting(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
+  return value === 0 ? 2147483647 : Math.floor(value);
+}
+
+/** Read the transport-related keys of `<agentDir>/settings.json` the way Pi resolves them. */
+export function readPiTransportSettings(dir: string = coopAgentDir()): PiTransportSettings {
+  let raw: any = {};
+  try {
+    raw = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"));
+  } catch {
+    raw = {};
+  }
+  if (!raw || typeof raw !== "object") raw = {};
+  let transport: PiTransportSettings["transport"] = "auto";
+  if (raw.transport === "sse" || raw.transport === "websocket" || raw.transport === "websocket-cached") transport = raw.transport;
+  else if (!("transport" in raw) && typeof raw.websockets === "boolean") transport = raw.websockets ? "websocket" : "sse";
+  const retry = raw.retry && typeof raw.retry === "object" ? raw.retry : {};
+  const provider = retry.provider && typeof retry.provider === "object" ? retry.provider : {};
+  const timeoutMs =
+    timeoutSetting(provider.timeoutMs) ?? timeoutSetting(raw.httpIdleTimeoutMs) ?? PI_DEFAULT_HTTP_IDLE_TIMEOUT_MS;
+  return {
+    transport,
+    timeoutMs,
+    retry: {
+      enabled: typeof retry.enabled === "boolean" ? retry.enabled : true,
+      maxRetries: typeof retry.maxRetries === "number" ? retry.maxRetries : 3,
+      baseDelayMs: typeof retry.baseDelayMs === "number" ? retry.baseDelayMs : 2000,
+      maxAgentDelayMs: typeof retry.maxAgentDelayMs === "number" ? retry.maxAgentDelayMs : PI_DEFAULT_MAX_AGENT_RETRY_DELAY_MS,
+    },
+  };
+}
+
+/** Seams for tests; production loads Pi's own `compact()` and pi-ai's `streamSimple()` lazily. */
+export interface CompactionTransportDeps {
+  readSettings: () => PiTransportSettings;
+  loadCompact: () => Promise<(...args: any[]) => Promise<any>>;
+  loadStreamSimple: () => Promise<(model: any, context: any, options?: any) => any>;
+  /** Session thinking level when the event context carries none (`pi.getThinkingLevel`). */
+  getThinkingLevel?: () => unknown;
+}
+
+const defaultCompactionTransportDeps: CompactionTransportDeps = {
+  readSettings: () => readPiTransportSettings(),
+  loadCompact: async () => (await import("@earendil-works/pi-coding-agent")).compact,
+  loadStreamSimple: async () => (await import("@earendil-works/pi-ai")).streamSimple,
+};
+
+/**
+ * `session_before_compact` handler. Returns `{ compaction }` only when coop ran the
+ * summary itself over the configured SSE transport; `undefined` leaves Pi's default.
+ */
+export function createCompactionTransportHandler(deps: CompactionTransportDeps = defaultCompactionTransportDeps) {
+  return async (event: any, ctx: any): Promise<{ compaction: any } | undefined> => {
+    let settings: PiTransportSettings;
+    let compact: (...args: any[]) => Promise<any>;
+    let streamSimple: (model: any, context: any, options?: any) => any;
+    let auth: any;
+    const model = ctx?.model;
+    try {
+      settings = deps.readSettings();
+      if (settings.transport !== "sse") return undefined;
+      if (!model || !TRANSPORT_AWARE_APIS.has(String(model.api))) return undefined;
+      if (!event?.preparation) return undefined;
+      compact = await deps.loadCompact();
+      streamSimple = await deps.loadStreamSimple();
+      auth = await ctx.modelRegistry?.getApiKeyAndHeaders?.(model);
+    } catch {
+      return undefined; // seam unavailable on this Pi: keep Pi's own compaction
+    }
+    if (!auth || auth.ok === false) return undefined;
+    const headers: Record<string, string> | undefined = auth.headers
+      ? Object.fromEntries(Object.entries(auth.headers).filter(([, v]) => typeof v === "string") as [string, string][])
+      : undefined;
+    const requestModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
+    let thinkingLevel = ctx.thinkingLevel;
+    if (thinkingLevel === undefined && deps.getThinkingLevel) {
+      try { thinkingLevel = deps.getThinkingLevel(); } catch { thinkingLevel = undefined; }
+    }
+    const streamFn = (m: any, context: any, options: any = {}) =>
+      streamSimple(m, context, {
+        ...options,
+        transport: settings.transport,
+        timeoutMs: options.timeoutMs ?? settings.timeoutMs,
+        maxRetries: options.maxRetries ?? settings.retry.maxRetries,
+        maxRetryDelayMs: options.maxRetryDelayMs ?? settings.retry.maxAgentDelayMs,
+      });
+    const compaction = await compact(
+      event.preparation,
+      requestModel,
+      auth.apiKey,
+      headers,
+      event.customInstructions,
+      event.signal,
+      thinkingLevel,
+      streamFn,
+      auth.env,
+      settings.retry,
+      undefined, // retry callbacks: Pi's spinner is not reachable from here
+      undefined, // sessionId: a fresh routing id, as Pi's own compaction uses
+    );
+    return { compaction };
+  };
+}
+
 export default function coopTools(pi: ExtensionAPI) {
+  pi.registerTool({
+    name: "sql_impact",
+    label: "SQL impact (live catalog trace)",
+    description: "Read-only live impact trace of ONE SQL object on the contract's default dev/test sql_targets entry: three fixed, parameterized catalog queries (never free text) for downstream dependents, upstream references and columns. A section marked unavailable means the target could not be asked; an empty list means 'no dependents', never 'could not look'. Accepts only `object`.",
+    promptSnippet: "Live catalog trace of one SQL object's dependents, references and columns",
+    promptGuidelines: [
+      "Before planning or editing a live SQL object, call sql_impact with its name, then data_doc lineage for the same object when built docs exist, and report drift between them. Metadata only: use fabric_sql_query for rows.",
+    ],
+    parameters: SQL_IMPACT_PARAMS,
+    executionMode: "sequential",
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const details = await runFabricSqlHelper(params, signal, ctx.cwd, "sql_impact.py");
+      const docsHint = hasBuiltDocs(ctx.cwd) ? " Built lineage docs exist here: call data_doc (command=\"lineage\") for the same object to cover the rest of the estate." : "";
+      const section = (name: string) => {
+        const part = details?.[name];
+        if (!part || typeof part !== "object") return `${name}: ?`;
+        return part.state === "ok" ? `${name}: ${part.count}${part.truncated ? "+" : ""}` : `${name}: unavailable`;
+      };
+      const text = details?.ok
+        ? `sql_impact: ${details.object?.schema}.${details.object?.name} (${details.object?.type}) on ${details.target?.kind} ${details.target?.environment}: ${["downstream", "upstream", "columns"].map(section).join(", ")}. Structured items are in details.${docsHint}`
+        : `sql_impact unavailable: ${String(details?.state || "internal_error")}.`;
+      return { content: [{ type: "text" as const, text }], details };
+    },
+  });
+
   pi.registerTool({
     name: "fabric_sql_query",
     label: "Fabric SQL Query (pyodbc fallback)",
-    description: "Separate governed pyodbc fallback for one bounded read against the canonical Fabric SQL target. First attempt the managed fabric-sqlendpoint MCP tool. Call fabric_sql_query only after that actual attempt fails because the MCP server/tool is unavailable or missing, or because of authentication, timeout, connection, or transport failure. Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
+    description: "Governed pyodbc read of one bounded SELECT against the contract's default sql_targets entry (Azure SQL, Fabric SQL database, Synapse serverless, Fabric Warehouse/Lakehouse), or the canonical Fabric SQL target without sql_targets. When a managed fabric-sqlendpoint MCP tool exists, attempt it first and call fabric_sql_query only after that actual attempt fails (unavailable/missing, authentication, timeout, connection, transport). Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
     promptSnippet: "Post-MCP-failure pyodbc fallback for one approval-gated bounded Fabric SELECT TOP read",
     promptGuidelines: [
-      "First attempt managed fabric-sqlendpoint MCP. Only after an actual unavailable/authentication/timeout/connection/transport/tool-missing failure may you issue a separate fabric_sql_query call; never fallback before MCP or for SQL/business/query rejection, and never cascade automatically.",
+      "With a managed fabric-sqlendpoint MCP server, attempt it first; only after an actual unavailable/authentication/timeout/connection/transport/tool-missing failure may you call fabric_sql_query; never fallback before MCP or for SQL/business/query rejection, and never cascade automatically. Direct sql_targets kinds (Azure SQL, Fabric SQL database, Synapse) have no MCP server: fabric_sql_query is the live read route.",
       "Use only one plain SELECT with a literal TOP bound; mutations, batches, cross-database names, and unbounded reads are rejected before authentication or connection.",
     ],
     parameters: FABRIC_SQL_QUERY_PARAMS,
@@ -2361,6 +2672,12 @@ export default function coopTools(pi: ExtensionAPI) {
 
   // Normal sessions start at the prompt. The only automatic handoff is the model
   // provider login required when a fresh install has no credentials yet.
+  // #236: honour `transport: "sse"` for manual and automatic compaction.
+  pi.on(
+    "session_before_compact",
+    createCompactionTransportHandler({ ...defaultCompactionTransportDeps, getThinkingLevel: () => pi.getThinkingLevel() }),
+  );
+
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
     // Learning-nudge lifecycle is per SESSION: reset the failure tally, the
     // dedupe set, and the once-only flags so a fresh session can be nudged

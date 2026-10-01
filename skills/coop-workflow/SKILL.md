@@ -54,7 +54,10 @@ partial, or connected project without requiring the user to edit YAML.
    impact. Run `git status` and `git pull` for the relevant repo.
 3. **Read the target + lineage.** Read the available file(s) and related documentation
    and lineage — call the `data_doc` tool (`coop-data-doc`) instead of guessing at
-   relationships. If local source is missing or partial, use read-only dev/test live
+   relationships. Before planning or editing a live SQL object (view, table, procedure,
+   function), call `sql_impact` with its name for the live dependents, references and
+   columns on the contract's default dev/test target, then `data_doc` lineage for the
+   same object when built docs exist; report drift between the two. If local source is missing or partial, use read-only dev/test live
    metadata/schema/code to fill gaps. Mark each fact's provenance (repo or live
    environment) and report drift. Use **Microsoft Learn** for current Microsoft docs.
 4. **Plan the first slice + get approval.** For multi-step work, write a short PLAN
@@ -163,6 +166,26 @@ read-only by default; actual row reads ask first. Any production read asks first
 a production row request must state the target, columns, filters, and small limit. If `require_approval` is true (the default), ask
 before running the command unless the user already approved that specific validation
 or an explicitly named Dev/test validation pattern as part of the current slice.
+
+### Verify with data (SQL slices)
+
+For a slice that changes a SQL object, make the failing and passing checks concrete
+with live data on the contract's default `sql_targets` entry (dev; never prod):
+
+1. **Before the edit**, call `sql_impact` for the object to list its dependents and
+   columns, then capture a baseline for the object and each dependent with
+   `fabric_sql_query`: a row count (`SELECT TOP (1) COUNT(*) AS row_count FROM
+   <object>`) and a bounded sample (`SELECT TOP (20) <key columns> FROM <object>
+   ORDER BY <key>`). State the exact data condition the edit must change.
+2. **Apply the edit on dev** after the slice is approved; writes go only to the
+   default dev target.
+3. **After the edit**, re-run exactly the same queries and show the difference
+   (counts before and after, rows that changed) as the passing check. A difference
+   you did not predict is a stop-and-ask trigger, not a footnote.
+
+Test targets ask first; production is explicit-approval only and never a verify
+target. Row reads reuse the session's bounded live-read grant; the baseline and
+the re-run must stay within the same approved scope.
 
 ## Other working habits
 

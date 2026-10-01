@@ -251,6 +251,43 @@ There is deliberately no data-doc `session_start` hook: missing or unbuilt docs
 stay silent, and users opt into setup later with `/setup-docs`, `/start`, or
 `coop data-doc setup`.
 
+### `sql_impact` (live impact tracing)
+
+Read-only live impact tracing for one SQL object (master plan section 8 item 4,
+row SQ4), implemented by `lib/sql_impact.py` over the same connection path as
+`fabric_sql_query` (`open_connection` in `lib/sql_query.py`: the contract's ready
+dev or test `sql_targets` default, or the managed Fabric target when the contract
+has no `sql_targets`; same identity pinning, driver, encryption and timeouts). The
+tool accepts exactly one field, `object` (`schema.name` or `name`, `dbo` assumed,
+brackets allowed, identifier characters only), and runs three fixed, parameterized
+catalog queries with the name bound through `OBJECT_ID(?)`, never spliced in:
+
+| Section | Query | Notes |
+| --- | --- | --- |
+| `downstream` | `sys.dm_sql_referencing_entities(?, 'OBJECT')` joined to `sys.objects` | who references the object, resolved at call time |
+| `upstream` | `sys.sql_expression_dependencies` for the object's referenced entities, joined to `sys.objects` | each item carries `resolved`; an unresolved or ambiguous one (dropped, cross-database) adds `mentioned_in_definition` from a `sys.sql_modules` `LIKE` check |
+| `columns` | `INFORMATION_SCHEMA.COLUMNS` | name, type, nullability, position, so a before/after comparison knows what to count |
+
+Each section is `{"state": "ok", "items": [...], "count", "truncated"}` or
+`{"state": "unavailable", "reason": ...}` when that catalog view is missing on the
+target (Synapse serverless never exposes `sys.dm_sql_referencing_entities`, so its
+`downstream` section says so without asking the server), so an empty list always
+means "no dependents" and never "could not look". Dependencies are capped at 500
+per section and columns at 1000. The result also carries the executor's `target`
+summary and the resolved `object` (schema, name, type); `object_not_found`,
+`object_invalid` and `input_invalid` are the tool's own states, every other state is
+the executor's. Driver error text, hosts and tokens never appear.
+
+Governance (`extensions/coop-guardrails`): `sql_impact` is a metadata read, so it
+runs without a prompt when the trusted contract snapshot resolves a dev or test
+target (the ready `sql_targets` default, or the managed Fabric entry's environment
+without `sql_targets`); a production or unresolved target asks once per call (and
+is blocked headlessly); a call carrying any field beyond `object` is blocked. The
+audit records a fixed label and the environment, never the object name. The tool's
+text output adds a `data_doc` lineage hint when built docs exist in the folder, and
+the `impact-analysis` prompt and the `coop-workflow` skill call `sql_impact` before
+any live SQL edit.
+
 ---
 
 ## Microsoft Fabric CLI (`fab`) and the Python Fabric collision
@@ -326,6 +363,52 @@ Per `.coop/project.yml` and `docs/guardrails.md`:
 `coop` **never** calls create/update/delete/deploy/publish MCP actions without
 explicit approval — regardless of what the server is capable of.
 
+### SQL connection targets (`sql_targets:` in the project contract)
+
+`.coop/project.yml` can name every SQL environment an engagement reaches and which
+one coop works on (master plan section 8 item 1, row SQ1). `lib/sql_targets.py`
+is the one reader (`doctor-lines`, `show`, `default`; `--project <yml>` or the
+nearest contract), dependency-free like the rest of `lib/`:
+
+```yaml
+sql_targets:
+  default_environment: dev      # dev or test; never prod
+  dev:
+    kind: azure_sql             # fabric_warehouse | fabric_lakehouse | fabric_sql_database | azure_sql | synapse_serverless
+    server: contoso-dev.database.windows.net
+    database: ContosoDW
+  test:
+    kind: fabric_warehouse
+    workspace_id: <guid>        # Fabric kinds carry ids; coop discovers the host
+    item_id: <guid>             # (fabric_lakehouse also needs sql_endpoint_id)
+    database: SalesWarehouse    # the Warehouse / Lakehouse item name
+  prod:
+    kind: azure_sql
+    server: contoso.database.windows.net
+    database: ContosoDW
+```
+
+| `kind` | Host the entry must name (or discovery must return) | Connect timeout |
+| --- | --- | --- |
+| `fabric_warehouse`, `fabric_lakehouse` | `*.datawarehouse.fabric.microsoft.com` (discovered from `workspace_id` / `item_id`; a hand-written `server` is rejected) | 15 s |
+| `fabric_sql_database` | `*.database.fabric.microsoft.com` | 15 s |
+| `azure_sql` | `*.database.windows.net` (serverless compute auto-pauses, so the first connection after idle can take up to a minute) | 60 s |
+| `synapse_serverless` | `*-ondemand.sql.azuresynapse.net` (views and external objects only) | 15 s |
+
+Rules the reader enforces: the host pattern must match the kind, so a production
+host cannot hide behind a dev kind and a Fabric host cannot pass as Azure SQL;
+`prod` may be present but is never the default; an entry with blank values is
+"unconfigured" (a doctor warning, not an error) so a wizard can leave
+placeholders; credential keys (`user`, `password`, `connection_string`, ...) make
+the entry invalid because coop authenticates with Entra ID tokens only. `coop doctor`
+prints one Project-contract row per entry (the ready default is marked) and one
+warning per rule broken. `/setup-project` proposes the dev entry's kind from the
+machine's client platform (SQ7) and the Fabric answer, writes the dev entry, and
+leaves `test` / `prod` to fill in; editing an existing contract touches only the
+dev entry. The SQL executor and the guardrails' resolved scope read this section
+in the later SQ rows; until then the managed `fabric-sqlendpoint` target below
+still comes from `fabric.default_sql_endpoint`.
+
 ### Managed Warehouse SQL endpoint MCP
 
 `coop sync` generates `fabric-sqlendpoint` as a distinct managed server; it does
@@ -380,11 +463,25 @@ expansion retains the earlier grant; revocation and a new session clear it.
 
 The preferred live SQL route is that managed MCP server. Coop also registers exactly
 one explicit fallback, `fabric_sql_query`, implemented by the new consolidated
-`lib/fabric_sql_query.py` helper (no historical standalone runner was recovered).
+`lib/sql_query.py` helper (renamed from `fabric_sql_query.py`; it also serves Azure SQL, Fabric SQL database and Synapse serverless targets declared in `sql_targets:`).
 The tool accepts only `query` plus optional `maximum_rows`; target, server, identity,
-and credentials come from the canonical project/managed MCP snapshot and selected
-Fabric Python (`coop_fabric_python` / `Get-CoopFabricPython`). It never cascades from
-MCP automatically. It accepts one plain literal-`TOP` `SELECT`, rejects mutations,
+and credentials come from the contract and the selected Fabric Python
+(`coop_fabric_python` / `Get-CoopFabricPython`). When the contract declares
+`sql_targets:` (row SQ2), the executor connects to its ready default entry: a
+direct kind (`azure_sql`, `fabric_sql_database`, `synapse_serverless`) connects to
+the contract's `server` with that kind's connect timeout (60 s for Azure SQL, whose
+serverless tier auto-pauses; 15 s otherwise) and mints only the
+`database.windows.net` token; an `azure_sql` entry with `read_scale_replicas: true`
+adds `ApplicationIntent=ReadOnly`. A discovered kind (`fabric_warehouse`,
+`fabric_lakehouse`) runs the same Fabric REST discovery as the managed target, from
+the contract's ids. A production entry is never selected, and a contract whose
+default entry is unconfigured or invalid returns `target_invalid` before any mint.
+Without `sql_targets:` the executor falls back to the canonical project/managed MCP
+snapshot as before. The `ok` result carries a `target` summary (`environment`,
+`kind`, `database`; never the host). On a machine with no managed Warehouse server
+(an Azure SQL-only install), the launch token helper mints the SQL audience for the
+contract's tenant chain so the executor still has a launch identity to pin to.
+It never cascades from MCP automatically. It accepts one plain literal-`TOP` `SELECT`, rejects mutations,
 batches, cross-database names, and unbounded reads before authentication, and returns
 capped structured JSON. Endpoint discovery uses Fabric's documented item APIs:
 Warehouse `GET /v1/workspaces/{workspaceId}/warehouses/{warehouseId}` reads
@@ -401,7 +498,10 @@ a short subprocess and then starts that Python executable directly, so cancellat
 targets the query process. SQL and tokens are
 never placed in argv, config, disk, logs, or diagnostics. The exact fallback tool may
 reuse the same in-memory session grant as MCP only when its canonical
-client/tenant/principal/environment/target/read/row/60-second scope matches.
+client/tenant/principal/environment/target/read/row/60-second scope matches. With a
+contract `sql_targets:` section the guardrails resolve that scope from the trusted
+contract snapshot (row SQ3; `docs/guardrails-reference.md`), so the approval prompt
+names the entry the executor connects to and never the managed Warehouse.
 
 ### Microsoft skills catalog
 
@@ -414,8 +514,16 @@ Each approved skill has a committed tree SHA-256. Every launch recomputes the
 actual exported tree receipt and full generation content address, and rejects
 pointer, repository, revision, path, receipt, or generation rewrites that do not
 match that committed authority.
-Baseline loads Microsoft KQL, Microsoft Docs, and Fabric SQL DW authoring and
-consumption skills only; `sqldw-operations-cli` is recorded as deferred.
+Baseline loads Microsoft KQL, Microsoft Docs, and every skill in the pinned
+skills-for-fabric catalog (v0.3.18) when a contract turns Fabric skills on,
+including `sqldw-cli` for Fabric Warehouse and Lakehouse SQL (its authoring,
+consumption and operations guidance in one skill; the older
+`sqldw-operations-cli` name no longer exists) and `sqldb-cli` for Fabric SQL
+database (`fabric_sql_database` in `sql_targets:`). Neither covers Azure SQL
+Database or Synapse serverless outside Fabric: for those kinds the resolved SQL
+standards (fed into context at launch) and the `coop-workflow` guidance are the
+authority, and no Microsoft skill is substituted (master plan section 8 item 6,
+row SQ6).
 
 ### Offline data documentation evidence
 

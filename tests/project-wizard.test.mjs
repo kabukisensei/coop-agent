@@ -17,6 +17,8 @@ const {
   runProjectWizard,
   estateMode,
   dataDocPrefillFromProject,
+  proposedSqlTargetKind,
+  sqlTargetsBlock,
 } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 
 let n = 0;
@@ -107,6 +109,9 @@ const settings = {
   tabularEditorEnabled: false,
   tabularEditorPath: "te",
   bpaRulesPath: "",
+  sqlTargetKind: "fabric_warehouse",
+  sqlTargetServer: "",
+  sqlTargetDatabase: "Contoso Warehouse",
 };
 
 await t("new-project renderer produces a parseable, governed contract", () => {
@@ -139,6 +144,100 @@ await t("new-project renderer produces a parseable, governed contract", () => {
   assert.equal(parsed.tenantId, "tenant-123");
   assert.equal(parsed.sqlEndpointItemName, "Contoso Warehouse");
   assert.equal(parsed.sqlEndpointPropertiesId, "33333333-3333-3333-3333-333333333333");
+  // SQ1: a Fabric Warehouse dev target carries the Fabric ids, never a server.
+  assert.equal(projectYamlScalar(text, ["sql_targets", "default_environment"]), "dev");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "kind"]), "fabric_warehouse");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "workspace_id"]), "11111111-1111-1111-1111-111111111111");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "item_id"]), "22222222-2222-2222-2222-222222222222");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "database"]), "Contoso Warehouse");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "server"]), "");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "prod", "kind"]), "fabric_warehouse");
+  assert.equal(parsed.sqlTargetKind, "fabric_warehouse");
+  assert.equal(parsed.sqlTargetDatabase, "Contoso Warehouse");
+  // The Python module is the authority for the contract; the renderer must only
+  // emit what lib/sql_targets.py reads back as a ready default.
+  const probe = trackFixture(mkdtempSync(join(tmpdir(), "coop-sql-targets-")));
+  mkdirSync(join(probe, ".coop"));
+  writeFileSync(join(probe, ".coop", "project.yml"), text);
+  const shown = spawnSync("python3", [join(REPO_ROOT, "lib", "sql_targets.py"), "--project", join(probe, ".coop", "project.yml"), "show"], { encoding: "utf8" });
+  assert.equal(shown.status, 0, shown.stderr);
+  const targets = JSON.parse(shown.stdout);
+  assert.deepEqual(targets.errors, []);
+  assert.equal(targets.targets.dev.state, "ready");
+  assert.equal(targets.targets.prod.state, "unconfigured");
+});
+
+await t("sql_targets: the dev kind follows the machine platform and an Azure SQL entry names a server", () => {
+  assert.equal(proposedSqlTargetKind("azure_sql", true), "azure_sql");
+  assert.equal(proposedSqlTargetKind("azure_sql", false), "azure_sql");
+  assert.equal(proposedSqlTargetKind("both", true), "fabric_warehouse");
+  assert.equal(proposedSqlTargetKind("both", false), "azure_sql");
+  assert.equal(proposedSqlTargetKind("fabric", false), "");
+  assert.equal(proposedSqlTargetKind("", true), "fabric_warehouse");
+  assert.deepEqual(sqlTargetsBlock({ ...settings, sqlTargetKind: "" }), []);
+  const azure = renderProjectWizardSettings({ ...settings, fabricEnabled: false, sqlTargetKind: "azure_sql", sqlTargetServer: "contoso-dev.database.windows.net", sqlTargetDatabase: "ContosoDW" });
+  assert.equal(projectYamlScalar(azure, ["sql_targets", "dev", "kind"]), "azure_sql");
+  assert.equal(projectYamlScalar(azure, ["sql_targets", "dev", "server"]), "contoso-dev.database.windows.net");
+  assert.equal(projectYamlScalar(azure, ["sql_targets", "dev", "workspace_id"]), "");
+  assert.doesNotMatch(azure, /^fabric:/m);
+  assert.equal(projectYamlScalar(azure, ["fabric_skills", "policy"]), "disabled");
+  const lakehouse = renderProjectWizardSettings({ ...settings, sqlTargetKind: "fabric_lakehouse" });
+  assert.equal(projectYamlScalar(lakehouse, ["sql_targets", "dev", "sql_endpoint_id"]), "33333333-3333-3333-3333-333333333333");
+  // Editing an existing contract adds only the dev entry and keeps a chosen default.
+  const existing = "profile:\n  client: 'Contoso'\nsql_targets:\n  default_environment: test\n  test:\n    kind: azure_sql\n    server: 't.database.windows.net'\n    database: 'T'\n";
+  const parsed = parseProjectWizardSettings(existing, "/work");
+  assert.equal(parsed.sqlTargetKind, "");
+  const merged = applyProjectWizardSettings(existing, { ...parsed, repositories: [], sqlTargetKind: "azure_sql", sqlTargetServer: "d.database.windows.net", sqlTargetDatabase: "D" });
+  assert.equal(projectYamlScalar(merged, ["sql_targets", "default_environment"]), "test");
+  assert.equal(projectYamlScalar(merged, ["sql_targets", "test", "server"]), "t.database.windows.net");
+  assert.equal(projectYamlScalar(merged, ["sql_targets", "dev", "server"]), "d.database.windows.net");
+  assert.equal(projectYamlScalar(merged, ["sql_targets", "dev", "kind"]), "azure_sql");
+  const untouched = applyProjectWizardSettings(existing, { ...parsed, repositories: [] });
+  assert.equal(projectYamlScalar(untouched, ["sql_targets", "dev", "kind"]), "", "no kind chosen: sql_targets is left alone");
+});
+
+await t("native wizard proposes the Azure SQL dev target on an Azure SQL machine", async () => {
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-project-azure-")));
+  mkdirSync(join(root, ".git"));
+  skipIfContaminated(root);
+  const coopDir = trackFixture(mkdtempSync(join(tmpdir(), "coop-azure-home-")));
+  mkdirSync(join(coopDir, ".coop"));
+  writeFileSync(join(coopDir, ".coop", "config"), JSON.stringify({ schema_version: 1, client: { platform: "azure_sql" } }));
+  const savedCoopDir = process.env.COOP_DIR;
+  process.env.COOP_DIR = coopDir;
+  try {
+    const confirms = [true, false, false, false, true]; // local source, add repo, Fabric, TE, write
+    const labels = [];
+    const ctx = {
+      cwd: root,
+      hasUI: true,
+      mode: "tui",
+      ui: {
+        input: async (label, def) => {
+          labels.push(label);
+          if (label.startsWith("Dev SQL server host")) return "Contoso-Dev.database.windows.net";
+          if (label.startsWith("Dev database name")) return "ContosoDW";
+          return def;
+        },
+        confirm: async (_title, message) => {
+          if (_title === "Microsoft Fabric / Power BI") assert.match(message, /Azure SQL client/);
+          return confirms.shift() ?? false;
+        },
+        select: async (_label, options) => options.find((x) => x.includes("General project")) ?? options.find((x) => x.startsWith("✓ Use this folder:")),
+        notify: () => {},
+      },
+    };
+    assert.equal(await runProjectWizard({}, ctx), true);
+    const text = readFileSync(join(root, ".coop", "project.yml"), "utf8");
+    assert.ok(labels.some((l) => l.startsWith("Dev SQL target kind")), "the wizard asks for the dev SQL target kind");
+    assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "kind"]), "azure_sql");
+    assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "server"]), "contoso-dev.database.windows.net");
+    assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "database"]), "ContosoDW");
+    assert.equal(projectYamlScalar(text, ["sql_targets", "default_environment"]), "dev");
+    assert.doesNotMatch(text, /^fabric:/m);
+  } finally {
+    if (savedCoopDir === undefined) delete process.env.COOP_DIR; else process.env.COOP_DIR = savedCoopDir;
+  }
 });
 
 await t("estate modes preserve discovery, partial, mixed, and connected options", () => {

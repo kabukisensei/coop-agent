@@ -200,6 +200,16 @@ def resolve_tenant(project_path: Path | None, config_path: Path) -> tuple[str, s
     return tenant_from_sources(project, config)
 
 
+def _direct_sql_target_configured(project_path: Path | None) -> bool:
+    """True when the contract's ready default sql_targets entry names its host."""
+    try:
+        import sql_targets as targets_lib  # noqa: WPS433 (same lib directory)
+    except Exception:
+        return False
+    target = targets_lib.parse_sql_targets(load_project(project_path)).default
+    return target is not None and not target.discovered
+
+
 def launcher_project_yml() -> Path | None:
     """The contract the launcher finds (coop_find_project_yml / Find-CoopProjectYml).
 
@@ -1133,6 +1143,17 @@ def main(argv: list[str] | None = None) -> int:
             cfg = {}
         entry = managed_sqlendpoint_entry(cfg)
         if entry is None:
+            # No managed Warehouse server (an Azure SQL-only machine, say): a
+            # contract whose default sql_targets entry names its host (SQ2) still
+            # needs a session identity, so mint the SQL audience for the same
+            # tenant chain. The executor pins its own mint to this token's tid.
+            if _direct_sql_target_configured(launcher_project_yml()):
+                tenant = pinned_tenant(launcher_project_yml())
+                token, state = az_access_token(resource=SQL_RESOURCE, tenant=tenant)
+                if state == "ok":
+                    sys.stdout.write("token\t" + token + "\tend")
+                else:
+                    sys.stdout.write("warning\t" + state + "\tend")
             return 0
         if sqlendpoint_config_status(entry) != "registered":
             sys.stdout.write("warning\tconfig_invalid\tend")

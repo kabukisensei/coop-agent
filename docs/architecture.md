@@ -85,9 +85,11 @@ for the Node tools and extensions; no script builds these paths inline.
      one clean bar. The splash is the truecolor block-art Cooptimize logo
      (uniform-padded, width-robust; `assets/splash.ansi`).
    - **`coop-tools` extension** — `extensions/coop-tools/`: registers the native
-     LLM-callable tools `data_doc`, `bpa_review` (Tabular Editor BPA) and the
-     governed `fabric_sql_query` fallback, which shell out and return JSON the
-     model reasons over. SQL/DAX/semantic-model standards need no tool: at launch
+     LLM-callable tools `data_doc`, `bpa_review` (Tabular Editor BPA), the
+     governed `fabric_sql_query` fallback and `sql_impact` (`lib/sql_impact.py`:
+     three fixed catalog queries for one object's dependents, references and
+     columns on the contract's dev/test SQL target), which shell out and return
+     JSON the model reasons over. SQL/DAX/semantic-model standards need no tool: at launch
      `lib/standards.mjs` resolves the active coop-standards wiki articles and the
      extension feeds them into every such task, and the agent self-checks its diff
      against them before presenting a change. `data_doc` takes

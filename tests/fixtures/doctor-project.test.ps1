@@ -118,6 +118,51 @@ try {
     "    local_path: $(($te -replace '\\', '/'))", '    default_branch: main', 'tools:', '  tabular_editor_cli:', '    enabled: true')
   $proj = Get-ProjectRows (Get-ProjectDoctorRows $te)
   if (Test-RowContains $proj 'executable_path not set') { Ok 'flags missing TE path when Tabular Editor enabled' } else { Ko 'did not flag missing TE path' (Show-Rows $proj) }
+
+  # --- sql_targets (SQ1): rows per entry, production never default ---------------
+  $targets = Join-Path $t 'targets'
+  Write-Contract $targets (@('profile:', '  organization: Cooptimize', '  default_branch: main', 'estate:', '  mode: discovery') + $off + @(
+    'sql_targets:', '  default_environment: prod', '  dev:', '    kind: azure_sql', '    server: contoso-dev.database.windows.net', '    database: ContosoDW',
+    '  prod:', '    kind: azure_sql', '    server: contoso.datawarehouse.fabric.microsoft.com', '    database: ContosoDW'))
+  $proj = Get-ProjectRows (Get-ProjectDoctorRows $targets)
+  $names = @($proj | ForEach-Object { [string]$_.name })
+  if ((@($names | Where-Object { $_.Contains('never be prod') })).Count -gt 0 -and
+      (@($names | Where-Object { $_.Contains('sql_targets.prod: server') -and $_.Contains('host pattern') })).Count -gt 0 -and
+      (@($names | Where-Object { $_.StartsWith('sql_targets.dev:') -and $_.Contains('contoso-dev.database.windows.net') })).Count -gt 0 -and
+      (@($proj | Where-Object { [string]$_.status -eq 'bad' })).Count -eq 0) {
+    Ok 'sql_targets: doctor names a prod default and a host that does not match its kind'
+  } else { Ko 'sql_targets doctor rows missing' (Show-Rows $proj) }
+  if (Test-RowContains $proj 'sql_targets not configured') { Ko 'configured sql_targets reported as absent' (Show-Rows $proj) } else { Ok 'sql_targets rows replace the not-configured row' }
+  $proj = Get-ProjectRows (Get-ProjectDoctorRows $good)
+  if (Test-RowContains $proj 'sql_targets not configured') { Ok 'a contract without sql_targets gets one informational row' } else { Ko 'missing sql_targets row' (Show-Rows $proj) }
+
+  # --- Azure SQL-only client: a missing Fabric CLI is optional, never red --------
+  # (master plan section 8 item 7). The row reads client.platform from the sandbox
+  # profile's config; fab is hidden from PATH so the "missing" branch runs whether
+  # or not the machine has it.
+  $configFile = Join-Path $env:COOP_DIR '.coop\config'
+  $savedPath = $env:PATH
+  try {
+    $noFab = @()
+    foreach ($d in ($env:PATH -split [System.IO.Path]::PathSeparator)) {
+      if (-not $d) { continue }
+      if ((Test-Path -LiteralPath (Join-Path $d 'fab')) -or (Test-Path -LiteralPath (Join-Path $d 'fab.exe')) -or (Test-Path -LiteralPath (Join-Path $d 'fab.cmd'))) { continue }
+      $noFab += $d
+    }
+    $env:PATH = ($noFab -join [System.IO.Path]::PathSeparator)
+    [System.IO.File]::WriteAllText($configFile, '{"schema_version":1,"client":{"platform":"azure_sql"},"integrations":{"fabric":false,"fabric_sql_endpoint":false}}', $utf8)
+    $fabRows = @((Get-ProjectDoctorRows $good) | Where-Object { [string]$_.section -eq 'Microsoft Fabric CLI' })
+    if ($fabRows.Count -eq 0) { Ko 'Fabric CLI section missing' }
+    elseif (@($fabRows | Where-Object { [string]$_.status -eq 'bad' }).Count -gt 0) { Ko 'Azure SQL client still gets a red Fabric CLI row' (Show-Rows $fabRows) }
+    elseif (-not (Test-RowContains $fabRows 'Azure SQL client')) { Ko 'optional-fab row missing' (Show-Rows $fabRows) }
+    else { Ok 'Azure SQL client: missing fab is reported as optional, not red' }
+    [System.IO.File]::WriteAllText($configFile, '{"schema_version":1,"client":{"platform":"fabric"},"integrations":{}}', $utf8)
+    $fabRows = @((Get-ProjectDoctorRows $good) | Where-Object { [string]$_.section -eq 'Microsoft Fabric CLI' })
+    if (Test-RowContains $fabRows 'fab missing') { Ok 'Fabric client: missing fab stays red' } else { Ko 'Fabric client lost the red fab row' (Show-Rows $fabRows) }
+  } finally {
+    $env:PATH = $savedPath
+    Remove-Item -LiteralPath $configFile -Force -ErrorAction SilentlyContinue
+  }
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {

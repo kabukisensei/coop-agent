@@ -99,3 +99,27 @@ coop version                                        # matches your clone's VERSI
 **Never** debug "my change has no effect" without checking this first.
 Invoking `.\bin\coop.cmd …` from the clone root always runs the code you are
 editing. See [CONTRIBUTING.md](../CONTRIBUTING.md#testing-local-changes).
+
+## 3. `/compact` fails with `WebSocket idle timeout after 300000ms`
+
+**Symptom.** Manual `/compact` or automatic compaction on a large session ends
+with `Error: WebSocket idle timeout after 300000ms` on an OpenAI Codex
+subscription model, and setting Transport to `sse` in `/settings` changes
+nothing (coop-agent #236).
+
+**Diagnose.** Pi 0.87.1 builds its compaction request without the session's
+transport setting, so the Codex provider opens a WebSocket for the summary
+regardless. Check the effective setting and the coop version:
+
+```powershell
+Get-Content "$HOME\.coop\agent\settings.json" | Select-String transport
+coop version
+```
+
+**Fix.** Update to a coop release that carries the `session_before_compact` hook
+in `extensions/coop-tools` (CHANGELOG, #236): with `transport: "sse"` coop runs
+the summary over SSE itself. Until then, keep the session, run `/handoff`, start
+a new session with `/new` and paste the summary.
+
+**Verify.** With Transport `sse`, `/compact` completes and the transcript shows
+the compaction summary; no WebSocket error.

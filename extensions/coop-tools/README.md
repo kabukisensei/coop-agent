@@ -184,6 +184,26 @@ tool calls, contracts with the flag disabled, and explicit per-task opt-outs do 
 require an entry. The verifier is intentionally advisory—the per-turn instruction
 is what makes the agent perform the log step, while the warning exposes a miss.
 
+## Compaction over the configured transport (`session_before_compact`)
+
+Pi 0.87.1 (and 1.0.0) builds its compaction request without the session's
+`transport` setting, so the OpenAI Codex provider falls back to `auto` and opens
+a WebSocket for the summary even when `/settings` says `sse`; a large context
+then fails with `WebSocket idle timeout after 300000ms` (coop-agent #236). When
+the agent dir's `settings.json` has `transport: "sse"` and the current model's
+provider honours `transport` (`openai-codex-responses`), this hook generates the
+summary itself through Pi's exported `compact()` with a stream function that
+forwards `transport`, the idle timeout (`retry.provider.timeoutMs`, else
+`httpIdleTimeoutMs`) and the retry policy, then returns it as the compaction.
+Manual `/compact`, threshold and overflow compaction all pass through the hook.
+
+It stands down (returns nothing, so Pi compacts as before) for every other
+transport, for models whose provider ignores `transport`, when credentials
+cannot be resolved, or when Pi lacks the `compact()` / `streamSimple()` seam. A
+provider failure during the SSE summary propagates, so Pi reports one
+`session_compact_failed` and keeps the session history. Remove the hook once
+upstream Pi forwards the transport to its compaction request.
+
 ## Behavior notes
 
 - If a CLI is not installed, the tool returns a friendly message
