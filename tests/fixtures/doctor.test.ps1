@@ -216,7 +216,7 @@ try {
   $rows = Get-DoctorRows
   $rw = Find-Row $rows 'started, read-write; coop asks before each edit'
   if ($null -ne $rw -and $rw.status -eq 'ok') { Ok 'doctor reports the governed read-write powerbi-modeling-mcp as healthy' } else { Ko 'doctor did not report the governed read-write mode' (Show-Rows $rows 'MCP') }
-  if ((Find-Rows $rows 'READ-WRITE').Count -eq 0) { Ok 'doctor no longer warns that read-write is accidental' } else { Ko 'doctor still warns that read-write is unsafe' (Show-Rows $rows 'MCP') }
+  if (@(Find-Rows $rows 'READ-WRITE').Count -eq 0) { Ok 'doctor no longer warns that read-write is accidental' } else { Ko 'doctor still warns that read-write is unsafe' (Show-Rows $rows 'MCP') }
   Set-Adapter '{"mcpServers":{"powerbi-modeling-mcp":{"command":"npx","args":["-y","@microsoft/powerbi-modeling-mcp@latest"]}}}'
   $rows = Get-DoctorRows
   if ($null -ne (Find-Row $rows 'missing --start')) { Ok 'doctor treats a flagless powerbi-modeling-mcp as unusable' } else { Ko 'doctor did not warn on unusable modeling config' (Show-Rows $rows 'MCP') }
@@ -275,29 +275,29 @@ sys.exit(1)
   # F. exact extension-fleet verification against the manifest pins.
   function Get-ExtRows($Rows) { @($Rows | Where-Object { [string]$_.section -eq 'Pi extensions' }) }
   function Test-AnyExt($Rows, [string[]]$Needles) {
-    foreach ($n in $Needles) { if ((Find-Rows $Rows $n).Count -gt 0) { return $true } }
+    foreach ($n in $Needles) { if (@(Find-Rows $Rows $n).Count -gt 0) { return $true } }
     return $false
   }
   $env:COOP_TEST_PI_LIST_MODE = 'ok'
   $ext = Get-ExtRows (Get-DoctorRows)
-  if ((Find-Rows $ext 'matches manifest').Count -gt 0) { Ok 'doctor verifies each managed extension against its manifest pin' } else { Ko 'doctor did not verify extension pins' (Show-Rows $ext 'Pi extensions') }
+  if (@(Find-Rows $ext 'matches manifest').Count -gt 0) { Ok 'doctor verifies each managed extension against its manifest pin' } else { Ko 'doctor did not verify extension pins' (Show-Rows $ext 'Pi extensions') }
   if (-not (Test-AnyExt $ext @('not installed', 'differs from manifest', 'newer than manifest'))) { Ok 'a pinned fleet produces no extension warnings' } else { Ko 'pinned fleet must be green in the extension section' (Show-Rows $ext 'Pi extensions') }
   $env:COOP_TEST_PI_LIST_MODE = 'drift'
   $ext = Get-ExtRows (Get-DoctorRows)
-  if ((Find-Rows $ext 'newer than manifest').Count -gt 0) { Ok 'doctor flags an extension newer than its manifest pin' } else { Ko 'doctor missed extension drift' (Show-Rows $ext 'Pi extensions') }
+  if (@(Find-Rows $ext 'newer than manifest').Count -gt 0) { Ok 'doctor flags an extension newer than its manifest pin' } else { Ko 'doctor missed extension drift' (Show-Rows $ext 'Pi extensions') }
   # Real `pi list` output (spec line + indented install path): only the spec line
   # carries the version; the install path also contains the extension name.
   $env:COOP_TEST_PI_LIST_MODE = 'real'
   $ext = Get-ExtRows (Get-DoctorRows)
   if (Test-AnyExt $ext @('pi-mcp-adapter 9.9.9 is newer than manifest', 'pi-mcp-adapter 9.9.9: differs from manifest')) { Ok 'doctor reads the spec line, not the install path, for the installed version' }
-  elseif ((Find-Rows $ext 'installed but version unknown').Count -gt 0) { Ko 'doctor ignored the spec line and lost the installed version' (Show-Rows $ext 'Pi extensions') }
+  elseif (@(Find-Rows $ext 'installed but version unknown').Count -gt 0) { Ko 'doctor ignored the spec line and lost the installed version' (Show-Rows $ext 'Pi extensions') }
   else { Ko 'doctor misread the installed extension version' (Show-Rows $ext 'Pi extensions') }
   # A same-version duplicate (one package under two sources) is a single proof.
   $env:COOP_TEST_PI_LIST_MODE = 'dup'
   $ext = Get-ExtRows (Get-DoctorRows)
   $pinMcp = Coop-ManifestGet -Key 'extensions.pi-mcp-adapter'
-  if ((Find-Rows $ext 'several versions').Count -gt 0) { Ko 'a same-version duplicate was reported as ambiguous' (Show-Rows $ext 'Pi extensions') }
-  elseif ((Find-Rows $ext "pi-mcp-adapter $pinMcp matches manifest").Count -gt 0) { Ok 'a same-version duplicate still proves the pin' }
+  if (@(Find-Rows $ext 'several versions').Count -gt 0) { Ko 'a same-version duplicate was reported as ambiguous' (Show-Rows $ext 'Pi extensions') }
+  elseif (@(Find-Rows $ext "pi-mcp-adapter $pinMcp matches manifest").Count -gt 0) { Ok 'a same-version duplicate still proves the pin' }
   else { Ko 'duplicate spec line broke the pin proof' (Show-Rows $ext 'Pi extensions') }
   Remove-Item -LiteralPath 'Env:\COOP_TEST_PI_LIST_MODE' -ErrorAction SilentlyContinue
   $env:PATH = $basePath
