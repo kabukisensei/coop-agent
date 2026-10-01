@@ -17,7 +17,7 @@ export COOP_ROOT
 # shellcheck source=../lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
 
-CORE_EXTENSIONS=( pi-mcp-adapter pi-hermes-memory pi-better-openai pi-web-access @juicesharp/rpiv-ask-user-question context-mode )
+CORE_EXTENSIONS=( pi-mcp-adapter pi-hermes-memory pi-better-openai pi-web-access @juicesharp/rpiv-ask-user-question @xl0/pi-lovely-rename context-mode )
 PI_AGENT="$(coop_pi_agent_dir)"
 GLOBAL_AGENT="$(coop_global_pi_agent_dir)"
 
@@ -47,6 +47,14 @@ if [ -n "$_settings_py" ] && "$_settings_py" "$COOP_ROOT/lib/pi_settings.py" ens
   coop_ok "quiet startup enabled (guardrails, skills, prompts, extensions, and theme still load)"
 else
   coop_warn "could not enable quiet startup in $PI_AGENT/settings.json" "run: coop sync"
+  SYNC_FAILURES=$((SYNC_FAILURES + 1))
+fi
+# pi-better-openai defaults to replacing the footer, which wipes coop's own footer
+# (issue #203); status mode feeds its usage text into coop's bar instead.
+if [ -n "$_settings_py" ] && "$_settings_py" "$COOP_ROOT/lib/pi_settings.py" ensure-coop-footer "$PI_AGENT/extensions/pi-better-openai.json"; then
+  coop_ok "pi-better-openai footer set to status mode (coop's own footer stays)"
+else
+  coop_warn "could not set pi-better-openai footer mode in $PI_AGENT/extensions/pi-better-openai.json" "run: coop sync"
   SYNC_FAILURES=$((SYNC_FAILURES + 1))
 fi
 
