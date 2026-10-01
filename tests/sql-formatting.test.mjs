@@ -53,7 +53,9 @@ for (const file of walk(DIR)) {
 }
 
 // --- the skill text carries the contract -----------------------------------------
-const skill = readFileSync(join(DIR, "SKILL.md"), "utf8");
+// Normalise line endings: a Windows checkout with autocrlf hands us CRLF.
+const text = (file) => readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+const skill = text(join(DIR, "SKILL.md"));
 assert.ok(/^name: sql-formatting$/m.test(skill), "skill is named sql-formatting");
 for (const needle of [
   "sql-prompt-cooptimize-style.json",
@@ -83,7 +85,7 @@ for (const needle of [
 assert.ok(!/coop-sql-review|sql_review/.test(skill), "skill does not point at the retired review CLI");
 
 // --- the worked example honours the mechanical rules ----------------------------
-const sql = readFileSync(join(DIR, "examples/formatted.sql"), "utf8");
+const sql = text(join(DIR, "examples/formatted.sql"));
 const lines = sql.split("\n");
 const code = lines
   .map((line, i) => ({ line, n: i + 1 }))
