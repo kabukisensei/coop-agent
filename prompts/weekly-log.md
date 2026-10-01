@@ -12,7 +12,7 @@ Include:
 - **Executive summary**
 - **Daily highlights**
 - **Objects changed** — and their docs / lineage updates
-- **Standards / quality issues found** (`sql_review` / `dax_review`, BPA, validate)
+- **Standards / quality issues found** (standards self-check, BPA, validate)
 - **Risks and open questions**
 - **Recommendations for next week**
 

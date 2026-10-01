@@ -80,7 +80,10 @@ coop_release_check_pins() {
     return 0
   fi
   local tool pin rel mismatch=0
-  for tool in coop-data-doc coop-sql-review coop-dax-review; do
+  # The pipx-published Coop tools the manifest pins (coop-data-doc only since ST1).
+  local pin_tools="coop-data-doc"
+  # shellcheck disable=SC2086
+  for tool in $pin_tools; do
     # Both files keep a one-`"key": "value"`-per-line layout (the manifest is
     # pretty-printed JSON; versions.json's is enforced by coop-website's own
     # checker), so sed is safe — and python-free — here.

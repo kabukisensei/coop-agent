@@ -237,7 +237,7 @@ try {
   Push-Location -LiteralPath $t
 
   # --- 1. install --force on a machine with pipx tools at older versions ----------
-  $m = New-Machine 'install' -PipxList @('package coop-data-doc 1.1.0', 'package coop-sql-review 0.15.2', 'package coop-dax-review 0.22.0', 'package ms-fabric-cli 1.7.0')
+  $m = New-Machine 'install' -PipxList @('package coop-data-doc 1.1.0', 'package ms-fabric-cli 1.7.0')
   $out = Invoke-Fleet 'install.ps1' @('--force')
   if ($out.Contains('8/8') -and -not $out.Contains('install/sync step(s) failed')) { Ok 'install --force runs through step 8/8 with no failed install/sync step' } else { Ko "install --force stopped early or reported a failed step (rc=$rc)" $out }
   if (Test-Call $m 'PIPX install --force --python .+ ms-fabric-cli==1\.7\.0') { Ok 'Fabric CLI install selects a supported bootstrap Python explicitly' } else { Ko 'Fabric CLI install did not select a supported bootstrap Python explicitly' (Get-Calls $m) }
@@ -293,10 +293,10 @@ try {
   # unit failure makes update non-zero even though execution reaches the
   # aggregate end (the old behaviour silently returned success via Doctor).
   Reset-Calls $m
-  Set-PipxList $m @('package coop-data-doc 1.1.0', 'package coop-sql-review 0.15.2', 'package coop-dax-review 0.22.0', 'package ms-fabric-cli 1.7.0')
+  Set-PipxList $m @('package coop-data-doc 1.1.0', 'package ms-fabric-cli 1.7.0')
   $out = Invoke-Fleet 'update.ps1'
   if (-not $out.Contains('failed convergence step(s)') -and (Test-CallLiteral $m 'PIPX install --force coop-data-doc==1.2.0')) { Ok 'update converges a drifted pipx tool to its manifest pin' } else { Ko "update did not converge drifted coop-data-doc (rc=$rc)" ($out + "`n" + (Get-Calls $m)) }
-  Set-PipxList $m @('package coop-data-doc 1.1.0', 'package coop-sql-review 0.15.2', 'package coop-dax-review 0.22.0', 'package ms-fabric-cli 1.7.0')
+  Set-PipxList $m @('package coop-data-doc 1.1.0', 'package ms-fabric-cli 1.7.0')
   $env:PIPX_FAIL_MATCH = 'coop-data-doc==1.2.0'
   $out = Invoke-Fleet 'update.ps1'
   if ($rc -ne 0 -and $out.Contains('update finished with 1 failed convergence step(s)')) { Ok 'update exits non-zero with a failed-step summary when a convergence unit fails' } else { Ko "failed pipx convergence was converted into update success (rc=$rc)" $out }
@@ -328,7 +328,7 @@ try {
   # --- 4. NORMAL-mode drift convergence (no --force): round-2 review item #1 -------
   # Deliberate drift: installed Pi 0.81.0 (manifest 0.87.1) and coop-data-doc 1.1.0
   # (manifest 1.2.0); ms-fabric-cli matches its pin.
-  $m2 = New-Machine 'drift' -PiVersion '0.81.0' -HonestPi $false -PipxList @('package coop-data-doc 1.1.0', 'package coop-sql-review 0.15.2', 'package coop-dax-review 0.22.0', 'package ms-fabric-cli 1.7.0')
+  $m2 = New-Machine 'drift' -PiVersion '0.81.0' -HonestPi $false -PipxList @('package coop-data-doc 1.1.0', 'package ms-fabric-cli 1.7.0')
   $out = Invoke-Fleet 'install.ps1'
   if (-not (Test-CallLiteral $m2 'NPM install -g @earendil-works/pi-coding-agent@0.87.1')) { Ko 'drifted Pi NOT converged to manifest' (Get-Calls $m2) }
   else { Ok 'normal install converges a drifted Pi to the manifest without --force' }
@@ -376,7 +376,7 @@ try {
   # --- 8. UPDATE repairs an incomplete workstation instead of only diagnosing it ----
   $m6 = New-Machine 'repair' -HonestPi $false -PipxList @() -LogPi $false
   $out = Invoke-Fleet 'update.ps1'
-  $missing = @(@('coop-data-doc==1.2.0', 'coop-sql-review==0.15.2', 'coop-dax-review==0.22.0', 'ms-fabric-cli==1.7.0') | Where-Object { -not (Test-CallLiteral $m6 $_) })
+  $missing = @(@('coop-data-doc==1.2.0', 'ms-fabric-cli==1.7.0') | Where-Object { -not (Test-CallLiteral $m6 $_) })
   if ($missing.Count -eq 0) { Ok 'update installs missing manifest-pinned pipx tools' } else { Ko "update did not install missing $($missing -join ', ')" (Get-Calls $m6) }
   if (Test-Call $m6 '^PIPX install --python .+ ms-fabric-cli==1\.7\.0') { Ok 'update installs a missing Fabric CLI with an explicit supported bootstrap Python' } else { Ko 'update did not select a supported bootstrap Python for the missing Fabric CLI' (Get-Calls $m6) }
   if (Test-Call $m6 '^PIPX install --force ') { Ko 'update force-reinstalled a tool that was simply missing' (Get-Calls $m6) } else { Ok 'a missing tool is installed, not force-reinstalled' }

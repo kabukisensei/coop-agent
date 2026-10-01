@@ -36,7 +36,7 @@ PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
 if "$PY" - "$ROOT/config/release-manifest.json" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))
-need = {"python_tools": ["ms-fabric-cli", "coop-data-doc", "coop-sql-review", "coop-dax-review", "fabric-cicd", "pyodbc"]}
+need = {"python_tools": ["ms-fabric-cli", "coop-data-doc", "fabric-cicd", "pyodbc"]}
 missing = [f"{k}.{p}" for k, ps in need.items() for p in ps if not m.get(k, {}).get(p)]
 assert m.get("pi", {}).get("version"), "pi.version"
 assert not missing, missing
