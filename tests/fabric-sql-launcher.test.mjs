@@ -75,7 +75,7 @@ const pi = {
 mod.default(pi);
 const tool = tools.get("fabric_sql_query");
 assert.ok(tool, "fabric_sql_query must be publicly registered");
-assert.match(tool.description, /First attempt the managed fabric-sqlendpoint MCP tool/);
+assert.match(tool.description, /When a managed fabric-sqlendpoint MCP tool exists, attempt it first/);
 assert.match(tool.description, /only after that actual attempt fails/);
 assert.match(tool.description, /Never use it for SQL\/business\/query rejection/);
 assert.match(tool.promptGuidelines.join(" "), /never fallback before MCP/);
