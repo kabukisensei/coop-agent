@@ -89,7 +89,9 @@ try {
   if (Sync-CoopFabricPythonPackages $false) { throw 'a failing inject was reported as success' }
   if ($script:warnings.Count -ne 1) { throw "expected one warning, got $($script:warnings.Count): $($script:warnings -join ' / ')" }
   $w = $script:warnings[0]
-  if ($w -notlike "failed to install fabric-cicd==$cicdPin in the ms-fabric-cli environment|ERROR: No matching distribution found for fabric-cicd==$cicdPin*") {
+  # cmd.exe splits arguments on '=', so the Windows shim's %3 is only the
+  # package name; the sh shim echoes the full spec. Match the common prefix.
+  if ($w -notlike "failed to install fabric-cicd==$cicdPin in the ms-fabric-cli environment|ERROR: No matching distribution found for fabric-cicd*") {
     throw "warning did not carry pip's error line: $w"
   }
   $failed = Get-Content -LiteralPath $calls -Raw
