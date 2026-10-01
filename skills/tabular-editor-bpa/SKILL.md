@@ -230,7 +230,8 @@ the repo and referenced from `.coop/project.yml`.
 
 ## Related skills and tools
 
-- **`dax-review`** / **`coop-dax-review`** — review DAX and model standards.
+- **`dax-patterns`** — DAX standards, applied while writing and self-checked before
+  presenting.
 - **`power-bi-impact-analysis`** — understand blast radius before rule-driven
   deletions or renames.
 - **`coop-workflow`** — plan-and-approve, never commit source without review.

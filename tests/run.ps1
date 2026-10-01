@@ -9,7 +9,7 @@
 #   3. update.ps1 --check is a dry-run that reports current/expected and exits 0;
 #      --pi-latest warns that it is deprecated and keeps that read-only path
 #   4. coop.ps1 forwards a single trailing --check argument intact to update.ps1
-#   5. coop.ps1 review --help exits 0; an unknown review flag dies non-zero
+#   5. (retired with ST1: coop review no longer exists)
 #   6. the child fixtures under tests/fixtures, one table-driven loop with a lane
 #      column (gate / extended); each fixture is a self-contained script that
 #      dot-sources tests/fixtures/_common.ps1
@@ -496,13 +496,6 @@ print("resume verdict contract OK")
     Ok 'coop wrapper does not split --check into unknown flags'
   } else { Ko 'coop wrapper split --check into unknown flags' }
 
-  # --- 6. review --help exits 0; an unknown review flag dies -----------------
-  Head 'coop review arg parsing (--help ok; unknown flag dies)'
-  & $coop review --help *> $null
-  if ($LASTEXITCODE -eq 0) { Ok 'review --help exits 0' } else { Ko "review --help exit was $LASTEXITCODE" }
-  & $coop review --bogus-flag *> $null
-  if ($LASTEXITCODE -ne 0) { Ok 'review with an unknown flag dies non-zero' } else { Ko 'review --bogus-flag did not die' }
-
   # --- 7c. Microsoft skills catalog deterministic fixture -------------------
   Head 'Microsoft skills catalog fixture'
   $pyExe = (Get-Command python3 -ErrorAction SilentlyContinue)
@@ -559,7 +552,7 @@ print("resume verdict contract OK")
   # tests/fixtures/_common.ps1 for Ok/Ko, Save-Env/Restore-Env, stubs and doctor
   # row helpers). Lane 'extended' rows run only with COOP_TEST_EXTENDED=1 (#96):
   # timing and process fixtures, and the ones that run the real scripts many
-  # times (doctor, inventory, review take about a minute each). A fixture's
+  # times (doctor and inventory take about a minute each). A fixture's
   # output is echoed when it passes; a non-zero exit, or a missing Needle, fails
   # this run with its full output. Coop status output is stderr: the children
   # run under ErrorActionPreference=Continue because Windows PowerShell 5.1
@@ -571,7 +564,6 @@ print("resume verdict contract OK")
     @{ Name = 'win-ownership-probe';    Lane = 'extended'; File = 'win-ownership-probe.ps1'; Head = 'windows ownership native probe (evidence only)'; OkLine = 'ownership probe completed; PROBE| evidence above' },
     @{ Name = 'update-follow';          Lane = 'gate';     Head = 'coop update follows release tags (never backwards)' },
     @{ Name = 'version-describe';       Lane = 'gate';     Head = 'coop version and doctor --publish carry git describe' },
-    @{ Name = 'review-transaction';     Lane = 'gate';     Head = 'review transaction asymmetric mutation'; OkLine = 'asymmetric review transaction preserved all artifacts' },
     @{ Name = 'pipx-ownership';         Lane = 'gate';     Head = 'pipx executable ownership' },
     @{ Name = 'fabric-python-finder';   Lane = 'gate';     Head = 'fabric-compatible Python discovery' },
     @{ Name = 'fabric-mcp-launch';      Lane = 'extended'; Head = 'Fabric MCP launch-time bearer isolation'; Needle = 'FABRIC_MCP_FIXTURE_INJECTION_REACHED' },
@@ -596,7 +588,6 @@ print("resume verdict contract OK")
     @{ Name = 'home-guard';             Lane = 'extended'; Head = 'home-guard (fleet paths must not mutate the real home)'; RestoreHome = $true },
     @{ Name = 'doctor';                 Lane = 'extended'; Head = 'doctor.ps1 MCP mode, az preflight, login and fleet rows' },
     @{ Name = 'inventory';              Lane = 'extended'; Head = 'truthful inventory (doctor pipx probes / sync postconditions)' },
-    @{ Name = 'review';                 Lane = 'extended'; Head = 'coop review (composite linters + docs compose)' },
     @{ Name = 'profile-redirect';       Lane = 'gate';     Head = 'install shortcuts and user PATH follow a redirected profile (isolated install)' })
   foreach ($fx in $fixtures) {
     if ($fx.Lane -eq 'extended' -and -not $extendedLane) { continue }

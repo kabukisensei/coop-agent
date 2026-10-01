@@ -6,7 +6,7 @@
 # A thin, branded layer ON TOP OF Pi (@earendil-works/pi-coding-agent). coop never
 # forks Pi: it launches `pi` with Cooptimize skills, prompts, theme, a powerline
 # splash/footer extension, and a governance system prompt, and it shells out to
-# the standalone Coop tools (coop-data-doc / coop-sql-review / coop-dax-review)
+# the standalone Coop tool (coop-data-doc)
 # and the Microsoft Fabric CLI (`fab`).
 #
 # Usage:
@@ -17,9 +17,6 @@
 #   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
 #   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
 #   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
-#   coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
-#   coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
-#   coop review [paths...]    Run both linters + compose findings onto the lineage docs
 #   coop support [--json]     Collect a sanitized support bundle (health, versions, events); preview + export
 #   coop fabric [args]        Pass through to the Microsoft Fabric CLI (`fab`)
 #   coop version              Print coop + pi versions
@@ -159,9 +156,6 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop profile reset        Remove your COOP user profile
   coop context-budget       Report fixed startup context sizes (use --json for machine output)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
-  coop sql-review [args]    Pass through to coop-sql-review (e.g. check <paths>, rules)
-  coop dax-review [args]    Pass through to coop-dax-review (e.g. check <paths>, rules)
-  coop review [paths...]    Run both linters + compose findings onto the lineage docs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
   coop support [--json]     Collect a sanitized support bundle (health, versions, events)
                             (--incident: incident record; --export PATH: write bundle)
@@ -322,7 +316,7 @@ function Build-CoopPiArgs {
   if (Test-Path -LiteralPath $prompts -PathType Container) { $piArgs += @('--prompt-template', $prompts) }
   $theme = Join-Path $script:CoopRoot 'themes\cooptimize.json'
   if (Test-Path -LiteralPath $theme -PathType Leaf) { $piArgs += @('--theme', $theme) }
-  # Cooptimize companion extensions: branding/splash/vibes, native review tools, governance,
+  # Cooptimize companion extensions: branding/splash/vibes, native tools, governance,
   # and the local user profile hidden instruction.
   $extPowerline = Join-Path $script:CoopRoot 'extensions\coop-powerline'
   if (Test-Path -LiteralPath $extPowerline) { $piArgs += @('-e', $extPowerline) }
@@ -557,18 +551,10 @@ function Invoke-CoopWebRetired {
   Invoke-LaunchPi
 }
 
-# --- Tool wrappers -----------------------------------------------------------
-# Flow straight through to a standalone Coop tool: every subcommand and the tool's
-# own interactive prompts work, and the exit code propagates. The AI agent gets
-# structured JSON via the native sql_review / dax_review tools.
-function Invoke-Tool {
-  param([string] $Bin, [string[]] $RestArgs = @())
-  if (-not (Test-Have $Bin)) { Coop-Die "$Bin is not installed. Run: coop install" }
-  Coop-Head "$Bin $($RestArgs -join ' ')"
-  & $Bin @RestArgs
-  exit $LASTEXITCODE
-}
-
+# --- Tool wrapper ------------------------------------------------------------
+# Flow straight through to coop-data-doc: every subcommand and its own interactive
+# prompts work, and the exit code propagates. The AI agent gets structured JSON
+# via the native data_doc tool.
 function Invoke-DataDoc {
   param([string[]] $RestArgs = @())
   if (-not (Test-Have 'coop-data-doc')) { Coop-Die 'coop-data-doc is not installed. Run: coop install' }
@@ -585,282 +571,7 @@ function Invoke-DataDoc {
       break
     }
   }
-  exit $rc   # mirror Invoke-Tool: a coop-data-doc failure must not be masked by the summary
-}
-
-# --- coop review: both linters + compose findings onto the lineage docs -------
-# coop review. One command for the whole advisory loop: run
-# coop-sql-review AND coop-dax-review over the same scope (each tool filters by
-# file type itself), save both JSON reports under .coop/reviews/ next to the
-# contract, then rebuild the lineage docs with the findings composed in
-# (coop-data-doc build --reviews …). Scope: explicit paths win; with none, the
-# nearest .coop/project.yml's repositories.*.local_path entries — the same
-# contract scoping the native sql_review/dax_review tools use (TODO placeholders
-# and paths missing on this machine are skipped with a note). NEVER blind-scans
-# the cwd. Advisory: linter findings don't fail the run unless --strict; docs-
-# not-set-up is a hint, not a failure; a hard data-doc failure (exit 2) propagates.
-function Invoke-CoopReview {
-  param([string[]] $RestArgs = @())
-  $strict = $false; $skipDocs = $false; $compare = $false; $doHtml = $false; $scope = @()
-  $diffMode = $false; $diffRef = 'HEAD'; $needDiffRef = $false
-  foreach ($a in $RestArgs) {
-    if ($needDiffRef) {
-      if ($a -notlike '-*') { $diffRef = $a; $needDiffRef = $false; continue }
-      $needDiffRef = $false
-    }
-    switch -Regex ($a) {
-      '^--strict$'    { $strict = $true }
-      '^--skip-docs$' { $skipDocs = $true }
-      '^--compare$'   { $compare = $true }
-      '^--html$'      { $doHtml = $true }
-      '^--diff$'      { $diffMode = $true; $needDiffRef = $true }
-      '^--diff=(.*)'  { $diffMode = $true; $diffRef = $Matches[1] }
-      '^(-h|--help)$' {
-        Coop-Say 'Usage: coop review [paths...] [--strict] [--skip-docs] [--compare] [--html]'
-        Coop-Say '  Run coop-sql-review AND coop-dax-review over the project scope (explicit paths'
-        Coop-Say "  win; else the nearest .coop/project.yml's repositories.*.local_path entries),"
-        Coop-Say '  save both JSON reports under .coop/reviews/, then rebuild the lineage docs with'
-        Coop-Say '  the findings composed in (coop-data-doc build --reviews …).'
-        Coop-Say '  --strict      pass --strict to both linters; exit 2 if either exits non-zero'
-        Coop-Say '  --skip-docs   skip the coop-data-doc build step (linters only)'
-        Coop-Say '  --compare     diff each linter against the previous run''s saved report and print'
-        Coop-Say '                a new/fixed/persisting delta (first run just becomes the baseline)'
-        Coop-Say '  --html        write a combined HTML suite report to .coop/reviews/suite.html'
-        Coop-Say '  --diff [ref]  review only the files changed since [ref] (default: HEAD)'
-        Coop-Say '                in git-tracked roots, falling back to full review for others'
-        return
-      }
-      default {
-        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop review [paths...] [--strict] [--skip-docs] [--compare] [--diff [ref]] [--html]" }
-        $scope += $a
-      }
-    }
-  }
-
-  if (-not (Test-Have 'coop-sql-review')) { Coop-Die 'coop-sql-review is not installed. Run: coop install' }
-  if (-not (Test-Have 'coop-dax-review')) { Coop-Die 'coop-dax-review is not installed. Run: coop install' }
-  if (-not $skipDocs -and -not (Test-Have 'coop-data-doc')) { Coop-Die 'coop-data-doc is not installed. Run: coop install   (or skip the docs step: coop review --skip-docs)' }
-
-  # Scope + output dir from the project contract (same semantics as coop-tools'
-  # contractReviewScope: resolve against the contract's repo root, existing only).
-  $proj = Find-CoopProjectYml
-  $outdir = if ($proj) { Join-Path (Split-Path -Parent $proj) 'reviews' } else { Join-Path '.coop' 'reviews' }
-  if ($scope.Count -eq 0 -and $proj) {
-    $base = Split-Path -Parent (Split-Path -Parent $proj)
-    foreach ($p in (Get-CoopYamlList $proj 'repositories.*.local_path')) {
-      if (-not $p) { continue }
-      if ($p -like 'TODO*') { Coop-Warn 'skipping a repositories.local_path that is still a TODO placeholder'; continue }
-      $abs = if ([System.IO.Path]::IsPathRooted($p)) { $p } else { Join-Path $base $p }
-      if (Test-Path -LiteralPath $abs) { $scope += $abs } else { Coop-Warn "skipping $p (not found on this machine)" }
-    }
-  }
-  if ($scope.Count -eq 0) { Coop-Die 'nothing to review — run inside a project with .coop/project.yml (repositories.*.local_path filled), or pass paths: coop review <paths...>' }
-
-  if ($diffMode) {
-    $newScope = @()
-    foreach ($item in $scope) {
-      if (Test-Path -LiteralPath $item -PathType Container) {
-        $isGit = $false
-        try {
-          $isGit = (& git -C $item rev-parse --is-inside-work-tree 2>$null) -eq 'true'
-        } catch {}
-        if ($isGit) {
-          $files = $(& git -C $item diff --name-only -z $diffRef --; & git -C $item ls-files -z --others --exclude-standard) -join '' -split "`0" | Where-Object { $_ }
-          foreach ($f in $files) {
-            $fPath = Join-Path $item $f
-            if (Test-Path -LiteralPath $fPath) { $newScope += $fPath }
-          }
-        } else {
-          Coop-Warn "$item is not a git repository; falling back to full review for this root"
-          $newScope += $item
-        }
-      } elseif (Test-Path -LiteralPath $item -PathType Leaf) {
-        $newScope += $item
-      }
-    }
-    $scope = $newScope
-    if ($scope.Count -eq 0) {
-      Coop-Info "coop review --diff: no files changed in the scope."
-      return
-    }
-  }
-
-  New-Item -ItemType Directory -Force -Path $outdir -ErrorAction SilentlyContinue | Out-Null
-  if (-not (Test-Path -LiteralPath $outdir -PathType Container)) { Coop-Die "cannot create $outdir" }
-  $sqlJson = ''; $daxJson = ''
-  $bpaJson = Join-Path $outdir 'bpa-review.json'
-  $sqlRun = Join-Path $outdir ('.coop-sql-review.current.' + [System.IO.Path]::GetRandomFileName() + '.json')
-  $daxRun = Join-Path $outdir ('.coop-dax-review.current.' + [System.IO.Path]::GetRandomFileName() + '.json')
-  $sqlResolutionPath = $null; $daxResolutionPath = $null; $taskResolutionsPath = $null; $promotionPath = $null; $acceptedPath = $null; $sqlPrev = $null; $daxPrev = $null
-  try {
-  foreach ($temp in @($sqlRun, $daxRun)) { $stream = [System.IO.File]::Open($temp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None); $stream.Dispose() }
-  # A suite HTML file always describes one complete current run.
-  Remove-Item -LiteralPath (Join-Path $outdir 'suite.html') -Force -ErrorAction SilentlyContinue
-  $extra = @(); if ($strict) { $extra = @('--strict') }
-  $sqlStandards = @(); $daxStandards = @(); $sqlProvenance = $false; $daxProvenance = $false
-  if (-not (Test-Have 'node')) { Coop-Die 'Node is required to resolve and verify review standards provenance' }
-  $standardsCli = Join-Path $script:CoopRoot 'lib\standards-cli.mjs'
-  $sqlResolutionPath = [System.IO.Path]::GetTempFileName(); $daxResolutionPath = [System.IO.Path]::GetTempFileName(); $taskResolutionsPath = [System.IO.Path]::GetTempFileName(); $promotionPath = [System.IO.Path]::GetTempFileName(); $acceptedPath = [System.IO.Path]::GetTempFileName()
-  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-  [System.IO.File]::WriteAllText($taskResolutionsPath, ((& node $standardsCli resolve-many 'sql,dax' $PWD.Path) -join ''), $utf8NoBom)
-  [System.IO.File]::WriteAllText($sqlResolutionPath, ((& node $standardsCli resolution-domain $taskResolutionsPath sql) -join ''), $utf8NoBom)
-  [System.IO.File]::WriteAllText($daxResolutionPath, ((& node $standardsCli resolution-domain $taskResolutionsPath dax) -join ''), $utf8NoBom)
-  $sqlResolution = Get-Content -LiteralPath $sqlResolutionPath -Raw | ConvertFrom-Json
-  $daxResolution = Get-Content -LiteralPath $daxResolutionPath -Raw | ConvertFrom-Json
-  $sqlStandard = [string]$sqlResolution.path; $daxStandard = [string]$daxResolution.path
-  if ($sqlStandard) { $sqlStandards = @('--standards', $sqlStandard) }
-  if ($daxStandard) { $daxStandards = @('--standards', $daxStandard) }
-  $savedEap = $ErrorActionPreference
-  try { $ErrorActionPreference = 'Continue'; [System.IO.File]::WriteAllText($acceptedPath, ((& node $standardsCli accepted-run $outdir 2>$null) -join ''), $utf8NoBom); $acceptedRc = $LASTEXITCODE }
-  finally { $ErrorActionPreference = $savedEap }
-  if ($acceptedRc -eq 0) {
-    $accepted = Get-Content -LiteralPath $acceptedPath -Raw | ConvertFrom-Json
-    $sqlJson = [string]$accepted.reports.sql; $daxJson = [string]$accepted.reports.dax
-  }
-
-  # --compare: snapshot each linter's previous saved report, then hand it to the linter as
-  # --diff-against so it prints a new/fixed/persisting delta (the run overwrites the saved
-  # copy via -o, so we compare against the snapshot). A first run has nothing to diff.
-  $sqlDiff = @(); $daxDiff = @(); $sqlPrev = $null; $daxPrev = $null
-  if ($compare) {
-    if (Test-Path -LiteralPath $sqlJson) { $sqlPrev = [System.IO.Path]::GetTempFileName(); Copy-Item -LiteralPath $sqlJson -Destination $sqlPrev -Force; $sqlDiff = @('--diff-against', $sqlPrev) }
-    if (Test-Path -LiteralPath $daxJson) { $daxPrev = [System.IO.Path]::GetTempFileName(); Copy-Item -LiteralPath $daxJson -Destination $daxPrev -Force; $daxDiff = @('--diff-against', $daxPrev) }
-    if (-not $sqlPrev -and -not $daxPrev) { Coop-Info 'no previous review to compare against yet — this run becomes the baseline' }
-  }
-
-  # Run both reviewers first; Node validates the complete envelopes and publishes
-  # reports plus bindings as one immutable generation behind one atomic pointer.
-  Coop-Head "coop-sql-review check → accepted review generation"
-  & coop-sql-review check @scope --format json @sqlStandards -o $sqlRun @sqlDiff @extra
-  $sqlRc = $LASTEXITCODE
-  if ($sqlRc -ne 0) { Coop-Warn "coop-sql-review exited $sqlRc" }
-  Coop-Head "coop-dax-review check → accepted review generation"
-  & coop-dax-review check @scope --format json @daxStandards -o $daxRun @daxDiff @extra
-  $daxRc = $LASTEXITCODE
-  if ($daxRc -ne 0) { Coop-Warn "coop-dax-review exited $daxRc" }
-  $savedEap = $ErrorActionPreference
-  try { $ErrorActionPreference = 'Continue'; [System.IO.File]::WriteAllText($promotionPath, ((& node $standardsCli promote-run $outdir $sqlResolutionPath $sqlRun $daxResolutionPath $daxRun 2>&1) -join "`n"), $utf8NoBom); $promoteRc = $LASTEXITCODE }
-  finally { $ErrorActionPreference = $savedEap }
-  if ($promoteRc -eq 0) {
-    $promotion = Get-Content -LiteralPath $promotionPath -Raw | ConvertFrom-Json
-    $sqlJson = [string]$promotion.reports.sql; $daxJson = [string]$promotion.reports.dax
-    $sqlProvenance = $true; $daxProvenance = $true
-  } else {
-    $provenanceError = Get-Content -LiteralPath $promotionPath -Raw
-    Coop-Err "review run rejected: $provenanceError"; $sqlRc = 2; $daxRc = 2
-    $rejected = Join-Path $outdir 'rejected'; New-Item -ItemType Directory -Force -Path $rejected | Out-Null
-    foreach ($run in @($sqlRun, $daxRun)) { if ((Test-Path -LiteralPath $run -PathType Leaf) -and (Get-Item -LiteralPath $run -Force).Length -gt 0) { Move-Item -LiteralPath $run -Destination (Join-Path $rejected ([System.IO.Path]::GetFileName($run))) -Force -ErrorAction Stop } }
-  }
-  Remove-Item -LiteralPath $sqlResolutionPath,$daxResolutionPath,$taskResolutionsPath -Force -ErrorAction SilentlyContinue
-  
-  $bpaRc = 0
-  Remove-Item -LiteralPath $bpaJson -Force -ErrorAction SilentlyContinue   # never let a stale report stand in for this run
-  if ($proj) {
-    $pyCmd = Get-CoopPython
-    if ($pyCmd) {
-      $bpaScript = Join-Path $env:COOP_ROOT 'lib\_bpa_runner.py'
-      & $pyCmd $bpaScript $proj $bpaJson @scope
-      $bpaRc = $LASTEXITCODE
-      if (Test-Path -LiteralPath $bpaJson -PathType Leaf) {
-        Coop-Head "Tabular Editor BPA → $bpaJson"
-        if ($bpaRc -ne 0) { Coop-Warn "Tabular Editor BPA exited $bpaRc" }
-      }
-    }
-  }
-
-  if ($sqlPrev) { Remove-Item -LiteralPath $sqlPrev -Force -ErrorAction SilentlyContinue }
-  if ($daxPrev) { Remove-Item -LiteralPath $daxPrev -Force -ErrorAction SilentlyContinue }
-
-  # Compose the findings onto the lineage docs (unless --skip-docs).
-  $ddRc = 0
-  if ($skipDocs) {
-    Coop-Info 'skipping the lineage-docs step (--skip-docs)'
-  } elseif (-not $sqlProvenance -or -not $daxProvenance) {
-    Coop-Warn 'skipping lineage-docs composition because this run contains a rejected review report'
-  } else {
-    Coop-Head 'coop-data-doc build (composing review findings)'
-    $ddArgs = @('build', '--non-interactive')
-    if ($sqlProvenance) { $ddArgs += '--reviews'; $ddArgs += $sqlJson }
-    if ($daxProvenance) { $ddArgs += '--reviews'; $ddArgs += $daxJson }
-    if (Test-Path -LiteralPath $bpaJson -PathType Leaf) { $ddArgs += '--reviews'; $ddArgs += $bpaJson }
-    & coop-data-doc @ddArgs
-    $ddRc = $LASTEXITCODE
-    if ($ddRc -eq 1) {
-      # Friendly "no config" exit — the findings are still saved; docs are an aid, not a gate.
-      Coop-Warn 'lineage docs not set up — findings saved, docs step skipped. Set up lineage docs first: coop data-doc setup   (or /setup-docs in the agent)'
-      $ddRc = 0
-    } elseif ($ddRc -ne 0) {
-      Coop-Err "coop-data-doc build failed (exit $ddRc)"
-    } else {
-      foreach ($d in @('data-docs-site', 'site')) {
-        if (Test-Path -LiteralPath (Join-Path $d 'index.html') -PathType Leaf) { Coop-Ok "Portal: $d/index.html"; break }
-      }
-    }
-  }
-
-  # Summary/HTML publishes only a coherent current SQL+DAX run.
-  $py = Get-CoopPython
-  if (-not $sqlProvenance -or -not $daxProvenance) {
-    Coop-Warn 'skipping suite summary/HTML because the complete review run was not accepted'
-  } elseif ($py) {
-    $htmlFlag = if ($doHtml) { "1" } else { "0" }
-    $suiteHtml = Join-Path $outdir "suite.html"
-    $summaryPy = @'
-import sys, os
-from coop_review_core.suite import load_envelopes, suite_summary, suite_text, suite_html
-
-paths = [p for p in sys.argv[1:4] if os.path.exists(p)]
-if not paths:
-    sys.exit(0)
-
-try:
-    envs = load_envelopes(paths)
-    summary = suite_summary(envs)
-    print("\n" + suite_text(envs, summary, color=True))
-    
-    do_html = sys.argv[4] == "1"
-    if do_html:
-        html_out = sys.argv[5]
-        html_paths = {}
-        for env in envs:
-            t = env.get("tool")
-            if t:
-                html_file = os.path.join(os.path.dirname(html_out), f"{t}.html")
-                if os.path.exists(html_file):
-                    html_paths[t] = f"{t}.html"
-        
-        html_tmp = f"{html_out}.{os.getpid()}.tmp"
-        try:
-            with open(html_tmp, "x", encoding="utf-8") as f:
-                f.write(suite_html(envs, summary, html_paths))
-                f.flush(); os.fsync(f.fileno())
-            os.replace(html_tmp, html_out)
-        finally:
-            if os.path.exists(html_tmp): os.unlink(html_tmp)
-        print(f"Suite HTML Report: {html_out}\n")
-except Exception as exc:
-    print(f"Suite summary error: {exc}", file=sys.stderr)
-'@
-    $sqlSummary = if ($sqlProvenance) { $sqlJson } else { '' }
-    $daxSummary = if ($daxProvenance) { $daxJson } else { '' }
-    $summaryPy | & $py - $sqlSummary $daxSummary $bpaJson $htmlFlag $suiteHtml
-  } else {
-    Coop-Ok "Reports: $sqlJson $daxJson $bpaJson"
-  }
-  Coop-Info "Tip: add these files to coop-data-doc.yml's reviews: list so CI check sees the same inputs."
-
-  # Exit: hard data-doc failures propagate; --strict makes a failing linter exit 2.
-  if ($ddRc -ge 2) { exit $ddRc }
-  if (-not $sqlProvenance -or -not $daxProvenance) { exit 2 }
-  if ($strict) {
-    if ($sqlRc -ne 0 -or $daxRc -ne 0 -or $bpaRc -ne 0) { exit 2 }
-  }
-  exit 0
-  } finally {
-    foreach ($temp in @($sqlRun, $daxRun, $sqlResolutionPath, $daxResolutionPath, $taskResolutionsPath, $promotionPath, $acceptedPath, $sqlPrev, $daxPrev)) {
-      if ($temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
-    }
-  }
+  exit $rc   # a coop-data-doc failure must not be masked by the summary
 }
 
 # --- Authoring scaffolders ---------------------------------------------------
@@ -1003,7 +714,7 @@ TODO: when to use this skill.
 - TODO
 
 ## Tools
-- Use the native tools (sql_review / dax_review / data_doc) and read-only MCP as needed.
+- Use the native tools (data_doc / bpa_review) and read-only MCP as needed.
 - Operates under the coop-workflow skill and docs/guardrails.md (advisory, read-only first).
 
 ## Output
@@ -1064,7 +775,7 @@ function Test-CoopReleasePins {
   }
   $vraw = Get-Content -LiteralPath $vjson -Raw
   $mismatch = $false
-  foreach ($tool in @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')) {
+  foreach ($tool in @('coop-data-doc')) {
     $pin = Coop-ManifestObjectGet 'python_tools' $tool
     # versions.json keeps a strict one-`"key": "value"`-per-line layout (enforced
     # by coop-website's own checker), so a regex read is safe — and python-free.
@@ -1380,9 +1091,6 @@ switch -CaseSensitive ($cmd) {
   'new-prompt' { New-CoopPrompt $rest; break }
   'release' { Invoke-CoopRelease $rest; break }
   'data-doc' { Invoke-DataDoc $rest; break }
-  'sql-review' { Invoke-Tool 'coop-sql-review' $rest; break }
-  'dax-review' { Invoke-Tool 'coop-dax-review' $rest; break }
-  'review' { Invoke-CoopReview $rest; break }
   'support' { & (Join-Path $script:CoopRoot 'scripts\support-center.ps1') @rest; exit $LASTEXITCODE }
   { $_ -ceq 'fabric' -or $_ -ceq 'fab' } {
     if (-not (Test-Have 'fab')) { Coop-Die 'Microsoft Fabric CLI (fab) not found. Run: coop install' }
@@ -1468,7 +1176,7 @@ function Invoke-CoopInitCi {
     if ($rc -eq 0) {
       Coop-Ok "Wrote $outFile"
     } elseif ($rc -eq 3) {
-      Coop-Warn "No CI gates generated: paths missing in .coop/project.yml"
+      Coop-Warn "No CI gates generated: no coop-data-doc.yml in $Dir" 'set up lineage docs first: coop data-doc setup   (or /setup-docs in the agent)'
     } else {
       Coop-Die "CI scaffolding failed"
     }

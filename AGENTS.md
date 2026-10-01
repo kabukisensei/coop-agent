@@ -22,11 +22,21 @@ Cooptimize guardrails and the Cooptimize workflow:
   deliberate project standards overrides; otherwise COOP's resolved standards task
   authority is authoritative. Read the nearest contract before doing file work.
 
-Native tools available: `sql_review`, `dax_review`, `data_doc` (advisory, read-only),
+Native tools available: `data_doc` (advisory, read-only) and `bpa_review` (Tabular
+Editor BPA, the deterministic model check, when configured),
 plus the Microsoft Fabric CLI (`fab` = ms-fabric-cli) and `fabric_cicd` (a validate-only
 Python **library**, not a CLI — `import fabric_cicd` in deployment scripts), and
 read-only Fabric / Power BI / Microsoft Learn MCP servers. Persistent memory is provided
 by pi-hermes-memory.
+
+SQL, DAX and semantic-model standards are applied **while coop writes**: the active
+coop-standards wiki articles are fed into every such task. Before presenting SQL,
+DAX, or model changes, coop **self-checks** its own diff against the same articles.
+The standards are the rule: coop fixes what does not meet them and deviates only on
+a user-granted exception or a stated reason, named in the summary. There is no
+separate rule engine: the former `sql_review` / `dax_review` tools and `coop review`
+were retired in ST1. Offline or on a first run, the wiki's articles come from the
+copy shipped with coop (`config/standards-bundle/`), and coop says so.
 
 `data_doc` wraps `coop-data-doc` with commands `scan` (default; builds the lineage
 graph, read-only), `build` (also writes Markdown docs + portal, indexed by
