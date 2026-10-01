@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `coop doctor` no longer calls the MCP set, or `powerbi-modeling-mcp`, read-only:
+  the section header, the `powerbi-mcp-server` hint and the no-config hint now say
+  that Fabric and Microsoft Learn are read-only while the Power BI Modeling, Azure
+  DevOps and Warehouse SQL servers are approval-gated (every edit asks first). The
+  `coop-workflow` and `power-bi-impact-analysis` skills and `.coop/project.example.yml`
+  use the same wording (#194).
+
 ## [0.26.0] — 2026-10-01
 
 ### Added
