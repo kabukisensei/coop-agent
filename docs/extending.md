@@ -4,7 +4,7 @@ coop is a thin layer over Pi, so **everything Pi can be extended with, coop can
 too** — and your team's additions live in this repo, version-controlled and shared
 the moment you push. Nothing here requires forking Pi or coop.
 
-At launch, `bin/coop` loads, from this repo:
+At launch, `bin/coop.ps1` loads, from this repo:
 
 | What | Where | How it's loaded |
 |------|-------|-----------------|
@@ -135,7 +135,7 @@ Pi extension in TypeScript. Use the three in `extensions/` as templates:
   own shell is untouched.
 
 To load a new companion extension, either drop it in `extensions/<name>/` and add a
-`-e` line in `bin/coop` / `bin/coop.ps1`, or install a published one with
+`-e` line in `bin/coop.ps1`, or install a published one with
 `coop add npm:<package>` (it persists in Pi's settings for everyone who installs).
 
 Full Pi extension API reference: run `coop pi --help`, and see the bundled examples
@@ -201,8 +201,8 @@ Configuration lives in `~/.coop/config` under the `knowledge` block:
 }
 ```
 
-- **Sync**: `scripts/sync-knowledge.sh` (or `scripts/sync-knowledge.ps1`) clones missing local paths and fast-forwards clean checkouts during `coop sync` and `coop update`. Offline or unauthenticated runs fail soft (warn and continue). Dirty checkouts are preserved and never reset.
-- **Skills launch slot**: If the local clone contains `skills/*/SKILL.md`, `bin/coop` and `bin/coop.ps1` append `--skill <dir>` to the Pi launch spec. Like the Microsoft drop-in slots, this is **subordinate**: if a team skill name or frontmatter name conflicts with a first-party Cooptimize skill in `skills/`, the Cooptimize skill wins and the team skill is skipped.
+- **Sync**: `scripts/sync-knowledge.ps1` clones missing local paths and fast-forwards clean checkouts during `coop sync` and `coop update`. Offline or unauthenticated runs fail soft (warn and continue). Dirty checkouts are preserved and never reset.
+- **Skills launch slot**: If the local clone contains `skills/*/SKILL.md`, `bin/coop.ps1` appends `--skill <dir>` to the Pi launch spec. Like the Microsoft drop-in slots, this is **subordinate**: if a team skill name or frontmatter name conflicts with a first-party Cooptimize skill in `skills/`, the Cooptimize skill wins and the team skill is skipped.
 - **Recall**: The `team-knowledge` skill guides the agent to query team patterns via the bundled local-search helper (`scripts/search-knowledge.py`, repository-bound, structured JSON status) before non-trivial work, and injects a hidden startup note when knowledge is available.
 - **Contributing learnings**: Draft discoveries with `/share-learning`, which generates a YAML frontmatter note under the user-selected clone's `learnings/` and routes publication via a plain Git pull request. Never commit directly to main.
 

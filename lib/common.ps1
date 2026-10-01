@@ -1,19 +1,18 @@
 ﻿#!/usr/bin/env pwsh
 #
-# coop-agent shared PowerShell library — the twin of lib/common.sh.
+# coop-agent shared PowerShell library — coop's one helper library (master plan S1).
 # Dot-sourced by bin/coop.ps1 and scripts/*.ps1:
 #
 #   . (Join-Path $PSScriptRoot '../lib/common.ps1')   # from scripts/ or bin/
 #
 # Defines helpers only; never calls `exit` except via Coop-Die. Dot-sourcing runs
 # this file in the CALLER's script scope, so every $script:* variable and function
-# here lands in (and binds to) the calling script — exactly like `. lib/common.sh`
-# on the bash side. When you change a helper in lib/common.sh, port it here in the
-# same change (scripts/check-parity.sh gates the pairing + this file's BOM).
+# here lands in (and binds to) the calling script. scripts/check-bom.sh gates this
+# file's UTF-8 BOM (Windows PowerShell 5.1 reads a BOM-less file as ANSI).
 
 # --- Resolve COOP_ROOT (the directory that contains bin/, lib/, scripts/) -----
 # $PSScriptRoot inside a dot-sourced file is THIS file's directory (lib/), so the
-# repo root is one level up — mirror of common.sh's self-location logic.
+# repo root is one level up.
 $script:CoopRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $env:COOP_ROOT = $script:CoopRoot
 
@@ -119,7 +118,7 @@ function Coop-ManifestStatus([string]$Installed, [string]$Expected) {
   return 'wrong-version'
 }
 
-# --- pipx inventory probes (truthful tool inventory; twins of lib/common.sh) --
+# --- pipx inventory probes (truthful tool inventory) --------------------------
 # `pipx list` output is NEVER authoritative: its cache can be stale and the
 # command can even be shadowed. The source of truth is distribution metadata
 # read INSIDE each venv via `pipx runpip`.
@@ -697,7 +696,7 @@ foreach ($d in (@(
 
 # --- Colors (respect NO_COLOR and non-TTY) -----------------------------------
 # Cooptimize brand palette (truecolor). Folds "is stderr a real console" in, so
-# redirected output gets plain text — mirror of common.sh's [ -t 2 ] check.
+# redirected output gets plain text.
 $script:CoopColor = ($null -eq $env:NO_COLOR -or $env:NO_COLOR -eq '') -and -not [Console]::IsErrorRedirected
 $e = [char]27
 if ($script:CoopColor) {
@@ -724,7 +723,7 @@ $script:G_CHECK  = [char]0x2713   # ✓
 $script:G_CROSS  = [char]0x2717   # ✗
 
 # --- Progress: one determinate "overall" bar + an animated active-item line ---
-# Mirror of common.sh. Built for installers where each item (npm/pipx/pi install)
+# Built for installers where each item (npm/pipx/pi install)
 # takes a while and its own % is unknowable. The bar is determinate at the ITEM
 # level (total known up front); the active item shows a braille spinner + elapsed
 # seconds so it is obviously alive. Animates only when stderr is a real console;
@@ -1024,7 +1023,7 @@ function Test-CoopAuthHasCredential {
 }
 
 # Align coop's ISOLATED extension tree's @earendil-works/pi-ai + pi-tui to the Pi
-# agent's OWN version (mirror of lib/common.sh coop_align_ext_deps). coop's
+# agent's OWN version. coop's
 # extensions load INTO the running agent, so they must share one pi-ai/pi-tui with
 # it; we write an npm `overrides` pin via lib/_extdeps.py and reinstall only when
 # the installed tree doesn't already match. Best-effort; never fatal. Lives in the
@@ -2011,8 +2010,7 @@ function Coop-Unit {
 }
 
 # Run a sibling coop script (sync/doctor) in a CHILD process so its `exit` cannot
-# abort the caller — mirrors bash invoking "$COOP_ROOT/scripts/x.sh" as a
-# subprocess. Returns the child's exit code.
+# abort the caller. Returns the child's exit code.
 function Invoke-CoopScript {
   param([string]$ScriptPath, [string[]]$ScriptArgs = @())
   $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }

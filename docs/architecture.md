@@ -1,7 +1,8 @@
 # Cooptimize Agent — Architecture
 
 `coop` is a **branded layer on top of Pi** (`@earendil-works/pi-coding-agent`). It
-is **not a fork**. `bin/coop` is a thin bash dispatcher that launches `pi` with
+is **not a fork**. `bin/coop.ps1` is a thin PowerShell dispatcher (launched by
+`bin/coop.cmd`, or by the Git Bash forwarder `bin/coop`) that launches `pi` with
 Cooptimize skills, prompts, theme, a governance system prompt, and companion
 extensions, and shells out to the standalone Coop tools and the Microsoft Fabric
 CLI. Everything Cooptimize-specific lives in this repo and is layered onto a
@@ -18,8 +19,8 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 
 ## Layers
 
-1. **`coop` (orchestrator).** `bin/coop` resolves `COOP_ROOT`, sources
-   `lib/common.sh`, exports `PI_CODING_AGENT_DIR` to point Pi at coop's isolated
+1. **`coop` (orchestrator).** `bin/coop.ps1` resolves `COOP_ROOT`, dot-sources
+   `lib/common.ps1`, exports `PI_CODING_AGENT_DIR` to point Pi at coop's isolated
    agent dir (`~/.coop/agent`; see **Isolation** above), runs a **launch-time
    extension-skew preflight** (checks the Pi agent against every installed
    extension's `@earendil-works/pi-ai` requirement — aborts with clear guidance if
@@ -42,8 +43,8 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
    it at launch via flags (`--append-system-prompt`, `--skill`,
    `--prompt-template`, `--theme`, `-e <extension>`).
 
-3. **Cooptimize resources loaded into Pi at launch** (see `bin/coop` →
-   `launch_pi`):
+3. **Cooptimize resources loaded into Pi at launch** (see `bin/coop.ps1` →
+   `Build-CoopPiArgs` / `coop launch-spec --json`):
    - **Guardrails system prompt** — `docs/guardrails.md`, *appended* (not
      replacing Pi's prompt): read-only-first, plan-and-approve, never commit
      source, MCP read-only, never expose secrets.
@@ -183,7 +184,7 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 
 ```mermaid
 flowchart TD
-    user([User]) --> coop["coop (bin/coop)\nbranded layer / orchestrator — never a fork"]
+    user([User]) --> coop["coop (bin/coop.ps1)\nbranded layer / orchestrator — never a fork"]
 
     coop -- "subcommands:\ndoctor · update · install · sync\ndata-doc · sql-review · dax-review · fabric" --> subs[[coop subcommands]]
     coop -- "exec pi --append-system-prompt --skill\n--prompt-template --theme -e …" --> pi["Pi\n@earendil-works/pi-coding-agent"]

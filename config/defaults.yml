@@ -105,7 +105,7 @@ mcp:
     - name: context-mode    # context-mode@1.0.169 — intent-driven search + SANDBOXED exec over docs/graph
       mode: sandboxed-exec  # not read-only: sandboxed code execution (over docs, not client data)
 
-# Branded resources loaded at launch (see bin/coop).
+# Branded resources loaded at launch (see bin/coop.ps1).
 resources:
   skills: skills
   prompts: prompts

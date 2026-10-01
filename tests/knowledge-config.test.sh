@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Tests for the ~/.coop/config "knowledge" block: onboarding writes it, the
-# lib/common.sh readers parse it (COOP_DIR override — never the real $HOME).
+# lib/common.ps1 readers parse it (COOP_DIR override — never the real $HOME).
 set -uo pipefail
 
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
@@ -56,7 +56,17 @@ assert k["repos"][0]["url"] == "https://github.com/cooptimize/incremental-bi.git
 PYEOF
 [ "$?" -eq 0 ] && ok "re-running onboarding preserves the knowledge block" || ko "re-run clobbered the knowledge block"
 
-# --- readers (lib/common.sh) ---------------------------------------------------
+# --- readers (lib/common.ps1: Test-CoopKnowledgeEnabled / Get-CoopKnowledgeRepos) ---
+# Driven through pwsh (master plan S1: the one implementation is PowerShell).
+# knowledge_repos prints one `url<TAB>local_path` line per repo, like the
+# retired bash reader did, so the assertions below stay unchanged.
+PWSH="$(command -v pwsh 2>/dev/null || command -v powershell.exe 2>/dev/null || command -v powershell 2>/dev/null || true)"
+[ -z "$PWSH" ] && { echo "pwsh (PowerShell 7) required: the knowledge readers live in lib/common.ps1"; exit 1; }
+knowledge_ps() { # <COOP_DIR> <pwsh statements run after dot-sourcing lib/common.ps1>
+  HOME="$TMP/home" USERPROFILE="$TMP/home" COOP_DIR="$1" COOP_ROOT="$ROOT" \
+    "$PWSH" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ". (Join-Path \$env:COOP_ROOT 'lib/common.ps1'); $2"
+}
+PS_REPOS='Get-CoopKnowledgeRepos | ForEach-Object { "$($_.Url)`t$($_.LocalPath)" }'
 CFG="$TMP/readers"; mkdir -p "$CFG/.coop"
 cat > "$CFG/.coop/config" <<JSON
 {"schema_version":1,
@@ -64,13 +74,9 @@ cat > "$CFG/.coop/config" <<JSON
    {"url":"https://github.com/cooptimize/incremental-bi.git","local_path":"~/.coop/knowledge/incremental-bi"},
    {"url":"https://example.invalid/team/kb-two.git","local_path":"$CFG/kb-two"}]}}
 JSON
-out="$(HOME="$TMP/home" COOP_DIR="$CFG" COOP_ROOT="$ROOT" bash -c '
-  . "$COOP_ROOT/lib/common.sh"
-  coop_knowledge_enabled || exit 1
-  coop_knowledge_repos
-')"
+out="$(knowledge_ps "$CFG" "if (-not (Test-CoopKnowledgeEnabled)) { exit 1 }; $PS_REPOS")"
 rc=$?
-[ "$rc" -eq 0 ] && ok "coop_knowledge_enabled true for enabled config" || ko "coop_knowledge_enabled rejected enabled config"
+[ "$rc" -eq 0 ] && ok "Test-CoopKnowledgeEnabled true for enabled config" || ko "Test-CoopKnowledgeEnabled rejected enabled config"
 line1="$(printf '%s\n' "$out" | sed -n '1p')"
 line2="$(printf '%s\n' "$out" | sed -n '2p')"
 lines="$(printf '%s\n' "$out" | grep -c '')"
@@ -94,29 +100,19 @@ esac
 # Missing knowledge key -> empty output, exit 0 (clean no-op).
 CFG2="$TMP/none"; mkdir -p "$CFG2/.coop"
 printf '%s\n' '{"schema_version":1,"integrations":{}}' > "$CFG2/.coop/config"
-out="$(HOME="$TMP/home" COOP_DIR="$CFG2" COOP_ROOT="$ROOT" bash -c '
-  . "$COOP_ROOT/lib/common.sh"
-  if coop_knowledge_enabled; then echo ENABLED; fi
-  coop_knowledge_repos
-')"
+out="$(knowledge_ps "$CFG2" "if (Test-CoopKnowledgeEnabled) { 'ENABLED' }; $PS_REPOS")"
 rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "missing knowledge key is a clean no-op" || ko "missing key: rc=$rc out=[$out]"
 
 # Disabled flag -> empty output, exit 0.
 CFG3="$TMP/disabled"; mkdir -p "$CFG3/.coop"
 printf '%s\n' '{"schema_version":1,"knowledge":{"enabled":false,"repos":[{"url":"u","local_path":"/tmp/x"}]}}' > "$CFG3/.coop/config"
-out="$(HOME="$TMP/home" COOP_DIR="$CFG3" COOP_ROOT="$ROOT" bash -c '
-  . "$COOP_ROOT/lib/common.sh"
-  coop_knowledge_repos
-')"
+out="$(knowledge_ps "$CFG3" "$PS_REPOS")"
 rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "disabled knowledge is a clean no-op" || ko "disabled: rc=$rc out=[$out]"
 
 # No config file at all -> clean no-op.
-out="$(HOME="$TMP/home" COOP_DIR="$TMP/nonexistent" COOP_ROOT="$ROOT" bash -c '
-  . "$COOP_ROOT/lib/common.sh"
-  coop_knowledge_repos
-')"
+out="$(knowledge_ps "$TMP/nonexistent" "$PS_REPOS")"
 rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "absent config file is a clean no-op" || ko "absent config: rc=$rc out=[$out]"
 

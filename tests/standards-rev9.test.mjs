@@ -48,15 +48,18 @@ const makeReviewer = (domain, standardPath, version) => {
   writeFileSync(script, `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; import {resolve} from "node:path";\nconst a=process.argv.slice(2), i=a.indexOf("--standards"), p=resolve(i>=0?a[i+1]:${JSON.stringify(standardPath)}), h=createHash("sha256").update(readFileSync(p)).digest("hex"), count=${JSON.stringify(domain === "sql" ? "files_checked" : "models_checked")}; process.stdout.write(JSON.stringify({tool:${JSON.stringify(`coop-${domain}-review`)},schema_version:${domain === "sql" ? 4 : 3},version:${JSON.stringify(version)},[count]:0,standards:{path:p,sha256:h},findings:[],diagnostics:[],agent_review:[],summary:{error:0,warning:0,info:0},verdict:{clean:true,highest_severity:null}}));\n`);
   return { command: process.execPath, args: [script], script };
 };
-// `bash scripts/doctor.sh` runs hermetic (#96): a temp HOME, USERPROFILE and agent
-// dir, so it never reads a real mcp.json, `pi` state or ~/.coop, and a fresh fetch
-// stamp in that agent dir, so its once-a-day refresh never fetches this checkout's
-// origin (the stamp tests/fixtures/doctor-warehouse.test.ps1 writes for doctor.ps1).
+// `scripts/doctor.ps1` (the one doctor since master plan S1; run through pwsh) runs
+// hermetic (#96): a temp HOME, USERPROFILE and agent dir, so it never reads a real
+// mcp.json, `pi` state or ~/.coop, and a fresh fetch stamp in that agent dir, so its
+// once-a-day refresh never fetches this checkout's origin (the stamp
+// tests/fixtures/doctor-warehouse.test.ps1 writes too).
 const doctorEnv = (env, name) => {
   const home = join(tmp, name), agent = join(home, ".coop", "agent");
   mkdirSync(agent, { recursive: true }); writeFileSync(join(agent, ".coop-fetch-stamp"), "");
   return { ...env, HOME: home, USERPROFILE: home, COOP_AGENT_DIR: agent, PI_CODING_AGENT_DIR: agent };
 };
+const PWSH = "pwsh";
+const runDoctor = (cwd, env) => spawnSync(PWSH, ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(ROOT, "scripts", "doctor.ps1")], { cwd, encoding: "utf8", env });
 const REVIEWER_NAMES = ["sql", "dax"].flatMap((domain) => ["", ".exe", ".cmd", ".bat", ".ps1"].map((ext) => `coop-${domain}-review${ext}`));
 const reviewerFreePath = () => (process.env.PATH || "").split(delimiter)
   .filter((dir) => dir && !REVIEWER_NAMES.some((name) => existsSync(join(dir, name))))
@@ -248,7 +251,7 @@ try {
         assert.equal(readFileSync(receipt, "utf8"), "called\n", `${domain} malformed reviewer must execute through PATH`);
       }
     }
-    const doctor = spawnSync("bash", [join(ROOT, "scripts", "doctor.sh")], { cwd: tmp, encoding: "utf8", env: doctorEnv(env, "failed-doctor-home") });
+    const doctor = runDoctor(tmp, doctorEnv(env, "failed-doctor-home"));
     assert.match(`${doctor.stdout}\n${doctor.stderr}`, /domain sql: formal_standard\/unavailable/);
     const support = JSON.parse(execFileSync(process.execPath, [join(ROOT, "lib", "support-center-cli.mjs"), "--json"], { encoding: "utf8", env }));
     assert.equal(support.manifest.components.find((x) => x.component === "standards").status, "degraded");
@@ -303,7 +306,7 @@ try {
     const lines = execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
     assert.match(lines, /canonical-remote\tconfigured\thttps:\/\/github\.com\/cooptimize\/coop-standards\.git\|main/);
     for (const domain of ["sql", "dax", "semantic_model"]) assert.match(lines, new RegExp(`domain\\t${domain}\\tformal_standard/unavailable`));
-    const doctor = spawnSync("bash", [join(ROOT, "scripts", "doctor.sh")], { cwd: tmp, encoding: "utf8", env: doctorEnv(env, "doctor-home") });
+    const doctor = runDoctor(tmp, doctorEnv(env, "doctor-home"));
     assert.match(`${doctor.stdout}\n${doctor.stderr}`, /source canonical-remote: configured/);
     assert.match(`${doctor.stdout}\n${doctor.stderr}`, /domain sql: formal_standard\/unavailable/);
     const support = JSON.parse(execFileSync(process.execPath, [join(ROOT, "lib", "support-center-cli.mjs"), "--json"], { encoding: "utf8", env }));
@@ -317,7 +320,7 @@ try {
     const saved = readFileSync(state, "utf8");
     const env = { ...process.env, PATH: reviewerFreePath(), COOP_STANDARDS_ROOT: cache, COOP_STANDARDS_STATE: state, COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "support-home"), NO_COLOR: "1" };
     const doctorLines = () => execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
-    const doctorOut = (name) => { const d = spawnSync("bash", [join(ROOT, "scripts", "doctor.sh")], { cwd: tmp, encoding: "utf8", env: doctorEnv(env, name) }); return `${d.stdout}\n${d.stderr}`; };
+    const doctorOut = (name) => { const d = runDoctor(tmp, doctorEnv(env, name)); return `${d.stdout}\n${d.stderr}`; };
     try {
       const fresh = JSON.parse(saved);
       writeFileSync(state, JSON.stringify({ ...fresh, last_successful_check_ms: Date.now() - 20 * 60 * 1000 }));

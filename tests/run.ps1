@@ -1,9 +1,8 @@
 ﻿#!/usr/bin/env pwsh
 #
-# coop PowerShell behavioral tests (twin of the PS-relevant assertions in tests/run.sh).
-# Windows is coop's PRIMARY target, yet every behavioral test drove the BASH side only —
-# the .ps1 dispatcher (coop.ps1) and update gate (update.ps1) had no executable safety
-# net. This exercises the SAME seams tests/run.sh does, but through PowerShell:
+# coop PowerShell behavioral tests: coop's own test lane (the product is PowerShell,
+# master plan S1). tests/run.sh holds the Node/Python logic tests and the bash
+# harness suites; this file drives coop.ps1, lib/common.ps1 and scripts/*.ps1:
 #   1. coop.ps1 launch-spec resolves guardrails, prompts, theme, all 3 extensions
 #   2. coop.ps1 --no-launch exits 0 + prints the spec; --no-launch --json emits {bin,args,env}
 #   3. update.ps1 fleet-mode decisions via COOP_UPDATE_GATE_DRYRUN
@@ -22,7 +21,7 @@
 # (terminal-acceptance reparse subset, knowledge git timeout, Windows ownership
 # probe, Fabric MCP launch-time bearer isolation, fresh-install Fabric Python
 # prerequisite). They stay at their positions because some depend on ordering.
-# The .ps1 UTF-8 BOM check lives in scripts/check-parity.sh only.
+# The .ps1 UTF-8 BOM check lives in scripts/check-bom.sh only.
 #
 $ErrorActionPreference = 'Stop'
 

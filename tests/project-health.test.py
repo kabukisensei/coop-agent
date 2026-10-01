@@ -899,12 +899,40 @@ class ProjectHealthTests(unittest.TestCase):
             "  fabric: docs/standards/fabric-standards.md\n"
         )
         self.contract.write_text(original, encoding="utf-8")
-        bash = shutil.which("bash")
-        self.assertIsNotNone(bash)
-        run = subprocess.run(
+        # The public dispatcher is bin/coop.ps1 (master plan S1: one implementation,
+        # in PowerShell): it exposes the helper and migration flags, and its
+        # `init --migrate-legacy` defaults to a dry run.
+        ps_dispatch = (ROOT / "bin" / "coop.ps1").read_text(encoding="utf-8-sig")
+        for token in (
+            "--migrate-legacy",
+            "--apply",
+            "--archive",
+            "lib/project_health.py",
+        ):
+            self.assertIn(token, ps_dispatch)
+        self.assertEqual((ROOT / "bin" / "coop.ps1").read_bytes()[:3], b"\xef\xbb\xbf")
+        ps_doctor = (ROOT / "scripts" / "doctor.ps1").read_text(encoding="utf-8-sig")
+        for token in (
+            "project_health.py",
+            "doctor-lines",
+            "legacy-project diagnostics",
+        ):
+            self.assertIn(token, ps_doctor)
+        self.assertEqual(
+            (ROOT / "scripts" / "doctor.ps1").read_bytes()[:3], b"\xef\xbb\xbf"
+        )
+
+        pwsh = shutil.which("pwsh") or shutil.which("powershell")
+        self.assertIsNotNone(pwsh, "pwsh (PowerShell 7) required: coop init is dispatched by bin/coop.ps1")
+        ps_run = subprocess.run(
             [
-                str(bash),
-                str(ROOT / "bin" / "coop"),
+                pwsh,
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(ROOT / "bin" / "coop.ps1"),
                 "init",
                 "--migrate-legacy",
                 str(self.root),
@@ -914,53 +942,9 @@ class ProjectHealthTests(unittest.TestCase):
             env={**os.environ, "NO_COLOR": "1"},
             check=False,
         )
-        self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertIn("Dry run only", run.stdout)
+        self.assertEqual(ps_run.returncode, 0, ps_run.stderr)
+        self.assertIn("Dry run only", ps_run.stdout)
         self.assertEqual(self.contract.read_text(encoding="utf-8"), original)
-
-        # Both public dispatchers expose the same helper and migration flags.
-        bash_dispatch = (ROOT / "bin" / "coop").read_text(encoding="utf-8")
-        ps_dispatch = (ROOT / "bin" / "coop.ps1").read_text(encoding="utf-8-sig")
-        for token in (
-            "--migrate-legacy",
-            "--apply",
-            "--archive",
-            "lib/project_health.py",
-        ):
-            self.assertIn(token, bash_dispatch)
-            self.assertIn(token, ps_dispatch)
-        self.assertEqual((ROOT / "bin" / "coop.ps1").read_bytes()[:3], b"\xef\xbb\xbf")
-        bash_doctor = (ROOT / "scripts" / "doctor.sh").read_text(encoding="utf-8")
-        ps_doctor = (ROOT / "scripts" / "doctor.ps1").read_text(encoding="utf-8-sig")
-        for token in (
-            "project_health.py",
-            "doctor-lines",
-            "legacy-project diagnostics",
-        ):
-            self.assertIn(token, bash_doctor)
-            self.assertIn(token, ps_doctor)
-        self.assertEqual(
-            (ROOT / "scripts" / "doctor.ps1").read_bytes()[:3], b"\xef\xbb\xbf"
-        )
-
-        pwsh = shutil.which("pwsh")
-        if pwsh:
-            ps_run = subprocess.run(
-                [
-                    pwsh,
-                    "-NoProfile",
-                    "-File",
-                    str(ROOT / "bin" / "coop.ps1"),
-                    "init",
-                    "--migrate-legacy",
-                    str(self.root),
-                ],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(ps_run.returncode, 0, ps_run.stderr)
-            self.assertIn("Dry run only", ps_run.stdout)
 
 
 if __name__ == "__main__":

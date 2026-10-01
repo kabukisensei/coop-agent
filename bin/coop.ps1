@@ -1128,7 +1128,7 @@ function Invoke-CoopRelease {
         Coop-Say '  Bump VERSION + release/extension manifests, roll CHANGELOG [Unreleased] into'
         Coop-Say '  a dated release, commit, tag vX.Y.Z, and push main + the tag atomically (both'
         Coop-Say '  or neither). Default: patch.'
-        Coop-Say '  Verifies extensions transpile + tests + bash/PowerShell parity pass, and that'
+        Coop-Say '  Verifies extensions transpile + tests + the .ps1 BOM check pass, and that'
         Coop-Say '  the tested_with coop-tool pins match the sibling coop-website''s versions.json'
         Coop-Say '  (--no-check to skip).'
         Coop-Say '  Requires a clean working tree on main, equal to origin/main (it fetches origin).'
@@ -1191,16 +1191,16 @@ function Invoke-CoopRelease {
       Coop-Warn 'npx not found — skipping the extension build check.'; $gateSkipped = $true
     }
 
-    # Gate on the full Node suite + bash/PowerShell parity, not just transpile.
-    # Both are bash scripts, so they need bash (Git Bash / WSL) on Windows. If the
-    # gate can't run on this host we fail closed before a push (below) rather than
-    # silently tagging an unverified release. bin/coop's coop_release tracks the same
-    # gate_skipped condition — bash is guaranteed on macOS/Linux, but node/npx are
-    # not, so a node-less host fails closed there too.
+    # Gate on the full Node suite + the .ps1 BOM check, not just transpile.
+    # Both are bash scripts (dev tooling), so they need bash (Git Bash / WSL) on
+    # Windows. If the gate can't run on this host we fail closed before a push
+    # (below) rather than silently tagging an unverified release. scripts/release.sh
+    # tracks the same gate_skipped condition — bash is guaranteed on macOS/Linux,
+    # but node/npx are not, so a node-less host fails closed there too.
     # COOP_TEST_EXTENDED=1 runs BOTH test lanes (gate + extended), so a release
     # keeps the full coverage that CI splits between ci.yml (gate, every PR) and
     # extended.yml (nightly). See docs/ci.md. Set only for the test run and then
-    # restored, the same scope as bin/coop's one-command prefix.
+    # restored, the same scope as scripts/release.sh's one-command prefix.
     $testsSh = Join-Path (Join-Path $root 'tests') 'run.sh'
     if (Test-Path -LiteralPath $testsSh) {
       if ((Test-Have 'bash') -and (Test-Have 'node')) {
@@ -1220,14 +1220,21 @@ function Invoke-CoopRelease {
         Coop-Warn 'bash or node not found — skipping the test suite.'; $gateSkipped = $true
       }
     }
-    $paritySh = Join-Path (Join-Path $root 'scripts') 'check-parity.sh'
-    if (Test-Path -LiteralPath $paritySh) {
+    # The PowerShell suite is the product's own lane; it runs under this same host.
+    $testsPs1 = Join-Path (Join-Path $root 'tests') 'run.ps1'
+    if (Test-Path -LiteralPath $testsPs1) {
+      $psOut = & $testsPs1 2>&1
+      if ($LASTEXITCODE -eq 0) { Coop-Ok 'PowerShell tests pass (tests/run.ps1)' }
+      else { $psOut | Out-String | Write-Host; Coop-Die 'PowerShell tests failed (tests/run.ps1) — fix them, or re-run with --no-check.' }
+    }
+    $bomSh = Join-Path (Join-Path $root 'scripts') 'check-bom.sh'
+    if (Test-Path -LiteralPath $bomSh) {
       if (Test-Have 'bash') {
-        & bash $paritySh *> $null
-        if ($LASTEXITCODE -eq 0) { Coop-Ok 'parity check passes' }
-        else { Coop-Die 'parity check failed (bash scripts/check-parity.sh) — fix it, or re-run with --no-check.' }
+        & bash $bomSh *> $null
+        if ($LASTEXITCODE -eq 0) { Coop-Ok 'BOM check passes' }
+        else { Coop-Die 'BOM check failed (bash scripts/check-bom.sh) — fix it, or re-run with --no-check.' }
       } else {
-        Coop-Warn 'bash not found — skipping the parity check.'; $gateSkipped = $true
+        Coop-Warn 'bash not found — skipping the BOM check.'; $gateSkipped = $true
       }
     }
     # Fail closed: a host that could not run the gate must not PUBLISH an unverified

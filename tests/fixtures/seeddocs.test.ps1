@@ -1,9 +1,14 @@
 ﻿#!/usr/bin/env pwsh
-# PowerShell twin of tests/seeddocs.test.sh's config-set status checks (#102):
-# `coop init --seed-docs` through bin/coop.ps1 against a stub coop-data-doc that
-# prints config-set's status line (coop-data-doc 1.2.0 wording). The status is
-# shown, and "saved, not runnable yet" is a warning, never discarded. The stub is
-# an extension-less script on macOS/Linux and a .cmd on Windows; an npm stub keeps
+# End-to-end `coop init --seed-docs` (#25, #102) through bin/coop.ps1 against a
+# stub coop-data-doc that records its arguments and stdin (the repos patch) and
+# prints config-set's status line (coop-data-doc 1.2.0 wording). Checks: the patch
+# is piped into `config-set --config <dir>/coop-data-doc.yml --from-json -`, the
+# status is shown, "saved, not runnable yet" is a warning (never discarded), a
+# non-interactive run without --yes declines and changes nothing, and a TODO-only
+# contract exits non-zero without calling the tool. tests/seeddocs.test.sh runs
+# this file after lib/_seeddocs.py's own cases (it carried these cases itself
+# until master plan S1 retired the bash dispatcher). The stub is an extension-less
+# script on macOS/Linux and a .cmd on Windows; an npm stub keeps
 # Add-CoopRuntimePaths from putting a real npm prefix (and a real coop-data-doc)
 # first on PATH. Sandboxed HOME/USERPROFILE/COOP_DIR/agent dir, never ~/.coop.
 # No waits. Assertions stay ASCII (Windows PowerShell 5.1 re-encodes child output)
@@ -24,11 +29,17 @@ $sandboxHome = Join-Path $t 'home'
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $saved = @{}
 $names = @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_SKIP_AZ',
-           'NO_COLOR','COOP_ASSUME_YES','SEED_STATUS')
+           'NO_COLOR','COOP_ASSUME_YES','SEED_STATUS','SEED_ARGS_LOG','SEED_STDIN')
+$argsLog = Join-Path $t 'dd-args.log'
+$stdinFile = Join-Path $t 'dd-stdin.json'
 foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 try {
+  $empty = Join-Path $t 'empty'
   New-Item -ItemType Directory -Force -Path $bin, (Join-Path $proj '.coop'), (Join-Path $proj 'pbirepo'),
-    (Join-Path $proj 'sqlrepo'), $sandboxHome, (Join-Path $t 'coop\.coop') | Out-Null
+    (Join-Path $proj 'sqlrepo'), (Join-Path $empty '.coop'), $sandboxHome, (Join-Path $t 'coop\.coop') | Out-Null
+  # A contract whose only repo is still a TODO placeholder: nothing to seed.
+  [System.IO.File]::WriteAllText((Join-Path $empty '.coop\project.yml'),
+    "repositories:`n  fabric:`n    local_path: 'TODO: /x'`n", $utf8)
   $pbi = (Join-Path $proj 'pbirepo') -replace '\\', '/'
   $sql = (Join-Path $proj 'sqlrepo') -replace '\\', '/'
   [System.IO.File]::WriteAllText((Join-Path $proj '.coop\project.yml'), (@(
@@ -42,10 +53,12 @@ try {
   ) -join "`n") + "`n", $utf8)
 
   if ($isWindowsHost) {
-    # config-set --config <cfg> --from-json - : the config path is %~3.
+    # config-set --config <cfg> --from-json - : the config path is %~3. The stub
+    # appends its arguments to SEED_ARGS_LOG and copies stdin to SEED_STDIN.
     [System.IO.File]::WriteAllText((Join-Path $bin 'coop-data-doc.cmd'), (@(
       '@echo off',
-      'more > nul',
+      'echo %* >> "%SEED_ARGS_LOG%"',
+      'findstr . > "%SEED_STDIN%"',
       'if "%SEED_STATUS%"=="not-runnable" goto notrunnable',
       'echo Wrote %~3 (validated).',
       'exit /b 0',
@@ -57,7 +70,8 @@ try {
   } else {
     [System.IO.File]::WriteAllText((Join-Path $bin 'coop-data-doc'), (@(
       '#!/bin/sh',
-      'cat > /dev/null',
+      'echo "$*" >> "$SEED_ARGS_LOG"',
+      'cat > "$SEED_STDIN"',
       'cfg=""; prev=""',
       'for a in "$@"; do [ "$prev" = "--config" ] && cfg="$a"; prev="$a"; done',
       'if [ "${SEED_STATUS:-validated}" = "not-runnable" ]; then',
@@ -79,22 +93,48 @@ try {
   $env:COOP_SKIP_AZ = '1'
   $env:NO_COLOR = '1'
   $env:COOP_ASSUME_YES = '1'
+  $env:SEED_ARGS_LOG = $argsLog
+  $env:SEED_STDIN = $stdinFile
 
-  function Invoke-Seed([string]$Status) {
+  # Invoke-Seed <status> [<dir>] [-NoTty]: run `coop init --seed-docs <dir>`. With
+  # -NoTty the child's stdin is a pipe (a non-interactive shell) and COOP_ASSUME_YES
+  # is unset, so Coop-Confirm must refuse.
+  function Invoke-Seed([string]$Status, [string]$Dir = $proj, [switch]$NoTty) {
     $env:SEED_STATUS = $Status
     $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $yes = $env:COOP_ASSUME_YES
     try {
       # [string] each record: Windows PowerShell 5.1 wraps native stderr lines in
       # ErrorRecords, and their default formatting adds noise and line wraps.
-      $lines = @(& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $coop init --seed-docs $proj 2>&1 | ForEach-Object { [string]$_ })
+      if ($NoTty) {
+        Remove-Item -LiteralPath 'Env:\COOP_ASSUME_YES' -ErrorAction SilentlyContinue
+        $lines = @('' | & $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $coop init --seed-docs $Dir 2>&1 | ForEach-Object { [string]$_ })
+      } else {
+        $lines = @(& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $coop init --seed-docs $Dir 2>&1 | ForEach-Object { [string]$_ })
+      }
       $rc = $LASTEXITCODE
       $raw = $lines -join "`n"
-    } finally { $ErrorActionPreference = $eap }
+    } finally { $ErrorActionPreference = $eap; if ($null -ne $yes) { $env:COOP_ASSUME_YES = $yes } }
     return @{ Out = $raw; Flat = ($raw -replace '\s', ''); Rc = $rc }
   }
 
+  # 1. The repos patch is piped into config-set against the project's coop-data-doc.yml.
   $r = Invoke-Seed 'validated'
-  if ($r.Rc -eq 0 -and $r.Flat.Contains('(validated).')) { Ok 'config-set status is shown' }
+  if ($r.Rc -ne 0) { Ko "coop init --seed-docs should succeed (exit $($r.Rc))" $r.Out }
+  $argText = if (Test-Path -LiteralPath $argsLog) { [System.IO.File]::ReadAllText($argsLog) } else { '' }
+  $cfgPath = Join-Path $proj 'coop-data-doc.yml'
+  if (($argText -replace '\s', '').Contains('--from-json-')) { Ok 'config-set --from-json - is invoked' }
+  else { Ko 'config-set --from-json - not invoked' $argText }
+  if (($argText -replace '\s', '').Contains(('--config ' + $cfgPath) -replace '\s', '')) { Ok "config-set targets the project dir's coop-data-doc.yml" }
+  else { Ko "config-set should target $cfgPath" $argText }
+  $patchOk = $false
+  try {
+    $patch = [System.IO.File]::ReadAllText($stdinFile) | ConvertFrom-Json
+    $patchOk = [bool]($patch.repos -and $patch.repos.sql -and $patch.repos.powerbi)
+  } catch { $patchOk = $false }
+  if ($patchOk) { Ok 'the repos patch (sql + powerbi) is piped into config-set' }
+  else { Ko 'the patch piped to config-set is wrong' (Get-Content -LiteralPath $stdinFile -Raw -ErrorAction SilentlyContinue) }
+  if ($r.Flat.Contains('(validated).')) { Ok 'config-set status is shown' }
   else { Ko "seed-docs should show config-set's validated status (exit $($r.Rc))" $r.Out }
 
   $r = Invoke-Seed 'not-runnable'
@@ -102,6 +142,22 @@ try {
   elseif ($r.Flat.Contains('!Wrote') -and $r.Flat.Contains('notrunnableyet') -and $r.Flat.Contains('pbi-repo')) {
     Ok 'not-runnable status is a warning naming the repo path'
   } else { Ko 'the not-runnable status should be a warning naming the repo path' $r.Out }
+
+  # 2. Declining leaves everything untouched (non-interactive without --yes refuses).
+  Remove-Item -LiteralPath $argsLog, $stdinFile -Force -ErrorAction SilentlyContinue
+  $r = Invoke-Seed 'validated' $proj -NoTty
+  if ($r.Rc -ne 0 -and -not (Test-Path -LiteralPath $stdinFile)) { Ok 'declining the confirmation exits non-zero and never calls config-set' }
+  elseif ($r.Rc -eq 0) { Ko 'declining should exit non-zero' $r.Out }
+  else { Ko 'declining must not invoke config-set' $r.Out }
+
+  # 3. A still-TODO contract warns and exits non-zero without calling the tool.
+  Remove-Item -LiteralPath $argsLog, $stdinFile -Force -ErrorAction SilentlyContinue
+  $r = Invoke-Seed 'validated' $empty
+  if ($r.Rc -ne 0 -and -not (Test-Path -LiteralPath $stdinFile) -and $r.Flat.Contains('nothingtoseedyet')) {
+    Ok 'TODO-only contract: warns, exits non-zero, config-set never called'
+  } elseif ($r.Rc -eq 0) { Ko 'TODO-only contract should exit non-zero' $r.Out }
+  elseif (Test-Path -LiteralPath $stdinFile) { Ko 'TODO-only contract must not invoke config-set' $r.Out }
+  else { Ko 'TODO-only contract should warn that there is nothing to seed yet' $r.Out }
 } finally {
   foreach ($n in $names) {
     if ($null -eq $saved[$n]) { Remove-Item -LiteralPath "Env:\$n" -ErrorAction SilentlyContinue }

@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
 #
-# coop sync (Windows / PowerShell mirror of scripts/sync.sh) —
+# coop sync —
 # provision coop's ISOLATED Pi agent dir (~/.coop/agent) + brand assets (non-destructive):
 #   • create the isolated dir; share auth/models from your personal pi (login)
 #   • enable Pi's quiet startup in the isolated settings (resources still load)
@@ -10,7 +10,7 @@
 #
 $ErrorActionPreference = 'Continue'
 
-# --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
+# --- Shared helpers: dot-source lib/common.ps1 ---------------------------------
 # Resolves COOP_ROOT/COOP_VERSION and defines the loggers, Test-Have,
 # Get-CoopPython, Get-CoopPiVersion, Get-CoopPiAgentDir, and Sync-CoopExtDeps
 # (the shared pi-ai/pi-tui aligner — moved into the shared lib so `coop sync` and
@@ -26,7 +26,7 @@ $GLOBAL_AGENT = Join-Path $HOME '.pi\agent'
 Coop-Head "coop sync (v$($script:CoopVersion))"
 
 # --- 1. Launchers (the .ps1/.cmd shims are inherently executable on Windows) --
-Coop-Ok 'bin/coop launchers and scripts are runnable'
+Coop-Ok 'coop launchers and scripts are runnable'
 
 # --- 2. Isolated Pi agent dir + shared credentials ---------------------------
 Coop-Head 'Isolated Pi agent dir'

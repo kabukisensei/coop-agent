@@ -1,0 +1,165 @@
+﻿#!/usr/bin/env pwsh
+# Release-manifest driven reproducible fleet (port of tests/fleet-manifest.test.sh):
+#   - Coop-ManifestGet / Coop-Manifest*Spec / Coop-ManifestStatus read dotted paths
+#   - the manifest's version/package contract against the PowerShell consumers
+#   - `coop update --check` reports expected/installed/status against the manifest
+#   - default `coop update` pins Pi to the manifest version, --edge takes latest
+# Offline: pi/npm/pipx are stubs on a scratch PATH; the gate stops before any
+# install (COOP_UPDATE_GATE_DRYRUN). Never touches the real ~/.coop (temp HOME).
+$ErrorActionPreference = 'Stop'
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$psExe = try { (Get-Process -Id $PID).Path } catch { 'pwsh' }
+$isWindowsHost = ($env:OS -eq 'Windows_NT')
+$t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-fleet-manifest-' + [guid]::NewGuid().ToString('N'))
+$bin = Join-Path $t 'bin'
+$G_CHECK = [char]0x2713; $G_CROSS = [char]0x2717
+$fail = 0
+function Ok([string]$m) { Write-Host "  $G_CHECK $m" }
+function Ko([string]$m, [string]$Out = '') { Write-Host "  $G_CROSS $m"; if ($Out) { Write-Host $Out }; $script:fail = 1 }
+$chmod = if ($isWindowsHost) { '' } else { (Get-Command chmod -ErrorAction Stop).Source }
+function Write-Shim {
+  param([string]$Name, [string]$Sh, [string]$Cmd, [string]$Dir = $bin)
+  [System.IO.File]::WriteAllText((Join-Path $Dir $Name), "#!/bin/sh`n$Sh`n")
+  [System.IO.File]::WriteAllText((Join-Path $Dir ($Name + '.cmd')), "@echo off`r`n$Cmd`r`n")
+  if (-not $isWindowsHost) { & $chmod +x (Join-Path $Dir $Name) }
+}
+# Run scripts/update.ps1 in a child process; returns its output, sets $script:rc.
+function Invoke-Update([string[]]$UpdateArgs = @()) {
+  $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  $lines = @(& $psExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\update.ps1') @UpdateArgs 2>&1 | ForEach-Object { "$_" })
+  $script:rc = $LASTEXITCODE
+  $ErrorActionPreference = $eap
+  return ($lines -join "`n")
+}
+
+$saved = @{}
+$names = @('PATH', 'HOME', 'USERPROFILE', 'COOP_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ONBOARD', 'COOP_SKIP_AZ', 'COOP_UPDATE_GATE_DRYRUN', 'COOP_PI_LATEST_OVERRIDE', 'COOP_RELEASE_MANIFEST', 'NO_COLOR')
+foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
+try {
+  New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $t 'agent') | Out-Null
+  $env:HOME = Join-Path $t 'home'
+  $env:USERPROFILE = $env:HOME
+  $env:COOP_DIR = Join-Path $t 'coop-dir'
+  $env:COOP_AGENT_DIR = Join-Path $t 'agent'
+  $env:PI_CODING_AGENT_DIR = $env:COOP_AGENT_DIR
+  $env:COOP_NO_ONBOARD = '1'
+  $env:COOP_SKIP_AZ = '1'
+  $env:NO_COLOR = '1'
+  Remove-Item Env:\COOP_RELEASE_MANIFEST -ErrorAction SilentlyContinue
+  Remove-Item Env:\COOP_UPDATE_GATE_DRYRUN -ErrorAction SilentlyContinue
+
+  . (Join-Path $root 'lib\common.ps1')
+
+  # --- manifest helpers --------------------------------------------------------
+  if ((Coop-ManifestGet -Key 'pi.version') -ceq '0.87.1') { Ok 'Coop-ManifestGet pi.version' } else { Ko "Coop-ManifestGet pi.version (got '$(Coop-ManifestGet -Key 'pi.version')')" }
+  if ((Coop-ManifestGet -Key 'node.min') -ceq '22.19.0') { Ok 'Coop-ManifestGet node.min' } else { Ko 'Coop-ManifestGet node.min' }
+  if ((Coop-ManifestGet -Key 'extensions.pi-mcp-adapter') -ceq '3.3.0') { Ok 'Coop-ManifestGet extensions.pi-mcp-adapter' } else { Ko 'Coop-ManifestGet extensions.pi-mcp-adapter' }
+  if ((Coop-ManifestGet -Key 'python_tools.coop-data-doc') -ceq '1.2.0') { Ok 'Coop-ManifestGet python_tools.coop-data-doc' } else { Ko 'Coop-ManifestGet python_tools.coop-data-doc' }
+  if ((Coop-ManifestGet -Key 'missing.key') -eq '') { Ok 'Coop-ManifestGet missing key returns empty' } else { Ko 'missing key should return empty' }
+  if ((Coop-ManifestExtensionSpec 'pi-mcp-adapter') -ceq 'npm:pi-mcp-adapter@3.3.0') { Ok 'literal extension spec: pi-mcp-adapter' } else { Ko 'extension spec mismatch' }
+  if ((Coop-ManifestExtensionSpec '@juicesharp/rpiv-ask-user-question') -ceq 'npm:@juicesharp/rpiv-ask-user-question@2.12.0') { Ok 'literal scoped extension spec' } else { Ko 'scoped extension spec mismatch' }
+  if ((Coop-ManifestExtensionSpec '@xl0/pi-lovely-rename') -ceq 'npm:@xl0/pi-lovely-rename@0.1.5') { Ok 'literal session-naming extension spec (N1)' } else { Ko 'session-naming extension spec mismatch' }
+  if ((Coop-ManifestPythonSpec 'fabric-cicd') -ceq 'fabric-cicd==1.3.0') { Ok 'literal python spec: fabric-cicd' } else { Ko 'python spec mismatch' }
+  if ((Coop-ManifestNpmToolSpec '@microsoft/powerbi-report-authoring-cli') -ceq '@microsoft/powerbi-report-authoring-cli@0.4.0') { Ok 'literal npm tool spec' } else { Ko 'npm tool spec mismatch' }
+  if ((Coop-ManifestExtensionSpec 'not-a-fleet-member') -eq '') { Ok 'unknown extension has no spec' } else { Ko 'unknown extension produced a spec' }
+
+  # --- manifest version/package contract (Python: JSON + lib/_yaml.py reader) ----
+  $py = Get-CoopPython
+  if (-not $py) { Ko 'python3 unavailable for the manifest contract check' }
+  else {
+    $contract = @'
+import json, pathlib, sys
+r=pathlib.Path(sys.argv[1]); m=json.load(open(r/'config/release-manifest.json'))
+assert m['coop_version']==(r/'VERSION').read_text().strip()
+for p in ['@microsoft/fabric-mcp','@azure-devops/mcp']:
+    assert p in m['mcp_servers']
+# Microsoft Learn is a direct HTTP entry (U1): the mcp-remote bridge is gone.
+assert 'mcp-remote' not in json.dumps(m)
+# powerbi-mcp-server ignores --readonly and exposes refresh_dataset (#93): retired.
+assert 'powerbi-mcp-server' not in json.dumps(m)
+assert '@microsoft/powerbi-modeling-mcp' in m['npm_tools']
+# Report Authoring 0.4.0 declares `@microsoft/powerbi-desktop-bridge-cli: ^1.0.0`
+# (master plan section 6): the global Bridge pin must satisfy that range.
+assert m['npm_tools']['@microsoft/powerbi-desktop-bridge-cli'] == '1.0.0'
+assert m['npm_tools']['@microsoft/powerbi-report-authoring-cli'] == '0.4.0'
+for p in ['pi-mcp-adapter','pi-hermes-memory','pi-better-openai','pi-web-access','@juicesharp/rpiv-ask-user-question','@xl0/pi-lovely-rename','context-mode']:
+    assert p in m['extensions']
+# Manifest is authoritative: every manifest fleet member must be referenced by its
+# PowerShell runtime consumers, and every generated MCP package must resolve from it.
+rd=lambda p:(r/p).read_text(encoding='utf-8-sig')
+install=rd('scripts/install.ps1'); update=rd('scripts/update.ps1'); sync=rd('scripts/sync.ps1'); common=rd('lib/common.ps1')
+for p in m['extensions']:
+    assert p in install and p in sync, p
+for p in m['python_tools']:
+    assert p in install or p in update or p in common, p
+for p in m['npm_tools']:
+    assert p in install and p in update, p
+import importlib.util
+spec=importlib.util.spec_from_file_location('mcp_config',r/'lib/mcp_config.py'); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+all_versions={**m['extensions'],**m['npm_tools'],**m['mcp_servers']}
+# Direct HTTP servers (value None) need no package; every npm-backed one must be pinned.
+assert {v for v in mod.SERVER_PACKAGES.values() if v} <= set(all_versions)
+assert json.load(open(r/'config/mcp.example.json'))['mcpServers']=={}
+# Any retained tested_with documentation must equal manifest, never own a second value.
+spec=importlib.util.spec_from_file_location('coop_yaml',r/'lib/_yaml.py'); y=importlib.util.module_from_spec(spec); spec.loader.exec_module(y)
+d=y._load_fallback((r/'config/defaults.yml').read_text()).get('tested_with',{})
+for key,pkg in [('pi',None),('coop_data_doc','coop-data-doc'),('coop_sql_review','coop-sql-review'),('coop_dax_review','coop-dax-review'),('ms_fabric_cli','ms-fabric-cli'),('fabric_cicd','fabric-cicd')]:
+    expected=m['pi']['version'] if pkg is None else m['python_tools'][pkg]
+    if key in d: assert str(d[key])==expected, (key,d[key],expected)
+'@
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $cOut = @($contract | & $py - $root 2>&1 | ForEach-Object { "$_" })
+    $cRc = $LASTEXITCODE
+    $ErrorActionPreference = $eap
+    if ($cRc -eq 0) { Ok 'manifest version/package contract' } else { Ko 'manifest contract failed' ($cOut -join "`n") }
+  }
+  $updateText = [System.IO.File]::ReadAllText((Join-Path $root 'scripts\update.ps1'))
+  if ($updateText.Contains('pi update --extensions')) { Ko 'normal update still invokes pi update --extensions' } else { Ok 'normal update has no unpinned extension update path' }
+
+  # --- status classifier ---------------------------------------------------------
+  $cases = @(
+    @('0.80.2', '0.80.2', 'ok', 'exact match'),
+    @('0.80.1', '0.80.2', 'older', 'older'),
+    @('0.81.0', '0.80.2', 'newer-than-tested', 'newer than tested'),
+    @('0.80.3', '0.80.2', 'wrong-version', 'patch drift'),
+    @('', '0.80.2', 'missing', 'missing'),
+    @('0.80.2', '', 'not-applicable', 'no expected -> not-applicable')
+  )
+  foreach ($c in $cases) {
+    $got = Coop-ManifestStatus -Installed $c[0] -Expected $c[1]
+    if ($got -ceq $c[2]) { Ok "status: $($c[3])" } else { Ko "status: $($c[3]) (got '$got', want '$($c[2])')" }
+  }
+
+  # --- stub PATH: pi 0.87.1, npm ls with the two authoring tools, pipx list ------
+  Write-Shim 'pi' 'if [ "$1" = "--version" ]; then echo "pi 0.87.1"; fi; exit 0' 'if "%1"=="--version" echo pi 0.87.1'
+  Write-Shim 'npm' 'if [ "$1" = "ls" ]; then echo "+ @microsoft/powerbi-report-authoring-cli@0.1.4"; echo "+ @microsoft/powerbi-modeling-mcp@1.0.0"; fi; exit 0' 'if "%1"=="ls" (echo + @microsoft/powerbi-report-authoring-cli@0.1.4& echo + @microsoft/powerbi-modeling-mcp@1.0.0)'
+  Write-Shim 'pipx' 'if [ "$1" = "list" ]; then echo "   package coop-data-doc 0.26.0, installed using ..."; echo "   package ms-fabric-cli 1.6.1, installed using ..."; fi; exit 0' 'if "%1"=="list" (echo    package coop-data-doc 0.26.0, installed using ...& echo    package ms-fabric-cli 1.6.1, installed using ...)'
+  $env:PATH = $bin + [System.IO.Path]::PathSeparator + $env:PATH
+
+  # --- --check reports expected versions and status --------------------------------
+  $out = Invoke-Update @('--check')
+  if ($rc -eq 0) { Ok '--check exits 0' } else { Ko "--check exit was $rc" $out }
+  if ($out.Contains('expected 0.87.1')) { Ok '--check reports pi expected 0.87.1' } else { Ko '--check missing pi expected 0.87.1' $out }
+  if ($out.Contains('status ok')) { Ok '--check reports status ok for matching versions' } else { Ko '--check missing ok status' $out }
+  if ($out.Contains('@microsoft/powerbi-report-authoring-cli')) { Ok '--check lists npm authoring tools' } else { Ko '--check missing npm authoring tools' $out }
+
+  # --- default update path pins to the manifest version ----------------------------
+  $env:COOP_UPDATE_GATE_DRYRUN = '1'
+  $out = Invoke-Update
+  if ($rc -eq 0) { Ok 'default update (gate dry-run) exits 0' } else { Ko "default update exit was $rc" $out }
+  if ($out.Contains('GATE pin:0.87.1')) { Ok 'default update pins Pi to the manifest (GATE pin:0.87.1)' } else { Ko 'expected GATE pin:0.87.1' $out }
+
+  # --- --edge update path bypasses the manifest pin ---------------------------------
+  $out = Invoke-Update @('--edge')
+  if ($rc -eq 0) { Ok '--edge update (gate dry-run) exits 0' } else { Ko "--edge update exit was $rc" $out }
+  if ($out.Contains('GATE all')) { Ok '--edge is the only latest/upstream mode' } else { Ko 'expected --edge GATE all' $out }
+  # With COOP_UPDATE_GATE_DRYRUN the script stops before the install unit; the gate
+  # decision is the observable seam. tests/fixtures/fleet-execution.test.ps1 runs
+  # the actual install/update/sync units against stubs.
+}
+finally {
+  foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
+  Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
+}
+if ($fail -eq 0) { Write-Host '  fleet-manifest tests passed' } else { Write-Host "  $G_CROSS fleet-manifest tests FAILED" }
+exit $fail

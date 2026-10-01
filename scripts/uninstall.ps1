@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
 #
-# coop uninstall (Windows / PowerShell mirror of scripts/uninstall.sh) — clean
+# coop uninstall — clean
 # teardown of coop's footprint on this machine (VM churn, offboarding). Inverse
 # of scripts/install.ps1.
 #
@@ -22,7 +22,7 @@
 #
 $ErrorActionPreference = 'Continue'
 
-# --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
+# --- Shared helpers: dot-source lib/common.ps1 ---------------------------------
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
 
 $KEEP_TOOLS = $false

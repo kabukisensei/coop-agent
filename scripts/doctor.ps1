@@ -1,13 +1,13 @@
 ﻿#!/usr/bin/env pwsh
 #
-# coop doctor (Windows / PowerShell mirror of scripts/doctor.sh) —
+# coop doctor —
 # verify the Cooptimize agent's dependencies and configuration.
 # Exit 0 when all REQUIRED dependencies are present (warnings are non-fatal);
 # exit 1 when something required is missing.
 #
 $ErrorActionPreference = 'Continue'
 
-# --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
+# --- Shared helpers: dot-source lib/common.ps1 ---------------------------------
 # Resolves COOP_ROOT/COOP_VERSION and defines the loggers, Test-Have,
 # Get-CoopPython, Get-CoopPiVersion, Get-CoopYamlValue, Find-CoopProjectYml, etc.
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
@@ -35,7 +35,7 @@ foreach ($a in $args) {
   }
 }
 
-# --json plumbing (mirror of doctor.sh): EVERY check funnels through D-Ok/D-Warn/
+# --json plumbing: EVERY check funnels through D-Ok/D-Warn/
 # D-Bad (and every header through D-Head), so machine-readable output is a
 # choke-point change. Records collect in $script:JsonChecks; the summary at the
 # bottom emits the document via ConvertTo-Json.
@@ -98,7 +98,7 @@ if (Test-Have 'pi') {
     $piv = [version]("{0}.{1}.{2}" -f $matches[1], $matches[2], $matches[3])
     if ($piv -lt [version]'0.79.0') { D-Warn "pi $piv is older than the tested minimum (0.79.0)" 'coop update' }
     # Ceiling: warn (never fail) when the installed Pi is a newer MINOR than coop's tested
-    # version (mirror of doctor.sh). `coop update` gates the jump; doctor just flags it.
+    # version. `coop update` gates the jump; doctor just flags it.
     $testedPi = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') 'tested_with.pi' ''
     if ($testedPi -match '(\d+)\.(\d+)') {
       $testedMinor = [version]("{0}.{1}" -f $matches[1], $matches[2])
@@ -273,7 +273,7 @@ if (Test-Have 'pi') {
 # Azure sign-in for the client tenant (H2). Probe only: doctor never signs in and
 # never touches the launch cache (.az-ok). Same tenant chain and token check as
 # the launch (Get-CoopTenant / Get-CoopAzTokenRc). A missing az is prerequisite
-# row 5. (mirror of doctor.sh)
+# row 5.
 if ($env:COOP_SKIP_AZ -ne '1' -and (Test-Have 'az')) {
   $azTenant = Get-CoopTenant
   if ($azTenant.Rc -eq 2) {
@@ -768,7 +768,7 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
   exit $LASTEXITCODE
 }
 
-# --json: one JSON document on stdout (mirror of doctor.sh; ConvertTo-Json handles
+# --json: one JSON document on stdout (ConvertTo-Json handles
 # escaping, including any control character a probed tool leaked into a message).
 if ($script:JSON) {
   $doc = [ordered]@{ checks = @($script:JsonChecks); fail = $script:FAIL; warn = $script:WARN }

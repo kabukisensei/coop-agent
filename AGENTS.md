@@ -107,21 +107,19 @@ start the next phase on your own).
   `coop doctor`, anything needing Pi/pipx/Fabric — is a Windows
   workstation activity. From a headless box, do not attempt these; report that
   they need a workstation instead.
-- `docs/troubleshooting.md` §1 (split Node toolchains, `/opt/homebrew`) and the
-  Homebrew `fab` collision are **Aaron's-Mac-specific**. A normal Linux box has
-  one `npm` and no `/opt/homebrew` — never chase those paths there.
 - Cross-repo work (see `RELEASE.md`) assumes all coop-* repos are cloned **side
   by side under one parent directory** (on Aaron's Mac: `~/Developer`). If a
   sibling repo is missing, stop and report — don't clone or guess paths.
 
 ### Environment (prerequisites for the checks)
 
-- Required: `git`, `bash` (any version ≥ 3.2 runs the scripts — but everything you
-  **write** must stay 3.2-compatible), `python3` (no PyYAML), Node.js + `npx`
-  (the test suite bundles the extensions with esbuild).
+- Required: `git`, `bash` (the test harness and the release script are bash dev
+  tooling), `python3` (no PyYAML), Node.js + `npx` (the test suite bundles the
+  extensions with esbuild), and `pwsh` (PowerShell 7 — available on Linux and
+  macOS): coop itself is PowerShell, so `tests/run.ps1` and every test that drives
+  `bin/coop.ps1` or `lib/common.ps1` need it.
 - Optional: `shellcheck` (CI runs it — run locally when installed:
-  `shellcheck -S warning -e SC1091 bin/coop lib/common.sh scripts/*.sh tests/*.sh`),
-  and `pwsh` (PowerShell 7 — available on Linux) to parse-check any `.ps1` you edit.
+  `shellcheck -S warning -e SC1091 bin/coop scripts/*.sh tests/*.sh`).
 
 ### Before any work
 
@@ -136,26 +134,28 @@ force anything to "fix" it.
 
 ### Hard rules when editing code (detail: CONTRIBUTING.md)
 
-1. **Paired scripts stay in sync.** Any edit to `bin/coop`, `lib/common.sh`, or
-   `scripts/*.sh` must be ported to the matching `.ps1` in the same change (and
-   vice versa). `lib/common.sh`'s twin is `lib/common.ps1` — the shared helper
-   library dot-sourced by `bin/coop.ps1` and every `scripts/*.ps1`; helper
-   changes go there, never into per-script inline copies.
-   `scripts/check-parity.sh` gates the pairing.
+1. **One implementation, in PowerShell** (master plan S1). The product is
+   `bin/coop.ps1`, `lib/common.ps1` (the shared helper library dot-sourced by
+   `bin/coop.ps1` and every `scripts/*.ps1`; helper changes go there, never into
+   per-script inline copies) and `scripts/*.ps1`. `bin/coop` is only a Git Bash
+   forwarder to `coop.ps1`, and `scripts/release.sh`, `scripts/check-bom.sh`,
+   `scripts/validate-resources.sh` and `tests/*.sh` are dev tooling. Never add a
+   bash product path back, and never add a `.sh` twin for a `.ps1`.
 2. **Every `.ps1` keeps its UTF-8 BOM** (`EF BB BF` as the first three bytes).
    Editors and agent write-tools silently strip it on rewrite — after every
-   `.ps1` edit, re-run `bash scripts/check-parity.sh` (it gates the BOM and
-   prints the exact fix command for any file missing it).
-3. **All bash stays bash-3.2 compatible** (macOS stock `/bin/bash`) —
-   `scripts/install.sh` especially. No associative arrays, `${var,,}`,
-   `mapfile`, or `&>>`.
+   `.ps1` edit, re-run `bash scripts/check-bom.sh` (it gates the BOM and prints
+   the exact fix command for any file missing it).
+3. **Every `.ps1` parses under Windows PowerShell 5.1** (`bin/coop.cmd`'s
+   runtime): no ternary, `??`, `?.` or `clean {}`. CI parses every file under
+   5.1; on a Linux or macOS box, pwsh 7 accepts those and will not warn you.
 
 ### Verify after every change
 
 ```bash
-for f in bin/coop lib/common.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
-bash scripts/check-parity.sh    # expect: "✓ parity check passed", exit 0
-bash tests/run.sh               # gate lane; expect: "✓ all tests passed (gate lane)", exit 0 (needs node + npx)
+for f in bin/coop scripts/*.sh tests/*.sh; do bash -n "$f"; done
+bash scripts/check-bom.sh       # expect: "✓ BOM check passed", exit 0
+bash tests/run.sh               # gate lane; expect: "✓ all tests passed (gate lane)", exit 0 (needs node + npx + pwsh)
+pwsh -NoProfile -File tests/run.ps1   # the PowerShell suite, gate lane; expect: exit 0 (CI also runs it under Windows PowerShell 5.1)
 ```
 
 `bash tests/run.sh` is the gate lane that every PR runs. The extended lane (timing

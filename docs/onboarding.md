@@ -27,12 +27,6 @@ prints (on Windows, double-click **Install coop.cmd** again). Or run the
 
 ## 2. Install
 
-**macOS / Linux**
-```bash
-git clone <coop-agent-repo> && cd coop-agent
-./bin/coop install
-```
-
 **Windows (PowerShell)**: teammates follow [Install coop on Windows](install-windows.md),
 which gets the code at the newest release. The short form below starts on the head of
 `main` until the next release:
@@ -242,8 +236,8 @@ Commit + push; teammates get it at the next release tag via `coop update`
 [extending.md](extending.md).
 
 Using **Azure DevOps Boards**? coop has an optional integration — the
-`azure-devops` skill plus `scripts/ado-digest.sh|.ps1` and
-`scripts/ado-onboard.sh|.ps1` (all client identifiers stay in the private
+`azure-devops` skill plus `scripts/ado-digest.ps1` and
+`scripts/ado-onboard.ps1` (all client identifiers stay in the private
 `~/.coop/devops/clients.yml`). See the "Azure DevOps Boards (optional)" section
 in the [README](../README.md#azure-devops-boards-optional).
 
@@ -259,7 +253,7 @@ For teams managing multiple machines or VMs, `coop` can aggregate its doctor sta
 
 1. Configure `fleet.publish_dir` in `~/.coop/config` (or `config/defaults.yml`) to a shared folder (e.g., OneDrive/SharePoint synced path).
 2. Have each machine run `coop doctor --json --publish` on a schedule (e.g., daily).
-3. Have one machine run `scripts/fleet-digest.sh --send` weekly to aggregate the snapshots into an email digest via Microsoft Graph.
+3. Have one machine run `scripts\fleet-digest.ps1 --send` weekly to aggregate the snapshots into an email digest via Microsoft Graph.
 
 ## Leaving a machine (VM rebuild / offboarding)
 

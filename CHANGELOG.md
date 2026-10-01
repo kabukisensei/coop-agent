@@ -5,6 +5,37 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Removed
+
+- The POSIX product path (master plan S1, row 7). coop is one implementation, in
+  PowerShell: `bin/coop.ps1`, `lib/common.ps1` and `scripts/*.ps1`, launched by
+  `bin/coop.cmd`. `lib/common.sh` and the bash lifecycle scripts (`install.sh`,
+  `update.sh`, `sync.sh`, `doctor.sh`, `uninstall.sh`, `sync-knowledge.sh`,
+  `support-center.sh`, `check-context-budget.sh`, `test-pi-matrix.sh`,
+  `migrate-from-pi-analytics-agent.sh`, the `ado-*` and `fleet-digest` wrappers)
+  are gone, and so is the bash/PowerShell parity gate (`scripts/check-parity.sh`):
+  `scripts/check-bom.sh` keeps the `.ps1` UTF-8 BOM and 5.1-safety checks. The
+  bash test suites that only exercised the removed scripts are gone with them;
+  the behavioural coverage that still applies now drives the `.ps1` files from
+  `tests/run.ps1` fixtures. macOS and Linux are development checkouts for the
+  logic tests, not installations: the Mac-only troubleshooting entries (split
+  Node toolchains, Homebrew `fab`) and the bash 3.2 rule are retired.
+
+### Changed
+
+- `bin/coop` is a Git Bash forwarder: every argument goes to `bin/coop.ps1`
+  under `pwsh`, `powershell.exe` or `powershell` (exit 127 with a pointer to
+  `docs/install-windows.md` when none is installed). `coop release` is the one
+  maintainer command that stays in bash (`scripts/release.sh`, reached through
+  `./bin/coop release`); its gate now runs `tests/run.ps1` under `pwsh` when
+  available and `scripts/check-bom.sh` instead of the parity check.
+- `fabric_sql_query` resolves the Fabric Python through `lib/common.ps1`
+  (`Get-CoopFabricPython`) on every platform: `powershell.exe` on Windows, `pwsh`
+  on a macOS or Linux development box.
+- CI: the macOS bash 3.2 job is retired; the `shell` job lints only the bash dev
+  tooling (forwarder, release and check scripts, test harness) and runs the BOM
+  check.
+
 ### Added
 
 - Sessions name themselves (master plan N1, row 9b). `@xl0/pi-lovely-rename`

@@ -340,9 +340,9 @@ client-repo gates above are a different thing.
 
 | Lane | Run it locally | Where CI runs it | What it holds |
 | --- | --- | --- | --- |
-| gate (default) | `bash tests/run.sh` | `.github/workflows/ci.yml` on every PR and every push to `main` | Deterministic logic tests. The same workflow also runs `bash -n` (including stock bash 3.2 on macOS), shellcheck, `bash scripts/check-parity.sh`, JSON, YAML and skill validation, the esbuild transpile, and the `.ps1` parse under pwsh 7 and Windows PowerShell 5.1 with PSScriptAnalyzer. |
+| gate (default) | `bash tests/run.sh` | `.github/workflows/ci.yml` on every PR and every push to `main` | Deterministic logic tests. The same workflow also runs `bash -n` and shellcheck over the bash dev tooling, `bash scripts/check-bom.sh`, JSON, YAML and skill validation, the esbuild transpile, and the `.ps1` parse under pwsh 7 and Windows PowerShell 5.1 with PSScriptAnalyzer. |
 | extended | `COOP_TEST_EXTENDED=1 bash tests/run.sh` | `.github/workflows/extended.yml`: nightly, on demand, and on a PR that changes that file | The gate lane plus the timing and process fixtures. The two lanes together are the full suite. |
-| Pi matrix | `bash scripts/test-pi-matrix.sh <pi-version>` or `pwsh -NoProfile -File scripts/test-pi-matrix.ps1 -PiVersion <pi-version>` (needs the network; installs that Pi from npm into a temp prefix) | `.github/workflows/pi-matrix.yml`: nightly, on demand, and on a PR that touches Pi alignment | `scripts/test-pi-matrix.ps1` against the pinned Pi release on Windows. |
+| Pi matrix | `pwsh -NoProfile -File scripts/test-pi-matrix.ps1 -PiVersion <pi-version>` (needs the network; installs that Pi from npm into a temp prefix) | `.github/workflows/pi-matrix.yml`: nightly, on demand, and on a PR that touches Pi alignment | `scripts/test-pi-matrix.ps1` against the pinned Pi release on Windows. |
 
 `COOP_TEST_EXTENDED` is the only switch. Unset or `0` runs the gate lane; `1`
 runs both lanes. `tests/run.ps1` reads the same variable. Each run names its lane
@@ -353,8 +353,10 @@ Both `ci.yml` and `extended.yml` run the suite on three hosts: ubuntu
 (`bash tests/run.sh`, then `tests/run.ps1` under pwsh 7), Windows Git Bash
 (`bash tests/run.sh`) and Windows PowerShell 5.1
 (`powershell -NoProfile -File tests\run.ps1`, the runtime `bin/coop.cmd` uses).
-`extended.yml` also runs every case of `tests/azcache.test.sh` under macOS stock
-bash 3.2.
+`tests/run.ps1` is coop's own lane: the product is PowerShell, so the
+behavioural fixtures under `tests/fixtures/*.test.ps1` drive `bin/coop.ps1`,
+`lib/common.ps1` and `scripts/*.ps1` directly. `tests/run.sh` holds the Node and
+Python logic tests and the bash-harness suites; `bash` there is dev tooling.
 
 ### Which suites are in which lane
 
@@ -395,15 +397,16 @@ The run scripts are the list; this page does not repeat it.
 - Moving a test between lanes never weakens it. No assertion is skipped,
   disabled or loosened to turn a lane green.
 - The repo-wide `.ps1` UTF-8 BOM check lives in one place,
-  `scripts/check-parity.sh`. Do not add another.
+  `scripts/check-bom.sh`. Do not add another.
 
 ### Running the extended lane
 
 - Locally: `COOP_TEST_EXTENDED=1 bash tests/run.sh`.
 - In CI: Actions -> extended -> Run workflow, on any branch.
-- `coop release` runs both lanes. Its pre-tag gate (in `bin/coop` and
-  `bin/coop.ps1`) runs `COOP_TEST_EXTENDED=1 bash tests/run.sh`, so every release
-  keeps the full suite's coverage. See `RELEASE.md`.
+- `coop release` runs both lanes. Its pre-tag gate (`scripts/release.sh`, and
+  `bin/coop.ps1` on Windows) runs `COOP_TEST_EXTENDED=1 bash tests/run.sh` and
+  `tests/run.ps1`, so every release keeps the full suite's coverage. See
+  `RELEASE.md`.
 
 The Windows terminal-workstation acceptance workflow runs `tests\run.ps1` with
 `COOP_TEST_EXTENDED=1`, so its behavioral-suite receipt covers both lanes.
@@ -427,7 +430,7 @@ fails while one of those was running, close it and rerun.
 `pi-matrix.yml` runs nightly, from Actions -> pi-matrix -> Run workflow, and on a
 pull request that changes any of these paths:
 
-- `scripts/sync.sh`, `scripts/sync.ps1`
+- `scripts/sync.ps1`
 - `lib/_extdeps.py`
 - `config/release-manifest.json`
 - `extensions/**`

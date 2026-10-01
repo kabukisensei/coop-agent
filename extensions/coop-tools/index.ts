@@ -91,14 +91,12 @@ export function fabricSqlPythonResolverInvocation(
   root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
   platform = process.platform,
 ): FabricSqlInvocation {
-  if (platform === "win32") return {
-    bin: "powershell.exe",
-    args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ". (Join-Path $env:COOP_ROOT 'lib\\common.ps1'); $py = Get-CoopFabricPython; if (-not $py) { exit 65 }; [Console]::Out.WriteLine($py)"],
-    env: { COOP_ROOT: root },
-  };
+  // One resolver, lib/common.ps1's Get-CoopFabricPython, on every platform
+  // (master plan S1: coop has no bash runtime). Windows PowerShell 5.1 on Windows,
+  // PowerShell 7 (pwsh) on a macOS/Linux developer box.
   return {
-    bin: "bash",
-    args: ["-c", '. "$COOP_ROOT/lib/common.sh"; coop_fabric_python || exit 65'],
+    bin: platform === "win32" ? "powershell.exe" : "pwsh",
+    args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ". (Join-Path (Join-Path $env:COOP_ROOT 'lib') 'common.ps1'); $py = Get-CoopFabricPython; if (-not $py) { exit 65 }; [Console]::Out.WriteLine($py)"],
     env: { COOP_ROOT: root },
   };
 }

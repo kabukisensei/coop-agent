@@ -27,10 +27,9 @@ DAX, semantic models (TMDL), and data documentation.
 From a fresh clone, run the installer with its full path (it links `coop` onto your
 `PATH`); after that, the bare `coop` command works:
 
-```bash
-git clone <coop-agent-repo> && cd coop-agent
-./bin/coop install     # fresh bootstrap of the whole stack (idempotent — safe to re-run)
-                       # Windows: .\bin\coop.cmd install
+```powershell
+git clone <coop-agent-repo>; cd coop-agent
+.\bin\coop.cmd install  # fresh bootstrap of the whole stack (idempotent — safe to re-run)
 coop                   # launch the ready, branded Pi agent (after install + new shell)
 ```
 
@@ -110,15 +109,18 @@ not count as an interpreter.
 
 ## Fresh install
 
-### macOS / Linux
+### Windows
 
-`coop` ships as the bash dispatcher `bin/coop`. From a clone of this repo:
+coop runs on Windows: `bin/coop.cmd` launches the PowerShell implementation
+(`bin/coop.ps1`). From a clone of this repo, in PowerShell or Git Bash:
 
-```bash
+```powershell
 git clone <coop-agent repo url> coop-agent
 cd coop-agent
-./bin/coop install        # bootstraps pi, extensions, pipx tools, Fabric CLI, links coop onto PATH
+.\bin\coop.cmd install   # bootstraps pi, extensions, pipx tools, Fabric CLI, links coop onto PATH
 ```
+
+From Git Bash, `./bin/coop install` forwards to the same PowerShell code.
 
 `coop install` handles the complete bootstrap: prerequisites → Pi → extensions →
 Microsoft Fabric CLI → standalone Coop tools → PATH/shortcuts → a short first-run
@@ -376,13 +378,12 @@ integration — nothing loads or runs unless you configure it.
   (**confirm-first** — coop-guardrails flags any work-item write), and runs the
   weekly per-client digest. It uses the Entra-authenticated REST API, plus the
   optional read-only-first `azure-devops` MCP entry generated from `~/.coop/config`; writes require approval.
-- **Batch entry points** — paired bash/PowerShell launchers over a stdlib-only
-  Python core:
-  - `scripts/ado-digest.sh` / `scripts/ado-digest.ps1` — a read-only, per-client
+- **Batch entry points** — PowerShell launchers over a stdlib-only Python core:
+  - `scripts/ado-digest.ps1` — a read-only, per-client
     watchdog digest (open / stale / unassigned) with Markdown/HTML output and
     optional Graph email (schedulable, e.g. from a Windows VM's Task Scheduler —
     see the skill).
-  - `scripts/ado-onboard.sh` / `scripts/ado-onboard.ps1` — guided, read-only
+  - `scripts/ado-onboard.ps1` — guided, read-only
     client discovery that writes only the local config.
 - **Config** — the MCP organization lives in `~/.coop/config`. Batch digest/onboarding
   records (projects, teams, people, recipients, and per-client auth) live in private
@@ -686,8 +687,8 @@ bundles, and exports a bundle by default for escalation.
 Set `fleet.publish_dir` in private Coop config, then run `coop doctor --publish` to write a
 per-host/user JSON snapshot. Aggregate snapshots with:
 
-```bash
-scripts/fleet-digest.sh --format md          # add --send or --dry-run
+```powershell
+scripts\fleet-digest.ps1 --format md         # add --send or --dry-run
 ```
 
 ```powershell
@@ -813,21 +814,13 @@ upstream release can temporarily restore upstream notices and `ctx_upgrade` with
 coop is distributed as **this Git repo**. Put it on a host your coworkers can reach
 (GitHub/Azure DevOps/internal), then each teammate runs the bootstrap once:
 
-```bash
-# macOS / Linux
-git clone <coop-agent-repo> && cd coop-agent
-./bin/coop install            # installs Pi, extensions, the pipx tools, ms-fabric-cli; links `coop` onto PATH
-
-# Windows (PowerShell)
+```powershell
 git clone <coop-agent-repo>; cd coop-agent
 .\bin\coop.cmd install        # creates %LOCALAPPDATA%\coop\bin\coop.cmd and adds it to your user PATH; open a new terminal if coop isn't found yet
 ```
 
-`coop install` is idempotent and **cross-platform**:
-
-- **macOS / Linux** — `bin/coop` (bash), tested.
-- **Windows** — `bin/coop.ps1` + `bin/coop.cmd` (PowerShell). Same subcommands,
-  dependency list, and `fab`-collision detection as the bash path.
+`coop install` is idempotent. coop is one PowerShell implementation
+(`bin/coop.ps1` + `bin/coop.cmd`); from Git Bash, `./bin/coop` forwards to it.
 
 Each teammate's machine needs the prerequisites (Node 22.19+, Python 3.10+, pipx, git —
 see [Prerequisites](#prerequisites)); the installer pulls everything else from npm
