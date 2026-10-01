@@ -2282,6 +2282,143 @@ async function showStartMenu(pi: ExtensionAPI, ctx: any): Promise<void> {
   if (item) await item.run(pi, ctx);
 }
 
+// ---------------------------------------------------------------------------
+// Compaction over the chosen transport (issue #236)
+//
+// Pi 0.87.1 (and still 1.0.0) builds its compaction request without the session's
+// `transport` setting: `AgentSession._runDefaultCompaction()` calls `compact()` with
+// no transport, so the OpenAI Codex provider falls back to "auto" and opens a
+// WebSocket for the summary request even when `/settings` says `sse`. On a large
+// context that request can sit silent until `WebSocket idle timeout after 300000ms`,
+// for manual `/compact` and threshold/overflow compaction alike.
+//
+// Bounded workaround until upstream forwards the transport: when the effective Pi
+// settings say `transport: "sse"` and the model is one whose provider reads
+// `transport` (Codex), coop answers `session_before_compact` with a compaction it
+// generated through Pi's own exported `compact()`, passing a stream function that
+// forwards `transport` and the idle timeout. Every other transport, model, or
+// error on the way in returns `undefined`, so Pi's default path is untouched. A
+// provider failure DURING the SSE summary propagates: Pi reports
+// `session_compact_failed` (fromExtension) and keeps the session history intact.
+
+/** Pi `settings.json` keys this hook reads (global agent dir only; `transport` is global-only). */
+export interface PiTransportSettings {
+  transport: "auto" | "sse" | "websocket" | "websocket-cached";
+  /** HTTP/WebSocket idle timeout Pi would apply (`retry.provider.timeoutMs`, else `httpIdleTimeoutMs`, else 300000). */
+  timeoutMs: number;
+  retry: { enabled: boolean; maxRetries: number; baseDelayMs: number; maxAgentDelayMs: number };
+}
+
+const PI_DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300000;
+const PI_DEFAULT_MAX_AGENT_RETRY_DELAY_MS = 60000;
+/** Provider APIs whose stream options honour `transport` (Pi 0.87.1: only Codex). */
+export const TRANSPORT_AWARE_APIS = new Set(["openai-codex-responses"]);
+
+function timeoutSetting(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
+  return value === 0 ? 2147483647 : Math.floor(value);
+}
+
+/** Read the transport-related keys of `<agentDir>/settings.json` the way Pi resolves them. */
+export function readPiTransportSettings(dir: string = coopAgentDir()): PiTransportSettings {
+  let raw: any = {};
+  try {
+    raw = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"));
+  } catch {
+    raw = {};
+  }
+  if (!raw || typeof raw !== "object") raw = {};
+  let transport: PiTransportSettings["transport"] = "auto";
+  if (raw.transport === "sse" || raw.transport === "websocket" || raw.transport === "websocket-cached") transport = raw.transport;
+  else if (!("transport" in raw) && typeof raw.websockets === "boolean") transport = raw.websockets ? "websocket" : "sse";
+  const retry = raw.retry && typeof raw.retry === "object" ? raw.retry : {};
+  const provider = retry.provider && typeof retry.provider === "object" ? retry.provider : {};
+  const timeoutMs =
+    timeoutSetting(provider.timeoutMs) ?? timeoutSetting(raw.httpIdleTimeoutMs) ?? PI_DEFAULT_HTTP_IDLE_TIMEOUT_MS;
+  return {
+    transport,
+    timeoutMs,
+    retry: {
+      enabled: typeof retry.enabled === "boolean" ? retry.enabled : true,
+      maxRetries: typeof retry.maxRetries === "number" ? retry.maxRetries : 3,
+      baseDelayMs: typeof retry.baseDelayMs === "number" ? retry.baseDelayMs : 2000,
+      maxAgentDelayMs: typeof retry.maxAgentDelayMs === "number" ? retry.maxAgentDelayMs : PI_DEFAULT_MAX_AGENT_RETRY_DELAY_MS,
+    },
+  };
+}
+
+/** Seams for tests; production loads Pi's own `compact()` and pi-ai's `streamSimple()` lazily. */
+export interface CompactionTransportDeps {
+  readSettings: () => PiTransportSettings;
+  loadCompact: () => Promise<(...args: any[]) => Promise<any>>;
+  loadStreamSimple: () => Promise<(model: any, context: any, options?: any) => any>;
+  /** Session thinking level when the event context carries none (`pi.getThinkingLevel`). */
+  getThinkingLevel?: () => unknown;
+}
+
+const defaultCompactionTransportDeps: CompactionTransportDeps = {
+  readSettings: () => readPiTransportSettings(),
+  loadCompact: async () => (await import("@earendil-works/pi-coding-agent")).compact,
+  loadStreamSimple: async () => (await import("@earendil-works/pi-ai")).streamSimple,
+};
+
+/**
+ * `session_before_compact` handler. Returns `{ compaction }` only when coop ran the
+ * summary itself over the configured SSE transport; `undefined` leaves Pi's default.
+ */
+export function createCompactionTransportHandler(deps: CompactionTransportDeps = defaultCompactionTransportDeps) {
+  return async (event: any, ctx: any): Promise<{ compaction: any } | undefined> => {
+    let settings: PiTransportSettings;
+    let compact: (...args: any[]) => Promise<any>;
+    let streamSimple: (model: any, context: any, options?: any) => any;
+    let auth: any;
+    const model = ctx?.model;
+    try {
+      settings = deps.readSettings();
+      if (settings.transport !== "sse") return undefined;
+      if (!model || !TRANSPORT_AWARE_APIS.has(String(model.api))) return undefined;
+      if (!event?.preparation) return undefined;
+      compact = await deps.loadCompact();
+      streamSimple = await deps.loadStreamSimple();
+      auth = await ctx.modelRegistry?.getApiKeyAndHeaders?.(model);
+    } catch {
+      return undefined; // seam unavailable on this Pi: keep Pi's own compaction
+    }
+    if (!auth || auth.ok === false) return undefined;
+    const headers: Record<string, string> | undefined = auth.headers
+      ? Object.fromEntries(Object.entries(auth.headers).filter(([, v]) => typeof v === "string") as [string, string][])
+      : undefined;
+    const requestModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
+    let thinkingLevel = ctx.thinkingLevel;
+    if (thinkingLevel === undefined && deps.getThinkingLevel) {
+      try { thinkingLevel = deps.getThinkingLevel(); } catch { thinkingLevel = undefined; }
+    }
+    const streamFn = (m: any, context: any, options: any = {}) =>
+      streamSimple(m, context, {
+        ...options,
+        transport: settings.transport,
+        timeoutMs: options.timeoutMs ?? settings.timeoutMs,
+        maxRetries: options.maxRetries ?? settings.retry.maxRetries,
+        maxRetryDelayMs: options.maxRetryDelayMs ?? settings.retry.maxAgentDelayMs,
+      });
+    const compaction = await compact(
+      event.preparation,
+      requestModel,
+      auth.apiKey,
+      headers,
+      event.customInstructions,
+      event.signal,
+      thinkingLevel,
+      streamFn,
+      auth.env,
+      settings.retry,
+      undefined, // retry callbacks: Pi's spinner is not reachable from here
+      undefined, // sessionId: a fresh routing id, as Pi's own compaction uses
+    );
+    return { compaction };
+  };
+}
+
 export default function coopTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "sql_impact",
@@ -2513,6 +2650,12 @@ export default function coopTools(pi: ExtensionAPI) {
 
   // Normal sessions start at the prompt. The only automatic handoff is the model
   // provider login required when a fresh install has no credentials yet.
+  // #236: honour `transport: "sse"` for manual and automatic compaction.
+  pi.on(
+    "session_before_compact",
+    createCompactionTransportHandler({ ...defaultCompactionTransportDeps, getThinkingLevel: () => pi.getThinkingLevel() }),
+  );
+
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
     // Learning-nudge lifecycle is per SESSION: reset the failure tally, the
     // dedupe set, and the once-only flags so a fresh session can be nudged

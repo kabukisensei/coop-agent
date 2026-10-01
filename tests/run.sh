@@ -173,6 +173,9 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge-integration.test.mjs"
 echo "→ workflow slice tests"
 node "$ROOT/tests/workflow.test.mjs"
 
+echo "→ compaction over the configured transport (#236) tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/compaction-transport.test.mjs"
+
 echo "→ coop-profile tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/coop-profile.test.mjs"
 
