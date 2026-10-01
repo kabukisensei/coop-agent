@@ -132,8 +132,10 @@ $UnitPipx = {
   return [pscustomobject]@{ ok = $false; msg = 'could not install pipx automatically — see https://pipx.pypa.io' }
 }
 
+# Units run in a Coop-Unit job: a fresh runspace that sees none of the caller's
+# variables or functions (#213), so everything they need arrives as arguments.
 $UnitPi = {
-  param([bool]$Force, [string]$Spec)
+  param([bool]$Force, [string]$Spec, [bool]$Edge, [string]$Pkg, [string]$TargetVersion)
   $piCmd = Get-Command pi -ErrorAction SilentlyContinue
   if ($piCmd) {
     $raw = (& pi --version 2>$null | Out-String)
@@ -142,21 +144,21 @@ $UnitPi = {
     # Convergence: missing -> install exact; == manifest -> skip;
     # != manifest -> force-install exact; --force -> reinstall exact.
     if (-not $Force -and $cur) {
-      if ($EDGE) {
+      if ($Edge) {
         # Edge means upstream/latest for EXISTING installs too.
         if (Get-Command npm -ErrorAction SilentlyContinue) {
-          & npm install -g $PI_NPM_PACKAGE *> $null
+          & npm install -g $Pkg *> $null
           if ($LASTEXITCODE -eq 0) {
             $raw2 = (& pi --version 2>$null | Out-String)
             $m3 = [regex]::Match([string]$raw2, '\d+\.\d+\.\d+')
             return [pscustomobject]@{ ok = $true; msg = "pi updated to latest ($($m3.Value))" }
           }
-          return [pscustomobject]@{ ok = $false; msg = "failed to update pi to latest (npm install -g $PI_NPM_PACKAGE)" }
+          return [pscustomobject]@{ ok = $false; msg = "failed to update pi to latest (npm install -g $Pkg)" }
         }
         return [pscustomobject]@{ ok = $false; msg = 'cannot update pi (npm missing) — install Node.js, then re-run: coop install' }
       }
       $expected = $null
-      if (-not [string]::IsNullOrEmpty($PI_TARGET_VERSION)) { $expected = $PI_TARGET_VERSION }
+      if (-not [string]::IsNullOrEmpty($TargetVersion)) { $expected = $TargetVersion }
       if (-not $expected) { return [pscustomobject]@{ ok = $true; msg = "pi present ($cur) — no manifest pin" } }
       if ($cur -eq $expected) { return [pscustomobject]@{ ok = $true; msg = "pi $cur matches manifest" } }
       if (Get-Command npm -ErrorAction SilentlyContinue) {
@@ -305,7 +307,7 @@ $UnitFabric = {
 }
 
 $UnitPytool = {
-  param([bool]$Force, [string]$Pkg, [string]$Target)
+  param([bool]$Force, [string]$Pkg, [string]$Target, [bool]$Edge)
   $pipxBin = Join-Path $HOME '.local\bin'
   if ((Test-Path -LiteralPath $pipxBin) -and (($env:PATH -split ';') -notcontains $pipxBin)) {
     $env:PATH = "$pipxBin;$env:PATH"
@@ -348,11 +350,9 @@ $UnitPytool = {
   }
   if (-not $hasPipx) { return [pscustomobject]@{ ok = $false; msg = "skipping $Pkg (pipx missing)" } }
 
-  $target = $Pkg
-  if (-not $Edge) {
-    $ver = Coop-ManifestGet -Key "python_tools.$Pkg"
-    if ($ver) { $target = "${Pkg}==${ver}" }
-  }
+  # $Target is the caller's resolved spec: pkg==pin from the manifest, or the
+  # bare package under --edge (Coop-ManifestGet does not exist inside the job).
+  $target = if ($Target) { $Target } else { $Pkg }
   # Convergence: skip only when the installed version matches the manifest pin.
   if (-not $Force) {
     $installed = ''
@@ -368,7 +368,7 @@ $UnitPytool = {
         if ($rc -eq 0) { return [pscustomobject]@{ ok = $true; msg = "$Pkg updated to latest ($(& $runPipxText @('list') | ForEach-Object { if ($_ -match "(?i)package $Pkg (\d+\.\d+\.\d+)") { $Matches[1] } }))" } }
         return [pscustomobject]@{ ok = $false; msg = "failed to upgrade $Pkg to latest" }
       }
-      if (-not $target -match '==') { return [pscustomobject]@{ ok = $true; msg = "$Pkg present ($installed) — no manifest pin" } }
+      if (-not ($target -match '==')) { return [pscustomobject]@{ ok = $true; msg = "$Pkg present ($installed) — no manifest pin" } }
       $expectedVer = $target -replace '.*==', ''
       if ($installed -eq $expectedVer) { return [pscustomobject]@{ ok = $true; msg = "$Pkg $installed matches manifest" } }
       $rc = & $runPipx @('install', '--force', $target)
@@ -528,7 +528,7 @@ try {
 
   # --- 2. Pi itself ----------------------------------------------------------
   Coop-Head '2/9  Pi (@earendil-works/pi-coding-agent)'
-  Install-Unit 'pi (@earendil-works/pi-coding-agent)' $UnitPi @($FORCE, $piSpec)
+  Install-Unit 'pi (@earendil-works/pi-coding-agent)' $UnitPi @($FORCE, $piSpec, $EDGE, $PI_NPM_PACKAGE, $PI_TARGET_VERSION)
   Add-CoopNpmPath      # make a just-npm-installed `pi` visible to step 3 this run
 
   # --- 3. Pi extensions ------------------------------------------------------
@@ -540,13 +540,16 @@ try {
   if ($NO_FABRIC) { Coop-Info 'skipping Microsoft Fabric CLI (--no-fabric)' }
   else {
     Install-Unit 'Microsoft Fabric CLI' $UnitFabric @($FORCE, $EDGE, $FABRIC_PKG, $fabricTarget, $fabricPython, $fabricFetchPython)
-    if (-not (Sync-CoopFabricPythonPackages $EDGE)) { Coop-Warn 'failed to converge the Fabric Python runtime'; $script:InstallFailures++ }
+    # A Fabric CLI venv that did not converge is the wrong target for the library
+    # injection and the driver check; the unit already counted the failure (#213).
+    if (-not $script:CoopUnitLastOk) { Coop-Warn 'skipping the Fabric Python runtime (Fabric CLI did not converge)' }
+    elseif (-not (Sync-CoopFabricPythonPackages $EDGE)) { Coop-Warn 'failed to converge the Fabric Python runtime'; $script:InstallFailures++ }
     elseif (-not (Ensure-CoopFabricOdbcDriver (-not $NO_PREREQS))) { Coop-Warn 'Fabric SQL fallback is not ready'; $script:InstallFailures++ }
   }
 
   # --- 5. Python tools (pipx) -----------------------------------------------
   Coop-Head '5/9  Coop tools (pipx)'
-  for ($i = 0; $i -lt $PY_TOOLS.Count; $i++) { Install-Unit $PY_TOOLS[$i] $UnitPytool @($FORCE, $PY_TOOLS[$i], $pytoolTargets[$i]) }
+  for ($i = 0; $i -lt $PY_TOOLS.Count; $i++) { Install-Unit $PY_TOOLS[$i] $UnitPytool @($FORCE, $PY_TOOLS[$i], $pytoolTargets[$i], $EDGE) }
 
   # --- 6. Power BI / Fabric authoring tools (npm) ----------------------------
   Coop-Head '6/9  Power BI / Fabric authoring tools'
