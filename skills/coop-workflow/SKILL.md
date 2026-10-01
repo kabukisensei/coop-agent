@@ -66,7 +66,7 @@ partial, or connected project without requiring the user to edit YAML.
    `.backups/...` using `backup.timestamp_format` from the contract.
 6. **Smallest safe edit.** Make the minimal change that satisfies the request.
    Lay out any T-SQL you write, or are asked to reformat, with the `sql-formatting`
-   skill (the Cooptimize SQL Prompt style); leave unrelated lines as they are.
+   skill (the Cooptimize layout); leave unrelated lines as they are.
 7. **Review.** Run the applicable review tool: `sql_review` (`coop-sql-review`) for
    SQL, `dax_review` (`coop-dax-review`) for DAX/models. Where relevant, run Tabular
    Editor BPA and `fabric-cicd` in validate-only mode. Address findings.
