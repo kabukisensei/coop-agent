@@ -509,6 +509,18 @@ with (
 assert ro_output["state"] == "ok", ro_output
 assert "ApplicationIntent=ReadOnly;" in ro_pyodbc.call[0]
 
+# Without PyYAML (fresh Windows machines, the Windows CI leg) lib/_yaml.py keeps
+# `true` as text; the entry still resolves and still carries the read-only intent.
+ro_text_pyodbc = FakePyodbc()
+with (
+    mock.patch.dict(os.environ, {fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN}, clear=False),
+    mock.patch.dict(sys.modules, {"pyodbc": ro_text_pyodbc, "yaml": None}),
+    mock.patch.object(fsq.wmcp, "az_access_token", side_effect=fake_sql_only_token),
+):
+    ro_text_output = fsq.execute({"query": QUERY}, cwd=ro_project)
+assert ro_text_output["state"] == "ok", ro_text_output
+assert "ApplicationIntent=ReadOnly;" in ro_text_pyodbc.call[0]
+
 # Synapse serverless and Fabric SQL database are direct kinds too (15 s timeout).
 for kind, host in (
     ("synapse_serverless", "contoso-ondemand.sql.azuresynapse.net"),
