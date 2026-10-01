@@ -42,7 +42,7 @@ import {
   provenanceText,
   sourceStatus,
 } from "../../lib/standards.mjs";
-import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
+import { agentDir as coopAgentDir, configPath as coopConfigPath, userProfilePath as coopUserProfilePath } from "../../lib/paths.mjs";
 
 const SEVERITY = Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info")]);
 
@@ -1863,6 +1863,23 @@ async function editRepository(ctx: any, root: string, repo: ProjectRepositorySet
 }
 
 /** Native UI project setup/edit flow. Returns true only after a contract write. */
+/** Write `<profile dir>/user.json` with just a name and the balanced preset: the
+ *  same shape and name rules as scripts/onboard.py (`validate_name`), which stays
+ *  the place to change the communication preset. Returns the saved name, or null
+ *  when the name is invalid or the file could not be written. */
+export function saveUserProfileName(rawName: string, path: string = coopUserProfilePath()): string | null {
+  const name = String(rawName ?? "").replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim();
+  if (!name || name.length > 100 || /[\\/<>|:&;]/.test(name)) return null;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    const profile = { schema_version: 1, name, communication: { preset: "balanced", custom_instructions: "" } };
+    writeFileSync(path, JSON.stringify(profile, null, 2) + "\n", "utf8");
+    return name;
+  } catch {
+    return null;
+  }
+}
+
 export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<boolean> {
   if (!ctx.hasUI || typeof ctx.ui?.input !== "function" || typeof ctx.ui?.confirm !== "function") {
     notify(ctx, "Project setup needs an interactive Coop UI. In a shell, run: coop init", "warning");
@@ -1874,6 +1891,19 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   const settings = parseProjectWizardSettings(original, root);
   const title = existing ? "Edit this Coop project" : "Set up this Coop project";
   notify(ctx, `${title}. Press Esc at any prompt to cancel without changing files.`, "info");
+
+  // The one onboarding question the launch no longer asks (master plan FR1): the
+  // name coop calls the user by. Asked only while the local profile is missing;
+  // Enter on a blank answer skips it, and it is never written into project.yml.
+  if (!existsSync(coopUserProfilePath())) {
+    const name = await askText(ctx, "What should coop call you? (your local profile, not the project)", "");
+    if (name === null) return false;
+    if (name) {
+      const saved = saveUserProfileName(name);
+      if (saved) notify(ctx, `Saved your profile name (${saved}). Coop will use it from the next session.`, "info");
+      else notify(ctx, "That name has characters coop can't save (\\ / < > | : & ;) or is over 100 characters; run `coop onboard` to set it.", "warning");
+    }
+  }
 
   const organization = await askText(ctx, "Organization", settings.organization);
   if (organization === null) return false;
@@ -2247,13 +2277,14 @@ export function shouldSuggestShareLearning(signals: ShareLearningSessionSignals)
   return failures >= 2;
 }
 
-/** The task menu — wired to tools/skills coop already ships. Each choice sends a
- *  friendly, first-person request AS the user (the menu just pre-writes the prompt
- *  a newcomer would otherwise have to compose); the agent then asks for specifics. */
+/** The seven common workflows (master plan FR1, section 9), each wired to a prompt,
+ *  skill or native wizard coop already ships. A choice either runs a native wizard
+ *  or sends a friendly, first-person request AS the user (the menu just pre-writes
+ *  the prompt a newcomer would otherwise have to compose); the agent then asks for
+ *  specifics. The retired `sql-review` / `dax-review` tools are the standards
+ *  self-check now (ST1), so item 1 asks for that. */
 export function buildStartMenu(): MenuItem[] {
   return [
-    { label: "⚙️  Set up or edit this Coop project", run: runProjectWizard },
-    { label: "📚  Document the data sources I have", run: documentDataFlow },
     {
       label: "🔎  Check SQL, DAX or a model against our standards",
       run: async (pi) => {
@@ -2263,30 +2294,50 @@ export function buildStartMenu(): MenuItem[] {
       },
     },
     {
-      label: "🧭  Impact check — what breaks if I change something?",
+      label: "🧭  Trace the impact of a change",
       run: async (pi) => {
         pi.sendUserMessage(
-          "Before I change something, I want to see its impact. Ask me which SQL object, table, measure, or semantic model I'm about to touch, then use the data_doc lineage to show me what's upstream and downstream and what could break.",
+          "Before I change something, I want to see its impact. Ask me which SQL object, table, measure, or semantic model I'm about to touch. For a live SQL object run sql_impact first, then use the data_doc lineage for the same object, and show me what's upstream and downstream and what could break.",
         );
       },
     },
     {
-      label: "🏛️  Review a Fabric workspace or architecture",
+      label: "🛠️  Fix or edit an object on dev, with approval",
       run: async (pi) => {
         pi.sendUserMessage(
-          "Help me review a Microsoft Fabric workspace or data architecture against best practices. Ask me what to look at — a workspace, or the files in this folder — then walk me through what you find in plain language.",
+          "I want to fix or edit a SQL object, a DAX measure or a semantic model on the dev target. Follow the Cooptimize workflow: ask me what to change and why, write a short spec with /spec-first and wait for my approval before editing anything, then work it one slice at a time with /slice-next, asking for approval before every write and verifying each slice with data on dev.",
+        );
+      },
+    },
+    { label: "📚  Document a warehouse or semantic model", run: documentDataFlow },
+    { label: "🏗️  Start a client project (set up or edit this Coop project)", run: runProjectWizard },
+    {
+      label: "📝  Write today's log or a handoff",
+      run: async (pi) => {
+        pi.sendUserMessage(
+          "Help me write up my work. Ask whether it's today's log (/daily-log), a weekly log (/weekly-log) or a handoff for whoever picks this up next (/handoff), then help me capture what I worked on and turn it into a clean entry.",
         );
       },
     },
     {
-      label: "📝  Write my work log (daily or weekly)",
+      label: "🔐  Sign in or check health",
       run: async (pi) => {
         pi.sendUserMessage(
-          "Help me write my work log. Ask whether it's a daily or weekly entry, then help me capture what I worked on and turn it into a clean log entry.",
+          "Check that this machine is ready: run `coop doctor` and explain anything that is not green in plain language, with the exact command to fix it. If Azure sign-in is missing for this project's tenant, give me the `az login --tenant <id> --allow-no-subscriptions` command to run. If `coop doctor` says my COOP profile is missing, tell me to pick \"Start a client project\" from /start (it asks my name) or run `coop onboard`.",
         );
       },
     },
   ];
+}
+
+/** True when this Pi process should open the Start Here menu once at startup: the
+ *  launcher sets COOP_FIRST_RUN=1 on the first interactive launch per profile dir
+ *  (master plan FR1). Only a dialog-capable TUI can show it. */
+export function shouldOpenFirstRunMenu(
+  ctx: Pick<ExtensionContext, "hasUI" | "mode">,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return ctx.hasUI && ctx.mode === "tui" && /^(1|true|yes|on)$/i.test(env.COOP_FIRST_RUN || "");
 }
 
 /** Render the on-demand Start Here menu and dispatch the choice. */
@@ -2687,7 +2738,21 @@ export default function coopTools(pi: ExtensionAPI) {
     seenToolErrorIds.clear();
     learningNudgeAnnounced = false;
     announcedTeamKnowledge = false;
-    primeModelLogin(ctx);
+    const primedLogin = primeModelLogin(ctx);
+    // First launch (master plan FR1): the common-workflows menu, once per profile
+    // dir. The flag is cleared first so `/new` in the same process never reopens it.
+    if (shouldOpenFirstRunMenu(ctx)) {
+      delete process.env.COOP_FIRST_RUN;
+      try {
+        if (primedLogin) {
+          notify(ctx, "After you sign in, run /start for the menu of common workflows.", "info");
+        } else {
+          await showStartMenu(pi, ctx);
+        }
+      } catch (e: any) {
+        notify(ctx, `Couldn't open the menu: ${errMsg(e)}. Run /start any time, or just type what you'd like to do.`, "error");
+      }
+    }
   });
 
   // --- Native lineage awareness + required daily-log postcondition ----------

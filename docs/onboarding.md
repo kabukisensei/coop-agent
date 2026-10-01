@@ -83,6 +83,14 @@ Fabric CLI, follow doctor's one-line fix.
 coop
 ```
 
+The first interactive launch opens the **Start Here menu** of the seven common
+workflows (standards check, impact trace, fix on dev with approval, document a
+warehouse or model, start a client project, logs and handoffs, sign in or health).
+Pick one, or press Esc for the plain prompt; `/start` opens it again any time and
+later launches go straight to the prompt. The launch never runs the onboarding
+wizard and nothing can stop it: with no profile yet, *Start a client project*
+asks the name coop calls you by (or run `coop onboard`).
+
 Fresh interactive installation now performs this step at the end: Coop opens a
 short sign-in-only screen with `/login openai-codex` in the editor. Press Enter,
 complete the browser sign-in, and the installer resumes automatically. If the
@@ -143,7 +151,7 @@ coop doctor
 ```
 
 Coop launches directly at the prompt without opening setup dialogs. Run
-`/setup-project` or choose *Set up or edit this Coop project* from `/start` when
+`/setup-project` or choose *Start a client project* from `/start` when
 you are ready; the wizard can create or edit a contract without replacing custom
 fields or policies. Choose discovery mode when no local source exists yet;
 SQL-only, Power-BI-only, partial-folder, mixed-repository, and fully connected
@@ -151,8 +159,8 @@ projects can all be expanded later through the same wizard.
 
 Lineage docs (`coop-data-doc`) are optional and do not block first use. Coop does
 not launch their setup wizard automatically. When you want lineage-aware impact
-analysis, run **`/setup-docs`** inside the agent, choose *Document my data* from
-`/start`, or run `coop data-doc setup` in a shell. These paths use the same full
+analysis, run **`/setup-docs`** inside the agent, choose *Document a warehouse or
+semantic model* from `/start`, or run `coop data-doc setup` in a shell. These paths use the same full
 native questionnaire; no reduced fallback exists.
 
 ## 5. Use it

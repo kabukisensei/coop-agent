@@ -482,18 +482,10 @@ function Invoke-LaunchPi {
     Coop-Die 'pi is not installed. Run: coop install   (installs the release''s tested Pi)'
   }
 
-  # First-run onboarding: ask for name/communication preference before the first
-  # real session, but only in an interactive terminal and only if not disabled.
-  # A failed onboarding must STOP the launch: continuing would run with a
-  # half-generated MCP configuration. The env var makes onboard.py announce
-  # "Starting Coop…" instead of "Run 'coop' to start."
-  $env:COOP_ONBOARD_FROM_LAUNCH = '1'
-  Invoke-CoopMaybeOnboard
-  $onboardRc = $script:CoopOnboardRc
-  Remove-Item Env:COOP_ONBOARD_FROM_LAUNCH -ErrorAction SilentlyContinue
-  if ($onboardRc -ne 0) {
-    Coop-Die "first-run onboarding failed — fix the error above, then run: coop   (or: coop onboard)"
-  }
+  # First launch (master plan FR1): no wizard and nothing that can stop the launch.
+  # The first interactive launch hands coop-tools COOP_FIRST_RUN=1 so the Start
+  # Here menu of common workflows opens once Pi is up; `coop onboard` stays on demand.
+  Set-CoopFirstRunLaunch
 
   # Guard against launching into a known-broken extension load (agent/extension skew).
   Invoke-CoopLaunchPreflight
@@ -524,7 +516,11 @@ function Invoke-LaunchPi {
 
   $piArgs = Build-CoopPiArgs
   $allArgs = @($piArgs + $PassArgs)
-  Invoke-CoopPiProcess -PiArgs $allArgs
+  try {
+    Invoke-CoopPiProcess -PiArgs $allArgs
+  } finally {
+    Remove-Item Env:COOP_FIRST_RUN -ErrorAction SilentlyContinue
+  }
   exit $script:CoopPiRc
 }
 
