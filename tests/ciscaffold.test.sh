@@ -26,7 +26,7 @@ power_bi:
 PROJ
 # The data-docs job (the only gate since ST1) needs the repo's coop-data-doc.yml.
 printf 'version: 1\n' > "$TMP/proj/coop-data-doc.yml"
-cd "$TMP/proj"
+cd "$TMP/proj" || fail "cannot enter $TMP/proj"
 
 # 1. GitHub Actions generation
 "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project.yml" "$ROOT/config/release-manifest.json" "$TMP/proj" > /dev/null \
@@ -100,10 +100,9 @@ pass "version injection rejected"
 # 7. The generated pipelines pin exactly the manifest's coop-tool versions.
 "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project.yml" "$ROOT/config/release-manifest.json" "$TMP/proj" > /dev/null \
   || fail "_ciscaffold.py should succeed against the real manifest"
-for tool in coop-data-doc; do
-  pin="$(sed -n 's/^[[:space:]]*"'"$tool"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/config/release-manifest.json")"
-  grep -q "pipx install $tool==$pin" "$gh_file" || fail "GitHub pipeline must pin $tool==$pin (the manifest's python_tools)"
-done
-pass "pipelines pin the manifest's coop-tool versions"
+tool=coop-data-doc
+pin="$(sed -n 's/^[[:space:]]*"'"$tool"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/config/release-manifest.json")"
+grep -q "pipx install $tool==$pin" "$gh_file" || fail "GitHub pipeline must pin $tool==$pin (the manifest's python_tools)"
+pass "pipelines pin the manifest's coop-data-doc version"
 
 printf '  %s\n' "ciscaffold tests passed"
