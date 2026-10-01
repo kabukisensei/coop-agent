@@ -514,5 +514,13 @@ Each approved skill has a committed tree SHA-256. Every launch recomputes the
 actual exported tree receipt and full generation content address, and rejects
 pointer, repository, revision, path, receipt, or generation rewrites that do not
 match that committed authority.
-Baseline loads Microsoft KQL, Microsoft Docs, and Fabric SQL DW authoring and
-consumption skills only; `sqldw-operations-cli` is recorded as deferred.
+Baseline loads Microsoft KQL, Microsoft Docs, and every skill in the pinned
+skills-for-fabric catalog (v0.3.18) when a contract turns Fabric skills on,
+including `sqldw-cli` for Fabric Warehouse and Lakehouse SQL (its authoring,
+consumption and operations guidance in one skill; the older
+`sqldw-operations-cli` name no longer exists) and `sqldb-cli` for Fabric SQL
+database (`fabric_sql_database` in `sql_targets:`). Neither covers Azure SQL
+Database or Synapse serverless outside Fabric: for those kinds the resolved SQL
+standards (fed into context at launch) and the `coop-workflow` guidance are the
+authority, and no Microsoft skill is substituted (master plan section 8 item 6,
+row SQ6).

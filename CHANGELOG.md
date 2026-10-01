@@ -278,6 +278,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   queries after it, and the difference as the passing check; writes go only to dev,
   test asks first, production is never a verify target.
 
+- Microsoft skill mapping for SQL targets (master plan section 8 item 6, row SQ6).
+  `sqldw-cli` (Fabric Warehouse and Lakehouse SQL) and `sqldb-cli` (Fabric SQL
+  database) are already in the pinned v0.3.18 baseline; the tool contract and the
+  extending guide now say so and state that neither covers Azure SQL Database or
+  Synapse serverless, where the resolved SQL standards (in context) and the
+  `coop-workflow` guidance are the authority. The
+  stale "`sqldw-operations-cli` deferred" wording is gone (that name no longer
+  exists upstream; its guidance lives in `sqldw-cli`).
+
 - The SQL executor reads `sql_targets:` (master plan section 8 item 1, row SQ2).
   `lib/fabric_sql_query.py` is now `lib/sql_query.py` (the in-agent tool keeps its
   `fabric_sql_query` name and contract). With a contract `sql_targets:` section it
