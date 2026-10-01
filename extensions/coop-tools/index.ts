@@ -38,9 +38,11 @@ import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } fro
 import { fileURLToPath } from "node:url";
 import {
   buildStandardsContext,
+  findProjectContract,
   provenanceText,
   sourceStatus,
 } from "../../lib/standards.mjs";
+import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
 
 const SEVERITY = Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info")]);
 
@@ -88,14 +90,12 @@ export function fabricSqlPythonResolverInvocation(
   root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
   platform = process.platform,
 ): FabricSqlInvocation {
-  if (platform === "win32") return {
-    bin: "powershell.exe",
-    args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ". (Join-Path $env:COOP_ROOT 'lib\\common.ps1'); $py = Get-CoopFabricPython; if (-not $py) { exit 65 }; [Console]::Out.WriteLine($py)"],
-    env: { COOP_ROOT: root },
-  };
+  // One resolver, lib/common.ps1's Get-CoopFabricPython, on every platform
+  // (master plan S1: coop has no bash runtime). Windows PowerShell 5.1 on Windows,
+  // PowerShell 7 (pwsh) on a macOS/Linux developer box.
   return {
-    bin: "bash",
-    args: ["-c", '. "$COOP_ROOT/lib/common.sh"; coop_fabric_python || exit 65'],
+    bin: platform === "win32" ? "powershell.exe" : "pwsh",
+    args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ". (Join-Path (Join-Path $env:COOP_ROOT 'lib') 'common.ps1'); $py = Get-CoopFabricPython; if (-not $py) { exit 65 }; [Console]::Out.WriteLine($py)"],
     env: { COOP_ROOT: root },
   };
 }
@@ -231,16 +231,13 @@ function summarizeReview(bin: string, parsed: any, stdout: string, code: number)
   );
 }
 
-// --- coop-data-doc setup wizard (native Pi dialogs) --------------------------
-// Defaults mirror coop-data-doc/src/coop_data_doc/config.py (render_config_yaml /
-// _CONFIG_TEMPLATE / DEFAULT_*). If that schema changes, mirror it here. We emit
-// only a SUBSET of known keys — safe because Config uses extra="forbid" (only
-// UNKNOWN keys are rejected) and every omitted field has a default.
+// --- coop-data-doc setup wizard (JSONL bridge to the companion) ---------------
+// coop never writes coop-data-doc.yml itself: `coop-data-doc setup --transport
+// jsonl` owns the config (runJsonlSetup below). coop only READS the few scalars it
+// needs (parseExisting) to prefill the wizard and to find the built docs. Keys and
+// defaults mirror coop-data-doc/src/coop_data_doc/config.py; if that schema
+// changes, mirror it here.
 const DATADOC_CONFIG = "coop-data-doc.yml";
-const DEFAULT_SQL_INCLUDE = ["**/*.sql"];
-const DEFAULT_SQL_EXCLUDE = ["**/archive/**"];
-const DEFAULT_PBI_INCLUDE = ["**/*.tmdl", "**/*.bim", "**/report.json", "**/visual.json", "**/page.json", "**/*.pbix"];
-const DEFAULT_PBI_EXCLUDE: string[] = [];
 const DEFAULT_OUTPUT_DIR = "./data-docs";
 
 interface DataDocSettings {
@@ -248,7 +245,6 @@ interface DataDocSettings {
   sqlPath: string;
   pbiPath: string;
   outputDir: string;
-  siteDir: string;
 }
 
 interface DataDocSetupPrefill extends Partial<DataDocSettings> {
@@ -294,36 +290,9 @@ function resolveRel(cwd: string, p: string): string {
   return isAbsolute(p) ? p : resolve(cwd, p);
 }
 
-function dirExists(p: string): boolean {
-  try {
-    return statSync(p).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 /** Markdown output dir holds built docs (mirrors what `coop-data-doc build` writes). */
 function isBuilt(outAbs: string): boolean {
   return existsSync(join(outAbs, "manifest.json")) || existsSync(join(outAbs, "index.md"));
-}
-
-function withinOrEqual(inner: string, outer: string): boolean {
-  // Separator-aware (path.relative), so nesting is detected on Windows too — a
-  // hardcoded "/" prefix test misses C:\a\b inside C:\a. Mirrors config.py's
-  // Path.relative_to. Empty rel = same dir; ".."/absolute rel = not inside.
-  const rel = relative(resolve(outer), resolve(inner));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
-/** Mirror config.py output_dirs_conflict: site must not equal/nest the markdown dir. */
-export function outputDirsConflict(outAbs: string, siteAbs: string): boolean {
-  return withinOrEqual(siteAbs, outAbs) || withinOrEqual(outAbs, siteAbs);
-}
-
-/** Mirror wizard._sibling_site: an HTML dir that sits NEXT TO the markdown dir. */
-export function siblingSite(outputDir: string): string {
-  const trimmed = outputDir.replace(/[/\\]+$/, "") || DEFAULT_OUTPUT_DIR;
-  return `${trimmed}-site`;
 }
 
 /** Read just the scalar value off a `key: value` line, quote- and comment-aware.
@@ -365,11 +334,12 @@ export function scalarValue(afterColon: string): string {
   return s.trim();
 }
 
-type ManagedKey = "project_name" | "sql_path" | "powerbi_path" | "output_dir" | "output_site_dir";
+type ManagedKey = "project_name" | "sql_path" | "powerbi_path" | "output_dir";
 
-/** Locate the lines for the 5 fields the native wizard manages — robust to 2- or
- *  4-space indentation, extra repo keys (e.g. a third `staging:`), and nested
- *  mappings. Block-style YAML only (best-effort), matching what coop-data-doc emits. */
+/** Locate the lines for the 4 scalars coop reads (project_name, repos.sql.path,
+ *  repos.powerbi.path, output.dir) — robust to 2- or 4-space indentation, extra
+ *  repo keys (e.g. a third `staging:`), and nested mappings. Block-style YAML only
+ *  (best-effort), matching what coop-data-doc emits. */
 export function classifyManagedLines(text: string): Array<{ i: number; key: ManagedKey }> {
   const lines = text.split("\n");
   const found: Array<{ i: number; key: ManagedKey }> = [];
@@ -401,7 +371,6 @@ export function classifyManagedLines(text: string): Array<{ i: number; key: Mana
       }
     } else if (section === "output") {
       if (body.startsWith("dir:")) found.push({ i, key: "output_dir" });
-      else if (body.startsWith("site_dir:")) found.push({ i, key: "output_site_dir" });
     }
   }
   return found;
@@ -417,48 +386,9 @@ export function parseExisting(text: string): DataDocSetupPrefill {
     else if (key === "sql_path") out.sqlPath = v;
     else if (key === "powerbi_path") out.pbiPath = v;
     else if (key === "output_dir") out.outputDir = v;
-    else if (key === "output_site_dir") out.siteDir = v;
   }
   out.sourceMode = out.sqlPath && out.pbiPath ? "both" : out.sqlPath ? "sql" : out.pbiPath ? "powerbi" : "none";
   return out;
-}
-
-/** The trailing ` # comment` of a post-colon remainder (outside quotes), or "". */
-export function trailingComment(rest: string): string {
-  let q: string | null = null;
-  for (let i = 0; i < rest.length; i++) {
-    const c = rest[i];
-    if (q) {
-      if (c === q && !(q === '"' && rest[i - 1] === "\\")) q = null;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      q = c;
-      continue;
-    }
-    if (c === "#" && i > 0 && /\s/.test(rest[i - 1])) return "  " + rest.slice(i);
-  }
-  return "";
-}
-
-/** Surgically rewrite ONLY the 5 managed scalars in an existing yml, preserving
- *  everything else (medallion layers, branding, schema mappings, include/exclude
- *  globs, sql_dialect, comments). This is what makes a /setup-docs re-run SAFE —
- *  regenerating from 5 fields would silently clobber all of that. */
-export function updateConfigText(text: string, s: DataDocSettings): string {
-  const lines = text.split("\n");
-  const value: Record<ManagedKey, string> = {
-    project_name: s.projectName,
-    sql_path: s.sqlPath,
-    powerbi_path: s.pbiPath,
-    output_dir: s.outputDir,
-    output_site_dir: s.siteDir,
-  };
-  for (const { i, key } of classifyManagedLines(text)) {
-    const ci = lines[i].indexOf(":");
-    lines[i] = `${lines[i].slice(0, ci + 1)} ${JSON.stringify(value[key])}${trailingComment(lines[i].slice(ci + 1))}`;
-  }
-  return lines.join("\n");
 }
 
 /* --- Project-contract scoping (.coop/project.yml → review paths) -------------
@@ -466,18 +396,11 @@ export function updateConfigText(text: string, s: DataDocSettings): string {
  * the model calls bpa_review without explicit paths, scope the review to those
  * repos instead of blind-scanning the cwd. Explicit paths always win. */
 
-/** Nearest .coop/project.yml walking up from cwd (mirror of the wrapper's
- *  coop_find_project_yml, WITHOUT its bundled-template fallback — the bundled
- *  template is all TODO placeholders and must never scope a review). */
+/** Nearest .coop/project.yml walking up from cwd — lib/standards.mjs's
+ *  findProjectContract, with no bundled-template fallback (the bundled template
+ *  is all TODO placeholders and must never scope a review). */
 export function findProjectYml(cwd: string): string | null {
-  let dir = resolve(cwd || ".");
-  for (;;) {
-    const cand = join(dir, ".coop", "project.yml");
-    if (existsSync(cand)) return cand;
-    const parent = resolve(dir, "..");
-    if (parent === dir) return null;
-    dir = parent;
-  }
+  return findProjectContract(cwd);
 }
 
 /** Pull `repositories.<name>.local_path` values out of a project.yml (block-style,
@@ -640,40 +563,6 @@ function parseBpaOutput(stdout: string, legacy: boolean): any {
     }
   }
   return { findings, summary };
-}
-
-/** Render a minimal, valid coop-data-doc.yml. Scalars/arrays JSON-encoded (valid YAML). */
-export function renderMinimalConfig(s: DataDocSettings): string {
-  const j = (v: unknown) => JSON.stringify(v);
-  return `# coop-data-doc configuration — generated by coop /setup-docs.
-# Point the tool at your repos, then run \`coop-data-doc build\`.
-# All relative paths resolve against the folder containing THIS file.
-# Re-run the same authoritative wizard with /setup-docs or \`coop data-doc setup\`.
-
-project_name: ${j(s.projectName)}
-
-repos:
-  sql:
-    path: ${j(s.sqlPath)}
-    include: ${j(DEFAULT_SQL_INCLUDE)}
-    exclude: ${j(DEFAULT_SQL_EXCLUDE)}
-  powerbi:
-    path: ${j(s.pbiPath)}
-    include: ${j(DEFAULT_PBI_INCLUDE)}
-    exclude: ${j(DEFAULT_PBI_EXCLUDE)}
-
-# The authoritative setup wizard configures these; empty = defaults.
-schema_mappings: []
-layers: {}
-ignore_schemas: []
-branding: {}
-
-output:
-  dir: ${j(s.outputDir)}        # markdown docs (for agents)
-  site_dir: ${j(s.siteDir)}     # html portal (for humans)
-
-sql_dialect: "tsql"
-`;
 }
 
 /** `coop-data-doc build`'s error for a configured repo folder that doesn't exist. */
@@ -2002,15 +1891,10 @@ const TYPE_IT = "Something else — I'll type it myself";
 
 const MODEL_LOGIN_COMMAND = "/login openai-codex";
 
-/** Path used by the Pi process currently hosting this extension. */
+/** Path used by the Pi process currently hosting this extension (the one agent-dir
+ *  chain in lib/paths.mjs: PI_CODING_AGENT_DIR, COOP_NO_ISOLATE, COOP_AGENT_DIR, default). */
 export function modelLoginAuthPath(): string {
-  const configured = process.env.PI_CODING_AGENT_DIR;
-  if (configured && configured.trim()) return join(configured, "auth.json");
-  if (/^(1|true|yes|on)$/i.test(process.env.COOP_NO_ISOLATE || "")) {
-    return join(homedir(), ".pi", "agent", "auth.json");
-  }
-  const coopAgent = process.env.COOP_AGENT_DIR;
-  return join(coopAgent && coopAgent.trim() ? coopAgent : join(homedir(), ".coop", "agent"), "auth.json");
+  return join(coopAgentDir(), "auth.json");
 }
 
 /**
@@ -2099,9 +1983,10 @@ async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
  * or null otherwise.
  */
 export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | null {
-  const base = coopDir || process.env.COOP_DIR || homedir();
+  // coopDir is the PARENT of .coop (the COOP_DIR meaning); the default is the
+  // profile dir from lib/paths.mjs.
   const home = homeDir || process.env.HOME || homedir();
-  const cfgPath = join(base, ".coop", "config");
+  const cfgPath = coopDir ? join(coopDir, ".coop", "config") : coopConfigPath();
   if (!existsSync(cfgPath)) return null;
   try {
     const raw = readFileSync(cfgPath, "utf8");

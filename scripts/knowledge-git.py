@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """knowledge-git.py — bounded, unattended git runner for knowledge sync.
 
-One shared timeout/unattended contract used by sync-knowledge.sh and
+One shared timeout/unattended contract used by
 sync-knowledge.ps1 so Git, credential helpers, askpass, and SSH can never wait
 indefinitely (http.lowSpeedTime only bounds HTTP low-speed stalls — it is not
 an overall deadline).

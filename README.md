@@ -29,10 +29,9 @@ DAX, semantic models (TMDL), and data documentation.
 From a fresh clone, run the installer with its full path (it links `coop` onto your
 `PATH`); after that, the bare `coop` command works:
 
-```bash
-git clone <coop-agent-repo> && cd coop-agent
-./bin/coop install     # fresh bootstrap of the whole stack (idempotent — safe to re-run)
-                       # Windows: .\bin\coop.cmd install
+```powershell
+git clone <coop-agent-repo>; cd coop-agent
+.\bin\coop.cmd install  # fresh bootstrap of the whole stack (idempotent — safe to re-run)
 coop                   # launch the ready, branded Pi agent (after install + new shell)
 ```
 
@@ -48,14 +47,12 @@ coop                   # launch the ready, branded Pi agent (after install + new
 > (the no-training-on-our-data terms attach to the business subscription). Details:
 > [docs/onboarding.md §3.5](docs/onboarding.md#35-first-launch--sign-in-one-time).
 
-On macOS/Linux, `coop install` links `coop` into `~/.local/bin`; that directory must
-be on `PATH`. On Windows it installs `%LOCALAPPDATA%\coop\bin\coop.cmd`, adds that
-directory to the user `PATH`, and requires a new terminal before the change appears.
-If `coop` is not found on macOS/Linux, add this to your shell rc and open a new shell:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
+`coop install` installs `%LOCALAPPDATA%\coop\bin\coop.cmd`, adds that directory
+to the user `PATH`, and asks for a new terminal before the change appears (an
+isolated install with a redirected profile keeps the launcher inside the sandbox
+and leaves the user `PATH` alone). Coop is operated on Windows workstations; on a
+Linux or macOS development box, `./bin/coop` forwards to `bin/coop.ps1` under
+`pwsh` for the tests only (see `CONTRIBUTING.md`).
 
 Verify everything with:
 
@@ -72,7 +69,14 @@ coop doctor      # checks dependencies + configuration; exits non-zero if requir
 curated extensions/settings/theme/MCP load — your personal `pi` (its extensions,
 themes, splash) stays untouched. Your login (auth/models) is shared in from
 `~/.pi/agent`; settings/extensions/MCP are isolated. Provisioned by `coop install` /
-`coop sync`. Disable with `COOP_NO_ISOLATE=1`.
+`coop sync`. Disable with `COOP_NO_ISOLATE=1` (`true`, `yes` and `on` also count).
+
+The rest of coop's profile (`config`, `user.json`, `support/`, `standards/`) lives
+next to the agent dir in `~/.coop`. `COOP_DIR` moves the whole profile: it is the
+**parent** of `.coop`, so `COOP_DIR=D:\coop-profile` puts the profile at
+`D:\coop-profile\.coop` and the agent dir at `D:\coop-profile\.coop\agent` unless
+`COOP_AGENT_DIR` overrides it. Every coop command, script and extension reads the
+same two rules (`lib/common.ps1`, `lib/coop_paths.py`, `lib/paths.mjs`).
 
 ---
 
@@ -95,7 +99,7 @@ clone's own launcher instead of `coop install` (on Windows: double-click
 | 6 | ODBC Driver 18 for SQL Server | live SQL | `winget install --id Microsoft.msodbcsql.18 -e` (install also offers it after the Fabric CLI) |
 | 7 | Tabular Editor CLI (`te`) | optional, BPA reviews | download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli, put `te` on `PATH`, then `te auth login` |
 
-macOS and Linux print the `brew` / `apt` equivalents. A machine that only has
+A machine that only has
 Python 3.14 passes row 3 when its pipx can fetch a standalone Python (pipx 1.5+;
 `--fetch-missing-python`, or `--fetch-python` from pipx 1.12); pipx then downloads
 Python 3.12 for the Fabric CLI, and `coop install`, `coop update` and
@@ -112,19 +116,25 @@ not count as an interpreter.
 
 ## Fresh install
 
-### macOS / Linux
+### Windows
 
-`coop` ships as the bash dispatcher `bin/coop`. From a clone of this repo:
+coop runs on Windows: `bin/coop.cmd` launches the PowerShell implementation
+(`bin/coop.ps1`). From a clone of this repo, in PowerShell or Git Bash:
 
-```bash
+```powershell
 git clone <coop-agent repo url> coop-agent
 cd coop-agent
-./bin/coop install        # bootstraps pi, extensions, pipx tools, Fabric CLI, links coop onto PATH
+.\bin\coop.cmd install   # bootstraps pi, extensions, pipx tools, Fabric CLI, links coop onto PATH
 ```
 
-`coop install` handles the complete bootstrap: prerequisites → Pi → extensions →
-Microsoft Fabric CLI → standalone Coop tools → PATH/shortcuts → a short first-run
-setup → sync and Doctor. First-run setup asks only for your profile and whether to
+From Git Bash, `./bin/coop install` forwards to the same PowerShell code.
+
+`coop install` handles the complete bootstrap: prerequisites → Pi → Microsoft
+Fabric CLI → standalone Coop tools → Power BI / Fabric authoring tools →
+PATH/shortcuts → a short first-run setup → sync (the pinned Pi extensions, MCP
+config, assets) and Doctor. Install, `coop update` and `coop sync` converge
+through the same manifest-driven code, so a component already at its pin is left
+alone. First-run setup asks only for your profile and whether to
 connect to client Fabric/Power BI; Coop applies the recommended integrations. The
 detailed switches remain available later with `coop onboard --config-only`.
 It is idempotent; re-run it any time.
@@ -261,12 +271,12 @@ snapshot of the contract. From a shell, `coop init` creates a new contract.
 
 ---
 
-## ⚠️ The `fab` collision — Microsoft Fabric CLI vs. Homebrew Python `fab`
+## ⚠️ The `fab` collision — Microsoft Fabric CLI vs. Python Fabric's `fab`
 
 `coop install` installs **`ms-fabric-cli`**, which provides the **Microsoft Fabric
-CLI** as the `fab` command. A Homebrew formula named **`fabric`** ships a
-**different** `fab` — a Python SSH / automation tool (Paramiko / Invoke). If both
-are present, `fab` may resolve to the wrong one.
+CLI** as the `fab` command. The Python package **`fabric`** (Paramiko / Invoke SSH
+automation) ships a **different** `fab`. If both are present, `fab` may resolve to
+the wrong one.
 
 **`coop doctor` detects this** by checking `fab --version` for `paramiko`/`invoke`
 and reports it as an error:
@@ -276,14 +286,13 @@ and reports it as an error:
   not the Microsoft Fabric CLI
 ```
 
-**Fix:** ensure `~/.local/bin` (where pipx installs `fab`) **precedes Homebrew** on
-your `PATH`, or remove the conflicting formula (macOS/Homebrew; on Linux,
-uninstall the Python `fabric` package however it was installed, e.g.
-`pipx uninstall fabric`):
+**Fix:** uninstall the Python `fabric` package however it was installed (for
+example `pipx uninstall fabric` or `pip uninstall fabric`), or put pipx's bin
+directory ahead of it on `PATH` (`pipx ensurepath`, then a new terminal), and
+re-verify:
 
-```bash
-brew uninstall fabric        # or reorder PATH so ~/.local/bin comes first
-fab --version                # re-verify: should be the Microsoft Fabric CLI
+```powershell
+fab --version                # should be the Microsoft Fabric CLI
 ```
 
 ---
@@ -374,13 +383,12 @@ integration — nothing loads or runs unless you configure it.
   (**confirm-first** — coop-guardrails flags any work-item write), and runs the
   weekly per-client digest. It uses the Entra-authenticated REST API, plus the
   optional read-only-first `azure-devops` MCP entry generated from `~/.coop/config`; writes require approval.
-- **Batch entry points** — paired bash/PowerShell launchers over a stdlib-only
-  Python core:
-  - `scripts/ado-digest.sh` / `scripts/ado-digest.ps1` — a read-only, per-client
+- **Batch entry points** — PowerShell launchers over a stdlib-only Python core:
+  - `scripts/ado-digest.ps1` — a read-only, per-client
     watchdog digest (open / stale / unassigned) with Markdown/HTML output and
     optional Graph email (schedulable, e.g. from a Windows VM's Task Scheduler —
     see the skill).
-  - `scripts/ado-onboard.sh` / `scripts/ado-onboard.ps1` — guided, read-only
+  - `scripts/ado-onboard.ps1` — guided, read-only
     client discovery that writes only the local config.
 - **Config** — the MCP organization lives in `~/.coop/config`. Batch digest/onboarding
   records (projects, teams, people, recipients, and per-client auth) live in private
@@ -687,8 +695,8 @@ bundles, and exports a bundle by default for escalation.
 Set `fleet.publish_dir` in private Coop config, then run `coop doctor --publish` to write a
 per-host/user JSON snapshot. Aggregate snapshots with:
 
-```bash
-scripts/fleet-digest.sh --format md          # add --send or --dry-run
+```powershell
+scripts\fleet-digest.ps1 --format md         # add --send or --dry-run
 ```
 
 ```powershell
@@ -814,21 +822,13 @@ upstream release can temporarily restore upstream notices and `ctx_upgrade` with
 coop is distributed as **this Git repo**. Put it on a host your coworkers can reach
 (GitHub/Azure DevOps/internal), then each teammate runs the bootstrap once:
 
-```bash
-# macOS / Linux
-git clone <coop-agent-repo> && cd coop-agent
-./bin/coop install            # installs Pi, extensions, the pipx tools, ms-fabric-cli; links `coop` onto PATH
-
-# Windows (PowerShell)
+```powershell
 git clone <coop-agent-repo>; cd coop-agent
 .\bin\coop.cmd install        # creates %LOCALAPPDATA%\coop\bin\coop.cmd and adds it to your user PATH; open a new terminal if coop isn't found yet
 ```
 
-`coop install` is idempotent and **cross-platform**:
-
-- **macOS / Linux** — `bin/coop` (bash), tested.
-- **Windows** — `bin/coop.ps1` + `bin/coop.cmd` (PowerShell). Same subcommands,
-  dependency list, and `fab`-collision detection as the bash path.
+`coop install` is idempotent. coop is one PowerShell implementation
+(`bin/coop.ps1` + `bin/coop.cmd`); from Git Bash, `./bin/coop` forwards to it.
 
 Each teammate's machine needs the prerequisites (Node 22.19+, Python 3.10+, pipx, git —
 see [Prerequisites](#prerequisites)); the installer pulls everything else from npm

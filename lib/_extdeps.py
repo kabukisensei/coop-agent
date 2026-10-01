@@ -22,7 +22,7 @@ registry), so pinning to ``pi --version`` always resolves. ``pi-mcp-adapter`` ke
 working because it only uses stable top-level exports present across 0.74 -> 0.80.
 
 This helper is stdlib-only (a fresh machine's python may lack any deps) and is
-called by both ``scripts/sync.sh`` and ``scripts/sync.ps1`` (and the doctors).
+called by ``scripts/sync.ps1`` (and the doctor).
 
 Usage:
     python3 _extdeps.py align <agent_dir> <agent_version> [--check]

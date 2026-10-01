@@ -1,17 +1,10 @@
 # Releasing the coop-* suite
 
-Cross-repo runbook. The suite is three sibling repos (same GitHub owner, all
-released from `main`, checked out side by side): **coop-data-doc** (Python →
-PyPI), **coop-agent** (this repo), and **coop-website** (static site). Release
-**in the order below** — coop-data-doc first, website last.
-
-`coop-review-core`, `coop-dax-review` and `coop-sql-review` are **archived**
-(master plan ST1 retired the review CLIs; their rules now live in the
-`cooptimize/coop-standards` wiki, which coop reads at launch and is not released
-through this runbook). They are no longer part of a suite release. coop does ship
-a **bundled copy** of that wiki for first runs and offline machines
-(`config/standards-bundle/`); refresh it as part of the coop-agent release (step
-(b) below).
+Cross-repo runbook. The suite is six sibling repos (same GitHub owner, all
+released from `main`, checked out side by side): **coop-review-core**,
+**coop-dax-review**, **coop-sql-review**, **coop-data-doc** (Python → PyPI),
+**coop-agent** (this repo), and **coop-website** (static site). Release **in
+the order below** — core first, website last.
 
 ## When to release — explicit instruction only
 
@@ -26,49 +19,53 @@ stop and ask.
 **Definition of done:** a suite release is **not finished** until coop-website
 is synced and pushed — `versions.json` updated **first**, then badges /
 cache-bust, and **both** check scripts (`check-versions.sh`, `check-links.sh`)
-PASS. See step (c).
+PASS. See step (e).
 
 ## What publishes automatically on a `v*` tag push
 
 | Repo | Pushing tag `vX.Y.Z` triggers | Version source (single source of truth) |
 | --- | --- | --- |
-| coop-data-doc | `publish.yml`: build → wheel smoke-test → **PyPI** → GitHub Release | `src/coop_data_doc/__init__.py` `__version__` |
+| coop-review-core | `publish.yml`: build → wheel smoke-test → **PyPI** → GitHub Release | `src/coop_review_core/__init__.py` `__version__` |
+| coop-dax-review | same → **PyPI** | `src/coop_dax_review/__init__.py` `__version__` |
+| coop-sql-review | same → **PyPI** | `src/coop_sql_review/__init__.py` `__version__` |
+| coop-data-doc | same → **PyPI** | `src/coop_data_doc/__init__.py` `__version__` |
 | coop-agent | `release.yml`: **GitHub Release only** (body = that version's CHANGELOG section). Nothing goes to npm/PyPI | `VERSION` file + `extensions/*/package.json` (lockstep, managed by `coop release`) |
 | coop-website | nothing — tags are not used; **pushing to `main` deploys** the site. CI (`check.yml`) gates version-sync + link checks on every push/PR | `versions.json` in the repo root — every HTML badge/mention must match it (`scripts/check-versions.sh` enforces) |
 
-coop-data-doc's `publish.yml` **verifies the pushed tag equals
+Every Python repo's `publish.yml` **verifies the pushed tag equals
 `__version__` exactly** and fails the whole publish otherwise.
 
 **Guardrails — never do these:**
 
-- **Never** tag before bumping `__version__` (coop-data-doc) — the publish fails
+- **Never** tag before bumping `__version__` (Python repos) — the publish fails
   and a published PyPI version can never be reused.
 - **Never** force-push, delete, or re-push a `v*` tag.
-- **Never** add a `version =` field to coop-data-doc's `pyproject.toml` —
-  the version is hatch-dynamic from `__init__.py`.
+- **Never** add a `version =` field to a Python repo's `pyproject.toml` —
+  versions are hatch-dynamic from `__init__.py`.
 - **Never** hand-edit coop-agent's `VERSION` or `extensions/*/package.json` —
   `coop release` owns them.
 - **Never** release from a dirty tree. Check first: `git status --porcelain`
   must print nothing.
 - **Never** push a coop-agent tag on its own: it must land on `main`, so
   `coop release` refuses a detached HEAD or a `main` that differs from
-  `origin/main` and pushes `main` and the tag atomically (see step (b)).
+  `origin/main` and pushes `main` and the tag atomically (see step (d)).
 - **Never** treat a clean tree as permission to release — a release happens only
   on Aaron's explicit request naming the version (see "When to release" above).
 
-## (a) coop-data-doc — FIRST, and only if it changed
+## (a) coop-review-core — FIRST, and only if it changed
 
-The version source is `src/coop_data_doc/__init__.py` `__version__`, and **the
-tag must match it exactly or `publish.yml` fails**.
+Core is a runtime dependency of coop-dax-review and coop-sql-review (their
+suppression/diagnostics/upgrade modules are thin shims over it), so it must be
+on PyPI **before** they release against it.
 
 ```bash
-cd ../coop-data-doc
+cd ../coop-review-core
 git pull
 git status --porcelain                 # expect: empty
 ```
 
 1. Bump the version — the ONLY place it lives:
-   edit `src/coop_data_doc/__init__.py` → `__version__ = "X.Y.Z"`.
+   edit `src/coop_review_core/__init__.py` → `__version__ = "X.Y.Z"`.
 2. Test + lint with the repo's own venv (system `python3` lacks the deps; CI
    gates the same):
 
@@ -79,13 +76,14 @@ git status --porcelain                 # expect: empty
    ```
 
    Expected: pytest reports all passed; ruff prints nothing / "All checks passed".
-   If the venv is ever missing ruff, add it with `.venv/bin/pip install ruff`
-   (CI installs its own and gates the same checks regardless).
-3. Commit and push `main` (coop-data-doc has no CHANGELOG; its release tag is
-   the record):
+   All four Python repos' venvs carried ruff + pytest as of 2026-07-02; if one
+   is ever missing ruff, add it with `.venv/bin/pip install ruff` (CI installs
+   its own and gates the same checks regardless).
+3. Commit and push `main` (no CHANGELOG here — coop-review-core and
+   coop-data-doc have none; coop-dax-review and coop-sql-review do):
 
    ```bash
-   git add src/coop_data_doc/__init__.py
+   git add src/coop_review_core/__init__.py
    git commit -m "Release vX.Y.Z"
    git push origin main
    ```
@@ -103,12 +101,43 @@ git status --porcelain                 # expect: empty
 6. Verify on PyPI (allow a minute for the index):
 
    ```bash
-   curl -s https://pypi.org/pypi/coop-data-doc/json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])'
+   curl -s https://pypi.org/pypi/coop-review-core/json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])'
    ```
 
    Expected output: `X.Y.Z`.
 
-## (b) coop-agent (this repo)
+## (b) Bump the core dependency floor (only if the core API changed)
+
+If dax/sql rely on something new in core, raise the floor in **both**
+`coop-dax-review/pyproject.toml` and `coop-sql-review/pyproject.toml`:
+
+```toml
+"coop-review-core>=X.Y.Z",
+```
+
+Verify: `grep -n "coop-review-core" pyproject.toml` in each repo shows the new
+floor. This change ships with each tool's own release in step (c).
+
+## (c) coop-dax-review, coop-sql-review, coop-data-doc
+
+Same procedure as (a), per repo — the version source is
+`src/<pkg>/__init__.py` `__version__`, and **the tag must match it exactly or
+`publish.yml` fails**:
+
+1. `git pull`, clean tree, bump `__version__`.
+2. coop-dax-review and coop-sql-review: update `CHANGELOG.md`.
+   coop-data-doc: no CHANGELOG.
+3. Test + lint with the repo's `.venv` (as in (a)).
+4. Commit, push `main`, tag `vX.Y.Z`, push the tag.
+5. Verify the Actions run is green, then verify each on PyPI:
+
+   ```bash
+   curl -s https://pypi.org/pypi/coop-dax-review/json  | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])'
+   curl -s https://pypi.org/pypi/coop-sql-review/json  | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])'
+   curl -s https://pypi.org/pypi/coop-data-doc/json    | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])'
+   ```
+
+## (d) coop-agent (this repo)
 
 coop-agent does **not** publish to a registry. Teammates get it when
 `coop update` fast-forwards their checkout to the newest `vX.Y.Z` tag on
@@ -121,23 +150,13 @@ Every extension or Pi pin change must already carry a regenerated
 `CONTRIBUTING.md`); the gate lane fails otherwise, so `coop release` stops before
 tagging a manifest whose lock drifted.
 
-If this suite release also bumped coop-data-doc (step (a)), **refresh
-`config/defaults.yml` → `tested_with.coop_data_doc` first** — the pre-tag gate
-below verifies that pin against coop-website's `versions.json` and aborts on a
-mismatch. (Update `versions.json` before or together with the pin; step (c)
-requires it anyway.) **Also update the `==X.Y.Z` pin in
-[`docs/ci.md`](docs/ci.md)** (the copy-paste GitHub Actions + Azure DevOps
-pipelines and the "Pinning the tool version" prose) to the same version — the
-pre-tag gate does **not** check `docs/ci.md`, so that pin drifts silently if
-you skip this.
-
-**Refresh the bundled standards copy** so the release ships the wiki as it is
-today (first runs and offline machines read it until `coop sync` reaches the
-wiki): from a clean clone of `cooptimize/coop-standards` on `main`, run
-`node lib/standards-cli.mjs bundle-update <path to that clone>`, then
-`node lib/standards-cli.mjs bundle-check` (exit 0), and commit
-`config/standards-bundle/` as `standards: bundle wiki @ <short revision>`. The
-gate lane fails if the bundle does not verify.
+If this suite release also bumped any of the three coop tools (steps (a)–(c)),
+**bump their `python_tools` pins in `config/release-manifest.json` first** (the
+one manifest; `config/defaults.yml` carries no pins) — the pre-tag gate below
+verifies those pins against coop-website's `versions.json` and aborts on a
+mismatch. (Update `versions.json` before or together with the pins; step (e)
+requires it anyway.) `docs/ci.md` shows the pipeline pins as `==<version>`
+placeholders that point at the manifest, so nothing there needs editing.
 
 From a clean tree on an attached `main` that equals `origin/main` (`coop release`
 fetches `origin` and refuses anything else), with user-visible changes recorded
@@ -147,15 +166,19 @@ under `## [Unreleased]` in `CHANGELOG.md`:
 ./bin/coop release patch        # or: minor | major   (default: patch); add --yes to skip the confirm
 ```
 
-What `coop release` does (`coop_release` in `bin/coop`): requires a clean tree;
+What `coop release` does (`scripts/release.sh`, the one maintainer command that
+stays in bash; `./bin/coop release` runs it, and `bin/coop.ps1`'s
+`Invoke-CoopRelease` is its Windows equivalent): requires a clean tree;
 fetches `origin` and refuses unless `HEAD` is the branch `main` at exactly
 `origin/main` (a detached HEAD, another branch, or unpushed or missing commits
 stop it before anything changes); runs the pre-tag gate — esbuild-checks every
 `extensions/*/index.ts`, then `COOP_TEST_EXTENDED=1 bash tests/run.sh` (both
 test lanes, gate and extended, so a release keeps the full suite that CI splits
-between `ci.yml` and the nightly `extended.yml`; see `docs/ci.md`) and
-`bash scripts/check-parity.sh`, then verifies the coop-data-doc `tested_with`
-pin in `config/defaults.yml` matches the sibling
+between `ci.yml` and the nightly `extended.yml`; see `docs/ci.md`),
+`pwsh -File tests/run.ps1` and `pwsh -File scripts/check-bom.ps1` when `pwsh`
+is installed (a missing `pwsh` warns; native Windows CI is the evidence for
+Windows PowerShell 5.1), then verifies the three coop-tool `python_tools` pins
+in `config/release-manifest.json` match the sibling
 `../coop-website/versions.json` (`coop_release_check_pins`; a mismatch aborts
 with the fix named, a **missing sibling checkout warns and asks** so an
 offline/partial clone can still release deliberately — all of the gate is
@@ -211,7 +234,7 @@ Never push the tag on its own.
 - **Fresh installs**: a plain clone starts on the head of `main` and joins the
   release channel at the next tag.
 
-## (c) coop-website — LAST
+## (e) coop-website — LAST
 
 No tags: **pushing to `main` deploys**. The site hard-codes tool versions in
 its HTML, with `versions.json` (repo root) as the declared single source of
@@ -232,11 +255,8 @@ git pull
 2. Update the **version badges**: each `docs/*.html` carries
    `<span class="version-label">vX.Y.Z</span>` in a `doc-version` line (plus a
    "docs last updated" date). Pages track the repo they document —
-   `data-doc.html` → coop-data-doc, everything else → coop-agent. (The
-   `sql-review.html` / `sql-rules.html` / `dax-review.html` / `dax-rules.html`
-   pages are retired with the CLIs; removing them from the site is a separate
-   coop-website PR, and until it lands their badges stay at the last released
-   versions.) Sample
+   `data-doc.html` → coop-data-doc, `sql-review.html` → coop-sql-review,
+   `dax-review.html` → coop-dax-review, everything else → coop-agent. Sample
    `coop doctor` output and JSON examples on those pages can also embed
    versions — search each touched page for the OLD version string:
 

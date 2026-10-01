@@ -1,77 +1,27 @@
-# coop-agent human-readable behavior defaults. Runtime package/version pins live
-# only in config/release-manifest.json; CI checks any tested_with documentation below
-# against that manifest.
+# coop-agent human-readable behavior defaults.
+#
+# Members and pins: config/release-manifest.json (the one manifest: Pi, the Pi
+# extensions, the Coop tools, the Fabric CLI and its runtime libraries, the npm
+# authoring tools and the MCP packages). `coop install`, `coop update`, `coop
+# sync`, `coop doctor`, `coop release` and the fleet digest all read it; this file
+# carries no second copy of any version or member list.
 
 agent:
   name: coop
   brand: Cooptimize
   built_on: "@earendil-works/pi-coding-agent"   # Pi — coop is a layer, never a fork
 
-# How coop installs + updates Pi itself.
-pi:
-  npm_package: "@earendil-works/pi-coding-agent"
-  # `coop update` runs this — it updates the agent AND every installed extension.
-  # (Bare `pi update` updates pi ONLY; `pi update --extensions` updates packages only.)
-  update_all: "pi update --all"
-
-# Pi extensions coop installs (pi install npm:<name>).
-pi_extensions:
-  core:
-    - pi-mcp-adapter        # MCP servers (Fabric / Power BI / Microsoft Learn / context-mode)
-    - pi-hermes-memory      # persistent memory + session search + secret scanning
-    - pi-better-openai      # plan usage limits (5h / 7d windows) — surfaced in coop's footer
-    - pi-web-access         # web search / URL fetch / GitHub clone / PDF / video understanding (read-only)
-    - "@juicesharp/rpiv-ask-user-question"  # structured questions the model can put to you (consent rounds)
-    - "@xl0/pi-lovely-rename"  # names an unnamed session after 3 user turns (+ /rename); manual /name wins (master plan N1)
-    # NOTE: coop renders its OWN footer + splash via extensions/coop-powerline — it does
-    # NOT use a third-party powerline footer (pi-powerline-footer was removed: its welcome
-    # overlay couldn't be disabled, Nerd Font glyphs showed as `?`, and it duplicated the
-    # bar). coop's footer shows `⬢ Cooptimize · <branch>` on the left and `<model> · ctx N%
-    # · tokens · $cost · <plan usage limits>` on the right, in plain text + common Unicode.
-    # It surfaces other extensions' status text (e.g. pi-better-openai's plan usage limits /
-    # 5h+7d windows) via footerData.getExtensionStatuses(). The splash is the truecolor
-    # block-art Cooptimize logo (uniform-padded, width-robust).
-  recommended:
-    - pi-permissions        # optional: finer per-tool permission gating (generic)
-    # NOTE: @aliou/pi-guardrails was DROPPED — it's pinned to the deprecated
-    # @mariozechner Pi and is superseded by coop's own `coop-guardrails` extension
-    # (below), which enforces Cooptimize's actual rules on the current Pi.
-
-# coop's own companion extensions (loaded from this repo via `pi -e`).
-coop_extensions:
-  - extensions/coop-powerline   # splash + footer segments + rotating feature tips
-  - extensions/coop-tools       # native LLM tools: data_doc / bpa_review + the setup wizards
-  - extensions/coop-guardrails  # ENFORCES governance: never-commit-source + destructive-command confirm
-
-# Standalone tools installed via pipx (all on PyPI).
-python_tools:
-  - coop-data-doc        # SQL + Power BI documentation, lineage, manifest.json
-
-# Microsoft Fabric CLI. NOTE: installing this makes `fab` the Microsoft Fabric CLI.
-# A Homebrew formula named `fabric` ships a DIFFERENT `fab` (Python SSH automation);
-# coop doctor detects the clash (and the Python-Fabric/Paramiko collision) and warns.
-# See docs/guardrails.md and README.
-fabric_cli:
-  pipx_package: ms-fabric-cli
-  command: fab
-  # fabric-cicd is a Python LIBRARY (no CLI), injected INTO this env via
-  # `pipx inject ms-fabric-cli fabric-cicd`, so `fabric_cicd` is importable in the
-  # Fabric CLI's environment. Used as `import fabric_cicd` in deployment scripts
-  # (validate-only by default), NOT a `fabric-cicd` command. `coop doctor` checks
-  # it's importable.
-  pipx_inject:
-    - fabric-cicd
-
-# Microsoft Power BI / Fabric authoring CLIs (npm). powerbi-report-author is the
-# metadata/validation/inventory CLI behind coop's power-bi-* skills (and the
-# skills-for-fabric skills); doctor treats it as required. The desktop bridge is
-# the Desktop reload/screenshot bridge — Windows + Power BI Desktop only, so the
-# installers add it only on Windows.
-npm_authoring_tools:
-  - "@microsoft/powerbi-report-authoring-cli"   # powerbi-report-author: catalog/formatting/validate/preview-*
-  - "@microsoft/powerbi-modeling-mcp"           # Power BI Modeling MCP server (optional in doctor)
-  # Windows-only, added by the installers when on Windows:
-  # - "@microsoft/powerbi-desktop-bridge-cli"   # powerbi-desktop: open/status/reload/screenshot
+# Microsoft Fabric CLI (`fab`, the pipx package ms-fabric-cli in the manifest).
+# NOTE: installing it makes `fab` the Microsoft Fabric CLI. A Homebrew formula
+# named `fabric` ships a DIFFERENT `fab` (Python SSH automation); `coop doctor`
+# detects the clash (and the Python-Fabric/Paramiko collision) and warns. See
+# docs/troubleshooting.md and README.
+#
+# fabric-cicd is a Python LIBRARY (no CLI), injected INTO the Fabric CLI's
+# environment via `pipx inject ms-fabric-cli fabric-cicd`, so `fabric_cicd` is
+# importable there. Used as `import fabric_cicd` in deployment scripts
+# (validate-only by default), NOT a `fabric-cicd` command. `coop doctor` checks
+# it's importable.
 
 # Optional cross-platform CLI (https://tabulareditor.com/product/features-and-tools/tabular-editor-cli)
 tabular_editor_cli:
@@ -85,9 +35,10 @@ tabular_editor_cli:
 # edits can land; the guardrail asks before each edit (#159). powerbi-mcp-server is retired: it ignores
 # --readonly and exposes refresh_dataset, a write (#93); doctor warns if it is present.
 # The Warehouse SQL endpoint MCP is a separate
-# managed remote HTTP server and every SQL call is approval-gated. context-mode is NOT a pure read: it runs
-# SANDBOXED code over the docs/graph (not client data) to save context — pinned, and
-# still subject to Pi's tool approval.
+# managed remote HTTP server and every SQL call is approval-gated. context-mode is NOT an
+# MCP server: it is a native Pi extension from the manifest's `extensions` list that runs
+# SANDBOXED code over the docs/graph (not client data) to save context, still subject to
+# Pi's tool approval.
 mcp:
   generator: lib/mcp_config.py
   install_target: "~/.coop/agent/mcp-adapter.json"
@@ -100,10 +51,9 @@ mcp:
       mode: approval-gated-edits  # reads run; edits ask; deletes/imports/deploys/production always ask
     - name: microsoft-learn # learn.microsoft.com/api/mcp direct HTTP, no bridge package (always-current docs)
       mode: read-only
-    - name: context-mode    # context-mode@1.0.169 — intent-driven search + SANDBOXED exec over docs/graph
-      mode: sandboxed-exec  # not read-only: sandboxed code execution (over docs, not client data)
 
-# Branded resources loaded at launch (see bin/coop).
+# Branded resources loaded at launch (see bin/coop.ps1; scripts/context-budget.py
+# reads these keys).
 resources:
   skills: skills
   prompts: prompts
@@ -112,26 +62,11 @@ resources:
   vibes: vibes
   splash: extensions/coop-powerline/assets/splash.ansi
 
-# Tested-with versions (reference). Installs and normal `coop update` pin everything to
-# config/release-manifest.json; CI checks any tested_with documentation below against it.
-# doctor warns when Pi is older than pi_min (the extension API coop's extensions rely on)
-# or a newer MINOR than `pi` below (drift reporting only — update never gates on this;
-# --edge is the only latest/upstream path). Bump `pi` as part of the Pi-upgrade checklist
-# (web/README.md) once coop's extensions + protocol are re-verified against a new Pi.
+# The oldest Pi whose extension API coop's extensions still work with. `coop doctor`
+# warns when the installed Pi is older; the Pi coop ships with is the manifest's
+# pi.version, and `coop update` pins to it (--edge is the only latest/upstream path).
 tested_with:
   pi_min: "0.79.0"
-  pi: "0.87.1"          # @earendil-works/pi-coding-agent (requires Node >= 22.19)
-  pi_mcp_adapter: "3.3.0"
-  pi_hermes_memory: "0.9.9"
-  pi_web_access: "0.10.7"
-  rpiv_ask_user_question: "2.12.0"
-  context_mode: "1.0.169"
-  ms_fabric_cli: "1.7.0"
-  fabric_cicd: "1.3.0"
-  # The coop-tool pin below must match the sibling coop-website checkout's
-  # versions.json (the suite's single source of truth for released version strings).
-  # `coop release` verifies this before tagging; refresh it when the tool releases.
-  coop_data_doc: "1.2.0"
 
 # Cooptimize brand palette (sampled from the color logo).
 brand_colors:

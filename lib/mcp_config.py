@@ -20,12 +20,14 @@ LIB_DIR = Path(__file__).resolve().parent
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import coop_paths  # noqa: E402
 from warehouse_mcp import (  # noqa: E402
     find_project_yml,
+    integration_enabled,
     load_project,
     machine_sqlendpoint_enabled,
     project_sqlendpoint_enabled,
-    select_target,
+    project_target,
 )
 
 # Servers COOP generates. The npm-backed ones run through `npx <package>@<pin>`;
@@ -148,11 +150,6 @@ def desired_servers(
 ) -> dict[str, dict[str, Any]]:
     if config and config.get("schema_version") != 1:
         raise ValueError("~/.coop/config schema_version must be 1")
-    integrations = (
-        config.get("integrations", {})
-        if isinstance(config.get("integrations", {}), dict)
-        else {}
-    )
     azure = config.get("azure", {}) if isinstance(config.get("azure", {}), dict) else {}
     ado = (
         config.get("azure_devops", {})
@@ -161,7 +158,8 @@ def desired_servers(
     )
 
     def enabled(name: str, default: bool = True) -> bool:
-        return integrations.get(name, default) is True
+        # warehouse_mcp.integration_enabled is the one flag rule (boolean true only).
+        return integration_enabled(config, name, default)
 
     tenant = (
         azure.get("tenant_id", "")
@@ -211,7 +209,7 @@ def desired_servers(
     if machine_sqlendpoint_enabled(config) and project_sqlendpoint_enabled(
         project or {}
     ):
-        target = select_target(project or {})
+        target = project_target(project or {})
         # Never turn an explicit malformed/partial item target into the global
         # endpoint. Omitting the managed entry lets Doctor report target_invalid
         # from the project contract without exposing an unintended broad scope.
@@ -381,11 +379,13 @@ def main() -> int:
     parser.add_argument(
         "--manifest", type=Path, default=root / "config" / "release-manifest.json"
     )
-    parser.add_argument("--config", type=Path, default=Path.home() / ".coop" / "config")
+    # Defaults follow the one profile root (lib/coop_paths.py): the config in
+    # <profile dir>/config and the adapter file in the agent dir Pi actually loads.
+    parser.add_argument("--config", type=Path, default=coop_paths.config_path())
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path.home() / ".coop" / "agent" / ADAPTER_CONFIG_NAME,
+        default=coop_paths.agent_dir() / ADAPTER_CONFIG_NAME,
     )
     parser.add_argument("--project", type=Path, default=None)
     parser.add_argument("--project-cwd", type=Path, default=Path.cwd())

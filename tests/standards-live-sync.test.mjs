@@ -549,6 +549,6 @@ try {
     assert.deepEqual(headings(buildStandardsContext(prompt, options({ refresh: false }))), headings(first));
   });
   // ST1: coop no longer pins a reviewer run from the shell (`coop review` is gone).
-  assert.doesNotMatch(readFileSync(join(ROOT, "bin", "coop"), "utf8"), /resolve-many|promote-run|accepted-run/);
+  assert.doesNotMatch(readFileSync(join(ROOT, "bin", "coop.ps1"), "utf8"), /resolve-many|promote-run|accepted-run/);
   console.log(`standards live sync: ${count} tests passed`);
 } finally { rmSync(tmp, { recursive: true, force: true }); }

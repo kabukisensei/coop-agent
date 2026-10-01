@@ -1,19 +1,18 @@
 ﻿#!/usr/bin/env pwsh
 #
-# coop-agent shared PowerShell library — the twin of lib/common.sh.
+# coop-agent shared PowerShell library — coop's one helper library (master plan S1).
 # Dot-sourced by bin/coop.ps1 and scripts/*.ps1:
 #
 #   . (Join-Path $PSScriptRoot '../lib/common.ps1')   # from scripts/ or bin/
 #
 # Defines helpers only; never calls `exit` except via Coop-Die. Dot-sourcing runs
 # this file in the CALLER's script scope, so every $script:* variable and function
-# here lands in (and binds to) the calling script — exactly like `. lib/common.sh`
-# on the bash side. When you change a helper in lib/common.sh, port it here in the
-# same change (scripts/check-parity.sh gates the pairing + this file's BOM).
+# here lands in (and binds to) the calling script. scripts/check-bom.ps1 gates this
+# file's UTF-8 BOM (Windows PowerShell 5.1 reads a BOM-less file as ANSI).
 
 # --- Resolve COOP_ROOT (the directory that contains bin/, lib/, scripts/) -----
 # $PSScriptRoot inside a dot-sourced file is THIS file's directory (lib/), so the
-# repo root is one level up — mirror of common.sh's self-location logic.
+# repo root is one level up.
 $script:CoopRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $env:COOP_ROOT = $script:CoopRoot
 
@@ -92,6 +91,60 @@ function Coop-ManifestKeys([string]$Key) {
   } catch { return @() }
 }
 
+# --- Fleet plan: the one manifest-driven list of what coop installs -----------
+# Every lifecycle script (install, update, sync, uninstall, doctor --fix) reads
+# this plan instead of carrying its own copy of the fleet (master plan S2, #222).
+# Pins come from config/release-manifest.json. -Edge drops the Pi and tool pins
+# (an unpinned spec means upstream latest); extensions stay pinned regardless,
+# because sync has no --edge. fabric-cicd and pyodbc are libraries injected into
+# the Fabric CLI environment (Sync-CoopFabricPythonPackages), not standalone
+# tools, and powerbi-desktop-bridge needs Power BI Desktop, so it is a
+# Windows-only npm tool. Returns
+#   @{ PiPackage; PiPin; PiSpec; Extensions; PythonTools; Fabric; FabricRuntime; NpmTools }
+# where every Extensions / PythonTools / NpmTools row (and Fabric, $null under
+# -NoFabric) is @{ Name; Pin; Spec }. An npm tool without a pin has Spec '' in
+# normal mode: it fails to converge rather than falling back to npm's latest.
+$script:CoopFabricCliPackage = 'ms-fabric-cli'
+$script:CoopFabricRuntimeLibraries = @('fabric-cicd', 'pyodbc')
+$script:CoopWindowsOnlyNpmTools = @('@microsoft/powerbi-desktop-bridge-cli')
+function Get-CoopFleetPlan {
+  param([switch]$Edge, [switch]$NoFabric)
+  $piPackage = Coop-ManifestGet -Key 'pi.package' -Default '@earendil-works/pi-coding-agent'
+  $piPin = Coop-ManifestGet -Key 'pi.version'
+  $piSpec = if (-not $Edge -and $piPin) { "${piPackage}@${piPin}" } else { $piPackage }
+  $extensions = @()
+  foreach ($name in @(Coop-ManifestKeys 'extensions')) {
+    $extensions += [pscustomobject]@{ Name = [string]$name; Pin = [string](Coop-ManifestObjectGet 'extensions' $name); Spec = [string](Coop-ManifestExtensionSpec $name) }
+  }
+  $pythonTools = @()
+  $fabric = $null
+  foreach ($name in @(Coop-ManifestKeys 'python_tools')) {
+    if ($script:CoopFabricRuntimeLibraries -contains $name) { continue }
+    $pin = [string](Coop-ManifestObjectGet 'python_tools' $name)
+    $spec = if (-not $Edge -and $pin) { "${name}==${pin}" } else { [string]$name }
+    $row = [pscustomobject]@{ Name = [string]$name; Pin = $pin; Spec = $spec }
+    if ($name -eq $script:CoopFabricCliPackage) { if (-not $NoFabric) { $fabric = $row } }
+    else { $pythonTools += $row }
+  }
+  $npmTools = @()
+  foreach ($name in @(Coop-ManifestKeys 'npm_tools')) {
+    if (($script:CoopWindowsOnlyNpmTools -contains $name) -and ($env:OS -ne 'Windows_NT')) { continue }
+    $pin = [string](Coop-ManifestObjectGet 'npm_tools' $name)
+    $spec = if ($Edge) { [string]$name } elseif ($pin) { "${name}@${pin}" } else { '' }
+    $npmTools += [pscustomobject]@{ Name = [string]$name; Pin = $pin; Spec = $spec }
+  }
+  return [pscustomobject]@{
+    PiPackage     = [string]$piPackage
+    PiPin         = [string]$piPin
+    PiSpec        = [string]$piSpec
+    Extensions    = @($extensions)
+    PythonTools   = @($pythonTools)
+    Fabric        = $fabric
+    FabricRuntime = @($script:CoopFabricRuntimeLibraries)
+    NpmTools      = @($npmTools)
+  }
+}
+
 function Coop-VersionLessThan([string]$A, [string]$B) {
   if (-not $A -or -not $B) { return $false }
   $aParts = @($A -replace '^v','' -split '\.' | Select-Object -First 3 | ForEach-Object { [int]($_ -replace '[^0-9].*$','') })
@@ -119,7 +172,7 @@ function Coop-ManifestStatus([string]$Installed, [string]$Expected) {
   return 'wrong-version'
 }
 
-# --- pipx inventory probes (truthful tool inventory; twins of lib/common.sh) --
+# --- pipx inventory probes (truthful tool inventory) --------------------------
 # `pipx list` output is NEVER authoritative: its cache can be stale and the
 # command can even be shadowed. The source of truth is distribution metadata
 # read INSIDE each venv via `pipx runpip`.
@@ -530,8 +583,11 @@ function Get-CoopExePipxVenv([string]$Command) {
 function Get-CoopWorkingNpm {
   # Windows commonly exposes BOTH npm.ps1 and npm.cmd. Without Select-Object,
   # `.Source` becomes an array and `& $cand --version` passes the second launcher
-  # as argv[0] (effectively `npm npm --version`). Prefer the native .cmd shim.
-  $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
+  # as argv[0] (effectively `npm npm --version`). Prefer the native .cmd shim on
+  # Windows only: pwsh on Linux/macOS also resolves an `npm.cmd` on PATH and
+  # cannot run it ("Cannot run a document in the middle of a pipeline").
+  $npmCommand = $null
+  if ($env:OS -eq 'Windows_NT') { $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -First 1 }
   if (-not $npmCommand) { $npmCommand = Get-Command npm -ErrorAction SilentlyContinue | Select-Object -First 1 }
   $cand = if ($npmCommand) { $npmCommand.Source } else { $null }
   if ($cand) {
@@ -551,7 +607,7 @@ function Get-CoopWorkingNpm {
 }
 
 # Converge the isolated tree's recorded extension dependencies to EXACT
-# versions and reinstall (twin of coop_converge_extension_pins). PRODUCTION
+# versions and reinstall. PRODUCTION
 # convergence: the compatibility matrix relies on this same path.
 function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
   # NOTE: forward slashes throughout — backslashes leak into node/npm argv on
@@ -631,7 +687,7 @@ function Get-CoopFileSha256([string]$Path) {
 # True when the shipped lock applies to this install (lock present, installed Pi
 # is the manifest's Pi) but the tree does not carry it yet: no package-lock.json
 # beside the tree's package.json, or one that differs from
-# config\extensions-lock.json. Mirror of coop_extensions_lock_pending.
+# config\extensions-lock.json.
 function Test-CoopExtensionsLockPending([string]$AgentDir, [string]$PiVersion) {
   $lock = Join-Path $script:CoopRoot 'config\extensions-lock.json'
   if (-not (Test-Path -LiteralPath $lock)) { return $false }
@@ -653,8 +709,17 @@ function Install-CoopExtensionsLock([string]$AgentDir, [string]$Npm, [string]$Pi
   if (-not (Test-Have 'node')) { return $false }
   $want = Coop-ManifestGet -Key 'pi.version'
   if (-not $want -or $PiVersion -ne $want) { return $false }
-  node (Join-Path $script:CoopRoot 'lib\extlock.js') matches $AgentDir $lock *> $null
-  if ($LASTEXITCODE -ne 0) { return $false }
+  # Native stderr (extlock's "tree declares X" line, npm warnings) is a
+  # NativeCommandError under Windows PowerShell 5.1 when redirected, and a
+  # terminating one in a caller running with $ErrorActionPreference = 'Stop';
+  # the exit code is the only signal these two commands carry.
+  $previousEap = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    node (Join-Path $script:CoopRoot 'lib\extlock.js') matches $AgentDir $lock *> $null
+    $matchRc = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $previousEap }
+  if ($matchRc -ne 0) { return $false }
   $npmDir = Join-Path $AgentDir 'npm'
   $treeLock = Join-Path $npmDir 'package-lock.json'
   # A lock this machine already failed to install is not retried (even on a
@@ -668,9 +733,10 @@ function Install-CoopExtensionsLock([string]$AgentDir, [string]$Npm, [string]$Pi
   # ran a bare `node-gyp rebuild` on the Windows VM and failed.
   Push-Location $npmDir
   try {
+    $ErrorActionPreference = 'Continue'
     & $Npm ci --no-audit --no-fund *> $null
     $rc = $LASTEXITCODE
-  } catch { $rc = 1 } finally { Pop-Location }
+  } catch { $rc = 1 } finally { $ErrorActionPreference = $previousEap; Pop-Location }
   if ($rc -eq 0) {
     Remove-Item -LiteralPath $failed -Force -ErrorAction SilentlyContinue
     return $true
@@ -713,7 +779,7 @@ foreach ($d in (@(
 
 # --- Colors (respect NO_COLOR and non-TTY) -----------------------------------
 # Cooptimize brand palette (truecolor). Folds "is stderr a real console" in, so
-# redirected output gets plain text — mirror of common.sh's [ -t 2 ] check.
+# redirected output gets plain text.
 $script:CoopColor = ($null -eq $env:NO_COLOR -or $env:NO_COLOR -eq '') -and -not [Console]::IsErrorRedirected
 $e = [char]27
 if ($script:CoopColor) {
@@ -740,7 +806,7 @@ $script:G_CHECK  = [char]0x2713   # ✓
 $script:G_CROSS  = [char]0x2717   # ✗
 
 # --- Progress: one determinate "overall" bar + an animated active-item line ---
-# Mirror of common.sh. Built for installers where each item (npm/pipx/pi install)
+# Built for installers where each item (npm/pipx/pi install)
 # takes a while and its own % is unknowable. The bar is determinate at the ITEM
 # level (total known up front); the active item shows a braille spinner + elapsed
 # seconds so it is obviously alive. Animates only when stderr is a real console;
@@ -834,8 +900,7 @@ function Coop-Emit {
   #   2. the replaced TextWriter via the [Console]::Error property (same
   #      contract, avoids the method that fails to JIT on those hosts)
   #   3. the PowerShell host API (redirectable; last resort)
-  # TTY redraw branch below is unchanged. POSIX twin: printf >&2 in
-  # lib/common.sh (already redirectable — parity preserved).
+  # TTY redraw branch below is unchanged.
   if ($script:ProgActive -and (Test-ProgTty)) {
     Coop-ProgLift
     [Console]::Error.WriteLine($Line)
@@ -854,14 +919,14 @@ function Coop-Emit {
 function Coop-Say  { param([string]$m) Coop-Emit $m }
 function Coop-Info { param([string]$m) Coop-Emit "$($script:C_LIME)$($script:G_BULLET)$($script:C_RST) $m" }
 function Coop-Ok   { param([string]$m) Coop-Emit "$($script:C_FOREST)$($script:G_CHECK)$($script:C_RST) $m" }
-# Optional second argument is the "how to fix" hint (mirror of coop_warn "$1" "$2").
+# Optional second argument is the "how to fix" hint.
 function Coop-Warn { param([string]$m, [string]$Hint = '') Coop-Emit ("$($script:C_OLIVE)!$($script:C_RST) $m" + $(if ($Hint) { " — $Hint" } else { '' })) }
 function Coop-Err  { param([string]$m) Coop-Emit "$($script:C_RED)$($script:G_CROSS)$($script:C_RST) $m" }
 function Coop-Die  { param([string]$m) Coop-Err $m; exit 1 }
 function Coop-Head { param([string]$m) Coop-Emit "`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)" }
 
 # --- Small utilities ----------------------------------------------------------
-# Is a command available on PATH? (mirror of have())
+# Is a command available on PATH?
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 
 # Pick a usable python interpreter that ACTUALLY runs — not the Windows Store
@@ -869,7 +934,7 @@ function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction 
 # on stock Windows `python3` resolves ONLY to the Store stub under
 # ...\WindowsApps\: Get-Command succeeds while `--version` prints nothing.
 # Prefer python3, fall back to python; $null when neither is real.
-# (mirror of coop_python — THE one python resolver; don't re-add per-script copies)
+# THE one python resolver; don't re-add per-script copies.
 function Get-CoopPython {
   foreach ($name in @('python3', 'python')) {
     $c = Get-Command $name -ErrorAction SilentlyContinue
@@ -901,7 +966,6 @@ function Test-CoopOdbcDriver18 {
 # Rows are in dependency order. Each row: Order, Name, Required, Ok, Detail, Fix.
 # Fix is the exact command to print; ' then ' separates two steps. Install stops
 # when a Required row is not Ok; doctor reports the same rows with the same text.
-# (mirror of coop_prereq_rows)
 function Get-CoopPrereqs([bool]$NoFabric = $false) {
   $win = ($env:OS -eq 'Windows_NT')
   $mac = (-not $win) -and ([string](& uname -s 2>$null) -eq 'Darwin')
@@ -999,17 +1063,44 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
   return $rows
 }
 
+# --- One profile root (master plan S3) ----------------------------------------
+# The ONE meaning of the location variables, mirrored by lib/coop_paths.py and
+# lib/paths.mjs:
+#   COOP_DIR is the PARENT of .coop: the profile dir is $COOP_DIR\.coop, default
+#   $HOME\.coop (config, user.json, agent\, support\, standards\, devops\).
+#   The agent dir Pi ACTUALLY loads is one chain everywhere: PI_CODING_AGENT_DIR
+#   -> COOP_NO_ISOLATE truthy (1|true|yes|on, any case) -> $HOME\.pi\agent
+#   -> COOP_AGENT_DIR -> <profile dir>\agent.
+# With no variables set every helper yields the historical ~/.coop/... path.
+function Get-CoopProfileDir {
+  $base = if ($env:COOP_DIR) { $env:COOP_DIR } else { $HOME }
+  return (Join-Path $base '.coop')
+}
+
+# The fleet/integration config written by scripts/onboard.py.
+function Get-CoopConfigFile { return (Join-Path (Get-CoopProfileDir) 'config') }
+
+# The local user profile written by scripts/onboard.py.
+function Get-CoopUserProfileFile { return (Join-Path (Get-CoopProfileDir) 'user.json') }
+
+# True when COOP_NO_ISOLATE asks for the personal ~/.pi/agent (1|true|yes|on).
+function Test-CoopNoIsolate { return ([string]$env:COOP_NO_ISOLATE).Trim() -match '^(1|true|yes|on)$' }
+
+# The user's own Pi agent dir: the one Pi loads with COOP_NO_ISOLATE, and the
+# one coop shares the login (auth/models) in from.
+function Get-CoopPersonalPiAgentDir { return (Join-Path (Join-Path $HOME '.pi') 'agent') }
+
 # coop runs Pi against an ISOLATED agent dir so coop's extensions/settings/theme
 # never mix with the user's personal `pi`. Override with COOP_AGENT_DIR.
-# (mirror of coop_pi_agent_dir)
-function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' } }
+# (the same chain as lib/coop_paths.py coop_agent_dir and lib/paths.mjs coopAgentDir)
+function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path (Get-CoopProfileDir) 'agent' } }
 
 # The agent dir Pi will ACTUALLY load: PI_CODING_AGENT_DIR when set; with
-# COOP_NO_ISOLATE=1 Pi falls back to the personal ~/.pi/agent.
-# (mirror of coop_effective_agent_dir)
+# COOP_NO_ISOLATE truthy Pi falls back to the personal ~/.pi/agent.
+# (the same chain as lib/coop_paths.py agent_dir and lib/paths.mjs agentDir)
 function Get-CoopEffectiveAgentDir {
   if ($env:PI_CODING_AGENT_DIR) { return $env:PI_CODING_AGENT_DIR }
-  if ($env:COOP_NO_ISOLATE -eq '1') { return (Join-Path $HOME '.pi\agent') }
+  if (Test-CoopNoIsolate) { return (Get-CoopPersonalPiAgentDir) }
   return (Get-CoopPiAgentDir)
 }
 
@@ -1024,7 +1115,6 @@ function Test-CoopPiLoginPresent {
 
 # True when the given auth.json holds a stored provider credential (#167). Pi
 # writes `{}` on startup, so a non-empty file alone is not a login.
-# (mirror of coop_auth_has_credential)
 function Test-CoopAuthHasCredential {
   param([string]$authPath)
   if (-not $authPath -or -not (Test-Path -LiteralPath $authPath -PathType Leaf)) { return $false }
@@ -1040,7 +1130,7 @@ function Test-CoopAuthHasCredential {
 }
 
 # Align coop's ISOLATED extension tree's @earendil-works/pi-ai + pi-tui to the Pi
-# agent's OWN version (mirror of lib/common.sh coop_align_ext_deps). coop's
+# agent's OWN version. coop's
 # extensions load INTO the running agent, so they must share one pi-ai/pi-tui with
 # it; we write an npm `overrides` pin via lib/_extdeps.py and reinstall only when
 # the installed tree doesn't already match. Best-effort; never fatal. Lives in the
@@ -1132,6 +1222,113 @@ function Sync-CoopExtDeps {
   else { Coop-Warn "could not fully align extension pi-ai/pi-tui to $ver — close any running coop session, then: coop doctor --fix" }
 }
 
+# --- Extension fleet convergence (the ONE `pi install` path; S2, #222) ---------
+# Converge every manifest extension INTO the isolated agent dir, idempotently:
+#   1. `pi install <npm:name@pin>` for each extension whose installed version
+#      (package.json in the tree) differs from the pin — an exact installed pin
+#      needs no network or package-manager mutation, so repeat runs are offline
+#      no-ops;
+#   2. Sync-CoopExtensionPins (exact pins in package.json, the shipped lockfile
+#      via npm ci, else npm install) — pins FIRST, then
+#   3. Sync-CoopExtDeps (pi-ai / pi-tui aligned to the installed Pi) LAST, so its
+#      overrides are what ships and no later reinstall recreates the startup skew;
+#   4. postconditions: every extension present at its pin (a `pi install` that
+#      exited 0 proves nothing on its own), then `_extdeps.py align --check`
+#      (rc 10 = skew remains, rc 11 = an extension needs a newer pi-ai).
+# Returns the failure count; the caller (`coop sync`, which install and update
+# run as a child) turns a non-zero count into its exit code. Every Pi operation
+# targets $AgentDir through PI_CODING_AGENT_DIR, never the personal ~/.pi; the
+# caller's value is restored afterwards. Extensions are always pinned: --edge is
+# a Pi and tools channel, not an extension one.
+function Sync-CoopExtensionFleet {
+  param([string]$AgentDir = (Get-CoopPiAgentDir))
+  $failures = 0
+  $priorAgentDir = $env:PI_CODING_AGENT_DIR
+  try {
+    $env:PI_CODING_AGENT_DIR = $AgentDir
+    if (-not (Test-Have 'pi')) {
+      # No runtime means NO fleet convergence happened at all: per contract that
+      # is a failure, not a warning.
+      Coop-Err 'pi is not installed — no extensions were converged or verified' 'install Pi first: coop install'
+      return 1
+    }
+    $fleetSpecs = @(); $fleetNames = @(); $fleetPins = @(); $preVers = @{}
+    foreach ($ext in (Get-CoopFleetPlan).Extensions) {
+      if (-not $ext.Spec -or -not $ext.Pin) { Coop-Warn "manifest pin missing for $($ext.Name)"; $failures++; continue }
+      # Strip only the literal four-character `npm:` transport prefix (a longer
+      # cut once produced `juicesharp/...` for scoped packages).
+      $fleetSpecs += ($ext.Spec -replace '^npm:', '')
+      $fleetNames += $ext.Name
+      $fleetPins += $ext.Pin
+      $pre = Get-CoopExtInstalledVersion -AgentDir $AgentDir -Name $ext.Name
+      $preVers[$ext.Name] = $pre
+      Coop-Info "Ensuring isolated $($ext.Name) is version $($ext.Pin)…"
+      if ($pre -ne $ext.Pin) {
+        & pi install $ext.Spec > $null 2>&1
+        if ($LASTEXITCODE -ne 0) { Coop-Warn "could not install $($ext.Name) (pin $($ext.Pin))"; $failures++ }
+      }
+    }
+
+    if ($fleetSpecs.Count -gt 0) {
+      # Sync-CoopExtensionPins runs lib/pins.js un-redirected, so its output can
+      # carry node's lines ahead of the verdict: the last Boolean is the verdict.
+      $pinsOk = $false
+      foreach ($item in @(Sync-CoopExtensionPins -AgentDir $AgentDir -Specs $fleetSpecs)) { if ($item -is [bool]) { $pinsOk = $item } }
+      if (-not $pinsOk) {
+        Coop-Warn "could not enforce exact extension pins in $AgentDir\npm" 'run: coop sync'
+        $failures++
+      }
+    }
+
+    $piRuntime = Get-CoopPiVersion
+    if ($piRuntime) { Coop-Info "Aligning shared Pi libraries with the installed Pi runtime ${piRuntime}…" }
+    Sync-CoopExtDeps -AgentDir $AgentDir
+
+    for ($k = 0; $k -lt $fleetNames.Count; $k++) {
+      $ext = $fleetNames[$k]; $extPin = $fleetPins[$k]; $pre = $preVers[$ext]
+      $postVer = Get-CoopExtInstalledVersion -AgentDir $AgentDir -Name $ext
+      if (-not $postVer) {
+        Coop-Warn "postcondition failed: pi install reported success, but $ext is MISSING from the isolated tree (wanted $extPin)" 'run: coop sync'
+        $failures++
+        continue
+      }
+      if ($postVer -ne $extPin) {
+        Coop-Warn "postcondition failed: pi install reported success, but $ext is version $postVer, not the pinned $extPin" 'run: coop sync'
+        $failures++
+        continue
+      }
+      switch ($pre) {
+        ''             { Coop-Ok "Installed release version $extPin ($ext)" }
+        $extPin        { Coop-Ok "Already at release version $extPin ($ext)" }
+        default {
+          if (Coop-VersionLessThan $extPin $pre) { Coop-Ok "Downgraded untested $pre → release version $extPin ($ext)" }
+          else { Coop-Ok "Updated $pre → $extPin ($ext)" }
+        }
+      }
+    }
+
+    if ($piRuntime) {
+      $py = Get-CoopPython
+      if ($py) {
+        & $py (Join-Path $script:CoopRoot 'lib\_extdeps.py') align $AgentDir $piRuntime --check *> $null
+        $alignRc = $LASTEXITCODE
+        if ($alignRc -eq 10) {
+          Coop-Err "shared-library skew remains after alignment (wanted pi-ai/pi-tui for pi $piRuntime)"
+          $failures++
+        } elseif ($alignRc -eq 11) {
+          Coop-Err "an installed extension needs newer pi-ai libraries than pi $piRuntime provides — run: coop update (moves Pi to this release's tested version), then: coop sync"
+          $failures++
+        }
+      }
+    }
+  }
+  finally {
+    if ($null -ne $priorAgentDir) { $env:PI_CODING_AGENT_DIR = $priorAgentDir }
+    else { Remove-Item Env:PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue }
+  }
+  return $failures
+}
+
 # --- Azure sign-in preflight (non-fatal) ---------------------------------------
 # Before a launch, make sure the Azure CLI can mint the Fabric token, then the
 # Power BI token, for the client tenant. The tenant comes from one chain
@@ -1143,20 +1340,19 @@ function Sync-CoopExtDeps {
 # When az reports an authentication failure and the launch runs in an
 # interactive console (stdin and stderr not redirected, or COOP_ASSUME_YES=1),
 # coop runs `az login --tenant <id>` itself: no question, bounded to 5 minutes,
-# and Ctrl-C cancels it (read as a key, so it does not stop the launch). With
-# -NewWindow (the retired `coop web`, which the old 'coop' shortcut ran in a minimized
-# console) the sign-in opens in its own visible window, and a failed, cancelled
-# or timed-out sign-in also shows its line in a window until Enter. A timeout or
-# a non-authentication error never opens a sign-in. Any failure prints ONE line
-# naming the command to run, and the launch continues.
+# and Ctrl-C cancels it (read as a key, so it does not stop the launch). A
+# timeout or a non-authentication error never opens a sign-in. Any failure
+# prints ONE line naming the command to run (Get-CoopAzLoginHint /
+# Get-CoopAzTokenHint, the same pair `coop doctor` prints), and the launch
+# continues.
 #
 # Cached: a verified check stamps the tenant id into <agent-dir>/.az-ok. Tokens
 # live ~60 minutes and `az` cold-starts in ~1-3s, so within 30 minutes of a
 # success for the SAME tenant no az call is made. A failed check (or a stale,
 # missing or mismatched marker) re-checks; marker I/O is best-effort and never
-# fails the launch. (mirror of coop_az_preflight)
+# fails the launch.
 
-# Resolve the client Azure tenant (mirror of coop_tenant). The chain and its
+# Resolve the client Azure tenant. The chain and its
 # rules live in one place, `lib/warehouse_mcp.py tenant`. Returns
 # [pscustomobject]@{ Rc; Tenant }: Rc 0 resolved, 1 none set, 2 not a GUID or a
 # domain name (a rejected value is never returned). The contract is the one
@@ -1202,22 +1398,7 @@ function Stop-CoopAzTree {
   }
 }
 
-# A PowerShell single-quoted literal for -Text.
-function ConvertTo-CoopPsLiteral {
-  param([string]$Text)
-  "'" + $Text.Replace("'", "''") + "'"
-}
-
-# Run -Script in a new visible PowerShell console window and return the process
-# (not waited for). -EncodedCommand: no native-argument quoting.
-function Start-CoopPsWindow {
-  param([string]$Script)
-  $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($Script))
-  $psExe = (Get-Process -Id $PID).Path
-  Start-Process -FilePath $psExe -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -PassThru -ErrorAction Stop
-}
-
-# Run az with a hard time limit (mirror of coop_az_run). Returns
+# Run az with a hard time limit. Returns
 # [pscustomobject]@{ Rc; Err }: az's exit code, 124 when az was stopped (the
 # timeout, or any code above 128 as in bash), 127 when az is missing or its path
 # has cmd.exe metacharacters. The child sees AZURE_CORE_LOGIN_EXPERIENCE_V2=off,
@@ -1230,10 +1411,8 @@ function Start-CoopPsWindow {
 #               WAM and device-code text. Ctrl-C is read as a key while az
 #               runs, so it cancels the sign-in (az is ended, Rc 124) instead
 #               of stopping coop, as the bash twin's INT trap does.
-#   -NewWindow  Windows sign-in in its own visible console window, which
-#               closes when az exits (the caller reports any failure)
 function Invoke-CoopAz {
-  param([int]$Seconds, [string[]]$AzArgs, [switch]$Quiet, [switch]$NewWindow)
+  param([int]$Seconds, [string[]]$AzArgs, [switch]$Quiet)
   $result = [pscustomobject]@{ Rc = 127; Err = '' }
   # Application only: PowerShell never runs az from the current folder.
   $cmd = Get-Command az -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -1249,38 +1428,26 @@ function Invoke-CoopAz {
     $ErrorActionPreference = 'Continue'
     # Start-Process on Windows PowerShell 5.1 cannot set a child-only variable.
     $env:AZURE_CORE_LOGIN_EXPERIENCE_V2 = 'off'
-    if ($NewWindow) {
-      # A new PowerShell window runs az. The script is passed with
-      # -EncodedCommand: no native-argument quoting.
-      $azLine = '& ' + (ConvertTo-CoopPsLiteral $az) + ' ' + (@($AzArgs | ForEach-Object { ConvertTo-CoopPsLiteral $_ }) -join ' ')
-      $windowScript = @(
-        "`$env:AZURE_CORE_LOGIN_EXPERIENCE_V2 = 'off'",
-        $azLine,
-        "exit `$LASTEXITCODE"
-      ) -join "`n"
-      $p = Start-CoopPsWindow $windowScript
-    } else {
-      $inFile = [System.IO.Path]::GetTempFileName()
-      $outFile = [System.IO.Path]::GetTempFileName()
-      $temps += $inFile, $outFile
-      $start = @{
-        FilePath = $az; ArgumentList = $AzArgs; NoNewWindow = $true; PassThru = $true
-        RedirectStandardInput = $inFile; RedirectStandardOutput = $outFile; ErrorAction = 'Stop'
-      }
-      if ($Quiet) {
-        $errFile = [System.IO.Path]::GetTempFileName()
-        $temps += $errFile
-        $start['RedirectStandardError'] = $errFile
-      } else {
-        # Throws when there is no console input (redirected, CI): Ctrl-C then
-        # keeps its default and stops coop, and the finally block ends az.
-        try {
-          $previousCtrlC = [Console]::TreatControlCAsInput
-          [Console]::TreatControlCAsInput = $true
-        } catch { $previousCtrlC = $null }
-      }
-      $p = Start-Process @start
+    $inFile = [System.IO.Path]::GetTempFileName()
+    $outFile = [System.IO.Path]::GetTempFileName()
+    $temps += $inFile, $outFile
+    $start = @{
+      FilePath = $az; ArgumentList = $AzArgs; NoNewWindow = $true; PassThru = $true
+      RedirectStandardInput = $inFile; RedirectStandardOutput = $outFile; ErrorAction = 'Stop'
     }
+    if ($Quiet) {
+      $errFile = [System.IO.Path]::GetTempFileName()
+      $temps += $errFile
+      $start['RedirectStandardError'] = $errFile
+    } else {
+      # Throws when there is no console input (redirected, CI): Ctrl-C then
+      # keeps its default and stops coop, and the finally block ends az.
+      try {
+        $previousCtrlC = [Console]::TreatControlCAsInput
+        [Console]::TreatControlCAsInput = $true
+      } catch { $previousCtrlC = $null }
+    }
+    $p = Start-Process @start
     $null = $p.Handle   # Windows PowerShell 5.1: keeps ExitCode readable after exit
     # Short waits, so a Ctrl-C is noticed promptly: as a key during an
     # in-console sign-in, else it stops this script and the finally block
@@ -1323,22 +1490,35 @@ function Invoke-CoopAz {
   return $result
 }
 
+# The az stderr markers that mean "a sign-in is needed". The one other copy is
+# the `authError` list in lib/fabric_request_headers.mjs (the Node token helper
+# cannot load this file); tests/warehouse-mcp.test.py asserts the two are equal.
+$script:CoopAzAuthMarkers = @('az login', 'not logged in', 'login required', 'authentication required',
+                              'interaction_required', 'interactionrequired', 'invalid_grant',
+                              'aadsts50058', 'aadsts50076', 'aadsts50078', 'aadsts50079', 'aadsts50158')
+
 # True when az's stderr reports an authentication failure (a sign-in is needed).
-# The same markers as lib/fabric_request_headers.mjs (mirror of coop_az_auth_error).
 function Test-CoopAzAuthError {
   param([string]$Text)
   if (-not $Text) { return $false }
   $lower = $Text.ToLowerInvariant()
-  foreach ($marker in @('az login', 'not logged in', 'login required', 'authentication required',
-                        'interaction_required', 'interactionrequired', 'invalid_grant',
-                        'aadsts50058', 'aadsts50076', 'aadsts50078', 'aadsts50079', 'aadsts50158')) {
+  foreach ($marker in $script:CoopAzAuthMarkers) {
     if ($lower.Contains($marker)) { return $true }
   }
   return $false
 }
 
+# The one pair of "what to run" hints for a client tenant, printed by the launch
+# preflight and by `coop doctor`'s Azure sign-in row.
+function Get-CoopAzLoginHint([string]$Tenant) {
+  "run: az login --tenant $Tenant --allow-no-subscriptions"
+}
+function Get-CoopAzTokenHint([string]$Tenant) {
+  "run: az account get-access-token --tenant $Tenant --resource https://api.fabric.microsoft.com"
+}
+
 # Check that az can mint the Fabric token, then the Power BI token, for -Tenant
-# (mirror of coop_az_tokens_ok). 15 seconds each; stops at the first failure.
+#. 15 seconds each; stops at the first failure.
 # Returns 0 when both mint, 1 when az reports an authentication failure, 2 for
 # any other failure, 124 on timeout.
 function Get-CoopAzTokenRc {
@@ -1354,7 +1534,6 @@ function Get-CoopAzTokenRc {
 }
 
 function Invoke-CoopAzPreflight {
-  param([switch]$NewWindow)
   if ($env:COOP_SKIP_AZ -eq '1') { return }
   if (-not (Test-Have 'az')) { return }
   $resolved = Get-CoopTenant
@@ -1377,16 +1556,10 @@ function Invoke-CoopAzPreflight {
   $tried = $false
   $interactive = $false
   try { $interactive = (-not [Console]::IsInputRedirected) -and (-not [Console]::IsErrorRedirected) } catch { }
-  $inWindow = $NewWindow -and $env:OS -eq 'Windows_NT'
   if ($rc -eq 1 -and ($interactive -or $env:COOP_ASSUME_YES -eq '1')) {
     $tried = $true
     Coop-Info "Opening Azure sign-in for tenant $tenant..."
-    $loginArgs = @('login', '--tenant', $tenant, '--allow-no-subscriptions', '--output', 'none')
-    if ($inWindow) {
-      $login = Invoke-CoopAz -Seconds 300 -AzArgs $loginArgs -NewWindow
-    } else {
-      $login = Invoke-CoopAz -Seconds 300 -AzArgs $loginArgs
-    }
+    $login = Invoke-CoopAz -Seconds 300 -AzArgs @('login', '--tenant', $tenant, '--allow-no-subscriptions', '--output', 'none')
     $rc = $login.Rc
     # A zero login exit is not enough: tenant-only and conditional-access flows
     # can finish without the tokens coop needs, so check both again.
@@ -1402,20 +1575,13 @@ function Invoke-CoopAzPreflight {
   }
   Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
   if ($tried) {
-    Coop-Warn "Azure sign-in for tenant $tenant is not verified; continuing." "run: az login --tenant $tenant --allow-no-subscriptions"
-    if ($inWindow) {
-      # The launching console is minimized (the 'coop' shortcut), so a failed,
-      # cancelled or timed-out sign-in also shows this line in its own window
-      # until Enter. The launch does not wait for it.
-      $notice = "Write-Host " + (ConvertTo-CoopPsLiteral "Azure sign-in for tenant $tenant is not verified. Run: az login --tenant $tenant --allow-no-subscriptions") + "`n[void](Read-Host 'Press Enter to close')"
-      try { $null = Start-CoopPsWindow $notice } catch { }
-    }
+    Coop-Warn "Azure sign-in for tenant $tenant is not verified; continuing." (Get-CoopAzLoginHint $tenant)
   } elseif ($rc -eq 124) {
-    Coop-Warn "Azure token check timed out for tenant $tenant (network or VPN?); continuing." "run: az account get-access-token --tenant $tenant --resource https://api.fabric.microsoft.com"
+    Coop-Warn "Azure token check timed out for tenant $tenant (network or VPN?); continuing." (Get-CoopAzTokenHint $tenant)
   } elseif ($rc -eq 1) {
-    Coop-Warn "Azure: not signed in to tenant $tenant; continuing." "run: az login --tenant $tenant --allow-no-subscriptions"
+    Coop-Warn "Azure: not signed in to tenant $tenant; continuing." (Get-CoopAzLoginHint $tenant)
   } else {
-    Coop-Warn "Azure token check failed for tenant $tenant (not an auth error); continuing." "run: az account get-access-token --tenant $tenant --resource https://api.fabric.microsoft.com"
+    Coop-Warn "Azure token check failed for tenant $tenant (not an auth error); continuing." (Get-CoopAzTokenHint $tenant)
   }
 }
 
@@ -1429,7 +1595,6 @@ function Invoke-CoopAzPreflight {
 # submodule (.git file naming its gitdir). Both twins use this one rule (#106), so
 # bash and PowerShell agree on a worktree; a plain copy, or a .git file that names
 # no gitdir, is not a checkout. No git process is started.
-# (mirror of coop_is_git_checkout)
 function Test-CoopGitCheckout([string]$Dir) {
   $g = Join-Path $Dir '.git'
   if (Test-Path -LiteralPath $g -PathType Container) { return $true }
@@ -1443,7 +1608,7 @@ function Test-CoopGitCheckout([string]$Dir) {
 # stall doctor or a launch. Stamps BEFORE fetching, so an offline machine pays
 # the wait at most once a day. Returns $true when THIS call attempted the (daily)
 # fetch; $false when throttled or not applicable (non-git copy / no git / no
-# origin remote). (mirror of coop_repo_fetch_throttled)
+# origin remote).
 function Invoke-CoopRepoFetchThrottled {
   if (-not (Test-Have 'git')) { return $false }
   if (-not (Test-CoopGitCheckout $script:CoopRoot)) { return $false }
@@ -1482,7 +1647,6 @@ function Invoke-CoopRepoFetchThrottled {
 # network). 0 when there is no newer release, this is not a git checkout, git is
 # missing, or the count is unknowable, so a checkout that is ahead, diverged or
 # held is never told to run an update that would not move it.
-# (mirror of coop_repo_behind_count)
 function Get-CoopRepoBehindCount {
   $ErrorActionPreference = 'Continue'
   $tag = Get-CoopRepoNextRelease
@@ -1496,7 +1660,6 @@ function Get-CoopRepoBehindCount {
 # performed the daily fetch), warn when a newer release is waiting for this
 # checkout. Never blocks or fails the launch; silent offline / non-git / current.
 # Stranded checkouts stay quiet here; step 1 and doctor name them.
-# (mirror of coop_update_nudge)
 function Invoke-CoopUpdateNudge {
   if (-not (Invoke-CoopRepoFetchThrottled)) { return }
   $tag = Get-CoopRepoNextRelease
@@ -1520,7 +1683,6 @@ function Get-CoopRepoGitLine {
 # The checked-out branch name; '' when HEAD is detached. Strips refs/heads/ from
 # the full ref, not --short: a tag named like the branch (a stray 'main' tag,
 # which every fetch auto-follows) turns --short into 'heads/main'.
-# (mirror of _coop_repo_branch)
 function Get-CoopRepoBranch {
   $ErrorActionPreference = 'Continue'
   $ref = Get-CoopRepoGitLine @('symbolic-ref', '-q', 'HEAD')
@@ -1530,7 +1692,7 @@ function Get-CoopRepoBranch {
 
 # True when HEAD follows release tags: a detached HEAD, or a branch whose upstream
 # is origin/main (main, or a renamed branch that tracks it). Any other branch,
-# including one with no upstream, is a hold. (mirror of _coop_repo_follows_releases)
+# including one with no upstream, is a hold.
 function Test-CoopRepoFollowsReleases {
   $ErrorActionPreference = 'Continue'
   $branch = Get-CoopRepoBranch
@@ -1542,7 +1704,6 @@ function Test-CoopRepoFollowsReleases {
 # The newest strict vX.Y.Z tag merged into the last-fetched origin/main, with any
 # extra for-each-ref filters (e.g. --contains HEAD). rc tags, tags off main and
 # junk output are skipped; lstrip=2 so a same-named branch cannot hide a tag.
-# (mirror of _coop_repo_newest_release)
 function Get-CoopRepoNewestRelease {
   param([string[]]$Filter = @())
   $ErrorActionPreference = 'Continue'
@@ -1561,7 +1722,6 @@ function Get-CoopRepoNewestRelease {
 # tag merged into the last-fetched origin/main that contains HEAD, unless HEAD is
 # already on it. Read-only and local. '' for a non-git copy, missing git, a hold,
 # or no newer release, so nothing is ever moved backwards.
-# (mirror of coop_repo_next_release)
 function Get-CoopRepoNextRelease {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return '' }
@@ -1577,7 +1737,6 @@ function Get-CoopRepoNextRelease {
 # shaped vX.Y.Z, such as v1 or v0.10.0.1, skipped; a bare short SHA when no
 # release is reachable) for the doctor row and step 1. No --dirty, so the index
 # is never touched. '' for a non-git copy or unexpected output.
-# (mirror of coop_repo_describe)
 function Get-CoopRepoDescribe {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return '' }
@@ -1591,7 +1750,7 @@ function Get-CoopRepoDescribe {
 # the checked-out branch's remote, unless a different remote points at the
 # canonical repo; else the one remote that points at the canonical repo. Never
 # the first name `git remote` lists: it is sorted, so a fork added next to a
-# renamed origin would come first. (mirror of _coop_repo_origin_candidate)
+# renamed origin would come first.
 function Get-CoopRepoOriginCandidate {
   $ErrorActionPreference = 'Continue'
   $root = $script:CoopRoot
@@ -1624,7 +1783,7 @@ function Get-CoopRepoOriginCandidate {
 # A state in which `coop update` cannot move this checkout, as
 # @{ Message; Hint } (what is wrong, then the command that fixes it); $null when
 # the checkout follows releases normally. Local only. Step 1 and doctor use it so
-# a stranded machine is never silent. (mirror of coop_repo_stranded)
+# a stranded machine is never silent.
 function Get-CoopRepoStranded {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return $null }
@@ -1664,7 +1823,6 @@ function Get-CoopRepoStranded {
 }
 
 # Coop-Warn the Get-CoopRepoStranded state; $false when there is none.
-# (mirror of _coop_repo_warn_stranded)
 function Write-CoopRepoStranded {
   $s = Get-CoopRepoStranded
   if ($null -eq $s) { return $false }
@@ -1674,7 +1832,7 @@ function Write-CoopRepoStranded {
 
 # The repo line of `coop update --check` (#107), as @{ Line; Hint } (Hint '' when
 # none): what step 1 would do to this checkout. Local only, no fetch, so --check
-# still changes nothing. (mirror of coop_repo_check_line)
+# still changes nothing.
 function Get-CoopRepoCheckLine {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git') -or -not (Test-CoopGitCheckout $script:CoopRoot)) {
@@ -1692,7 +1850,6 @@ function Get-CoopRepoCheckLine {
 # @{ Level; Message; Hint } (Level 'ok' or 'warn'; Hint '' for ok). Local only
 # (no network; doctor refreshes origin first). A newer release to move to comes
 # first; else a stranded state is named with its fix; else the checkout is ok.
-# (mirror of coop_repo_doctor_row)
 function Get-CoopRepoDoctorRow {
   $ErrorActionPreference = 'Continue'
   $next = Get-CoopRepoNextRelease
@@ -1712,7 +1869,7 @@ function Get-CoopRepoDoctorRow {
 # head of main, via today's `git pull --ff-only` on a branch, or a guarded
 # re-attach of a detached HEAD to main. Tracked-file changes skip the move; a hold
 # is not fetched or moved. Warn-and-continue: never touches the update's failure
-# count. (mirror of coop_repo_follow_release)
+# count.
 function Invoke-CoopRepoFollowRelease {
   param([bool]$Edge = $false)
   $ErrorActionPreference = 'Continue'
@@ -1786,7 +1943,6 @@ function Invoke-CoopRepoFollowRelease {
 }
 
 # The Pi agent's own semver, e.g. '0.80.2' (from `pi --version`). '' if unknown.
-# (mirror of coop_pi_version)
 function Get-CoopPiVersion {
   if (-not (Test-Have 'pi')) { return '' }
   $raw = (& pi --version 2>$null | Select-Object -First 1)
@@ -1794,8 +1950,283 @@ function Get-CoopPiVersion {
   if ($m.Success) { return $m.Value } else { return '' }
 }
 
+# --- Fleet convergence (install / update share these; master plan S2, #222) ----
+# One probe and one install branch per component. Each Invoke-Coop*Converge
+# returns the Coop-Unit result contract, @{ ok = <bool>; msg = <string> }, and
+# takes every input as an argument, so the same function runs inside a Coop-Unit
+# job (a fresh runspace that dot-sources this library; see $script:CoopConvergeUnit)
+# and in-process from `coop doctor --fix`.
+function Coop-UnitResult([bool]$Ok, [string]$Message) { return [pscustomobject]@{ ok = $Ok; msg = $Message } }
+
+# The Coop-Unit body every convergence unit uses: dot-source lib/common.ps1 in the
+# job's runspace, then call one convergence function with splatted parameters.
+#   Coop-Unit <label> $script:CoopConvergeUnit @($script:CoopCommonPath, 'Invoke-CoopPiConverge', @{ Package = ...; Pin = ...; Edge = $false; Force = $false })
+$script:CoopCommonPath = Join-Path $script:CoopRoot 'lib\common.ps1'
+$script:CoopConvergeUnit = {
+  param([string]$Common, [string]$Function, [hashtable]$Params)
+  . $Common
+  return (& $Function @Params)
+}
+
+# Windows in-place Pi updates (`npm install -g` over an installed agent) replace the
+# global package via an atomic rename. If a coop/pi session has those files open,
+# the rename fails and leaves a half-written tree plus a leftover
+# `.pi-coding-agent-*` staging dir (see the pi-ai/pi-tui skew issue). So install
+# and update both clean stale staging dirs and refuse the in-place Pi convergence
+# while a session is open.
+function Get-CoopNpmGlobalRoots {
+  $roots = @()
+  try { $r = (& npm root -g 2>$null | Select-Object -First 1); if ($r) { $roots += $r.Trim() } } catch { }
+  if ($env:APPDATA) { $roots += (Join-Path $env:APPDATA 'npm\node_modules') }
+  return @($roots | Where-Object { $_ } | Select-Object -Unique)
+}
+
+function Remove-CoopPiStagingDirs {
+  foreach ($root in (Get-CoopNpmGlobalRoots)) {
+    $ew = Join-Path $root '@earendil-works'
+    if (Test-Path -LiteralPath $ew) {
+      Get-ChildItem -LiteralPath $ew -Directory -Filter '.pi-coding-agent-*' -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        $name = $_.Name
+        Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path -LiteralPath $_.FullName)) { Coop-Info "removed leftover npm staging dir: $name" }
+      }
+    }
+  }
+}
+
+function Test-CoopPiRunning {
+  try {
+    $procs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue
+    foreach ($p in $procs) {
+      if ($p.ProcessId -eq $PID) { continue }
+      if ($p.CommandLine -and $p.CommandLine -match 'pi-coding-agent') { return $true }
+    }
+  } catch { }
+  return $false
+}
+
+# The busy guard install and update share: clear leftover staging dirs, then say
+# whether Pi may be converged in place. $false (with the warning printed) when a
+# coop/pi session has the agent files open; the caller skips the Pi unit and
+# counts a failure. $Command names the lifecycle command to re-run.
+function Test-CoopPiConvergeAllowed([string]$Command = 'coop update') {
+  if (-not (Test-Have 'pi')) { return $true }
+  Remove-CoopPiStagingDirs
+  if (-not (Test-CoopPiRunning)) { return $true }
+  Coop-Warn 'a coop/pi session appears to be running — skipping the in-place Pi convergence (Windows locks open files, which can corrupt the agent install and leave a `.pi-coding-agent-*` staging dir).'
+  Coop-Say  "      Close all coop/pi windows, then re-run: $Command"
+  return $false
+}
+
+# Pi: probe `pi --version`; skip at the pin; else `npm install -g <spec>`.
+# -Edge converges an existing install to the unpinned package (upstream latest);
+# -Force reinstalls the spec even at the pin.
+function Invoke-CoopPiConverge {
+  param([string]$Package, [string]$Pin, [bool]$Edge = $false, [bool]$Force = $false)
+  $spec = if (-not $Edge -and $Pin) { "${Package}@${Pin}" } else { $Package }
+  $cur = Get-CoopPiVersion
+  $hasNpm = Test-Have 'npm'
+  if ($cur -and -not $Force) {
+    if ($Edge) {
+      # Edge means upstream/latest for EXISTING installs too.
+      if (-not $hasNpm) { return (Coop-UnitResult $false 'cannot update pi (npm missing) — install Node.js, then re-run: coop install') }
+      & npm install -g $Package *> $null
+      if ($LASTEXITCODE -eq 0) { return (Coop-UnitResult $true "pi updated to latest ($(Get-CoopPiVersion))") }
+      return (Coop-UnitResult $false "failed to update pi to latest (npm install -g $Package)")
+    }
+    if (-not $Pin) { return (Coop-UnitResult $true "pi present ($cur) — no manifest pin") }
+    if ($cur -eq $Pin) { return (Coop-UnitResult $true "pi $cur matches manifest") }
+    if (-not $hasNpm) { return (Coop-UnitResult $false 'cannot converge pi (npm missing) — install Node.js, then re-run: coop install') }
+    & npm install -g $spec *> $null
+    if ($LASTEXITCODE -eq 0) { return (Coop-UnitResult $true "pi converged $cur -> $Pin") }
+    return (Coop-UnitResult $false "failed to converge pi to $spec — try: npm install -g $spec")
+  }
+  if (-not $hasNpm) { return (Coop-UnitResult $false 'cannot install pi (npm missing) — install Node.js, then re-run: coop install') }
+  & npm install -g $spec *> $null
+  if ($LASTEXITCODE -eq 0) { return (Coop-UnitResult $true "pi installed ($spec)") }
+  return (Coop-UnitResult $false "npm install of pi failed — try: npm install -g $spec")
+}
+
+# --- pipx runner and probe (one copy; the install units used to carry three) --
+# The pipx to run: COOP_PIPX_BIN when set (tests pin one), else `pipx` on PATH,
+# else `python -m pipx` for a pipx that `pip install --user pipx` put in a Scripts
+# dir not on PATH yet (the Windows Store alias is skipped). @() when none answers.
+function Get-CoopPipxInvocation {
+  if ($env:COOP_PIPX_BIN) {
+    if (Get-Command $env:COOP_PIPX_BIN -ErrorAction SilentlyContinue) { return @([string]$env:COOP_PIPX_BIN) }
+    return @()
+  }
+  if (Get-Command pipx -ErrorAction SilentlyContinue) { return @('pipx') }
+  foreach ($name in @('python3', 'python')) {
+    $c = Get-Command $name -ErrorAction SilentlyContinue
+    if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
+    & $c.Source -m pipx --version *> $null
+    if ($LASTEXITCODE -eq 0) { return @($c.Source, '-m', 'pipx') }
+  }
+  return @()
+}
+function Test-CoopPipxAvailable { return ((@(Get-CoopPipxInvocation)).Count -gt 0) }
+# Run pipx quietly; the exit code (1 when no pipx answers).
+function Invoke-CoopPipx([string[]]$PipxArgs) {
+  $inv = @(Get-CoopPipxInvocation)
+  if ($inv.Count -eq 0) { return 1 }
+  $exe = $inv[0]
+  $rest = @($inv | Select-Object -Skip 1) + @($PipxArgs)
+  & $exe @rest *> $null
+  return $LASTEXITCODE
+}
+# pipx's stdout as one string ('' when no pipx answers).
+function Get-CoopPipxOutput([string[]]$PipxArgs) {
+  $inv = @(Get-CoopPipxInvocation)
+  if ($inv.Count -eq 0) { return '' }
+  $exe = $inv[0]
+  $rest = @($inv | Select-Object -Skip 1) + @($PipxArgs)
+  return [string](& $exe @rest 2>$null | Out-String)
+}
+# Installed version of a pipx tool per `pipx list` ('' when absent). The
+# convergence probe; doctor's inventory rows keep reading in-venv metadata.
+# $ListText lets a caller probe several tools from one `pipx list`.
+function Get-CoopPipxToolVersion([string]$Package, [string]$ListText = '') {
+  if (-not $ListText) { $ListText = Get-CoopPipxOutput @('list') }
+  if (-not $ListText) { return '' }
+  $m = [regex]::Match([string]$ListText, ('(?i)package ' + [regex]::Escape($Package) + ' (\d+\.\d+\.\d+)'))
+  if ($m.Success) { return $m.Groups[1].Value } else { return '' }
+}
+
+# pipx tool: probe `pipx list`; skip at the pin; drifted (or a matching package
+# that must be rebuilt on pipx's standalone Python, $FetchPython set) ->
+# `pipx install --force <spec>`; missing -> `pipx install <spec>`; -Force ->
+# `pipx install --force <spec>`; -Edge on an existing tool -> `pipx upgrade`, or a
+# forced unpinned reinstall when the tool runs on an explicit interpreter
+# ($Python, the Fabric CLI), so an unsupported venv is repaired. Postcondition:
+# outside --edge the installed version must equal the pin afterwards, so an old
+# launcher left on PATH never reads as a converged tool.
+function Invoke-CoopPipxConverge {
+  param([string]$Package, [string]$Pin, [bool]$Edge = $false, [bool]$Force = $false, [string]$Python = '', [string]$FetchPython = '')
+  if (-not (Test-CoopPipxAvailable)) { return (Coop-UnitResult $false "skipping $Package (pipx missing)") }
+  $spec = if (-not $Edge -and $Pin) { "${Package}==${Pin}" } else { $Package }
+  function New-PipxInstallArgs([bool]$WithForce) {
+    $a = @('install')
+    if ($WithForce) { $a += '--force' }
+    if ($FetchPython) { $a += $FetchPython }
+    if ($Python) { $a += @('--python', $Python) }
+    $a += $spec
+    return $a
+  }
+  $installed = Get-CoopPipxToolVersion $Package
+  $outcome = ''
+  if ($Force) {
+    if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) { return (Coop-UnitResult $false "failed to reinstall $Package ($spec)") }
+    $outcome = "$Package reinstalled ($spec)"
+  } elseif ($installed) {
+    if ($Edge) {
+      # Edge means upstream/latest for EXISTING installs too.
+      if ($Python) {
+        if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) { return (Coop-UnitResult $false "failed to update $Package with Python $Python") }
+      } elseif ((Invoke-CoopPipx @('upgrade', $Package)) -ne 0) { return (Coop-UnitResult $false "failed to upgrade $Package to latest") }
+      $now = Get-CoopPipxToolVersion $Package
+      return (Coop-UnitResult $true "$Package updated to latest ($(if ($now) { $now } else { '?' }))")
+    }
+    if (-not $Pin) { return (Coop-UnitResult $true "$Package present ($installed) — no manifest pin") }
+    if ($installed -eq $Pin -and -not $FetchPython) { return (Coop-UnitResult $true "$Package $installed matches manifest") }
+    if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) {
+      if ($installed -eq $Pin) { return (Coop-UnitResult $false "failed to rebuild $Package with standalone Python $Python") }
+      return (Coop-UnitResult $false "failed to converge $Package to $Pin")
+    }
+    $outcome = if ($installed -eq $Pin) { "$Package $Pin rebuilt with Python $Python" } else { "$Package converged $installed -> $Pin" }
+  } else {
+    if ((Invoke-CoopPipx (New-PipxInstallArgs $false)) -ne 0) { return (Coop-UnitResult $false "could not install $Package ($spec)") }
+    $outcome = "$Package installed ($spec)"
+  }
+  if (-not $Edge -and $Pin) {
+    $now = Get-CoopPipxToolVersion $Package
+    if ($now -ne $Pin) {
+      $nowDisp = if ($now) { $now } else { 'none' }
+      return (Coop-UnitResult $false "$Package remains at $nowDisp; expected $Pin")
+    }
+  }
+  return (Coop-UnitResult $true $outcome)
+}
+
+# Microsoft Fabric CLI: the pipx convergence on the interpreter the plan chose
+# (Get-CoopFabricPipxPlan: a local 3.10-3.13, or pipx's standalone 3.12 via
+# $FetchPython), then the `fab` identity check: Python Fabric (SSH) on PATH is
+# not the Microsoft Fabric CLI. Runtime-library convergence (fabric-cicd, pyodbc)
+# is the caller's Sync-CoopFabricPythonPackages, after this unit.
+function Invoke-CoopFabricCliConverge {
+  param([string]$Package, [string]$Pin, [bool]$Edge = $false, [bool]$Force = $false, [string]$Python = '', [string]$FetchPython = '', [string]$Command = 'coop install')
+  if (-not (Test-CoopPipxAvailable)) { return (Coop-UnitResult $false 'skipping Fabric CLI (pipx missing)') }
+  if (-not $Python) { return (Coop-UnitResult $false "Microsoft Fabric CLI needs Python 3.10-3.13 — install Python 3.12 or upgrade pipx (1.12+ fetches one), then re-run: $Command") }
+  $r = Invoke-CoopPipxConverge -Package $Package -Pin $Pin -Edge $Edge -Force $Force -Python $Python -FetchPython $FetchPython
+  if (-not $r.ok) { return $r }
+  if (Get-Command fab -ErrorAction SilentlyContinue) {
+    $fv = ((& fab --version 2>&1) -join ' ')
+    if ($fv -match '(?i)paramiko|invoke') {
+      return (Coop-UnitResult $false "'fab' is Python Fabric (SSH), not Microsoft Fabric CLI — put the pipx Scripts dir first on PATH, then: fab --version")
+    }
+    $v = (& fab --version 2>$null | Select-Object -First 1)
+    return (Coop-UnitResult $true "Microsoft Fabric CLI ready ($v)")
+  }
+  $localFab = Join-Path $HOME '.local\bin\fab.exe'
+  if (Test-Path -LiteralPath $localFab) {
+    $v = (& $localFab --version 2>$null | Select-Object -First 1)
+    return (Coop-UnitResult $true "Microsoft Fabric CLI ready ($v)")
+  }
+  return (Coop-UnitResult $false "$Package installed but 'fab' not on PATH yet — open a new shell")
+}
+
+# Installed version of a global npm tool per `npm ls -g --depth=0` ('' when absent).
+function Get-CoopNpmToolVersion([string]$Package) {
+  if (-not (Test-Have 'npm')) { return '' }
+  $text = [string](& npm ls -g --depth=0 $Package 2>$null | Out-String)
+  if (-not $text) { return '' }
+  $m = [regex]::Match($text, ([regex]::Escape($Package) + '@(\d+\.\d+\.\d+[^\s]*)'))
+  if (-not $m.Success) { $m = [regex]::Match($text, ([regex]::Escape($Package) + '@(\S+)')) }
+  if ($m.Success) { return $m.Groups[1].Value } else { return '' }
+}
+
+# npm tool (Power BI / Fabric authoring): probe `npm ls -g`; skip at the pin; else
+# `npm install -g <spec>`. Normal mode installs the pin only: a tool without one
+# is a failure, never npm's latest, and there is no `npm update -g` fallback
+# (it ignores the version). -Edge takes the bare package for an existing install.
+function Invoke-CoopNpmToolConverge {
+  param([string]$Package, [string]$Pin, [bool]$Edge = $false, [bool]$Force = $false)
+  if (-not (Test-Have 'npm')) { return (Coop-UnitResult $false "skipping $Package (npm missing)") }
+  if (-not $Edge -and -not $Pin) { return (Coop-UnitResult $false "no manifest pin for $Package (normal mode installs pins only)") }
+  $spec = if ($Edge) { $Package } else { "${Package}@${Pin}" }
+  $cur = Get-CoopNpmToolVersion $Package
+  if ($cur -and -not $Force) {
+    if ($Edge) {
+      & npm install -g $Package *> $null
+      if ($LASTEXITCODE -eq 0) { $now = Get-CoopNpmToolVersion $Package; return (Coop-UnitResult $true "$Package updated to latest ($(if ($now) { $now } else { '?' }))") }
+      return (Coop-UnitResult $false "failed to update $Package to latest (npm install -g $Package)")
+    }
+    if ($cur -eq $Pin) { return (Coop-UnitResult $true "$Package $cur matches manifest") }
+    & npm install -g $spec *> $null
+    if ($LASTEXITCODE -eq 0) { return (Coop-UnitResult $true "$Package converged $cur -> $Pin") }
+    return (Coop-UnitResult $false "failed to converge $Package to $spec — try: npm install -g $spec")
+  }
+  & npm install -g $spec *> $null
+  if ($LASTEXITCODE -eq 0) { return (Coop-UnitResult $true "$Package installed ($spec)") }
+  return (Coop-UnitResult $false "could not install $Package — try: npm install -g $spec")
+}
+
+# All npm tools of the plan as one unit result (install and update show one
+# "Power BI/Fabric authoring tools" item). $Names and $Pins are parallel.
+function Invoke-CoopNpmToolsConverge {
+  param([string[]]$Names, [string[]]$Pins, [bool]$Edge = $false, [bool]$Force = $false)
+  if (-not (Test-Have 'npm')) { return (Coop-UnitResult $false 'skipping Power BI/Fabric authoring tools (npm missing)') }
+  $ok = 0; $failed = 0; $problems = @()
+  for ($i = 0; $i -lt @($Names).Count; $i++) {
+    $pin = if ($i -lt @($Pins).Count) { [string]$Pins[$i] } else { '' }
+    $r = Invoke-CoopNpmToolConverge -Package $Names[$i] -Pin $pin -Edge $Edge -Force $Force
+    if ($r.ok) { $ok++ } else { $failed++; $problems += $r.msg }
+  }
+  if ($failed -eq 0) { return (Coop-UnitResult $true "$ok Power BI/Fabric authoring tool(s) ready") }
+  return (Coop-UnitResult $false "$ok ready, $failed failed: $($problems -join '; ')")
+}
+
 # True if version $A's MAJOR.MINOR is strictly newer than $B's (patch ignored).
-# (mirror of coop_minor_newer)
 function Test-CoopMinorNewer {
   param([string]$A, [string]$B)
   $ma = [regex]::Match([string]$A, '^(\d+)\.(\d+)'); $mb = [regex]::Match([string]$B, '^(\d+)\.(\d+)')
@@ -1804,7 +2235,7 @@ function Test-CoopMinorNewer {
 }
 
 # Read a dotted scalar key from a YAML file via lib/_yaml.py (PyYAML when present,
-# else a dependency-free fallback parser). (mirror of coop_yaml_get)
+# else a dependency-free fallback parser).
 function Get-CoopYamlValue {
   param([string]$File, [string]$Key, [string]$Default = '')
   if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { return $Default }
@@ -1821,7 +2252,6 @@ function Get-CoopYamlValue {
 }
 
 # Read a dotted key that is a YAML list of scalars, returning a string array.
-# (mirror of coop_yaml_list)
 function Get-CoopYamlList {
   param([string]$File, [string]$Key)
   if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { return @() }
@@ -1838,14 +2268,8 @@ function Get-CoopYamlList {
 # --- Team knowledge config (~/.coop/config "knowledge" block) -----------------
 # The fleet config JSON (schema_version 1, written by scripts/onboard.py) carries
 # an OPTIONAL "knowledge" block: { "enabled": bool, "repos": [{url, local_path}] }.
-# Absent/disabled/unreadable is a clean no-op everywhere. COOP_DIR overrides the
-# parent of .coop (same convention as onboard.py and the test suite).
-# (mirrors of coop_config_file / coop_knowledge_enabled / coop_knowledge_repos)
-function Get-CoopConfigFile {
-  $base = if ($env:COOP_DIR) { $env:COOP_DIR } else { $HOME }
-  return (Join-Path $base '.coop\config')
-}
-
+# Absent/disabled/unreadable is a clean no-op everywhere. The file is
+# Get-CoopConfigFile (<profile dir>\config; COOP_DIR is the parent of .coop).
 function Get-CoopKnowledgeBlock {
   $f = Get-CoopConfigFile
   if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $null }
@@ -1880,7 +2304,6 @@ function Get-CoopKnowledgeRepos {
 }
 
 # Extract the YAML frontmatter `name:` from a SKILL.md (first match), or '' if none.
-# (mirror of coop_skill_name)
 function Get-CoopSkillName {
   param([string]$File)
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { return '' }
@@ -1919,7 +2342,7 @@ function Test-CoopToolEnabled {
 }
 
 # Locate the active project contract: nearest .coop/project.yml walking up from
-# $PWD, else the bundled one at COOP_ROOT/.coop/project.yml. (mirror of coop_find_project_yml)
+# $PWD, else the bundled one at COOP_ROOT/.coop/project.yml.
 function Find-CoopProjectYml {
   param([string]$StartDir = (Get-Location).Path)
   $dir = $StartDir
@@ -1936,7 +2359,6 @@ function Find-CoopProjectYml {
 }
 
 # Confirm a potentially-destructive action unless --yes / COOP_ASSUME_YES is set.
-# (mirror of coop_confirm)
 function Coop-Confirm {
   param([string]$Prompt = 'Proceed?')
   if ($env:COOP_ASSUME_YES -eq '1') { return $true }
@@ -1946,13 +2368,14 @@ function Coop-Confirm {
   if ($ans -match '^(y|yes)$') { return $true } else { return $false }
 }
 
-# Test whether the local COOP user profile exists.
+# Test whether the local COOP user profile exists (in the profile dir onboarding
+# writes to, so COOP_DIR is honoured).
 function Test-CoopUserProfileMissing {
-  return -not (Test-Path -LiteralPath (Join-Path $HOME '.coop\user.json') -PathType Leaf)
+  return -not (Test-Path -LiteralPath (Get-CoopUserProfileFile) -PathType Leaf)
 }
 
 function Test-CoopOnboardingMissing {
-  return (Test-CoopUserProfileMissing) -or -not (Test-Path -LiteralPath (Join-Path $HOME '.coop\config') -PathType Leaf)
+  return (Test-CoopUserProfileMissing) -or -not (Test-Path -LiteralPath (Get-CoopConfigFile) -PathType Leaf)
 }
 
 # First-run onboarding: run when either the profile or integration config is missing.
@@ -1988,7 +2411,7 @@ function Start-CoopJob {
 #   While it runs, the active-item line animates under the overall bar; on completion
 #   the bar advances by one and a permanent ✓/! line is printed. NB: the scriptblock
 #   runs in a FRESH runspace — it sees none of these functions/variables, so units
-#   must be self-contained and take their inputs as arguments. (mirror of coop_unit)
+#   must be self-contained and take their inputs as arguments.
 function Coop-Unit {
   param([string]$Label, [scriptblock]$Work, [object[]]$WorkArgs = @())
   $sw  = [System.Diagnostics.Stopwatch]::StartNew()
@@ -2027,8 +2450,7 @@ function Coop-Unit {
 }
 
 # Run a sibling coop script (sync/doctor) in a CHILD process so its `exit` cannot
-# abort the caller — mirrors bash invoking "$COOP_ROOT/scripts/x.sh" as a
-# subprocess. Returns the child's exit code.
+# abort the caller. Returns the child's exit code.
 function Invoke-CoopScript {
   param([string]$ScriptPath, [string[]]$ScriptArgs = @())
   $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }

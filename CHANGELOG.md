@@ -5,6 +5,123 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Removed
+
+- Test modes and override seams (master plan S7, row 8, issue #228):
+  `COOP_UPDATE_GATE_DRYRUN` and `COOP_FLEET_TEST_MODE` (install and update now
+  always run through their last step), `Get-PiLatest` with
+  `COOP_PI_LATEST_OVERRIDE` (`--pi-latest` still warns and means `--edge`), and
+  the dead `COOP_PYPI_LATEST_OVERRIDE`. `scripts/check-bom.sh` (replaced by
+  `scripts/check-bom.ps1`). The version copies in `config/defaults.yml`
+  (`pi.update_all`, `pi_extensions`, `coop_extensions`, `python_tools`,
+  `fabric_cli`, `npm_authoring_tools` and every `tested_with` key but `pi_min`):
+  `config/release-manifest.json` is the one manifest, read by `coop doctor`,
+  `coop release`, `coop init --ci` and the fleet digest.
+- Dead tool helpers (master plan S6, row 8, issue #226). `extensions/coop-tools`
+  lost the old local `coop-data-doc.yml` writer the JSONL wizard replaced
+  (`renderMinimalConfig`, `updateConfigText`, `trailingComment`,
+  `outputDirsConflict`, `withinOrEqual`, `siblingSite`, `dirExists`, the
+  `DEFAULT_SQL_*`/`DEFAULT_PBI_*` glob lists and the write-only `siteDir` /
+  `output.site_dir` field, which `parseExisting` no longer reports);
+  `extensions/coop-guardrails` lost its unused `GIT_COMMIT_RE`, `GIT_PREFIX`,
+  `segmentAround`, `parseAllowedGlobs` and `parseRepoCommitPolicy` (the
+  per-repository globs are pinned through `parseRepoEntries` / `commitPolicy`
+  instead); `lib/standards.mjs` lost the stale `RESOLUTION_STATES` list; and
+  `coop doctor` no longer matches the never-emitted `PENDING_OWNER_PROVISIONING`
+  and `invalid_preserved` standards states. `tests/datadoc.test.mjs` is replaced
+  by `tests/review-scope.test.mjs` (the live reader and review-scope cases plus a
+  `parseExisting` case on literal YAML).
+
+### Changed
+
+- Tests (S7, #228): one helper library `tests/fixtures/_common.ps1` (Ok/Ko,
+  Save-Env/Restore-Env, sandbox home, shims, Python stubs, doctor rows, git and
+  process helpers) dot-sourced by every fixture; `tests/run.ps1` runs
+  `scripts/check-bom.ps1` first and launches the child fixtures from one
+  table-driven loop with a lane column (gate / extended); `fleet-execution` and
+  `home-guard` run install and update to the end under the sandbox and assert on
+  the call log and the failed-step summary lines; `tests/run.sh` keeps one
+  forwarder smoke for `--no-launch`. `coop release` and `scripts/release.sh`
+  check the coop-tool pins of `config/release-manifest.json` against
+  coop-website's `versions.json`; `docs/ci.md` shows pipeline pins as
+  `==<version>` placeholders. `coop doctor`'s `fab` collision hint names the
+  Python `fabric` package and `pipx ensurepath` instead of Homebrew. Docs and
+  agent instructions describe one PowerShell implementation (no parity, no bash
+  3.2, four companion extensions, the manifest as the one version source).
+
+- `coop doctor` reads the Pi floor from `config/defaults.yml` `tested_with.pi_min`
+  (0.79.0 only when the key is missing) instead of a hard-coded 0.79.0;
+  `coop-tools`' `findProjectYml` is `lib/standards.mjs`'s `findProjectContract`;
+  `parseRepoEntries` now drops a trailing `  # comment` from a block-list commit
+  glob the way it already did for scalar values (the deleted `parseAllowedGlobs`
+  did too);
+  a new `tests/lineage.test.mjs` pins the `data_doc` tool's `lineage` branch and
+  the session-start lineage note. The setup-docs prompt and skill now say the
+  config is written only when the wizard emits `complete` AND exits 0 (as the
+  bridge requires) and that the flow needs coop-data-doc 1.1.1+; two
+  `bin/coop.ps1` comments stopped pointing at the retired bash launcher.
+- Shared token/MCP checks; Doctor stays observational (master plan S4, row 8,
+  issue #224). The retired `coop web` sign-in window is gone from `lib/common.ps1`
+  (`Invoke-CoopAz` / `Invoke-CoopAzPreflight` lost `-NewWindow`, and
+  `Start-CoopPsWindow` / `ConvertTo-CoopPsLiteral` with it); the launch preflight
+  and `coop doctor` print one shared hint pair (`Get-CoopAzLoginHint` /
+  `Get-CoopAzTokenHint`), and a test asserts `Test-CoopAzAuthError`'s markers equal
+  the Node helper's. `lib/fabric_token_runner.mjs` is the one launch-frame
+  validator: `Get-CoopFabricMcpToken` only splits the validated frame and keeps the
+  state-to-message table, and the warning states live once as `WARNING_STATES` in
+  `lib/warehouse_mcp.py` (a test pins the runner's enum to it). In Python,
+  `managed_sqlendpoint_entry` is the one ownership rule (doctor, `launch-token`,
+  `fabric_sql_query`), `ITEM_URL_RE` the one item-URL shape, `select_target` is an
+  alias of `project_target`, `integration_enabled` the one integrations-flag rule
+  (`lib/mcp_config.py` reuses it), and `jwt_identity` a strict shared JWT identity
+  mirroring `fabric_request_headers.mjs` (`fabric_sql_query` dropped its lenient
+  copy and its own `SQL_RESOURCE`). `coop doctor` resolves the client tenant once
+  through `Get-CoopTenant`: the Warehouse row names it only when it is that
+  resolved tenant, and the project-contract row reports a TODO `fabric.tenant_id`
+  as empty and a non-GUID/non-domain value as invalid. `doctor_status` now also
+  returns `config_state`, `probe_state` and `usable`, and the Warehouse row says
+  `usable`, `configured (not probed)` or `probed: <state>`; the existing `state`
+  values and `registered` string are unchanged.
+- One install/update/sync convergence path (master plan S2, row 8, issue #222).
+  `lib/common.ps1` now owns the fleet: `Get-CoopFleetPlan` is the one
+  manifest-driven list (Pi, extensions, the Coop tools, the Fabric CLI, the npm
+  authoring tools, Desktop Bridge on Windows only) that `coop install`, `coop
+  update`, `coop sync` and `coop uninstall` read instead of their own copies;
+  `Invoke-CoopPiConverge`, `Invoke-CoopPipxConverge` (one pipx runner with the
+  `python -m pipx` fallback, one `pipx list` probe, a postcondition that the
+  installed version equals the pin), `Invoke-CoopFabricCliConverge` (the `fab`
+  identity check on top) and `Invoke-CoopNpmToolConverge` are the one probe and
+  one install branch per component, run inside the `Coop-Unit` jobs through
+  `$script:CoopConvergeUnit`; `Sync-CoopExtensionFleet` is the one `pi install`
+  path (pins, lockfile, pi-ai/pi-tui alignment, postconditions). Behaviour that
+  follows: `coop update` skips Pi and every pipx/npm tool already at its pin (an
+  offline no-op, like install), converges a drifted one, and installs a missing
+  one without `--force`; install no longer runs its own `pi install` or a
+  `pipx upgrade` fallback, and extensions converge once, in the sync child both
+  commands run (install is now 8 steps); `--edge` moves Pi and the tools to
+  upstream latest while the extensions stay at their pins; an npm tool without a
+  manifest pin fails in normal mode; the busy guard (`Test-CoopPiConvergeAllowed`:
+  leftover `.pi-coding-agent-*` staging dirs removed, no in-place Pi convergence
+  under a running session) now covers install too; `coop update --check` and
+  `coop doctor` reuse the probes, and doctor's Power BI hints name the manifest
+  pins. No pin changed.
+- One profile root (master plan S3, row 8, issue #220). `COOP_DIR` now means one
+  thing everywhere: the parent of `.coop` (profile at `$COOP_DIR/.coop`, default
+  `~/.coop`). `coop support` (`lib/support-center-cli.mjs`) and `coop context-budget`
+  read the profile there instead of treating `COOP_DIR` as the `.coop` folder
+  itself, and the first-run gates, the `coop-profile` / `coop-powerline` profile
+  readers, `coop sync`'s MCP generation, `coop doctor --publish`, `fleet-digest`,
+  `ado_lib` and the standards roots honour `COOP_DIR` instead of reading the real
+  home. The agent dir Pi actually loads is one chain in every language
+  (`PI_CODING_AGENT_DIR` → `COOP_NO_ISOLATE` truthy `1|true|yes|on`, any case →
+  `~/.pi/agent` → `COOP_AGENT_DIR` → `<profile dir>/agent`), including
+  `coop onboard`'s MCP output, the guardrails audit log and the Fabric SQL
+  launcher. The inline copies in `bin/coop.ps1` and the scripts go through
+  `Get-CoopProfileDir` / `Get-CoopUserProfileFile` / `Get-CoopEffectiveAgentDir`
+  (`lib/common.ps1`), `lib/coop_paths.py` and `lib/paths.mjs`. No new variables;
+  with nothing set every path is unchanged. The acceptance harness no longer
+  re-points `COOP_DIR` for the candidate's Support Center.
+
 ### Fixed
 
 - `coop sync` from a PowerShell 7 window. `coop.cmd` starts Windows PowerShell
@@ -13,6 +130,44 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   printed `✓ sync complete.` (seen on the development VM, 2026-10-01). The lock
   hashes now go through .NET (`Get-CoopFileSha256`), and `coop.cmd` clears
   `PSModulePath` so 5.1 rebuilds its own module path.
+- `coop install` convergence on Windows (#213). The Pi and pipx install units run
+  in a background job that sees none of the installer's variables, so a drifted
+  Pi was reported `pi present — no manifest pin` and never converged, pipx tools
+  installed without their `==pin`, and `--edge` never upgraded an existing Pi or
+  tool. The units now receive the edge flag, package and pinned spec as
+  arguments, and a Fabric CLI unit that did not converge no longer gets the
+  Python runtime injected into the wrong venv.
+
+### Removed
+
+- The POSIX product path (master plan S1, row 7). coop is one implementation, in
+  PowerShell: `bin/coop.ps1`, `lib/common.ps1` and `scripts/*.ps1`, launched by
+  `bin/coop.cmd`. `lib/common.sh` and the bash lifecycle scripts (`install.sh`,
+  `update.sh`, `sync.sh`, `doctor.sh`, `uninstall.sh`, `sync-knowledge.sh`,
+  `support-center.sh`, `check-context-budget.sh`, `test-pi-matrix.sh`,
+  `migrate-from-pi-analytics-agent.sh`, the `ado-*` and `fleet-digest` wrappers)
+  are gone, and so is the bash/PowerShell parity gate (`scripts/check-parity.sh`):
+  `scripts/check-bom.sh` keeps the `.ps1` UTF-8 BOM and 5.1-safety checks. The
+  bash test suites that only exercised the removed scripts are gone with them;
+  the behavioural coverage that still applies now drives the `.ps1` files from
+  `tests/run.ps1` fixtures. macOS and Linux are development checkouts for the
+  logic tests, not installations: the Mac-only troubleshooting entries (split
+  Node toolchains, Homebrew `fab`) and the bash 3.2 rule are retired.
+
+### Changed
+
+- `bin/coop` is a Git Bash forwarder: every argument goes to `bin/coop.ps1`
+  under `pwsh`, `powershell.exe` or `powershell` (exit 127 with a pointer to
+  `docs/install-windows.md` when none is installed). `coop release` is the one
+  maintainer command that stays in bash (`scripts/release.sh`, reached through
+  `./bin/coop release`); its gate now runs `tests/run.ps1` under `pwsh` when
+  available and `scripts/check-bom.sh` instead of the parity check.
+- `fabric_sql_query` resolves the Fabric Python through `lib/common.ps1`
+  (`Get-CoopFabricPython`) on every platform: `powershell.exe` on Windows, `pwsh`
+  on a macOS or Linux development box.
+- CI: the macOS bash 3.2 job is retired; the `shell` job lints only the bash dev
+  tooling (forwarder, release and check scripts, test harness) and runs the BOM
+  check.
 
 ### Removed
 

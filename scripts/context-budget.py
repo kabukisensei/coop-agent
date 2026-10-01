@@ -27,6 +27,11 @@ import re
 import sys
 from pathlib import Path
 
+LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
+import coop_paths  # noqa: E402
+
 SCHEMA_VERSION = 1
 TOKEN_FORMULA = "ceil(chars/4)"
 
@@ -112,10 +117,9 @@ def find_project_instructions(start_dir: Path) -> tuple[Path | None, int, int]:
 
 
 def profile_path() -> Path:
-    """Locate the local user profile."""
-    home = Path.home()
-    coop_dir = os.environ.get("COOP_DIR", str(home / ".coop"))
-    return Path(coop_dir) / "user.json"
+    """Locate the local user profile (<profile dir>/user.json; COOP_DIR is the
+    parent of .coop, as everywhere else)."""
+    return coop_paths.user_profile_path()
 
 
 def _sanitize(value: str, max_len: int = 100) -> str:

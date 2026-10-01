@@ -26,22 +26,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  bash32:
-    # Keeps the Azure sign-in preflight's watchdog and hang cases running under
-    # stock bash 3.2; ci.yml's bash32 job runs only the gate cases.
-    name: bash 3.2 Azure preflight, extended (macOS stock)
-    runs-on: macos-latest
-    timeout-minutes: 60
-    env:
-      COOP_TEST_EXTENDED: '1'
-    steps:
-      - uses: actions/checkout@v5
-      - name: Azure sign-in preflight under stock /bin/bash (3.2), all cases
-        run: |
-          if [ "${COOP_TEST_EXTENDED:-}" != "1" ]; then echo "::error::COOP_TEST_EXTENDED did not reach bash"; exit 1; fi
-          /bin/bash --version | head -1
-          /bin/bash tests/azcache.test.sh
-
   tests:
     name: logic tests, extended (ubuntu)
     runs-on: ubuntu-latest
