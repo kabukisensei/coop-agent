@@ -187,8 +187,11 @@ def parse_target(environment: str, raw: Any) -> SqlTarget:
     target.workspace_id = _text(raw.get("workspace_id")).lower()
     target.item_id = _text(raw.get("item_id")).lower()
     target.sql_endpoint_id = _text(raw.get("sql_endpoint_id")).lower()
+    # The dependency-free reader (no PyYAML) keeps `true` / `false` as text.
     replicas = raw.get("read_scale_replicas", False)
-    if replicas not in (True, False):
+    if isinstance(replicas, str):
+        replicas = {"true": True, "false": False}.get(replicas.strip().lower(), replicas)
+    if replicas not in (True, False) or isinstance(replicas, int) and not isinstance(replicas, bool):
         target.state, target.reason = "invalid", "read_scale_replicas must be true or false"
         return target
     target.read_scale_replicas = replicas is True
