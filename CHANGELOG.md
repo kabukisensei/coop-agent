@@ -5,6 +5,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Removed
+
+- Dead tool helpers (master plan S6, row 8, issue #226). `extensions/coop-tools`
+  lost the old local `coop-data-doc.yml` writer the JSONL wizard replaced
+  (`renderMinimalConfig`, `updateConfigText`, `trailingComment`,
+  `outputDirsConflict`, `withinOrEqual`, `siblingSite`, `dirExists`, the
+  `DEFAULT_SQL_*`/`DEFAULT_PBI_*` glob lists and the write-only `siteDir` /
+  `output.site_dir` field, which `parseExisting` no longer reports);
+  `extensions/coop-guardrails` lost its unused `GIT_COMMIT_RE`, `GIT_PREFIX`,
+  `segmentAround`, `parseAllowedGlobs` and `parseRepoCommitPolicy` (the
+  per-repository globs are pinned through `parseRepoEntries` / `commitPolicy`
+  instead); `lib/standards.mjs` lost the stale `RESOLUTION_STATES` list; and
+  `coop doctor` no longer matches the never-emitted `PENDING_OWNER_PROVISIONING`
+  and `invalid_preserved` standards states. `tests/datadoc.test.mjs` is replaced
+  by `tests/review-scope.test.mjs` (the live reader and review-scope cases plus a
+  `parseExisting` case on literal YAML).
+
 ### Changed
 
 - Read-only SQL on a dev target no longer asks for approval. When the guardrails
@@ -15,6 +32,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   records it as `dev-read-only`. Test and production targets, unbounded or
   ambiguous SQL, generic MCP row reads and every mutation ask as before.
 
+- `coop doctor` reads the Pi floor from `config/defaults.yml` `tested_with.pi_min`
+  (0.79.0 only when the key is missing) instead of a hard-coded 0.79.0;
+  `coop-tools`' `findProjectYml` is `lib/standards.mjs`'s `findProjectContract`;
+  `parseRepoEntries` now drops a trailing `  # comment` from a block-list commit
+  glob the way it already did for scalar values (the deleted `parseAllowedGlobs`
+  did too);
+  a new `tests/lineage.test.mjs` pins the `data_doc` tool's `lineage` branch and
+  the session-start lineage note. The setup-docs prompt and skill now say the
+  config is written only when the wizard emits `complete` AND exits 0 (as the
+  bridge requires) and that the flow needs coop-data-doc 1.1.1+; two
+  `bin/coop.ps1` comments stopped pointing at the retired bash launcher.
 - Shared token/MCP checks; Doctor stays observational (master plan S4, row 8,
   issue #224). The retired `coop web` sign-in window is gone from `lib/common.ps1`
   (`Invoke-CoopAz` / `Invoke-CoopAzPreflight` lost `-NewWindow`, and

@@ -21,7 +21,7 @@ const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
 const dist = process.env.COOP_TEST_DIST;
 const cg = await import(pathToFileURL(`${dist}/coop-guardrails.mjs`).href);
 const coopGuardrails = cg.default;
-const { isSecretPath, commitStagesAll, parseAllowedGlobs, mcpMutationLabel, mcpLiveReadRisk, sqlMcpRisk, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoCommitPolicy, commitPolicy, buildSessionGovernance, resetSessionGovernance, stripManagedUpdateNotices } = cg;
+const { isSecretPath, commitStagesAll, mcpMutationLabel, mcpLiveReadRisk, sqlMcpRisk, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoEntries, commitPolicy, buildSessionGovernance, resetSessionGovernance, stripManagedUpdateNotices } = cg;
 
 // Capture the handler the extension registers.
 let staged = "";     // `git diff --cached --name-only`
@@ -288,7 +288,7 @@ await t("commitStagesAll uses parsed args, not sibling flags", () => {
 await t("gitRepoDir handles Windows absolute -C paths without resolving against cwd", () => {
   assert.equal(gitRepoDir('git -C "C:\\Work\\Client Project" commit -am x', "/cwd"), "C:\\Work\\Client Project");
 });
-await t("parseRepoCommitPolicy resolves per-repository local_path", () => {
+await t("parseRepoEntries + commitPolicy resolve per-repository local_path from the snapshot", () => {
   const text = `
 repositories:
   fabric:
@@ -304,12 +304,24 @@ repositories:
     agent_never_commit:
       - "**/*.sql"
 `;
-  const projectDir = "/home/user/coop-agent";
-  assert.deepEqual(parseRepoCommitPolicy(text, projectDir, "/home/user/fabric"), { allowed: ["docs/**"], denied: ["**/*.tmdl"] });
-  assert.deepEqual(parseRepoCommitPolicy(text, projectDir, "/home/user/fabric-dw"), { allowed: ["reports/**"], denied: ["**/*.sql"] });
-  assert.equal(parseRepoCommitPolicy(text, projectDir, "/home/user/other"), null);
+  const projectDir = resolve("/home/user/coop-agent");
+  const parent = resolve(projectDir, "..");
+  const policy = (yml, repoDir) => commitPolicy(repoDir, { loaded: true, entries: parseRepoEntries(yml, projectDir) });
+  const builtins = commitPolicy("/nowhere/at/all", { loaded: true, entries: [] });
+  assert.ok(builtins.allowed.length > 0, "built-in allow globs apply to every repo");
+  assert.deepEqual(builtins.denied, []);
+  // local_path resolves against the contract's project dir; each repo sees only its own globs.
+  const fabric = policy(text, join(parent, "fabric"));
+  assert.deepEqual(fabric.allowed, [...builtins.allowed, "docs/**"]);
+  assert.deepEqual(fabric.denied, ["**/*.tmdl"]);
+  const dw = policy(text, join(parent, "fabric-dw"));
+  assert.deepEqual(dw.allowed, [...builtins.allowed, "reports/**"]);
+  assert.deepEqual(dw.denied, ["**/*.sql"]);
+  // An unmatched repository gets the built-ins only — never a sibling's allowlist.
+  assert.deepEqual(policy(text, join(parent, "other")), builtins);
+  // Quoted repo keys and flow lists are read too.
   const quoted = "repositories:\n  'sql repo':\n    local_path: '../fabric'\n    agent_allowed_to_commit: ['docs/**']\n";
-  assert.deepEqual(parseRepoCommitPolicy(quoted, projectDir, "/home/user/fabric"), { allowed: ["docs/**"], denied: [] });
+  assert.deepEqual(policy(quoted, join(parent, "fabric")), { allowed: [...builtins.allowed, "docs/**"], denied: [] });
 });
 await t("governance is a per-session trusted snapshot; in-session edits cannot weaken it", () => {
   resetSessionGovernance();
@@ -538,11 +550,18 @@ await t("blocks bash writes to secrets via fd or combined redirects", async () =
 });
 
 // --- allow-list parsing (block + flow YAML forms) --------------------------------
-await t("parseAllowedGlobs reads BOTH block and flow YAML forms", () => {
+await t("parseRepoEntries reads BOTH block and flow YAML forms of the commit globs", () => {
+  const projectDir = resolve("/proj");
   const block =
-    "repositories:\n  fabric:\n    agent_allowed_to_commit:\n      - \"docs/**\"\n      - reports/generated/**  # note\n  other: x\n";
-  assert.deepEqual(parseAllowedGlobs(block).sort(), ["docs/**", "reports/generated/**"].sort());
-  assert.deepEqual(parseAllowedGlobs('agent_allowed_to_commit: ["docs/**", "site/**"]').sort(), ["docs/**", "site/**"].sort());
+    "repositories:\n  fabric:\n    local_path: \".\"\n    agent_allowed_to_commit:\n      - \"docs/**\"\n      - reports/generated/**  # note\n    agent_never_commit:\n      - secrets/**\n  other: x\n";
+  const [entry] = parseRepoEntries(block, projectDir);
+  assert.equal(entry.path, projectDir);
+  assert.deepEqual(entry.allowed.sort(), ["docs/**", "reports/generated/**"].sort());
+  assert.deepEqual(entry.denied, ["secrets/**"]);
+  const flow = "repositories:\n  fabric:\n    local_path: .\n    agent_allowed_to_commit: [\"docs/**\", \"site/**\"]\n    agent_never_commit: ['**/*.pbip']\n";
+  const [flowEntry] = parseRepoEntries(flow, projectDir);
+  assert.deepEqual(flowEntry.allowed.sort(), ["docs/**", "site/**"].sort());
+  assert.deepEqual(flowEntry.denied, ["**/*.pbip"]);
 });
 await t("repository-specific globs retain semantics and deny overrides markdown allowance", async () => {
   resetSessionGovernance();

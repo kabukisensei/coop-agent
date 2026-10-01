@@ -62,46 +62,6 @@ function findProjectYml(cwd: string, exists: (path: string) => boolean = existsS
   return null;
 }
 
-/** Parse the `agent_allowed_to_commit` globs out of project.yml text — handling BOTH
- *  YAML flow form (`agent_allowed_to_commit: ["docs/**", ...]`) AND block form
- *
- *      agent_allowed_to_commit:
- *        - "docs/**"
- *        - reports/generated/**
- *
- *  across every occurrence (project.yml defines the key per-repository). The shipped
- *  .coop/project.example.yml uses block form, so a flow-only regex silently ignored a
- *  user's customizations — and diverged from the bash side (lib/_yaml.py reads both). */
-export function parseAllowedGlobs(text: string): string[] {
-  const globs: string[] = [];
-  const add = (raw: string) => {
-    const g = raw.trim().replace(/\s+#.*$/, "").trim().replace(/^["']|["']$/g, "");
-    if (g) globs.push(g);
-  };
-  // Flow form (all occurrences).
-  const flow = /agent_allowed_to_commit\s*:\s*\[([^\]]*)\]/g;
-  let m: RegExpExecArray | null;
-  while ((m = flow.exec(text))) {
-    for (const raw of m[1].split(",")) add(raw);
-  }
-  // Block form: the key on its own line, then more-indented `- item` entries.
-  const lines = text.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const head = /^(\s*)agent_allowed_to_commit\s*:\s*(#.*)?$/.exec(lines[i]);
-    if (!head) continue;
-    const baseIndent = head[1].length;
-    for (let j = i + 1; j < lines.length; j++) {
-      const body = lines[j].trim();
-      if (!body || body.startsWith("#")) continue;
-      const indent = lines[j].length - lines[j].trimStart().length;
-      const item = /^-\s+(.*)$/.exec(body);
-      if (indent > baseIndent && item) add(item[1]);
-      else break; // dedent / non-list sibling → end of this block
-    }
-  }
-  return globs;
-}
-
 /** A committed path is allowed only after explicit deny rules have been checked. */
 function isAllowedCommitPath(file: string, allowedGlobs: string[], deniedGlobs: string[]): boolean {
   if (deniedGlobs.some((g) => matchGlob(file, g))) return false;
@@ -135,8 +95,8 @@ function globToRegex(glob: string): RegExp {
 
 export type RepoCommitPolicy = { allowed: string[]; denied: string[] };
 
-/** Parse the `repositories` section of project.yml and find the entry whose
- *  `local_path` resolves to `repoDir`. Returns null if no matching entry. */
+/** One `repositories:` entry of project.yml with its `local_path` resolved
+ *  against the contract's project dir and its commit globs. */
 export type RepoPolicyEntry = { name: string; path: string; allowed: string[]; denied: string[] };
 
 /** Parse EVERY repositories: entry into resolved policy entries. This is the input
@@ -220,7 +180,8 @@ export function parseRepoEntries(text: string, projectDir: string): RepoPolicyEn
       const item = /^-\s+(.*)$/.exec(trimmed);
       if (item && indent > currentBaseIndent + 2) {
         const parentKey = findParentKey(lines, i, currentBaseIndent + 2);
-        const g = item[1].trim().replace(/^["']|["']$/g, "");
+        // Same cleanup as the scalar branch: a trailing `  # note` is a comment, not part of the glob.
+        const g = item[1].trim().replace(/\s+#.*$/, "").replace(/^["']|["']$/g, "");
         if (g) {
           if (parentKey === "agent_allowed_to_commit") currentAllowed.push(g);
           else if (parentKey === "agent_never_commit") currentDenied.push(g);
@@ -230,12 +191,6 @@ export function parseRepoEntries(text: string, projectDir: string): RepoPolicyEn
   }
   if (inRepos) flush();
   return entries;
-}
-
-/** Back-compat wrapper: policy for exactly the repository whose local_path matches. */
-export function parseRepoCommitPolicy(text: string, projectDir: string, repoDir: string): RepoCommitPolicy | null {
-  const hit = parseRepoEntries(text, projectDir).find((e) => e.path === resolve(repoDir));
-  return hit ? { allowed: hit.allowed, denied: hit.denied } : null;
 }
 
 function findParentKey(lines: string[], idx: number, parentIndent: number): string | null {
@@ -541,32 +496,11 @@ export function parseGitCommand(cmd: string): ParsedGitCommand | null {
   return parseGitCommands(cmd)[0] ?? null;
 }
 
-/** `git`, optionally followed by global options (`-C <dir>`, `-c k=v`, `--no-pager`),
- *  as a regex-source fragment shared by every git detector so `git -C <dir> <subcmd>`
- *  and interspersed flags match consistently. Kept for backwards compatibility with
- *  any external callers; new code should use {@link parseGitCommand}. */
-const GIT_PREFIX = String.raw`\bgit\b(?:\s+-{1,2}[A-Za-z][\w-]*(?:[=\s]\S+)?)*`;
-
-/** A `git commit` invocation, tolerant of global options between `git` and `commit`
- *  (`git -C <dir> commit`, `git -c k=v commit`, `git --no-pager commit`). */
-export const GIT_COMMIT_RE = new RegExp(GIT_PREFIX + String.raw`\s+commit\b`, "i");
-
 /** Explicit pathspec arguments of `git commit <pathspec>` — the files it commits
  *  straight from the WORKING TREE, ignoring the index. */
 export function explicitCommitPathspecs(cmd: string, parsed: ParsedGitCommand | null = parseGitCommand(cmd)): string[] {
   if (!parsed || parsed.subcommand !== "commit") return [];
   return parsed.pathspecs;
-}
-
-/** The shell segment (top-level, split on ; && || | &) that contains string index
- *  `idx`, plus everything before it — positions are on the ORIGINAL string so callers
- *  can slice exactly. Kept for leading-cd logic. */
-function segmentAround(cmd: string, idx: number): { segment: string; before: string } {
-  for (const { segment, start } of splitShellSegments(cmd)) {
-    const end = start + segment.length;
-    if (idx >= start && idx < end) return { segment, before: cmd.slice(0, start) };
-  }
-  return { segment: cmd, before: "" };
 }
 
 /** The directory of the LAST `cd <dir>` / `pushd <dir>` in a command prefix, or null.
