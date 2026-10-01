@@ -27,6 +27,12 @@ STAGE_DIR_NAME = "stage"
 
 fails = 0
 
+# Windows runners default stdout to cp1252, which cannot encode the check mark.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 
 def ok(msg: str) -> None:
     print(f"  ✓ {msg}")
@@ -65,6 +71,7 @@ const rec = {
 if (log) fs.appendFileSync(log, JSON.stringify(rec) + '\n');
 const cmd = rec.argv[0];
 if (cmd === 'init') {
+  if (mode === 'init-fail') { process.stderr.write("fatal: could not read Username for 'https://github.com': terminal prompts disabled\n"); process.exit(1); }
   const dir = path.join(home, '.teamai');
   fs.mkdirSync(dir, { recursive: true });
   const repo = path.join(dir, 'team');
@@ -113,7 +120,7 @@ def write_exec(path: Path, text: str) -> None:
 
 
 def run(env: dict, *args: str) -> tuple[int, dict | None, str]:
-    r = subprocess.run([sys.executable, str(ADAPTER), *args], env=env, text=True, capture_output=True, check=False)
+    r = subprocess.run([sys.executable, str(ADAPTER), *args], env=env, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
     try:
         doc = json.loads(r.stdout) if r.stdout.strip() else None
     except json.JSONDecodeError:
@@ -208,18 +215,31 @@ with tempfile.TemporaryDirectory() as raw:
 
     # --- install via a fake npm (never -g, into the isolated prefix) --------------
     npm_log = tmp / "npm.log"
-    fake_npm = tmp / "fake-npm.sh"
-    write_exec(
-        fake_npm,
-        "#!/bin/sh\n"
-        f"printf '%s\\n' \"$*\" >> '{npm_log}'\n"
-        f"printf '%s\\n' \"HOME=$HOME\" >> '{npm_log}'\n"
-        "prefix=''\nwhile [ $# -gt 0 ]; do if [ \"$1\" = '--prefix' ]; then prefix=\"$2\"; fi; shift; done\n"
-        f"mkdir -p \"$prefix/node_modules/{PACKAGE}/dist\"\n"
-        f"printf '%s' '{{\"name\":\"{PACKAGE}\",\"version\":\"{PIN}\"}}' > \"$prefix/node_modules/{PACKAGE}/package.json\"\n"
-        f"cp '{tmp / 'stub-index.js'}' \"$prefix/node_modules/{PACKAGE}/dist/index.js\"\n"
-        "exit 0\n",
+    # A Python fake behind a platform wrapper, so the same test runs under Git Bash on Windows.
+    fake_npm_py = tmp / "fake-npm.py"
+    fake_npm_py.write_text(
+        "import json, os, shutil, sys\n"
+        "log, stub, args = sys.argv[1], sys.argv[2], sys.argv[3:]\n"
+        "with open(log, 'a', encoding='utf-8') as fh:\n"
+        "    fh.write(' '.join(args) + '\\n')\n"
+        "    fh.write('HOME=' + os.environ.get('HOME', '') + '\\n')\n"
+        "prefix = ''\n"
+        "for i, a in enumerate(args):\n"
+        "    if a == '--prefix':\n"
+        "        prefix = args[i + 1]\n"
+        f"pkg = os.path.join(prefix, 'node_modules', {PACKAGE!r})\n"
+        "os.makedirs(os.path.join(pkg, 'dist'), exist_ok=True)\n"
+        "with open(os.path.join(pkg, 'package.json'), 'w', encoding='utf-8') as fh:\n"
+        f"    json.dump({{'name': {PACKAGE!r}, 'version': {PIN!r}}}, fh)\n"
+        "shutil.copy(stub, os.path.join(pkg, 'dist', 'index.js'))\n",
+        encoding="utf-8",
     )
+    if os.name == "nt":
+        fake_npm = tmp / "fake-npm.cmd"
+        fake_npm.write_text(f'@"{sys.executable}" "{fake_npm_py}" "{npm_log}" "{tmp / "stub-index.js"}" %*\r\n', encoding="utf-8")
+    else:
+        fake_npm = tmp / "fake-npm.sh"
+        write_exec(fake_npm, f'#!/bin/sh\nexec "{sys.executable}" "{fake_npm_py}" "{npm_log}" "{tmp / "stub-index.js"}" "$@"\n')
     (tmp / "stub-index.js").write_text(STUB_CLI, encoding="utf-8")
     env_npm = dict(base_env, COOP_NPM_BIN=str(fake_npm))
     rc, doc, err = run(env_npm, "install")
@@ -241,12 +261,26 @@ with tempfile.TemporaryDirectory() as raw:
     check(doc["state"] == "not_initialized" and doc["installed_version"] == PIN and doc["initialized"] is False, "status: installed, no isolated config.yaml -> not_initialized")
     rc, doc, _ = run(base_env, "recall", "--query", "watermark")
     check(doc["state"] == "not_initialized", "recall: not initialized -> not_initialized, no CLI run")
+    check(doc.get("detail") == "run: coop teamai init", "not_initialized with a team repo set: the detail says to run init, not to set the repo")
     check(not stub_log.exists(), "no CLI process ran before init")
+
+    # --- init failure is remembered and named by the next status ---------------------
+    stub_mode.write_text("init-fail", encoding="utf-8")
+    rc, doc, _ = run(base_env, "init")
+    check(rc == 0 and doc["state"] == "unavailable" and any("could not read Username" in w for w in doc["warnings"]), "init: CLI failure -> unavailable with the git error, exit 0")
+    state = json.loads((profile / "teamai" / "state.json").read_text(encoding="utf-8"))
+    check("could not read Username" in state.get("last_init_error", ""), "init failure recorded in state.json")
+    rc, doc, _ = run(base_env, "status")
+    check(doc["state"] == "not_initialized" and "last init failed" in doc.get("detail", "") and "coop teamai init" in doc["detail"], "status after a failed init: detail names the failure and the fix")
+    stub_mode.write_text("results", encoding="utf-8")
+    stub_log.unlink(missing_ok=True)
 
     # --- init needs a team repo -----------------------------------------------------
     set_config({"enabled": True, "team_repo": "", "provider": "git"})
     rc, doc, _ = run(base_env, "init")
     check(doc["state"] == "not_initialized" and any("team_repo" in w for w in doc["warnings"]), "init: empty team_repo -> not_initialized with a warning, nothing run")
+    rc, doc, _ = run(base_env, "status")
+    check(doc["state"] == "not_initialized" and "set knowledge.teamai.team_repo" in doc.get("detail", ""), "status without a team repo: detail says to set the repo")
     check(not stub_log.exists(), "init without a repo never starts the CLI")
 
     # --- init against the (stub) sandbox repo ---------------------------------------
@@ -264,6 +298,7 @@ with tempfile.TemporaryDirectory() as raw:
     check(init_rec["api_token"] == "" and init_rec["claude_leak"] == "", "parent TEAMAI_* / CLAUDE_* variables are not inherited")
     check(init_rec["git_prompt"] == "0", "GIT_TERMINAL_PROMPT=0 (no credential prompts)")
     check((iso_home / ".teamai" / "config.yaml").is_file(), "the CLI's data home landed under the isolated home")
+    check(json.loads((profile / "teamai" / "state.json").read_text(encoding="utf-8")).get("last_init_error", "x") == "", "a successful init clears last_init_error")
     check(not (real_home / ".teamai").exists() and not (real_home / ".claude").exists(), "nothing was written to the real home")
     rc, doc, _ = run(base_env, "status")
     check(doc["state"] == "ok" and doc["initialized"] is True and doc["stale"] is True and doc["last_pull_at"] is None, "status: initialized, never pulled -> ok + stale, last_pull_at null")

@@ -125,7 +125,7 @@ if ($teamaiPy) {
       $stopOps = $true
       switch ([string]$doc.state) {
         'ok'              { Coop-Ok "teamai $op`: ok$suffix"; $stopOps = $false }
-        'not_initialized' { Coop-Info ("teamai $op`: not initialized" + $(if ($detail) { $suffix } else { ' (set knowledge.teamai.team_repo, then run: coop teamai init)' })) }
+        'not_initialized' { Coop-Info ("teamai $op`: not initialized" + $(if ($detail) { $suffix } else { ' (run: coop teamai init)' })) }
         default           { Coop-Warn "teamai $op`: $($doc.state)$suffix" 'the trial stays fail-soft; run: coop teamai status' }
       }
       if ($stopOps) { break }
