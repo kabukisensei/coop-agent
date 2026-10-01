@@ -66,14 +66,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   consolidation timeout to 180 s, warns in the session when an automatic
   consolidation fails, and adds `/memory-pin` for rules the agent must not rewrite.
   Existing memory files are read as before (same storage root under
-  `~/.coop/agent`). VM qualification pending.
+  `~/.coop/agent`). VM-qualified 2026-10-01.
 - `@azure-devops/mcp` moves to **2.10.0** (master plan U1, section 6 row). Read-only
   check of both published packages: the same 37 tool names, the same domains (coop
   still passes `core work work-items search`), and `--authentication azcli`
   unchanged, so the generated `azure-devops` entry is the same apart from the pin.
   2.10.0 updates `@azure/identity` and `@azure/msal-node` and adds
   `@azure/msal-node-extensions` and `open` for its own interactive sign-in, which
-  coop does not use. `coop sync` regenerates the entry. VM qualification pending
+  coop does not use. `coop sync` regenerates the entry. VM-qualified 2026-10-01
   (one work-item query through the MCP).
 - `mcp-remote` is gone (master plan U1, section 6.2). It only bridged the Microsoft
   Learn MCP, and `learn.microsoft.com/api/mcp` is unauthenticated Streamable HTTP
@@ -84,7 +84,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   still carries the old `npx mcp-remote` command line migrates on the next sync. The
   package leaves `config/release-manifest.json` and the Microsoft skills manifest's
   dependency list; `coop doctor` and the guardrails already treated the Learn server
-  by name, not by package. VM qualification pending (a live tools-list through the
+  by name, not by package. VM-qualified 2026-10-01 (a live tools-list through the
   adapter).
 - Vibes: seven new working lines (four crew lines in `coop-internal`, three
   client-safe classics in `professional`), and a `{user}` placeholder that
@@ -107,7 +107,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `docs_list-item-types`, `docs_workload-api-spec` is `docs_item-api-spec`, and the
   `onelake_*` commands use hyphens); the guardrails already classify both spellings,
   and `onelake_get-principal-access`, a read the lists had missed, now passes
-  without a prompt. `coop sync` regenerates the entry. VM qualification pending (a
+  without a prompt. `coop sync` regenerates the entry. VM-qualified 2026-10-01 (a
   live `docs` and `onelake` router call).
 - `@juicesharp/rpiv-ask-user-question` moves to **2.12.0** (master plan U1, section 6
   row). The tool the setup wizards call is still `ask_user_question`, with the same
@@ -122,7 +122,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `session_load_failed` / `stale_module_cache` and asks the model to fall back to chat
   rather than counting as a decline. The plan named 2.11.0; 2.12.0 (published
   2026-09-30) differs only in declaring `typebox` as a peer again, so the extension
-  shares Pi's own copy. Peers unchanged, no native code. VM qualification pending
+  shares Pi's own copy. Peers unchanged, no native code. VM-qualified 2026-10-01
   (`/setup-project` and `/setup-docs` dialogs, `Esc` cancellation).
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
