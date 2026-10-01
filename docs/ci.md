@@ -413,10 +413,10 @@ The Windows terminal-workstation acceptance workflow runs `tests\run.ps1` with
 
 The extended block of `tests/run.sh` keeps the gate lane's temp home (#135).
 `tests/fixtures/home-guard.test.ps1` (run by `tests/run.ps1`) is the one exception: it reads the real `~/.local/bin`
-and `~/.coop` on purpose, to prove the fleet paths leave them alone. The extended
-fixtures that run doctor, update or a launch (`doctor`, `inventory`, `first-run`)
-work on a copy of the tree without `.git`, and `fabric-mcp-launch` pre-writes a
-fresh fetch stamp. `update-guard` and `review` sandbox their own home.
+and `~/.coop` on purpose, to prove the fleet paths leave them alone. The fixtures
+that run doctor, update, sync or a launch (`doctor`, `inventory`,
+`fleet-execution`, `first-run`) work on a copy of the tree without `.git` or
+pre-write a fresh fetch stamp, and `review` sandboxes its own home.
 
 As a backstop, `tests/run.sh` records the caller's `~/.coop` and `~/.azure`
 (path, size and modification time of every file) and this checkout's `HEAD`,

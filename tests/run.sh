@@ -302,9 +302,6 @@ bash "$ROOT/tests/seeddocs.test.sh"
 echo "→ coop init --ci (CI pipeline scaffolding) tests"
 bash "$ROOT/tests/ciscaffold.test.sh"
 
-echo "→ doctor project contract validation tests"
-bash "$ROOT/tests/doctor-project.test.sh"
-
 echo "→ BPA runner resolution tests (te bpa run; TE2 must never be invoked)"
 bash "$ROOT/tests/bpa-runner.test.sh"
 
@@ -343,29 +340,13 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   node "$ROOT/tests/fabric-request-headers.test.mjs"
   COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-sql-launcher.test.mjs"
 
-  echo "→ team knowledge sync script tests"
-  bash "$ROOT/tests/sync-knowledge.test.sh"
-
   echo "→ windows owned-kill native evidence probe (Defect A diagnostics)"
   case "$(uname -s 2>/dev/null)" in
     MINGW*|MSYS*|CYGWIN*) pwsh -NoProfile -File "$ROOT/tests/fixtures/win-ownership-probe.ps1" ;;
     *) echo "  – Windows-only probe; skipped on POSIX (covered by the Windows CI legs)" ;;
   esac
 
-  echo "→ truthful inventory (doctor pipx probes / sync postconditions)"
-  bash "$ROOT/tests/inventory.test.sh"
-  echo "→ first-run continuation through plain coop (pty-driven)"
-  case "$(uname -s 2>/dev/null)" in
-    MINGW*|MSYS*|CYGWIN*) echo "  – Python pty/termios is unavailable on native Windows; covered by macOS PTY + Windows launcher tests" ;;
-    *) bash "$ROOT/tests/first-run.test.sh" ;;
-  esac
 
-
-  echo "→ coop review (composite linters + docs compose) tests"
-  bash "$ROOT/tests/review.test.sh"
-
-  echo "→ doctor MCP mode reporting tests"
-  bash "$ROOT/tests/doctor.test.sh"
 
   # The whole file (#133): tests that need pwsh skip themselves without it.
   # tests/run.ps1 keeps its reparse subset, so Windows does not run the file

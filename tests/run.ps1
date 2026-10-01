@@ -802,7 +802,10 @@ print("resume verdict contract OK")
       @{ Name = 'login-present';   Head = 'model login detection ignores Pi''s empty startup auth.json (#167)' },
       @{ Name = 'extensions-lock'; Head = 'extension lockfile applied through the helpers (#152)' },
       @{ Name = 'team-skills';     Head = 'team knowledge skills launch slot (launch-spec --json)' },
-      @{ Name = 'staleness';       Head = 'repo staleness nudge (throttled fetch + behind-count)' })) {
+      @{ Name = 'staleness';       Head = 'repo staleness nudge (throttled fetch + behind-count)' },
+      @{ Name = 'doctor-project';  Head = 'doctor.ps1 project contract rows' },
+      @{ Name = 'first-run';       Head = 'first-run launcher continuation (onboarding gate)' },
+      @{ Name = 'sync-knowledge';  Head = 'team knowledge sync (sync-knowledge.ps1; hang cases in the extended lane)' })) {
     Head $fx.Head
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -829,6 +832,21 @@ print("resume verdict contract OK")
     $hgRc = $LASTEXITCODE; $ErrorActionPreference = $oldErrorAction
     foreach ($name in $homeVarNames) { [Environment]::SetEnvironmentVariable($name, $hgSaved[$name]) }
     if ($hgRc -eq 0) { $hgOut | ForEach-Object { Write-Host $_ } } else { Ko "home-guard fixture failed: $($hgOut | Out-String)" }
+
+    # doctor, inventory and review each run the real scripts many times (about a
+    # minute each): extended lane, as their bash predecessors were.
+    foreach ($fx in @(
+        @{ Name = 'doctor';    Head = 'doctor.ps1 MCP mode, az preflight, login and fleet rows' },
+        @{ Name = 'inventory'; Head = 'truthful inventory (doctor pipx probes / sync postconditions)' },
+        @{ Name = 'review';    Head = 'coop review (composite linters + docs compose)' })) {
+      Head $fx.Head
+      $oldErrorAction = $ErrorActionPreference
+      $ErrorActionPreference = 'Continue'
+      $fxOut = & $psExe -NoProfile -File (Join-Path $root ('tests\fixtures\' + $fx.Name + '.test.ps1')) 2>&1
+      $fxRc = $LASTEXITCODE
+      $ErrorActionPreference = $oldErrorAction
+      if ($fxRc -eq 0) { $fxOut | ForEach-Object { Write-Host $_ } } else { Ko "$($fx.Name) fixture failed: $($fxOut | Out-String)" }
+    }
   }
 
   # --- 9h. Shortcut + user-PATH targets follow a redirected profile (isolated installs)

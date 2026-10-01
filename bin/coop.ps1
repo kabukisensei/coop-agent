@@ -743,7 +743,7 @@ function Invoke-CoopReview {
     $provenanceError = Get-Content -LiteralPath $promotionPath -Raw
     Coop-Err "review run rejected: $provenanceError"; $sqlRc = 2; $daxRc = 2
     $rejected = Join-Path $outdir 'rejected'; New-Item -ItemType Directory -Force -Path $rejected | Out-Null
-    foreach ($run in @($sqlRun, $daxRun)) { if ((Test-Path -LiteralPath $run -PathType Leaf) -and (Get-Item -LiteralPath $run).Length -gt 0) { Move-Item -LiteralPath $run -Destination (Join-Path $rejected ([System.IO.Path]::GetFileName($run))) -Force -ErrorAction Stop } }
+    foreach ($run in @($sqlRun, $daxRun)) { if ((Test-Path -LiteralPath $run -PathType Leaf) -and (Get-Item -LiteralPath $run -Force).Length -gt 0) { Move-Item -LiteralPath $run -Destination (Join-Path $rejected ([System.IO.Path]::GetFileName($run))) -Force -ErrorAction Stop } }
   }
   Remove-Item -LiteralPath $sqlResolutionPath,$daxResolutionPath,$taskResolutionsPath -Force -ErrorAction SilentlyContinue
   
