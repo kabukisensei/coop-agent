@@ -138,6 +138,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Guardrails: a Fabric or Azure DevOps write called through pi-mcp-adapter's
+  **direct tools** now asks for approval like the proxied call. The adapter can
+  register every server tool as `<server>_<tool>` (`directTools` on a server
+  entry, which its `/mcp-adapter` panel can switch on); such a call carries no
+  `{server, tool, args}` envelope, so `fabric_onelake {command:
+  onelake_create-directory}` or `azure-devops_wit_work_item_write` reached the
+  server with no prompt (found on the VM during the v0.25.0 acceptance run; the
+  same shape on 0.24.0). The guardrail now resolves a managed server's direct
+  name to its server and remote tool, so Fabric router commands, deletes and
+  name-based mutations are classified the same way on both paths, and
+  `coop sync` writes `directTools: false` on every managed command server (a
+  user-added `true` is switched back off, as `scriptMode` is). Reads are unchanged.
 - `coop doctor` no longer reports the cached standards as degraded just because the
   15-minute freshness window expired since the last launch. Doctor never refreshes,
   so on an install last launched hours ago the sync row now reads `stale @ last

@@ -717,6 +717,28 @@ await t("a proxied refresh_dataset call asks first and is blocked when declined 
   assert.equal(asked, 1);
   assert.equal(blocked(approved), false);
 });
+await t("direct adapter tools (directTools) are gated like proxied calls", async () => {
+  await handleSessionStart({}, ctx);
+  let asked = 0;
+  const ui = { notify: () => {}, confirm: async () => { asked++; return false; }, select: async (_t, options) => { asked++; return options[options.length - 1]; } };
+  const c = { ...ctx, ui };
+  // Fabric router write by its direct name asks; a delete always asks; a read passes.
+  assert.equal(blocked(await handle({ toolName: "fabric_onelake", input: { command: "onelake_create-directory", workspace: "dev" } }, c)), true);
+  assert.equal(asked, 1);
+  assert.equal(blocked(await handle({ toolName: "fabric_onelake", input: { command: "onelake_delete-file", workspace: "dev" } }, c)), true);
+  assert.equal(asked, 2);
+  assert.equal(blocked(await handle({ toolName: "fabric_onelake", input: { command: "onelake_list-workspaces" } }, c)), false);
+  assert.equal(blocked(await handle({ toolName: "fabric_docs", input: { command: "docs_list-item-types" } }, c)), false);
+  assert.equal(asked, 2);
+  // Azure DevOps 2.10.0 direct write names carry no Fabric noun; the server prefix proves MCP.
+  assert.equal(mcpMutationLabel({ outerTool: "azure-devops_wit_work_item_write", innerTool: "wit_work_item_write", server: "azure-devops" }), "azure-devops/wit_work_item_write");
+  assert.equal(blocked(await handle({ toolName: "azure-devops_wit_work_item_write", input: { project: "P", fields: {} } }, c)), true);
+  assert.equal(blocked(await handle({ toolName: "azure-devops_wit_query", input: { project: "P" } }, c)), false);
+  // Headless: the direct write fails closed.
+  assert.equal(blocked(await handle({ toolName: "fabric_core", input: { command: "core_create-item" } }, { cwd: ctx.cwd, hasUI: false })), true);
+  // coop's own native fallback tool is not an adapter direct tool.
+  assert.equal(effectiveMutationTarget({ toolName: "fabric_sql_query", input: { sql: "select 1" } }).server, undefined);
+});
 await t("mcpScript is blocked: its MCP calls bypass the tool_call hook", async () => {
   let asked = 0;
   const ui = { confirm: async () => { asked++; return true; }, notify: () => {} };
@@ -1271,7 +1293,9 @@ await t("grant status and fixed audit labels contain no token, forged scope, or 
 await t("effectiveMutationTarget derives the inner remote tool for proxied MCP calls", () => {
   assert.deepEqual(effectiveMutationTarget({ toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace", args: "{}" } }), { outerTool: "mcp", innerTool: "fabric_delete_workspace", server: "fabric" });
   assert.deepEqual(effectiveMutationTarget({ toolName: "mcp", input: { tool: "powerbi_update_dataset" } }), { outerTool: "mcp", innerTool: "powerbi_update_dataset", server: undefined });
-  assert.deepEqual(effectiveMutationTarget({ toolName: "fabric_delete_workspace", input: {} }), { outerTool: "fabric_delete_workspace" });
+  // A direct adapter tool (`directTools`) resolves to its server and remote tool.
+  assert.deepEqual(effectiveMutationTarget({ toolName: "fabric_delete_workspace", input: {} }), { outerTool: "fabric_delete_workspace", innerTool: "delete_workspace", server: "fabric" });
+  assert.deepEqual(effectiveMutationTarget({ toolName: "my_tool", input: {} }), { outerTool: "my_tool" });
   assert.deepEqual(effectiveMutationTarget({ toolName: "read", input: { path: ".env" } }), { outerTool: "read" });
 });
 await t("mcpMutationLabel classifies proxied inner tools, not the outer 'mcp' wrapper", () => {

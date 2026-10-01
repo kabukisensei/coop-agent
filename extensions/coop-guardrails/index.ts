@@ -793,6 +793,23 @@ function fabricRouterCall(event: any): { router: string; command: string; kind: 
   return { router: routed.router, command: shown, kind: "always-ask" };
 }
 
+// pi-mcp-adapter can also register every server tool directly (`directTools` on a
+// server entry, which its /mcp-adapter panel can switch on) as `<server>_<tool>`.
+// Those calls carry no {server, tool, args} envelope, so without this mapping a
+// direct `fabric_onelake {command: onelake_create-directory}` or
+// `azure-devops_wit_work_item_write` looked like an unknown tool and never reached
+// the Fabric router or name-based mutation labels. Coop's generated config turns
+// directTools off; this keeps the gate when a user turns it back on.
+// Longer names first so `fabric-sqlendpoint_…` is not read as server `fabric`.
+const DIRECT_TOOL_SERVERS = ["fabric-sqlendpoint", "powerbi-modeling-mcp", "microsoft-learn", "azure-devops", "fabric"];
+function directToolServer(outerTool: string): string | null {
+  if (outerTool === FABRIC_SQL_FALLBACK_TOOL) return null; // coop's own native tool
+  for (const server of DIRECT_TOOL_SERVERS) {
+    if (outerTool.length > server.length + 1 && outerTool.startsWith(server + "_")) return server;
+  }
+  return null;
+}
+
 /** Match the adapter's two dispatch shapes. Namespace wrappers bind their server
  * in the registered tool name; input.server cannot override that binding. Keep
  * unknown namespaces verbatim rather than guessing which underscores were hyphens. */
@@ -803,7 +820,12 @@ function normalizeMcpCall(event: any): { target: MutationTarget; args: any; prox
   // Direct MCP tools may also start with mcp__; only an actual {tool, args}
   // envelope carries a dispatched inner operation. Otherwise retain direct args.
   const proxy = (outerTool === "mcp" || !!namespace) && typeof input?.tool === "string";
-  if (!proxy) return { target: { outerTool }, args: input, proxy: false };
+  if (!proxy) {
+    const direct = directToolServer(outerTool);
+    if (!direct) return { target: { outerTool }, args: input, proxy: false };
+    const args = input && typeof input === "object" && !Array.isArray(input) ? input : undefined;
+    return fabricRouted({ target: { outerTool, innerTool: outerTool.slice(direct.length + 1), server: direct }, args, proxy: false });
+  }
   const server = namespace
     ? (namespace === "fabric_sqlendpoint" ? MANAGED_SQL_SERVER : namespace)
     : typeof input?.server === "string" ? input.server : undefined;
@@ -860,7 +882,8 @@ export function mcpMutationLabel(toolName: string | { outerTool: string; innerTo
   if (!MCP_WRITE_VERB.test(name)) return null;
   // A proxied call's server identity proves this is MCP; remote tool names need not
   // repeat a Fabric/Power BI noun (e.g. azure-devops/create_work_item).
-  if ((target.outerTool === "mcp" || target.outerTool.startsWith("mcp__")) && target.innerTool && target.server) return mutationName(target);
+  const viaAdapter = target.outerTool === "mcp" || target.outerTool.startsWith("mcp__") || !!directToolServer(target.outerTool);
+  if (viaAdapter && target.innerTool && target.server) return mutationName(target);
   if (!MCP_TOOLISH.test(name)) return null;
   return mutationName(target);
 }
