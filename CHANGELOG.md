@@ -168,6 +168,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   before the source is marked degraded (a timeout is not retried), and the
   failure detail now carries git's last stderr line, so a transient clone
   failure on a loaded CI runner neither fails the live-sync test nor hides why.
+- `tests/standards-lock-simple.test.mjs` (extended lane) no longer fails on macOS
+  with `timed out waiting for .../serialized/A-entered`: its fixture root is now
+  resolved to its real path, as the other standards tests do, because macOS keeps
+  `tmpdir()` under the `/var -> /private/var` symlink that the standards
+  storage-root check rejects, so the lock worker exited at once and the marker
+  never appeared. The wait now also fails at once with the worker's stderr when
+  the worker exits first, instead of reporting a timeout.
 - Manual `/compact` and automatic compaction no longer time out over a WebSocket
   when Pi's Transport setting is `sse` (#236). Pi 0.87.1 builds its compaction
   request without the session's transport, so the OpenAI Codex provider fell back
