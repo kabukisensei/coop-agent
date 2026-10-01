@@ -178,7 +178,7 @@ shows anything still missing.
 | Component | How it's provided |
 | --- | --- |
 | **Pi** | installed globally via `npm` |
-| **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits), `pi-web-access` (web search/fetch — read-only), `@juicesharp/rpiv-ask-user-question` (structured questions) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
+| **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits), `pi-web-access` (web search/fetch — read-only), `@juicesharp/rpiv-ask-user-question` (structured questions), `@xl0/pi-lovely-rename` (automatic session names) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
 | **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `sql_review`/`dax_review`/`data_doc`/`sql_impact`/`bpa_review` + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
 | **Standalone tools** — `coop-data-doc`, `coop-sql-review`, `coop-dax-review` | installed via `pipx` from PyPI |
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
@@ -722,7 +722,11 @@ duplicated the bar). The footer shows `⬢ Cooptimize · <branch>` on the left a
 `<model> · ctx N% · tokens · $cost · <plan usage limits>` on the right, in plain text +
 common Unicode (no Nerd Font glyphs). It surfaces other extensions' status text (e.g.
 `pi-better-openai`'s plan usage limits / 5h + 7d windows) via
-`footerData.getExtensionStatuses()`, so everything is in one clean bar. The splash is
+`footerData.getExtensionStatuses()`, so everything is in one clean bar. For that to
+work, `coop sync` (also run by `coop install` and `coop update`) keeps
+`pi-better-openai`'s own footer in `status` mode in `~/.coop/agent/extensions/pi-better-openai.json`;
+its default `replace` mode installs a second footer that wipes coop's. A deliberate
+`off` is left alone. The splash is
 the truecolor block-art Cooptimize logo (uniform-padded, width-robust). Coop also owns
 the terminal tab title (`coop - <session> - <folder>`) so Pi's `π` branding does not
 reappear after startup or a session rename. The tab icon itself belongs to the terminal
