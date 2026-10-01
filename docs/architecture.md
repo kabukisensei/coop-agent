@@ -118,6 +118,9 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      understanding (read-only; complements the Microsoft Learn MCP).
    - `@juicesharp/rpiv-ask-user-question` — lets the model put a structured,
      typed-option question to the user instead of guessing (fits consent rounds).
+   - `@xl0/pi-lovely-rename` — names an unnamed session after three user turns
+     (`/rename` regenerates; a manual `/name` always wins). The name shows in
+     coop's footer and terminal title.
    - Optional: `pi-permissions` (finer per-tool permission gating). *(`@aliou/pi-guardrails`
      was dropped — pinned to the deprecated Pi and superseded by `coop-guardrails`.)*
 
