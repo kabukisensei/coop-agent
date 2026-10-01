@@ -23,13 +23,15 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 [ "$(coop_manifest_get python_tools.coop-data-doc)" = "1.2.0" ] && ok "coop_manifest_get python_tools.coop-data-doc" || ko "coop_manifest_get python_tools.coop-data-doc"
 [ -z "$(coop_manifest_get missing.key)" ] && ok "coop_manifest_get missing key returns empty" || ko "missing key should return empty"
 [ "$(coop_manifest_extension_spec pi-mcp-adapter)" = "npm:pi-mcp-adapter@3.3.0" ] && ok "literal extension spec: pi-mcp-adapter" || ko "extension spec mismatch"
-[ "$(coop_manifest_extension_spec @juicesharp/rpiv-ask-user-question)" = "npm:@juicesharp/rpiv-ask-user-question@1.20.0" ] && ok "literal scoped extension spec" || ko "scoped extension spec mismatch"
+[ "$(coop_manifest_extension_spec @juicesharp/rpiv-ask-user-question)" = "npm:@juicesharp/rpiv-ask-user-question@2.12.0" ] && ok "literal scoped extension spec" || ko "scoped extension spec mismatch"
 "$(command -v python3 2>/dev/null || command -v python)" - "$ROOT" <<'PY' || fail=1
 import json, pathlib, sys
 r=pathlib.Path(sys.argv[1]); m=json.load(open(r/'config/release-manifest.json'))
 assert m['coop_version']==(r/'VERSION').read_text().strip()
-for p in ['@microsoft/fabric-mcp','@azure-devops/mcp','mcp-remote']:
+for p in ['@microsoft/fabric-mcp','@azure-devops/mcp']:
     assert p in m['mcp_servers']
+# Microsoft Learn is a direct HTTP entry (U1): the mcp-remote bridge is gone.
+assert 'mcp-remote' not in json.dumps(m)
 # powerbi-mcp-server ignores --readonly and exposes refresh_dataset (#93): retired.
 assert 'powerbi-mcp-server' not in json.dumps(m)
 assert '@microsoft/powerbi-modeling-mcp' in m['npm_tools']
@@ -49,7 +51,8 @@ for p in m['npm_tools']:
 import importlib.util
 spec=importlib.util.spec_from_file_location('mcp_config',r/'lib/mcp_config.py'); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 all_versions={**m['extensions'],**m['npm_tools'],**m['mcp_servers']}
-assert set(mod.SERVER_PACKAGES.values()) <= set(all_versions)
+# Direct HTTP servers (value None) need no package; every npm-backed one must be pinned.
+assert {v for v in mod.SERVER_PACKAGES.values() if v} <= set(all_versions)
 assert json.load(open(r/'config/mcp.example.json'))['mcpServers']=={}
 # Any retained tested_with documentation must equal manifest, never own a second value.
 spec=importlib.util.spec_from_file_location('coop_yaml',r/'lib/_yaml.py'); y=importlib.util.module_from_spec(spec); spec.loader.exec_module(y)

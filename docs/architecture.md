@@ -84,6 +84,9 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      human-hidden (`display:false`) note — once per folder — telling the agent to
      consult that lineage **before** touching any SQL/DAX/semantic-model object;
      it stays silent when no built docs exist (the docs are an aid, not a gate).
+     The same hook hands the agent the Warehouse target the project contract
+     pins, so a simple read goes straight to `fabric-sqlendpoint` with the
+     contract ids instead of rediscovering them (silent without a contract target).
      The extension also hosts the in-agent project contract wizard
      (`/setup-project` and the on-demand Start Here menu)
      plus the `coop-data-doc` setup wizard built on
@@ -158,7 +161,8 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      `coop sync` removes the entry it generated; `coop doctor` warns about a
      user-owned one.)
    - `azure-devops` — `@azure-devops/mcp <org>` (organization-gated).
-   - `microsoft-learn` — `learn.microsoft.com/api/mcp` via `mcp-remote`
+   - `microsoft-learn` — `learn.microsoft.com/api/mcp`, a direct Streamable HTTP
+     entry the adapter speaks itself (no bridge package)
      (always-current Microsoft docs).
 
    (`context-mode` is NOT an MCP server — it is a native Pi extension from the

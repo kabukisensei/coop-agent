@@ -18,6 +18,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Standards: a prompt that says PBIX, PBIP or PBIR now reaches the Power BI File
+  Types article ("Convert the Sales report PBIX to a PBIP project"), the one
+  coop-standards article no realistic prompt reached before. The classifier treats
+  those words as "file", the way it already reads "dim" as dimension and "proc" as
+  procedure; two golden rows stop being known failures.
+- Simple Fabric reads go straight to the contract target. At session start coop
+  now hands the agent the Warehouse/Lakehouse ids the nearest `.coop/project.yml`
+  pins (`fabric.default_workspace_id`, `fabric.default_sql_endpoint`) in a hidden
+  note, and the guardrails prompt plus the `team-knowledge` skill say a one-row
+  query, listing, or connection check uses those ids directly — no team-knowledge
+  search, memory search, skill load, or Fabric catalog discovery first. Seen on
+  0.24.0: a `TOP 1` read ran two knowledge searches, a memory search, and MCP
+  discovery before the query although the contract held the ids. The approval
+  prompt before Warehouse SQL is unchanged.
 - Microsoft skills catalog (master plan U1, the Fabric catalog row):
   `microsoft/skills-for-fabric` moves from v0.3.10 to **v0.3.18**
   (`6c11ad58c25992e5d1435ce7cd80d217d5598a31`) and the baseline now enables the
@@ -53,6 +67,63 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   consolidation fails, and adds `/memory-pin` for rules the agent must not rewrite.
   Existing memory files are read as before (same storage root under
   `~/.coop/agent`). VM qualification pending.
+- `@azure-devops/mcp` moves to **2.10.0** (master plan U1, section 6 row). Read-only
+  check of both published packages: the same 37 tool names, the same domains (coop
+  still passes `core work work-items search`), and `--authentication azcli`
+  unchanged, so the generated `azure-devops` entry is the same apart from the pin.
+  2.10.0 updates `@azure/identity` and `@azure/msal-node` and adds
+  `@azure/msal-node-extensions` and `open` for its own interactive sign-in, which
+  coop does not use. `coop sync` regenerates the entry. VM qualification pending
+  (one work-item query through the MCP).
+- `mcp-remote` is gone (master plan U1, section 6.2). It only bridged the Microsoft
+  Learn MCP, and `learn.microsoft.com/api/mcp` is unauthenticated Streamable HTTP
+  that `pi-mcp-adapter` speaks directly. The generated `microsoft-learn` entry is now
+  `{"url": "https://learn.microsoft.com/api/mcp", "auth": false, "lifecycle": "lazy",
+  "requestTimeoutMs": 60000}`, the same shape as `fabric-sqlendpoint`, and like that
+  entry it is replaced wholesale on every `coop sync`, so a coop-managed entry that
+  still carries the old `npx mcp-remote` command line migrates on the next sync. The
+  package leaves `config/release-manifest.json` and the Microsoft skills manifest's
+  dependency list; `coop doctor` and the guardrails already treated the Learn server
+  by name, not by package. VM qualification pending (a live tools-list through the
+  adapter).
+- Vibes: seven new working lines (four crew lines in `coop-internal`, three
+  client-safe classics in `professional`), and a `{user}` placeholder that
+  `coop-powerline` fills from the COOP profile name, else the OS login, else `Dave`.
+  Tips now cover the commands added since the last pass (`/setup-project`,
+  `/standards-status`, `/coop-live-read`, `/coop-approvals`, `/share-learning`,
+  `/mcp-adapter`, `/export`, `/resume`, `/session`, and the pi-hermes-memory 0.9.9
+  commands `/memory-insights`, `/memory-pin`, `/memory-preview-context`,
+  `/memory-consolidate`, `/memory-switch-project`) and per-repo skill enablement
+  via `.coop/project.yml`; the vague skill-load-conflicts tip is gone. The vibes
+  test now also checks `tips.txt`, the new commands, and keeps `{user}` and
+  profanity out of the client-safe tips.
+- `@microsoft/fabric-mcp` moves to **1.4.0** (master plan U1, section 6 row). Checked
+  offline against both binaries: in coop's `--mode namespace`, 1.4.0 lists no tools
+  at all unless each namespace is named, where 1.3.0 listed its four routers by
+  default. The generated `fabric` entry now passes `--namespace docs --namespace
+  onelake --namespace core --namespace datafactory`, so both versions expose the same
+  four routers (`docs`, `onelake`, `core`, `datafactory`) with the same commands.
+  1.4.0 spells its commands in kebab-case (`docs_workloads` is now
+  `docs_list-item-types`, `docs_workload-api-spec` is `docs_item-api-spec`, and the
+  `onelake_*` commands use hyphens); the guardrails already classify both spellings,
+  and `onelake_get-principal-access`, a read the lists had missed, now passes
+  without a prompt. `coop sync` regenerates the entry. VM qualification pending (a
+  live `docs` and `onelake` router call).
+- `@juicesharp/rpiv-ask-user-question` moves to **2.12.0** (master plan U1, section 6
+  row). The tool the setup wizards call is still `ask_user_question`, with the same
+  parameters and the same answer envelope, and cancelling still returns the single
+  "User declined to answer questions" line. Since 1.20.0: every question ends in a
+  `Type something.` free-text row (the "Chat about this" row and its `kind: "chat"`
+  answer are gone); `n` adds a note to any question, or a global note on the Submit
+  tab; `Ctrl+]` collapses the dialog to read the transcript (`collapseKey` in
+  `~/.config/rpiv-ask-user-question/config.json`, `"off"` disables it); non-interactive
+  runs drop the tool from the model's list instead of failing every call; RPC hosts get
+  their native dialogs; and a dialog that fails to load reports
+  `session_load_failed` / `stale_module_cache` and asks the model to fall back to chat
+  rather than counting as a decline. The plan named 2.11.0; 2.12.0 (published
+  2026-09-30) differs only in declaring `typebox` as a peer again, so the extension
+  shares Pi's own copy. Peers unchanged, no native code. VM qualification pending
+  (`/setup-project` and `/setup-docs` dialogs, `Esc` cancellation).
 - The test gate runs unchanged on a developer Mac. Test fixture roots resolve to
   their real path, since macOS keeps the temp dir under the `/var` -> `/private/var`
   symlink that the standards storage-root check rejects, and the standards
@@ -64,6 +135,61 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   Pi 0.87.1 + `pi-mcp-adapter` 3.3.0 as done at tag v0.24.0 (VM run passed,
   Warehouse approval prompt verified live) with #175 and #176 in review as
   drafts and #170 held; row 7 records S5 merged (#161). No scope or order change.
+
+### Fixed
+
+- `coop doctor` no longer reports the cached standards as degraded just because the
+  15-minute freshness window expired since the last launch. Doctor never refreshes,
+  so on an install last launched hours ago the sync row now reads `stale @ last
+  checked N min ago; standards refresh at every coop launch, or now with: coop sync`
+  and the domain rows stay green as "last known good @ <revision>". A refresh that
+  actually failed reads `failed` with the reason, and every last-known-good row is
+  then a warning as before. `/standards-status` JSON gains `last_attempt_ms`,
+  `last_attempt_ok` and `detail`.
+
+- Machines whose only Python is 3.14 no longer get a Fabric CLI they cannot fix.
+  The Python prerequisite row (install and `coop doctor`) now passes with any pipx
+  that can fetch a standalone Python (1.5+, both flag spellings; it accepted only
+  the 1.12+ spelling before) and counts a pipx that is installed but not on PATH
+  yet, as the pipx row already did. `coop doctor --fix` builds the Fabric CLI with
+  the same interpreter plan as install and update — a local Python 3.10–3.13, or
+  pipx's standalone 3.12 — instead of a bare `pipx install` that inherited 3.14
+  and failed, and it rebuilds an existing Fabric environment that runs 3.14
+  (re-injecting `fabric-cicd`). On Windows, when pipx is too old to fetch a
+  Python, the row prints the admin-free repair (`python -m pip install --user
+  --upgrade pipx`) instead of a winget Python install, and
+  `coop install --prereqs auto` runs it. Bash and PowerShell in parity.
+- `coop_version_lt` read a two-part version `X.Y` as `X.Y.Y`, so Python 3.14.2
+  counted as older than 3.14 and passed the Fabric check it should have failed
+  (and 3.10.5 counted as older than 3.10). Missing parts now read as 0.
+- `coop install --prereqs auto` ran a two-step fix (`a then b`) as the single
+  command `ab`: the newline that split the steps was lost inside a heredoc.
+- `coop doctor` no longer reports a pipx environment as "stale/corrupt" when the
+  executable it resolved on PATH is not the pipx one. A `pip install` copy, another
+  tool manager's shim, or a leftover launcher earlier on PATH (a teammate's
+  `coop-data-doc` reported 1.1.1 while the pipx venv held 1.2.0) is now a PATH
+  shadow: the row names the resolved path and both versions, and the hint says to
+  remove that copy or put pipx's bin dir first on PATH. The old hint,
+  `pipx install --force`, rebuilt a venv that was never wrong and could not clear
+  the row. When pipx has no copy at all, the row says so and leads with the pinned
+  `pipx install`. The "Standalone Coop tools" section no longer gives such a copy a
+  green tick. When pipx has the venv but nothing answers on PATH, the row says
+  "not on PATH" with an `ensurepath` / `reinstall` hint, and a launcher that runs
+  but prints nothing is named with its path, instead of the old catch-all
+  "produced no version" with a `--force` hint. Genuine metadata/CLI disagreement
+  inside the pipx venv is unchanged.
+- A coop installed into a redirected profile (HOME / USERPROFILE / LOCALAPPDATA /
+  APPDATA pointed at a sandbox folder, as the acceptance harness and the VM
+  runbooks do) no longer spills onto the real account. `coop install` wrote the
+  "coop" Desktop and Start Menu shortcuts through the Windows shell folders, so a
+  sandbox install rewrote the real shortcuts to point at the sandbox, and it
+  appended the sandbox launcher folder to the real user PATH in the registry.
+  Shortcuts now land in the redirected profile's own Desktop and Start Menu, the
+  persistent user PATH is left alone (the launcher is on PATH for that run only,
+  and the install says so), and `coop update` / `coop uninstall` look in the same
+  folders. A normal install still uses the shell folders, so a OneDrive-redirected
+  Desktop keeps working. Windows only; the bash installer never had the problem.
+
 
 ## [0.24.0] — 2026-09-30
 

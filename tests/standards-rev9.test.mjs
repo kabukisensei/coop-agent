@@ -293,6 +293,26 @@ try {
     assert.equal(support.standards.canonical_remote, CANONICAL_REMOTE_STATE);
   });
 
+  test("STD-10b", "Doctor tells an expired freshness window apart from a failed refresh", () => {
+    // Doctor never refreshes. An install last launched longer ago than freshness_seconds
+    // has a stale window but a healthy last attempt; only a failed attempt is a warning.
+    const saved = readFileSync(state, "utf8");
+    const env = { ...process.env, PATH: reviewerFreePath(), COOP_STANDARDS_ROOT: cache, COOP_STANDARDS_STATE: state, COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "support-home"), NO_COLOR: "1" };
+    const doctorLines = () => execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
+    const doctorOut = (name) => { const d = spawnSync("bash", [join(ROOT, "scripts", "doctor.sh")], { cwd: tmp, encoding: "utf8", env: doctorEnv(env, name) }); return `${d.stdout}\n${d.stderr}`; };
+    try {
+      const fresh = JSON.parse(saved);
+      writeFileSync(state, JSON.stringify({ ...fresh, last_successful_check_ms: Date.now() - 20 * 60 * 1000 }));
+      const stale = doctorLines();
+      assert.match(stale, /source\tcanonical-sync\tstale\tlast checked 20 min ago; standards refresh at every coop launch, or now with: coop sync/);
+      assert.match(doctorOut("doctor-stale-home"), /✓ source canonical-sync: stale @ last checked 20 min ago/);
+      writeFileSync(state, JSON.stringify({ ...fresh, ok: false, degraded: true, detail: "canonical remote unavailable or authentication required", last_attempt_ms: Date.now() }));
+      const failed = doctorLines();
+      assert.match(failed, /source\tcanonical-sync\tfailed\tcanonical remote unavailable or authentication required; run: coop sync/);
+      assert.match(doctorOut("doctor-failed-home"), /! source canonical-sync: failed — canonical remote unavailable/);
+    } finally { writeFileSync(state, saved); }
+  });
+
   test("SECURITY", "project traversal, POSIX/Windows absolute paths, symlink escape, and non-files are rejected", () => {
     const project = join(tmp, "hostile-project"); mkdirSync(join(project, ".coop"), { recursive: true });
     const outside = join(tmp, "sensitive.md"); writeFileSync(outside, "SECRET-MUST-NOT-BE-READ");
