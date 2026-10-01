@@ -612,6 +612,22 @@ function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
 # live) or `npm ci` failed (the caller's install then repairs the tree). Mirror
 # of coop_apply_extensions_lock. Lifecycle scripts run as they do for a plain
 # install (better-sqlite3, context-mode and sharp build or fetch their binaries).
+# SHA-256 of a file as an upper-case hex string, through .NET rather than
+# Get-FileHash: Windows PowerShell 5.1 started by coop.cmd from a PowerShell 7
+# window inherits pwsh's PSModulePath and cannot load Microsoft.PowerShell.Utility's
+# Get-FileHash ("not recognized", seen on the VM 2026-10-01); the .NET type is
+# always there. Returns '' for a missing file.
+function Get-CoopFileSha256([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  $stream = [System.IO.File]::OpenRead($Path)
+  try {
+    return ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '')
+  } finally {
+    $stream.Dispose(); $sha.Dispose()
+  }
+}
+
 # True when the shipped lock applies to this install (lock present, installed Pi
 # is the manifest's Pi) but the tree does not carry it yet: no package-lock.json
 # beside the tree's package.json, or one that differs from
@@ -621,13 +637,13 @@ function Test-CoopExtensionsLockPending([string]$AgentDir, [string]$PiVersion) {
   if (-not (Test-Path -LiteralPath $lock)) { return $false }
   $want = Coop-ManifestGet -Key 'pi.version'
   if (-not $want -or $PiVersion -ne $want) { return $false }
-  $a = (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash
+  $a = Get-CoopFileSha256 $lock
   # A lock this machine could not install is not retried until a new one ships.
   $failed = Join-Path $AgentDir 'npm\.coop-lock-failed.json'
-  if ((Test-Path -LiteralPath $failed) -and ((Get-FileHash -LiteralPath $failed -Algorithm SHA256).Hash -eq $a)) { return $false }
+  if ((Test-Path -LiteralPath $failed) -and ((Get-CoopFileSha256 $failed) -eq $a)) { return $false }
   $treeLock = Join-Path $AgentDir 'npm\package-lock.json'
   if (-not (Test-Path -LiteralPath $treeLock)) { return $true }
-  $b = (Get-FileHash -LiteralPath $treeLock -Algorithm SHA256).Hash
+  $b = Get-CoopFileSha256 $treeLock
   return ($a -ne $b)
 }
 
@@ -644,7 +660,7 @@ function Install-CoopExtensionsLock([string]$AgentDir, [string]$Npm, [string]$Pi
   # A lock this machine already failed to install is not retried (even on a
   # wiped tree) until a new lock ships; the caller's plain install converges.
   $failed = Join-Path $npmDir '.coop-lock-failed.json'
-  if ((Test-Path -LiteralPath $failed) -and ((Get-FileHash -LiteralPath $failed -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash)) { return $false }
+  if ((Test-Path -LiteralPath $failed) -and ((Get-CoopFileSha256 $failed) -eq (Get-CoopFileSha256 $lock))) { return $false }
   try { Copy-Item -LiteralPath $lock -Destination $treeLock -Force } catch { return $false }
   # Lifecycle scripts run as in a plain install. npm builds the nodes it installs
   # from the lock entries, so lib/extlock.js carries `gypfile: false` into the
