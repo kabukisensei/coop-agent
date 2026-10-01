@@ -124,6 +124,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Manual `/compact` and automatic compaction no longer time out over a WebSocket
+  when Pi's Transport setting is `sse` (#236). Pi 0.87.1 builds its compaction
+  request without the session's transport, so the OpenAI Codex provider fell back
+  to `auto` and opened a WebSocket for the summary even after `/settings` was set
+  to `sse`, failing with `WebSocket idle timeout after 300000ms` on a large
+  context. `extensions/coop-tools` now answers `session_before_compact` with a
+  summary it generates through Pi's own `compact()` over the configured SSE
+  transport (same model, thinking level, credentials, idle timeout and retry
+  policy; manual, threshold and overflow compaction alike). With any other
+  transport, a model whose provider ignores `transport`, or a Pi without the
+  seam, Pi's own compaction runs unchanged; a provider failure during the SSE
+  summary surfaces as one `session_compact_failed` with the history intact.
+
 - `coop sync` no longer re-injects `fabric-cicd` and `pyodbc` into the Fabric
   CLI environment on every run (#186). A library already at its manifest pin is
   left alone, so a converged sync makes no `pipx inject` call and needs no
