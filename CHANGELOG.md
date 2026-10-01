@@ -44,6 +44,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   for the same object. The fixed-context budget gate moves from 7000 to 7200
   estimated tokens for the new tool's compact metadata (`scripts/check-context-budget.*`).
 
+- Verify with data (master plan section 8 item 5, row SQ5). The `coop-workflow`
+  skill's live-data section and the `/slice-next` prompt now make a SQL slice's
+  checks concrete: `sql_impact` for the dependents, a row count and a bounded sample
+  through `fabric_sql_query` on the default dev target before the edit, the same
+  queries after it, and the difference as the passing check; writes go only to dev,
+  test asks first, production is never a verify target.
+
 - The SQL executor reads `sql_targets:` (master plan section 8 item 1, row SQ2).
   `lib/fabric_sql_query.py` is now `lib/sql_query.py` (the in-agent tool keeps its
   `fabric_sql_query` name and contract). With a contract `sql_targets:` section it
