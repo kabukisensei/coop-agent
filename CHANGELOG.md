@@ -7,6 +7,28 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Shared token/MCP checks; Doctor stays observational (master plan S4, row 8,
+  issue #224). The retired `coop web` sign-in window is gone from `lib/common.ps1`
+  (`Invoke-CoopAz` / `Invoke-CoopAzPreflight` lost `-NewWindow`, and
+  `Start-CoopPsWindow` / `ConvertTo-CoopPsLiteral` with it); the launch preflight
+  and `coop doctor` print one shared hint pair (`Get-CoopAzLoginHint` /
+  `Get-CoopAzTokenHint`), and a test asserts `Test-CoopAzAuthError`'s markers equal
+  the Node helper's. `lib/fabric_token_runner.mjs` is the one launch-frame
+  validator: `Get-CoopFabricMcpToken` only splits the validated frame and keeps the
+  state-to-message table, and the warning states live once as `WARNING_STATES` in
+  `lib/warehouse_mcp.py` (a test pins the runner's enum to it). In Python,
+  `managed_sqlendpoint_entry` is the one ownership rule (doctor, `launch-token`,
+  `fabric_sql_query`), `ITEM_URL_RE` the one item-URL shape, `select_target` is an
+  alias of `project_target`, `integration_enabled` the one integrations-flag rule
+  (`lib/mcp_config.py` reuses it), and `jwt_identity` a strict shared JWT identity
+  mirroring `fabric_request_headers.mjs` (`fabric_sql_query` dropped its lenient
+  copy and its own `SQL_RESOURCE`). `coop doctor` resolves the client tenant once
+  through `Get-CoopTenant`: the Warehouse row names it only when it is that
+  resolved tenant, and the project-contract row reports a TODO `fabric.tenant_id`
+  as empty and a non-GUID/non-domain value as invalid. `doctor_status` now also
+  returns `config_state`, `probe_state` and `usable`, and the Warehouse row says
+  `usable`, `configured (not probed)` or `probed: <state>`; the existing `state`
+  values and `registered` string are unchanged.
 - One install/update/sync convergence path (master plan S2, row 8, issue #222).
   `lib/common.ps1` now owns the fleet: `Get-CoopFleetPlan` is the one
   manifest-driven list (Pi, extensions, the Coop tools, the Fabric CLI, the npm

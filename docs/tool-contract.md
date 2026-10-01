@@ -414,10 +414,20 @@ coop's own mints, where `<id>` must be a GUID or a domain name with a dot, and
 `lib/fabric_request_headers.mjs <endpoint URL>` for per-request headers.
 The general `fabric` MCP (`@microsoft/fabric-mcp`) signs in with az's default account;
 coop cannot give it a tenant, and `coop doctor` says so on its row.
-Doctor treats config registration as only one state; live tools-list discovery
-can still report `auth_required`, `unavailable`, `tool_missing`, or
-`target_invalid`. Live dev/test verification remains pending on the signed-in
-user, tenant, target, and Fabric permissions.
+Doctor is observational: `warehouse_mcp.py doctor-json` returns `state` (the
+one-word verdict the row prints; `registered` means the config, and when probed
+the live checks, passed), `config_state` (what the config alone proves:
+`registered`, `unavailable` or `target_invalid`), `probe_state` (`not_probed`,
+`ok`, or the first failing live step: `auth_required`, `token_timeout`,
+`token_output_invalid`, `azure_cli_unavailable`, `token_launch_failed`,
+`token_command_failed`, `target_invalid`, `tool_missing` or `unavailable`) and
+`usable` (true only when the probe ran, the target validated and a compatible
+SQL tool was listed). The `coop doctor` row says `usable`, `configured (not
+probed)` or `probed: <state>` accordingly, and names the probe tenant only when
+it is the one `Get-CoopTenant` resolves. The launch's `launch-token` frames are
+validated once, by `lib/fabric_token_runner.mjs`, against `WARNING_STATES` in
+`lib/warehouse_mcp.py`. Live dev/test verification remains pending on the
+signed-in user, tenant, target, and Fabric permissions.
 
 For a verified managed target, one approved session scope covers matching single
 `SELECT` calls with a literal `TOP` bound, including bracketed names such as

@@ -118,7 +118,12 @@ try {
       'if /i "%~nx1"=="warehouse_mcp.py" goto warehouse',
       'exit /b 1',
       ':warehouse',
+      'if /i "%~2"=="tenant" goto tenant',
       'echo {"state":"%COOP_WAREHOUSE_TEST_STATE%","target":{"scope":"global"},"tenant":"%COOP_WAREHOUSE_TEST_TENANT%"}',
+      'exit /b 0',
+      ':tenant',
+      'if "%COOP_WAREHOUSE_TEST_TENANT%"=="" exit /b 1',
+      'echo %COOP_WAREHOUSE_TEST_TENANT%',
       'exit /b 0'
     ) -join "`r`n") + "`r`n", [System.Text.Encoding]::ASCII)
   } else {
@@ -128,6 +133,7 @@ try {
       'case "${1:-}" in',
       '  --version) echo "Python 3.12.0"; exit 0 ;;',
       '  *warehouse_mcp.py)',
+      '    if [ "${2:-}" = tenant ]; then [ -n "${COOP_WAREHOUSE_TEST_TENANT:-}" ] || exit 1; printf ''%s\n'' "$COOP_WAREHOUSE_TEST_TENANT"; exit 0; fi',
       '    printf ''{"state":"%s","target":{"scope":"global"},"tenant":"%s"}\n'' "$COOP_WAREHOUSE_TEST_STATE" "${COOP_WAREHOUSE_TEST_TENANT:-}"',
       '    exit 0 ;;',
       'esac',
