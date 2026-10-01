@@ -76,7 +76,11 @@ if ($env:COOP_NO_ISOLATE -ne '1') {
 function Add-CoopRuntimePaths {
   $dirs = @()
   if (Test-Have 'npm') {
-    $p = (& npm prefix -g 2>$null)
+    # npm can print a notice before the path (seen under Git Bash on the Windows
+    # runner with a temp HOME): keep the last non-blank line, never an array.
+    $lines = @(& npm prefix -g 2>$null | ForEach-Object { [string]$_ } | Where-Object { $_.Trim() -ne '' })
+    $p = ''
+    if ($lines.Count -gt 0) { $p = $lines[$lines.Count - 1].Trim() }
     if ($p) { $dirs += $p; $dirs += (Join-Path $p 'bin') }   # win: shims in prefix; *nix: prefix/bin
   }
   $dirs += (Join-Path $HOME '.local\bin')                    # pipx default PIPX_BIN_DIR
