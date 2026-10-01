@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# coop init --seed-docs (issue #25): lib/_seeddocs.py classification + the
-# bin/coop flow against a shimmed coop-data-doc. Fully offline.
+# coop init --seed-docs (issue #25): lib/_seeddocs.py classification, then the
+# bin/coop.ps1 flow against a shimmed coop-data-doc (tests/fixtures/seeddocs.test.ps1,
+# driven through pwsh; master plan S1 retired the bash dispatcher). Fully offline.
 #
 set -uo pipefail
 
@@ -71,58 +72,13 @@ rc=0; out="$("$PY" "$ROOT/lib/_seeddocs.py" "$TMP/empty/.coop/project.yml" 2>/de
 [ -z "$out" ] || fail "all-TODO contract must print no patch"
 pass "all-TODO contract -> exit 3, nothing to seed"
 
-# 3. End-to-end `coop init --seed-docs` against a shimmed coop-data-doc:
-#    the shim records its args, writes stdin (the patch) to a file, and prints
-#    config-set's status line (coop-data-doc 1.2.0 wording; SEED_STATUS picks it).
-mkdir -p "$TMP/bin"
-cat > "$TMP/bin/coop-data-doc" <<EOF
-#!/bin/sh
-echo "\$*" >> "$TMP/dd-args.log"
-cat > "$TMP/dd-stdin.json"
-cfg=""; prev=""
-for a in "\$@"; do [ "\$prev" = "--config" ] && cfg="\$a"; prev="\$a"; done
-if [ "\${SEED_STATUS:-validated}" = "not-runnable" ]; then
-  echo "Wrote \$cfg (saved, not runnable yet (Repo 'powerbi' path does not exist: /nowhere/pbi-repo (configured in \$cfg)))."
-else
-  echo "Wrote \$cfg (validated)."
-fi
-exit 0
-EOF
-chmod +x "$TMP/bin/coop-data-doc"
-out="$(PATH="$TMP/bin:$PATH" COOP_ASSUME_YES=1 NO_COLOR=1 bash "$ROOT/bin/coop" init --seed-docs "$TMP/proj" 2>&1)" \
-  || fail "coop init --seed-docs should succeed"
-grep -q -- "--from-json -" "$TMP/dd-args.log" || fail "config-set --from-json - not invoked"
-grep -q -- "--config $TMP/proj/coop-data-doc.yml" "$TMP/dd-args.log" || fail "config-set should target the project dir's coop-data-doc.yml"
-"$PY" -c "import json,sys; p=json.load(open(sys.argv[1])); assert 'repos' in p and 'sql' in p['repos'] and 'powerbi' in p['repos']" "$TMP/dd-stdin.json" \
-  || fail "the patch piped to config-set is wrong"
-pass "coop init --seed-docs pipes the repos patch into coop-data-doc config-set"
-case "$out" in
-  *"Wrote $TMP/proj/coop-data-doc.yml (validated)."*) pass "config-set's validated status is shown (#102)" ;;
-  *) fail "config-set's status should be shown, got: $out" ;;
-esac
-
-# 3b. A slot config-set can't validate yet (a placeholder repo path): the status is
-#     shown as a warning instead of being discarded (#102). Seeding still succeeds.
-rc=0
-out="$(PATH="$TMP/bin:$PATH" SEED_STATUS=not-runnable COOP_ASSUME_YES=1 NO_COLOR=1 bash "$ROOT/bin/coop" init --seed-docs "$TMP/proj" 2>&1)" || rc=$?
-[ "$rc" = 0 ] || fail "a not-runnable seed still writes the config and exits 0 (got $rc): $out"
-printf '%s\n' "$out" | grep -q "^! Wrote $TMP/proj/coop-data-doc.yml (saved, not runnable yet (Repo 'powerbi' path does not exist: /nowhere/pbi-repo" \
-  || fail "the not-runnable status should be a warning naming the repo path, got: $out"
-pass "config-set's not-runnable status is a warning naming the repo path (#102)"
-
-# 4. Declining leaves everything untouched (non-interactive without --yes refuses).
-rm -f "$TMP/dd-args.log" "$TMP/dd-stdin.json"
-rc=0
-PATH="$TMP/bin:$PATH" NO_COLOR=1 bash "$ROOT/bin/coop" init --seed-docs "$TMP/proj" </dev/null >/dev/null 2>&1 || rc=$?
-[ "$rc" != 0 ] || fail "declining should exit non-zero"
-[ ! -f "$TMP/dd-stdin.json" ] || fail "declining must not invoke config-set"
-pass "declining the confirmation changes nothing"
-
-# 5. Seed on a still-TODO contract warns and exits non-zero without calling the tool.
-rc=0
-PATH="$TMP/bin:$PATH" COOP_ASSUME_YES=1 NO_COLOR=1 bash "$ROOT/bin/coop" init --seed-docs "$TMP/empty" >/dev/null 2>&1 || rc=$?
-[ "$rc" != 0 ] || fail "TODO-only contract should exit non-zero"
-[ ! -f "$TMP/dd-stdin.json" ] || fail "TODO-only contract must not invoke config-set"
-pass "TODO-only contract: warns, exits non-zero, config-set never called"
+# 3. End-to-end `coop init --seed-docs` through bin/coop.ps1 against a shimmed
+#    coop-data-doc: the patch is piped into config-set, the status line is shown
+#    (#102), declining without --yes and a TODO-only contract change nothing.
+PWSH="$(command -v pwsh 2>/dev/null || command -v powershell.exe 2>/dev/null || command -v powershell 2>/dev/null || true)"
+[ -n "$PWSH" ] || fail "pwsh (PowerShell 7) required: coop init --seed-docs is dispatched by bin/coop.ps1"
+FIXTURE="$ROOT/tests/fixtures/seeddocs.test.ps1"
+if command -v cygpath >/dev/null 2>&1; then FIXTURE="$(cygpath -w "$FIXTURE")"; fi
+"$PWSH" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$FIXTURE" || fail "coop init --seed-docs end-to-end cases (tests/fixtures/seeddocs.test.ps1)"
 
 printf '  %s\n' "seed-docs tests passed"

@@ -568,6 +568,6 @@ try {
     }
     assert.deepEqual(headings(buildStandardsContext(prompt, options({ refresh: false }))), headings(first));
   });
-  assert.match(readFileSync(join(ROOT, "bin", "coop"), "utf8"), /resolve-many sql,dax/);
+  assert.match(readFileSync(join(ROOT, "bin", "coop.ps1"), "utf8"), /resolve-many 'sql,dax'/);
   console.log(`standards live sync: ${count} tests passed`);
 } finally { rmSync(tmp, { recursive: true, force: true }); }

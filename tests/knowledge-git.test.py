@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -1658,6 +1659,175 @@ class ProcessInspectorTests(unittest.TestCase):
                 self.assertEqual(uncertainties, [])
             finally:
                 proc.wait(timeout=5)
+
+
+class KnowledgeGitRunnerContractTests(unittest.TestCase):
+    """Subprocess contracts of scripts/knowledge-git.py (ported from the retired
+    tests/sync-knowledge.test.sh cases E, F and G1-G3): exit codes pass through,
+    the child gets an unattended environment that never leaks into the parent,
+    and the EFFECTIVE SSH transport is honored (env transports untouched,
+    core.sshCommand preserved with BatchMode appended only to a plain `ssh`,
+    non-ssh custom transports skipped with an actionable warning).
+
+    The fake git is a launcher (sh on POSIX, .cmd on Windows) around a Python
+    script: it dumps the GIT_*/GCM_* child environment to PROBEOUT when
+    PROBEENV=1 and delegates every call to the real git, so the runner's
+    core.sshCommand probe reads the repo's real configuration.
+    """
+
+    RUNNER = str(ROOT / "scripts" / "knowledge-git.py")
+    PROBE_NAMES = (
+        "GIT_TERMINAL_PROMPT",
+        "GCM_INTERACTIVE",
+        "GIT_ASKPASS",
+        "SSH_ASKPASS",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+    )
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.probe_out = self.base / "probe-env.txt"
+        self.env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in self.PROBE_NAMES and k not in ("PROBEENV", "PROBEOUT")
+        }
+        self.env["COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS"] = "10"
+
+    def _run(self, args, env=None, timeout=60):
+        return subprocess.run(
+            [sys.executable, self.RUNNER] + list(args),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env if env is not None else self.env,
+            timeout=timeout,
+            check=False,
+        )
+
+    def _fake_git(self):
+        real_git = shutil.which("git")
+        if not real_git:
+            self.skipTest("git is required for the fake-git delegation fixture")
+        script = self.base / "fake_git.py"
+        script.write_text(
+            "import os, subprocess, sys\n"
+            "if os.environ.get('PROBEENV') == '1':\n"
+            "    names = %r\n"
+            "    with open(os.environ['PROBEOUT'], 'w', encoding='utf-8') as f:\n"
+            "        for n in names:\n"
+            "            if n in os.environ:\n"
+            "                f.write('%%s=%%s\\n' %% (n, os.environ[n]))\n"
+            "sys.exit(subprocess.call([%r] + sys.argv[1:]))\n"
+            % (list(self.PROBE_NAMES), real_git),
+            encoding="utf-8",
+        )
+        if os.name == "nt":
+            launcher = self.base / "git.cmd"
+            launcher.write_text(
+                '@"%s" "%s" %%*\r\n' % (sys.executable, script), encoding="ascii"
+            )
+        else:
+            launcher = self.base / "git"
+            launcher.write_text(
+                '#!/bin/sh\nexec "%s" "%s" "$@"\n' % (sys.executable, script),
+                encoding="utf-8",
+            )
+            launcher.chmod(0o755)
+        return str(launcher)
+
+    def _repo(self):
+        repo = self.base / "envprobe"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        return repo
+
+    def _probe(self, fake_git, repo, extra_env=None):
+        if self.probe_out.exists():
+            self.probe_out.unlink()
+        env = dict(self.env)
+        env["PROBEENV"] = "1"
+        env["PROBEOUT"] = str(self.probe_out)
+        if extra_env:
+            env.update(extra_env)
+        result = self._run(
+            ["--", fake_git, "-C", str(repo), "status", "--porcelain"], env=env
+        )
+        self.assertTrue(
+            self.probe_out.exists(), "fake git never ran (no environment probe)"
+        )
+        lines = self.probe_out.read_text(encoding="utf-8").splitlines()
+        return result, dict(line.split("=", 1) for line in lines if "=" in line)
+
+    # --- F. exit codes stay meaningful ---------------------------------------
+    def test_runner_passes_through_a_normal_exit(self):
+        env = dict(self.env)
+        env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"  # env transport: no probe
+        result = self._run(["--", sys.executable, "-c", "pass"], env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_cannot_start_maps_to_127(self):
+        missing = str(self.base / "git-binary-xyz")
+        result = self._run(["--", missing, "status"])
+        self.assertEqual(result.returncode, 127, result.stderr)
+
+    def test_malformed_usage_maps_to_2(self):
+        result = self._run([])
+        self.assertEqual(result.returncode, 2, result.stderr)
+
+    # --- E. child-only unattended environment ---------------------------------
+    def test_child_gets_unattended_environment_without_leaking(self):
+        fake_git = self._fake_git()
+        repo = self._repo()
+        parent_before = dict(os.environ)
+        result, probed = self._probe(fake_git, repo)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(probed.get("GIT_TERMINAL_PROMPT"), "0")
+        self.assertEqual(probed.get("GCM_INTERACTIVE"), "never")
+        self.assertEqual(probed.get("GIT_ASKPASS"), os.devnull)
+        self.assertEqual(probed.get("SSH_ASKPASS"), os.devnull)
+        self.assertEqual(probed.get("GIT_SSH_COMMAND"), "ssh -o BatchMode=yes")
+        # The overrides are built for the child only; the parent is untouched.
+        self.assertEqual(dict(os.environ), parent_before)
+
+    # --- G. the effective SSH transport is honored ------------------------------
+    def test_env_ssh_command_is_never_replaced(self):
+        fake_git = self._fake_git()
+        repo = self._repo()
+        _, probed = self._probe(
+            fake_git, repo, {"GIT_SSH_COMMAND": "custom-ssh-wrapper -x"}
+        )
+        self.assertEqual(probed.get("GIT_SSH_COMMAND"), "custom-ssh-wrapper -x")
+
+    def test_configured_plain_ssh_gains_batch_mode(self):
+        fake_git = self._fake_git()
+        repo = self._repo()
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "core.sshCommand", "ssh -i /tmp/identity_file"],
+            check=True,
+        )
+        result, probed = self._probe(fake_git, repo)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            probed.get("GIT_SSH_COMMAND"), "ssh -i /tmp/identity_file -o BatchMode=yes"
+        )
+
+    def test_non_ssh_custom_transport_is_preserved_with_a_warning(self):
+        fake_git = self._fake_git()
+        repo = self._repo()
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "core.sshCommand", "/tmp/corp-ssh-wrapper"],
+            check=True,
+        )
+        result, probed = self._probe(fake_git, repo)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("GIT_SSH", probed)
+        self.assertNotIn("GIT_SSH_COMMAND", probed)
+        self.assertIn(
+            "custom SSH transport preserved", result.stderr.decode("utf-8", "replace")
+        )
 
 
 if __name__ == "__main__":

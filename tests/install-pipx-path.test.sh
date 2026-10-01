@@ -4,6 +4,8 @@
 # %APPDATA%\Python\Scripts — so a fresh-user Windows install must resolve it
 # via sysconfig's nt_user scheme or step 4/9 (Fabric CLI) cannot see pipx
 # and both the --fetch-python fallback and bare `pipx` calls fail.
+# (scripts/install.ps1 is the one installer since master plan S1 retired the
+# bash product path.)
 set -euo pipefail
 
 ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
@@ -18,8 +20,4 @@ if grep -q "Join-Path \$base 'Scripts'" "$ROOT/scripts/install.ps1"; then
   exit 1
 fi
 
-# POSIX twin keeps its correct user-base/bin prepend (pip --user scripts land in ~/.local/bin).
-grep -q 'PATH="\$_ub/bin:\$PATH"' "$ROOT/scripts/install.sh" \
-  || { echo "FAIL: install.sh lost its user-base/bin PATH prepend"; exit 1; }
-
-echo "✓ pipx launcher PATH resolution is correct on both twins"
+echo "✓ pipx launcher PATH resolution is correct in install.ps1"

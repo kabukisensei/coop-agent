@@ -168,14 +168,18 @@ under `## [Unreleased]` in `CHANGELOG.md`:
 ./bin/coop release patch        # or: minor | major   (default: patch); add --yes to skip the confirm
 ```
 
-What `coop release` does (`coop_release` in `bin/coop`): requires a clean tree;
+What `coop release` does (`scripts/release.sh`, the one maintainer command that
+stays in bash; `./bin/coop release` runs it, and `bin/coop.ps1`'s
+`Invoke-CoopRelease` is its Windows equivalent): requires a clean tree;
 fetches `origin` and refuses unless `HEAD` is the branch `main` at exactly
 `origin/main` (a detached HEAD, another branch, or unpushed or missing commits
 stop it before anything changes); runs the pre-tag gate — esbuild-checks every
 `extensions/*/index.ts`, then `COOP_TEST_EXTENDED=1 bash tests/run.sh` (both
 test lanes, gate and extended, so a release keeps the full suite that CI splits
-between `ci.yml` and the nightly `extended.yml`; see `docs/ci.md`) and
-`bash scripts/check-parity.sh`, then verifies the three coop-tool `tested_with`
+between `ci.yml` and the nightly `extended.yml`; see `docs/ci.md`),
+`pwsh -File tests/run.ps1` when `pwsh` is installed (a missing `pwsh` warns;
+native Windows CI is the evidence for Windows PowerShell 5.1) and
+`bash scripts/check-bom.sh`, then verifies the three coop-tool `tested_with`
 pins in `config/defaults.yml` match the sibling
 `../coop-website/versions.json` (`coop_release_check_pins`; a mismatch aborts
 with the fix named, a **missing sibling checkout warns and asks** so an

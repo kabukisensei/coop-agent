@@ -971,7 +971,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "tenant":
         # Prints the resolved client tenant (nothing otherwise) and exits
         # 0 resolved / 1 unset / 2 invalid. Never writes stderr and never
-        # echoes a rejected value; lib/common.sh and lib/common.ps1 call this.
+        # echoes a rejected value; lib/common.ps1 calls this.
         if args.project is not None:
             project_path = Path(args.project) if args.project else None
         else:

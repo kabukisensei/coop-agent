@@ -1,7 +1,7 @@
 # coop-tools
 
 Native, LLM-callable Cooptimize tools for Pi. This **companion** extension —
-loaded via `pi -e` (or automatically by `bin/coop`) — registers three tools the
+loaded via `pi -e` (or automatically by `bin/coop.ps1`) — registers three tools the
 agent can call directly instead of asking you to run a CLI:
 
 ```sh

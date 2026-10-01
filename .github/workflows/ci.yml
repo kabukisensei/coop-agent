@@ -21,26 +21,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  bash32:
-    # Enforce the hard bash-3.2 rule (macOS stock /bin/bash). ubuntu's bash 5 accepts
-    # ${var,,}, mapfile, &>>, etc. that break every stock-bash Mac install.sh runs on;
-    # only a real 3.2 shell catches them. macOS runners ship bash 3.2 at /bin/bash.
-    name: bash 3.2 parse (macOS stock)
-    runs-on: macos-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-      - name: parse under stock /bin/bash (3.2)
-        run: |
-          /bin/bash --version | head -1
-          for f in bin/coop lib/common.sh scripts/*.sh tests/*.sh; do echo "checking $f"; /bin/bash -n "$f"; done
-      - name: Azure sign-in preflight under stock /bin/bash (3.2)
-        # Runtime check of the preflight's cache, tenant chain and exit-code
-        # mapping under bash 3.2 (the step above checks syntax only). Fake az,
-        # offline. Gate lane: the watchdog and hang cases run under stock bash
-        # 3.2 in extended.yml's bash32 job.
-        run: /bin/bash tests/azcache.test.sh
-
   shell:
     name: shell + config lint
     runs-on: ubuntu-latest
@@ -48,13 +28,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: bash -n (syntax)
-        run: for f in bin/coop lib/common.sh scripts/*.sh tests/*.sh; do echo "checking $f"; bash -n "$f"; done
+        # Dev tooling only: the product runs in PowerShell (master plan S1). The
+        # forwarder, release.sh and the test harness are the bash that remains.
+        run: for f in bin/coop scripts/*.sh tests/*.sh; do echo "checking $f"; bash -n "$f"; done
       - name: shellcheck
         run: |
           sudo apt-get update -qq && sudo apt-get install -y shellcheck
-          shellcheck -S warning -e SC1091 bin/coop lib/common.sh scripts/*.sh tests/*.sh
-      - name: cross-platform parity + .ps1 BOM (the one BOM check)
-        run: bash scripts/check-parity.sh
+          shellcheck -S warning -e SC1091 bin/coop scripts/*.sh tests/*.sh
+      - name: .ps1 UTF-8 BOM (the one BOM check)
+        run: bash scripts/check-bom.sh
       - name: python yaml reader
         run: |
           python3 -c "import ast; ast.parse(open('lib/_yaml.py').read())"
@@ -137,10 +119,9 @@ jobs:
         run: pwsh -File tests/run.ps1
 
   tests-windows:
-    # Windows is coop's PRIMARY deployment target. Git Bash on windows-latest runs
-    # tests/run.sh unchanged (bash + node + npx all present), gate lane only here: the
-    # Node logic tests (guardrails bundle and the rest) and search-knowledge.test.sh,
-    # which replaced the old focused knowledge-search job.
+    # Windows is coop's ONLY deployment target. Git Bash on windows-latest runs
+    # tests/run.sh unchanged (bash + node + npx + pwsh all present), gate lane only
+    # here: the Node and Python logic tests and the bash-harness suites.
     name: logic tests (Windows)
     runs-on: windows-latest
     timeout-minutes: 15
@@ -270,7 +251,7 @@ jobs:
     # skipped job fails it too. Add any new ci.yml job to `needs` here.
     name: gate
     if: always()
-    needs: [bash32, shell, extensions, tests, tests-windows, windows]
+    needs: [shell, extensions, tests, tests-windows, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

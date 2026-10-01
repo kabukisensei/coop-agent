@@ -258,7 +258,9 @@ try {
     $hangFile = Join-Path $state 'hang.pid'
     if (-not (Test-Path -LiteralPath $hangFile)) { return $true }
     $hangPid = [int]([System.IO.File]::ReadAllText($hangFile).Trim())
-    for ($i = 0; $i -lt 20; $i++) {
+    # Bounded wait: the stopped probe's child exits on its own schedule, and under
+    # a loaded host (the suite's parallel lanes) 2 seconds was not always enough.
+    for ($i = 0; $i -lt 100; $i++) {
       if (-not (Get-Process -Id $hangPid -ErrorAction SilentlyContinue)) { return $true }
       Start-Sleep -Milliseconds 100
     }

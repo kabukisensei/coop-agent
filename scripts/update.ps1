@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
 #
-# coop update (Windows / PowerShell mirror of scripts/update.sh) —
+# coop update —
 # keep the whole Cooptimize stack current:
 #   1. Move coop-agent to the newest release tag (--edge: head of main)
 #   2. Update Pi itself and every installed Pi extension
@@ -10,7 +10,7 @@
 #
 $ErrorActionPreference = 'Continue'
 
-# --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
+# --- Shared helpers: dot-source lib/common.ps1 ---------------------------------
 # Resolves COOP_ROOT/COOP_VERSION and defines the loggers, the progress engine
 # (Coop-Prog*/Coop-Emit), Test-Have, Get-CoopPython, Get-CoopYamlValue,
 # Test-CoopMinorNewer, Coop-Unit, Invoke-CoopScript, etc.
@@ -52,7 +52,7 @@ function Test-CoopPiRunning {
   return $false
 }
 
-# --- Parse flags (mirror of update.sh) ---------------------------------------
+# --- Parse flags -------------------------------------------------------------
 $NO_FABRIC = $false
 $CHECK = $false       # --check: dry-run — report current/expected, change nothing
 $EDGE = $false        # --edge: head of main + latest upstream instead of the release tag and manifest
@@ -80,7 +80,7 @@ if ($env:OS -eq 'Windows_NT') { $PBIH_NPM_TOOLS += '@microsoft/powerbi-desktop-b
 # Update coop's ISOLATED Pi agent dir (not the user's personal pi).
 $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 
-# --- Fleet mode (mirror of update.sh) ----------------------------------------
+# --- Fleet mode --------------------------------------------------------------
 # Exactly two modes: NORMAL moves coop-agent to the newest release tag (never
 # backwards) and pins Pi + every extension/tool to that release's manifest (no
 # registry queries, no prompts); --edge takes head of main and latest upstream.
@@ -372,7 +372,7 @@ if ($syncRc -ne 0) { Coop-Warn 'sync reported issues'; $script:UpdateFailures++ 
 try { if (Set-CoopDesktopShortcuts -OnlyIfPresent) { Coop-Ok 'refreshed the "coop" double-click launcher' } } catch { }
 
 # --- 6. Doctor ---------------------------------------------------------------
-# Propagate doctor's verdict as the update's exit code (mirror of update.sh).
+# Propagate doctor's verdict as the update's exit code.
 Coop-Head '6/6  Doctor'
 $doctorRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
 if ($doctorRc -ne 0 -or $script:UpdateFailures -gt 0) {

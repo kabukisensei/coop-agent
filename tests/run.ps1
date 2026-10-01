@@ -1,9 +1,8 @@
 ﻿#!/usr/bin/env pwsh
 #
-# coop PowerShell behavioral tests (twin of the PS-relevant assertions in tests/run.sh).
-# Windows is coop's PRIMARY target, yet every behavioral test drove the BASH side only —
-# the .ps1 dispatcher (coop.ps1) and update gate (update.ps1) had no executable safety
-# net. This exercises the SAME seams tests/run.sh does, but through PowerShell:
+# coop PowerShell behavioral tests: coop's own test lane (the product is PowerShell,
+# master plan S1). tests/run.sh holds the Node/Python logic tests and the bash
+# harness suites; this file drives coop.ps1, lib/common.ps1 and scripts/*.ps1:
 #   1. coop.ps1 launch-spec resolves guardrails, prompts, theme, all 3 extensions
 #   2. coop.ps1 --no-launch exits 0 + prints the spec; --no-launch --json emits {bin,args,env}
 #   3. update.ps1 fleet-mode decisions via COOP_UPDATE_GATE_DRYRUN
@@ -22,7 +21,7 @@
 # (terminal-acceptance reparse subset, knowledge git timeout, Windows ownership
 # probe, Fabric MCP launch-time bearer isolation, fresh-install Fabric Python
 # prerequisite). They stay at their positions because some depend on ordering.
-# The .ps1 UTF-8 BOM check lives in scripts/check-parity.sh only.
+# The .ps1 UTF-8 BOM check lives in scripts/check-bom.sh only.
 #
 $ErrorActionPreference = 'Stop'
 
@@ -794,6 +793,60 @@ print("resume verdict contract OK")
     $seedOut | ForEach-Object { Write-Host $_ }
   } else {
     Ko "seed-docs config-set status fixture failed: $($seedOut | Out-String)"
+  }
+
+  # --- 10. Suites ported from the retired bash tests (master plan S1): coop's own
+  #         behavioural fixtures, one child pwsh/powershell each.
+  foreach ($fx in @(
+      @{ Name = 'fleet-manifest';  Head = 'fleet manifest (Coop-Manifest* helpers, update --check, gate pin)' },
+      @{ Name = 'login-present';   Head = 'model login detection ignores Pi''s empty startup auth.json (#167)' },
+      @{ Name = 'extensions-lock'; Head = 'extension lockfile applied through the helpers (#152)' },
+      @{ Name = 'team-skills';     Head = 'team knowledge skills launch slot (launch-spec --json)' },
+      @{ Name = 'staleness';       Head = 'repo staleness nudge (throttled fetch + behind-count)' },
+      @{ Name = 'doctor-project';  Head = 'doctor.ps1 project contract rows' },
+      @{ Name = 'first-run';       Head = 'first-run launcher continuation (onboarding gate)' },
+      @{ Name = 'sync-knowledge';  Head = 'team knowledge sync (sync-knowledge.ps1; hang cases in the extended lane)' })) {
+    Head $fx.Head
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $fxOut = & $psExe -NoProfile -File (Join-Path $root ('tests\fixtures\' + $fx.Name + '.test.ps1')) 2>&1
+    $fxRc = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorAction
+    if ($fxRc -eq 0) { $fxOut | ForEach-Object { Write-Host $_ } } else { Ko "$($fx.Name) fixture failed: $($fxOut | Out-String)" }
+  }
+
+  # --- 10b. EXTENDED LANE: process fixtures ported from the bash extended block.
+  if ($extendedLane) {
+    Head 'fleet execution (install/update/sync against stubs)'
+    $oldErrorAction = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $feOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\fleet-execution.test.ps1') 2>&1
+    $feRc = $LASTEXITCODE; $ErrorActionPreference = $oldErrorAction
+    if ($feRc -eq 0) { $feOut | ForEach-Object { Write-Host $_ } } else { Ko "fleet-execution fixture failed: $($feOut | Out-String)" }
+
+    # home-guard checks the CALLER's real home on purpose (#135): restore it for
+    # the child, then put the gate-lane temp home back.
+    Head 'home-guard (fleet paths must not mutate the real home)'
+    $hgSaved = @{}; foreach ($name in $homeVarNames) { $hgSaved[$name] = [Environment]::GetEnvironmentVariable($name); [Environment]::SetEnvironmentVariable($name, $priorHomeVars[$name]) }
+    $oldErrorAction = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $hgOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\home-guard.test.ps1') 2>&1
+    $hgRc = $LASTEXITCODE; $ErrorActionPreference = $oldErrorAction
+    foreach ($name in $homeVarNames) { [Environment]::SetEnvironmentVariable($name, $hgSaved[$name]) }
+    if ($hgRc -eq 0) { $hgOut | ForEach-Object { Write-Host $_ } } else { Ko "home-guard fixture failed: $($hgOut | Out-String)" }
+
+    # doctor, inventory and review each run the real scripts many times (about a
+    # minute each): extended lane, as their bash predecessors were.
+    foreach ($fx in @(
+        @{ Name = 'doctor';    Head = 'doctor.ps1 MCP mode, az preflight, login and fleet rows' },
+        @{ Name = 'inventory'; Head = 'truthful inventory (doctor pipx probes / sync postconditions)' },
+        @{ Name = 'review';    Head = 'coop review (composite linters + docs compose)' })) {
+      Head $fx.Head
+      $oldErrorAction = $ErrorActionPreference
+      $ErrorActionPreference = 'Continue'
+      $fxOut = & $psExe -NoProfile -File (Join-Path $root ('tests\fixtures\' + $fx.Name + '.test.ps1')) 2>&1
+      $fxRc = $LASTEXITCODE
+      $ErrorActionPreference = $oldErrorAction
+      if ($fxRc -eq 0) { $fxOut | ForEach-Object { Write-Host $_ } } else { Ko "$($fx.Name) fixture failed: $($fxOut | Out-String)" }
+    }
   }
 
   # --- 9h. Shortcut + user-PATH targets follow a redirected profile (isolated installs)

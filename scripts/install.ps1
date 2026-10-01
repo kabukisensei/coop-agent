@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
 #
-# coop install / bootstrap (Windows / PowerShell mirror of scripts/install.sh) —
+# coop install / bootstrap —
 # set up the whole Cooptimize stack on a fresh machine. Idempotent: safe to re-run.
 # Non-fatal where it can be (warns and keeps going), so `coop doctor` can report
 # whatever is still missing at the end.
@@ -15,7 +15,7 @@
 #
 $ErrorActionPreference = 'Continue'
 
-# --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
+# --- Shared helpers: dot-source lib/common.ps1 ---------------------------------
 # Resolves COOP_ROOT/COOP_VERSION and defines the loggers, the progress engine
 # (Coop-Prog*/Coop-Emit), Test-Have, Get-CoopPython, Coop-Unit, Invoke-CoopScript, etc.
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
@@ -557,7 +557,7 @@ finally {
 }
 
 # Offline fleet fixtures exercise the real install units but must stop before
-# launcher/PATH/onboarding/Doctor work. This mirrors install.sh's existing seam.
+# launcher/PATH/onboarding/Doctor work.
 if ($env:COOP_FLEET_TEST_MODE -eq '1') {
   if ($script:InstallFailures -eq 0) { exit 0 } else { exit 1 }
 }
@@ -696,13 +696,13 @@ if ($script:InstallFailures -eq 0 -and
 }
 
 [Console]::Error.WriteLine('')
-# Propagate doctor's verdict as the install's exit code (mirror of install.sh): a
+# Propagate doctor's verdict as the install's exit code: a
 # genuinely broken install (a required dep still missing → doctor exits 1) is then
 # detectable by whatever ran `coop install`, incl. the double-click launcher wrapper.
 $doctorRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
 
 [Console]::Error.WriteLine('')
-# Close on doctor's verdict (mirror of install.sh): a green "complete" line after a
+# Close on doctor's verdict: a green "complete" line after a
 # failed doctor would bury the real state — on failure, point back at the ✗ items.
 $installRc = if (($doctorRc -ne 0) -or ($script:InstallFailures -gt 0)) { 1 } else { 0 }
 if ($installRc -ne 0) {

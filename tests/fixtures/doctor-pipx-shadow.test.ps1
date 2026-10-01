@@ -51,6 +51,13 @@ $saved = @{}
 $names = @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE',
            'COOP_SKIP_AZ','NO_COLOR','COOP_PIPX_BIN','COOP_PIPX_HOME','PIPX_HOME','COOP_RELEASE_MANIFEST')
 foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
+# The machine PATH stays for node/python/git, minus any folder that already
+# resolves coop-data-doc (a workstation with the real pipx launcher installed),
+# so only the fixture's copies answer in every case.
+$sep = [System.IO.Path]::PathSeparator
+$basePath = (@($saved['PATH'] -split [regex]::Escape($sep) | Where-Object {
+  $_ -and -not (@(Get-ChildItem -LiteralPath $_ -Filter 'coop-data-doc*' -File -ErrorAction SilentlyContinue).Count)
+}) -join $sep)
 $savedLocation = Get-Location
 try {
   New-Item -ItemType Directory -Force -Path $shadowDir, $fakeBin, $venvBin, $pipxBinDir, $cwd, $sandboxHome, (Join-Path $t 'coop\.coop'), $agent | Out-Null
@@ -124,7 +131,7 @@ try {
   #    not on PATH at all (its launcher would live in PIPX_BIN_DIR).
   $shadow = New-Stub $shadowDir 'coop-data-doc' 'coop-data-doc, version 1.1.1'
   $null = New-Stub $venvBin 'coop-data-doc' "coop-data-doc, version $Pin"
-  $env:PATH = "$shadowDir$sep$fakeBin$sep$($saved['PATH'])"
+  $env:PATH = "$shadowDir$sep$fakeBin$sep$basePath"
   $resolved = (Get-Command coop-data-doc -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
   if ($resolved -ne $shadow) { throw "fixture must resolve the shadow stub (got $resolved)" }
   $rows = Get-DoctorRows
@@ -160,7 +167,7 @@ try {
   #    reports 1.0.0 against metadata 1.2.0 (twin of F4). Still stale/corrupt.
   Remove-Item -LiteralPath $shadow -Force
   $null = New-Stub $venvBin 'coop-data-doc' 'coop-data-doc, version 1.0.0'
-  $env:PATH = "$venvBin$sep$fakeBin$sep$($saved['PATH'])"
+  $env:PATH = "$venvBin$sep$fakeBin$sep$basePath"
   $rows = Get-DoctorRows
   $stale = @($rows | Where-Object { ([string]$_.name) -eq "coop-data-doc pipx environment is stale/corrupt: metadata says $Pin but coop-data-doc reports 1.0.0" })
   if ($stale.Count -ne 1 -or $stale[0].status -ne 'fail' -or -not ([string]$stale[0].hint).StartsWith("pipx install --force coop-data-doc==$Pin")) {
@@ -169,7 +176,7 @@ try {
   # 3. Venv present (metadata 1.2.0) but nothing answers on PATH.
   Remove-Item -LiteralPath (Join-Path $venvBin (Split-Path -Leaf $shadow)) -Force -ErrorAction SilentlyContinue
   Get-ChildItem -LiteralPath $venvBin -Filter 'coop-data-doc*' | Remove-Item -Force
-  $env:PATH = "$fakeBin$sep$($saved['PATH'])"
+  $env:PATH = "$fakeBin$sep$basePath"
   if (Get-Command coop-data-doc -ErrorAction SilentlyContinue) { throw 'fixture must not resolve any coop-data-doc in case 3' }
   $rows = Get-DoctorRows
   $np = @($rows | Where-Object { ([string]$_.name) -eq "coop-data-doc is not on PATH (pipx has $Pin installed)" })
@@ -184,7 +191,7 @@ try {
   } else {
     [System.IO.File]::WriteAllText($silent, "#!/bin/sh`necho 'Fatal error in launcher: Unable to create process' >&2`nexit 1`n", $utf8)
   }
-  $env:PATH = "$venvBin$sep$fakeBin$sep$($saved['PATH'])"
+  $env:PATH = "$venvBin$sep$fakeBin$sep$basePath"
   $rows = Get-DoctorRows
   $sl = @($rows | Where-Object { ([string]$_.name) -eq "coop-data-doc: coop-data-doc at $silent runs but prints no version (pipx metadata says $Pin); it printed: Fatal error in launcher: Unable to create process" })
   if ($sl.Count -ne 1 -or $sl[0].status -ne 'warn' -or -not ([string]$sl[0].hint).Contains('pipx reinstall coop-data-doc')) {

@@ -1,7 +1,7 @@
 # Cooptimize Agent — Tool Contracts
 
 The exact, machine-readable contracts `coop` and the native tools rely on. These
-are stable interfaces — `bin/coop`, `extensions/coop-tools/index.ts`, and
+are stable interfaces — `bin/coop.ps1`, `extensions/coop-tools/index.ts`, and
 `.coop/project.yml` all assume them. Do **not** invent flags beyond what is
 listed here.
 
@@ -19,7 +19,7 @@ coop-sql-review check <paths...> --format json [--min-severity error|warning|inf
 coop-dax-review check <paths...> --format json [--min-severity error|warning|info] [--strict]
 ```
 
-**How `coop` invokes them** (`bin/coop` → `run_tool`):
+**How `coop` invokes them** (`bin/coop.ps1` → `Invoke-Tool`):
 
 The CLI wrappers **flow straight through** — `coop sql-review <args>` runs
 `coop-sql-review <args>` verbatim (`exec`), and likewise for dax. Every subcommand
@@ -106,7 +106,7 @@ appends a `/setup-docs` hint when it sees that. The review tools (`sql_review` /
 `dax_review`) have **no** wizard — they use bundled standards, configurable per-run
 with `--standards` / `--config`.
 
-**How `coop` invokes it** (`bin/coop` → `run_data_doc`):
+**How `coop` invokes it** (`bin/coop.ps1` → `Invoke-DataDoc`):
 
 - Args are **passed through verbatim** — including the interactive `setup` wizard and
   `init` (coop preserves the terminal, so the prompts work). `coop data-doc` with no
@@ -329,7 +329,7 @@ stay silent, and users opt into setup later with `/setup-docs`, `/start`, or
 
 `coop doctor` detects the collision by checking whether `fab --version` mentions
 Paramiko/Invoke (the Python SSH tool) and reports it as a **hard error** (`✗`,
-counted toward a non-zero exit), exactly as emitted by `scripts/doctor.sh`:
+counted toward a non-zero exit), exactly as emitted by `scripts/doctor.ps1`:
 
 ```
 $ coop fabric workspace list      # -> whichever `fab` is first on PATH

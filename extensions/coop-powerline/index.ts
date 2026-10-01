@@ -24,7 +24,7 @@ import { homedir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// --- Locate our assets (env vars from bin/coop win; else resolve from this file) ---
+// --- Locate our assets (env vars from bin/coop.ps1 win; else resolve from this file) ---
 let EXT_DIR = "";
 try {
   EXT_DIR = dirname(fileURLToPath(import.meta.url));
