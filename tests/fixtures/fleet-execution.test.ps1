@@ -25,18 +25,6 @@ $G_CHECK = [char]0x2713; $G_CROSS = [char]0x2717
 $fail = 0
 function Ok([string]$m) { Write-Host "  $G_CHECK $m" }
 function Ko([string]$m, [string]$Out = '') { Write-Host "  $G_CROSS $m"; if ($Out) { Write-Host $Out }; $script:fail = 1 }
-# KNOWN PRODUCT GAP (scripts/install.ps1): $UnitPi and $UnitPytool run in a job
-# runspace (Coop-Unit) yet read the parent's $EDGE / $PI_TARGET_VERSION /
-# $PI_NPM_PACKAGE and call Coop-ManifestGet, none of which exist there, so a
-# drifted Pi is reported "no manifest pin" instead of converged, pipx tools are
-# installed without their manifest pin, and --edge never takes the upstream path
-# for existing tools. The affected assertions report as a gap (not a failure)
-# until the units take those inputs as arguments; COOP_TEST_EXPECT_UNIT_FIX=1
-# enforces them.
-$expectUnitFix = ($env:COOP_TEST_EXPECT_UNIT_FIX -eq '1')
-function Gap([string]$m, [string]$Out = '') {
-  if ($script:expectUnitFix) { Ko $m $Out } else { Write-Host "  - known gap (install.ps1 units read parent-scope state inside a job): $m" }
-}
 $sep = [System.IO.Path]::PathSeparator
 $chmod = if ($isWindowsHost) { '' } else { (Get-Command chmod -ErrorAction Stop).Source }
 # Real tools the stub machine forwards to (captured before PATH is restricted).
@@ -210,7 +198,7 @@ try {
   if ($rc -ne 0) { Ok 'exact pyodbc pin is injected and injection failure is nonzero' } else { Ko 'failed pyodbc injection was converted into install success' $out }
   # Install, like update, keeps a visible convergence failure in its exit status
   # even though it continues through the remaining units for diagnostics.
-  # (the match is the unit's argv prefix, not the pinned spec: see the known gap above)
+  # (the match is the unit's argv prefix; the pinned spec follows it)
   $env:PIPX_FAIL_MATCH = 'install --force coop-data-doc'
   $out = Invoke-Fleet 'install.ps1' @('--force')
   if ($rc -ne 0) { Ok 'install exits non-zero when a convergence unit fails' } else { Ko 'failed pipx convergence was converted into install success' $out }
@@ -259,10 +247,10 @@ try {
   $m2 = New-Machine 'drift' -PiVersion '0.81.0' -HonestPi $false -PipxList @('package coop-data-doc 1.1.0', 'package coop-sql-review 0.15.2', 'package coop-dax-review 0.22.0', 'package ms-fabric-cli 1.7.0')
   $env:COOP_FLEET_TEST_MODE = '1'
   $out = Invoke-Fleet 'install.ps1'
-  if (-not (Test-CallLiteral $m2 'NPM install -g @earendil-works/pi-coding-agent@0.87.1')) { Gap 'drifted Pi NOT converged to manifest' (Get-Calls $m2) }
+  if (-not (Test-CallLiteral $m2 'NPM install -g @earendil-works/pi-coding-agent@0.87.1')) { Ko 'drifted Pi NOT converged to manifest' (Get-Calls $m2) }
   else { Ok 'normal install converges a drifted Pi to the manifest without --force' }
   if (-not (Test-CallLiteral $m2 'PIPX install --force coop-data-doc')) { Ko 'drifted coop-data-doc NOT force-installed' (Get-Calls $m2) }
-  elseif (-not (Test-CallLiteral $m2 'PIPX install --force coop-data-doc==1.2.0')) { Gap 'drifted coop-data-doc NOT force-installed to its manifest pin' (Get-Calls $m2) }
+  elseif (-not (Test-CallLiteral $m2 'PIPX install --force coop-data-doc==1.2.0')) { Ko 'drifted coop-data-doc NOT force-installed to its manifest pin' (Get-Calls $m2) }
   else { Ok 'normal install converges a drifted pipx tool to its manifest pin without --force' }
   if (Test-Call $m2 'PIPX install .*ms-fabric-cli==') { Ko 'matching fabric-cli was reinstalled despite matching pin' (Get-Calls $m2) }
   else { Ok 'normal install leaves a pipx tool that already matches its pin alone' }
@@ -270,9 +258,9 @@ try {
   # --- 5. --edge on an EXISTING machine attempts upstream latest -------------------
   $m4 = New-Machine 'edge' -HonestPi $false -PipxList @('package coop-data-doc 1.2.0', 'package ms-fabric-cli 1.7.0')
   $out = Invoke-Fleet 'install.ps1' @('--edge')
-  if (-not (Test-CallLiteral $m4 'NPM install -g @earendil-works/pi-coding-agent')) { Gap 'edge install did not attempt a Pi upstream update' (Get-Calls $m4) }
+  if (-not (Test-CallLiteral $m4 'NPM install -g @earendil-works/pi-coding-agent')) { Ko 'edge install did not attempt a Pi upstream update' (Get-Calls $m4) }
   else { Ok 'install --edge attempts a Pi upstream update' }
-  if (-not (Test-CallLiteral $m4 'PIPX upgrade coop-data-doc')) { Gap 'edge install did not attempt a pipx upgrade for an existing tool' (Get-Calls $m4) }
+  if (-not (Test-CallLiteral $m4 'PIPX upgrade coop-data-doc')) { Ko 'edge install did not attempt a pipx upgrade for an existing tool' (Get-Calls $m4) }
   else { Ok 'install --edge attempts a pipx upgrade for an existing tool' }
   if (Test-Call $m4 'PI install npm:[^ ]+@') { Ko 'edge install pinned an extension' (Get-Calls $m4) }
   elseif (-not (Test-CallLiteral $m4 'PI install npm:pi-mcp-adapter')) { Ko 'edge install did not install the extensions unpinned' (Get-Calls $m4) }
