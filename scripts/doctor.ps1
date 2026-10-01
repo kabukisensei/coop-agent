@@ -665,6 +665,19 @@ if ($proj) {
 
   D-Ok 'Microsoft skills project policy is covered by the pinned catalog doctor section'
 
+  # SQL connection targets (sql_targets:, master plan SQ1): kinds, host patterns,
+  # and the rule that production is never the default. Shared with Bash.
+  if ($pyBin) {
+    foreach ($line in @(& $pyBin (Join-Path $script:CoopRoot 'lib\sql_targets.py') --project $proj doctor-lines 2>$null)) {
+      $parts = @(([string]$line) -split "`t", 3)
+      if ($parts.Count -lt 2 -or -not $parts[0]) { continue }
+      $hint = if ($parts.Count -ge 3) { $parts[2] } else { '' }
+      if ($parts[0] -ceq 'ok') { D-Ok $parts[1] }
+      elseif ($parts[0] -ceq 'bad') { D-Bad $parts[1] $hint }
+      else { D-Warn $parts[1] $hint }
+    }
+  }
+
   # Read-only bounded legacy-project diagnostics, shared with Bash and migration.
   if ($pyBin) {
     $projectRoot = Split-Path -Parent (Split-Path -Parent $proj)

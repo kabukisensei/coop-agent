@@ -615,6 +615,23 @@ if [ -n "$proj" ]; then
 
   ok "Microsoft skills project policy is covered by the pinned catalog doctor section"
 
+  # SQL connection targets (sql_targets:, master plan SQ1): kinds, host patterns,
+  # and the rule that production is never the default. Shared with PowerShell.
+  _targets_py="$(coop_python 2>/dev/null || true)"
+  if [ -n "$_targets_py" ]; then
+    while IFS="$(printf '\t')" read -r _t_level _t_name _t_hint; do
+      [ -n "$_t_level" ] || continue
+      case "$_t_level" in
+        ok) ok "$_t_name" ;;
+        bad) bad "$_t_name" "$_t_hint" ;;
+        *) warn "$_t_name" "$_t_hint" ;;
+      esac
+    done <<EOF
+$("$_targets_py" "$COOP_ROOT/lib/sql_targets.py" --project "$proj" doctor-lines 2>/dev/null)
+EOF
+    unset _t_level _t_name _t_hint
+  fi
+
   # Read-only bounded legacy-project diagnostics. The shared Python helper is
   # also used by the PowerShell doctor and explicit migration command.
   _health_py="$(coop_python 2>/dev/null || true)"

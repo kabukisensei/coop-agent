@@ -385,6 +385,52 @@ Per `.coop/project.yml` and `docs/guardrails.md`:
 `coop` **never** calls create/update/delete/deploy/publish MCP actions without
 explicit approval — regardless of what the server is capable of.
 
+### SQL connection targets (`sql_targets:` in the project contract)
+
+`.coop/project.yml` can name every SQL environment an engagement reaches and which
+one coop works on (master plan section 8 item 1, row SQ1). `lib/sql_targets.py`
+is the one reader (`doctor-lines`, `show`, `default`; `--project <yml>` or the
+nearest contract), dependency-free like the rest of `lib/`:
+
+```yaml
+sql_targets:
+  default_environment: dev      # dev or test; never prod
+  dev:
+    kind: azure_sql             # fabric_warehouse | fabric_lakehouse | fabric_sql_database | azure_sql | synapse_serverless
+    server: contoso-dev.database.windows.net
+    database: ContosoDW
+  test:
+    kind: fabric_warehouse
+    workspace_id: <guid>        # Fabric kinds carry ids; coop discovers the host
+    item_id: <guid>             # (fabric_lakehouse also needs sql_endpoint_id)
+    database: SalesWarehouse    # the Warehouse / Lakehouse item name
+  prod:
+    kind: azure_sql
+    server: contoso.database.windows.net
+    database: ContosoDW
+```
+
+| `kind` | Host the entry must name (or discovery must return) | Connect timeout |
+| --- | --- | --- |
+| `fabric_warehouse`, `fabric_lakehouse` | `*.datawarehouse.fabric.microsoft.com` (discovered from `workspace_id` / `item_id`; a hand-written `server` is rejected) | 15 s |
+| `fabric_sql_database` | `*.database.fabric.microsoft.com` | 15 s |
+| `azure_sql` | `*.database.windows.net` (serverless compute auto-pauses, so the first connection after idle can take up to a minute) | 60 s |
+| `synapse_serverless` | `*-ondemand.sql.azuresynapse.net` (views and external objects only) | 15 s |
+
+Rules the reader enforces: the host pattern must match the kind, so a production
+host cannot hide behind a dev kind and a Fabric host cannot pass as Azure SQL;
+`prod` may be present but is never the default; an entry with blank values is
+"unconfigured" (a doctor warning, not an error) so a wizard can leave
+placeholders; credential keys (`user`, `password`, `connection_string`, ...) make
+the entry invalid because coop authenticates with Entra ID tokens only. `coop doctor`
+prints one Project-contract row per entry (the ready default is marked) and one
+warning per rule broken. `/setup-project` proposes the dev entry's kind from the
+machine's client platform (SQ7) and the Fabric answer, writes the dev entry, and
+leaves `test` / `prod` to fill in; editing an existing contract touches only the
+dev entry. The SQL executor and the guardrails' resolved scope read this section
+in the later SQ rows; until then the managed `fabric-sqlendpoint` target below
+still comes from `fabric.default_sql_endpoint`.
+
 ### Managed Warehouse SQL endpoint MCP
 
 `coop sync` generates `fabric-sqlendpoint` as a distinct managed server; it does

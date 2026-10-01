@@ -187,6 +187,47 @@ YAML
 out="$(cd "$TMP/te" && "$ROOT/scripts/doctor.sh" --json 2>/dev/null)"
 echo "$out" | grep -q 'executable_path not set' && ok "flags missing TE path when Tabular Editor enabled" || ko "did not flag missing TE path"
 
+# --- sql_targets (SQ1): rows per entry, production never default ---------------
+mkdir -p "$TMP/targets/.coop"
+cat > "$TMP/targets/.coop/project.yml" <<'YAML'
+profile:
+  organization: Cooptimize
+  default_branch: main
+estate:
+  mode: discovery
+tools:
+  fabric_cli:
+    enabled: false
+  tabular_editor_cli:
+    enabled: false
+sql_targets:
+  default_environment: prod
+  dev:
+    kind: azure_sql
+    server: contoso-dev.database.windows.net
+    database: ContosoDW
+  prod:
+    kind: azure_sql
+    server: contoso.datawarehouse.fabric.microsoft.com
+    database: ContosoDW
+YAML
+out="$(cd "$TMP/targets" && "$ROOT/scripts/doctor.sh" --json 2>/dev/null)"
+python3 - "$out" <<'PY' >/dev/null
+import sys, json
+d = json.loads(sys.argv[1])
+proj = [c for c in d["checks"] if c["section"] == "Project contract"]
+names = [c["name"] for c in proj]
+assert any("never be prod" in n for n in names), names
+assert any("sql_targets.prod: server" in n and "host pattern" in n for n in names), names
+assert any(n.startswith("sql_targets.dev:") and "contoso-dev.database.windows.net" in n for n in names), names
+assert all(c["status"] != "bad" for c in proj), proj
+PY
+rc=$?
+[ "$rc" -eq 0 ] && ok "sql_targets: doctor names a prod default and a host that does not match its kind" || ko "sql_targets doctor rows missing"
+echo "$out" | grep -q 'sql_targets not configured' && ko "configured sql_targets reported as absent" || ok "sql_targets rows replace the not-configured row"
+out="$(cd "$TMP/good" && "$ROOT/scripts/doctor.sh" --json 2>/dev/null)"
+echo "$out" | grep -q 'sql_targets not configured' && ok "a contract without sql_targets gets one informational row" || ko "missing sql_targets row"
+
 # --- Azure SQL-only client: a missing Fabric CLI is optional, never red --------
 # (master plan section 8 item 7). The row reads client.platform from the sandbox
 # home's ~/.coop/config; fab is hidden from PATH so the "missing" branch runs

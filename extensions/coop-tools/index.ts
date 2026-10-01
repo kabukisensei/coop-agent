@@ -1212,6 +1212,27 @@ export interface ProjectWizardSettings {
   tabularEditorEnabled: boolean;
   tabularEditorPath: string;
   bpaRulesPath: string;
+  /** sql_targets.dev (master plan SQ1): blank kind = no sql_targets block. */
+  sqlTargetKind: string;
+  sqlTargetServer: string;
+  sqlTargetDatabase: string;
+}
+
+/** The sql_targets kinds lib/sql_targets.py accepts (the Python module is the authority). */
+export const SQL_TARGET_KINDS = ["fabric_warehouse", "fabric_lakehouse", "fabric_sql_database", "azure_sql", "synapse_serverless"] as const;
+/** Kinds whose host coop discovers from Fabric ids; the others name a server. */
+export const SQL_TARGET_DISCOVERED_KINDS = new Set<string>(["fabric_warehouse", "fabric_lakehouse"]);
+
+/**
+ * The dev sql_targets kind to propose for a new contract: the machine's client
+ * platform (SQ7) seeds it, the Fabric answer refines it, and the person can
+ * still type any kind or blank it (section 8 item 7).
+ */
+export function proposedSqlTargetKind(platform: ReturnType<typeof clientPlatform>, fabricEnabled: boolean): string {
+  if (platform === "azure_sql") return "azure_sql";
+  if (platform === "both") return fabricEnabled ? "fabric_warehouse" : "azure_sql";
+  if (platform === "fabric") return fabricEnabled ? "fabric_warehouse" : "";
+  return fabricEnabled ? "fabric_warehouse" : "";
 }
 
 export type EstateMode = "discovery" | "partial" | "connected";
@@ -1520,7 +1541,49 @@ export function parseProjectWizardSettings(text: string, projectRoot: string): P
     tabularEditorEnabled: boolValue(teFlag, false),
     tabularEditorPath: projectYamlScalar(text, ["tools", "tabular_editor_cli", "executable_path"]) || "te",
     bpaRulesPath: projectYamlScalar(text, ["tools", "tabular_editor_cli", "bpa_rules_path"]),
+    sqlTargetKind: projectYamlScalar(text, ["sql_targets", "dev", "kind"]),
+    sqlTargetServer: projectYamlScalar(text, ["sql_targets", "dev", "server"]),
+    sqlTargetDatabase: projectYamlScalar(text, ["sql_targets", "dev", "database"]),
   };
+}
+
+/** The sql_targets lines for a contract (dev entry from the wizard; test/prod left to fill in). */
+export function sqlTargetsBlock(settings: ProjectWizardSettings): string[] {
+  const kind = settings.sqlTargetKind;
+  if (!kind) return [];
+  const discovered = SQL_TARGET_DISCOVERED_KINDS.has(kind);
+  const lines = [
+    "",
+    "# SQL connection targets (one per environment). coop works on default_environment",
+    "# (dev or test, never prod) unless a session is explicitly scoped and approved.",
+    "# Entra ID tokens only: never a user, password or connection string here.",
+    "sql_targets:",
+    "  default_environment: dev",
+    "  dev:",
+    `    kind: ${yamlQuoted(kind)}`,
+  ];
+  if (discovered) {
+    lines.push(
+      "    # coop discovers the host from these Fabric ids through the Fabric REST API.",
+      `    workspace_id: ${yamlQuoted(canonicalProjectUuid(settings.fabricWorkspaceId))}`,
+      `    item_id: ${yamlQuoted(canonicalProjectUuid(settings.sqlEndpointItemId))}`,
+    );
+    if (kind === "fabric_lakehouse") lines.push(`    sql_endpoint_id: ${yamlQuoted(canonicalProjectUuid(settings.sqlEndpointPropertiesId))}`);
+  } else {
+    lines.push(`    server: ${yamlQuoted(settings.sqlTargetServer)}`);
+  }
+  lines.push(
+    `    database: ${yamlQuoted(settings.sqlTargetDatabase)}`,
+    "  test:",
+    `    kind: ${yamlQuoted(kind)}`,
+    ...(discovered ? ["    workspace_id: ''", "    item_id: ''"] : ["    server: ''"]),
+    "    database: ''",
+    "  prod:",
+    `    kind: ${yamlQuoted(kind)}`,
+    ...(discovered ? ["    workspace_id: ''", "    item_id: ''"] : ["    server: ''"]),
+    "    database: ''",
+  );
+  return lines;
 }
 
 function safeRepositoryBlock(repo: ProjectRepositorySettings): string[] {
@@ -1610,6 +1673,20 @@ export function applyProjectWizardSettings(text: string, settings: ProjectWizard
     set(["tools", "tabular_editor_cli", "executable_path"], settings.tabularEditorPath);
     set(["tools", "tabular_editor_cli", "bpa_rules_path"], settings.bpaRulesPath);
   }
+  if (settings.sqlTargetKind) {
+    // Only the dev entry is wizard-owned; test/prod entries and an existing
+    // default_environment stay as the person wrote them.
+    if (!projectYamlScalar(out, ["sql_targets", "default_environment"])) set(["sql_targets", "default_environment"], "dev");
+    set(["sql_targets", "dev", "kind"], settings.sqlTargetKind);
+    if (SQL_TARGET_DISCOVERED_KINDS.has(settings.sqlTargetKind)) {
+      set(["sql_targets", "dev", "workspace_id"], canonicalProjectUuid(settings.fabricWorkspaceId));
+      set(["sql_targets", "dev", "item_id"], canonicalProjectUuid(settings.sqlEndpointItemId));
+      if (settings.sqlTargetKind === "fabric_lakehouse") set(["sql_targets", "dev", "sql_endpoint_id"], canonicalProjectUuid(settings.sqlEndpointPropertiesId));
+    } else {
+      set(["sql_targets", "dev", "server"], settings.sqlTargetServer);
+    }
+    set(["sql_targets", "dev", "database"], settings.sqlTargetDatabase);
+  }
   return out.endsWith("\n") ? out : `${out}\n`;
 }
 
@@ -1672,6 +1749,7 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "  semantic_models: []",
     "  reports: []",
   );
+  lines.push(...sqlTargetsBlock(settings));
   lines.push(
     "",
     "tools:",
@@ -1984,6 +2062,32 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
       powerBiWorkspaceName: pbiName,
       powerBiWorkspaceId: pbiId,
     });
+  }
+
+  // SQL connection target for the dev environment (sql_targets:, SQ1). Enter keeps
+  // the proposal; blank means no sql_targets block (today's fabric:-only contract).
+  const kindDefault = settings.sqlTargetKind || proposedSqlTargetKind(platform, settings.fabricEnabled);
+  const kind = await askText(ctx, `Dev SQL target kind (${SQL_TARGET_KINDS.join(", ")}; blank = none)`, kindDefault);
+  if (kind === null) return false;
+  const kindValue = kind.trim().toLowerCase();
+  if (kindValue && !(SQL_TARGET_KINDS as readonly string[]).includes(kindValue)) {
+    notify(ctx, `SQL target kind must be one of ${SQL_TARGET_KINDS.join(", ")}, or blank.`, "error");
+    return false;
+  }
+  settings.sqlTargetKind = kindValue;
+  if (kindValue) {
+    if (!SQL_TARGET_DISCOVERED_KINDS.has(kindValue)) {
+      const server = await askText(ctx, "Dev SQL server host (for example contoso-dev.database.windows.net)", settings.sqlTargetServer);
+      if (server === null) return false;
+      if (/[\s,:;=\/\\]/.test(server)) {
+        notify(ctx, "The server is a host name only: no port, path or connection-string parts.", "error");
+        return false;
+      }
+      settings.sqlTargetServer = server.toLowerCase();
+    }
+    const database = await askText(ctx, "Dev database name", settings.sqlTargetDatabase || settings.sqlEndpointItemName || "");
+    if (database === null) return false;
+    settings.sqlTargetDatabase = database;
   }
 
   settings.tabularEditorEnabled = await askConfirm(ctx, "Tabular Editor", "Use the Tabular Editor CLI for semantic-model BPA reviews?");

@@ -86,6 +86,30 @@ fabric:
     test: "TODO: test Warehouse / Lakehouse workspace"
     prod: "TODO: prod Warehouse / Lakehouse workspace"
 
+# --- SQL connection targets (master plan SQ1) ----------------------------------
+# One entry per environment; coop works on default_environment (dev or test,
+# never prod) unless a session is explicitly scoped and approved for another.
+# kind: fabric_warehouse | fabric_lakehouse | fabric_sql_database | azure_sql |
+#       synapse_serverless. The server host must match the kind (Azure SQL is
+#       *.database.windows.net); Fabric Warehouse / Lakehouse entries carry the
+#       workspace_id + item_id (and sql_endpoint_id for a Lakehouse) instead of a
+#       server, because coop discovers that host through the Fabric REST API.
+# Entra ID tokens only: never a user, password or connection string here.
+sql_targets:
+  default_environment: dev
+  dev:
+    kind: azure_sql
+    server: "TODO: contoso-dev.database.windows.net"
+    database: "TODO: database"
+  test:
+    kind: azure_sql
+    server: ""
+    database: ""
+  prod:
+    kind: azure_sql
+    server: ""
+    database: ""
+
 power_bi:
   default_workspace_name: "TODO: dev semantic-model workspace name"
   default_workspace_id: "TODO: dev semantic-model workspace id"
