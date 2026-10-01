@@ -207,30 +207,147 @@ function findParentKey(lines: string[], idx: number, parentIndent: number): stri
   return null;
 }
 
-export type SessionGovernance = { loaded: boolean; entries: RepoPolicyEntry[] };
+export type SessionGovernance = { loaded: boolean; entries: RepoPolicyEntry[]; sqlContract: ContractSqlScope | null };
 
 // The TRUSTED policy snapshot: read once per session, then frozen. Editing
 // .coop/project.yml mid-session can never weaken the active guardrails.
-let sessionGovernance: SessionGovernance = { loaded: false, entries: [] };
+let sessionGovernance: SessionGovernance = { loaded: false, entries: [], sqlContract: null };
 
 /** Read the session's project contract once into an immutable governance snapshot. */
 export function buildSessionGovernance(sessionCwd: string): SessionGovernance {
   const entries: RepoPolicyEntry[] = [];
+  let sqlContract: ContractSqlScope | null = null;
   try {
     const proj = findProjectYml(sessionCwd);
     if (proj) {
       const projectRoot = dirname(dirname(proj));
-      entries.push(...parseRepoEntries(readFileSync(proj, "utf8"), projectRoot));
+      const text = readFileSync(proj, "utf8");
+      entries.push(...parseRepoEntries(text, projectRoot));
+      sqlContract = parseContractSqlScope(text);
     }
   } catch {
     /* conservative defaults are fine */
   }
-  return { loaded: true, entries };
+  return { loaded: true, entries, sqlContract };
 }
 
 /** Forget the snapshot so the next governed call re-reads the contract (new session / tests). */
 export function resetSessionGovernance(): void {
-  sessionGovernance = { loaded: false, entries: [] };
+  sessionGovernance = { loaded: false, entries: [], sqlContract: null };
+}
+
+// --- sql_targets: the contract's SQL scope (SQ3) ------------------------------------
+// lib/sql_targets.py is the authority on the section; this is the same validation
+// ported to the trusted snapshot so the live-read prompt describes exactly what
+// lib/sql_query.py will connect to. Anything the port cannot vouch for resolves to
+// null, which means "ask on every call" (never a grant).
+export type ContractSqlTarget = {
+  environment: "dev" | "test";
+  kind: string;
+  database: string;
+  server: string;
+  workspaceId: string;
+  itemId: string;
+  sqlEndpointId: string;
+};
+/** `configured` mirrors lib/sql_query.py: once the section exists, the executor
+ *  uses it (or fails closed) and never falls back to the managed Fabric target. */
+export type ContractSqlScope = { configured: boolean; client: string; tenant: string; target: ContractSqlTarget | null };
+
+const SQL_HOST_LABEL = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
+const SQL_TARGET_KINDS: Record<string, { host: RegExp; discovered: boolean }> = {
+  fabric_warehouse: { host: new RegExp(`^${SQL_HOST_LABEL}(?:\\.${SQL_HOST_LABEL})*\\.datawarehouse\\.fabric\\.microsoft\\.com$`), discovered: true },
+  fabric_lakehouse: { host: new RegExp(`^${SQL_HOST_LABEL}(?:\\.${SQL_HOST_LABEL})*\\.datawarehouse\\.fabric\\.microsoft\\.com$`), discovered: true },
+  fabric_sql_database: { host: new RegExp(`^${SQL_HOST_LABEL}(?:\\.${SQL_HOST_LABEL})*\\.database\\.fabric\\.microsoft\\.com$`), discovered: false },
+  azure_sql: { host: new RegExp(`^${SQL_HOST_LABEL}(?:\\.${SQL_HOST_LABEL})*\\.database\\.windows\\.net$`), discovered: false },
+  synapse_serverless: { host: new RegExp(`^${SQL_HOST_LABEL}-ondemand(?:\\.${SQL_HOST_LABEL})*\\.sql\\.azuresynapse\\.net$`), discovered: false },
+};
+const SQL_TARGET_KEYS = new Set(["kind", "server", "database", "workspace_id", "item_id", "sql_endpoint_id", "read_scale_replicas"]);
+const SQL_SAFE_DATABASE = /^[A-Za-z0-9][A-Za-z0-9 ._@&'()+-]{0,159}$/;
+const SQL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A YAML scalar as lib/_yaml.py reads it: quotes stripped, trailing comment dropped. */
+function yamlScalar(raw: string): string {
+  const v = raw.trim();
+  const quoted = /^"((?:[^"\\]|\\.)*)"\s*(?:#.*)?$|^'((?:[^']|'')*)'\s*(?:#.*)?$/.exec(v);
+  if (quoted) return quoted[1] !== undefined ? quoted[1].replace(/\\(.)/g, "$1") : quoted[2].replace(/''/g, "'");
+  return v.replace(/\s+#.*$/, "").trim();
+}
+
+/** The top-level `section:` block of a contract as nested string maps (two levels:
+ *  `section.key: scalar` and `section.key.subkey: scalar`). Deeper nesting, lists
+ *  and flow collections are not what sql_targets uses, so they read as "". */
+function yamlSection(text: string, section: string): Record<string, string | Record<string, string>> | null {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const start = lines.findIndex((line) => new RegExp(`^${section}\\s*:\\s*(?:#.*)?$`).test(line));
+  if (start < 0) return null;
+  const out: Record<string, string | Record<string, string>> = {};
+  let current: string | null = null;
+  let currentIndent = 0;
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i];
+    const body = line.trim();
+    if (!body || body.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    if (indent === 0) break;
+    const kv = /^([A-Za-z0-9_]+)\s*:(?:\s+(.*))?$/.exec(body);
+    if (!kv) { current = null; continue; }
+    const [, key, rawValue] = kv;
+    if (current !== null && indent > currentIndent) {
+      const nested = out[current];
+      if (typeof nested === "object") nested[key] = rawValue === undefined ? "" : yamlScalar(rawValue);
+      continue;
+    }
+    currentIndent = indent;
+    if (rawValue === undefined || rawValue.trim() === "" || rawValue.trim().startsWith("#")) { out[key] = {}; current = key; }
+    else { out[key] = yamlScalar(rawValue); current = null; }
+  }
+  return out;
+}
+
+function sqlPlaceholder(value: string): boolean { return !value || value.toUpperCase().startsWith("TODO"); }
+
+/** One `sql_targets` entry, or null unless it is exactly ready (lib/sql_targets.py's
+ *  "ready" state): placeholders, unknown or credential keys, a host that does not
+ *  match its kind, ids for a direct kind, a hand-written host for a discovered kind. */
+function readySqlTarget(environment: "dev" | "test", raw: unknown): ContractSqlTarget | null {
+  if (!raw || typeof raw !== "object") return null;
+  const entry = raw as Record<string, string>;
+  if (Object.keys(entry).some((key) => !SQL_TARGET_KEYS.has(key))) return null;
+  const kind = (entry.kind || "").trim().toLowerCase();
+  const spec = SQL_TARGET_KINDS[kind];
+  const database = (entry.database || "").trim();
+  if (!spec || sqlPlaceholder(database) || !SQL_SAFE_DATABASE.test(database)) return null;
+  const server = (entry.server || "").trim().toLowerCase();
+  const workspaceId = (entry.workspace_id || "").trim().toLowerCase();
+  const itemId = (entry.item_id || "").trim().toLowerCase();
+  const sqlEndpointId = (entry.sql_endpoint_id || "").trim().toLowerCase();
+  if (entry.read_scale_replicas !== undefined && (kind !== "azure_sql" || !/^(true|false)$/i.test(entry.read_scale_replicas.trim()))) return null;
+  if (spec.discovered) {
+    if (server || !SQL_UUID.test(workspaceId) || !SQL_UUID.test(itemId)) return null;
+    if (kind === "fabric_lakehouse" ? !SQL_UUID.test(sqlEndpointId) : sqlEndpointId) return null;
+    return { environment, kind, database, server: "", workspaceId, itemId, sqlEndpointId };
+  }
+  if (workspaceId || itemId || sqlEndpointId || sqlPlaceholder(server) || !spec.host.test(server)) return null;
+  return { environment, kind, database, server, workspaceId: "", itemId: "", sqlEndpointId: "" };
+}
+
+/** The contract's SQL scope source: profile.client, fabric.tenant_id and the ready
+ *  default `sql_targets` entry. `target` is null when the default is prod, missing,
+ *  unconfigured or invalid, so a contract-driven read then asks on every call. */
+export function parseContractSqlScope(text: string): ContractSqlScope | null {
+  const section = yamlSection(text, "sql_targets");
+  if (section === null) return null;
+  const profile = yamlSection(text, "profile") || {};
+  const fabric = yamlSection(text, "fabric") || {};
+  const client = typeof profile.client === "string" ? profile.client : "";
+  const tenant = typeof fabric.tenant_id === "string" ? fabric.tenant_id.trim().toLowerCase() : "";
+  const envs = ["dev", "test", "prod"];
+  if (Object.keys(section).some((key) => key !== "default_environment" && !envs.includes(key))) return { configured: true, client, tenant, target: null };
+  const rawDefault = typeof section.default_environment === "string" ? section.default_environment.trim().toLowerCase() : "";
+  const environment = rawDefault === "" ? "dev" : rawDefault;
+  if (environment !== "dev" && environment !== "test") return { configured: true, client, tenant, target: null };
+  return { configured: true, client, tenant, target: readySqlTarget(environment, section[environment]) };
 }
 
 function ensureSessionGovernance(sessionCwd: string): SessionGovernance {
@@ -1029,6 +1146,8 @@ export type LiveReadScope = {
   operationClass: string;
   resultLimit: number;
   timeoutMs: number;
+  /** Prompt label when the scope came from the contract's sql_targets (SQ3). */
+  label?: string;
 };
 
 export type LiveReadGrant = { scope: LiveReadScope; grantedAt: number };
@@ -1086,6 +1205,8 @@ export type LiveReadResolverDeps = {
   readText: (path: string) => string;
   agentDir: string;
   token: () => string | undefined;
+  /** The trusted snapshot's `sql_targets` scope source (SQ3); absent means no section. */
+  contract?: () => ContractSqlScope | null;
 };
 
 function launchIdentity(token: string | undefined): { tenant: string; principal: string } | null {
@@ -1108,6 +1229,10 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   if (event?.toolName === FABRIC_SQL_FALLBACK_TOOL) {
     const root = process.env.COOP_ROOT;
     if (!root || !existsSync(join(root, "lib", "sql_query.py"))) return null;
+    // A contract with sql_targets drives lib/sql_query.py (SQ2), so its scope
+    // comes from the trusted snapshot, never from the managed Fabric entry.
+    const contract = deps.contract?.() ?? null;
+    if (contract?.configured) return contractLiveReadScope(event, contract, deps);
   }
   let mcp: any;
   try { mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp-adapter.json"))); } catch { return null; }
@@ -1163,6 +1288,37 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   };
 }
 
+/** Scope for a contract-driven read: the ready dev/test default entry, the
+ *  contract's client, and the launch identity (whose tenant the contract's
+ *  fabric.tenant_id must match when it names one). Targets are
+ *  `kind/host/database` for direct kinds and `workspace/item/database` for
+ *  discovered ones, so a Warehouse named both ways shares one grant. */
+function contractLiveReadScope(event: any, contract: ContractSqlScope, deps: LiveReadResolverDeps): LiveReadScope | null {
+  const target = contract.target;
+  const client = strictResolvedText(contract.client);
+  const identity = launchIdentity(deps.token());
+  if (!target || !client || !identity) return null;
+  if (contract.tenant && (!UUID.test(contract.tenant) || contract.tenant !== identity.tenant)) return null;
+  const database = strictResolvedText(target.database);
+  if (!database) return null;
+  let resultLimit = boundedSelectLimit(callSqlText(event));
+  if (!resultLimit) return null;
+  if (Number.isInteger(event?.input?.maximum_rows)) resultLimit = Math.min(resultLimit, event.input.maximum_rows);
+  const discovered = SQL_TARGET_KINDS[target.kind]?.discovered;
+  const endpointId = target.kind === "fabric_lakehouse" ? target.sqlEndpointId : target.itemId;
+  return {
+    client,
+    tenant: identity.tenant,
+    principal: identity.principal,
+    environment: target.environment,
+    targets: [discovered ? `${target.workspaceId}/${endpointId}/${database}` : `${target.kind}/${target.server}/${database}`],
+    operationClass: "sql-read",
+    resultLimit,
+    timeoutMs: PINNED_MCP_REQUEST_TIMEOUT_MS,
+    label: `COOP contract SQL target (${target.kind}, ${target.environment})`,
+  };
+}
+
 export function createLiveReadGrant(scope: LiveReadScope, now = Date.now()): LiveReadGrant {
   return { scope: { ...scope, targets: [...scope.targets] }, grantedAt: now };
 }
@@ -1194,7 +1350,7 @@ export function decideLiveRead(event: any, grant: LiveReadGrant | null, resolved
   const sql = sqlMcpRisk(event);
   const read = mcpLiveReadRisk(event);
   if (!sql && !read) return { action: "none" };
-  const label = sql?.label || read!.label;
+  const label = (sql?.kind === "row-data" && resolvedScope?.label) || sql?.label || read!.label;
   const kind = sql?.kind || read!.kind;
   const environment = resolvedScope?.environment || read?.environment;
   const targetName = (effectiveMutationTarget(event).innerTool || effectiveMutationTarget(event).outerTool).toLowerCase();
@@ -1599,7 +1755,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
             return { block: true, reason: `coop guardrails: blocked the MCP action ${mcp} (you declined). MCP is read-only by default — list / read / inspect only; make changes with explicit approval or in the Fabric / Power BI UX.` };
           }
         }
-        const resolvedScope = resolveLiveReadScope(event, liveReadDeps);
+        const resolvedScope = resolveLiveReadScope(event, { ...liveReadDeps, contract: () => ensureSessionGovernance(ctx.cwd).sqlContract });
         const decision = decideLiveRead(event, liveReadGrant, resolvedScope);
         if (decision.action !== "none" && decision.action !== "allow-grant") {
           // A single dev/test Warehouse INSERT/UPDATE/CREATE/ALTER can ride a session

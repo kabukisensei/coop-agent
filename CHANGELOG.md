@@ -231,7 +231,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   placeholders tolerated, credential keys rejected); `coop doctor` shows one
   Project-contract row per entry; `/setup-project` proposes the dev entry's kind
   from the machine's client platform and writes it; `.coop/project.example.yml`
-  carries the shape. The guardrails' resolved scope (SQ3) adopts them next.
+  carries the shape.
+
+- The guardrails' live-read scope follows `sql_targets:` (master plan section 8
+  item 1, row SQ3). With that section in the contract, a `fabric_sql_query` call
+  resolves its bounded session scope from the trusted contract snapshot: the ready
+  dev or test default entry, the contract's client and the launch identity (its
+  tenant must match `fabric.tenant_id` when set). The approval prompt now names
+  that entry (`azure_sql/<host>/<database>`, or the Warehouse ids) instead of the
+  managed Warehouse; a Warehouse named by ids shares the managed MCP grant. A prod
+  default, a placeholder, an invalid entry, a missing client or a tenant mismatch
+  resolve no scope, so every such read asks; mid-session contract edits never
+  change the scope.
 
 - The SQL executor reads `sql_targets:` (master plan section 8 item 1, row SQ2).
   `lib/fabric_sql_query.py` is now `lib/sql_query.py` (the in-agent tool keeps its
