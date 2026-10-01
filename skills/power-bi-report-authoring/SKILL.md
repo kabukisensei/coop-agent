@@ -35,12 +35,14 @@ This skill operates inside the `coop-workflow` skill:
 
 ## Prerequisites
 
-Node.js 20 or later. Both CLIs are installed by `coop install`:
+Node.js 20 or later. Both CLIs are installed by `coop install` and `coop update`
+at the exact versions pinned in `config/release-manifest.json` (if you install
+by hand, use those pins, not `@latest`):
 
 ```bash
-npm install -g @microsoft/powerbi-report-authoring-cli@latest
+npm install -g @microsoft/powerbi-report-authoring-cli@<manifest pin>
 # Windows + Power BI Desktop only:
-npm install -g @microsoft/powerbi-desktop-bridge-cli@latest
+npm install -g @microsoft/powerbi-desktop-bridge-cli@<manifest pin>
 ```
 
 Verify:

@@ -35,8 +35,11 @@ assert 'mcp-remote' not in json.dumps(m)
 # powerbi-mcp-server ignores --readonly and exposes refresh_dataset (#93): retired.
 assert 'powerbi-mcp-server' not in json.dumps(m)
 assert '@microsoft/powerbi-modeling-mcp' in m['npm_tools']
-# 0.0.1 was never published; Windows installs must use the first supported line.
-assert m['npm_tools']['@microsoft/powerbi-desktop-bridge-cli'] == '0.1.2'
+# Report Authoring 0.4.0 declares `@microsoft/powerbi-desktop-bridge-cli: ^1.0.0`
+# (master plan section 6): the global Bridge pin must satisfy that range so the
+# authoring preview and the global `powerbi-desktop` run the same major.
+assert m['npm_tools']['@microsoft/powerbi-desktop-bridge-cli'] == '1.0.0'
+assert m['npm_tools']['@microsoft/powerbi-report-authoring-cli'] == '0.4.0'
 for p in ['pi-mcp-adapter','pi-hermes-memory','pi-better-openai','pi-web-access','@juicesharp/rpiv-ask-user-question','context-mode']:
     assert p in m['extensions']
 # Manifest is authoritative: every manifest fleet member must be referenced by its

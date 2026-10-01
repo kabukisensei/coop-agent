@@ -25,9 +25,9 @@
     "pyodbc": "5.3.0"
   },
   "npm_tools": {
-    "@microsoft/powerbi-report-authoring-cli": "0.1.4",
+    "@microsoft/powerbi-report-authoring-cli": "0.4.0",
     "@microsoft/powerbi-modeling-mcp": "1.0.0",
-    "@microsoft/powerbi-desktop-bridge-cli": "0.1.2"
+    "@microsoft/powerbi-desktop-bridge-cli": "1.0.0"
   },
   "mcp_servers": {
     "@microsoft/fabric-mcp": "1.4.0",
