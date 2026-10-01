@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `coop sync` from a PowerShell 7 window. `coop.cmd` starts Windows PowerShell
+  5.1, which inherited pwsh's `PSModulePath` and could not load `Get-FileHash`,
+  so the lockfile comparison errored, the shipped lock was skipped and sync still
+  printed `✓ sync complete.` (seen on the development VM, 2026-10-01). The lock
+  hashes now go through .NET (`Get-CoopFileSha256`), and `coop.cmd` clears
+  `PSModulePath` so 5.1 rebuilds its own module path.
+
 ### Removed
 
 - The POSIX product path (master plan S1, row 7). coop is one implementation, in

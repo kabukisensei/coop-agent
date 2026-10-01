@@ -790,7 +790,7 @@ doctor_hints = {
     "token_output_invalid": "Azure CLI returned no usable accessToken JSON; verify the Fabric token command output",
     "auth_required": "sign in with Azure CLI/tenant access; doctor never triggers login",
 }
-for doctor_script in (ROOT / "scripts" / "doctor.sh", ROOT / "scripts" / "doctor.ps1"):
+for doctor_script in (ROOT / "scripts" / "doctor.ps1",):
     doctor_text = doctor_script.read_text(encoding="utf-8-sig")
     for diagnostic_state, expected_hint in doctor_hints.items():
         matching_lines = [
