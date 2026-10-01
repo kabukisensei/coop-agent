@@ -37,6 +37,12 @@ in one clean bar instead of a duplicate one. The whole line is clipped to the
 terminal width so it never overflows, and it re-renders on branch changes and
 between turns so the numbers stay current.
 
+If another extension clears or replaces the footer during `session_start`,
+Coop restores it in Pi's subsequent `resources_discover` hook (startup and
+reload). That hook runs after all startup handlers finish, including async
+handlers. An intact Coop footer is left alone; replacing it disposes its branch
+subscription before a new one is installed.
+
 ### Startup splash (`ctx.ui.setHeader`)
 
 On `session_start` (UI sessions only) it installs a header via

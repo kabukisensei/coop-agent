@@ -201,6 +201,7 @@ export default function coopPowerline(pi: ExtensionAPI) {
   if (vibes.length === 0) vibes = FALLBACK_VIBES;
 
   const titleTimers = new Set<ReturnType<typeof setTimeout>>();
+  let reapplyFooter: (() => void) | undefined;
   const clearTitleTimers = () => {
     for (const timer of titleTimers) clearTimeout(timer);
     titleTimers.clear();
@@ -267,6 +268,7 @@ export default function coopPowerline(pi: ExtensionAPI) {
   };
 
   pi.on("session_start", async (_event, ctx) => {
+    reapplyFooter = undefined;
     try {
       if (!ctx.hasUI) return;
       setCoopTitle(ctx, true);
@@ -277,13 +279,17 @@ export default function coopPowerline(pi: ExtensionAPI) {
       // coop renders its OWN footer (no third-party powerline → no Nerd Font `?`
       // glyphs, no welcome overlay, no duplication). Plain text + common Unicode.
       if (typeof ctx.ui.setFooter === "function") {
-        ctx.ui.setFooter((tui: any, theme: Theme, footerData: any) => {
+        let footerInstalled = false;
+        const createFooter = (tui: any, theme: Theme, footerData: any) => {
           const unsub =
             typeof footerData?.onBranchChange === "function"
               ? footerData.onBranchChange(() => tui?.requestRender?.())
               : () => {};
           return {
-            dispose: unsub,
+            dispose() {
+              footerInstalled = false;
+              unsub();
+            },
             invalidate() {},
             render(width: number): string[] {
               try {
@@ -312,7 +318,13 @@ export default function coopPowerline(pi: ExtensionAPI) {
               }
             },
           };
-        });
+        };
+        reapplyFooter = () => {
+          if (footerInstalled) return;
+          ctx.ui.setFooter(createFooter);
+          footerInstalled = true;
+        };
+        reapplyFooter();
       }
       // Working vibes + honeycomb indicator.
       if (typeof ctx.ui.setWorkingMessage === "function") {
@@ -323,6 +335,17 @@ export default function coopPowerline(pi: ExtensionAPI) {
       }
     } catch {
       /* never break pi */
+    }
+  });
+
+  // Pi awaits every session_start handler before resources_discover (startup
+  // and reload). Restore our footer if a later handler cleared/replaced it;
+  // unlike a timer, this also waits for asynchronous startup handlers.
+  pi.on("resources_discover", () => {
+    try {
+      reapplyFooter?.();
+    } catch {
+      /* footer branding must never affect the session */
     }
   });
 
@@ -352,6 +375,7 @@ export default function coopPowerline(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
+    reapplyFooter = undefined;
     clearTitleTimers();
   });
 

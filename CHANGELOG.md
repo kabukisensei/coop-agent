@@ -5,6 +5,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Coop's footer is restored after startup or reload if another extension's
+  `session_start` handler clears or replaces it (#203). The re-apply waits for
+  all startup handlers and leaves an intact footer alone, preserving one branch
+  subscription and other extensions' status text.
+
 ### Added
 
 - The isolated extension tree is reproducible (issue #152, master plan U1).
