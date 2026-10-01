@@ -222,14 +222,32 @@ try {
     assert.equal(sourceStatus(incompatibleOptions).domains.sql.state, "unavailable");
 
     const badBin = join(tmp, "bad-reviewer-bin"); mkdirSync(badBin);
+    const badReviewers = [];
     for (const [name, standardPath] of [["coop-sql-review", sqlBundled], ["coop-dax-review", daxBundled]]) {
-      const script = join(badBin, name);
-      writeFileSync(script, `#!/usr/bin/env node\nimport {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; const a=process.argv.slice(2), i=a.indexOf("--standards"), p=i>=0?a[i+1]:${JSON.stringify(standardPath)}, sha256=i>=0?"${"0".repeat(64)}":createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({version:"1.0.0",standards:{path:p,sha256},findings:[]}));\n`);
+      const script = join(badBin, process.platform === "win32" ? `${name}.mjs` : name);
+      const receipt = join(badBin, `${name}.calls`);
+      writeFileSync(script, `#!/usr/bin/env node\nimport {createHash} from "node:crypto"; import {appendFileSync,readFileSync} from "node:fs"; appendFileSync(${JSON.stringify(receipt)}, "called\\n"); const a=process.argv.slice(2), i=a.indexOf("--standards"), p=i>=0?a[i+1]:${JSON.stringify(standardPath)}, sha256=i>=0?"${"0".repeat(64)}":createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({version:"1.0.0",standards:{path:p,sha256},findings:[]}));\n`);
       chmodSync(script, 0o755);
+      badReviewers.push({ domain: name === "coop-sql-review" ? "sql" : "dax", script, receipt });
     }
-    const env = { ...process.env, PATH: `${badBin}:${process.env.PATH}`, COOP_STANDARDS_ROOT: join(tmp, "none", "canonical"), COOP_STANDARDS_STATE: join(tmp, "none", "status.json"), COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "failed-support-home"), NO_COLOR: "1" };
+    // A .cmd shim cannot run through the resolver's shell-free spawnSync on
+    // Windows. Use its existing reviewerBins seam to exercise malformed output
+    // there too; the receipt distinguishes rejection from failure to launch.
+    for (const { domain, script, receipt } of badReviewers) {
+      const reviewer = { command: process.execPath, args: [script] };
+      assert.equal(resolveStandard(domain, none({ cwd: tmp, reviewerBins: { [domain]: reviewer } })).state, "unavailable");
+      assert.equal(readFileSync(receipt, "utf8"), "called\n", `${domain} malformed reviewer must execute`);
+      rmSync(receipt);
+    }
+    const env = { ...process.env, PATH: `${badBin}${delimiter}${reviewerFreePath()}`, COOP_STANDARDS_ROOT: join(tmp, "none", "canonical"), COOP_STANDARDS_STATE: join(tmp, "none", "status.json"), COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "failed-support-home"), NO_COLOR: "1" };
     const lines = execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
     assert.match(lines, /domain\tsql\tformal_standard\/unavailable/);
+    assert.match(lines, /domain\tdax\tformal_standard\/unavailable/);
+    if (process.platform !== "win32") {
+      for (const { domain, receipt } of badReviewers) {
+        assert.equal(readFileSync(receipt, "utf8"), "called\n", `${domain} malformed reviewer must execute through PATH`);
+      }
+    }
     const doctor = spawnSync("bash", [join(ROOT, "scripts", "doctor.sh")], { cwd: tmp, encoding: "utf8", env: doctorEnv(env, "failed-doctor-home") });
     assert.match(`${doctor.stdout}\n${doctor.stderr}`, /domain sql: formal_standard\/unavailable/);
     const support = JSON.parse(execFileSync(process.execPath, [join(ROOT, "lib", "support-center-cli.mjs"), "--json"], { encoding: "utf8", env }));
