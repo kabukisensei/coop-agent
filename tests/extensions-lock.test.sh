@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# config/extensions-lock.json pins the isolated extension tree's TRANSITIVE
+# dependencies (issue #152). The lock must agree with config/release-manifest.json
+# (a pin bump without `node lib/extlock.js generate` fails here), and `coop sync`
+# applies it only when it can hold: manifest Pi installed and a tree whose
+# package.json declares exactly the lock's root dependencies. Offline; the lock
+# is read, never resolved.
+set -uo pipefail
+
+ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+fail=0
+ok()  { printf '  ✓ %s\n' "$1"; }
+ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
+LOCK="$ROOT/config/extensions-lock.json"
+MANIFEST="$ROOT/config/release-manifest.json"
+
+[ -f "$LOCK" ] && ok "config/extensions-lock.json ships with the release" || ko "config/extensions-lock.json is missing"
+
+# 1. The committed lock agrees with the manifest: every extension at its pin,
+#    nothing extra, and pi-ai / pi-tui / the agent peer at the manifest's Pi.
+if node "$ROOT/lib/extlock.js" check "$MANIFEST" "$LOCK" >/dev/null 2>&1; then
+  ok "lock root, extension versions and shared Pi libraries match the manifest"
+else
+  ko "lock drifted from the manifest: $(node "$ROOT/lib/extlock.js" check "$MANIFEST" "$LOCK" 2>&1 | head -3 | tr '\n' ' ')"
+fi
+
+# 2. A bumped pin without a regenerated lock fails the check (this is the gate).
+"$PY" - "$MANIFEST" "$TMP/bumped.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+name = sorted(m["extensions"])[0]
+m["extensions"][name] = "99.99.99"
+json.dump(m, open(sys.argv[2], "w"))
+PY
+if node "$ROOT/lib/extlock.js" check "$TMP/bumped.json" "$LOCK" >/dev/null 2>&1; then
+  ko "a manifest pin bump without a regenerated lock passed the check"
+else
+  ok "a manifest pin bump without a regenerated lock fails the check"
+fi
+"$PY" - "$MANIFEST" "$TMP/newpi.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+m["pi"]["version"] = "0.0.1"
+json.dump(m, open(sys.argv[2], "w"))
+PY
+if node "$ROOT/lib/extlock.js" check "$TMP/newpi.json" "$LOCK" >/dev/null 2>&1; then
+  ko "a Pi bump without a regenerated lock passed the check"
+else
+  ok "a Pi bump without a regenerated lock fails the check (the lock resolves pi-ai/pi-tui to the manifest's Pi)"
+fi
+
+# 3. `matches`: the tree's package.json must declare exactly the lock's root.
+pi_ver="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["pi"]["version"])' "$MANIFEST")"
+mk_tree() { # <dir> <extra-deps-json-fragment> <override-version>
+  mkdir -p "$1/npm"
+  "$PY" - "$MANIFEST" "$1/npm/package.json" "$2" "$3" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+deps = dict(m["extensions"]); deps.update(json.loads(sys.argv[3]))
+v = sys.argv[4]
+json.dump({"name": "pi-extensions", "private": True, "dependencies": deps,
+           "overrides": {"@earendil-works/pi-ai": v, "@earendil-works/pi-tui": v, "@earendil-works/pi-coding-agent": v}},
+          open(sys.argv[2], "w"), indent=2)
+PY
+}
+mk_tree "$TMP/exact" '{}' "$pi_ver"
+node "$ROOT/lib/extlock.js" matches "$TMP/exact" "$LOCK" >/dev/null 2>&1 \
+  && ok "a tree declaring exactly the manifest pins can take the lock" || ko "an exact tree was refused: $(node "$ROOT/lib/extlock.js" matches "$TMP/exact" "$LOCK" 2>&1 | head -2 | tr '\n' ' ')"
+mk_tree "$TMP/extra" '{"some-personal-extension":"1.0.0"}' "$pi_ver"
+node "$ROOT/lib/extlock.js" matches "$TMP/extra" "$LOCK" >/dev/null 2>&1 \
+  && ko "a tree with an extra extension took the lock (npm ci would refuse it)" || ok "a tree with an extra extension falls back to a live resolution"
+mk_tree "$TMP/otherpi" '{}' "0.0.1"
+node "$ROOT/lib/extlock.js" matches "$TMP/otherpi" "$LOCK" >/dev/null 2>&1 \
+  && ko "a tree overriding pi-ai to another version took the lock" || ok "a tree pinned to another Pi falls back to a live resolution"
+
+# 4. The convergence twins consult the lock before their live npm install, and
+#    the lock path is the one that runs `npm ci`.
+grep -q 'coop_apply_extensions_lock "$agent_dir" "$npm_bin" "$pi_ver"' "$ROOT/lib/common.sh" \
+  && grep -q '"$npm_bin" ci --no-audit --no-fund' "$ROOT/lib/common.sh" \
+  && ok "coop_converge_extension_pins installs from the lock (npm ci) before a live resolution" \
+  || ko "lib/common.sh convergence no longer tries the lockfile first"
+grep -q 'Install-CoopExtensionsLock -AgentDir $AgentDir -Npm $npm -PiVersion $piVer' "$ROOT/lib/common.ps1" \
+  && grep -q '& $Npm ci --no-audit --no-fund' "$ROOT/lib/common.ps1" \
+  && ok "Sync-CoopExtensionPins installs from the lock (npm ci) before a live resolution" \
+  || ko "lib/common.ps1 convergence no longer tries the lockfile first"
+
+# 5. End to end through the bash helper with a stub npm: an exact tree on the
+#    manifest Pi gets the lock copied beside package.json and `npm ci`; a tree
+#    with an extra extension gets a plain `npm install` and no lock.
+STUB="$TMP/stub"; mkdir -p "$STUB"
+cat > "$STUB/npm" <<EOF
+#!/bin/sh
+echo "NPM \$*" >> "$TMP/npm.log"; exit 0
+EOF
+chmod +x "$STUB/npm"
+run_helper() { # <agent-dir>
+  (
+    export COOP_ROOT="$ROOT" PATH="$STUB:$PATH"
+    # shellcheck disable=SC1091
+    . "$ROOT/lib/common.sh"
+    coop_apply_extensions_lock "$1" "$STUB/npm" "$pi_ver"
+  )
+}
+: > "$TMP/npm.log"
+if run_helper "$TMP/exact" && [ -f "$TMP/exact/npm/package-lock.json" ] && grep -q '^NPM ci ' "$TMP/npm.log"; then
+  ok "sync copies the lock next to package.json and runs npm ci on an exact tree"
+else
+  ko "lock path did not run npm ci on an exact tree ($(cat "$TMP/npm.log" 2>/dev/null | tr '\n' ' '))"
+fi
+cmp -s "$LOCK" "$TMP/exact/npm/package-lock.json" && ok "the tree's package-lock.json is byte-identical to the shipped lock" || ko "the copied lock differs from config/extensions-lock.json"
+: > "$TMP/npm.log"
+if run_helper "$TMP/extra"; then
+  ko "lock path claimed success on a tree the lock cannot hold"
+else
+  [ ! -f "$TMP/extra/npm/package-lock.json" ] && ! grep -q '^NPM ci ' "$TMP/npm.log" \
+    && ok "a tree the lock cannot hold gets no lock and no npm ci (caller resolves live)" \
+    || ko "lock path touched a tree it cannot hold"
+fi
+: > "$TMP/npm.log"
+if run_helper_other=$(cd "$TMP" && COOP_ROOT="$ROOT" PATH="$STUB:$PATH" bash -c '. "$0/lib/common.sh"; coop_apply_extensions_lock "$1" "$2" 0.0.1' "$ROOT" "$TMP/exact" "$STUB/npm" 2>&1); then
+  ko "lock applied although the installed Pi is not the manifest's Pi ($run_helper_other)"
+else
+  ok "an installed Pi other than the manifest's (edge, matrix) skips the lock"
+fi
+
+if [ "$fail" -ne 0 ]; then echo "  ✗ extensions-lock tests FAILED"; exit 1; fi
+echo "  extensions-lock tests passed"

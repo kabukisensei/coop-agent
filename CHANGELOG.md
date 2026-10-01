@@ -7,6 +7,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- The isolated extension tree is reproducible (issue #152, master plan U1).
+  `config/extensions-lock.json` is npm's lockfile for the release's pinned
+  extension set, resolved with pi-ai, pi-tui and the agent peer at the manifest's
+  Pi. `coop sync` copies it next to the tree's `package.json` and installs with
+  `npm ci`, so two machines on the same release get the same transitive
+  dependency versions instead of "latest in range" on the day each one synced,
+  and a bad upstream patch release no longer reaches the fleet without a coop
+  release. The lock applies only when it can hold (the manifest's Pi is
+  installed and the tree declares exactly the manifest's extensions); `--edge`,
+  the Pi matrix and a tree carrying a personal extension still resolve live as
+  before. Maintainers regenerate it with `node lib/extlock.js generate` whenever a
+  pin moves; the gate lane fails when the lock and the manifest disagree. VM
+  qualification pending.
 - Guardrails: Fabric and Azure REST writes issued from the shell now ask for
   approval like a mutating MCP call. `az rest` with a non-GET `--method`,
   `fab api -X post|patch|put|delete`, and the Fabric CLI's mutating subcommands

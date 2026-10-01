@@ -121,6 +121,19 @@ bash scripts/check-parity.sh                                          # pairing 
 coop doctor                                                           # deps + config (workstation only — see note)
 ```
 
+If your change bumps a pin in `config/release-manifest.json` (an extension or
+Pi itself), regenerate the extension lockfile in the same PR and commit it:
+
+```bash
+node lib/extlock.js generate      # rewrites config/extensions-lock.json (needs the npm registry)
+node lib/extlock.js check         # expect: "extlock: lock matches the manifest"
+```
+
+`config/extensions-lock.json` is npm's lockfile for coop's isolated extension
+tree (`~/.coop/agent/npm`); `coop sync` installs the tree from it with `npm ci`,
+so every machine on a release runs the same transitive dependency versions
+(issue #152). The gate lane fails when the lock and the manifest disagree.
+
 If you are on a headless dev box without the coop stack installed (no `pi`,
 pipx tools, or `fab`), **skip `coop doctor`** and say so in the PR — the four
 checks above plus CI fully cover script/doc changes.

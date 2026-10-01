@@ -145,6 +145,11 @@ coop-agent does **not** publish to a registry. Teammates get it when
 alone reaches only maintainers on `coop update --edge`. The whole release is
 one command; see also [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a-release).
 
+Every extension or Pi pin change must already carry a regenerated
+`config/extensions-lock.json` (`node lib/extlock.js generate`, see
+`CONTRIBUTING.md`); the gate lane fails otherwise, so `coop release` stops before
+tagging a manifest whose lock drifted.
+
 If this suite release also bumped any of the three coop tools (steps (a)–(c)),
 **refresh `config/defaults.yml` → `tested_with` first** — the pre-tag gate below
 verifies those pins against coop-website's `versions.json` and aborts on a
