@@ -389,15 +389,33 @@ print("ready\t"+v+"\t"+str(max(majors)))
   return [pscustomobject]@{ state = $(if ($parts.Count) { $parts[0] } else { 'pyodbc_unloadable' }); version = $(if ($parts.Count -gt 1) { $parts[1] } else { '' }); driver = $(if ($parts.Count -gt 2) { [int]$parts[2] } else { 0 }) }
 }
 
+# Converge the runtime libraries inside the Fabric CLI venv. A library whose
+# installed version already equals its manifest pin is left alone, so a sync
+# with everything present makes no pipx inject call and needs no network; only a
+# missing or drifted library (or fabric-cicd under -Edge, which means upstream
+# latest) is re-injected, with --force so a drifted one is replaced (#186). When
+# pip fails, its last ERROR line rides on the warning so the cause is visible.
 function Sync-CoopFabricPythonPackages([bool]$Edge = $false) {
   if (-not $env:COOP_FABRIC_PYTHON) {
     $pipx = Get-CoopPipxCmd
-    foreach ($pkg in @('fabric-cicd', 'pyodbc')) {
+    foreach ($pkg in $script:CoopFabricRuntimeLibraries) {
       $pin = Coop-ManifestGet -Key "python_tools.$pkg"
       if (-not $pin) { return $false }
-      $spec = if ($Edge -and $pkg -eq 'fabric-cicd') { $pkg } else { "$pkg==$pin" }
-      & $pipx inject ms-fabric-cli $spec --force *> $null
-      if ($LASTEXITCODE -ne 0) { Coop-Warn "failed to install $spec in the ms-fabric-cli environment"; return $false }
+      $wantLatest = ($Edge -and $pkg -eq 'fabric-cicd')
+      if (-not $wantLatest) {
+        $installed = Get-CoopVenvDistVersion 'ms-fabric-cli' $pkg
+        if ($installed -eq $pin) { continue }
+      }
+      $spec = if ($wantLatest) { $pkg } else { "$pkg==$pin" }
+      # pip's errors arrive on stderr; keep them as text rather than letting a
+      # caller's $ErrorActionPreference = 'Stop' turn the first line terminating.
+      $previousEap = $ErrorActionPreference
+      try {
+        $ErrorActionPreference = 'Continue'
+        $out = (& $pipx inject ms-fabric-cli $spec --force 2>&1 | Out-String)
+        $rc = $LASTEXITCODE
+      } finally { $ErrorActionPreference = $previousEap }
+      if ($rc -ne 0) { Coop-Warn "failed to install $spec in the ms-fabric-cli environment" (Coop-PipErrorTail $out); return $false }
     }
   }
   $status = Get-CoopFabricSqlRuntimeStatus
