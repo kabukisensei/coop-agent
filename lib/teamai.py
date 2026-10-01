@@ -53,6 +53,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -722,6 +723,23 @@ def compare_url(remote: str, branch: str) -> str:
     return f"https://github.com/{m.group(1)}/{m.group(2)}/compare/{branch}?expand=1"
 
 
+def remove_tree(path: Path) -> None:
+    """rmtree that also clears the read-only bit git sets on pack and object
+    files on Windows (a plain rmtree leaves the stage clone behind there)."""
+
+    def _onerror(func, target, _exc):
+        try:
+            os.chmod(target, stat.S_IWRITE | stat.S_IREAD)
+            func(target)
+        except Exception:
+            pass
+
+    try:
+        shutil.rmtree(path, onerror=_onerror)
+    except Exception:
+        pass
+
+
 def git_cmd(args: list[str], cwd: Path, timeout: int, identity: tuple[str, str] | None = None) -> dict:
     git = shutil.which("git")
     if not git:
@@ -810,7 +828,7 @@ def cmd_contribute(block: dict, package: str, pin: str, file: str, title: str, a
     stage = stage_root / stamp
     try:
         stage_root.mkdir(parents=True, exist_ok=True)
-        shutil.rmtree(stage, ignore_errors=True)
+        remove_tree(stage)
         t = max(timeout_seconds(), 120)
         steps = [
             ("clone", git_cmd(["clone", "--quiet", "--depth", "1", "--no-tags", remote, str(stage)], stage_root, t)),
@@ -836,7 +854,7 @@ def cmd_contribute(block: dict, package: str, pin: str, file: str, title: str, a
             doc["warnings"].append(summarize_failure(f"git {name}", last))
             return doc
     finally:
-        shutil.rmtree(stage, ignore_errors=True)
+        remove_tree(stage)
     doc["staged"] = True
     doc["state"] = "staged"
     doc["detail"] = f"{dest} is on branch {branch}; open the pull request from the compare URL (nothing was written to the default or learnings branch)"
