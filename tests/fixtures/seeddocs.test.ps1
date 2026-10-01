@@ -123,9 +123,11 @@ try {
   if ($r.Rc -ne 0) { Ko "coop init --seed-docs should succeed (exit $($r.Rc))" $r.Out }
   $argText = if (Test-Path -LiteralPath $argsLog) { [System.IO.File]::ReadAllText($argsLog) } else { '' }
   $cfgPath = Join-Path $proj 'coop-data-doc.yml'
-  if (($argText -replace '\s', '').Contains('--from-json-')) { Ok 'config-set --from-json - is invoked' }
+  $argFlat = $argText -replace '\s', ''
+  $cfgFlat = ('--config ' + $cfgPath) -replace '\s', ''
+  if ($argFlat.Contains('--from-json-')) { Ok 'config-set --from-json - is invoked' }
   else { Ko 'config-set --from-json - not invoked' $argText }
-  if (($argText -replace '\s', '').Contains(('--config ' + $cfgPath) -replace '\s', '')) { Ok "config-set targets the project dir's coop-data-doc.yml" }
+  if ($argFlat.Contains($cfgFlat)) { Ok "config-set targets the project dir's coop-data-doc.yml" }
   else { Ko "config-set should target $cfgPath" $argText }
   $patchOk = $false
   try {

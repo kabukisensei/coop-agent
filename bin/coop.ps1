@@ -911,11 +911,17 @@ function Invoke-CoopInit {
   if (Test-Path -LiteralPath $dst) { Coop-Die "$dst already exists — not overwriting.  (seed coop-data-doc.yml from it with: coop init --seed-docs)" }
   $py = Get-CoopPython
   if (-not $py) { Coop-Die 'python3 is required for: coop init' }
+  $wizard = Join-Path (Join-Path $script:CoopRoot 'lib') 'init_wizard.py'
   if ($template) {
     New-Item -ItemType Directory -Force -Path (Join-Path $dir '.coop') | Out-Null
-    & $py "$script:CoopRoot\lib\init_wizard.py" "$dir" --template > "$dst"
+    & $py $wizard "$dir" --template > "$dst"
+    if ($LASTEXITCODE -ne 0) {
+      # Never leave an empty contract behind and report success.
+      Remove-Item -LiteralPath $dst -Force -ErrorAction SilentlyContinue
+      exit $LASTEXITCODE
+    }
   } else {
-    & $py "$script:CoopRoot\lib\init_wizard.py" "$dir"
+    & $py $wizard "$dir"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   }
   Coop-Ok "Wrote $dst"
