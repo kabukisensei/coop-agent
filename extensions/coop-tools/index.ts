@@ -30,7 +30,7 @@ import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendi
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import { accessSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -242,6 +242,25 @@ function summarizeReview(bin: string, parsed: any, stdout: string, code: number)
 // changes, mirror it here.
 const DATADOC_CONFIG = "coop-data-doc.yml";
 const DEFAULT_OUTPUT_DIR = "./data-docs";
+
+/** Match the companion's environment-first, ancestor config discovery. */
+export function findDataDocConfig(cwd: string, env: Record<string, string | undefined> = process.env): string | null {
+  const selected = env.COOP_DATA_DOC_CONFIG;
+  if (selected) {
+    const candidate = resolve(cwd, expandHomePath(selected));
+    let existing = candidate;
+    while (!existsSync(existing) && dirname(existing) !== existing) existing = dirname(existing);
+    try { return resolve(realpathSync(existing), relative(existing, candidate)); } catch { return candidate; }
+  }
+  let directory = resolve(cwd);
+  for (;;) {
+    const candidate = join(directory, DATADOC_CONFIG);
+    try { if (statSync(candidate).isFile()) return realpathSync(candidate); } catch { /* absent */ }
+    const parent = dirname(directory);
+    if (parent === directory) return null;
+    directory = parent;
+  }
+}
 
 interface DataDocSettings {
   projectName: string;
@@ -913,7 +932,9 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDo
   let executable: string;
   try { executable = resolveDataDocExecutable(); }
   catch (e: any) { notify(ctx, errMsg(e), "error"); return false; }
-  const child = spawn(executable, ["setup", "--transport", "jsonl"], { cwd: ctx.cwd, stdio: ["pipe", "pipe", "pipe"], shell: false });
+  const selectedConfig = findDataDocConfig(ctx.cwd);
+  const configBase = selectedConfig ? dirname(selectedConfig) : ctx.cwd;
+  const child = spawn(executable, ["setup", "--transport", "jsonl"], { cwd: ctx.cwd, env: { ...process.env, PYTHONIOENCODING: "utf-8" }, stdio: ["pipe", "pipe", "pipe"], shell: false });
   let stderrTail = "", terminal: "complete" | "cancelled" | "error" | null = null, protocolError = "";
   let helloSeen = false;
   child.stderr?.on("data", (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
@@ -960,7 +981,7 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDo
       if (prompt.id === "local_sources" && prefill.sourceMode) prompt.default = prefill.sourceMode;
       if (prompt.kind === "path" && /SQL repo path/i.test(prompt.message) && prefill.sqlPath) prompt.default = prefill.sqlPath;
       if (prompt.kind === "path" && /Power BI repo path/i.test(prompt.message) && prefill.pbiPath) prompt.default = prefill.pbiPath;
-      const answer = await renderPrompt(ctx, prompt);
+      const answer = await renderPrompt({ ...ctx, cwd: configBase }, prompt);
       if (answer === null) {
         await send({ id: evt.id, cancelled: true });
         return;
@@ -1044,7 +1065,7 @@ async function runQuickSetup(pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPr
     return false;
   }
   const outcome: JsonlSetupOutcome = {};
-  const ok = await runJsonlSetup(pi, ctx, { ...dataDocPrefillFromProject(ctx.cwd), ...prefill }, outcome);
+  const ok = await runJsonlSetup(pi, ctx, { ...dataDocPrefillFromProject(dirname(findDataDocConfig(ctx.cwd) || join(ctx.cwd, DATADOC_CONFIG))), ...prefill }, outcome);
   if (ok && outcome.notRunnable !== undefined) {
     // A saved config that can't build is a warning, never an automatic build (#102).
     const reason = outcome.notRunnable || "the saved config doesn't validate";
@@ -1061,7 +1082,7 @@ async function runQuickSetup(pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPr
 /** /setup-docs: run (or re-run) the wizard for this folder, prefilled from its config. */
 async function runSetupDocs(pi: ExtensionAPI, ctx: any): Promise<boolean> {
   if (stopInHomeFolder(ctx)) return false;
-  const ymlPath = join(ctx.cwd, DATADOC_CONFIG);
+  const ymlPath = findDataDocConfig(ctx.cwd) || join(ctx.cwd, DATADOC_CONFIG);
   const prefill = existsSync(ymlPath) ? parseExisting(safeRead(ymlPath)) : {};
   return await runQuickSetup(pi, ctx, prefill);
 }
@@ -1976,13 +1997,13 @@ interface MenuItem {
 async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
   if (stopInHomeFolder(ctx)) return;
   const cwd: string = ctx.cwd;
-  const ymlPath = join(cwd, DATADOC_CONFIG);
+  const ymlPath = findDataDocConfig(cwd) || join(cwd, DATADOC_CONFIG);
   if (!existsSync(ymlPath)) {
     await runQuickSetup(pi, ctx, {});
     return;
   }
   const cfg = parseExisting(safeRead(ymlPath));
-  const outAbs = resolveRel(cwd, cfg.outputDir || DEFAULT_OUTPUT_DIR);
+  const outAbs = resolveRel(dirname(ymlPath), cfg.outputDir || DEFAULT_OUTPUT_DIR);
   if (!isBuilt(outAbs)) {
     await runBuild(pi, ctx, cfg.outputDir);
     return;
@@ -2428,7 +2449,7 @@ export default function coopTools(pi: ExtensionAPI) {
           res.code === 0 && parsed
             ? parsed.ambiguous
               ? `'${p.object}' is ambiguous — ${(parsed.matches || []).length} matches; re-call lineage with a specific name (candidates in details).`
-              : `Lineage for ${parsed.object?.name || p.object}: ${(parsed.upstream || []).length} upstream, ${(parsed.downstream || []).length} downstream, ${(parsed.relationships || []).length} relationship(s). Full slice + doc path in details.`
+              : `Observed lineage for ${parsed.object?.name || p.object}: ${(parsed.upstream || []).length} upstream, ${(parsed.downstream || []).length} downstream, ${(parsed.relationships || []).length} relationship(s). Evidence confidence: ${parsed.evidence?.state || "unknown"}; states: ${(parsed.evidence?.states || ["unknown"]).join(", ")}. Empty results do not prove zero impact. Coverage, trust, provenance, full slice and doc path in details.`
             : noGraph
               ? "No built lineage graph yet — run data_doc (build) first, or /setup-docs to set it up. (You can still work without it.)"
               : `lineage failed (exit ${res.code}): ${(res.stderr || res.stdout).trim().slice(0, 300)}`;
@@ -2460,9 +2481,10 @@ export default function coopTools(pi: ExtensionAPI) {
             type: "text" as const,
             text:
               `coop-data-doc ${command} finished (exit ${res.code}).\n` +
-              `Machine-readable artifacts: graph.json` +
-              (command === "build" ? " + manifest.json + Markdown docs + portal" : "") +
-              `.\n\n${tail}${setupHint}`,
+              (res.code === 0 && (command === "scan" || command === "build")
+                ? `Machine-readable artifacts: graph.json${command === "build" ? " + manifest.json + Markdown docs + portal" : ""}.\n`
+                : "") +
+              `\n${tail}${setupHint}`,
           },
         ],
         details: { tool: "coop-data-doc", command, exitCode: res.code, stderr: res.stderr },
@@ -2537,19 +2559,19 @@ export default function coopTools(pi: ExtensionAPI) {
 
       let message: any;
       if (!announcedCwds.has(cwd)) {
-        const ymlPath = join(cwd, DATADOC_CONFIG);
+        const ymlPath = findDataDocConfig(cwd) || join(cwd, DATADOC_CONFIG);
         if (existsSync(ymlPath)) {
           const cfg = parseExisting(safeRead(ymlPath));
-          const outAbs = resolveRel(cwd, cfg.outputDir || DEFAULT_OUTPUT_DIR);
-          if (isBuilt(outAbs)) {
+          const outAbs = resolveRel(dirname(ymlPath), cfg.outputDir || DEFAULT_OUTPUT_DIR);
+          if (existsSync(join(outAbs, "graph.json"))) {
             announcedCwds.add(cwd);
             const relOut = relative(cwd, outAbs) || ".";
             message = {
               customType: "coop-lineage",
               display: false,
               content:
-                `Cooptimize lineage docs ARE available for this estate (coop-data-doc outputs under ${relOut}: graph.json, manifest.json, per-object Markdown). ` +
-                `Use them: BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its up/downstream impact via the data_doc tool (command="lineage", object="<name>"), and read that object's doc (located via manifest.json) plus its immediate neighbors — don't re-derive lineage by hand. If the docs look stale, run data_doc (build) to refresh.`,
+                `An observed lineage graph is available under ${relOut}: graph.json${existsSync(join(outAbs, "manifest.json")) ? ", manifest.json" : ""}. Its coverage may be partial or unknown; empty lineage does not prove zero impact. ` +
+                `BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its observed up/downstream impact via the data_doc tool (command="lineage", object="<name>"). ${existsSync(join(outAbs, "manifest.json")) ? "Read available object docs via manifest.json and its immediate neighbors. " : "Run data_doc (build) to generate object docs. "}If the graph looks stale, run data_doc (build) to refresh.`,
               details: { outputDir: relOut },
             };
           }
