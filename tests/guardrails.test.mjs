@@ -1255,6 +1255,51 @@ await t("contract sql_targets scope: prod, placeholder, tenant mismatch or a mis
   await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
+await t("sql_impact (SQ4): dev/test metadata runs without a prompt; prod, unresolved and forged inputs do not", async () => {
+  clearAudit();
+  writeManagedTarget();
+  writeContract(AZURE_CONTRACT);
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = false; confirmCount = 0;
+  const impact = (object = "dbo.vw_Sales") => ({ toolName: "sql_impact", input: { object } });
+  assert.equal(blocked(await handle(impact(), liveCtx)), false, "contract dev target: no prompt");
+  assert.equal(confirmCount, 0);
+  const allowed = readAudit().filter((x) => x.tool === "governed-sql-impact");
+  assert.equal(allowed.length, 1);
+  assert.deepEqual([allowed[0].decision, allowed[0].label, allowed[0].detail], ["allowed", "live metadata read", "dev"]);
+  assert.equal(JSON.stringify(allowed).includes("vw_Sales"), false, "the object name never enters the audit");
+  for (const input of [{ object: "dbo.vw_Sales", query: "SELECT 1" }, { object: "dbo.vw_Sales", server: "x" }, { object: 5 }, {}, { target: "dbo.x" }]) {
+    assert.equal(blocked(await handle({ toolName: "sql_impact", input }, liveCtx)), true, JSON.stringify(input));
+  }
+  assert.equal(confirmCount, 0, "forged shapes are blocked, never prompted");
+  // A contract whose default is prod or a placeholder: asks once per call; headless blocks.
+  writeContract(contractText(["  default_environment: prod", "  prod:", "    kind: azure_sql", "    server: contoso.database.windows.net", "    database: ContosoDW"]));
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0; lastConfirm = "";
+  assert.equal(blocked(await handle(impact(), liveCtx)), false);
+  assert.equal(confirmCount, 1);
+  assert.match(lastConfirm, /sql_impact/);
+  assert.match(lastConfirm, /unresolved/);
+  confirmAnswer = false;
+  assert.equal(blocked(await handle(impact(), liveCtx)), true, "declined");
+  assert.equal(blocked(await handle(impact(), { ...liveCtx, hasUI: false, ui: {} })), true, "headless");
+  // No sql_targets: the managed Fabric entry's environment decides.
+  removeContract();
+  writeManagedTarget({ environment: "test" });
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmCount = 0;
+  assert.equal(blocked(await handle(impact(), liveCtx)), false, "managed test target: no prompt");
+  assert.equal(confirmCount, 0);
+  writeManagedTarget();  // production
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0;
+  assert.equal(blocked(await handle(impact(), liveCtx)), false);
+  assert.equal(confirmCount, 1, "production managed target asks");
+  assert.match(lastConfirm, /production/);
+  await handleSessionStart({ reason: "new" }, liveCtx);
+});
+
 await t("changed managed target, launch identity, or environment reprompts", async () => {
   writeManagedTarget();
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();

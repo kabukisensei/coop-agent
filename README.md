@@ -191,7 +191,7 @@ shows anything still missing.
 | --- | --- |
 | **Pi** | installed globally via `npm` |
 | **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits), `pi-web-access` (web search/fetch — read-only), `@juicesharp/rpiv-ask-user-question` (structured questions), `@xl0/pi-lovely-rename` (automatic session names) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
-| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `data_doc`/`bpa_review` + standards-in-context + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
+| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `data_doc`/`sql_impact`/`bpa_review` + standards-in-context + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
 | **Standalone tool** — `coop-data-doc` | installed via `pipx` from PyPI |
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
@@ -577,11 +577,12 @@ A project override is one Markdown file per domain in `.coop/project.yml`
 
 ## Standalone tools
 
-coop wraps one standalone pipx tool and exposes two native LLM tools: `data_doc`
-and the optional, config-driven `bpa_review` (Tabular Editor BPA, the deterministic
-model check). `bpa_review` is read-only; `data_doc build` writes generated
-documentation. SQL and DAX standards need no tool: they are applied while coop
-writes and self-checked before it presents a change.
+coop wraps one standalone pipx tool and exposes three native LLM tools: `data_doc`,
+`sql_impact` (live catalog impact trace of one SQL object on the contract's dev/test
+`sql_targets` entry) and the optional, config-driven `bpa_review` (Tabular Editor BPA,
+the deterministic model check). `sql_impact` and `bpa_review` are read-only;
+`data_doc build` writes generated documentation. SQL and DAX standards need no tool:
+they are applied while coop writes and self-checked before it presents a change.
 
 - **`coop-data-doc`** — progressive SQL and/or Power BI documentation, lineage, and machine-readable
   output. `scan` → `graph.json`; `build` → `manifest.json` + Markdown docs + a
