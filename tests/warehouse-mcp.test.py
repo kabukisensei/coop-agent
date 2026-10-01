@@ -1013,6 +1013,40 @@ with tempfile.TemporaryDirectory() as tmp:
     assert launch_token() == HOME_TENANT
     assert az_calls(az_state)[-1] == FABRIC_ARGV
 
+    # SQ2: no managed Warehouse server at all (an Azure SQL-only install). With a
+    # contract whose default sql_targets entry names its host, the launcher mints
+    # the SQL audience for the same tenant chain; without one it stays silent.
+    unmanaged_path = tmp_path / "mcp-unmanaged.json"
+    unmanaged_path.write_text(json.dumps({"mcpServers": {}, "_coop": {"managed_servers": []}}), encoding="utf-8")
+    SQL_ARGV = "account get-access-token --resource https://database.windows.net/ --output json"
+
+    def launch_token_raw(path):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "lib" / "warehouse_mcp.py"), "launch-token", str(path)],
+            cwd=repo, env=env, capture_output=True, timeout=60,
+        )
+        assert result.returncode == 0 and result.stderr == b"", result
+        return result.stdout.decode("ascii")
+
+    (repo / ".coop" / "project.yml").write_text(f"fabric:\n  tenant_id: {CLIENT_TENANT}\n", encoding="utf-8")
+    assert launch_token_raw(unmanaged_path) == ""
+    (repo / ".coop" / "project.yml").write_text(
+        f"fabric:\n  tenant_id: {CLIENT_TENANT}\n"
+        "sql_targets:\n  default_environment: dev\n  dev:\n    kind: azure_sql\n    server: contoso-dev.database.windows.net\n    database: ContosoDW\n",
+        encoding="utf-8",
+    )
+    frame = launch_token_raw(unmanaged_path)
+    assert frame.startswith("token\t") and frame.endswith("\tend"), frame
+    assert tid_of(frame[len("token\t") : -len("\tend")]) == CLIENT_TENANT
+    assert az_calls(az_state)[-1] == f"{SQL_ARGV} --tenant {CLIENT_TENANT}"
+    # A discovered kind (Fabric Warehouse by ids) is the managed server's job, not this path's.
+    (repo / ".coop" / "project.yml").write_text(
+        f"fabric:\n  tenant_id: {CLIENT_TENANT}\n"
+        f"sql_targets:\n  default_environment: dev\n  dev:\n    kind: fabric_warehouse\n    workspace_id: {CLIENT_TENANT}\n    item_id: {HOME_TENANT}\n    database: W\n",
+        encoding="utf-8",
+    )
+    assert launch_token_raw(unmanaged_path) == ""
+
     # doctor-json reports the tenant it mints for, from the same contract and chain.
     def doctor_json(*extra):
         result = subprocess.run(

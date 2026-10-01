@@ -23,12 +23,12 @@ assert.ok(!windowsCommand.includes("$args["), "Windows PowerShell 5.1 binding mu
 const direct = mod.fabricSqlHelperInvocation("/tmp/Python With Spaces/python3", "/tmp/Coop Root");
 assert.deepEqual(direct, {
   bin: "/tmp/Python With Spaces/python3",
-  args: [join("/tmp/Coop Root", "lib", "fabric_sql_query.py")],
+  args: [join("/tmp/Coop Root", "lib", "sql_query.py")],
 });
 
 const root = mkdtempSync(join(tmpdir(), "coop sql launcher spaces "));
 const fakePython = join(root, "Python Runtime", "python3");
-const helperPath = join(root, "lib", "fabric_sql_query.py");
+const helperPath = join(root, "lib", "sql_query.py");
 const marker = join(root, "helper-invoked");
 mkdirSync(join(root, "lib"), { recursive: true });
 mkdirSync(join(root, "Python Runtime"), { recursive: true });

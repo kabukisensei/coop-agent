@@ -1173,7 +1173,7 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   if (!reusableSqlSurface(event)) return null;
   if (event?.toolName === FABRIC_SQL_FALLBACK_TOOL) {
     const root = process.env.COOP_ROOT;
-    if (!root || !existsSync(join(root, "lib", "fabric_sql_query.py"))) return null;
+    if (!root || !existsSync(join(root, "lib", "sql_query.py"))) return null;
   }
   let mcp: any;
   try { mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp-adapter.json"))); } catch { return null; }

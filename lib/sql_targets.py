@@ -97,7 +97,12 @@ KINDS: dict[str, dict[str, Any]] = {
 FABRIC_ITEM_KINDS = {"fabric_warehouse": "Warehouse", "fabric_lakehouse": "Lakehouse"}
 SAFE_DATABASE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._@&'()+-]{0,159}$")
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-ALLOWED_KEYS = {"kind", "server", "database", "workspace_id", "item_id", "sql_endpoint_id", "description"}
+ALLOWED_KEYS = {
+    "kind", "server", "database", "workspace_id", "item_id", "sql_endpoint_id", "description",
+    # azure_sql only: the database has read-scale replicas (Premium / Business
+    # Critical), so the executor connects with ApplicationIntent=ReadOnly.
+    "read_scale_replicas",
+}
 FORBIDDEN_KEYS = {
     "user", "username", "uid", "password", "pwd", "secret", "token", "connection_string",
     "connectionstring", "auth", "authentication", "login", "credential", "credentials",
@@ -113,6 +118,7 @@ class SqlTarget:
     workspace_id: str = ""
     item_id: str = ""
     sql_endpoint_id: str = ""
+    read_scale_replicas: bool = False
     state: str = "unconfigured"  # ready | unconfigured | invalid
     reason: str = ""
 
@@ -181,6 +187,11 @@ def parse_target(environment: str, raw: Any) -> SqlTarget:
     target.workspace_id = _text(raw.get("workspace_id")).lower()
     target.item_id = _text(raw.get("item_id")).lower()
     target.sql_endpoint_id = _text(raw.get("sql_endpoint_id")).lower()
+    replicas = raw.get("read_scale_replicas", False)
+    if replicas not in (True, False):
+        target.state, target.reason = "invalid", "read_scale_replicas must be true or false"
+        return target
+    target.read_scale_replicas = replicas is True
     if unknown:
         target.state, target.reason = "invalid", f"unknown keys: {', '.join(unknown)}"
         return target
@@ -233,6 +244,9 @@ def parse_target(environment: str, raw: Any) -> SqlTarget:
         if target.workspace_id or target.item_id or target.sql_endpoint_id:
             target.state, target.reason = "invalid", f"{target.kind} takes no Fabric ids"
             return target
+    if target.read_scale_replicas and target.kind != "azure_sql":
+        target.state, target.reason = "invalid", "read_scale_replicas applies to azure_sql only"
+        return target
     target.state, target.reason = "ready", ""
     return target
 

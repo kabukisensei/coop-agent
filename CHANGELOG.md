@@ -17,8 +17,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   placeholders tolerated, credential keys rejected); `coop doctor` shows one
   Project-contract row per entry; `/setup-project` proposes the dev entry's kind
   from the machine's client platform and writes it; `.coop/project.example.yml`
-  carries the shape. Nothing executes against these targets yet: the SQL
-  executor (SQ2) and the guardrails' resolved scope (SQ3) adopt them next.
+  carries the shape. The guardrails' resolved scope (SQ3) adopts them next.
+
+- The SQL executor reads `sql_targets:` (master plan section 8 item 1, row SQ2).
+  `lib/fabric_sql_query.py` is now `lib/sql_query.py` (the in-agent tool keeps its
+  `fabric_sql_query` name and contract). With a contract `sql_targets:` section it
+  connects to the ready default entry: Azure SQL, Fabric SQL database and Synapse
+  serverless by the contract's host (Azure SQL with a 60 s connect timeout for
+  serverless auto-resume, and `ApplicationIntent=ReadOnly` when the entry sets
+  `read_scale_replicas: true`), Fabric Warehouse and Lakehouse by REST discovery
+  from the contract's ids. A production entry is never selected; an unconfigured or
+  invalid default returns `target_invalid` before any token is minted; results
+  carry a `target` summary without the host. Without `sql_targets:` the managed
+  Fabric target path is unchanged. On an install with no managed Warehouse MCP
+  server the launch token helper mints the SQL audience for the contract's tenant
+  when the default entry is a direct kind, so the executor has an identity to pin to.
 
 - Install-time client platform choice (master plan section 8 item 7, row SQ7;
   Aaron, 2026-09-30). `coop install --platform fabric|azure_sql|both` (or the

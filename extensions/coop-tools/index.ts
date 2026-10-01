@@ -107,7 +107,7 @@ export function fabricSqlHelperInvocation(
   python: string,
   root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
 ): FabricSqlInvocation {
-  return { bin: python, args: [join(root, "lib", "fabric_sql_query.py")] };
+  return { bin: python, args: [join(root, "lib", "sql_query.py")] };
 }
 
 async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<{ python?: string; state?: string }> {
@@ -2481,10 +2481,10 @@ export default function coopTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "fabric_sql_query",
     label: "Fabric SQL Query (pyodbc fallback)",
-    description: "Separate governed pyodbc fallback for one bounded read against the canonical Fabric SQL target. First attempt the managed fabric-sqlendpoint MCP tool. Call fabric_sql_query only after that actual attempt fails because the MCP server/tool is unavailable or missing, or because of authentication, timeout, connection, or transport failure. Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
+    description: "Separate governed pyodbc read for one bounded SELECT against the contract's default sql_targets entry (Azure SQL, Fabric SQL database, Synapse serverless, or a Fabric Warehouse/Lakehouse), or the canonical Fabric SQL target when the contract has no sql_targets. When a managed fabric-sqlendpoint MCP tool exists, attempt it first and call fabric_sql_query only after that actual attempt fails because the MCP server/tool is unavailable or missing, or because of authentication, timeout, connection, or transport failure. Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
     promptSnippet: "Post-MCP-failure pyodbc fallback for one approval-gated bounded Fabric SELECT TOP read",
     promptGuidelines: [
-      "First attempt managed fabric-sqlendpoint MCP. Only after an actual unavailable/authentication/timeout/connection/transport/tool-missing failure may you issue a separate fabric_sql_query call; never fallback before MCP or for SQL/business/query rejection, and never cascade automatically.",
+      "When a managed fabric-sqlendpoint MCP server is registered, attempt it first. Only after an actual unavailable/authentication/timeout/connection/transport/tool-missing failure may you issue a separate fabric_sql_query call; never fallback before MCP or for SQL/business/query rejection, and never cascade automatically. On an Azure SQL, Fabric SQL database or Synapse serverless target from sql_targets there is no MCP server: fabric_sql_query is the one live read route.",
       "Use only one plain SELECT with a literal TOP bound; mutations, batches, cross-database names, and unbounded reads are rejected before authentication or connection.",
     ],
     parameters: FABRIC_SQL_QUERY_PARAMS,
