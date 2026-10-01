@@ -24,6 +24,13 @@ run_onboard() {
   HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" "$@"
 }
 
+# The public dispatcher is bin/coop.ps1 (master plan S1: one implementation, in
+# PowerShell); pwsh on macOS/Linux and CI, Windows PowerShell as the fallback.
+PWSH="$(command -v pwsh 2>/dev/null || command -v powershell.exe 2>/dev/null || command -v powershell 2>/dev/null || true)"
+[ -z "$PWSH" ] && { echo "pwsh (PowerShell 7) required: the coop dispatcher is bin/coop.ps1"; exit 1; }
+COOP_PS1="$ROOT/bin/coop.ps1"
+if command -v cygpath >/dev/null 2>&1; then COOP_PS1="$(cygpath -w "$COOP_PS1")"; fi
+
 # --- first-run onboarding ---------------------------------------------------------
 out="$(printf 'Test User\n1\n' | HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" onboard --json 2>/dev/null)"
 name="$(printf '%s' "$out" | "$PY" -c 'import sys,json; print(json.load(sys.stdin)["name"])')"
@@ -36,8 +43,8 @@ preset="$(printf '%s' "$out" | "$PY" -c 'import sys,json; print(json.load(sys.st
 # Exercise the public dispatcher, not only onboard.py directly. The launcher
 # must supply onboard.py's required `onboard` subcommand before user flags.
 LAUNCH_DIR="$COOP_DIR/launcher"; mkdir -p "$LAUNCH_DIR"
-launch_out="$(printf 'Launcher User\n1\n' | env HOME="$LAUNCH_DIR" COOP_DIR="$LAUNCH_DIR" COOP_AZ_BIN=/nonexistent/az \
-  bash "$ROOT/bin/coop" onboard --json 2>/dev/null)"
+launch_out="$(printf 'Launcher User\n1\n' | env HOME="$LAUNCH_DIR" USERPROFILE="$LAUNCH_DIR" COOP_DIR="$LAUNCH_DIR" COOP_AZ_BIN=/nonexistent/az \
+  "$PWSH" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$COOP_PS1" onboard --json 2>/dev/null)"
 launch_name="$(printf '%s' "$launch_out" | "$PY" -c 'import sys,json; print(json.load(sys.stdin)["name"])')"
 [ "$launch_name" = "Launcher User" ] && [ -f "$LAUNCH_DIR/.coop/user.json" ] && ok "coop onboard dispatcher supplies the required subcommand" || ko "coop onboard dispatcher failed"
 
@@ -80,7 +87,7 @@ PY
 [ "$?" -eq 0 ] && ok "detected tenant accepted and Azure DevOps disabled" || ko "Azure integration choices incorrect"
 # Existing profile alone is incomplete: common helper requires global config too.
 rm "$COOP_DIR/.coop/config"
-( HOME="$COOP_DIR" COOP_ROOT="$ROOT" bash -c '. "$COOP_ROOT/lib/common.sh"; coop_onboarding_missing' ) && ok "missing global config retriggers onboarding" || ko "missing global config did not retrigger onboarding"
+( HOME="$COOP_DIR" USERPROFILE="$COOP_DIR" COOP_ROOT="$ROOT" "$PWSH" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command '. (Join-Path $env:COOP_ROOT "lib/common.ps1"); if (Test-CoopOnboardingMissing) { exit 0 } else { exit 1 }' ) && ok "missing global config retriggers onboarding" || ko "missing global config did not retrigger onboarding"
 printf '%s\n' '{"schema_version":1,"azure":{"enabled":false,"tenant_id":"","tenant_name":""},"integrations":{},"azure_devops":{"organization":""},"mcp":{"safe_mode":"read_only_first"},"fleet":{"publish_dir":""}}' > "$COOP_DIR/.coop/config"
 
 # --- profile show ---------------------------------------------------------------

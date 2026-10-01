@@ -24,11 +24,15 @@ from azure_auth import (  # noqa: E402
     login_azure,
     tenant_label,
 )
+import coop_paths  # noqa: E402
 
-COOP_DIR = Path(os.environ.get("COOP_DIR", Path.home())) / ".coop"
-USER_JSON = COOP_DIR / "user.json"
-CONFIG_JSON = COOP_DIR / "config"
-MCP_OUTPUT = COOP_DIR / "agent" / "mcp-adapter.json"
+# One profile root (master plan S3): COOP_DIR is the parent of .coop, and the
+# managed MCP config lands in the agent dir Pi actually loads (same chain as the
+# launcher: PI_CODING_AGENT_DIR -> COOP_NO_ISOLATE -> COOP_AGENT_DIR -> default).
+COOP_DIR = coop_paths.profile_dir()
+USER_JSON = coop_paths.user_profile_path()
+CONFIG_JSON = coop_paths.config_path()
+MCP_OUTPUT = coop_paths.agent_dir() / "mcp-adapter.json"
 
 PRESETS = {
     "concise": "Answer first. Keep explanations short. Use bullets where useful. Explain tradeoffs only when material.",

@@ -9,10 +9,10 @@ Required steps:
 1. Read `.coop/project.yml` for project context and use COOP's resolved DAX and documentation task authority, including any deliberate project override.
 2. Locate the model's TMDL/source for `{{model_name}}` in the `fabric` repo; run `git status` and `git pull`.
 3. Read the model definition and related docs/lineage — call the `data_doc` tool (`coop-data-doc`) for relationships instead of guessing.
-4. Run the `dax_review` tool (`coop-dax-review check <paths> --format json`) over the measures and address advisory findings.
+4. Check the measures against the DAX and semantic-model standards articles in context and list every rule they do not meet.
 5. If Tabular Editor CLI is enabled in the contract, run Tabular Editor BPA against the model; otherwise note it is unavailable.
 6. Check measures, relationships, and naming against the DAX standards, weighting `{{focus}}`: relationship cardinality and cross-filter direction, measure correctness and formatting, hidden technical columns, consistent naming.
 7. Write a short PLAN of recommended changes — read-only first; do not edit anything until the user approves.
-8. With approval, back up before any edit, make the smallest safe change, re-run `dax_review`, and show `git diff`.
+8. With approval, back up before any edit, make the smallest safe change, self-check the diff against the same standards articles (fix what does not meet them; deviate only on a user exception or a stated reason), re-run BPA where enabled, and show `git diff`.
 9. Update Markdown docs, glossary, and lineage; append a review entry to the daily log.
 10. Never commit semantic model / report / DAX source. Commit docs/logs/site only with approval.

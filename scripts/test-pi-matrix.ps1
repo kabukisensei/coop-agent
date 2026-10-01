@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env pwsh
 #
-# Pi compatibility matrix for ONE runtime version — WINDOWS twin of
-# scripts/test-pi-matrix.sh (Slice 4). Run on a Windows host:
+# Pi compatibility matrix for ONE runtime version (the nightly pi-matrix.yml
+# workflow runs it). Run on a Windows host:
 #   pwsh -File scripts/test-pi-matrix.ps1 -PiVersion 0.87.1 [-RepoRoot <path>]
 #
 # Everything is written under a temp directory; the workstation's global npm

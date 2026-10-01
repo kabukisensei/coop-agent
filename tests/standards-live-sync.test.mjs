@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { activeCanonicalGeneration, buildStandardsContext, fsyncDirectory, fsyncFile, identifyTaskDomains, pinStandardsTask, promoteReviewRun, provenanceText, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, retrieveRelevantSections, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
+import { activeCanonicalGeneration, buildStandardsContext, fsyncDirectory, fsyncFile, identifyTaskDomains, pinStandardsTask, provenanceText, refreshCanonical, resolveStandard, retrieveRelevantSections, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Fixture roots are resolved to their real path: macOS keeps tmpdir() under the
@@ -35,7 +35,7 @@ const writeCanonical = (suffix) => {
   put(".obsidian/app.json", "{}\n");
 };
 const commit = (message) => { git(["add", "."]); git(["commit", "-q", "-m", message]); return git(["rev-parse", "HEAD"]); };
-const options = (more = {}) => ({ canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, fixtureRegistry: true, remote, now: () => now, reviewerBins: { sql: join(tmp, "none-sql"), dax: join(tmp, "none-dax") }, ...more });
+const options = (more = {}) => ({ canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, fixtureRegistry: true, remote, now: () => now, ...more });
 // A forced refresh that fails must say why (issue #100: a bare `false !== true`
 // hid the cause of a Windows-only failure).
 const assertRefreshed = (opts) => { const r = refreshCanonical(opts); assert.equal(r.ok, true, JSON.stringify(r)); return r; };
@@ -203,7 +203,7 @@ try {
     assert.equal(failed.ok, false); assert.equal(failed.skipped, undefined); assert.equal(fetches, 1);
     assert.equal(refreshCanonical(options()).ok, true);
   });
-  test("one task pin constrains every domain and late reviewer resolution", () => {
+  test("one task pin constrains every domain and late resolution", () => {
     const pinned = pinStandardsTask(["sql", "dax"], options({ refresh: false })); assert.equal(pinned.resolutions.every((r) => r.revision === r2), true);
     writeCanonical("r3"); r3 = commit("r3"); now += 901_000; assert.equal(refreshCanonical(options()).revision, r3);
     assert.equal(pinned.resolve("semantic_model").revision, r2); assert.equal(pinned.resolutions.every((r) => readFileSync(r.path, "utf8").includes("r2")), true);
@@ -248,26 +248,6 @@ try {
     assert.equal(pin.resolutions[0].state, "stale_last_known_good"); assert.equal(pin.resolutions[0].degraded, true);
     rmSync(lock, { recursive: true });
   });
-  test("accepted canonical provenance maps to its retained immutable generation", () => {
-    const outdir = join(tmp, "canonical-reviews"); mkdirSync(outdir);
-    const entries = [];
-    for (const domain of ["sql", "dax"]) {
-      const resolution = resolveStandard(domain, options({ cwd: tmp, refresh: false }));
-      const report = { tool: `coop-${domain}-review`, schema_version: domain === "sql" ? 4 : 3, version: "canonical-test", [domain === "sql" ? "files_checked" : "models_checked"]: 0,
-        standards: { path: resolution.path, sha256: resolution.sha256 }, findings: [], diagnostics: [], agent_review: [], summary: { error: 0, warning: 0, info: 0 }, verdict: { clean: true, highest_severity: null } };
-      const resolutionPath = join(tmp, `canonical-${domain}-resolution.json`), reportPath = join(tmp, `canonical-${domain}-report.json`);
-      writeFileSync(resolutionPath, JSON.stringify(resolution)); writeFileSync(reportPath, JSON.stringify(report)); entries.push({ domain, resolutionPath, reportPath });
-    }
-    assert.equal(promoteReviewRun(outdir, entries, options()).ok, true);
-    writeCanonical("after-canonical-review"); commit("after-canonical-review"); now += 1;
-    assertRefreshed(options({ force: true }));
-    const accepted = resolveAcceptedReviewRun(outdir, options()); assert.equal(accepted.ok, true, JSON.stringify(accepted));
-    assert.equal(JSON.parse(readFileSync(accepted.reports.sql)).version, "canonical-test");
-    const acceptedMetadata = JSON.parse(readFileSync(join(accepted.generation, "generation.json")));
-    const authority = JSON.parse(readFileSync(join(accepted.generation, acceptedMetadata.files.sql_authority.file)));
-    writeFileSync(join(dirname(authority.source_root), "generation.json"), "{}\n");
-    assert.equal(resolveAcceptedReviewRun(outdir, options()).ok, false);
-  });
   test("remote-main binding rejects a clean local descendant and missing authoritative ref", () => {
     const active = activeCanonicalGeneration(options()); assert.equal(active.ok, true);
     git(["config", "user.email", "standards@test.invalid"], active.checkout); git(["config", "user.name", "Standards Test"], active.checkout);
@@ -293,7 +273,7 @@ try {
     assert.equal(sql.file, "wiki:sql");
     const input = readFileSync(sql.path, "utf8");
     for (const decoy of ["SHIM", "RETIRED", "DRAFT", "NOFRONT"]) assert.equal(input.includes(decoy), false, decoy);
-    assert.match(input, /coop reviewer-input cache for sql/); assert.equal(/^---/m.test(input), false);
+    assert.match(input, /coop standards snapshot for sql/); assert.equal(/^---/m.test(input), false);
   });
   test("powerbi articles split into coop's dax and semantic_model domains by artifact", () => {
     assert.deepEqual(resolveStandard("dax", options({ refresh: false })).articles.map((a) => a.file), ["Power BI/Semantic Model/DAX.md"]);
@@ -568,6 +548,7 @@ try {
     }
     assert.deepEqual(headings(buildStandardsContext(prompt, options({ refresh: false }))), headings(first));
   });
-  assert.match(readFileSync(join(ROOT, "bin", "coop"), "utf8"), /resolve-many sql,dax/);
+  // ST1: coop no longer pins a reviewer run from the shell (`coop review` is gone).
+  assert.doesNotMatch(readFileSync(join(ROOT, "bin", "coop.ps1"), "utf8"), /resolve-many|promote-run|accepted-run/);
   console.log(`standards live sync: ${count} tests passed`);
 } finally { rmSync(tmp, { recursive: true, force: true }); }

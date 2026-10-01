@@ -2,7 +2,8 @@
 
 coop-agent is a shared Cooptimize tool. Most contributions are **additive and file-based**
 — a new skill, prompt, or vibe — so the bar to contribute is low. Bigger changes
-(the wrapper, scripts, extensions) should keep the cross-platform + governance contract.
+(the launcher, scripts, extensions) should keep the PowerShell + governance contract:
+one implementation in PowerShell, Windows PowerShell 5.1 floor (master plan S1).
 
 ## Quick contributions (skills / prompts)
 
@@ -26,19 +27,16 @@ Guidelines:
 
 ## Changing code (wrapper / scripts / extensions)
 
-Keep parity and the contract:
+Keep the one implementation and the contract:
 
-- **Cross-platform:** changes to `bin/coop` should be mirrored in `bin/coop.ps1`
-  (and `scripts/*.sh` ↔ `scripts/*.ps1`). The bash path is primary; the PowerShell
-  path must stay equivalent (same subcommands, dependency lists, `fab`-collision
-  detection).
+- **PowerShell is the product** (master plan S1): `bin/coop.ps1`, `lib/common.ps1`
+  and `scripts/*.ps1`, launched by `bin/coop.cmd` on Windows. `bin/coop` is a Git
+  Bash forwarder to `coop.ps1` and carries no logic; `scripts/release.sh`,
+  `scripts/validate-resources.sh` and `tests/*.sh` are bash dev tooling, and
+  `scripts/check-bom.ps1` is the BOM check. Never add a bash product path or a
+  `.sh` twin back.
 - **Governance:** preserve read-only-first, plan-and-approve, never-commit-source,
   read-only MCP, and never expose secrets.
-- **bash 3.2:** macOS ships bash 3.2 (`/bin/bash`) — guard empty-array expansions
-  with `${arr[@]+"${arr[@]}"}`, brace a variable expansion that is directly
-  followed by multibyte text (`"${var}…"`, not `"$var…"` — 3.2 mis-scans the
-  adjacency), and avoid bash-4+ features (associative arrays, `${var,,}`,
-  `mapfile`, `&>>`).
 - **No new hard deps:** the YAML reader (`lib/_yaml.py`) is dependency-free on purpose
   (system python may lack PyYAML). Don't reintroduce a hard PyYAML dependency.
 
@@ -47,16 +45,10 @@ Keep parity and the contract:
 - **Every `.ps1` in this repo must start with a UTF-8 BOM** (`EF BB BF`).
   Windows PowerShell 5.1 reads a BOM-less `.ps1` as ANSI, so em-dashes /
   ellipses / box-drawing characters turn into mojibake. Some editors and agent
-  file-write tools silently drop the BOM when rewriting a file — re-check after
-  any edit.
-
-  Check (the first three bytes must be `efbb bf`):
-
-  ```bash
-  head -c3 scripts/doctor.ps1 | xxd
-  ```
-
-  Re-add a missing BOM:
+  file-write tools silently drop the BOM when rewriting a file — after any
+  `.ps1` edit, run the one BOM check, `pwsh -NoProfile -File scripts/check-bom.ps1`
+  (`tests/run.ps1` runs it first). It prints the exact fix command for each
+  offender; the recipe it prints re-adds a missing BOM by hand:
 
   ```bash
   printf '\357\273\277' | cat - file.ps1 > file.ps1.bom && mv file.ps1.bom file.ps1
@@ -68,56 +60,50 @@ Keep parity and the contract:
   shortcut, and the Start-Menu/Desktop shortcuts `scripts/install.ps1` creates.
   So the whole repo has a **5.1 floor**. PowerShell-7-only constructs — the
   ternary `cond ? a : b`, null-coalescing `??` / `??=`, null-conditional `?.` /
-  `?[]`, and `clean { }` blocks — parse fine under `pwsh` 7 (all a macOS dev has)
-  but are a **hard parse error** under 5.1, which breaks `coop` at launch for the
+  `?[]`, and `clean { }` blocks — parse fine under `pwsh` 7 (all a Linux or macOS
+  dev box has) but are a **hard parse error** under 5.1, which breaks `coop` at launch for the
   whole team. Don't use them. CI parses every `.ps1` under BOTH `pwsh` 7 and
   Windows PowerShell 5.1 (the `windows` job) so a 7-ism can't sail through green;
   when in doubt, keep to syntax that predates PowerShell 6.
 
-- **Shared PowerShell helpers live in `lib/common.ps1`** — the dot-sourced twin
-  of `lib/common.sh` (loggers, progress engine, `Test-Have`, `Get-CoopPython`,
-  YAML readers, `Coop-Unit`, …). `bin/coop.ps1` and every `scripts/*.ps1` load it
-  with `. (Join-Path $PSScriptRoot '../lib/common.ps1')`. When you change a helper
-  in `lib/common.sh`, port the change into `lib/common.ps1` in the same PR (and
-  vice versa) — never re-add a per-script inline copy. (Exception: `Coop-Unit`
-  scriptblocks run in fresh background runspaces and see none of the library, so
-  logic inside a unit stays self-contained by design.)
-- `scripts/check-parity.sh` (run by CI) is the one BOM check. It fails on any
-  BOM-less `.ps1` or one with a doubled BOM, when `bin/coop.ps1` or
-  `scripts/sync-knowledge.ps1` does not start with a comment line right after
-  the BOM, on any `scripts/*.sh` without a `scripts/*.ps1` twin (and vice versa)
-  that isn't allow-listed as an intentional singleton, and when either shared
-  helper library (`lib/common.sh` / `lib/common.ps1`) is missing.
+- **Shared PowerShell helpers live in `lib/common.ps1`** (loggers, progress
+  engine, `Test-Have`, `Get-CoopPython`, YAML readers, `Coop-Unit`, …).
+  `bin/coop.ps1` and every `scripts/*.ps1` load it with
+  `. (Join-Path $PSScriptRoot '../lib/common.ps1')`. A helper change goes there —
+  never re-add a per-script inline copy. (Exception: `Coop-Unit` scriptblocks run
+  in fresh background runspaces and see none of the library, so logic inside a
+  unit stays self-contained by design.) `extensions/coop-tools` resolves the
+  Fabric Python through the same library (`Get-CoopFabricPython`, via
+  `powershell.exe` on Windows and `pwsh` elsewhere).
+- `scripts/check-bom.ps1` is the one BOM check (the first section of
+  `tests/run.ps1`, so every CI leg runs it; `coop release` and `scripts/release.sh`
+  run it too). It fails on any BOM-less `.ps1` or one with a doubled BOM, when
+  `bin/coop.ps1` or `scripts/sync-knowledge.ps1` does not start with a comment
+  line right after the BOM, and on a bash-style `\` line continuation in a `.ps1`.
 
-### Testing local changes on macOS
+### Testing local changes
 
-The `coop` command on your PATH is a symlink created by `coop install` — if it
-points at a different clone than the one you're editing, you will run stale
-code and your changes will appear to have no effect. Verify **before** testing:
+On Windows, the `coop` on your PATH is `%LOCALAPPDATA%\coop\bin\coop.cmd`, a
+launcher written by `coop install` that calls one clone's `bin\coop.cmd`. If it
+points at a different clone than the one you are editing, you run stale code.
+Check it with `type %LOCALAPPDATA%\coop\bin\coop.cmd` (or `Get-Content`), and
+re-run `.\bin\coop.cmd install` from your dev clone to repoint it. Invoking
+`.\bin\coop.cmd …` from the clone root always runs the code you are editing.
 
-```bash
-ls -l ~/.local/bin/coop        # must point at YOUR dev clone's bin/coop
-```
-
-Fix (from the root of your dev clone):
-
-```bash
-ln -sf "$(pwd)/bin/coop" ~/.local/bin/coop    # or re-run: ./bin/coop install
-```
-
-When in doubt, invoke the clone directly — `./bin/coop …` always runs the code
-you are editing. See `docs/troubleshooting.md` for the full runbook entry.
+On a macOS or Linux dev box, `./bin/coop …` forwards to `bin/coop.ps1` under
+`pwsh`; it is a development convenience for the logic tests, not a supported way
+to operate coop (see `docs/troubleshooting.md`).
 
 ## Before you open a PR
 
 Run the same checks CI runs:
 
 ```bash
-for f in bin/coop lib/common.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
-                                                                      # shell syntax — expect: no output, exit 0
+for f in bin/coop scripts/*.sh tests/*.sh; do bash -n "$f"; done     # dev-tooling shell syntax — expect: no output, exit 0
 python3 lib/_yaml.py get .coop/project.yml profile.organization MISS  # yaml reader — expect: Cooptimize
+pwsh -NoProfile -File scripts/check-bom.ps1                           # .ps1 BOM — expect: "✓ BOM check passed"
+pwsh -NoProfile -File tests/run.ps1                                   # PowerShell suite, gate lane — expect: "✓ PowerShell behavioral tests passed (gate lane)"
 bash tests/run.sh                                                     # gate lane, expect: "✓ all tests passed (gate lane)"
-bash scripts/check-parity.sh                                          # pairing + BOM — expect: "✓ parity check passed"
 coop doctor                                                           # deps + config (workstation only — see note)
 ```
 
@@ -141,7 +127,7 @@ until a new lock ships. The gate lane fails when the lock and the manifest
 disagree.
 
 If you are on a headless dev box without the coop stack installed (no `pi`,
-pipx tools, or `fab`), **skip `coop doctor`** and say so in the PR — the four
+pipx tools, or `fab`), **skip `coop doctor`** and say so in the PR — the five
 checks above plus CI fully cover script/doc changes.
 
 `bash tests/run.sh` runs the gate lane, the deterministic tests every PR runs.
@@ -158,12 +144,12 @@ The lanes, the fixture rules, and the CI workflows are described in
 [docs/ci.md](docs/ci.md#coop-agents-own-ci-maintainers-gate-and-extended-lanes).
 
 CI (`.github/workflows/ci.yml`) runs on every PR and every push to `main`. Its
-jobs run `bash -n` (also under macOS stock bash 3.2), `shellcheck`,
-`scripts/check-parity.sh`, JSON/YAML/skill validation, and the esbuild
-transpile of the TypeScript extensions; they parse every `.ps1` under pwsh 7 and
-Windows PowerShell 5.1 with PSScriptAnalyzer; and they run the gate lane on
-ubuntu (`tests/run.sh`, then `tests/run.ps1` under pwsh 7), under Windows Git
-Bash (`tests/run.sh`), and under Windows PowerShell 5.1 (`tests/run.ps1`). The
+jobs run `bash -n` and `shellcheck` over the bash dev tooling, JSON/YAML/skill
+validation, and the esbuild transpile of the TypeScript extensions; they parse
+every `.ps1` under pwsh 7 and Windows PowerShell 5.1 with PSScriptAnalyzer; and
+they run the gate lane on ubuntu (`tests/run.sh`, then `tests/run.ps1` under
+pwsh 7, which starts with `scripts/check-bom.ps1`), under Windows Git Bash
+(`tests/run.sh`), and under Windows PowerShell 5.1 (`tests/run.ps1`). The
 `gate` job passes only when every other job succeeded. The extended lane runs in
 `.github/workflows/extended.yml` (nightly, or Actions -> extended -> Run workflow
 on any branch), and the live Pi compatibility matrix in

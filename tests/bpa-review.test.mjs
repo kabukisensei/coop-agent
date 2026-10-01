@@ -81,7 +81,7 @@ try {
   response = new Error("Executable missing");
   assert.equal((await invoke()).isError, true);
   for (const hook of resultHooks) {
-    const override = await hook({ toolName: "sql_review", isError: false, details: { analysisFailed: true } }, ctx);
+    const override = await hook({ toolName: "data_doc", isError: false, details: { analysisFailed: true } }, ctx);
     assert.equal(override?.isError, undefined, "BPA hook must not alter other tools");
   }
 

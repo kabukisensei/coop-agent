@@ -3,13 +3,11 @@
 # scripts/search-knowledge.py helper (via Get-CoopPython discovery) against
 # temporary fixture roots. No network, no real subscriptions or credentials.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $helper = Join-Path $root 'scripts\search-knowledge.py'
 $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-search-knowledge-ps-' + [guid]::NewGuid().ToString('N'))
-$failed = $false
-function Ok([string]$Message) { Write-Host "  OK  $Message" }
-function Ko([string]$Message) { Write-Host "  FAIL $Message"; $script:failed = $true }
 
 . (Join-Path $root 'lib\common.ps1')
 $py = Get-CoopPython
@@ -31,16 +29,6 @@ try {
 
   function Write-Cfg([string]$Json) {
     Set-Content -Encoding utf8 (Join-Path $cfg '.coop\config') $Json
-  }
-  # Windows PowerShell 5.1 turns native stderr into terminating
-  # NativeCommandError records under $ErrorActionPreference='Stop' even with
-  # call-site redirection when invoked nested (run.ps1 spawns this fixture via
-  # powershell -File and captures its streams) — confirmed on CI run
-  # 34672102094 (job 103495262351). Lower EAP for the native invocation only.
-  function Invoke-Native([Parameter(Mandatory=$true)][scriptblock]$Command) {
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try { & $Command } finally { $ErrorActionPreference = $prevEap }
   }
   function Invoke-Helper([string]$Query) {
     $oldCoopDir = $env:COOP_DIR; $oldHome = $env:HOME
@@ -118,5 +106,4 @@ finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($failed) { exit 1 }
-exit 0
+exit $fail

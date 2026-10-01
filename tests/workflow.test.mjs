@@ -82,8 +82,6 @@ for (const [name, text] of [["example", example], ["fallback", fallback]]) {
 const agentDocs = [
   "AGENTS.md",
   "docs/architecture.md",
-  "skills/sql-review/SKILL.md",
-  "skills/dax-review/SKILL.md",
   "skills/fabric-workspace-review/SKILL.md",
 ].map((path) => [path, readFileSync(join(ROOT, path), "utf8")]);
 for (const [path, content] of agentDocs) {
@@ -101,7 +99,6 @@ const authoritySurfaces = [
   "README.md",
   "lib/init_wizard.py",
   "extensions/coop-tools/index.ts",
-  "bin/coop",
   "bin/coop.ps1",
 ].map((path) => [path, readFileSync(join(ROOT, path), "utf8")]);
 for (const [path, content] of authoritySurfaces) {
