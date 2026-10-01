@@ -34,6 +34,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- `data_doc` (master plan row 11a, DD4): the wrapper finds `coop-data-doc.yml`
+  the way the companion does (`COOP_DATA_DOC_CONFIG`, then the working folder
+  and its ancestors, symlinks resolved) and resolves wizard path pickers and the
+  output folder against that config's folder; the session-start lineage note
+  needs `graph.json` and mentions object pages only when `manifest.json`
+  exists; `lineage` reports the companion's evidence state and says that an
+  empty result never proves zero impact (older companions report `unknown`);
+  a failed scan/build or a read-only `check` no longer claims artifacts. The
+  JSONL setup child runs with `PYTHONIOENCODING=utf-8`.
 - Tests (S7, #228): one helper library `tests/fixtures/_common.ps1` (Ok/Ko,
   Save-Env/Restore-Env, sandbox home, shims, Python stubs, doctor rows, git and
   process helpers) dot-sourced by every fixture; `tests/run.ps1` runs
