@@ -92,7 +92,6 @@ def fixture_manifest(ms_url: str, ms_rev: str, fab_url: str, fab_rev: str) -> di
         "dependencies": {
             "refresh": ["git", "python3"],
             "launch": ["python3"],
-            "mcp": {"mcp-remote": "0.1.38"},
         },
         "repositories": {
             "microsoft_skills": {
@@ -179,7 +178,9 @@ def write_manifest(path: Path, data: dict) -> None:
 
 real_manifest = json.loads((ROOT / "config" / "microsoft-skills.json").read_text())
 assert "dependencies" in real_manifest
-assert real_manifest["dependencies"]["mcp"]["mcp-remote"] == "0.1.38"
+# Microsoft Learn is a direct HTTP entry; no MCP bridge package is a dependency.
+assert "mcp" not in real_manifest["dependencies"]
+assert "mcp-remote" not in json.dumps(real_manifest)
 assert mskills.validate_manifest(real_manifest)
 
 mode, names = mskills.policy_for(
