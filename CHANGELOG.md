@@ -124,6 +124,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- `coop sync` no longer re-injects `fabric-cicd` and `pyodbc` into the Fabric
+  CLI environment on every run (#186). A library already at its manifest pin is
+  left alone, so a converged sync makes no `pipx inject` call and needs no
+  network; only a missing or drifted library (or `fabric-cicd` under `--edge`)
+  is re-injected. When pip does fail, the warning now carries pip's last
+  `ERROR:` line instead of hiding it, so a transient download failure no longer
+  reads as an unexplained sync failure.
+
 - `coop sync` from a PowerShell 7 window. `coop.cmd` starts Windows PowerShell
   5.1, which inherited pwsh's `PSModulePath` and could not load `Get-FileHash`,
   so the lockfile comparison errored, the shipped lock was skipped and sync still
