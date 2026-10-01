@@ -69,7 +69,14 @@ coop doctor      # checks dependencies + configuration; exits non-zero if requir
 curated extensions/settings/theme/MCP load — your personal `pi` (its extensions,
 themes, splash) stays untouched. Your login (auth/models) is shared in from
 `~/.pi/agent`; settings/extensions/MCP are isolated. Provisioned by `coop install` /
-`coop sync`. Disable with `COOP_NO_ISOLATE=1`.
+`coop sync`. Disable with `COOP_NO_ISOLATE=1` (`true`, `yes` and `on` also count).
+
+The rest of coop's profile (`config`, `user.json`, `support/`, `standards/`) lives
+next to the agent dir in `~/.coop`. `COOP_DIR` moves the whole profile: it is the
+**parent** of `.coop`, so `COOP_DIR=D:\coop-profile` puts the profile at
+`D:\coop-profile\.coop` and the agent dir at `D:\coop-profile\.coop\agent` unless
+`COOP_AGENT_DIR` overrides it. Every coop command, script and extension reads the
+same two rules (`lib/common.ps1`, `lib/coop_paths.py`, `lib/paths.mjs`).
 
 ---
 

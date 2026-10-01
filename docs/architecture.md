@@ -15,7 +15,17 @@ coop runs Pi against its own agent dir (`~/.coop/agent`; override with
 curated extensions/settings/theme/MCP load — your personal `pi` (its extensions,
 themes, splash) stays untouched. Your login (auth/models) is shared in from
 `~/.pi/agent`; settings/extensions/MCP are isolated. Provisioned by
-`coop install`/`coop sync`. Disable with `COOP_NO_ISOLATE=1`.
+`coop install`/`coop sync`. Disable with `COOP_NO_ISOLATE=1` (`true`, `yes`, `on`).
+
+One profile root (master plan S3). `COOP_DIR` is the **parent** of `.coop`: the
+profile dir is `$COOP_DIR\.coop` (default `~/.coop`) and holds `config`,
+`user.json`, `agent\`, `support\`, `standards\` and `devops\`. The agent dir Pi
+actually loads is one chain everywhere: `PI_CODING_AGENT_DIR`, else
+`COOP_NO_ISOLATE` truthy → `~/.pi/agent`, else `COOP_AGENT_DIR`, else
+`<profile dir>\agent`. The helpers are `Get-CoopProfileDir` / `Get-CoopConfigFile` /
+`Get-CoopUserProfileFile` / `Get-CoopPiAgentDir` / `Get-CoopEffectiveAgentDir` in
+`lib/common.ps1`, `lib/coop_paths.py` for the Python scripts and `lib/paths.mjs`
+for the Node tools and extensions; no script builds these paths inline.
 
 ## Layers
 

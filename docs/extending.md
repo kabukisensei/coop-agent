@@ -22,7 +22,12 @@ So adding a capability is usually just **adding a file and committing it**.
 > extensions/settings/theme/MCP load — your personal `pi` stays untouched. The same
 > applies to the management aliases: `coop add` and the `coop new-*` scaffolders operate
 > on coop's isolated dir / this repo, not your global `~/.pi/agent`. Disable with
-> `COOP_NO_ISOLATE=1`.
+> `COOP_NO_ISOLATE=1`. The rest of the profile (`config`, `user.json`, `support/`,
+> `standards/`) sits beside it in `~/.coop`; `COOP_DIR` is the **parent** of `.coop`
+> and moves all of it (`COOP_DIR=X` → `X\.coop`, agent dir `X\.coop\agent` unless
+> `COOP_AGENT_DIR` is set). An extension needing one of these paths imports
+> `../../lib/paths.mjs` (`profileDir`, `configPath`, `userProfilePath`, `agentDir`)
+> instead of building them from `homedir()`.
 
 ---
 

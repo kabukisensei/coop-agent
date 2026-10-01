@@ -15,6 +15,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   records it as `dev-read-only`. Test and production targets, unbounded or
   ambiguous SQL, generic MCP row reads and every mutation ask as before.
 
+- One profile root (master plan S3, row 8, issue #220). `COOP_DIR` now means one
+  thing everywhere: the parent of `.coop` (profile at `$COOP_DIR/.coop`, default
+  `~/.coop`). `coop support` (`lib/support-center-cli.mjs`) and `coop context-budget`
+  read the profile there instead of treating `COOP_DIR` as the `.coop` folder
+  itself, and the first-run gates, the `coop-profile` / `coop-powerline` profile
+  readers, `coop sync`'s MCP generation, `coop doctor --publish`, `fleet-digest`,
+  `ado_lib` and the standards roots honour `COOP_DIR` instead of reading the real
+  home. The agent dir Pi actually loads is one chain in every language
+  (`PI_CODING_AGENT_DIR` → `COOP_NO_ISOLATE` truthy `1|true|yes|on`, any case →
+  `~/.pi/agent` → `COOP_AGENT_DIR` → `<profile dir>/agent`), including
+  `coop onboard`'s MCP output, the guardrails audit log and the Fabric SQL
+  launcher. The inline copies in `bin/coop.ps1` and the scripts go through
+  `Get-CoopProfileDir` / `Get-CoopUserProfileFile` / `Get-CoopEffectiveAgentDir`
+  (`lib/common.ps1`), `lib/coop_paths.py` and `lib/paths.mjs`. No new variables;
+  with nothing set every path is unchanged. The acceptance harness no longer
+  re-points `COOP_DIR` for the candidate's Support Center.
+
 ### Fixed
 
 - `coop sync` from a PowerShell 7 window. `coop.cmd` starts Windows PowerShell

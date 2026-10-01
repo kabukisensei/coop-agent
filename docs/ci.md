@@ -386,7 +386,12 @@ The run scripts are the list; this page does not repeat it.
 - No fixture touches the real home. Point `HOME`, `USERPROFILE`, `COOP_DIR`,
   `COOP_AGENT_DIR`, `PI_CODING_AGENT_DIR` and the standards roots
   (`COOP_STANDARDS_ROOT`, `COOP_STANDARDS_STATE`, `COOP_STANDARDS_SNAPSHOT_ROOT`)
-  at temp directories, so the fixture is also safe to run on its own. As a
+  at temp directories, so the fixture is also safe to run on its own. `COOP_DIR`
+  is the parent of `.coop`: a fixture that sets `COOP_DIR=X` finds (and onboarding
+  writes) the profile at `X/.coop` (`config`, `user.json`, `support/`), and the
+  agent dir at `X/.coop/agent` unless `COOP_AGENT_DIR` or `PI_CODING_AGENT_DIR`
+  points elsewhere (`tests/fixtures/profile-root.test.ps1`, `tests/coop-paths.test.py`,
+  `tests/paths.test.mjs` prove the chain in each language). As a
   backstop, `tests/run.sh` gives every gate test a temp home: it points `HOME`
   and `USERPROFILE` at a temp directory and unsets the other variables so they
   resolve inside it. `tests/run.ps1` does the same for the processes it starts,

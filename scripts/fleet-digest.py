@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 import ado_lib as A  # reusing GraphMailer
 import _yaml
+import coop_paths
 
 def _esc_html(s):
     if s is None: return ""
@@ -61,7 +62,7 @@ def main(argv):
     def_path = os.path.join(coop_root, "config", "defaults.yml")
     defs = _yaml.load(def_path) if os.path.isfile(def_path) else {}
 
-    cfg_path = args.config or os.path.expanduser("~/.coop/config")
+    cfg_path = args.config or str(coop_paths.config_path())
     cfg = _yaml.load(cfg_path) if os.path.isfile(cfg_path) else {}
 
     pub_dir = _yaml.dig(cfg, "fleet.publish_dir") or _yaml.dig(defs, "fleet.publish_dir")

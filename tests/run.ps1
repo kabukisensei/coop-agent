@@ -805,6 +805,7 @@ print("resume verdict contract OK")
       @{ Name = 'staleness';       Head = 'repo staleness nudge (throttled fetch + behind-count)' },
       @{ Name = 'doctor-project';  Head = 'doctor.ps1 project contract rows' },
       @{ Name = 'first-run';       Head = 'first-run launcher continuation (onboarding gate)' },
+      @{ Name = 'profile-root';    Head = 'one profile root: COOP_DIR parent of .coop, one agent-dir chain (S3, #220)' },
       @{ Name = 'sync-knowledge';  Head = 'team knowledge sync (sync-knowledge.ps1; hang cases in the extended lane)' })) {
     Head $fx.Head
     $oldErrorAction = $ErrorActionPreference

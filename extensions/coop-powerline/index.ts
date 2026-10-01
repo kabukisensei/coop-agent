@@ -20,9 +20,10 @@
 
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { userProfilePath } from "../../lib/paths.mjs";
 
 // --- Locate our assets (env vars from bin/coop.ps1 win; else resolve from this file) ---
 let EXT_DIR = "";
@@ -127,11 +128,11 @@ function vibeSets(): string[] {
 }
 
 // `{user}` in a vibe line becomes the person's name: the COOP profile name
-// (~/.coop/user.json, the same file coop-profile reads), else the OS login,
-// else "Dave" (HAL never did learn anyone else's name).
+// (<profile dir>/user.json, the same file coop-profile reads; lib/paths.mjs),
+// else the OS login, else "Dave" (HAL never did learn anyone else's name).
 function vibeUserName(): string {
   try {
-    const raw = JSON.parse(readFileSync(join(homedir(), ".coop", "user.json"), "utf8"));
+    const raw = JSON.parse(readFileSync(userProfilePath(), "utf8"));
     if (raw && typeof raw.name === "string") {
       const name = raw.name.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100);
       if (name) return name;
