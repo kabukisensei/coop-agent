@@ -505,7 +505,8 @@ with (
     mock.patch.dict(sys.modules, {"pyodbc": ro_pyodbc}),
     mock.patch.object(fsq.wmcp, "az_access_token", side_effect=fake_sql_only_token),
 ):
-    assert fsq.execute({"query": QUERY}, cwd=ro_project)["state"] == "ok"
+    ro_output = fsq.execute({"query": QUERY}, cwd=ro_project)
+assert ro_output["state"] == "ok", ro_output
 assert "ApplicationIntent=ReadOnly;" in ro_pyodbc.call[0]
 
 # Synapse serverless and Fabric SQL database are direct kinds too (15 s timeout).
