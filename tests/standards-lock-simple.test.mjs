@@ -1,17 +1,28 @@
 import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const tmp = mkdtempSync(join(tmpdir(), "coop-standards-lock-simple-"));
+// The fixture root is resolved to its real path: macOS keeps tmpdir() under the
+// /var -> /private/var symlink, which the standards storage-root check rejects
+// (the worker then exits at once and the marker never appears).
+const tmp = realpathSync(mkdtempSync(join(tmpdir(), "coop-standards-lock-simple-")));
 const moduleUrl = new URL("../lib/standards.mjs", import.meta.url).href;
 const worker = join(tmp, "worker.mjs");
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const waitFor = async (path, timeout = 5000) => {
+// Polls for a marker the worker writes. A worker that exits first fails the wait
+// at once with its stderr, so a lock failure reads as itself, not as a timeout;
+// the limit only bounds a worker that is still running (a cold node start on a
+// loaded machine takes seconds, so it is generous).
+const waitFor = async (path, done, timeout = 30_000) => {
   const deadline = Date.now() + timeout;
+  let exit = null;
+  done.then((result) => { exit = result; });
   while (Date.now() < deadline) {
-    try { readFileSync(path); return; } catch { await delay(10); }
+    try { readFileSync(path); return; } catch { }
+    if (exit) throw new Error(`worker exited (code ${exit.code}, signal ${exit.signal}) before writing ${path}: ${exit.stderr.trim()}`);
+    await delay(10);
   }
   throw new Error(`timed out waiting for ${path}`);
 };
@@ -54,7 +65,7 @@ const test = async (name, fn) => { await fn(); count++; console.log(`  ✓ ${nam
 try {
   await test("concurrent refresh-style work is serialized without overlap", async () => {
     const root = join(tmp, "serialized"); mkdirSync(root);
-    const a = run(root, "A", { HOLD_FILE: "release-A" }); const aDone = exited(a); await waitFor(join(root, "A-entered"));
+    const a = run(root, "A", { HOLD_FILE: "release-A" }); const aDone = exited(a); await waitFor(join(root, "A-entered"), aDone);
     const b = run(root, "B", { TIMEOUT: "3000" }); const bDone = exited(b);
     await delay(150); assert.equal(readdirSync(root).includes("B-entered"), false, "B entered while A held the lock");
     writeFileSync(join(root, "release-A"), "1");
