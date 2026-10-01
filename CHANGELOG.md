@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `coop sync` from a PowerShell 7 window. `coop.cmd` starts Windows PowerShell
+  5.1, which inherited pwsh's `PSModulePath` and could not load `Get-FileHash`,
+  so the lockfile comparison errored, the shipped lock was skipped and sync still
+  printed `✓ sync complete.` (seen on the development VM, 2026-10-01). The lock
+  hashes now go through .NET (`Get-CoopFileSha256`), and `coop.cmd` clears
+  `PSModulePath` so 5.1 rebuilds its own module path.
+
 ### Removed
 
 - The SQL and DAX review wrappers (master plan ST1, decided by Aaron on
@@ -64,6 +73,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   once and remembers that lock, so sync does not retry it until a release ships a
   new one. Maintainers regenerate it with `node lib/extlock.js generate` whenever
   a pin moves; the gate lane fails when the lock and the manifest disagree.
+
+### Fixed
+
+- coop's own footer renders again (issue #203). `pi-better-openai` 0.1.22
+  defaults to `footer.mode: "replace"`, which installs its own footer on
+  `session_start` and replaces coop-powerline's `⬢ Cooptimize` bar with Pi's
+  built-in one. `coop sync` (run by `coop install` and `coop update`) now keeps
+  that extension's `footer.mode` at `status` in
+  `~/.coop/agent/extensions/pi-better-openai.json`, which is what coop's footer
+  already consumes through `footerData.getExtensionStatuses()`; a deliberate
+  `off` is left alone and every other key in that file is preserved. Existing
+  installs pick it up on their next `coop update` or `coop sync`.
 
 ### Changed
 

@@ -116,7 +116,9 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
    - `pi-mcp-adapter` — wires the read-only MCP servers.
    - `pi-hermes-memory` — persistent memory, session search, secret scanning.
    - `pi-better-openai` — plan usage limits (5h / 7d windows), surfaced in
-     coop's own footer via `footerData.getExtensionStatuses()`.
+     coop's own footer via `footerData.getExtensionStatuses()`. `coop sync`
+     pins its `footer.mode` to `status` (its `replace` default would wipe
+     coop's footer).
    - `pi-web-access` — web search, URL fetch, GitHub clone, PDF/YouTube/video
      understanding (read-only; complements the Microsoft Learn MCP).
    - `@juicesharp/rpiv-ask-user-question` — lets the model put a structured,
