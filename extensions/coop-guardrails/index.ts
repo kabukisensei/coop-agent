@@ -23,7 +23,8 @@
  *      reads and any production access require explicit approval.
  *   5. Mutating MCP actions — confirm before Fabric/Power BI/MCP tool calls whose
  *      names look like create/update/delete/deploy/publish (best-effort; MCP tool
- *      names vary, so this complements — not replaces — Pi's tool approval).
+ *      names vary. This extension is the approval layer: Pi itself does not
+ *      prompt per tool call).
  *
  * It is the coop-native replacement for the third-party @aliou/pi-guardrails (which
  * was pinned to the old @mariozechner Pi). It enforces the AGENT's tool calls — your

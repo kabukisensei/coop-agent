@@ -10,9 +10,9 @@ At launch, `bin/coop.ps1` loads, from this repo:
 |------|-------|-----------------|
 | Skills | `skills/<name>/SKILL.md` | each first-party folder auto-loaded; Microsoft skills come from the pinned catalog launch slot |
 | Prompt templates | `prompts/<name>.md` | whole folder via `--prompt-template` |
-| Theme | `themes/cooptimize.json` | via `--theme` |
+| Theme | `themes/cooptimize.json` | registered via `--theme`; a user picks it in `/settings` |
 | Guardrails prompt | `docs/guardrails.md` | via `--append-system-prompt` (advisory; the `coop-guardrails` extension enforces it) |
-| Companion extensions | `extensions/coop-*/` (`coop-powerline`, `coop-tools`, `coop-guardrails`) | via `pi -e` |
+| Companion extensions | `extensions/coop-*/` (`coop-powerline`, `coop-tools`, `coop-guardrails`, `coop-profile`) | via `pi -e` |
 | Vibes | `vibes/*.txt` | read by `coop-powerline` |
 
 So adding a capability is usually just **adding a file and committing it**.
@@ -102,13 +102,29 @@ ships — see the `daily-logger` skill and the `/daily-log` and `/weekly-log` pr
 
 ## 3. Add or tweak the theme
 
-Copy `themes/cooptimize.json`, change the `vars` (brand colors live there), and
-either replace the file or load yours with `coop --theme path/to/theme.json`.
+Pi's `--theme <path>` only **registers** a theme file; it does not select it. The
+active theme is the `theme` key in `~/.coop/agent/settings.json` (set from
+`/settings`) or `--use-theme <name>` for one run, and coop never sets it, so new
+users get Pi's automatic `dark` / `light` theme until they pick `cooptimize` in
+`/settings`. To ship your own:
+
+1. Copy `themes/cooptimize.json` and give the copy a new `name` (Pi keeps the
+   first theme with a given name, and coop registers its file first, so a copy
+   still called `cooptimize` is dropped).
+2. Change the `vars` (brand colors live there).
+3. Either load it with `coop --theme path/to/theme.json` and pick it in
+   `/settings`, run `coop --theme path/to/theme.json --use-theme <name>` for a
+   single session, or drop the file in `~/.coop/agent/themes/`.
+
+Editing `themes/cooptimize.json` in place restyles the team theme for everyone who
+has already selected it.
 
 ## 4. Add a native tool or UI feature (a Pi extension)
 
 For real logic (new LLM-callable tools, footer/splash tweaks, event hooks), write a
-Pi extension in TypeScript. Use the three in `extensions/` as templates:
+Pi extension in TypeScript. Use the four in `extensions/` as templates
+(`coop-profile`, the fourth, is a small `before_agent_start` hook that injects the
+local user profile; the other three are below):
 
 - `extensions/coop-tools/index.ts` — registers `data_doc` / `bpa_review` /
   `fabric_sql_query` with `pi.registerTool(...)`. Copy the pattern to wrap another CLI. The
@@ -140,7 +156,11 @@ Pi extension in TypeScript. Use the three in `extensions/` as templates:
 
 To load a new companion extension, either drop it in `extensions/<name>/` and add a
 `-e` line in `bin/coop.ps1`, or install a published one with
-`coop add npm:<package>` (it persists in Pi's settings for everyone who installs).
+`coop add npm:<package>`. `coop add` runs `pi install` against **this user's**
+isolated `~/.coop/agent` only. To ship an npm extension to the whole team, pin it
+in the `extensions` object of `config/release-manifest.json` and run
+`node lib/extlock.js generate`; `coop sync` / `coop update` then install it on
+every machine.
 
 Full Pi extension API reference: run `coop pi --help`, and see the bundled examples
 under the Pi package's `examples/extensions/` (the patterns coop's extensions follow).

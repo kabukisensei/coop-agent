@@ -38,7 +38,7 @@ tabular_editor_cli:
 # managed remote HTTP server and every SQL call is approval-gated. context-mode is NOT an
 # MCP server: it is a native Pi extension from the manifest's `extensions` list that runs
 # SANDBOXED code over the docs/graph (not client data) to save context, still subject to
-# Pi's tool approval.
+# the coop-guardrails hooks (Pi itself does not prompt per tool call).
 mcp:
   generator: lib/mcp_config.py
   install_target: "~/.coop/agent/mcp-adapter.json"
