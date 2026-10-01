@@ -2022,12 +2022,44 @@ function Remove-CoopPiStagingDirs {
   }
 }
 
-function Test-CoopPiRunning {
+# Path text for a substring match: lowercase, `\` separators, no trailing
+# separator. Win32_Process.CommandLine carries paths as the launcher wrote them
+# (npm's .cmd shims use backslashes; `npm root -g` may not).
+function ConvertTo-CoopPathKey([string]$Path) {
+  return ([string]$Path).Trim().Replace('/', '\').TrimEnd('\').ToLowerInvariant()
+}
+
+# True when one node.exe command line is a Pi session run from THIS install's npm
+# tree (#234): it names pi-coding-agent under one of $Roots, the npm global roots
+# this install converges (Get-CoopNpmGlobalRoots). A session launched from
+# another install has another root (a daily C: install while a sandbox installs
+# into a redirected E: profile) and is no reason to skip the convergence here.
+# With no root known (npm did not answer) every pi-coding-agent session counts,
+# as before.
+function Test-CoopPiCommandLineOwned([string]$CommandLine, [string[]]$Roots) {
+  if (-not $CommandLine -or $CommandLine -notmatch 'pi-coding-agent') { return $false }
+  $known = @($Roots | Where-Object { $_ })
+  if ($known.Count -eq 0) { return $true }
+  $cmd = ConvertTo-CoopPathKey $CommandLine
+  foreach ($r in $known) {
+    $key = ConvertTo-CoopPathKey $r
+    if ($key -and $cmd.Contains($key + '\')) { return $true }
+  }
+  return $false
+}
+
+# A coop/pi session of THIS install is open: a node.exe (not this process) whose
+# command line Test-CoopPiCommandLineOwned accepts. $Rows / $Roots let a fixture
+# pass fake process rows (ProcessId, CommandLine) and roots; by default the rows
+# come from Win32_Process and the roots from Get-CoopNpmGlobalRoots.
+function Test-CoopPiRunning([object[]]$Rows = $null, [string[]]$Roots = $null) {
+  if ($null -eq $Roots) { $Roots = @(Get-CoopNpmGlobalRoots) }
   try {
-    $procs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue
-    foreach ($p in $procs) {
+    if ($null -eq $Rows) { $Rows = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue) }
+    foreach ($p in $Rows) {
+      if ($null -eq $p) { continue }
       if ($p.ProcessId -eq $PID) { continue }
-      if ($p.CommandLine -and $p.CommandLine -match 'pi-coding-agent') { return $true }
+      if (Test-CoopPiCommandLineOwned ([string]$p.CommandLine) $Roots) { return $true }
     }
   } catch { }
   return $false
@@ -2035,8 +2067,9 @@ function Test-CoopPiRunning {
 
 # The busy guard install and update share: clear leftover staging dirs, then say
 # whether Pi may be converged in place. $false (with the warning printed) when a
-# coop/pi session has the agent files open; the caller skips the Pi unit and
-# counts a failure. $Command names the lifecycle command to re-run.
+# coop/pi session of this install has the agent files open (sessions from another
+# install's npm tree do not count, #234); the caller skips the Pi unit and counts
+# a failure. $Command names the lifecycle command to re-run.
 function Test-CoopPiConvergeAllowed([string]$Command = 'coop update') {
   if (-not (Test-Have 'pi')) { return $true }
   Remove-CoopPiStagingDirs
