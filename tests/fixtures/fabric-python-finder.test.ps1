@@ -3,9 +3,8 @@ $ErrorActionPreference = 'Stop'
 
 # Get-CoopFabricBootstrapPython must discover side-by-side interpreters that are NOT on
 # PATH (Python install manager + winget layouts) and must reject incompatible
-# versions (notably a 3.14-only machine). The bash twin of this fixture runs in
-# the Windows Git Bash CI leg; here we skip native Windows to avoid executing
-# deliberately-invalid stub .exe files under ErrorActionPreference=Stop.
+# versions (notably a 3.14-only machine). Native Windows is skipped to avoid
+# executing deliberately-invalid stub .exe files under ErrorActionPreference=Stop.
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 . (Join-Path $root 'lib/common.ps1')

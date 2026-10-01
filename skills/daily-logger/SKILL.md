@@ -24,8 +24,8 @@ Append an entry whenever you:
 
 - completed an implementation or configuration change,
 - prepared or proposed a source change for human review (SQL / DAX / model / report),
-- ran meaningful validation or a review (`sql_review` / `dax_review`) or
-  built/refreshed docs (`data_doc`),
+- ran meaningful validation (the standards self-check, BPA, `fabric-cicd` validate)
+  or built/refreshed docs (`data_doc`),
 - updated documentation, glossary, lineage, or the portal,
 - hit an open question or a decision the user should weigh in on.
 
@@ -74,8 +74,8 @@ One or two lines on the day's focus.
 |--------|---------|
 
 ## Standards / quality findings
-- From `sql_review` / `dax_review` (cite file:line and severity), Tabular Editor BPA,
-  or `fabric-cicd` validate.
+- From the standards self-check (cite file:line and the rule not met), Tabular
+  Editor BPA, or `fabric-cicd` validate.
 
 ## Open questions
 - Tensions to surface for a consent round.

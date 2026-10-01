@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
 #
-# coop sync-knowledge (Windows / PowerShell mirror of scripts/sync-knowledge.sh) —
+# coop sync-knowledge —
 # sync the configured team knowledge repos (~/.coop/config "knowledge" block):
 # clone missing local paths, fast-forward clean checkouts, warn + skip dirty
 # checkouts (never reset/clean), warn + continue on unreachable remotes. Always
@@ -21,7 +21,7 @@
 
 $ErrorActionPreference = 'Continue'
 
-# --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
+# --- Shared helpers: dot-source lib/common.ps1 ---------------------------------
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
 
 if (-not (Test-CoopKnowledgeEnabled)) {

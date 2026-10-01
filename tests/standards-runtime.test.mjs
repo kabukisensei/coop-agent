@@ -48,26 +48,12 @@ writeFileSync(join(project, ".coop", "project.yml"), "standards:\n  sql: standar
 
 const handlers = new Map();
 const tools = new Map();
-const executions = [];
-let reportMode = "valid";
 const pi = {
   on(name, fn) { handlers.set(name, fn); },
   registerTool(tool) { tools.set(tool.name, tool); },
   registerCommand() {},
   sendUserMessage() {},
-  async exec(bin, args, options) {
-    executions.push({ bin, args, optionKeys: Object.keys(options).sort() });
-    const index = args.indexOf("--standards");
-    const path = index >= 0 ? args[index + 1] : null;
-    const sha256 = path ? createHash("sha256").update(readFileSync(path)).digest("hex") : null;
-    const standards = path ? { path, sha256 } : undefined;
-    if (reportMode === "bad_hash" && standards) standards.sha256 = "0".repeat(64);
-    if (reportMode === "bad_path" && standards) standards.path = join(root, "wrong.md");
-    if (reportMode === "malformed_revision" && standards) standards.revision = 7;
-    const reviewDomain = String(bin).includes("dax") ? "dax" : "sql";
-    const stdout = reportMode === "malformed" ? "not-json" : JSON.stringify({ tool: `coop-${reviewDomain}-review`, schema_version: reviewDomain === "dax" ? 3 : 4, version: "test", [reviewDomain === "dax" ? "models_checked" : "files_checked"]: 0, standards: reportMode === "missing" ? undefined : standards, findings: [], diagnostics: [], agent_review: [], summary: { error: 0, warning: 0, info: 0 }, verdict: { clean: true, highest_severity: null } });
-    return { stdout, stderr: "reviewer diagnostic", code: 0 };
-  },
+  async exec() { throw new Error("the standards context must never shell out"); },
 };
 const ctx = { cwd: project, hasUI: false, mode: "rpc", ui: { setStatus() {}, notify() {} } };
 
@@ -94,21 +80,20 @@ try {
   const sqlRecord = sqlContext.message.details.records.find((x) => x.resolution.domain === "sql").resolution;
   assert.equal(sqlRecord.immutable, true); assert.notEqual(sqlRecord.path, sqlRecord.source_path);
   writeFileSync(sqlSource, "# MUTATED AFTER CONTEXT");
-  const sqlResult = await tools.get("sql_review").execute("1", { paths: ["query.sql"] }, undefined, undefined, ctx);
-  assert.deepEqual(sqlResult.details.standards, sqlRecord);
-  assert.deepEqual(sqlResult.details.args.slice(-2), ["--standards", sqlRecord.path]);
-  assert.deepEqual(executions.at(-1).optionKeys, ["cwd", "signal"]);
-  assert.deepEqual(sqlResult.details.standardsBinding, { owner: "coop", path: sqlRecord.path, sha256: sqlRecord.sha256, revision: sqlRecord.revision });
-  assert.equal(sqlResult.details.reportRejected, undefined);
+  // The snapshot the task was pinned to is immutable: mutating the source after
+  // the context was built changes neither its bytes nor its hash.
   assert.match(readFileSync(sqlRecord.path, "utf8"), /Schema qualify names/);
+  assert.equal(createHash("sha256").update(readFileSync(sqlRecord.path)).digest("hex"), sqlRecord.sha256);
+  // ST1: the coop-sql-review / coop-dax-review wrappers are gone; standards are
+  // applied while writing, through the context above.
+  assert.equal(tools.has("sql_review"), false); assert.equal(tools.has("dax_review"), false);
+  assert.equal(tools.has("bpa_review"), true); assert.equal(tools.has("data_doc"), true);
 
   const daxContext = await handlers.get("before_agent_start")({ prompt: "Validate this DAX measure", systemPrompt: "base" }, ctx);
   assertCloneSafe(daxContext.message.details, "dax details");
   const daxRecord = daxContext.message.details.records.find((x) => x.resolution.domain === "dax").resolution;
   assert.match(daxContext.message.content, /explicit measures/);
-  const daxResult = await tools.get("dax_review").execute("2", { paths: ["measure.dax"] }, undefined, undefined, ctx);
-  assert.deepEqual(daxResult.details.standards, daxRecord);
-  assert.deepEqual(daxResult.details.args.slice(-2), ["--standards", daxRecord.path]);
+  assert.equal(daxRecord.immutable, true);
 
   const semantic = await handlers.get("before_agent_start")({ prompt: "Assess semantic model relationships", systemPrompt: "base" }, ctx);
   assert.deepEqual(semantic.message.details.domains, ["semantic_model", "dax"]);
@@ -118,9 +103,6 @@ try {
   const semanticModel = semantic.message.details.records.find((x) => x.resolution.domain === "semantic_model").resolution;
   const semanticDax = semantic.message.details.records.find((x) => x.resolution.domain === "dax").resolution;
   assert.equal(semanticModel.immutable, true); assert.equal(semanticDax.immutable, true);
-  const semanticReview = await tools.get("dax_review").execute("3", { paths: ["model.tmdl"] }, undefined, undefined, ctx);
-  assert.deepEqual(semanticReview.details.standards, semanticDax);
-  assert.deepEqual(semanticReview.details.args.slice(-2), ["--standards", semanticDax.path]);
 
   const multiple = await handlers.get("before_agent_start")({ prompt: "Implement a SQL procedure and validate this DAX measure", systemPrompt: "base" }, ctx);
   assert.deepEqual(multiple.message.details.domains, ["sql", "dax"]);
@@ -144,15 +126,6 @@ try {
   assert.equal(independentSql.revision, baselineSql.revision); assert.equal(independentSql.sha256, baselineSql.sha256); assert.equal(independentSql.path, baselineSql.path);
   assert.equal(existsSync(sentinel), false, "standards path invoked TeamAI");
 
-  for (const [mode, error] of [["bad_hash", /hash mismatch/], ["bad_path", /path mismatch|cannot be verified/], ["malformed_revision", /revision claim is malformed|provenance schema is invalid/], ["missing", /provenance is missing|unknown or missing fields/], ["malformed", /envelope is missing|provenance is missing/]]) {
-    reportMode = mode;
-    const rejected = await tools.get("dax_review").execute("4", { paths: ["measure.dax"] }, undefined, undefined, ctx);
-    assert.equal(rejected.details.reportRejected, true, mode);
-    assert.match(rejected.details.provenanceError, error, mode);
-    assert.equal(rejected.details.stderr, "reviewer diagnostic", mode);
-    assert.equal(Object.hasOwn(rejected.details, "report"), false, mode);
-  }
-
   const unrelated = await handlers.get("before_agent_start")({ prompt: "Review this Power Query transformation", systemPrompt: "base" }, ctx);
   assert.equal(unrelated, undefined);
   const greeting = await handlers.get("before_agent_start")({ prompt: "hey", systemPrompt: "base" }, ctx);
@@ -168,7 +141,7 @@ try {
   } finally {
     process.env.COOP_STANDARDS_SNAPSHOT_ROOT = savedSnapshotRoot;
   }
-  console.log("  ✓ automatic SQL/DAX/semantic-model context uses immutable reviewer-verified snapshots and rejects mismatches");
+  console.log("  ✓ automatic SQL/DAX/semantic-model context uses immutable standards snapshots; no review wrappers are registered");
   assert.deepEqual(realBytes(), realBefore, `the suite must not touch the real ${realStandards}`);
   console.log("  ✓ the developer's real ~/.coop/standards pointer and status are untouched by the runtime fixture");
 } finally {

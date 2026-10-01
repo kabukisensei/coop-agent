@@ -40,6 +40,13 @@ else
   echo "→ lane: gate (default). Add the extended lane with: COOP_TEST_EXTENDED=1 bash tests/run.sh"
 fi
 
+# coop is PowerShell (master plan S1): the forwarder smoke, the Fabric SQL
+# launcher and every test that drives bin/coop.ps1 or lib/common.ps1 need pwsh.
+if ! command -v pwsh >/dev/null 2>&1; then
+  echo "✗ pwsh (PowerShell 7) is required to run the suite: install it, or put it on PATH" >&2
+  exit 1
+fi
+
 bundle() {
   local ext="$1"; shift
   npx -y esbuild "$ROOT/extensions/$ext/index.ts" \
@@ -133,13 +140,13 @@ unset COOP_DIR COOP_AGENT_DIR PI_CODING_AGENT_DIR \
 echo "→ Revision 9 standards registry/resolver and automatic application tests"
 node "$ROOT/tests/standards-rev9.test.mjs"
 node "$ROOT/tests/standards-live-sync.test.mjs"
-node "$ROOT/tests/standards-review-generations.test.mjs"
 node "$ROOT/tests/standards-golden.test.mjs"
+node "$ROOT/tests/standards-bundle.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/standards-runtime.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/bpa-review.test.mjs"
 
-echo "→ data-doc config tests"
-COOP_TEST_DIST="$TMP" node "$ROOT/tests/datadoc.test.mjs"
+echo "→ data-doc config reader and contract review-scope tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/review-scope.test.mjs"
 echo "→ coop-guardrails enforcement tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/guardrails.test.mjs"
 echo "→ start-here menu tests"
@@ -152,8 +159,6 @@ echo "→ team knowledge recall note tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/team-knowledge-recall.test.mjs"
 echo "→ contract-driven Fabric target note tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-target-note.test.mjs"
-# The .ps1 UTF-8 BOM check (exactly one BOM; launch-critical first line) lives in
-# scripts/check-parity.sh only.
 echo "→ share-learning prompt and friction nudge tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/share-learning.test.mjs"
 echo "→ learning-nudge runtime (registered handler) tests"
@@ -161,6 +166,8 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/learning-nudge-runtime.test.mjs"
 
 echo "→ setup-docs JSONL bridge (renderPrompt / askCheckbox) tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge.test.mjs"
+echo "→ data_doc lineage branch and session lineage note tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/lineage.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge-integration.test.mjs"
 
 echo "→ workflow slice tests"
@@ -178,8 +185,12 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/powerline.test.mjs"
 echo "→ vibes & feature-discovery tips contract tests"
 node "$ROOT/tests/vibes.test.mjs"
 
-echo "→ launch-spec (shared launch builder) test"
-SPEC="$(bash "$ROOT/bin/coop" launch-spec)"
+echo "→ Git Bash forwarder: bin/coop forwards to coop.ps1 (launch-spec) and release.sh"
+# bin/coop carries no logic (master plan S1): it execs pwsh/powershell on
+# bin/coop.ps1. Driving launch-spec through it proves the forwarder and the
+# shared launch builder together; tests/run.ps1 covers coop.ps1 directly.
+# coop.ps1 prints Windows paths under Git Bash; compare with one separator.
+SPEC="$(bash "$ROOT/bin/coop" launch-spec | tr '\\' '/')"
 for needle in "docs/guardrails.md" "--prompt-template" "themes/cooptimize.json" \
               "extensions/coop-powerline" "extensions/coop-tools" "extensions/coop-guardrails" "extensions/coop-profile"; do
   case "$SPEC" in
@@ -187,68 +198,55 @@ for needle in "docs/guardrails.md" "--prompt-template" "themes/cooptimize.json" 
     *) echo "  ✗ launch-spec missing: $needle"; exit 1 ;;
   esac
 done
-echo "  ✓ launch-spec resolves guardrails, prompts, theme, and all 4 extensions"
+echo "  ✓ launch-spec resolves guardrails, prompts, theme, and all 4 extensions (through the forwarder)"
+REL_OUT="$(bash "$ROOT/bin/coop" release --help 2>&1)" || { echo "  ✗ bin/coop release --help failed: $REL_OUT"; exit 1; }
+case "$REL_OUT" in
+  *"coop release"*) echo "  ✓ bin/coop release forwards to scripts/release.sh" ;;
+  *) echo "  ✗ bin/coop release did not reach scripts/release.sh: $REL_OUT"; exit 1 ;;
+esac
+FWD_TMP="$TMP/fwd-missing"; mkdir -p "$FWD_TMP/bin" "$FWD_TMP/scripts"; cp "$ROOT/bin/coop" "$FWD_TMP/bin/coop"
+FWD_RC=0; FWD_OUT="$(bash "$FWD_TMP/bin/coop" version 2>&1)" || FWD_RC=$?
+if [ "$FWD_RC" -ne 0 ] && case "$FWD_OUT" in *"coop.ps1 is missing"*) true ;; *) false ;; esac; then
+  echo "  ✓ the forwarder fails clearly when bin/coop.ps1 is missing"
+else
+  echo "  ✗ forwarder with a missing coop.ps1: rc=$FWD_RC out=$FWD_OUT"; exit 1
+fi
 
-echo "→ --no-launch dry-run (must NOT start pi; prints the spec)"
-# --no-launch is a dry-run: it runs the preflights (no-op without pi) and prints the
-# resolved launch spec, then exits 0 — the opposite of its old behavior (it launched).
-# Keep its repair-capable preflight away from the developer's real ~/.coop tree.
+echo "→ bin/coop forwards --no-launch to coop.ps1 (one smoke; tests/run.ps1 owns the spec)"
+# The forwarder is only a Git Bash shim: one dry-run through it proves the hand-off
+# to bin/coop.ps1. What the spec contains (--json, PI_SKIP_VERSION_CHECK,
+# PI_MCP_CONFIG_MODE=exclusive) is tests/run.ps1 section 2. Keep the
+# repair-capable preflight away from the developer's real ~/.coop tree.
 LAUNCH_AGENT="$TMP/launch-agent"; LAUNCH_COOP="$TMP/launch-coop"
 mkdir -p "$LAUNCH_AGENT" "$LAUNCH_COOP"
 NL_RC=0
-NL_OUT="$(COOP_AGENT_DIR="$LAUNCH_AGENT" PI_CODING_AGENT_DIR="$LAUNCH_AGENT" COOP_DIR="$LAUNCH_COOP" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" --no-launch)" || NL_RC=$?
+NL_OUT="$(COOP_AGENT_DIR="$LAUNCH_AGENT" PI_CODING_AGENT_DIR="$LAUNCH_AGENT" COOP_DIR="$LAUNCH_COOP" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" --no-launch | tr '\\' '/')" || NL_RC=$?
 [ "$NL_RC" -eq 0 ] || { echo "  ✗ coop --no-launch exited $NL_RC (expected 0)"; exit 1; }
 case "$NL_OUT" in
-  *"docs/guardrails.md"*) ;;
+  *"docs/guardrails.md"*) echo "  ✓ the forwarder reaches coop.ps1 --no-launch (spec printed, exit 0)" ;;
   *) echo "  ✗ coop --no-launch did not print the launch spec (no docs/guardrails.md)"; exit 1 ;;
 esac
-# --json delegates to the launch-spec JSON path.
-JSON_SPEC="$(COOP_AGENT_DIR="$LAUNCH_AGENT" PI_CODING_AGENT_DIR="$LAUNCH_AGENT" COOP_DIR="$LAUNCH_COOP" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" --no-launch --json)"
-case "$JSON_SPEC" in
-  *'"bin"'*'"args"'*) ;;
-  *) echo "  ✗ coop --no-launch --json did not emit the JSON spec"; exit 1 ;;
-esac
-JSON_SPEC="$JSON_SPEC" node -e 'const s=JSON.parse(process.env.JSON_SPEC); if(s.env.PI_SKIP_VERSION_CHECK!=="1") process.exit(1)'
-echo "  ✓ --no-launch prints the spec and exits 0 (no pi launched)"
-# #165: MCP comes only from coop's agent-dir mcp-adapter.json, never a repo's .mcp.json.
-if JSON_SPEC="$JSON_SPEC" node -e 'const s=JSON.parse(process.env.JSON_SPEC); process.exit(s.env.PI_MCP_CONFIG_MODE==="exclusive"?0:1)'; then
-  echo "  ✓ launch spec pins MCP config to coop's agent dir (PI_MCP_CONFIG_MODE=exclusive)"
-else
-  echo "  ✗ launch spec does not set PI_MCP_CONFIG_MODE=exclusive"; exit 1
-fi
 
-echo "→ fleet manifest tests"
-bash "$ROOT/tests/fleet-manifest.test.sh"
 echo "→ fleet health digest rendering (HTML/Markdown escaping, UTF-8 output)"
 bash "$ROOT/tests/fleet-digest.test.sh"
-echo "→ coop update follows release tags, never backwards (H5; gate lane: offline, no sleep or marker)"
-bash "$ROOT/tests/update-follow.test.sh"
-echo "→ coop version, doctor --publish and the fleet digest carry git describe (#108; offline, no sleep)"
-bash "$ROOT/tests/version-describe.test.sh"
-echo "→ release transaction tests"
-bash "$ROOT/tests/release.test.sh"
-echo "→ install prerequisite gate (H1: ordered checklist, stop before installing)"
-bash "$ROOT/tests/install-prereq-gate.test.sh"
-echo "→ pipx launcher PATH resolution (install.sh / install.ps1 twins)"
+echo "→ pipx launcher PATH resolution (install.ps1)"
 bash "$ROOT/tests/install-pipx-path.test.sh"
-echo "→ entrypoints guard a missing lib/common helper library"
+echo "→ entrypoints guard a missing helper library / forwarder target"
 bash "$ROOT/tests/missing-common-guard.test.sh"
 echo "→ user paths install and recommend only the release's pinned versions (#151)"
 bash "$ROOT/tests/pins.test.sh"
-echo "→ model login detection ignores Pi's empty startup auth.json (#167)"
-bash "$ROOT/tests/login-present.test.sh"
 echo "→ extension tree pins the agent peer to the agent's version (#122)"
 bash "$ROOT/tests/extdeps-agent-pin.test.sh"
 echo "→ extension lockfile pins the tree's transitive dependencies (#152)"
 bash "$ROOT/tests/extensions-lock.test.sh"
-echo "→ fabric-compatible Python discovery (side-by-side, off-PATH)"
-bash "$ROOT/tests/fixtures/fabric-python-finder.test.sh"
 bash "$ROOT/tests/mcp-config.test.sh"
 python3 "$ROOT/tests/warehouse-mcp.test.py"
 python3 "$ROOT/tests/fabric-sql-query.test.py"
 echo "→ sql_targets contract section (SQ1: kinds, host patterns, production never default)"
 python3 "$ROOT/tests/sql-targets.test.py"
 python3 "$ROOT/tests/microsoft-skills.test.py"
+echo "→ one profile root: COOP_DIR is the parent of .coop; one agent-dir chain (S3, #220)"
+python3 "$ROOT/tests/coop-paths.test.py"
 python3 "$ROOT/tests/p0-vertical-slice.test.py"
 bash "$ROOT/tests/onboard.test.sh"
 echo "→ Azure CLI resolution and sign-in helpers (onboarding, coop init)"
@@ -283,13 +281,6 @@ for prev, ok, detail in cases:
     assert got_detail == detail, (prev, got_detail, detail)
 print("  OK  resume verdict: failure sentinel / expected prev=1 / already-running / still-suspended")
 PY
-echo "→ team knowledge skills launch slot tests"
-bash "$ROOT/tests/team-skills.test.sh"
-bash "$ROOT/tests/context-budget.test.sh"
-bash "$ROOT/scripts/check-context-budget.sh"
-
-echo "→ Azure sign-in preflight (tenant chain, token check, automatic sign-in, .az-ok cache) tests"
-bash "$ROOT/tests/azcache.test.sh"
 
 echo "→ coop init wizard tests"
 bash "$ROOT/tests/init-wizard.test.sh"
@@ -303,9 +294,6 @@ bash "$ROOT/tests/seeddocs.test.sh"
 echo "→ coop init --ci (CI pipeline scaffolding) tests"
 bash "$ROOT/tests/ciscaffold.test.sh"
 
-echo "→ doctor project contract validation tests"
-bash "$ROOT/tests/doctor-project.test.sh"
-
 echo "→ BPA runner resolution tests (te bpa run; TE2 must never be invoked)"
 bash "$ROOT/tests/bpa-runner.test.sh"
 
@@ -317,6 +305,8 @@ node "$ROOT/tests/tool-result.test.mjs"
 echo "→ support command and Support Center contract tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/support-command.test.mjs"
 node "$ROOT/tests/support-center.test.mjs"
+echo "→ one profile root in Node (lib/paths.mjs and the bundled extensions)"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/paths.test.mjs"
 
 # ============================================================================
 # EXTENDED LANE (only with COOP_TEST_EXTENDED=1)
@@ -327,8 +317,9 @@ node "$ROOT/tests/support-center.test.mjs"
 # ============================================================================
 if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   echo "→ extended lane"
-  # The extended fixtures keep the gate lane's temp home (#135), except
-  # home-guard below, which checks the real home on purpose.
+  # The extended fixtures keep the gate lane's temp home (#135);
+  # tests/fixtures/home-guard.test.ps1 (run by tests/run.ps1) is the one that
+  # checks the real home on purpose.
 
   echo "→ standards lock (simple lock; waitFor polls and a fixed sleep)"
   node "$ROOT/tests/standards-lock-simple.test.mjs"
@@ -339,19 +330,10 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   echo "→ live JSONL happy-path vs the installed coop-data-doc"
   COOP_TEST_DATADOC_REQUIRED="${COOP_TEST_DATADOC_REQUIRED:-0}" COOP_TEST_DIST="$TMP" node "$ROOT/tests/jsonl-live.test.mjs"
 
-  echo "→ coop update tested-Pi-version guard (--check, gate decision)"
-  bash "$ROOT/tests/update-guard.test.sh"
-  echo "→ fleet execution and fresh-install Python prerequisite"
-  bash "$ROOT/tests/fleet-execution.test.sh"
-  bash "$ROOT/tests/install-python-prereq.test.sh"
 
-  echo "→ Fabric request headers, MCP launch (all phases) and SQL launcher"
+  echo "→ Fabric request headers and SQL launcher (MCP launch phases: tests/fixtures/fabric-mcp-launch.test.ps1 in run.ps1)"
   node "$ROOT/tests/fabric-request-headers.test.mjs"
-  bash "$ROOT/tests/fabric-mcp-launch.test.sh"
   COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-sql-launcher.test.mjs"
-
-  echo "→ team knowledge sync script tests"
-  bash "$ROOT/tests/sync-knowledge.test.sh"
 
   echo "→ windows owned-kill native evidence probe (Defect A diagnostics)"
   case "$(uname -s 2>/dev/null)" in
@@ -359,25 +341,7 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
     *) echo "  – Windows-only probe; skipped on POSIX (covered by the Windows CI legs)" ;;
   esac
 
-  echo "→ truthful inventory (doctor pipx probes / sync postconditions)"
-  bash "$ROOT/tests/inventory.test.sh"
-  echo "→ first-run continuation through plain coop (pty-driven)"
-  case "$(uname -s 2>/dev/null)" in
-    MINGW*|MSYS*|CYGWIN*) echo "  – Python pty/termios is unavailable on native Windows; covered by macOS PTY + Windows launcher tests" ;;
-    *) bash "$ROOT/tests/first-run.test.sh" ;;
-  esac
-  echo "→ home-guard (fleet paths must not mutate the real home)"
-  # shellcheck source=/dev/null
-  ( . "$CALLER_HOME_ENV"; bash "$ROOT/tests/home-guard.test.sh" )
 
-  echo "→ repo staleness nudge (throttled fetch + behind-count) tests"
-  bash "$ROOT/tests/staleness.test.sh"
-
-  echo "→ coop review (composite linters + docs compose) tests"
-  bash "$ROOT/tests/review.test.sh"
-
-  echo "→ doctor MCP mode reporting tests"
-  bash "$ROOT/tests/doctor.test.sh"
 
   # The whole file (#133): tests that need pwsh skip themselves without it.
   # tests/run.ps1 keeps its reparse subset, so Windows does not run the file

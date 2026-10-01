@@ -31,10 +31,29 @@ try:
 except Exception:  # pragma: no cover - import fallback for direct embedding
     load_yaml = None
 
+_LIB_DIR = str(Path(__file__).resolve().parent)
+if _LIB_DIR not in sys.path:
+    sys.path.insert(0, _LIB_DIR)
+import coop_paths  # noqa: E402
+
 FABRIC_RESOURCE = "https://api.fabric.microsoft.com"
 SQL_RESOURCE = "https://database.windows.net/"
 TOKEN_RESOURCES = {FABRIC_RESOURCE, SQL_RESOURCE}
 FABRIC_TOKEN_ENV = "COOP_FABRIC_MCP_TOKEN"
+# The one list of launch-token warning states. `launch-token` prints
+# `warning<TAB><state><TAB>end` with one of these; lib/fabric_token_runner.mjs
+# (the launch-frame validator) accepts exactly this set, and
+# tests/warehouse-mcp.test.py asserts the two stay equal.
+WARNING_STATES = (
+    "config_invalid",
+    "azure_cli_unavailable",
+    "token_launch_failed",
+    "token_timeout",
+    "auth_required",
+    "token_command_failed",
+    "token_output_invalid",
+)
+MANAGED_SQL_SERVER = "fabric-sqlendpoint"
 GLOBAL_SQL_ENDPOINT_URL = f"{FABRIC_RESOURCE}/v1/mcp/dataPlane/sqlEndpoint"
 REQUEST_HEADERS_HELPER = str(
     Path(__file__).resolve().parent / "fabric_request_headers.mjs"
@@ -45,6 +64,13 @@ _TOKEN_HELPER_SIGNAL_LOCK = threading.Lock()
 UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+# The one item-scoped Warehouse MCP URL shape (workspace, SQL endpoint item).
+ITEM_URL_RE = re.compile(
+    rf"^{re.escape(FABRIC_RESOURCE)}/v1/mcp/dataPlane/workspaces/({UUID_RE.pattern[1:-1]})/items/({UUID_RE.pattern[1:-1]})/sqlEndpoint$"
+)
+# A JWT, and the claims coop binds a session to, are visible ASCII only.
+VISIBLE_ASCII_RE = re.compile(r"^[!-~]+$")
+MAX_JWT_CHARS = 16384
 WAREHOUSE_TYPES = {"Warehouse", "Lakehouse"}
 COMPATIBLE_SQL_TOOLS = {
     "executeSQL",
@@ -139,7 +165,7 @@ def tenant_value(value: Any) -> tuple[str, str]:
 
 def coop_config_path() -> Path:
     """~/.coop/config, honouring COOP_DIR exactly as scripts/onboard.py does."""
-    return Path(os.environ.get("COOP_DIR") or Path.home()) / ".coop" / "config"
+    return coop_paths.config_path()
 
 
 def tenant_from_sources(project: Any, config: Any) -> tuple[str, str]:
@@ -216,6 +242,17 @@ def project_sqlendpoint_enabled(project: dict[str, Any]) -> bool:
     return True
 
 
+def integration_enabled(config: Any, name: str, default: bool = True) -> bool:
+    """The one ~/.coop/config integrations flag rule: only the boolean true opts in.
+
+    A missing flag takes `default`; any other value (a string "true", 1, null)
+    is off. lib/mcp_config.py's `enabled()` is this function.
+    """
+    raw_integrations = config.get("integrations") if isinstance(config, dict) else None
+    integrations = raw_integrations if isinstance(raw_integrations, dict) else {}
+    return integrations.get(name, default) is True
+
+
 def machine_sqlendpoint_enabled(config: dict[str, Any]) -> bool:
     raw_integrations = config.get("integrations")
     integrations: dict[str, Any] = (
@@ -226,9 +263,9 @@ def machine_sqlendpoint_enabled(config: dict[str, Any]) -> bool:
     # is malformed, so an alias cannot turn a rejected canonical value into an
     # enabled SQL execution surface.
     if "fabric_sql_endpoint" in integrations:
-        return integrations["fabric_sql_endpoint"] is True
-    if "fabric-sqlendpoint" in integrations:
-        return integrations["fabric-sqlendpoint"] is True
+        return integration_enabled(config, "fabric_sql_endpoint")
+    if MANAGED_SQL_SERVER in integrations:
+        return integration_enabled(config, MANAGED_SQL_SERVER)
     # Migration safety: an existing explicit opt-out of the original Fabric
     # integration must not acquire a new SQL execution surface merely because
     # this more-specific setting did not exist yet. An explicit new setting is
@@ -302,13 +339,74 @@ def project_target(project: dict[str, Any]) -> SqlEndpointTarget:
     )
 
 
-def select_target(project: dict[str, Any]) -> SqlEndpointTarget:
-    target = project_target(project)
-    if target.scope in {"item", "invalid"}:
-        return target
-    return SqlEndpointTarget(
-        url=GLOBAL_SQL_ENDPOINT_URL, scope="global", reason=target.reason
-    )
+# The former select_target re-derived project_target's global case; one name.
+select_target = project_target
+
+
+def managed_sqlendpoint_entry(mcp_config: Any) -> Any | None:
+    """The managed Warehouse MCP entry of an mcp-adapter.json document, or None.
+
+    The one ownership rule: the entry exists under `mcpServers` and `_coop
+    .managed_servers` names it (a user-owned entry of the same name is not
+    coop's). Doctor, `launch-token` and fabric_sql_query all ask this.
+    """
+    if not isinstance(mcp_config, dict):
+        return None
+    raw_servers = mcp_config.get("mcpServers")
+    servers = raw_servers if isinstance(raw_servers, dict) else {}
+    raw_meta = mcp_config.get("_coop")
+    meta = raw_meta if isinstance(raw_meta, dict) else {}
+    raw_managed = meta.get("managed_servers")
+    managed = raw_managed if isinstance(raw_managed, list) else []
+    if MANAGED_SQL_SERVER not in managed:
+        return None
+    return servers.get(MANAGED_SQL_SERVER)
+
+
+def jwt_identity(token: Any) -> tuple[str, str, str] | None:
+    """(tenant, kind, principal) of a JWT, or None. Mirrors jwtIdentity in
+    lib/fabric_request_headers.mjs: at most 16384 visible-ASCII characters,
+    three canonical base64url segments, a UTF-8 JSON object payload whose `tid`
+    is a GUID (lowercased) and whose `oid` (else `sub`) is a visible-ASCII
+    string (lowercased); kind names which claim bound the principal."""
+    if (
+        not isinstance(token, str)
+        or len(token) > MAX_JWT_CHARS
+        or not VISIBLE_ASCII_RE.fullmatch(token)
+    ):
+        return None
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    decoded = []
+    for part in parts:
+        try:
+            raw = base64.b64decode(
+                part + "=" * (-len(part) % 4), altchars=b"-_", validate=True
+            )
+        except (ValueError, TypeError):
+            return None
+        if not raw or base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != part:
+            return None
+        decoded.append(raw)
+    try:
+        claims = json.loads(decoded[1].decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(claims, dict):
+        return None
+    tenant = claims.get("tid")
+    tenant = tenant.lower() if isinstance(tenant, str) else ""
+    if isinstance(claims.get("oid"), str):
+        kind = "oid"
+    elif isinstance(claims.get("sub"), str):
+        kind = "sub"
+    else:
+        return None
+    principal = claims[kind]
+    if not UUID_RE.fullmatch(tenant) or not VISIBLE_ASCII_RE.fullmatch(principal):
+        return None
+    return tenant, kind, principal.lower()
 
 
 def classify_tools(tools: list[Any]) -> str:
@@ -372,10 +470,7 @@ def sqlendpoint_config_status(entry: Any) -> str:
             and target["item_id"] == ""
             else "unavailable"
         )
-    m = re.match(
-        rf"^{re.escape(FABRIC_RESOURCE)}/v1/mcp/dataPlane/workspaces/({UUID_RE.pattern[1:-1]})/items/({UUID_RE.pattern[1:-1]})/sqlEndpoint$",
-        url,
-    )
+    m = ITEM_URL_RE.match(url)
     if not m:
         return "target_invalid"
     return (
@@ -394,10 +489,7 @@ def registered_target(entry: Any) -> SqlEndpointTarget | None:
     url = raw_url if isinstance(raw_url, str) else ""
     if url == GLOBAL_SQL_ENDPOINT_URL:
         return SqlEndpointTarget(url=url, scope="global", reason="registered")
-    m = re.match(
-        rf"^{re.escape(FABRIC_RESOURCE)}/v1/mcp/dataPlane/workspaces/({UUID_RE.pattern[1:-1]})/items/({UUID_RE.pattern[1:-1]})/sqlEndpoint$",
-        url,
-    )
+    m = ITEM_URL_RE.match(url)
     if not m:
         return None
     return SqlEndpointTarget(
@@ -883,25 +975,27 @@ def doctor_status(
     probe: bool = False,
     tenant: str = "",
 ) -> dict[str, Any]:
-    servers = (
-        mcp_config.get("mcpServers")
-        if isinstance(mcp_config.get("mcpServers"), dict)
-        else {}
-    )
-    entry = servers.get("fabric-sqlendpoint")
-    raw_meta = mcp_config.get("_coop")
-    meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
-    raw_managed = meta.get("managed_servers")
-    managed: list[Any] = raw_managed if isinstance(raw_managed, list) else []
-    registered = isinstance(entry, dict) and "fabric-sqlendpoint" in managed
+    """Observe the managed Warehouse MCP server; never sign in or execute SQL.
+
+    `state` is the one-word verdict doctor has always printed. The fields added
+    for honesty: `config_state` is what the config alone proves (registered |
+    unavailable | target_invalid), `probe_state` is what the live probe found
+    (not_probed, or ok, or the first failing step's state) and `usable` is true
+    only when the probe ran, the target validated and a compatible tool was
+    listed. Config alone is registered, never usable.
+    """
+    entry = managed_sqlendpoint_entry(mcp_config)
+    registered = isinstance(entry, dict)
     state = sqlendpoint_config_status(entry) if registered else "unavailable"
-    target = select_target(project or {})
+    target = project_target(project or {})
     actual_target = registered_target(entry) if registered else None
     if target.scope == "invalid":
         state = "target_invalid"
     elif state == "registered" and not same_target(actual_target, target):
         state = "target_invalid"
-    if state == "registered" and probe:
+    config_state = state
+    probed = state == "registered" and probe
+    if probed:
         # The probe mints for the client tenant, like the launch; no tenant keeps
         # the unpinned call exactly as it was.
         token, auth = az_access_token(tenant=tenant) if tenant else az_access_token()
@@ -938,9 +1032,18 @@ def doctor_status(
         state = tool_state if tool_state != "ok" else classify_tools(tools)
     elif state == "registered" and tools is not None:
         state = classify_tools(tools)
+    if not probed:
+        probe_state = "not_probed"
+    elif state == "registered":
+        probe_state = "ok"
+    else:
+        probe_state = state
     return {
-        "server": "fabric-sqlendpoint",
+        "server": MANAGED_SQL_SERVER,
         "state": state,
+        "config_state": config_state,
+        "probe_state": probe_state,
+        "usable": probe_state == "ok",
         "registered": registered,
         "compatible_tools": sorted(COMPATIBLE_SQL_TOOLS),
         "target": target.__dict__,
@@ -971,7 +1074,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "tenant":
         # Prints the resolved client tenant (nothing otherwise) and exits
         # 0 resolved / 1 unset / 2 invalid. Never writes stderr and never
-        # echoes a rejected value; lib/common.sh and lib/common.ps1 call this.
+        # echoes a rejected value; lib/common.ps1 calls this.
         if args.project is not None:
             project_path = Path(args.project) if args.project else None
         else:
@@ -989,7 +1092,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(
             json.dumps(
-                select_target(load_project(project_path)),
+                project_target(load_project(project_path)),
                 default=lambda o: o.__dict__,
                 sort_keys=True,
             )
@@ -1028,14 +1131,8 @@ def main(argv: list[str] | None = None) -> int:
             cfg = json.loads(Path(args.mcp_config).read_text(encoding="utf-8-sig"))
         except Exception:
             cfg = {}
-        raw_servers = cfg.get("mcpServers") if isinstance(cfg, dict) else None
-        servers = raw_servers if isinstance(raw_servers, dict) else {}
-        raw_meta = cfg.get("_coop") if isinstance(cfg, dict) else None
-        meta = raw_meta if isinstance(raw_meta, dict) else {}
-        raw_managed = meta.get("managed_servers")
-        managed = raw_managed if isinstance(raw_managed, list) else []
-        entry = servers.get("fabric-sqlendpoint")
-        if "fabric-sqlendpoint" not in managed or entry is None:
+        entry = managed_sqlendpoint_entry(cfg)
+        if entry is None:
             return 0
         if sqlendpoint_config_status(entry) != "registered":
             sys.stdout.write("warning\tconfig_invalid\tend")
@@ -1047,6 +1144,8 @@ def main(argv: list[str] | None = None) -> int:
         if state == "ok":
             sys.stdout.write("token\t" + token + "\tend")
             return 0
+        if state not in WARNING_STATES:
+            state = "token_command_failed"
         sys.stdout.write("warning\t" + state + "\tend")
         return 0
     return 2

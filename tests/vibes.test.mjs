@@ -45,8 +45,6 @@ function readPool(filePath) {
 const POOL_NAMES = [
   "professional.txt",
   "data-doc.txt",
-  "sql-review.txt",
-  "dax-review.txt",
   "fabric.txt",
   "coop-internal.txt",
   "tips.txt",
@@ -325,7 +323,7 @@ const powerlineSrc = readFileSync(join(ROOT, "extensions/coop-powerline/index.ts
   else ko("{user} placeholder used in a tips section", placeholderTips.map(({ line }) => line).join(" | "));
   const substitutes =
     powerlineSrc.includes("function fillVibe(") &&
-    powerlineSrc.includes('join(homedir(), ".coop", "user.json")') &&
+    powerlineSrc.includes('readFileSync(userProfilePath(), "utf8")') &&
     powerlineSrc.includes("userInfo().username") &&
     powerlineSrc.includes('return "Dave";') &&
     /const pickVibe = \(\): string => fillVibe\(/.test(powerlineSrc);

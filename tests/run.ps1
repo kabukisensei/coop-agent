@@ -1,28 +1,28 @@
 ﻿#!/usr/bin/env pwsh
 #
-# coop PowerShell behavioral tests (twin of the PS-relevant assertions in tests/run.sh).
-# Windows is coop's PRIMARY target, yet every behavioral test drove the BASH side only —
-# the .ps1 dispatcher (coop.ps1) and update gate (update.ps1) had no executable safety
-# net. This exercises the SAME seams tests/run.sh does, but through PowerShell:
-#   1. coop.ps1 launch-spec resolves guardrails, prompts, theme, all 3 extensions
+# coop PowerShell behavioral tests: coop's own test lane (the product is PowerShell,
+# master plan S1). tests/run.sh holds the Node/Python logic tests and the bash
+# harness suites; this file drives coop.ps1, lib/common.ps1 and scripts/*.ps1:
+#   0. scripts/check-bom.ps1 (every .ps1 keeps its UTF-8 BOM) runs first
+#   1. coop.ps1 launch-spec resolves guardrails, prompts, theme, all 4 extensions
 #   2. coop.ps1 --no-launch exits 0 + prints the spec; --no-launch --json emits {bin,args,env}
-#   3. update.ps1 fleet-mode decisions via COOP_UPDATE_GATE_DRYRUN
-#      (the same seams tests/update-guard.test.sh drives against update.sh)
-#   4. update.ps1 --check is a dry-run that reports current/expected and exits 0
-#   5. coop.ps1 forwards a single trailing --check argument intact to update.ps1
-#   6. coop.ps1 review --help exits 0; an unknown review flag dies non-zero
+#   3. update.ps1 --check is a dry-run that reports current/expected and exits 0;
+#      --pi-latest warns that it is deprecated and keeps that read-only path
+#   4. coop.ps1 forwards a single trailing --check argument intact to update.ps1
+#   5. (retired with ST1: coop review no longer exists)
+#   6. the child fixtures under tests/fixtures, one table-driven loop with a lane
+#      column (gate / extended); each fixture is a self-contained script that
+#      dot-sources tests/fixtures/_common.ps1
 #
-# No network: the fleet-mode decision stops before any install via
-# COOP_UPDATE_GATE_DRYRUN. Runs under Windows PowerShell 5.1
-# (coop.cmd's runtime) and pwsh 7 (macOS/Linux CI). CI wires it into the windows +
-# tests jobs; run locally with `pwsh -File tests/run.ps1`.
+# No network: the stubs on a scratch PATH answer every tool probe, and nothing is
+# installed. Runs under Windows PowerShell 5.1 (coop.cmd's runtime) and pwsh 7
+# (macOS/Linux CI). CI wires it into the windows + tests jobs; run locally with
+# `pwsh -File tests/run.ps1`.
 #
 # Lanes (#96), as in tests/run.sh: the default run is the gate lane (deterministic
-# logic only). COOP_TEST_EXTENDED=1 also runs the sections marked "EXTENDED LANE"
-# (terminal-acceptance reparse subset, knowledge git timeout, Windows ownership
-# probe, Fabric MCP launch-time bearer isolation, fresh-install Fabric Python
-# prerequisite). They stay at their positions because some depend on ordering.
-# The .ps1 UTF-8 BOM check lives in scripts/check-parity.sh only.
+# logic only). COOP_TEST_EXTENDED=1 also runs the extended lane: the in-process
+# sections marked "EXTENDED LANE" and the fixture rows with Lane = 'extended'
+# (timing and process fixtures; docs/ci.md lists them).
 #
 $ErrorActionPreference = 'Stop'
 
@@ -89,8 +89,19 @@ if ($extendedLane) {
   Head 'lane: gate (default). Add the extended lane with COOP_TEST_EXTENDED=1'
 }
 
+# --- 0. .ps1 UTF-8 BOM check (scripts/check-bom.ps1) ---------------------------
+# First, before any fixture: a BOM-less .ps1 mojibakes its glyphs on Windows
+# PowerShell 5.1, and the check prints the exact fix command for each offender.
+Head '.ps1 UTF-8 BOM check (scripts/check-bom.ps1)'
+$bomEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+$bomOut = & $psExe -NoProfile -File (Join-Path $root 'scripts\check-bom.ps1') 2>&1
+$bomRc = $LASTEXITCODE
+$ErrorActionPreference = $bomEap
+if ($bomRc -eq 0) { Ok 'every .ps1 keeps its UTF-8 BOM (scripts/check-bom.ps1)' } else { Ko "scripts/check-bom.ps1 failed: $($bomOut | Out-String)" }
+
 # --- pi/npm stubs on a scratch PATH -----------------------------------------
-# The gate + --check need a `pi` (reporting 0.87.1) and an `npm` that Get-Command
+# --check needs a `pi` (reporting 0.87.1) and an `npm` that Get-Command
 # resolves. Windows PowerShell 5.1 finds a stub only via a PATHEXT extension
 # (.cmd), so write BOTH an extension-less Unix executable and a .cmd wrapper.
 $stub = Join-Path ([System.IO.Path]::GetTempPath()) ("coop-ps-test-" + [System.IO.Path]::GetRandomFileName())
@@ -334,40 +345,6 @@ try {
   if ($dupSpec -like '*kb-dup-a*shared-skill*') { Ok 'first repository copy loaded (PS)' } else { Ko 'first copy missing (PS)' }
   if ($dupSpec -like '*kb-dup-b*') { Ko 'second repository duplicate NOT skipped (PS)' } else { Ok 'second repository duplicate skipped (PS)' }
 
-  # --- 1e. EXTENDED LANE: bounded knowledge git (process-tree deadline) ------
-  # Hang children and a deadline; PS in-process return.
-  if ($extendedLane) {
-    Head 'knowledge git timeout (PowerShell)'
-    $oldErrorAction = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    $kgOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\sync-knowledge-timeout.test.ps1') 2>&1
-    $kgRc = $LASTEXITCODE
-    $ErrorActionPreference = $oldErrorAction
-    if ($kgRc -eq 0) {
-      $kgOut | ForEach-Object { Write-Host $_ }
-    } else {
-      Ko "knowledge git timeout fixture failed: $($kgOut | Out-String)"
-    }
-  }
-
-  # --- 1f. EXTENDED LANE: Windows owned-kill native evidence probe (Defect A)
-  # Evidence-only synthetic probe; asserts nothing about product correctness.
-  if ($extendedLane) {
-    Head 'windows ownership native probe (evidence only)'
-    $oldErrorAction = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    $probeOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\win-ownership-probe.ps1') 2>&1
-    $probeRc = $LASTEXITCODE
-    $ErrorActionPreference = $oldErrorAction
-    if ($probeRc -eq 0) {
-      $probeOut | ForEach-Object { Write-Host $_ }
-      Ok 'ownership probe completed; PROBE| evidence above'
-    } else {
-      Ko "ownership probe failed: $($probeOut | Out-String)"
-    }
-  }
-
-
   # --- 1g. ResumeThread previous-suspend-count contract (Defect A) ----------
   # Deterministic unit test of the pure verdict classifier: failure sentinel,
   # expected prev=1 for a CREATE_SUSPENDED first resume, already-running (0),
@@ -474,27 +451,6 @@ print("resume verdict contract OK")
     if ($LASTEXITCODE -eq 0) { Ok 'check-context-budget.ps1 gate passes' } else { Ko 'check-context-budget.ps1 gate failed' }
   }
 
-  # --- 4. update fleet-mode decisions (COOP_UPDATE_GATE_DRYRUN stops before install) -
-  # Normal mode pins to the release manifest ('GATE pin:<v>'); --edge takes latest
-  # ('GATE all'); --pi-latest is a deprecated alias for --edge.
-  Head 'coop update fleet-mode decision (COOP_UPDATE_GATE_DRYRUN)'
-  function Invoke-Gate {
-    param([string[]]$GateArgs = @())
-    $out = & $psExe -NoProfile -Command @"
-`$env:PATH = '$stubPath'
-`$env:COOP_UPDATE_GATE_DRYRUN = '1'
-& '$update' $($GateArgs -join ' ') 2>`$null
-"@ 6>$null
-    # The gate line is the last emitted 'GATE …' line.
-    return (($out | Where-Object { $_ -match 'GATE' }) | Select-Object -Last 1)
-  }
-  $d = Invoke-Gate
-  if ($d -eq 'GATE pin:0.87.1') { Ok 'normal mode pins Pi to the release manifest' } else { Ko "expected 'GATE pin:0.87.1', got '$d'" }
-  $d = Invoke-Gate -GateArgs @('--edge')
-  if ($d -eq 'GATE all') { Ok '--edge is the only latest/upstream mode' } else { Ko "with --edge expected 'GATE all', got '$d'" }
-  $d = Invoke-Gate -GateArgs @('--pi-latest')
-  if ($d -eq 'GATE all') { Ok '--pi-latest is a deprecated alias for --edge' } else { Ko "with --pi-latest expected 'GATE all', got '$d'" }
-
   # --- 4. update --check is a dry-run: reports versions, exits 0 -------------
   Head 'coop update --check (dry-run — reports current/expected)'
   $checkOut = & $psExe -NoProfile -Command @"
@@ -505,91 +461,40 @@ print("resume verdict contract OK")
   if ($checkOut -like '*expected 0.87.1*') { Ok '--check prints the pi expected version' } else { Ko '--check missing pi expected version' }
   if ($checkOut -like '*status *') { Ok '--check prints a status column' } else { Ko '--check missing status column' }
   if ($checkOut -like '*@microsoft/powerbi-report-authoring-cli*') { Ok '--check lists npm authoring tools' } else { Ko '--check missing npm authoring tools' }
+  # --pi-latest is a deprecated alias for --edge: it warns (stderr) and the
+  # read-only --check table is unchanged (normal update pins to the manifest;
+  # --edge is the only latest/upstream mode, exercised in fleet-execution).
+  # The warning is written through [Console]::Error (Coop-Emit), so it reaches
+  # this process as the child's stderr: capture it here, under Continue (5.1
+  # turns redirected native stderr into NativeCommandError records).
+  $oldErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $piLatestOut = & $psExe -NoProfile -Command @"
+`$env:PATH = '$stubPath'
+& '$update' --pi-latest --check
+"@ 2>&1 6>$null | Out-String
+  $piLatestRc = $LASTEXITCODE
+  $ErrorActionPreference = $oldErrorAction
+  if ($piLatestRc -eq 0 -and ($piLatestOut -like '*--pi-latest is deprecated*') -and ($piLatestOut -like '*expected 0.87.1*')) {
+    Ok '--pi-latest warns that it is deprecated and still reaches the --check dry-run'
+  } else { Ko "--pi-latest --check: exit $piLatestRc, output: $piLatestOut" }
 
   # --- 5. dispatcher preserves one trailing argument -------------------------
-  # COOP_UPDATE_GATE_DRYRUN is a safety net: before the fix, coop.ps1 split the
-  # scalar '--check' into six characters and update.ps1 entered its mutating path.
-  # The gate seam stops that broken path before any install while this test asserts
-  # that the real --check dry-run was reached through the public wrapper.
+  # Before the fix, coop.ps1 split the scalar '--check' into six characters and
+  # update.ps1 entered its mutating path; this asserts the real --check dry-run
+  # is reached through the public wrapper (the stub PATH answers every probe,
+  # and --check itself installs nothing).
   Head 'coop update --check wrapper forwarding (single trailing argument)'
   $wrappedCheckOut = & $psExe -NoProfile -Command @"
 `$env:PATH = '$stubPath'
-`$env:COOP_UPDATE_GATE_DRYRUN = '1'
 & '$coop' update --check 2>&1
 "@ 6>$null | Out-String
   if (($wrappedCheckOut -like '*expected 0.87.1*') -and ($wrappedCheckOut -like '*status *')) {
     Ok 'coop wrapper forwards --check intact to the read-only path'
   } else { Ko "coop wrapper did not reach the --check dry-run: $wrappedCheckOut" }
-  if ($wrappedCheckOut -notlike '*ignoring unknown flag*' -and $wrappedCheckOut -notlike '*GATE *') {
-    Ok 'coop wrapper does not split --check or enter the update gate'
-  } else { Ko 'coop wrapper split --check or entered the mutating update path' }
-
-  # --- 5b. coop update follows release tags, never backwards (H5) -------------
-  # Gate lane: offline git fixtures in a temp dir, no sleep or marker. The fixture
-  # runs with EAP=Stop to prove the helpers' function-local Continue on 5.1.
-  Head 'coop update follows release tags (never backwards)'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $followOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\update-follow.test.ps1') 2>&1
-  $followRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($followRc -eq 0) {
-    $followOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "update-follow fixture failed: $($followOut | Out-String)"
-  }
-
-  # --- 5c. coop version and doctor --publish carry git describe (#108) -------
-  # Offline throwaway clones of a copy of this tree; sandboxed homes and publish dir.
-  Head 'coop version and doctor --publish carry git describe'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $describeOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\version-describe.test.ps1') 2>&1
-  $describeRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($describeRc -eq 0) {
-    $describeOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "version-describe fixture failed: $($describeOut | Out-String)"
-  }
-
-  # --- 6. review --help exits 0; an unknown review flag dies -----------------
-  Head 'coop review arg parsing (--help ok; unknown flag dies)'
-  & $coop review --help *> $null
-  if ($LASTEXITCODE -eq 0) { Ok 'review --help exits 0' } else { Ko "review --help exit was $LASTEXITCODE" }
-  & $coop review --bogus-flag *> $null
-  if ($LASTEXITCODE -ne 0) { Ok 'review with an unknown flag dies non-zero' } else { Ko 'review --bogus-flag did not die' }
-
-  Head 'review transaction asymmetric mutation'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $reviewTxnOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\review-transaction.test.ps1') 2>&1
-  $reviewTxnRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($reviewTxnRc -eq 0) { $reviewTxnOut | ForEach-Object { Write-Host $_ }; Ok 'asymmetric review transaction preserved all artifacts' }
-  else { Ko "PowerShell asymmetric review transaction failed: $($reviewTxnOut | Out-String)" }
-
-  # --- 7. pipx launcher ownership (Windows .exe metadata fallback) ----------
-  Head 'pipx executable ownership'
-  $ownerOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\pipx-ownership.test.ps1') 2>&1
-  if ($LASTEXITCODE -eq 0) {
-    $ownerOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "pipx ownership fixture failed: $($ownerOut | Out-String)"
-  }
-
-  # --- 7b. fabric-compatible Python discovery (side-by-side, off-PATH) ------
-  Head 'fabric-compatible Python discovery'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $finderOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\fabric-python-finder.test.ps1') 2>&1
-  $finderRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($finderRc -eq 0) {
-    $finderOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "fabric python finder fixture failed: $($finderOut | Out-String)"
-  }
+  if ($wrappedCheckOut -notlike '*ignoring unknown flag*') {
+    Ok 'coop wrapper does not split --check into unknown flags'
+  } else { Ko 'coop wrapper split --check into unknown flags' }
 
   # --- 7c. Microsoft skills catalog deterministic fixture -------------------
   Head 'Microsoft skills catalog fixture'
@@ -642,31 +547,85 @@ print("resume verdict contract OK")
     Ko 'python not available; Warehouse/P0 fixtures cannot run'
   }
 
-  # --- EXTENDED LANE: Fabric MCP launch-time bearer isolation ---------------
-  # Marker files and bounded child processes; the self-recursion probe below
-  # re-runs this file with COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE=1, which exits
-  # at the probe block at the top before any lane logic.
-  if ($extendedLane) {
-    Head 'Fabric MCP launch-time bearer isolation'
+  # --- 8. Child fixtures: one pwsh/powershell child each ---------------------
+  # Every fixture under tests/fixtures is a self-contained script (they share
+  # tests/fixtures/_common.ps1 for Ok/Ko, Save-Env/Restore-Env, stubs and doctor
+  # row helpers). Lane 'extended' rows run only with COOP_TEST_EXTENDED=1 (#96):
+  # timing and process fixtures, and the ones that run the real scripts many
+  # times (doctor and inventory take about a minute each). A fixture's
+  # output is echoed when it passes; a non-zero exit, or a missing Needle, fails
+  # this run with its full output. Coop status output is stderr: the children
+  # run under ErrorActionPreference=Continue because Windows PowerShell 5.1
+  # turns redirected native stderr into NativeCommandError records.
+  # home-guard checks the CALLER's real home on purpose (#135): RestoreHome puts
+  # it back for that child, then the gate-lane temp home returns.
+  $fixtures = @(
+    @{ Name = 'sync-knowledge-timeout'; Lane = 'extended'; Head = 'knowledge git timeout (PowerShell)' },
+    @{ Name = 'win-ownership-probe';    Lane = 'extended'; File = 'win-ownership-probe.ps1'; Head = 'windows ownership native probe (evidence only)'; OkLine = 'ownership probe completed; PROBE| evidence above' },
+    @{ Name = 'update-follow';          Lane = 'gate';     Head = 'coop update follows release tags (never backwards)' },
+    @{ Name = 'version-describe';       Lane = 'gate';     Head = 'coop version and doctor --publish carry git describe' },
+    @{ Name = 'pipx-ownership';         Lane = 'gate';     Head = 'pipx executable ownership' },
+    @{ Name = 'fabric-python-finder';   Lane = 'gate';     Head = 'fabric-compatible Python discovery' },
+    @{ Name = 'fabric-mcp-launch';      Lane = 'extended'; Head = 'Fabric MCP launch-time bearer isolation'; Needle = 'FABRIC_MCP_FIXTURE_INJECTION_REACHED' },
+    @{ Name = 'release';                Lane = 'gate';     Head = 'release transaction consistency' },
+    @{ Name = 'search-knowledge';       Lane = 'gate';     Head = 'team knowledge local recall helper' },
+    @{ Name = 'install-python-prereq';  Lane = 'extended'; Head = 'fresh-install Fabric Python prerequisite' },
+    @{ Name = 'install-prereq-gate';    Lane = 'gate';     Head = 'install prerequisite gate' },
+    @{ Name = 'azcache';                Lane = 'gate';     Head = 'Azure sign-in preflight (tenant chain, token check, automatic sign-in, .az-ok cache)' },
+    @{ Name = 'doctor-warehouse';       Lane = 'gate';     Head = 'doctor.ps1 Warehouse tenant and fabric MCP rows' },
+    @{ Name = 'doctor-pipx-shadow';     Lane = 'gate';     Head = 'doctor.ps1 pipx PATH-shadow rows (foreign coop-data-doc on PATH vs. stale venv)' },
+    @{ Name = 'seeddocs';               Lane = 'gate';     Head = 'coop init --seed-docs shows the config-set status (not runnable = warning)' },
+    @{ Name = 'fleet-manifest';         Lane = 'gate';     Head = 'fleet manifest (Coop-Manifest* helpers, fleet plan)' },
+    @{ Name = 'login-present';          Lane = 'gate';     Head = 'model login detection ignores Pi''s empty startup auth.json (#167)' },
+    @{ Name = 'extensions-lock';        Lane = 'gate';     Head = 'extension lockfile applied through the helpers (#152)' },
+    @{ Name = 'team-skills';            Lane = 'gate';     Head = 'team knowledge skills launch slot (launch-spec --json)' },
+    @{ Name = 'staleness';              Lane = 'gate';     Head = 'repo staleness nudge (throttled fetch + behind-count)' },
+    @{ Name = 'doctor-project';         Lane = 'gate';     Head = 'doctor.ps1 project contract rows' },
+    @{ Name = 'first-run';              Lane = 'gate';     Head = 'first-run launcher continuation (onboarding gate)' },
+    @{ Name = 'profile-root';           Lane = 'gate';     Head = 'one profile root: COOP_DIR parent of .coop, one agent-dir chain (S3, #220)' },
+    @{ Name = 'sync-knowledge';         Lane = 'gate';     Head = 'team knowledge sync (sync-knowledge.ps1; hang cases in the extended lane)' },
+    @{ Name = 'fleet-execution';        Lane = 'extended'; Head = 'fleet execution (install/update/sync against stubs)' },
+    @{ Name = 'home-guard';             Lane = 'extended'; Head = 'home-guard (fleet paths must not mutate the real home)'; RestoreHome = $true },
+    @{ Name = 'doctor';                 Lane = 'extended'; Head = 'doctor.ps1 MCP mode, az preflight, login and fleet rows' },
+    @{ Name = 'inventory';              Lane = 'extended'; Head = 'truthful inventory (doctor pipx probes / sync postconditions)' },
+    @{ Name = 'profile-redirect';       Lane = 'gate';     Head = 'install shortcuts and user PATH follow a redirected profile (isolated install)' })
+  foreach ($fx in $fixtures) {
+    if ($fx.Lane -eq 'extended' -and -not $extendedLane) { continue }
+    Head $fx.Head
+    $fxFile = if ($fx.File) { $fx.File } else { $fx.Name + '.test.ps1' }
+    $hgSaved = @{}
+    if ($fx.RestoreHome) {
+      foreach ($name in $homeVarNames) { $hgSaved[$name] = [Environment]::GetEnvironmentVariable($name); [Environment]::SetEnvironmentVariable($name, $priorHomeVars[$name]) }
+    }
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    $fabricLaunchOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\fabric-mcp-launch.test.ps1') 2>&1
-    $fabricLaunchRc = $LASTEXITCODE
+    $fxOut = & $psExe -NoProfile -File (Join-Path $root ('tests\fixtures\' + $fxFile)) 2>&1
+    $fxRc = $LASTEXITCODE
     $ErrorActionPreference = $oldErrorAction
-    $fabricLaunchText = $fabricLaunchOut | Out-String
-    if ($fabricLaunchRc -eq 0 -and $fabricLaunchText.Contains('FABRIC_MCP_FIXTURE_INJECTION_REACHED')) {
-      $fabricLaunchOut | ForEach-Object { Write-Host $_ }
-    } else {
-      Ko "Fabric MCP launch fixture failed: $($fabricLaunchOut | Out-String)"
+    if ($fx.RestoreHome) {
+      foreach ($name in $homeVarNames) { [Environment]::SetEnvironmentVariable($name, $hgSaved[$name]) }
     }
+    $fxText = $fxOut | Out-String
+    if ($fxRc -eq 0 -and ((-not $fx.Needle) -or $fxText.Contains($fx.Needle))) {
+      $fxOut | ForEach-Object { Write-Host $_ }
+      if ($fx.OkLine) { Ok $fx.OkLine }
+    } else {
+      Ko "$($fx.Name) fixture failed (rc=$fxRc): $fxText"
+    }
+  }
 
-    # Regression for the prior false green: run this aggregate's exact fixture
-    # path in forced-failure mode. The nested aggregate must stay nonzero even
-    # though its probe runs a successful command after the child failure.
+  # --- 8b. EXTENDED LANE: Fabric MCP child-failure propagation --------------
+  # Regression for a prior false green: re-run this file's exact fixture path
+  # in forced-failure mode (COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE=1 exits at the
+  # probe block at the top before any lane logic). The nested aggregate must stay
+  # nonzero even though its probe runs a successful command after the child failure.
+  if ($extendedLane) {
+    Head 'Fabric MCP child failure propagation'
     $priorProbe = $env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE
     $priorForcedFailure = $env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE
     $env:COOP_TEST_FABRIC_RUNNER_FAILURE_PROBE = '1'
     $env:COOP_TEST_FORCE_FABRIC_FIXTURE_FAILURE = '1'
+    $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     $fabricProbeOut = & $psExe -NoProfile -File $PSCommandPath *>&1
     $fabricProbeRc = $LASTEXITCODE
@@ -685,128 +644,6 @@ print("resume verdict contract OK")
     } else {
       Ko "Fabric MCP runner propagation regression failed: rc=$fabricProbeRc output=$fabricProbeText"
     }
-  }
-
-  # --- 8. release transaction ------------------------------------------------
-  Head 'release transaction consistency'
-  # Coop status output intentionally uses stderr. Windows PowerShell 5.1 turns
-  # redirected native stderr into NativeCommandError records; with this suite's
-  # ErrorActionPreference=Stop that would abort despite a zero child exit.
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $releaseOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\release.test.ps1') 2>&1
-  $releaseRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($releaseRc -eq 0) {
-    $releaseOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "release transaction fixture failed: $($releaseOut | Out-String)"
-  }
-
-  # --- 9b. team knowledge local recall helper (configured-clone search) --------
-  Head 'team knowledge local recall helper'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $searchKbOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\search-knowledge.test.ps1') 2>&1
-  $searchKbRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($searchKbRc -eq 0) {
-    $searchKbOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "team knowledge recall fixture failed: $($searchKbOut | Out-String)"
-  }
-
-  # --- 9c. EXTENDED LANE: fresh install repairs a Python 3.14-only Fabric prerequisite
-  if ($extendedLane) {
-    Head 'fresh-install Fabric Python prerequisite'
-    $oldErrorAction = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    $pyPrereqOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\install-python-prereq.test.ps1') 2>&1
-    $pyPrereqRc = $LASTEXITCODE
-    $ErrorActionPreference = $oldErrorAction
-    if ($pyPrereqRc -eq 0) {
-      $pyPrereqOut | ForEach-Object { Write-Host $_ }
-    } else {
-      Ko "fresh-install Python prerequisite fixture failed: $($pyPrereqOut | Out-String)"
-    }
-  }
-
-  # --- 9d. Install stops at the ordered prerequisite checklist (H1) ------------
-  Head 'install prerequisite gate'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $gateOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\install-prereq-gate.test.ps1') 2>&1
-  $gateRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($gateRc -eq 0) {
-    $gateOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "install prerequisite gate fixture failed: $($gateOut | Out-String)"
-  }
-
-  # --- 9e. Azure sign-in preflight twin (H2; fake az, clears COOP_SKIP_AZ itself)
-  Head 'Azure sign-in preflight (tenant chain, token check, automatic sign-in, .az-ok cache)'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $azOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\azcache.test.ps1') 2>&1
-  $azRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($azRc -eq 0) {
-    $azOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "Azure sign-in preflight fixture failed: $($azOut | Out-String)"
-  }
-
-  # --- 9f. doctor.ps1 Warehouse tenant and fabric MCP rows (H2b; twin of tests/doctor.test.sh)
-  Head 'doctor.ps1 Warehouse tenant and fabric MCP rows'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $doctorWhOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\doctor-warehouse.test.ps1') 2>&1
-  $doctorWhRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($doctorWhRc -eq 0) {
-    $doctorWhOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "doctor.ps1 Warehouse and fabric rows fixture failed: $($doctorWhOut | Out-String)"
-  }
-
-  # --- 9f2. doctor.ps1 pipx PATH-shadow rows (twin of tests/inventory.test.sh F4 + F4c)
-  Head 'doctor.ps1 pipx PATH-shadow rows (foreign coop-data-doc on PATH vs. stale venv)'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $doctorShOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\doctor-pipx-shadow.test.ps1') 2>&1
-  $doctorShRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($doctorShRc -eq 0) {
-    $doctorShOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "doctor.ps1 pipx PATH-shadow rows fixture failed: $($doctorShOut | Out-String)"
-  }
-
-  # --- 9g. coop init --seed-docs shows config-set's status (#102; twin of tests/seeddocs.test.sh)
-  Head 'coop init --seed-docs shows the config-set status (not runnable = warning)'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $seedOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\seeddocs.test.ps1') 2>&1
-  $seedRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($seedRc -eq 0) {
-    $seedOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "seed-docs config-set status fixture failed: $($seedOut | Out-String)"
-  }
-
-  # --- 9h. Shortcut + user-PATH targets follow a redirected profile (isolated installs)
-  Head 'install shortcuts and user PATH follow a redirected profile (isolated install)'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $redirectOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\profile-redirect.test.ps1') 2>&1
-  $redirectRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($redirectRc -eq 0) {
-    $redirectOut | ForEach-Object { Write-Host $_ }
-  } else {
-    Ko "profile-redirect fixture failed: $($redirectOut | Out-String)"
   }
 }
 catch {
