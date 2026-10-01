@@ -524,3 +524,22 @@ Database or Synapse serverless outside Fabric: for those kinds the resolved SQL
 standards (fed into context at launch) and the `coop-workflow` guidance are the
 authority, and no Microsoft skill is substituted (master plan section 8 item 6,
 row SQ6).
+
+### Offline data documentation evidence
+
+`data_doc lineage` preserves the companion's complete JSON slice in tool details,
+including coverage, trust and source provenance. The text summary describes observed
+links and their evidence state; zero observed neighbors never proves zero impact
+outside the parsed scope. Older companion output without evidence remains unknown.
+A failed scan/build and a read-only `check` do not claim newly generated artifacts.
+Startup announces a graph only when `graph.json` exists and points to object pages
+only when a manifest exists.
+
+The companion selects `COOP_DATA_DOC_CONFIG` first (including a missing authoring
+path), then searches the working directory and its ancestors. Coop uses the same
+resolved config path, including symlinks, for output discovery and wizard path
+pickers. Relative source/output paths belong to that config's parent directory.
+The existing setup wizard uses UTF-8 JSONL in both directions through pipes;
+portable tests exercise a non-UTF-8 Python stream, while native Windows terminal
+and PowerShell 5.1 qualification remains a release acceptance requirement.
+SQL sources are optional and may be partial; live discovery remains Coop SQ.

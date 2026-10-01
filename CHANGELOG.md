@@ -54,6 +54,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- `data_doc` (master plan row 11a, DD4): the wrapper finds `coop-data-doc.yml`
+  the way the companion does (`COOP_DATA_DOC_CONFIG`, then the working folder
+  and its ancestors, symlinks resolved) and resolves wizard path pickers and the
+  output folder against that config's folder; the session-start lineage note
+  needs `graph.json` and mentions object pages only when `manifest.json`
+  exists; `lineage` reports the companion's evidence state and says that an
+  empty result never proves zero impact (older companions report `unknown`);
+  a failed scan/build or a read-only `check` no longer claims artifacts. The
+  JSONL setup child runs with `PYTHONIOENCODING=utf-8`.
 - `coop-data-doc` pin 1.2.0 -> 1.3.0 (`config/release-manifest.json`): the mixed-estate
   lineage release (coverage declarations, `lineage` evidence, source/output safety,
   identity collisions, UTF-8 JSONL pipes). `coop sync` installs it; `coop doctor`

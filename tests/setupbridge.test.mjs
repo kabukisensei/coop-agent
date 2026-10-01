@@ -4,7 +4,7 @@
 // fix offer). No live coop-data-doc subprocess is required: pi.exec is faked.
 // Imports the bundled extension's named exports (COOP_TEST_DIST set by tests/run.sh).
 import { strict as assert } from "node:assert";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -426,3 +426,39 @@ await t("other build failures keep the plain error, no fix offer (#102)", async 
 });
 
 console.log(`  ${n} setup-bridge tests passed`);
+
+await t("data-doc config follows ancestors and authoritative missing env path", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-doc-config-")));
+  const nested = join(root, "client", "src");
+  mkdirSync(nested, { recursive: true });
+  writeFileSync(join(root, "coop-data-doc.yml"), "project_name: Test\n");
+  assert.equal(mod.findDataDocConfig(nested, {}), join(root, "coop-data-doc.yml"));
+  assert.equal(mod.findDataDocConfig(nested, { COOP_DATA_DOC_CONFIG: "missing.yml" }), join(nested, "missing.yml"));
+});
+
+await t("data_doc failure/check claims no generated artifacts; lineage qualifies evidence", async () => {
+  const tools = {};
+  let result = { code: 2, stdout: "", stderr: "validation failed" };
+  mod.default({ on: () => {}, registerTool: spec => { tools[spec.name] = spec; }, registerCommand: () => {}, exec: async () => result });
+  const ctx = { cwd: tmpdir() };
+  const failed = await tools.data_doc.execute("test", {command: "build"}, undefined, undefined, ctx);
+  assert.doesNotMatch(failed.content[0].text, /Machine-readable artifacts:/);
+  result = { code: 0, stdout: "Current", stderr: "" };
+  const checked = await tools.data_doc.execute("test", {command: "check"}, undefined, undefined, ctx);
+  assert.doesNotMatch(checked.content[0].text, /Machine-readable artifacts:/);
+  result = { code: 0, stdout: JSON.stringify({ object: {name: "Sales"}, upstream: [], downstream: [], evidence: { state: "partial", states: ["missing", "unresolved"] } }), stderr: "" };
+  const lineage = await tools.data_doc.execute("test", {command: "lineage", object: "Sales"}, undefined, undefined, ctx);
+  assert.match(lineage.content[0].text, /observed/i);
+  assert.match(lineage.content[0].text, /partial/);
+  assert.match(lineage.content[0].text, /unresolved/);
+  assert.match(lineage.content[0].text, /zero impact/i);
+});
+
+await t("data-doc symlink config uses resolved companion base", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-doc-symlink-")));
+  mkdirSync(join(root, "project")); mkdirSync(join(root, "contracts"));
+  const target = join(root, "contracts", "client.yml");
+  writeFileSync(target, "project_name: Test\n");
+  symlinkSync(target, join(root, "project", "coop-data-doc.yml"));
+  assert.equal(mod.findDataDocConfig(join(root, "project"), {}), target);
+});
