@@ -26,7 +26,7 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 
 $saved = @{}
 $names = @('HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE','COOP_SKIP_AZ','NO_COLOR',
-           'COOP_STANDARDS_ROOT','COOP_STANDARDS_STATE','COOP_STANDARDS_SNAPSHOT_ROOT')
+           'COOP_STANDARDS_ROOT','COOP_STANDARDS_STATE','COOP_STANDARDS_SNAPSHOT_ROOT','PSModuleAnalysisCachePath')
 foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 $savedLocation = Get-Location
 try {
@@ -41,6 +41,10 @@ try {
   $env:COOP_AGENT_DIR = $agent
   $env:COOP_SKIP_AZ = '1'
   $env:NO_COLOR = '1'
+  # Windows PowerShell 5.1 writes its module analysis cache under LOCALAPPDATA and,
+  # when that is unset (a sandboxed profile on the VM), into the CURRENT folder,
+  # which the read-only digest below would count as Doctor mutating the project.
+  $env:PSModuleAnalysisCachePath = Join-Path $t 'ModuleAnalysisCache'
   foreach ($n in @('PI_CODING_AGENT_DIR','COOP_NO_ISOLATE','COOP_STANDARDS_ROOT','COOP_STANDARDS_STATE','COOP_STANDARDS_SNAPSHOT_ROOT')) {
     Remove-Item -LiteralPath "Env:\$n" -ErrorAction SilentlyContinue
   }
