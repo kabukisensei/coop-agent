@@ -115,7 +115,7 @@ function Invoke-CoopTeamai {
   param([string[]]$Rest)
   $py = Get-CoopPython
   if (-not $py) { Coop-Die 'python3 is required for coop teamai' }
-  if (-not $Rest -or $Rest.Count -eq 0) { Coop-Die 'usage: coop teamai <status|install|init|pull|recall --query <text>>' }
+  if (-not $Rest -or $Rest.Count -eq 0) { Coop-Die 'usage: coop teamai <status|install|init|pull|recall --query <text>|contribute --file <draft.md> [--title <text>] [--approve]>' }
   & $py (Join-Path $script:CoopRoot 'lib\teamai.py') @Rest
   exit $LASTEXITCODE
 }
@@ -171,7 +171,8 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop profile edit         Edit your COOP user profile
   coop profile reset        Remove your COOP user profile
   coop teamai <cmd>         TeamAI shared-knowledge trial, isolated (status|install|init|pull|
-                            recall --query <text>); off until knowledge.teamai.enabled is true
+                            recall --query <text>|contribute --file <draft.md> [--approve]);
+                            off until knowledge.teamai.enabled is true
   coop context-budget       Report fixed startup context sizes (use --json for machine output)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
