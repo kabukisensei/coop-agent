@@ -81,9 +81,12 @@ line1="$(printf '%s\n' "$out" | sed -n '1p')"
 line2="$(printf '%s\n' "$out" | sed -n '2p')"
 lines="$(printf '%s\n' "$out" | grep -c '')"
 [ "$lines" = "2" ] && ok "reader emits one line per repo" || ko "expected 2 repo lines, got $lines: $out"
-case "$line1" in
-  "https://github.com/cooptimize/incremental-bi.git	"*"/home/.coop/knowledge/incremental-bi" | \
-  "https://github.com/cooptimize/incremental-bi.git	"*"\\home/.coop/knowledge/incremental-bi")
+# Compare without the host's path format: under Git Bash on Windows the reader
+# prints a backslash Windows path (and a short 8.3 temp path), so only the
+# separator-normalised tail of local_path is asserted.
+line1n="$(printf '%s' "$line1" | tr '\\' '/')"
+case "$line1n" in
+  "https://github.com/cooptimize/incremental-bi.git	"*"/home/.coop/knowledge/incremental-bi")
     case "$line1" in
       *"	~"*) ko "line 1 path still starts with literal tilde: [$line1]" ;;
       *) ok "reader expands ~ in local_path" ;;
