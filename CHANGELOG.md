@@ -5,6 +5,29 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- First run shows the common workflows, not a wizard (master plan FR1, Phase 6).
+  The first interactive `coop` launch on a machine opens the Start Here menu once
+  (`bin/coop.ps1` hands coop-tools `COOP_FIRST_RUN=1` and writes
+  `<profile dir>/first-run`); `/start` opens it any time and later launches go
+  straight to the prompt. The menu is the plan's seven workflows: check SQL, DAX or
+  a model against the standards; trace the impact of a change (`sql_impact`, then
+  `data_doc lineage`); fix or edit an object on dev with approval (`/spec-first`,
+  `/slice-next`); document a warehouse or semantic model; start a client project
+  (`/setup-project`); write today's log or a handoff; sign in or check health
+  (`coop doctor`, `az login`). While the local profile is missing, *Start a client
+  project* asks the name coop calls you by and saves `user.json` with the balanced
+  preset (`coop onboard` still edits the full profile).
+
+### Changed
+
+- A plain `coop` launch never runs the onboarding wizard any more and nothing in
+  first-run setup can stop the launch (previously a missing or failed
+  `scripts/onboard.py` run stopped it); an incomplete profile gets one line that
+  names the menu item and `coop onboard`. `coop install` keeps its interactive
+  "Personalize Coop" step. The Fabric workspace review left the `/start` menu
+  (still `/fabric-architecture-review`).
 ### Fixed
 
 - The Azure sign-in preflight no longer reports `Azure token check failed ...
