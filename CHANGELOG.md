@@ -26,6 +26,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   storage-root check rejects, so the lock worker exited at once and the marker
   never appeared. The wait now also fails at once with the worker's stderr when
   the worker exits first, instead of reporting a timeout.
+- The install/update busy guard (`Test-CoopPiConvergeAllowed`, issue #234) counts
+  only coop/pi sessions run from the npm tree this install converges
+  (`Get-CoopNpmGlobalRoots`), so an isolated install (a redirected profile on
+  another drive) converges Pi in place and exits 0 while coop is open from a
+  different install on the same machine. A session from the same install still
+  skips the convergence with the same warning; with no npm root known, every
+  session counts as before. `tests/fixtures/pi-busy-guard.test.ps1` (gate lane)
+  covers both cases with fake process rows.
 
 ## [0.26.0] — 2026-10-01
 
@@ -443,17 +451,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   so the skills' status-first preflight stays. `coop update` and `coop install`
   install the new pins from the manifest. VM qualification (needs Power BI
   Desktop) pending.
-
-### Fixed
-
-- The install/update busy guard (`Test-CoopPiConvergeAllowed`, issue #234) counts
-  only coop/pi sessions run from the npm tree this install converges
-  (`Get-CoopNpmGlobalRoots`), so an isolated install (a redirected profile on
-  another drive) converges Pi in place and exits 0 while coop is open from a
-  different install on the same machine. A session from the same install still
-  skips the convergence with the same warning; with no npm root known, every
-  session counts as before. `tests/fixtures/pi-busy-guard.test.ps1` (gate lane)
-  covers both cases with fake process rows.
 
 ## [0.25.0] — 2026-10-01
 
