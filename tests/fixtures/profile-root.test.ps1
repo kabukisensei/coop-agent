@@ -11,20 +11,15 @@
 # automatic variable (not re-read from $env:HOME in-process), so the default-path
 # cases compare strings against it and never touch the real home.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-profile-root-' + [guid]::NewGuid().ToString('N'))
-$G_CHECK = [char]0x2713; $G_CROSS = [char]0x2717
-$fail = 0
-function Ok([string]$m) { Write-Host "  $G_CHECK $m" }
-function Ko([string]$m, [string]$Out = '') { Write-Host "  $G_CROSS $m"; if ($Out) { Write-Host $Out }; $script:fail = 1 }
 function Same([string]$Label, [string]$Got, [string]$Want) {
   if ([System.IO.Path]::GetFullPath($Got) -eq [System.IO.Path]::GetFullPath($Want)) { Ok $Label } else { Ko "$Label (got '$Got', want '$Want')" }
 }
 function Clear-Vars { foreach ($n in @('COOP_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE')) { Remove-Item "Env:\$n" -ErrorAction SilentlyContinue } }
 
-$saved = @{}
-$names = @('COOP_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
+$saved = Save-Env @('COOP_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE')
 try {
   $cdir = Join-Path $t 'cdir'; $agent = Join-Path $t 'agent'; $pidir = Join-Path $t 'pidir'
   New-Item -ItemType Directory -Force -Path $cdir, $agent, $pidir | Out-Null
@@ -94,7 +89,7 @@ try {
   if ($inline.Count -eq 0) { Ok 'launcher and scripts build profile paths only through the helpers' } else { Ko 'inline profile paths remain' ($inline -join "`n") }
 }
 finally {
-  foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($fail -eq 0) { Write-Host '  profile-root tests passed' } else { Write-Host "  $G_CROSS profile-root tests FAILED" }

@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env pwsh
-# Team knowledge skills launch slot (port of tests/team-skills.test.sh), driven
+# Team knowledge skills launch slot, driven
 # through `bin/coop.ps1 launch-spec --json` (Build-CoopPiArgs + Get-CoopSkillName):
 #   - a configured knowledge repo's valid team skills become --skill args
 #   - first-party collisions by directory name and by frontmatter name are skipped
@@ -10,16 +10,10 @@
 #   - with isolation off, the Microsoft catalog resolves from ~/.pi/agent
 # Offline; every path is under a temp dir; COOP_DIR and HOME are sandboxed.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $coop = Join-Path $root 'bin\coop.ps1'
-$psExe = try { (Get-Process -Id $PID).Path } catch { 'pwsh' }
-$isWindowsHost = ($env:OS -eq 'Windows_NT')
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-team-skills-' + [guid]::NewGuid().ToString('N'))
-$G_CHECK = [char]0x2713; $G_CROSS = [char]0x2717
-$fail = 0
-function Ok([string]$m) { Write-Host "  $G_CHECK $m" }
-function Ko([string]$m, [string]$Out = '') { Write-Host "  $G_CROSS $m"; if ($Out) { Write-Host $Out }; $script:fail = 1 }
-$chmod = if ($isWindowsHost) { '' } else { (Get-Command chmod -ErrorAction Stop).Source }
 function Write-Skill([string]$Dir, [string]$Body) {
   New-Item -ItemType Directory -Force -Path $Dir | Out-Null
   [System.IO.File]::WriteAllText((Join-Path $Dir 'SKILL.md'), $Body, (New-Object System.Text.UTF8Encoding($false)))
@@ -46,9 +40,7 @@ function Invoke-Spec {
 }
 function Test-HasArg([object]$Spec, [string]$Needle) { return [bool]@($Spec.Args | Where-Object { $_ -like "*$Needle*" }).Count }
 
-$saved = @{}
-$names = @('PATH', 'HOME', 'USERPROFILE', 'COOP_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE', 'COOP_NO_ONBOARD', 'COOP_SKIP_AZ', 'COOP_SKIP_UPDATE_CHECK', 'COOP_TEST_MS_DIR')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
+$saved = Save-Env @('PATH', 'HOME', 'USERPROFILE', 'COOP_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE', 'COOP_NO_ONBOARD', 'COOP_SKIP_AZ', 'COOP_SKIP_UPDATE_CHECK', 'COOP_TEST_MS_DIR')
 try {
   $cfg = Join-Path $t 'coop'
   $sandboxHome = Join-Path $t 'home'
@@ -193,7 +185,7 @@ try {
   }
 }
 finally {
-  foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($fail -eq 0) { Write-Host '  team-skills tests passed' } else { Write-Host "  $G_CROSS team-skills tests FAILED" }

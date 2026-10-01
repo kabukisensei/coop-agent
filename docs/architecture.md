@@ -103,9 +103,15 @@ for the Node tools and extensions; no script builds these paths inline.
      plus the `coop-data-doc` setup wizard built on
      Pi's native dialogs (the on-demand `/setup-docs` command and the explicit
      *Document my data* `/start` action), since coop-data-doc's own
-     questionary wizard can't be driven from a non-TTY child. (The `setup-docs`
-     skill + prompt launch coop-data-doc's authoritative questionnaire over JSONL;
-     terminal and in-agent setup both end at the same `coop-data-doc.yml`.)
+     questionary wizard can't be driven from a non-TTY child. The wizard drives
+     coop-data-doc's authoritative questionnaire over its JSONL bridge, and
+     coop-data-doc (the companion tool) owns `coop-data-doc.yml`: coop never
+     writes that file itself. (The `setup-docs` skill + prompt reach the same
+     questionnaire; terminal and in-agent setup both end at the same file.)
+   - **`coop-profile` extension** — `extensions/coop-profile/`: injects the local
+     Coop user profile (`user.json`, written by `coop onboard`) as a small hidden
+     instruction at session start, so the agent addresses the member by name and
+     in their preferred style without the profile ever appearing in the chat.
    - **`coop-guardrails` extension** — `extensions/coop-guardrails/`: **enforces**
      governance at runtime via a `tool_call` hook (blocks the agent committing
      source; confirms destructive commands). Complements the advisory
@@ -117,8 +123,8 @@ for the Node tools and extensions; no script builds these paths inline.
      bounded session-grant checks. `COOP_NO_GUARDRAILS=1` disables.
 
 4. **Pi extensions installed from npm** into coop's isolated agent dir
-   (`config/defaults.yml`; exact pins in `config/release-manifest.json`, and
-   their transitive dependencies in `config/extensions-lock.json`, which
+   (the `extensions` list of `config/release-manifest.json`, the one manifest,
+   with their transitive dependencies in `config/extensions-lock.json`, which
    `coop sync` installs with `npm ci` so every machine on a release runs the same
    tree). One convergence path (master plan S2): `coop install` and `coop update`
    converge Pi, the pipx tools, the Fabric CLI and the npm authoring tools through
@@ -141,8 +147,13 @@ for the Node tools and extensions; no script builds these paths inline.
    - `@xl0/pi-lovely-rename` — names an unnamed session after three user turns
      (`/rename` regenerates; a manual `/name` always wins). The name shows in
      coop's footer and terminal title.
-   - Optional: `pi-permissions` (finer per-tool permission gating). *(`@aliou/pi-guardrails`
-     was dropped — pinned to the deprecated Pi and superseded by `coop-guardrails`.)*
+   - `context-mode` — a native Pi extension (not an MCP server) that runs
+     sandboxed code over the built docs/graph to save context, still subject to
+     Pi's tool approval.
+
+   The list is exactly the manifest's `extensions` object; nothing optional ships
+   beside it. *(`@aliou/pi-guardrails` was dropped — pinned to the deprecated Pi
+   and superseded by `coop-guardrails`.)*
 
    `pi-powerline-footer` is **not** used — coop renders its own footer/splash via
    `extensions/coop-powerline` (see layer 3).
@@ -164,7 +175,7 @@ for the Node tools and extensions; no script builds these paths inline.
 
 6. **Microsoft platform tooling:**
    - **`fab`** — the Microsoft Fabric CLI (`ms-fabric-cli`). `coop fabric …` is a
-     pass-through. NOTE: a Homebrew `fabric` formula ships a *different* `fab`
+     pass-through. NOTE: the Python `fabric` package ships a *different* `fab`
      (Python SSH / Paramiko) — a real `PATH` collision that `coop doctor`
      detects and warns about.
    - **`fabric-cicd`** — a Python **LIBRARY** (no CLI). coop installs it via
@@ -213,6 +224,8 @@ flowchart TD
       theme["themes/cooptimize.json"]
       ext_pl["ext: coop-powerline\nfooter · splash · rotating feature tips\n(no pi-powerline-footer)"]
       ext_tools["ext: coop-tools\nsql_review · dax_review · data_doc (scan/build/check/lineage)\n+ /setup-docs wizard · before_agent_start lineage note"]
+      ext_profile["ext: coop-profile\nhidden user-profile instruction"]
+      ext_guard["ext: coop-guardrails\ntool_call hook · policy enforcement"]
     end
 
     pi --> guard
@@ -221,11 +234,17 @@ flowchart TD
     pi --> theme
     pi --> ext_pl
     pi --> ext_tools
+    pi --> ext_profile
+    pi --> ext_guard
 
-    subgraph PIEXT["Pi extensions (npm, into ~/.coop/agent)"]
+    subgraph PIEXT["Pi extensions (npm, into ~/.coop/agent; the manifest's extensions list)"]
       mcpad["pi-mcp-adapter"]
       mem["pi-hermes-memory"]
       bopenai["pi-better-openai\nplan usage limits (5h/7d)"]
+      webacc["pi-web-access"]
+      askq["rpiv-ask-user-question"]
+      rename["pi-lovely-rename"]
+      ctxmode["context-mode\n(native extension, not MCP)"]
     end
     pi --> PIEXT
     bopenai -. "status via getExtensionStatuses()" .-> ext_pl
@@ -234,7 +253,7 @@ flowchart TD
       datadoc["coop-data-doc\nscan→graph.json\nbuild→manifest.json + docs + portal\nlineage <object>→up/downstream JSON"]
       sqlrev["coop-sql-review\ncheck --format json (advisory)"]
       daxrev["coop-dax-review\ncheck --format json (advisory)"]
-      fab["fab (Microsoft Fabric CLI)\n⚠ Homebrew 'fab' collision → doctor"]
+      fab["fab (Microsoft Fabric CLI)\n⚠ Python Fabric 'fab' collision → doctor"]
       cicd["fabric-cicd (LIBRARY, no CLI)\npipx inject ms-fabric-cli fabric-cicd\nimport fabric_cicd · validate-only"]
       te["Tabular Editor CLI\noptional · path-configured"]
     end
@@ -250,12 +269,12 @@ flowchart TD
       fmcp["fabric"]
       pmcp["powerbi-modeling-mcp (edits ask)"]
       lmcp["microsoft-learn"]
-      cmcp["context-mode"]
+      smcp["fabric-sqlendpoint (SQL asks)"]
     end
     mcpad --> MCP
 
     classDef ro fill:#eef,stroke:#00416B
-    class MCP,fmcp,pmcp,lmcp,cmcp ro
+    class MCP,fmcp,pmcp,lmcp,smcp ro
 ```
 
 ## Governance flow

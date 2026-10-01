@@ -35,8 +35,6 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y shellcheck
           shellcheck -S warning -e SC1091 bin/coop scripts/*.sh tests/*.sh
-      - name: .ps1 UTF-8 BOM (the one BOM check)
-        run: bash scripts/check-bom.sh
       - name: python yaml reader
         run: |
           python3 -c "import ast; ast.parse(open('lib/_yaml.py').read())"
@@ -114,7 +112,7 @@ jobs:
           node-version: '22.19.0'
       - name: run test suite, gate lane (bash tests/run.sh)
         run: bash tests/run.sh
-      - name: PowerShell behavioral tests, gate lane (pwsh 7, coop.ps1 + update.ps1 seams)
+      - name: PowerShell behavioral tests, gate lane (pwsh 7; starts with scripts/check-bom.ps1)
         shell: pwsh
         run: pwsh -File tests/run.ps1
 
@@ -235,12 +233,12 @@ jobs:
           }
           Write-Host "PSScriptAnalyzer: no errors"
 
-      # Behavioral test of the .ps1 twins under Windows PowerShell 5.1 — the runtime
-      # bin/coop.cmd actually launches (not pwsh 7). Exercises coop.ps1's launch-spec /
-      # --no-launch / review parser and update.ps1's gate seams, the closest production
-      # fidelity for coop's PRIMARY platform. (The ubuntu `tests` job runs the same file
-      # under pwsh 7 for the cross-edition check.) Gate lane only; the full 5.1 run is
-      # in extended.yml.
+      # Behavioral tests of the product under Windows PowerShell 5.1 — the runtime
+      # bin/coop.cmd actually launches (not pwsh 7): the .ps1 BOM check, coop.ps1's
+      # launch-spec / --no-launch / review parser, update.ps1 --check and the fixture
+      # table, the closest production fidelity for coop's ONLY platform. (The ubuntu
+      # `tests` job runs the same file under pwsh 7 for the cross-edition check.)
+      # Gate lane only; the full 5.1 run is in extended.yml.
       - name: PowerShell behavioral tests, gate lane (Windows PowerShell 5.1)
         shell: powershell
         run: powershell -NoProfile -File tests\run.ps1

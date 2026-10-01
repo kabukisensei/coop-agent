@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env pwsh
-# H5: PowerShell twin of tests/update-follow.test.sh. Step 1 of `coop update`
+# H5: Step 1 of `coop update`
 # (Invoke-CoopRepoFollowRelease) follows release tags and never moves a checkout
 # backwards; the doctor/launch helpers (Get-CoopRepoNextRelease,
 # Get-CoopRepoBehindCount, Invoke-CoopUpdateNudge, Get-CoopRepoStranded,
@@ -9,29 +9,13 @@
 # Assertions read git state; message text is checked only where no state differs.
 # Printed fixes are run the way a user pastes them into PowerShell (Invoke-Hint).
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 # pwsh 7.3+: a failed native command honors EAP=Stop too, as redirected stderr does
 # on Windows PowerShell 5.1, so every host proves the helpers' local Continue.
 $PSNativeCommandUseErrorActionPreference = $true
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-update-follow-' + [guid]::NewGuid().ToString('N'))
-$failed = $false
-function Ok([string]$Message) { Write-Host "  OK  $Message" }
-function Ko([string]$Message, [string]$Out = '') { Write-Host "  FAIL $Message"; if ($Out) { Write-Host $Out }; $script:failed = $true }
 
-# Fixture git runs in its own Continue scope and throws on a real failure.
-function Invoke-FixtureGit {
-  param([string[]]$GitArgs)
-  $ErrorActionPreference = 'Continue'
-  $o = @(& git @GitArgs 2>&1)
-  if ($LASTEXITCODE -ne 0) { throw "fixture git $($GitArgs -join ' ') failed: $($o | Out-String)" }
-}
-function Get-FixtureGit {
-  param([string[]]$GitArgs)
-  $ErrorActionPreference = 'Continue'
-  $o = @(& git @GitArgs 2>$null)
-  if ($LASTEXITCODE -ne 0 -or $o.Count -eq 0 -or $null -eq $o[0]) { return '' }
-  return ([string]$o[0]).Trim()
-}
 function Add-FixtureCommit([string]$Repo, [string]$Message, [string]$File) {
   [System.IO.File]::WriteAllText((Join-Path $Repo $File), "$Message`n")
   Invoke-FixtureGit @('-C', $Repo, 'add', $File)
@@ -68,9 +52,7 @@ function Invoke-Captured([scriptblock]$Body) {
   return $writer.ToString()
 }
 
-$saved = @{}
-$names = @('HOME', 'GIT_CONFIG_NOSYSTEM', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'COOP_AGENT_DIR', 'NO_COLOR')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
+$saved = Save-Env @('HOME', 'GIT_CONFIG_NOSYSTEM', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'COOP_AGENT_DIR', 'NO_COLOR')
 try {
   New-Item -ItemType Directory -Force -Path $t, (Join-Path $t 'home') | Out-Null
   # Hermetic git: no user or system config, a fixed identity.
@@ -105,7 +87,7 @@ try {
   $C4 = Get-FixtureGit @('-C', $seed, 'rev-parse', 'main')
 
   . (Join-Path $root 'lib\common.ps1')
-  # The launch nudge's daily fetch is stubbed out (tests/staleness.test.sh covers
+  # The launch nudge's daily fetch is stubbed out (staleness.test.ps1 covers
   # the throttle), so the nudge's own logic runs with no subprocess wait.
   function Invoke-CoopRepoFetchThrottled { return $true }
 
@@ -504,11 +486,8 @@ catch {
   Ko "fixture error: $($_.Exception.Message)"
 }
 finally {
-  foreach ($n in $saved.Keys) {
-    if ($null -eq $saved[$n]) { Remove-Item -LiteralPath "Env:\$n" -ErrorAction SilentlyContinue }
-    else { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
-  }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($failed) { exit 1 }
+exit $fail

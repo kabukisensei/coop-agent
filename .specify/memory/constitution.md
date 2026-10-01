@@ -2,32 +2,39 @@
 
 ## Core Principles
 
-### I. Paired-Script Parity (NON-NEGOTIABLE)
+### I. One Implementation, in PowerShell (NON-NEGOTIABLE)
 
-Every edit to `bin/coop`, `lib/common.sh`, or `scripts/*.sh` must be ported to its
-`.ps1` twin in the same change, and vice versa. `lib/common.ps1` is the sole shared
-helper library — helper changes never live in per-script inline copies.
-`scripts/check-parity.sh` gates this on every change. Every `.ps1` keeps its UTF-8
-BOM (`EF BB BF` first three bytes); after any `.ps1` edit, re-run the parity check.
+The product is `bin/coop.ps1`, `lib/common.ps1` (the sole shared helper library,
+dot-sourced by `bin/coop.ps1` and every `scripts/*.ps1`; helper changes never live
+in per-script inline copies) and `scripts/*.ps1` (master plan S1). `bin/coop` is
+only a Git Bash forwarder to `coop.ps1`; `scripts/release.sh`,
+`scripts/validate-resources.sh` and `tests/*.sh` are dev tooling. There is no
+bash product path and no `.sh` twin of any `.ps1`, so there is no parity to keep.
+Every `.ps1` keeps its UTF-8 BOM (`EF BB BF` first three bytes) and parses under
+Windows PowerShell 5.1; `scripts/check-bom.ps1` gates the BOM on every change.
 
-Rationale: the sh/ps1 twins are the cross-platform contract of the product. Drift
-between them ships platform-specific breakage that CI catches late or not at all.
+Rationale: coop is operated on Windows workstations; a second implementation is a
+second place for every bug, and drift between two ships breakage that CI catches
+late or not at all.
 
-### II. Bash 3.2 Compatibility
+### II. Windows PowerShell 5.1 Floor
 
-All bash written in this repo targets macOS stock `/bin/bash` (3.2). Prohibited:
-associative arrays, `${var,,}` lowercase expansion, `mapfile`/`readarray`,
-`&>>` redirect. `scripts/install.sh` especially must stay 3.2-clean.
+Every `.ps1` runs under Windows PowerShell 5.1 (`bin/coop.cmd`'s runtime) and
+pwsh 7. Prohibited: the ternary operator, `??`, `?.`, `clean {}` blocks, and any
+other 7-only syntax. Single objects are wrapped in `@()` before `.Count`;
+`Get-ChildItem -Include` is never trusted to filter a non-recursive listing.
 
-Rationale: macOS ships bash 3.2 and never upgrades it; developers and CI on newer
-bash will not catch 4.x-only syntax, but every macOS user hits it immediately.
+Rationale: pwsh 7 on a Linux or macOS development box accepts 7-only syntax
+silently; every Windows member hits the failure immediately.
 
 ### III. Verify Before Declaring Done
 
 No change is complete until its verification gates pass:
-- `bash -n` on every edited shell script (and pwsh parse-check on edited `.ps1`)
-- `bash scripts/check-parity.sh` — expect "✓ parity check passed"
-- `bash tests/run.sh` — expect "✓ all tests passed" (requires node + npx)
+- `bash -n` on every edited dev-tooling script and a pwsh parse-check on every
+  edited `.ps1`
+- `pwsh -NoProfile -File scripts/check-bom.ps1` — expect "✓ BOM check passed"
+- `pwsh -NoProfile -File tests/run.ps1` — expect "✓ PowerShell behavioral tests passed (gate lane)"
+- `bash tests/run.sh` — expect "✓ all tests passed (gate lane)" (requires node + npx + pwsh)
 - Behavior changes carry a slice-specific test: a failing check before the change
   and the same check passing after, run against real data when enabled
 - Docs changes: every path, script name, and command referenced must exist in the tree
@@ -67,9 +74,10 @@ layer is a permanent tax on comprehension and review.
 - **Spec-first:** non-trivial edits start from an approved spec (`/spec-first` in
   the product workflow, or the Spec Kit `speckit-specify → plan` loop for this
   repo's own development).
-- **Cross-platform reality:** the product runs on macOS and Windows workstations;
-  developing the repo works headless on Linux, but workstation-only operations
-  (`coop install`, `coop doctor`) are never attempted from a headless box.
+- **Platform reality:** coop is operated on Windows workstations; developing the
+  repo works on any OS with the prerequisites, including headless Linux, but
+  workstation-only operations (`coop install`, `coop doctor`) are never attempted
+  from a headless box.
 - **No secrets, ever:** `.env*`, keys, and tokens are never committed (see
   `.gitignore`). Public artifacts (website, docs) never contain private data.
 
@@ -93,8 +101,9 @@ This constitution supersedes informal practice where they conflict. Amendments
 require: a version bump (MAJOR — principle removal/redefinition; MINOR — new or
 materially expanded principle; PATCH — clarification/typo), an entry in the Sync
 Impact Report, and a `docs:` commit. Compliance is verified in review against the
-verification gates in Principle III. Where AGENTS.md, CONTRIBUTING.md, or
-RELEASE.md conflict with this document, this document prevails and those files
-are amended to match. Runtime development guidance remains in AGENTS.md.
+verification gates in Principle III. AGENTS.md is the canonical operational
+guide for working on this repo (CONTRIBUTING.md and RELEASE.md carry its detail);
+this document does not supersede it. Where this document and AGENTS.md disagree,
+AGENTS.md wins and this document is amended to match in the same change.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-11 | **Last Amended**: 2026-09-11
+**Version**: 2.0.0 | **Ratified**: 2026-09-11 | **Last Amended**: 2026-10-01
