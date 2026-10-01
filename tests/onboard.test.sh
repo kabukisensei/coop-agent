@@ -389,12 +389,15 @@ case "$out9" in
   *"Setup complete. Run 'coop' to start."*) ok "explicit onboard ends with start instructions" ;;
   *) ko "explicit onboard completion message missing: $(tail -2 <<<"$out9")" ;;
 esac
+# The launch no longer runs the wizard (master plan FR1): the old
+# COOP_ONBOARD_FROM_LAUNCH announcement is gone and the message is the same.
 d9b="$(mktemp -d "$COOP_DIR/c9b.XXXXXX")"
 out10="$(printf '\n1\ny\n%s\n\n\nn\n\n' "$GUID" | HOME="$d9b" COOP_DIR="$d9b" COOP_AZ_BIN=/nonexistent/az COOP_ONBOARD_FROM_LAUNCH=1 \
   "$PY" "$ROOT/scripts/onboard.py" onboard 2>&1 >/dev/null)"
 case "$out10" in
-  *"Setup complete. Starting Coop"*) ok "launch-triggered onboarding announces startup" ;;
-  *) ko "launch completion message missing: $(tail -2 <<<"$out10")" ;;
+  *"Starting Coop"*) ko "onboard still announces a launch it no longer belongs to: $(tail -2 <<<"$out10")" ;;
+  *"Setup complete. Run 'coop' to start."*) ok "onboard ends with start instructions whatever the environment says" ;;
+  *) ko "completion message missing: $(tail -2 <<<"$out10")" ;;
 esac
 # Quick start WITH a client tenant: the review lists Power BI Modeling MCP, never
 # the retired Power BI MCP that sync no longer writes (#93).

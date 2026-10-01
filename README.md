@@ -257,19 +257,29 @@ machine-readable JSON through the native `data_doc` / `bpa_review` tools (in
 There is no `coop review` command: SQL/DAX standards are applied in the agent while
 it writes, and it self-checks its diff against them before presenting a change.
 
-Coop starts directly at the prompt without opening setup dialogs. Run **`/start`**
-anytime for a menu of common tasks.
+The **first interactive launch** on a machine opens the **Start Here menu** of the
+seven common workflows (check SQL/DAX/a model against the standards, trace the
+impact of a change, fix or edit an object on dev with approval, document a
+warehouse or semantic model, start a client project, write today's log or a
+handoff, sign in or check health), each wired to a prompt, skill or wizard coop
+already ships. Press Esc or pick *Something else* to get the plain prompt; every
+later launch starts at the prompt, and **`/start`** opens the same menu any time.
+A plain `coop` never runs the onboarding wizard and nothing in setup can stop the
+launch: the name coop calls you by is asked by *Start a client project* while no
+profile exists (or by `coop onboard`), and the client tenant lives in the project
+contract. `coop install` still asks the profile and integration questions on an
+interactive install.
 
 For **`coop-data-doc` setup**, coop offers an **on-demand in-agent** path so you
-don't have to drop to a shell: run **`/setup-docs`** or choose *Document my data*
-from `/start` when you are ready. Coop does not launch this wizard automatically
+don't have to drop to a shell: run **`/setup-docs`** or choose *Document a
+warehouse or semantic model* from `/start` when you are ready. Coop does not launch this wizard automatically
 during startup. The command runs (or re-runs) the full native `coop-data-doc`
 wizard through a strict JSONL bridge; it is the same questionnaire used by
 `coop data-doc setup`. Older tool versions stop with upgrade guidance rather than a reduced fallback. See
 [`extensions/coop-tools/README.md`](extensions/coop-tools/README.md#data-doc-setup-setup-docs).
 
 Project configuration has the same no-shell path: run **`/setup-project`** or
-choose **Set up or edit this Coop project** from `/start`. The wizard creates a
+choose **Start a client project** from `/start`. The wizard creates a
 missing `.coop/project.yml` or safely edits the nearest existing one, covering
 client details, whatever repositories are available, Fabric/Power BI workspaces,
 and Tabular Editor. A repository is not required: the wizard can start an engagement

@@ -1441,23 +1441,13 @@ function Invoke-CoopAz {
   $previousCtrlC = $null
   $temps = @()
   $errFile = ''
+  $errTask = $null
   $p = $null
   try {
     $ErrorActionPreference = 'Continue'
     # Start-Process on Windows PowerShell 5.1 cannot set a child-only variable.
     $env:AZURE_CORE_LOGIN_EXPERIENCE_V2 = 'off'
-    $inFile = [System.IO.Path]::GetTempFileName()
-    $outFile = [System.IO.Path]::GetTempFileName()
-    $temps += $inFile, $outFile
-    $start = @{
-      FilePath = $az; ArgumentList = $AzArgs; NoNewWindow = $true; PassThru = $true
-      RedirectStandardInput = $inFile; RedirectStandardOutput = $outFile; ErrorAction = 'Stop'
-    }
-    if ($Quiet) {
-      $errFile = [System.IO.Path]::GetTempFileName()
-      $temps += $errFile
-      $start['RedirectStandardError'] = $errFile
-    } else {
+    if (-not $Quiet) {
       # Throws when there is no console input (redirected, CI): Ctrl-C then
       # keeps its default and stops coop, and the finally block ends az.
       try {
@@ -1465,8 +1455,40 @@ function Invoke-CoopAz {
         [Console]::TreatControlCAsInput = $true
       } catch { $previousCtrlC = $null }
     }
-    $p = Start-Process @start
-    $null = $p.Handle   # Windows PowerShell 5.1: keeps ExitCode readable after exit
+    if ($env:OS -eq 'Windows_NT') {
+      $inFile = [System.IO.Path]::GetTempFileName()
+      $outFile = [System.IO.Path]::GetTempFileName()
+      $temps += $inFile, $outFile
+      $start = @{
+        FilePath = $az; ArgumentList = $AzArgs; NoNewWindow = $true; PassThru = $true
+        RedirectStandardInput = $inFile; RedirectStandardOutput = $outFile; ErrorAction = 'Stop'
+      }
+      if ($Quiet) {
+        $errFile = [System.IO.Path]::GetTempFileName()
+        $temps += $errFile
+        $start['RedirectStandardError'] = $errFile
+      }
+      $p = Start-Process @start
+      $null = $p.Handle   # Windows PowerShell 5.1: keeps ExitCode readable after exit
+    } else {
+      # Linux/macOS (pwsh 7): Start-Process writes -RedirectStandardInput into the
+      # child's stdin only after it has started, so a child that exits first (the
+      # fast fake az in CI) fails that write with "Broken pipe" and the process
+      # object is lost (Rc 127, "not an auth error"). .NET starts az directly
+      # instead: stdin is closed at once, stdout is drained and dropped, and
+      # stderr is drained into Err for -Quiet (else it stays on the console).
+      $psi = New-Object System.Diagnostics.ProcessStartInfo
+      $psi.FileName = $az
+      foreach ($a in $AzArgs) { $psi.ArgumentList.Add($a) }
+      $psi.UseShellExecute = $false
+      $psi.RedirectStandardInput = $true
+      $psi.RedirectStandardOutput = $true
+      $psi.RedirectStandardError = [bool]$Quiet
+      $p = [System.Diagnostics.Process]::Start($psi)
+      $p.StandardInput.Close()
+      $null = $p.StandardOutput.ReadToEndAsync()
+      if ($Quiet) { $errTask = $p.StandardError.ReadToEndAsync() }
+    }
     # Short waits, so a Ctrl-C is noticed promptly: as a key during an
     # in-console sign-in, else it stops this script and the finally block
     # below ends az.
@@ -1492,7 +1514,10 @@ function Invoke-CoopAz {
       Stop-CoopAzTree $p
       $result.Rc = 124
     }
-    if ($errFile) {
+    if ($errTask) {
+      # EOF once az (or the tree Stop-CoopAzTree ended) has closed its stderr.
+      try { if ($errTask.Wait(5000)) { $result.Err = $errTask.Result } } catch { }
+    } elseif ($errFile) {
       try { $result.Err = [System.IO.File]::ReadAllText($errFile) } catch { }
     }
   } catch {
@@ -2426,7 +2451,43 @@ function Test-CoopOnboardingMissing {
   return (Test-CoopUserProfileMissing) -or -not (Test-Path -LiteralPath (Get-CoopConfigFile) -PathType Leaf)
 }
 
-# First-run onboarding: run when either the profile or integration config is missing.
+# The stamp coop writes the first time an interactive launch hands the Start Here
+# menu to coop-tools (master plan FR1): `<profile dir>/first-run`.
+function Get-CoopFirstRunStampFile { return (Join-Path (Get-CoopProfileDir) 'first-run') }
+
+# First launch (master plan FR1): a plain `coop` never runs the onboarding wizard
+# and nothing here can stop the launch. An incomplete profile gets one line that
+# names where the questions now live (the Start Here menu's project item, or
+# `coop onboard`). The first interactive launch per profile dir also sets
+# COOP_FIRST_RUN=1 so coop-tools opens the Start Here menu once Pi is up; the
+# stamp keeps later launches at the plain prompt (`/start` any time).
+# $Interactive defaults to the real terminal state; fixtures pass it explicitly.
+function Set-CoopFirstRunLaunch {
+  param([bool] $Interactive = (-not [Console]::IsInputRedirected))
+  $script:CoopOnboardRc = 0
+  if (Test-CoopOnboardingMissing) {
+    if ($Interactive) {
+      Coop-Info 'First run: no COOP profile yet. Pick "Start a client project" in the menu to set your name, or run: coop onboard'
+    } else {
+      Coop-Warn 'COOP onboarding is incomplete (user.json or config missing). Run: coop onboard'
+    }
+  }
+  if (-not $Interactive) { return }
+  $stamp = Get-CoopFirstRunStampFile
+  if (Test-Path -LiteralPath $stamp -PathType Leaf) { return }
+  try {
+    $dir = Split-Path -Parent $stamp
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    [System.IO.File]::WriteAllText($stamp, ((Get-Date).ToUniversalTime().ToString('o') + "`n"))
+  } catch {
+    # A read-only profile dir must not block the launch; the menu simply opens again next time.
+  }
+  $env:COOP_FIRST_RUN = '1'
+}
+
+# Interactive onboarding wizard (name, communication preference, client platform,
+# tenant, integrations). Run by `coop install` and `coop onboard`; the launch
+# never calls it (Set-CoopFirstRunLaunch).
 function Invoke-CoopMaybeOnboard {
   # Exit code contract for callers: $script:CoopOnboardRc is 0 when onboarding
   # ran (or was legitimately skipped) and the wizard's exit code when it failed.

@@ -21,7 +21,8 @@ SQL and DAX standards are **not** a tool here. The former `sql_review` /
 SQL / DAX / semantic-model task, and the agent self-checks its diff against them
 before presenting a change, naming any rule it could not meet.
 
-It also adds an on-demand **Start Here menu** (the `/start` command), a native
+It also adds the **Start Here menu** (the `/start` command, opened once on the
+first interactive launch), a native
 **project contract wizard** (`/setup-project`), and setup for `coop-data-doc`
 (the manual `/setup-docs` command) so lineage docs can
 be established without leaving the agent when the user is ready, and a
@@ -35,8 +36,12 @@ touches an object — see [Start Here menu](#start-here-menu-start),
 ## Project setup (`/setup-project`)
 
 Users do not need to know `coop init` or manually edit YAML. Run `/setup-project`
-or choose the first `/start` menu item whenever the project is ready to configure.
-Normal Coop startup does not open the wizard.
+or choose *Start a client project* from `/start` whenever the project is ready to
+configure. Normal Coop startup does not open the wizard. While the local user
+profile (`<profile dir>/user.json`) is missing, the wizard first asks the name coop
+calls the user by and saves it there with the balanced communication preset (the
+launch no longer runs the onboarding wizard, master plan FR1); the name never goes
+into `project.yml`.
 
 The wizard configures the organization/client, zero or more repository paths and
 roles (including mixed SQL + Power BI repos), default branches, Fabric/Power BI
@@ -50,21 +55,39 @@ editing so `coop-guardrails` loads a fresh trusted contract snapshot.
 
 ## Start Here menu (`/start`)
 
-A guided, on-demand menu of common Cooptimize tasks. Each choice sends a friendly,
-first-person request **as you** (the menu just pre-writes the prompt a newcomer
-would otherwise have to compose); the agent then asks for specifics. The
-*Document my data* choice routes into the `/setup-docs` wizard (or a build) when
-needed. Choices are wired to the tools/skills coop already ships: checking SQL, DAX or a
-model against the standards, impact/lineage, Fabric workspace/architecture review,
-and work logs.
+The seven common workflows of the master plan (section 9), each wired to a prompt,
+skill or native wizard coop already ships:
 
-**Strictly on demand — normal startup goes straight to the prompt:**
+1. Check SQL, DAX or a model against our standards (the standards self-check;
+   `bpa_review` for a model)
+2. Trace the impact of a change (`sql_impact` for a live SQL object, then
+   `data_doc lineage`)
+3. Fix or edit an object on dev, with approval (`/spec-first` then `/slice-next`)
+4. Document a warehouse or semantic model (`/setup-docs`, or a `data_doc build`)
+5. Start a client project (the `/setup-project` wizard; asks your name while no
+   profile exists)
+6. Write today's log or a handoff (`/daily-log`, `/weekly-log`, `/handoff`)
+7. Sign in or check health (`coop doctor`, `az login`)
 
-- **`/start`** opens the menu on demand, anytime.
-- It never auto-opens on startup, `/new`, `/resume`, `/fork`, or `/reload`.
+Items 4 and 5 run a native wizard; the others send a friendly, first-person
+request **as you** (the menu just pre-writes the prompt a newcomer would otherwise
+have to compose), and the agent then asks for specifics. The Fabric workspace
+review stays available as `/fabric-architecture-review`.
+
+**When it opens:**
+
+- **Once, on the first interactive launch** on a machine: `bin/coop.ps1` sets
+  `COOP_FIRST_RUN=1` the first time it launches Pi from a terminal and writes
+  `<profile dir>/first-run` so it never does so again; the `session_start` hook
+  shows the menu once and clears the flag, so `/new` in the same process does not
+  reopen it. When that launch is also the one-time model sign-in, the hook only
+  says to run `/start` after signing in.
+- **`/start`** opens the menu on demand, anytime. Later launches, `/new`,
+  `/resume`, `/fork` and `/reload` go straight to the prompt.
 - The menu offers **"Something else — I'll type it myself"** to return to the prompt.
-- Data-doc setup is never opened automatically. The menu's *Document my data*
-  choice launches it only when selected; `/setup-docs` remains available anytime.
+- Data-doc setup is never opened automatically. The menu's *Document a warehouse or
+  semantic model* choice launches it only when selected; `/setup-docs` remains
+  available anytime.
 
 It requires dialog-capable UI (`ctx.hasUI`), provides a one-line explanation when
 dialogs aren't available, and is wrapped so it can never break a session.
