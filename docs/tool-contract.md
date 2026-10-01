@@ -520,7 +520,7 @@ including `sqldw-cli` for Fabric Warehouse and Lakehouse SQL (its authoring,
 consumption and operations guidance in one skill; the older
 `sqldw-operations-cli` name no longer exists) and `sqldb-cli` for Fabric SQL
 database (`fabric_sql_database` in `sql_targets:`). Neither covers Azure SQL
-Database or Synapse serverless outside Fabric: for those kinds coop's own
-`sql-review` skill, `sql_review` tool and the `coop-workflow` guidance are the
+Database or Synapse serverless outside Fabric: for those kinds the resolved SQL
+standards (fed into context at launch) and the `coop-workflow` guidance are the
 authority, and no Microsoft skill is substituted (master plan section 8 item 6,
 row SQ6).

@@ -178,8 +178,8 @@ The pinned Microsoft skills catalog is **subordinate to your skills**:
 The catalog covers Fabric only: `sqldw-cli` is the Warehouse and Lakehouse SQL
 skill and `sqldb-cli` the Fabric SQL database one. For Azure SQL Database and
 Synapse serverless targets (`azure_sql`, `synapse_serverless` in `sql_targets:`)
-no Microsoft skill applies; coop's `sql-review` skill and the `coop-workflow`
-guidance are the authority there.
+no Microsoft skill applies; the resolved SQL standards (fed into context at
+launch) and the `coop-workflow` guidance are the authority there.
 
 A Microsoft skill loads only if the pinned manifest, current project policy, and
 conflict checks all allow it. Fabric authoring skills may edit source files, but
