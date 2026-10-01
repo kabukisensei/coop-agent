@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.26.0] — 2026-10-01
+
 ### Added
 
 - `sql-formatting` skill: coop lays out the T-SQL it writes, or is asked to
