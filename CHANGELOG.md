@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-10-01
+
 ### Added
 
 - The isolated extension tree is reproducible (issue #152, master plan U1).
@@ -31,6 +33,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Power BI authoring tools (master plan U1, section 6 rows):
+  `@microsoft/powerbi-report-authoring-cli` moves from 0.1.4 to **0.4.0** and
+  `@microsoft/powerbi-desktop-bridge-cli` from 0.1.2 to **1.0.0**, together,
+  because 0.4.0 depends on the Bridge library at `^1.0.0`. Every CLI verb the
+  `power-bi-report-authoring` and `report-themes` skills call keeps its name;
+  0.4.0 adds `preview` (Desktop status, reload and screenshot through the Bridge
+  library), `pack`/`unpack` for Fabric report definitions, `scaffold`, `measure`,
+  `text`, bookmark validation, and `.pbip` / `datasetReference` validation (new
+  `PBIR_BOOKMARK_*`, `PBIR_PBIP_*` and `PBIR_DATASET_*` codes, so a report that
+  validated clean on 0.1.4 can now report errors that Desktop or Fabric would
+  have raised later). Bridge 1.0.0 keeps the same six commands; a reload Desktop
+  accepts but does not apply now fails with `RELOAD_REJECTED` instead of printing
+  `status: ok`, and `status` reports each instance's `hasUnsavedChanges`.
+  `powerbi-desktop reload` still discards unsaved Desktop edits unconditionally,
+  so the skills' status-first preflight stays. `coop update` and `coop install`
+  install the new pins from the manifest. VM qualification (needs Power BI
+  Desktop) pending.
 - Standards: a prompt that says PBIX, PBIP or PBIR now reaches the Power BI File
   Types article ("Convert the Sales report PBIX to a PBIP project"), the one
   coop-standards article no realistic prompt reached before. The classifier treats
