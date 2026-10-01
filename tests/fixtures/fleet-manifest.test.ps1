@@ -30,7 +30,7 @@ try {
   if ((Coop-ManifestGet -Key 'pi.version') -ceq '0.87.1') { Ok 'Coop-ManifestGet pi.version' } else { Ko "Coop-ManifestGet pi.version (got '$(Coop-ManifestGet -Key 'pi.version')')" }
   if ((Coop-ManifestGet -Key 'node.min') -ceq '22.19.0') { Ok 'Coop-ManifestGet node.min' } else { Ko 'Coop-ManifestGet node.min' }
   if ((Coop-ManifestGet -Key 'extensions.pi-mcp-adapter') -ceq '3.3.0') { Ok 'Coop-ManifestGet extensions.pi-mcp-adapter' } else { Ko 'Coop-ManifestGet extensions.pi-mcp-adapter' }
-  if ((Coop-ManifestGet -Key 'python_tools.coop-data-doc') -ceq '1.2.0') { Ok 'Coop-ManifestGet python_tools.coop-data-doc' } else { Ko 'Coop-ManifestGet python_tools.coop-data-doc' }
+  if ((Coop-ManifestGet -Key 'python_tools.coop-data-doc') -ceq '1.3.0') { Ok 'Coop-ManifestGet python_tools.coop-data-doc' } else { Ko 'Coop-ManifestGet python_tools.coop-data-doc' }
   if ((Coop-ManifestGet -Key 'missing.key') -eq '') { Ok 'Coop-ManifestGet missing key returns empty' } else { Ko 'missing key should return empty' }
   if ((Coop-ManifestExtensionSpec 'pi-mcp-adapter') -ceq 'npm:pi-mcp-adapter@3.3.0') { Ok 'literal extension spec: pi-mcp-adapter' } else { Ko 'extension spec mismatch' }
   if ((Coop-ManifestExtensionSpec '@juicesharp/rpiv-ask-user-question') -ceq 'npm:@juicesharp/rpiv-ask-user-question@2.12.0') { Ok 'literal scoped extension spec' } else { Ko 'scoped extension spec mismatch' }
