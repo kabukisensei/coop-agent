@@ -93,6 +93,7 @@ grep -q 'Install-CoopExtensionsLock -AgentDir $AgentDir -Npm $npm -PiVersion $pi
 STUB="$TMP/stub"; mkdir -p "$STUB"
 cat > "$STUB/npm" <<EOF
 #!/bin/sh
+[ "\$1" = "--version" ] && { echo 10.9.0; exit 0; }
 echo "NPM \$*" >> "$TMP/npm.log"; exit 0
 EOF
 chmod +x "$STUB/npm"
@@ -124,6 +125,55 @@ if run_helper_other=$(cd "$TMP" && COOP_ROOT="$ROOT" PATH="$STUB:$PATH" bash -c 
   ko "lock applied although the installed Pi is not the manifest's Pi ($run_helper_other)"
 else
   ok "an installed Pi other than the manifest's (edge, matrix) skips the lock"
+fi
+
+# 6. The convergence fast path must still reach the lock (VM finding, 2026-10-01):
+#    `pi install` lands every extension at its exact pin and records caret
+#    ranges, so a tree that is "already at pin" but carries no lock gets pins.js
+#    (exact specs) and then npm ci; a tree that already carries the shipped lock
+#    is left alone.
+mk_installed() { # <dir>: exact-pin node_modules, caret-range package.json (what pi install leaves)
+  mkdir -p "$1/npm/node_modules"
+  "$PY" - "$MANIFEST" "$1/npm" <<'PY2'
+import json, os, sys
+m = json.load(open(sys.argv[1])); root = sys.argv[2]
+json.dump({"name": "pi-extensions", "private": True,
+           "dependencies": {k: "^" + v for k, v in m["extensions"].items()}}, open(os.path.join(root, "package.json"), "w"), indent=2)
+for name, ver in m["extensions"].items():
+    d = os.path.join(root, "node_modules", *name.split("/")); os.makedirs(d, exist_ok=True)
+    json.dump({"name": name, "version": ver}, open(os.path.join(d, "package.json"), "w"))
+PY2
+}
+specs="$("$PY" -c 'import json,sys; m=json.load(open(sys.argv[1])); print(" ".join(f"{k}@{v}" for k,v in m["extensions"].items()))' "$MANIFEST")"
+cat > "$STUB/pi" <<EOF
+#!/bin/sh
+[ "\$1" = "--version" ] && { echo "pi $pi_ver"; exit 0; }
+exit 0
+EOF
+chmod +x "$STUB/pi"
+run_converge() { # <agent-dir>
+  (
+    export COOP_ROOT="$ROOT" PATH="$STUB:$PATH"
+    # shellcheck disable=SC1091
+    . "$ROOT/lib/common.sh"
+    # shellcheck disable=SC2086  # $specs is a deliberate word list
+    coop_converge_extension_pins "$1" $specs
+  )
+}
+mk_installed "$TMP/installed"
+: > "$TMP/npm.log"
+if run_converge "$TMP/installed" && grep -q '^NPM ci ' "$TMP/npm.log" && cmp -s "$LOCK" "$TMP/installed/npm/package-lock.json"; then
+  ok "an already-at-pin tree without the lock still gets exact pins and npm ci"
+else
+  ko "fast path skipped the lock on an already-at-pin tree ($(tr '\n' ' ' < "$TMP/npm.log"))"
+fi
+"$PY" -c 'import json,sys; d=json.load(open(sys.argv[1]))["dependencies"]; sys.exit(0 if all(not v.startswith("^") for v in d.values()) else 1)' "$TMP/installed/npm/package.json" \
+  && ok "pins.js rewrote the caret ranges pi install records to exact pins before npm ci" || ko "package.json still carries caret ranges"
+: > "$TMP/npm.log"
+if run_converge "$TMP/installed" && [ ! -s "$TMP/npm.log" ]; then
+  ok "a tree that already carries the shipped lock is left alone (idempotent, offline)"
+else
+  ko "a locked tree was reinstalled ($(tr '\n' ' ' < "$TMP/npm.log"))"
 fi
 
 if [ "$fail" -ne 0 ]; then echo "  ✗ extensions-lock tests FAILED"; exit 1; fi

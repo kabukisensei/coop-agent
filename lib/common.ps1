@@ -570,6 +570,11 @@ function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
     $got = Get-CoopExtInstalledVersion -AgentDir $AgentDir -Name $spec.Substring(0, $i)
     if ($got -ne $spec.Substring($i + 1)) { $need = $true; break }
   }
+  # `pi install` already lands every extension at its exact pin, so the fast
+  # path alone would never reach the lockfile (seen on the VM, #152): a tree
+  # whose package-lock.json is not the shipped lock still needs the npm ci.
+  $piVer = Get-CoopPiVersion
+  if (-not $need -and (Test-CoopExtensionsLockPending -AgentDir $AgentDir -PiVersion $piVer)) { $need = $true }
   if (-not $need) { return $true }
   $npm = Get-CoopWorkingNpm
   if (-not $npm) { return $false }
@@ -578,7 +583,6 @@ function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
   # This npm install auto-installs peers. Pin the agent peer (and pi-ai/pi-tui) to
   # the running Pi first (#122); unpinned, npm fetched the newest agent into the
   # tree seconds after upstream published it. Best-effort, like the alignment.
-  $piVer = Get-CoopPiVersion
   $py = Get-CoopPython
   if ($piVer -and $py) {
     & $py (Join-Path $script:CoopRoot 'lib\_extdeps.py') align $AgentDir $piVer *> $null
@@ -608,6 +612,22 @@ function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
 # live) or `npm ci` failed (the caller's install then repairs the tree). Mirror
 # of coop_apply_extensions_lock. Lifecycle scripts run as they do for a plain
 # install (better-sqlite3, context-mode and sharp build or fetch their binaries).
+# True when the shipped lock applies to this install (lock present, installed Pi
+# is the manifest's Pi) but the tree does not carry it yet: no package-lock.json
+# beside the tree's package.json, or one that differs from
+# config\extensions-lock.json. Mirror of coop_extensions_lock_pending.
+function Test-CoopExtensionsLockPending([string]$AgentDir, [string]$PiVersion) {
+  $lock = Join-Path $script:CoopRoot 'config\extensions-lock.json'
+  if (-not (Test-Path -LiteralPath $lock)) { return $false }
+  $want = Coop-ManifestGet -Key 'pi.version'
+  if (-not $want -or $PiVersion -ne $want) { return $false }
+  $treeLock = Join-Path $AgentDir 'npm\package-lock.json'
+  if (-not (Test-Path -LiteralPath $treeLock)) { return $true }
+  $a = (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash
+  $b = (Get-FileHash -LiteralPath $treeLock -Algorithm SHA256).Hash
+  return ($a -ne $b)
+}
+
 function Install-CoopExtensionsLock([string]$AgentDir, [string]$Npm, [string]$PiVersion) {
   $lock = Join-Path $script:CoopRoot 'config\extensions-lock.json'
   if (-not (Test-Path -LiteralPath $lock)) { return $false }

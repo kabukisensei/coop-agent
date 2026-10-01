@@ -478,6 +478,12 @@ coop_converge_extension_pins() { # <agent-dir> <name@ver>...
     got="$(coop_ext_installed_version "$agent_dir" "$nm")"
     [ "$got" != "$want" ] && need=1
   done
+  # `pi install` already lands every extension at its exact pin, so the fast
+  # path alone would never reach the lockfile (seen on the VM, #152): a tree
+  # whose package-lock.json is not the shipped lock still needs the npm ci.
+  local pi_ver
+  pi_ver="$(coop_pi_version 2>/dev/null || true)"
+  if [ "$need" != 1 ] && coop_extensions_lock_pending "$agent_dir" "$pi_ver"; then need=1; fi
   [ "$need" = 1 ] || return 0
   have node || return 1
   local npm_bin
@@ -491,8 +497,7 @@ coop_converge_extension_pins() { # <agent-dir> <name@ver>...
   # This npm install auto-installs peers. Pin the agent peer (and pi-ai/pi-tui) to
   # the running Pi first (#122); unpinned, npm fetched the newest agent into the
   # tree seconds after upstream published it. Best-effort, like the alignment.
-  local pi_ver py
-  pi_ver="$(coop_pi_version 2>/dev/null || true)"
+  local py
   if [ -n "$pi_ver" ] && py="$(coop_python)"; then
     "$py" "$COOP_ROOT/lib/_extdeps.py" align "$agent_dir" "$pi_ver" >/dev/null 2>&1 || true
   fi
@@ -513,6 +518,20 @@ coop_converge_extension_pins() { # <agent-dir> <name@ver>...
 # or `npm ci` failed (the caller's install then repairs the tree). Mirror of
 # Install-CoopExtensionsLock. Lifecycle scripts run as they do for a plain
 # install (better-sqlite3, context-mode and sharp build or fetch their binaries).
+# True (0) when the shipped lock applies to this install (lock present, installed
+# Pi is the manifest's Pi) but the tree does not carry it yet: no
+# package-lock.json beside the tree's package.json, or one that differs from
+# config/extensions-lock.json. Mirror of Test-CoopExtensionsLockPending.
+coop_extensions_lock_pending() { # <agent-dir> <installed-pi-version>
+  local lock="$COOP_ROOT/config/extensions-lock.json" want
+  [ -f "$lock" ] || return 1
+  want="$(coop_manifest_get pi.version)"
+  [ -n "$want" ] && [ "$2" = "$want" ] || return 1
+  [ -f "$1/npm/package-lock.json" ] || return 0
+  cmp -s "$lock" "$1/npm/package-lock.json" && return 1
+  return 0
+}
+
 coop_apply_extensions_lock() { # <agent-dir> <npm-bin> <installed-pi-version>
   local agent_dir="$1" npm_bin="$2" pi_ver="$3"
   local lock="$COOP_ROOT/config/extensions-lock.json" want
