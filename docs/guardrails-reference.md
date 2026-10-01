@@ -76,6 +76,17 @@ One accepted bounded scope covers subsequent matching calls; an expanded scope
 requires approval, and rejecting it preserves the prior grant. Mutations retain
 their separate approval gate and never spend a read grant.
 
+When the contract declares `sql_targets:`, the native `fabric_sql_query` tool's scope
+comes from the session's trusted contract snapshot instead of the managed Fabric
+entry: the ready dev or test default entry (`kind/host/database` for Azure SQL,
+Fabric SQL database and Synapse serverless; `workspace/item/database` for a Fabric
+Warehouse or Lakehouse, so the same Warehouse shares one grant with the managed MCP
+route), the contract's `profile.client`, and the launch identity, whose tenant must
+match `fabric.tenant_id` when the contract names one. A prod default, a placeholder,
+an invalid entry, a missing client or a tenant mismatch never resolve a scope, so
+every such read asks. Editing the contract mid-session never changes the scope until
+`/new` or a restart.
+
 The grant resets on every session start or shutdown (new, resume, or fork), process restart, or
 `/coop-live-read revoke`; use `/coop-live-read status` to inspect its non-secret
 scope. It otherwise survives turns, compaction, and reconnects. Every call is still

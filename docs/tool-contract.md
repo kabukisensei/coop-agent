@@ -510,7 +510,10 @@ a short subprocess and then starts that Python executable directly, so cancellat
 targets the query process. SQL and tokens are
 never placed in argv, config, disk, logs, or diagnostics. The exact fallback tool may
 reuse the same in-memory session grant as MCP only when its canonical
-client/tenant/principal/environment/target/read/row/60-second scope matches.
+client/tenant/principal/environment/target/read/row/60-second scope matches. With a
+contract `sql_targets:` section the guardrails resolve that scope from the trusted
+contract snapshot (row SQ3; `docs/guardrails-reference.md`), so the approval prompt
+names the entry the executor connects to and never the managed Warehouse.
 
 ### Microsoft skills catalog
 
