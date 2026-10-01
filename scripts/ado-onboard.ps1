@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env pwsh
 #
-# ado-onboard — thin launcher for scripts/ado-onboard.py (Windows/PowerShell twin of
-# Locates Python and passes every argument straight through.
+# ado-onboard — thin launcher for scripts/ado-onboard.py: locates Python (Get-CoopPython)
+# and passes every argument straight through.
 #
 $ErrorActionPreference = 'Stop'
 

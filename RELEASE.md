@@ -151,14 +151,12 @@ Every extension or Pi pin change must already carry a regenerated
 tagging a manifest whose lock drifted.
 
 If this suite release also bumped any of the three coop tools (steps (a)–(c)),
-**refresh `config/defaults.yml` → `tested_with` first** — the pre-tag gate below
+**bump their `python_tools` pins in `config/release-manifest.json` first** (the
+one manifest; `config/defaults.yml` carries no pins) — the pre-tag gate below
 verifies those pins against coop-website's `versions.json` and aborts on a
 mismatch. (Update `versions.json` before or together with the pins; step (e)
-requires it anyway.) **Also update the `==X.Y.Z` pins in
-[`docs/ci.md`](docs/ci.md)** (the copy-paste GitHub Actions + Azure DevOps
-pipelines and the "Pinning tool versions" prose) to the same versions — the
-pre-tag gate does **not** check `docs/ci.md`, so those pins drift silently if
-you skip this.
+requires it anyway.) `docs/ci.md` shows the pipeline pins as `==<version>`
+placeholders that point at the manifest, so nothing there needs editing.
 
 From a clean tree on an attached `main` that equals `origin/main` (`coop release`
 fetches `origin` and refuses anything else), with user-visible changes recorded
@@ -177,10 +175,10 @@ stop it before anything changes); runs the pre-tag gate — esbuild-checks every
 `extensions/*/index.ts`, then `COOP_TEST_EXTENDED=1 bash tests/run.sh` (both
 test lanes, gate and extended, so a release keeps the full suite that CI splits
 between `ci.yml` and the nightly `extended.yml`; see `docs/ci.md`),
-`pwsh -File tests/run.ps1` when `pwsh` is installed (a missing `pwsh` warns;
-native Windows CI is the evidence for Windows PowerShell 5.1) and
-`bash scripts/check-bom.sh`, then verifies the three coop-tool `tested_with`
-pins in `config/defaults.yml` match the sibling
+`pwsh -File tests/run.ps1` and `pwsh -File scripts/check-bom.ps1` when `pwsh`
+is installed (a missing `pwsh` warns; native Windows CI is the evidence for
+Windows PowerShell 5.1), then verifies the three coop-tool `python_tools` pins
+in `config/release-manifest.json` match the sibling
 `../coop-website/versions.json` (`coop_release_check_pins`; a mismatch aborts
 with the fix named, a **missing sibling checkout warns and asks** so an
 offline/partial clone can still release deliberately — all of the gate is

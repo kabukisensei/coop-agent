@@ -81,8 +81,8 @@ mutation, no update overwriting user configuration):
 - A test is written for a boundary or a bug, not for coverage. A test that needs a
   sleep, a PTY, a marker file, or a load-dependent wait is an integration test and
   does not belong in the PR gate.
-- Paired scripts, bash 3.2, and the `.ps1` BOM rules in `AGENTS.md` still apply until
-  the simplification phase retires them in the same PR that retires the surface.
+- The `.ps1` BOM and Windows PowerShell 5.1 rules in `AGENTS.md` apply; the paired
+  scripts and bash 3.2 rules were retired with the bash product path (S1-S7).
 - No new behavior on a surface this plan retires (`coop web`, the macOS/Linux
   product path, `mcp-remote`). A hotfix touches such a surface only to keep it
   from breaking; it does not improve it.
@@ -153,8 +153,8 @@ prerequisite behaves as today.
 **Observed:** three places can sign in, and none of them works by default on the
 rollout machines.
 
-- The launch preflight (`coop_az_preflight` in `lib/common.sh`,
-  `Invoke-CoopAzPreflight` in `lib/common.ps1`) returns before doing anything when
+- The launch preflight (`Invoke-CoopAzPreflight` in `lib/common.ps1`) returns
+  before doing anything when
   there is no `.coop/project.yml` under the working directory **or** when
   `fabric.tenant_id` is empty or starts with `TODO`. The bundled fallback contract
   ships `TODO`, so from the desktop shortcut (home folder) or any repo without a
@@ -338,7 +338,7 @@ duplicated gates, not in the logic tests users depend on.
 web phases inside `fabric-mcp-launch.test.sh` (legacy web); the macOS-specific
 cases in `knowledge-git`, `inventory`, `install-python-prereq`, `coop-profile` and
 the macOS bash 3.2 job once the bash product path is retired; the
-`COOP_UPDATE_GATE_DRYRUN` / `COOP_FLEET_TEST_MODE` test modes per revision 2.0 S7.
+update and install test modes per revision 2.0 S7 (retired in S7, issue #228).
 `fleet-*` and `ado-*` fixtures stay unless Aaron retires those features.
 
 **Wire or delete now (Phase 1):** the ten orphaned test files above either join the
@@ -487,9 +487,9 @@ and cross-checked against Pi's 0.84.3 and 0.87.1 sources. Result:
   now `/mcp-adapter`. Nothing else in the entry format changed: `url`, `auth: false`,
   `requestHeadersCommand`, `lifecycle`, `requestTimeoutMs`, and coop's private
   `_coop`/`_coop_target` keys all pass through 3.x unchanged.
-- **Also in that PR:** `config/defaults.yml` `tested_with.pi_mcp_adapter` says
-  `2.10.0` while the manifest says `2.34.0`; fix it and the doctor fixtures that
-  assume it. Consider `settings.allowInstall: false` (the agent may not install
+- **Also in that PR:** the manifest's `pi-mcp-adapter` pin is the only copy
+  (S7 removed `config/defaults.yml`'s `tested_with` versions); fix the doctor
+  fixtures that assume an older one. Consider `settings.allowInstall: false` (the agent may not install
   remote servers) and the new project-trust rule for a work repo's `.mcp.json`.
 - **`mcp-remote` removal, exact change:** the Microsoft Learn entry becomes
   `{"url": "https://learn.microsoft.com/api/mcp", "auth": false, "lifecycle": "lazy",
@@ -722,7 +722,7 @@ This is a focused companion repair lane alongside the existing SQ work, not a
 second roadmap or a mandate to onboard every client's SQL estate first.
 
 **Reverified baseline:** `coop-data-doc` main `cef94a5` (v1.2.0); Coop main
-`f1e662e`, which includes S6 [#227](https://github.com/kabukisensei/coop-agent/pull/227),
+`b69246c`, which includes S7 [#229](https://github.com/kabukisensei/coop-agent/pull/229), S6 [#227](https://github.com/kabukisensei/coop-agent/pull/227),
 S4 [#225](https://github.com/kabukisensei/coop-agent/pull/225), S2
 [#223](https://github.com/kabukisensei/coop-agent/pull/223) and S3
 [#221](https://github.com/kabukisensei/coop-agent/pull/221). The earlier Coop static
@@ -732,10 +732,9 @@ and SQ1–SQ7 remain open work, including SQ4
 [#216](https://github.com/kabukisensei/coop-agent/pull/216), and SQ6
 [#217](https://github.com/kabukisensei/coop-agent/pull/217). Recheck main and those
 branches before wrapper changes; do not duplicate their live SQL executor,
-authentication, approvals, or standards work. S7
-[#229](https://github.com/kabukisensei/coop-agent/pull/229), dev read policy
+authentication, approvals, or standards work. Dev read policy
 [#230](https://github.com/kabukisensei/coop-agent/pull/230), and SQL formatting
-[#231](https://github.com/kabukisensei/coop-agent/pull/231) are also active.
+[#231](https://github.com/kabukisensei/coop-agent/pull/231) are also active; [#232](https://github.com/kabukisensei/coop-agent/pull/232) owns injection drift and is unrelated to DD.
 
 **Architecture:** `coop-data-doc` remains offline and deterministic, using the
 single existing wizard and explicit local files. SQL repositories are optional.
@@ -759,9 +758,9 @@ one with the other. SQL-less builds remain useful for Power BI dependencies.
 
 | Step | Depends on | Focus and acceptance | Current evidence/status |
 | --- | --- | --- | --- |
-| DD1 | authorized now | Protect source trees from output cleanup; neutralize SVG, tooltip and diagnostics injection; retain Business Intent through layer/page changes and uncertain identities; reject incomplete crawls and strict failures before graph publication | Implemented locally on isolated data-doc branch; 18 synthetic regressions and full 646-test suite pass, Ruff/format pass; real fixture HTML build passes (35 objects, 49 edges). Independent code review passed. Local data-doc commit `fee3f42` on `dd1/source-output-safety`; not published, merged or released. Scoped table-layer intent migration only; unmatched authored pages retained for reconciliation. Other strict failures still refresh caches and non-strict file-level omissions remain DD2 work. |
-| DD2 | DD1 | Declare mixed-estate scope and completeness in the existing config/wizard; machine and human coverage/trust/provenance; Power BI-only and partial SQL builds; lineage and impact qualify empty results; semantic-definition changes seed impact; prevent incomplete evidence from pruning saved decisions | Pending. Existing Power BI-only wizard choice is present but does not establish an adequate evidence contract. Coordinate atomic decision persistence with existing data-doc [#63](https://github.com/kabukisensei/coop-data-doc/issues/63); do not duplicate its implementation. |
-| DD3 | DD2, migration review | Same-name models across roots and nested paths; exact report path binding; cache invalidation when source changes while target survives; preserve every partition source; SQL UNION/EXCEPT/INTERSECT and CTAS dependencies; correctly qualified dependency identities | Pending. Reproduce each with synthetic fixtures before fixing. Scope-qualified IDs require explicit backward compatibility for existing intent and cache; emit collision/migration diagnostics first wherever identity needs user choice. Never silently merge estates or rewrite committed decisions. |
+| DD1 | authorized now | Protect source trees from output cleanup; neutralize SVG, tooltip and diagnostics injection; retain Business Intent through layer/page changes and uncertain identities; reject incomplete crawls and strict failures before graph publication | Implemented locally on isolated data-doc branch; 18 synthetic regressions and full 646-test suite pass, Ruff/format pass; real fixture HTML build passes (35 objects, 49 edges). Independent code review passed. Local data-doc commit `fee3f42` on `dd1/source-output-safety`; not published, merged or released. Scoped table-layer intent migration only; unmatched authored pages retained for reconciliation. DD2 now closes strict cache deferral and file-level omission publication gaps. |
+| DD2 | DD1 | Declare mixed-estate scope and completeness in the existing config/wizard; machine and human coverage/trust/provenance; Power BI-only and partial SQL builds; lineage and impact qualify empty results; semantic-definition changes seed impact; prevent incomplete evidence from pruning saved decisions | Implemented in local data-doc commit `e95cee1`; 656 tests, Ruff/format, synthetic HTML build and independent review pass. Optional source/repo and layer declarations default unknown; wizard, graph, index, lineage and `impact --evidence` retain scoped confidence/provenance. Strict cache writes defer until validation; file omissions reject publication; stale human decisions are retained. Not released. Coordinate atomic decision persistence with existing data-doc [#63](https://github.com/kabukisensei/coop-data-doc/issues/63); do not duplicate its implementation. |
+| DD3 | DD2, migration review | Same-name models across roots and nested paths; exact report path binding; cache invalidation when source changes while target survives; preserve every partition source; SQL UNION/EXCEPT/INTERSECT and CTAS dependencies; correctly qualified dependency identities | In progress locally: 11 synthetic failures reproduced (partition overwrite, six set-operation/CTAS cases, changed-source cache, two model collisions and path binding). Fixes uncommitted; do not treat as accepted. Scope-qualified IDs require explicit backward compatibility for existing intent and cache; emit collision/migration diagnostics first wherever identity needs user choice. Never silently merge estates or rewrite committed decisions. |
 | DD4 | DD2/DD3 contract; S6 main; ST1/SQ branch reconciliation | Coop config discovery agrees with companion ancestor/environment rules and picker paths resolve against config base; wrapper claims only actual successful artifacts; lineage retains coverage/trust/provenance; UTF-8 JSONL stdin/stdout works through Windows pipes; formula-safe CSV; contract/docs alignment | Pending. Keep the existing wizard/protocol. Coordinate data-doc installation/cache docs with [#65](https://github.com/kabukisensei/coop-data-doc/issues/65). Windows acceptance remains unverified by macOS fixtures. |
 
 **Mixed-estate acceptance matrix (synthetic fixtures, no client access):**
@@ -780,8 +779,9 @@ Run each repo's defined checks, plus security/preservation/migration regressions
 and a real HTML build from synthetic fixtures. Review independently before
 publication. Windows pipe encoding and PowerShell 5.1 runtime acceptance need a
 Windows runner/VM; no client databases, repositories, credentials, or destructive
-source operations are used. Commit tested chunks locally; publication, merge,
-release and deployment await Aaron's separate instruction.
+source operations are used. Publish tested/reviewed chunks as draft PRs (Aaron authorized October 1) so agents
+can coordinate ownership. Keep unfinished work local. Merge, release and deployment
+still await Aaron's separate instruction.
 
 ## 9. Phase 6 — First run shows common workflows, not a wizard
 
@@ -951,12 +951,12 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 5 | H3 | Coop reads the coop-standards wiki directly; contract override shape | local clones of both repos | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` | merged ([#85](https://github.com/kabukisensei/coop-agent/pull/85), 2026-09-28); no VM step; close [#80](https://github.com/kabukisensei/coop-agent/issues/80) at the tag |
 | 6 | T1 | CI gate/extended split; fixture rules | H1–H3 merged | gate under five minutes, both OS, no weakened assertion | merged ([#132](https://github.com/kabukisensei/coop-agent/pull/132), 2026-09-29) |
 | 7 | S1, S5 | Retire POSIX product path and legacy web | T1 (Aaron started it on 2026-09-30: Mac, Linux and the web are dropped) | one Windows implementation, forwarder kept, tests removed with their surface | S5 merged ([#161](https://github.com/kabukisensei/coop-agent/pull/161), 2026-09-30, shipped in v0.24.0); S1 in review (PR), issue [#205](https://github.com/kabukisensei/coop-agent/issues/205), 2026-10-01 |
-| 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | S3 #221, S2 #223, S4 #225 and S6 #227 merged on main by 2026-10-01; S7 in review ([#229](https://github.com/kabukisensei/coop-agent/pull/229)). Publication/VM evidence remains per each package. |
+| 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | S3 #221, S2 #223, S4 #225 and S6 #227 merged on main by 2026-10-01; S7 #229 also merged on main. Publication/VM evidence remains per each package. |
 | 9 | U1 | Dependency reconciliation per section 6, one row per PR, qualified on the VM | S-lane (Aaron started U1 ahead of it on 2026-09-30) | exact versions, tests, rollback per PR; keep/drop list closed | in progress: Pi 0.87.1 + `pi-mcp-adapter` 3.3.0 **done (tag v0.24.0, 2026-09-30)**: merged in [#162](https://github.com/kabukisensei/coop-agent/pull/162), VM run passed (matrix 20/20, sync, doctor, `mcp-adapter.json` migration, console checks), Warehouse approval prompt verified live on the released build; Pi 0.99 stays blocked on the adapter's peer range (section 6.3; [#170](https://github.com/kabukisensei/coop-agent/pull/170) is a held draft). Merged 2026-09-30 (unreleased): `pi-hermes-memory` 0.9.9 ([#181](https://github.com/kabukisensei/coop-agent/pull/181)), Fabric skills catalog v0.3.18 ([#175](https://github.com/kabukisensei/coop-agent/pull/175)), shell-issued Fabric REST write approvals ([#176](https://github.com/kabukisensei/coop-agent/pull/176)). Also merged 2026-09-30/10-01 (unreleased, VM steps pending): `@juicesharp/rpiv-ask-user-question` 2.12.0 ([#188](https://github.com/kabukisensei/coop-agent/pull/188)), `@microsoft/fabric-mcp` 1.4.0 ([#189](https://github.com/kabukisensei/coop-agent/pull/189)), `mcp-remote` drop ([#190](https://github.com/kabukisensei/coop-agent/pull/190)), `@azure-devops/mcp` 2.10.0 ([#191](https://github.com/kabukisensei/coop-agent/pull/191)). Power BI pair merged 2026-10-01 (unreleased): `@microsoft/powerbi-report-authoring-cli` 0.4.0 + `@microsoft/powerbi-desktop-bridge-cli` 1.0.0 ([#199](https://github.com/kabukisensei/coop-agent/pull/199); one PR because 0.4.0 depends on Bridge ^1.0.0; its VM step needs Power BI Desktop on the VM, Aaron's). Lockfile merged 2026-10-01 (unreleased, [#200](https://github.com/kabukisensei/coop-agent/pull/200), closes [#152](https://github.com/kabukisensei/coop-agent/issues/152)): `config/extensions-lock.json` pins the isolated tree's transitive dependencies and `coop sync` installs it with `npm ci`; VM run passed (two clean syncs give the same `npm ls --all` output; lock entries carry `gypfile: false` so npm never compiles better-sqlite3 13 on Windows). U1 rows complete except the Power BI pair's Desktop check |
 | 9b | N1 | Automatic session naming after a few turns (`@xl0/pi-lovely-rename` trial first, coop-owned fallback; section 10) | U1 rows merged (Aaron scheduled it 2026-09-30) | names appear in footer and title on the VM without breaking manual `/name`; acceptance list in section 10 | merged 2026-10-01 (unreleased, [#198](https://github.com/kabukisensei/coop-agent/pull/198)): upstream `@xl0/pi-lovely-rename` 0.1.5 pinned, three-turn trigger kept (Aaron, 2026-10-01); VM trial passed (generated names show in the resume list and footer, manual `/name` survives, `/rename` regenerates). Coop's own footer is replaced by Pi's on the VM ([#203](https://github.com/kabukisensei/coop-agent/issues/203), pre-existing). Coop-owned namer not needed unless long sessions name badly |
 | 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewers retired from coop (decided 2026-09-28), self-check in place | in review ([#211](https://github.com/kabukisensei/coop-agent/pull/211)); not merged |
 | 11 | SQ1–SQ7 | Azure SQL targets, dev default, live impact, data verification, install-time Fabric/Azure SQL client choice (section 8 item 7) | ST1 | section 8 acceptance | in review: SQ7 #208, SQ1 #209, SQ2 #212, SQ3 #214, SQ4 #215, SQ5 #216, SQ6 #217; live acceptance pending |
-| 11a | DD1–DD4 | Mixed-estate offline documentation and Coop evidence contract (section 8.1) | DD1 authorized now; later steps follow dependencies in section 8.1 | acceptance matrix, preserved intent/cache, honest scoped impact, Windows contract verification | started locally, not published; DD1 `fee3f42` tested and reviewed, DD2–DD4 pending |
+| 11a | DD1–DD4 | Mixed-estate offline documentation and Coop evidence contract (section 8.1) | DD1 authorized now; later steps follow dependencies in section 8.1 | acceptance matrix, preserved intent/cache, honest scoped impact, Windows contract verification | DD1 `fee3f42` and DD2 `e95cee1` tested/reviewed; draft publication authorized; DD3 in progress, DD4 pending |
 | 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | not started |
 | 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, diagnostics, simplify (naming moved to N1) | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |

@@ -96,7 +96,7 @@ jobs:
 
       # Pin the version — see "Pinning tool versions" below.
       - name: Install coop-sql-review
-        run: pipx install coop-sql-review==0.12.0
+        run: pipx install coop-sql-review==<version>   # the manifest's python_tools pin
 
       # --strict + --min-severity warning: fail on warnings and errors; info-level
       # style suggestions stay out of the gate (drop --min-severity to include them).
@@ -136,7 +136,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install coop-dax-review
-        run: pipx install coop-dax-review==0.15.0
+        run: pipx install coop-dax-review==<version>   # the manifest's python_tools pin
 
       # coop-dax-review has no SARIF output yet (it lands in an upcoming release —
       # switch this job to the sql-review shape when it does). Until then the gate
@@ -164,7 +164,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install coop-data-doc
-        run: pipx install coop-data-doc==1.2.0
+        run: pipx install coop-data-doc==<version>   # the manifest's python_tools pin
 
       # Freshness first: compares the COMMITTED docs against the source.
       # Exit 1 = stale (someone changed source without rebuilding the docs);
@@ -214,7 +214,7 @@ stages:
         steps:
           - checkout: self
 
-          - script: pipx install coop-sql-review==0.12.0
+          - script: pipx install coop-sql-review==<version>   # the manifest's python_tools pin
             displayName: Install coop-sql-review
 
           # Same flags as the GitHub job. SARIF goes into a folder that is
@@ -254,7 +254,7 @@ stages:
         steps:
           - checkout: self
 
-          - script: pipx install coop-dax-review==0.15.0
+          - script: pipx install coop-dax-review==<version>   # the manifest's python_tools pin
             displayName: Install coop-dax-review
 
           # No SARIF from coop-dax-review yet (it lands in an upcoming release —
@@ -280,7 +280,7 @@ stages:
         steps:
           - checkout: self
 
-          - script: pipx install coop-data-doc==1.2.0
+          - script: pipx install coop-data-doc==<version>   # the manifest's python_tools pin
             displayName: Install coop-data-doc
 
           # Freshness first (committed docs vs source) — see the ordering note
@@ -320,9 +320,9 @@ elsewhere with `--config PATH` or `COOP_DATA_DOC_CONFIG`.
 
 ## Pinning tool versions
 
-The pins in this page (`coop-sql-review==0.12.0`, `coop-dax-review==0.15.0`,
-`coop-data-doc==1.2.0`) match `config/defaults.yml` → `tested_with` — the
-versions coop was last verified against — at the time of writing. Pinning keeps
+Replace each `==<version>` in this page with the tool's pin from
+`config/release-manifest.json` → `python_tools` (the one manifest;
+`coop init --ci github|ado` generates a pipeline with them filled in). Pinning keeps
 pipelines reproducible: a new tool release can add rules, and an unpinned
 pipeline would go red on a change nobody made. Bump the pins deliberately (a
 small PR that updates the `==` versions), the same way you'd bump any other CI
@@ -340,7 +340,7 @@ client-repo gates above are a different thing.
 
 | Lane | Run it locally | Where CI runs it | What it holds |
 | --- | --- | --- | --- |
-| gate (default) | `bash tests/run.sh` | `.github/workflows/ci.yml` on every PR and every push to `main` | Deterministic logic tests. The same workflow also runs `bash -n` and shellcheck over the bash dev tooling, `bash scripts/check-bom.sh`, JSON, YAML and skill validation, the esbuild transpile, and the `.ps1` parse under pwsh 7 and Windows PowerShell 5.1 with PSScriptAnalyzer. |
+| gate (default) | `bash tests/run.sh` | `.github/workflows/ci.yml` on every PR and every push to `main` | Deterministic logic tests. The same workflow also runs `bash -n` and shellcheck over the bash dev tooling, JSON, YAML and skill validation, the esbuild transpile, `tests/run.ps1` (which starts with `scripts/check-bom.ps1`), and the `.ps1` parse under pwsh 7 and Windows PowerShell 5.1 with PSScriptAnalyzer. |
 | extended | `COOP_TEST_EXTENDED=1 bash tests/run.sh` | `.github/workflows/extended.yml`: nightly, on demand, and on a PR that changes that file | The gate lane plus the timing and process fixtures. The two lanes together are the full suite. |
 | Pi matrix | `pwsh -NoProfile -File scripts/test-pi-matrix.ps1 -PiVersion <pi-version>` (needs the network; installs that Pi from npm into a temp prefix) | `.github/workflows/pi-matrix.yml`: nightly, on demand, and on a PR that touches Pi alignment | `scripts/test-pi-matrix.ps1` against the pinned Pi release on Windows. |
 
@@ -365,8 +365,9 @@ The run scripts are the list; this page does not repeat it.
 - `tests/run.sh` runs the gate suites first. The extended suites are in one block
   headed `EXTENDED LANE` at the end of the file, which runs only when
   `COOP_TEST_EXTENDED=1`.
-- `tests/run.ps1` marks each extended section `EXTENDED LANE` where it stands,
-  because some sections depend on their position.
+- `tests/run.ps1` marks its in-process extended sections `EXTENDED LANE` where
+  they stand, and its child fixtures sit in one table with a lane column
+  (`gate` / `extended`); an extended row runs only with `COOP_TEST_EXTENDED=1`.
 - Some gate files keep a few extended-only cases (hang, watchdog or
   live-process cases) behind the same variable inside the file. The header of
   `tests/run.sh` names them.
@@ -402,16 +403,17 @@ The run scripts are the list; this page does not repeat it.
 - Moving a test between lanes never weakens it. No assertion is skipped,
   disabled or loosened to turn a lane green.
 - The repo-wide `.ps1` UTF-8 BOM check lives in one place,
-  `scripts/check-bom.sh`. Do not add another.
+  `scripts/check-bom.ps1` (the first section of `tests/run.ps1`). Do not add
+  another.
 
 ### Running the extended lane
 
 - Locally: `COOP_TEST_EXTENDED=1 bash tests/run.sh`.
 - In CI: Actions -> extended -> Run workflow, on any branch.
 - `coop release` runs both lanes. Its pre-tag gate (`scripts/release.sh`, and
-  `bin/coop.ps1` on Windows) runs `COOP_TEST_EXTENDED=1 bash tests/run.sh` and
-  `tests/run.ps1`, so every release keeps the full suite's coverage. See
-  `RELEASE.md`.
+  `bin/coop.ps1` on Windows) runs `COOP_TEST_EXTENDED=1 bash tests/run.sh`,
+  `tests/run.ps1` and `scripts/check-bom.ps1`, so every release keeps the full
+  suite's coverage. See `RELEASE.md`.
 
 The Windows terminal-workstation acceptance workflow runs `tests\run.ps1` with
 `COOP_TEST_EXTENDED=1`, so its behavioral-suite receipt covers both lanes.

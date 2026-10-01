@@ -9,8 +9,8 @@
 # rolls CHANGELOG.md's [Unreleased] into a dated [X.Y.Z] heading, commits, tags
 # vX.Y.Z and pushes main + the tag in one atomic push. Gates first: extensions
 # transpile, the full test lanes (bash tests/run.sh and, when pwsh is on PATH,
-# tests/run.ps1), the .ps1 BOM check, and the tested_with pins against the
-# sibling coop-website's versions.json. Requires a clean tree on an attached main
+# tests/run.ps1 and scripts/check-bom.ps1), and the manifest's coop-tool pins
+# against the sibling coop-website's versions.json. Requires a clean tree on an attached main
 # that equals origin/main. Runbook: RELEASE.md.
 #
 # This is the one maintainer command that stays in bash after master plan S1
@@ -40,19 +40,6 @@ coop_warn() { printf '%s!%s %s\n' "$COOP_OLIVE"  "$COOP_RST" "$1${2:+ — $2}" >
 coop_err()  { printf '%s✗%s %s\n' "$COOP_RED"    "$COOP_RST" "$*" >&2; }
 coop_die()  { coop_err "$*"; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
-coop_python() {
-  if have python3; then echo python3
-  elif have python; then echo python
-  else return 1
-  fi
-}
-coop_yaml_get() { # <file> <dotted.key> [default]
-  local file="$1" key="$2" default="${3:-}"
-  local py; py="$(coop_python)" || { printf '%s' "$default"; return 0; }
-  [ -f "$file" ] || { printf '%s' "$default"; return 0; }
-  local out; out="$("$py" "$COOP_ROOT/lib/_yaml.py" get "$file" "$key" "$default" 2>/dev/null | tr -d '\r')"
-  [ -n "$out" ] && printf '%s' "$out" || printf '%s' "$default"
-}
 coop_confirm() {
   local prompt="${1:-Proceed?}"
   if [ "${COOP_ASSUME_YES:-0}" = "1" ]; then return 0; fi
@@ -68,53 +55,53 @@ _coop_repo_branch() {
   return 0
 }
 
-# --- Release gate: tested_with pins vs coop-website/versions.json -------------
-# config/defaults.yml pins the coop-tool versions coop was last verified against
-# (tested_with.coop_data_doc/_sql_review/_dax_review — the "tested" column of
-# `coop update --check`); the sibling coop-website checkout's versions.json is the
+# --- Release gate: the manifest's coop-tool pins vs coop-website/versions.json -
+# config/release-manifest.json (python_tools) pins the coop-tool versions a
+# release installs; the sibling coop-website checkout's versions.json is the
 # suite's single source of truth for released version strings. Verify the three
 # pins BEFORE tagging so they can't drift releases-stale again (issue #23):
 #   - pins match versions.json      -> ok, continue
-#   - a pin disagrees / unreadable  -> die (fix defaults.yml, or --no-check)
+#   - a pin disagrees / unreadable  -> die (fix the manifest, or --no-check)
 #   - sibling checkout missing      -> warn + confirm (offline / partial clones
 #                                      stay workable; --yes continues with a note)
 # Returns 1 when the user declines the confirm (caller cancels the release).
+# bin/coop.ps1's Test-CoopReleasePins is the same gate for `coop release` on Windows.
 coop_release_check_pins() {
   local assume_yes="${1:-0}"
-  local defaults="$COOP_ROOT/config/defaults.yml"
+  local manifest="$COOP_ROOT/config/release-manifest.json"
   local vjson="$COOP_ROOT/../coop-website/versions.json"
   if [ ! -f "$vjson" ]; then
-    coop_warn "sibling coop-website checkout not found — can't verify config/defaults.yml tested_with against versions.json (see RELEASE.md)."
+    coop_warn "sibling coop-website checkout not found — can't verify config/release-manifest.json python_tools against versions.json (see RELEASE.md)."
     if [ "$assume_yes" = "1" ]; then
-      coop_info "continuing (--yes) — verify the tested_with pins by hand."
+      coop_info "continuing (--yes) — verify the coop-tool pins by hand."
       return 0
     fi
-    coop_confirm "Release without verifying the tested_with pins?" || return 1
+    coop_confirm "Release without verifying the coop-tool pins?" || return 1
     return 0
   fi
-  local tool key pin rel mismatch=0
+  local tool pin rel mismatch=0
   for tool in coop-data-doc coop-sql-review coop-dax-review; do
-    key="$(printf '%s' "$tool" | tr '-' '_')"
-    pin="$(coop_yaml_get "$defaults" "tested_with.$key" "")"
-    # versions.json keeps a strict one-`"key": "value"`-per-line layout (enforced
-    # by coop-website's own checker), so sed is safe — and python-free — here.
+    # Both files keep a one-`"key": "value"`-per-line layout (the manifest is
+    # pretty-printed JSON; versions.json's is enforced by coop-website's own
+    # checker), so sed is safe — and python-free — here.
+    pin="$(sed -n 's/^[[:space:]]*"'"$tool"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest")"; pin="${pin%%$'\n'*}"
     rel="$(sed -n 's/^[[:space:]]*"'"$tool"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$vjson")"; rel="${rel%%$'\n'*}"
     if [ -z "$rel" ]; then
       coop_warn "could not read $tool from coop-website/versions.json — skipping its pin check."
       continue
     fi
     if [ -z "$pin" ]; then
-      coop_warn "could not read tested_with.$key from config/defaults.yml (versions.json says $tool is $rel)."
+      coop_warn "could not read python_tools.$tool from config/release-manifest.json (versions.json says $tool is $rel)."
       mismatch=1
     elif [ "$pin" != "$rel" ]; then
-      coop_warn "tested_with.$key is $pin but coop-website/versions.json says $tool is $rel."
+      coop_warn "python_tools.$tool is $pin in config/release-manifest.json but coop-website/versions.json says $rel."
       mismatch=1
     fi
   done
   if [ "$mismatch" = "1" ]; then
-    coop_die "tested_with pins disagree with coop-website/versions.json — update config/defaults.yml (see RELEASE.md), or re-run with --no-check."
+    coop_die "the coop-tool pins in config/release-manifest.json disagree with coop-website/versions.json — update the manifest (see RELEASE.md), or re-run with --no-check."
   fi
-  coop_ok "tested_with pins match coop-website/versions.json"
+  coop_ok "coop-tool pins match coop-website/versions.json"
 }
 
 # --- Release gate: an attached main that equals origin/main (#105) ------------
@@ -164,7 +151,7 @@ Usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]
   a dated release, commit, tag vX.Y.Z, and push main + the tag atomically (both
   or neither). Default: patch.
   Verifies extensions transpile + tests + the .ps1 BOM check pass, and that
-  the tested_with coop-tool pins match the sibling coop-website's versions.json
+  the manifest's coop-tool pins match the sibling coop-website's versions.json
   (--no-check to skip).
   Requires a clean working tree on main, equal to origin/main (it fetches origin).
 EOF
@@ -267,11 +254,17 @@ EOF
         coop_warn "pwsh not found — skipping tests/run.ps1 (CI runs it on Windows and Linux)."
       fi
     fi
-    if [ -f "$COOP_ROOT/scripts/check-bom.sh" ]; then
-      if bash "$COOP_ROOT/scripts/check-bom.sh" >/dev/null 2>&1; then
-        coop_ok "BOM check passes"
+    # The .ps1 encoding gate is PowerShell (scripts/check-bom.ps1); like
+    # tests/run.ps1 above, a missing pwsh warns rather than fails.
+    if [ -f "$COOP_ROOT/scripts/check-bom.ps1" ]; then
+      if have pwsh; then
+        if pwsh -NoLogo -NoProfile -File "$COOP_ROOT/scripts/check-bom.ps1" >/dev/null 2>&1; then
+          coop_ok "BOM check passes (scripts/check-bom.ps1)"
+        else
+          coop_die "BOM check failed (pwsh -NoProfile -File scripts/check-bom.ps1) — fix it, or re-run with --no-check."
+        fi
       else
-        coop_die "BOM check failed (bash scripts/check-bom.sh) — fix it, or re-run with --no-check."
+        coop_warn "pwsh not found — skipping scripts/check-bom.ps1 (tests/run.ps1 runs it in CI)."
       fi
     fi
 
@@ -283,7 +276,7 @@ EOF
       coop_die "release gate could not run (npx/node not found) — install Node.js, use --no-push to bump locally only, or --no-check to release without gating."
     fi
 
-    # tested_with pins vs the sibling coop-website's versions.json: a mismatch
+    # The manifest's coop-tool pins vs the sibling coop-website's versions.json: a mismatch
     # dies; a missing sibling warns + confirms (--yes continues). See the
     # function header above and RELEASE.md.
     coop_release_check_pins "$assume_yes" \
