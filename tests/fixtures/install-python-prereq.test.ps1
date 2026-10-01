@@ -92,11 +92,14 @@ exit /b 1
   # The H1 prerequisite gate reads node's version; pin it instead of trusting
   # whatever Node the hosted runner ships.
   Write-Shim 'node' "#!/bin/sh`necho v22.19.0`n" "@echo off`r`necho v22.19.0`r`n"
+  # The pipx list is static, so the coop tools sit at their pins: the convergence
+  # postcondition (installed version == pin) holds and the Fabric CLI, at its
+  # pin too, is rebuilt only because pipx must fetch its Python.
   Write-Shim 'pipx' @'
 #!/bin/sh
 echo "PIPX $*" >> "$COOP_TEST_CALLS"
 if [ "$1" = "list" ]; then
-  echo 'package coop-data-doc 1.1.1'; echo 'package coop-sql-review 0.15.2'; echo 'package coop-dax-review 0.22.0'; echo 'package ms-fabric-cli 1.7.0'
+  echo 'package coop-data-doc 1.2.0'; echo 'package coop-sql-review 0.15.2'; echo 'package coop-dax-review 0.22.0'; echo 'package ms-fabric-cli 1.7.0'
 fi
 exit 0
 '@ @'
@@ -107,7 +110,7 @@ if "%1"=="install" if "%2"=="--help" (
   exit /b 0
 )
 if "%1"=="list" (
-  echo package coop-data-doc 1.1.1
+  echo package coop-data-doc 1.2.0
   echo package coop-sql-review 0.15.2
   echo package coop-dax-review 0.22.0
   echo package ms-fabric-cli 1.7.0

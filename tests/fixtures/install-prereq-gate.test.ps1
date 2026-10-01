@@ -79,7 +79,7 @@ try {
   foreach ($want in @('1. Git  (2.50.0)', '2. Node.js 22.19.0 or newer  (not found)', $nodeFix, '3. Python 3.10-3.13 (3.12 recommended)  (not found)', $pyFix, '2 required prerequisite(s) missing. Install the')) {
     if (-not $out.Contains($want)) { Ko "install.ps1 output is missing: $want" $out }
   }
-  if ($out.Contains('2/9')) { Ko 'install.ps1 went past the prerequisite stage' $out }
+  if ($out.Contains('2/8')) { Ko 'install.ps1 went past the prerequisite stage' $out }
   if ($fail -eq 0) { Write-Host '  ok install.ps1 without Node/Python stops at the checklist with both commands' }
   foreach ($want in @(" rows above in that order, open a NEW terminal, $rerun", "(or let coop run those commands for you: $launch --prereqs auto)")) {
     if (-not $out.Contains($want)) { Ko "install.ps1 output is missing: $want" $out }

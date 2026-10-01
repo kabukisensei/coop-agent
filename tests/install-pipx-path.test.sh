@@ -2,7 +2,7 @@
 # The pipx launcher from `pip install --user pipx` lands in the VERSIONED
 # per-user Scripts dir on Windows (%APPDATA%\Python\Python312\Scripts), NOT
 # %APPDATA%\Python\Scripts — so a fresh-user Windows install must resolve it
-# via sysconfig's nt_user scheme or step 4/9 (Fabric CLI) cannot see pipx
+# via sysconfig's nt_user scheme or step 3/8 (Fabric CLI) cannot see pipx
 # and both the --fetch-python fallback and bare `pipx` calls fail.
 # (scripts/install.ps1 is the one installer since master plan S1 retired the
 # bash product path.)

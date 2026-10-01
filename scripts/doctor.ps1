@@ -93,9 +93,9 @@ $pyBin = Get-CoopPython
 
 # Minimum Pi version — the extension API used by coop-powerline / coop-tools.
 if (Test-Have 'pi') {
-  $piRaw = (& pi --version 2>$null | Select-Object -First 1)
-  if ($piRaw -match '(\d+)\.(\d+)\.(\d+)') {
-    $piv = [version]("{0}.{1}.{2}" -f $matches[1], $matches[2], $matches[3])
+  $piProbe = Get-CoopPiVersion
+  if ($piProbe) {
+    $piv = [version]$piProbe
     if ($piv -lt [version]'0.79.0') { D-Warn "pi $piv is older than the tested minimum (0.79.0)" 'coop update' }
     # Ceiling: warn (never fail) when the installed Pi is a newer MINOR than coop's tested
     # version. `coop update` gates the jump; doctor just flags it.
@@ -115,11 +115,7 @@ D-Head 'Release manifest'
 $piExpected = Coop-ManifestGet 'pi.version'
 if ($piExpected) {
   if (Test-Have 'pi') {
-    $piRaw = (& pi --version 2>$null | Select-Object -First 1)
-    $piv = ''
-    if ($piRaw -match '(\d+)\.(\d+)\.(\d+)') {
-      $piv = "$($matches[1]).$($matches[2]).$($matches[3])"
-    }
+    $piv = Get-CoopPiVersion
     $piStatus = Coop-ManifestStatus $piv $piExpected
     switch ($piStatus) {
       'ok'                { D-Ok "pi $piv matches manifest ($piExpected)" }
@@ -326,20 +322,19 @@ D-Head 'Fabric / semantic-model tooling'
 # Power BI / Fabric authoring npm tools. powerbi-report-author backs coop's own
 # power-bi-* skills AND the skills-for-fabric skills, so it is required; the rest
 # stay optional. powerbi-desktop-bridge is only useful on Windows with Desktop.
-Check 'powerbi-report-author' 'required' 'npm install -g @microsoft/powerbi-report-authoring-cli' @('powerbi-report-author', '--version')
+# Hints name the manifest pin (Coop-ManifestNpmToolSpec), never npm's latest.
+function Get-NpmToolHint([string]$Package) { $s = Coop-ManifestNpmToolSpec $Package; if (-not $s) { $s = $Package }; return "npm install -g $s" }
+Check 'powerbi-report-author' 'required' (Get-NpmToolHint '@microsoft/powerbi-report-authoring-cli') @('powerbi-report-author', '--version')
 if ($env:OS -eq 'Windows_NT') {
-  Check 'powerbi-desktop' 'optional' 'npm install -g @microsoft/powerbi-desktop-bridge-cli (Windows + Power BI Desktop only)' @('powerbi-desktop', '--version')
+  Check 'powerbi-desktop' 'optional' "$(Get-NpmToolHint '@microsoft/powerbi-desktop-bridge-cli') (Windows + Power BI Desktop only)" @('powerbi-desktop', '--version')
 } else {
   D-Ok 'powerbi-desktop (Desktop Bridge) — Windows only, not applicable here'
 }
-# powerbi-modeling-mcp is started via npx; verify the package is installed globally.
-$pbihModeling = $false
-if (Test-Have 'npm') {
-  & npm ls -g --depth=0 @microsoft/powerbi-modeling-mcp *> $null
-  if ($LASTEXITCODE -eq 0) { $pbihModeling = $true }
-}
-if ($pbihModeling) { D-Ok 'powerbi-modeling-mcp (npm package installed)' }
-else { D-Warn 'powerbi-modeling-mcp not installed' 'npm install -g @microsoft/powerbi-modeling-mcp' }
+# powerbi-modeling-mcp is started via npx; verify the package is installed
+# globally, with the same probe update --check uses (Get-CoopNpmToolVersion).
+$pbihModelingVer = Get-CoopNpmToolVersion '@microsoft/powerbi-modeling-mcp'
+if ($pbihModelingVer) { D-Ok "powerbi-modeling-mcp $pbihModelingVer (npm package installed)" }
+else { D-Warn 'powerbi-modeling-mcp not installed' (Get-NpmToolHint '@microsoft/powerbi-modeling-mcp') }
 
 # fabric-cicd is a Python LIBRARY (no CLI) living inside the Fabric CLI's env;
 # it is manifest-pinned like any other tool, just verified differently.
@@ -743,7 +738,9 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
         }
       }
     }
-    foreach ($t in @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')) {
+    # The Coop tools come from the fleet plan install/update converge (the
+    # Fabric CLI is the rebuild above); repairs install the manifest pin only.
+    foreach ($t in @((Get-CoopFleetPlan).PythonTools | ForEach-Object { $_.Name })) {
       if (-not (Test-Have $t)) {
         $tSpec = Coop-ManifestPythonSpec $t
         if (-not $tSpec) {
