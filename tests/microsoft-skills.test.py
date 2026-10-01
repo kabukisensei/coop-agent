@@ -514,12 +514,16 @@ with tempfile.TemporaryDirectory() as td:
     except ValueError:
         pass
     (d / "SKILL.md").write_text("---\nname: right\n---\n", encoding="utf-8")
-    os.symlink(d / "SKILL.md", d / "link.md")
     try:
-        mskills.validate_skill(d, "right", set())
-        raise AssertionError("symlink accepted")
-    except ValueError:
-        pass
+        os.symlink(d / "SKILL.md", d / "link.md")
+    except OSError as exc:  # Windows without the symlink privilege (plain VM accounts)
+        print(f"  - skipped the symlink case: cannot create symlinks here ({exc})")
+    else:
+        try:
+            mskills.validate_skill(d, "right", set())
+            raise AssertionError("symlink accepted")
+        except ValueError:
+            pass
 with tempfile.TemporaryDirectory() as td:
     t = Path(td)
     d = t / "skill"

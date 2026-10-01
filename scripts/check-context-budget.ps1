@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
 #
-# check-context-budget.ps1 — PowerShell twin of scripts/check-context-budget.sh.
+# check-context-budget.ps1 — context-budget check (lib/context-budget via scripts/context-budget.py).
 # Runs the same Python measurement script and checks the same thresholds.
 #
 $ErrorActionPreference = 'Stop'

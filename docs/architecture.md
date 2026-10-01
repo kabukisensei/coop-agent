@@ -1,7 +1,8 @@
 # Cooptimize Agent — Architecture
 
 `coop` is a **branded layer on top of Pi** (`@earendil-works/pi-coding-agent`). It
-is **not a fork**. `bin/coop` is a thin bash dispatcher that launches `pi` with
+is **not a fork**. `bin/coop.ps1` is a thin PowerShell dispatcher (launched by
+`bin/coop.cmd`, or by the Git Bash forwarder `bin/coop`) that launches `pi` with
 Cooptimize skills, prompts, theme, a governance system prompt, and companion
 extensions, and shells out to the standalone Coop tools and the Microsoft Fabric
 CLI. Everything Cooptimize-specific lives in this repo and is layered onto a
@@ -14,12 +15,22 @@ coop runs Pi against its own agent dir (`~/.coop/agent`; override with
 curated extensions/settings/theme/MCP load — your personal `pi` (its extensions,
 themes, splash) stays untouched. Your login (auth/models) is shared in from
 `~/.pi/agent`; settings/extensions/MCP are isolated. Provisioned by
-`coop install`/`coop sync`. Disable with `COOP_NO_ISOLATE=1`.
+`coop install`/`coop sync`. Disable with `COOP_NO_ISOLATE=1` (`true`, `yes`, `on`).
+
+One profile root (master plan S3). `COOP_DIR` is the **parent** of `.coop`: the
+profile dir is `$COOP_DIR\.coop` (default `~/.coop`) and holds `config`,
+`user.json`, `agent\`, `support\`, `standards\` and `devops\`. The agent dir Pi
+actually loads is one chain everywhere: `PI_CODING_AGENT_DIR`, else
+`COOP_NO_ISOLATE` truthy → `~/.pi/agent`, else `COOP_AGENT_DIR`, else
+`<profile dir>\agent`. The helpers are `Get-CoopProfileDir` / `Get-CoopConfigFile` /
+`Get-CoopUserProfileFile` / `Get-CoopPiAgentDir` / `Get-CoopEffectiveAgentDir` in
+`lib/common.ps1`, `lib/coop_paths.py` for the Python scripts and `lib/paths.mjs`
+for the Node tools and extensions; no script builds these paths inline.
 
 ## Layers
 
-1. **`coop` (orchestrator).** `bin/coop` resolves `COOP_ROOT`, sources
-   `lib/common.sh`, exports `PI_CODING_AGENT_DIR` to point Pi at coop's isolated
+1. **`coop` (orchestrator).** `bin/coop.ps1` resolves `COOP_ROOT`, dot-sources
+   `lib/common.ps1`, exports `PI_CODING_AGENT_DIR` to point Pi at coop's isolated
    agent dir (`~/.coop/agent`; see **Isolation** above), runs a **launch-time
    extension-skew preflight** (checks the Pi agent against every installed
    extension's `@earendil-works/pi-ai` requirement — aborts with clear guidance if
@@ -33,7 +44,7 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
    `COOP_SKIP_AZ=1` skips it), then `exec pi …` with the branded resources
    attached. It also dispatches the
    subcommands (`doctor`, `update`, `install`/`bootstrap`, `sync`, `data-doc`,
-   `sql-review`, `dax-review`, `fabric`, `version`, `help`) and aliases Pi
+   `fabric`, `version`, `help`) and aliases Pi
    management (`coop list/config/add/remove/pi`) so `coop` is the only command a
    user types. Any unknown subcommand or flag is passed straight through to `pi`.
 
@@ -42,14 +53,13 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
    it at launch via flags (`--append-system-prompt`, `--skill`,
    `--prompt-template`, `--theme`, `-e <extension>`).
 
-3. **Cooptimize resources loaded into Pi at launch** (see `bin/coop` →
-   `launch_pi`):
+3. **Cooptimize resources loaded into Pi at launch** (see `bin/coop.ps1` →
+   `Build-CoopPiArgs` / `coop launch-spec --json`):
    - **Guardrails system prompt** — `docs/guardrails.md`, *appended* (not
      replacing Pi's prompt): read-only-first, plan-and-approve, never commit
      source, MCP read-only, never expose secrets.
    - **Skills** — `skills/`, including `coop-workflow` (the principles-first
-     Cooptimize workflow) that the task skills run inside: `sql-review`,
-     `dax-review`, `data-doc-analysis`, `power-bi-impact-analysis`,
+     Cooptimize workflow) that the task skills run inside: `data-doc-analysis`, `power-bi-impact-analysis`,
      `fabric-workspace-review`, `daily-logger`, `setup-docs` (the in-agent
      coop-data-doc wizard driven via `ask-user-question` + coop-data-doc's
      non-interactive commands), and `git-helper` (drafts Conventional-Commits
@@ -75,10 +85,14 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      one clean bar. The splash is the truecolor block-art Cooptimize logo
      (uniform-padded, width-robust; `assets/splash.ansi`).
    - **`coop-tools` extension** — `extensions/coop-tools/`: registers the native
-     LLM-callable tools `sql_review`, `dax_review`, `data_doc` that shell out to
-     the standalone CLIs and return JSON the model reasons over, plus `sql_impact`
-     (`lib/sql_impact.py`: three fixed catalog queries for one object's dependents,
-     references and columns on the contract's dev/test SQL target). `data_doc` takes
+     LLM-callable tools `data_doc`, `bpa_review` (Tabular Editor BPA), the
+     governed `fabric_sql_query` fallback and `sql_impact` (`lib/sql_impact.py`:
+     three fixed catalog queries for one object's dependents, references and
+     columns on the contract's dev/test SQL target), which shell out and return
+     JSON the model reasons over. SQL/DAX/semantic-model standards need no tool: at launch
+     `lib/standards.mjs` resolves the active coop-standards wiki articles and the
+     extension feeds them into every such task, and the agent self-checks its diff
+     against them before presenting a change. `data_doc` takes
      a `command` (`scan` / `build` / `check` / `lineage`); `lineage <object>
      [depth]` returns one object's upstream/downstream + relationships as JSON
      from the built graph, so the agent grounds a change in real lineage instead
@@ -94,9 +108,15 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      plus the `coop-data-doc` setup wizard built on
      Pi's native dialogs (the on-demand `/setup-docs` command and the explicit
      *Document my data* `/start` action), since coop-data-doc's own
-     questionary wizard can't be driven from a non-TTY child. (The `setup-docs`
-     skill + prompt launch coop-data-doc's authoritative questionnaire over JSONL;
-     terminal and in-agent setup both end at the same `coop-data-doc.yml`.)
+     questionary wizard can't be driven from a non-TTY child. The wizard drives
+     coop-data-doc's authoritative questionnaire over its JSONL bridge, and
+     coop-data-doc (the companion tool) owns `coop-data-doc.yml`: coop never
+     writes that file itself. (The `setup-docs` skill + prompt reach the same
+     questionnaire; terminal and in-agent setup both end at the same file.)
+   - **`coop-profile` extension** — `extensions/coop-profile/`: injects the local
+     Coop user profile (`user.json`, written by `coop onboard`) as a small hidden
+     instruction at session start, so the agent addresses the member by name and
+     in their preferred style without the profile ever appearing in the chat.
    - **`coop-guardrails` extension** — `extensions/coop-guardrails/`: **enforces**
      governance at runtime via a `tool_call` hook (blocks the agent committing
      source; confirms destructive commands). Complements the advisory
@@ -108,10 +128,17 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      bounded session-grant checks. `COOP_NO_GUARDRAILS=1` disables.
 
 4. **Pi extensions installed from npm** into coop's isolated agent dir
-   (`config/defaults.yml`; exact pins in `config/release-manifest.json`, and
-   their transitive dependencies in `config/extensions-lock.json`, which
+   (the `extensions` list of `config/release-manifest.json`, the one manifest,
+   with their transitive dependencies in `config/extensions-lock.json`, which
    `coop sync` installs with `npm ci` so every machine on a release runs the same
-   tree):
+   tree). One convergence path (master plan S2): `coop install` and `coop update`
+   converge Pi, the pipx tools, the Fabric CLI and the npm authoring tools through
+   the same `lib/common.ps1` functions (`Get-CoopFleetPlan` reads the manifest;
+   `Invoke-CoopPiConverge` / `Invoke-CoopPipxConverge` /
+   `Invoke-CoopFabricCliConverge` / `Invoke-CoopNpmToolConverge` probe, skip at
+   the pin, else install) and leave the extensions to the `coop sync` child both
+   run, where `Sync-CoopExtensionFleet` is the one `pi install` path (pins,
+   lockfile, pi-ai/pi-tui alignment, postconditions). The extensions are:
    - `pi-mcp-adapter` — wires the read-only MCP servers.
    - `pi-hermes-memory` — persistent memory, session search, secret scanning.
    - `pi-better-openai` — plan usage limits (5h / 7d windows), surfaced in
@@ -125,8 +152,13 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
    - `@xl0/pi-lovely-rename` — names an unnamed session after three user turns
      (`/rename` regenerates; a manual `/name` always wins). The name shows in
      coop's footer and terminal title.
-   - Optional: `pi-permissions` (finer per-tool permission gating). *(`@aliou/pi-guardrails`
-     was dropped — pinned to the deprecated Pi and superseded by `coop-guardrails`.)*
+   - `context-mode` — a native Pi extension (not an MCP server) that runs
+     sandboxed code over the built docs/graph to save context, still subject to
+     Pi's tool approval.
+
+   The list is exactly the manifest's `extensions` object; nothing optional ships
+   beside it. *(`@aliou/pi-guardrails` was dropped — pinned to the deprecated Pi
+   and superseded by `coop-guardrails`.)*
 
    `pi-powerline-footer` is **not** used — coop renders its own footer/splash via
    `extensions/coop-powerline` (see layer 3).
@@ -142,13 +174,12 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      prompting — and exposes non-interactive twins of its wizard for agents/CI
      (`folders` / `set-folders`, `show-config` / `config-set`, `resolve` /
      `resolve-apply`).
-   - `coop-sql-review` — advisory T-SQL standards linter
-     (`check <paths> --format json`). Never edits or blocks.
-   - `coop-dax-review` — advisory DAX standards linter (same shape).
+   (`coop-sql-review` and `coop-dax-review` were retired in ST1: their rules now
+   live in the coop-standards wiki articles coop writes against.)
 
 6. **Microsoft platform tooling:**
    - **`fab`** — the Microsoft Fabric CLI (`ms-fabric-cli`). `coop fabric …` is a
-     pass-through. NOTE: a Homebrew `fabric` formula ships a *different* `fab`
+     pass-through. NOTE: the Python `fabric` package ships a *different* `fab`
      (Python SSH / Paramiko) — a real `PATH` collision that `coop doctor`
      detects and warns about.
    - **`fabric-cicd`** — a Python **LIBRARY** (no CLI). coop installs it via
@@ -185,9 +216,9 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 
 ```mermaid
 flowchart TD
-    user([User]) --> coop["coop (bin/coop)\nbranded layer / orchestrator — never a fork"]
+    user([User]) --> coop["coop (bin/coop.ps1)\nbranded layer / orchestrator — never a fork"]
 
-    coop -- "subcommands:\ndoctor · update · install · sync\ndata-doc · sql-review · dax-review · fabric" --> subs[[coop subcommands]]
+    coop -- "subcommands:\ndoctor · update · install · sync\ndata-doc · fabric" --> subs[[coop subcommands]]
     coop -- "exec pi --append-system-prompt --skill\n--prompt-template --theme -e …" --> pi["Pi\n@earendil-works/pi-coding-agent"]
 
     subgraph LAYER["Cooptimize layer (this repo)"]
@@ -196,7 +227,9 @@ flowchart TD
       prompts["prompts/"]
       theme["themes/cooptimize.json"]
       ext_pl["ext: coop-powerline\nfooter · splash · rotating feature tips\n(no pi-powerline-footer)"]
-      ext_tools["ext: coop-tools\nsql_review · dax_review · data_doc (scan/build/check/lineage)\n+ /setup-docs wizard · before_agent_start lineage note"]
+      ext_tools["ext: coop-tools\ndata_doc (scan/build/check/lineage) · bpa_review\n+ standards articles in context · /setup-docs wizard · lineage note"]
+      ext_profile["ext: coop-profile\nhidden user-profile instruction"]
+      ext_guard["ext: coop-guardrails\ntool_call hook · policy enforcement"]
     end
 
     pi --> guard
@@ -205,41 +238,42 @@ flowchart TD
     pi --> theme
     pi --> ext_pl
     pi --> ext_tools
+    pi --> ext_profile
+    pi --> ext_guard
 
-    subgraph PIEXT["Pi extensions (npm, into ~/.coop/agent)"]
+    subgraph PIEXT["Pi extensions (npm, into ~/.coop/agent; the manifest's extensions list)"]
       mcpad["pi-mcp-adapter"]
       mem["pi-hermes-memory"]
       bopenai["pi-better-openai\nplan usage limits (5h/7d)"]
+      webacc["pi-web-access"]
+      askq["rpiv-ask-user-question"]
+      rename["pi-lovely-rename"]
+      ctxmode["context-mode\n(native extension, not MCP)"]
     end
     pi --> PIEXT
     bopenai -. "status via getExtensionStatuses()" .-> ext_pl
 
     subgraph TOOLS["Standalone tools (pipx) — CLIs + the fabric-cicd library"]
       datadoc["coop-data-doc\nscan→graph.json\nbuild→manifest.json + docs + portal\nlineage <object>→up/downstream JSON"]
-      sqlrev["coop-sql-review\ncheck --format json (advisory)"]
-      daxrev["coop-dax-review\ncheck --format json (advisory)"]
-      fab["fab (Microsoft Fabric CLI)\n⚠ Homebrew 'fab' collision → doctor"]
+      fab["fab (Microsoft Fabric CLI)\n⚠ Python Fabric 'fab' collision → doctor"]
       cicd["fabric-cicd (LIBRARY, no CLI)\npipx inject ms-fabric-cli fabric-cicd\nimport fabric_cicd · validate-only"]
       te["Tabular Editor CLI\noptional · path-configured"]
     end
     subs --> datadoc
-    subs --> sqlrev
-    subs --> daxrev
     subs --> fab
     ext_tools --> datadoc
-    ext_tools --> sqlrev
-    ext_tools --> daxrev
+    ext_tools --> te
 
     subgraph MCP["Approval-gated MCP (optional)"]
       fmcp["fabric"]
       pmcp["powerbi-modeling-mcp (edits ask)"]
       lmcp["microsoft-learn"]
-      cmcp["context-mode"]
+      smcp["fabric-sqlendpoint (SQL asks)"]
     end
     mcpad --> MCP
 
     classDef ro fill:#eef,stroke:#00416B
-    class MCP,fmcp,pmcp,lmcp,cmcp ro
+    class MCP,fmcp,pmcp,lmcp,smcp ro
 ```
 
 ## Governance flow
@@ -249,9 +283,11 @@ or lineage runs through the **`coop-workflow` skill** (principles-first), enforc
 `guardrails.md` system prompt: read project context plus COOP's resolved standards
 task authority (including any deliberate project override) →
 scope and impact → read target + lineage (`data_doc`) → **PLAN + explicit
-approval** → timestamped backup → smallest safe edit → review
-(`sql_review` / `dax_review`, plus Tabular Editor BPA / `fabric-cicd` validate
-where relevant) → diff + summarize → update docs/glossary/lineage and regenerate
+approval** → timestamped backup → smallest safe edit → self-check
+(the diff against the same standards articles used to write it: fix what does not
+meet them, deviate only on a user exception or a stated reason; plus Tabular Editor
+BPA / `fabric-cicd` validate where relevant) →
+diff + summarize → update docs/glossary/lineage and regenerate
 the site → append to the daily log → **commit docs/logs/site only with approval;
 never commit source**.
 

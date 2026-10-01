@@ -68,9 +68,14 @@ partial, or connected project without requiring the user to edit YAML.
 5. **Back up.** Create a timestamped backup of every file you will change, under
    `.backups/...` using `backup.timestamp_format` from the contract.
 6. **Smallest safe edit.** Make the minimal change that satisfies the request.
-7. **Review.** Run the applicable review tool: `sql_review` (`coop-sql-review`) for
-   SQL, `dax_review` (`coop-dax-review`) for DAX/models. Where relevant, run Tabular
-   Editor BPA and `fabric-cicd` in validate-only mode. Address findings.
+7. **Self-check.** Before presenting SQL, DAX, or model changes, check your own diff
+   against the same standards articles you used to write them, rule by rule. The
+   standards are the rule, not advice: fix anything that does not meet them before
+   you present it. Deviate only when the user has granted an exception for it or you
+   can state a concrete reason it cannot or should not apply here, and say which in
+   the summary (there is no separate rule engine; this check is it). Where relevant,
+   run Tabular Editor BPA (`bpa_review`, the deterministic model check) and
+   `fabric-cicd` in validate-only mode. Address findings.
 8. **Diff + summarize.** Show `git diff` and summarize the change in plain language.
 9. **Document.** Update Markdown docs, glossary, and lineage; regenerate the site
    (or re-run `coop-data-doc build`) if documentation changed.
