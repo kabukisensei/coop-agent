@@ -642,25 +642,21 @@ coop_release_check_pins() {
     coop_confirm "Release without verifying the tested_with pins?" || return 1
     return 0
   fi
-  local tool key pin rel mismatch=0
-  for tool in coop-data-doc; do
-    key="$(printf '%s' "$tool" | tr '-' '_')"
-    pin="$(coop_yaml_get "$defaults" "tested_with.$key" "")"
-    # versions.json keeps a strict one-`"key": "value"`-per-line layout (enforced
-    # by coop-website's own checker), so sed is safe — and python-free — here.
-    rel="$(sed -n 's/^[[:space:]]*"'"$tool"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$vjson")"; rel="${rel%%$'\n'*}"
-    if [ -z "$rel" ]; then
-      coop_warn "could not read $tool from coop-website/versions.json — skipping its pin check."
-      continue
-    fi
-    if [ -z "$pin" ]; then
-      coop_warn "could not read tested_with.$key from config/defaults.yml (versions.json says $tool is $rel)."
-      mismatch=1
-    elif [ "$pin" != "$rel" ]; then
-      coop_warn "tested_with.$key is $pin but coop-website/versions.json says $tool is $rel."
-      mismatch=1
-    fi
-  done
+  # One pin since ST1 (coop-data-doc); the sql/dax reviewers are retired.
+  local tool=coop-data-doc key=coop_data_doc pin rel mismatch=0
+  pin="$(coop_yaml_get "$defaults" "tested_with.$key" "")"
+  # versions.json keeps a strict one-`"key": "value"`-per-line layout (enforced
+  # by coop-website's own checker), so sed is safe — and python-free — here.
+  rel="$(sed -n 's/^[[:space:]]*"'"$tool"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$vjson")"; rel="${rel%%$'\n'*}"
+  if [ -z "$rel" ]; then
+    coop_warn "could not read $tool from coop-website/versions.json — skipping its pin check."
+  elif [ -z "$pin" ]; then
+    coop_warn "could not read tested_with.$key from config/defaults.yml (versions.json says $tool is $rel)."
+    mismatch=1
+  elif [ "$pin" != "$rel" ]; then
+    coop_warn "tested_with.$key is $pin but coop-website/versions.json says $tool is $rel."
+    mismatch=1
+  fi
   if [ "$mismatch" = "1" ]; then
     coop_die "tested_with pins disagree with coop-website/versions.json — update config/defaults.yml (see RELEASE.md), or re-run with --no-check."
   fi

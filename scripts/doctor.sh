@@ -693,18 +693,17 @@ EOF_PLAN
         fi
       fi
     fi
-    for t in coop-data-doc; do
-      if ! have "$t"; then
-        t_spec="$(coop_manifest_python_spec "$t")"
-        if [ -z "$t_spec" ]; then
-          coop_warn "no release pin for $t in the manifest" "run: coop update"
-          repair_failed=1
-          continue
-        fi
+    t=coop-data-doc
+    if ! have "$t"; then
+      t_spec="$(coop_manifest_python_spec "$t")"
+      if [ -z "$t_spec" ]; then
+        coop_warn "no release pin for $t in the manifest" "run: coop update"
+        repair_failed=1
+      else
         coop_info "pipx install $t_spec"
         pipx install "$t_spec" >/dev/null 2>&1 && coop_ok "$t installed" || coop_warn "could not install $t (run: pipx install $t_spec)"
       fi
-    done
+    fi
   fi
   [ "$repair_failed" -eq 0 ] || exit 1
   coop_info "Re-checking… (system deps like node/python/pipx install manually — see hints above)"
