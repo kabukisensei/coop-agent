@@ -96,7 +96,11 @@ if (Test-Have 'pi') {
   $piProbe = Get-CoopPiVersion
   if ($piProbe) {
     $piv = [version]$piProbe
-    if ($piv -lt [version]'0.79.0') { D-Warn "pi $piv is older than the tested minimum (0.79.0)" 'coop update' }
+    # Floor: config/defaults.yml tested_with.pi_min (the extension API coop relies on);
+    # 0.79.0 only if that key is missing.
+    $piMin = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') 'tested_with.pi_min' '0.79.0'
+    if ($piMin -notmatch '^\d+\.\d+(\.\d+)?$') { $piMin = '0.79.0' }
+    if ($piv -lt [version]$piMin) { D-Warn "pi $piv is older than the tested minimum ($piMin)" 'coop update' }
     # Ceiling: warn (never fail) when the installed Pi is a newer MINOR than coop's tested
     # version. `coop update` gates the jump; doctor just flags it.
     $testedPi = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') 'tested_with.pi' ''
@@ -632,7 +636,7 @@ if (Test-Have 'node') {
       if ($syncFailed) { D-Warn "$kind ${name}: $state" $hint }
       else { D-Ok "$kind ${name}: last known good @ $(($detail -split '\|')[0]) (verified at the last check; the next coop launch or coop sync refreshes it)" }
     }
-    elseif ($state -match 'unavailable|auth_required|dirty_preserved|invalid_preserved|wiki_warning|PENDING_OWNER_PROVISIONING') { D-Warn "$kind ${name}: $state" $hint }
+    elseif ($state -match 'unavailable|auth_required|dirty_preserved|wiki_warning') { D-Warn "$kind ${name}: $state" $hint }
     else { D-Ok "$kind ${name}: $state$(if ($detail) { " @ $detail" } else { '' })" }
   }
 } else {

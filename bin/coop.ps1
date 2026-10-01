@@ -91,7 +91,6 @@ function Add-CoopRuntimePaths {
   }
 }
 
-# Summarize a coop-data-doc manifest/graph JSON artifact. (mirror of the inline PY in run_data_doc)
 # --- Onboarding / profile ----------------------------------------------------
 function Invoke-CoopOnboard {
   param([string[]]$Rest)
@@ -940,11 +939,11 @@ function Invoke-CoopInit {
   Coop-Info 'Run the same native lineage wizard via `coop data-doc setup` or /setup-docs inside coop.'
 }
 
-# Seed coop-data-doc.yml's repos: from the contract's repositories: (issue #25) —
-# mirror of coop_init_seed_docs in bin/coop. lib/_seeddocs.py classifies the filled
-# repos into coop-data-doc's sql/powerbi slots (TODO placeholders skipped with a
-# note) and prints the JSON patch; `coop-data-doc config-set --from-json -` applies
-# it non-destructively. Declining changes nothing.
+# Seed coop-data-doc.yml's repos: from the contract's repositories: (issue #25).
+# `coop init --seed-docs` runs this after the contract exists: lib/_seeddocs.py
+# classifies the filled repos into coop-data-doc's sql/powerbi slots (TODO
+# placeholders skipped with a note) and prints the JSON patch; `coop-data-doc
+# config-set --from-json -` applies it non-destructively. Declining changes nothing.
 function Invoke-CoopInitSeedDocs {
   param([string]$Dir)
   $proj = Join-Path $Dir '.coop\project.yml'
