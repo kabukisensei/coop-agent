@@ -245,8 +245,9 @@ or lineage runs through the **`coop-workflow` skill** (principles-first), enforc
 task authority (including any deliberate project override) →
 scope and impact → read target + lineage (`data_doc`) → **PLAN + explicit
 approval** → timestamped backup → smallest safe edit → self-check
-(the diff against the same standards articles used to write it, naming any rule it
-could not meet; plus Tabular Editor BPA / `fabric-cicd` validate where relevant) →
+(the diff against the same standards articles used to write it: fix what does not
+meet them, deviate only on a user exception or a stated reason; plus Tabular Editor
+BPA / `fabric-cicd` validate where relevant) →
 diff + summarize → update docs/glossary/lineage and regenerate
 the site → append to the daily log → **commit docs/logs/site only with approval;
 never commit source**.

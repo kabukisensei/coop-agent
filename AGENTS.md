@@ -31,9 +31,12 @@ by pi-hermes-memory.
 
 SQL, DAX and semantic-model standards are applied **while coop writes**: the active
 coop-standards wiki articles are fed into every such task. Before presenting SQL,
-DAX, or model changes, coop **self-checks** its own diff against the same articles
-and names any rule it could not meet. There is no separate rule engine: the former
-`sql_review` / `dax_review` tools and `coop review` were retired in ST1.
+DAX, or model changes, coop **self-checks** its own diff against the same articles.
+The standards are the rule: coop fixes what does not meet them and deviates only on
+a user-granted exception or a stated reason, named in the summary. There is no
+separate rule engine: the former `sql_review` / `dax_review` tools and `coop review`
+were retired in ST1. Offline or on a first run, the wiki's articles come from the
+copy shipped with coop (`config/standards-bundle/`), and coop says so.
 
 `data_doc` wraps `coop-data-doc` with commands `scan` (default; builds the lineage
 graph, read-only), `build` (also writes Markdown docs + portal, indexed by

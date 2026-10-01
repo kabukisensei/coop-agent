@@ -33,7 +33,7 @@ or when the user explicitly opts out for that task.
 
 ## Tool summary
 
-Advisory tools: `data_doc`, `bpa_review`. Self-check SQL/DAX/model changes against the standards articles in context; name any unmet rule. A missing or partial repo is not a blocker: use local sources, then approved live discovery. Read-only MCP (Fabric, Power BI, Microsoft Learn), memory, web, and ask-user. See `docs/guardrails-reference.md` and the `coop-workflow` skill.
+Advisory tools: `data_doc`, `bpa_review`. Follow the standards in context; deviate only on a user exception or a stated reason. A missing or partial repo is not a blocker: use local sources, then approved live discovery. Read-only MCP (Fabric, Power BI, Microsoft Learn), memory, web, and ask-user. See `docs/guardrails-reference.md` and the `coop-workflow` skill.
 
 ## Read focused
 

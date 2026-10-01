@@ -68,8 +68,8 @@ agent to "use the lakehouse-naming-review skill."
 > needs to run a tool, point it at the native tools (`data_doc`, `bpa_review`) or
 > `fab` / `fabric-cicd` (validate-only). For SQL/DAX standards there is no tool to
 > call: the active coop-standards articles are already in context, so a skill asks
-> the agent to write to them and self-check its diff against them (naming any rule
-> it could not meet). `bpa_review` called without explicit paths auto-scopes to the
+> the agent to write to them and self-check its diff against them (fixing what does
+> not meet them; a deviation needs a user exception or a stated reason). `bpa_review` called without explicit paths auto-scopes to the
 > nearest `.coop/project.yml`'s `power_bi.semantic_models` entries — see
 > [docs/tool-contract.md](tool-contract.md).
 

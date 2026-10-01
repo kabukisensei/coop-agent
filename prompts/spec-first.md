@@ -17,7 +17,7 @@ spec** and get my approval on it. Cover:
 - **Edge cases** — nulls, late/duplicate data, incremental-refresh windows,
   permission boundaries.
 - **Test / validation plan** — which checks will prove it works: the standards
-  self-check (name any rule the change cannot meet), BPA, `fabric-cicd` validate,
+  self-check (every rule met, or a user exception / stated reason for each deviation), BPA, `fabric-cicd` validate,
   tests.
 
 Keep the spec focused — read the object plus its immediate lineage neighbors, not

@@ -438,7 +438,7 @@ command text and should not be shared as sanitized exports.
 4. Write a short **PLAN** and get explicit approval **before** any edit.
 5. Create a timestamped backup of every file to be changed.
 6. Make the smallest safe edit.
-7. Self-check: before presenting SQL, DAX, or model changes, check the diff against the same standards articles used to write them and name any rule it could not meet (plus Tabular Editor BPA / `fabric-cicd` validate where relevant).
+7. Self-check: before presenting SQL, DAX, or model changes, check the diff against the same standards articles used to write them; fix what does not meet them, and deviate only on a user exception or a stated reason (plus Tabular Editor BPA / `fabric-cicd` validate where relevant).
 8. Show `git diff` and summarize the change.
 9. Update Markdown docs / glossary / lineage; regenerate the site if docs changed.
 10. If `logging.require_task_log` is enabled, use `daily-logger` and append to the
@@ -477,8 +477,11 @@ append, not a commit or push.
 
 Coop resolves five governed domains: SQL, DAX, semantic model, Fabric, and
 documentation. Precedence is **project/client override → verified canonical generation →
-stale last-known-good → unavailable** (there is no bundled fallback). A project override is
-the effective authority when configured; Coop does not silently claim it is canonical.
+stale last-known-good → bundled copy → unavailable**. The bundled copy is the wiki's
+active articles as shipped with this coop release (`config/standards-bundle/`, refreshed
+at every release), so a first run or an offline machine still works to the standards;
+coop says when it is using it. A project override is the effective authority when
+configured; Coop does not silently claim it is canonical.
 
 Launch performs a bounded, fail-soft refresh. Each task receives an immutable standards
 snapshot (one content-addressed file per domain; its hash is the resolution identity),

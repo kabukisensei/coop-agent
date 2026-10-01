@@ -117,11 +117,18 @@ the independent states/revisions of formal standards, the Incremental BI
 `approved_pattern`, and governed TeamAI `team_knowledge`.
 
 Resolution precedence is project/client override, verified canonical checkout,
-verified stale last-known-good, then truthful unavailable/auth-required. The
-resolution states are `canonical`, `project_override`, `stale_last_known_good`,
-`auth_required` and `unavailable`; there is no bundled fallback (ST1), so without
-the wiki or a project override a domain is reported unavailable and the agent is
-told so. Existing relative `standards.sql` and `standards.dax`
+verified stale last-known-good, the bundled copy, then truthful
+unavailable/auth-required. The resolution states are `canonical`,
+`project_override`, `stale_last_known_good`, `bundled`, `auth_required` and
+`unavailable`. The bundled copy is `config/standards-bundle/`: the wiki's active
+articles at their wiki paths plus `bundle.json` (repository, branch, revision,
+capture time, every article's sha256), written from a verified clone by
+`node lib/standards-cli.mjs bundle-update <clone>` before each release and
+checked by `bundle-check`. It is used only when it names the registry's own
+repository and branch and every listed article is present unchanged; a domain
+resolved from it carries `state=bundled`, `degraded: true` and the capture date,
+the agent is told the wiki was unreachable, and `coop doctor` warns. Its
+snapshot hash equals the canonical one for the same article bytes. Existing relative `standards.sql` and `standards.dax`
 paths in v0.23.1 project contracts remain project-local overrides without rewriting
 the contract. Project-controlled paths must resolve to regular files whose real
 paths stay inside the project root; traversal, absolute POSIX/Windows paths, and

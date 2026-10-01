@@ -31,15 +31,30 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   not meet. `bpa_review` (Tabular Editor BPA) stays as the deterministic model
   check. `coop uninstall` still removes the two retired venvs when an older coop
   left them behind. The two CLI repositories are archived separately.
-- The bundled-fallback standards resolution. It discovered a standard by
-  running a reviewer CLI and binding its provenance, so it leaves with the
-  reviewers: without the coop-standards wiki or a project override a domain now
-  reports `unavailable` (or `auth_required`) instead of `bundled_fallback`, and
-  the `.coop/reviews` accepted-generation store, reviewer report validation and
-  the `verify-report` / `promote-run` / `accepted-run` CLI subcommands are
-  removed. The per-domain snapshot file keeps its role as the resolution's
-  content address; its header now reads "coop standards snapshot" instead of
-  "reviewer-input cache".
+- The reviewer-discovered bundled fallback (`bundled_fallback`). It found a
+  standard by running a reviewer CLI and binding its provenance, so it leaves
+  with the reviewers, together with the `.coop/reviews` accepted-generation
+  store, reviewer report validation and the `verify-report` / `promote-run` /
+  `accepted-run` CLI subcommands. The per-domain snapshot file keeps its role as
+  the resolution's content address; its header now reads "coop standards
+  snapshot" instead of "reviewer-input cache". Its replacement is the bundled
+  copy below.
+
+### Added
+
+- A bundled copy of the coop-standards wiki (`config/standards-bundle/`: the
+  active articles at their wiki paths plus `bundle.json` with the source
+  revision, capture time and per-article hashes), so a first run or an offline
+  machine still works to the standards. Resolution order is now project
+  override, canonical, stale last-known-good, bundled copy, unavailable. A
+  domain served from the copy says so (`state=bundled`, the capture date and a
+  "run coop sync when online" note in the agent's context; a `coop doctor`
+  warning). Maintainers refresh it before a release with
+  `node lib/standards-cli.mjs bundle-update <clean clone>`; `bundle-check`
+  verifies it and the gate lane runs that check.
+- The workflow now states the standards rule the self-check enforces: follow
+  the standards; deviate only when the user has granted an exception or coop
+  states a concrete reason, and say which in the summary.
 
 ### Added
 

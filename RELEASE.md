@@ -8,7 +8,10 @@ PyPI), **coop-agent** (this repo), and **coop-website** (static site). Release
 `coop-review-core`, `coop-dax-review` and `coop-sql-review` are **archived**
 (master plan ST1 retired the review CLIs; their rules now live in the
 `cooptimize/coop-standards` wiki, which coop reads at launch and is not released
-through this runbook). They are no longer part of a suite release.
+through this runbook). They are no longer part of a suite release. coop does ship
+a **bundled copy** of that wiki for first runs and offline machines
+(`config/standards-bundle/`); refresh it as part of the coop-agent release (step
+(b) below).
 
 ## When to release — explicit instruction only
 
@@ -127,6 +130,14 @@ requires it anyway.) **Also update the `==X.Y.Z` pin in
 pipelines and the "Pinning the tool version" prose) to the same version — the
 pre-tag gate does **not** check `docs/ci.md`, so that pin drifts silently if
 you skip this.
+
+**Refresh the bundled standards copy** so the release ships the wiki as it is
+today (first runs and offline machines read it until `coop sync` reaches the
+wiki): from a clean clone of `cooptimize/coop-standards` on `main`, run
+`node lib/standards-cli.mjs bundle-update <path to that clone>`, then
+`node lib/standards-cli.mjs bundle-check` (exit 0), and commit
+`config/standards-bundle/` as `standards: bundle wiki @ <short revision>`. The
+gate lane fails if the bundle does not verify.
 
 From a clean tree on an attached `main` that equals `origin/main` (`coop release`
 fetches `origin` and refuses anything else), with user-visible changes recorded

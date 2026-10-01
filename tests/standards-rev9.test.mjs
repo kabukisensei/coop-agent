@@ -116,21 +116,27 @@ try {
     assert.equal(r.state, "project_override"); assert.equal(r.source_path, resolve(project, "client", "sql.md")); assert.match(r.path, /snapshots/);
   });
 
-  test("STD-06", "unavailable canonical uses verified stale, unavailable, and auth states (no bundled fallback)", () => {
+  test("STD-06", "unavailable canonical uses verified stale, unavailable, and auth states (a bundle for another repository is ignored)", () => {
     const stale = resolveStandard("sql", opts({ now: () => now + 901_000 }));
     assert.equal(stale.state, "stale_last_known_good"); assert.equal(stale.revision, r1);
+    // The fixture registry names a temp remote; the real config/standards-bundle is
+    // bound to cooptimize/coop-standards, so it never answers for this registry.
     for (const domain of ["sql", "dax", "semantic_model"]) {
       const r = resolveStandard(domain, none({ cwd: tmp }));
       assert.equal(r.state, "unavailable"); assert.equal(r.path, null); assert.equal(r.revision, null); assert.equal(r.sha256, null);
       assert.equal(resolveStandard(domain, none({ cwd: tmp, authRequired: true })).state, "auth_required");
     }
     assert.equal(RESOLUTION_STATES.includes("bundled_fallback"), false);
+    assert.equal(RESOLUTION_STATES.includes("bundled"), true);
   });
 
   test("STD-07", "unavailable standards are reported truthfully by the CLI, Doctor and Support", () => {
-    const env = { ...process.env, COOP_STANDARDS_ROOT: join(tmp, "none", "canonical"), COOP_STANDARDS_STATE: join(tmp, "none", "status.json"), COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "failed-support-home"), NO_COLOR: "1" };
+    // Without the bundled copy as well (COOP_STANDARDS_BUNDLE names an empty dir); the
+    // shipped copy's own reporting is tests/standards-bundle.test.mjs.
+    const env = { ...process.env, COOP_STANDARDS_ROOT: join(tmp, "none", "canonical"), COOP_STANDARDS_STATE: join(tmp, "none", "status.json"), COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_STANDARDS_BUNDLE: join(tmp, "none", "bundle"), COOP_DIR: join(tmp, "failed-support-home"), NO_COLOR: "1" };
     const lines = execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
     assert.match(lines, /domain\tsql\tformal_standard\/unavailable/);
+    assert.match(lines, /source\tbundled-copy\tunavailable\t/);
     const doctor = spawnSync("bash", [join(ROOT, "scripts", "doctor.sh")], { cwd: tmp, encoding: "utf8", env: doctorEnv(env, "failed-doctor-home") });
     assert.match(`${doctor.stdout}\n${doctor.stderr}`, /domain sql: formal_standard\/unavailable/);
     const support = JSON.parse(execFileSync(process.execPath, [join(ROOT, "lib", "support-center-cli.mjs"), "--json"], { encoding: "utf8", env }));
@@ -177,14 +183,17 @@ try {
     const status = sourceStatus(opts({ cwd: tmp }));
     assert.equal(status.canonical_remote, CANONICAL_REMOTE_STATE); assert.equal(status.sources[0].revision, r1); assert.equal(status.sources[0].state, "available");
     // The CLI, doctor and Support use the committed production registry, which names
-    // the private GitHub remote: this fixture's cache is not its authority.
+    // the GitHub remote: this fixture's cache is not its authority, so the shipped
+    // bundled copy answers for the domains it carries, and doctor warns about it.
     const env = { ...process.env, COOP_STANDARDS_ROOT: cache, COOP_STANDARDS_STATE: state, COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "support-home"), NO_COLOR: "1" };
     const lines = execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
     assert.match(lines, /canonical-remote\tconfigured\thttps:\/\/github\.com\/cooptimize\/coop-standards\.git\|main/);
-    for (const domain of ["sql", "dax", "semantic_model"]) assert.match(lines, new RegExp(`domain\\t${domain}\\tformal_standard/unavailable`));
+    for (const domain of ["sql", "dax", "semantic_model"]) assert.match(lines, new RegExp(`domain\\t${domain}\\tformal_standard/bundled\\t[0-9a-f]{40}\\|[0-9a-f]{64}\\|.*\\|fallback`));
+    assert.match(lines, /domain\tdocumentation\tformal_standard\/unavailable/);
     const doctor = spawnSync("bash", [join(ROOT, "scripts", "doctor.sh")], { cwd: tmp, encoding: "utf8", env: doctorEnv(env, "doctor-home") });
     assert.match(`${doctor.stdout}\n${doctor.stderr}`, /source canonical-remote: configured/);
-    assert.match(`${doctor.stdout}\n${doctor.stderr}`, /domain sql: formal_standard\/unavailable/);
+    assert.match(`${doctor.stdout}\n${doctor.stderr}`, /! domain sql: formal_standard\/bundled \(the copy shipped with coop; [0-9a-f]{40}\)/);
+    assert.match(`${doctor.stdout}\n${doctor.stderr}`, /run coop sync when online/);
     const support = JSON.parse(execFileSync(process.execPath, [join(ROOT, "lib", "support-center-cli.mjs"), "--json"], { encoding: "utf8", env }));
     assert.equal(support.manifest.components.find((x) => x.component === "standards").status, "degraded");
     assert.equal(support.standards.canonical_remote, CANONICAL_REMOTE_STATE);

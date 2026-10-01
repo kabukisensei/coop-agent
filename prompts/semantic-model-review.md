@@ -13,6 +13,6 @@ Required steps:
 5. If Tabular Editor CLI is enabled in the contract, run Tabular Editor BPA against the model; otherwise note it is unavailable.
 6. Check measures, relationships, and naming against the DAX standards, weighting `{{focus}}`: relationship cardinality and cross-filter direction, measure correctness and formatting, hidden technical columns, consistent naming.
 7. Write a short PLAN of recommended changes — read-only first; do not edit anything until the user approves.
-8. With approval, back up before any edit, make the smallest safe change, self-check the diff against the same standards articles (name any rule it could not meet), re-run BPA where enabled, and show `git diff`.
+8. With approval, back up before any edit, make the smallest safe change, self-check the diff against the same standards articles (fix what does not meet them; deviate only on a user exception or a stated reason), re-run BPA where enabled, and show `git diff`.
 9. Update Markdown docs, glossary, and lineage; append a review entry to the daily log.
 10. Never commit semantic model / report / DAX source. Commit docs/logs/site only with approval.

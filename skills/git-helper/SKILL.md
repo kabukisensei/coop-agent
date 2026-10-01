@@ -16,7 +16,7 @@ rule 4) — a human does — so the job here is to make the human's commit effor
    source changes from docs/logs/site changes.
 3. If SQL / DAX / semantic-model objects changed, note the lineage impact
    (`data_doc` tool, `command="lineage"`) and any standards self-check findings
-   (rules the change could not meet) from this session.
+   (any deviation and its user exception or stated reason) from this session.
 
 ## Commit message (Conventional Commits)
 

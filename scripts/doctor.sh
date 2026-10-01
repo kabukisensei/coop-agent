@@ -562,6 +562,7 @@ if have node; then
       *stale_last_known_good*)
         if [ "$_sync_failed" = 1 ]; then warn "$_kind $_name: $_state" "${_detail:-standards remain fail-soft}"
         else ok "$_kind $_name: last known good @ ${_detail%%|*} (verified at the last check; the next coop launch or coop sync refreshes it)"; fi ;;
+      *bundled*) warn "$_kind $_name: $_state (the copy shipped with coop; ${_detail%%|*})" "the coop-standards wiki has not been reached from this machine; run coop sync when online" ;;
       *unavailable*|*auth_required*|*dirty_preserved*|*invalid_preserved*|wiki_warning|PENDING_OWNER_PROVISIONING) warn "$_kind $_name: $_state" "${_detail:-standards remain fail-soft}" ;;
       *) ok "$_kind $_name: $_state${_detail:+ @ $_detail}" ;;
     esac
@@ -569,7 +570,7 @@ if have node; then
 $(node "$COOP_ROOT/lib/standards-cli.mjs" doctor-lines "" "$PWD" 2>/dev/null)
 EOF
 else
-  warn "standards status unavailable" "Node is required to discover and verify any SQL/DAX bundled fallback"
+  warn "standards status unavailable" "Node is required to verify the standards wiki cache and the bundled copy"
 fi
 
 section "Optional"

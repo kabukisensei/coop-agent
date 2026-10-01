@@ -15,7 +15,7 @@ Capture from this session:
   human action needed.
 - **Documentation / logs / site committed** (with approval) — commit + summary.
 - **Standards / quality findings** — from the self-check against the standards
-  articles in context (cite file:line + the rule you could not meet), Tabular
+  articles in context (cite file:line, the rule, and the exception or reason for any deviation), Tabular
   Editor BPA, or `fabric-cicd` validate.
 - **Open questions** and **next suggested actions**.
 

@@ -617,11 +617,12 @@ if (Test-Have 'node') {
       if ($syncFailed) { D-Warn "$kind ${name}: $state" $hint }
       else { D-Ok "$kind ${name}: last known good @ $(($detail -split '\|')[0]) (verified at the last check; the next coop launch or coop sync refreshes it)" }
     }
+    elseif ($state -match 'bundled') { D-Warn "$kind ${name}: $state (the copy shipped with coop; $(($detail -split '\|')[0]))" 'the coop-standards wiki has not been reached from this machine; run coop sync when online' }
     elseif ($state -match 'unavailable|auth_required|dirty_preserved|invalid_preserved|wiki_warning|PENDING_OWNER_PROVISIONING') { D-Warn "$kind ${name}: $state" $hint }
     else { D-Ok "$kind ${name}: $state$(if ($detail) { " @ $detail" } else { '' })" }
   }
 } else {
-  D-Warn 'standards status unavailable' 'Node is required to discover and verify any SQL/DAX bundled fallback'
+  D-Warn 'standards status unavailable' 'Node is required to verify the standards wiki cache and the bundled copy'
 }
 
 D-Head 'Optional'
