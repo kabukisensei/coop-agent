@@ -3,8 +3,8 @@
 
 This fixture contains no client data and performs no live calls. It proves the
 intended control flow: one MCP SQL executor, approval before bounded rows, SQL
-generated from schema/fixture rows, and review tied to the same pinned standard
-revision.
+generated from schema/fixture rows, and the self-check tied to the same pinned
+standard revision.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ group by invoice_date
 order by invoice_date desc;"""
 
 review = {
-    "tool": "coop-sql-review",
+    "tool": "coop-standards-self-check",
     "standard_revision": SQL_STANDARD_REVISION,
     "sql_sha256": hashlib.sha256(generated_sql.encode("utf-8")).hexdigest(),
     "status": "pass",

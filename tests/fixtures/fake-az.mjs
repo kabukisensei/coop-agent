@@ -1,8 +1,7 @@
-// Shared fake Azure CLI for the H2 sign-in fixtures: tests/azcache.test.sh,
-// tests/fixtures/azcache.test.ps1, tests/doctor.test.sh and
-// tests/azure-auth.test.py, and for the H2b tenant-pinned mints:
+// Shared fake Azure CLI for the H2 sign-in fixtures: tests/fixtures/azcache.test.ps1,
+// tests/fixtures/doctor.test.ps1 and tests/azure-auth.test.py, and for the H2b tenant-pinned mints:
 // tests/fabric-request-headers.test.mjs, tests/warehouse-mcp.test.py and
-// tests/fabric-sql-query.test.py. It never contacts Azure. Tests wrap it per OS:
+// tests/sql-query.test.py. It never contacts Azure. Tests wrap it per OS:
 //   POSIX:   az      = #!/bin/sh + exec "<node>" "<this file>" "$@"
 //   Windows: az.cmd  = @"<node>" "<this file>" %*
 // The token helper passes az only an allowlisted environment, so the H2b

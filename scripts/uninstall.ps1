@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
 #
-# coop uninstall (Windows / PowerShell mirror of scripts/uninstall.sh) — clean
+# coop uninstall — clean
 # teardown of coop's footprint on this machine (VM churn, offboarding). Inverse
 # of scripts/install.ps1.
 #
@@ -8,8 +8,8 @@
 # dir's entry on the persistent USER PATH (registry, ExpandString-safe, with the
 # WM_SETTINGCHANGE broadcast), the Start Menu + Desktop shortcuts, coop's
 # isolated Pi agent dir (~/.coop/agent), and the tool layer: the npm-global Pi
-# agent plus the pipx venvs (coop-data-doc / coop-sql-review / coop-dax-review /
-# ms-fabric-cli).
+# agent plus the pipx venvs (coop-data-doc / ms-fabric-cli, plus the retired
+# coop-sql-review / coop-dax-review venvs when an older coop left them behind).
 #
 # NEVER touches: this repo clone, any work repo's .coop\project.yml, the rest of
 # ~/.coop (private config dirs live there), or your personal ~/.pi/agent (and
@@ -22,7 +22,7 @@
 #
 $ErrorActionPreference = 'Continue'
 
-# --- Shared helpers: dot-source lib/common.ps1 (the twin of lib/common.sh) ----
+# --- Shared helpers: dot-source lib/common.ps1 ---------------------------------
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
 
 $KEEP_TOOLS = $false
@@ -41,8 +41,12 @@ foreach ($a in $args) {
   }
 }
 
-$PI_NPM_PACKAGE = '@earendil-works/pi-coding-agent'
-$PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review', 'ms-fabric-cli')
+# The tool layer to remove comes from the same manifest-driven plan install
+# reads (Get-CoopFleetPlan): Pi, the pipx tools + Fabric CLI, the npm tools.
+$PLAN = Get-CoopFleetPlan
+$PI_NPM_PACKAGE = $PLAN.PiPackage
+$PY_TOOLS = @($PLAN.PythonTools | ForEach-Object { $_.Name })
+if ($PLAN.Fabric) { $PY_TOOLS += $PLAN.Fabric.Name }
 
 Coop-Head "coop uninstall (v$($script:CoopVersion))"
 $scope = "the coop launcher + user-PATH entry + Start Menu/Desktop shortcuts + coop's isolated agent dir ($(Get-CoopPiAgentDir))"
@@ -121,7 +125,7 @@ else { Coop-Info 'no coop shortcuts found (already gone)' }
 # --- 3. The isolated Pi agent dir ----------------------------------------------
 # ONLY the agent dir — the rest of ~/.coop can hold private, non-coop-agent config.
 $agentDir = Get-CoopPiAgentDir
-if (-not $agentDir -or $agentDir -eq $HOME -or $agentDir -eq (Join-Path $HOME '.coop')) {
+if (-not $agentDir -or $agentDir -eq $HOME -or $agentDir -eq (Get-CoopProfileDir) -or $agentDir -eq (Join-Path $HOME '.coop')) {
   Coop-Warn "suspicious agent dir '$agentDir' — not removing"
 } elseif (Test-Path -LiteralPath $agentDir) {
   Remove-Item -LiteralPath $agentDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -156,8 +160,7 @@ if ($KEEP_TOOLS) {
     Coop-Info 'pipx not found — no pipx tools to remove'
   }
   # Power BI / Fabric authoring npm tools that install.ps1 adds globally.
-  $pbihTools = @('@microsoft/powerbi-report-authoring-cli', '@microsoft/powerbi-modeling-mcp', '@microsoft/powerbi-desktop-bridge-cli')
-  foreach ($pkg in $pbihTools) {
+  foreach ($pkg in @($PLAN.NpmTools | ForEach-Object { $_.Name })) {
     if ($globals -match [regex]::Escape($pkg)) {
       & npm uninstall -g $pkg *> $null
       if ($LASTEXITCODE -eq 0) { Coop-Ok "removed $pkg (npm)" }

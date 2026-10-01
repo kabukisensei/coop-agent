@@ -151,16 +151,6 @@ tools:
     enabled: true
     default_command: "build"
     machine_outputs: ["graph.json", "manifest.json"]
-  coop_sql_review:
-    command: "coop-sql-review"
-    enabled: true
-    invoke: "check {paths} --format json"
-    advisory_only: true       # never edits or blocks
-  coop_dax_review:
-    command: "coop-dax-review"
-    enabled: true
-    invoke: "check {paths} --format json"
-    advisory_only: true
 
 # --- MCP servers (all read-only, all optional) -------------------------------
 # Generated as manifest-pinned managed entries from ~/.coop/config by `coop sync`.
@@ -252,7 +242,7 @@ workflow:
     - "Write a short PLAN and get explicit review/approval before any edit"
     - "Create a timestamped backup of every file to be changed"
     - "Make the smallest safe edit"
-    - "Run the applicable review (coop-sql-review / coop-dax-review; Tabular Editor BPA / fabric-cicd validate where relevant)"
+    - "Self-check the change against the standards articles used to write it (name any rule it could not meet); Tabular Editor BPA / fabric-cicd validate where relevant"
     - "Show git diff + summarize the change"
     - "Update Markdown docs / glossary / lineage; regenerate site if docs changed"
     - "Append to the daily log"
@@ -263,7 +253,7 @@ approval_policy:
     - "read files"
     - "git status / git diff / git pull"
     - "create backups"
-    - "run coop-sql-review / coop-dax-review / coop-data-doc (advisory)"
+    - "run coop-data-doc / Tabular Editor BPA (advisory)"
     - "MCP dev/test metadata / schema / artifact-code list / read / inspect"
     - "update markdown docs, html site, logs"
   ask_first:

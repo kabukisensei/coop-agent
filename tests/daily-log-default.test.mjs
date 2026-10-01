@@ -60,7 +60,7 @@ await t("tool classifier ignores reads and recognizes work plus the log write", 
   const log = "/work/project/docs/agent/logs/daily/2026-01-01.md";
   assert.equal(dailyLogToolEffect("read", { path: "README.md" }, root, log), "none");
   assert.equal(dailyLogToolEffect("data_doc", { command: "lineage" }, root, log), "none");
-  assert.equal(dailyLogToolEffect("sql_review", {}, root, log), "meaningful");
+  assert.equal(dailyLogToolEffect("bpa_review", {}, root, log), "meaningful");
   assert.equal(dailyLogToolEffect("edit", { path: "src/app.ts" }, root, log), "meaningful");
   assert.equal(dailyLogToolEffect("write", { path: log }, root, log), "log");
   assert.equal(dailyLogToolEffect("bash", { command: "npm test" }, root, log), "meaningful");
