@@ -5,6 +5,28 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- `coop teamai <status|install|init|pull|recall --query <text>>` (master plan
+  Phase 7, K1: isolated CLI, read-only recall and sources). `lib/teamai.py`
+  installs the manifest-pinned `teamai-cli` (`teamai` in
+  `config/release-manifest.json`) with `npm install --prefix` into
+  `<profile dir>/teamai/pkg` (never `-g`, never a `teamai` on `PATH`) and runs it
+  with `HOME`/`USERPROFILE` redirected to `<profile dir>/teamai/home`, a disposable
+  workspace, hooks and recall-quality recording disabled, inherited
+  `TEAMAI_*`/`CLAUDE_*` variables dropped, no stdin and a hard timeout
+  (`COOP_TEAMAI_TIMEOUT_SECONDS`). Each call prints one JSON document with
+  `disabled`, `not_installed`, `not_initialized`, `ok`, `no_match`, `partial` or
+  `unavailable`, a `stale` flag, and recall results capped at five with
+  repository (token-redacted), revision, file, author, date and snippet
+  provenance. Off by default: `coop onboard --config-only` asks for
+  `knowledge.teamai` (`enabled`, `team_repo`, `provider`, `role`); `coop sync`
+  installs and pulls only when enabled; `coop doctor` shows the trial's state;
+  launch never touches it. The `team-knowledge` skill consults
+  `coop teamai recall` only when `coop teamai status` reports `ok`, after the
+  local search. Tests: `tests/teamai-adapter.test.py` (stub CLI, decoy `teamai`
+  on `PATH` must never run) and `tests/fixtures/teamai.test.ps1`.
+
 ## [0.26.0] — 2026-10-01
 
 ### Added

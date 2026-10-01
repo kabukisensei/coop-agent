@@ -516,6 +516,32 @@ def run_config_questions(
     else:
         knowledge = {"enabled": False, "repos": old_repos}
 
+    # TeamAI shared knowledge trial (master plan K1): an isolated copy of the
+    # pinned teamai-cli under <profile dir>/teamai, explicit `coop teamai` commands
+    # only, off by default. Quick start never asks; an existing block is kept.
+    old_t = old_k.get("teamai") if isinstance(old_k.get("teamai"), dict) else {}
+    teamai = {
+        "enabled": bool(old_t.get("enabled", False)),
+        "team_repo": str(old_t.get("team_repo", "") or ""),
+        "provider": str(old_t.get("provider", "") or "git"),
+        "role": str(old_t.get("role", "") or ""),
+    }
+    if not quick_start:
+        teamai["enabled"] = read_confirm(
+            "Enable the TeamAI shared knowledge trial? (isolated teamai-cli copy; recall only via `coop teamai`)",
+            teamai["enabled"],
+        )
+        if teamai["enabled"]:
+            teamai["team_repo"] = read_input(
+                f"TeamAI sandbox team repository (https or ssh URL) [{teamai['team_repo'] or 'none'}]: ",
+                teamai["team_repo"],
+            ).strip()
+            teamai["role"] = read_input(
+                f"TeamAI role filter (optional) [{teamai['role'] or 'none'}]: ",
+                teamai["role"],
+            ).strip()
+    knowledge["teamai"] = teamai
+
     # Honest summary BEFORE anything is saved.
     labels = {
         "fabric": "Microsoft Fabric MCP",
@@ -544,6 +570,12 @@ def run_config_questions(
         )
     else:
         sys.stderr.write("- Cooptimize Shared Knowledge: disabled\n")
+    if teamai["enabled"]:
+        sys.stderr.write(
+            f"- TeamAI trial: enabled ({re.sub(r'://[^@/]+@', '://', teamai['team_repo']) or 'team repo not set yet'}; isolated, explicit `coop teamai` only)\n"
+        )
+    else:
+        sys.stderr.write("- TeamAI trial: disabled\n")
     sys.stderr.write(
         f"- Enabled: {', '.join(enabled_labels) if enabled_labels else 'none'}\n"
     )

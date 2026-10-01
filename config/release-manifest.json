@@ -28,6 +28,10 @@
     "@microsoft/powerbi-modeling-mcp": "1.0.0",
     "@microsoft/powerbi-desktop-bridge-cli": "1.0.0"
   },
+  "teamai": {
+    "package": "teamai-cli",
+    "version": "0.26.0"
+  },
   "mcp_servers": {
     "@microsoft/fabric-mcp": "1.4.0",
     "@azure-devops/mcp": "2.10.0"

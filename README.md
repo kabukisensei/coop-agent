@@ -227,6 +227,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop onboard [--edit|--config-only|--reset|--json]` | Configure profile and managed integrations without launching the agent |
 | `coop profile [--edit|--reset|--json]` | Inspect or update the private user profile |
 | `coop context-budget [--json]` | Inspect the active model/context budget |
+| `coop teamai <status\|install\|init\|pull\|recall --query <text>>` | TeamAI shared-knowledge trial (master plan K1): the pinned `teamai-cli` isolated under `~/.coop/teamai`, explicit and bounded, one JSON document per call; off until `knowledge.teamai.enabled` is true |
 | `coop uninstall [--keep-tools] [--yes]` | Remove the launcher/shortcuts/user-PATH entry and isolated agent dir; by default also uninstall Pi, pipx tools/Fabric CLI, Power BI Report Authoring CLI, Power BI Modeling MCP, and the Windows Desktop Bridge. `--keep-tools` preserves all managed npm/pipx tools. Never touches repo clones, work repos, the rest of `~/.coop`, or personal `~/.pi/agent` |
 | `coop install [--edge] [--force] [--yes] [--prereqs auto] [--no-prereqs] [--no-fabric] [--platform fabric\|azure_sql\|both]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest and is tools-only here (install never moves the repo). With a source arg, alias of `coop add` |
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
@@ -695,6 +696,24 @@ after at least two distinct failed tool results in one session. Use **`/share-le
 a reviewed pull request back to the knowledge source; it never silently publishes or
 commits. Experimental `knowledge.sources` v2 remains disabled by default, and semantic
 retrieval is not claimed as a production runtime feature.
+
+### TeamAI trial (K1, isolated, off by default)
+
+`coop onboard --config-only` can enable the TeamAI shared-knowledge trial
+(`knowledge.teamai`: `enabled`, `team_repo`, `provider`, `role`). When enabled,
+`coop sync` installs the manifest-pinned `teamai-cli` with `npm install --prefix`
+into `~/.coop/teamai/pkg` (never globally, never a `teamai` from `PATH`) and pulls
+the team repository; `coop teamai init` runs once against the sandbox team repository
+URL. Every call runs with `HOME`/`USERPROFILE` redirected to `~/.coop/teamai/home`,
+a disposable `~/.coop/teamai/workspace` as the working directory, hooks and
+recall-quality recording disabled, every inherited `TEAMAI_*`/`CLAUDE_*` variable
+dropped, no stdin and a hard timeout (`COOP_TEAMAI_TIMEOUT_SECONDS`, default 60):
+the CLI's data home and the AI-tool settings it would inject into stay inside that
+isolated root, never in your real home, the stable coop profile or another agent's
+directory. Launch never touches it. `coop teamai recall --query <text>` returns at
+most five results with repository, revision, file and author provenance and reports
+`no_match`, `partial`, `unavailable` and a `stale` flag honestly; `coop doctor` shows
+the trial's state. Contribution (`teamai push`/`contribute`) is K2 and is not wired.
 
 ---
 

@@ -105,6 +105,34 @@ if (Test-CoopKnowledgeEnabled) {
   & (Join-Path $script:CoopRoot 'scripts\sync-knowledge.ps1')
 }
 
+# --- 5b2. TeamAI trial (K1; optional; explicit and bounded; fail-soft) -------
+# Only when knowledge.teamai.enabled: converge the pinned teamai-cli into the
+# isolated prefix and, once initialized, pull the team repo. Launch never does this.
+$teamaiPy = Get-CoopPython
+if ($teamaiPy) {
+  $teamaiAdapter = Join-Path $script:CoopRoot 'lib\teamai.py'
+  $teamaiStatus = $null
+  try { $teamaiStatus = [string](& $teamaiPy $teamaiAdapter status 2>$null | Out-String) | ConvertFrom-Json } catch { $teamaiStatus = $null }
+  if ($teamaiStatus -and $teamaiStatus.enabled) {
+    Coop-Head 'TeamAI shared knowledge (trial)'
+    foreach ($op in @('install', 'pull')) {
+      $doc = $null
+      try { $doc = [string](& $teamaiPy $teamaiAdapter $op 2>$null | Out-String) | ConvertFrom-Json } catch { $doc = $null }
+      if (-not $doc) { Coop-Warn "teamai $op`: adapter gave no result" 'run: coop teamai status'; break }
+      $detail = if ($doc.detail) { $doc.detail } elseif ($doc.warnings -and $doc.warnings.Count -gt 0) { [string]$doc.warnings[0] } else { '' }
+      $suffix = if ($detail) { " ($detail)" } else { '' }
+      # A `break` inside `switch` only leaves the switch, so a flag stops the loop.
+      $stopOps = $true
+      switch ([string]$doc.state) {
+        'ok'              { Coop-Ok "teamai $op`: ok$suffix"; $stopOps = $false }
+        'not_initialized' { Coop-Info ("teamai $op`: not initialized" + $(if ($detail) { $suffix } else { ' (set knowledge.teamai.team_repo, then run: coop teamai init)' })) }
+        default           { Coop-Warn "teamai $op`: $($doc.state)$suffix" 'the trial stays fail-soft; run: coop teamai status' }
+      }
+      if ($stopOps) { break }
+    }
+  }
+}
+
 # --- 5c. Canonical standards (forced, bounded, fail-soft) ---------------------
 if (Test-Have 'node') {
   $standardsCli = Join-Path $script:CoopRoot 'lib\standards-cli.mjs'

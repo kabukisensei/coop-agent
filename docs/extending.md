@@ -214,6 +214,7 @@ Configuration lives in `~/.coop/config` under the `knowledge` block:
 - **Skills launch slot**: If the local clone contains `skills/*/SKILL.md`, `bin/coop.ps1` appends `--skill <dir>` to the Pi launch spec. Like the Microsoft drop-in slots, this is **subordinate**: if a team skill name or frontmatter name conflicts with a first-party Cooptimize skill in `skills/`, the Cooptimize skill wins and the team skill is skipped.
 - **Recall**: The `team-knowledge` skill guides the agent to query team patterns via the bundled local-search helper (`scripts/search-knowledge.py`, repository-bound, structured JSON status) before non-trivial work, and injects a hidden startup note when knowledge is available.
 - **Contributing learnings**: Draft discoveries with `/share-learning`, which generates a YAML frontmatter note under the user-selected clone's `learnings/` and routes publication via a plain Git pull request. Never commit directly to main.
+- **TeamAI trial (K1)**: an optional `knowledge.teamai` block (`enabled`, `team_repo`, `provider`, `role`) turns on the isolated `teamai-cli` adapter (`lib/teamai.py`, reached only through `coop teamai`, see `README.md`). It is a second read-only source for the `team-knowledge` skill, not a replacement for the local search; the skill consults it only when `coop teamai status` reports `ok`.
 
 ---
 
