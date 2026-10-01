@@ -529,8 +529,11 @@ function Get-CoopExePipxVenv([string]$Command) {
 function Get-CoopWorkingNpm {
   # Windows commonly exposes BOTH npm.ps1 and npm.cmd. Without Select-Object,
   # `.Source` becomes an array and `& $cand --version` passes the second launcher
-  # as argv[0] (effectively `npm npm --version`). Prefer the native .cmd shim.
-  $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
+  # as argv[0] (effectively `npm npm --version`). Prefer the native .cmd shim on
+  # Windows only: pwsh on Linux/macOS also resolves an `npm.cmd` on PATH and
+  # cannot run it ("Cannot run a document in the middle of a pipeline").
+  $npmCommand = $null
+  if ($env:OS -eq 'Windows_NT') { $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -First 1 }
   if (-not $npmCommand) { $npmCommand = Get-Command npm -ErrorAction SilentlyContinue | Select-Object -First 1 }
   $cand = if ($npmCommand) { $npmCommand.Source } else { $null }
   if ($cand) {

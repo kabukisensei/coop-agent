@@ -96,6 +96,9 @@ try {
   $npmCmd = 'if "%1"=="--version" (echo 10.9.0& exit /b 0)' + "`r`n" + 'echo NPM %*>>"%COOP_TEST_NPM_LOG%"'
   Write-Shim $stub 'npm' ($npmSh + '; exit 0') ($npmCmd + "`r`n" + 'exit /b 0')
   Write-Shim $failStub 'npm' ($npmSh + '; if [ "$1" = "ci" ]; then exit 1; fi; exit 0') ($npmCmd + "`r`n" + 'if "%1"=="ci" exit /b 1' + "`r`n" + 'exit /b 0')
+  # The explicit -Npm path must be runnable by `&`: on Windows that is the .cmd twin.
+  $npmStub = Join-Path $stub 'npm'
+  if ($isWindowsHost) { $npmStub = Join-Path $stub 'npm.cmd' }
   foreach ($d in @($stub, $failStub)) {
     Write-Shim $d 'pi' "if [ `"`$1`" = `"--version`" ]; then echo `"pi $piVer`"; fi; exit 0" "if `"%1`"==`"--version`" echo pi $piVer"
   }
@@ -110,19 +113,19 @@ try {
   $exact = Join-Path $t 'exact'; New-Tree $exact @{} $piVer
   $extra = Join-Path $t 'extra'; New-Tree $extra @{ 'some-personal-extension' = '1.0.0' } $piVer
   Reset-Log
-  $applied = Install-CoopExtensionsLock -AgentDir $exact -Npm (Join-Path $stub 'npm') -PiVersion $piVer
+  $applied = Install-CoopExtensionsLock -AgentDir $exact -Npm $npmStub -PiVersion $piVer
   if ($applied -and (Test-Path -LiteralPath (Join-Path $exact 'npm\package-lock.json')) -and (Test-LogHas 'NPM ci ')) {
     Ok 'sync copies the lock next to package.json and runs npm ci on an exact tree'
   } else { Ko 'lock path did not run npm ci on an exact tree' (Get-Log) }
   if (Test-SameFile $lock (Join-Path $exact 'npm\package-lock.json')) { Ok "the tree's package-lock.json is byte-identical to the shipped lock" } else { Ko 'the copied lock differs from config/extensions-lock.json' }
   Reset-Log
-  $applied = Install-CoopExtensionsLock -AgentDir $extra -Npm (Join-Path $stub 'npm') -PiVersion $piVer
+  $applied = Install-CoopExtensionsLock -AgentDir $extra -Npm $npmStub -PiVersion $piVer
   if ($applied) { Ko 'lock path claimed success on a tree the lock cannot hold' }
   elseif (-not (Test-Path -LiteralPath (Join-Path $extra 'npm\package-lock.json')) -and -not (Test-LogHas 'NPM ci ')) {
     Ok 'a tree the lock cannot hold gets no lock and no npm ci (caller resolves live)'
   } else { Ko 'lock path touched a tree it cannot hold' (Get-Log) }
   Reset-Log
-  $applied = Install-CoopExtensionsLock -AgentDir $exact -Npm (Join-Path $stub 'npm') -PiVersion '0.0.1'
+  $applied = Install-CoopExtensionsLock -AgentDir $exact -Npm $npmStub -PiVersion '0.0.1'
   if ($applied -or (Test-LogHas 'NPM ci ')) { Ko "lock applied although the installed Pi is not the manifest's Pi" (Get-Log) }
   else { Ok "an installed Pi other than the manifest's (edge, matrix) skips the lock" }
   if (Test-CoopExtensionsLockPending -AgentDir $extra -PiVersion $piVer) { Ok 'a tree without the lock on the manifest Pi is lock-pending' } else { Ko 'a tree without the lock should be lock-pending' }
