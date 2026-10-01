@@ -172,6 +172,8 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge-integration.test.mjs"
 
 echo "→ workflow slice tests"
 node "$ROOT/tests/workflow.test.mjs"
+echo "→ sql-formatting skill tests"
+node "$ROOT/tests/sql-formatting.test.mjs"
 
 echo "→ coop-profile tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/coop-profile.test.mjs"

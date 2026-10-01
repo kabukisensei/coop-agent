@@ -450,7 +450,7 @@ command text and should not be shared as sanitized exports.
 3. Read the target file(s) + look up the object's upstream/downstream via the `data_doc` tool (`command="lineage"`) before touching it; use the Microsoft Learn MCP for current docs.
 4. Write a short **PLAN** and get explicit approval **before** any edit.
 5. Create a timestamped backup of every file to be changed.
-6. Make the smallest safe edit.
+6. Make the smallest safe edit; T-SQL coop writes or reformats follows the `sql-formatting` skill (the Cooptimize SQL Prompt style).
 7. Run the applicable review — `sql_review` / `dax_review` (and Tabular Editor BPA / `fabric-cicd` validate where relevant).
 8. Show `git diff` and summarize the change.
 9. Update Markdown docs / glossary / lineage; regenerate the site if docs changed.
