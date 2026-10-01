@@ -8,8 +8,8 @@
 # Scope: ~/.local/bin and ~/.coop (the two locations the fleet scripts write) of
 # the home this fixture was started with, plus the checkout running the tests,
 # which update and doctor must never fetch or move (the scripts run from a plain
-# copy of the tree with no .git, #104). Offline: pi/npm/pipx/fab/az are honest
-# stubs; git, node and python are real.
+# copy of the tree with no .git, #104). Offline: pi/npm/pipx/fab/az/winget are
+# honest stubs; git, node and python are real (behind forwarding stubs).
 $ErrorActionPreference = 'Stop'
 $checkout = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $psExe = try { (Get-Process -Id $PID).Path } catch { 'pwsh' }
@@ -19,11 +19,18 @@ $G_CHECK = [char]0x2713; $G_CROSS = [char]0x2717
 $fail = 0
 function Ok([string]$m) { Write-Host "  $G_CHECK $m" }
 function Ko([string]$m, [string]$Out = '') { Write-Host "  $G_CROSS $m"; if ($Out) { Write-Host $Out }; $script:fail = 1 }
+$utf8 = New-Object System.Text.UTF8Encoding($false)
 $chmod = if ($isWindowsHost) { '' } else { (Get-Command chmod -ErrorAction Stop).Source }
 $realNode = (Get-Command node -ErrorAction Stop).Source
 $realGit = (Get-Command git -ErrorAction Stop).Source
+# A Fabric-compatible (3.10-3.13) Python, preferring a versioned one; the Windows
+# Store App-Execution-Alias stub under WindowsApps is not an interpreter.
 $realPy = $null
-foreach ($n in @('python3.13', 'python3.12', 'python3', 'python')) { $c = Get-Command $n -ErrorAction SilentlyContinue; if ($c) { $realPy = $c.Source; break } }
+foreach ($n in @('python3.13', 'python3.12', 'python3', 'python')) {
+  $c = Get-Command $n -ErrorAction SilentlyContinue
+  if (-not $c -or -not $c.Source -or $c.Source -match '\\WindowsApps\\') { continue }
+  $realPy = $c.Source; break
+}
 if (-not $realPy) { throw 'a Python 3.10-3.13 is required for the home-guard fixture' }
 $psDir = Split-Path -Parent $psExe
 
@@ -41,11 +48,6 @@ function Get-Snapshot([string]$Dir) {
   }
   return (($lines | Sort-Object) -join "`n")
 }
-function Write-Stub([string]$Dir, [string]$Name, [string]$Body, [string]$Cmd = 'exit /b 0') {
-  [System.IO.File]::WriteAllText((Join-Path $Dir $Name), "#!/bin/sh`n$Body`n")
-  if ($isWindowsHost) { [System.IO.File]::WriteAllText((Join-Path $Dir ($Name + '.cmd')), "@echo off`r`n$Cmd`r`n") }
-  else { & $chmod +x (Join-Path $Dir $Name) }
-}
 function Invoke-Fleet([string]$Script, [string]$OutFile, [string[]]$ScriptArgs = @()) {
   $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
   $lines = @(& $psExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "scripts\$Script") @ScriptArgs 2>&1 | ForEach-Object { "$_" })
@@ -57,7 +59,8 @@ function Invoke-Fleet([string]$Script, [string]$OutFile, [string[]]$ScriptArgs =
 $saved = @{}
 $names = @('PATH', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'COOP_DIR', 'PIPX_HOME', 'PIPX_BIN_DIR', 'PI_CODING_AGENT_DIR', 'COOP_AGENT_DIR',
            'COOP_NO_ONBOARD', 'MARKER', 'COOP_TEST_STUB_PATH', 'COOP_FABRIC_PYTHON', 'COOP_FLEET_TEST_MODE', 'COOP_RELEASE_MANIFEST', 'COOP_SKIP_AZ',
-           'COOP_AZ_BIN', 'NO_COLOR', 'COOP_PI_LATEST_OVERRIDE', 'COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT')
+           'COOP_AZ_BIN', 'NO_COLOR', 'COOP_PI_LATEST_OVERRIDE', 'COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT',
+           'PYTHONPATH', 'PYTHONHOME')
 foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 $priorPath = $env:PATH
 try {
@@ -81,43 +84,99 @@ try {
   [System.IO.File]::WriteAllText($marker, '')
 
   # Honest offline stubs so the scripts exercise real code paths without network
-  # or workstation tools. The pi stub installs extensions honestly (sync's
-  # postcondition check requires it); the npm stub materializes the shared
-  # pi-ai/pi-tui libraries the realignment asks for.
-  Write-Stub $bin 'pi' @'
-[ "$1" = "--version" ] && { echo 'pi 0.87.1'; exit 0; }
-if [ "$1" = "install" ]; then
-  spec="$2"; rest="${spec#npm:}"; name="${rest%@*}"; ver="${rest##*@}"
-  dir="${PI_CODING_AGENT_DIR:?}/npm/node_modules/$name"
-  mkdir -p "$dir"
-  printf '{"name":"%s","version":"%s"}\n' "$name" "$ver" > "$dir/package.json"
-fi
-echo "PI $*" >> "$MARKER"; exit 0
-'@ 'if "%1"=="--version" (echo pi 0.87.1& exit /b 0)' + "`r`n" + 'echo PI %*>>"%MARKER%"' + "`r`n" + 'exit /b 0'
-  Write-Stub $bin 'npm' @'
-[ "$1 $2" = "prefix -g" ] && { dirname "$(dirname "$0")"; exit 0; }
-[ "$1" = "view" ] && { echo '0.87.1'; exit 0; }
-[ "$1" = "--version" ] && { echo '10.9.0'; exit 0; }
-if [ "$1" = "install" ]; then
-  for a in "$@"; do
-    case "$a" in
-      @earendil-works/pi-ai@*|@earendil-works/pi-tui@*)
-        name="${a%@*}"; ver="${a##*@}"; mkdir -p "node_modules/$name"
-        printf '{"name":"%s","version":"%s"}\n' "$name" "$ver" > "node_modules/$name/package.json" ;;
-    esac
-  done
-fi
-echo "NPM $*" >> "$MARKER"; exit 0
-'@ ('if "%1 %2"=="prefix -g" (echo ' + $sandboxHome + '\.local& exit /b 0)' + "`r`n" + 'if "%1"=="view" (echo 0.87.1& exit /b 0)' + "`r`n" + 'if "%1"=="--version" (echo 10.9.0& exit /b 0)' + "`r`n" + 'echo NPM %*>>"%MARKER%"' + "`r`n" + 'exit /b 0')
-  Write-Stub $bin 'pipx' '[ "$1" = "list" ] && exit 0' + "`n" + 'echo "PIPX $*" >> "$MARKER"; exit 0' ('if "%1"=="list" exit /b 0' + "`r`n" + 'echo PIPX %*>>"%MARKER%"' + "`r`n" + 'exit /b 0')
-  Write-Stub $bin 'fab' "echo 'fab version 1.6.1'" 'echo fab version 1.6.1'
+  # or workstation tools. Every stub is ONE Python script (<name>.stub.py) behind
+  # a one-line forwarder (.cmd on Windows, #!/bin/sh elsewhere), so each behaves
+  # identically on every platform. The pi stub installs extensions honestly
+  # (sync's postcondition check requires it); the npm stub materializes the
+  # shared pi-ai/pi-tui libraries the realignment asks for.
+  function New-PyStub([string]$Dir, [string]$Name, [string]$Source) {
+    New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+    $py = Join-Path $Dir "$Name.stub.py"
+    [System.IO.File]::WriteAllText($py, $Source, $utf8)
+    if ($isWindowsHost) {
+      $p = Join-Path $Dir "$Name.cmd"
+      [System.IO.File]::WriteAllText($p, "@`"$realPy`" `"$py`" %*`r`n@exit /b %ERRORLEVEL%`r`n", [System.Text.Encoding]::ASCII)
+    } else {
+      $p = Join-Path $Dir $Name
+      [System.IO.File]::WriteAllText($p, "#!/bin/sh`nexec `"$realPy`" `"$py`" `"`$@`"`n", $utf8)
+      & $chmod +x $p
+    }
+    return $p
+  }
+  function ConvertTo-PyString([string]$S) { return "'" + $S.Replace('\', '\\').Replace("'", "\'") + "'" }
+  $stubPrelude = @'
+import json, os, subprocess, sys
+args = sys.argv[1:]
+def log(line):
+    with open(os.environ['MARKER'], 'a', encoding='utf-8', newline='\n') as f:
+        f.write(line + '\n')
+def write_pkg(root, spec):
+    i = spec.rfind('@')
+    name, ver = (spec[:i], spec[i + 1:]) if i > 0 else (spec, '')
+    d = os.path.join(root, *name.split('/'))
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, 'package.json'), 'w', encoding='utf-8') as f:
+        json.dump({'name': name, 'version': ver}, f)
+def forward(exe):
+    sys.exit(subprocess.call([exe] + args))
+
+'@
+  $null = New-PyStub $bin 'pi' ($stubPrelude + @'
+if args[:1] == ['--version']:
+    print('pi 0.87.1'); sys.exit(0)
+if args[:1] == ['install'] and len(args) > 1:
+    spec = args[1]
+    write_pkg(os.path.join(os.environ['PI_CODING_AGENT_DIR'], 'npm', 'node_modules'), spec[4:] if spec.startswith('npm:') else spec)
+log('PI ' + ' '.join(args))
+sys.exit(0)
+'@)
+  $null = New-PyStub $bin 'npm' ($stubPrelude + @'
+if args[:2] == ['prefix', '-g']:
+    print(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))); sys.exit(0)
+if args[:1] == ['view']:
+    print('0.87.1'); sys.exit(0)
+if args[:1] == ['--version']:
+    print('10.9.0'); sys.exit(0)
+if args[:1] == ['install']:
+    for a in args:
+        if a.startswith('@earendil-works/pi-ai@') or a.startswith('@earendil-works/pi-tui@'):
+            write_pkg('node_modules', a)
+log('NPM ' + ' '.join(args))
+sys.exit(0)
+'@)
+  $null = New-PyStub $bin 'pipx' ($stubPrelude + @'
+if args[:1] == ['list']:
+    sys.exit(0)
+log('PIPX ' + ' '.join(args))
+sys.exit(0)
+'@)
+  $null = New-PyStub $bin 'fab' ($stubPrelude + "print('fab version 1.6.1')`nsys.exit(0)`n")
   # A Fabric-compatible (3.10-3.13) Python and an Azure CLI stub let install pass
   # its H1 prerequisite gate, so the install path below really runs. Real git
   # behind a wrapper (Git Bash keeps git in /mingw64/bin, off this PATH).
-  Write-Stub $bin 'az' 'echo azure-cli 2.80.0' 'echo azure-cli 2.80.0'
-  Write-Stub $bin 'git' "exec `"$realGit`" `"`$@`"" "`"$realGit`" %*"
-  Write-Stub $bin 'node' "exec `"$realNode`" `"`$@`"" "`"$realNode`" %*"
-  Write-Stub $bin 'python3' "exec `"$realPy`" `"`$@`"" "`"$realPy`" %*"
+  $null = New-PyStub $bin 'az' ($stubPrelude + "print('azure-cli 2.80.0')`nsys.exit(0)`n")
+  $null = New-PyStub $bin 'git' ($stubPrelude + 'forward(' + (ConvertTo-PyString $realGit) + ")`n")
+  $null = New-PyStub $bin 'node' ($stubPrelude + 'forward(' + (ConvertTo-PyString $realNode) + ")`n")
+  $null = New-PyStub $bin 'python3' ($stubPrelude + 'forward(' + (ConvertTo-PyString $realPy) + ")`n")
+  # A driver_missing runtime on Windows would reach `winget install
+  # Microsoft.msodbcsql.18` on the host; this winget only logs and fails.
+  $null = New-PyStub $bin 'winget' ($stubPrelude + "log('WINGET ' + ' '.join(args))`nsys.exit(1)`n")
+  # The Fabric CLI's pipx environment is a REAL (pip-less) venv of the real
+  # interpreter under the sandbox PIPX_HOME, so Get-CoopVenvPythonPath finds
+  # Scripts\python.exe on Windows and bin/python elsewhere; a fixture pyodbc
+  # (5.3.0 metadata, Driver 18 present) on PYTHONPATH answers its runtime probe.
+  $venv = Join-Path $t 'pipx-home\venvs\ms-fabric-cli'
+  & $realPy -m venv --without-pip $venv *> $null
+  if ($LASTEXITCODE -ne 0 -or -not ((Test-Path -LiteralPath (Join-Path $venv 'Scripts\python.exe')) -or (Test-Path -LiteralPath (Join-Path $venv 'bin/python')))) {
+    throw "could not create the Fabric venv fixture under $venv with $realPy"
+  }
+  $runtimeFixture = Join-Path $t 'runtime-fixture'
+  $pyodbcMetadata = Join-Path $runtimeFixture 'pyodbc-5.3.0.dist-info'
+  New-Item -ItemType Directory -Force -Path $runtimeFixture, $pyodbcMetadata | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $runtimeFixture 'pyodbc.py'), "def drivers():`n    return ['ODBC Driver 18 for SQL Server']`n", $utf8)
+  [System.IO.File]::WriteAllText((Join-Path $pyodbcMetadata 'METADATA'), "Metadata-Version: 2.1`nName: pyodbc`nVersion: 5.3.0`n", $utf8)
+  Remove-Item Env:\PYTHONHOME -ErrorAction SilentlyContinue
+  $env:PYTHONPATH = if ($saved['PYTHONPATH']) { $runtimeFixture + [System.IO.Path]::PathSeparator + $saved['PYTHONPATH'] } else { $runtimeFixture }
 
   # Native Windows node and python find the home through USERPROFILE, not HOME, so
   # the fleet scripts get a sandboxed USERPROFILE too; without it a standards
