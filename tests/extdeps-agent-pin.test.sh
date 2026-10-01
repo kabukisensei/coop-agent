@@ -51,10 +51,7 @@ tree "$TMP/pinned" '{"@earendil-works/pi-ai":"0.84.3","@earendil-works/pi-tui":"
 rc=0; "$PY" "$ROOT/lib/_extdeps.py" align "$TMP/pinned" 0.84.3 --check >/dev/null || rc=$?
 [ "$rc" -eq 0 ] && ok "an agent peer at the agent's version is aligned" || ko "a pinned agent peer returned rc $rc"
 
-# The convergence helpers write the pin before their own npm install (both twins).
-grep -q '_extdeps.py" align "$agent_dir" "$pi_ver"' "$ROOT/lib/common.sh" \
-  && ok "coop_converge_extension_pins pins peers before its npm install" \
-  || ko "lib/common.sh convergence no longer pins peers before npm install"
+# The convergence helper writes the pin before its own npm install.
 grep -q "_extdeps.py') align \$AgentDir \$piVer" "$ROOT/lib/common.ps1" \
   && ok "Sync-CoopExtensionPins pins peers before its npm install" \
   || ko "lib/common.ps1 convergence no longer pins peers before npm install"

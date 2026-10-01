@@ -1,7 +1,8 @@
 /**
  * coop-profile — inject the local COOP user profile as a tiny hidden instruction.
  *
- * Reads ~/.coop/user.json before each turn and contributes a stable system-prompt
+ * Reads the COOP user profile (<profile dir>/user.json, the file scripts/onboard.py
+ * writes; see lib/paths.mjs) before each turn and contributes a stable system-prompt
  * instruction, without appending persistent session messages.
  *
  * Failure is graceful: if the file is missing, malformed, or the schema is unknown,
@@ -10,8 +11,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { userProfilePath } from "../../lib/paths.mjs";
 
 type CommunicationPreset = "concise" | "balanced" | "teaching" | "custom";
 
@@ -31,16 +31,15 @@ const PRESET_TEXT: Record<CommunicationPreset, string> = {
   custom: "", // filled from custom_instructions
 };
 
-const USER_JSON = join(homedir(), ".coop", "user.json");
-
 function isValidPreset(p: string): p is CommunicationPreset {
   return ["concise", "balanced", "teaching", "custom"].includes(p);
 }
 
 export function loadProfile(): UserProfile | null {
-  if (!existsSync(USER_JSON)) return null;
+  const userJson = userProfilePath();
+  if (!existsSync(userJson)) return null;
   try {
-    const raw = JSON.parse(readFileSync(USER_JSON, "utf8"));
+    const raw = JSON.parse(readFileSync(userJson, "utf8"));
     if (typeof raw !== "object" || raw === null || raw.schema_version !== 1) return null;
     if (typeof raw.name !== "string" || !sanitize(raw.name)) return null;
     if (typeof raw.communication !== "object" || raw.communication === null) return null;

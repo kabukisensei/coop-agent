@@ -120,11 +120,11 @@ Read-only against Azure DevOps. Config-driven, client-agnostic, stdlib-only (no
 `requests`/`PyYAML` — it reuses coop's dependency-free YAML reader).
 
 ```bash
-scripts/ado-digest.sh --client <key>              # dry run: prints a markdown digest
-scripts/ado-digest.sh --client <key> --format html # HTML (Outlook-safe tables)
-scripts/ado-digest.sh --send                       # email every enabled client via Graph
-scripts/ado-digest.sh --rollup                     # + internal all-clients summary
-scripts/ado-digest.sh --stale-days 21 --no-state   # override threshold; don't touch state
+scripts/ado-digest.ps1 --client <key>              # dry run: prints a markdown digest
+scripts/ado-digest.ps1 --client <key> --format html # HTML (Outlook-safe tables)
+scripts/ado-digest.ps1 --send                       # email every enabled client via Graph
+scripts/ado-digest.ps1 --rollup                     # + internal all-clients summary
+scripts/ado-digest.ps1 --stale-days 21 --no-state   # override threshold; don't touch state
 ```
 
 Per run it renders a summary strip (open/stale/unassigned per type, **deltas vs the last
@@ -145,9 +145,9 @@ Guided, **read-only** discovery (writes only the local config). Run it instead o
 hand-authoring YAML, or drive it via flags:
 
 ```bash
-scripts/ado-onboard.sh --key <key> --org https://dev.azure.com/<Org> \
+scripts/ado-onboard.ps1 --key <key> --org https://dev.azure.com/<Org> `
   --project "<Project>" --team "<Team>" --auth azcli --tenant <id> --check   # compare/preview
-scripts/ado-onboard.sh --key <key> … --write                                 # append + smoke test
+scripts/ado-onboard.ps1 --key <key> … --write                                 # append + smoke test
 ```
 
 It verifies auth, discovers org → project → team(s) and area paths, proposes
@@ -162,8 +162,8 @@ no duplicate). Natural-language trigger: "set up a new DevOps client."
 
 **macOS/Linux (cron):**
 ```
-0 7 * * 1  /path/to/coop-agent/scripts/ado-digest.sh --send >> ~/.coop/devops/digest.log 2>&1
-0 8 * * 1  /path/to/coop-agent/scripts/fleet-digest.sh --send >> ~/.coop/fleet.log 2>&1
+pwsh -File C:\path\to\coop-agent\scripts\ado-digest.ps1 --send   # weekly, e.g. Task Scheduler Monday 07:00; log to ~/.coop/devops/digest.log
+pwsh -File C:\path\to\coop-agent\scripts\fleet-digest.ps1 --send  # weekly, Monday 08:00; log to ~/.coop/fleet.log
 ```
 
 **Windows (Task Scheduler)** — call `scripts\ado-digest.ps1 --send` and `scripts\fleet-digest.ps1 --send` (the launcher passes flags through to Python verbatim, so use the double-dash `--send`, not `-send`). Minimal task XML:
@@ -203,7 +203,7 @@ client's own workspace (never mix client data):
 
 ## Tools used
 
-- `scripts/ado-digest.py` (+ `.sh`/`.ps1` wrappers) — the digest workhorse (read-only ADO).
+- `scripts/ado-digest.py` (+ `.ps1` wrapper) — the digest workhorse (read-only ADO).
 - `scripts/ado-onboard.py` (+ wrappers) — guided client onboarding (read-only ADO).
 - `scripts/ado_lib.py` — shared auth/REST/WIQL/identity library (stdlib only).
 - **azure-devops MCP** (`@azure-devops/mcp`, generated from `~/.coop/config`, domains

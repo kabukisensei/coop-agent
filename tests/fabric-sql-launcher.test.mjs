@@ -32,7 +32,6 @@ const helperPath = join(root, "lib", "sql_query.py");
 const marker = join(root, "helper-invoked");
 mkdirSync(join(root, "lib"), { recursive: true });
 mkdirSync(join(root, "Python Runtime"), { recursive: true });
-cpSync(join(sourceRoot, "lib", "common.sh"), join(root, "lib", "common.sh"));
 cpSync(join(sourceRoot, "lib", "common.ps1"), join(root, "lib", "common.ps1"));
 writeFileSync(helperPath, `import os, sys
 sys.stdin.read()

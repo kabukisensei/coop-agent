@@ -19,8 +19,9 @@ and before building (consent rounds). Never commit source.
 
 ## Required tool version
 
-This flow requires **coop-data-doc ≥ 1.1.0** (the first release that ships the
-`--transport jsonl` flag and the WizardIO protocol). If `coop-data-doc --version`
+This flow requires **coop-data-doc ≥ 1.1.1** (the first release whose
+`--transport jsonl` WizardIO protocol opens with the `hello` handshake coop's
+bridge requires). If `coop-data-doc --version`
 reports an older version, run `coop update` first and do **not** fall back to the
 old config-set/folders/set-folders manual flow.
 
@@ -72,8 +73,10 @@ Other events the process may emit (display, do not reply):
    Send `{"id":"<same id>","answer":...}` back to the process.
 4. **Display notices/progress.** Surface `notice` and `progress` events to the
    user.
-5. **Complete.** When the process emits `complete` or exits 0, the config is
-   written. Show the saved path and a summary (project name, repo paths).
+5. **Complete.** The config is written only when the process emits `complete`
+   AND exits 0; a `complete` without exit 0, or exit 0 without `complete`, is a
+   failure to report. On success show the saved path and a summary (project
+   name, repo paths).
    If a notice said `Saved, but not runnable yet:`, the config points at a repo
    folder that does not exist: tell the user which path to fix and **do not build**.
 6. **Build (with approval).** Confirm, then `coop-data-doc build --non-interactive`.

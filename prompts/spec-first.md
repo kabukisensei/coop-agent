@@ -16,8 +16,9 @@ spec** and get my approval on it. Cover:
   touched.
 - **Edge cases** — nulls, late/duplicate data, incremental-refresh windows,
   permission boundaries.
-- **Test / validation plan** — which reviews (`sql_review` / `dax_review` / BPA /
-  `fabric-cicd` validate) and checks will prove it works.
+- **Test / validation plan** — which checks will prove it works: the standards
+  self-check (every rule met, or a user exception / stated reason for each deviation), BPA, `fabric-cicd` validate,
+  tests.
 
 Keep the spec focused — read the object plus its immediate lineage neighbors, not
 the whole estate. Present the spec as a PLAN and wait for approval before editing.

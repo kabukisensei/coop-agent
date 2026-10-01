@@ -1,1 +1,2 @@
 .github/workflows/windows-terminal-workstation-acceptance.yml text eol=lf
+config/standards-bundle/** text eol=lf

@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env pwsh
 #
-# ado-digest — thin launcher for scripts/ado-digest.py (Windows/PowerShell twin of
-# scripts/ado-digest.sh). Locates Python and passes every argument straight through.
+# ado-digest — thin launcher for scripts/ado-digest.py: locates Python (Get-CoopPython)
+# and passes every argument straight through.
 # Runs cleanly under Task Scheduler with no TTY (lib/common.ps1 detects redirected
 # stderr and emits plain, colorless lines).
 #
