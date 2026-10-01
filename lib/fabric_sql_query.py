@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import re
@@ -17,7 +16,7 @@ from typing import Any
 import coop_paths
 import warehouse_mcp as wmcp
 
-SQL_RESOURCE = "https://database.windows.net/"
+SQL_RESOURCE = wmcp.SQL_RESOURCE
 SQL_COPT_SS_ACCESS_TOKEN = 1256
 MAX_ROWS = 1000
 CONNECT_TIMEOUT = 15
@@ -90,23 +89,11 @@ def select_driver(drivers: list[str]) -> str | None:
     return max(supported, default=(0, ""))[1] or None
 
 
-def _jwt_identity(token: str) -> tuple[str, str] | None:
-    try:
-        payload = token.split(".")[1]
-        payload += "=" * (-len(payload) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
-        tenant = str(claims.get("tid", "")).lower()
-        principal = str(claims.get("oid") or claims.get("sub") or "")
-    except (ValueError, IndexError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    return (tenant, principal) if wmcp.is_uuid(tenant) and principal else None
-
-
 def _canonical_target(
     project_path: Path,
 ) -> tuple[wmcp.SqlEndpointTarget | None, str, str]:
     project = wmcp.load_project(project_path)
-    target = wmcp.select_target(project)
+    target = wmcp.project_target(project)
     raw_default = project.get("fabric", {}).get("default_sql_endpoint", {})
     database = raw_default.get("item_name", "") if isinstance(raw_default, dict) else ""
     if (
@@ -122,13 +109,12 @@ def _canonical_target(
         config = json.loads(
             (agent_dir / "mcp-adapter.json").read_text(encoding="utf-8-sig")
         )
-        entry = config["mcpServers"]["fabric-sqlendpoint"]
-        managed = config["_coop"]["managed_servers"]
-    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return None, "", "managed_config_unavailable"
-    registered = (
-        wmcp.registered_target(entry) if "fabric-sqlendpoint" in managed else None
-    )
+    entry = wmcp.managed_sqlendpoint_entry(config)
+    if entry is None:
+        return None, "", "managed_config_unavailable"
+    registered = wmcp.registered_target(entry)
     metadata = entry.get("_coop_target", {}) if isinstance(entry, dict) else {}
     if (
         not wmcp.same_target(registered, target)
@@ -241,7 +227,7 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
         return result("odbc_driver_unavailable", minimum_version=18)
     # Both mints are pinned to the launch token's tenant (its tid), not to
     # whichever account az treats as the default; no launch identity, no mint.
-    launch_identity = _jwt_identity(os.environ.get(wmcp.FABRIC_TOKEN_ENV, ""))
+    launch_identity = wmcp.jwt_identity(os.environ.get(wmcp.FABRIC_TOKEN_ENV, ""))
     if not launch_identity:
         return result("identity_mismatch")
     tenant = launch_identity[0]
@@ -257,8 +243,8 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     if state != "ok":
         return result(state, stage="database_token")
     if (
-        _jwt_identity(fabric_token) != launch_identity
-        or _jwt_identity(sql_token) != launch_identity
+        wmcp.jwt_identity(fabric_token) != launch_identity
+        or wmcp.jwt_identity(sql_token) != launch_identity
     ):
         return result("identity_mismatch")
     connection_string = (

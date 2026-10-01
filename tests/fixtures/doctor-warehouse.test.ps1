@@ -2,7 +2,8 @@
 # H2b: the PowerShell twin of the Warehouse and fabric rows in tests/doctor.test.sh.
 # Runs scripts/doctor.ps1 --json with an agent-dir mcp-adapter.json that has fabric,
 # fabric-sqlendpoint, and a user-owned powerbi-mcp-server entry, with a python3
-# stub whose warehouse_mcp.py doctor-json prints a fixed state and tenant. The
+# stub whose warehouse_mcp.py doctor-json prints a fixed state and tenant (and
+# whose `tenant` answers the same tenant, as Get-CoopTenant asks). The
 # Warehouse row names the tenant the probe minted for, the token_command_failed
 # hint pins it with --tenant, a tenant that is not a GUID or domain name is
 # dropped, the fabric row says coop cannot pin the fabric MCP's tenant, and the
@@ -46,7 +47,12 @@ try {
       'if /i "%~nx1"=="warehouse_mcp.py" goto warehouse',
       'exit /b 1',
       ':warehouse',
+      'if /i "%~2"=="tenant" goto tenant',
       'echo {"state":"%COOP_WAREHOUSE_TEST_STATE%","target":{"scope":"global"},"tenant":"%COOP_WAREHOUSE_TEST_TENANT%"}',
+      'exit /b 0',
+      ':tenant',
+      'if "%COOP_WAREHOUSE_TEST_TENANT%"=="" exit /b 1',
+      'echo %COOP_WAREHOUSE_TEST_TENANT%',
       'exit /b 0'
     ) -join "`r`n") + "`r`n", [System.Text.Encoding]::ASCII)
   } else {
@@ -56,6 +62,7 @@ try {
       'case "${1:-}" in',
       '  --version) echo "Python 3.12.0"; exit 0 ;;',
       '  *warehouse_mcp.py)',
+      '    if [ "${2:-}" = tenant ]; then [ -n "${COOP_WAREHOUSE_TEST_TENANT:-}" ] || exit 1; printf ''%s\n'' "$COOP_WAREHOUSE_TEST_TENANT"; exit 0; fi',
       '    printf ''{"state":"%s","target":{"scope":"global"},"tenant":"%s"}\n'' "$COOP_WAREHOUSE_TEST_STATE" "${COOP_WAREHOUSE_TEST_TENANT:-}"',
       '    exit 0 ;;',
       'esac',

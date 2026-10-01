@@ -85,13 +85,13 @@ try {
   }
   function Get-WarnCount([string]$Out) { @($Out -split "`r?`n" | Where-Object { $_.StartsWith('! ') }).Count }
   function Probe-Line([string]$Tenant, [string]$Resource) { "account get-access-token --tenant $Tenant --resource $Resource --output none" }
-  function Invoke-Preflight([switch]$AssumeYes, [switch]$NewWindow) {
+  function Invoke-Preflight([switch]$AssumeYes) {
     $writer = New-Object System.IO.StringWriter
     $previous = [Console]::Error
     if ($AssumeYes) { $env:COOP_ASSUME_YES = '1' }
     try {
       [Console]::SetError($writer)
-      Invoke-CoopAzPreflight -NewWindow:$NewWindow
+      Invoke-CoopAzPreflight
     } finally {
       [Console]::SetError($previous)
       Remove-Item Env:\COOP_ASSUME_YES -ErrorAction SilentlyContinue
@@ -273,9 +273,9 @@ try {
   if ($extendedLane) {
     $realInvokeCoopAz = ${function:Invoke-CoopAz}
     function Invoke-CoopAz {
-      param([int]$Seconds, [string[]]$AzArgs, [switch]$Quiet, [switch]$NewWindow)
+      param([int]$Seconds, [string[]]$AzArgs, [switch]$Quiet)
       if ($Seconds -eq 300) { $Seconds = 3 }
-      & $realInvokeCoopAz -Seconds $Seconds -AzArgs $AzArgs -Quiet:$Quiet -NewWindow:$NewWindow
+      & $realInvokeCoopAz -Seconds $Seconds -AzArgs $AzArgs -Quiet:$Quiet
     }
     try {
       Set-Project $T2; Reset-Az; Set-AzState 'login-rc' 'hang'
@@ -324,18 +324,6 @@ try {
   } else {
     Skipped '13d a stopped probe also ends the az wrapper child (a hanging az, 3 s limit)'
   }
-
-  # 13e. `coop web` (-NewWindow): on Windows the sign-in runs in its own window;
-  #      a success is re-checked and stamped like the in-console sign-in.
-  Set-Project $T2; Reset-Az @("$T2 $Pbi")
-  Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
-  $out = Invoke-Preflight -AssumeYes -NewWindow
-  $login = @(Get-AzLines | Where-Object { $_.StartsWith('login ') })
-  if ($login.Count -ne 1 -or $login[0] -ne "login --tenant $T2 --allow-no-subscriptions --output none LXV2=off") { Ko '-NewWindow: one sign-in with LXV2=off expected' ((Get-AzLines) -join "`n") }
-  elseif ((Get-Probes) -ne 3) { Ko '-NewWindow: the sign-in must re-check both tokens' ((Get-AzLines) -join "`n") }
-  elseif (-not (Test-Path -LiteralPath $marker) -or ([System.IO.File]::ReadAllText($marker)) -ne $T2) { Ko '-NewWindow: a verified sign-in stamps the marker' }
-  elseif (-not $out.Contains("Signed in to Azure for tenant $T2") -or (Get-WarnCount $out) -ne 0) { Ko '-NewWindow: success should be reported with no warning' $out }
-  else { Ok '-NewWindow sign-in (coop web): one sign-in (LXV2=off), both tokens re-checked, marker stamped' }
 
   # 13f. Ctrl-C during an in-console sign-in cancels it: one line, and the launch
   #      goes on. Needs a terminal, so POSIX legs drive pwsh through a Python pty.

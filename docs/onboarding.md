@@ -102,9 +102,8 @@ shared in from `~/.pi/agent` automatically (see
 
 The first launch after onboarding may also open the Azure sign-in for the client
 tenant, once and without a question: a browser page, or on Windows a sign-in
-window. From the `coop` desktop shortcut it opens in its own window. After that, a
-launch checks the Fabric and Power BI tokens (a success is remembered for 30
-minutes) and says nothing.
+window. After that, a launch checks the Fabric and Power BI tokens (a success is
+remembered for 30 minutes) and says nothing.
 
 - The tenant comes from the project's `.coop/project.yml` `fabric.tenant_id`, else
   from `~/.coop/config` `azure.tenant_id` (saved by onboarding). With neither,
@@ -113,8 +112,7 @@ minutes) and says nothing.
   run `coop onboard --config-only` once.
 - Ctrl-C cancels the sign-in. If sign-in fails, is cancelled or takes longer than
   5 minutes, Coop prints one line with the exact command
-  (`az login --tenant <id> --allow-no-subscriptions`) and starts anyway. From the
-  desktop shortcut, that line also stays in a small window until you press Enter.
+  (`az login --tenant <id> --allow-no-subscriptions`) and starts anyway.
   Piped, scheduled, and other non-interactive launches never open a sign-in; they
   print the same line. A token check that times out or hits a network error never
   opens a sign-in either.

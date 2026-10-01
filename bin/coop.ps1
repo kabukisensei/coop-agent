@@ -195,7 +195,7 @@ e.g. ``coop -c`` resumes the last session, ``coop @notes.md "review this"``.
 # The Azure sign-in preflight (Fabric + Power BI token check for the client
 # tenant, automatic bounded sign-in in an interactive console, cached ~30 min)
 # lives in lib/common.ps1 (Invoke-CoopAzPreflight) — called below by
-# Invoke-LaunchPi and Invoke-CoopWeb.
+# Invoke-LaunchPi.
 
 # --- Launch the branded Pi agent ---------------------------------------------
 # Launch-time skew guard (mirror of common.sh coop_launch_preflight): refuse to exec
@@ -351,6 +351,12 @@ function Build-CoopPiArgs {
 }
 
 # --- Launch the branded Pi agent ---------------------------------------------
+# The launch token for the managed Warehouse MCP (child-only, never argv or disk).
+# lib/fabric_token_runner.mjs is the one validator of the helper's framed stdout:
+# it exits 0 and forwards the frame only when it is exactly `token<TAB>...<TAB>end`
+# or `warning<TAB><state><TAB>end` with a state from lib/warehouse_mcp.py
+# WARNING_STATES. This function only splits that validated frame and keeps the
+# state-to-message table.
 function Get-CoopFabricMcpToken {
   $py = Get-CoopPython
   if (-not $py) { return '' }
@@ -394,9 +400,11 @@ function Get-CoopFabricMcpToken {
     return ''
   }
   $protocol = ($stdout -join "`n")
-  if ($protocol -match "^token`t([!-~]{1,16384})`tend$") { return $Matches[1] }
-  if ($protocol -match "^warning`t([^\s]+)`tend$") {
-    $state = $Matches[1]
+  if (-not $protocol) { return '' }
+  $fields = @($protocol -split "`t")
+  if ($fields.Count -eq 3 -and $fields[2] -eq 'end' -and $fields[0] -eq 'token') { return $fields[1] }
+  if ($fields.Count -eq 3 -and $fields[2] -eq 'end' -and $fields[0] -eq 'warning') {
+    $state = $fields[1]
     $warnings = @{
       config_invalid = 'managed configuration is invalid; run coop sync'
       azure_cli_unavailable = 'Azure CLI is not installed or not on PATH'
@@ -411,12 +419,11 @@ function Get-CoopFabricMcpToken {
     if ($state -eq 'auth_required') {
       # The preflight's cached success is stale: drop it so the next launch
       # checks again (and signs in) instead of trusting the marker.
-      Remove-Item -LiteralPath (Join-Path (Get-CoopEffectiveAgentDir) '.az-ok') -Force -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath (Join-Path $agentDir '.az-ok') -Force -ErrorAction SilentlyContinue
     }
     Coop-Warn "Fabric Warehouse MCP unavailable: $message"
     return ''
   }
-  if (-not $protocol) { return '' }
   Coop-Warn 'Fabric Warehouse MCP unavailable: token helper returned invalid output'
   return ''
 }
