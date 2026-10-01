@@ -90,8 +90,8 @@ every such read asks. Editing the contract mid-session never changes the scope u
 When that resolved scope's environment is `dev`, the read needs no approval at all:
 one plain SELECT with a literal TOP bound against the trusted dev target runs without
 a prompt, creates no session grant, and is audited as `dev-read-only`. The environment
-comes only from COOP-owned configuration (`coop sync`'s managed entry), never from the
-call. Test and production targets, unresolved or placeholder metadata, a missing
+comes only from COOP-owned configuration (`coop sync`'s managed entry, or the contract's
+`sql_targets` default entry for `fabric_sql_query`), never from the call. Test and production targets, unresolved or placeholder metadata, a missing
 launch identity, unbounded or ambiguous SQL, CTE/UNION/cross-database reads, batches,
 `EXEC`, exports, generic MCP row reads and every mutation keep their gates.
 

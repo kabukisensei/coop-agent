@@ -1203,15 +1203,47 @@ await t("parseContractSqlScope ports lib/sql_targets.py: ready default only, pro
   assert.equal(cg.parseContractSqlScope(contractText(["  dev:", "    kind: synapse_serverless", "    server: ws-ondemand.sql.azuresynapse.net", "    database: Lake"])).target.kind, "synapse_serverless");
 });
 
-await t("contract sql_targets scope: the native read asks once per contract target and the prompt names it", async () => {
+const AZ_TEST_HOST = "contoso-test.database.windows.net";
+const TEST_AZURE_CONTRACT = contractText([
+  "  default_environment: test",
+  "  test:",
+  "    kind: azure_sql",
+  `    server: "${AZ_TEST_HOST}"`,
+  "    database: ContosoDW",
+  "  prod:",
+  "    kind: azure_sql",
+  "    server: contoso.database.windows.net",
+  "    database: ContosoDW",
+]);
+
+await t("contract sql_targets scope: a dev default target runs read-only SQL without a prompt", async () => {
   writeManagedTarget();
   writeContract(AZURE_CONTRACT);
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  clearAudit();
+  confirmAnswer = false; confirmCount = 0;
+  assert.equal(blocked(await handle(nativeRead(), liveCtx)), false, "dev contract target");
+  assert.equal(blocked(await handle(nativeRead("SELECT TOP (500) name FROM dbo.Account", 500), liveCtx)), false, "any bound, no grant needed");
+  assert.equal(confirmCount, 0, "no approval prompt on the dev contract target");
+  assert.ok(readAudit().every((e) => e.detail === "dev-read-only" && e.decision === "allowed"));
+  // The managed MCP proxy still resolves against the managed (production) entry and asks.
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "managed production Warehouse still asks");
+  assert.equal(blocked(await handle(nativeRead("INSERT INTO dbo.Account (id) VALUES (1)"), liveCtx)), true, "a write on dev still asks");
+  assert.equal(blocked(await handle(nativeRead("SELECT name FROM dbo.Account"), liveCtx)), true, "an unbounded read still asks");
+  assert.equal(confirmCount, 3);
+  removeContract();
+});
+
+await t("contract sql_targets scope: the native read asks once per contract target and the prompt names it", async () => {
+  writeManagedTarget();
+  writeContract(TEST_AZURE_CONTRACT);
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
   await handleSessionStart({ reason: "new" }, liveCtx);
   confirmAnswer = true; confirmCount = 0; lastConfirm = "";
   assert.equal(blocked(await handle(nativeRead(), liveCtx)), false);
   assert.equal(confirmCount, 1);
-  for (const value of ["COOP contract SQL target (azure_sql, dev)", "Contoso", TENANT_ID, "environment: dev", `azure_sql/${AZ_HOST}/ContosoDW`, "sql-read", "row limit: 10"]) assert.ok(lastConfirm.includes(value), value);
+  for (const value of ["COOP contract SQL target (azure_sql, test)", "Contoso", TENANT_ID, "environment: test", `azure_sql/${AZ_TEST_HOST}/ContosoDW`, "sql-read", "row limit: 10"]) assert.ok(lastConfirm.includes(value), value);
   assert.equal(lastConfirm.includes("contoso.database.windows.net/"), false, "prod never appears");
   assert.equal(lastConfirm.includes("Warehouse"), false, "a contract target is not described as the managed Warehouse");
   confirmAnswer = false;
@@ -1220,7 +1252,7 @@ await t("contract sql_targets scope: the native read asks once per contract targ
   // The managed MCP proxy is a different target: the contract grant does not cover it.
   assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "managed Warehouse scope differs from the contract target");
   // Mid-session edits to the contract never change the trusted snapshot.
-  writeContract(contractText(["  default_environment: dev", "  dev:", "    kind: azure_sql", "    server: other.database.windows.net", "    database: ContosoDW"]));
+  writeContract(contractText(["  default_environment: test", "  test:", "    kind: azure_sql", "    server: other.database.windows.net", "    database: ContosoDW"]));
   assert.equal(blocked(await handle(nativeRead("SELECT TOP (5) name FROM dbo.Account", 5), liveCtx)), false, "snapshot still the approved target");
   removeContract();
 });
