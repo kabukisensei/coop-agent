@@ -333,8 +333,9 @@ private `~/.coop/devops/clients.yml`.
 **Approval boundary.** Dev/test metadata reads proceed by default. Row reads, production
 access, mutation-looking MCP actions, and **every Warehouse SQL call** require explicit
 approval; approval-required calls fail closed when no UI is available. Warehouse SQL is
-classified as `row-data` or `ddl-dml-destructive`: bounded `SELECT`-style reads still ask,
-while DDL/DML, permissions, `SELECT … INTO`, and `COPY INTO` receive mutation-specific
+classified as `row-data` or `ddl-dml-destructive`: one bounded `SELECT` on the resolved
+**dev** target runs without a prompt, bounded reads on test/production targets still ask,
+and DDL/DML, permissions, `SELECT … INTO`, and `COPY INTO` receive mutation-specific
 confirmation. Audit entries record the tool/risk decision, never raw SQL or arguments.
 Central `mcp` and dynamic `mcp__fabric_sqlendpoint` calls share the same verified
 bounded SQL grant: approve once, then approve again only for an expanded scope.

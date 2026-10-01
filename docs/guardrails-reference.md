@@ -87,6 +87,14 @@ an invalid entry, a missing client or a tenant mismatch never resolve a scope, s
 every such read asks. Editing the contract mid-session never changes the scope until
 `/new` or a restart.
 
+When that resolved scope's environment is `dev`, the read needs no approval at all:
+one plain SELECT with a literal TOP bound against the trusted dev target runs without
+a prompt, creates no session grant, and is audited as `dev-read-only`. The environment
+comes only from COOP-owned configuration (`coop sync`'s managed entry, or the contract's
+`sql_targets` default entry for `fabric_sql_query`), never from the call. Test and production targets, unresolved or placeholder metadata, a missing
+launch identity, unbounded or ambiguous SQL, CTE/UNION/cross-database reads, batches,
+`EXEC`, exports, generic MCP row reads and every mutation keep their gates.
+
 The grant resets on every session start or shutdown (new, resume, or fork), process restart, or
 `/coop-live-read revoke`; use `/coop-live-read status` to inspect its non-secret
 scope. It otherwise survives turns, compaction, and reconnects. Every call is still
