@@ -709,7 +709,11 @@ duplicated the bar). The footer shows `⬢ Cooptimize · <branch>` on the left a
 `<model> · ctx N% · tokens · $cost · <plan usage limits>` on the right, in plain text +
 common Unicode (no Nerd Font glyphs). It surfaces other extensions' status text (e.g.
 `pi-better-openai`'s plan usage limits / 5h + 7d windows) via
-`footerData.getExtensionStatuses()`, so everything is in one clean bar. The splash is
+`footerData.getExtensionStatuses()`, so everything is in one clean bar. For that to
+work, `coop sync` (also run by `coop install` and `coop update`) keeps
+`pi-better-openai`'s own footer in `status` mode in `~/.coop/agent/extensions/pi-better-openai.json`;
+its default `replace` mode installs a second footer that wipes coop's. A deliberate
+`off` is left alone. The splash is
 the truecolor block-art Cooptimize logo (uniform-padded, width-robust). Coop also owns
 the terminal tab title (`coop - <session> - <folder>`) so Pi's `π` branding does not
 reappear after startup or a session rename. The tab icon itself belongs to the terminal

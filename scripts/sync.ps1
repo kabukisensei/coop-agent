@@ -55,6 +55,11 @@ if ($settingsPy) {
   & $settingsPy (Join-Path $script:CoopRoot 'lib\pi_settings.py') ensure-quiet-startup (Join-Path $PI_AGENT 'settings.json')
   if ($LASTEXITCODE -eq 0) { Coop-Ok 'quiet startup enabled (guardrails, skills, prompts, extensions, and theme still load)' }
   else { Coop-Warn "could not enable quiet startup in $PI_AGENT\settings.json" 'run: coop sync'; $script:SyncFailures++ }
+  # pi-better-openai defaults to replacing the footer, which wipes coop's own footer
+  # (issue #203); status mode feeds its usage text into coop's bar instead.
+  & $settingsPy (Join-Path $script:CoopRoot 'lib\pi_settings.py') ensure-coop-footer (Join-Path $PI_AGENT 'extensions\pi-better-openai.json')
+  if ($LASTEXITCODE -eq 0) { Coop-Ok "pi-better-openai footer set to status mode (coop's own footer stays)" }
+  else { Coop-Warn "could not set pi-better-openai footer mode in $PI_AGENT\extensions\pi-better-openai.json" 'run: coop sync'; $script:SyncFailures++ }
 } else {
   Coop-Warn 'could not enable quiet startup: Python not found' 'run: coop sync'
   $script:SyncFailures++

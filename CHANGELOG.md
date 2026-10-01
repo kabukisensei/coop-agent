@@ -26,6 +26,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   new one. Maintainers regenerate it with `node lib/extlock.js generate` whenever
   a pin moves; the gate lane fails when the lock and the manifest disagree.
 
+### Fixed
+
+- coop's own footer renders again (issue #203). `pi-better-openai` 0.1.22
+  defaults to `footer.mode: "replace"`, which installs its own footer on
+  `session_start` and replaces coop-powerline's `⬢ Cooptimize` bar with Pi's
+  built-in one. `coop sync` (run by `coop install` and `coop update`) now keeps
+  that extension's `footer.mode` at `status` in
+  `~/.coop/agent/extensions/pi-better-openai.json`, which is what coop's footer
+  already consumes through `footerData.getExtensionStatuses()`; a deliberate
+  `off` is left alone and every other key in that file is preserved. Existing
+  installs pick it up on their next `coop update` or `coop sync`.
+
 ### Changed
 
 - Power BI authoring tools (master plan U1, section 6 rows):

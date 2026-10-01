@@ -16,34 +16,30 @@ import sys
 import tempfile
 
 
-def ensure_quiet_startup(path: Path) -> bool:
-    """Set quietStartup without disturbing any other Pi setting.
+def _read_json_object(path: Path) -> tuple[dict, int | None]:
+    """Read a JSON object file, returning it with its current mode (None if absent)."""
 
-    Returns True when the file changed and False when it was already converged.
-    """
+    if not path.exists():
+        return {}, None
+    existing_mode = stat.S_IMODE(path.stat().st_mode)
+    try:
+        document = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read {path}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValueError(f"cannot update {path}: root must be a JSON object")
+    return document, existing_mode
 
-    existing_mode: int | None = None
-    if path.exists():
-        existing_mode = stat.S_IMODE(path.stat().st_mode)
-        try:
-            settings = json.loads(path.read_text(encoding="utf-8-sig"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise ValueError(f"cannot read {path}: {exc}") from exc
-        if not isinstance(settings, dict):
-            raise ValueError(f"cannot update {path}: root must be a JSON object")
-    else:
-        settings = {}
 
-    if settings.get("quietStartup") is True:
-        return False
+def _write_json_object(path: Path, document: dict, existing_mode: int | None) -> None:
+    """Replace `path` atomically, keeping its mode (0600 for a new file)."""
 
-    settings["quietStartup"] = True
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     tmp = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(settings, handle, ensure_ascii=False, indent=2)
+            json.dump(document, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
         os.chmod(tmp, existing_mode if existing_mode is not None else 0o600)
         os.replace(tmp, path)
@@ -52,17 +48,60 @@ def ensure_quiet_startup(path: Path) -> bool:
             tmp.unlink()
         except FileNotFoundError:
             pass
+
+
+def ensure_quiet_startup(path: Path) -> bool:
+    """Set quietStartup without disturbing any other Pi setting.
+
+    Returns True when the file changed and False when it was already converged.
+    """
+
+    settings, existing_mode = _read_json_object(path)
+    if settings.get("quietStartup") is True:
+        return False
+    settings["quietStartup"] = True
+    _write_json_object(path, settings, existing_mode)
+    return True
+
+
+# pi-better-openai's own footer defaults to `footer.mode: "replace"`, which calls
+# ctx.ui.setFooter and wipes coop-powerline's footer on session_start (issue #203).
+# coop owns the footer: it surfaces pi-better-openai's plan-usage text through
+# footerData.getExtensionStatuses(), which is exactly what "status" mode emits.
+COOP_FOOTER_MODES = ("status", "off")
+
+
+def ensure_coop_footer(path: Path) -> bool:
+    """Keep pi-better-openai in status-line mode so coop's own footer survives.
+
+    `path` is pi-better-openai's global config (`<agent dir>/extensions/
+    pi-better-openai.json`). Only `footer.mode` is touched: "replace" (its
+    default) becomes "status"; a deliberate "off" is left alone, and every other
+    key is preserved. Returns True when the file changed.
+    """
+
+    config, existing_mode = _read_json_object(path)
+    footer = config.get("footer")
+    if not isinstance(footer, dict):
+        footer = {}
+    if footer.get("mode") in COOP_FOOTER_MODES:
+        return False
+    config["footer"] = {**footer, "mode": "status"}
+    _write_json_object(path, config, existing_mode)
     return True
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Converge Coop-owned Pi settings")
-    parser.add_argument("command", choices=("ensure-quiet-startup",))
+    parser.add_argument("command", choices=("ensure-quiet-startup", "ensure-coop-footer"))
     parser.add_argument("settings", type=Path)
     args = parser.parse_args(argv)
 
     try:
-        ensure_quiet_startup(args.settings)
+        if args.command == "ensure-coop-footer":
+            ensure_coop_footer(args.settings)
+        else:
+            ensure_quiet_startup(args.settings)
     except ValueError as exc:
         print(f"pi-settings: {exc}", file=sys.stderr)
         return 2

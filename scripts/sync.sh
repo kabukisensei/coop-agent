@@ -49,6 +49,14 @@ else
   coop_warn "could not enable quiet startup in $PI_AGENT/settings.json" "run: coop sync"
   SYNC_FAILURES=$((SYNC_FAILURES + 1))
 fi
+# pi-better-openai defaults to replacing the footer, which wipes coop's own footer
+# (issue #203); status mode feeds its usage text into coop's bar instead.
+if [ -n "$_settings_py" ] && "$_settings_py" "$COOP_ROOT/lib/pi_settings.py" ensure-coop-footer "$PI_AGENT/extensions/pi-better-openai.json"; then
+  coop_ok "pi-better-openai footer set to status mode (coop's own footer stays)"
+else
+  coop_warn "could not set pi-better-openai footer mode in $PI_AGENT/extensions/pi-better-openai.json" "run: coop sync"
+  SYNC_FAILURES=$((SYNC_FAILURES + 1))
+fi
 
 # --- 4. Managed Fabric Python runtime ----------------------------------------
 # Sync repairs an existing Fabric environment, but never installs Fabric itself.
