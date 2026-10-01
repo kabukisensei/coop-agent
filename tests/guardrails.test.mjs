@@ -1153,11 +1153,94 @@ await t("changed managed target, launch identity, or environment reprompts", asy
   }
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
 
-  writeManagedTarget({ environment: "dev" });
+  writeManagedTarget({ environment: "test" });
   assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "changed environment");
   writeManagedTarget({ client: "TODO client" });
   assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "unresolved managed metadata");
   writeManagedTarget();
+});
+
+// --- dev target: provably read-only SQL runs without approval ---------------------
+await t("one plain bounded SELECT on the resolved dev target runs without a prompt", async () => {
+  writeManagedTarget({ environment: "dev" });
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  clearAudit();
+  confirmAnswer = false; confirmCount = 0;
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "managed MCP proxy read");
+  assert.equal(blocked(await handle(sqlRead("select top 500 [name], [secret col]] x] from [dbo].[Account] where id = 'DELETE'"), liveCtx)), false, "any plain bounded SELECT, no grant needed");
+  assert.equal(blocked(await handle({ toolName: "fabric_sql_query", input: { query: "SELECT TOP (25) customer_id FROM dbo.Customer", maximum_rows: 10 } }, liveCtx)), false, "exact native fallback");
+  assert.equal(confirmCount, 0, "no approval prompt on dev");
+  const entries = readAudit();
+  assert.equal(entries.length, 3);
+  for (const e of entries) {
+    assert.equal(e.decision, "allowed");
+    assert.equal(e.detail, "dev-read-only");
+  }
+  assert.equal(JSON.stringify(entries).includes("Account"), false, "audit never carries SQL");
+  const status = cmds["coop-live-read"];
+  let shown = "";
+  await status.handler([], { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
+  assert.ok(shown.includes("none active"), "dev reads create no session grant");
+});
+
+await t("dev auto-allow covers only provably read-only SQL on the trusted dev target", async () => {
+  writeManagedTarget({ environment: "dev" });
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = false;
+  const stillAsks = {
+    "mutation": sqlRead("INSERT INTO dbo.Customer (id) VALUES (1)"),
+    "update": sqlRead("UPDATE dbo.Customer SET name = 'x'"),
+    "delete": sqlRead("DELETE FROM dbo.Customer"),
+    "select into": sqlRead("SELECT TOP (10) * INTO dbo.Copy FROM dbo.Customer"),
+    "exec": sqlRead("EXEC dbo.Report"),
+    "batch": sqlRead("SELECT TOP (1) 1; SELECT TOP (1) 2"),
+    "unbounded": sqlRead("SELECT customer_id FROM dbo.Customer"),
+    "cte": sqlRead("WITH c AS (SELECT TOP (5) id FROM dbo.Customer) SELECT * FROM c"),
+    "union": sqlRead("SELECT TOP (5) id FROM dbo.A UNION SELECT id FROM dbo.B"),
+    "cross-database": sqlRead("SELECT TOP (5) id FROM Other.dbo.Customer"),
+    "unclosed quote": sqlRead("SELECT TOP (5) 'x FROM dbo.Customer"),
+    "unknown execution control": sqlRead(undefined, { timeout: 1 }),
+    "other item id": sqlRead(undefined, { itemId: OTHER_ITEM_ID }),
+    "native fallback with extra field": { toolName: "fabric_sql_query", input: { query: "SELECT TOP (5) id FROM dbo.Customer", target: OTHER_ITEM_ID } },
+    "generic MCP row read": { toolName: "mcp", input: { server: "fabric", tool: "query_lakehouse_rows", args: JSON.stringify({ environment: "dev" }) } },
+  };
+  for (const [why, event] of Object.entries(stillAsks)) {
+    confirmCount = 0;
+    assert.equal(blocked(await handle(event, liveCtx)), true, why);
+    assert.equal(confirmCount, 1, `${why} asks`);
+  }
+  // The same read asks on test and production, and when the target or identity
+  // cannot be trusted.
+  for (const [why, setup] of Object.entries({
+    "test target": () => writeManagedTarget({ environment: "test" }),
+    "production target": () => writeManagedTarget({ environment: "production" }),
+    "unresolved client": () => writeManagedTarget({ environment: "dev", client: "TODO client" }),
+    "no launch identity": () => { writeManagedTarget({ environment: "dev" }); delete process.env.COOP_FABRIC_MCP_TOKEN; },
+  })) {
+    setup();
+    confirmCount = 0;
+    assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, why);
+    assert.equal(confirmCount, 1, `${why} asks`);
+    process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  }
+  // Headless: dev reads still run, since nothing needs approving.
+  writeManagedTarget({ environment: "dev" });
+  assert.equal(blocked(await handle(sqlRead(), { ...liveCtx, hasUI: false, ui: undefined })), false, "headless dev read");
+  writeManagedTarget();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+});
+
+await t("decideLiveRead: allow-dev only for a resolved sql-read scope on dev", () => {
+  const scope = (environment) => ({ client: "Contoso", tenant: TENANT_ID, principal: "p", environment, targets: ["w/i/d"], operationClass: "sql-read", resultLimit: 25, timeoutMs: 60000 });
+  assert.equal(cg.decideLiveRead(sqlRead(), null, scope("dev")).action, "allow-dev");
+  assert.equal(cg.decideLiveRead(sqlRead(), null, scope("test")).action, "prompt-and-grant");
+  assert.equal(cg.decideLiveRead(sqlRead(), null, scope("production")).action, "prompt-and-grant");
+  assert.equal(cg.decideLiveRead(sqlRead(), null, null).action, "prompt-once");
+  assert.equal(cg.decideLiveRead(sqlRead(), null, { ...scope("dev"), operationClass: "sql-write" }).action, "prompt-once");
+  assert.equal(cg.decideLiveRead(sqlRead("DROP TABLE dbo.Customer"), null, scope("dev")).action, "separate-gate");
+  assert.equal(cg.decideLiveRead(sqlRead("SELECT TOP (1) 1; SELECT TOP (1) 2"), null, scope("dev")).action, "separate-gate");
 });
 
 await t("forged header command, URL, timeout, and auth cannot reuse a grant", async () => {

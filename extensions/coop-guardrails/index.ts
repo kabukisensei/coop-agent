@@ -18,8 +18,9 @@
  *   3. Secret files — confirm before read/edit/write of `.env`, private keys, or
  *      credential files, AND before a bash command that touches one (`cat .env`
  *      etc.). The agent must never expose secrets.
- *   4. Live data reads — dev/test metadata is allowed read-only; row-level reads
- *      and any production access require explicit approval.
+ *   4. Live data reads — dev/test metadata is allowed read-only; one plain bounded
+ *      SELECT against the resolved dev target runs unprompted; other row-level
+ *      reads and any production access require explicit approval.
  *   5. Mutating MCP actions — confirm before Fabric/Power BI/MCP tool calls whose
  *      names look like create/update/delete/deploy/publish (best-effort; MCP tool
  *      names vary, so this complements — not replaces — Pi's tool approval).
@@ -1248,7 +1249,7 @@ export function liveReadGrantMatches(grant: LiveReadGrant | null, requested: Liv
 }
 
 export type LiveReadDecision = {
-  action: "none" | "allow-grant" | "prompt-once" | "prompt-and-grant" | "separate-gate";
+  action: "none" | "allow-grant" | "allow-dev" | "prompt-once" | "prompt-and-grant" | "separate-gate";
   label?: string;
   kind?: SqlMcpRisk["kind"] | LiveReadRisk["kind"];
   environment?: string;
@@ -1267,6 +1268,11 @@ export function decideLiveRead(event: any, grant: LiveReadGrant | null, resolved
   if (sql && sql.kind !== "row-data") return { action: "separate-gate", label, kind, environment };
   if (/export|download/.test(targetName)) return { action: "separate-gate", label, kind, environment };
   if (!resolvedScope || resolvedScope.operationClass !== "sql-read") return { action: "prompt-once", label, kind, environment };
+  // A provably read-only call (one plain SELECT with a literal TOP, the only shape
+  // that resolves a scope) against a target the trusted config says is dev needs
+  // no approval. Test and production, unbounded or ambiguous SQL, and every
+  // mutation keep their gates.
+  if (resolvedScope.environment === "dev") return { action: "allow-dev", label, kind, environment, scope: resolvedScope };
   if (liveReadGrantMatches(grant, resolvedScope)) return { action: "allow-grant", label, kind, environment, scope: resolvedScope };
   return { action: "prompt-and-grant", label, kind, environment, scope: resolvedScope };
 }
@@ -1666,6 +1672,10 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         }
         const resolvedScope = resolveLiveReadScope(event, liveReadDeps);
         const decision = decideLiveRead(event, liveReadGrant, resolvedScope);
+        if (decision.action === "allow-dev") {
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: "live read", detail: "dev-read-only" });
+          return;
+        }
         if (decision.action !== "none" && decision.action !== "allow-grant") {
           // A single dev/test Warehouse INSERT/UPDATE/CREATE/ALTER can ride a session
           // approval (#156); destructive SQL, batches and production always ask.
@@ -1880,7 +1890,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, `git commit <path>`, and `cd <dir> && git commit`) of anything outside docs/logs/site",
         "  • destructive commands — confirms rm -rf / git push --force (incl. +refspec) / reset --hard / git clean -f / DROP·TRUNCATE",
         "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
-        `  • live data — allows dev/test metadata; bounded matching reads may reuse one session grant (${liveReadGrant ? "active" : "none"}; /coop-live-read status|revoke)`,
+        `  • live data — allows dev/test metadata and one plain bounded SELECT on the dev target; elsewhere bounded matching reads may reuse one session grant (${liveReadGrant ? "active" : "none"}; /coop-live-read status|revoke)`,
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
         `  • edit approvals — approving an edit can cover that server for the session; deletes, drops and production still ask (${editApprovals.size ? `${editApprovals.size} active` : "none"}; /coop-approvals status|revoke)`,
         "  • managed updates — blocks ctx_upgrade so the manifest-pinned fleet moves together",

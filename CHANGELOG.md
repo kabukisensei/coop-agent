@@ -5,6 +5,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- Read-only SQL on a dev target no longer asks for approval. When the guardrails
+  resolve a Warehouse SQL call's bounded scope (one plain `SELECT` with a literal
+  `TOP`, through the managed `fabric-sqlendpoint` proxy or the exact
+  `fabric_sql_query` fallback) and the trusted managed entry says the target is
+  `dev`, the read runs without a prompt and without a session grant; the audit
+  records it as `dev-read-only`. Test and production targets, unbounded or
+  ambiguous SQL, generic MCP row reads and every mutation ask as before.
+
 ### Fixed
 
 - `coop sync` from a PowerShell 7 window. `coop.cmd` starts Windows PowerShell
