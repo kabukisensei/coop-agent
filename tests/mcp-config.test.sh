@@ -46,6 +46,11 @@ assert s['azure-devops']['args'][1].endswith('@'+manifest['mcp_servers']['@azure
 # Microsoft Learn is unauthenticated Streamable HTTP the adapter speaks directly (U1):
 # the exact entry, and a managed pre-0.25 mcp-remote command line migrates to it.
 assert s['microsoft-learn']=={'url':'https://learn.microsoft.com/api/mcp','auth':False,'lifecycle':'lazy','requestTimeoutMs':60000}
+# Every managed command server keeps the proxied dispatch the guardrails parse
+# (URL entries are replaced wholesale, so a user-added flag cannot survive there).
+assert all(s[k].get('directTools') is False for k in m['_coop']['managed_servers'] if 'command' in s[k]), {k: s[k].get('directTools') for k in m['_coop']['managed_servers']}
+# A user's own server keeps whatever it set.
+assert 'directTools' not in s['custom']
 assert 'mcp-remote' not in json.dumps(m) and 'mcp-remote' not in json.dumps(manifest)
 # context-mode is a native Pi extension — never generated as an MCP server.
 assert 'context-mode' not in s
@@ -57,12 +62,15 @@ cp "$d/mcp.json" "$d/mcp-first.json"
 # allowInstall stay off.
 "$PY" - "$d/mcp.json" <<'PY'
 import json,sys
-m=json.load(open(sys.argv[1])); m['settings']={'scriptMode': True, 'allowInstall': True, 'idleTimeout': 5}; json.dump(m,open(sys.argv[1],'w'))
+m=json.load(open(sys.argv[1])); m['settings']={'scriptMode': True, 'allowInstall': True, 'idleTimeout': 5}; m['mcpServers']['fabric']['directTools']=True; json.dump(m,open(sys.argv[1],'w'))
 PY
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp.json"
 "$PY" - "$d/mcp.json" <<'PY'
 import json,sys
-assert json.load(open(sys.argv[1]))['settings']=={'scriptMode': False, 'allowInstall': False, 'idleTimeout': 5}
+m=json.load(open(sys.argv[1]))
+assert m['settings']=={'scriptMode': False, 'allowInstall': False, 'idleTimeout': 5}
+# A user-enabled directTools on a managed server is switched back off on sync.
+assert m['mcpServers']['fabric']['directTools'] is False
 PY
 cp "$d/mcp-first.json" "$d/mcp.json"
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp.json"

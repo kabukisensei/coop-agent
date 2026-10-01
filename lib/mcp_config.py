@@ -320,6 +320,13 @@ def generate(
                         merged[field] = definition[field]
                     else:
                         merged.pop(field, None)
+                # The adapter can register every server tool directly
+                # (`directTools`), bypassing the {server, tool, args} envelope
+                # coop's guardrails parse. Coop keeps the proxied dispatch for its
+                # managed command servers; the guardrail also labels direct names
+                # in case a user config turns it back on. URL entries are replaced
+                # wholesale above, so a user-added flag never survives there.
+                merged["directTools"] = False
                 servers[name] = merged
             managed.add(name)
     result["mcpServers"] = {k: servers[k] for k in sorted(servers)}
