@@ -412,7 +412,7 @@ The Windows terminal-workstation acceptance workflow runs `tests\run.ps1` with
 `COOP_TEST_EXTENDED=1`, so its behavioral-suite receipt covers both lanes.
 
 The extended block of `tests/run.sh` keeps the gate lane's temp home (#135).
-`tests/home-guard.test.sh` is the one exception: it reads the real `~/.local/bin`
+`tests/fixtures/home-guard.test.ps1` (run by `tests/run.ps1`) is the one exception: it reads the real `~/.local/bin`
 and `~/.coop` on purpose, to prove the fleet paths leave them alone. The extended
 fixtures that run doctor, update or a launch (`doctor`, `inventory`, `first-run`)
 work on a copy of the tree without `.git`, and `fabric-mcp-launch` pre-writes a

@@ -239,8 +239,6 @@ else
   echo "  ✗ launch spec does not set PI_MCP_CONFIG_MODE=exclusive"; exit 1
 fi
 
-echo "→ fleet manifest tests"
-bash "$ROOT/tests/fleet-manifest.test.sh"
 echo "→ fleet health digest rendering (HTML/Markdown escaping, UTF-8 output)"
 bash "$ROOT/tests/fleet-digest.test.sh"
 echo "→ pipx launcher PATH resolution (install.ps1)"
@@ -249,8 +247,6 @@ echo "→ entrypoints guard a missing helper library / forwarder target"
 bash "$ROOT/tests/missing-common-guard.test.sh"
 echo "→ user paths install and recommend only the release's pinned versions (#151)"
 bash "$ROOT/tests/pins.test.sh"
-echo "→ model login detection ignores Pi's empty startup auth.json (#167)"
-bash "$ROOT/tests/login-present.test.sh"
 echo "→ extension tree pins the agent peer to the agent's version (#122)"
 bash "$ROOT/tests/extdeps-agent-pin.test.sh"
 echo "→ extension lockfile pins the tree's transitive dependencies (#152)"
@@ -293,8 +289,6 @@ for prev, ok, detail in cases:
     assert got_detail == detail, (prev, got_detail, detail)
 print("  OK  resume verdict: failure sentinel / expected prev=1 / already-running / still-suspended")
 PY
-echo "→ team knowledge skills launch slot tests"
-bash "$ROOT/tests/team-skills.test.sh"
 
 echo "→ coop init wizard tests"
 bash "$ROOT/tests/init-wizard.test.sh"
@@ -344,8 +338,6 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   echo "→ live JSONL happy-path vs the installed coop-data-doc"
   COOP_TEST_DATADOC_REQUIRED="${COOP_TEST_DATADOC_REQUIRED:-0}" COOP_TEST_DIST="$TMP" node "$ROOT/tests/jsonl-live.test.mjs"
 
-  echo "→ fleet execution and fresh-install Python prerequisite"
-  bash "$ROOT/tests/fleet-execution.test.sh"
 
   echo "→ Fabric request headers and SQL launcher (MCP launch phases: tests/fixtures/fabric-mcp-launch.test.ps1 in run.ps1)"
   node "$ROOT/tests/fabric-request-headers.test.mjs"
@@ -367,12 +359,7 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
     MINGW*|MSYS*|CYGWIN*) echo "  – Python pty/termios is unavailable on native Windows; covered by macOS PTY + Windows launcher tests" ;;
     *) bash "$ROOT/tests/first-run.test.sh" ;;
   esac
-  echo "→ home-guard (fleet paths must not mutate the real home)"
-  # shellcheck source=/dev/null
-  ( . "$CALLER_HOME_ENV"; bash "$ROOT/tests/home-guard.test.sh" )
 
-  echo "→ repo staleness nudge (throttled fetch + behind-count) tests"
-  bash "$ROOT/tests/staleness.test.sh"
 
   echo "→ coop review (composite linters + docs compose) tests"
   bash "$ROOT/tests/review.test.sh"

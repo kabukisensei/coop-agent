@@ -795,6 +795,42 @@ print("resume verdict contract OK")
     Ko "seed-docs config-set status fixture failed: $($seedOut | Out-String)"
   }
 
+  # --- 10. Suites ported from the retired bash tests (master plan S1): coop's own
+  #         behavioural fixtures, one child pwsh/powershell each.
+  foreach ($fx in @(
+      @{ Name = 'fleet-manifest';  Head = 'fleet manifest (Coop-Manifest* helpers, update --check, gate pin)' },
+      @{ Name = 'login-present';   Head = 'model login detection ignores Pi''s empty startup auth.json (#167)' },
+      @{ Name = 'extensions-lock'; Head = 'extension lockfile applied through the helpers (#152)' },
+      @{ Name = 'team-skills';     Head = 'team knowledge skills launch slot (launch-spec --json)' },
+      @{ Name = 'staleness';       Head = 'repo staleness nudge (throttled fetch + behind-count)' })) {
+    Head $fx.Head
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $fxOut = & $psExe -NoProfile -File (Join-Path $root ('tests\fixtures\' + $fx.Name + '.test.ps1')) 2>&1
+    $fxRc = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorAction
+    if ($fxRc -eq 0) { $fxOut | ForEach-Object { Write-Host $_ } } else { Ko "$($fx.Name) fixture failed: $($fxOut | Out-String)" }
+  }
+
+  # --- 10b. EXTENDED LANE: process fixtures ported from the bash extended block.
+  if ($extendedLane) {
+    Head 'fleet execution (install/update/sync against stubs)'
+    $oldErrorAction = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $feOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\fleet-execution.test.ps1') 2>&1
+    $feRc = $LASTEXITCODE; $ErrorActionPreference = $oldErrorAction
+    if ($feRc -eq 0) { $feOut | ForEach-Object { Write-Host $_ } } else { Ko "fleet-execution fixture failed: $($feOut | Out-String)" }
+
+    # home-guard checks the CALLER's real home on purpose (#135): restore it for
+    # the child, then put the gate-lane temp home back.
+    Head 'home-guard (fleet paths must not mutate the real home)'
+    $hgSaved = @{}; foreach ($name in $homeVarNames) { $hgSaved[$name] = [Environment]::GetEnvironmentVariable($name); [Environment]::SetEnvironmentVariable($name, $priorHomeVars[$name]) }
+    $oldErrorAction = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $hgOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\home-guard.test.ps1') 2>&1
+    $hgRc = $LASTEXITCODE; $ErrorActionPreference = $oldErrorAction
+    foreach ($name in $homeVarNames) { [Environment]::SetEnvironmentVariable($name, $hgSaved[$name]) }
+    if ($hgRc -eq 0) { $hgOut | ForEach-Object { Write-Host $_ } } else { Ko "home-guard fixture failed: $($hgOut | Out-String)" }
+  }
+
   # --- 9h. Shortcut + user-PATH targets follow a redirected profile (isolated installs)
   Head 'install shortcuts and user PATH follow a redirected profile (isolated install)'
   $oldErrorAction = $ErrorActionPreference

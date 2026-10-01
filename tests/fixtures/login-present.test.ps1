@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # #167 (port of tests/login-present.test.sh): Pi writes an empty `{}` auth.json on
 # startup, so "the file is non-empty" is not proof of a model login.
 # Test-CoopPiLoginPresent (the effective agent dir) and Test-CoopAuthHasCredential

@@ -20,8 +20,10 @@ $chmod = if ($isWindowsHost) { '' } else { (Get-Command chmod -ErrorAction Stop)
 function Write-Shim {
   param([string]$Name, [string]$Sh, [string]$Cmd, [string]$Dir = $bin)
   [System.IO.File]::WriteAllText((Join-Path $Dir $Name), "#!/bin/sh`n$Sh`n")
-  [System.IO.File]::WriteAllText((Join-Path $Dir ($Name + '.cmd')), "@echo off`r`n$Cmd`r`n")
-  if (-not $isWindowsHost) { & $chmod +x (Join-Path $Dir $Name) }
+  # .cmd twins only on Windows: Get-CoopWorkingNpm prefers npm.cmd through Get-Command,
+  # which on Linux/macOS would try to run the batch file.
+  if ($isWindowsHost) { [System.IO.File]::WriteAllText((Join-Path $Dir ($Name + '.cmd')), "@echo off`r`n$Cmd`r`n") }
+  else { & $chmod +x (Join-Path $Dir $Name) }
 }
 # Run scripts/update.ps1 in a child process; returns its output, sets $script:rc.
 function Invoke-Update([string[]]$UpdateArgs = @()) {
