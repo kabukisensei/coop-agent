@@ -95,11 +95,11 @@ mcp:
   servers:
     - name: fabric          # @microsoft/fabric-mcp (AzureCliCredential)
       mode: read-only       # by policy — Fabric MCP has no server-side read-only switch
-    - name: fabric-sqlendpoint # https://api.fabric.microsoft.com/v1/mcp/dataPlane/... via mcp-remote
+    - name: fabric-sqlendpoint # https://api.fabric.microsoft.com/v1/mcp/dataPlane/... direct HTTP (adapter-native)
       mode: approval-gated-sql
     - name: powerbi-modeling-mcp # @microsoft/powerbi-modeling-mcp --start --readwrite --accept-eula
       mode: approval-gated-edits  # reads run; edits ask; deletes/imports/deploys/production always ask
-    - name: microsoft-learn # learn.microsoft.com/api/mcp via mcp-remote (always-current docs)
+    - name: microsoft-learn # learn.microsoft.com/api/mcp direct HTTP, no bridge package (always-current docs)
       mode: read-only
     - name: context-mode    # context-mode@1.0.169 — intent-driven search + SANDBOXED exec over docs/graph
       mode: sandboxed-exec  # not read-only: sandboxed code execution (over docs, not client data)
@@ -125,7 +125,7 @@ tested_with:
   pi_mcp_adapter: "3.3.0"
   pi_hermes_memory: "0.9.9"
   pi_web_access: "0.10.7"
-  rpiv_ask_user_question: "1.20.0"
+  rpiv_ask_user_question: "2.12.0"
   context_mode: "1.0.169"
   ms_fabric_cli: "1.7.0"
   fabric_cicd: "1.3.0"

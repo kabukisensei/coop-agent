@@ -28,13 +28,20 @@ from warehouse_mcp import (  # noqa: E402
     select_target,
 )
 
+# Servers COOP generates. The npm-backed ones run through `npx <package>@<pin>`;
+# the two direct HTTP servers (value None) are spoken to by pi-mcp-adapter itself
+# (Streamable HTTP with SSE fallback), so they need no package at all.
 SERVER_PACKAGES = {
     "fabric": "@microsoft/fabric-mcp",
-    "fabric-sqlendpoint": "mcp-remote",
+    "fabric-sqlendpoint": None,
     "powerbi-modeling-mcp": "@microsoft/powerbi-modeling-mcp",
     "azure-devops": "@azure-devops/mcp",
-    "microsoft-learn": "mcp-remote",
+    "microsoft-learn": None,
 }
+# Direct HTTP entries are wholly COOP-owned and replaced on every regeneration, so
+# a stale transport, auth or `command`/`args` field (the pre-0.25 `mcp-remote`
+# bridge for Microsoft Learn) can never survive a sync.
+URL_SERVERS = frozenset({"fabric-sqlendpoint", "microsoft-learn"})
 # Servers COOP generated in earlier releases and no longer generates. Their names
 # are still COOP's, so a marked entry or a legacy TODO-/@latest placeholder is
 # removed on the next sync; an unmarked user-owned entry is left alone (doctor
@@ -72,17 +79,18 @@ def spec(manifest: dict[str, Any], package: str) -> str:
     return f"{package}@{version(manifest, package)}"
 
 
-def remote_http_server(manifest: dict[str, Any], url: str) -> dict[str, Any]:
+def direct_http_server(url: str) -> dict[str, Any]:
+    """An unauthenticated Streamable HTTP server the adapter talks to directly.
+
+    `auth: False` skips the adapter's OAuth probing; the adapter defaults to the
+    Streamable HTTP transport with SSE fallback, which is what learn.microsoft.com
+    serves.
+    """
     return {
-        "command": "npx",
-        "args": [
-            "-y",
-            spec(manifest, "mcp-remote"),
-            url,
-            "--transport",
-            "http-only",
-            "--silent",
-        ],
+        "url": url,
+        "auth": False,
+        "lifecycle": "lazy",
+        "requestTimeoutMs": 60000,
     }
 
 
@@ -185,6 +193,18 @@ def desired_servers(
                 "start",
                 "--mode",
                 "namespace",
+                # 1.4.0 exposes no router unless its namespaces are named (1.3.0
+                # exposed all four by default). Naming them keeps the same four
+                # routers on both versions; coop's guardrails classify each
+                # router's command (#171).
+                "--namespace",
+                "docs",
+                "--namespace",
+                "onelake",
+                "--namespace",
+                "core",
+                "--namespace",
+                "datafactory",
             ],
             "env": env,
         }
@@ -240,9 +260,7 @@ def desired_servers(
             ],
         }
     if enabled("microsoft_learn"):
-        out["microsoft-learn"] = remote_http_server(
-            manifest, "https://learn.microsoft.com/api/mcp"
-        )
+        out["microsoft-learn"] = direct_http_server("https://learn.microsoft.com/api/mcp")
     return out
 
 
@@ -290,9 +308,10 @@ def generate(
     for name, definition in desired.items():
         current = servers.get(name)
         if current is None or name in managed or legacy_seeded(name, current):
-            if name == "fabric-sqlendpoint":
-                # This security-sensitive entry is wholly COOP-owned. Replacing it
-                # prevents stale transport/auth fields from surviving regeneration.
+            if name in URL_SERVERS:
+                # Direct HTTP entries are wholly COOP-owned. Replacing them prevents
+                # stale transport/auth fields, or the old `mcp-remote` command line,
+                # from surviving regeneration.
                 servers[name] = definition
             else:
                 merged = dict(current) if isinstance(current, dict) else {}

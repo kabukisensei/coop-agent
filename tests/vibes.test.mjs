@@ -49,6 +49,7 @@ const POOL_NAMES = [
   "dax-review.txt",
   "fabric.txt",
   "coop-internal.txt",
+  "tips.txt",
 ];
 
 const CREW_MEMBERS = ["Joel", "Eric", "Tanner", "Josh", "Simar", "April", "Aaron"];
@@ -59,7 +60,7 @@ const DISALLOWED_PATTERNS = [
 ];
 
 const ACTIONABLE_PREFIX = /^(Add|Ask|Configure|Include|Open|Read|Run|Save|Scan|Set|Try|Type|Use)\b/;
-const CLIENT_UNSAFE_PATTERNS = [/\bbastards\b/i, /screw you guys/i];
+const CLIENT_UNSAFE_PATTERNS = [/\bbastards\b/i, /screw you guys/i, /\bshit\b/i];
 const OUT_OF_AGENT_PATTERNS = [
   /^Run coop\b/i,
   /^Run fab\b/i,
@@ -282,6 +283,8 @@ const WEBSITE_SLASH_COMMANDS = [
   "/handoff",
   "/pr-description",
   "/skill:<name>",
+  "/memory-insights",
+  "/memory-pin",
   "/model",
   "/new",
   "/compact",
@@ -313,8 +316,24 @@ if (allNeedlesFound) {
   ko(`some key feature needles missing`);
 }
 
-console.log("→ coop-powerline FALLBACK_VIBES");
+console.log("→ {user} placeholder");
 const powerlineSrc = readFileSync(join(ROOT, "extensions/coop-powerline/index.ts"), "utf8");
+{
+  // Only easter-egg lines may carry {user}; tips stay literal and copy-pasteable.
+  const placeholderTips = allMessages.filter(({ line, section }) => section === "tips" && line.includes("{user}"));
+  if (placeholderTips.length === 0) ok("{user} placeholder appears only in easter-egg sections");
+  else ko("{user} placeholder used in a tips section", placeholderTips.map(({ line }) => line).join(" | "));
+  const substitutes =
+    powerlineSrc.includes("function fillVibe(") &&
+    powerlineSrc.includes('join(homedir(), ".coop", "user.json")') &&
+    powerlineSrc.includes("userInfo().username") &&
+    powerlineSrc.includes('return "Dave";') &&
+    /const pickVibe = \(\): string => fillVibe\(/.test(powerlineSrc);
+  if (substitutes) ok("coop-powerline fills {user} from the COOP profile, then the OS login, then Dave");
+  else ko("coop-powerline does not substitute {user} in picked vibes");
+}
+
+console.log("→ coop-powerline FALLBACK_VIBES");
 if (!powerlineSrc.includes('if (name === "coop-internal.txt") continue;')) {
   ok("default rotation includes coop-internal.txt");
 } else {

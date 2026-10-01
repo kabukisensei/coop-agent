@@ -94,9 +94,13 @@ clone's own launcher instead of `coop install` (on Windows: double-click
 | 7 | Tabular Editor CLI (`te`) | optional, BPA reviews | download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli, put `te` on `PATH`, then `te auth login` |
 
 macOS and Linux print the `brew` / `apt` equivalents. A machine that only has
-Python 3.14 passes row 3 when its pipx supports `--fetch-python`; pipx then fetches
-a standalone Python 3.12 for the Fabric CLI. The Windows Store Python alias does not
-count as an interpreter.
+Python 3.14 passes row 3 when its pipx can fetch a standalone Python (pipx 1.5+;
+`--fetch-missing-python`, or `--fetch-python` from pipx 1.12); pipx then downloads
+Python 3.12 for the Fabric CLI, and `coop install`, `coop update` and
+`coop doctor --fix` all build that environment the same way. When pipx is too old
+for that, the Windows row prints the admin-free repair instead of a Python install:
+`python -m pip install --user --upgrade pipx`. The Windows Store Python alias does
+not count as an interpreter.
 
 - `coop install --prereqs auto` runs the printed commands for you, with their output
   visible, re-checks, and still asks you to open a new terminal.
@@ -173,7 +177,7 @@ shows anything still missing.
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
 | **Power BI authoring tools** — Report Authoring CLI, Power BI Modeling MCP, and Windows-only Desktop Bridge | installed globally from manifest-pinned npm packages; Doctor requires Report Authoring and validates Modeling MCP arguments |
 | **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
-| **Windows double-click launcher**: **coop** opens the terminal agent | created on the Start Menu and Desktop, starting in your home folder; `coop update` repairs older shortcuts. Purely additive: `coop` in any terminal is unchanged |
+| **Windows double-click launcher**: **coop** opens the terminal agent | created on the Start Menu and Desktop, starting in your home folder; `coop update` repairs older shortcuts. Purely additive: `coop` in any terminal is unchanged. An isolated install (`USERPROFILE` redirected at a sandbox folder) keeps its shortcuts inside that profile and leaves your user PATH alone |
 
 > `pi-powerline-footer` is **not** used. coop renders its own footer and splash via
 > `extensions/coop-powerline` (see [Footer & splash](#footer--splash)).
@@ -483,7 +487,10 @@ snapshot, and native reviewers bind to the same authority so prompt guidance and
 results cannot drift mid-task. Provenance or integrity failures reject a candidate rather
 than partially applying it. Run **`/standards-status`** to inspect effective authority,
 generation, freshness, and fallback state. `config/standards-registry.json` names the
-canonical repository and branch.
+canonical repository and branch. `coop doctor` reports without refreshing: on an install
+last launched more than 15 minutes ago its sync row reads `stale @ last checked N min
+ago` and the cached standards stay green as last known good; only a refresh that failed
+(`failed`, with the reason) turns them into warnings. `coop sync` refreshes now.
 
 The canonical standards are the `cooptimize/coop-standards` wiki, read the way the team
 reads it: every Markdown article whose front matter has `status: active` (under `SQL/`,
@@ -529,9 +536,9 @@ signal ("Add a Marketing page to the Sales report", "Update the README with the 
 gold naming conventions"), and a title-case report name ("the Project Status report") is a
 report, not a status document. Everyday prompts outside that list that say "report",
 "silver", "gold" or "fabric ... warehouse" ("Review the quarterly report with the client",
-"Fix the silver merge conflict in the gold branch") still get those articles. Still
-missed: PBIX, PBIP and
-`.gitignore` prompts do not reach Power BI File Types, "chart" does not reach Power BI
+"Fix the silver merge conflict in the gold branch") still get those articles. A PBIX,
+PBIP or PBIR in the prompt is a Power BI file, so those prompts reach Power BI File Types.
+Still missed: "chart" does not reach Power BI
 Report Visuals, a named model with no Power BI word ("Add a YTD measure to the Finance
 model") gets no DAX articles, and a bare "proc" with no layer word ("Fix the proc that
 loads customers") gets nothing. `tests/standards-golden.test.mjs` scores a 52-prompt golden

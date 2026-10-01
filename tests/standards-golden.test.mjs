@@ -30,9 +30,7 @@ import { buildStandardsContext, pinStandardsTask, refreshCanonical } from "../li
 const KNOWN_FAILURES = new Map([
   // "index" now matches the stemmed "indexing", so a gold index task also gets Silver Indexing.
   [22, ["forbidden Silver Indexing"]],
-  // PBIX, PBIP, .gitignore and "chart" are not words of the articles' titles or front matter.
-  [37, ["missing Power BI File Types"]],
-  [38, ["missing Power BI File Types"]],
+  // "chart" is not a word of the articles' titles or front matter.
   [41, ["missing Power BI Report Visuals"]],
 ]);
 

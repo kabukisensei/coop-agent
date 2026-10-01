@@ -8,7 +8,7 @@ cat > "$d/config" <<'JSON'
 {"schema_version":1,"azure":{"tenant_id":"tenant-1"},"integrations":{"fabric":true,"power_bi":true,"power_bi_modeling":true,"azure_devops":true,"microsoft_learn":true,"context_mode":true},"azure_devops":{"organization":"cooptimize"}}
 JSON
 cat > "$d/mcp.json" <<'JSON'
-{"mcpServers":{"custom":{"command":"custom","args":["x"]},"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp@old"],"customField":true,"lifecycle":"eager","auth":"custom-managed-auth","headers":{"X-Managed-Custom":"keep-me"},"extraSettings":{"retry":3}},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"],"auth":"oauth","bearerToken":"stale-secret-fixture","bearerTokenEnv":"STALE_FABRIC_TOKEN_ENV","bearerTokenStore":"stale-store","caFile":"stale-ca.pem","headers":{"Authorization":"Bearer stale-secret-fixture"},"httpTransport":{"forged":true},"oauth":{"legacy":true},"protocolVersion":"forged","requestHeadersCommand":{"command":"forged","args":["stale"]},"requestTimeoutMs":1,"lifecycle":"eager","unknownExtra":true}},"_coop":{"schema_version":1,"managed_servers":["fabric","fabric-sqlendpoint"]}}
+{"mcpServers":{"custom":{"command":"custom","args":["x"]},"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp@old"],"customField":true,"lifecycle":"eager","auth":"custom-managed-auth","headers":{"X-Managed-Custom":"keep-me"},"extraSettings":{"retry":3}},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"],"auth":"oauth","bearerToken":"stale-secret-fixture","bearerTokenEnv":"STALE_FABRIC_TOKEN_ENV","bearerTokenStore":"stale-store","caFile":"stale-ca.pem","headers":{"Authorization":"Bearer stale-secret-fixture"},"httpTransport":{"forged":true},"oauth":{"legacy":true},"protocolVersion":"forged","requestHeadersCommand":{"command":"forged","args":["stale"]},"requestTimeoutMs":1,"lifecycle":"eager","unknownExtra":true},"microsoft-learn":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://learn.microsoft.com/api/mcp","--transport","http-only","--silent"],"lifecycle":"eager"}},"_coop":{"schema_version":1,"managed_servers":["fabric","fabric-sqlendpoint","microsoft-learn"]}}
 JSON
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp.json"
 "$PY" - "$d/mcp.json" "$ROOT/config/release-manifest.json" <<'PY'
@@ -20,6 +20,8 @@ assert s['fabric']['lifecycle']=='eager'
 assert s['fabric']['auth']=='custom-managed-auth'
 assert s['fabric']['headers']=={'X-Managed-Custom':'keep-me'}
 assert s['fabric']['extraSettings']=={'retry':3}
+# Fabric MCP 1.4.0 exposes no router in namespace mode unless each namespace is named.
+assert s['fabric']['args']==['-y','@microsoft/fabric-mcp@'+manifest['mcp_servers']['@microsoft/fabric-mcp'],'server','start','--mode','namespace','--namespace','docs','--namespace','onelake','--namespace','core','--namespace','datafactory']
 sql=s['fabric-sqlendpoint']
 assert sql['url']=='https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint'
 assert sql['auth'] is False
@@ -41,9 +43,10 @@ assert '--start' in model and '--readwrite' in model and '--readonly' not in mod
 assert model[1].endswith('@'+manifest['npm_tools']['@microsoft/powerbi-modeling-mcp'])
 assert all('@latest' not in str(v) and 'TODO-' not in str(v) for v in s.values())
 assert s['azure-devops']['args'][1].endswith('@'+manifest['mcp_servers']['@azure-devops/mcp'])
-learn=s['microsoft-learn']
-assert learn['command']=='npx'
-assert learn['args']==['-y','mcp-remote@'+manifest['mcp_servers']['mcp-remote'],'https://learn.microsoft.com/api/mcp','--transport','http-only','--silent']
+# Microsoft Learn is unauthenticated Streamable HTTP the adapter speaks directly (U1):
+# the exact entry, and a managed pre-0.25 mcp-remote command line migrates to it.
+assert s['microsoft-learn']=={'url':'https://learn.microsoft.com/api/mcp','auth':False,'lifecycle':'lazy','requestTimeoutMs':60000}
+assert 'mcp-remote' not in json.dumps(m) and 'mcp-remote' not in json.dumps(manifest)
 # context-mode is a native Pi extension — never generated as an MCP server.
 assert 'context-mode' not in s
 # The adapter's mcpScript tool calls MCP tools out of the guardrails' sight.

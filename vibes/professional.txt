@@ -20,6 +20,17 @@ Type /skill:<name> to invoke a specific Coop skill directly.
 Run /coop-vibe <set> to switch pools, or /coop-vibe all for the full rotation.
 Run /coop-splash to re-display the startup header and brand banner.
 Run /coop-guardrails to check Coop's source and destructive-action protections.
+Run /setup-project to create or edit .coop/project.yml with a wizard instead of hand-editing YAML.
+Type /standards-status to see which standards are active, their commit, and how fresh they are.
+Type /coop-live-read status to see this session's bounded live-read grant, or revoke to clear it.
+Type /coop-approvals status to list this session's edit approvals, or revoke to clear them.
+Run /share-learning to turn a correction or reusable pattern into a reviewed team-knowledge note.
+Type /mcp-adapter to see which managed MCP servers this session is connected to.
+Type /export to save the session as HTML, or /resume to reopen an earlier one.
+Type /session for the current session's file, message count, tokens, and cost.
+Type /memory-insights to see everything Coop remembers about you and this project.
+Type /memory-pin <rule> to pin an instruction Coop must keep in every session.
+Type /memory-preview-context to see exactly what memory adds to the prompt.
 Try asking Coop to trace a visual through its measure, table, view, and load procedure.
 Ask Coop to prove a refactor with exact before-and-after outputs, not compilation alone.
 Try a small slice: backup, smallest change, review, real validation, then diff.
@@ -31,3 +42,6 @@ Try asking Coop to write project updates in user outcomes and next steps.
 These aren't the insights you're looking for…
 The failing test insists 'tis but a scratch…
 It's only a dashboard — shhh! — said the report author…
+Cooptimizing…
+I'm afraid I can't do that, {user}.
+All your base are belong to us…

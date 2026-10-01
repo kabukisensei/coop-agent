@@ -828,9 +828,10 @@ def _mcp_post(
 def mcp_tools_list(url: str, token: str, timeout: int = 8) -> tuple[list[Any], str]:
     """Initialize and discover tools directly with an existing Azure token.
 
-    Doctor intentionally does not execute mcp-remote: doing so could initiate its
-    native interactive OAuth flow. The token is kept only in request headers and
-    is never returned or printed.
+    Doctor intentionally speaks to the endpoint itself rather than through the
+    adapter or any bridge process, so nothing can start an interactive OAuth
+    flow. The token is kept only in request headers and is never returned or
+    printed.
     """
     init = {
         "jsonrpc": "2.0",
