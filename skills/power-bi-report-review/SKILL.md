@@ -60,13 +60,14 @@ Use read-only tools only:
   `preview-themes`, and `validate` (see `power-bi-report-authoring`).
 - **Lineage and impact:** `coop-data-doc` / `data_doc` tool.
 - **Workspace metadata:** `fab` CLI or Fabric/Power BI MCP (list, read, inspect).
-- **Model-side issues:** `coop-dax-review` / `dax_review` tool.
+- **Model-side issues:** the DAX and semantic-model standards articles in context
+  (self-check) and `bpa_review` (Tabular Editor BPA) where enabled.
 - **Usage Metrics:** Power BI service Usage Metrics report or Activity Events
   (tenant admin). Do not rely on arbitrary "healthy" thresholds — interpret in
   context of audience size and report cadence.
 
-If the semantic model is in scope, run `dax-review` or `power-bi-impact-analysis`
-in parallel. Many report symptoms (slow visuals, blank values, broken bindings)
+If the semantic model is in scope, check the model against the DAX standards in
+context (plus `bpa_review`) or run `power-bi-impact-analysis` in parallel. Many report symptoms (slow visuals, blank values, broken bindings)
 start in the model.
 
 ## Review dimensions
@@ -135,8 +136,8 @@ Checklist:
 - [ ] DirectQuery/Direct Lake reports avoid report-level heavy operations.
 - [ ] Extension measures are not doing work that belongs in the model.
 
-Use Performance Analyzer exports, `powerbi-report-author validate`, and model
-review via `coop-dax-review` to ground findings.
+Use Performance Analyzer exports, `powerbi-report-author validate`, and
+`bpa_review` (Tabular Editor BPA) to ground findings.
 
 ### 5. Governance
 
@@ -226,6 +227,6 @@ LOW
 
 - **`power-bi-report-authoring`** — PBIR inspection and editing commands.
 - **`power-bi-impact-analysis`** — blast-radius analysis before changes.
-- **`dax-review`** / **`coop-dax-review`** — model and DAX review.
+- **`tabular-editor-bpa`** / **`dax-patterns`** — model and DAX checks.
 - **`fabric-workspace-review`** — workspace-level architecture review.
 - **`coop-workflow`** — plan-and-approve, backups, logging, never commit source.

@@ -13,7 +13,7 @@ It is loaded the way any Pi extension is, via `pi -e`:
 pi -e extensions/coop-powerline
 ```
 
-`bin/coop` does this for you when you launch the branded agent (`coop`), and
+`bin/coop.ps1` does this for you when you launch the branded agent (`coop`), and
 also exports the two env vars below.
 
 ## What it adds
@@ -92,7 +92,7 @@ keeps its configured icon.
 
 ## Environment variables
 
-Both are set by `bin/coop`; set them yourself if you load the extension directly.
+Both are set by `bin/coop.ps1`; set them yourself if you load the extension directly.
 
 | Variable | Purpose | Default |
 | --- | --- | --- |

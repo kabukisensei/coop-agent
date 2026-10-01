@@ -27,12 +27,6 @@ prints (on Windows, double-click **Install coop.cmd** again). Or run the
 
 ## 2. Install
 
-**macOS / Linux**
-```bash
-git clone <coop-agent-repo> && cd coop-agent
-./bin/coop install
-```
-
 **Windows (PowerShell)**: teammates follow [Install coop on Windows](install-windows.md),
 which gets the code at the newest release. The short form below starts on the head of
 `main` until the next release:
@@ -49,9 +43,9 @@ git clone <coop-agent-repo>; cd coop-agent
 This installs Pi, its extensions, the Coop tools, and the Microsoft Fabric CLI, and
 links `coop` onto your `PATH`. During a fresh interactive install, the short setup
 asks for your name, communication preference, and whether Coop should connect to a
-client Fabric/Power BI environment. Choose **yes** and finish the Azure sign-in: a
-browser page on macOS and Linux, and on Windows usually a Microsoft sign-in window
-(Azure CLI falls back to a device code by itself when it cannot open either). This
+client Fabric/Power BI environment. Choose **yes** and finish the Azure sign-in,
+usually a Microsoft sign-in window (Azure CLI falls back to a device code by itself
+when it cannot open one). This
 works with the standard Windows `az.cmd` install, including one under
 `C:\Program Files (x86)`. Coop waits for it and detects the tenant (including
 tenants without Azure subscriptions); when several tenants are signed in, you pick
@@ -80,7 +74,7 @@ coop doctor
 Green = ready; it tells you exactly what's missing. Add `--fix` (`coop doctor --fix`)
 to auto-apply the safe remediations — re-sync extensions/MCP/assets and `pipx`-install
 any missing Coop tools, then re-check. One known gotcha it may flag is the **`fab`
-collision** — if your `fab` is Homebrew's Python SSH tool instead of the Microsoft
+collision** — if your `fab` is Python Fabric's SSH tool instead of the Microsoft
 Fabric CLI, follow doctor's one-line fix.
 
 ## 3.5 First launch — sign in (one time)
@@ -114,9 +108,8 @@ shared in from `~/.pi/agent` automatically (see
 
 The first launch after onboarding may also open the Azure sign-in for the client
 tenant, once and without a question: a browser page, or on Windows a sign-in
-window. From the `coop` desktop shortcut it opens in its own window. After that, a
-launch checks the Fabric and Power BI tokens (a success is remembered for 30
-minutes) and says nothing.
+window. After that, a launch checks the Fabric and Power BI tokens (a success is
+remembered for 30 minutes) and says nothing.
 
 - The tenant comes from the project's `.coop/project.yml` `fabric.tenant_id`, else
   from `~/.coop/config` `azure.tenant_id` (saved by onboarding). With neither,
@@ -125,8 +118,7 @@ minutes) and says nothing.
   run `coop onboard --config-only` once.
 - Ctrl-C cancels the sign-in. If sign-in fails, is cancelled or takes longer than
   5 minutes, Coop prints one line with the exact command
-  (`az login --tenant <id> --allow-no-subscriptions`) and starts anyway. From the
-  desktop shortcut, that line also stays in a small window until you press Enter.
+  (`az login --tenant <id> --allow-no-subscriptions`) and starts anyway.
   Piped, scheduled, and other non-interactive launches never open a sign-in; they
   print the same line. A token check that times out or hits a network error never
   opens a sign-in either.
@@ -170,14 +162,12 @@ coop                      # launch the agent (run it inside your work repo)
 ```
 
 coop follows the Cooptimize workflow: read context → plan → **ask before editing** →
-back up → review with the tools → never commit source. You stay in control.
+back up → self-check against the standards → never commit source. You stay in control.
 
 Handy commands:
 
 ```bash
-coop sql-review check path/to.sql      # advisory SQL standards check
-coop dax-review check path/to/model    # advisory DAX standards check
-coop data-doc                          # build lineage + Markdown docs
+coop data-doc                    # build lineage + Markdown docs
 coop list / coop config          # manage Pi extensions
 ```
 
@@ -208,25 +198,25 @@ Enable it during `coop onboard` (or `coop onboard --config-only`):
 
 ## Try it — a safe first task (nothing gets changed)
 
-**1. See an advisory review on a throwaway file.**
+**1. Make a throwaway file.**
 
 ```bash
 printf 'SELECT * FROM dbo.Orders o JOIN dbo.Customer c ON o.CustomerId = c.Id;\n' > /tmp/sample.sql
-coop sql-review check /tmp/sample.sql
-#   Windows (PowerShell): Set-Content "$env:TEMP\sample.sql" 'SELECT * FROM dbo.Orders;'; coop sql-review check "$env:TEMP\sample.sql"
+#   Windows (PowerShell): Set-Content "$env:TEMP\sample.sql" 'SELECT * FROM dbo.Orders;'
 ```
 
-You'll get a severity summary (errors / warnings / info). `coop sql-review` is
-**advisory** — it reports against our SQL standards and **never edits or blocks**.
-
-**2. Now work *with* the agent.**
+**2. Ask the agent to check it against the standards.**
 
 ```bash
-coop @/tmp/sample.sql "Review this against our SQL standards and explain what you'd change — don't edit anything yet."
+coop @/tmp/sample.sql "Check this against our SQL standards and explain what you'd change — don't edit anything yet."
 ```
 
-Watch the loop: it reads context → runs `sql_review` → **proposes a plan and asks
-before changing anything**. Reply "looks good" to proceed, or steer it. That
+The Cooptimize SQL standards are already in coop's context, so it checks the file
+against them directly and names every rule it does not meet. It is **advisory** —
+it reports and **never edits or blocks**.
+
+Watch the loop: it reads context → checks against the standards → **proposes a plan
+and asks before changing anything**. Reply "looks good" to proceed, or steer it. That
 plan-and-approve loop — you always in control — is the whole point.
 
 **3. In a real work repo, try a focused lineage read.**
@@ -248,8 +238,8 @@ Commit + push; teammates get it at the next release tag via `coop update`
 [extending.md](extending.md).
 
 Using **Azure DevOps Boards**? coop has an optional integration — the
-`azure-devops` skill plus `scripts/ado-digest.sh|.ps1` and
-`scripts/ado-onboard.sh|.ps1` (all client identifiers stay in the private
+`azure-devops` skill plus `scripts/ado-digest.ps1` and
+`scripts/ado-onboard.ps1` (all client identifiers stay in the private
 `~/.coop/devops/clients.yml`). See the "Azure DevOps Boards (optional)" section
 in the [README](../README.md#azure-devops-boards-optional).
 
@@ -265,7 +255,7 @@ For teams managing multiple machines or VMs, `coop` can aggregate its doctor sta
 
 1. Configure `fleet.publish_dir` in `~/.coop/config` (or `config/defaults.yml`) to a shared folder (e.g., OneDrive/SharePoint synced path).
 2. Have each machine run `coop doctor --json --publish` on a schedule (e.g., daily).
-3. Have one machine run `scripts/fleet-digest.sh --send` weekly to aggregate the snapshots into an email digest via Microsoft Graph.
+3. Have one machine run `scripts\fleet-digest.ps1 --send` weekly to aggregate the snapshots into an email digest via Microsoft Graph.
 
 ## Leaving a machine (VM rebuild / offboarding)
 
