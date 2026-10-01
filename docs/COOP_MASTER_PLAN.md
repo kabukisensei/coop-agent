@@ -652,6 +652,21 @@ adapter: a Pi fix or feature coop actually needs, 0.87.x no longer receiving
 fixes, or D1 needing a current Pi to package. Until one of those holds, nothing
 in the current phases moves for it.
 
+**Simplicity and maintainability (Aaron, 2026-10-01).** Today 1.0 adds workarounds
+rather than removing any: the `tuiMode` pin, the `-builtin:mcp` lock, #170's
+guardrail handling of the built-in tool shape and codemode's nested calls, and a
+newer adapter release to track. The upgrade that would **simplify** coop is the
+one that drops the adapter: Pi's built-in MCP is first-party and versioned with
+Pi, so moving coop's servers onto it removes a fast-moving third-party dependency
+(three breaking majors in a week), the `mcp-adapter.json` migration and the
+exclusive-mode environment. It cannot happen yet because the built-in still
+resolves `headers` once per connect (no per-request hook for the Warehouse
+bearer helper) and has no exclusive config source (a trusted repo's
+`.pi/mcp.json` replaces global servers). The worthwhile shape of U2 is therefore
+**Pi 1.x plus the adapter drop in one row**, once Pi offers a per-request header
+command (or coop proves a `!command` header with reconnect on 401) and coop owns
+the trust decision; a Pi pin bump alone is maintenance, not an improvement.
+
 ## 7. Phase 4 — Standards alignment and the reviewer decision
 
 Depends on H3 having access to the two repositories.
