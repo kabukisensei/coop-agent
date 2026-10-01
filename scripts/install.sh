@@ -21,11 +21,25 @@ export COOP_ROOT
 
 FORCE=0; NO_FABRIC=0; NO_PREREQS=0; EDGE=0; PREREQS_AUTO=0
 INSTALL_FAILURES=0
-_prereqs_arg=0
+_prereqs_arg=0; _platform_arg=0
+# --platform <fabric|azure_sql|both> answers the client platform question (master
+# plan section 8 item 7) without a prompt: onboarding reads COOP_CLIENT_PLATFORM,
+# and step 8 saves it even when onboarding does not run (non-interactive install).
+coop_install_platform() { # <value>
+  case "$1" in
+    fabric|azure_sql|both) export COOP_CLIENT_PLATFORM="$1" ;;
+    *) coop_warn "install: --platform takes one value: fabric, azure_sql or both (got '$1')" ;;
+  esac
+}
 for a in "$@"; do
   if [ "$_prereqs_arg" = 1 ]; then
     _prereqs_arg=0
     if [ "$a" = auto ]; then PREREQS_AUTO=1; else coop_warn "install: --prereqs takes one value: auto"; fi
+    continue
+  fi
+  if [ "$_platform_arg" = 1 ]; then
+    _platform_arg=0
+    coop_install_platform "$a"
     continue
   fi
   case "$a" in
@@ -35,13 +49,16 @@ for a in "$@"; do
     --no-prereqs) NO_PREREQS=1 ;;
     --prereqs=auto) PREREQS_AUTO=1 ;;
     --prereqs) _prereqs_arg=1 ;;
+    --platform=*) coop_install_platform "${a#--platform=}" ;;
+    --platform) _platform_arg=1 ;;
     --edge) EDGE=1 ;;
     --yes|-y) export COOP_ASSUME_YES=1 ;;
     *) coop_warn "install: ignoring unknown flag '$a'" ;;
   esac
 done
 [ "$_prereqs_arg" = 1 ] && coop_warn "install: --prereqs takes one value: auto"
-unset _prereqs_arg
+[ "$_platform_arg" = 1 ] && coop_warn "install: --platform takes one value: fabric, azure_sql or both"
+unset _prereqs_arg _platform_arg
 
 # --- What we install (release manifest is the single source of truth) ----------
 PI_NPM_PACKAGE="$(coop_manifest_get pi.package || echo "@earendil-works/pi-coding-agent")"
@@ -442,6 +459,17 @@ esac
 if [ -t 0 ] && [ "${COOP_NO_ONBOARD:-0}" != "1" ]; then
   coop_head "8/9  Personalize Coop"
   coop_maybe_onboard || coop_warn "onboarding could not complete; run: coop onboard"
+fi
+# --platform is kept even when onboarding did not run (non-interactive or
+# COOP_NO_ONBOARD): the first interactive launch then skips that question.
+if [ -n "${COOP_CLIENT_PLATFORM:-}" ] && [ "$(coop_client_platform)" != "$COOP_CLIENT_PLATFORM" ]; then
+  _plat_py="$(coop_python 2>/dev/null || true)"
+  if [ -n "$_plat_py" ] && "$_plat_py" "$COOP_ROOT/scripts/onboard.py" platform --set "$COOP_CLIENT_PLATFORM" >/dev/null; then
+    coop_ok "client platform saved: $COOP_CLIENT_PLATFORM"
+  else
+    coop_warn "could not save the client platform; run: coop onboard --platform $COOP_CLIENT_PLATFORM"
+  fi
+  unset _plat_py
 fi
 
 # --- 9. Sync, model sign-in, and doctor ---------------------------------------

@@ -15,6 +15,9 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export COOP_AZ_BIN=/nonexistent/az
+# The client platform question (master plan section 8 item 7) is answered from
+# the environment so the scripted answers below keep their positions.
+export COOP_CLIENT_PLATFORM=fabric
 
 # --- onboarding writes the knowledge block (and preserves it on re-run) -------
 D1="$TMP/onboard"; mkdir -p "$D1"

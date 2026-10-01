@@ -7,6 +7,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- Install-time client platform choice (master plan section 8 item 7, row SQ7;
+  Aaron, 2026-09-30). `coop install --platform fabric|azure_sql|both` (or the
+  first onboarding, which now asks once) saves the answer as `client.platform` in
+  `~/.coop/config`; `coop onboard --platform <value>` changes it and
+  `coop doctor --fix` asks once on a machine that predates the setting. The value
+  is a machine default only: on an `azure_sql` machine onboarding defaults the
+  Fabric and Warehouse SQL endpoint MCP servers off, the Fabric skill baseline
+  stays off unless a contract sets `fabric_skills: policy: baseline` (a `fabric:`
+  section alone no longer implies it there), `coop doctor` reports a missing `fab`
+  as optional instead of red, and the launch sign-in check mints the SQL audience
+  (`https://database.windows.net/`) instead of the Fabric and Power BI ones.
+  `/setup-project` mentions the machine's platform on its Fabric question. The
+  project contract still wins per repository; guardrails, approvals and the SQL
+  executor never read the install choice.
+
 - The isolated extension tree is reproducible (issue #152, master plan U1).
   `config/extensions-lock.json` is npm's lockfile for the release's pinned
   extension set, resolved with pi-ai, pi-tui and the agent peer at the manifest's

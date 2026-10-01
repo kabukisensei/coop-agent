@@ -37,6 +37,44 @@ PRESETS = {
 }
 PRESET_KEYS = list(PRESETS.keys()) + ["custom"]
 
+# Client SQL platform (master plan section 8 item 7). A machine default stored in
+# ~/.coop/config as client.platform; `coop install --platform` and the
+# COOP_CLIENT_PLATFORM variable answer the question without a prompt. The
+# project contract still wins per repository (one teammate can serve two clients).
+PLATFORMS = ["fabric", "azure_sql", "both"]
+PLATFORM_LABELS = {
+    "fabric": "Microsoft Fabric (Warehouse / Lakehouse SQL endpoint)",
+    "azure_sql": "Azure SQL Database (no Fabric)",
+    "both": "Both Fabric and Azure SQL",
+}
+PLATFORM_ENV = "COOP_CLIENT_PLATFORM"
+
+
+def normalize_platform(value: object) -> str:
+    """Canonical platform id for a user/env spelling, or '' when unknown."""
+    if not isinstance(value, str):
+        return ""
+    v = value.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "fabric": "fabric",
+        "azure_sql": "azure_sql",
+        "azuresql": "azure_sql",
+        "azure": "azure_sql",
+        "sql": "azure_sql",
+        "both": "both",
+    }
+    return aliases.get(v, "")
+
+
+def config_platform(config: dict) -> str:
+    client = config.get("client") if isinstance(config.get("client"), dict) else {}
+    return normalize_platform(client.get("platform", ""))
+
+
+def fabric_platform(platform: str) -> bool:
+    """True unless the machine is an Azure SQL-only client (unset means Fabric)."""
+    return platform != "azure_sql"
+
 
 def coop_user_profile_missing() -> bool:
     return not USER_JSON.is_file()
@@ -294,12 +332,21 @@ def run_config_questions(
     tenant = str(old_azure.get("tenant_id", ""))
     tenant_name = str(old_azure.get("tenant_name", ""))
 
+    # Asked once: an install-time answer (coop install --platform) is kept on the
+    # quick-start path; editing the config re-asks with the saved value as default.
+    platform = ask_platform(
+        config_platform(existing), skip_saved=quick_start
+    )
+    services = (
+        "Azure SQL" if platform == "azure_sql" else "Microsoft Fabric and Power BI"
+    )
+
     # This identity domain is exclusively for client resources. Shared Knowledge
     # will use a separate `knowledge` config, authentication flow, and token cache;
     # it must never reuse or replace the client's Azure CLI session.
     sys.stderr.write(
         "\nClient Microsoft environment\n"
-        "This is the tenant whose Fabric and Power BI resources Coop should access.\n"
+        f"This is the tenant whose {services} resources Coop should access.\n"
         "Do not enter the Cooptimize tenant here unless this is internal Cooptimize work.\n"
         "Cooptimize Shared Knowledge always uses a separate sign-in and identity.\n"
     )
@@ -307,7 +354,7 @@ def run_config_questions(
     configure_cloud = True
     if quick_start and not tenant:
         configure_cloud = read_confirm(
-            "Connect Coop to client Microsoft Fabric and Power BI now?", True
+            f"Connect Coop to client {services} now?", True
         )
 
     selected: dict[str, str] = {}
@@ -336,7 +383,7 @@ def run_config_questions(
         configure_cloud
         and not tenant
         and read_confirm(
-            "Configure the Azure tenant whose Fabric and Power BI resources Coop should access now?",
+            f"Configure the Azure tenant whose {services} resources Coop should access now?",
             False if quick_start else bool(tenant),
         )
     ):
@@ -360,14 +407,17 @@ def run_config_questions(
     if quick_start:
         integrations.update(
             {
-                "fabric": bool(tenant),
-                "fabric_sql_endpoint": bool(tenant),
+                "fabric": bool(tenant) and fabric_platform(platform),
+                "fabric_sql_endpoint": bool(tenant) and fabric_platform(platform),
                 "power_bi_modeling": True,
                 "azure_devops": False,
                 "microsoft_learn": True,
             }
         )
-        if not tenant:
+        if not fabric_platform(platform):
+            omitted["fabric"] = "Azure SQL client"
+            omitted["fabric_sql_endpoint"] = "Azure SQL client"
+        elif not tenant:
             omitted["fabric"] = "connect Azure later"
             omitted["fabric_sql_endpoint"] = "connect Azure later"
         omitted["azure_devops"] = "set up later if needed"
@@ -377,13 +427,20 @@ def run_config_questions(
     else:
         # Fabric MCP follows the active Azure CLI login; it works without an
         # explicitly stored tenant (the login itself carries the tenant).
+        # An Azure SQL-only client defaults the Fabric servers off; the
+        # question is still asked so a mixed machine can turn them on.
         integrations["fabric"] = read_confirm(
             "Enable Microsoft Fabric MCP? (follows your active Azure CLI login)",
-            bool(old_i.get("fabric", True)),
+            bool(old_i.get("fabric", fabric_platform(platform))),
         )
         integrations["fabric_sql_endpoint"] = read_confirm(
             "Enable Fabric Warehouse SQL endpoint MCP? (approval-gated SQL)",
-            bool(old_i.get("fabric_sql_endpoint", old_i.get("fabric", True))),
+            bool(
+                old_i.get(
+                    "fabric_sql_endpoint",
+                    old_i.get("fabric", fabric_platform(platform)),
+                )
+            ),
         )
 
         # No "Power BI MCP" toggle: powerbi-mcp-server is retired (#93) and never
@@ -470,6 +527,7 @@ def run_config_questions(
         if not integrations.get(k)
     ]
     sys.stderr.write("\nReview:\n")
+    sys.stderr.write(f"- Client platform: {PLATFORM_LABELS[platform]}\n")
     if tenant:
         sys.stderr.write(
             f"- Client Azure tenant: {tenant_name or '(display name unknown)'} ({tenant})\n"
@@ -491,6 +549,7 @@ def run_config_questions(
 
     return {
         "schema_version": 1,
+        "client": {"platform": platform},
         "azure": {
             "enabled": bool(tenant),
             "purpose": "client_resources",
@@ -507,6 +566,77 @@ def run_config_questions(
             else ""
         },
     }
+
+
+def ask_platform(current: str, *, forced: str = "", skip_saved: bool = False) -> str:
+    """Resolve the client platform: a forced value, the environment, else a prompt.
+
+    A saved value is the prompt's default (or the answer itself with skip_saved);
+    an unknown forced or environment spelling is reported and the prompt runs.
+    """
+    if skip_saved and current in PLATFORMS:
+        return current
+    for candidate, origin in ((forced, "--platform"), (os.environ.get(PLATFORM_ENV, ""), PLATFORM_ENV)):
+        if not candidate:
+            continue
+        value = normalize_platform(candidate)
+        if value:
+            return value
+        sys.stderr.write(
+            f"Ignoring {origin}={candidate!r}: expected one of {', '.join(PLATFORMS)}.\n"
+        )
+    sys.stderr.write(
+        "\nClient SQL platform\n"
+        "Coop tailors doctor, the default MCP servers and the Fabric skills to it.\n"
+        "A project contract (.coop/project.yml) can still override it per repository.\n"
+    )
+    labels = [PLATFORM_LABELS[p] for p in PLATFORMS]
+    default = current if current in PLATFORMS else "fabric"
+    chosen = read_choice(
+        "Does this client run on Fabric, Azure SQL, or both?",
+        labels,
+        default=PLATFORM_LABELS[default],
+    )
+    for key, label in PLATFORM_LABELS.items():
+        if label == chosen:
+            return key
+    return default
+
+
+def cmd_platform(args: argparse.Namespace) -> int:
+    """Show or set the machine's client platform without re-running onboarding.
+
+    Used by `coop install --platform` and `coop doctor --fix` (which asks once on
+    a machine that predates the setting). Only client.platform is written; every
+    other key of ~/.coop/config is preserved.
+    """
+    try:
+        config = load_config()
+    except ValueError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 2
+    current = config_platform(config)
+    if args.show:
+        print(current)
+        return 0 if current else 1
+    if args.set:
+        value = normalize_platform(args.set)
+        if not value:
+            sys.stderr.write(
+                f"Unknown platform {args.set!r}: expected one of {', '.join(PLATFORMS)}.\n"
+            )
+            return 2
+    else:
+        value = ask_platform(current)
+    config = dict(config)
+    config.setdefault("schema_version", 1)
+    client = dict(config.get("client")) if isinstance(config.get("client"), dict) else {}
+    client["platform"] = value
+    config["client"] = client
+    save_config(config)
+    sys.stderr.write(f"Client platform: {PLATFORM_LABELS[value]} (saved to {CONFIG_JSON}).\n")
+    print(value)
+    return 0
 
 
 def refresh_mcp() -> None:
@@ -647,6 +777,13 @@ def cmd_onboard(args: argparse.Namespace) -> int:
     except ValueError as exc:
         sys.stderr.write(f"{exc}\n")
         return 2
+    if args.platform:
+        if not normalize_platform(args.platform):
+            sys.stderr.write(
+                f"Unknown platform {args.platform!r}: expected one of {', '.join(PLATFORMS)}.\n"
+            )
+            return 2
+        os.environ[PLATFORM_ENV] = args.platform
 
     if args.config_only:
         profile = load_user()
@@ -667,8 +804,11 @@ def cmd_onboard(args: argparse.Namespace) -> int:
     else:
         profile = run_full_onboarding()
 
+    # Quick start is for a machine with no integration answers yet; a config that
+    # only carries the install-time platform choice still qualifies.
     config = run_config_questions(
-        existing_config, quick_start=not existing_config and not args.config_only
+        existing_config,
+        quick_start="integrations" not in existing_config and not args.config_only,
     )
     save_config(config)
     try:
@@ -738,6 +878,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Edit integrations without changing the user profile.",
     )
+    onboard.add_argument(
+        "--platform",
+        choices=PLATFORMS,
+        help="Answer the client platform question (fabric, azure_sql, both) without a prompt.",
+    )
+
+    platform = sub.add_parser(
+        "platform", help="Show or set the machine's client platform (fabric, azure_sql, both)."
+    )
+    platform.add_argument("--show", action="store_true", help="Print the saved value (exit 1 when unset).")
+    platform.add_argument("--set", metavar="PLATFORM", help="Save this value without a prompt.")
 
     profile = sub.add_parser("profile", help="Show or edit COOP profile.")
     profile.add_argument("--edit", action="store_true", help="Edit profile.")
@@ -749,6 +900,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_onboard(args)
     if args.command == "profile":
         return cmd_profile(args)
+    if args.command == "platform":
+        return cmd_platform(args)
     return 1
 
 

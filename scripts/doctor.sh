@@ -258,18 +258,26 @@ if [ "${COOP_SKIP_AZ:-0}" != "1" ] && have az; then
   else
     _az_rc=0
     coop_az_tokens_ok "$_az_t" || _az_rc=$?
+    # The audience named in the hint is the platform's first one (Fabric REST, or
+    # the SQL audience on an Azure SQL-only machine).
+    _az_res="$(coop_az_token_resources | head -n 1)"
     case "$_az_rc" in
       0) ok "Azure sign-in: signed in to tenant $_az_t" ;;
-      124) warn "Azure sign-in: check timed out for tenant $_az_t" "run: az account get-access-token --tenant $_az_t --resource https://api.fabric.microsoft.com" ;;
+      124) warn "Azure sign-in: check timed out for tenant $_az_t" "run: az account get-access-token --tenant $_az_t --resource $_az_res" ;;
       1) warn "Azure sign-in: not signed in to tenant $_az_t" "run: az login --tenant $_az_t --allow-no-subscriptions" ;;
-      *) warn "Azure sign-in: token check failed for tenant $_az_t (not an auth error)" "run: az account get-access-token --tenant $_az_t --resource https://api.fabric.microsoft.com" ;;
+      *) warn "Azure sign-in: token check failed for tenant $_az_t (not an auth error)" "run: az account get-access-token --tenant $_az_t --resource $_az_res" ;;
     esac
+    unset _az_res
   fi
   unset _az_trc _az_t _az_rc
 fi
 
 section "Microsoft Fabric CLI"
-if have fab; then
+# An Azure SQL-only client (client.platform in ~/.coop/config, master plan section
+# 8 item 7) does not need the Fabric CLI: a missing fab is reported, never red.
+if ! have fab && coop_azure_sql_only; then
+  ok "fab not installed (Azure SQL client; the Fabric CLI is optional here)"
+elif have fab; then
   fabver="$(fab --version 2>&1 | head -3 | tr '\n' ' ')"
   if printf '%s' "$fabver" | grep -qiE 'paramiko|invoke'; then
     bad "fab is the WRONG tool" "this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI"
@@ -645,6 +653,20 @@ fi
 section "Powerline / splash assets"
 [ -f "$COOP_ROOT/extensions/coop-powerline/assets/splash.ansi" ] && ok "brand splash present" || warn "splash.ansi missing" "run: coop sync"
 [ -f "$COOP_ROOT/themes/cooptimize.json" ] && ok "Cooptimize theme present" || warn "theme missing"
+
+# A machine that predates the client platform setting is asked once (--fix,
+# interactive, never in --json): the answer is saved to ~/.coop/config and the
+# rows above read it on the next run.
+if [ "$FIX" = 1 ] && [ "$JSON" = 0 ] && [ -t 0 ] && [ -f "$(coop_config_file)" ] && [ -z "$(coop_client_platform)" ]; then
+  section "Client platform (--fix)"
+  _fix_py="$(coop_python 2>/dev/null || true)"
+  if [ -n "$_fix_py" ] && "$_fix_py" "$COOP_ROOT/scripts/onboard.py" platform >/dev/null; then
+    coop_ok "client platform saved; rerun: coop doctor"
+  else
+    coop_warn "client platform not saved; run: coop onboard --platform fabric|azure_sql|both"
+  fi
+  unset _fix_py
+fi
 
 if [ "$FIX" = 1 ] && { [ "$FAIL" -gt 0 ] || [ "$WARN" -gt 0 ]; }; then
   section "Applying fixes (--fix)"

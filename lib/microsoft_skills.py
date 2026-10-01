@@ -228,8 +228,33 @@ def own_skill_names() -> set[str]:
     return names
 
 
+CLIENT_PLATFORMS = ("fabric", "azure_sql", "both")
+
+
+def machine_platform(config_path: Path | None = None) -> str:
+    """The machine's client platform from ~/.coop/config (client.platform).
+
+    Written by `coop install --platform` / `coop onboard` (master plan section 8
+    item 7). Empty when unset or unreadable, which every caller treats as Fabric.
+    COOP_DIR overrides the parent of .coop, as everywhere else.
+    """
+    path = config_path or (
+        Path(os.environ.get("COOP_DIR") or Path.home()) / ".coop" / "config"
+    )
+    try:
+        config = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return ""
+    client = config.get("client") if isinstance(config, dict) else None
+    value = client.get("platform") if isinstance(client, dict) else ""
+    return value if value in CLIENT_PLATFORMS else ""
+
+
 def policy_for(
-    project: dict[str, Any], repo_key: str, repo_manifest: dict[str, Any]
+    project: dict[str, Any],
+    repo_key: str,
+    repo_manifest: dict[str, Any],
+    platform: str | None = None,
 ) -> tuple[str, list[str]]:
     block = project.get(repo_key) if isinstance(project.get(repo_key), dict) else {}
     explicit_mode = block.get("policy") or block.get("mode")
@@ -241,8 +266,16 @@ def policy_for(
         # empty allowlist as an explicit opt-out, never as "load the baseline".
         mode = "restricted"
     elif repo_key == "fabric_skills":
+        # A contract with a fabric: section implies the Fabric baseline, except
+        # on an Azure SQL-only machine, where only an explicit fabric_skills
+        # policy turns the Fabric skills on (section 8 item 7).
         fabric = project.get("fabric")
-        mode = "baseline" if isinstance(fabric, dict) else "disabled"
+        if platform is None:
+            platform = machine_platform()
+        if platform == "azure_sql":
+            mode = "disabled"
+        else:
+            mode = "baseline" if isinstance(fabric, dict) else "disabled"
     else:
         mode = "baseline"
     if mode == "disabled":

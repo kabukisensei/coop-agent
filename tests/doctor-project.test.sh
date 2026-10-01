@@ -187,4 +187,35 @@ YAML
 out="$(cd "$TMP/te" && "$ROOT/scripts/doctor.sh" --json 2>/dev/null)"
 echo "$out" | grep -q 'executable_path not set' && ok "flags missing TE path when Tabular Editor enabled" || ko "did not flag missing TE path"
 
+# --- Azure SQL-only client: a missing Fabric CLI is optional, never red --------
+# (master plan section 8 item 7). The row reads client.platform from the sandbox
+# home's ~/.coop/config; fab is hidden from PATH so the "missing" branch runs
+# whether or not the machine has it.
+mkdir -p "$HOME/.coop"
+printf '%s\n' '{"schema_version":1,"client":{"platform":"azure_sql"},"integrations":{"fabric":false,"fabric_sql_endpoint":false}}' > "$HOME/.coop/config"
+# Drop every PATH directory that holds a fab (no symlinks: Git Bash copies them).
+nofab=""
+_old_ifs="$IFS"; IFS=:
+for d in $PATH; do
+  [ -n "$d" ] || continue
+  if [ -x "$d/fab" ] || [ -f "$d/fab.exe" ] || [ -f "$d/fab.cmd" ]; then continue; fi
+  nofab="${nofab:+$nofab:}$d"
+done
+IFS="$_old_ifs"; unset _old_ifs
+out="$(cd "$TMP/good" && PATH="$nofab" "$ROOT/scripts/doctor.sh" --json 2>/dev/null)"
+python3 - "$out" <<'PY' >/dev/null
+import sys, json
+d = json.loads(sys.argv[1])
+fab = [c for c in d["checks"] if c["section"] == "Microsoft Fabric CLI"]
+assert fab, "Fabric CLI section missing"
+assert not any(c["status"] == "bad" for c in fab), f"Azure SQL client got a red Fabric CLI row: {fab}"
+assert any("Azure SQL client" in c["name"] for c in fab), f"optional-fab row missing: {fab}"
+PY
+rc=$?
+[ "$rc" -eq 0 ] && ok "Azure SQL client: missing fab is reported as optional, not red" || ko "Azure SQL client still gets a red Fabric CLI row"
+printf '%s\n' '{"schema_version":1,"client":{"platform":"fabric"},"integrations":{}}' > "$HOME/.coop/config"
+out="$(cd "$TMP/good" && PATH="$nofab" "$ROOT/scripts/doctor.sh" --json 2>/dev/null)"
+echo "$out" | grep -q '"fab missing"' && ok "Fabric client: missing fab stays red" || ko "Fabric client lost the red fab row"
+rm -f "$HOME/.coop/config"
+
 exit $fail

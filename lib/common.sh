@@ -1073,14 +1073,24 @@ coop_az_auth_error() {
   return 1
 }
 
-# Check that az can mint the Fabric token, then the Power BI token, for tenant
-# $1 (mirror of Get-CoopAzTokenRc). 15 seconds each; --output none keeps tokens
-# out of coop's pipes, and az's stderr is only classified, never shown or kept.
-# Stops at the first failure. Returns 0 when both mint, 1 when az reports an
+# The token audiences the client platform needs (mirror of Get-CoopAzTokenResources):
+# Fabric REST then Power BI for a Fabric client, the SQL audience alone for an
+# Azure SQL-only client. An unset platform means Fabric (today's behavior).
+coop_az_token_resources() {
+  case "$(coop_client_platform)" in
+    azure_sql) printf '%s\n' https://database.windows.net/ ;;
+    *) printf '%s\n' https://api.fabric.microsoft.com https://analysis.windows.net/powerbi/api ;;
+  esac
+}
+
+# Check that az can mint every token the platform needs (coop_az_token_resources)
+# for tenant $1 (mirror of Get-CoopAzTokenRc). 15 seconds each; --output none keeps
+# tokens out of coop's pipes, and az's stderr is only classified, never shown or
+# kept. Stops at the first failure. Returns 0 when all mint, 1 when az reports an
 # authentication failure, 2 for any other failure, 124 on timeout.
 coop_az_tokens_ok() {
   local r rc err
-  for r in https://api.fabric.microsoft.com https://analysis.windows.net/powerbi/api; do
+  for r in $(coop_az_token_resources); do
     rc=0
     err="$(coop_az_run 15 account get-access-token --tenant "$1" --resource "$r" --output none 2>&1 >/dev/null)" || rc=$?
     if [ "$rc" -eq 0 ]; then continue; fi
@@ -1662,6 +1672,31 @@ coop_yaml_list() {
 # Absent/disabled/unreadable is a clean no-op everywhere. COOP_DIR overrides the
 # parent of .coop (same convention as onboard.py and the test suite).
 coop_config_file() { printf '%s' "${COOP_DIR:-$HOME}/.coop/config"; }
+
+# The machine's client platform from the fleet config (client.platform, written
+# by scripts/onboard.py): "fabric", "azure_sql" or "both". Empty when the config
+# or the key is absent or malformed; every caller treats empty as Fabric, which
+# is what a machine that predates the setting ran as. (mirror of Get-CoopClientPlatform)
+coop_client_platform() {
+  local f py
+  f="$(coop_config_file)"
+  [ -f "$f" ] || return 0
+  py="$(coop_python)" || return 0
+  "$py" - "$f" <<'PY' 2>/dev/null
+import json, sys
+try:
+    c = json.load(open(sys.argv[1], encoding="utf-8-sig"))
+    k = c.get("client") or {}
+    v = k.get("platform") if isinstance(k, dict) else ""
+    print(v if v in ("fabric", "azure_sql", "both") else "")
+except Exception:
+    pass
+PY
+}
+
+# True (0) when this machine is an Azure SQL-only client, so Fabric-only rows and
+# defaults step aside (master plan section 8 item 7).
+coop_azure_sql_only() { [ "$(coop_client_platform)" = "azure_sql" ]; }
 
 # True (0) when knowledge.enabled is truthy in the fleet config.
 coop_knowledge_enabled() {

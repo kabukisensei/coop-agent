@@ -56,6 +56,12 @@ works with the standard Windows `az.cmd` install, including one under
 `C:\Program Files (x86)`. Coop waits for it and detects the tenant (including
 tenants without Azure subscriptions); when several tenants are signed in, you pick
 the client one. If sign-in cannot complete, Coop offers a device-code retry.
+Before the tenant step, Coop asks once whether this client runs on Fabric, Azure SQL,
+or both (skipped when `coop install --platform <value>` already answered it). The
+answer is saved as `client.platform` in `~/.coop/config` and is only a machine
+default: an Azure SQL client gets the Fabric MCP servers off and the Fabric skills
+off unless a repo's `.coop/project.yml` turns them on, and `coop doctor` treats a
+missing Fabric CLI as optional. Change it with `coop onboard --platform <value>`.
 Recommended integrations are then enabled automatically; run
 `coop onboard --config-only` later for detailed choices.
 As the final interactive step, Coop opens its model sign-in screen with

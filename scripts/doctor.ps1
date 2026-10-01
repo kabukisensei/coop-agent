@@ -283,15 +283,22 @@ if ($env:COOP_SKIP_AZ -ne '1' -and (Test-Have 'az')) {
   } else {
     $azT = $azTenant.Tenant
     $azRc = Get-CoopAzTokenRc -Tenant $azT
+    # The audience named in the hint is the platform's first one (Fabric REST, or
+    # the SQL audience on an Azure SQL-only machine).
+    $azRes = @(Get-CoopAzTokenResources)[0]
     if ($azRc -eq 0) { D-Ok "Azure sign-in: signed in to tenant $azT" }
-    elseif ($azRc -eq 124) { D-Warn "Azure sign-in: check timed out for tenant $azT" "run: az account get-access-token --tenant $azT --resource https://api.fabric.microsoft.com" }
+    elseif ($azRc -eq 124) { D-Warn "Azure sign-in: check timed out for tenant $azT" "run: az account get-access-token --tenant $azT --resource $azRes" }
     elseif ($azRc -eq 1) { D-Warn "Azure sign-in: not signed in to tenant $azT" "run: az login --tenant $azT --allow-no-subscriptions" }
-    else { D-Warn "Azure sign-in: token check failed for tenant $azT (not an auth error)" "run: az account get-access-token --tenant $azT --resource https://api.fabric.microsoft.com" }
+    else { D-Warn "Azure sign-in: token check failed for tenant $azT (not an auth error)" "run: az account get-access-token --tenant $azT --resource $azRes" }
   }
 }
 
 D-Head 'Microsoft Fabric CLI'
-if (Test-Have 'fab') {
+# An Azure SQL-only client (client.platform in ~/.coop/config, master plan section
+# 8 item 7) does not need the Fabric CLI: a missing fab is reported, never red.
+if (-not (Test-Have 'fab') -and (Test-CoopAzureSqlOnly)) {
+  D-Ok 'fab not installed (Azure SQL client; the Fabric CLI is optional here)'
+} elseif (Test-Have 'fab') {
   $fabver = ((& fab --version 2>&1 | Select-Object -First 3) -join ' ')
   if ($fabver -match '(?i)paramiko|invoke') {
     D-Bad 'fab is the WRONG tool' "this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI"
@@ -691,6 +698,21 @@ if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {
 D-Head 'Powerline / splash assets'
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi') -PathType Leaf) { D-Ok 'brand splash present' } else { D-Warn 'splash.ansi missing' 'run: coop sync' }
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'themes\cooptimize.json') -PathType Leaf) { D-Ok 'Cooptimize theme present' } else { D-Warn 'theme missing' }
+
+# A machine that predates the client platform setting is asked once (--fix,
+# interactive, never in --json): the answer is saved to ~/.coop/config and the
+# rows above read it on the next run.
+if ($script:FIX -and -not $script:JSON -and -not [Console]::IsInputRedirected -and (Test-Path -LiteralPath (Get-CoopConfigFile) -PathType Leaf) -and -not (Get-CoopClientPlatform)) {
+  D-Head 'Client platform (--fix)'
+  $fixPy = Get-CoopPython
+  $platFixed = $false
+  if ($fixPy) {
+    & $fixPy (Join-Path $script:CoopRoot 'scripts\onboard.py') platform | Out-Null
+    $platFixed = ($LASTEXITCODE -eq 0)
+  }
+  if ($platFixed) { Coop-Ok 'client platform saved; rerun: coop doctor' }
+  else { Coop-Warn 'client platform not saved; run: coop onboard --platform fabric|azure_sql|both' }
+}
 
 if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
   D-Head 'Applying fixes (--fix)'

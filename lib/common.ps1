@@ -1325,9 +1325,17 @@ function Test-CoopAzAuthError {
 # (mirror of coop_az_tokens_ok). 15 seconds each; stops at the first failure.
 # Returns 0 when both mint, 1 when az reports an authentication failure, 2 for
 # any other failure, 124 on timeout.
+# The token audiences the client platform needs (mirror of coop_az_token_resources):
+# Fabric REST then Power BI for a Fabric client, the SQL audience alone for an
+# Azure SQL-only client. An unset platform means Fabric (today's behavior).
+function Get-CoopAzTokenResources {
+  if ((Get-CoopClientPlatform) -ceq 'azure_sql') { return @('https://database.windows.net/') }
+  return @('https://api.fabric.microsoft.com', 'https://analysis.windows.net/powerbi/api')
+}
+
 function Get-CoopAzTokenRc {
   param([string]$Tenant)
-  foreach ($resource in @('https://api.fabric.microsoft.com', 'https://analysis.windows.net/powerbi/api')) {
+  foreach ($resource in (Get-CoopAzTokenResources)) {
     $r = Invoke-CoopAz -Seconds 15 -Quiet -AzArgs @('account', 'get-access-token', '--tenant', $Tenant, '--resource', $resource, '--output', 'none')
     if ($r.Rc -eq 0) { continue }
     if ($r.Rc -eq 124) { return 124 }
@@ -1829,6 +1837,25 @@ function Get-CoopConfigFile {
   $base = if ($env:COOP_DIR) { $env:COOP_DIR } else { $HOME }
   return (Join-Path $base '.coop\config')
 }
+
+# The machine's client platform from the fleet config (client.platform, written
+# by scripts/onboard.py): 'fabric', 'azure_sql' or 'both'. Empty when the config
+# or the key is absent or malformed; every caller treats empty as Fabric, which
+# is what a machine that predates the setting ran as. (mirror of coop_client_platform)
+function Get-CoopClientPlatform {
+  $f = Get-CoopConfigFile
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return '' }
+  try {
+    $cfg = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    $v = [string]$cfg.client.platform
+    if ($v -cin @('fabric', 'azure_sql', 'both')) { return $v }
+  } catch { return '' }
+  return ''
+}
+
+# True when this machine is an Azure SQL-only client, so Fabric-only rows and
+# defaults step aside (master plan section 8 item 7).
+function Test-CoopAzureSqlOnly { return ((Get-CoopClientPlatform) -ceq 'azure_sql') }
 
 function Get-CoopKnowledgeBlock {
   $f = Get-CoopConfigFile
