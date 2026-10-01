@@ -189,7 +189,8 @@ echo "→ Git Bash forwarder: bin/coop forwards to coop.ps1 (launch-spec) and re
 # bin/coop carries no logic (master plan S1): it execs pwsh/powershell on
 # bin/coop.ps1. Driving launch-spec through it proves the forwarder and the
 # shared launch builder together; tests/run.ps1 covers coop.ps1 directly.
-SPEC="$(bash "$ROOT/bin/coop" launch-spec)"
+# coop.ps1 prints Windows paths under Git Bash; compare with one separator.
+SPEC="$(bash "$ROOT/bin/coop" launch-spec | tr '\\' '/')"
 for needle in "docs/guardrails.md" "--prompt-template" "themes/cooptimize.json" \
               "extensions/coop-powerline" "extensions/coop-tools" "extensions/coop-guardrails" "extensions/coop-profile"; do
   case "$SPEC" in
@@ -218,7 +219,7 @@ echo "→ --no-launch dry-run (must NOT start pi; prints the spec)"
 LAUNCH_AGENT="$TMP/launch-agent"; LAUNCH_COOP="$TMP/launch-coop"
 mkdir -p "$LAUNCH_AGENT" "$LAUNCH_COOP"
 NL_RC=0
-NL_OUT="$(COOP_AGENT_DIR="$LAUNCH_AGENT" PI_CODING_AGENT_DIR="$LAUNCH_AGENT" COOP_DIR="$LAUNCH_COOP" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" --no-launch)" || NL_RC=$?
+NL_OUT="$(COOP_AGENT_DIR="$LAUNCH_AGENT" PI_CODING_AGENT_DIR="$LAUNCH_AGENT" COOP_DIR="$LAUNCH_COOP" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" --no-launch | tr '\\' '/')" || NL_RC=$?
 [ "$NL_RC" -eq 0 ] || { echo "  ✗ coop --no-launch exited $NL_RC (expected 0)"; exit 1; }
 case "$NL_OUT" in
   *"docs/guardrails.md"*) ;;
