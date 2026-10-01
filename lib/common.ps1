@@ -621,9 +621,12 @@ function Test-CoopExtensionsLockPending([string]$AgentDir, [string]$PiVersion) {
   if (-not (Test-Path -LiteralPath $lock)) { return $false }
   $want = Coop-ManifestGet -Key 'pi.version'
   if (-not $want -or $PiVersion -ne $want) { return $false }
+  $a = (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash
+  # A lock this machine could not install is not retried until a new one ships.
+  $failed = Join-Path $AgentDir 'npm\.coop-lock-failed.json'
+  if ((Test-Path -LiteralPath $failed) -and ((Get-FileHash -LiteralPath $failed -Algorithm SHA256).Hash -eq $a)) { return $false }
   $treeLock = Join-Path $AgentDir 'npm\package-lock.json'
   if (-not (Test-Path -LiteralPath $treeLock)) { return $true }
-  $a = (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash
   $b = (Get-FileHash -LiteralPath $treeLock -Algorithm SHA256).Hash
   return ($a -ne $b)
 }
@@ -639,13 +642,30 @@ function Install-CoopExtensionsLock([string]$AgentDir, [string]$Npm, [string]$Pi
   $npmDir = Join-Path $AgentDir 'npm'
   $treeLock = Join-Path $npmDir 'package-lock.json'
   try { Copy-Item -LiteralPath $lock -Destination $treeLock -Force } catch { return $false }
+  # `npm ci` runs lifecycle scripts from the lock's metadata, not the installed
+  # package.json, so a package that ships its binary and sets `gypfile: false`
+  # (better-sqlite3 13) still gets a bare `node-gyp rebuild` and fails without a
+  # compiler (seen on the Windows VM). Install with scripts off, then `npm
+  # rebuild`, which reads each installed package.json and runs the same scripts a
+  # plain install would (prebuild-install for better-sqlite3 12, sharp, esbuild).
   Push-Location $npmDir
   try {
-    & $Npm ci --no-audit --no-fund *> $null
+    & $Npm ci --ignore-scripts --no-audit --no-fund *> $null
     $rc = $LASTEXITCODE
+    if ($rc -eq 0) {
+      & $Npm rebuild --no-audit --no-fund *> $null
+      $rc = $LASTEXITCODE
+    }
   } catch { $rc = 1 } finally { Pop-Location }
-  if ($rc -eq 0) { return $true }
+  $failed = Join-Path $npmDir '.coop-lock-failed.json'
+  if ($rc -eq 0) {
+    Remove-Item -LiteralPath $failed -Force -ErrorAction SilentlyContinue
+    return $true
+  }
+  # Remember this lock as failed so the next sync does not tear the tree down
+  # again; the caller's plain install repairs the tree now.
   Remove-Item -LiteralPath $treeLock -Force -ErrorAction SilentlyContinue
+  try { Copy-Item -LiteralPath $lock -Destination $failed -Force } catch {}
   return $false
 }
 

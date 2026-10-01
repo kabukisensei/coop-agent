@@ -79,11 +79,13 @@ node "$ROOT/lib/extlock.js" matches "$TMP/otherpi" "$LOCK" >/dev/null 2>&1 \
 # 4. The convergence twins consult the lock before their live npm install, and
 #    the lock path is the one that runs `npm ci`.
 grep -q 'coop_apply_extensions_lock "$agent_dir" "$npm_bin" "$pi_ver"' "$ROOT/lib/common.sh" \
-  && grep -q '"$npm_bin" ci --no-audit --no-fund' "$ROOT/lib/common.sh" \
+  && grep -q '"$npm_bin" ci --ignore-scripts --no-audit --no-fund' "$ROOT/lib/common.sh" \
+  && grep -q '"$npm_bin" rebuild --no-audit --no-fund' "$ROOT/lib/common.sh" \
   && ok "coop_converge_extension_pins installs from the lock (npm ci) before a live resolution" \
   || ko "lib/common.sh convergence no longer tries the lockfile first"
 grep -q 'Install-CoopExtensionsLock -AgentDir $AgentDir -Npm $npm -PiVersion $piVer' "$ROOT/lib/common.ps1" \
-  && grep -q '& $Npm ci --no-audit --no-fund' "$ROOT/lib/common.ps1" \
+  && grep -q '& $Npm ci --ignore-scripts --no-audit --no-fund' "$ROOT/lib/common.ps1" \
+  && grep -q '& $Npm rebuild --no-audit --no-fund' "$ROOT/lib/common.ps1" \
   && ok "Sync-CoopExtensionPins installs from the lock (npm ci) before a live resolution" \
   || ko "lib/common.ps1 convergence no longer tries the lockfile first"
 
@@ -106,10 +108,11 @@ run_helper() { # <agent-dir>
   )
 }
 : > "$TMP/npm.log"
-if run_helper "$TMP/exact" && [ -f "$TMP/exact/npm/package-lock.json" ] && grep -q '^NPM ci ' "$TMP/npm.log"; then
-  ok "sync copies the lock next to package.json and runs npm ci on an exact tree"
+if run_helper "$TMP/exact" && [ -f "$TMP/exact/npm/package-lock.json" ] && grep -q '^NPM ci --ignore-scripts ' "$TMP/npm.log" \
+   && grep -q '^NPM rebuild ' "$TMP/npm.log"; then
+  ok "sync copies the lock next to package.json, runs npm ci with scripts off, then npm rebuild on an exact tree"
 else
-  ko "lock path did not run npm ci on an exact tree ($(cat "$TMP/npm.log" 2>/dev/null | tr '\n' ' '))"
+  ko "lock path did not run npm ci --ignore-scripts + npm rebuild on an exact tree ($(cat "$TMP/npm.log" 2>/dev/null | tr '\n' ' '))"
 fi
 cmp -s "$LOCK" "$TMP/exact/npm/package-lock.json" && ok "the tree's package-lock.json is byte-identical to the shipped lock" || ko "the copied lock differs from config/extensions-lock.json"
 : > "$TMP/npm.log"
@@ -174,6 +177,58 @@ if run_converge "$TMP/installed" && [ ! -s "$TMP/npm.log" ]; then
   ok "a tree that already carries the shipped lock is left alone (idempotent, offline)"
 else
   ko "a locked tree was reinstalled ($(tr '\n' ' ' < "$TMP/npm.log"))"
+fi
+
+# 7. A machine where the lock cannot install (VM, 2026-10-01: `npm ci` compiled
+#    better-sqlite3 13 from source and failed) falls back to the live install
+#    ONCE and remembers that lock: the next sync neither tears the tree down nor
+#    retries npm ci until a different lock ships.
+FAILSTUB="$TMP/failstub"; mkdir -p "$FAILSTUB"
+cat > "$FAILSTUB/npm" <<EOF
+#!/bin/sh
+[ "\$1" = "--version" ] && { echo 10.9.0; exit 0; }
+echo "NPM \$*" >> "$TMP/npm.log"
+[ "\$1" = "ci" ] && exit 1
+exit 0
+EOF
+chmod +x "$FAILSTUB/npm"; cp "$STUB/pi" "$FAILSTUB/pi"
+run_converge_failing() { # <agent-dir>
+  (
+    export COOP_ROOT="$ROOT" PATH="$FAILSTUB:$PATH"
+    # shellcheck disable=SC1091
+    . "$ROOT/lib/common.sh"
+    # shellcheck disable=SC2086
+    coop_converge_extension_pins "$1" $specs
+  )
+}
+mk_installed "$TMP/nolock"
+: > "$TMP/npm.log"
+if run_converge_failing "$TMP/nolock" && grep -q '^NPM ci ' "$TMP/npm.log" && grep -q '^NPM install ' "$TMP/npm.log" \
+   && [ ! -f "$TMP/nolock/npm/package-lock.json" ] && cmp -s "$LOCK" "$TMP/nolock/npm/.coop-lock-failed.json"; then
+  ok "a failed npm ci falls back to the live install, drops the copied lock and records the failed lock"
+else
+  ko "failed-lock fallback misbehaved ($(tr '\n' ' ' < "$TMP/npm.log"); lock=$([ -f "$TMP/nolock/npm/package-lock.json" ] && echo present || echo absent))"
+fi
+: > "$TMP/npm.log"
+if run_converge_failing "$TMP/nolock" && [ ! -s "$TMP/npm.log" ]; then
+  ok "the next sync does not retry a lock this machine already failed to install (no npm call)"
+else
+  ko "a known-failed lock was retried ($(tr '\n' ' ' < "$TMP/npm.log"))"
+fi
+printf '{"stale": true}\n' > "$TMP/nolock/npm/.coop-lock-failed.json"
+: > "$TMP/npm.log"
+if run_converge_failing "$TMP/nolock" && grep -q '^NPM ci ' "$TMP/npm.log"; then
+  ok "a different (new) lock is tried again after an earlier failure"
+else
+  ko "a new lock was not retried after an earlier failure ($(tr '\n' ' ' < "$TMP/npm.log"))"
+fi
+printf '{"stale": true}\n' > "$TMP/nolock/npm/.coop-lock-failed.json"
+: > "$TMP/npm.log"
+if run_converge "$TMP/nolock" && grep -q '^NPM ci ' "$TMP/npm.log" && [ ! -f "$TMP/nolock/npm/.coop-lock-failed.json" ] \
+   && cmp -s "$LOCK" "$TMP/nolock/npm/package-lock.json"; then
+  ok "a lock that installs clears the failed-lock record"
+else
+  ko "a successful lock install left the failed-lock record ($(tr '\n' ' ' < "$TMP/npm.log"))"
 fi
 
 if [ "$fail" -ne 0 ]; then echo "  ✗ extensions-lock tests FAILED"; exit 1; fi
