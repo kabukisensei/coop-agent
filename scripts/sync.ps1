@@ -4,7 +4,7 @@
 # provision coop's ISOLATED Pi agent dir (~/.coop/agent) + brand assets (non-destructive):
 #   • create the isolated dir; share auth/models from your personal pi (login)
 #   • enable Pi's quiet startup in the isolated settings (resources still load)
-#   • install coop's core Pi extensions INTO that dir (MCP / memory / better-openai)
+#   • converge the manifest's Pi extensions INTO that dir (Sync-CoopExtensionFleet)
 #   • place the read-only MCP config into the isolated dir if absent (never clobbers)
 #   • verify splash / theme / vibes are present
 #
@@ -12,14 +12,13 @@ $ErrorActionPreference = 'Continue'
 
 # --- Shared helpers: dot-source lib/common.ps1 ---------------------------------
 # Resolves COOP_ROOT/COOP_VERSION and defines the loggers, Test-Have,
-# Get-CoopPython, Get-CoopPiVersion, Get-CoopPiAgentDir, and Sync-CoopExtDeps
-# (the shared pi-ai/pi-tui aligner — moved into the shared lib so `coop sync` and
-# the launch preflight both call the SAME targeted helper; see lib/common.sh's
-# coop_align_ext_deps twin and AGENTS.md rule 1).
+# Get-CoopPython, Get-CoopPiVersion, Get-CoopPiAgentDir, Get-CoopFleetPlan and
+# Sync-CoopExtensionFleet (the one extension convergence path, which wraps
+# Sync-CoopExtDeps, the pi-ai/pi-tui aligner the launch preflight also calls).
 . (Join-Path $PSScriptRoot '../lib/common.ps1')
 
-# coop renders its own footer/splash — no third-party powerline footer.
-$CORE_EXTENSIONS = @('pi-mcp-adapter', 'pi-hermes-memory', 'pi-better-openai', 'pi-web-access', '@juicesharp/rpiv-ask-user-question', '@xl0/pi-lovely-rename', 'context-mode')
+# coop renders its own footer/splash — no third-party powerline footer. The
+# extension fleet itself comes from the release manifest (Get-CoopFleetPlan).
 $PI_AGENT = Get-CoopPiAgentDir
 $GLOBAL_AGENT = Get-CoopPersonalPiAgentDir
 
@@ -67,7 +66,7 @@ if ($settingsPy) {
 
 # --- 4. Managed Fabric Python runtime ----------------------------------------
 # Repair an existing Fabric environment, but never install Fabric itself.
-if ($env:COOP_SKIP_FABRIC_SYNC -ne '1' -and ($env:COOP_FABRIC_PYTHON -or (Get-CoopVenvPythonPath 'ms-fabric-cli'))) {
+if ($env:COOP_SKIP_FABRIC_SYNC -ne '1' -and ($env:COOP_FABRIC_PYTHON -or (Get-CoopVenvPythonPath $script:CoopFabricCliPackage))) {
   if ((Sync-CoopFabricPythonPackages) -and (Ensure-CoopFabricOdbcDriver $true)) {
     $sqlStatus = Get-CoopFabricSqlRuntimeStatus
     if ($sqlStatus.state -eq 'ready') { Coop-Ok 'Fabric SQL Python runtime ready (pyodbc + ODBC Driver 18+)' }
@@ -79,108 +78,14 @@ if ($env:COOP_SKIP_FABRIC_SYNC -ne '1' -and ($env:COOP_FABRIC_PYTHON -or (Get-Co
 }
 
 # --- 4b. Core Pi extensions — installed INTO the isolated dir (idempotent) ----
-# `pi install` exiting 0 proves nothing on its own: every extension is verified
-# against the manifest pin AFTER production exact-pin convergence; any failure
-# makes sync exit non-zero.
-$fleetSpecs = @(); $fleetNames = @(); $fleetPins = @(); $preVers = @{}
-
-# PI_CODING_AGENT_DIR scoping: every Pi operation must target the ISOLATED dir,
-# never the caller's personal ~/.pi. Save and restore any prior value.
-$priorAgentDir = $env:PI_CODING_AGENT_DIR
-
-try {
-  # Scoped here so EVERY Pi operation targets the isolated dir and the caller's
-  # environment is always restored (even when Pi is missing).
-  $env:PI_CODING_AGENT_DIR = $PI_AGENT
-  Coop-Info "Coop keeps its extensions in $PI_AGENT and pins the versions tested"
-  Coop-Info "together with this Coop release. Your personal Pi extensions are unchanged."
-  if (Test-Have 'pi') {
-    foreach ($ext in $CORE_EXTENSIONS) {
-      $extSpec = Coop-ManifestExtensionSpec $ext
-      if (-not $extSpec) { Coop-Warn "manifest pin missing for $ext"; $script:SyncFailures++; continue }
-      $i = $extSpec.LastIndexOf('@')
-      # Strip only the literal four-character `npm:` transport prefix. The old
-      # Substring(5) also removed the package's first character, producing
-      # `juicesharp/...` for scoped packages and invalidating npm convergence.
-      $fleetSpecs += ($extSpec -replace '^npm:', '')
-      $fleetNames += $ext
-      $pin = $extSpec.Substring($i + 1)
-      $fleetPins += $pin
-      $pre = Get-CoopExtInstalledVersion -AgentDir $PI_AGENT -Name $ext
-      $preVers[$ext] = $pre
-      Coop-Info "Ensuring isolated $ext is version ${pin}…"
-      # Exact installed pins need no network or package-manager mutation. This
-      # makes repeat syncs genuinely idempotent and keeps offline launches stable.
-      if ($pre -ne $pin) {
-        & pi install $extSpec > $null 2>&1
-        if ($LASTEXITCODE -ne 0) { Coop-Warn "could not install $ext (pin $pin)"; $script:SyncFailures++ }
-      }
-    }
-
-    # Order matters: exact extension pins FIRST, then shared-library alignment —
-    # the alignment's npm install is the LAST resolution, so its overrides are
-    # what ships and no later reinstall can recreate the startup skew.
-    if ($fleetSpecs.Count -gt 0) {
-      if (-not (Sync-CoopExtensionPins -AgentDir $PI_AGENT -Specs $fleetSpecs)) {
-        Coop-Warn "could not enforce exact extension pins in $PI_AGENT\npm" 'run: coop sync'
-        $script:SyncFailures++
-      }
-    }
-
-    $piRuntime = Get-CoopPiVersion
-    if ($piRuntime) { Coop-Info "Aligning shared Pi libraries with the installed Pi runtime ${piRuntime}…" }
-    Sync-CoopExtDeps -AgentDir $PI_AGENT
-
-    # Postconditions: fleet at manifest versions AND shared libs satisfying the
-    # ACTIVE runtime's own metadata, verified after all installs.
-    for ($k = 0; $k -lt $fleetNames.Count; $k++) {
-      $ext = $fleetNames[$k]; $extPin = $fleetPins[$k]; $pre = $preVers[$ext]
-      $postVer = Get-CoopExtInstalledVersion -AgentDir $PI_AGENT -Name $ext
-      if (-not $postVer) {
-        Coop-Warn "postcondition failed: pi install reported success, but $ext is MISSING from the isolated tree (wanted $extPin)" 'run: coop sync'
-        $script:SyncFailures++
-        continue
-      }
-      if ($postVer -ne $extPin) {
-        Coop-Warn "postcondition failed: pi install reported success, but $ext is version $postVer, not the pinned $extPin" 'run: coop sync'
-        $script:SyncFailures++
-        continue
-      }
-      switch ($pre) {
-        ''             { Coop-Ok "Installed release version $extPin ($ext)" }
-        $extPin        { Coop-Ok "Already at release version $extPin ($ext)" }
-        default {
-          if (Coop-VersionLessThan $extPin $pre) { Coop-Ok "Downgraded untested $pre → release version $extPin ($ext)" }
-          else { Coop-Ok "Updated $pre → $extPin ($ext)" }
-        }
-      }
-    }
-
-    if ($piRuntime) {
-      $py = Get-CoopPython
-      if ($py) {
-        & $py (Join-Path $script:CoopRoot 'lib\_extdeps.py') align $PI_AGENT $piRuntime --check *> $null
-        $alignRc = $LASTEXITCODE
-        if ($alignRc -eq 10) {
-          Coop-Err "shared-library skew remains after alignment (wanted pi-ai/pi-tui for pi $piRuntime)"
-          $script:SyncFailures++
-        } elseif ($alignRc -eq 11) {
-          Coop-Err "an installed extension needs newer pi-ai libraries than pi $piRuntime provides" 'run: coop update (moves Pi to this release''s tested version), then: coop sync'
-          $script:SyncFailures++
-        }
-      }
-    }
-  } else {
-    # No runtime means NO fleet convergence happened at all: per contract that
-    # is a failure, not a warning.
-    Coop-Err 'pi is not installed — no extensions were converged or verified' 'install Pi first: coop install'
-    $script:SyncFailures++
-  }
-}
-finally {
-  if ($null -ne $priorAgentDir) { $env:PI_CODING_AGENT_DIR = $priorAgentDir }
-  else { Remove-Item Env:PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue }
-}
+# The one `pi install` path (Sync-CoopExtensionFleet in lib/common.ps1, master
+# plan S2): the manifest's extensions at their exact pins, the shipped lockfile,
+# the shared pi-ai/pi-tui alignment and the postconditions. `coop install` and
+# `coop update` run this script as a child, so extensions converge once, here.
+# Every Pi operation targets the ISOLATED dir, never the caller's personal ~/.pi.
+Coop-Info "Coop keeps its extensions in $PI_AGENT and pins the versions tested"
+Coop-Info "together with this Coop release. Your personal Pi extensions are unchanged."
+$script:SyncFailures += [int](Sync-CoopExtensionFleet -AgentDir $PI_AGENT)
 
 # --- 5. MCP config — manifest-pinned, ownership-aware, non-destructive --------
 # pi-mcp-adapter 3.x reads mcp-adapter.json; the generator migrates an old mcp.json.

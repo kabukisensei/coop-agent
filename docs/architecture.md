@@ -120,7 +120,14 @@ for the Node tools and extensions; no script builds these paths inline.
    (`config/defaults.yml`; exact pins in `config/release-manifest.json`, and
    their transitive dependencies in `config/extensions-lock.json`, which
    `coop sync` installs with `npm ci` so every machine on a release runs the same
-   tree):
+   tree). One convergence path (master plan S2): `coop install` and `coop update`
+   converge Pi, the pipx tools, the Fabric CLI and the npm authoring tools through
+   the same `lib/common.ps1` functions (`Get-CoopFleetPlan` reads the manifest;
+   `Invoke-CoopPiConverge` / `Invoke-CoopPipxConverge` /
+   `Invoke-CoopFabricCliConverge` / `Invoke-CoopNpmToolConverge` probe, skip at
+   the pin, else install) and leave the extensions to the `coop sync` child both
+   run, where `Sync-CoopExtensionFleet` is the one `pi install` path (pins,
+   lockfile, pi-ai/pi-tui alignment, postconditions). The extensions are:
    - `pi-mcp-adapter` — wires the read-only MCP servers.
    - `pi-hermes-memory` — persistent memory, session search, secret scanning.
    - `pi-better-openai` — plan usage limits (5h / 7d windows), surfaced in

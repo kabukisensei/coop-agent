@@ -1,16 +1,22 @@
 ﻿#!/usr/bin/env pwsh
 # Execute the normal install/update/sync fleet paths with offline stubs and assert
 # the exact specs they converge to (port of tests/fleet-execution.test.sh):
-#   - `install --force` installs every manifest extension at its pin, the Fabric
-#     CLI with an explicit supported bootstrap Python, and injects the exact
-#     fabric-cicd / pyodbc runtime pins; an injection or pipx failure is exit 1
+#   - `install --force` reinstalls the Fabric CLI with an explicit supported
+#     bootstrap Python and injects the exact fabric-cicd / pyodbc runtime pins;
+#     an injection or pipx failure is exit 1; install itself never runs
+#     `pi install` (the extensions are the sync child's, master plan S2)
 #   - a non-Windows install without ODBC Driver 18 still converges with ONE warning
-#   - `update` (fleet mode) never fetches the checkout it runs from, pins Pi and
-#     every extension, and is exit 1 when a convergence unit fails
-#   - `sync` installs every manifest extension pin into the isolated tree
+#   - `update` (fleet mode) never fetches the checkout it runs from, leaves Pi and
+#     the pipx tools already at their pins alone (offline no-op), converges a
+#     drifted tool, and is exit 1 when a convergence unit fails
+#   - `sync` installs every manifest extension pin into the isolated tree, and a
+#     repeat sync is an offline no-op
 #   - normal install converges drifted Pi / pipx tools, skips matching ones;
-#     `--edge` attempts upstream latest; a failed Fabric convergence is a failure;
-#     update installs missing manifest-pinned pipx tools
+#     `--edge` attempts upstream latest for Pi and the tools (extensions stay
+#     pinned); a failed Fabric convergence is a failure; update installs missing
+#     manifest-pinned pipx tools with the explicit bootstrap Python
+# The pipx stub is honest: `install` / `upgrade` update the list it reports, so
+# the convergence postcondition (installed version == pin) is really exercised.
 # The scripts run from a plain COPY of this tree with no .git (#104): step 1 of
 # `coop update` fetches and fast-forwards the checkout it runs from, and a test
 # must never touch the checkout running it. Every location the fleet scripts can
@@ -121,23 +127,38 @@ if args[:1] == ['install']:
             write_pkg('node_modules', a)
 sys.exit(0)
 '@
-# pipx: `pipx list` prints the machine's installed packages; any other call
-# whose argv contains $PIPX_FAIL_MATCH fails (exit 1, unlogged) so the
-# failure-injection cases can fail a convergence unit; everything else is logged.
-function Get-PipxStub([string[]]$PipxList) {
-  $listPy = '[' + (($PipxList | ForEach-Object { ConvertTo-PyString $_ }) -join ', ') + ']'
-  return $stubPrelude + @"
+# Honest pipx: `pipx list` prints the machine's installed packages from the
+# $PIPX_STATE file; any other call whose argv contains $PIPX_FAIL_MATCH fails
+# (exit 1, unlogged) so the failure-injection cases can fail a convergence unit;
+# everything else is logged, and `install [--force] ... <pkg>[==<ver>]` /
+# `upgrade <pkg>` record the package at that version (an unpinned spec and
+# `upgrade` land on 9.9.9, "latest"), so a convergence is verified by what pipx
+# then reports (the postcondition installed == pin).
+$pipxStub = $stubPrelude + @'
+state = os.environ['PIPX_STATE']
+def read_state():
+    if not os.path.exists(state):
+        return []
+    with open(state, encoding='utf-8') as f:
+        return [l for l in f.read().splitlines() if l]
 if args[:1] == ['list']:
-    for line in ${listPy}:
+    for line in read_state():
         print(line)
     sys.exit(0)
 fail = os.environ.get('PIPX_FAIL_MATCH', '')
 if fail and fail in ' '.join(args):
     sys.exit(1)
 log('PIPX ' + ' '.join(args))
+if args[:1] in (['install'], ['upgrade']) and len(args) > 1:
+    name, _, ver = args[-1].partition('==')
+    if not ver:
+        ver = '9.9.9'
+    lines = [l for l in read_state() if not l.startswith('package ' + name + ' ')]
+    lines.append('package %s %s' % (name, ver))
+    with open(state, 'w', encoding='utf-8', newline='\n') as f:
+        f.write('\n'.join(lines) + '\n')
 sys.exit(0)
-"@
-}
+'@
 # One fully isolated "machine": every location the fleet scripts can touch lives
 # under it, plus the stub bin that models the tools present on it.
 function New-Machine {
@@ -163,7 +184,11 @@ function New-Machine {
   Remove-Item Env:\COOP_FABRIC_PYTHON, Env:\PIPX_FAIL_MATCH, Env:\COOP_TEST_DRIVER_MISSING -ErrorAction SilentlyContinue
   $null = New-PyStub $bin 'pi' (Get-PiStub $PiVersion $HonestPi $LogPi)
   $null = New-PyStub $bin 'npm' $npmStub
-  $null = New-PyStub $bin 'pipx' (Get-PipxStub $PipxList)
+  # The pipx list lives in a state file the honest stub reads and updates.
+  $pipxState = Join-Path $d 'pipx-list'
+  [System.IO.File]::WriteAllText($pipxState, (($PipxList | ForEach-Object { "$_" }) -join "`n") + $(if (@($PipxList).Count) { "`n" } else { '' }), $utf8)
+  $env:PIPX_STATE = $pipxState
+  $null = New-PyStub $bin 'pipx' $pipxStub
   $null = New-PyStub $bin 'fab' ($stubPrelude + "print('fab version $FabVersion')`nsys.exit(0)`n")
   # Git and Azure CLI are install prerequisites (H1 gate); this machine has them.
   $null = New-PyStub $bin 'az' ($stubPrelude + "print('azure-cli 2.80.0')`nsys.exit(0)`n")
@@ -191,8 +216,10 @@ function New-Machine {
     # into one unusable segment, and the trailing copy keeps the stubs resolvable.
     $env:PATH = $bin + ':' + $psDir + ':/usr/bin:/bin:' + $bin
   }
-  return [pscustomobject]@{ Dir = $d; Bin = $bin; Agent = $agent; Marker = $marker; Home = $mHome }
+  return [pscustomobject]@{ Dir = $d; Bin = $bin; Agent = $agent; Marker = $marker; Home = $mHome; PipxState = $pipxState }
 }
+# Rewrite what the stub pipx reports (a machine whose tool drifted after install).
+function Set-PipxList([object]$M, [string[]]$Lines) { [System.IO.File]::WriteAllText($M.PipxState, ($Lines -join "`n") + "`n", $utf8) }
 function Get-Calls([object]$M) { return [System.IO.File]::ReadAllText($M.Marker) }
 function Reset-Calls([object]$M) { [System.IO.File]::WriteAllText($M.Marker, '') }
 function Test-Call([object]$M, [string]$Pattern) { return [bool]@((Get-Calls $M) -split "`r?`n" | Where-Object { $_ -match $Pattern }).Count }
@@ -210,7 +237,7 @@ $saved = @{}
 $names = @('PATH', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'COOP_DIR', 'PIPX_HOME', 'PIPX_BIN_DIR', 'PI_CODING_AGENT_DIR', 'COOP_AGENT_DIR',
            'COOP_NO_ONBOARD', 'MARKER', 'COOP_TEST_STUB_PATH', 'COOP_FABRIC_PYTHON', 'PIPX_FAIL_MATCH', 'COOP_TEST_DRIVER_MISSING',
            'COOP_FLEET_TEST_MODE', 'COOP_PI_LATEST_OVERRIDE', 'COOP_PYPI_LATEST_OVERRIDE', 'COOP_RELEASE_MANIFEST', 'COOP_SKIP_AZ', 'NO_COLOR',
-           'PYTHONPATH', 'PYTHONHOME')
+           'PYTHONPATH', 'PYTHONHOME', 'PIPX_STATE')
 foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 $script:priorPath = $env:PATH
 try {
@@ -241,8 +268,9 @@ try {
   $out = Invoke-Fleet 'install.ps1' @('--force')
   if ($rc -eq 0) { Ok 'install --force (fleet mode) exits 0' } else { Ko "install --force exited $rc" $out }
   if (Test-Call $m 'PIPX install --force --python .+ ms-fabric-cli==1\.7\.0') { Ok 'Fabric CLI install selects a supported bootstrap Python explicitly' } else { Ko 'Fabric CLI install did not select a supported bootstrap Python explicitly' (Get-Calls $m) }
-  $missing = @($extSpecs | Where-Object { -not (Test-CallLiteral $m "PI install $_") })
-  if ($missing.Count -eq 0) { Ok 'install --force installs every manifest extension at its exact pin' } else { Ko "missing install spec(s): $($missing -join ', ')" (Get-Calls $m) }
+  if (Test-CallLiteral $m 'PIPX install --force coop-data-doc==1.2.0') { Ok 'install --force reinstalls a pipx tool at its exact pin' } else { Ko 'install --force did not reinstall coop-data-doc at its pin' (Get-Calls $m) }
+  # Extensions are the sync child's (one `pi install` path, S2): install runs none.
+  if (Test-Call $m '^PI install ') { Ko 'install ran its own pi install; extensions converge once, in sync' (Get-Calls $m) } else { Ok 'install leaves the extensions to the sync child (no pi install of its own)' }
   if ((Test-CallLiteral $m 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force') -and (Test-CallLiteral $m 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force')) { Ok 'install injects the exact fabric-cicd and pyodbc runtime pins' } else { Ko 'install did not inject the exact runtime pins' (Get-Calls $m) }
 
   # Driver auto-provisioning is Windows-only. A supported non-Windows install still
@@ -265,8 +293,7 @@ try {
   if ($rc -ne 0) { Ok 'exact pyodbc pin is injected and injection failure is nonzero' } else { Ko 'failed pyodbc injection was converted into install success' $out }
   # Install, like update, keeps a visible convergence failure in its exit status
   # even though it continues through the remaining units for diagnostics.
-  # (the match is the unit's argv prefix; the pinned spec follows it)
-  $env:PIPX_FAIL_MATCH = 'install --force coop-data-doc'
+  $env:PIPX_FAIL_MATCH = 'install --force coop-data-doc==1.2.0'
   $out = Invoke-Fleet 'install.ps1' @('--force')
   if ($rc -ne 0) { Ok 'install exits non-zero when a convergence unit fails' } else { Ko 'failed pipx convergence was converted into install success' $out }
   Remove-Item Env:\PIPX_FAIL_MATCH -ErrorAction SilentlyContinue
@@ -276,13 +303,21 @@ try {
   $out = Invoke-Fleet 'update.ps1'
   if ($rc -eq 0) { Ok 'normal pinned update exits 0' } else { Ko "normal pinned update failed unexpectedly (rc=$rc)" $out }
   if ($out.Contains('not a git checkout')) { Ok 'update runs from a copy of the tree, so step 1 never fetches or moves the checkout running the tests' } else { Ko 'update step 1 ran against a git checkout; the fixture must run a copy (#104)' $out }
-  if (Test-Call $m 'PIPX install --force --python .+ ms-fabric-cli==1\.7\.0') { Ok 'Fabric CLI update selects a supported bootstrap Python explicitly' } else { Ko 'Fabric CLI update did not select a supported bootstrap Python explicitly' (Get-Calls $m) }
-  $missing = @($extSpecs | Where-Object { -not (Test-CallLiteral $m "PI install $_") })
-  if ($missing.Count -eq 0) { Ok 'update pins every manifest extension at its exact spec' } else { Ko "missing update spec(s): $($missing -join ', ')" (Get-Calls $m) }
+  # Everything the --force install left is at its pin, so update is an offline
+  # no-op for Pi and every pipx tool (the same probe-then-skip install uses).
+  if (Test-Call $m '^PIPX (install|upgrade) ') { Ko 'update reinstalled a pipx tool already at its pin' (Get-Calls $m) } else { Ok 'update leaves pipx tools already at their pins alone (offline no-op)' }
+  if (Test-Call $m '^NPM install -g @earendil-works/pi-coding-agent') { Ko 'update reinstalled a Pi already at the manifest version' (Get-Calls $m) } else { Ok 'update leaves a Pi already at the manifest version alone (offline no-op)' }
+  if ((Test-CallLiteral $m 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force') -and (Test-CallLiteral $m 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force')) { Ok 'update still converges the exact Fabric runtime pins' } else { Ko 'update did not converge the Fabric runtime pins' (Get-Calls $m) }
   if (Test-CallLiteral $m 'PI update --extensions') { Ko 'update ran the unpinned pi update --extensions' (Get-Calls $m) } else { Ok 'update never runs the unpinned pi update --extensions' }
-  if (Test-CallLiteral $m 'NPM install -g @earendil-works/pi-coding-agent@0.87.1') { Ok 'update pins Pi to the manifest version' } else { Ko 'update did not pin Pi to the manifest version' (Get-Calls $m) }
-  # A visible unit failure makes update non-zero even though execution reaches the
+  if (Test-Call $m '^PI (install|update) ') { Ko 'update ran its own pi install/update; extensions converge once, in sync' (Get-Calls $m) } else { Ok 'update leaves the extensions to the sync child (no pi install of its own)' }
+  # Drift after the install: update converges the tool to its pin, and a visible
+  # unit failure makes update non-zero even though execution reaches the
   # aggregate end (the old behaviour silently returned success via Doctor).
+  Reset-Calls $m
+  Set-PipxList $m @('package coop-data-doc 1.1.0', 'package coop-sql-review 0.15.2', 'package coop-dax-review 0.22.0', 'package ms-fabric-cli 1.7.0')
+  $out = Invoke-Fleet 'update.ps1'
+  if ($rc -eq 0 -and (Test-CallLiteral $m 'PIPX install --force coop-data-doc==1.2.0')) { Ok 'update converges a drifted pipx tool to its manifest pin' } else { Ko "update did not converge drifted coop-data-doc (rc=$rc)" (Get-Calls $m) }
+  Set-PipxList $m @('package coop-data-doc 1.1.0', 'package coop-sql-review 0.15.2', 'package coop-dax-review 0.22.0', 'package ms-fabric-cli 1.7.0')
   $env:PIPX_FAIL_MATCH = 'coop-data-doc==1.2.0'
   $out = Invoke-Fleet 'update.ps1'
   if ($rc -ne 0) { Ok 'update exits non-zero when a convergence unit fails' } else { Ko 'failed pipx convergence was converted into update success' $out }
@@ -301,6 +336,10 @@ try {
   foreach ($ext in @('pi-mcp-adapter', '@juicesharp/rpiv-ask-user-question')) {
     if (Test-Path -LiteralPath (Join-Path $m.Agent "npm\node_modules\$ext\package.json")) { Ok "sync materialized $ext in the isolated tree" } else { Ko "sync did not materialize $ext in the isolated tree" $out }
   }
+  # A tree already at every pin needs no `pi install`: the repeat sync is offline.
+  Reset-Calls $m
+  $out = Invoke-Fleet 'sync.ps1'
+  if ($rc -eq 0 -and -not (Test-Call $m '^PI install ')) { Ok 'a repeat sync skips extensions already at their pins (offline no-op)' } else { Ko "repeat sync reinstalled extensions or failed (rc=$rc)" ($out + "`n" + (Get-Calls $m)) }
   # The Fabric runtime convergence argv (normal + edge) through the shared helper.
   $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
   $frOut = @(& $psExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $checkout 'tests\fixtures\fabric-runtime-convergence.test.ps1') 2>&1 | ForEach-Object { "$_" })
@@ -329,13 +368,14 @@ try {
   else { Ok 'install --edge attempts a Pi upstream update' }
   if (-not (Test-CallLiteral $m4 'PIPX upgrade coop-data-doc')) { Ko 'edge install did not attempt a pipx upgrade for an existing tool' (Get-Calls $m4) }
   else { Ok 'install --edge attempts a pipx upgrade for an existing tool' }
-  if (Test-Call $m4 'PI install npm:[^ ]+@') { Ko 'edge install pinned an extension' (Get-Calls $m4) }
-  elseif (-not (Test-CallLiteral $m4 'PI install npm:pi-mcp-adapter')) { Ko 'edge install did not install the extensions unpinned' (Get-Calls $m4) }
+  # --edge is a Pi and tools channel: the extensions stay pinned (sync has no
+  # --edge), so install issues no `pi install` of its own here either.
+  if (Test-Call $m4 '^PI install ') { Ko 'edge install ran its own pi install (extensions are the pinned sync child''s)' (Get-Calls $m4) }
   elseif (-not (Test-Call $m4 'PIPX install --force --python .+ ms-fabric-cli$')) { Ko 'edge install did not reinstall the Fabric CLI unpinned' (Get-Calls $m4) }
-  elseif (-not (Test-CallLiteral $m4 'PIPX inject ms-fabric-cli fabric-cicd --force')) { Ko 'edge install did not refresh unpinned fabric-cicd' (Get-Calls $m4) }
+  elseif (-not (Test-CallLiteral $m4 'PIPX inject ms-fabric-cli fabric-cicd --force')) { Ko 'edge install did not refresh unpinned fabric-cicd' ($out + "`n" + (Get-Calls $m4)) }
   elseif (Test-CallLiteral $m4 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force') { Ko 'edge install incorrectly pinned fabric-cicd' (Get-Calls $m4) }
   elseif (-not (Test-CallLiteral $m4 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force')) { Ko 'edge install did not preserve the exact pyodbc runtime contract' (Get-Calls $m4) }
-  else { Ok 'install --edge takes upstream latest for extensions, the Fabric CLI and fabric-cicd' }
+  else { Ok 'install --edge takes upstream latest for the Fabric CLI and fabric-cicd, keeps the extensions pinned' }
 
   # --- 6. Fabric failed convergence must NOT read as success -------------------------
   # pipx refuses the --force install of ms-fabric-cli==pin while an OLD fab binary
@@ -361,6 +401,8 @@ try {
   $out = Invoke-Fleet 'update.ps1'
   $missing = @(@('coop-data-doc==1.2.0', 'coop-sql-review==0.15.2', 'coop-dax-review==0.22.0', 'ms-fabric-cli==1.7.0') | Where-Object { -not (Test-CallLiteral $m6 $_) })
   if ($missing.Count -eq 0) { Ok 'update installs missing manifest-pinned pipx tools' } else { Ko "update did not install missing $($missing -join ', ')" (Get-Calls $m6) }
+  if (Test-Call $m6 '^PIPX install --python .+ ms-fabric-cli==1\.7\.0') { Ok 'update installs a missing Fabric CLI with an explicit supported bootstrap Python' } else { Ko 'update did not select a supported bootstrap Python for the missing Fabric CLI' (Get-Calls $m6) }
+  if (Test-Call $m6 '^PIPX install --force ') { Ko 'update force-reinstalled a tool that was simply missing' (Get-Calls $m6) } else { Ok 'a missing tool is installed, not force-reinstalled' }
 }
 finally {
   foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }

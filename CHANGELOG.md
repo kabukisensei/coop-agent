@@ -15,6 +15,29 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   records it as `dev-read-only`. Test and production targets, unbounded or
   ambiguous SQL, generic MCP row reads and every mutation ask as before.
 
+- One install/update/sync convergence path (master plan S2, row 8, issue #222).
+  `lib/common.ps1` now owns the fleet: `Get-CoopFleetPlan` is the one
+  manifest-driven list (Pi, extensions, the Coop tools, the Fabric CLI, the npm
+  authoring tools, Desktop Bridge on Windows only) that `coop install`, `coop
+  update`, `coop sync` and `coop uninstall` read instead of their own copies;
+  `Invoke-CoopPiConverge`, `Invoke-CoopPipxConverge` (one pipx runner with the
+  `python -m pipx` fallback, one `pipx list` probe, a postcondition that the
+  installed version equals the pin), `Invoke-CoopFabricCliConverge` (the `fab`
+  identity check on top) and `Invoke-CoopNpmToolConverge` are the one probe and
+  one install branch per component, run inside the `Coop-Unit` jobs through
+  `$script:CoopConvergeUnit`; `Sync-CoopExtensionFleet` is the one `pi install`
+  path (pins, lockfile, pi-ai/pi-tui alignment, postconditions). Behaviour that
+  follows: `coop update` skips Pi and every pipx/npm tool already at its pin (an
+  offline no-op, like install), converges a drifted one, and installs a missing
+  one without `--force`; install no longer runs its own `pi install` or a
+  `pipx upgrade` fallback, and extensions converge once, in the sync child both
+  commands run (install is now 8 steps); `--edge` moves Pi and the tools to
+  upstream latest while the extensions stay at their pins; an npm tool without a
+  manifest pin fails in normal mode; the busy guard (`Test-CoopPiConvergeAllowed`:
+  leftover `.pi-coding-agent-*` staging dirs removed, no in-place Pi convergence
+  under a running session) now covers install too; `coop update --check` and
+  `coop doctor` reuse the probes, and doctor's Power BI hints name the manifest
+  pins. No pin changed.
 - One profile root (master plan S3, row 8, issue #220). `COOP_DIR` now means one
   thing everywhere: the parent of `.coop` (profile at `$COOP_DIR/.coop`, default
   `~/.coop`). `coop support` (`lib/support-center-cli.mjs`) and `coop context-budget`

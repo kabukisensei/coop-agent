@@ -41,8 +41,12 @@ foreach ($a in $args) {
   }
 }
 
-$PI_NPM_PACKAGE = '@earendil-works/pi-coding-agent'
-$PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review', 'ms-fabric-cli')
+# The tool layer to remove comes from the same manifest-driven plan install
+# reads (Get-CoopFleetPlan): Pi, the pipx tools + Fabric CLI, the npm tools.
+$PLAN = Get-CoopFleetPlan
+$PI_NPM_PACKAGE = $PLAN.PiPackage
+$PY_TOOLS = @($PLAN.PythonTools | ForEach-Object { $_.Name })
+if ($PLAN.Fabric) { $PY_TOOLS += $PLAN.Fabric.Name }
 
 Coop-Head "coop uninstall (v$($script:CoopVersion))"
 $scope = "the coop launcher + user-PATH entry + Start Menu/Desktop shortcuts + coop's isolated agent dir ($(Get-CoopPiAgentDir))"
@@ -156,8 +160,7 @@ if ($KEEP_TOOLS) {
     Coop-Info 'pipx not found — no pipx tools to remove'
   }
   # Power BI / Fabric authoring npm tools that install.ps1 adds globally.
-  $pbihTools = @('@microsoft/powerbi-report-authoring-cli', '@microsoft/powerbi-modeling-mcp', '@microsoft/powerbi-desktop-bridge-cli')
-  foreach ($pkg in $pbihTools) {
+  foreach ($pkg in @($PLAN.NpmTools | ForEach-Object { $_.Name })) {
     if ($globals -match [regex]::Escape($pkg)) {
       & npm uninstall -g $pkg *> $null
       if ($LASTEXITCODE -eq 0) { Coop-Ok "removed $pkg (npm)" }

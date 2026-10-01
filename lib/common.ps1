@@ -91,6 +91,60 @@ function Coop-ManifestKeys([string]$Key) {
   } catch { return @() }
 }
 
+# --- Fleet plan: the one manifest-driven list of what coop installs -----------
+# Every lifecycle script (install, update, sync, uninstall, doctor --fix) reads
+# this plan instead of carrying its own copy of the fleet (master plan S2, #222).
+# Pins come from config/release-manifest.json. -Edge drops the Pi and tool pins
+# (an unpinned spec means upstream latest); extensions stay pinned regardless,
+# because sync has no --edge. fabric-cicd and pyodbc are libraries injected into
+# the Fabric CLI environment (Sync-CoopFabricPythonPackages), not standalone
+# tools, and powerbi-desktop-bridge needs Power BI Desktop, so it is a
+# Windows-only npm tool. Returns
+#   @{ PiPackage; PiPin; PiSpec; Extensions; PythonTools; Fabric; FabricRuntime; NpmTools }
+# where every Extensions / PythonTools / NpmTools row (and Fabric, $null under
+# -NoFabric) is @{ Name; Pin; Spec }. An npm tool without a pin has Spec '' in
+# normal mode: it fails to converge rather than falling back to npm's latest.
+$script:CoopFabricCliPackage = 'ms-fabric-cli'
+$script:CoopFabricRuntimeLibraries = @('fabric-cicd', 'pyodbc')
+$script:CoopWindowsOnlyNpmTools = @('@microsoft/powerbi-desktop-bridge-cli')
+function Get-CoopFleetPlan {
+  param([switch]$Edge, [switch]$NoFabric)
+  $piPackage = Coop-ManifestGet -Key 'pi.package' -Default '@earendil-works/pi-coding-agent'
+  $piPin = Coop-ManifestGet -Key 'pi.version'
+  $piSpec = if (-not $Edge -and $piPin) { "${piPackage}@${piPin}" } else { $piPackage }
+  $extensions = @()
+  foreach ($name in @(Coop-ManifestKeys 'extensions')) {
+    $extensions += [pscustomobject]@{ Name = [string]$name; Pin = [string](Coop-ManifestObjectGet 'extensions' $name); Spec = [string](Coop-ManifestExtensionSpec $name) }
+  }
+  $pythonTools = @()
+  $fabric = $null
+  foreach ($name in @(Coop-ManifestKeys 'python_tools')) {
+    if ($script:CoopFabricRuntimeLibraries -contains $name) { continue }
+    $pin = [string](Coop-ManifestObjectGet 'python_tools' $name)
+    $spec = if (-not $Edge -and $pin) { "${name}==${pin}" } else { [string]$name }
+    $row = [pscustomobject]@{ Name = [string]$name; Pin = $pin; Spec = $spec }
+    if ($name -eq $script:CoopFabricCliPackage) { if (-not $NoFabric) { $fabric = $row } }
+    else { $pythonTools += $row }
+  }
+  $npmTools = @()
+  foreach ($name in @(Coop-ManifestKeys 'npm_tools')) {
+    if (($script:CoopWindowsOnlyNpmTools -contains $name) -and ($env:OS -ne 'Windows_NT')) { continue }
+    $pin = [string](Coop-ManifestObjectGet 'npm_tools' $name)
+    $spec = if ($Edge) { [string]$name } elseif ($pin) { "${name}@${pin}" } else { '' }
+    $npmTools += [pscustomobject]@{ Name = [string]$name; Pin = $pin; Spec = $spec }
+  }
+  return [pscustomobject]@{
+    PiPackage     = [string]$piPackage
+    PiPin         = [string]$piPin
+    PiSpec        = [string]$piSpec
+    Extensions    = @($extensions)
+    PythonTools   = @($pythonTools)
+    Fabric        = $fabric
+    FabricRuntime = @($script:CoopFabricRuntimeLibraries)
+    NpmTools      = @($npmTools)
+  }
+}
+
 function Coop-VersionLessThan([string]$A, [string]$B) {
   if (-not $A -or -not $B) { return $false }
   $aParts = @($A -replace '^v','' -split '\.' | Select-Object -First 3 | ForEach-Object { [int]($_ -replace '[^0-9].*$','') })
@@ -1171,6 +1225,113 @@ function Sync-CoopExtDeps {
   else { Coop-Warn "could not fully align extension pi-ai/pi-tui to $ver — close any running coop session, then: coop doctor --fix" }
 }
 
+# --- Extension fleet convergence (the ONE `pi install` path; S2, #222) ---------
+# Converge every manifest extension INTO the isolated agent dir, idempotently:
+#   1. `pi install <npm:name@pin>` for each extension whose installed version
+#      (package.json in the tree) differs from the pin — an exact installed pin
+#      needs no network or package-manager mutation, so repeat runs are offline
+#      no-ops;
+#   2. Sync-CoopExtensionPins (exact pins in package.json, the shipped lockfile
+#      via npm ci, else npm install) — pins FIRST, then
+#   3. Sync-CoopExtDeps (pi-ai / pi-tui aligned to the installed Pi) LAST, so its
+#      overrides are what ships and no later reinstall recreates the startup skew;
+#   4. postconditions: every extension present at its pin (a `pi install` that
+#      exited 0 proves nothing on its own), then `_extdeps.py align --check`
+#      (rc 10 = skew remains, rc 11 = an extension needs a newer pi-ai).
+# Returns the failure count; the caller (`coop sync`, which install and update
+# run as a child) turns a non-zero count into its exit code. Every Pi operation
+# targets $AgentDir through PI_CODING_AGENT_DIR, never the personal ~/.pi; the
+# caller's value is restored afterwards. Extensions are always pinned: --edge is
+# a Pi and tools channel, not an extension one.
+function Sync-CoopExtensionFleet {
+  param([string]$AgentDir = (Get-CoopPiAgentDir))
+  $failures = 0
+  $priorAgentDir = $env:PI_CODING_AGENT_DIR
+  try {
+    $env:PI_CODING_AGENT_DIR = $AgentDir
+    if (-not (Test-Have 'pi')) {
+      # No runtime means NO fleet convergence happened at all: per contract that
+      # is a failure, not a warning.
+      Coop-Err 'pi is not installed — no extensions were converged or verified' 'install Pi first: coop install'
+      return 1
+    }
+    $fleetSpecs = @(); $fleetNames = @(); $fleetPins = @(); $preVers = @{}
+    foreach ($ext in (Get-CoopFleetPlan).Extensions) {
+      if (-not $ext.Spec -or -not $ext.Pin) { Coop-Warn "manifest pin missing for $($ext.Name)"; $failures++; continue }
+      # Strip only the literal four-character `npm:` transport prefix (a longer
+      # cut once produced `juicesharp/...` for scoped packages).
+      $fleetSpecs += ($ext.Spec -replace '^npm:', '')
+      $fleetNames += $ext.Name
+      $fleetPins += $ext.Pin
+      $pre = Get-CoopExtInstalledVersion -AgentDir $AgentDir -Name $ext.Name
+      $preVers[$ext.Name] = $pre
+      Coop-Info "Ensuring isolated $($ext.Name) is version $($ext.Pin)…"
+      if ($pre -ne $ext.Pin) {
+        & pi install $ext.Spec > $null 2>&1
+        if ($LASTEXITCODE -ne 0) { Coop-Warn "could not install $($ext.Name) (pin $($ext.Pin))"; $failures++ }
+      }
+    }
+
+    if ($fleetSpecs.Count -gt 0) {
+      # Sync-CoopExtensionPins runs lib/pins.js un-redirected, so its output can
+      # carry node's lines ahead of the verdict: the last Boolean is the verdict.
+      $pinsOk = $false
+      foreach ($item in @(Sync-CoopExtensionPins -AgentDir $AgentDir -Specs $fleetSpecs)) { if ($item -is [bool]) { $pinsOk = $item } }
+      if (-not $pinsOk) {
+        Coop-Warn "could not enforce exact extension pins in $AgentDir\npm" 'run: coop sync'
+        $failures++
+      }
+    }
+
+    $piRuntime = Get-CoopPiVersion
+    if ($piRuntime) { Coop-Info "Aligning shared Pi libraries with the installed Pi runtime ${piRuntime}…" }
+    Sync-CoopExtDeps -AgentDir $AgentDir
+
+    for ($k = 0; $k -lt $fleetNames.Count; $k++) {
+      $ext = $fleetNames[$k]; $extPin = $fleetPins[$k]; $pre = $preVers[$ext]
+      $postVer = Get-CoopExtInstalledVersion -AgentDir $AgentDir -Name $ext
+      if (-not $postVer) {
+        Coop-Warn "postcondition failed: pi install reported success, but $ext is MISSING from the isolated tree (wanted $extPin)" 'run: coop sync'
+        $failures++
+        continue
+      }
+      if ($postVer -ne $extPin) {
+        Coop-Warn "postcondition failed: pi install reported success, but $ext is version $postVer, not the pinned $extPin" 'run: coop sync'
+        $failures++
+        continue
+      }
+      switch ($pre) {
+        ''             { Coop-Ok "Installed release version $extPin ($ext)" }
+        $extPin        { Coop-Ok "Already at release version $extPin ($ext)" }
+        default {
+          if (Coop-VersionLessThan $extPin $pre) { Coop-Ok "Downgraded untested $pre → release version $extPin ($ext)" }
+          else { Coop-Ok "Updated $pre → $extPin ($ext)" }
+        }
+      }
+    }
+
+    if ($piRuntime) {
+      $py = Get-CoopPython
+      if ($py) {
+        & $py (Join-Path $script:CoopRoot 'lib\_extdeps.py') align $AgentDir $piRuntime --check *> $null
+        $alignRc = $LASTEXITCODE
+        if ($alignRc -eq 10) {
+          Coop-Err "shared-library skew remains after alignment (wanted pi-ai/pi-tui for pi $piRuntime)"
+          $failures++
+        } elseif ($alignRc -eq 11) {
+          Coop-Err "an installed extension needs newer pi-ai libraries than pi $piRuntime provides — run: coop update (moves Pi to this release's tested version), then: coop sync"
+          $failures++
+        }
+      }
+    }
+  }
+  finally {
+    if ($null -ne $priorAgentDir) { $env:PI_CODING_AGENT_DIR = $priorAgentDir }
+    else { Remove-Item Env:PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue }
+  }
+  return $failures
+}
+
 # --- Azure sign-in preflight (non-fatal) ---------------------------------------
 # Before a launch, make sure the Azure CLI can mint the Fabric token, then the
 # Power BI token, for the client tenant. The tenant comes from one chain
@@ -1831,6 +1992,282 @@ function Get-CoopPiVersion {
   $raw = (& pi --version 2>$null | Select-Object -First 1)
   $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
   if ($m.Success) { return $m.Value } else { return '' }
+}
+
+# --- Fleet convergence (install / update share these; master plan S2, #222) ----
+# One probe and one install branch per component. Each Invoke-Coop*Converge
+# returns the Coop-Unit result contract, @{ ok = <bool>; msg = <string> }, and
+# takes every input as an argument, so the same function runs inside a Coop-Unit
+# job (a fresh runspace that dot-sources this library; see $script:CoopConvergeUnit)
+# and in-process from `coop doctor --fix`.
+function Coop-UnitResult([bool]$Ok, [string]$Message) { return [pscustomobject]@{ ok = $Ok; msg = $Message } }
+
+# The Coop-Unit body every convergence unit uses: dot-source lib/common.ps1 in the
+# job's runspace, then call one convergence function with splatted parameters.
+#   Coop-Unit <label> $script:CoopConvergeUnit @($script:CoopCommonPath, 'Invoke-CoopPiConverge', @{ Package = ...; Pin = ...; Edge = $false; Force = $false })
+$script:CoopCommonPath = Join-Path $script:CoopRoot 'lib\common.ps1'
+$script:CoopConvergeUnit = {
+  param([string]$Common, [string]$Function, [hashtable]$Params)
+  . $Common
+  return (& $Function @Params)
+}
+
+# Windows in-place Pi updates (`npm install -g` over an installed agent) replace the
+# global package via an atomic rename. If a coop/pi session has those files open,
+# the rename fails and leaves a half-written tree plus a leftover
+# `.pi-coding-agent-*` staging dir (see the pi-ai/pi-tui skew issue). So install
+# and update both clean stale staging dirs and refuse the in-place Pi convergence
+# while a session is open.
+function Get-CoopNpmGlobalRoots {
+  $roots = @()
+  try { $r = (& npm root -g 2>$null | Select-Object -First 1); if ($r) { $roots += $r.Trim() } } catch { }
+  if ($env:APPDATA) { $roots += (Join-Path $env:APPDATA 'npm\node_modules') }
+  return @($roots | Where-Object { $_ } | Select-Object -Unique)
+}
+
+function Remove-CoopPiStagingDirs {
+  foreach ($root in (Get-CoopNpmGlobalRoots)) {
+    $ew = Join-Path $root '@earendil-works'
+    if (Test-Path -LiteralPath $ew) {
+      Get-ChildItem -LiteralPath $ew -Directory -Filter '.pi-coding-agent-*' -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        $name = $_.Name
+        Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path -LiteralPath $_.FullName)) { Coop-Info "removed leftover npm staging dir: $name" }
+      }
+    }
+  }
+}
+
+function Test-CoopPiRunning {
+  try {
+    $procs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue
+    foreach ($p in $procs) {
+      if ($p.ProcessId -eq $PID) { continue }
+      if ($p.CommandLine -and $p.CommandLine -match 'pi-coding-agent') { return $true }
+    }
+  } catch { }
+  return $false
+}
+
+# The busy guard install and update share: clear leftover staging dirs, then say
+# whether Pi may be converged in place. $false (with the warning printed) when a
+# coop/pi session has the agent files open; the caller skips the Pi unit and
+# counts a failure. $Command names the lifecycle command to re-run.
+function Test-CoopPiConvergeAllowed([string]$Command = 'coop update') {
+  if (-not (Test-Have 'pi')) { return $true }
+  Remove-CoopPiStagingDirs
+  if (-not (Test-CoopPiRunning)) { return $true }
+  Coop-Warn 'a coop/pi session appears to be running — skipping the in-place Pi convergence (Windows locks open files, which can corrupt the agent install and leave a `.pi-coding-agent-*` staging dir).'
+  Coop-Say  "      Close all coop/pi windows, then re-run: $Command"
+  return $false
+}
+
+# Pi: probe `pi --version`; skip at the pin; else `npm install -g <spec>`.
+# -Edge converges an existing install to the unpinned package (upstream latest);
+# -Force reinstalls the spec even at the pin.
+function Invoke-CoopPiConverge {
+  param([string]$Package, [string]$Pin, [bool]$Edge = $false, [bool]$Force = $false)
+  $spec = if (-not $Edge -and $Pin) { "${Package}@${Pin}" } else { $Package }
+  $cur = Get-CoopPiVersion
+  $hasNpm = Test-Have 'npm'
+  if ($cur -and -not $Force) {
+    if ($Edge) {
+      # Edge means upstream/latest for EXISTING installs too.
+      if (-not $hasNpm) { return (Coop-UnitResult $false 'cannot update pi (npm missing) — install Node.js, then re-run: coop install') }
+      & npm install -g $Package *> $null
+      if ($LASTEXITCODE -eq 0) { return (Coop-UnitResult $true "pi updated to latest ($(Get-CoopPiVersion))") }
+      return (Coop-UnitResult $false "failed to update pi to latest (npm install -g $Package)")
+    }
+    if (-not $Pin) { return (Coop-UnitResult $true "pi present ($cur) — no manifest pin") }
+    if ($cur -eq $Pin) { return (Coop-UnitResult $true "pi $cur matches manifest") }
+    if (-not $hasNpm) { return (Coop-UnitResult $false 'cannot converge pi (npm missing) — install Node.js, then re-run: coop install') }
+    & npm install -g $spec *> $null
+    if ($LASTEXITCODE -eq 0) { return (Coop-UnitResult $true "pi converged $cur -> $Pin") }
+    return (Coop-UnitResult $false "failed to converge pi to $spec — try: npm install -g $spec")
+  }
+  if (-not $hasNpm) { return (Coop-UnitResult $false 'cannot install pi (npm missing) — install Node.js, then re-run: coop install') }
+  & npm install -g $spec *> $null
+  if ($LASTEXITCODE -eq 0) { return (Coop-UnitResult $true "pi installed ($spec)") }
+  return (Coop-UnitResult $false "npm install of pi failed — try: npm install -g $spec")
+}
+
+# --- pipx runner and probe (one copy; the install units used to carry three) --
+# The pipx to run: COOP_PIPX_BIN when set (tests pin one), else `pipx` on PATH,
+# else `python -m pipx` for a pipx that `pip install --user pipx` put in a Scripts
+# dir not on PATH yet (the Windows Store alias is skipped). @() when none answers.
+function Get-CoopPipxInvocation {
+  if ($env:COOP_PIPX_BIN) {
+    if (Get-Command $env:COOP_PIPX_BIN -ErrorAction SilentlyContinue) { return @([string]$env:COOP_PIPX_BIN) }
+    return @()
+  }
+  if (Get-Command pipx -ErrorAction SilentlyContinue) { return @('pipx') }
+  foreach ($name in @('python3', 'python')) {
+    $c = Get-Command $name -ErrorAction SilentlyContinue
+    if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
+    & $c.Source -m pipx --version *> $null
+    if ($LASTEXITCODE -eq 0) { return @($c.Source, '-m', 'pipx') }
+  }
+  return @()
+}
+function Test-CoopPipxAvailable { return ((@(Get-CoopPipxInvocation)).Count -gt 0) }
+# Run pipx quietly; the exit code (1 when no pipx answers).
+function Invoke-CoopPipx([string[]]$PipxArgs) {
+  $inv = @(Get-CoopPipxInvocation)
+  if ($inv.Count -eq 0) { return 1 }
+  $exe = $inv[0]
+  $rest = @($inv | Select-Object -Skip 1) + @($PipxArgs)
+  & $exe @rest *> $null
+  return $LASTEXITCODE
+}
+# pipx's stdout as one string ('' when no pipx answers).
+function Get-CoopPipxOutput([string[]]$PipxArgs) {
+  $inv = @(Get-CoopPipxInvocation)
+  if ($inv.Count -eq 0) { return '' }
+  $exe = $inv[0]
+  $rest = @($inv | Select-Object -Skip 1) + @($PipxArgs)
+  return [string](& $exe @rest 2>$null | Out-String)
+}
+# Installed version of a pipx tool per `pipx list` ('' when absent). The
+# convergence probe; doctor's inventory rows keep reading in-venv metadata.
+# $ListText lets a caller probe several tools from one `pipx list`.
+function Get-CoopPipxToolVersion([string]$Package, [string]$ListText = '') {
+  if (-not $ListText) { $ListText = Get-CoopPipxOutput @('list') }
+  if (-not $ListText) { return '' }
+  $m = [regex]::Match([string]$ListText, ('(?i)package ' + [regex]::Escape($Package) + ' (\d+\.\d+\.\d+)'))
+  if ($m.Success) { return $m.Groups[1].Value } else { return '' }
+}
+
+# pipx tool: probe `pipx list`; skip at the pin; drifted (or a matching package
+# that must be rebuilt on pipx's standalone Python, $FetchPython set) ->
+# `pipx install --force <spec>`; missing -> `pipx install <spec>`; -Force ->
+# `pipx install --force <spec>`; -Edge on an existing tool -> `pipx upgrade`, or a
+# forced unpinned reinstall when the tool runs on an explicit interpreter
+# ($Python, the Fabric CLI), so an unsupported venv is repaired. Postcondition:
+# outside --edge the installed version must equal the pin afterwards, so an old
+# launcher left on PATH never reads as a converged tool.
+function Invoke-CoopPipxConverge {
+  param([string]$Package, [string]$Pin, [bool]$Edge = $false, [bool]$Force = $false, [string]$Python = '', [string]$FetchPython = '')
+  if (-not (Test-CoopPipxAvailable)) { return (Coop-UnitResult $false "skipping $Package (pipx missing)") }
+  $spec = if (-not $Edge -and $Pin) { "${Package}==${Pin}" } else { $Package }
+  function New-PipxInstallArgs([bool]$WithForce) {
+    $a = @('install')
+    if ($WithForce) { $a += '--force' }
+    if ($FetchPython) { $a += $FetchPython }
+    if ($Python) { $a += @('--python', $Python) }
+    $a += $spec
+    return $a
+  }
+  $installed = Get-CoopPipxToolVersion $Package
+  $outcome = ''
+  if ($Force) {
+    if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) { return (Coop-UnitResult $false "failed to reinstall $Package ($spec)") }
+    $outcome = "$Package reinstalled ($spec)"
+  } elseif ($installed) {
+    if ($Edge) {
+      # Edge means upstream/latest for EXISTING installs too.
+      if ($Python) {
+        if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) { return (Coop-UnitResult $false "failed to update $Package with Python $Python") }
+      } elseif ((Invoke-CoopPipx @('upgrade', $Package)) -ne 0) { return (Coop-UnitResult $false "failed to upgrade $Package to latest") }
+      $now = Get-CoopPipxToolVersion $Package
+      return (Coop-UnitResult $true "$Package updated to latest ($(if ($now) { $now } else { '?' }))")
+    }
+    if (-not $Pin) { return (Coop-UnitResult $true "$Package present ($installed) — no manifest pin") }
+    if ($installed -eq $Pin -and -not $FetchPython) { return (Coop-UnitResult $true "$Package $installed matches manifest") }
+    if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) {
+      if ($installed -eq $Pin) { return (Coop-UnitResult $false "failed to rebuild $Package with standalone Python $Python") }
+      return (Coop-UnitResult $false "failed to converge $Package to $Pin")
+    }
+    $outcome = if ($installed -eq $Pin) { "$Package $Pin rebuilt with Python $Python" } else { "$Package converged $installed -> $Pin" }
+  } else {
+    if ((Invoke-CoopPipx (New-PipxInstallArgs $false)) -ne 0) { return (Coop-UnitResult $false "could not install $Package ($spec)") }
+    $outcome = "$Package installed ($spec)"
+  }
+  if (-not $Edge -and $Pin) {
+    $now = Get-CoopPipxToolVersion $Package
+    if ($now -ne $Pin) {
+      $nowDisp = if ($now) { $now } else { 'none' }
+      return (Coop-UnitResult $false "$Package remains at $nowDisp; expected $Pin")
+    }
+  }
+  return (Coop-UnitResult $true $outcome)
+}
+
+# Microsoft Fabric CLI: the pipx convergence on the interpreter the plan chose
+# (Get-CoopFabricPipxPlan: a local 3.10-3.13, or pipx's standalone 3.12 via
+# $FetchPython), then the `fab` identity check: Python Fabric (SSH) on PATH is
+# not the Microsoft Fabric CLI. Runtime-library convergence (fabric-cicd, pyodbc)
+# is the caller's Sync-CoopFabricPythonPackages, after this unit.
+function Invoke-CoopFabricCliConverge {
+  param([string]$Package, [string]$Pin, [bool]$Edge = $false, [bool]$Force = $false, [string]$Python = '', [string]$FetchPython = '', [string]$Command = 'coop install')
+  if (-not (Test-CoopPipxAvailable)) { return (Coop-UnitResult $false 'skipping Fabric CLI (pipx missing)') }
+  if (-not $Python) { return (Coop-UnitResult $false "Microsoft Fabric CLI needs Python 3.10-3.13 — install Python 3.12 or upgrade pipx (1.12+ fetches one), then re-run: $Command") }
+  $r = Invoke-CoopPipxConverge -Package $Package -Pin $Pin -Edge $Edge -Force $Force -Python $Python -FetchPython $FetchPython
+  if (-not $r.ok) { return $r }
+  if (Get-Command fab -ErrorAction SilentlyContinue) {
+    $fv = ((& fab --version 2>&1) -join ' ')
+    if ($fv -match '(?i)paramiko|invoke') {
+      return (Coop-UnitResult $false "'fab' is Python Fabric (SSH), not Microsoft Fabric CLI — put the pipx Scripts dir first on PATH, then: fab --version")
+    }
+    $v = (& fab --version 2>$null | Select-Object -First 1)
+    return (Coop-UnitResult $true "Microsoft Fabric CLI ready ($v)")
+  }
+  $localFab = Join-Path $HOME '.local\bin\fab.exe'
+  if (Test-Path -LiteralPath $localFab) {
+    $v = (& $localFab --version 2>$null | Select-Object -First 1)
+    return (Coop-UnitResult $true "Microsoft Fabric CLI ready ($v)")
+  }
+  return (Coop-UnitResult $false "$Package installed but 'fab' not on PATH yet — open a new shell")
+}
+
+# Installed version of a global npm tool per `npm ls -g --depth=0` ('' when absent).
+function Get-CoopNpmToolVersion([string]$Package) {
+  if (-not (Test-Have 'npm')) { return '' }
+  $text = [string](& npm ls -g --depth=0 $Package 2>$null | Out-String)
+  if (-not $text) { return '' }
+  $m = [regex]::Match($text, ([regex]::Escape($Package) + '@(\d+\.\d+\.\d+[^\s]*)'))
+  if (-not $m.Success) { $m = [regex]::Match($text, ([regex]::Escape($Package) + '@(\S+)')) }
+  if ($m.Success) { return $m.Groups[1].Value } else { return '' }
+}
+
+# npm tool (Power BI / Fabric authoring): probe `npm ls -g`; skip at the pin; else
+# `npm install -g <spec>`. Normal mode installs the pin only: a tool without one
+# is a failure, never npm's latest, and there is no `npm update -g` fallback
+# (it ignores the version). -Edge takes the bare package for an existing install.
+function Invoke-CoopNpmToolConverge {
+  param([string]$Package, [string]$Pin, [bool]$Edge = $false, [bool]$Force = $false)
+  if (-not (Test-Have 'npm')) { return (Coop-UnitResult $false "skipping $Package (npm missing)") }
+  if (-not $Edge -and -not $Pin) { return (Coop-UnitResult $false "no manifest pin for $Package (normal mode installs pins only)") }
+  $spec = if ($Edge) { $Package } else { "${Package}@${Pin}" }
+  $cur = Get-CoopNpmToolVersion $Package
+  if ($cur -and -not $Force) {
+    if ($Edge) {
+      & npm install -g $Package *> $null
+      if ($LASTEXITCODE -eq 0) { $now = Get-CoopNpmToolVersion $Package; return (Coop-UnitResult $true "$Package updated to latest ($(if ($now) { $now } else { '?' }))") }
+      return (Coop-UnitResult $false "failed to update $Package to latest (npm install -g $Package)")
+    }
+    if ($cur -eq $Pin) { return (Coop-UnitResult $true "$Package $cur matches manifest") }
+    & npm install -g $spec *> $null
+    if ($LASTEXITCODE -eq 0) { return (Coop-UnitResult $true "$Package converged $cur -> $Pin") }
+    return (Coop-UnitResult $false "failed to converge $Package to $spec — try: npm install -g $spec")
+  }
+  & npm install -g $spec *> $null
+  if ($LASTEXITCODE -eq 0) { return (Coop-UnitResult $true "$Package installed ($spec)") }
+  return (Coop-UnitResult $false "could not install $Package — try: npm install -g $spec")
+}
+
+# All npm tools of the plan as one unit result (install and update show one
+# "Power BI/Fabric authoring tools" item). $Names and $Pins are parallel.
+function Invoke-CoopNpmToolsConverge {
+  param([string[]]$Names, [string[]]$Pins, [bool]$Edge = $false, [bool]$Force = $false)
+  if (-not (Test-Have 'npm')) { return (Coop-UnitResult $false 'skipping Power BI/Fabric authoring tools (npm missing)') }
+  $ok = 0; $failed = 0; $problems = @()
+  for ($i = 0; $i -lt @($Names).Count; $i++) {
+    $pin = if ($i -lt @($Pins).Count) { [string]$Pins[$i] } else { '' }
+    $r = Invoke-CoopNpmToolConverge -Package $Names[$i] -Pin $pin -Edge $Edge -Force $Force
+    if ($r.ok) { $ok++ } else { $failed++; $problems += $r.msg }
+  }
+  if ($failed -eq 0) { return (Coop-UnitResult $true "$ok Power BI/Fabric authoring tool(s) ready") }
+  return (Coop-UnitResult $false "$ok ready, $failed failed: $($problems -join '; ')")
 }
 
 # True if version $A's MAJOR.MINOR is strictly newer than $B's (patch ignored).
