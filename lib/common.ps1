@@ -1441,23 +1441,13 @@ function Invoke-CoopAz {
   $previousCtrlC = $null
   $temps = @()
   $errFile = ''
+  $errTask = $null
   $p = $null
   try {
     $ErrorActionPreference = 'Continue'
     # Start-Process on Windows PowerShell 5.1 cannot set a child-only variable.
     $env:AZURE_CORE_LOGIN_EXPERIENCE_V2 = 'off'
-    $inFile = [System.IO.Path]::GetTempFileName()
-    $outFile = [System.IO.Path]::GetTempFileName()
-    $temps += $inFile, $outFile
-    $start = @{
-      FilePath = $az; ArgumentList = $AzArgs; NoNewWindow = $true; PassThru = $true
-      RedirectStandardInput = $inFile; RedirectStandardOutput = $outFile; ErrorAction = 'Stop'
-    }
-    if ($Quiet) {
-      $errFile = [System.IO.Path]::GetTempFileName()
-      $temps += $errFile
-      $start['RedirectStandardError'] = $errFile
-    } else {
+    if (-not $Quiet) {
       # Throws when there is no console input (redirected, CI): Ctrl-C then
       # keeps its default and stops coop, and the finally block ends az.
       try {
@@ -1465,8 +1455,40 @@ function Invoke-CoopAz {
         [Console]::TreatControlCAsInput = $true
       } catch { $previousCtrlC = $null }
     }
-    $p = Start-Process @start
-    $null = $p.Handle   # Windows PowerShell 5.1: keeps ExitCode readable after exit
+    if ($env:OS -eq 'Windows_NT') {
+      $inFile = [System.IO.Path]::GetTempFileName()
+      $outFile = [System.IO.Path]::GetTempFileName()
+      $temps += $inFile, $outFile
+      $start = @{
+        FilePath = $az; ArgumentList = $AzArgs; NoNewWindow = $true; PassThru = $true
+        RedirectStandardInput = $inFile; RedirectStandardOutput = $outFile; ErrorAction = 'Stop'
+      }
+      if ($Quiet) {
+        $errFile = [System.IO.Path]::GetTempFileName()
+        $temps += $errFile
+        $start['RedirectStandardError'] = $errFile
+      }
+      $p = Start-Process @start
+      $null = $p.Handle   # Windows PowerShell 5.1: keeps ExitCode readable after exit
+    } else {
+      # Linux/macOS (pwsh 7): Start-Process writes -RedirectStandardInput into the
+      # child's stdin only after it has started, so a child that exits first (the
+      # fast fake az in CI) fails that write with "Broken pipe" and the process
+      # object is lost (Rc 127, "not an auth error"). .NET starts az directly
+      # instead: stdin is closed at once, stdout is drained and dropped, and
+      # stderr is drained into Err for -Quiet (else it stays on the console).
+      $psi = New-Object System.Diagnostics.ProcessStartInfo
+      $psi.FileName = $az
+      foreach ($a in $AzArgs) { $psi.ArgumentList.Add($a) }
+      $psi.UseShellExecute = $false
+      $psi.RedirectStandardInput = $true
+      $psi.RedirectStandardOutput = $true
+      $psi.RedirectStandardError = [bool]$Quiet
+      $p = [System.Diagnostics.Process]::Start($psi)
+      $p.StandardInput.Close()
+      $null = $p.StandardOutput.ReadToEndAsync()
+      if ($Quiet) { $errTask = $p.StandardError.ReadToEndAsync() }
+    }
     # Short waits, so a Ctrl-C is noticed promptly: as a key during an
     # in-console sign-in, else it stops this script and the finally block
     # below ends az.
@@ -1492,7 +1514,10 @@ function Invoke-CoopAz {
       Stop-CoopAzTree $p
       $result.Rc = 124
     }
-    if ($errFile) {
+    if ($errTask) {
+      # EOF once az (or the tree Stop-CoopAzTree ended) has closed its stderr.
+      try { if ($errTask.Wait(5000)) { $result.Err = $errTask.Result } } catch { }
+    } elseif ($errFile) {
       try { $result.Err = [System.IO.File]::ReadAllText($errFile) } catch { }
     }
   } catch {
