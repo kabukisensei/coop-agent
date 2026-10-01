@@ -54,7 +54,9 @@ foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) 
 # fixture's copies answer.
 $sep0 = [System.IO.Path]::PathSeparator
 $basePath = (@($env:PATH -split [regex]::Escape($sep0) | Where-Object {
-  $_ -and -not (@(Get-ChildItem -LiteralPath $_ -Include 'fab*', 'coop-data-doc*' -File -ErrorAction SilentlyContinue).Count)
+  # -Include does not filter a non-recursive listing under Windows PowerShell
+  # 5.1 (every folder with any file would be dropped), so test the names.
+  $_ -and -not (@(Get-ChildItem -LiteralPath $_ -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'fab*' -or $_.Name -like 'coop-data-doc*' }).Count)
 }) -join $sep0)
 $savedLocation = Get-Location
 try {
