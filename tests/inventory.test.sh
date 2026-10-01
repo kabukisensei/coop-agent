@@ -192,7 +192,10 @@ esac
 # libraries and Driver readiness to the managed convergence helpers.
 CALLS="$TMP/doctor-fix.calls"; : > "$CALLS"
 out="$(COOP_TEST_FIX_INSTALL=1 COOP_TEST_CALLS="$CALLS" doctor_out "$d" "" --fix)"
-grep -F 'PIPX install ms-fabric-cli==1.7.0' "$CALLS" >/dev/null \
+# The install may carry managed-runtime selectors (--python <pinned runtime>,
+# --force); the pins invariant is the exact ==spec, not the absence of flags.
+grep -E 'PIPX install .+ms-fabric-cli==1\.7\.0([[:space:]]|$)' "$CALLS" >/dev/null \
+  && ! grep -E 'PIPX install .+ms-fabric-cli([[:space:]]|$)' "$CALLS" | grep -v 'ms-fabric-cli==1\.7\.0' >/dev/null \
   && grep -F 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force' "$CALLS" >/dev/null \
   && grep -F 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force' "$CALLS" >/dev/null \
   && ok "doctor --fix converges the exact managed Fabric runtime" \
