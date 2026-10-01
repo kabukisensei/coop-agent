@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env pwsh
-# Home-guard (port of tests/home-guard.test.sh): proves the fleet entry points
+# Home-guard: proves the fleet entry points
 # (install / update / sync / doctor / onboard) cannot write into the REAL home
 # directory when run under the suite's isolation environment. Motivated by a
 # historical leak where test stubs landed in ~/.local/bin; this fails if that
@@ -11,26 +11,14 @@
 # copy of the tree with no .git, #104). Offline: pi/npm/pipx/fab/az/winget are
 # honest stubs; git, node and python are real (behind forwarding stubs).
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $checkout = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$psExe = try { (Get-Process -Id $PID).Path } catch { 'pwsh' }
-$isWindowsHost = ($env:OS -eq 'Windows_NT')
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-home-guard-' + [guid]::NewGuid().ToString('N'))
-$G_CHECK = [char]0x2713; $G_CROSS = [char]0x2717
-$fail = 0
-function Ok([string]$m) { Write-Host "  $G_CHECK $m" }
-function Ko([string]$m, [string]$Out = '') { Write-Host "  $G_CROSS $m"; if ($Out) { Write-Host $Out }; $script:fail = 1 }
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-$chmod = if ($isWindowsHost) { '' } else { (Get-Command chmod -ErrorAction Stop).Source }
 $realNode = (Get-Command node -ErrorAction Stop).Source
 $realGit = (Get-Command git -ErrorAction Stop).Source
 # A Fabric-compatible (3.10-3.13) Python, preferring a versioned one; the Windows
 # Store App-Execution-Alias stub under WindowsApps is not an interpreter.
-$realPy = $null
-foreach ($n in @('python3.13', 'python3.12', 'python3', 'python')) {
-  $c = Get-Command $n -ErrorAction SilentlyContinue
-  if (-not $c -or -not $c.Source -or $c.Source -match '\\WindowsApps\\') { continue }
-  $realPy = $c.Source; break
-}
+$realPy = Get-FixturePython
 if (-not $realPy) { throw 'a Python 3.10-3.13 is required for the home-guard fixture' }
 $psDir = Split-Path -Parent $psExe
 
@@ -56,12 +44,10 @@ function Invoke-Fleet([string]$Script, [string]$OutFile, [string[]]$ScriptArgs =
   [System.IO.File]::WriteAllText($env:MARKER, '')
 }
 
-$saved = @{}
-$names = @('PATH', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'COOP_DIR', 'PIPX_HOME', 'PIPX_BIN_DIR', 'PI_CODING_AGENT_DIR', 'COOP_AGENT_DIR',
-           'COOP_NO_ONBOARD', 'MARKER', 'COOP_TEST_STUB_PATH', 'COOP_FABRIC_PYTHON', 'COOP_FLEET_TEST_MODE', 'COOP_RELEASE_MANIFEST', 'COOP_SKIP_AZ',
-           'COOP_AZ_BIN', 'NO_COLOR', 'COOP_PI_LATEST_OVERRIDE', 'COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT',
+$saved = Save-Env @('PATH', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'COOP_DIR', 'PIPX_HOME', 'PIPX_BIN_DIR', 'PI_CODING_AGENT_DIR', 'COOP_AGENT_DIR',
+           'COOP_NO_ONBOARD', 'COOP_NO_MODEL_LOGIN', 'MARKER', 'COOP_TEST_STUB_PATH', 'COOP_FABRIC_PYTHON', 'COOP_RELEASE_MANIFEST', 'COOP_SKIP_AZ',
+           'COOP_AZ_BIN', 'NO_COLOR', 'COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT',
            'PYTHONPATH', 'PYTHONHOME')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 $priorPath = $env:PATH
 try {
   $beforeLocalBin = Get-Snapshot (Join-Path $realHome '.local\bin')
@@ -83,26 +69,6 @@ try {
   $marker = Join-Path $t 'calls'
   [System.IO.File]::WriteAllText($marker, '')
 
-  # Honest offline stubs so the scripts exercise real code paths without network
-  # or workstation tools. Every stub is ONE Python script (<name>.stub.py) behind
-  # a one-line forwarder (.cmd on Windows, #!/bin/sh elsewhere), so each behaves
-  # identically on every platform. The pi stub installs extensions honestly
-  # (sync's postcondition check requires it); the npm stub materializes the
-  # shared pi-ai/pi-tui libraries the realignment asks for.
-  function New-PyStub([string]$Dir, [string]$Name, [string]$Source) {
-    New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-    $py = Join-Path $Dir "$Name.stub.py"
-    [System.IO.File]::WriteAllText($py, $Source, $utf8)
-    if ($isWindowsHost) {
-      $p = Join-Path $Dir "$Name.cmd"
-      [System.IO.File]::WriteAllText($p, "@`"$realPy`" `"$py`" %*`r`n@exit /b %ERRORLEVEL%`r`n", [System.Text.Encoding]::ASCII)
-    } else {
-      $p = Join-Path $Dir $Name
-      [System.IO.File]::WriteAllText($p, "#!/bin/sh`nexec `"$realPy`" `"$py`" `"`$@`"`n", $utf8)
-      & $chmod +x $p
-    }
-    return $p
-  }
   function ConvertTo-PyString([string]$S) { return "'" + $S.Replace('\', '\\').Replace("'", "\'") + "'" }
   $stubPrelude = @'
 import json, os, subprocess, sys
@@ -188,8 +154,10 @@ sys.exit(0)
   $env:PI_CODING_AGENT_DIR = $agent; $env:COOP_AGENT_DIR = $agent
   $env:COOP_RELEASE_MANIFEST = Join-Path $root 'config\release-manifest.json'
   $env:MARKER = $marker; $env:COOP_TEST_STUB_PATH = $bin
-  $env:COOP_NO_ONBOARD = '1'; $env:COOP_SKIP_AZ = '1'; $env:NO_COLOR = '1'
-  $env:COOP_PI_LATEST_OVERRIDE = '0.87.1'
+  # Install and update run through to their last step (PATH link, shortcuts,
+  # sync, doctor): the sandbox profile roots and redirected stdio keep the real
+  # profile, registry PATH and model sign-in out of reach.
+  $env:COOP_NO_ONBOARD = '1'; $env:COOP_NO_MODEL_LOGIN = '1'; $env:COOP_SKIP_AZ = '1'; $env:NO_COLOR = '1'
   foreach ($n in @('COOP_FABRIC_PYTHON', 'COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT')) { [Environment]::SetEnvironmentVariable($n, $null) }
   if ($isWindowsHost) { $env:PATH = $bin + ';' + $priorPath }
   else {
@@ -201,10 +169,8 @@ sys.exit(0)
   }
 
   Write-Host '-> fleet paths cannot mutate the real home directory'
-  $env:COOP_FLEET_TEST_MODE = '1'
   Invoke-Fleet 'install.ps1' (Join-Path $t 'install.out') @('--force')
   Invoke-Fleet 'update.ps1' (Join-Path $t 'update.out')
-  Remove-Item Env:\COOP_FLEET_TEST_MODE -ErrorAction SilentlyContinue
   Invoke-Fleet 'sync.ps1' (Join-Path $t 'sync.out')
   Push-Location $t
   try { Invoke-Fleet 'doctor.ps1' (Join-Path $t 'doctor.out') } finally { Pop-Location }
@@ -221,8 +187,18 @@ sys.exit(0)
   if ($beforeCoop -ceq $afterCoop) { Ok "$realHome/.coop unchanged by fleet paths" }
   else { Ko "$realHome/.coop MUTATED" (Compare-Object ($beforeCoop -split "`n") ($afterCoop -split "`n") | Select-Object -First 10 | Out-String) }
 
-  # Update and doctor ran from the copy, so neither saw a git checkout to fetch or move.
+  # Both scripts ran through their last step (PATH link, shortcuts, sync, doctor):
+  # the guard proves nothing about a run that stopped early. These stubs are not
+  # honest about pipx installs, so the convergence verdict itself is
+  # fleet-execution's business, not this fixture's.
+  $installOut = [System.IO.File]::ReadAllText((Join-Path $t 'install.out'))
   $updateOut = [System.IO.File]::ReadAllText((Join-Path $t 'update.out'))
+  if ($installOut.Contains('8/8') -and $installOut.Contains('Bootstrap')) { Ok 'install ran through step 8/8 (sync + doctor) to its closing line' }
+  else { Ko 'install stopped before its last step' $installOut }
+  if ($updateOut.Contains('6/6')) { Ok 'update ran through step 6/6 (doctor)' }
+  else { Ko 'update stopped before its last step' $updateOut }
+
+  # Update and doctor ran from the copy, so neither saw a git checkout to fetch or move.
   $doctorOut = [System.IO.File]::ReadAllText((Join-Path $t 'doctor.out'))
   if ($updateOut.Contains('not a git checkout') -and $doctorOut.Contains('not a git checkout')) { Ok 'update and doctor ran from a copy, never the checkout running the tests' }
   else { Ko 'update or doctor ran against a git checkout; fleet paths must run from a copy (#104)' ($updateOut + "`n" + $doctorOut) }
@@ -232,7 +208,7 @@ sys.exit(0)
   else { Ko 'isolation sanity failed: extension tree not created in temp dir' ([System.IO.File]::ReadAllText((Join-Path $t 'install.out'))) }
 }
 finally {
-  foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($fail -eq 0) { Write-Host '  home-guard tests passed' } else { Write-Host "  $G_CROSS home-guard tests FAILED" }

@@ -1,29 +1,13 @@
 ﻿#!/usr/bin/env pwsh
-# PowerShell twin of tests/release.test.sh. Exercises the real coop.ps1 release
+# Exercises the real coop.ps1 release
 # path in disposable repositories: every "origin" is a local bare repo, so nothing
 # leaves this machine. The tag may only reach origin together with main (#105).
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-release-ps-' + [guid]::NewGuid().ToString('N'))
-$failed = $false
-function Ok([string]$Message) { Write-Host "  OK  $Message" }
-function Ko([string]$Message, [string]$Out = '') { Write-Host "  FAIL $Message"; if ($Out) { Write-Host $Out }; $script:failed = $true }
 
-# Fixture git runs in its own Continue scope and throws on a real failure.
-function Invoke-FixtureGit {
-  param([string[]]$GitArgs)
-  $ErrorActionPreference = 'Continue'
-  $o = @(& git @GitArgs 2>&1)
-  if ($LASTEXITCODE -ne 0) { throw "fixture git $($GitArgs -join ' ') failed: $($o | Out-String)" }
-}
-function Get-FixtureGit {
-  param([string[]]$GitArgs)
-  $ErrorActionPreference = 'Continue'
-  $o = @(& git @GitArgs 2>$null)
-  if ($LASTEXITCODE -ne 0 -or $o.Count -eq 0 -or $null -eq $o[0]) { return '' }
-  return ([string]$o[0]).Trim()
-}
 
 # A coop checkout on main with a bare origin at <dir>.git, main == origin/main.
 function New-ReleaseFixture([string]$Path) {
@@ -71,9 +55,7 @@ function Invoke-Release([string]$Dir, [string[]]$ReleaseArgs) {
   return ($writer.ToString() + $streams)
 }
 
-$saved = @{}
-$names = @('HOME', 'GIT_CONFIG_NOSYSTEM', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'NO_COLOR')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
+$saved = Save-Env @('HOME', 'GIT_CONFIG_NOSYSTEM', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'NO_COLOR')
 New-Item -ItemType Directory -Force -Path $temp, (Join-Path $temp 'home') | Out-Null
 try {
   # Hermetic git: no user or system config, a fixed identity.
@@ -194,8 +176,8 @@ exit 0
   Assert-Refused $ahead 'main ahead of origin/main' '1 ahead, 0 behind'
 }
 finally {
-  foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
+  Restore-Env $saved
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($failed) { exit 1 }
+exit $fail

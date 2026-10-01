@@ -1,22 +1,13 @@
 ﻿#!/usr/bin/env pwsh
-# Repo-staleness helpers (port of tests/staleness.test.sh): Invoke-CoopRepoFetchThrottled
+# Repo-staleness helpers: Invoke-CoopRepoFetchThrottled
 # + Get-CoopRepoBehindCount + Invoke-CoopUpdateNudge in lib/common.ps1. Fully offline:
 # the "origin" is a local repo in the sandbox, so `git fetch` never touches the
 # network. The count is against the next release tag (H5);
 # tests/fixtures/update-follow.test.ps1 covers the release boundaries.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-staleness-' + [guid]::NewGuid().ToString('N'))
-$G_CHECK = [char]0x2713; $G_CROSS = [char]0x2717
-$fail = 0
-function Ok([string]$m) { Write-Host "  $G_CHECK $m" }
-function Ko([string]$m, [string]$Out = '') { Write-Host "  $G_CROSS $m"; if ($Out) { Write-Host $Out }; $script:fail = 1 }
-function Invoke-FixtureGit {
-  param([string[]]$GitArgs)
-  $ErrorActionPreference = 'Continue'
-  $o = @(& git @GitArgs 2>&1)
-  if ($LASTEXITCODE -ne 0) { throw "fixture git $($GitArgs -join ' ') failed: $($o | Out-String)" }
-}
 # Coop-Warn writes through [Console]::Error; capture it the way update-follow does.
 function Invoke-Captured([scriptblock]$Body) {
   $writer = New-Object System.IO.StringWriter
@@ -25,9 +16,7 @@ function Invoke-Captured([scriptblock]$Body) {
   return $writer.ToString()
 }
 
-$saved = @{}
-$names = @('HOME', 'USERPROFILE', 'GIT_CONFIG_NOSYSTEM', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE', 'NO_COLOR', 'COOP_SKIP_AZ')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
+$saved = Save-Env @('HOME', 'USERPROFILE', 'GIT_CONFIG_NOSYSTEM', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE', 'NO_COLOR', 'COOP_SKIP_AZ')
 try {
   New-Item -ItemType Directory -Force -Path $t, (Join-Path $t 'home') | Out-Null
   # Hermetic git: no user or system config, a fixed identity.
@@ -101,7 +90,7 @@ try {
   }
 }
 finally {
-  foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($fail -eq 0) { Write-Host '  staleness helper tests passed' } else { Write-Host "  $G_CROSS staleness helper tests FAILED" }

@@ -1,22 +1,17 @@
 ﻿#!/usr/bin/env pwsh
-# #167 (port of tests/login-present.test.sh): Pi writes an empty `{}` auth.json on
+# #167: Pi writes an empty `{}` auth.json on
 # startup, so "the file is non-empty" is not proof of a model login.
 # Test-CoopPiLoginPresent (the effective agent dir) and Test-CoopAuthHasCredential
 # (by path, the helper coop doctor uses for both auth.json files) must count only
 # a stored provider credential. Offline; temp agent dirs only.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-login-present-' + [guid]::NewGuid().ToString('N'))
-$G_CHECK = [char]0x2713; $G_CROSS = [char]0x2717
-$fail = 0
-function Ok([string]$m) { Write-Host "  $G_CHECK $m" }
-function Ko([string]$m, [string]$Out = '') { Write-Host "  $G_CROSS $m"; if ($Out) { Write-Host $Out }; $script:fail = 1 }
 function Write-Bytes([string]$Path, [byte[]]$Bytes) { [System.IO.File]::WriteAllBytes($Path, $Bytes) }
 function Write-Text([string]$Path, [string]$Text) { Write-Bytes $Path ([System.Text.Encoding]::UTF8.GetBytes($Text)) }
 
-$saved = @{}
-$names = @('HOME', 'USERPROFILE', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE', 'COOP_SKIP_AZ')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
+$saved = Save-Env @('HOME', 'USERPROFILE', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE', 'COOP_SKIP_AZ')
 try {
   $agent = Join-Path $t 'agent'
   $other = Join-Path $t 'other'
@@ -71,7 +66,7 @@ try {
   }
 }
 finally {
-  foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($fail -eq 0) { Write-Host '  login-present tests passed' } else { Write-Host "  $G_CROSS login-present tests FAILED" }

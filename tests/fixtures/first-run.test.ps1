@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env pwsh
-# Port of tests/first-run.test.sh (master plan S1): the launcher's first-run
+# The launcher's first-run
 # control flow in bin/coop.ps1 / lib/common.ps1, without a PTY.
 #   A. Onboarding gate (in-process, stdin redirected): Test-CoopUserProfileMissing /
 #      Test-CoopOnboardingMissing per state; Invoke-CoopMaybeOnboard never starts
@@ -17,26 +17,18 @@
 # Sandboxed HOME/USERPROFILE/agent dir, never ~/.coop; COOP_SKIP_AZ=1, no network
 # (fresh fetch stamp in the sandbox agent dir).
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$psExe = try { (Get-Process -Id $PID).Path } catch { 'pwsh' }
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-first-run-ps-' + [guid]::NewGuid().ToString('N'))
-$fail = 0
-function Ok([string]$m) { Write-Host "  ok $m" }
-function Ko([string]$m, [string]$out = '') { Write-Host "  x $m"; if ($out) { Write-Host $out }; $script:fail = 1 }
 
-$isWindowsHost = ($env:OS -eq 'Windows_NT')
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-$sep = [System.IO.Path]::PathSeparator
 $sandboxHome = Join-Path $t 'home'
 $agent = Join-Path $t 'agent'
 $marker = Join-Path $t 'marker'
 $bin = Join-Path $t 'bin'
 
-$saved = @{}
-$names = @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE','COOP_SKIP_AZ','COOP_AZ_BIN',
+$saved = Save-Env @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE','COOP_SKIP_AZ','COOP_AZ_BIN',
            'COOP_SKIP_EXT_CHECK','COOP_NO_ONBOARD','COOP_NO_MODEL_LOGIN','COOP_PRIME_MODEL_LOGIN','COOP_ONBOARD_FROM_LAUNCH','NO_COLOR',
            'COOP_STANDARDS_ROOT','COOP_STANDARDS_STATE','COOP_STANDARDS_SNAPSHOT_ROOT')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 try {
   New-Item -ItemType Directory -Force -Path $sandboxHome, $agent, $marker, $bin | Out-Null
   # The launch's once-a-day refresh fetches origin into this checkout; a fresh
@@ -55,25 +47,9 @@ try {
     Remove-Item -LiteralPath "Env:\$n" -ErrorAction SilentlyContinue
   }
 
-  $realPy = $null
-  foreach ($cand in @('python3', 'python', 'py')) {
-    $c = Get-Command $cand -ErrorAction SilentlyContinue
-    if ($c) { $realPy = $c.Source; break }
-  }
+  $realPy = Get-FixturePython
+  if (-not $realPy) { $c = Get-Command py -ErrorAction SilentlyContinue; if ($c) { $realPy = $c.Source } }
   if (-not $realPy) { throw 'python3 is required for the stub pi' }
-  function New-PyStub([string]$Dir, [string]$Name, [string]$Source) {
-    $py = Join-Path $Dir "$Name.stub.py"
-    [System.IO.File]::WriteAllText($py, $Source, $utf8)
-    if ($isWindowsHost) {
-      $p = Join-Path $Dir "$Name.cmd"
-      [System.IO.File]::WriteAllText($p, "@`"$realPy`" `"$py`" %*`r`n", [System.Text.Encoding]::ASCII)
-    } else {
-      $p = Join-Path $Dir $Name
-      [System.IO.File]::WriteAllText($p, "#!/bin/sh`nexec `"$realPy`" `"$py`" `"`$@`"`n", $utf8)
-      & chmod +x $p
-    }
-    return $p
-  }
   # Stub pi: records its argv and COOP_PRIME_MODEL_LOGIN, marks that it ran.
   $null = New-PyStub $bin 'pi' @"
 import os, sys
@@ -183,13 +159,10 @@ sys.exit(0)
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {
-  foreach ($n in $names) {
-    if ($null -eq $saved[$n]) { Remove-Item -LiteralPath "Env:\$n" -ErrorAction SilentlyContinue }
-    else { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
-  }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($fail -ne 0) { Write-Host '  x first-run launcher (PowerShell) tests FAILED'; exit 1 }
+if ($fail -ne 0) { Write-Host "  $G_CROSS first-run launcher (PowerShell) tests FAILED"; exit 1 }
 Write-Host '  first-run launcher (PowerShell) tests passed'
 exit 0

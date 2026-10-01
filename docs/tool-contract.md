@@ -313,19 +313,20 @@ stay silent, and users opt into setup later with `/setup-docs`, `/start`, or
 
 ---
 
-## Microsoft Fabric CLI (`fab`) and the Homebrew collision
+## Microsoft Fabric CLI (`fab`) and the Python Fabric collision
 
-`coop fabric [args]` (alias `coop fab`) is a pure pass-through:
-`have fab || die; exec fab "$@"`.
+`coop fabric [args]` (alias `coop fab`) is a pure pass-through in `bin/coop.ps1`:
+it dies when `fab` is not on `PATH`, otherwise runs `fab` with the arguments
+unchanged.
 
 - The intended `fab` is the **Microsoft Fabric CLI** (`ms-fabric-cli`, installed
-  via pipx).
-- **Collision:** a Homebrew formula named `fabric` ships a *different* `fab`
-  binary — a Python SSH / Paramiko automation tool. If both are on `PATH`,
-  `coop fabric …` may run the wrong one.
+  via pipx at the manifest's pin).
+- **Collision:** the Python package `fabric` ships a *different* `fab` — a Python
+  SSH / Paramiko automation tool. If both are on `PATH`, `coop fabric …` may run
+  the wrong one.
 - **Doctor detection:** `coop doctor` checks which `fab` resolves first and warns
-  when the Homebrew/Paramiko `fab` shadows the Microsoft Fabric CLI, so the user
-  can fix `PATH` or uninstall the conflicting formula.
+  when the Paramiko `fab` shadows the Microsoft Fabric CLI, so the user can fix
+  `PATH` or uninstall the conflicting package.
 
 `coop doctor` detects the collision by checking whether `fab --version` mentions
 Paramiko/Invoke (the Python SSH tool) and reports it as a **hard error** (`✗`,
@@ -336,8 +337,8 @@ $ coop fabric workspace list      # -> whichever `fab` is first on PATH
 $ coop doctor
 Microsoft Fabric CLI
 ✗ fab is the WRONG tool — this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI
-      Fix: pipx install ms-fabric-cli==1.7.0   and ensure ~/.local/bin precedes Homebrew on PATH
-           (or: brew uninstall fabric). Verify with: fab --version
+      Fix: pipx install ms-fabric-cli==1.7.0   and put pipx's bin dir first on PATH (pipx ensurepath)
+           or uninstall the Python fabric package. Verify with: fab --version
 ```
 
 ---

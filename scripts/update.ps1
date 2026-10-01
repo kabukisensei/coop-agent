@@ -55,20 +55,6 @@ $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 # are gone: they queried latest versions merely to ask about them, and normal
 # update resolved back to manifest pins anyway.
 
-# Latest published Pi version — used ONLY by --check reporting. COOP_PI_LATEST_OVERRIDE
-# short-circuits the registry query.
-function Get-PiLatest {
-  if ($env:COOP_PI_LATEST_OVERRIDE) { return $env:COOP_PI_LATEST_OVERRIDE }
-  if (-not (Test-Have 'npm')) { return '' }
-  $raw = (& npm view $PLAN.PiPackage version 2>$null | Select-Object -First 1)
-  # No stdout (offline, registry/proxy error) leaves $raw as AutomationNull, and Windows
-  # PowerShell 5.1 passes that to .NET as a real $null — [regex]::Match would throw
-  # ArgumentNullException. Return '' instead, matching update.sh's silent-empty contract.
-  if ($null -eq $raw) { return '' }
-  $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
-  if ($m.Success) { return $m.Value } else { return '' }
-}
-
 # Per-item units: the convergence functions in lib/common.ps1, run through
 # $script:CoopConvergeUnit (a background job whose fresh runspace dot-sources the
 # library; every input is an argument). Same contract as install, so the bar
@@ -83,9 +69,8 @@ if ($CHECK) {
   if ($repoCheck.Hint) { Write-Output ('  {0,-32} {1}' -f '', $repoCheck.Hint) }
   $piCur = if (Test-Have 'pi') { $v = Get-CoopPiVersion; if ($v) { $v } else { '?' } } else { 'not installed' }
   $piExp = $PLAN.PiPin; if (-not $piExp) { $piExp = '?' }
-  $piLat = Get-PiLatest; if (-not $piLat) { $piLat = '?' }
-  # The version-table rows go to STDOUT (Write-Output), matching update.sh's bare
-  # printf — so `coop update --check > versions.txt` captures the table on Windows too.
+  # The version-table rows go to STDOUT (Write-Output), so
+  # `coop update --check > versions.txt` captures the table; status lines are stderr.
   Write-Output ('  {0,-32} current {1,-13} expected {2,-13} status {3}' -f "pi ($($PLAN.PiPackage))", $piCur, $piExp, (Coop-ManifestStatus -Installed $piCur -Expected $piExp))
   # The same probes the convergence units use (Get-CoopPipxToolVersion from one
   # `pipx list`, Get-CoopNpmToolVersion from `npm ls -g`).
@@ -107,15 +92,6 @@ if ($CHECK) {
 }
 
 Coop-Head "coop update (v$($script:CoopVersion))"
-
-# Test seam: print the resolved fleet-mode decision and stop BEFORE any install or
-# side effect. Normal mode pins everything to the release manifest; --edge takes latest.
-if ($env:COOP_UPDATE_GATE_DRYRUN -eq '1') {
-  if ($EDGE) { Write-Output 'GATE all'; exit 0 }
-  $piPin = Coop-ManifestGet -Key 'pi.version'
-  if ($piPin) { Write-Output ("GATE pin:{0}" -f $piPin) } else { Write-Output 'GATE all' }
-  exit 0
-}
 
 # --- 1. Update coop-agent itself ---------------------------------------------
 Coop-Head '1/6  coop-agent repository'
@@ -231,7 +207,6 @@ if ($PLAN.Fabric -and (Get-CoopPipxToolVersion $PLAN.Fabric.Name)) {
   else { Coop-Warn 'failed to converge the Fabric Python runtime'; $script:UpdateFailures++ }
   if (-not (Ensure-CoopFabricOdbcDriver $true)) { Coop-Warn 'Fabric SQL fallback is not ready'; $script:UpdateFailures++ }
 }
-if ($env:COOP_FLEET_TEST_MODE -eq '1') { if ($script:UpdateFailures -gt 0) { exit 1 } else { exit 0 } }
 
 # --- 5. Sync: the extension fleet at its pins, MCP config, brand assets -------
 # The sync child is the ONE extension convergence path (Sync-CoopExtensionFleet):

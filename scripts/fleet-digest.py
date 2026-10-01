@@ -4,7 +4,7 @@
 Reads published `coop doctor --json --publish` snapshots from fleet.publish_dir,
 aggregates them into a single markdown or HTML table, and highlights:
  - Failures and warnings (with the failing check names)
- - Tool versions vs the expected tested_with versions
+ - Tool versions vs the release manifest's pins (config/release-manifest.json)
  - Stale check-ins (>7 days)
 
 Usage:
@@ -40,6 +40,21 @@ def _coop_label(m):
     cd = m.get("coop_describe")
     return f"{cv} ({cd})" if cd else cv
 
+def _manifest_versions(path):
+    """{'pi': <pi.version>, '<python_tool with _>': <pin>, ...} from the release manifest."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            m = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    pi = m.get("pi") or {}
+    if pi.get("version"):
+        out["pi"] = str(pi["version"])
+    for name, ver in (m.get("python_tools") or {}).items():
+        out[name.replace("-", "_")] = str(ver)
+    return out
+
 def _days_since(iso, now):
     if not iso: return None
     try:
@@ -74,7 +89,10 @@ def main(argv):
         sys.stderr.write(f"fleet.publish_dir '{pub_dir}' is not a valid directory\n")
         return 1
 
-    tested_with = defs.get("tested_with") or {}
+    # Expected versions: the release manifest (COOP_RELEASE_MANIFEST overrides the
+    # checkout's copy, as lib/common.ps1 does). Keys use the tested_with spelling the
+    # renderers match check names against: pi, coop_data_doc, ms_fabric_cli, ...
+    tested_with = _manifest_versions(os.environ.get("COOP_RELEASE_MANIFEST") or os.path.join(coop_root, "config", "release-manifest.json"))
 
     now = datetime.now(timezone.utc)
     machines = []
@@ -172,7 +190,7 @@ def _render_md(machines, now, tested_with):
             if match:
                 tool_bin = match.group(1)
                 tool_ver = match.group(2)
-                # tested_with keys have underscores: "coop_data_doc"
+                # manifest keys are spelled with underscores here: "coop_data_doc"
                 tw_key = tool_bin.replace("-", "_")
                 if tool_bin == "fab": tw_key = "ms_fabric_cli"
                 if tw_key in tested_with and tool_ver != tested_with[tw_key]:

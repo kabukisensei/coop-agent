@@ -7,6 +7,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Removed
 
+- Test modes and override seams (master plan S7, row 8, issue #228):
+  `COOP_UPDATE_GATE_DRYRUN` and `COOP_FLEET_TEST_MODE` (install and update now
+  always run through their last step), `Get-PiLatest` with
+  `COOP_PI_LATEST_OVERRIDE` (`--pi-latest` still warns and means `--edge`), and
+  the dead `COOP_PYPI_LATEST_OVERRIDE`. `scripts/check-bom.sh` (replaced by
+  `scripts/check-bom.ps1`). The version copies in `config/defaults.yml`
+  (`pi.update_all`, `pi_extensions`, `coop_extensions`, `python_tools`,
+  `fabric_cli`, `npm_authoring_tools` and every `tested_with` key but `pi_min`):
+  `config/release-manifest.json` is the one manifest, read by `coop doctor`,
+  `coop release`, `coop init --ci` and the fleet digest.
 - Dead tool helpers (master plan S6, row 8, issue #226). `extensions/coop-tools`
   lost the old local `coop-data-doc.yml` writer the JSONL wizard replaced
   (`renderMinimalConfig`, `updateConfigText`, `trailingComment`,
@@ -31,6 +41,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `dev`, the read runs without a prompt and without a session grant; the audit
   records it as `dev-read-only`. Test and production targets, unbounded or
   ambiguous SQL, generic MCP row reads and every mutation ask as before.
+- Tests (S7, #228): one helper library `tests/fixtures/_common.ps1` (Ok/Ko,
+  Save-Env/Restore-Env, sandbox home, shims, Python stubs, doctor rows, git and
+  process helpers) dot-sourced by every fixture; `tests/run.ps1` runs
+  `scripts/check-bom.ps1` first and launches the child fixtures from one
+  table-driven loop with a lane column (gate / extended); `fleet-execution` and
+  `home-guard` run install and update to the end under the sandbox and assert on
+  the call log and the failed-step summary lines; `tests/run.sh` keeps one
+  forwarder smoke for `--no-launch`. `coop release` and `scripts/release.sh`
+  check the coop-tool pins of `config/release-manifest.json` against
+  coop-website's `versions.json`; `docs/ci.md` shows pipeline pins as
+  `==<version>` placeholders. `coop doctor`'s `fab` collision hint names the
+  Python `fabric` package and `pipx ensurepath` instead of Homebrew. Docs and
+  agent instructions describe one PowerShell implementation (no parity, no bash
+  3.2, four companion extensions, the manifest as the one version source).
 
 - `coop doctor` reads the Pi floor from `config/defaults.yml` `tested_with.pi_min`
   (0.79.0 only when the key is missing) instead of a hard-coded 0.79.0;

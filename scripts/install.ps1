@@ -89,7 +89,7 @@ for ($ai = 0; $ai -lt $args.Count; $ai++) {
 # footer/splash via extensions/coop-powerline — no third-party powerline footer.
 $PLAN = Get-CoopFleetPlan -Edge:$EDGE -NoFabric:$NO_FABRIC
 
-# Install/operate against coop's ISOLATED Pi agent dir (mirror of coop_pi_agent_dir).
+# Install/operate against coop's ISOLATED Pi agent dir (Get-CoopPiAgentDir).
 $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 New-Item -ItemType Directory -Force -Path $env:PI_CODING_AGENT_DIR | Out-Null
 
@@ -264,12 +264,6 @@ try {
 }
 finally {
   Coop-ProgEnd
-}
-
-# Offline fleet fixtures exercise the real install units but must stop before
-# launcher/PATH/onboarding/Doctor work.
-if ($env:COOP_FLEET_TEST_MODE -eq '1') {
-  if ($script:InstallFailures -eq 0) { exit 0 } else { exit 1 }
 }
 
 # --- 6. Put `coop` on PATH ---------------------------------------------------

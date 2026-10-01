@@ -159,8 +159,6 @@ echo "→ team knowledge recall note tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/team-knowledge-recall.test.mjs"
 echo "→ contract-driven Fabric target note tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-target-note.test.mjs"
-# The .ps1 UTF-8 BOM check (exactly one BOM; launch-critical first line) lives in
-# scripts/check-bom.sh only.
 echo "→ share-learning prompt and friction nudge tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/share-learning.test.mjs"
 echo "→ learning-nudge runtime (registered handler) tests"
@@ -214,33 +212,20 @@ else
   echo "  ✗ forwarder with a missing coop.ps1: rc=$FWD_RC out=$FWD_OUT"; exit 1
 fi
 
-echo "→ --no-launch dry-run (must NOT start pi; prints the spec)"
-# --no-launch is a dry-run: it runs the preflights (no-op without pi) and prints the
-# resolved launch spec, then exits 0 — the opposite of its old behavior (it launched).
-# Keep its repair-capable preflight away from the developer's real ~/.coop tree.
+echo "→ bin/coop forwards --no-launch to coop.ps1 (one smoke; tests/run.ps1 owns the spec)"
+# The forwarder is only a Git Bash shim: one dry-run through it proves the hand-off
+# to bin/coop.ps1. What the spec contains (--json, PI_SKIP_VERSION_CHECK,
+# PI_MCP_CONFIG_MODE=exclusive) is tests/run.ps1 section 2. Keep the
+# repair-capable preflight away from the developer's real ~/.coop tree.
 LAUNCH_AGENT="$TMP/launch-agent"; LAUNCH_COOP="$TMP/launch-coop"
 mkdir -p "$LAUNCH_AGENT" "$LAUNCH_COOP"
 NL_RC=0
 NL_OUT="$(COOP_AGENT_DIR="$LAUNCH_AGENT" PI_CODING_AGENT_DIR="$LAUNCH_AGENT" COOP_DIR="$LAUNCH_COOP" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" --no-launch | tr '\\' '/')" || NL_RC=$?
 [ "$NL_RC" -eq 0 ] || { echo "  ✗ coop --no-launch exited $NL_RC (expected 0)"; exit 1; }
 case "$NL_OUT" in
-  *"docs/guardrails.md"*) ;;
+  *"docs/guardrails.md"*) echo "  ✓ the forwarder reaches coop.ps1 --no-launch (spec printed, exit 0)" ;;
   *) echo "  ✗ coop --no-launch did not print the launch spec (no docs/guardrails.md)"; exit 1 ;;
 esac
-# --json delegates to the launch-spec JSON path.
-JSON_SPEC="$(COOP_AGENT_DIR="$LAUNCH_AGENT" PI_CODING_AGENT_DIR="$LAUNCH_AGENT" COOP_DIR="$LAUNCH_COOP" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" --no-launch --json)"
-case "$JSON_SPEC" in
-  *'"bin"'*'"args"'*) ;;
-  *) echo "  ✗ coop --no-launch --json did not emit the JSON spec"; exit 1 ;;
-esac
-JSON_SPEC="$JSON_SPEC" node -e 'const s=JSON.parse(process.env.JSON_SPEC); if(s.env.PI_SKIP_VERSION_CHECK!=="1") process.exit(1)'
-echo "  ✓ --no-launch prints the spec and exits 0 (no pi launched)"
-# #165: MCP comes only from coop's agent-dir mcp-adapter.json, never a repo's .mcp.json.
-if JSON_SPEC="$JSON_SPEC" node -e 'const s=JSON.parse(process.env.JSON_SPEC); process.exit(s.env.PI_MCP_CONFIG_MODE==="exclusive"?0:1)'; then
-  echo "  ✓ launch spec pins MCP config to coop's agent dir (PI_MCP_CONFIG_MODE=exclusive)"
-else
-  echo "  ✗ launch spec does not set PI_MCP_CONFIG_MODE=exclusive"; exit 1
-fi
 
 echo "→ fleet health digest rendering (HTML/Markdown escaping, UTF-8 output)"
 bash "$ROOT/tests/fleet-digest.test.sh"
@@ -330,8 +315,9 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/paths.test.mjs"
 # ============================================================================
 if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   echo "→ extended lane"
-  # The extended fixtures keep the gate lane's temp home (#135), except
-  # home-guard below, which checks the real home on purpose.
+  # The extended fixtures keep the gate lane's temp home (#135);
+  # tests/fixtures/home-guard.test.ps1 (run by tests/run.ps1) is the one that
+  # checks the real home on purpose.
 
   echo "→ standards lock (simple lock; waitFor polls and a fixed sleep)"
   node "$ROOT/tests/standards-lock-simple.test.mjs"

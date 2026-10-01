@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env pwsh
-# Port of tests/sync-knowledge.test.sh (master plan S1): scripts/sync-knowledge.ps1
+# scripts/sync-knowledge.ps1
 # against a LOCAL bare-repo fixture (real git, file paths, no network). Gate
 # lane: clone on the first run, fast-forward on the second, a dirty checkout is
 # warned and skipped (never reset), the disabled flag is a no-op, a bogus URL
@@ -12,26 +12,14 @@
 # SSH-transport / exit-code contracts live in tests/knowledge-git.test.py.
 # Sandboxed HOME/USERPROFILE/COOP_DIR, never ~/.coop.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$psExe = try { (Get-Process -Id $PID).Path } catch { 'pwsh' }
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-sync-knowledge-ps-' + [guid]::NewGuid().ToString('N'))
-$fail = 0
-function Ok([string]$m) { Write-Host "  ok $m" }
-function Ko([string]$m, [string]$out = '') { Write-Host "  x $m"; if ($out) { Write-Host $out }; $script:fail = 1 }
-function Invoke-Native([scriptblock]$Command) {
-  $prevEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-  try { & $Command } finally { $ErrorActionPreference = $prevEap }
-}
 
-$isWindowsHost = ($env:OS -eq 'Windows_NT')
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-$sep = [System.IO.Path]::PathSeparator
 $syncScript = Join-Path $root 'scripts\sync-knowledge.ps1'
 $sandboxHome = Join-Path $t 'home'
 
-$saved = @{}
-$names = @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS','FAKELOG','SLEEPERFILE','REALGIT','PROBEOUT','PROBEENV','NO_COLOR')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
+$saved = Save-Env @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS','FAKELOG','SLEEPERFILE','REALGIT','PROBEOUT','PROBEENV','NO_COLOR')
 try {
   New-Item -ItemType Directory -Force -Path $sandboxHome | Out-Null
   $env:HOME = $sandboxHome
@@ -299,16 +287,6 @@ exec "$REALGIT" "$@"
       foreach ($f in @($se, $so)) { if (Test-Path -LiteralPath $f) { $out += [System.IO.File]::ReadAllText($f) } }
       return [pscustomobject]@{ Rc = $rc; Out = $out; TimedOut = $timedOut }
     }
-    function Assert-SleeperGone([string]$Label) {
-      Start-Sleep -Seconds 2   # allow the killed tree to be reaped
-      if (-not (Test-Path -LiteralPath $sleeperFile)) { Ko "${Label}: fake git never spawned its sleeper descendant"; return }
-      $sleeperPid = [int]((Get-Content -LiteralPath $sleeperFile) -join '')
-      $proof = (Test-Path -LiteralPath $fakeLog) -and ((Get-Content -LiteralPath $fakeLog -Raw) -match ('spawned-sleeper pid=' + $sleeperPid + '(?!\d)'))
-      if (-not $proof) { Ko "${Label}: no spawn-time existence proof for pid $sleeperPid"; Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue; return }
-      $alive = Get-Process -Id $sleeperPid -ErrorAction SilentlyContinue
-      if ($alive) { Ko "${Label}: sleeper $sleeperPid survived the timeout" } else { Ok "${Label}: sleeper descendant terminated with the owned tree" }
-      Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue
-    }
     function Get-LogLines([string]$Needle) {
       if (-not (Test-Path -LiteralPath $fakeLog)) { return @() }
       return @(Get-Content -LiteralPath $fakeLog | Where-Object { $_.Contains($Needle) })
@@ -363,13 +341,10 @@ exec "$REALGIT" "$@"
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {
-  foreach ($n in $names) {
-    if ($null -eq $saved[$n]) { Remove-Item -LiteralPath "Env:\$n" -ErrorAction SilentlyContinue }
-    else { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
-  }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($fail -ne 0) { Write-Host '  x sync-knowledge.ps1 (PowerShell) tests FAILED'; exit 1 }
+if ($fail -ne 0) { Write-Host "  $G_CROSS sync-knowledge.ps1 (PowerShell) tests FAILED"; exit 1 }
 Write-Host '  sync-knowledge.ps1 (PowerShell) tests passed'
 exit 0
