@@ -34,6 +34,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- `coop-data-doc` pin 1.2.0 -> 1.3.0 (`config/release-manifest.json`): the mixed-estate
+  lineage release (coverage declarations, `lineage` evidence, source/output safety,
+  identity collisions, UTF-8 JSONL pipes). `coop sync` installs it; `coop doctor`
+  reports an older copy as stale.
 - Tests (S7, #228): one helper library `tests/fixtures/_common.ps1` (Ok/Ko,
   Save-Env/Restore-Env, sandbox home, shims, Python stubs, doctor rows, git and
   process helpers) dot-sourced by every fixture; `tests/run.ps1` runs
