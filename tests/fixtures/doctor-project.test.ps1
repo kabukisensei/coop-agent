@@ -118,6 +118,34 @@ try {
     "    local_path: $(($te -replace '\\', '/'))", '    default_branch: main', 'tools:', '  tabular_editor_cli:', '    enabled: true')
   $proj = Get-ProjectRows (Get-ProjectDoctorRows $te)
   if (Test-RowContains $proj 'executable_path not set') { Ok 'flags missing TE path when Tabular Editor enabled' } else { Ko 'did not flag missing TE path' (Show-Rows $proj) }
+
+  # --- Azure SQL-only client: a missing Fabric CLI is optional, never red --------
+  # (master plan section 8 item 7). The row reads client.platform from the sandbox
+  # profile's config; fab is hidden from PATH so the "missing" branch runs whether
+  # or not the machine has it.
+  $configFile = Join-Path $env:COOP_DIR '.coop\config'
+  $savedPath = $env:PATH
+  try {
+    $noFab = @()
+    foreach ($d in ($env:PATH -split [System.IO.Path]::PathSeparator)) {
+      if (-not $d) { continue }
+      if ((Test-Path -LiteralPath (Join-Path $d 'fab')) -or (Test-Path -LiteralPath (Join-Path $d 'fab.exe')) -or (Test-Path -LiteralPath (Join-Path $d 'fab.cmd'))) { continue }
+      $noFab += $d
+    }
+    $env:PATH = ($noFab -join [System.IO.Path]::PathSeparator)
+    [System.IO.File]::WriteAllText($configFile, '{"schema_version":1,"client":{"platform":"azure_sql"},"integrations":{"fabric":false,"fabric_sql_endpoint":false}}', $utf8)
+    $fabRows = @((Get-ProjectDoctorRows $good) | Where-Object { [string]$_.section -eq 'Microsoft Fabric CLI' })
+    if ($fabRows.Count -eq 0) { Ko 'Fabric CLI section missing' }
+    elseif (@($fabRows | Where-Object { [string]$_.status -eq 'bad' }).Count -gt 0) { Ko 'Azure SQL client still gets a red Fabric CLI row' (Show-Rows $fabRows) }
+    elseif (-not (Test-RowContains $fabRows 'Azure SQL client')) { Ko 'optional-fab row missing' (Show-Rows $fabRows) }
+    else { Ok 'Azure SQL client: missing fab is reported as optional, not red' }
+    [System.IO.File]::WriteAllText($configFile, '{"schema_version":1,"client":{"platform":"fabric"},"integrations":{}}', $utf8)
+    $fabRows = @((Get-ProjectDoctorRows $good) | Where-Object { [string]$_.section -eq 'Microsoft Fabric CLI' })
+    if (Test-RowContains $fabRows 'fab missing') { Ok 'Fabric client: missing fab stays red' } else { Ko 'Fabric client lost the red fab row' (Show-Rows $fabRows) }
+  } finally {
+    $env:PATH = $savedPath
+    Remove-Item -LiteralPath $configFile -Force -ErrorAction SilentlyContinue
+  }
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {

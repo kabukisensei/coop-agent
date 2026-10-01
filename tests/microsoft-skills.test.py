@@ -211,6 +211,41 @@ mode, names = mskills.policy_for(
 assert mode == "restricted"
 assert names == ["sqldw-cli"]
 
+# Client platform (master plan section 8 item 7): an Azure SQL-only machine keeps
+# the Fabric baseline off even when the contract has a fabric: section; an
+# explicit fabric_skills policy still wins; fabric/both/unset keep today's rule.
+fabric_repo = real_manifest["repositories"]["fabric_skills"]
+assert mskills.policy_for({"fabric": {}}, "fabric_skills", fabric_repo, "azure_sql") == ("disabled", [])
+assert mskills.policy_for({}, "fabric_skills", fabric_repo, "azure_sql") == ("disabled", [])
+mode, names = mskills.policy_for(
+    {"fabric": {}, "fabric_skills": {"policy": "baseline"}}, "fabric_skills", fabric_repo, "azure_sql"
+)
+assert mode == "baseline" and "sqldw-cli" in names
+for platform in ("fabric", "both", ""):
+    mode, _ = mskills.policy_for({"fabric": {}}, "fabric_skills", fabric_repo, platform)
+    assert mode == "baseline", platform
+# Microsoft skills (kql, microsoft-docs) are not platform-bound.
+mode, names = mskills.policy_for({}, "microsoft_skills", real_manifest["repositories"]["microsoft_skills"], "azure_sql")
+assert mode == "baseline" and names == ["kql", "microsoft-docs"]
+with tempfile.TemporaryDirectory() as td:
+    cfg_dir = Path(td) / ".coop"
+    cfg_dir.mkdir()
+    assert mskills.machine_platform(cfg_dir / "config") == ""
+    (cfg_dir / "config").write_text('{"schema_version": 1, "client": {"platform": "azure_sql"}}', encoding="utf-8")
+    assert mskills.machine_platform(cfg_dir / "config") == "azure_sql"
+    (cfg_dir / "config").write_text('{"schema_version": 1, "client": {"platform": "mainframe"}}', encoding="utf-8")
+    assert mskills.machine_platform(cfg_dir / "config") == ""
+    saved_coop_dir = os.environ.get("COOP_DIR")
+    os.environ["COOP_DIR"] = td
+    try:
+        (cfg_dir / "config").write_text('{"schema_version": 1, "client": {"platform": "azure_sql"}}', encoding="utf-8")
+        assert mskills.policy_for({"fabric": {}}, "fabric_skills", fabric_repo) == ("disabled", [])
+    finally:
+        if saved_coop_dir is None:
+            del os.environ["COOP_DIR"]
+        else:
+            os.environ["COOP_DIR"] = saved_coop_dir
+
 for repo_key in ("microsoft_skills", "fabric_skills"):
     mode, names = mskills.policy_for(
         {repo_key: {"allow": []}}, repo_key, real_manifest["repositories"][repo_key]

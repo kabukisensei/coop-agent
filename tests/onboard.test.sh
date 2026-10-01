@@ -15,6 +15,10 @@ COOP_DIR="$(mktemp -d)"
 trap 'rm -rf "$COOP_DIR"' EXIT
 export COOP_DIR
 export COOP_AZ_BIN=/nonexistent/az
+# The client platform question (master plan section 8 item 7) is answered from
+# the environment here, so the scripted answers below keep their positions; the
+# platform cases at the end of this file unset it to exercise the prompt itself.
+export COOP_CLIENT_PLATFORM=fabric
 
 run_onboard() {
   HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" "$@"
@@ -406,5 +410,65 @@ case "$enabled11" in
     || ko "quick start did not save the tenant: $tenant9c" ;;
   *) ko "quick start review line missing: $enabled11" ;;
 esac
+
+# --- client platform: install choice, machine default, Azure SQL defaults -----
+unset COOP_CLIENT_PLATFORM
+platform_of() { cfg_json "$1/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin).get("client",{}).get("platform",""))'; }
+integration_of() { cfg_json "$1/.coop/config" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["integrations"].get(sys.argv[1]))' "$2"; }
+
+# (p1) Quick start asks the platform first; answer 2 = Azure SQL turns the
+# Fabric servers off with an honest reason, and the choice is saved.
+dp1="$(mktemp -d "$COOP_DIR/p1.XXXXXX")"
+printf 'Plat User\n1\n2\n' | HOME="$dp1" COOP_DIR="$dp1" COOP_AZ_BIN=/nonexistent/az \
+  "$PY" "$ROOT/scripts/onboard.py" onboard --json 2>"$dp1/stderr.txt" >/dev/null
+grep -q "Does this client run on Fabric, Azure SQL, or both?" "$dp1/stderr.txt" \
+  && ok "first onboarding asks the client platform question" || ko "platform question missing from first onboarding"
+[ "$(platform_of "$dp1")" = "azure_sql" ] && ok "answer 2 saves client.platform azure_sql" || ko "platform not saved: $(platform_of "$dp1")"
+[ "$(integration_of "$dp1" fabric)" = "False" ] && [ "$(integration_of "$dp1" fabric_sql_endpoint)" = "False" ] \
+  && ok "Azure SQL quick start defaults the Fabric MCP servers off" || ko "Fabric servers enabled on an Azure SQL quick start"
+grep -q "Fabric MCP (Azure SQL client)" "$dp1/stderr.txt" && ok "review names the Azure SQL reason" || ko "review lacks the Azure SQL reason"
+grep -q "Azure SQL resources Coop should access" "$dp1/stderr.txt" && ok "tenant wording follows the platform" || ko "tenant wording still says Fabric on an Azure SQL client"
+
+# (p2) Editing the config re-asks with the saved value as the default (EOF keeps it).
+printf '\n\n\n\n\n\n\n\n\n' | HOME="$dp1" COOP_DIR="$dp1" COOP_AZ_BIN=/nonexistent/az \
+  "$PY" "$ROOT/scripts/onboard.py" onboard --config-only 2>"$dp1/stderr2.txt" >/dev/null
+[ "$(platform_of "$dp1")" = "azure_sql" ] && ok "config-only edit keeps the saved platform as default" || ko "config-only edit lost the platform"
+grep -q "Does this client run on" "$dp1/stderr2.txt" && ok "config-only edit re-asks the platform" || ko "config-only edit skipped the platform question"
+
+# (p3) `platform --set` (coop install --platform, non-interactive) writes only the
+# key, creating a minimal config, and the following onboarding does not re-ask.
+dp3="$(mktemp -d "$COOP_DIR/p3.XXXXXX")"
+HOME="$dp3" COOP_DIR="$dp3" "$PY" "$ROOT/scripts/onboard.py" platform --set both >/dev/null 2>&1
+[ "$(platform_of "$dp3")" = "both" ] && ok "platform --set writes client.platform on a fresh machine" || ko "platform --set failed"
+shown="$(HOME="$dp3" COOP_DIR="$dp3" "$PY" "$ROOT/scripts/onboard.py" platform --show 2>/dev/null)"
+[ "$shown" = "both" ] && ok "platform --show prints the saved value" || ko "platform --show printed: $shown"
+printf 'Both User\n1\n' | HOME="$dp3" COOP_DIR="$dp3" COOP_AZ_BIN=/nonexistent/az \
+  "$PY" "$ROOT/scripts/onboard.py" onboard --json 2>"$dp3/stderr.txt" >/dev/null
+if grep -q "Does this client run on" "$dp3/stderr.txt"; then ko "onboarding re-asked a platform saved at install"; else ok "onboarding keeps the install-time platform without asking"; fi
+grep -q "Using the recommended integrations" "$dp3/stderr.txt" && ok "a config holding only the platform still takes the quick start" || ko "platform-only config skipped the quick start"
+[ "$(platform_of "$dp3")" = "both" ] && ok "onboarding preserves client.platform" || ko "onboarding dropped client.platform"
+HOME="$dp3" COOP_DIR="$dp3" "$PY" "$ROOT/scripts/onboard.py" platform --set mainframe >/dev/null 2>&1 && ko "platform --set accepted an unknown value" || ok "platform --set rejects an unknown value"
+[ "$(platform_of "$dp3")" = "both" ] && ok "a rejected value leaves the saved platform alone" || ko "rejected value changed the platform"
+
+# (p4) COOP_CLIENT_PLATFORM and --platform answer without a prompt; the saved
+# config keeps every other key (knowledge repos survive a platform change).
+dp4="$(mktemp -d "$COOP_DIR/p4.XXXXXX")"
+printf 'Env User\n1\n' | HOME="$dp4" COOP_DIR="$dp4" COOP_AZ_BIN=/nonexistent/az COOP_CLIENT_PLATFORM=azure-sql \
+  "$PY" "$ROOT/scripts/onboard.py" onboard --json 2>"$dp4/stderr.txt" >/dev/null
+[ "$(platform_of "$dp4")" = "azure_sql" ] && ok "COOP_CLIENT_PLATFORM answers the question (spelling normalized)" || ko "env platform not applied: $(platform_of "$dp4")"
+if grep -q "Does this client run on" "$dp4/stderr.txt"; then ko "env answer still prompted"; else ok "env answer suppresses the prompt"; fi
+printf '\n\n\n\n\n\n\n\n' | HOME="$dp4" COOP_DIR="$dp4" COOP_AZ_BIN=/nonexistent/az \
+  "$PY" "$ROOT/scripts/onboard.py" onboard --config-only --platform fabric 2>/dev/null >/dev/null
+[ "$(platform_of "$dp4")" = "fabric" ] && ok "--platform overrides the saved value" || ko "--platform ignored: $(platform_of "$dp4")"
+HOME="$dp4" COOP_DIR="$dp4" "$PY" "$ROOT/scripts/onboard.py" onboard --config-only --platform mainframe </dev/null >/dev/null 2>&1 && ko "--platform accepted an unknown value" || ok "--platform rejects an unknown value"
+"$PY" - "$dp4/.coop/config" <<'PY'
+import json, sys
+p = sys.argv[1]
+c = json.load(open(p))
+c["knowledge"] = {"enabled": True, "repos": [{"url": "https://example.invalid/kb.git", "local_path": "~/.coop/knowledge/kb"}]}
+json.dump(c, open(p, "w"))
+PY
+HOME="$dp4" COOP_DIR="$dp4" "$PY" "$ROOT/scripts/onboard.py" platform --set both >/dev/null 2>&1
+cfg_json "$dp4/.coop/config" | grep -q 'kb.git' && ok "platform --set preserves the other config keys" || ko "platform --set dropped other keys"
 
 exit $fail

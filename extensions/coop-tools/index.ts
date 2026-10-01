@@ -1807,7 +1807,15 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   }
   settings.repositories = editedRepos;
 
-  settings.fabricEnabled = await askConfirm(ctx, "Microsoft Fabric / Power BI", "Does this project use Microsoft Fabric or Power BI?");
+  // The install-time client platform only shapes the question; the answer (and
+  // the contract it writes) decides per repository.
+  const platform = clientPlatform();
+  const platformHint = platform === "azure_sql"
+    ? " This machine is set up as an Azure SQL client, so No is the usual answer."
+    : platform === "both" || platform === "fabric"
+      ? ` This machine is set up as a ${platform === "both" ? "Fabric and Azure SQL" : "Fabric"} client.`
+      : "";
+  settings.fabricEnabled = await askConfirm(ctx, "Microsoft Fabric / Power BI", `Does this project use Microsoft Fabric or Power BI?${platformHint}`);
   if (settings.fabricEnabled) {
     const tenant = await askText(ctx, "Azure tenant ID (optional)", settings.tenantId);
     if (tenant === null) return false;
@@ -1982,6 +1990,24 @@ async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
  * Return the team-knowledge note string if at least one configured knowledge repo clone exists,
  * or null otherwise.
  */
+/**
+ * The machine's client platform from ~/.coop/config (client.platform, written by
+ * `coop install --platform` / `coop onboard`; master plan section 8 item 7):
+ * "fabric", "azure_sql" or "both". "" when unset or unreadable (treated as Fabric).
+ * The project contract still wins per repository; this only seeds wizard defaults.
+ */
+export function clientPlatform(coopDir?: string): "fabric" | "azure_sql" | "both" | "" {
+  const base = coopDir || process.env.COOP_DIR || homedir();
+  const cfgPath = join(base, ".coop", "config");
+  try {
+    const raw = JSON.parse(readFileSync(cfgPath, "utf8"));
+    const value = raw?.client?.platform;
+    return value === "fabric" || value === "azure_sql" || value === "both" ? value : "";
+  } catch {
+    return "";
+  }
+}
+
 export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | null {
   // coopDir is the PARENT of .coop (the COOP_DIR meaning); the default is the
   // profile dir from lib/paths.mjs.
