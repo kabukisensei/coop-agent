@@ -101,9 +101,9 @@ if (Test-Have 'pi') {
     $piMin = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') 'tested_with.pi_min' '0.79.0'
     if ($piMin -notmatch '^\d+\.\d+(\.\d+)?$') { $piMin = '0.79.0' }
     if ($piv -lt [version]$piMin) { D-Warn "pi $piv is older than the tested minimum ($piMin)" 'coop update' }
-    # Ceiling: warn (never fail) when the installed Pi is a newer MINOR than coop's tested
-    # version. `coop update` gates the jump; doctor just flags it.
-    $testedPi = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') 'tested_with.pi' ''
+    # Ceiling: warn (never fail) when the installed Pi is a newer MINOR than the
+    # manifest's Pi (what `coop update` pins to); doctor just flags the drift.
+    $testedPi = Coop-ManifestGet -Key 'pi.version'
     if ($testedPi -match '(\d+)\.(\d+)') {
       $testedMinor = [version]("{0}.{1}" -f $matches[1], $matches[2])
       $piMinor = [version]("{0}.{1}" -f $piv.Major, $piv.Minor)
@@ -301,8 +301,8 @@ if (Test-Have 'fab') {
   if ($fabver -match '(?i)paramiko|invoke') {
     D-Bad 'fab is the WRONG tool' "this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI"
     if (-not $script:JSON) {
-      Coop-Say "      Fix: pipx install $(Coop-ManifestPythonSpec 'ms-fabric-cli')   and ensure ~/.local/bin precedes Homebrew on PATH"
-      Coop-Say '           (or: brew uninstall fabric). Verify with: fab --version'
+      Coop-Say "      Fix: pipx install $(Coop-ManifestPythonSpec 'ms-fabric-cli')   and put pipx's bin dir first on PATH (pipx ensurepath)"
+      Coop-Say '           or uninstall the Python fabric package. Verify with: fab --version'
     }
   } else {
     $fv = (& fab --version 2>$null | Select-Object -First 1)

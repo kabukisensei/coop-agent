@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
-# PowerShell behavioral twin of the bounded-git regression in
-# tests/sync-knowledge.test.sh.
+# The bounded-git regression of scripts/sync-knowledge.ps1 (hang children and a
+# deadline); the gate-lane cases are sync-knowledge.test.ps1.
 #
 # The fake `git` MUST be a real PE binary: native CreateProcess resolves the
 # exact name "git" before appending .exe, so an extensionless script or a
@@ -11,24 +11,10 @@
 # depends on it. It spawns a REAL child process (recording its PID) so the
 # tests demand evidence the child existed and was terminated.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-knowledge-timeout-ps-' + [guid]::NewGuid().ToString('N'))
-$failed = $false
-function Ok([string]$Message) { Write-Host "  OK  $Message" }
-function Ko([string]$Message) { Write-Host "  FAIL $Message"; $script:failed = $true }
-# Windows PowerShell 5.1 converts native-command stderr into terminating
-# NativeCommandError records under $ErrorActionPreference='Stop' — even with
-# call-site 2>$null or 2>&1-into-$null redirection when the fixture runs
-# nested (powershell -File under a capturing parent, as tests/run.ps1 does).
-# Empirically confirmed on CI (run 34673322072, sync-knowledge-timeout fixture
-# line 32). Lowering EAP for the native invocation is the 5.1-safe form;
-# $LASTEXITCODE is unaffected. Assertions are unchanged.
-function Invoke-Native([Parameter(Mandatory=$true)][scriptblock]$Command) {
-  $prevEap = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  try { & $Command } finally { $ErrorActionPreference = $prevEap }
-}
 
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 try {
@@ -240,27 +226,6 @@ exec "$REALGIT" "$@"
   # $sentinelJob is an unrelated long-lived process that must survive every
   # timeout test — evidence the kill path never strays outside the owned tree.
   $sentinelJob = Start-Job -ScriptBlock { Start-Sleep -Seconds 300 }
-  function Assert-SleeperGone([string]$label) {
-    Start-Sleep -Seconds 2   # allow the killed tree to be reaped
-    if (-not (Test-Path -LiteralPath $sleeperFile)) {
-      Ko "${label}: fake git never spawned its sleeper"
-      return
-    }
-    $sleeperPid = [int]((Get-Content -LiteralPath $sleeperFile) -join '')
-    $proof = $false
-    if (Test-Path -LiteralPath $fakeLog) {
-      $proof = (Get-Content -LiteralPath $fakeLog -Raw) -match ("spawned-sleeper pid=" + $sleeperPid + "(?!\d)")
-    }
-    if (-not $proof) {
-      Ko "${label}: no spawn-time existence proof for pid $sleeperPid (recorded value was not a real PID?)"
-      Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue
-      return
-    }
-    $alive = Get-Process -Id $sleeperPid -ErrorAction SilentlyContinue
-    if ($alive) { Ko "${label}: sleeper $sleeperPid survived the deadline" }
-    else { Ok "${label}: sleeper $sleeperPid provably existed and is gone" }
-    Remove-Item -LiteralPath $sleeperFile -ErrorAction SilentlyContinue
-  }
 
   # --- A (PS). clone hang is bounded; the healthy repo still syncs ------------
   $cfg = Join-Path $temp 'cfg'
@@ -373,5 +338,4 @@ finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($failed) { exit 1 }
-exit 0
+exit $fail

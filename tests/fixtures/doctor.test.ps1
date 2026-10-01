@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env pwsh
-# Port of tests/doctor.test.sh (master plan S1): scripts/doctor.ps1 --json rows
+# scripts/doctor.ps1 --json rows
 # that tests/fixtures/doctor-warehouse.test.ps1 does not already cover.
 #   A. config/mcp.example.json is an empty documentation skeleton (no pins).
 #   B. the Warehouse (fabric-sqlendpoint) states map to their exact hints, and
@@ -22,13 +22,9 @@
 # except in C (fake az); a fresh fetch stamp keeps doctor offline. No waits.
 # Assertions stay ASCII: Windows PowerShell 5.1 re-encodes child output.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$psExe = try { (Get-Process -Id $PID).Path } catch { 'pwsh' }
-$isWindowsHost = ($env:OS -eq 'Windows_NT')
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-doctor-ps-' + [guid]::NewGuid().ToString('N'))
-$fail = 0
-function Ok([string]$m) { Write-Host "  ok $m" }
-function Ko([string]$m, [string]$out = '') { Write-Host "  x $m"; if ($out) { Write-Host $out }; $script:fail = 1 }
 
 $sandboxHome = Join-Path $t 'home'
 $agent = Join-Path $t 'agent'
@@ -40,14 +36,10 @@ $azCoop = Join-Path $t 'azcoop'
 $piBin = Join-Path $t 'pibin'
 $doctor = Join-Path $root 'scripts\doctor.ps1'
 $manifest = Join-Path $root 'config\release-manifest.json'
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-$sep = [System.IO.Path]::PathSeparator
 
-$saved = @{}
-$names = @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE','COOP_SKIP_AZ','NO_COLOR',
+$saved = Save-Env @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE','COOP_SKIP_AZ','NO_COLOR',
            'COOP_STANDARDS_ROOT','COOP_STANDARDS_STATE','COOP_STANDARDS_SNAPSHOT_ROOT','COOP_WAREHOUSE_TEST_STATE',
            'COOP_WAREHOUSE_TEST_TENANT','COOP_TEST_AZ_STATE','COOP_TEST_PI_LIST_MODE','COOP_TEST_MANIFEST')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 $basePath = $env:PATH
 $savedLocation = Get-Location
 try {
@@ -70,37 +62,6 @@ try {
   if (-not $realPy) { throw 'a real python is required for this fixture' }
   $node = (Get-Command node -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 
-  # A command backed by a Python script: <Name>.cmd on Windows, a sh launcher elsewhere.
-  function New-PyStub([string]$Dir, [string]$Name, [string]$Source) {
-    New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-    $py = Join-Path $Dir "$Name.stub.py"
-    [System.IO.File]::WriteAllText($py, $Source, $utf8)
-    if ($isWindowsHost) {
-      $p = Join-Path $Dir "$Name.cmd"
-      [System.IO.File]::WriteAllText($p, "@`"$realPy`" `"$py`" %*`r`n", [System.Text.Encoding]::ASCII)
-    } else {
-      $p = Join-Path $Dir $Name
-      [System.IO.File]::WriteAllText($p, "#!/bin/sh`nexec `"$realPy`" `"$py`" `"`$@`"`n", $utf8)
-      & chmod +x $p
-    }
-    return $p
-  }
-  function Get-DoctorRows() {
-    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    try {
-      $raw = (& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $doctor --json 2>$null | Out-String)
-    } finally {
-      $ErrorActionPreference = $eap
-    }
-    $doc = @($raw -split "`r?`n" | Where-Object { $_.StartsWith('{"checks"') }) | Select-Object -Last 1
-    if (-not $doc) { throw "doctor.ps1 --json printed no document: $raw" }
-    return @(($doc | ConvertFrom-Json).checks)
-  }
-  function Find-Rows($Rows, [string]$Needle) { @($Rows | Where-Object { ([string]$_.name).Contains($Needle) }) }
-  function Find-Row($Rows, [string]$Needle) { Find-Rows $Rows $Needle | Select-Object -First 1 }
-  function Show-Rows($Rows, [string]$Needle) {
-    (@($Rows | Where-Object { ([string]$_.name).Contains($Needle) -or ([string]$_.section).Contains($Needle) } | ForEach-Object { "$($_.status) | $($_.name) | $($_.hint)" }) -join "`n")
-  }
   function Set-Adapter([string]$Json) { [System.IO.File]::WriteAllText((Join-Path $agent 'mcp-adapter.json'), $Json, $utf8) }
 
   # --- A. checked-in example is documentation only; the generator owns runtime specs
@@ -346,13 +307,10 @@ sys.exit(1)
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {
   Set-Location -LiteralPath $savedLocation
-  foreach ($n in $names) {
-    if ($null -eq $saved[$n]) { Remove-Item -LiteralPath "Env:\$n" -ErrorAction SilentlyContinue }
-    else { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
-  }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($fail -ne 0) { Write-Host '  x doctor.ps1 MCP modes, login, fleet and Warehouse rows (PowerShell) tests FAILED'; exit 1 }
+if ($fail -ne 0) { Write-Host "  $G_CROSS doctor.ps1 MCP modes, login, fleet and Warehouse rows (PowerShell) tests FAILED"; exit 1 }
 Write-Host '  doctor.ps1 MCP modes, login, fleet and Warehouse rows (PowerShell) tests passed'
 exit 0

@@ -264,7 +264,7 @@ def main():
         sys.exit(1)
     ci_type = sys.argv[1]
     proj_path = sys.argv[2]
-    defaults_path = sys.argv[3]
+    manifest_path = sys.argv[3]   # config/release-manifest.json (the one pin list)
     out_dir = sys.argv[4]
 
     if ci_type not in ["github", "ado"]:
@@ -273,27 +273,30 @@ def main():
 
     try:
         proj_data = _yaml.load(proj_path)
-        defaults_data = _yaml.load(defaults_path)
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
     except Exception as e:
-        sys.stderr.write(f"error reading yamls: {e}\n")
+        sys.stderr.write(f"error reading project yml / release manifest: {e}\n")
         sys.exit(1)
 
-    if not isinstance(proj_data, dict) or not isinstance(defaults_data, dict):
-        sys.stderr.write("error: project yml and defaults yml must be mappings\n")
+    if not isinstance(proj_data, dict) or not isinstance(manifest, dict):
+        sys.stderr.write("error: project yml and release manifest must be mappings\n")
         sys.exit(1)
 
-    tested_with = defaults_data.get('tested_with', {})
-    if not isinstance(tested_with, dict):
-        sys.stderr.write("error: defaults.yml tested_with must be a mapping\n")
+    python_tools = manifest.get('python_tools', {})
+    if not isinstance(python_tools, dict):
+        sys.stderr.write("error: release manifest python_tools must be a mapping\n")
         sys.exit(1)
 
-    sql_ver = tested_with.get('coop_sql_review', '0.12.0')
-    dax_ver = tested_with.get('coop_dax_review', '0.15.0')
-    doc_ver = tested_with.get('coop_data_doc', '0.33.0')
+    # The generated pipelines pin exactly what the release installs: no fallback
+    # version, a missing or malformed pin is an error.
+    sql_ver = python_tools.get('coop-sql-review')
+    dax_ver = python_tools.get('coop-dax-review')
+    doc_ver = python_tools.get('coop-data-doc')
 
-    for label, ver in [("coop_sql_review", sql_ver), ("coop_dax_review", dax_ver), ("coop_data_doc", doc_ver)]:
-        if not _valid_version(ver):
-            sys.stderr.write(f"error: {label} version {ver!r} is not a valid semver\n")
+    for label, ver in [("coop-sql-review", sql_ver), ("coop-dax-review", dax_ver), ("coop-data-doc", doc_ver)]:
+        if ver is None or not _valid_version(ver):
+            sys.stderr.write(f"error: release manifest python_tools.{label} {ver!r} is not a valid semver\n")
             sys.exit(1)
 
     sql_path = get_sql_path(proj_data)

@@ -4,6 +4,7 @@
 # pipx must fetch a standalone 3.12 runtime, proving install.ps1 does not require
 # winget, py, or pymanager to repair a Python 3.14-only workstation.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-install-python-' + [guid]::NewGuid().ToString('N'))
 # Run the installer and updater from a plain copy of this tree with no .git
@@ -14,25 +15,13 @@ $install = Join-Path $src 'scripts\install.ps1'
 $update = Join-Path $src 'scripts\update.ps1'
 $bin = Join-Path $t 'bin'
 $calls = Join-Path $t 'calls'
-$isWindowsHost = ($env:OS -eq 'Windows_NT')
 if (-not $isWindowsHost) {
   Write-Host '  --  Windows fresh-install prerequisite fixture runs in Windows CI'
   exit 0
 }
 $nativePython = Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1
 
-
-function Write-Shim {
-  param([string]$Name, [string]$Sh, [string]$Cmd)
-  [System.IO.File]::WriteAllText((Join-Path $bin $Name), $Sh)
-  [System.IO.File]::WriteAllText((Join-Path $bin ($Name + '.cmd')), $Cmd)
-  if (-not $isWindowsHost) { & chmod +x (Join-Path $bin $Name) }
-}
-
-$saved = @{}
-foreach ($name in @('PATH','HOME','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODING_AGENT_DIR','COOP_AGENT_DIR','COOP_NO_ONBOARD','COOP_FLEET_TEST_MODE','COOP_FABRIC_PYTHON','COOP_TEST_CALLS','COOP_TEST_DRIVER_MISSING','COOP_TEST_DRIVER_READY','COOP_ASSUME_YES','LOCALAPPDATA','ProgramFiles','PYTHONHOME','PYTHONPATH')) {
-  $saved[$name] = [Environment]::GetEnvironmentVariable($name)
-}
+$saved = Save-Env @('PATH','HOME','USERPROFILE','APPDATA','COOP_DIR','PIPX_HOME','PIPX_BIN_DIR','PI_CODING_AGENT_DIR','COOP_AGENT_DIR','COOP_NO_ONBOARD','COOP_NO_MODEL_LOGIN','COOP_SKIP_AZ','COOP_FABRIC_PYTHON','COOP_TEST_CALLS','COOP_TEST_DRIVER_MISSING','COOP_TEST_DRIVER_READY','COOP_ASSUME_YES','LOCALAPPDATA','ProgramFiles','PYTHONHOME','PYTHONPATH')
 
 try {
   New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $t 'pipx-home'), (Join-Path $t 'pipx-bin'), (Join-Path $t 'agent'), (Join-Path $t 'program-files'), (Join-Path $t 'local-app-data'), $src | Out-Null
@@ -47,7 +36,7 @@ try {
   # Exercise the real runtime probe against the fixture module and metadata.
   [System.IO.File]::WriteAllText((Join-Path $pyodbcMetadata 'METADATA'), "Metadata-Version: 2.1`nName: pyodbc`nVersion: 5.3.0`n")
 
-  Write-Shim 'python3' @'
+  Write-Shim 'python3' -Raw @'
 #!/bin/sh
 [ "$1" = "--version" ] && echo 'Python 3.14.6'
 [ "$1" = "-c" ] && echo '3.14'
@@ -61,11 +50,11 @@ exit /b 0
   foreach ($pythonName in @('python3.13', 'python3.12', 'python')) {
     Copy-Item -LiteralPath (Join-Path $bin 'python3.cmd') -Destination (Join-Path $bin ($pythonName + '.cmd'))
   }
-  Write-Shim 'py' "#!/bin/sh`nexit 1`n" "@echo off`r`nexit /b 1`r`n"
+  Write-Shim 'py' -Raw "#!/bin/sh`nexit 1`n" "@echo off`r`nexit /b 1`r`n"
   # A hosted runner can have real Winget on PATH. Shadow it before invoking
   # the installer so this fixture cannot install or replace the host Python.
-  Write-Shim 'winget' "#!/bin/sh`nexit 1`n" "@echo off`r`nexit /b 1`r`n"
-  Write-Shim 'pi' @'
+  Write-Shim 'winget' -Raw "#!/bin/sh`nexit 1`n" "@echo off`r`nexit /b 1`r`n"
+  Write-Shim 'pi' -Raw @'
 #!/bin/sh
 [ "$1" = "--version" ] && echo 'pi 0.87.1'
 exit 0
@@ -74,7 +63,7 @@ exit 0
 if "%1"=="--version" echo pi 0.87.1
 exit /b 0
 '@
-  Write-Shim 'git' @'
+  Write-Shim 'git' -Raw @'
 #!/bin/sh
 echo "GIT $*" >> "$COOP_TEST_CALLS"
 [ "$1" = "--version" ] && { echo 'git version 2.50.0'; exit 0; }
@@ -88,14 +77,14 @@ if "%1"=="--version" (
 )
 exit /b 1
 '@
-  Write-Shim 'npm' "#!/bin/sh`nexit 0`n" "@echo off`r`nexit /b 0`r`n"
+  Write-Shim 'npm' -Raw "#!/bin/sh`nexit 0`n" "@echo off`r`nexit /b 0`r`n"
   # The H1 prerequisite gate reads node's version; pin it instead of trusting
   # whatever Node the hosted runner ships.
-  Write-Shim 'node' "#!/bin/sh`necho v22.19.0`n" "@echo off`r`necho v22.19.0`r`n"
+  Write-Shim 'node' -Raw "#!/bin/sh`necho v22.19.0`n" "@echo off`r`necho v22.19.0`r`n"
   # The pipx list is static, so the coop tools sit at their pins: the convergence
   # postcondition (installed version == pin) holds and the Fabric CLI, at its
   # pin too, is rebuilt only because pipx must fetch its Python.
-  Write-Shim 'pipx' @'
+  Write-Shim 'pipx' -Raw @'
 #!/bin/sh
 echo "PIPX $*" >> "$COOP_TEST_CALLS"
 if [ "$1" = "list" ]; then
@@ -132,8 +121,8 @@ exit /b 0
   # Scripts alone, which loses pyvenv.cfg and cannot locate the base runtime.
   $pipxCmd = [System.IO.File]::ReadAllText($pipxCmdPath).Replace('__NATIVE_PYTHON__', $nativePython.Source)
   [System.IO.File]::WriteAllText($pipxCmdPath, $pipxCmd)
-  Write-Shim 'fab' "#!/bin/sh`necho 'fab version 1.7.0'`n" "@echo off`r`necho fab version 1.7.0`r`n"
-  Write-Shim 'az' "#!/bin/sh`necho 'azure-cli 2.80.0'`n" "@echo off`r`necho azure-cli 2.80.0`r`n"
+  Write-Shim 'fab' -Raw "#!/bin/sh`necho 'fab version 1.7.0'`n" "@echo off`r`necho fab version 1.7.0`r`n"
+  Write-Shim 'az' -Raw "#!/bin/sh`necho 'azure-cli 2.80.0'`n" "@echo off`r`necho azure-cli 2.80.0`r`n"
 
   # Defect D bounded comparison, stage A: a harmless Start-Job returning a
   # fixed synthetic value in a CLEAN session (real SystemRoot, unmodified
@@ -168,14 +157,20 @@ exit /b 0
   }
 
   $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$($saved['PATH'])"
+  # Every profile root points into the sandbox: install.ps1 runs through to its
+  # PATH link / shortcuts / login steps (Test-CoopProfileRedirected skips the
+  # registry PATH write), so nothing here may reach the real profile.
   $env:HOME = Join-Path $t 'home'
+  $env:USERPROFILE = $env:HOME
+  $env:APPDATA = Join-Path $t 'home\AppData\Roaming'
   $env:COOP_DIR = Join-Path $t 'coop-dir'
   $env:PIPX_HOME = Join-Path $t 'pipx-home'
   $env:PIPX_BIN_DIR = Join-Path $t 'pipx-bin'
   $env:PI_CODING_AGENT_DIR = Join-Path $t 'agent'
   $env:COOP_AGENT_DIR = $env:PI_CODING_AGENT_DIR
   $env:COOP_NO_ONBOARD = '1'
-  $env:COOP_FLEET_TEST_MODE = '1'
+  $env:COOP_NO_MODEL_LOGIN = '1'
+  $env:COOP_SKIP_AZ = '1'
   Remove-Item Env:COOP_FABRIC_PYTHON -ErrorAction SilentlyContinue
   $env:COOP_TEST_CALLS = $calls
   Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
@@ -336,7 +331,7 @@ exit /b 0
   if ($installedRuntime.state -ne 'ready' -or $installedRuntime.version -ne '5.3.0' -or $installedRuntime.driver -ne 18) {
     Write-Error "Fabric runtime status was not ready with pyodbc 5.3.0 and Driver 18: $($installedRuntime | ConvertTo-Json -Compress)"
   }
-  Write-Host '  OK  Windows installer fetches a standalone Fabric Python without winget/py/pymanager'
+  Ok 'Windows installer fetches a standalone Fabric Python without winget/py/pymanager'
 
   [System.IO.File]::WriteAllText($calls, '')
   $oldPreference = $ErrorActionPreference
@@ -370,14 +365,14 @@ exit /b 0
   if ($updatedRuntime.state -ne 'ready' -or $updatedRuntime.version -ne '5.3.0' -or $updatedRuntime.driver -ne 18) {
     Write-Error "Updated Fabric runtime status was not ready with pyodbc 5.3.0 and Driver 18: $($updatedRuntime | ConvertTo-Json -Compress)"
   }
-  Write-Host '  OK  Windows updater repairs and reconverges the managed Fabric runtime'
+  Ok 'Windows updater repairs and reconverges the managed Fabric runtime'
 
   # Driver 18 provisioning is license-consent gated and uses the exact winget ID/vector.
   $driverReady = Join-Path $t 'driver-ready'
   $env:COOP_TEST_DRIVER_MISSING = '1'
   $env:COOP_TEST_DRIVER_READY = $driverReady
   if (Ensure-CoopFabricOdbcDriver $false) { Write-Error 'Driver provisioning ignored --no-prereqs semantics' }
-  Write-Shim 'winget' "#!/bin/sh`nexit 1`n" @'
+  Write-Shim 'winget' -Raw "#!/bin/sh`nexit 1`n" @'
 @echo off
 echo WINGET %*>>"%COOP_TEST_CALLS%"
 type nul >"%COOP_TEST_DRIVER_READY%"
@@ -389,12 +384,9 @@ exit /b 0
   $transcript = Get-Content $calls -Raw
   $expectedWinget = 'WINGET install --id Microsoft.msodbcsql.18 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity'
   if ($transcript -notlike "*$expectedWinget*") { Write-Error "Driver installer used the wrong winget vector`n$transcript" }
-  Write-Host '  OK  Driver 18 provisioning requires consent and uses the pinned winget package ID'
+  Ok 'Driver 18 provisioning requires consent and uses the pinned winget package ID'
 }
 finally {
-  foreach ($name in $saved.Keys) {
-    if ($null -eq $saved[$name]) { [Environment]::SetEnvironmentVariable($name, $null) }
-    else { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
-  }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
