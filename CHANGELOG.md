@@ -38,6 +38,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   lineage release (coverage declarations, `lineage` evidence, source/output safety,
   identity collisions, UTF-8 JSONL pipes). `coop sync` installs it; `coop doctor`
   reports an older copy as stale.
+- Read-only SQL on a dev target no longer asks for approval. When the guardrails
+  resolve a Warehouse SQL call's bounded scope (one plain `SELECT` with a literal
+  `TOP`, through the managed `fabric-sqlendpoint` proxy or the exact
+  `fabric_sql_query` fallback) and the trusted managed entry or the contract's
+  `sql_targets` default entry says the target is `dev`, the read runs without a
+  prompt and without a session grant; the audit
+  records it as `dev-read-only`. Test and production targets, unbounded or
+  ambiguous SQL, generic MCP row reads and every mutation ask as before.
 - Tests (S7, #228): one helper library `tests/fixtures/_common.ps1` (Ok/Ko,
   Save-Env/Restore-Env, sandbox home, shims, Python stubs, doctor rows, git and
   process helpers) dot-sourced by every fixture; `tests/run.ps1` runs
