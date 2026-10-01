@@ -54,6 +54,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- `coop-data-doc` pin 1.2.0 -> 1.3.0 (`config/release-manifest.json`): the mixed-estate
+  lineage release (coverage declarations, `lineage` evidence, source/output safety,
+  identity collisions, UTF-8 JSONL pipes). `coop sync` installs it; `coop doctor`
+  reports an older copy as stale.
 - Read-only SQL on a dev target no longer asks for approval. When the guardrails
   resolve a Warehouse SQL call's bounded scope (one plain `SELECT` with a literal
   `TOP`, through the managed `fabric-sqlendpoint` proxy or the exact
