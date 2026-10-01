@@ -426,11 +426,25 @@ expansion retains the earlier grant; revocation and a new session clear it.
 
 The preferred live SQL route is that managed MCP server. Coop also registers exactly
 one explicit fallback, `fabric_sql_query`, implemented by the new consolidated
-`lib/fabric_sql_query.py` helper (no historical standalone runner was recovered).
+`lib/sql_query.py` helper (renamed from `fabric_sql_query.py`; it also serves Azure SQL, Fabric SQL database and Synapse serverless targets declared in `sql_targets:`).
 The tool accepts only `query` plus optional `maximum_rows`; target, server, identity,
-and credentials come from the canonical project/managed MCP snapshot and selected
-Fabric Python (`coop_fabric_python` / `Get-CoopFabricPython`). It never cascades from
-MCP automatically. It accepts one plain literal-`TOP` `SELECT`, rejects mutations,
+and credentials come from the contract and the selected Fabric Python
+(`coop_fabric_python` / `Get-CoopFabricPython`). When the contract declares
+`sql_targets:` (row SQ2), the executor connects to its ready default entry: a
+direct kind (`azure_sql`, `fabric_sql_database`, `synapse_serverless`) connects to
+the contract's `server` with that kind's connect timeout (60 s for Azure SQL, whose
+serverless tier auto-pauses; 15 s otherwise) and mints only the
+`database.windows.net` token; an `azure_sql` entry with `read_scale_replicas: true`
+adds `ApplicationIntent=ReadOnly`. A discovered kind (`fabric_warehouse`,
+`fabric_lakehouse`) runs the same Fabric REST discovery as the managed target, from
+the contract's ids. A production entry is never selected, and a contract whose
+default entry is unconfigured or invalid returns `target_invalid` before any mint.
+Without `sql_targets:` the executor falls back to the canonical project/managed MCP
+snapshot as before. The `ok` result carries a `target` summary (`environment`,
+`kind`, `database`; never the host). On a machine with no managed Warehouse server
+(an Azure SQL-only install), the launch token helper mints the SQL audience for the
+contract's tenant chain so the executor still has a launch identity to pin to.
+It never cascades from MCP automatically. It accepts one plain literal-`TOP` `SELECT`, rejects mutations,
 batches, cross-database names, and unbounded reads before authentication, and returns
 capped structured JSON. Endpoint discovery uses Fabric's documented item APIs:
 Warehouse `GET /v1/workspaces/{workspaceId}/warehouses/{warehouseId}` reads

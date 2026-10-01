@@ -23,12 +23,12 @@ assert.ok(!windowsCommand.includes("$args["), "Windows PowerShell 5.1 binding mu
 const direct = mod.fabricSqlHelperInvocation("/tmp/Python With Spaces/python3", "/tmp/Coop Root");
 assert.deepEqual(direct, {
   bin: "/tmp/Python With Spaces/python3",
-  args: [join("/tmp/Coop Root", "lib", "fabric_sql_query.py")],
+  args: [join("/tmp/Coop Root", "lib", "sql_query.py")],
 });
 
 const root = mkdtempSync(join(tmpdir(), "coop sql launcher spaces "));
 const fakePython = join(root, "Python Runtime", "python3");
-const helperPath = join(root, "lib", "fabric_sql_query.py");
+const helperPath = join(root, "lib", "sql_query.py");
 const marker = join(root, "helper-invoked");
 mkdirSync(join(root, "lib"), { recursive: true });
 mkdirSync(join(root, "Python Runtime"), { recursive: true });
@@ -74,7 +74,7 @@ const pi = {
 mod.default(pi);
 const tool = tools.get("fabric_sql_query");
 assert.ok(tool, "fabric_sql_query must be publicly registered");
-assert.match(tool.description, /First attempt the managed fabric-sqlendpoint MCP tool/);
+assert.match(tool.description, /When a managed fabric-sqlendpoint MCP tool exists, attempt it first/);
 assert.match(tool.description, /only after that actual attempt fails/);
 assert.match(tool.description, /Never use it for SQL\/business\/query rejection/);
 assert.match(tool.promptGuidelines.join(" "), /never fallback before MCP/);
