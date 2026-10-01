@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-10-01
+
 ### Added
 
 - Guardrails: Fabric and Azure REST writes issued from the shell now ask for
