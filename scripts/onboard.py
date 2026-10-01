@@ -826,10 +826,7 @@ def cmd_onboard(args: argparse.Namespace) -> int:
         )
         return 1
     sys.stderr.write(f"Saved integration config to {CONFIG_JSON}.\n")
-    if os.environ.get("COOP_ONBOARD_FROM_LAUNCH") == "1":
-        sys.stderr.write("Setup complete. Starting Coop…\n")
-    else:
-        sys.stderr.write("Setup complete. Run 'coop' to start.\n")
+    sys.stderr.write("Setup complete. Run 'coop' to start.\n")
     if args.json:
         print(json.dumps(profile, indent=2, ensure_ascii=False))
     return 0
