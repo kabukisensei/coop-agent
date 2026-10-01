@@ -41,6 +41,7 @@ import {
   sourceStatus,
   bindReviewerProvenance,
 } from "../../lib/standards.mjs";
+import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
 
 const SEVERITY = Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info")]);
 type StandardsBindingResult =
@@ -2014,15 +2015,10 @@ const TYPE_IT = "Something else — I'll type it myself";
 
 const MODEL_LOGIN_COMMAND = "/login openai-codex";
 
-/** Path used by the Pi process currently hosting this extension. */
+/** Path used by the Pi process currently hosting this extension (the one agent-dir
+ *  chain in lib/paths.mjs: PI_CODING_AGENT_DIR, COOP_NO_ISOLATE, COOP_AGENT_DIR, default). */
 export function modelLoginAuthPath(): string {
-  const configured = process.env.PI_CODING_AGENT_DIR;
-  if (configured && configured.trim()) return join(configured, "auth.json");
-  if (/^(1|true|yes|on)$/i.test(process.env.COOP_NO_ISOLATE || "")) {
-    return join(homedir(), ".pi", "agent", "auth.json");
-  }
-  const coopAgent = process.env.COOP_AGENT_DIR;
-  return join(coopAgent && coopAgent.trim() ? coopAgent : join(homedir(), ".coop", "agent"), "auth.json");
+  return join(coopAgentDir(), "auth.json");
 }
 
 /**
@@ -2111,9 +2107,10 @@ async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
  * or null otherwise.
  */
 export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | null {
-  const base = coopDir || process.env.COOP_DIR || homedir();
+  // coopDir is the PARENT of .coop (the COOP_DIR meaning); the default is the
+  // profile dir from lib/paths.mjs.
   const home = homeDir || process.env.HOME || homedir();
-  const cfgPath = join(base, ".coop", "config");
+  const cfgPath = coopDir ? join(coopDir, ".coop", "config") : coopConfigPath();
   if (!existsSync(cfgPath)) return null;
   try {
     const raw = readFileSync(cfgPath, "utf8");

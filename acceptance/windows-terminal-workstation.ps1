@@ -1199,10 +1199,10 @@ try {
   $event = [ordered]@{ event = 'acceptance-probe'; config = [ordered]@{ api_key = $canary; note = 'redaction probe' } } | ConvertTo-Json -Compress
   [System.IO.File]::WriteAllText((Join-Path $eventsDir 'events.jsonl'), $event + "`n")
   $baselineSupportPath = Join-Path $EvidenceRoot 'support-baseline.json'
-  # Support Center's COOP_DIR contract is the .coop directory itself, while the
-  # launcher/onboarding contract treats COOP_DIR as its parent. Scope this
-  # product-defined distinction to Support invocations instead of duplicating
-  # or moving profile state.
+  # The BASELINE release (v0.23.1) predates master plan S3: its Support Center
+  # read COOP_DIR as the .coop directory itself. Scope that old contract to the
+  # baseline Support invocation only; the candidate reads COOP_DIR as the parent
+  # of .coop like every other coop command, so it needs no override.
   $profileParentForCommands = $env:COOP_DIR
   $env:COOP_DIR = Join-Path $profileRoot '.coop'
   $supportBase = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $BaselineRoot 'bin\coop.ps1'),'support','--export',$baselineSupportPath) (Join-Path $logs 'baseline-support') 300
@@ -1244,9 +1244,7 @@ try {
   $candidateDoctorJson = Get-Content -LiteralPath $candidateDoctor.Stdout -Raw | ConvertFrom-Json
   if ($candidateDoctorJson.fail -ne 0) { throw 'candidate Doctor JSON contains required failures' }
   $candidateSupportPath = Join-Path $EvidenceRoot 'support-candidate.json'
-  $env:COOP_DIR = Join-Path $profileRoot '.coop'
   $candidateSupport = Invoke-Bounded 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $CandidateRoot 'bin\coop.ps1'),'support','--json') (Join-Path $logs 'candidate-support') 300
-  $env:COOP_DIR = $profileParentForCommands
   Assert-ExitZero $candidateSupport 'candidate Support'
   Copy-Item -LiteralPath $candidateSupport.Stdout -Destination $candidateSupportPath
   $supportJson = Get-Content -LiteralPath $candidateSupportPath -Raw | ConvertFrom-Json

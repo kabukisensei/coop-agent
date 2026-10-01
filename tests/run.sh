@@ -256,6 +256,8 @@ bash "$ROOT/tests/mcp-config.test.sh"
 python3 "$ROOT/tests/warehouse-mcp.test.py"
 python3 "$ROOT/tests/fabric-sql-query.test.py"
 python3 "$ROOT/tests/microsoft-skills.test.py"
+echo "→ one profile root: COOP_DIR is the parent of .coop; one agent-dir chain (S3, #220)"
+python3 "$ROOT/tests/coop-paths.test.py"
 python3 "$ROOT/tests/p0-vertical-slice.test.py"
 bash "$ROOT/tests/onboard.test.sh"
 echo "→ Azure CLI resolution and sign-in helpers (onboarding, coop init)"
@@ -314,6 +316,8 @@ node "$ROOT/tests/tool-result.test.mjs"
 echo "→ support command and Support Center contract tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/support-command.test.mjs"
 node "$ROOT/tests/support-center.test.mjs"
+echo "→ one profile root in Node (lib/paths.mjs and the bundled extensions)"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/paths.test.mjs"
 
 # ============================================================================
 # EXTENDED LANE (only with COOP_TEST_EXTENDED=1)

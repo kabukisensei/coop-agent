@@ -20,6 +20,7 @@ LIB_DIR = Path(__file__).resolve().parent
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import coop_paths  # noqa: E402
 from warehouse_mcp import (  # noqa: E402
     find_project_yml,
     load_project,
@@ -381,11 +382,13 @@ def main() -> int:
     parser.add_argument(
         "--manifest", type=Path, default=root / "config" / "release-manifest.json"
     )
-    parser.add_argument("--config", type=Path, default=Path.home() / ".coop" / "config")
+    # Defaults follow the one profile root (lib/coop_paths.py): the config in
+    # <profile dir>/config and the adapter file in the agent dir Pi actually loads.
+    parser.add_argument("--config", type=Path, default=coop_paths.config_path())
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path.home() / ".coop" / "agent" / ADAPTER_CONFIG_NAME,
+        default=coop_paths.agent_dir() / ADAPTER_CONFIG_NAME,
     )
     parser.add_argument("--project", type=Path, default=None)
     parser.add_argument("--project-cwd", type=Path, default=Path.cwd())

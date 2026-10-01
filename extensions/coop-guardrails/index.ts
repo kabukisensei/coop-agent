@@ -34,8 +34,8 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, existsSync, readFileSync, renameSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { agentDir as coopAgentDir } from "../../lib/paths.mjs";
 
 declare const Buffer: { from(value: string, encoding: "base64url"): { length: number; toString(encoding: "utf8" | "base64url"): string } };
 
@@ -1463,7 +1463,8 @@ export function bashSecretCmdPath(cmd: string): string | null {
 // Logging is best-effort and cannot change the enforcement decision.
 const AUDIT_MAX_BYTES = 1_000_000;
 function auditDir(): string {
-  return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".coop", "agent");
+  // The agent dir Pi actually loads (the one chain in lib/paths.mjs).
+  return coopAgentDir();
 }
 function auditPath(): string {
   return join(auditDir(), "guardrails-audit.jsonl");
