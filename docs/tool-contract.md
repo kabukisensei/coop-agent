@@ -1,59 +1,25 @@
 # Cooptimize Agent — Tool Contracts
 
 The exact, machine-readable contracts `coop` and the native tools rely on. These
-are stable interfaces — `bin/coop`, `extensions/coop-tools/index.ts`, and
+are stable interfaces — `bin/coop.ps1`, `extensions/coop-tools/index.ts`, and
 `.coop/project.yml` all assume them. Do **not** invent flags beyond what is
 listed here.
 
 ---
 
-## `coop sql-review` / `coop dax-review`
+## SQL / DAX standards — applied while writing, no review CLI
 
-Both wrap the standalone advisory linters. They are **advisory only** — they
-never edit files and never block.
-
-**CLI contract (the tool binaries):**
-
-```
-coop-sql-review check <paths...> --format json [--min-severity error|warning|info] [--strict]
-coop-dax-review check <paths...> --format json [--min-severity error|warning|info] [--strict]
-```
-
-**How `coop` invokes them** (`bin/coop` → `run_tool`):
-
-The CLI wrappers **flow straight through** — `coop sql-review <args>` runs
-`coop-sql-review <args>` verbatim (`exec`), and likewise for dax. Every subcommand
-works and the exit code propagates:
-
-```
-coop sql-review check sql/gold --format text     # human-readable report
-coop sql-review check sql/gold --format json     # raw JSON
-coop sql-review rules                            # list the rules
-coop sql-review upgrade                          # update the tool
-coop sql-review check sql/                        # directory -> interactive subfolder picker (TTY)
-```
-
-There is **no capture and no summary** in the CLI path (so the tools' own
-interactive prompts work). The tools have **no setup wizard** — they ship bundled
-standards, configurable per run with `--standards` / `--config`.
-
-**For the AI agent**, structured JSON comes from the native `sql_review` / `dax_review`
-tools in `extensions/coop-tools/index.ts`, which run `check … --format json` and
-return the parsed report in the tool result's `details`. Report shape:
-
-```json
-{ "findings": [ { "severity": "error", "rule": "TSQL-NO-SELECT-STAR",
-                  "message": "Avoid SELECT * in gold layer views.",
-                  "file": "sql/gold/v_sales.sql", "line": 12 } ] }
-```
-
-The native tool counts the `severity` field (`error` / `warning` / `info`) for its
-one-line summary and passes the full report through in `details`.
-
-Pinned SQL schema 4 and DAX schema 3 reports use 12 lowercase hexadecimal
-characters for finding and agent-review fingerprints. These are stable finding
-identities; `standards.sha256` remains a separate 64-character SHA-256 digest.
-Native validation checks both formats and preserves the standards binding.
+There is no `coop sql-review`, `coop dax-review` or `coop review` command and no
+`sql_review` / `dax_review` native tool (retired in ST1; the `coop-sql-review` and
+`coop-dax-review` repos are archived). Standards reach the agent as **content, not
+a tool call**: at launch `lib/standards.mjs` resolves the active
+`cooptimize/coop-standards` wiki articles (see
+[Revision 9 standards resolution](#revision-9-standards-resolution)), and the
+`coop-tools` `before_agent_start` hook feeds the relevant articles into every SQL,
+DAX and semantic-model task. Before presenting such a change the agent
+**self-checks** its own diff against the same articles and names any rule it could
+not meet. The deterministic checks that remain are `bpa_review` (Tabular Editor
+BPA, semantic models) and `fabric-cicd` validate.
 
 ---
 
@@ -102,11 +68,9 @@ coop data-doc init      # or: write a starter coop-data-doc.yml to edit by hand
 
 Until a config exists, doc-building commands flow through and the tool reports
 `error: Config file not found: coop-data-doc.yml` — and the native `data_doc` tool
-appends a `/setup-docs` hint when it sees that. The review tools (`sql_review` /
-`dax_review`) have **no** wizard — they use bundled standards, configurable per-run
-with `--standards` / `--config`.
+appends a `/setup-docs` hint when it sees that.
 
-**How `coop` invokes it** (`bin/coop` → `run_data_doc`):
+**How `coop` invokes it** (`bin/coop.ps1` → `Invoke-DataDoc`):
 
 - Args are **passed through verbatim** — including the interactive `setup` wizard and
   `init` (coop preserves the terminal, so the prompts work). `coop data-doc` with no
@@ -153,8 +117,18 @@ the independent states/revisions of formal standards, the Incremental BI
 `approved_pattern`, and governed TeamAI `team_knowledge`.
 
 Resolution precedence is project/client override, verified canonical checkout,
-verified stale last-known-good, SQL/DAX reviewer bundled fallback, then truthful
-unavailable/auth-required. Existing relative `standards.sql` and `standards.dax`
+verified stale last-known-good, the bundled copy, then truthful
+unavailable/auth-required. The resolution states are `canonical`,
+`project_override`, `stale_last_known_good`, `bundled`, `auth_required` and
+`unavailable`. The bundled copy is `config/standards-bundle/`: the wiki's active
+articles at their wiki paths plus `bundle.json` (repository, branch, revision,
+capture time, every article's sha256), written from a verified clone by
+`node lib/standards-cli.mjs bundle-update <clone>` before each release and
+checked by `bundle-check`. It is used only when it names the registry's own
+repository and branch and every listed article is present unchanged; a domain
+resolved from it carries `state=bundled`, `degraded: true` and the capture date,
+the agent is told the wiki was unreachable, and `coop doctor` warns. Its
+snapshot hash equals the canonical one for the same article bytes. Existing relative `standards.sql` and `standards.dax`
 paths in v0.23.1 project contracts remain project-local overrides without rewriting
 the contract. Project-controlled paths must resolve to regular files whose real
 paths stay inside the project root; traversal, absolute POSIX/Windows paths, and
@@ -164,23 +138,14 @@ is retrieved only for relevant semantic-model tasks and never becomes mandatory
 authority.
 
 At task start, resolved bytes are copied once into a read-only, content-addressed
-snapshot. The context reads that snapshot and the SQL/DAX reviewer receives the
-same snapshot through `--standards`; the original authority path remains in
-`source_path` for provenance. Reviewer-returned path/hash provenance is mandatory,
-and the snapshot path, realpath, and hash are rechecked before output is accepted.
-The reviewer report remains unchanged: any reviewer-owned revision claim is retained
-as a claim, while COOP records the trusted resolver's revision separately in a
-wrapper-owned `standardsBinding` after path/hash verification. A mismatch fails
-closed. Aggregate review writes into per-run files and atomically promotes only
-accepted reports; rejected output is quarantined away from canonical configured
-review paths and cannot enter docs, suite summaries, comparison baselines, or HTML.
-Bundled fallback is discovered through the installed reviewer's own JSON provenance;
-legacy top-level-version and explicit standards-revision envelopes use the same
-path/hash compatibility rule as actual review and are snapshotted the same way, so
-its real, bounded guidance is available before work rather than only after review.
-Pinned reviewer source references used to verify this contract are
-`/tmp/std-ref-sql` at `cd9bf347548375801df0abf86b13f72781e1d360` and
-`/tmp/std-ref-dax` at `fe39270168c08a6360c99aadcb51a9ad73678a65`.
+**domain snapshot**: one file per domain, the concatenation of that domain's
+articles (path order, front matter stripped) under a header that says it is not the
+standard. Its SHA-256 is the domain's resolution identity (task pins, provenance);
+the original authority path remains in `source_path`. The snapshot path, realpath
+and hash are rechecked when it is read, and a mismatch fails closed. The agent
+receives the articles themselves, not the snapshot, and its self-check binds to the
+same resolution, so what it wrote against and what it checks against cannot drift
+mid-task.
 
 The canonical remote is the private `https://github.com/cooptimize/coop-standards.git`
 repository. Only its configured authoritative/default `main` branch is consumed. Coop
@@ -189,8 +154,8 @@ reads it as the Obsidian wiki it is: each Markdown article with front matter and
 (`sql`; `powerbi` → `dax` for `dax_expression`/`measure`, else `semantic_model`; any other
 domain keeps its name). `standards.yml`, `standards/*.md`, `scripts/`, and `deprecation/`
 are never read. Tasks receive the relevant articles whole, each with path, SHA-256 and
-revision; the SQL/DAX reviewers' single `--standards` file is a reviewer-input copy of the
-domain's articles (path order, front matter stripped) built in Coop's snapshot storage.
+revision; the domain snapshot above is built in Coop's snapshot storage from the same
+articles.
 Coop performs a bounded, noninteractive, fail-soft refresh at launch and before applicable
 work when the last successful check is at least 15 minutes old; `coop sync` forces a
 check. A verified change stages and durably validates one complete immutable generation,
@@ -199,35 +164,12 @@ Invalid, partial, offline, authentication-failed, or lock-timeout refreshes pres
 prior verified generation as degraded/stale last-known-good. Refreshes use one
 cross-process lock, but Monday P0 never guesses that an old or malformed lock is safe
 to recover: it does not steal, rename, or delete uncertain locks. A crash-abandoned lock
-requires later/manual cleanup. Canonical and accepted-review generations are not pruned
+requires later/manual cleanup. Canonical generations are not pruned
 and readers use no leases; bounded cleanup and disk-growth management are deferred beta
-limitations. Each task uses immutable content-addressed snapshots, so generation and
-SQL/DAX review retain one path, commit and SHA-256 even if a later refresh lands during
-that task. Accepted SQL+DAX review generations also retain captured report bytes,
-COOP-owned bindings, and independently revalidated authority provenance behind one
-atomic pointer. Doctor and Support report source, branch, successful check/sync times,
-commit, SHA-256, freshness, degraded state and per-domain fallback truthfully.
-
-### `sql_review` / `dax_review`
-
-| Param | Type | Notes |
-|-------|------|-------|
-| `paths` | `string[]` (optional) | Files/dirs to check. When omitted, the nearest `.coop/project.yml`'s `repositories.*.local_path` entries scope the review (TODO placeholders and paths missing on this machine are skipped with a note); only with no usable contract does it fall back to `["."]`. Explicit paths always win. The scope used is surfaced in the result (`details.scope` + a `Scope:` line). |
-| `min_severity` | `"error" \| "warning" \| "info"` (optional) | Maps to `--min-severity`. |
-| `strict` | `boolean` (optional, default false) | Maps to `--strict` (CI gate). |
-
-Invocation (built in `runReview`):
-`<bin> check <paths…> --format json [--min-severity <s>] [--strict]`, run with
-`pi.exec(bin, args, { cwd: ctx.cwd, signal })`.
-
-Result:
-
-- `content[0].text` — e.g.
-  `coop-sql-review: 3 finding(s) — 1 error, 2 warning, 0 info (exit 0). Full structured report is in this tool result's details.`
-  (the advisory default exits `0` even with findings; `--strict` exits `2` when errors are present)
-- `details` — `{ tool, args, exitCode, report: <parsed JSON or raw stdout>, stderr }`.
-- If the binary is missing or JSON won't parse, it reports the problem in
-  `content` (not a conversation error) and still returns `details`.
+limitations. Each task uses immutable content-addressed snapshots, so a task retains one
+path, commit and SHA-256 even if a later refresh lands during it. Doctor and Support
+report source, branch, successful check/sync times, commit, SHA-256, freshness and
+degraded state per domain truthfully.
 
 ### `bpa_review` (Tabular Editor)
 
@@ -250,8 +192,6 @@ failures, or rule evaluation errors are reported as incomplete/failed analysis.
 Raw stdout/stderr and the invoked arguments remain in `details`. Missing TE
 configuration returns a setup hint. Legacy `TabularEditor.exe` keeps its
 `<model> -A <rules> -V` invocation and requires an explicit rule file.
-The `coop review` command also accepts an unset rule path for TE's built-in rules
-and preserves the current JSON severity labels and object names.
 
 ### `data_doc`
 
@@ -313,31 +253,32 @@ stay silent, and users opt into setup later with `/setup-docs`, `/start`, or
 
 ---
 
-## Microsoft Fabric CLI (`fab`) and the Homebrew collision
+## Microsoft Fabric CLI (`fab`) and the Python Fabric collision
 
-`coop fabric [args]` (alias `coop fab`) is a pure pass-through:
-`have fab || die; exec fab "$@"`.
+`coop fabric [args]` (alias `coop fab`) is a pure pass-through in `bin/coop.ps1`:
+it dies when `fab` is not on `PATH`, otherwise runs `fab` with the arguments
+unchanged.
 
 - The intended `fab` is the **Microsoft Fabric CLI** (`ms-fabric-cli`, installed
-  via pipx).
-- **Collision:** a Homebrew formula named `fabric` ships a *different* `fab`
-  binary — a Python SSH / Paramiko automation tool. If both are on `PATH`,
-  `coop fabric …` may run the wrong one.
+  via pipx at the manifest's pin).
+- **Collision:** the Python package `fabric` ships a *different* `fab` — a Python
+  SSH / Paramiko automation tool. If both are on `PATH`, `coop fabric …` may run
+  the wrong one.
 - **Doctor detection:** `coop doctor` checks which `fab` resolves first and warns
-  when the Homebrew/Paramiko `fab` shadows the Microsoft Fabric CLI, so the user
-  can fix `PATH` or uninstall the conflicting formula.
+  when the Paramiko `fab` shadows the Microsoft Fabric CLI, so the user can fix
+  `PATH` or uninstall the conflicting package.
 
 `coop doctor` detects the collision by checking whether `fab --version` mentions
 Paramiko/Invoke (the Python SSH tool) and reports it as a **hard error** (`✗`,
-counted toward a non-zero exit), exactly as emitted by `scripts/doctor.sh`:
+counted toward a non-zero exit), exactly as emitted by `scripts/doctor.ps1`:
 
 ```
 $ coop fabric workspace list      # -> whichever `fab` is first on PATH
 $ coop doctor
 Microsoft Fabric CLI
 ✗ fab is the WRONG tool — this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI
-      Fix: pipx install ms-fabric-cli==1.7.0   and ensure ~/.local/bin precedes Homebrew on PATH
-           (or: brew uninstall fabric). Verify with: fab --version
+      Fix: pipx install ms-fabric-cli==1.7.0   and put pipx's bin dir first on PATH (pipx ensurepath)
+           or uninstall the Python fabric package. Verify with: fab --version
 ```
 
 ---
@@ -414,10 +355,20 @@ coop's own mints, where `<id>` must be a GUID or a domain name with a dot, and
 `lib/fabric_request_headers.mjs <endpoint URL>` for per-request headers.
 The general `fabric` MCP (`@microsoft/fabric-mcp`) signs in with az's default account;
 coop cannot give it a tenant, and `coop doctor` says so on its row.
-Doctor treats config registration as only one state; live tools-list discovery
-can still report `auth_required`, `unavailable`, `tool_missing`, or
-`target_invalid`. Live dev/test verification remains pending on the signed-in
-user, tenant, target, and Fabric permissions.
+Doctor is observational: `warehouse_mcp.py doctor-json` returns `state` (the
+one-word verdict the row prints; `registered` means the config, and when probed
+the live checks, passed), `config_state` (what the config alone proves:
+`registered`, `unavailable` or `target_invalid`), `probe_state` (`not_probed`,
+`ok`, or the first failing live step: `auth_required`, `token_timeout`,
+`token_output_invalid`, `azure_cli_unavailable`, `token_launch_failed`,
+`token_command_failed`, `target_invalid`, `tool_missing` or `unavailable`) and
+`usable` (true only when the probe ran, the target validated and a compatible
+SQL tool was listed). The `coop doctor` row says `usable`, `configured (not
+probed)` or `probed: <state>` accordingly, and names the probe tenant only when
+it is the one `Get-CoopTenant` resolves. The launch's `launch-token` frames are
+validated once, by `lib/fabric_token_runner.mjs`, against `WARNING_STATES` in
+`lib/warehouse_mcp.py`. Live dev/test verification remains pending on the
+signed-in user, tenant, target, and Fabric permissions.
 
 For a verified managed target, one approved session scope covers matching single
 `SELECT` calls with a literal `TOP` bound, including bracketed names such as

@@ -1,16 +1,18 @@
 /**
  * coop-tools — native, LLM-callable Cooptimize tools for Pi.
  *
- * Registers three read-only / advisory tools that shell out to the standalone
- * Coop CLIs and return machine-readable JSON the model can reason over:
+ * Registers read-only / advisory tools that shell out to the standalone Coop
+ * CLIs and return machine-readable JSON the model can reason over:
  *
- *   sql_review  -> coop-sql-review check <paths> --format json   (advisory; never edits/blocks)
- *   dax_review  -> coop-dax-review check <paths> --format json   (advisory; never edits/blocks)
  *   data_doc    -> coop-data-doc <scan|build|check|lineage>      (lineage graph + manifest.json;
  *                                                                lineage = one object's up/downstream)
+ *   bpa_review  -> Tabular Editor BPA over semantic-model files  (advisory; never edits/blocks)
  *
- * These let the agent call the review/documentation tools directly instead of
- * asking the user to run them. They are advisory: they never modify source.
+ * These let the agent call the documentation/model-check tools directly instead
+ * of asking the user to run them. They are advisory: they never modify source.
+ * SQL and DAX standards are applied while coop writes (lib/standards.mjs feeds
+ * the coop-standards wiki articles into every task); the former coop-sql-review /
+ * coop-dax-review wrappers were retired (master plan ST1).
  *
  * It ALSO bridges coop-data-doc's single authoritative setup questionnaire over
  * strict JSONL so users can establish lineage docs without leaving the agent. Pi
@@ -36,16 +38,13 @@ import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } fro
 import { fileURLToPath } from "node:url";
 import {
   buildStandardsContext,
+  findProjectContract,
   provenanceText,
-  reviewStandardsArgs,
   sourceStatus,
-  bindReviewerProvenance,
 } from "../../lib/standards.mjs";
+import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
 
 const SEVERITY = Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info")]);
-type StandardsBindingResult =
-  | { ok: true; binding: { owner: "coop"; path: string; sha256: string; revision: string } }
-  | { ok: false; error: string };
 
 const REVIEW_PARAMS = Type.Object({
   paths: Type.Optional(
@@ -91,14 +90,12 @@ export function fabricSqlPythonResolverInvocation(
   root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
   platform = process.platform,
 ): FabricSqlInvocation {
-  if (platform === "win32") return {
-    bin: "powershell.exe",
-    args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ". (Join-Path $env:COOP_ROOT 'lib\\common.ps1'); $py = Get-CoopFabricPython; if (-not $py) { exit 65 }; [Console]::Out.WriteLine($py)"],
-    env: { COOP_ROOT: root },
-  };
+  // One resolver, lib/common.ps1's Get-CoopFabricPython, on every platform
+  // (master plan S1: coop has no bash runtime). Windows PowerShell 5.1 on Windows,
+  // PowerShell 7 (pwsh) on a macOS/Linux developer box.
   return {
-    bin: "bash",
-    args: ["-c", '. "$COOP_ROOT/lib/common.sh"; coop_fabric_python || exit 65'],
+    bin: platform === "win32" ? "powershell.exe" : "pwsh",
+    args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ". (Join-Path (Join-Path $env:COOP_ROOT 'lib') 'common.ps1'); $py = Get-CoopFabricPython; if (-not $py) { exit 65 }; [Console]::Out.WriteLine($py)"],
     env: { COOP_ROOT: root },
   };
 }
@@ -234,16 +231,13 @@ function summarizeReview(bin: string, parsed: any, stdout: string, code: number)
   );
 }
 
-// --- coop-data-doc setup wizard (native Pi dialogs) --------------------------
-// Defaults mirror coop-data-doc/src/coop_data_doc/config.py (render_config_yaml /
-// _CONFIG_TEMPLATE / DEFAULT_*). If that schema changes, mirror it here. We emit
-// only a SUBSET of known keys — safe because Config uses extra="forbid" (only
-// UNKNOWN keys are rejected) and every omitted field has a default.
+// --- coop-data-doc setup wizard (JSONL bridge to the companion) ---------------
+// coop never writes coop-data-doc.yml itself: `coop-data-doc setup --transport
+// jsonl` owns the config (runJsonlSetup below). coop only READS the few scalars it
+// needs (parseExisting) to prefill the wizard and to find the built docs. Keys and
+// defaults mirror coop-data-doc/src/coop_data_doc/config.py; if that schema
+// changes, mirror it here.
 const DATADOC_CONFIG = "coop-data-doc.yml";
-const DEFAULT_SQL_INCLUDE = ["**/*.sql"];
-const DEFAULT_SQL_EXCLUDE = ["**/archive/**"];
-const DEFAULT_PBI_INCLUDE = ["**/*.tmdl", "**/*.bim", "**/report.json", "**/visual.json", "**/page.json", "**/*.pbix"];
-const DEFAULT_PBI_EXCLUDE: string[] = [];
 const DEFAULT_OUTPUT_DIR = "./data-docs";
 
 interface DataDocSettings {
@@ -251,7 +245,6 @@ interface DataDocSettings {
   sqlPath: string;
   pbiPath: string;
   outputDir: string;
-  siteDir: string;
 }
 
 interface DataDocSetupPrefill extends Partial<DataDocSettings> {
@@ -297,36 +290,9 @@ function resolveRel(cwd: string, p: string): string {
   return isAbsolute(p) ? p : resolve(cwd, p);
 }
 
-function dirExists(p: string): boolean {
-  try {
-    return statSync(p).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 /** Markdown output dir holds built docs (mirrors what `coop-data-doc build` writes). */
 function isBuilt(outAbs: string): boolean {
   return existsSync(join(outAbs, "manifest.json")) || existsSync(join(outAbs, "index.md"));
-}
-
-function withinOrEqual(inner: string, outer: string): boolean {
-  // Separator-aware (path.relative), so nesting is detected on Windows too — a
-  // hardcoded "/" prefix test misses C:\a\b inside C:\a. Mirrors config.py's
-  // Path.relative_to. Empty rel = same dir; ".."/absolute rel = not inside.
-  const rel = relative(resolve(outer), resolve(inner));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
-/** Mirror config.py output_dirs_conflict: site must not equal/nest the markdown dir. */
-export function outputDirsConflict(outAbs: string, siteAbs: string): boolean {
-  return withinOrEqual(siteAbs, outAbs) || withinOrEqual(outAbs, siteAbs);
-}
-
-/** Mirror wizard._sibling_site: an HTML dir that sits NEXT TO the markdown dir. */
-export function siblingSite(outputDir: string): string {
-  const trimmed = outputDir.replace(/[/\\]+$/, "") || DEFAULT_OUTPUT_DIR;
-  return `${trimmed}-site`;
 }
 
 /** Read just the scalar value off a `key: value` line, quote- and comment-aware.
@@ -368,11 +334,12 @@ export function scalarValue(afterColon: string): string {
   return s.trim();
 }
 
-type ManagedKey = "project_name" | "sql_path" | "powerbi_path" | "output_dir" | "output_site_dir";
+type ManagedKey = "project_name" | "sql_path" | "powerbi_path" | "output_dir";
 
-/** Locate the lines for the 5 fields the native wizard manages — robust to 2- or
- *  4-space indentation, extra repo keys (e.g. a third `staging:`), and nested
- *  mappings. Block-style YAML only (best-effort), matching what coop-data-doc emits. */
+/** Locate the lines for the 4 scalars coop reads (project_name, repos.sql.path,
+ *  repos.powerbi.path, output.dir) — robust to 2- or 4-space indentation, extra
+ *  repo keys (e.g. a third `staging:`), and nested mappings. Block-style YAML only
+ *  (best-effort), matching what coop-data-doc emits. */
 export function classifyManagedLines(text: string): Array<{ i: number; key: ManagedKey }> {
   const lines = text.split("\n");
   const found: Array<{ i: number; key: ManagedKey }> = [];
@@ -404,7 +371,6 @@ export function classifyManagedLines(text: string): Array<{ i: number; key: Mana
       }
     } else if (section === "output") {
       if (body.startsWith("dir:")) found.push({ i, key: "output_dir" });
-      else if (body.startsWith("site_dir:")) found.push({ i, key: "output_site_dir" });
     }
   }
   return found;
@@ -420,68 +386,21 @@ export function parseExisting(text: string): DataDocSetupPrefill {
     else if (key === "sql_path") out.sqlPath = v;
     else if (key === "powerbi_path") out.pbiPath = v;
     else if (key === "output_dir") out.outputDir = v;
-    else if (key === "output_site_dir") out.siteDir = v;
   }
   out.sourceMode = out.sqlPath && out.pbiPath ? "both" : out.sqlPath ? "sql" : out.pbiPath ? "powerbi" : "none";
   return out;
 }
 
-/** The trailing ` # comment` of a post-colon remainder (outside quotes), or "". */
-export function trailingComment(rest: string): string {
-  let q: string | null = null;
-  for (let i = 0; i < rest.length; i++) {
-    const c = rest[i];
-    if (q) {
-      if (c === q && !(q === '"' && rest[i - 1] === "\\")) q = null;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      q = c;
-      continue;
-    }
-    if (c === "#" && i > 0 && /\s/.test(rest[i - 1])) return "  " + rest.slice(i);
-  }
-  return "";
-}
-
-/** Surgically rewrite ONLY the 5 managed scalars in an existing yml, preserving
- *  everything else (medallion layers, branding, schema mappings, include/exclude
- *  globs, sql_dialect, comments). This is what makes a /setup-docs re-run SAFE —
- *  regenerating from 5 fields would silently clobber all of that. */
-export function updateConfigText(text: string, s: DataDocSettings): string {
-  const lines = text.split("\n");
-  const value: Record<ManagedKey, string> = {
-    project_name: s.projectName,
-    sql_path: s.sqlPath,
-    powerbi_path: s.pbiPath,
-    output_dir: s.outputDir,
-    output_site_dir: s.siteDir,
-  };
-  for (const { i, key } of classifyManagedLines(text)) {
-    const ci = lines[i].indexOf(":");
-    lines[i] = `${lines[i].slice(0, ci + 1)} ${JSON.stringify(value[key])}${trailingComment(lines[i].slice(ci + 1))}`;
-  }
-  return lines.join("\n");
-}
-
 /* --- Project-contract scoping (.coop/project.yml → review paths) -------------
  * The contract's `repositories.*.local_path` answers "which paths matter"; when
- * the model calls sql_review/dax_review without explicit paths, scope the review
- * to those repos instead of blind-scanning the cwd (coop-sql-review's own docs
- * warn against bare full-tree `check` runs). Explicit paths always win. */
+ * the model calls bpa_review without explicit paths, scope the review to those
+ * repos instead of blind-scanning the cwd. Explicit paths always win. */
 
-/** Nearest .coop/project.yml walking up from cwd (mirror of the wrapper's
- *  coop_find_project_yml, WITHOUT its bundled-template fallback — the bundled
- *  template is all TODO placeholders and must never scope a review). */
+/** Nearest .coop/project.yml walking up from cwd — lib/standards.mjs's
+ *  findProjectContract, with no bundled-template fallback (the bundled template
+ *  is all TODO placeholders and must never scope a review). */
 export function findProjectYml(cwd: string): string | null {
-  let dir = resolve(cwd || ".");
-  for (;;) {
-    const cand = join(dir, ".coop", "project.yml");
-    if (existsSync(cand)) return cand;
-    const parent = resolve(dir, "..");
-    if (parent === dir) return null;
-    dir = parent;
-  }
+  return findProjectContract(cwd);
 }
 
 /** Pull `repositories.<name>.local_path` values out of a project.yml (block-style,
@@ -644,40 +563,6 @@ function parseBpaOutput(stdout: string, legacy: boolean): any {
     }
   }
   return { findings, summary };
-}
-
-/** Render a minimal, valid coop-data-doc.yml. Scalars/arrays JSON-encoded (valid YAML). */
-export function renderMinimalConfig(s: DataDocSettings): string {
-  const j = (v: unknown) => JSON.stringify(v);
-  return `# coop-data-doc configuration — generated by coop /setup-docs.
-# Point the tool at your repos, then run \`coop-data-doc build\`.
-# All relative paths resolve against the folder containing THIS file.
-# Re-run the same authoritative wizard with /setup-docs or \`coop data-doc setup\`.
-
-project_name: ${j(s.projectName)}
-
-repos:
-  sql:
-    path: ${j(s.sqlPath)}
-    include: ${j(DEFAULT_SQL_INCLUDE)}
-    exclude: ${j(DEFAULT_SQL_EXCLUDE)}
-  powerbi:
-    path: ${j(s.pbiPath)}
-    include: ${j(DEFAULT_PBI_INCLUDE)}
-    exclude: ${j(DEFAULT_PBI_EXCLUDE)}
-
-# The authoritative setup wizard configures these; empty = defaults.
-schema_mappings: []
-layers: {}
-ignore_schemas: []
-branding: {}
-
-output:
-  dir: ${j(s.outputDir)}        # markdown docs (for agents)
-  site_dir: ${j(s.siteDir)}     # html portal (for humans)
-
-sql_dialect: "tsql"
-`;
 }
 
 /** `coop-data-doc build`'s error for a configured repo folder that doesn't exist. */
@@ -1459,7 +1344,7 @@ export function dailyLogToolEffect(toolName: string, input: Record<string, unkno
     const target = isAbsolute(rawPath) ? rawPath : resolve(cwd, rawPath);
     return samePath(target, logPath) ? "log" : "meaningful";
   }
-  if (toolName === "sql_review" || toolName === "dax_review" || toolName === "bpa_review") return "meaningful";
+  if (toolName === "bpa_review") return "meaningful";
   if (toolName === "data_doc") return input.command === "lineage" ? "none" : "meaningful";
   if (toolName === "bash" || toolName === "powershell") {
     const command = typeof input.command === "string" ? input.command : "";
@@ -1697,16 +1582,6 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "    enabled: true",
     "    default_command: 'build'",
     "    machine_outputs: ['graph.json', 'manifest.json']",
-    "  coop_sql_review:",
-    "    command: 'coop-sql-review'",
-    "    enabled: true",
-    "    invoke: 'check {paths} --format json'",
-    "    advisory_only: true",
-    "  coop_dax_review:",
-    "    command: 'coop-dax-review'",
-    "    enabled: true",
-    "    invoke: 'check {paths} --format json'",
-    "    advisory_only: true",
     "",
     "mcp:",
     "  fabric:",
@@ -1778,7 +1653,7 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "    - 'read files'",
     "    - 'git status / git diff / git pull'",
     "    - 'create backups'",
-    "    - 'run advisory Coop review and documentation tools'",
+    "    - 'run the advisory data_doc / bpa_review tools'",
     "    - 'MCP dev/test metadata / schema / artifact-code list / read / inspect'",
     "    - 'update markdown docs, html site, logs'",
     "  ask_first:",
@@ -2024,15 +1899,10 @@ const TYPE_IT = "Something else — I'll type it myself";
 
 const MODEL_LOGIN_COMMAND = "/login openai-codex";
 
-/** Path used by the Pi process currently hosting this extension. */
+/** Path used by the Pi process currently hosting this extension (the one agent-dir
+ *  chain in lib/paths.mjs: PI_CODING_AGENT_DIR, COOP_NO_ISOLATE, COOP_AGENT_DIR, default). */
 export function modelLoginAuthPath(): string {
-  const configured = process.env.PI_CODING_AGENT_DIR;
-  if (configured && configured.trim()) return join(configured, "auth.json");
-  if (/^(1|true|yes|on)$/i.test(process.env.COOP_NO_ISOLATE || "")) {
-    return join(homedir(), ".pi", "agent", "auth.json");
-  }
-  const coopAgent = process.env.COOP_AGENT_DIR;
-  return join(coopAgent && coopAgent.trim() ? coopAgent : join(homedir(), ".coop", "agent"), "auth.json");
+  return join(coopAgentDir(), "auth.json");
 }
 
 /**
@@ -2139,9 +2009,10 @@ export function clientPlatform(coopDir?: string): "fabric" | "azure_sql" | "both
 }
 
 export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | null {
-  const base = coopDir || process.env.COOP_DIR || homedir();
+  // coopDir is the PARENT of .coop (the COOP_DIR meaning); the default is the
+  // profile dir from lib/paths.mjs.
   const home = homeDir || process.env.HOME || homedir();
-  const cfgPath = join(base, ".coop", "config");
+  const cfgPath = coopDir ? join(coopDir, ".coop", "config") : coopConfigPath();
   if (!existsSync(cfgPath)) return null;
   try {
     const raw = readFileSync(cfgPath, "utf8");
@@ -2240,18 +2111,10 @@ export function buildStartMenu(): MenuItem[] {
     { label: "⚙️  Set up or edit this Coop project", run: runProjectWizard },
     { label: "📚  Document the data sources I have", run: documentDataFlow },
     {
-      label: "🔎  Review SQL against our standards",
+      label: "🔎  Check SQL, DAX or a model against our standards",
       run: async (pi) => {
         pi.sendUserMessage(
-          "I'd like to review some T-SQL / Fabric Warehouse SQL against our Cooptimize standards. Ask me which file or folder to check, then run sql_review and summarize the findings by severity with file and line references.",
-        );
-      },
-    },
-    {
-      label: "📊  Review DAX or a semantic model",
-      run: async (pi) => {
-        pi.sendUserMessage(
-          "I'd like to review DAX / a semantic model against our Cooptimize standards. Ask me for the file or folder, then run dax_review and walk me through the findings by severity in plain language.",
+          "I'd like to check some T-SQL / Fabric Warehouse SQL, DAX, or a semantic model against our Cooptimize standards. Ask me which file or folder to check, read it, compare it with the standards articles you were given for that domain, and walk me through what does not meet them (with file and line references and the standard section each one comes from). For a semantic model, also run bpa_review when Tabular Editor is configured.",
         );
       },
     },
@@ -2297,83 +2160,6 @@ async function showStartMenu(pi: ExtensionAPI, ctx: any): Promise<void> {
 }
 
 export default function coopTools(pi: ExtensionAPI) {
-  // One immutable resolution record per domain/agent operation. The task hook
-  // creates it before work starts; the deterministic reviewer consumes the
-  // same object rather than resolving again mid-operation.
-  let operationStandards = new Map<string, any>();
-  let operationStandardsResolve: ((domain: string) => any) | null = null;
-  const runReview = async (
-    bin: string,
-    params: ReviewParams,
-    signal: AbortSignal | undefined,
-    ctx: ExtensionContext,
-  ) => {
-    // Scope: explicit model-supplied paths always win. Otherwise read the nearest
-    // .coop/project.yml and review the contract's declared repos
-    // (repositories.*.local_path) instead of blind-scanning the cwd; fall back to
-    // ["."] only when there is no usable contract (absent, or all TODO/missing).
-    let rawPaths: string[];
-    let scope: string;
-    let scopeNotes = "";
-    if (params.paths && params.paths.length) {
-      rawPaths = params.paths;
-      scope = "explicit paths";
-    } else {
-      const c = contractReviewScope(ctx.cwd);
-      const notes: string[] = [];
-      if (c.skippedTodo.length) notes.push(`skipped TODO local_path: ${c.skippedTodo.join(", ")}`);
-      if (c.skippedMissing.length) notes.push(`skipped missing local_path: ${c.skippedMissing.join(", ")}`);
-      scopeNotes = notes.length ? ` (${notes.join("; ")})` : "";
-      if (c.paths.length) {
-        rawPaths = c.paths;
-        scope = `project contract (${c.contract})`;
-      } else {
-        rawPaths = ["."];
-        scope = "current directory";
-      }
-    }
-    // Neutralize argument injection: a model-supplied path starting with "-" would be
-    // read as a CLI flag by the review tool. Prefix "./" so it stays a positional path.
-    const paths = rawPaths.map((p) => (String(p).startsWith("-") ? "./" + p : p));
-    const domain = bin === "coop-sql-review" ? "sql" : "dax";
-    const standards = operationStandards.get(domain) || operationStandardsResolve?.(domain) || { domain, authority_class: "formal_standard", state: "unavailable", path: null, revision: null, sha256: null, source: "task-resolver-unavailable" };
-    operationStandards.set(domain, standards);
-    const args = ["check", ...paths, "--format", "json", ...reviewStandardsArgs(standards)];
-    if (params.min_severity) args.push("--min-severity", params.min_severity);
-    if (params.strict) args.push("--strict");
-
-    let res;
-    try {
-      // Pi ExecOptions supports only cwd, signal, and timeout. Provenance comes
-      // from the reviewer's supported --standards report contract.
-      res = await pi.exec(bin, args, { cwd: ctx.cwd, signal });
-    } catch (e: any) {
-      return {
-        content: [{ type: "text" as const, text: `${bin} could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
-        details: { tool: bin, error: errMsg(e) },
-        // not a real error for the conversation, just report it
-      };
-    }
-    let parsed: any = null;
-    try {
-      parsed = JSON.parse(res.stdout);
-    } catch {
-      /* leave parsed null */
-    }
-    const provenance = bindReviewerProvenance(standards, parsed) as StandardsBindingResult;
-    if (!provenance.ok) {
-      return {
-        content: [{ type: "text" as const, text: `${bin} output rejected: ${provenance.error}. Same-source validation failed closed.` }],
-        details: { tool: bin, args, scope, scopeNotes, standards, exitCode: res.code, reportRejected: true, provenanceError: provenance.error, stderr: res.stderr },
-      };
-    }
-    const scopeLine = `Scope: ${scope}${scopeNotes} — ${paths.join(", ")}`;
-    return {
-      content: [{ type: "text" as const, text: `${summarizeReview(bin, parsed, res.stdout, res.code)}\n${scopeLine}` }],
-      details: { tool: bin, args, scope, scopeNotes, standards, standardsBinding: provenance.binding, exitCode: res.code, report: parsed ?? res.stdout, stderr: res.stderr },
-    };
-  };
-
   pi.registerTool({
     name: "fabric_sql_query",
     label: "Fabric SQL Query (pyodbc fallback)",
@@ -2391,40 +2177,6 @@ export default function coopTools(pi: ExtensionAPI) {
         ? `fabric_sql_query: ${details.row_count} row(s) returned${details.truncated ? " (capped)" : ""}. Structured rows are in details.`
         : `fabric_sql_query unavailable: ${String(details?.state || "internal_error")}.`;
       return { content: [{ type: "text" as const, text }], details };
-    },
-  });
-
-  pi.registerTool({
-    name: "sql_review",
-    label: "SQL Review",
-    description:
-      "Run coop-sql-review against T-SQL / Fabric Warehouse SQL files and return findings as JSON. Advisory only — it reports deviations from Cooptimize SQL standards and never edits or blocks.",
-    promptSnippet: "Lint T-SQL/Fabric SQL against Cooptimize standards (advisory, JSON output)",
-    promptGuidelines: [
-      "Use sql_review to check SQL before proposing or reviewing changes; it never edits files.",
-      "Treat results as advisory; summarize findings by severity and cite file:line.",
-    ],
-    parameters: REVIEW_PARAMS,
-    executionMode: "parallel",
-    async execute(_id, params, signal, _onUpdate, ctx) {
-      return runReview("coop-sql-review", params as ReviewParams, signal, ctx);
-    },
-  });
-
-  pi.registerTool({
-    name: "dax_review",
-    label: "DAX Review",
-    description:
-      "Run coop-dax-review against DAX / semantic-model files and return findings as JSON. Advisory only — reports deviations from Cooptimize DAX standards and never edits or blocks.",
-    promptSnippet: "Lint DAX/semantic-model code against Cooptimize standards (advisory, JSON output)",
-    promptGuidelines: [
-      "Use dax_review to check DAX measures/models before proposing or reviewing changes.",
-      "Treat results as advisory; summarize findings by severity.",
-    ],
-    parameters: REVIEW_PARAMS,
-    executionMode: "parallel",
-    async execute(_id, params, signal, _onUpdate, ctx) {
-      return runReview("coop-dax-review", params as ReviewParams, signal, ctx);
     },
   });
 
@@ -2622,8 +2374,6 @@ export default function coopTools(pi: ExtensionAPI) {
     seenToolErrorIds.clear();
     learningNudgeAnnounced = false;
     announcedTeamKnowledge = false;
-    operationStandards = new Map();
-    operationStandardsResolve = null;
     primeModelLogin(ctx);
   });
 
@@ -2651,13 +2401,9 @@ export default function coopTools(pi: ExtensionAPI) {
   const missedLogAt = new Map<string, number>();
 
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
-    operationStandards = new Map();
-    operationStandardsResolve = null;
     try {
       const cwd: string = ctx.cwd;
       const standardsContext = buildStandardsContext(event.prompt || "", { cwd });
-      operationStandards = new Map(standardsContext.records.map((record: any) => [record.resolution.domain, record.resolution]));
-      operationStandardsResolve = standardsContext.resolve;
       pendingDailyEffects.clear();
       const requirement = requiredDailyLog(cwd);
       dailyRun = requirement && !dailyLogOptOut(event.prompt || "")
@@ -2744,8 +2490,8 @@ export default function coopTools(pi: ExtensionAPI) {
           customType: "coop-standards",
           display: false,
           content,
-          // Pi message details cross a structured-clone boundary. Keep the
-          // executable resolver in operationStandardsResolve and expose data only.
+          // Pi message details cross a structured-clone boundary: expose data only,
+          // never the executable resolver.
           details: {
             domains: standardsContext.domains,
             records: standardsContext.records,

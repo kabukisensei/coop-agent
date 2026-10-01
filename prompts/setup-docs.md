@@ -16,8 +16,9 @@ Required steps:
 2. Launch `coop-data-doc setup --transport jsonl` as a subprocess. Forward each
    `prompt` event to the user through the agent UI, mapping the answer back to the
    prompt's `id` as JSONL on the process stdin.
-3. Surface `notice`/`progress` events to the user. When the wizard emits
-   `complete` or exits 0, the config is written.
+3. Surface `notice`/`progress` events to the user. The config counts as written
+   only when the wizard emits `complete` AND exits 0; either one alone is a
+   failure (report it, do not assume a config exists).
 4. With approval, **build**: `coop-data-doc build --non-interactive`. Report the
    portal path (`file://…/index.html`) and any **unresolved cross-repo links**.
 5. If there are unresolved links, offer to map them **through the agent**: run

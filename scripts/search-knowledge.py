@@ -37,6 +37,11 @@ import json
 import os
 import sys
 
+LIB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib")
+if LIB_DIR not in sys.path:
+    sys.path.insert(0, LIB_DIR)
+import coop_paths  # noqa: E402
+
 MAX_MATCHES_PER_REPO = 10
 SNIPPET_CAP = 240
 MARKDOWN_SUFFIXES = (".md", ".markdown")
@@ -47,10 +52,7 @@ STATUS_INVALID_CONFIG = "invalid_config"
 
 
 def config_path():
-    coop_dir = os.environ.get("COOP_DIR")
-    if coop_dir:
-        return os.path.join(coop_dir, ".coop", "config")
-    return os.path.join(os.path.expanduser("~"), ".coop", "config")
+    return str(coop_paths.config_path())
 
 
 def load_config():

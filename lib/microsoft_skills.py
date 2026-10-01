@@ -15,11 +15,17 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.parse
 from pathlib import Path
 from typing import Any
+
+_LIB_DIR = str(Path(__file__).resolve().parent)
+if _LIB_DIR not in sys.path:
+    sys.path.insert(0, _LIB_DIR)
+import coop_paths  # noqa: E402
 
 try:
     from _yaml import load as load_yaml
@@ -41,14 +47,8 @@ APPROVED_HOSTS = {"github.com"}
 
 
 def agent_dir() -> Path:
-    configured = os.environ.get("PI_CODING_AGENT_DIR") or os.environ.get(
-        "COOP_AGENT_DIR"
-    )
-    if configured:
-        return Path(configured).expanduser()
-    if os.environ.get("COOP_NO_ISOLATE", "").lower() in {"1", "true", "yes", "on"}:
-        return Path.home() / ".pi" / "agent"
-    return Path.home() / ".coop" / "agent"
+    """The agent dir Pi actually loads: the one chain in lib/coop_paths.py."""
+    return coop_paths.agent_dir()
 
 
 def catalog_root() -> Path:

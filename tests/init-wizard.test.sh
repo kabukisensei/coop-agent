@@ -14,6 +14,13 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# `coop init` is dispatched by bin/coop.ps1 (master plan S1: one implementation,
+# in PowerShell); pwsh on macOS/Linux and CI, Windows PowerShell as the fallback.
+PWSH="$(command -v pwsh 2>/dev/null || command -v powershell.exe 2>/dev/null || command -v powershell 2>/dev/null || true)"
+[ -z "$PWSH" ] && { echo "pwsh (PowerShell 7) required: coop init is dispatched by bin/coop.ps1"; exit 1; }
+COOP_PS1="$ROOT/bin/coop.ps1"
+if command -v cygpath >/dev/null 2>&1; then COOP_PS1="$(cygpath -w "$COOP_PS1")"; fi
+
 answers() {
   printf '%s\n' "$@"
 }
@@ -78,7 +85,7 @@ esac
 
 # --- legacy --template still works --------------------------------------------
 mkdir -p "$TMP/legacy"
-HOME="$TMP" bash "$ROOT/bin/coop" init --template "$TMP/legacy" >/dev/null 2>&1
+HOME="$TMP" USERPROFILE="$TMP" "$PWSH" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$COOP_PS1" init --template "$TMP/legacy" >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "--template exits 0" || ko "--template exit: $rc"
 [ -s "$TMP/legacy/.coop/project.yml" ] && ok "--template produced output" || ko "--template output empty"

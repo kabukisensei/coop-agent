@@ -24,26 +24,29 @@ power_bi:
     - path: "pbirepo/model1"
     - path: "TODO: fixme"
 PROJ
+# The data-docs job (the only gate since ST1) needs the repo's coop-data-doc.yml.
+printf 'version: 1\n' > "$TMP/proj/coop-data-doc.yml"
+cd "$TMP/proj" || fail "cannot enter $TMP/proj"
 
 # 1. GitHub Actions generation
-"$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project.yml" "$ROOT/config/defaults.yml" "$TMP/proj" > /dev/null \
+"$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project.yml" "$ROOT/config/release-manifest.json" "$TMP/proj" > /dev/null \
   || fail "_ciscaffold.py should succeed for github"
 
 gh_file="$TMP/proj/.github/workflows/coop-gates.yml"
 [ -f "$gh_file" ] || fail "GitHub pipeline not generated"
-grep -q "sqlrepo/sql" "$gh_file" || fail "SQL path not in GitHub pipeline"
-grep -q "pbirepo/model1" "$gh_file" || fail "Power BI path not in GitHub pipeline"
+grep -q "coop-data-doc check" "$gh_file" || fail "lineage-docs gate not in GitHub pipeline"
+grep -q "sql-review\|dax-review" "$gh_file" && fail "retired review jobs still in GitHub pipeline (ST1)"
 grep -q "TODO" "$gh_file" && fail "TODO path included in GitHub pipeline"
 pass "GitHub Actions CI generated correctly"
 
 # 2. ADO generation
-"$PY" "$ROOT/lib/_ciscaffold.py" ado "$TMP/proj/.coop/project.yml" "$ROOT/config/defaults.yml" "$TMP/proj" > /dev/null \
+"$PY" "$ROOT/lib/_ciscaffold.py" ado "$TMP/proj/.coop/project.yml" "$ROOT/config/release-manifest.json" "$TMP/proj" > /dev/null \
   || fail "_ciscaffold.py should succeed for ado"
 
 ado_file="$TMP/proj/azure-pipelines/coop-gates.yml"
 [ -f "$ado_file" ] || fail "ADO pipeline not generated"
-grep -q "sqlrepo/sql" "$ado_file" || fail "SQL path not in ADO pipeline"
-grep -q "pbirepo/model1" "$ado_file" || fail "Power BI path not in ADO pipeline"
+grep -q "coop-data-doc check" "$ado_file" || fail "lineage-docs gate not in ADO pipeline"
+grep -q "sql_review\|dax_review" "$ado_file" && fail "retired review jobs still in ADO pipeline (ST1)"
 grep -q "TODO" "$ado_file" && fail "TODO path included in ADO pipeline"
 pass "Azure DevOps CI generated correctly"
 
@@ -56,36 +59,28 @@ repositories:
 power_bi:
   semantic_models: []
 PROJ
-"$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-numeric.yml" "$ROOT/config/defaults.yml" "$TMP/proj" > /dev/null \
-  || fail "numeric sql_root should be treated as a real value"
-grep -q "sqlrepo/0" "$gh_file" || fail "numeric sql_root should produce sqlrepo/0 path"
-pass "is_todo does not treat 0 as TODO"
+"$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-numeric.yml" "$ROOT/config/release-manifest.json" "$TMP/proj" > /dev/null \
+  || fail "numeric sql_root should still parse as a real value"
+pass "contract with a numeric sql_root is accepted"
 
 # 4. YAML list top-level should fail cleanly, not AttributeError.
 cat > "$TMP/proj/.coop/project-list.yml" <<PROJ
 - a
 - b
 PROJ
-if "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-list.yml" "$ROOT/config/defaults.yml" "$TMP/proj" > /dev/null 2>&1; then
+if "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-list.yml" "$ROOT/config/release-manifest.json" "$TMP/proj" > /dev/null 2>&1; then
   fail "top-level YAML list should be rejected"
 fi
 pass "top-level YAML list rejected cleanly"
 
-# 5. Path injection should be rejected.
-cat > "$TMP/proj/.coop/project-inject.yml" <<PROJ
-repositories:
-  dw:
-    local_path: "sqlrepo; rm -rf /"
-    sql_root: "sql"
-power_bi:
-  semantic_models: []
-PROJ
-if "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-inject.yml" "$ROOT/config/defaults.yml" "$TMP/proj" > /dev/null 2>&1; then
-  fail "path with shell metacharacters should be rejected"
-fi
-pass "path injection rejected"
+# 5. Without a coop-data-doc.yml there is nothing to generate (exit 3, no file).
+mkdir -p "$TMP/empty/.coop" && cp "$TMP/proj/.coop/project.yml" "$TMP/empty/.coop/project.yml"
+( cd "$TMP/empty" && "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/empty/.coop/project.yml" "$ROOT/config/release-manifest.json" "$TMP/empty" > /dev/null 2>&1 )
+[ $? -eq 3 ] || fail "missing coop-data-doc.yml should exit 3"
+[ -f "$TMP/empty/.github/workflows/coop-gates.yml" ] && fail "no pipeline should be written without coop-data-doc.yml"
+pass "no coop-data-doc.yml exits 3 without writing"
 
-# 6. Version injection should be rejected.
+# 6. Version injection should be rejected (the pins come from the release manifest).
 cat > "$TMP/proj/.coop/project-ver.yml" <<PROJ
 repositories:
   dw:
@@ -94,15 +89,20 @@ repositories:
 power_bi:
   semantic_models: []
 PROJ
-cat > "$TMP/defaults-bad.yml" <<DEF
-tested_with:
-  coop_sql_review: "0.12.0; rm -rf /"
-  coop_dax_review: "0.15.0"
-  coop_data_doc: "0.33.0"
+cat > "$TMP/manifest-bad.json" <<DEF
+{"python_tools": {"coop-data-doc": "0.33.0; rm -rf /"}}
 DEF
-if "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-ver.yml" "$TMP/defaults-bad.yml" "$TMP/proj" > /dev/null 2>&1; then
+if "$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project-ver.yml" "$TMP/manifest-bad.json" "$TMP/proj" > /dev/null 2>&1; then
   fail "version with shell metacharacters should be rejected"
 fi
 pass "version injection rejected"
+
+# 7. The generated pipelines pin exactly the manifest's coop-tool versions.
+"$PY" "$ROOT/lib/_ciscaffold.py" github "$TMP/proj/.coop/project.yml" "$ROOT/config/release-manifest.json" "$TMP/proj" > /dev/null \
+  || fail "_ciscaffold.py should succeed against the real manifest"
+tool=coop-data-doc
+pin="$(sed -n 's/^[[:space:]]*"'"$tool"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/config/release-manifest.json")"
+grep -q "pipx install $tool==$pin" "$gh_file" || fail "GitHub pipeline must pin $tool==$pin (the manifest's python_tools)"
+pass "pipelines pin the manifest's coop-data-doc version"
 
 printf '  %s\n' "ciscaffold tests passed"

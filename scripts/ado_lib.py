@@ -49,7 +49,20 @@ ADO_RESOURCE = "499b84ac-1321-427f-aa17-267ca6975798"
 VSSPS_BASE = "https://app.vssps.visualstudio.com"
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
-DEFAULT_CONFIG = os.path.join(os.path.expanduser("~"), ".coop", "devops", "clients.yml")
+
+
+def _default_config():
+    """<profile dir>/devops/clients.yml (lib/coop_paths.py: COOP_DIR is the
+    parent of .coop, default ~/.coop)."""
+    lib_dir = str(Path(__file__).resolve().parent.parent / "lib")
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    import coop_paths  # noqa: E402  (path set above)
+
+    return str(coop_paths.profile_dir() / "devops" / "clients.yml")
+
+
+DEFAULT_CONFIG = _default_config()
 
 # Fields fetched for every work item in a digest.
 DIGEST_FIELDS = [

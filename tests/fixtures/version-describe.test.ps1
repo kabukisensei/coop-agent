@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env pwsh
-# #108: PowerShell twin of tests/version-describe.test.sh. `coop.ps1 version`
+# #108: `coop.ps1 version`
 # and `doctor.ps1 --publish` carry the checkout's git describe
 # (Get-CoopRepoDescribe), so two machines on different commits past the same
 # release tag are told apart; a copy that is not a git checkout prints VERSION
@@ -10,33 +10,16 @@
 # stubs. No waits. Assertions stay ASCII: Windows PowerShell 5.1 re-encodes
 # child output.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$psExe = try { (Get-Process -Id $PID).Path } catch { 'pwsh' }
-$isWindowsHost = ($env:OS -eq 'Windows_NT')
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-version-describe-' + [guid]::NewGuid().ToString('N'))
-$fail = 0
-function Ok([string]$m) { Write-Host "  ok $m" }
-function Ko([string]$m, [string]$out = '') { Write-Host "  x $m"; if ($out) { Write-Host $out }; $script:fail = 1 }
 
 $bin = Join-Path $t 'bin'
 $cwd = Join-Path $t 'cwd'
 $sandboxHome = Join-Path $t 'home'
 $pub = Join-Path $t 'published'
 $seed = Join-Path $t 'seed'
-$utf8 = New-Object System.Text.UTF8Encoding($false)
 
-# Fixture git runs in its own Continue scope and throws on a real failure.
-function Invoke-FixtureGit([string[]]$GitArgs) {
-  $ErrorActionPreference = 'Continue'
-  $o = @(& git @GitArgs 2>&1)
-  if ($LASTEXITCODE -ne 0) { throw "fixture git $($GitArgs -join ' ') failed: $($o | Out-String)" }
-  if ($o.Count -gt 0) { return ([string]$o[0]).Trim() }
-}
-function Write-Shim([string]$Name, [string]$Sh, [string]$Cmd) {
-  [System.IO.File]::WriteAllText((Join-Path $bin $Name), $Sh)
-  [System.IO.File]::WriteAllText((Join-Path $bin ($Name + '.cmd')), $Cmd)
-  if (-not $isWindowsHost) { & chmod +x (Join-Path $bin $Name) }
-}
 function New-Machine([string]$Name, [string]$Rev) {
   $d = Join-Path (Join-Path $t $Name) 'coop-agent'
   $null = Invoke-FixtureGit @('clone', '-q', $seed, $d)
@@ -61,26 +44,24 @@ function Get-VersionLines([string]$CoopRoot) {
   return @($lines | ForEach-Object { ([string]$_).TrimEnd() })
 }
 
-$saved = @{}
-$names = @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','PIPX_HOME','PIPX_BIN_DIR',
+$saved = Save-Env @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','PIPX_HOME','PIPX_BIN_DIR',
            'npm_config_prefix','COOP_TEST_STUB_PATH','COOP_SKIP_AZ','COOP_NO_ONBOARD','COOP_NO_ISOLATE','NO_COLOR',
            'COOP_ROOT','COOP_RELEASE_MANIFEST','USER','USERNAME','GIT_CONFIG_NOSYSTEM','GIT_AUTHOR_NAME',
            'GIT_AUTHOR_EMAIL','GIT_COMMITTER_NAME','GIT_COMMITTER_EMAIL')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 try {
   New-Item -ItemType Directory -Force -Path $bin, $cwd, (Join-Path $sandboxHome '.coop'), (Join-Path $t 'agent'), $pub, $seed | Out-Null
-  Write-Shim 'pi' @'
+  Write-Shim 'pi' -Raw @'
 #!/bin/sh
 [ "$1" = "--version" ] && { echo 0.84.3; exit 0; }
 exit 0
 '@ "@echo off`r`nif `"%~1`"==`"--version`" (echo 0.84.3& exit /b 0)`r`nexit /b 0`r`n"
-  Write-Shim 'npm' @'
+  Write-Shim 'npm' -Raw @'
 #!/bin/sh
 [ "$1" = "--version" ] && { echo 10.9.0; exit 0; }
 exit 0
 '@ "@echo off`r`nif `"%~1`"==`"--version`" (echo 10.9.0& exit /b 0)`r`nexit /b 0`r`n"
   foreach ($n in @('pipx', 'az', 'fab', 'brew', 'winget')) {
-    Write-Shim $n "#!/bin/sh`nexit 1`n" "@echo off`r`nexit /b 1`r`n"
+    Write-Shim $n -Raw "#!/bin/sh`nexit 1`n" "@echo off`r`nexit /b 1`r`n"
   }
   # doctor.ps1 --publish writes here, never to a shared folder.
   [System.IO.File]::WriteAllText((Join-Path $sandboxHome '.coop\config'),
@@ -127,8 +108,8 @@ exit 0
   # Machine A runs c2 (one past the tag), machine B runs c3 (two past it).
   $a = New-Machine 'a' 'HEAD~1'
   $b = New-Machine 'b' 'HEAD'
-  $descA = 'v0.23.5-1-g' + (Invoke-FixtureGit @('-C', $a, 'rev-parse', '--short', 'HEAD'))
-  $descB = 'v0.23.5-2-g' + (Invoke-FixtureGit @('-C', $b, 'rev-parse', '--short', 'HEAD'))
+  $descA = 'v0.23.5-1-g' + (Get-FixtureGit @('-C', $a, 'rev-parse', '--short', 'HEAD'))
+  $descB = 'v0.23.5-2-g' + (Get-FixtureGit @('-C', $b, 'rev-parse', '--short', 'HEAD'))
 
   # 1. Two machines past the same tag print different, exact version lines.
   $outA = Get-VersionLines $a
@@ -190,13 +171,10 @@ exit 0
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {
-  foreach ($n in $names) {
-    if ($null -eq $saved[$n]) { Remove-Item -LiteralPath "Env:\$n" -ErrorAction SilentlyContinue }
-    else { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
-  }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($fail -ne 0) { Write-Host '  x coop.ps1 version and doctor.ps1 --publish describe (PowerShell) tests FAILED'; exit 1 }
+if ($fail -ne 0) { Write-Host "  $G_CROSS coop.ps1 version and doctor.ps1 --publish describe (PowerShell) tests FAILED"; exit 1 }
 Write-Host '  coop.ps1 version and doctor.ps1 --publish describe (PowerShell) tests passed'
 exit 0
